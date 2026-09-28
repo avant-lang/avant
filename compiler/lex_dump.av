@@ -1,0 +1,94 @@
+fn dump_tokens(tokens: Array(Token)) {
+  i = 0
+  while i < tokens.size {
+    t = tokens[i]
+    loc = t.loc
+    puts("${t.kind}\t${loc.line}\t${loc.column}\t${escape_dump(t.value)}")
+    i = i + 1
+  }
+}
+
+fn main {
+  args = argv()
+  if args.size < 2 {
+    puts("usage: lex_dump [--ast|--check|--myc] FILE.av")
+    return
+  }
+  start = 1
+  want_ast = false
+  want_check = false
+  want_myc = false
+  if str_eq(args[1], "--ast") {
+    want_ast = true
+    start = 2
+  }
+  if str_eq(args[1], "--check") {
+    want_check = true
+    start = 2
+  }
+  if str_eq(args[1], "--myc") {
+    want_myc = true
+    start = 2
+  }
+  if args.size <= start {
+    puts("usage: lex_dump [--ast|--check|--myc] FILE.av")
+    return
+  }
+  path = args[start]
+  if src = source_read(path) {
+    lex = Lexer.new(src)
+    tokens = lex.tokenize
+    if e = lex.err {
+      puts(e.show)
+      return
+    }
+    if want_ast {
+      parser = Parser.new(src, tokens)
+      program = parser.parse
+      if e = parser.err {
+        puts(e.show)
+        return
+      }
+      puts(dump_program(program))
+    } else if want_check {
+      parser = Parser.new(src, tokens)
+      program = parser.parse
+      if e = parser.err {
+        puts(e.show)
+        return
+      }
+      checker = Checker.new(src, program)
+      dummy = checker.check
+      if e = checker.err {
+        puts(e.show)
+        return
+      }
+      puts(dump_typed_program(program))
+    } else if want_myc {
+      parser = Parser.new(src, tokens)
+      program = parser.parse
+      if e = parser.err {
+        puts(e.show)
+        return
+      }
+      checker = Checker.new(src, program)
+      dummy = checker.check
+      if e = checker.err {
+        puts(e.show)
+        return
+      }
+      ir = emit_myc(program)
+      if ir.size > 0 {
+        if ir[ir.size - 1] == 10 {
+          puts(str_slice(ir, 0, ir.size - 1))
+        } else {
+          puts(ir)
+        }
+      }
+    } else {
+      dump_tokens(tokens)
+    }
+  } else {
+    puts("cannot read ${path}")
+  }
+}

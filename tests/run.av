@@ -1,0 +1,191 @@
+// Directory runner. Concat is generated; adding tests/cases/foo.av does not edit this file.
+//   AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
+
+fn str_eq(a: String, b: String): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i] != b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+fn str_ends(s: String, suf: String): Bool {
+  if suf.size > s.size {
+    return false
+  }
+  str_eq(str_slice(s, s.size - suf.size, s.size), suf)
+}
+
+fn is_ident_start(c: Int): Bool {
+  if c >= 65 {
+    if c <= 90 {
+      return true
+    }
+  }
+  if c >= 97 {
+    if c <= 122 {
+      return true
+    }
+  }
+  c == 95
+}
+
+fn is_ident_char(c: Int): Bool {
+  if is_ident_start(c) {
+    return true
+  }
+  if c >= 48 {
+    if c <= 57 {
+      return true
+    }
+  }
+  false
+}
+
+fn drop_av(name: String): String {
+  if str_ends(name, ".av") {
+    return str_slice(name, 0, name.size - 3)
+  }
+  name
+}
+
+fn valid_case_name(name: String): Bool {
+  if str_ends(name, ".av") {
+  } else {
+    return false
+  }
+  stem = drop_av(name)
+  if stem.size == 0 {
+    return false
+  }
+  if is_ident_start(stem[0]) {
+  } else {
+    return false
+  }
+  i = 1
+  while i < stem.size {
+    if is_ident_char(stem[i]) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+fn avant_test_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  "."
+}
+
+fn avant_cases_dir: String {
+  if v = env_get("AVANT_TEST_DIR") {
+    return v
+  }
+  "${avant_test_root()}/tests/cases"
+}
+
+fn generate_main(names: Array(String)): String {
+  b = buf_new()
+  b.push_str("fn main {\n")
+  b.push_str("  c = Checks.new()\n")
+  b.push_str("  c.started = now_ms()\n")
+  i = 0
+  while i < names.size {
+    stem = drop_av(names[i])
+    b.push_str("  test_${stem}(c)\n")
+    i = i + 1
+  }
+  b.push_str("  c.finish()\n")
+  b.push_str("}\n")
+  b.to_s
+}
+
+fn main {
+  if compiler = env_get("AVANT_COMPILER") {
+    if file_exists(compiler) {
+    } else {
+      puts("FAIL  tests/run.av")
+      puts("AVANT_COMPILER does not exist: ${compiler}")
+      return
+    }
+    root = avant_test_root()
+    harness = "${root}/tests/harness.av"
+    cases = avant_cases_dir()
+    if file_exists(harness) {
+    } else {
+      puts("FAIL  tests/run.av")
+      puts("missing harness ${harness}")
+      return
+    }
+    names = dir_list(cases)
+    picked: Array(String) = []
+    i = 0
+    while i < names.size {
+      name = names[i]
+      if valid_case_name(name) {
+        picked.push(name)
+      }
+      i = i + 1
+    }
+    if picked.size == 0 {
+      puts("FAIL  tests/run.av")
+      puts("no tests/cases/*.av under ${cases}")
+      return
+    }
+    stamp = now_ms()
+    main_src = "/tmp/avant-s10-${stamp}-main.av"
+    bin = "/tmp/avant-s10-${stamp}-suite.bin"
+    log = "/tmp/avant-s10-${stamp}-suite.log"
+    dummy = file_write(main_src, generate_main(picked))
+    args: Array(String) = []
+    args.push("compile")
+    args.push(harness)
+    i = 0
+    while i < picked.size {
+      args.push("${cases}/${picked[i]}")
+      i = i + 1
+    }
+    args.push(main_src)
+    args.push(bin)
+    code = process_run_out(compiler, args, log)
+    if code != 0 {
+      puts("FAIL  tests/run.av")
+      puts("inner suite compile failed (${code})")
+      if err = file_read(log) {
+        puts(err)
+      }
+      return
+    }
+    if file_exists(bin) {
+    } else {
+      puts("FAIL  tests/run.av")
+      puts("inner suite bin missing")
+      if err = file_read(log) {
+        puts(err)
+      }
+      return
+    }
+    chmod_args: Array(String) = []
+    chmod_args.push("+x")
+    chmod_args.push(bin)
+    dummy2 = process_run("/bin/chmod", chmod_args)
+    empty: Array(String) = []
+    run_code = process_run(bin, empty)
+    if run_code != 0 {
+      puts("FAIL  tests/run.av")
+      puts("inner suite exited ${run_code}")
+    }
+  } else {
+    puts("FAIL  tests/run.av")
+    puts("AVANT_COMPILER is not set")
+  }
+}

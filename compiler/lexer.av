@@ -1,0 +1,744 @@
+fn ch_is_digit(c: Int): Bool {
+  c >= 48 && c <= 57
+}
+
+fn ch_is_alpha(c: Int): Bool {
+  if c >= 65 {
+    if c <= 90 {
+      return true
+    }
+  }
+  if c >= 97 {
+    if c <= 122 {
+      return true
+    }
+  }
+  false
+}
+
+fn ch_is_ident_start(c: Int): Bool {
+  if ch_is_alpha(c) {
+    return true
+  }
+  c == 95
+}
+
+fn ch_is_ident_continue(c: Int): Bool {
+  if ch_is_ident_start(c) {
+    return true
+  }
+  ch_is_digit(c)
+}
+
+fn ch_is_hex(c: Int): Bool {
+  if ch_is_digit(c) {
+    return true
+  }
+  if c >= 97 {
+    if c <= 102 {
+      return true
+    }
+  }
+  if c >= 65 {
+    if c <= 70 {
+      return true
+    }
+  }
+  false
+}
+
+class Lexer {
+  source: Source
+  path: String = ""
+  pos: Int = 0
+  line: Int = 1
+  column: Int = 1
+  queue: Array(Token)
+  qpos: Int = 0
+  intern_map: Hash(String, String)
+  keywords: Hash(String, Int)
+  failed: Bool = false
+  err: CompileError? = nil
+  str_kind: Int = 0
+  str_frag: String = ""
+
+  fn initialize(source: Source) {
+    self.source = source
+    self.path = source.path
+    self.pos = 0
+    self.line = 1
+    self.column = 1
+    q: Array(Token) = []
+    self.queue = q
+    self.qpos = 0
+    im = Hash(String, String).new
+    self.intern_map = im
+    self.keywords = keyword_table()
+    self.failed = false
+    self.err = nil
+    self.str_kind = 0
+    self.str_frag = ""
+  }
+
+  fn has_err: Bool {
+    self.failed
+  }
+
+  fn at_end: Bool {
+    self.pos >= self.source.text.size
+  }
+
+  fn here: Location {
+    Location.new(self.path, self.line, self.column, self.pos)
+  }
+
+  fn peek: Int {
+    if self.at_end {
+      return 0
+    }
+    self.source.text[self.pos]
+  }
+
+  fn peek_at(n: Int): Int {
+    p = self.pos + n
+    if p >= self.source.text.size {
+      return 0
+    }
+    self.source.text[p]
+  }
+
+  fn peek_next: Int {
+    self.peek_at(1)
+  }
+
+  fn bump {
+    c = self.peek
+    if self.at_end {
+      return
+    }
+    self.pos = self.pos + 1
+    if c == 10 {
+      self.line = self.line + 1
+      self.column = 1
+    } else {
+      self.column = self.column + 1
+    }
+  }
+
+  fn skip_spaces {
+    while true {
+      c = self.peek
+      if c == 32 || c == 9 || c == 13 {
+        self.bump
+      } else {
+        break
+      }
+    }
+  }
+
+  fn skip_line_comment {
+    if self.peek == 47 {
+      self.bump
+    }
+    if self.peek == 47 {
+      self.bump
+    }
+    if self.peek == 32 {
+      if self.peek_at(1) == 102 {
+        if self.peek_at(2) == 105 {
+          if self.peek_at(3) == 108 {
+            if self.peek_at(4) == 101 {
+              if self.peek_at(5) == 58 {
+                if self.peek_at(6) == 32 {
+                  self.bump
+                  self.bump
+                  self.bump
+                  self.bump
+                  self.bump
+                  self.bump
+                  self.bump
+                  start = self.pos
+                  while true {
+                    if self.at_end {
+                      break
+                    }
+                    if self.peek == 10 {
+                      break
+                    }
+                    self.bump
+                  }
+                  self.path = self.intern_str(str_slice(self.source.text, start, self.pos))
+                  self.line = 0
+                  self.column = 1
+                  return
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    while true {
+      if self.at_end {
+        break
+      }
+      if self.peek == 10 {
+        break
+      }
+      self.bump
+    }
+  }
+
+  fn intern_str(s: String): String {
+    if existing = self.intern_map.get(s) {
+      return existing
+    }
+    self.intern_map[s] = s
+    s
+  }
+
+  fn fail_tok(loc: Location, message: String): Token {
+    if self.failed {
+      return Token.new(tk_eof(), loc, "")
+    }
+    self.failed = true
+    self.err = CompileError.new(loc, message)
+    Token.new(tk_eof(), loc, "")
+  }
+
+  fn queue_empty: Bool {
+    self.qpos >= self.queue.size
+  }
+
+  fn queue_take: Token {
+    t = self.queue[self.qpos]
+    self.qpos = self.qpos + 1
+    t
+  }
+
+  fn queue_push(t: Token) {
+    self.queue.push(t)
+  }
+
+  fn read_ident: String {
+    start = self.pos
+    while ch_is_ident_continue(self.peek) {
+      self.bump
+    }
+    str_slice(self.source.text, start, self.pos)
+  }
+
+  fn exponent_ahead: Bool {
+    c = self.peek
+    if c != 101 {
+      if c != 69 {
+        return false
+      }
+    }
+    n = self.peek_next
+    if ch_is_digit(n) {
+      return true
+    }
+    if n == 43 || n == 45 {
+      return ch_is_digit(self.peek_at(2))
+    }
+    false
+  }
+
+  fn read_int_suffix: String {
+    if self.peek == 117 {
+      if self.peek_next == 54 {
+        if self.peek_at(2) == 52 {
+          if ch_is_ident_continue(self.peek_at(3)) {
+            return ""
+          }
+          self.bump
+          self.bump
+          self.bump
+          return "u64"
+        }
+      }
+    }
+    if self.peek == 105 {
+      if self.peek_next == 54 {
+        if self.peek_at(2) == 52 {
+          if ch_is_ident_continue(self.peek_at(3)) {
+            return ""
+          }
+          self.bump
+          self.bump
+          self.bump
+          return "i64"
+        }
+      }
+    }
+    ""
+  }
+
+  fn read_number(loc: Location): Token {
+    start = self.pos
+    if self.peek == 48 {
+      n = self.peek_next
+      if n == 120 || n == 88 {
+        self.bump
+        self.bump
+        if ch_is_hex(self.peek) {
+        } else {
+          return self.fail_tok(self.here, "hex literal needs a digit after 0x")
+        }
+        while ch_is_hex(self.peek) {
+          self.bump
+        }
+        text = str_slice(self.source.text, start, self.pos)
+        suffix = self.read_int_suffix
+        if suffix.size == 0 {
+          return Token.new(tk_integer(), loc, self.intern_str(text))
+        }
+        return Token.new(tk_integer(), loc, self.intern_str(text + suffix))
+      }
+    }
+    while ch_is_digit(self.peek) {
+      self.bump
+    }
+    is_float = false
+    if self.peek == 46 {
+      if ch_is_digit(self.peek_next) {
+        is_float = true
+        self.bump
+        while ch_is_digit(self.peek) {
+          self.bump
+        }
+      }
+    }
+    if self.exponent_ahead {
+      is_float = true
+      self.bump
+      s = self.peek
+      if s == 43 || s == 45 {
+        self.bump
+      }
+      while ch_is_digit(self.peek) {
+        self.bump
+      }
+    }
+    text = str_slice(self.source.text, start, self.pos)
+    if is_float {
+      return Token.new(tk_float(), loc, self.intern_str(text))
+    }
+    suffix = self.read_int_suffix
+    if suffix.size == 0 {
+      return Token.new(tk_integer(), loc, self.intern_str(text))
+    }
+    Token.new(tk_integer(), loc, self.intern_str(text + suffix))
+  }
+
+  fn read_escape: Int {
+    if self.at_end {
+      dummy = self.fail_tok(self.here, "unterminated string escape")
+      return 0
+    }
+    c = self.peek
+    self.bump
+    switch c {
+      case 110 {
+        10
+      }
+      case 116 {
+        9
+      }
+      case 114 {
+        13
+      }
+      case 92 {
+        92
+      }
+      case 34 {
+        34
+      }
+      case 36 {
+        36
+      }
+      else {
+        dummy = self.fail_tok(self.here, "unknown string escape \\" + chr(c))
+        0
+      }
+    }
+  }
+
+  fn read_string_body {
+    buf = buf_new()
+    while true {
+      if self.at_end {
+        dummy = self.fail_tok(self.here, "unterminated string")
+        self.str_frag = ""
+        self.str_kind = 2
+        return
+      }
+      c = self.peek
+      if c == 34 {
+        self.bump
+        self.str_frag = self.intern_str(buf.to_s)
+        self.str_kind = 0
+        return
+      }
+      if c == 10 {
+        dummy = self.fail_tok(self.here, "unterminated string")
+        self.str_frag = ""
+        self.str_kind = 2
+        return
+      }
+      if c == 92 {
+        self.bump
+        e = self.read_escape
+        if self.has_err {
+          self.str_frag = ""
+          self.str_kind = 2
+          return
+        }
+        buf.push_byte(e)
+        continue
+      }
+      if c == 36 {
+        if self.peek_next == 123 {
+          self.bump
+          self.bump
+          self.str_frag = self.intern_str(buf.to_s)
+          self.str_kind = 1
+          return
+        }
+        self.bump
+        buf.push_byte(c)
+        continue
+      }
+      self.bump
+      buf.push_byte(c)
+    }
+  }
+
+  fn lex_interp_expr: Array(Token) {
+    tokens: Array(Token) = []
+    depth = 0
+    while true {
+      if self.has_err {
+        return tokens
+      }
+      self.skip_spaces
+      if self.at_end {
+        dummy = self.fail_tok(self.here, "unterminated string interpolation")
+        return tokens
+      }
+      if self.peek == 10 {
+        loc = self.here
+        self.bump
+        last_nl = false
+        if tokens.size > 0 {
+          last = tokens[tokens.size - 1]
+          if last.kind == tk_newline() {
+            last_nl = true
+          }
+        }
+        if last_nl {
+        } else {
+          tokens.push(Token.new(tk_newline(), loc, ""))
+        }
+        continue
+      }
+      if self.peek == 47 {
+        if self.peek_next == 47 {
+          self.skip_line_comment
+          continue
+        }
+      }
+      tok = self.read_token
+      if tok.kind == tk_l_brace() {
+        depth = depth + 1
+        tokens.push(tok)
+      } else if tok.kind == tk_r_brace() {
+        if depth == 0 {
+          return tokens
+        }
+        depth = depth - 1
+        tokens.push(tok)
+      } else if tok.kind == tk_interp_open() {
+        dummy = self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
+        return tokens
+      } else {
+        tokens.push(tok)
+      }
+    }
+    tokens
+  }
+
+  fn lex_interpolation: Array(Token) {
+    tokens: Array(Token) = []
+    while true {
+      if self.has_err {
+        return tokens
+      }
+      expr = self.lex_interp_expr
+      self.read_string_body
+      if self.has_err {
+        return tokens
+      }
+      if self.str_kind == 0 {
+        i = 0
+        while i < expr.size {
+          tokens.push(expr[i])
+          i = i + 1
+        }
+        tokens.push(Token.new(tk_interp_close(), self.here, self.str_frag))
+        return tokens
+      }
+      if self.str_kind == 1 {
+        i = 0
+        while i < expr.size {
+          tokens.push(expr[i])
+          i = i + 1
+        }
+        tokens.push(Token.new(tk_interp_mid(), self.here, self.str_frag))
+      }
+    }
+    tokens
+  }
+
+  fn read_string_token(loc: Location): Token {
+    self.bump
+    self.read_string_body
+    if self.has_err {
+      return Token.new(tk_eof(), loc, "")
+    }
+    if self.str_kind == 0 {
+      return Token.new(tk_string(), loc, self.intern_str(self.str_frag))
+    }
+    if self.str_kind == 1 {
+      first_frag = self.str_frag
+      rest = self.lex_interpolation
+      first = Token.new(tk_interp_open(), loc, self.intern_str(first_frag))
+      i = 0
+      while i < rest.size {
+        self.queue_push(rest[i])
+        i = i + 1
+      }
+      return first
+    }
+    self.fail_tok(loc, "unterminated string")
+  }
+
+  fn read_ident_tok(loc: Location): Token {
+    ident = self.read_ident
+    if k = self.keywords.get(ident) {
+      return Token.new(k, loc, "")
+    }
+    Token.new(tk_ident(), loc, self.intern_str(ident))
+  }
+
+  fn read_token: Token {
+    loc = self.here
+    c = self.peek
+    if ch_is_digit(c) {
+      return self.read_number(loc)
+    }
+    if ch_is_ident_start(c) {
+      return self.read_ident_tok(loc)
+    }
+    switch c {
+      case 123 {
+        self.bump
+        Token.new(tk_l_brace(), loc, "")
+      }
+      case 125 {
+        self.bump
+        Token.new(tk_r_brace(), loc, "")
+      }
+      case 40 {
+        self.bump
+        Token.new(tk_l_paren(), loc, "")
+      }
+      case 41 {
+        self.bump
+        Token.new(tk_r_paren(), loc, "")
+      }
+      case 91 {
+        self.bump
+        Token.new(tk_l_bracket(), loc, "")
+      }
+      case 93 {
+        self.bump
+        Token.new(tk_r_bracket(), loc, "")
+      }
+      case 44 {
+        self.bump
+        Token.new(tk_comma(), loc, "")
+      }
+      case 58 {
+        self.bump
+        Token.new(tk_colon(), loc, "")
+      }
+      case 124 {
+        self.bump
+        kind = tk_pipe()
+        if self.peek == 124 {
+          self.bump
+          kind = tk_pipe_pipe()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 38 {
+        self.bump
+        kind = tk_amp()
+        if self.peek == 38 {
+          self.bump
+          kind = tk_amp_amp()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 94 {
+        self.bump
+        Token.new(tk_caret(), loc, "")
+      }
+      case 126 {
+        self.bump
+        Token.new(tk_tilde(), loc, "")
+      }
+      case 63 {
+        self.bump
+        Token.new(tk_question(), loc, "")
+      }
+      case 46 {
+        self.bump
+        Token.new(tk_dot(), loc, "")
+      }
+      case 43 {
+        self.bump
+        kind = tk_plus()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_plus_eq()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 45 {
+        self.bump
+        kind = tk_minus()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_minus_eq()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 42 {
+        self.bump
+        kind = tk_star()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_star_eq()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 37 {
+        self.bump
+        Token.new(tk_percent(), loc, "")
+      }
+      case 47 {
+        self.bump
+        kind = tk_slash()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_slash_eq()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 61 {
+        self.bump
+        kind = tk_eq()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_eq_eq()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 33 {
+        self.bump
+        kind = tk_bang()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_not_eq()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 60 {
+        self.bump
+        kind = tk_less()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_less_eq()
+        } else if self.peek == 60 {
+          self.bump
+          kind = tk_less_less()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 62 {
+        self.bump
+        kind = tk_greater()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_greater_eq()
+        } else if self.peek == 62 {
+          self.bump
+          kind = tk_greater_greater()
+        }
+        Token.new(kind, loc, "")
+      }
+      case 34 {
+        self.read_string_token(loc)
+      }
+      else {
+        self.bump
+        self.fail_tok(loc, "unexpected character " + chr(c))
+      }
+    }
+  }
+
+  fn tokenize: Array(Token) {
+    tokens: Array(Token) = []
+    last_kind = 0 - 1
+    while true {
+      if self.has_err {
+        break
+      }
+      self.skip_spaces
+      if self.at_end {
+        if self.queue_empty {
+          break
+        }
+      }
+      if self.queue_empty {
+        if self.peek == 47 {
+          if self.peek_next == 47 {
+            self.skip_line_comment
+            continue
+          }
+        }
+        if self.peek == 10 {
+          loc = self.here
+          self.bump
+          if last_kind != tk_newline() {
+            tokens.push(Token.new(tk_newline(), loc, ""))
+            last_kind = tk_newline()
+          }
+          continue
+        }
+        t = self.read_token
+        tokens.push(t)
+        last_kind = t.kind
+      } else {
+        t = self.queue_take
+        tokens.push(t)
+        last_kind = t.kind
+      }
+    }
+    tokens.push(Token.new(tk_eof(), self.here, ""))
+    tokens
+  }
+}

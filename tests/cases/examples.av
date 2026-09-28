@@ -1,0 +1,64 @@
+fn expect_example(c: Checks, compiler: String, root: String, stamp: Int, stem: String, extra: Array(String)) {
+  src = "${root}/examples/${stem}.av"
+  want_path = "${root}/tests/expected/${stem}.out"
+  log = "/tmp/avant-s10-${stamp}-${stem}.txt"
+  code = run_av_cmd_flags(compiler, src, log, extra)
+  c.eq_int(code, 0, "run ${stem}.av")
+  if got = file_read(log) {
+    if want = file_read(want_path) {
+      c.eq_str(got, want, "${stem}.av stdout")
+    } else {
+      c.expect(false, "expected ${stem}.out")
+    }
+  } else {
+    c.expect(false, "run ${stem}.av output")
+  }
+}
+
+fn test_examples(c: Checks) {
+  c.suite("tests/cases/examples.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    stamp = now_ms()
+    none: Array(String) = []
+    expect_example(c, compiler, root, stamp, "hello", none)
+    expect_example(c, compiler, root, stamp, "fact", none)
+    expect_example(c, compiler, root, stamp, "vec2", none)
+    expect_example(c, compiler, root, stamp, "sieve", none)
+    expect_example(c, compiler, root, stamp, "methods", none)
+    expect_example(c, compiler, root, stamp, "trees", none)
+    expect_example(c, compiler, root, stamp, "binarytrees", none)
+    expect_example(c, compiler, root, stamp, "switch", none)
+    expect_example(c, compiler, root, stamp, "defaults", none)
+    expect_example(c, compiler, root, stamp, "sqrt", none)
+    zflags: Array(String) = []
+    zflags.push("--lib")
+    zflags.push("z")
+    expect_example(c, compiler, root, stamp, "zlib", zflags)
+    aflags: Array(String) = []
+    aflags.push("--cc")
+    aflags.push("${root}/examples/c/add.c")
+    expect_example(c, compiler, root, stamp, "add", aflags)
+    expect_example(c, compiler, root, stamp, "errors", none)
+    expect_example(c, compiler, root, stamp, "collect", none)
+    expect_example(c, compiler, root, stamp, "json", none)
+    expect_example(c, compiler, root, stamp, "http", none)
+    expect_example(c, compiler, root, stamp, "spawn", none)
+    expect_example(c, compiler, root, stamp, "digest", none)
+
+    mat_log = "/tmp/avant-s10-${stamp}-matmul.txt"
+    mcode = run_av_cmd(compiler, "${root}/examples/matmul.av", mat_log)
+    c.eq_int(mcode, 0, "run matmul.av")
+    if mout = file_read(mat_log) {
+      c.eq_int(count_lines(mout), 4, "matmul four lines")
+      a = nth_line(mout, 0)
+      b = nth_line(mout, 1)
+      c.eq_str(a, b, "matmul sequential matches spawned")
+      c.expect(a.size > 0, "matmul checksum nonempty")
+    } else {
+      c.expect(false, "run matmul.av")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

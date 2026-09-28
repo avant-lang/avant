@@ -1,0 +1,390 @@
+fn type_is_builtin(name: String): Bool {
+  if str_eq(name, "Int") {
+    return true
+  }
+  if str_eq(name, "Int64") {
+    return true
+  }
+  if str_eq(name, "UInt64") {
+    return true
+  }
+  if str_eq(name, "Bool") {
+    return true
+  }
+  if str_eq(name, "Float64") {
+    return true
+  }
+  if str_eq(name, "String") {
+    return true
+  }
+  if str_eq(name, "Void") {
+    return true
+  }
+  if str_eq(name, "Array") {
+    return true
+  }
+  if str_eq(name, "Ptr") {
+    return true
+  }
+  if str_eq(name, "Hash") {
+    return true
+  }
+  if str_eq(name, "Buf") {
+    return true
+  }
+  if str_eq(name, "Nil") {
+    return true
+  }
+  str_eq(name, "JoinHandle")
+}
+
+class TypeResolver {
+  named: Hash(String, Int)
+  opaques: Hash(String, Int)
+  interned: Array(Ty)
+  failed: Bool = false
+  err: CompileError? = nil
+  t_int: Ty
+  t_int64: Ty
+  t_uint64: Ty
+  t_bool: Ty
+  t_float: Ty
+  t_string: Ty
+  t_void: Ty
+  t_nil: Ty
+  t_buf: Ty
+
+  fn initialize {
+    n = Hash(String, Int).new
+    self.named = n
+    o = Hash(String, Int).new
+    self.opaques = o
+    inn: Array(Ty) = []
+    inn.push(ty_void())
+    self.interned = inn
+    self.t_int = ty_int()
+    self.t_int64 = ty_int64()
+    self.t_uint64 = ty_uint64()
+    self.t_bool = ty_bool()
+    self.t_float = ty_float()
+    self.t_string = ty_string()
+    self.t_void = ty_void()
+    self.t_nil = ty_nil()
+    self.t_buf = ty_buf()
+    self.failed = false
+    self.err = nil
+  }
+
+  fn has_err: Bool {
+    self.failed
+  }
+
+  fn fail(loc: Location, message: String) {
+    if self.failed {
+      return
+    }
+    self.failed = true
+    self.err = CompileError.new(loc, message)
+  }
+
+  fn intern(ty: Ty): Int {
+    self.interned.push(ty)
+    self.interned.size - 1
+  }
+
+  fn ty_at(id: Int): Ty {
+    self.interned[id]
+  }
+
+  fn put_named(name: String, ty: Ty): Int {
+    id = self.intern(ty)
+    self.named[name] = id
+    id
+  }
+
+  fn get_named(name: String): Ty? {
+    if id = self.named.get(name) {
+      return self.ty_at(id)
+    }
+    nil
+  }
+
+  fn get_opaque(name: String): Ty? {
+    if id = self.opaques.get(name) {
+      return self.ty_at(id)
+    }
+    nil
+  }
+
+  fn resolve_value(tn: TypeName): Ty {
+    ty = self.resolve(tn)
+    if ty.is_opaque {
+      self.fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+      return self.t_int
+    }
+    if ty.is_void {
+      self.fail(tn.loc, "Void is not a value; use Ptr(Void) or omit a return type")
+      return self.t_int
+    }
+    ty
+  }
+
+  fn resolve(tn: TypeName): Ty {
+    inner = self.resolve_core(tn)
+    if tn.nilable {
+      return ty_nilable(inner)
+    }
+    inner
+  }
+
+  fn reject_args(tn: TypeName) {
+    if tn.args.size > 0 {
+      self.fail(tn.loc, "${tn.name} does not take type arguments")
+    }
+  }
+
+  fn resolve_core(tn: TypeName): Ty {
+    if tn.members.size > 0 {
+      parts: Array(Ty) = []
+      i = 0
+      while i < tn.members.size {
+        parts.push(self.resolve(tn.members[i]))
+        i = i + 1
+      }
+      return ty_union_build(parts)
+    }
+    if str_eq(tn.name, "Int") {
+      self.reject_args(tn)
+      return self.t_int
+    }
+    if str_eq(tn.name, "Int64") {
+      self.reject_args(tn)
+      return self.t_int64
+    }
+    if str_eq(tn.name, "UInt64") {
+      self.reject_args(tn)
+      return self.t_uint64
+    }
+    if str_eq(tn.name, "Bool") {
+      self.reject_args(tn)
+      return self.t_bool
+    }
+    if str_eq(tn.name, "Float64") {
+      self.reject_args(tn)
+      return self.t_float
+    }
+    if str_eq(tn.name, "String") {
+      self.reject_args(tn)
+      return self.t_string
+    }
+    if str_eq(tn.name, "Buf") {
+      self.reject_args(tn)
+      return self.t_buf
+    }
+    if str_eq(tn.name, "Nil") {
+      self.reject_args(tn)
+      return self.t_nil
+    }
+    if str_eq(tn.name, "Void") {
+      self.reject_args(tn)
+      return self.t_void
+    }
+    if str_eq(tn.name, "Array") {
+      if tn.args.size != 1 {
+        self.fail(tn.loc, "Array takes one type argument")
+        return self.t_int
+      }
+      return ty_array(self.resolve_value(tn.args[0]))
+    }
+    if str_eq(tn.name, "Hash") {
+      if tn.args.size != 2 {
+        self.fail(tn.loc, "Hash takes two type arguments")
+        return self.t_int
+      }
+      return ty_hash(self.resolve_value(tn.args[0]), self.resolve_value(tn.args[1]))
+    }
+    if str_eq(tn.name, "JoinHandle") {
+      if tn.args.size != 1 {
+        self.fail(tn.loc, "JoinHandle takes one type argument")
+        return self.t_int
+      }
+      return ty_join(self.resolve_value(tn.args[0]))
+    }
+    if str_eq(tn.name, "Ptr") {
+      if tn.args.size != 1 {
+        self.fail(tn.loc, "Ptr takes one type argument")
+        return self.t_int
+      }
+      inner = tn.args[0]
+      if str_eq(inner.name, "Void") {
+        self.reject_args(inner)
+        return ty_ptr(self.t_void)
+      }
+      return ty_ptr(self.resolve(inner))
+    }
+    self.reject_args(tn)
+    if found = self.get_named(tn.name) {
+      return found
+    }
+    if opq = self.get_opaque(tn.name) {
+      return opq
+    }
+    self.fail(tn.loc, "unknown type ${tn.name}")
+    self.t_int
+  }
+}
+
+fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
+  i = 0
+  while i < tn.args.size {
+    note_ptr_opaque(tn.args[i], resolver)
+    i = i + 1
+  }
+  if str_eq(tn.name, "Ptr") {
+    if tn.args.size == 1 {
+      inner = tn.args[0]
+      if inner.args.size == 0 {
+        if type_is_builtin(inner.name) {
+          return
+        }
+        if existing = resolver.get_named(inner.name) {
+          return
+        }
+        if already = resolver.get_opaque(inner.name) {
+          return
+        }
+        opq = ty_named(tyk_opaque(), inner.name)
+        id = resolver.intern(opq)
+        resolver.opaques[inner.name] = id
+      }
+    }
+  }
+}
+
+fn note_type_name(tn: TypeName, resolver: TypeResolver) {
+  note_ptr_opaque(tn, resolver)
+}
+
+fn collect_opaques(program: Program, resolver: TypeResolver) {
+  i = 0
+  while i < program.libs.size {
+    lib_def = program.libs[i]
+    j = 0
+    while j < lib_def.funs.size {
+      cfun = lib_def.funs[j]
+      k = 0
+      while k < cfun.params.size {
+        note_type_name(cfun.params[k].type, resolver)
+        k = k + 1
+      }
+      if ret = cfun.return_type {
+        note_type_name(ret, resolver)
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < program.structs.size {
+    sdef = program.structs[i]
+    j = 0
+    while j < sdef.fields.size {
+      note_type_name(sdef.fields[j].type, resolver)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < program.classes.size {
+    cdef = program.classes[i]
+    j = 0
+    while j < cdef.fields.size {
+      note_type_name(cdef.fields[j].type, resolver)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  fns = program_all_functions(program)
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    j = 0
+    while j < fnn.params.size {
+      note_type_name(fnn.params[j].type, resolver)
+      j = j + 1
+    }
+    if recv = fnn.receiver {
+      note_type_name(recv.type, resolver)
+    }
+    if ret = fnn.return_type {
+      note_type_name(ret, resolver)
+    }
+    i = i + 1
+  }
+}
+
+fn fill_type_fields(resolver: TypeResolver, name: String, fields: Array(Field)) {
+  resolved: Array(TyField) = []
+  seen = Hash(String, Int).new
+  i = 0
+  while i < fields.size {
+    field = fields[i]
+    if prev = seen.get(field.name) {
+      resolver.fail(field.loc, "duplicate field ${field.name}")
+      return
+    }
+    seen[field.name] = 1
+    resolved.push(TyField.new(field.name, resolver.resolve_value(field.type)))
+    i = i + 1
+  }
+  if ty = resolver.get_named(name) {
+    ty.fields = resolved
+  }
+}
+
+fn load_types(program: Program): TypeResolver {
+  resolver = TypeResolver.new
+  i = 0
+  while i < program.structs.size {
+    sdef = program.structs[i]
+    if existing = resolver.get_named(sdef.name) {
+      resolver.fail(sdef.loc, "${sdef.name} is already defined")
+      return resolver
+    }
+    resolver.put_named(sdef.name, ty_named(tyk_struct(), sdef.name))
+    i = i + 1
+  }
+  i = 0
+  while i < program.classes.size {
+    cdef = program.classes[i]
+    if already = resolver.get_named(cdef.name) {
+      resolver.fail(cdef.loc, "${cdef.name} is already defined")
+      return resolver
+    }
+    resolver.put_named(cdef.name, ty_named(tyk_class(), cdef.name))
+    i = i + 1
+  }
+  i = 0
+  while i < program.libs.size {
+    lib_def = program.libs[i]
+    if existing = resolver.get_named(lib_def.name) {
+      resolver.fail(lib_def.loc, "lib ${lib_def.name} collides with a type")
+      return resolver
+    }
+    i = i + 1
+  }
+  collect_opaques(program, resolver)
+  i = 0
+  while i < program.structs.size {
+    sdef2 = program.structs[i]
+    fill_type_fields(resolver, sdef2.name, sdef2.fields)
+    i = i + 1
+  }
+  i = 0
+  while i < program.classes.size {
+    cdef2 = program.classes[i]
+    fill_type_fields(resolver, cdef2.name, cdef2.fields)
+    i = i + 1
+  }
+  resolver
+}

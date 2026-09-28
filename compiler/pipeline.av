@@ -1,0 +1,461 @@
+class IrBox {
+  text: String = ""
+  ok: Bool = false
+
+  fn initialize(text: String, ok: Bool) {
+    self.text = text
+    self.ok = ok
+  }
+}
+
+class LinkJob {
+  objects: Array(String)
+  flags: Array(String)
+  err: String = ""
+
+  fn initialize {
+    o: Array(String) = []
+    f: Array(String) = []
+    self.objects = o
+    self.flags = f
+    self.err = ""
+  }
+}
+
+class CliSplit {
+  paths: Array(String)
+  rest: Array(String)
+
+  fn initialize {
+    p: Array(String) = []
+    r: Array(String) = []
+    self.paths = p
+    self.rest = r
+  }
+}
+
+fn str_starts(s: String, pre: String): Bool {
+  if pre.size > s.size {
+    return false
+  }
+  str_eq(str_slice(s, 0, pre.size), pre)
+}
+
+fn path_basename(path: String): String {
+  i = path.size - 1
+  while i >= 0 {
+    if path[i] == 47 {
+      return str_slice(path, i + 1, path.size)
+    }
+    i = i - 1
+  }
+  path
+}
+
+fn path_dirname(path: String): String {
+  i = path.size - 1
+  while i >= 0 {
+    if path[i] == 47 {
+      if i == 0 {
+        return "/"
+      }
+      return str_slice(path, 0, i)
+    }
+    i = i - 1
+  }
+  "."
+}
+
+fn drop_av_suffix(path: String): String {
+  base = path_basename(path)
+  if str_ends(base, ".av") {
+    return str_slice(base, 0, base.size - 3)
+  }
+  base
+}
+
+fn avant_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  args = argv()
+  if args.size > 0 {
+    dir = path_dirname(args[0])
+    base = path_basename(dir)
+    if str_eq(base, "bin") {
+      parent = path_dirname(dir)
+      probe = "${parent}/runtime/build/avant_rt.o"
+      if file_exists(probe) {
+        return parent
+      }
+    }
+  }
+  if file_exists("runtime/build/avant_rt.o") {
+    return "."
+  }
+  "."
+}
+
+fn myc_llvm_path: String {
+  if v = env_get("AVANT_MYC_LLVM") {
+    if file_exists(v) {
+      return v
+    }
+  }
+  root = avant_root()
+  sibling = "${root}/../myc/myc-llvm"
+  if file_exists(sibling) {
+    return sibling
+  }
+  if file_exists("../myc/myc-llvm") {
+    return "../myc/myc-llvm"
+  }
+  sibling
+}
+
+fn runtime_object_names: Array(String) {
+  names: Array(String) = []
+  names.push("avant_rt.o")
+  names.push("avant_str.o")
+  names.push("avant_buf.o")
+  names.push("avant_hash.o")
+  names.push("avant_array.o")
+  names.push("avant_task.o")
+  names.push("avant_json.o")
+  names.push("avant_http.o")
+  names.push("avant_wide.o")
+  names.push("avant_codec.o")
+  names.push("avant_re.o")
+  names.push("avant_io.o")
+  names.push("avant_cov.o")
+  names.push("yyjson.o")
+  names.push("us_bsd.o")
+  names.push("us_context.o")
+  names.push("us_loop.o")
+  names.push("us_socket.o")
+  names.push("us_udp.o")
+  names.push("us_epoll_kqueue.o")
+  names
+}
+
+fn runtime_objects(root: String): Array(String) {
+  names = runtime_object_names()
+  objs: Array(String) = []
+  i = 0
+  while i < names.size {
+    objs.push("${root}/runtime/build/${names[i]}")
+    i = i + 1
+  }
+  objs
+}
+
+fn linker_flags_s(extra: Array(String)): String {
+  buf = buf_new()
+  buf.push_str("-pthread -lm -lpcre2-8 -lz")
+  i = 0
+  while i < extra.size {
+    buf.push_str(" ")
+    buf.push_str(extra[i])
+    i = i + 1
+  }
+  buf.to_s
+}
+
+fn read_concat(paths: Array(String)): String? {
+  if paths.size == 0 {
+    return nil
+  }
+  if paths.size == 1 {
+    path = paths[0]
+    if text = file_read(path) {
+      return text
+    }
+    puts("cannot read ${path}")
+    return nil
+  }
+  buf = buf_new()
+  i = 0
+  while i < paths.size {
+    path = paths[i]
+    if i > 0 {
+      buf.push_str("\n")
+    }
+    buf.push_str("// file: ")
+    buf.push_str(path)
+    buf.push_str("\n")
+    if body = file_read(path) {
+      buf.push_str(body)
+      if body.size > 0 {
+        if body[body.size - 1] == 10 {
+        } else {
+          buf.push_str("\n")
+        }
+      }
+    } else {
+      puts("cannot read ${path}")
+      return nil
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+fn compile_source(src: Source): IrBox {
+  lex = Lexer.new(src)
+  tokens = lex.tokenize
+  if e = lex.err {
+    puts(e.show)
+    return IrBox.new("", false)
+  }
+  parser = Parser.new(src, tokens)
+  program = parser.parse
+  if e = parser.err {
+    puts(e.show)
+    return IrBox.new("", false)
+  }
+  checker = Checker.new(src, program)
+  dummy = checker.check
+  if e = checker.err {
+    puts(e.show)
+    return IrBox.new("", false)
+  }
+  ir = emit_myc(program)
+  IrBox.new(ir, true)
+}
+
+fn compile_av_paths(paths: Array(String)): IrBox {
+  if paths.size == 0 {
+    puts("compile needs a .av file")
+    return IrBox.new("", false)
+  }
+  last = paths[paths.size - 1]
+  if text = read_concat(paths) {
+    src = Source.new(last, text)
+    return compile_source(src)
+  }
+  IrBox.new("", false)
+}
+
+fn print_ir(ir: String) {
+  if ir.size == 0 {
+    return
+  }
+  if ir[ir.size - 1] == 10 {
+    puts(str_slice(ir, 0, ir.size - 1))
+  } else {
+    puts(ir)
+  }
+}
+
+fn run_cc(args: Array(String)): Int {
+  if v = env_get("CC") {
+    if file_exists(v) {
+      return process_run(v, args)
+    }
+  }
+  if file_exists("/usr/bin/cc") {
+    return process_run("/usr/bin/cc", args)
+  }
+  wrapped: Array(String) = []
+  wrapped.push("cc")
+  i = 0
+  while i < args.size {
+    wrapped.push(args[i])
+    i = i + 1
+  }
+  process_run("/usr/bin/env", wrapped)
+}
+
+fn compile_c_file(path: String): String {
+  if file_exists(path) {
+  } else {
+    puts("C source is missing: ${path}")
+    return ""
+  }
+  dir = path_dirname(path)
+  base = path_basename(path)
+  name = base
+  if str_ends(base, ".c") {
+    name = str_slice(base, 0, base.size - 2)
+  }
+  obj = "${dir}/${name}.o"
+  args: Array(String) = []
+  args.push("-c")
+  args.push("-O2")
+  args.push("-std=c11")
+  args.push("-o")
+  args.push(obj)
+  args.push(path)
+  code = run_cc(args)
+  if code != 0 {
+    puts("failed to compile C: ${path}")
+    return ""
+  }
+  obj
+}
+
+fn parse_link(args: Array(String)): LinkJob {
+  job = LinkJob.new
+  i = 0
+  while i < args.size {
+    arg = args[i]
+    if str_eq(arg, "--lib") {
+      if i + 1 >= args.size {
+        job.err = "--lib needs a name"
+        return job
+      }
+      name = args[i + 1]
+      job.flags.push("-l${name}")
+      i = i + 2
+    } else if str_starts(arg, "--lib=") {
+      name = str_slice(arg, 6, arg.size)
+      job.flags.push("-l${name}")
+      i = i + 1
+    } else if str_eq(arg, "--cc") {
+      if i + 1 >= args.size {
+        job.err = "--cc needs a .c file"
+        return job
+      }
+      obj = compile_c_file(args[i + 1])
+      if str_eq(obj, "") {
+        job.err = "failed to compile C"
+        return job
+      }
+      job.objects.push(obj)
+      i = i + 2
+    } else if str_starts(arg, "--cc=") {
+      obj = compile_c_file(str_slice(arg, 5, arg.size))
+      if str_eq(obj, "") {
+        job.err = "failed to compile C"
+        return job
+      }
+      job.objects.push(obj)
+      i = i + 1
+    } else if str_starts(arg, "-l") {
+      if arg.size > 2 {
+        job.flags.push(arg)
+        i = i + 1
+      } else {
+        job.err = "unknown link argument ${arg}"
+        return job
+      }
+    } else if str_ends(arg, ".c") {
+      obj = compile_c_file(arg)
+      if str_eq(obj, "") {
+        job.err = "failed to compile C"
+        return job
+      }
+      job.objects.push(obj)
+      i = i + 1
+    } else if str_ends(arg, ".o") {
+      job.objects.push(arg)
+      i = i + 1
+    } else {
+      job.err = "unknown link argument ${arg}"
+      return job
+    }
+  }
+  job
+}
+
+fn take_av_files(args: Array(String)): CliSplit {
+  split = CliSplit.new
+  i = 0
+  while i < args.size {
+    if str_ends(args[i], ".av") {
+      split.paths.push(args[i])
+      i = i + 1
+    } else {
+      break
+    }
+  }
+  while i < args.size {
+    split.rest.push(args[i])
+    i = i + 1
+  }
+  split
+}
+
+fn take_out_path(args: Array(String), source: String): CliSplit {
+  split = CliSplit.new
+  if args.size == 0 {
+    split.paths.push(drop_av_suffix(source))
+    return split
+  }
+  first = args[0]
+  if str_starts(first, "-") {
+    split.paths.push(drop_av_suffix(source))
+    i = 0
+    while i < args.size {
+      split.rest.push(args[i])
+      i = i + 1
+    }
+    return split
+  }
+  if str_ends(first, ".c") {
+    split.paths.push(drop_av_suffix(source))
+    i = 0
+    while i < args.size {
+      split.rest.push(args[i])
+      i = i + 1
+    }
+    return split
+  }
+  if str_ends(first, ".o") {
+    split.paths.push(drop_av_suffix(source))
+    i = 0
+    while i < args.size {
+      split.rest.push(args[i])
+      i = i + 1
+    }
+    return split
+  }
+  split.paths.push(first)
+  i = 1
+  while i < args.size {
+    split.rest.push(args[i])
+    i = i + 1
+  }
+  split
+}
+
+fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String): Int {
+  stamp = now_ms()
+  ir_path = "/tmp/avant-av-${stamp}.myc"
+  w = file_write(ir_path, ir)
+  if w != 0 {
+    puts("cannot write ${ir_path}")
+    return 1
+  }
+  myc = myc_llvm_path()
+  if file_exists(myc) {
+  } else {
+    puts("myc-llvm not found (${myc})")
+    return 1
+  }
+  flags = linker_flags_s(extra_flags)
+  args: Array(String) = []
+  args.push("MYC_LINKER_FLAGS=${flags}")
+  args.push(myc)
+  args.push(mode)
+  args.push(ir_path)
+  objs = runtime_objects(avant_root())
+  i = 0
+  while i < objs.size {
+    args.push(objs[i])
+    i = i + 1
+  }
+  i = 0
+  while i < extra_objs.size {
+    args.push(extra_objs[i])
+    i = i + 1
+  }
+  if str_eq(mode, "c") {
+    args.push(out_path)
+  }
+  if file_exists("/usr/bin/env") {
+    return process_run("/usr/bin/env", args)
+  }
+  puts("cannot find /usr/bin/env")
+  1
+}

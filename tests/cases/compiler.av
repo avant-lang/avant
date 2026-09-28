@@ -1,0 +1,82 @@
+fn test_compiler(c: Checks) {
+  c.suite("tests/cases/compiler.av")
+  stamp = now_ms()
+  echo_out = "/tmp/avant-s10-${stamp}-echo.txt"
+  echo_args: Array(String) = []
+  echo_args.push("ok")
+  echo_code = process_run_out("/bin/echo", echo_args, echo_out)
+  c.eq_int(echo_code, 0, "process_run_out echo")
+  if echoed = file_read(echo_out) {
+    c.eq_str(echoed, "ok\n", "process_run_out capture")
+  } else {
+    c.expect(false, "process_run_out capture")
+  }
+
+  if compiler = env_get("AVANT_COMPILER") {
+    c.expect(file_exists(compiler), "AVANT_COMPILER exists")
+
+    hello_src = "/tmp/avant-s10-${stamp}-hello.av"
+    hello_bin = "/tmp/avant-s10-${stamp}-hello.bin"
+    hello_out = "/tmp/avant-s10-${stamp}-hello.txt"
+    hello_log = "/tmp/avant-s10-${stamp}-hello.log"
+    hello_dump = "/tmp/avant-s10-${stamp}-hello.myc"
+    hello_body = "fn main {\n  w = file_write(\"${hello_out}\", \"Hello Avant\")\n}\n"
+    w = file_write(hello_src, hello_body)
+    c.eq_int(w, 0, "write hello fixture")
+    hello_code = compile_av(compiler, hello_src, hello_bin, hello_log)
+    c.eq_int(hello_code, 0, "compile hello fixture")
+    c.expect(file_exists(hello_bin), "hello bin exists")
+    chmod_x(hello_bin)
+    run_code = run_av_bin(hello_bin, hello_log)
+    c.eq_int(run_code, 0, "run hello fixture")
+    if got = file_read(hello_out) {
+      c.eq_str(got, "Hello Avant", "hello fixture wrote")
+    } else {
+      c.expect(false, "hello fixture wrote")
+    }
+
+    dump_code = dump_av(compiler, hello_src, hello_dump)
+    c.eq_int(dump_code, 0, "dump hello fixture")
+    if ir = file_read(hello_dump) {
+      c.expect(str_has(ir, "FUNC"), "dump has FUNC")
+      c.expect(str_has(ir, "Hello Avant"), "dump has string")
+    } else {
+      c.expect(false, "dump hello fixture")
+    }
+
+    fact_src = "/tmp/avant-s10-${stamp}-fact.av"
+    fact_bin = "/tmp/avant-s10-${stamp}-fact.bin"
+    fact_out = "/tmp/avant-s10-${stamp}-fact.txt"
+    fact_log = "/tmp/avant-s10-${stamp}-fact.log"
+    fact_body = "fn fact(n: Int): Int {\n  if n <= 1 { return 1 }\n  n * fact(n - 1)\n}\nfn main {\n  n = fact(5)\n  b = buf_new()\n  b.push_fmt_i(n)\n  w = file_write(\"${fact_out}\", b.to_s)\n}\n"
+    w2 = file_write(fact_src, fact_body)
+    c.eq_int(w2, 0, "write fact fixture")
+    fact_code = compile_av(compiler, fact_src, fact_bin, fact_log)
+    c.eq_int(fact_code, 0, "compile fact fixture")
+    c.expect(file_exists(fact_bin), "fact bin exists")
+    chmod_x(fact_bin)
+    fact_run = run_av_bin(fact_bin, fact_log)
+    c.eq_int(fact_run, 0, "run fact fixture")
+    if n = file_read(fact_out) {
+      c.eq_str(n, "120", "fact(5)")
+    } else {
+      c.expect(false, "fact(5)")
+    }
+
+    bad_src = "/tmp/avant-s10-${stamp}-bad.av"
+    bad_bin = "/tmp/avant-s10-${stamp}-bad.bin"
+    bad_log = "/tmp/avant-s10-${stamp}-bad.log"
+    w3 = file_write(bad_src, "fn main {\n  puts(x)\n}\n")
+    c.eq_int(w3, 0, "write bad fixture")
+    bad_code = compile_av(compiler, bad_src, bad_bin, bad_log)
+    c.eq_int(bad_code, 0, "compile bad still exits 0")
+    c.expect(!file_exists(bad_bin), "bad bin absent")
+    if err = file_read(bad_log) {
+      c.expect(str_has(err, "unknown name"), "checker unknown name")
+    } else {
+      c.expect(false, "checker unknown name")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

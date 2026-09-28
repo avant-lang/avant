@@ -1,0 +1,349 @@
+fn ex_int: Int { 1 }
+fn ex_float: Int { 2 }
+fn ex_string: Int { 3 }
+fn ex_bool: Int { 4 }
+fn ex_name: Int { 5 }
+fn ex_call: Int { 6 }
+fn ex_unary: Int { 7 }
+fn ex_binary: Int { 8 }
+fn ex_field: Int { 9 }
+fn ex_index: Int { 10 }
+fn ex_struct: Int { 11 }
+fn ex_array: Int { 12 }
+fn ex_array_new: Int { 13 }
+fn ex_hash_new: Int { 14 }
+fn ex_nil: Int { 15 }
+fn ex_try: Int { 16 }
+fn ex_interp: Int { 17 }
+fn ex_switch: Int { 18 }
+
+fn st_expr: Int { 1 }
+fn st_return: Int { 2 }
+fn st_if: Int { 3 }
+fn st_while: Int { 4 }
+fn st_break: Int { 5 }
+fn st_continue: Int { 6 }
+fn st_assign: Int { 7 }
+
+class TypeName {
+  loc: Location
+  name: String = ""
+  args: Array(TypeName)
+  nilable: Bool = false
+  members: Array(TypeName)
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    a: Array(TypeName) = []
+    self.args = a
+    m: Array(TypeName) = []
+    self.members = m
+    self.nilable = false
+  }
+}
+
+class Param {
+  loc: Location
+  name: String = ""
+  type: TypeName
+
+  fn initialize(loc: Location, name: String, type: TypeName) {
+    self.loc = loc
+    self.name = name
+    self.type = type
+  }
+}
+
+class InterpPart {
+  text: String? = nil
+  expr: Expr? = nil
+
+  fn initialize {
+  }
+}
+
+class SwitchCase {
+  loc: Location
+  labels: Array(Int64)
+  body: Array(Stmt)
+
+  fn initialize(loc: Location) {
+    self.loc = loc
+    labs: Array(Int64) = []
+    self.labels = labs
+    b: Array(Stmt) = []
+    self.body = b
+  }
+}
+
+class Block {
+  loc: Location
+  params: Array(String)
+  body: Array(Stmt)
+
+  fn initialize(loc: Location) {
+    self.loc = loc
+    p: Array(String) = []
+    self.params = p
+    b: Array(Stmt) = []
+    self.body = b
+  }
+}
+
+class Expr {
+  kind: Int = 0
+  loc: Location
+  ident: String = ""
+  callee: String = ""
+  value_str: String = ""
+  int_bits: UInt64 = 0u64
+  int_suffix: String = ""
+  float_val: Float64 = 0.0
+  bool_val: Bool = false
+  op: Int = 0
+  implicit_field: Bool = false
+  method_call: Bool = false
+  type_name: String = ""
+  lib_name: String = ""
+  has_else: Bool = false
+  left: Expr? = nil
+  right: Expr? = nil
+  object: Expr? = nil
+  cond: Expr? = nil
+  receiver: Expr? = nil
+  inner: Expr? = nil
+  size_expr: Expr? = nil
+  args: Array(Expr)
+  elems: Array(Expr)
+  field_names: Array(String)
+  field_exprs: Array(Expr)
+  parts: Array(InterpPart)
+  cases: Array(SwitchCase)
+  else_body: Array(Stmt)
+  block: Block? = nil
+  elem_type: TypeName? = nil
+  key_type: TypeName? = nil
+  val_type: TypeName? = nil
+  ty: Ty? = nil
+  spawn_thunk: String = ""
+  cap_names: Array(String)
+  cap_tys: Array(Ty)
+
+  fn initialize(kind: Int, loc: Location) {
+    self.kind = kind
+    self.loc = loc
+    a: Array(Expr) = []
+    self.args = a
+    el: Array(Expr) = []
+    self.elems = el
+    fns: Array(String) = []
+    self.field_names = fns
+    fe: Array(Expr) = []
+    self.field_exprs = fe
+    ps: Array(InterpPart) = []
+    self.parts = ps
+    cs: Array(SwitchCase) = []
+    self.cases = cs
+    eb: Array(Stmt) = []
+    self.else_body = eb
+    cn: Array(String) = []
+    self.cap_names = cn
+    ct: Array(Ty) = []
+    self.cap_tys = ct
+    self.spawn_thunk = ""
+  }
+}
+
+class Stmt {
+  kind: Int = 0
+  loc: Location
+  expr: Expr? = nil
+  value: Expr? = nil
+  target: Expr? = nil
+  cond: Expr? = nil
+  bind: String = ""
+  op: Int = 0
+  then_body: Array(Stmt)
+  else_body: Array(Stmt)
+  body: Array(Stmt)
+  declared: TypeName? = nil
+
+  fn initialize(kind: Int, loc: Location) {
+    self.kind = kind
+    self.loc = loc
+    t: Array(Stmt) = []
+    self.then_body = t
+    e: Array(Stmt) = []
+    self.else_body = e
+    b: Array(Stmt) = []
+    self.body = b
+  }
+}
+
+class Field {
+  loc: Location
+  name: String = ""
+  type: TypeName
+  default: Expr? = nil
+
+  fn initialize(loc: Location, name: String, type: TypeName) {
+    self.loc = loc
+    self.name = name
+    self.type = type
+  }
+}
+
+class FunDecl {
+  loc: Location
+  name: String = ""
+  params: Array(Param)
+  return_type: TypeName? = nil
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    p: Array(Param) = []
+    self.params = p
+  }
+}
+
+class Function {
+  loc: Location
+  name: String = ""
+  params: Array(Param)
+  return_type: TypeName? = nil
+  body: Array(Stmt)
+  receiver: Param? = nil
+  owner: String = ""
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    p: Array(Param) = []
+    self.params = p
+    b: Array(Stmt) = []
+    self.body = b
+  }
+}
+
+class StructDef {
+  loc: Location
+  name: String = ""
+  fields: Array(Field)
+  methods: Array(Function)
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    f: Array(Field) = []
+    self.fields = f
+    m: Array(Function) = []
+    self.methods = m
+  }
+}
+
+class ClassDef {
+  loc: Location
+  name: String = ""
+  fields: Array(Field)
+  methods: Array(Function)
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    f: Array(Field) = []
+    self.fields = f
+    m: Array(Function) = []
+    self.methods = m
+  }
+}
+
+class LibDef {
+  loc: Location
+  name: String = ""
+  funs: Array(FunDecl)
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    f: Array(FunDecl) = []
+    self.funs = f
+  }
+}
+
+class Program {
+  loc: Location
+  structs: Array(StructDef)
+  classes: Array(ClassDef)
+  functions: Array(Function)
+  libs: Array(LibDef)
+
+  fn initialize(loc: Location) {
+    self.loc = loc
+    s: Array(StructDef) = []
+    self.structs = s
+    c: Array(ClassDef) = []
+    self.classes = c
+    f: Array(Function) = []
+    self.functions = f
+    l: Array(LibDef) = []
+    self.libs = l
+  }
+}
+
+fn stmt_expr(loc: Location, expr: Expr): Stmt {
+  s = Stmt.new(st_expr(), loc)
+  s.expr = expr
+  s
+}
+
+fn stmt_return(loc: Location, expr: Expr?): Stmt {
+  s = Stmt.new(st_return(), loc)
+  s.expr = expr
+  s
+}
+
+fn program_all_functions(program: Program): Array(Function) {
+  out: Array(Function) = []
+  i = 0
+  while i < program.functions.size {
+    out.push(program.functions[i])
+    i = i + 1
+  }
+  i = 0
+  while i < program.structs.size {
+    sdef = program.structs[i]
+    j = 0
+    while j < sdef.methods.size {
+      out.push(sdef.methods[j])
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < program.classes.size {
+    cdef = program.classes[i]
+    j = 0
+    while j < cdef.methods.size {
+      out.push(cdef.methods[j])
+      j = j + 1
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn fn_is_method(fnn: Function): Bool {
+  if r = fnn.receiver {
+    return true
+  }
+  fnn.owner.size > 0
+}
+
+fn fn_self_name(fnn: Function): String {
+  if r = fnn.receiver {
+    return r.name
+  }
+  "self"
+}

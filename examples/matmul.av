@@ -1,0 +1,44 @@
+fn cell(n: Int, i: Int, j: Int): Int {
+  a = 0
+  k = 0
+  while k < n {
+    a = a + (i * n + k + 1) * (k * n + j + 1)
+    k = k + 1
+  }
+  a
+}
+
+fn band(n: Int, lo: Int, hi: Int): Int {
+  s = 0
+  i = lo
+  while i < hi {
+    j = 0
+    while j < n {
+      s = s + cell(n, i, j)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  s
+}
+
+fn band0: Int { band(80, 0, 20) }
+fn band1: Int { band(80, 20, 40) }
+fn band2: Int { band(80, 40, 60) }
+fn band3: Int { band(80, 60, 80) }
+
+fn main {
+  t0 = now_ms()
+  seq = band(80, 0, 80)
+  t1 = now_ms()
+  a = spawn { band0() }
+  b = spawn { band1() }
+  c = spawn { band2() }
+  d = spawn { band3() }
+  par = a.join + b.join + c.join + d.join
+  t2 = now_ms()
+  puts(seq)
+  puts(par)
+  puts(t1 - t0)
+  puts(t2 - t1)
+}

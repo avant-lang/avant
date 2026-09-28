@@ -1,0 +1,270 @@
+fn str_eq(a: String, b: String): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i] != b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+fn str_has(hay: String, needle: String): Bool {
+  if needle.size > hay.size {
+    return false
+  }
+  if needle.size == 0 {
+    return true
+  }
+  i = 0
+  while i + needle.size <= hay.size {
+    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn str_ends(s: String, suf: String): Bool {
+  if suf.size > s.size {
+    return false
+  }
+  str_eq(str_slice(s, s.size - suf.size, s.size), suf)
+}
+
+fn fmt_counts(bad: Int, ok: Int): String {
+  total = bad + ok
+  if bad == 0 {
+    return "${ok} passed, ${total} total"
+  }
+  if ok == 0 {
+    return "${bad} failed, ${total} total"
+  }
+  "${bad} failed, ${ok} passed, ${total} total"
+}
+
+fn nth_line(s: String, n: Int): String {
+  start = 0
+  i = 0
+  line = 0
+  while i < s.size {
+    if s[i] == 10 {
+      if line == n {
+        return str_slice(s, start, i)
+      }
+      line = line + 1
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if line == n {
+    return str_slice(s, start, s.size)
+  }
+  ""
+}
+
+fn count_lines(s: String): Int {
+  n = 0
+  i = 0
+  while i < s.size {
+    if s[i] == 10 {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  n
+}
+
+fn avant_test_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  "."
+}
+
+class Checks {
+  passed: Int = 0
+  failed: Int = 0
+  suites_ok: Int = 0
+  suites_bad: Int = 0
+  suite_name: String = ""
+  suite_failed_at: Int = 0
+  started: Int = 0
+  lines: Array(String)
+
+  fn initialize {
+    ls: Array(String) = []
+    self.lines = ls
+  }
+
+  fn flush_suite {
+    if self.suite_name.size == 0 {
+      return
+    }
+    nfail = self.failed - self.suite_failed_at
+    if nfail == 0 {
+      puts(" PASS  ${self.suite_name}")
+      self.suites_ok = self.suites_ok + 1
+    } else {
+      puts(" FAIL  ${self.suite_name}")
+      self.suites_bad = self.suites_bad + 1
+    }
+    i = 0
+    while i < self.lines.size {
+      puts(self.lines[i])
+      i = i + 1
+    }
+    empty: Array(String) = []
+    self.lines = empty
+    self.suite_name = ""
+  }
+
+  fn suite(name: String) {
+    self.flush_suite()
+    self.suite_name = name
+    self.suite_failed_at = self.failed
+  }
+
+  fn expect(cond: Bool, msg: String) {
+    if cond {
+      self.passed = self.passed + 1
+      self.lines.push("    ✓ ${msg}")
+    } else {
+      self.failed = self.failed + 1
+      self.lines.push("    ✕ ${msg}")
+      self.lines.push("")
+      self.lines.push("  ● ${self.suite_name} › ${msg}")
+      self.lines.push("")
+    }
+  }
+
+  fn eq_int(got: Int, want: Int, msg: String) {
+    if got == want {
+      self.passed = self.passed + 1
+      self.lines.push("    ✓ ${msg}")
+    } else {
+      self.failed = self.failed + 1
+      self.lines.push("    ✕ ${msg}")
+      self.lines.push("")
+      self.lines.push("  ● ${self.suite_name} › ${msg}")
+      self.lines.push("")
+      self.lines.push("    got ${got}, want ${want}")
+      self.lines.push("")
+    }
+  }
+
+  fn eq_str(got: String, want: String, msg: String) {
+    if str_eq(got, want) {
+      self.passed = self.passed + 1
+      self.lines.push("    ✓ ${msg}")
+    } else {
+      self.failed = self.failed + 1
+      self.lines.push("    ✕ ${msg}")
+      self.lines.push("")
+      self.lines.push("  ● ${self.suite_name} › ${msg}")
+      self.lines.push("")
+      self.lines.push("    got ${got}, want ${want}")
+      self.lines.push("")
+    }
+  }
+
+  fn finish {
+    self.flush_suite()
+    ms = now_ms() - self.started
+    puts("")
+    puts("Test Suites: ${fmt_counts(self.suites_bad, self.suites_ok)}")
+    puts("Tests:       ${fmt_counts(self.failed, self.passed)}")
+    puts("Time:        ${ms} ms")
+    puts("Ran all test suites.")
+  }
+}
+
+fn empty_strs: Array(String) {
+  a: Array(String) = []
+  a
+}
+
+fn chmod_x(path: String) {
+  args: Array(String) = []
+  args.push("+x")
+  args.push(path)
+  dummy = process_run("/bin/chmod", args)
+}
+
+fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push(src)
+  args.push(bin)
+  process_run_out(compiler, args, log)
+}
+
+fn compile_av_flags(compiler: String, src: String, bin: String, log: String, extra: Array(String)): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push(src)
+  args.push(bin)
+  i = 0
+  while i < extra.size {
+    args.push(extra[i])
+    i = i + 1
+  }
+  process_run_out(compiler, args, log)
+}
+
+fn dump_av(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("dump")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+fn run_av_bin(bin: String, log: String): Int {
+  process_run_out(bin, empty_strs(), log)
+}
+
+fn run_av_cmd(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("run")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array(String)): Int {
+  args: Array(String) = []
+  args.push("run")
+  args.push(src)
+  i = 0
+  while i < extra.size {
+    args.push(extra[i])
+    i = i + 1
+  }
+  process_run_out(compiler, args, log)
+}
+
+fn compile_av_cov(compiler: String, src: String, bin: String, log: String): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push("--coverage")
+  args.push(src)
+  args.push(bin)
+  process_run_out(compiler, args, log)
+}
+
+fn dump_av_cov(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("dump")
+  args.push("--coverage")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+fn write_tmp(stamp: Int, name: String, body: String): String {
+  path = "/tmp/avant-s10-${stamp}-${name}"
+  dummy = file_write(path, body)
+  path
+}

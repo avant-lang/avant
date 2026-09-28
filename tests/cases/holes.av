@@ -1,0 +1,62 @@
+fn test_holes(c: Checks) {
+  c.suite("tests/cases/holes.av")
+  c.eq_str(b64_encode("aaa"), "YWFh", "b64_encode")
+  c.eq_str(b64_decode(b64_encode("aaa")), "aaa", "b64_decode")
+  bb = buf_new(8)
+  b64_encode_buf(bb, "aaa")
+  c.eq_str(bb.to_s, "YWFh", "b64_encode_buf")
+  db = buf_new(8)
+  b64_decode_buf(db, bb.to_s)
+  c.eq_str(db.to_s, "aaa", "b64_decode_buf")
+
+  c.eq_int(re_count("a+", "aa ba", 0), 2, "re_count")
+  c.eq_str(sha256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256")
+  c.eq_str(zlib_uncompress(zlib_compress("hello")), "hello", "zlib roundtrip")
+
+  doc = json_parse("{\"coordinates\":[{\"x\":1.0,\"y\":2.0,\"z\":3.0}]}")
+  root = json_root(doc)
+  if coords = json_get(root, "coordinates") {
+    if cell = json_at(coords, 0) {
+      if x = json_f64(cell, "x") {
+        if y = json_f64(cell, "y") {
+          if z = json_f64(cell, "z") {
+            c.eq_int((x + y + z).to_i, 6, "json walk")
+          } else {
+            c.expect(false, "json walk z")
+          }
+        } else {
+          c.expect(false, "json walk y")
+        }
+      } else {
+        c.expect(false, "json walk x")
+      }
+    } else {
+      c.expect(false, "json_at")
+    }
+    c.eq_int(json_sum_f64(coords, "x").to_i + json_sum_f64(coords, "y").to_i + json_sum_f64(coords, "z").to_i, 6, "json_sum_f64")
+  } else {
+    c.expect(false, "json_get coordinates")
+  }
+  json_free(doc)
+
+  hs = Hash(String, Int).new
+  c.eq_int(hs.inc_slice("ab ab", 0, 2), 1, "inc_slice 1")
+  c.eq_int(hs.inc_slice("ab ab", 3, 5), 2, "inc_slice 2")
+  c.eq_int(hs.size, 1, "inc_slice size")
+  c.eq_str(hash_last_key(), "ab", "hash_last_key")
+  hs["ab"] = 9
+  if v = hs.get_concat("a", "b") {
+    c.eq_int(v, 9, "get_concat")
+  } else {
+    c.expect(false, "get_concat")
+  }
+
+  c.eq_int(str_to_f_slice("x=12.9,", 2, 6).to_i, 12, "str_to_f_slice")
+  lo = wide_op(0, 0 - 1, 0, 1, 0)
+  c.eq_int(lo, 0, "wide_op lo")
+  c.eq_int(wide_hi(), 1, "wide_hi")
+  cs = checksum_f64(1.0)
+  c.expect(cs != 0, "checksum_f64")
+  us = now_us()
+  c.expect(us == us, "now_us")
+}

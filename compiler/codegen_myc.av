@@ -1,0 +1,4532 @@
+fn myc_id_part(s: String): String {
+  buf = buf_new(s.size)
+  i = 0
+  while i < s.size {
+    c = s[i]
+    ok = false
+    if c >= 48 {
+      if c <= 57 {
+        ok = true
+      }
+    }
+    if c >= 65 {
+      if c <= 90 {
+        ok = true
+      }
+    }
+    if c >= 97 {
+      if c <= 122 {
+        ok = true
+      }
+    }
+    if ok {
+      buf.push_byte(c)
+    } else {
+      buf.push_byte(95)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+fn ty_layout_myc(ty: Ty): String {
+  if ty.is_array {
+    if e = ty.inner {
+      return "Array_${myc_id_part(e.show)}"
+    }
+    return "Array_"
+  }
+  if ty.is_union {
+    buf = buf_new()
+    buf.push_str("U_")
+    i = 0
+    while i < ty.members.size {
+      if i > 0 {
+        buf.push_str("_")
+      }
+      buf.push_str(myc_id_part(ty.members[i].show))
+      i = i + 1
+    }
+    return buf.to_s
+  }
+  ty.name
+}
+
+fn ty_self_ptr_myc(ty: Ty): String {
+  "ptr<${ty_layout_myc(ty)}>"
+}
+
+fn ty_myc(ty: Ty): String {
+  k = ty.kind
+  if k == tyk_int() {
+    return "i32"
+  }
+  if k == tyk_int64() {
+    return "i64"
+  }
+  if k == tyk_uint64() {
+    return "u64"
+  }
+  if k == tyk_bool() {
+    return "bool"
+  }
+  if k == tyk_float() {
+    return "f64"
+  }
+  if k == tyk_string() {
+    return "ptr<u8>"
+  }
+  if k == tyk_void() {
+    return "void"
+  }
+  if k == tyk_nil() {
+    return "i32"
+  }
+  if k == tyk_buf() {
+    return "ptr<void>"
+  }
+  if k == tyk_hash() {
+    return "ptr<void>"
+  }
+  if k == tyk_join() {
+    return "ptr<void>"
+  }
+  if k == tyk_array() {
+    return ty_self_ptr_myc(ty)
+  }
+  if k == tyk_class() {
+    return ty_self_ptr_myc(ty)
+  }
+  if k == tyk_struct() {
+    return ty_layout_myc(ty)
+  }
+  if k == tyk_union() {
+    return ty_layout_myc(ty)
+  }
+  if k == tyk_ptr() {
+    if inner = ty.inner {
+      if inner.is_opaque {
+        return "ptr<void>"
+      }
+      if inner.is_void {
+        return "ptr<void>"
+      }
+      return "ptr<${ty_myc(inner)}>"
+    }
+    return "ptr<void>"
+  }
+  "void"
+}
+
+fn ty_has_heap(ty: Ty): Bool {
+  if ty.is_class {
+    return true
+  }
+  if ty.is_array {
+    return true
+  }
+  if ty.is_string {
+    return true
+  }
+  if ty.is_hash {
+    return true
+  }
+  if ty.is_buf {
+    return true
+  }
+  if ty.is_join {
+    return true
+  }
+  if ty.is_union {
+    i = 0
+    while i < ty.members.size {
+      m = ty.members[i]
+      if m.is_nil {
+      } else {
+        if ty_has_heap(m) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    return false
+  }
+  if ty.is_struct {
+    i = 0
+    while i < ty.fields.size {
+      if ty_has_heap(ty.fields[i].ty) {
+        return true
+      }
+      i = i + 1
+    }
+  }
+  false
+}
+
+fn heap_ptr_value(ty: Ty): Bool {
+  if ty.is_class {
+    return true
+  }
+  if ty.is_array {
+    return true
+  }
+  if ty.is_string {
+    return true
+  }
+  if ty.is_hash {
+    return true
+  }
+  if ty.is_buf {
+    return true
+  }
+  ty.is_join
+}
+
+fn array_type_id(elem: Ty): Int {
+  if heap_ptr_value(elem) {
+    return 65535
+  }
+  0
+}
+
+fn abi_align(ty: Ty): Int {
+  if ty.is_int {
+    return 4
+  }
+  if ty.is_nil {
+    return 4
+  }
+  if ty.is_int64 {
+    return 8
+  }
+  if ty.is_uint64 {
+    return 8
+  }
+  if ty.is_bool {
+    return 1
+  }
+  if ty.is_union {
+    best = 4
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      a = abi_align(payloads[i])
+      if a > best {
+        best = a
+      }
+      i = i + 1
+    }
+    return best
+  }
+  if ty.is_struct {
+    if ty.fields.size == 0 {
+      return 1
+    }
+    best = 1
+    i = 0
+    while i < ty.fields.size {
+      a = abi_align(ty.fields[i].ty)
+      if a > best {
+        best = a
+      }
+      i = i + 1
+    }
+    return best
+  }
+  8
+}
+
+fn abi_size(ty: Ty): Int {
+  if ty.is_int {
+    return 4
+  }
+  if ty.is_nil {
+    return 4
+  }
+  if ty.is_int64 {
+    return 8
+  }
+  if ty.is_uint64 {
+    return 8
+  }
+  if ty.is_bool {
+    return 1
+  }
+  if ty.is_union {
+    offset = 4
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      fty = payloads[i]
+      offset = align_up_i(offset, abi_align(fty))
+      offset = offset + abi_size(fty)
+      i = i + 1
+    }
+    return align_up_i(offset, abi_align(ty))
+  }
+  if ty.is_struct {
+    offset = 0
+    i = 0
+    while i < ty.fields.size {
+      fty = ty.fields[i].ty
+      offset = align_up_i(offset, abi_align(fty))
+      offset = offset + abi_size(fty)
+      i = i + 1
+    }
+    return align_up_i(offset, abi_align(ty))
+  }
+  8
+}
+
+fn align_up_i(n: Int, align: Int): Int {
+  (n + align - 1) / align * align
+}
+
+fn u64_pow2(word: Int): UInt64 {
+  p = 1u64
+  i = 0
+  while i < word {
+    p = p * 2u64
+    i = i + 1
+  }
+  p
+}
+
+fn word_bit(offset: Int, bits: UInt64): UInt64 {
+  word = offset / 8
+  bits | u64_pow2(word)
+}
+
+fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
+  if heap_ptr_value(ty) {
+    return word_bit(offset, bits)
+  }
+  if ty.is_union {
+    off = align_up_i(offset + 4, 8)
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      m = payloads[i]
+      off = align_up_i(off, abi_align(m))
+      bits = add_ptr_bits(m, off, bits)
+      off = off + abi_size(m)
+      i = i + 1
+    }
+    return bits
+  }
+  if ty.is_struct {
+    off = offset
+    i = 0
+    while i < ty.fields.size {
+      fty = ty.fields[i].ty
+      off = align_up_i(off, abi_align(fty))
+      bits = add_ptr_bits(fty, off, bits)
+      off = off + abi_size(fty)
+      i = i + 1
+    }
+    return bits
+  }
+  bits
+}
+
+fn pointer_word_bits(ty: Ty): UInt64 {
+  bits = 0u64
+  offset = 0
+  i = 0
+  while i < ty.fields.size {
+    fty = ty.fields[i].ty
+    offset = align_up_i(offset, abi_align(fty))
+    bits = add_ptr_bits(fty, offset, bits)
+    offset = offset + abi_size(fty)
+    i = i + 1
+  }
+  bits
+}
+
+fn myc_quote(value: String): String {
+  buf = buf_new(value.size + 2)
+  buf.push_byte(34)
+  i = 0
+  while i < value.size {
+    c = value[i]
+    if c == 10 {
+      buf.push_str("\\n")
+    } else if c == 9 {
+      buf.push_str("\\t")
+    } else if c == 13 {
+      buf.push_str("\\r")
+    } else if c == 34 {
+      buf.push_str("\\\"")
+    } else if c == 92 {
+      buf.push_str("\\\\")
+    } else {
+      buf.push_byte(c)
+    }
+    i = i + 1
+  }
+  buf.push_byte(34)
+  buf.to_s
+}
+
+fn myc_binop(op: Int): String {
+  switch op {
+    case 37 {
+      "add"
+    }
+    case 38 {
+      "sub"
+    }
+    case 39 {
+      "mul"
+    }
+    case 40 {
+      "div"
+    }
+    case 41 {
+      "rem"
+    }
+    case 53 {
+      "and"
+    }
+    case 51 {
+      "or"
+    }
+    case 55 {
+      "xor"
+    }
+    case 57 {
+      "shl"
+    }
+    case 58 {
+      "sar"
+    }
+    case 43 {
+      "eq"
+    }
+    case 44 {
+      "not_eq"
+    }
+    case 45 {
+      "less"
+    }
+    case 46 {
+      "less_eq"
+    }
+    case 47 {
+      "more"
+    }
+    case 48 {
+      "more_eq"
+    }
+    else {
+      "add"
+    }
+  }
+}
+
+fn compound_to_binop(op: Int): Int {
+  if op == 24 {
+    return 37
+  }
+  if op == 25 {
+    return 38
+  }
+  if op == 26 {
+    return 39
+  }
+  if op == 27 {
+    return 40
+  }
+  op
+}
+
+fn split_comma(s: String): Array(String) {
+  out: Array(String) = []
+  if s.size == 0 {
+    return out
+  }
+  start = 0
+  i = 0
+  while i < s.size {
+    if s[i] == 44 {
+      out.push(str_slice(s, start, i))
+      start = i + 1
+    }
+    i = i + 1
+  }
+  out.push(str_slice(s, start, s.size))
+  out
+}
+
+fn expr_ty(e: Expr): Ty {
+  if t = e.ty {
+    return t
+  }
+  ty_void()
+}
+
+fn coverage_wanted: Bool {
+  if v = env_get("AVANT_COVERAGE") {
+    if v.size > 0 {
+      if str_eq(v, "0") {
+      } else {
+        return true
+      }
+    }
+  }
+  args = argv()
+  i = 0
+  while i < args.size {
+    if str_eq(args[i], "--coverage") {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn coverage_map_path: String {
+  if v = env_get("AVANT_COVERAGE_MAP") {
+    if v.size > 0 {
+      return v
+    }
+  }
+  stamp = now_ms()
+  "/tmp/avant-cov-${stamp}.map"
+}
+
+class MycGen {
+  program: Program
+  resolver: TypeResolver
+  functions: Array(FuncSig)
+  fn_index: Hash(String, Int)
+  rooted: Hash(String, Int)
+  out: Buf
+  indent: Int = 0
+  temps: Int = 0
+  c_main: Bool = false
+  return_type: Ty
+  array_tys: Array(Ty)
+  union_tys: Array(Ty)
+  methods: Array(FuncSig)
+  method_index: Hash(String, Int)
+  class_ids: Hash(String, Int)
+  self_ty: Ty? = nil
+  self_name: String = ""
+  spawn_id: Int = 0
+  pending: Array(Expr)
+  cov: Bool = false
+  cov_n: Int = 0
+  cov_map_path: String = ""
+  cov_kinds: Array(Int)
+  cov_paths: Array(String)
+  cov_lines: Array(Int)
+  cov_names: Array(String)
+  cov_line_slots: Hash(String, Int)
+
+  fn initialize(program: Program) {
+    self.program = program
+    self.resolver = TypeResolver.new
+    fns: Array(FuncSig) = []
+    self.functions = fns
+    fi = Hash(String, Int).new
+    self.fn_index = fi
+    rt = Hash(String, Int).new
+    self.rooted = rt
+    b = buf_new()
+    self.out = b
+    self.indent = 0
+    self.temps = 0
+    self.c_main = false
+    self.return_type = ty_void()
+    at: Array(Ty) = []
+    self.array_tys = at
+    ut: Array(Ty) = []
+    self.union_tys = ut
+    ms: Array(FuncSig) = []
+    self.methods = ms
+    mi = Hash(String, Int).new
+    self.method_index = mi
+    ci = Hash(String, Int).new
+    self.class_ids = ci
+    self.self_name = ""
+    self.spawn_id = 0
+    th: Array(Expr) = []
+    self.pending = th
+    self.cov = false
+    self.cov_n = 0
+    self.cov_map_path = ""
+    ck: Array(Int) = []
+    self.cov_kinds = ck
+    cp: Array(String) = []
+    self.cov_paths = cp
+    cl: Array(Int) = []
+    self.cov_lines = cl
+    cn: Array(String) = []
+    self.cov_names = cn
+    ls = Hash(String, Int).new
+    self.cov_line_slots = ls
+  }
+
+  fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
+    if self.cov {
+    } else {
+      return 0
+    }
+    slot = self.cov_n
+    self.cov_n = slot + 1
+    self.cov_kinds.push(kind)
+    self.cov_paths.push(path)
+    self.cov_lines.push(line)
+    self.cov_names.push(name)
+    slot
+  }
+
+  fn emit_cov_hit(slot: Int) {
+    if self.cov {
+      self.line("PUSH ${slot}")
+      self.line("CALL :avant_cov_hit")
+    }
+  }
+
+  fn cov_touch_line(loc: Location) {
+    if self.cov {
+    } else {
+      return
+    }
+    key = "${loc.path}:${loc.line}"
+    if slot = self.cov_line_slots.get(key) {
+      self.emit_cov_hit(slot)
+      return
+    }
+    slot = self.cov_register(4, loc.path, loc.line, "")
+    self.cov_line_slots[key] = slot
+    self.emit_cov_hit(slot)
+  }
+
+  fn cov_stmt(stmt: Stmt) {
+    if self.cov {
+    } else {
+      return
+    }
+    loc = stmt.loc
+    s = self.cov_register(1, loc.path, loc.line, "")
+    self.emit_cov_hit(s)
+    self.cov_touch_line(loc)
+  }
+
+  fn cov_func(fnn: Function) {
+    if self.cov {
+    } else {
+      return
+    }
+    loc = fnn.loc
+    name = fnn.name
+    if fnn.owner.size > 0 {
+      name = "${fnn.owner}.${fnn.name}"
+    }
+    s = self.cov_register(3, loc.path, loc.line, name)
+    self.emit_cov_hit(s)
+    self.cov_touch_line(loc)
+  }
+
+  fn cov_branch(loc: Location) {
+    if self.cov {
+    } else {
+      return
+    }
+    s = self.cov_register(2, loc.path, loc.line, "")
+    self.emit_cov_hit(s)
+    self.cov_touch_line(loc)
+  }
+
+  fn emit_cov_init {
+    if self.cov {
+      q = myc_quote(self.cov_map_path)
+      self.line("PUSH ${q}")
+      self.line("CALL :avant_cov_init")
+    }
+  }
+
+  fn write_cov_map {
+    if self.cov {
+    } else {
+      return
+    }
+    buf = buf_new()
+    buf.push_str("avant-cov 1\n")
+    i = 0
+    while i < self.cov_n {
+      kind = self.cov_kinds[i]
+      tag = "S"
+      if kind == 2 {
+        tag = "B"
+      }
+      if kind == 3 {
+        tag = "F"
+      }
+      if kind == 4 {
+        tag = "L"
+      }
+      buf.push_str(tag)
+      buf.push_str("\t")
+      buf.push_str(self.cov_paths[i])
+      buf.push_str("\t")
+      buf.push_fmt_i(self.cov_lines[i])
+      buf.push_str("\t")
+      buf.push_str(self.cov_names[i])
+      buf.push_str("\n")
+      i = i + 1
+    }
+    dummy = file_write(self.cov_map_path, buf.to_s)
+  }
+
+  fn line(text: String) {
+    i = 0
+    while i < self.indent {
+      self.out.push_str("  ")
+      i = i + 1
+    }
+    self.out.push_str(text)
+    self.out.push_byte(10)
+  }
+
+  fn blank {
+    self.out.push_byte(10)
+  }
+
+  fn new_temp: String {
+    self.temps = self.temps + 1
+    n = self.temps
+    "__t${n}"
+  }
+
+  fn reset_rooted {
+    rt = Hash(String, Int).new
+    self.rooted = rt
+  }
+
+  fn find_fn(name: String): FuncSig? {
+    if id = self.fn_index.get(name) {
+      return self.functions[id]
+    }
+    nil
+  }
+
+  fn has_fn(name: String): Bool {
+    if id = self.fn_index.get(name) {
+      return true
+    }
+    false
+  }
+
+  fn ext(name: String, args_s: String, ret: String) {
+    self.line("FUNC :${name}")
+    self.indent = self.indent + 1
+    if ret.size > 0 {
+      self.line("RETURN")
+      self.indent = self.indent + 1
+      self.line("TYPE :${ret}")
+      self.indent = self.indent - 1
+    }
+    args = split_comma(args_s)
+    if args.size > 0 {
+      self.line("ARGS")
+      self.indent = self.indent + 1
+      i = 0
+      while i < args.size {
+        a = args[i]
+        self.line("TYPE :${a}")
+        i = i + 1
+      }
+      self.indent = self.indent - 1
+    }
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+  }
+
+  fn emit_runtime_decl {
+    self.ext("avant_alloc", "u64,u32", "ptr<void>")
+    self.ext("avant_pin", "ptr<void>", "")
+    self.ext("avant_gc_enter", "", "")
+    self.ext("avant_gc_leave", "", "")
+    self.ext("avant_gc_root", "ptr<void>", "")
+    self.ext("avant_type_map", "u32,u64", "")
+    self.ext("avant_barrier", "ptr<void>", "")
+    self.ext("avant_str_concat", "ptr<u8>,ptr<u8>", "ptr<u8>")
+    self.ext("avant_str_from_int", "i32", "ptr<u8>")
+    self.ext("avant_str_from_i64", "i64", "ptr<u8>")
+    self.ext("avant_str_from_u64", "u64", "ptr<u8>")
+    self.ext("avant_str_from_float", "f64", "ptr<u8>")
+    self.ext("avant_str_from_bool", "i32", "ptr<u8>")
+    self.ext("avant_str_from_byte", "i32", "ptr<u8>")
+    self.ext("avant_str_from_i32_bytes", "ptr<void>", "ptr<u8>")
+    self.ext("avant_str_repeat_byte", "i32,i32", "ptr<u8>")
+    self.ext("avant_str_slice", "ptr<u8>,i32,i32", "ptr<u8>")
+    self.ext("avant_str_fmt_float", "f64,i32", "ptr<u8>")
+    self.ext("avant_str_eq", "ptr<u8>,ptr<u8>", "i32")
+    self.ext("avant_str_size", "ptr<u8>", "i32")
+    self.ext("avant_str_byte", "ptr<u8>,i32", "i32")
+    self.ext("avant_str_to_f", "ptr<u8>", "f64")
+    self.ext("avant_str_to_f_slice", "ptr<u8>,i32,i32", "f64")
+    self.ext("avant_str_to_i", "ptr<u8>", "i32")
+    self.ext("avant_checksum_f64", "f64", "i32")
+    self.ext("avant_checksum_str", "ptr<u8>", "i32")
+    self.ext("avant_wide_op", "i32,i32,i32,i32,i32", "i32")
+    self.ext("avant_wide_hi", "", "i32")
+    self.ext("avant_exp", "f64", "f64")
+    self.ext("avant_hash_new", "i32,i32", "ptr<void>")
+    self.ext("avant_hash_size", "ptr<void>", "i32")
+    self.ext("avant_hash_set_i32", "ptr<void>,ptr<u8>,i32", "")
+    self.ext("avant_hash_set_str", "ptr<void>,ptr<u8>,ptr<u8>", "")
+    self.ext("avant_hash_set_i32k_i32", "ptr<void>,i32,i32", "")
+    self.ext("avant_hash_get_i32", "ptr<void>,ptr<u8>,ptr<i32>", "i32")
+    self.ext("avant_hash_get_str", "ptr<void>,ptr<u8>,ptr<i32>", "ptr<u8>")
+    self.ext("avant_hash_get_i32k_i32", "ptr<void>,i32,ptr<i32>", "i32")
+    self.ext("avant_hash_del", "ptr<void>,ptr<u8>", "")
+    self.ext("avant_hash_del_i32k", "ptr<void>,i32", "")
+    self.ext("avant_hash_inc_slice", "ptr<void>,ptr<u8>,i32,i32", "i32")
+    self.ext("avant_hash_last_key", "", "ptr<u8>")
+    self.ext("avant_hash_get_str_slice", "ptr<void>,ptr<u8>,i32,i32,ptr<i32>", "ptr<u8>")
+    self.ext("avant_hash_get_concat", "ptr<void>,ptr<u8>,ptr<u8>,ptr<i32>", "i32")
+    self.ext("avant_buf_new", "i32", "ptr<void>")
+    self.ext("avant_buf_push_byte", "ptr<void>,i32", "")
+    self.ext("avant_buf_push_str", "ptr<void>,ptr<u8>", "")
+    self.ext("avant_buf_push_slice", "ptr<void>,ptr<u8>,i32,i32", "")
+    self.ext("avant_buf_push_fmt_f", "ptr<void>,f64,i32", "")
+    self.ext("avant_buf_push_fmt_i", "ptr<void>,i32", "")
+    self.ext("avant_buf_to_str", "ptr<void>", "ptr<u8>")
+    self.ext("avant_buf_size", "ptr<void>", "i32")
+    self.ext("avant_buf_clear", "ptr<void>", "")
+    self.ext("avant_buf_starts", "ptr<void>,ptr<u8>", "i32")
+    self.ext("avant_b64_encode", "ptr<u8>", "ptr<u8>")
+    self.ext("avant_b64_decode", "ptr<u8>", "ptr<u8>")
+    self.ext("avant_b64_encode_buf", "ptr<void>,ptr<u8>", "")
+    self.ext("avant_b64_decode_buf", "ptr<void>,ptr<u8>", "")
+    self.ext("avant_crc32_i32", "ptr<void>", "i32")
+    self.ext("avant_sha256_word0", "ptr<void>", "i32")
+    self.ext("avant_re_compile", "ptr<u8>,i32", "ptr<void>")
+    self.ext("avant_re_find", "ptr<void>,ptr<u8>,i32", "i32")
+    self.ext("avant_re_m0", "", "i32")
+    self.ext("avant_re_m1", "", "i32")
+    self.ext("avant_re_c0", "", "i32")
+    self.ext("avant_re_c1", "", "i32")
+    self.ext("avant_re_count", "ptr<u8>,ptr<u8>,i32", "i32")
+    self.ext("avant_array_push_slot", "ptr<void>,u64,u32", "ptr<void>")
+    self.ext("avant_array_push_i32", "ptr<void>,i32", "")
+    self.ext("avant_array_clear", "ptr<void>", "")
+    self.ext("avant_array_reserve", "ptr<void>,i32,u64,u32", "")
+    self.ext("avant_array_pop_slot", "ptr<void>,u64", "ptr<void>")
+    self.ext("avant_array_sort_i32", "ptr<void>", "")
+    self.ext("avant_array_fill_i32", "ptr<void>,i32", "")
+    self.ext("avant_zlib_compress", "ptr<u8>", "ptr<u8>")
+    self.ext("avant_zlib_uncompress", "ptr<u8>", "ptr<u8>")
+    self.ext("avant_sha256", "ptr<u8>", "ptr<u8>")
+    self.ext("avant_spawn", "ptr<void>,ptr<void>", "ptr<void>")
+    self.ext("avant_join", "ptr<void>", "i32")
+    self.ext("avant_now_ms", "", "i32")
+    self.ext("avant_now_us", "", "i32")
+    self.ext("avant_io_init_argv", "i32,ptr<void>", "")
+    self.ext("avant_argv", "", "ptr<void>")
+    self.ext("avant_file_read", "ptr<u8>,ptr<i32>", "ptr<u8>")
+    self.ext("avant_file_write", "ptr<u8>,ptr<u8>", "i32")
+    self.ext("avant_process_run", "ptr<u8>,ptr<void>", "i32")
+    self.ext("avant_process_run_out", "ptr<u8>,ptr<void>,ptr<u8>", "i32")
+    self.ext("avant_env_get", "ptr<u8>,ptr<i32>", "ptr<u8>")
+    self.ext("avant_file_exists", "ptr<u8>", "i32")
+    self.ext("avant_dir_list", "ptr<u8>", "ptr<void>")
+    if self.cov {
+      self.ext("avant_cov_init", "ptr<u8>", "")
+      self.ext("avant_cov_hit", "i32", "")
+    }
+    self.ext("avant_json_parse", "ptr<u8>", "ptr<void>")
+    self.ext("avant_json_free", "ptr<void>", "")
+    self.ext("avant_json_gen_body", "i32", "ptr<u8>")
+    self.ext("avant_json_gen_into", "ptr<void>,i32", "")
+    self.ext("avant_json_get_int", "ptr<void>,ptr<u8>,ptr<i32>", "i32")
+    self.ext("avant_json_get_str", "ptr<void>,ptr<u8>,ptr<i32>", "ptr<u8>")
+    self.ext("avant_json_root", "ptr<void>", "ptr<void>")
+    self.ext("avant_json_obj_get", "ptr<void>,ptr<u8>", "ptr<void>")
+    self.ext("avant_json_arr_len", "ptr<void>", "i32")
+    self.ext("avant_json_arr_get", "ptr<void>,i32", "ptr<void>")
+    self.ext("avant_json_as_f64", "ptr<void>,ptr<i32>", "f64")
+    self.ext("avant_json_obj_f64", "ptr<void>,ptr<u8>,ptr<i32>", "f64")
+    self.ext("avant_json_arr_sum_f64", "ptr<void>,ptr<u8>", "f64")
+    self.ext("avant_http_roundtrip", "ptr<u8>", "ptr<u8>")
+  }
+
+  fn emit_lib_decls {
+    i = 0
+    while i < self.program.libs.size {
+      lib_def = self.program.libs[i]
+      j = 0
+      while j < lib_def.funs.size {
+        self.emit_lib_fun(lib_def.funs[j])
+        j = j + 1
+      }
+      i = i + 1
+    }
+  }
+
+  fn emit_lib_fun(fnn: FunDecl) {
+    params: Array(Ty) = []
+    i = 0
+    while i < fnn.params.size {
+      params.push(self.resolver.resolve_value(fnn.params[i].type))
+      i = i + 1
+    }
+    ret = ty_void()
+    if t = fnn.return_type {
+      ret = self.resolver.resolve(t)
+    }
+    self.line("FUNC :${fnn.name}")
+    self.indent = self.indent + 1
+    if ret.is_void {
+    } else {
+      self.line("RETURN")
+      self.indent = self.indent + 1
+      m = ty_myc(ret)
+      self.line("TYPE :${m}")
+      self.indent = self.indent - 1
+    }
+    if params.size > 0 {
+      self.line("ARGS")
+      self.indent = self.indent + 1
+      i = 0
+      while i < params.size {
+        m = ty_myc(params[i])
+        self.line("TYPE :${m}")
+        i = i + 1
+      }
+      self.indent = self.indent - 1
+    }
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+  }
+
+  fn collect_sigs {
+    i = 0
+    while i < self.program.functions.size {
+      fnn = self.program.functions[i]
+      if fn_is_method(fnn) {
+      } else {
+        params: Array(Ty) = []
+        j = 0
+        while j < fnn.params.size {
+          params.push(self.resolver.resolve_value(fnn.params[j].type))
+          j = j + 1
+        }
+        ret = ty_void()
+        if t = fnn.return_type {
+          ret = self.resolver.resolve(t)
+        }
+        sig = FuncSig.new(fnn.name, fnn, params, ret)
+        self.functions.push(sig)
+        self.fn_index[fnn.name] = self.functions.size - 1
+      }
+      i = i + 1
+    }
+  }
+
+  fn collect_methods {
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if fn_is_method(fnn) {
+        owner = fnn.owner
+        if owner.size == 0 {
+          if r = fnn.receiver {
+            ty = self.resolver.resolve(r.type)
+            owner = ty.name
+            fnn.owner = owner
+          }
+        }
+        params: Array(Ty) = []
+        j = 0
+        while j < fnn.params.size {
+          params.push(self.resolver.resolve_value(fnn.params[j].type))
+          j = j + 1
+        }
+        ret = ty_void()
+        if t = fnn.return_type {
+          ret = self.resolver.resolve(t)
+        }
+        sig = FuncSig.new(fnn.name, fnn, params, ret)
+        sig.owner = owner
+        self.methods.push(sig)
+        self.method_index[sig.mangled] = self.methods.size - 1
+      }
+      i = i + 1
+    }
+  }
+
+  fn assign_class_ids {
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      n = i + 1
+      self.class_ids[cdef.name] = n
+      i = i + 1
+    }
+  }
+
+  fn find_method(owner: String, name: String): FuncSig? {
+    key = "${owner}__${name}"
+    if id = self.method_index.get(key) {
+      return self.methods[id]
+    }
+    nil
+  }
+
+  fn note_ty(ty: Ty) {
+    if ty.is_array {
+      layout = ty_layout_myc(ty)
+      i = 0
+      while i < self.array_tys.size {
+        if str_eq(ty_layout_myc(self.array_tys[i]), layout) {
+          return
+        }
+        i = i + 1
+      }
+      self.array_tys.push(ty)
+      if e = ty.inner {
+        self.note_ty(e)
+      }
+      return
+    }
+    if ty.is_union {
+      layout = ty_layout_myc(ty)
+      seen = false
+      i = 0
+      while i < self.union_tys.size {
+        if str_eq(ty_layout_myc(self.union_tys[i]), layout) {
+          seen = true
+        }
+        i = i + 1
+      }
+      if seen {
+      } else {
+        self.union_tys.push(ty)
+      }
+      i = 0
+      while i < ty.members.size {
+        self.note_ty(ty.members[i])
+        i = i + 1
+      }
+    }
+  }
+
+  fn collect_arrays {
+    i = 0
+    while i < self.functions.size {
+      sig = self.functions[i]
+      j = 0
+      while j < sig.params.size {
+        self.note_ty(sig.params[j])
+        j = j + 1
+      }
+      self.note_ty(sig.ret)
+      i = i + 1
+    }
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      j = 0
+      while j < sig.params.size {
+        self.note_ty(sig.params[j])
+        j = j + 1
+      }
+      self.note_ty(sig.ret)
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.structs.size {
+      sdef = self.program.structs[i]
+      if ty = self.resolver.get_named(sdef.name) {
+        j = 0
+        while j < ty.fields.size {
+          self.note_ty(ty.fields[j].ty)
+          j = j + 1
+        }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if ty = self.resolver.get_named(cdef.name) {
+        j = 0
+        while j < ty.fields.size {
+          self.note_ty(ty.fields[j].ty)
+          j = j + 1
+        }
+      }
+      i = i + 1
+    }
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      self.collect_stmts(fns[i].body)
+      i = i + 1
+    }
+  }
+
+  fn collect_stmts(body: Array(Stmt)) {
+    i = 0
+    while i < body.size {
+      stmt = body[i]
+      k = stmt.kind
+      if k == st_if() {
+        if c = stmt.cond {
+          self.collect_expr(c)
+        }
+        self.collect_stmts(stmt.then_body)
+        self.collect_stmts(stmt.else_body)
+      } else if k == st_while() {
+        if c = stmt.cond {
+          self.collect_expr(c)
+        }
+        self.collect_stmts(stmt.body)
+      } else if k == st_assign() {
+        if t = stmt.target {
+          self.collect_expr(t)
+        }
+        if v = stmt.value {
+          self.collect_expr(v)
+        }
+      } else if k == st_expr() {
+        if e = stmt.expr {
+          self.collect_expr(e)
+        }
+      } else if k == st_return() {
+        if e = stmt.expr {
+          self.collect_expr(e)
+        }
+      }
+      i = i + 1
+    }
+  }
+
+  fn collect_expr(expr: Expr) {
+    self.note_ty(expr_ty(expr))
+    k = expr.kind
+    if k == ex_call() {
+      if recv = expr.receiver {
+        self.collect_expr(recv)
+      } else {
+        if str_eq(expr.callee, "spawn") {
+          if b = expr.block {
+            n = self.spawn_id
+            expr.spawn_thunk = "__spawn_${n}"
+            self.spawn_id = n + 1
+            self.pending.push(expr)
+          }
+        }
+      }
+      i = 0
+      while i < expr.args.size {
+        self.collect_expr(expr.args[i])
+        i = i + 1
+      }
+      if b = expr.block {
+        self.collect_stmts(b.body)
+      }
+      return
+    }
+    if k == ex_unary() {
+      if inner = expr.inner {
+        self.collect_expr(inner)
+      }
+      return
+    }
+    if k == ex_binary() {
+      if l = expr.left {
+        self.collect_expr(l)
+      }
+      if r = expr.right {
+        self.collect_expr(r)
+      }
+      return
+    }
+    if k == ex_field() {
+      if obj = expr.object {
+        self.collect_expr(obj)
+      }
+      return
+    }
+    if k == ex_index() {
+      if l = expr.left {
+        self.collect_expr(l)
+      }
+      if r = expr.right {
+        self.collect_expr(r)
+      }
+      return
+    }
+    if k == ex_struct() {
+      i = 0
+      while i < expr.field_exprs.size {
+        self.collect_expr(expr.field_exprs[i])
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_array() {
+      i = 0
+      while i < expr.elems.size {
+        self.collect_expr(expr.elems[i])
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_array_new() {
+      if size = expr.size_expr {
+        self.collect_expr(size)
+      }
+      return
+    }
+    if k == ex_try() {
+      if inner = expr.inner {
+        self.collect_expr(inner)
+      }
+      return
+    }
+    if k == ex_interp() {
+      i = 0
+      while i < expr.parts.size {
+        part = expr.parts[i]
+        if inner = part.expr {
+          self.collect_expr(inner)
+        }
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_switch() {
+      if c = expr.cond {
+        self.collect_expr(c)
+      }
+      i = 0
+      while i < expr.cases.size {
+        self.collect_stmts(expr.cases[i].body)
+        i = i + 1
+      }
+      if expr.has_else {
+        self.collect_stmts(expr.else_body)
+      }
+    }
+  }
+
+  fn emit_layout(ty: Ty) {
+    name = ty_layout_myc(ty)
+    self.line("STRUCT :${name}")
+    self.indent = self.indent + 1
+    i = 0
+    while i < ty.fields.size {
+      m = ty_myc(ty.fields[i].ty)
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  fn emit_array_def(ty: Ty) {
+    name = ty_layout_myc(ty)
+    self.line("STRUCT :${name}")
+    self.indent = self.indent + 1
+    if e = ty.inner {
+      em = ty_myc(e)
+      self.line("TYPE :ptr<${em}>")
+    }
+    self.line("TYPE :i32")
+    self.line("TYPE :i32")
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  fn emit_union_def(ty: Ty) {
+    name = ty_layout_myc(ty)
+    self.line("STRUCT :${name}")
+    self.indent = self.indent + 1
+    self.line("TYPE :i32")
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      m = ty_myc(payloads[i])
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  fn emit: String {
+    self.cov = coverage_wanted()
+    if self.cov {
+      self.cov_map_path = coverage_map_path()
+    }
+    self.resolver = load_types(self.program)
+    self.emit_runtime_decl
+    self.emit_lib_decls
+    self.collect_sigs
+    self.collect_methods
+    self.assign_class_ids
+    self.collect_arrays
+    i = 0
+    while i < self.program.structs.size {
+      sdef = self.program.structs[i]
+      if ty = self.resolver.get_named(sdef.name) {
+        self.emit_layout(ty)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if ty = self.resolver.get_named(cdef.name) {
+        self.emit_layout(ty)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.union_tys.size {
+      self.emit_union_def(self.union_tys[i])
+      i = i + 1
+    }
+    i = 0
+    while i < self.array_tys.size {
+      self.emit_array_def(self.array_tys[i])
+      i = i + 1
+    }
+    i = 0
+    while i < self.pending.size {
+      self.emit_spawn_cap_layout(self.pending[i])
+      i = i + 1
+    }
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      self.emit_function(fns[i])
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if ty = self.resolver.get_named(cdef.name) {
+        self.emit_constructor(ty)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.pending.size {
+      self.emit_spawn_thunk(self.pending[i])
+      i = i + 1
+    }
+    if self.has_fn("main") {
+    } else {
+      self.emit_wrapper_main
+    }
+    self.write_cov_map
+    self.out.to_s
+  }
+
+  fn emit_function(fnn: Function) {
+    self.temps = 0
+    self.c_main = false
+    self.self_ty = nil
+    self.self_name = ""
+    if fn_is_method(fnn) {
+      if sig = self.find_method(fnn.owner, fnn.name) {
+        self.return_type = sig.ret
+        if owner = self.resolver.get_named(sig.owner) {
+          self.self_ty = owner
+        }
+        self.self_name = fn_self_name(fnn)
+        self.emit_method_func(fnn, sig)
+      }
+      self.self_ty = nil
+      self.self_name = ""
+      return
+    }
+    if sig = self.find_fn(fnn.name) {
+      self.return_type = sig.ret
+      if str_eq(fnn.name, "main") {
+        self.c_main = true
+      }
+      self.emit_plain_func(fnn, sig.params)
+      self.c_main = false
+    }
+  }
+
+  fn emit_return_header {
+    if self.c_main {
+      self.line("RETURN")
+      self.indent = self.indent + 1
+      self.line("TYPE :i32")
+      self.indent = self.indent - 1
+    } else {
+      if self.return_type.is_void {
+      } else {
+        self.line("RETURN")
+        self.indent = self.indent + 1
+        m = ty_myc(self.return_type)
+        self.line("TYPE :${m}")
+        self.indent = self.indent - 1
+      }
+    }
+  }
+
+  fn emit_plain_func(fnn: Function, params: Array(Ty)) {
+    self.line("FUNC :${fnn.name}")
+    self.indent = self.indent + 1
+    if self.c_main {
+      self.line("ARGS")
+      self.indent = self.indent + 1
+      self.line("TYPE :i32")
+      self.line("TYPE :ptr<void>")
+      self.indent = self.indent - 1
+      self.emit_return_header
+      self.line("BODY")
+      self.indent = self.indent + 1
+      self.reset_rooted
+      self.line("CALL :avant_gc_enter")
+      self.emit_type_maps
+      self.emit_init_argv
+      self.emit_cov_init
+      self.cov_func(fnn)
+      self.emit_stmts(fnn.body, true)
+      self.emit_gc_leave_if_fallthrough(fnn)
+    } else {
+      if fnn.params.size > 0 {
+        self.line("ARGS")
+        self.indent = self.indent + 1
+        i = 0
+        while i < params.size {
+          m = ty_myc(params[i])
+          self.line("TYPE :${m}")
+          i = i + 1
+        }
+        self.indent = self.indent - 1
+      }
+      self.emit_return_header
+      self.line("BODY")
+      self.indent = self.indent + 1
+      self.reset_rooted
+      self.line("CALL :avant_gc_enter")
+      i = 0
+      while i < fnn.params.size {
+        param = fnn.params[i]
+        m = ty_myc(params[i])
+        self.line("PARAM ${i}")
+        self.line("LOCAL :${param.name} :${m}")
+        self.line("STORE")
+        i = i + 1
+      }
+      i = 0
+      while i < fnn.params.size {
+        self.ensure_root(fnn.params[i].name, params[i])
+        i = i + 1
+      }
+      self.cov_func(fnn)
+      self.emit_stmts(fnn.body, true)
+      self.emit_gc_leave_if_fallthrough(fnn)
+    }
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+  }
+
+  fn emit_method_func(fnn: Function, sig: FuncSig) {
+    mangled = sig.mangled
+    self.line("FUNC :${mangled}")
+    self.indent = self.indent + 1
+    self.line("ARGS")
+    self.indent = self.indent + 1
+    if owner = self.self_ty {
+      m = ty_self_ptr_myc(owner)
+      self.line("TYPE :${m}")
+    }
+    i = 0
+    while i < sig.params.size {
+      m = ty_myc(sig.params[i])
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.emit_return_header
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.reset_rooted
+    self.line("CALL :avant_gc_enter")
+    recv_name = fn_self_name(fnn)
+    if owner = self.self_ty {
+      m = ty_self_ptr_myc(owner)
+      self.line("PARAM 0")
+      self.line("LOCAL :${recv_name} :${m}")
+      self.line("STORE")
+    }
+    i = 0
+    while i < fnn.params.size {
+      param = fnn.params[i]
+      m = ty_myc(sig.params[i])
+      n = i + 1
+      self.line("PARAM ${n}")
+      self.line("LOCAL :${param.name} :${m}")
+      self.line("STORE")
+      i = i + 1
+    }
+    if owner = self.self_ty {
+      self.ensure_root(recv_name, owner)
+    }
+    i = 0
+    while i < fnn.params.size {
+      self.ensure_root(fnn.params[i].name, sig.params[i])
+      i = i + 1
+    }
+    self.cov_func(fnn)
+    self.emit_stmts(fnn.body, true)
+    self.emit_gc_leave_if_fallthrough(fnn)
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+    self.self_ty = nil
+    self.self_name = ""
+  }
+
+  fn emit_named_args(names: Array(String), types: Array(Ty)) {
+    if names.size <= 1 {
+      i = 0
+      while i < names.size {
+        self.line("LOCAL :${names[i]}")
+        i = i + 1
+      }
+      return
+    }
+    tmps: Array(String) = []
+    i = 0
+    while i < names.size {
+      self.line("LOCAL :${names[i]}")
+      tmp = self.new_temp
+      m = ty_myc(types[i])
+      self.line("LOCAL :${tmp} :${m}")
+      self.line("STORE")
+      self.ensure_root(tmp, types[i])
+      tmps.push(tmp)
+      i = i + 1
+    }
+    i = tmps.size - 1
+    while i >= 0 {
+      t = tmps[i]
+      self.line("LOCAL :${t}")
+      i = i - 1
+    }
+  }
+
+  fn emit_field_defaults(ty: Ty) {
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if str_eq(cdef.name, ty.name) {
+        j = 0
+        while j < cdef.fields.size {
+          field = cdef.fields[j]
+          if default = field.default {
+            field_ty = ty.fields[j].ty
+            self.emit_expr(default)
+            self.emit_coerce(expr_ty(default), field_ty)
+            if heap_ptr_value(field_ty) {
+              val = self.new_temp
+              m = ty_myc(field_ty)
+              self.line("LOCAL :${val} :${m}")
+              self.line("STORE")
+              self.ensure_root(val, field_ty)
+              self.line("LOCAL :self")
+              self.line("CALL :avant_barrier")
+              self.line("LOCAL :${val}")
+              self.line("LOCAL :self")
+              self.line("DEREF")
+              self.line("FIELD ${j}")
+              self.line("STORE")
+            } else {
+              self.line("LOCAL :self")
+              self.line("DEREF")
+              self.line("FIELD ${j}")
+              self.line("STORE")
+            }
+          }
+          j = j + 1
+        }
+        return
+      }
+      i = i + 1
+    }
+  }
+
+  fn emit_constructor(ty: Ty) {
+    self.temps = 0
+    self.return_type = ty
+    self.self_ty = nil
+    self.self_name = ""
+    init_sig = self.find_method(ty.name, "initialize")
+    ctor = "${ty.name}__new"
+    self.line("FUNC :${ctor}")
+    self.indent = self.indent + 1
+    if sig = init_sig {
+      if sig.params.size > 0 {
+        self.line("ARGS")
+        self.indent = self.indent + 1
+        i = 0
+        while i < sig.params.size {
+          m = ty_myc(sig.params[i])
+          self.line("TYPE :${m}")
+          i = i + 1
+        }
+        self.indent = self.indent - 1
+      }
+    }
+    self.line("RETURN")
+    self.indent = self.indent + 1
+    m = ty_myc(ty)
+    self.line("TYPE :${m}")
+    self.indent = self.indent - 1
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.reset_rooted
+    self.line("CALL :avant_gc_enter")
+    if sig = init_sig {
+      i = 0
+      while i < sig.params.size {
+        name = sig.node.params[i].name
+        m = ty_myc(sig.params[i])
+        self.line("PARAM ${i}")
+        self.line("LOCAL :${name} :${m}")
+        self.line("STORE")
+        self.ensure_root(name, sig.params[i])
+        i = i + 1
+      }
+    }
+    tid = 1
+    if id = self.class_ids.get(ty.name) {
+      tid = id
+    }
+    layout = ty_layout_myc(ty)
+    self.emit_alloc_sizeof(layout, tid)
+    sp = ty_self_ptr_myc(ty)
+    self.line("AS :${sp}")
+    self.line("LOCAL :self :${sp}")
+    self.line("STORE")
+    self.ensure_root("self", ty)
+    self.emit_field_defaults(ty)
+    if sig = init_sig {
+      names: Array(String) = []
+      i = 0
+      while i < sig.node.params.size {
+        names.push(sig.node.params[i].name)
+        i = i + 1
+      }
+      self.emit_named_args(names, sig.params)
+      self.line("LOCAL :self")
+      mangled = sig.mangled
+      self.line("CALL :${mangled}")
+    }
+    self.line("LOCAL :self")
+    self.emit_ret
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+  }
+
+  fn emit_wrapper_main {
+    run_void = true
+    if sig = self.find_fn("run") {
+      if sig.ret.is_void {
+        run_void = true
+      } else {
+        run_void = false
+      }
+    }
+    self.line("FUNC :main")
+    self.indent = self.indent + 1
+    self.line("ARGS")
+    self.indent = self.indent + 1
+    self.line("TYPE :i32")
+    self.line("TYPE :ptr<void>")
+    self.indent = self.indent - 1
+    self.line("RETURN")
+    self.indent = self.indent + 1
+    self.line("TYPE :i32")
+    self.indent = self.indent - 1
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.line("CALL :avant_gc_enter")
+    self.emit_type_maps
+    self.emit_init_argv
+    self.emit_cov_init
+    self.line("CALL :run")
+    if run_void {
+    } else {
+      self.line("STACK :drop")
+    }
+    self.line("CALL :avant_gc_leave")
+    self.line("PUSH 0")
+    self.line("RET")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+  }
+
+  fn emit_init_argv {
+    self.line("PARAM 1")
+    self.line("PARAM 0")
+    self.line("CALL :avant_io_init_argv")
+  }
+
+  fn emit_type_maps {
+    self.line("PUSH 1 :u64")
+    self.line("PUSH 1022 :u32")
+    self.line("CALL :avant_type_map")
+    self.line("PUSH 1 :u64")
+    self.line("PUSH 1021 :u32")
+    self.line("CALL :avant_type_map")
+    self.line("PUSH 7 :u64")
+    self.line("PUSH 1023 :u32")
+    self.line("CALL :avant_type_map")
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if ty = self.resolver.get_named(cdef.name) {
+        bits = pointer_word_bits(ty)
+        if id = self.class_ids.get(cdef.name) {
+          self.line("PUSH ${bits} :u64")
+          self.line("PUSH ${id} :u32")
+          self.line("CALL :avant_type_map")
+        }
+      }
+      i = i + 1
+    }
+  }
+
+  fn emit_ret {
+    self.line("CALL :avant_gc_leave")
+    if self.c_main {
+      self.line("PUSH 0")
+    }
+    self.line("RET")
+  }
+
+  fn emit_gc_leave_if_fallthrough(fnn: Function) {
+    if fnn.body.size == 0 {
+      self.emit_ret
+      return
+    }
+    last = fnn.body[fnn.body.size - 1]
+    if last.kind == st_return() {
+      return
+    }
+    if last.kind == st_expr() {
+      if self.return_type.is_void {
+      } else {
+        return
+      }
+    }
+    self.emit_ret
+  }
+
+  fn emit_ptr_root(name: String) {
+    self.rooted[name] = 1
+    self.line("LOCAL :${name}")
+    self.line("ADDR")
+    self.line("CALL :avant_gc_root")
+  }
+
+  fn ensure_root(name: String, ty: Ty) {
+    if v = self.rooted.get(name) {
+      return
+    }
+    if ty_has_heap(ty) {
+    } else {
+      return
+    }
+    self.rooted[name] = 1
+    if ty.is_union {
+      i = 0
+      field_i = 1
+      while i < ty.members.size {
+        m = ty.members[i]
+        if m.is_nil {
+        } else {
+          if ty_has_heap(m) {
+            self.line("LOCAL :${name}")
+            self.line("FIELD ${field_i}")
+            self.line("ADDR")
+            self.line("CALL :avant_gc_root")
+          }
+          field_i = field_i + 1
+        }
+        i = i + 1
+      }
+      return
+    }
+    self.emit_ptr_root(name)
+  }
+
+  fn emit_stmts(body: Array(Stmt), implicit_return: Bool) {
+    i = 0
+    while i < body.size {
+      at_tail = false
+      if implicit_return {
+        if i == body.size - 1 {
+          at_tail = true
+        }
+      }
+      self.emit_stmt(body[i], at_tail)
+      i = i + 1
+    }
+  }
+
+  fn emit_stmt(stmt: Stmt, at_tail: Bool) {
+    self.cov_stmt(stmt)
+    k = stmt.kind
+    switch k {
+      case 2 {
+        if e = stmt.expr {
+          self.emit_expr(e)
+          self.emit_coerce(expr_ty(e), self.return_type)
+        }
+        self.emit_ret
+      }
+      case 3 {
+        if stmt.bind.size > 0 {
+          self.emit_if_assign(stmt)
+        } else {
+          if c = stmt.cond {
+            self.emit_expr(c)
+          }
+          self.line("IF")
+          self.indent = self.indent + 1
+          self.line("THEN")
+          self.indent = self.indent + 1
+          self.cov_branch(stmt.loc)
+          self.emit_stmts(stmt.then_body, false)
+          self.indent = self.indent - 1
+          if stmt.else_body.size > 0 {
+            self.line("ELSE")
+            self.indent = self.indent + 1
+            self.cov_branch(stmt.loc)
+            self.emit_stmts(stmt.else_body, false)
+            self.indent = self.indent - 1
+          } else {
+            if self.cov {
+              self.line("ELSE")
+              self.indent = self.indent + 1
+              self.cov_branch(stmt.loc)
+              self.indent = self.indent - 1
+            }
+          }
+          self.indent = self.indent - 1
+          self.line("ENDIF")
+        }
+      }
+      case 4 {
+        self.line("LOOP")
+        self.indent = self.indent + 1
+        self.line("COND")
+        self.indent = self.indent + 1
+        if c = stmt.cond {
+          self.emit_expr(c)
+        }
+        self.indent = self.indent - 1
+        self.line("BODY")
+        self.indent = self.indent + 1
+        self.cov_branch(stmt.loc)
+        self.emit_stmts(stmt.body, false)
+        self.indent = self.indent - 1
+        self.indent = self.indent - 1
+        self.line("ENDLOOP")
+      }
+      case 5 {
+        self.line("BREAK")
+      }
+      case 6 {
+        self.line("NEXT")
+      }
+      case 7 {
+        self.emit_assign(stmt)
+      }
+      case 1 {
+        if e = stmt.expr {
+          self.emit_expr(e)
+          if at_tail {
+            if self.return_type.is_void {
+              if expr_ty(e).is_void {
+              } else {
+                self.line("STACK :drop")
+              }
+            } else {
+              self.emit_coerce(expr_ty(e), self.return_type)
+              self.emit_ret
+            }
+          } else {
+            if expr_ty(e).is_void {
+            } else {
+              self.line("STACK :drop")
+            }
+          }
+        }
+      }
+      else {
+      }
+    }
+  }
+
+  fn emit_assign(stmt: Stmt) {
+    if stmt.op == tk_eq() {
+      if t = stmt.target {
+        if t.kind == ex_index() {
+          if arr = t.left {
+            if expr_ty(arr).is_hash {
+              if v = stmt.value {
+                self.emit_hash_set(t, v, expr_ty(arr))
+                return
+              }
+            }
+          }
+        }
+        if t.kind == ex_field() {
+          if obj = t.object {
+            object_ty = expr_ty(obj)
+            if object_ty.is_class {
+              if heap_ptr_value(expr_ty(t)) {
+                if v = stmt.value {
+                  self.emit_barrier_field_store(t, v)
+                  return
+                }
+              }
+            }
+          }
+        }
+      }
+      if v = stmt.value {
+        if t = stmt.target {
+          self.emit_expr(v)
+          self.emit_coerce(expr_ty(v), expr_ty(t))
+        }
+      }
+    } else {
+      if t = stmt.target {
+        self.emit_expr(t)
+        tmp = self.new_temp
+        ty = expr_ty(t)
+        m = ty_myc(ty)
+        self.line("LOCAL :${tmp} :${m}")
+        self.line("STORE")
+        if v = stmt.value {
+          self.emit_expr(v)
+        }
+        self.line("LOCAL :${tmp}")
+        op = myc_binop(compound_to_binop(stmt.op))
+        self.line("BINARY :${op}")
+      }
+    }
+    if t = stmt.target {
+      self.emit_lvalue(t)
+      self.line("STORE")
+      self.root_after_store(t)
+    }
+  }
+
+  fn emit_barrier_field_store(target: Expr, value: Expr) {
+    field_ty = expr_ty(target)
+    if obj = target.object {
+      object_ty = expr_ty(obj)
+      self.emit_expr(value)
+      val = self.new_temp
+      m = ty_myc(field_ty)
+      self.line("LOCAL :${val} :${m}")
+      self.line("STORE")
+      self.ensure_root(val, field_ty)
+      self.emit_expr(obj)
+      objn = self.new_temp
+      om = ty_myc(object_ty)
+      self.line("LOCAL :${objn} :${om}")
+      self.line("STORE")
+      self.ensure_root(objn, object_ty)
+      self.line("LOCAL :${objn}")
+      self.line("CALL :avant_barrier")
+      self.line("LOCAL :${val}")
+      self.line("LOCAL :${objn}")
+      self.line("DEREF")
+      fi = object_ty.field_index(target.ident)
+      self.line("FIELD ${fi}")
+      self.line("STORE")
+    }
+  }
+
+  fn root_after_store(target: Expr) {
+    if target.kind == ex_name() {
+      if target.implicit_field {
+        return
+      }
+      self.ensure_root(target.ident, expr_ty(target))
+    }
+  }
+
+  fn emit_coerce(got: Ty, want: Ty) {
+    if got.same_as(want) {
+      return
+    }
+    if want.is_union {
+      if want.includes_member(got) {
+        self.emit_wrap_union(got, want)
+      }
+    }
+  }
+
+  fn emit_wrap_union(got: Ty, want: Ty) {
+    val = self.new_temp
+    gm = ty_myc(got)
+    self.line("LOCAL :${val} :${gm}")
+    self.line("STORE")
+    self.ensure_root(val, got)
+    payloads = want.payload_members
+    i = payloads.size - 1
+    while i >= 0 {
+      m = payloads[i]
+      if m.same_as(got) {
+        self.line("LOCAL :${val}")
+      } else {
+        self.emit_zero(m)
+      }
+      i = i - 1
+    }
+    tag = want.tag_of(got)
+    self.line("PUSH ${tag}")
+    layout = ty_layout_myc(want)
+    self.line("CREATE :${layout}")
+  }
+
+  fn try_success_from(got: Ty): Ty {
+    if got.includes_nil {
+      return ty_without_nil(got)
+    }
+    ret = self.return_type
+    i = 0
+    while i < got.members.size {
+      m = got.members[i]
+      if ret.includes_member(m) {
+      } else {
+        return m
+      }
+      i = i + 1
+    }
+    ty_without_nil(got)
+  }
+
+  fn try_fail_from(got: Ty): Ty {
+    if got.includes_nil {
+      return ty_nil()
+    }
+    ret = self.return_type
+    i = 0
+    while i < got.members.size {
+      m = got.members[i]
+      if ret.includes_member(m) {
+        return m
+      }
+      i = i + 1
+    }
+    ty_nil()
+  }
+
+  fn emit_unwrap(tmp: String, uty: Ty, success: Ty) {
+    if success.is_nil {
+      self.line("PUSH 0")
+      return
+    }
+    idx = uty.payload_index(success)
+    self.line("LOCAL :${tmp}")
+    self.line("FIELD ${idx}")
+  }
+
+  fn emit_failure_return(tmp: String, got: Ty, fail: Ty) {
+    if self.return_type.same_as(got) {
+      self.line("LOCAL :${tmp}")
+    } else {
+      if fail.is_nil {
+        self.emit_zero(fail)
+        self.emit_wrap_union(fail, self.return_type)
+      } else {
+        self.emit_unwrap(tmp, got, fail)
+        self.emit_wrap_union(fail, self.return_type)
+      }
+    }
+    self.emit_ret
+  }
+
+  fn emit_try(expr: Expr) {
+    if inner = expr.inner {
+      uty = expr_ty(inner)
+      self.emit_expr(inner)
+      tmp = self.new_temp
+      um = ty_myc(uty)
+      self.line("LOCAL :${tmp} :${um}")
+      self.line("STORE")
+      self.ensure_root(tmp, uty)
+      success = self.try_success_from(uty)
+      fail = self.try_fail_from(uty)
+      fail_tag = uty.tag_of(fail)
+      wrapped = self.new_temp
+      self.line("LOCAL :${tmp}")
+      self.line("FIELD 0")
+      self.line("PUSH ${fail_tag}")
+      self.line("BINARY :eq")
+      self.line("IF")
+      self.indent = self.indent + 1
+      self.line("THEN")
+      self.indent = self.indent + 1
+      self.emit_failure_return(tmp, uty, fail)
+      self.indent = self.indent - 1
+      self.line("ELSE")
+      self.indent = self.indent + 1
+      self.emit_unwrap(tmp, uty, success)
+      sm = ty_myc(success)
+      self.line("LOCAL :${wrapped} :${sm}")
+      self.line("STORE")
+      self.ensure_root(wrapped, success)
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDIF")
+      self.line("LOCAL :${wrapped}")
+    }
+  }
+
+  fn emit_if_assign(stmt: Stmt) {
+    if cond = stmt.cond {
+      uty = expr_ty(cond)
+      success = ty_without_nil(uty)
+      self.emit_expr(cond)
+      tmp = self.new_temp
+      um = ty_myc(uty)
+      self.line("LOCAL :${tmp} :${um}")
+      self.line("STORE")
+      self.ensure_root(tmp, uty)
+      nil_tag = uty.tag_of(ty_nil())
+      self.line("LOCAL :${tmp}")
+      self.line("FIELD 0")
+      self.line("PUSH ${nil_tag}")
+      self.line("BINARY :not_eq")
+      self.line("IF")
+      self.indent = self.indent + 1
+      self.line("THEN")
+      self.indent = self.indent + 1
+      self.cov_branch(stmt.loc)
+      self.emit_unwrap(tmp, uty, success)
+      bind = stmt.bind
+      sm = ty_myc(success)
+      self.line("LOCAL :${bind} :${sm}")
+      self.line("STORE")
+      self.ensure_root(bind, success)
+      self.emit_stmts(stmt.then_body, false)
+      self.indent = self.indent - 1
+      if stmt.else_body.size > 0 {
+        self.line("ELSE")
+        self.indent = self.indent + 1
+        self.cov_branch(stmt.loc)
+        self.emit_stmts(stmt.else_body, false)
+        self.indent = self.indent - 1
+      } else {
+        if self.cov {
+          self.line("ELSE")
+          self.indent = self.indent + 1
+          self.cov_branch(stmt.loc)
+          self.indent = self.indent - 1
+        }
+      }
+      self.indent = self.indent - 1
+      self.line("ENDIF")
+    }
+  }
+
+  fn emit_to_string(ty: Ty) {
+    if ty.is_string {
+      return
+    }
+    if ty.is_int {
+      self.line("CALL :avant_str_from_int")
+      return
+    }
+    if ty.is_int64 {
+      self.line("CALL :avant_str_from_i64")
+      return
+    }
+    if ty.is_uint64 {
+      self.line("CALL :avant_str_from_u64")
+      return
+    }
+    if ty.is_float {
+      self.line("CALL :avant_str_from_float")
+      return
+    }
+    if ty.is_bool {
+      self.line("AS :i32")
+      self.line("CALL :avant_str_from_bool")
+    }
+  }
+
+  fn emit_interp(expr: Expr) {
+    pieces: Array(String) = []
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      skip = true
+      if text = part.text {
+        if text.size == 0 {
+        } else {
+          q = myc_quote(text)
+          self.line("PUSH ${q}")
+          skip = false
+        }
+      } else {
+        if inner = part.expr {
+          self.emit_expr(inner)
+          self.emit_to_string(expr_ty(inner))
+          skip = false
+        }
+      }
+      if skip {
+      } else {
+        tmp = self.new_temp
+        self.line("LOCAL :${tmp} :ptr<u8>")
+        self.line("STORE")
+        self.ensure_root(tmp, ty_string())
+        pieces.push(tmp)
+      }
+      i = i + 1
+    }
+    if pieces.size == 0 {
+      self.line("PUSH \"\"")
+      return
+    }
+    acc = pieces[0]
+    i = 1
+    while i < pieces.size {
+      p = pieces[i]
+      self.line("LOCAL :${p}")
+      self.line("LOCAL :${acc}")
+      self.line("CALL :avant_str_concat")
+      acc = self.new_temp
+      self.line("LOCAL :${acc} :ptr<u8>")
+      self.line("STORE")
+      self.ensure_root(acc, ty_string())
+      i = i + 1
+    }
+    self.line("LOCAL :${acc}")
+  }
+
+  fn emit_expr(expr: Expr) {
+    k = expr.kind
+    switch k {
+      case 1 {
+        self.emit_int_literal(expr)
+      }
+      case 2 {
+        if expr.value_str.size > 0 {
+          lit = expr.value_str
+          self.line("PUSH ${lit}")
+        } else {
+          self.line("PUSH 0.0")
+        }
+      }
+      case 3 {
+        q = myc_quote(expr.value_str)
+        self.line("PUSH ${q}")
+      }
+      case 4 {
+        if expr.bool_val {
+          self.line("PUSH true")
+        } else {
+          self.line("PUSH false")
+        }
+      }
+      case 15 {
+        self.line("PUSH 0")
+      }
+      case 5 {
+        self.emit_lvalue(expr)
+      }
+      case 9 {
+        if expr.method_call {
+          if obj = expr.object {
+            object_ty = expr_ty(obj)
+            if object_ty.is_join {
+              self.emit_expr(obj)
+              self.line("CALL :avant_join")
+            } else if object_ty.is_array {
+              if str_eq(expr.ident, "pop") {
+                self.emit_array_pop(obj, object_ty)
+              } else if str_eq(expr.ident, "sort") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_array_sort_i32")
+              } else if str_eq(expr.ident, "clear") {
+                self.emit_array_clear(obj, object_ty)
+              }
+            } else if object_ty.is_float {
+              self.emit_float_field(expr)
+            } else if object_ty.is_integer {
+              self.emit_int_field(expr)
+            } else if object_ty.is_string {
+              self.emit_expr(obj)
+              if str_eq(expr.ident, "to_f") {
+                self.line("CALL :avant_str_to_f")
+              } else if str_eq(expr.ident, "to_i") {
+                self.line("CALL :avant_str_to_i")
+              }
+            } else if object_ty.is_buf {
+              self.emit_expr(obj)
+              if str_eq(expr.ident, "to_s") {
+                self.line("CALL :avant_buf_to_str")
+              } else if str_eq(expr.ident, "clear") {
+                self.line("CALL :avant_buf_clear")
+              }
+            } else {
+              empty: Array(Expr) = []
+              self.emit_method_invoke(obj, expr.ident, empty)
+            }
+          }
+        } else {
+          if obj = expr.object {
+            object_ty = expr_ty(obj)
+            if object_ty.is_string {
+              if str_eq(expr.ident, "size") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_str_size")
+              } else if str_eq(expr.ident, "to_f") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_str_to_f")
+              } else if str_eq(expr.ident, "to_i") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_str_to_i")
+              } else {
+                self.emit_lvalue(expr)
+              }
+            } else if object_ty.is_hash {
+              if str_eq(expr.ident, "size") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_hash_size")
+              } else {
+                self.emit_lvalue(expr)
+              }
+            } else if object_ty.is_buf {
+              if str_eq(expr.ident, "size") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_buf_size")
+              } else {
+                self.emit_lvalue(expr)
+              }
+            } else {
+              self.emit_lvalue(expr)
+            }
+          } else {
+            self.emit_lvalue(expr)
+          }
+        }
+      }
+      case 10 {
+        self.emit_lvalue(expr)
+      }
+      case 7 {
+        self.emit_unary(expr)
+      }
+      case 8 {
+        self.emit_binary(expr)
+      }
+      case 6 {
+        self.emit_call(expr)
+      }
+      case 11 {
+        self.emit_struct_literal(expr)
+      }
+      case 12 {
+        self.emit_array_literal(expr)
+      }
+      case 13 {
+        self.emit_array_new(expr)
+      }
+      case 14 {
+        self.emit_hash_new(expr)
+      }
+      case 18 {
+        self.emit_switch(expr)
+      }
+      case 16 {
+        self.emit_try(expr)
+      }
+      case 17 {
+        self.emit_interp(expr)
+      }
+      else {
+      }
+    }
+  }
+
+  fn emit_lvalue(expr: Expr) {
+    if expr.kind == ex_name() {
+      if expr.implicit_field {
+        self.emit_self_field(expr.ident)
+        return
+      }
+      if self.is_struct_self(expr.ident) {
+        if st = self.self_ty {
+          m = ty_self_ptr_myc(st)
+          self.line("LOCAL :${expr.ident} :${m}")
+          self.line("DEREF")
+          return
+        }
+      }
+      ty = expr_ty(expr)
+      m = ty_myc(ty)
+      self.line("LOCAL :${expr.ident} :${m}")
+      return
+    }
+    if expr.kind == ex_field() {
+      self.emit_field_lvalue(expr)
+      return
+    }
+    if expr.kind == ex_index() {
+      self.emit_index_lvalue(expr)
+      return
+    }
+    self.emit_expr(expr)
+  }
+
+  fn emit_field_lvalue(expr: Expr) {
+    if obj = expr.object {
+      object_ty = expr_ty(obj)
+      if object_ty.is_array {
+        self.emit_expr(obj)
+        self.line("DEREF")
+        self.line("FIELD 1")
+        return
+      }
+      if object_ty.is_class {
+        self.emit_expr(obj)
+        self.line("DEREF")
+        fi = object_ty.field_index(expr.ident)
+        self.line("FIELD ${fi}")
+        return
+      }
+      self.emit_lvalue(obj)
+      fi = object_ty.field_index(expr.ident)
+      self.line("FIELD ${fi}")
+    }
+  }
+
+  fn emit_index_lvalue(expr: Expr) {
+    if arr = expr.left {
+      if ix = expr.right {
+        container = expr_ty(arr)
+        if container.is_string {
+          self.emit_expr(ix)
+          self.emit_expr(arr)
+          self.line("CALL :avant_str_byte")
+          return
+        }
+        if container.is_hash {
+          self.emit_hash_get(expr, container)
+          return
+        }
+        array_ty = container
+        ptr_tmp = self.new_temp
+        self.emit_expr(arr)
+        self.line("DEREF")
+        self.line("FIELD 0")
+        if e = array_ty.inner {
+          em = ty_myc(e)
+          self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
+        } else {
+          self.line("LOCAL :${ptr_tmp} :ptr<i32>")
+        }
+        self.line("STORE")
+        self.emit_expr(ix)
+        self.line("LOCAL :${ptr_tmp}")
+        self.line("BINARY :add")
+        self.line("DEREF")
+      }
+    }
+  }
+
+  fn emit_struct_literal(expr: Expr) {
+    ty = expr_ty(expr)
+    n = ty.fields.size
+    slots: Array(String) = []
+    i = 0
+    while i < n {
+      slots.push("")
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_names.size {
+      fname = expr.field_names[i]
+      value = expr.field_exprs[i]
+      fi = ty.field_index(fname)
+      self.emit_expr(value)
+      tmp = self.new_temp
+      m = ty_myc(ty.fields[fi].ty)
+      self.line("LOCAL :${tmp} :${m}")
+      self.line("STORE")
+      slots[fi] = tmp
+      i = i + 1
+    }
+    i = n - 1
+    while i >= 0 {
+      slot = slots[i]
+      self.line("LOCAL :${slot}")
+      i = i - 1
+    }
+    m = ty_myc(ty)
+    self.line("CREATE :${m}")
+  }
+
+  fn emit_alloc_sizeof(layout: String, type_id: Int) {
+    self.line("PUSH ${type_id} :u32")
+    self.line("SIZEOF :${layout}")
+    self.line("CALL :avant_alloc")
+  }
+
+  fn emit_alloc_count(elem: Ty) {
+    self.line("AS :u64")
+    em = ty_myc(elem)
+    self.line("SIZEOF :${em}")
+    self.line("BINARY :mul")
+    tid = array_type_id(elem)
+    self.line("PUSH ${tid} :u32")
+    self.line("STACK :swap2")
+    self.line("CALL :avant_alloc")
+    self.line("AS :ptr<${em}>")
+  }
+
+  fn emit_array_header(ty: Ty, buf: String, size: String, cap: String) {
+    layout = ty_layout_myc(ty)
+    self.emit_alloc_sizeof(layout, 1022)
+    m = ty_myc(ty)
+    self.line("AS :${m}")
+    arr = self.new_temp
+    self.line("LOCAL :${arr} :${m}")
+    self.line("STORE")
+    self.ensure_root(arr, ty)
+    self.line("LOCAL :${buf}")
+    self.line("LOCAL :${arr}")
+    self.line("DEREF")
+    self.line("FIELD 0")
+    self.line("STORE")
+    self.line("LOCAL :${size}")
+    self.line("LOCAL :${arr}")
+    self.line("DEREF")
+    self.line("FIELD 1")
+    self.line("STORE")
+    self.line("LOCAL :${cap}")
+    self.line("LOCAL :${arr}")
+    self.line("DEREF")
+    self.line("FIELD 2")
+    self.line("STORE")
+    self.line("LOCAL :${arr}")
+  }
+
+  fn emit_array_literal(expr: Expr) {
+    ty = expr_ty(expr)
+    n = expr.elems.size
+    ptr_tmp = self.new_temp
+    self.line("PUSH ${n}")
+    if e = ty.inner {
+      self.emit_alloc_count(e)
+      em = ty_myc(e)
+      self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
+    } else {
+      self.emit_alloc_count(ty_int())
+      self.line("LOCAL :${ptr_tmp} :ptr<i32>")
+    }
+    self.line("STORE")
+    self.emit_ptr_root(ptr_tmp)
+    i = 0
+    while i < expr.elems.size {
+      el = expr.elems[i]
+      self.emit_expr(el)
+      if e = ty.inner {
+        self.emit_coerce(expr_ty(el), e)
+      }
+      self.line("PUSH ${i}")
+      self.line("LOCAL :${ptr_tmp}")
+      self.line("BINARY :add")
+      self.line("DEREF")
+      self.line("STORE")
+      i = i + 1
+    }
+    n_tmp = self.new_temp
+    self.line("PUSH ${n}")
+    self.line("LOCAL :${n_tmp} :i32")
+    self.line("STORE")
+    self.emit_array_header(ty, ptr_tmp, n_tmp, n_tmp)
+  }
+
+  fn emit_array_new(expr: Expr) {
+    ty = expr_ty(expr)
+    len_tmp = self.new_temp
+    ptr_tmp = self.new_temp
+    if size = expr.size_expr {
+      self.emit_expr(size)
+    }
+    self.line("LOCAL :${len_tmp} :i32")
+    self.line("STORE")
+    self.line("LOCAL :${len_tmp}")
+    if e = ty.inner {
+      self.emit_alloc_count(e)
+      em = ty_myc(e)
+      self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
+    } else {
+      self.emit_alloc_count(ty_int())
+      self.line("LOCAL :${ptr_tmp} :ptr<i32>")
+    }
+    self.line("STORE")
+    self.emit_ptr_root(ptr_tmp)
+    self.emit_array_header(ty, ptr_tmp, len_tmp, len_tmp)
+  }
+
+  fn emit_switch(expr: Expr) {
+    result_ty = expr_ty(expr)
+    if c = expr.cond {
+      self.emit_expr(c)
+      ct = expr_ty(c)
+      if ct.is_bool {
+        self.line("AS :i32")
+      }
+    }
+    has_dest = false
+    dest = ""
+    if result_ty.is_void {
+    } else {
+      has_dest = true
+      dest = self.new_temp
+    }
+    self.line("SWITCH")
+    self.indent = self.indent + 1
+    i = 0
+    while i < expr.cases.size {
+      arm = expr.cases[i]
+      j = 0
+      while j < arm.labels.size {
+        lab = arm.labels[j]
+        self.line("CASE ${lab}")
+        self.indent = self.indent + 1
+        self.cov_branch(arm.loc)
+        self.emit_switch_arm(arm.body, has_dest, dest, result_ty)
+        self.indent = self.indent - 1
+        j = j + 1
+      }
+      i = i + 1
+    }
+    if expr.has_else {
+      self.line("ELSE")
+      self.indent = self.indent + 1
+      self.cov_branch(expr.loc)
+      self.emit_switch_arm(expr.else_body, has_dest, dest, result_ty)
+      self.indent = self.indent - 1
+    } else {
+      if self.cov {
+        self.line("ELSE")
+        self.indent = self.indent + 1
+        self.cov_branch(expr.loc)
+        self.indent = self.indent - 1
+      }
+    }
+    self.indent = self.indent - 1
+    self.line("ENDSWITCH")
+    if has_dest {
+      self.line("LOCAL :${dest}")
+    }
+  }
+
+  fn emit_switch_arm(body: Array(Stmt), has_dest: Bool, dest: String, result_ty: Ty) {
+    if has_dest {
+      if body.size == 0 {
+        self.emit_zero(result_ty)
+        m = ty_myc(result_ty)
+        self.line("LOCAL :${dest} :${m}")
+        self.line("STORE")
+        self.ensure_root(dest, result_ty)
+        return
+      }
+      last = body.size - 1
+      i = 0
+      while i < body.size {
+        stmt = body[i]
+        if i == last {
+          if stmt.kind == st_expr() {
+            if e = stmt.expr {
+              self.emit_expr(e)
+              self.emit_coerce(expr_ty(e), result_ty)
+              m = ty_myc(result_ty)
+              self.line("LOCAL :${dest} :${m}")
+              self.line("STORE")
+              self.ensure_root(dest, result_ty)
+            }
+          } else {
+            self.emit_stmt(stmt, false)
+          }
+        } else {
+          self.emit_stmt(stmt, false)
+        }
+        i = i + 1
+      }
+    } else {
+      self.emit_stmts(body, false)
+    }
+  }
+
+  fn emit_zero(ty: Ty) {
+    if ty.is_float {
+      self.line("PUSH 0 :f64")
+      return
+    }
+    if ty.is_int64 {
+      self.line("PUSH 0 :i64")
+      return
+    }
+    if ty.is_uint64 {
+      self.line("PUSH 0 :u64")
+      return
+    }
+    if ty.is_bool {
+      self.line("PUSH false")
+      return
+    }
+    self.line("PUSH 0")
+    if ty.is_int {
+      return
+    }
+    if ty.is_nil {
+      return
+    }
+    m = ty_myc(ty)
+    self.line("AS :${m}")
+  }
+
+  fn emit_int_literal(expr: Expr) {
+    ty = expr_ty(expr)
+    if ty.is_float {
+      self.line("PUSH ${expr.int_bits} :f64")
+    } else if ty.is_uint64 {
+      self.line("PUSH ${expr.int_bits} :u64")
+    } else if ty.is_int64 {
+      self.line("PUSH ${expr.int_bits} :i64")
+    } else {
+      self.line("PUSH ${expr.int_bits}")
+    }
+  }
+
+  fn emit_unary(expr: Expr) {
+    if inner = expr.inner {
+      self.emit_expr(inner)
+    }
+    op = expr.op
+    if op == tk_minus() {
+      self.line("UNARY :neg")
+    } else if op == tk_bang() {
+      self.line("UNARY :lnot")
+    } else if op == tk_tilde() {
+      self.line("UNARY :bnot")
+    }
+  }
+
+  fn emit_binary(expr: Expr) {
+    if expr.op == tk_amp_amp() {
+      self.emit_logical(expr)
+      return
+    }
+    if expr.op == tk_pipe_pipe() {
+      self.emit_logical(expr)
+      return
+    }
+    if l = expr.left {
+      left_ty = expr_ty(l)
+      if left_ty.is_string {
+        self.emit_string_binary(expr)
+        return
+      }
+      tmp = self.new_temp
+      self.emit_expr(l)
+      m = ty_myc(left_ty)
+      self.line("LOCAL :${tmp} :${m}")
+      self.line("STORE")
+      if r = expr.right {
+        self.emit_expr(r)
+        right_ty = expr_ty(r)
+        if left_ty.is_uint64 {
+          if right_ty.is_int {
+            if expr.op == tk_less_less() {
+              self.line("AS :${m}")
+            } else if expr.op == tk_greater_greater() {
+              self.line("AS :${m}")
+            }
+          }
+        } else if left_ty.is_int64 {
+          if right_ty.is_int {
+            if expr.op == tk_less_less() {
+              self.line("AS :${m}")
+            } else if expr.op == tk_greater_greater() {
+              self.line("AS :${m}")
+            }
+          }
+        }
+      }
+      self.line("LOCAL :${tmp}")
+      op = myc_binop(expr.op)
+      if expr.op == tk_greater_greater() {
+        if left_ty.is_uint64 {
+          op = "shr"
+        }
+      }
+      self.line("BINARY :${op}")
+    }
+  }
+
+  fn emit_logical(expr: Expr) {
+    dest = self.new_temp
+    if l = expr.left {
+      self.emit_expr(l)
+    }
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.cov_branch(expr.loc)
+    if expr.op == tk_amp_amp() {
+      if r = expr.right {
+        self.emit_expr(r)
+      }
+    } else {
+      self.line("PUSH true")
+    }
+    self.line("LOCAL :${dest} :bool")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.cov_branch(expr.loc)
+    if expr.op == tk_amp_amp() {
+      self.line("PUSH false")
+    } else {
+      if r = expr.right {
+        self.emit_expr(r)
+      }
+    }
+    self.line("LOCAL :${dest} :bool")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${dest}")
+  }
+
+  fn emit_string_binary(expr: Expr) {
+    if l = expr.left {
+      if r = expr.right {
+        if expr.op == tk_plus() {
+          self.emit_expr(l)
+          a = self.new_temp
+          self.line("LOCAL :${a} :ptr<u8>")
+          self.line("STORE")
+          self.ensure_root(a, ty_string())
+          self.emit_expr(r)
+          self.line("LOCAL :${a}")
+          self.line("CALL :avant_str_concat")
+          return
+        }
+        if expr.op == tk_eq_eq() {
+          self.emit_expr(l)
+          a = self.new_temp
+          self.line("LOCAL :${a} :ptr<u8>")
+          self.line("STORE")
+          self.emit_expr(r)
+          self.line("LOCAL :${a}")
+          self.line("CALL :avant_str_eq")
+          self.line("AS :bool")
+          return
+        }
+        if expr.op == tk_not_eq() {
+          self.emit_expr(l)
+          a = self.new_temp
+          self.line("LOCAL :${a} :ptr<u8>")
+          self.line("STORE")
+          self.emit_expr(r)
+          self.line("LOCAL :${a}")
+          self.line("CALL :avant_str_eq")
+          self.line("PUSH 0")
+          self.line("BINARY :eq")
+        }
+      }
+    }
+  }
+
+  fn hash_set_func(ty: Ty): String {
+    if k = ty.key {
+      if k.is_int {
+        return "avant_hash_set_i32k_i32"
+      }
+    }
+    if v = ty.val {
+      if v.is_string {
+        return "avant_hash_set_str"
+      }
+    }
+    "avant_hash_set_i32"
+  }
+
+  fn hash_get_func(ty: Ty): String {
+    if k = ty.key {
+      if k.is_int {
+        return "avant_hash_get_i32k_i32"
+      }
+    }
+    if v = ty.val {
+      if v.is_string {
+        return "avant_hash_get_str"
+      }
+    }
+    "avant_hash_get_i32"
+  }
+
+  fn hash_del_func(ty: Ty): String {
+    if k = ty.key {
+      if k.is_int {
+        return "avant_hash_del_i32k"
+      }
+    }
+    "avant_hash_del"
+  }
+
+  fn emit_hash_new(expr: Expr) {
+    ty = expr_ty(expr)
+    val_kind = 0
+    key_kind = 0
+    if v = ty.val {
+      if v.is_string {
+        val_kind = 1
+      }
+    }
+    if k = ty.key {
+      if k.is_string {
+        key_kind = 1
+      }
+    }
+    self.line("PUSH ${val_kind}")
+    self.line("PUSH ${key_kind}")
+    self.line("CALL :avant_hash_new")
+  }
+
+  fn emit_hash_set(target: Expr, value: Expr, ty: Ty) {
+    self.emit_expr(value)
+    val = self.new_temp
+    if v = ty.val {
+      m = ty_myc(v)
+      self.line("LOCAL :${val} :${m}")
+      self.line("STORE")
+      self.ensure_root(val, v)
+    }
+    if ix = target.right {
+      self.emit_expr(ix)
+    }
+    key = self.new_temp
+    if k = ty.key {
+      m = ty_myc(k)
+      self.line("LOCAL :${key} :${m}")
+      self.line("STORE")
+      self.ensure_root(key, k)
+    }
+    if arr = target.left {
+      self.emit_expr(arr)
+    }
+    h = self.new_temp
+    self.line("LOCAL :${h} :ptr<void>")
+    self.line("STORE")
+    self.ensure_root(h, ty)
+    self.line("LOCAL :${val}")
+    self.line("LOCAL :${key}")
+    self.line("LOCAL :${h}")
+    fn_name = self.hash_set_func(ty)
+    self.line("CALL :${fn_name}")
+  }
+
+  fn emit_hash_get(expr: Expr, ty: Ty) {
+    found = self.new_temp
+    self.line("PUSH 0")
+    self.line("LOCAL :${found} :i32")
+    self.line("STORE")
+    if ix = expr.right {
+      self.emit_expr(ix)
+    }
+    key = self.new_temp
+    if k = ty.key {
+      m = ty_myc(k)
+      self.line("LOCAL :${key} :${m}")
+      self.line("STORE")
+    }
+    if arr = expr.left {
+      self.emit_expr(arr)
+    }
+    h = self.new_temp
+    self.line("LOCAL :${h} :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :${found}")
+    self.line("ADDR")
+    self.line("LOCAL :${key}")
+    self.line("LOCAL :${h}")
+    fn_name = self.hash_get_func(ty)
+    self.line("CALL :${fn_name}")
+    self.emit_hash_get_wrap(ty, found)
+  }
+
+  fn emit_hash_get_wrap(ty: Ty, found: String) {
+    val = self.new_temp
+    want = ty_int()
+    if v = ty.val {
+      m = ty_myc(v)
+      self.line("LOCAL :${val} :${m}")
+      self.line("STORE")
+      self.ensure_root(val, v)
+      want = ty_nilable(v)
+    }
+    dest = self.new_temp
+    self.line("LOCAL :${found}")
+    self.line("PUSH 1")
+    self.line("BINARY :eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${val}")
+    if v = ty.val {
+      self.emit_wrap_union(v, want)
+    }
+    wm = ty_myc(want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${dest}")
+  }
+
+  fn emit_hash_method(expr: Expr, ty: Ty) {
+    if str_eq(expr.callee, "get") {
+      idx = Expr.new(ex_index(), expr.loc)
+      if recv = expr.receiver {
+        idx.left = recv
+      }
+      if expr.args.size > 0 {
+        idx.right = expr.args[0]
+      }
+      idx.ty = expr.ty
+      self.emit_hash_get(idx, ty)
+      return
+    }
+    if str_eq(expr.callee, "delete") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      key = self.new_temp
+      if k = ty.key {
+        m = ty_myc(k)
+        self.line("LOCAL :${key} :${m}")
+      } else {
+        self.line("LOCAL :${key} :ptr<u8>")
+      }
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      h = self.new_temp
+      self.line("LOCAL :${h} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${key}")
+      self.line("LOCAL :${h}")
+      fn_name = self.hash_del_func(ty)
+      self.line("CALL :${fn_name}")
+      return
+    }
+    if str_eq(expr.callee, "inc_slice") {
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      stop = self.new_temp
+      self.line("LOCAL :${stop} :i32")
+      self.line("STORE")
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      start = self.new_temp
+      self.line("LOCAL :${start} :i32")
+      self.line("STORE")
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      s = self.new_temp
+      self.line("LOCAL :${s} :ptr<u8>")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      h = self.new_temp
+      self.line("LOCAL :${h} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${stop}")
+      self.line("LOCAL :${start}")
+      self.line("LOCAL :${s}")
+      self.line("LOCAL :${h}")
+      self.line("CALL :avant_hash_inc_slice")
+      return
+    }
+    if str_eq(expr.callee, "get_slice") {
+      found = self.new_temp
+      self.line("PUSH 0")
+      self.line("LOCAL :${found} :i32")
+      self.line("STORE")
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      stop = self.new_temp
+      self.line("LOCAL :${stop} :i32")
+      self.line("STORE")
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      start = self.new_temp
+      self.line("LOCAL :${start} :i32")
+      self.line("STORE")
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      s = self.new_temp
+      self.line("LOCAL :${s} :ptr<u8>")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      h = self.new_temp
+      self.line("LOCAL :${h} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${found}")
+      self.line("ADDR")
+      self.line("LOCAL :${stop}")
+      self.line("LOCAL :${start}")
+      self.line("LOCAL :${s}")
+      self.line("LOCAL :${h}")
+      self.line("CALL :avant_hash_get_str_slice")
+      self.emit_hash_get_wrap(ty, found)
+      return
+    }
+    if str_eq(expr.callee, "get_concat") {
+      found = self.new_temp
+      self.line("PUSH 0")
+      self.line("LOCAL :${found} :i32")
+      self.line("STORE")
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      b = self.new_temp
+      self.line("LOCAL :${b} :ptr<u8>")
+      self.line("STORE")
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      a = self.new_temp
+      self.line("LOCAL :${a} :ptr<u8>")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      h = self.new_temp
+      self.line("LOCAL :${h} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${found}")
+      self.line("ADDR")
+      self.line("LOCAL :${b}")
+      self.line("LOCAL :${a}")
+      self.line("LOCAL :${h}")
+      self.line("CALL :avant_hash_get_concat")
+      self.emit_hash_get_wrap(ty, found)
+    }
+  }
+
+  fn emit_array_method(expr: Expr, ty: Ty) {
+    if str_eq(expr.callee, "push") {
+      self.emit_array_push(expr, ty)
+      return
+    }
+    if str_eq(expr.callee, "pop") {
+      if recv = expr.receiver {
+        self.emit_array_pop(recv, ty)
+      }
+      return
+    }
+    if str_eq(expr.callee, "each") {
+      self.emit_array_each(expr, ty)
+      return
+    }
+    if str_eq(expr.callee, "sort") {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_array_sort_i32")
+      return
+    }
+    if str_eq(expr.callee, "clear") {
+      if recv = expr.receiver {
+        self.emit_array_clear(recv, ty)
+      }
+      return
+    }
+    if str_eq(expr.callee, "fill") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_array_fill_i32")
+      return
+    }
+    if str_eq(expr.callee, "reserve") {
+      self.emit_array_reserve(expr, ty)
+    }
+  }
+
+  fn emit_array_clear(recv: Expr, ty: Ty) {
+    self.emit_expr(recv)
+    arr = self.new_temp
+    m = ty_myc(ty)
+    self.line("LOCAL :${arr} :${m}")
+    self.line("STORE")
+    self.ensure_root(arr, ty)
+    self.line("PUSH 0")
+    self.line("LOCAL :${arr}")
+    self.line("DEREF")
+    self.line("FIELD 1")
+    self.line("STORE")
+  }
+
+  fn emit_array_reserve(expr: Expr, ty: Ty) {
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+    }
+    arr = self.new_temp
+    m = ty_myc(ty)
+    self.line("LOCAL :${arr} :${m}")
+    self.line("STORE")
+    self.ensure_root(arr, ty)
+    if e = ty.inner {
+      tid = array_type_id(e)
+      self.line("PUSH ${tid} :u32")
+      em = ty_myc(e)
+      self.line("SIZEOF :${em}")
+      self.line("AS :u64")
+    }
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    self.line("LOCAL :${arr}")
+    self.line("CALL :avant_array_reserve")
+  }
+
+  fn emit_array_pop(recv: Expr, ty: Ty) {
+    self.emit_expr(recv)
+    arr = self.new_temp
+    m = ty_myc(ty)
+    self.line("LOCAL :${arr} :${m}")
+    self.line("STORE")
+    self.ensure_root(arr, ty)
+    if e = ty.inner {
+      em = ty_myc(e)
+      self.line("SIZEOF :${em}")
+      self.line("AS :u64")
+      self.line("LOCAL :${arr}")
+      self.line("CALL :avant_array_pop_slot")
+      self.line("AS :ptr<${em}>")
+      slot = self.new_temp
+      self.line("LOCAL :${slot} :ptr<${em}>")
+      self.line("STORE")
+      self.emit_ptr_root(slot)
+      self.line("LOCAL :${slot}")
+      self.line("DEREF")
+    }
+  }
+
+  fn emit_array_push(expr: Expr, ty: Ty) {
+    if e = ty.inner {
+      if e.is_int {
+        if expr.args.size > 0 {
+          self.emit_expr(expr.args[0])
+          self.emit_coerce(expr_ty(expr.args[0]), e)
+        }
+        if recv = expr.receiver {
+          self.emit_expr(recv)
+        }
+        self.line("CALL :avant_array_push_i32")
+        return
+      }
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      arr = self.new_temp
+      m = ty_myc(ty)
+      self.line("LOCAL :${arr} :${m}")
+      self.line("STORE")
+      self.ensure_root(arr, ty)
+      tid = array_type_id(e)
+      self.line("PUSH ${tid} :u32")
+      em = ty_myc(e)
+      self.line("SIZEOF :${em}")
+      self.line("AS :u64")
+      self.line("LOCAL :${arr}")
+      self.line("CALL :avant_array_push_slot")
+      self.line("AS :ptr<${em}>")
+      slot = self.new_temp
+      self.line("LOCAL :${slot} :ptr<${em}>")
+      self.line("STORE")
+      self.emit_ptr_root(slot)
+      if heap_ptr_value(e) {
+        self.line("LOCAL :${arr}")
+        self.line("DEREF")
+        self.line("FIELD 0")
+        self.line("CALL :avant_barrier")
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+        self.emit_coerce(expr_ty(expr.args[0]), e)
+      }
+      self.line("LOCAL :${slot}")
+      self.line("DEREF")
+      self.line("STORE")
+    }
+  }
+
+  fn emit_array_each(expr: Expr, ty: Ty) {
+    if b = expr.block {
+      pname = b.params[0]
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      arr = self.new_temp
+      m = ty_myc(ty)
+      self.line("LOCAL :${arr} :${m}")
+      self.line("STORE")
+      self.ensure_root(arr, ty)
+      i = self.new_temp
+      self.line("PUSH 0")
+      self.line("LOCAL :${i} :i32")
+      self.line("STORE")
+      self.line("LOOP")
+      self.indent = self.indent + 1
+      self.line("COND")
+      self.indent = self.indent + 1
+      self.line("LOCAL :${arr}")
+      self.line("DEREF")
+      self.line("FIELD 1")
+      self.line("LOCAL :${i}")
+      self.line("BINARY :less")
+      self.indent = self.indent - 1
+      self.line("BODY")
+      self.indent = self.indent + 1
+      buf = self.new_temp
+      self.line("LOCAL :${arr}")
+      self.line("DEREF")
+      self.line("FIELD 0")
+      if e = ty.inner {
+        em = ty_myc(e)
+        self.line("LOCAL :${buf} :ptr<${em}>")
+        self.line("STORE")
+        self.line("LOCAL :${i}")
+        self.line("LOCAL :${buf}")
+        self.line("BINARY :add")
+        self.line("DEREF")
+        self.line("LOCAL :${pname} :${em}")
+        self.line("STORE")
+        self.ensure_root(pname, e)
+      }
+      self.emit_stmts(b.body, false)
+      self.line("PUSH 1")
+      self.line("LOCAL :${i}")
+      self.line("BINARY :add")
+      self.line("LOCAL :${i} :i32")
+      self.line("STORE")
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDLOOP")
+    }
+  }
+
+  fn emit_call(expr: Expr) {
+    if expr.lib_name.size > 0 {
+      self.emit_call_named(expr.callee, expr.args)
+      return
+    }
+    if recv = expr.receiver {
+      if str_eq(expr.callee, "new") {
+        self.emit_ctor_call(expr, recv)
+        return
+      }
+      rty = expr_ty(recv)
+      if rty.is_float {
+        self.emit_float_method(expr)
+        return
+      }
+      if rty.is_integer {
+        self.emit_int_method(expr)
+        return
+      }
+      if rty.is_string {
+        self.emit_string_method(expr)
+        return
+      }
+      if rty.is_array {
+        self.emit_array_method(expr, rty)
+        return
+      }
+      if rty.is_hash {
+        self.emit_hash_method(expr, rty)
+        return
+      }
+      if rty.is_buf {
+        self.emit_buf_method(expr)
+        return
+      }
+      if rty.is_join {
+        self.emit_join(expr)
+        return
+      }
+      self.emit_method_invoke(recv, expr.callee, expr.args)
+      return
+    }
+    if str_eq(expr.callee, "puts") {
+      if expr.args.size > 0 {
+        self.emit_puts(expr.args[0])
+      }
+      return
+    }
+    if str_eq(expr.callee, "spawn") {
+      self.emit_spawn(expr)
+      return
+    }
+    if str_eq(expr.callee, "now_ms") {
+      self.line("CALL :avant_now_ms")
+      return
+    }
+    if str_eq(expr.callee, "file_read") {
+      self.emit_opt_cstr(expr, "avant_file_read")
+      return
+    }
+    if str_eq(expr.callee, "file_write") {
+      self.emit_call_named("avant_file_write", expr.args)
+      return
+    }
+    if str_eq(expr.callee, "argv") {
+      self.line("CALL :avant_argv")
+      m = ty_myc(expr_ty(expr))
+      self.line("AS :${m}")
+      return
+    }
+    if str_eq(expr.callee, "process_run") {
+      self.emit_process_run(expr)
+      return
+    }
+    if str_eq(expr.callee, "process_run_out") {
+      self.emit_process_run_out(expr)
+      return
+    }
+    if str_eq(expr.callee, "env_get") {
+      self.emit_opt_cstr(expr, "avant_env_get")
+      return
+    }
+    if str_eq(expr.callee, "file_exists") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_file_exists")
+      self.line("PUSH 1")
+      self.line("BINARY :eq")
+      return
+    }
+    if str_eq(expr.callee, "dir_list") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_dir_list")
+      m = ty_myc(expr_ty(expr))
+      self.line("AS :${m}")
+      return
+    }
+    if str_eq(expr.callee, "now_us") {
+      self.line("CALL :avant_now_us")
+      return
+    }
+    if str_eq(expr.callee, "chr") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_str_from_byte")
+      return
+    }
+    if str_eq(expr.callee, "repeat_byte") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_str_repeat_byte")
+      return
+    }
+    if str_eq(expr.callee, "bytes_to_str") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_str_from_i32_bytes")
+      return
+    }
+    if str_eq(expr.callee, "fmt_float") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_str_fmt_float")
+      return
+    }
+    if str_eq(expr.callee, "str_to_f_slice") {
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_str_to_f_slice")
+      return
+    }
+    if str_eq(expr.callee, "json_free") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_json_free")
+      return
+    }
+    if str_eq(expr.callee, "b64_encode") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_b64_encode")
+      return
+    }
+    if str_eq(expr.callee, "b64_decode") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_b64_decode")
+      return
+    }
+    if str_eq(expr.callee, "b64_encode_buf") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_b64_encode_buf")
+      return
+    }
+    if str_eq(expr.callee, "b64_decode_buf") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_b64_decode_buf")
+      return
+    }
+    if str_eq(expr.callee, "zlib_compress") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_zlib_compress")
+      return
+    }
+    if str_eq(expr.callee, "zlib_uncompress") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_zlib_uncompress")
+      return
+    }
+    if str_eq(expr.callee, "sha256") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_sha256")
+      return
+    }
+    if str_eq(expr.callee, "crc32_bytes") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_crc32_i32")
+      return
+    }
+    if str_eq(expr.callee, "sha256_word0") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_sha256_word0")
+      return
+    }
+    if str_eq(expr.callee, "re_count") {
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_re_count")
+      return
+    }
+    if str_eq(expr.callee, "hash_last_key") {
+      self.line("CALL :avant_hash_last_key")
+      return
+    }
+    if str_eq(expr.callee, "exp") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_exp")
+      return
+    }
+    if str_eq(expr.callee, "json_root") {
+      self.emit_json_root(expr)
+      return
+    }
+    if str_eq(expr.callee, "json_get") {
+      self.emit_json_obj_get(expr)
+      return
+    }
+    if str_eq(expr.callee, "json_len") {
+      self.emit_json_len(expr)
+      return
+    }
+    if str_eq(expr.callee, "json_at") {
+      self.emit_json_at(expr)
+      return
+    }
+    if str_eq(expr.callee, "json_f64") {
+      self.emit_json_f64(expr)
+      return
+    }
+    if str_eq(expr.callee, "json_sum_f64") {
+      self.emit_json_sum_f64(expr)
+      return
+    }
+    if str_eq(expr.callee, "wide_op") {
+      if expr.args.size > 4 {
+        self.emit_expr(expr.args[4])
+      }
+      if expr.args.size > 3 {
+        self.emit_expr(expr.args[3])
+      }
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_wide_op")
+      return
+    }
+    if str_eq(expr.callee, "wide_hi") {
+      self.line("CALL :avant_wide_hi")
+      return
+    }
+    if str_eq(expr.callee, "checksum_f64") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_checksum_f64")
+      return
+    }
+    if str_eq(expr.callee, "checksum_str") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_checksum_str")
+      return
+    }
+    if str_eq(expr.callee, "puts_u") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("PUSH \"%u\\n\"")
+      self.line("PRINTF 1")
+      return
+    }
+    if str_eq(expr.callee, "str_slice") {
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_str_slice")
+      return
+    }
+    if str_eq(expr.callee, "buf_new") {
+      if expr.args.size == 0 {
+        self.line("PUSH 0")
+      } else {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_buf_new")
+      return
+    }
+    if str_eq(expr.callee, "json_parse") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_json_parse")
+      return
+    }
+    if str_eq(expr.callee, "json_int") {
+      self.emit_json_get(expr, false)
+      return
+    }
+    if str_eq(expr.callee, "json_str") {
+      self.emit_json_get(expr, true)
+      return
+    }
+    if str_eq(expr.callee, "http_roundtrip") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_http_roundtrip")
+      return
+    }
+    self.emit_call_named(expr.callee, expr.args)
+  }
+
+  fn is_struct_self(name: String): Bool {
+    if st = self.self_ty {
+      if st.is_struct {
+        return str_eq(self.self_name, name)
+      }
+    }
+    false
+  }
+
+  fn emit_self_field(field: String) {
+    if st = self.self_ty {
+      m = ty_self_ptr_myc(st)
+      self.line("LOCAL :${self.self_name} :${m}")
+      self.line("DEREF")
+      fi = st.field_index(field)
+      self.line("FIELD ${fi}")
+    }
+  }
+
+  fn emit_self_ptr(recv: Expr) {
+    ty = expr_ty(recv)
+    if ty.is_class {
+      self.emit_expr(recv)
+      return
+    }
+    self.emit_lvalue(recv)
+    self.line("ADDR")
+  }
+
+  fn emit_method_invoke(recv: Expr, name: String, args: Array(Expr)) {
+    self.emit_args(args)
+    self.emit_self_ptr(recv)
+    ty = expr_ty(recv)
+    mangled = "${ty.name}__${name}"
+    self.line("CALL :${mangled}")
+  }
+
+  fn emit_ctor_call(expr: Expr, recv: Expr) {
+    if recv.kind == ex_name() {
+      ctor = "${recv.ident}__new"
+      self.emit_call_named(ctor, expr.args)
+    }
+  }
+
+  fn emit_spawn_cap_layout(call: Expr) {
+    if call.cap_names.size == 0 {
+      return
+    }
+    name = call.spawn_thunk
+    self.line("STRUCT :${name}_cap")
+    self.indent = self.indent + 1
+    i = 0
+    while i < call.cap_tys.size {
+      m = ty_myc(call.cap_tys[i])
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  fn emit_spawn(expr: Expr) {
+    name = expr.spawn_thunk
+    if expr.cap_names.size == 0 {
+      self.line("PUSH 0")
+      self.line("AS :ptr<void>")
+    } else {
+      self.emit_alloc_sizeof("${name}_cap", 0)
+      self.line("AS :ptr<${name}_cap>")
+      holder = self.new_temp
+      self.line("LOCAL :${holder} :ptr<${name}_cap>")
+      self.line("STORE")
+      self.line("LOCAL :${holder}")
+      self.line("AS :ptr<void>")
+      self.line("CALL :avant_pin")
+      i = 0
+      while i < expr.cap_names.size {
+        cname = expr.cap_names[i]
+        cm = ty_myc(expr.cap_tys[i])
+        self.line("LOCAL :${cname} :${cm}")
+        self.line("LOCAL :${holder}")
+        self.line("DEREF")
+        self.line("FIELD ${i}")
+        self.line("STORE")
+        i = i + 1
+      }
+      self.line("LOCAL :${holder}")
+      self.line("AS :ptr<void>")
+    }
+    self.line("ADDR :${name}")
+    self.line("AS :ptr<void>")
+    self.line("CALL :avant_spawn")
+  }
+
+  fn emit_spawn_thunk(call: Expr) {
+    if b = call.block {
+      saved_indent = self.indent
+      saved_count = self.temps
+      saved_ret = self.return_type
+      saved_rooted = self.rooted
+      saved_self = self.self_ty
+      saved_self_name = self.self_name
+      saved_main = self.c_main
+      self.indent = 0
+      self.temps = 0
+      self.return_type = ty_int()
+      self.self_ty = nil
+      self.self_name = ""
+      self.c_main = false
+      name = call.spawn_thunk
+      self.line("FUNC :${name}")
+      self.indent = self.indent + 1
+      self.line("ARGS")
+      self.indent = self.indent + 1
+      self.line("TYPE :ptr<void>")
+      self.indent = self.indent - 1
+      self.line("RETURN")
+      self.indent = self.indent + 1
+      self.line("TYPE :i32")
+      self.indent = self.indent - 1
+      self.line("BODY")
+      self.indent = self.indent + 1
+      self.reset_rooted
+      self.line("CALL :avant_gc_enter")
+      self.line("PARAM 0")
+      if call.cap_names.size == 0 {
+        self.line("STACK :drop")
+      } else {
+        self.line("AS :ptr<${name}_cap>")
+        holder = self.new_temp
+        self.line("LOCAL :${holder} :ptr<${name}_cap>")
+        self.line("STORE")
+        i = 0
+        while i < call.cap_names.size {
+          cname = call.cap_names[i]
+          cm = ty_myc(call.cap_tys[i])
+          self.line("LOCAL :${holder}")
+          self.line("DEREF")
+          self.line("FIELD ${i}")
+          self.line("LOCAL :${cname} :${cm}")
+          self.line("STORE")
+          i = i + 1
+        }
+      }
+      i = 0
+      while i < b.body.size {
+        stmt = b.body[i]
+        if i == b.body.size - 1 {
+          if e = stmt.expr {
+            self.emit_expr(e)
+            self.emit_ret
+          } else {
+            self.emit_stmt(stmt, false)
+            self.emit_ret
+          }
+        } else {
+          self.emit_stmt(stmt, false)
+        }
+        i = i + 1
+      }
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDFUNC")
+      self.blank
+      self.indent = saved_indent
+      self.temps = saved_count
+      self.return_type = saved_ret
+      self.rooted = saved_rooted
+      self.self_ty = saved_self
+      self.self_name = saved_self_name
+      self.c_main = saved_main
+    }
+  }
+
+  fn emit_join(expr: Expr) {
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+    }
+    self.line("CALL :avant_join")
+  }
+
+  fn emit_json_get(expr: Expr, as_str: Bool) {
+    found = self.new_temp
+    self.line("PUSH 0")
+    self.line("LOCAL :${found} :i32")
+    self.line("STORE")
+    self.emit_expr(expr.args[1])
+    key = self.new_temp
+    self.line("LOCAL :${key} :ptr<u8>")
+    self.line("STORE")
+    self.emit_expr(expr.args[0])
+    doc = self.new_temp
+    self.line("LOCAL :${doc} :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :${found}")
+    self.line("ADDR")
+    self.line("LOCAL :${key}")
+    self.line("LOCAL :${doc}")
+    val_ty = ty_int()
+    if as_str {
+      self.line("CALL :avant_json_get_str")
+      val_ty = ty_string()
+    } else {
+      self.line("CALL :avant_json_get_int")
+      val_ty = ty_int()
+    }
+    val = self.new_temp
+    vm = ty_myc(val_ty)
+    self.line("LOCAL :${val} :${vm}")
+    self.line("STORE")
+    self.ensure_root(val, val_ty)
+    want = expr_ty(expr)
+    wm = ty_myc(want)
+    slot = self.new_temp
+    self.line("LOCAL :${found}")
+    self.line("PUSH 1")
+    self.line("BINARY :eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${val}")
+    self.emit_wrap_union(val_ty, want)
+    self.line("LOCAL :${slot} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${slot} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${slot}")
+  }
+
+  fn emit_nullable_ptr {
+    ptr_ty = ty_ptr(ty_void())
+    want = ty_nilable(ptr_ty)
+    val = self.new_temp
+    self.line("LOCAL :${val} :ptr<void>")
+    self.line("STORE")
+    self.ensure_root(val, ptr_ty)
+    held = self.new_temp
+    self.line("LOCAL :${val}")
+    self.line("PUSH 0")
+    self.line("AS :ptr<void>")
+    self.line("BINARY :not_eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${val}")
+    self.emit_wrap_union(ptr_ty, want)
+    wm = ty_myc(want)
+    self.line("LOCAL :${held} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${held} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${held}")
+  }
+
+  fn emit_json_root(expr: Expr) {
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    self.line("CALL :avant_json_root")
+  }
+
+  fn emit_json_obj_get(expr: Expr) {
+    if expr.args.size > 1 {
+      self.emit_expr(expr.args[1])
+    }
+    key = self.new_temp
+    self.line("LOCAL :${key} :ptr<u8>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    obj = self.new_temp
+    self.line("LOCAL :${obj} :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :${key}")
+    self.line("LOCAL :${obj}")
+    self.line("CALL :avant_json_obj_get")
+    self.emit_nullable_ptr
+  }
+
+  fn emit_json_len(expr: Expr) {
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    self.line("CALL :avant_json_arr_len")
+  }
+
+  fn emit_json_at(expr: Expr) {
+    if expr.args.size > 1 {
+      self.emit_expr(expr.args[1])
+    }
+    idx = self.new_temp
+    self.line("LOCAL :${idx} :i32")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    arr = self.new_temp
+    self.line("LOCAL :${arr} :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :${idx}")
+    self.line("LOCAL :${arr}")
+    self.line("CALL :avant_json_arr_get")
+    self.emit_nullable_ptr
+  }
+
+  fn emit_json_f64(expr: Expr) {
+    found = self.new_temp
+    self.line("PUSH 0")
+    self.line("LOCAL :${found} :i32")
+    self.line("STORE")
+    if expr.args.size > 1 {
+      self.emit_expr(expr.args[1])
+    }
+    key = self.new_temp
+    self.line("LOCAL :${key} :ptr<u8>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    obj = self.new_temp
+    self.line("LOCAL :${obj} :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :${found}")
+    self.line("ADDR")
+    self.line("LOCAL :${key}")
+    self.line("LOCAL :${obj}")
+    self.line("CALL :avant_json_obj_f64")
+    val_ty = ty_float()
+    val = self.new_temp
+    self.line("LOCAL :${val} :f64")
+    self.line("STORE")
+    want = ty_nilable(val_ty)
+    held = self.new_temp
+    self.line("LOCAL :${found}")
+    self.line("PUSH 1")
+    self.line("BINARY :eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${val}")
+    self.emit_wrap_union(val_ty, want)
+    wm = ty_myc(want)
+    self.line("LOCAL :${held} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${held} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${held}")
+  }
+
+  fn emit_json_sum_f64(expr: Expr) {
+    if expr.args.size > 1 {
+      self.emit_expr(expr.args[1])
+    }
+    key = self.new_temp
+    self.line("LOCAL :${key} :ptr<u8>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    arr = self.new_temp
+    self.line("LOCAL :${arr} :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :${key}")
+    self.line("LOCAL :${arr}")
+    self.line("CALL :avant_json_arr_sum_f64")
+  }
+
+  fn emit_int_convert(from: Ty, name: String) {
+    if str_eq(name, "to_f") {
+      self.line("AS :f64")
+      return
+    }
+    if str_eq(name, "abs") {
+      self.line("UNARY :abs")
+      return
+    }
+    if str_eq(name, "to_i") {
+      if from.is_int {
+        return
+      }
+      self.line("AS :i32")
+      return
+    }
+    if str_eq(name, "to_i64") {
+      if from.is_int {
+        self.line("TO :i64")
+      } else if from.is_uint64 {
+        self.line("AS :i64")
+      }
+      return
+    }
+    if str_eq(name, "to_u64") {
+      if from.is_int {
+        self.line("TO :i64")
+        self.line("AS :u64")
+      } else if from.is_int64 {
+        self.line("AS :u64")
+      }
+    }
+  }
+
+  fn emit_float_field(expr: Expr) {
+    if obj = expr.object {
+      self.emit_expr(obj)
+    }
+    if str_eq(expr.ident, "sqrt") {
+      self.line("UNARY :sqrt")
+    } else if str_eq(expr.ident, "abs") {
+      self.line("UNARY :abs")
+    } else if str_eq(expr.ident, "floor") {
+      self.line("UNARY :floor")
+    } else if str_eq(expr.ident, "to_i") {
+      self.line("UNARY :trunc")
+      self.line("AS :i32")
+    }
+  }
+
+  fn emit_int_field(expr: Expr) {
+    if obj = expr.object {
+      self.emit_expr(obj)
+      self.emit_int_convert(expr_ty(obj), expr.ident)
+    }
+  }
+
+  fn emit_float_method(expr: Expr) {
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+    }
+    if str_eq(expr.callee, "sqrt") {
+      self.line("UNARY :sqrt")
+    } else if str_eq(expr.callee, "exp") {
+      self.line("CALL :avant_exp")
+    } else if str_eq(expr.callee, "abs") {
+      self.line("UNARY :abs")
+    } else if str_eq(expr.callee, "floor") {
+      self.line("UNARY :floor")
+    } else if str_eq(expr.callee, "to_i") {
+      self.line("UNARY :trunc")
+      self.line("AS :i32")
+    }
+  }
+
+  fn emit_int_method(expr: Expr) {
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+      self.emit_int_convert(expr_ty(recv), expr.callee)
+    }
+  }
+
+  fn emit_string_method(expr: Expr) {
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+    }
+    if str_eq(expr.callee, "to_f") {
+      self.line("CALL :avant_str_to_f")
+    } else if str_eq(expr.callee, "to_i") {
+      self.line("CALL :avant_str_to_i")
+    }
+  }
+
+  fn emit_opt_cstr(expr: Expr, cname: String) {
+    found = self.new_temp
+    self.line("PUSH 0")
+    self.line("LOCAL :${found} :i32")
+    self.line("STORE")
+    self.line("LOCAL :${found}")
+    self.line("ADDR")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    self.line("CALL :${cname}")
+    val_ty = ty_string()
+    val = self.new_temp
+    vm = ty_myc(val_ty)
+    self.line("LOCAL :${val} :${vm}")
+    self.line("STORE")
+    self.ensure_root(val, val_ty)
+    want = expr_ty(expr)
+    wm = ty_myc(want)
+    slot = self.new_temp
+    self.line("LOCAL :${found}")
+    self.line("PUSH 1")
+    self.line("BINARY :eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${val}")
+    self.emit_wrap_union(val_ty, want)
+    self.line("LOCAL :${slot} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${slot} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${slot}")
+  }
+
+  fn emit_process_run(expr: Expr) {
+    if expr.args.size > 1 {
+      self.emit_expr(expr.args[1])
+    }
+    self.line("AS :ptr<void>")
+    args = self.new_temp
+    self.line("LOCAL :${args} :ptr<void>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    path = self.new_temp
+    self.line("LOCAL :${path} :ptr<u8>")
+    self.line("STORE")
+    self.ensure_root(path, ty_string())
+    self.line("LOCAL :${args}")
+    self.line("LOCAL :${path}")
+    self.line("CALL :avant_process_run")
+  }
+
+  fn emit_process_run_out(expr: Expr) {
+    if expr.args.size > 2 {
+      self.emit_expr(expr.args[2])
+    }
+    outp = self.new_temp
+    self.line("LOCAL :${outp} :ptr<u8>")
+    self.line("STORE")
+    self.ensure_root(outp, ty_string())
+    if expr.args.size > 1 {
+      self.emit_expr(expr.args[1])
+    }
+    self.line("AS :ptr<void>")
+    args = self.new_temp
+    self.line("LOCAL :${args} :ptr<void>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    }
+    path = self.new_temp
+    self.line("LOCAL :${path} :ptr<u8>")
+    self.line("STORE")
+    self.ensure_root(path, ty_string())
+    self.line("LOCAL :${outp}")
+    self.line("LOCAL :${args}")
+    self.line("LOCAL :${path}")
+    self.line("CALL :avant_process_run_out")
+  }
+
+  fn emit_buf_method(expr: Expr) {
+    if str_eq(expr.callee, "push_byte") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      b = self.new_temp
+      self.line("LOCAL :${b} :i32")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      buf = self.new_temp
+      self.line("LOCAL :${buf} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${b}")
+      self.line("LOCAL :${buf}")
+      self.line("CALL :avant_buf_push_byte")
+      return
+    }
+    if str_eq(expr.callee, "push_str") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      s = self.new_temp
+      self.line("LOCAL :${s} :ptr<u8>")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      buf = self.new_temp
+      self.line("LOCAL :${buf} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${s}")
+      self.line("LOCAL :${buf}")
+      self.line("CALL :avant_buf_push_str")
+      return
+    }
+    if str_eq(expr.callee, "push_slice") {
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      stop = self.new_temp
+      self.line("LOCAL :${stop} :i32")
+      self.line("STORE")
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      start = self.new_temp
+      self.line("LOCAL :${start} :i32")
+      self.line("STORE")
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      s = self.new_temp
+      self.line("LOCAL :${s} :ptr<u8>")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      buf = self.new_temp
+      self.line("LOCAL :${buf} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${stop}")
+      self.line("LOCAL :${start}")
+      self.line("LOCAL :${s}")
+      self.line("LOCAL :${buf}")
+      self.line("CALL :avant_buf_push_slice")
+      return
+    }
+    if str_eq(expr.callee, "push_fmt_f") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      prec = self.new_temp
+      self.line("LOCAL :${prec} :i32")
+      self.line("STORE")
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      v = self.new_temp
+      self.line("LOCAL :${v} :f64")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      buf = self.new_temp
+      self.line("LOCAL :${buf} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${prec}")
+      self.line("LOCAL :${v}")
+      self.line("LOCAL :${buf}")
+      self.line("CALL :avant_buf_push_fmt_f")
+      return
+    }
+    if str_eq(expr.callee, "push_fmt_i") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      n = self.new_temp
+      self.line("LOCAL :${n} :i32")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      buf = self.new_temp
+      self.line("LOCAL :${buf} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${n}")
+      self.line("LOCAL :${buf}")
+      self.line("CALL :avant_buf_push_fmt_i")
+      return
+    }
+    if str_eq(expr.callee, "to_s") {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_buf_to_str")
+      return
+    }
+    if str_eq(expr.callee, "clear") {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_buf_clear")
+    }
+  }
+
+  fn emit_call_named(name: String, args: Array(Expr)) {
+    self.emit_args(args)
+    self.line("CALL :${name}")
+  }
+
+  fn emit_args(args: Array(Expr)) {
+    if args.size <= 1 {
+      if args.size == 1 {
+        self.emit_expr(args[0])
+      }
+      return
+    }
+    tmps: Array(String) = []
+    i = 0
+    while i < args.size {
+      arg = args[i]
+      self.emit_expr(arg)
+      tmp = self.new_temp
+      m = ty_myc(expr_ty(arg))
+      self.line("LOCAL :${tmp} :${m}")
+      self.line("STORE")
+      self.ensure_root(tmp, expr_ty(arg))
+      tmps.push(tmp)
+      i = i + 1
+    }
+    i = tmps.size - 1
+    while i >= 0 {
+      t = tmps[i]
+      self.line("LOCAL :${t}")
+      i = i - 1
+    }
+  }
+
+  fn emit_puts(arg: Expr) {
+    self.emit_expr(arg)
+    ty = expr_ty(arg)
+    if ty.is_int {
+      self.line("PUSH \"%d\\n\"")
+      self.line("PRINTF 1")
+      return
+    }
+    if ty.is_int64 {
+      self.line("PUSH \"%lld\\n\"")
+      self.line("PRINTF 1")
+      return
+    }
+    if ty.is_uint64 {
+      self.line("PUSH \"%llu\\n\"")
+      self.line("PRINTF 1")
+      return
+    }
+    if ty.is_string {
+      self.line("PUSH \"%s\\n\"")
+      self.line("PRINTF 1")
+      return
+    }
+    if ty.is_float {
+      self.line("PUSH \"%g\\n\"")
+      self.line("PRINTF 1")
+      return
+    }
+    if ty.is_bool {
+      self.line("AS :i32")
+      self.line("PUSH \"%d\\n\"")
+      self.line("PRINTF 1")
+    }
+  }
+}
+
+fn emit_myc(program: Program): String {
+  gen = MycGen.new(program)
+  gen.emit
+}

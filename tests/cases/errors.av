@@ -1,0 +1,40 @@
+fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
+  src = "/tmp/avant-s10-${stamp}-${tag}.av"
+  bin = "/tmp/avant-s10-${stamp}-${tag}.bin"
+  log = "/tmp/avant-s10-${stamp}-${tag}.log"
+  dummy = file_write(src, body)
+  code = compile_av(compiler, src, bin, log)
+  c.expect(!file_exists(bin), "${tag} bin absent")
+  if err = file_read(log) {
+    c.expect(str_has(err, needle), tag)
+  } else {
+    c.expect(false, tag)
+  }
+}
+
+fn test_errors(c: Checks) {
+  c.suite("tests/cases/errors.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    expect_err(c, compiler, stamp, "unknown-name", "fn main {\n  puts(x)\n}\n", "unknown name")
+    expect_err(c, compiler, stamp, "no-entry", "fn fact(n: Int): Int {\n  n\n}\n", "main or fn run")
+    expect_err(c, compiler, stamp, "if-bool", "fn main {\n  if 1 { puts(\"x\") }\n}\n", "if condition must be Bool")
+    expect_err(c, compiler, stamp, "missing-return", "fn f: Int {\n}\nfn main {\n  puts(f())\n}\n", "missing return value")
+    expect_err(c, compiler, stamp, "block-scope", "fn main {\n  if true {\n    y = 3\n  }\n  puts(y)\n}\n", "unknown name y")
+    expect_err(c, compiler, stamp, "unknown-type", "fn f(n: Float): Int {\n  n\n}\nfn main {\n  puts(1)\n}\n", "unknown type Float")
+    expect_err(c, compiler, stamp, "empty-array", "fn main {\n  xs = []\n  puts(1)\n}\n", "empty array needs a type")
+    expect_err(c, compiler, stamp, "class-struct", "class Counter {\n  value: Int\n  fn initialize(value: Int) { self.value = value }\n}\nfn main {\n  c = Counter { value: 1 }\n  puts(1)\n}\n", "constructed with Counter.new")
+    expect_err(c, compiler, stamp, "struct-new", "struct Point {\n  x: Int\n}\nfn main {\n  p = Point.new()\n  puts(1)\n}\n", "structs are constructed")
+    expect_err(c, compiler, stamp, "top-fun", "fun sqrt(x: Float64): Float64\nfn main {\n  puts(1)\n}\n", "fun belongs in a lib block")
+    expect_err(c, compiler, stamp, "fun-body", "lib math {\n  fun sqrt(x: Float64): Float64 {\n    x\n  }\n}\nfn main {\n  puts(1)\n}\n", "no body")
+    expect_err(c, compiler, stamp, "struct-default", "struct Point {\n  x: Int = 0\n}\nfn main {\n  puts(1)\n}\n", "struct fields have no defaults")
+    expect_err(c, compiler, stamp, "dup-case", "fn main {\n  switch 1 {\n    case 1 {\n      puts(1)\n    }\n    case 1 {\n      puts(2)\n    }\n  }\n}\n", "duplicate case")
+    expect_err(c, compiler, stamp, "switch-else", "fn f(n: Int): String {\n  switch n {\n    case 0 {\n      \"zero\"\n    }\n  }\n}\nfn main {\n  puts(f(0))\n}\n", "needs else")
+    expect_err(c, compiler, stamp, "switch-str", "fn main {\n  switch \"x\" {\n    case 0 {\n      puts(1)\n    }\n  }\n}\n", "Int or Bool")
+    expect_err(c, compiler, stamp, "field-default", "class Box {\n  n: Int = 1 + 2\n  fn initialize {\n  }\n}\nfn main {\n  puts(Box.new().n)\n}\n", "literal or nil")
+    expect_err(c, compiler, stamp, "spawn-class", "class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  b = Box.new(1)\n  h = spawn { b.n }\n  puts(h.join)\n}\n", "cannot capture")
+    expect_err(c, compiler, stamp, "unterm", "fn main {\n  puts(\"hello)\n}\n", "unterminated")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

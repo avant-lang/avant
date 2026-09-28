@@ -1,0 +1,48 @@
+fn test_gc(c: Checks) {
+  c.suite("tests/cases/gc.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-s10-${stamp}-gc.av"
+    dump = "/tmp/avant-s10-${stamp}-gc.myc"
+    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  puts(a.left.item)\n}\n"
+    w = file_write(src, body)
+    c.eq_int(w, 0, "write gc fixture")
+    code = dump_av(compiler, src, dump)
+    c.eq_int(code, 0, "dump gc fixture")
+    if ir = file_read(dump) {
+      c.expect(str_has(ir, "STRUCT :U_Box_Nil"), "IR has Box? layout")
+      c.expect(str_has(ir, "PUSH 4 :u64"), "T? field type map")
+      c.expect(str_has(ir, "FUNC :avant_alloc"), "IR has avant_alloc")
+      c.expect(str_has(ir, "CALL :avant_alloc"), "IR calls avant_alloc")
+      c.expect(str_has(ir, "FUNC :avant_gc_enter"), "IR has avant_gc_enter")
+      c.expect(str_has(ir, "FUNC :avant_gc_root"), "IR has avant_gc_root")
+      c.expect(str_has(ir, "FUNC :avant_type_map"), "IR has avant_type_map")
+      c.expect(str_has(ir, "FUNC :avant_barrier"), "IR has avant_barrier")
+      c.expect(str_has(ir, "CALL :avant_barrier"), "IR calls avant_barrier")
+      c.expect(!str_has(ir, "MALLOC"), "IR has no MALLOC")
+    } else {
+      c.expect(false, "dump gc fixture")
+    }
+
+    golden = "${avant_test_root()}/tests/goldens/hello.myc"
+    hello = "${avant_test_root()}/examples/hello.av"
+    hello_dump = "/tmp/avant-s10-${stamp}-hello-golden.myc"
+    if file_exists(golden) {
+      gcode = dump_av(compiler, hello, hello_dump)
+      c.eq_int(gcode, 0, "dump hello golden")
+      if got = file_read(hello_dump) {
+        if want = file_read(golden) {
+          c.eq_str(got, want, "hello dump matches golden")
+        } else {
+          c.expect(false, "read hello golden")
+        }
+      } else {
+        c.expect(false, "dump hello golden")
+      }
+    } else {
+      c.expect(false, "hello golden exists")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

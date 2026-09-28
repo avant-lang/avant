@@ -1,0 +1,162 @@
+fn argv_user: Array(String) {
+  args = argv()
+  rest: Array(String) = []
+  i = 1
+  while i < args.size {
+    rest.push(args[i])
+    i = i + 1
+  }
+  rest
+}
+
+fn argv_drop_first(args: Array(String)): Array(String) {
+  rest: Array(String) = []
+  i = 1
+  while i < args.size {
+    rest.push(args[i])
+    i = i + 1
+  }
+  rest
+}
+
+fn argv_filter_coverage(args: Array(String)): Array(String) {
+  rest: Array(String) = []
+  i = 0
+  while i < args.size {
+    if str_eq(args[i], "--coverage") {
+    } else {
+      rest.push(args[i])
+    }
+    i = i + 1
+  }
+  rest
+}
+
+fn show_usage {
+  puts("Avant compiler (Stage 8)")
+  puts("")
+  puts("  avant-av run FILE.av [FILE.av ...] [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av dump FILE.av [FILE.av ...] [--coverage]")
+  puts("  avant-av compile FILE.av [FILE.av ...] [OUT] [--coverage] [--lib NAME] [--cc FILE.c]")
+}
+
+fn driver_dump(args: Array(String)) {
+  split = take_av_files(args)
+  if split.paths.size == 0 {
+    puts("dump needs a .av file")
+    show_usage()
+    return
+  }
+  box = compile_av_paths(split.paths)
+  if box.ok {
+    print_ir(box.text)
+  }
+}
+
+fn driver_run(args: Array(String)) {
+  split = take_av_files(args)
+  if split.paths.size == 0 {
+    puts("run needs a .av file")
+    show_usage()
+    return
+  }
+  job = parse_link(split.rest)
+  if job.err.size > 0 {
+    puts(job.err)
+    return
+  }
+  box = compile_av_paths(split.paths)
+  if box.ok {
+    code = invoke_myc(box.text, "r", job.objects, job.flags, "")
+    if code != 0 {
+      puts("myc-llvm failed (${code})")
+    }
+  }
+}
+
+fn driver_compile(args: Array(String)) {
+  split = take_av_files(args)
+  if split.paths.size == 0 {
+    puts("compile needs a .av file")
+    show_usage()
+    return
+  }
+  last = split.paths[split.paths.size - 1]
+  out_split = take_out_path(split.rest, last)
+  if out_split.paths.size == 0 {
+    puts("compile needs an output path")
+    return
+  }
+  out_path = out_split.paths[0]
+  job = parse_link(out_split.rest)
+  if job.err.size > 0 {
+    puts(job.err)
+    return
+  }
+  box = compile_av_paths(split.paths)
+  if box.ok {
+    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path)
+    if code != 0 {
+      puts("myc-llvm failed (${code})")
+    }
+  }
+}
+
+fn main {
+  args = argv_filter_coverage(argv_user())
+  if args.size == 0 {
+    show_usage()
+    return
+  }
+  command = args[0]
+  if str_eq(command, "-h") {
+    show_usage()
+    return
+  }
+  if str_eq(command, "--help") {
+    show_usage()
+    return
+  }
+  if str_eq(command, "help") {
+    show_usage()
+    return
+  }
+  if str_eq(command, "dump") {
+    driver_dump(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "d") {
+    driver_dump(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "run") {
+    driver_run(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "r") {
+    driver_run(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "compile") {
+    driver_compile(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "c") {
+    driver_compile(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "bind") {
+    puts("bind stays on the Crystal host")
+    return
+  }
+  if str_eq(command, "b") {
+    puts("bind stays on the Crystal host")
+    return
+  }
+  if str_ends(command, ".av") {
+    driver_run(args)
+    return
+  }
+  puts("unknown command ${command}")
+  show_usage()
+}

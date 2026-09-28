@@ -1,0 +1,123 @@
+fn add(a: Int, b: Int): Int {
+  a + b
+}
+
+fn test_lang(c: Checks) {
+  c.suite("tests/cases/lang.av")
+  c.eq_int(7 & 5, 5, "bitwise and")
+  c.expect(true && false || true, "logical")
+  c.eq_int("abc"[0], 97, "string byte")
+
+  n = 0
+  while n < 10 {
+    if n == 3 {
+      break
+    }
+    n = n + 1
+  }
+  c.eq_int(n, 3, "break")
+  c.eq_int(8 >> 1, 4, "shift")
+
+  x = 3
+  y = 4
+  h = spawn { add(x, y) }
+  c.eq_int(h.join, 7, "spawn Int capture")
+
+  inner = 0
+  while inner < 5 {
+    k = 0
+    while k < 3 {
+      if k == 1 {
+        break
+      }
+      k = k + 1
+    }
+    inner = inner + 1
+  }
+  c.eq_int(inner, 5, "inner break")
+
+  c.eq_int("42".to_i, 42, "to_i")
+
+  p = 1
+  q = p
+  c.eq_int(q, 1, "int copy")
+
+  xs: Array(Int) = [3, 1, 2]
+  xs.sort
+  c.eq_int(xs[0], 1, "sort lo")
+  c.eq_int(xs[2], 3, "sort hi")
+
+  hmap = Hash(Int, Int).new
+  hmap[10] = 1
+  if v = hmap.get(10) {
+    hmap[10] = v + 1
+  }
+  hmap[20] = 3
+  c.eq_int(hmap.size, 2, "Hash(Int, Int) size")
+  if v2 = hmap.get(10) {
+    c.eq_int(v2, 2, "Hash(Int, Int) get")
+  } else {
+    c.expect(false, "Hash(Int, Int) get")
+  }
+  popped: Array(Int) = [1, 2]
+  c.eq_int(popped.pop, 2, "Array.pop")
+
+  cleared: Array(Int) = [1, 2, 3]
+  cleared.clear
+  cleared.reserve(8)
+  cleared.push(7)
+  cleared.push(9)
+  c.eq_int(cleared.size, 2, "clear+reserve size")
+  c.eq_int(cleared[0], 7, "clear+reserve 0")
+  c.eq_int(cleared[1], 9, "clear+reserve 1")
+
+  a64: Int64 = 1
+  b64 = 2i64
+  c.eq_int((a64 + b64).to_i, 3, "Int64 add")
+  filled = Array(Int).new(4)
+  filled.fill(7)
+  c.eq_int(filled[3], 7, "Array.fill")
+
+  acc: UInt64 = 3000000000
+  c.eq_str("${acc}", "3000000000", "UInt64 interp")
+
+  b = buf_new()
+  b.push_byte(97)
+  b.push_str("b")
+  b.push_fmt_i(12)
+  c.eq_str(b.to_s, "ab12", "Buf")
+  bf = buf_new(8)
+  bf.push_fmt_f(3.14159, 2)
+  c.eq_str(bf.to_s, "3.14", "Buf push_fmt_f")
+
+  c.eq_str(chr(97) + chr(98), "ab", "chr")
+  c.eq_str(repeat_byte(97, 3), "aaa", "repeat_byte")
+  bytes: Array(Int) = [97, 98, 99]
+  c.eq_str(bytes_to_str(bytes), "abc", "bytes_to_str")
+  c.eq_str(str_slice("abcd", 1, 3), "bc", "str_slice")
+  c.eq_str(fmt_float(1.0, 7), "1.0000000", "fmt_float")
+  c.eq_int(exp(0.0).to_i, 1, "exp")
+
+  i = 0
+  while i < 2 {
+    typed: Array(Int) = []
+    typed.push(i)
+    i = i + 1
+  }
+  c.eq_int(i, 2, "while typed bind")
+
+  s = switch true {
+    case 0 { "no" }
+    case 1 { "yes" }
+    else { "other" }
+  }
+  c.eq_str(s, "yes", "Bool switch")
+
+  miss = 0
+  switch 9 {
+    case 0 {
+      miss = 1
+    }
+  }
+  c.eq_int(miss, 0, "void switch miss")
+}

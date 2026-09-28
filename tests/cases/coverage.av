@@ -1,0 +1,41 @@
+fn test_coverage(c: Checks) {
+  c.suite("tests/cases/coverage.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-s10-${stamp}-cov.av"
+    bin = "/tmp/avant-s10-${stamp}-cov.bin"
+    log = "/tmp/avant-s10-${stamp}-cov.log"
+    dump_log = "/tmp/avant-s10-${stamp}-cov.myc"
+    body = "fn covered(n: Int): Int {\n  r = 0\n  if n > 0 {\n    r = 1\n  } else {\n    r = 2\n  }\n  r\n}\nfn unused(n: Int): Int {\n  n + 1\n}\nfn main {\n  x = covered(1)\n}\n"
+    w = file_write(src, body)
+    c.eq_int(w, 0, "write coverage fixture")
+
+    dump_code = dump_av_cov(compiler, src, dump_log)
+    c.eq_int(dump_code, 0, "dump --coverage")
+    if ir = file_read(dump_log) {
+      c.expect(str_has(ir, "avant_cov_hit"), "dump IR has avant_cov_hit")
+      c.expect(str_has(ir, "avant_cov_init"), "dump IR has avant_cov_init")
+    } else {
+      c.expect(false, "dump --coverage")
+    }
+
+    code = compile_av_cov(compiler, src, bin, log)
+    c.eq_int(code, 0, "compile --coverage")
+    c.expect(file_exists(bin), "coverage bin exists")
+    chmod_x(bin)
+    run_code = run_av_bin(bin, log)
+    c.eq_int(run_code, 0, "run coverage fixture")
+    if out = file_read(log) {
+      c.expect(str_has(out, "% Stmts"), "coverage has % Stmts")
+      c.expect(str_has(out, "% Branch"), "coverage has % Branch")
+      c.expect(str_has(out, "% Funcs"), "coverage has % Funcs")
+      c.expect(str_has(out, "% Lines"), "coverage has % Lines")
+      c.expect(str_has(out, "Uncovered Line"), "coverage has Uncovered Line")
+      c.expect(str_has(out, "All files"), "coverage has All files")
+    } else {
+      c.expect(false, "coverage table")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

@@ -1,0 +1,1322 @@
+fn str_ends(s: String, suf: String): Bool {
+  if suf.size > s.size {
+    return false
+  }
+  str_eq(str_slice(s, s.size - suf.size, s.size), suf)
+}
+
+fn hex_digit_val(c: Int): Int {
+  if ch_is_digit(c) {
+    return c - 48
+  }
+  if c >= 97 {
+    if c <= 102 {
+      return c - 87
+    }
+  }
+  if c >= 65 {
+    if c <= 70 {
+      return c - 55
+    }
+  }
+  0 - 1
+}
+
+fn parse_u64_dec(s: String): UInt64 {
+  n = 0u64
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if ch_is_digit(c) {
+      d = (c - 48).to_u64
+      n = n * 10u64 + d
+    } else {
+      return 0u64
+    }
+    i = i + 1
+  }
+  n
+}
+
+fn parse_u64_hex(s: String): UInt64 {
+  n = 0u64
+  i = 0
+  while i < s.size {
+    v = hex_digit_val(s[i])
+    if v < 0 {
+      return 0u64
+    }
+    n = n * 16u64 + v.to_u64
+    i = i + 1
+  }
+  n
+}
+
+class TypeBody {
+  fields: Array(Field)
+  methods: Array(Function)
+
+  fn initialize {
+    f: Array(Field) = []
+    self.fields = f
+    m: Array(Function) = []
+    self.methods = m
+  }
+}
+
+class Parser {
+  source: Source
+  tokens: Array(Token)
+  index: Int = 0
+  allow_struct_lit: Bool = true
+  failed: Bool = false
+  err: CompileError? = nil
+  int_bits: UInt64 = 0u64
+  int_suffix: String = ""
+
+  fn initialize(source: Source, tokens: Array(Token)) {
+    self.source = source
+    self.tokens = tokens
+    self.index = 0
+    self.allow_struct_lit = true
+    self.failed = false
+    self.err = nil
+    self.int_bits = 0u64
+    self.int_suffix = ""
+  }
+
+  fn has_err: Bool {
+    self.failed
+  }
+
+  fn fail(loc: Location, message: String) {
+    if self.failed {
+      return
+    }
+    self.failed = true
+    self.err = CompileError.new(loc, message)
+  }
+
+  fn dummy_type(loc: Location): TypeName {
+    TypeName.new(loc, "Int")
+  }
+
+  fn dummy_expr(loc: Location): Expr {
+    Expr.new(ex_nil(), loc)
+  }
+
+  fn dummy_stmt(loc: Location): Stmt {
+    stmt_expr(loc, self.dummy_expr(loc))
+  }
+
+  fn dummy_fn(loc: Location): Function {
+    Function.new(loc, "")
+  }
+
+  fn current: Token {
+    self.tokens[self.index]
+  }
+
+  fn bump: Token {
+    tok = self.current
+    if tok.kind != tk_eof() {
+      self.index = self.index + 1
+    }
+    tok
+  }
+
+  fn match_tok(kind: Int): Bool {
+    if self.current.kind != kind {
+      return false
+    }
+    dummy = self.bump
+    true
+  }
+
+  fn expect(kind: Int): Token {
+    tok = self.current
+    if tok.kind != kind {
+      self.fail(tok.loc, "expected ${kind}, found ${tok.kind}")
+      return tok
+    }
+    self.bump
+  }
+
+  fn skip_newlines {
+    while self.current.kind == tk_newline() {
+      dummy = self.bump
+    }
+  }
+
+  fn look_ahead_non_nl: Token {
+    i = self.index
+    while i < self.tokens.size {
+      t = self.tokens[i]
+      if t.kind != tk_newline() {
+        return t
+      }
+      i = i + 1
+    }
+    self.tokens[self.tokens.size - 1]
+  }
+
+  fn infix_prec(kind: Int): Int {
+    switch kind {
+      case 52 {
+        1
+      }
+      case 54 {
+        2
+      }
+      case 51 {
+        3
+      }
+      case 55 {
+        4
+      }
+      case 53 {
+        5
+      }
+      case 43, 44 {
+        6
+      }
+      case 45, 46, 47, 48 {
+        7
+      }
+      case 57, 58 {
+        8
+      }
+      case 37, 38 {
+        9
+      }
+      case 39, 40, 41 {
+        10
+      }
+      else {
+        0 - 1
+      }
+    }
+  }
+
+  fn skip_newlines_if_continuing {
+    if self.current.kind != tk_newline() {
+      return
+    }
+    kind = self.look_ahead_non_nl.kind
+    if self.infix_prec(kind) >= 0 {
+      self.skip_newlines
+    }
+  }
+
+  fn skip_newlines_if_postfix {
+    if self.current.kind != tk_newline() {
+      return
+    }
+    kind = self.look_ahead_non_nl.kind
+    if kind == tk_dot() || kind == tk_l_bracket() || kind == tk_question() {
+      self.skip_newlines
+    }
+  }
+
+  fn parse_int_tok(tok: Token): Bool {
+    raw = tok.value
+    suffix = ""
+    if str_ends(raw, "u64") {
+      if raw.size > 3 {
+        suffix = "u64"
+        raw = str_slice(raw, 0, raw.size - 3)
+      }
+    } else if str_ends(raw, "i64") {
+      if raw.size > 3 {
+        suffix = "i64"
+        raw = str_slice(raw, 0, raw.size - 3)
+      }
+    }
+    bits = 0u64
+    if raw.size >= 2 {
+      if raw[0] == 48 {
+        if raw[1] == 120 || raw[1] == 88 {
+          bits = parse_u64_hex(str_slice(raw, 2, raw.size))
+          self.int_bits = bits
+          self.int_suffix = suffix
+          return true
+        }
+      }
+    }
+    bits = parse_u64_dec(raw)
+    self.int_bits = bits
+    self.int_suffix = suffix
+    true
+  }
+
+  fn parse: Program {
+    self.skip_newlines
+    loc = self.current.loc
+    program = Program.new(loc)
+    while self.current.kind != tk_eof() {
+      if self.has_err {
+        return program
+      }
+      k = self.current.kind
+      if k == tk_struct() {
+        program.structs.push(self.parse_struct)
+      } else if k == tk_class() {
+        program.classes.push(self.parse_class)
+      } else if k == tk_lib() {
+        program.libs.push(self.parse_lib)
+      } else if k == tk_fn() {
+        program.functions.push(self.parse_fn(""))
+      } else if k == tk_fun() {
+        self.fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
+        return program
+      } else {
+        self.fail(self.current.loc, "expected struct, class, lib, or fn, found ${k}")
+        return program
+      }
+      self.skip_newlines
+    }
+    program
+  }
+
+  fn parse_struct: StructDef {
+    loc = self.expect(tk_struct()).loc
+    name = self.expect(tk_ident()).value
+    body = self.parse_type_body(name)
+    i = 0
+    while i < body.fields.size {
+      field = body.fields[i]
+      if d = field.default {
+        self.fail(field.loc, "struct fields have no defaults; use a literal")
+      }
+      i = i + 1
+    }
+    defn = StructDef.new(loc, name)
+    defn.fields = body.fields
+    defn.methods = body.methods
+    defn
+  }
+
+  fn parse_class: ClassDef {
+    loc = self.expect(tk_class()).loc
+    name = self.expect(tk_ident()).value
+    body = self.parse_type_body(name)
+    defn = ClassDef.new(loc, name)
+    defn.fields = body.fields
+    defn.methods = body.methods
+    defn
+  }
+
+  fn parse_lib: LibDef {
+    loc = self.expect(tk_lib()).loc
+    name = self.expect(tk_ident()).value
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    defn = LibDef.new(loc, name)
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.current.kind == tk_fn() {
+        self.fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
+        break
+      }
+      if self.current.kind != tk_fun() {
+        self.fail(self.current.loc, "inside lib, write fun (the C ABI)")
+        break
+      }
+      defn.funs.push(self.parse_fun_decl)
+      if self.has_err {
+        break
+      }
+      self.skip_newlines
+    }
+    dummy2 = self.expect(tk_r_brace())
+    defn
+  }
+
+  fn parse_fun_decl: FunDecl {
+    loc = self.expect(tk_fun()).loc
+    name_tok = self.expect(tk_ident())
+    decl = FunDecl.new(loc, name_tok.value)
+    if self.current.kind == tk_l_paren() {
+      dummy = self.bump
+      self.skip_newlines
+      if self.current.kind != tk_r_paren() {
+        while true {
+          decl.params.push(self.parse_param)
+          self.skip_newlines
+          if self.match_tok(tk_comma()) {
+            self.skip_newlines
+          } else {
+            break
+          }
+        }
+      }
+      dummy2 = self.expect(tk_r_paren())
+    }
+    if self.match_tok(tk_colon()) {
+      self.skip_newlines
+      decl.return_type = self.parse_type_name
+    }
+    self.skip_newlines
+    if self.current.kind == tk_l_brace() {
+      self.fail(self.current.loc, "fun is a C declaration; it has no body")
+      return decl
+    }
+    decl
+  }
+
+  fn parse_type_body(owner: String): TypeBody {
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    body = TypeBody.new()
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.has_err {
+        break
+      }
+      if self.current.kind == tk_fn() {
+        body.methods.push(self.parse_fn(owner))
+      } else {
+        body.fields.push(self.parse_field)
+      }
+      self.skip_newlines
+    }
+    dummy2 = self.expect(tk_r_brace())
+    body
+  }
+
+  fn parse_field: Field {
+    name = self.expect(tk_ident())
+    dummy = self.expect(tk_colon())
+    self.skip_newlines
+    type = self.parse_type_name
+    field = Field.new(name.loc, name.value, type)
+    if self.match_tok(tk_eq()) {
+      self.skip_newlines
+      field.default = self.parse_expr
+    }
+    field
+  }
+
+  fn parse_fn(owner: String): Function {
+    loc = self.expect(tk_fn()).loc
+    receiver: Param? = nil
+    if owner.size > 0 {
+      if self.current.kind == tk_l_paren() {
+        self.fail(self.current.loc, "inherent methods do not take a receiver; use fn name(...)")
+      }
+    } else {
+      if self.current.kind == tk_l_paren() {
+        dummy = self.bump
+        self.skip_newlines
+        receiver = self.parse_param
+        self.skip_newlines
+        dummy2 = self.expect(tk_r_paren())
+        self.skip_newlines
+      }
+    }
+    name_tok = self.expect(tk_ident())
+    if str_eq(name_tok.value, "new") {
+      if owner.size > 0 {
+        self.fail(name_tok.loc, "new is reserved; write initialize")
+      }
+      if r = receiver {
+        self.fail(name_tok.loc, "new is reserved; write initialize")
+      }
+    }
+    fnn = Function.new(loc, name_tok.value)
+    fnn.receiver = receiver
+    fnn.owner = owner
+    if self.current.kind == tk_l_paren() {
+      dummy = self.bump
+      self.skip_newlines
+      if self.current.kind != tk_r_paren() {
+        while true {
+          fnn.params.push(self.parse_param)
+          self.skip_newlines
+          if self.match_tok(tk_comma()) {
+            self.skip_newlines
+          } else {
+            break
+          }
+        }
+      }
+      dummy2 = self.expect(tk_r_paren())
+    }
+    if self.match_tok(tk_colon()) {
+      self.skip_newlines
+      fnn.return_type = self.parse_type_name
+    }
+    self.skip_newlines
+    fnn.body = self.parse_block
+    fnn
+  }
+
+  fn parse_param: Param {
+    name_tok = self.expect(tk_ident())
+    dummy = self.expect(tk_colon())
+    self.skip_newlines
+    type = self.parse_type_name
+    Param.new(name_tok.loc, name_tok.value, type)
+  }
+
+  fn parse_type_name: TypeName {
+    loc = self.current.loc
+    first = self.parse_nilable_type
+    if self.current.kind != tk_pipe() {
+      return first
+    }
+    first_copy = first
+    u = TypeName.new(loc, "")
+    u.members.push(first_copy)
+    while self.match_tok(tk_pipe()) {
+      self.skip_newlines
+      u.members.push(self.parse_nilable_type)
+    }
+    u
+  }
+
+  fn parse_nilable_type: TypeName {
+    tn = self.parse_primary_type
+    while self.current.kind == tk_question() {
+      dummy = self.bump
+      tn.nilable = true
+    }
+    tn
+  }
+
+  fn parse_primary_type: TypeName {
+    tok = self.expect(tk_ident())
+    tn = TypeName.new(tok.loc, tok.value)
+    if self.current.kind == tk_l_paren() {
+      dummy = self.bump
+      self.skip_newlines
+      if self.current.kind != tk_r_paren() {
+        while true {
+          tn.args.push(self.parse_type_name)
+          self.skip_newlines
+          if self.match_tok(tk_comma()) {
+            self.skip_newlines
+          } else {
+            break
+          }
+        }
+      }
+      dummy2 = self.expect(tk_r_paren())
+    }
+    tn
+  }
+
+  fn parse_block: Array(Stmt) {
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    stmts: Array(Stmt) = []
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.has_err {
+        break
+      }
+      stmts.push(self.parse_stmt)
+      self.skip_newlines
+    }
+    dummy2 = self.expect(tk_r_brace())
+    stmts
+  }
+
+  fn parse_stmt: Stmt {
+    k = self.current.kind
+    if k == tk_if() {
+      return self.parse_if
+    }
+    if k == tk_switch() {
+      expr = self.parse_switch
+      return stmt_expr(expr.loc, expr)
+    }
+    if k == tk_while() {
+      return self.parse_while
+    }
+    if k == tk_break() {
+      return self.parse_break
+    }
+    if k == tk_continue() {
+      return self.parse_continue
+    }
+    if k == tk_return() {
+      return self.parse_return
+    }
+    if k == tk_ident() {
+      return self.parse_ident_stmt
+    }
+    expr = self.parse_expr
+    self.finish_stmt(expr)
+  }
+
+  fn annotated_bind_ahead: Bool {
+    if self.current.kind != tk_ident() {
+      return false
+    }
+    i = self.index + 1
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        return self.tokens[i].kind == tk_colon()
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  fn parse_ident_stmt: Stmt {
+    if self.annotated_bind_ahead {
+      loc = self.current.loc
+      name = self.bump
+      dummy = self.expect(tk_colon())
+      self.skip_newlines
+      declared = self.parse_type_name
+      self.skip_newlines
+      dummy2 = self.expect(tk_eq())
+      self.skip_newlines
+      value = self.maybe_trailing_block(self.parse_expr)
+      s = Stmt.new(st_assign(), loc)
+      target = Expr.new(ex_name(), name.loc)
+      target.ident = name.value
+      s.target = target
+      s.value = value
+      s.declared = declared
+      s.op = tk_eq()
+      return s
+    }
+    expr = self.parse_expr
+    self.finish_stmt(expr)
+  }
+
+  fn finish_stmt(expr: Expr): Stmt {
+    expr2 = self.maybe_trailing_block(expr)
+    self.skip_newlines_if_continuing
+    if token_is_assign_op(self.current.kind) {
+      op = self.bump
+      self.skip_newlines
+      value = self.maybe_trailing_block(self.parse_expr)
+      s = Stmt.new(st_assign(), op.loc)
+      s.target = expr2
+      s.value = value
+      s.op = op.kind
+      return s
+    }
+    stmt_expr(expr2.loc, expr2)
+  }
+
+  fn maybe_trailing_block(expr: Expr): Expr {
+    i = self.index
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        break
+      }
+      i = i + 1
+    }
+    if i >= self.tokens.size {
+      return expr
+    }
+    if self.tokens[i].kind != tk_l_brace() {
+      return expr
+    }
+    if expr.kind != ex_call() {
+      if expr.kind != ex_field() {
+        return expr
+      }
+    }
+    self.skip_newlines
+    self.attach_block(expr, self.parse_trailing_block)
+  }
+
+  fn if_assign_ahead: Bool {
+    if self.current.kind != tk_ident() {
+      return false
+    }
+    i = self.index + 1
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        return self.tokens[i].kind == tk_eq()
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  fn parse_if: Stmt {
+    loc = self.expect(tk_if()).loc
+    self.skip_newlines
+    bind = ""
+    cond = self.dummy_expr(loc)
+    if self.if_assign_ahead {
+      name = self.bump
+      self.skip_newlines
+      dummy = self.expect(tk_eq())
+      self.skip_newlines
+      bind = name.value
+      cond = self.parse_cond_expr
+    } else {
+      cond = self.parse_cond_expr
+    }
+    self.skip_newlines
+    then_body = self.parse_block
+    else_body: Array(Stmt) = []
+    self.skip_newlines
+    if self.current.kind == tk_else() {
+      dummy = self.bump
+      self.skip_newlines
+      if self.current.kind == tk_if() {
+        else_body.push(self.parse_if)
+      } else {
+        else_body = self.parse_block
+      }
+    }
+    s = Stmt.new(st_if(), loc)
+    s.cond = cond
+    s.then_body = then_body
+    s.else_body = else_body
+    s.bind = bind
+    s
+  }
+
+  fn parse_while: Stmt {
+    loc = self.expect(tk_while()).loc
+    self.skip_newlines
+    cond = self.parse_cond_expr
+    self.skip_newlines
+    body = self.parse_block
+    s = Stmt.new(st_while(), loc)
+    s.cond = cond
+    s.body = body
+    s
+  }
+
+  fn parse_switch: Expr {
+    loc = self.expect(tk_switch()).loc
+    self.skip_newlines
+    cond = self.parse_cond_expr
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    expr = Expr.new(ex_switch(), loc)
+    expr.cond = cond
+    seen_else = false
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.current.kind == tk_case() {
+        if seen_else {
+          self.fail(self.current.loc, "else must be the last switch arm")
+        }
+        expr.cases.push(self.parse_switch_case)
+      } else if self.current.kind == tk_else() {
+        if seen_else {
+          self.fail(self.current.loc, "duplicate else in switch")
+        }
+        dummy2 = self.bump
+        self.skip_newlines
+        expr.else_body = self.parse_block
+        expr.has_else = true
+        seen_else = true
+      } else {
+        self.fail(self.current.loc, "expected case or else, found ${self.current.kind}")
+        break
+      }
+      self.skip_newlines
+    }
+    dummy3 = self.expect(tk_r_brace())
+    if expr.cases.size == 0 {
+      self.fail(loc, "switch needs a case")
+    }
+    expr
+  }
+
+  fn parse_switch_case: SwitchCase {
+    loc = self.expect(tk_case()).loc
+    self.skip_newlines
+    arm = SwitchCase.new(loc)
+    while true {
+      arm.labels.push(self.parse_case_label)
+      self.skip_newlines
+      if self.match_tok(tk_comma()) {
+        self.skip_newlines
+      } else {
+        break
+      }
+    }
+    self.skip_newlines
+    arm.body = self.parse_block
+    arm
+  }
+
+  fn parse_case_label: Int64 {
+    neg = false
+    if self.current.kind == tk_minus() {
+      dummy = self.bump
+      self.skip_newlines
+      neg = true
+    }
+    if self.current.kind != tk_integer() {
+      self.fail(self.current.loc, "case label must be an integer literal")
+      return 0i64
+    }
+    tok = self.bump
+    if self.parse_int_tok(tok) {
+    } else {
+      return 0i64
+    }
+    if self.int_suffix.size != 0 {
+      self.fail(tok.loc, "case label must be an Int literal")
+      return 0i64
+    }
+    bits = self.int_bits
+    if neg {
+      if bits > 2147483648u64 {
+        self.fail(tok.loc, "case label does not fit in Int")
+        return 0i64
+      }
+      return 0i64 - bits.to_i64()
+    }
+    if bits > 2147483647u64 {
+      self.fail(tok.loc, "case label does not fit in Int")
+      return 0i64
+    }
+    bits.to_i64()
+  }
+
+  fn parse_cond_expr: Expr {
+    old = self.allow_struct_lit
+    self.allow_struct_lit = false
+    expr = self.parse_expr
+    self.allow_struct_lit = old
+    expr
+  }
+
+  fn parse_break: Stmt {
+    loc = self.expect(tk_break()).loc
+    Stmt.new(st_break(), loc)
+  }
+
+  fn parse_continue: Stmt {
+    loc = self.expect(tk_continue()).loc
+    Stmt.new(st_continue(), loc)
+  }
+
+  fn parse_return: Stmt {
+    loc = self.expect(tk_return()).loc
+    expr: Expr? = nil
+    k = self.current.kind
+    if k == tk_newline() || k == tk_r_brace() || k == tk_eof() {
+    } else {
+      expr = self.parse_expr
+    }
+    stmt_return(loc, expr)
+  }
+
+  fn parse_expr: Expr {
+    self.parse_expr_min(0)
+  }
+
+  fn parse_expr_min(min_prec: Int): Expr {
+    left = self.parse_postfix(self.parse_prefix)
+    while true {
+      self.skip_newlines_if_continuing
+      prec = self.infix_prec(self.current.kind)
+      if prec < min_prec {
+        break
+      }
+      op = self.bump
+      self.skip_newlines
+      right = self.parse_expr_min(prec + 1)
+      bin = Expr.new(ex_binary(), op.loc)
+      bin.op = op.kind
+      bin.left = left
+      bin.right = right
+      left = bin
+    }
+    left
+  }
+
+  fn parse_postfix(left: Expr): Expr {
+    cur = left
+    keep = true
+    while keep {
+      self.skip_newlines_if_postfix
+      k = self.current.kind
+      if k == tk_dot() {
+        at = self.bump.loc
+        self.skip_newlines
+        field = self.expect(tk_ident())
+        if self.current.kind == tk_l_paren() {
+          args = self.parse_arg_list
+          call = Expr.new(ex_call(), at)
+          call.callee = field.value
+          call.args = args
+          call.receiver = cur
+          cur = call
+        } else if str_eq(field.value, "new") {
+          call = Expr.new(ex_call(), at)
+          call.callee = "new"
+          call.receiver = cur
+          cur = call
+        } else {
+          fa = Expr.new(ex_field(), at)
+          fa.object = cur
+          fa.ident = field.value
+          cur = fa
+        }
+      } else if k == tk_l_bracket() {
+        at = self.bump.loc
+        self.skip_newlines
+        idxe = self.parse_expr
+        self.skip_newlines
+        dummy = self.expect(tk_r_bracket())
+        ix = Expr.new(ex_index(), at)
+        ix.left = cur
+        ix.right = idxe
+        cur = ix
+      } else if k == 50 {
+        at = self.bump.loc
+        tr = Expr.new(ex_try(), at)
+        tr.inner = cur
+        cur = tr
+      } else {
+        keep = false
+      }
+    }
+    cur
+  }
+
+  fn parse_prefix: Expr {
+    self.skip_newlines
+    tok = self.current
+    k = tok.kind
+    if k == tk_integer() {
+      dummy = self.bump
+      ok = self.parse_int_tok(tok)
+      e = Expr.new(ex_int(), tok.loc)
+      e.int_bits = self.int_bits
+      e.int_suffix = self.int_suffix
+      return e
+    }
+    if k == tk_float() {
+      dummy = self.bump
+      e = Expr.new(ex_float(), tok.loc)
+      e.float_val = tok.value.to_f
+      e.value_str = tok.value
+      return e
+    }
+    if k == tk_string() {
+      dummy = self.bump
+      e = Expr.new(ex_string(), tok.loc)
+      e.value_str = tok.value
+      return e
+    }
+    if k == tk_interp_open() {
+      return self.parse_interpolated_string
+    }
+    if k == tk_true() {
+      dummy = self.bump
+      e = Expr.new(ex_bool(), tok.loc)
+      e.bool_val = true
+      return e
+    }
+    if k == tk_false() {
+      dummy = self.bump
+      e = Expr.new(ex_bool(), tok.loc)
+      e.bool_val = false
+      return e
+    }
+    if k == tk_nil() {
+      dummy = self.bump
+      return Expr.new(ex_nil(), tok.loc)
+    }
+    if k == tk_spawn() {
+      return self.parse_spawn(tok)
+    }
+    if k == tk_switch() {
+      return self.parse_switch
+    }
+    if k == tk_l_bracket() {
+      return self.parse_array_literal
+    }
+    if k == tk_ident() {
+      return self.parse_ident_expr
+    }
+    if k == tk_self() {
+      dummy = self.bump
+      e = Expr.new(ex_name(), tok.loc)
+      e.ident = "self"
+      return e
+    }
+    if k == tk_minus() {
+      dummy = self.bump
+      self.skip_newlines
+      inner = self.parse_expr_min(11)
+      e = Expr.new(ex_unary(), tok.loc)
+      e.op = tk_minus()
+      e.inner = inner
+      return e
+    }
+    if k == tk_bang() {
+      dummy = self.bump
+      self.skip_newlines
+      inner = self.parse_expr_min(11)
+      e = Expr.new(ex_unary(), tok.loc)
+      e.op = tk_bang()
+      e.inner = inner
+      return e
+    }
+    if k == tk_tilde() {
+      dummy = self.bump
+      self.skip_newlines
+      inner = self.parse_expr_min(11)
+      e = Expr.new(ex_unary(), tok.loc)
+      e.op = tk_tilde()
+      e.inner = inner
+      return e
+    }
+    if k == tk_l_paren() {
+      dummy = self.bump
+      self.skip_newlines
+      old = self.allow_struct_lit
+      self.allow_struct_lit = true
+      expr = self.parse_expr
+      self.allow_struct_lit = old
+      self.skip_newlines
+      dummy2 = self.expect(tk_r_paren())
+      return expr
+    }
+    self.fail(tok.loc, "expected expression, found ${k}")
+    self.dummy_expr(tok.loc)
+  }
+
+  fn struct_literal_ahead: Bool {
+    if self.current.kind != tk_l_brace() {
+      return false
+    }
+    i = self.index + 1
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        break
+      }
+      i = i + 1
+    }
+    if i >= self.tokens.size {
+      return false
+    }
+    if self.tokens[i].kind != tk_ident() {
+      return false
+    }
+    i = i + 1
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        break
+      }
+      i = i + 1
+    }
+    if i >= self.tokens.size {
+      return false
+    }
+    self.tokens[i].kind == tk_colon()
+  }
+
+  fn parse_ident_expr: Expr {
+    tok = self.bump
+    if str_eq(tok.value, "Array") {
+      if self.current.kind == tk_l_paren() {
+        return self.parse_array_new(tok)
+      }
+    }
+    if str_eq(tok.value, "Hash") {
+      if self.current.kind == tk_l_paren() {
+        return self.parse_hash_new(tok)
+      }
+    }
+    if self.current.kind == tk_l_paren() {
+      return self.parse_call(tok)
+    }
+    if self.allow_struct_lit {
+      if self.struct_literal_ahead {
+        return self.parse_struct_literal(tok)
+      }
+    }
+    e = Expr.new(ex_name(), tok.loc)
+    e.ident = tok.value
+    e
+  }
+
+  fn parse_array_new(tok: Token): Expr {
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    elem = self.parse_type_name
+    self.skip_newlines
+    dummy2 = self.expect(tk_r_paren())
+    self.skip_newlines
+    dummy3 = self.expect(tk_dot())
+    self.skip_newlines
+    meth = self.expect(tk_ident())
+    if str_eq(meth.value, "new") {
+    } else {
+      self.fail(meth.loc, "Array(T) only supports .new")
+    }
+    dummy4 = self.expect(tk_l_paren())
+    self.skip_newlines
+    size = self.parse_expr
+    self.skip_newlines
+    dummy5 = self.expect(tk_r_paren())
+    e = Expr.new(ex_array_new(), tok.loc)
+    e.elem_type = elem
+    e.size_expr = size
+    e
+  }
+
+  fn parse_hash_new(tok: Token): Expr {
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    key = self.parse_type_name
+    self.skip_newlines
+    dummy2 = self.expect(tk_comma())
+    self.skip_newlines
+    val = self.parse_type_name
+    self.skip_newlines
+    dummy3 = self.expect(tk_r_paren())
+    self.skip_newlines
+    dummy4 = self.expect(tk_dot())
+    self.skip_newlines
+    meth = self.expect(tk_ident())
+    if str_eq(meth.value, "new") {
+    } else {
+      self.fail(meth.loc, "Hash(K, V) only supports .new")
+    }
+    if self.current.kind == tk_l_paren() {
+      dummy5 = self.bump
+      self.skip_newlines
+      dummy6 = self.expect(tk_r_paren())
+    }
+    e = Expr.new(ex_hash_new(), tok.loc)
+    e.key_type = key
+    e.val_type = val
+    e
+  }
+
+  fn parse_array_literal: Expr {
+    loc = self.expect(tk_l_bracket()).loc
+    self.skip_newlines
+    e = Expr.new(ex_array(), loc)
+    if self.current.kind != tk_r_bracket() {
+      while true {
+        e.elems.push(self.parse_expr)
+        self.skip_newlines
+        if self.match_tok(tk_comma()) {
+          self.skip_newlines
+          if self.current.kind == tk_r_bracket() {
+            break
+          }
+        } else {
+          break
+        }
+      }
+    }
+    dummy = self.expect(tk_r_bracket())
+    e
+  }
+
+  fn parse_struct_literal(name: Token): Expr {
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    e = Expr.new(ex_struct(), name.loc)
+    e.type_name = name.value
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      field = self.expect(tk_ident())
+      dummy2 = self.expect(tk_colon())
+      self.skip_newlines
+      value = self.parse_expr
+      e.field_names.push(field.value)
+      e.field_exprs.push(value)
+      self.skip_newlines
+      if self.match_tok(tk_comma()) {
+        self.skip_newlines
+      } else {
+        break
+      }
+    }
+    dummy3 = self.expect(tk_r_brace())
+    e
+  }
+
+  fn parse_spawn(tok: Token): Expr {
+    if self.current.kind != tk_eof() {
+      dummy = self.bump
+    }
+    self.skip_newlines
+    block = self.parse_trailing_block
+    e = Expr.new(ex_call(), tok.loc)
+    e.callee = "spawn"
+    e.block = block
+    e
+  }
+
+  fn parse_call(name: Token): Expr {
+    args = self.parse_arg_list
+    e = Expr.new(ex_call(), name.loc)
+    e.callee = name.value
+    e.args = args
+    e
+  }
+
+  fn parse_interpolated_string: Expr {
+    open = self.expect(tk_interp_open())
+    e = Expr.new(ex_interp(), open.loc)
+    if open.value.size != 0 {
+      p = InterpPart.new()
+      p.text = open.value
+      e.parts.push(p)
+    }
+    while true {
+      if self.current.kind == tk_interp_close() {
+        close = self.bump
+        if close.value.size != 0 {
+          p = InterpPart.new()
+          p.text = close.value
+          e.parts.push(p)
+        }
+        break
+      }
+      if self.current.kind == tk_interp_mid() {
+        self.fail(self.current.loc, "expected interpolation expression")
+        break
+      }
+      self.skip_newlines
+      inner = self.parse_expr
+      p = InterpPart.new()
+      p.expr = inner
+      e.parts.push(p)
+      self.skip_newlines
+      if self.current.kind == tk_interp_mid() {
+        mid = self.bump
+        if mid.value.size != 0 {
+          p2 = InterpPart.new()
+          p2.text = mid.value
+          e.parts.push(p2)
+        }
+      } else if self.current.kind == tk_interp_close() {
+        continue
+      } else {
+        self.fail(self.current.loc, "expected end of interpolation")
+        break
+      }
+    }
+    e
+  }
+
+  fn parse_trailing_block: Block {
+    loc = self.expect(tk_l_brace()).loc
+    self.skip_newlines
+    block = Block.new(loc)
+    if self.current.kind == tk_pipe() {
+      dummy = self.bump
+      self.skip_newlines
+      if self.current.kind != tk_pipe() {
+        while true {
+          block.params.push(self.expect(tk_ident()).value)
+          self.skip_newlines
+          if self.match_tok(tk_comma()) {
+            self.skip_newlines
+          } else {
+            break
+          }
+        }
+      }
+      dummy2 = self.expect(tk_pipe())
+      self.skip_newlines
+    }
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.has_err {
+        break
+      }
+      block.body.push(self.parse_stmt)
+      self.skip_newlines
+    }
+    dummy3 = self.expect(tk_r_brace())
+    block
+  }
+
+  fn attach_block(left: Expr, block: Block): Expr {
+    if left.kind == ex_call() {
+      if b = left.block {
+        self.fail(block.loc, "call already has a block")
+        return left
+      }
+      left.block = block
+      return left
+    }
+    if left.kind == ex_field() {
+      call = Expr.new(ex_call(), block.loc)
+      call.callee = left.ident
+      if obj = left.object {
+        call.receiver = obj
+      }
+      call.block = block
+      return call
+    }
+    if left.kind == ex_name() {
+      call = Expr.new(ex_call(), block.loc)
+      call.callee = left.ident
+      call.block = block
+      return call
+    }
+    self.fail(block.loc, "trailing block must follow a call")
+    left
+  }
+
+  fn parse_arg_list: Array(Expr) {
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    args: Array(Expr) = []
+    if self.current.kind != tk_r_paren() {
+      while true {
+        args.push(self.parse_expr)
+        self.skip_newlines
+        if self.match_tok(tk_comma()) {
+          self.skip_newlines
+        } else {
+          break
+        }
+      }
+    }
+    dummy2 = self.expect(tk_r_paren())
+    args
+  }
+}

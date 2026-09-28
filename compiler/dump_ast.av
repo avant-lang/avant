@@ -1,0 +1,381 @@
+fn escape_dump(s: String): String {
+  buf = buf_new(s.size)
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c == 92 {
+      buf.push_str("\\\\")
+    } else if c == 10 {
+      buf.push_str("\\n")
+    } else if c == 9 {
+      buf.push_str("\\t")
+    } else {
+      buf.push_byte(c)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+fn dump_type(t: TypeName): String {
+  buf = buf_new()
+  if t.members.size > 0 {
+    i = 0
+    while i < t.members.size {
+      if i > 0 {
+        buf.push_str("|")
+      }
+      buf.push_str(dump_type(t.members[i]))
+      i = i + 1
+    }
+  } else {
+    buf.push_str(t.name)
+    if t.args.size > 0 {
+      buf.push_str("(")
+      i = 0
+      while i < t.args.size {
+        if i > 0 {
+          buf.push_str(",")
+        }
+        buf.push_str(dump_type(t.args[i]))
+        i = i + 1
+      }
+      buf.push_str(")")
+    }
+  }
+  if t.nilable {
+    buf.push_str("?")
+  }
+  buf.to_s
+}
+
+fn dump_expr(e: Expr): String {
+  buf = buf_new()
+  k = e.kind
+  if k == ex_int() {
+    buf.push_str("(int ")
+    buf.push_fmt_i(e.int_bits.to_i)
+    if e.int_suffix.size > 0 {
+      buf.push_str(e.int_suffix)
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_float() {
+    buf.push_str("(float)")
+    return buf.to_s
+  }
+  if k == ex_string() {
+    buf.push_str("(string ")
+    buf.push_str(escape_dump(e.value_str))
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_bool() {
+    if e.bool_val {
+      buf.push_str("(true)")
+    } else {
+      buf.push_str("(false)")
+    }
+    return buf.to_s
+  }
+  if k == ex_nil() {
+    buf.push_str("(nil)")
+    return buf.to_s
+  }
+  if k == ex_name() {
+    buf.push_str("(name ")
+    buf.push_str(e.ident)
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_call() {
+    buf.push_str("(call ")
+    buf.push_str(e.callee)
+    if recv = e.receiver {
+      buf.push_str(" ")
+      buf.push_str(dump_expr(recv))
+    }
+    i = 0
+    while i < e.args.size {
+      buf.push_str(" ")
+      buf.push_str(dump_expr(e.args[i]))
+      i = i + 1
+    }
+    if b = e.block {
+      buf.push_str(" (block")
+      j = 0
+      while j < b.params.size {
+        buf.push_str(" |")
+        buf.push_str(b.params[j])
+        j = j + 1
+      }
+      j = 0
+      while j < b.body.size {
+        buf.push_str(" ")
+        buf.push_str(dump_stmt(b.body[j]))
+        j = j + 1
+      }
+      buf.push_str(")")
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_unary() {
+    buf.push_str("(unary ")
+    buf.push_fmt_i(e.op)
+    buf.push_str(" ")
+    if inner = e.inner {
+      buf.push_str(dump_expr(inner))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_binary() {
+    buf.push_str("(binary ")
+    buf.push_fmt_i(e.op)
+    buf.push_str(" ")
+    if l = e.left {
+      buf.push_str(dump_expr(l))
+    }
+    buf.push_str(" ")
+    if r = e.right {
+      buf.push_str(dump_expr(r))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_field() {
+    buf.push_str("(field ")
+    if obj = e.object {
+      buf.push_str(dump_expr(obj))
+    }
+    buf.push_str(" ")
+    buf.push_str(e.ident)
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_index() {
+    buf.push_str("(index ")
+    if l = e.left {
+      buf.push_str(dump_expr(l))
+    }
+    buf.push_str(" ")
+    if r = e.right {
+      buf.push_str(dump_expr(r))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_try() {
+    buf.push_str("(try ")
+    if inner = e.inner {
+      buf.push_str(dump_expr(inner))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_array() {
+    buf.push_str("(array")
+    i = 0
+    while i < e.elems.size {
+      buf.push_str(" ")
+      buf.push_str(dump_expr(e.elems[i]))
+      i = i + 1
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_switch() {
+    buf.push_str("(switch ")
+    if c = e.cond {
+      buf.push_str(dump_expr(c))
+    }
+    i = 0
+    while i < e.cases.size {
+      arm = e.cases[i]
+      buf.push_str(" (case")
+      j = 0
+      while j < arm.labels.size {
+        buf.push_str(" ")
+        buf.push_fmt_i(arm.labels[j].to_i)
+        j = j + 1
+      }
+      j = 0
+      while j < arm.body.size {
+        buf.push_str(" ")
+        buf.push_str(dump_stmt(arm.body[j]))
+        j = j + 1
+      }
+      buf.push_str(")")
+      i = i + 1
+    }
+    if e.has_else {
+      buf.push_str(" (else")
+      i = 0
+      while i < e.else_body.size {
+        buf.push_str(" ")
+        buf.push_str(dump_stmt(e.else_body[i]))
+        i = i + 1
+      }
+      buf.push_str(")")
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  buf.push_str("(expr)")
+  buf.to_s
+}
+
+fn dump_stmt(s: Stmt): String {
+  buf = buf_new()
+  k = s.kind
+  if k == st_expr() {
+    buf.push_str("(expr ")
+    if e = s.expr {
+      buf.push_str(dump_expr(e))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == st_return() {
+    buf.push_str("(return")
+    if e = s.expr {
+      buf.push_str(" ")
+      buf.push_str(dump_expr(e))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == st_if() {
+    buf.push_str("(if")
+    if s.bind.size > 0 {
+      buf.push_str("-assign ")
+      buf.push_str(s.bind)
+    }
+    buf.push_str(" ")
+    if c = s.cond {
+      buf.push_str(dump_expr(c))
+    }
+    i = 0
+    while i < s.then_body.size {
+      buf.push_str(" ")
+      buf.push_str(dump_stmt(s.then_body[i]))
+      i = i + 1
+    }
+    if s.else_body.size > 0 {
+      buf.push_str(" (else")
+      i = 0
+      while i < s.else_body.size {
+        buf.push_str(" ")
+        buf.push_str(dump_stmt(s.else_body[i]))
+        i = i + 1
+      }
+      buf.push_str(")")
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == st_while() {
+    buf.push_str("(while ")
+    if c = s.cond {
+      buf.push_str(dump_expr(c))
+    }
+    i = 0
+    while i < s.body.size {
+      buf.push_str(" ")
+      buf.push_str(dump_stmt(s.body[i]))
+      i = i + 1
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == st_break() {
+    return "(break)"
+  }
+  if k == st_continue() {
+    return "(continue)"
+  }
+  if k == st_assign() {
+    buf.push_str("(assign ")
+    buf.push_fmt_i(s.op)
+    buf.push_str(" ")
+    if t = s.target {
+      buf.push_str(dump_expr(t))
+    }
+    buf.push_str(" ")
+    if v = s.value {
+      buf.push_str(dump_expr(v))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  buf.push_str("(stmt ")
+  buf.push_fmt_i(k)
+  buf.push_str(")")
+  buf.to_s
+}
+
+fn dump_fn(fnn: Function): String {
+  buf = buf_new()
+  buf.push_str("(fn ")
+  buf.push_str(fnn.name)
+  if recv = fnn.receiver {
+    buf.push_str(" (recv ")
+    buf.push_str(recv.name)
+    buf.push_str(" ")
+    buf.push_str(dump_type(recv.type))
+    buf.push_str(")")
+  }
+  i = 0
+  while i < fnn.params.size {
+    p = fnn.params[i]
+    buf.push_str(" (param ")
+    buf.push_str(p.name)
+    buf.push_str(" ")
+    buf.push_str(dump_type(p.type))
+    buf.push_str(")")
+    i = i + 1
+  }
+  if rt = fnn.return_type {
+    buf.push_str(" ")
+    buf.push_str(dump_type(rt))
+  }
+  i = 0
+  while i < fnn.body.size {
+    buf.push_str(" ")
+    buf.push_str(dump_stmt(fnn.body[i]))
+    i = i + 1
+  }
+  buf.push_str(")")
+  buf.to_s
+}
+
+fn dump_program(program: Program): String {
+  buf = buf_new()
+  buf.push_str("(program")
+  i = 0
+  while i < program.structs.size {
+    s = program.structs[i]
+    buf.push_str(" (struct ")
+    buf.push_str(s.name)
+    buf.push_str(")")
+    i = i + 1
+  }
+  i = 0
+  while i < program.classes.size {
+    c = program.classes[i]
+    buf.push_str(" (class ")
+    buf.push_str(c.name)
+    buf.push_str(")")
+    i = i + 1
+  }
+  i = 0
+  while i < program.functions.size {
+    buf.push_str(" ")
+    buf.push_str(dump_fn(program.functions[i]))
+    i = i + 1
+  }
+  buf.push_str(")")
+  buf.to_s
+}
