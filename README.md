@@ -8,7 +8,7 @@ This folder is the language. In the local workbench it sits next to `myc/` (IR b
 
 This README is the **living language document** until a website exists. It describes what the compilers actually accept today. The target sketch (including features that are decided but not built) is [syntax.md](syntax.md) **S3**.
 
-Waves 1–3 are closed. Stages 6–13 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). **D29** (quote-first macros) is implemented (`stage13.md`). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
+Waves 1–3 are closed. Stages 6–14 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). **D29** (quote-first macros) is implemented (`stage13.md`). **D48** dump goldens are implemented (`stage14.md`). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
 
 ## What compiles today
 
@@ -167,10 +167,12 @@ These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **n
 
 | What | Decision | When |
 | --- | --- | --- |
-| First-class `fn(T): U` values (S3 `map`) | D30 leftover | After Stage 11 / later |
-| Real `.parallel` / `Channel(T)` / `Mutex(T)` | D35 | After Stages 10–13 |
-| C struct field layouts, methods on `Ptr(T)` | D36 leftover | After Stages 10–13 |
-| Macros beyond quote, packages, HTTP *server*, formatter | Wave 4 / D19 | After Stages 10–13; see [questions.md](questions.md) |
+| First-class `fn(T): U` values (S3 `map`) | D46 | D43 Stage 19 |
+| Generic structs and classes | D47 | D43 Stage 20 Part 0 |
+| Named interfaces | D45 | D43 Stage 21 |
+| Real `.parallel` / `Channel(T)` / `Mutex(T)` | D35 | D43 Stage 20 |
+| C struct field layouts, methods on `Ptr(T)` | D36 leftover | D43 Stage 18 |
+| Macros beyond quote, packages, HTTP *server*, formatter | Wave 4 / D19 | D43 Stages 22 and 25; see [d43.md](d43.md) |
 
 ## How it is compiled
 
@@ -178,7 +180,7 @@ These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **n
 .av source → parser/checker (Crystal host *and* `compiler/*.av`) → myc IR → myc-llvm → binary
 ```
 
-Still emit myc IR (**D39**). Crystal `src/` is scaffolding and the identity oracle until a later decision. Identity is `compiler/*.av`.
+Still emit myc IR (**D39**). Crystal `src/` is scaffolding and the identity oracle until **Stage 16** (D43). Identity is `compiler/*.av`.
 
 ## Compiler and tests
 
@@ -219,11 +221,12 @@ crystal src/cli.cr compile compiler/main.av bin/avant-av
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 ./bin/avant-av-b compile compiler/main.av bin/avant-av-c
 ./bin/avant-av-c run examples/hello.av
+AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/bless_goldens.av
 ```
 
-Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen).
+Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen). Dump goldens: `tests/goldens/` (**D48** / Stage 14).
 
-**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). **Stage 13** (closed): D29 quote-first ([stage13.md](stage13.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: later bucket in [questions.md](questions.md) / [roadmap.md](roadmap.md).
+**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). **Stage 13** (closed): D29 quote-first ([stage13.md](stage13.md)). **Stage 14** (closed): native dump goldens ([stage14.md](stage14.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**) until **Stage 16**. Next: **D43** Stages 15–25 ([d43.md](d43.md) / [roadmap.md](roadmap.md)), not opened. Wave 5 closed (**D44–D48**).
 
 ## Live ledgers
 
@@ -232,17 +235,19 @@ These files are **current truth**. They are rewritten in place. They are not log
 | File | Role |
 | --- | --- |
 | [philosophy.md](philosophy.md) | Why Avant exists, non-negotiables, measurable objectives |
-| [decisions.md](decisions.md) | Technical choices that are in force (D41 = sequence after Stage 9, complete; D42 = modules; D29 = quote-first) |
-| [questions.md](questions.md) | Open questions (later bucket after 10–13; Q24–Q25 closed; D29 implemented) |
+| [decisions.md](decisions.md) | Technical choices that are in force (D41 complete; D42 = modules; D29 = quote-first; D43 = sequence after Stage 13; Stage 14 closed; D44–D48 = Wave 5) |
+| [questions.md](questions.md) | Open questions (Wave 5 closed; D43 Stage 14 closed, 15–25 numbered not opened; Q24–Q25 closed; D29 implemented) |
 | [syntax.md](syntax.md) | Canonical sketch **S3** (target; not all of it compiles) |
 | [baseline.md](baseline.md) | LangArena numbers Avant will be judged against |
-| [roadmap.md](roadmap.md) | Stages. 6–13 closed |
+| [roadmap.md](roadmap.md) | Stages. 6–14 closed; 15–25 planned (D43) |
+| [d43.md](d43.md) | D43 sequence. Stage 14 closed; 15–25 planned. Crystal roles; Stage 16 gates |
 | [bootstrap.md](bootstrap.md) | Stage 8 record (closed). Identity roots, I/O, pitfalls |
 | [stage9.md](stage9.md) | Stage 9 record (closed). Native tests + coverage on B (D40) |
 | [stage10.md](stage10.md) | Stage 10 record (closed). Native suite on B; B→C; goldens |
 | [stage11.md](stage11.md) | Stage 11 record (closed). D26 and user generics |
 | [stage12.md](stage12.md) | Stage 12 record (closed). D42 `import` / `pub` |
 | [stage13.md](stage13.md) | Stage 13 record (closed). D29 `quote` / `#()` / field walk |
+| [stage14.md](stage14.md) | Stage 14 record (closed). D48 native dump goldens |
 | [experiments/immix.md](experiments/immix.md) | Sticky vs GenImmix measurement (closed) |
 
 Read `philosophy.md`, then `decisions.md`. Patience, measurement, and organized code are part of the identity.

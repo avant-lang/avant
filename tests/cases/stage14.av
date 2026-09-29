@@ -1,0 +1,110 @@
+fn s14_expect_file(c: Checks, got_path: String, want_path: String, msg: String) {
+  if got = file_read(got_path) {
+    if want = file_read(want_path) {
+      c.eq_str(got, want, msg)
+    } else {
+      c.expect(false, "read golden ${want_path}")
+    }
+  } else {
+    c.expect(false, "read dump ${got_path}")
+  }
+}
+
+fn s14_layer(c: Checks, dumper: String, flag: String, src: String, golden: String, stamp: Int, key: String) {
+  out = "/tmp/avant-s14-${stamp}-${key}.out"
+  code = dump_lex(dumper, flag, src, out)
+  c.eq_int(code, 0, "dump ${key}")
+  s14_expect_file(c, out, golden, key)
+}
+
+fn s14_myc(c: Checks, compiler: String, src: String, golden: String, stamp: Int, key: String) {
+  out = "/tmp/avant-s14-${stamp}-${key}.out"
+  code = dump_av(compiler, src, out)
+  c.eq_int(code, 0, "dump ${key}")
+  s14_expect_file(c, out, golden, key)
+}
+
+fn s14_all(c: Checks, dumper: String, compiler: String, root: String, stamp: Int, src_rel: String, stem: String, key: String) {
+  src = "${root}/${src_rel}"
+  base = "${root}/tests/goldens/${stem}"
+  s14_layer(c, dumper, "", src, "${base}.tok", stamp, "${key}-tok")
+  s14_layer(c, dumper, "--ast", src, "${base}.ast", stamp, "${key}-ast")
+  s14_layer(c, dumper, "--check", src, "${base}.check", stamp, "${key}-check")
+  s14_myc(c, compiler, src, "${base}.myc", stamp, "${key}-myc")
+}
+
+fn test_stage14(c: Checks) {
+  c.suite("tests/cases/stage14.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    stamp = now_ms()
+    dumper = "/tmp/avant-s14-${stamp}-lex-dump"
+    dlog = "/tmp/avant-s14-${stamp}-lex-dump.log"
+    dcode = compile_av(compiler, "${root}/compiler/lex_dump.av", dumper, dlog)
+    c.eq_int(dcode, 0, "compile lex_dump")
+    if file_exists(dumper) {
+      chmod_x(dumper)
+      s14_all(c, dumper, compiler, root, stamp, "examples/hello.av", "examples/hello", "hello")
+      s14_all(c, dumper, compiler, root, stamp, "examples/fact.av", "examples/fact", "fact")
+      s14_all(c, dumper, compiler, root, stamp, "examples/vec2.av", "examples/vec2", "vec2")
+      s14_all(c, dumper, compiler, root, stamp, "examples/sieve.av", "examples/sieve", "sieve")
+      s14_all(c, dumper, compiler, root, stamp, "examples/methods.av", "examples/methods", "methods")
+      s14_all(c, dumper, compiler, root, stamp, "examples/trees.av", "examples/trees", "trees")
+      s14_all(c, dumper, compiler, root, stamp, "examples/binarytrees.av", "examples/binarytrees", "binarytrees")
+      s14_all(c, dumper, compiler, root, stamp, "examples/switch.av", "examples/switch", "switch")
+      s14_all(c, dumper, compiler, root, stamp, "examples/defaults.av", "examples/defaults", "defaults")
+      s14_all(c, dumper, compiler, root, stamp, "examples/sqrt.av", "examples/sqrt", "sqrt")
+      s14_all(c, dumper, compiler, root, stamp, "examples/zlib.av", "examples/zlib", "zlib")
+      s14_all(c, dumper, compiler, root, stamp, "examples/add.av", "examples/add", "add")
+      s14_all(c, dumper, compiler, root, stamp, "examples/errors.av", "examples/errors", "errors")
+      s14_all(c, dumper, compiler, root, stamp, "examples/collect.av", "examples/collect", "collect")
+      s14_all(c, dumper, compiler, root, stamp, "examples/json.av", "examples/json", "json")
+      s14_all(c, dumper, compiler, root, stamp, "examples/http.av", "examples/http", "http")
+      s14_all(c, dumper, compiler, root, stamp, "examples/spawn.av", "examples/spawn", "spawn")
+      s14_all(c, dumper, compiler, root, stamp, "examples/matmul.av", "examples/matmul", "matmul")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/chr.av", "part3/chr", "p3-chr")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/slice.av", "part3/slice", "p3-slice")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/index.av", "part3/index", "p3-index")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/buf.av", "part3/buf", "p3-buf")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/conv.av", "part3/conv", "p3-conv")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/exists.av", "part3/exists", "p3-exists")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/argv.av", "part3/argv", "p3-argv")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/env.av", "part3/env", "p3-env")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/interp.av", "part3/interp", "p3-interp")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/pop.av", "part3/pop", "p3-pop")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/part3/run.av", "part3/run", "p3-run")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage11/defaults.av", "stage11/defaults", "s11-defaults")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage11/overload.av", "stage11/overload", "s11-overload")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage11/operator.av", "stage11/operator", "s11-operator")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage11/generic.av", "stage11/generic", "s11-generic")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage13/quote_fn.av", "stage13/quote_fn", "s13-quote")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage13/splice_name.av", "stage13/splice_name", "s13-splice")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage13/hygiene.av", "stage13/hygiene", "s13-hygiene")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage13/fields.av", "stage13/fields", "s13-fields")
+      s14_all(c, dumper, compiler, root, stamp, "tests/fixtures/stage13/method.av", "stage13/method", "s13-method")
+      s12 = "${root}/tests/fixtures/stage12/main.av"
+      s12g = "${root}/tests/goldens/stage12/main"
+      s14_layer(c, dumper, "", s12, "${s12g}.tok", stamp, "s12-tok")
+      s14_layer(c, dumper, "--ast", s12, "${s12g}.ast", stamp, "s12-ast")
+      s14_myc(c, compiler, s12, "${s12g}.myc", stamp, "s12-myc")
+      hello_g = "${root}/tests/goldens/hello.myc"
+      hello_ex = "${root}/tests/goldens/examples/hello.myc"
+      if hg = file_read(hello_g) {
+        if ex = file_read(hello_ex) {
+          c.eq_str(hg, ex, "hello.myc aliases examples/hello.myc")
+        } else {
+          c.expect(false, "read examples/hello.myc")
+        }
+      } else {
+        c.expect(false, "read hello.myc")
+      }
+    } else {
+      c.expect(false, "lex_dump bin")
+      if err = file_read(dlog) {
+        puts(err)
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

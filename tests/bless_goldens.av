@@ -1,0 +1,332 @@
+// Regenerate tests/goldens from compiler B (D48).
+//   AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/bless_goldens.av
+
+fn str_eq(a: String, b: String): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i] != b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+fn avant_test_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  "."
+}
+
+fn mkdir_p(path: String) {
+  args: Array(String) = []
+  args.push("-p")
+  args.push(path)
+  dummy = process_run("/bin/mkdir", args)
+}
+
+fn chmod_x(path: String) {
+  args: Array(String) = []
+  args.push("+x")
+  args.push(path)
+  dummy = process_run("/bin/chmod", args)
+}
+
+fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push(src)
+  args.push(bin)
+  process_run_out(compiler, args, log)
+}
+
+fn dump_av(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("dump")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+fn dump_lex(dumper: String, flag: String, src: String, log: String): Int {
+  args: Array(String) = []
+  if flag.size > 0 {
+    args.push(flag)
+  }
+  args.push(src)
+  process_run_out(dumper, args, log)
+}
+
+fn bless_fail(msg: String) {
+  puts("FAIL  tests/bless_goldens.av")
+  puts(msg)
+}
+
+fn bless_layer(dumper: String, flag: String, src: String, dest: String, tag: String): Bool {
+  code = dump_lex(dumper, flag, src, dest)
+  if code != 0 {
+    bless_fail("dump ${tag} exited ${code}")
+    if err = file_read(dest) {
+      puts(err)
+    }
+    return false
+  }
+  if file_exists(dest) {
+    return true
+  }
+  bless_fail("dump ${tag} wrote nothing")
+  false
+}
+
+fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
+  code = dump_av(compiler, src, dest)
+  if code != 0 {
+    bless_fail("dump ${tag} exited ${code}")
+    if err = file_read(dest) {
+      puts(err)
+    }
+    return false
+  }
+  if file_exists(dest) {
+    return true
+  }
+  bless_fail("dump ${tag} wrote nothing")
+  false
+}
+
+fn bless_all(dumper: String, compiler: String, root: String, src_rel: String, stem: String): Bool {
+  src = "${root}/${src_rel}"
+  base = "${root}/tests/goldens/${stem}"
+  if bless_layer(dumper, "", src, "${base}.tok", "${stem}.tok") {
+  } else {
+    return false
+  }
+  if bless_layer(dumper, "--ast", src, "${base}.ast", "${stem}.ast") {
+  } else {
+    return false
+  }
+  if bless_layer(dumper, "--check", src, "${base}.check", "${stem}.check") {
+  } else {
+    return false
+  }
+  bless_myc(compiler, src, "${base}.myc", "${stem}.myc")
+}
+
+fn main {
+  if compiler = env_get("AVANT_COMPILER") {
+    if file_exists(compiler) {
+    } else {
+      bless_fail("AVANT_COMPILER does not exist: ${compiler}")
+      return
+    }
+    root = avant_test_root()
+    mkdir_p("${root}/tests/goldens/examples")
+    mkdir_p("${root}/tests/goldens/part3")
+    mkdir_p("${root}/tests/goldens/stage11")
+    mkdir_p("${root}/tests/goldens/stage12")
+    mkdir_p("${root}/tests/goldens/stage13")
+    stamp = now_ms()
+    dumper = "/tmp/avant-s14-${stamp}-lex-dump"
+    dlog = "/tmp/avant-s14-${stamp}-lex-dump.log"
+    dcode = compile_av(compiler, "${root}/compiler/lex_dump.av", dumper, dlog)
+    if dcode != 0 {
+      bless_fail("compile lex_dump failed (${dcode})")
+      if err = file_read(dlog) {
+        puts(err)
+      }
+      return
+    }
+    if file_exists(dumper) {
+    } else {
+      bless_fail("lex_dump bin missing")
+      if err = file_read(dlog) {
+        puts(err)
+      }
+      return
+    }
+    chmod_x(dumper)
+    ok = true
+    if bless_all(dumper, compiler, root, "examples/hello.av", "examples/hello") {
+    } else { ok = false }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/fact.av", "examples/fact") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/vec2.av", "examples/vec2") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/sieve.av", "examples/sieve") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/methods.av", "examples/methods") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/trees.av", "examples/trees") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/binarytrees.av", "examples/binarytrees") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/switch.av", "examples/switch") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/defaults.av", "examples/defaults") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/sqrt.av", "examples/sqrt") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/zlib.av", "examples/zlib") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/add.av", "examples/add") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/errors.av", "examples/errors") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/collect.av", "examples/collect") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/json.av", "examples/json") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/http.av", "examples/http") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/spawn.av", "examples/spawn") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "examples/matmul.av", "examples/matmul") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/chr.av", "part3/chr") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/slice.av", "part3/slice") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/index.av", "part3/index") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/buf.av", "part3/buf") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/conv.av", "part3/conv") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/exists.av", "part3/exists") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/argv.av", "part3/argv") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/env.av", "part3/env") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/interp.av", "part3/interp") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/pop.av", "part3/pop") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/part3/run.av", "part3/run") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage11/defaults.av", "stage11/defaults") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage11/overload.av", "stage11/overload") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage11/operator.av", "stage11/operator") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage11/generic.av", "stage11/generic") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage13/quote_fn.av", "stage13/quote_fn") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage13/splice_name.av", "stage13/splice_name") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage13/hygiene.av", "stage13/hygiene") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage13/fields.av", "stage13/fields") {
+      } else { ok = false }
+    }
+    if ok {
+      if bless_all(dumper, compiler, root, "tests/fixtures/stage13/method.av", "stage13/method") {
+      } else { ok = false }
+    }
+    if ok {
+      s12 = "${root}/tests/fixtures/stage12/main.av"
+      s12g = "${root}/tests/goldens/stage12/main"
+      if bless_layer(dumper, "", s12, "${s12g}.tok", "stage12/main.tok") {
+      } else { ok = false }
+      if ok {
+        if bless_layer(dumper, "--ast", s12, "${s12g}.ast", "stage12/main.ast") {
+        } else { ok = false }
+      }
+      if ok {
+        if bless_myc(compiler, s12, "${s12g}.myc", "stage12/main.myc") {
+        } else { ok = false }
+      }
+    }
+    if ok {
+      hello_src = "${root}/tests/goldens/examples/hello.myc"
+      hello_dst = "${root}/tests/goldens/hello.myc"
+      if ir = file_read(hello_src) {
+        dummy = file_write(hello_dst, ir)
+      } else {
+        bless_fail("read examples/hello.myc")
+        ok = false
+      }
+    }
+    if ok {
+      puts("PASS  tests/bless_goldens.av")
+    }
+  } else {
+    bless_fail("AVANT_COMPILER is not set")
+  }
+}
