@@ -1,0 +1,92 @@
+fn s15_fail_log(c: Checks, log: String, msg: String) {
+  c.expect(false, msg)
+  if err = file_read(log) {
+    puts(err)
+  }
+}
+
+fn test_stage15(c: Checks) {
+  c.suite("tests/cases/stage15.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    stamp = now_ms()
+    hello = "${root}/examples/hello.av"
+    golden = "${root}/tests/goldens/hello.myc"
+    main_av = "${root}/compiler/main.av"
+    hello_b = "/tmp/avant-s15-${stamp}-hello-b.myc"
+    hello_c = "/tmp/avant-s15-${stamp}-hello-c.myc"
+    main_b = "/tmp/avant-s15-${stamp}-main-b.myc"
+    main_c = "/tmp/avant-s15-${stamp}-main-c.myc"
+    bin_c = "/tmp/avant-s15-${stamp}-c"
+    bin_d = "/tmp/avant-s15-${stamp}-d"
+    clog = "/tmp/avant-s15-${stamp}-c.log"
+    dlog = "/tmp/avant-s15-${stamp}-d.log"
+    hlog = "/tmp/avant-s15-${stamp}-hello.log"
+
+    b_hello = dump_av(compiler, hello, hello_b)
+    c.eq_int(b_hello, 0, "dump hello")
+    if got = file_read(hello_b) {
+      if want = file_read(golden) {
+        c.eq_str(got, want, "hello dump matches golden")
+      } else {
+        c.expect(false, "read golden hello.myc")
+      }
+    } else {
+      s15_fail_log(c, hello_b, "read hello dump")
+    }
+
+    ccode = compile_av(compiler, main_av, bin_c, clog)
+    c.eq_int(ccode, 0, "compile next compiler")
+    if file_exists(bin_c) {
+      chmod_x(bin_c)
+
+      c_hello = dump_av(bin_c, hello, hello_c)
+      c.eq_int(c_hello, 0, "next dump hello")
+      if got_c = file_read(hello_c) {
+        if want = file_read(golden) {
+          c.eq_str(got_c, want, "next hello dump matches golden")
+        } else {
+          c.expect(false, "read golden hello.myc")
+        }
+        if got_b = file_read(hello_b) {
+          c.eq_str(got_c, got_b, "next hello dump matches this compiler")
+        }
+      } else {
+        s15_fail_log(c, hello_c, "read next hello dump")
+      }
+
+      b_main = dump_av(compiler, main_av, main_b)
+      c.eq_int(b_main, 0, "dump compiler myc")
+      c_main = dump_av(bin_c, main_av, main_c)
+      c.eq_int(c_main, 0, "next dump compiler myc")
+      if ir_b = file_read(main_b) {
+        if ir_c = file_read(main_c) {
+          c.eq_str(sha256(ir_b), sha256(ir_c), "compiler myc digest matches next")
+        } else {
+          s15_fail_log(c, main_c, "read next compiler myc")
+        }
+      } else {
+        s15_fail_log(c, main_b, "read compiler myc")
+      }
+
+      dcode = compile_av(bin_c, main_av, bin_d, dlog)
+      c.eq_int(dcode, 0, "next compiles D")
+      if file_exists(bin_d) {
+        chmod_x(bin_d)
+        hcode = run_av_cmd(bin_d, hello, hlog)
+        c.eq_int(hcode, 0, "D runs hello")
+        if hout = file_read(hlog) {
+          c.eq_str(hout, "Hello Avant\n", "D hello stdout")
+        } else {
+          c.expect(false, "read D hello stdout")
+        }
+      } else {
+        s15_fail_log(c, dlog, "D bin exists")
+      }
+    } else {
+      s15_fail_log(c, clog, "C bin exists")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

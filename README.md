@@ -8,7 +8,7 @@ This folder is the language. In the local workbench it sits next to `myc/` (IR b
 
 This README is the **living language document** until a website exists. It describes what the compilers actually accept today. The target sketch (including features that are decided but not built) is [syntax.md](syntax.md) **S3**.
 
-Waves 1–3 are closed. Stages 6–14 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). **D29** (quote-first macros) is implemented (`stage13.md`). **D48** dump goldens are implemented (`stage14.md`). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
+Waves 1–3 are closed. Stages 6–16 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). **D29** (quote-first macros) is implemented (`stage13.md`). **D48** dump goldens are implemented (`stage14.md`). **D48** compiler fixed-point is implemented (`stage15.md`). **Stage 16** closed: identity is the oracle (`stage16.md`). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
 
 ## What compiles today
 
@@ -177,18 +177,19 @@ These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **n
 ## How it is compiled
 
 ```
-.av source → parser/checker (Crystal host *and* `compiler/*.av`) → myc IR → myc-llvm → binary
+.av source → parser/checker (`compiler/*.av`; Crystal `src/` is frozen recovery) → myc IR → myc-llvm → binary
 ```
 
-Still emit myc IR (**D39**). Crystal `src/` is scaffolding and the identity oracle until **Stage 16** (D43). Identity is `compiler/*.av`.
+Still emit myc IR (**D39**). Identity is the oracle (**Stage 16**). Crystal `src/` is scaffolding and recovery. Identity is `compiler/*.av`.
 
 ## Compiler and tests
 
 Needs Crystal 1.21, a C compiler (`cc`), libclang (for `avant bind`), and `myc-llvm` (workbench sibling `../myc/myc-llvm`, or `AVANT_MYC_LLVM`). Heap allocation goes through `runtime/avant_rt.c` (GenImmix, D34). JSON is yyjson; HTTP is uSockets (both under `runtime/third_party/`). C libraries link with `--lib` / `--cc`. Spawn links `-pthread`.
 
 ```
+AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 crystal spec
-AVANT_COMPILER=./bin/avant-av-b crystal src/cli.cr run tests/run.av
+crystal src/cli.cr compile compiler/main.av bin/avant-av
 crystal src/cli.cr run examples/hello.av
 crystal src/cli.cr run examples/fact.av
 crystal src/cli.cr run examples/vec2.av
@@ -220,13 +221,15 @@ crystal src/cli.cr compile compiler/main.av bin/avant-av
 ./bin/avant-av-b run examples/hello.av
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 ./bin/avant-av-b compile compiler/main.av bin/avant-av-c
-./bin/avant-av-c run examples/hello.av
+./bin/avant-av-c compile compiler/main.av bin/avant-av-d
+./bin/avant-av-d run examples/hello.av
+AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/bless_goldens.av
 ```
 
-Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen). Dump goldens: `tests/goldens/` (**D48** / Stage 14).
+Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen). Dump goldens: `tests/goldens/` (**D48** / Stage 14). Compiler fixed-point: **D48** / Stage 15 (`stage15.md`). Identity oracle: **Stage 16** (`stage16.md`). Recovery `crystal spec`; re-bless host-vs-port with `AVANT_BLESS_HOST=1 crystal spec`.
 
-**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). **Stage 13** (closed): D29 quote-first ([stage13.md](stage13.md)). **Stage 14** (closed): native dump goldens ([stage14.md](stage14.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**) until **Stage 16**. Next: **D43** Stages 15–25 ([d43.md](d43.md) / [roadmap.md](roadmap.md)), not opened. Wave 5 closed (**D44–D48**).
+**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language proof ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). **Stage 13** (closed): D29 quote-first ([stage13.md](stage13.md)). **Stage 14** (closed): native dump goldens ([stage14.md](stage14.md)). **Stage 15** (closed): compiler fixed-point ([stage15.md](stage15.md)). **Stage 16** (closed): identity is the oracle ([stage16.md](stage16.md)). Next: **D43** Stages 17–25 ([d43.md](d43.md) / [roadmap.md](roadmap.md)), not opened. Wave 5 closed (**D44–D48**).
 
 ## Live ledgers
 
@@ -235,12 +238,12 @@ These files are **current truth**. They are rewritten in place. They are not log
 | File | Role |
 | --- | --- |
 | [philosophy.md](philosophy.md) | Why Avant exists, non-negotiables, measurable objectives |
-| [decisions.md](decisions.md) | Technical choices that are in force (D41 complete; D42 = modules; D29 = quote-first; D43 = sequence after Stage 13; Stage 14 closed; D44–D48 = Wave 5) |
-| [questions.md](questions.md) | Open questions (Wave 5 closed; D43 Stage 14 closed, 15–25 numbered not opened; Q24–Q25 closed; D29 implemented) |
+| [decisions.md](decisions.md) | Technical choices that are in force (D41 complete; D42 = modules; D29 = quote-first; D43 = sequence after Stage 13; Stages 14–16 closed; D44–D48 = Wave 5) |
+| [questions.md](questions.md) | Open questions (Wave 5 closed; D43 Stages 14–16 closed, 17–25 numbered not opened; Q24–Q25 closed; D29 implemented) |
 | [syntax.md](syntax.md) | Canonical sketch **S3** (target; not all of it compiles) |
 | [baseline.md](baseline.md) | LangArena numbers Avant will be judged against |
-| [roadmap.md](roadmap.md) | Stages. 6–14 closed; 15–25 planned (D43) |
-| [d43.md](d43.md) | D43 sequence. Stage 14 closed; 15–25 planned. Crystal roles; Stage 16 gates |
+| [roadmap.md](roadmap.md) | Stages. 6–16 closed; 17–25 planned (D43) |
+| [d43.md](d43.md) | D43 sequence. Stages 14–16 closed; 17–25 planned. Crystal roles |
 | [bootstrap.md](bootstrap.md) | Stage 8 record (closed). Identity roots, I/O, pitfalls |
 | [stage9.md](stage9.md) | Stage 9 record (closed). Native tests + coverage on B (D40) |
 | [stage10.md](stage10.md) | Stage 10 record (closed). Native suite on B; B→C; goldens |
@@ -248,6 +251,8 @@ These files are **current truth**. They are rewritten in place. They are not log
 | [stage12.md](stage12.md) | Stage 12 record (closed). D42 `import` / `pub` |
 | [stage13.md](stage13.md) | Stage 13 record (closed). D29 `quote` / `#()` / field walk |
 | [stage14.md](stage14.md) | Stage 14 record (closed). D48 native dump goldens |
+| [stage15.md](stage15.md) | Stage 15 record (closed). D48 compiler fixed-point |
+| [stage16.md](stage16.md) | Stage 16 record (closed). Identity is the oracle |
 | [experiments/immix.md](experiments/immix.md) | Sticky vs GenImmix measurement (closed) |
 
 Read `philosophy.md`, then `decisions.md`. Patience, measurement, and organized code are part of the identity.

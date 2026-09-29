@@ -18,6 +18,7 @@ describe "Stage 10 process_run_out stdout" do
   end
 end
 
+{% if env("AVANT_BLESS_HOST") == "1" %}
 describe "Stage 10 port holes identity" do
   it "matches the Crystal host myc IR on dir_list and Stage 7 holes" do
     root = File.expand_path("..", __DIR__)
@@ -95,7 +96,9 @@ describe "Stage 10 native suite" do
       printed.should match(/PASS  tests\/cases\/stage12\.av/)
       printed.should match(/PASS  tests\/cases\/stage13\.av/)
       printed.should match(/PASS  tests\/cases\/stage14\.av/)
-      printed.should match(/Test Suites: 12 passed, 12 total/)
+      printed.should match(/PASS  tests\/cases\/stage15\.av/)
+      printed.should match(/PASS  tests\/cases\/stage16\.av/)
+      printed.should match(/Test Suites: 14 passed, 14 total/)
       printed.should match(/Ran all test suites/)
     end
   end
@@ -117,3 +120,4 @@ describe "Stage 10 native suite" do
     end
   end
 end
+{% end %}

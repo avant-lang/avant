@@ -1,3 +1,9 @@
+# Retired Stage 16: Crystal is not the port oracle. Daily proof is tests/run.av.
+# Last blessing 2026-09-29: 176 examples, 0 failures. Re-run: AVANT_BLESS_HOST=1 crystal spec
+{% unless env("AVANT_BLESS_HOST") == "1" %}
+  {% skip_file %}
+{% end %}
+
 require "./spec_helper"
 
 describe "Stage 8 Part 3 identity surface" do

@@ -19,6 +19,7 @@ describe "Stage 9 process_run_out" do
   end
 end
 
+{% if env("AVANT_BLESS_HOST") == "1" %}
 describe "Stage 9 native runner" do
   root = File.expand_path("..", __DIR__)
   myc = File.expand_path("../../myc/myc-llvm", __DIR__)
@@ -112,3 +113,4 @@ describe "Stage 9 native runner" do
     end
   end
 end
+{% end %}

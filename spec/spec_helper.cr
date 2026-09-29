@@ -1,6 +1,9 @@
 require "spec"
 require "../src/avant"
 
+# Stage 16: Crystal is recovery, not the port oracle. Daily proof is tests/run.av.
+# Host-vs-port specs skip unless AVANT_BLESS_HOST=1. Last blessing 2026-09-29: 176 examples, 0 failures.
+
 def tokenize(text : String, path = "<test>")
   Avant::Lexer.new(Avant::Source.new(path, text)).tokenize
 end

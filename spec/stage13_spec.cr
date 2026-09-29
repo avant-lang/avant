@@ -153,6 +153,7 @@ describe "Stage 13 macros" do
   end
 end
 
+{% if env("AVANT_BLESS_HOST") == "1" %}
 describe "Stage 13 identity dump" do
   it "matches the Crystal host tokens, AST, typed dump, and myc IR on quote fixtures" do
     bin = compile_av_bin(port_compiler_files)
@@ -208,3 +209,4 @@ describe "Stage 13 identity dump" do
     end
   end
 end
+{% end %}
