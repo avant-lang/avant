@@ -6,7 +6,8 @@ module Avant
         tn.name,
         tn.args.map { |a| clone_type_name(a) },
         tn.nilable,
-        tn.members.map { |m| clone_type_name(m) }
+        tn.members.map { |m| clone_type_name(m) },
+        tn.qualifier
       )
     end
 
@@ -22,13 +23,13 @@ module Avant
               if rep.union?
                 return TypeName.union(tn.location, [rep], true)
               end
-              return TypeName.new(tn.location, rep.name, rep.args.dup, true, rep.members.map { |m| clone_type_name(m) })
+              return TypeName.new(tn.location, rep.name, rep.args.dup, true, rep.members.map { |m| clone_type_name(m) }, rep.qualifier)
             end
             return rep
           end
         end
       end
-      TypeName.new(tn.location, tn.name, tn.args.map { |a| subst_type_name(a, from, to) }, tn.nilable)
+      TypeName.new(tn.location, tn.name, tn.args.map { |a| subst_type_name(a, from, to) }, tn.nilable, [] of TypeName, tn.qualifier)
     end
 
     def self.clone_param(p : Param) : Param
@@ -53,6 +54,8 @@ module Avant
       out.type_params = fn.type_params.dup
       out.generic = fn.generic
       out.template = fn.template
+      out.vis = fn.vis
+      out.module_name = fn.module_name
       out
     end
 
@@ -102,7 +105,7 @@ module Avant
       when StructLiteral
         fields = [] of {String, Expr}
         e.fields.each { |n, v| fields << {n, clone_expr(v)} }
-        StructLiteral.new(e.location, e.type_name, fields)
+        StructLiteral.new(e.location, e.type_name, fields, e.qualifier)
       when ArrayLiteral
         ArrayLiteral.new(e.location, e.elements.map { |x| clone_expr(x) })
       when ArrayNew

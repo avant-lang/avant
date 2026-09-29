@@ -109,6 +109,41 @@ fn generate_main(names: Array(String)): String {
   b.to_s
 }
 
+fn stitch_suite(harness: String, cases: String, names: Array(String), generated: String): String? {
+  buf = buf_new()
+  if body = file_read(harness) {
+    buf.push_str(body)
+    if body.size > 0 {
+      if body[body.size - 1] == 10 {
+      } else {
+        buf.push_str("\n")
+      }
+    }
+  } else {
+    return nil
+  }
+  i = 0
+  while i < names.size {
+    path = "${cases}/${names[i]}"
+    if body = file_read(path) {
+      buf.push_str("\n")
+      buf.push_str(body)
+      if body.size > 0 {
+        if body[body.size - 1] == 10 {
+        } else {
+          buf.push_str("\n")
+        }
+      }
+    } else {
+      return nil
+    }
+    i = i + 1
+  }
+  buf.push_str("\n")
+  buf.push_str(generated)
+  buf.to_s
+}
+
 fn main {
   if compiler = env_get("AVANT_COMPILER") {
     if file_exists(compiler) {
@@ -142,19 +177,20 @@ fn main {
       return
     }
     stamp = now_ms()
-    main_src = "/tmp/avant-s10-${stamp}-main.av"
+    suite_src = "/tmp/avant-s10-${stamp}-suite.av"
     bin = "/tmp/avant-s10-${stamp}-suite.bin"
     log = "/tmp/avant-s10-${stamp}-suite.log"
-    dummy = file_write(main_src, generate_main(picked))
+    generated = generate_main(picked)
+    if text = stitch_suite(harness, cases, picked, generated) {
+      dummy = file_write(suite_src, text)
+    } else {
+      puts("FAIL  tests/run.av")
+      puts("failed to stitch suite sources")
+      return
+    }
     args: Array(String) = []
     args.push("compile")
-    args.push(harness)
-    i = 0
-    while i < picked.size {
-      args.push("${cases}/${picked[i]}")
-      i = i + 1
-    }
-    args.push(main_src)
+    args.push(suite_src)
     args.push(bin)
     code = process_run_out(compiler, args, log)
     if code != 0 {

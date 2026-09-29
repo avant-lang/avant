@@ -26,11 +26,20 @@ module Avant
       @loop_depth = 0
       @pending = [] of AST::Function
       @instance_by_emit = {} of String => AST::Function
+      @current_module = ""
+      @root_module = ""
+      @type_mod = {} of String => String
+      @type_vis = {} of String => Bool
+      @lib_mod = {} of String => String
+      @lib_vis = {} of String => Bool
+      @import_graph = {} of String => Array(String)
+      @known_modules = Set(String).new
     end
 
     def check : AST::Program
       @named, @opaques = Avant.load_types(@program)
       @resolver = TypeResolver.new(@named, @opaques)
+      note_modules
 
       @program.libs.each { |lib_def| register_lib(lib_def) }
       @program.functions.each do |fn|
@@ -46,7 +55,7 @@ module Avant
       reserve_constructors
       check_field_defaults
 
-      unless @functions.has_key?("main") || @functions.has_key?("run")
+      unless has_root_entry?
         raise CompileError.at(@program.location, "program needs fn main or fn run")
       end
 
@@ -60,6 +69,218 @@ module Avant
         i += 1
       end
       @program
+    end
+
+    private def note_modules : Nil
+      @root_module = @program.root_module
+      @current_module = @root_module
+      @import_graph = @program.import_graph
+      @known_modules = Set(String).new
+      @import_graph.each_key { |name| @known_modules << name }
+      @import_graph.each_value { |names| names.each { |n| @known_modules << n } }
+      @program.structs.each do |defn|
+        @type_mod[defn.name] = defn.module_name
+        @type_vis[defn.name] = defn.vis
+      end
+      @program.classes.each do |defn|
+        @type_mod[defn.name] = defn.module_name
+        @type_vis[defn.name] = defn.vis
+      end
+    end
+
+    private def has_root_entry? : Bool
+      ["main", "run"].each do |name|
+        (@functions[name]? || [] of FuncSig).each do |sig|
+          return true if sig.node.module_name == @root_module || @root_module.empty?
+        end
+      end
+      false
+    end
+
+    private def imported_by?(from_mod : String, target : String) : Bool
+      return true if from_mod == target
+      (@import_graph[from_mod]? || [] of String).includes?(target)
+    end
+
+    private def qualifier_ok?(qual : String, from_mod : String) : Bool
+      return true if qual == from_mod
+      imported_by?(from_mod, qual)
+    end
+
+    private def type_visible?(name : String, from_mod : String, qualifier : String? = nil) : Bool
+      return true unless @named.has_key?(name)
+      owner = @type_mod[name]? || from_mod
+      if q = qualifier
+        return false unless owner == q
+        return false unless qualifier_ok?(q, from_mod)
+        return owner == from_mod || @type_vis[name]? == true
+      end
+      return true if owner == from_mod
+      return false unless @type_vis[name]? == true
+      imported_by?(from_mod, owner)
+    end
+
+    private def lib_visible?(name : String, from_mod : String) : Bool
+      owner = @lib_mod[name]? || from_mod
+      return true if owner == from_mod
+      return false unless @lib_vis[name]? == true
+      imported_by?(from_mod, owner)
+    end
+
+    private def fn_visible?(fn : AST::Function, from_mod : String) : Bool
+      return true if fn.module_name == from_mod || fn.module_name.empty? || from_mod.empty?
+      fn.vis && imported_by?(from_mod, fn.module_name)
+    end
+
+    private def method_visible?(fn : AST::Function, from_mod : String) : Bool
+      return true if fn.vis
+      return true if fn.name == "initialize"
+      fn.module_name == from_mod || fn.module_name.empty? || from_mod.empty?
+    end
+
+    private def clash_unqualified?(name : String, from_mod : String) : Bool
+      origins = [] of String
+      if (owner = @type_mod[name]?) && type_visible?(name, from_mod)
+        origins << "type:#{owner}"
+      end
+      if @libs.has_key?(name) && lib_visible?(name, from_mod)
+        origins << "lib:#{@lib_mod[name]? || from_mod}"
+      end
+      fn_mods = Set(String).new
+      (@functions[name]? || [] of FuncSig).each do |sig|
+        next if sig.node.template
+        next unless fn_visible?(sig.node, from_mod)
+        fn_mods << sig.node.module_name
+      end
+      fn_mods.each { |m| origins << "fn:#{m}" }
+      kinds = origins.map { |o| o.split(":")[0] }.uniq
+      type_owners = origins.select { |o| o.starts_with?("type:") || o.starts_with?("lib:") }
+      type_owners.size > 1 || (type_owners.size >= 1 && kinds.size > 1)
+    end
+
+    private def lookup_named_type(name : String, loc : Location, qualifier : String? = nil) : AggTy
+      if clash_unqualified?(name, @current_module) && qualifier.nil?
+        raise CompileError.at(loc, "ambiguous name #{name}; qualify it")
+      end
+      ty = @named[name]? || raise CompileError.at(loc, "unknown type #{name}")
+      unless type_visible?(name, @current_module, qualifier)
+        raise CompileError.at(loc, "unknown type #{name}")
+      end
+      if q = qualifier
+        owner = @type_mod[name]?
+        unless owner == q
+          raise CompileError.at(loc, "unknown type #{q}.#{name}")
+        end
+      end
+      ty
+    end
+
+    private def resolve_in_module(tn : AST::TypeName) : Ty
+      if q = tn.qualifier
+        unless qualifier_ok?(q, @current_module)
+          raise CompileError.at(tn.location, "unknown module #{q}")
+        end
+        unless @named.has_key?(tn.name) && @type_mod[tn.name]? == q
+          raise CompileError.at(tn.location, "unknown type #{q}.#{tn.name}")
+        end
+        unless type_visible?(tn.name, @current_module, q)
+          raise CompileError.at(tn.location, "unknown type #{q}.#{tn.name}")
+        end
+      elsif clash_unqualified?(tn.name, @current_module) && @named.has_key?(tn.name)
+        raise CompileError.at(tn.location, "ambiguous name #{tn.name}; qualify it")
+      elsif @named.has_key?(tn.name) && !type_visible?(tn.name, @current_module)
+        raise CompileError.at(tn.location, "unknown type #{tn.name}")
+      end
+      @resolver.resolve(tn)
+    end
+
+    private def resolve_value_in_module(tn : AST::TypeName) : Ty
+      if q = tn.qualifier
+        unless qualifier_ok?(q, @current_module)
+          raise CompileError.at(tn.location, "unknown module #{q}")
+        end
+      elsif @named.has_key?(tn.name) && !type_visible?(tn.name, @current_module)
+        raise CompileError.at(tn.location, "unknown type #{tn.name}")
+      elsif clash_unqualified?(tn.name, @current_module) && @named.has_key?(tn.name)
+        raise CompileError.at(tn.location, "ambiguous name #{tn.name}; qualify it")
+      end
+      @resolver.resolve_value(tn)
+    end
+
+    private def ensure_pub_sig_ty(ty : Ty, loc : Location, fn : AST::Function) : Nil
+      return unless fn.vis
+      case ty
+      when AggTy
+        owner = @type_mod[ty.name]? || fn.module_name
+        if owner != fn.module_name && @type_vis[ty.name]? != true
+          raise CompileError.at(loc, "pub signature cannot use private type #{ty.name}")
+        end
+      when ArrayTy
+        ensure_pub_sig_ty(ty.elem, loc, fn)
+      when HashTy
+        ensure_pub_sig_ty(ty.key, loc, fn)
+        ensure_pub_sig_ty(ty.val, loc, fn)
+      when PtrTy
+        ensure_pub_sig_ty(ty.inner, loc, fn)
+      when JoinHandleTy
+        ensure_pub_sig_ty(ty.result, loc, fn)
+      when UnionTy
+        ty.members.each { |m| ensure_pub_sig_ty(m, loc, fn) }
+      end
+    end
+
+    private def lookup_module_type(mod : String, name : String, loc : Location) : Ty
+      ty = @named[name]?
+      unless ty && @type_mod[name]? == mod && type_visible?(name, @current_module, mod)
+        raise CompileError.at(loc, "unknown type #{mod}.#{name}")
+      end
+      ty
+    end
+
+    private def type_from_recv(recv : AST::Expr, loc : Location) : AggTy
+      case recv
+      when AST::Name
+        lookup_named_type(recv.ident, recv.location)
+      when AST::FieldAccess
+        object = check_expr(recv.object)
+        unless object.is_a?(ModuleTy)
+          raise CompileError.at(loc, "new is a type constructor")
+        end
+        ty = lookup_module_type(object.name, recv.field, recv.location)
+        unless ty.is_a?(AggTy)
+          raise CompileError.at(loc, "new is a type constructor")
+        end
+        ty
+      else
+        raise CompileError.at(loc, "new is a type constructor")
+      end
+    end
+
+    private def dispatch_qualified_call(expr : AST::Call, mod : String) : Ty
+      if expr.callee == "new"
+        raise CompileError.at(expr.location, "new is a type constructor")
+      end
+      saved = @current_module
+      arg_tys = expr.args.map { |a| check_expr(a) }
+      @current_module = mod
+      begin
+        sig = match_func(expr.callee, arg_tys, nil, expr.location)
+        unless sig.node.module_name == mod
+          raise CompileError.at(expr.location, "unknown function #{mod}.#{expr.callee}")
+        end
+        fill_defaults(expr, sig.node)
+        expr.args.each_with_index do |arg, i|
+          got = i < arg_tys.size ? arg_tys[i] : check_expr(arg, sig.params[i])
+          unless assignable?(got, sig.params[i])
+            raise CompileError.at(arg.location, "argument #{i + 1} of #{expr.callee} is #{got}, expected #{sig.params[i]}")
+          end
+        end
+        expr.resolved = sig.node.emit_name
+        expr.receiver = nil
+        sig.return_type
+      ensure
+        @current_module = saved
+      end
     end
 
     private def register_lib(lib_def : AST::LibDef) : Nil
@@ -98,11 +319,16 @@ module Avant
         @c_symbols[fn.name] = "#{lib_def.name}.#{fn.name}"
       end
       @libs[lib_def.name] = funs
+      @lib_mod[lib_def.name] = lib_def.module_name
+      @lib_vis[lib_def.name] = lib_def.vis
     end
 
     private def register_function(fn : AST::Function) : Nil
       if Avant.operator_method?(fn.name)
         raise CompileError.at(fn.location, "operator methods need a receiver")
+      end
+      if (fn.name == "main" || fn.name == "run") && !@root_module.empty? && fn.module_name != @root_module && !fn.module_name.empty?
+        raise CompileError.at(fn.location, "fn #{fn.name} is program entry; keep it in the root")
       end
       if @libs.has_key?(fn.name)
         raise CompileError.at(fn.location, "function #{fn.name} collides with a lib")
@@ -111,7 +337,10 @@ module Avant
         raise CompileError.at(fn.location, "function #{fn.name} collides with a C function")
       end
       if @named.has_key?(fn.name)
-        raise CompileError.at(fn.location, "function #{fn.name} collides with a type")
+        owner = @type_mod[fn.name]?
+        if owner.nil? || owner == fn.module_name || fn.module_name.empty? || owner.empty?
+          raise CompileError.at(fn.location, "function #{fn.name} collides with a type")
+        end
       end
       check_trailing_defaults(fn)
       tparams = Avant.collect_type_param_names(fn, @named).to_a
@@ -120,11 +349,13 @@ module Avant
       end
       fn.type_params = tparams
       fn.generic = tparams.size > 0
+      saved_mod = @current_module
+      @current_module = fn.module_name
       saved = @resolver
       @resolver = TypeResolver.new(@named, @opaques, Set.new(tparams))
-      params = fn.params.map { |p| @resolver.resolve_value(p.type) }
+      params = fn.params.map { |p| resolve_value_in_module(p.type) }
       ret = if t = fn.return_type
-              ty = @resolver.resolve(t)
+              ty = resolve_in_module(t)
               if ty.is_a?(OpaqueTy)
                 raise CompileError.at(t.location, "#{ty} is opaque; use Ptr(#{ty})")
               end
@@ -133,25 +364,33 @@ module Avant
               VoidTy::INSTANCE
             end
       @resolver = saved
+      params.each_with_index { |ty, i| ensure_pub_sig_ty(ty, fn.params[i].location, fn) }
+      ensure_pub_sig_ty(ret, fn.location, fn)
+      @current_module = saved_mod
       bucket = @functions[fn.name] ||= [] of FuncSig
       bucket.each do |existing|
         next if existing.node.template
         if same_param_types?(existing.params, params)
-          raise CompileError.at(fn.location, "function #{fn.name} is already defined")
+          same_mod = existing.node.module_name == fn.module_name || existing.node.module_name.empty? || fn.module_name.empty?
+          if same_mod || existing.node.vis || fn.vis
+            raise CompileError.at(fn.location, "function #{fn.name} is already defined")
+          end
         end
       end
       bucket << FuncSig.new(fn, params, ret)
     end
 
     private def register_method(fn : AST::Function) : Nil
+      saved_mod = @current_module
+      @current_module = fn.module_name
       owner_ty = if owner = fn.owner
-                   @named[owner]? || raise CompileError.at(fn.location, "unknown type #{owner}")
+                   lookup_named_type(owner, fn.location)
                  else
                    recv = fn.receiver.not_nil!
                    tparams_early = Avant.collect_type_param_names(fn, @named)
                    saved = @resolver
                    @resolver = TypeResolver.new(@named, @opaques, tparams_early)
-                   ty = @resolver.resolve(recv.type)
+                   ty = resolve_in_module(recv.type)
                    @resolver = saved
                    unless ty.is_a?(AggTy)
                      raise CompileError.at(recv.location, "methods can only extend a struct or class, not #{ty}")
@@ -173,9 +412,9 @@ module Avant
       fn.generic = tparams.size > 0
       saved = @resolver
       @resolver = TypeResolver.new(@named, @opaques, Set.new(tparams))
-      params = fn.params.map { |p| @resolver.resolve_value(p.type) }
+      params = fn.params.map { |p| resolve_value_in_module(p.type) }
       ret = if t = fn.return_type
-              ty = @resolver.resolve(t)
+              ty = resolve_in_module(t)
               if ty.is_a?(OpaqueTy)
                 raise CompileError.at(t.location, "#{ty} is opaque; use Ptr(#{ty})")
               end
@@ -184,6 +423,9 @@ module Avant
               VoidTy::INSTANCE
             end
       @resolver = saved
+      params.each_with_index { |ty, i| ensure_pub_sig_ty(ty, fn.params[i].location, fn) }
+      ensure_pub_sig_ty(ret, fn.location, fn)
+      @current_module = saved_mod
       if fn.name == "initialize" && !ret.void?
         raise CompileError.at(fn.location, "initialize cannot return a value")
       end
@@ -216,6 +458,8 @@ module Avant
       @self_ty = nil
       @self_name = nil
       @program.classes.each do |defn|
+        saved_mod = @current_module
+        @current_module = defn.module_name
         ty = @named[defn.name]
         defn.fields.each do |field|
           default = field.default
@@ -231,6 +475,7 @@ module Avant
           end
           pop_scope
         end
+        @current_module = saved_mod
       end
       @self_ty = saved_self
       @self_name = saved_self_name
@@ -285,17 +530,31 @@ module Avant
     private def assign_emit_names : Nil
       @functions.each do |name, sigs|
         if name == "main" || name == "run"
-          if sigs.size > 1
+          concrete_root = sigs.reject { |s| s.node.template || s.node.generic }
+          if concrete_root.count { |s| s.node.module_name == @root_module || @root_module.empty? || s.node.module_name.empty? } > 1
             raise CompileError.at(sigs[1].node.location, "function #{name} is already defined")
           end
         end
         concrete = sigs.reject { |s| s.node.generic }
+        pub_names = concrete.select(&.node.vis)
+        mods = concrete.map(&.node.module_name).uniq
         sigs.each do |sig|
           next if sig.node.generic
-          sig.node.emit_name = if concrete.size <= 1
-            name
+          base = if mods.size > 1 && !sig.node.vis && !sig.node.module_name.empty?
+                   "#{sig.node.module_name}__#{name}"
+                 else
+                   name
+                 end
+          group = if sig.node.vis
+                    pub_names
+                  else
+                    concrete.select { |s| s.node.module_name == sig.node.module_name && !s.node.vis }
+                  end
+          group = concrete if group.empty?
+          sig.node.emit_name = if group.size <= 1
+            base
           else
-            parts = [name]
+            parts = [base]
             sig.params.each { |p| parts << Avant.mangle_ty(p) }
             parts.join("__")
           end
@@ -340,7 +599,8 @@ module Avant
     end
 
     private def method_list(owner : String, name : String) : Array(MethodSig)
-      @methods[owner]?.try(&.[name]?) || [] of MethodSig
+      all = @methods[owner]?.try(&.[name]?) || [] of MethodSig
+      all.select { |s| method_visible?(s.node, @current_module) }
     end
 
     private def unify_ty(pattern : Ty, actual : Ty, subst : Hash(String, Ty)) : Bool
@@ -524,6 +784,7 @@ module Avant
       saw_generic = false
       (@functions[name]? || [] of FuncSig).each do |sig|
         next if sig.node.template
+        next unless fn_visible?(sig.node, @current_module)
         next unless arity_ok?(sig.node, arg_tys.size)
         if sig.node.generic
           saw_generic = true
@@ -602,7 +863,8 @@ module Avant
 
     private def dispatch_call(expr : AST::Call, expected : Ty?) : Ty
       arg_tys = expr.args.map { |a| check_expr(a) }
-      unless @functions.has_key?(expr.callee)
+      visible = (@functions[expr.callee]? || [] of FuncSig).any? { |s| !s.node.template && fn_visible?(s.node, @current_module) }
+      unless visible
         raise CompileError.at(expr.location, "unknown function #{expr.callee}")
       end
       sig = match_func(expr.callee, arg_tys, expected, expr.location)
@@ -635,6 +897,8 @@ module Avant
     end
 
     private def check_function(fn : AST::Function) : Nil
+      saved_mod = @current_module
+      @current_module = fn.module_name
       ret, params = function_types(fn)
       @return_type = ret
       if !ret.void? && fn.body.empty?
@@ -672,6 +936,7 @@ module Avant
       pop_scope
       @self_ty = nil
       @self_name = nil
+      @current_module = saved_mod
     end
 
     private def function_types(fn : AST::Function) : {Ty, Array(Ty)}
@@ -776,7 +1041,7 @@ module Avant
           raise CompileError.at(stmt.location, "cannot assign to self")
         end
         if declared = stmt.declared_type
-          want = @resolver.resolve(declared)
+          want = resolve_in_module(declared)
           if lookup(target.ident) || implicit_field(target.ident)
             raise CompileError.at(stmt.location, "cannot shadow #{target.ident}")
           end
@@ -931,6 +1196,9 @@ module Avant
         expr.implicit_field = true
         return field_ty
       end
+      if @known_modules.includes?(expr.ident) && qualifier_ok?(expr.ident, @current_module)
+        return ModuleTy.new(expr.ident)
+      end
       raise CompileError.at(expr.location, "unknown name #{expr.ident}")
     end
 
@@ -1079,6 +1347,9 @@ module Avant
 
     private def check_field(expr : AST::FieldAccess) : Ty
       object = check_expr(expr.object)
+      if object.is_a?(ModuleTy)
+        return lookup_module_type(object.name, expr.field, expr.location)
+      end
       if object.float?
         return check_float_field(expr)
       end
@@ -1228,7 +1499,7 @@ module Avant
     end
 
     private def check_struct_literal(expr : AST::StructLiteral) : Ty
-      ty = @named[expr.type_name]? || raise CompileError.at(expr.location, "unknown type #{expr.type_name}")
+      ty = lookup_named_type(expr.type_name, expr.location, expr.qualifier)
       if ty.class?
         raise CompileError.at(expr.location, "classes are constructed with #{ty.name}.new, not #{ty.name} { }")
       end
@@ -1274,7 +1545,7 @@ module Avant
     end
 
     private def check_array_new(expr : AST::ArrayNew) : Ty
-      elem = @resolver.resolve(expr.elem_type)
+      elem = resolve_in_module(expr.elem_type)
       size = check_expr(expr.size, IntTy::INSTANCE)
       unless size.int?
         raise CompileError.at(expr.size.location, "Array(T).new expects Int size")
@@ -1879,7 +2150,13 @@ module Avant
     private def check_method_call(expr : AST::Call, recv : AST::Expr) : Ty
       if recv.is_a?(AST::Name) && lookup(recv.ident).nil?
         if funs = @libs[recv.ident]?
+          unless lib_visible?(recv.ident, @current_module)
+            raise CompileError.at(recv.location, "unknown name #{recv.ident}")
+          end
           return check_lib_call(expr, recv.ident, funs)
+        end
+        if @known_modules.includes?(recv.ident) && qualifier_ok?(recv.ident, @current_module)
+          return dispatch_qualified_call(expr, recv.ident)
         end
       end
 
@@ -2001,10 +2278,7 @@ module Avant
     end
 
     private def check_constructor(expr : AST::Call, recv : AST::Expr) : Ty
-      unless recv.is_a?(AST::Name)
-        raise CompileError.at(expr.location, "new is a type constructor")
-      end
-      ty = @named[recv.ident]? || raise CompileError.at(recv.location, "unknown type #{recv.ident}")
+      ty = type_from_recv(recv, expr.location)
       unless ty.class?
         raise CompileError.at(expr.location, "structs are constructed with #{ty.name} { fields }, not .new")
       end
@@ -2024,6 +2298,7 @@ module Avant
         unless expr.args.empty?
           raise CompileError.at(expr.location, "#{ty.name}.new takes no arguments")
         end
+        expr.resolved = "#{ty.name}__new"
       end
       ty
     end
@@ -2257,8 +2532,8 @@ module Avant
     end
 
     private def check_hash_new(expr : AST::HashNew) : Ty
-      key = @resolver.resolve_value(expr.key_type)
-      val = @resolver.resolve_value(expr.val_type)
+      key = resolve_value_in_module(expr.key_type)
+      val = resolve_value_in_module(expr.val_type)
       unless key.string? || key.int?
         raise CompileError.at(expr.location, "Hash keys must be String or Int")
       end

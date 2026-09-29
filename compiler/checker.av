@@ -1,4 +1,15 @@
-class FuncSig {
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+
+pub class FuncSig {
   name: String = ""
   node: Function
   params: Array(Ty)
@@ -13,12 +24,12 @@ class FuncSig {
     self.owner = ""
   }
 
-  fn mangled: String {
+  pub fn mangled: String {
     self.node.emit_name
   }
 }
 
-fn required_arity(fnn: Function): Int {
+pub fn required_arity(fnn: Function): Int {
   i = 0
   while i < fnn.params.size {
     if d = fnn.params[i].default {
@@ -29,7 +40,7 @@ fn required_arity(fnn: Function): Int {
   fnn.params.size
 }
 
-fn arity_ok(fnn: Function, argc: Int): Bool {
+pub fn arity_ok(fnn: Function, argc: Int): Bool {
   req = required_arity(fnn)
   if argc < req {
     return false
@@ -37,7 +48,7 @@ fn arity_ok(fnn: Function, argc: Int): Bool {
   argc <= fnn.params.size
 }
 
-fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
+pub fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
   if a.size != b.size {
     return false
   }
@@ -52,7 +63,7 @@ fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
   true
 }
 
-fn is_op_fn_name(name: String): Bool {
+pub fn is_op_fn_name(name: String): Bool {
   if str_eq(name, "+") {
     return true
   }
@@ -89,11 +100,11 @@ fn is_op_fn_name(name: String): Bool {
   false
 }
 
-fn binary_op_method_name(op: Int): String {
+pub fn binary_op_method_name(op: Int): String {
   fn_op_name(op)
 }
 
-fn mangle_ty(ty: Ty): String {
+pub fn mangle_ty(ty: Ty): String {
   k = ty.kind
   if k == tyk_int() {
     return "Int"
@@ -168,7 +179,7 @@ fn mangle_ty(ty: Ty): String {
   ty.name
 }
 
-fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
+pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
   if ty.is_union {
     if ty.is_nilable {
       inner = ty_without_nil(ty)
@@ -249,7 +260,7 @@ fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
   TypeName.new(loc, ty.name)
 }
 
-class CFunSig {
+pub class CFunSig {
   name: String = ""
   lib_name: String = ""
   params: Array(Ty)
@@ -263,7 +274,7 @@ class CFunSig {
   }
 }
 
-fn reserved_c_names: Hash(String, Int) {
+pub fn reserved_c_names: Hash(String, Int) {
   h = Hash(String, Int).new
   names = [
     "main",
@@ -382,7 +393,7 @@ fn reserved_c_names: Hash(String, Int) {
   h
 }
 
-class Scope {
+pub class Scope {
   names: Hash(String, Int)
 
   fn initialize {
@@ -391,7 +402,7 @@ class Scope {
   }
 }
 
-class Checker {
+pub class Checker {
   source: Source
   program: Program
   resolver: TypeResolver
@@ -414,6 +425,13 @@ class Checker {
   pending: Array(Function)
   instances: Array(Function)
   next_ol: Int = 1
+  current_module: String = ""
+  root_module: String = ""
+  type_mod: Hash(String, String)
+  type_vis: Hash(String, Int)
+  lib_mod: Hash(String, String)
+  lib_vis: Hash(String, Int)
+  known_mods: Hash(String, Int)
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -451,13 +469,25 @@ class Checker {
     insts: Array(Function) = []
     self.instances = insts
     self.next_ol = 1
+    self.current_module = ""
+    self.root_module = ""
+    tm = Hash(String, String).new
+    self.type_mod = tm
+    tv = Hash(String, Int).new
+    self.type_vis = tv
+    lm = Hash(String, String).new
+    self.lib_mod = lm
+    lv = Hash(String, Int).new
+    self.lib_vis = lv
+    km = Hash(String, Int).new
+    self.known_mods = km
   }
 
-  fn has_err: Bool {
+  pub fn has_err: Bool {
     self.failed
   }
 
-  fn fail(loc: Location, message: String) {
+  pub fn fail(loc: Location, message: String) {
     if self.failed {
       return
     }
@@ -465,31 +495,31 @@ class Checker {
     self.err = CompileError.new(loc, message)
   }
 
-  fn pull_resolve {
+  pub fn pull_resolve {
     if e = self.resolver.err {
       self.fail(e.loc, e.message)
     }
   }
 
-  fn intern(ty: Ty): Int {
+  pub fn intern(ty: Ty): Int {
     self.resolver.intern(ty)
   }
 
-  fn push_scope {
+  pub fn push_scope {
     self.scopes.push(Scope.new)
   }
 
-  fn pop_scope {
+  pub fn pop_scope {
     dummy = self.scopes.pop
   }
 
-  fn bind(name: String, ty: Ty) {
+  pub fn bind(name: String, ty: Ty) {
     id = self.intern(ty)
     last = self.scopes[self.scopes.size - 1]
     last.names[name] = id
   }
 
-  fn lookup(name: String): Ty? {
+  pub fn lookup(name: String): Ty? {
     i = self.scopes.size - 1
     while i >= 0 {
       sc = self.scopes[i]
@@ -501,14 +531,470 @@ class Checker {
     nil
   }
 
-  fn find_fn(name: String): FuncSig? {
+  pub fn note_modules {
+    self.root_module = self.program.root_module
+    self.current_module = self.root_module
+    km = Hash(String, Int).new
+    i = 0
+    while i < self.program.mods.size {
+      info = self.program.mods[i]
+      km[info.name] = 1
+      j = 0
+      while j < info.imports.size {
+        km[info.imports[j]] = 1
+        j = j + 1
+      }
+      i = i + 1
+    }
+    self.known_mods = km
+    tm = Hash(String, String).new
+    tv = Hash(String, Int).new
+    i = 0
+    while i < self.program.structs.size {
+      sdef = self.program.structs[i]
+      tm[sdef.name] = sdef.mod_name
+      if sdef.vis {
+        tv[sdef.name] = 1
+      } else {
+        tv[sdef.name] = 0
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      tm[cdef.name] = cdef.mod_name
+      if cdef.vis {
+        tv[cdef.name] = 1
+      } else {
+        tv[cdef.name] = 0
+      }
+      i = i + 1
+    }
+    self.type_mod = tm
+    self.type_vis = tv
+  }
+
+  pub fn imported_by(from_mod: String, target: String): Bool {
+    if str_eq(from_mod, target) {
+      return true
+    }
+    i = 0
+    while i < self.program.mods.size {
+      info = self.program.mods[i]
+      if str_eq(info.name, from_mod) {
+        j = 0
+        while j < info.imports.size {
+          if str_eq(info.imports[j], target) {
+            return true
+          }
+          j = j + 1
+        }
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn qualifier_ok(qual: String, from_mod: String): Bool {
+    if str_eq(qual, from_mod) {
+      return true
+    }
+    self.imported_by(from_mod, qual)
+  }
+
+  pub fn type_is_visible(name: String, from_mod: String, qual: String): Bool {
+    if named = self.resolver.get_named(name) {
+    } else {
+      return true
+    }
+    owner = from_mod
+    if o = self.type_mod.get(name) {
+      owner = o
+    }
+    if qual.size > 0 {
+      if str_eq(owner, qual) {
+      } else {
+        return false
+      }
+      if self.qualifier_ok(qual, from_mod) {
+      } else {
+        return false
+      }
+      if str_eq(owner, from_mod) {
+        return true
+      }
+      if v = self.type_vis.get(name) {
+        return v == 1
+      }
+      return false
+    }
+    if str_eq(owner, from_mod) {
+      return true
+    }
+    if v = self.type_vis.get(name) {
+      if v == 1 {
+        return self.imported_by(from_mod, owner)
+      }
+    }
+    false
+  }
+
+  pub fn lib_is_visible(name: String, from_mod: String): Bool {
+    owner = from_mod
+    if o = self.lib_mod.get(name) {
+      owner = o
+    }
+    if str_eq(owner, from_mod) {
+      return true
+    }
+    if v = self.lib_vis.get(name) {
+      if v == 1 {
+        return self.imported_by(from_mod, owner)
+      }
+    }
+    false
+  }
+
+  pub fn fn_is_visible(fnn: Function, from_mod: String): Bool {
+    if str_eq(fnn.mod_name, from_mod) {
+      return true
+    }
+    if fnn.mod_name.size == 0 {
+      return true
+    }
+    if from_mod.size == 0 {
+      return true
+    }
+    if fnn.vis {
+      return self.imported_by(from_mod, fnn.mod_name)
+    }
+    false
+  }
+
+  pub fn method_is_visible(fnn: Function, from_mod: String): Bool {
+    if fnn.vis {
+      return true
+    }
+    if str_eq(fnn.name, "initialize") {
+      return true
+    }
+    if str_eq(fnn.mod_name, from_mod) {
+      return true
+    }
+    if fnn.mod_name.size == 0 {
+      return true
+    }
+    if from_mod.size == 0 {
+      return true
+    }
+    false
+  }
+
+  pub fn clash_unqualified(name: String, from_mod: String): Bool {
+    origins: Array(String) = []
+    if o = self.type_mod.get(name) {
+      if self.type_is_visible(name, from_mod, "") {
+        origins.push("type:${o}")
+      }
+    }
+    if id = self.lib_names.get(name) {
+      if self.lib_is_visible(name, from_mod) {
+        owner = from_mod
+        if o = self.lib_mod.get(name) {
+          owner = o
+        }
+        origins.push("lib:${owner}")
+      }
+    }
+    fn_mods = Hash(String, Int).new
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, name) {
+        if self.fn_is_visible(sig.node, from_mod) {
+          if seen = fn_mods.get(sig.node.mod_name) {
+          } else {
+            fn_mods[sig.node.mod_name] = 1
+            origins.push("fn:${sig.node.mod_name}")
+          }
+        }
+      }
+      i = i + 1
+    }
+    type_owners = 0
+    has_type = false
+    has_fn = false
+    i = 0
+    while i < origins.size {
+      o = origins[i]
+      if o.size >= 5 {
+        if str_eq(str_slice(o, 0, 5), "type:") {
+          type_owners = type_owners + 1
+          has_type = true
+        } else if str_eq(str_slice(o, 0, 4), "lib:") {
+          type_owners = type_owners + 1
+          has_type = true
+        } else if str_eq(str_slice(o, 0, 3), "fn:") {
+          has_fn = true
+        }
+      }
+      i = i + 1
+    }
+    if type_owners > 1 {
+      return true
+    }
+    if type_owners >= 1 {
+      if has_fn {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn lookup_named_type(name: String, loc: Location, qual: String): Ty? {
+    if self.clash_unqualified(name, self.current_module) {
+      if qual.size == 0 {
+        self.fail(loc, "ambiguous name ${name}; qualify it")
+        return nil
+      }
+    }
+    if ty = self.resolver.get_named(name) {
+      if self.type_is_visible(name, self.current_module, qual) {
+      } else {
+        self.fail(loc, "unknown type ${name}")
+        return nil
+      }
+      if qual.size > 0 {
+        owner = ""
+        if o = self.type_mod.get(name) {
+          owner = o
+        }
+        if str_eq(owner, qual) {
+        } else {
+          self.fail(loc, "unknown type ${qual}.${name}")
+          return nil
+        }
+      }
+      return ty
+    }
+    self.fail(loc, "unknown type ${name}")
+    nil
+  }
+
+  pub fn resolve_in_module(tn: TypeName): Ty {
+    if tn.mod_name.size > 0 {
+      if self.qualifier_ok(tn.mod_name, self.current_module) {
+      } else {
+        self.fail(tn.loc, "unknown module ${tn.mod_name}")
+        return self.t_int()
+      }
+      if named = self.resolver.get_named(tn.name) {
+        owner = ""
+        if o = self.type_mod.get(tn.name) {
+          owner = o
+        }
+        if str_eq(owner, tn.mod_name) {
+        } else {
+          self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+          return self.t_int()
+        }
+        if self.type_is_visible(tn.name, self.current_module, tn.mod_name) {
+        } else {
+          self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+          return self.t_int()
+        }
+      } else {
+        self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+        return self.t_int()
+      }
+    } else {
+      if named = self.resolver.get_named(tn.name) {
+        if self.clash_unqualified(tn.name, self.current_module) {
+          self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+          return self.t_int()
+        }
+        if self.type_is_visible(tn.name, self.current_module, "") {
+        } else {
+          self.fail(tn.loc, "unknown type ${tn.name}")
+          return self.t_int()
+        }
+      }
+    }
+    self.resolver.resolve(tn)
+  }
+
+  pub fn resolve_value_in_module(tn: TypeName): Ty {
+    if tn.mod_name.size > 0 {
+      if self.qualifier_ok(tn.mod_name, self.current_module) {
+      } else {
+        self.fail(tn.loc, "unknown module ${tn.mod_name}")
+        return self.t_int()
+      }
+    } else {
+      if named = self.resolver.get_named(tn.name) {
+        if self.type_is_visible(tn.name, self.current_module, "") {
+        } else {
+          self.fail(tn.loc, "unknown type ${tn.name}")
+          return self.t_int()
+        }
+        if self.clash_unqualified(tn.name, self.current_module) {
+          self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+          return self.t_int()
+        }
+      }
+    }
+    self.resolver.resolve_value(tn)
+  }
+
+  pub fn ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Function) {
+    if fnn.vis {
+    } else {
+      return
+    }
+    if ty.is_agg {
+      owner = fnn.mod_name
+      if o = self.type_mod.get(ty.name) {
+        owner = o
+      }
+      if str_eq(owner, fnn.mod_name) {
+      } else {
+        vis = 0
+        if flag = self.type_vis.get(ty.name) {
+          vis = flag
+        }
+        if vis == 1 {
+        } else {
+          self.fail(loc, "pub signature cannot use private type ${ty.name}")
+        }
+      }
+      return
+    }
+    if ty.is_array {
+      if elem = ty.inner {
+        self.ensure_pub_sig_ty(elem, loc, fnn)
+      }
+      return
+    }
+    if ty.is_hash {
+      if hk = ty.key {
+        self.ensure_pub_sig_ty(hk, loc, fnn)
+      }
+      if hv = ty.val {
+        self.ensure_pub_sig_ty(hv, loc, fnn)
+      }
+      return
+    }
+    if ty.is_ptr {
+      if pin = ty.inner {
+        self.ensure_pub_sig_ty(pin, loc, fnn)
+      }
+      return
+    }
+    if ty.is_join {
+      if jin = ty.inner {
+        self.ensure_pub_sig_ty(jin, loc, fnn)
+      }
+      return
+    }
+    if ty.is_union {
+      i = 0
+      while i < ty.members.size {
+        self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
+        i = i + 1
+      }
+    }
+  }
+
+  pub fn lookup_module_type(mod: String, name: String, loc: Location): Ty? {
+    if ty = self.resolver.get_named(name) {
+      owner = ""
+      if o = self.type_mod.get(name) {
+        owner = o
+      }
+      if str_eq(owner, mod) {
+        if self.type_is_visible(name, self.current_module, mod) {
+          return ty
+        }
+      }
+    }
+    self.fail(loc, "unknown type ${mod}.${name}")
+    nil
+  }
+
+  pub fn type_from_recv(recv: Expr, loc: Location): Ty? {
+    if recv.kind == ex_name() {
+      return self.lookup_named_type(recv.ident, recv.loc, "")
+    }
+    if recv.kind == ex_field() {
+      if obj = recv.object {
+        object = self.check_expr(obj)
+        if object.is_module {
+        } else {
+          self.fail(loc, "new is a type constructor")
+          return nil
+        }
+        return self.lookup_module_type(object.name, recv.ident, recv.loc)
+      }
+    }
+    self.fail(loc, "new is a type constructor")
+    nil
+  }
+
+  pub fn dispatch_qualified_call(expr: Expr, mod: String): Ty {
+    if str_eq(expr.callee, "new") {
+      self.fail(expr.loc, "new is a type constructor")
+      return self.t_int()
+    }
+    saved = self.current_module
+    arg_tys: Array(Ty) = []
+    i = 0
+    while i < expr.args.size {
+      arg_tys.push(self.check_expr(expr.args[i]))
+      i = i + 1
+    }
+    self.current_module = mod
+    none: Ty? = nil
+    if sig = self.match_func(expr.callee, arg_tys, none, expr.loc) {
+      if str_eq(sig.node.mod_name, mod) {
+      } else {
+        self.fail(expr.loc, "unknown function ${mod}.${expr.callee}")
+        self.current_module = saved
+        return self.t_int()
+      }
+      self.fill_defaults(expr, sig.node)
+      i = 0
+      while i < expr.args.size {
+        got = self.t_int()
+        if i < arg_tys.size {
+          got = arg_tys[i]
+        } else {
+          got = self.check_expr_as(expr.args[i], sig.params[i])
+        }
+        if ty_assignable(got, sig.params[i]) {
+        } else {
+          n = i + 1
+          self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        }
+        i = i + 1
+      }
+      expr.resolved = sig.node.emit_name
+      expr.receiver = nil
+      self.current_module = saved
+      return sig.ret
+    }
+    self.current_module = saved
+    self.t_int()
+  }
+
+  pub fn find_fn(name: String): FuncSig? {
     if id = self.fn_index.get(name) {
       return self.functions[id]
     }
     nil
   }
 
-  fn find_method(owner: String, name: String): FuncSig? {
+  pub fn find_method(owner: String, name: String): FuncSig? {
     key = "${owner}__${name}"
     if id = self.method_index.get(key) {
       return self.methods[id]
@@ -516,12 +1002,12 @@ class Checker {
     nil
   }
 
-  fn alloc_ol(fnn: Function) {
+  pub fn alloc_ol(fnn: Function) {
     fnn.ol_index = self.next_ol
     self.next_ol = self.next_ol + 1
   }
 
-  fn check_trailing_defaults(fnn: Function) {
+  pub fn check_trailing_defaults(fnn: Function) {
     seen = false
     i = 0
     while i < fnn.params.size {
@@ -538,7 +1024,7 @@ class Checker {
     }
   }
 
-  fn count_named_fns(name: String): Int {
+  pub fn count_named_fns(name: String): Int {
     n = 0
     i = 1
     while i < self.functions.size {
@@ -550,7 +1036,7 @@ class Checker {
     n
   }
 
-  fn count_named_methods(owner: String, name: String): Int {
+  pub fn count_named_methods(owner: String, name: String): Int {
     n = 0
     i = 0
     while i < self.methods.size {
@@ -565,7 +1051,7 @@ class Checker {
     n
   }
 
-  fn find_sig_by_node(fnn: Function): FuncSig? {
+  pub fn find_sig_by_node(fnn: Function): FuncSig? {
     i = 1
     while i < self.functions.size {
       sig = self.functions[i]
@@ -585,7 +1071,7 @@ class Checker {
     nil
   }
 
-  fn find_instance(emit: String): Function? {
+  pub fn find_instance(emit: String): Function? {
     i = 0
     while i < self.instances.size {
       inst = self.instances[i]
@@ -597,7 +1083,7 @@ class Checker {
     nil
   }
 
-  fn subst_get(keys: Array(String), vals: Array(Ty), name: String): Ty? {
+  pub fn subst_get(keys: Array(String), vals: Array(Ty), name: String): Ty? {
     i = 0
     while i < keys.size {
       if str_eq(keys[i], name) {
@@ -608,7 +1094,7 @@ class Checker {
     nil
   }
 
-  fn subst_put(keys: Array(String), vals: Array(Ty), name: String, ty: Ty): Bool {
+  pub fn subst_put(keys: Array(String), vals: Array(Ty), name: String, ty: Ty): Bool {
     if existing = self.subst_get(keys, vals, name) {
       return existing.same_as(ty)
     }
@@ -617,7 +1103,7 @@ class Checker {
     true
   }
 
-  fn unify_ty(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Bool {
+  pub fn unify_ty(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Bool {
     if pattern.is_var {
       return self.subst_put(keys, vals, pattern.name, actual)
     }
@@ -670,7 +1156,7 @@ class Checker {
     actual.same_as(pattern)
   }
 
-  fn infer_subst(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
+  pub fn infer_subst(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
     keys: Array(String) = []
     vals: Array(Ty) = []
     i = 0
@@ -713,7 +1199,7 @@ class Checker {
     out
   }
 
-  fn fill_defaults(expr: Expr, fnn: Function) {
+  pub fn fill_defaults(expr: Expr, fnn: Function) {
     while expr.args.size < fnn.params.size {
       i = expr.args.size
       if d = fnn.params[i].default {
@@ -734,7 +1220,7 @@ class Checker {
     }
   }
 
-  fn attach_method_fn(fnn: Function) {
+  pub fn attach_method_fn(fnn: Function) {
     owner = fnn.owner
     i = 0
     while i < self.program.structs.size {
@@ -757,7 +1243,7 @@ class Checker {
     self.program.functions.push(fnn)
   }
 
-  fn instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+  pub fn instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
     from = sig.node.type_params
     to: Array(TypeName) = []
     buf = buf_new()
@@ -801,7 +1287,7 @@ class Checker {
     nsig
   }
 
-  fn instantiate_method(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+  pub fn instantiate_method(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
     from = sig.node.type_params
     to: Array(TypeName) = []
     buf = buf_new()
@@ -849,7 +1335,7 @@ class Checker {
     nsig
   }
 
-  fn match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+  pub fn match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
     cands: Array(FuncSig) = []
     saw_generic = false
     i = 1
@@ -866,6 +1352,7 @@ class Checker {
         }
         if is_inst {
         } else {
+          if self.fn_is_visible(sig.node, self.current_module) {
           if arity_ok(sig.node, arg_tys.size) {
             if sig.node.generic {
               saw_generic = true
@@ -886,6 +1373,7 @@ class Checker {
                 cands.push(sig)
               }
             }
+          }
           }
         }
       }
@@ -914,7 +1402,7 @@ class Checker {
     chosen
   }
 
-  fn match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+  pub fn match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
     cands: Array(FuncSig) = []
     saw_generic = false
     i = 0
@@ -932,6 +1420,7 @@ class Checker {
           }
           if is_inst {
           } else {
+            if self.method_is_visible(sig.node, self.current_module) {
             if arity_ok(sig.node, arg_tys.size) {
               if sig.node.generic {
                 saw_generic = true
@@ -952,6 +1441,7 @@ class Checker {
                   cands.push(sig)
                 }
               }
+            }
             }
           }
         }
@@ -981,12 +1471,28 @@ class Checker {
     chosen
   }
 
-  fn dispatch_call(expr: Expr, expected: Ty?): Ty {
+  pub fn dispatch_call(expr: Expr, expected: Ty?): Ty {
     arg_tys: Array(Ty) = []
     i = 0
     while i < expr.args.size {
       arg_tys.push(self.check_expr(expr.args[i]))
       i = i + 1
+    }
+    visible = false
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, expr.callee) {
+        if self.fn_is_visible(sig.node, self.current_module) {
+          visible = true
+        }
+      }
+      i = i + 1
+    }
+    if visible {
+    } else {
+      self.fail(expr.loc, "unknown function ${expr.callee}")
+      return self.t_int()
     }
     if sig = self.match_func(expr.callee, arg_tys, expected, expr.loc) {
       self.fill_defaults(expr, sig.node)
@@ -1011,7 +1517,7 @@ class Checker {
     self.t_int()
   }
 
-  fn dispatch_method(expr: Expr, object: Ty, expected: Ty?): Ty {
+  pub fn dispatch_method(expr: Expr, object: Ty, expected: Ty?): Ty {
     if field_ty = object.field_named(expr.callee) {
       self.fail(expr.loc, "${object.name}.${expr.callee} is a field, not a method")
       return field_ty
@@ -1045,7 +1551,7 @@ class Checker {
     self.t_int()
   }
 
-  fn assign_emit_names {
+  pub fn assign_emit_names {
     i = 1
     while i < self.functions.size {
       sig = self.functions[i]
@@ -1053,34 +1559,134 @@ class Checker {
       } else {
       name = sig.name
       if str_eq(name, "main") {
-        if self.count_named_fns(name) > 1 {
+        nroot = 0
+        j = 1
+        while j < self.functions.size {
+          other = self.functions[j]
+          if other.node.generic {
+          } else {
+            if str_eq(other.name, name) {
+              if str_eq(other.node.mod_name, self.root_module) {
+                nroot = nroot + 1
+              } else {
+                if self.root_module.size == 0 {
+                  nroot = nroot + 1
+                } else {
+                  if other.node.mod_name.size == 0 {
+                    nroot = nroot + 1
+                  }
+                }
+              }
+            }
+          }
+          j = j + 1
+        }
+        if nroot > 1 {
           self.fail(sig.node.loc, "function ${name} is already defined")
           return
         }
       }
       if str_eq(name, "run") {
-        if self.count_named_fns(name) > 1 {
+        nroot = 0
+        j = 1
+        while j < self.functions.size {
+          other = self.functions[j]
+          if other.node.generic {
+          } else {
+            if str_eq(other.name, name) {
+              if str_eq(other.node.mod_name, self.root_module) {
+                nroot = nroot + 1
+              } else {
+                if self.root_module.size == 0 {
+                  nroot = nroot + 1
+                } else {
+                  if other.node.mod_name.size == 0 {
+                    nroot = nroot + 1
+                  }
+                }
+              }
+            }
+          }
+          j = j + 1
+        }
+        if nroot > 1 {
           self.fail(sig.node.loc, "function ${name} is already defined")
           return
         }
       }
-      n = 0
+      mods: Array(String) = []
       j = 1
       while j < self.functions.size {
         other = self.functions[j]
         if other.node.generic {
         } else {
           if str_eq(other.name, name) {
-            n = n + 1
+            found = false
+            m = 0
+            while m < mods.size {
+              if str_eq(mods[m], other.node.mod_name) {
+                found = true
+              }
+              m = m + 1
+            }
+            if found {
+            } else {
+              mods.push(other.node.mod_name)
+            }
           }
         }
         j = j + 1
       }
-      if n <= 1 {
-        sig.node.emit_name = name
+      base = name
+      if mods.size > 1 {
+        if sig.node.vis {
+        } else {
+          if sig.node.mod_name.size > 0 {
+            base = "${sig.node.mod_name}__${name}"
+          }
+        }
+      }
+      g = 0
+      j = 1
+      while j < self.functions.size {
+        other = self.functions[j]
+        if other.node.generic {
+        } else {
+          if str_eq(other.name, name) {
+            if sig.node.vis {
+              if other.node.vis {
+                g = g + 1
+              }
+            } else {
+              if other.node.vis {
+              } else {
+                if str_eq(other.node.mod_name, sig.node.mod_name) {
+                  g = g + 1
+                }
+              }
+            }
+          }
+        }
+        j = j + 1
+      }
+      if g == 0 {
+        j = 1
+        while j < self.functions.size {
+          other = self.functions[j]
+          if other.node.generic {
+          } else {
+            if str_eq(other.name, name) {
+              g = g + 1
+            }
+          }
+          j = j + 1
+        }
+      }
+      if g <= 1 {
+        sig.node.emit_name = base
       } else {
         buf = buf_new()
-        buf.push_str(name)
+        buf.push_str(base)
         k = 0
         while k < sig.params.size {
           buf.push_str("__")
@@ -1140,29 +1746,30 @@ class Checker {
     }
   }
 
-  fn implicit_field(name: String): Ty? {
+  pub fn implicit_field(name: String): Ty? {
     if st = self.self_ty {
       return st.field_named(name)
     }
     nil
   }
 
-  fn t_int: Ty { self.resolver.t_int }
-  fn t_int64: Ty { self.resolver.t_int64 }
-  fn t_uint64: Ty { self.resolver.t_uint64 }
-  fn t_bool: Ty { self.resolver.t_bool }
-  fn t_float: Ty { self.resolver.t_float }
-  fn t_string: Ty { self.resolver.t_string }
-  fn t_void: Ty { self.resolver.t_void }
-  fn t_nil: Ty { self.resolver.t_nil }
-  fn t_buf: Ty { self.resolver.t_buf }
+  pub fn t_int: Ty { self.resolver.t_int }
+  pub fn t_int64: Ty { self.resolver.t_int64 }
+  pub fn t_uint64: Ty { self.resolver.t_uint64 }
+  pub fn t_bool: Ty { self.resolver.t_bool }
+  pub fn t_float: Ty { self.resolver.t_float }
+  pub fn t_string: Ty { self.resolver.t_string }
+  pub fn t_void: Ty { self.resolver.t_void }
+  pub fn t_nil: Ty { self.resolver.t_nil }
+  pub fn t_buf: Ty { self.resolver.t_buf }
 
-  fn check: Program {
+  pub fn check: Program {
     self.resolver = load_types(self.program)
     self.pull_resolve
     if self.has_err {
       return self.program
     }
+    self.note_modules
     i = 0
     while i < self.program.libs.size {
       self.register_lib(self.program.libs[i])
@@ -1217,11 +1824,28 @@ class Checker {
       return self.program
     }
     has_entry = false
-    if id = self.fn_index.get("main") {
-      has_entry = true
-    }
-    if id = self.fn_index.get("run") {
-      has_entry = true
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, "main") {
+        if str_eq(sig.node.mod_name, self.root_module) {
+          has_entry = true
+        } else {
+          if self.root_module.size == 0 {
+            has_entry = true
+          }
+        }
+      }
+      if str_eq(sig.name, "run") {
+        if str_eq(sig.node.mod_name, self.root_module) {
+          has_entry = true
+        } else {
+          if self.root_module.size == 0 {
+            has_entry = true
+          }
+        }
+      }
+      i = i + 1
     }
     if has_entry {
     } else {
@@ -1252,7 +1876,7 @@ class Checker {
     self.program
   }
 
-  fn register_lib(lib_def: LibDef) {
+  pub fn register_lib(lib_def: LibDef) {
     if id = self.lib_names.get(lib_def.name) {
       self.fail(lib_def.loc, "lib ${lib_def.name} is already defined")
       return
@@ -1309,12 +1933,40 @@ class Checker {
       self.c_symbols[cfun.name] = key
       j = j + 1
     }
+    self.lib_mod[lib_def.name] = lib_def.mod_name
+    if lib_def.vis {
+      self.lib_vis[lib_def.name] = 1
+    } else {
+      self.lib_vis[lib_def.name] = 0
+    }
   }
 
-  fn register_function(fnn: Function) {
+  pub fn register_function(fnn: Function) {
     if is_op_fn_name(fnn.name) {
       self.fail(fnn.loc, "operator methods need a receiver")
       return
+    }
+    if str_eq(fnn.name, "main") {
+      if self.root_module.size > 0 {
+        if str_eq(fnn.mod_name, self.root_module) {
+        } else {
+          if fnn.mod_name.size > 0 {
+            self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
+            return
+          }
+        }
+      }
+    }
+    if str_eq(fnn.name, "run") {
+      if self.root_module.size > 0 {
+        if str_eq(fnn.mod_name, self.root_module) {
+        } else {
+          if fnn.mod_name.size > 0 {
+            self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
+            return
+          }
+        }
+      }
     }
     if id = self.lib_names.get(fnn.name) {
       self.fail(fnn.loc, "function ${fnn.name} collides with a lib")
@@ -1325,8 +1977,24 @@ class Checker {
       return
     }
     if named = self.resolver.get_named(fnn.name) {
-      self.fail(fnn.loc, "function ${fnn.name} collides with a type")
-      return
+      owner = ""
+      if o = self.type_mod.get(fnn.name) {
+        owner = o
+      }
+      collide = false
+      if owner.size == 0 {
+        collide = true
+      }
+      if str_eq(owner, fnn.mod_name) {
+        collide = true
+      }
+      if fnn.mod_name.size == 0 {
+        collide = true
+      }
+      if collide {
+        self.fail(fnn.loc, "function ${fnn.name} collides with a type")
+        return
+      }
     }
     self.check_trailing_defaults(fnn)
     if self.has_err {
@@ -1347,33 +2015,63 @@ class Checker {
     }
     fnn.type_params = tparams
     fnn.generic = tparams.size > 0
+    saved_mod = self.current_module
+    self.current_module = fnn.mod_name
     self.resolver.set_tparams(tparams)
     params: Array(Ty) = []
     i = 0
     while i < fnn.params.size {
-      params.push(self.resolver.resolve_value(fnn.params[i].type))
+      params.push(self.resolve_value_in_module(fnn.params[i].type))
       self.pull_resolve
       i = i + 1
     }
     ret = self.t_void()
     if t = fnn.return_type {
-      ty = self.resolver.resolve(t)
+      ty = self.resolve_in_module(t)
       self.pull_resolve
       if ty.is_opaque {
         self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
         self.resolver.clear_tparams
+        self.current_module = saved_mod
         return
       }
       ret = ty
     }
     self.resolver.clear_tparams
+    i = 0
+    while i < params.size {
+      self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+      i = i + 1
+    }
+    self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+    self.current_module = saved_mod
     i = 1
     while i < self.functions.size {
       existing = self.functions[i]
       if str_eq(existing.name, fnn.name) {
         if params_same(existing.params, params) {
-          self.fail(fnn.loc, "function ${fnn.name} is already defined")
-          return
+          same_mod = false
+          if str_eq(existing.node.mod_name, fnn.mod_name) {
+            same_mod = true
+          }
+          if existing.node.mod_name.size == 0 {
+            same_mod = true
+          }
+          if fnn.mod_name.size == 0 {
+            same_mod = true
+          }
+          if same_mod {
+            self.fail(fnn.loc, "function ${fnn.name} is already defined")
+            return
+          }
+          if existing.node.vis {
+            self.fail(fnn.loc, "function ${fnn.name} is already defined")
+            return
+          }
+          if fnn.vis {
+            self.fail(fnn.loc, "function ${fnn.name} is already defined")
+            return
+          }
         }
       }
       i = i + 1
@@ -1387,23 +2085,25 @@ class Checker {
     }
   }
 
-  fn register_method(fnn: Function) {
+  pub fn register_method(fnn: Function) {
+    saved_mod = self.current_module
+    self.current_module = fnn.mod_name
     owner_ty = self.t_int()
     has_owner = false
     tparams = collect_fn_type_params(fnn, self.resolver.named)
     self.resolver.set_tparams(tparams)
     if fnn.owner.size > 0 {
-      if found = self.resolver.get_named(fnn.owner) {
+      if found = self.lookup_named_type(fnn.owner, fnn.loc, "") {
         owner_ty = found
         has_owner = true
       } else {
-        self.fail(fnn.loc, "unknown type ${fnn.owner}")
         self.resolver.clear_tparams
+        self.current_module = saved_mod
         return
       }
     } else {
       if recv = fnn.receiver {
-        ty = self.resolver.resolve(recv.type)
+        ty = self.resolve_in_module(recv.type)
         self.pull_resolve
         if ty.is_agg {
           fnn.owner = ty.name
@@ -1412,32 +2112,38 @@ class Checker {
         } else {
           self.fail(recv.loc, "methods can only extend a struct or class, not ${ty.show}")
           self.resolver.clear_tparams
+          self.current_module = saved_mod
           return
         }
       } else {
         self.fail(fnn.loc, "unknown type")
         self.resolver.clear_tparams
+        self.current_module = saved_mod
         return
       }
     }
     if has_owner {
     } else {
       self.resolver.clear_tparams
+      self.current_module = saved_mod
       return
     }
     if str_eq(fnn.name, "new") {
       self.fail(fnn.loc, "new is reserved; write initialize")
       self.resolver.clear_tparams
+      self.current_module = saved_mod
       return
     }
     if field_ty = owner_ty.field_named(fnn.name) {
       self.fail(fnn.loc, "method ${owner_ty.name}.${fnn.name} collides with a field")
       self.resolver.clear_tparams
+      self.current_module = saved_mod
       return
     }
     self.check_trailing_defaults(fnn)
     if self.has_err {
       self.resolver.clear_tparams
+      self.current_module = saved_mod
       return
     }
     fnn.type_params = tparams
@@ -1445,22 +2151,30 @@ class Checker {
     params: Array(Ty) = []
     i = 0
     while i < fnn.params.size {
-      params.push(self.resolver.resolve_value(fnn.params[i].type))
+      params.push(self.resolve_value_in_module(fnn.params[i].type))
       self.pull_resolve
       i = i + 1
     }
     ret = self.t_void()
     if t = fnn.return_type {
-      ty = self.resolver.resolve(t)
+      ty = self.resolve_in_module(t)
       self.pull_resolve
       if ty.is_opaque {
         self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
         self.resolver.clear_tparams
+        self.current_module = saved_mod
         return
       }
       ret = ty
     }
     self.resolver.clear_tparams
+    i = 0
+    while i < params.size {
+      self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+      i = i + 1
+    }
+    self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+    self.current_module = saved_mod
     if str_eq(fnn.name, "initialize") {
       if ret.is_void {
       } else {
@@ -1496,7 +2210,7 @@ class Checker {
     }
   }
 
-  fn reserve_constructors {
+  pub fn reserve_constructors {
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
@@ -1511,7 +2225,7 @@ class Checker {
     }
   }
 
-  fn trivial_default(expr: Expr): Bool {
+  pub fn trivial_default(expr: Expr): Bool {
     k = expr.kind
     if k == ex_int() {
       return true
@@ -1538,7 +2252,7 @@ class Checker {
     false
   }
 
-  fn check_field_defaults {
+  pub fn check_field_defaults {
     saved = self.self_ty
     saved_name = self.self_name
     self.self_ty = nil
@@ -1546,6 +2260,7 @@ class Checker {
     i = 0
     while i < self.program.classes.size {
       defn = self.program.classes[i]
+      self.current_module = defn.mod_name
       if ty = self.resolver.get_named(defn.name) {
         j = 0
         while j < defn.fields.size {
@@ -1575,7 +2290,9 @@ class Checker {
     self.self_name = saved_name
   }
 
-  fn check_function(fnn: Function) {
+  pub fn check_function(fnn: Function) {
+    saved_mod = self.current_module
+    self.current_module = fnn.mod_name
     ret = self.t_void()
     params: Array(Ty) = []
     if sig = self.find_sig_by_node(fnn) {
@@ -1583,6 +2300,7 @@ class Checker {
       params = sig.params
     } else {
       self.fail(fnn.loc, "unknown function ${fnn.name}")
+      self.current_module = saved_mod
       return
     }
     self.return_type = ret
@@ -1590,6 +2308,7 @@ class Checker {
     } else {
       if fnn.body.size == 0 {
         self.fail(fnn.loc, "missing return value")
+        self.current_module = saved_mod
         return
       }
     }
@@ -1602,6 +2321,7 @@ class Checker {
         self.self_name = fn_self_name(fnn)
         if existing = self.lookup(self.self_name) {
           self.fail(fnn.loc, "duplicate parameter ${self.self_name}")
+          self.current_module = saved_mod
           return
         }
         self.bind(self.self_name, owner)
@@ -1612,6 +2332,7 @@ class Checker {
       param = fnn.params[i]
       if existing = self.lookup(param.name) {
         self.fail(param.loc, "duplicate parameter ${param.name}")
+        self.current_module = saved_mod
         return
       }
       self.bind(param.name, params[i])
@@ -1623,6 +2344,7 @@ class Checker {
         if ty_assignable(got, params[i]) {
         } else {
           self.fail(default.loc, "cannot assign ${got.show} to ${params[i].show}")
+          self.current_module = saved_mod
           return
         }
       }
@@ -1632,9 +2354,10 @@ class Checker {
     self.pop_scope
     self.self_ty = nil
     self.self_name = ""
+    self.current_module = saved_mod
   }
 
-  fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
+  pub fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     i = 0
     while i < body.size {
       last = false
@@ -1648,13 +2371,13 @@ class Checker {
     }
   }
 
-  fn check_block(body: Array(Stmt), expected: Ty, at_tail: Bool) {
+  pub fn check_block(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     self.push_scope
     self.check_body(body, expected, at_tail)
     self.pop_scope
   }
 
-  fn fallthrough(body: Array(Stmt)): Bool {
+  pub fn fallthrough(body: Array(Stmt)): Bool {
     if body.size == 0 {
       return true
     }
@@ -1677,7 +2400,7 @@ class Checker {
     true
   }
 
-  fn check_stmt(stmt: Stmt, expected: Ty, at_tail: Bool) {
+  pub fn check_stmt(stmt: Stmt, expected: Ty, at_tail: Bool) {
     if self.has_err {
       return
     }
@@ -1809,7 +2532,7 @@ class Checker {
     self.fail(stmt.loc, "unknown statement")
   }
 
-  fn check_if_assign(stmt: Stmt, expected: Ty, at_tail: Bool) {
+  pub fn check_if_assign(stmt: Stmt, expected: Ty, at_tail: Bool) {
     if cond = stmt.cond {
       got = self.check_expr(cond)
       success = self.if_assign_success(got, cond.loc)
@@ -1842,7 +2565,7 @@ class Checker {
     }
   }
 
-  fn if_assign_success(got: Ty, loc: Location): Ty {
+  pub fn if_assign_success(got: Ty, loc: Location): Ty {
     if got.is_union {
       if got.includes_nil {
         success = ty_without_nil(got)
@@ -1857,7 +2580,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_assign(stmt: Stmt) {
+  pub fn check_assign(stmt: Stmt) {
     if stmt.op != tk_eq() {
       self.check_compound_assign(stmt)
       return
@@ -1870,7 +2593,7 @@ class Checker {
             return
           }
           if declared = stmt.declared {
-            want = self.resolver.resolve(declared)
+            want = self.resolve_in_module(declared)
             self.pull_resolve
             if existing = self.lookup(target.ident) {
               self.fail(stmt.loc, "cannot shadow ${target.ident}")
@@ -1964,7 +2687,7 @@ class Checker {
     self.fail(stmt.loc, "cannot assign to this expression")
   }
 
-  fn check_compound_assign(stmt: Stmt) {
+  pub fn check_compound_assign(stmt: Stmt) {
     if declared = stmt.declared {
       self.fail(stmt.loc, "type annotation only belongs on a new name")
       return
@@ -1998,15 +2721,15 @@ class Checker {
     }
   }
 
-  fn check_expr(expr: Expr): Ty {
+  pub fn check_expr(expr: Expr): Ty {
     self.check_expr_flag(expr, false, self.t_int())
   }
 
-  fn check_expr_as(expr: Expr, want: Ty): Ty {
+  pub fn check_expr_as(expr: Expr, want: Ty): Ty {
     self.check_expr_flag(expr, true, want)
   }
 
-  fn check_expr_flag(expr: Expr, has_want: Bool, want: Ty): Ty {
+  pub fn check_expr_flag(expr: Expr, has_want: Bool, want: Ty): Ty {
     if self.has_err {
       return self.t_int()
     }
@@ -2021,7 +2744,7 @@ class Checker {
     kind
   }
 
-  fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
+  pub fn check_expr_core(expr: Expr, has_want: Bool, want: Ty): Ty {
     k = expr.kind
     if k == ex_int() {
       return self.check_integer(expr, has_want, want)
@@ -2081,7 +2804,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_try(expr: Expr): Ty {
+  pub fn check_try(expr: Expr): Ty {
     if inner = expr.inner {
       got = self.check_expr(inner)
       return self.split_try_success(got, expr.loc)
@@ -2089,7 +2812,7 @@ class Checker {
     self.t_int()
   }
 
-  fn split_try_success(got: Ty, loc: Location): Ty {
+  pub fn split_try_success(got: Ty, loc: Location): Ty {
     if got.is_union {
       if got.includes_nil {
         return ty_without_nil(got)
@@ -2123,7 +2846,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_interp(expr: Expr): Ty {
+  pub fn check_interp(expr: Expr): Ty {
     i = 0
     while i < expr.parts.size {
       part = expr.parts[i]
@@ -2152,7 +2875,7 @@ class Checker {
     self.t_string()
   }
 
-  fn check_float_field(expr: Expr): Ty {
+  pub fn check_float_field(expr: Expr): Ty {
     if str_eq(expr.ident, "sqrt") {
       expr.method_call = true
       return self.t_float()
@@ -2173,7 +2896,7 @@ class Checker {
     self.t_float()
   }
 
-  fn check_int_field(expr: Expr, object: Ty): Ty {
+  pub fn check_int_field(expr: Expr, object: Ty): Ty {
     if str_eq(expr.ident, "to_f") {
       expr.method_call = true
       return self.t_float()
@@ -2198,7 +2921,7 @@ class Checker {
     object
   }
 
-  fn check_field(expr: Expr): Ty {
+  pub fn check_field(expr: Expr): Ty {
     if obj = expr.object {
       object = self.check_expr(obj)
       if object.is_float {
@@ -2323,7 +3046,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_index(expr: Expr): Ty {
+  pub fn check_index(expr: Expr): Ty {
     if arr = expr.left {
       if ix = expr.right {
         container = self.check_expr(arr)
@@ -2366,10 +3089,10 @@ class Checker {
     self.t_int()
   }
 
-  fn check_array_new(expr: Expr): Ty {
+  pub fn check_array_new(expr: Expr): Ty {
     elem = self.t_int()
     if tn = expr.elem_type {
-      elem = self.resolver.resolve(tn)
+      elem = self.resolve_in_module(tn)
       self.pull_resolve
     }
     if size = expr.size_expr {
@@ -2382,7 +3105,7 @@ class Checker {
     ty_array(elem)
   }
 
-  fn check_array_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+  pub fn check_array_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.elems.size == 0 {
       if has_want {
         if want.is_array {
@@ -2417,15 +3140,15 @@ class Checker {
     ty_array(elem_ty)
   }
 
-  fn check_hash_new(expr: Expr): Ty {
+  pub fn check_hash_new(expr: Expr): Ty {
     key = self.t_int()
     val = self.t_int()
     if kn = expr.key_type {
-      key = self.resolver.resolve_value(kn)
+      key = self.resolve_value_in_module(kn)
       self.pull_resolve
     }
     if vn = expr.val_type {
-      val = self.resolver.resolve_value(vn)
+      val = self.resolve_value_in_module(vn)
       self.pull_resolve
     }
     if key.is_string {
@@ -2453,8 +3176,8 @@ class Checker {
     ty_hash(key, val)
   }
 
-  fn check_struct_literal(expr: Expr): Ty {
-    if ty = self.resolver.get_named(expr.type_name) {
+  pub fn check_struct_literal(expr: Expr): Ty {
+    if ty = self.lookup_named_type(expr.type_name, expr.loc, expr.mod_name) {
       if ty.is_class {
         self.fail(expr.loc, "classes are constructed with ${ty.name}.new, not ${ty.name} { }")
         return ty
@@ -2494,7 +3217,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_name(expr: Expr): Ty {
+  pub fn check_name(expr: Expr): Ty {
     if str_eq(expr.ident, "self") {
       if st = self.self_ty {
       } else {
@@ -2509,11 +3232,16 @@ class Checker {
       expr.implicit_field = true
       return field_ty
     }
+    if k = self.known_mods.get(expr.ident) {
+      if self.qualifier_ok(expr.ident, self.current_module) {
+        return ty_module(expr.ident)
+      }
+    }
     self.fail(expr.loc, "unknown name ${expr.ident}")
     self.t_int()
   }
 
-  fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
+  pub fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
     if has_want {
       if want.is_float {
         return self.t_float()
@@ -2541,7 +3269,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_unary(expr: Expr): Ty {
+  pub fn check_unary(expr: Expr): Ty {
     if inner = expr.inner {
       got = self.check_expr(inner)
       if expr.op == tk_minus() {
@@ -2571,7 +3299,7 @@ class Checker {
     self.t_int()
   }
 
-  fn bitwise_op(op: Int): Bool {
+  pub fn bitwise_op(op: Int): Bool {
     if op == tk_amp() {
       return true
     }
@@ -2587,14 +3315,14 @@ class Checker {
     op == tk_greater_greater()
   }
 
-  fn shift_op(op: Int): Bool {
+  pub fn shift_op(op: Int): Bool {
     if op == tk_less_less() {
       return true
     }
     op == tk_greater_greater()
   }
 
-  fn int_binary(op: Int, ty: Ty): Ty {
+  pub fn int_binary(op: Int, ty: Ty): Ty {
     if op == tk_plus() {
       return ty
     }
@@ -2629,7 +3357,7 @@ class Checker {
     ty
   }
 
-  fn float_binary(op: Int, loc: Location): Ty {
+  pub fn float_binary(op: Int, loc: Location): Ty {
     if op == tk_plus() {
       return self.t_float()
     }
@@ -2664,7 +3392,7 @@ class Checker {
     self.t_float()
   }
 
-  fn check_binary(expr: Expr): Ty {
+  pub fn check_binary(expr: Expr): Ty {
     if l = expr.left {
       if r = expr.right {
         op = expr.op
@@ -2805,7 +3533,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
+  pub fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
     if recv = expr.receiver {
       return self.check_method_call(expr, recv)
     }
@@ -3123,7 +3851,7 @@ class Checker {
     return self.dispatch_call(expr, expected)
   }
 
-  fn check_args(expr: Expr, params: Array(Ty), label: String) {
+  pub fn check_args(expr: Expr, params: Array(Ty), label: String) {
     if expr.args.size != params.size {
       self.fail(expr.loc, "${label} takes ${params.size} arguments, got ${expr.args.size}")
       return
@@ -3141,67 +3869,63 @@ class Checker {
     }
   }
 
-  fn check_constructor(expr: Expr, recv: Expr): Ty {
-    if recv.kind == ex_name() {
-      if ty = self.resolver.get_named(recv.ident) {
-        if ty.is_class {
-          recv.ty = ty
-          has_init = false
-          mi = 0
-          while mi < self.methods.size {
-            ms = self.methods[mi]
-            if str_eq(ms.owner, ty.name) {
-              if str_eq(ms.name, "initialize") {
-                has_init = true
-              }
-            }
-            mi = mi + 1
-          }
-          if has_init {
-            arg_tys: Array(Ty) = []
-            ai = 0
-            while ai < expr.args.size {
-              arg_tys.push(self.check_expr(expr.args[ai]))
-              ai = ai + 1
-            }
-            none: Ty? = nil
-            if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc) {
-              self.fill_defaults(expr, sig.node)
-              i = 0
-              while i < expr.args.size {
-                got = self.t_int()
-                if i < arg_tys.size {
-                  got = arg_tys[i]
-                } else {
-                  got = self.check_expr_as(expr.args[i], sig.params[i])
-                }
-                if ty_assignable(got, sig.params[i]) {
-                } else {
-                  n = i + 1
-                  self.fail(expr.args[i].loc, "argument ${n} of ${ty.name}.new is ${got.show}, expected ${sig.params[i].show}")
-                }
-                i = i + 1
-              }
-            }
-          } else {
-            if expr.args.size == 0 {
-            } else {
-              self.fail(expr.loc, "${ty.name}.new takes no arguments")
+  pub fn check_constructor(expr: Expr, recv: Expr): Ty {
+    if ty = self.type_from_recv(recv, expr.loc) {
+      if ty.is_class {
+        recv.ty = ty
+        has_init = false
+        mi = 0
+        while mi < self.methods.size {
+          ms = self.methods[mi]
+          if str_eq(ms.owner, ty.name) {
+            if str_eq(ms.name, "initialize") {
+              has_init = true
             }
           }
-          return ty
+          mi = mi + 1
         }
-        self.fail(expr.loc, "structs are constructed with ${ty.name} { fields }, not .new")
+        if has_init {
+          arg_tys: Array(Ty) = []
+          ai = 0
+          while ai < expr.args.size {
+            arg_tys.push(self.check_expr(expr.args[ai]))
+            ai = ai + 1
+          }
+          none: Ty? = nil
+          if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc) {
+            self.fill_defaults(expr, sig.node)
+            i = 0
+            while i < expr.args.size {
+              got = self.t_int()
+              if i < arg_tys.size {
+                got = arg_tys[i]
+              } else {
+                got = self.check_expr_as(expr.args[i], sig.params[i])
+              }
+              if ty_assignable(got, sig.params[i]) {
+              } else {
+                n = i + 1
+                self.fail(expr.args[i].loc, "argument ${n} of ${ty.name}.new is ${got.show}, expected ${sig.params[i].show}")
+              }
+              i = i + 1
+            }
+          }
+        } else {
+          if expr.args.size == 0 {
+          } else {
+            self.fail(expr.loc, "${ty.name}.new takes no arguments")
+          }
+        }
+        expr.resolved = "${ty.name}__new"
         return ty
       }
-      self.fail(recv.loc, "unknown type ${recv.ident}")
-      return self.t_int()
+      self.fail(expr.loc, "structs are constructed with ${ty.name} { fields }, not .new")
+      return ty
     }
-    self.fail(expr.loc, "new is a type constructor")
     self.t_int()
   }
 
-  fn check_lib_call(expr: Expr, lib_name: String): Ty {
+  pub fn check_lib_call(expr: Expr, lib_name: String): Ty {
     key = "${lib_name}.${expr.callee}"
     if id = self.cfun_index.get(key) {
       sig = self.cfuns[id]
@@ -3213,12 +3937,21 @@ class Checker {
     self.t_int()
   }
 
-  fn check_method_call(expr: Expr, recv: Expr): Ty {
+  pub fn check_method_call(expr: Expr, recv: Expr): Ty {
     if recv.kind == ex_name() {
       if found = self.lookup(recv.ident) {
       } else {
         if id = self.lib_names.get(recv.ident) {
-          return self.check_lib_call(expr, recv.ident)
+          if self.lib_is_visible(recv.ident, self.current_module) {
+            return self.check_lib_call(expr, recv.ident)
+          }
+          self.fail(recv.loc, "unknown name ${recv.ident}")
+          return self.t_int()
+        }
+        if k = self.known_mods.get(recv.ident) {
+          if self.qualifier_ok(recv.ident, self.current_module) {
+            return self.dispatch_qualified_call(expr, recv.ident)
+          }
         }
       }
     }
@@ -3255,14 +3988,14 @@ class Checker {
     self.t_int()
   }
 
-  fn check_block_void(block: Block, pname: String, pty: Ty) {
+  pub fn check_block_void(block: Block, pname: String, pty: Ty) {
     self.push_scope
     self.bind(pname, pty)
     self.check_body(block.body, self.t_void(), false)
     self.pop_scope
   }
 
-  fn check_float_method(expr: Expr): Ty {
+  pub fn check_float_method(expr: Expr): Ty {
     if b = expr.block {
       self.fail(expr.loc, "Float64.${expr.callee} does not take a block")
       return self.t_float()
@@ -3306,7 +4039,7 @@ class Checker {
     self.t_float()
   }
 
-  fn check_int_method(expr: Expr, object: Ty): Ty {
+  pub fn check_int_method(expr: Expr, object: Ty): Ty {
     if b = expr.block {
       self.fail(expr.loc, "${object.show}.${expr.callee} does not take a block")
       return object
@@ -3350,7 +4083,7 @@ class Checker {
     object
   }
 
-  fn check_string_method(expr: Expr): Ty {
+  pub fn check_string_method(expr: Expr): Ty {
     if b = expr.block {
       self.fail(expr.loc, "String.${expr.callee} does not take a block")
       return self.t_string()
@@ -3373,7 +4106,7 @@ class Checker {
     self.t_string()
   }
 
-  fn check_buf_method(expr: Expr): Ty {
+  pub fn check_buf_method(expr: Expr): Ty {
     if b = expr.block {
       self.fail(expr.loc, "Buf.${expr.callee} does not take a block")
       return self.t_void()
@@ -3480,7 +4213,7 @@ class Checker {
     self.t_void()
   }
 
-  fn check_array_method(expr: Expr, array: Ty): Ty {
+  pub fn check_array_method(expr: Expr, array: Ty): Ty {
     if str_eq(expr.callee, "push") {
       if b = expr.block {
         self.fail(expr.loc, "push does not take a block")
@@ -3612,7 +4345,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_hash_method(expr: Expr, hash: Ty): Ty {
+  pub fn check_hash_method(expr: Expr, hash: Ty): Ty {
     if str_eq(expr.callee, "get") {
       if expr.args.size == 1 {
         if b = expr.block {
@@ -3779,7 +4512,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
+  pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     if cond = expr.cond {
       ct = self.check_expr(cond)
       if ct.is_int {
@@ -3869,7 +4602,7 @@ class Checker {
     result
   }
 
-  fn check_spawn(expr: Expr): Ty {
+  pub fn check_spawn(expr: Expr): Ty {
     if expr.args.size == 0 {
     } else {
       self.fail(expr.loc, "spawn takes a block, not arguments")
@@ -3893,7 +4626,7 @@ class Checker {
     ty_join(self.t_int())
   }
 
-  fn check_block_value(block: Block): Ty {
+  pub fn check_block_value(block: Block): Ty {
     if block.body.size == 0 {
       self.fail(block.loc, "block needs a value")
       return self.t_int()
@@ -3927,7 +4660,7 @@ class Checker {
     self.t_int()
   }
 
-  fn copyable_for_spawn(ty: Ty): Bool {
+  pub fn copyable_for_spawn(ty: Ty): Bool {
     if ty.is_int {
       return true
     }
@@ -3943,12 +4676,12 @@ class Checker {
     ty.is_float
   }
 
-  fn collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
+  pub fn collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
     seen = Hash(String, Int).new
     self.walk_spawn_stmts(body, expr, seen)
   }
 
-  fn walk_spawn_stmts(body: Array(Stmt), node: Expr, seen: Hash(String, Int)) {
+  pub fn walk_spawn_stmts(body: Array(Stmt), node: Expr, seen: Hash(String, Int)) {
     i = 0
     while i < body.size {
       self.walk_spawn_stmt(body[i], node, seen)
@@ -3956,7 +4689,7 @@ class Checker {
     }
   }
 
-  fn walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Hash(String, Int)) {
+  pub fn walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Hash(String, Int)) {
     k = stmt.kind
     if k == st_return() {
       if e = stmt.expr {
@@ -4001,7 +4734,7 @@ class Checker {
     }
   }
 
-  fn walk_spawn_expr(expr: Expr, node: Expr, seen: Hash(String, Int)) {
+  pub fn walk_spawn_expr(expr: Expr, node: Expr, seen: Hash(String, Int)) {
     k = expr.kind
     if k == ex_name() {
       self.note_spawn_capture(expr, node, seen)
@@ -4105,7 +4838,7 @@ class Checker {
     }
   }
 
-  fn note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {
+  pub fn note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {
     if ty = self.lookup(expr.ident) {
       if self.copyable_for_spawn(ty) {
       } else {
@@ -4121,7 +4854,7 @@ class Checker {
     }
   }
 
-  fn check_json_walk_call(expr: Expr): Ty? {
+  pub fn check_json_walk_call(expr: Expr): Ty? {
     if str_eq(expr.callee, "json_root") {
       if expr.args.size == 1 {
         if b = expr.block {
@@ -4264,7 +4997,7 @@ class Checker {
     nil
   }
 
-  fn check_codec_call(expr: Expr): Ty? {
+  pub fn check_codec_call(expr: Expr): Ty? {
     if str_eq(expr.callee, "b64_encode") {
       return self.check_one_string(expr, self.t_string())
     }
@@ -4322,7 +5055,7 @@ class Checker {
     nil
   }
 
-  fn check_one_string(expr: Expr, ret: Ty): Ty {
+  pub fn check_one_string(expr: Expr, ret: Ty): Ty {
     if expr.args.size == 1 {
       if b = expr.block {
         self.fail(expr.loc, "${expr.callee} takes one String")
@@ -4340,7 +5073,7 @@ class Checker {
     ret
   }
 
-  fn check_buf_string(expr: Expr): Ty {
+  pub fn check_buf_string(expr: Expr): Ty {
     if expr.args.size == 2 {
       if b = expr.block {
         self.fail(expr.loc, "${expr.callee} takes Buf and String")
@@ -4363,7 +5096,7 @@ class Checker {
     self.t_void()
   }
 
-  fn check_i32_bytes(expr: Expr): Ty {
+  pub fn check_i32_bytes(expr: Expr): Ty {
     if expr.args.size == 1 {
       if b = expr.block {
         self.fail(expr.loc, "${expr.callee} takes Array(Int)")
@@ -4389,7 +5122,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_langarena_call(expr: Expr): Ty? {
+  pub fn check_langarena_call(expr: Expr): Ty? {
     if str_eq(expr.callee, "now_us") {
       if expr.args.size == 0 {
         if b = expr.block {
@@ -4587,7 +5320,7 @@ class Checker {
     nil
   }
 
-  fn check_i32_bytes_to_str(expr: Expr): Ty {
+  pub fn check_i32_bytes_to_str(expr: Expr): Ty {
     if expr.args.size == 1 {
       if b = expr.block {
         self.fail(expr.loc, "bytes_to_str takes Array(Int)")
@@ -4613,7 +5346,7 @@ class Checker {
     self.t_string()
   }
 
-  fn check_json_get(expr: Expr, val: Ty): Ty {
+  pub fn check_json_get(expr: Expr, val: Ty): Ty {
     if expr.args.size == 2 {
       if b = expr.block {
         self.fail(expr.loc, "${expr.callee} takes a document and a key")
@@ -4636,7 +5369,7 @@ class Checker {
     ty_nilable(val)
   }
 
-  fn check_join(expr: Expr, handle: Ty): Ty {
+  pub fn check_join(expr: Expr, handle: Ty): Ty {
     if str_eq(expr.callee, "join") {
     } else {
       self.fail(expr.loc, "no method ${expr.callee} on JoinHandle")
@@ -4658,7 +5391,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_switch_branch(body: Array(Stmt), has_want: Bool, want: Ty): Ty {
+  pub fn check_switch_branch(body: Array(Stmt), has_want: Bool, want: Ty): Ty {
     self.push_scope
     if body.size == 0 {
       self.pop_scope

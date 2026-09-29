@@ -1,23 +1,30 @@
-fn tyk_int: Int { 1 }
-fn tyk_int64: Int { 2 }
-fn tyk_uint64: Int { 3 }
-fn tyk_bool: Int { 4 }
-fn tyk_float: Int { 5 }
-fn tyk_string: Int { 6 }
-fn tyk_void: Int { 7 }
-fn tyk_nil: Int { 8 }
-fn tyk_array: Int { 9 }
-fn tyk_struct: Int { 10 }
-fn tyk_class: Int { 11 }
-fn tyk_ptr: Int { 12 }
-fn tyk_union: Int { 13 }
-fn tyk_hash: Int { 14 }
-fn tyk_buf: Int { 15 }
-fn tyk_join: Int { 16 }
-fn tyk_opaque: Int { 17 }
-fn tyk_var: Int { 18 }
+import location
+import diagnostic
+import source
+import token
+import lexer
 
-fn str_lt(a: String, b: String): Bool {
+pub fn tyk_int: Int { 1 }
+pub fn tyk_int64: Int { 2 }
+pub fn tyk_uint64: Int { 3 }
+pub fn tyk_bool: Int { 4 }
+pub fn tyk_float: Int { 5 }
+pub fn tyk_string: Int { 6 }
+pub fn tyk_void: Int { 7 }
+pub fn tyk_nil: Int { 8 }
+pub fn tyk_array: Int { 9 }
+pub fn tyk_struct: Int { 10 }
+pub fn tyk_class: Int { 11 }
+pub fn tyk_ptr: Int { 12 }
+pub fn tyk_union: Int { 13 }
+pub fn tyk_hash: Int { 14 }
+pub fn tyk_buf: Int { 15 }
+pub fn tyk_join: Int { 16 }
+pub fn tyk_opaque: Int { 17 }
+pub fn tyk_var: Int { 18 }
+pub fn tyk_module: Int { 19 }
+
+pub fn str_lt(a: String, b: String): Bool {
   n = a.size
   if b.size < n {
     n = b.size
@@ -35,7 +42,7 @@ fn str_lt(a: String, b: String): Bool {
   a.size < b.size
 }
 
-class TyField {
+pub class TyField {
   name: String = ""
   ty: Ty
 
@@ -45,7 +52,7 @@ class TyField {
   }
 }
 
-class Ty {
+pub class Ty {
   kind: Int = 0
   name: String = ""
   inner: Ty? = nil
@@ -62,10 +69,10 @@ class Ty {
     self.fields = f
   }
 
-  fn is_int: Bool { self.kind == tyk_int() }
-  fn is_int64: Bool { self.kind == tyk_int64() }
-  fn is_uint64: Bool { self.kind == tyk_uint64() }
-  fn is_integer: Bool {
+  pub fn is_int: Bool { self.kind == tyk_int() }
+  pub fn is_int64: Bool { self.kind == tyk_int64() }
+  pub fn is_uint64: Bool { self.kind == tyk_uint64() }
+  pub fn is_integer: Bool {
     if self.is_int {
       return true
     }
@@ -74,35 +81,36 @@ class Ty {
     }
     self.is_uint64
   }
-  fn is_bool: Bool { self.kind == tyk_bool() }
-  fn is_float: Bool { self.kind == tyk_float() }
-  fn is_string: Bool { self.kind == tyk_string() }
-  fn is_void: Bool { self.kind == tyk_void() }
-  fn is_array: Bool { self.kind == tyk_array() }
-  fn is_struct: Bool { self.kind == tyk_struct() }
-  fn is_class: Bool { self.kind == tyk_class() }
-  fn is_ptr: Bool { self.kind == tyk_ptr() }
-  fn is_nil: Bool { self.kind == tyk_nil() }
-  fn is_union: Bool { self.kind == tyk_union() }
-  fn is_hash: Bool { self.kind == tyk_hash() }
-  fn is_buf: Bool { self.kind == tyk_buf() }
-  fn is_join: Bool { self.kind == tyk_join() }
-  fn is_opaque: Bool { self.kind == tyk_opaque() }
-  fn is_var: Bool { self.kind == tyk_var() }
-  fn is_agg: Bool {
+  pub fn is_bool: Bool { self.kind == tyk_bool() }
+  pub fn is_float: Bool { self.kind == tyk_float() }
+  pub fn is_string: Bool { self.kind == tyk_string() }
+  pub fn is_void: Bool { self.kind == tyk_void() }
+  pub fn is_array: Bool { self.kind == tyk_array() }
+  pub fn is_struct: Bool { self.kind == tyk_struct() }
+  pub fn is_class: Bool { self.kind == tyk_class() }
+  pub fn is_ptr: Bool { self.kind == tyk_ptr() }
+  pub fn is_nil: Bool { self.kind == tyk_nil() }
+  pub fn is_union: Bool { self.kind == tyk_union() }
+  pub fn is_hash: Bool { self.kind == tyk_hash() }
+  pub fn is_buf: Bool { self.kind == tyk_buf() }
+  pub fn is_join: Bool { self.kind == tyk_join() }
+  pub fn is_opaque: Bool { self.kind == tyk_opaque() }
+  pub fn is_var: Bool { self.kind == tyk_var() }
+  pub fn is_module: Bool { self.kind == tyk_module() }
+  pub fn is_agg: Bool {
     if self.is_struct {
       return true
     }
     self.is_class
   }
-  fn is_numeric: Bool {
+  pub fn is_numeric: Bool {
     if self.is_integer {
       return true
     }
     self.is_float
   }
 
-  fn field_named(name: String): Ty? {
+  pub fn field_named(name: String): Ty? {
     i = 0
     while i < self.fields.size {
       f = self.fields[i]
@@ -114,7 +122,7 @@ class Ty {
     nil
   }
 
-  fn field_index(name: String): Int {
+  pub fn field_index(name: String): Int {
     i = 0
     while i < self.fields.size {
       f = self.fields[i]
@@ -126,7 +134,7 @@ class Ty {
     0 - 1
   }
 
-  fn same_as(other: Ty): Bool {
+  pub fn same_as(other: Ty): Bool {
     if self.kind != other.kind {
       return false
     }
@@ -208,6 +216,9 @@ class Ty {
     if k == tyk_var() {
       return str_eq(self.name, other.name)
     }
+    if k == tyk_module() {
+      return str_eq(self.name, other.name)
+    }
     if k == tyk_union() {
       if self.members.size != other.members.size {
         return false
@@ -225,7 +236,7 @@ class Ty {
     false
   }
 
-  fn includes_member(other: Ty): Bool {
+  pub fn includes_member(other: Ty): Bool {
     i = 0
     while i < self.members.size {
       if self.members[i].same_as(other) {
@@ -236,7 +247,7 @@ class Ty {
     false
   }
 
-  fn includes_nil: Bool {
+  pub fn includes_nil: Bool {
     i = 0
     while i < self.members.size {
       if self.members[i].is_nil {
@@ -247,7 +258,7 @@ class Ty {
     false
   }
 
-  fn tag_of(member: Ty): Int {
+  pub fn tag_of(member: Ty): Int {
     i = 0
     while i < self.members.size {
       if self.members[i].same_as(member) {
@@ -258,7 +269,7 @@ class Ty {
     0
   }
 
-  fn payload_index(member: Ty): Int {
+  pub fn payload_index(member: Ty): Int {
     n = 0
     i = 0
     while i < self.members.size {
@@ -275,7 +286,7 @@ class Ty {
     0 - 1
   }
 
-  fn payload_members: Array(Ty) {
+  pub fn payload_members: Array(Ty) {
     kept: Array(Ty) = []
     i = 0
     while i < self.members.size {
@@ -289,7 +300,7 @@ class Ty {
     kept
   }
 
-  fn is_nilable: Bool {
+  pub fn is_nilable: Bool {
     if self.is_union {
       if self.includes_nil {
         return self.members.size == 2
@@ -298,7 +309,7 @@ class Ty {
     false
   }
 
-  fn show: String {
+  pub fn show: String {
     k = self.kind
     if k == tyk_int() {
       return "Int"
@@ -329,6 +340,9 @@ class Ty {
     }
     if k == tyk_var() {
       return self.name
+    }
+    if k == tyk_module() {
+      return "module ${self.name}"
     }
     if k == tyk_array() {
       buf = buf_new()
@@ -376,7 +390,7 @@ class Ty {
     self.name
   }
 
-  fn show_union: String {
+  pub fn show_union: String {
     if self.is_nilable {
       non_nil = ty_without_nil(self)
       buf = buf_new()
@@ -403,54 +417,60 @@ class Ty {
   }
 }
 
-fn ty_int: Ty { Ty.new(tyk_int()) }
-fn ty_int64: Ty { Ty.new(tyk_int64()) }
-fn ty_uint64: Ty { Ty.new(tyk_uint64()) }
-fn ty_bool: Ty { Ty.new(tyk_bool()) }
-fn ty_float: Ty { Ty.new(tyk_float()) }
-fn ty_string: Ty { Ty.new(tyk_string()) }
-fn ty_void: Ty { Ty.new(tyk_void()) }
-fn ty_nil: Ty { Ty.new(tyk_nil()) }
-fn ty_buf: Ty { Ty.new(tyk_buf()) }
+pub fn ty_int: Ty { Ty.new(tyk_int()) }
+pub fn ty_int64: Ty { Ty.new(tyk_int64()) }
+pub fn ty_uint64: Ty { Ty.new(tyk_uint64()) }
+pub fn ty_bool: Ty { Ty.new(tyk_bool()) }
+pub fn ty_float: Ty { Ty.new(tyk_float()) }
+pub fn ty_string: Ty { Ty.new(tyk_string()) }
+pub fn ty_void: Ty { Ty.new(tyk_void()) }
+pub fn ty_nil: Ty { Ty.new(tyk_nil()) }
+pub fn ty_buf: Ty { Ty.new(tyk_buf()) }
 
-fn ty_var(name: String): Ty {
+pub fn ty_var(name: String): Ty {
   t = Ty.new(tyk_var())
   t.name = name
   t
 }
 
-fn ty_array(elem: Ty): Ty {
+pub fn ty_module(name: String): Ty {
+  t = Ty.new(tyk_module())
+  t.name = name
+  t
+}
+
+pub fn ty_array(elem: Ty): Ty {
   t = Ty.new(tyk_array())
   t.inner = elem
   t
 }
 
-fn ty_ptr(inner: Ty): Ty {
+pub fn ty_ptr(inner: Ty): Ty {
   t = Ty.new(tyk_ptr())
   t.inner = inner
   t
 }
 
-fn ty_join(result: Ty): Ty {
+pub fn ty_join(result: Ty): Ty {
   t = Ty.new(tyk_join())
   t.inner = result
   t
 }
 
-fn ty_hash(key: Ty, val: Ty): Ty {
+pub fn ty_hash(key: Ty, val: Ty): Ty {
   t = Ty.new(tyk_hash())
   t.key = key
   t.val = val
   t
 }
 
-fn ty_named(kind: Int, name: String): Ty {
+pub fn ty_named(kind: Int, name: String): Ty {
   t = Ty.new(kind)
   t.name = name
   t
 }
 
-fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
+pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
   if ty.is_union {
     i = 0
     while i < ty.members.size {
@@ -462,7 +482,7 @@ fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
   }
 }
 
-fn ty_union_build(types: Array(Ty)): Ty {
+pub fn ty_union_build(types: Array(Ty)): Ty {
   flat: Array(Ty) = []
   i = 0
   while i < types.size {
@@ -513,14 +533,14 @@ fn ty_union_build(types: Array(Ty)): Ty {
   u
 }
 
-fn ty_nilable(inner: Ty): Ty {
+pub fn ty_nilable(inner: Ty): Ty {
   parts: Array(Ty) = []
   parts.push(inner)
   parts.push(ty_nil())
   ty_union_build(parts)
 }
 
-fn ty_without_nil(ty: Ty): Ty {
+pub fn ty_without_nil(ty: Ty): Ty {
   kept: Array(Ty) = []
   i = 0
   while i < ty.members.size {
@@ -534,7 +554,7 @@ fn ty_without_nil(ty: Ty): Ty {
   ty_union_build(kept)
 }
 
-fn ty_assignable(got: Ty, want: Ty): Bool {
+pub fn ty_assignable(got: Ty, want: Ty): Bool {
   if got.same_as(want) {
     return true
   }
@@ -557,4 +577,44 @@ fn ty_assignable(got: Ty, want: Ty): Bool {
     }
   }
   false
+}
+
+pub fn type_is_builtin(name: String): Bool {
+  if str_eq(name, "Int") {
+    return true
+  }
+  if str_eq(name, "Int64") {
+    return true
+  }
+  if str_eq(name, "UInt64") {
+    return true
+  }
+  if str_eq(name, "Bool") {
+    return true
+  }
+  if str_eq(name, "Float64") {
+    return true
+  }
+  if str_eq(name, "String") {
+    return true
+  }
+  if str_eq(name, "Void") {
+    return true
+  }
+  if str_eq(name, "Array") {
+    return true
+  }
+  if str_eq(name, "Ptr") {
+    return true
+  }
+  if str_eq(name, "Hash") {
+    return true
+  }
+  if str_eq(name, "Buf") {
+    return true
+  }
+  if str_eq(name, "Nil") {
+    return true
+  }
+  str_eq(name, "JoinHandle")
 }

@@ -2,27 +2,35 @@ module Avant
   ROOT = File.expand_path("../..", __DIR__)
 
   def self.compile_file(path : String) : String
-    compile(Source.read(path))
+    source = Source.read(path)
+    compile_program(Loader.load(path), source)
   end
 
   def self.compile_files(paths : Array(String)) : String
     raise "compile_files needs at least one .av file" if paths.empty?
-    return compile_file(paths[0]) if paths.size == 1
-    text = String.build do |io|
-      paths.each_with_index do |path, i|
-        io << "\n" if i > 0
-        io << "// file: " << path << '\n'
-        body = File.read(path)
-        io << body
-        io << '\n' unless body.ends_with?('\n')
-      end
+    if paths.size == 1
+      return compile_file(paths[0])
     end
-    compile(Source.new(paths[-1], text))
+    raise CompileError.at(Location.new(paths[0], 1, 1, 0), "compile takes one root .av (use import)")
   end
 
   def self.compile(source : Source) : String
     tokens = Lexer.new(source).tokenize
     program = Parser.new(source, tokens).parse
+    unless program.imports.empty?
+      if File.exists?(source.path)
+        return compile_file(source.path)
+      end
+      raise CompileError.at(program.imports[0].location, "import needs a .av file root")
+    end
+    name = module_name_of(source.path)
+    tag_module(program, name, source.path)
+    program.root_module = name
+    program.import_graph = {name => [] of String} of String => Array(String)
+    compile_program(program, source)
+  end
+
+  def self.compile_program(program : AST::Program, source : Source) : String
     Checker.new(source, program).check
     Codegen::Myc.new(program).emit
   end

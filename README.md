@@ -8,7 +8,7 @@ This folder is the language. In the local workbench it sits next to `myc/` (IR b
 
 This README is the **living language document** until a website exists. It describes what the compilers actually accept today. The target sketch (including features that are decided but not built) is [syntax.md](syntax.md) **S3**.
 
-Waves 1–3 are closed. Stages 6–11 of the compiler exist. Stages 12–13 are planned (**D41**); do not start Stage 12 unless asked (Q24–Q25 first). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
+Waves 1–3 are closed. Stages 6–12 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). Stage 13 is D29. Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
 
 ## What compiles today
 
@@ -65,6 +65,16 @@ class Counter {
   fn +(other: Counter): Counter {
     Counter.new(value + other.value)
   }
+}
+```
+
+A file is a module. `import name` loads `name.av` beside the importer. `pub` is the public surface; names default module-private. Cycles are errors. The CLI takes one root (not a concat list). `fn main` / `fn run` are entry, not `pub`.
+
+```avant
+import vec
+fn main {
+  v = origin()
+  puts(v.x)
 }
 ```
 
@@ -126,7 +136,7 @@ fn main {
 
 Proof programs (identity compiler **B** matches the host on this list): `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`; `matmul.av` checksums only. Call C as `libname.funname(...)`. Heap is GenImmix; the copying nursery is off until myc safepoints.
 
-Identity also runs the Stage 7 helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill`, `dir_list`, `now_us`, and similar. Remaining host-only names wait for a failing native test (**D40**). Concat `.av` files until modules exist (Stage 12).
+Identity also runs the Stage 7 helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill`, `dir_list`, `now_us`, and similar. Remaining host-only names wait for a failing native test (**D40**). Programs compile from a root; `import` follows neighbouring `.av` files (**D42**).
 
 ## Decided, not built
 
@@ -135,7 +145,6 @@ These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **n
 | What | Decision | When (D41) |
 | --- | --- | --- |
 | First-class `fn(T): U` values (S3 `map`) | D30 leftover | After Stage 11 / later |
-| `import` / modules / visibility | Wave 4; **Q24–Q25** must be answered first | Stage 12 |
 | `comptime` / `quote { }` / splice `#()` | D29 | Stage 13 (quote first) |
 | Real `.parallel` / `Channel(T)` / `Mutex(T)` | D35 | After Stages 10–13 |
 | C struct field layouts, methods on `Ptr(T)` | D36 leftover | After Stages 10–13 |
@@ -182,17 +191,17 @@ crystal build src/cli.cr -o bin/avant
 Self-host and native suite (after A and B exist; `AVANT_ROOT` / `AVANT_MYC_LLVM` as in [bootstrap.md](bootstrap.md)):
 
 ```
-crystal src/cli.cr compile compiler/location.av compiler/diagnostic.av compiler/source.av compiler/token.av compiler/lexer.av compiler/type.av compiler/ast.av compiler/resolve.av compiler/parser.av compiler/checker.av compiler/codegen_myc.av compiler/pipeline.av compiler/main.av bin/avant-av
-./bin/avant-av compile compiler/location.av compiler/diagnostic.av compiler/source.av compiler/token.av compiler/lexer.av compiler/type.av compiler/ast.av compiler/resolve.av compiler/parser.av compiler/checker.av compiler/codegen_myc.av compiler/pipeline.av compiler/main.av bin/avant-av-b
+crystal src/cli.cr compile compiler/main.av bin/avant-av
+./bin/avant-av compile compiler/main.av bin/avant-av-b
 ./bin/avant-av-b run examples/hello.av
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
-./bin/avant-av-b compile compiler/location.av compiler/diagnostic.av compiler/source.av compiler/token.av compiler/lexer.av compiler/type.av compiler/ast.av compiler/resolve.av compiler/parser.av compiler/checker.av compiler/codegen_myc.av compiler/pipeline.av compiler/main.av bin/avant-av-c
+./bin/avant-av-b compile compiler/main.av bin/avant-av-c
 ./bin/avant-av-c run examples/hello.av
 ```
 
 Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen).
 
-**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: **Stage 12** only after Q24–Q25 ([roadmap.md](roadmap.md)).
+**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: **Stage 13** D29 quote-first ([roadmap.md](roadmap.md)).
 
 ## Live ledgers
 
@@ -201,15 +210,16 @@ These files are **current truth**. They are rewritten in place. They are not log
 | File | Role |
 | --- | --- |
 | [philosophy.md](philosophy.md) | Why Avant exists, non-negotiables, measurable objectives |
-| [decisions.md](decisions.md) | Technical choices that are in force (D41 = sequence after Stage 9) |
-| [questions.md](questions.md) | Open questions (Q24–Q25 before Stage 12; later bucket after 10–13) |
+| [decisions.md](decisions.md) | Technical choices that are in force (D41 = sequence after Stage 9; D42 = modules) |
+| [questions.md](questions.md) | Open questions (later bucket after 10–13; Q24–Q25 closed) |
 | [syntax.md](syntax.md) | Canonical sketch **S3** (target; not all of it compiles) |
 | [baseline.md](baseline.md) | LangArena numbers Avant will be judged against |
-| [roadmap.md](roadmap.md) | Stages. 6–11 closed; 12–13 planned |
-| [bootstrap.md](bootstrap.md) | Stage 8 record (closed). Identity concat, I/O, pitfalls |
+| [roadmap.md](roadmap.md) | Stages. 6–12 closed; 13 planned |
+| [bootstrap.md](bootstrap.md) | Stage 8 record (closed). Identity roots, I/O, pitfalls |
 | [stage9.md](stage9.md) | Stage 9 record (closed). Native tests + coverage on B (D40) |
 | [stage10.md](stage10.md) | Stage 10 record (closed). Native suite on B; B→C; goldens |
 | [stage11.md](stage11.md) | Stage 11 record (closed). D26 and user generics |
+| [stage12.md](stage12.md) | Stage 12 record (closed). D42 `import` / `pub` |
 | [experiments/immix.md](experiments/immix.md) | Sticky vs GenImmix measurement (closed) |
 
 Read `philosophy.md`, then `decisions.md`. Patience, measurement, and organized code are part of the identity.

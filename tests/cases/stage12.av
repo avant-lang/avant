@@ -1,0 +1,138 @@
+fn s12_mkdir(path: String) {
+  args: Array(String) = []
+  args.push("-p")
+  args.push(path)
+  dummy = process_run("/bin/mkdir", args)
+}
+
+fn s12_write(dir: String, name: String, body: String) {
+  dummy = file_write("${dir}/${name}.av", body)
+}
+
+fn test_stage12(c: Checks) {
+  c.suite("tests/cases/stage12.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    dir = "/tmp/avant-s12-${stamp}"
+    s12_mkdir(dir)
+
+    s12_write(dir, "vec", "pub struct Vec2 {\n  x: Int\n  y: Int\n}\npub fn origin: Vec2 {\n  Vec2 { x: 0, y: 0 }\n}\n")
+    s12_write(dir, "main", "import vec\nfn main {\n  v = origin()\n  puts(v.x)\n}\n")
+    bin = "${dir}/ok.bin"
+    log = "${dir}/ok.log"
+    out = "${dir}/ok.out"
+    code = compile_av(compiler, "${dir}/main.av", bin, log)
+    c.eq_int(code, 0, "import pub names")
+    c.expect(file_exists(bin), "import pub names bin")
+    chmod_x(bin)
+    run_code = run_av_bin(bin, out)
+    c.eq_int(run_code, 0, "import pub names run")
+    if got = file_read(out) {
+      c.eq_str(got, "0\n", "imported origin")
+    } else {
+      c.expect(false, "imported origin")
+    }
+
+    s12_write(dir, "util", "fn hidden: Int {\n  1\n}\npub fn shown: Int {\n  hidden()\n}\n")
+    s12_write(dir, "hide", "import util\nfn main {\n  puts(hidden())\n}\n")
+    hide_bin = "${dir}/hide.bin"
+    hide_log = "${dir}/hide.log"
+    hide_code = compile_av(compiler, "${dir}/hide.av", hide_bin, hide_log)
+    c.expect(!file_exists(hide_bin), "private helper bin absent")
+    if err = file_read(hide_log) {
+      c.expect(str_has(err, "unknown function hidden"), "private helper hidden")
+    } else {
+      c.expect(false, "private helper hidden")
+    }
+
+    s12_write(dir, "ca", "import cb\npub fn from_a: Int { 1 }\n")
+    s12_write(dir, "cb", "import ca\npub fn from_b: Int { 1 }\n")
+    s12_write(dir, "cycle", "import ca\nfn main {\n  puts(from_a())\n}\n")
+    cycle_bin = "${dir}/cycle.bin"
+    cycle_log = "${dir}/cycle.log"
+    dummy_c = compile_av(compiler, "${dir}/cycle.av", cycle_bin, cycle_log)
+    c.expect(!file_exists(cycle_bin), "cycle bin absent")
+    if err = file_read(cycle_log) {
+      c.expect(str_has(err, "import cycle"), "import cycle")
+    } else {
+      c.expect(false, "import cycle")
+    }
+
+    s12_write(dir, "one", "pub class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
+    s12_write(dir, "two", "pub class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
+    s12_write(dir, "clash", "import one\nimport two\nfn main {\n  puts(1)\n}\n")
+    clash_bin = "${dir}/clash.bin"
+    clash_log = "${dir}/clash.log"
+    dummy_k = compile_av(compiler, "${dir}/clash.av", clash_bin, clash_log)
+    c.expect(!file_exists(clash_bin), "dup pub bin absent")
+    if err = file_read(clash_log) {
+      c.expect(str_has(err, "already defined"), "dup pub name")
+    } else {
+      c.expect(false, "dup pub name")
+    }
+
+    s12_write(dir, "show_int", "pub fn show(n: Int): Int {\n  n\n}\n")
+    s12_write(dir, "show_str", "pub fn show(s: String): Int {\n  s.size\n}\n")
+    s12_write(dir, "over", "import show_int\nimport show_str\nfn main {\n  puts(show(7))\n  puts(show(\"ab\"))\n}\n")
+    over_bin = "${dir}/over.bin"
+    over_log = "${dir}/over.log"
+    over_out = "${dir}/over.out"
+    over_code = compile_av(compiler, "${dir}/over.av", over_bin, over_log)
+    c.eq_int(over_code, 0, "pub overloads")
+    chmod_x(over_bin)
+    dummy_r = run_av_bin(over_bin, over_out)
+    if got = file_read(over_out) {
+      c.eq_str(got, "7\n2\n", "merged pub overloads")
+    } else {
+      c.expect(false, "merged pub overloads")
+    }
+
+    s12_write(dir, "alpha", "pub fn value: Int { 1 }\n")
+    s12_write(dir, "beta", "pub class value {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
+    s12_write(dir, "qual", "import alpha\nimport beta\nfn main {\n  puts(alpha.value())\n  v = beta.value.new(2)\n  puts(v.n)\n}\n")
+    qual_bin = "${dir}/qual.bin"
+    qual_log = "${dir}/qual.log"
+    qual_out = "${dir}/qual.out"
+    qual_code = compile_av(compiler, "${dir}/qual.av", qual_bin, qual_log)
+    c.eq_int(qual_code, 0, "qualify clash")
+    chmod_x(qual_bin)
+    dummy_q = run_av_bin(qual_bin, qual_out)
+    if got = file_read(qual_out) {
+      c.eq_str(got, "1\n2\n", "qualified clash")
+    } else {
+      c.expect(false, "qualified clash")
+    }
+
+    s12_write(dir, "d20vec", "pub struct Vec2 {\n  x: Int\n  y: Int\n}\n")
+    s12_write(dir, "ext", "import d20vec\npub fn (v: Vec2) doubled: Vec2 {\n  Vec2 { x: v.x * 2, y: v.y * 2 }\n}\n")
+    s12_write(dir, "d20", "import d20vec\nimport ext\nfn main {\n  v = Vec2 { x: 1, y: 3 }\n  w = v.doubled()\n  puts(w.x)\n  puts(w.y)\n}\n")
+    d20_bin = "${dir}/d20.bin"
+    d20_log = "${dir}/d20.log"
+    d20_out = "${dir}/d20.out"
+    d20_code = compile_av(compiler, "${dir}/d20.av", d20_bin, d20_log)
+    c.eq_int(d20_code, 0, "D20 methods")
+    chmod_x(d20_bin)
+    dummy_d = run_av_bin(d20_bin, d20_out)
+    if got = file_read(d20_out) {
+      c.eq_str(got, "2\n6\n", "D20 doubled")
+    } else {
+      c.expect(false, "D20 doubled")
+    }
+
+    s12_write(dir, "solo", "fn main {\n  puts(1)\n}\n")
+    solo_bin = "${dir}/solo.bin"
+    solo_log = "${dir}/solo.log"
+    solo_out = "${dir}/solo.out"
+    solo_code = compile_av(compiler, "${dir}/solo.av", solo_bin, solo_log)
+    c.eq_int(solo_code, 0, "single file")
+    chmod_x(solo_bin)
+    dummy_s = run_av_bin(solo_bin, solo_out)
+    if got = file_read(solo_out) {
+      c.eq_str(got, "1\n", "single file no import")
+    } else {
+      c.expect(false, "single file no import")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

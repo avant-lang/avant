@@ -1,44 +1,12 @@
-fn type_is_builtin(name: String): Bool {
-  if str_eq(name, "Int") {
-    return true
-  }
-  if str_eq(name, "Int64") {
-    return true
-  }
-  if str_eq(name, "UInt64") {
-    return true
-  }
-  if str_eq(name, "Bool") {
-    return true
-  }
-  if str_eq(name, "Float64") {
-    return true
-  }
-  if str_eq(name, "String") {
-    return true
-  }
-  if str_eq(name, "Void") {
-    return true
-  }
-  if str_eq(name, "Array") {
-    return true
-  }
-  if str_eq(name, "Ptr") {
-    return true
-  }
-  if str_eq(name, "Hash") {
-    return true
-  }
-  if str_eq(name, "Buf") {
-    return true
-  }
-  if str_eq(name, "Nil") {
-    return true
-  }
-  str_eq(name, "JoinHandle")
-}
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
 
-class TypeResolver {
+pub class TypeResolver {
   named: Hash(String, Int)
   opaques: Hash(String, Int)
   interned: Array(Ty)
@@ -78,7 +46,7 @@ class TypeResolver {
     self.err = nil
   }
 
-  fn set_tparams(names: Array(String)) {
+  pub fn set_tparams(names: Array(String)) {
     tp = Hash(String, Int).new
     i = 0
     while i < names.size {
@@ -88,16 +56,16 @@ class TypeResolver {
     self.tparams = tp
   }
 
-  fn clear_tparams {
+  pub fn clear_tparams {
     tp = Hash(String, Int).new
     self.tparams = tp
   }
 
-  fn has_err: Bool {
+  pub fn has_err: Bool {
     self.failed
   }
 
-  fn fail(loc: Location, message: String) {
+  pub fn fail(loc: Location, message: String) {
     if self.failed {
       return
     }
@@ -105,36 +73,36 @@ class TypeResolver {
     self.err = CompileError.new(loc, message)
   }
 
-  fn intern(ty: Ty): Int {
+  pub fn intern(ty: Ty): Int {
     self.interned.push(ty)
     self.interned.size - 1
   }
 
-  fn ty_at(id: Int): Ty {
+  pub fn ty_at(id: Int): Ty {
     self.interned[id]
   }
 
-  fn put_named(name: String, ty: Ty): Int {
+  pub fn put_named(name: String, ty: Ty): Int {
     id = self.intern(ty)
     self.named[name] = id
     id
   }
 
-  fn get_named(name: String): Ty? {
+  pub fn get_named(name: String): Ty? {
     if id = self.named.get(name) {
       return self.ty_at(id)
     }
     nil
   }
 
-  fn get_opaque(name: String): Ty? {
+  pub fn get_opaque(name: String): Ty? {
     if id = self.opaques.get(name) {
       return self.ty_at(id)
     }
     nil
   }
 
-  fn resolve_value(tn: TypeName): Ty {
+  pub fn resolve_value(tn: TypeName): Ty {
     ty = self.resolve(tn)
     if ty.is_opaque {
       self.fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
@@ -147,7 +115,7 @@ class TypeResolver {
     ty
   }
 
-  fn resolve(tn: TypeName): Ty {
+  pub fn resolve(tn: TypeName): Ty {
     inner = self.resolve_core(tn)
     if tn.nilable {
       return ty_nilable(inner)
@@ -155,13 +123,13 @@ class TypeResolver {
     inner
   }
 
-  fn reject_args(tn: TypeName) {
+  pub fn reject_args(tn: TypeName) {
     if tn.args.size > 0 {
       self.fail(tn.loc, "${tn.name} does not take type arguments")
     }
   }
 
-  fn resolve_core(tn: TypeName): Ty {
+  pub fn resolve_core(tn: TypeName): Ty {
     if tn.members.size > 0 {
       parts: Array(Ty) = []
       i = 0
@@ -257,7 +225,7 @@ class TypeResolver {
   }
 }
 
-fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int)) {
+pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int)) {
   i = 0
   while i < tn.args.size {
     note_ptr_opaque_skip(tn.args[i], resolver, skip)
@@ -292,16 +260,16 @@ fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String,
   }
 }
 
-fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
+pub fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
   empty = Hash(String, Int).new
   note_ptr_opaque_skip(tn, resolver, empty)
 }
 
-fn note_type_name(tn: TypeName, resolver: TypeResolver) {
+pub fn note_type_name(tn: TypeName, resolver: TypeResolver) {
   note_ptr_opaque(tn, resolver)
 }
 
-fn collect_opaques(program: Program, resolver: TypeResolver) {
+pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   i = 0
   while i < program.libs.size {
     lib_def = program.libs[i]
@@ -366,7 +334,7 @@ fn collect_opaques(program: Program, resolver: TypeResolver) {
   }
 }
 
-fn fill_type_fields(resolver: TypeResolver, name: String, fields: Array(Field)) {
+pub fn fill_type_fields(resolver: TypeResolver, name: String, fields: Array(Field)) {
   resolved: Array(TyField) = []
   seen = Hash(String, Int).new
   i = 0
@@ -385,7 +353,7 @@ fn fill_type_fields(resolver: TypeResolver, name: String, fields: Array(Field)) 
   }
 }
 
-fn load_types(program: Program): TypeResolver {
+pub fn load_types(program: Program): TypeResolver {
   resolver = TypeResolver.new
   i = 0
   while i < program.structs.size {

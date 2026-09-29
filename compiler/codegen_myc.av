@@ -1,4 +1,16 @@
-fn myc_id_part(s: String): String {
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import checker
+
+pub fn myc_id_part(s: String): String {
   buf = buf_new(s.size)
   i = 0
   while i < s.size {
@@ -29,7 +41,7 @@ fn myc_id_part(s: String): String {
   buf.to_s
 }
 
-fn ty_layout_myc(ty: Ty): String {
+pub fn ty_layout_myc(ty: Ty): String {
   if ty.is_array {
     if e = ty.inner {
       return "Array_${myc_id_part(e.show)}"
@@ -52,11 +64,11 @@ fn ty_layout_myc(ty: Ty): String {
   ty.name
 }
 
-fn ty_self_ptr_myc(ty: Ty): String {
+pub fn ty_self_ptr_myc(ty: Ty): String {
   "ptr<${ty_layout_myc(ty)}>"
 }
 
-fn ty_myc(ty: Ty): String {
+pub fn ty_myc(ty: Ty): String {
   k = ty.kind
   if k == tyk_int() {
     return "i32"
@@ -118,7 +130,7 @@ fn ty_myc(ty: Ty): String {
   "void"
 }
 
-fn ty_has_heap(ty: Ty): Bool {
+pub fn ty_has_heap(ty: Ty): Bool {
   if ty.is_class {
     return true
   }
@@ -163,7 +175,7 @@ fn ty_has_heap(ty: Ty): Bool {
   false
 }
 
-fn heap_ptr_value(ty: Ty): Bool {
+pub fn heap_ptr_value(ty: Ty): Bool {
   if ty.is_class {
     return true
   }
@@ -182,14 +194,14 @@ fn heap_ptr_value(ty: Ty): Bool {
   ty.is_join
 }
 
-fn array_type_id(elem: Ty): Int {
+pub fn array_type_id(elem: Ty): Int {
   if heap_ptr_value(elem) {
     return 65535
   }
   0
 }
 
-fn abi_align(ty: Ty): Int {
+pub fn abi_align(ty: Ty): Int {
   if ty.is_int {
     return 4
   }
@@ -236,7 +248,7 @@ fn abi_align(ty: Ty): Int {
   8
 }
 
-fn abi_size(ty: Ty): Int {
+pub fn abi_size(ty: Ty): Int {
   if ty.is_int {
     return 4
   }
@@ -278,11 +290,11 @@ fn abi_size(ty: Ty): Int {
   8
 }
 
-fn align_up_i(n: Int, align: Int): Int {
+pub fn align_up_i(n: Int, align: Int): Int {
   (n + align - 1) / align * align
 }
 
-fn u64_pow2(word: Int): UInt64 {
+pub fn u64_pow2(word: Int): UInt64 {
   p = 1u64
   i = 0
   while i < word {
@@ -292,12 +304,12 @@ fn u64_pow2(word: Int): UInt64 {
   p
 }
 
-fn word_bit(offset: Int, bits: UInt64): UInt64 {
+pub fn word_bit(offset: Int, bits: UInt64): UInt64 {
   word = offset / 8
   bits | u64_pow2(word)
 }
 
-fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
+pub fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
   if heap_ptr_value(ty) {
     return word_bit(offset, bits)
   }
@@ -329,7 +341,7 @@ fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
   bits
 }
 
-fn pointer_word_bits(ty: Ty): UInt64 {
+pub fn pointer_word_bits(ty: Ty): UInt64 {
   bits = 0u64
   offset = 0
   i = 0
@@ -343,7 +355,7 @@ fn pointer_word_bits(ty: Ty): UInt64 {
   bits
 }
 
-fn myc_quote(value: String): String {
+pub fn myc_quote(value: String): String {
   buf = buf_new(value.size + 2)
   buf.push_byte(34)
   i = 0
@@ -368,7 +380,7 @@ fn myc_quote(value: String): String {
   buf.to_s
 }
 
-fn myc_binop(op: Int): String {
+pub fn myc_binop(op: Int): String {
   switch op {
     case 37 {
       "add"
@@ -424,7 +436,7 @@ fn myc_binop(op: Int): String {
   }
 }
 
-fn compound_to_binop(op: Int): Int {
+pub fn compound_to_binop(op: Int): Int {
   if op == 24 {
     return 37
   }
@@ -440,7 +452,7 @@ fn compound_to_binop(op: Int): Int {
   op
 }
 
-fn split_comma(s: String): Array(String) {
+pub fn split_comma(s: String): Array(String) {
   out: Array(String) = []
   if s.size == 0 {
     return out
@@ -458,14 +470,14 @@ fn split_comma(s: String): Array(String) {
   out
 }
 
-fn expr_ty(e: Expr): Ty {
+pub fn expr_ty(e: Expr): Ty {
   if t = e.ty {
     return t
   }
   ty_void()
 }
 
-fn coverage_wanted: Bool {
+pub fn coverage_wanted: Bool {
   if v = env_get("AVANT_COVERAGE") {
     if v.size > 0 {
       if str_eq(v, "0") {
@@ -485,7 +497,7 @@ fn coverage_wanted: Bool {
   false
 }
 
-fn coverage_map_path: String {
+pub fn coverage_map_path: String {
   if v = env_get("AVANT_COVERAGE_MAP") {
     if v.size > 0 {
       return v
@@ -495,7 +507,7 @@ fn coverage_map_path: String {
   "/tmp/avant-cov-${stamp}.map"
 }
 
-class MycGen {
+pub class MycGen {
   program: Program
   resolver: TypeResolver
   functions: Array(FuncSig)
@@ -568,7 +580,7 @@ class MycGen {
     self.cov_line_slots = ls
   }
 
-  fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
+  pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
     if self.cov {
     } else {
       return 0
@@ -582,14 +594,14 @@ class MycGen {
     slot
   }
 
-  fn emit_cov_hit(slot: Int) {
+  pub fn emit_cov_hit(slot: Int) {
     if self.cov {
       self.line("PUSH ${slot}")
       self.line("CALL :avant_cov_hit")
     }
   }
 
-  fn cov_touch_line(loc: Location) {
+  pub fn cov_touch_line(loc: Location) {
     if self.cov {
     } else {
       return
@@ -604,7 +616,7 @@ class MycGen {
     self.emit_cov_hit(slot)
   }
 
-  fn cov_stmt(stmt: Stmt) {
+  pub fn cov_stmt(stmt: Stmt) {
     if self.cov {
     } else {
       return
@@ -615,7 +627,7 @@ class MycGen {
     self.cov_touch_line(loc)
   }
 
-  fn cov_func(fnn: Function) {
+  pub fn cov_func(fnn: Function) {
     if self.cov {
     } else {
       return
@@ -630,7 +642,7 @@ class MycGen {
     self.cov_touch_line(loc)
   }
 
-  fn cov_branch(loc: Location) {
+  pub fn cov_branch(loc: Location) {
     if self.cov {
     } else {
       return
@@ -640,7 +652,7 @@ class MycGen {
     self.cov_touch_line(loc)
   }
 
-  fn emit_cov_init {
+  pub fn emit_cov_init {
     if self.cov {
       q = myc_quote(self.cov_map_path)
       self.line("PUSH ${q}")
@@ -648,7 +660,7 @@ class MycGen {
     }
   }
 
-  fn write_cov_map {
+  pub fn write_cov_map {
     if self.cov {
     } else {
       return
@@ -681,7 +693,7 @@ class MycGen {
     dummy = file_write(self.cov_map_path, buf.to_s)
   }
 
-  fn line(text: String) {
+  pub fn line(text: String) {
     i = 0
     while i < self.indent {
       self.out.push_str("  ")
@@ -691,36 +703,36 @@ class MycGen {
     self.out.push_byte(10)
   }
 
-  fn blank {
+  pub fn blank {
     self.out.push_byte(10)
   }
 
-  fn new_temp: String {
+  pub fn new_temp: String {
     self.temps = self.temps + 1
     n = self.temps
     "__t${n}"
   }
 
-  fn reset_rooted {
+  pub fn reset_rooted {
     rt = Hash(String, Int).new
     self.rooted = rt
   }
 
-  fn find_fn(name: String): FuncSig? {
+  pub fn find_fn(name: String): FuncSig? {
     if id = self.fn_index.get(name) {
       return self.functions[id]
     }
     nil
   }
 
-  fn has_fn(name: String): Bool {
+  pub fn has_fn(name: String): Bool {
     if id = self.fn_index.get(name) {
       return true
     }
     false
   }
 
-  fn ext(name: String, args_s: String, ret: String) {
+  pub fn ext(name: String, args_s: String, ret: String) {
     self.line("FUNC :${name}")
     self.indent = self.indent + 1
     if ret.size > 0 {
@@ -746,7 +758,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit_runtime_decl {
+  pub fn emit_runtime_decl {
     self.ext("avant_alloc", "u64,u32", "ptr<void>")
     self.ext("avant_pin", "ptr<void>", "")
     self.ext("avant_gc_enter", "", "")
@@ -856,7 +868,7 @@ class MycGen {
     self.ext("avant_http_roundtrip", "ptr<u8>", "ptr<u8>")
   }
 
-  fn emit_lib_decls {
+  pub fn emit_lib_decls {
     i = 0
     while i < self.program.libs.size {
       lib_def = self.program.libs[i]
@@ -869,7 +881,7 @@ class MycGen {
     }
   }
 
-  fn emit_lib_fun(fnn: FunDecl) {
+  pub fn emit_lib_fun(fnn: FunDecl) {
     params: Array(Ty) = []
     i = 0
     while i < fnn.params.size {
@@ -906,7 +918,7 @@ class MycGen {
     self.blank
   }
 
-  fn collect_sigs {
+  pub fn collect_sigs {
     i = 0
     while i < self.program.functions.size {
       fnn = self.program.functions[i]
@@ -933,7 +945,7 @@ class MycGen {
     }
   }
 
-  fn collect_methods {
+  pub fn collect_methods {
     fns = program_all_functions(self.program)
     i = 0
     while i < fns.size {
@@ -969,7 +981,7 @@ class MycGen {
     }
   }
 
-  fn assign_class_ids {
+  pub fn assign_class_ids {
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
@@ -979,7 +991,7 @@ class MycGen {
     }
   }
 
-  fn find_method(owner: String, name: String): FuncSig? {
+  pub fn find_method(owner: String, name: String): FuncSig? {
     key = "${owner}__${name}"
     if id = self.method_index.get(key) {
       return self.methods[id]
@@ -987,14 +999,14 @@ class MycGen {
     nil
   }
 
-  fn find_method_emit(emit: String): FuncSig? {
+  pub fn find_method_emit(emit: String): FuncSig? {
     if id = self.method_index.get(emit) {
       return self.methods[id]
     }
     nil
   }
 
-  fn find_initialize(owner: String): FuncSig? {
+  pub fn find_initialize(owner: String): FuncSig? {
     i = 0
     while i < self.methods.size {
       sig = self.methods[i]
@@ -1008,7 +1020,7 @@ class MycGen {
     nil
   }
 
-  fn note_ty(ty: Ty) {
+  pub fn note_ty(ty: Ty) {
     if ty.is_array {
       layout = ty_layout_myc(ty)
       i = 0
@@ -1046,7 +1058,7 @@ class MycGen {
     }
   }
 
-  fn collect_arrays {
+  pub fn collect_arrays {
     i = 0
     while i < self.functions.size {
       sig = self.functions[i]
@@ -1104,7 +1116,7 @@ class MycGen {
     }
   }
 
-  fn collect_stmts(body: Array(Stmt)) {
+  pub fn collect_stmts(body: Array(Stmt)) {
     i = 0
     while i < body.size {
       stmt = body[i]
@@ -1140,7 +1152,7 @@ class MycGen {
     }
   }
 
-  fn collect_expr(expr: Expr) {
+  pub fn collect_expr(expr: Expr) {
     self.note_ty(expr_ty(expr))
     k = expr.kind
     if k == ex_call() {
@@ -1250,7 +1262,7 @@ class MycGen {
     }
   }
 
-  fn emit_layout(ty: Ty) {
+  pub fn emit_layout(ty: Ty) {
     name = ty_layout_myc(ty)
     self.line("STRUCT :${name}")
     self.indent = self.indent + 1
@@ -1265,7 +1277,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit_array_def(ty: Ty) {
+  pub fn emit_array_def(ty: Ty) {
     name = ty_layout_myc(ty)
     self.line("STRUCT :${name}")
     self.indent = self.indent + 1
@@ -1280,7 +1292,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit_union_def(ty: Ty) {
+  pub fn emit_union_def(ty: Ty) {
     name = ty_layout_myc(ty)
     self.line("STRUCT :${name}")
     self.indent = self.indent + 1
@@ -1297,7 +1309,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit: String {
+  pub fn emit: String {
     self.cov = coverage_wanted()
     if self.cov {
       self.cov_map_path = coverage_map_path()
@@ -1367,7 +1379,7 @@ class MycGen {
     self.out.to_s
   }
 
-  fn emit_function(fnn: Function) {
+  pub fn emit_function(fnn: Function) {
     if fnn.generic {
       return
     }
@@ -1398,7 +1410,7 @@ class MycGen {
     }
   }
 
-  fn emit_return_header {
+  pub fn emit_return_header {
     if self.c_main {
       self.line("RETURN")
       self.indent = self.indent + 1
@@ -1416,7 +1428,7 @@ class MycGen {
     }
   }
 
-  fn emit_plain_func(fnn: Function, params: Array(Ty)) {
+  pub fn emit_plain_func(fnn: Function, params: Array(Ty)) {
     self.line("FUNC :${fnn.emit_name}")
     self.indent = self.indent + 1
     if self.c_main {
@@ -1477,7 +1489,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit_method_func(fnn: Function, sig: FuncSig) {
+  pub fn emit_method_func(fnn: Function, sig: FuncSig) {
     mangled = sig.mangled
     self.line("FUNC :${mangled}")
     self.indent = self.indent + 1
@@ -1535,7 +1547,7 @@ class MycGen {
     self.self_name = ""
   }
 
-  fn emit_named_args(names: Array(String), types: Array(Ty)) {
+  pub fn emit_named_args(names: Array(String), types: Array(Ty)) {
     if names.size <= 1 {
       i = 0
       while i < names.size {
@@ -1564,7 +1576,7 @@ class MycGen {
     }
   }
 
-  fn emit_field_defaults(ty: Ty) {
+  pub fn emit_field_defaults(ty: Ty) {
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
@@ -1604,7 +1616,7 @@ class MycGen {
     }
   }
 
-  fn emit_constructor(ty: Ty) {
+  pub fn emit_constructor(ty: Ty) {
     self.temps = 0
     self.return_type = ty
     self.self_ty = nil
@@ -1679,7 +1691,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit_wrapper_main {
+  pub fn emit_wrapper_main {
     run_void = true
     if sig = self.find_fn("run") {
       if sig.ret.is_void {
@@ -1719,13 +1731,13 @@ class MycGen {
     self.blank
   }
 
-  fn emit_init_argv {
+  pub fn emit_init_argv {
     self.line("PARAM 1")
     self.line("PARAM 0")
     self.line("CALL :avant_io_init_argv")
   }
 
-  fn emit_type_maps {
+  pub fn emit_type_maps {
     self.line("PUSH 1 :u64")
     self.line("PUSH 1022 :u32")
     self.line("CALL :avant_type_map")
@@ -1750,7 +1762,7 @@ class MycGen {
     }
   }
 
-  fn emit_ret {
+  pub fn emit_ret {
     self.line("CALL :avant_gc_leave")
     if self.c_main {
       self.line("PUSH 0")
@@ -1758,7 +1770,7 @@ class MycGen {
     self.line("RET")
   }
 
-  fn emit_gc_leave_if_fallthrough(fnn: Function) {
+  pub fn emit_gc_leave_if_fallthrough(fnn: Function) {
     if fnn.body.size == 0 {
       self.emit_ret
       return
@@ -1776,14 +1788,14 @@ class MycGen {
     self.emit_ret
   }
 
-  fn emit_ptr_root(name: String) {
+  pub fn emit_ptr_root(name: String) {
     self.rooted[name] = 1
     self.line("LOCAL :${name}")
     self.line("ADDR")
     self.line("CALL :avant_gc_root")
   }
 
-  fn ensure_root(name: String, ty: Ty) {
+  pub fn ensure_root(name: String, ty: Ty) {
     if v = self.rooted.get(name) {
       return
     }
@@ -1814,7 +1826,7 @@ class MycGen {
     self.emit_ptr_root(name)
   }
 
-  fn emit_stmts(body: Array(Stmt), implicit_return: Bool) {
+  pub fn emit_stmts(body: Array(Stmt), implicit_return: Bool) {
     i = 0
     while i < body.size {
       at_tail = false
@@ -1828,7 +1840,7 @@ class MycGen {
     }
   }
 
-  fn emit_stmt(stmt: Stmt, at_tail: Bool) {
+  pub fn emit_stmt(stmt: Stmt, at_tail: Bool) {
     self.cov_stmt(stmt)
     k = stmt.kind
     switch k {
@@ -1923,7 +1935,7 @@ class MycGen {
     }
   }
 
-  fn emit_assign(stmt: Stmt) {
+  pub fn emit_assign(stmt: Stmt) {
     if stmt.op == tk_eq() {
       if t = stmt.target {
         if t.kind == ex_index() {
@@ -1979,7 +1991,7 @@ class MycGen {
     }
   }
 
-  fn emit_barrier_field_store(target: Expr, value: Expr) {
+  pub fn emit_barrier_field_store(target: Expr, value: Expr) {
     field_ty = expr_ty(target)
     if obj = target.object {
       object_ty = expr_ty(obj)
@@ -2006,7 +2018,7 @@ class MycGen {
     }
   }
 
-  fn root_after_store(target: Expr) {
+  pub fn root_after_store(target: Expr) {
     if target.kind == ex_name() {
       if target.implicit_field {
         return
@@ -2015,7 +2027,7 @@ class MycGen {
     }
   }
 
-  fn emit_coerce(got: Ty, want: Ty) {
+  pub fn emit_coerce(got: Ty, want: Ty) {
     if got.same_as(want) {
       return
     }
@@ -2026,7 +2038,7 @@ class MycGen {
     }
   }
 
-  fn emit_wrap_union(got: Ty, want: Ty) {
+  pub fn emit_wrap_union(got: Ty, want: Ty) {
     val = self.new_temp
     gm = ty_myc(got)
     self.line("LOCAL :${val} :${gm}")
@@ -2049,7 +2061,7 @@ class MycGen {
     self.line("CREATE :${layout}")
   }
 
-  fn try_success_from(got: Ty): Ty {
+  pub fn try_success_from(got: Ty): Ty {
     if got.includes_nil {
       return ty_without_nil(got)
     }
@@ -2066,7 +2078,7 @@ class MycGen {
     ty_without_nil(got)
   }
 
-  fn try_fail_from(got: Ty): Ty {
+  pub fn try_fail_from(got: Ty): Ty {
     if got.includes_nil {
       return ty_nil()
     }
@@ -2082,7 +2094,7 @@ class MycGen {
     ty_nil()
   }
 
-  fn emit_unwrap(tmp: String, uty: Ty, success: Ty) {
+  pub fn emit_unwrap(tmp: String, uty: Ty, success: Ty) {
     if success.is_nil {
       self.line("PUSH 0")
       return
@@ -2092,7 +2104,7 @@ class MycGen {
     self.line("FIELD ${idx}")
   }
 
-  fn emit_failure_return(tmp: String, got: Ty, fail: Ty) {
+  pub fn emit_failure_return(tmp: String, got: Ty, fail: Ty) {
     if self.return_type.same_as(got) {
       self.line("LOCAL :${tmp}")
     } else {
@@ -2107,7 +2119,7 @@ class MycGen {
     self.emit_ret
   }
 
-  fn emit_try(expr: Expr) {
+  pub fn emit_try(expr: Expr) {
     if inner = expr.inner {
       uty = expr_ty(inner)
       self.emit_expr(inner)
@@ -2144,7 +2156,7 @@ class MycGen {
     }
   }
 
-  fn emit_if_assign(stmt: Stmt) {
+  pub fn emit_if_assign(stmt: Stmt) {
     if cond = stmt.cond {
       uty = expr_ty(cond)
       success = ty_without_nil(uty)
@@ -2191,7 +2203,7 @@ class MycGen {
     }
   }
 
-  fn emit_to_string(ty: Ty) {
+  pub fn emit_to_string(ty: Ty) {
     if ty.is_string {
       return
     }
@@ -2217,7 +2229,7 @@ class MycGen {
     }
   }
 
-  fn emit_interp(expr: Expr) {
+  pub fn emit_interp(expr: Expr) {
     pieces: Array(String) = []
     i = 0
     while i < expr.parts.size {
@@ -2267,7 +2279,7 @@ class MycGen {
     self.line("LOCAL :${acc}")
   }
 
-  fn emit_expr(expr: Expr) {
+  pub fn emit_expr(expr: Expr) {
     k = expr.kind
     switch k {
       case 1 {
@@ -2417,7 +2429,7 @@ class MycGen {
     }
   }
 
-  fn emit_lvalue(expr: Expr) {
+  pub fn emit_lvalue(expr: Expr) {
     if expr.kind == ex_name() {
       if expr.implicit_field {
         self.emit_self_field(expr.ident)
@@ -2447,7 +2459,7 @@ class MycGen {
     self.emit_expr(expr)
   }
 
-  fn emit_field_lvalue(expr: Expr) {
+  pub fn emit_field_lvalue(expr: Expr) {
     if obj = expr.object {
       object_ty = expr_ty(obj)
       if object_ty.is_array {
@@ -2469,7 +2481,7 @@ class MycGen {
     }
   }
 
-  fn emit_index_lvalue(expr: Expr) {
+  pub fn emit_index_lvalue(expr: Expr) {
     if arr = expr.left {
       if ix = expr.right {
         container = expr_ty(arr)
@@ -2503,7 +2515,7 @@ class MycGen {
     }
   }
 
-  fn emit_struct_literal(expr: Expr) {
+  pub fn emit_struct_literal(expr: Expr) {
     ty = expr_ty(expr)
     n = ty.fields.size
     slots: Array(String) = []
@@ -2535,13 +2547,13 @@ class MycGen {
     self.line("CREATE :${m}")
   }
 
-  fn emit_alloc_sizeof(layout: String, type_id: Int) {
+  pub fn emit_alloc_sizeof(layout: String, type_id: Int) {
     self.line("PUSH ${type_id} :u32")
     self.line("SIZEOF :${layout}")
     self.line("CALL :avant_alloc")
   }
 
-  fn emit_alloc_count(elem: Ty) {
+  pub fn emit_alloc_count(elem: Ty) {
     self.line("AS :u64")
     em = ty_myc(elem)
     self.line("SIZEOF :${em}")
@@ -2553,7 +2565,7 @@ class MycGen {
     self.line("AS :ptr<${em}>")
   }
 
-  fn emit_array_header(ty: Ty, buf: String, size: String, cap: String) {
+  pub fn emit_array_header(ty: Ty, buf: String, size: String, cap: String) {
     layout = ty_layout_myc(ty)
     self.emit_alloc_sizeof(layout, 1022)
     m = ty_myc(ty)
@@ -2580,7 +2592,7 @@ class MycGen {
     self.line("LOCAL :${arr}")
   }
 
-  fn emit_array_literal(expr: Expr) {
+  pub fn emit_array_literal(expr: Expr) {
     ty = expr_ty(expr)
     n = expr.elems.size
     ptr_tmp = self.new_temp
@@ -2616,7 +2628,7 @@ class MycGen {
     self.emit_array_header(ty, ptr_tmp, n_tmp, n_tmp)
   }
 
-  fn emit_array_new(expr: Expr) {
+  pub fn emit_array_new(expr: Expr) {
     ty = expr_ty(expr)
     len_tmp = self.new_temp
     ptr_tmp = self.new_temp
@@ -2639,7 +2651,7 @@ class MycGen {
     self.emit_array_header(ty, ptr_tmp, len_tmp, len_tmp)
   }
 
-  fn emit_switch(expr: Expr) {
+  pub fn emit_switch(expr: Expr) {
     result_ty = expr_ty(expr)
     if c = expr.cond {
       self.emit_expr(c)
@@ -2693,7 +2705,7 @@ class MycGen {
     }
   }
 
-  fn emit_switch_arm(body: Array(Stmt), has_dest: Bool, dest: String, result_ty: Ty) {
+  pub fn emit_switch_arm(body: Array(Stmt), has_dest: Bool, dest: String, result_ty: Ty) {
     if has_dest {
       if body.size == 0 {
         self.emit_zero(result_ty)
@@ -2730,7 +2742,7 @@ class MycGen {
     }
   }
 
-  fn emit_zero(ty: Ty) {
+  pub fn emit_zero(ty: Ty) {
     if ty.is_float {
       self.line("PUSH 0 :f64")
       return
@@ -2758,7 +2770,7 @@ class MycGen {
     self.line("AS :${m}")
   }
 
-  fn emit_int_literal(expr: Expr) {
+  pub fn emit_int_literal(expr: Expr) {
     ty = expr_ty(expr)
     if ty.is_float {
       self.line("PUSH ${expr.int_bits} :f64")
@@ -2771,7 +2783,7 @@ class MycGen {
     }
   }
 
-  fn emit_unary(expr: Expr) {
+  pub fn emit_unary(expr: Expr) {
     if inner = expr.inner {
       self.emit_expr(inner)
     }
@@ -2785,7 +2797,7 @@ class MycGen {
     }
   }
 
-  fn emit_binary(expr: Expr) {
+  pub fn emit_binary(expr: Expr) {
     if expr.resolved.size > 0 {
       if l = expr.left {
         if r = expr.right {
@@ -2847,7 +2859,7 @@ class MycGen {
     }
   }
 
-  fn emit_logical(expr: Expr) {
+  pub fn emit_logical(expr: Expr) {
     dest = self.new_temp
     if l = expr.left {
       self.emit_expr(l)
@@ -2885,7 +2897,7 @@ class MycGen {
     self.line("LOCAL :${dest}")
   }
 
-  fn emit_string_binary(expr: Expr) {
+  pub fn emit_string_binary(expr: Expr) {
     if l = expr.left {
       if r = expr.right {
         if expr.op == tk_plus() {
@@ -2925,7 +2937,7 @@ class MycGen {
     }
   }
 
-  fn hash_set_func(ty: Ty): String {
+  pub fn hash_set_func(ty: Ty): String {
     if k = ty.key {
       if k.is_int {
         return "avant_hash_set_i32k_i32"
@@ -2939,7 +2951,7 @@ class MycGen {
     "avant_hash_set_i32"
   }
 
-  fn hash_get_func(ty: Ty): String {
+  pub fn hash_get_func(ty: Ty): String {
     if k = ty.key {
       if k.is_int {
         return "avant_hash_get_i32k_i32"
@@ -2953,7 +2965,7 @@ class MycGen {
     "avant_hash_get_i32"
   }
 
-  fn hash_del_func(ty: Ty): String {
+  pub fn hash_del_func(ty: Ty): String {
     if k = ty.key {
       if k.is_int {
         return "avant_hash_del_i32k"
@@ -2962,7 +2974,7 @@ class MycGen {
     "avant_hash_del"
   }
 
-  fn emit_hash_new(expr: Expr) {
+  pub fn emit_hash_new(expr: Expr) {
     ty = expr_ty(expr)
     val_kind = 0
     key_kind = 0
@@ -2981,7 +2993,7 @@ class MycGen {
     self.line("CALL :avant_hash_new")
   }
 
-  fn emit_hash_set(target: Expr, value: Expr, ty: Ty) {
+  pub fn emit_hash_set(target: Expr, value: Expr, ty: Ty) {
     self.emit_expr(value)
     val = self.new_temp
     if v = ty.val {
@@ -3014,7 +3026,7 @@ class MycGen {
     self.line("CALL :${fn_name}")
   }
 
-  fn emit_hash_get(expr: Expr, ty: Ty) {
+  pub fn emit_hash_get(expr: Expr, ty: Ty) {
     found = self.new_temp
     self.line("PUSH 0")
     self.line("LOCAL :${found} :i32")
@@ -3043,7 +3055,7 @@ class MycGen {
     self.emit_hash_get_wrap(ty, found)
   }
 
-  fn emit_hash_get_wrap(ty: Ty, found: String) {
+  pub fn emit_hash_get_wrap(ty: Ty, found: String) {
     val = self.new_temp
     want = ty_int()
     if v = ty.val {
@@ -3081,7 +3093,7 @@ class MycGen {
     self.line("LOCAL :${dest}")
   }
 
-  fn emit_hash_method(expr: Expr, ty: Ty) {
+  pub fn emit_hash_method(expr: Expr, ty: Ty) {
     if str_eq(expr.callee, "get") {
       idx = Expr.new(ex_index(), expr.loc)
       if recv = expr.receiver {
@@ -3222,7 +3234,7 @@ class MycGen {
     }
   }
 
-  fn emit_array_method(expr: Expr, ty: Ty) {
+  pub fn emit_array_method(expr: Expr, ty: Ty) {
     if str_eq(expr.callee, "push") {
       self.emit_array_push(expr, ty)
       return
@@ -3265,7 +3277,7 @@ class MycGen {
     }
   }
 
-  fn emit_array_clear(recv: Expr, ty: Ty) {
+  pub fn emit_array_clear(recv: Expr, ty: Ty) {
     self.emit_expr(recv)
     arr = self.new_temp
     m = ty_myc(ty)
@@ -3279,7 +3291,7 @@ class MycGen {
     self.line("STORE")
   }
 
-  fn emit_array_reserve(expr: Expr, ty: Ty) {
+  pub fn emit_array_reserve(expr: Expr, ty: Ty) {
     if recv = expr.receiver {
       self.emit_expr(recv)
     }
@@ -3302,7 +3314,7 @@ class MycGen {
     self.line("CALL :avant_array_reserve")
   }
 
-  fn emit_array_pop(recv: Expr, ty: Ty) {
+  pub fn emit_array_pop(recv: Expr, ty: Ty) {
     self.emit_expr(recv)
     arr = self.new_temp
     m = ty_myc(ty)
@@ -3325,7 +3337,7 @@ class MycGen {
     }
   }
 
-  fn emit_array_push(expr: Expr, ty: Ty) {
+  pub fn emit_array_push(expr: Expr, ty: Ty) {
     if e = ty.inner {
       if e.is_int {
         if expr.args.size > 0 {
@@ -3374,7 +3386,7 @@ class MycGen {
     }
   }
 
-  fn emit_array_each(expr: Expr, ty: Ty) {
+  pub fn emit_array_each(expr: Expr, ty: Ty) {
     if b = expr.block {
       pname = b.params[0]
       if recv = expr.receiver {
@@ -3429,7 +3441,7 @@ class MycGen {
     }
   }
 
-  fn emit_call(expr: Expr) {
+  pub fn emit_call(expr: Expr) {
     if expr.lib_name.size > 0 {
       self.emit_call_named(expr.callee, expr.args)
       return
@@ -3800,7 +3812,7 @@ class MycGen {
     self.emit_call_named(name, expr.args)
   }
 
-  fn is_struct_self(name: String): Bool {
+  pub fn is_struct_self(name: String): Bool {
     if st = self.self_ty {
       if st.is_struct {
         return str_eq(self.self_name, name)
@@ -3809,7 +3821,7 @@ class MycGen {
     false
   }
 
-  fn emit_self_field(field: String) {
+  pub fn emit_self_field(field: String) {
     if st = self.self_ty {
       m = ty_self_ptr_myc(st)
       self.line("LOCAL :${self.self_name} :${m}")
@@ -3819,7 +3831,7 @@ class MycGen {
     }
   }
 
-  fn emit_self_ptr(recv: Expr) {
+  pub fn emit_self_ptr(recv: Expr) {
     ty = expr_ty(recv)
     if ty.is_class {
       self.emit_expr(recv)
@@ -3829,20 +3841,25 @@ class MycGen {
     self.line("ADDR")
   }
 
-  fn emit_method_invoke(recv: Expr, name: String, args: Array(Expr)) {
+  pub fn emit_method_invoke(recv: Expr, name: String, args: Array(Expr)) {
     self.emit_args(args)
     self.emit_self_ptr(recv)
     self.line("CALL :${name}")
   }
 
-  fn emit_ctor_call(expr: Expr, recv: Expr) {
-    if recv.kind == ex_name() {
-      ctor = "${recv.ident}__new"
+  pub fn emit_ctor_call(expr: Expr, recv: Expr) {
+    ctor = expr.resolved
+    if ctor.size == 0 {
+      if recv.kind == ex_name() {
+        ctor = "${recv.ident}__new"
+      }
+    }
+    if ctor.size > 0 {
       self.emit_call_named(ctor, expr.args)
     }
   }
 
-  fn emit_spawn_cap_layout(call: Expr) {
+  pub fn emit_spawn_cap_layout(call: Expr) {
     if call.cap_names.size == 0 {
       return
     }
@@ -3860,7 +3877,7 @@ class MycGen {
     self.blank
   }
 
-  fn emit_spawn(expr: Expr) {
+  pub fn emit_spawn(expr: Expr) {
     name = expr.spawn_thunk
     if expr.cap_names.size == 0 {
       self.line("PUSH 0")
@@ -3893,7 +3910,7 @@ class MycGen {
     self.line("CALL :avant_spawn")
   }
 
-  fn emit_spawn_thunk(call: Expr) {
+  pub fn emit_spawn_thunk(call: Expr) {
     if b = call.block {
       saved_indent = self.indent
       saved_count = self.temps
@@ -3973,14 +3990,14 @@ class MycGen {
     }
   }
 
-  fn emit_join(expr: Expr) {
+  pub fn emit_join(expr: Expr) {
     if recv = expr.receiver {
       self.emit_expr(recv)
     }
     self.line("CALL :avant_join")
   }
 
-  fn emit_json_get(expr: Expr, as_str: Bool) {
+  pub fn emit_json_get(expr: Expr, as_str: Bool) {
     found = self.new_temp
     self.line("PUSH 0")
     self.line("LOCAL :${found} :i32")
@@ -4037,7 +4054,7 @@ class MycGen {
     self.line("LOCAL :${slot}")
   }
 
-  fn emit_nullable_ptr {
+  pub fn emit_nullable_ptr {
     ptr_ty = ty_ptr(ty_void())
     want = ty_nilable(ptr_ty)
     val = self.new_temp
@@ -4071,14 +4088,14 @@ class MycGen {
     self.line("LOCAL :${held}")
   }
 
-  fn emit_json_root(expr: Expr) {
+  pub fn emit_json_root(expr: Expr) {
     if expr.args.size > 0 {
       self.emit_expr(expr.args[0])
     }
     self.line("CALL :avant_json_root")
   }
 
-  fn emit_json_obj_get(expr: Expr) {
+  pub fn emit_json_obj_get(expr: Expr) {
     if expr.args.size > 1 {
       self.emit_expr(expr.args[1])
     }
@@ -4097,14 +4114,14 @@ class MycGen {
     self.emit_nullable_ptr
   }
 
-  fn emit_json_len(expr: Expr) {
+  pub fn emit_json_len(expr: Expr) {
     if expr.args.size > 0 {
       self.emit_expr(expr.args[0])
     }
     self.line("CALL :avant_json_arr_len")
   }
 
-  fn emit_json_at(expr: Expr) {
+  pub fn emit_json_at(expr: Expr) {
     if expr.args.size > 1 {
       self.emit_expr(expr.args[1])
     }
@@ -4123,7 +4140,7 @@ class MycGen {
     self.emit_nullable_ptr
   }
 
-  fn emit_json_f64(expr: Expr) {
+  pub fn emit_json_f64(expr: Expr) {
     found = self.new_temp
     self.line("PUSH 0")
     self.line("LOCAL :${found} :i32")
@@ -4176,7 +4193,7 @@ class MycGen {
     self.line("LOCAL :${held}")
   }
 
-  fn emit_json_sum_f64(expr: Expr) {
+  pub fn emit_json_sum_f64(expr: Expr) {
     if expr.args.size > 1 {
       self.emit_expr(expr.args[1])
     }
@@ -4194,7 +4211,7 @@ class MycGen {
     self.line("CALL :avant_json_arr_sum_f64")
   }
 
-  fn emit_int_convert(from: Ty, name: String) {
+  pub fn emit_int_convert(from: Ty, name: String) {
     if str_eq(name, "to_f") {
       self.line("AS :f64")
       return
@@ -4228,7 +4245,7 @@ class MycGen {
     }
   }
 
-  fn emit_float_field(expr: Expr) {
+  pub fn emit_float_field(expr: Expr) {
     if obj = expr.object {
       self.emit_expr(obj)
     }
@@ -4244,14 +4261,14 @@ class MycGen {
     }
   }
 
-  fn emit_int_field(expr: Expr) {
+  pub fn emit_int_field(expr: Expr) {
     if obj = expr.object {
       self.emit_expr(obj)
       self.emit_int_convert(expr_ty(obj), expr.ident)
     }
   }
 
-  fn emit_float_method(expr: Expr) {
+  pub fn emit_float_method(expr: Expr) {
     if recv = expr.receiver {
       self.emit_expr(recv)
     }
@@ -4269,14 +4286,14 @@ class MycGen {
     }
   }
 
-  fn emit_int_method(expr: Expr) {
+  pub fn emit_int_method(expr: Expr) {
     if recv = expr.receiver {
       self.emit_expr(recv)
       self.emit_int_convert(expr_ty(recv), expr.callee)
     }
   }
 
-  fn emit_string_method(expr: Expr) {
+  pub fn emit_string_method(expr: Expr) {
     if recv = expr.receiver {
       self.emit_expr(recv)
     }
@@ -4287,7 +4304,7 @@ class MycGen {
     }
   }
 
-  fn emit_opt_cstr(expr: Expr, cname: String) {
+  pub fn emit_opt_cstr(expr: Expr, cname: String) {
     found = self.new_temp
     self.line("PUSH 0")
     self.line("LOCAL :${found} :i32")
@@ -4331,7 +4348,7 @@ class MycGen {
     self.line("LOCAL :${slot}")
   }
 
-  fn emit_process_run(expr: Expr) {
+  pub fn emit_process_run(expr: Expr) {
     if expr.args.size > 1 {
       self.emit_expr(expr.args[1])
     }
@@ -4351,7 +4368,7 @@ class MycGen {
     self.line("CALL :avant_process_run")
   }
 
-  fn emit_process_run_out(expr: Expr) {
+  pub fn emit_process_run_out(expr: Expr) {
     if expr.args.size > 2 {
       self.emit_expr(expr.args[2])
     }
@@ -4379,7 +4396,7 @@ class MycGen {
     self.line("CALL :avant_process_run_out")
   }
 
-  fn emit_buf_method(expr: Expr) {
+  pub fn emit_buf_method(expr: Expr) {
     if str_eq(expr.callee, "push_byte") {
       if expr.args.size > 0 {
         self.emit_expr(expr.args[0])
@@ -4506,12 +4523,12 @@ class MycGen {
     }
   }
 
-  fn emit_call_named(name: String, args: Array(Expr)) {
+  pub fn emit_call_named(name: String, args: Array(Expr)) {
     self.emit_args(args)
     self.line("CALL :${name}")
   }
 
-  fn emit_args(args: Array(Expr)) {
+  pub fn emit_args(args: Array(Expr)) {
     if args.size <= 1 {
       if args.size == 1 {
         self.emit_expr(args[0])
@@ -4539,7 +4556,7 @@ class MycGen {
     }
   }
 
-  fn emit_puts(arg: Expr) {
+  pub fn emit_puts(arg: Expr) {
     self.emit_expr(arg)
     ty = expr_ty(arg)
     if ty.is_int {
@@ -4575,7 +4592,7 @@ class MycGen {
   }
 }
 
-fn emit_myc(program: Program): String {
+pub fn emit_myc(program: Program): String {
   gen = MycGen.new(program)
   gen.emit
 }

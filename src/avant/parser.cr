@@ -12,46 +12,68 @@ module Avant
       classes = [] of AST::ClassDef
       functions = [] of AST::Function
       libs = [] of AST::LibDef
+      imports = [] of AST::ImportDecl
 
       until current.kind.eof?
+        vis = false
+        if current.kind.pub?
+          vis = true
+          bump
+          skip_newlines
+        end
         case current.kind
+        when .import?
+          if vis
+            raise CompileError.at(current.location, "import cannot be pub")
+          end
+          imports << parse_import
         when .struct?
-          structs << parse_struct
+          structs << parse_struct(vis)
         when .class?
-          classes << parse_class
+          classes << parse_class(vis)
         when .lib?
-          libs << parse_lib
+          libs << parse_lib(vis)
         when .fn?
-          functions << parse_function
+          functions << parse_function(nil, vis)
         when .fun?
           raise CompileError.at(current.location, "fun belongs in a lib block; there is no extern fn")
         else
-          raise CompileError.at(current.location, "expected struct, class, lib, or fn, found #{current.kind}")
+          if vis
+            raise CompileError.at(current.location, "pub prefixes struct, class, lib, or fn")
+          end
+          raise CompileError.at(current.location, "expected struct, class, lib, fn, or import, found #{current.kind}")
         end
         skip_newlines
       end
 
-      AST::Program.new(location, structs, functions, classes, libs)
+      AST::Program.new(location, structs, functions, classes, libs, imports)
     end
 
-    private def parse_struct : AST::StructDef
+    private def parse_import : AST::ImportDecl
+      loc = expect(:import).location
+      skip_newlines
+      name = expect(:ident)
+      AST::ImportDecl.new(loc, name.value)
+    end
+
+    private def parse_struct(vis : Bool) : AST::StructDef
       loc = expect(:struct).location
       name = expect(:ident).value
       fields, methods = parse_type_body(name)
       if field = fields.find(&.default)
         raise CompileError.at(field.location, "struct fields have no defaults; use a literal")
       end
-      AST::StructDef.new(loc, name, fields, methods)
+      AST::StructDef.new(loc, name, fields, methods, vis)
     end
 
-    private def parse_class : AST::ClassDef
+    private def parse_class(vis : Bool) : AST::ClassDef
       loc = expect(:class).location
       name = expect(:ident).value
       fields, methods = parse_type_body(name)
-      AST::ClassDef.new(loc, name, fields, methods)
+      AST::ClassDef.new(loc, name, fields, methods, vis)
     end
 
-    private def parse_lib : AST::LibDef
+    private def parse_lib(vis : Bool) : AST::LibDef
       loc = expect(:lib).location
       name = expect(:ident).value
       skip_newlines
@@ -66,7 +88,7 @@ module Avant
         skip_newlines
       end
       expect(:r_brace)
-      AST::LibDef.new(loc, name, funs)
+      AST::LibDef.new(loc, name, funs, vis)
     end
 
     private def parse_fun_decl : AST::FunDecl
@@ -114,9 +136,21 @@ module Avant
       fields = [] of AST::Field
       methods = [] of AST::Function
       until current.kind.r_brace? || current.kind.eof?
+        vis = false
+        if current.kind.pub?
+          vis = true
+          bump
+          skip_newlines
+          unless current.kind.fn?
+            raise CompileError.at(current.location, "pub in a type body only prefixes fn")
+          end
+        end
         if current.kind.fn?
-          methods << parse_function(owner)
+          methods << parse_function(owner, vis)
         else
+          if vis
+            raise CompileError.at(current.location, "fields of a pub type are visible; do not mark a field pub")
+          end
           fields << parse_field
         end
         skip_newlines
@@ -179,7 +213,7 @@ module Avant
       end
     end
 
-    private def parse_function(owner : String? = nil) : AST::Function
+    private def parse_function(owner : String? = nil, vis : Bool = false) : AST::Function
       loc = expect(:fn).location
       receiver : AST::Param? = nil
 
@@ -226,7 +260,7 @@ module Avant
 
       skip_newlines
       body = parse_block
-      AST::Function.new(loc, name, params, return_type, body, receiver, owner)
+      AST::Function.new(loc, name, params, return_type, body, receiver, owner, vis)
     end
 
     private def parse_param : AST::Param
@@ -260,13 +294,20 @@ module Avant
       tn = parse_primary_type
       while current.kind.question?
         bump
-        tn = AST::TypeName.new(tn.location, tn.name, tn.args, true, tn.members)
+        tn = AST::TypeName.new(tn.location, tn.name, tn.args, true, tn.members, tn.qualifier)
       end
       tn
     end
 
     private def parse_primary_type : AST::TypeName
       tok = expect(:ident)
+      qualifier = nil.as(String?)
+      if current.kind.dot?
+        qualifier = tok.value
+        bump
+        skip_newlines
+        tok = expect(:ident)
+      end
       args = [] of AST::TypeName
       if current.kind.l_paren?
         bump
@@ -281,7 +322,7 @@ module Avant
         end
         expect(:r_paren)
       end
-      AST::TypeName.new(tok.location, tok.value, args)
+      AST::TypeName.new(tok.location, tok.value, args, false, [] of AST::TypeName, qualifier)
     end
 
     private def parse_block : Array(AST::Stmt)
@@ -553,6 +594,12 @@ module Avant
             left = AST::Call.new(loc, field.value, args, left)
           elsif field.value == "new"
             left = AST::Call.new(loc, "new", [] of AST::Expr, left)
+          elsif @allow_struct_lit && struct_literal_ahead?
+            qual = nil.as(String?)
+            if left.is_a?(AST::Name)
+              qual = left.ident
+            end
+            left = parse_struct_literal(field, qual)
           else
             left = AST::FieldAccess.new(loc, left, field.value)
           end
@@ -717,7 +764,7 @@ module Avant
       AST::ArrayLiteral.new(loc, elements)
     end
 
-    private def parse_struct_literal(name : Token) : AST::StructLiteral
+    private def parse_struct_literal(name : Token, qualifier : String? = nil) : AST::StructLiteral
       expect(:l_brace)
       skip_newlines
       fields = [] of {String, AST::Expr}
@@ -732,7 +779,7 @@ module Avant
         skip_newlines
       end
       expect(:r_brace)
-      AST::StructLiteral.new(name.location, name.value, fields)
+      AST::StructLiteral.new(name.location, name.value, fields, qualifier)
     end
 
     private def struct_literal_ahead? : Bool

@@ -1,36 +1,44 @@
-fn ex_int: Int { 1 }
-fn ex_float: Int { 2 }
-fn ex_string: Int { 3 }
-fn ex_bool: Int { 4 }
-fn ex_name: Int { 5 }
-fn ex_call: Int { 6 }
-fn ex_unary: Int { 7 }
-fn ex_binary: Int { 8 }
-fn ex_field: Int { 9 }
-fn ex_index: Int { 10 }
-fn ex_struct: Int { 11 }
-fn ex_array: Int { 12 }
-fn ex_array_new: Int { 13 }
-fn ex_hash_new: Int { 14 }
-fn ex_nil: Int { 15 }
-fn ex_try: Int { 16 }
-fn ex_interp: Int { 17 }
-fn ex_switch: Int { 18 }
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
 
-fn st_expr: Int { 1 }
-fn st_return: Int { 2 }
-fn st_if: Int { 3 }
-fn st_while: Int { 4 }
-fn st_break: Int { 5 }
-fn st_continue: Int { 6 }
-fn st_assign: Int { 7 }
+pub fn ex_int: Int { 1 }
+pub fn ex_float: Int { 2 }
+pub fn ex_string: Int { 3 }
+pub fn ex_bool: Int { 4 }
+pub fn ex_name: Int { 5 }
+pub fn ex_call: Int { 6 }
+pub fn ex_unary: Int { 7 }
+pub fn ex_binary: Int { 8 }
+pub fn ex_field: Int { 9 }
+pub fn ex_index: Int { 10 }
+pub fn ex_struct: Int { 11 }
+pub fn ex_array: Int { 12 }
+pub fn ex_array_new: Int { 13 }
+pub fn ex_hash_new: Int { 14 }
+pub fn ex_nil: Int { 15 }
+pub fn ex_try: Int { 16 }
+pub fn ex_interp: Int { 17 }
+pub fn ex_switch: Int { 18 }
 
-class TypeName {
+pub fn st_expr: Int { 1 }
+pub fn st_return: Int { 2 }
+pub fn st_if: Int { 3 }
+pub fn st_while: Int { 4 }
+pub fn st_break: Int { 5 }
+pub fn st_continue: Int { 6 }
+pub fn st_assign: Int { 7 }
+
+pub class TypeName {
   loc: Location
   name: String = ""
   args: Array(TypeName)
   nilable: Bool = false
   members: Array(TypeName)
+  mod_name: String = ""
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -40,10 +48,11 @@ class TypeName {
     m: Array(TypeName) = []
     self.members = m
     self.nilable = false
+    self.mod_name = ""
   }
 }
 
-class Param {
+pub class Param {
   loc: Location
   name: String = ""
   type: TypeName
@@ -56,7 +65,7 @@ class Param {
   }
 }
 
-class InterpPart {
+pub class InterpPart {
   text: String? = nil
   expr: Expr? = nil
 
@@ -64,7 +73,7 @@ class InterpPart {
   }
 }
 
-class SwitchCase {
+pub class SwitchCase {
   loc: Location
   labels: Array(Int64)
   body: Array(Stmt)
@@ -78,7 +87,7 @@ class SwitchCase {
   }
 }
 
-class Block {
+pub class Block {
   loc: Location
   params: Array(String)
   body: Array(Stmt)
@@ -92,7 +101,7 @@ class Block {
   }
 }
 
-class Expr {
+pub class Expr {
   kind: Int = 0
   loc: Location
   ident: String = ""
@@ -131,6 +140,8 @@ class Expr {
   resolved: String = ""
   cap_names: Array(String)
   cap_tys: Array(Ty)
+  vis: Bool = false
+  mod_name: String = ""
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -155,10 +166,12 @@ class Expr {
     self.cap_tys = ct
     self.spawn_thunk = ""
     self.resolved = ""
+    self.vis = false
+    self.mod_name = ""
   }
 }
 
-class Stmt {
+pub class Stmt {
   kind: Int = 0
   loc: Location
   expr: Expr? = nil
@@ -184,7 +197,7 @@ class Stmt {
   }
 }
 
-class Field {
+pub class Field {
   loc: Location
   name: String = ""
   type: TypeName
@@ -197,7 +210,7 @@ class Field {
   }
 }
 
-class FunDecl {
+pub class FunDecl {
   loc: Location
   name: String = ""
   params: Array(Param)
@@ -211,7 +224,7 @@ class FunDecl {
   }
 }
 
-class Function {
+pub class Function {
   loc: Location
   name: String = ""
   params: Array(Param)
@@ -223,6 +236,8 @@ class Function {
   type_params: Array(String)
   generic: Bool = false
   ol_index: Int = 0
+  vis: Bool = false
+  mod_name: String = ""
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -236,14 +251,18 @@ class Function {
     self.type_params = tp
     self.generic = false
     self.ol_index = 0
+    self.vis = false
+    self.mod_name = ""
   }
 }
 
-class StructDef {
+pub class StructDef {
   loc: Location
   name: String = ""
   fields: Array(Field)
   methods: Array(Function)
+  vis: Bool = false
+  mod_name: String = ""
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -252,14 +271,18 @@ class StructDef {
     self.fields = f
     m: Array(Function) = []
     self.methods = m
+    self.vis = false
+    self.mod_name = ""
   }
 }
 
-class ClassDef {
+pub class ClassDef {
   loc: Location
   name: String = ""
   fields: Array(Field)
   methods: Array(Function)
+  vis: Bool = false
+  mod_name: String = ""
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -268,28 +291,62 @@ class ClassDef {
     self.fields = f
     m: Array(Function) = []
     self.methods = m
+    self.vis = false
+    self.mod_name = ""
   }
 }
 
-class LibDef {
+pub class LibDef {
   loc: Location
   name: String = ""
   funs: Array(FunDecl)
+  vis: Bool = false
+  mod_name: String = ""
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
     self.name = name
     f: Array(FunDecl) = []
     self.funs = f
+    self.vis = false
+    self.mod_name = ""
   }
 }
 
-class Program {
+pub class ImportDecl {
+  loc: Location
+  name: String = ""
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+  }
+}
+
+pub class ModInfo {
+  name: String = ""
+  path: String = ""
+  imports: Array(String)
+
+  fn initialize(name: String, path: String) {
+    self.name = name
+    self.path = path
+    im: Array(String) = []
+    self.imports = im
+  }
+}
+
+pub class Program {
   loc: Location
   structs: Array(StructDef)
   classes: Array(ClassDef)
   functions: Array(Function)
   libs: Array(LibDef)
+  imports: Array(ImportDecl)
+  module_name: String = ""
+  module_path: String = ""
+  root_module: String = ""
+  mods: Array(ModInfo)
 
   fn initialize(loc: Location) {
     self.loc = loc
@@ -301,22 +358,29 @@ class Program {
     self.functions = f
     l: Array(LibDef) = []
     self.libs = l
+    im: Array(ImportDecl) = []
+    self.imports = im
+    self.module_name = ""
+    self.module_path = ""
+    self.root_module = ""
+    md: Array(ModInfo) = []
+    self.mods = md
   }
 }
 
-fn stmt_expr(loc: Location, expr: Expr): Stmt {
+pub fn stmt_expr(loc: Location, expr: Expr): Stmt {
   s = Stmt.new(st_expr(), loc)
   s.expr = expr
   s
 }
 
-fn stmt_return(loc: Location, expr: Expr?): Stmt {
+pub fn stmt_return(loc: Location, expr: Expr?): Stmt {
   s = Stmt.new(st_return(), loc)
   s.expr = expr
   s
 }
 
-fn program_all_functions(program: Program): Array(Function) {
+pub fn program_all_functions(program: Program): Array(Function) {
   out: Array(Function) = []
   i = 0
   while i < program.functions.size {
@@ -346,23 +410,24 @@ fn program_all_functions(program: Program): Array(Function) {
   out
 }
 
-fn fn_is_method(fnn: Function): Bool {
+pub fn fn_is_method(fnn: Function): Bool {
   if r = fnn.receiver {
     return true
   }
   fnn.owner.size > 0
 }
 
-fn fn_self_name(fnn: Function): String {
+pub fn fn_self_name(fnn: Function): String {
   if r = fnn.receiver {
     return r.name
   }
   "self"
 }
 
-fn clone_type_name(tn: TypeName): TypeName {
+pub fn clone_type_name(tn: TypeName): TypeName {
   out = TypeName.new(tn.loc, tn.name)
   out.nilable = tn.nilable
+  out.mod_name = tn.mod_name
   i = 0
   while i < tn.args.size {
     out.args.push(clone_type_name(tn.args[i]))
@@ -376,7 +441,7 @@ fn clone_type_name(tn: TypeName): TypeName {
   out
 }
 
-fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): TypeName {
+pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): TypeName {
   if tn.members.size > 0 {
     out = TypeName.new(tn.loc, "")
     out.nilable = tn.nilable
@@ -411,6 +476,7 @@ fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): Type
   }
   out = TypeName.new(tn.loc, tn.name)
   out.nilable = tn.nilable
+  out.mod_name = tn.mod_name
   i = 0
   while i < tn.args.size {
     out.args.push(subst_type_name(tn.args[i], from, to))
@@ -419,7 +485,7 @@ fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): Type
   out
 }
 
-fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Array(String)) {
+pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Array(String)) {
   if tn.members.size > 0 {
     i = 0
     while i < tn.members.size {
@@ -455,7 +521,7 @@ fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Array(S
   into.push(tn.name)
 }
 
-fn clone_param(p: Param): Param {
+pub fn clone_param(p: Param): Param {
   out = Param.new(p.loc, p.name, clone_type_name(p.type))
   if d = p.default {
     out.default = clone_expr(d)
@@ -463,7 +529,7 @@ fn clone_param(p: Param): Param {
   out
 }
 
-fn clone_interp_part(p: InterpPart): InterpPart {
+pub fn clone_interp_part(p: InterpPart): InterpPart {
   out = InterpPart.new()
   out.text = p.text
   if e = p.expr {
@@ -472,7 +538,7 @@ fn clone_interp_part(p: InterpPart): InterpPart {
   out
 }
 
-fn clone_switch_case(c: SwitchCase): SwitchCase {
+pub fn clone_switch_case(c: SwitchCase): SwitchCase {
   out = SwitchCase.new(c.loc)
   i = 0
   while i < c.labels.size {
@@ -487,7 +553,7 @@ fn clone_switch_case(c: SwitchCase): SwitchCase {
   out
 }
 
-fn clone_block(b: Block): Block {
+pub fn clone_block(b: Block): Block {
   out = Block.new(b.loc)
   i = 0
   while i < b.params.size {
@@ -502,7 +568,7 @@ fn clone_block(b: Block): Block {
   out
 }
 
-fn clone_expr(e: Expr): Expr {
+pub fn clone_expr(e: Expr): Expr {
   out = Expr.new(e.kind, e.loc)
   out.ident = e.ident
   out.callee = e.callee
@@ -517,6 +583,8 @@ fn clone_expr(e: Expr): Expr {
   out.type_name = e.type_name
   out.lib_name = e.lib_name
   out.has_else = e.has_else
+  out.vis = e.vis
+  out.mod_name = e.mod_name
   if x = e.left {
     out.left = clone_expr(x)
   }
@@ -588,7 +656,7 @@ fn clone_expr(e: Expr): Expr {
   out
 }
 
-fn clone_stmt(s: Stmt): Stmt {
+pub fn clone_stmt(s: Stmt): Stmt {
   out = Stmt.new(s.kind, s.loc)
   out.bind = s.bind
   out.op = s.op
@@ -625,7 +693,7 @@ fn clone_stmt(s: Stmt): Stmt {
   out
 }
 
-fn clone_function(fnn: Function): Function {
+pub fn clone_function(fnn: Function): Function {
   out = Function.new(fnn.loc, fnn.name)
   out.owner = fnn.owner
   out.emit_name = fnn.emit_name
@@ -651,10 +719,13 @@ fn clone_function(fnn: Function): Function {
     i = i + 1
   }
   out.generic = fnn.generic
+  out.ol_index = fnn.ol_index
+  out.vis = fnn.vis
+  out.mod_name = fnn.mod_name
   out
 }
 
-fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
+pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
   if x = e.left {
     subst_type_in_expr(x, from, to)
   }
@@ -719,7 +790,7 @@ fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
   }
 }
 
-fn subst_type_in_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeName)) {
+pub fn subst_type_in_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeName)) {
   i = 0
   while i < body.size {
     subst_type_in_stmt(body[i], from, to)
@@ -727,7 +798,7 @@ fn subst_type_in_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeNam
   }
 }
 
-fn subst_type_in_stmt(s: Stmt, from: Array(String), to: Array(TypeName)) {
+pub fn subst_type_in_stmt(s: Stmt, from: Array(String), to: Array(TypeName)) {
   if x = s.expr {
     subst_type_in_expr(x, from, to)
   }
@@ -748,7 +819,7 @@ fn subst_type_in_stmt(s: Stmt, from: Array(String), to: Array(TypeName)) {
   }
 }
 
-fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeName)) {
+pub fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeName)) {
   if r = fnn.receiver {
     r.type = subst_type_name(r.type, from, to)
   }
@@ -767,7 +838,7 @@ fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeName))
   subst_type_in_stmts(fnn.body, from, to)
 }
 
-fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
+pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
   if e.kind == ex_name() {
     i = 0
     while i < from.size {
@@ -831,7 +902,7 @@ fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
   e
 }
 
-fn rewrite_stmt_names_body(body: Array(Stmt), from: Array(String), to: Array(Expr)) {
+pub fn rewrite_stmt_names_body(body: Array(Stmt), from: Array(String), to: Array(Expr)) {
   i = 0
   while i < body.size {
     rewrite_stmt_names(body[i], from, to)
@@ -839,7 +910,7 @@ fn rewrite_stmt_names_body(body: Array(Stmt), from: Array(String), to: Array(Exp
   }
 }
 
-fn rewrite_stmt_names(s: Stmt, from: Array(String), to: Array(Expr)) {
+pub fn rewrite_stmt_names(s: Stmt, from: Array(String), to: Array(Expr)) {
   if x = s.expr {
     s.expr = rewrite_expr_names(x, from, to)
   }
@@ -857,7 +928,7 @@ fn rewrite_stmt_names(s: Stmt, from: Array(String), to: Array(Expr)) {
   rewrite_stmt_names_body(s.body, from, to)
 }
 
-fn collect_fn_type_params(fnn: Function, named: Hash(String, Int)): Array(String) {
+pub fn collect_fn_type_params(fnn: Function, named: Hash(String, Int)): Array(String) {
   into: Array(String) = []
   i = 0
   while i < fnn.params.size {

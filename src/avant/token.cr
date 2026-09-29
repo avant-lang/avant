@@ -63,6 +63,8 @@ module Avant
       InterpOpen
       InterpMid
       InterpClose
+      Import
+      Pub
     end
 
     getter kind : Kind
@@ -73,7 +75,7 @@ module Avant
     end
 
     def keyword? : Bool
-      kind.fn? || kind.if? || kind.else? || kind.return? || kind.struct? || kind.class? || kind.lib? || kind.fun? || kind.self_kw? || kind.while? || kind.true? || kind.false? || kind.nil_kw? || kind.spawn? || kind.break_kw? || kind.continue_kw? || kind.switch? || kind.case?
+      kind.fn? || kind.if? || kind.else? || kind.return? || kind.struct? || kind.class? || kind.lib? || kind.fun? || kind.self_kw? || kind.while? || kind.true? || kind.false? || kind.nil_kw? || kind.spawn? || kind.break_kw? || kind.continue_kw? || kind.switch? || kind.case? || kind.import? || kind.pub?
     end
 
     def assign_op? : Bool

@@ -71,22 +71,20 @@ def dump_host_tokens(text : String, path = "<test>") : String
   end.join('\n') + "\n"
 end
 
+def port_compiler_root : String
+  File.expand_path("../compiler/lex_dump.av", __DIR__)
+end
+
+def port_driver_root : String
+  File.expand_path("../compiler/main.av", __DIR__)
+end
+
 def port_compiler_files : Array(String)
-  dir = File.expand_path("../compiler", __DIR__)
-  %w[
-    location.av diagnostic.av source.av token.av lexer.av
-    type.av ast.av resolve.av parser.av checker.av codegen_myc.av
-    dump_ast.av dump_check.av lex_dump.av
-  ].map { |name| File.join(dir, name) }
+  [port_compiler_root]
 end
 
 def port_driver_files : Array(String)
-  dir = File.expand_path("../compiler", __DIR__)
-  %w[
-    location.av diagnostic.av source.av token.av lexer.av
-    type.av ast.av resolve.av parser.av checker.av codegen_myc.av
-    pipeline.av main.av
-  ].map { |name| File.join(dir, name) }
+  [port_driver_root]
 end
 
 def port_lexer_files : Array(String)

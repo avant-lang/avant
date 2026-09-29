@@ -1533,8 +1533,15 @@ module Avant
       end
 
       private def emit_ctor_call(expr : AST::Call, recv : AST::Expr) : Nil
-        name = recv.as(AST::Name).ident
-        emit_call_named("#{name}__new", expr.args)
+        name = expr.resolved || begin
+          ty = recv.type
+          if ty.is_a?(AggTy)
+            "#{ty.name}__new"
+          else
+            "#{recv.as(AST::Name).ident}__new"
+          end
+        end
+        emit_call_named(name, expr.args)
       end
 
       private def initialize_sig(owner : String) : MethodSig?

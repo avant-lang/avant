@@ -1,78 +1,90 @@
 // Token kinds are Int. Numbers match Crystal `Token::Kind` (src/avant/token.cr).
 
-fn tk_eof: Int { 0 }
-fn tk_newline: Int { 1 }
-fn tk_ident: Int { 2 }
-fn tk_integer: Int { 3 }
-fn tk_float: Int { 4 }
-fn tk_string: Int { 5 }
-fn tk_fn: Int { 6 }
-fn tk_if: Int { 7 }
-fn tk_else: Int { 8 }
-fn tk_return: Int { 9 }
-fn tk_struct: Int { 10 }
-fn tk_class: Int { 11 }
-fn tk_lib: Int { 12 }
-fn tk_fun: Int { 13 }
-fn tk_self: Int { 14 }
-fn tk_while: Int { 15 }
-fn tk_true: Int { 16 }
-fn tk_false: Int { 17 }
-fn tk_nil: Int { 18 }
-fn tk_spawn: Int { 19 }
-fn tk_break: Int { 20 }
-fn tk_continue: Int { 21 }
-fn tk_switch: Int { 22 }
-fn tk_case: Int { 23 }
-fn tk_plus_eq: Int { 24 }
-fn tk_minus_eq: Int { 25 }
-fn tk_star_eq: Int { 26 }
-fn tk_slash_eq: Int { 27 }
-fn tk_l_brace: Int { 28 }
-fn tk_r_brace: Int { 29 }
-fn tk_l_paren: Int { 30 }
-fn tk_r_paren: Int { 31 }
-fn tk_l_bracket: Int { 32 }
-fn tk_r_bracket: Int { 33 }
-fn tk_comma: Int { 34 }
-fn tk_colon: Int { 35 }
-fn tk_dot: Int { 36 }
-fn tk_plus: Int { 37 }
-fn tk_minus: Int { 38 }
-fn tk_star: Int { 39 }
-fn tk_slash: Int { 40 }
-fn tk_percent: Int { 41 }
-fn tk_eq: Int { 42 }
-fn tk_eq_eq: Int { 43 }
-fn tk_not_eq: Int { 44 }
-fn tk_less: Int { 45 }
-fn tk_less_eq: Int { 46 }
-fn tk_greater: Int { 47 }
-fn tk_greater_eq: Int { 48 }
-fn tk_bang: Int { 49 }
-fn tk_question: Int { 50 }
-fn tk_pipe: Int { 51 }
-fn tk_pipe_pipe: Int { 52 }
-fn tk_amp: Int { 53 }
-fn tk_amp_amp: Int { 54 }
-fn tk_caret: Int { 55 }
-fn tk_tilde: Int { 56 }
-fn tk_less_less: Int { 57 }
-fn tk_greater_greater: Int { 58 }
-fn tk_interp_open: Int { 59 }
-fn tk_interp_mid: Int { 60 }
-fn tk_interp_close: Int { 61 }
+import location
+import diagnostic
+import source
 
-fn token_is_keyword(kind: Int): Bool {
+pub fn tk_eof: Int { 0 }
+pub fn tk_newline: Int { 1 }
+pub fn tk_ident: Int { 2 }
+pub fn tk_integer: Int { 3 }
+pub fn tk_float: Int { 4 }
+pub fn tk_string: Int { 5 }
+pub fn tk_fn: Int { 6 }
+pub fn tk_if: Int { 7 }
+pub fn tk_else: Int { 8 }
+pub fn tk_return: Int { 9 }
+pub fn tk_struct: Int { 10 }
+pub fn tk_class: Int { 11 }
+pub fn tk_lib: Int { 12 }
+pub fn tk_fun: Int { 13 }
+pub fn tk_self: Int { 14 }
+pub fn tk_while: Int { 15 }
+pub fn tk_true: Int { 16 }
+pub fn tk_false: Int { 17 }
+pub fn tk_nil: Int { 18 }
+pub fn tk_spawn: Int { 19 }
+pub fn tk_break: Int { 20 }
+pub fn tk_continue: Int { 21 }
+pub fn tk_switch: Int { 22 }
+pub fn tk_case: Int { 23 }
+pub fn tk_plus_eq: Int { 24 }
+pub fn tk_minus_eq: Int { 25 }
+pub fn tk_star_eq: Int { 26 }
+pub fn tk_slash_eq: Int { 27 }
+pub fn tk_l_brace: Int { 28 }
+pub fn tk_r_brace: Int { 29 }
+pub fn tk_l_paren: Int { 30 }
+pub fn tk_r_paren: Int { 31 }
+pub fn tk_l_bracket: Int { 32 }
+pub fn tk_r_bracket: Int { 33 }
+pub fn tk_comma: Int { 34 }
+pub fn tk_colon: Int { 35 }
+pub fn tk_dot: Int { 36 }
+pub fn tk_plus: Int { 37 }
+pub fn tk_minus: Int { 38 }
+pub fn tk_star: Int { 39 }
+pub fn tk_slash: Int { 40 }
+pub fn tk_percent: Int { 41 }
+pub fn tk_eq: Int { 42 }
+pub fn tk_eq_eq: Int { 43 }
+pub fn tk_not_eq: Int { 44 }
+pub fn tk_less: Int { 45 }
+pub fn tk_less_eq: Int { 46 }
+pub fn tk_greater: Int { 47 }
+pub fn tk_greater_eq: Int { 48 }
+pub fn tk_bang: Int { 49 }
+pub fn tk_question: Int { 50 }
+pub fn tk_pipe: Int { 51 }
+pub fn tk_pipe_pipe: Int { 52 }
+pub fn tk_amp: Int { 53 }
+pub fn tk_amp_amp: Int { 54 }
+pub fn tk_caret: Int { 55 }
+pub fn tk_tilde: Int { 56 }
+pub fn tk_less_less: Int { 57 }
+pub fn tk_greater_greater: Int { 58 }
+pub fn tk_interp_open: Int { 59 }
+pub fn tk_interp_mid: Int { 60 }
+pub fn tk_interp_close: Int { 61 }
+pub fn tk_import: Int { 62 }
+pub fn tk_pub: Int { 63 }
+
+pub fn token_is_keyword(kind: Int): Bool {
   if kind >= 6 {
     if kind <= 23 {
       return true
     }
   }
+  if kind == tk_import() {
+    return true
+  }
+  if kind == tk_pub() {
+    return true
+  }
   false
 }
 
-fn token_is_assign_op(kind: Int): Bool {
+pub fn token_is_assign_op(kind: Int): Bool {
   if kind == 42 {
     return true
   }
@@ -84,7 +96,7 @@ fn token_is_assign_op(kind: Int): Bool {
   false
 }
 
-fn keyword_table: Hash(String, Int) {
+pub fn keyword_table: Hash(String, Int) {
   kw = Hash(String, Int).new
   kw["fn"] = tk_fn()
   kw["if"] = tk_if()
@@ -104,10 +116,12 @@ fn keyword_table: Hash(String, Int) {
   kw["continue"] = tk_continue()
   kw["switch"] = tk_switch()
   kw["case"] = tk_case()
+  kw["import"] = tk_import()
+  kw["pub"] = tk_pub()
   kw
 }
 
-fn fn_op_name(kind: Int): String {
+pub fn fn_op_name(kind: Int): String {
   if kind == tk_plus() {
     return "+"
   }
@@ -144,7 +158,7 @@ fn fn_op_name(kind: Int): String {
   ""
 }
 
-fn emit_op_name(name: String): String {
+pub fn emit_op_name(name: String): String {
   if str_eq(name, "+") {
     return "plus"
   }
@@ -181,7 +195,7 @@ fn emit_op_name(name: String): String {
   name
 }
 
-class Token {
+pub class Token {
   kind: Int = 0
   loc: Location
   value: String = ""

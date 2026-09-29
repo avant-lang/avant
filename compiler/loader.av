@@ -1,0 +1,278 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+
+pub fn path_basename(path: String): String {
+  i = path.size - 1
+  while i >= 0 {
+    if path[i] == 47 {
+      return str_slice(path, i + 1, path.size)
+    }
+    i = i - 1
+  }
+  path
+}
+
+pub fn path_dirname(path: String): String {
+  i = path.size - 1
+  while i >= 0 {
+    if path[i] == 47 {
+      if i == 0 {
+        return "/"
+      }
+      return str_slice(path, 0, i)
+    }
+    i = i - 1
+  }
+  "."
+}
+
+pub fn module_name_of(path: String): String {
+  base = path_basename(path)
+  if base.size > 3 {
+    n = base.size
+    if base[n - 3] == 46 {
+      if base[n - 2] == 97 {
+        if base[n - 1] == 118 {
+          return str_slice(base, 0, n - 3)
+        }
+      }
+    }
+  }
+  base
+}
+
+pub fn child_av_path(importer: String, name: String): String {
+  dir = path_dirname(importer)
+  if str_eq(dir, ".") {
+    return "${name}.av"
+  }
+  "${dir}/${name}.av"
+}
+
+pub fn tag_module(program: Program, name: String, path: String) {
+  program.module_name = name
+  program.module_path = path
+  i = 0
+  while i < program.structs.size {
+    sdef = program.structs[i]
+    sdef.mod_name = name
+    j = 0
+    while j < sdef.methods.size {
+      sdef.methods[j].mod_name = name
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < program.classes.size {
+    cdef = program.classes[i]
+    cdef.mod_name = name
+    j = 0
+    while j < cdef.methods.size {
+      cdef.methods[j].mod_name = name
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < program.functions.size {
+    program.functions[i].mod_name = name
+    i = i + 1
+  }
+  i = 0
+  while i < program.libs.size {
+    program.libs[i].mod_name = name
+    i = i + 1
+  }
+}
+
+pub fn path_in_list(list: Array(String), path: String): Bool {
+  i = 0
+  while i < list.size {
+    if str_eq(list[i], path) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub class Loader {
+  loaded: Hash(String, Int)
+  programs: Array(Program)
+  stack: Array(String)
+  order: Array(String)
+  mods: Array(ModInfo)
+  failed: Bool = false
+  err: CompileError? = nil
+
+  fn initialize {
+    h = Hash(String, Int).new
+    self.loaded = h
+    p: Array(Program) = []
+    self.programs = p
+    st: Array(String) = []
+    self.stack = st
+    o: Array(String) = []
+    self.order = o
+    m: Array(ModInfo) = []
+    self.mods = m
+    self.failed = false
+    self.err = nil
+  }
+
+  pub fn fail(loc: Location, message: String) {
+    if self.failed {
+      return
+    }
+    self.failed = true
+    self.err = CompileError.new(loc, message)
+  }
+
+  pub fn load_root(path: String): Program? {
+    if file_exists(path) {
+    } else {
+      self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
+      return nil
+    }
+    dummy = self.load_file(path)
+    if self.failed {
+      return nil
+    }
+    self.merge(path)
+  }
+
+  pub fn load_file(path: String): Program? {
+    if path_in_list(self.stack, path) {
+      buf = buf_new()
+      buf.push_str("import cycle: ")
+      i = 0
+      while i < self.stack.size {
+        if i > 0 {
+          buf.push_str(" -> ")
+        }
+        buf.push_str(module_name_of(self.stack[i]))
+        i = i + 1
+      }
+      buf.push_str(" -> ")
+      buf.push_str(module_name_of(path))
+      self.fail(Location.new(path, 1, 1, 0), buf.to_s)
+      return nil
+    }
+    if id = self.loaded.get(path) {
+      return self.programs[id]
+    }
+    self.stack.push(path)
+    if file = source_read(path) {
+      lex = Lexer.new(file)
+      tokens = lex.tokenize
+      if e = lex.err {
+        dummy2 = self.stack.pop
+        self.fail(e.loc, e.message)
+        return nil
+      }
+      parser = Parser.new(file, tokens)
+      program = parser.parse
+      if e = parser.err {
+        dummy3 = self.stack.pop
+        self.fail(e.loc, e.message)
+        return nil
+      }
+      name = module_name_of(path)
+      tag_module(program, name, path)
+      self.programs.push(program)
+      self.loaded[path] = self.programs.size - 1
+      seen = Hash(String, Int).new
+      imports: Array(String) = []
+      i = 0
+      while i < program.imports.size {
+        if self.failed {
+          dummy4 = self.stack.pop
+          return nil
+        }
+        imp = program.imports[i]
+        if prev = seen.get(imp.name) {
+          dummy5 = self.stack.pop
+          self.fail(imp.loc, "already imported ${imp.name}")
+          return nil
+        }
+        seen[imp.name] = 1
+        child = child_av_path(path, imp.name)
+        if file_exists(child) {
+        } else {
+          dummy6 = self.stack.pop
+          self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path}")
+          return nil
+        }
+        dummy7 = self.load_file(child)
+        imports.push(module_name_of(child))
+        i = i + 1
+      }
+      info = ModInfo.new(name, path)
+      info.imports = imports
+      self.mods.push(info)
+      self.order.push(path)
+      dummy8 = self.stack.pop
+      return program
+    }
+    dummy9 = self.stack.pop
+    self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
+    nil
+  }
+
+  pub fn merge(root_path: String): Program? {
+    if id = self.loaded.get(root_path) {
+      root = self.programs[id]
+      merged = Program.new(root.loc)
+      i = 0
+      while i < self.order.size {
+        pid = 0
+        if found = self.loaded.get(self.order[i]) {
+          pid = found
+        }
+        p = self.programs[pid]
+        j = 0
+        while j < p.structs.size {
+          merged.structs.push(p.structs[j])
+          j = j + 1
+        }
+        j = 0
+        while j < p.classes.size {
+          merged.classes.push(p.classes[j])
+          j = j + 1
+        }
+        j = 0
+        while j < p.functions.size {
+          merged.functions.push(p.functions[j])
+          j = j + 1
+        }
+        j = 0
+        while j < p.libs.size {
+          merged.libs.push(p.libs[j])
+          j = j + 1
+        }
+        i = i + 1
+      }
+      merged.imports = root.imports
+      merged.module_name = root.module_name
+      merged.module_path = root.module_path
+      merged.root_module = root.module_name
+      merged.mods = self.mods
+      return merged
+    }
+    nil
+  }
+}
+
+pub fn load_program(path: String): Loader {
+  loader = Loader.new()
+  dummy = loader.load_root(path)
+  loader
+}

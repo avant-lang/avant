@@ -7,14 +7,31 @@ module Avant
       end
     end
 
+    class ImportDecl < Node
+      getter name : String
+
+      def initialize(location, @name)
+        super(location)
+      end
+    end
+
     class Program < Node
       getter structs : Array(StructDef)
       getter classes : Array(ClassDef)
       getter functions : Array(Function)
       getter libs : Array(LibDef)
+      getter imports : Array(ImportDecl)
+      property module_name : String
+      property module_path : String
+      property root_module : String
+      property import_graph : Hash(String, Array(String))
 
-      def initialize(location, @structs, @functions, @classes = [] of ClassDef, @libs = [] of LibDef)
+      def initialize(location, @structs, @functions, @classes = [] of ClassDef, @libs = [] of LibDef, @imports = [] of ImportDecl)
         super(location)
+        @module_name = ""
+        @module_path = ""
+        @root_module = ""
+        @import_graph = {} of String => Array(String)
       end
 
       def all_functions : Array(Function)
@@ -29,9 +46,12 @@ module Avant
       getter name : String
       getter fields : Array(Field)
       getter methods : Array(Function)
+      property vis : Bool
+      property module_name : String
 
-      def initialize(location, @name, @fields, @methods = [] of Function)
+      def initialize(location, @name, @fields, @methods = [] of Function, @vis = false)
         super(location)
+        @module_name = ""
       end
     end
 
@@ -39,18 +59,24 @@ module Avant
       getter name : String
       getter fields : Array(Field)
       getter methods : Array(Function)
+      property vis : Bool
+      property module_name : String
 
-      def initialize(location, @name, @fields, @methods = [] of Function)
+      def initialize(location, @name, @fields, @methods = [] of Function, @vis = false)
         super(location)
+        @module_name = ""
       end
     end
 
     class LibDef < Node
       getter name : String
       getter funs : Array(FunDecl)
+      property vis : Bool
+      property module_name : String
 
-      def initialize(location, @name, @funs)
+      def initialize(location, @name, @funs, @vis = false)
         super(location)
+        @module_name = ""
       end
     end
 
@@ -85,13 +111,16 @@ module Avant
       property type_params : Array(String)
       property generic : Bool
       property template : Function?
+      property vis : Bool
+      property module_name : String
 
-      def initialize(location, @name, @params, @return_type, @body, @receiver = nil, @owner = nil)
+      def initialize(location, @name, @params, @return_type, @body, @receiver = nil, @owner = nil, @vis = false)
         super(location)
         @emit_name = @name
         @type_params = [] of String
         @generic = false
         @template = nil
+        @module_name = ""
       end
 
       def void? : Bool
@@ -122,8 +151,9 @@ module Avant
       getter args : Array(TypeName)
       getter nilable : Bool
       getter members : Array(TypeName)
+      getter qualifier : String?
 
-      def initialize(location, @name, @args = [] of TypeName, @nilable = false, @members = [] of TypeName)
+      def initialize(location, @name, @args = [] of TypeName, @nilable = false, @members = [] of TypeName, @qualifier = nil)
         super(location)
       end
 
@@ -132,7 +162,7 @@ module Avant
       end
 
       def self.union(location, members : Array(TypeName), nilable = false)
-        new(location, "", [] of TypeName, nilable, members)
+        new(location, "", [] of TypeName, nilable, members, nil)
       end
     end
 
@@ -268,7 +298,7 @@ module Avant
     class Call < Expr
       getter callee : String
       getter args : Array(Expr)
-      getter receiver : Expr?
+      property receiver : Expr?
       property lib_name : String?
       property block : Block?
       property spawn_captures : Array({String, Ty})
@@ -344,8 +374,9 @@ module Avant
     class StructLiteral < Expr
       getter type_name : String
       getter fields : Array({String, Expr})
+      getter qualifier : String?
 
-      def initialize(location, @type_name, @fields)
+      def initialize(location, @type_name, @fields, @qualifier = nil)
         super(location)
       end
     end

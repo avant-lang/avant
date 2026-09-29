@@ -17,15 +17,18 @@ module Avant
         when "dump", "d"
           paths, _rest = take_av_files(args)
           abort_usage("dump needs a .av file") if paths.empty?
+          abort_usage("dump takes one root .av (use import)") if paths.size > 1
           STDOUT.print Avant.compile_files(paths)
         when "run", "r"
           paths, rest = take_av_files(args)
           abort_usage("run needs a .av file") if paths.empty?
+          abort_usage("run takes one root .av (use import)") if paths.size > 1
           link = LinkJob.parse(rest)
           run_ir(Avant.compile_files(paths), paths[-1], link)
         when "compile", "c"
           paths, rest = take_av_files(args)
           abort_usage("compile needs a .av file") if paths.empty?
+          abort_usage("compile takes one root .av (use import)") if paths.size > 1
           out_path, link_args = take_out_path(rest, paths[-1])
           link = LinkJob.parse(link_args)
           compile_ir(Avant.compile_files(paths), paths[-1], out_path, link)
@@ -34,6 +37,7 @@ module Avant
         else
           if command.ends_with?(".av")
             paths, rest = take_av_files(@argv)
+            abort_usage("run takes one root .av (use import)") if paths.size > 1
             link = LinkJob.parse(rest)
             run_ir(Avant.compile_files(paths), paths[-1], link)
           else
@@ -116,16 +120,15 @@ module Avant
 
     private def usage(io : IO) : Nil
       io.puts <<-USAGE
-      Avant compiler (Stage 7)
+      Avant compiler
 
-        avant run FILE.av [FILE.av ...] [--lib NAME] [--cc FILE.c]
-        avant dump FILE.av [FILE.av ...]
-        avant compile FILE.av [FILE.av ...] [OUT] [--lib NAME] [--cc FILE.c]
+        avant run FILE.av [--lib NAME] [--cc FILE.c]
+        avant dump FILE.av
+        avant compile FILE.av [OUT] [--lib NAME] [--cc FILE.c]
         avant bind [--lib NAME] HEADER.h
 
-      Stage 7: LangArena ports. Heap is GenImmix (D34).
-      Extra .av files are concatenated (shared helper + task).
-      Entry: fn main, or fn run (a myc main is synthesized).
+      FILE.av is the program root. `import name` loads name.av beside it.
+      Heap is GenImmix (D34). Entry: fn main, or fn run (a myc main is synthesized).
       USAGE
     end
   end

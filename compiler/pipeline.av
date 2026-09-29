@@ -1,4 +1,17 @@
-class IrBox {
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import checker
+import codegen_myc
+
+pub class IrBox {
   text: String = ""
   ok: Bool = false
 
@@ -8,7 +21,7 @@ class IrBox {
   }
 }
 
-class LinkJob {
+pub class LinkJob {
   objects: Array(String)
   flags: Array(String)
   err: String = ""
@@ -22,7 +35,7 @@ class LinkJob {
   }
 }
 
-class CliSplit {
+pub class CliSplit {
   paths: Array(String)
   rest: Array(String)
 
@@ -34,39 +47,14 @@ class CliSplit {
   }
 }
 
-fn str_starts(s: String, pre: String): Bool {
+pub fn str_starts(s: String, pre: String): Bool {
   if pre.size > s.size {
     return false
   }
   str_eq(str_slice(s, 0, pre.size), pre)
 }
 
-fn path_basename(path: String): String {
-  i = path.size - 1
-  while i >= 0 {
-    if path[i] == 47 {
-      return str_slice(path, i + 1, path.size)
-    }
-    i = i - 1
-  }
-  path
-}
-
-fn path_dirname(path: String): String {
-  i = path.size - 1
-  while i >= 0 {
-    if path[i] == 47 {
-      if i == 0 {
-        return "/"
-      }
-      return str_slice(path, 0, i)
-    }
-    i = i - 1
-  }
-  "."
-}
-
-fn drop_av_suffix(path: String): String {
+pub fn drop_av_suffix(path: String): String {
   base = path_basename(path)
   if str_ends(base, ".av") {
     return str_slice(base, 0, base.size - 3)
@@ -74,7 +62,7 @@ fn drop_av_suffix(path: String): String {
   base
 }
 
-fn avant_root: String {
+pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
   }
@@ -96,7 +84,7 @@ fn avant_root: String {
   "."
 }
 
-fn myc_llvm_path: String {
+pub fn myc_llvm_path: String {
   if v = env_get("AVANT_MYC_LLVM") {
     if file_exists(v) {
       return v
@@ -113,7 +101,7 @@ fn myc_llvm_path: String {
   sibling
 }
 
-fn runtime_object_names: Array(String) {
+pub fn runtime_object_names: Array(String) {
   names: Array(String) = []
   names.push("avant_rt.o")
   names.push("avant_str.o")
@@ -138,7 +126,7 @@ fn runtime_object_names: Array(String) {
   names
 }
 
-fn runtime_objects(root: String): Array(String) {
+pub fn runtime_objects(root: String): Array(String) {
   names = runtime_object_names()
   objs: Array(String) = []
   i = 0
@@ -149,7 +137,7 @@ fn runtime_objects(root: String): Array(String) {
   objs
 }
 
-fn linker_flags_s(extra: Array(String)): String {
+pub fn linker_flags_s(extra: Array(String)): String {
   buf = buf_new()
   buf.push_str("-pthread -lm -lpcre2-8 -lz")
   i = 0
@@ -161,46 +149,12 @@ fn linker_flags_s(extra: Array(String)): String {
   buf.to_s
 }
 
-fn read_concat(paths: Array(String)): String? {
-  if paths.size == 0 {
-    return nil
-  }
-  if paths.size == 1 {
-    path = paths[0]
-    if text = file_read(path) {
-      return text
+pub fn compile_source(src: Source): IrBox {
+  if src.path.size > 0 {
+    if file_exists(src.path) {
+      return compile_av_path(src.path)
     }
-    puts("cannot read ${path}")
-    return nil
   }
-  buf = buf_new()
-  i = 0
-  while i < paths.size {
-    path = paths[i]
-    if i > 0 {
-      buf.push_str("\n")
-    }
-    buf.push_str("// file: ")
-    buf.push_str(path)
-    buf.push_str("\n")
-    if body = file_read(path) {
-      buf.push_str(body)
-      if body.size > 0 {
-        if body[body.size - 1] == 10 {
-        } else {
-          buf.push_str("\n")
-        }
-      }
-    } else {
-      puts("cannot read ${path}")
-      return nil
-    }
-    i = i + 1
-  }
-  buf.to_s
-}
-
-fn compile_source(src: Source): IrBox {
   lex = Lexer.new(src)
   tokens = lex.tokenize
   if e = lex.err {
@@ -213,6 +167,19 @@ fn compile_source(src: Source): IrBox {
     puts(e.show)
     return IrBox.new("", false)
   }
+  if program.imports.size > 0 {
+    puts("import needs a .av file root")
+    return IrBox.new("", false)
+  }
+  name = module_name_of(src.path)
+  tag_module(program, name, src.path)
+  program.root_module = name
+  info = ModInfo.new(name, src.path)
+  program.mods.push(info)
+  compile_program(src, program)
+}
+
+pub fn compile_program(src: Source, program: Program): IrBox {
   checker = Checker.new(src, program)
   dummy = checker.check
   if e = checker.err {
@@ -223,20 +190,38 @@ fn compile_source(src: Source): IrBox {
   IrBox.new(ir, true)
 }
 
-fn compile_av_paths(paths: Array(String)): IrBox {
-  if paths.size == 0 {
-    puts("compile needs a .av file")
-    return IrBox.new("", false)
+pub fn compile_av_path(path: String): IrBox {
+  loader = Loader.new()
+  if program = loader.load_root(path) {
+    if e = loader.err {
+      puts(e.show)
+      return IrBox.new("", false)
+    }
+    src = Source.new(path, "")
+    if text = file_read(path) {
+      src = Source.new(path, text)
+    }
+    return compile_program(src, program)
   }
-  last = paths[paths.size - 1]
-  if text = read_concat(paths) {
-    src = Source.new(last, text)
-    return compile_source(src)
+  if e = loader.err {
+    puts(e.show)
   }
   IrBox.new("", false)
 }
 
-fn print_ir(ir: String) {
+pub fn compile_av_paths(paths: Array(String)): IrBox {
+  if paths.size == 0 {
+    puts("compile needs a .av file")
+    return IrBox.new("", false)
+  }
+  if paths.size > 1 {
+    puts("compile takes one root .av (use import)")
+    return IrBox.new("", false)
+  }
+  compile_av_path(paths[0])
+}
+
+pub fn print_ir(ir: String) {
   if ir.size == 0 {
     return
   }
@@ -247,7 +232,7 @@ fn print_ir(ir: String) {
   }
 }
 
-fn run_cc(args: Array(String)): Int {
+pub fn run_cc(args: Array(String)): Int {
   if v = env_get("CC") {
     if file_exists(v) {
       return process_run(v, args)
@@ -266,7 +251,7 @@ fn run_cc(args: Array(String)): Int {
   process_run("/usr/bin/env", wrapped)
 }
 
-fn compile_c_file(path: String): String {
+pub fn compile_c_file(path: String): String {
   if file_exists(path) {
   } else {
     puts("C source is missing: ${path}")
@@ -294,7 +279,7 @@ fn compile_c_file(path: String): String {
   obj
 }
 
-fn parse_link(args: Array(String)): LinkJob {
+pub fn parse_link(args: Array(String)): LinkJob {
   job = LinkJob.new
   i = 0
   while i < args.size {
@@ -358,7 +343,7 @@ fn parse_link(args: Array(String)): LinkJob {
   job
 }
 
-fn take_av_files(args: Array(String)): CliSplit {
+pub fn take_av_files(args: Array(String)): CliSplit {
   split = CliSplit.new
   i = 0
   while i < args.size {
@@ -376,7 +361,7 @@ fn take_av_files(args: Array(String)): CliSplit {
   split
 }
 
-fn take_out_path(args: Array(String), source: String): CliSplit {
+pub fn take_out_path(args: Array(String), source: String): CliSplit {
   split = CliSplit.new
   if args.size == 0 {
     split.paths.push(drop_av_suffix(source))
@@ -419,7 +404,7 @@ fn take_out_path(args: Array(String), source: String): CliSplit {
   split
 }
 
-fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String): Int {
+pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String): Int {
   stamp = now_ms()
   ir_path = "/tmp/avant-av-${stamp}.myc"
   w = file_write(ir_path, ir)

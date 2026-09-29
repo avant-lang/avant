@@ -1,4 +1,18 @@
-fn argv_user: Array(String) {
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import checker
+import codegen_myc
+import pipeline
+
+pub fn argv_user: Array(String) {
   args = argv()
   rest: Array(String) = []
   i = 1
@@ -9,7 +23,7 @@ fn argv_user: Array(String) {
   rest
 }
 
-fn argv_drop_first(args: Array(String)): Array(String) {
+pub fn argv_drop_first(args: Array(String)): Array(String) {
   rest: Array(String) = []
   i = 1
   while i < args.size {
@@ -19,7 +33,7 @@ fn argv_drop_first(args: Array(String)): Array(String) {
   rest
 }
 
-fn argv_filter_coverage(args: Array(String)): Array(String) {
+pub fn argv_filter_coverage(args: Array(String)): Array(String) {
   rest: Array(String) = []
   i = 0
   while i < args.size {
@@ -32,18 +46,25 @@ fn argv_filter_coverage(args: Array(String)): Array(String) {
   rest
 }
 
-fn show_usage {
-  puts("Avant compiler (Stage 8)")
+pub fn show_usage {
+  puts("Avant compiler")
   puts("")
-  puts("  avant-av run FILE.av [FILE.av ...] [--coverage] [--lib NAME] [--cc FILE.c]")
-  puts("  avant-av dump FILE.av [FILE.av ...] [--coverage]")
-  puts("  avant-av compile FILE.av [FILE.av ...] [OUT] [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av run FILE.av [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av dump FILE.av [--coverage]")
+  puts("  avant-av compile FILE.av [OUT] [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("")
+  puts("FILE.av is the program root. import name loads name.av beside it.")
 }
 
-fn driver_dump(args: Array(String)) {
+pub fn driver_dump(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
     puts("dump needs a .av file")
+    show_usage()
+    return
+  }
+  if split.paths.size > 1 {
+    puts("dump takes one root .av (use import)")
     show_usage()
     return
   }
@@ -53,10 +74,15 @@ fn driver_dump(args: Array(String)) {
   }
 }
 
-fn driver_run(args: Array(String)) {
+pub fn driver_run(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
     puts("run needs a .av file")
+    show_usage()
+    return
+  }
+  if split.paths.size > 1 {
+    puts("run takes one root .av (use import)")
     show_usage()
     return
   }
@@ -74,10 +100,15 @@ fn driver_run(args: Array(String)) {
   }
 }
 
-fn driver_compile(args: Array(String)) {
+pub fn driver_compile(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
     puts("compile needs a .av file")
+    show_usage()
+    return
+  }
+  if split.paths.size > 1 {
+    puts("compile takes one root .av (use import)")
     show_usage()
     return
   }

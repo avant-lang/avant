@@ -76,6 +76,10 @@ module Avant
       false
     end
 
+    def module_ref?
+      false
+    end
+
     def aggregate?
       struct? || class?
     end
@@ -323,6 +327,29 @@ module Avant
 
     def to_s(io : IO) : Nil
       io << @name
+    end
+  end
+
+  class ModuleTy < Ty
+    getter name : String
+
+    def initialize(@name)
+    end
+
+    def module_ref?
+      true
+    end
+
+    def myc : String
+      raise "module #{@name} is not a value"
+    end
+
+    def same?(other : Ty) : Bool
+      other.is_a?(ModuleTy) && other.name == @name
+    end
+
+    def to_s(io : IO) : Nil
+      io << "module " << @name
     end
   end
 

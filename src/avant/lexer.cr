@@ -19,6 +19,8 @@ module Avant
       "continue" => Token::Kind::ContinueKw,
       "switch"   => Token::Kind::Switch,
       "case"     => Token::Kind::Case,
+      "import"   => Token::Kind::Import,
+      "pub"      => Token::Kind::Pub,
     }
 
     def initialize(@source : Source)
