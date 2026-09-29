@@ -8,7 +8,7 @@ This folder is the language. In the local workbench it sits next to `myc/` (IR b
 
 This README is the **living language document** until a website exists. It describes what the compilers actually accept today. The target sketch (including features that are decided but not built) is [syntax.md](syntax.md) **S3**.
 
-Waves 1–3 are closed. Stages 6–12 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). Stage 13 is D29. Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
+Waves 1–3 are closed. Stages 6–13 of the compiler exist. **D42** (file-modules, `import` / `pub`) is implemented (`stage12.md`). **D29** (quote-first macros) is implemented (`stage13.md`). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
 
 ## What compiles today
 
@@ -136,16 +136,38 @@ fn main {
 
 Proof programs (identity compiler **B** matches the host on this list): `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`; `matmul.av` checksums only. Call C as `libname.funname(...)`. Heap is GenImmix; the copying nursery is off until myc safepoints.
 
-Identity also runs the Stage 7 helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill`, `dir_list`, `now_us`, and similar. Remaining host-only names wait for a failing native test (**D40**). Programs compile from a root; `import` follows neighbouring `.av` files (**D42**).
+Identity also runs the Stage 7 helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill`, `dir_list`, `now_us`, and similar. Remaining host-only names wait for a failing native test (**D40**). Programs compile from a root; `import` follows neighbouring `.av` files (**D42**). `quote { }` injects code; `#()` splices inside quote; `comptime { for f in Type.fields { quote { ... } } }` is the one derived walk (**D29**).
+
+```avant
+quote {
+  fn doubled(n: Int): Int {
+    n + n
+  }
+}
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+comptime {
+  for f in Point.fields {
+    quote {
+      fn #(f.name)(p: Point): #(f.type) {
+        p.#(f.name)
+      }
+    }
+  }
+}
+```
 
 ## Decided, not built
 
 These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **not** shipping. Do not read S3 as a tutorial for today's binary.
 
-| What | Decision | When (D41) |
+| What | Decision | When |
 | --- | --- | --- |
 | First-class `fn(T): U` values (S3 `map`) | D30 leftover | After Stage 11 / later |
-| `comptime` / `quote { }` / splice `#()` | D29 | Stage 13 (quote first) |
 | Real `.parallel` / `Channel(T)` / `Mutex(T)` | D35 | After Stages 10–13 |
 | C struct field layouts, methods on `Ptr(T)` | D36 leftover | After Stages 10–13 |
 | Macros beyond quote, packages, HTTP *server*, formatter | Wave 4 / D19 | After Stages 10–13; see [questions.md](questions.md) |
@@ -201,7 +223,7 @@ AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 
 Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen).
 
-**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: **Stage 13** D29 quote-first ([roadmap.md](roadmap.md)).
+**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). **Stage 12** (closed): D42 file-modules, `import` / `pub` ([stage12.md](stage12.md)). **Stage 13** (closed): D29 quote-first ([stage13.md](stage13.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: later bucket in [questions.md](questions.md) / [roadmap.md](roadmap.md).
 
 ## Live ledgers
 
@@ -210,16 +232,17 @@ These files are **current truth**. They are rewritten in place. They are not log
 | File | Role |
 | --- | --- |
 | [philosophy.md](philosophy.md) | Why Avant exists, non-negotiables, measurable objectives |
-| [decisions.md](decisions.md) | Technical choices that are in force (D41 = sequence after Stage 9; D42 = modules) |
-| [questions.md](questions.md) | Open questions (later bucket after 10–13; Q24–Q25 closed) |
+| [decisions.md](decisions.md) | Technical choices that are in force (D41 = sequence after Stage 9, complete; D42 = modules; D29 = quote-first) |
+| [questions.md](questions.md) | Open questions (later bucket after 10–13; Q24–Q25 closed; D29 implemented) |
 | [syntax.md](syntax.md) | Canonical sketch **S3** (target; not all of it compiles) |
 | [baseline.md](baseline.md) | LangArena numbers Avant will be judged against |
-| [roadmap.md](roadmap.md) | Stages. 6–12 closed; 13 planned |
+| [roadmap.md](roadmap.md) | Stages. 6–13 closed |
 | [bootstrap.md](bootstrap.md) | Stage 8 record (closed). Identity roots, I/O, pitfalls |
 | [stage9.md](stage9.md) | Stage 9 record (closed). Native tests + coverage on B (D40) |
 | [stage10.md](stage10.md) | Stage 10 record (closed). Native suite on B; B→C; goldens |
 | [stage11.md](stage11.md) | Stage 11 record (closed). D26 and user generics |
 | [stage12.md](stage12.md) | Stage 12 record (closed). D42 `import` / `pub` |
+| [stage13.md](stage13.md) | Stage 13 record (closed). D29 `quote` / `#()` / field walk |
 | [experiments/immix.md](experiments/immix.md) | Sticky vs GenImmix measurement (closed) |
 
 Read `philosophy.md`, then `decisions.md`. Patience, measurement, and organized code are part of the identity.

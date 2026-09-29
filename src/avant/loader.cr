@@ -21,6 +21,37 @@ module Avant
     end
     program.functions.each { |fn| fn.module_name = name }
     program.libs.each { |lib_def| lib_def.module_name = name }
+    program.quotes.each do |q|
+      q.module_name = name
+      q.functions.each { |fn| fn.module_name = name }
+    end
+    program.comptimes.each do |c|
+      c.module_name = name
+      c.quote.module_name = name
+      c.quote.functions.each { |fn| fn.module_name = name }
+    end
+    program.structs.each do |s|
+      s.quotes.each do |q|
+        q.module_name = name
+        q.functions.each { |fn| fn.module_name = name }
+      end
+      s.comptimes.each do |c|
+        c.module_name = name
+        c.quote.module_name = name
+        c.quote.functions.each { |fn| fn.module_name = name }
+      end
+    end
+    program.classes.each do |cl|
+      cl.quotes.each do |q|
+        q.module_name = name
+        q.functions.each { |fn| fn.module_name = name }
+      end
+      cl.comptimes.each do |c|
+        c.module_name = name
+        c.quote.module_name = name
+        c.quote.functions.each { |fn| fn.module_name = name }
+      end
+    end
   end
 
   class Loader
@@ -85,14 +116,18 @@ module Avant
       classes = [] of AST::ClassDef
       functions = [] of AST::Function
       libs = [] of AST::LibDef
+      quotes = [] of AST::QuoteDecl
+      comptimes = [] of AST::ComptimeWalk
       @order.each do |path|
         p = @loaded[path]
         structs.concat(p.structs)
         classes.concat(p.classes)
         functions.concat(p.functions)
         libs.concat(p.libs)
+        quotes.concat(p.quotes)
+        comptimes.concat(p.comptimes)
       end
-      merged = AST::Program.new(root.location, structs, functions, classes, libs, root.imports)
+      merged = AST::Program.new(root.location, structs, functions, classes, libs, root.imports, quotes, comptimes)
       merged.module_name = root.module_name
       merged.module_path = root.module_path
       merged.root_module = root.module_name

@@ -31,6 +31,7 @@ module Avant
   end
 
   def self.compile_program(program : AST::Program, source : Source) : String
+    Expander.new(source, program).expand
     Checker.new(source, program).check
     Codegen::Myc.new(program).emit
   end

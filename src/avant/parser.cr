@@ -3,6 +3,7 @@ module Avant
     def initialize(@source : Source, @tokens : Array(Token))
       @index = 0
       @allow_struct_lit = true
+      @in_quote = false
     end
 
     def parse : AST::Program
@@ -13,6 +14,8 @@ module Avant
       functions = [] of AST::Function
       libs = [] of AST::LibDef
       imports = [] of AST::ImportDecl
+      quotes = [] of AST::QuoteDecl
+      comptimes = [] of AST::ComptimeWalk
 
       until current.kind.eof?
         vis = false
@@ -35,18 +38,28 @@ module Avant
           libs << parse_lib(vis)
         when .fn?
           functions << parse_function(nil, vis)
+        when .quote?
+          if vis
+            raise CompileError.at(current.location, "quote cannot be pub; mark the fns inside")
+          end
+          quotes << parse_quote_decl("")
+        when .comptime?
+          if vis
+            raise CompileError.at(current.location, "comptime cannot be pub")
+          end
+          comptimes << parse_comptime_walk("")
         when .fun?
           raise CompileError.at(current.location, "fun belongs in a lib block; there is no extern fn")
         else
           if vis
             raise CompileError.at(current.location, "pub prefixes struct, class, lib, or fn")
           end
-          raise CompileError.at(current.location, "expected struct, class, lib, fn, or import, found #{current.kind}")
+          raise CompileError.at(current.location, "expected struct, class, lib, fn, import, quote, or comptime, found #{current.kind}")
         end
         skip_newlines
       end
 
-      AST::Program.new(location, structs, functions, classes, libs, imports)
+      AST::Program.new(location, structs, functions, classes, libs, imports, quotes, comptimes)
     end
 
     private def parse_import : AST::ImportDecl
@@ -56,21 +69,167 @@ module Avant
       AST::ImportDecl.new(loc, name.value)
     end
 
+    private def parse_quote_decl(owner : String) : AST::QuoteDecl
+      if @in_quote
+        raise CompileError.at(current.location, "quote cannot nest")
+      end
+      loc = expect(:quote).location
+      skip_newlines
+      expect(:l_brace)
+      skip_newlines
+      @in_quote = true
+      functions = [] of AST::Function
+      until current.kind.r_brace? || current.kind.eof?
+        vis = false
+        if current.kind.pub?
+          vis = true
+          bump
+          skip_newlines
+        end
+        unless current.kind.fn?
+          @in_quote = false
+          raise CompileError.at(current.location, "quote holds fn")
+        end
+        owner_arg = owner.empty? ? nil : owner
+        functions << parse_function(owner_arg, vis)
+        skip_newlines
+      end
+      expect(:r_brace)
+      @in_quote = false
+      AST::QuoteDecl.new(loc, functions, owner)
+    end
+
+    private def parse_quote_stmt : AST::QuoteStmt
+      if @in_quote
+        raise CompileError.at(current.location, "quote cannot nest")
+      end
+      loc = expect(:quote).location
+      skip_newlines
+      @in_quote = true
+      body = parse_block
+      @in_quote = false
+      AST::QuoteStmt.new(loc, body)
+    end
+
+    private def parse_comptime_walk(owner : String) : AST::ComptimeWalk
+      loc = expect(:comptime).location
+      skip_newlines
+      expect(:l_brace)
+      skip_newlines
+      for_tok = current
+      unless for_tok.kind.ident? && for_tok.value == "for"
+        raise CompileError.at(for_tok.location, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      end
+      bump
+      skip_newlines
+      var_tok = expect(:ident)
+      skip_newlines
+      in_tok = current
+      unless in_tok.kind.ident? && in_tok.value == "in"
+        raise CompileError.at(in_tok.location, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      end
+      bump
+      skip_newlines
+      type_tok = expect(:ident)
+      skip_newlines
+      expect(:dot)
+      skip_newlines
+      fields_tok = expect(:ident)
+      unless fields_tok.value == "fields"
+        raise CompileError.at(fields_tok.location, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      end
+      skip_newlines
+      expect(:l_brace)
+      skip_newlines
+      unless current.kind.quote?
+        raise CompileError.at(current.location, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      end
+      quote = parse_quote_decl(owner)
+      skip_newlines
+      expect(:r_brace)
+      skip_newlines
+      expect(:r_brace)
+      AST::ComptimeWalk.new(loc, var_tok.value, type_tok.value, quote, owner)
+    end
+
+    private def parse_splice : AST::Splice
+      loc = expect(:pound).location
+      unless @in_quote
+        raise CompileError.at(loc, "splice #() only belongs in quote")
+      end
+      unless current.kind.l_paren?
+        raise CompileError.at(current.location, "expected ( after #")
+      end
+      bump
+      skip_newlines
+      inner = parse_splice_payload
+      skip_newlines
+      expect(:r_paren)
+      AST::Splice.new(loc, inner)
+    end
+
+    private def parse_splice_payload : AST::Expr
+      tok = current
+      left = case tok.kind
+      when .ident?
+        bump
+        AST::Name.new(tok.location, tok.value).as(AST::Expr)
+      when .self_kw?
+        bump
+        AST::Name.new(tok.location, "self").as(AST::Expr)
+      when .string?
+        bump
+        AST::StringLiteral.new(tok.location, tok.value).as(AST::Expr)
+      when .integer?
+        bump
+        bits, suffix = parse_integer(tok)
+        AST::IntegerLiteral.new(tok.location, bits, suffix).as(AST::Expr)
+      when .float?
+        bump
+        AST::FloatLiteral.new(tok.location, tok.value.to_f64).as(AST::Expr)
+      when .true?
+        bump
+        AST::BoolLiteral.new(tok.location, true).as(AST::Expr)
+      when .false?
+        bump
+        AST::BoolLiteral.new(tok.location, false).as(AST::Expr)
+      when .nil_kw?
+        bump
+        AST::NilLiteral.new(tok.location).as(AST::Expr)
+      else
+        raise CompileError.at(tok.location, "splice is a literal, a name, or f.name / f.type")
+      end
+      if current.kind.dot?
+        loc = bump.location
+        skip_newlines
+        field = expect(:ident)
+        AST::FieldAccess.new(loc, left, field.value)
+      else
+        left
+      end
+    end
+
     private def parse_struct(vis : Bool) : AST::StructDef
       loc = expect(:struct).location
       name = expect(:ident).value
-      fields, methods = parse_type_body(name)
+      fields, methods, quotes, comptimes = parse_type_body(name)
       if field = fields.find(&.default)
         raise CompileError.at(field.location, "struct fields have no defaults; use a literal")
       end
-      AST::StructDef.new(loc, name, fields, methods, vis)
+      s = AST::StructDef.new(loc, name, fields, methods, vis)
+      s.quotes = quotes
+      s.comptimes = comptimes
+      s
     end
 
     private def parse_class(vis : Bool) : AST::ClassDef
       loc = expect(:class).location
       name = expect(:ident).value
-      fields, methods = parse_type_body(name)
-      AST::ClassDef.new(loc, name, fields, methods, vis)
+      fields, methods, quotes, comptimes = parse_type_body(name)
+      c = AST::ClassDef.new(loc, name, fields, methods, vis)
+      c.quotes = quotes
+      c.comptimes = comptimes
+      c
     end
 
     private def parse_lib(vis : Bool) : AST::LibDef
@@ -129,12 +288,14 @@ module Avant
       AST::FunDecl.new(loc, name_tok.value, params, return_type)
     end
 
-    private def parse_type_body(owner : String) : {Array(AST::Field), Array(AST::Function)}
+    private def parse_type_body(owner : String) : {Array(AST::Field), Array(AST::Function), Array(AST::QuoteDecl), Array(AST::ComptimeWalk)}
       skip_newlines
       expect(:l_brace)
       skip_newlines
       fields = [] of AST::Field
       methods = [] of AST::Function
+      quotes = [] of AST::QuoteDecl
+      comptimes = [] of AST::ComptimeWalk
       until current.kind.r_brace? || current.kind.eof?
         vis = false
         if current.kind.pub?
@@ -147,6 +308,16 @@ module Avant
         end
         if current.kind.fn?
           methods << parse_function(owner, vis)
+        elsif current.kind.quote?
+          if vis
+            raise CompileError.at(current.location, "pub in a type body only prefixes fn")
+          end
+          quotes << parse_quote_decl(owner)
+        elsif current.kind.comptime?
+          if vis
+            raise CompileError.at(current.location, "pub in a type body only prefixes fn")
+          end
+          comptimes << parse_comptime_walk(owner)
         else
           if vis
             raise CompileError.at(current.location, "fields of a pub type are visible; do not mark a field pub")
@@ -156,7 +327,7 @@ module Avant
         skip_newlines
       end
       expect(:r_brace)
-      {fields, methods}
+      {fields, methods, quotes, comptimes}
     end
 
     private def parse_field : AST::Field
@@ -232,7 +403,13 @@ module Avant
       end
 
       name_loc = current.location
-      name = parse_fn_name
+      name = ""
+      name_splice = nil.as(AST::Expr?)
+      if current.kind.pound?
+        name_splice = parse_splice
+      else
+        name = parse_fn_name
+      end
       if name == "new" && (owner || receiver)
         raise CompileError.at(name_loc, "new is reserved; write initialize")
       end
@@ -260,7 +437,9 @@ module Avant
 
       skip_newlines
       body = parse_block
-      AST::Function.new(loc, name, params, return_type, body, receiver, owner, vis)
+      fn = AST::Function.new(loc, name, params, return_type, body, receiver, owner, vis)
+      fn.name_splice = name_splice
+      fn
     end
 
     private def parse_param : AST::Param
@@ -300,6 +479,12 @@ module Avant
     end
 
     private def parse_primary_type : AST::TypeName
+      if current.kind.pound?
+        sp = parse_splice
+        tn = AST::TypeName.new(sp.location, "")
+        tn.splice = sp
+        return tn
+      end
       tok = expect(:ident)
       qualifier = nil.as(String?)
       if current.kind.dot?
@@ -352,6 +537,8 @@ module Avant
         parse_continue
       when .return?
         parse_return
+      when .quote?
+        parse_quote_stmt
       when .ident?
         parse_ident_stmt
       else
@@ -588,20 +775,34 @@ module Avant
         when .dot?
           loc = bump.location
           skip_newlines
-          field = expect(:ident)
-          if current.kind.l_paren?
-            args = parse_arg_list
-            left = AST::Call.new(loc, field.value, args, left)
-          elsif field.value == "new"
-            left = AST::Call.new(loc, "new", [] of AST::Expr, left)
-          elsif @allow_struct_lit && struct_literal_ahead?
-            qual = nil.as(String?)
-            if left.is_a?(AST::Name)
-              qual = left.ident
+          if current.kind.pound?
+            sp = parse_splice
+            if current.kind.l_paren?
+              args = parse_arg_list
+              call = AST::Call.new(loc, "", args, left)
+              call.callee_splice = sp
+              left = call
+            else
+              fa = AST::FieldAccess.new(loc, left, "")
+              fa.field_splice = sp
+              left = fa
             end
-            left = parse_struct_literal(field, qual)
           else
-            left = AST::FieldAccess.new(loc, left, field.value)
+            field = expect(:ident)
+            if current.kind.l_paren?
+              args = parse_arg_list
+              left = AST::Call.new(loc, field.value, args, left)
+            elsif field.value == "new"
+              left = AST::Call.new(loc, "new", [] of AST::Expr, left)
+            elsif @allow_struct_lit && struct_literal_ahead?
+              qual = nil.as(String?)
+              if left.is_a?(AST::Name)
+                qual = left.ident
+              end
+              left = parse_struct_literal(field, qual)
+            else
+              left = AST::FieldAccess.new(loc, left, field.value)
+            end
           end
         when .l_bracket?
           loc = bump.location
@@ -653,6 +854,16 @@ module Avant
         parse_array_literal
       when .ident?
         parse_ident_expr
+      when .pound?
+        sp = parse_splice
+        if current.kind.l_paren?
+          args = parse_arg_list
+          call = AST::Call.new(sp.location, "", args)
+          call.callee_splice = sp
+          call
+        else
+          sp
+        end
       when .self_kw?
         bump
         AST::Name.new(tok.location, "self")

@@ -8,6 +8,7 @@ import ast
 import resolve
 import parser
 import loader
+import expand
 import checker
 import codegen_myc
 import dump_ast
@@ -72,6 +73,12 @@ fn main {
         puts(e.show)
         return
       }
+      expander = Expander.new(src, program)
+      dummy_e = expander.expand
+      if e = expander.err {
+        puts(e.show)
+        return
+      }
       checker = Checker.new(src, program)
       dummy = checker.check
       if e = checker.err {
@@ -83,6 +90,12 @@ fn main {
       parser = Parser.new(src, tokens)
       program = parser.parse
       if e = parser.err {
+        puts(e.show)
+        return
+      }
+      expander = Expander.new(src, program)
+      dummy_e = expander.expand
+      if e = expander.err {
         puts(e.show)
         return
       }

@@ -23,6 +23,7 @@ pub fn ex_nil: Int { 15 }
 pub fn ex_try: Int { 16 }
 pub fn ex_interp: Int { 17 }
 pub fn ex_switch: Int { 18 }
+pub fn ex_splice: Int { 19 }
 
 pub fn st_expr: Int { 1 }
 pub fn st_return: Int { 2 }
@@ -31,6 +32,7 @@ pub fn st_while: Int { 4 }
 pub fn st_break: Int { 5 }
 pub fn st_continue: Int { 6 }
 pub fn st_assign: Int { 7 }
+pub fn st_quote: Int { 8 }
 
 pub class TypeName {
   loc: Location
@@ -39,6 +41,7 @@ pub class TypeName {
   nilable: Bool = false
   members: Array(TypeName)
   mod_name: String = ""
+  splice: Expr? = nil
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -142,6 +145,7 @@ pub class Expr {
   cap_tys: Array(Ty)
   vis: Bool = false
   mod_name: String = ""
+  splice: Expr? = nil
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -238,6 +242,7 @@ pub class Function {
   ol_index: Int = 0
   vis: Bool = false
   mod_name: String = ""
+  name_splice: Expr? = nil
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -256,11 +261,46 @@ pub class Function {
   }
 }
 
+pub class QuoteDecl {
+  loc: Location
+  functions: Array(Function)
+  owner: String = ""
+  mod_name: String = ""
+
+  fn initialize(loc: Location) {
+    self.loc = loc
+    f: Array(Function) = []
+    self.functions = f
+    self.owner = ""
+    self.mod_name = ""
+  }
+}
+
+pub class ComptimeWalk {
+  loc: Location
+  var_name: String = ""
+  type_name: String = ""
+  qdecl: QuoteDecl
+  owner: String = ""
+  mod_name: String = ""
+
+  fn initialize(loc: Location, var_name: String, type_name: String, qdecl: QuoteDecl) {
+    self.loc = loc
+    self.var_name = var_name
+    self.type_name = type_name
+    self.qdecl = qdecl
+    self.owner = ""
+    self.mod_name = ""
+  }
+}
+
 pub class StructDef {
   loc: Location
   name: String = ""
   fields: Array(Field)
   methods: Array(Function)
+  quotes: Array(QuoteDecl)
+  comptimes: Array(ComptimeWalk)
   vis: Bool = false
   mod_name: String = ""
 
@@ -271,6 +311,10 @@ pub class StructDef {
     self.fields = f
     m: Array(Function) = []
     self.methods = m
+    q: Array(QuoteDecl) = []
+    self.quotes = q
+    cw: Array(ComptimeWalk) = []
+    self.comptimes = cw
     self.vis = false
     self.mod_name = ""
   }
@@ -281,6 +325,8 @@ pub class ClassDef {
   name: String = ""
   fields: Array(Field)
   methods: Array(Function)
+  quotes: Array(QuoteDecl)
+  comptimes: Array(ComptimeWalk)
   vis: Bool = false
   mod_name: String = ""
 
@@ -291,6 +337,10 @@ pub class ClassDef {
     self.fields = f
     m: Array(Function) = []
     self.methods = m
+    q: Array(QuoteDecl) = []
+    self.quotes = q
+    cw: Array(ComptimeWalk) = []
+    self.comptimes = cw
     self.vis = false
     self.mod_name = ""
   }
@@ -343,6 +393,8 @@ pub class Program {
   functions: Array(Function)
   libs: Array(LibDef)
   imports: Array(ImportDecl)
+  quotes: Array(QuoteDecl)
+  comptimes: Array(ComptimeWalk)
   module_name: String = ""
   module_path: String = ""
   root_module: String = ""
@@ -360,6 +412,10 @@ pub class Program {
     self.libs = l
     im: Array(ImportDecl) = []
     self.imports = im
+    q: Array(QuoteDecl) = []
+    self.quotes = q
+    cw: Array(ComptimeWalk) = []
+    self.comptimes = cw
     self.module_name = ""
     self.module_path = ""
     self.root_module = ""
@@ -377,6 +433,22 @@ pub fn stmt_expr(loc: Location, expr: Expr): Stmt {
 pub fn stmt_return(loc: Location, expr: Expr?): Stmt {
   s = Stmt.new(st_return(), loc)
   s.expr = expr
+  s
+}
+
+pub fn stmt_return_void(loc: Location): Stmt {
+  Stmt.new(st_return(), loc)
+}
+
+pub fn stmt_return_val(loc: Location, expr: Expr): Stmt {
+  s = Stmt.new(st_return(), loc)
+  s.expr = expr
+  s
+}
+
+pub fn stmt_quote(loc: Location, body: Array(Stmt)): Stmt {
+  s = Stmt.new(st_quote(), loc)
+  s.body = body
   s
 }
 
@@ -428,6 +500,9 @@ pub fn clone_type_name(tn: TypeName): TypeName {
   out = TypeName.new(tn.loc, tn.name)
   out.nilable = tn.nilable
   out.mod_name = tn.mod_name
+  if sp = tn.splice {
+    out.splice = clone_expr(sp)
+  }
   i = 0
   while i < tn.args.size {
     out.args.push(clone_type_name(tn.args[i]))
@@ -585,6 +660,9 @@ pub fn clone_expr(e: Expr): Expr {
   out.has_else = e.has_else
   out.vis = e.vis
   out.mod_name = e.mod_name
+  if sp = e.splice {
+    out.splice = clone_expr(sp)
+  }
   if x = e.left {
     out.left = clone_expr(x)
   }
@@ -722,6 +800,9 @@ pub fn clone_function(fnn: Function): Function {
   out.ol_index = fnn.ol_index
   out.vis = fnn.vis
   out.mod_name = fnn.mod_name
+  if sp = fnn.name_splice {
+    out.name_splice = clone_expr(sp)
+  }
   out
 }
 

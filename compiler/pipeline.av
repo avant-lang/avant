@@ -8,6 +8,7 @@ import ast
 import resolve
 import parser
 import loader
+import expand
 import checker
 import codegen_myc
 
@@ -180,6 +181,12 @@ pub fn compile_source(src: Source): IrBox {
 }
 
 pub fn compile_program(src: Source, program: Program): IrBox {
+  expander = Expander.new(src, program)
+  dummy_e = expander.expand
+  if e = expander.err {
+    puts(e.show)
+    return IrBox.new("", false)
+  }
   checker = Checker.new(src, program)
   dummy = checker.check
   if e = checker.err {

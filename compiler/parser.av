@@ -57,12 +57,18 @@ pub fn parse_u64_hex(s: String): UInt64 {
 pub class TypeBody {
   fields: Array(Field)
   methods: Array(Function)
+  quotes: Array(QuoteDecl)
+  comptimes: Array(ComptimeWalk)
 
   fn initialize {
     f: Array(Field) = []
     self.fields = f
     m: Array(Function) = []
     self.methods = m
+    q: Array(QuoteDecl) = []
+    self.quotes = q
+    cw: Array(ComptimeWalk) = []
+    self.comptimes = cw
   }
 }
 
@@ -75,6 +81,7 @@ pub class Parser {
   err: CompileError? = nil
   int_bits: UInt64 = 0u64
   int_suffix: String = ""
+  in_quote: Bool = false
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -85,6 +92,7 @@ pub class Parser {
     self.err = nil
     self.int_bits = 0u64
     self.int_suffix = ""
+    self.in_quote = false
   }
 
   pub fn has_err: Bool {
@@ -280,6 +288,18 @@ pub class Parser {
         program.libs.push(self.parse_lib(vis))
       } else if k == tk_fn() {
         program.functions.push(self.parse_fn("", vis))
+      } else if k == tk_quote() {
+        if vis {
+          self.fail(self.current.loc, "quote cannot be pub; mark the fns inside")
+          return program
+        }
+        program.quotes.push(self.parse_quote_decl(""))
+      } else if k == tk_comptime() {
+        if vis {
+          self.fail(self.current.loc, "comptime cannot be pub")
+          return program
+        }
+        program.comptimes.push(self.parse_comptime_walk(""))
       } else if k == tk_fun() {
         self.fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
         return program
@@ -288,7 +308,7 @@ pub class Parser {
           self.fail(self.current.loc, "pub prefixes struct, class, lib, or fn")
           return program
         }
-        self.fail(self.current.loc, "expected struct, class, lib, fn, or import, found ${k}")
+        self.fail(self.current.loc, "expected struct, class, lib, fn, import, quote, or comptime, found ${k}")
         return program
       }
       self.skip_newlines
@@ -301,6 +321,193 @@ pub class Parser {
     self.skip_newlines
     name = self.expect(tk_ident())
     ImportDecl.new(loc, name.value)
+  }
+
+  pub fn parse_quote_decl(owner: String): QuoteDecl {
+    if self.in_quote {
+      self.fail(self.current.loc, "quote cannot nest")
+    }
+    loc = self.expect(tk_quote()).loc
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    self.in_quote = true
+    q = QuoteDecl.new(loc)
+    q.owner = owner
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.has_err {
+        break
+      }
+      vis = false
+      if self.current.kind == tk_pub() {
+        vis = true
+        dummy_pub = self.bump
+        self.skip_newlines
+      }
+      if self.current.kind == tk_fn() {
+        q.functions.push(self.parse_fn(owner, vis))
+      } else {
+        self.fail(self.current.loc, "quote holds fn")
+        break
+      }
+      self.skip_newlines
+    }
+    dummy2 = self.expect(tk_r_brace())
+    self.in_quote = false
+    q
+  }
+
+  pub fn parse_quote_stmt: Stmt {
+    if self.in_quote {
+      self.fail(self.current.loc, "quote cannot nest")
+    }
+    loc = self.expect(tk_quote()).loc
+    self.skip_newlines
+    self.in_quote = true
+    body = self.parse_block
+    self.in_quote = false
+    stmt_quote(loc, body)
+  }
+
+  pub fn parse_comptime_walk(owner: String): ComptimeWalk {
+    loc = self.expect(tk_comptime()).loc
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    for_tok = self.current
+    if for_tok.kind == tk_ident() {
+      if str_eq(for_tok.value, "for") {
+      } else {
+        self.fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      }
+    } else {
+      self.fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+    }
+    dummy_for = self.bump
+    self.skip_newlines
+    var_tok = self.expect(tk_ident())
+    self.skip_newlines
+    in_tok = self.current
+    if in_tok.kind == tk_ident() {
+      if str_eq(in_tok.value, "in") {
+      } else {
+        self.fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      }
+    } else {
+      self.fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+    }
+    dummy_in = self.bump
+    self.skip_newlines
+    type_tok = self.expect(tk_ident())
+    self.skip_newlines
+    dummy_dot = self.expect(tk_dot())
+    self.skip_newlines
+    fields_tok = self.expect(tk_ident())
+    if str_eq(fields_tok.value, "fields") {
+    } else {
+      self.fail(fields_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+    }
+    self.skip_newlines
+    dummy_lb = self.expect(tk_l_brace())
+    self.skip_newlines
+    if self.current.kind == tk_quote() {
+    } else {
+      self.fail(self.current.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+    }
+    qdecl = self.parse_quote_decl(owner)
+    self.skip_newlines
+    dummy_rb = self.expect(tk_r_brace())
+    self.skip_newlines
+    dummy_rb2 = self.expect(tk_r_brace())
+    walk = ComptimeWalk.new(loc, var_tok.value, type_tok.value, qdecl)
+    walk.owner = owner
+    walk
+  }
+
+  pub fn parse_splice: Expr {
+    loc = self.expect(tk_pound()).loc
+    if self.in_quote {
+    } else {
+      self.fail(loc, "splice #() only belongs in quote")
+    }
+    if self.current.kind == tk_l_paren() {
+    } else {
+      self.fail(self.current.loc, "expected ( after #")
+    }
+    dummy = self.bump
+    self.skip_newlines
+    inner = self.parse_splice_payload
+    self.skip_newlines
+    dummy2 = self.expect(tk_r_paren())
+    e = Expr.new(ex_splice(), loc)
+    e.inner = inner
+    e
+  }
+
+  pub fn parse_splice_payload: Expr {
+    tok = self.current
+    k = tok.kind
+    left = self.dummy_expr(tok.loc)
+    if k == tk_ident() {
+      dummy = self.bump
+      e = Expr.new(ex_name(), tok.loc)
+      e.ident = tok.value
+      left = e
+    } else if k == tk_self() {
+      dummy = self.bump
+      e = Expr.new(ex_name(), tok.loc)
+      e.ident = "self"
+      left = e
+    } else if k == tk_string() {
+      dummy = self.bump
+      e = Expr.new(ex_string(), tok.loc)
+      e.value_str = tok.value
+      left = e
+    } else if k == tk_integer() {
+      dummy = self.bump
+      ok = self.parse_int_tok(tok)
+      e = Expr.new(ex_int(), tok.loc)
+      e.int_bits = self.int_bits
+      e.int_suffix = self.int_suffix
+      left = e
+    } else if k == tk_float() {
+      dummy = self.bump
+      e = Expr.new(ex_float(), tok.loc)
+      e.float_val = tok.value.to_f
+      e.value_str = tok.value
+      left = e
+    } else if k == tk_true() {
+      dummy = self.bump
+      e = Expr.new(ex_bool(), tok.loc)
+      e.bool_val = true
+      left = e
+    } else if k == tk_false() {
+      dummy = self.bump
+      e = Expr.new(ex_bool(), tok.loc)
+      e.bool_val = false
+      left = e
+    } else if k == tk_nil() {
+      dummy = self.bump
+      left = Expr.new(ex_nil(), tok.loc)
+    } else {
+      self.fail(tok.loc, "splice is a literal, a name, or f.name / f.type")
+    }
+    if self.current.kind == tk_dot() {
+      at = self.bump.loc
+      self.skip_newlines
+      field = self.expect(tk_ident())
+      fa = Expr.new(ex_field(), at)
+      fa.object = left
+      fa.ident = field.value
+      return fa
+    }
+    left
   }
 
   pub fn parse_struct(vis: Bool): StructDef {
@@ -318,6 +525,8 @@ pub class Parser {
     defn = StructDef.new(loc, name)
     defn.fields = body.fields
     defn.methods = body.methods
+    defn.quotes = body.quotes
+    defn.comptimes = body.comptimes
     defn.vis = vis
     defn
   }
@@ -329,6 +538,8 @@ pub class Parser {
     defn = ClassDef.new(loc, name)
     defn.fields = body.fields
     defn.methods = body.methods
+    defn.quotes = body.quotes
+    defn.comptimes = body.comptimes
     defn.vis = vis
     defn
   }
@@ -435,6 +646,18 @@ pub class Parser {
       }
       if self.current.kind == tk_fn() {
         body.methods.push(self.parse_fn(owner, vis))
+      } else if self.current.kind == tk_quote() {
+        if vis {
+          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+          break
+        }
+        body.quotes.push(self.parse_quote_decl(owner))
+      } else if self.current.kind == tk_comptime() {
+        if vis {
+          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+          break
+        }
+        body.comptimes.push(self.parse_comptime_walk(owner))
       } else {
         if vis {
           self.fail(self.current.loc, "fields of a pub type are visible; do not mark a field pub")
@@ -483,6 +706,37 @@ pub class Parser {
       }
     }
     name_loc = self.current.loc
+    name = ""
+    if self.current.kind == tk_pound() {
+      fnn_hold = Function.new(loc, "")
+      fnn_hold.name_splice = self.parse_splice
+      fnn_hold.receiver = receiver
+      fnn_hold.owner = owner
+      fnn_hold.vis = vis
+      if self.current.kind == tk_l_paren() {
+        dummy = self.bump
+        self.skip_newlines
+        if self.current.kind != tk_r_paren() {
+          while true {
+            fnn_hold.params.push(self.parse_param)
+            self.skip_newlines
+            if self.match_tok(tk_comma()) {
+              self.skip_newlines
+            } else {
+              break
+            }
+          }
+        }
+        dummy2 = self.expect(tk_r_paren())
+      }
+      if self.match_tok(tk_colon()) {
+        self.skip_newlines
+        fnn_hold.return_type = self.parse_type_name
+      }
+      self.skip_newlines
+      fnn_hold.body = self.parse_block
+      return fnn_hold
+    }
     name = self.parse_fn_name
     if str_eq(name, "new") {
       if owner.size > 0 {
@@ -575,6 +829,12 @@ pub class Parser {
   }
 
   pub fn parse_primary_type: TypeName {
+    if self.current.kind == tk_pound() {
+      sp = self.parse_splice
+      tn = TypeName.new(sp.loc, "")
+      tn.splice = sp
+      return tn
+    }
     tok = self.expect(tk_ident())
     qual = ""
     if self.current.kind == tk_dot() {
@@ -645,6 +905,9 @@ pub class Parser {
     }
     if k == tk_return() {
       return self.parse_return
+    }
+    if k == tk_quote() {
+      return self.parse_quote_stmt
     }
     if k == tk_ident() {
       return self.parse_ident_stmt
@@ -951,37 +1214,54 @@ pub class Parser {
       if k == tk_dot() {
         at = self.bump.loc
         self.skip_newlines
-        field = self.expect(tk_ident())
-        if self.current.kind == tk_l_paren() {
-          args = self.parse_arg_list
-          call = Expr.new(ex_call(), at)
-          call.callee = field.value
-          call.args = args
-          call.receiver = cur
-          cur = call
-        } else if str_eq(field.value, "new") {
-          call = Expr.new(ex_call(), at)
-          call.callee = "new"
-          call.receiver = cur
-          cur = call
-        } else if self.allow_struct_lit {
-          if self.struct_literal_ahead {
-            qual = ""
-            if cur.kind == ex_name() {
-              qual = cur.ident
+        if self.current.kind == tk_pound() {
+          sp = self.parse_splice
+          if self.current.kind == tk_l_paren() {
+            args = self.parse_arg_list
+            call = Expr.new(ex_call(), at)
+            call.args = args
+            call.receiver = cur
+            call.splice = sp
+            cur = call
+          } else {
+            fa = Expr.new(ex_field(), at)
+            fa.object = cur
+            fa.splice = sp
+            cur = fa
+          }
+        } else {
+          field = self.expect(tk_ident())
+          if self.current.kind == tk_l_paren() {
+            args = self.parse_arg_list
+            call = Expr.new(ex_call(), at)
+            call.callee = field.value
+            call.args = args
+            call.receiver = cur
+            cur = call
+          } else if str_eq(field.value, "new") {
+            call = Expr.new(ex_call(), at)
+            call.callee = "new"
+            call.receiver = cur
+            cur = call
+          } else if self.allow_struct_lit {
+            if self.struct_literal_ahead {
+              qual = ""
+              if cur.kind == ex_name() {
+                qual = cur.ident
+              }
+              cur = self.parse_struct_literal(field, qual)
+            } else {
+              fa = Expr.new(ex_field(), at)
+              fa.object = cur
+              fa.ident = field.value
+              cur = fa
             }
-            cur = self.parse_struct_literal(field, qual)
           } else {
             fa = Expr.new(ex_field(), at)
             fa.object = cur
             fa.ident = field.value
             cur = fa
           }
-        } else {
-          fa = Expr.new(ex_field(), at)
-          fa.object = cur
-          fa.ident = field.value
-          cur = fa
         }
       } else if k == tk_l_bracket() {
         at = self.bump.loc
@@ -1060,6 +1340,17 @@ pub class Parser {
     }
     if k == tk_ident() {
       return self.parse_ident_expr
+    }
+    if k == tk_pound() {
+      sp = self.parse_splice
+      if self.current.kind == tk_l_paren() {
+        args = self.parse_arg_list
+        call = Expr.new(ex_call(), sp.loc)
+        call.args = args
+        call.splice = sp
+        return call
+      }
+      return sp
     }
     if k == tk_self() {
       dummy = self.bump

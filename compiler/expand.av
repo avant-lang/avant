@@ -1,0 +1,1107 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+
+pub fn ident_ok(s: String): Bool {
+  if s.size == 0 {
+    return false
+  }
+  if ch_is_ident_start(s[0]) {
+  } else {
+    return false
+  }
+  i = 1
+  while i < s.size {
+    if ch_is_ident_continue(s[i]) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn list_has_str(list: Array(String), name: String): Bool {
+  i = 0
+  while i < list.size {
+    if str_eq(list[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub class Expander {
+  source: Source
+  program: Program
+  next_id: Int = 0
+  ctx_var: String = ""
+  ctx_field: Field? = nil
+  failed: Bool = false
+  err: CompileError? = nil
+
+  fn initialize(source: Source, program: Program) {
+    self.source = source
+    self.program = program
+    self.next_id = 0
+    self.ctx_var = ""
+    self.failed = false
+    self.err = nil
+  }
+
+  pub fn has_err: Bool {
+    self.failed
+  }
+
+  pub fn fail(loc: Location, message: String) {
+    if self.failed {
+      return
+    }
+    self.failed = true
+    self.err = CompileError.new(loc, message)
+  }
+
+  pub fn expand: Program {
+    self.expand_quotes(self.program.quotes, "")
+    empty_q: Array(QuoteDecl) = []
+    self.program.quotes = empty_q
+    i = 0
+    while i < self.program.structs.size {
+      sdef = self.program.structs[i]
+      self.expand_quotes(sdef.quotes, sdef.name)
+      sq: Array(QuoteDecl) = []
+      sdef.quotes = sq
+      self.expand_walks(sdef.comptimes, sdef.name)
+      sc: Array(ComptimeWalk) = []
+      sdef.comptimes = sc
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      self.expand_quotes(cdef.quotes, cdef.name)
+      cq: Array(QuoteDecl) = []
+      cdef.quotes = cq
+      self.expand_walks(cdef.comptimes, cdef.name)
+      cc: Array(ComptimeWalk) = []
+      cdef.comptimes = cc
+      i = i + 1
+    }
+    self.expand_walks(self.program.comptimes, "")
+    empty_c: Array(ComptimeWalk) = []
+    self.program.comptimes = empty_c
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      fns[i].body = self.expand_stmt_list(fns[i].body)
+      i = i + 1
+    }
+    self.program
+  }
+
+  pub fn expand_quotes(quotes: Array(QuoteDecl), owner: String) {
+    i = 0
+    while i < quotes.size {
+      if self.has_err {
+        return
+      }
+      q = quotes[i]
+      own = owner
+      if own.size == 0 {
+        own = q.owner
+      }
+      j = 0
+      while j < q.functions.size {
+        fnn = self.fill_and_hygiene_fn(clone_function(q.functions[j]))
+        self.inject_function(fnn, own, q.mod_name)
+        j = j + 1
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn expand_walks(walks: Array(ComptimeWalk), owner: String) {
+    i = 0
+    while i < walks.size {
+      if self.has_err {
+        return
+      }
+      walk = walks[i]
+      fields = self.find_fields(walk.type_name, walk.loc)
+      own = owner
+      if own.size == 0 {
+        own = walk.owner
+      }
+      j = 0
+      while j < fields.size {
+        self.ctx_var = walk.var_name
+        self.ctx_field = fields[j]
+        k = 0
+        while k < walk.qdecl.functions.size {
+          fnn = self.fill_and_hygiene_fn(clone_function(walk.qdecl.functions[k]))
+          self.inject_function(fnn, own, walk.mod_name)
+          k = k + 1
+        }
+        self.ctx_var = ""
+        self.ctx_field = nil
+        j = j + 1
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn fill_and_hygiene_fn(fnn: Function): Function {
+    self.fill_function(fnn)
+    self.hygiene_function(fnn)
+    fnn.body = self.expand_stmt_list(fnn.body)
+    fnn
+  }
+
+  pub fn inject_function(fnn: Function, owner: String, mod_name: String) {
+    if mod_name.size > 0 {
+      fnn.mod_name = mod_name
+    }
+    if owner.size == 0 {
+      fnn.owner = ""
+      self.program.functions.push(fnn)
+      return
+    }
+    fnn.owner = owner
+    i = 0
+    while i < self.program.structs.size {
+      if str_eq(self.program.structs[i].name, owner) {
+        self.program.structs[i].methods.push(fnn)
+        return
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      if str_eq(self.program.classes[i].name, owner) {
+        self.program.classes[i].methods.push(fnn)
+        return
+      }
+      i = i + 1
+    }
+    self.fail(fnn.loc, "quote owner ${owner} is not a type")
+  }
+
+  pub fn find_fields(type_name: String, loc: Location): Array(Field) {
+    found: Array(Field) = []
+    hits = 0
+    i = 0
+    while i < self.program.structs.size {
+      if str_eq(self.program.structs[i].name, type_name) {
+        found = self.program.structs[i].fields
+        hits = hits + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      if str_eq(self.program.classes[i].name, type_name) {
+        found = self.program.classes[i].fields
+        hits = hits + 1
+      }
+      i = i + 1
+    }
+    if hits == 0 {
+      self.fail(loc, "unknown type ${type_name} for fields")
+    }
+    if hits > 1 {
+      self.fail(loc, "ambiguous type ${type_name} for fields")
+    }
+    found
+  }
+
+  pub fn fill_function(fnn: Function) {
+    if sp = fnn.name_splice {
+      fnn.name = self.splice_to_ident(sp)
+      fnn.emit_name = fnn.name
+      fnn.name_splice = nil
+    }
+    if r = fnn.receiver {
+      r.type = self.fill_type_name(r.type)
+    }
+    if t = fnn.return_type {
+      fnn.return_type = self.fill_type_name(t)
+    }
+    i = 0
+    while i < fnn.params.size {
+      fnn.params[i].type = self.fill_type_name(fnn.params[i].type)
+      i = i + 1
+    }
+    body: Array(Stmt) = []
+    i = 0
+    while i < fnn.body.size {
+      body.push(self.fill_stmt(fnn.body[i]))
+      i = i + 1
+    }
+    fnn.body = body
+  }
+
+  pub fn fill_type_name(tn: TypeName): TypeName {
+    if sp = tn.splice {
+      return self.splice_to_type(sp)
+    }
+    args: Array(TypeName) = []
+    i = 0
+    while i < tn.args.size {
+      args.push(self.fill_type_name(tn.args[i]))
+      i = i + 1
+    }
+    tn.args = args
+    members: Array(TypeName) = []
+    i = 0
+    while i < tn.members.size {
+      members.push(self.fill_type_name(tn.members[i]))
+      i = i + 1
+    }
+    tn.members = members
+    tn
+  }
+
+  pub fn fill_stmt(s: Stmt): Stmt {
+    k = s.kind
+    if k == st_expr() {
+      if e = s.expr {
+        return stmt_expr(s.loc, self.fill_expr(e))
+      }
+      return s
+    }
+    if k == st_return() {
+      if e = s.expr {
+        return stmt_return_val(s.loc, self.fill_expr(e))
+      }
+      return stmt_return_void(s.loc)
+    }
+    if k == st_if() {
+      out = Stmt.new(st_if(), s.loc)
+      out.bind = s.bind
+      if c = s.cond {
+        out.cond = self.fill_expr(c)
+      }
+      i = 0
+      while i < s.then_body.size {
+        out.then_body.push(self.fill_stmt(s.then_body[i]))
+        i = i + 1
+      }
+      i = 0
+      while i < s.else_body.size {
+        out.else_body.push(self.fill_stmt(s.else_body[i]))
+        i = i + 1
+      }
+      return out
+    }
+    if k == st_while() {
+      out = Stmt.new(st_while(), s.loc)
+      if c = s.cond {
+        out.cond = self.fill_expr(c)
+      }
+      i = 0
+      while i < s.body.size {
+        out.body.push(self.fill_stmt(s.body[i]))
+        i = i + 1
+      }
+      return out
+    }
+    if k == st_assign() {
+      out = Stmt.new(st_assign(), s.loc)
+      out.op = s.op
+      if t = s.target {
+        out.target = self.fill_expr(t)
+      }
+      if v = s.value {
+        out.value = self.fill_expr(v)
+      }
+      if d = s.declared {
+        out.declared = self.fill_type_name(d)
+      }
+      return out
+    }
+    if k == st_quote() {
+      return stmt_quote(s.loc, self.fill_stmt_list(s.body))
+    }
+    s
+  }
+
+  pub fn fill_stmt_list(body: Array(Stmt)): Array(Stmt) {
+    out: Array(Stmt) = []
+    i = 0
+    while i < body.size {
+      out.push(self.fill_stmt(body[i]))
+      i = i + 1
+    }
+    out
+  }
+
+  pub fn fill_expr(e: Expr): Expr {
+    k = e.kind
+    if k == ex_splice() {
+      return self.splice_to_expr(e)
+    }
+    if k == ex_call() {
+      if sp = e.splice {
+        e.callee = self.splice_to_ident(sp)
+        e.splice = nil
+      }
+      if r = e.receiver {
+        e.receiver = self.fill_expr(r)
+      }
+      args: Array(Expr) = []
+      i = 0
+      while i < e.args.size {
+        args.push(self.fill_expr(e.args[i]))
+        i = i + 1
+      }
+      e.args = args
+      if b = e.block {
+        b.body = self.fill_stmt_list(b.body)
+      }
+      return e
+    }
+    if k == ex_unary() {
+      out = Expr.new(ex_unary(), e.loc)
+      out.op = e.op
+      if inner = e.inner {
+        out.inner = self.fill_expr(inner)
+      }
+      return out
+    }
+    if k == ex_binary() {
+      out = Expr.new(ex_binary(), e.loc)
+      out.op = e.op
+      if l = e.left {
+        out.left = self.fill_expr(l)
+      }
+      if r = e.right {
+        out.right = self.fill_expr(r)
+      }
+      return out
+    }
+    if k == ex_field() {
+      if sp = e.splice {
+        e.ident = self.splice_to_ident(sp)
+        e.splice = nil
+      }
+      out = Expr.new(ex_field(), e.loc)
+      out.ident = e.ident
+      out.method_call = e.method_call
+      if obj = e.object {
+        out.object = self.fill_expr(obj)
+      }
+      return out
+    }
+    if k == ex_index() {
+      out = Expr.new(ex_index(), e.loc)
+      if l = e.left {
+        out.left = self.fill_expr(l)
+      }
+      if r = e.right {
+        out.right = self.fill_expr(r)
+      }
+      return out
+    }
+    if k == ex_struct() {
+      out = clone_expr(e)
+      fe: Array(Expr) = []
+      i = 0
+      while i < e.field_exprs.size {
+        fe.push(self.fill_expr(e.field_exprs[i]))
+        i = i + 1
+      }
+      out.field_exprs = fe
+      return out
+    }
+    if k == ex_array() {
+      out = Expr.new(ex_array(), e.loc)
+      i = 0
+      while i < e.elems.size {
+        out.elems.push(self.fill_expr(e.elems[i]))
+        i = i + 1
+      }
+      return out
+    }
+    if k == ex_array_new() {
+      out = Expr.new(ex_array_new(), e.loc)
+      if t = e.elem_type {
+        out.elem_type = self.fill_type_name(t)
+      }
+      if sz = e.size_expr {
+        out.size_expr = self.fill_expr(sz)
+      }
+      return out
+    }
+    if k == ex_hash_new() {
+      out = Expr.new(ex_hash_new(), e.loc)
+      if t = e.key_type {
+        out.key_type = self.fill_type_name(t)
+      }
+      if t = e.val_type {
+        out.val_type = self.fill_type_name(t)
+      }
+      return out
+    }
+    if k == ex_try() {
+      out = Expr.new(ex_try(), e.loc)
+      if inner = e.inner {
+        out.inner = self.fill_expr(inner)
+      }
+      return out
+    }
+    if k == ex_interp() {
+      out = clone_expr(e)
+      i = 0
+      while i < out.parts.size {
+        p = out.parts[i]
+        if inner = p.expr {
+          p.expr = self.fill_expr(inner)
+        }
+        i = i + 1
+      }
+      return out
+    }
+    if k == ex_switch() {
+      out = clone_expr(e)
+      if c = e.cond {
+        out.cond = self.fill_expr(c)
+      }
+      i = 0
+      while i < out.cases.size {
+        arm = out.cases[i]
+        arm.body = self.fill_stmt_list(arm.body)
+        i = i + 1
+      }
+      eb: Array(Stmt) = []
+      i = 0
+      while i < e.else_body.size {
+        eb.push(self.fill_stmt(e.else_body[i]))
+        i = i + 1
+      }
+      out.else_body = eb
+      return out
+    }
+    e
+  }
+
+  pub fn splice_payload(sp: Expr): Expr {
+    if sp.kind == ex_splice() {
+      if inner = sp.inner {
+        return inner
+      }
+    }
+    sp
+  }
+
+  pub fn splice_to_ident(sp: Expr): String {
+    inner = self.splice_payload(sp)
+    if inner.kind == ex_string() {
+      return self.ident_from_string(inner.value_str, inner.loc)
+    }
+    if inner.kind == ex_name() {
+      return inner.ident
+    }
+    if inner.kind == ex_field() {
+      return self.walk_field_name(inner)
+    }
+    self.fail(inner.loc, "splice is a name here")
+    ""
+  }
+
+  pub fn splice_to_type(sp: Expr): TypeName {
+    inner = self.splice_payload(sp)
+    if inner.kind == ex_string() {
+      return TypeName.new(inner.loc, self.ident_from_string(inner.value_str, inner.loc))
+    }
+    if inner.kind == ex_name() {
+      return TypeName.new(inner.loc, inner.ident)
+    }
+    if inner.kind == ex_field() {
+      if self.walk_field(inner) {
+      } else {
+        self.fail(inner.loc, "splice f.type needs a field walk")
+        return TypeName.new(inner.loc, "Int")
+      }
+      if str_eq(inner.ident, "type") {
+      } else {
+        self.fail(inner.loc, "f.type is the field type in a walk")
+        return TypeName.new(inner.loc, "Int")
+      }
+      if field = self.ctx_field {
+        return clone_type_name(field.type)
+      }
+      self.fail(inner.loc, "splice f.type needs a field walk")
+      return TypeName.new(inner.loc, "Int")
+    }
+    self.fail(inner.loc, "splice is a type here")
+    TypeName.new(inner.loc, "Int")
+  }
+
+  pub fn splice_to_expr(sp: Expr): Expr {
+    inner = self.splice_payload(sp)
+    k = inner.kind
+    if k == ex_int() {
+      return clone_expr(inner)
+    }
+    if k == ex_float() {
+      return clone_expr(inner)
+    }
+    if k == ex_string() {
+      return clone_expr(inner)
+    }
+    if k == ex_bool() {
+      return clone_expr(inner)
+    }
+    if k == ex_nil() {
+      return clone_expr(inner)
+    }
+    if k == ex_name() {
+      e = Expr.new(ex_name(), inner.loc)
+      e.ident = inner.ident
+      return e
+    }
+    if k == ex_field() {
+      if self.walk_field(inner) {
+      } else {
+        self.fail(inner.loc, "splice f.name needs a field walk")
+        return inner
+      }
+      if field = self.ctx_field {
+        if str_eq(inner.ident, "name") {
+          e = Expr.new(ex_string(), inner.loc)
+          e.value_str = field.name
+          return e
+        }
+        if str_eq(inner.ident, "type") {
+          self.fail(inner.loc, "f.type is a type, not an expression")
+          return inner
+        }
+        self.fail(inner.loc, "field walk splice is f.name or f.type")
+        return inner
+      }
+      self.fail(inner.loc, "splice f.name needs a field walk")
+      return inner
+    }
+    self.fail(inner.loc, "splice is a literal, a name, or f.name / f.type")
+    inner
+  }
+
+  pub fn walk_field(fa: Expr): Bool {
+    if self.ctx_var.size == 0 {
+      return false
+    }
+    if obj = fa.object {
+      if obj.kind == ex_name() {
+        if str_eq(obj.ident, self.ctx_var) {
+          if str_eq(fa.ident, "name") {
+            return true
+          }
+          if str_eq(fa.ident, "type") {
+            return true
+          }
+        }
+      }
+    }
+    false
+  }
+
+  pub fn walk_field_name(fa: Expr): String {
+    if self.walk_field(fa) {
+    } else {
+      self.fail(fa.loc, "splice f.name needs a field walk")
+      return ""
+    }
+    if str_eq(fa.ident, "name") {
+    } else {
+      self.fail(fa.loc, "f.name is the field name in a walk")
+      return ""
+    }
+    if field = self.ctx_field {
+      return field.name
+    }
+    ""
+  }
+
+  pub fn ident_from_string(s: String, loc: Location): String {
+    if ident_ok(s) {
+      return s
+    }
+    self.fail(loc, "splice is not an identifier ${s}")
+    s
+  }
+
+  pub fn hygiene_function(fnn: Function) {
+    introduced: Array(String) = []
+    i = 0
+    while i < fnn.params.size {
+      if str_eq(fnn.params[i].name, "self") {
+      } else {
+        introduced.push(fnn.params[i].name)
+      }
+      i = i + 1
+    }
+    if r = fnn.receiver {
+      if str_eq(r.name, "self") {
+      } else {
+        introduced.push(r.name)
+      }
+    }
+    self.collect_introduced(fnn.body, introduced)
+    map = self.rename_map(introduced)
+    if map.size == 0 {
+      return
+    }
+    i = 0
+    while i < fnn.params.size {
+      if mapped = map.get(fnn.params[i].name) {
+        fnn.params[i].name = mapped
+      }
+      i = i + 1
+    }
+    if r = fnn.receiver {
+      if mapped = map.get(r.name) {
+        r.name = mapped
+      }
+    }
+    fnn.body = self.rename_stmt_list(fnn.body, map)
+  }
+
+  pub fn hygiene_stmts(body: Array(Stmt)): Array(Stmt) {
+    introduced: Array(String) = []
+    self.collect_introduced(body, introduced)
+    map = self.rename_map(introduced)
+    if map.size == 0 {
+      return body
+    }
+    self.rename_stmt_list(body, map)
+  }
+
+  pub fn rename_map(introduced: Array(String)): Hash(String, String) {
+    map = Hash(String, String).new
+    if introduced.size == 0 {
+      return map
+    }
+    id = self.next_id
+    self.next_id = self.next_id + 1
+    i = 0
+    while i < introduced.size {
+      name = introduced[i]
+      if str_eq(name, "self") {
+      } else {
+        if prev = map.get(name) {
+        } else {
+          map[name] = "__q${id}_${name}"
+        }
+      }
+      i = i + 1
+    }
+    map
+  }
+
+  pub fn collect_introduced(body: Array(Stmt), into: Array(String)) {
+    i = 0
+    while i < body.size {
+      s = body[i]
+      k = s.kind
+      if k == st_assign() {
+        if t = s.target {
+          if t.kind == ex_name() {
+            into.push(t.ident)
+          }
+        }
+        if v = s.value {
+          self.collect_introduced_expr(v, into)
+        }
+      } else if k == st_if() {
+        if s.bind.size > 0 {
+          into.push(s.bind)
+        }
+        if c = s.cond {
+          self.collect_introduced_expr(c, into)
+        }
+        self.collect_introduced(s.then_body, into)
+        self.collect_introduced(s.else_body, into)
+      } else if k == st_while() {
+        if c = s.cond {
+          self.collect_introduced_expr(c, into)
+        }
+        self.collect_introduced(s.body, into)
+      } else if k == st_quote() {
+        self.collect_introduced(s.body, into)
+      } else if k == st_expr() {
+        if e = s.expr {
+          self.collect_introduced_expr(e, into)
+        }
+      } else if k == st_return() {
+        if e = s.expr {
+          self.collect_introduced_expr(e, into)
+        }
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn collect_introduced_expr(e: Expr, into: Array(String)) {
+    k = e.kind
+    if k == ex_call() {
+      if b = e.block {
+        i = 0
+        while i < b.params.size {
+          into.push(b.params[i])
+          i = i + 1
+        }
+        self.collect_introduced(b.body, into)
+      }
+      if r = e.receiver {
+        self.collect_introduced_expr(r, into)
+      }
+      i = 0
+      while i < e.args.size {
+        self.collect_introduced_expr(e.args[i], into)
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_unary() {
+      if inner = e.inner {
+        self.collect_introduced_expr(inner, into)
+      }
+      return
+    }
+    if k == ex_binary() {
+      if l = e.left {
+        self.collect_introduced_expr(l, into)
+      }
+      if r = e.right {
+        self.collect_introduced_expr(r, into)
+      }
+      return
+    }
+    if k == ex_field() {
+      if obj = e.object {
+        self.collect_introduced_expr(obj, into)
+      }
+      return
+    }
+    if k == ex_index() {
+      if l = e.left {
+        self.collect_introduced_expr(l, into)
+      }
+      if r = e.right {
+        self.collect_introduced_expr(r, into)
+      }
+      return
+    }
+    if k == ex_struct() {
+      i = 0
+      while i < e.field_exprs.size {
+        self.collect_introduced_expr(e.field_exprs[i], into)
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_array() {
+      i = 0
+      while i < e.elems.size {
+        self.collect_introduced_expr(e.elems[i], into)
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_array_new() {
+      if sz = e.size_expr {
+        self.collect_introduced_expr(sz, into)
+      }
+      return
+    }
+    if k == ex_try() {
+      if inner = e.inner {
+        self.collect_introduced_expr(inner, into)
+      }
+      return
+    }
+    if k == ex_interp() {
+      i = 0
+      while i < e.parts.size {
+        p = e.parts[i]
+        if inner = p.expr {
+          self.collect_introduced_expr(inner, into)
+        }
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_switch() {
+      if c = e.cond {
+        self.collect_introduced_expr(c, into)
+      }
+      i = 0
+      while i < e.cases.size {
+        self.collect_introduced(e.cases[i].body, into)
+        i = i + 1
+      }
+      self.collect_introduced(e.else_body, into)
+    }
+  }
+
+  pub fn rename_stmt_list(body: Array(Stmt), map: Hash(String, String)): Array(Stmt) {
+    out: Array(Stmt) = []
+    i = 0
+    while i < body.size {
+      out.push(self.rename_stmt(body[i], map))
+      i = i + 1
+    }
+    out
+  }
+
+  pub fn rename_stmt(s: Stmt, map: Hash(String, String)): Stmt {
+    k = s.kind
+    if k == st_expr() {
+      if e = s.expr {
+        return stmt_expr(s.loc, self.rename_expr(e, map))
+      }
+      return s
+    }
+    if k == st_return() {
+      if e = s.expr {
+        return stmt_return_val(s.loc, self.rename_expr(e, map))
+      }
+      return stmt_return_void(s.loc)
+    }
+    if k == st_if() {
+      out = Stmt.new(st_if(), s.loc)
+      out.bind = s.bind
+      if mapped = map.get(s.bind) {
+        out.bind = mapped
+      }
+      if c = s.cond {
+        out.cond = self.rename_expr(c, map)
+      }
+      out.then_body = self.rename_stmt_list(s.then_body, map)
+      out.else_body = self.rename_stmt_list(s.else_body, map)
+      return out
+    }
+    if k == st_while() {
+      out = Stmt.new(st_while(), s.loc)
+      if c = s.cond {
+        out.cond = self.rename_expr(c, map)
+      }
+      out.body = self.rename_stmt_list(s.body, map)
+      return out
+    }
+    if k == st_assign() {
+      out = Stmt.new(st_assign(), s.loc)
+      out.op = s.op
+      out.declared = s.declared
+      if t = s.target {
+        out.target = self.rename_expr(t, map)
+      }
+      if v = s.value {
+        out.value = self.rename_expr(v, map)
+      }
+      return out
+    }
+    if k == st_quote() {
+      return stmt_quote(s.loc, self.rename_stmt_list(s.body, map))
+    }
+    s
+  }
+
+  pub fn rename_expr(e: Expr, map: Hash(String, String)): Expr {
+    k = e.kind
+    if k == ex_name() {
+      if mapped = map.get(e.ident) {
+        n = Expr.new(ex_name(), e.loc)
+        n.ident = mapped
+        n.implicit_field = e.implicit_field
+        return n
+      }
+      return e
+    }
+    if k == ex_call() {
+      out = clone_expr(e)
+      if mapped = map.get(e.callee) {
+        out.callee = mapped
+      }
+      if r = e.receiver {
+        out.receiver = self.rename_expr(r, map)
+      }
+      args: Array(Expr) = []
+      i = 0
+      while i < e.args.size {
+        args.push(self.rename_expr(e.args[i], map))
+        i = i + 1
+      }
+      out.args = args
+      if b = e.block {
+        nb = clone_block(b)
+        i = 0
+        while i < nb.params.size {
+          if mapped = map.get(nb.params[i]) {
+            nb.params[i] = mapped
+          }
+          i = i + 1
+        }
+        nb.body = self.rename_stmt_list(b.body, map)
+        out.block = nb
+      }
+      return out
+    }
+    if k == ex_unary() {
+      out = Expr.new(ex_unary(), e.loc)
+      out.op = e.op
+      if inner = e.inner {
+        out.inner = self.rename_expr(inner, map)
+      }
+      return out
+    }
+    if k == ex_binary() {
+      out = Expr.new(ex_binary(), e.loc)
+      out.op = e.op
+      if l = e.left {
+        out.left = self.rename_expr(l, map)
+      }
+      if r = e.right {
+        out.right = self.rename_expr(r, map)
+      }
+      return out
+    }
+    if k == ex_field() {
+      out = Expr.new(ex_field(), e.loc)
+      out.ident = e.ident
+      out.method_call = e.method_call
+      if obj = e.object {
+        out.object = self.rename_expr(obj, map)
+      }
+      return out
+    }
+    if k == ex_index() {
+      out = Expr.new(ex_index(), e.loc)
+      if l = e.left {
+        out.left = self.rename_expr(l, map)
+      }
+      if r = e.right {
+        out.right = self.rename_expr(r, map)
+      }
+      return out
+    }
+    if k == ex_struct() {
+      out = clone_expr(e)
+      fe: Array(Expr) = []
+      i = 0
+      while i < e.field_exprs.size {
+        fe.push(self.rename_expr(e.field_exprs[i], map))
+        i = i + 1
+      }
+      out.field_exprs = fe
+      return out
+    }
+    if k == ex_array() {
+      out = Expr.new(ex_array(), e.loc)
+      i = 0
+      while i < e.elems.size {
+        out.elems.push(self.rename_expr(e.elems[i], map))
+        i = i + 1
+      }
+      return out
+    }
+    if k == ex_array_new() {
+      out = clone_expr(e)
+      if sz = e.size_expr {
+        out.size_expr = self.rename_expr(sz, map)
+      }
+      return out
+    }
+    if k == ex_try() {
+      out = Expr.new(ex_try(), e.loc)
+      if inner = e.inner {
+        out.inner = self.rename_expr(inner, map)
+      }
+      return out
+    }
+    if k == ex_interp() {
+      out = clone_expr(e)
+      i = 0
+      while i < out.parts.size {
+        p = out.parts[i]
+        if inner = p.expr {
+          p.expr = self.rename_expr(inner, map)
+        }
+        i = i + 1
+      }
+      return out
+    }
+    if k == ex_switch() {
+      out = clone_expr(e)
+      if c = e.cond {
+        out.cond = self.rename_expr(c, map)
+      }
+      i = 0
+      while i < out.cases.size {
+        arm = out.cases[i]
+        arm.body = self.rename_stmt_list(arm.body, map)
+        i = i + 1
+      }
+      out.else_body = self.rename_stmt_list(e.else_body, map)
+      return out
+    }
+    e
+  }
+
+  pub fn expand_stmt_list(body: Array(Stmt)): Array(Stmt) {
+    out: Array(Stmt) = []
+    i = 0
+    while i < body.size {
+      s = body[i]
+      k = s.kind
+      if k == st_quote() {
+        filled = self.fill_stmt_list(s.body)
+        hygiened = self.hygiene_stmts(filled)
+        nested = self.expand_stmt_list(hygiened)
+        j = 0
+        while j < nested.size {
+          out.push(nested[j])
+          j = j + 1
+        }
+      } else if k == st_if() {
+        n = Stmt.new(st_if(), s.loc)
+        n.bind = s.bind
+        n.cond = s.cond
+        n.then_body = self.expand_stmt_list(s.then_body)
+        n.else_body = self.expand_stmt_list(s.else_body)
+        out.push(n)
+      } else if k == st_while() {
+        n = Stmt.new(st_while(), s.loc)
+        n.cond = s.cond
+        n.body = self.expand_stmt_list(s.body)
+        out.push(n)
+      } else if k == st_expr() {
+        if e = s.expr {
+          if e.kind == ex_switch() {
+            sw = clone_expr(e)
+            j = 0
+            while j < sw.cases.size {
+              sw.cases[j].body = self.expand_stmt_list(e.cases[j].body)
+              j = j + 1
+            }
+            sw.else_body = self.expand_stmt_list(e.else_body)
+            out.push(stmt_expr(s.loc, sw))
+          } else {
+            out.push(s)
+          }
+        } else {
+          out.push(s)
+        }
+      } else {
+        out.push(s)
+      }
+      i = i + 1
+    }
+    out
+  }
+}

@@ -1,0 +1,101 @@
+fn s13_mkdir(path: String) {
+  args: Array(String) = []
+  args.push("-p")
+  args.push(path)
+  dummy = process_run("/bin/mkdir", args)
+}
+
+fn s13_write(dir: String, name: String, body: String) {
+  dummy = file_write("${dir}/${name}.av", body)
+}
+
+quote {
+  fn s13_doubled(n: Int): Int {
+    n + n
+  }
+}
+
+quote {
+  fn #("s13_tripled")(n: Int): Int {
+    n * 3
+  }
+}
+
+struct S13Box {
+  n: Int
+  quote {
+    fn s13_doubled: Int {
+      self.n + self.n
+    }
+  }
+}
+
+fn test_stage13(c: Checks) {
+  c.suite("tests/cases/stage13.av")
+  c.eq_int(s13_doubled(21), 42, "quoted fn")
+  c.eq_int(s13_tripled(7), 21, "spliced name")
+  tmp = 1
+  quote {
+    tmp = 2
+    c.eq_int(tmp, 2, "quote local")
+  }
+  c.eq_int(tmp, 1, "outer local")
+  b = S13Box { n: 3 }
+  c.eq_int(b.s13_doubled(), 6, "quoted method")
+
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    dir = "/tmp/avant-s13-${stamp}"
+    s13_mkdir(dir)
+
+    s13_write(dir, "fields", "struct Point {\n  x: Int\n  y: Int\n}\ncomptime {\n  for f in Point.fields {\n    quote {\n      fn #(f.name)(p: Point): #(f.type) {\n        p.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  p = Point { x: 3, y: 4 }\n  puts(x(p))\n  puts(y(p))\n}\n")
+    fields_bin = "${dir}/fields.bin"
+    fields_log = "${dir}/fields.log"
+    fields_out = "${dir}/fields.out"
+    fields_code = compile_av(compiler, "${dir}/fields.av", fields_bin, fields_log)
+    c.eq_int(fields_code, 0, "field walk compile")
+    c.expect(file_exists(fields_bin), "field walk bin")
+    chmod_x(fields_bin)
+    dummy_f = run_av_bin(fields_bin, fields_out)
+    if got = file_read(fields_out) {
+      c.eq_str(got, "3\n4\n", "field walk accessors")
+    } else {
+      c.expect(false, "field walk accessors")
+    }
+
+    s13_write(dir, "splice_out", "fn #(name): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n")
+    splice_bin = "${dir}/splice.bin"
+    splice_log = "${dir}/splice.log"
+    dummy_s = compile_av(compiler, "${dir}/splice_out.av", splice_bin, splice_log)
+    c.expect(!file_exists(splice_bin), "splice outside quote bin absent")
+    if err = file_read(splice_log) {
+      c.expect(str_has(err, "splice #() only belongs in quote"), "splice outside quote")
+    } else {
+      c.expect(false, "splice outside quote")
+    }
+
+    s13_write(dir, "bad_comptime", "comptime {\n  puts(1)\n}\nfn main {\n  puts(1)\n}\n")
+    bad_bin = "${dir}/bad.bin"
+    bad_log = "${dir}/bad.log"
+    dummy_b = compile_av(compiler, "${dir}/bad_comptime.av", bad_bin, bad_log)
+    c.expect(!file_exists(bad_bin), "bad comptime bin absent")
+    if err = file_read(bad_log) {
+      c.expect(str_has(err, "field walk"), "comptime field walk")
+    } else {
+      c.expect(false, "comptime field walk")
+    }
+
+    s13_write(dir, "nested", "quote {\n  fn inner: Int {\n    quote {\n      1\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n")
+    nest_bin = "${dir}/nest.bin"
+    nest_log = "${dir}/nest.log"
+    dummy_n = compile_av(compiler, "${dir}/nested.av", nest_bin, nest_log)
+    c.expect(!file_exists(nest_bin), "nested quote bin absent")
+    if err = file_read(nest_log) {
+      c.expect(str_has(err, "quote cannot nest"), "nested quote")
+    } else {
+      c.expect(false, "nested quote")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

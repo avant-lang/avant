@@ -19,8 +19,10 @@ module Avant
       "continue" => Token::Kind::ContinueKw,
       "switch"   => Token::Kind::Switch,
       "case"     => Token::Kind::Case,
-      "import"   => Token::Kind::Import,
-      "pub"      => Token::Kind::Pub,
+      "import"    => Token::Kind::Import,
+      "pub"       => Token::Kind::Pub,
+      "quote"     => Token::Kind::Quote,
+      "comptime"  => Token::Kind::Comptime,
     }
 
     def initialize(@source : Source)
@@ -184,6 +186,9 @@ module Avant
         else
           Token.new(:ident, loc, intern(ident))
         end
+      when '#'
+        bump
+        Token.new(:pound, loc)
       else
         bump
         raise CompileError.at(loc, "unexpected character #{c.inspect}")

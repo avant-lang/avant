@@ -8,7 +8,7 @@ module Avant
         tn.nilable,
         tn.members.map { |m| clone_type_name(m) },
         tn.qualifier
-      )
+      ).tap { |copied| copied.splice = tn.splice.try { |s| clone_expr(s) } }
     end
 
     def self.subst_type_name(tn : TypeName, from : Array(String), to : Array(TypeName)) : TypeName
@@ -56,6 +56,7 @@ module Avant
       out.template = fn.template
       out.vis = fn.vis
       out.module_name = fn.module_name
+      out.name_splice = fn.name_splice.try { |s| clone_expr(s) }
       out
     end
 
@@ -93,13 +94,16 @@ module Avant
       when Call
         c = Call.new(e.location, e.callee, e.args.map { |a| clone_expr(a) }, e.receiver.try { |r| clone_expr(r) }, e.block.try { |b| clone_block(b) })
         c.lib_name = e.lib_name
+        c.callee_splice = e.callee_splice.try { |s| clone_expr(s) }
         c
       when Unary
         Unary.new(e.location, e.op, clone_expr(e.expr))
       when Binary
         Binary.new(e.location, e.op, clone_expr(e.left), clone_expr(e.right))
       when FieldAccess
-        FieldAccess.new(e.location, clone_expr(e.object), e.field, e.method_call)
+        fa = FieldAccess.new(e.location, clone_expr(e.object), e.field, e.method_call)
+        fa.field_splice = e.field_splice.try { |s| clone_expr(s) }
+        fa
       when Index
         Index.new(e.location, clone_expr(e.array), clone_expr(e.index))
       when StructLiteral
@@ -119,6 +123,8 @@ module Avant
       when SwitchExpr
         sw = SwitchExpr.new(e.location, clone_expr(e.cond), e.cases.map { |c| clone_switch_case(c) }, e.else_body.try { |b| b.map { |s| clone_stmt(s) } })
         sw
+      when Splice
+        Splice.new(e.location, clone_expr(e.inner))
       else
         raise "cannot clone #{e.class}"
       end
@@ -145,6 +151,8 @@ module Avant
         ContinueStmt.new(s.location)
       when AssignStmt
         AssignStmt.new(s.location, clone_expr(s.target), clone_expr(s.value), s.declared_type.try { |t| clone_type_name(t) }, s.op)
+      when QuoteStmt
+        QuoteStmt.new(s.location, s.body.map { |x| clone_stmt(x) })
       else
         raise "cannot clone #{s.class}"
       end

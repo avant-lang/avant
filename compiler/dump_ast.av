@@ -31,6 +31,9 @@ pub fn escape_dump(s: String): String {
 }
 
 pub fn dump_type(t: TypeName): String {
+  if sp = t.splice {
+    return dump_expr(sp)
+  }
   buf = buf_new()
   if t.members.size > 0 {
     i = 0
@@ -104,7 +107,11 @@ pub fn dump_expr(e: Expr): String {
   }
   if k == ex_call() {
     buf.push_str("(call ")
-    buf.push_str(e.callee)
+    if sp = e.splice {
+      buf.push_str(dump_expr(sp))
+    } else {
+      buf.push_str(e.callee)
+    }
     if recv = e.receiver {
       buf.push_str(" ")
       buf.push_str(dump_expr(recv))
@@ -164,7 +171,11 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(obj))
     }
     buf.push_str(" ")
-    buf.push_str(e.ident)
+    if sp = e.splice {
+      buf.push_str(dump_expr(sp))
+    } else {
+      buf.push_str(e.ident)
+    }
     buf.push_str(")")
     return buf.to_s
   }
@@ -232,6 +243,14 @@ pub fn dump_expr(e: Expr): String {
         i = i + 1
       }
       buf.push_str(")")
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == ex_splice() {
+    buf.push_str("(splice ")
+    if inner = e.inner {
+      buf.push_str(dump_expr(inner))
     }
     buf.push_str(")")
     return buf.to_s
@@ -323,6 +342,17 @@ pub fn dump_stmt(s: Stmt): String {
     buf.push_str(")")
     return buf.to_s
   }
+  if k == st_quote() {
+    buf.push_str("(quote")
+    i = 0
+    while i < s.body.size {
+      buf.push_str(" ")
+      buf.push_str(dump_stmt(s.body[i]))
+      i = i + 1
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
   buf.push_str("(stmt ")
   buf.push_fmt_i(k)
   buf.push_str(")")
@@ -332,7 +362,11 @@ pub fn dump_stmt(s: Stmt): String {
 pub fn dump_fn(fnn: Function): String {
   buf = buf_new()
   buf.push_str("(fn ")
-  buf.push_str(fnn.name)
+  if sp = fnn.name_splice {
+    buf.push_str(dump_expr(sp))
+  } else {
+    buf.push_str(fnn.name)
+  }
   if recv = fnn.receiver {
     buf.push_str(" (recv ")
     buf.push_str(recv.name)
@@ -387,6 +421,36 @@ pub fn dump_program(program: Program): String {
   while i < program.functions.size {
     buf.push_str(" ")
     buf.push_str(dump_fn(program.functions[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < program.quotes.size {
+    q = program.quotes[i]
+    buf.push_str(" (quote")
+    j = 0
+    while j < q.functions.size {
+      buf.push_str(" ")
+      buf.push_str(dump_fn(q.functions[j]))
+      j = j + 1
+    }
+    buf.push_str(")")
+    i = i + 1
+  }
+  i = 0
+  while i < program.comptimes.size {
+    walk = program.comptimes[i]
+    buf.push_str(" (comptime ")
+    buf.push_str(walk.type_name)
+    buf.push_str(" ")
+    buf.push_str(walk.var_name)
+    buf.push_str(" (quote")
+    j = 0
+    while j < walk.qdecl.functions.size {
+      buf.push_str(" ")
+      buf.push_str(dump_fn(walk.qdecl.functions[j]))
+      j = j + 1
+    }
+    buf.push_str("))")
     i = i + 1
   }
   buf.push_str(")")

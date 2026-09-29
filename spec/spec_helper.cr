@@ -96,6 +96,9 @@ def dump_host_escape(s : String) : String
 end
 
 def dump_host_type(t : Avant::AST::TypeName) : String
+  if sp = t.splice
+    return dump_host_expr(sp)
+  end
   if t.union?
     inner = t.members.map { |m| dump_host_type(m) }.join("|")
     t.nilable ? "#{inner}?" : inner
@@ -124,7 +127,11 @@ def dump_host_expr(e : Avant::AST::Expr) : String
     "(name #{e.ident})"
   when Avant::AST::Call
     buf = String.build do |io|
-      io << "(call " << e.callee
+      callee = e.callee
+      if sp = e.callee_splice
+        callee = dump_host_expr(sp)
+      end
+      io << "(call " << callee
       if recv = e.receiver
         io << " " << dump_host_expr(recv)
       end
@@ -144,7 +151,11 @@ def dump_host_expr(e : Avant::AST::Expr) : String
   when Avant::AST::Binary
     "(binary #{e.op.value} #{dump_host_expr(e.left)} #{dump_host_expr(e.right)})"
   when Avant::AST::FieldAccess
-    "(field #{dump_host_expr(e.object)} #{e.field})"
+    field = e.field
+    if sp = e.field_splice
+      field = dump_host_expr(sp)
+    end
+    "(field #{dump_host_expr(e.object)} #{field})"
   when Avant::AST::Index
     "(index #{dump_host_expr(e.array)} #{dump_host_expr(e.index)})"
   when Avant::AST::Try
@@ -168,6 +179,8 @@ def dump_host_expr(e : Avant::AST::Expr) : String
       io << ")"
     end
     buf
+  when Avant::AST::Splice
+    "(splice #{dump_host_expr(e.inner)})"
   else
     "(expr)"
   end
@@ -212,6 +225,13 @@ def dump_host_stmt(s : Avant::AST::Stmt) : String
     "(continue)"
   when Avant::AST::AssignStmt
     "(assign #{s.op.value} #{dump_host_expr(s.target)} #{dump_host_expr(s.value)})"
+  when Avant::AST::QuoteStmt
+    buf = String.build do |io|
+      io << "(quote"
+      s.body.each { |t| io << " " << dump_host_stmt(t) }
+      io << ")"
+    end
+    buf
   else
     "(stmt)"
   end
@@ -219,7 +239,12 @@ end
 
 def dump_host_fn(fn : Avant::AST::Function) : String
   String.build do |io|
-    io << "(fn " << fn.name
+    io << "(fn "
+    if sp = fn.name_splice
+      io << dump_host_expr(sp)
+    else
+      io << fn.name
+    end
     if recv = fn.receiver
       io << " (recv " << recv.name << " " << dump_host_type(recv.type) << ")"
     end
@@ -241,6 +266,17 @@ def dump_host_ast(text : String, path = "<test>") : String
     program.structs.each { |s| io << " (struct " << s.name << ")" }
     program.classes.each { |c| io << " (class " << c.name << ")" }
     program.functions.each { |fn| io << " " << dump_host_fn(fn) }
+    program.quotes.each do |q|
+      io << " (quote"
+      q.functions.each { |fn| io << " " << dump_host_fn(fn) }
+      io << ")"
+    end
+    program.comptimes.each do |c|
+      io << " (comptime " << c.type_name << " " << c.var_name
+      io << " (quote"
+      c.quote.functions.each { |fn| io << " " << dump_host_fn(fn) }
+      io << "))"
+    end
     io << ")\n"
   end
 end
@@ -397,6 +433,7 @@ def dump_host_typed(text : String, path = "<test>") : String
   begin
     tokens = Avant::Lexer.new(source).tokenize
     program = Avant::Parser.new(source, tokens).parse
+    Avant::Expander.new(source, program).expand
     Avant::Checker.new(source, program).check
     dump_host_typed_program(program) + "\n"
   rescue e : Avant::CompileError

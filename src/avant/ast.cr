@@ -21,12 +21,14 @@ module Avant
       getter functions : Array(Function)
       getter libs : Array(LibDef)
       getter imports : Array(ImportDecl)
+      property quotes : Array(QuoteDecl)
+      property comptimes : Array(ComptimeWalk)
       property module_name : String
       property module_path : String
       property root_module : String
       property import_graph : Hash(String, Array(String))
 
-      def initialize(location, @structs, @functions, @classes = [] of ClassDef, @libs = [] of LibDef, @imports = [] of ImportDecl)
+      def initialize(location, @structs, @functions, @classes = [] of ClassDef, @libs = [] of LibDef, @imports = [] of ImportDecl, @quotes = [] of QuoteDecl, @comptimes = [] of ComptimeWalk)
         super(location)
         @module_name = ""
         @module_path = ""
@@ -46,11 +48,15 @@ module Avant
       getter name : String
       getter fields : Array(Field)
       getter methods : Array(Function)
+      property quotes : Array(QuoteDecl)
+      property comptimes : Array(ComptimeWalk)
       property vis : Bool
       property module_name : String
 
       def initialize(location, @name, @fields, @methods = [] of Function, @vis = false)
         super(location)
+        @quotes = [] of QuoteDecl
+        @comptimes = [] of ComptimeWalk
         @module_name = ""
       end
     end
@@ -59,11 +65,15 @@ module Avant
       getter name : String
       getter fields : Array(Field)
       getter methods : Array(Function)
+      property quotes : Array(QuoteDecl)
+      property comptimes : Array(ComptimeWalk)
       property vis : Bool
       property module_name : String
 
       def initialize(location, @name, @fields, @methods = [] of Function, @vis = false)
         super(location)
+        @quotes = [] of QuoteDecl
+        @comptimes = [] of ComptimeWalk
         @module_name = ""
       end
     end
@@ -101,11 +111,11 @@ module Avant
     end
 
     class Function < Node
-      getter name : String
+      property name : String
       getter params : Array(Param)
       property return_type : TypeName?
-      getter body : Array(Stmt)
-      getter receiver : Param?
+      property body : Array(Stmt)
+      property receiver : Param?
       property owner : String?
       property emit_name : String
       property type_params : Array(String)
@@ -113,6 +123,7 @@ module Avant
       property template : Function?
       property vis : Bool
       property module_name : String
+      property name_splice : Expr?
 
       def initialize(location, @name, @params, @return_type, @body, @receiver = nil, @owner = nil, @vis = false)
         super(location)
@@ -121,6 +132,7 @@ module Avant
         @generic = false
         @template = nil
         @module_name = ""
+        @name_splice = nil
       end
 
       def void? : Bool
@@ -137,7 +149,7 @@ module Avant
     end
 
     class Param < Node
-      getter name : String
+      property name : String
       property type : TypeName
       getter default : Expr?
 
@@ -147,14 +159,16 @@ module Avant
     end
 
     class TypeName < Node
-      getter name : String
+      property name : String
       getter args : Array(TypeName)
-      getter nilable : Bool
+      property nilable : Bool
       getter members : Array(TypeName)
-      getter qualifier : String?
+      property qualifier : String?
+      property splice : Expr?
 
       def initialize(location, @name, @args = [] of TypeName, @nilable = false, @members = [] of TypeName, @qualifier = nil)
         super(location)
+        @splice = nil
       end
 
       def union?
@@ -209,6 +223,14 @@ module Avant
     end
 
     class ContinueStmt < Stmt
+    end
+
+    class QuoteStmt < Stmt
+      property body : Array(Stmt)
+
+      def initialize(location, @body)
+        super(location)
+      end
     end
 
     class AssignStmt < Stmt
@@ -296,7 +318,7 @@ module Avant
     end
 
     class Call < Expr
-      getter callee : String
+      property callee : String
       getter args : Array(Expr)
       property receiver : Expr?
       property lib_name : String?
@@ -304,6 +326,7 @@ module Avant
       property spawn_captures : Array({String, Ty})
       property spawn_thunk : String?
       property resolved : String?
+      property callee_splice : Expr?
 
       def initialize(location, @callee, @args, @receiver = nil, @block = nil)
         super(location)
@@ -311,6 +334,7 @@ module Avant
         @spawn_captures = [] of {String, Ty}
         @spawn_thunk = nil
         @resolved = nil
+        @callee_splice = nil
       end
 
       def method? : Bool
@@ -320,7 +344,7 @@ module Avant
 
     class Block < Node
       getter params : Array(String)
-      getter body : Array(Stmt)
+      property body : Array(Stmt)
       property value_type : Ty?
 
       def initialize(location, @params, @body)
@@ -352,13 +376,15 @@ module Avant
 
     class FieldAccess < Expr
       getter object : Expr
-      getter field : String
+      property field : String
       property method_call : Bool
       property resolved : String?
+      property field_splice : Expr?
 
       def initialize(location, @object, @field, @method_call = false)
         super(location)
         @resolved = nil
+        @field_splice = nil
       end
     end
 
@@ -429,6 +455,38 @@ module Avant
     record InterpPart, text : String?, expr : Expr? do
       def literal?
         !@text.nil?
+      end
+    end
+
+    class Splice < Expr
+      getter inner : Expr
+
+      def initialize(location, @inner)
+        super(location)
+      end
+    end
+
+    class QuoteDecl < Node
+      getter functions : Array(Function)
+      property owner : String
+      property module_name : String
+
+      def initialize(location, @functions, @owner = "")
+        super(location)
+        @module_name = ""
+      end
+    end
+
+    class ComptimeWalk < Node
+      getter var_name : String
+      getter type_name : String
+      getter quote : QuoteDecl
+      property owner : String
+      property module_name : String
+
+      def initialize(location, @var_name, @type_name, @quote, @owner = "")
+        super(location)
+        @module_name = ""
       end
     end
   end
