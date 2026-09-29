@@ -14,11 +14,239 @@ class FuncSig {
   }
 
   fn mangled: String {
-    if self.owner.size > 0 {
-      return "${self.owner}__${self.name}"
-    }
-    self.name
+    self.node.emit_name
   }
+}
+
+fn required_arity(fnn: Function): Int {
+  i = 0
+  while i < fnn.params.size {
+    if d = fnn.params[i].default {
+      return i
+    }
+    i = i + 1
+  }
+  fnn.params.size
+}
+
+fn arity_ok(fnn: Function, argc: Int): Bool {
+  req = required_arity(fnn)
+  if argc < req {
+    return false
+  }
+  argc <= fnn.params.size
+}
+
+fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i].same_as(b[i]) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+fn is_op_fn_name(name: String): Bool {
+  if str_eq(name, "+") {
+    return true
+  }
+  if str_eq(name, "-") {
+    return true
+  }
+  if str_eq(name, "*") {
+    return true
+  }
+  if str_eq(name, "/") {
+    return true
+  }
+  if str_eq(name, "%") {
+    return true
+  }
+  if str_eq(name, "==") {
+    return true
+  }
+  if str_eq(name, "!=") {
+    return true
+  }
+  if str_eq(name, "<") {
+    return true
+  }
+  if str_eq(name, "<=") {
+    return true
+  }
+  if str_eq(name, ">") {
+    return true
+  }
+  if str_eq(name, ">=") {
+    return true
+  }
+  false
+}
+
+fn binary_op_method_name(op: Int): String {
+  fn_op_name(op)
+}
+
+fn mangle_ty(ty: Ty): String {
+  k = ty.kind
+  if k == tyk_int() {
+    return "Int"
+  }
+  if k == tyk_int64() {
+    return "Int64"
+  }
+  if k == tyk_uint64() {
+    return "UInt64"
+  }
+  if k == tyk_bool() {
+    return "Bool"
+  }
+  if k == tyk_float() {
+    return "Float64"
+  }
+  if k == tyk_string() {
+    return "String"
+  }
+  if k == tyk_void() {
+    return "Void"
+  }
+  if k == tyk_nil() {
+    return "Nil"
+  }
+  if k == tyk_buf() {
+    return "Buf"
+  }
+  if k == tyk_array() {
+    if e = ty.inner {
+      return "Array_${mangle_ty(e)}"
+    }
+    return "Array"
+  }
+  if k == tyk_ptr() {
+    if e = ty.inner {
+      return "Ptr_${mangle_ty(e)}"
+    }
+    return "Ptr"
+  }
+  if k == tyk_join() {
+    if e = ty.inner {
+      return "JoinHandle_${mangle_ty(e)}"
+    }
+    return "JoinHandle"
+  }
+  if k == tyk_hash() {
+    buf = buf_new()
+    buf.push_str("Hash")
+    if ke = ty.key {
+      buf.push_str("_")
+      buf.push_str(mangle_ty(ke))
+    }
+    if va = ty.val {
+      buf.push_str("_")
+      buf.push_str(mangle_ty(va))
+    }
+    return buf.to_s
+  }
+  if k == tyk_union() {
+    buf = buf_new()
+    i = 0
+    while i < ty.members.size {
+      if i > 0 {
+        buf.push_str("_")
+      }
+      buf.push_str(mangle_ty(ty.members[i]))
+      i = i + 1
+    }
+    return buf.to_s
+  }
+  ty.name
+}
+
+fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
+  if ty.is_union {
+    if ty.is_nilable {
+      inner = ty_without_nil(ty)
+      tn = ty_to_type_name(inner, loc)
+      if tn.nilable {
+      } else {
+        tn.nilable = true
+      }
+      return tn
+    }
+    out = TypeName.new(loc, "")
+    i = 0
+    while i < ty.members.size {
+      out.members.push(ty_to_type_name(ty.members[i], loc))
+      i = i + 1
+    }
+    return out
+  }
+  k = ty.kind
+  if k == tyk_int() {
+    return TypeName.new(loc, "Int")
+  }
+  if k == tyk_int64() {
+    return TypeName.new(loc, "Int64")
+  }
+  if k == tyk_uint64() {
+    return TypeName.new(loc, "UInt64")
+  }
+  if k == tyk_bool() {
+    return TypeName.new(loc, "Bool")
+  }
+  if k == tyk_float() {
+    return TypeName.new(loc, "Float64")
+  }
+  if k == tyk_string() {
+    return TypeName.new(loc, "String")
+  }
+  if k == tyk_buf() {
+    return TypeName.new(loc, "Buf")
+  }
+  if k == tyk_nil() {
+    return TypeName.new(loc, "Nil")
+  }
+  if k == tyk_void() {
+    return TypeName.new(loc, "Void")
+  }
+  if k == tyk_array() {
+    tn = TypeName.new(loc, "Array")
+    if e = ty.inner {
+      tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_hash() {
+    tn = TypeName.new(loc, "Hash")
+    if ke = ty.key {
+      tn.args.push(ty_to_type_name(ke, loc))
+    }
+    if va = ty.val {
+      tn.args.push(ty_to_type_name(va, loc))
+    }
+    return tn
+  }
+  if k == tyk_ptr() {
+    tn = TypeName.new(loc, "Ptr")
+    if e = ty.inner {
+      tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_join() {
+    tn = TypeName.new(loc, "JoinHandle")
+    if e = ty.inner {
+      tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  TypeName.new(loc, ty.name)
 }
 
 class CFunSig {
@@ -183,6 +411,9 @@ class Checker {
   loop_depth: Int = 0
   self_ty: Ty? = nil
   self_name: String = ""
+  pending: Array(Function)
+  instances: Array(Function)
+  next_ol: Int = 1
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -215,6 +446,11 @@ class Checker {
     self.return_type = ty_void()
     self.loop_depth = 0
     self.self_name = ""
+    pend: Array(Function) = []
+    self.pending = pend
+    insts: Array(Function) = []
+    self.instances = insts
+    self.next_ol = 1
   }
 
   fn has_err: Bool {
@@ -278,6 +514,630 @@ class Checker {
       return self.methods[id]
     }
     nil
+  }
+
+  fn alloc_ol(fnn: Function) {
+    fnn.ol_index = self.next_ol
+    self.next_ol = self.next_ol + 1
+  }
+
+  fn check_trailing_defaults(fnn: Function) {
+    seen = false
+    i = 0
+    while i < fnn.params.size {
+      p = fnn.params[i]
+      if d = p.default {
+        seen = true
+      } else {
+        if seen {
+          self.fail(p.loc, "default arguments must be trailing")
+          return
+        }
+      }
+      i = i + 1
+    }
+  }
+
+  fn count_named_fns(name: String): Int {
+    n = 0
+    i = 1
+    while i < self.functions.size {
+      if str_eq(self.functions[i].name, name) {
+        n = n + 1
+      }
+      i = i + 1
+    }
+    n
+  }
+
+  fn count_named_methods(owner: String, name: String): Int {
+    n = 0
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      if str_eq(sig.owner, owner) {
+        if str_eq(sig.name, name) {
+          n = n + 1
+        }
+      }
+      i = i + 1
+    }
+    n
+  }
+
+  fn find_sig_by_node(fnn: Function): FuncSig? {
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if sig.node.ol_index == fnn.ol_index {
+        return sig
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      if sig.node.ol_index == fnn.ol_index {
+        return sig
+      }
+      i = i + 1
+    }
+    nil
+  }
+
+  fn find_instance(emit: String): Function? {
+    i = 0
+    while i < self.instances.size {
+      inst = self.instances[i]
+      if str_eq(inst.emit_name, emit) {
+        return inst
+      }
+      i = i + 1
+    }
+    nil
+  }
+
+  fn subst_get(keys: Array(String), vals: Array(Ty), name: String): Ty? {
+    i = 0
+    while i < keys.size {
+      if str_eq(keys[i], name) {
+        return vals[i]
+      }
+      i = i + 1
+    }
+    nil
+  }
+
+  fn subst_put(keys: Array(String), vals: Array(Ty), name: String, ty: Ty): Bool {
+    if existing = self.subst_get(keys, vals, name) {
+      return existing.same_as(ty)
+    }
+    keys.push(name)
+    vals.push(ty)
+    true
+  }
+
+  fn unify_ty(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Bool {
+    if pattern.is_var {
+      return self.subst_put(keys, vals, pattern.name, actual)
+    }
+    if pattern.is_array {
+      if actual.is_array {
+        if pe = pattern.inner {
+          if ae = actual.inner {
+            return self.unify_ty(pe, ae, keys, vals)
+          }
+        }
+      }
+      return false
+    }
+    if pattern.is_hash {
+      if actual.is_hash {
+        if pk = pattern.key {
+          if ak = actual.key {
+            if pv = pattern.val {
+              if av = actual.val {
+                if self.unify_ty(pk, ak, keys, vals) {
+                  return self.unify_ty(pv, av, keys, vals)
+                }
+              }
+            }
+          }
+        }
+      }
+      return false
+    }
+    if pattern.is_ptr {
+      if actual.is_ptr {
+        if pe = pattern.inner {
+          if ae = actual.inner {
+            return self.unify_ty(pe, ae, keys, vals)
+          }
+        }
+      }
+      return false
+    }
+    if pattern.is_join {
+      if actual.is_join {
+        if pe = pattern.inner {
+          if ae = actual.inner {
+            return self.unify_ty(pe, ae, keys, vals)
+          }
+        }
+      }
+      return false
+    }
+    actual.same_as(pattern)
+  }
+
+  fn infer_subst(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
+    keys: Array(String) = []
+    vals: Array(Ty) = []
+    i = 0
+    while i < params.size {
+      if i < arg_tys.size {
+        if self.unify_ty(params[i], arg_tys[i], keys, vals) {
+        } else {
+          return nil
+        }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < tparams.size {
+      name = tparams[i]
+      if got = self.subst_get(keys, vals, name) {
+      } else {
+        if e = expected {
+          if e.is_void {
+          } else {
+            if self.unify_ty(ret, e, keys, vals) {
+            } else {
+              return nil
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    out: Array(Ty) = []
+    i = 0
+    while i < tparams.size {
+      if got = self.subst_get(keys, vals, tparams[i]) {
+        out.push(got)
+      } else {
+        return nil
+      }
+      i = i + 1
+    }
+    out
+  }
+
+  fn fill_defaults(expr: Expr, fnn: Function) {
+    while expr.args.size < fnn.params.size {
+      i = expr.args.size
+      if d = fnn.params[i].default {
+        cloned = clone_expr(d)
+        from: Array(String) = []
+        to: Array(Expr) = []
+        j = 0
+        while j < i {
+          from.push(fnn.params[j].name)
+          to.push(expr.args[j])
+          j = j + 1
+        }
+        expr.args.push(rewrite_expr_names(cloned, from, to))
+      } else {
+        self.fail(expr.loc, "${fnn.name} takes ${fnn.params.size} arguments, got ${expr.args.size}")
+        return
+      }
+    }
+  }
+
+  fn attach_method_fn(fnn: Function) {
+    owner = fnn.owner
+    i = 0
+    while i < self.program.structs.size {
+      sdef = self.program.structs[i]
+      if str_eq(sdef.name, owner) {
+        sdef.methods.push(fnn)
+        return
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if str_eq(cdef.name, owner) {
+        cdef.methods.push(fnn)
+        return
+      }
+      i = i + 1
+    }
+    self.program.functions.push(fnn)
+  }
+
+  fn instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+    from = sig.node.type_params
+    to: Array(TypeName) = []
+    buf = buf_new()
+    buf.push_str(sig.node.name)
+    i = 0
+    while i < from.size {
+      to.push(ty_to_type_name(subst[i], loc))
+      buf.push_str("__")
+      buf.push_str(mangle_ty(subst[i]))
+      i = i + 1
+    }
+    emit = buf.to_s
+    if existing = self.find_instance(emit) {
+      return self.find_sig_by_node(existing)
+    }
+    inst = clone_function(sig.node)
+    subst_function_types(inst, from, to)
+    inst.generic = false
+    tp: Array(String) = []
+    inst.type_params = tp
+    inst.emit_name = emit
+    self.alloc_ol(inst)
+    self.resolver.clear_tparams
+    params: Array(Ty) = []
+    i = 0
+    while i < inst.params.size {
+      params.push(self.resolver.resolve_value(inst.params[i].type))
+      self.pull_resolve
+      i = i + 1
+    }
+    ret = self.t_void()
+    if t = inst.return_type {
+      ret = self.resolver.resolve(t)
+      self.pull_resolve
+    }
+    self.program.functions.push(inst)
+    nsig = FuncSig.new(inst.name, inst, params, ret)
+    self.functions.push(nsig)
+    self.instances.push(inst)
+    self.pending.push(inst)
+    nsig
+  }
+
+  fn instantiate_method(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+    from = sig.node.type_params
+    to: Array(TypeName) = []
+    buf = buf_new()
+    buf.push_str(sig.owner)
+    buf.push_str("__")
+    buf.push_str(emit_op_name(sig.name))
+    i = 0
+    while i < from.size {
+      to.push(ty_to_type_name(subst[i], loc))
+      buf.push_str("__")
+      buf.push_str(mangle_ty(subst[i]))
+      i = i + 1
+    }
+    emit = buf.to_s
+    if existing = self.find_instance(emit) {
+      return self.find_sig_by_node(existing)
+    }
+    inst = clone_function(sig.node)
+    subst_function_types(inst, from, to)
+    inst.generic = false
+    tp: Array(String) = []
+    inst.type_params = tp
+    inst.emit_name = emit
+    inst.owner = sig.owner
+    self.alloc_ol(inst)
+    self.resolver.clear_tparams
+    params: Array(Ty) = []
+    i = 0
+    while i < inst.params.size {
+      params.push(self.resolver.resolve_value(inst.params[i].type))
+      self.pull_resolve
+      i = i + 1
+    }
+    ret = self.t_void()
+    if t = inst.return_type {
+      ret = self.resolver.resolve(t)
+      self.pull_resolve
+    }
+    self.attach_method_fn(inst)
+    nsig = FuncSig.new(inst.name, inst, params, ret)
+    nsig.owner = sig.owner
+    self.methods.push(nsig)
+    self.instances.push(inst)
+    self.pending.push(inst)
+    nsig
+  }
+
+  fn match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+    cands: Array(FuncSig) = []
+    saw_generic = false
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, name) {
+        is_inst = false
+        j = 0
+        while j < self.instances.size {
+          if self.instances[j].ol_index == sig.node.ol_index {
+            is_inst = true
+          }
+          j = j + 1
+        }
+        if is_inst {
+        } else {
+          if arity_ok(sig.node, arg_tys.size) {
+            if sig.node.generic {
+              saw_generic = true
+              if subst = self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+                cands.push(sig)
+              }
+            } else {
+              ok = true
+              k = 0
+              while k < arg_tys.size {
+                if ty_assignable(arg_tys[k], sig.params[k]) {
+                } else {
+                  ok = false
+                }
+                k = k + 1
+              }
+              if ok {
+                cands.push(sig)
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if cands.size == 0 {
+      if saw_generic {
+        self.fail(loc, "cannot infer type argument")
+      } else {
+        self.fail(loc, "unknown function ${name}")
+      }
+      return nil
+    }
+    if cands.size > 1 {
+      self.fail(loc, "ambiguous call to ${name}")
+      return nil
+    }
+    chosen = cands[0]
+    if chosen.node.generic {
+      if subst = self.infer_subst(chosen.node.type_params, chosen.params, arg_tys, chosen.ret, expected) {
+        return self.instantiate_function(chosen, subst, loc)
+      }
+      self.fail(loc, "cannot infer type argument")
+      return nil
+    }
+    chosen
+  }
+
+  fn match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+    cands: Array(FuncSig) = []
+    saw_generic = false
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      if str_eq(sig.owner, owner) {
+        if str_eq(sig.name, name) {
+          is_inst = false
+          j = 0
+          while j < self.instances.size {
+            if self.instances[j].ol_index == sig.node.ol_index {
+              is_inst = true
+            }
+            j = j + 1
+          }
+          if is_inst {
+          } else {
+            if arity_ok(sig.node, arg_tys.size) {
+              if sig.node.generic {
+                saw_generic = true
+                if subst = self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+                  cands.push(sig)
+                }
+              } else {
+                ok = true
+                k = 0
+                while k < arg_tys.size {
+                  if ty_assignable(arg_tys[k], sig.params[k]) {
+                  } else {
+                    ok = false
+                  }
+                  k = k + 1
+                }
+                if ok {
+                  cands.push(sig)
+                }
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if cands.size == 0 {
+      if saw_generic {
+        self.fail(loc, "cannot infer type argument")
+      } else {
+        self.fail(loc, "no method ${name} on ${owner}")
+      }
+      return nil
+    }
+    if cands.size > 1 {
+      self.fail(loc, "ambiguous call to ${owner}.${name}")
+      return nil
+    }
+    chosen = cands[0]
+    if chosen.node.generic {
+      if subst = self.infer_subst(chosen.node.type_params, chosen.params, arg_tys, chosen.ret, expected) {
+        return self.instantiate_method(chosen, subst, loc)
+      }
+      self.fail(loc, "cannot infer type argument")
+      return nil
+    }
+    chosen
+  }
+
+  fn dispatch_call(expr: Expr, expected: Ty?): Ty {
+    arg_tys: Array(Ty) = []
+    i = 0
+    while i < expr.args.size {
+      arg_tys.push(self.check_expr(expr.args[i]))
+      i = i + 1
+    }
+    if sig = self.match_func(expr.callee, arg_tys, expected, expr.loc) {
+      self.fill_defaults(expr, sig.node)
+      i = 0
+      while i < expr.args.size {
+        got = self.t_int()
+        if i < arg_tys.size {
+          got = arg_tys[i]
+        } else {
+          got = self.check_expr_as(expr.args[i], sig.params[i])
+        }
+        if ty_assignable(got, sig.params[i]) {
+        } else {
+          n = i + 1
+          self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        }
+        i = i + 1
+      }
+      expr.resolved = sig.node.emit_name
+      return sig.ret
+    }
+    self.t_int()
+  }
+
+  fn dispatch_method(expr: Expr, object: Ty, expected: Ty?): Ty {
+    if field_ty = object.field_named(expr.callee) {
+      self.fail(expr.loc, "${object.name}.${expr.callee} is a field, not a method")
+      return field_ty
+    }
+    arg_tys: Array(Ty) = []
+    i = 0
+    while i < expr.args.size {
+      arg_tys.push(self.check_expr(expr.args[i]))
+      i = i + 1
+    }
+    if sig = self.match_method(object.name, expr.callee, arg_tys, expected, expr.loc) {
+      self.fill_defaults(expr, sig.node)
+      i = 0
+      while i < expr.args.size {
+        got = self.t_int()
+        if i < arg_tys.size {
+          got = arg_tys[i]
+        } else {
+          got = self.check_expr_as(expr.args[i], sig.params[i])
+        }
+        if ty_assignable(got, sig.params[i]) {
+        } else {
+          n = i + 1
+          self.fail(expr.args[i].loc, "argument ${n} of ${object.name}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        }
+        i = i + 1
+      }
+      expr.resolved = sig.node.emit_name
+      return sig.ret
+    }
+    self.t_int()
+  }
+
+  fn assign_emit_names {
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if sig.node.generic {
+      } else {
+      name = sig.name
+      if str_eq(name, "main") {
+        if self.count_named_fns(name) > 1 {
+          self.fail(sig.node.loc, "function ${name} is already defined")
+          return
+        }
+      }
+      if str_eq(name, "run") {
+        if self.count_named_fns(name) > 1 {
+          self.fail(sig.node.loc, "function ${name} is already defined")
+          return
+        }
+      }
+      n = 0
+      j = 1
+      while j < self.functions.size {
+        other = self.functions[j]
+        if other.node.generic {
+        } else {
+          if str_eq(other.name, name) {
+            n = n + 1
+          }
+        }
+        j = j + 1
+      }
+      if n <= 1 {
+        sig.node.emit_name = name
+      } else {
+        buf = buf_new()
+        buf.push_str(name)
+        k = 0
+        while k < sig.params.size {
+          buf.push_str("__")
+          buf.push_str(mangle_ty(sig.params[k]))
+          k = k + 1
+        }
+        sig.node.emit_name = buf.to_s
+      }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      if sig.node.generic {
+      } else {
+      name = sig.name
+      owner = sig.owner
+      if str_eq(name, "initialize") {
+        if self.count_named_methods(owner, name) > 1 {
+          self.fail(sig.node.loc, "initialize cannot be overloaded")
+          return
+        }
+      }
+      n = 0
+      j = 0
+      while j < self.methods.size {
+        other = self.methods[j]
+        if other.node.generic {
+        } else {
+          if str_eq(other.owner, owner) {
+            if str_eq(other.name, name) {
+              n = n + 1
+            }
+          }
+        }
+        j = j + 1
+      }
+      sanitized = emit_op_name(name)
+      if n <= 1 {
+        sig.node.emit_name = "${owner}__${sanitized}"
+      } else {
+        buf = buf_new()
+        buf.push_str(owner)
+        buf.push_str("__")
+        buf.push_str(sanitized)
+        k = 0
+        while k < sig.params.size {
+          buf.push_str("__")
+          buf.push_str(mangle_ty(sig.params[k]))
+          k = k + 1
+        }
+        sig.node.emit_name = buf.to_s
+      }
+      }
+      i = i + 1
+    }
   }
 
   fn implicit_field(name: String): Ty? {
@@ -348,6 +1208,10 @@ class Checker {
     if self.has_err {
       return self.program
     }
+    self.assign_emit_names
+    if self.has_err {
+      return self.program
+    }
     self.check_field_defaults
     if self.has_err {
       return self.program
@@ -370,7 +1234,19 @@ class Checker {
       if self.has_err {
         return self.program
       }
-      self.check_function(fns[i])
+      fnn = fns[i]
+      if fnn.generic {
+      } else {
+        self.check_function(fnn)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.pending.size {
+      if self.has_err {
+        return self.program
+      }
+      self.check_function(self.pending[i])
       i = i + 1
     }
     self.program
@@ -436,8 +1312,8 @@ class Checker {
   }
 
   fn register_function(fnn: Function) {
-    if existing = self.find_fn(fnn.name) {
-      self.fail(fnn.loc, "function ${fnn.name} is already defined")
+    if is_op_fn_name(fnn.name) {
+      self.fail(fnn.loc, "operator methods need a receiver")
       return
     }
     if id = self.lib_names.get(fnn.name) {
@@ -452,6 +1328,26 @@ class Checker {
       self.fail(fnn.loc, "function ${fnn.name} collides with a type")
       return
     }
+    self.check_trailing_defaults(fnn)
+    if self.has_err {
+      return
+    }
+    tparams = collect_fn_type_params(fnn, self.resolver.named)
+    if str_eq(fnn.name, "main") {
+      if tparams.size > 0 {
+        self.fail(fnn.loc, "main cannot be generic")
+        return
+      }
+    }
+    if str_eq(fnn.name, "run") {
+      if tparams.size > 0 {
+        self.fail(fnn.loc, "run cannot be generic")
+        return
+      }
+    }
+    fnn.type_params = tparams
+    fnn.generic = tparams.size > 0
+    self.resolver.set_tparams(tparams)
     params: Array(Ty) = []
     i = 0
     while i < fnn.params.size {
@@ -465,24 +1361,44 @@ class Checker {
       self.pull_resolve
       if ty.is_opaque {
         self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+        self.resolver.clear_tparams
         return
       }
       ret = ty
     }
+    self.resolver.clear_tparams
+    i = 1
+    while i < self.functions.size {
+      existing = self.functions[i]
+      if str_eq(existing.name, fnn.name) {
+        if params_same(existing.params, params) {
+          self.fail(fnn.loc, "function ${fnn.name} is already defined")
+          return
+        }
+      }
+      i = i + 1
+    }
+    self.alloc_ol(fnn)
     sig = FuncSig.new(fnn.name, fnn, params, ret)
     self.functions.push(sig)
-    self.fn_index[fnn.name] = self.functions.size - 1
+    if taken = self.fn_index.get(fnn.name) {
+    } else {
+      self.fn_index[fnn.name] = self.functions.size - 1
+    }
   }
 
   fn register_method(fnn: Function) {
     owner_ty = self.t_int()
     has_owner = false
+    tparams = collect_fn_type_params(fnn, self.resolver.named)
+    self.resolver.set_tparams(tparams)
     if fnn.owner.size > 0 {
       if found = self.resolver.get_named(fnn.owner) {
         owner_ty = found
         has_owner = true
       } else {
         self.fail(fnn.loc, "unknown type ${fnn.owner}")
+        self.resolver.clear_tparams
         return
       }
     } else {
@@ -495,29 +1411,37 @@ class Checker {
           has_owner = true
         } else {
           self.fail(recv.loc, "methods can only extend a struct or class, not ${ty.show}")
+          self.resolver.clear_tparams
           return
         }
       } else {
         self.fail(fnn.loc, "unknown type")
+        self.resolver.clear_tparams
         return
       }
     }
     if has_owner {
     } else {
+      self.resolver.clear_tparams
       return
     }
     if str_eq(fnn.name, "new") {
       self.fail(fnn.loc, "new is reserved; write initialize")
+      self.resolver.clear_tparams
       return
     }
     if field_ty = owner_ty.field_named(fnn.name) {
       self.fail(fnn.loc, "method ${owner_ty.name}.${fnn.name} collides with a field")
+      self.resolver.clear_tparams
       return
     }
-    if existing = self.find_method(owner_ty.name, fnn.name) {
-      self.fail(fnn.loc, "method ${owner_ty.name}.${fnn.name} is already defined")
+    self.check_trailing_defaults(fnn)
+    if self.has_err {
+      self.resolver.clear_tparams
       return
     }
+    fnn.type_params = tparams
+    fnn.generic = tparams.size > 0
     params: Array(Ty) = []
     i = 0
     while i < fnn.params.size {
@@ -531,30 +1455,45 @@ class Checker {
       self.pull_resolve
       if ty.is_opaque {
         self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+        self.resolver.clear_tparams
         return
       }
       ret = ty
     }
+    self.resolver.clear_tparams
     if str_eq(fnn.name, "initialize") {
       if ret.is_void {
       } else {
         self.fail(fnn.loc, "initialize cannot return a value")
         return
       }
+      if fnn.generic {
+        self.fail(fnn.loc, "initialize cannot be generic")
+        return
+      }
     }
+    i = 0
+    while i < self.methods.size {
+      existing = self.methods[i]
+      if str_eq(existing.owner, owner_ty.name) {
+        if str_eq(existing.name, fnn.name) {
+          if params_same(existing.params, params) {
+            self.fail(fnn.loc, "method ${owner_ty.name}.${fnn.name} is already defined")
+            return
+          }
+        }
+      }
+      i = i + 1
+    }
+    self.alloc_ol(fnn)
     sig = FuncSig.new(fnn.name, fnn, params, ret)
     sig.owner = owner_ty.name
-    mangled = sig.mangled
-    if taken = self.find_fn(mangled) {
-      self.fail(fnn.loc, "function ${mangled} is already defined")
-      return
-    }
-    if bound = self.c_symbols.get(mangled) {
-      self.fail(fnn.loc, "emitted name ${mangled} collides with a C function")
-      return
-    }
     self.methods.push(sig)
-    self.method_index[mangled] = self.methods.size - 1
+    key = "${owner_ty.name}__${fnn.name}"
+    if taken = self.method_index.get(key) {
+    } else {
+      self.method_index[key] = self.methods.size - 1
+    }
   }
 
   fn reserve_constructors {
@@ -639,22 +1578,12 @@ class Checker {
   fn check_function(fnn: Function) {
     ret = self.t_void()
     params: Array(Ty) = []
-    if fn_is_method(fnn) {
-      if sig = self.find_method(fnn.owner, fnn.name) {
-        ret = sig.ret
-        params = sig.params
-      } else {
-        self.fail(fnn.loc, "unknown function ${fnn.name}")
-        return
-      }
+    if sig = self.find_sig_by_node(fnn) {
+      ret = sig.ret
+      params = sig.params
     } else {
-      if sig = self.find_fn(fnn.name) {
-        ret = sig.ret
-        params = sig.params
-      } else {
-        self.fail(fnn.loc, "unknown function ${fnn.name}")
-        return
-      }
+      self.fail(fnn.loc, "unknown function ${fnn.name}")
+      return
     }
     self.return_type = ret
     if ret.is_void {
@@ -686,6 +1615,17 @@ class Checker {
         return
       }
       self.bind(param.name, params[i])
+      if default = param.default {
+        saved = self.self_ty
+        self.self_ty = nil
+        got = self.check_expr_as(default, params[i])
+        self.self_ty = saved
+        if ty_assignable(got, params[i]) {
+        } else {
+          self.fail(default.loc, "cannot assign ${got.show} to ${params[i].show}")
+          return
+        }
+      }
       i = i + 1
     }
     self.check_body(fnn.body, ret, true)
@@ -1102,7 +2042,7 @@ class Checker {
       return self.check_name(expr)
     }
     if k == ex_call() {
-      return self.check_call(expr)
+      return self.check_call(expr, has_want, want)
     }
     if k == ex_unary() {
       return self.check_unary(expr)
@@ -1351,13 +2291,28 @@ class Checker {
           }
           return field_ty
         }
-        if sig = self.find_method(object.name, expr.ident) {
-          if sig.params.size == 0 {
+        has_zero = false
+        mi = 0
+        while mi < self.methods.size {
+          ms = self.methods[mi]
+          if str_eq(ms.owner, object.name) {
+            if str_eq(ms.name, expr.ident) {
+              if arity_ok(ms.node, 0) {
+                has_zero = true
+              }
+            }
+          }
+          mi = mi + 1
+        }
+        if has_zero {
+          arg_tys: Array(Ty) = []
+          none: Ty? = nil
+          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc) {
             expr.method_call = true
+            expr.resolved = sig.node.emit_name
             return sig.ret
           }
-          self.fail(expr.loc, "${object.name}.${expr.ident} takes ${sig.params.size} arguments")
-          return sig.ret
+          return self.t_int()
         }
         self.fail(expr.loc, "no field ${expr.ident} on ${object.name}")
         return self.t_int()
@@ -1736,6 +2691,33 @@ class Checker {
           return self.t_bool()
         }
         left = self.check_expr(l)
+        opname = binary_op_method_name(op)
+        if opname.size > 0 {
+          if left.is_agg {
+            has_op = false
+            mi = 0
+            while mi < self.methods.size {
+              ms = self.methods[mi]
+              if str_eq(ms.owner, left.name) {
+                if str_eq(ms.name, opname) {
+                  has_op = true
+                }
+              }
+              mi = mi + 1
+            }
+            if has_op {
+              right = self.check_expr(r)
+              arg_tys: Array(Ty) = []
+              arg_tys.push(right)
+              none: Ty? = nil
+              if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc) {
+                expr.resolved = sig.node.emit_name
+                return sig.ret
+              }
+              return self.t_int()
+            }
+          }
+        }
         right_has = false
         right_want = self.t_int()
         if left.is_integer {
@@ -1823,7 +2805,7 @@ class Checker {
     self.t_int()
   }
 
-  fn check_call(expr: Expr): Ty {
+  fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
     if recv = expr.receiver {
       return self.check_method_call(expr, recv)
     }
@@ -2134,26 +3116,11 @@ class Checker {
       self.fail(expr.loc, "buf_new takes an optional Int capacity")
       return self.t_buf()
     }
-    if sig = self.find_fn(expr.callee) {
-      if expr.args.size != sig.params.size {
-        self.fail(expr.loc, "${expr.callee} takes ${sig.params.size} arguments, got ${expr.args.size}")
-        return sig.ret
-      }
-      i = 0
-      while i < expr.args.size {
-        call_arg = expr.args[i]
-        got = self.check_expr_as(call_arg, sig.params[i])
-        if ty_assignable(got, sig.params[i]) {
-        } else {
-          n = i + 1
-          self.fail(call_arg.loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
-        }
-        i = i + 1
-      }
-      return sig.ret
+    expected: Ty? = nil
+    if has_want {
+      expected = want
     }
-    self.fail(expr.loc, "unknown function ${expr.callee}")
-    self.t_int()
+    return self.dispatch_call(expr, expected)
   }
 
   fn check_args(expr: Expr, params: Array(Ty), label: String) {
@@ -2179,8 +3146,43 @@ class Checker {
       if ty = self.resolver.get_named(recv.ident) {
         if ty.is_class {
           recv.ty = ty
-          if sig = self.find_method(ty.name, "initialize") {
-            self.check_args(expr, sig.params, "${ty.name}.new")
+          has_init = false
+          mi = 0
+          while mi < self.methods.size {
+            ms = self.methods[mi]
+            if str_eq(ms.owner, ty.name) {
+              if str_eq(ms.name, "initialize") {
+                has_init = true
+              }
+            }
+            mi = mi + 1
+          }
+          if has_init {
+            arg_tys: Array(Ty) = []
+            ai = 0
+            while ai < expr.args.size {
+              arg_tys.push(self.check_expr(expr.args[ai]))
+              ai = ai + 1
+            }
+            none: Ty? = nil
+            if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc) {
+              self.fill_defaults(expr, sig.node)
+              i = 0
+              while i < expr.args.size {
+                got = self.t_int()
+                if i < arg_tys.size {
+                  got = arg_tys[i]
+                } else {
+                  got = self.check_expr_as(expr.args[i], sig.params[i])
+                }
+                if ty_assignable(got, sig.params[i]) {
+                } else {
+                  n = i + 1
+                  self.fail(expr.args[i].loc, "argument ${n} of ${ty.name}.new is ${got.show}, expected ${sig.params[i].show}")
+                }
+                i = i + 1
+              }
+            }
           } else {
             if expr.args.size == 0 {
             } else {
@@ -2246,16 +3248,8 @@ class Checker {
       return self.check_join(expr, object)
     }
     if object.is_agg {
-      if field_ty = object.field_named(expr.callee) {
-        self.fail(expr.loc, "${object.name}.${expr.callee} is a field, not a method")
-        return field_ty
-      }
-      if sig = self.find_method(object.name, expr.callee) {
-        self.check_args(expr, sig.params, "${object.name}.${expr.callee}")
-        return sig.ret
-      }
-      self.fail(expr.loc, "no method ${expr.callee} on ${object.name}")
-      return self.t_int()
+      none: Ty? = nil
+      return self.dispatch_method(expr, object, none)
     }
     self.fail(expr.loc, "cannot call ${expr.callee} on ${object.show}")
     self.t_int()

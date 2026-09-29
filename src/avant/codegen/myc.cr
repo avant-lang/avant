@@ -39,9 +39,10 @@ module Avant
 
         @program.functions.each do |fn|
           next if fn.method?
+          next if fn.generic
           params = fn.params.map { |p| @resolver.resolve(p.type) }
           ret = fn.return_type ? @resolver.resolve(fn.return_type.not_nil!) : VoidTy::INSTANCE
-          @sigs[fn.name] = {params, ret}
+          @sigs[fn.emit_name] = {params, ret}
         end
         collect_methods
 
@@ -63,11 +64,12 @@ module Avant
       private def collect_methods : Nil
         @program.all_functions.each do |fn|
           next unless fn.method?
+          next if fn.generic
           owner = @named[fn.owner.not_nil!]
           params = fn.params.map { |p| @resolver.resolve(p.type) }
           ret = fn.return_type ? @resolver.resolve(fn.return_type.not_nil!) : VoidTy::INSTANCE
           bucket = @methods[owner.name] ||= {} of String => MethodSig
-          bucket[fn.name] = MethodSig.new(fn, owner, params, ret)
+          bucket[fn.emit_name] = MethodSig.new(fn, owner, params, ret)
         end
       end
 
@@ -89,11 +91,11 @@ module Avant
         @program.classes.each do |defn|
           defn.fields.each { |field| collect_expr(field.default) }
         end
-        @program.all_functions.each { |fn| collect_stmts(fn.body) }
+        @program.all_functions.each { |fn| collect_stmts(fn.body) unless fn.generic }
       end
 
       private def collect_spawns : Nil
-        @program.all_functions.each { |fn| collect_spawn_stmts(fn.body) }
+        @program.all_functions.each { |fn| collect_spawn_stmts(fn.body) unless fn.generic }
       end
 
       private def collect_spawn_stmts(body : Array(AST::Stmt)) : Nil
@@ -271,19 +273,20 @@ module Avant
       end
 
       private def emit_function(fn : AST::Function) : Nil
+        return if fn.generic
         @temps = 0
         @self_ty = nil
         @self_name = nil
 
         if fn.method?
-          sig = @methods[fn.owner.not_nil!][fn.name]
+          sig = @methods[fn.owner.not_nil!][fn.emit_name]
           @return_type = sig.return_type
           @self_ty = sig.owner
           @self_name = fn.self_name
           @c_main = false
           emit_method_func(fn, sig)
         else
-          params, @return_type = @sigs[fn.name]
+          params, @return_type = @sigs[fn.emit_name]
           @c_main = fn.name == "main"
           emit_plain_func(fn, params)
           @c_main = false
@@ -291,7 +294,7 @@ module Avant
       end
 
       private def emit_plain_func(fn : AST::Function, params : Array(Ty)) : Nil
-        line "FUNC :#{fn.name}"
+        line "FUNC :#{fn.emit_name}"
         @indent += 1
         if @c_main
           line "ARGS"
@@ -373,7 +376,7 @@ module Avant
       end
 
       private def emit_constructor(ty : ClassTy) : Nil
-        init = @methods[ty.name]?.try(&.["initialize"]?)
+        init = initialize_sig(ty.name)
         @temps = 0
         @return_type = ty.as(Ty)
         @self_ty = nil
@@ -850,7 +853,7 @@ module Avant
                 raise "unknown buf field #{expr.field}"
               end
             else
-              emit_method_invoke(expr.object, method_for(expr.object, expr.field), [] of AST::Expr)
+              emit_method_named(expr.object, expr.resolved.not_nil!, [] of AST::Expr)
             end
           elsif expr.is_a?(AST::FieldAccess) && expr.object.type.try(&.string?) && expr.field == "size"
             emit_expr(expr.object)
@@ -1042,6 +1045,10 @@ module Avant
       end
 
       private def emit_binary(expr : AST::Binary) : Nil
+        if name = expr.op_method
+          emit_method_named(expr.left, name, [expr.right] of AST::Expr)
+          return
+        end
         if expr.op.amp_amp? || expr.op.pipe_pipe?
           emit_logical(expr)
           return
@@ -1458,12 +1465,12 @@ module Avant
           elsif recv.type.try(&.join_handle?)
             emit_join(expr)
           else
-            emit_method_invoke(recv, method_for(recv, expr.callee), expr.args)
+            emit_method_named(recv, expr.resolved.not_nil!, expr.args)
           end
           return
         end
 
-        emit_call_named(expr.callee, expr.args)
+        emit_call_named(expr.resolved || expr.callee, expr.args)
       end
 
       private def emit_float_method(expr : AST::Call) : Nil
@@ -1530,15 +1537,28 @@ module Avant
         emit_call_named("#{name}__new", expr.args)
       end
 
+      private def initialize_sig(owner : String) : MethodSig?
+        bucket = @methods[owner]?
+        return nil unless bucket
+        bucket.each_value do |sig|
+          return sig if sig.node.name == "initialize"
+        end
+        nil
+      end
+
       private def method_for(recv : AST::Expr, name : String) : MethodSig
         ty = recv.type.as(AggTy)
         @methods[ty.name][name]
       end
 
-      private def emit_method_invoke(recv : AST::Expr, sig : MethodSig, args : Array(AST::Expr)) : Nil
+      private def emit_method_named(recv : AST::Expr, name : String, args : Array(AST::Expr)) : Nil
         emit_args(args)
         emit_self_ptr(recv)
-        line "CALL :#{sig.mangled}"
+        line "CALL :#{name}"
+      end
+
+      private def emit_method_invoke(recv : AST::Expr, sig : MethodSig, args : Array(AST::Expr)) : Nil
+        emit_method_named(recv, sig.mangled, args)
       end
 
       private def emit_self_ptr(recv : AST::Expr) : Nil

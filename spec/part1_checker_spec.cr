@@ -47,7 +47,7 @@ describe "Stage 8 Part 1 checker" do
           "ifbool.av"  => %(fn main {\n  if 1 { puts("x") }\n}\n),
           "noret.av"   => %(fn f: Int {\n}\nfn main {\n  puts(f())\n}\n),
           "leak.av"    => %(fn main {\n  if true {\n    y = 3\n  }\n  puts(y)\n}\n),
-          "badtype.av" => %(fn f(n: Float): Int {\n  n\n}\nfn main {\n  puts(1)\n}\n),
+          "badtype.av" => %(fn main {\n  x: Float = 1\n  puts(1)\n}\n),
         }
         cases.each do |name, text|
           path = File.join(dir, name)

@@ -77,13 +77,21 @@ module Avant
     class Function < Node
       getter name : String
       getter params : Array(Param)
-      getter return_type : TypeName?
+      property return_type : TypeName?
       getter body : Array(Stmt)
       getter receiver : Param?
       property owner : String?
+      property emit_name : String
+      property type_params : Array(String)
+      property generic : Bool
+      property template : Function?
 
       def initialize(location, @name, @params, @return_type, @body, @receiver = nil, @owner = nil)
         super(location)
+        @emit_name = @name
+        @type_params = [] of String
+        @generic = false
+        @template = nil
       end
 
       def void? : Bool
@@ -101,9 +109,10 @@ module Avant
 
     class Param < Node
       getter name : String
-      getter type : TypeName
+      property type : TypeName
+      getter default : Expr?
 
-      def initialize(location, @name, @type)
+      def initialize(location, @name, @type, @default = nil)
         super(location)
       end
     end
@@ -175,7 +184,7 @@ module Avant
     class AssignStmt < Stmt
       property target : Expr
       getter value : Expr
-      getter declared_type : TypeName?
+      property declared_type : TypeName?
       getter op : Token::Kind
 
       def initialize(location, @target, @value, @declared_type = nil, @op = Token::Kind::Eq)
@@ -264,12 +273,14 @@ module Avant
       property block : Block?
       property spawn_captures : Array({String, Ty})
       property spawn_thunk : String?
+      property resolved : String?
 
       def initialize(location, @callee, @args, @receiver = nil, @block = nil)
         super(location)
         @lib_name = nil
         @spawn_captures = [] of {String, Ty}
         @spawn_thunk = nil
+        @resolved = nil
       end
 
       def method? : Bool
@@ -301,9 +312,11 @@ module Avant
       getter op : Token::Kind
       getter left : Expr
       getter right : Expr
+      property op_method : String?
 
       def initialize(location, @op, @left, @right)
         super(location)
+        @op_method = nil
       end
     end
 
@@ -311,9 +324,11 @@ module Avant
       getter object : Expr
       getter field : String
       property method_call : Bool
+      property resolved : String?
 
       def initialize(location, @object, @field, @method_call = false)
         super(location)
+        @resolved = nil
       end
     end
 
@@ -344,7 +359,7 @@ module Avant
     end
 
     class ArrayNew < Expr
-      getter elem_type : TypeName
+      property elem_type : TypeName
       getter size : Expr
 
       def initialize(location, @elem_type, @size)
@@ -353,8 +368,8 @@ module Avant
     end
 
     class HashNew < Expr
-      getter key_type : TypeName
-      getter val_type : TypeName
+      property key_type : TypeName
+      property val_type : TypeName
 
       def initialize(location, @key_type, @val_type)
         super(location)

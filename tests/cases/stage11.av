@@ -1,0 +1,57 @@
+fn s11_greet(name: String, times: Int = 1): Int {
+  times
+}
+
+fn s11_show(n: Int): Int {
+  n
+}
+
+fn s11_show(s: String): Int {
+  s.size
+}
+
+fn s11_id(x: T): T {
+  x
+}
+
+fn s11_first(xs: Array(T)): T {
+  xs[0]
+}
+
+struct S11Vec {
+  x: Int
+  y: Int
+
+  fn +(other: S11Vec): S11Vec {
+    S11Vec { x: x + other.x, y: y + other.y }
+  }
+
+  fn wrap(v: T): T {
+    v
+  }
+}
+
+fn (a: S11Vec) *(s: Int): S11Vec {
+  S11Vec { x: a.x * s, y: a.y * s }
+}
+
+fn test_stage11(c: Checks) {
+  c.suite("tests/cases/stage11.av")
+  c.eq_int(s11_greet("hi"), 1, "default arg")
+  c.eq_int(s11_greet("hi", 4), 4, "explicit default arg")
+  c.eq_int(s11_show(7), 7, "overload Int")
+  c.eq_int(s11_show("ab"), 2, "overload String")
+  c.eq_int(s11_id(9), 9, "generic id Int")
+  c.eq_int(s11_id("xy").size, 2, "generic id String")
+  xs: Array(Int) = [8, 1]
+  c.eq_int(s11_first(xs), 8, "generic first")
+  a = S11Vec { x: 1, y: 2 }
+  b = S11Vec { x: 3, y: 4 }
+  s = a + b
+  c.eq_int(s.x, 4, "operator + x")
+  c.eq_int(s.y, 6, "operator + y")
+  p = a * 3
+  c.eq_int(p.x, 3, "operator * x")
+  c.eq_int(p.y, 6, "operator * y")
+  c.eq_int(a.wrap(11), 11, "generic method")
+}

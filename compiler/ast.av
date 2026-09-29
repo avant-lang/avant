@@ -47,6 +47,7 @@ class Param {
   loc: Location
   name: String = ""
   type: TypeName
+  default: Expr? = nil
 
   fn initialize(loc: Location, name: String, type: TypeName) {
     self.loc = loc
@@ -127,6 +128,7 @@ class Expr {
   val_type: TypeName? = nil
   ty: Ty? = nil
   spawn_thunk: String = ""
+  resolved: String = ""
   cap_names: Array(String)
   cap_tys: Array(Ty)
 
@@ -152,6 +154,7 @@ class Expr {
     ct: Array(Ty) = []
     self.cap_tys = ct
     self.spawn_thunk = ""
+    self.resolved = ""
   }
 }
 
@@ -216,6 +219,10 @@ class Function {
   body: Array(Stmt)
   receiver: Param? = nil
   owner: String = ""
+  emit_name: String = ""
+  type_params: Array(String)
+  generic: Bool = false
+  ol_index: Int = 0
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -224,6 +231,11 @@ class Function {
     self.params = p
     b: Array(Stmt) = []
     self.body = b
+    self.emit_name = name
+    tp: Array(String) = []
+    self.type_params = tp
+    self.generic = false
+    self.ol_index = 0
   }
 }
 
@@ -346,4 +358,517 @@ fn fn_self_name(fnn: Function): String {
     return r.name
   }
   "self"
+}
+
+fn clone_type_name(tn: TypeName): TypeName {
+  out = TypeName.new(tn.loc, tn.name)
+  out.nilable = tn.nilable
+  i = 0
+  while i < tn.args.size {
+    out.args.push(clone_type_name(tn.args[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < tn.members.size {
+    out.members.push(clone_type_name(tn.members[i]))
+    i = i + 1
+  }
+  out
+}
+
+fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): TypeName {
+  if tn.members.size > 0 {
+    out = TypeName.new(tn.loc, "")
+    out.nilable = tn.nilable
+    i = 0
+    while i < tn.members.size {
+      out.members.push(subst_type_name(tn.members[i], from, to))
+      i = i + 1
+    }
+    return out
+  }
+  if tn.args.size == 0 {
+    i = 0
+    while i < from.size {
+      if str_eq(tn.name, from[i]) {
+        rep = clone_type_name(to[i])
+        if tn.nilable {
+          if rep.nilable {
+          } else {
+            if rep.members.size > 0 {
+              wrapped = TypeName.new(tn.loc, "")
+              wrapped.members.push(rep)
+              wrapped.nilable = true
+              return wrapped
+            }
+            rep.nilable = true
+          }
+        }
+        return rep
+      }
+      i = i + 1
+    }
+  }
+  out = TypeName.new(tn.loc, tn.name)
+  out.nilable = tn.nilable
+  i = 0
+  while i < tn.args.size {
+    out.args.push(subst_type_name(tn.args[i], from, to))
+    i = i + 1
+  }
+  out
+}
+
+fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Array(String)) {
+  if tn.members.size > 0 {
+    i = 0
+    while i < tn.members.size {
+      type_name_unbound_names(tn.members[i], named, into)
+      i = i + 1
+    }
+    return
+  }
+  i = 0
+  while i < tn.args.size {
+    type_name_unbound_names(tn.args[i], named, into)
+    i = i + 1
+  }
+  if type_is_builtin(tn.name) {
+    return
+  }
+  if id = named.get(tn.name) {
+    return
+  }
+  if tn.args.size > 0 {
+    return
+  }
+  if tn.name.size == 0 {
+    return
+  }
+  i = 0
+  while i < into.size {
+    if str_eq(into[i], tn.name) {
+      return
+    }
+    i = i + 1
+  }
+  into.push(tn.name)
+}
+
+fn clone_param(p: Param): Param {
+  out = Param.new(p.loc, p.name, clone_type_name(p.type))
+  if d = p.default {
+    out.default = clone_expr(d)
+  }
+  out
+}
+
+fn clone_interp_part(p: InterpPart): InterpPart {
+  out = InterpPart.new()
+  out.text = p.text
+  if e = p.expr {
+    out.expr = clone_expr(e)
+  }
+  out
+}
+
+fn clone_switch_case(c: SwitchCase): SwitchCase {
+  out = SwitchCase.new(c.loc)
+  i = 0
+  while i < c.labels.size {
+    out.labels.push(c.labels[i])
+    i = i + 1
+  }
+  i = 0
+  while i < c.body.size {
+    out.body.push(clone_stmt(c.body[i]))
+    i = i + 1
+  }
+  out
+}
+
+fn clone_block(b: Block): Block {
+  out = Block.new(b.loc)
+  i = 0
+  while i < b.params.size {
+    out.params.push(b.params[i])
+    i = i + 1
+  }
+  i = 0
+  while i < b.body.size {
+    out.body.push(clone_stmt(b.body[i]))
+    i = i + 1
+  }
+  out
+}
+
+fn clone_expr(e: Expr): Expr {
+  out = Expr.new(e.kind, e.loc)
+  out.ident = e.ident
+  out.callee = e.callee
+  out.value_str = e.value_str
+  out.int_bits = e.int_bits
+  out.int_suffix = e.int_suffix
+  out.float_val = e.float_val
+  out.bool_val = e.bool_val
+  out.op = e.op
+  out.implicit_field = e.implicit_field
+  out.method_call = e.method_call
+  out.type_name = e.type_name
+  out.lib_name = e.lib_name
+  out.has_else = e.has_else
+  if x = e.left {
+    out.left = clone_expr(x)
+  }
+  if x = e.right {
+    out.right = clone_expr(x)
+  }
+  if x = e.object {
+    out.object = clone_expr(x)
+  }
+  if x = e.cond {
+    out.cond = clone_expr(x)
+  }
+  if x = e.receiver {
+    out.receiver = clone_expr(x)
+  }
+  if x = e.inner {
+    out.inner = clone_expr(x)
+  }
+  if x = e.size_expr {
+    out.size_expr = clone_expr(x)
+  }
+  i = 0
+  while i < e.args.size {
+    out.args.push(clone_expr(e.args[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    out.elems.push(clone_expr(e.elems[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_names.size {
+    out.field_names.push(e.field_names[i])
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    out.field_exprs.push(clone_expr(e.field_exprs[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    out.parts.push(clone_interp_part(e.parts[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < e.cases.size {
+    out.cases.push(clone_switch_case(e.cases[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    out.else_body.push(clone_stmt(e.else_body[i]))
+    i = i + 1
+  }
+  if b = e.block {
+    out.block = clone_block(b)
+  }
+  if t = e.elem_type {
+    out.elem_type = clone_type_name(t)
+  }
+  if t = e.key_type {
+    out.key_type = clone_type_name(t)
+  }
+  if t = e.val_type {
+    out.val_type = clone_type_name(t)
+  }
+  out
+}
+
+fn clone_stmt(s: Stmt): Stmt {
+  out = Stmt.new(s.kind, s.loc)
+  out.bind = s.bind
+  out.op = s.op
+  if x = s.expr {
+    out.expr = clone_expr(x)
+  }
+  if x = s.value {
+    out.value = clone_expr(x)
+  }
+  if x = s.target {
+    out.target = clone_expr(x)
+  }
+  if x = s.cond {
+    out.cond = clone_expr(x)
+  }
+  i = 0
+  while i < s.then_body.size {
+    out.then_body.push(clone_stmt(s.then_body[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    out.else_body.push(clone_stmt(s.else_body[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    out.body.push(clone_stmt(s.body[i]))
+    i = i + 1
+  }
+  if t = s.declared {
+    out.declared = clone_type_name(t)
+  }
+  out
+}
+
+fn clone_function(fnn: Function): Function {
+  out = Function.new(fnn.loc, fnn.name)
+  out.owner = fnn.owner
+  out.emit_name = fnn.emit_name
+  if r = fnn.receiver {
+    out.receiver = clone_param(r)
+  }
+  if t = fnn.return_type {
+    out.return_type = clone_type_name(t)
+  }
+  i = 0
+  while i < fnn.params.size {
+    out.params.push(clone_param(fnn.params[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < fnn.body.size {
+    out.body.push(clone_stmt(fnn.body[i]))
+    i = i + 1
+  }
+  i = 0
+  while i < fnn.type_params.size {
+    out.type_params.push(fnn.type_params[i])
+    i = i + 1
+  }
+  out.generic = fnn.generic
+  out
+}
+
+fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
+  if x = e.left {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = e.right {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = e.object {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = e.cond {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = e.receiver {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = e.inner {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = e.size_expr {
+    subst_type_in_expr(x, from, to)
+  }
+  i = 0
+  while i < e.args.size {
+    subst_type_in_expr(e.args[i], from, to)
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    subst_type_in_expr(e.elems[i], from, to)
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    subst_type_in_expr(e.field_exprs[i], from, to)
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    p = e.parts[i]
+    if inner = p.expr {
+      subst_type_in_expr(inner, from, to)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.cases.size {
+    subst_type_in_stmts(e.cases[i].body, from, to)
+    i = i + 1
+  }
+  subst_type_in_stmts(e.else_body, from, to)
+  if b = e.block {
+    subst_type_in_stmts(b.body, from, to)
+  }
+  if t = e.elem_type {
+    e.elem_type = subst_type_name(t, from, to)
+  }
+  if t = e.key_type {
+    e.key_type = subst_type_name(t, from, to)
+  }
+  if t = e.val_type {
+    e.val_type = subst_type_name(t, from, to)
+  }
+}
+
+fn subst_type_in_stmts(body: Array(Stmt), from: Array(String), to: Array(TypeName)) {
+  i = 0
+  while i < body.size {
+    subst_type_in_stmt(body[i], from, to)
+    i = i + 1
+  }
+}
+
+fn subst_type_in_stmt(s: Stmt, from: Array(String), to: Array(TypeName)) {
+  if x = s.expr {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = s.value {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = s.target {
+    subst_type_in_expr(x, from, to)
+  }
+  if x = s.cond {
+    subst_type_in_expr(x, from, to)
+  }
+  subst_type_in_stmts(s.then_body, from, to)
+  subst_type_in_stmts(s.else_body, from, to)
+  subst_type_in_stmts(s.body, from, to)
+  if t = s.declared {
+    s.declared = subst_type_name(t, from, to)
+  }
+}
+
+fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeName)) {
+  if r = fnn.receiver {
+    r.type = subst_type_name(r.type, from, to)
+  }
+  if t = fnn.return_type {
+    fnn.return_type = subst_type_name(t, from, to)
+  }
+  i = 0
+  while i < fnn.params.size {
+    p = fnn.params[i]
+    p.type = subst_type_name(p.type, from, to)
+    if d = p.default {
+      subst_type_in_expr(d, from, to)
+    }
+    i = i + 1
+  }
+  subst_type_in_stmts(fnn.body, from, to)
+}
+
+fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
+  if e.kind == ex_name() {
+    i = 0
+    while i < from.size {
+      if str_eq(e.ident, from[i]) {
+        return clone_expr(to[i])
+      }
+      i = i + 1
+    }
+    return e
+  }
+  if x = e.left {
+    e.left = rewrite_expr_names(x, from, to)
+  }
+  if x = e.right {
+    e.right = rewrite_expr_names(x, from, to)
+  }
+  if x = e.object {
+    e.object = rewrite_expr_names(x, from, to)
+  }
+  if x = e.cond {
+    e.cond = rewrite_expr_names(x, from, to)
+  }
+  if x = e.receiver {
+    e.receiver = rewrite_expr_names(x, from, to)
+  }
+  if x = e.inner {
+    e.inner = rewrite_expr_names(x, from, to)
+  }
+  if x = e.size_expr {
+    e.size_expr = rewrite_expr_names(x, from, to)
+  }
+  i = 0
+  while i < e.args.size {
+    e.args[i] = rewrite_expr_names(e.args[i], from, to)
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    e.elems[i] = rewrite_expr_names(e.elems[i], from, to)
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    e.field_exprs[i] = rewrite_expr_names(e.field_exprs[i], from, to)
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    p = e.parts[i]
+    if inner = p.expr {
+      p.expr = rewrite_expr_names(inner, from, to)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.cases.size {
+    rewrite_stmt_names_body(e.cases[i].body, from, to)
+    i = i + 1
+  }
+  rewrite_stmt_names_body(e.else_body, from, to)
+  e
+}
+
+fn rewrite_stmt_names_body(body: Array(Stmt), from: Array(String), to: Array(Expr)) {
+  i = 0
+  while i < body.size {
+    rewrite_stmt_names(body[i], from, to)
+    i = i + 1
+  }
+}
+
+fn rewrite_stmt_names(s: Stmt, from: Array(String), to: Array(Expr)) {
+  if x = s.expr {
+    s.expr = rewrite_expr_names(x, from, to)
+  }
+  if x = s.value {
+    s.value = rewrite_expr_names(x, from, to)
+  }
+  if x = s.target {
+    s.target = rewrite_expr_names(x, from, to)
+  }
+  if x = s.cond {
+    s.cond = rewrite_expr_names(x, from, to)
+  }
+  rewrite_stmt_names_body(s.then_body, from, to)
+  rewrite_stmt_names_body(s.else_body, from, to)
+  rewrite_stmt_names_body(s.body, from, to)
+}
+
+fn collect_fn_type_params(fnn: Function, named: Hash(String, Int)): Array(String) {
+  into: Array(String) = []
+  i = 0
+  while i < fnn.params.size {
+    type_name_unbound_names(fnn.params[i].type, named, into)
+    i = i + 1
+  }
+  if r = fnn.receiver {
+    type_name_unbound_names(r.type, named, into)
+  }
+  if t = fnn.return_type {
+    type_name_unbound_names(t, named, into)
+  }
+  into
 }

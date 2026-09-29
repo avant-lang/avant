@@ -53,6 +53,7 @@ class TypeResolver {
   t_void: Ty
   t_nil: Ty
   t_buf: Ty
+  tparams: Hash(String, Int)
 
   fn initialize {
     n = Hash(String, Int).new
@@ -71,8 +72,25 @@ class TypeResolver {
     self.t_void = ty_void()
     self.t_nil = ty_nil()
     self.t_buf = ty_buf()
+    tp = Hash(String, Int).new
+    self.tparams = tp
     self.failed = false
     self.err = nil
+  }
+
+  fn set_tparams(names: Array(String)) {
+    tp = Hash(String, Int).new
+    i = 0
+    while i < names.size {
+      tp[names[i]] = 1
+      i = i + 1
+    }
+    self.tparams = tp
+  }
+
+  fn clear_tparams {
+    tp = Hash(String, Int).new
+    self.tparams = tp
   }
 
   fn has_err: Bool {
@@ -222,6 +240,11 @@ class TypeResolver {
       }
       return ty_ptr(self.resolve(inner))
     }
+    if id = self.tparams.get(tn.name) {
+      if tn.args.size == 0 {
+        return ty_var(tn.name)
+      }
+    }
     self.reject_args(tn)
     if found = self.get_named(tn.name) {
       return found
@@ -234,10 +257,15 @@ class TypeResolver {
   }
 }
 
-fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
+fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int)) {
   i = 0
   while i < tn.args.size {
-    note_ptr_opaque(tn.args[i], resolver)
+    note_ptr_opaque_skip(tn.args[i], resolver, skip)
+    i = i + 1
+  }
+  i = 0
+  while i < tn.members.size {
+    note_ptr_opaque_skip(tn.members[i], resolver, skip)
     i = i + 1
   }
   if str_eq(tn.name, "Ptr") {
@@ -250,6 +278,9 @@ fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
         if existing = resolver.get_named(inner.name) {
           return
         }
+        if skipped = skip.get(inner.name) {
+          return
+        }
         if already = resolver.get_opaque(inner.name) {
           return
         }
@@ -259,6 +290,11 @@ fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
       }
     }
   }
+}
+
+fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
+  empty = Hash(String, Int).new
+  note_ptr_opaque_skip(tn, resolver, empty)
 }
 
 fn note_type_name(tn: TypeName, resolver: TypeResolver) {
@@ -308,16 +344,23 @@ fn collect_opaques(program: Program, resolver: TypeResolver) {
   i = 0
   while i < fns.size {
     fnn = fns[i]
+    names = collect_fn_type_params(fnn, resolver.named)
+    skip = Hash(String, Int).new
+    n = 0
+    while n < names.size {
+      skip[names[n]] = 1
+      n = n + 1
+    }
     j = 0
     while j < fnn.params.size {
-      note_type_name(fnn.params[j].type, resolver)
+      note_ptr_opaque_skip(fnn.params[j].type, resolver, skip)
       j = j + 1
     }
     if recv = fnn.receiver {
-      note_type_name(recv.type, resolver)
+      note_ptr_opaque_skip(recv.type, resolver, skip)
     }
     if ret = fnn.return_type {
-      note_type_name(ret, resolver)
+      note_ptr_opaque_skip(ret, resolver, skip)
     }
     i = i + 1
   }

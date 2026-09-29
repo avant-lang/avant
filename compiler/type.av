@@ -15,6 +15,7 @@ fn tyk_hash: Int { 14 }
 fn tyk_buf: Int { 15 }
 fn tyk_join: Int { 16 }
 fn tyk_opaque: Int { 17 }
+fn tyk_var: Int { 18 }
 
 fn str_lt(a: String, b: String): Bool {
   n = a.size
@@ -87,6 +88,7 @@ class Ty {
   fn is_buf: Bool { self.kind == tyk_buf() }
   fn is_join: Bool { self.kind == tyk_join() }
   fn is_opaque: Bool { self.kind == tyk_opaque() }
+  fn is_var: Bool { self.kind == tyk_var() }
   fn is_agg: Bool {
     if self.is_struct {
       return true
@@ -201,6 +203,9 @@ class Ty {
       return str_eq(self.name, other.name)
     }
     if k == tyk_opaque() {
+      return str_eq(self.name, other.name)
+    }
+    if k == tyk_var() {
       return str_eq(self.name, other.name)
     }
     if k == tyk_union() {
@@ -322,6 +327,9 @@ class Ty {
     if k == tyk_buf() {
       return "Buf"
     }
+    if k == tyk_var() {
+      return self.name
+    }
     if k == tyk_array() {
       buf = buf_new()
       buf.push_str("Array(")
@@ -404,6 +412,12 @@ fn ty_string: Ty { Ty.new(tyk_string()) }
 fn ty_void: Ty { Ty.new(tyk_void()) }
 fn ty_nil: Ty { Ty.new(tyk_nil()) }
 fn ty_buf: Ty { Ty.new(tyk_buf()) }
+
+fn ty_var(name: String): Ty {
+  t = Ty.new(tyk_var())
+  t.name = name
+  t
+}
 
 fn ty_array(elem: Ty): Ty {
   t = Ty.new(tyk_array())

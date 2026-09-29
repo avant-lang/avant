@@ -912,19 +912,22 @@ class MycGen {
       fnn = self.program.functions[i]
       if fn_is_method(fnn) {
       } else {
-        params: Array(Ty) = []
-        j = 0
-        while j < fnn.params.size {
-          params.push(self.resolver.resolve_value(fnn.params[j].type))
-          j = j + 1
+        if fnn.generic {
+        } else {
+          params: Array(Ty) = []
+          j = 0
+          while j < fnn.params.size {
+            params.push(self.resolver.resolve_value(fnn.params[j].type))
+            j = j + 1
+          }
+          ret = ty_void()
+          if t = fnn.return_type {
+            ret = self.resolver.resolve(t)
+          }
+          sig = FuncSig.new(fnn.name, fnn, params, ret)
+          self.functions.push(sig)
+          self.fn_index[fnn.emit_name] = self.functions.size - 1
         }
-        ret = ty_void()
-        if t = fnn.return_type {
-          ret = self.resolver.resolve(t)
-        }
-        sig = FuncSig.new(fnn.name, fnn, params, ret)
-        self.functions.push(sig)
-        self.fn_index[fnn.name] = self.functions.size - 1
       }
       i = i + 1
     }
@@ -936,28 +939,31 @@ class MycGen {
     while i < fns.size {
       fnn = fns[i]
       if fn_is_method(fnn) {
-        owner = fnn.owner
-        if owner.size == 0 {
-          if r = fnn.receiver {
-            ty = self.resolver.resolve(r.type)
-            owner = ty.name
-            fnn.owner = owner
+        if fnn.generic {
+        } else {
+          owner = fnn.owner
+          if owner.size == 0 {
+            if r = fnn.receiver {
+              ty = self.resolver.resolve(r.type)
+              owner = ty.name
+              fnn.owner = owner
+            }
           }
+          params: Array(Ty) = []
+          j = 0
+          while j < fnn.params.size {
+            params.push(self.resolver.resolve_value(fnn.params[j].type))
+            j = j + 1
+          }
+          ret = ty_void()
+          if t = fnn.return_type {
+            ret = self.resolver.resolve(t)
+          }
+          sig = FuncSig.new(fnn.name, fnn, params, ret)
+          sig.owner = owner
+          self.methods.push(sig)
+          self.method_index[fnn.emit_name] = self.methods.size - 1
         }
-        params: Array(Ty) = []
-        j = 0
-        while j < fnn.params.size {
-          params.push(self.resolver.resolve_value(fnn.params[j].type))
-          j = j + 1
-        }
-        ret = ty_void()
-        if t = fnn.return_type {
-          ret = self.resolver.resolve(t)
-        }
-        sig = FuncSig.new(fnn.name, fnn, params, ret)
-        sig.owner = owner
-        self.methods.push(sig)
-        self.method_index[sig.mangled] = self.methods.size - 1
       }
       i = i + 1
     }
@@ -977,6 +983,27 @@ class MycGen {
     key = "${owner}__${name}"
     if id = self.method_index.get(key) {
       return self.methods[id]
+    }
+    nil
+  }
+
+  fn find_method_emit(emit: String): FuncSig? {
+    if id = self.method_index.get(emit) {
+      return self.methods[id]
+    }
+    nil
+  }
+
+  fn find_initialize(owner: String): FuncSig? {
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      if str_eq(sig.owner, owner) {
+        if str_eq(sig.name, "initialize") {
+          return sig
+        }
+      }
+      i = i + 1
     }
     nil
   }
@@ -1069,7 +1096,10 @@ class MycGen {
     fns = program_all_functions(self.program)
     i = 0
     while i < fns.size {
-      self.collect_stmts(fns[i].body)
+      if fns[i].generic {
+      } else {
+        self.collect_stmts(fns[i].body)
+      }
       i = i + 1
     }
   }
@@ -1338,12 +1368,15 @@ class MycGen {
   }
 
   fn emit_function(fnn: Function) {
+    if fnn.generic {
+      return
+    }
     self.temps = 0
     self.c_main = false
     self.self_ty = nil
     self.self_name = ""
     if fn_is_method(fnn) {
-      if sig = self.find_method(fnn.owner, fnn.name) {
+      if sig = self.find_method_emit(fnn.emit_name) {
         self.return_type = sig.ret
         if owner = self.resolver.get_named(sig.owner) {
           self.self_ty = owner
@@ -1355,7 +1388,7 @@ class MycGen {
       self.self_name = ""
       return
     }
-    if sig = self.find_fn(fnn.name) {
+    if sig = self.find_fn(fnn.emit_name) {
       self.return_type = sig.ret
       if str_eq(fnn.name, "main") {
         self.c_main = true
@@ -1384,7 +1417,7 @@ class MycGen {
   }
 
   fn emit_plain_func(fnn: Function, params: Array(Ty)) {
-    self.line("FUNC :${fnn.name}")
+    self.line("FUNC :${fnn.emit_name}")
     self.indent = self.indent + 1
     if self.c_main {
       self.line("ARGS")
@@ -1576,7 +1609,7 @@ class MycGen {
     self.return_type = ty
     self.self_ty = nil
     self.self_name = ""
-    init_sig = self.find_method(ty.name, "initialize")
+    init_sig = self.find_initialize(ty.name)
     ctor = "${ty.name}__new"
     self.line("FUNC :${ctor}")
     self.indent = self.indent + 1
@@ -2301,7 +2334,11 @@ class MycGen {
               }
             } else {
               empty: Array(Expr) = []
-              self.emit_method_invoke(obj, expr.ident, empty)
+              name = expr.resolved
+              if name.size == 0 {
+                name = "${object_ty.name}__${emit_op_name(expr.ident)}"
+              }
+              self.emit_method_invoke(obj, name, empty)
             }
           }
         } else {
@@ -2749,6 +2786,16 @@ class MycGen {
   }
 
   fn emit_binary(expr: Expr) {
+    if expr.resolved.size > 0 {
+      if l = expr.left {
+        if r = expr.right {
+          args: Array(Expr) = []
+          args.push(r)
+          self.emit_method_invoke(l, expr.resolved, args)
+          return
+        }
+      }
+    }
     if expr.op == tk_amp_amp() {
       self.emit_logical(expr)
       return
@@ -3421,7 +3468,7 @@ class MycGen {
         self.emit_join(expr)
         return
       }
-      self.emit_method_invoke(recv, expr.callee, expr.args)
+      self.emit_method_invoke(recv, expr.resolved, expr.args)
       return
     }
     if str_eq(expr.callee, "puts") {
@@ -3746,7 +3793,11 @@ class MycGen {
       self.line("CALL :avant_http_roundtrip")
       return
     }
-    self.emit_call_named(expr.callee, expr.args)
+    name = expr.resolved
+    if name.size == 0 {
+      name = expr.callee
+    }
+    self.emit_call_named(name, expr.args)
   }
 
   fn is_struct_self(name: String): Bool {
@@ -3781,9 +3832,7 @@ class MycGen {
   fn emit_method_invoke(recv: Expr, name: String, args: Array(Expr)) {
     self.emit_args(args)
     self.emit_self_ptr(recv)
-    ty = expr_ty(recv)
-    mangled = "${ty.name}__${name}"
-    self.line("CALL :${mangled}")
+    self.line("CALL :${name}")
   }
 
   fn emit_ctor_call(expr: Expr, recv: Expr) {

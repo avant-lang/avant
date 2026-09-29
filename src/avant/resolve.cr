@@ -1,13 +1,13 @@
 module Avant
-  record MethodSig,
-    node : AST::Function,
-    owner : AggTy,
-    params : Array(Ty),
-    return_type : Ty do
-    def mangled : String
-      "#{owner.name}__#{node.name}"
+    record MethodSig,
+      node : AST::Function,
+      owner : AggTy,
+      params : Array(Ty),
+      return_type : Ty do
+      def mangled : String
+        node.emit_name
+      end
     end
-  end
 
   def self.load_types(program : AST::Program) : {Hash(String, AggTy), Hash(String, OpaqueTy)}
     named = {} of String => AggTy
@@ -72,24 +72,52 @@ module Avant
     program.structs.each { |defn| defn.fields.each { |f| note.call(f.type) } }
     program.classes.each { |defn| defn.fields.each { |f| note.call(f.type) } }
     program.all_functions.each do |fn|
-      fn.params.each { |p| note.call(p.type) }
+      skip = collect_type_param_names(fn, named)
+      fn.params.each { |p| note_ptr_opaque(p.type, named, opaques, skip) }
       if recv = fn.receiver
-        note.call(recv.type)
+        note_ptr_opaque(recv.type, named, opaques, skip)
       end
       if ret = fn.return_type
-        note.call(ret)
+        note_ptr_opaque(ret, named, opaques, skip)
       end
     end
     opaques
   end
 
-  def self.note_ptr_opaque(tn : AST::TypeName, named : Hash(String, AggTy), opaques : Hash(String, OpaqueTy)) : Nil
-    tn.args.each { |a| note_ptr_opaque(a, named, opaques) }
+  def self.collect_type_param_names(fn : AST::Function, named : Hash(String, AggTy)) : Set(String)
+    into = [] of String
+    fn.params.each { |p| collect_unbound_type_names(p.type, named, into) }
+    if r = fn.receiver
+      collect_unbound_type_names(r.type, named, into)
+    end
+    if t = fn.return_type
+      collect_unbound_type_names(t, named, into)
+    end
+    Set.new(into)
+  end
+
+  def self.collect_unbound_type_names(tn : AST::TypeName, named : Hash(String, AggTy), into : Array(String)) : Nil
+    if tn.union?
+      tn.members.each { |m| collect_unbound_type_names(m, named, into) }
+      return
+    end
+    tn.args.each { |a| collect_unbound_type_names(a, named, into) }
+    return if TypeResolver.builtin?(tn.name)
+    return if named.has_key?(tn.name)
+    return unless tn.args.empty?
+    return if tn.name.empty?
+    into << tn.name unless into.includes?(tn.name)
+  end
+
+  def self.note_ptr_opaque(tn : AST::TypeName, named : Hash(String, AggTy), opaques : Hash(String, OpaqueTy), skip = Set(String).new) : Nil
+    tn.args.each { |a| note_ptr_opaque(a, named, opaques, skip) }
+    tn.members.each { |m| note_ptr_opaque(m, named, opaques, skip) }
     return unless tn.name == "Ptr" && tn.args.size == 1
     inner = tn.args[0]
     return unless inner.args.empty?
     return if TypeResolver.builtin?(inner.name)
     return if named.has_key?(inner.name)
+    return if skip.includes?(inner.name)
     opaques[inner.name] ||= OpaqueTy.new(inner.name)
   end
 
@@ -108,7 +136,7 @@ module Avant
       BUILTINS.includes?(name)
     end
 
-    def initialize(@named : Hash(String, AggTy), @opaques = {} of String => OpaqueTy)
+    def initialize(@named : Hash(String, AggTy), @opaques = {} of String => OpaqueTy, @type_params = Set(String).new)
     end
 
     def resolve_value(tn : AST::TypeName) : Ty
@@ -187,6 +215,9 @@ module Avant
           PtrTy.new(resolve(inner))
         end
       else
+        if @type_params.includes?(tn.name) && tn.args.empty?
+          return TypeVar.new(tn.name)
+        end
         reject_args(tn)
         @named[tn.name]? || @opaques[tn.name]? || raise CompileError.at(tn.location, "unknown type #{tn.name}")
       end

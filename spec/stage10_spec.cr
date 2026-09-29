@@ -91,7 +91,8 @@ describe "Stage 10 native suite" do
       printed.should match(/PASS  tests\/cases\/gc\.av/)
       printed.should match(/PASS  tests\/cases\/holes\.av/)
       printed.should match(/PASS  tests\/cases\/lang\.av/)
-      printed.should match(/Test Suites: 8 passed, 8 total/)
+      printed.should match(/PASS  tests\/cases\/stage11\.av/)
+      printed.should match(/Test Suites: 9 passed, 9 total/)
       printed.should match(/Ran all test suites/)
     end
   end

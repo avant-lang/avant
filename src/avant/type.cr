@@ -72,6 +72,10 @@ module Avant
       false
     end
 
+    def type_var?
+      false
+    end
+
     def aggregate?
       struct? || class?
     end
@@ -218,6 +222,29 @@ module Avant
 
     def to_s(io : IO) : Nil
       io << "String"
+    end
+  end
+
+  class TypeVar < Ty
+    getter name : String
+
+    def initialize(@name)
+    end
+
+    def type_var?
+      true
+    end
+
+    def myc : String
+      raise "type parameter #{@name} is not concrete"
+    end
+
+    def same?(other : Ty) : Bool
+      other.is_a?(TypeVar) && other.name == @name
+    end
+
+    def to_s(io : IO) : Nil
+      io << @name
     end
   end
 
@@ -575,6 +602,48 @@ module Avant
 
     def to_s(io : IO) : Nil
       io << "JoinHandle(" << @result << ')'
+    end
+  end
+
+  def self.emit_op_name(name : String) : String
+    case name
+    when "+"
+      "plus"
+    when "-"
+      "minus"
+    when "*"
+      "star"
+    when "/"
+      "slash"
+    when "%"
+      "percent"
+    when "=="
+      "eq"
+    when "!="
+      "ne"
+    when "<"
+      "lt"
+    when "<="
+      "le"
+    when ">"
+      "gt"
+    when ">="
+      "ge"
+    else
+      name
+    end
+  end
+
+  def self.mangle_ty(ty : Ty) : String
+    ty.to_s.gsub(/[^A-Za-z0-9]+/, "_").gsub(/^_|_$/, "")
+  end
+
+  def self.operator_method?(name : String) : Bool
+    case name
+    when "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">="
+      true
+    else
+      false
     end
   end
 end

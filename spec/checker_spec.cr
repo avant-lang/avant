@@ -52,7 +52,7 @@ describe Avant::Checker do
   end
 
   it "rejects unknown types" do
-    ex = compile_error("fn f(n: Float): Int {\n  n\n}\nfn main {\n  puts(1)\n}\n")
+    ex = compile_error("fn main {\n  x: Float = 1\n  puts(1)\n}\n")
     ex.message.should match(/unknown type Float/)
   end
 

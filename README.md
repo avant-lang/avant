@@ -8,7 +8,7 @@ This folder is the language. In the local workbench it sits next to `myc/` (IR b
 
 This README is the **living language document** until a website exists. It describes what the compilers actually accept today. The target sketch (including features that are decided but not built) is [syntax.md](syntax.md) **S3**.
 
-Waves 1–3 are closed. Stages 6–10 of the compiler exist. Stages 11–13 are planned (**D41**); do not start Stage 11 unless asked. Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
+Waves 1–3 are closed. Stages 6–11 of the compiler exist. Stages 12–13 are planned (**D41**); do not start Stage 12 unless asked (Q24–Q25 first). Immix closed ([experiments/immix.md](experiments/immix.md)). Stage 7 official prod closed (`results/2026-09-27-opt3/`, 50/50).
 
 ## What compiles today
 
@@ -41,6 +41,15 @@ fn (p: Point) scaled(s: Int): Point {
   Point { x: p.x * s, y: p.y * s }
 }
 
+fn greet(name: String, times: Int = 1): Int {
+  times
+}
+
+fn show(n: Int): Int { n }
+fn show(s: String): Int { s.size }
+
+fn id(x: T): T { x }
+
 class Counter {
   value: Int = 0
 
@@ -51,6 +60,10 @@ class Counter {
   fn inc: Int {
     value += 1
     value
+  }
+
+  fn +(other: Counter): Counter {
+    Counter.new(value + other.value)
   }
 }
 ```
@@ -121,8 +134,7 @@ These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **n
 
 | What | Decision | When (D41) |
 | --- | --- | --- |
-| Default arguments, overloading, `fn +` | D26 | Stage 11 |
-| User generics (`fn map(xs: Array(T), …)`) | D30 (settled spelling; not implemented) | Stage 11 |
+| First-class `fn(T): U` values (S3 `map`) | D30 leftover | After Stage 11 / later |
 | `import` / modules / visibility | Wave 4; **Q24–Q25** must be answered first | Stage 12 |
 | `comptime` / `quote { }` / splice `#()` | D29 | Stage 13 (quote first) |
 | Real `.parallel` / `Channel(T)` / `Mutex(T)` | D35 | After Stages 10–13 |
@@ -180,7 +192,7 @@ AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 
 Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen).
 
-**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: **Stage 11** ([roadmap.md](roadmap.md)).
+**Stage 8** (closed): identity compiler; `bin/avant-av`; A builds B; B runs `hello.av` ([bootstrap.md](bootstrap.md)). **Stage 9** (closed): native runner + coverage on B ([stage9.md](stage9.md)). **Stage 10** (closed): native behavioral suite on B is the daily language oracle ([stage10.md](stage10.md)). **Stage 11** (closed): D26 and user generics ([stage11.md](stage11.md)). Crystal `spec/` stays the host-vs-port identity oracle (**D40**). Next, when asked: **Stage 12** only after Q24–Q25 ([roadmap.md](roadmap.md)).
 
 ## Live ledgers
 
@@ -193,10 +205,11 @@ These files are **current truth**. They are rewritten in place. They are not log
 | [questions.md](questions.md) | Open questions (Q24–Q25 before Stage 12; later bucket after 10–13) |
 | [syntax.md](syntax.md) | Canonical sketch **S3** (target; not all of it compiles) |
 | [baseline.md](baseline.md) | LangArena numbers Avant will be judged against |
-| [roadmap.md](roadmap.md) | Stages. 6–10 closed; 11–13 planned |
+| [roadmap.md](roadmap.md) | Stages. 6–11 closed; 12–13 planned |
 | [bootstrap.md](bootstrap.md) | Stage 8 record (closed). Identity concat, I/O, pitfalls |
 | [stage9.md](stage9.md) | Stage 9 record (closed). Native tests + coverage on B (D40) |
 | [stage10.md](stage10.md) | Stage 10 record (closed). Native suite on B; B→C; goldens |
+| [stage11.md](stage11.md) | Stage 11 record (closed). D26 and user generics |
 | [experiments/immix.md](experiments/immix.md) | Sticky vs GenImmix measurement (closed) |
 
 Read `philosophy.md`, then `decisions.md`. Patience, measurement, and organized code are part of the identity.

@@ -13,10 +13,10 @@ module Avant
     def initialize(@source : Source, @program : AST::Program)
       @named = {} of String => AggTy
       @opaques = {} of String => OpaqueTy
-      @functions = {} of String => FuncSig
+      @functions = {} of String => Array(FuncSig)
       @libs = {} of String => Hash(String, FunSig)
       @c_symbols = {} of String => String
-      @methods = {} of String => Hash(String, MethodSig)
+      @methods = {} of String => Hash(String, Array(MethodSig))
       @mangled = {} of String => AST::Function
       @scopes = [] of Hash(String, Ty)
       @resolver = TypeResolver.new(@named)
@@ -24,6 +24,8 @@ module Avant
       @self_name = nil.as(String?)
       @return_type = VoidTy::INSTANCE.as(Ty)
       @loop_depth = 0
+      @pending = [] of AST::Function
+      @instance_by_emit = {} of String => AST::Function
     end
 
     def check : AST::Program
@@ -40,6 +42,7 @@ module Avant
       end
       @program.structs.each { |defn| defn.methods.each { |fn| register_method(fn) } }
       @program.classes.each { |defn| defn.methods.each { |fn| register_method(fn) } }
+      assign_emit_names
       reserve_constructors
       check_field_defaults
 
@@ -47,7 +50,15 @@ module Avant
         raise CompileError.at(@program.location, "program needs fn main or fn run")
       end
 
-      @program.all_functions.each { |fn| check_function(fn) }
+      @program.all_functions.each do |fn|
+        next if fn.generic
+        check_function(fn)
+      end
+      i = 0
+      while i < @pending.size
+        check_function(@pending[i])
+        i += 1
+      end
       @program
     end
 
@@ -90,8 +101,8 @@ module Avant
     end
 
     private def register_function(fn : AST::Function) : Nil
-      if @functions.has_key?(fn.name)
-        raise CompileError.at(fn.location, "function #{fn.name} is already defined")
+      if Avant.operator_method?(fn.name)
+        raise CompileError.at(fn.location, "operator methods need a receiver")
       end
       if @libs.has_key?(fn.name)
         raise CompileError.at(fn.location, "function #{fn.name} collides with a lib")
@@ -102,6 +113,15 @@ module Avant
       if @named.has_key?(fn.name)
         raise CompileError.at(fn.location, "function #{fn.name} collides with a type")
       end
+      check_trailing_defaults(fn)
+      tparams = Avant.collect_type_param_names(fn, @named).to_a
+      if (fn.name == "main" || fn.name == "run") && tparams.size > 0
+        raise CompileError.at(fn.location, "#{fn.name} cannot be generic")
+      end
+      fn.type_params = tparams
+      fn.generic = tparams.size > 0
+      saved = @resolver
+      @resolver = TypeResolver.new(@named, @opaques, Set.new(tparams))
       params = fn.params.map { |p| @resolver.resolve_value(p.type) }
       ret = if t = fn.return_type
               ty = @resolver.resolve(t)
@@ -112,8 +132,15 @@ module Avant
             else
               VoidTy::INSTANCE
             end
-      @functions[fn.name] = FuncSig.new(fn, params, ret)
-      note_mangled(fn.name, fn)
+      @resolver = saved
+      bucket = @functions[fn.name] ||= [] of FuncSig
+      bucket.each do |existing|
+        next if existing.node.template
+        if same_param_types?(existing.params, params)
+          raise CompileError.at(fn.location, "function #{fn.name} is already defined")
+        end
+      end
+      bucket << FuncSig.new(fn, params, ret)
     end
 
     private def register_method(fn : AST::Function) : Nil
@@ -121,7 +148,11 @@ module Avant
                    @named[owner]? || raise CompileError.at(fn.location, "unknown type #{owner}")
                  else
                    recv = fn.receiver.not_nil!
+                   tparams_early = Avant.collect_type_param_names(fn, @named)
+                   saved = @resolver
+                   @resolver = TypeResolver.new(@named, @opaques, tparams_early)
                    ty = @resolver.resolve(recv.type)
+                   @resolver = saved
                    unless ty.is_a?(AggTy)
                      raise CompileError.at(recv.location, "methods can only extend a struct or class, not #{ty}")
                    end
@@ -136,11 +167,12 @@ module Avant
         raise CompileError.at(fn.location, "method #{owner_ty.name}.#{fn.name} collides with a field")
       end
 
-      bucket = @methods[owner_ty.name] ||= {} of String => MethodSig
-      if bucket.has_key?(fn.name)
-        raise CompileError.at(fn.location, "method #{owner_ty.name}.#{fn.name} is already defined")
-      end
-
+      check_trailing_defaults(fn)
+      tparams = Avant.collect_type_param_names(fn, @named).to_a
+      fn.type_params = tparams
+      fn.generic = tparams.size > 0
+      saved = @resolver
+      @resolver = TypeResolver.new(@named, @opaques, Set.new(tparams))
       params = fn.params.map { |p| @resolver.resolve_value(p.type) }
       ret = if t = fn.return_type
               ty = @resolver.resolve(t)
@@ -151,12 +183,22 @@ module Avant
             else
               VoidTy::INSTANCE
             end
+      @resolver = saved
       if fn.name == "initialize" && !ret.void?
         raise CompileError.at(fn.location, "initialize cannot return a value")
       end
-      sig = MethodSig.new(fn, owner_ty, params, ret)
-      bucket[fn.name] = sig
-      note_mangled(sig.mangled, fn)
+      if fn.name == "initialize" && fn.generic
+        raise CompileError.at(fn.location, "initialize cannot be generic")
+      end
+      names = @methods[owner_ty.name] ||= {} of String => Array(MethodSig)
+      bucket = names[fn.name] ||= [] of MethodSig
+      bucket.each do |existing|
+        next if existing.node.template
+        if same_param_types?(existing.params, params)
+          raise CompileError.at(fn.location, "method #{owner_ty.name}.#{fn.name} is already defined")
+        end
+      end
+      bucket << MethodSig.new(fn, owner_ty, params, ret)
     end
 
     private def reserve_constructors : Nil
@@ -215,6 +257,383 @@ module Avant
       @mangled[name] = fn
     end
 
+    private def check_trailing_defaults(fn : AST::Function) : Nil
+      seen = false
+      fn.params.each do |p|
+        if p.default
+          seen = true
+        elsif seen
+          raise CompileError.at(p.location, "default arguments must be trailing")
+        end
+      end
+    end
+
+    private def same_param_types?(a : Array(Ty), b : Array(Ty)) : Bool
+      return false unless a.size == b.size
+      a.each_with_index { |t, i| return false unless t.same?(b[i]) }
+      true
+    end
+
+    private def required_arity(fn : AST::Function) : Int32
+      fn.params.index { |p| p.default } || fn.params.size
+    end
+
+    private def arity_ok?(fn : AST::Function, argc : Int32) : Bool
+      argc >= required_arity(fn) && argc <= fn.params.size
+    end
+
+    private def assign_emit_names : Nil
+      @functions.each do |name, sigs|
+        if name == "main" || name == "run"
+          if sigs.size > 1
+            raise CompileError.at(sigs[1].node.location, "function #{name} is already defined")
+          end
+        end
+        concrete = sigs.reject { |s| s.node.generic }
+        sigs.each do |sig|
+          next if sig.node.generic
+          sig.node.emit_name = if concrete.size <= 1
+            name
+          else
+            parts = [name]
+            sig.params.each { |p| parts << Avant.mangle_ty(p) }
+            parts.join("__")
+          end
+          note_mangled(sig.node.emit_name, sig.node)
+        end
+      end
+      @methods.each do |owner, bucket|
+        bucket.each do |name, sigs|
+          sanitized = Avant.emit_op_name(name)
+          concrete = sigs.reject { |s| s.node.generic }
+          if name == "initialize" && concrete.size > 1
+            raise CompileError.at(sigs[1].node.location, "initialize cannot be overloaded")
+          end
+          sigs.each do |sig|
+            next if sig.node.generic
+            sig.node.emit_name = if concrete.size <= 1
+              "#{owner}__#{sanitized}"
+            else
+              parts = [owner, sanitized]
+              sig.params.each { |p| parts << Avant.mangle_ty(p) }
+              parts.join("__")
+            end
+            note_mangled(sig.node.emit_name, sig.node)
+          end
+        end
+      end
+    end
+
+    private def func_sig_for(fn : AST::Function) : FuncSig
+      (@functions[fn.name]? || [] of FuncSig).each do |sig|
+        return sig if sig.node == fn
+      end
+      raise CompileError.at(fn.location, "unknown function #{fn.name}")
+    end
+
+    private def method_sig_for(fn : AST::Function) : MethodSig
+      owner = fn.owner.not_nil!
+      (@methods[owner]?.try(&.[fn.name]?) || [] of MethodSig).each do |sig|
+        return sig if sig.node == fn
+      end
+      raise CompileError.at(fn.location, "unknown function #{fn.name}")
+    end
+
+    private def method_list(owner : String, name : String) : Array(MethodSig)
+      @methods[owner]?.try(&.[name]?) || [] of MethodSig
+    end
+
+    private def unify_ty(pattern : Ty, actual : Ty, subst : Hash(String, Ty)) : Bool
+      if pattern.is_a?(TypeVar)
+        if existing = subst[pattern.name]?
+          return existing.same?(actual)
+        end
+        subst[pattern.name] = actual
+        return true
+      end
+      if pattern.is_a?(ArrayTy) && actual.is_a?(ArrayTy)
+        return unify_ty(pattern.elem, actual.elem, subst)
+      end
+      if pattern.is_a?(HashTy) && actual.is_a?(HashTy)
+        return unify_ty(pattern.key, actual.key, subst) && unify_ty(pattern.val, actual.val, subst)
+      end
+      if pattern.is_a?(PtrTy) && actual.is_a?(PtrTy)
+        return unify_ty(pattern.inner, actual.inner, subst)
+      end
+      if pattern.is_a?(JoinHandleTy) && actual.is_a?(JoinHandleTy)
+        return unify_ty(pattern.result, actual.result, subst)
+      end
+      actual.same?(pattern)
+    end
+
+    private def infer_subst(tparams : Array(String), params : Array(Ty), arg_tys : Array(Ty), ret : Ty, expected : Ty?) : Hash(String, Ty)?
+      subst = {} of String => Ty
+      params.each_with_index do |p, i|
+        break if i >= arg_tys.size
+        return nil unless unify_ty(p, arg_tys[i], subst)
+      end
+      tparams.each do |name|
+        next if subst.has_key?(name)
+        if expected && !expected.void?
+          return nil unless unify_ty(ret, expected, subst)
+        end
+      end
+      tparams.each do |name|
+        return nil unless subst.has_key?(name)
+      end
+      subst
+    end
+
+    private def ty_to_type_name(ty : Ty, loc : Location) : AST::TypeName
+      if ty.is_a?(UnionTy) && ty.nilable?
+        inner = ty_to_type_name(ty.without_nil, loc)
+        return AST::TypeName.new(inner.location, inner.name, inner.args, true, inner.members)
+      end
+      if ty.is_a?(UnionTy)
+        return AST::TypeName.union(loc, ty.members.map { |m| ty_to_type_name(m, loc) })
+      end
+      case ty
+      when IntTy
+        AST::TypeName.new(loc, "Int")
+      when Int64Ty
+        AST::TypeName.new(loc, "Int64")
+      when UInt64Ty
+        AST::TypeName.new(loc, "UInt64")
+      when BoolTy
+        AST::TypeName.new(loc, "Bool")
+      when Float64Ty
+        AST::TypeName.new(loc, "Float64")
+      when StringTy
+        AST::TypeName.new(loc, "String")
+      when BufTy
+        AST::TypeName.new(loc, "Buf")
+      when NilTy
+        AST::TypeName.new(loc, "Nil")
+      when VoidTy
+        AST::TypeName.new(loc, "Void")
+      when ArrayTy
+        AST::TypeName.new(loc, "Array", [ty_to_type_name(ty.elem, loc)])
+      when HashTy
+        AST::TypeName.new(loc, "Hash", [ty_to_type_name(ty.key, loc), ty_to_type_name(ty.val, loc)])
+      when PtrTy
+        AST::TypeName.new(loc, "Ptr", [ty_to_type_name(ty.inner, loc)])
+      when JoinHandleTy
+        AST::TypeName.new(loc, "JoinHandle", [ty_to_type_name(ty.result, loc)])
+      when AggTy
+        AST::TypeName.new(loc, ty.name)
+      when OpaqueTy
+        AST::TypeName.new(loc, ty.name)
+      when TypeVar
+        AST::TypeName.new(loc, ty.name)
+      else
+        raise "cannot reify #{ty}"
+      end
+    end
+
+    private def fill_defaults(expr : AST::Call, fn : AST::Function) : Nil
+      while expr.args.size < fn.params.size
+        i = expr.args.size
+        default = fn.params[i].default || raise CompileError.at(expr.location, "#{fn.name} takes #{fn.params.size} arguments, got #{expr.args.size}")
+        map = {} of String => AST::Expr
+        (0...i).each { |j| map[fn.params[j].name] = expr.args[j] }
+        expr.args << AST.rewrite_names(AST.clone_expr(default), map)
+      end
+    end
+
+    private def instantiate_function(sig : FuncSig, subst : Hash(String, Ty), loc : Location) : FuncSig
+      from = sig.node.type_params
+      to = from.map { |n| ty_to_type_name(subst[n], loc) }
+      suffix = from.map { |n| Avant.mangle_ty(subst[n]) }.join("__")
+      emit = "#{sig.node.name}__#{suffix}"
+      if existing = @instance_by_emit[emit]?
+        return func_sig_for(existing)
+      end
+      inst = AST.clone_function(sig.node)
+      AST.subst_function_types(inst, from, to)
+      inst.generic = false
+      inst.template = sig.node
+      inst.type_params = [] of String
+      inst.emit_name = emit
+      params = inst.params.map { |p| @resolver.resolve_value(p.type) }
+      ret = if t = inst.return_type
+              @resolver.resolve(t)
+            else
+              VoidTy::INSTANCE
+            end
+      @program.functions << inst
+      bucket = @functions[inst.name] ||= [] of FuncSig
+      fsig = FuncSig.new(inst, params, ret)
+      bucket << fsig
+      @instance_by_emit[emit] = inst
+      note_mangled(emit, inst)
+      @pending << inst
+      fsig
+    end
+
+    private def instantiate_method(sig : MethodSig, subst : Hash(String, Ty), loc : Location) : MethodSig
+      from = sig.node.type_params
+      to = from.map { |n| ty_to_type_name(subst[n], loc) }
+      suffix = from.map { |n| Avant.mangle_ty(subst[n]) }.join("__")
+      emit = "#{sig.owner.name}__#{Avant.emit_op_name(sig.node.name)}__#{suffix}"
+      if existing = @instance_by_emit[emit]?
+        return method_sig_for(existing)
+      end
+      inst = AST.clone_function(sig.node)
+      AST.subst_function_types(inst, from, to)
+      inst.generic = false
+      inst.template = sig.node
+      inst.type_params = [] of String
+      inst.emit_name = emit
+      inst.owner = sig.owner.name
+      params = inst.params.map { |p| @resolver.resolve_value(p.type) }
+      ret = if t = inst.return_type
+              @resolver.resolve(t)
+            else
+              VoidTy::INSTANCE
+            end
+      attach_method(inst)
+      msig = MethodSig.new(inst, sig.owner, params, ret)
+      names = @methods[sig.owner.name] ||= {} of String => Array(MethodSig)
+      bucket = names[inst.name] ||= [] of MethodSig
+      bucket << msig
+      @instance_by_emit[emit] = inst
+      note_mangled(emit, inst)
+      @pending << inst
+      msig
+    end
+
+    private def attach_method(fn : AST::Function) : Nil
+      owner = fn.owner.not_nil!
+      @program.structs.each do |s|
+        if s.name == owner
+          s.methods << fn
+          return
+        end
+      end
+      @program.classes.each do |c|
+        if c.name == owner
+          c.methods << fn
+          return
+        end
+      end
+      @program.functions << fn
+    end
+
+    private def match_func(name : String, arg_tys : Array(Ty), expected : Ty?, loc : Location) : FuncSig
+      cands = [] of FuncSig
+      saw_generic = false
+      (@functions[name]? || [] of FuncSig).each do |sig|
+        next if sig.node.template
+        next unless arity_ok?(sig.node, arg_tys.size)
+        if sig.node.generic
+          saw_generic = true
+          if infer_subst(sig.node.type_params, sig.params, arg_tys, sig.return_type, expected)
+            cands << sig
+          end
+        else
+          ok = true
+          arg_tys.each_with_index do |got, i|
+            unless assignable?(got, sig.params[i])
+              ok = false
+              break
+            end
+          end
+          cands << sig if ok
+        end
+      end
+      if cands.size == 0
+        if saw_generic
+          raise CompileError.at(loc, "cannot infer type argument")
+        end
+        raise CompileError.at(loc, "unknown function #{name}")
+      end
+      if cands.size > 1
+        raise CompileError.at(loc, "ambiguous call to #{name}")
+      end
+      chosen = cands[0]
+      if chosen.node.generic
+        subst = infer_subst(chosen.node.type_params, chosen.params, arg_tys, chosen.return_type, expected)
+        unless subst
+          raise CompileError.at(loc, "cannot infer type argument")
+        end
+        return instantiate_function(chosen, subst, loc)
+      end
+      chosen
+    end
+
+    private def match_method(owner : String, name : String, arg_tys : Array(Ty), expected : Ty?, loc : Location) : MethodSig
+      cands = [] of MethodSig
+      saw_generic = false
+      method_list(owner, name).each do |sig|
+        next if sig.node.template
+        next unless arity_ok?(sig.node, arg_tys.size)
+        if sig.node.generic
+          saw_generic = true
+          if infer_subst(sig.node.type_params, sig.params, arg_tys, sig.return_type, expected)
+            cands << sig
+          end
+        else
+          ok = true
+          arg_tys.each_with_index do |got, i|
+            unless assignable?(got, sig.params[i])
+              ok = false
+              break
+            end
+          end
+          cands << sig if ok
+        end
+      end
+      if cands.size == 0
+        if saw_generic
+          raise CompileError.at(loc, "cannot infer type argument")
+        end
+        raise CompileError.at(loc, "no method #{name} on #{owner}")
+      end
+      if cands.size > 1
+        raise CompileError.at(loc, "ambiguous call to #{owner}.#{name}")
+      end
+      chosen = cands[0]
+      if chosen.node.generic
+        subst = infer_subst(chosen.node.type_params, chosen.params, arg_tys, chosen.return_type, expected) || raise CompileError.at(loc, "cannot infer type argument")
+        return instantiate_method(chosen, subst, loc)
+      end
+      chosen
+    end
+
+    private def dispatch_call(expr : AST::Call, expected : Ty?) : Ty
+      arg_tys = expr.args.map { |a| check_expr(a) }
+      unless @functions.has_key?(expr.callee)
+        raise CompileError.at(expr.location, "unknown function #{expr.callee}")
+      end
+      sig = match_func(expr.callee, arg_tys, expected, expr.location)
+      fill_defaults(expr, sig.node)
+      expr.args.each_with_index do |arg, i|
+        got = i < arg_tys.size ? arg_tys[i] : check_expr(arg, sig.params[i])
+        unless assignable?(got, sig.params[i])
+          raise CompileError.at(arg.location, "argument #{i + 1} of #{expr.callee} is #{got}, expected #{sig.params[i]}")
+        end
+      end
+      expr.resolved = sig.node.emit_name
+      sig.return_type
+    end
+
+    private def dispatch_method(expr : AST::Call, object : AggTy, expected : Ty?) : Ty
+      if object.field_type(expr.callee)
+        raise CompileError.at(expr.location, "#{object.name}.#{expr.callee} is a field, not a method")
+      end
+      arg_tys = expr.args.map { |a| check_expr(a) }
+      sig = match_method(object.name, expr.callee, arg_tys, expected, expr.location)
+      fill_defaults(expr, sig.node)
+      expr.args.each_with_index do |arg, i|
+        got = i < arg_tys.size ? arg_tys[i] : check_expr(arg, sig.params[i])
+        unless assignable?(got, sig.params[i])
+          raise CompileError.at(arg.location, "argument #{i + 1} of #{object.name}.#{expr.callee} is #{got}, expected #{sig.params[i]}")
+        end
+      end
+      expr.resolved = sig.node.emit_name
+      sig.return_type
+    end
+
     private def check_function(fn : AST::Function) : Nil
       ret, params = function_types(fn)
       @return_type = ret
@@ -239,6 +658,15 @@ module Avant
           raise CompileError.at(param.location, "duplicate parameter #{param.name}")
         end
         bind(param.name, params[i])
+        if default = param.default
+          saved = @self_ty
+          @self_ty = nil
+          got = check_expr(default, params[i])
+          @self_ty = saved
+          unless assignable?(got, params[i])
+            raise CompileError.at(default.location, "cannot assign #{got} to #{params[i]}")
+          end
+        end
       end
       check_body(fn.body, ret, at_tail: true)
       pop_scope
@@ -248,10 +676,10 @@ module Avant
 
     private def function_types(fn : AST::Function) : {Ty, Array(Ty)}
       if fn.method?
-        sig = method_sig(fn.owner.not_nil!, fn.name).not_nil!
+        sig = method_sig_for(fn)
         {sig.return_type, sig.params}
       else
-        sig = @functions[fn.name]
+        sig = func_sig_for(fn)
         {sig.return_type, sig.params}
       end
     end
@@ -457,7 +885,7 @@ module Avant
              when AST::Name
                check_name(expr)
              when AST::Call
-               check_call(expr)
+               check_call(expr, expected)
              when AST::Unary
                check_unary(expr)
              when AST::Binary
@@ -562,6 +990,15 @@ module Avant
       end
 
       left = check_expr(expr.left)
+      if (opname = binary_op_method(expr.op)) && left.is_a?(AggTy)
+        if method_list(left.name, opname).any? { |s| s.node.template.nil? }
+          right = check_expr(expr.right)
+          sig = match_method(left.name, opname, [right] of Ty, nil, expr.location)
+          expr.op_method = sig.node.emit_name
+          return sig.return_type
+        end
+      end
+
       right = check_expr(expr.right, (left.integer? || left.float? || left.string?) ? left : nil)
       if left.string? && right.string?
         case expr.op
@@ -719,10 +1156,11 @@ module Avant
         return field_ty
       end
       if sig = method_sig(object.name, expr.field)
-        unless sig.params.empty?
+        unless arity_ok?(sig.node, 0)
           raise CompileError.at(expr.location, "#{object.name}.#{expr.field} takes #{sig.params.size} arguments")
         end
         expr.method_call = true
+        expr.resolved = sig.node.emit_name
         return sig.return_type
       end
       raise CompileError.at(expr.location, "no field #{expr.field} on #{object.name}")
@@ -844,7 +1282,7 @@ module Avant
       ArrayTy.new(elem)
     end
 
-    private def check_call(expr : AST::Call) : Ty
+    private def check_call(expr : AST::Call, expected : Ty? = nil) : Ty
       if recv = expr.receiver
         return check_method_call(expr, recv)
       end
@@ -1435,20 +1873,7 @@ module Avant
         return VoidTy::INSTANCE
       end
 
-      sig = @functions[expr.callee]?
-      unless sig
-        raise CompileError.at(expr.location, "unknown function #{expr.callee}")
-      end
-      unless expr.args.size == sig.params.size
-        raise CompileError.at(expr.location, "#{expr.callee} takes #{sig.params.size} arguments, got #{expr.args.size}")
-      end
-      expr.args.each_with_index do |arg, i|
-        got = check_expr(arg, sig.params[i])
-        unless assignable?(got, sig.params[i])
-          raise CompileError.at(arg.location, "argument #{i + 1} of #{expr.callee} is #{got}, expected #{sig.params[i]}")
-        end
-      end
-      sig.return_type
+      return dispatch_call(expr, expected)
     end
 
     private def check_method_call(expr : AST::Call, recv : AST::Expr) : Ty
@@ -1487,15 +1912,7 @@ module Avant
       unless object.is_a?(AggTy)
         raise CompileError.at(expr.location, "cannot call #{expr.callee} on #{object}")
       end
-      if object.field_type(expr.callee)
-        raise CompileError.at(expr.location, "#{object.name}.#{expr.callee} is a field, not a method")
-      end
-      sig = method_sig(object.name, expr.callee)
-      unless sig
-        raise CompileError.at(expr.location, "no method #{expr.callee} on #{object.name}")
-      end
-      check_args(expr, sig.params, "#{object.name}.#{expr.callee}")
-      sig.return_type
+      dispatch_method(expr, object, nil)
     end
 
     private def check_float_method(expr : AST::Call, _object : Ty) : Ty
@@ -1592,8 +2009,17 @@ module Avant
         raise CompileError.at(expr.location, "structs are constructed with #{ty.name} { fields }, not .new")
       end
       recv.type = ty
-      if sig = method_sig(ty.name, "initialize")
-        check_args(expr, sig.params, "#{ty.name}.new")
+      if method_list(ty.name, "initialize").any? { |s| s.node.template.nil? }
+        arg_tys = expr.args.map { |a| check_expr(a) }
+        sig = match_method(ty.name, "initialize", arg_tys, nil, expr.location)
+        fill_defaults(expr, sig.node)
+        expr.args.each_with_index do |arg, i|
+          got = i < arg_tys.size ? arg_tys[i] : check_expr(arg, sig.params[i])
+          unless assignable?(got, sig.params[i])
+            raise CompileError.at(arg.location, "argument #{i + 1} of #{ty.name}.new is #{got}, expected #{sig.params[i]}")
+          end
+        end
+        expr.resolved = "#{ty.name}__new"
       else
         unless expr.args.empty?
           raise CompileError.at(expr.location, "#{ty.name}.new takes no arguments")
@@ -1615,7 +2041,40 @@ module Avant
     end
 
     private def method_sig(owner : String, name : String) : MethodSig?
-      @methods[owner]?.try(&.[name]?)
+      list = method_list(owner, name).reject { |s| s.node.template }
+      return nil if list.empty?
+      zeros = list.select { |s| arity_ok?(s.node, 0) && !s.node.generic }
+      return nil unless zeros.size == 1
+      zeros[0]
+    end
+
+    private def binary_op_method(op : Token::Kind) : String?
+      case op
+      when .plus?
+        "+"
+      when .minus?
+        "-"
+      when .star?
+        "*"
+      when .slash?
+        "/"
+      when .percent?
+        "%"
+      when .eq_eq?
+        "=="
+      when .not_eq?
+        "!="
+      when .less?
+        "<"
+      when .less_eq?
+        "<="
+      when .greater?
+        ">"
+      when .greater_eq?
+        ">="
+      else
+        nil
+      end
     end
 
     private def implicit_field(name : String) : Ty?

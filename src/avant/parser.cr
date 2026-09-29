@@ -98,6 +98,12 @@ module Avant
         raise CompileError.at(current.location, "fun is a C declaration; it has no body")
       end
 
+      params.each do |p|
+        if p.default
+          raise CompileError.at(p.location, "fun parameters cannot have defaults")
+        end
+      end
+
       AST::FunDecl.new(loc, name_tok.value, params, return_type)
     end
 
@@ -132,6 +138,47 @@ module Avant
       AST::Field.new(name.location, name.value, type, default)
     end
 
+    private def parse_fn_name : String
+      tok = current
+      if tok.kind.ident?
+        return bump.value
+      end
+      if name = operator_method_name(tok.kind)
+        bump
+        return name
+      end
+      raise CompileError.at(tok.location, "expected function name")
+    end
+
+    private def operator_method_name(kind : Token::Kind) : String?
+      case kind
+      when .plus?
+        "+"
+      when .minus?
+        "-"
+      when .star?
+        "*"
+      when .slash?
+        "/"
+      when .percent?
+        "%"
+      when .eq_eq?
+        "=="
+      when .not_eq?
+        "!="
+      when .less?
+        "<"
+      when .less_eq?
+        "<="
+      when .greater?
+        ">"
+      when .greater_eq?
+        ">="
+      else
+        nil
+      end
+    end
+
     private def parse_function(owner : String? = nil) : AST::Function
       loc = expect(:fn).location
       receiver : AST::Param? = nil
@@ -140,6 +187,9 @@ module Avant
         bump
         skip_newlines
         receiver = parse_param
+        if receiver.default
+          raise CompileError.at(receiver.location, "receiver cannot have a default")
+        end
         skip_newlines
         expect(:r_paren)
         skip_newlines
@@ -147,9 +197,10 @@ module Avant
         raise CompileError.at(current.location, "inherent methods do not take a receiver; use fn name(...)")
       end
 
-      name_tok = expect(:ident)
-      if name_tok.value == "new" && (owner || receiver)
-        raise CompileError.at(name_tok.location, "new is reserved; write initialize")
+      name_loc = current.location
+      name = parse_fn_name
+      if name == "new" && (owner || receiver)
+        raise CompileError.at(name_loc, "new is reserved; write initialize")
       end
 
       params = [] of AST::Param
@@ -175,7 +226,7 @@ module Avant
 
       skip_newlines
       body = parse_block
-      AST::Function.new(loc, name_tok.value, params, return_type, body, receiver, owner)
+      AST::Function.new(loc, name, params, return_type, body, receiver, owner)
     end
 
     private def parse_param : AST::Param
@@ -183,7 +234,12 @@ module Avant
       expect(:colon)
       skip_newlines
       type = parse_type_name
-      AST::Param.new(name_tok.location, name_tok.value, type)
+      default = nil.as(AST::Expr?)
+      if match?(:eq)
+        skip_newlines
+        default = parse_expr
+      end
+      AST::Param.new(name_tok.location, name_tok.value, type, default)
     end
 
     private def parse_type_name : AST::TypeName

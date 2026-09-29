@@ -367,6 +367,15 @@ class Parser {
       self.fail(self.current.loc, "fun is a C declaration; it has no body")
       return decl
     }
+    i = 0
+    while i < decl.params.size {
+      p = decl.params[i]
+      if d = p.default {
+        self.fail(p.loc, "fun parameters cannot have defaults")
+        return decl
+      }
+      i = i + 1
+    }
     decl
   }
 
@@ -420,22 +429,27 @@ class Parser {
       if self.current.kind == tk_l_paren() {
         dummy = self.bump
         self.skip_newlines
-        receiver = self.parse_param
+        recv = self.parse_param
+        if d = recv.default {
+          self.fail(recv.loc, "receiver cannot have a default")
+        }
+        receiver = recv
         self.skip_newlines
         dummy2 = self.expect(tk_r_paren())
         self.skip_newlines
       }
     }
-    name_tok = self.expect(tk_ident())
-    if str_eq(name_tok.value, "new") {
+    name_loc = self.current.loc
+    name = self.parse_fn_name
+    if str_eq(name, "new") {
       if owner.size > 0 {
-        self.fail(name_tok.loc, "new is reserved; write initialize")
+        self.fail(name_loc, "new is reserved; write initialize")
       }
       if r = receiver {
-        self.fail(name_tok.loc, "new is reserved; write initialize")
+        self.fail(name_loc, "new is reserved; write initialize")
       }
     }
-    fnn = Function.new(loc, name_tok.value)
+    fnn = Function.new(loc, name)
     fnn.receiver = receiver
     fnn.owner = owner
     if self.current.kind == tk_l_paren() {
@@ -463,12 +477,32 @@ class Parser {
     fnn
   }
 
+  fn parse_fn_name: String {
+    tok = self.current
+    if tok.kind == tk_ident() {
+      dummy = self.bump
+      return tok.value
+    }
+    op = fn_op_name(tok.kind)
+    if op.size > 0 {
+      dummy = self.bump
+      return op
+    }
+    self.fail(tok.loc, "expected function name")
+    ""
+  }
+
   fn parse_param: Param {
     name_tok = self.expect(tk_ident())
     dummy = self.expect(tk_colon())
     self.skip_newlines
     type = self.parse_type_name
-    Param.new(name_tok.loc, name_tok.value, type)
+    p = Param.new(name_tok.loc, name_tok.value, type)
+    if self.match_tok(tk_eq()) {
+      self.skip_newlines
+      p.default = self.parse_expr
+    }
+    p
   }
 
   fn parse_type_name: TypeName {
