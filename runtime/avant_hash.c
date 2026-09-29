@@ -420,6 +420,12 @@ const char *avant_hash_last_key(void) {
   return g_last_key ? g_last_key : "";
 }
 
+void avant_hash_walk_tls(void (*fn)(void **slot)) {
+  if (fn) {
+    fn((void **)&g_last_key);
+  }
+}
+
 const char *avant_hash_get_str_slice(void *hp, const char *s, int32_t start, int32_t stop, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   if (found) {

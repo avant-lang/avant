@@ -22,6 +22,13 @@ FUNC :avant_gc_root
     TYPE :ptr<void>
 ENDFUNC
 
+FUNC :avant_gc_reload
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
 FUNC :avant_type_map
   ARGS
     TYPE :u32
@@ -471,6 +478,35 @@ FUNC :avant_array_push_slot
     TYPE :u32
 ENDFUNC
 
+FUNC :avant_array_push_ptr
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<void>
+    TYPE :u32
+ENDFUNC
+
+FUNC :avant_array_set_ptr
+  ARGS
+    TYPE :ptr<void>
+    TYPE :i32
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_array_get_ptr
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_array_pop_ptr
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
 FUNC :avant_array_push_i32
   ARGS
     TYPE :ptr<void>
@@ -818,6 +854,8 @@ FUNC :main
     FIELD 2
     STORE
     LOCAL :__t3
+    CALL :avant_barrier
+    LOCAL :__t3
     LOCAL :xs :ptr<Array_Int>
     STORE
     LOCAL :xs
@@ -891,13 +929,19 @@ FUNC :first__Int
     LOCAL :xs
     ADDR
     CALL :avant_gc_root
+    PUSH 0
+    LOCAL :__t1 :i32
+    STORE
     LOCAL :xs :ptr<Array_Int>
     DEREF
     FIELD 0
-    LOCAL :__t1 :ptr<i32>
+    LOCAL :__t2 :ptr<i32>
     STORE
-    PUSH 0
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
     LOCAL :__t1
+    LOCAL :__t2
     BINARY :add
     DEREF
     CALL :avant_gc_leave

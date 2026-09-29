@@ -769,20 +769,18 @@ module Avant
         line "STORE"
         ensure_root(val, array_ty.elem)
         emit_expr(target.array)
-        line "DEREF"
-        line "FIELD 0"
-        buf = new_temp
-        line "LOCAL :#{buf} :ptr<#{array_ty.elem.myc}>"
+        arr = new_temp
+        line "LOCAL :#{arr} :#{target.array.type.not_nil!.myc}"
         line "STORE"
-        emit_ptr_root(buf)
-        line "LOCAL :#{buf}"
-        line "CALL :avant_barrier"
-        line "LOCAL :#{val}"
+        ensure_root(arr, target.array.type.not_nil!)
         emit_expr(target.index)
-        line "LOCAL :#{buf}"
-        line "BINARY :add"
-        line "DEREF"
+        ix = new_temp
+        line "LOCAL :#{ix} :i32"
         line "STORE"
+        line "LOCAL :#{val}"
+        line "LOCAL :#{ix}"
+        line "LOCAL :#{arr}"
+        line "CALL :avant_array_set_ptr"
       end
 
       private def root_after_store(target : AST::Expr) : Nil
@@ -1032,13 +1030,25 @@ module Avant
           return
         end
         array_ty = container.as(ArrayTy)
-        ptr_tmp = new_temp
+        if heap_ptr_value?(array_ty.elem)
+          emit_expr(expr.index)
+          emit_expr(expr.array)
+          line "CALL :avant_array_get_ptr"
+          line "AS :#{array_ty.elem.myc}"
+          return
+        end
+        emit_expr(expr.index)
+        ix = new_temp
+        line "LOCAL :#{ix} :i32"
+        line "STORE"
         emit_expr(expr.array)
         line "DEREF"
         line "FIELD 0"
+        ptr_tmp = new_temp
         line "LOCAL :#{ptr_tmp} :ptr<#{array_ty.elem.myc}>"
         line "STORE"
-        emit_expr(expr.index)
+        emit_ptr_root(ptr_tmp)
+        line "LOCAL :#{ix}"
         line "LOCAL :#{ptr_tmp}"
         line "BINARY :add"
         line "DEREF"
@@ -1806,6 +1816,10 @@ module Avant
         emit_ext_func("avant_re_c1", [] of String, "i32")
         emit_ext_func("avant_re_count", ["ptr<u8>", "ptr<u8>", "i32"], "i32")
         emit_ext_func("avant_array_push_slot", ["ptr<void>", "u64", "u32"], "ptr<void>")
+        emit_ext_func("avant_array_push_ptr", ["ptr<void>", "ptr<void>", "u32"], nil)
+        emit_ext_func("avant_array_set_ptr", ["ptr<void>", "i32", "ptr<void>"], nil)
+        emit_ext_func("avant_array_get_ptr", ["ptr<void>", "i32"], "ptr<void>")
+        emit_ext_func("avant_array_pop_ptr", ["ptr<void>"], "ptr<void>")
         emit_ext_func("avant_array_push_i32", ["ptr<void>", "i32"], nil)
         emit_ext_func("avant_array_clear", ["ptr<void>"], nil)
         emit_ext_func("avant_array_reserve", ["ptr<void>", "i32", "u64", "u32"], nil)

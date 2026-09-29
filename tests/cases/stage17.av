@@ -1,0 +1,107 @@
+fn test_stage17(c: Checks) {
+  c.suite("tests/cases/stage17.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-s17-${stamp}-churn.av"
+    bin = "/tmp/avant-s17-${stamp}-churn"
+    clog = "/tmp/avant-s17-${stamp}-compile.log"
+    rlog = "/tmp/avant-s17-${stamp}-run.log"
+    slog = "/tmp/avant-s17-${stamp}-stats.log"
+    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) + check(n.right, depth - 1) + n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
+    w = file_write(src, body)
+    c.eq_int(w, 0, "write nursery churn")
+    cc = compile_av(compiler, src, bin, clog)
+    c.eq_int(cc, 0, "compile nursery churn")
+    if clogt = file_read(clog) {
+      c.expect(!str_has(clogt, "DT_TEXTREL"), "compile has no TEXTREL warning")
+      c.expect(!str_has(clogt, "llvm_stackmaps"), "compile has no stackmap reloc warning")
+    } else {
+      c.expect(true, "compile has no TEXTREL warning")
+      c.expect(true, "compile has no stackmap reloc warning")
+    }
+    if file_exists(bin) {
+      chmod_x(bin)
+      cap: Array(String) = []
+      cap.push("AVANT_NURSERY=1")
+      cap.push("AVANT_HEAP_MAX_MB=3")
+      cap.push(bin)
+      rcode = process_run_out("/usr/bin/env", cap, rlog)
+      c.eq_int(rcode, 0, "churn under 3MiB heap")
+      if out = file_read(rlog) {
+        c.eq_str(out, "251535360\n", "churn checksum")
+      } else {
+        c.expect(false, "read churn stdout")
+      }
+
+      st: Array(String) = []
+      st.push("AVANT_NURSERY=1")
+      st.push("AVANT_GC_STATS=1")
+      st.push(bin)
+      scode = process_run_out("/usr/bin/env", st, slog)
+      c.eq_int(scode, 0, "churn with gc stats")
+      if stats = file_read(slog) {
+        c.expect(str_has(stats, "young="), "gc stats printed")
+        c.expect(!str_has(stats, "young=0 full"), "copying nursery ran")
+        c.expect(!str_has(stats, "copied=0 live"), "nursery copied bytes")
+      } else {
+        c.expect(false, "read gc stats")
+      }
+
+      dlog = "/tmp/avant-s17-${stamp}-discard.log"
+      disc: Array(String) = []
+      disc.push("AVANT_NURSERY=1")
+      disc.push("AVANT_NURSERY_DISCARD=1")
+      disc.push("AVANT_HEAP_MAX_MB=3")
+      disc.push(bin)
+      dcode = process_run_out("/usr/bin/env", disc, dlog)
+      c.eq_int(dcode, 0, "churn with from-space discarded")
+      if dout = file_read(dlog) {
+        c.eq_str(dout, "251535360\n", "churn checksum after discard")
+      } else {
+        c.expect(false, "read discard stdout")
+      }
+
+      mlog = "/tmp/avant-s17-${stamp}-stackmap.log"
+      sm: Array(String) = []
+      sm.push("AVANT_NURSERY=1")
+      sm.push("AVANT_NURSERY_STACKMAP=1")
+      sm.push("AVANT_NURSERY_DISCARD=1")
+      sm.push("AVANT_HEAP_MAX_MB=3")
+      sm.push("AVANT_GC_STATS=1")
+      sm.push(bin)
+      mcode = process_run_out("/usr/bin/env", sm, mlog)
+      c.eq_int(mcode, 0, "churn with stackmap walk")
+      if mout = file_read(mlog) {
+        c.expect(str_has(mout, "251535360"), "churn checksum with stackmap")
+        c.expect(str_has(mout, "sm_hits="), "stackmap stats printed")
+        c.expect(!str_has(mout, "sm_hits=0 "), "stackmap return-address hits")
+      } else {
+        c.expect(false, "read stackmap stats")
+      }
+
+      ccbin = "/tmp/avant-s17-${stamp}-cc"
+      cclog = "/tmp/avant-s17-${stamp}-cc.log"
+      ccenv: Array(String) = []
+      ccenv.push("AVANT_NURSERY=1")
+      ccenv.push(compiler)
+      ccenv.push("compile")
+      ccenv.push("compiler/main.av")
+      ccenv.push(ccbin)
+      cccode = process_run_out("/usr/bin/env", ccenv, cclog)
+      c.eq_int(cccode, 0, "compile-compiler with nursery (from-space discarded)")
+      c.expect(file_exists(ccbin), "nursery compile-compiler wrote a binary")
+      if ccout = file_read(cclog) {
+        c.expect(!str_has(ccout, "DT_TEXTREL"), "compile-compiler has no TEXTREL warning")
+      } else {
+        c.expect(true, "compile-compiler has no TEXTREL warning")
+      }
+    } else {
+      c.expect(false, "churn binary exists")
+      if err = file_read(clog) {
+        puts(err)
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

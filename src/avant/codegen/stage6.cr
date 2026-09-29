@@ -44,6 +44,8 @@ module Avant
         line "FIELD 2"
         line "STORE"
         line "LOCAL :#{arr}"
+        line "CALL :avant_barrier"
+        line "LOCAL :#{arr}"
       end
 
       private def emit_coerce(got : Ty, want : Ty) : Nil
@@ -608,30 +610,35 @@ module Avant
           line "CALL :avant_array_push_i32"
           return
         end
+        # Evaluate the element first. push_slot returns an interior
+        # pointer into the buffer; a collecting CALL before the store
+        # would leave the slot pointing at a moved buffer.
+        emit_expr(expr.args[0])
+        emit_coerce(expr.args[0].type.not_nil!, ty.elem)
+        val = new_temp
+        line "LOCAL :#{val} :#{ty.elem.myc}"
+        line "STORE"
+        ensure_root(val, ty.elem)
         emit_expr(expr.receiver.not_nil!)
         arr = new_temp
         line "LOCAL :#{arr} :#{ty.myc}"
         line "STORE"
         ensure_root(arr, ty.as(Ty))
+        if heap_ptr_value?(ty.elem)
+          line "PUSH #{array_type_id(ty.elem)} :u32"
+          line "LOCAL :#{val}"
+          line "LOCAL :#{arr}"
+          line "CALL :avant_array_push_ptr"
+          return
+        end
         line "PUSH #{array_type_id(ty.elem)} :u32"
         line "SIZEOF :#{ty.elem.myc}"
         line "AS :u64"
         line "LOCAL :#{arr}"
         line "CALL :avant_array_push_slot"
         line "AS :ptr<#{ty.elem.myc}>"
-        slot = new_temp
-        line "LOCAL :#{slot} :ptr<#{ty.elem.myc}>"
-        line "STORE"
-        emit_ptr_root(slot)
-        if heap_ptr_value?(ty.elem)
-          line "LOCAL :#{arr}"
-          line "DEREF"
-          line "FIELD 0"
-          line "CALL :avant_barrier"
-        end
-        emit_expr(expr.args[0])
-        emit_coerce(expr.args[0].type.not_nil!, ty.elem)
-        line "LOCAL :#{slot}"
+        line "LOCAL :#{val}"
+        line "STACK :swap2"
         line "DEREF"
         line "STORE"
       end
@@ -687,16 +694,23 @@ module Avant
         @indent -= 1
         line "BODY"
         @indent += 1
-        buf = new_temp
-        line "LOCAL :#{arr}"
-        line "DEREF"
-        line "FIELD 0"
-        line "LOCAL :#{buf} :ptr<#{ty.elem.myc}>"
-        line "STORE"
-        line "LOCAL :#{i}"
-        line "LOCAL :#{buf}"
-        line "BINARY :add"
-        line "DEREF"
+        if heap_ptr_value?(ty.elem)
+          line "LOCAL :#{i}"
+          line "LOCAL :#{arr}"
+          line "CALL :avant_array_get_ptr"
+          line "AS :#{ty.elem.myc}"
+        else
+          buf = new_temp
+          line "LOCAL :#{arr}"
+          line "DEREF"
+          line "FIELD 0"
+          line "LOCAL :#{buf} :ptr<#{ty.elem.myc}>"
+          line "STORE"
+          line "LOCAL :#{i}"
+          line "LOCAL :#{buf}"
+          line "BINARY :add"
+          line "DEREF"
+        end
         line "LOCAL :#{pname} :#{ty.elem.myc}"
         line "STORE"
         ensure_root(pname, ty.elem)
@@ -955,6 +969,12 @@ module Avant
         line "LOCAL :#{arr} :#{ty.myc}"
         line "STORE"
         ensure_root(arr, ty.as(Ty))
+        if heap_ptr_value?(ty.elem)
+          line "LOCAL :#{arr}"
+          line "CALL :avant_array_pop_ptr"
+          line "AS :#{ty.elem.myc}"
+          return
+        end
         line "SIZEOF :#{ty.elem.myc}"
         line "AS :u64"
         line "LOCAL :#{arr}"

@@ -11,8 +11,16 @@
  * sees is the payload; the header sits immediately before it so field
  * indices in myc IR stay the language layout.
  *
- * Collector is GenImmix (copying nursery, Immix mature). AVANT_FLAG_PINNED
- * is the C-escape seam: pinned objects are not moved.
+ * Collector is GenImmix (copying nursery, Immix mature). Stage 17 is
+ * growing myc-llvm pointer safepoints so the copying nursery can be
+ * the default. Until compile-compiler stays honest with young copy
+ * and from-space discarded, the nursery is off unless AVANT_NURSERY=1.
+ * AVANT_NURSERY_DISCARD=1 frees from-space after young copy (pinned
+ * nursery blocks stay). LLVM stack maps are walked when the nursery
+ * is on (AVANT_NURSERY_STACKMAP=0 disables). Discard compile-compiler
+ * needs that walk so leftover myc spills are rewritten. AVANT_NURSERY=0
+ * is the Stage 7 full (non-moving) collect. AVANT_FLAG_PINNED is the C-escape seam:
+ * pinned objects are not moved and are young-GC roots.
  */
 
 #define AVANT_TYPE_BYTES 0
@@ -24,6 +32,7 @@
 #define AVANT_FLAG_PINNED 1u
 #define AVANT_FLAG_MARKED 2u
 #define AVANT_FLAG_FORWARDED 4u
+#define AVANT_FLAG_YSCAN 8u
 #define AVANT_FLAG_HEAP 0x8000u
 
 typedef struct AvantHeader {
@@ -41,6 +50,7 @@ void avant_gc_defer_leave(void);
 void avant_gc_enter(void);
 void avant_gc_leave(void);
 void avant_gc_root(void *slot);
+void *avant_gc_reload(void *slot);
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 void avant_barrier(void *obj);
 
@@ -129,10 +139,15 @@ void avant_hash_del(void *h, const char *key);
 void avant_hash_del_i32k(void *h, int32_t key);
 int32_t avant_hash_inc_slice(void *h, const char *s, int32_t start, int32_t stop);
 const char *avant_hash_last_key(void);
+void avant_hash_walk_tls(void (*fn)(void **slot));
 const char *avant_hash_get_str_slice(void *h, const char *s, int32_t start, int32_t stop, int32_t *found);
 int32_t avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
 
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
+void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id);
+void avant_array_set_ptr(void *arr, int32_t i, void *elem);
+void *avant_array_get_ptr(void *arr, int32_t i);
+void *avant_array_pop_ptr(void *arr);
 void avant_array_push_i32(void *arr, int32_t v);
 void avant_array_clear(void *arr);
 void avant_array_reserve(void *arr, int32_t n, uint64_t elem_size, uint32_t buf_type_id);

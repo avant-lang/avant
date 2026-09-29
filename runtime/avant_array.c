@@ -37,6 +37,10 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
   if (a->buf && a->size < a->cap) {
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
+    avant_barrier(a);
+    if (a->buf) {
+      avant_barrier(a->buf);
+    }
     return slot;
   }
   avant_gc_defer_enter();
@@ -46,7 +50,60 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
   slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
   a->size += 1;
   avant_gc_defer_leave();
+  avant_barrier(a);
+  if (a->buf) {
+    avant_barrier(a->buf);
+  }
   return slot;
+}
+
+void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
+  void *slot;
+  AvantArray *a = (AvantArray *)arr;
+  if (!a) {
+    return;
+  }
+  /*
+   * Store under defer so myc IR never holds an interior buffer
+   * pointer across a collecting CALL. Grow may nest defer.
+   */
+  avant_gc_defer_enter();
+  slot = avant_array_push_slot(arr, sizeof(void *), buf_type_id);
+  if (slot) {
+    memcpy(slot, &elem, sizeof(void *));
+  }
+  avant_gc_defer_leave();
+  avant_barrier(a);
+  if (a->buf) {
+    avant_barrier(a->buf);
+  }
+}
+
+void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf) {
+    return;
+  }
+  ((void **)a->buf)[i] = elem;
+  avant_barrier(a);
+  avant_barrier(a->buf);
+}
+
+void *avant_array_get_ptr(void *arr, int32_t i) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || i < 0 || i >= a->size) {
+    return NULL;
+  }
+  return ((void **)a->buf)[i];
+}
+
+void *avant_array_pop_ptr(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || a->size <= 0) {
+    return NULL;
+  }
+  a->size -= 1;
+  return ((void **)a->buf)[a->size];
 }
 
 void avant_array_push_i32(void *arr, int32_t v) {

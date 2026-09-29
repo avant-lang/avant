@@ -764,6 +764,7 @@ pub class MycGen {
     self.ext("avant_gc_enter", "", "")
     self.ext("avant_gc_leave", "", "")
     self.ext("avant_gc_root", "ptr<void>", "")
+    self.ext("avant_gc_reload", "ptr<void>", "ptr<void>")
     self.ext("avant_type_map", "u32,u64", "")
     self.ext("avant_barrier", "ptr<void>", "")
     self.ext("avant_str_concat", "ptr<u8>,ptr<u8>", "ptr<u8>")
@@ -826,6 +827,10 @@ pub class MycGen {
     self.ext("avant_re_c1", "", "i32")
     self.ext("avant_re_count", "ptr<u8>,ptr<u8>,i32", "i32")
     self.ext("avant_array_push_slot", "ptr<void>,u64,u32", "ptr<void>")
+    self.ext("avant_array_push_ptr", "ptr<void>,ptr<void>,u32", "")
+    self.ext("avant_array_set_ptr", "ptr<void>,i32,ptr<void>", "")
+    self.ext("avant_array_get_ptr", "ptr<void>,i32", "ptr<void>")
+    self.ext("avant_array_pop_ptr", "ptr<void>", "ptr<void>")
     self.ext("avant_array_push_i32", "ptr<void>,i32", "")
     self.ext("avant_array_clear", "ptr<void>", "")
     self.ext("avant_array_reserve", "ptr<void>,i32,u64,u32", "")
@@ -1946,6 +1951,16 @@ pub class MycGen {
                 return
               }
             }
+            if expr_ty(arr).is_array {
+              if e = expr_ty(arr).inner {
+                if heap_ptr_value(e) {
+                  if v = stmt.value {
+                    self.emit_array_set_ptr(t, v)
+                    return
+                  }
+                }
+              }
+            }
           }
         }
         if t.kind == ex_field() {
@@ -2496,21 +2511,42 @@ pub class MycGen {
           return
         }
         array_ty = container
-        ptr_tmp = self.new_temp
-        self.emit_expr(arr)
-        self.line("DEREF")
-        self.line("FIELD 0")
         if e = array_ty.inner {
           em = ty_myc(e)
+          if heap_ptr_value(e) {
+            self.emit_expr(ix)
+            self.emit_expr(arr)
+            self.line("CALL :avant_array_get_ptr")
+            self.line("AS :${em}")
+            return
+          }
+          self.emit_expr(ix)
+          ixt = self.new_temp
+          self.line("LOCAL :${ixt} :i32")
+          self.line("STORE")
+          self.emit_expr(arr)
+          self.line("DEREF")
+          self.line("FIELD 0")
+          ptr_tmp = self.new_temp
           self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
+          self.line("STORE")
+          self.emit_ptr_root(ptr_tmp)
+          self.line("LOCAL :${ixt}")
+          self.line("LOCAL :${ptr_tmp}")
+          self.line("BINARY :add")
+          self.line("DEREF")
         } else {
+          self.emit_expr(arr)
+          self.line("DEREF")
+          self.line("FIELD 0")
+          ptr_tmp = self.new_temp
           self.line("LOCAL :${ptr_tmp} :ptr<i32>")
+          self.line("STORE")
+          self.emit_expr(ix)
+          self.line("LOCAL :${ptr_tmp}")
+          self.line("BINARY :add")
+          self.line("DEREF")
         }
-        self.line("STORE")
-        self.emit_expr(ix)
-        self.line("LOCAL :${ptr_tmp}")
-        self.line("BINARY :add")
-        self.line("DEREF")
       }
     }
   }
@@ -2589,6 +2625,8 @@ pub class MycGen {
     self.line("DEREF")
     self.line("FIELD 2")
     self.line("STORE")
+    self.line("LOCAL :${arr}")
+    self.line("CALL :avant_barrier")
     self.line("LOCAL :${arr}")
   }
 
@@ -3323,6 +3361,12 @@ pub class MycGen {
     self.ensure_root(arr, ty)
     if e = ty.inner {
       em = ty_myc(e)
+      if heap_ptr_value(e) {
+        self.line("LOCAL :${arr}")
+        self.line("CALL :avant_array_pop_ptr")
+        self.line("AS :${em}")
+        return
+      }
       self.line("SIZEOF :${em}")
       self.line("AS :u64")
       self.line("LOCAL :${arr}")
@@ -3334,6 +3378,37 @@ pub class MycGen {
       self.emit_ptr_root(slot)
       self.line("LOCAL :${slot}")
       self.line("DEREF")
+    }
+  }
+
+  pub fn emit_array_set_ptr(target: Expr, value: Expr) {
+    if arr = target.left {
+      if ix = target.right {
+        array_ty = expr_ty(arr)
+        if e = array_ty.inner {
+          self.emit_expr(value)
+          self.emit_coerce(expr_ty(value), e)
+          val = self.new_temp
+          em = ty_myc(e)
+          self.line("LOCAL :${val} :${em}")
+          self.line("STORE")
+          self.ensure_root(val, e)
+          self.emit_expr(arr)
+          arrn = self.new_temp
+          m = ty_myc(array_ty)
+          self.line("LOCAL :${arrn} :${m}")
+          self.line("STORE")
+          self.ensure_root(arrn, array_ty)
+          self.emit_expr(ix)
+          ixt = self.new_temp
+          self.line("LOCAL :${ixt} :i32")
+          self.line("STORE")
+          self.line("LOCAL :${val}")
+          self.line("LOCAL :${ixt}")
+          self.line("LOCAL :${arrn}")
+          self.line("CALL :avant_array_set_ptr")
+        }
+      }
     }
   }
 
@@ -3350,6 +3425,15 @@ pub class MycGen {
         self.line("CALL :avant_array_push_i32")
         return
       }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+        self.emit_coerce(expr_ty(expr.args[0]), e)
+      }
+      val = self.new_temp
+      em = ty_myc(e)
+      self.line("LOCAL :${val} :${em}")
+      self.line("STORE")
+      self.ensure_root(val, e)
       if recv = expr.receiver {
         self.emit_expr(recv)
       }
@@ -3359,28 +3443,21 @@ pub class MycGen {
       self.line("STORE")
       self.ensure_root(arr, ty)
       tid = array_type_id(e)
+      if heap_ptr_value(e) {
+        self.line("PUSH ${tid} :u32")
+        self.line("LOCAL :${val}")
+        self.line("LOCAL :${arr}")
+        self.line("CALL :avant_array_push_ptr")
+        return
+      }
       self.line("PUSH ${tid} :u32")
-      em = ty_myc(e)
       self.line("SIZEOF :${em}")
       self.line("AS :u64")
       self.line("LOCAL :${arr}")
       self.line("CALL :avant_array_push_slot")
       self.line("AS :ptr<${em}>")
-      slot = self.new_temp
-      self.line("LOCAL :${slot} :ptr<${em}>")
-      self.line("STORE")
-      self.emit_ptr_root(slot)
-      if heap_ptr_value(e) {
-        self.line("LOCAL :${arr}")
-        self.line("DEREF")
-        self.line("FIELD 0")
-        self.line("CALL :avant_barrier")
-      }
-      if expr.args.size > 0 {
-        self.emit_expr(expr.args[0])
-        self.emit_coerce(expr_ty(expr.args[0]), e)
-      }
-      self.line("LOCAL :${slot}")
+      self.line("LOCAL :${val}")
+      self.line("STACK :swap2")
       self.line("DEREF")
       self.line("STORE")
     }
@@ -3413,18 +3490,25 @@ pub class MycGen {
       self.indent = self.indent - 1
       self.line("BODY")
       self.indent = self.indent + 1
-      buf = self.new_temp
-      self.line("LOCAL :${arr}")
-      self.line("DEREF")
-      self.line("FIELD 0")
       if e = ty.inner {
         em = ty_myc(e)
-        self.line("LOCAL :${buf} :ptr<${em}>")
-        self.line("STORE")
-        self.line("LOCAL :${i}")
-        self.line("LOCAL :${buf}")
-        self.line("BINARY :add")
-        self.line("DEREF")
+        if heap_ptr_value(e) {
+          self.line("LOCAL :${i}")
+          self.line("LOCAL :${arr}")
+          self.line("CALL :avant_array_get_ptr")
+          self.line("AS :${em}")
+        } else {
+          buf = self.new_temp
+          self.line("LOCAL :${arr}")
+          self.line("DEREF")
+          self.line("FIELD 0")
+          self.line("LOCAL :${buf} :ptr<${em}>")
+          self.line("STORE")
+          self.line("LOCAL :${i}")
+          self.line("LOCAL :${buf}")
+          self.line("BINARY :add")
+          self.line("DEREF")
+        }
         self.line("LOCAL :${pname} :${em}")
         self.line("STORE")
         self.ensure_root(pname, e)

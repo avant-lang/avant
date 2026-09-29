@@ -85,6 +85,10 @@ module Avant
       avant_hash_get_str_slice
       avant_hash_get_concat
       avant_array_push_slot
+      avant_array_push_ptr
+      avant_array_set_ptr
+      avant_array_get_ptr
+      avant_array_pop_ptr
       avant_array_push_i32
       avant_array_clear
       avant_array_reserve
@@ -148,7 +152,7 @@ module Avant
     private def self.units : Array({String, String, Array(String)})
       Dir.mkdir_p(BUILD)
       list = [] of {String, String, Array(String)}
-      c_flags = ["-O2", "-std=c11", "-pthread", "-I#{DIR}", "-I#{File.join(DIR, "third_party/yyjson")}", "-I#{USOCKETS_SRC}", "-DLIBUS_NO_SSL"]
+      c_flags = ["-O2", "-std=c11", "-pthread", "-fno-omit-frame-pointer", "-I#{DIR}", "-I#{File.join(DIR, "third_party/yyjson")}", "-I#{USOCKETS_SRC}", "-DLIBUS_NO_SSL"]
       {
         "avant_rt.c"     => [] of String,
         "avant_str.c"    => [] of String,

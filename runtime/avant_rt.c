@@ -1,11 +1,16 @@
+#define _GNU_SOURCE
 #define _DEFAULT_SOURCE
 
 #include "avant_rt.h"
 
+#include <elf.h>
+#include <fcntl.h>
+#include <link.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /*
  * Precise Immix-family collector.
@@ -14,8 +19,10 @@
  * headers. Tracing is precise (type maps + a shadow stack of local slots).
  *
  * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
- * stay put; that collection recycles nursery lines instead of discarding
- * the space. Objects that escape to C should be pinned (D34).
+ * stay put (those blocks remain `SPACE_FROM` so their address is stable,
+ * D34). After young copy, unpinned from-space is discarded. Set
+ * `AVANT_NURSERY_DISCARD=0` to park all nursery blocks instead (leftover
+ * pointer diagnosis). Objects that escape to C should be pinned.
  *
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
  * allocation and collection take a world lock.
@@ -29,12 +36,14 @@
 #define BLOCK_HASH 4096
 #define LARGE_HASH 4096
 #define LOS_LIMIT 8192
-#define YOUNG_BYTES (512u * 1024u * 1024u)
+#define YOUNG_BYTES (1u * 1024u * 1024u)
+#define FULL_BYTES (32u * 1024u * 1024u)
 #define MAX_TYPES 1024
 #define CACHE_BLOCKS 2
 
 #define SPACE_MATURE 0
 #define SPACE_NURSERY 1
+#define SPACE_FROM 2
 
 typedef struct Block {
   struct Block *hash_next;
@@ -69,10 +78,14 @@ typedef struct FwdEnt {
 static int g_inited;
 static int g_collecting;
 static int g_saw_pinned_nursery;
+static int g_nursery_off;
+static int g_discard_from;
+static int g_stackmap_walk;
 
 static Block *g_bht[BLOCK_HASH];
 static Block *g_mature;
 static Block *g_nursery;
+static Block *g_from;
 static Block *g_cache;
 static int g_cache_n;
 
@@ -87,6 +100,8 @@ static __thread Frame *g_frame;
 typedef struct ThreadReg {
   struct ThreadReg *next;
   Frame **head;
+  void *stack_lo;
+  void *stack_hi;
 } ThreadReg;
 
 static __thread ThreadReg g_self_reg;
@@ -94,6 +109,12 @@ static ThreadReg *g_threads;
 static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_gc_defer;
+static int g_stack_scan;
+static uint64_t g_interior_slots;
+static uint64_t g_sm_walks;
+static uint64_t g_sm_hits;
+static uint64_t g_sm_leftover;
+static uint32_t g_sm_nsites;
 
 typedef struct PinEnt {
   struct PinEnt *next;
@@ -139,6 +160,18 @@ void avant_gc_register_thread(void) {
     return;
   }
   g_self_reg.head = &g_frame;
+  {
+    pthread_attr_t attr;
+    void *addr = NULL;
+    size_t sz = 0;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+      if (pthread_attr_getstack(&attr, &addr, &sz) == 0 && addr && sz) {
+        g_self_reg.stack_lo = addr;
+        g_self_reg.stack_hi = (uint8_t *)addr + sz;
+      }
+      pthread_attr_destroy(&attr);
+    }
+  }
   pthread_mutex_lock(&g_threads_mu);
   g_self_reg.next = g_threads;
   g_threads = &g_self_reg;
@@ -424,6 +457,67 @@ static int is_heap_payload(void *p, Block **ob, Large **ol) {
   return 0;
 }
 
+/*
+ * Object start, or the payload of the object that contains p.
+ * myc FIELD/ADDR can root an interior slot; young copy must still
+ * move the object and keep the same offset into it.
+ */
+static void *object_payload(void *p, Block **ob, Large **ol) {
+  if (is_heap_payload(p, ob, ol)) {
+    return p;
+  }
+  if (!p) {
+    return NULL;
+  }
+  Block *b = block_of(p);
+  if (b) {
+    uint8_t *addr = (uint8_t *)p;
+    if (addr < b->base || addr >= b->base + BLOCK_SIZE) {
+      return NULL;
+    }
+    size_t off = (size_t)(addr - b->base);
+    size_t bit = off / 8;
+    for (;;) {
+      size_t cand = bit * 8;
+      if (has_start(b, cand)) {
+        AvantHeader *h = (AvantHeader *)(b->base + cand);
+        size_t total = obj_total(h);
+        uint8_t *hs = (uint8_t *)h;
+        if (addr >= hs && addr < hs + total) {
+          if (ob) {
+            *ob = b;
+          }
+          if (ol) {
+            *ol = NULL;
+          }
+          return payload_of(h);
+        }
+        return NULL;
+      }
+      if (bit == 0) {
+        return NULL;
+      }
+      bit--;
+    }
+  }
+  Large *L;
+  uint8_t *addr = (uint8_t *)p;
+  for (L = g_large; L; L = L->next) {
+    uint8_t *hs = (uint8_t *)&L->header;
+    size_t total = obj_total(&L->header);
+    if (addr >= hs && addr < hs + total) {
+      if (ob) {
+        *ob = NULL;
+      }
+      if (ol) {
+        *ol = L;
+      }
+      return payload_of(&L->header);
+    }
+  }
+  return NULL;
+}
+
 int avant_is_heap(void *payload) {
   return is_heap_payload(payload, NULL, NULL);
 }
@@ -466,6 +560,9 @@ static void clear_all_marks(void) {
   for (b = g_nursery; b; b = b->next) {
     foreach_block_object(b, clear_mark_one);
   }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, clear_mark_one);
+  }
   Large *L;
   for (L = g_large; L; L = L->next) {
     L->header.flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
@@ -491,23 +588,32 @@ static void mark_object_lines(void *p) {
 static void scan_payload(void *p);
 
 static void mark(void *p) {
-  if (!is_heap_payload(p, NULL, NULL)) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start) {
     return;
   }
-  AvantHeader *h = avant_header(p);
+  AvantHeader *h = avant_header(start);
   if (h->flags & AVANT_FLAG_MARKED) {
     return;
   }
   h->flags |= AVANT_FLAG_MARKED;
-  mark_object_lines(p);
+  mark_object_lines(start);
   g_live += obj_total(h);
-  work_push(p);
+  work_push(start);
 }
 
 static void drain(void) {
   while (g_work_n) {
     void *p = g_work[--g_work_n];
     scan_payload(p);
+  }
+}
+
+static void mark_tls_slot(void **slot) {
+  if (slot) {
+    mark(*slot);
   }
 }
 
@@ -561,6 +667,7 @@ static void mark_roots(void) {
   for (PinEnt *p = g_pins; p; p = p->next) {
     mark(p->payload);
   }
+  avant_hash_walk_tls(mark_tls_slot);
   drain();
 }
 
@@ -802,12 +909,570 @@ static void *copy_nursery(void *p) {
   return np;
 }
 
+static void scan_old_once(void *p);
+
 static void copy_from_slot(void **slot) {
   void *p = *slot;
-  if (!is_heap_payload(p, NULL, NULL)) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start) {
     return;
   }
-  *slot = copy_nursery(p);
+  if (start != p) {
+    g_interior_slots++;
+  }
+  if (b && b->space == SPACE_NURSERY) {
+    ptrdiff_t delta = (uint8_t *)p - (uint8_t *)start;
+    void *np = copy_nursery(start);
+    *slot = (uint8_t *)np + delta;
+    return;
+  }
+  /* Mature / large: walk for young children. Write barriers are the
+   * fast path; this scan makes a missed barrier (old array → young
+   * buffer, old object only on the heap) honest during young GC. */
+  scan_old_once(start);
+}
+
+static void relocate_root_location(void ***slot_loc) {
+  void *addr = (void *)*slot_loc;
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(addr, &b, &ol);
+  if (!start || !b || b->space != SPACE_NURSERY) {
+    return;
+  }
+  if (start != addr) {
+    g_interior_slots++;
+  }
+  ptrdiff_t delta = (uint8_t *)addr - (uint8_t *)start;
+  void *np = copy_nursery(start);
+  *slot_loc = (void **)((uint8_t *)np + delta);
+}
+
+/*
+ * LLVM spill slots hold heap pointers that avant_gc_root never sees.
+ * After precise copy, from-space object-starts on the live C stack are
+ * rewritten to to-space when the object was already forwarded. Words
+ * that only appear here are pinned in place (D34-shaped) so we do not
+ * treat a packed i32 pair as a root that gets copied. Do not walk
+ * interiors: that smashed compile-compiler.
+ */
+static void pin_nursery_in_place(void *p) {
+  if (fwd_get(p)) {
+    return;
+  }
+  AvantHeader *h = avant_header(p);
+  if (h->flags & AVANT_FLAG_PINNED) {
+    copy_nursery(p);
+    return;
+  }
+  fwd_put(p, p);
+  g_saw_pinned_nursery = 1;
+  if (!(h->flags & AVANT_FLAG_MARKED)) {
+    h->flags |= AVANT_FLAG_MARKED;
+    mark_object_lines(p);
+    g_live += obj_total(h);
+    work_push(p);
+  }
+}
+
+static void copy_from_c_stack(void) {
+  uint8_t *sp;
+  uint8_t *hi;
+  uint8_t *p;
+  uint8_t *lo;
+  if (!g_stack_scan) {
+    return;
+  }
+  sp = (uint8_t *)__builtin_frame_address(0);
+  lo = g_self_reg.stack_lo;
+  hi = g_self_reg.stack_hi;
+  if (!hi || !sp || sp >= (uint8_t *)hi) {
+    return;
+  }
+  if (lo && sp < (uint8_t *)lo) {
+    return;
+  }
+  p = (uint8_t *)((uintptr_t)sp & ~(uintptr_t)(ALIGN - 1));
+  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
+    void *w = *(void **)p;
+    Block *b = NULL;
+    if (!is_heap_payload(w, &b, NULL)) {
+      continue;
+    }
+    if (b && b->space == SPACE_NURSERY) {
+      void *to = fwd_get(w);
+      if (to) {
+        *(void **)p = to;
+      } else {
+        pin_nursery_in_place(w);
+      }
+    } else {
+      scan_old_once(w);
+    }
+  }
+}
+
+extern char __LLVM_StackMaps[] __attribute__((weak));
+
+#define SM_DIRECT 2
+#define SM_INDIRECT 3
+#define DWARF_X64_RBP 6
+#define DWARF_X64_RSP 7
+
+typedef struct SmSite {
+  uintptr_t site;
+  const uint8_t *rec;
+  uint32_t fsize;
+} SmSite;
+
+static const uint8_t *g_sm_sec;
+static uintptr_t g_load_bias;
+static SmSite *g_sm_sites;
+
+static uint16_t sm_u16(const uint8_t *p) {
+  uint16_t v;
+  memcpy(&v, p, 2);
+  return v;
+}
+
+static uint32_t sm_u32(const uint8_t *p) {
+  uint32_t v;
+  memcpy(&v, p, 4);
+  return v;
+}
+
+static uint64_t sm_u64(const uint8_t *p) {
+  uint64_t v;
+  memcpy(&v, p, 8);
+  return v;
+}
+
+static int32_t sm_i32(const uint8_t *p) {
+  int32_t v;
+  memcpy(&v, p, 4);
+  return v;
+}
+
+static unsigned sm_record_size(const uint8_t *rec) {
+  uint16_t nloc = sm_u16(rec + 14);
+  unsigned loc_end = ((16u + 12u * nloc) + 7u) & ~7u;
+  unsigned nlo_off = loc_end + 2u;
+  uint16_t nlive = sm_u16(rec + nlo_off);
+  unsigned rec_end = nlo_off + 2u + 4u * nlive;
+  return (rec_end + 7u) & ~7u;
+}
+
+static void sm_apply_record(const uint8_t *rec, void *rbp, void *rsp) {
+  uint16_t nloc = sm_u16(rec + 14);
+  const uint8_t *loc = rec + 16;
+  uint16_t i;
+  for (i = 0; i < nloc; i++, loc += 12) {
+    uint8_t kind = loc[0];
+    uint16_t size = sm_u16(loc + 2);
+    uint16_t reg = sm_u16(loc + 4);
+    int32_t off = sm_i32(loc + 8);
+    uint8_t *base;
+    if (size != sizeof(void *)) {
+      continue;
+    }
+    if (kind != SM_INDIRECT && kind != SM_DIRECT) {
+      continue;
+    }
+    if (reg == DWARF_X64_RBP) {
+      base = (uint8_t *)rbp;
+    } else if (reg == DWARF_X64_RSP && rsp) {
+      base = (uint8_t *)rsp;
+    } else {
+      continue;
+    }
+    copy_from_slot((void **)(base + off));
+  }
+}
+
+static int sm_phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
+  int *seen = (int *)data;
+  (void)size;
+  if (*seen) {
+    return 1;
+  }
+  g_load_bias = (uintptr_t)info->dlpi_addr;
+  *seen = 1;
+  return 1;
+}
+
+/*
+ * LLVM emits __LLVM_StackMaps as a local section label. The runtime's
+ * weak extern stays UND in dynsym, so the pointer is always NULL.
+ * Find .llvm_stackmaps via ELF section headers of /proc/self/exe.
+ */
+static const uint8_t *sm_section_from_exe(void) {
+  int fd;
+  Elf64_Ehdr eh;
+  Elf64_Shdr *sh;
+  char *names;
+  const uint8_t *sec = NULL;
+  size_t bytes;
+  uint32_t i;
+  uint32_t strndx;
+
+  fd = open("/proc/self/exe", O_RDONLY);
+  if (fd < 0) {
+    return NULL;
+  }
+  if (read(fd, &eh, sizeof(eh)) != (ssize_t)sizeof(eh) ||
+      memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 ||
+      eh.e_ident[EI_CLASS] != ELFCLASS64 ||
+      eh.e_shentsize != sizeof(Elf64_Shdr) ||
+      eh.e_shoff == 0 || eh.e_shnum == 0) {
+    close(fd);
+    return NULL;
+  }
+  bytes = (size_t)eh.e_shnum * sizeof(Elf64_Shdr);
+  sh = malloc(bytes);
+  if (!sh) {
+    close(fd);
+    return NULL;
+  }
+  if (lseek(fd, (off_t)eh.e_shoff, SEEK_SET) != (off_t)eh.e_shoff ||
+      (size_t)read(fd, sh, bytes) != bytes) {
+    free(sh);
+    close(fd);
+    return NULL;
+  }
+  strndx = eh.e_shstrndx;
+  if (strndx >= eh.e_shnum) {
+    free(sh);
+    close(fd);
+    return NULL;
+  }
+  names = malloc(sh[strndx].sh_size + 1);
+  if (!names) {
+    free(sh);
+    close(fd);
+    return NULL;
+  }
+  if (lseek(fd, (off_t)sh[strndx].sh_offset, SEEK_SET) !=
+          (off_t)sh[strndx].sh_offset ||
+      (size_t)read(fd, names, sh[strndx].sh_size) != sh[strndx].sh_size) {
+    free(names);
+    free(sh);
+    close(fd);
+    return NULL;
+  }
+  names[sh[strndx].sh_size] = 0;
+  for (i = 0; i < eh.e_shnum; i++) {
+    uint32_t no = sh[i].sh_name;
+    if (no >= sh[strndx].sh_size) {
+      continue;
+    }
+    if (strcmp(names + no, ".llvm_stackmaps") != 0) {
+      continue;
+    }
+    sec = (const uint8_t *)(g_load_bias + (uintptr_t)sh[i].sh_addr);
+    break;
+  }
+  free(names);
+  free(sh);
+  close(fd);
+  return sec;
+}
+
+static int sm_site_cmp(const void *a, const void *b) {
+  const SmSite *x = (const SmSite *)a;
+  const SmSite *y = (const SmSite *)b;
+  if (x->site < y->site) {
+    return -1;
+  }
+  if (x->site > y->site) {
+    return 1;
+  }
+  return 0;
+}
+
+static void sm_index_records(void) {
+  const uint8_t *sec = g_sm_sec;
+  uint32_t nfn, nconst, nrec, fi, ri;
+  const uint8_t *fnp;
+  const uint8_t *rec;
+  uint32_t cap;
+
+  if (!sec || sec[0] != 3) {
+    return;
+  }
+  nfn = sm_u32(sec + 4);
+  nconst = sm_u32(sec + 8);
+  nrec = sm_u32(sec + 12);
+  if (nrec == 0 || nrec > 10000000u) {
+    return;
+  }
+  fnp = sec + 16;
+  rec = fnp + (unsigned)nfn * 24u + (unsigned)nconst * 8u;
+  cap = nrec;
+  g_sm_sites = malloc((size_t)cap * sizeof(SmSite));
+  if (!g_sm_sites) {
+    return;
+  }
+  ri = 0;
+  for (fi = 0; fi < nfn; fi++) {
+    uint64_t faddr = sm_u64(fnp + (unsigned)fi * 24u);
+    uint64_t fcount = sm_u64(fnp + (unsigned)fi * 24u + 16u);
+    uint64_t k;
+    uintptr_t fbase = (uintptr_t)faddr;
+    /*
+     * R_X86_64_RELATIVE in .llvm_stackmaps (TEXTREL) rewrites faddr to
+     * the runtime VA. If the loader left the ELF vaddr, add the bias.
+     */
+    if (g_load_bias && fbase < g_load_bias) {
+      fbase += g_load_bias;
+    }
+    uint64_t fsize = sm_u64(fnp + (unsigned)fi * 24u + 8u);
+    uint32_t fsize32 = 0;
+    if (fsize && fsize != UINT64_MAX && fsize <= (1u << 20)) {
+      fsize32 = (uint32_t)fsize;
+    }
+    for (k = 0; k < fcount && ri < nrec; k++, ri++) {
+      uint32_t inst_off = sm_u32(rec + 8);
+      /* LLVM records the return address (next insn after CALL). */
+      g_sm_sites[g_sm_nsites].site = fbase + inst_off;
+      g_sm_sites[g_sm_nsites].rec = rec;
+      g_sm_sites[g_sm_nsites].fsize = fsize32;
+      g_sm_nsites++;
+      rec += sm_record_size(rec);
+    }
+  }
+  if (g_sm_nsites) {
+    qsort(g_sm_sites, g_sm_nsites, sizeof(SmSite), sm_site_cmp);
+  }
+}
+
+static void sm_init(void) {
+  int seen = 0;
+  if (g_sm_sec || !g_stackmap_walk) {
+    return;
+  }
+  dl_iterate_phdr(sm_phdr_cb, &seen);
+  if (__LLVM_StackMaps && (unsigned char)__LLVM_StackMaps[0] == 3) {
+    g_sm_sec = (const uint8_t *)__LLVM_StackMaps;
+  } else {
+    g_sm_sec = sm_section_from_exe();
+  }
+  sm_index_records();
+}
+
+static SmSite *sm_find_site(void *ret) {
+  uintptr_t retu = (uintptr_t)ret;
+  uint32_t lo = 0;
+  uint32_t hi;
+  if (!g_sm_nsites) {
+    return NULL;
+  }
+  hi = g_sm_nsites;
+  while (lo < hi) {
+    uint32_t mid = lo + (hi - lo) / 2;
+    if (g_sm_sites[mid].site < retu) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo >= g_sm_nsites || g_sm_sites[lo].site != retu) {
+    return NULL;
+  }
+  return &g_sm_sites[lo];
+}
+
+static int sm_lookup_apply(void *ret, void *caller_rbp, void *callee_rbp) {
+  SmSite *site;
+  const uint8_t *rec;
+  void *rsp;
+  site = sm_find_site(ret);
+  if (!site) {
+    return 0;
+  }
+  rec = site->rec;
+  /*
+   * Callee prologue: push rbp; mov rsp, rbp. Caller's RSP at the CALL
+   * (before pushing the return address, after any stack args) is
+   * callee_rbp + 16. LLVM stack size is one number per function, so
+   * rbp - fsize is wrong at callsites that push extra stack arguments.
+   */
+  rsp = callee_rbp ? (uint8_t *)callee_rbp + 16 : NULL;
+  sm_apply_record(rec, caller_rbp, rsp);
+  g_sm_hits++;
+  return 1;
+}
+
+static void rewrite_if_forwarded(void **slot) {
+  void *w = *slot;
+  void *to = fwd_get(w);
+  if (to && to != w) {
+    *slot = to;
+  }
+}
+
+/*
+ * After the work queue drains, every copied object is in the forwarding
+ * table. Stackmap apply ran earlier as a *root* walk (copy_from_slot).
+ * LLVM still leaves extra as(0) spills of the same pointer bits that
+ * were never in gc-live. Rewrite those words in the matched myc frame
+ * (LLVM stack size from the callsite RSP) so discard does not alias.
+ * Exact fwd_get only: packed i32s that are not a copied payload stay.
+ */
+static void sm_rewrite_frame(void *rsp, uint32_t fsize) {
+  uint8_t *p;
+  uint8_t *end;
+  uint8_t *hi;
+  if (!rsp || fsize < sizeof(void *)) {
+    return;
+  }
+  p = (uint8_t *)rsp;
+  end = p + fsize;
+  hi = g_self_reg.stack_hi;
+  if (hi && end > hi) {
+    end = hi;
+  }
+  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+  for (; p + sizeof(void *) <= end; p += ALIGN) {
+    rewrite_if_forwarded((void **)p);
+  }
+}
+
+static int sm_lookup_rewrite(void *ret, void *caller_rbp, void *callee_rbp) {
+  SmSite *site;
+  void *rsp;
+  (void)caller_rbp;
+  site = sm_find_site(ret);
+  if (!site) {
+    return 0;
+  }
+  rsp = callee_rbp ? (uint8_t *)callee_rbp + 16 : NULL;
+  sm_rewrite_frame(rsp, site->fsize);
+  return 1;
+}
+
+static void walk_c_frames(int roots) {
+  uint8_t *fp;
+  uint8_t *hi;
+  uint8_t *lo;
+  uint32_t n;
+  if (!g_stackmap_walk || !g_sm_nsites) {
+    return;
+  }
+  fp = (uint8_t *)__builtin_frame_address(0);
+  lo = g_self_reg.stack_lo;
+  hi = g_self_reg.stack_hi;
+  if (!fp || !hi) {
+    return;
+  }
+  for (n = 0; n < 256 && fp; n++) {
+    uint8_t *next;
+    void *ret;
+    if (lo && fp < lo) {
+      break;
+    }
+    if (fp >= hi) {
+      break;
+    }
+    if (((uintptr_t)fp & 7u) != 0) {
+      break;
+    }
+    next = *(uint8_t **)fp;
+    ret = *((void **)fp + 1);
+    if (ret) {
+      if (roots) {
+        g_sm_walks++;
+        sm_lookup_apply(ret, next, fp);
+      } else {
+        sm_lookup_rewrite(ret, next, fp);
+      }
+    }
+    if (!next || next <= fp) {
+      break;
+    }
+    fp = next;
+  }
+}
+
+static void copy_from_stackmaps(void) {
+  /*
+   * On with AVANT_NURSERY=1 unless AVANT_NURSERY_STACKMAP=0. Callsite
+   * RSP is callee_rbp+16 (not LLVM stack size). Mapped slots are roots
+   * (copy_from_slot). Leftover spills in the same frame are rewritten
+   * after the work queue (rewrite_from_stackmaps).
+   */
+  walk_c_frames(1);
+}
+
+static void rewrite_from_stackmaps(void) {
+  walk_c_frames(0);
+}
+
+static void count_c_stack_nursery(void) {
+  uint8_t *p;
+  uint8_t *hi;
+  uint8_t *lo;
+  if (!g_stackmap_walk) {
+    return;
+  }
+  p = (uint8_t *)__builtin_frame_address(0);
+  lo = g_self_reg.stack_lo;
+  hi = g_self_reg.stack_hi;
+  if (!hi || !p) {
+    return;
+  }
+  if (lo && p < lo) {
+    return;
+  }
+  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+  for (; p + sizeof(void *) <= hi; p += ALIGN) {
+    void *w = *(void **)p;
+    Block *b = NULL;
+    if (!is_heap_payload(w, &b, NULL)) {
+      continue;
+    }
+    if (b && b->space == SPACE_NURSERY) {
+      void *to = fwd_get(w);
+      /* Copied to to-space, but this stack word still names from-space. */
+      if (to && to != w) {
+        g_sm_leftover++;
+      }
+    }
+  }
+}
+
+static void scan_old_once(void *p) {
+  AvantHeader *h = avant_header(p);
+  if (h->flags & AVANT_FLAG_YSCAN) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_YSCAN;
+  work_push(p);
+}
+
+static void clear_yscan_one(AvantHeader *h, Block *b) {
+  (void)b;
+  h->flags &= (uint16_t)~AVANT_FLAG_YSCAN;
+}
+
+static void clear_yscan(void) {
+  Block *b;
+  Large *L;
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, clear_yscan_one);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, clear_yscan_one);
+  }
+  for (L = g_large; L; L = L->next) {
+    L->header.flags &= (uint16_t)~AVANT_FLAG_YSCAN;
+  }
+}
+
+static void young_scan_header(AvantHeader *h, Block *b) {
+  (void)b;
+  copy_payload_children(payload_of(h));
 }
 
 static void gen_young_copy(void) {
@@ -815,25 +1480,112 @@ static void gen_young_copy(void) {
   g_saw_pinned_nursery = 0;
   ThreadReg *t;
   uint32_t i;
+  Block *b;
+  Large *L;
   pthread_mutex_lock(&g_threads_mu);
   for (t = g_threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
+        relocate_root_location(&f->slots[i]);
         copy_from_slot(f->slots[i]);
       }
     }
   }
   pthread_mutex_unlock(&g_threads_mu);
+  copy_from_c_stack();
+  copy_from_stackmaps();
+  /*
+   * D34: pinned objects are mark roots. Full collect already walks
+   * g_pins; young copy must too. C globals (argv, interned bytes)
+   * hold those pointers and would otherwise see a freed nursery.
+   */
+  for (PinEnt *p = g_pins; p; p = p->next) {
+    copy_from_slot(&p->payload);
+  }
+  avant_hash_walk_tls(copy_from_slot);
   for (i = 0; i < g_rem_n; i++) {
     void *obj = g_remset[i];
     if (is_heap_payload(obj, NULL, NULL)) {
       copy_payload_children(obj);
     }
   }
+  /*
+   * Walk every mature and large object. A missed write barrier
+   * (old object holding a young pointer) is otherwise a dangling
+   * slot after nursery discard. Remset stays the fast path; this
+   * walk is how Stage 17 stays honest while myc safepoints settle.
+   */
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, young_scan_header);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, young_scan_header);
+  }
+  for (L = g_large; L; L = L->next) {
+    copy_payload_children(payload_of(&L->header));
+  }
   while (g_work_n) {
     void *p = g_work[--g_work_n];
     copy_payload_children(p);
+  }
+  /*
+   * Mapped stackmap slots were roots above. Extra LLVM spills of the
+   * same pointer bits are not in gc-live; rewrite them now that every
+   * copied object is in the forwarding table.
+   */
+  rewrite_from_stackmaps();
+  count_c_stack_nursery();
+}
+
+static int g_block_has_pin;
+
+static void note_pinned_in_block(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_PINNED) {
+    g_block_has_pin = 1;
+  }
+}
+
+static int block_has_pinned(Block *b) {
+  g_block_has_pin = 0;
+  foreach_block_object(b, note_pinned_in_block);
+  return g_block_has_pin;
+}
+
+/*
+ * After young copy, free unpinned nursery blocks. Pinned objects keep
+ * their address (D34); those blocks stay on g_from as SPACE_FROM.
+ *
+ * AVANT_NURSERY_DISCARD=0 parks every nursery block instead. That was
+ * the Stage 17 safety net before stackmap leftover rewrite; it is not
+ * the product path.
+ */
+static void park_nursery_from(void) {
+  Block *b = g_nursery;
+  g_nursery = NULL;
+  while (b) {
+    Block *next = b->next;
+    b->space = SPACE_FROM;
+    b->next = g_from;
+    g_from = b;
+    b = next;
+  }
+}
+
+static void discard_nursery_from(void) {
+  Block *b = g_nursery;
+  g_nursery = NULL;
+  while (b) {
+    Block *next = b->next;
+    if (block_has_pinned(b)) {
+      b->space = SPACE_FROM;
+      b->next = g_from;
+      g_from = b;
+    } else {
+      cache_or_free_block(b);
+    }
+    b = next;
   }
 }
 
@@ -892,21 +1644,33 @@ static void collect(int full) {
   if (!full) {
     g_stats.young_collections++;
     zero_line_marks(g_nursery);
+#if defined(__x86_64__)
+    /* Spill myc callee-saved GPRs into collect's frame so the C-stack
+     * walk can rewrite or pin them. Without this, a heap pointer can
+     * sit in rbx across avant_alloc and miss the shadow stack. */
+    __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
+#endif
     gen_young_copy();
-    if (g_saw_pinned_nursery) {
-      filter_blocks(&g_nursery, keep_if_live);
+    if (g_discard_from) {
+      discard_nursery_from();
     } else {
-      filter_blocks(&g_nursery, NULL);
+      park_nursery_from();
     }
+    if (getenv("AVANT_NURSERY_KEEP")) {
+      /* extra diagnostic: park already leaves from-space readable. */
+    }
+    clear_yscan();
   } else {
     g_stats.full_collections++;
     clear_all_marks();
     zero_line_marks(g_mature);
     zero_line_marks(g_nursery);
+    zero_line_marks(g_from);
     mark_roots();
     sweep_large();
     filter_blocks(&g_mature, keep_if_live);
     filter_blocks(&g_nursery, keep_if_live);
+    filter_blocks(&g_from, keep_if_live);
   }
 
   g_rem_n = 0;
@@ -923,16 +1687,26 @@ static void maybe_collect(void) {
     return;
   }
   /*
-   * myc-llvm can keep heap pointers in GPRs across CALL. Young copy
-   * rewrites the shadow stack only, so those registers go stale (prod
-   * Binarytrees/Matmul SIGSEGV). Full collection is non-moving.
+   * Stage 17: myc-llvm spills live pointer SSA into avant_gc_root
+   * slots around CALL, so young copy can rewrite them. Full collection
+   * remains non-moving. Default is still full collect only; set
+   * AVANT_NURSERY=1 to enable young copy. AVANT_NURSERY=0 is explicit
+   * Stage 7 behaviour.
    *
    * C helpers also hold heap pointers that mark_roots does not see
    * (concat args, hash tables mid-grow). avant_gc_defer_* blocks
    * collection for that window.
    */
-  if (g_since_gc >= YOUNG_BYTES) {
+  if (g_nursery_off) {
+    if (g_since_gc >= FULL_BYTES) {
+      collect(1);
+    }
+    return;
+  }
+  if (g_since_gc >= FULL_BYTES) {
     collect(1);
+  } else if (g_since_gc >= YOUNG_BYTES) {
+    collect(0);
   }
 }
 
@@ -966,14 +1740,19 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
 static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
-          "alloc=%llu copied=%llu live=%llu peak_heap=%llu\n",
+          "alloc=%llu copied=%llu live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
           (unsigned long long)g_stats.allocated_bytes,
           (unsigned long long)g_stats.copied_bytes,
           (unsigned long long)g_stats.live_bytes,
-          (unsigned long long)g_stats.peak_heap);
+          (unsigned long long)g_stats.peak_heap,
+          (unsigned long long)g_interior_slots,
+          (unsigned long long)g_sm_walks,
+          (unsigned long long)g_sm_hits,
+          g_sm_nsites,
+          (unsigned long long)g_sm_leftover);
 }
 
 static void init_gc(void) {
@@ -983,6 +1762,48 @@ static void init_gc(void) {
   g_inited = 1;
   uint64_t mb = env_u64("AVANT_HEAP_MAX_MB", 0);
   g_heap_max = mb ? mb * 1024ull * 1024ull : 0;
+  {
+    const char *v = getenv("AVANT_NURSERY");
+    /* Copying nursery is the product default. Set to 0 for Stage 7
+     * full-collect (non-moving) diagnosis. */
+    if (v && v[0] == '0' && v[1] == 0) {
+      g_nursery_off = 1;
+    } else {
+      g_nursery_off = 0;
+    }
+  }
+  {
+    const char *v = getenv("AVANT_NURSERY_STACK");
+    /* Off unless set to 1. Conservative rewrite of LLVM spill slots
+     * smashes packed i32s; pin-only misses spills. Precise roots are
+     * the shadow stack after myc-llvm store-before-gc_root. */
+    g_stack_scan = v && v[0] == '1' && v[1] == 0;
+  }
+  {
+    const char *v = getenv("AVANT_NURSERY_DISCARD");
+    /* Product path discards unpinned from-space after young copy.
+     * Set to 0 to park (diagnostic). */
+    if (v && v[0] == '0' && v[1] == 0) {
+      g_discard_from = 0;
+    } else {
+      g_discard_from = 1;
+    }
+  }
+  {
+    const char *v = getenv("AVANT_NURSERY_STACKMAP");
+    if (v && v[0] == '0' && v[1] == 0) {
+      g_stackmap_walk = 0;
+    } else if (v && v[0] == '1' && v[1] == 0) {
+      g_stackmap_walk = 1;
+    } else {
+      /* On with the copying nursery so leftover LLVM spills in myc
+       * frames can be rewritten after young copy. Set to 0 to disable. */
+      g_stackmap_walk = !g_nursery_off;
+    }
+  }
+  if (g_stackmap_walk) {
+    sm_init();
+  }
   if (getenv("AVANT_GC_STATS")) {
     atexit(print_stats);
   }
@@ -1045,6 +1866,18 @@ void avant_gc_root(void *slot) {
   f->slots[f->n++] = (void **)slot;
 }
 
+__attribute__((noinline))
+void *avant_gc_reload(void *slot) {
+  /*
+   * Stage 17: myc-llvm stores this return into the rooted alloca after
+   * a collecting CALL. The load is opaque to LLVM isel, so a pre-call
+   * copy in an unrooted spill cannot replace it.
+   */
+  void *p = *(void *volatile *)slot;
+  *(void *volatile *)slot = p;
+  return p;
+}
+
 void avant_barrier(void *obj) {
   if (!obj || g_collecting) {
     return;
@@ -1095,8 +1928,13 @@ void avant_gc_defer_enter(void) {
    * must not collect: the outer helper still holds unmarked pointers.
    * Do not collect on leave — a helper that returns a heap pointer has
    * not yet STOREd it.
+   *
+   * Young copy must not run here: myc spilled heap args into roots and
+   * then copied them into C registers. A moving collect would update the
+   * slots and leave the C args dangling. Full collect stays non-moving
+   * (AVANT_NURSERY=0), so it is still safe at this boundary.
    */
-  if (g_gc_defer == 0) {
+  if (g_gc_defer == 0 && g_nursery_off) {
     maybe_collect();
   }
   g_gc_defer += 1;
