@@ -51,9 +51,20 @@ module Avant
     "myc-llvm"
   end
 
+    def self.myc_gc_safepoint_args : Array(String)
+      [
+        "--gc-root=avant_gc_root",
+        "--gc-reload=avant_gc_reload",
+        "--gc-enter=avant_gc_enter",
+        "--gc-leave=avant_gc_leave",
+        "--gc-leaf=avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_is_heap,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr",
+      ]
+    end
+
     def self.run_ir(ir : String, output : IO = STDOUT, error : IO = STDERR, extra_objects : Array(String) = [] of String, linker_flags : Array(String) = [] of String) : Process::Status
       flags = Runtime.linker_flags + linker_flags
       args = ["r"]
+      myc_gc_safepoint_args.each { |a| args << a }
       Runtime.ensure_objects.each { |obj| args << obj }
       extra_objects.each { |obj| args << obj }
       env = {"MYC_LINKER_FLAGS" => flags.join(" ")}
@@ -70,6 +81,7 @@ module Avant
     def self.compile_ir(ir : String, out_path : String, output : IO = STDOUT, error : IO = STDERR, extra_objects : Array(String) = [] of String, linker_flags : Array(String) = [] of String) : Process::Status
       flags = Runtime.linker_flags + linker_flags
       args = ["c"]
+      myc_gc_safepoint_args.each { |a| args << a }
       Runtime.ensure_objects.each { |obj| args << obj }
       extra_objects.each { |obj| args << obj }
       args << out_path

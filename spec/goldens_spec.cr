@@ -36,15 +36,15 @@ GOLDEN_ALL = [
   {"tests/fixtures/part3/interp.av", "part3/interp"},
   {"tests/fixtures/part3/pop.av", "part3/pop"},
   {"tests/fixtures/part3/run.av", "part3/run"},
-  {"tests/fixtures/stage11/defaults.av", "stage11/defaults"},
-  {"tests/fixtures/stage11/overload.av", "stage11/overload"},
-  {"tests/fixtures/stage11/operator.av", "stage11/operator"},
-  {"tests/fixtures/stage11/generic.av", "stage11/generic"},
-  {"tests/fixtures/stage13/quote_fn.av", "stage13/quote_fn"},
-  {"tests/fixtures/stage13/splice_name.av", "stage13/splice_name"},
-  {"tests/fixtures/stage13/hygiene.av", "stage13/hygiene"},
-  {"tests/fixtures/stage13/fields.av", "stage13/fields"},
-  {"tests/fixtures/stage13/method.av", "stage13/method"},
+  {"tests/fixtures/overloading/defaults.av", "overloading/defaults"},
+  {"tests/fixtures/overloading/overload.av", "overloading/overload"},
+  {"tests/fixtures/overloading/operator.av", "overloading/operator"},
+  {"tests/fixtures/overloading/generic.av", "overloading/generic"},
+  {"tests/fixtures/macros/quote_fn.av", "macros/quote_fn"},
+  {"tests/fixtures/macros/splice_name.av", "macros/splice_name"},
+  {"tests/fixtures/macros/hygiene.av", "macros/hygiene"},
+  {"tests/fixtures/macros/fields.av", "macros/fields"},
+  {"tests/fixtures/macros/method.av", "macros/method"},
 ]
 
 describe "Stage 14 goldens" do
@@ -61,12 +61,12 @@ describe "Stage 14 goldens" do
       File.read("#{base}.myc").should eq(Avant.compile_file(path)), "#{stem}.myc"
     end
 
-    path = File.join(root, "tests/fixtures/stage12/main.av")
+    path = File.join(root, "tests/fixtures/modules/main.av")
     text = File.read(path)
-    base = File.join(root, "tests/goldens/stage12/main")
-    File.read("#{base}.tok").should eq(dump_host_tokens(text, path)), "stage12/main.tok"
-    File.read("#{base}.ast").should eq(dump_host_ast(text, path)), "stage12/main.ast"
-    File.read("#{base}.myc").should eq(Avant.compile_file(path)), "stage12/main.myc"
+    base = File.join(root, "tests/goldens/modules/main")
+    File.read("#{base}.tok").should eq(dump_host_tokens(text, path)), "modules/main.tok"
+    File.read("#{base}.ast").should eq(dump_host_ast(text, path)), "modules/main.ast"
+    File.read("#{base}.myc").should eq(Avant.compile_file(path)), "modules/main.myc"
 
     File.read(File.join(root, "tests/goldens/hello.myc")).should eq(
       File.read(File.join(root, "tests/goldens/examples/hello.myc"))
