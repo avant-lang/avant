@@ -42,7 +42,7 @@ AV
 describe "Stage 17 recovery" do
   it "keeps src/ as recovery: host-built A still runs hello.av with the nursery on" do
     root = File.expand_path("..", __DIR__)
-    myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+    myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
     hello = File.expand_path("../examples/hello.av", __DIR__)
     File.exists?(File.join(root, "src/cli.cr")).should be_true
 

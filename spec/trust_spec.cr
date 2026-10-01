@@ -22,7 +22,7 @@ end
 describe "Stage 10 port holes identity" do
   it "matches the Crystal host myc IR on dir_list and Stage 7 holes" do
     root = File.expand_path("..", __DIR__)
-    myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+    myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
     File.exists?(myc).should be_true
     bin = compile_av_bin(port_driver_files)
     begin
@@ -57,7 +57,7 @@ end
 
 describe "Stage 10 native suite" do
   root = File.expand_path("..", __DIR__)
-  myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+  myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
   runner = File.expand_path("../tests/run.av", __DIR__)
   hello = File.expand_path("../examples/hello.av", __DIR__)
   bin_a = ""

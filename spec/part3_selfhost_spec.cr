@@ -45,7 +45,7 @@ end
 describe "Stage 8 Part 3 self-host" do
   it "builds compiler B from compiler A and B runs hello.av" do
     root = File.expand_path("..", __DIR__)
-    myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+    myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
     File.exists?(myc).should be_true
 
     hello = File.expand_path("../examples/hello.av", __DIR__)

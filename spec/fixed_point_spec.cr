@@ -9,7 +9,7 @@ require "./spec_helper"
 
 describe "Stage 15 compiler fixed-point" do
   root = File.expand_path("..", __DIR__)
-  myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+  myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
   runner = File.expand_path("../tests/run.av", __DIR__)
   hello = File.expand_path("../examples/hello.av", __DIR__)
   golden = File.expand_path("../tests/goldens/hello.myc", __DIR__)
