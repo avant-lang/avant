@@ -22,7 +22,7 @@ end
 {% if env("AVANT_BLESS_HOST") == "1" %}
 describe "Stage 9 native runner" do
   root = File.expand_path("..", __DIR__)
-  myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+  myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
   runner = File.expand_path("../tests/run.av", __DIR__)
   bin_a = ""
 

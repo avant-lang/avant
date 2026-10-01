@@ -9,7 +9,7 @@ require "./spec_helper"
 describe "Stage 8 Part 2 driver" do
   it "dumps IR and runs Stage 1–6 examples matching the Crystal host" do
     root = File.expand_path("..", __DIR__)
-    myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+    myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
     File.exists?(myc).should be_true
 
     bin = compile_av_bin(port_driver_files)

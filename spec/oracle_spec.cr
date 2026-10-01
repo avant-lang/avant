@@ -3,7 +3,7 @@ require "./spec_helper"
 describe "Stage 16 recovery" do
   it "keeps src/ as recovery: the host still builds compiler A and A runs hello.av" do
     root = File.expand_path("..", __DIR__)
-    myc = File.expand_path("../../myc/myc-llvm", __DIR__)
+    myc = File.expand_path("../../safepoints/myc-llvm", __DIR__)
     hello = File.expand_path("../examples/hello.av", __DIR__)
     File.exists?(File.join(root, "src/cli.cr")).should be_true
     File.exists?(File.join(root, "compiler/main.av")).should be_true

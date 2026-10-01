@@ -4,13 +4,43 @@
 
 It is for people who want as little syntax as Crystal (or less) to say the same thing, required braces without TypeScript paperwork, and enough speed that simplicity is not an apology. Home: [github.com/avant-lang/avant](https://github.com/avant-lang/avant) (private until minimally working, then public). License: [MIT](LICENSE).
 
-This folder is the language. In the local workbench it sits next to `myc/` (IR backend) and `LangArena/` (scoreboard). Those trees are not part of this repository's identity.
+This folder is the language. The compiler you run is written in Avant (`compiler/*.av`). Crystal `src/` is recovery scaffolding.
 
-This README is the **living language document** until a website exists. It describes what the compilers actually accept today. The target sketch (including features that are decided but not built) is [syntax.md](syntax.md) **S3**. Stages 6–17 are closed; 18–25 wait ([roadmap.md](roadmap.md), [d43.md](d43.md)). Identity is the oracle. Copying nursery is the default.
+## Index
 
-## What compiles today
+1. [Getting started](#getting-started)
+2. [Language](#language)
+3. [Types](#types)
+4. [Modules](#modules)
+5. [Errors](#errors)
+6. [Memory](#memory)
+7. [C interop](#c-interop)
+8. [Concurrency](#concurrency)
+9. [Macros](#macros)
+10. [Builtins](#builtins)
+11. [Toolchain](#toolchain)
+12. [Tests](#tests)
+13. [Not built yet](#not-built-yet)
+14. [Goals](#goals)
+15. [License](#license)
 
-Braces are required. No parentheses on `if` / `while` / `switch`. No semicolons. `=` binds or assigns. `fn`. Last expression is the value. Types are `name: Type`. `T?` is `T | Nil`. Failure is a union member; postfix `?` returns the failure. `struct` is a value; `class` is a reference. Entry is `fn main`, or `fn run` (a myc `main` is synthesized).
+## Getting started
+
+Needs Crystal 1.21, a C compiler (`cc`), libclang (for `avant bind`), LLVM 20, and a safepoints-enabled `myc-llvm` (workbench sibling `../safepoints/myc-llvm`, or `AVANT_MYC_LLVM`).
+
+From this directory:
+
+```
+crystal src/cli.cr compile compiler/main.av bin/avant-av
+./bin/avant-av compile compiler/main.av bin/avant-av-b
+./bin/avant-av-b run examples/hello.av
+```
+
+`AVANT_ROOT` and `AVANT_MYC_LLVM` override discovery. `AVANT_MYC_FINAL=1` asks myc-llvm for `--final` (slow compile, more LLVM opts). Daily builds use myc-llvm default.
+
+## Language
+
+Braces are required. No parentheses on `if` / `while` / `switch`. No semicolons. `=` binds or assigns. `fn`. Last expression is the value. Types are `name: Type`. Entry is `fn main`, or `fn run` (a myc `main` is synthesized).
 
 Comments are `//` to end of line. There is no `/* */`. `// file: path` is a test-runner concat marker (it resets lexer path and line); it is not a module import.
 
@@ -26,7 +56,7 @@ fn fact(n: Int): Int {
 }
 ```
 
-Structs, classes, inherent methods, and external receivers:
+Structs, classes, inherent methods, external receivers, defaults, overloading, operators, and generic functions:
 
 ```avant
 struct Point {
@@ -69,7 +99,29 @@ class Counter {
 }
 ```
 
-A file is a module. `import name` loads `name.av` beside the importer. `pub` is the public surface; names default module-private. Cycles are errors. The CLI takes one root (not a concat list). `fn main` / `fn run` are entry, not `pub`.
+A `struct` is a value (copy). A `class` is a reference (identity). `Type { fields }` constructs a struct, not a class.
+
+## Types
+
+`T?` is `T | Nil`. Unions are first-class (`Int | String`, `User | DbError`). Type application is `Array(Int)`, `Hash(String, Int)` — not `[]Int`, not `Array<Int>`. Array literals `[1, 2, 3]` and empty `[]` are expressions.
+
+New names are block-scoped. `=` to an existing enclosing name assigns outward. Mutable by default.
+
+`switch` / `case` is Int (or Bool) only; a value switch needs `else`.
+
+```avant
+fn name_of(kind: Int): String {
+  switch kind {
+    case 0 { "eof" }
+    case 1, 2 { "ident-or-int" }
+    else { "other" }
+  }
+}
+```
+
+## Modules
+
+A file is a module. `import name` loads `name.av` beside the importer. `pub` is the public surface; names default module-private. Cycles are errors. The CLI takes one root (not a concat list). `fn main` / `fn run` are entry, not `pub`. Public names enter the importer’s scope. Duplicate public names are a compile error; qualify only to resolve a clash.
 
 ```avant
 import vec
@@ -79,7 +131,9 @@ fn main {
 }
 ```
 
-Nilable types, postfix `?`, if-assign, interpolation, arrays, hashes, blocks:
+## Errors
+
+Failure is a union member, not unwind. Postfix `?` unwraps the success variant(s) or returns the failure from the current function. `if user = find("ada") { ... }` binds only in the then-block.
 
 ```avant
 fn parse_id(raw: Int): Int? {
@@ -91,7 +145,15 @@ fn bump(id: Int): Int? {
   n = parse_id(id)?
   n + 1
 }
+```
 
+## Memory
+
+Heap allocation goes through `runtime/avant_rt.c` (precise GenImmix: copying nursery, Immix mature). The copying nursery is the default. `AVANT_NURSERY=0` restores a full, non-moving collect. Objects that escape to C are pinned and are not copied.
+
+Interpolation in double-quoted strings is `${expr}`. A `$` that is not followed by `{` is a literal dollar.
+
+```avant
 fn main {
   xs: Array(Int) = [1, 2]
   xs.push(3)
@@ -107,37 +169,40 @@ fn main {
 }
 ```
 
-`switch` / `case` (Int discriminant), C `lib` / `fun`, `spawn` / `.join`, JSON via yyjson, HTTP via uSockets:
+## C interop
+
+C is `lib` / `fun`. Hand-written and generated bindings are the same grammar. There is no `extern fn`. Call as `libname.funname(...)`. Link extra `.c` / `.o` with `--cc` and system libraries with `--lib NAME`. C++ is `extern "C"` only. `avant bind HEADER.h` translates a header with libclang into an editable `lib` block.
 
 ```avant
-fn name_of(kind: Int): String {
-  switch kind {
-    case 0 { "eof" }
-    case 1, 2 { "ident-or-int" }
-    else { "other" }
-  }
-}
-
 lib math {
   fun sqrt(x: Float64): Float64
 }
 
+fn main {
+  puts(math.sqrt(4.0))
+}
+```
+
+JSON is yyjson. HTTP loopback is uSockets C (both under `runtime/third_party/`). Spawn links `-pthread`.
+
+## Concurrency
+
+`spawn { }` is a 1:1 OS thread. The result of the block is joined with `.join`. Int (and similar copyable) locals may be copied into the thunk. A bare `class` may not be captured. `.parallel` exists in the grammar but still lowers to a sequential map.
+
+```avant
 fn six_times_seven: Int {
   6 * 7
 }
 
 fn main {
-  puts(math.sqrt(4.0))
-  doc = json_parse("{\"n\": 7}")
-  if n = json_int(doc, "n") { puts(n) }
   h = spawn { six_times_seven() }
   puts(h.join)
 }
 ```
 
-Proof programs (identity compiler **B** matches the host on this list): `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`; `matmul.av` checksums only. Call C as `libname.funname(...)`. Heap is GenImmix; the copying nursery is the default (`AVANT_NURSERY=0` restores Stage 7 full collect).
+## Macros
 
-Identity also runs helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill`, `dir_list`, `now_us`, and similar. Remaining host-only names wait for a failing native test (**D40**). Programs compile from a root; `import` follows neighbouring `.av` files (**D42**). `quote { }` injects code; `#()` splices inside quote; `comptime { for f in Type.fields { quote { ... } } }` is the one derived walk (**D29**).
+`quote { }` injects functions (top-level / type body) or statements (inside a function). `#()` splices only inside quote. Hygiene gensyms names the quote introduces. `comptime` is one field walk: `for f in Type.fields { quote { ... } }`. Nested quote is an error. There is no arbitrary comptime interpreter.
 
 ```avant
 quote {
@@ -162,69 +227,49 @@ comptime {
 }
 ```
 
-## Decided, not built
+## Builtins
 
-These are in [decisions.md](decisions.md) / [syntax.md](syntax.md). They are **not** shipping. Do not read S3 as a tutorial for today's binary.
+Proof programs (identity compiler **B** matches the host on this list): `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`; `matmul.av` checksums only.
 
-| What | Decision | When |
-| --- | --- | --- |
-| First-class `fn(T): U` values (S3 `map`) | D46 | D43 Stage 19 |
-| Generic structs and classes | D47 | D43 Stage 20 Part 0 |
-| Named interfaces | D45 | D43 Stage 21 |
-| Real `.parallel` / `Channel(T)` / `Mutex(T)` | D35 | D43 Stage 20 |
-| C struct field layouts, methods on `Ptr(T)` | D36 leftover | D43 Stage 18 |
-| Macros beyond quote, packages, HTTP *server*, formatter | Wave 4 / D19 | D43 Stages 22 and 25; see [d43.md](d43.md) |
+Helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill` / `.pop` / `.clear`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists` / `argv` / `env_get` / `process_run` / `process_run_out`. Remaining host-only names wait for a failing native test.
 
-## How it is compiled
+## Toolchain
 
 ```
-.av source → parser/checker (`compiler/*.av`; Crystal `src/` is frozen recovery) → myc IR → myc-llvm → binary
+.av source → parser/checker (compiler/*.av; Crystal src/ is frozen recovery) → myc IR → myc-llvm (safepoints shard) → binary
 ```
 
-Still emit myc IR (**D39**). Identity is the oracle. Crystal `src/` is scaffolding and recovery.
+The product emit is still myc IR. Identity is the compiler you trust. Crystal `src/` still builds A if you need recovery.
 
-## Compiler and tests
+## Tests
 
-Needs Crystal 1.21, a C compiler (`cc`), libclang (for `avant bind`), and `myc-llvm` (workbench sibling `../myc/myc-llvm`, or `AVANT_MYC_LLVM`). Heap allocation goes through `runtime/avant_rt.c` (GenImmix, D34). JSON is yyjson; HTTP is uSockets (both under `runtime/third_party/`). C libraries link with `--lib` / `--cc`. Spawn links `-pthread`.
-
-Daily proof is the native suite on identity **B** or **C**. Recovery is `crystal spec`. Host-vs-port dump specs skip unless `AVANT_BLESS_HOST=1`.
+Daily proof is the native suite on identity **B** or **C**. Recovery is `crystal spec`.
 
 ```
-crystal src/cli.cr compile compiler/main.av bin/avant-av
-./bin/avant-av compile compiler/main.av bin/avant-av-b
-./bin/avant-av-b run examples/hello.av
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 ./bin/avant-av-b compile compiler/main.av bin/avant-av-c
 AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
-AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/bless_goldens.av
-crystal spec
 ```
 
-Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the **identity** compiler (not Crystal host codegen). Dump goldens: `tests/goldens/` (**D48**). Compiler fixed-point: [fixed-point.md](fixed-point.md). Recovery `crystal spec`; re-bless host-vs-port with `AVANT_BLESS_HOST=1 crystal spec`. Stage records: [roadmap.md](roadmap.md). **Do not** start Stages 18–25 unless asked.
+Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the identity compiler (not Crystal host codegen). Dump goldens live under `tests/goldens/`.
 
-## Live ledgers
+## Not built yet
 
-These files are **current truth**. They are rewritten in place. They are not logs.
+These are decided. They are **not** shipping. Do not read a target sketch as a tutorial for today’s binary.
 
-| File | Role |
+| What | Status |
 | --- | --- |
-| [philosophy.md](philosophy.md) | Why Avant exists, non-negotiables, measurable objectives |
-| [decisions.md](decisions.md) | Technical choices that are in force |
-| [questions.md](questions.md) | Open questions (Wave 5 closed; Stages 18–25 numbered, not opened) |
-| [syntax.md](syntax.md) | Canonical sketch **S3** (target; not all of it compiles) |
-| [baseline.md](baseline.md) | LangArena numbers Avant will be judged against |
-| [roadmap.md](roadmap.md) | Stages. 6–17 closed; 18–25 planned (D43) |
-| [d43.md](d43.md) | Sequence after Stage 13. Stages 14–17 closed; 18–25 planned |
-| [bootstrap.md](bootstrap.md) | Stage 8 — Bootstrap. Identity roots, I/O, pitfalls |
-| [native-tests.md](native-tests.md) | Stage 9 — Native tests and coverage |
-| [trust.md](trust.md) | Stage 10 — Native suite / trust |
-| [overloading.md](overloading.md) | Stage 11 — Defaults, overloading, operators, user generics |
-| [modules.md](modules.md) | Stage 12 — Modules |
-| [macros.md](macros.md) | Stage 13 — Macros (`quote` / `#()`) |
-| [goldens.md](goldens.md) | Stage 14 — Dump goldens |
-| [fixed-point.md](fixed-point.md) | Stage 15 — Compiler fixed-point |
-| [oracle.md](oracle.md) | Stage 16 — Identity is the oracle |
-| [safepoints.md](safepoints.md) | Stage 17 — myc safepoints / copying nursery |
-| [experiments/immix.md](experiments/immix.md) | Sticky vs GenImmix measurement (closed) |
+| First-class `fn(T): U` values | decided, not shipping |
+| Generic structs and classes | decided, not shipping |
+| Named interfaces | decided, not shipping |
+| Real `.parallel` / `Channel(T)` / `Mutex(T)` | decided, not shipping |
+| C struct field layouts, methods on `Ptr(T)` | decided, not shipping |
+| Formatter, packages, HTTP *server* | decided, not shipping |
 
-Read `philosophy.md`, then `decisions.md`. Patience, measurement, and organized code are part of the identity.
+## Goals
+
+Beginners are welcome; advanced programmers are not blocked. Automatic memory management is a given. Errors are values. The public scoreboard is LangArena: expressiveness at Crystal’s class, runtime nearer C/Rust than Crystal already is and clearly faster than Go, memory better than Crystal without giving up GC.
+
+## License
+
+[MIT](LICENSE).

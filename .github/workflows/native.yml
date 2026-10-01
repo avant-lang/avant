@@ -1,0 +1,77 @@
+# Crystal → A → B, then native suite on B. Required gate.
+#
+# Avant does not Crystal-require myc or myc_llvm_safepoints. It shells out
+# to a myc-llvm *binary*. This job checks out avant-lang/safepoints; that
+# shard's shard.yml pulls kostya/myc; `crystal build src/cli.cr` overlays
+# safepoints on myc and writes myc-llvm. AVANT_MYC_LLVM points Avant at it.
+# Pin `ref` on the safepoints checkout when a tag exists.
+
+name: native
+
+"on":
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      LLVM_CONFIG: llvm-config-20
+      AVANT_ROOT: ${{ github.workspace }}
+      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: avant-lang/safepoints
+          path: safepoints
+          persist-credentials: false
+
+      - name: Install LLVM 20 and link libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            llvm-20-dev \
+            libpcre2-dev \
+            zlib1g-dev
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.21"
+
+      - name: Build myc-llvm
+        working-directory: safepoints
+        run: |
+          shards install
+          crystal build src/cli.cr -o myc-llvm
+
+      - name: Crystal → A
+        run: crystal src/cli.cr compile compiler/main.av bin/avant-av
+
+      - name: A → B
+        run: ./bin/avant-av compile compiler/main.av bin/avant-av-b
+
+      - name: Native suite on B
+        env:
+          AVANT_COMPILER: ./bin/avant-av-b
+        run: |
+          set -euo pipefail
+          ./bin/avant-av-b run tests/run.av | tee native.log
+          if grep -q 'FAIL  tests/run.av' native.log; then
+            exit 1
+          fi
+          if grep -qE 'Test Suites:.*failed' native.log; then
+            exit 1
+          fi
+          grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
+          grep -q 'Ran all test suites.' native.log

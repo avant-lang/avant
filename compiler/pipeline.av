@@ -92,6 +92,13 @@ pub fn myc_llvm_path: String {
     }
   }
   root = avant_root()
+  shard = "${root}/../safepoints/myc-llvm"
+  if file_exists(shard) {
+    return shard
+  }
+  if file_exists("../safepoints/myc-llvm") {
+    return "../safepoints/myc-llvm"
+  }
   sibling = "${root}/../myc/myc-llvm"
   if file_exists(sibling) {
     return sibling
@@ -99,7 +106,7 @@ pub fn myc_llvm_path: String {
   if file_exists("../myc/myc-llvm") {
     return "../myc/myc-llvm"
   }
-  sibling
+  shard
 }
 
 pub fn runtime_object_names: Array(String) {
@@ -430,6 +437,11 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   args.push("MYC_LINKER_FLAGS=${flags}")
   args.push(myc)
   args.push(mode)
+  if v = env_get("AVANT_MYC_FINAL") {
+    if str_eq(v, "1") {
+      args.push("--final")
+    }
+  }
   // myc-llvm GC safepoints: names stay Avant C symbols; myc only sees these flags.
   args.push("--gc-root=avant_gc_root")
   args.push("--gc-reload=avant_gc_reload")
