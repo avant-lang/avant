@@ -1,0 +1,145 @@
+# On a version tag: Crystal → A → B, native suite on B, then attach
+# linux-x86_64 B + myc-llvm to a GitHub Release for that tag.
+#
+# Git tags cannot hold files. Release assets are the GitHub way to
+# attach a binary to a tag. Creating or editing a Release later for
+# the same tag keeps these files (one Release per tag). Not a seed.
+#
+# Backfill an existing tag from Actions: Run workflow → tag name.
+
+name: release-binary
+
+"on":
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and attach (e.g. v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-binary-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  binary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      LLVM_CONFIG: llvm-config-20
+      AVANT_ROOT: ${{ github.workspace }}
+      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+      TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: avant-lang/safepoints
+          path: safepoints
+          persist-credentials: false
+
+      - name: Install LLVM 20 and link libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            llvm-20-dev \
+            libpcre2-dev \
+            zlib1g-dev
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.21"
+
+      - name: Build myc-llvm
+        working-directory: safepoints
+        run: |
+          shards install
+          crystal build src/cli.cr -o myc-llvm
+
+      - name: Crystal → A
+        run: crystal src/cli.cr compile compiler/main.av bin/avant-av
+
+      - name: A → B
+        run: ./bin/avant-av compile compiler/main.av bin/avant-av-b
+
+      - name: Native suite on B
+        env:
+          AVANT_COMPILER: ./bin/avant-av-b
+        run: |
+          set -euo pipefail
+          ./bin/avant-av-b run tests/run.av | tee native.log
+          if grep -q 'FAIL  tests/run.av' native.log; then
+            exit 1
+          fi
+          if grep -qE 'Test Suites:.*failed' native.log; then
+            exit 1
+          fi
+          grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
+          grep -q 'Ran all test suites.' native.log
+
+      - name: Package linux-x86_64 B
+        run: |
+          set -euo pipefail
+          mkdir -p dist/avant-linux-x86_64
+          cp -f bin/avant-av-b dist/avant-linux-x86_64/avant-av-b
+          cp -f safepoints/myc-llvm dist/avant-linux-x86_64/myc-llvm
+          chmod +x dist/avant-linux-x86_64/avant-av-b dist/avant-linux-x86_64/myc-llvm
+          myc_sha="$(git -C safepoints/lib/myc rev-parse HEAD 2>/dev/null || true)"
+          if [ -z "${myc_sha}" ]; then
+            myc_sha="$(grep -m1 'commit:' safepoints/shard.yml | awk '{print $2}')"
+          fi
+          {
+            echo "tag: ${TAG_NAME}"
+            echo "avant: $(git rev-parse HEAD)"
+            echo "safepoints: $(git -C safepoints rev-parse HEAD)"
+            echo "myc: ${myc_sha}"
+            echo "crystal: $(crystal --version | head -n1)"
+            echo "llvm: $(llvm-config-20 --version)"
+            echo "runner: ubuntu-24.04 linux-x86_64"
+            echo "not-a-seed: yes"
+          } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
+          tar -C dist -czf dist/avant-av-b-linux-x86_64.tar.gz avant-linux-x86_64
+          sha256sum dist/avant-av-b-linux-x86_64.tar.gz | tee dist/avant-av-b-linux-x86_64.tar.gz.sha256
+          {
+            echo "Convenience linux-x86_64 compiler **B** and \`myc-llvm\`."
+            echo
+            echo "Not a seed (Stage 23). Not minimally working / public."
+            echo "Needs the source tree (\`runtime/\`, \`cc\`) and LLVM 20 to compile programs."
+            echo "Set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
+            echo
+            cat dist/versions.txt
+            echo
+            echo '```'
+            cat dist/avant-av-b-linux-x86_64.tar.gz.sha256
+            echo '```'
+          } > dist/notes.md
+
+      - name: Attach to GitHub Release for the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG_NAME}" >/dev/null 2>&1; then
+            gh release upload "${TAG_NAME}" \
+              dist/avant-av-b-linux-x86_64.tar.gz \
+              dist/avant-av-b-linux-x86_64.tar.gz.sha256 \
+              --clobber
+          else
+            gh release create "${TAG_NAME}" \
+              dist/avant-av-b-linux-x86_64.tar.gz \
+              dist/avant-av-b-linux-x86_64.tar.gz.sha256 \
+              --title "${TAG_NAME}" \
+              --notes-file dist/notes.md \
+              --prerelease \
+              --verify-tag
+          fi
