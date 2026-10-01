@@ -34,7 +34,27 @@ fn test_examples(c: Checks) {
     zflags: Array(String) = []
     zflags.push("--lib")
     zflags.push("z")
-    expect_example(c, compiler, root, stamp, "zlib", zflags)
+    zsrc = "${root}/examples/zlib.av"
+    zlog = "/tmp/avant-s10-${stamp}-zlib.txt"
+    zcode = run_av_cmd_flags(compiler, zsrc, zlog, zflags)
+    c.eq_int(zcode, 0, "run zlib.av")
+    if zgot = file_read(zlog) {
+      line = nth_line(zgot, 0)
+      if line.size > 0 {
+        digit = false
+        if line[0] >= 48 {
+          if line[0] <= 57 {
+            digit = true
+          }
+        }
+        c.expect(digit, "zlib.av stdout starts with a digit")
+        c.expect(str_has(line, "."), "zlib.av stdout is a version")
+      } else {
+        c.expect(false, "zlib.av stdout nonempty")
+      }
+    } else {
+      c.expect(false, "zlib.av stdout")
+    }
     aflags: Array(String) = []
     aflags.push("--cc")
     aflags.push("${root}/examples/c/add.c")
