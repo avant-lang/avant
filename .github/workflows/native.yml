@@ -6,13 +6,18 @@
 # safepoints on myc and writes myc-llvm. AVANT_MYC_LLVM points Avant at it.
 # Pin `ref` on the safepoints checkout when a tag exists.
 # Tag pushes are `release.yml` (binary attached to a GitHub Release).
+# `native` also writes junit.xml and lcov.info (soft Codecov; not the merge gate).
+# Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is quiet anyway so
+# `run FILE.av` stdout stays the program. A `--coverage` fixture still prints.
+# Push is `master` only so a same-repo PR is not a second identical run
+# (`pull_request` already covers the branch; tags never hit this workflow).
 
 name: native
 
 "on":
   push:
     branches:
-      - "**"
+      - master
   pull_request:
 
 permissions:
@@ -31,9 +36,9 @@ jobs:
       AVANT_ROOT: ${{ github.workspace }}
       AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: avant-lang/safepoints
           path: safepoints
@@ -62,11 +67,17 @@ jobs:
         run: crystal src/cli.cr compile compiler/main.av bin/avant-av
 
       - name: A → B
+        env:
+          AVANT_COVERAGE: "1"
+          AVANT_COVERAGE_MAP: ${{ github.workspace }}/coverage.map
         run: ./bin/avant-av compile compiler/main.av bin/avant-av-b
 
       - name: Native suite on B
         env:
           AVANT_COMPILER: ./bin/avant-av-b
+          AVANT_JUNIT: junit.xml
+          AVANT_COVERAGE_LCOV: lcov.info
+          AVANT_COVERAGE_REPORT: "0"
         run: |
           set -euo pipefail
           ./bin/avant-av-b run tests/run.av | tee native.log
@@ -78,3 +89,34 @@ jobs:
           fi
           grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
           grep -q 'Ran all test suites.' native.log
+
+      - name: Upload LCOV and JUnit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-reports
+          path: |
+            junit.xml
+            lcov.info
+          if-no-files-found: warn
+
+      - name: Codecov coverage (soft)
+        if: always()
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
+          disable_search: true
+
+      - name: Codecov test analytics (soft)
+        if: always()
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: junit.xml
+          report_type: test_results
+          fail_ci_if_error: false
+          disable_search: true

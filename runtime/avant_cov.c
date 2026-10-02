@@ -51,39 +51,76 @@ static int use_color(void) {
   return isatty(1);
 }
 
-static int should_report(void) {
-  const char *r = getenv("AVANT_COVERAGE_REPORT");
-  if (r && r[0] == '0' && r[1] == 0) {
-    return 0;
-  }
-  if (r && r[0] == '1' && r[1] == 0) {
-    return 1;
-  }
-
-  int fd = open("/proc/self/cmdline", O_RDONLY);
-  if (fd < 0) {
-    return 1;
-  }
-  char buf[4096];
-  ssize_t n = read(fd, buf, (ssize_t)sizeof(buf) - 1);
-  close(fd);
-  if (n <= 0) {
-    return 1;
-  }
-  buf[n] = 0;
+static const char *cmdline_arg1(char *buf, ssize_t n) {
   char *p = buf;
   char *end = buf + n;
   while (p < end && *p) {
     p++;
   }
-  if (p >= end || p + 1 >= end) {
-    return 1;
+  if (p >= end || p + 1 >= end || p[1] == 0) {
+    return NULL;
   }
-  p++;
-  if (strcmp(p, "compile") == 0 || strcmp(p, "c") == 0 || strcmp(p, "dump") == 0 ||
-      strcmp(p, "d") == 0 || strcmp(p, "bind") == 0 || strcmp(p, "b") == 0) {
+  return p + 1;
+}
+
+static int is_cli_compile_cmd(const char *cmd) {
+  if (!cmd) {
     return 0;
   }
+  return strcmp(cmd, "compile") == 0 || strcmp(cmd, "c") == 0 ||
+         strcmp(cmd, "dump") == 0 || strcmp(cmd, "d") == 0 ||
+         strcmp(cmd, "bind") == 0 || strcmp(cmd, "b") == 0;
+}
+
+static int is_cli_cmd(const char *cmd) {
+  size_t n;
+  if (is_cli_compile_cmd(cmd)) {
+    return 1;
+  }
+  if (!cmd) {
+    return 0;
+  }
+  if (strcmp(cmd, "run") == 0 || strcmp(cmd, "r") == 0) {
+    return 1;
+  }
+  if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "--help") == 0) {
+    return 1;
+  }
+  n = strlen(cmd);
+  if (n >= 3 && strcmp(cmd + (n - 3), ".av") == 0) {
+    return 1;
+  }
+  return 0;
+}
+
+static int should_report(void) {
+  const char *r = getenv("AVANT_COVERAGE_REPORT");
+  const char *cmd = NULL;
+  char buf[4096];
+  int fd;
+  ssize_t n;
+
+  if (r && r[0] == '1' && r[1] == 0) {
+    return 1;
+  }
+
+  fd = open("/proc/self/cmdline", O_RDONLY);
+  if (fd >= 0) {
+    n = read(fd, buf, (ssize_t)sizeof(buf) - 1);
+    close(fd);
+    if (n > 0) {
+      buf[n] = 0;
+      cmd = cmdline_arg1(buf, n);
+    }
+  }
+
+  /* Identity compiler CLI stays quiet so `run FILE.av` stdout is the
+     program, not a compiler coverage table. REPORT=1 forces the table.
+     A program built with --coverage (no CLI subcommand) still prints. */
+  if (is_cli_cmd(cmd)) {
+    return 0;
+  }
+
   return 1;
 }
 
@@ -384,6 +421,164 @@ static void print_pct(int hit, int tot, int color, int inner) {
   printf(" %s%*d%s ", c, num_w, pct, r);
 }
 
+static const char *lcov_sf_path(const char *path) {
+  return display_path(path);
+}
+
+static const char *lcov_out_path(void) {
+  const char *env = getenv("AVANT_COVERAGE_LCOV");
+  if (env && env[0] == '0' && env[1] == 0) {
+    return NULL;
+  }
+  if (env && env[0]) {
+    return env;
+  }
+  return "lcov.info";
+}
+
+static void write_lcov(void) {
+  FILE *out;
+  int i;
+  int file_n = 0;
+  int file_cap = 0;
+  CovFile *files = NULL;
+  const char *path;
+  const char *out_path = lcov_out_path();
+
+  if (!out_path || !g_slots || g_nslots <= 0) {
+    return;
+  }
+
+  for (i = 0; i < g_nslots; i++) {
+    if (!find_file(&files, &file_n, &file_cap, g_slots[i].path ? g_slots[i].path : "")) {
+      free(files);
+      return;
+    }
+  }
+
+  out = fopen(out_path, "w");
+  if (!out) {
+    for (i = 0; i < file_n; i++) {
+      free(files[i].path);
+      free(files[i].show);
+      free(files[i].uncovered);
+    }
+    free(files);
+    return;
+  }
+
+  for (i = 0; i < file_n; i++) {
+    int s;
+    int fn_tot = 0, fn_hit = 0;
+    int br_tot = 0, br_hit = 0;
+    int br_idx = 0;
+    int lf = 0, lh = 0;
+    path = lcov_sf_path(files[i].path ? files[i].path : "");
+    fprintf(out, "TN:\n");
+    fprintf(out, "SF:%s\n", path ? path : "<input>");
+
+    for (s = 0; s < g_nslots; s++) {
+      const char *sp = g_slots[s].path ? g_slots[s].path : "";
+      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
+        continue;
+      }
+      if (g_slots[s].kind == 'F') {
+        const char *name = g_slots[s].name && g_slots[s].name[0] ? g_slots[s].name : "fn";
+        fprintf(out, "FN:%d,%s\n", g_slots[s].line, name);
+      }
+    }
+    for (s = 0; s < g_nslots; s++) {
+      uint64_t hit = (g_hits && s >= 0 && s < g_nslots) ? g_hits[s] : 0;
+      const char *sp = g_slots[s].path ? g_slots[s].path : "";
+      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
+        continue;
+      }
+      if (g_slots[s].kind == 'F') {
+        const char *name = g_slots[s].name && g_slots[s].name[0] ? g_slots[s].name : "fn";
+        fprintf(out, "FNDA:%llu,%s\n", (unsigned long long)hit, name);
+        fn_tot++;
+        if (hit) {
+          fn_hit++;
+        }
+      }
+    }
+    fprintf(out, "FNF:%d\n", fn_tot);
+    fprintf(out, "FNH:%d\n", fn_hit);
+
+    for (s = 0; s < g_nslots; s++) {
+      uint64_t hit = (g_hits && s >= 0 && s < g_nslots) ? g_hits[s] : 0;
+      const char *sp = g_slots[s].path ? g_slots[s].path : "";
+      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
+        continue;
+      }
+      if (g_slots[s].kind == 'B') {
+        if (hit) {
+          fprintf(out, "BRDA:%d,0,%d,%llu\n", g_slots[s].line, br_idx, (unsigned long long)hit);
+          br_hit++;
+        } else {
+          fprintf(out, "BRDA:%d,0,%d,-\n", g_slots[s].line, br_idx);
+        }
+        br_idx++;
+        br_tot++;
+      }
+    }
+    fprintf(out, "BRF:%d\n", br_tot);
+    fprintf(out, "BRH:%d\n", br_hit);
+
+    for (s = 0; s < g_nslots; s++) {
+      const char *sp = g_slots[s].path ? g_slots[s].path : "";
+      int t;
+      int found = 0;
+      if (strcmp(sp, files[i].path ? files[i].path : "") != 0) {
+        continue;
+      }
+      if (g_slots[s].kind != 'L') {
+        continue;
+      }
+      for (t = 0; t < s; t++) {
+        const char *tp = g_slots[t].path ? g_slots[t].path : "";
+        if (g_slots[t].kind == 'L' && g_slots[t].line == g_slots[s].line &&
+            strcmp(tp, sp) == 0) {
+          found = 1;
+          break;
+        }
+      }
+      if (found) {
+        continue;
+      }
+      {
+        uint64_t sum = 0;
+        int u;
+        for (u = s; u < g_nslots; u++) {
+          const char *up = g_slots[u].path ? g_slots[u].path : "";
+          if (g_slots[u].kind == 'L' && g_slots[u].line == g_slots[s].line &&
+              strcmp(up, sp) == 0) {
+            if (g_hits && u >= 0 && u < g_nslots) {
+              sum += g_hits[u];
+            }
+          }
+        }
+        fprintf(out, "DA:%d,%llu\n", g_slots[s].line, (unsigned long long)sum);
+        lf++;
+        if (sum) {
+          lh++;
+        }
+      }
+    }
+    fprintf(out, "LF:%d\n", lf);
+    fprintf(out, "LH:%d\n", lh);
+    fprintf(out, "end_of_record\n");
+  }
+
+  fclose(out);
+  for (i = 0; i < file_n; i++) {
+    free(files[i].path);
+    free(files[i].show);
+    free(files[i].uncovered);
+  }
+  free(files);
+}
+
 static void print_report(void) {
   int i;
   int file_n = 0;
@@ -530,6 +725,7 @@ static void avant_cov_exit(void) {
   if (g_hits && g_hits != MAP_FAILED) {
     msync(g_hits, g_hits_bytes, MS_SYNC);
   }
+  write_lcov();
   if (should_report()) {
     print_report();
     fflush(stdout);
