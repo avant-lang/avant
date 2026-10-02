@@ -79,6 +79,41 @@ fn count_lines(s: String): Int {
   n
 }
 
+fn xml_escape(s: String): String {
+  b = buf_new()
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c == 38 {
+      b.push_str("&amp;")
+    } else if c == 60 {
+      b.push_str("&lt;")
+    } else if c == 62 {
+      b.push_str("&gt;")
+    } else if c == 34 {
+      b.push_str("&quot;")
+    } else if c == 39 {
+      b.push_str("&apos;")
+    } else {
+      b.push_byte(c)
+    }
+    i = i + 1
+  }
+  b.to_s
+}
+
+fn junit_path: String {
+  if v = env_get("AVANT_JUNIT") {
+    if str_eq(v, "0") {
+      return ""
+    }
+    if v.size > 0 {
+      return v
+    }
+  }
+  "junit.xml"
+}
+
 fn avant_test_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
@@ -95,10 +130,33 @@ class Checks {
   suite_failed_at: Int = 0
   started: Int = 0
   lines: Array(String)
+  junit_class: Array(String)
+  junit_name: Array(String)
+  junit_fail: Array(Int)
+  junit_detail: Array(String)
 
   fn initialize {
     ls: Array(String) = []
     self.lines = ls
+    jc: Array(String) = []
+    self.junit_class = jc
+    jn: Array(String) = []
+    self.junit_name = jn
+    jf: Array(Int) = []
+    self.junit_fail = jf
+    jd: Array(String) = []
+    self.junit_detail = jd
+  }
+
+  fn record_case(ok: Bool, name: String, detail: String) {
+    self.junit_class.push(self.suite_name)
+    self.junit_name.push(name)
+    if ok {
+      self.junit_fail.push(0)
+    } else {
+      self.junit_fail.push(1)
+    }
+    self.junit_detail.push(detail)
   }
 
   fn flush_suite {
@@ -133,12 +191,14 @@ class Checks {
     if cond {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
+      self.record_case(true, msg, "")
     } else {
       self.failed = self.failed + 1
       self.lines.push("    ✕ ${msg}")
       self.lines.push("")
       self.lines.push("  ● ${self.suite_name} › ${msg}")
       self.lines.push("")
+      self.record_case(false, msg, msg)
     }
   }
 
@@ -146,6 +206,7 @@ class Checks {
     if got == want {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
+      self.record_case(true, msg, "")
     } else {
       self.failed = self.failed + 1
       self.lines.push("    ✕ ${msg}")
@@ -154,6 +215,7 @@ class Checks {
       self.lines.push("")
       self.lines.push("    got ${got}, want ${want}")
       self.lines.push("")
+      self.record_case(false, msg, "got ${got}, want ${want}")
     }
   }
 
@@ -161,6 +223,7 @@ class Checks {
     if str_eq(got, want) {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
+      self.record_case(true, msg, "")
     } else {
       self.failed = self.failed + 1
       self.lines.push("    ✕ ${msg}")
@@ -169,7 +232,71 @@ class Checks {
       self.lines.push("")
       self.lines.push("    got ${got}, want ${want}")
       self.lines.push("")
+      self.record_case(false, msg, "got ${got}, want ${want}")
     }
+  }
+
+  fn write_junit(ms: Int) {
+    path = junit_path()
+    if path.size == 0 {
+      return
+    }
+    total = self.passed + self.failed
+    sec = ms / 1000
+    b = buf_new()
+    b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+    b.push_str("<testsuites tests=\"")
+    b.push_fmt_i(total)
+    b.push_str("\" failures=\"")
+    b.push_fmt_i(self.failed)
+    b.push_str("\" time=\"")
+    b.push_fmt_i(sec)
+    b.push_str("\">\n")
+    i = 0
+    while i < self.junit_name.size {
+      class_name = self.junit_class[i]
+      j = i
+      n = 0
+      bad = 0
+      while j < self.junit_name.size {
+        if str_eq(self.junit_class[j], class_name) {
+          n = n + 1
+          if self.junit_fail[j] != 0 {
+            bad = bad + 1
+          }
+          j = j + 1
+        } else {
+          break
+        }
+      }
+      b.push_str("  <testsuite name=\"")
+      b.push_str(xml_escape(class_name))
+      b.push_str("\" tests=\"")
+      b.push_fmt_i(n)
+      b.push_str("\" failures=\"")
+      b.push_fmt_i(bad)
+      b.push_str("\">\n")
+      k = i
+      while k < j {
+        b.push_str("    <testcase name=\"")
+        b.push_str(xml_escape(self.junit_name[k]))
+        b.push_str("\" classname=\"")
+        b.push_str(xml_escape(class_name))
+        b.push_str("\"")
+        if self.junit_fail[k] != 0 {
+          b.push_str(">\n      <failure message=\"")
+          b.push_str(xml_escape(self.junit_detail[k]))
+          b.push_str("\"/>\n    </testcase>\n")
+        } else {
+          b.push_str("/>\n")
+        }
+        k = k + 1
+      }
+      b.push_str("  </testsuite>\n")
+      i = j
+    }
+    b.push_str("</testsuites>\n")
+    dummy = file_write(path, b.to_s)
   }
 
   fn finish {
@@ -180,6 +307,7 @@ class Checks {
     puts("Tests:       ${fmt_counts(self.failed, self.passed)}")
     puts("Time:        ${ms} ms")
     puts("Ran all test suites.")
+    self.write_junit(ms)
   }
 }
 

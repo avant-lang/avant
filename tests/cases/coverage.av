@@ -35,6 +35,55 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "coverage table")
     }
+    if lcov = file_read("lcov.info") {
+      c.expect(str_has(lcov, "TN:"), "lcov has TN:")
+      c.expect(str_has(lcov, "SF:"), "lcov has SF:")
+      c.expect(str_has(lcov, "DA:"), "lcov has DA:")
+      c.expect(str_has(lcov, "end_of_record"), "lcov has end_of_record")
+    } else {
+      c.expect(false, "lcov.info")
+    }
+
+    jdir = "/tmp/avant-s10-${stamp}-jcases"
+    mkdir_args: Array(String) = []
+    mkdir_args.push("-p")
+    mkdir_args.push(jdir)
+    dummy_mkdir = process_run("/bin/mkdir", mkdir_args)
+    jcase = "${jdir}/ok.av"
+    jbody = "fn test_ok(c: Checks) {\n  c.suite(\"tests/cases/ok.av\")\n  c.expect(true, \"ok\")\n}\n"
+    jw = file_write(jcase, jbody)
+    c.eq_int(jw, 0, "write junit mini case")
+    junit = "/tmp/avant-s10-${stamp}-junit.xml"
+    jlog = "/tmp/avant-s10-${stamp}-junit.log"
+    runner = "${avant_test_root()}/tests/run.av"
+    env_args: Array(String) = []
+    env_args.push("AVANT_JUNIT=${junit}")
+    env_args.push("AVANT_TEST_DIR=${jdir}")
+    env_args.push("AVANT_COMPILER=${compiler}")
+    env_args.push("AVANT_ROOT=${avant_test_root()}")
+    env_args.push("AVANT_COVERAGE_LCOV=0")
+    if myc = env_get("AVANT_MYC_LLVM") {
+      env_args.push("AVANT_MYC_LLVM=${myc}")
+    }
+    env_args.push(compiler)
+    env_args.push("run")
+    env_args.push(runner)
+    jcode = process_run_out("/usr/bin/env", env_args, jlog)
+    c.eq_int(jcode, 0, "mini suite for junit")
+    if jout = file_read(jlog) {
+      c.expect(str_has(jout, "PASS  tests/cases/ok.av"), "mini suite keep Jest PASS")
+      c.expect(str_has(jout, "Ran all test suites."), "mini suite keep Jest summary")
+    } else {
+      c.expect(false, "mini suite log")
+    }
+    if xml = file_read(junit) {
+      c.expect(str_has(xml, "<testsuites"), "junit has testsuites")
+      c.expect(str_has(xml, "<testcase"), "junit has testcase")
+      c.expect(str_has(xml, "classname=\"tests/cases/ok.av\""), "junit classname")
+      c.expect(str_has(xml, "name=\"ok\""), "junit testcase name")
+    } else {
+      c.expect(false, "junit.xml")
+    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

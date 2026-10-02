@@ -109,6 +109,20 @@ fn generate_main(names: Array(String)): String {
   b.to_s
 }
 
+fn write_runner_junit_fail {
+  path = "junit.xml"
+  if v = env_get("AVANT_JUNIT") {
+    if str_eq(v, "0") {
+      return
+    }
+    if v.size > 0 {
+      path = v
+    }
+  }
+  xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"1\" failures=\"1\">\n  <testsuite name=\"tests/run.av\" tests=\"1\" failures=\"1\">\n    <testcase name=\"runner\" classname=\"tests/run.av\">\n      <failure message=\"runner failed\"/>\n    </testcase>\n  </testsuite>\n</testsuites>\n"
+  dummy = file_write(path, xml)
+}
+
 fn stitch_suite(harness: String, cases: String, names: Array(String), generated: String): String? {
   buf = buf_new()
   if body = file_read(harness) {
@@ -150,6 +164,7 @@ fn main {
     } else {
       puts("FAIL  tests/run.av")
       puts("AVANT_COMPILER does not exist: ${compiler}")
+      write_runner_junit_fail()
       return
     }
     root = avant_test_root()
@@ -159,6 +174,7 @@ fn main {
     } else {
       puts("FAIL  tests/run.av")
       puts("missing harness ${harness}")
+      write_runner_junit_fail()
       return
     }
     names = dir_list(cases)
@@ -174,6 +190,7 @@ fn main {
     if picked.size == 0 {
       puts("FAIL  tests/run.av")
       puts("no tests/cases/*.av under ${cases}")
+      write_runner_junit_fail()
       return
     }
     stamp = now_ms()
@@ -186,6 +203,7 @@ fn main {
     } else {
       puts("FAIL  tests/run.av")
       puts("failed to stitch suite sources")
+      write_runner_junit_fail()
       return
     }
     args: Array(String) = []
@@ -199,6 +217,7 @@ fn main {
       if err = file_read(log) {
         puts(err)
       }
+      write_runner_junit_fail()
       return
     }
     if file_exists(bin) {
@@ -208,6 +227,7 @@ fn main {
       if err = file_read(log) {
         puts(err)
       }
+      write_runner_junit_fail()
       return
     }
     chmod_args: Array(String) = []
@@ -219,9 +239,26 @@ fn main {
     if run_code != 0 {
       puts("FAIL  tests/run.av")
       puts("inner suite exited ${run_code}")
+      jpath = "junit.xml"
+      if v = env_get("AVANT_JUNIT") {
+        if v.size > 0 {
+          if str_eq(v, "0") {
+            jpath = ""
+          } else {
+            jpath = v
+          }
+        }
+      }
+      if jpath.size > 0 {
+        if file_exists(jpath) {
+        } else {
+          write_runner_junit_fail()
+        }
+      }
     }
   } else {
     puts("FAIL  tests/run.av")
     puts("AVANT_COMPILER is not set")
+    write_runner_junit_fail()
   }
 }
