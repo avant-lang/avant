@@ -73,13 +73,24 @@ static int is_cli_compile_cmd(const char *cmd) {
 }
 
 static int is_cli_cmd(const char *cmd) {
+  size_t n;
   if (is_cli_compile_cmd(cmd)) {
     return 1;
   }
   if (!cmd) {
     return 0;
   }
-  return strcmp(cmd, "run") == 0 || strcmp(cmd, "r") == 0;
+  if (strcmp(cmd, "run") == 0 || strcmp(cmd, "r") == 0) {
+    return 1;
+  }
+  if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "--help") == 0) {
+    return 1;
+  }
+  n = strlen(cmd);
+  if (n >= 3 && strcmp(cmd + (n - 3), ".av") == 0) {
+    return 1;
+  }
+  return 0;
 }
 
 static int should_report(void) {
@@ -103,15 +114,11 @@ static int should_report(void) {
     }
   }
 
-  /* compile / dump / bind never print the table (hits still accumulate). */
-  if (is_cli_compile_cmd(cmd)) {
+  /* Identity compiler CLI stays quiet so `run FILE.av` stdout is the
+     program, not a compiler coverage table. REPORT=1 forces the table.
+     A program built with --coverage (no CLI subcommand) still prints. */
+  if (is_cli_cmd(cmd)) {
     return 0;
-  }
-
-  /* REPORT=0 quiets the identity compiler (`run`), not a program built
-     with --coverage (no CLI subcommand). */
-  if (r && r[0] == '0' && r[1] == 0) {
-    return is_cli_cmd(cmd) ? 0 : 1;
   }
 
   return 1;

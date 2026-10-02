@@ -251,7 +251,7 @@ AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
 ```
 
-Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the identity compiler (not Crystal host codegen). That process writes `lcov.info` (`AVANT_COVERAGE_LCOV=0` disables; a path overrides). `AVANT_COVERAGE_REPORT=0` quiets the compiler CLI table; a `--coverage` program still prints it. The native runner writes `junit.xml` from the same `PASS` / `FAIL` events (`AVANT_JUNIT=0` disables). Jest-shaped stdout stays. Dump goldens live under `tests/goldens/`.
+Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the identity compiler (not Crystal host codegen). That process writes `lcov.info` (`AVANT_COVERAGE_LCOV=0` disables; a path overrides). The compiler CLI does not print the Jest table (`AVANT_COVERAGE_REPORT=1` forces it); a `--coverage` program still prints it. The native runner writes `junit.xml` from the same `PASS` / `FAIL` events (`AVANT_JUNIT=0` disables). Jest-shaped stdout stays. Dump goldens live under `tests/goldens/`.
 
 ## Not built yet
 
