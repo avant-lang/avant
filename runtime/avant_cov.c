@@ -51,39 +51,69 @@ static int use_color(void) {
   return isatty(1);
 }
 
-static int should_report(void) {
-  const char *r = getenv("AVANT_COVERAGE_REPORT");
-  if (r && r[0] == '0' && r[1] == 0) {
-    return 0;
-  }
-  if (r && r[0] == '1' && r[1] == 0) {
-    return 1;
-  }
-
-  int fd = open("/proc/self/cmdline", O_RDONLY);
-  if (fd < 0) {
-    return 1;
-  }
-  char buf[4096];
-  ssize_t n = read(fd, buf, (ssize_t)sizeof(buf) - 1);
-  close(fd);
-  if (n <= 0) {
-    return 1;
-  }
-  buf[n] = 0;
+static const char *cmdline_arg1(char *buf, ssize_t n) {
   char *p = buf;
   char *end = buf + n;
   while (p < end && *p) {
     p++;
   }
-  if (p >= end || p + 1 >= end) {
-    return 1;
+  if (p >= end || p + 1 >= end || p[1] == 0) {
+    return NULL;
   }
-  p++;
-  if (strcmp(p, "compile") == 0 || strcmp(p, "c") == 0 || strcmp(p, "dump") == 0 ||
-      strcmp(p, "d") == 0 || strcmp(p, "bind") == 0 || strcmp(p, "b") == 0) {
+  return p + 1;
+}
+
+static int is_cli_compile_cmd(const char *cmd) {
+  if (!cmd) {
     return 0;
   }
+  return strcmp(cmd, "compile") == 0 || strcmp(cmd, "c") == 0 ||
+         strcmp(cmd, "dump") == 0 || strcmp(cmd, "d") == 0 ||
+         strcmp(cmd, "bind") == 0 || strcmp(cmd, "b") == 0;
+}
+
+static int is_cli_cmd(const char *cmd) {
+  if (is_cli_compile_cmd(cmd)) {
+    return 1;
+  }
+  if (!cmd) {
+    return 0;
+  }
+  return strcmp(cmd, "run") == 0 || strcmp(cmd, "r") == 0;
+}
+
+static int should_report(void) {
+  const char *r = getenv("AVANT_COVERAGE_REPORT");
+  const char *cmd = NULL;
+  char buf[4096];
+  int fd;
+  ssize_t n;
+
+  if (r && r[0] == '1' && r[1] == 0) {
+    return 1;
+  }
+
+  fd = open("/proc/self/cmdline", O_RDONLY);
+  if (fd >= 0) {
+    n = read(fd, buf, (ssize_t)sizeof(buf) - 1);
+    close(fd);
+    if (n > 0) {
+      buf[n] = 0;
+      cmd = cmdline_arg1(buf, n);
+    }
+  }
+
+  /* compile / dump / bind never print the table (hits still accumulate). */
+  if (is_cli_compile_cmd(cmd)) {
+    return 0;
+  }
+
+  /* REPORT=0 quiets the identity compiler (`run`), not a program built
+     with --coverage (no CLI subcommand). */
+  if (r && r[0] == '0' && r[1] == 0) {
+    return is_cli_cmd(cmd) ? 0 : 1;
+  }
+
   return 1;
 }
 

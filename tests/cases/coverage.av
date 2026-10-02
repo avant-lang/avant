@@ -23,7 +23,11 @@ fn test_coverage(c: Checks) {
     c.eq_int(code, 0, "compile --coverage")
     c.expect(file_exists(bin), "coverage bin exists")
     chmod_x(bin)
-    run_code = run_av_bin(bin, log)
+    // REPORT=0 must not hide a --coverage program's table.
+    cov_run: Array(String) = []
+    cov_run.push("AVANT_COVERAGE_REPORT=0")
+    cov_run.push(bin)
+    run_code = process_run_out("/usr/bin/env", cov_run, log)
     c.eq_int(run_code, 0, "run coverage fixture")
     if out = file_read(log) {
       c.expect(str_has(out, "% Stmts"), "coverage has % Stmts")
