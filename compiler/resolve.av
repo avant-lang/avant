@@ -108,6 +108,10 @@ pub class TypeResolver {
       self.fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
       return self.t_int
     }
+    if ty.is_clayout {
+      self.fail(tn.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+      return self.t_int
+    }
     if ty.is_void {
       self.fail(tn.loc, "Void is not a value; use Ptr(Void) or omit a return type")
       return self.t_int
@@ -286,6 +290,16 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
       }
       j = j + 1
     }
+    j = 0
+    while j < lib_def.layouts.size {
+      lay = lib_def.layouts[j]
+      k = 0
+      while k < lay.fields.size {
+        note_type_name(lay.fields[k].type, resolver)
+        k = k + 1
+      }
+      j = j + 1
+    }
     i = i + 1
   }
   i = 0
@@ -334,6 +348,80 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   }
 }
 
+pub fn c_field_ok(ty: Ty): Bool {
+  if ty.is_int {
+    return true
+  }
+  if ty.is_int64 {
+    return true
+  }
+  if ty.is_uint64 {
+    return true
+  }
+  if ty.is_bool {
+    return true
+  }
+  if ty.is_float {
+    return true
+  }
+  if ty.is_string {
+    return true
+  }
+  if ty.is_clayout {
+    return true
+  }
+  if ty.is_ptr {
+    if inner = ty.inner {
+      if inner.is_void {
+        return true
+      }
+      if inner.is_opaque {
+        return true
+      }
+      if inner.is_clayout {
+        return true
+      }
+    }
+  }
+  false
+}
+
+pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(String, Int)) {
+  resolved: Array(TyField) = []
+  seen = Hash(String, Int).new
+  i = 0
+  while i < layout.fields.size {
+    field = layout.fields[i]
+    if prev = seen.get(field.name) {
+      resolver.fail(field.loc, "duplicate field ${field.name}")
+      return
+    }
+    seen[field.name] = 1
+    ty = resolver.resolve(field.type)
+    if resolver.failed {
+      return
+    }
+    if ty.is_clayout {
+      if mark = ready.get(ty.name) {
+      } else {
+        resolver.fail(field.loc, "${ty.name} is not a complete C layout yet")
+        return
+      }
+    }
+    if c_field_ok(ty) {
+    } else {
+      resolver.fail(field.loc, "C layout fields must be C types, not ${ty.show}")
+      return
+    }
+    resolved.push(TyField.new(field.name, ty))
+    i = i + 1
+  }
+  if ty = resolver.get_named(layout.name) {
+    ty.fields = resolved
+  }
+  ready[layout.name] = 1
+}
+
 pub fn fill_type_fields(resolver: TypeResolver, name: String, fields: Array(Field)) {
   resolved: Array(TyField) = []
   seen = Hash(String, Int).new
@@ -378,6 +466,21 @@ pub fn load_types(program: Program): TypeResolver {
   i = 0
   while i < program.libs.size {
     lib_def = program.libs[i]
+    j = 0
+    while j < lib_def.layouts.size {
+      lay = lib_def.layouts[j]
+      if existing = resolver.get_named(lay.name) {
+        resolver.fail(lay.loc, "${lay.name} is already defined")
+        return resolver
+      }
+      resolver.put_named(lay.name, ty_named(tyk_clayout(), lay.name))
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < program.libs.size {
+    lib_def = program.libs[i]
     if existing = resolver.get_named(lib_def.name) {
       resolver.fail(lib_def.loc, "lib ${lib_def.name} collides with a type")
       return resolver
@@ -395,6 +498,20 @@ pub fn load_types(program: Program): TypeResolver {
   while i < program.classes.size {
     cdef2 = program.classes[i]
     fill_type_fields(resolver, cdef2.name, cdef2.fields)
+    i = i + 1
+  }
+  ready = Hash(String, Int).new
+  i = 0
+  while i < program.libs.size {
+    lib_def = program.libs[i]
+    j = 0
+    while j < lib_def.layouts.size {
+      fill_clayout_fields(resolver, lib_def.layouts[j], ready)
+      if resolver.failed {
+        return resolver
+      }
+      j = j + 1
+    }
     i = i + 1
   }
   resolver

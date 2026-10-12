@@ -346,10 +346,28 @@ pub class ClassDef {
   }
 }
 
+pub class CLayout {
+  loc: Location
+  name: String = ""
+  fields: Array(Field)
+  vis: Bool = false
+  mod_name: String = ""
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    f: Array(Field) = []
+    self.fields = f
+    self.vis = false
+    self.mod_name = ""
+  }
+}
+
 pub class LibDef {
   loc: Location
   name: String = ""
   funs: Array(FunDecl)
+  layouts: Array(CLayout)
   vis: Bool = false
   mod_name: String = ""
 
@@ -358,6 +376,8 @@ pub class LibDef {
     self.name = name
     f: Array(FunDecl) = []
     self.funs = f
+    lays: Array(CLayout) = []
+    self.layouts = lays
     self.vis = false
     self.mod_name = ""
   }
@@ -568,6 +588,16 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
       i = i + 1
     }
     return
+  }
+  if str_eq(tn.name, "Ptr") {
+    if tn.args.size == 1 {
+      arg = tn.args[0]
+      if arg.members.size == 0 {
+        if arg.args.size == 0 {
+          return
+        }
+      }
+    }
   }
   i = 0
   while i < tn.args.size {

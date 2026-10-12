@@ -171,7 +171,7 @@ fn main {
 
 ## C interop
 
-C is `lib` / `fun`. Hand-written and generated bindings are the same grammar. There is no `extern fn`. Call as `libname.funname(...)`. Link extra `.c` / `.o` with `--cc` and system libraries with `--lib NAME`. C++ is `extern "C"` only. `avant bind HEADER.h` translates a header with libclang into an editable `lib` block.
+C is `lib` / `fun`. Hand-written and generated bindings are the same grammar. There is no `extern fn`. Call as `libname.funname(...)`. Link extra `.c` / `.o` with `--cc` and system libraries with `--lib NAME`. C++ is `extern "C"` only. `avant bind HEADER.h` translates a header with libclang into an editable `lib` block. It also emits `struct` layouts when clang's size, alignment, and offsets match the natural layout of the Avant field types. A layout is not a value. Read and write its fields through `Ptr(T)` (`p.x`). Methods are `fn (p: Ptr(T)) name`. A heap `String` stored into a C field is pinned for the process.
 
 ```avant
 lib math {
@@ -263,7 +263,6 @@ These are decided. They are **not** shipping. Do not read a target sketch as a t
 | Generic structs and classes | decided, not shipping |
 | Named interfaces | decided, not shipping |
 | Real `.parallel` / `Channel(T)` / `Mutex(T)` | decided, not shipping |
-| C struct field layouts, methods on `Ptr(T)` | decided, not shipping |
 | Formatter, packages, HTTP *server* | decided, not shipping |
 
 ## Goals

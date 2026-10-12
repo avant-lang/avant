@@ -576,6 +576,22 @@ pub class Checker {
       }
       i = i + 1
     }
+    i = 0
+    while i < self.program.libs.size {
+      lib_def = self.program.libs[i]
+      j = 0
+      while j < lib_def.layouts.size {
+        lay = lib_def.layouts[j]
+        tm[lay.name] = lib_def.mod_name
+        if lib_def.vis {
+          tv[lay.name] = 1
+        } else {
+          tv[lay.name] = 0
+        }
+        j = j + 1
+      }
+      i = i + 1
+    }
     self.type_mod = tm
     self.type_vis = tv
   }
@@ -893,6 +909,24 @@ pub class Checker {
     if ty.is_ptr {
       if pin = ty.inner {
         self.ensure_pub_sig_ty(pin, loc, fnn)
+      }
+      return
+    }
+    if ty.is_clayout {
+      owner = fnn.mod_name
+      if o = self.type_mod.get(ty.name) {
+        owner = o
+      }
+      if str_eq(owner, fnn.mod_name) {
+      } else {
+        vis = 0
+        if flag = self.type_vis.get(ty.name) {
+          vis = flag
+        }
+        if vis == 1 {
+        } else {
+          self.fail(loc, "pub signature cannot use private type ${ty.name}")
+        }
       }
       return
     }
@@ -1407,7 +1441,7 @@ pub class Checker {
     chosen
   }
 
-  pub fn match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+  pub fn match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String): FuncSig? {
     cands: Array(FuncSig) = []
     saw_generic = false
     i = 0
@@ -1457,12 +1491,12 @@ pub class Checker {
       if saw_generic {
         self.fail(loc, "cannot infer type argument")
       } else {
-        self.fail(loc, "no method ${name} on ${owner}")
+        self.fail(loc, "no method ${name} on ${shown}")
       }
       return nil
     }
     if cands.size > 1 {
-      self.fail(loc, "ambiguous call to ${owner}.${name}")
+      self.fail(loc, "ambiguous call to ${shown}.${name}")
       return nil
     }
     chosen = cands[0]
@@ -1523,8 +1557,23 @@ pub class Checker {
   }
 
   pub fn dispatch_method(expr: Expr, object: Ty, expected: Ty?): Ty {
-    if field_ty = object.field_named(expr.callee) {
-      self.fail(expr.loc, "${object.name}.${expr.callee} is a field, not a method")
+    owner = object.name
+    shown = object.show
+    field_owner = object
+    if object.is_ptr {
+      owner = self.method_owner_name(object)
+      if inner = object.inner {
+        if inner.is_clayout {
+          field_owner = inner
+        }
+      }
+    }
+    if field_ty = field_owner.field_named(expr.callee) {
+      label = field_owner.name
+      if label.size == 0 {
+        label = shown
+      }
+      self.fail(expr.loc, "${label}.${expr.callee} is a field, not a method")
       return field_ty
     }
     arg_tys: Array(Ty) = []
@@ -1533,7 +1582,7 @@ pub class Checker {
       arg_tys.push(self.check_expr(expr.args[i]))
       i = i + 1
     }
-    if sig = self.match_method(object.name, expr.callee, arg_tys, expected, expr.loc) {
+    if sig = self.match_method(owner, expr.callee, arg_tys, expected, expr.loc, shown) {
       self.fill_defaults(expr, sig.node)
       i = 0
       while i < expr.args.size {
@@ -1546,7 +1595,7 @@ pub class Checker {
         if ty_assignable(got, sig.params[i]) {
         } else {
           n = i + 1
-          self.fail(expr.args[i].loc, "argument ${n} of ${object.name}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+          self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
         }
         i = i + 1
       }
@@ -1930,6 +1979,10 @@ pub class Checker {
           self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
           return
         }
+        if ty.is_clayout {
+          self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+          return
+        }
         ret = ty
       }
       sig = CFunSig.new(cfun.name, lib_def.name, params, ret)
@@ -2040,6 +2093,12 @@ pub class Checker {
         self.current_module = saved_mod
         return
       }
+      if ty.is_clayout {
+        self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+        self.resolver.clear_tparams
+        self.current_module = saved_mod
+        return
+      }
       ret = ty
     }
     self.resolver.clear_tparams
@@ -2090,16 +2149,42 @@ pub class Checker {
     }
   }
 
+  pub fn ptr_method_ok(ty: Ty): Bool {
+    if ty.is_ptr {
+      if inner = ty.inner {
+        if inner.is_void {
+          return true
+        }
+        if inner.is_opaque {
+          return true
+        }
+        if inner.is_clayout {
+          return true
+        }
+      }
+    }
+    false
+  }
+
+  pub fn method_owner_name(ty: Ty): String {
+    if ty.is_ptr {
+      return mangle_ty(ty)
+    }
+    ty.name
+  }
+
   pub fn register_method(fnn: Function) {
     saved_mod = self.current_module
     self.current_module = fnn.mod_name
     owner_ty = self.t_int()
+    owner_key = ""
     has_owner = false
     tparams = collect_fn_type_params(fnn, self.resolver.named)
     self.resolver.set_tparams(tparams)
     if fnn.owner.size > 0 {
       if found = self.lookup_named_type(fnn.owner, fnn.loc, "") {
         owner_ty = found
+        owner_key = found.name
         has_owner = true
       } else {
         self.resolver.clear_tparams
@@ -2113,7 +2198,24 @@ pub class Checker {
         if ty.is_agg {
           fnn.owner = ty.name
           owner_ty = ty
+          owner_key = ty.name
           has_owner = true
+        } else if self.ptr_method_ok(ty) {
+          if tparams.size > 0 {
+            self.fail(recv.loc, "Ptr methods are not generic")
+            self.resolver.clear_tparams
+            self.current_module = saved_mod
+            return
+          }
+          owner_key = self.method_owner_name(ty)
+          fnn.owner = owner_key
+          owner_ty = ty
+          has_owner = true
+        } else if ty.is_ptr {
+          self.fail(recv.loc, "methods on ${ty.show} are not Stage 18 Ptr methods")
+          self.resolver.clear_tparams
+          self.current_module = saved_mod
+          return
         } else {
           self.fail(recv.loc, "methods can only extend a struct or class, not ${ty.show}")
           self.resolver.clear_tparams
@@ -2139,8 +2241,14 @@ pub class Checker {
       self.current_module = saved_mod
       return
     }
-    if field_ty = owner_ty.field_named(fnn.name) {
-      self.fail(fnn.loc, "method ${owner_ty.name}.${fnn.name} collides with a field")
+    field_owner = owner_ty
+    if owner_ty.is_ptr {
+      if inner = owner_ty.inner {
+        field_owner = inner
+      }
+    }
+    if field_ty = field_owner.field_named(fnn.name) {
+      self.fail(fnn.loc, "${field_owner.name}.${fnn.name} is both a field and a method")
       self.resolver.clear_tparams
       self.current_module = saved_mod
       return
@@ -2170,6 +2278,12 @@ pub class Checker {
         self.current_module = saved_mod
         return
       }
+      if ty.is_clayout {
+        self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+        self.resolver.clear_tparams
+        self.current_module = saved_mod
+        return
+      }
       ret = ty
     }
     self.resolver.clear_tparams
@@ -2194,10 +2308,10 @@ pub class Checker {
     i = 0
     while i < self.methods.size {
       existing = self.methods[i]
-      if str_eq(existing.owner, owner_ty.name) {
+      if str_eq(existing.owner, owner_key) {
         if str_eq(existing.name, fnn.name) {
           if params_same(existing.params, params) {
-            self.fail(fnn.loc, "method ${owner_ty.name}.${fnn.name} is already defined")
+            self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
             return
           }
         }
@@ -2206,9 +2320,9 @@ pub class Checker {
     }
     self.alloc_ol(fnn)
     sig = FuncSig.new(fnn.name, fnn, params, ret)
-    sig.owner = owner_ty.name
+    sig.owner = owner_key
     self.methods.push(sig)
-    key = "${owner_ty.name}__${fnn.name}"
+    key = "${owner_key}__${fnn.name}"
     if taken = self.method_index.get(key) {
     } else {
       self.method_index[key] = self.methods.size - 1
@@ -2330,6 +2444,20 @@ pub class Checker {
           return
         }
         self.bind(self.self_name, owner)
+      } else {
+        if recv = fnn.receiver {
+          ty = self.resolve_in_module(recv.type)
+          self.pull_resolve
+          if self.ptr_method_ok(ty) {
+            self.self_name = recv.name
+            if existing = self.lookup(self.self_name) {
+              self.fail(fnn.loc, "duplicate parameter ${self.self_name}")
+              self.current_module = saved_mod
+              return
+            }
+            self.bind(self.self_name, ty)
+          }
+        }
       }
     }
     i = 0
@@ -2413,6 +2541,9 @@ pub class Checker {
     if k == st_return() {
       if expr = stmt.expr {
         got = self.check_expr_as(expr, expected)
+        if self.reject_clayout_value(got, expr.loc) {
+          return
+        }
         if ty_assignable(got, expected) {
         } else {
           self.fail(stmt.loc, "return type is ${got.show}, expected ${expected.show}")
@@ -2600,6 +2731,9 @@ pub class Checker {
           if declared = stmt.declared {
             want = self.resolve_in_module(declared)
             self.pull_resolve
+            if self.reject_clayout_value(want, declared.loc) {
+              return
+            }
             if existing = self.lookup(target.ident) {
               self.fail(stmt.loc, "cannot shadow ${target.ident}")
               return
@@ -2639,6 +2773,9 @@ pub class Checker {
           got = self.check_expr(value)
           if got.is_void {
             self.fail(stmt.loc, "cannot bind a Void value")
+            return
+          }
+          if self.reject_clayout_value(got, value.loc) {
             return
           }
           self.bind(target.ident, got)
@@ -2681,6 +2818,9 @@ pub class Checker {
             return
           }
         }
+        if self.reject_clayout_value(place, target.loc) {
+          return
+        }
         got = self.check_expr_as(value, place)
         if ty_assignable(got, place) {
         } else {
@@ -2711,6 +2851,9 @@ pub class Checker {
             self.fail(stmt.loc, "cannot assign to a method")
             return
           }
+        }
+        if self.reject_clayout_value(place, target.loc) {
+          return
         }
         got = self.check_expr_as(value, place)
         if got.same_as(place) {
@@ -3035,7 +3178,7 @@ pub class Checker {
         if has_zero {
           arg_tys: Array(Ty) = []
           none: Ty? = nil
-          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc) {
+          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc, object.name) {
             expr.method_call = true
             expr.resolved = sig.node.emit_name
             return sig.ret
@@ -3045,9 +3188,96 @@ pub class Checker {
         self.fail(expr.loc, "no field ${expr.ident} on ${object.name}")
         return self.t_int()
       }
+      if object.is_ptr {
+        return self.check_ptr_member(expr, object)
+      }
+      if object.is_clayout {
+        return self.check_clayout_member(expr, object)
+      }
       self.fail(expr.loc, "cannot read field ${expr.ident} on ${object.show}")
       return self.t_int()
     }
+    self.t_int()
+  }
+
+  pub fn clayout_value_name(ty: Ty): String {
+    if ty.is_clayout {
+      return ty.show
+    }
+    if ty.is_array {
+      if e = ty.inner {
+        return self.clayout_value_name(e)
+      }
+    }
+    if ty.is_union {
+      i = 0
+      while i < ty.members.size {
+        name = self.clayout_value_name(ty.members[i])
+        if name.size > 0 {
+          return name
+        }
+        i = i + 1
+      }
+    }
+    ""
+  }
+
+  pub fn reject_clayout_value(ty: Ty, loc: Location): Bool {
+    name = self.clayout_value_name(ty)
+    if name.size > 0 {
+      self.fail(loc, "${name} is a C layout; use Ptr(${name})")
+      return true
+    }
+    false
+  }
+
+  pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
+    owner = self.method_owner_name(object)
+    pointee = object
+    if inner = object.inner {
+      pointee = inner
+    }
+    if pointee.is_clayout {
+      if field_ty = pointee.field_named(expr.ident) {
+        if sig = self.find_method(owner, expr.ident) {
+          self.fail(expr.loc, "${pointee.name}.${expr.ident} is both a field and a method")
+          return field_ty
+        }
+        return field_ty
+      }
+    }
+    has_zero = false
+    mi = 0
+    while mi < self.methods.size {
+      ms = self.methods[mi]
+      if str_eq(ms.owner, owner) {
+        if str_eq(ms.name, expr.ident) {
+          if arity_ok(ms.node, 0) {
+            has_zero = true
+          }
+        }
+      }
+      mi = mi + 1
+    }
+    if has_zero {
+      arg_tys: Array(Ty) = []
+      none: Ty? = nil
+      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show) {
+        expr.method_call = true
+        expr.resolved = sig.node.emit_name
+        return sig.ret
+      }
+      return self.t_int()
+    }
+    self.fail(expr.loc, "no field ${expr.ident} on ${object.show}")
+    self.t_int()
+  }
+
+  pub fn check_clayout_member(expr: Expr, object: Ty): Ty {
+    if field_ty = object.field_named(expr.ident) {
+      return field_ty
+    }
+    self.fail(expr.loc, "no field ${expr.ident} on ${object.show}")
     self.t_int()
   }
 
@@ -3099,6 +3329,9 @@ pub class Checker {
     if tn = expr.elem_type {
       elem = self.resolve_in_module(tn)
       self.pull_resolve
+      if self.reject_clayout_value(elem, tn.loc) {
+        return self.t_int()
+      }
     }
     if size = expr.size_expr {
       st = self.check_expr_as(size, self.t_int())
@@ -3187,6 +3420,9 @@ pub class Checker {
         self.fail(expr.loc, "classes are constructed with ${ty.name}.new, not ${ty.name} { }")
         return ty
       }
+      if self.reject_clayout_value(ty, expr.loc) {
+        return ty
+      }
       seen = Hash(String, Int).new
       i = 0
       while i < expr.field_names.size {
@@ -3226,6 +3462,9 @@ pub class Checker {
     if str_eq(expr.ident, "self") {
       if st = self.self_ty {
       } else {
+        if existing = self.lookup("self") {
+          return existing
+        }
         self.fail(expr.loc, "self is only valid in a method")
         return self.t_int()
       }
@@ -3443,7 +3682,7 @@ pub class Checker {
               arg_tys: Array(Ty) = []
               arg_tys.push(right)
               none: Ty? = nil
-              if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc) {
+              if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name) {
                 expr.resolved = sig.node.emit_name
                 return sig.ret
               }
@@ -3897,7 +4136,7 @@ pub class Checker {
             ai = ai + 1
           }
           none: Ty? = nil
-          if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc) {
+          if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc, ty.name) {
             self.fill_defaults(expr, sig.node)
             i = 0
             while i < expr.args.size {
@@ -3986,6 +4225,10 @@ pub class Checker {
       return self.check_join(expr, object)
     }
     if object.is_agg {
+      none: Ty? = nil
+      return self.dispatch_method(expr, object, none)
+    }
+    if object.is_ptr {
       none: Ty? = nil
       return self.dispatch_method(expr, object, none)
     }

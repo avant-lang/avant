@@ -112,6 +112,9 @@ pub fn ty_myc(ty: Ty): String {
   if k == tyk_struct() {
     return ty_layout_myc(ty)
   }
+  if k == tyk_clayout() {
+    return ty.name
+  }
   if k == tyk_union() {
     return ty_layout_myc(ty)
   }
@@ -1345,6 +1348,19 @@ pub class MycGen {
       i = i + 1
     }
     i = 0
+    while i < self.program.libs.size {
+      lib_def = self.program.libs[i]
+      j = 0
+      while j < lib_def.layouts.size {
+        lay = lib_def.layouts[j]
+        if ty = self.resolver.get_named(lay.name) {
+          self.emit_layout(ty)
+        }
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
     while i < self.union_tys.size {
       self.emit_union_def(self.union_tys[i])
       i = i + 1
@@ -1397,11 +1413,14 @@ pub class MycGen {
     if fn_is_method(fnn) {
       if sig = self.find_method_emit(fnn.emit_name) {
         self.return_type = sig.ret
+        self.self_name = fn_self_name(fnn)
         if owner = self.resolver.get_named(sig.owner) {
           self.self_ty = owner
+          self.emit_method_func(fnn, sig)
+        } else {
+          self.self_ty = nil
+          self.emit_ptr_method_func(fnn, sig)
         }
-        self.self_name = fn_self_name(fnn)
-        self.emit_method_func(fnn, sig)
       }
       self.self_ty = nil
       self.self_name = ""
@@ -1537,6 +1556,60 @@ pub class MycGen {
     }
     if owner = self.self_ty {
       self.ensure_root(recv_name, owner)
+    }
+    i = 0
+    while i < fnn.params.size {
+      self.ensure_root(fnn.params[i].name, sig.params[i])
+      i = i + 1
+    }
+    self.cov_func(fnn)
+    self.emit_stmts(fnn.body, true)
+    self.emit_gc_leave_if_fallthrough(fnn)
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+    self.self_ty = nil
+    self.self_name = ""
+  }
+
+  pub fn emit_ptr_method_func(fnn: Function, sig: FuncSig) {
+    recv_ty = ty_void()
+    if r = fnn.receiver {
+      recv_ty = self.resolver.resolve(r.type)
+    }
+    mrecv = ty_myc(recv_ty)
+    mangled = sig.mangled
+    recv_name = fn_self_name(fnn)
+    self.line("FUNC :${mangled}")
+    self.indent = self.indent + 1
+    self.line("ARGS")
+    self.indent = self.indent + 1
+    self.line("TYPE :${mrecv}")
+    i = 0
+    while i < sig.params.size {
+      m = ty_myc(sig.params[i])
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.emit_return_header
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.reset_rooted
+    self.line("CALL :avant_gc_enter")
+    self.line("PARAM 0")
+    self.line("LOCAL :${recv_name} :${mrecv}")
+    self.line("STORE")
+    i = 0
+    while i < fnn.params.size {
+      param = fnn.params[i]
+      m = ty_myc(sig.params[i])
+      n = i + 1
+      self.line("PARAM ${n}")
+      self.line("LOCAL :${param.name} :${m}")
+      self.line("STORE")
+      i = i + 1
     }
     i = 0
     while i < fnn.params.size {
@@ -1976,6 +2049,19 @@ pub class MycGen {
                 }
               }
             }
+          }
+        }
+        if self.c_layout_heap_store(t) {
+          if v = stmt.value {
+            self.emit_expr(v)
+            self.emit_coerce(expr_ty(v), expr_ty(t))
+            self.line("STACK :dup")
+            self.line("AS :ptr<void>")
+            self.line("CALL :avant_pin")
+            self.emit_lvalue(t)
+            self.line("STORE")
+            self.root_after_store(t)
+            return
           }
         }
       }
@@ -2491,6 +2577,17 @@ pub class MycGen {
         fi = object_ty.field_index(expr.ident)
         self.line("FIELD ${fi}")
         return
+      }
+      if object_ty.is_ptr {
+        if inner = object_ty.inner {
+          if inner.is_clayout {
+            self.emit_expr(obj)
+            self.line("DEREF")
+            fi = inner.field_index(expr.ident)
+            self.line("FIELD ${fi}")
+            return
+          }
+        }
       }
       self.emit_lvalue(obj)
       fi = object_ty.field_index(expr.ident)
@@ -3929,8 +4026,38 @@ pub class MycGen {
 
   pub fn emit_method_invoke(recv: Expr, name: String, args: Array(Expr)) {
     self.emit_args(args)
-    self.emit_self_ptr(recv)
+    rty = expr_ty(recv)
+    if rty.is_ptr {
+      self.emit_expr(recv)
+    } else {
+      self.emit_self_ptr(recv)
+    }
     self.line("CALL :${name}")
+  }
+
+  pub fn c_layout_heap_store(target: Expr): Bool {
+    if target.kind == ex_field() {
+    } else {
+      return false
+    }
+    if ty_has_heap(expr_ty(target)) {
+    } else {
+      return false
+    }
+    if obj = target.object {
+      ot = expr_ty(obj)
+      if ot.is_clayout {
+        return true
+      }
+      if ot.is_ptr {
+        if inner = ot.inner {
+          if inner.is_clayout {
+            return true
+          }
+        }
+      }
+    }
+    false
   }
 
   pub fn emit_ctor_call(expr: Expr, recv: Expr) {
