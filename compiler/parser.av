@@ -551,6 +551,47 @@ pub class Parser {
     dummy = self.expect(tk_l_brace())
     self.skip_newlines
     defn = LibDef.new(loc, name)
+    defn.vis = vis
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.current.kind == tk_struct() {
+        defn.layouts.push(self.parse_clayout(vis))
+        if self.has_err {
+          break
+        }
+        self.skip_newlines
+      } else if self.current.kind == tk_fn() {
+        self.fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
+        break
+      } else if self.current.kind != tk_fun() {
+        self.fail(self.current.loc, "inside lib, write fun or struct")
+        break
+      } else {
+        defn.funs.push(self.parse_fun_decl)
+        if self.has_err {
+          break
+        }
+        self.skip_newlines
+      }
+    }
+    dummy2 = self.expect(tk_r_brace())
+    defn.vis = vis
+    defn
+  }
+
+  pub fn parse_clayout(vis: Bool): CLayout {
+    loc = self.expect(tk_struct()).loc
+    name = self.expect(tk_ident()).value
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    layout = CLayout.new(loc, name)
+    layout.vis = vis
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -559,22 +600,44 @@ pub class Parser {
         break
       }
       if self.current.kind == tk_fn() {
-        self.fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
+        self.fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
-      if self.current.kind != tk_fun() {
-        self.fail(self.current.loc, "inside lib, write fun (the C ABI)")
+      if self.current.kind == tk_fun() {
+        self.fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
-      defn.funs.push(self.parse_fun_decl)
+      if self.current.kind == tk_quote() {
+        self.fail(self.current.loc, "C layout fields are name: Type only")
+        break
+      }
+      if self.current.kind == tk_comptime() {
+        self.fail(self.current.loc, "C layout fields are name: Type only")
+        break
+      }
+      if self.current.kind == tk_pub() {
+        self.fail(self.current.loc, "C layout fields are name: Type only")
+        break
+      }
+      field = self.parse_field
+      if d = field.default {
+        self.fail(field.loc, "C layout fields have no defaults")
+        break
+      }
+      layout.fields.push(field)
       if self.has_err {
         break
       }
       self.skip_newlines
     }
+    if layout.fields.size == 0 {
+      if self.has_err {
+      } else {
+        self.fail(loc, "C layout needs a field")
+      }
+    }
     dummy2 = self.expect(tk_r_brace())
-    defn.vis = vis
-    defn
+    layout
   }
 
   pub fn parse_fun_decl: FunDecl {

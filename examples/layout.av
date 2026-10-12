@@ -1,0 +1,120 @@
+lib layout {
+  struct Point {
+    x: Float64
+    y: Float64
+  }
+  struct Pad {
+    a: Bool
+    b: Int
+    c: Bool
+    d: Float64
+  }
+  struct Nest {
+    a: Point
+    flag: Bool
+    z: Float64
+  }
+  struct StrRec {
+    a: Int
+    p: String
+    u: UInt64
+    d: Float64
+  }
+  fun point_new(x: Float64, y: Float64): Ptr(Point)
+  fun pad_new: Ptr(Pad)
+  fun pad_get_b(p: Ptr(Pad)): Int
+  fun pad_off_b: Int
+  fun pad_off_c: Int
+  fun pad_off_d: Int
+  fun pad_size: Int
+  fun nest_new: Ptr(Nest)
+  fun nest_off_flag: Int
+  fun nest_off_z: Int
+  fun nest_size: Int
+  fun str_new: Ptr(StrRec)
+  fun str_off_p: Int
+  fun str_off_u: Int
+  fun str_off_d: Int
+  fun str_size: Int
+  fun str_get_a(r: Ptr(StrRec)): Int
+  fun str_get_u(r: Ptr(StrRec)): UInt64
+  fun str_get_d(r: Ptr(StrRec)): Float64
+  fun str_get_p(r: Ptr(StrRec)): String
+  fun opq_new: Ptr(Opq)
+  fun opq_id(p: Ptr(Opq)): Int
+}
+
+fn (p: Ptr(Point)) len2: Float64 {
+  (p.x * p.x) + (p.y * p.y)
+}
+
+fn (p: Ptr(Opq)) id: Int {
+  layout.opq_id(p)
+}
+
+fn eq(got: Int, want: Int) {
+  if got == want {
+    puts("ok")
+  } else {
+    puts("bad")
+    puts(got)
+    puts(want)
+  }
+}
+
+fn churn: Int {
+  n = 0
+  i = 0
+  while i < 80000 {
+    junk = "abcdefghij" + "klmnopqrst"
+    n = n + junk.size
+    i = i + 1
+  }
+  n
+}
+
+fn main {
+  p = layout.point_new(3.0, 4.0)
+  puts(p.len2)
+  puts(p.len2())
+  eq(layout.pad_off_b(), 4)
+  eq(layout.pad_off_c(), 8)
+  eq(layout.pad_off_d(), 16)
+  eq(layout.pad_size(), 24)
+  pad = layout.pad_new()
+  puts(pad.a)
+  puts(pad.b)
+  puts(pad.c)
+  puts(pad.d)
+  pad.b += 1
+  puts(layout.pad_get_b(pad))
+  eq(layout.nest_off_flag(), 16)
+  eq(layout.nest_off_z(), 24)
+  eq(layout.nest_size(), 32)
+  nest = layout.nest_new()
+  puts(nest.a.x)
+  puts(nest.a.y)
+  puts(nest.flag)
+  puts(nest.z)
+  nest.a.x = 9.0
+  puts(nest.a.x)
+  eq(layout.str_off_p(), 8)
+  eq(layout.str_off_u(), 16)
+  eq(layout.str_off_d(), 24)
+  eq(layout.str_size(), 32)
+  rec = layout.str_new()
+  s = "hello" + "world"
+  rec.a = 11
+  rec.u = 99u64
+  rec.d = 1.5
+  rec.p = s
+  puts(churn())
+  puts(layout.str_get_a(rec))
+  puts(layout.str_get_u(rec))
+  puts(layout.str_get_d(rec))
+  puts(layout.str_get_p(rec))
+  puts(rec.p)
+  q = layout.opq_new()
+  puts(q.id)
+  puts(q.id())
+}
