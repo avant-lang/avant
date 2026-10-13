@@ -510,9 +510,43 @@ pub class Parser {
     left
   }
 
+  pub fn parse_type_params(loc: Location): Array(String) {
+    names: Array(String) = []
+    if self.current.kind != tk_l_paren() {
+      return names
+    }
+    dummy = self.bump
+    self.skip_newlines
+    if self.current.kind == tk_r_paren() {
+      self.fail(loc, "type parameter list is empty")
+      dummy2 = self.bump
+      return names
+    }
+    while true {
+      tok = self.expect(tk_ident())
+      i = 0
+      while i < names.size {
+        if str_eq(names[i], tok.value) {
+          self.fail(tok.loc, "duplicate type parameter ${tok.value}")
+        }
+        i = i + 1
+      }
+      names.push(tok.value)
+      self.skip_newlines
+      if self.match_tok(tk_comma()) {
+        self.skip_newlines
+      } else {
+        break
+      }
+    }
+    dummy3 = self.expect(tk_r_paren())
+    names
+  }
+
   pub fn parse_struct(vis: Bool): StructDef {
     loc = self.expect(tk_struct()).loc
     name = self.expect(tk_ident()).value
+    params = self.parse_type_params(loc)
     body = self.parse_type_body(name)
     i = 0
     while i < body.fields.size {
@@ -523,6 +557,7 @@ pub class Parser {
       i = i + 1
     }
     defn = StructDef.new(loc, name)
+    defn.type_params = params
     defn.fields = body.fields
     defn.methods = body.methods
     defn.quotes = body.quotes
@@ -534,8 +569,10 @@ pub class Parser {
   pub fn parse_class(vis: Bool): ClassDef {
     loc = self.expect(tk_class()).loc
     name = self.expect(tk_ident()).value
+    params = self.parse_type_params(loc)
     body = self.parse_type_body(name)
     defn = ClassDef.new(loc, name)
+    defn.type_params = params
     defn.fields = body.fields
     defn.methods = body.methods
     defn.quotes = body.quotes
@@ -587,6 +624,9 @@ pub class Parser {
   pub fn parse_clayout(vis: Bool): CLayout {
     loc = self.expect(tk_struct()).loc
     name = self.expect(tk_ident()).value
+    if self.current.kind == tk_l_paren() {
+      self.fail(self.current.loc, "lib structs take no type parameters")
+    }
     self.skip_newlines
     dummy = self.expect(tk_l_brace())
     self.skip_newlines
@@ -940,6 +980,11 @@ pub class Parser {
     if self.current.kind == tk_l_paren() {
       dummy = self.bump
       self.skip_newlines
+      if self.current.kind == tk_r_paren() {
+        self.fail(tok.loc, "empty type arguments")
+        dummy_empty = self.bump
+        return tn
+      }
       if self.current.kind != tk_r_paren() {
         while true {
           tn.args.push(self.parse_type_name)
@@ -1324,12 +1369,22 @@ pub class Parser {
         } else {
           field = self.expect(tk_ident())
           if self.current.kind == tk_l_paren() {
-            args = self.parse_arg_list
-            call = Expr.new(ex_call(), at)
-            call.callee = field.value
-            call.args = args
-            call.receiver = cur
-            cur = call
+            took_type = false
+            if cur.kind == ex_name() {
+              if app = self.parse_maybe_type_app(field, cur.ident) {
+                cur = app
+                took_type = true
+              }
+            }
+            if took_type {
+            } else {
+              args = self.parse_arg_list
+              call = Expr.new(ex_call(), at)
+              call.callee = field.value
+              call.args = args
+              call.receiver = cur
+              cur = call
+            }
           } else if str_eq(field.value, "new") {
             call = Expr.new(ex_call(), at)
             call.callee = "new"
@@ -1542,6 +1597,9 @@ pub class Parser {
     if i >= self.tokens.size {
       return false
     }
+    if self.tokens[i].kind == tk_r_brace() {
+      return true
+    }
     if self.tokens[i].kind != tk_ident() {
       return false
     }
@@ -1558,6 +1616,70 @@ pub class Parser {
     self.tokens[i].kind == tk_colon()
   }
 
+  pub fn parse_maybe_type_app(tok: Token, qual: String): Expr? {
+    if self.current.kind != tk_l_paren() {
+      return nil
+    }
+    saved_index = self.index
+    saved_failed = self.failed
+    saved_err = self.err
+    dummy = self.bump
+    self.skip_newlines
+    args: Array(TypeName) = []
+    if self.current.kind != tk_r_paren() {
+      while true {
+        args.push(self.parse_type_name)
+        if self.failed {
+          self.index = saved_index
+          self.failed = saved_failed
+          self.err = saved_err
+          return nil
+        }
+        self.skip_newlines
+        if self.match_tok(tk_comma()) {
+          self.skip_newlines
+        } else {
+          break
+        }
+      }
+    }
+    if self.current.kind != tk_r_paren() {
+      self.index = saved_index
+      self.failed = saved_failed
+      self.err = saved_err
+      return nil
+    }
+    dummy2 = self.bump
+    if args.size == 0 {
+      self.index = saved_index
+      self.failed = saved_failed
+      self.err = saved_err
+      return nil
+    }
+    ahead = self.look_ahead_non_nl
+    if ahead.kind == tk_dot() {
+      e = Expr.new(ex_name(), tok.loc)
+      e.ident = tok.value
+      e.mod_name = qual
+      e.type_args = args
+      return e
+    }
+    if ahead.kind == tk_l_brace() {
+      if self.allow_struct_lit {
+        self.skip_newlines
+        if self.struct_literal_ahead {
+          e = self.parse_struct_literal(tok, qual)
+          e.type_args = args
+          return e
+        }
+      }
+    }
+    self.index = saved_index
+    self.failed = saved_failed
+    self.err = saved_err
+    nil
+  }
+
   pub fn parse_ident_expr: Expr {
     tok = self.bump
     if str_eq(tok.value, "Array") {
@@ -1571,6 +1693,9 @@ pub class Parser {
       }
     }
     if self.current.kind == tk_l_paren() {
+      if app = self.parse_maybe_type_app(tok, "") {
+        return app
+      }
       return self.parse_call(tok)
     }
     if self.allow_struct_lit {
