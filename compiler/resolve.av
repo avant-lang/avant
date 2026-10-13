@@ -22,6 +22,7 @@ pub class TypeResolver {
   t_nil: Ty
   t_buf: Ty
   tparams: Hash(String, Int)
+  tparam_names: Array(String)
   program: Program? = nil
   struct_inflight: Array(String)
   inst_depth: Int = 0
@@ -45,6 +46,8 @@ pub class TypeResolver {
     self.t_buf = ty_buf()
     tp = Hash(String, Int).new
     self.tparams = tp
+    tn: Array(String) = []
+    self.tparam_names = tn
     self.program = nil
     inf: Array(String) = []
     self.struct_inflight = inf
@@ -55,17 +58,22 @@ pub class TypeResolver {
 
   pub fn set_tparams(names: Array(String)) {
     tp = Hash(String, Int).new
+    copy: Array(String) = []
     i = 0
     while i < names.size {
       tp[names[i]] = 1
+      copy.push(names[i])
       i = i + 1
     }
     self.tparams = tp
+    self.tparam_names = copy
   }
 
   pub fn clear_tparams {
     tp = Hash(String, Int).new
     self.tparams = tp
+    empty: Array(String) = []
+    self.tparam_names = empty
   }
 
   pub fn has_err: Bool {
@@ -219,6 +227,9 @@ pub class TypeResolver {
         return self.t_int
       }
       return ty_join(self.resolve_value_uninline(tn.args[0]))
+    }
+    if idef = self.find_interface(tn.name) {
+      return self.reject_iface_value(tn, idef)
     }
     if str_eq(tn.name, "Ptr") {
       if tn.args.size != 1 {
@@ -390,6 +401,20 @@ pub class TypeResolver {
     false
   }
 
+  pub fn find_interface(name: String): InterfaceDef? {
+    if p = self.program {
+      i = 0
+      while i < p.interfaces.size {
+        idef = p.interfaces[i]
+        if str_eq(idef.name, name) {
+          return idef
+        }
+        i = i + 1
+      }
+    }
+    nil
+  }
+
   pub fn defines_type(name: String): Bool {
     if type_is_builtin(name) {
       return true
@@ -421,8 +446,51 @@ pub class TypeResolver {
         }
         i = i + 1
       }
+      i = 0
+      while i < p.interfaces.size {
+        if str_eq(p.interfaces[i].name, name) {
+          return true
+        }
+        i = i + 1
+      }
     }
     false
+  }
+
+  pub fn reject_iface_value(tn: TypeName, idef: InterfaceDef): Ty {
+    n = idef.type_params.size
+    if n == 0 {
+      if tn.args.size > 0 {
+        self.fail(tn.loc, "${idef.name} does not take type arguments")
+        return self.t_int
+      }
+      self.fail(tn.loc, "${idef.name} is not a value type")
+      return self.t_int
+    }
+    if tn.args.size == 0 {
+      self.fail(tn.loc, "${idef.name} needs type arguments")
+      return self.t_int
+    }
+    if tn.args.size != n {
+      word = "type arguments"
+      if n == 1 {
+        word = "type argument"
+      }
+      self.fail(tn.loc, "${idef.name} takes ${n} ${word}")
+      return self.t_int
+    }
+    arg_tys: Array(Ty) = []
+    i = 0
+    while i < tn.args.size {
+      arg_tys.push(self.resolve(tn.args[i]))
+      if self.failed {
+        return self.t_int
+      }
+      i = i + 1
+    }
+    label = self.format_app(idef.name, arg_tys)
+    self.fail(tn.loc, "${label} is not a value type")
+    self.t_int
   }
 
   pub fn check_type_params(loc: Location, type_name: String, params: Array(String)) {
@@ -603,12 +671,29 @@ pub class TypeResolver {
         methods.push(m)
         i = i + 1
       }
+      opted: Array(TypeName) = []
+      src_opt: Array(TypeName) = []
+      if is_struct {
+        if sdef = self.find_struct_template(tn.name) {
+          src_opt = sdef.opt_ins
+        }
+      } else {
+        if cdef = self.find_class_template(tn.name) {
+          src_opt = cdef.opt_ins
+        }
+      }
+      i = 0
+      while i < src_opt.size {
+        opted.push(subst_type_name(src_opt[i], params, tn.args))
+        i = i + 1
+      }
       if is_struct {
         if self.has_struct_named(key) {
         } else {
           sinst = StructDef.new(loc, key)
           sinst.fields = fields
           sinst.methods = methods
+          sinst.opt_ins = opted
           sinst.mod_name = mod_name
           sinst.vis = vis
           p.structs.push(sinst)
@@ -619,6 +704,7 @@ pub class TypeResolver {
           cinst = ClassDef.new(loc, key)
           cinst.fields = fields
           cinst.methods = methods
+          cinst.opt_ins = opted
           cinst.mod_name = mod_name
           cinst.vis = vis
           p.classes.push(cinst)
@@ -653,6 +739,11 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
   i = 0
   while i < tn.members.size {
     note_ptr_opaque_skip(tn.members[i], resolver, skip)
+    i = i + 1
+  }
+  i = 0
+  while i < tn.bounds.size {
+    note_ptr_opaque_skip(tn.bounds[i], resolver, skip)
     i = i + 1
   }
   if str_eq(tn.name, "Ptr") {
@@ -897,6 +988,26 @@ pub fn load_types(program: Program): TypeResolver {
       cty.template = true
     }
     resolver.put_named(cdef.name, cty)
+    i = i + 1
+  }
+  i = 0
+  while i < program.interfaces.size {
+    idef = program.interfaces[i]
+    if existing = resolver.get_named(idef.name) {
+      resolver.fail(idef.loc, "${idef.name} is already defined")
+      return resolver
+    }
+    if idef.type_params.size > 0 {
+      resolver.check_type_params(idef.loc, idef.name, idef.type_params)
+      if resolver.failed {
+        return resolver
+      }
+    }
+    ity = ty_named(tyk_iface(), idef.name)
+    if idef.type_params.size > 0 {
+      ity.template = true
+    }
+    resolver.put_named(idef.name, ity)
     i = i + 1
   }
   i = 0

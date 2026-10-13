@@ -288,6 +288,10 @@ pub class Parser {
         program.libs.push(self.parse_lib(vis))
       } else if k == tk_fn() {
         program.functions.push(self.parse_fn("", vis))
+      } else if k == tk_interface() {
+        program.interfaces.push(self.parse_interface(vis))
+      } else if k == tk_ident() {
+        self.parse_opt_in(program, vis)
       } else if k == tk_quote() {
         if vis {
           self.fail(self.current.loc, "quote cannot be pub; mark the fns inside")
@@ -305,10 +309,10 @@ pub class Parser {
         return program
       } else {
         if vis {
-          self.fail(self.current.loc, "pub prefixes struct, class, lib, or fn")
+          self.fail(self.current.loc, "pub prefixes struct, class, lib, fn, or interface")
           return program
         }
-        self.fail(self.current.loc, "expected struct, class, lib, fn, import, quote, or comptime, found ${k}")
+        self.fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${k}")
         return program
       }
       self.skip_newlines
@@ -547,6 +551,7 @@ pub class Parser {
     loc = self.expect(tk_struct()).loc
     name = self.expect(tk_ident()).value
     params = self.parse_type_params(loc)
+    opted = self.parse_opt_clause()
     body = self.parse_type_body(name)
     i = 0
     while i < body.fields.size {
@@ -562,6 +567,7 @@ pub class Parser {
     defn.methods = body.methods
     defn.quotes = body.quotes
     defn.comptimes = body.comptimes
+    defn.opt_ins = opted
     defn.vis = vis
     defn
   }
@@ -570,6 +576,7 @@ pub class Parser {
     loc = self.expect(tk_class()).loc
     name = self.expect(tk_ident()).value
     params = self.parse_type_params(loc)
+    opted = self.parse_opt_clause()
     body = self.parse_type_body(name)
     defn = ClassDef.new(loc, name)
     defn.type_params = params
@@ -577,8 +584,128 @@ pub class Parser {
     defn.methods = body.methods
     defn.quotes = body.quotes
     defn.comptimes = body.comptimes
+    defn.opt_ins = opted
     defn.vis = vis
     defn
+  }
+
+  pub fn parse_opt_clause: Array(TypeName) {
+    empty: Array(TypeName) = []
+    self.skip_newlines
+    if self.current.kind == tk_colon() {
+      dummy = self.bump
+      self.skip_newlines
+      return self.parse_iface_apps()
+    }
+    empty
+  }
+
+  pub fn parse_iface_apps: Array(TypeName) {
+    apps: Array(TypeName) = []
+    while true {
+      apps.push(self.parse_primary_type)
+      self.skip_newlines
+      if self.match_tok(tk_plus()) {
+        self.skip_newlines
+      } else {
+        break
+      }
+    }
+    apps
+  }
+
+  pub fn parse_bounded_type: TypeName {
+    tn = self.parse_type_name
+    self.skip_newlines
+    if self.current.kind == tk_colon() {
+      dummy = self.bump
+      self.skip_newlines
+      tn.bounds = self.parse_iface_apps
+    }
+    tn
+  }
+
+  pub fn parse_interface(vis: Bool): InterfaceDef {
+    loc = self.expect(tk_interface()).loc
+    name = self.expect(tk_ident()).value
+    params = self.parse_type_params(loc)
+    idef = InterfaceDef.new(loc, name)
+    idef.type_params = params
+    idef.vis = vis
+    self.skip_newlines
+    dummy = self.expect(tk_l_brace())
+    self.skip_newlines
+    while true {
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.has_err {
+        break
+      }
+      if self.current.kind == tk_fn() {
+        idef.methods.push(self.parse_iface_method)
+      } else {
+        self.fail(self.current.loc, "interface methods are signatures")
+        break
+      }
+      self.skip_newlines
+    }
+    dummy2 = self.expect(tk_r_brace())
+    idef
+  }
+
+  pub fn parse_iface_method: Function {
+    loc = self.expect(tk_fn()).loc
+    name = self.parse_fn_name
+    fnn = Function.new(loc, name)
+    if self.current.kind == tk_l_paren() {
+      dummy = self.bump
+      self.skip_newlines
+      if self.current.kind != tk_r_paren() {
+        while true {
+          fnn.params.push(self.parse_param)
+          self.skip_newlines
+          if self.match_tok(tk_comma()) {
+            self.skip_newlines
+          } else {
+            break
+          }
+        }
+      }
+      dummy2 = self.expect(tk_r_paren())
+    }
+    if self.match_tok(tk_colon()) {
+      self.skip_newlines
+      fnn.return_type = self.parse_bounded_type
+    }
+    self.skip_newlines
+    if self.current.kind == tk_l_brace() {
+      self.fail(self.current.loc, "interface methods have no body")
+      fnn.body = self.parse_block
+    }
+    fnn
+  }
+
+  pub fn parse_opt_in(program: Program, vis: Bool) {
+    target = self.parse_primary_type
+    self.skip_newlines
+    if self.current.kind != tk_colon() {
+      if vis {
+        self.fail(target.loc, "pub prefixes struct, class, lib, fn, or interface")
+      } else {
+        self.fail(target.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime")
+      }
+      return
+    }
+    dummy = self.bump
+    self.skip_newlines
+    opt = OptIn.new(target.loc, target)
+    opt.ifaces = self.parse_iface_apps
+    opt.vis = vis
+    program.opt_ins.push(opt)
   }
 
   pub fn parse_lib(vis: Bool): LibDef {
@@ -834,7 +961,7 @@ pub class Parser {
       }
       if self.match_tok(tk_colon()) {
         self.skip_newlines
-        fnn_hold.return_type = self.parse_type_name
+        fnn_hold.return_type = self.parse_bounded_type
       }
       self.skip_newlines
       fnn_hold.body = self.parse_block
@@ -871,7 +998,7 @@ pub class Parser {
     }
     if self.match_tok(tk_colon()) {
       self.skip_newlines
-      fnn.return_type = self.parse_type_name
+      fnn.return_type = self.parse_bounded_type
     }
     self.skip_newlines
     fnn.body = self.parse_block
@@ -897,7 +1024,7 @@ pub class Parser {
     name_tok = self.expect(tk_ident())
     dummy = self.expect(tk_colon())
     self.skip_newlines
-    type = self.parse_type_name
+    type = self.parse_bounded_type
     p = Param.new(name_tok.loc, name_tok.value, type)
     if self.match_tok(tk_eq()) {
       self.skip_newlines

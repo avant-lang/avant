@@ -96,6 +96,58 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "join-in-parallel", "fn main {\n  xs = [1]\n  ys = xs.parallel { |item|\n    h = spawn { 1 }\n    h.join\n  }\n  puts(ys[0])\n}\n", "join inside a pool worker")
     expect_err(c, compiler, stamp, "mutex-escape", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = 0u64\n  }\n}\nfn main {\n  mu = Mutex.new(1)\n  y = 0\n  n = mu.with { |x|\n    y = x\n    x\n  }\n  puts(n)\n}\n", "mutex place cannot escape")
     expect_err(c, compiler, stamp, "mutex-return", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = 0u64\n  }\n}\nfn main {\n  mu = Mutex.new(1)\n  n = mu.with { |x|\n    return x\n  }\n  puts(n)\n}\n", "return inside Mutex.with")
+    expect_err(c, compiler, stamp, "iface-no-opt", "interface Show {\n  fn to_s: String\n}\nstruct Vec2 {\n  x: Int\n  fn to_s: String { \"v\" }\n}\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Vec2 { x: 1 }))\n}\n", "does not implement")
+    expect_err(c, compiler, stamp, "iface-missing", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  x: Int\n}\nfn main {\n  puts(1)\n}\n", "missing to_s")
+    expect_err(c, compiler, stamp, "iface-ret", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  x: Int\n  fn to_s: Int { 1 }\n}\nfn main {\n  puts(1)\n}\n", "returns Int, expected String")
+    expect_err(c, compiler, stamp, "iface-nil", "interface N {\n  fn f: Int?\n}\nstruct Vec2: N {\n  fn f: Int { 1 }\n}\nfn main {\n  puts(1)\n}\n", "returns Int, expected Int?")
+    expect_err(c, compiler, stamp, "iface-param", "interface N {\n  fn f(n: Int): Int\n}\nstruct Vec2: N {\n  fn f(n: String): Int { n.size }\n}\nfn main {\n  puts(1)\n}\n", "parameter 1 is String, expected Int")
+    expect_err(c, compiler, stamp, "iface-short", "interface N {\n  fn f(n: Int): Int\n}\nstruct Vec2: N {\n  fn f(n: Int, m: Int = 0): Int { n }\n}\nfn main {\n  puts(1)\n}\n", "missing f")
+    expect_err(c, compiler, stamp, "iface-two", "interface Id {\n  fn id(x: U): U\n}\nstruct Vec2: Id {\n  x: Int\n  fn id(x: A): A { x }\n  fn id(x: B): B { x }\n}\nfn main {\n  puts(1)\n}\n", "ambiguous")
+    expect_err(c, compiler, stamp, "iface-field", "interface Show {\n  fn to_s: String\n}\nstruct Vec2 {\n  s: Show\n}\nfn main {\n  puts(1)\n}\n", "is not a value type")
+    expect_err(c, compiler, stamp, "iface-local", "interface Show {\n  fn to_s: String\n}\nfn main {\n  x: Show = 1\n  puts(1)\n}\n", "is not a value type")
+    expect_err(c, compiler, stamp, "iface-array", "interface Show {\n  fn to_s: String\n}\nfn main {\n  xs: Array(Show) = []\n  puts(1)\n}\n", "is not a value type")
+    expect_err(c, compiler, stamp, "iface-bare", "interface Enumerable(T) {\n  fn each(block: fn(T): Nil)\n}\nstruct Vec2: Enumerable {\n  x: Int\n}\nfn main {\n  puts(1)\n}\n", "needs type arguments")
+    expect_err(c, compiler, stamp, "iface-free", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Vec2: Eq(T) {\n  x: Int\n}\nfn main {\n  puts(1)\n}\n", "unknown type T")
+    expect_err(c, compiler, stamp, "iface-body", "interface Show {\n  fn to_s: String {\n    \"x\"\n  }\n}\nfn main {\n  puts(1)\n}\n", "interface methods have no body")
+    expect_err(c, compiler, stamp, "iface-dup", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  fn to_s: String { \"v\" }\n}\nVec2: Show\nfn main {\n  puts(1)\n}\n", "already implements")
+    expect_err(c, compiler, stamp, "iface-empty", "interface Show() {\n  fn to_s: String\n}\nfn main {\n  puts(1)\n}\n", "type parameter list is empty")
+    expect_err(c, compiler, stamp, "iface-builtin", "interface Enumerable(T) {\n  fn each(block: fn(T): Nil)\n}\nArray(Int): Enumerable(Int)\nfn main {\n  puts(1)\n}\n", "cannot opt into")
+    expect_err(c, compiler, stamp, "iface-ptr-int", "interface Show {\n  fn to_s: String\n}\nfn (p: Ptr(Int)) to_s: String { \"n\" }\nPtr(Int): Show\nfn main {\n  puts(1)\n}\n", "not Stage 18")
+    dir = "/tmp/avant-s21-${stamp}"
+    s12_mkdir(dir)
+    s12_write(dir, "s21priv", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  fn to_s: String { \"p\" }\n}\npub Hide: Show\n")
+    s12_write(dir, "s21privmain", "import s21priv\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
+    priv_bin = "${dir}/priv.bin"
+    priv_log = "${dir}/priv.log"
+    dummy_p = compile_av(compiler, "${dir}/s21privmain.av", priv_bin, priv_log)
+    c.expect(!file_exists(priv_bin), "iface-private bin absent")
+    if err = file_read(priv_log) {
+      c.expect(str_has(err, "does not implement"), "iface-private")
+    } else {
+      c.expect(false, "iface-private")
+    }
+    s12_write(dir, "s21hid", "interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"h\" }\n}\npub Hide: Show\n")
+    s12_write(dir, "s21hidmain", "import s21hid\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
+    hid_bin = "${dir}/hid.bin"
+    hid_log = "${dir}/hid.log"
+    dummy_h = compile_av(compiler, "${dir}/s21hidmain.av", hid_bin, hid_log)
+    c.expect(!file_exists(hid_bin), "iface-vis bin absent")
+    if err = file_read(hid_log) {
+      c.expect(str_has(err, "unknown type Show"), "iface-vis")
+    } else {
+      c.expect(false, "iface-vis")
+    }
+    s12_write(dir, "s21quiet", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"q\" }\n}\nHide: Show\n")
+    s12_write(dir, "s21quietmain", "import s21quiet\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
+    quiet_bin = "${dir}/quiet.bin"
+    quiet_log = "${dir}/quiet.log"
+    dummy_q = compile_av(compiler, "${dir}/s21quietmain.av", quiet_bin, quiet_log)
+    c.expect(!file_exists(quiet_bin), "iface-opt-vis bin absent")
+    if err = file_read(quiet_log) {
+      c.expect(str_has(err, "does not implement"), "iface-opt-vis")
+    } else {
+      c.expect(false, "iface-opt-vis")
+    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
