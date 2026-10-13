@@ -4172,7 +4172,12 @@ pub class MycGen {
     if name.size == 0 {
       name = expr.callee
     }
-    self.emit_call_named(name, expr.args)
+    if sig = self.find_fn(name) {
+      self.emit_typed_args(expr.args, sig.params)
+      self.line("CALL :${name}")
+    } else {
+      self.emit_call_named(name, expr.args)
+    }
   }
 
   pub fn is_struct_self(name: String): Bool {
@@ -4312,6 +4317,153 @@ pub class MycGen {
     self.line("CALL :avant_spawn")
   }
 
+  pub fn note_spawn_box(name: String, caps: Array(String), into: Array(String)) {
+    found = false
+    i = 0
+    while i < caps.size {
+      if str_eq(caps[i], name) {
+        found = true
+      }
+      i = i + 1
+    }
+    if found {
+    } else {
+      return
+    }
+    j = 0
+    while j < into.size {
+      if str_eq(into[j], name) {
+        return
+      }
+      j = j + 1
+    }
+    into.push(name)
+  }
+
+  pub fn collect_spawn_box_stmts(body: Array(Stmt), caps: Array(String), into: Array(String)) {
+    i = 0
+    while i < body.size {
+      self.collect_spawn_box_stmt(body[i], caps, into)
+      i = i + 1
+    }
+  }
+
+  pub fn collect_spawn_box_stmt(stmt: Stmt, caps: Array(String), into: Array(String)) {
+    k = stmt.kind
+    if k == st_return() {
+      if e = stmt.expr {
+        self.collect_spawn_box_expr(e, caps, into)
+      }
+      return
+    }
+    if k == st_if() {
+      if c = stmt.cond {
+        self.collect_spawn_box_expr(c, caps, into)
+      }
+      self.collect_spawn_box_stmts(stmt.then_body, caps, into)
+      self.collect_spawn_box_stmts(stmt.else_body, caps, into)
+      return
+    }
+    if k == st_while() {
+      if c = stmt.cond {
+        self.collect_spawn_box_expr(c, caps, into)
+      }
+      self.collect_spawn_box_stmts(stmt.body, caps, into)
+      return
+    }
+    if k == st_assign() {
+      if target = stmt.target {
+        self.collect_spawn_box_expr(target, caps, into)
+      }
+      if v = stmt.value {
+        self.collect_spawn_box_expr(v, caps, into)
+      }
+      return
+    }
+    if k == st_expr() {
+      if e = stmt.expr {
+        self.collect_spawn_box_expr(e, caps, into)
+      }
+    }
+  }
+
+  pub fn collect_spawn_box_expr(expr: Expr, caps: Array(String), into: Array(String)) {
+    k = expr.kind
+    if k == ex_lambda() {
+      i = 0
+      while i < expr.cap_names.size {
+        self.note_spawn_box(expr.cap_names[i], caps, into)
+        i = i + 1
+      }
+      if b = expr.block {
+        self.collect_spawn_box_stmts(b.body, caps, into)
+      }
+      return
+    }
+    if k == ex_call() {
+      if inner = expr.inner {
+        self.collect_spawn_box_expr(inner, caps, into)
+      }
+      if recv = expr.receiver {
+        self.collect_spawn_box_expr(recv, caps, into)
+      }
+      i = 0
+      while i < expr.args.size {
+        self.collect_spawn_box_expr(expr.args[i], caps, into)
+        i = i + 1
+      }
+      if b = expr.block {
+        self.collect_spawn_box_stmts(b.body, caps, into)
+      }
+      return
+    }
+    if k == ex_unary() {
+      if inner = expr.inner {
+        self.collect_spawn_box_expr(inner, caps, into)
+      }
+      return
+    }
+    if k == ex_binary() {
+      if l = expr.left {
+        self.collect_spawn_box_expr(l, caps, into)
+      }
+      if r = expr.right {
+        self.collect_spawn_box_expr(r, caps, into)
+      }
+      return
+    }
+    if k == ex_field() {
+      if obj = expr.object {
+        self.collect_spawn_box_expr(obj, caps, into)
+      }
+      return
+    }
+    if k == ex_index() {
+      if l = expr.left {
+        self.collect_spawn_box_expr(l, caps, into)
+      }
+      if r = expr.right {
+        self.collect_spawn_box_expr(r, caps, into)
+      }
+      return
+    }
+    if k == ex_struct() {
+      i = 0
+      while i < expr.field_exprs.size {
+        self.collect_spawn_box_expr(expr.field_exprs[i], caps, into)
+        i = i + 1
+      }
+      return
+    }
+    if k == ex_array() {
+      i = 0
+      while i < expr.elems.size {
+        self.collect_spawn_box_expr(expr.elems[i], caps, into)
+        i = i + 1
+      }
+    }
+  }
+
   pub fn emit_spawn_thunk(call: Expr) {
     if b = call.block {
       saved_indent = self.indent
@@ -4340,18 +4492,20 @@ pub class MycGen {
       self.indent = self.indent - 1
       self.line("BODY")
       self.indent = self.indent + 1
-      none: Array(String) = []
-      self.begin_fn_frame(none)
       self.reset_rooted
       self.line("CALL :avant_gc_enter")
       self.line("PARAM 0")
+      boxed: Array(String) = []
+      self.collect_spawn_box_stmts(b.body, call.cap_names, boxed)
       if call.cap_names.size == 0 {
         self.line("STACK :drop")
+        self.begin_fn_frame(boxed)
       } else {
         self.line("AS :ptr<${name}_cap>")
         holder = self.new_temp
         self.line("LOCAL :${holder} :ptr<${name}_cap>")
         self.line("STORE")
+        self.begin_fn_frame(boxed)
         i = 0
         while i < call.cap_names.size {
           cname = call.cap_names[i]
@@ -4359,8 +4513,18 @@ pub class MycGen {
           self.line("LOCAL :${holder}")
           self.line("DEREF")
           self.line("FIELD ${i}")
-          self.line("LOCAL :${cname} :${cm}")
-          self.line("STORE")
+          if self.name_is_boxed(cname) {
+            tmp = self.new_temp
+            self.line("LOCAL :${tmp} :${cm}")
+            self.line("STORE")
+            self.ensure_root(tmp, call.cap_tys[i])
+            self.ensure_box(cname, call.cap_tys[i])
+            self.line("LOCAL :${tmp}")
+            self.store_box_value(cname, call.cap_tys[i])
+          } else {
+            self.line("LOCAL :${cname} :${cm}")
+            self.line("STORE")
+          }
           i = i + 1
         }
       }
@@ -4933,9 +5097,17 @@ pub class MycGen {
   }
 
   pub fn emit_args(args: Array(Expr)) {
+    none: Array(Ty) = []
+    self.emit_typed_args(args, none)
+  }
+
+  pub fn emit_typed_args(args: Array(Expr), types: Array(Ty)) {
     if args.size <= 1 {
       if args.size == 1 {
         self.emit_expr(args[0])
+        if types.size > 0 {
+          self.emit_coerce(expr_ty(args[0]), types[0])
+        }
       }
       return
     }
@@ -4944,11 +5116,20 @@ pub class MycGen {
     while i < args.size {
       arg = args[i]
       self.emit_expr(arg)
+      got = expr_ty(arg)
+      if i < types.size {
+        self.emit_coerce(got, types[i])
+        if types[i].is_union {
+          if types[i].includes_member(got) {
+            got = types[i]
+          }
+        }
+      }
       tmp = self.new_temp
-      m = ty_myc(expr_ty(arg))
+      m = ty_myc(got)
       self.line("LOCAL :${tmp} :${m}")
       self.line("STORE")
-      self.ensure_root(tmp, expr_ty(arg))
+      self.ensure_root(tmp, got)
       tmps.push(tmp)
       i = i + 1
     }
@@ -5280,7 +5461,7 @@ pub class MycGen {
     self.line("LOCAL :${tmp} :${layout}")
     self.line("STORE")
     self.emit_ptr_root(tmp)
-    self.emit_args(expr.args)
+    self.emit_typed_args(expr.args, expr.cap_tys)
     self.line("LOCAL :${tmp}")
     self.line("FIELD 0")
     self.line("LOCAL :${tmp}")
