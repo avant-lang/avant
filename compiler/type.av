@@ -57,18 +57,27 @@ pub class TyField {
 pub class Ty {
   kind: Int = 0
   name: String = ""
+  label: String = ""
+  origin: String = ""
+  template: Bool = false
   inner: Ty? = nil
   key: Ty? = nil
   val: Ty? = nil
   members: Array(Ty)
   fields: Array(TyField)
+  ty_args: Array(Ty)
 
   fn initialize(kind: Int) {
     self.kind = kind
+    self.label = ""
+    self.origin = ""
+    self.template = false
     m: Array(Ty) = []
     self.members = m
     f: Array(TyField) = []
     self.fields = f
+    ta: Array(Ty) = []
+    self.ty_args = ta
   }
 
   pub fn is_int: Bool { self.kind == tyk_int() }
@@ -209,10 +218,10 @@ pub class Ty {
       return false
     }
     if k == tyk_struct() {
-      return str_eq(self.name, other.name)
+      return self.same_agg(other)
     }
     if k == tyk_class() {
-      return str_eq(self.name, other.name)
+      return self.same_agg(other)
     }
     if k == tyk_opaque() {
       return str_eq(self.name, other.name)
@@ -335,7 +344,36 @@ pub class Ty {
     false
   }
 
+  pub fn same_agg(other: Ty): Bool {
+    if self.origin.size > 0 {
+      if other.origin.size > 0 {
+        if str_eq(self.origin, other.origin) {
+          if self.ty_args.size == other.ty_args.size {
+            i = 0
+            while i < self.ty_args.size {
+              if self.ty_args[i].same_as(other.ty_args[i]) {
+              } else {
+                return false
+              }
+              i = i + 1
+            }
+            return true
+          }
+        }
+        return false
+      }
+      return false
+    }
+    if other.origin.size > 0 {
+      return false
+    }
+    str_eq(self.name, other.name)
+  }
+
   pub fn show: String {
+    if self.label.size > 0 {
+      return self.label
+    }
     k = self.kind
     if k == tyk_int() {
       return "Int"
@@ -480,6 +518,147 @@ pub fn ty_var(name: String): Ty {
   t = Ty.new(tyk_var())
   t.name = name
   t
+}
+
+pub fn ty_has_var(ty: Ty): Bool {
+  if ty.is_var {
+    return true
+  }
+  if inner = ty.inner {
+    if ty_has_var(inner) {
+      return true
+    }
+  }
+  if key = ty.key {
+    if ty_has_var(key) {
+      return true
+    }
+  }
+  if val = ty.val {
+    if ty_has_var(val) {
+      return true
+    }
+  }
+  i = 0
+  while i < ty.members.size {
+    if ty_has_var(ty.members[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < ty.ty_args.size {
+    if ty_has_var(ty.ty_args[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn mangle_ty(ty: Ty): String {
+  k = ty.kind
+  if k == tyk_int() {
+    return "Int"
+  }
+  if k == tyk_int64() {
+    return "Int64"
+  }
+  if k == tyk_uint64() {
+    return "UInt64"
+  }
+  if k == tyk_bool() {
+    return "Bool"
+  }
+  if k == tyk_float() {
+    return "Float64"
+  }
+  if k == tyk_string() {
+    return "String"
+  }
+  if k == tyk_void() {
+    return "Void"
+  }
+  if k == tyk_nil() {
+    return "Nil"
+  }
+  if k == tyk_buf() {
+    return "Buf"
+  }
+  if k == tyk_array() {
+    if e = ty.inner {
+      return "Array_${mangle_ty(e)}"
+    }
+    return "Array"
+  }
+  if k == tyk_ptr() {
+    if e = ty.inner {
+      return "Ptr_${mangle_ty(e)}"
+    }
+    return "Ptr"
+  }
+  if k == tyk_join() {
+    if e = ty.inner {
+      return "JoinHandle_${mangle_ty(e)}"
+    }
+    return "JoinHandle"
+  }
+  if k == tyk_hash() {
+    buf = buf_new()
+    buf.push_str("Hash")
+    if ke = ty.key {
+      buf.push_str("_")
+      buf.push_str(mangle_ty(ke))
+    }
+    if va = ty.val {
+      buf.push_str("_")
+      buf.push_str(mangle_ty(va))
+    }
+    return buf.to_s
+  }
+  if k == tyk_union() {
+    buf = buf_new()
+    i = 0
+    while i < ty.members.size {
+      if i > 0 {
+        buf.push_str("_")
+      }
+      buf.push_str(mangle_ty(ty.members[i]))
+      i = i + 1
+    }
+    return buf.to_s
+  }
+  if k == tyk_fn() {
+    buf = buf_new()
+    buf.push_str("Fn")
+    i = 0
+    while i < ty.members.size {
+      buf.push_str("_")
+      buf.push_str(mangle_ty(ty.members[i]))
+      i = i + 1
+    }
+    buf.push_str("__")
+    if r = ty.inner {
+      buf.push_str(mangle_ty(r))
+    } else {
+      buf.push_str("Void")
+    }
+    return buf.to_s
+  }
+  if ty.origin.size > 0 {
+    if ty.ty_args.size > 0 {
+      buf = buf_new()
+      buf.push_str(ty.origin)
+      i = 0
+      while i < ty.ty_args.size {
+        buf.push_str("__")
+        buf.push_str(mangle_ty(ty.ty_args[i]))
+        i = i + 1
+      }
+      return buf.to_s
+    }
+  }
+  ty.name
 }
 
 pub fn ty_module(name: String): Ty {

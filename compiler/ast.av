@@ -145,6 +145,7 @@ pub class Expr {
   elem_type: TypeName? = nil
   key_type: TypeName? = nil
   val_type: TypeName? = nil
+  type_args: Array(TypeName)
   ty: Ty? = nil
   spawn_thunk: String = ""
   resolved: String = ""
@@ -174,6 +175,8 @@ pub class Expr {
     self.cases = cs
     eb: Array(Stmt) = []
     self.else_body = eb
+    tas: Array(TypeName) = []
+    self.type_args = tas
     cn: Array(String) = []
     self.cap_names = cn
     ct: Array(Ty) = []
@@ -316,6 +319,7 @@ pub class ComptimeWalk {
 pub class StructDef {
   loc: Location
   name: String = ""
+  type_params: Array(String)
   fields: Array(Field)
   methods: Array(Function)
   quotes: Array(QuoteDecl)
@@ -326,6 +330,8 @@ pub class StructDef {
   fn initialize(loc: Location, name: String) {
     self.loc = loc
     self.name = name
+    tp: Array(String) = []
+    self.type_params = tp
     f: Array(Field) = []
     self.fields = f
     m: Array(Function) = []
@@ -342,6 +348,7 @@ pub class StructDef {
 pub class ClassDef {
   loc: Location
   name: String = ""
+  type_params: Array(String)
   fields: Array(Field)
   methods: Array(Function)
   quotes: Array(QuoteDecl)
@@ -352,6 +359,8 @@ pub class ClassDef {
   fn initialize(loc: Location, name: String) {
     self.loc = loc
     self.name = name
+    tp: Array(String) = []
+    self.type_params = tp
     f: Array(Field) = []
     self.fields = f
     m: Array(Function) = []
@@ -833,6 +842,11 @@ pub fn clone_expr(e: Expr): Expr {
   if t = e.val_type {
     out.val_type = clone_type_name(t)
   }
+  i = 0
+  while i < e.type_args.size {
+    out.type_args.push(clone_type_name(e.type_args[i]))
+    i = i + 1
+  }
   out
 }
 
@@ -981,6 +995,11 @@ pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
   }
   if t = e.val_type {
     e.val_type = subst_type_name(t, from, to)
+  }
+  i = 0
+  while i < e.type_args.size {
+    e.type_args[i] = subst_type_name(e.type_args[i], from, to)
+    i = i + 1
   }
 }
 

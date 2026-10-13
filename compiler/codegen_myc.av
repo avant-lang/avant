@@ -41,10 +41,26 @@ pub fn myc_id_part(s: String): String {
   buf.to_s
 }
 
+pub fn ty_myc_id(ty: Ty): String {
+  if ty.is_struct {
+    return ty.name
+  }
+  if ty.is_class {
+    return ty.name
+  }
+  if ty.is_clayout {
+    return ty.name
+  }
+  if ty.is_opaque {
+    return ty.name
+  }
+  ty.show
+}
+
 pub fn ty_layout_myc(ty: Ty): String {
   if ty.is_array {
     if e = ty.inner {
-      return "Array_${myc_id_part(e.show)}"
+      return "Array_${myc_id_part(ty_myc_id(e))}"
     }
     return "Array_"
   }
@@ -56,7 +72,7 @@ pub fn ty_layout_myc(ty: Ty): String {
       if i > 0 {
         buf.push_str("_")
       }
-      buf.push_str(myc_id_part(ty.members[i].show))
+      buf.push_str(myc_id_part(ty_myc_id(ty.members[i])))
       i = i + 1
     }
     return buf.to_s
@@ -606,6 +622,11 @@ pub class MycGen {
   cap_tys_now: Array(Ty)
   in_lambda: Bool = false
   env_layout: String = ""
+  place_name: String = ""
+  place_holder: String = ""
+  place_field: Int = 0
+  need_gate: Int = 0
+  need_parallel: Int = 0
 
   fn initialize(program: Program) {
     self.program = program
@@ -670,6 +691,11 @@ pub class MycGen {
     self.cap_tys_now = ctys
     self.in_lambda = false
     self.env_layout = ""
+    self.place_name = ""
+    self.place_holder = ""
+    self.place_field = 0
+    self.need_gate = 0
+    self.need_parallel = 0
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -965,6 +991,17 @@ pub class MycGen {
     self.ext("avant_json_obj_f64", "ptr<void>,ptr<u8>,ptr<i32>", "f64")
     self.ext("avant_json_arr_sum_f64", "ptr<void>,ptr<u8>", "f64")
     self.ext("avant_http_roundtrip", "ptr<u8>", "ptr<u8>")
+    if self.need_parallel != 0 {
+      self.ext("avant_parallel_for", "i32,ptr<void>,ptr<void>", "")
+    }
+    if self.need_gate != 0 {
+      self.ext("avant_gate_new", "", "u64")
+      self.ext("avant_gate_lock", "u64", "")
+      self.ext("avant_gate_unlock", "u64", "")
+      self.ext("avant_gate_wait", "u64", "")
+      self.ext("avant_gate_signal", "u64", "")
+      self.ext("avant_gate_broadcast", "u64", "")
+    }
   }
 
   pub fn emit_lib_decls {
@@ -1051,6 +1088,7 @@ pub class MycGen {
       fnn = fns[i]
       if fn_is_method(fnn) {
         if fnn.generic {
+        } else if self.owner_is_template(fnn.owner) {
         } else {
           owner = fnn.owner
           if owner.size == 0 {
@@ -1081,11 +1119,15 @@ pub class MycGen {
   }
 
   pub fn assign_class_ids {
+    n = 1
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
-      n = i + 1
-      self.class_ids[cdef.name] = n
+      if cdef.type_params.size > 0 {
+      } else {
+        self.class_ids[cdef.name] = n
+        n = n + 1
+      }
       i = i + 1
     }
   }
@@ -1280,6 +1322,27 @@ pub class MycGen {
       }
       if recv = expr.receiver {
         self.collect_expr(recv)
+        if str_eq(expr.callee, "parallel") {
+          n = self.spawn_id
+          expr.spawn_thunk = "__par_${n}"
+          self.spawn_id = n + 1
+          self.pending.push(expr)
+          self.need_parallel = 1
+          words: Array(Ty) = []
+          words.push(expr_ty(recv))
+          words.push(expr_ty(expr))
+          wi = 0
+          while wi < expr.cap_tys.size {
+            words.push(expr.cap_tys[wi])
+            wi = wi + 1
+          }
+          self.note_words("${expr.spawn_thunk}_cap", words)
+        }
+        if str_eq(expr.callee, "with") {
+          if str_eq(expr_ty(recv).origin, "Mutex") {
+            self.need_gate = 1
+          }
+        }
       } else {
         if str_eq(expr.callee, "spawn") {
           if b = expr.block {
@@ -1287,7 +1350,13 @@ pub class MycGen {
             expr.spawn_thunk = "__spawn_${n}"
             self.spawn_id = n + 1
             self.pending.push(expr)
+            if expr.cap_names.size > 0 {
+              self.note_words("${expr.spawn_thunk}_cap", expr.cap_tys)
+            }
           }
+        }
+        if self.is_gate_callee(expr.callee) {
+          self.need_gate = 1
         }
       }
       i = 0
@@ -1441,25 +1510,31 @@ pub class MycGen {
       self.cov_map_path = coverage_map_path()
     }
     self.resolver = load_types(self.program)
-    self.emit_runtime_decl
-    self.emit_lib_decls
     self.collect_sigs
     self.collect_methods
     self.assign_class_ids
     self.collect_arrays
+    self.emit_runtime_decl
+    self.emit_lib_decls
     i = 0
     while i < self.program.structs.size {
       sdef = self.program.structs[i]
-      if ty = self.resolver.get_named(sdef.name) {
-        self.emit_layout(ty)
+      if sdef.type_params.size > 0 {
+      } else {
+        if ty = self.resolver.get_named(sdef.name) {
+          self.emit_layout(ty)
+        }
       }
       i = i + 1
     }
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
-      if ty = self.resolver.get_named(cdef.name) {
-        self.emit_layout(ty)
+      if cdef.type_params.size > 0 {
+      } else {
+        if ty = self.resolver.get_named(cdef.name) {
+          self.emit_layout(ty)
+        }
       }
       i = i + 1
     }
@@ -1499,7 +1574,12 @@ pub class MycGen {
     self.emit_env_defs
     i = 0
     while i < self.pending.size {
-      self.emit_spawn_cap_layout(self.pending[i])
+      pend = self.pending[i]
+      if str_eq(pend.callee, "parallel") {
+        self.emit_parallel_layout(pend)
+      } else {
+        self.emit_spawn_cap_layout(pend)
+      }
       i = i + 1
     }
     fns = program_all_functions(self.program)
@@ -1511,14 +1591,22 @@ pub class MycGen {
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
-      if ty = self.resolver.get_named(cdef.name) {
-        self.emit_constructor(ty)
+      if cdef.type_params.size > 0 {
+      } else {
+        if ty = self.resolver.get_named(cdef.name) {
+          self.emit_constructor(ty)
+        }
       }
       i = i + 1
     }
     i = 0
     while i < self.pending.size {
-      self.emit_spawn_thunk(self.pending[i])
+      pend = self.pending[i]
+      if str_eq(pend.callee, "parallel") {
+        self.emit_parallel_thunk(pend)
+      } else {
+        self.emit_spawn_thunk(pend)
+      }
       i = i + 1
     }
     i = 0
@@ -1544,8 +1632,34 @@ pub class MycGen {
     self.out.to_s
   }
 
+  pub fn owner_is_template(owner: String): Bool {
+    if owner.size == 0 {
+      return false
+    }
+    i = 0
+    while i < self.program.structs.size {
+      sdef = self.program.structs[i]
+      if str_eq(sdef.name, owner) {
+        return sdef.type_params.size > 0
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if str_eq(cdef.name, owner) {
+        return cdef.type_params.size > 0
+      }
+      i = i + 1
+    }
+    false
+  }
+
   pub fn emit_function(fnn: Function) {
     if fnn.generic {
+      return
+    }
+    if self.owner_is_template(fnn.owner) {
       return
     }
     self.temps = 0
@@ -1955,12 +2069,15 @@ pub class MycGen {
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
-      if ty = self.resolver.get_named(cdef.name) {
-        bits = pointer_word_bits(ty)
-        if id = self.class_ids.get(cdef.name) {
-          self.line("PUSH ${bits} :u64")
-          self.line("PUSH ${id} :u32")
-          self.line("CALL :avant_type_map")
+      if cdef.type_params.size > 0 {
+      } else {
+        if ty = self.resolver.get_named(cdef.name) {
+          bits = pointer_word_bits(ty)
+          if id = self.class_ids.get(cdef.name) {
+            self.line("PUSH ${bits} :u64")
+            self.line("PUSH ${id} :u32")
+            self.line("CALL :avant_type_map")
+          }
         }
       }
       i = i + 1
@@ -2010,6 +2127,11 @@ pub class MycGen {
   }
 
   pub fn ensure_root(name: String, ty: Ty) {
+    if self.place_name.size > 0 {
+      if str_eq(name, self.place_name) {
+        return
+      }
+    }
     if v = self.rooted.get(name) {
       return
     }
@@ -2691,6 +2813,14 @@ pub class MycGen {
 
   pub fn emit_lvalue(expr: Expr) {
     if expr.kind == ex_name() {
+      if self.place_name.size > 0 {
+        if str_eq(expr.ident, self.place_name) {
+          self.line("LOCAL :${self.place_holder}")
+          self.line("DEREF")
+          self.line("FIELD ${self.place_field}")
+          return
+        }
+      }
       if expr.implicit_field {
         self.emit_self_field(expr.ident)
         return
@@ -3587,6 +3717,10 @@ pub class MycGen {
     }
     if str_eq(expr.callee, "reserve") {
       self.emit_array_reserve(expr, ty)
+      return
+    }
+    if str_eq(expr.callee, "parallel") {
+      self.emit_parallel(expr, ty)
     }
   }
 
@@ -3843,6 +3977,12 @@ pub class MycGen {
         self.emit_join(expr)
         return
       }
+      if str_eq(expr.callee, "with") {
+        if str_eq(rty.origin, "Mutex") {
+          self.emit_mutex_with(expr, rty)
+          return
+        }
+      }
       self.emit_method_invoke(recv, expr.resolved, expr.args)
       return
     }
@@ -3854,6 +3994,15 @@ pub class MycGen {
     }
     if str_eq(expr.callee, "spawn") {
       self.emit_spawn(expr)
+      return
+    }
+    if str_eq(expr.callee, "avant_gate_new") {
+      self.line("CALL :avant_gate_new")
+      return
+    }
+    if self.is_gate_callee(expr.callee) {
+      self.emit_args(expr.args)
+      self.line("CALL :${expr.callee}")
       return
     }
     if str_eq(expr.callee, "now_ms") {
@@ -4281,7 +4430,8 @@ pub class MycGen {
       self.line("PUSH 0")
       self.line("AS :ptr<void>")
     } else {
-      self.emit_alloc_sizeof("${name}_cap", 0)
+      cap_id = self.closure_type_id("${name}_cap")
+      self.emit_alloc_sizeof("${name}_cap", cap_id)
       self.line("AS :ptr<${name}_cap>")
       holder = self.new_temp
       self.line("LOCAL :${holder} :ptr<${name}_cap>")
@@ -4524,6 +4674,7 @@ pub class MycGen {
           } else {
             self.line("LOCAL :${cname} :${cm}")
             self.line("STORE")
+            self.ensure_root(cname, call.cap_tys[i])
           }
           i = i + 1
         }
@@ -4556,6 +4707,355 @@ pub class MycGen {
       self.self_name = saved_self_name
       self.c_main = saved_main
     }
+  }
+
+  pub fn emit_parallel_layout(call: Expr) {
+    name = call.spawn_thunk
+    self.line("STRUCT :${name}_cap")
+    self.indent = self.indent + 1
+    if recv = call.receiver {
+      inm = ty_myc(expr_ty(recv))
+      self.line("TYPE :${inm}")
+    }
+    outm = ty_myc(expr_ty(call))
+    self.line("TYPE :${outm}")
+    i = 0
+    while i < call.cap_tys.size {
+      cm = ty_myc(call.cap_tys[i])
+      self.line("TYPE :${cm}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  pub fn emit_parallel(expr: Expr, array_ty: Ty) {
+    name = expr.spawn_thunk
+    layout = "${name}_cap"
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+    }
+    arr = self.new_temp
+    am = ty_myc(array_ty)
+    self.line("LOCAL :${arr} :${am}")
+    self.line("STORE")
+    self.ensure_root(arr, array_ty)
+    self.line("LOCAL :${arr}")
+    self.line("DEREF")
+    self.line("FIELD 1")
+    n = self.new_temp
+    self.line("LOCAL :${n} :i32")
+    self.line("STORE")
+    out_ty = expr_ty(expr)
+    elem = ty_int()
+    if e = out_ty.inner {
+      elem = e
+    }
+    ptr = self.new_temp
+    self.line("LOCAL :${n}")
+    em = ty_myc(elem)
+    self.emit_alloc_count(elem)
+    self.line("LOCAL :${ptr} :ptr<${em}>")
+    self.line("STORE")
+    self.emit_ptr_root(ptr)
+    self.emit_array_header(out_ty, ptr, n, n)
+    dst = self.new_temp
+    om = ty_myc(out_ty)
+    self.line("LOCAL :${dst} :${om}")
+    self.line("STORE")
+    self.ensure_root(dst, out_ty)
+    tid = self.closure_type_id(layout)
+    self.emit_alloc_sizeof(layout, tid)
+    self.line("AS :ptr<${layout}>")
+    ctx = self.new_temp
+    self.line("LOCAL :${ctx} :ptr<${layout}>")
+    self.line("STORE")
+    self.emit_ptr_root(ctx)
+    self.line("LOCAL :${ctx}")
+    self.line("AS :ptr<void>")
+    self.line("CALL :avant_pin")
+    self.line("LOCAL :${arr}")
+    self.line("LOCAL :${ctx}")
+    self.line("DEREF")
+    self.line("FIELD 0")
+    self.line("STORE")
+    self.line("LOCAL :${dst}")
+    self.line("LOCAL :${ctx}")
+    self.line("DEREF")
+    self.line("FIELD 1")
+    self.line("STORE")
+    i = 0
+    while i < expr.cap_names.size {
+      cname = expr.cap_names[i]
+      cm = ty_myc(expr.cap_tys[i])
+      if self.name_is_boxed(cname) {
+        self.emit_box_lvalue(cname, expr.cap_tys[i])
+      } else {
+        sci = self.cap_index(cname)
+        if sci >= 0 {
+          self.emit_cap_lvalue(sci)
+        } else {
+          self.line("LOCAL :${cname} :${cm}")
+        }
+      }
+      fi = i + 2
+      self.line("LOCAL :${ctx}")
+      self.line("DEREF")
+      self.line("FIELD ${fi}")
+      self.line("STORE")
+      i = i + 1
+    }
+    self.line("LOCAL :${ctx}")
+    self.line("AS :ptr<void>")
+    self.line("ADDR :${name}")
+    self.line("AS :ptr<void>")
+    self.line("LOCAL :${n}")
+    self.line("CALL :avant_parallel_for")
+    self.line("LOCAL :${dst}")
+  }
+
+  pub fn emit_parallel_thunk(call: Expr) {
+    if b = call.block {
+      saved_indent = self.indent
+      saved_count = self.temps
+      saved_ret = self.return_type
+      saved_rooted = self.rooted
+      saved_self = self.self_ty
+      saved_self_name = self.self_name
+      saved_main = self.c_main
+      saved_place = self.place_name
+      saved_ph = self.place_holder
+      saved_pf = self.place_field
+      self.indent = 0
+      self.temps = 0
+      self.return_type = ty_void()
+      self.self_ty = nil
+      self.self_name = ""
+      self.c_main = false
+      self.place_name = ""
+      self.place_holder = ""
+      self.place_field = 0
+      name = call.spawn_thunk
+      layout = "${name}_cap"
+      self.line("FUNC :${name}")
+      self.indent = self.indent + 1
+      self.line("ARGS")
+      self.indent = self.indent + 1
+      self.line("TYPE :i32")
+      self.line("TYPE :ptr<void>")
+      self.indent = self.indent - 1
+      self.line("BODY")
+      self.indent = self.indent + 1
+      self.reset_rooted
+      self.line("CALL :avant_gc_enter")
+      self.line("PARAM 0")
+      idx = self.new_temp
+      self.line("LOCAL :${idx} :i32")
+      self.line("STORE")
+      self.line("PARAM 1")
+      self.line("AS :ptr<${layout}>")
+      holder = self.new_temp
+      self.line("LOCAL :${holder} :ptr<${layout}>")
+      self.line("STORE")
+      self.emit_ptr_root(holder)
+      boxed: Array(String) = []
+      self.collect_spawn_box_stmts(b.body, call.cap_names, boxed)
+      self.begin_fn_frame(boxed)
+      in_ty = ty_void()
+      if recv = call.receiver {
+        in_ty = expr_ty(recv)
+      }
+      am = ty_myc(in_ty)
+      self.line("LOCAL :${holder}")
+      self.line("DEREF")
+      self.line("FIELD 0")
+      arr = self.new_temp
+      self.line("LOCAL :${arr} :${am}")
+      self.line("STORE")
+      self.ensure_root(arr, in_ty)
+      out_ty = expr_ty(call)
+      elem = ty_int()
+      if e = out_ty.inner {
+        elem = e
+      }
+      em = ty_myc(elem)
+      om = ty_myc(out_ty)
+      self.line("LOCAL :${holder}")
+      self.line("DEREF")
+      self.line("FIELD 1")
+      dst = self.new_temp
+      self.line("LOCAL :${dst} :${om}")
+      self.line("STORE")
+      self.ensure_root(dst, out_ty)
+      pname = b.params[0]
+      in_elem = ty_int()
+      if ie = in_ty.inner {
+        in_elem = ie
+      }
+      iem = ty_myc(in_elem)
+      if heap_ptr_value(in_elem) {
+        self.line("LOCAL :${idx}")
+        self.line("LOCAL :${arr}")
+        self.line("CALL :avant_array_get_ptr")
+        self.line("AS :${iem}")
+      } else {
+        buf = self.new_temp
+        self.line("LOCAL :${arr}")
+        self.line("DEREF")
+        self.line("FIELD 0")
+        self.line("LOCAL :${buf} :ptr<${iem}>")
+        self.line("STORE")
+        self.emit_ptr_root(buf)
+        self.line("LOCAL :${idx}")
+        self.line("LOCAL :${buf}")
+        self.line("BINARY :add")
+        self.line("DEREF")
+      }
+      self.line("LOCAL :${pname} :${iem}")
+      self.line("STORE")
+      self.ensure_root(pname, in_elem)
+      i = 0
+      while i < call.cap_names.size {
+        cname = call.cap_names[i]
+        cm = ty_myc(call.cap_tys[i])
+        fi = i + 2
+        self.line("LOCAL :${holder}")
+        self.line("DEREF")
+        self.line("FIELD ${fi}")
+        if self.name_is_boxed(cname) {
+          tmp = self.new_temp
+          self.line("LOCAL :${tmp} :${cm}")
+          self.line("STORE")
+          self.ensure_root(tmp, call.cap_tys[i])
+          self.ensure_box(cname, call.cap_tys[i])
+          self.line("LOCAL :${tmp}")
+          self.store_box_value(cname, call.cap_tys[i])
+        } else {
+          self.line("LOCAL :${cname} :${cm}")
+          self.line("STORE")
+          self.ensure_root(cname, call.cap_tys[i])
+        }
+        i = i + 1
+      }
+      i = 0
+      while i < b.body.size {
+        stmt = b.body[i]
+        if i == b.body.size - 1 {
+          if last = stmt.expr {
+            self.emit_expr(last)
+            self.emit_coerce(expr_ty(last), elem)
+            val = self.new_temp
+            self.line("LOCAL :${val} :${em}")
+            self.line("STORE")
+            self.ensure_root(val, elem)
+            if heap_ptr_value(elem) {
+              self.line("LOCAL :${val}")
+              self.line("LOCAL :${idx}")
+              self.line("LOCAL :${dst}")
+              self.line("CALL :avant_array_set_ptr")
+            } else {
+              slot = self.new_temp
+              self.line("LOCAL :${dst}")
+              self.line("DEREF")
+              self.line("FIELD 0")
+              self.line("LOCAL :${slot} :ptr<${em}>")
+              self.line("STORE")
+              self.emit_ptr_root(slot)
+              self.line("LOCAL :${val}")
+              self.line("LOCAL :${idx}")
+              self.line("LOCAL :${slot}")
+              self.line("BINARY :add")
+              self.line("DEREF")
+              self.line("STORE")
+            }
+            self.emit_ret
+          } else {
+            self.emit_stmt(stmt, false)
+            self.emit_ret
+          }
+        } else {
+          self.emit_stmt(stmt, false)
+        }
+        i = i + 1
+      }
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDFUNC")
+      self.blank
+      self.indent = saved_indent
+      self.temps = saved_count
+      self.return_type = saved_ret
+      self.rooted = saved_rooted
+      self.self_ty = saved_self
+      self.self_name = saved_self_name
+      self.c_main = saved_main
+      self.place_name = saved_place
+      self.place_holder = saved_ph
+      self.place_field = saved_pf
+    }
+  }
+
+  pub fn emit_mutex_with(expr: Expr, mutex_ty: Ty) {
+    if recv = expr.receiver {
+      self.emit_expr(recv)
+    }
+    holder = self.new_temp
+    m = ty_myc(mutex_ty)
+    self.line("LOCAL :${holder} :${m}")
+    self.line("STORE")
+    self.ensure_root(holder, mutex_ty)
+    gate_i = mutex_ty.field_index("gate")
+    self.line("LOCAL :${holder}")
+    self.line("DEREF")
+    self.line("FIELD ${gate_i}")
+    self.line("CALL :avant_gate_lock")
+    saved_name = self.place_name
+    saved_holder = self.place_holder
+    saved_field = self.place_field
+    self.place_holder = holder
+    self.place_field = mutex_ty.field_index("cell")
+    self.place_name = ""
+    if b = expr.block {
+      if b.params.size > 0 {
+        self.place_name = b.params[0]
+      }
+      i = 0
+      while i < b.body.size {
+        stmt = b.body[i]
+        if i == b.body.size - 1 {
+          if e = stmt.expr {
+            self.emit_expr(e)
+          } else {
+            self.emit_stmt(stmt, false)
+          }
+        } else {
+          self.emit_stmt(stmt, false)
+        }
+        i = i + 1
+      }
+    }
+    val_ty = expr_ty(expr)
+    if val_ty.is_void {
+      self.line("LOCAL :${holder}")
+      self.line("DEREF")
+      self.line("FIELD ${gate_i}")
+      self.line("CALL :avant_gate_unlock")
+    } else {
+      tmp = self.new_temp
+      vm = ty_myc(val_ty)
+      self.line("LOCAL :${tmp} :${vm}")
+      self.line("STORE")
+      self.ensure_root(tmp, val_ty)
+      self.line("LOCAL :${holder}")
+      self.line("DEREF")
+      self.line("FIELD ${gate_i}")
+      self.line("CALL :avant_gate_unlock")
+      self.line("LOCAL :${tmp}")
+    }
+    self.place_name = saved_name
+    self.place_holder = saved_holder
+    self.place_field = saved_field
   }
 
   pub fn emit_join(expr: Expr) {
@@ -5189,6 +5689,50 @@ pub class MycGen {
       i = i + 1
     }
     false
+  }
+
+  pub fn is_gate_callee(name: String): Bool {
+    if str_eq(name, "avant_gate_new") {
+      return true
+    }
+    if str_eq(name, "avant_gate_lock") {
+      return true
+    }
+    if str_eq(name, "avant_gate_unlock") {
+      return true
+    }
+    if str_eq(name, "avant_gate_wait") {
+      return true
+    }
+    if str_eq(name, "avant_gate_signal") {
+      return true
+    }
+    str_eq(name, "avant_gate_broadcast")
+  }
+
+  pub fn note_words(name: String, tys: Array(Ty)) {
+    bits = 0u64
+    offset = 0
+    i = 0
+    while i < tys.size {
+      fty = tys[i]
+      offset = align_up_i(offset, abi_align(fty))
+      bits = add_ptr_bits(fty, offset, bits)
+      offset = offset + abi_size(fty)
+      i = i + 1
+    }
+    if bits == 0u64 {
+      return
+    }
+    j = 0
+    while j < self.closure_names.size {
+      if str_eq(self.closure_names[j], name) {
+        return
+      }
+      j = j + 1
+    }
+    self.closure_names.push(name)
+    self.closure_bits.push(bits)
   }
 
   pub fn closure_type_id(name: String): Int {

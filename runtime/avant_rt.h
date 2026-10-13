@@ -157,6 +157,13 @@ void avant_array_fill_i32(void *arr, int32_t v);
 
 void *avant_spawn(void *fn, void *arg);
 int32_t avant_join(void *handle);
+void avant_parallel_for(int32_t n, void *fn, void *ctx);
+uint64_t avant_gate_new(void);
+void avant_gate_lock(uint64_t gate);
+void avant_gate_unlock(uint64_t gate);
+void avant_gate_wait(uint64_t gate);
+void avant_gate_signal(uint64_t gate);
+void avant_gate_broadcast(uint64_t gate);
 int32_t avant_now_ms(void);
 int32_t avant_now_us(void);
 

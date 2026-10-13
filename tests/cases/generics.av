@@ -1,0 +1,93 @@
+struct S20Pair(A, B) {
+  a: A
+  b: B
+
+  fn first: A {
+    a
+  }
+}
+
+class S20Box(T) {
+  value: T
+
+  fn initialize(value: T) {
+    self.value = value
+  }
+
+  fn get: T {
+    value
+  }
+
+  fn map(f: fn(T): U): S20Box(U) {
+    S20Box.new(f(value))
+  }
+}
+
+fn (b: S20Box(T)) s20_len: Int {
+  1
+}
+
+class S20Link(T) {
+  value: T
+  next: S20Link(T)?
+
+  fn initialize(value: T) {
+    self.value = value
+  }
+}
+
+struct S20Hold(T) {
+  xs: Array(T)
+}
+
+struct S20Node(T) {
+  xs: Array(S20Node(T))
+}
+
+struct S20Tag(T) {
+}
+
+fn s20_take(p: S20Pair(Int, String)): Int {
+  p.a
+}
+
+fn s20_bump(p: S20Pair(Int, Int)): S20Pair(Int, Int) {
+  S20Pair { a: p.a + 1, b: p.b }
+}
+
+fn test_generics(c: Checks) {
+  c.suite("tests/cases/generics.av")
+  p = S20Pair { a: 1, b: "x" }
+  c.eq_int(p.first, 1, "inferred pair")
+  c.eq_str(p.b, "x", "pair string")
+  q = S20Pair(Int, String) { a: 2, b: "y" }
+  c.eq_int(q.a, 2, "explicit pair")
+  nested = S20Pair { a: 3, b: S20Pair { a: 4, b: "z" } }
+  c.eq_int(nested.a, 3, "nested outer")
+  c.eq_int(nested.b.a, 4, "nested inner")
+  c.eq_str(nested.b.b, "z", "nested string")
+  c.eq_int(s20_take(S20Pair { a: 5, b: "q" }), 5, "expected type fills args")
+  b = S20Box.new(7)
+  c.eq_int(b.get, 7, "box get")
+  c.eq_int(b.s20_len, 1, "external method")
+  mapped = b.map { |n| n + 10 }
+  c.eq_int(mapped.get, 17, "map block")
+  named: fn(Int): Int = { |n| n + 1 }
+  mapped2 = b.map(named)
+  c.eq_int(mapped2.get, 8, "map fn value")
+  s = S20Box.new("hi")
+  c.eq_str(s.get, "hi", "box string")
+  link = S20Link.new(3)
+  c.eq_int(link.value, 3, "recursive class")
+  h = S20Hold { xs: [8, 9] }
+  c.eq_int(h.xs[0], 8, "array field 0")
+  c.eq_int(h.xs[1], 9, "array field 1")
+  node = S20Node(Int) { xs: [] }
+  c.eq_int(node.xs.size, 0, "array of self is finite")
+  tag = S20Tag(Int) { }
+  c.eq_int(1, 1, "empty generic struct")
+  left = S20Pair { a: 1, b: 2 }
+  right = s20_bump(left)
+  c.eq_int(left.a, 1, "struct original")
+  c.eq_int(right.a, 2, "struct copy")
+}

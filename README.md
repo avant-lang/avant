@@ -111,6 +111,8 @@ New names are block-scoped. `=` to an existing enclosing name assigns outward. M
 
 A function value has type `fn(T): U`. An omitted return is `Void`. Spellings: `fn(): Int`, `fn(Int): Int`, `fn(Int, String): Bool`. The type is invariant. A bare function name in that context is the value. `{ |x| x + 1 }` is a lambda. A zero-argument lambda is `{ || ... }`, because `||` is one token. A trailing block on a call whose last parameter is a `fn` is that argument. A name the lambda uses from an outer function is a shared cell: an assignment on either side is visible to the other. `each`, `spawn`, and `.parallel` keep their own blocks, and `each` stays inlined. Methods are not values. Call a function field as `(box.f)()`. There is no `==` on a `fn` value. `Array(T).new` takes a size; an empty array with a known element type is `ys: Array(Int) = []`.
 
+A struct or class may take type parameters: `struct Pair(A, B)` and `class Box(T)`. Each use is its own layout. `Box(Int)` and `Box(String)` are different types. `Box(Int).new(1)` and `Box.new(1)` are the same value when `initialize` takes `T`. `Pair { a: 1, b: "x" }` is `Pair(Int, String)`. An unapplied `Box` is an error, and a type parameter must be a fresh name. A struct whose inline layout is infinite (`struct Node(T) { next: Node(T)? }`) is an error. A class may name itself (`class Link(T) { next: Link(T)? }`). `Array`, `Hash`, `Ptr`, and `JoinHandle` stay builtins.
+
 ```avant
 fn name_of(kind: Int): String {
   switch kind {
@@ -203,7 +205,13 @@ JSON is yyjson. HTTP loopback is uSockets C (both under `runtime/third_party/`).
 
 ## Concurrency
 
-`spawn { }` is a 1:1 OS thread. The result of the block is joined with `.join`. Int (and similar copyable) locals may be copied into the thunk. A bare `class` may not be captured. `.parallel` exists in the grammar but still lowers to a sequential map.
+`spawn { }` submits the block to a bounded OS-thread pool. The size is the number of processors online, read once when the pool starts. `AVANT_THREADS` replaces that size and must be a positive integer. Tasks beyond the pool wait in the queue. The block's result is `Int`, joined with `.join`. `join` or `.parallel` from inside a pool worker is an error. A nested `spawn` from a worker is allowed.
+
+A value crosses `spawn` or `.parallel` when it is `Int`, `Int64`, `UInt64`, `Bool`, `Float64`, a `String` (the pointer is copied and both tasks root it), or a struct whose every field crosses. A `Channel` or `Mutex` value crosses. A class, `Array`, `Hash`, `fn`, or `JoinHandle` does not, and a struct that contains one of those does not.
+
+`items.parallel { |item| ... }` on `Array(T)` takes one block parameter and returns `Array(U)` in input order. The parent waits outside the pool.
+
+`Channel(T)` and `Mutex(T)` are ordinary generic classes. The proof is `tests/cases/s35.av`: rendezvous `Channel(T).new`, buffered `Channel(T).new(n)`, `recv` as `T?`, and `Mutex(T).with { |x| ... }`, where `x` is a place that dies with the block. Wait and wake go through `avant_gate_*`. Those classes are not imported for you. Statement-form `parallel { }` is later.
 
 ```avant
 fn six_times_seven: Int {
@@ -275,9 +283,8 @@ These are decided. They are **not** shipping. Do not read a target sketch as a t
 
 | What | Status |
 | --- | --- |
-| Generic structs and classes | decided, not shipping |
 | Named interfaces | decided, not shipping |
-| Real `.parallel` / `Channel(T)` / `Mutex(T)` | decided, not shipping |
+| Statement-form `parallel { }` | decided, not shipping |
 | Formatter, packages, HTTP *server* | decided, not shipping |
 
 ## Goals

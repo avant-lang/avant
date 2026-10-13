@@ -22,6 +22,9 @@ pub class TypeResolver {
   t_nil: Ty
   t_buf: Ty
   tparams: Hash(String, Int)
+  program: Program? = nil
+  struct_inflight: Array(String)
+  inst_depth: Int = 0
 
   fn initialize {
     n = Hash(String, Int).new
@@ -42,6 +45,10 @@ pub class TypeResolver {
     self.t_buf = ty_buf()
     tp = Hash(String, Int).new
     self.tparams = tp
+    self.program = nil
+    inf: Array(String) = []
+    self.struct_inflight = inf
+    self.inst_depth = 0
     self.failed = false
     self.err = nil
   }
@@ -138,12 +145,12 @@ pub class TypeResolver {
       params: Array(Ty) = []
       i = 0
       while i < tn.args.size {
-        params.push(self.resolve_value(tn.args[i]))
+        params.push(self.resolve_value_uninline(tn.args[i]))
         i = i + 1
       }
       ret = self.t_void
       if r = tn.ret {
-        ret = self.resolve(r)
+        ret = self.resolve_uninline(r)
       }
       return ty_fn(params, ret)
     }
@@ -197,21 +204,21 @@ pub class TypeResolver {
         self.fail(tn.loc, "Array takes one type argument")
         return self.t_int
       }
-      return ty_array(self.resolve_value(tn.args[0]))
+      return ty_array(self.resolve_value_uninline(tn.args[0]))
     }
     if str_eq(tn.name, "Hash") {
       if tn.args.size != 2 {
         self.fail(tn.loc, "Hash takes two type arguments")
         return self.t_int
       }
-      return ty_hash(self.resolve_value(tn.args[0]), self.resolve_value(tn.args[1]))
+      return ty_hash(self.resolve_value_uninline(tn.args[0]), self.resolve_value_uninline(tn.args[1]))
     }
     if str_eq(tn.name, "JoinHandle") {
       if tn.args.size != 1 {
         self.fail(tn.loc, "JoinHandle takes one type argument")
         return self.t_int
       }
-      return ty_join(self.resolve_value(tn.args[0]))
+      return ty_join(self.resolve_value_uninline(tn.args[0]))
     }
     if str_eq(tn.name, "Ptr") {
       if tn.args.size != 1 {
@@ -223,15 +230,22 @@ pub class TypeResolver {
         self.reject_args(inner)
         return ty_ptr(self.t_void)
       }
-      return ty_ptr(self.resolve(inner))
+      return ty_ptr(self.resolve_uninline(inner))
     }
     if id = self.tparams.get(tn.name) {
       if tn.args.size == 0 {
         return ty_var(tn.name)
       }
     }
+    if self.has_template(tn.name) {
+      return self.instantiate_template(tn)
+    }
     self.reject_args(tn)
     if found = self.get_named(tn.name) {
+      if found.template {
+        self.fail(tn.loc, "${tn.name} needs type arguments")
+        return self.t_int
+      }
       return found
     }
     if opq = self.get_opaque(tn.name) {
@@ -239,6 +253,391 @@ pub class TypeResolver {
     }
     self.fail(tn.loc, "unknown type ${tn.name}")
     self.t_int
+  }
+
+  pub fn save_inflight: Array(String) {
+    saved: Array(String) = []
+    i = 0
+    while i < self.struct_inflight.size {
+      saved.push(self.struct_inflight[i])
+      i = i + 1
+    }
+    saved
+  }
+
+  pub fn resolve_uninline(tn: TypeName): Ty {
+    saved = self.save_inflight
+    empty: Array(String) = []
+    self.struct_inflight = empty
+    ty = self.resolve(tn)
+    self.struct_inflight = saved
+    ty
+  }
+
+  pub fn resolve_value_uninline(tn: TypeName): Ty {
+    saved = self.save_inflight
+    empty: Array(String) = []
+    self.struct_inflight = empty
+    ty = self.resolve_value(tn)
+    self.struct_inflight = saved
+    ty
+  }
+
+  pub fn inflight_has(key: String): Bool {
+    i = 0
+    while i < self.struct_inflight.size {
+      if str_eq(self.struct_inflight[i], key) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn format_app(origin: String, args: Array(Ty)): String {
+    buf = buf_new()
+    buf.push_str(origin)
+    buf.push_str("(")
+    i = 0
+    while i < args.size {
+      if i > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str(args[i].show)
+      i = i + 1
+    }
+    buf.push_str(")")
+    buf.to_s
+  }
+
+  pub fn inst_key(origin: String, args: Array(Ty)): String {
+    buf = buf_new()
+    buf.push_str(origin)
+    i = 0
+    while i < args.size {
+      buf.push_str("__")
+      buf.push_str(mangle_ty(args[i]))
+      i = i + 1
+    }
+    buf.to_s
+  }
+
+  pub fn find_struct_template(name: String): StructDef? {
+    if p = self.program {
+      i = 0
+      while i < p.structs.size {
+        sdef = p.structs[i]
+        if str_eq(sdef.name, name) {
+          if sdef.type_params.size > 0 {
+            return sdef
+          }
+        }
+        i = i + 1
+      }
+    }
+    nil
+  }
+
+  pub fn find_class_template(name: String): ClassDef? {
+    if p = self.program {
+      i = 0
+      while i < p.classes.size {
+        cdef = p.classes[i]
+        if str_eq(cdef.name, name) {
+          if cdef.type_params.size > 0 {
+            return cdef
+          }
+        }
+        i = i + 1
+      }
+    }
+    nil
+  }
+
+  pub fn has_template(name: String): Bool {
+    if s = self.find_struct_template(name) {
+      return true
+    }
+    if c = self.find_class_template(name) {
+      return true
+    }
+    false
+  }
+
+  pub fn has_struct_named(name: String): Bool {
+    if p = self.program {
+      i = 0
+      while i < p.structs.size {
+        if str_eq(p.structs[i].name, name) {
+          return true
+        }
+        i = i + 1
+      }
+    }
+    false
+  }
+
+  pub fn has_class_named(name: String): Bool {
+    if p = self.program {
+      i = 0
+      while i < p.classes.size {
+        if str_eq(p.classes[i].name, name) {
+          return true
+        }
+        i = i + 1
+      }
+    }
+    false
+  }
+
+  pub fn defines_type(name: String): Bool {
+    if type_is_builtin(name) {
+      return true
+    }
+    if p = self.program {
+      i = 0
+      while i < p.structs.size {
+        if str_eq(p.structs[i].name, name) {
+          return true
+        }
+        i = i + 1
+      }
+      i = 0
+      while i < p.classes.size {
+        if str_eq(p.classes[i].name, name) {
+          return true
+        }
+        i = i + 1
+      }
+      i = 0
+      while i < p.libs.size {
+        lib_def = p.libs[i]
+        j = 0
+        while j < lib_def.layouts.size {
+          if str_eq(lib_def.layouts[j].name, name) {
+            return true
+          }
+          j = j + 1
+        }
+        i = i + 1
+      }
+    }
+    false
+  }
+
+  pub fn check_type_params(loc: Location, type_name: String, params: Array(String)) {
+    seen = Hash(String, Int).new
+    i = 0
+    while i < params.size {
+      p = params[i]
+      if prev = seen.get(p) {
+        self.fail(loc, "duplicate type parameter ${p}")
+        return
+      }
+      seen[p] = 1
+      if str_eq(p, type_name) {
+        self.fail(loc, "type parameter ${p} must be a fresh name")
+        return
+      }
+      if self.defines_type(p) {
+        self.fail(loc, "type parameter ${p} must be a fresh name")
+        return
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn ty_args_have_var(args: Array(Ty)): Bool {
+    i = 0
+    while i < args.size {
+      if ty_has_var(args[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn make_pattern(kind: Int, origin: String, args: Array(Ty)): Ty {
+    t = Ty.new(kind)
+    t.origin = origin
+    t.name = origin
+    t.label = self.format_app(origin, args)
+    t.ty_args = args
+    t.template = false
+    t
+  }
+
+  pub fn clone_subst_field(field: Field, from: Array(String), to: Array(TypeName)): Field {
+    t = subst_type_name(field.type, from, to)
+    f = Field.new(field.loc, field.name, t)
+    if d = field.default {
+      c = clone_expr(d)
+      subst_type_in_expr(c, from, to)
+      f.default = c
+    }
+    f
+  }
+
+  pub fn fill_inst_fields(ty: Ty, fields: Array(Field)) {
+    resolved: Array(TyField) = []
+    seen = Hash(String, Int).new
+    i = 0
+    while i < fields.size {
+      field = fields[i]
+      if prev = seen.get(field.name) {
+        self.fail(field.loc, "duplicate field ${field.name}")
+        return
+      }
+      seen[field.name] = 1
+      resolved.push(TyField.new(field.name, self.resolve_value(field.type)))
+      if self.failed {
+        return
+      }
+      i = i + 1
+    }
+    ty.fields = resolved
+  }
+
+  pub fn instantiate_template(tn: TypeName): Ty {
+    if self.failed {
+      return self.t_int
+    }
+    is_struct = false
+    kind = tyk_class()
+    params: Array(String) = []
+    src_fields: Array(Field) = []
+    src_methods: Array(Function) = []
+    mod_name = ""
+    vis = false
+    loc = tn.loc
+    if sdef = self.find_struct_template(tn.name) {
+      is_struct = true
+      kind = tyk_struct()
+      params = sdef.type_params
+      src_fields = sdef.fields
+      src_methods = sdef.methods
+      mod_name = sdef.mod_name
+      vis = sdef.vis
+      loc = sdef.loc
+    } else {
+      if cdef = self.find_class_template(tn.name) {
+        kind = tyk_class()
+        params = cdef.type_params
+        src_fields = cdef.fields
+        src_methods = cdef.methods
+        mod_name = cdef.mod_name
+        vis = cdef.vis
+        loc = cdef.loc
+      } else {
+        self.fail(tn.loc, "unknown type ${tn.name}")
+        return self.t_int
+      }
+    }
+    if tn.args.size == 0 {
+      self.fail(tn.loc, "${tn.name} needs type arguments")
+      return self.t_int
+    }
+    if tn.args.size != params.size {
+      n = params.size
+      word = "type arguments"
+      if n == 1 {
+        word = "type argument"
+      }
+      self.fail(tn.loc, "${tn.name} takes ${n} ${word}")
+      return self.t_int
+    }
+    arg_tys: Array(Ty) = []
+    i = 0
+    while i < tn.args.size {
+      arg_tys.push(self.resolve(tn.args[i]))
+      if self.failed {
+        return self.t_int
+      }
+      i = i + 1
+    }
+    if self.ty_args_have_var(arg_tys) {
+      return self.make_pattern(kind, tn.name, arg_tys)
+    }
+    key = self.inst_key(tn.name, arg_tys)
+    label = self.format_app(tn.name, arg_tys)
+    if is_struct {
+      if self.inflight_has(key) {
+        self.fail(tn.loc, "struct layout of ${label} is infinite")
+        return self.t_int
+      }
+    }
+    if existing = self.get_named(key) {
+      return existing
+    }
+    self.inst_depth = self.inst_depth + 1
+    if self.inst_depth > 32 {
+      self.fail(tn.loc, "type instantiation too deep")
+      self.inst_depth = self.inst_depth - 1
+      return self.t_int
+    }
+    shell = Ty.new(kind)
+    shell.name = key
+    shell.origin = tn.name
+    shell.label = label
+    shell.ty_args = arg_tys
+    shell.template = false
+    dummy_id = self.put_named(key, shell)
+    if p = self.program {
+      fields: Array(Field) = []
+      methods: Array(Function) = []
+      i = 0
+      while i < src_fields.size {
+        fields.push(self.clone_subst_field(src_fields[i], params, tn.args))
+        i = i + 1
+      }
+      i = 0
+      while i < src_methods.size {
+        m = clone_function(src_methods[i])
+        subst_function_types(m, params, tn.args)
+        m.owner = key
+        m.generic = false
+        fresh: Array(String) = []
+        m.type_params = fresh
+        m.emit_name = m.name
+        methods.push(m)
+        i = i + 1
+      }
+      if is_struct {
+        if self.has_struct_named(key) {
+        } else {
+          sinst = StructDef.new(loc, key)
+          sinst.fields = fields
+          sinst.methods = methods
+          sinst.mod_name = mod_name
+          sinst.vis = vis
+          p.structs.push(sinst)
+        }
+      } else {
+        if self.has_class_named(key) {
+        } else {
+          cinst = ClassDef.new(loc, key)
+          cinst.fields = fields
+          cinst.methods = methods
+          cinst.mod_name = mod_name
+          cinst.vis = vis
+          p.classes.push(cinst)
+        }
+      }
+      if is_struct {
+        self.struct_inflight.push(key)
+        self.fill_inst_fields(shell, fields)
+        dummy_pop = self.struct_inflight.pop
+      } else {
+        saved = self.save_inflight
+        empty: Array(String) = []
+        self.struct_inflight = empty
+        self.fill_inst_fields(shell, fields)
+        self.struct_inflight = saved
+      }
+    }
+    self.inst_depth = self.inst_depth - 1
+    shell
   }
 }
 
@@ -459,6 +858,7 @@ pub fn fill_type_fields(resolver: TypeResolver, name: String, fields: Array(Fiel
 
 pub fn load_types(program: Program): TypeResolver {
   resolver = TypeResolver.new
+  resolver.program = program
   i = 0
   while i < program.structs.size {
     sdef = program.structs[i]
@@ -466,7 +866,17 @@ pub fn load_types(program: Program): TypeResolver {
       resolver.fail(sdef.loc, "${sdef.name} is already defined")
       return resolver
     }
-    resolver.put_named(sdef.name, ty_named(tyk_struct(), sdef.name))
+    if sdef.type_params.size > 0 {
+      resolver.check_type_params(sdef.loc, sdef.name, sdef.type_params)
+      if resolver.failed {
+        return resolver
+      }
+    }
+    sty = ty_named(tyk_struct(), sdef.name)
+    if sdef.type_params.size > 0 {
+      sty.template = true
+    }
+    resolver.put_named(sdef.name, sty)
     i = i + 1
   }
   i = 0
@@ -476,7 +886,17 @@ pub fn load_types(program: Program): TypeResolver {
       resolver.fail(cdef.loc, "${cdef.name} is already defined")
       return resolver
     }
-    resolver.put_named(cdef.name, ty_named(tyk_class(), cdef.name))
+    if cdef.type_params.size > 0 {
+      resolver.check_type_params(cdef.loc, cdef.name, cdef.type_params)
+      if resolver.failed {
+        return resolver
+      }
+    }
+    cty = ty_named(tyk_class(), cdef.name)
+    if cdef.type_params.size > 0 {
+      cty.template = true
+    }
+    resolver.put_named(cdef.name, cty)
     i = i + 1
   }
   i = 0
@@ -506,14 +926,26 @@ pub fn load_types(program: Program): TypeResolver {
   collect_opaques(program, resolver)
   i = 0
   while i < program.structs.size {
+    if resolver.failed {
+      return resolver
+    }
     sdef2 = program.structs[i]
-    fill_type_fields(resolver, sdef2.name, sdef2.fields)
+    if sdef2.type_params.size > 0 {
+    } else {
+      fill_type_fields(resolver, sdef2.name, sdef2.fields)
+    }
     i = i + 1
   }
   i = 0
   while i < program.classes.size {
+    if resolver.failed {
+      return resolver
+    }
     cdef2 = program.classes[i]
-    fill_type_fields(resolver, cdef2.name, cdef2.fields)
+    if cdef2.type_params.size > 0 {
+    } else {
+      fill_type_fields(resolver, cdef2.name, cdef2.fields)
+    }
     i = i + 1
   }
   ready = Hash(String, Int).new
