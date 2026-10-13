@@ -475,6 +475,7 @@ pub class Checker {
   lam_scopes: Array(Int)
   lambda_infer: Bool = false
   inferred_ret: Ty
+  spawn_skip: Array(String)
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -530,6 +531,8 @@ pub class Checker {
     self.lam_scopes = ls
     self.lambda_infer = false
     self.inferred_ret = ty_void()
+    ss: Array(String) = []
+    self.spawn_skip = ss
   }
 
   pub fn has_err: Bool {
@@ -3627,11 +3630,23 @@ pub class Checker {
         return self.t_int()
       }
     }
+    if self.lam_exprs.size > 0 {
+      if self.self_name.size > 0 {
+        if str_eq(expr.ident, self.self_name) {
+          self.fail(expr.loc, "a lambda cannot capture the method receiver")
+          return self.t_int()
+        }
+      }
+    }
     if existing = self.lookup(expr.ident) {
       self.note_capture(expr.ident, existing)
       return existing
     }
     if field_ty = self.implicit_field(expr.ident) {
+      if self.lam_exprs.size > 0 {
+        self.fail(expr.loc, "a lambda cannot capture the method receiver")
+        return self.t_int()
+      }
       expr.implicit_field = true
       return field_ty
     }
@@ -5189,6 +5204,16 @@ pub class Checker {
       return
     }
     if k == ex_call() {
+      if inner = expr.inner {
+        self.walk_spawn_expr(inner, node, seen)
+      }
+      if expr.indirect {
+        if expr.callee.size > 0 {
+          name = Expr.new(ex_name(), expr.loc)
+          name.ident = expr.callee
+          self.note_spawn_capture(name, node, seen)
+        }
+      }
       if recv = expr.receiver {
         self.walk_spawn_expr(recv, node, seen)
       }
@@ -5283,10 +5308,39 @@ pub class Checker {
       if expr.has_else {
         self.walk_spawn_stmts(expr.else_body, node, seen)
       }
+      return
+    }
+    if k == ex_lambda() {
+      if b = expr.block {
+        mark = self.spawn_skip.size
+        i = 0
+        while i < b.params.size {
+          self.spawn_skip.push(b.params[i])
+          i = i + 1
+        }
+        self.walk_spawn_stmts(b.body, node, seen)
+        while self.spawn_skip.size > mark {
+          dropped = self.spawn_skip.pop
+        }
+      }
     }
   }
 
+  pub fn spawn_skip_has(name: String): Bool {
+    i = 0
+    while i < self.spawn_skip.size {
+      if str_eq(self.spawn_skip[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
   pub fn note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {
+    if self.spawn_skip_has(expr.ident) {
+      return
+    }
     if ty = self.lookup(expr.ident) {
       if self.copyable_for_spawn(ty) {
       } else {
@@ -6470,6 +6524,13 @@ pub class Checker {
       return self.t_int()
     }
     expr.resolved = mangle_ty(callee)
+    pts: Array(Ty) = []
+    pi = 0
+    while pi < callee.members.size {
+      pts.push(callee.members[pi])
+      pi = pi + 1
+    }
+    expr.cap_tys = pts
     ret = self.t_void()
     if r = callee.inner {
       ret = r
@@ -6559,25 +6620,33 @@ pub class Checker {
     if idx < 0 {
       return
     }
-    floor = self.lam_scopes[nlam - 1]
-    if idx >= floor {
-      return
-    }
-    lam = self.lam_exprs[nlam - 1]
-    seen = false
-    i = 0
-    while i < lam.cap_names.size {
-      if str_eq(lam.cap_names[i], name) {
-        seen = true
+    captured = false
+    li = 0
+    while li < nlam {
+      floor = self.lam_scopes[li]
+      if idx >= floor {
+      } else {
+        lam = self.lam_exprs[li]
+        seen = false
+        i = 0
+        while i < lam.cap_names.size {
+          if str_eq(lam.cap_names[i], name) {
+            seen = true
+          }
+          i = i + 1
+        }
+        if seen {
+        } else {
+          lam.cap_names.push(name)
+          lam.cap_tys.push(ty)
+        }
+        captured = true
       }
-      i = i + 1
+      li = li + 1
     }
-    if seen {
-    } else {
-      lam.cap_names.push(name)
-      lam.cap_tys.push(ty)
+    if captured {
+      self.mark_box(name, idx)
     }
-    self.mark_box(name, idx)
   }
 
   pub fn mark_box(name: String, idx: Int) {
@@ -6639,6 +6708,15 @@ pub class Checker {
       ret = self.t_void()
       if r = want.inner {
         ret = r
+      }
+      if ret.is_void {
+      } else {
+        if ret.is_var {
+        } else {
+          if b.body.size == 0 {
+            self.fail(expr.loc, "missing return value")
+          }
+        }
       }
       result_ret = ret
       if ret.is_var {

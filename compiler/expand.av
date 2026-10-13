@@ -877,6 +877,17 @@ pub class Expander {
         i = i + 1
       }
       self.collect_introduced(e.else_body, into)
+      return
+    }
+    if k == ex_lambda() {
+      if b = e.block {
+        i = 0
+        while i < b.params.size {
+          into.push(b.params[i])
+          i = i + 1
+        }
+        self.collect_introduced(b.body, into)
+      }
     }
   }
 
@@ -1079,6 +1090,22 @@ pub class Expander {
         i = i + 1
       }
       out.else_body = self.rename_stmt_list(e.else_body, map)
+      return out
+    }
+    if k == ex_lambda() {
+      out = clone_expr(e)
+      if b = e.block {
+        nb = clone_block(b)
+        i = 0
+        while i < nb.params.size {
+          if mapped = map.get(nb.params[i]) {
+            nb.params[i] = mapped
+          }
+          i = i + 1
+        }
+        nb.body = self.rename_stmt_list(b.body, map)
+        out.block = nb
+      }
       return out
     }
     e

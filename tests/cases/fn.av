@@ -46,6 +46,70 @@ fn s19_each_sum: Int {
   sum
 }
 
+fn s19_pair(a: Int, b: Int): Int {
+  a * 10 + b
+}
+
+pub fn s19_pub(f: fn(Int): Int): Int {
+  f(1)
+}
+
+fn s19_outer(n: Int): fn(): fn(): Int {
+  { ||
+    { || n }
+  }
+}
+
+fn s19_go(f: fn()) {
+  f()
+}
+
+fn s19_ret_lam(n: Int): fn(Int): Int {
+  return { |x| x + n }
+}
+
+fn s19_nil: Nil {
+  nil
+}
+
+fn s19_take_nil(f: fn(): Nil): Int {
+  f()
+  1
+}
+
+struct S19Meth {
+  base: Int
+
+  fn off(x: Int): fn(Int): Int {
+    b = base
+    { |y| y + x + b }
+  }
+}
+
+struct S19Hold {
+  f: fn(Int): Int
+}
+
+class S19Nest {
+  inner: S19Hold
+
+  fn initialize {
+  }
+}
+
+fn s19_nilish(n: Int?): Int {
+  if v = n {
+    return v
+  }
+  0
+}
+
+quote {
+  fn s19_quoted(n: Int): fn(Int): Int {
+    { |x: Int| x + n + #(1) }
+  }
+}
+
 fn test_fn(c: Checks) {
   c.suite("tests/cases/fn.av")
   f: fn(Int): Int = s19_inc
@@ -94,6 +158,160 @@ fn test_fn(c: Checks) {
   msg = "ke" + "pt"
   read: fn(): String = { || msg }
   c.eq_str(read(), "kept", "capture string")
+  bare = s19_inc
+  c.eq_int(bare(2), 3, "bare fn value")
+  ann = { |n: Int| n + 1 }
+  c.eq_int(ann(4), 5, "annotated lambda")
+  both_a = 2
+  both_b = 3
+  both: fn(): Int = { || both_a + both_b }
+  both_a = 4
+  c.eq_int(both(), 7, "two captures")
+  paired: fn(Int, Int): Int = s19_pair
+  c.eq_int(paired(4, 2), 42, "two-arg named")
+  paired_l = { |a: Int, b: Int| a * 10 + b }
+  c.eq_int(paired_l(4, 2), 42, "two-arg lambda")
+  c.eq_int(s19_outer(4)()(), 4, "nested capture")
+  nest_k = 1
+  nest_wrap: fn(): fn(): Int = { ||
+    nest_k = nest_k + 1
+    { || nest_k }
+  }
+  nest_inner = nest_wrap()
+  nest_k = 9
+  c.eq_int(nest_inner(), 9, "nested sees assign")
+  deep: fn(): fn(): fn(): Int = { ||
+    cell = 1
+    mid = { ||
+      { || cell }
+    }
+    cell = 6
+    mid
+  }
+  c.eq_int(deep()()(), 6, "threaded lambda local")
+  hold = S19Hold { f: { |n| n + 1 } }
+  hold2 = hold
+  c.eq_int((hold2.f)(6), 7, "struct fn field")
+  c.eq_int(s19_quoted(1)(2), 4, "quoted lambda")
+  outer_q = 1
+  quote {
+    seen: fn(): Int = { ||
+      outer_q = 9
+      outer_q
+    }
+    c.eq_int(seen(), 9, "quoted lambda local")
+  }
+  c.eq_int(outer_q, 1, "quoted lambda stayed inside")
+  c.eq_int(s19_pub(s19_inc), 2, "pub fn param")
+  gone = 0
+  s19_go() { || gone = gone + 1 }
+  c.eq_int(gone, 1, "void fn value")
+  returned = s19_map([1]) { |n|
+    return n + 1
+  }
+  c.eq_int(returned[0], 2, "inferred return")
+  cell = 1
+  cell_read: fn(): Int = { || cell }
+  cell_bump: fn(): Int = { ||
+    cell = cell + 1
+    cell
+  }
+  c.eq_int(cell_bump(), 2, "second lambda bumps")
+  c.eq_int(cell_read(), 2, "first lambda sees it")
+  held: fn(Int): Int = { |k| k + 1 }
+  call_held: fn(): Int = { || held(4) }
+  c.eq_int(call_held(), 5, "capture fn")
+  held = { |k| k + 10 }
+  c.eq_int(call_held(), 14, "capture fn assign")
+  flag = true
+  see_b: fn(): Bool = { || flag }
+  flag = false
+  shown = 1
+  if see_b() {
+    shown = 2
+  }
+  c.eq_int(shown, 1, "capture bool")
+  flt = 1.5
+  see_f: fn(): Float64 = { || flt }
+  flt = 2.5
+  c.expect(see_f() == 2.5, "capture float")
+  wide: Int64 = 5
+  see_wide: fn(): Int64 = { || wide }
+  wide = 8
+  c.eq_int(see_wide().to_i, 8, "capture int64")
+  c.eq_int(s19_ret_lam(3)(4), 7, "return lambda")
+  nil_l: fn(): Nil = { || nil }
+  c.eq_int(s19_take_nil(s19_nil), 1, "nil return")
+  c.eq_int(s19_take_nil(nil_l), 1, "nil lambda")
+  meth = S19Meth { base: 10 }
+  c.eq_int(meth.off(1)(2), 13, "method captures param")
+  map_extra = 10
+  map_got = s19_map([1, 2]) { |x| x + map_extra }
+  c.eq_int(map_got[0], 11, "map captures")
+  c.eq_int(map_got[1], 12, "map captures 1")
+  box_n = 4
+  box_see: fn(): Int = { || box_n }
+  box_h = spawn { box_n + 1 }
+  c.eq_int(box_h.join, 5, "spawn copies boxed int")
+  box_n = 9
+  c.eq_int(box_see(), 9, "box survives spawn")
+  s19_go() { || }
+  c.expect(true, "empty void lambda")
+  nest = S19Nest.new()
+  nest.inner = S19Hold { f: s19_inc }
+  c.eq_int((nest.inner.f)(6), 7, "fn in nested struct")
+  outer_n = 4
+  run_spawn: fn(): Int = { ||
+    s19_run_h = spawn { outer_n + 1 }
+    s19_run_h.join
+  }
+  outer_n = 10
+  c.eq_int(run_spawn(), 11, "spawn inside lambda")
+  cap_n = 3
+  lam_h = spawn {
+    lam_f: fn(): Int = { || cap_n + 1 }
+    lam_f()
+  }
+  cap_n = 9
+  c.eq_int(lam_h.join, 4, "lambda inside spawn")
+  s19_flag = true
+  s19_see_flag: fn(): Bool = { || s19_flag }
+  s19_bh = spawn {
+    s19_bit = 0
+    if s19_flag {
+      s19_bit = 1
+    }
+    s19_bit
+  }
+  c.eq_int(s19_bh.join, 1, "spawn copies boxed bool")
+  s19_flag = false
+  s19_shown = 0
+  if s19_see_flag() {
+    s19_shown = 1
+  }
+  c.eq_int(s19_shown, 0, "bool box survives spawn")
+  s19_w: Int64 = 5
+  s19_see_w: fn(): Int64 = { || s19_w }
+  s19_wh = spawn { s19_w.to_i }
+  c.eq_int(s19_wh.join, 5, "spawn copies boxed int64")
+  s19_w = 9
+  c.eq_int(s19_see_w().to_i, 9, "int64 box survives spawn")
+  s19_u: UInt64 = 8
+  s19_see_u: fn(): UInt64 = { || s19_u }
+  s19_uh = spawn { s19_u.to_i }
+  c.eq_int(s19_uh.join, 8, "spawn copies boxed uint64")
+  s19_u = 12
+  c.eq_int(s19_see_u().to_i, 12, "uint64 box survives spawn")
+  c.eq_int(s19_nilish(4), 4, "nilable param")
+  c.eq_int(s19_nilish(nil), 0, "nilable nil")
+  s19_nil_f: fn(Int?): Int = { |n: Int?|
+    if v = n {
+      return v
+    }
+    0
+  }
+  c.eq_int(s19_nil_f(4), 4, "nilable lambda")
+  c.eq_int(s19_nil_f(nil), 0, "nilable lambda nil")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
     src = "/tmp/avant-s19-${stamp}.av"
@@ -101,7 +319,7 @@ fn test_fn(c: Checks) {
     clog = "/tmp/avant-s19-${stamp}-compile.log"
     rlog = "/tmp/avant-s19-${stamp}-run.log"
     slog = "/tmp/avant-s19-${stamp}-stats.log"
-    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nclass Hold {\n  f: fn(): String\n  g: fn(Int): Int\n  fn initialize {\n  }\n}\nfn ident(n: Int): Int {\n  n + 1\n}\nfn main {\n  h = Hold.new()\n  s = \"ke\" + \"pt\"\n  h.f = { || s }\n  h.g = ident\n  arr: Array(fn(): String) = []\n  arr.push({ || s })\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts((h.f)())\n  puts((arr[0])())\n  puts((h.g)(41))\n}\n"
+    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nclass Hold {\n  f: fn(): String\n  g: fn(Int): Int\n  fn initialize {\n  }\n}\nstruct Inner {\n  f: fn(): String\n}\nclass Nest {\n  inner: Inner\n  fn initialize {\n  }\n}\nfn ident(n: Int): Int {\n  n + 1\n}\nfn main {\n  h = Hold.new()\n  s = \"ke\" + \"pt\"\n  h.f = { || s }\n  h.g = ident\n  arr: Array(fn(): String) = []\n  arr.push({ || s })\n  nest = Nest.new()\n  nest.inner = Inner { f: { || s } }\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts((h.f)())\n  puts((arr[0])())\n  puts((h.g)(41))\n  puts((nest.inner.f)())\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write nursery fn")
     cc = compile_av(compiler, src, bin, clog)
@@ -115,7 +333,7 @@ fn test_fn(c: Checks) {
       rcode = process_run_out("/usr/bin/env", cap, rlog)
       c.eq_int(rcode, 0, "fn survives nursery")
       if out = file_read(rlog) {
-        c.eq_str(out, "kept\nkept\n42\n", "fn values after collection")
+        c.eq_str(out, "kept\nkept\n42\nkept\n", "fn values after collection")
       } else {
         c.expect(false, "read nursery fn stdout")
       }
