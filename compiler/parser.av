@@ -891,12 +891,41 @@ pub class Parser {
     tn
   }
 
+  pub fn parse_fn_type: TypeName {
+    tok = self.bump
+    tn = TypeName.new(tok.loc, "")
+    tn.fn_type = true
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    if self.current.kind != tk_r_paren() {
+      while true {
+        tn.args.push(self.parse_type_name)
+        self.skip_newlines
+        if self.match_tok(tk_comma()) {
+          self.skip_newlines
+        } else {
+          break
+        }
+      }
+    }
+    dummy2 = self.expect(tk_r_paren())
+    if self.current.kind == tk_colon() {
+      dummy3 = self.bump
+      self.skip_newlines
+      tn.ret = self.parse_type_name
+    }
+    tn
+  }
+
   pub fn parse_primary_type: TypeName {
     if self.current.kind == tk_pound() {
       sp = self.parse_splice
       tn = TypeName.new(sp.loc, "")
       tn.splice = sp
       return tn
+    }
+    if self.current.kind == tk_fn() {
+      return self.parse_fn_type
     }
     tok = self.expect(tk_ident())
     qual = ""
@@ -1341,6 +1370,14 @@ pub class Parser {
         tr = Expr.new(ex_try(), at)
         tr.inner = cur
         cur = tr
+      } else if k == tk_l_paren() {
+        at = self.current.loc
+        args = self.parse_arg_list
+        call = Expr.new(ex_call(), at)
+        call.indirect = true
+        call.inner = cur
+        call.args = args
+        cur = call
       } else {
         keep = false
       }
@@ -1459,8 +1496,36 @@ pub class Parser {
       dummy2 = self.expect(tk_r_paren())
       return expr
     }
+    if k == tk_l_brace() {
+      if self.lambda_ahead {
+        e = Expr.new(ex_lambda(), tok.loc)
+        e.block = self.parse_trailing_block
+        return e
+      }
+    }
     self.fail(tok.loc, "expected expression, found ${k}")
     self.dummy_expr(tok.loc)
+  }
+
+  pub fn lambda_ahead: Bool {
+    if self.current.kind != tk_l_brace() {
+      return false
+    }
+    i = self.index + 1
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        k = self.tokens[i].kind
+        if k == tk_pipe() {
+          return true
+        }
+        if k == tk_pipe_pipe() {
+          return true
+        }
+        return false
+      }
+      i = i + 1
+    }
+    false
   }
 
   pub fn struct_literal_ahead: Bool {
@@ -1693,12 +1758,23 @@ pub class Parser {
     loc = self.expect(tk_l_brace()).loc
     self.skip_newlines
     block = Block.new(loc)
-    if self.current.kind == tk_pipe() {
+    if self.current.kind == tk_pipe_pipe() {
+      dummy_or = self.bump
+      self.skip_newlines
+    } else if self.current.kind == tk_pipe() {
       dummy = self.bump
       self.skip_newlines
       if self.current.kind != tk_pipe() {
         while true {
-          block.params.push(self.expect(tk_ident()).value)
+          name = self.expect(tk_ident())
+          block.params.push(name.value)
+          ann = TypeName.new(name.loc, "")
+          if self.current.kind == tk_colon() {
+            dummy_c = self.bump
+            self.skip_newlines
+            ann = self.parse_type_name
+          }
+          block.param_types.push(ann)
           self.skip_newlines
           if self.match_tok(tk_comma()) {
             self.skip_newlines

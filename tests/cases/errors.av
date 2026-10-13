@@ -52,6 +52,12 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "opaque-field", "lib sqlite3 {\n  fun open: Ptr(Sqlite3)\n}\nfn main {\n  db = sqlite3.open()\n  puts(db.x)\n}\n", "no field x on Ptr(Sqlite3)")
     expect_err(c, compiler, stamp, "clayout-dup", "lib a {\n  struct Point {\n    x: Int\n  }\n}\nlib b {\n  struct Point {\n    y: Int\n  }\n}\nfn main {\n  puts(1)\n}\n", "Point is already defined")
     expect_err(c, compiler, stamp, "clayout-both", "lib math {\n  struct Point {\n    x: Int\n  }\n}\nfn (p: Ptr(Point)) x: Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "Point.x is both a field and a method")
+    expect_err(c, compiler, stamp, "fn-ambig", "fn pick(n: Int): Int {\n  n\n}\nfn pick(s: String): Int {\n  s.size\n}\nfn main {\n  p = pick\n  puts(1)\n}\n", "ambiguous overload")
+    expect_err(c, compiler, stamp, "fn-method", "struct P19 {\n  x: Int\n  fn add(n: Int): Int {\n    x + n\n  }\n}\nfn main {\n  p = P19 { x: 1 }\n  f = p.add\n  puts(1)\n}\n", "methods are not values")
+    expect_err(c, compiler, stamp, "fn-cfun", "lib math {\n  fun apply(f: fn(Int): Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
+    expect_err(c, compiler, stamp, "fn-generic", "fn id(x: T): T {\n  x\n}\nfn main {\n  f = id\n  puts(1)\n}\n", "generic function is not a value")
+    expect_err(c, compiler, stamp, "fn-lam", "fn main {\n  g = { |n| n + 1 }\n  puts(1)\n}\n", "lambda parameter needs a type")
+    expect_err(c, compiler, stamp, "fn-eq", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Int = { |n| n }\n  if f == g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

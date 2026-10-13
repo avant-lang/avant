@@ -134,6 +134,19 @@ pub class TypeResolver {
   }
 
   pub fn resolve_core(tn: TypeName): Ty {
+    if tn.fn_type {
+      params: Array(Ty) = []
+      i = 0
+      while i < tn.args.size {
+        params.push(self.resolve_value(tn.args[i]))
+        i = i + 1
+      }
+      ret = self.t_void
+      if r = tn.ret {
+        ret = self.resolve(r)
+      }
+      return ty_fn(params, ret)
+    }
     if tn.members.size > 0 {
       parts: Array(Ty) = []
       i = 0
@@ -230,6 +243,9 @@ pub class TypeResolver {
 }
 
 pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(String, Int)) {
+  if r = tn.ret {
+    note_ptr_opaque_skip(r, resolver, skip)
+  }
   i = 0
   while i < tn.args.size {
     note_ptr_opaque_skip(tn.args[i], resolver, skip)

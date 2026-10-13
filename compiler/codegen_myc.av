@@ -68,6 +68,37 @@ pub fn ty_self_ptr_myc(ty: Ty): String {
   "ptr<${ty_layout_myc(ty)}>"
 }
 
+pub fn fn_layout_name(ty: Ty): String {
+  mangle_ty(ty)
+}
+
+pub fn fn_code_myc(ty: Ty): String {
+  buf = buf_new()
+  buf.push_str("fn<ptr<void>")
+  i = 0
+  while i < ty.members.size {
+    buf.push_str(", ")
+    buf.push_str(ty_myc(ty.members[i]))
+    i = i + 1
+  }
+  buf.push_str(", ")
+  if r = ty.inner {
+    if r.is_void {
+      buf.push_str("void")
+    } else {
+      buf.push_str(ty_myc(r))
+    }
+  } else {
+    buf.push_str("void")
+  }
+  buf.push_str(">")
+  buf.to_s
+}
+
+pub fn box_layout_name(ty: Ty): String {
+  "Box_${mangle_ty(ty)}"
+}
+
 pub fn ty_myc(ty: Ty): String {
   k = ty.kind
   if k == tyk_int() {
@@ -130,10 +161,16 @@ pub fn ty_myc(ty: Ty): String {
     }
     return "ptr<void>"
   }
+  if k == tyk_fn() {
+    return fn_layout_name(ty)
+  }
   "void"
 }
 
 pub fn ty_has_heap(ty: Ty): Bool {
+  if ty.is_fn {
+    return true
+  }
   if ty.is_class {
     return true
   }
@@ -198,13 +235,26 @@ pub fn heap_ptr_value(ty: Ty): Bool {
 }
 
 pub fn array_type_id(elem: Ty): Int {
+  if elem.is_fn {
+    return 65535
+  }
   if heap_ptr_value(elem) {
     return 65535
   }
   0
 }
 
+pub fn needs_heap_barrier(ty: Ty): Bool {
+  if heap_ptr_value(ty) {
+    return true
+  }
+  ty.is_fn
+}
+
 pub fn abi_align(ty: Ty): Int {
+  if ty.is_fn {
+    return 8
+  }
   if ty.is_int {
     return 4
   }
@@ -252,6 +302,9 @@ pub fn abi_align(ty: Ty): Int {
 }
 
 pub fn abi_size(ty: Ty): Int {
+  if ty.is_fn {
+    return 16
+  }
   if ty.is_int {
     return 4
   }
@@ -313,6 +366,9 @@ pub fn word_bit(offset: Int, bits: UInt64): UInt64 {
 }
 
 pub fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
+  if ty.is_fn {
+    return word_bit(offset, bits)
+  }
   if heap_ptr_value(ty) {
     return word_bit(offset, bits)
   }
@@ -538,6 +594,18 @@ pub class MycGen {
   cov_lines: Array(Int)
   cov_names: Array(String)
   cov_line_slots: Hash(String, Int)
+  lam_id: Int = 0
+  lambdas: Array(Expr)
+  fn_tys: Array(Ty)
+  box_tys: Array(Ty)
+  closure_names: Array(String)
+  closure_bits: Array(UInt64)
+  box_list: Array(String)
+  box_ready: Hash(String, Int)
+  cap_list: Array(String)
+  cap_tys_now: Array(Ty)
+  in_lambda: Bool = false
+  env_layout: String = ""
 
   fn initialize(program: Program) {
     self.program = program
@@ -581,6 +649,27 @@ pub class MycGen {
     self.cov_names = cn
     ls = Hash(String, Int).new
     self.cov_line_slots = ls
+    self.lam_id = 0
+    lams: Array(Expr) = []
+    self.lambdas = lams
+    ftys: Array(Ty) = []
+    self.fn_tys = ftys
+    btys: Array(Ty) = []
+    self.box_tys = btys
+    cnames: Array(String) = []
+    self.closure_names = cnames
+    cbits: Array(UInt64) = []
+    self.closure_bits = cbits
+    boxes: Array(String) = []
+    self.box_list = boxes
+    br = Hash(String, Int).new
+    self.box_ready = br
+    caps: Array(String) = []
+    self.cap_list = caps
+    ctys: Array(Ty) = []
+    self.cap_tys_now = ctys
+    self.in_lambda = false
+    self.env_layout = ""
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -1031,6 +1120,26 @@ pub class MycGen {
   }
 
   pub fn note_ty(ty: Ty) {
+    if ty.is_fn {
+      layout = fn_layout_name(ty)
+      i = 0
+      while i < self.fn_tys.size {
+        if str_eq(fn_layout_name(self.fn_tys[i]), layout) {
+          return
+        }
+        i = i + 1
+      }
+      self.fn_tys.push(ty)
+      i = 0
+      while i < ty.members.size {
+        self.note_ty(ty.members[i])
+        i = i + 1
+      }
+      if r = ty.inner {
+        self.note_ty(r)
+      }
+      return
+    }
     if ty.is_array {
       layout = ty_layout_myc(ty)
       i = 0
@@ -1166,6 +1275,9 @@ pub class MycGen {
     self.note_ty(expr_ty(expr))
     k = expr.kind
     if k == ex_call() {
+      if inner = expr.inner {
+        self.collect_expr(inner)
+      }
       if recv = expr.receiver {
         self.collect_expr(recv)
       } else {
@@ -1255,6 +1367,10 @@ pub class MycGen {
         }
         i = i + 1
       }
+      return
+    }
+    if k == ex_lambda() {
+      self.collect_lambda(expr)
       return
     }
     if k == ex_switch() {
@@ -1371,6 +1487,17 @@ pub class MycGen {
       i = i + 1
     }
     i = 0
+    while i < self.fn_tys.size {
+      self.emit_fn_def(self.fn_tys[i])
+      i = i + 1
+    }
+    i = 0
+    while i < self.box_tys.size {
+      self.emit_box_def(self.box_tys[i])
+      i = i + 1
+    }
+    self.emit_env_defs
+    i = 0
     while i < self.pending.size {
       self.emit_spawn_cap_layout(self.pending[i])
       i = i + 1
@@ -1392,6 +1519,21 @@ pub class MycGen {
     i = 0
     while i < self.pending.size {
       self.emit_spawn_thunk(self.pending[i])
+      i = i + 1
+    }
+    i = 0
+    while i < self.lambdas.size {
+      self.emit_lambda_thunk(self.lambdas[i])
+      i = i + 1
+    }
+    i = 0
+    while i < fns.size {
+      if fns[i].as_value {
+        if fns[i].generic {
+        } else {
+          self.emit_fn_trampoline(fns[i])
+        }
+      }
       i = i + 1
     }
     if self.has_fn("main") {
@@ -1455,6 +1597,7 @@ pub class MycGen {
   }
 
   pub fn emit_plain_func(fnn: Function, params: Array(Ty)) {
+    self.begin_fn_frame(fnn.box_names)
     self.line("FUNC :${fnn.emit_name}")
     self.indent = self.indent + 1
     if self.c_main {
@@ -1491,20 +1634,13 @@ pub class MycGen {
       self.indent = self.indent + 1
       self.reset_rooted
       self.line("CALL :avant_gc_enter")
+      pnames: Array(String) = []
       i = 0
       while i < fnn.params.size {
-        param = fnn.params[i]
-        m = ty_myc(params[i])
-        self.line("PARAM ${i}")
-        self.line("LOCAL :${param.name} :${m}")
-        self.line("STORE")
+        pnames.push(fnn.params[i].name)
         i = i + 1
       }
-      i = 0
-      while i < fnn.params.size {
-        self.ensure_root(fnn.params[i].name, params[i])
-        i = i + 1
-      }
+      self.emit_param_group(pnames, params, 0)
       self.cov_func(fnn)
       self.emit_stmts(fnn.body, true)
       self.emit_gc_leave_if_fallthrough(fnn)
@@ -1516,6 +1652,7 @@ pub class MycGen {
   }
 
   pub fn emit_method_func(fnn: Function, sig: FuncSig) {
+    self.begin_fn_frame(fnn.box_names)
     mangled = sig.mangled
     self.line("FUNC :${mangled}")
     self.indent = self.indent + 1
@@ -1544,24 +1681,17 @@ pub class MycGen {
       self.line("LOCAL :${recv_name} :${m}")
       self.line("STORE")
     }
+    pnames: Array(String) = []
     i = 0
     while i < fnn.params.size {
-      param = fnn.params[i]
-      m = ty_myc(sig.params[i])
-      n = i + 1
-      self.line("PARAM ${n}")
-      self.line("LOCAL :${param.name} :${m}")
-      self.line("STORE")
+      pnames.push(fnn.params[i].name)
       i = i + 1
     }
-    if owner = self.self_ty {
-      self.ensure_root(recv_name, owner)
+    raws = self.emit_param_stores(pnames, sig.params, 1)
+    if rooted = self.self_ty {
+      self.ensure_root(recv_name, rooted)
     }
-    i = 0
-    while i < fnn.params.size {
-      self.ensure_root(fnn.params[i].name, sig.params[i])
-      i = i + 1
-    }
+    self.emit_param_finish(pnames, sig.params, raws)
     self.cov_func(fnn)
     self.emit_stmts(fnn.body, true)
     self.emit_gc_leave_if_fallthrough(fnn)
@@ -1574,6 +1704,7 @@ pub class MycGen {
   }
 
   pub fn emit_ptr_method_func(fnn: Function, sig: FuncSig) {
+    self.begin_fn_frame(fnn.box_names)
     recv_ty = ty_void()
     if r = fnn.receiver {
       recv_ty = self.resolver.resolve(r.type)
@@ -1601,21 +1732,13 @@ pub class MycGen {
     self.line("PARAM 0")
     self.line("LOCAL :${recv_name} :${mrecv}")
     self.line("STORE")
+    pnames: Array(String) = []
     i = 0
     while i < fnn.params.size {
-      param = fnn.params[i]
-      m = ty_myc(sig.params[i])
-      n = i + 1
-      self.line("PARAM ${n}")
-      self.line("LOCAL :${param.name} :${m}")
-      self.line("STORE")
+      pnames.push(fnn.params[i].name)
       i = i + 1
     }
-    i = 0
-    while i < fnn.params.size {
-      self.ensure_root(fnn.params[i].name, sig.params[i])
-      i = i + 1
-    }
+    self.emit_param_group(pnames, sig.params, 1)
     self.cov_func(fnn)
     self.emit_stmts(fnn.body, true)
     self.emit_gc_leave_if_fallthrough(fnn)
@@ -1668,7 +1791,7 @@ pub class MycGen {
             field_ty = ty.fields[j].ty
             self.emit_expr(default)
             self.emit_coerce(expr_ty(default), field_ty)
-            if heap_ptr_value(field_ty) {
+            if needs_heap_barrier(field_ty) {
               val = self.new_temp
               m = ty_myc(field_ty)
               self.line("LOCAL :${val} :${m}")
@@ -1701,6 +1824,8 @@ pub class MycGen {
     self.return_type = ty
     self.self_ty = nil
     self.self_name = ""
+    none: Array(String) = []
+    self.begin_fn_frame(none)
     init_sig = self.find_initialize(ty.name)
     ctor = "${ty.name}__new"
     self.line("FUNC :${ctor}")
@@ -1838,6 +1963,15 @@ pub class MycGen {
           self.line("CALL :avant_type_map")
         }
       }
+      i = i + 1
+    }
+    i = 0
+    while i < self.closure_names.size {
+      bits = self.closure_bits[i]
+      id = 400 + i
+      self.line("PUSH ${bits} :u64")
+      self.line("PUSH ${id} :u32")
+      self.line("CALL :avant_type_map")
       i = i + 1
     }
   }
@@ -2018,6 +2152,17 @@ pub class MycGen {
   pub fn emit_assign(stmt: Stmt) {
     if stmt.op == tk_eq() {
       if t = stmt.target {
+        if t.kind == ex_name() {
+          if self.name_is_boxed(t.ident) {
+            if v = stmt.value {
+              self.ensure_box(t.ident, expr_ty(t))
+              self.emit_expr(v)
+              self.emit_coerce(expr_ty(v), expr_ty(t))
+              self.store_box_value(t.ident, expr_ty(t))
+              return
+            }
+          }
+        }
         if t.kind == ex_index() {
           if arr = t.left {
             if expr_ty(arr).is_hash {
@@ -2042,7 +2187,7 @@ pub class MycGen {
           if obj = t.object {
             object_ty = expr_ty(obj)
             if object_ty.is_class {
-              if heap_ptr_value(expr_ty(t)) {
+              if needs_heap_barrier(expr_ty(t)) {
                 if v = stmt.value {
                   self.emit_barrier_field_store(t, v)
                   return
@@ -2073,6 +2218,11 @@ pub class MycGen {
       }
     } else {
       if t = stmt.target {
+        if t.kind == ex_name() {
+          if self.name_is_boxed(t.ident) {
+            self.ensure_box(t.ident, expr_ty(t))
+          }
+        }
         self.emit_expr(t)
         tmp = self.new_temp
         ty = expr_ty(t)
@@ -2411,7 +2561,14 @@ pub class MycGen {
         self.line("PUSH 0")
       }
       case 5 {
-        self.emit_lvalue(expr)
+        if expr.fn_ref {
+          self.emit_fn_ref(expr)
+        } else {
+          self.emit_lvalue(expr)
+        }
+      }
+      case 20 {
+        self.emit_lambda(expr)
       }
       case 9 {
         if expr.method_call {
@@ -2536,6 +2693,15 @@ pub class MycGen {
     if expr.kind == ex_name() {
       if expr.implicit_field {
         self.emit_self_field(expr.ident)
+        return
+      }
+      ci = self.cap_index(expr.ident)
+      if ci >= 0 {
+        self.emit_cap_lvalue(ci)
+        return
+      }
+      if self.name_is_boxed(expr.ident) {
+        self.emit_box_lvalue(expr.ident, expr_ty(expr))
         return
       }
       if self.is_struct_self(expr.ident) {
@@ -2880,6 +3046,16 @@ pub class MycGen {
   }
 
   pub fn emit_zero(ty: Ty) {
+    if ty.is_fn {
+      code = fn_code_myc(ty)
+      layout = fn_layout_name(ty)
+      self.line("PUSH 0")
+      self.line("AS \"${code}\"")
+      self.line("PUSH 0")
+      self.line("AS :ptr<void>")
+      self.line("CREATE :${layout}")
+      return
+    }
     if ty.is_float {
       self.line("PUSH 0 :f64")
       return
@@ -3625,6 +3801,10 @@ pub class MycGen {
   }
 
   pub fn emit_call(expr: Expr) {
+    if expr.indirect {
+      self.emit_indirect(expr)
+      return
+    }
     if expr.lib_name.size > 0 {
       self.emit_call_named(expr.callee, expr.args)
       return
@@ -4108,7 +4288,16 @@ pub class MycGen {
       while i < expr.cap_names.size {
         cname = expr.cap_names[i]
         cm = ty_myc(expr.cap_tys[i])
-        self.line("LOCAL :${cname} :${cm}")
+        if self.name_is_boxed(cname) {
+          self.emit_box_lvalue(cname, expr.cap_tys[i])
+        } else {
+          sci = self.cap_index(cname)
+          if sci >= 0 {
+            self.emit_cap_lvalue(sci)
+          } else {
+            self.line("LOCAL :${cname} :${cm}")
+          }
+        }
         self.line("LOCAL :${holder}")
         self.line("DEREF")
         self.line("FIELD ${i}")
@@ -4151,6 +4340,8 @@ pub class MycGen {
       self.indent = self.indent - 1
       self.line("BODY")
       self.indent = self.indent + 1
+      none: Array(String) = []
+      self.begin_fn_frame(none)
       self.reset_rooted
       self.line("CALL :avant_gc_enter")
       self.line("PARAM 0")
@@ -4766,6 +4957,494 @@ pub class MycGen {
       t = tmps[i]
       self.line("LOCAL :${t}")
       i = i - 1
+    }
+  }
+
+  pub fn begin_fn_frame(boxes: Array(String)) {
+    self.in_lambda = false
+    self.env_layout = ""
+    caps: Array(String) = []
+    self.cap_list = caps
+    ctys: Array(Ty) = []
+    self.cap_tys_now = ctys
+    bs: Array(String) = []
+    i = 0
+    while i < boxes.size {
+      n = boxes[i]
+      skip = false
+      if self.self_name.size > 0 {
+        if str_eq(n, self.self_name) {
+          skip = true
+        }
+      }
+      if skip {
+      } else {
+        bs.push(n)
+      }
+      i = i + 1
+    }
+    self.box_list = bs
+    ready = Hash(String, Int).new
+    self.box_ready = ready
+  }
+
+  pub fn cap_index(name: String): Int {
+    i = 0
+    while i < self.cap_list.size {
+      if str_eq(self.cap_list[i], name) {
+        return i
+      }
+      i = i + 1
+    }
+    0 - 1
+  }
+
+  pub fn name_is_boxed(name: String): Bool {
+    i = 0
+    while i < self.box_list.size {
+      if str_eq(self.box_list[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn closure_type_id(name: String): Int {
+    i = 0
+    while i < self.closure_names.size {
+      if str_eq(self.closure_names[i], name) {
+        return 400 + i
+      }
+      i = i + 1
+    }
+    0
+  }
+
+  pub fn note_box(ty: Ty) {
+    self.note_ty(ty)
+    layout = box_layout_name(ty)
+    i = 0
+    while i < self.box_tys.size {
+      if str_eq(box_layout_name(self.box_tys[i]), layout) {
+        return
+      }
+      i = i + 1
+    }
+    self.box_tys.push(ty)
+    bits = add_ptr_bits(ty, 0, 0u64)
+    self.closure_names.push(layout)
+    self.closure_bits.push(bits)
+  }
+
+  pub fn note_env(name: String, count: Int) {
+    bits = 0u64
+    i = 0
+    while i < count {
+      bits = word_bit(i * 8, bits)
+      i = i + 1
+    }
+    self.closure_names.push(name)
+    self.closure_bits.push(bits)
+  }
+
+  pub fn collect_lambda(expr: Expr) {
+    n = self.lam_id
+    expr.resolved = "__lam_${n}"
+    self.lam_id = n + 1
+    self.lambdas.push(expr)
+    i = 0
+    while i < expr.cap_tys.size {
+      self.note_box(expr.cap_tys[i])
+      i = i + 1
+    }
+    if expr.cap_names.size > 0 {
+      env = "${expr.resolved}_env"
+      self.note_env(env, expr.cap_names.size)
+    }
+    if b = expr.block {
+      self.collect_stmts(b.body)
+    }
+  }
+
+  pub fn emit_fn_def(ty: Ty) {
+    name = fn_layout_name(ty)
+    code = fn_code_myc(ty)
+    self.line("STRUCT :${name}")
+    self.indent = self.indent + 1
+    self.line("TYPE :ptr<void>")
+    self.line("TYPE \"${code}\"")
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  pub fn emit_box_def(ty: Ty) {
+    name = box_layout_name(ty)
+    m = ty_myc(ty)
+    self.line("STRUCT :${name}")
+    self.indent = self.indent + 1
+    self.line("TYPE :${m}")
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
+  }
+
+  pub fn emit_env_defs {
+    i = 0
+    while i < self.lambdas.size {
+      lam = self.lambdas[i]
+      if lam.cap_names.size > 0 {
+        name = "${lam.resolved}_env"
+        self.line("STRUCT :${name}")
+        self.indent = self.indent + 1
+        j = 0
+        while j < lam.cap_tys.size {
+          box = box_layout_name(lam.cap_tys[j])
+          self.line("TYPE :ptr<${box}>")
+          j = j + 1
+        }
+        self.indent = self.indent - 1
+        self.line("ENDSTRUCT")
+        self.blank
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn emit_param_stores(names: Array(String), types: Array(Ty), index_base: Int): Array(String) {
+    raws: Array(String) = []
+    i = 0
+    while i < names.size {
+      m = ty_myc(types[i])
+      slot = index_base + i
+      self.line("PARAM ${slot}")
+      if self.name_is_boxed(names[i]) {
+        tmp = self.new_temp
+        self.line("LOCAL :${tmp} :${m}")
+        self.line("STORE")
+        raws.push(tmp)
+      } else {
+        self.line("LOCAL :${names[i]} :${m}")
+        self.line("STORE")
+        raws.push("")
+      }
+      i = i + 1
+    }
+    raws
+  }
+
+  pub fn emit_param_finish(names: Array(String), types: Array(Ty), raws: Array(String)) {
+    i = 0
+    while i < names.size {
+      if self.name_is_boxed(names[i]) {
+        self.ensure_root(raws[i], types[i])
+        self.ensure_box(names[i], types[i])
+        self.line("LOCAL :${raws[i]}")
+        self.store_box_value(names[i], types[i])
+      } else {
+        self.ensure_root(names[i], types[i])
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn emit_param_group(names: Array(String), types: Array(Ty), index_base: Int) {
+    raws = self.emit_param_stores(names, types, index_base)
+    self.emit_param_finish(names, types, raws)
+  }
+
+  pub fn ensure_box(name: String, ty: Ty) {
+    if v = self.box_ready.get(name) {
+      return
+    }
+    box = box_layout_name(ty)
+    id = self.closure_type_id(box)
+    self.emit_alloc_sizeof(box, id)
+    self.line("AS :ptr<${box}>")
+    self.line("LOCAL :${name} :ptr<${box}>")
+    self.line("STORE")
+    self.emit_zero(ty)
+    self.store_box_value(name, ty)
+    self.emit_ptr_root(name)
+    self.box_ready[name] = 1
+  }
+
+  pub fn store_box_value(name: String, ty: Ty) {
+    box = box_layout_name(ty)
+    self.line("LOCAL :${name} :ptr<${box}>")
+    self.line("DEREF")
+    self.line("FIELD 0")
+    self.line("STORE")
+  }
+
+  pub fn emit_box_lvalue(name: String, ty: Ty) {
+    box = box_layout_name(ty)
+    self.line("LOCAL :${name} :ptr<${box}>")
+    self.line("DEREF")
+    self.line("FIELD 0")
+  }
+
+  pub fn emit_cap_lvalue(index: Int) {
+    self.line("LOCAL :__env :ptr<${self.env_layout}>")
+    self.line("DEREF")
+    self.line("FIELD ${index}")
+    self.line("DEREF")
+    self.line("FIELD 0")
+  }
+
+  pub fn emit_box_pointer(name: String, ty: Ty) {
+    ci = self.cap_index(name)
+    if ci >= 0 {
+      self.line("LOCAL :__env :ptr<${self.env_layout}>")
+      self.line("DEREF")
+      self.line("FIELD ${ci}")
+      return
+    }
+    self.ensure_box(name, ty)
+    box = box_layout_name(ty)
+    self.line("LOCAL :${name} :ptr<${box}>")
+  }
+
+  pub fn emit_named_value(name: String) {
+    ci = self.cap_index(name)
+    if ci >= 0 {
+      self.emit_cap_lvalue(ci)
+      return
+    }
+    if self.name_is_boxed(name) {
+      self.line("LOCAL :${name}")
+      self.line("DEREF")
+      self.line("FIELD 0")
+      return
+    }
+    self.line("LOCAL :${name}")
+  }
+
+  pub fn emit_fn_value(code_sym: String, fty: Ty, hold: String) {
+    code = fn_code_myc(fty)
+    layout = fn_layout_name(fty)
+    // CREATE stores field 0 from the top of the stack. Push the code word, then the env.
+    self.line("ADDR :${code_sym}")
+    self.line("AS \"${code}\"")
+    if hold.size == 0 {
+      self.line("PUSH 0")
+      self.line("AS :ptr<void>")
+    } else {
+      self.line("LOCAL :${hold}")
+      self.line("AS :ptr<void>")
+    }
+    self.line("CREATE :${layout}")
+  }
+
+  pub fn emit_fn_ref(expr: Expr) {
+    tramp = "__fn_${expr.resolved}"
+    self.emit_fn_value(tramp, expr_ty(expr), "")
+  }
+
+  pub fn emit_lambda(expr: Expr) {
+    fty = expr_ty(expr)
+    if expr.cap_names.size == 0 {
+      self.emit_fn_value(expr.resolved, fty, "")
+      return
+    }
+    env = "${expr.resolved}_env"
+    id = self.closure_type_id(env)
+    self.emit_alloc_sizeof(env, id)
+    self.line("AS :ptr<${env}>")
+    hold = self.new_temp
+    self.line("LOCAL :${hold} :ptr<${env}>")
+    self.line("STORE")
+    self.emit_ptr_root(hold)
+    i = 0
+    while i < expr.cap_names.size {
+      self.emit_box_pointer(expr.cap_names[i], expr.cap_tys[i])
+      self.line("LOCAL :${hold}")
+      self.line("DEREF")
+      self.line("FIELD ${i}")
+      self.line("STORE")
+      i = i + 1
+    }
+    self.emit_fn_value(expr.resolved, fty, hold)
+  }
+
+  pub fn emit_indirect(expr: Expr) {
+    layout = expr.resolved
+    if inner = expr.inner {
+      self.emit_expr(inner)
+      layout = ty_myc(expr_ty(inner))
+    } else {
+      self.emit_named_value(expr.callee)
+    }
+    tmp = self.new_temp
+    self.line("LOCAL :${tmp} :${layout}")
+    self.line("STORE")
+    self.emit_ptr_root(tmp)
+    self.emit_args(expr.args)
+    self.line("LOCAL :${tmp}")
+    self.line("FIELD 0")
+    self.line("LOCAL :${tmp}")
+    self.line("FIELD 1")
+    self.line("INVOKE")
+  }
+
+  pub fn emit_body_fallthrough(body: Array(Stmt)) {
+    if body.size == 0 {
+      self.emit_ret
+      return
+    }
+    last = body[body.size - 1]
+    if last.kind == st_return() {
+      return
+    }
+    if last.kind == st_expr() {
+      if self.return_type.is_void {
+      } else {
+        return
+      }
+    }
+    self.emit_ret
+  }
+
+  pub fn emit_lambda_thunk(expr: Expr) {
+    saved_indent = self.indent
+    saved_temps = self.temps
+    saved_ret = self.return_type
+    saved_main = self.c_main
+    saved_rooted = self.rooted
+    saved_self = self.self_ty
+    saved_self_name = self.self_name
+    self.indent = 0
+    self.temps = 0
+    self.c_main = false
+    self.self_ty = nil
+    self.self_name = ""
+    self.in_lambda = true
+    self.env_layout = ""
+    if expr.cap_names.size > 0 {
+      self.env_layout = "${expr.resolved}_env"
+    }
+    caps: Array(String) = []
+    ctys: Array(Ty) = []
+    i = 0
+    while i < expr.cap_names.size {
+      caps.push(expr.cap_names[i])
+      ctys.push(expr.cap_tys[i])
+      i = i + 1
+    }
+    self.cap_list = caps
+    self.cap_tys_now = ctys
+    boxes: Array(String) = []
+    i = 0
+    while i < expr.box_names.size {
+      boxes.push(expr.box_names[i])
+      i = i + 1
+    }
+    self.box_list = boxes
+    ready = Hash(String, Int).new
+    self.box_ready = ready
+    fty = expr_ty(expr)
+    ret = ty_void()
+    if r = fty.inner {
+      ret = r
+    }
+    self.return_type = ret
+    name = expr.resolved
+    self.line("FUNC :${name}")
+    self.indent = self.indent + 1
+    self.line("ARGS")
+    self.indent = self.indent + 1
+    self.line("TYPE :ptr<void>")
+    i = 0
+    while i < fty.members.size {
+      m = ty_myc(fty.members[i])
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.emit_return_header
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.reset_rooted
+    self.line("CALL :avant_gc_enter")
+    self.line("PARAM 0")
+    if expr.cap_names.size == 0 {
+      self.line("STACK :drop")
+    } else {
+      self.line("AS :ptr<${self.env_layout}>")
+      self.line("LOCAL :__env :ptr<${self.env_layout}>")
+      self.line("STORE")
+      self.emit_ptr_root("__env")
+    }
+    if b = expr.block {
+      ptys: Array(Ty) = []
+      i = 0
+      while i < b.params.size {
+        if i < fty.members.size {
+          ptys.push(fty.members[i])
+        } else {
+          ptys.push(ty_void())
+        }
+        i = i + 1
+      }
+      self.emit_param_group(b.params, ptys, 1)
+      self.emit_stmts(b.body, true)
+      self.emit_body_fallthrough(b.body)
+    } else {
+      self.emit_ret
+    }
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+    self.indent = saved_indent
+    self.temps = saved_temps
+    self.return_type = saved_ret
+    self.c_main = saved_main
+    self.rooted = saved_rooted
+    self.self_ty = saved_self
+    self.self_name = saved_self_name
+    self.in_lambda = false
+  }
+
+  pub fn emit_fn_trampoline(fnn: Function) {
+    if sig = self.find_fn(fnn.emit_name) {
+      name = "__fn_${fnn.emit_name}"
+      saved_ret = self.return_type
+      saved_main = self.c_main
+      self.c_main = false
+      self.return_type = sig.ret
+      self.line("FUNC :${name}")
+      self.indent = self.indent + 1
+      self.line("ARGS")
+      self.indent = self.indent + 1
+      self.line("TYPE :ptr<void>")
+      i = 0
+      while i < sig.params.size {
+        m = ty_myc(sig.params[i])
+        self.line("TYPE :${m}")
+        i = i + 1
+      }
+      self.indent = self.indent - 1
+      self.emit_return_header
+      self.line("BODY")
+      self.indent = self.indent + 1
+      self.line("PARAM 0")
+      self.line("STACK :drop")
+      i = sig.params.size - 1
+      while i >= 0 {
+        slot = i + 1
+        self.line("PARAM ${slot}")
+        i = i - 1
+      }
+      self.line("CALL :${fnn.emit_name}")
+      self.line("RET")
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDFUNC")
+      self.blank
+      self.return_type = saved_ret
+      self.c_main = saved_main
     }
   }
 
