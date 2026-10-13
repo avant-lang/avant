@@ -176,6 +176,23 @@ pub fn mangle_ty(ty: Ty): String {
     }
     return buf.to_s
   }
+  if k == tyk_fn() {
+    buf = buf_new()
+    buf.push_str("Fn")
+    i = 0
+    while i < ty.members.size {
+      buf.push_str("_")
+      buf.push_str(mangle_ty(ty.members[i]))
+      i = i + 1
+    }
+    buf.push_str("__")
+    if r = ty.inner {
+      buf.push_str(mangle_ty(r))
+    } else {
+      buf.push_str("Void")
+    }
+    return buf.to_s
+  }
   ty.name
 }
 
@@ -254,6 +271,22 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     tn = TypeName.new(loc, "JoinHandle")
     if e = ty.inner {
       tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_fn() {
+    tn = TypeName.new(loc, "")
+    tn.fn_type = true
+    i = 0
+    while i < ty.members.size {
+      tn.args.push(ty_to_type_name(ty.members[i], loc))
+      i = i + 1
+    }
+    if r = ty.inner {
+      if r.is_void {
+      } else {
+        tn.ret = ty_to_type_name(r, loc)
+      }
     }
     return tn
   }
@@ -437,6 +470,11 @@ pub class Checker {
   lib_mod: Hash(String, String)
   lib_vis: Hash(String, Int)
   known_mods: Hash(String, Int)
+  current_fn: Function? = nil
+  lam_exprs: Array(Expr)
+  lam_scopes: Array(Int)
+  lambda_infer: Bool = false
+  inferred_ret: Ty
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -486,6 +524,12 @@ pub class Checker {
     self.lib_vis = lv
     km = Hash(String, Int).new
     self.known_mods = km
+    le: Array(Expr) = []
+    self.lam_exprs = le
+    ls: Array(Int) = []
+    self.lam_scopes = ls
+    self.lambda_infer = false
+    self.inferred_ret = ty_void()
   }
 
   pub fn has_err: Bool {
@@ -534,6 +578,18 @@ pub class Checker {
       i = i - 1
     }
     nil
+  }
+
+  pub fn lookup_index(name: String): Int {
+    i = self.scopes.size - 1
+    while i >= 0 {
+      sc = self.scopes[i]
+      if id = sc.names.get(name) {
+        return i
+      }
+      i = i - 1
+    }
+    0 - 1
   }
 
   pub fn note_modules {
@@ -942,6 +998,17 @@ pub class Checker {
         self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
         i = i + 1
       }
+      return
+    }
+    if ty.is_fn {
+      i = 0
+      while i < ty.members.size {
+        self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
+        i = i + 1
+      }
+      if r = ty.inner {
+        self.ensure_pub_sig_ty(r, loc, fnn)
+      }
     }
   }
 
@@ -1184,6 +1251,27 @@ pub class Checker {
     }
     if pattern.is_join {
       if actual.is_join {
+        if pe = pattern.inner {
+          if ae = actual.inner {
+            return self.unify_ty(pe, ae, keys, vals)
+          }
+        }
+      }
+      return false
+    }
+    if pattern.is_fn {
+      if actual.is_fn {
+        if pattern.members.size != actual.members.size {
+          return false
+        }
+        i = 0
+        while i < pattern.members.size {
+          if self.unify_ty(pattern.members[i], actual.members[i], keys, vals) {
+          } else {
+            return false
+          }
+          i = i + 1
+        }
         if pe = pattern.inner {
           if ae = actual.inner {
             return self.unify_ty(pe, ae, keys, vals)
@@ -1511,6 +1599,10 @@ pub class Checker {
   }
 
   pub fn dispatch_call(expr: Expr, expected: Ty?): Ty {
+    self.absorb_fn_block(expr)
+    if got = self.dispatch_deferred(expr, expected) {
+      return got
+    }
     arg_tys: Array(Ty) = []
     i = 0
     while i < expr.args.size {
@@ -1967,8 +2059,13 @@ pub class Checker {
       params: Array(Ty) = []
       k = 0
       while k < cfun.params.size {
-        params.push(self.resolver.resolve_value(cfun.params[k].type))
+        pty = self.resolver.resolve_value(cfun.params[k].type)
         self.pull_resolve
+        if pty.is_fn {
+          self.fail(cfun.params[k].loc, "C function pointers are not supported")
+          return
+        }
+        params.push(pty)
         k = k + 1
       }
       ret = self.t_void()
@@ -1981,6 +2078,10 @@ pub class Checker {
         }
         if ty.is_clayout {
           self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+          return
+        }
+        if ty.is_fn {
+          self.fail(t.loc, "C function pointers are not supported")
           return
         }
         ret = ty
@@ -2483,7 +2584,9 @@ pub class Checker {
       }
       i = i + 1
     }
+    self.current_fn = fnn
     self.check_body(fnn.body, ret, true)
+    self.current_fn = nil
     self.pop_scope
     self.self_ty = nil
     self.self_name = ""
@@ -2539,6 +2642,14 @@ pub class Checker {
     }
     k = stmt.kind
     if k == st_return() {
+      if self.lambda_infer {
+        if expr = stmt.expr {
+          self.inferred_ret = self.check_expr(expr)
+        } else {
+          self.inferred_ret = self.t_void()
+        }
+        return
+      }
       if expr = stmt.expr {
         got = self.check_expr_as(expr, expected)
         if self.reject_clayout_value(got, expr.loc) {
@@ -2648,6 +2759,19 @@ pub class Checker {
     }
     if k == st_expr() {
       if expr = stmt.expr {
+        if at_tail {
+          if expr.kind == ex_lambda() {
+            if expected.is_void {
+            } else {
+              got = self.check_expr_as(expr, expected)
+              return
+            }
+          }
+          if self.lambda_infer {
+            self.inferred_ret = self.check_expr(expr)
+            return
+          }
+        }
         got = self.check_expr(expr)
         if at_tail {
           if expected.is_void {
@@ -2742,16 +2866,29 @@ pub class Checker {
               self.fail(stmt.loc, "cannot shadow ${target.ident}")
               return
             }
+            early = false
+            if value.kind == ex_lambda() {
+              self.bind(target.ident, want)
+              target.ty = want
+              early = true
+            }
             got = self.check_expr_as(value, want)
             if ty_assignable(got, want) {
             } else {
-              self.fail(value.loc, "cannot assign ${got.show} to ${want.show}")
+              if self.fn_compatible(got, want) {
+              } else {
+                self.fail(value.loc, "cannot assign ${got.show} to ${want.show}")
+              }
             }
-            self.bind(target.ident, want)
-            target.ty = want
+            if early {
+            } else {
+              self.bind(target.ident, want)
+              target.ty = want
+            }
             return
           }
           if existing = self.lookup(target.ident) {
+            self.note_capture(target.ident, existing)
             got = self.check_expr_as(value, existing)
             if ty_assignable(got, existing) {
             } else {
@@ -2885,7 +3022,10 @@ pub class Checker {
     if has_want {
       if ty_assignable(kind, want) {
       } else {
-        self.fail(expr.loc, "expected ${want.show}, got ${kind.show}")
+        if self.fn_compatible(kind, want) {
+        } else {
+          self.fail(expr.loc, "expected ${want.show}, got ${kind.show}")
+        }
       }
     }
     expr.ty = kind
@@ -2910,7 +3050,10 @@ pub class Checker {
       return self.t_nil()
     }
     if k == ex_name() {
-      return self.check_name(expr)
+      return self.check_name(expr, has_want, want)
+    }
+    if k == ex_lambda() {
+      return self.check_lambda(expr, has_want, want)
     }
     if k == ex_call() {
       return self.check_call(expr, has_want, want)
@@ -3185,7 +3328,22 @@ pub class Checker {
           }
           return self.t_int()
         }
-        self.fail(expr.loc, "no field ${expr.ident} on ${object.name}")
+        has_method = false
+        mi = 0
+        while mi < self.methods.size {
+          ms = self.methods[mi]
+          if str_eq(ms.owner, object.name) {
+            if str_eq(ms.name, expr.ident) {
+              has_method = true
+            }
+          }
+          mi = mi + 1
+        }
+        if has_method {
+          self.fail(expr.loc, "methods are not values")
+        } else {
+          self.fail(expr.loc, "no field ${expr.ident} on ${object.name}")
+        }
         return self.t_int()
       }
       if object.is_ptr {
@@ -3458,7 +3616,7 @@ pub class Checker {
     self.t_int()
   }
 
-  pub fn check_name(expr: Expr): Ty {
+  pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
     if str_eq(expr.ident, "self") {
       if st = self.self_ty {
       } else {
@@ -3470,6 +3628,7 @@ pub class Checker {
       }
     }
     if existing = self.lookup(expr.ident) {
+      self.note_capture(expr.ident, existing)
       return existing
     }
     if field_ty = self.implicit_field(expr.ident) {
@@ -3480,6 +3639,14 @@ pub class Checker {
       if self.qualifier_ok(expr.ident, self.current_module) {
         return ty_module(expr.ident)
       }
+    }
+    if has_want {
+      if want.is_fn {
+        return self.check_fn_ref(expr, want)
+      }
+    }
+    if got = self.check_fn_ref_bare(expr) {
+      return got
     }
     self.fail(expr.loc, "unknown name ${expr.ident}")
     self.t_int()
@@ -3703,6 +3870,26 @@ pub class Checker {
           right_want = left
         }
         right = self.check_expr_flag(r, right_has, right_want)
+        if left.is_fn {
+          if op == tk_eq_eq() {
+            self.fail(expr.loc, "cannot compare fn values")
+            return self.t_bool()
+          }
+          if op == tk_not_eq() {
+            self.fail(expr.loc, "cannot compare fn values")
+            return self.t_bool()
+          }
+        }
+        if right.is_fn {
+          if op == tk_eq_eq() {
+            self.fail(expr.loc, "cannot compare fn values")
+            return self.t_bool()
+          }
+          if op == tk_not_eq() {
+            self.fail(expr.loc, "cannot compare fn values")
+            return self.t_bool()
+          }
+        }
         if left.is_string {
           if right.is_string {
             if op == tk_plus() {
@@ -3778,8 +3965,21 @@ pub class Checker {
   }
 
   pub fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.indirect {
+      if inner = expr.inner {
+        callee = self.check_expr(inner)
+        return self.check_indirect_call(expr, callee)
+      }
+    }
     if recv = expr.receiver {
       return self.check_method_call(expr, recv)
+    }
+    if existing = self.lookup(expr.callee) {
+      if existing.is_fn {
+        self.note_capture(expr.callee, existing)
+        expr.indirect = true
+        return self.check_indirect_call(expr, existing)
+      }
     }
     if str_eq(expr.callee, "puts") {
       if expr.args.size != 1 {
@@ -5674,5 +5874,804 @@ pub class Checker {
     }
     self.pop_scope
     self.t_void()
+  }
+
+  pub fn fn_compatible(got: Ty, want: Ty): Bool {
+    if want.is_fn {
+      if got.is_fn {
+        if want.members.size != got.members.size {
+          return false
+        }
+        i = 0
+        while i < want.members.size {
+          if want.members[i].is_var {
+          } else {
+            if want.members[i].same_as(got.members[i]) {
+            } else {
+              return false
+            }
+          }
+          i = i + 1
+        }
+        if wr = want.inner {
+          if wr.is_var {
+            return true
+          }
+          if gr = got.inner {
+            return wr.same_as(gr)
+          }
+        }
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn sig_is_instance(sig: FuncSig): Bool {
+    j = 0
+    while j < self.instances.size {
+      if self.instances[j].ol_index == sig.node.ol_index {
+        return true
+      }
+      j = j + 1
+    }
+    false
+  }
+
+  pub fn add_name(names: Array(String), name: String) {
+    i = 0
+    while i < names.size {
+      if str_eq(names[i], name) {
+        return
+      }
+      i = i + 1
+    }
+    names.push(name)
+  }
+
+  pub fn ann_present(ann: TypeName): Bool {
+    if ann.fn_type {
+      return true
+    }
+    if ann.members.size > 0 {
+      return true
+    }
+    if ann.nilable {
+      return true
+    }
+    ann.name.size > 0
+  }
+
+  pub fn ty_has_var(ty: Ty): Bool {
+    if ty.is_var {
+      return true
+    }
+    if ty.is_array {
+      if e = ty.inner {
+        return self.ty_has_var(e)
+      }
+    }
+    if ty.is_ptr {
+      if e = ty.inner {
+        return self.ty_has_var(e)
+      }
+    }
+    if ty.is_hash {
+      if k = ty.key {
+        if self.ty_has_var(k) {
+          return true
+        }
+      }
+      if v = ty.val {
+        return self.ty_has_var(v)
+      }
+    }
+    if ty.is_fn {
+      i = 0
+      while i < ty.members.size {
+        if self.ty_has_var(ty.members[i]) {
+          return true
+        }
+        i = i + 1
+      }
+      if r = ty.inner {
+        return self.ty_has_var(r)
+      }
+    }
+    false
+  }
+
+  pub fn fn_param_needs_type(ty: Ty): Bool {
+    if ty.is_fn {
+      i = 0
+      while i < ty.members.size {
+        if self.ty_has_var(ty.members[i]) {
+          return true
+        }
+        i = i + 1
+      }
+      return false
+    }
+    self.ty_has_var(ty)
+  }
+
+  pub fn subst_ty(ty: Ty, keys: Array(String), vals: Array(Ty)): Ty {
+    if ty.is_var {
+      if g = self.subst_get(keys, vals, ty.name) {
+        return g
+      }
+      return ty
+    }
+    if ty.is_array {
+      if e = ty.inner {
+        return ty_array(self.subst_ty(e, keys, vals))
+      }
+    }
+    if ty.is_ptr {
+      if e = ty.inner {
+        return ty_ptr(self.subst_ty(e, keys, vals))
+      }
+    }
+    if ty.is_hash {
+      if k = ty.key {
+        if v = ty.val {
+          return ty_hash(self.subst_ty(k, keys, vals), self.subst_ty(v, keys, vals))
+        }
+      }
+    }
+    if ty.is_join {
+      if e = ty.inner {
+        return ty_join(self.subst_ty(e, keys, vals))
+      }
+    }
+    if ty.is_fn {
+      ps: Array(Ty) = []
+      i = 0
+      while i < ty.members.size {
+        ps.push(self.subst_ty(ty.members[i], keys, vals))
+        i = i + 1
+      }
+      ret = self.t_void()
+      if r = ty.inner {
+        ret = self.subst_ty(r, keys, vals)
+      }
+      return ty_fn(ps, ret)
+    }
+    ty
+  }
+
+  pub fn fn_sig_ty(sig: FuncSig): Ty {
+    ps: Array(Ty) = []
+    i = 0
+    while i < sig.params.size {
+      ps.push(sig.params[i])
+      i = i + 1
+    }
+    ty_fn(ps, sig.ret)
+  }
+
+  pub fn fn_matches_want(sig: FuncSig, want: Ty): Bool {
+    if want.is_fn {
+    } else {
+      return false
+    }
+    if want.members.size != sig.params.size {
+      return false
+    }
+    i = 0
+    while i < want.members.size {
+      if want.members[i].is_var {
+        return false
+      }
+      if want.members[i].same_as(sig.params[i]) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    if wr = want.inner {
+      if wr.is_var {
+        return true
+      }
+      return wr.same_as(sig.ret)
+    }
+    sig.ret.is_void
+  }
+
+  pub fn arg_is_deferred(arg: Expr): Bool {
+    if arg.kind == ex_lambda() {
+      return true
+    }
+    if arg.kind == ex_name() {
+      if got = self.lookup(arg.ident) {
+        return false
+      }
+      if field = self.implicit_field(arg.ident) {
+        return false
+      }
+      if k = self.known_mods.get(arg.ident) {
+        return false
+      }
+      return true
+    }
+    false
+  }
+
+  pub fn deferred_slots_are_fn(sig: FuncSig, deferred: Array(Int)): Bool {
+    i = 0
+    while i < deferred.size {
+      if deferred[i] == 1 {
+        if i < sig.params.size {
+          if sig.params[i].is_fn {
+          } else {
+            return false
+          }
+        } else {
+          return false
+        }
+      }
+      i = i + 1
+    }
+    true
+  }
+
+  pub fn deferred_unifies(sig: FuncSig, deferred: Array(Int), ctypes: Array(Ty)): Bool {
+    keys: Array(String) = []
+    vals: Array(Ty) = []
+    if sig.node.generic {
+      i = 0
+      while i < deferred.size {
+        if deferred[i] == 0 {
+          if i < sig.params.size {
+            if self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+            } else {
+              return false
+            }
+          }
+        }
+        i = i + 1
+      }
+      i = 0
+      while i < deferred.size {
+        if deferred[i] == 1 {
+          if i < sig.params.size {
+            pty = self.subst_ty(sig.params[i], keys, vals)
+            if pty.is_fn {
+              if self.fn_param_needs_type(pty) {
+                return false
+              }
+            } else {
+              return false
+            }
+          }
+        }
+        i = i + 1
+      }
+      return true
+    }
+    i = 0
+    while i < deferred.size {
+      if deferred[i] == 0 {
+        if i < sig.params.size {
+          if ty_assignable(ctypes[i], sig.params[i]) {
+          } else {
+            return false
+          }
+        }
+      } else {
+        if i < sig.params.size {
+          if sig.params[i].is_fn {
+            if self.fn_param_needs_type(sig.params[i]) {
+              return false
+            }
+          } else {
+            return false
+          }
+        }
+      }
+      i = i + 1
+    }
+    true
+  }
+
+  pub fn absorb_fn_block(expr: Expr) {
+    if b = expr.block {
+    } else {
+      return
+    }
+    want_n = expr.args.size + 1
+    take = false
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, expr.callee) {
+        if self.fn_is_visible(sig.node, self.current_module) {
+          if self.sig_is_instance(sig) {
+          } else {
+            if sig.params.size == want_n {
+              last = sig.params[want_n - 1]
+              if last.is_fn {
+                take = true
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if take {
+      if b = expr.block {
+        lam = Expr.new(ex_lambda(), b.loc)
+        lam.block = b
+        expr.args.push(lam)
+        expr.block = nil
+      }
+    }
+  }
+
+  pub fn dispatch_deferred(expr: Expr, expected: Ty?): Ty? {
+    deferred: Array(Int) = []
+    any = false
+    i = 0
+    while i < expr.args.size {
+      if self.arg_is_deferred(expr.args[i]) {
+        deferred.push(1)
+        any = true
+      } else {
+        deferred.push(0)
+      }
+      i = i + 1
+    }
+    if any {
+    } else {
+      return nil
+    }
+    hits = 0
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, expr.callee) {
+        if self.fn_is_visible(sig.node, self.current_module) {
+          if self.sig_is_instance(sig) {
+          } else {
+            if arity_ok(sig.node, expr.args.size) {
+              if self.deferred_slots_are_fn(sig, deferred) {
+                hits = hits + 1
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if hits == 0 {
+      return nil
+    }
+    ctypes: Array(Ty) = []
+    i = 0
+    while i < expr.args.size {
+      if deferred[i] == 1 {
+        ctypes.push(self.t_int())
+      } else {
+        ctypes.push(self.check_expr(expr.args[i]))
+      }
+      i = i + 1
+    }
+    if self.has_err {
+      return self.t_int()
+    }
+    cands: Array(FuncSig) = []
+    saw_generic = false
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, expr.callee) {
+        if self.fn_is_visible(sig.node, self.current_module) {
+          if self.sig_is_instance(sig) {
+          } else {
+            if arity_ok(sig.node, expr.args.size) {
+              if self.deferred_slots_are_fn(sig, deferred) {
+                if self.deferred_unifies(sig, deferred, ctypes) {
+                  cands.push(sig)
+                } else {
+                  if sig.node.generic {
+                    saw_generic = true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if cands.size == 0 {
+      if saw_generic {
+        self.fail(expr.loc, "cannot infer type argument")
+      } else {
+        self.fail(expr.loc, "unknown function ${expr.callee}")
+      }
+      return self.t_int()
+    }
+    if cands.size > 1 {
+      self.fail(expr.loc, "ambiguous call to ${expr.callee}")
+      return self.t_int()
+    }
+    self.finish_deferred(expr, cands[0], deferred, ctypes, expected)
+  }
+
+  pub fn finish_deferred(expr: Expr, chosen: FuncSig, deferred: Array(Int), ctypes: Array(Ty), expected: Ty?): Ty {
+    sig = chosen
+    keys: Array(String) = []
+    vals: Array(Ty) = []
+    if sig.node.generic {
+      i = 0
+      while i < deferred.size {
+        if deferred[i] == 0 {
+          if i < sig.params.size {
+            if self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+            } else {
+              self.fail(expr.loc, "cannot infer type argument")
+              return self.t_int()
+            }
+          }
+        }
+        i = i + 1
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if deferred[i] == 1 {
+        pty = sig.params[i]
+        if sig.node.generic {
+          pty = self.subst_ty(sig.params[i], keys, vals)
+        }
+        got = self.check_fn_arg(expr.args[i], pty)
+        if self.unify_ty(pty, got, keys, vals) {
+        } else {
+          if ty_assignable(got, pty) {
+          } else {
+            if self.fn_compatible(got, pty) {
+            } else {
+              n = i + 1
+              self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${pty.show}")
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if self.has_err {
+      return self.t_int()
+    }
+    if sig.node.generic {
+      if e = expected {
+        self.unify_ty(sig.ret, e, keys, vals)
+      }
+      subst: Array(Ty) = []
+      ti = 0
+      while ti < sig.node.type_params.size {
+        name = sig.node.type_params[ti]
+        if g = self.subst_get(keys, vals, name) {
+          subst.push(g)
+        } else {
+          self.fail(expr.loc, "cannot infer type argument")
+          return self.t_int()
+        }
+        ti = ti + 1
+      }
+      if inst = self.instantiate_function(sig, subst, expr.loc) {
+        sig = inst
+      } else {
+        return self.t_int()
+      }
+    }
+    expr.resolved = sig.node.emit_name
+    sig.ret
+  }
+
+  pub fn check_fn_arg(arg: Expr, want: Ty): Ty {
+    if arg.kind == ex_lambda() {
+      return self.check_lambda_against(arg, want)
+    }
+    if arg.kind == ex_name() {
+      return self.check_fn_ref(arg, want)
+    }
+    self.check_expr_as(arg, want)
+  }
+
+  pub fn check_fn_ref(expr: Expr, want: Ty): Ty {
+    cands: Array(FuncSig) = []
+    saw_generic = false
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, expr.ident) {
+        if self.fn_is_visible(sig.node, self.current_module) {
+          if self.sig_is_instance(sig) {
+          } else {
+            if sig.node.generic {
+              saw_generic = true
+            } else {
+              if self.fn_matches_want(sig, want) {
+                cands.push(sig)
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if cands.size == 1 {
+      chosen = cands[0]
+      expr.fn_ref = true
+      expr.resolved = chosen.node.emit_name
+      chosen.node.as_value = true
+      ty = self.fn_sig_ty(chosen)
+      expr.ty = ty
+      return ty
+    }
+    if cands.size > 1 {
+      self.fail(expr.loc, "ambiguous overload of ${expr.ident}")
+      return self.t_int()
+    }
+    if saw_generic {
+      self.fail(expr.loc, "generic function is not a value")
+      return self.t_int()
+    }
+    self.fail(expr.loc, "unknown function ${expr.ident}")
+    self.t_int()
+  }
+
+  pub fn check_fn_ref_bare(expr: Expr): Ty? {
+    cands: Array(FuncSig) = []
+    saw_generic = false
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if str_eq(sig.name, expr.ident) {
+        if self.fn_is_visible(sig.node, self.current_module) {
+          if self.sig_is_instance(sig) {
+          } else {
+            if sig.node.generic {
+              saw_generic = true
+            } else {
+              cands.push(sig)
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if cands.size == 1 {
+      chosen = cands[0]
+      expr.fn_ref = true
+      expr.resolved = chosen.node.emit_name
+      chosen.node.as_value = true
+      ty = self.fn_sig_ty(chosen)
+      expr.ty = ty
+      return ty
+    }
+    if cands.size > 1 {
+      self.fail(expr.loc, "ambiguous overload of ${expr.ident}")
+      return self.t_int()
+    }
+    if saw_generic {
+      self.fail(expr.loc, "generic function is not a value")
+      return self.t_int()
+    }
+    nil
+  }
+
+  pub fn check_indirect_call(expr: Expr, callee: Ty): Ty {
+    if callee.is_fn {
+    } else {
+      self.fail(expr.loc, "cannot call ${callee.show}")
+      return self.t_int()
+    }
+    expr.resolved = mangle_ty(callee)
+    ret = self.t_void()
+    if r = callee.inner {
+      ret = r
+    }
+    if b = expr.block {
+      self.fail(expr.loc, "function value does not take a block")
+      return ret
+    }
+    if expr.args.size != callee.members.size {
+      self.fail(expr.loc, "takes ${callee.members.size} arguments, got ${expr.args.size}")
+      return ret
+    }
+    i = 0
+    while i < expr.args.size {
+      got = self.check_expr_as(expr.args[i], callee.members[i])
+      if ty_assignable(got, callee.members[i]) {
+      } else {
+        if self.fn_compatible(got, callee.members[i]) {
+        } else {
+          n = i + 1
+          self.fail(expr.args[i].loc, "argument ${n} is ${got.show}, expected ${callee.members[i].show}")
+        }
+      }
+      i = i + 1
+    }
+    ret
+  }
+
+  pub fn check_lambda(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if has_want {
+      if want.is_fn {
+        return self.check_lambda_against(expr, want)
+      }
+      self.fail(expr.loc, "expected ${want.show}, got a lambda")
+      return self.t_int()
+    }
+    self.check_lambda_free(expr)
+  }
+
+  pub fn check_lambda_free(expr: Expr): Ty {
+    if b = expr.block {
+      params: Array(Ty) = []
+      i = 0
+      while i < b.params.size {
+        if i < b.param_types.size {
+          ann = b.param_types[i]
+          if self.ann_present(ann) {
+            pty = self.resolve_in_module(ann)
+            self.pull_resolve
+            params.push(pty)
+          } else {
+            self.fail(expr.loc, "lambda parameter needs a type")
+            return self.t_int()
+          }
+        } else {
+          self.fail(expr.loc, "lambda parameter needs a type")
+          return self.t_int()
+        }
+        i = i + 1
+      }
+      ret = ty_var("__fnret")
+      want = ty_fn(params, ret)
+      return self.check_lambda_against(expr, want)
+    }
+    self.fail(expr.loc, "lambda parameter needs a type")
+    self.t_int()
+  }
+
+  pub fn push_lambda(expr: Expr) {
+    self.push_scope
+    self.lam_exprs.push(expr)
+    self.lam_scopes.push(self.scopes.size - 1)
+  }
+
+  pub fn pop_lambda {
+    self.pop_scope
+    dummy = self.lam_exprs.pop
+    dummy2 = self.lam_scopes.pop
+  }
+
+  pub fn note_capture(name: String, ty: Ty) {
+    nlam = self.lam_exprs.size
+    if nlam == 0 {
+      return
+    }
+    idx = self.lookup_index(name)
+    if idx < 0 {
+      return
+    }
+    floor = self.lam_scopes[nlam - 1]
+    if idx >= floor {
+      return
+    }
+    lam = self.lam_exprs[nlam - 1]
+    seen = false
+    i = 0
+    while i < lam.cap_names.size {
+      if str_eq(lam.cap_names[i], name) {
+        seen = true
+      }
+      i = i + 1
+    }
+    if seen {
+    } else {
+      lam.cap_names.push(name)
+      lam.cap_tys.push(ty)
+    }
+    self.mark_box(name, idx)
+  }
+
+  pub fn mark_box(name: String, idx: Int) {
+    owner = 0 - 1
+    last = self.lam_exprs.size - 1
+    i = 0
+    while i < last {
+      if self.lam_scopes[i] <= idx {
+        owner = i
+      }
+      i = i + 1
+    }
+    if owner >= 0 {
+      self.add_name(self.lam_exprs[owner].box_names, name)
+    } else {
+      if fnn = self.current_fn {
+        self.add_name(fnn.box_names, name)
+      }
+    }
+  }
+
+  pub fn check_lambda_against(expr: Expr, want: Ty): Ty {
+    if b = expr.block {
+      if b.params.size != want.members.size {
+        self.fail(expr.loc, "lambda takes ${want.members.size} arguments, got ${b.params.size}")
+        return self.t_int()
+      }
+      i = 0
+      while i < want.members.size {
+        if self.ty_has_var(want.members[i]) {
+          self.fail(expr.loc, "lambda parameter needs a type")
+          return self.t_int()
+        }
+        i = i + 1
+      }
+      fresh: Array(String) = []
+      expr.cap_names = fresh
+      ft: Array(Ty) = []
+      expr.cap_tys = ft
+      self.push_lambda(expr)
+      i = 0
+      while i < b.params.size {
+        pty = want.members[i]
+        if i < b.param_types.size {
+          ann = b.param_types[i]
+          if self.ann_present(ann) {
+            got = self.resolve_in_module(ann)
+            self.pull_resolve
+            if got.same_as(pty) {
+            } else {
+              self.fail(b.loc, "lambda parameter is ${got.show}, expected ${pty.show}")
+            }
+            pty = got
+          }
+        }
+        self.bind(b.params[i], pty)
+        i = i + 1
+      }
+      ret = self.t_void()
+      if r = want.inner {
+        ret = r
+      }
+      result_ret = ret
+      if ret.is_var {
+        saved_infer = self.lambda_infer
+        saved_ty = self.inferred_ret
+        self.lambda_infer = true
+        self.inferred_ret = self.t_void()
+        self.check_body(b.body, self.t_void(), true)
+        result_ret = self.inferred_ret
+        self.lambda_infer = saved_infer
+        self.inferred_ret = saved_ty
+      } else {
+        self.check_body(b.body, ret, true)
+      }
+      self.pop_lambda
+      if result_ret.is_void {
+      } else {
+        if result_ret.is_var {
+          self.fail(expr.loc, "cannot infer type argument")
+          result_ret = self.t_void()
+        }
+      }
+      ps: Array(Ty) = []
+      i = 0
+      while i < want.members.size {
+        ps.push(want.members[i])
+        i = i + 1
+      }
+      out = ty_fn(ps, result_ret)
+      expr.ty = out
+      return out
+    }
+    self.fail(expr.loc, "lambda parameter needs a type")
+    self.t_int()
   }
 }

@@ -24,6 +24,7 @@ pub fn tyk_opaque: Int { 17 }
 pub fn tyk_var: Int { 18 }
 pub fn tyk_module: Int { 19 }
 pub fn tyk_clayout: Int { 20 }
+pub fn tyk_fn: Int { 21 }
 
 pub fn str_lt(a: String, b: String): Bool {
   n = a.size
@@ -97,6 +98,7 @@ pub class Ty {
   pub fn is_join: Bool { self.kind == tyk_join() }
   pub fn is_opaque: Bool { self.kind == tyk_opaque() }
   pub fn is_clayout: Bool { self.kind == tyk_clayout() }
+  pub fn is_fn: Bool { self.kind == tyk_fn() }
   pub fn is_var: Bool { self.kind == tyk_var() }
   pub fn is_module: Bool { self.kind == tyk_module() }
   pub fn is_agg: Bool {
@@ -237,6 +239,25 @@ pub class Ty {
         i = i + 1
       }
       return true
+    }
+    if k == tyk_fn() {
+      if self.members.size != other.members.size {
+        return false
+      }
+      i = 0
+      while i < self.members.size {
+        if self.members[i].same_as(other.members[i]) {
+        } else {
+          return false
+        }
+        i = i + 1
+      }
+      if a = self.inner {
+        if b = other.inner {
+          return a.same_as(b)
+        }
+      }
+      return false
     }
     false
   }
@@ -392,7 +413,30 @@ pub class Ty {
     if k == tyk_union() {
       return self.show_union
     }
+    if k == tyk_fn() {
+      return self.show_fn
+    }
     self.name
+  }
+
+  pub fn show_fn: String {
+    buf = buf_new()
+    buf.push_str("fn(")
+    i = 0
+    while i < self.members.size {
+      if i > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str(self.members[i].show)
+      i = i + 1
+    }
+    buf.push_str("): ")
+    if r = self.inner {
+      buf.push_str(r.show)
+    } else {
+      buf.push_str("Void")
+    }
+    buf.to_s
   }
 
   pub fn show_union: String {
@@ -472,6 +516,13 @@ pub fn ty_hash(key: Ty, val: Ty): Ty {
 pub fn ty_named(kind: Int, name: String): Ty {
   t = Ty.new(kind)
   t.name = name
+  t
+}
+
+pub fn ty_fn(params: Array(Ty), ret: Ty): Ty {
+  t = Ty.new(tyk_fn())
+  t.members = params
+  t.inner = ret
   t
 }
 

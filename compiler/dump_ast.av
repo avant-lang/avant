@@ -34,6 +34,27 @@ pub fn dump_type(t: TypeName): String {
   if sp = t.splice {
     return dump_expr(sp)
   }
+  if t.fn_type {
+    buf = buf_new()
+    buf.push_str("fn(")
+    i = 0
+    while i < t.args.size {
+      if i > 0 {
+        buf.push_str(",")
+      }
+      buf.push_str(dump_type(t.args[i]))
+      i = i + 1
+    }
+    buf.push_str(")")
+    if r = t.ret {
+      buf.push_str(":")
+      buf.push_str(dump_type(r))
+    }
+    if t.nilable {
+      buf.push_str("?")
+    }
+    return buf.to_s
+  }
   buf = buf_new()
   if t.members.size > 0 {
     i = 0

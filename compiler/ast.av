@@ -24,6 +24,7 @@ pub fn ex_try: Int { 16 }
 pub fn ex_interp: Int { 17 }
 pub fn ex_switch: Int { 18 }
 pub fn ex_splice: Int { 19 }
+pub fn ex_lambda: Int { 20 }
 
 pub fn st_expr: Int { 1 }
 pub fn st_return: Int { 2 }
@@ -42,6 +43,8 @@ pub class TypeName {
   members: Array(TypeName)
   mod_name: String = ""
   splice: Expr? = nil
+  fn_type: Bool = false
+  ret: TypeName? = nil
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -52,6 +55,7 @@ pub class TypeName {
     self.members = m
     self.nilable = false
     self.mod_name = ""
+    self.fn_type = false
   }
 }
 
@@ -93,12 +97,15 @@ pub class SwitchCase {
 pub class Block {
   loc: Location
   params: Array(String)
+  param_types: Array(TypeName)
   body: Array(Stmt)
 
   fn initialize(loc: Location) {
     self.loc = loc
     p: Array(String) = []
     self.params = p
+    pt: Array(TypeName) = []
+    self.param_types = pt
     b: Array(Stmt) = []
     self.body = b
   }
@@ -143,6 +150,9 @@ pub class Expr {
   resolved: String = ""
   cap_names: Array(String)
   cap_tys: Array(Ty)
+  box_names: Array(String)
+  indirect: Bool = false
+  fn_ref: Bool = false
   vis: Bool = false
   mod_name: String = ""
   splice: Expr? = nil
@@ -168,8 +178,12 @@ pub class Expr {
     self.cap_names = cn
     ct: Array(Ty) = []
     self.cap_tys = ct
+    bn: Array(String) = []
+    self.box_names = bn
     self.spawn_thunk = ""
     self.resolved = ""
+    self.indirect = false
+    self.fn_ref = false
     self.vis = false
     self.mod_name = ""
   }
@@ -243,6 +257,8 @@ pub class Function {
   vis: Bool = false
   mod_name: String = ""
   name_splice: Expr? = nil
+  box_names: Array(String)
+  as_value: Bool = false
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -254,10 +270,13 @@ pub class Function {
     self.emit_name = name
     tp: Array(String) = []
     self.type_params = tp
+    bx: Array(String) = []
+    self.box_names = bx
     self.generic = false
     self.ol_index = 0
     self.vis = false
     self.mod_name = ""
+    self.as_value = false
   }
 }
 
@@ -520,8 +539,12 @@ pub fn clone_type_name(tn: TypeName): TypeName {
   out = TypeName.new(tn.loc, tn.name)
   out.nilable = tn.nilable
   out.mod_name = tn.mod_name
+  out.fn_type = tn.fn_type
   if sp = tn.splice {
     out.splice = clone_expr(sp)
+  }
+  if r = tn.ret {
+    out.ret = clone_type_name(r)
   }
   i = 0
   while i < tn.args.size {
@@ -537,6 +560,20 @@ pub fn clone_type_name(tn: TypeName): TypeName {
 }
 
 pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): TypeName {
+  if tn.fn_type {
+    out = TypeName.new(tn.loc, "")
+    out.fn_type = true
+    out.nilable = tn.nilable
+    i = 0
+    while i < tn.args.size {
+      out.args.push(subst_type_name(tn.args[i], from, to))
+      i = i + 1
+    }
+    if r = tn.ret {
+      out.ret = subst_type_name(r, from, to)
+    }
+    return out
+  }
   if tn.members.size > 0 {
     out = TypeName.new(tn.loc, "")
     out.nilable = tn.nilable
@@ -581,6 +618,17 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
 }
 
 pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Array(String)) {
+  if tn.fn_type {
+    i = 0
+    while i < tn.args.size {
+      type_name_unbound_names(tn.args[i], named, into)
+      i = i + 1
+    }
+    if r = tn.ret {
+      type_name_unbound_names(r, named, into)
+    }
+    return
+  }
   if tn.members.size > 0 {
     i = 0
     while i < tn.members.size {
@@ -666,6 +714,11 @@ pub fn clone_block(b: Block): Block {
     i = i + 1
   }
   i = 0
+  while i < b.param_types.size {
+    out.param_types.push(clone_type_name(b.param_types[i]))
+    i = i + 1
+  }
+  i = 0
   while i < b.body.size {
     out.body.push(clone_stmt(b.body[i]))
     i = i + 1
@@ -690,6 +743,10 @@ pub fn clone_expr(e: Expr): Expr {
   out.has_else = e.has_else
   out.vis = e.vis
   out.mod_name = e.mod_name
+  out.indirect = e.indirect
+  out.fn_ref = e.fn_ref
+  out.resolved = e.resolved
+  out.spawn_thunk = e.spawn_thunk
   if sp = e.splice {
     out.splice = clone_expr(sp)
   }
@@ -751,6 +808,21 @@ pub fn clone_expr(e: Expr): Expr {
   }
   if b = e.block {
     out.block = clone_block(b)
+  }
+  i = 0
+  while i < e.cap_names.size {
+    out.cap_names.push(e.cap_names[i])
+    i = i + 1
+  }
+  i = 0
+  while i < e.cap_tys.size {
+    out.cap_tys.push(e.cap_tys[i])
+    i = i + 1
+  }
+  i = 0
+  while i < e.box_names.size {
+    out.box_names.push(e.box_names[i])
+    i = i + 1
   }
   if t = e.elem_type {
     out.elem_type = clone_type_name(t)
@@ -830,6 +902,12 @@ pub fn clone_function(fnn: Function): Function {
   out.ol_index = fnn.ol_index
   out.vis = fnn.vis
   out.mod_name = fnn.mod_name
+  out.as_value = fnn.as_value
+  i = 0
+  while i < fnn.box_names.size {
+    out.box_names.push(fnn.box_names[i])
+    i = i + 1
+  }
   if sp = fnn.name_splice {
     out.name_splice = clone_expr(sp)
   }
@@ -889,6 +967,11 @@ pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
   subst_type_in_stmts(e.else_body, from, to)
   if b = e.block {
     subst_type_in_stmts(b.body, from, to)
+    i = 0
+    while i < b.param_types.size {
+      b.param_types[i] = subst_type_name(b.param_types[i], from, to)
+      i = i + 1
+    }
   }
   if t = e.elem_type {
     e.elem_type = subst_type_name(t, from, to)
@@ -977,6 +1060,9 @@ pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
   }
   if x = e.inner {
     e.inner = rewrite_expr_names(x, from, to)
+  }
+  if b = e.block {
+    rewrite_stmt_names_body(b.body, from, to)
   }
   if x = e.size_expr {
     e.size_expr = rewrite_expr_names(x, from, to)

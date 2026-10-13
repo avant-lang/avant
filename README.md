@@ -109,6 +109,8 @@ New names are block-scoped. `=` to an existing enclosing name assigns outward. M
 
 `switch` / `case` is Int (or Bool) only; a value switch needs `else`.
 
+A function value has type `fn(T): U`. An omitted return is `Void`. Spellings: `fn(): Int`, `fn(Int): Int`, `fn(Int, String): Bool`. The type is invariant. A bare function name in that context is the value. `{ |x| x + 1 }` is a lambda. A zero-argument lambda is `{ || ... }`, because `||` is one token. A trailing block on a call whose last parameter is a `fn` is that argument. A name the lambda uses from an outer function is a shared cell: an assignment on either side is visible to the other. `each`, `spawn`, and `.parallel` keep their own blocks, and `each` stays inlined. Methods are not values. Call a function field as `(box.f)()`. There is no `==` on a `fn` value. `Array(T).new` takes a size; an empty array with a known element type is `ys: Array(Int) = []`.
+
 ```avant
 fn name_of(kind: Int): String {
   switch kind {
@@ -116,6 +118,20 @@ fn name_of(kind: Int): String {
     case 1, 2 { "ident-or-int" }
     else { "other" }
   }
+}
+
+fn inc(n: Int): Int {
+  n + 1
+}
+
+fn map(xs: Array(T), f: fn(T): U): Array(U) {
+  ys: Array(U) = []
+  xs.each { |x| ys.push(f(x)) }
+  ys
+}
+
+fn add(n: Int): fn(Int): Int {
+  { |x| x + n }
 }
 ```
 
@@ -259,7 +275,6 @@ These are decided. They are **not** shipping. Do not read a target sketch as a t
 
 | What | Status |
 | --- | --- |
-| First-class `fn(T): U` values | decided, not shipping |
 | Generic structs and classes | decided, not shipping |
 | Named interfaces | decided, not shipping |
 | Real `.parallel` / `Channel(T)` / `Mutex(T)` | decided, not shipping |

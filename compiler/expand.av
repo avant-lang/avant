@@ -270,6 +270,9 @@ pub class Expander {
       i = i + 1
     }
     tn.args = args
+    if r = tn.ret {
+      tn.ret = self.fill_type_name(r)
+    }
     members: Array(TypeName) = []
     i = 0
     while i < tn.members.size {
@@ -375,6 +378,20 @@ pub class Expander {
       }
       e.args = args
       if b = e.block {
+        b.body = self.fill_stmt_list(b.body)
+      }
+      if inner = e.inner {
+        e.inner = self.fill_expr(inner)
+      }
+      return e
+    }
+    if k == ex_lambda() {
+      if b = e.block {
+        i = 0
+        while i < b.param_types.size {
+          b.param_types[i] = self.fill_type_name(b.param_types[i])
+          i = i + 1
+        }
         b.body = self.fill_stmt_list(b.body)
       }
       return e
