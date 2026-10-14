@@ -1,0 +1,65 @@
+# Crystal src/ still builds A. Not the merge gate.
+#
+# A red job here means the frozen host can no longer compile compiler/main.av
+# or run examples/hello.av. It does not fail `native`. Do not mark this
+# workflow as a required status check.
+#
+# myc-llvm is built the same way as native.yml. The host compiles the
+# runtime objects itself.
+
+name: recovery
+
+"on":
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crystal-a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LLVM_CONFIG: llvm-config-20
+      AVANT_ROOT: ${{ github.workspace }}
+      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: avant-lang/safepoints
+          path: safepoints
+          persist-credentials: false
+
+      - name: Install LLVM 20 and link libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            llvm-20-dev \
+            libpcre2-dev \
+            zlib1g-dev
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.21"
+
+      - name: Build myc-llvm
+        working-directory: safepoints
+        run: |
+          shards install
+          crystal build src/cli.cr -o myc-llvm
+
+      - name: Crystal → A
+        run: crystal src/cli.cr compile compiler/main.av bin/avant-av
+
+      - name: A runs hello
+        run: ./bin/avant-av run examples/hello.av

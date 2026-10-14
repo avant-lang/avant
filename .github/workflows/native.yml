@@ -1,11 +1,17 @@
-# Crystal → A → B, then native suite on B. Required gate.
+# v0.4.0 seed → B, then native suite on B. Required gate.
 #
-# Avant does not Crystal-require myc or myc_llvm_safepoints. It shells out
-# to a myc-llvm *binary*. This job checks out avant-lang/safepoints; that
-# shard's shard.yml pulls kostya/myc; `crystal build src/cli.cr` overlays
-# safepoints on myc and writes myc-llvm. AVANT_MYC_LLVM points Avant at it.
-# Pin `ref` on the safepoints checkout when a tag exists.
-# Tag pushes are `release.yml` (binary attached to a GitHub Release).
+# The seed is the published pre-release asset avant-linux-x86_64.tar.gz
+# (binary `avant`). It compiles compiler/main.av into B with coverage on.
+# Runtime objects come from runtime/build.sh. Crystal src/ is not on this
+# path; recovery.yml still builds A from src/.
+#
+# myc-llvm stays a Crystal build (Q53-A). This job checks out
+# avant-lang/safepoints; that shard's shard.yml pulls kostya/myc;
+# `crystal build src/cli.cr` overlays safepoints on myc and writes myc-llvm.
+# AVANT_MYC_LLVM points Avant at it. Pin `ref` on the safepoints checkout
+# when a tag exists.
+#
+# Tag pushes are `release.yml` (still Crystal → A until a later change).
 # `native` also writes junit.xml and lcov.info (soft Codecov; not the merge gate).
 # Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is quiet anyway so
 # `run FILE.av` stdout stays the program. A `--coverage` fixture still prints.
@@ -64,14 +70,25 @@ jobs:
           shards install
           crystal build src/cli.cr -o myc-llvm
 
-      - name: Crystal → A
-        run: crystal src/cli.cr compile compiler/main.av bin/avant-av
+      - name: Build runtime objects
+        run: sh runtime/build.sh
 
-      - name: A → B
+      - name: Download v0.4.0 compiler
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/avant-seed.tar.gz \
+            https://github.com/avant-lang/avant/releases/download/v0.4.0/avant-linux-x86_64.tar.gz
+          tar -C /tmp -xzf /tmp/avant-seed.tar.gz
+          test -x /tmp/avant-linux-x86_64/avant
+
+      - name: Seed → B
         env:
           AVANT_COVERAGE: "1"
           AVANT_COVERAGE_MAP: ${{ github.workspace }}/coverage.map
-        run: ./bin/avant-av compile compiler/main.av bin/avant-av-b
+        run: |
+          set -euo pipefail
+          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-av-b
+          ./bin/avant-av-b run examples/hello.av
 
       - name: Native suite on B
         env:
