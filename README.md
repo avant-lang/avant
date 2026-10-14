@@ -2,7 +2,7 @@
 
 Avant is a systems language: required braces, type inference, automatic memory management with GenImmix, and ahead-of-time compilation to native code.
 
-The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted and compiles itself. Crystal `src/` only builds the first binary, and it is frozen. The backend is still [myc](https://github.com/kostya/myc): the compiler emits myc IR and runs `myc-llvm`.
+The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted and compiles itself. The backend is still [myc](https://github.com/kostya/myc): the compiler emits myc IR and runs `myc-llvm`. Building `myc-llvm` from the safepoints shard still uses Crystal. That Crystal is not in this repository.
 
 ## Index
 
@@ -30,22 +30,22 @@ The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted an
 
 ### Requirements
 
-Crystal 1.21, a C compiler (`cc`), LLVM 20, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang.
+A published `avant` compiler (the `v0.4.0` seed or newer), a C compiler (`cc`), LLVM 20, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard.
 
 ### Build a compiler
 
 From this directory:
 
 ```
-crystal src/cli.cr compile compiler/main.av bin/avant-av
-./bin/avant-av compile compiler/main.av bin/avant-av-b
-./bin/avant-av-b run examples/hello.av
+sh runtime/build.sh
+/path/to/avant compile compiler/main.av bin/avant
+./bin/avant run examples/hello.av
 ```
 
-Crystal builds **A** (`bin/avant-av`). A builds **B**. After the first A exists, rebuild with B:
+The published compiler builds the next one. After `bin/avant` exists, rebuild with it:
 
 ```
-./bin/avant-av-b compile compiler/main.av bin/avant-av-b
+./bin/avant compile compiler/main.av bin/avant
 ```
 
 `AVANT_ROOT` overrides where the compiler looks for `runtime/build`.
@@ -54,7 +54,7 @@ Crystal builds **A** (`bin/avant-av`). A builds **B**. After the first A exists,
 
 Daily compiles pass myc-llvm `--debug`. That is fast instruction selection. The compiler's own frontend takes about the same time either way. Safepoints stay on, so the copying nursery still sees stack maps.
 
-`AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slower compile, more LLVM optimization). Crystal `src/` is frozen, so the Crystal → A step still uses myc's default. The A it writes then passes `--debug`.
+`AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slower compile, more LLVM optimization). A daily compiler passes `--debug`.
 
 ## Programs
 
@@ -672,7 +672,7 @@ Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compres
 .av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
 ```
 
-`src/` is the frozen Crystal compiler that can still build A. It is recovery, not the compiler you change. New language goes in `compiler/*.av` only, and those files stay in the syntax Crystal can still parse, so the compiler's own source does not use `fn` types, brace lambdas, generic struct or class declarations, or `interface`.
+New language goes in `compiler/*.av`. The compiler is that tree. A published seed builds it. Git history still has the old Crystal host.
 
 ```
 ./bin/avant-av-b run FILE.av
@@ -684,7 +684,7 @@ Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compres
 
 ## Tests
 
-The daily proof is the native suite on B or on the next compiler, C. `crystal spec` is recovery.
+The daily proof is the native suite on B or on the next compiler, C.
 
 ```
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
