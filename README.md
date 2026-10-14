@@ -36,7 +36,7 @@ crystal src/cli.cr compile compiler/main.av bin/avant-av
 ./bin/avant-av-b run examples/hello.av
 ```
 
-`AVANT_ROOT` and `AVANT_MYC_LLVM` override discovery. `AVANT_MYC_FINAL=1` asks myc-llvm for `--final` (slow compile, more LLVM opts). Daily builds use myc-llvm default.
+`AVANT_ROOT` and `AVANT_MYC_LLVM` override discovery. Daily builds pass myc-llvm `--debug` (fast codegen; the compiler frontend stays the same speed). `AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slow compile, more LLVM opts). Crystal `src/` is frozen and still invokes myc at its default when it builds A.
 
 ## Language
 
@@ -267,6 +267,14 @@ Helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av
 
 The product emit is still myc IR. Identity is the compiler you trust. Crystal `src/` still builds A if you need recovery.
 
+`format` reprints a file. It does not compile it. Stdout is the default. `--check` prints `canonical` or `would change PATH`. `--write` replaces the file.
+
+```
+./bin/avant-av-b format FILE.av
+./bin/avant-av-b format FILE.av --check
+./bin/avant-av-b format FILE.av --write
+```
+
 ## Tests
 
 Daily proof is the native suite on identity **B** or **C**. Recovery is `crystal spec`.
@@ -286,7 +294,7 @@ These are decided. They are **not** shipping. Do not read a target sketch as a t
 | What | Status |
 | --- | --- |
 | Statement-form `parallel { }` | decided, not shipping |
-| Formatter, packages, HTTP *server* | decided, not shipping |
+| Packages, HTTP *server* | decided, not shipping |
 
 ## Goals
 

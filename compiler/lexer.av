@@ -66,6 +66,7 @@ pub class Lexer {
   err: CompileError? = nil
   str_kind: Int = 0
   str_frag: String = ""
+  keep_comments: Bool = false
 
   fn initialize(source: Source) {
     self.source = source
@@ -83,6 +84,7 @@ pub class Lexer {
     self.err = nil
     self.str_kind = 0
     self.str_frag = ""
+    self.keep_comments = false
   }
 
   pub fn has_err: Bool {
@@ -507,6 +509,9 @@ pub class Lexer {
   }
 
   pub fn read_string_token(loc: Location): Token {
+    if self.keep_comments {
+      return self.read_string_token_format(loc)
+    }
     self.bump
     self.read_string_body
     if self.has_err {
@@ -709,6 +714,7 @@ pub class Lexer {
     }
   }
 
+  // compile, run, and dump use tokenize. format uses tokenize_format.
   pub fn tokenize: Array(Token) {
     tokens: Array(Token) = []
     last_kind = 0 - 1
@@ -746,6 +752,261 @@ pub class Lexer {
         tokens.push(t)
         last_kind = t.kind
       }
+    }
+    tokens.push(Token.new(tk_eof(), self.here, ""))
+    tokens
+  }
+
+  pub fn only_ws_before(at: Int): Bool {
+    i = at
+    while i > 0 {
+      c = self.source.text[i - 1]
+      if c == 10 {
+        return true
+      }
+      if c == 32 {
+      } else if c == 9 {
+      } else if c == 13 {
+      } else {
+        return false
+      }
+      i = i - 1
+    }
+    true
+  }
+
+  pub fn line_begin_at(at: Int): Int {
+    i = at
+    while i > 0 {
+      if self.source.text[i - 1] == 10 {
+        return i
+      }
+      i = i - 1
+    }
+    0
+  }
+
+  pub fn comment_is_file_directive: Bool {
+    if self.peek != 47 {
+      return false
+    }
+    if self.peek_at(1) != 47 {
+      return false
+    }
+    if self.peek_at(2) != 32 {
+      return false
+    }
+    if self.peek_at(3) != 102 {
+      return false
+    }
+    if self.peek_at(4) != 105 {
+      return false
+    }
+    if self.peek_at(5) != 108 {
+      return false
+    }
+    if self.peek_at(6) != 101 {
+      return false
+    }
+    if self.peek_at(7) != 58 {
+      return false
+    }
+    self.peek_at(8) == 32
+  }
+
+  pub fn consume_comment_body {
+    while true {
+      if self.at_end {
+        return
+      }
+      c = self.peek
+      if c == 10 {
+        return
+      }
+      if c == 13 {
+        return
+      }
+      self.bump
+    }
+  }
+
+  pub fn read_format_comment: Token {
+    loc = self.here
+    start = self.pos
+    file_line = self.comment_is_file_directive
+    self.consume_comment_body
+    if file_line {
+      path_at = start + 9
+      if path_at < self.pos {
+        self.path = self.intern_str(str_slice(self.source.text, path_at, self.pos))
+      } else {
+        self.path = self.intern_str("")
+      }
+      self.line = 0
+      self.column = 1
+      if self.only_ws_before(start) {
+        begin = self.line_begin_at(start)
+        raw = str_slice(self.source.text, begin, self.pos)
+        return Token.new(tk_file_line(), loc, raw)
+      }
+      raw_mid = str_slice(self.source.text, start, self.pos)
+      return Token.new(tk_comment(), loc, raw_mid)
+    }
+    raw = str_slice(self.source.text, start, self.pos)
+    Token.new(tk_comment(), loc, raw)
+  }
+
+  pub fn read_string_token_format(loc: Location): Token {
+    open_pos = self.pos
+    self.bump
+    self.read_string_body
+    if self.has_err {
+      return Token.new(tk_eof(), loc, "")
+    }
+    if self.str_kind == 0 {
+      raw = str_slice(self.source.text, open_pos, self.pos)
+      return Token.new(tk_string(), loc, raw)
+    }
+    if self.str_kind == 1 {
+      raw_open = str_slice(self.source.text, open_pos, self.pos)
+      rest = self.lex_interpolation_format
+      if self.has_err {
+        return Token.new(tk_eof(), loc, "")
+      }
+      i = 0
+      while i < rest.size {
+        self.queue_push(rest[i])
+        i = i + 1
+      }
+      return Token.new(tk_interp_open(), loc, raw_open)
+    }
+    self.fail_tok(loc, "unterminated string")
+  }
+
+  pub fn lex_interp_expr_format: Array(Token) {
+    tokens: Array(Token) = []
+    depth = 0
+    while true {
+      if self.has_err {
+        return tokens
+      }
+      self.skip_spaces
+      if self.at_end {
+        dummy = self.fail_tok(self.here, "unterminated string interpolation")
+        return tokens
+      }
+      if self.peek == 10 {
+        loc = self.here
+        self.bump
+        tokens.push(Token.new(tk_newline(), loc, ""))
+        continue
+      }
+      if self.peek == 47 {
+        if self.peek_next == 47 {
+          tok = self.read_format_comment
+          tokens.push(tok)
+          continue
+        }
+      }
+      tok = self.read_token
+      if self.has_err {
+        return tokens
+      }
+      if tok.kind == tk_l_brace() {
+        depth = depth + 1
+        tokens.push(tok)
+      } else if tok.kind == tk_r_brace() {
+        if depth == 0 {
+          return tokens
+        }
+        depth = depth - 1
+        tokens.push(tok)
+      } else if tok.kind == tk_interp_open() {
+        dummy2 = self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
+        return tokens
+      } else {
+        tokens.push(tok)
+      }
+    }
+    tokens
+  }
+
+  pub fn lex_interpolation_format: Array(Token) {
+    tokens: Array(Token) = []
+    while true {
+      if self.has_err {
+        return tokens
+      }
+      expr = self.lex_interp_expr_format
+      if self.has_err {
+        return tokens
+      }
+      body_start = self.pos
+      self.read_string_body
+      if self.has_err {
+        return tokens
+      }
+      raw = str_slice(self.source.text, body_start, self.pos)
+      i = 0
+      while i < expr.size {
+        tokens.push(expr[i])
+        i = i + 1
+      }
+      if self.str_kind == 0 {
+        tokens.push(Token.new(tk_interp_close(), self.here, raw))
+        return tokens
+      }
+      if self.str_kind == 1 {
+        tokens.push(Token.new(tk_interp_mid(), self.here, raw))
+      } else {
+        return tokens
+      }
+    }
+    tokens
+  }
+
+  pub fn tokenize_format: Array(Token) {
+    self.keep_comments = true
+    tokens: Array(Token) = []
+    while true {
+      if self.has_err {
+        break
+      }
+      self.skip_spaces
+      if self.at_end {
+        if self.queue_empty {
+          break
+        }
+      }
+      if self.queue_empty {
+        if self.at_end {
+          break
+        }
+        if self.peek == 47 {
+          if self.peek_next == 47 {
+            tok = self.read_format_comment
+            tokens.push(tok)
+            continue
+          }
+        }
+        if self.peek == 10 {
+          loc = self.here
+          self.bump
+          tokens.push(Token.new(tk_newline(), loc, ""))
+          continue
+        }
+        t = self.read_token
+        if self.has_err {
+          break
+        }
+        tokens.push(t)
+      } else {
+        t = self.queue_take
+        tokens.push(t)
+      }
+    }
+    if self.has_err {
+      return tokens
     }
     tokens.push(Token.new(tk_eof(), self.here, ""))
     tokens

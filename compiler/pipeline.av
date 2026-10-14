@@ -418,6 +418,27 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
   split
 }
 
+pub fn myc_wants_final: Bool {
+  if v = env_get("AVANT_MYC_FINAL") {
+    if str_eq(v, "1") {
+      return true
+    }
+  }
+  false
+}
+
+pub fn myc_wants_debug: Bool {
+  if myc_wants_final() {
+    return false
+  }
+  if v = env_get("AVANT_MYC_DEBUG") {
+    if str_eq(v, "0") {
+      return false
+    }
+  }
+  true
+}
+
 pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String): Int {
   stamp = now_ms()
   ir_path = "/tmp/avant-av-${stamp}.myc"
@@ -437,10 +458,10 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   args.push("MYC_LINKER_FLAGS=${flags}")
   args.push(myc)
   args.push(mode)
-  if v = env_get("AVANT_MYC_FINAL") {
-    if str_eq(v, "1") {
-      args.push("--final")
-    }
+  if myc_wants_final() {
+    args.push("--final")
+  } else if myc_wants_debug() {
+    args.push("--debug")
   }
   // myc-llvm GC safepoints: names stay Avant C symbols; myc only sees these flags.
   args.push("--gc-root=avant_gc_root")

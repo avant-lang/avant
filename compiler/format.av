@@ -1,0 +1,664 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+
+pub class FormatResult {
+  ok: Bool = false
+  text: String = ""
+  err: String = ""
+
+  fn initialize(ok: Bool, text: String, err: String) {
+    self.ok = ok
+    self.text = text
+    self.err = err
+  }
+}
+
+pub fn token_text(t: Token): String {
+  k = t.kind
+  if k == tk_ident() {
+    return t.value
+  }
+  if k == tk_integer() {
+    return t.value
+  }
+  if k == tk_float() {
+    return t.value
+  }
+  if k == tk_string() {
+    return t.value
+  }
+  if k == tk_comment() {
+    return t.value
+  }
+  if k == tk_file_line() {
+    return t.value
+  }
+  if k == tk_interp_open() {
+    return t.value
+  }
+  if k == tk_interp_mid() {
+    return t.value
+  }
+  if k == tk_interp_close() {
+    return t.value
+  }
+  if k == tk_fn() {
+    return "fn"
+  }
+  if k == tk_if() {
+    return "if"
+  }
+  if k == tk_else() {
+    return "else"
+  }
+  if k == tk_return() {
+    return "return"
+  }
+  if k == tk_struct() {
+    return "struct"
+  }
+  if k == tk_class() {
+    return "class"
+  }
+  if k == tk_lib() {
+    return "lib"
+  }
+  if k == tk_fun() {
+    return "fun"
+  }
+  if k == tk_self() {
+    return "self"
+  }
+  if k == tk_while() {
+    return "while"
+  }
+  if k == tk_true() {
+    return "true"
+  }
+  if k == tk_false() {
+    return "false"
+  }
+  if k == tk_nil() {
+    return "nil"
+  }
+  if k == tk_spawn() {
+    return "spawn"
+  }
+  if k == tk_break() {
+    return "break"
+  }
+  if k == tk_continue() {
+    return "continue"
+  }
+  if k == tk_switch() {
+    return "switch"
+  }
+  if k == tk_case() {
+    return "case"
+  }
+  if k == tk_import() {
+    return "import"
+  }
+  if k == tk_pub() {
+    return "pub"
+  }
+  if k == tk_quote() {
+    return "quote"
+  }
+  if k == tk_comptime() {
+    return "comptime"
+  }
+  if k == tk_interface() {
+    return "interface"
+  }
+  if k == tk_plus_eq() {
+    return "+="
+  }
+  if k == tk_minus_eq() {
+    return "-="
+  }
+  if k == tk_star_eq() {
+    return "*="
+  }
+  if k == tk_slash_eq() {
+    return "/="
+  }
+  if k == tk_l_brace() {
+    return "{"
+  }
+  if k == tk_r_brace() {
+    return "}"
+  }
+  if k == tk_l_paren() {
+    return "("
+  }
+  if k == tk_r_paren() {
+    return ")"
+  }
+  if k == tk_l_bracket() {
+    return "["
+  }
+  if k == tk_r_bracket() {
+    return "]"
+  }
+  if k == tk_comma() {
+    return ","
+  }
+  if k == tk_colon() {
+    return ":"
+  }
+  if k == tk_dot() {
+    return "."
+  }
+  if k == tk_plus() {
+    return "+"
+  }
+  if k == tk_minus() {
+    return "-"
+  }
+  if k == tk_star() {
+    return "*"
+  }
+  if k == tk_slash() {
+    return "/"
+  }
+  if k == tk_percent() {
+    return "%"
+  }
+  if k == tk_eq() {
+    return "="
+  }
+  if k == tk_eq_eq() {
+    return "=="
+  }
+  if k == tk_not_eq() {
+    return "!="
+  }
+  if k == tk_less() {
+    return "<"
+  }
+  if k == tk_less_eq() {
+    return "<="
+  }
+  if k == tk_greater() {
+    return ">"
+  }
+  if k == tk_greater_eq() {
+    return ">="
+  }
+  if k == tk_bang() {
+    return "!"
+  }
+  if k == tk_question() {
+    return "?"
+  }
+  if k == tk_pipe() {
+    return "|"
+  }
+  if k == tk_pipe_pipe() {
+    return "||"
+  }
+  if k == tk_amp() {
+    return "&"
+  }
+  if k == tk_amp_amp() {
+    return "&&"
+  }
+  if k == tk_caret() {
+    return "^"
+  }
+  if k == tk_tilde() {
+    return "~"
+  }
+  if k == tk_less_less() {
+    return "<<"
+  }
+  if k == tk_greater_greater() {
+    return ">>"
+  }
+  if k == tk_pound() {
+    return "#"
+  }
+  ""
+}
+
+pub fn push_token(buf: Buf, t: Token) {
+  k = t.kind
+  if k == tk_interp_mid() {
+    buf.push_byte(125)
+  } else if k == tk_interp_close() {
+    buf.push_byte(125)
+  }
+  buf.push_str(token_text(t))
+}
+
+pub fn tight_before(k: Int): Bool {
+  if k == tk_colon() {
+    return true
+  }
+  if k == tk_comma() {
+    return true
+  }
+  if k == tk_l_paren() {
+    return true
+  }
+  if k == tk_dot() {
+    return true
+  }
+  if k == tk_question() {
+    return true
+  }
+  if k == tk_r_paren() {
+    return true
+  }
+  if k == tk_r_bracket() {
+    return true
+  }
+  if k == tk_interp_mid() {
+    return true
+  }
+  k == tk_interp_close()
+}
+
+pub fn tight_after_kind(k: Int): Bool {
+  if k == tk_l_paren() {
+    return true
+  }
+  if k == tk_l_bracket() {
+    return true
+  }
+  if k == tk_dot() {
+    return true
+  }
+  if k == tk_pound() {
+    return true
+  }
+  if k == tk_bang() {
+    return true
+  }
+  if k == tk_tilde() {
+    return true
+  }
+  if k == tk_interp_open() {
+    return true
+  }
+  k == tk_interp_mid()
+}
+
+pub fn value_end(k: Int): Bool {
+  if k == tk_ident() {
+    return true
+  }
+  if k == tk_integer() {
+    return true
+  }
+  if k == tk_float() {
+    return true
+  }
+  if k == tk_string() {
+    return true
+  }
+  if k == tk_true() {
+    return true
+  }
+  if k == tk_false() {
+    return true
+  }
+  if k == tk_nil() {
+    return true
+  }
+  if k == tk_self() {
+    return true
+  }
+  if k == tk_r_paren() {
+    return true
+  }
+  if k == tk_r_bracket() {
+    return true
+  }
+  if k == tk_r_brace() {
+    return true
+  }
+  if k == tk_question() {
+    return true
+  }
+  k == tk_interp_close()
+}
+
+pub fn minus_is_prefix(prev: Int, at_start: Bool): Bool {
+  if at_start {
+    return true
+  }
+  if prev < 0 {
+    return true
+  }
+  if prev == tk_newline() {
+    return true
+  }
+  if value_end(prev) {
+    return false
+  }
+  true
+}
+
+pub fn next_significant(tokens: Array(Token), i: Int): Int {
+  j = i + 1
+  while j < tokens.size {
+    k = tokens[j].kind
+    if k == tk_newline() {
+    } else if k == tk_comment() {
+    } else if k == tk_file_line() {
+    } else {
+      return k
+    }
+    j = j + 1
+  }
+  tk_eof()
+}
+
+pub fn brace_starts_lambda(tokens: Array(Token), i: Int): Bool {
+  k = next_significant(tokens, i)
+  if k == tk_pipe() {
+    return true
+  }
+  k == tk_pipe_pipe()
+}
+
+pub fn must_separate(prev: Int, prev2: Int, curr: Int, nextk: Int): Bool {
+  if prev == tk_bang() {
+    if curr == tk_eq() {
+      return true
+    }
+  }
+  if prev == tk_minus() {
+    if curr == tk_eq() {
+      return true
+    }
+  }
+  if prev == tk_dot() {
+    if curr == tk_integer() {
+      if prev2 == tk_integer() {
+        return true
+      }
+      if prev2 == tk_float() {
+        return true
+      }
+    }
+    if curr == tk_float() {
+      if prev2 == tk_integer() {
+        return true
+      }
+      if prev2 == tk_float() {
+        return true
+      }
+    }
+  }
+  if curr == tk_dot() {
+    if prev == tk_integer() {
+      if nextk == tk_integer() {
+        return true
+      }
+      if nextk == tk_float() {
+        return true
+      }
+    }
+    if prev == tk_float() {
+      if nextk == tk_integer() {
+        return true
+      }
+      if nextk == tk_float() {
+        return true
+      }
+    }
+  }
+  false
+}
+
+pub fn nth_significant(tokens: Array(Token), i: Int, n: Int): Int {
+  j = i + 1
+  seen = 0
+  while j < tokens.size {
+    k = tokens[j].kind
+    if k == tk_newline() {
+    } else if k == tk_comment() {
+    } else if k == tk_file_line() {
+    } else {
+      seen = seen + 1
+      if seen == n {
+        return k
+      }
+    }
+    j = j + 1
+  }
+  tk_eof()
+}
+
+pub fn fn_receiver_space(tokens: Array(Token), i: Int, prev: Int): Bool {
+  if prev != tk_fn() {
+    return false
+  }
+  if tokens[i].kind != tk_l_paren() {
+    return false
+  }
+  depth = 1
+  saw_colon = false
+  j = i + 1
+  while j < tokens.size {
+    k = tokens[j].kind
+    if k == tk_newline() {
+    } else if k == tk_comment() {
+    } else if k == tk_file_line() {
+    } else if k == tk_l_paren() {
+      depth = depth + 1
+    } else if k == tk_r_paren() {
+      depth = depth - 1
+      if depth == 0 {
+        if saw_colon {
+          nxt = nth_significant(tokens, j, 1)
+          if nxt != tk_colon() {
+            return true
+          }
+        }
+        return false
+      }
+    } else if k == tk_colon() {
+      if depth == 1 {
+        saw_colon = true
+      }
+    }
+    j = j + 1
+  }
+  false
+}
+
+pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight: Bool, lambda_state: Int, separate: Bool): Bool {
+  if separate {
+    return false
+  }
+  if curr == tk_l_paren() {
+    if fn_receiver_space(tokens, i, prev) {
+      return false
+    }
+  }
+  if after_tight {
+    return true
+  }
+  if curr == tk_pipe() {
+    if lambda_state == 2 {
+      return true
+    }
+  }
+  if curr == tk_l_bracket() {
+    if value_end(prev) {
+      return true
+    }
+  }
+  if tight_before(curr) {
+    return true
+  }
+  if tight_after_kind(prev) {
+    return true
+  }
+  false
+}
+
+pub fn collapse_newlines(n: Int): Int {
+  if n > 2 {
+    return 2
+  }
+  n
+}
+
+pub fn push_newlines(buf: Buf, n: Int) {
+  j = 0
+  while j < n {
+    buf.push_byte(10)
+    j = j + 1
+  }
+}
+
+pub fn push_indent(buf: Buf, depth: Int) {
+  pad = depth * 2
+  p = 0
+  while p < pad {
+    buf.push_byte(32)
+    p = p + 1
+  }
+}
+
+pub fn reprint(tokens: Array(Token)): String {
+  buf = buf_new()
+  depth = 0
+  at_start = true
+  prev = 0 - 1
+  prev2 = 0 - 1
+  after_tight = false
+  lambda_state = 0
+  pending = 0
+  i = 0
+  while i < tokens.size {
+    t = tokens[i]
+    k = t.kind
+    if k == tk_eof() {
+      break
+    }
+    if k == tk_newline() {
+      pending = pending + 1
+      i = i + 1
+      continue
+    }
+    if pending > 0 {
+      push_newlines(buf, collapse_newlines(pending))
+      pending = 0
+      at_start = true
+      after_tight = false
+      prev2 = prev
+      prev = tk_newline()
+    }
+    started = at_start
+    dedented = false
+    if started {
+      if k == tk_r_brace() {
+        if depth > 0 {
+          depth = depth - 1
+          dedented = true
+        }
+      }
+      if k == tk_file_line() {
+        buf.push_str(t.value)
+      } else {
+        push_indent(buf, depth)
+        push_token(buf, t)
+      }
+      at_start = false
+    } else if k == tk_comment() {
+      buf.push_byte(32)
+      buf.push_str(t.value)
+    } else {
+      nextk = next_significant(tokens, i)
+      separate = must_separate(prev, prev2, k, nextk)
+      if no_space(tokens, i, prev, k, after_tight, lambda_state, separate) {
+        push_token(buf, t)
+      } else {
+        buf.push_byte(32)
+        push_token(buf, t)
+      }
+    }
+    if k == tk_comment() {
+    } else if k == tk_file_line() {
+    } else if k == tk_l_brace() {
+      depth = depth + 1
+      if brace_starts_lambda(tokens, i) {
+        lambda_state = 1
+      } else {
+        lambda_state = 0
+      }
+      after_tight = false
+    } else if k == tk_r_brace() {
+      if dedented {
+      } else if depth > 0 {
+        depth = depth - 1
+      }
+      after_tight = false
+      lambda_state = 0
+    } else if lambda_state == 1 {
+      if k == tk_pipe() {
+        lambda_state = 2
+        after_tight = true
+      } else if k == tk_pipe_pipe() {
+        lambda_state = 0
+        after_tight = false
+      } else if k == tk_minus() {
+        lambda_state = 0
+        after_tight = minus_is_prefix(prev, started)
+      } else {
+        lambda_state = 0
+        after_tight = tight_after_kind(k)
+      }
+    } else if lambda_state == 2 {
+      if k == tk_pipe() {
+        lambda_state = 0
+        after_tight = false
+      } else if k == tk_minus() {
+        after_tight = minus_is_prefix(prev, started)
+      } else {
+        after_tight = tight_after_kind(k)
+      }
+    } else if k == tk_minus() {
+      after_tight = minus_is_prefix(prev, started)
+    } else {
+      after_tight = tight_after_kind(k)
+    }
+    prev2 = prev
+    prev = k
+    i = i + 1
+  }
+  if pending > 0 {
+    push_newlines(buf, collapse_newlines(pending))
+  }
+  buf.to_s
+}
+
+pub fn format_source(path: String, text: String): FormatResult {
+  src = Source.new(path, text)
+  lex = Lexer.new(src)
+  tokens = lex.tokenize_format
+  if e = lex.err {
+    return FormatResult.new(false, "", e.show)
+  }
+  FormatResult.new(true, reprint(tokens), "")
+}
+
+pub fn print_format(text: String) {
+  if text.size == 0 {
+    return
+  }
+  if text[text.size - 1] == 10 {
+    puts(str_slice(text, 0, text.size - 1))
+  } else {
+    puts(text)
+  }
+}
