@@ -704,7 +704,6 @@ These are decided and currently do not compile.
 | --- | --- |
 | `parallel { }` with no receiver | decided, not shipping |
 | Packages, an HTTP server | decided, not shipping |
-| A compiler binary that Crystal is not required to produce | decided; the release asset will be `avant-linux-x86_64`, and `v0.1.0` is not yet that seed |
 | A general `for` loop | not part of the language yet; `each` and `while` are the loops |
 
 ## Goals

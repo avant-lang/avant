@@ -1,10 +1,13 @@
-# On a version tag: Crystal → A → B, native suite on B, then open a
-# draft GitHub Release with the linux-x86_64 seed.
+# On a version tag: the v0.4.0 seed builds B, the suite runs on B,
+# then a draft GitHub Release is opened with the linux-x86_64 compiler.
+#
+# The seed is avant-linux-x86_64.tar.gz from v0.4.0 (binary `avant`).
+# Runtime objects come from runtime/build.sh. Crystal src/ is not on
+# this path. myc-llvm is still built with Crystal (Q53-A).
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
-# is named `avant` (Q51-A). `myc-llvm` sits beside it. v0.1.0 stays
-# the older `avant-av-b-linux-x86_64.tar.gz` and is not a seed; do
-# not backfill that tag with this workflow.
+# is named `avant`. Do not dispatch this workflow onto v0.4.0: that
+# tag's asset is the seed, and an upload would replace it.
 #
 # The suite runs before any release is created. A new tag becomes a
 # draft (`gh release create --draft`). Publishing the draft is a
@@ -22,7 +25,7 @@ name: release-binary
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and attach (e.g. v0.1.0)
+        description: Existing tag to build and attach (not v0.4.0)
         required: true
         type: string
 
@@ -73,11 +76,22 @@ jobs:
           shards install
           crystal build src/cli.cr -o myc-llvm
 
-      - name: Crystal → A
-        run: crystal src/cli.cr compile compiler/main.av bin/avant-av
+      - name: Build runtime objects
+        run: sh runtime/build.sh
 
-      - name: A → B
-        run: ./bin/avant-av compile compiler/main.av bin/avant-av-b
+      - name: Download v0.4.0 compiler
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/avant-seed.tar.gz \
+            https://github.com/avant-lang/avant/releases/download/v0.4.0/avant-linux-x86_64.tar.gz
+          tar -C /tmp -xzf /tmp/avant-seed.tar.gz
+          test -x /tmp/avant-linux-x86_64/avant
+
+      - name: Seed → B
+        run: |
+          set -euo pipefail
+          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-av-b
+          ./bin/avant-av-b run examples/hello.av
 
       - name: Native suite on B
         env:
@@ -120,6 +134,7 @@ jobs:
             echo "crystal: $(crystal --version | head -n1)"
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
+            echo "built-by: v0.4.0"
             echo "seed: yes"
             echo "binary: avant"
           } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
@@ -128,7 +143,7 @@ jobs:
           {
             echo "linux-x86_64 compiler \`avant\` and \`myc-llvm\`."
             echo
-            echo "This asset is a seed for the next build of compiler A (Stage 23, Q51-A). It is not the oracle. \`src/\` still builds A. \`native\` keeps building \`myc-llvm\` from the safepoints checkout (Q53-A)."
+            echo "Built by the v0.4.0 seed. This asset can be the next pin after it is published. It is not the oracle. \`src/\` remains recovery. \`myc-llvm\` in CI is still built from the safepoints checkout."
             echo "Needs the source tree (\`runtime/\`, \`cc\`) and LLVM 20 to compile programs."
             echo "Set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
             echo

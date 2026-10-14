@@ -1,5 +1,11 @@
 # Avant Language changelog
 
+## 0.5.0 - 2026-10-14
+
+### Changed
+* The required `native` build uses the published `v0.4.0` compiler. Crystal `src/` is recovery (`recovery.yml`), not the merge gate.
+* A version tag builds its compiler with that same `v0.4.0` seed and `runtime/build.sh`. `myc-llvm` is still built with Crystal.
+
 ## 0.4.0 - 2026-10-14
 
 ### Added
