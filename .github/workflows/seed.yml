@@ -1,11 +1,12 @@
-# Q52-A experiment. Not the merge gate.
+# Q52 proof. Not the merge gate. native.yml still builds A with Crystal.
 #
-# Downloads the v0.1.0 linux-x86_64 compiler (asset name
-# avant-av-b-linux-x86_64.tar.gz, binary avant-av-b) and asks it to
-# compile today's compiler/main.av. myc-llvm is built here with Crystal
-# (Q53-A). A red job means that asset cannot replace Crystal → A yet.
-# native.yml stays on Crystal → A until this job is green and the pin
-# moves. Merge on a green native suite; read this job for the seed.
+# Two pins. v0.1.0 is the asset that already passed (binary avant-av-b).
+# v0.4.0 is the published pre-release (binary avant inside
+# avant-linux-x86_64.tar.gz). Both must compile today's compiler/main.av
+# and pass the suite. native switches only after v0.4.0 is the one we keep.
+#
+# myc-llvm is still built with Crystal (Q53-A). Runtime objects come from
+# runtime/build.sh, not from crystal src/cli.cr.
 
 name: seed
 
@@ -23,9 +24,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  v0_1_0:
+  pin:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: v0.1.0
+            asset: avant-av-b-linux-x86_64.tar.gz
+            bin: avant-av-b
+          - name: v0.4.0
+            asset: avant-linux-x86_64.tar.gz
+            bin: avant
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
@@ -60,20 +72,20 @@ jobs:
           crystal build src/cli.cr -o myc-llvm
 
       - name: Build runtime objects
-        run: crystal src/cli.cr compile examples/hello.av /tmp/avant-hello-warm
+        run: sh runtime/build.sh
 
-      - name: Download v0.1.0 compiler
+      - name: Download ${{ matrix.name }} compiler
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/avant-v0.1.0.tar.gz \
-            https://github.com/avant-lang/avant/releases/download/v0.1.0/avant-av-b-linux-x86_64.tar.gz
-          tar -C /tmp -xzf /tmp/avant-v0.1.0.tar.gz
-          test -x /tmp/avant-linux-x86_64/avant-av-b
+          curl -fsSL -o /tmp/avant-seed.tar.gz \
+            "https://github.com/avant-lang/avant/releases/download/${{ matrix.name }}/${{ matrix.asset }}"
+          tar -C /tmp -xzf /tmp/avant-seed.tar.gz
+          test -x "/tmp/avant-linux-x86_64/${{ matrix.bin }}"
 
       - name: Seed compiles compiler A
         run: |
           set -euo pipefail
-          /tmp/avant-linux-x86_64/avant-av-b compile compiler/main.av bin/avant-from-seed
+          "/tmp/avant-linux-x86_64/${{ matrix.bin }}" compile compiler/main.av bin/avant-from-seed
           ./bin/avant-from-seed run examples/hello.av
 
       - name: Native suite on the seed-built compiler
