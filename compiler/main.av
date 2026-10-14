@@ -11,6 +11,7 @@ import loader
 import checker
 import codegen_myc
 import pipeline
+import format
 
 pub fn argv_user: Array(String) {
   args = argv()
@@ -52,8 +53,66 @@ pub fn show_usage {
   puts("  avant-av run FILE.av [--coverage] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av dump FILE.av [--coverage]")
   puts("  avant-av compile FILE.av [OUT] [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av format FILE.av [--write] [--check]")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
+}
+
+pub fn driver_format(args: Array(String)) {
+  split = take_av_files(args)
+  if split.paths.size == 0 {
+    puts("format needs a .av file")
+    show_usage()
+    return
+  }
+  if split.paths.size > 1 {
+    puts("format takes one root .av (use import)")
+    show_usage()
+    return
+  }
+  path = split.paths[0]
+  check = false
+  write = false
+  i = 0
+  while i < split.rest.size {
+    flag = split.rest[i]
+    if str_eq(flag, "--check") {
+      check = true
+    } else if str_eq(flag, "--write") {
+      write = true
+    } else {
+      puts("unknown format argument ${flag}")
+      show_usage()
+      return
+    }
+    i = i + 1
+  }
+  if text = file_read(path) {
+    got = format_source(path, text)
+    if got.ok {
+    } else {
+      puts(got.err)
+      return
+    }
+    if check {
+      if str_eq(text, got.text) {
+        puts("canonical")
+      } else {
+        puts("would change ${path}")
+      }
+      return
+    }
+    if write {
+      w = file_write(path, got.text)
+      if w != 0 {
+        puts("cannot write ${path}")
+      }
+      return
+    }
+    print_format(got.text)
+  } else {
+    puts("cannot read ${path}")
+  }
 }
 
 pub fn driver_dump(args: Array(String)) {
@@ -170,6 +229,14 @@ fn main {
   }
   if str_eq(command, "compile") {
     driver_compile(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "format") {
+    driver_format(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "f") {
+    driver_format(argv_drop_first(args))
     return
   }
   if str_eq(command, "c") {

@@ -69,7 +69,8 @@ static int is_cli_compile_cmd(const char *cmd) {
   }
   return strcmp(cmd, "compile") == 0 || strcmp(cmd, "c") == 0 ||
          strcmp(cmd, "dump") == 0 || strcmp(cmd, "d") == 0 ||
-         strcmp(cmd, "bind") == 0 || strcmp(cmd, "b") == 0;
+         strcmp(cmd, "bind") == 0 || strcmp(cmd, "b") == 0 ||
+         strcmp(cmd, "format") == 0 || strcmp(cmd, "f") == 0;
 }
 
 static int is_cli_cmd(const char *cmd) {
@@ -114,7 +115,7 @@ static int should_report(void) {
     }
   }
 
-  /* Identity compiler CLI stays quiet so `run FILE.av` stdout is the
+  /* Identity compiler CLI stays quiet so `run` / `format` stdout is the
      program, not a compiler coverage table. REPORT=1 forces the table.
      A program built with --coverage (no CLI subcommand) still prints. */
   if (is_cli_cmd(cmd)) {

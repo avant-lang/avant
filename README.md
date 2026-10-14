@@ -267,6 +267,14 @@ Helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av
 
 The product emit is still myc IR. Identity is the compiler you trust. Crystal `src/` still builds A if you need recovery.
 
+`format` reprints a file. It does not compile it. Stdout is the default. `--check` prints `canonical` or `would change PATH`. `--write` replaces the file.
+
+```
+./bin/avant-av-b format FILE.av
+./bin/avant-av-b format FILE.av --check
+./bin/avant-av-b format FILE.av --write
+```
+
 ## Tests
 
 Daily proof is the native suite on identity **B** or **C**. Recovery is `crystal spec`.
@@ -286,7 +294,7 @@ These are decided. They are **not** shipping. Do not read a target sketch as a t
 | What | Status |
 | --- | --- |
 | Statement-form `parallel { }` | decided, not shipping |
-| Formatter, packages, HTTP *server* | decided, not shipping |
+| Packages, HTTP *server* | decided, not shipping |
 
 ## Goals
 
