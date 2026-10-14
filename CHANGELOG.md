@@ -1,5 +1,14 @@
 # Avant Language changelog
 
+## 0.4.0 - 2026-10-14
+
+### Added
+* `bind` and `b` on the identity compiler. The command drives `tools/bind.c` through libclang. The C visitor is unchanged.
+
+### Changed
+* The next tagged release asset is `avant-linux-x86_64.tar.gz`, with the compiler named `avant`. `release.yml` opens a draft after the suite. `v0.1.0` is left as it is.
+* GitHub `seed` checks that the `v0.1.0` compiler can build today's sources and pass the suite. `native` still builds A with Crystal.
+
 ## 0.3.0 - 2026-10-14
 
 ### Added
