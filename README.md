@@ -1,32 +1,38 @@
 # Avant
 
-**Avant** is a systems programming language: Crystal-class density, a C-family silhouette, automatic memory management, AOT to native code.
+Avant is a systems language: required braces, type inference, automatic memory management with GenImmix, and ahead-of-time compilation to native code.
 
-It is for people who want as little syntax as Crystal (or less) to say the same thing, required braces without TypeScript paperwork, and enough speed that simplicity is not an apology. Home: [github.com/avant-lang/avant](https://github.com/avant-lang/avant) (private until minimally working, then public). License: [MIT](LICENSE).
-
-This folder is the language. The compiler you run is written in Avant (`compiler/*.av`). Crystal `src/` is recovery scaffolding.
+The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted and compiles itself. Crystal `src/` only builds the first binary, and it is frozen. The backend is still [myc](https://github.com/kostya/myc): the compiler emits myc IR and runs `myc-llvm`.
 
 ## Index
 
 1. [Getting started](#getting-started)
-2. [Language](#language)
-3. [Types](#types)
-4. [Modules](#modules)
-5. [Errors](#errors)
-6. [Memory](#memory)
-7. [C interop](#c-interop)
-8. [Concurrency](#concurrency)
-9. [Macros](#macros)
-10. [Builtins](#builtins)
-11. [Toolchain](#toolchain)
-12. [Tests](#tests)
-13. [Not built yet](#not-built-yet)
-14. [Goals](#goals)
-15. [License](#license)
+2. [Programs](#programs)
+3. [Structs and classes](#structs-and-classes)
+4. [Types](#types)
+5. [Control flow](#control-flow)
+6. [Modules](#modules)
+7. [Errors](#errors)
+8. [Strings and collections](#strings-and-collections)
+9. [Memory](#memory)
+10. [C interop](#c-interop)
+11. [Concurrency](#concurrency)
+12. [Macros](#macros)
+13. [Formatter](#formatter)
+14. [Builtins](#builtins)
+15. [Toolchain](#toolchain)
+16. [Tests](#tests)
+17. [Not built yet](#not-built-yet)
+18. [Goals](#goals)
+19. [License](#license)
 
 ## Getting started
 
-Needs Crystal 1.21, a C compiler (`cc`), libclang (for `avant bind`), LLVM 20, and a safepoints-enabled `myc-llvm` (workbench sibling `../safepoints/myc-llvm`, or `AVANT_MYC_LLVM`).
+### Requirements
+
+Crystal 1.21, a C compiler (`cc`), LLVM 20, and a safepoints-enabled `myc-llvm`. In this workbench that binary is `../safepoints/myc-llvm`. `AVANT_MYC_LLVM` overrides the path. `avant bind` also needs libclang.
+
+### Build a compiler
 
 From this directory:
 
@@ -36,17 +42,28 @@ crystal src/cli.cr compile compiler/main.av bin/avant-av
 ./bin/avant-av-b run examples/hello.av
 ```
 
-`AVANT_ROOT` and `AVANT_MYC_LLVM` override discovery. Daily builds pass myc-llvm `--debug` (fast codegen; the compiler frontend stays the same speed). `AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slow compile, more LLVM opts). Crystal `src/` is frozen and still invokes myc at its default when it builds A.
+Crystal builds **A** (`bin/avant-av`). A builds **B**. After the first A exists, rebuild with B:
 
-## Language
+```
+./bin/avant-av-b compile compiler/main.av bin/avant-av-b
+```
 
-Braces are required. No parentheses on `if` / `while` / `switch`. No semicolons. `=` binds or assigns. `fn`. Last expression is the value. Types are `name: Type`. Entry is `fn main`, or `fn run` (a myc `main` is synthesized).
+`AVANT_ROOT` overrides where the compiler looks for `runtime/build`.
 
-Comments are `//` to end of line. There is no `/* */`. `// file: path` is a test-runner concat marker (it resets lexer path and line); it is not a module import.
+### How a build is code-generated
+
+Daily compiles pass myc-llvm `--debug`. That is fast instruction selection. The compiler's own frontend takes about the same time either way. Safepoints stay on, so the copying nursery still sees stack maps.
+
+`AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slower compile, more LLVM optimization). Crystal `src/` is frozen, so the Crystal → A step still uses myc's default. The A it writes then passes `--debug`.
+
+## Programs
+
+Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function is its value. A type is written `name: Type`.
+
+The entry point is `fn main`, or `fn run` (the compiler synthesizes a myc `main`). Neither needs `pub`.
 
 ```avant
 fn main {
-  // greeting
   puts("Hello Avant")
 }
 
@@ -56,7 +73,34 @@ fn fact(n: Int): Int {
 }
 ```
 
-Structs, classes, inherent methods, external receivers, defaults, overloading, operators, and generic functions:
+### Comments
+
+`//` runs to the end of the line. There is no `/* */`.
+
+`// file: path` is a marker the test runner uses when it concatenates sources. It resets the lexer's path and line. It is not `import`.
+
+### Names
+
+A name introduced in a block stays in that block. Assigning a name that already exists in an enclosing block writes that outer name. Locals are mutable.
+
+```avant
+fn main {
+  n = 1
+  if true {
+    n = 2
+    y = 3
+  }
+  puts(n)
+}
+```
+
+After the `if`, `n` is `2`. `y` is not in scope.
+
+## Structs and classes
+
+A `struct` is a value. Copying it copies the fields. A `class` is a reference. Copying it copies the pointer. `Type { fields }` builds a struct. It does not build a class.
+
+### Structs
 
 ```avant
 struct Point {
@@ -68,19 +112,28 @@ struct Point {
   }
 }
 
+fn main {
+  p = Point { x: 1, y: 2 }
+  q = p
+  puts(q.sum)
+}
+```
+
+`q` is a separate `Point`. Changing `q.x` does not change `p.x`.
+
+Inside a method, a field name is in scope. `self` is the receiver. An external method is a function with a receiver parameter:
+
+```avant
 fn (p: Point) scaled(s: Int): Point {
   Point { x: p.x * s, y: p.y * s }
 }
+```
 
-fn greet(name: String, times: Int = 1): Int {
-  times
-}
+### Classes
 
-fn show(n: Int): Int { n }
-fn show(s: String): Int { s.size }
+`Type.new(...)` allocates and calls `initialize`. A field may have a literal or `nil` default.
 
-fn id(x: T): T { x }
-
+```avant
 class Counter {
   value: Int = 0
 
@@ -92,6 +145,36 @@ class Counter {
     value += 1
     value
   }
+}
+
+fn main {
+  c = Counter.new(10)
+  puts(c.inc)
+}
+```
+
+### Overloads, defaults, operators
+
+Two functions may share a name when the arity or the argument types differ. The return type alone does not overload. Defaults are trailing, and the call site fills them in.
+
+```avant
+fn show(n: Int): Int { n }
+fn show(s: String): Int { s.size }
+
+fn greet(name: String, times: Int = 1): Int {
+  times
+}
+```
+
+An operator is a method whose name is the operator. It is declared inside the type, the same way `inc` is:
+
+```avant
+class Counter {
+  value: Int
+
+  fn initialize(value: Int) {
+    self.value = value
+  }
 
   fn +(other: Counter): Counter {
     Counter.new(value + other.value)
@@ -99,21 +182,255 @@ class Counter {
 }
 ```
 
-A `struct` is a value (copy). A `class` is a reference (identity). `Type { fields }` constructs a struct, not a class.
+### Generic functions
+
+An unbound name in a signature is a type parameter. The call site omits it when the arguments determine it.
+
+```avant
+fn id(x: T): T {
+  x
+}
+```
+
+`id(1)` is `Int`. `id("a")` is `String`. There is no `[]Int` and no `Array<Int>`.
 
 ## Types
 
-`T?` is `T | Nil`. Unions are first-class (`Int | String`, `User | DbError`). Type application is `Array(Int)`, `Hash(String, Int)` — not `[]Int`, not `Array<Int>`. Array literals `[1, 2, 3]` and empty `[]` are expressions.
+### Primitives
 
-New names are block-scoped. `=` to an existing enclosing name assigns outward. Mutable by default.
+`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
 
-`switch` / `case` is Int (or Bool) only; a value switch needs `else`.
+### Nil and unions
 
-A function value has type `fn(T): U`. An omitted return is `Void`. Spellings: `fn(): Int`, `fn(Int): Int`, `fn(Int, String): Bool`. The type is invariant. A bare function name in that context is the value. `{ |x| x + 1 }` is a lambda. A zero-argument lambda is `{ || ... }`, because `||` is one token. A trailing block on a call whose last parameter is a `fn` is that argument. A name the lambda uses from an outer function is a shared cell: an assignment on either side is visible to the other. `each`, `spawn`, and `.parallel` keep their own blocks, and `each` stays inlined. Methods are not values. Call a function field as `(box.f)()`. There is no `==` on a `fn` value. `Array(T).new` takes a size; an empty array with a known element type is `ys: Array(Int) = []`.
+`T?` means `T | Nil`. `nil` is the only value of `Nil`. Any other union is written with `|`.
 
-A struct or class may take type parameters: `struct Pair(A, B)` and `class Box(T)`. Each use is its own layout. `Box(Int)` and `Box(String)` are different types. `Box(Int).new(1)` and `Box.new(1)` are the same value when `initialize` takes `T`. `Pair { a: 1, b: "x" }` is `Pair(Int, String)`. An unapplied `Box` is an error, and a type parameter must be a fresh name. A struct whose inline layout is infinite (`struct Node(T) { next: Node(T)? }`) is an error. A class may name itself (`class Link(T) { next: Link(T)? }`). `Array`, `Hash`, `Ptr`, and `JoinHandle` stay builtins.
+```avant
+fn parse_id(raw: Int): Int? {
+  if raw < 0 { return nil }
+  raw
+}
 
-A named `interface` is a set of method signatures. A struct, class, or `Ptr` to a C layout opts in by name: `struct Vec2: Show` on the declaration, or later `Vec2: Show`. Several names use `+`. `pub` on a later opt-in is who else can see that fact. An interface may take type parameters (`interface Eq(T)`). A generic function states a bound on a type parameter (`fn show(v: T: Show): String`). The call site must have opted in. The body is specialized, and the call is an ordinary method call. `Show` is not a value, so it cannot be stored or placed in an `Array`. `Array` itself does not opt in, and `each` stays a special form.
+fn label(v: Int | String): Int {
+  1
+}
+```
+
+Failure is a union member. There is no unwind. See [Errors](#errors).
+
+### Arrays
+
+The type is `Array(Int)`, not `[]Int` and not `Array<Int>`. A literal is an expression. An empty literal needs a known element type, because `[]` alone does not say what it holds.
+
+```avant
+fn main {
+  xs = [1, 2, 3]
+  xs.push(4)
+  puts(xs[0])
+  puts(xs.size)
+
+  ys: Array(Int) = []
+  zs = Array(Int).new(8)
+}
+```
+
+`Array(T).new` takes a size. `push`, `pop`, `clear`, `reserve`, and `fill` are methods. `each` is not a method call: the compiler inlines it as a loop. See [Iteration](#iteration).
+
+### Hashes
+
+`Hash(String, Int)` and `Hash(Int, Int)` are both real. `get` returns `T?`.
+
+```avant
+fn main {
+  h = Hash(String, Int).new
+  h["a"] = 10
+  if v = h.get("a") {
+    puts(v)
+  }
+}
+```
+
+The `if v = ...` form is [if-assign](#if-and-while). `v` exists only in the then-block.
+
+### Function values
+
+A function value has type `fn(T): U`. The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`. Spellings:
+
+```avant
+fn takes_callback(f: fn(Int): Int): Int {
+  f(1)
+}
+
+fn returns_fn: fn(Int): Int {
+  { |x| x + 1 }
+}
+```
+
+`fn(): Int` takes nothing. `fn(Int, String): Bool` takes two arguments. A bare function name in a value position is that function:
+
+```avant
+fn inc(n: Int): Int {
+  n + 1
+}
+
+fn main {
+  f: fn(Int): Int = inc
+  puts(f(2))
+}
+```
+
+There is no `==` on a `fn` value. Methods are not values. A call written `box.f()` is a method call. To call a field that holds a function, parenthesize the field: `(box.f)()`.
+
+### Lambdas and trailing blocks
+
+`{ |x| x + 1 }` is a lambda. A type inside the pipes is optional when the expected `fn` type already gives it. A lambda whose parameter type is still free is an error.
+
+`||` is one token. A lambda with no parameters is `{ || 1 }`. `{ | | 1 }` with a space is two pipes, and it is not that form.
+
+A trailing block on a call fills the last parameter when that parameter is a `fn` and the written arguments are one short:
+
+```avant
+fn map(xs: Array(T), f: fn(T): U): Array(U) {
+  ys: Array(U) = []
+  xs.each { |x| ys.push(f(x)) }
+  ys
+}
+
+fn main {
+  ys = map([1, 2, 3]) { |n| n + 1 }
+  puts(ys.size)
+}
+```
+
+`each`, `spawn`, and `.parallel` keep their own blocks. They do not become `fn` parameters, and `each` stays inlined.
+
+### Capture
+
+A name a lambda reads from an outer function is stored in a shared cell. An assignment on either side is visible to the other.
+
+```avant
+fn add(n: Int): fn(Int): Int {
+  { |x| x + n }
+}
+
+fn main {
+  f = add(10)
+  puts(f(1))
+}
+```
+
+`f(1)` is `11`. `n` was captured from `add`.
+
+### Generic structs and classes
+
+A struct or a class may take type parameters. Each use is its own layout. `Box(Int)` and `Box(String)` are different types. An unapplied `Box` is an error. A type parameter must be a fresh name, not an existing type.
+
+```avant
+struct Pair(A, B) {
+  a: A
+  b: B
+}
+
+class Box(T) {
+  value: T
+
+  fn initialize(value: T) {
+    self.value = value
+  }
+}
+
+fn main {
+  p = Pair { a: 1, b: "x" }
+  b = Box(Int).new(1)
+  c = Box.new(1)
+}
+```
+
+`Pair { a: 1, b: "x" }` is `Pair(Int, String)`. `Box.new(1)` is `Box(Int)` when `initialize` takes `T`. `Box(Int).new(1)` is the same value, written out.
+
+A struct is copied inline, so a struct that contains itself does not fit:
+
+```avant
+struct Node(T) {
+  next: Node(T)?
+}
+```
+
+That is an error. A class is a pointer, so a class may name itself:
+
+```avant
+class Link(T) {
+  next: Link(T)?
+}
+```
+
+`Array`, `Hash`, `Ptr`, and `JoinHandle` stay built in. They are not generic structs you declare.
+
+### Interfaces
+
+An `interface` is a set of method signatures. It has no method bodies, and it is not a value: you cannot store a `Show`, and you cannot write `Array(Show)`.
+
+A struct, a class, or a `Ptr` to a C layout opts in by name. The clause can sit on the type or come later. Several names join with `+`. `pub` on a later opt-in is who else can see that fact.
+
+```avant
+interface Show {
+  fn to_s: String
+}
+
+interface Eq(T) {
+  fn ==(other: T): Bool
+}
+
+struct Vec2: Show + Eq(Vec2) {
+  x: Int
+  y: Int
+
+  fn to_s: String {
+    "vec"
+  }
+
+  fn ==(other: Vec2): Bool {
+    if x == other.x {
+      return y == other.y
+    }
+    false
+  }
+}
+
+fn show(v: T: Show): String {
+  v.to_s
+}
+```
+
+`T: Show` is a bound. The call site must have opted in. The compiler copies the function for that concrete type and emits an ordinary method call. There is no vtable.
+
+The witness must match the signature exactly. `Int` does not witness `Int?`. A default on the method does not make a shorter signature count. Builtins do not opt in: `Array` has no `Show` clause, and `each` stays a special form. `Ptr(Int)` is not a layout pointer and cannot opt in. `Ptr(Point)` can, when `Point` is a C layout. See [Layouts](#layouts-and-ptr).
+
+An interface may take type parameters (`interface Eq(T)`). Two bounds are written `T: Show + Eq(T)`.
+
+## Control flow
+
+### If and while
+
+`if` and `while` are statements. `if` may have an `else`. A new name bound in the condition of `if` exists only in the then-block. That is how optional results are opened:
+
+```avant
+fn main {
+  h = Hash(String, Int).new
+  h["a"] = 10
+  if v = h.get("a") {
+    puts(v)
+  }
+
+  n = 0
+  while n < 3 {
+    n = n + 1
+  }
+}
+```
+
+### Switch
+
+`switch` / `case` discriminates `Int` or `Bool`. A switch used as a value needs `else`, so every input produces a result.
 
 ```avant
 fn name_of(kind: Int): String {
@@ -123,37 +440,34 @@ fn name_of(kind: Int): String {
     else { "other" }
   }
 }
-
-fn inc(n: Int): Int {
-  n + 1
-}
-
-fn map(xs: Array(T), f: fn(T): U): Array(U) {
-  ys: Array(U) = []
-  xs.each { |x| ys.push(f(x)) }
-  ys
-}
-
-fn add(n: Int): fn(Int): Int {
-  { |x| x + n }
-}
 ```
+
+### Iteration
+
+`xs.each { |n| ... }` walks an array. The block is not a `fn` value. The compiler inlines the loop.
+
+There is no general `for`. The only `for` is the comptime field walk in [Macros](#macros).
 
 ## Modules
 
-A file is a module. `import name` loads `name.av` beside the importer. `pub` is the public surface; names default module-private. Cycles are errors. The CLI takes one root (not a concat list). `fn main` / `fn run` are entry, not `pub`. Public names enter the importer’s scope. Duplicate public names are a compile error; qualify only to resolve a clash.
+A file is a module. `import name` loads `name.av` beside the importer. Names are module-private unless marked `pub`. Cycles are an error. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
+
+Public names enter the importer's scope. If two imports publish the same name, qualify to resolve the clash.
 
 ```avant
 import vec
+
 fn main {
   v = origin()
   puts(v.x)
 }
 ```
 
+`origin` is `pub` in `vec.av`. `fn main` in the root is the entry point. It is not `pub`.
+
 ## Errors
 
-Failure is a union member, not unwind. Postfix `?` unwraps the success variant(s) or returns the failure from the current function. `if user = find("ada") { ... }` binds only in the then-block.
+A function that can fail returns a union. Postfix `?` unwraps the success side, or returns the failure from the current function.
 
 ```avant
 fn parse_id(raw: Int): Int? {
@@ -167,11 +481,29 @@ fn bump(id: Int): Int? {
 }
 ```
 
-## Memory
+If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
 
-Heap allocation goes through `runtime/avant_rt.c` (precise GenImmix: copying nursery, Immix mature). The copying nursery is the default. `AVANT_NURSERY=0` restores a full, non-moving collect. Objects that escape to C are pinned and are not copied.
+`if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
 
-Interpolation in double-quoted strings is `${expr}`. A `$` that is not followed by `{` is a literal dollar.
+## Strings and collections
+
+### Strings
+
+Adjacent pieces and `${expr}` build a new string. A `$` that is not followed by `{` is a dollar sign.
+
+```avant
+fn main {
+  name = "Ada"
+  puts("hello ${name}")
+  puts("it costs $5")
+}
+```
+
+`size` is the byte length. Strings are not mutated in place. Concatenation allocates a new string.
+
+### Arrays, again
+
+Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
 ```avant
 fn main {
@@ -179,19 +511,23 @@ fn main {
   xs.push(3)
   sum = 0
   xs.each { |n| sum += n }
-
-  h = Hash(String, Int).new
-  h["a"] = 10
-  if v = h.get("a") { puts(v) }
-
-  puts("n=${41}")
-  puts("it costs $5")
+  puts(sum)
 }
 ```
 
+## Memory
+
+Heap allocation goes through `runtime/avant_rt.c`. The collector is precise GenImmix: a copying nursery, then an Immix mature space. The nursery is the default.
+
+`AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_STACKMAP=0` skips the stack-map walk. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
+
+A heap object stored into a C field is pinned for the process. Pinned objects are not copied. See [C interop](#c-interop).
+
 ## C interop
 
-C is `lib` / `fun`. Hand-written and generated bindings are the same grammar. There is no `extern fn`. Call as `libname.funname(...)`. Link extra `.c` / `.o` with `--cc` and system libraries with `--lib NAME`. C++ is `extern "C"` only. `avant bind HEADER.h` translates a header with libclang into an editable `lib` block. It also emits `struct` layouts when clang's size, alignment, and offsets match the natural layout of the Avant field types. A layout is not a value. Read and write its fields through `Ptr(T)` (`p.x`). Methods are `fn (p: Ptr(T)) name`. A heap `String` stored into a C field is pinned for the process.
+### lib and fun
+
+C is a `lib` block of `fun` declarations. Hand-written bindings and generated ones are the same grammar. There is no `extern fn`. Call through the lib name.
 
 ```avant
 lib math {
@@ -203,17 +539,38 @@ fn main {
 }
 ```
 
-JSON is yyjson. HTTP loopback is uSockets C (both under `runtime/third_party/`). Spawn links `-pthread`.
+C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
+
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. The `bind` command itself is still the Crystal tool `tools/bind.c`.
+
+### Layouts and Ptr
+
+A `struct` inside `lib` is a C layout: size, alignment, and field offsets. It is not an Avant value. You do not construct it with `{ }`. You read and write fields through `Ptr(T)`.
+
+```avant
+lib point {
+  struct Point {
+    x: Int
+    y: Int
+  }
+}
+
+fn (p: Ptr(Point)) sum: Int {
+  p.x + p.y
+}
+```
+
+`Ptr(Int)` is rejected. `Ptr` of a layout, and `Ptr(Void)`, are the pointer types this is for. A `String` stored into a C field is pinned for the process, so the collector will not move it while C holds the pointer.
+
+JSON in the examples is yyjson. The loopback HTTP example is uSockets (C, not C++). Both live under `runtime/third_party/`.
 
 ## Concurrency
 
-`spawn { }` submits the block to a bounded OS-thread pool. The size is the number of processors online, read once when the pool starts. `AVANT_THREADS` replaces that size and must be a positive integer. Tasks beyond the pool wait in the queue. The block's result is `Int`, joined with `.join`. `join` or `.parallel` from inside a pool worker is an error. A nested `spawn` from a worker is allowed.
+### spawn
 
-A value crosses `spawn` or `.parallel` when it is `Int`, `Int64`, `UInt64`, `Bool`, `Float64`, a `String` (the pointer is copied and both tasks root it), or a struct whose every field crosses. A `Channel` or `Mutex` value crosses. A class, `Array`, `Hash`, `fn`, or `JoinHandle` does not, and a struct that contains one of those does not.
+`spawn { }` runs the block on a pool of OS threads. The pool size is the number of processors online, read once when the pool starts. `AVANT_THREADS` replaces that size and must be a positive integer. Extra tasks wait in a queue.
 
-`items.parallel { |item| ... }` on `Array(T)` takes one block parameter and returns `Array(U)` in input order. The parent waits outside the pool.
-
-`Channel(T)` and `Mutex(T)` are ordinary generic classes. The proof is `tests/cases/s35.av`: rendezvous `Channel(T).new`, buffered `Channel(T).new(n)`, `recv` as `T?`, and `Mutex(T).with { |x| ... }`, where `x` is a place that dies with the block. Wait and wake go through `avant_gate_*`. Those classes are not imported for you. Statement-form `parallel { }` is later.
+The block's result is `Int`. `.join` waits for it. Calling `.join` or `.parallel` from inside a pool worker is an error. A nested `spawn` from a worker is allowed.
 
 ```avant
 fn six_times_seven: Int {
@@ -226,17 +583,39 @@ fn main {
 }
 ```
 
-## Macros
+### What may cross a task
 
-`quote { }` injects functions (top-level / type body) or statements (inside a function). `#()` splices only inside quote. Hygiene gensyms names the quote introduces. `comptime` is one field walk: `for f in Type.fields { quote { ... } }`. Nested quote is an error. There is no arbitrary comptime interpreter.
+A value may be sent into `spawn` or `.parallel` when it is `Int`, `Int64`, `UInt64`, `Bool`, `Float64`, or a struct whose every field may cross. A `String` crosses as a shared pointer: both tasks keep it alive. A `Channel` or `Mutex` value crosses.
+
+A class, `Array`, `Hash`, `fn`, or `JoinHandle` does not cross. A struct that contains one of those does not either.
+
+### parallel
+
+`items.parallel { |item| ... }` on an `Array(T)` takes one block parameter and returns `Array(U)` in input order. The parent waits outside the pool.
 
 ```avant
-quote {
-  fn doubled(n: Int): Int {
-    n + n
-  }
+fn main {
+  xs = [1, 2, 3, 4]
+  ys = xs.parallel { |n| n * n }
+  puts(ys[0])
 }
+```
 
+`parallel { }` as a statement, with no receiver, is not built.
+
+### Channel and Mutex
+
+`Channel(T)` and `Mutex(T)` are ordinary generic classes. Nothing imports them for you. The proof is `tests/cases/s35.av`.
+
+`Channel(T).new` is a rendezvous channel. `Channel(T).new(n)` is buffered. `recv` returns `T?`. `Mutex(T).with { |x| ... }` holds the lock for the block. `x` is a place that dies with the block. `return` inside `with` is an error. Waiting and waking go through the runtime's `avant_gate_*` functions.
+
+## Macros
+
+`quote { }` pastes functions at the top level or in a type body, and statements inside a function. `#()` splices an expression, and only inside `quote`. Names the quote introduces are hygienic: they do not capture names from the paste site. Nested `quote` is an error. There is no general comptime interpreter.
+
+The one comptime loop walks fields:
+
+```avant
 struct Point {
   x: Int
   y: Int
@@ -253,21 +632,25 @@ comptime {
 }
 ```
 
-## Builtins
+That pastes `fn x` and `fn y`. `for f in Box.fields` on a generic type is an error. The walk wants a concrete, non-generic name.
 
-Proof programs (identity compiler **B** matches the host on this list): `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`; `matmul.av` checksums only.
+A quote can also introduce a whole function:
 
-Helpers the native suite pulled: `sha256` / `zlib_compress` (`examples/digest.av`), `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `Array.reserve` / `.fill` / `.pop` / `.clear`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists` / `argv` / `env_get` / `process_run` / `process_run_out`. Remaining host-only names wait for a failing native test.
-
-## Toolchain
-
+```avant
+quote {
+  fn doubled(n: Int): Int {
+    n + n
+  }
+}
 ```
-.av source → parser/checker (compiler/*.av; Crystal src/ is frozen recovery) → myc IR → myc-llvm (safepoints shard) → binary
-```
 
-The product emit is still myc IR. Identity is the compiler you trust. Crystal `src/` still builds A if you need recovery.
+## Formatter
 
-`format` reprints a file. It does not compile it. Stdout is the default. `--check` prints `canonical` or `would change PATH`. `--write` replaces the file.
+`format` (short name `f`) reprints a file from its tokens. It does not parse, typecheck, or follow imports. Comments stay. Your line breaks stay. Blank lines collapse to one. Indent is two spaces. The canonical colon is `name: Type`.
+
+`name : Type` is accepted. The formatter prints `name: Type`: no space before the colon, one space after.
+
+Stdout is the default. `--write` replaces the file. `--check` prints `canonical` or `would change PATH` and does not write. A lex error prints the diagnostic and leaves the file alone.
 
 ```
 ./bin/avant-av-b format FILE.av
@@ -275,9 +658,33 @@ The product emit is still myc IR. Identity is the compiler you trust. Crystal `s
 ./bin/avant-av-b format FILE.av --write
 ```
 
+`compile`, `run`, and `dump` still drop comments. Formatting is a separate command so a format bug cannot change what a program means.
+
+## Builtins
+
+These examples run on the identity compiler: `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`. `matmul.av` checks that the sequential and spawned checksums match.
+
+Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compress`, `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, `process_run` / `process_run_out`. A host-only name is ported when a failing native test needs it, not before.
+
+## Toolchain
+
+```
+.av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
+```
+
+`src/` is the frozen Crystal compiler that can still build A. It is recovery, not the compiler you change. New language goes in `compiler/*.av` only, and those files stay in the syntax Crystal can still parse, so the compiler's own source does not use `fn` types, brace lambdas, generic struct or class declarations, or `interface`.
+
+```
+./bin/avant-av-b run FILE.av
+./bin/avant-av-b compile FILE.av OUT
+./bin/avant-av-b dump FILE.av
+```
+
+`dump` prints myc IR. It does not link a binary.
+
 ## Tests
 
-Daily proof is the native suite on identity **B** or **C**. Recovery is `crystal spec`.
+The daily proof is the native suite on B or on the next compiler, C. `crystal spec` is recovery.
 
 ```
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
@@ -285,20 +692,26 @@ AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
 AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
 ```
 
-Adding `tests/cases/foo.av` does not edit `tests/run.av`. Coverage: `--coverage` / `AVANT_COVERAGE=1` on the identity compiler (not Crystal host codegen). That process writes `lcov.info` (`AVANT_COVERAGE_LCOV=0` disables; a path overrides). The compiler CLI does not print the Jest table (`AVANT_COVERAGE_REPORT=1` forces it); a `--coverage` program still prints it. The native runner writes `junit.xml` from the same `PASS` / `FAIL` events (`AVANT_JUNIT=0` disables). Jest-shaped stdout stays. Dump goldens live under `tests/goldens/`.
+Adding `tests/cases/foo.av` does not require an edit to `tests/run.av`. The runner stitches `tests/harness.av` and `tests/cases/*.av` into one program.
+
+`--coverage` or `AVANT_COVERAGE=1` instruments the identity compiler and writes `lcov.info`. `AVANT_COVERAGE_LCOV=0` disables that file. A path overrides the name. The compiler stays quiet unless `AVANT_COVERAGE_REPORT=1`. A program compiled with `--coverage` still prints its own table. The runner writes `junit.xml` from the same pass and fail events (`AVANT_JUNIT=0` disables it). Dump goldens live in `tests/goldens/`.
 
 ## Not built yet
 
-These are decided. They are **not** shipping. Do not read a target sketch as a tutorial for today’s binary.
+These are decided and currently do not compile.
 
 | What | Status |
 | --- | --- |
-| Statement-form `parallel { }` | decided, not shipping |
-| Packages, HTTP *server* | decided, not shipping |
+| `parallel { }` with no receiver | decided, not shipping |
+| Packages, an HTTP server | decided, not shipping |
+| `avant bind` written in Avant, and a compiler binary that Crystal is not required to produce | decided, not shipping |
+| A general `for` loop | not part of the language yet; `each` and `while` are the loops |
 
 ## Goals
 
-Beginners are welcome; advanced programmers are not blocked. Automatic memory management is a given. Errors are values. The public scoreboard is LangArena: expressiveness at Crystal’s class, runtime nearer C/Rust than Crystal already is and clearly faster than Go, memory better than Crystal without giving up GC.
+Beginners are welcome. Advanced programmers are not blocked. Memory is managed for you. Errors are values. The public scoreboard is LangArena: Crystal's expressiveness, runtime nearer C and Rust than Crystal is today and clearly faster than Go, and memory better than Crystal without giving up the collector.
+
+Official LangArena numbers are still the 2026-09-27 run. A daily `--debug` build is the development compiler. A scored run uses `AVANT_MYC_FINAL=1` when that run is asked for.
 
 ## License
 
