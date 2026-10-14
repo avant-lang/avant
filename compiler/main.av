@@ -12,6 +12,7 @@ import checker
 import codegen_myc
 import pipeline
 import format
+import bindgen
 
 pub fn argv_user: Array(String) {
   args = argv()
@@ -54,6 +55,7 @@ pub fn show_usage {
   puts("  avant-av dump FILE.av [--coverage]")
   puts("  avant-av compile FILE.av [OUT] [--coverage] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av format FILE.av [--write] [--check]")
+  puts("  avant-av bind [--lib NAME] HEADER.h")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
 }
@@ -192,6 +194,65 @@ pub fn driver_compile(args: Array(String)) {
   }
 }
 
+pub fn driver_bind(args: Array(String)) {
+  lib_name = ""
+  header = ""
+  i = 0
+  while i < args.size {
+    arg = args[i]
+    if str_eq(arg, "--lib") {
+      if i + 1 >= args.size {
+        puts("--lib needs a name")
+        show_usage()
+        return
+      }
+      lib_name = args[i + 1]
+      i = i + 2
+    } else if str_starts(arg, "--lib=") {
+      lib_name = str_slice(arg, 6, arg.size)
+      i = i + 1
+    } else if str_starts(arg, "-") {
+      puts("unknown bind argument ${arg}")
+      show_usage()
+      return
+    } else {
+      if header.size > 0 {
+        puts("bind takes one header")
+        show_usage()
+        return
+      }
+      header = arg
+      i = i + 1
+    }
+  }
+  if header.size == 0 {
+    puts("bind needs a C header")
+    show_usage()
+    return
+  }
+  if lib_name.size == 0 {
+    lib_name = bind_default_name(header)
+  }
+  if file_exists(header) {
+  } else {
+    puts("header is missing")
+    return
+  }
+  got = bind_generate(lib_name, header)
+  if got.ok {
+    bind_emit(got.text)
+    if got.err.size > 0 {
+      bind_emit(got.err)
+    }
+    return
+  }
+  if got.err.size > 0 {
+    bind_emit(got.err)
+    return
+  }
+  puts("avant-bind failed")
+}
+
 fn main {
   args = argv_filter_coverage(argv_user())
   if args.size == 0 {
@@ -244,11 +305,11 @@ fn main {
     return
   }
   if str_eq(command, "bind") {
-    puts("bind stays on the Crystal host")
+    driver_bind(argv_drop_first(args))
     return
   }
   if str_eq(command, "b") {
-    puts("bind stays on the Crystal host")
+    driver_bind(argv_drop_first(args))
     return
   }
   if str_ends(command, ".av") {

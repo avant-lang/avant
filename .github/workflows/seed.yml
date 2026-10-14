@@ -1,0 +1,92 @@
+# Q52-A experiment. Not the merge gate.
+#
+# Downloads the v0.1.0 linux-x86_64 compiler (asset name
+# avant-av-b-linux-x86_64.tar.gz, binary avant-av-b) and asks it to
+# compile today's compiler/main.av. myc-llvm is built here with Crystal
+# (Q53-A). A red job means that asset cannot replace Crystal → A yet.
+# native.yml stays on Crystal → A until this job is green and the pin
+# moves. Merge on a green native suite; read this job for the seed.
+
+name: seed
+
+"on":
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  v0_1_0:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      LLVM_CONFIG: llvm-config-20
+      AVANT_ROOT: ${{ github.workspace }}
+      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: avant-lang/safepoints
+          path: safepoints
+          persist-credentials: false
+
+      - name: Install LLVM 20 and link libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            llvm-20-dev \
+            libclang-20-dev \
+            libpcre2-dev \
+            zlib1g-dev
+
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: "1.21"
+
+      - name: Build myc-llvm
+        working-directory: safepoints
+        run: |
+          shards install
+          crystal build src/cli.cr -o myc-llvm
+
+      - name: Build runtime objects
+        run: crystal src/cli.cr compile examples/hello.av /tmp/avant-hello-warm
+
+      - name: Download v0.1.0 compiler
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/avant-v0.1.0.tar.gz \
+            https://github.com/avant-lang/avant/releases/download/v0.1.0/avant-av-b-linux-x86_64.tar.gz
+          tar -C /tmp -xzf /tmp/avant-v0.1.0.tar.gz
+          test -x /tmp/avant-linux-x86_64/avant-av-b
+
+      - name: Seed compiles compiler A
+        run: |
+          set -euo pipefail
+          /tmp/avant-linux-x86_64/avant-av-b compile compiler/main.av bin/avant-from-seed
+          ./bin/avant-from-seed run examples/hello.av
+
+      - name: Native suite on the seed-built compiler
+        env:
+          AVANT_COMPILER: ./bin/avant-from-seed
+        run: |
+          set -euo pipefail
+          ./bin/avant-from-seed run tests/run.av | tee native.log
+          if grep -q 'FAIL  tests/run.av' native.log; then
+            exit 1
+          fi
+          if grep -qE 'Test Suites:.*failed' native.log; then
+            exit 1
+          fi
+          grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
+          grep -q 'Ran all test suites.' native.log
