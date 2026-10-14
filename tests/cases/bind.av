@@ -27,6 +27,13 @@ fn s23_body(text: String): String {
   text
 }
 
+fn s23_head(text: String): String {
+  if text.size > 240 {
+    return str_slice(text, 0, 240)
+  }
+  text
+}
+
 fn s23_has_lib(text: String): Bool {
   if text.size >= 4 {
     if str_eq(str_slice(text, 0, 4), "lib ") {
@@ -53,7 +60,7 @@ fn test_bind(c: Checks) {
     add_code = s23_run(compiler, "bind", add_log, add_flags)
     c.eq_int(add_code, 0, "bind add.h exits 0")
     add_txt = s23_read(add_log)
-    c.expect(str_has(add_txt, "lib add {"), "default lib name is the header stem")
+    c.expect(str_has(add_txt, "lib add {"), "default lib name is the header stem (${s23_head(add_txt)})")
     c.expect(str_has(add_txt, "fun avant_add(a: Int, b: Int): Int"), "avant_add")
     c.expect(str_has(add_txt, "fun avant_sentinel: Ptr(Void)"), "avant_sentinel")
     c.expect(str_has(add_txt, "fun avant_is_null(p: Ptr(Void)): Int"), "avant_is_null")
