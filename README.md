@@ -113,6 +113,8 @@ A function value has type `fn(T): U`. An omitted return is `Void`. Spellings: `f
 
 A struct or class may take type parameters: `struct Pair(A, B)` and `class Box(T)`. Each use is its own layout. `Box(Int)` and `Box(String)` are different types. `Box(Int).new(1)` and `Box.new(1)` are the same value when `initialize` takes `T`. `Pair { a: 1, b: "x" }` is `Pair(Int, String)`. An unapplied `Box` is an error, and a type parameter must be a fresh name. A struct whose inline layout is infinite (`struct Node(T) { next: Node(T)? }`) is an error. A class may name itself (`class Link(T) { next: Link(T)? }`). `Array`, `Hash`, `Ptr`, and `JoinHandle` stay builtins.
 
+A named `interface` is a set of method signatures. A struct, class, or `Ptr` to a C layout opts in by name: `struct Vec2: Show` on the declaration, or later `Vec2: Show`. Several names use `+`. `pub` on a later opt-in is who else can see that fact. An interface may take type parameters (`interface Eq(T)`). A generic function states a bound on a type parameter (`fn show(v: T: Show): String`). The call site must have opted in. The body is specialized, and the call is an ordinary method call. `Show` is not a value, so it cannot be stored or placed in an `Array`. `Array` itself does not opt in, and `each` stays a special form.
+
 ```avant
 fn name_of(kind: Int): String {
   switch kind {
@@ -283,7 +285,6 @@ These are decided. They are **not** shipping. Do not read a target sketch as a t
 
 | What | Status |
 | --- | --- |
-| Named interfaces | decided, not shipping |
 | Statement-form `parallel { }` | decided, not shipping |
 | Formatter, packages, HTTP *server* | decided, not shipping |
 

@@ -25,6 +25,7 @@ pub fn tyk_var: Int { 18 }
 pub fn tyk_module: Int { 19 }
 pub fn tyk_clayout: Int { 20 }
 pub fn tyk_fn: Int { 21 }
+pub fn tyk_iface: Int { 22 }
 
 pub fn str_lt(a: String, b: String): Bool {
   n = a.size
@@ -108,6 +109,7 @@ pub class Ty {
   pub fn is_opaque: Bool { self.kind == tyk_opaque() }
   pub fn is_clayout: Bool { self.kind == tyk_clayout() }
   pub fn is_fn: Bool { self.kind == tyk_fn() }
+  pub fn is_iface: Bool { self.kind == tyk_iface() }
   pub fn is_var: Bool { self.kind == tyk_var() }
   pub fn is_module: Bool { self.kind == tyk_module() }
   pub fn is_agg: Bool {
@@ -248,6 +250,22 @@ pub class Ty {
         i = i + 1
       }
       return true
+    }
+    if k == tyk_iface() {
+      if str_eq(self.name, other.name) {
+        if self.ty_args.size == other.ty_args.size {
+          i = 0
+          while i < self.ty_args.size {
+            if self.ty_args[i].same_as(other.ty_args[i]) {
+            } else {
+              return false
+            }
+            i = i + 1
+          }
+          return true
+        }
+      }
+      return false
     }
     if k == tyk_fn() {
       if self.members.size != other.members.size {

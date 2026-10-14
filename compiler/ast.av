@@ -45,6 +45,7 @@ pub class TypeName {
   splice: Expr? = nil
   fn_type: Bool = false
   ret: TypeName? = nil
+  bounds: Array(TypeName)
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -53,9 +54,21 @@ pub class TypeName {
     self.args = a
     m: Array(TypeName) = []
     self.members = m
+    bds: Array(TypeName) = []
+    self.bounds = bds
     self.nilable = false
     self.mod_name = ""
     self.fn_type = false
+  }
+}
+
+pub class TypeBound {
+  param: String = ""
+  iface: TypeName
+
+  fn initialize(param: String, iface: TypeName) {
+    self.param = param
+    self.iface = iface
   }
 }
 
@@ -262,6 +275,7 @@ pub class Function {
   name_splice: Expr? = nil
   box_names: Array(String)
   as_value: Bool = false
+  bounds: Array(TypeBound)
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -275,6 +289,8 @@ pub class Function {
     self.type_params = tp
     bx: Array(String) = []
     self.box_names = bx
+    bd: Array(TypeBound) = []
+    self.bounds = bd
     self.generic = false
     self.ol_index = 0
     self.vis = false
@@ -326,6 +342,7 @@ pub class StructDef {
   comptimes: Array(ComptimeWalk)
   vis: Bool = false
   mod_name: String = ""
+  opt_ins: Array(TypeName)
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -340,6 +357,8 @@ pub class StructDef {
     self.quotes = q
     cw: Array(ComptimeWalk) = []
     self.comptimes = cw
+    oi: Array(TypeName) = []
+    self.opt_ins = oi
     self.vis = false
     self.mod_name = ""
   }
@@ -355,6 +374,7 @@ pub class ClassDef {
   comptimes: Array(ComptimeWalk)
   vis: Bool = false
   mod_name: String = ""
+  opt_ins: Array(TypeName)
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -369,6 +389,45 @@ pub class ClassDef {
     self.quotes = q
     cw: Array(ComptimeWalk) = []
     self.comptimes = cw
+    oi: Array(TypeName) = []
+    self.opt_ins = oi
+    self.vis = false
+    self.mod_name = ""
+  }
+}
+
+pub class InterfaceDef {
+  loc: Location
+  name: String = ""
+  type_params: Array(String)
+  methods: Array(Function)
+  vis: Bool = false
+  mod_name: String = ""
+
+  fn initialize(loc: Location, name: String) {
+    self.loc = loc
+    self.name = name
+    tp: Array(String) = []
+    self.type_params = tp
+    m: Array(Function) = []
+    self.methods = m
+    self.vis = false
+    self.mod_name = ""
+  }
+}
+
+pub class OptIn {
+  loc: Location
+  target: TypeName
+  ifaces: Array(TypeName)
+  vis: Bool = false
+  mod_name: String = ""
+
+  fn initialize(loc: Location, target: TypeName) {
+    self.loc = loc
+    self.target = target
+    xs: Array(TypeName) = []
+    self.ifaces = xs
     self.vis = false
     self.mod_name = ""
   }
@@ -447,6 +506,8 @@ pub class Program {
   module_path: String = ""
   root_module: String = ""
   mods: Array(ModInfo)
+  interfaces: Array(InterfaceDef)
+  opt_ins: Array(OptIn)
 
   fn initialize(loc: Location) {
     self.loc = loc
@@ -469,6 +530,10 @@ pub class Program {
     self.root_module = ""
     md: Array(ModInfo) = []
     self.mods = md
+    ifs: Array(InterfaceDef) = []
+    self.interfaces = ifs
+    ops: Array(OptIn) = []
+    self.opt_ins = ops
   }
 }
 
@@ -565,6 +630,11 @@ pub fn clone_type_name(tn: TypeName): TypeName {
     out.members.push(clone_type_name(tn.members[i]))
     i = i + 1
   }
+  i = 0
+  while i < tn.bounds.size {
+    out.bounds.push(clone_type_name(tn.bounds[i]))
+    i = i + 1
+  }
   out
 }
 
@@ -581,6 +651,11 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
     if r = tn.ret {
       out.ret = subst_type_name(r, from, to)
     }
+    i = 0
+    while i < tn.bounds.size {
+      out.bounds.push(subst_type_name(tn.bounds[i], from, to))
+      i = i + 1
+    }
     return out
   }
   if tn.members.size > 0 {
@@ -591,6 +666,11 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
       out.members.push(subst_type_name(tn.members[i], from, to))
       i = i + 1
     }
+    i = 0
+    while i < tn.bounds.size {
+      out.bounds.push(subst_type_name(tn.bounds[i], from, to))
+      i = i + 1
+    }
     return out
   }
   if tn.args.size == 0 {
@@ -598,6 +678,11 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
     while i < from.size {
       if str_eq(tn.name, from[i]) {
         rep = clone_type_name(to[i])
+        bi = 0
+        while bi < tn.bounds.size {
+          rep.bounds.push(subst_type_name(tn.bounds[bi], from, to))
+          bi = bi + 1
+        }
         if tn.nilable {
           if rep.nilable {
           } else {
@@ -623,10 +708,20 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
     out.args.push(subst_type_name(tn.args[i], from, to))
     i = i + 1
   }
+  i = 0
+  while i < tn.bounds.size {
+    out.bounds.push(subst_type_name(tn.bounds[i], from, to))
+    i = i + 1
+  }
   out
 }
 
 pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Array(String)) {
+  bi = 0
+  while bi < tn.bounds.size {
+    type_name_unbound_names(tn.bounds[bi], named, into)
+    bi = bi + 1
+  }
   if tn.fn_type {
     i = 0
     while i < tn.args.size {
@@ -912,6 +1007,12 @@ pub fn clone_function(fnn: Function): Function {
     out.type_params.push(fnn.type_params[i])
     i = i + 1
   }
+  i = 0
+  while i < fnn.bounds.size {
+    b = fnn.bounds[i]
+    out.bounds.push(TypeBound.new(b.param, clone_type_name(b.iface)))
+    i = i + 1
+  }
   out.generic = fnn.generic
   out.ol_index = fnn.ol_index
   out.vis = fnn.vis
@@ -1045,6 +1146,19 @@ pub fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeNa
     p.type = subst_type_name(p.type, from, to)
     if d = p.default {
       subst_type_in_expr(d, from, to)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < fnn.bounds.size {
+    b = fnn.bounds[i]
+    b.iface = subst_type_name(b.iface, from, to)
+    j = 0
+    while j < from.size {
+      if str_eq(b.param, from[j]) {
+        b.param = to[j].name
+      }
+      j = j + 1
     }
     i = i + 1
   }

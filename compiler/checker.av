@@ -346,6 +346,141 @@ pub fn reserved_c_names: Hash(String, Int) {
   h
 }
 
+pub class ImplFact {
+  type_key: String = ""
+  iface_key: String = ""
+  mod_name: String = ""
+  vis: Bool = false
+
+  fn initialize {
+  }
+}
+
+pub fn str_index(names: Array(String), name: String): Int {
+  i = 0
+  while i < names.size {
+    if str_eq(names[i], name) {
+      return i
+    }
+    i = i + 1
+  }
+  0 - 1
+}
+
+pub fn iface_key_of(name: String, args: Array(Ty)): String {
+  if args.size == 0 {
+    return name
+  }
+  buf = buf_new()
+  buf.push_str(name)
+  i = 0
+  while i < args.size {
+    buf.push_str("__")
+    buf.push_str(mangle_ty(args[i]))
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub fn impl_type_key(ty: Ty): String {
+  if ty.is_ptr {
+    return mangle_ty(ty)
+  }
+  ty.name
+}
+
+pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
+  if a.is_var {
+    if b.is_var {
+      ia = str_index(ap, a.name)
+      ib = str_index(bp, b.name)
+      if ia < 0 {
+        return false
+      }
+      return ia == ib
+    }
+    return false
+  }
+  if b.is_var {
+    return false
+  }
+  if a.kind != b.kind {
+    return false
+  }
+  if a.is_fn {
+    if a.members.size != b.members.size {
+      return false
+    }
+    i = 0
+    while i < a.members.size {
+      if ty_eq_sig(a.members[i], b.members[i], ap, bp) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    if ar = a.inner {
+      if br = b.inner {
+        return ty_eq_sig(ar, br, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_union {
+    if a.members.size != b.members.size {
+      return false
+    }
+    i = 0
+    while i < a.members.size {
+      if ty_eq_sig(a.members[i], b.members[i], ap, bp) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    return true
+  }
+  if a.is_ptr {
+    if ae = a.inner {
+      if be = b.inner {
+        return ty_eq_sig(ae, be, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_array {
+    if ae = a.inner {
+      if be = b.inner {
+        return ty_eq_sig(ae, be, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_join {
+    if ae = a.inner {
+      if be = b.inner {
+        return ty_eq_sig(ae, be, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_hash {
+    if ak = a.key {
+      if av = a.val {
+        if bk = b.key {
+          if bv = b.val {
+            if ty_eq_sig(ak, bk, ap, bp) {
+              return ty_eq_sig(av, bv, ap, bp)
+            }
+          }
+        }
+      }
+    }
+    return false
+  }
+  a.same_as(b)
+}
+
 pub class Scope {
   names: Hash(String, Int)
 
@@ -398,6 +533,14 @@ pub class Checker {
   in_task: Int = 0
   place_name: String = ""
   place_depth: Int = 0
+  witness_note: String = ""
+  impls: Array(ImplFact)
+  sig_params: Array(Ty)
+  sig_ret: Ty
+  sig_vars: Array(String)
+  wit_params: Array(Ty)
+  wit_ret: Ty
+  wit_vars: Array(String)
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -463,6 +606,18 @@ pub class Checker {
     self.in_task = 0
     self.place_name = ""
     self.place_depth = 0
+    im: Array(ImplFact) = []
+    self.impls = im
+    sp: Array(Ty) = []
+    self.sig_params = sp
+    self.sig_ret = ty_void()
+    sv: Array(String) = []
+    self.sig_vars = sv
+    wp: Array(Ty) = []
+    self.wit_params = wp
+    self.wit_ret = ty_void()
+    wv: Array(String) = []
+    self.wit_vars = wv
   }
 
   pub fn has_err: Bool {
@@ -484,7 +639,15 @@ pub class Checker {
     if self.ready_adopt {
       if self.in_adopt {
       } else {
+        saved: Array(String) = []
+        i = 0
+        while i < self.resolver.tparam_names.size {
+          saved.push(self.resolver.tparam_names[i])
+          i = i + 1
+        }
+        self.resolver.clear_tparams
         self.adopt_new_types
+        self.resolver.set_tparams(saved)
       }
     }
   }
@@ -568,6 +731,17 @@ pub class Checker {
         tv[cdef.name] = 1
       } else {
         tv[cdef.name] = 0
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.program.interfaces.size {
+      idef = self.program.interfaces[i]
+      tm[idef.name] = idef.mod_name
+      if idef.vis {
+        tv[idef.name] = 1
+      } else {
+        tv[idef.name] = 0
       }
       i = i + 1
     }
@@ -1401,6 +1575,10 @@ pub class Checker {
   }
 
   pub fn instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+    if self.bounds_hold(sig.node, subst, loc) {
+    } else {
+      return nil
+    }
     from = sig.node.type_params
     to: Array(TypeName) = []
     buf = buf_new()
@@ -1445,6 +1623,10 @@ pub class Checker {
   }
 
   pub fn instantiate_method(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+    if self.bounds_hold(sig.node, subst, loc) {
+    } else {
+      return nil
+    }
     from = sig.node.type_params
     to: Array(TypeName) = []
     buf = buf_new()
@@ -2342,7 +2524,15 @@ pub class Checker {
       i = i + 1
     }
     self.ready_adopt = true
+    self.check_interface_sigs
+    if self.has_err {
+      return self.program
+    }
     self.adopt_new_types
+    if self.has_err {
+      return self.program
+    }
+    self.apply_late_opt_ins
     if self.has_err {
       return self.program
     }
@@ -2564,6 +2754,10 @@ pub class Checker {
     }
     fnn.type_params = tparams
     fnn.generic = tparams.size > 0
+    self.attach_bounds(fnn)
+    if self.has_err {
+      return
+    }
     saved_mod = self.current_module
     self.current_module = fnn.mod_name
     self.resolver.set_tparams(tparams)
@@ -2752,6 +2946,12 @@ pub class Checker {
     }
     fnn.type_params = tparams
     fnn.generic = tparams.size > 0
+    self.attach_bounds(fnn)
+    if self.has_err {
+      self.resolver.clear_tparams
+      self.current_module = saved_mod
+      return
+    }
     params: Array(Ty) = []
     i = 0
     while i < fnn.params.size {
@@ -2840,6 +3040,10 @@ pub class Checker {
       }
       j = j + 1
     }
+    if sdef.type_params.size > 0 {
+      return
+    }
+    self.check_decl_opts(sdef.name, sdef.opt_ins, sdef.mod_name, sdef.loc)
   }
 
   pub fn adopt_one_class(cdef: ClassDef) {
@@ -2856,6 +3060,10 @@ pub class Checker {
       j = j + 1
     }
     if cdef.type_params.size > 0 {
+      return
+    }
+    self.check_decl_opts(cdef.name, cdef.opt_ins, cdef.mod_name, cdef.loc)
+    if self.failed {
       return
     }
     if self.adopt_pending {
@@ -8073,5 +8281,601 @@ pub class Checker {
     }
     self.fail(expr.loc, "lambda parameter needs a type")
     self.t_int()
+  }
+
+  pub fn attach_bounds(fnn: Function) {
+    i = 0
+    while i < fnn.params.size {
+      self.collect_bounds(fnn, fnn.params[i].type)
+      if self.has_err {
+        return
+      }
+      i = i + 1
+    }
+    if r = fnn.receiver {
+      self.collect_bounds(fnn, r.type)
+      if self.has_err {
+        return
+      }
+    }
+    if t = fnn.return_type {
+      self.collect_bounds(fnn, t)
+    }
+  }
+
+  pub fn collect_bounds(fnn: Function, tn: TypeName) {
+    if tn.bounds.size > 0 {
+      ok = false
+      if tn.fn_type {
+      } else if tn.members.size > 0 {
+      } else if tn.nilable {
+      } else if tn.args.size > 0 {
+      } else if tn.name.size == 0 {
+      } else if str_index(fnn.type_params, tn.name) >= 0 {
+        ok = true
+      }
+      if ok {
+        i = 0
+        while i < tn.bounds.size {
+          fnn.bounds.push(TypeBound.new(tn.name, tn.bounds[i]))
+          i = i + 1
+        }
+      } else {
+        self.fail(tn.loc, "bounds are only allowed on a type parameter")
+        return
+      }
+    }
+    if tn.fn_type {
+      i = 0
+      while i < tn.args.size {
+        self.collect_bounds(fnn, tn.args[i])
+        if self.has_err {
+          return
+        }
+        i = i + 1
+      }
+      if r = tn.ret {
+        self.collect_bounds(fnn, r)
+      }
+      return
+    }
+    if tn.members.size > 0 {
+      i = 0
+      while i < tn.members.size {
+        self.collect_bounds(fnn, tn.members[i])
+        if self.has_err {
+          return
+        }
+        i = i + 1
+      }
+      return
+    }
+    i = 0
+    while i < tn.args.size {
+      self.collect_bounds(fnn, tn.args[i])
+      if self.has_err {
+        return
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn bounds_hold(fnn: Function, subst: Array(Ty), loc: Location): Bool {
+    if fnn.bounds.size == 0 {
+      return true
+    }
+    arg_tns: Array(TypeName) = []
+    k = 0
+    while k < subst.size {
+      arg_tns.push(ty_to_type_name(subst[k], loc))
+      k = k + 1
+    }
+    i = 0
+    while i < fnn.bounds.size {
+      b = fnn.bounds[i]
+      idx = str_index(fnn.type_params, b.param)
+      if idx < 0 {
+        self.fail(loc, "bounds are only allowed on a type parameter")
+        return false
+      }
+      if idx >= subst.size {
+        self.fail(loc, "cannot infer type argument")
+        return false
+      }
+      applied = subst_type_name(b.iface, fnn.type_params, arg_tns)
+      if self.use_impl(subst[idx], applied, loc) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    true
+  }
+
+  pub fn check_interface_sigs {
+    i = 0
+    while i < self.program.interfaces.size {
+      idef = self.program.interfaces[i]
+      saved = self.current_module
+      self.current_module = idef.mod_name
+      j = 0
+      while j < idef.methods.size {
+        method = idef.methods[j]
+        if method.body.size > 0 {
+          self.fail(method.loc, "interface methods have no body")
+          self.current_module = saved
+          return
+        }
+        raw = collect_fn_type_params(method, self.resolver.named)
+        vars: Array(String) = []
+        n = 0
+        while n < raw.size {
+          if str_index(idef.type_params, raw[n]) >= 0 {
+          } else {
+            vars.push(raw[n])
+          }
+          n = n + 1
+        }
+        both: Array(String) = []
+        n = 0
+        while n < idef.type_params.size {
+          both.push(idef.type_params[n])
+          n = n + 1
+        }
+        n = 0
+        while n < vars.size {
+          both.push(vars[n])
+          n = n + 1
+        }
+        self.resolver.set_tparams(both)
+        p = 0
+        while p < method.params.size {
+          dummy = self.resolve_value_in_module(method.params[p].type)
+          self.pull_resolve
+          if self.has_err {
+            self.resolver.clear_tparams
+            self.current_module = saved
+            return
+          }
+          p = p + 1
+        }
+        if t = method.return_type {
+          dummy2 = self.resolve_in_module(t)
+          self.pull_resolve
+          if self.has_err {
+            self.resolver.clear_tparams
+            self.current_module = saved
+            return
+          }
+        }
+        self.resolver.clear_tparams
+        j = j + 1
+      }
+      self.current_module = saved
+      i = i + 1
+    }
+  }
+
+  pub fn check_decl_opts(type_name: String, opt_ins: Array(TypeName), mod_name: String, loc: Location) {
+    if opt_ins.size == 0 {
+      return
+    }
+    ty: Ty? = nil
+    if found = self.resolver.get_named(type_name) {
+      ty = found
+    } else {
+      return
+    }
+    if concrete = ty {
+      saved = self.current_module
+      self.current_module = mod_name
+      i = 0
+      while i < opt_ins.size {
+        self.record_impl(concrete, opt_ins[i], loc, mod_name, true)
+        if self.has_err {
+          self.current_module = saved
+          return
+        }
+        i = i + 1
+      }
+      self.current_module = saved
+    }
+  }
+
+  pub fn apply_late_opt_ins {
+    i = 0
+    while i < self.program.opt_ins.size {
+      opt = self.program.opt_ins[i]
+      saved = self.current_module
+      self.current_module = opt.mod_name
+      ty = self.resolve_in_module(opt.target)
+      self.pull_resolve
+      if self.has_err {
+        self.current_module = saved
+        return
+      }
+      if self.opt_target_ok(ty) {
+        j = 0
+        while j < opt.ifaces.size {
+          self.record_impl(ty, opt.ifaces[j], opt.loc, opt.mod_name, opt.vis)
+          if self.has_err {
+            self.current_module = saved
+            return
+          }
+          j = j + 1
+        }
+      } else {
+        self.fail(opt.loc, "${ty.show} cannot opt into an interface")
+        self.current_module = saved
+        return
+      }
+      self.current_module = saved
+      i = i + 1
+    }
+  }
+
+  pub fn opt_target_ok(ty: Ty): Bool {
+    if ty.template {
+      return false
+    }
+    if ty.is_struct {
+      return true
+    }
+    if ty.is_class {
+      return true
+    }
+    self.ptr_method_ok(ty)
+  }
+
+  pub fn iface_args_of(idef: InterfaceDef, tn: TypeName): Array(Ty)? {
+    if self.type_is_visible(idef.name, self.current_module, tn.mod_name) {
+    } else {
+      self.fail(tn.loc, "unknown type ${idef.name}")
+      return nil
+    }
+    n = idef.type_params.size
+    if n == 0 {
+      if tn.args.size > 0 {
+        self.fail(tn.loc, "${idef.name} does not take type arguments")
+        return nil
+      }
+    } else if tn.args.size == 0 {
+      self.fail(tn.loc, "${idef.name} needs type arguments")
+      return nil
+    } else if tn.args.size != n {
+      word = "type arguments"
+      if n == 1 {
+        word = "type argument"
+      }
+      self.fail(tn.loc, "${idef.name} takes ${n} ${word}")
+      return nil
+    }
+    args: Array(Ty) = []
+    i = 0
+    while i < tn.args.size {
+      args.push(self.resolve_value_in_module(tn.args[i]))
+      self.pull_resolve
+      if self.has_err {
+        return nil
+      }
+      if ty_has_var(args[args.size - 1]) {
+        self.fail(tn.loc, "${idef.name} needs type arguments")
+        return nil
+      }
+      i = i + 1
+    }
+    args
+  }
+
+  pub fn record_impl(concrete: Ty, tn: TypeName, loc: Location, mod_name: String, vis: Bool) {
+    idef: InterfaceDef? = nil
+    if found = self.resolver.find_interface(tn.name) {
+      idef = found
+    } else {
+      self.fail(tn.loc, "${tn.name} is not an interface")
+      return
+    }
+    if defn = idef {
+      got: Array(Ty)? = nil
+      if args = self.iface_args_of(defn, tn) {
+        got = args
+      } else {
+        return
+      }
+      if args = got {
+        label = defn.name
+        if args.size > 0 {
+          label = self.resolver.format_app(defn.name, args)
+        }
+        if self.opt_target_ok(concrete) {
+        } else {
+          self.fail(loc, "${concrete.show} cannot opt into an interface")
+          return
+        }
+        key = iface_key_of(defn.name, args)
+        tkey = impl_type_key(concrete)
+        if prev = self.find_impl(tkey, key) {
+          self.fail(loc, "${concrete.show} already implements ${label}")
+          return
+        }
+        n = self.count_witnesses(concrete, defn, args, self.current_module, label)
+        if n == 1 {
+          fact = ImplFact.new()
+          fact.type_key = tkey
+          fact.iface_key = key
+          fact.mod_name = mod_name
+          fact.vis = vis
+          self.impls.push(fact)
+        } else {
+          self.fail(loc, self.witness_note)
+        }
+      }
+    }
+  }
+
+  pub fn use_impl(concrete: Ty, tn: TypeName, loc: Location): Bool {
+    idef: InterfaceDef? = nil
+    if found = self.resolver.find_interface(tn.name) {
+      idef = found
+    } else {
+      self.fail(loc, "${tn.name} is not an interface")
+      return false
+    }
+    if defn = idef {
+      got: Array(Ty)? = nil
+      if args = self.iface_args_of(defn, tn) {
+        got = args
+      } else {
+        return false
+      }
+      if args = got {
+        label = defn.name
+        if args.size > 0 {
+          label = self.resolver.format_app(defn.name, args)
+        }
+        key = iface_key_of(defn.name, args)
+        tkey = impl_type_key(concrete)
+        if fact = self.find_impl(tkey, key) {
+          if self.fact_visible(fact) {
+          } else {
+            self.fail(loc, "${concrete.show} does not implement ${label}")
+            return false
+          }
+        } else {
+          self.fail(loc, "${concrete.show} does not implement ${label}")
+          return false
+        }
+        n = self.count_witnesses(concrete, defn, args, self.current_module, label)
+        if n == 1 {
+          return true
+        }
+        self.fail(loc, "${concrete.show} does not implement ${label}")
+        return false
+      }
+    }
+    false
+  }
+
+  pub fn fact_visible(fact: ImplFact): Bool {
+    if fact.vis {
+      return true
+    }
+    if str_eq(fact.mod_name, self.current_module) {
+      return true
+    }
+    if fact.mod_name.size == 0 {
+      return true
+    }
+    if self.current_module.size == 0 {
+      return true
+    }
+    false
+  }
+
+  pub fn find_impl(type_key: String, iface_key: String): ImplFact? {
+    i = 0
+    while i < self.impls.size {
+      fact = self.impls[i]
+      if str_eq(fact.type_key, type_key) {
+        if str_eq(fact.iface_key, iface_key) {
+          return fact
+        }
+      }
+      i = i + 1
+    }
+    nil
+  }
+
+  pub fn load_iface_method(idef: InterfaceDef, method: Function, arg_tys: Array(Ty)): Bool {
+    arg_tns: Array(TypeName) = []
+    i = 0
+    while i < arg_tys.size {
+      arg_tns.push(ty_to_type_name(arg_tys[i], method.loc))
+      i = i + 1
+    }
+    cloned = clone_function(method)
+    subst_function_types(cloned, idef.type_params, arg_tns)
+    raw = collect_fn_type_params(cloned, self.resolver.named)
+    vars: Array(String) = []
+    i = 0
+    while i < raw.size {
+      if str_index(idef.type_params, raw[i]) >= 0 {
+      } else {
+        vars.push(raw[i])
+      }
+      i = i + 1
+    }
+    both: Array(String) = []
+    i = 0
+    while i < vars.size {
+      both.push(vars[i])
+      i = i + 1
+    }
+    self.resolver.set_tparams(both)
+    params: Array(Ty) = []
+    i = 0
+    while i < cloned.params.size {
+      params.push(self.resolver.resolve_value(cloned.params[i].type))
+      self.pull_resolve
+      if self.has_err {
+        self.resolver.clear_tparams
+        return false
+      }
+      i = i + 1
+    }
+    ret = self.t_void()
+    if t = cloned.return_type {
+      ret = self.resolver.resolve(t)
+      self.pull_resolve
+      if self.has_err {
+        self.resolver.clear_tparams
+        return false
+      }
+    }
+    self.resolver.clear_tparams
+    self.sig_params = params
+    self.sig_ret = ret
+    self.sig_vars = vars
+    true
+  }
+
+  pub fn count_witnesses(concrete: Ty, idef: InterfaceDef, arg_tys: Array(Ty), from_mod: String, label: String): Int {
+    if idef.methods.size == 0 {
+      self.witness_note = ""
+      return 1
+    }
+    mi = 0
+    while mi < idef.methods.size {
+      method = idef.methods[mi]
+      if self.load_iface_method(idef, method, arg_tys) {
+      } else {
+        self.witness_note = "${concrete.show} does not implement ${label}"
+        return 0
+      }
+      method_hits = 0
+      method_note = ""
+      j = 0
+      while j < self.methods.size {
+        sig = self.methods[j]
+        if str_eq(sig.name, method.name) {
+          if self.method_is_visible(sig.node, from_mod) {
+            if self.witness_fits(sig, concrete) {
+              if self.wit_params.size == self.sig_params.size {
+                if self.sigs_match() {
+                  method_hits = method_hits + 1
+                } else {
+                  if method_note.size == 0 {
+                    method_note = self.diff_note(concrete, label, method.name)
+                  }
+                }
+              }
+            }
+          }
+        }
+        j = j + 1
+      }
+      if method_hits == 0 {
+        if method_note.size > 0 {
+          self.witness_note = method_note
+        } else {
+          self.witness_note = "${concrete.show} does not implement ${label}: missing ${method.name}"
+        }
+        return 0
+      }
+      if method_hits > 1 {
+        self.witness_note = "ambiguous call to ${concrete.show}.${method.name}"
+        return 2
+      }
+      mi = mi + 1
+    }
+    self.witness_note = ""
+    1
+  }
+
+  pub fn sigs_match: Bool {
+    i = 0
+    while i < self.sig_params.size {
+      if ty_eq_sig(self.sig_params[i], self.wit_params[i], self.sig_vars, self.wit_vars) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    ty_eq_sig(self.sig_ret, self.wit_ret, self.sig_vars, self.wit_vars)
+  }
+
+  pub fn diff_note(concrete: Ty, label: String, name: String): String {
+    i = 0
+    while i < self.sig_params.size {
+      if i < self.wit_params.size {
+        if ty_eq_sig(self.sig_params[i], self.wit_params[i], self.sig_vars, self.wit_vars) {
+        } else {
+          n = i + 1
+          return "${concrete.show} does not implement ${label}: ${name} parameter ${n} is ${self.wit_params[i].show}, expected ${self.sig_params[i].show}"
+        }
+      }
+      i = i + 1
+    }
+    "${concrete.show} does not implement ${label}: ${name} returns ${self.wit_ret.show}, expected ${self.sig_ret.show}"
+  }
+
+  pub fn witness_fits(sig: FuncSig, concrete: Ty): Bool {
+    owner = impl_type_key(concrete)
+    if concrete.origin.size > 0 {
+      if str_eq(sig.owner, concrete.origin) {
+        if sig.node.generic {
+          if recv = sig.node.receiver {
+            self.resolver.set_tparams(sig.node.type_params)
+            pat = self.resolver.resolve(recv.type)
+            self.pull_resolve
+            self.resolver.clear_tparams
+            if self.has_err {
+              return false
+            }
+            if str_eq(pat.origin, concrete.origin) {
+              if pat.ty_args.size == concrete.ty_args.size {
+                keys: Array(String) = []
+                vals: Array(Ty) = []
+                i = 0
+                while i < pat.ty_args.size {
+                  if self.unify_ty(pat.ty_args[i], concrete.ty_args[i], keys, vals) {
+                  } else {
+                    return false
+                  }
+                  i = i + 1
+                }
+                params: Array(Ty) = []
+                i = 0
+                while i < sig.params.size {
+                  params.push(self.subst_ty(sig.params[i], keys, vals))
+                  i = i + 1
+                }
+                ret = self.subst_ty(sig.ret, keys, vals)
+                vars: Array(String) = []
+                i = 0
+                while i < sig.node.type_params.size {
+                  if g = self.subst_get(keys, vals, sig.node.type_params[i]) {
+                  } else {
+                    vars.push(sig.node.type_params[i])
+                  }
+                  i = i + 1
+                }
+                self.wit_params = params
+                self.wit_ret = ret
+                self.wit_vars = vars
+                return true
+              }
+            }
+          }
+        }
+      }
+    }
+    if str_eq(sig.owner, owner) {
+      self.wit_params = sig.params
+      self.wit_ret = sig.ret
+      self.wit_vars = sig.node.type_params
+      return true
+    }
+    false
   }
 }
