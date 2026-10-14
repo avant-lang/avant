@@ -30,7 +30,7 @@ The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted an
 
 ### Requirements
 
-Crystal 1.21, a C compiler (`cc`), LLVM 20, and a safepoints-enabled `myc-llvm`. In this workbench that binary is `../safepoints/myc-llvm`. `AVANT_MYC_LLVM` overrides the path. `avant bind` also needs libclang.
+Crystal 1.21, a C compiler (`cc`), LLVM 20, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang.
 
 ### Build a compiler
 
@@ -541,7 +541,7 @@ fn main {
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
-`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. The `bind` command itself is still the Crystal tool `tools/bind.c`.
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. The command lives on the identity compiler. The translator is still `tools/bind.c`.
 
 ### Layouts and Ptr
 
@@ -704,7 +704,7 @@ These are decided and currently do not compile.
 | --- | --- |
 | `parallel { }` with no receiver | decided, not shipping |
 | Packages, an HTTP server | decided, not shipping |
-| `avant bind` written in Avant, and a compiler binary that Crystal is not required to produce | decided, not shipping |
+| A compiler binary that Crystal is not required to produce | decided; the release asset will be `avant-linux-x86_64`, and `v0.1.0` is not yet that seed |
 | A general `for` loop | not part of the language yet; `each` and `while` are the loops |
 
 ## Goals

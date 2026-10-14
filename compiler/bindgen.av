@@ -1,0 +1,262 @@
+import source
+import loader
+import pipeline
+
+pub class BindResult {
+  ok: Bool = false
+  text: String = ""
+  err: String = ""
+
+  fn initialize(ok: Bool, text: String, err: String) {
+    self.ok = ok
+    self.text = text
+    self.err = err
+  }
+}
+
+pub fn bind_emit(s: String) {
+  if s.size == 0 {
+    return
+  }
+  if s[s.size - 1] == 10 {
+    if s.size == 1 {
+      puts("")
+      return
+    }
+    puts(str_slice(s, 0, s.size - 1))
+    return
+  }
+  puts(s)
+}
+
+pub fn bind_default_name(header: String): String {
+  base = path_basename(header)
+  if str_ends(base, ".h") {
+    return str_slice(base, 0, base.size - 2)
+  }
+  base
+}
+
+fn bind_read(path: String): String {
+  if text = file_read(path) {
+    return text
+  }
+  ""
+}
+
+fn bind_trim(s: String): String {
+  start = 0
+  n = s.size
+  while start < n {
+    c = s[start]
+    if c == 32 || c == 10 || c == 9 || c == 13 {
+      start = start + 1
+    } else {
+      break
+    }
+  }
+  stop = n
+  while stop > start {
+    c = s[stop - 1]
+    if c == 32 || c == 10 || c == 9 || c == 13 {
+      stop = stop - 1
+    } else {
+      break
+    }
+  }
+  str_slice(s, start, stop)
+}
+
+fn bind_push_words(into: Array(String), text: String) {
+  i = 0
+  n = text.size
+  while i < n {
+    c = text[i]
+    if c == 32 || c == 10 || c == 9 || c == 13 {
+      i = i + 1
+    } else {
+      start = i
+      while i < n {
+        d = text[i]
+        if d == 32 || d == 10 || d == 9 || d == 13 {
+          break
+        }
+        i = i + 1
+      }
+      into.push(str_slice(text, start, i))
+    }
+  }
+}
+
+fn bind_sh_quote(s: String): String {
+  buf = buf_new()
+  buf.push_str("'")
+  i = 0
+  while i < s.size {
+    if s[i] == 39 {
+      buf.push_str("'\\''")
+    } else {
+      buf.push_str(str_slice(s, i, i + 1))
+    }
+    i = i + 1
+  }
+  buf.push_str("'")
+  buf.to_s
+}
+
+fn bind_llvm_config: String {
+  if v = env_get("LLVM_CONFIG") {
+    return v
+  }
+  "llvm-config"
+}
+
+fn bind_cc_cmd: String {
+  if v = env_get("CC") {
+    if file_exists(v) {
+      return v
+    }
+  }
+  if file_exists("/usr/bin/cc") {
+    return "/usr/bin/cc"
+  }
+  "cc"
+}
+
+fn bind_run_tool(cmd: String, args: Array(String), log: String): Int {
+  if file_exists(cmd) {
+    return process_run_out(cmd, args, log)
+  }
+  wrapped: Array(String) = []
+  wrapped.push(cmd)
+  i = 0
+  while i < args.size {
+    wrapped.push(args[i])
+    i = i + 1
+  }
+  if file_exists("/usr/bin/env") {
+    return process_run_out("/usr/bin/env", wrapped, log)
+  }
+  127
+}
+
+fn bind_compile_bin(src: String, bin: String): String {
+  stamp = now_ms()
+  cflags_log = "/tmp/avant-bind-${stamp}-cflags"
+  libdir_log = "/tmp/avant-bind-${stamp}-libdir"
+  cc_log = "/tmp/avant-bind-${stamp}-cc"
+  tool = bind_llvm_config()
+  cargs: Array(String) = []
+  cargs.push("--cflags")
+  code = bind_run_tool(tool, cargs, cflags_log)
+  if code != 0 {
+    msg = bind_read(cflags_log)
+    if msg.size == 0 {
+      return "llvm-config --cflags failed (${code})"
+    }
+    return bind_trim(msg)
+  }
+  largs: Array(String) = []
+  largs.push("--libdir")
+  code = bind_run_tool(tool, largs, libdir_log)
+  if code != 0 {
+    return "llvm-config --libdir failed (${code})"
+  }
+  if cflags = file_read(cflags_log) {
+    if libdir_raw = file_read(libdir_log) {
+      libdir = bind_trim(libdir_raw)
+      if libdir.size == 0 {
+        return "llvm-config --libdir was empty"
+      }
+      args: Array(String) = []
+      args.push("-O2")
+      args.push("-std=c11")
+      bind_push_words(args, cflags)
+      args.push(src)
+      args.push("-o")
+      args.push(bin)
+      args.push("-L${libdir}")
+      args.push("-lclang")
+      args.push("-Wl,-rpath,${libdir}")
+      cc = bind_cc_cmd()
+      code = bind_run_tool(cc, args, cc_log)
+      if code != 0 {
+        captured = bind_read(cc_log)
+        return "failed to build avant-bind:\n${captured}"
+      }
+      return ""
+    }
+  }
+  "cannot read llvm-config output"
+}
+
+fn bind_ensure(root: String): String {
+  src_path = "${root}/tools/bind.c"
+  if file_exists(src_path) {
+  } else {
+    return "bind source is missing"
+  }
+  if text = file_read(src_path) {
+    bin = "${root}/bin/avant-bind"
+    stamp_path = "${bin}.src"
+    fresh = false
+    if file_exists(bin) {
+      if old = file_read(stamp_path) {
+        if str_eq(old, text) {
+          fresh = true
+        }
+      }
+    }
+    if fresh {
+      return ""
+    }
+    err = bind_compile_bin(src_path, bin)
+    if err.size > 0 {
+      return err
+    }
+    w = file_write(stamp_path, text)
+    if w != 0 {
+      return "cannot write ${stamp_path}"
+    }
+    return ""
+  }
+  "cannot read ${src_path}"
+}
+
+fn bind_split(bin: String, lib_name: String, header: String, out_path: String, err_path: String): Int {
+  qbin = bind_sh_quote(bin)
+  qlib = bind_sh_quote(lib_name)
+  qheader = bind_sh_quote(header)
+  qout = bind_sh_quote(out_path)
+  qerr = bind_sh_quote(err_path)
+  script = "${qbin} ${qlib} ${qheader} > ${qout} 2> ${qerr}"
+  args: Array(String) = []
+  args.push("-c")
+  args.push(script)
+  if file_exists("/bin/sh") {
+    return process_run("/bin/sh", args)
+  }
+  process_run("/usr/bin/sh", args)
+}
+
+pub fn bind_generate(lib_name: String, header: String): BindResult {
+  root = avant_root()
+  ensured = bind_ensure(root)
+  if ensured.size > 0 {
+    return BindResult.new(false, "", ensured)
+  }
+  bin = "${root}/bin/avant-bind"
+  stamp = now_ms()
+  out_path = "/tmp/avant-bind-${stamp}.out"
+  err_path = "/tmp/avant-bind-${stamp}.err"
+  code = bind_split(bin, lib_name, header, out_path, err_path)
+  out_txt = bind_read(out_path)
+  err_txt = bind_read(err_path)
+  if code != 0 {
+    if err_txt.size > 0 {
+      return BindResult.new(false, "", err_txt)
+    }
+    return BindResult.new(false, "", "avant-bind failed (${code})")
+  }
+  BindResult.new(true, out_txt, err_txt)
+}
