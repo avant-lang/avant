@@ -101,9 +101,16 @@ jobs:
           cp -f bin/avant-av-b dist/avant-linux-x86_64/avant
           cp -f safepoints/myc-llvm dist/avant-linux-x86_64/myc-llvm
           chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
-          myc_sha="$(git -C safepoints/lib/myc rev-parse HEAD 2>/dev/null || true)"
+          myc_sha=""
+          if [ -d safepoints/lib/myc/.git ] || [ -f safepoints/lib/myc/.git ]; then
+            myc_top="$(git -C safepoints/lib/myc rev-parse --show-toplevel 2>/dev/null || true)"
+            myc_real="$(cd safepoints/lib/myc && pwd)"
+            if [ "$myc_top" = "$myc_real" ]; then
+              myc_sha="$(git -C safepoints/lib/myc rev-parse HEAD)"
+            fi
+          fi
           if [ -z "${myc_sha}" ]; then
-            myc_sha="$(grep -m1 'commit:' safepoints/shard.yml | awk '{print $2}')"
+            myc_sha="$(awk '/commit:/ { print $2; exit }' safepoints/shard.yml)"
           fi
           {
             echo "tag: ${TAG_NAME}"
