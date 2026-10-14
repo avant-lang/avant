@@ -36,7 +36,7 @@ crystal src/cli.cr compile compiler/main.av bin/avant-av
 ./bin/avant-av-b run examples/hello.av
 ```
 
-`AVANT_ROOT` and `AVANT_MYC_LLVM` override discovery. `AVANT_MYC_FINAL=1` asks myc-llvm for `--final` (slow compile, more LLVM opts). Daily builds use myc-llvm default.
+`AVANT_ROOT` and `AVANT_MYC_LLVM` override discovery. Daily builds pass myc-llvm `--debug` (fast codegen; the compiler frontend stays the same speed). `AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slow compile, more LLVM opts). Crystal `src/` is frozen and still invokes myc at its default when it builds A.
 
 ## Language
 
