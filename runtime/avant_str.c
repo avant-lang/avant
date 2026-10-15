@@ -191,7 +191,53 @@ char *avant_str_from_byte(int32_t b) {
 }
 
 double avant_exp(double x) {
-  return exp(x);
+  /* A gc-leaf. Hold the world lock so a collecting call cannot move
+   * the caller's heap pointers while they sit in registers. */
+  avant_world_lock();
+  double r = exp(x);
+  avant_world_unlock();
+  return r;
+}
+
+char *avant_str_cat_i32(const char *prefix, int32_t n) {
+  char digs[16];
+  int nd = 0;
+  uint32_t u;
+  if (n < 0) {
+    u = (uint32_t)(-(n + 1)) + 1u;
+  } else {
+    u = (uint32_t)n;
+  }
+  if (u == 0) {
+    digs[nd++] = '0';
+  } else {
+    while (u) {
+      digs[nd++] = (char)('0' + (u % 10u));
+      u /= 10u;
+    }
+  }
+  if (!prefix) {
+    prefix = "";
+  }
+  size_t np = avant_str_n(prefix);
+  size_t neg = n < 0 ? 1u : 0u;
+  size_t total = np + neg + (size_t)nd;
+  avant_gc_defer_enter();
+  char *p = (char *)avant_alloc((uint64_t)total + 1, AVANT_TYPE_BYTES);
+  if (np) {
+    memcpy(p, prefix, np);
+  }
+  size_t k = np;
+  if (neg) {
+    p[k++] = '-';
+  }
+  while (nd > 0) {
+    nd--;
+    p[k++] = digs[nd];
+  }
+  p[k] = 0;
+  avant_gc_defer_leave();
+  return p;
 }
 
 double avant_str_to_f(const char *s) {

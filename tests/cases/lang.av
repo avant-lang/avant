@@ -11,6 +11,10 @@ fn test_lang(c: Checks) {
   c.eq_int(7 & 5, 5, "bitwise and")
   c.expect(true && false || true, "logical")
   c.eq_int("abc"[0], 97, "string byte")
+  c.eq_int("abc"[1], 98, "string byte 1")
+  c.eq_int("abc"[3], 0, "string byte at nul")
+  c.eq_str("item_${7}", "item_7", "prefix int interp")
+  c.eq_str("n_${0 - 3}", "n_-3", "prefix negative interp")
 
   n = 0
   while n < 10 {
@@ -58,10 +62,14 @@ fn test_lang(c: Checks) {
   }
   hmap[20] = 3
   c.eq_int(hmap.size, 2, "Hash(Int, Int) size")
-  if v2 = hmap.get(10) {
-    c.eq_int(v2, 2, "Hash(Int, Int) get")
+  hmap.clear
+  c.eq_int(hmap.size, 0, "hash clear")
+  hmap[10] = 4
+  c.eq_int(hmap.size, 1, "hash after clear")
+  if cleared_v = hmap.get(10) {
+    c.eq_int(cleared_v, 4, "hash value after clear")
   } else {
-    c.expect(false, "Hash(Int, Int) get")
+    c.expect(false, "hash value after clear")
   }
   popped: Array(Int) = [1, 2]
   c.eq_int(popped.pop, 2, "Array.pop")

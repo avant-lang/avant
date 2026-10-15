@@ -96,6 +96,7 @@ static uint8_t *g_limit;
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
 static __thread Frame *g_frame;
+static __thread Frame *g_frame_free;
 static __thread int g_alloc_mature;
 
 typedef struct ThreadReg {
@@ -1823,12 +1824,21 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   g_type_set[type_id] = 1;
 }
 
+/* A call used to calloc a frame and free it on leave. Hot recursion
+ * (Brainfuck) and numeric methods spent the call on that pair. Frames
+ * are kept on a thread-local freelist; the slot array is reused too. */
 void avant_gc_enter(void) {
   init_gc();
   avant_gc_register_thread();
-  Frame *f = calloc(1, sizeof(Frame));
-  if (!f) {
-    die("out of memory");
+  Frame *f = g_frame_free;
+  if (f) {
+    g_frame_free = f->prev;
+    f->n = 0;
+  } else {
+    f = calloc(1, sizeof(Frame));
+    if (!f) {
+      die("out of memory");
+    }
   }
   f->prev = g_frame;
   g_frame = f;
@@ -1840,8 +1850,9 @@ void avant_gc_leave(void) {
     die("gc leave without enter");
   }
   g_frame = f->prev;
-  free(f->slots);
-  free(f);
+  f->n = 0;
+  f->prev = g_frame_free;
+  g_frame_free = f;
 }
 
 void avant_gc_root(void *slot) {

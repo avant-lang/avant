@@ -4063,6 +4063,10 @@ pub class Checker {
         if str_eq(expr.ident, "size") {
           return self.t_int()
         }
+        if str_eq(expr.ident, "clear") {
+          expr.method_call = true
+          return self.t_void()
+        }
         self.fail(expr.loc, "${object.show} has no field ${expr.ident} (did you mean size?)")
         return self.t_int()
       }
@@ -6131,6 +6135,17 @@ pub class Checker {
   }
 
   pub fn check_hash_method(expr: Expr, hash: Ty): Ty {
+    if str_eq(expr.callee, "clear") {
+      if expr.args.size == 0 {
+        if b = expr.block {
+          self.fail(expr.loc, "clear takes no arguments")
+          return self.t_void()
+        }
+        return self.t_void()
+      }
+      self.fail(expr.loc, "clear takes no arguments")
+      return self.t_void()
+    }
     if str_eq(expr.callee, "get") {
       if expr.args.size == 1 {
         if b = expr.block {

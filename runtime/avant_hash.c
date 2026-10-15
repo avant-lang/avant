@@ -281,6 +281,28 @@ int32_t avant_hash_size(void *hp) {
   return h ? h->size : 0;
 }
 
+void avant_hash_clear(void *hp) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i;
+  if (!h) {
+    return;
+  }
+  if (h->key_kind == AVANT_HASH_KEY_STR && h->keys) {
+    for (i = 0; i < h->cap; i++) {
+      ((void **)h->keys)[i] = NULL;
+    }
+  }
+  if (h->val_kind == AVANT_HASH_VAL_STR && h->vals) {
+    for (i = 0; i < h->cap; i++) {
+      ((void **)h->vals)[i] = NULL;
+    }
+  }
+  if (h->state && h->cap > 0) {
+    memset(h->state, 0, (size_t)h->cap);
+  }
+  h->size = 0;
+}
+
 void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
   avant_gc_defer_enter();
   AvantHash *h = (AvantHash *)hp;

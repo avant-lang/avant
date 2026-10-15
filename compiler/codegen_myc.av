@@ -666,6 +666,8 @@ pub class MycGen {
   place_field: Int = 0
   need_gate: Int = 0
   need_parallel: Int = 0
+  cur_leaf: Int = 0
+  numeric_leaves: Hash(String, Int)
 
   fn initialize(program: Program) {
     self.program = program
@@ -735,6 +737,9 @@ pub class MycGen {
     self.place_field = 0
     self.need_gate = 0
     self.need_parallel = 0
+    self.cur_leaf = 0
+    leaves = Hash(String, Int).new
+    self.numeric_leaves = leaves
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -927,6 +932,7 @@ pub class MycGen {
     self.ext("avant_type_map", "u32,u64", "")
     self.ext("avant_barrier", "ptr<void>", "")
     self.ext("avant_str_concat", "ptr<u8>,ptr<u8>", "ptr<u8>")
+    self.ext("avant_str_cat_i32", "ptr<u8>,i32", "ptr<u8>")
     self.ext("avant_str_from_int", "i32", "ptr<u8>")
     self.ext("avant_str_from_i64", "i64", "ptr<u8>")
     self.ext("avant_str_from_u64", "u64", "ptr<u8>")
@@ -950,6 +956,7 @@ pub class MycGen {
     self.ext("avant_exp", "f64", "f64")
     self.ext("avant_hash_new", "i32,i32", "ptr<void>")
     self.ext("avant_hash_size", "ptr<void>", "i32")
+    self.ext("avant_hash_clear", "ptr<void>", "")
     self.ext("avant_hash_set_i32", "ptr<void>,ptr<u8>,i32", "")
     self.ext("avant_hash_set_str", "ptr<void>,ptr<u8>,ptr<u8>", "")
     self.ext("avant_hash_set_i32k_i32", "ptr<void>,i32,i32", "")
@@ -1555,6 +1562,7 @@ pub class MycGen {
     self.resolver = load_types(self.program)
     self.collect_sigs
     self.collect_methods
+    self.mark_numeric_leaves
     self.assign_class_ids
     self.collect_arrays
     self.emit_runtime_decl
@@ -1642,6 +1650,7 @@ pub class MycGen {
       }
       i = i + 1
     }
+    self.cur_leaf = 0
     i = 0
     while i < self.pending.size {
       pend = self.pending[i]
@@ -1698,7 +1707,219 @@ pub class MycGen {
     false
   }
 
+  pub fn mark_numeric_leaves {
+    found = Hash(String, Int).new
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if self.fn_can_skip_frame(fnn) {
+        found[fnn.emit_name] = 1
+      }
+      i = i + 1
+    }
+    self.numeric_leaves = found
+  }
+
+  pub fn fn_can_skip_frame(fnn: Function): Bool {
+    if fnn.generic {
+      return false
+    }
+    if fn_is_method(fnn) {
+      return false
+    }
+    if str_eq(fnn.name, "main") {
+      return false
+    }
+    if fnn.box_names.size > 0 {
+      return false
+    }
+    if sig = self.find_fn(fnn.emit_name) {
+      i = 0
+      while i < sig.params.size {
+        if ty_has_heap(sig.params[i]) {
+          return false
+        }
+        i = i + 1
+      }
+      if ty_has_heap(sig.ret) {
+        return false
+      }
+    } else {
+      return false
+    }
+    if self.stmts_need_frame(fnn.body) {
+      return false
+    }
+    true
+  }
+
+  pub fn stmts_need_frame(body: Array(Stmt)): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_needs_frame(body[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmt_needs_frame(stmt: Stmt): Bool {
+    if e = stmt.expr {
+      if self.expr_needs_frame(e) {
+        return true
+      }
+    }
+    if c = stmt.cond {
+      if self.expr_needs_frame(c) {
+        return true
+      }
+    }
+    if t = stmt.target {
+      if self.expr_needs_frame(t) {
+        return true
+      }
+    }
+    if v = stmt.value {
+      if self.expr_needs_frame(v) {
+        return true
+      }
+    }
+    if self.stmts_need_frame(stmt.then_body) {
+      return true
+    }
+    if self.stmts_need_frame(stmt.else_body) {
+      return true
+    }
+    if self.stmts_need_frame(stmt.body) {
+      return true
+    }
+    false
+  }
+
+  pub fn expr_needs_frame(expr: Expr): Bool {
+    if ty_has_heap(expr_ty(expr)) {
+      return true
+    }
+    k = expr.kind
+    if k == ex_call() {
+      return true
+    }
+    if k == ex_lambda() {
+      return true
+    }
+    if k == ex_array() {
+      return true
+    }
+    if k == ex_array_new() {
+      return true
+    }
+    if k == ex_hash_new() {
+      return true
+    }
+    if k == ex_interp() {
+      return true
+    }
+    if k == ex_splice() {
+      return true
+    }
+    if k == ex_binary() {
+      if expr.resolved.size > 0 {
+        return true
+      }
+    }
+    if k == ex_field() {
+      if expr.method_call {
+        return true
+      }
+    }
+    if inner = expr.inner {
+      if self.expr_needs_frame(inner) {
+        return true
+      }
+    }
+    if l = expr.left {
+      if self.expr_needs_frame(l) {
+        return true
+      }
+    }
+    if r = expr.right {
+      if self.expr_needs_frame(r) {
+        return true
+      }
+    }
+    if obj = expr.object {
+      if self.expr_needs_frame(obj) {
+        return true
+      }
+    }
+    if c = expr.cond {
+      if self.expr_needs_frame(c) {
+        return true
+      }
+    }
+    if recv = expr.receiver {
+      if self.expr_needs_frame(recv) {
+        return true
+      }
+    }
+    if sz = expr.size_expr {
+      if self.expr_needs_frame(sz) {
+        return true
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if self.expr_needs_frame(expr.args[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      if self.expr_needs_frame(expr.elems[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_exprs.size {
+      if self.expr_needs_frame(expr.field_exprs[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if pe = part.expr {
+        if self.expr_needs_frame(pe) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.cases.size {
+      if self.stmts_need_frame(expr.cases[i].body) {
+        return true
+      }
+      i = i + 1
+    }
+    if self.stmts_need_frame(expr.else_body) {
+      return true
+    }
+    if b = expr.block {
+      if self.stmts_need_frame(b.body) {
+        return true
+      }
+    }
+    false
+  }
+
   pub fn emit_function(fnn: Function) {
+    self.cur_leaf = 0
     if fnn.generic {
       return
     }
@@ -1754,6 +1975,10 @@ pub class MycGen {
   }
 
   pub fn emit_plain_func(fnn: Function, params: Array(Ty)) {
+    self.cur_leaf = 0
+    if v = self.numeric_leaves.get(fnn.emit_name) {
+      self.cur_leaf = 1
+    }
     self.begin_fn_frame(fnn.box_names)
     self.line("FUNC :${fnn.emit_name}")
     self.indent = self.indent + 1
@@ -1767,7 +1992,9 @@ pub class MycGen {
       self.line("BODY")
       self.indent = self.indent + 1
       self.reset_rooted
-      self.line("CALL :avant_gc_enter")
+      if self.cur_leaf == 0 {
+        self.line("CALL :avant_gc_enter")
+      }
       self.emit_type_maps
       self.emit_init_argv
       self.emit_cov_init
@@ -1790,7 +2017,9 @@ pub class MycGen {
       self.line("BODY")
       self.indent = self.indent + 1
       self.reset_rooted
-      self.line("CALL :avant_gc_enter")
+      if self.cur_leaf == 0 {
+        self.line("CALL :avant_gc_enter")
+      }
       pnames: Array(String) = []
       i = 0
       while i < fnn.params.size {
@@ -1809,6 +2038,7 @@ pub class MycGen {
   }
 
   pub fn emit_method_func(fnn: Function, sig: FuncSig) {
+    self.cur_leaf = 0
     self.begin_fn_frame(fnn.box_names)
     mangled = sig.mangled
     self.line("FUNC :${mangled}")
@@ -1861,6 +2091,7 @@ pub class MycGen {
   }
 
   pub fn emit_ptr_method_func(fnn: Function, sig: FuncSig) {
+    self.cur_leaf = 0
     self.begin_fn_frame(fnn.box_names)
     recv_ty = ty_void()
     if r = fnn.receiver {
@@ -1977,6 +2208,7 @@ pub class MycGen {
   }
 
   pub fn emit_constructor(ty: Ty) {
+    self.cur_leaf = 0
     self.temps = 0
     self.return_type = ty
     self.self_ty = nil
@@ -2137,7 +2369,9 @@ pub class MycGen {
   }
 
   pub fn emit_ret {
-    self.line("CALL :avant_gc_leave")
+    if self.cur_leaf == 0 {
+      self.line("CALL :avant_gc_leave")
+    }
     if self.c_main {
       self.line("PUSH 0")
     }
@@ -2170,6 +2404,9 @@ pub class MycGen {
   }
 
   pub fn ensure_root(name: String, ty: Ty) {
+    if self.cur_leaf != 0 {
+      return
+    }
     if self.place_name.size > 0 {
       if str_eq(name, self.place_name) {
         return
@@ -2648,6 +2885,25 @@ pub class MycGen {
   }
 
   pub fn emit_interp(expr: Expr) {
+    if expr.parts.size == 2 {
+      head = expr.parts[0]
+      tail = expr.parts[1]
+      if text = head.text {
+        if inner = tail.expr {
+          if expr_ty(inner).is_int {
+            self.emit_expr(inner)
+            ntmp = self.new_temp
+            self.line("LOCAL :${ntmp} :i32")
+            self.line("STORE")
+            self.line("LOCAL :${ntmp}")
+            q = myc_quote(text)
+            self.line("PUSH ${q}")
+            self.line("CALL :avant_str_cat_i32")
+            return
+          }
+        }
+      }
+    }
     pieces: Array(String) = []
     i = 0
     while i < expr.parts.size {
@@ -2769,6 +3025,13 @@ pub class MycGen {
               } else if str_eq(expr.ident, "clear") {
                 self.line("CALL :avant_buf_clear")
               }
+            } else if object_ty.is_hash {
+              self.emit_expr(obj)
+              if str_eq(expr.ident, "clear") {
+                self.line("CALL :avant_hash_clear")
+              } else if str_eq(expr.ident, "size") {
+                self.line("CALL :avant_hash_size")
+              }
             } else {
               empty: Array(Expr) = []
               name = expr.resolved
@@ -2798,6 +3061,9 @@ pub class MycGen {
               if str_eq(expr.ident, "size") {
                 self.emit_expr(obj)
                 self.line("CALL :avant_hash_size")
+              } else if str_eq(expr.ident, "clear") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_hash_clear")
               } else {
                 self.emit_lvalue(expr)
               }
@@ -2940,8 +3206,18 @@ pub class MycGen {
         container = expr_ty(arr)
         if container.is_string {
           self.emit_expr(ix)
+          ixt = self.new_temp
+          self.line("LOCAL :${ixt} :i32")
+          self.line("STORE")
           self.emit_expr(arr)
-          self.line("CALL :avant_str_byte")
+          st = self.new_temp
+          self.line("LOCAL :${st} :ptr<u8>")
+          self.line("STORE")
+          self.line("LOCAL :${ixt}")
+          self.line("LOCAL :${st}")
+          self.line("BINARY :add")
+          self.line("DEREF")
+          self.line("TO :i32")
           return
         }
         if container.is_hash {
@@ -2951,13 +3227,6 @@ pub class MycGen {
         array_ty = container
         if e = array_ty.inner {
           em = ty_myc(e)
-          if heap_ptr_value(e) {
-            self.emit_expr(ix)
-            self.emit_expr(arr)
-            self.line("CALL :avant_array_get_ptr")
-            self.line("AS :${em}")
-            return
-          }
           self.emit_expr(ix)
           ixt = self.new_temp
           self.line("LOCAL :${ixt} :i32")
@@ -3580,6 +3849,13 @@ pub class MycGen {
   }
 
   pub fn emit_hash_method(expr: Expr, ty: Ty) {
+    if str_eq(expr.callee, "clear") {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_hash_clear")
+      return
+    }
     if str_eq(expr.callee, "get") {
       idx = Expr.new(ex_index(), expr.loc)
       if recv = expr.receiver {
@@ -3944,23 +4220,16 @@ pub class MycGen {
       self.indent = self.indent + 1
       if e = ty.inner {
         em = ty_myc(e)
-        if heap_ptr_value(e) {
-          self.line("LOCAL :${i}")
-          self.line("LOCAL :${arr}")
-          self.line("CALL :avant_array_get_ptr")
-          self.line("AS :${em}")
-        } else {
-          buf = self.new_temp
-          self.line("LOCAL :${arr}")
-          self.line("DEREF")
-          self.line("FIELD 0")
-          self.line("LOCAL :${buf} :ptr<${em}>")
-          self.line("STORE")
-          self.line("LOCAL :${i}")
-          self.line("LOCAL :${buf}")
-          self.line("BINARY :add")
-          self.line("DEREF")
-        }
+        buf = self.new_temp
+        self.line("LOCAL :${arr}")
+        self.line("DEREF")
+        self.line("FIELD 0")
+        self.line("LOCAL :${buf} :ptr<${em}>")
+        self.line("STORE")
+        self.line("LOCAL :${i}")
+        self.line("LOCAL :${buf}")
+        self.line("BINARY :add")
+        self.line("DEREF")
         self.line("LOCAL :${pname} :${em}")
         self.line("STORE")
         self.ensure_root(pname, e)

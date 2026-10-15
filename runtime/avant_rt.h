@@ -75,6 +75,7 @@ void avant_gc_unregister_thread(void);
 size_t avant_str_n(const char *s);
 char *avant_str_empty(void);
 char *avant_str_concat(const char *a, const char *b);
+char *avant_str_cat_i32(const char *prefix, int32_t n);
 char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(int32_t b, int32_t n);
 char *avant_str_slice(const char *s, int32_t start, int32_t stop);
@@ -133,6 +134,7 @@ int32_t avant_wide_hi(void);
 
 void *avant_hash_new(int32_t key_kind, int32_t val_kind);
 int32_t avant_hash_size(void *h);
+void avant_hash_clear(void *h);
 void avant_hash_set_i32(void *h, const char *key, int32_t val);
 void avant_hash_set_str(void *h, const char *key, const char *val);
 void avant_hash_set_i32k_i32(void *h, int32_t key, int32_t val);
