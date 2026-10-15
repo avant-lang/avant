@@ -11,14 +11,17 @@ import loader
 import expand
 import checker
 import codegen_myc
+import re2c_pat
 
 pub class IrBox {
   text: String = ""
   ok: Bool = false
+  re2c_obj: String = ""
 
   fn initialize(text: String, ok: Bool) {
     self.text = text
     self.ok = ok
+    self.re2c_obj = ""
   }
 }
 
@@ -200,8 +203,18 @@ pub fn compile_program(src: Source, program: Program): IrBox {
     puts(e.show)
     return IrBox.new("", false)
   }
+  plan = re2c_plan(program)
+  if plan.count > 0 {
+    obj = compile_re2c(plan.src)
+    if obj.size > 0 {
+      program.re2c_ids = plan.ids
+      program.re2c_obj = obj
+    }
+  }
   ir = emit_myc(program)
-  IrBox.new(ir, true)
+  box = IrBox.new(ir, true)
+  box.re2c_obj = program.re2c_obj
+  box
 }
 
 pub fn compile_av_path(path: String): IrBox {
@@ -263,6 +276,64 @@ pub fn run_cc(args: Array(String)): Int {
     i = i + 1
   }
   process_run("/usr/bin/env", wrapped)
+}
+
+pub fn re2c_bin: String {
+  if v = env_get("AVANT_RE2C") {
+    if file_exists(v) {
+      return v
+    }
+  }
+  local = "${avant_root()}/bin/re2c"
+  if file_exists(local) {
+    return local
+  }
+  if file_exists("/usr/bin/re2c") {
+    return "/usr/bin/re2c"
+  }
+  "re2c"
+}
+
+pub fn compile_re2c(src: String): String {
+  stamp = now_ms()
+  base = "/tmp/avant-re2c-${stamp}"
+  re_path = "${base}.re"
+  c_path = "${base}.c"
+  log_path = "${base}.log"
+  w = file_write(re_path, src)
+  if w != 0 {
+    puts("re2c: cannot write ${re_path}")
+    return ""
+  }
+  args: Array(String) = []
+  args.push("-b")
+  args.push("-o")
+  args.push(c_path)
+  args.push(re_path)
+  code = process_run_out(re2c_bin(), args, log_path)
+  if code != 0 {
+    puts("re2c: generator failed, pattern stays on PCRE2")
+    if text = file_read(log_path) {
+      puts(text)
+    }
+    return ""
+  }
+  obj = "${base}.o"
+  cc: Array(String) = []
+  cc.push("-c")
+  cc.push("-O2")
+  cc.push("-std=c11")
+  cc.push("-I")
+  cc.push("${avant_root()}/runtime")
+  cc.push("-o")
+  cc.push(obj)
+  cc.push(c_path)
+  code = run_cc(cc)
+  if code != 0 {
+    puts("re2c: C compile failed, pattern stays on PCRE2")
+    return ""
+  }
+  obj
 }
 
 pub fn compile_c_file(path: String): String {

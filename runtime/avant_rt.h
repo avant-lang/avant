@@ -126,6 +126,7 @@ int32_t avant_re_m0(void);
 int32_t avant_re_m1(void);
 int32_t avant_re_c0(void);
 int32_t avant_re_c1(void);
+void avant_re_set_span(int32_t m0, int32_t m1, int32_t c0, int32_t c1);
 int32_t avant_re_count(const char *pat, const char *s, int32_t caseless);
 int32_t avant_wide_op(int32_t op, int32_t a_lo, int32_t a_hi, int32_t b_lo, int32_t b_hi);
 int32_t avant_wide_hi(void);

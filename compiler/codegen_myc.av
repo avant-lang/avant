@@ -9,6 +9,7 @@ import resolve
 import parser
 import loader
 import checker
+import re2c_pat
 
 pub fn myc_id_part(s: String): String {
   buf = buf_new(s.size)
@@ -984,6 +985,10 @@ pub class MycGen {
     self.ext("avant_re_c0", "", "i32")
     self.ext("avant_re_c1", "", "i32")
     self.ext("avant_re_count", "ptr<u8>,ptr<u8>,i32", "i32")
+    if self.program.re2c_obj.size > 0 {
+      self.ext("avant_re2c_count", "i32,ptr<u8>", "i32")
+      self.ext("avant_re2c_handle", "i32", "ptr<void>")
+    }
     self.ext("avant_array_push_slot", "ptr<void>,u64,u32", "ptr<void>")
     self.ext("avant_array_push_ptr", "ptr<void>,ptr<void>,u32", "")
     self.ext("avant_array_set_ptr", "ptr<void>,i32,ptr<void>", "")
@@ -4219,6 +4224,15 @@ pub class MycGen {
       return
     }
     if str_eq(expr.callee, "re_count") {
+      if expr.args.size == 3 {
+        rid = self.re2c_call_id(expr.args[0], expr.args[2])
+        if rid > 0 {
+          self.emit_expr(expr.args[1])
+          self.line("PUSH ${rid}")
+          self.line("CALL :avant_re2c_count")
+          return
+        }
+      }
       if expr.args.size > 2 {
         self.emit_expr(expr.args[2])
       }
@@ -4232,6 +4246,14 @@ pub class MycGen {
       return
     }
     if str_eq(expr.callee, "re_compile") {
+      if expr.args.size == 2 {
+        rid = self.re2c_call_id(expr.args[0], expr.args[1])
+        if rid > 0 {
+          self.line("PUSH ${rid}")
+          self.line("CALL :avant_re2c_handle")
+          return
+        }
+      }
       if expr.args.size > 1 {
         self.emit_expr(expr.args[1])
       }
@@ -5815,6 +5837,22 @@ pub class MycGen {
       return true
     }
     str_eq(name, "avant_gate_broadcast")
+  }
+
+  pub fn re2c_call_id(pat: Expr, flags: Expr): Int {
+    if pat.kind == ex_string() {
+    } else {
+      return 0
+    }
+    if flags.kind == ex_int() {
+    } else {
+      return 0
+    }
+    key = re2c_key(pat.value_str, flags.int_bits.to_i)
+    if id = self.program.re2c_ids.get(key) {
+      return id
+    }
+    0
   }
 
   pub fn re_mark_callee(name: String): Bool {
