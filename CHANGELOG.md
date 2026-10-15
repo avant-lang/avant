@@ -1,5 +1,13 @@
 # Avant Language changelog
 
+## 0.6.0 - 2026-10-14
+
+### Removed
+* The Crystal host: `src/`, `spec/`, `shard.yml`, and `recovery.yml`. A published seed builds the compiler. `myc-llvm` is still built with Crystal from the safepoints shard, which is not in this repository.
+
+### Added
+* A native test that an old object keeps a stored field through a later collection (`tests/cases/safepoints.av`).
+
 ## 0.5.0 - 2026-10-14
 
 ### Changed

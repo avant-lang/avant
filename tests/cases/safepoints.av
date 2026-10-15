@@ -79,6 +79,32 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "read stackmap stats")
       }
 
+      bsrc = "/tmp/avant-s17-${stamp}-barrier.av"
+      bbin = "/tmp/avant-s17-${stamp}-barrier"
+      blog = "/tmp/avant-s17-${stamp}-barrier-cc.log"
+      brun = "/tmp/avant-s17-${stamp}-barrier-run.log"
+      bbody = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts(a.left.item)\n}\n"
+      bw = file_write(bsrc, bbody)
+      c.eq_int(bw, 0, "write old-object store")
+      bcc = compile_av(compiler, bsrc, bbin, blog)
+      c.eq_int(bcc, 0, "compile old-object store")
+      if file_exists(bbin) {
+        chmod_x(bbin)
+        benv: Array(String) = []
+        benv.push("AVANT_NURSERY=1")
+        benv.push("AVANT_HEAP_MAX_MB=3")
+        benv.push(bbin)
+        bcode = process_run_out("/usr/bin/env", benv, brun)
+        c.eq_int(bcode, 0, "old object survives later collections")
+        if bout = file_read(brun) {
+          c.eq_str(bout, "42\n", "stored field is 42 after collection")
+        } else {
+          c.expect(false, "read barrier stdout")
+        }
+      } else {
+        c.expect(false, "barrier binary exists")
+      }
+
       ccbin = "/tmp/avant-s17-${stamp}-cc"
       cclog = "/tmp/avant-s17-${stamp}-cc.log"
       ccenv: Array(String) = []
