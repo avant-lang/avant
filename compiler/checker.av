@@ -1190,6 +1190,7 @@ pub class Checker {
         } else {
           got = self.check_expr_as(expr.args[i], sig.params[i])
         }
+        got = self.fit_call_arg(expr.args[i], got, sig.params[i])
         if ty_assignable(got, sig.params[i]) {
         } else {
           n = i + 1
@@ -1927,6 +1928,7 @@ pub class Checker {
         } else {
           got = self.check_expr_as(expr.args[i], sig.params[i])
         }
+        got = self.fit_call_arg(expr.args[i], got, sig.params[i])
         if ty_assignable(got, sig.params[i]) {
         } else {
           n = i + 1
@@ -2273,6 +2275,7 @@ pub class Checker {
         } else {
           got = self.check_expr_as(expr.args[i], sig.params[i])
         }
+        got = self.fit_call_arg(expr.args[i], got, sig.params[i])
         if ty_assignable(got, sig.params[i]) {
         } else {
           n = i + 1
@@ -5348,6 +5351,20 @@ pub class Checker {
     return self.dispatch_call(expr, expected)
   }
 
+  pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
+    if ty_assignable(got, want) {
+      return got
+    }
+    if expr.kind == ex_int() {
+      widened = self.check_integer(expr, true, want)
+      if ty_assignable(widened, want) {
+        expr.ty = widened
+        return widened
+      }
+    }
+    got
+  }
+
   pub fn check_args(expr: Expr, params: Array(Ty), label: String) {
     if expr.args.size != params.size {
       self.fail(expr.loc, "${label} takes ${params.size} arguments, got ${expr.args.size}")
@@ -5527,6 +5544,7 @@ pub class Checker {
               }
             }
             if i < sig.params.size {
+              got = self.fit_call_arg(expr.args[i], got, sig.params[i])
               if ty_assignable(got, sig.params[i]) {
               } else {
                 n = i + 1
@@ -5912,6 +5930,19 @@ pub class Checker {
         self.fail(expr.args[0].loc, "push_fmt_i expects Int")
       }
       return self.t_void()
+    }
+    if str_eq(expr.callee, "starts_with") {
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "starts_with takes one String")
+        return self.t_int()
+      }
+      s = self.check_expr_as(expr.args[0], self.t_string())
+      if ty_assignable(s, self.t_string()) {
+      } else {
+        self.fail(expr.args[0].loc, "starts_with expects String")
+      }
+      return self.t_int()
     }
     if str_eq(expr.callee, "to_s") {
       if expr.args.size == 0 {
@@ -6839,6 +6870,45 @@ pub class Checker {
       }
       return self.t_void()
     }
+    if str_eq(expr.callee, "json_gen_body") {
+      if expr.args.size == 1 {
+        if b = expr.block {
+          self.fail(expr.loc, "json_gen_body takes one Int")
+          return self.t_string()
+        }
+      } else {
+        self.fail(expr.loc, "json_gen_body takes one Int")
+        return self.t_string()
+      }
+      n = self.check_expr_as(expr.args[0], self.t_int())
+      if n.is_int {
+      } else {
+        self.fail(expr.args[0].loc, "json_gen_body expects Int")
+      }
+      return self.t_string()
+    }
+    if str_eq(expr.callee, "json_gen_into") {
+      if expr.args.size == 2 {
+        if b = expr.block {
+          self.fail(expr.loc, "json_gen_into takes Buf and Int")
+          return self.t_void()
+        }
+      } else {
+        self.fail(expr.loc, "json_gen_into takes Buf and Int")
+        return self.t_void()
+      }
+      buf = self.check_expr(expr.args[0])
+      if buf.is_buf {
+      } else {
+        self.fail(expr.args[0].loc, "json_gen_into expects Buf")
+      }
+      n = self.check_expr_as(expr.args[1], self.t_int())
+      if n.is_int {
+      } else {
+        self.fail(expr.args[1].loc, "json_gen_into expects Int")
+      }
+      return self.t_void()
+    }
     nil
   }
 
@@ -6897,7 +6967,80 @@ pub class Checker {
       }
       return self.t_int()
     }
+    if str_eq(expr.callee, "re_compile") {
+      if expr.args.size == 2 {
+        if b = expr.block {
+          self.fail(expr.loc, "re_compile takes a pattern and flags")
+          return ty_ptr(self.t_void())
+        }
+      } else {
+        self.fail(expr.loc, "re_compile takes a pattern and flags")
+        return ty_ptr(self.t_void())
+      }
+      pat = self.check_expr_as(expr.args[0], self.t_string())
+      flags = self.check_expr_as(expr.args[1], self.t_int())
+      if ty_assignable(pat, self.t_string()) {
+      } else {
+        self.fail(expr.args[0].loc, "re_compile expects String")
+      }
+      if flags.is_int {
+      } else {
+        self.fail(expr.args[1].loc, "flags must be Int")
+      }
+      return ty_ptr(self.t_void())
+    }
+    if str_eq(expr.callee, "re_find") {
+      if expr.args.size == 3 {
+        if b = expr.block {
+          self.fail(expr.loc, "re_find takes a pattern, a string, and a start")
+          return self.t_int()
+        }
+      } else {
+        self.fail(expr.loc, "re_find takes a pattern, a string, and a start")
+        return self.t_int()
+      }
+      re = self.check_expr(expr.args[0])
+      if re.is_ptr {
+      } else {
+        self.fail(expr.args[0].loc, "re_find expects Ptr(Void)")
+      }
+      text = self.check_expr_as(expr.args[1], self.t_string())
+      from = self.check_expr_as(expr.args[2], self.t_int())
+      if ty_assignable(text, self.t_string()) {
+      } else {
+        self.fail(expr.args[1].loc, "re_find expects String")
+      }
+      if from.is_int {
+      } else {
+        self.fail(expr.args[2].loc, "start must be Int")
+      }
+      return self.t_int()
+    }
+    if self.re_mark_name(expr.callee) {
+      if expr.args.size == 0 {
+        if b = expr.block {
+          self.fail(expr.loc, "${expr.callee} takes no arguments")
+          return self.t_int()
+        }
+        return self.t_int()
+      }
+      self.fail(expr.loc, "${expr.callee} takes no arguments")
+      return self.t_int()
+    }
     nil
+  }
+
+  pub fn re_mark_name(name: String): Bool {
+    if str_eq(name, "re_m0") {
+      return true
+    }
+    if str_eq(name, "re_m1") {
+      return true
+    }
+    if str_eq(name, "re_c0") {
+      return true
+    }
+    str_eq(name, "re_c1")
   }
 
   pub fn check_one_string(expr: Expr, ret: Ty): Ty {
@@ -7082,6 +7225,27 @@ pub class Checker {
       if got.is_numeric {
       } else {
         self.fail(expr.args[0].loc, "exp expects Float64")
+      }
+      if got.is_float {
+      } else {
+        expr.args[0].ty = self.t_float()
+      }
+      return self.t_float()
+    }
+    if str_eq(expr.callee, "sqrt") {
+      if expr.args.size == 1 {
+        if b = expr.block {
+          self.fail(expr.loc, "sqrt takes one Float64")
+          return self.t_float()
+        }
+      } else {
+        self.fail(expr.loc, "sqrt takes one Float64")
+        return self.t_float()
+      }
+      got = self.check_expr(expr.args[0])
+      if got.is_numeric {
+      } else {
+        self.fail(expr.args[0].loc, "sqrt expects Float64")
       }
       if got.is_float {
       } else {

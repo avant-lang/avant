@@ -46,6 +46,9 @@ void avant_pin(void *payload);
 int avant_is_heap(void *payload);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
+void avant_world_lock(void);
+void avant_world_unlock(void);
+void avant_alloc_in_mature(int32_t on);
 
 void avant_gc_enter(void);
 void avant_gc_leave(void);

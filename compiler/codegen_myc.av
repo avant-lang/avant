@@ -455,6 +455,44 @@ pub fn myc_quote(value: String): String {
   buf.to_s
 }
 
+pub fn myc_float_literal(text: String): String {
+  epos = 0 - 1
+  i = 0
+  while i < text.size {
+    c = text[i]
+    if c == 101 || c == 69 {
+      epos = i
+    }
+    i = i + 1
+  }
+  if epos < 0 {
+    return text
+  }
+  head = str_slice(text, 0, epos)
+  j = epos + 1
+  neg = false
+  if j < text.size {
+    c = text[j]
+    if c == 43 || c == 45 {
+      if c == 45 {
+        neg = true
+      }
+      j = j + 1
+    }
+  }
+  while j < text.size && text[j] == 48 {
+    j = j + 1
+  }
+  digits = str_slice(text, j, text.size)
+  if digits.size == 0 {
+    return "${head}e0"
+  }
+  if neg {
+    return "${head}e-${digits}"
+  }
+  "${head}e${digits}"
+}
+
 pub fn myc_binop(op: Int): String {
   switch op {
     case 37 {
@@ -2662,7 +2700,7 @@ pub class MycGen {
       }
       case 2 {
         if expr.value_str.size > 0 {
-          lit = expr.value_str
+          lit = myc_float_literal(expr.value_str)
           self.line("PUSH ${lit}")
         } else {
           self.line("PUSH 0.0")
@@ -4193,6 +4231,33 @@ pub class MycGen {
       self.line("CALL :avant_re_count")
       return
     }
+    if str_eq(expr.callee, "re_compile") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_re_compile")
+      return
+    }
+    if str_eq(expr.callee, "re_find") {
+      if expr.args.size > 2 {
+        self.emit_expr(expr.args[2])
+      }
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_re_find")
+      return
+    }
+    if self.re_mark_callee(expr.callee) {
+      self.line("CALL :avant_${expr.callee}")
+      return
+    }
     if str_eq(expr.callee, "hash_last_key") {
       self.line("CALL :avant_hash_last_key")
       return
@@ -4202,6 +4267,13 @@ pub class MycGen {
         self.emit_expr(expr.args[0])
       }
       self.line("CALL :avant_exp")
+      return
+    }
+    if str_eq(expr.callee, "sqrt") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("UNARY :sqrt")
       return
     }
     if str_eq(expr.callee, "json_root") {
@@ -4300,6 +4372,23 @@ pub class MycGen {
         self.emit_expr(expr.args[0])
       }
       self.line("CALL :avant_json_parse")
+      return
+    }
+    if str_eq(expr.callee, "json_gen_body") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_json_gen_body")
+      return
+    }
+    if str_eq(expr.callee, "json_gen_into") {
+      if expr.args.size > 1 {
+        self.emit_expr(expr.args[1])
+      }
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      self.line("CALL :avant_json_gen_into")
       return
     }
     if str_eq(expr.callee, "json_int") {
@@ -5576,6 +5665,24 @@ pub class MycGen {
       self.line("CALL :avant_buf_push_fmt_i")
       return
     }
+    if str_eq(expr.callee, "starts_with") {
+      if expr.args.size > 0 {
+        self.emit_expr(expr.args[0])
+      }
+      s = self.new_temp
+      self.line("LOCAL :${s} :ptr<u8>")
+      self.line("STORE")
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      buf = self.new_temp
+      self.line("LOCAL :${buf} :ptr<void>")
+      self.line("STORE")
+      self.line("LOCAL :${s}")
+      self.line("LOCAL :${buf}")
+      self.line("CALL :avant_buf_starts")
+      return
+    }
     if str_eq(expr.callee, "to_s") {
       if recv = expr.receiver {
         self.emit_expr(recv)
@@ -5708,6 +5815,19 @@ pub class MycGen {
       return true
     }
     str_eq(name, "avant_gate_broadcast")
+  }
+
+  pub fn re_mark_callee(name: String): Bool {
+    if str_eq(name, "re_m0") {
+      return true
+    }
+    if str_eq(name, "re_m1") {
+      return true
+    }
+    if str_eq(name, "re_c0") {
+      return true
+    }
+    str_eq(name, "re_c1")
   }
 
   pub fn note_words(name: String, tys: Array(Ty)) {

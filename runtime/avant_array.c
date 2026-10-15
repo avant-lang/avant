@@ -81,29 +81,42 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
 
 void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || !a->buf) {
-    return;
+  /*
+   * Another worker can be inside avant_alloc, which relocates nursery
+   * objects. This call used to be a gc-leaf, so the buffer pointer in
+   * a register was not a root. Hold the world lock across the store
+   * so a collection cannot move buf between the load and the write.
+   */
+  avant_world_lock();
+  if (a && a->buf) {
+    ((void **)a->buf)[i] = elem;
+    avant_barrier(a);
+    avant_barrier(a->buf);
   }
-  ((void **)a->buf)[i] = elem;
-  avant_barrier(a);
-  avant_barrier(a->buf);
+  avant_world_unlock();
 }
 
 void *avant_array_get_ptr(void *arr, int32_t i) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || !a->buf || i < 0 || i >= a->size) {
-    return NULL;
+  void *elem = NULL;
+  avant_world_lock();
+  if (a && a->buf && i >= 0 && i < a->size) {
+    elem = ((void **)a->buf)[i];
   }
-  return ((void **)a->buf)[i];
+  avant_world_unlock();
+  return elem;
 }
 
 void *avant_array_pop_ptr(void *arr) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || !a->buf || a->size <= 0) {
-    return NULL;
+  void *elem = NULL;
+  avant_world_lock();
+  if (a && a->buf && a->size > 0) {
+    a->size -= 1;
+    elem = ((void **)a->buf)[a->size];
   }
-  a->size -= 1;
-  return ((void **)a->buf)[a->size];
+  avant_world_unlock();
+  return elem;
 }
 
 void avant_array_push_i32(void *arr, int32_t v) {

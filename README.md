@@ -664,7 +664,7 @@ Stdout is the default. `--write` replaces the file. `--check` prints `canonical`
 
 These examples run on the identity compiler: `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`. `matmul.av` checks that the sequential and spawned checksums match.
 
-Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compress`, `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, `process_run` / `process_run_out`. A host-only name is ported when a failing native test needs it, not before.
+Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compress`, `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free` / `json_gen_body` / `json_gen_into`, base64, PCRE2 `re_count` / `re_compile` / `re_find`, `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, `process_run` / `process_run_out`. A host-only name is ported when a failing native test needs it, not before.
 
 ## Toolchain
 
