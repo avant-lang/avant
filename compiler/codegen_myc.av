@@ -928,6 +928,11 @@ pub class MycGen {
     self.ext("avant_gc_enter", "", "")
     self.ext("avant_gc_leave", "", "")
     self.ext("avant_gc_root", "ptr<void>", "")
+    self.line("GLOBAL :g_avant_shared")
+    self.indent = self.indent + 1
+    self.line("TYPE :i32")
+    self.indent = self.indent - 1
+    self.line("ENDGLOBAL")
     self.ext("avant_gc_reload", "ptr<void>", "ptr<void>")
     self.ext("avant_type_map", "u32,u64", "")
     self.ext("avant_barrier", "ptr<void>", "")
@@ -2403,6 +2408,24 @@ pub class MycGen {
     self.line("CALL :avant_gc_root")
   }
 
+  // Root an interior pointer only after a second thread exists.
+  // g_avant_shared stays 0 for a whole single-threaded run, so the
+  // call is not on the hot path. The array object remains a root
+  // either way, and its buf word is scanned.
+  pub fn emit_root_if_shared(name: String) {
+    self.line("PUSH 0")
+    self.line("GLOBAL :g_avant_shared")
+    self.line("BINARY :not_eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.emit_ptr_root(name)
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+  }
+
   pub fn ensure_root(name: String, ty: Ty) {
     if self.cur_leaf != 0 {
       return
@@ -3237,7 +3260,7 @@ pub class MycGen {
           ptr_tmp = self.new_temp
           self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
           self.line("STORE")
-          self.emit_ptr_root(ptr_tmp)
+          self.emit_root_if_shared(ptr_tmp)
           self.line("LOCAL :${ixt}")
           self.line("LOCAL :${ptr_tmp}")
           self.line("BINARY :add")

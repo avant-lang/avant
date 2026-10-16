@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <link.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,11 @@
 #define BLOCK_HASH 4096
 #define LARGE_HASH 4096
 #define LOS_LIMIT 8192
-#define YOUNG_BYTES (1u * 1024u * 1024u)
+/* 1 MiB retraced one depth-20 tree 93 times (3.85s, copied bytes
+ * about equal to allocated bytes). 16 MiB is the measured default.
+ * The full threshold stays 32 MiB, so young collection still runs.
+ * AVANT_YOUNG_MB overrides this. */
+#define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
 #define FULL_BYTES (32u * 1024u * 1024u)
 #define MAX_TYPES 1024
 #define CACHE_BLOCKS 2
@@ -108,6 +113,11 @@ typedef struct ThreadReg {
 
 static __thread ThreadReg g_self_reg;
 static ThreadReg *g_threads;
+/* Becomes 1 when a second thread registers, and stays 1. A single
+ * mutator collects only at its own allocating call, so an interior
+ * pointer used before the next call does not need a root. Another
+ * thread can collect at any instruction. */
+atomic_int g_avant_shared;
 static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_gc_defer;
@@ -128,6 +138,7 @@ static PinEnt *g_pins;
 static void **g_remset;
 static uint32_t g_rem_n;
 static uint32_t g_rem_cap;
+static uint64_t g_young_bytes;
 static void **g_yscan_list;
 static uint32_t g_yscan_n;
 static uint32_t g_yscan_cap;
@@ -180,6 +191,9 @@ void avant_gc_register_thread(void) {
   pthread_mutex_lock(&g_threads_mu);
   g_self_reg.next = g_threads;
   g_threads = &g_self_reg;
+  if (g_self_reg.next) {
+    atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
+  }
   pthread_mutex_unlock(&g_threads_mu);
 }
 
@@ -949,7 +963,7 @@ static void copy_from_slot(void **slot) {
   }
   /* Mature / large: walk for young children. Write barriers are the
    * fast path; this scan makes a missed barrier (old array → young
-   * buffer, old object only on the heap) honest during young GC. */
+   * buffer, optional field stores) honest during young GC. */
   scan_old_once(start);
 }
 
@@ -1708,7 +1722,7 @@ static void maybe_collect(void) {
    * are never reclaimed. */
   if (g_stats.allocated_bytes - g_last_full_at >= FULL_BYTES) {
     collect(1);
-  } else if (g_since_gc >= YOUNG_BYTES) {
+  } else if (g_since_gc >= g_young_bytes) {
     collect(0);
   }
 }
@@ -1763,6 +1777,10 @@ static void init_gc(void) {
     return;
   }
   g_inited = 1;
+  {
+    uint64_t ymb = env_u64("AVANT_YOUNG_MB", 0);
+    g_young_bytes = ymb ? ymb * 1024ull * 1024ull : YOUNG_BYTES_DEFAULT;
+  }
   uint64_t mb = env_u64("AVANT_HEAP_MAX_MB", 0);
   g_heap_max = mb ? mb * 1024ull * 1024ull : 0;
   {
