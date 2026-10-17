@@ -251,6 +251,16 @@ pub fn heap_ptr_value(ty: Ty): Bool {
   ty.is_join
 }
 
+pub fn scalar_array_elem(ty: Ty): Bool {
+  if ty.is_integer {
+    return true
+  }
+  if ty.is_bool {
+    return true
+  }
+  ty.is_float
+}
+
 pub fn array_type_id(elem: Ty): Int {
   if elem.is_fn {
     return 65535
@@ -668,6 +678,10 @@ pub class MycGen {
   need_parallel: Int = 0
   cur_leaf: Int = 0
   numeric_leaves: Hash(String, Int)
+  hoist_names: Array(String)
+  hoist_bits: Array(String)
+  hoist_ptrs: Array(String)
+  hoist_ems: Array(String)
 
   fn initialize(program: Program) {
     self.program = program
@@ -740,6 +754,14 @@ pub class MycGen {
     self.cur_leaf = 0
     leaves = Hash(String, Int).new
     self.numeric_leaves = leaves
+    hn: Array(String) = []
+    self.hoist_names = hn
+    hb: Array(String) = []
+    self.hoist_bits = hb
+    hp: Array(String) = []
+    self.hoist_ptrs = hp
+    he: Array(String) = []
+    self.hoist_ems = he
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -878,6 +900,14 @@ pub class MycGen {
   pub fn reset_rooted {
     rt = Hash(String, Int).new
     self.rooted = rt
+    hn: Array(String) = []
+    self.hoist_names = hn
+    hb: Array(String) = []
+    self.hoist_bits = hb
+    hp: Array(String) = []
+    self.hoist_ptrs = hp
+    he: Array(String) = []
+    self.hoist_ems = he
   }
 
   pub fn find_fn(name: String): FuncSig? {
@@ -2523,6 +2553,7 @@ pub class MycGen {
         }
       }
       case 4 {
+        nhoist = self.begin_loop_hoists(stmt)
         self.line("LOOP")
         self.indent = self.indent + 1
         self.line("COND")
@@ -2538,6 +2569,7 @@ pub class MycGen {
         self.indent = self.indent - 1
         self.indent = self.indent - 1
         self.line("ENDLOOP")
+        self.end_loop_hoists(nhoist)
       }
       case 5 {
         self.line("BREAK")
@@ -3223,6 +3255,595 @@ pub class MycGen {
     }
   }
 
+  // A pointer local is a volatile GC slot, so an index reloads the array
+  // and its buffer every iteration. Across a loop that cannot collect,
+  // a scalar buffer is kept in an i64, which is not a GC slot. The
+  // single-mutator path uses that i64. The buffer slot is rooted once
+  // before the loop. A second thread reloads that slot. The shared flag
+  // load is volatile in myc-llvm, so the check stays in the loop.
+  pub fn begin_loop_hoists(stmt: Stmt): Int {
+    if self.cur_leaf != 0 {
+      return 0
+    }
+    if self.loop_may_collect(stmt) {
+      return 0
+    }
+    names = self.plan_loop_hoists(stmt)
+    i = 0
+    while i < names.size {
+      self.emit_buf_hoist(names[i])
+      i = i + 1
+    }
+    names.size
+  }
+
+  pub fn end_loop_hoists(n: Int) {
+    left = n
+    while left > 0 {
+      self.hoist_names.pop
+      self.hoist_bits.pop
+      self.hoist_ptrs.pop
+      self.hoist_ems.pop
+      left = left - 1
+    }
+  }
+
+  pub fn plan_loop_hoists(stmt: Stmt): Array(String) {
+    found: Array(String) = []
+    assigned = self.loop_assigned(stmt)
+    if c = stmt.cond {
+      self.collect_hoist_names(c, assigned, found)
+    }
+    self.collect_hoist_stmts(stmt.body, assigned, found)
+    found
+  }
+
+  pub fn collect_hoist_stmts(body: Array(Stmt), assigned: Array(String), found: Array(String)) {
+    i = 0
+    while i < body.size {
+      self.collect_hoist_stmt(body[i], assigned, found)
+      i = i + 1
+    }
+  }
+
+  pub fn collect_hoist_stmt(stmt: Stmt, assigned: Array(String), found: Array(String)) {
+    if e = stmt.expr {
+      self.collect_hoist_names(e, assigned, found)
+    }
+    if c = stmt.cond {
+      self.collect_hoist_names(c, assigned, found)
+    }
+    if t = stmt.target {
+      self.collect_hoist_names(t, assigned, found)
+    }
+    if v = stmt.value {
+      self.collect_hoist_names(v, assigned, found)
+    }
+    self.collect_hoist_stmts(stmt.then_body, assigned, found)
+    self.collect_hoist_stmts(stmt.else_body, assigned, found)
+    self.collect_hoist_stmts(stmt.body, assigned, found)
+  }
+
+  pub fn collect_hoist_names(expr: Expr, assigned: Array(String), found: Array(String)) {
+    if expr.kind == ex_index() {
+      if arr = expr.left {
+        if arr.kind == ex_name() {
+          if arr.implicit_field {
+          } else {
+            if self.name_is_boxed(arr.ident) {
+            } else {
+              if self.cap_index(arr.ident) >= 0 {
+              } else {
+                container = expr_ty(arr)
+                if container.is_array {
+                  if e = container.inner {
+                    if scalar_array_elem(e) {
+                      if self.name_listed(arr.ident, assigned) {
+                      } else {
+                        if self.hoist_index(arr.ident) >= 0 {
+                        } else {
+                          if self.name_listed(arr.ident, found) {
+                          } else {
+                            found.push(arr.ident)
+                            self.hoist_ems.push(ty_myc(e))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if inner = expr.inner {
+      self.collect_hoist_names(inner, assigned, found)
+    }
+    if l = expr.left {
+      self.collect_hoist_names(l, assigned, found)
+    }
+    if r = expr.right {
+      self.collect_hoist_names(r, assigned, found)
+    }
+    if obj = expr.object {
+      self.collect_hoist_names(obj, assigned, found)
+    }
+    if c = expr.cond {
+      self.collect_hoist_names(c, assigned, found)
+    }
+    if recv = expr.receiver {
+      self.collect_hoist_names(recv, assigned, found)
+    }
+    if sz = expr.size_expr {
+      self.collect_hoist_names(sz, assigned, found)
+    }
+    i = 0
+    while i < expr.args.size {
+      self.collect_hoist_names(expr.args[i], assigned, found)
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      self.collect_hoist_names(expr.elems[i], assigned, found)
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_exprs.size {
+      self.collect_hoist_names(expr.field_exprs[i], assigned, found)
+      i = i + 1
+    }
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if pe = part.expr {
+        self.collect_hoist_names(pe, assigned, found)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.cases.size {
+      self.collect_hoist_stmts(expr.cases[i].body, assigned, found)
+      i = i + 1
+    }
+    self.collect_hoist_stmts(expr.else_body, assigned, found)
+    if b = expr.block {
+      self.collect_hoist_stmts(b.body, assigned, found)
+    }
+  }
+
+  pub fn loop_assigned(stmt: Stmt): Array(String) {
+    found: Array(String) = []
+    if c = stmt.cond {
+      self.collect_assigned_expr(c, found)
+    }
+    self.collect_assigned_stmts(stmt.body, found)
+    found
+  }
+
+  pub fn collect_assigned_stmts(body: Array(Stmt), found: Array(String)) {
+    i = 0
+    while i < body.size {
+      self.collect_assigned_stmt(body[i], found)
+      i = i + 1
+    }
+  }
+
+  pub fn collect_assigned_stmt(stmt: Stmt, found: Array(String)) {
+    if stmt.bind.size > 0 {
+      if self.name_listed(stmt.bind, found) {
+      } else {
+        found.push(stmt.bind)
+      }
+    }
+    if t = stmt.target {
+      if t.kind == ex_name() {
+        if t.implicit_field {
+        } else {
+          if self.name_listed(t.ident, found) {
+          } else {
+            found.push(t.ident)
+          }
+        }
+      }
+    }
+    self.collect_assigned_stmts(stmt.then_body, found)
+    self.collect_assigned_stmts(stmt.else_body, found)
+    self.collect_assigned_stmts(stmt.body, found)
+    if e = stmt.expr {
+      self.collect_assigned_expr(e, found)
+    }
+  }
+
+  pub fn collect_assigned_expr(expr: Expr, found: Array(String)) {
+    i = 0
+    while i < expr.cases.size {
+      self.collect_assigned_stmts(expr.cases[i].body, found)
+      i = i + 1
+    }
+    self.collect_assigned_stmts(expr.else_body, found)
+    if b = expr.block {
+      self.collect_assigned_stmts(b.body, found)
+    }
+    if inner = expr.inner {
+      self.collect_assigned_expr(inner, found)
+    }
+    if l = expr.left {
+      self.collect_assigned_expr(l, found)
+    }
+    if r = expr.right {
+      self.collect_assigned_expr(r, found)
+    }
+    if obj = expr.object {
+      self.collect_assigned_expr(obj, found)
+    }
+    if c = expr.cond {
+      self.collect_assigned_expr(c, found)
+    }
+    i = 0
+    while i < expr.args.size {
+      self.collect_assigned_expr(expr.args[i], found)
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      self.collect_assigned_expr(expr.elems[i], found)
+      i = i + 1
+    }
+  }
+
+  pub fn loop_may_collect(stmt: Stmt): Bool {
+    if c = stmt.cond {
+      if self.expr_may_collect(c) {
+        return true
+      }
+    }
+    self.stmts_may_collect(stmt.body)
+  }
+
+  pub fn stmts_may_collect(body: Array(Stmt)): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_may_collect(body[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmt_may_collect(stmt: Stmt): Bool {
+    if e = stmt.expr {
+      if self.expr_may_collect(e) {
+        return true
+      }
+    }
+    if c = stmt.cond {
+      if self.expr_may_collect(c) {
+        return true
+      }
+    }
+    if t = stmt.target {
+      if self.expr_may_collect(t) {
+        return true
+      }
+    }
+    if v = stmt.value {
+      if self.expr_may_collect(v) {
+        return true
+      }
+    }
+    if self.stmts_may_collect(stmt.then_body) {
+      return true
+    }
+    if self.stmts_may_collect(stmt.else_body) {
+      return true
+    }
+    self.stmts_may_collect(stmt.body)
+  }
+
+  pub fn expr_may_collect(expr: Expr): Bool {
+    k = expr.kind
+    if k == ex_call() {
+      if self.call_may_collect(expr) {
+        return true
+      }
+    }
+    if k == ex_lambda() {
+      return true
+    }
+    if k == ex_array() {
+      return true
+    }
+    if k == ex_array_new() {
+      return true
+    }
+    if k == ex_hash_new() {
+      return true
+    }
+    if k == ex_interp() {
+      return true
+    }
+    if k == ex_splice() {
+      return true
+    }
+    if k == ex_binary() {
+      if expr.resolved.size > 0 {
+        return true
+      }
+      if l = expr.left {
+        if expr_ty(l).is_string {
+          return true
+        }
+      }
+    }
+    if k == ex_field() {
+      if expr.method_call {
+        return true
+      }
+    }
+    if inner = expr.inner {
+      if self.expr_may_collect(inner) {
+        return true
+      }
+    }
+    if l = expr.left {
+      if self.expr_may_collect(l) {
+        return true
+      }
+    }
+    if r = expr.right {
+      if self.expr_may_collect(r) {
+        return true
+      }
+    }
+    if obj = expr.object {
+      if self.expr_may_collect(obj) {
+        return true
+      }
+    }
+    if c = expr.cond {
+      if self.expr_may_collect(c) {
+        return true
+      }
+    }
+    if recv = expr.receiver {
+      if self.expr_may_collect(recv) {
+        return true
+      }
+    }
+    if sz = expr.size_expr {
+      if self.expr_may_collect(sz) {
+        return true
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if self.expr_may_collect(expr.args[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      if self.expr_may_collect(expr.elems[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_exprs.size {
+      if self.expr_may_collect(expr.field_exprs[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if pe = part.expr {
+        if self.expr_may_collect(pe) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.cases.size {
+      if self.stmts_may_collect(expr.cases[i].body) {
+        return true
+      }
+      i = i + 1
+    }
+    if self.stmts_may_collect(expr.else_body) {
+      return true
+    }
+    if b = expr.block {
+      if self.stmts_may_collect(b.body) {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn call_may_collect(expr: Expr): Bool {
+    if expr.indirect {
+      return true
+    }
+    if expr.fn_ref {
+      return true
+    }
+    if expr.method_call {
+      return true
+    }
+    name = expr.callee
+    if name.size == 0 {
+      name = expr.resolved
+    }
+    if name.size == 0 {
+      return true
+    }
+    if self.runtime_leaf(name) {
+      return false
+    }
+    if v = self.numeric_leaves.get(name) {
+      return false
+    }
+    true
+  }
+
+  pub fn runtime_leaf(name: String): Bool {
+    if str_eq(name, "avant_gc_root") {
+      return true
+    }
+    if str_eq(name, "avant_gc_reload") {
+      return true
+    }
+    if str_eq(name, "avant_gc_enter") {
+      return true
+    }
+    if str_eq(name, "avant_gc_leave") {
+      return true
+    }
+    if str_eq(name, "avant_type_map") {
+      return true
+    }
+    if str_eq(name, "avant_barrier") {
+      return true
+    }
+    if str_eq(name, "avant_cov_hit") {
+      return true
+    }
+    if str_eq(name, "avant_cov_init") {
+      return true
+    }
+    if str_eq(name, "avant_pin") {
+      return true
+    }
+    if str_eq(name, "avant_is_heap") {
+      return true
+    }
+    if str_eq(name, "avant_exp") {
+      return true
+    }
+    if str_eq(name, "avant_array_get_ptr") {
+      return true
+    }
+    if str_eq(name, "avant_array_set_ptr") {
+      return true
+    }
+    if str_eq(name, "avant_array_pop_ptr") {
+      return true
+    }
+    if str_eq(name, "printf") {
+      return true
+    }
+    if str_eq(name, "memset") {
+      return true
+    }
+    if str_eq(name, "memcpy") {
+      return true
+    }
+    if str_eq(name, "memmove") {
+      return true
+    }
+    if str_eq(name, "malloc") {
+      return true
+    }
+    if str_eq(name, "calloc") {
+      return true
+    }
+    if str_eq(name, "free") {
+      return true
+    }
+    false
+  }
+
+  pub fn name_listed(name: String, names: Array(String)): Bool {
+    i = 0
+    while i < names.size {
+      if str_eq(names[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn hoist_index(name: String): Int {
+    i = 0
+    while i < self.hoist_names.size {
+      if str_eq(self.hoist_names[i], name) {
+        return i
+      }
+      i = i + 1
+    }
+    0 - 1
+  }
+
+  pub fn emit_buf_hoist(name: String) {
+    hi = self.hoist_names.size
+    em = self.hoist_ems[hi]
+    self.line("LOCAL :${name}")
+    self.line("DEREF")
+    self.line("FIELD 0")
+    ptr = self.new_temp
+    self.line("LOCAL :${ptr} :ptr<${em}>")
+    self.line("STORE")
+    self.line("LOCAL :${ptr}")
+    self.line("AS :i64")
+    bits = self.new_temp
+    self.line("LOCAL :${bits} :i64")
+    self.line("STORE")
+    self.emit_ptr_root(ptr)
+    self.hoist_names.push(name)
+    self.hoist_bits.push(bits)
+    self.hoist_ptrs.push(ptr)
+  }
+
+  pub fn emit_hoisted_index(ix: Expr, hi: Int) {
+    em = self.hoist_ems[hi]
+    bits = self.hoist_bits[hi]
+    ptr = self.hoist_ptrs[hi]
+    self.emit_expr(ix)
+    ixt = self.new_temp
+    self.line("LOCAL :${ixt} :i32")
+    self.line("STORE")
+    addr = self.new_temp
+    self.line("PUSH 0")
+    self.line("GLOBAL :g_avant_shared")
+    self.line("BINARY :not_eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${ptr}")
+    self.line("LOCAL :${ixt}")
+    self.line("STACK :swap2")
+    self.line("BINARY :add")
+    self.line("AS :i64")
+    self.line("LOCAL :${addr} :i64")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${bits}")
+    self.line("AS :ptr<${em}>")
+    self.line("LOCAL :${ixt}")
+    self.line("STACK :swap2")
+    self.line("BINARY :add")
+    self.line("AS :i64")
+    self.line("LOCAL :${addr} :i64")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${addr}")
+    self.line("AS :ptr<${em}>")
+    self.line("DEREF")
+  }
+
   pub fn emit_index_lvalue(expr: Expr) {
     if arr = expr.left {
       if ix = expr.right {
@@ -3250,6 +3871,16 @@ pub class MycGen {
         array_ty = container
         if e = array_ty.inner {
           em = ty_myc(e)
+          if arr.kind == ex_name() {
+            if arr.implicit_field {
+            } else {
+              hi = self.hoist_index(arr.ident)
+              if hi >= 0 {
+                self.emit_hoisted_index(ix, hi)
+                return
+              }
+            }
+          }
           self.emit_expr(ix)
           ixt = self.new_temp
           self.line("LOCAL :${ixt} :i32")
