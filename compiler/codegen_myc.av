@@ -1628,6 +1628,7 @@ pub class MycGen {
     self.collect_methods
     self.mark_numeric_leaves
     self.may_share = self.program_may_share
+    self.mark_quiet_leaves
     self.assign_class_ids
     self.collect_arrays
     self.emit_runtime_decl
@@ -1784,6 +1785,72 @@ pub class MycGen {
       i = i + 1
     }
     self.numeric_leaves = found
+  }
+
+  // A function that cannot collect needs no frame and no safepoint.
+  // Another thread can collect while this one holds a raw pointer, so
+  // this stays off when the program spawns or uses .parallel.
+  pub fn mark_quiet_leaves {
+    buf = buf_new()
+    first = 1
+    if self.may_share {
+      self.program.quiet_leaves = ""
+      return
+    }
+    fns = program_all_functions(self.program)
+    guard = 0
+    while guard < fns.size {
+      added = 0
+      i = 0
+      while i < fns.size {
+        fnn = fns[i]
+        if self.quiet_candidate(fnn) {
+          if v = self.numeric_leaves.get(fnn.emit_name) {
+          } else {
+            if self.stmts_may_collect(fnn.body) {
+            } else {
+              self.numeric_leaves[fnn.emit_name] = 1
+              if first == 0 {
+                buf.push_str(",")
+              }
+              first = 0
+              buf.push_str(fnn.emit_name)
+              added = 1
+            }
+          }
+        }
+        i = i + 1
+      }
+      if added == 0 {
+        guard = fns.size
+      } else {
+        guard = guard + 1
+      }
+    }
+    self.program.quiet_leaves = buf.to_s
+  }
+
+  pub fn quiet_candidate(fnn: Function): Bool {
+    if fnn.generic {
+      return false
+    }
+    if str_eq(fnn.name, "main") {
+      return false
+    }
+    if fnn.emit_name.size == 0 {
+      return false
+    }
+    if fnn.box_names.size > 0 {
+      return false
+    }
+    true
+  }
+
+  pub fn leaf_named(name: String): Bool {
+    if v = self.numeric_leaves.get(name) {
+      return true
+    }
+    false
   }
 
   // spawn and .parallel register a second thread, which can collect
@@ -2253,6 +2320,9 @@ pub class MycGen {
 
   pub fn emit_method_func(fnn: Function, sig: FuncSig) {
     self.cur_leaf = 0
+    if self.leaf_named(sig.mangled) {
+      self.cur_leaf = 1
+    }
     self.begin_fn_frame(fnn.box_names)
     mangled = sig.mangled
     self.line("FUNC :${mangled}")
@@ -2274,7 +2344,9 @@ pub class MycGen {
     self.line("BODY")
     self.indent = self.indent + 1
     self.reset_rooted
-    self.line("CALL :avant_gc_enter")
+    if self.cur_leaf == 0 {
+      self.line("CALL :avant_gc_enter")
+    }
     recv_name = fn_self_name(fnn)
     if owner = self.self_ty {
       m = ty_self_ptr_myc(owner)
@@ -2306,6 +2378,9 @@ pub class MycGen {
 
   pub fn emit_ptr_method_func(fnn: Function, sig: FuncSig) {
     self.cur_leaf = 0
+    if self.leaf_named(sig.mangled) {
+      self.cur_leaf = 1
+    }
     self.begin_fn_frame(fnn.box_names)
     recv_ty = ty_void()
     if r = fnn.receiver {
@@ -2330,7 +2405,9 @@ pub class MycGen {
     self.line("BODY")
     self.indent = self.indent + 1
     self.reset_rooted
-    self.line("CALL :avant_gc_enter")
+    if self.cur_leaf == 0 {
+      self.line("CALL :avant_gc_enter")
+    }
     self.line("PARAM 0")
     self.line("LOCAL :${recv_name} :${mrecv}")
     self.line("STORE")
@@ -3500,9 +3577,6 @@ pub class MycGen {
   // before the loop. A second thread reloads that slot. The shared flag
   // load is volatile in myc-llvm, so the check stays in the loop.
   pub fn begin_loop_hoists(stmt: Stmt): Int {
-    if self.cur_leaf != 0 {
-      return 0
-    }
     if self.loop_may_collect(stmt) {
       return 0
     }
@@ -4034,7 +4108,9 @@ pub class MycGen {
     bits = self.new_temp
     self.line("LOCAL :${bits} :i64")
     self.line("STORE")
-    self.emit_ptr_root(ptr)
+    if self.cur_leaf == 0 {
+      self.emit_ptr_root(ptr)
+    }
     self.hoist_names.push(name)
     self.hoist_bits.push(bits)
     self.hoist_ptrs.push(ptr)

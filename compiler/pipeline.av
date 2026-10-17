@@ -17,11 +17,13 @@ pub class IrBox {
   text: String = ""
   ok: Bool = false
   re2c_obj: String = ""
+  quiet_leaves: String = ""
 
   fn initialize(text: String, ok: Bool) {
     self.text = text
     self.ok = ok
     self.re2c_obj = ""
+    self.quiet_leaves = ""
   }
 }
 
@@ -214,6 +216,7 @@ pub fn compile_program(src: Source, program: Program): IrBox {
   ir = emit_myc(program)
   box = IrBox.new(ir, true)
   box.re2c_obj = program.re2c_obj
+  box.quiet_leaves = program.quiet_leaves
   box
 }
 
@@ -510,7 +513,7 @@ pub fn myc_wants_debug: Bool {
   true
 }
 
-pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String): Int {
+pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String): Int {
   stamp = now_ms()
   ir_path = "/tmp/avant-av-${stamp}.myc"
   w = file_write(ir_path, ir)
@@ -539,7 +542,11 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   args.push("--gc-reload=avant_gc_reload")
   args.push("--gc-enter=avant_gc_enter")
   args.push("--gc-leave=avant_gc_leave")
-  args.push("--gc-leaf=avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_is_heap,avant_exp,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr")
+  leaves = "avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_is_heap,avant_exp,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr"
+  if quiet.size > 0 {
+    leaves = "${leaves},${quiet}"
+  }
+  args.push("--gc-leaf=${leaves}")
   args.push(ir_path)
   objs = runtime_objects(avant_root())
   i = 0
