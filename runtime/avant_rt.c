@@ -1910,15 +1910,19 @@ void *avant_gc_reload(void *slot) {
 }
 
 void avant_barrier(void *obj) {
+  Block *b = NULL;
   if (!obj || g_collecting) {
     return;
   }
-  if (!is_heap_payload(obj, NULL, NULL)) {
+  if (!is_heap_payload(obj, &b, NULL)) {
     return;
   }
-  if (is_old(obj)) {
-    rem_add(obj);
+  /* Nursery objects are scanned from the root. One lookup: is_old
+   * used to walk the block table again. */
+  if (b && b->space == SPACE_NURSERY) {
+    return;
   }
+  rem_add(obj);
 }
 
 void avant_pin(void *payload) {

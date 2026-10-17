@@ -261,6 +261,26 @@ pub fn scalar_array_elem(ty: Ty): Bool {
   ty.is_float
 }
 
+// Int, bool, and float stay in an i64. A class, array, string, hash,
+// buffer, or join is one pointer word. A fn value is two words, and a
+// struct element is inline, so neither is hoisted this way.
+pub fn hoist_array_elem(ty: Ty): Bool {
+  if scalar_array_elem(ty) {
+    return true
+  }
+  pointer_root_ty(ty)
+}
+
+pub fn pointer_root_ty(ty: Ty): Bool {
+  if ty.is_fn {
+    return false
+  }
+  if scalar_array_elem(ty) {
+    return false
+  }
+  heap_ptr_value(ty)
+}
+
 pub fn array_type_id(elem: Ty): Int {
   if elem.is_fn {
     return 65535
@@ -682,6 +702,10 @@ pub class MycGen {
   hoist_bits: Array(String)
   hoist_ptrs: Array(String)
   hoist_ems: Array(String)
+  root_loop: Int = 0
+  early_indent: Int = 0
+  early_out: Buf
+  may_share: Bool = false
 
   fn initialize(program: Program) {
     self.program = program
@@ -762,6 +786,11 @@ pub class MycGen {
     self.hoist_ptrs = hp
     he: Array(String) = []
     self.hoist_ems = he
+    self.root_loop = 0
+    self.early_indent = 0
+    eb = buf_new()
+    self.early_out = eb
+    self.may_share = false
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -1598,6 +1627,7 @@ pub class MycGen {
     self.collect_sigs
     self.collect_methods
     self.mark_numeric_leaves
+    self.may_share = self.program_may_share
     self.assign_class_ids
     self.collect_arrays
     self.emit_runtime_decl
@@ -1754,6 +1784,155 @@ pub class MycGen {
       i = i + 1
     }
     self.numeric_leaves = found
+  }
+
+  // spawn and .parallel register a second thread, which can collect
+  // while this thread holds an interior pointer. A program with neither
+  // keeps g_avant_shared at 0, so the flag load is dead.
+  pub fn program_may_share: Bool {
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      if self.stmts_may_share(fns[i].body) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmts_may_share(body: Array(Stmt)): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_may_share(body[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmt_may_share(stmt: Stmt): Bool {
+    if e = stmt.expr {
+      if self.expr_may_share(e) {
+        return true
+      }
+    }
+    if c = stmt.cond {
+      if self.expr_may_share(c) {
+        return true
+      }
+    }
+    if t = stmt.target {
+      if self.expr_may_share(t) {
+        return true
+      }
+    }
+    if v = stmt.value {
+      if self.expr_may_share(v) {
+        return true
+      }
+    }
+    if self.stmts_may_share(stmt.then_body) {
+      return true
+    }
+    if self.stmts_may_share(stmt.else_body) {
+      return true
+    }
+    self.stmts_may_share(stmt.body)
+  }
+
+  pub fn expr_may_share(expr: Expr): Bool {
+    if expr.kind == ex_call() {
+      if str_eq(expr.callee, "spawn") {
+        return true
+      }
+      if str_eq(expr.callee, "parallel") {
+        return true
+      }
+    }
+    if inner = expr.inner {
+      if self.expr_may_share(inner) {
+        return true
+      }
+    }
+    if l = expr.left {
+      if self.expr_may_share(l) {
+        return true
+      }
+    }
+    if r = expr.right {
+      if self.expr_may_share(r) {
+        return true
+      }
+    }
+    if obj = expr.object {
+      if self.expr_may_share(obj) {
+        return true
+      }
+    }
+    if c = expr.cond {
+      if self.expr_may_share(c) {
+        return true
+      }
+    }
+    if recv = expr.receiver {
+      if self.expr_may_share(recv) {
+        return true
+      }
+    }
+    if sz = expr.size_expr {
+      if self.expr_may_share(sz) {
+        return true
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if self.expr_may_share(expr.args[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      if self.expr_may_share(expr.elems[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_exprs.size {
+      if self.expr_may_share(expr.field_exprs[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if pe = part.expr {
+        if self.expr_may_share(pe) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.cases.size {
+      if self.stmts_may_share(expr.cases[i].body) {
+        return true
+      }
+      i = i + 1
+    }
+    if self.stmts_may_share(expr.else_body) {
+      return true
+    }
+    if b = expr.block {
+      if self.stmts_may_share(b.body) {
+        return true
+      }
+    }
+    false
   }
 
   pub fn fn_can_skip_frame(fnn: Function): Bool {
@@ -2443,6 +2622,10 @@ pub class MycGen {
   // call is not on the hot path. The array object remains a root
   // either way, and its buf word is scanned.
   pub fn emit_root_if_shared(name: String) {
+    if self.may_share {
+    } else {
+      return
+    }
     self.line("PUSH 0")
     self.line("GLOBAL :g_avant_shared")
     self.line("BINARY :not_eq")
@@ -2492,7 +2675,78 @@ pub class MycGen {
       }
       return
     }
+    // The root call is idempotent. Inside a loop it ran on every
+    // iteration and walked the frame's slot list. Register the slot
+    // once, before the outermost loop. It holds null until the loop
+    // stores the real pointer. myc-llvm reloads the slot after a
+    // collecting call. A union stays rooted at the store: its fields
+    // are not one pointer word.
+    if self.root_loop > 0 && pointer_root_ty(ty) {
+      self.emit_early_root(name, ty)
+      return
+    }
     self.emit_ptr_root(name)
+  }
+
+  pub fn emit_early_root(name: String, ty: Ty) {
+    saved_out = self.out
+    saved_indent = self.indent
+    self.out = self.early_out
+    self.indent = self.early_indent
+    self.emit_zero(ty)
+    m = ty_myc(ty)
+    decl = buf_new()
+    decl.push_str("LOCAL :")
+    decl.push_str(name)
+    decl.push_str(" :")
+    decl.push_str(m)
+    self.line(decl.to_s)
+    self.line("STORE")
+    use = buf_new()
+    use.push_str("LOCAL :")
+    use.push_str(name)
+    self.line(use.to_s)
+    self.line("ADDR")
+    self.line("CALL :avant_gc_root")
+    self.out = saved_out
+    self.indent = saved_indent
+  }
+
+  pub fn emit_while(stmt: Stmt) {
+    nhoist = self.begin_loop_hoists(stmt)
+    outer = false
+    if self.root_loop == 0 {
+      outer = true
+      fresh = buf_new()
+      self.early_out = fresh
+      self.early_indent = self.indent
+    }
+    saved = self.out
+    body = buf_new()
+    self.out = body
+    self.root_loop = self.root_loop + 1
+    self.line("LOOP")
+    self.indent = self.indent + 1
+    self.line("COND")
+    self.indent = self.indent + 1
+    if c = stmt.cond {
+      self.emit_expr(c)
+    }
+    self.indent = self.indent - 1
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.cov_branch(stmt.loc)
+    self.emit_stmts(stmt.body, false)
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDLOOP")
+    self.root_loop = self.root_loop - 1
+    self.end_loop_hoists(nhoist)
+    self.out = saved
+    if outer {
+      self.out.push_str(self.early_out.to_s)
+    }
+    self.out.push_str(body.to_s)
   }
 
   pub fn emit_stmts(body: Array(Stmt), implicit_return: Bool) {
@@ -2553,23 +2807,7 @@ pub class MycGen {
         }
       }
       case 4 {
-        nhoist = self.begin_loop_hoists(stmt)
-        self.line("LOOP")
-        self.indent = self.indent + 1
-        self.line("COND")
-        self.indent = self.indent + 1
-        if c = stmt.cond {
-          self.emit_expr(c)
-        }
-        self.indent = self.indent - 1
-        self.line("BODY")
-        self.indent = self.indent + 1
-        self.cov_branch(stmt.loc)
-        self.emit_stmts(stmt.body, false)
-        self.indent = self.indent - 1
-        self.indent = self.indent - 1
-        self.line("ENDLOOP")
-        self.end_loop_hoists(nhoist)
+        self.emit_while(stmt)
       }
       case 5 {
         self.line("BREAK")
@@ -3337,7 +3575,7 @@ pub class MycGen {
                 container = expr_ty(arr)
                 if container.is_array {
                   if e = container.inner {
-                    if scalar_array_elem(e) {
+                    if hoist_array_elem(e) {
                       if self.name_listed(arr.ident, assigned) {
                       } else {
                         if self.hoist_index(arr.ident) >= 0 {
@@ -3811,34 +4049,45 @@ pub class MycGen {
     self.line("LOCAL :${ixt} :i32")
     self.line("STORE")
     addr = self.new_temp
-    self.line("PUSH 0")
-    self.line("GLOBAL :g_avant_shared")
-    self.line("BINARY :not_eq")
-    self.line("IF")
-    self.indent = self.indent + 1
-    self.line("THEN")
-    self.indent = self.indent + 1
-    self.line("LOCAL :${ptr}")
-    self.line("LOCAL :${ixt}")
-    self.line("STACK :swap2")
-    self.line("BINARY :add")
-    self.line("AS :i64")
-    self.line("LOCAL :${addr} :i64")
-    self.line("STORE")
-    self.indent = self.indent - 1
-    self.line("ELSE")
-    self.indent = self.indent + 1
-    self.line("LOCAL :${bits}")
-    self.line("AS :ptr<${em}>")
-    self.line("LOCAL :${ixt}")
-    self.line("STACK :swap2")
-    self.line("BINARY :add")
-    self.line("AS :i64")
-    self.line("LOCAL :${addr} :i64")
-    self.line("STORE")
-    self.indent = self.indent - 1
-    self.indent = self.indent - 1
-    self.line("ENDIF")
+    if self.may_share {
+      self.line("PUSH 0")
+      self.line("GLOBAL :g_avant_shared")
+      self.line("BINARY :not_eq")
+      self.line("IF")
+      self.indent = self.indent + 1
+      self.line("THEN")
+      self.indent = self.indent + 1
+      self.line("LOCAL :${ptr}")
+      self.line("LOCAL :${ixt}")
+      self.line("STACK :swap2")
+      self.line("BINARY :add")
+      self.line("AS :i64")
+      self.line("LOCAL :${addr} :i64")
+      self.line("STORE")
+      self.indent = self.indent - 1
+      self.line("ELSE")
+      self.indent = self.indent + 1
+      self.line("LOCAL :${bits}")
+      self.line("AS :ptr<${em}>")
+      self.line("LOCAL :${ixt}")
+      self.line("STACK :swap2")
+      self.line("BINARY :add")
+      self.line("AS :i64")
+      self.line("LOCAL :${addr} :i64")
+      self.line("STORE")
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDIF")
+    } else {
+      self.line("LOCAL :${bits}")
+      self.line("AS :ptr<${em}>")
+      self.line("LOCAL :${ixt}")
+      self.line("STACK :swap2")
+      self.line("BINARY :add")
+      self.line("AS :i64")
+      self.line("LOCAL :${addr} :i64")
+      self.line("STORE")
+    }
     self.line("LOCAL :${addr}")
     self.line("AS :ptr<${em}>")
     self.line("DEREF")
