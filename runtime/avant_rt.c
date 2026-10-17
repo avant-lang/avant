@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <link.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,11 @@
 #define BLOCK_HASH 4096
 #define LARGE_HASH 4096
 #define LOS_LIMIT 8192
-#define YOUNG_BYTES (1u * 1024u * 1024u)
+/* 1 MiB retraced one depth-20 tree 93 times (3.85s, copied bytes
+ * about equal to allocated bytes). 16 MiB is the measured default.
+ * The full threshold stays 32 MiB, so young collection still runs.
+ * AVANT_YOUNG_MB overrides this. */
+#define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
 #define FULL_BYTES (32u * 1024u * 1024u)
 #define MAX_TYPES 1024
 #define CACHE_BLOCKS 2
@@ -96,6 +101,8 @@ static uint8_t *g_limit;
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
 static __thread Frame *g_frame;
+static __thread Frame *g_frame_free;
+static __thread int g_alloc_mature;
 
 typedef struct ThreadReg {
   struct ThreadReg *next;
@@ -106,6 +113,11 @@ typedef struct ThreadReg {
 
 static __thread ThreadReg g_self_reg;
 static ThreadReg *g_threads;
+/* Becomes 1 when a second thread registers, and stays 1. A single
+ * mutator collects only at its own allocating call, so an interior
+ * pointer used before the next call does not need a root. Another
+ * thread can collect at any instruction. */
+atomic_int g_avant_shared;
 static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_gc_defer;
@@ -126,6 +138,10 @@ static PinEnt *g_pins;
 static void **g_remset;
 static uint32_t g_rem_n;
 static uint32_t g_rem_cap;
+static uint64_t g_young_bytes;
+static void **g_yscan_list;
+static uint32_t g_yscan_n;
+static uint32_t g_yscan_cap;
 
 static void **g_work;
 static uint32_t g_work_n;
@@ -175,6 +191,9 @@ void avant_gc_register_thread(void) {
   pthread_mutex_lock(&g_threads_mu);
   g_self_reg.next = g_threads;
   g_threads = &g_self_reg;
+  if (g_self_reg.next) {
+    atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
+  }
   pthread_mutex_unlock(&g_threads_mu);
 }
 
@@ -222,18 +241,32 @@ static void work_push(void *p) {
   g_work[g_work_n++] = p;
 }
 
+#define AVANT_FLAG_REM 16u
+
 static void rem_add(void *obj) {
-  uint32_t i;
-  for (i = 0; i < g_rem_n; i++) {
-    if (g_remset[i] == obj) {
-      return;
-    }
+  AvantHeader *h = avant_header(obj);
+  if (h->flags & AVANT_FLAG_REM) {
+    return;
   }
+  h->flags |= AVANT_FLAG_REM;
   if (g_rem_n == g_rem_cap) {
     g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
     g_remset = xrealloc(g_remset, g_rem_cap * sizeof(void *));
   }
   g_remset[g_rem_n++] = obj;
+}
+
+static int is_heap_payload(void *p, Block **ob, Large **ol);
+
+static void rem_forget(void) {
+  uint32_t i;
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    if (is_heap_payload(obj, NULL, NULL)) {
+      avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
+    }
+  }
+  g_rem_n = 0;
 }
 
 static size_t hash_ptr(void *p) {
@@ -930,7 +963,7 @@ static void copy_from_slot(void **slot) {
   }
   /* Mature / large: walk for young children. Write barriers are the
    * fast path; this scan makes a missed barrier (old array → young
-   * buffer, old object only on the heap) honest during young GC. */
+   * buffer, optional field stores) honest during young GC. */
   scan_old_once(start);
 }
 
@@ -1442,37 +1475,33 @@ static void count_c_stack_nursery(void) {
   }
 }
 
+static void yscan_note(void *p) {
+  if (g_yscan_n == g_yscan_cap) {
+    g_yscan_cap = g_yscan_cap ? g_yscan_cap * 2 : 256;
+    g_yscan_list = xrealloc(g_yscan_list, g_yscan_cap * sizeof(void *));
+  }
+  g_yscan_list[g_yscan_n++] = p;
+}
+
 static void scan_old_once(void *p) {
   AvantHeader *h = avant_header(p);
   if (h->flags & AVANT_FLAG_YSCAN) {
     return;
   }
   h->flags |= AVANT_FLAG_YSCAN;
+  yscan_note(p);
   work_push(p);
 }
 
-static void clear_yscan_one(AvantHeader *h, Block *b) {
-  (void)b;
-  h->flags &= (uint16_t)~AVANT_FLAG_YSCAN;
-}
-
 static void clear_yscan(void) {
-  Block *b;
-  Large *L;
-  for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, clear_yscan_one);
+  uint32_t i;
+  for (i = 0; i < g_yscan_n; i++) {
+    void *p = g_yscan_list[i];
+    if (is_heap_payload(p, NULL, NULL)) {
+      avant_header(p)->flags &= (uint16_t)~AVANT_FLAG_YSCAN;
+    }
   }
-  for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, clear_yscan_one);
-  }
-  for (L = g_large; L; L = L->next) {
-    L->header.flags &= (uint16_t)~AVANT_FLAG_YSCAN;
-  }
-}
-
-static void young_scan_header(AvantHeader *h, Block *b) {
-  (void)b;
-  copy_payload_children(payload_of(h));
+  g_yscan_n = 0;
 }
 
 static void gen_young_copy(void) {
@@ -1480,8 +1509,6 @@ static void gen_young_copy(void) {
   g_saw_pinned_nursery = 0;
   ThreadReg *t;
   uint32_t i;
-  Block *b;
-  Large *L;
   pthread_mutex_lock(&g_threads_mu);
   for (t = g_threads; t; t = t->next) {
     Frame *f;
@@ -1510,21 +1537,7 @@ static void gen_young_copy(void) {
       copy_payload_children(obj);
     }
   }
-  /*
-   * Walk every mature and large object. A missed write barrier
-   * (old object holding a young pointer) is otherwise a dangling
-   * slot after nursery discard. Remset stays the fast path; this
-   * walk is how Stage 17 stays honest while myc safepoints settle.
-   */
-  for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, young_scan_header);
-  }
-  for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, young_scan_header);
-  }
-  for (L = g_large; L; L = L->next) {
-    copy_payload_children(payload_of(&L->header));
-  }
+  /* Old-to-young edges are the remembered set (avant_barrier). */
   while (g_work_n) {
     void *p = g_work[--g_work_n];
     copy_payload_children(p);
@@ -1660,8 +1673,10 @@ static void collect(int full) {
       /* extra diagnostic: park already leaves from-space readable. */
     }
     clear_yscan();
+    rem_forget();
   } else {
     g_stats.full_collections++;
+    rem_forget();
     clear_all_marks();
     zero_line_marks(g_mature);
     zero_line_marks(g_nursery);
@@ -1673,7 +1688,6 @@ static void collect(int full) {
     filter_blocks(&g_from, keep_if_live);
   }
 
-  g_rem_n = 0;
   g_since_gc = 0;
   if (full) {
     g_last_full_at = g_stats.allocated_bytes;
@@ -1703,9 +1717,12 @@ static void maybe_collect(void) {
     }
     return;
   }
-  if (g_since_gc >= FULL_BYTES) {
+  /* Young collection resets g_since_gc, so a full collection has to
+   * watch bytes since the last full collection or dead mature objects
+   * are never reclaimed. */
+  if (g_stats.allocated_bytes - g_last_full_at >= FULL_BYTES) {
     collect(1);
-  } else if (g_since_gc >= YOUNG_BYTES) {
+  } else if (g_since_gc >= g_young_bytes) {
     collect(0);
   }
 }
@@ -1760,6 +1777,10 @@ static void init_gc(void) {
     return;
   }
   g_inited = 1;
+  {
+    uint64_t ymb = env_u64("AVANT_YOUNG_MB", 0);
+    g_young_bytes = ymb ? ymb * 1024ull * 1024ull : YOUNG_BYTES_DEFAULT;
+  }
   uint64_t mb = env_u64("AVANT_HEAP_MAX_MB", 0);
   g_heap_max = mb ? mb * 1024ull * 1024ull : 0;
   {
@@ -1821,12 +1842,21 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   g_type_set[type_id] = 1;
 }
 
+/* A call used to calloc a frame and free it on leave. Hot recursion
+ * (Brainfuck) and numeric methods spent the call on that pair. Frames
+ * are kept on a thread-local freelist; the slot array is reused too. */
 void avant_gc_enter(void) {
   init_gc();
   avant_gc_register_thread();
-  Frame *f = calloc(1, sizeof(Frame));
-  if (!f) {
-    die("out of memory");
+  Frame *f = g_frame_free;
+  if (f) {
+    g_frame_free = f->prev;
+    f->n = 0;
+  } else {
+    f = calloc(1, sizeof(Frame));
+    if (!f) {
+      die("out of memory");
+    }
   }
   f->prev = g_frame;
   g_frame = f;
@@ -1838,8 +1868,9 @@ void avant_gc_leave(void) {
     die("gc leave without enter");
   }
   g_frame = f->prev;
-  free(f->slots);
-  free(f);
+  f->n = 0;
+  f->prev = g_frame_free;
+  g_frame_free = f;
 }
 
 void avant_gc_root(void *slot) {
@@ -1879,15 +1910,19 @@ void *avant_gc_reload(void *slot) {
 }
 
 void avant_barrier(void *obj) {
+  Block *b = NULL;
   if (!obj || g_collecting) {
     return;
   }
-  if (!is_heap_payload(obj, NULL, NULL)) {
+  if (!is_heap_payload(obj, &b, NULL)) {
     return;
   }
-  if (is_old(obj)) {
-    rem_add(obj);
+  /* Nursery objects are scanned from the root. One lookup: is_old
+   * used to walk the block table again. */
+  if (b && b->space == SPACE_NURSERY) {
+    return;
   }
+  rem_add(obj);
 }
 
 void avant_pin(void *payload) {
@@ -1949,6 +1984,19 @@ void avant_gc_defer_leave(void) {
   pthread_mutex_unlock(&g_world);
 }
 
+void avant_alloc_in_mature(int32_t on) {
+  g_alloc_mature = on ? 1 : 0;
+}
+
+void avant_world_lock(void) {
+  init_gc();
+  pthread_mutex_lock(&g_world);
+}
+
+void avant_world_unlock(void) {
+  pthread_mutex_unlock(&g_world);
+}
+
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   init_gc();
   if (nbytes > UINT32_MAX) {
@@ -1973,6 +2021,9 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   }
 
   uint8_t space = SPACE_NURSERY;
+  if (g_nursery_off || g_alloc_mature) {
+    space = SPACE_MATURE;
+  }
   AvantHeader *h = place(total, space, 0);
   h->size = (uint32_t)payload;
   h->type_id = (uint16_t)type_id;

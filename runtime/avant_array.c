@@ -1,7 +1,20 @@
 #include "avant_rt.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * g_avant_shared stays 0 until a second thread registers. The mutator
+ * collects only inside avant_alloc, so a push, pop, or store that does
+ * not allocate can skip the world lock. The locked path stays once
+ * another thread exists.
+ */
+extern atomic_int g_avant_shared;
+
+static int mutator_private(void) {
+  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
+}
 
 typedef struct {
   void *buf;
@@ -63,9 +76,20 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   if (!a) {
     return;
   }
+  if (mutator_private() && a->buf && a->size < a->cap) {
+    slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
+    memcpy(slot, &elem, sizeof(void *));
+    a->size += 1;
+    avant_barrier(a);
+    if (a->buf) {
+      avant_barrier(a->buf);
+    }
+    return;
+  }
   /*
    * Store under defer so myc IR never holds an interior buffer
    * pointer across a collecting CALL. Grow may nest defer.
+   * push_slot already barriers the array and the buffer.
    */
   avant_gc_defer_enter();
   slot = avant_array_push_slot(arr, sizeof(void *), buf_type_id);
@@ -73,37 +97,68 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
     memcpy(slot, &elem, sizeof(void *));
   }
   avant_gc_defer_leave();
-  avant_barrier(a);
-  if (a->buf) {
-    avant_barrier(a->buf);
-  }
 }
 
 void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || !a->buf) {
+  /*
+   * Another worker can be inside avant_alloc, which relocates nursery
+   * objects. This call used to be a gc-leaf, so the buffer pointer in
+   * a register was not a root. Hold the world lock across the store
+   * so a collection cannot move buf between the load and the write.
+   * A private mutator does not collect on this path.
+   */
+  if (mutator_private()) {
+    if (a && a->buf) {
+      ((void **)a->buf)[i] = elem;
+      avant_barrier(a);
+      avant_barrier(a->buf);
+    }
     return;
   }
-  ((void **)a->buf)[i] = elem;
-  avant_barrier(a);
-  avant_barrier(a->buf);
+  avant_world_lock();
+  if (a && a->buf) {
+    ((void **)a->buf)[i] = elem;
+    avant_barrier(a);
+    avant_barrier(a->buf);
+  }
+  avant_world_unlock();
 }
 
 void *avant_array_get_ptr(void *arr, int32_t i) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || !a->buf || i < 0 || i >= a->size) {
+  void *elem = NULL;
+  if (mutator_private()) {
+    if (a && a->buf && i >= 0 && i < a->size) {
+      return ((void **)a->buf)[i];
+    }
     return NULL;
   }
-  return ((void **)a->buf)[i];
+  avant_world_lock();
+  if (a && a->buf && i >= 0 && i < a->size) {
+    elem = ((void **)a->buf)[i];
+  }
+  avant_world_unlock();
+  return elem;
 }
 
 void *avant_array_pop_ptr(void *arr) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || !a->buf || a->size <= 0) {
+  void *elem = NULL;
+  if (mutator_private()) {
+    if (a && a->buf && a->size > 0) {
+      a->size -= 1;
+      return ((void **)a->buf)[a->size];
+    }
     return NULL;
   }
-  a->size -= 1;
-  return ((void **)a->buf)[a->size];
+  avant_world_lock();
+  if (a && a->buf && a->size > 0) {
+    a->size -= 1;
+    elem = ((void **)a->buf)[a->size];
+  }
+  avant_world_unlock();
+  return elem;
 }
 
 void avant_array_push_i32(void *arr, int32_t v) {

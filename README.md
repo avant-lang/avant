@@ -19,18 +19,19 @@ The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted an
 11. [Concurrency](#concurrency)
 12. [Macros](#macros)
 13. [Formatter](#formatter)
-14. [Builtins](#builtins)
-15. [Toolchain](#toolchain)
-16. [Tests](#tests)
-17. [Not built yet](#not-built-yet)
-18. [Goals](#goals)
-19. [License](#license)
+14. [Regex](#regex)
+15. [Builtins](#builtins)
+16. [Toolchain](#toolchain)
+17. [Tests](#tests)
+18. [Not built yet](#not-built-yet)
+19. [Goals](#goals)
+20. [License](#license)
 
 ## Getting started
 
 ### Requirements
 
-A published `avant` compiler (the `v0.4.0` seed or newer), a C compiler (`cc`), LLVM 20, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard.
+A published `avant` compiler (the `v0.4.0` seed or newer), a C compiler (`cc`), LLVM 20, libpcre2, re2c, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard. A string literal at `re_compile` is compiled with re2c. A computed pattern uses PCRE2. Without `re2c`, that literal stays on PCRE2.
 
 ### Build a compiler
 
@@ -660,11 +661,108 @@ Stdout is the default. `--write` replaces the file. `--check` prints `canonical`
 
 `compile`, `run`, and `dump` still drop comments. Formatting is a separate command so a format bug cannot change what a program means.
 
+## Regex
+
+You can pass regex patterns as strings to `re_compile`, `re_find`, and `re_count`.
+
+### `re_compile`
+
+```
+re_compile(pattern: String, flags: Int): Ptr(Void)
+```
+
+`pattern` is the regular expression. `flags` is `0` for a case-sensitive match and `1` for a case-insensitive one. The result is a handle for `re_find`.
+
+A string literal is compiled with re2c. A value computed at runtime stays on PCRE2, and so does a literal re2c cannot express.
+
+```avant
+fn main {
+  re = re_compile("x(y)", 0)
+  bot = re_compile("bot", 1)
+  built = "a"
+  built = built + "+"
+  dyn = re_compile(built, 0)
+}
+```
+
+`"x(y)"` and `"bot"` are literals. `built` is computed, so `dyn` is a PCRE2 handle. A literal backreference is also PCRE2, and the compiler prints why:
+
+```avant
+fn main {
+  re = re_compile("(a)\\1", 0)
+}
+```
+
+### `re_find`
+
+```
+re_find(re: Ptr(Void), text: String, from: Int): Int
+```
+
+`re` is a handle from `re_compile`. `text` is the string to search. `from` is the byte index to start at. The result is `1` when a match is found and `0` when it is not. The next successful find overwrites the previous span.
+
+`re_m0` and `re_m1` are the byte bounds of the whole match. `re_c0` and `re_c1` are the first capturing group. With no group they repeat the whole match.
+
+```avant
+fn main {
+  re = re_compile("x(y)", 0)
+  if re_find(re, "zxy", 0) == 1 {
+    puts(re_m0())
+    puts(re_m1())
+    puts(re_c0())
+    puts(re_c1())
+  }
+}
+```
+
+That prints `1`, `3`, `2`, and `3`: the whole match is `xy`, and the group is `y`.
+
+A second find continues after the previous match:
+
+```avant
+fn main {
+  re = re_compile("a+", 0)
+  i = 0
+  text = "xxaa"
+  if re_find(re, text, i) == 1 {
+    puts(re_m0())
+    i = re_m1()
+  }
+}
+```
+
+`re_m0` is `2` and `re_m1` is `4`.
+
+### `re_count`
+
+```
+re_count(pattern: String, text: String, flags: Int): Int
+```
+
+`pattern` and `flags` are the same as for `re_compile`. `text` is the string to scan. The result is how many non-overlapping matches are in `text`. This call always uses PCRE2, including when `pattern` is a string literal.
+
+```avant
+fn main {
+  puts(re_count("a+", "aa ba", 0))
+  built = "a"
+  built = built + "+"
+  puts(re_count(built, "aa ba", 0))
+}
+```
+
+Both lines print `2`.
+
+### Under the hood
+
+A string literal at `re_compile` is compiled with [re2c](https://re2c.org) (`-b`) while the program is compiled. The generated C is linked into the binary, and `re_find` runs that scanner. A pattern built at runtime stays on PCRE2 with JIT.
+
+re2c does not take a backreference, a lookahead, or a lookbehind. The non-greedy form it does take is `.*?` before a one- or two-character literal, as in `\{\{(.*?)\}\}`. Anything else in a literal stays on PCRE2, and the compiler prints `re2c: pattern stays on PCRE2`. If `re2c` is not installed, a literal stays on PCRE2 the same way. `AVANT_RE2C` overrides the `re2c` binary.
+
 ## Builtins
 
 These examples run on the identity compiler: `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`. `matmul.av` checks that the sequential and spawned checksums match.
 
-Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compress`, `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free`, base64, PCRE2 `re_count`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, `process_run` / `process_run_out`. A host-only name is ported when a failing native test needs it, not before.
+Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compress`, `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free` / `json_gen_body` / `json_gen_into`, base64, `re_compile` / `re_find` / `re_count` (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, `process_run` / `process_run_out`. A host-only name is ported when a failing native test needs it, not before.
 
 ## Toolchain
 
