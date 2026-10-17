@@ -97,6 +97,14 @@ static int g_cache_n;
 static Block *g_cur;
 static uint8_t *g_bump;
 static uint8_t *g_limit;
+/* Per-space bump cursor. A full block used to send the next allocation
+ * back through every older block (take_from_list + find_hole). Workers
+ * allocate in mature space, and that walk dominated Matmul::T16.
+ * g_alloc_fresh means the cursor is a new block: when it fills, allocate
+ * another instead of rescanning full blocks. A full collection clears
+ * the cursor so the next allocation reuses holes. */
+static Block *g_alloc_cur[3];
+static uint8_t g_alloc_fresh[3];
 
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
@@ -737,7 +745,20 @@ static void reset_block_bump(Block *b) {
   }
 }
 
+static void clear_alloc_cur(uint8_t space);
+
 static void cache_or_free_block(Block *b) {
+  if (g_alloc_cur[SPACE_NURSERY] == b) {
+    clear_alloc_cur(SPACE_NURSERY);
+  }
+  if (g_alloc_cur[SPACE_MATURE] == b) {
+    clear_alloc_cur(SPACE_MATURE);
+  }
+  if (g_cur == b) {
+    g_cur = NULL;
+    g_bump = NULL;
+    g_limit = NULL;
+  }
   block_unregister(b);
   if (g_cache_n < CACHE_BLOCKS) {
     memset(b->line_mark, 0, sizeof(b->line_mark));
@@ -832,14 +853,9 @@ static int try_bump(Block *b, size_t total) {
   return bump_fits(total);
 }
 
-static int take_from_list(Block *list, size_t total) {
-  Block *b;
-  for (b = list; b; b = b->next) {
-    if (try_bump(b, total)) {
-      return 1;
-    }
-  }
-  return 0;
+static void clear_alloc_cur(uint8_t space) {
+  g_alloc_cur[space] = NULL;
+  g_alloc_fresh[space] = 0;
 }
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc);
@@ -847,9 +863,22 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc);
 static void collect(int full);
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
-  Block *list = space == SPACE_NURSERY ? g_nursery : g_mature;
-  if (take_from_list(list, total)) {
+  Block *cur = g_alloc_cur[space];
+  if (cur && try_bump(cur, total)) {
     return bump_take(total);
+  }
+  /* A fresh block has no holes behind it. Scanning the list again
+   * walks every full block. Recycle only after a collection cleared
+   * the fresh bit, and then only forward from the cursor. */
+  if (!g_alloc_fresh[space]) {
+    Block *list = space == SPACE_NURSERY ? g_nursery : g_mature;
+    Block *b = cur ? cur->next : list;
+    for (; b; b = b->next) {
+      if (try_bump(b, total)) {
+        g_alloc_cur[space] = b;
+        return bump_take(total);
+      }
+    }
   }
   Block *b = new_block(space);
   if (!b) {
@@ -859,6 +888,8 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     }
     die("heap limit");
   }
+  g_alloc_cur[space] = b;
+  g_alloc_fresh[space] = 1;
   use_block(b);
   if (!bump_fits(total)) {
     die("object larger than block");
@@ -867,18 +898,9 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
 }
 
 static void *mature_alloc(size_t total) {
-  if (take_from_list(g_mature, total)) {
-    return bump_take(total);
-  }
-  Block *b = new_block(SPACE_MATURE);
-  if (!b) {
-    die("out of memory");
-  }
-  use_block(b);
-  if (!bump_fits(total)) {
-    die("object larger than block");
-  }
-  return bump_take(total);
+  /* Young copy promotes into mature space while g_collecting is set.
+   * tried_gc stays 1 so a failed block does not re-enter collect. */
+  return place(total, SPACE_MATURE, 1);
 }
 
 static void copy_from_slot(void **slot);
@@ -1653,6 +1675,12 @@ static void collect(int full) {
   g_cur = NULL;
   g_bump = NULL;
   g_limit = NULL;
+  /* Nursery blocks are parked or freed below. A full collection also
+   * rebuilds the mature list, so that cursor would dangle. */
+  clear_alloc_cur(SPACE_NURSERY);
+  if (full) {
+    clear_alloc_cur(SPACE_MATURE);
+  }
 
   if (!full) {
     g_stats.young_collections++;
