@@ -698,6 +698,10 @@ pub class MycGen {
   need_parallel: Int = 0
   cur_leaf: Int = 0
   numeric_leaves: Hash(String, Int)
+  // 1 while quiet-leaf elimination is walking bodies. Calls that do not
+  // move objects stay inside the set. Loop hoisting keeps the strict walk.
+  leaf_walk: Int = 0
+  leaf_open: Hash(String, Int)
   hoist_names: Array(String)
   hoist_bits: Array(String)
   hoist_ptrs: Array(String)
@@ -778,6 +782,9 @@ pub class MycGen {
     self.cur_leaf = 0
     leaves = Hash(String, Int).new
     self.numeric_leaves = leaves
+    self.leaf_walk = 0
+    opened = Hash(String, Int).new
+    self.leaf_open = opened
     hn: Array(String) = []
     self.hoist_names = hn
     hb: Array(String) = []
@@ -1790,6 +1797,13 @@ pub class MycGen {
   // A function that cannot collect needs no frame and no safepoint.
   // Another thread can collect while this one holds a raw pointer, so
   // this stays off when the program spawns or uses .parallel.
+  //
+  // A recursive call is not itself a collection. Every candidate starts
+  // in the set, and a function drops out when it calls something that
+  // is already out. Integer casts and hash get, clear, delete, and size
+  // do not move. A hash or array index store is not a call in this walk.
+  // Those helpers defer, and a private mutator does not move inside that
+  // window.
   pub fn mark_quiet_leaves {
     buf = buf_new()
     first = 1
@@ -1797,36 +1811,68 @@ pub class MycGen {
       self.program.quiet_leaves = ""
       return
     }
+    open = Hash(String, Int).new
     fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if self.quiet_candidate(fnn) {
+        if v = self.numeric_leaves.get(fnn.emit_name) {
+        } else {
+          open[fnn.emit_name] = 1
+        }
+      }
+      i = i + 1
+    }
+    self.leaf_open = open
+    self.leaf_walk = 1
     guard = 0
     while guard < fns.size {
-      added = 0
+      removed = 0
       i = 0
       while i < fns.size {
         fnn = fns[i]
-        if self.quiet_candidate(fnn) {
-          if v = self.numeric_leaves.get(fnn.emit_name) {
-          } else {
+        if v = open.get(fnn.emit_name) {
+          if v == 1 {
             if self.stmts_may_collect(fnn.body) {
-            } else {
-              self.numeric_leaves[fnn.emit_name] = 1
-              if first == 0 {
-                buf.push_str(",")
-              }
-              first = 0
-              buf.push_str(fnn.emit_name)
-              added = 1
+              open[fnn.emit_name] = 0
+              removed = 1
             }
           }
         }
         i = i + 1
       }
-      if added == 0 {
+      if removed == 0 {
         guard = fns.size
       } else {
         guard = guard + 1
       }
     }
+    self.leaf_walk = 0
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if v = open.get(fnn.emit_name) {
+        if v == 1 {
+          self.numeric_leaves[fnn.emit_name] = 1
+          if first == 0 {
+            buf.push_str(",")
+          }
+          first = 0
+          buf.push_str(fnn.emit_name)
+        }
+      }
+      i = i + 1
+    }
+    // These helpers do not move when this thread is the only mutator.
+    // Set grows under defer. Get, clear, delete, and size do not allocate.
+    // A program that spawns does not reach this list.
+    if first == 0 {
+      buf.push_str(",")
+    }
+    buf.push_str("avant_hash_get_i32,avant_hash_get_str,avant_hash_get_i32k_i32")
+    buf.push_str(",avant_hash_set_i32,avant_hash_set_str,avant_hash_set_i32k_i32")
+    buf.push_str(",avant_hash_clear,avant_hash_size,avant_hash_del,avant_hash_del_i32k")
     self.program.quiet_leaves = buf.to_s
   }
 
@@ -3892,7 +3938,13 @@ pub class MycGen {
     }
     if k == ex_field() {
       if expr.method_call {
-        return true
+        if self.leaf_walk == 1 {
+          if self.field_call_blocks(expr) {
+            return true
+          }
+        } else {
+          return true
+        }
       }
     }
     if inner = expr.inner {
@@ -3980,6 +4032,9 @@ pub class MycGen {
   }
 
   pub fn call_may_collect(expr: Expr): Bool {
+    if self.leaf_walk == 1 {
+      return self.call_blocks_leaf(expr)
+    }
     if expr.indirect {
       return true
     }
@@ -4003,6 +4058,112 @@ pub class MycGen {
       return false
     }
     true
+  }
+
+  // True when this call can move a heap pointer. Hash lookup and
+  // integer casts do not. The name is the emit name when the callee
+  // is one of ours still in the open set.
+  pub fn call_blocks_leaf(expr: Expr): Bool {
+    if expr.indirect {
+      return true
+    }
+    if expr.fn_ref {
+      return true
+    }
+    if recv = expr.receiver {
+      if self.receiver_stays_put(expr_ty(recv), expr.callee) {
+        return false
+      }
+    }
+    if self.name_stays_put(expr.callee) {
+      return false
+    }
+    if self.name_stays_put(expr.resolved) {
+      return false
+    }
+    true
+  }
+
+  pub fn field_call_blocks(expr: Expr): Bool {
+    if obj = expr.object {
+      if self.receiver_stays_put(expr_ty(obj), expr.ident) {
+        return false
+      }
+    }
+    if self.name_stays_put(expr.resolved) {
+      return false
+    }
+    true
+  }
+
+  pub fn name_stays_put(name: String): Bool {
+    if name.size == 0 {
+      return false
+    }
+    if self.runtime_leaf(name) {
+      return true
+    }
+    if v = self.numeric_leaves.get(name) {
+      return true
+    }
+    if v = self.leaf_open.get(name) {
+      if v == 1 {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn receiver_stays_put(ty: Ty, name: String): Bool {
+    if ty.is_hash {
+      if str_eq(name, "get") {
+        return true
+      }
+      if str_eq(name, "size") {
+        return true
+      }
+      if str_eq(name, "clear") {
+        return true
+      }
+      if str_eq(name, "delete") {
+        return true
+      }
+      return false
+    }
+    if ty.is_integer {
+      if str_eq(name, "to_i") {
+        return true
+      }
+      if str_eq(name, "to_i64") {
+        return true
+      }
+      if str_eq(name, "to_u64") {
+        return true
+      }
+      if str_eq(name, "to_f") {
+        return true
+      }
+      if str_eq(name, "abs") {
+        return true
+      }
+      return false
+    }
+    if ty.is_float {
+      if str_eq(name, "sqrt") {
+        return true
+      }
+      if str_eq(name, "abs") {
+        return true
+      }
+      if str_eq(name, "floor") {
+        return true
+      }
+      if str_eq(name, "to_i") {
+        return true
+      }
+      return false
+    }
+    false
   }
 
   pub fn runtime_leaf(name: String): Bool {
