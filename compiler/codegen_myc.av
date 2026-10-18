@@ -1802,6 +1802,7 @@ pub class MycGen {
   // in the set, and a function drops out when it calls something that
   // is already out. Integer casts and hash get, clear, delete, and size
   // do not move. A hash or array index store is not a call in this walk.
+  // Array.each is inlined, so the call is not a collection; the block is.
   // Those helpers defer, and a private mutator does not move inside that
   // window.
   pub fn mark_quiet_leaves {
@@ -4159,6 +4160,12 @@ pub class MycGen {
         return true
       }
       if str_eq(name, "to_i") {
+        return true
+      }
+      return false
+    }
+    if ty.is_array {
+      if str_eq(name, "each") {
         return true
       }
       return false
