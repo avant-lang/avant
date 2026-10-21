@@ -32,7 +32,11 @@
 #define AVANT_FLAG_PINNED 1u
 #define AVANT_FLAG_MARKED 2u
 #define AVANT_FLAG_FORWARDED 4u
-#define AVANT_FLAG_YSCAN 8u
+/* Set on a nursery object that already survived one young collection.
+ * The next young collection tenures it. A tree that dies first is not. */
+#define AVANT_FLAG_SURVIVED 8u
+/* Nursery allocation. avant_barrier reads this instead of hashing the block. */
+#define AVANT_FLAG_YOUNG 32u
 #define AVANT_FLAG_HEAP 0x8000u
 
 typedef struct AvantHeader {

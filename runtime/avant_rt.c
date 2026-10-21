@@ -49,6 +49,10 @@
 #define SPACE_MATURE 0
 #define SPACE_NURSERY 1
 #define SPACE_FROM 2
+/* Survivors of a low-survival young collection are copied here, then the
+ * block is retagged as nursery. Mature space is for objects that have
+ * already survived a collection. */
+#define SPACE_TO 3
 
 typedef struct Block {
   struct Block *hash_next;
@@ -91,6 +95,7 @@ static Block *g_bht[BLOCK_HASH];
 static Block *g_mature;
 static Block *g_nursery;
 static Block *g_from;
+static Block *g_to;
 static Block *g_cache;
 static int g_cache_n;
 
@@ -103,8 +108,8 @@ static uint8_t *g_limit;
  * g_alloc_fresh means the cursor is a new block: when it fills, allocate
  * another instead of rescanning full blocks. A full collection clears
  * the cursor so the next allocation reuses holes. */
-static Block *g_alloc_cur[3];
-static uint8_t g_alloc_fresh[3];
+static Block *g_alloc_cur[4];
+static uint8_t g_alloc_fresh[4];
 
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
@@ -146,10 +151,29 @@ static PinEnt *g_pins;
 static void **g_remset;
 static uint32_t g_rem_n;
 static uint32_t g_rem_cap;
+/* Mature objects that still point at a young survivor after this collection. */
+static void **g_keep;
+static uint32_t g_keep_n;
+static uint32_t g_keep_cap;
+/* Objects flagged MARKED by the survival probe. Clearing them by walking
+ * every nursery object retraced the dead tree. */
+static void **g_noted;
+static uint32_t g_noted_n;
+static uint32_t g_noted_cap;
 static uint64_t g_young_bytes;
-static void **g_yscan_list;
-static uint32_t g_yscan_n;
-static uint32_t g_yscan_cap;
+/* 0 when AVANT_YOUNG_MB pinned the threshold (tests). */
+static int g_young_adapt;
+static uint64_t g_nursery_held;
+static uint64_t g_mature_since_full;
+static uint64_t g_to_bytes;
+static uint64_t g_sticky_grows;
+static int g_probe;
+static int g_force_tenure;
+static uint64_t g_probe_nursery_bytes;
+/* A depth-20 object tree is about 96 MiB. The nursery grows to hold one
+ * burst and collects when that burst has died. 192 MiB is the cap. */
+#define YOUNG_BYTES_MAX (192ull * 1024ull * 1024ull)
+#define STICKY_MIN (8ull * 1024ull * 1024ull)
 
 static void **g_work;
 static uint32_t g_work_n;
@@ -754,6 +778,9 @@ static void cache_or_free_block(Block *b) {
   if (g_alloc_cur[SPACE_MATURE] == b) {
     clear_alloc_cur(SPACE_MATURE);
   }
+  if (g_alloc_cur[SPACE_TO] == b) {
+    clear_alloc_cur(SPACE_TO);
+  }
   if (g_cur == b) {
     g_cur = NULL;
     g_bump = NULL;
@@ -812,6 +839,9 @@ static Block *new_block(uint8_t space) {
   if (space == SPACE_NURSERY) {
     b->next = g_nursery;
     g_nursery = b;
+  } else if (space == SPACE_TO) {
+    b->next = g_to;
+    g_to = b;
   } else {
     b->next = g_mature;
     g_mature = b;
@@ -832,7 +862,11 @@ static int bump_fits(size_t need) {
 static void *bump_take(size_t need) {
   Block *b = g_cur;
   size_t off = (size_t)(g_bump - b->base);
-  clear_starts(b, off, need);
+  /* A fresh block is zeroed and only bumps forward. Clearing start bits
+   * is for a hole in a recycled block. */
+  if (!g_alloc_fresh[b->space]) {
+    clear_starts(b, off, need);
+  }
   set_start(b, off);
   void *h = g_bump;
   g_bump += need;
@@ -871,7 +905,12 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
    * walks every full block. Recycle only after a collection cleared
    * the fresh bit, and then only forward from the cursor. */
   if (!g_alloc_fresh[space]) {
-    Block *list = space == SPACE_NURSERY ? g_nursery : g_mature;
+    Block *list = g_mature;
+    if (space == SPACE_NURSERY) {
+      list = g_nursery;
+    } else if (space == SPACE_TO) {
+      list = g_to;
+    }
     Block *b = cur ? cur->next : list;
     for (; b; b = b->next) {
       if (try_bump(b, total)) {
@@ -900,7 +939,74 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
 static void *mature_alloc(size_t total) {
   /* Young copy promotes into mature space while g_collecting is set.
    * tried_gc stays 1 so a failed block does not re-enter collect. */
+  g_mature_since_full += total;
   return place(total, SPACE_MATURE, 1);
+}
+
+static AvantHeader *to_alloc(size_t total) {
+  AvantHeader *h = place(total, SPACE_TO, 1);
+  g_to_bytes += total;
+  return h;
+}
+
+static void keep_add(void *obj) {
+  if (g_keep_n == g_keep_cap) {
+    g_keep_cap = g_keep_cap ? g_keep_cap * 2 : 64;
+    g_keep = xrealloc(g_keep, g_keep_cap * sizeof(void *));
+  }
+  g_keep[g_keep_n++] = obj;
+}
+
+static void note_marked(void *payload) {
+  if (g_noted_n == g_noted_cap) {
+    g_noted_cap = g_noted_cap ? g_noted_cap * 2 : 256;
+    g_noted = xrealloc(g_noted, g_noted_cap * sizeof(void *));
+  }
+  g_noted[g_noted_n++] = payload;
+}
+
+static void clear_noted(void) {
+  uint32_t i;
+  for (i = 0; i < g_noted_n; i++) {
+    avant_header(g_noted[i])->flags &=
+        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+  }
+  g_noted_n = 0;
+}
+
+static void probe_note(void *start) {
+  AvantHeader *h = avant_header(start);
+  if (h->flags & AVANT_FLAG_MARKED) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_MARKED;
+  note_marked(start);
+  g_probe_nursery_bytes += obj_total(h);
+  work_push(start);
+}
+
+/* The slot now names a young object. If that slot lives in a mature
+ * object, the next young collection has to find it from the remembered
+ * set: the mature object is not walked from the roots. */
+static void remember_young_edge(void **slot, void *payload) {
+  Block *pb = NULL;
+  Block *ob = NULL;
+  Large *ol = NULL;
+  void *owner;
+  if (!is_heap_payload(payload, &pb, NULL) || !pb) {
+    return;
+  }
+  if (pb->space != SPACE_NURSERY && pb->space != SPACE_TO) {
+    return;
+  }
+  owner = object_payload((void *)slot, &ob, &ol);
+  if (!owner) {
+    return;
+  }
+  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO)) {
+    return;
+  }
+  keep_add(owner);
 }
 
 static void copy_from_slot(void **slot);
@@ -933,6 +1039,9 @@ static void copy_payload_children(void *p) {
 
 static void *copy_nursery(void *p) {
   Block *b = NULL;
+  if (g_probe) {
+    die("probe copied");
+  }
   if (!is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
     return p;
   }
@@ -952,9 +1061,18 @@ static void *copy_nursery(void *p) {
     return p;
   }
   size_t total = obj_total(h);
-  AvantHeader *nh = mature_alloc(total);
+  /* Tenure only after a previous collection, or when the caller has
+   * already decided this graph is long-lived. A first survivor stays
+   * in the nursery (SPACE_TO) so a tree that dies next cycle is not
+   * promoted. */
+  int tenure = g_force_tenure || (h->flags & AVANT_FLAG_SURVIVED);
+  AvantHeader *nh = tenure ? (AvantHeader *)mature_alloc(total) : to_alloc(total);
   memcpy(nh, h, total);
-  nh->flags = (uint16_t)((h->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_HEAP)) | AVANT_FLAG_MARKED);
+  nh->flags = (uint16_t)(h->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_HEAP));
+  nh->flags |= AVANT_FLAG_MARKED;
+  if (!tenure) {
+    nh->flags |= (uint16_t)(AVANT_FLAG_SURVIVED | AVANT_FLAG_YOUNG);
+  }
   void *np = payload_of(nh);
   fwd_put(p, np);
   g_stats.copied_bytes += total;
@@ -964,8 +1082,6 @@ static void *copy_nursery(void *p) {
   return np;
 }
 
-static void scan_old_once(void *p);
-
 static void copy_from_slot(void **slot) {
   void *p = *slot;
   Block *b = NULL;
@@ -974,19 +1090,23 @@ static void copy_from_slot(void **slot) {
   if (!start) {
     return;
   }
-  if (start != p) {
+  if (start != p && !g_probe) {
     g_interior_slots++;
   }
   if (b && b->space == SPACE_NURSERY) {
+    if (g_probe) {
+      probe_note(start);
+      return;
+    }
     ptrdiff_t delta = (uint8_t *)p - (uint8_t *)start;
     void *np = copy_nursery(start);
     *slot = (uint8_t *)np + delta;
-    return;
+    remember_young_edge(slot, np);
   }
-  /* Mature / large: walk for young children. Write barriers are the
-   * fast path; this scan makes a missed barrier (old array → young
-   * buffer, optional field stores) honest during young GC. */
-  scan_old_once(start);
+  /* A mature pointer stays put. Young children were recorded by
+   * avant_barrier on the store, or they were copied when this object
+   * itself was promoted. Walking the mature object from here retraces
+   * the whole promoted tree on every young collection. */
 }
 
 static void relocate_root_location(void ***slot_loc) {
@@ -1063,8 +1183,6 @@ static void copy_from_c_stack(void) {
       } else {
         pin_nursery_in_place(w);
       }
-    } else {
-      scan_old_once(w);
     }
   }
 }
@@ -1497,38 +1615,12 @@ static void count_c_stack_nursery(void) {
   }
 }
 
-static void yscan_note(void *p) {
-  if (g_yscan_n == g_yscan_cap) {
-    g_yscan_cap = g_yscan_cap ? g_yscan_cap * 2 : 256;
-    g_yscan_list = xrealloc(g_yscan_list, g_yscan_cap * sizeof(void *));
-  }
-  g_yscan_list[g_yscan_n++] = p;
-}
-
-static void scan_old_once(void *p) {
-  AvantHeader *h = avant_header(p);
-  if (h->flags & AVANT_FLAG_YSCAN) {
-    return;
-  }
-  h->flags |= AVANT_FLAG_YSCAN;
-  yscan_note(p);
-  work_push(p);
-}
-
-static void clear_yscan(void) {
-  uint32_t i;
-  for (i = 0; i < g_yscan_n; i++) {
-    void *p = g_yscan_list[i];
-    if (is_heap_payload(p, NULL, NULL)) {
-      avant_header(p)->flags &= (uint16_t)~AVANT_FLAG_YSCAN;
-    }
-  }
-  g_yscan_n = 0;
-}
-
 static void gen_young_copy(void) {
-  fwd_reset();
+  if (!g_probe) {
+    fwd_reset();
+  }
   g_saw_pinned_nursery = 0;
+  g_work_n = 0;
   ThreadReg *t;
   uint32_t i;
   pthread_mutex_lock(&g_threads_mu);
@@ -1536,13 +1628,17 @@ static void gen_young_copy(void) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
-        relocate_root_location(&f->slots[i]);
+        if (!g_probe) {
+          relocate_root_location(&f->slots[i]);
+        }
         copy_from_slot(f->slots[i]);
       }
     }
   }
   pthread_mutex_unlock(&g_threads_mu);
-  copy_from_c_stack();
+  if (!g_probe) {
+    copy_from_c_stack();
+  }
   copy_from_stackmaps();
   /*
    * D34: pinned objects are mark roots. Full collect already walks
@@ -1563,6 +1659,9 @@ static void gen_young_copy(void) {
   while (g_work_n) {
     void *p = g_work[--g_work_n];
     copy_payload_children(p);
+  }
+  if (g_probe) {
+    return;
   }
   /*
    * Mapped stackmap slots were roots above. Extra LLVM spills of the
@@ -1664,7 +1763,129 @@ static void sweep_large(void) {
   }
 }
 
+static void clear_mark_flag_one(AvantHeader *h, Block *b) {
+  (void)b;
+  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+}
+
+static void clear_mark_flags(void) {
+  Block *b;
+  Large *L;
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, clear_mark_flag_one);
+  }
+  for (b = g_nursery; b; b = b->next) {
+    foreach_block_object(b, clear_mark_flag_one);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, clear_mark_flag_one);
+  }
+  for (b = g_to; b; b = b->next) {
+    foreach_block_object(b, clear_mark_flag_one);
+  }
+  for (L = g_large; L; L = L->next) {
+    L->header.flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+  }
+}
+
+static uint64_t g_mark_sum;
+
+static void sum_marked_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_MARKED) {
+    g_mark_sum += obj_total(h);
+  }
+}
+
+static void adopt_to_space(void) {
+  Block *head = g_to;
+  Block *b = g_to;
+  g_to = NULL;
+  while (b) {
+    Block *next = b->next;
+    b->space = SPACE_NURSERY;
+    b->next = g_nursery;
+    g_nursery = b;
+    b = next;
+  }
+  clear_alloc_cur(SPACE_TO);
+  clear_alloc_cur(SPACE_NURSERY);
+  if (head && head->bump < head->base + BLOCK_SIZE) {
+    g_alloc_cur[SPACE_NURSERY] = head;
+    g_alloc_fresh[SPACE_NURSERY] = 1;
+    use_block(head);
+  }
+}
+
+static void rem_commit_kept(void) {
+  uint32_t n = g_keep_n;
+  void **kept = g_keep;
+  uint32_t i;
+  g_keep = NULL;
+  g_keep_n = 0;
+  g_keep_cap = 0;
+  rem_forget();
+  for (i = 0; i < n; i++) {
+    if (is_heap_payload(kept[i], NULL, NULL)) {
+      rem_add(kept[i]);
+    }
+  }
+  free(kept);
+}
+
+/* Return 1 if the nursery should be left in place and the threshold raised.
+ * A live object tree larger than the nursery used to be promoted and then
+ * retraced. Waiting until that tree is dead costs a mark and no copy. */
+static int young_pause(uint64_t used, uint64_t surv) {
+  uint64_t dead;
+  uint64_t next;
+  if (g_heap_max && g_heap_bytes + g_young_bytes > g_heap_max) {
+    return 0;
+  }
+  dead = used > surv ? used - surv : 0;
+  if (dead >= STICKY_MIN && dead >= surv) {
+    next = used + (dead - surv) + (64ull * 1024ull);
+  } else {
+    next = g_young_bytes * 2;
+    if (next < used * 2) {
+      next = used * 2;
+    }
+  }
+  if (next > YOUNG_BYTES_MAX) {
+    next = YOUNG_BYTES_MAX;
+  }
+  if (next <= g_young_bytes) {
+    return 0;
+  }
+  g_young_bytes = next;
+  g_sticky_grows++;
+  return 1;
+}
+
+static void young_copy_out(int tenure) {
+  g_force_tenure = tenure;
+  g_to_bytes = 0;
+  g_keep_n = 0;
+  zero_line_marks(g_nursery);
+  gen_young_copy();
+  clear_alloc_cur(SPACE_NURSERY);
+  if (g_discard_from) {
+    discard_nursery_from();
+  } else {
+    park_nursery_from();
+  }
+  adopt_to_space();
+  rem_commit_kept();
+  g_nursery_held = g_to_bytes;
+  g_to_bytes = 0;
+  g_force_tenure = 0;
+  clear_mark_flags();
+}
+
 static void collect(int full) {
+  int pause = 0;
+  uint64_t used = 0;
+  uint64_t surv = 0;
   if (g_collecting) {
     die("GC reentered");
   }
@@ -1675,36 +1896,61 @@ static void collect(int full) {
   g_cur = NULL;
   g_bump = NULL;
   g_limit = NULL;
-  /* Nursery blocks are parked or freed below. A full collection also
-   * rebuilds the mature list, so that cursor would dangle. */
-  clear_alloc_cur(SPACE_NURSERY);
-  if (full) {
-    clear_alloc_cur(SPACE_MATURE);
-  }
 
   if (!full) {
-    g_stats.young_collections++;
-    zero_line_marks(g_nursery);
 #if defined(__x86_64__)
     /* Spill myc callee-saved GPRs into collect's frame so the C-stack
      * walk can rewrite or pin them. Without this, a heap pointer can
      * sit in rbx across avant_alloc and miss the shadow stack. */
     __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
 #endif
-    gen_young_copy();
-    if (g_discard_from) {
-      discard_nursery_from();
+    if (!g_young_adapt) {
+      g_stats.young_collections++;
+      young_copy_out(1);
     } else {
-      park_nursery_from();
+      used = g_nursery_held;
+      if (used >= STICKY_MIN) {
+        g_probe = 1;
+        g_probe_nursery_bytes = 0;
+        gen_young_copy();
+        g_probe = 0;
+        surv = g_probe_nursery_bytes;
+        clear_noted();
+        g_work_n = 0;
+        if (surv * 2 > used) {
+          pause = young_pause(used, surv);
+        }
+      }
+      if (!pause) {
+        int tenure = 0;
+        g_stats.young_collections++;
+        if (used >= STICKY_MIN && surv * 2 > used) {
+          /* Cap reached, or the heap cannot grow. The graph is live.
+           * Tenure it so the next cycle does not trace it again. */
+          tenure = 1;
+        }
+        young_copy_out(tenure);
+        if (g_young_adapt && used >= STICKY_MIN && surv * 2 <= used &&
+            used > surv && (used - surv) >= STICKY_MIN) {
+          uint64_t dead = used - surv;
+          uint64_t next = dead + (64ull * 1024ull);
+          if (next > YOUNG_BYTES_MAX) {
+            next = YOUNG_BYTES_MAX;
+          }
+          if (next >= STICKY_MIN) {
+            g_young_bytes = next;
+          }
+        }
+      }
     }
-    if (getenv("AVANT_NURSERY_KEEP")) {
-      /* extra diagnostic: park already leaves from-space readable. */
-    }
-    clear_yscan();
-    rem_forget();
   } else {
+    Block *b;
     g_stats.full_collections++;
-    rem_forget();
+    /* Non-moving. Evacuating the nursery here needs a second copy of
+     * every live object while the from-space blocks are still charged
+     * against the heap limit. */
+    clear_alloc_cur(SPACE_NURSERY);
+    clear_alloc_cur(SPACE_MATURE);
     clear_all_marks();
     zero_line_marks(g_mature);
     zero_line_marks(g_nursery);
@@ -1714,12 +1960,19 @@ static void collect(int full) {
     filter_blocks(&g_mature, keep_if_live);
     filter_blocks(&g_nursery, keep_if_live);
     filter_blocks(&g_from, keep_if_live);
+    g_mark_sum = 0;
+    for (b = g_nursery; b; b = b->next) {
+      foreach_block_object(b, sum_marked_one);
+    }
+    for (b = g_from; b; b = b->next) {
+      foreach_block_object(b, sum_marked_one);
+    }
+    g_nursery_held = g_mark_sum;
+    g_mature_since_full = 0;
+    g_last_full_at = g_stats.allocated_bytes;
   }
 
   g_since_gc = 0;
-  if (full) {
-    g_last_full_at = g_stats.allocated_bytes;
-  }
   g_stats.live_bytes = g_live;
   g_collecting = 0;
 }
@@ -1745,12 +1998,13 @@ static void maybe_collect(void) {
     }
     return;
   }
-  /* Young collection resets g_since_gc, so a full collection has to
-   * watch bytes since the last full collection or dead mature objects
-   * are never reclaimed. */
-  if (g_stats.allocated_bytes - g_last_full_at >= FULL_BYTES) {
+  /* Nursery garbage is reclaimed by a young collection. A full
+   * collection runs when mature space, including promotions and large
+   * objects, has grown by FULL_BYTES. Counting every nursery byte here
+   * marked a live tree that a young collection should have discarded. */
+  if (g_mature_since_full >= FULL_BYTES) {
     collect(1);
-  } else if (g_since_gc >= g_young_bytes) {
+  } else if (g_nursery_held >= g_young_bytes) {
     collect(0);
   }
 }
@@ -1776,6 +2030,7 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   g_large = L;
   large_hash_add(L);
   g_heap_bytes += chunk;
+  g_mature_since_full += chunk;
   if (g_heap_bytes > g_stats.peak_heap) {
     g_stats.peak_heap = g_heap_bytes;
   }
@@ -1785,7 +2040,8 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
 static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
-          "alloc=%llu copied=%llu live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu\n",
+          "alloc=%llu copied=%llu live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
+          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -1797,7 +2053,11 @@ static void print_stats(void) {
           (unsigned long long)g_sm_walks,
           (unsigned long long)g_sm_hits,
           g_sm_nsites,
-          (unsigned long long)g_sm_leftover);
+          (unsigned long long)g_sm_leftover,
+          (unsigned long long)g_sticky_grows,
+          (unsigned long long)(g_young_bytes / (1024ull * 1024ull)),
+          (unsigned long long)g_nursery_held,
+          (unsigned long long)g_mature_since_full);
 }
 
 static void init_gc(void) {
@@ -1807,7 +2067,13 @@ static void init_gc(void) {
   g_inited = 1;
   {
     uint64_t ymb = env_u64("AVANT_YOUNG_MB", 0);
-    g_young_bytes = ymb ? ymb * 1024ull * 1024ull : YOUNG_BYTES_DEFAULT;
+    if (ymb) {
+      g_young_bytes = ymb * 1024ull * 1024ull;
+      g_young_adapt = 0;
+    } else {
+      g_young_bytes = YOUNG_BYTES_DEFAULT;
+      g_young_adapt = 1;
+    }
   }
   uint64_t mb = env_u64("AVANT_HEAP_MAX_MB", 0);
   g_heap_max = mb ? mb * 1024ull * 1024ull : 0;
@@ -1939,15 +2205,24 @@ void *avant_gc_reload(void *slot) {
 
 void avant_barrier(void *obj) {
   Block *b = NULL;
+  AvantHeader *h;
   if (!obj || g_collecting) {
     return;
+  }
+  /* The compiler passes the object being stored into. A nursery object
+   * is scanned from the roots, so the hot path is the flag in the header
+   * and not a block-table lookup. */
+  if (((uintptr_t)obj & (ALIGN - 1)) == 0) {
+    h = avant_header(obj);
+    if ((h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) ==
+        (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) {
+      return;
+    }
   }
   if (!is_heap_payload(obj, &b, NULL)) {
     return;
   }
-  /* Nursery objects are scanned from the root. One lookup: is_old
-   * used to walk the block table again. */
-  if (b && b->space == SPACE_NURSERY) {
+  if (b && (b->space == SPACE_NURSERY || b->space == SPACE_TO)) {
     return;
   }
   rem_add(obj);
@@ -2056,10 +2331,18 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   h->size = (uint32_t)payload;
   h->type_id = (uint16_t)type_id;
   h->flags = AVANT_FLAG_HEAP;
+  if (space == SPACE_NURSERY) {
+    h->flags |= AVANT_FLAG_YOUNG;
+  }
   void *obj = payload_of(h);
   memset(obj, 0, payload);
   g_stats.allocated_bytes += total;
   g_since_gc += total;
+  if (space == SPACE_NURSERY) {
+    g_nursery_held += total;
+  } else {
+    g_mature_since_full += total;
+  }
   pthread_mutex_unlock(&g_world);
   return obj;
 }

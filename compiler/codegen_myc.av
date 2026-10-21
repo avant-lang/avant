@@ -291,11 +291,38 @@ pub fn array_type_id(elem: Ty): Int {
   0
 }
 
+// A store into a mature object can keep a young pointer. Node? is a
+// union around a class pointer, so the field type itself is not a
+// heap pointer. The payload word still is.
 pub fn needs_heap_barrier(ty: Ty): Bool {
   if heap_ptr_value(ty) {
     return true
   }
-  ty.is_fn
+  if ty.is_fn {
+    return true
+  }
+  if ty.is_union {
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      if needs_heap_barrier(payloads[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    return false
+  }
+  if ty.is_struct {
+    i = 0
+    while i < ty.fields.size {
+      if needs_heap_barrier(ty.fields[i].ty) {
+        return true
+      }
+      i = i + 1
+    }
+    return false
+  }
+  false
 }
 
 pub fn abi_align(ty: Ty): Int {
@@ -3068,25 +3095,44 @@ pub class MycGen {
     if obj = target.object {
       object_ty = expr_ty(obj)
       self.emit_expr(value)
+      self.emit_coerce(expr_ty(value), field_ty)
       val = self.new_temp
       m = ty_myc(field_ty)
       self.line("LOCAL :${val} :${m}")
       self.line("STORE")
-      self.ensure_root(val, field_ty)
-      self.emit_expr(obj)
-      objn = self.new_temp
-      om = ty_myc(object_ty)
-      self.line("LOCAL :${objn} :${om}")
-      self.line("STORE")
-      self.ensure_root(objn, object_ty)
-      self.line("LOCAL :${objn}")
-      self.line("CALL :avant_barrier")
-      self.line("LOCAL :${val}")
-      self.line("LOCAL :${objn}")
-      self.line("DEREF")
-      fi = object_ty.field_index(target.ident)
-      self.line("FIELD ${fi}")
-      self.line("STORE")
+      // A local object is already addressed. The barrier and the store
+      // do not allocate, so the value does not need its own root and the
+      // object does not need a second slot.
+      if obj.kind == ex_name() {
+        if self.may_share {
+          self.ensure_root(val, field_ty)
+          self.ensure_root(obj.ident, object_ty)
+        }
+        self.line("LOCAL :${obj.ident}")
+        self.line("CALL :avant_barrier")
+        self.line("LOCAL :${val}")
+        self.line("LOCAL :${obj.ident}")
+        self.line("DEREF")
+        fi = object_ty.field_index(target.ident)
+        self.line("FIELD ${fi}")
+        self.line("STORE")
+      } else {
+        self.ensure_root(val, field_ty)
+        self.emit_expr(obj)
+        objn = self.new_temp
+        om = ty_myc(object_ty)
+        self.line("LOCAL :${objn} :${om}")
+        self.line("STORE")
+        self.ensure_root(objn, object_ty)
+        self.line("LOCAL :${objn}")
+        self.line("CALL :avant_barrier")
+        self.line("LOCAL :${val}")
+        self.line("LOCAL :${objn}")
+        self.line("DEREF")
+        fi = object_ty.field_index(target.ident)
+        self.line("FIELD ${fi}")
+        self.line("STORE")
+      }
     }
   }
 
