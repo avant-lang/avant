@@ -158,8 +158,16 @@ static void insert_raw(AvantHash *dst, int64_t key_bits, int32_t val_i32, const 
   int32_t i = 0;
   lookup(dst, key_bits, hv, &i);
   store_key(dst, i, key_bits);
+  /* A mature key or value buffer is not walked from the roots. The
+   * slot just stored may point at a young string. */
+  if (dst->key_kind == AVANT_HASH_KEY_STR && dst->keys) {
+    avant_barrier(dst->keys);
+  }
   if (dst->val_kind == AVANT_HASH_VAL_STR) {
     store_val_str(dst, i, val_str);
+    if (dst->vals) {
+      avant_barrier(dst->vals);
+    }
   } else {
     store_val_i32(dst, i, val_i32);
   }

@@ -1834,8 +1834,9 @@ pub class MycGen {
   // A recursive call is not itself a collection. Every candidate starts
   // in the set, and a function drops out when it calls something that
   // is already out. Integer casts and hash get, clear, delete, and size
-  // do not move. A hash or array index store is not a call in this walk.
-  // Array.each is inlined, so the call is not a collection; the block is.
+  // do not move. Array clear and fill do not allocate. A hash or array
+  // index store is not a call in this walk. Array.each is inlined, so
+  // the call is not a collection; the block is.
   // Those helpers defer, and a private mutator does not move inside that
   // window.
   pub fn mark_quiet_leaves {
@@ -1883,6 +1884,24 @@ pub class MycGen {
       }
     }
     self.leaf_walk = 0
+    // A numeric leaf already omits its frame. Callers still statepoint
+    // the call unless the name is on this list.
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if fnn.emit_name.size > 0 {
+        if v = self.numeric_leaves.get(fnn.emit_name) {
+          if v == 1 {
+            if first == 0 {
+              buf.push_str(",")
+            }
+            first = 0
+            buf.push_str(fnn.emit_name)
+          }
+        }
+      }
+      i = i + 1
+    }
     i = 0
     while i < fns.size {
       fnn = fns[i]
@@ -4223,6 +4242,12 @@ pub class MycGen {
       if str_eq(name, "each") {
         return true
       }
+      if str_eq(name, "clear") {
+        return true
+      }
+      if str_eq(name, "fill") {
+        return true
+      }
       return false
     }
     false
@@ -4278,6 +4303,12 @@ pub class MycGen {
       return true
     }
     if str_eq(name, "avant_array_pop_ptr") {
+      return true
+    }
+    if str_eq(name, "avant_array_clear") {
+      return true
+    }
+    if str_eq(name, "avant_array_fill_i32") {
       return true
     }
     if str_eq(name, "printf") {

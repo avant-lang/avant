@@ -172,6 +172,7 @@ static uint64_t g_to_bytes;
 static uint64_t g_sticky_grows;
 static int g_probe;
 static int g_force_tenure;
+static int g_from_mature;
 static uint64_t g_probe_nursery_bytes;
 /* A depth-20 object tree is about 96 MiB. The nursery grows to hold one
  * burst and collects when that burst has died. 192 MiB is the cap. */
@@ -498,6 +499,24 @@ static void large_hash_del(Large *L) {
       return;
     }
     pp = &(*pp)->hash_next;
+  }
+}
+
+static void free_large(Large *L) {
+  Large **pp = &g_large;
+  size_t chunk = align_up(sizeof(Large) + (size_t)L->header.size);
+  large_hash_del(L);
+  while (*pp) {
+    if (*pp == L) {
+      *pp = L->next;
+      break;
+    }
+    pp = &(*pp)->next;
+  }
+  free(L);
+  g_heap_bytes -= chunk;
+  if (g_mature_since_full >= chunk) {
+    g_mature_since_full -= chunk;
   }
 }
 
@@ -1049,6 +1068,7 @@ static void remember_young_edge(void **slot, void *payload) {
 }
 
 static void copy_from_slot(void **slot);
+static void trace_mature(void *p, int from_mature);
 
 static void copy_payload_children(void *p) {
   AvantHeader *h = avant_header(p);
@@ -1074,6 +1094,32 @@ static void copy_payload_children(void *p) {
       copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
     }
   }
+}
+
+/* A remembered object is an old-to-young edge, not a root. Scanning
+ * every remembered buffer keeps a dead array's nodes alive: the
+ * calculator replaces that array each iteration, the buffer is a large
+ * object, and the young collection was tenuring the whole history.
+ * Scan a mature or large object when a root or a young object points
+ * at it. From inside a mature object, scan only a child that is itself
+ * remembered, so a still-live mature tree is not walked. */
+static void trace_mature(void *p, int from_mature) {
+  AvantHeader *h = avant_header(p);
+  int saved;
+  if (h->flags & AVANT_FLAG_MARKED) {
+    return;
+  }
+  if (from_mature && (h->flags & AVANT_FLAG_REM) == 0) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_MARKED;
+  if (g_probe) {
+    note_marked(p);
+  }
+  saved = g_from_mature;
+  g_from_mature = 1;
+  copy_payload_children(p);
+  g_from_mature = saved;
 }
 
 static void *copy_nursery(void *p) {
@@ -1141,11 +1187,14 @@ static void copy_from_slot(void **slot) {
     void *np = copy_nursery(start);
     *slot = (uint8_t *)np + delta;
     remember_young_edge(slot, np);
+    return;
   }
-  /* A mature pointer stays put. Young children were recorded by
-   * avant_barrier on the store, or they were copied when this object
-   * itself was promoted. Walking the mature object from here retraces
-   * the whole promoted tree on every young collection. */
+  /* Mature and large objects stay put. Follow one when this slot is a
+   * root or a field of a young object. A field of a mature object is
+   * followed only when that child is remembered. */
+  if (ol || (b && b->space == SPACE_MATURE)) {
+    trace_mature(start, g_from_mature);
+  }
 }
 
 static void relocate_root_location(void ***slot_loc) {
@@ -1654,11 +1703,47 @@ static void count_c_stack_nursery(void) {
   }
 }
 
+static void rem_scrub(void) {
+  uint32_t i;
+  uint32_t w = 0;
+  int locked = rem_locked();
+  if (locked) {
+    pthread_mutex_lock(&g_rem_mu);
+  }
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    AvantHeader *h;
+    if (!is_heap_payload(obj, NULL, NULL)) {
+      continue;
+    }
+    h = avant_header(obj);
+    if (h->flags & AVANT_FLAG_MARKED) {
+      g_remset[w++] = obj;
+    } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
+      Large *L = large_of(obj);
+      /* A dead expression buffer is a large object. Leaving it on the
+       * large list makes every missed pointer walk that list. */
+      if (L) {
+        free_large(L);
+      } else {
+        h->flags &= (uint16_t)~AVANT_FLAG_REM;
+      }
+    } else {
+      h->flags &= (uint16_t)~AVANT_FLAG_REM;
+    }
+  }
+  g_rem_n = w;
+  if (locked) {
+    pthread_mutex_unlock(&g_rem_mu);
+  }
+}
+
 static void gen_young_copy(void) {
   if (!g_probe) {
     fwd_reset();
   }
   g_saw_pinned_nursery = 0;
+  g_from_mature = 0;
   g_work_n = 0;
   ThreadReg *t;
   uint32_t i;
@@ -1688,22 +1773,8 @@ static void gen_young_copy(void) {
     copy_from_slot(&p->payload);
   }
   avant_hash_walk_tls(copy_from_slot);
-  {
-    int locked = rem_locked();
-    if (locked) {
-      pthread_mutex_lock(&g_rem_mu);
-    }
-    for (i = 0; i < g_rem_n; i++) {
-      void *obj = g_remset[i];
-      if (is_heap_payload(obj, NULL, NULL)) {
-        copy_payload_children(obj);
-      }
-    }
-    if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
-    }
-  }
-  /* Old-to-young edges are the remembered set (avant_barrier). */
+  /* Remembered objects are reached from the roots above. The set is
+   * not itself a root list: a dead buffer would keep its nodes alive. */
   while (g_work_n) {
     void *p = g_work[--g_work_n];
     copy_payload_children(p);
@@ -1963,6 +2034,7 @@ static void collect(int full) {
         gen_young_copy();
         g_probe = 0;
         surv = g_probe_nursery_bytes;
+        rem_scrub();
         clear_noted();
         g_work_n = 0;
         if (surv * 2 > used) {
@@ -2262,9 +2334,11 @@ void avant_barrier(void *obj) {
    * and not a block-table lookup. */
   if (((uintptr_t)obj & (ALIGN - 1)) == 0) {
     h = avant_header(obj);
-    if ((h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) ==
-        (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) {
-      return;
+    if (h->flags & AVANT_FLAG_HEAP) {
+      /* Already scanned from the roots, or already in the remembered set. */
+      if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_REM)) {
+        return;
+      }
     }
   }
   if (!is_heap_payload(obj, &b, NULL)) {
