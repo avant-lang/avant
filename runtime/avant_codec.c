@@ -1,5 +1,8 @@
 #include "avant_rt.h"
 
+#define BASE64_STATIC_DEFINE
+#include "libbase64.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,34 +14,14 @@ typedef struct {
   int32_t cap;
 } AvantArray;
 
-static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 static size_t b64_encoded_len(size_t n) {
   return ((n + 2) / 3) * 4;
 }
 
-static void b64_write(char *out, const unsigned char *p, size_t n) {
-  size_t i = 0;
-  size_t o = 0;
-  while (i < n) {
-    unsigned b0 = p[i];
-    unsigned b1 = (i + 1 < n) ? p[i + 1] : 0;
-    unsigned b2 = (i + 2 < n) ? p[i + 2] : 0;
-    size_t remain = n - i;
-    out[o++] = B64[b0 >> 2];
-    out[o++] = B64[((b0 & 3) << 4) | (b1 >> 4)];
-    if (remain == 1) {
-      out[o++] = '=';
-      out[o++] = '=';
-    } else if (remain == 2) {
-      out[o++] = B64[((b1 & 15) << 2) | (b2 >> 6)];
-      out[o++] = '=';
-    } else {
-      out[o++] = B64[((b1 & 15) << 2) | (b2 >> 6)];
-      out[o++] = B64[b2 & 63];
-    }
-    i += 3;
-  }
+static size_t b64_write(char *out, const unsigned char *p, size_t n) {
+  size_t wrote = 0;
+  base64_encode((const char *)p, n, out, &wrote, 0);
+  return wrote;
 }
 
 char *avant_b64_encode(const char *s) {
@@ -65,30 +48,15 @@ void avant_b64_encode_buf(void *buf, const char *s) {
   avant_buf_clear(buf);
   avant_buf_ensure(buf, (int32_t)out_n);
   char *dst = (char *)avant_buf_bytes(buf);
+  size_t wrote = 0;
   if (dst) {
-    b64_write(dst, p, n);
+    wrote = b64_write(dst, p, n);
   }
-  avant_buf_set_size(buf, (int32_t)out_n);
+  if (wrote > out_n) {
+    wrote = out_n;
+  }
+  avant_buf_set_size(buf, (int32_t)wrote);
   avant_gc_defer_leave();
-}
-
-static int b64_val(unsigned char c) {
-  if (c >= 'A' && c <= 'Z') {
-    return c - 'A';
-  }
-  if (c >= 'a' && c <= 'z') {
-    return c - 'a' + 26;
-  }
-  if (c >= '0' && c <= '9') {
-    return c - '0' + 52;
-  }
-  if (c == '+') {
-    return 62;
-  }
-  if (c == '/') {
-    return 63;
-  }
-  return -1;
 }
 
 static size_t b64_decoded_len(const unsigned char *p, size_t n) {
@@ -103,25 +71,16 @@ static size_t b64_decoded_len(const unsigned char *p, size_t n) {
 }
 
 static size_t b64_decode_write(char *out, const unsigned char *p, size_t n, size_t out_n) {
-  size_t i = 0;
-  size_t o = 0;
-  while (i < n && o < out_n) {
-    int c0 = b64_val(p[i]);
-    int c1 = (i + 1 < n) ? b64_val(p[i + 1]) : -1;
-    int c2 = (i + 2 < n) ? b64_val(p[i + 2]) : -1;
-    int c3 = (i + 3 < n) ? b64_val(p[i + 3]) : -1;
-    if (c0 >= 0 && c1 >= 0 && o < out_n) {
-      out[o++] = (char)(((c0 << 2) | (c1 >> 4)) & 255);
-    }
-    if (c2 >= 0 && o < out_n) {
-      out[o++] = (char)(((c1 << 4) | (c2 >> 2)) & 255);
-    }
-    if (c3 >= 0 && o < out_n) {
-      out[o++] = (char)(((c2 << 6) | c3) & 255);
-    }
-    i += 4;
+  size_t wrote = 0;
+  int ok;
+  if (!out) {
+    return 0;
   }
-  return o;
+  ok = base64_decode((const char *)p, n, out, &wrote, 0);
+  if (ok != 1 || wrote > out_n) {
+    return 0;
+  }
+  return wrote;
 }
 
 char *avant_b64_decode(const char *s) {
