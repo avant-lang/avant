@@ -24,8 +24,9 @@ The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted an
 16. [Toolchain](#toolchain)
 17. [Tests](#tests)
 18. [Not built yet](#not-built-yet)
-19. [Goals](#goals)
-20. [License](#license)
+19. [Benchmarks](#benchmarks)
+20. [Goals](#goals)
+21. [License](#license)
 
 ## Getting started
 
@@ -803,6 +804,68 @@ These are decided and currently do not compile.
 | `parallel { }` with no receiver | decided, not shipping |
 | Packages, an HTTP server | decided, not shipping |
 | A general `for` loop | not part of the language yet; `each` and `while` are the loops |
+
+## Benchmarks
+
+Latest 50-task prod, 2026-10-21, Ryzen 7 5700G, `--final`. C, Crystal, and Go are the 2026-09-18 LangArena snapshot (`C/Clang`, `Crystal`, `Go`) on a Ryzen 7 3800X. Seconds and megabytes, lower is better. **Bold** is the lowest in that row. This run is not the adopted official number.
+
+| | Avant | C | Crystal | Go | Avant / C |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Wall sum | 91.525 | **55.550** | 78.245 | 117.566 | 1.65× |
+| RSS average | 63.30 | **22.82** | 65.33 | 67.19 | 2.77× |
+
+| Task | Avant | C | Crystal | Go |
+| --- | ---: | ---: | ---: | ---: |
+| `Etc::Sieve` | 4.192 | **0.819** | 1.899 | 1.119 |
+| `Binarytrees::Obj` | 1.734 | 2.621 | **1.160** | 1.369 |
+| `Binarytrees::Arena` | 0.648 | **0.317** | 0.564 | 1.091 |
+| `Matmul::Single` | 6.638 | **4.953** | 5.040 | 5.092 |
+| `Matmul::T4` | 1.820 | **1.303** | 2.963 | 1.323 |
+| `Matmul::T8` | 1.229 | **0.690** | 1.849 | 0.698 |
+| `Matmul::T16` | 1.074 | **0.343** | 2.051 | 0.511 |
+| `Sort::Quick` | 1.415 | **1.177** | 1.482 | 1.364 |
+| `Sort::Merge` | 1.191 | **1.095** | 2.190 | 1.570 |
+| `Sort::Self` | **0.162** | 2.000 | 1.053 | 1.295 |
+| `CLBG::Mandelbrot` | 1.007 | **0.904** | 0.919 | 0.921 |
+| `CLBG::Fannkuchredux` | 1.191 | 1.165 | 1.140 | **1.079** |
+| `CLBG::Spectralnorm` | 1.084 | 0.926 | 0.937 | **0.876** |
+| `CLBG::Nbody` | **1.331** | 1.502 | 1.503 | 1.664 |
+| `Brainfuck::Array` | 1.664 | **1.155** | 3.272 | 2.103 |
+| `Brainfuck::Recursion` | 1.718 | **1.643** | 1.966 | 1.818 |
+| `Etc::GameOfLife` | 2.902 | 1.866 | 3.548 | **1.004** |
+| `Etc::TextRaytracer` | **0.017** | 1.350 | 1.520 | 1.690 |
+| `Etc::NeuralNet` | 1.335 | **1.041** | 1.229 | 2.029 |
+| `Etc::CacheSimulation` | 6.862 | **0.781** | 1.513 | 1.781 |
+| `Etc::Words` | 1.916 | 2.051 | **0.884** | 1.120 |
+| `Graph::BFS` | 3.676 | **1.173** | 1.902 | 2.046 |
+| `Graph::DFS` | 2.409 | **0.920** | 1.483 | 1.300 |
+| `Graph::AStar` | 4.244 | 2.032 | **1.515** | 2.893 |
+| `Hash::CRC32` | 0.333 | **0.286** | 0.868 | 4.281 |
+| `Hash::SHA256` | 1.354 | **0.923** | 0.982 | 1.083 |
+| `Distance::Jaro` | 1.032 | **0.892** | 1.292 | 0.979 |
+| `Distance::NGram` | 0.822 | 1.867 | 0.727 | **0.633** |
+| `Base64::Encode` | 0.109 | **0.101** | 1.324 | 2.082 |
+| `Base64::Decode` | 0.139 | **0.129** | 1.312 | 1.631 |
+| `Json::Generate` | 0.760 | **0.655** | 1.181 | 2.458 |
+| `Json::ParseDom` | **0.085** | 0.087 | 0.534 | 3.834 |
+| `Json::ParseMapping` | 0.225 | **0.217** | 1.744 | 2.634 |
+| `CSV::Parse` | 2.695 | **2.196** | 3.519 | 3.135 |
+| `Template::Regex` | 1.563 | **1.183** | 1.592 | 8.763 |
+| `Template::Parse` | 1.537 | 0.962 | 2.560 | **0.776** |
+| `Maze::Generator` | 2.698 | **0.443** | 1.646 | 1.080 |
+| `Maze::BFS` | 1.738 | **0.455** | 1.854 | 1.360 |
+| `Maze::AStar` | 2.383 | **1.485** | 2.282 | 2.636 |
+| `Etc::LogParser` | 0.492 | **0.487** | 1.158 | 30.928 |
+| `Calculator::Ast` | 6.333 | 1.104 | 0.560 | **0.554** |
+| `Calculator::Interpreter` | 2.831 | 1.205 | 0.885 | **0.666** |
+| `Compress::BWTEncode` | 1.475 | **0.749** | 1.430 | 1.690 |
+| `Compress::BWTDecode` | 1.750 | **0.887** | 0.957 | 1.164 |
+| `Compress::HuffEncode` | **0.774** | 0.806 | 1.026 | 0.886 |
+| `Compress::HuffDecode` | 0.739 | **0.443** | 1.205 | 1.491 |
+| `Compress::ArithEncode` | 1.229 | **1.193** | 1.355 | 1.246 |
+| `Compress::ArithDecode` | 1.039 | **0.945** | 1.155 | 1.095 |
+| `Compress::LZWEncode` | **0.192** | 1.456 | 0.984 | 1.116 |
+| `Compress::LZWDecode` | 5.741 | 0.567 | **0.531** | 1.609 |
 
 ## Goals
 

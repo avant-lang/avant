@@ -191,8 +191,23 @@ int32_t avant_re_count(const char *pat, const char *s, int32_t caseless) {
   if (!md) {
     return 0;
   }
+  /*
+   * C's log scan calls pcre2_jit_match. pcre2_match reaches the same
+   * JIT code after a heavier entry. A pattern that was not JIT-compiled
+   * falls back for the rest of this call.
+   */
+  int jit = 1;
   while (start <= slen) {
-    int rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+    int rc;
+    if (jit) {
+      rc = pcre2_jit_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+      if (rc == PCRE2_ERROR_JIT_BADOPTION) {
+        jit = 0;
+        rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+      }
+    } else {
+      rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+    }
     PCRE2_SIZE *ov;
     PCRE2_SIZE next;
     if (rc < 0) {

@@ -1937,7 +1937,8 @@ pub class MycGen {
     buf.push_str(",avant_hash_clear,avant_hash_size,avant_hash_del,avant_hash_del_i32k")
     buf.push_str(",avant_hash_get_str_slice,avant_hash_inc_slice")
     buf.push_str(",avant_buf_clear,avant_buf_push_byte,avant_buf_push_str,avant_buf_push_slice")
-    buf.push_str(",avant_re_find,avant_re_m0,avant_re_m1,avant_re_c0,avant_re_c1")
+    buf.push_str(",avant_buf_push_fmt_i,avant_buf_push_fmt_f")
+    buf.push_str(",avant_re_find,avant_re_count,avant_re_m0,avant_re_m1,avant_re_c0,avant_re_c1")
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
@@ -4564,6 +4565,13 @@ pub class MycGen {
       if str_eq(name, "push_slice") {
         return true
       }
+      // Formats into spare capacity, or grows under defer.
+      if str_eq(name, "push_fmt_i") {
+        return true
+      }
+      if str_eq(name, "push_fmt_f") {
+        return true
+      }
       return false
     }
     if ty.is_integer {
@@ -4674,6 +4682,12 @@ pub class MycGen {
     if str_eq(name, "avant_re_find") {
       return true
     }
+    if str_eq(name, "re_count") {
+      return true
+    }
+    if str_eq(name, "avant_re_count") {
+      return true
+    }
     if str_eq(name, "re_m0") || str_eq(name, "avant_re_m0") {
       return true
     }
@@ -4696,6 +4710,12 @@ pub class MycGen {
       return true
     }
     if str_eq(name, "avant_buf_push_slice") {
+      return true
+    }
+    if str_eq(name, "avant_buf_push_fmt_i") {
+      return true
+    }
+    if str_eq(name, "avant_buf_push_fmt_f") {
       return true
     }
     if str_eq(name, "avant_hash_get_str_slice") {

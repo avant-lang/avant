@@ -55,6 +55,64 @@ fn test_lang(c: Checks) {
   c.eq_int(xs[0], 1, "sort lo")
   c.eq_int(xs[2], 3, "sort hi")
 
+  wide = Array(Int).new(200)
+  i = 0
+  wide_sum = 0
+  while i < 200 {
+    wide[i] = 80 - (i * 13) % 180
+    wide_sum = wide_sum + wide[i]
+    i = i + 1
+  }
+  wide[0] = -2000000000
+  wide[1] = 2000000000
+  wide_sum = wide_sum - (80 - 0) - (80 - 13) + wide[0] + wide[1]
+  wide.sort
+  wide_got = 0
+  wide_ok = 1
+  i = 0
+  while i < 200 {
+    wide_got = wide_got + wide[i]
+    if i > 0 {
+      if wide[i] < wide[i - 1] {
+        wide_ok = 0
+      }
+    }
+    i = i + 1
+  }
+  c.eq_int(wide_ok, 1, "sort wide ordered")
+  c.eq_int(wide_got, wide_sum, "sort wide sum")
+  c.eq_int(wide[0], -2000000000, "sort wide lo")
+  c.eq_int(wide[199], 2000000000, "sort wide hi")
+
+  narrow = Array(Int).new(200)
+  i = 0
+  while i < 200 {
+    narrow[i] = (i * 3) % 7 - 3
+    i = i + 1
+  }
+  narrow.sort
+  narrow_ok = 1
+  i = 1
+  while i < 200 {
+    if narrow[i] < narrow[i - 1] {
+      narrow_ok = 0
+    }
+    i = i + 1
+  }
+  c.eq_int(narrow_ok, 1, "sort narrow ordered")
+  c.eq_int(narrow[0], -3, "sort narrow lo")
+  c.eq_int(narrow[199], 3, "sort narrow hi")
+
+  rev = Array(Int).new(600)
+  i = 0
+  while i < 600 {
+    rev[i] = 600 - i
+    i = i + 1
+  }
+  rev.sort
+  c.eq_int(rev[0], 1, "sort reverse lo")
+  c.eq_int(rev[599], 600, "sort reverse hi")
+
   hmap = Hash(Int, Int).new
   hmap[10] = 1
   if v = hmap.get(10) {
