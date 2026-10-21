@@ -1926,6 +1926,9 @@ pub class MycGen {
     buf.push_str("avant_hash_get_i32,avant_hash_get_str,avant_hash_get_i32k_i32")
     buf.push_str(",avant_hash_set_i32,avant_hash_set_str,avant_hash_set_i32k_i32")
     buf.push_str(",avant_hash_clear,avant_hash_size,avant_hash_del,avant_hash_del_i32k")
+    buf.push_str(",avant_hash_get_str_slice")
+    buf.push_str(",avant_buf_clear,avant_buf_push_byte,avant_buf_push_str,avant_buf_push_slice")
+    buf.push_str(",avant_re_find,avant_re_m0,avant_re_m1,avant_re_c0,avant_re_c1")
     self.program.quiet_leaves = buf.to_s
   }
 
@@ -4194,6 +4197,9 @@ pub class MycGen {
       if str_eq(name, "get") {
         return true
       }
+      if str_eq(name, "get_slice") {
+        return true
+      }
       if str_eq(name, "size") {
         return true
       }
@@ -4201,6 +4207,26 @@ pub class MycGen {
         return true
       }
       if str_eq(name, "delete") {
+        return true
+      }
+      return false
+    }
+    if ty.is_buf {
+      // clear and size do not allocate. A push writes into spare
+      // capacity, or grows under defer, so the call does not collect.
+      if str_eq(name, "clear") {
+        return true
+      }
+      if str_eq(name, "size") {
+        return true
+      }
+      if str_eq(name, "push_byte") {
+        return true
+      }
+      if str_eq(name, "push_str") {
+        return true
+      }
+      if str_eq(name, "push_slice") {
         return true
       }
       return false
@@ -4294,6 +4320,39 @@ pub class MycGen {
     // allocate. Naming only the runtime symbol left calculate_output
     // as a collecting frame.
     if str_eq(name, "exp") {
+      return true
+    }
+    if str_eq(name, "re_find") {
+      return true
+    }
+    if str_eq(name, "avant_re_find") {
+      return true
+    }
+    if str_eq(name, "re_m0") || str_eq(name, "avant_re_m0") {
+      return true
+    }
+    if str_eq(name, "re_m1") || str_eq(name, "avant_re_m1") {
+      return true
+    }
+    if str_eq(name, "re_c0") || str_eq(name, "avant_re_c0") {
+      return true
+    }
+    if str_eq(name, "re_c1") || str_eq(name, "avant_re_c1") {
+      return true
+    }
+    if str_eq(name, "avant_buf_clear") {
+      return true
+    }
+    if str_eq(name, "avant_buf_push_byte") {
+      return true
+    }
+    if str_eq(name, "avant_buf_push_str") {
+      return true
+    }
+    if str_eq(name, "avant_buf_push_slice") {
+      return true
+    }
+    if str_eq(name, "avant_hash_get_str_slice") {
       return true
     }
     if str_eq(name, "avant_array_get_ptr") {
