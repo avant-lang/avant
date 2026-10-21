@@ -1,9 +1,12 @@
 #include "avant_rt.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+extern atomic_int g_avant_shared;
 
 typedef struct {
   void *buf;
@@ -191,8 +194,11 @@ char *avant_str_from_byte(int32_t b) {
 }
 
 double avant_exp(double x) {
-  /* A gc-leaf. Hold the world lock so a collecting call cannot move
-   * the caller's heap pointers while they sit in registers. */
+  /* Does not allocate. The lock only matters once another thread can
+   * collect while the caller's pointers sit in registers. */
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
+    return exp(x);
+  }
   avant_world_lock();
   double r = exp(x);
   avant_world_unlock();
