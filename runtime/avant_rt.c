@@ -151,6 +151,9 @@ static PinEnt *g_pins;
 static void **g_remset;
 static uint32_t g_rem_n;
 static uint32_t g_rem_cap;
+/* Workers call avant_barrier without the world lock (a fresh array
+ * header). The remembered-set realloc is shared. */
+static pthread_mutex_t g_rem_mu = PTHREAD_MUTEX_INITIALIZER;
 /* Mature objects that still point at a young survivor after this collection. */
 static void **g_keep;
 static uint32_t g_keep_n;
@@ -275,9 +278,20 @@ static void work_push(void *p) {
 
 #define AVANT_FLAG_REM 16u
 
+static int rem_locked(void) {
+  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
+}
+
 static void rem_add(void *obj) {
   AvantHeader *h = avant_header(obj);
+  int locked = rem_locked();
+  if (locked) {
+    pthread_mutex_lock(&g_rem_mu);
+  }
   if (h->flags & AVANT_FLAG_REM) {
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
+    }
     return;
   }
   h->flags |= AVANT_FLAG_REM;
@@ -286,12 +300,19 @@ static void rem_add(void *obj) {
     g_remset = xrealloc(g_remset, g_rem_cap * sizeof(void *));
   }
   g_remset[g_rem_n++] = obj;
+  if (locked) {
+    pthread_mutex_unlock(&g_rem_mu);
+  }
 }
 
 static int is_heap_payload(void *p, Block **ob, Large **ol);
 
 static void rem_forget(void) {
   uint32_t i;
+  int locked = rem_locked();
+  if (locked) {
+    pthread_mutex_lock(&g_rem_mu);
+  }
   for (i = 0; i < g_rem_n; i++) {
     void *obj = g_remset[i];
     if (is_heap_payload(obj, NULL, NULL)) {
@@ -299,6 +320,9 @@ static void rem_forget(void) {
     }
   }
   g_rem_n = 0;
+  if (locked) {
+    pthread_mutex_unlock(&g_rem_mu);
+  }
 }
 
 static size_t hash_ptr(void *p) {
@@ -585,6 +609,21 @@ static void *object_payload(void *p, Block **ob, Large **ol) {
 
 int avant_is_heap(void *payload) {
   return is_heap_payload(payload, NULL, NULL);
+}
+
+/* 1 when a young collection can move this buffer. Mature and large
+ * objects stay put, so a parallel numeric loop can keep the address. */
+int32_t avant_is_young(void *payload) {
+  AvantHeader *h;
+  if (!payload || ((uintptr_t)payload & (ALIGN - 1)) != 0) {
+    return 0;
+  }
+  h = avant_header(payload);
+  if ((h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) ==
+      (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) {
+    return 1;
+  }
+  return 0;
 }
 
 static int in_nursery(void *p) {
@@ -1649,10 +1688,19 @@ static void gen_young_copy(void) {
     copy_from_slot(&p->payload);
   }
   avant_hash_walk_tls(copy_from_slot);
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
-      copy_payload_children(obj);
+  {
+    int locked = rem_locked();
+    if (locked) {
+      pthread_mutex_lock(&g_rem_mu);
+    }
+    for (i = 0; i < g_rem_n; i++) {
+      void *obj = g_remset[i];
+      if (is_heap_payload(obj, NULL, NULL)) {
+        copy_payload_children(obj);
+      }
+    }
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
     }
   }
   /* Old-to-young edges are the remembered set (avant_barrier). */
@@ -2251,6 +2299,35 @@ void avant_pin(void *payload) {
   e->payload = payload;
   e->next = g_pins;
   g_pins = e;
+  pthread_mutex_unlock(&g_world);
+}
+
+void avant_unpin(void *payload) {
+  PinEnt **pp;
+  if (!payload) {
+    return;
+  }
+  pthread_mutex_lock(&g_world);
+  if (!is_heap_payload(payload, NULL, NULL)) {
+    pthread_mutex_unlock(&g_world);
+    return;
+  }
+  AvantHeader *h = avant_header(payload);
+  if ((h->flags & AVANT_FLAG_PINNED) == 0) {
+    pthread_mutex_unlock(&g_world);
+    return;
+  }
+  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
+  pp = &g_pins;
+  while (*pp) {
+    if ((*pp)->payload == payload) {
+      PinEnt *dead = *pp;
+      *pp = dead->next;
+      free(dead);
+      break;
+    }
+    pp = &(*pp)->next;
+  }
   pthread_mutex_unlock(&g_world);
 }
 

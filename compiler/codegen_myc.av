@@ -733,6 +733,7 @@ pub class MycGen {
   hoist_bits: Array(String)
   hoist_ptrs: Array(String)
   hoist_ems: Array(String)
+  hoist_young: Array(String)
   root_loop: Int = 0
   early_indent: Int = 0
   early_out: Buf
@@ -820,6 +821,8 @@ pub class MycGen {
     self.hoist_ptrs = hp
     he: Array(String) = []
     self.hoist_ems = he
+    hy: Array(String) = []
+    self.hoist_young = hy
     self.root_loop = 0
     self.early_indent = 0
     eb = buf_new()
@@ -971,6 +974,8 @@ pub class MycGen {
     self.hoist_ptrs = hp
     he: Array(String) = []
     self.hoist_ems = he
+    hy: Array(String) = []
+    self.hoist_young = hy
   }
 
   pub fn find_fn(name: String): FuncSig? {
@@ -1052,6 +1057,7 @@ pub class MycGen {
     self.ext("avant_wide_op", "i32,i32,i32,i32,i32", "i32")
     self.ext("avant_wide_hi", "", "i32")
     self.ext("avant_exp", "f64", "f64")
+    self.ext("avant_is_young", "ptr<void>", "i32")
     self.ext("avant_hash_new", "i32,i32", "ptr<void>")
     self.ext("avant_hash_size", "ptr<void>", "i32")
     self.ext("avant_hash_clear", "ptr<void>", "")
@@ -3689,6 +3695,9 @@ pub class MycGen {
       self.hoist_bits.pop
       self.hoist_ptrs.pop
       self.hoist_ems.pop
+      if self.may_share {
+        self.hoist_young.pop
+      }
       left = left - 1
     }
   }
@@ -4250,6 +4259,9 @@ pub class MycGen {
     if str_eq(name, "avant_is_heap") {
       return true
     }
+    if str_eq(name, "avant_is_young") {
+      return true
+    }
     if str_eq(name, "avant_exp") {
       return true
     }
@@ -4334,6 +4346,14 @@ pub class MycGen {
     self.hoist_names.push(name)
     self.hoist_bits.push(bits)
     self.hoist_ptrs.push(ptr)
+    if self.may_share {
+      self.line("LOCAL :${ptr}")
+      self.line("CALL :avant_is_young")
+      young = self.new_temp
+      self.line("LOCAL :${young} :i32")
+      self.line("STORE")
+      self.hoist_young.push(young)
+    }
   }
 
   pub fn emit_hoisted_index(ix: Expr, hi: Int) {
@@ -4346,8 +4366,9 @@ pub class MycGen {
     self.line("STORE")
     addr = self.new_temp
     if self.may_share {
+      young = self.hoist_young[hi]
+      self.line("LOCAL :${young}")
       self.line("PUSH 0")
-      self.line("GLOBAL :g_avant_shared")
       self.line("BINARY :not_eq")
       self.line("IF")
       self.indent = self.indent + 1

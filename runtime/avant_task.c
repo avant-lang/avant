@@ -199,6 +199,10 @@ int32_t avant_join(void *handle) {
   }
   result = t->result;
   pthread_mutex_unlock(&pool_mu);
+  /* The spawn capture is pinned so the worker can read it. After join
+   * it is the only pin keeping a shared matrix alive. */
+  avant_unpin(t->arg);
+  t->arg = NULL;
   return result;
 }
 
