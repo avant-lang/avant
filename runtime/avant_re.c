@@ -83,6 +83,25 @@ int32_t avant_re_c1(void) {
   return g_c1;
 }
 
+void avant_re_set_span(int32_t m0, int32_t m1, int32_t c0, int32_t c1) {
+  g_m0 = m0;
+  g_m1 = m1;
+  g_c0 = c0;
+  g_c1 = c1;
+}
+
+__attribute__((weak)) int32_t avant_re2c_owns(void *re) {
+  (void)re;
+  return 0;
+}
+
+__attribute__((weak)) int32_t avant_re2c_find_dispatch(void *re, const char *s, int32_t from) {
+  (void)re;
+  (void)s;
+  (void)from;
+  return 0;
+}
+
 int32_t avant_re_find(void *re, const char *s, int32_t from) {
   pcre2_code *code = (pcre2_code *)re;
   pcre2_match_data *md;
@@ -90,6 +109,9 @@ int32_t avant_re_find(void *re, const char *s, int32_t from) {
   int rc;
   PCRE2_SIZE *ov;
   g_m0 = g_m1 = g_c0 = g_c1 = 0;
+  if (avant_re2c_owns(re)) {
+    return avant_re2c_find_dispatch(re, s, from);
+  }
   if (!code) {
     return 0;
   }
@@ -169,8 +191,23 @@ int32_t avant_re_count(const char *pat, const char *s, int32_t caseless) {
   if (!md) {
     return 0;
   }
+  /*
+   * C's log scan calls pcre2_jit_match. pcre2_match reaches the same
+   * JIT code after a heavier entry. A pattern that was not JIT-compiled
+   * falls back for the rest of this call.
+   */
+  int jit = 1;
   while (start <= slen) {
-    int rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+    int rc;
+    if (jit) {
+      rc = pcre2_jit_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+      if (rc == PCRE2_ERROR_JIT_BADOPTION) {
+        jit = 0;
+        rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+      }
+    } else {
+      rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+    }
     PCRE2_SIZE *ov;
     PCRE2_SIZE next;
     if (rc < 0) {

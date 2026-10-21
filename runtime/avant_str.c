@@ -1,9 +1,12 @@
 #include "avant_rt.h"
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+extern atomic_int g_avant_shared;
 
 typedef struct {
   void *buf;
@@ -191,7 +194,56 @@ char *avant_str_from_byte(int32_t b) {
 }
 
 double avant_exp(double x) {
-  return exp(x);
+  /* Does not allocate. The lock only matters once another thread can
+   * collect while the caller's pointers sit in registers. */
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
+    return exp(x);
+  }
+  avant_world_lock();
+  double r = exp(x);
+  avant_world_unlock();
+  return r;
+}
+
+char *avant_str_cat_i32(const char *prefix, int32_t n) {
+  char digs[16];
+  int nd = 0;
+  uint32_t u;
+  if (n < 0) {
+    u = (uint32_t)(-(n + 1)) + 1u;
+  } else {
+    u = (uint32_t)n;
+  }
+  if (u == 0) {
+    digs[nd++] = '0';
+  } else {
+    while (u) {
+      digs[nd++] = (char)('0' + (u % 10u));
+      u /= 10u;
+    }
+  }
+  if (!prefix) {
+    prefix = "";
+  }
+  size_t np = avant_str_n(prefix);
+  size_t neg = n < 0 ? 1u : 0u;
+  size_t total = np + neg + (size_t)nd;
+  avant_gc_defer_enter();
+  char *p = (char *)avant_alloc((uint64_t)total + 1, AVANT_TYPE_BYTES);
+  if (np) {
+    memcpy(p, prefix, np);
+  }
+  size_t k = np;
+  if (neg) {
+    p[k++] = '-';
+  }
+  while (nd > 0) {
+    nd--;
+    p[k++] = digs[nd];
+  }
+  p[k] = 0;
+  avant_gc_defer_leave();
+  return p;
 }
 
 double avant_str_to_f(const char *s) {

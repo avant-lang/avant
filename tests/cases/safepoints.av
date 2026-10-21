@@ -35,6 +35,7 @@ fn test_safepoints(c: Checks) {
 
       st: Array(String) = []
       st.push("AVANT_NURSERY=1")
+      st.push("AVANT_YOUNG_MB=1")
       st.push("AVANT_GC_STATS=1")
       st.push(bin)
       scode = process_run_out("/usr/bin/env", st, slog)
@@ -64,6 +65,7 @@ fn test_safepoints(c: Checks) {
       mlog = "/tmp/avant-s17-${stamp}-stackmap.log"
       sm: Array(String) = []
       sm.push("AVANT_NURSERY=1")
+      sm.push("AVANT_YOUNG_MB=1")
       sm.push("AVANT_NURSERY_STACKMAP=1")
       sm.push("AVANT_NURSERY_DISCARD=1")
       sm.push("AVANT_HEAP_MAX_MB=3")
@@ -103,6 +105,42 @@ fn test_safepoints(c: Checks) {
         }
       } else {
         c.expect(false, "barrier binary exists")
+      }
+
+      bsrc2 = "/tmp/avant-s17-${stamp}-bump.av"
+      bbin2 = "/tmp/avant-s17-${stamp}-bump"
+      blog2 = "/tmp/avant-s17-${stamp}-bump-cc.log"
+      brun2 = "/tmp/avant-s17-${stamp}-bump-run.log"
+      bdump = "/tmp/avant-s17-${stamp}-bump.myc"
+      bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      shift = 1 << (depth - 1)\n      if l = make_tree(item - shift, depth - 1) {\n        if r = make_tree(item + shift, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  nursery_reclaim()\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
+      bw2 = file_write(bsrc2, bbody2)
+      c.eq_int(bw2, 0, "write bump tree")
+      dcode2 = dump_av(compiler, bsrc2, bdump)
+      c.eq_int(dcode2, 0, "dump bump tree")
+      if ir2 = file_read(bdump) {
+        c.expect(str_has(ir2, "FUNC :Node__bump"), "bump constructor is emitted")
+        c.expect(str_has(ir2, "CALL :avant_bump_alloc"), "bump uses the non-collecting allocator")
+        c.expect(str_has(ir2, "CALL :avant_gc_quiet_enter"), "recursive bump build is a quiet leaf")
+        c.expect(str_has(ir2, "CALL :avant_nursery_reclaim"), "dead nursery is reclaimed between trees")
+      } else {
+        c.expect(false, "read bump dump")
+      }
+      bcc2 = compile_av(compiler, bsrc2, bbin2, blog2)
+      c.eq_int(bcc2, 0, "compile bump tree")
+      if file_exists(bbin2) {
+        chmod_x(bbin2)
+        benv2: Array(String) = []
+        benv2.push("AVANT_NURSERY=1")
+        benv2.push(bbin2)
+        bcode2 = process_run_out("/usr/bin/env", benv2, brun2)
+        c.eq_int(bcode2, 0, "bump tree runs")
+        if bout2 = file_read(brun2) {
+          c.eq_str(bout2, "2540\n", "bump tree sum")
+        } else {
+          c.expect(false, "read bump tree stdout")
+        }
+      } else {
+        c.expect(false, "bump binary exists")
       }
 
       ccbin = "/tmp/avant-s17-${stamp}-cc"

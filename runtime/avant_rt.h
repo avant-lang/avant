@@ -32,7 +32,11 @@
 #define AVANT_FLAG_PINNED 1u
 #define AVANT_FLAG_MARKED 2u
 #define AVANT_FLAG_FORWARDED 4u
-#define AVANT_FLAG_YSCAN 8u
+/* Set on a nursery object that already survived one young collection.
+ * The next young collection tenures it. A tree that dies first is not. */
+#define AVANT_FLAG_SURVIVED 8u
+/* Nursery allocation. avant_barrier reads this instead of hashing the block. */
+#define AVANT_FLAG_YOUNG 32u
 #define AVANT_FLAG_HEAP 0x8000u
 
 typedef struct AvantHeader {
@@ -42,13 +46,28 @@ typedef struct AvantHeader {
 } AvantHeader;
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
+/* Never collects. Returns null when a collection would be required,
+ * when another thread exists, or when the nursery is off. */
+void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id);
+/* Young collection. A dead nursery is discarded. A still-live tree
+ * keeps the existing wait. */
+void avant_nursery_reclaim(void);
 void avant_pin(void *payload);
+void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
+int32_t avant_is_young(void *payload);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
+void avant_world_lock(void);
+void avant_world_unlock(void);
+void avant_alloc_in_mature(int32_t on);
 
 void avant_gc_enter(void);
 void avant_gc_leave(void);
+/* A quiet leaf does not collect. myc still roots pointer results; those
+ * calls must not attach to the caller's frame. */
+void avant_gc_quiet_enter(void);
+void avant_gc_quiet_leave(void);
 void avant_gc_root(void *slot);
 void *avant_gc_reload(void *slot);
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
@@ -72,6 +91,7 @@ void avant_gc_unregister_thread(void);
 size_t avant_str_n(const char *s);
 char *avant_str_empty(void);
 char *avant_str_concat(const char *a, const char *b);
+char *avant_str_cat_i32(const char *prefix, int32_t n);
 char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(int32_t b, int32_t n);
 char *avant_str_slice(const char *s, int32_t start, int32_t stop);
@@ -123,12 +143,14 @@ int32_t avant_re_m0(void);
 int32_t avant_re_m1(void);
 int32_t avant_re_c0(void);
 int32_t avant_re_c1(void);
+void avant_re_set_span(int32_t m0, int32_t m1, int32_t c0, int32_t c1);
 int32_t avant_re_count(const char *pat, const char *s, int32_t caseless);
 int32_t avant_wide_op(int32_t op, int32_t a_lo, int32_t a_hi, int32_t b_lo, int32_t b_hi);
 int32_t avant_wide_hi(void);
 
 void *avant_hash_new(int32_t key_kind, int32_t val_kind);
 int32_t avant_hash_size(void *h);
+void avant_hash_clear(void *h);
 void avant_hash_set_i32(void *h, const char *key, int32_t val);
 void avant_hash_set_str(void *h, const char *key, const char *val);
 void avant_hash_set_i32k_i32(void *h, int32_t key, int32_t val);

@@ -78,6 +78,36 @@ static int64_t load_key(const AvantHash *h, int32_t i) {
   return (int64_t)((int32_t *)h->keys)[i];
 }
 
+/* Occupied slots are state 1. Bit 0x80 means the key is a heap string
+ * whose length is the header size. A probe then reads that length.
+ * avant_str_n confirms an unknown pointer with a block walk, and that
+ * walk was the cache. The bit is set only when the header length already
+ * agreed with avant_str_n, so a C string keeps the slow check. */
+#define AVANT_HASH_HEAP_LEN 0x80u
+
+static int slot_full(uint8_t st) {
+  return (st & 0x7fu) == 1;
+}
+
+static size_t slot_n(const AvantHash *h, int32_t i) {
+  const char *s = (const char *)(uintptr_t)load_key(h, i);
+  if (h->state[i] & AVANT_HASH_HEAP_LEN) {
+    return (size_t)avant_header((void *)s)->size - 1;
+  }
+  return avant_str_n(s);
+}
+
+static uint8_t occ_mark(const char *key, size_t n) {
+  if (key && ((uintptr_t)key & 7u) == 0) {
+    AvantHeader *h = avant_header((void *)key);
+    if ((h->flags & AVANT_FLAG_HEAP) && h->type_id == AVANT_TYPE_BYTES && h->size > 0 &&
+        (size_t)h->size - 1 == n) {
+      return (uint8_t)(1u | AVANT_HASH_HEAP_LEN);
+    }
+  }
+  return 1;
+}
+
 static void store_key(AvantHash *h, int32_t i, int64_t key_bits) {
   if (h->key_kind == AVANT_HASH_KEY_STR) {
     ((void **)h->keys)[i] = (void *)(uintptr_t)key_bits;
@@ -140,9 +170,9 @@ static int lookup_bytes(AvantHash *h, const char *s, size_t n, uint32_t hv, int3
       if (tomb < 0) {
         tomb = i;
       }
-    } else {
+    } else if (slot_full(st)) {
       const char *slot = (const char *)(uintptr_t)load_key(h, i);
-      if (bytes_eq(slot, avant_str_n(slot), s, n)) {
+      if (bytes_eq(slot, slot_n(h, i), s, n)) {
         *out = i;
         return 1;
       }
@@ -153,19 +183,47 @@ static int lookup_bytes(AvantHash *h, const char *s, size_t n, uint32_t hv, int3
   return 0;
 }
 
+static int lookup_str(AvantHash *h, const char *key, int32_t *out) {
+  size_t n = avant_str_n(key);
+  return lookup_bytes(h, key, n, hash_bytes(key, n), out);
+}
+
 static void insert_raw(AvantHash *dst, int64_t key_bits, int32_t val_i32, const char *val_str) {
-  uint32_t hv = hash_key(dst, key_bits);
   int32_t i = 0;
-  lookup(dst, key_bits, hv, &i);
+  const char *skey = NULL;
+  size_t sn = 0;
+  if (dst->key_kind == AVANT_HASH_KEY_STR) {
+    skey = (const char *)(uintptr_t)key_bits;
+    sn = avant_str_n(skey);
+    lookup_bytes(dst, skey, sn, hash_bytes(skey, sn), &i);
+  } else {
+    uint32_t hv = hash_key(dst, key_bits);
+    lookup(dst, key_bits, hv, &i);
+  }
+  int full = slot_full(dst->state[i]);
+  void *prev = NULL;
+  if (full && dst->key_kind == AVANT_HASH_KEY_STR) {
+    prev = (void *)(uintptr_t)load_key(dst, i);
+  }
   store_key(dst, i, key_bits);
+  /* A mature key or value buffer is not walked from the roots. The
+   * slot just stored may point at a young string. */
+  if (dst->key_kind == AVANT_HASH_KEY_STR && dst->keys) {
+    avant_barrier(dst->keys);
+  }
   if (dst->val_kind == AVANT_HASH_VAL_STR) {
     store_val_str(dst, i, val_str);
+    if (dst->vals) {
+      avant_barrier(dst->vals);
+    }
   } else {
     store_val_i32(dst, i, val_i32);
   }
-  if (dst->state[i] != 1) {
-    dst->state[i] = 1;
+  if (!full) {
+    dst->state[i] = dst->key_kind == AVANT_HASH_KEY_STR ? occ_mark(skey, sn) : 1;
     dst->size += 1;
+  } else if (dst->key_kind == AVANT_HASH_KEY_STR && prev != (void *)(uintptr_t)key_bits) {
+    dst->state[i] = occ_mark(skey, sn);
   }
 }
 
@@ -207,7 +265,7 @@ static void grow(AvantHash *h) {
 
   int32_t i;
   for (i = 0; i < ocap; i++) {
-    if (ostate[i] != 1) {
+    if (!slot_full(ostate[i])) {
       continue;
     }
     int64_t kb = h->key_kind == AVANT_HASH_KEY_STR
@@ -281,6 +339,28 @@ int32_t avant_hash_size(void *hp) {
   return h ? h->size : 0;
 }
 
+void avant_hash_clear(void *hp) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i;
+  if (!h) {
+    return;
+  }
+  if (h->key_kind == AVANT_HASH_KEY_STR && h->keys) {
+    for (i = 0; i < h->cap; i++) {
+      ((void **)h->keys)[i] = NULL;
+    }
+  }
+  if (h->val_kind == AVANT_HASH_VAL_STR && h->vals) {
+    for (i = 0; i < h->cap; i++) {
+      ((void **)h->vals)[i] = NULL;
+    }
+  }
+  if (h->state && h->cap > 0) {
+    memset(h->state, 0, (size_t)h->cap);
+  }
+  h->size = 0;
+}
+
 void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
   avant_gc_defer_enter();
   AvantHash *h = (AvantHash *)hp;
@@ -314,7 +394,7 @@ void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val) {
 int32_t avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !lookup(h, (int64_t)(uintptr_t)key, hash_str(key), &i)) {
+  if (!h || !lookup_str(h, key, &i)) {
     if (found) {
       *found = 0;
     }
@@ -329,7 +409,7 @@ int32_t avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
 const char *avant_hash_get_str(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !lookup(h, (int64_t)(uintptr_t)key, hash_str(key), &i)) {
+  if (!h || !lookup_str(h, key, &i)) {
     if (found) {
       *found = 0;
     }
@@ -359,7 +439,7 @@ int32_t avant_hash_get_i32k_i32(void *hp, int32_t key, int32_t *found) {
 void avant_hash_del(void *hp, const char *key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !lookup(h, (int64_t)(uintptr_t)key, hash_str(key), &i)) {
+  if (!h || !lookup_str(h, key, &i)) {
     return;
   }
   h->state[i] = 2;
@@ -407,8 +487,8 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   key[n] = 0;
   store_key(h, i, (int64_t)(uintptr_t)key);
   store_val_i32(h, i, 1);
-  if (h->state[i] != 1) {
-    h->state[i] = 1;
+  if (!slot_full(h->state[i])) {
+    h->state[i] = (uint8_t)(1u | AVANT_HASH_HEAP_LEN);
     h->size += 1;
   }
   g_last_key = key;
@@ -468,8 +548,7 @@ static uint32_t hash_concat_bytes(const char *a, size_t na, const char *b, size_
   return h;
 }
 
-static int bytes_eq_concat(const char *slot, const char *a, size_t na, const char *b, size_t nb) {
-  size_t ns;
+static int bytes_eq_concat(const char *slot, size_t ns, const char *a, size_t na, const char *b, size_t nb) {
   if (!slot) {
     slot = "";
   }
@@ -481,7 +560,6 @@ static int bytes_eq_concat(const char *slot, const char *a, size_t na, const cha
     b = "";
     nb = 0;
   }
-  ns = avant_str_n(slot);
   if (ns != na + nb) {
     return 0;
   }
@@ -516,9 +594,9 @@ int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *f
     if (st == 0) {
       return 0;
     }
-    if (st == 1) {
+    if (slot_full(st)) {
       const char *slot = (const char *)(uintptr_t)load_key(h, i);
-      if (bytes_eq_concat(slot, a, na, b, nb)) {
+      if (bytes_eq_concat(slot, slot_n(h, i), a, na, b, nb)) {
         if (found) {
           *found = 1;
         }

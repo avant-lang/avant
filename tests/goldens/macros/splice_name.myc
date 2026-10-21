@@ -6,6 +6,17 @@ FUNC :avant_alloc
     TYPE :u32
 ENDFUNC
 
+FUNC :avant_bump_alloc
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :u64
+    TYPE :u32
+ENDFUNC
+
+FUNC :avant_nursery_reclaim
+ENDFUNC
+
 FUNC :avant_pin
   ARGS
     TYPE :ptr<void>
@@ -17,11 +28,20 @@ ENDFUNC
 FUNC :avant_gc_leave
 ENDFUNC
 
+FUNC :avant_gc_quiet_enter
+ENDFUNC
+
+FUNC :avant_gc_quiet_leave
+ENDFUNC
+
 FUNC :avant_gc_root
   ARGS
     TYPE :ptr<void>
 ENDFUNC
 
+GLOBAL :g_avant_shared
+  TYPE :i32
+ENDGLOBAL
 FUNC :avant_gc_reload
   RETURN
     TYPE :ptr<void>
@@ -46,6 +66,14 @@ FUNC :avant_str_concat
   ARGS
     TYPE :ptr<u8>
     TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_str_cat_i32
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<u8>
+    TYPE :i32
 ENDFUNC
 
 FUNC :avant_str_from_int
@@ -205,6 +233,13 @@ FUNC :avant_exp
     TYPE :f64
 ENDFUNC
 
+FUNC :avant_is_young
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
 FUNC :avant_hash_new
   RETURN
     TYPE :ptr<void>
@@ -216,6 +251,11 @@ ENDFUNC
 FUNC :avant_hash_size
   RETURN
     TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_hash_clear
   ARGS
     TYPE :ptr<void>
 ENDFUNC
@@ -797,7 +837,6 @@ FUNC :tripled
   RETURN
     TYPE :i32
   BODY
-    CALL :avant_gc_enter
     PARAM 0
     LOCAL :__q0_n :i32
     STORE
@@ -807,7 +846,6 @@ FUNC :tripled
     PUSH 3
     LOCAL :__t1
     BINARY :mul
-    CALL :avant_gc_leave
     RET
 ENDFUNC
 

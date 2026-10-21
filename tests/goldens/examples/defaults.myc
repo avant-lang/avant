@@ -6,6 +6,17 @@ FUNC :avant_alloc
     TYPE :u32
 ENDFUNC
 
+FUNC :avant_bump_alloc
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :u64
+    TYPE :u32
+ENDFUNC
+
+FUNC :avant_nursery_reclaim
+ENDFUNC
+
 FUNC :avant_pin
   ARGS
     TYPE :ptr<void>
@@ -17,11 +28,20 @@ ENDFUNC
 FUNC :avant_gc_leave
 ENDFUNC
 
+FUNC :avant_gc_quiet_enter
+ENDFUNC
+
+FUNC :avant_gc_quiet_leave
+ENDFUNC
+
 FUNC :avant_gc_root
   ARGS
     TYPE :ptr<void>
 ENDFUNC
 
+GLOBAL :g_avant_shared
+  TYPE :i32
+ENDGLOBAL
 FUNC :avant_gc_reload
   RETURN
     TYPE :ptr<void>
@@ -46,6 +66,14 @@ FUNC :avant_str_concat
   ARGS
     TYPE :ptr<u8>
     TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_str_cat_i32
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<u8>
+    TYPE :i32
 ENDFUNC
 
 FUNC :avant_str_from_int
@@ -205,6 +233,13 @@ FUNC :avant_exp
     TYPE :f64
 ENDFUNC
 
+FUNC :avant_is_young
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
 FUNC :avant_hash_new
   RETURN
     TYPE :ptr<void>
@@ -216,6 +251,11 @@ ENDFUNC
 FUNC :avant_hash_size
   RETURN
     TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_hash_clear
   ARGS
     TYPE :ptr<void>
 ENDFUNC
@@ -848,14 +888,9 @@ FUNC :CalcNode__initialize
   ARGS
     TYPE :ptr<CalcNode>
   BODY
-    CALL :avant_gc_enter
     PARAM 0
     LOCAL :self :ptr<CalcNode>
     STORE
-    LOCAL :self
-    ADDR
-    CALL :avant_gc_root
-    CALL :avant_gc_leave
     RET
 ENDFUNC
 
@@ -864,22 +899,17 @@ FUNC :Named__initialize
     TYPE :ptr<Named>
     TYPE :i32
   BODY
-    CALL :avant_gc_enter
     PARAM 0
     LOCAL :self :ptr<Named>
     STORE
     PARAM 1
     LOCAL :kind :i32
     STORE
-    LOCAL :self
-    ADDR
-    CALL :avant_gc_root
     LOCAL :kind :i32
     LOCAL :self :ptr<Named>
     DEREF
     FIELD 0
     STORE
-    CALL :avant_gc_leave
     RET
 ENDFUNC
 
