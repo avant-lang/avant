@@ -46,6 +46,12 @@ typedef struct AvantHeader {
 } AvantHeader;
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
+/* Never collects. Returns null when a collection would be required,
+ * when another thread exists, or when the nursery is off. */
+void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id);
+/* Young collection. A dead nursery is discarded. A still-live tree
+ * keeps the existing wait. */
+void avant_nursery_reclaim(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
@@ -58,6 +64,10 @@ void avant_alloc_in_mature(int32_t on);
 
 void avant_gc_enter(void);
 void avant_gc_leave(void);
+/* A quiet leaf does not collect. myc still roots pointer results; those
+ * calls must not attach to the caller's frame. */
+void avant_gc_quiet_enter(void);
+void avant_gc_quiet_leave(void);
 void avant_gc_root(void *slot);
 void *avant_gc_reload(void *slot);
 void avant_type_map(uint32_t type_id, uint64_t word_bits);

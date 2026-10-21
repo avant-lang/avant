@@ -114,6 +114,7 @@ static uint8_t g_alloc_fresh[4];
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
 static __thread Frame *g_frame;
+static __thread int g_gc_quiet;
 static __thread Frame *g_frame_free;
 static __thread int g_alloc_mature;
 
@@ -992,6 +993,40 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     die("object larger than block");
   }
   return bump_take(total);
+}
+
+/* Like place into the nursery, but never collects. */
+static AvantHeader *place_bump(size_t total) {
+  uint8_t space = SPACE_NURSERY;
+  Block *cur;
+  Block *b;
+  if (g_nursery_off || g_alloc_mature || total > LOS_LIMIT) {
+    return NULL;
+  }
+  cur = g_alloc_cur[space];
+  if (cur && try_bump(cur, total)) {
+    return (AvantHeader *)bump_take(total);
+  }
+  if (!g_alloc_fresh[space]) {
+    b = cur ? cur->next : g_nursery;
+    for (; b; b = b->next) {
+      if (try_bump(b, total)) {
+        g_alloc_cur[space] = b;
+        return (AvantHeader *)bump_take(total);
+      }
+    }
+  }
+  b = new_block(space);
+  if (!b) {
+    return NULL;
+  }
+  g_alloc_cur[space] = b;
+  g_alloc_fresh[space] = 1;
+  use_block(b);
+  if (!bump_fits(total)) {
+    return NULL;
+  }
+  return (AvantHeader *)bump_take(total);
 }
 
 static void *mature_alloc(size_t total) {
@@ -2287,7 +2322,20 @@ void avant_gc_leave(void) {
   g_frame_free = f;
 }
 
+void avant_gc_quiet_enter(void) {
+  g_gc_quiet++;
+}
+
+void avant_gc_quiet_leave(void) {
+  if (g_gc_quiet > 0) {
+    g_gc_quiet--;
+  }
+}
+
 void avant_gc_root(void *slot) {
+  if (g_gc_quiet) {
+    return;
+  }
   if (!g_frame) {
     die("gc root without enter");
   }
@@ -2502,6 +2550,44 @@ void avant_gc_stats(AvantGcStats *out) {
   if (out) {
     *out = g_stats;
   }
+}
+
+void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
+  size_t payload;
+  size_t total;
+  AvantHeader *h;
+  void *obj;
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+    return NULL;
+  }
+  if (nbytes > UINT32_MAX || type_id > UINT16_MAX) {
+    return NULL;
+  }
+  init_gc();
+  payload = (size_t)nbytes;
+  total = align_up(sizeof(AvantHeader) + payload);
+  h = place_bump(total);
+  if (!h) {
+    return NULL;
+  }
+  h->size = (uint32_t)payload;
+  h->type_id = (uint16_t)type_id;
+  h->flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG);
+  obj = payload_of(h);
+  memset(obj, 0, payload);
+  g_stats.allocated_bytes += total;
+  g_since_gc += total;
+  g_nursery_held += total;
+  return obj;
+}
+
+void avant_nursery_reclaim(void) {
+  init_gc();
+  pthread_mutex_lock(&g_world);
+  if (!g_nursery_off && !g_collecting && g_nursery_held > 0) {
+    collect(0);
+  }
+  pthread_mutex_unlock(&g_world);
 }
 
 void avant_gc_collect(void) {

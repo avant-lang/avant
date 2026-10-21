@@ -220,9 +220,13 @@ pub fn reserved_c_names: Hash(String, Int) {
   names = [
     "main",
     "avant_alloc",
+    "avant_bump_alloc",
+    "avant_nursery_reclaim",
     "avant_pin",
     "avant_gc_enter",
     "avant_gc_leave",
+    "avant_gc_quiet_enter",
+    "avant_gc_quiet_leave",
     "avant_gc_root",
     "avant_gc_reload",
     "avant_type_map",
@@ -5038,6 +5042,13 @@ pub class Checker {
         return self.check_indirect_call(expr, existing)
       }
     }
+    if str_eq(expr.callee, "nursery_reclaim") {
+      if expr.args.size != 0 {
+        self.fail(expr.loc, "nursery_reclaim takes no arguments")
+        return self.t_void()
+      }
+      return self.t_void()
+    }
     if str_eq(expr.callee, "puts") {
       if expr.args.size != 1 {
         self.fail(expr.loc, "puts takes one argument")
@@ -5676,6 +5687,17 @@ pub class Checker {
     }
     if str_eq(expr.callee, "new") {
       return self.check_constructor(expr, recv, has_want, want)
+    }
+    if str_eq(expr.callee, "bump") {
+      ty = self.check_constructor(expr, recv, has_want, want)
+      if self.has_err {
+        return ty
+      }
+      if ty.is_class {
+        expr.resolved = "${ty.name}__bump"
+        return ty_nilable(ty)
+      }
+      return ty
     }
     if str_eq(expr.callee, "send") {
       i = 0

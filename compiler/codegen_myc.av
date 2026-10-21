@@ -724,6 +724,7 @@ pub class MycGen {
   need_gate: Int = 0
   need_parallel: Int = 0
   cur_leaf: Int = 0
+  quiet_guard: Int = 0
   numeric_leaves: Hash(String, Int)
   // 1 while quiet-leaf elimination is walking bodies. Calls that do not
   // move objects stay inside the set. Loop hoisting keeps the strict walk.
@@ -808,6 +809,7 @@ pub class MycGen {
     self.need_gate = 0
     self.need_parallel = 0
     self.cur_leaf = 0
+    self.quiet_guard = 0
     leaves = Hash(String, Int).new
     self.numeric_leaves = leaves
     self.leaf_walk = 0
@@ -1022,9 +1024,13 @@ pub class MycGen {
     // Declaring avant_gc_root is what myc-llvm keys off, via --gc-root from
     // pipeline.av. The copying-nursery contract is avant-ledgers/stages/safepoints.md.
     self.ext("avant_alloc", "u64,u32", "ptr<void>")
+    self.ext("avant_bump_alloc", "u64,u32", "ptr<void>")
+    self.ext("avant_nursery_reclaim", "", "")
     self.ext("avant_pin", "ptr<void>", "")
     self.ext("avant_gc_enter", "", "")
     self.ext("avant_gc_leave", "", "")
+    self.ext("avant_gc_quiet_enter", "", "")
+    self.ext("avant_gc_quiet_leave", "", "")
     self.ext("avant_gc_root", "ptr<void>", "")
     self.line("GLOBAL :g_avant_shared")
     self.indent = self.indent + 1
@@ -1752,6 +1758,9 @@ pub class MycGen {
       } else {
         if ty = self.resolver.get_named(cdef.name) {
           self.emit_constructor(ty)
+          if self.class_uses_bump(cdef.name) {
+            self.emit_bump_constructor(ty)
+          }
         }
       }
       i = i + 1
@@ -1929,6 +1938,15 @@ pub class MycGen {
     buf.push_str(",avant_hash_get_str_slice,avant_hash_inc_slice")
     buf.push_str(",avant_buf_clear,avant_buf_push_byte,avant_buf_push_str,avant_buf_push_slice")
     buf.push_str(",avant_re_find,avant_re_m0,avant_re_m1,avant_re_c0,avant_re_c1")
+    i = 0
+    while i < self.program.classes.size {
+      cdef = self.program.classes[i]
+      if cdef.type_params.size > 0 {
+      } else {
+        buf.push_str(",${cdef.name}__bump")
+      }
+      i = i + 1
+    }
     self.program.quiet_leaves = buf.to_s
   }
 
@@ -2357,6 +2375,106 @@ pub class MycGen {
     }
   }
 
+  pub fn arm_quiet_guard(body: Array(Stmt)) {
+    self.quiet_guard = 0
+    if self.cur_leaf != 0 {
+      if self.stmts_call_heap(body) {
+        self.quiet_guard = 1
+        self.line("CALL :avant_gc_quiet_enter")
+      }
+    }
+  }
+
+  pub fn stmts_call_heap(body: Array(Stmt)): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_calls_heap(body[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmt_calls_heap(stmt: Stmt): Bool {
+    if e = stmt.expr {
+      if self.expr_calls_heap(e) {
+        return true
+      }
+    }
+    if c = stmt.cond {
+      if self.expr_calls_heap(c) {
+        return true
+      }
+    }
+    if v = stmt.value {
+      if self.expr_calls_heap(v) {
+        return true
+      }
+    }
+    if t = stmt.target {
+      if self.expr_calls_heap(t) {
+        return true
+      }
+    }
+    if self.stmts_call_heap(stmt.then_body) {
+      return true
+    }
+    if self.stmts_call_heap(stmt.else_body) {
+      return true
+    }
+    if self.stmts_call_heap(stmt.body) {
+      return true
+    }
+    false
+  }
+
+  pub fn expr_calls_heap(expr: Expr): Bool {
+    if expr.kind == ex_call() {
+      if ty_has_heap(expr_ty(expr)) {
+        return true
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if self.expr_calls_heap(expr.args[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    if recv = expr.receiver {
+      if self.expr_calls_heap(recv) {
+        return true
+      }
+    }
+    if l = expr.left {
+      if self.expr_calls_heap(l) {
+        return true
+      }
+    }
+    if r = expr.right {
+      if self.expr_calls_heap(r) {
+        return true
+      }
+    }
+    if obj = expr.object {
+      if self.expr_calls_heap(obj) {
+        return true
+      }
+    }
+    if inner = expr.inner {
+      if self.expr_calls_heap(inner) {
+        return true
+      }
+    }
+    if b = expr.block {
+      if self.stmts_call_heap(b.body) {
+        return true
+      }
+    }
+    false
+  }
+
   pub fn emit_plain_func(fnn: Function, params: Array(Ty)) {
     self.cur_leaf = 0
     if v = self.numeric_leaves.get(fnn.emit_name) {
@@ -2375,6 +2493,7 @@ pub class MycGen {
       self.line("BODY")
       self.indent = self.indent + 1
       self.reset_rooted
+      self.quiet_guard = 0
       if self.cur_leaf == 0 {
         self.line("CALL :avant_gc_enter")
       }
@@ -2403,6 +2522,7 @@ pub class MycGen {
       if self.cur_leaf == 0 {
         self.line("CALL :avant_gc_enter")
       }
+      self.arm_quiet_guard(fnn.body)
       pnames: Array(String) = []
       i = 0
       while i < fnn.params.size {
@@ -2449,6 +2569,7 @@ pub class MycGen {
     if self.cur_leaf == 0 {
       self.line("CALL :avant_gc_enter")
     }
+    self.arm_quiet_guard(fnn.body)
     recv_name = fn_self_name(fnn)
     if owner = self.self_ty {
       m = ty_self_ptr_myc(owner)
@@ -2510,6 +2631,7 @@ pub class MycGen {
     if self.cur_leaf == 0 {
       self.line("CALL :avant_gc_enter")
     }
+    self.arm_quiet_guard(fnn.body)
     self.line("PARAM 0")
     self.line("LOCAL :${recv_name} :${mrecv}")
     self.line("STORE")
@@ -2602,6 +2724,7 @@ pub class MycGen {
 
   pub fn emit_constructor(ty: Ty) {
     self.cur_leaf = 0
+    self.quiet_guard = 0
     self.temps = 0
     self.return_type = ty
     self.self_ty = nil
@@ -2676,6 +2799,210 @@ pub class MycGen {
     self.indent = self.indent - 1
     self.line("ENDFUNC")
     self.blank
+  }
+
+  // Allocates without collecting. Null means the nursery could not
+  // grow, and the caller retries after nursery_reclaim. Ordinary
+  // .new stays on avant_alloc.
+  pub fn emit_bump_constructor(ty: Ty) {
+    saved_leaf = self.cur_leaf
+    self.cur_leaf = 1
+    self.quiet_guard = 0
+    self.temps = 0
+    opt = ty_nilable(ty)
+    self.return_type = opt
+    self.self_ty = nil
+    self.self_name = ""
+    none: Array(String) = []
+    self.begin_fn_frame(none)
+    init_sig = self.find_initialize(ty.name)
+    ctor = "${ty.name}__bump"
+    self.line("FUNC :${ctor}")
+    self.indent = self.indent + 1
+    if sig = init_sig {
+      if sig.params.size > 0 {
+        self.line("ARGS")
+        self.indent = self.indent + 1
+        i = 0
+        while i < sig.params.size {
+          m = ty_myc(sig.params[i])
+          self.line("TYPE :${m}")
+          i = i + 1
+        }
+        self.indent = self.indent - 1
+      }
+    }
+    self.line("RETURN")
+    self.indent = self.indent + 1
+    m = ty_myc(opt)
+    self.line("TYPE :${m}")
+    self.indent = self.indent - 1
+    self.line("BODY")
+    self.indent = self.indent + 1
+    self.reset_rooted
+    if sig = init_sig {
+      i = 0
+      while i < sig.params.size {
+        name = sig.node.params[i].name
+        m = ty_myc(sig.params[i])
+        self.line("PARAM ${i}")
+        self.line("LOCAL :${name} :${m}")
+        self.line("STORE")
+        i = i + 1
+      }
+    }
+    tid = 1
+    if id = self.class_ids.get(ty.name) {
+      tid = id
+    }
+    layout = ty_layout_myc(ty)
+    self.line("PUSH ${tid} :u32")
+    self.line("SIZEOF :${layout}")
+    self.line("CALL :avant_bump_alloc")
+    self.line("LOCAL :bump_raw :ptr<void>")
+    self.line("STORE")
+    self.line("LOCAL :bump_raw")
+    self.line("PUSH 0")
+    self.line("AS :ptr<void>")
+    self.line("BINARY :eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), opt)
+    self.line("RET")
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    sp = ty_self_ptr_myc(ty)
+    self.line("LOCAL :bump_raw")
+    self.line("AS :${sp}")
+    self.line("LOCAL :self :${sp}")
+    self.line("STORE")
+    self.emit_field_defaults(ty)
+    if sig = init_sig {
+      names: Array(String) = []
+      i = 0
+      while i < sig.node.params.size {
+        names.push(sig.node.params[i].name)
+        i = i + 1
+      }
+      self.emit_named_args(names, sig.params)
+      self.line("LOCAL :self")
+      mangled = sig.mangled
+      self.line("CALL :${mangled}")
+    }
+    self.line("LOCAL :self")
+    self.emit_wrap_union(ty, opt)
+    self.line("RET")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+    self.cur_leaf = saved_leaf
+    self.return_type = ty
+  }
+
+  pub fn class_uses_bump(name: String): Bool {
+    fns = program_all_functions(self.program)
+    i = 0
+    while i < fns.size {
+      if self.stmts_use_bump(fns[i].body, name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmts_use_bump(body: Array(Stmt), name: String): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_use_bump(body[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmt_use_bump(stmt: Stmt, name: String): Bool {
+    if e = stmt.expr {
+      if self.expr_use_bump(e, name) {
+        return true
+      }
+    }
+    if c = stmt.cond {
+      if self.expr_use_bump(c, name) {
+        return true
+      }
+    }
+    if v = stmt.value {
+      if self.expr_use_bump(v, name) {
+        return true
+      }
+    }
+    if self.stmts_use_bump(stmt.then_body, name) {
+      return true
+    }
+    if self.stmts_use_bump(stmt.else_body, name) {
+      return true
+    }
+    if self.stmts_use_bump(stmt.body, name) {
+      return true
+    }
+    false
+  }
+
+  pub fn expr_use_bump(expr: Expr, name: String): Bool {
+    if expr.kind == ex_call() {
+      if str_eq(expr.callee, "bump") {
+        if recv = expr.receiver {
+          if recv.kind == ex_name() {
+            if str_eq(recv.ident, name) {
+              return true
+            }
+          }
+        }
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if self.expr_use_bump(expr.args[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    if recv = expr.receiver {
+      if self.expr_use_bump(recv, name) {
+        return true
+      }
+    }
+    if l = expr.left {
+      if self.expr_use_bump(l, name) {
+        return true
+      }
+    }
+    if r = expr.right {
+      if self.expr_use_bump(r, name) {
+        return true
+      }
+    }
+    if obj = expr.object {
+      if self.expr_use_bump(obj, name) {
+        return true
+      }
+    }
+    if inner = expr.inner {
+      if self.expr_use_bump(inner, name) {
+        return true
+      }
+    }
+    false
   }
 
   pub fn emit_wrapper_main {
@@ -2762,6 +3089,9 @@ pub class MycGen {
   }
 
   pub fn emit_ret {
+    if self.quiet_guard != 0 {
+      self.line("CALL :avant_gc_quiet_leave")
+    }
     if self.cur_leaf == 0 {
       self.line("CALL :avant_gc_leave")
     }
@@ -4318,6 +4648,12 @@ pub class MycGen {
     if str_eq(name, "avant_is_young") {
       return true
     }
+    if str_eq(name, "avant_bump_alloc") {
+      return true
+    }
+    if str_eq(name, "bump") {
+      return true
+    }
     if str_eq(name, "avant_exp") {
       return true
     }
@@ -5582,7 +5918,7 @@ pub class MycGen {
       return
     }
     if recv = expr.receiver {
-      if str_eq(expr.callee, "new") {
+      if str_eq(expr.callee, "new") || str_eq(expr.callee, "bump") {
         self.emit_ctor_call(expr, recv)
         return
       }
@@ -5973,6 +6309,10 @@ pub class MycGen {
         self.emit_expr(expr.args[0])
       }
       self.line("CALL :avant_str_slice")
+      return
+    }
+    if str_eq(expr.callee, "nursery_reclaim") {
+      self.line("CALL :avant_nursery_reclaim")
       return
     }
     if str_eq(expr.callee, "buf_new") {
@@ -7792,11 +8132,13 @@ pub class MycGen {
     saved_rooted = self.rooted
     saved_self = self.self_ty
     saved_self_name = self.self_name
+    saved_guard = self.quiet_guard
     self.indent = 0
     self.temps = 0
     self.c_main = false
     self.self_ty = nil
     self.self_name = ""
+    self.quiet_guard = 0
     self.in_lambda = true
     self.env_layout = ""
     if expr.cap_names.size > 0 {
@@ -7882,6 +8224,7 @@ pub class MycGen {
     self.rooted = saved_rooted
     self.self_ty = saved_self
     self.self_name = saved_self_name
+    self.quiet_guard = saved_guard
     self.in_lambda = false
   }
 
