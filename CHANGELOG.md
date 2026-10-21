@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.7.0 - 2026-10-22
 
 ### Added
 * `re_compile` makes a pattern handle. `re_find` searches a string from a byte index. `re_m0` and `re_m1` are the match bounds. `re_c0` and `re_c1` are the first group.
