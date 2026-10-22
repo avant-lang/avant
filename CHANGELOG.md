@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.9.0 - 2026-10-22
 
 ### Changed
 * Deleting a hash entry closes the gap in the probe sequence. A later lookup stops at an empty slot instead of walking every deleted key. A string key keeps its hash in the table, so a different hash does not compare the bytes.
