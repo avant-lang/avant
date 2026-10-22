@@ -32,7 +32,7 @@ The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted an
 
 ### Requirements
 
-A published `avant` compiler (the `v0.4.0` seed or newer), a C compiler (`cc`), LLVM 20, libpcre2, re2c, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard. A string literal at `re_compile` is compiled with re2c. A computed pattern uses PCRE2. Without `re2c`, that literal stays on PCRE2.
+A published `avant` compiler (the `v0.7.0` seed or newer), a C compiler (`cc`), LLVM 20, libpcre2, re2c, and a safepoints-enabled `myc-llvm` ([repo](https://github.com/avant-lang/safepoints)). You can use `AVANT_MYC_LLVM` to inform/override the path of `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard. A string literal at `re_compile` is compiled with re2c. A computed pattern uses PCRE2. Without `re2c`, that literal stays on PCRE2.
 
 ### Build a compiler
 
@@ -807,65 +807,65 @@ These are decided and currently do not compile.
 
 ## Benchmarks
 
-Latest 50-task prod, 2026-10-21, Ryzen 7 5700G, `--final`. C, Crystal, and Go are the 2026-09-18 LangArena snapshot (`C/Clang`, `Crystal`, `Go`) on a Ryzen 7 3800X. Seconds and megabytes, lower is better. **Bold** is the lowest in that row. This run is not the adopted official number.
+Latest 50-task prod, 2026-10-22, Ryzen 7 5700G, `--final`. C, Crystal, and Go are the 2026-09-18 LangArena snapshot (`C/Clang`, `Crystal`, `Go`) on a Ryzen 7 3800X. Seconds and megabytes, lower is better. **Bold** is the lowest in that row. This run is not the adopted official number.
 
 | | Avant | C | Crystal | Go | Avant / C |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Wall sum | 88.298 | **55.550** | 78.245 | 117.566 | 1.59× |
-| RSS average | 63.30 | **22.82** | 65.33 | 67.19 | 2.77× |
+| Wall sum | 81.665 | **55.550** | 78.245 | 117.566 | 1.47× |
+| RSS average | 73.68 | **22.82** | 65.33 | 67.19 | 3.23× |
 
 | Task | Avant | C | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: |
-| `Etc::Sieve` | 0.965 | **0.819** | 1.899 | 1.119 |
-| `Binarytrees::Obj` | 1.734 | 2.621 | **1.160** | 1.369 |
-| `Binarytrees::Arena` | 0.648 | **0.317** | 0.564 | 1.091 |
-| `Matmul::Single` | 6.638 | **4.953** | 5.040 | 5.092 |
-| `Matmul::T4` | 1.820 | **1.303** | 2.963 | 1.323 |
-| `Matmul::T8` | 1.229 | **0.690** | 1.849 | 0.698 |
-| `Matmul::T16` | 1.074 | **0.343** | 2.051 | 0.511 |
-| `Sort::Quick` | 1.415 | **1.177** | 1.482 | 1.364 |
-| `Sort::Merge` | 1.191 | **1.095** | 2.190 | 1.570 |
-| `Sort::Self` | **0.162** | 2.000 | 1.053 | 1.295 |
-| `CLBG::Mandelbrot` | 1.007 | **0.904** | 0.919 | 0.921 |
-| `CLBG::Fannkuchredux` | 1.191 | 1.165 | 1.140 | **1.079** |
-| `CLBG::Spectralnorm` | 1.084 | 0.926 | 0.937 | **0.876** |
-| `CLBG::Nbody` | **1.331** | 1.502 | 1.503 | 1.664 |
-| `Brainfuck::Array` | 1.664 | **1.155** | 3.272 | 2.103 |
-| `Brainfuck::Recursion` | 1.718 | **1.643** | 1.966 | 1.818 |
-| `Etc::GameOfLife` | 2.902 | 1.866 | 3.548 | **1.004** |
-| `Etc::TextRaytracer` | **0.017** | 1.350 | 1.520 | 1.690 |
-| `Etc::NeuralNet` | 1.335 | **1.041** | 1.229 | 2.029 |
-| `Etc::CacheSimulation` | 6.862 | **0.781** | 1.513 | 1.781 |
-| `Etc::Words` | 1.916 | 2.051 | **0.884** | 1.120 |
-| `Graph::BFS` | 3.676 | **1.173** | 1.902 | 2.046 |
-| `Graph::DFS` | 2.409 | **0.920** | 1.483 | 1.300 |
-| `Graph::AStar` | 4.244 | 2.032 | **1.515** | 2.893 |
-| `Hash::CRC32` | 0.333 | **0.286** | 0.868 | 4.281 |
-| `Hash::SHA256` | 1.354 | **0.923** | 0.982 | 1.083 |
-| `Distance::Jaro` | 1.032 | **0.892** | 1.292 | 0.979 |
+| `Etc::Sieve` | 0.914 | **0.819** | 1.899 | 1.119 |
+| `Binarytrees::Obj` | 1.624 | 2.621 | **1.160** | 1.369 |
+| `Binarytrees::Arena` | 0.507 | **0.317** | 0.564 | 1.091 |
+| `Matmul::Single` | 5.887 | **4.953** | 5.040 | 5.092 |
+| `Matmul::T4` | 1.718 | **1.303** | 2.963 | 1.323 |
+| `Matmul::T8` | 1.174 | **0.690** | 1.849 | 0.698 |
+| `Matmul::T16` | 0.932 | **0.343** | 2.051 | 0.511 |
+| `Sort::Quick` | 1.337 | **1.177** | 1.482 | 1.364 |
+| `Sort::Merge` | 1.138 | **1.095** | 2.190 | 1.570 |
+| `Sort::Self` | **0.139** | 2.000 | 1.053 | 1.295 |
+| `CLBG::Mandelbrot` | 0.977 | **0.904** | 0.919 | 0.921 |
+| `CLBG::Fannkuchredux` | 1.166 | 1.165 | 1.140 | **1.079** |
+| `CLBG::Spectralnorm` | 1.047 | 0.926 | 0.937 | **0.876** |
+| `CLBG::Nbody` | **1.285** | 1.502 | 1.503 | 1.664 |
+| `Brainfuck::Array` | 1.932 | **1.155** | 3.272 | 2.103 |
+| `Brainfuck::Recursion` | 1.911 | **1.643** | 1.966 | 1.818 |
+| `Etc::GameOfLife` | 1.899 | 1.866 | 3.548 | **1.004** |
+| `Etc::TextRaytracer` | **0.015** | 1.350 | 1.520 | 1.690 |
+| `Etc::NeuralNet` | 1.304 | **1.041** | 1.229 | 2.029 |
+| `Etc::CacheSimulation` | 6.572 | **0.781** | 1.513 | 1.781 |
+| `Etc::Words` | 1.824 | 2.051 | **0.884** | 1.120 |
+| `Graph::BFS` | 2.685 | **1.173** | 1.902 | 2.046 |
+| `Graph::DFS` | 2.207 | **0.920** | 1.483 | 1.300 |
+| `Graph::AStar` | 3.710 | 2.032 | **1.515** | 2.893 |
+| `Hash::CRC32` | 0.323 | **0.286** | 0.868 | 4.281 |
+| `Hash::SHA256` | 1.319 | **0.923** | 0.982 | 1.083 |
+| `Distance::Jaro` | 0.994 | **0.892** | 1.292 | 0.979 |
 | `Distance::NGram` | 0.822 | 1.867 | 0.727 | **0.633** |
-| `Base64::Encode` | 0.109 | **0.101** | 1.324 | 2.082 |
-| `Base64::Decode` | 0.139 | **0.129** | 1.312 | 1.631 |
-| `Json::Generate` | 0.760 | **0.655** | 1.181 | 2.458 |
-| `Json::ParseDom` | **0.085** | 0.087 | 0.534 | 3.834 |
-| `Json::ParseMapping` | 0.225 | **0.217** | 1.744 | 2.634 |
-| `CSV::Parse` | 2.695 | **2.196** | 3.519 | 3.135 |
-| `Template::Regex` | 1.563 | **1.183** | 1.592 | 8.763 |
-| `Template::Parse` | 1.537 | 0.962 | 2.560 | **0.776** |
-| `Maze::Generator` | 2.698 | **0.443** | 1.646 | 1.080 |
-| `Maze::BFS` | 1.738 | **0.455** | 1.854 | 1.360 |
-| `Maze::AStar` | 2.383 | **1.485** | 2.282 | 2.636 |
-| `Etc::LogParser` | 0.492 | **0.487** | 1.158 | 30.928 |
-| `Calculator::Ast` | 6.333 | 1.104 | 0.560 | **0.554** |
-| `Calculator::Interpreter` | 2.831 | 1.205 | 0.885 | **0.666** |
-| `Compress::BWTEncode` | 1.475 | **0.749** | 1.430 | 1.690 |
-| `Compress::BWTDecode` | 1.750 | **0.887** | 0.957 | 1.164 |
-| `Compress::HuffEncode` | **0.774** | 0.806 | 1.026 | 0.886 |
-| `Compress::HuffDecode` | 0.739 | **0.443** | 1.205 | 1.491 |
-| `Compress::ArithEncode` | 1.229 | **1.193** | 1.355 | 1.246 |
-| `Compress::ArithDecode` | 1.039 | **0.945** | 1.155 | 1.095 |
-| `Compress::LZWEncode` | **0.192** | 1.456 | 0.984 | 1.116 |
-| `Compress::LZWDecode` | 5.741 | 0.567 | **0.531** | 1.609 |
+| `Base64::Encode` | 0.105 | **0.101** | 1.324 | 2.082 |
+| `Base64::Decode` | **0.128** | 0.129 | 1.312 | 1.631 |
+| `Json::Generate` | 0.743 | **0.655** | 1.181 | 2.458 |
+| `Json::ParseDom` | **0.084** | 0.087 | 0.534 | 3.834 |
+| `Json::ParseMapping` | **0.197** | 0.217 | 1.744 | 2.634 |
+| `CSV::Parse` | 2.827 | **2.196** | 3.519 | 3.135 |
+| `Template::Regex` | **0.953** | 1.183 | 1.592 | 8.763 |
+| `Template::Parse` | 0.864 | 0.962 | 2.560 | **0.776** |
+| `Maze::Generator` | 2.398 | **0.443** | 1.646 | 1.080 |
+| `Maze::BFS` | 2.635 | **0.455** | 1.854 | 1.360 |
+| `Maze::AStar` | 3.187 | **1.485** | 2.282 | 2.636 |
+| `Etc::LogParser` | **0.473** | 0.487 | 1.158 | 30.928 |
+| `Calculator::Ast` | 5.393 | 1.104 | 0.560 | **0.554** |
+| `Calculator::Interpreter` | 2.261 | 1.205 | 0.885 | **0.666** |
+| `Compress::BWTEncode` | 1.379 | **0.749** | 1.430 | 1.690 |
+| `Compress::BWTDecode` | 1.307 | **0.887** | 0.957 | 1.164 |
+| `Compress::HuffEncode` | **0.714** | 0.806 | 1.026 | 0.886 |
+| `Compress::HuffDecode` | 0.702 | **0.443** | 1.205 | 1.491 |
+| `Compress::ArithEncode` | 1.245 | **1.193** | 1.355 | 1.246 |
+| `Compress::ArithDecode` | 0.998 | **0.945** | 1.155 | 1.095 |
+| `Compress::LZWEncode` | **0.187** | 1.456 | 0.984 | 1.116 |
+| `Compress::LZWDecode` | 5.523 | 0.567 | **0.531** | 1.609 |
 
 ## Goals
 

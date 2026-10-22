@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.8.0 - 2026-10-22
 
 ### Changed
 * `Array.fill` accepts `Bool` as well as `Int`. A `Bool` fill writes one byte per element.
