@@ -1,13 +1,13 @@
-# On a version tag: the v0.6.0 seed builds B, the suite runs on B,
+# On a version tag: the v0.7.0 seed builds B, the suite runs on B,
 # then a draft GitHub Release is opened with the linux-x86_64 compiler.
 #
-# The seed is avant-linux-x86_64.tar.gz from v0.6.0 (binary `avant`).
+# The seed is avant-linux-x86_64.tar.gz from v0.7.0 (binary `avant`).
 # Runtime objects come from runtime/build.sh. Crystal src/ is not on
 # this path. myc-llvm is still built with Crystal (Q53-A).
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
-# is named `avant`. Do not dispatch this workflow onto v0.6.0: that
+# is named `avant`. Do not dispatch this workflow onto v0.7.0: that
 # tag's asset is the seed, and an upload would replace it.
 #
 # The suite runs before any release is created. A new tag becomes a
@@ -26,7 +26,7 @@ name: release-binary
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and attach (not v0.6.0)
+        description: Existing tag to build and attach (not v0.7.0)
         required: true
         type: string
 
@@ -81,11 +81,11 @@ jobs:
       - name: Build runtime objects
         run: sh runtime/build.sh
 
-      - name: Download v0.6.0 compiler
+      - name: Download v0.7.0 compiler
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/avant-seed.tar.gz \
-            https://github.com/avant-lang/avant/releases/download/v0.6.0/avant-linux-x86_64.tar.gz
+            https://github.com/avant-lang/avant/releases/download/v0.7.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
@@ -136,7 +136,7 @@ jobs:
             echo "crystal: $(crystal --version | head -n1)"
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
-            echo "built-by: v0.6.0"
+            echo "built-by: v0.7.0"
             echo "seed: yes"
             echo "binary: avant"
           } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
@@ -145,7 +145,7 @@ jobs:
           {
             echo "linux-x86_64 compiler \`avant\` and \`myc-llvm\`."
             echo
-            echo "Built by the v0.6.0 seed. This asset can be the next pin after it is published. It is not the oracle. \`myc-llvm\` in CI is still built from the safepoints checkout."
+            echo "Built by the v0.7.0 seed. This asset can be the next pin after it is published. It is not the oracle. \`myc-llvm\` in CI is still built from the safepoints checkout."
             echo "Needs the source tree (\`runtime/\`, \`cc\`), LLVM 20, libpcre2, and re2c to compile programs."
             echo "A string literal at \`re_compile\` is compiled with re2c. A computed pattern uses PCRE2."
             echo "Set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."

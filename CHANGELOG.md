@@ -1,5 +1,13 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Changed
+* `Array.fill` accepts `Bool` as well as `Int`. A `Bool` fill writes one byte per element.
+* A scalar buffer larger than a block starts young. A young collection frees it when nothing marks it. A marked one stays put and becomes mature. One freed byte buffer can be reused for the next allocation of the same size.
+* An assignment that allocates, and does not read the local it replaces, drops that pointer before the allocation.
+* `Array.new` clears the previous buffer and header slots before it allocates.
+
 ## 0.7.0 - 2026-10-22
 
 ### Added
