@@ -1214,15 +1214,19 @@ static void copy_payload_children(void *p) {
  * calculator replaces that array each iteration, the buffer is a large
  * object, and the young collection was tenuring the whole history.
  * Scan a mature or large object when a root or a young object points
- * at it. From inside a mature object, scan only a child that is itself
- * remembered, so a still-live mature tree is not walked. */
+ * at it. From inside a mature object, scan a remembered child or a
+ * young large child. A mature tree that is not remembered is not walked. */
 static void trace_mature(void *p, int from_mature) {
   AvantHeader *h = avant_header(p);
   int saved;
   if (h->flags & AVANT_FLAG_MARKED) {
     return;
   }
-  if (from_mature && (h->flags & AVANT_FLAG_REM) == 0) {
+  /* A mature parent's young child is usually in the nursery and is
+   * copied before this function runs. A young large object is not in a
+   * block, so it arrives here. Leaving it unmarked lets the young
+   * collection free a string the parent array still holds. */
+  if (from_mature && (h->flags & AVANT_FLAG_REM) == 0 && (h->flags & AVANT_FLAG_YOUNG) == 0) {
     return;
   }
   h->flags |= AVANT_FLAG_MARKED;
@@ -1266,7 +1270,8 @@ static void *copy_nursery(void *p) {
   int tenure = g_force_tenure || (h->flags & AVANT_FLAG_SURVIVED);
   AvantHeader *nh = tenure ? (AvantHeader *)mature_alloc(total) : to_alloc(total);
   memcpy(nh, h, total);
-  nh->flags = (uint16_t)(h->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_HEAP));
+  nh->flags = (uint16_t)(h->flags &
+                         (AVANT_FLAG_PINNED | AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA));
   nh->flags |= AVANT_FLAG_MARKED;
   if (!tenure) {
     nh->flags |= (uint16_t)(AVANT_FLAG_SURVIVED | AVANT_FLAG_YOUNG);

@@ -39,6 +39,9 @@
 #define AVANT_FLAG_YOUNG 32u
 /* Large-object payload. It is not moved by a young collection. */
 #define AVANT_FLAG_LARGE 64u
+/* Heap string whose header size is the byte length plus the trailing NUL.
+ * Readers may trust that length without walking the block table. */
+#define AVANT_FLAG_STRMETA 0x4000u
 #define AVANT_FLAG_HEAP 0x8000u
 
 typedef struct AvantHeader {
@@ -228,6 +231,13 @@ const char *avant_http_roundtrip(const char *body);
 
 static inline AvantHeader *avant_header(void *payload) {
   return ((AvantHeader *)payload) - 1;
+}
+
+static inline void avant_str_tag(void *payload) {
+  if (payload) {
+    avant_header(payload)->flags =
+        (uint16_t)(avant_header(payload)->flags | AVANT_FLAG_STRMETA);
+  }
 }
 
 #endif

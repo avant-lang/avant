@@ -27,6 +27,7 @@ static char *dup_bytes(const char *s, size_t n) {
     memcpy(p, s, n);
   }
   p[n] = 0;
+  avant_str_tag(p);
   avant_gc_defer_leave();
   return p;
 }

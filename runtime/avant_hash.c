@@ -16,6 +16,15 @@ typedef struct {
 
 static __thread const char *g_last_key;
 
+/* state bytes, then one uint32 hash per slot. cap is 0 or a power of two. */
+static uint64_t state_bytes(int32_t cap) {
+  return (uint64_t)cap + (uint64_t)cap * (uint64_t)sizeof(uint32_t);
+}
+
+static uint32_t *hashes_of(const AvantHash *h) {
+  return (uint32_t *)(h->state + h->cap);
+}
+
 static uint32_t hash_bytes(const char *s, size_t n) {
   uint32_t h = 2166136261u;
   size_t i;
@@ -170,7 +179,7 @@ static int lookup_bytes(AvantHash *h, const char *s, size_t n, uint32_t hv, int3
       if (tomb < 0) {
         tomb = i;
       }
-    } else if (slot_full(st)) {
+    } else if (slot_full(st) && hashes_of(h)[i] == hv) {
       const char *slot = (const char *)(uintptr_t)load_key(h, i);
       if (bytes_eq(slot, slot_n(h, i), s, n)) {
         *out = i;
@@ -192,12 +201,14 @@ static void insert_raw(AvantHash *dst, int64_t key_bits, int32_t val_i32, const 
   int32_t i = 0;
   const char *skey = NULL;
   size_t sn = 0;
+  uint32_t hv = 0;
   if (dst->key_kind == AVANT_HASH_KEY_STR) {
     skey = (const char *)(uintptr_t)key_bits;
     sn = avant_str_n(skey);
-    lookup_bytes(dst, skey, sn, hash_bytes(skey, sn), &i);
+    hv = hash_bytes(skey, sn);
+    lookup_bytes(dst, skey, sn, hv, &i);
   } else {
-    uint32_t hv = hash_key(dst, key_bits);
+    hv = hash_key(dst, key_bits);
     lookup(dst, key_bits, hv, &i);
   }
   int full = slot_full(dst->state[i]);
@@ -218,6 +229,9 @@ static void insert_raw(AvantHash *dst, int64_t key_bits, int32_t val_i32, const 
     }
   } else {
     store_val_i32(dst, i, val_i32);
+  }
+  if (dst->state && dst->key_kind == AVANT_HASH_KEY_STR) {
+    hashes_of(dst)[i] = hv;
   }
   if (!full) {
     dst->state[i] = dst->key_kind == AVANT_HASH_KEY_STR ? occ_mark(skey, sn) : 1;
@@ -253,7 +267,7 @@ static void grow(AvantHash *h) {
   uint8_t *ostate = h->state;
   int32_t ncap = ocap ? ocap * 2 : 8;
   void *nkeys = avant_alloc(key_bytes(h, ncap), key_type_id(h));
-  uint8_t *nstate = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
+  uint8_t *nstate = (uint8_t *)avant_alloc(state_bytes(ncap), AVANT_TYPE_BYTES);
   void *nvals = avant_alloc(val_bytes(h, ncap), val_type_id(h));
 
   AvantHash dst = *h;
@@ -356,7 +370,7 @@ void avant_hash_clear(void *hp) {
     }
   }
   if (h->state && h->cap > 0) {
-    memset(h->state, 0, (size_t)h->cap);
+    memset(h->state, 0, (size_t)state_bytes(h->cap));
   }
   h->size = 0;
 }
@@ -436,27 +450,70 @@ int32_t avant_hash_get_i32k_i32(void *hp, int32_t key, int32_t *found) {
   return ((int32_t *)h->vals)[i];
 }
 
+/* Linear-probing deletion slides later cluster entries back into the hole
+ * so a removed key does not leave a tombstone that later probes must walk. */
+static void erase_at(AvantHash *h, int32_t i) {
+  int32_t mask = h->cap - 1;
+  uint32_t *hs = hashes_of(h);
+  h->size -= 1;
+  for (;;) {
+    int32_t k;
+    h->state[i] = 0;
+    if (h->key_kind == AVANT_HASH_KEY_STR) {
+      ((void **)h->keys)[i] = NULL;
+    }
+    k = (i + 1) & mask;
+    for (;;) {
+      uint32_t hv;
+      int32_t home;
+      int move;
+      if (!slot_full(h->state[k])) {
+        return;
+      }
+      if (h->key_kind == AVANT_HASH_KEY_STR) {
+        hv = hs[k];
+      } else {
+        hv = hash_i32(((int32_t *)h->keys)[k]);
+      }
+      home = (int32_t)(hv & (uint32_t)mask);
+      move = (i <= k) ? (home <= i || home > k) : (home <= i && home > k);
+      if (move) {
+        h->state[i] = h->state[k];
+        hs[i] = hs[k];
+        if (h->key_kind == AVANT_HASH_KEY_STR) {
+          ((void **)h->keys)[i] = ((void **)h->keys)[k];
+        } else {
+          ((int32_t *)h->keys)[i] = ((int32_t *)h->keys)[k];
+        }
+        if (h->val_kind == AVANT_HASH_VAL_STR) {
+          ((const char **)h->vals)[i] = ((const char **)h->vals)[k];
+        } else {
+          ((int32_t *)h->vals)[i] = ((int32_t *)h->vals)[k];
+        }
+        i = k;
+        break;
+      }
+      k = (k + 1) & mask;
+    }
+  }
+}
+
 void avant_hash_del(void *hp, const char *key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !lookup_str(h, key, &i)) {
+  if (!h || !h->cap || !lookup_str(h, key, &i)) {
     return;
   }
-  h->state[i] = 2;
-  if (h->key_kind == AVANT_HASH_KEY_STR) {
-    ((void **)h->keys)[i] = NULL;
-  }
-  h->size -= 1;
+  erase_at(h, i);
 }
 
 void avant_hash_del_i32k(void *hp, int32_t key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !lookup(h, (int64_t)key, hash_i32(key), &i)) {
+  if (!h || !h->cap || !lookup(h, (int64_t)key, hash_i32(key), &i)) {
     return;
   }
-  h->state[i] = 2;
-  h->size -= 1;
+  erase_at(h, i);
 }
 
 int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t stop) {
@@ -485,8 +542,10 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
     memcpy(key, p, n);
   }
   key[n] = 0;
+  avant_str_tag(key);
   store_key(h, i, (int64_t)(uintptr_t)key);
   store_val_i32(h, i, 1);
+  hashes_of(h)[i] = hv;
   if (!slot_full(h->state[i])) {
     h->state[i] = (uint8_t)(1u | AVANT_HASH_HEAP_LEN);
     h->size += 1;
@@ -594,7 +653,7 @@ int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *f
     if (st == 0) {
       return 0;
     }
-    if (slot_full(st)) {
+    if (slot_full(st) && hashes_of(h)[i] == hv) {
       const char *slot = (const char *)(uintptr_t)load_key(h, i);
       if (bytes_eq_concat(slot, slot_n(h, i), a, na, b, nb)) {
         if (found) {

@@ -100,6 +100,7 @@ static struct us_socket_t *on_client_data(struct us_socket_t *s, char *data, int
     char *copy = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
     memcpy(copy, sep, (size_t)n);
     copy[n] = 0;
+    avant_str_tag(copy);
     avant_gc_defer_leave();
     job->copied = copy;
     job->done = 1;

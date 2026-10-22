@@ -32,6 +32,7 @@ char *avant_b64_encode(const char *s) {
   char *out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
   b64_write(out, p, n);
   out[out_n] = 0;
+  avant_str_tag(out);
   avant_gc_defer_leave();
   return out;
 }
@@ -91,6 +92,7 @@ char *avant_b64_decode(const char *s) {
   char *out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
   size_t o = b64_decode_write(out, p, n, out_n);
   out[o] = 0;
+  avant_str_tag(out);
   avant_gc_defer_leave();
   return out;
 }
@@ -257,6 +259,7 @@ char *avant_sha256(const char *s) {
     out[i * 8 + 7] = HEX[v & 15];
   }
   out[64] = 0;
+  avant_str_tag(out);
   avant_gc_defer_leave();
   return out;
 }
@@ -285,6 +288,7 @@ char *avant_zlib_compress(const char *s) {
   out[3] = (char)(n & 255);
   memcpy(out + 4, raw, (size_t)dest_len);
   out[4 + dest_len] = 0;
+  avant_str_tag(out);
   free(raw);
   avant_gc_defer_leave();
   return out;
@@ -305,6 +309,7 @@ char *avant_zlib_uncompress(const char *s) {
   out = (char *)avant_alloc((uint64_t)orig + 1, AVANT_TYPE_BYTES);
   if (orig == 0) {
     out[0] = 0;
+    avant_str_tag(out);
     avant_gc_defer_leave();
     return out;
   }
@@ -313,6 +318,7 @@ char *avant_zlib_uncompress(const char *s) {
     return avant_str_empty();
   }
   out[orig] = 0;
+  avant_str_tag(out);
   avant_gc_defer_leave();
   return out;
 }
