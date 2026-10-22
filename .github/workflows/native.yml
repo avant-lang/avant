@@ -1,21 +1,17 @@
 # v0.9.0 seed → B, then native suite on B. Required gate.
 #
-# The seed is the published pre-release asset avant-linux-x86_64.tar.gz
-# (binary `avant`). It compiles compiler/main.av into B with coverage on.
-# Runtime objects come from runtime/build.sh. There is no Crystal host
-# in this repository.
-#
-# myc-llvm stays a Crystal build (Q53-A). This job checks out
-# avant-lang/safepoints; that shard's shard.yml pulls kostya/myc;
-# `crystal build src/cli.cr` overlays safepoints on myc and writes myc-llvm.
-# AVANT_MYC_LLVM points Avant at it. Pin `ref` on the safepoints checkout
-# when a tag exists.
+# The seed is the published asset avant-linux-x86_64.tar.gz. Inside it,
+# `avant` is the compiler and `myc-llvm` is the prebuilt backend. This job
+# does not install Crystal and does not compile myc-llvm. AVANT_MYC_LLVM
+# points at the extracted backend. `avant` compiles compiler/main.av into B
+# with coverage on. Runtime objects come from runtime/build.sh.
 #
 # `re2c` is a build tool, like `cc`. A string literal at `re_compile` is
 # compiled with it and linked in. Without `re2c` that call stays on PCRE2.
 # Computed patterns always use PCRE2 (`libpcre2-dev`).
 #
-# Tag pushes are `release.yml` (the v0.9.0 seed builds that binary too).
+# Tag pushes are `release.yml` (the v0.9.0 seed builds that binary too,
+# and the new asset reuses this same myc-llvm).
 # `native` also writes junit.xml and lcov.info (soft Codecov; not the merge gate).
 # Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is quiet anyway so
 # `run FILE.av` stdout stays the program. A `--coverage` fixture still prints.
@@ -44,15 +40,9 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/checkout@v7
-        with:
-          repository: avant-lang/safepoints
-          path: safepoints
-          persist-credentials: false
 
       - name: Install LLVM 20 and link libraries
         run: |
@@ -65,16 +55,6 @@ jobs:
             zlib1g-dev \
             re2c
 
-      - uses: crystal-lang/install-crystal@v1
-        with:
-          crystal: "1.21"
-
-      - name: Build myc-llvm
-        working-directory: safepoints
-        run: |
-          shards install
-          crystal build src/cli.cr -o myc-llvm
-
       - name: Build runtime objects
         run: sh runtime/build.sh
 
@@ -85,6 +65,7 @@ jobs:
             https://github.com/avant-lang/avant/releases/download/v0.9.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
+          test -x /tmp/avant-linux-x86_64/myc-llvm
 
       - name: Seed → B
         env:

@@ -1,14 +1,15 @@
 # Q52 pin check. Not the merge gate.
 #
-# v0.9.0 is the published compiler (binary `avant` inside
-# avant-linux-x86_64.tar.gz). This job asks that binary to compile
-# today's compiler/main.av and pass the suite, without coverage.
+# v0.9.0 is the published compiler. avant-linux-x86_64.tar.gz contains
+# `avant` and the prebuilt `myc-llvm`. This job asks that compiler to
+# compile today's compiler/main.av and pass the suite, without coverage.
 # `native` compiles B from the same pin with coverage on.
+# AVANT_MYC_LLVM is the extracted backend. This job does not install
+# Crystal and does not compile myc-llvm.
 #
 # v0.1.0 stayed green through pull request 10 and is no longer a job.
-# myc-llvm is still built with Crystal (Q53-A). Runtime objects come from
-# runtime/build.sh. `re2c` compiles a string literal at `re_compile`;
-# computed patterns use PCRE2.
+# Runtime objects come from runtime/build.sh. `re2c` compiles a string
+# literal at `re_compile`; computed patterns use PCRE2.
 
 name: seed
 
@@ -32,15 +33,9 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/checkout@v7
-        with:
-          repository: avant-lang/safepoints
-          path: safepoints
-          persist-credentials: false
 
       - name: Install LLVM 20 and link libraries
         run: |
@@ -53,16 +48,6 @@ jobs:
             zlib1g-dev \
             re2c
 
-      - uses: crystal-lang/install-crystal@v1
-        with:
-          crystal: "1.21"
-
-      - name: Build myc-llvm
-        working-directory: safepoints
-        run: |
-          shards install
-          crystal build src/cli.cr -o myc-llvm
-
       - name: Build runtime objects
         run: sh runtime/build.sh
 
@@ -73,6 +58,7 @@ jobs:
             https://github.com/avant-lang/avant/releases/download/v0.9.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
+          test -x /tmp/avant-linux-x86_64/myc-llvm
 
       - name: Seed compiles compiler A
         run: |

@@ -1,5 +1,10 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Changed
+* `Array.fill` on `Int` writes `0` and `-1` as a repeated byte. Any other value is stored in wide chunks.
+
 ## 0.9.0 - 2026-10-22
 
 ### Changed
