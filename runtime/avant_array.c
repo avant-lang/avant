@@ -3,6 +3,9 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 /*
  * g_avant_shared stays 0 until a second thread registers. The mutator
@@ -484,11 +487,32 @@ void avant_array_fill_i32(void *arr, int32_t v) {
   }
   n = a->size;
   p = (int32_t *)a->buf;
-  if (v == 0) {
-    memset(p, 0, (size_t)n * sizeof(int32_t));
+  /* 0 and -1 are a repeated byte. A* fills came_from with -1. */
+  if (v == 0 || v == -1) {
+    memset(p, v == 0 ? 0 : 0xff, (size_t)n * sizeof(int32_t));
     return;
   }
+#if defined(__SSE2__)
+  {
+    __m128i x = _mm_set1_epi32(v);
+    i = 0;
+    while (i + 8 <= n) {
+      _mm_storeu_si128((__m128i *)(p + i), x);
+      _mm_storeu_si128((__m128i *)(p + i + 4), x);
+      i += 8;
+    }
+    while (i + 4 <= n) {
+      _mm_storeu_si128((__m128i *)(p + i), x);
+      i += 4;
+    }
+    while (i < n) {
+      p[i] = v;
+      i++;
+    }
+  }
+#else
   for (i = 0; i < n; i++) {
     p[i] = v;
   }
+#endif
 }

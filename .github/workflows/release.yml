@@ -1,13 +1,15 @@
-# On a version tag: the v0.7.0 seed builds B, the suite runs on B,
+# On a version tag: the v0.9.0 seed builds B, the suite runs on B,
 # then a draft GitHub Release is opened with the linux-x86_64 compiler.
 #
-# The seed is avant-linux-x86_64.tar.gz from v0.7.0 (binary `avant`).
-# Runtime objects come from runtime/build.sh. Crystal src/ is not on
-# this path. myc-llvm is still built with Crystal (Q53-A).
+# The seed is avant-linux-x86_64.tar.gz from v0.9.0. It contains `avant`
+# and the prebuilt `myc-llvm`. This job uses that backend as
+# AVANT_MYC_LLVM and ships the same binary in the new asset. It does not
+# install Crystal and does not compile myc-llvm.
+# Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
-# is named `avant`. Do not dispatch this workflow onto v0.7.0: that
+# is named `avant`. Do not dispatch this workflow onto v0.9.0: that
 # tag's asset is the seed, and an upload would replace it.
 #
 # The suite runs before any release is created. A new tag becomes a
@@ -26,7 +28,7 @@ name: release-binary
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and attach (not v0.7.0)
+        description: Existing tag to build and attach (not v0.9.0)
         required: true
         type: string
 
@@ -44,18 +46,12 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: ${{ github.workspace }}/safepoints/myc-llvm
+      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
       TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - uses: actions/checkout@v7
-        with:
-          repository: avant-lang/safepoints
-          path: safepoints
-          persist-credentials: false
 
       - name: Install LLVM 20 and link libraries
         run: |
@@ -68,26 +64,17 @@ jobs:
             zlib1g-dev \
             re2c
 
-      - uses: crystal-lang/install-crystal@v1
-        with:
-          crystal: "1.21"
-
-      - name: Build myc-llvm
-        working-directory: safepoints
-        run: |
-          shards install
-          crystal build src/cli.cr -o myc-llvm
-
       - name: Build runtime objects
         run: sh runtime/build.sh
 
-      - name: Download v0.7.0 compiler
+      - name: Download v0.9.0 compiler
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/avant-seed.tar.gz \
-            https://github.com/avant-lang/avant/releases/download/v0.7.0/avant-linux-x86_64.tar.gz
+            https://github.com/avant-lang/avant/releases/download/v0.9.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
+          test -x /tmp/avant-linux-x86_64/myc-llvm
 
       - name: Seed → B
         run: |
@@ -115,28 +102,19 @@ jobs:
           set -euo pipefail
           mkdir -p dist/avant-linux-x86_64
           cp -f bin/avant-av-b dist/avant-linux-x86_64/avant
-          cp -f safepoints/myc-llvm dist/avant-linux-x86_64/myc-llvm
+          cp -f /tmp/avant-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
           chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
-          myc_sha=""
-          if [ -d safepoints/lib/myc/.git ] || [ -f safepoints/lib/myc/.git ]; then
-            myc_top="$(git -C safepoints/lib/myc rev-parse --show-toplevel 2>/dev/null || true)"
-            myc_real="$(cd safepoints/lib/myc && pwd)"
-            if [ "$myc_top" = "$myc_real" ]; then
-              myc_sha="$(git -C safepoints/lib/myc rev-parse HEAD)"
-            fi
-          fi
-          if [ -z "${myc_sha}" ]; then
-            myc_sha="$(awk '/commit:/ { print $2; exit }' safepoints/shard.yml)"
-          fi
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
-            echo "safepoints: $(git -C safepoints rev-parse HEAD)"
-            echo "myc: ${myc_sha}"
-            echo "crystal: $(crystal --version | head -n1)"
+            echo "myc-llvm: reused from v0.9.0 avant-linux-x86_64.tar.gz"
+            if [ -f /tmp/avant-linux-x86_64/versions.txt ]; then
+              echo "myc-llvm-origin:"
+              sed 's/^/  /' /tmp/avant-linux-x86_64/versions.txt
+            fi
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
-            echo "built-by: v0.7.0"
+            echo "built-by: v0.9.0"
             echo "seed: yes"
             echo "binary: avant"
           } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
@@ -145,7 +123,7 @@ jobs:
           {
             echo "linux-x86_64 compiler \`avant\` and \`myc-llvm\`."
             echo
-            echo "Built by the v0.7.0 seed. This asset can be the next pin after it is published. It is not the oracle. \`myc-llvm\` in CI is still built from the safepoints checkout."
+            echo "Built by the v0.9.0 seed. \`myc-llvm\` is the binary from that seed asset, reused unchanged. This asset can be the next pin after it is published. It is not the oracle."
             echo "Needs the source tree (\`runtime/\`, \`cc\`), LLVM 20, libpcre2, and re2c to compile programs."
             echo "A string literal at \`re_compile\` is compiled with re2c. A computed pattern uses PCRE2."
             echo "Set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
