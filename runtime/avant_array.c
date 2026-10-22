@@ -466,6 +466,14 @@ void avant_array_sort_i32(void *arr) {
   sort_i32((int32_t *)a->buf, a->size);
 }
 
+void avant_array_fill_u8(void *arr, int32_t v) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || a->size <= 0) {
+    return;
+  }
+  memset(a->buf, (int)(unsigned char)v, (size_t)a->size);
+}
+
 void avant_array_fill_i32(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t n;

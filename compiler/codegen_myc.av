@@ -738,6 +738,8 @@ pub class MycGen {
   root_loop: Int = 0
   early_indent: Int = 0
   early_out: Buf
+  early_names: Array(String)
+  early_myc: Array(String)
   may_share: Bool = false
 
   fn initialize(program: Program) {
@@ -829,6 +831,10 @@ pub class MycGen {
     self.early_indent = 0
     eb = buf_new()
     self.early_out = eb
+    en: Array(String) = []
+    self.early_names = en
+    emc: Array(String) = []
+    self.early_myc = emc
     self.may_share = false
   }
 
@@ -978,6 +984,10 @@ pub class MycGen {
     self.hoist_ems = he
     hy: Array(String) = []
     self.hoist_young = hy
+    en: Array(String) = []
+    self.early_names = en
+    emc: Array(String) = []
+    self.early_myc = emc
   }
 
   pub fn find_fn(name: String): FuncSig? {
@@ -1117,6 +1127,7 @@ pub class MycGen {
     self.ext("avant_array_pop_slot", "ptr<void>,u64", "ptr<void>")
     self.ext("avant_array_sort_i32", "ptr<void>", "")
     self.ext("avant_array_fill_i32", "ptr<void>,i32", "")
+    self.ext("avant_array_fill_u8", "ptr<void>,i32", "")
     self.ext("avant_zlib_compress", "ptr<u8>", "ptr<u8>")
     self.ext("avant_zlib_uncompress", "ptr<u8>", "ptr<u8>")
     self.ext("avant_sha256", "ptr<u8>", "ptr<u8>")
@@ -3220,6 +3231,55 @@ pub class MycGen {
     self.line("CALL :avant_gc_root")
     self.out = saved_out
     self.indent = saved_indent
+    // A temp rooted for the whole loop keeps its last pointer until the
+    // next store. That store is after the next allocation, so the dead
+    // buffer stays a root and is promoted. Clear temps at the end of the
+    // outermost loop, once the iteration is done with them.
+    if self.is_codegen_temp(name) {
+      self.early_names.push(name)
+      self.early_myc.push(ty_myc(ty))
+    }
+  }
+
+  pub fn is_codegen_temp(name: String): Bool {
+    if name.size < 3 {
+      return false
+    }
+    str_eq(str_slice(name, 0, 3), "__t")
+  }
+
+  pub fn note_loop_temp(name: String, myc: String) {
+    if self.root_loop == 0 {
+      return
+    }
+    if self.is_codegen_temp(name) {
+    } else {
+      return
+    }
+    i = 0
+    while i < self.early_names.size {
+      if str_eq(self.early_names[i], name) {
+        return
+      }
+      i = i + 1
+    }
+    self.early_names.push(name)
+    self.early_myc.push(myc)
+  }
+
+  pub fn clear_early_temps {
+    i = 0
+    while i < self.early_names.size {
+      self.line("PUSH 0")
+      self.line("AS :${self.early_myc[i]}")
+      self.line("LOCAL :${self.early_names[i]}")
+      self.line("STORE")
+      i = i + 1
+    }
+    en: Array(String) = []
+    self.early_names = en
+    emc: Array(String) = []
+    self.early_myc = emc
   }
 
   pub fn emit_while(stmt: Stmt) {
@@ -3230,6 +3290,10 @@ pub class MycGen {
       fresh = buf_new()
       self.early_out = fresh
       self.early_indent = self.indent
+      en: Array(String) = []
+      self.early_names = en
+      emc: Array(String) = []
+      self.early_myc = emc
     }
     saved = self.out
     body = buf_new()
@@ -3247,6 +3311,9 @@ pub class MycGen {
     self.indent = self.indent + 1
     self.cov_branch(stmt.loc)
     self.emit_stmts(stmt.body, false)
+    if outer {
+      self.clear_early_temps
+    }
     self.indent = self.indent - 1
     self.indent = self.indent - 1
     self.line("ENDLOOP")
@@ -3354,8 +3421,199 @@ pub class MycGen {
     }
   }
 
+  pub fn expr_mentions(expr: Expr, name: String): Bool {
+    if expr.kind == ex_name() {
+      if str_eq(expr.ident, name) {
+        return true
+      }
+    }
+    i = 0
+    while i < expr.cap_names.size {
+      if str_eq(expr.cap_names[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    if inner = expr.inner {
+      if self.expr_mentions(inner, name) {
+        return true
+      }
+    }
+    if l = expr.left {
+      if self.expr_mentions(l, name) {
+        return true
+      }
+    }
+    if r = expr.right {
+      if self.expr_mentions(r, name) {
+        return true
+      }
+    }
+    if obj = expr.object {
+      if self.expr_mentions(obj, name) {
+        return true
+      }
+    }
+    if c = expr.cond {
+      if self.expr_mentions(c, name) {
+        return true
+      }
+    }
+    if recv = expr.receiver {
+      if self.expr_mentions(recv, name) {
+        return true
+      }
+    }
+    if sz = expr.size_expr {
+      if self.expr_mentions(sz, name) {
+        return true
+      }
+    }
+    if sp = expr.splice {
+      if self.expr_mentions(sp, name) {
+        return true
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      if self.expr_mentions(expr.args[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      if self.expr_mentions(expr.elems[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_exprs.size {
+      if self.expr_mentions(expr.field_exprs[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if pe = part.expr {
+        if self.expr_mentions(pe, name) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.cases.size {
+      if self.stmts_mention(expr.cases[i].body, name) {
+        return true
+      }
+      i = i + 1
+    }
+    if self.stmts_mention(expr.else_body, name) {
+      return true
+    }
+    if b = expr.block {
+      if self.stmts_mention(b.body, name) {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn stmts_mention(body: Array(Stmt), name: String): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_mentions(body[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn stmt_mentions(stmt: Stmt, name: String): Bool {
+    if str_eq(stmt.bind, name) {
+      return true
+    }
+    if e = stmt.expr {
+      if self.expr_mentions(e, name) {
+        return true
+      }
+    }
+    if c = stmt.cond {
+      if self.expr_mentions(c, name) {
+        return true
+      }
+    }
+    if t = stmt.target {
+      if self.expr_mentions(t, name) {
+        return true
+      }
+    }
+    if v = stmt.value {
+      if self.expr_mentions(v, name) {
+        return true
+      }
+    }
+    if self.stmts_mention(stmt.then_body, name) {
+      return true
+    }
+    if self.stmts_mention(stmt.else_body, name) {
+      return true
+    }
+    self.stmts_mention(stmt.body, name)
+  }
+
+  // `primes = Array.new` does not read primes. Drop the old pointer
+  // before the allocation so a young collection can free that buffer.
+  pub fn assign_drops_local(stmt: Stmt): Bool {
+    if t = stmt.target {
+      if t.kind == ex_name() {
+      } else {
+        return false
+      }
+      if t.implicit_field {
+        return false
+      }
+      if self.name_is_boxed(t.ident) {
+        return false
+      }
+      if self.cap_index(t.ident) >= 0 {
+        return false
+      }
+      if heap_ptr_value(expr_ty(t)) {
+      } else {
+        return false
+      }
+      if v = stmt.value {
+        if self.expr_may_collect(v) {
+          if self.expr_mentions(v, t.ident) {
+            return false
+          }
+          return true
+        }
+      }
+    }
+    false
+  }
+
+  pub fn drop_local(name: String, ty: Ty) {
+    self.emit_zero(ty)
+    m = ty_myc(ty)
+    self.line("LOCAL :${name} :${m}")
+    self.line("STORE")
+  }
+
   pub fn emit_assign(stmt: Stmt) {
     if stmt.op == tk_eq() {
+      if self.assign_drops_local(stmt) {
+        if t = stmt.target {
+          self.drop_local(t.ident, expr_ty(t))
+        }
+      }
       if t = stmt.target {
         if t.kind == ex_name() {
           if self.name_is_boxed(t.ident) {
@@ -4044,6 +4302,17 @@ pub class MycGen {
   pub fn end_loop_hoists(n: Int) {
     left = n
     while left > 0 {
+      // The hoisted buffer slot stays a root for the rest of the frame.
+      // Clear it when the loop ends so the next allocation can free the
+      // buffer once the array local is overwritten.
+      if self.cur_leaf == 0 {
+        ptr = self.hoist_ptrs[self.hoist_ptrs.size - 1]
+        em = self.hoist_ems[self.hoist_ems.size - 1]
+        self.line("PUSH 0")
+        self.line("AS :ptr<${em}>")
+        self.line("LOCAL :${ptr}")
+        self.line("STORE")
+      }
       self.hoist_names.pop
       self.hoist_bits.pop
       self.hoist_ptrs.pop
@@ -4742,6 +5011,9 @@ pub class MycGen {
     if str_eq(name, "avant_array_fill_i32") {
       return true
     }
+    if str_eq(name, "avant_array_fill_u8") {
+      return true
+    }
     if str_eq(name, "printf") {
       return true
     }
@@ -4919,6 +5191,7 @@ pub class MycGen {
           ptr_tmp = self.new_temp
           self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
           self.line("STORE")
+          self.note_loop_temp(ptr_tmp, "ptr<${em}>")
           self.emit_root_if_shared(ptr_tmp)
           self.line("LOCAL :${ixt}")
           self.line("LOCAL :${ptr_tmp}")
@@ -4990,12 +5263,26 @@ pub class MycGen {
     self.line("AS :ptr<${em}>")
   }
 
+  pub fn null_slot(name: String, myc: String) {
+    self.line("PUSH 0")
+    self.line("AS :${myc}")
+    self.line("LOCAL :${name} :${myc}")
+    self.line("STORE")
+  }
+
   pub fn emit_array_header(ty: Ty, buf: String, size: String, cap: String) {
-    layout = ty_layout_myc(ty)
-    self.emit_alloc_sizeof(layout, 1022)
     m = ty_myc(ty)
-    self.line("AS :${m}")
     arr = self.new_temp
+    self.null_slot(arr, m)
+    self.emit_array_header_at(ty, buf, size, cap, arr)
+  }
+
+  pub fn emit_array_header_at(ty: Ty, buf: String, size: String, cap: String, arr: String) {
+    m = ty_myc(ty)
+    layout = ty_layout_myc(ty)
+    self.null_slot(arr, m)
+    self.emit_alloc_sizeof(layout, 1022)
+    self.line("AS :${m}")
     self.line("LOCAL :${arr} :${m}")
     self.line("STORE")
     self.ensure_root(arr, ty)
@@ -5064,10 +5351,19 @@ pub class MycGen {
     }
     self.line("LOCAL :${len_tmp} :i32")
     self.line("STORE")
+    em = "i32"
+    if e = ty.inner {
+      em = ty_myc(e)
+    }
+    arr = self.new_temp
+    m = ty_myc(ty)
+    // Both slots are roots for the whole loop. Clear them before the
+    // buffer allocation, or the previous array is marked and promoted.
+    self.null_slot(ptr_tmp, "ptr<${em}>")
+    self.null_slot(arr, m)
     self.line("LOCAL :${len_tmp}")
     if e = ty.inner {
       self.emit_alloc_count(e)
-      em = ty_myc(e)
       self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
     } else {
       self.emit_alloc_count(ty_int())
@@ -5075,7 +5371,12 @@ pub class MycGen {
     }
     self.line("STORE")
     self.emit_ptr_root(ptr_tmp)
-    self.emit_array_header(ty, ptr_tmp, len_tmp, len_tmp)
+    if e = ty.inner {
+      self.note_loop_temp(ptr_tmp, "ptr<${ty_myc(e)}>")
+    } else {
+      self.note_loop_temp(ptr_tmp, "ptr<i32>")
+    }
+    self.emit_array_header_at(ty, ptr_tmp, len_tmp, len_tmp, arr)
   }
 
   pub fn emit_switch(expr: Expr) {
@@ -5707,13 +6008,26 @@ pub class MycGen {
       return
     }
     if str_eq(expr.callee, "fill") {
+      byte_fill = false
+      if e = ty.inner {
+        if e.is_bool {
+          byte_fill = true
+        }
+      }
       if expr.args.size > 0 {
         self.emit_expr(expr.args[0])
+        if byte_fill {
+          self.line("AS :i32")
+        }
       }
       if recv = expr.receiver {
         self.emit_expr(recv)
       }
-      self.line("CALL :avant_array_fill_i32")
+      if byte_fill {
+        self.line("CALL :avant_array_fill_u8")
+      } else {
+        self.line("CALL :avant_array_fill_i32")
+      }
       return
     }
     if str_eq(expr.callee, "reserve") {

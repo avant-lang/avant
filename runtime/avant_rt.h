@@ -37,6 +37,8 @@
 #define AVANT_FLAG_SURVIVED 8u
 /* Nursery allocation. avant_barrier reads this instead of hashing the block. */
 #define AVANT_FLAG_YOUNG 32u
+/* Large-object payload. It is not moved by a young collection. */
+#define AVANT_FLAG_LARGE 64u
 #define AVANT_FLAG_HEAP 0x8000u
 
 typedef struct AvantHeader {
@@ -176,6 +178,7 @@ void avant_array_reserve(void *arr, int32_t n, uint64_t elem_size, uint32_t buf_
 void *avant_array_pop_slot(void *arr, uint64_t elem_size);
 void avant_array_sort_i32(void *arr);
 void avant_array_fill_i32(void *arr, int32_t v);
+void avant_array_fill_u8(void *arr, int32_t v);
 
 void *avant_spawn(void *fn, void *arg);
 int32_t avant_join(void *handle);

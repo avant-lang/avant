@@ -305,6 +305,7 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_array_pop_slot",
     "avant_array_sort_i32",
     "avant_array_fill_i32",
+    "avant_array_fill_u8",
     "avant_spawn",
     "avant_join",
     "avant_parallel_for",
@@ -6088,14 +6089,22 @@ pub class Checker {
       }
       if e = array.inner {
         if e.is_int {
+          got = self.check_expr_as(expr.args[0], self.t_int())
+          if got.is_int {
+          } else {
+            self.fail(expr.args[0].loc, "fill expects Int")
+          }
+        } else if e.is_bool {
+          got = self.check_expr_as(expr.args[0], self.t_bool())
+          if got.is_bool {
+          } else {
+            self.fail(expr.args[0].loc, "fill expects Bool")
+          }
         } else {
-          self.fail(expr.loc, "Array.fill is Int-only")
+          self.fail(expr.loc, "Array.fill is Int or Bool")
         }
-      }
-      got = self.check_expr_as(expr.args[0], self.t_int())
-      if got.is_int {
       } else {
-        self.fail(expr.args[0].loc, "fill expects Int")
+        self.check_expr_as(expr.args[0], self.t_int())
       }
       return self.t_void()
     }
