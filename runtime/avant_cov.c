@@ -136,23 +136,37 @@ static char *xstrdup(const char *s) {
 }
 
 static const char *display_path(const char *path) {
-  const char *p;
+  const char *rel;
+  const char *mark;
   if (!path || !path[0]) {
     return "<input>";
   }
-  p = strstr(path, "/compiler/");
-  if (p) {
-    return p + 1;
+  /* Codecov matches SF: to a path in the git tree. compiler/main.av has
+   * no slash before the directory, so searching only for "/compiler/"
+   * used to leave the basename main.av, which matches no file. */
+  rel = path;
+  while (rel[0] == '.' && rel[1] == '/') {
+    rel += 2;
   }
-  p = strstr(path, "/tests/");
-  if (p) {
-    return p + 1;
+  if (strncmp(rel, "compiler/", 9) == 0 || strncmp(rel, "tests/", 6) == 0) {
+    return rel;
   }
-  p = strrchr(path, '/');
-  if (p && p[1]) {
-    return p + 1;
+  mark = strstr(rel, "/compiler/");
+  if (mark) {
+    return mark + 1;
   }
-  return path;
+  mark = strstr(rel, "/tests/");
+  if (mark) {
+    return mark + 1;
+  }
+  if (rel[0] != '/') {
+    return rel;
+  }
+  mark = strrchr(rel, '/');
+  if (mark && mark[1]) {
+    return mark + 1;
+  }
+  return rel;
 }
 
 static int parse_map(const char *path) {
