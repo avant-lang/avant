@@ -4616,11 +4616,7 @@ pub class MycGen {
     }
     if k == ex_field() {
       if expr.method_call {
-        if self.leaf_walk == 1 {
-          if self.field_call_blocks(expr) {
-            return true
-          }
-        } else {
+        if self.field_call_blocks(expr) {
           return true
         }
       }
@@ -4719,20 +4715,18 @@ pub class MycGen {
     if expr.fn_ref {
       return true
     }
-    if expr.method_call {
-      return true
+    // A method used to block buffer hoisting even when it cannot collect.
+    // next_int, to_i, and fill are in that set. A push is not: it can
+    // replace the buffer.
+    if recv = expr.receiver {
+      if self.receiver_stays_put(expr_ty(recv), expr.callee) {
+        return false
+      }
     }
-    name = expr.callee
-    if name.size == 0 {
-      name = expr.resolved
-    }
-    if name.size == 0 {
-      return true
-    }
-    if self.runtime_leaf(name) {
+    if self.name_stays_put(expr.callee) {
       return false
     }
-    if v = self.numeric_leaves.get(name) {
+    if self.name_stays_put(expr.resolved) {
       return false
     }
     true
