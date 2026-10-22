@@ -19,9 +19,50 @@ static char *g_empty;
 
 static char *empty_str(void);
 
-size_t avant_str_n(const char *s) {
+/* Short tagged strings keep the length in the header. The NUL check stays
+ * inside the same page, so a lookalike header cannot fault. Longer strings
+ * and raw C pointers still take the block walk or strlen. */
+static int str_meta_len(const char *s, size_t *out) {
+  uintptr_t u;
+  AvantHeader *h;
+  uint32_t sz;
+  uintptr_t last;
   if (!s) {
     return 0;
+  }
+  u = (uintptr_t)s;
+  if (u & 7u) {
+    return 0;
+  }
+  h = avant_header((void *)s);
+  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA)) != (AVANT_FLAG_HEAP | AVANT_FLAG_STRMETA)) {
+    return 0;
+  }
+  if (h->type_id != AVANT_TYPE_BYTES) {
+    return 0;
+  }
+  sz = h->size;
+  if (sz == 0 || sz > 128) {
+    return 0;
+  }
+  last = u + (sz - 1);
+  if (((last ^ u) & ~(uintptr_t)4095) != 0) {
+    return 0;
+  }
+  if (s[sz - 1] != 0) {
+    return 0;
+  }
+  *out = (size_t)sz - 1;
+  return 1;
+}
+
+size_t avant_str_n(const char *s) {
+  size_t meta = 0;
+  if (!s) {
+    return 0;
+  }
+  if (str_meta_len(s, &meta)) {
+    return meta;
   }
   if (((uintptr_t)s % 8) == 0) {
     AvantHeader *h = avant_header((void *)s);
@@ -44,6 +85,7 @@ static char *dup_bytes(const char *s, size_t n) {
     memcpy(p, s, n);
   }
   p[n] = 0;
+  avant_str_tag(p);
   avant_gc_defer_leave();
   return p;
 }
@@ -76,6 +118,7 @@ char *avant_str_concat(const char *a, const char *b) {
   memcpy(p, a, na);
   memcpy(p + na, b, nb);
   p[na + nb] = 0;
+  avant_str_tag(p);
   avant_gc_defer_leave();
   return p;
 }
@@ -95,6 +138,7 @@ char *avant_str_from_i32_bytes(void *arr) {
     p[i] = (char)(unsigned char)(src[i] & 255);
   }
   p[n] = 0;
+  avant_str_tag(p);
   avant_gc_defer_leave();
   return p;
 }
@@ -106,6 +150,7 @@ char *avant_str_repeat_byte(int32_t b, int32_t n) {
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   memset(p, (unsigned char)(b & 255), (size_t)n);
   p[n] = 0;
+  avant_str_tag(p);
   return p;
 }
 
@@ -242,6 +287,7 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
     p[k++] = digs[nd];
   }
   p[k] = 0;
+  avant_str_tag(p);
   avant_gc_defer_leave();
   return p;
 }

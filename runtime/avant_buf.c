@@ -175,6 +175,7 @@ char *avant_buf_to_str(void *buf) {
     memcpy(p, src, (size_t)n);
   }
   p[n] = 0;
+  avant_str_tag(p);
   avant_gc_defer_leave();
   return p;
 }

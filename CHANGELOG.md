@@ -1,5 +1,12 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Changed
+* Deleting a hash entry closes the gap in the probe sequence. A later lookup stops at an empty slot instead of walking every deleted key. A string key keeps its hash in the table, so a different hash does not compare the bytes.
+* A short heap string keeps its length in the header. `String.size` reads that length and does not walk the block table.
+* A young collection marks a young large object that a mature object still points at. The object stays. A large string stored in an array is not freed and reused for the next large string.
+
 ## 0.8.0 - 2026-10-22
 
 ### Changed
