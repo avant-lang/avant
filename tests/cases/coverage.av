@@ -44,8 +44,33 @@ fn test_coverage(c: Checks) {
       c.expect(str_has(lcov, "SF:"), "lcov has SF:")
       c.expect(str_has(lcov, "DA:"), "lcov has DA:")
       c.expect(str_has(lcov, "end_of_record"), "lcov has end_of_record")
+      c.expect(str_has(lcov, "SF:avant-s10-${stamp}-cov.av\n"), "absolute path keeps its file name")
     } else {
       c.expect(false, "lcov.info")
+    }
+
+    rel_dir = "covrel-${stamp}"
+    rel_src = "${rel_dir}/sample.av"
+    mkdir_rel: Array(String) = []
+    mkdir_rel.push("-p")
+    mkdir_rel.push(rel_dir)
+    dummy_rel = process_run("/bin/mkdir", mkdir_rel)
+    rel_w = file_write(rel_src, body)
+    c.eq_int(rel_w, 0, "write relative coverage fixture")
+    rel_bin = "/tmp/avant-s10-${stamp}-covrel.bin"
+    rel_log = "/tmp/avant-s10-${stamp}-covrel.log"
+    rel_code = compile_av_cov(compiler, rel_src, rel_bin, rel_log)
+    c.eq_int(rel_code, 0, "compile relative coverage fixture")
+    chmod_x(rel_bin)
+    rel_run: Array(String) = []
+    rel_run.push("AVANT_COVERAGE_REPORT=0")
+    rel_run.push(rel_bin)
+    rel_run_code = process_run_out("/usr/bin/env", rel_run, rel_log)
+    c.eq_int(rel_run_code, 0, "run relative coverage fixture")
+    if rel_lcov = file_read("lcov.info") {
+      c.expect(str_has(rel_lcov, "SF:${rel_src}\n"), "relative SF keeps the directory")
+    } else {
+      c.expect(false, "relative lcov.info")
     }
 
     jdir = "/tmp/avant-s10-${stamp}-jcases"
