@@ -2388,13 +2388,9 @@ pub class MycGen {
   }
 
   pub fn arm_quiet_guard(body: Array(Stmt)) {
+    // A quiet leaf does not collect. myc-llvm does not plant roots in
+    // that frame, so the quiet enter/leave pair is only call overhead.
     self.quiet_guard = 0
-    if self.cur_leaf != 0 {
-      if self.stmts_call_heap(body) {
-        self.quiet_guard = 1
-        self.line("CALL :avant_gc_quiet_enter")
-      }
-    }
   }
 
   pub fn stmts_call_heap(body: Array(Stmt)): Bool {
@@ -5006,6 +5002,24 @@ pub class MycGen {
       return true
     }
     if str_eq(name, "avant_array_fill_u8") {
+      return true
+    }
+    if str_eq(name, "avant_str_size") || str_eq(name, "avant_str_byte") || str_eq(name, "avant_str_eq") {
+      return true
+    }
+    if str_eq(name, "avant_str_to_f") || str_eq(name, "avant_str_to_i") || str_eq(name, "avant_str_to_f_slice") {
+      return true
+    }
+    if str_eq(name, "avant_checksum_str") || str_eq(name, "avant_checksum_f64") {
+      return true
+    }
+    if str_eq(name, "avant_buf_size") || str_eq(name, "avant_buf_starts") {
+      return true
+    }
+    if str_eq(name, "avant_wide_op") || str_eq(name, "avant_wide_hi") {
+      return true
+    }
+    if str_eq(name, "avant_now_ms") || str_eq(name, "avant_now_us") {
       return true
     }
     if str_eq(name, "printf") {

@@ -120,7 +120,7 @@ fn test_safepoints(c: Checks) {
       if ir2 = file_read(bdump) {
         c.expect(str_has(ir2, "FUNC :Node__bump"), "bump constructor is emitted")
         c.expect(str_has(ir2, "CALL :avant_bump_alloc"), "bump uses the non-collecting allocator")
-        c.expect(str_has(ir2, "CALL :avant_gc_quiet_enter"), "recursive bump build is a quiet leaf")
+        c.expect(!str_has(ir2, "CALL :avant_gc_quiet_enter"), "a quiet leaf does not take a quiet guard")
         c.expect(str_has(ir2, "CALL :avant_nursery_reclaim"), "dead nursery is reclaimed between trees")
       } else {
         c.expect(false, "read bump dump")

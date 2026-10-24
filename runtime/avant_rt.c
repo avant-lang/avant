@@ -968,6 +968,10 @@ static Block *new_block(uint8_t space) {
       g_stats.peak_heap = g_heap_bytes;
     }
   }
+  /* The whole block is zero, including every byte a later bump will
+   * claim. Fresh allocation then skips the per-object memset. A hole
+   * in a recycled block is not fresh and still clears its payload. */
+  memset(b->base, 0, BLOCK_SIZE);
   b->space = space;
   b->search = 0;
   b->bump = b->base;
@@ -1947,6 +1951,17 @@ static void park_nursery_from(void) {
 static void discard_nursery_from(void) {
   Block *b = g_nursery;
   g_nursery = NULL;
+  /* Pins are roots, so a young copy already saw every pinned nursery
+   * object. Walking every dead object to recheck the flag was most of
+   * a calculator collection: the tree is garbage and nothing is pinned. */
+  if (!g_saw_pinned_nursery) {
+    while (b) {
+      Block *next = b->next;
+      cache_or_free_block(b);
+      b = next;
+    }
+    return;
+  }
   while (b) {
     Block *next = b->next;
     if (block_has_pinned(b)) {
@@ -2300,6 +2315,31 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   return payload_of(&L->header);
 }
 
+/* Payload is already zero when the object landed in a fresh block.
+ * g_alloc_fresh stays set only while the cursor bumps forward through
+ * memory new_block cleared. A hole clears the flag and must be zeroed. */
+static void init_object(AvantHeader *h, size_t payload, uint32_t type_id, int young, int zeroed) {
+  h->size = (uint32_t)payload;
+  h->type_id = (uint16_t)type_id;
+  h->flags = young ? (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG) : (uint16_t)AVANT_FLAG_HEAP;
+  if (!zeroed) {
+    memset(payload_of(h), 0, payload);
+  }
+}
+
+static void account_alloc(size_t total, int nursery) {
+  g_stats.allocated_bytes += total;
+  g_since_gc += total;
+  if (nursery) {
+    g_nursery_held += total;
+  } else {
+    g_mature_since_full += total;
+  }
+  if (g_heap_bytes > g_stats.peak_heap) {
+    g_stats.peak_heap = g_heap_bytes;
+  }
+}
+
 static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
@@ -2616,9 +2656,24 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     die("type id too large");
   }
 
-  pthread_mutex_lock(&g_world);
   size_t payload = (size_t)nbytes;
   size_t total = align_up(sizeof(AvantHeader) + payload);
+  /* Single mutator, under the young threshold: bump and return.
+   * Collection stays on the locked path, with the caller's roots
+   * already spilled. This is the same contract as avant_bump_alloc. */
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !g_gc_defer &&
+      !g_collecting && !g_nursery_off && !g_alloc_mature && total <= LOS_LIMIT &&
+      g_mature_since_full < FULL_BYTES && g_nursery_held + total < g_young_bytes) {
+    AvantHeader *fast = place_bump(total);
+    if (fast) {
+      int zeroed = g_alloc_fresh[SPACE_NURSERY];
+      init_object(fast, payload, type_id, 1, zeroed);
+      account_alloc(total, 1);
+      return payload_of(fast);
+    }
+  }
+
+  pthread_mutex_lock(&g_world);
   maybe_collect();
 
   if (total > LOS_LIMIT) {
@@ -2639,21 +2694,9 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     space = SPACE_MATURE;
   }
   AvantHeader *h = place(total, space, 0);
-  h->size = (uint32_t)payload;
-  h->type_id = (uint16_t)type_id;
-  h->flags = AVANT_FLAG_HEAP;
-  if (space == SPACE_NURSERY) {
-    h->flags |= AVANT_FLAG_YOUNG;
-  }
+  init_object(h, payload, type_id, space == SPACE_NURSERY, g_alloc_fresh[space]);
+  account_alloc(total, space == SPACE_NURSERY);
   void *obj = payload_of(h);
-  memset(obj, 0, payload);
-  g_stats.allocated_bytes += total;
-  g_since_gc += total;
-  if (space == SPACE_NURSERY) {
-    g_nursery_held += total;
-  } else {
-    g_mature_since_full += total;
-  }
   pthread_mutex_unlock(&g_world);
   return obj;
 }
@@ -2668,7 +2711,6 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
   size_t payload;
   size_t total;
   AvantHeader *h;
-  void *obj;
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
     return NULL;
   }
@@ -2682,15 +2724,9 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
   if (!h) {
     return NULL;
   }
-  h->size = (uint32_t)payload;
-  h->type_id = (uint16_t)type_id;
-  h->flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG);
-  obj = payload_of(h);
-  memset(obj, 0, payload);
-  g_stats.allocated_bytes += total;
-  g_since_gc += total;
-  g_nursery_held += total;
-  return obj;
+  init_object(h, payload, type_id, 1, g_alloc_fresh[SPACE_NURSERY]);
+  account_alloc(total, 1);
+  return payload_of(h);
 }
 
 void avant_nursery_reclaim(void) {

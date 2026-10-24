@@ -1,10 +1,10 @@
 # On a version tag: the v0.9.0 seed builds B, the suite runs on B,
 # then a draft GitHub Release is opened with the linux-x86_64 compiler.
 #
-# The seed is avant-linux-x86_64.tar.gz from v0.9.0. It contains `avant`
-# and the prebuilt `myc-llvm`. This job uses that backend as
-# AVANT_MYC_LLVM and ships the same binary in the new asset. It does not
-# install Crystal and does not compile myc-llvm.
+# The seed is avant-linux-x86_64.tar.gz from v0.9.0. It contains `avant`.
+# `myc-llvm` is the safepoints v0.4.0 release, checked by sha256, and is
+# not copied into the new asset. This job does not install Crystal and
+# does not compile myc-llvm.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 #
@@ -46,7 +46,7 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
+      AVANT_MYC_LLVM: /tmp/myc-llvm-linux-x86_64/myc-llvm
       TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
@@ -74,7 +74,15 @@ jobs:
             https://github.com/avant-lang/avant/releases/download/v0.9.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
-          test -x /tmp/avant-linux-x86_64/myc-llvm
+
+      - name: Download safepoints v0.4.0 myc-llvm
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
+            https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz
+          echo "790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
+          tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
+          test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
 
       - name: Seed → B
         run: |
@@ -102,15 +110,15 @@ jobs:
           set -euo pipefail
           mkdir -p dist/avant-linux-x86_64
           cp -f bin/avant-av-b dist/avant-linux-x86_64/avant
-          cp -f /tmp/avant-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
-          chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
+          chmod +x dist/avant-linux-x86_64/avant
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
-            echo "myc-llvm: reused from v0.9.0 avant-linux-x86_64.tar.gz"
-            if [ -f /tmp/avant-linux-x86_64/versions.txt ]; then
+            echo "myc-llvm: https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz"
+            echo "myc-llvm-sha256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e"
+            if [ -f /tmp/myc-llvm-linux-x86_64/versions.txt ]; then
               echo "myc-llvm-origin:"
-              sed 's/^/  /' /tmp/avant-linux-x86_64/versions.txt
+              sed 's/^/  /' /tmp/myc-llvm-linux-x86_64/versions.txt
             fi
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
@@ -121,12 +129,15 @@ jobs:
           tar -C dist -czf dist/avant-linux-x86_64.tar.gz avant-linux-x86_64
           sha256sum dist/avant-linux-x86_64.tar.gz | tee dist/avant-linux-x86_64.tar.gz.sha256
           {
-            echo "linux-x86_64 compiler \`avant\` and \`myc-llvm\`."
+            echo "linux-x86_64 compiler \`avant\`."
             echo
-            echo "Built by the v0.9.0 seed. \`myc-llvm\` is the binary from that seed asset, reused unchanged. This asset can be the next pin after it is published. It is not the oracle."
+            echo "Built by the v0.9.0 seed. This asset does not contain \`myc-llvm\`."
+            echo "Download safepoints v0.4.0 \`myc-llvm-linux-x86_64.tar.gz\` and set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
+            echo "https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz"
+            echo "sha256 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e"
             echo "Needs the source tree (\`runtime/\`, \`cc\`), LLVM 20, libpcre2, and re2c to compile programs."
             echo "A string literal at \`re_compile\` is compiled with re2c. A computed pattern uses PCRE2."
-            echo "Set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
+            echo "This asset can be the next compiler pin after it is published. It is not the oracle."
             echo
             cat dist/versions.txt
             echo
