@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.10.0 - 2026-10-22
 
 ### Changed
 * CI takes `myc-llvm` from the safepoints `v0.4.0` release. A new `avant-linux-x86_64.tar.gz` contains the compiler only. Set `AVANT_MYC_LLVM` to the extracted safepoints binary.
