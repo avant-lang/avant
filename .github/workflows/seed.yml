@@ -1,11 +1,10 @@
 # Q52 pin check. Not the merge gate.
 #
 # v0.9.0 is the published compiler. avant-linux-x86_64.tar.gz contains
-# `avant` and the prebuilt `myc-llvm`. This job asks that compiler to
-# compile today's compiler/main.av and pass the suite, without coverage.
-# `native` compiles B from the same pin with coverage on.
-# AVANT_MYC_LLVM is the extracted backend. This job does not install
-# Crystal and does not compile myc-llvm.
+# `avant`. This job asks that compiler to compile today's compiler/main.av
+# and pass the suite, without coverage. `native` compiles B from the same
+# pin with coverage on. AVANT_MYC_LLVM is safepoints v0.4.0, checked by
+# sha256. This job does not install Crystal and does not compile myc-llvm.
 #
 # v0.1.0 stayed green through pull request 10 and is no longer a job.
 # Runtime objects come from runtime/build.sh. `re2c` compiles a string
@@ -33,7 +32,7 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
+      AVANT_MYC_LLVM: /tmp/myc-llvm-linux-x86_64/myc-llvm
     steps:
       - uses: actions/checkout@v7
 
@@ -58,7 +57,15 @@ jobs:
             https://github.com/avant-lang/avant/releases/download/v0.9.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
-          test -x /tmp/avant-linux-x86_64/myc-llvm
+
+      - name: Download safepoints v0.4.0 myc-llvm
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
+            https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz
+          echo "790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
+          tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
+          test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
 
       - name: Seed compiles compiler A
         run: |

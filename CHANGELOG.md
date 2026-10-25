@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+* CI takes `myc-llvm` from the safepoints `v0.4.0` release. A new `avant-linux-x86_64.tar.gz` contains the compiler only. Set `AVANT_MYC_LLVM` to the extracted safepoints binary.
 * `Array.fill` on `Int` writes `0` and `-1` as a repeated byte. Any other value is stored in wide chunks.
 * A loop keeps an array's buffer across a call that cannot collect and cannot replace that buffer. `to_i`, `to_f`, `next_int`, and `fill` are such calls. `push` still reloads the buffer, because a push can grow it.
 * `lcov.info` keeps a relative directory in `SF:`. `compiler/main.av` stays `compiler/main.av`, so tools like Codecov can match the file.

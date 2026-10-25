@@ -1,17 +1,19 @@
 # v0.9.0 seed → B, then native suite on B. Required gate.
 #
-# The seed is the published asset avant-linux-x86_64.tar.gz. Inside it,
-# `avant` is the compiler and `myc-llvm` is the prebuilt backend. This job
-# does not install Crystal and does not compile myc-llvm. AVANT_MYC_LLVM
-# points at the extracted backend. `avant` compiles compiler/main.av into B
-# with coverage on. Runtime objects come from runtime/build.sh.
+# The seed is the published asset avant-linux-x86_64.tar.gz. `avant` in
+# that asset compiles compiler/main.av into B with coverage on.
+# `myc-llvm` is the safepoints v0.4.0 release, checked by sha256.
+# This job does not install Crystal and does not compile myc-llvm.
+# AVANT_MYC_LLVM points at the extracted backend.
+# Runtime objects come from runtime/build.sh.
 #
 # `re2c` is a build tool, like `cc`. A string literal at `re_compile` is
 # compiled with it and linked in. Without `re2c` that call stays on PCRE2.
 # Computed patterns always use PCRE2 (`libpcre2-dev`).
 #
 # Tag pushes are `release.yml` (the v0.9.0 seed builds that binary too,
-# and the new asset reuses this same myc-llvm).
+# with this same safepoints v0.4.0 myc-llvm). The Avant asset does not
+# ship myc-llvm.
 # `native` also writes junit.xml and lcov.info (soft Codecov; not the merge gate).
 # Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is quiet anyway so
 # `run FILE.av` stdout stays the program. A `--coverage` fixture still prints.
@@ -40,7 +42,7 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
+      AVANT_MYC_LLVM: /tmp/myc-llvm-linux-x86_64/myc-llvm
     steps:
       - uses: actions/checkout@v7
 
@@ -65,7 +67,15 @@ jobs:
             https://github.com/avant-lang/avant/releases/download/v0.9.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
-          test -x /tmp/avant-linux-x86_64/myc-llvm
+
+      - name: Download safepoints v0.4.0 myc-llvm
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
+            https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz
+          echo "790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
+          tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
+          test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
 
       - name: Seed → B
         env:
