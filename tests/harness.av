@@ -36,6 +36,21 @@ fn str_ends(s: String, suf: String): Bool {
   str_eq(str_slice(s, s.size - suf.size, s.size), suf)
 }
 
+fn junit_time(ms: Int): String {
+  if ms < 0 {
+    ms = 0
+  }
+  sec = ms / 1000
+  frac = ms % 1000
+  if frac < 10 {
+    return "${sec}.00${frac}"
+  }
+  if frac < 100 {
+    return "${sec}.0${frac}"
+  }
+  "${sec}.${frac}"
+}
+
 fn fmt_counts(bad: Int, ok: Int): String {
   total = bad + ok
   if bad == 0 {
@@ -129,11 +144,13 @@ class Checks {
   suite_name: String = ""
   suite_failed_at: Int = 0
   started: Int = 0
+  case_at: Int = 0
   lines: Array(String)
   junit_class: Array(String)
   junit_name: Array(String)
   junit_fail: Array(Int)
   junit_detail: Array(String)
+  junit_ms: Array(Int)
 
   fn initialize {
     ls: Array(String) = []
@@ -146,11 +163,23 @@ class Checks {
     self.junit_fail = jf
     jd: Array(String) = []
     self.junit_detail = jd
+    jm: Array(Int) = []
+    self.junit_ms = jm
   }
 
   fn record_case(ok: Bool, name: String, detail: String) {
+    now = now_ms()
+    elapsed = 0
+    if self.case_at > 0 {
+      elapsed = now - self.case_at
+      if elapsed < 0 {
+        elapsed = 0
+      }
+    }
+    self.case_at = now
     self.junit_class.push(self.suite_name)
     self.junit_name.push(name)
+    self.junit_ms.push(elapsed)
     if ok {
       self.junit_fail.push(0)
     } else {
@@ -185,6 +214,7 @@ class Checks {
     self.flush_suite()
     self.suite_name = name
     self.suite_failed_at = self.failed
+    self.case_at = now_ms()
   }
 
   fn expect(cond: Bool, msg: String) {
@@ -273,16 +303,26 @@ class Checks {
       b.push_str(xml_escape(class_name))
       b.push_str("\" tests=\"")
       b.push_fmt_i(n)
+      suite_ms = 0
+      k = i
+      while k < j {
+        suite_ms = suite_ms + self.junit_ms[k]
+        k = k + 1
+      }
       b.push_str("\" failures=\"")
       b.push_fmt_i(bad)
-      b.push_str("\" time=\"0\">\n")
+      b.push_str("\" time=\"")
+      b.push_str(junit_time(suite_ms))
+      b.push_str("\">\n")
       k = i
       while k < j {
         b.push_str("    <testcase name=\"")
         b.push_str(xml_escape(self.junit_name[k]))
         b.push_str("\" classname=\"")
         b.push_str(xml_escape(class_name))
-        b.push_str("\" time=\"0\"")
+        b.push_str("\" time=\"")
+        b.push_str(junit_time(self.junit_ms[k]))
+        b.push_str("\"")
         if self.junit_fail[k] != 0 {
           b.push_str(">\n      <failure message=\"")
           b.push_str(xml_escape(self.junit_detail[k]))
