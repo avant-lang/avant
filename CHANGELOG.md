@@ -1,5 +1,18 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+* Wrapping arithmetic operators: `&+`, `&-`, and `&*` on integers wrap on overflow. They are the explicit spelling of the old unchecked arithmetic.
+* `.get(i)` on `Array`, `String`, and `Buf` returns `T?`: the element or byte when `i` is in bounds, nil when it is not.
+* `avant compile` and `avant run` accept `--debug` and `--release`. `--release` is `--final`, the scored codegen mode. A flag wins over `AVANT_MYC_FINAL` and `AVANT_MYC_DEBUG`, which still work.
+
+### Changed
+* Indexing an `Array`, `String`, or `Buf` outside `0 <= i < size` now traps at runtime, for reads and writes. The program prints one diagnostic to stderr (for example `avant runtime: index 10 out of bounds (size 3)`) and exits with status 1. An out-of-bounds read previously returned 0 or whatever byte followed the buffer.
+* Integer `+`, `-`, `*`, `/`, and `%` are checked, including compound assignments (`+=`, `-=`, `*=`, `/=`) and `Int64` and `UInt64` arithmetic. Overflow and division by zero trap with a stderr diagnostic and exit status 1, instead of wrapping silently or killing the process with a floating-point exception. Arithmetic the compiler can prove cannot overflow, and indexes it can prove in bounds, carries no check.
+* Compile errors print to stderr and the compiler exits with a non-zero status. `avant run` exits with the compiled program's status. `avant format` is unchanged here: its diagnostics stay and it still exits 0.
+* An `Array` captured by a `spawn` block is read-only inside the block, and the sender may not mutate it until the handle is joined. Both are compile errors. Mutation crosses a task boundary through a `Mutex(Array)`, a `Channel`, or `.parallel`.
+
 ## 0.12.0 - 2026-10-26
 
 ### Added
