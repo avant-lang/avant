@@ -516,3 +516,238 @@ void avant_array_fill_i32(void *arr, int32_t v) {
   }
 #endif
 }
+
+static int32_t *i32_buf(void *arr, int32_t need) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || a->size < need || need < 0) {
+    return NULL;
+  }
+  return (int32_t *)a->buf;
+}
+
+/* Stable counting sort of sa by rank[(sa[i] + add) % n]. */
+static int order_by_rank(int32_t *sa, const int32_t *rank, int32_t *tmp, int32_t *count,
+                         int32_t n, int32_t csz, int32_t add) {
+  int32_t i;
+  int32_t sum;
+  if (n <= 1) {
+    return 1;
+  }
+  if (csz <= 0) {
+    return 0;
+  }
+  memset(count, 0, (size_t)csz * sizeof(int32_t));
+  if (add <= 0) {
+    for (i = 0; i < n; i++) {
+      int32_t key = rank[sa[i]];
+      if ((uint32_t)key >= (uint32_t)csz) {
+        return 0;
+      }
+      count[key]++;
+    }
+  } else {
+    for (i = 0; i < n; i++) {
+      int32_t idx = sa[i] + add;
+      if (idx >= n) {
+        idx -= n;
+      }
+      int32_t key = rank[idx];
+      if ((uint32_t)key >= (uint32_t)csz) {
+        return 0;
+      }
+      count[key]++;
+    }
+  }
+  sum = 0;
+  for (i = 0; i < csz; i++) {
+    int32_t c = count[i];
+    count[i] = sum;
+    sum += c;
+  }
+  if (add <= 0) {
+    for (i = 0; i < n; i++) {
+      int32_t idx = sa[i];
+      tmp[count[rank[idx]]++] = idx;
+    }
+  } else {
+    for (i = 0; i < n; i++) {
+      int32_t idx = sa[i];
+      int32_t j = idx + add;
+      if (j >= n) {
+        j -= n;
+      }
+      tmp[count[rank[j]]++] = idx;
+    }
+  }
+  memcpy(sa, tmp, (size_t)n * sizeof(int32_t));
+  return 1;
+}
+
+/* 1 when the last ordered suffix got rank n - 1. */
+static int rerank(int32_t *sa, int32_t *rank, int32_t *neu, int32_t n, int32_t add) {
+  int32_t prev;
+  int32_t i;
+  if (n <= 0) {
+    return 1;
+  }
+  prev = sa[0];
+  neu[prev] = 0;
+  for (i = 1; i < n; i++) {
+    int32_t curr = sa[i];
+    int32_t pk = prev + add;
+    int32_t ck = curr + add;
+    int32_t r;
+    if (pk >= n) {
+      pk -= n;
+    }
+    if (ck >= n) {
+      ck -= n;
+    }
+    r = neu[prev];
+    if (rank[prev] != rank[curr] || rank[pk] != rank[ck]) {
+      r++;
+    }
+    neu[curr] = r;
+    prev = curr;
+  }
+  memcpy(rank, neu, (size_t)n * sizeof(int32_t));
+  return neu[sa[n - 1]] == n - 1;
+}
+
+int32_t avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, void *tmp_arr,
+                            void *count_arr, void *out_arr) {
+  AvantArray *in_a = (AvantArray *)input_arr;
+  int32_t n;
+  int32_t *input;
+  int32_t *sa;
+  int32_t *rank;
+  int32_t *tmp;
+  int32_t *count;
+  int32_t *out;
+  int32_t csz;
+  int32_t counts[256];
+  int32_t positions[256];
+  int32_t temp_counts[256];
+  int32_t i;
+  int32_t total;
+  int32_t original;
+  if (!in_a || !in_a->buf) {
+    return 0;
+  }
+  n = in_a->size;
+  csz = 0;
+  if (count_arr) {
+    csz = ((AvantArray *)count_arr)->size;
+  }
+  input = i32_buf(input_arr, n);
+  sa = i32_buf(sa_arr, n);
+  rank = i32_buf(rank_arr, n);
+  tmp = i32_buf(tmp_arr, n);
+  count = i32_buf(count_arr, csz > 0 ? csz : 1);
+  out = i32_buf(out_arr, n);
+  if (!input || !sa || !rank || !tmp || !count || !out || n <= 0) {
+    return 0;
+  }
+  memset(counts, 0, sizeof(counts));
+  for (i = 0; i < n; i++) {
+    counts[input[i] & 255]++;
+  }
+  total = 0;
+  for (i = 0; i < 256; i++) {
+    positions[i] = total;
+    total += counts[i];
+  }
+  memset(temp_counts, 0, sizeof(temp_counts));
+  for (i = 0; i < n; i++) {
+    int32_t byte = input[i] & 255;
+    int32_t pos = positions[byte] + temp_counts[byte];
+    sa[pos] = i;
+    temp_counts[byte]++;
+  }
+  if (n > 1) {
+    int32_t current_rank = 0;
+    int32_t prev_char = input[sa[0]] & 255;
+    int32_t k;
+    for (i = 0; i < n; i++) {
+      int32_t idx = sa[i];
+      int32_t ch = input[idx] & 255;
+      if (ch != prev_char) {
+        current_rank++;
+        prev_char = ch;
+      }
+      rank[idx] = current_rank;
+    }
+    k = 1;
+    while (k < n) {
+      if (!order_by_rank(sa, rank, tmp, count, n, csz, k)) {
+        break;
+      }
+      if (!order_by_rank(sa, rank, tmp, count, n, csz, 0)) {
+        break;
+      }
+      if (rerank(sa, rank, tmp, n, k)) {
+        break;
+      }
+      if (k > n / 2) {
+        break;
+      }
+      k *= 2;
+    }
+  }
+  original = 0;
+  for (i = 0; i < n; i++) {
+    int32_t suffix = sa[i];
+    if (suffix == 0) {
+      out[i] = input[n - 1];
+      original = i;
+    } else {
+      out[i] = input[suffix - 1];
+    }
+  }
+  return original;
+}
+
+void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, int32_t start) {
+  AvantArray *bwt_a = (AvantArray *)bwt_arr;
+  int32_t n;
+  int32_t *bwt;
+  int32_t *next;
+  int32_t *out;
+  int32_t counts[256];
+  int32_t positions[256];
+  int32_t temp_counts[256];
+  int32_t i;
+  int32_t total;
+  int32_t idx;
+  if (!bwt_a || !bwt_a->buf) {
+    return;
+  }
+  n = bwt_a->size;
+  bwt = i32_buf(bwt_arr, n);
+  next = i32_buf(next_arr, n);
+  out = i32_buf(out_arr, n);
+  if (!bwt || !next || !out || n <= 0) {
+    return;
+  }
+  memset(counts, 0, sizeof(counts));
+  for (i = 0; i < n; i++) {
+    counts[bwt[i] & 255]++;
+  }
+  total = 0;
+  for (i = 0; i < 256; i++) {
+    positions[i] = total;
+    total += counts[i];
+  }
+  memset(temp_counts, 0, sizeof(temp_counts));
+  for (i = 0; i < n; i++) {
+    int32_t byte = bwt[i] & 255;
+    int32_t pos = positions[byte] + temp_counts[byte];
+    next[pos] = i;
+    temp_counts[byte]++;
+  }
+  idx = start;
+  for (i = 0; i < n; i++) {
+    idx = next[idx];
+    out[i] = bwt[idx];
+  }
+}

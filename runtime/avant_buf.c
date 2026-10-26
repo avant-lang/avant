@@ -192,6 +192,10 @@ void avant_buf_clear(void *buf) {
   }
 }
 
+void avant_bytes_ensure(void *buf, int32_t n) {
+  avant_buf_ensure(buf, n);
+}
+
 void avant_buf_ensure(void *buf, int32_t n) {
   AvantBuf *b = (AvantBuf *)buf;
   if (!b || n <= b->cap) {
@@ -214,6 +218,118 @@ void avant_buf_set_size(void *buf, int32_t n) {
     n = b->cap;
   }
   b->size = n;
+}
+
+void avant_buf_set_ident(void *buf, int32_t n) {
+  AvantBuf *b = (AvantBuf *)buf;
+  int32_t i;
+  if (!b || n <= 0) {
+    return;
+  }
+  if (b->cap < n) {
+    avant_buf_ensure(buf, n);
+  }
+  if (!b->data || b->cap < n) {
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    b->data[i] = (uint8_t)i;
+  }
+  b->size = n;
+}
+
+static int32_t *buf_i32s(void *arr, int32_t n) {
+  typedef struct {
+    int32_t *buf;
+    int32_t size;
+    int32_t cap;
+  } I32Arr;
+  I32Arr *a = (I32Arr *)arr;
+  if (!a || !a->buf || n < 0 || a->size < n) {
+    return NULL;
+  }
+  return a->buf;
+}
+
+void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras,
+                            int32_t n) {
+  AvantBuf *b = (AvantBuf *)buf;
+  int32_t *dst;
+  int32_t *src;
+  int32_t *ln;
+  int32_t *ex;
+  int32_t i;
+  if (!b || n <= 0) {
+    return;
+  }
+  dst = buf_i32s(dst_offs, n);
+  src = buf_i32s(src_offs, n);
+  ln = buf_i32s(lens, n);
+  ex = buf_i32s(extras, n);
+  if (!dst || !src || !ln || !ex) {
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    int32_t len = ln[i];
+    int32_t d = dst[i];
+    int32_t s = src[i];
+    int32_t need;
+    uint8_t *p;
+    if (len < 0 || d < 0 || s < 0) {
+      return;
+    }
+    need = d + len + 1;
+    if (need > b->cap) {
+      avant_buf_ensure(buf, need);
+    }
+    p = b->data;
+    if (!p || need > b->cap) {
+      return;
+    }
+    if (len > 0) {
+      memmove(p + d, p + s, (size_t)len);
+    }
+    p[d + len] = (uint8_t)ex[i];
+  }
+}
+
+void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *src_offs, void *lens,
+                           int32_t n) {
+  AvantBuf *dst = (AvantBuf *)dst_buf;
+  AvantBuf *src = (AvantBuf *)src_buf;
+  int32_t *doff;
+  int32_t *soff;
+  int32_t *ln;
+  int32_t i;
+  if (!dst || !src || n <= 0) {
+    return;
+  }
+  doff = buf_i32s(dst_offs, n);
+  soff = buf_i32s(src_offs, n);
+  ln = buf_i32s(lens, n);
+  if (!doff || !soff || !ln) {
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    int32_t len = ln[i];
+    int32_t d = doff[i];
+    int32_t s = soff[i];
+    int32_t need;
+    if (len < 0 || d < 0 || s < 0) {
+      return;
+    }
+    if (len == 0) {
+      continue;
+    }
+    need = d + len;
+    if (need > dst->cap) {
+      avant_buf_ensure(dst_buf, need);
+    }
+    if (!dst->data || !src->data || need > dst->cap || s + len > src->cap) {
+      return;
+    }
+    memcpy(dst->data + d, src->data + s, (size_t)len);
+  }
 }
 
 uint8_t *avant_buf_bytes(void *buf) {

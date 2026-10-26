@@ -1739,6 +1739,14 @@ pub class MycGen {
       self.emit_array_def(self.array_tys[i])
       i = i + 1
     }
+    self.line("STRUCT :AvantBuf")
+    self.indent = self.indent + 1
+    self.line("TYPE :ptr<u8>")
+    self.line("TYPE :i32")
+    self.line("TYPE :i32")
+    self.indent = self.indent - 1
+    self.line("ENDSTRUCT")
+    self.blank
     i = 0
     while i < self.fn_tys.size {
       self.emit_fn_def(self.fn_tys[i])
@@ -3823,6 +3831,13 @@ pub class MycGen {
       }
     }
     if t = stmt.target {
+      if t.kind == ex_index() {
+        if arr = t.left {
+          if expr_ty(arr).is_buf {
+            self.line("AS :u8")
+          }
+        }
+      }
       self.emit_lvalue(t)
       self.line("STORE")
       self.root_after_store(t)
@@ -4286,6 +4301,11 @@ pub class MycGen {
       }
       case 10 {
         self.emit_lvalue(expr)
+        if l = expr.left {
+          if expr_ty(l).is_buf {
+            self.line("TO :i32")
+          }
+        }
       }
       case 7 {
         self.emit_unary(expr)
@@ -4493,19 +4513,26 @@ pub class MycGen {
               if self.cap_index(arr.ident) >= 0 {
               } else {
                 container = expr_ty(arr)
+                hoist_em = ""
                 if container.is_array {
                   if e = container.inner {
                     if hoist_array_elem(e) {
-                      if self.name_listed(arr.ident, assigned) {
+                      hoist_em = ty_myc(e)
+                    }
+                  }
+                }
+                if container.is_buf {
+                  hoist_em = "u8"
+                }
+                if hoist_em.size > 0 {
+                  if self.name_listed(arr.ident, assigned) {
+                  } else {
+                    if self.hoist_index(arr.ident) >= 0 {
+                    } else {
+                      if self.name_listed(arr.ident, found) {
                       } else {
-                        if self.hoist_index(arr.ident) >= 0 {
-                        } else {
-                          if self.name_listed(arr.ident, found) {
-                          } else {
-                            found.push(arr.ident)
-                            self.hoist_ems.push(ty_myc(e))
-                          }
-                        }
+                        found.push(arr.ident)
+                        self.hoist_ems.push(hoist_em)
                       }
                     }
                   }
@@ -5198,6 +5225,9 @@ pub class MycGen {
     hi = self.hoist_names.size
     em = self.hoist_ems[hi]
     self.line("LOCAL :${name}")
+    if str_eq(em, "u8") {
+      self.line("AS :ptr<AvantBuf>")
+    }
     self.line("DEREF")
     self.line("FIELD 0")
     ptr = self.new_temp
@@ -5293,6 +5323,34 @@ pub class MycGen {
     if arr = expr.left {
       if ix = expr.right {
         container = expr_ty(arr)
+        if container.is_buf {
+          if arr.kind == ex_name() {
+            if arr.implicit_field {
+            } else {
+              hi = self.hoist_index(arr.ident)
+              if hi >= 0 {
+                self.emit_hoisted_index(ix, hi)
+                return
+              }
+            }
+          }
+          self.emit_expr(ix)
+          ixt = self.new_temp
+          self.line("LOCAL :${ixt} :i32")
+          self.line("STORE")
+          self.emit_expr(arr)
+          self.line("AS :ptr<AvantBuf>")
+          self.line("DEREF")
+          self.line("FIELD 0")
+          ptr_tmp = self.new_temp
+          self.line("LOCAL :${ptr_tmp} :ptr<u8>")
+          self.line("STORE")
+          self.line("LOCAL :${ixt}")
+          self.line("LOCAL :${ptr_tmp}")
+          self.line("BINARY :add")
+          self.line("DEREF")
+          return
+        }
         if container.is_string {
           self.emit_expr(ix)
           ixt = self.new_temp

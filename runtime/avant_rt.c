@@ -295,6 +295,11 @@ static void work_push(void *p) {
 }
 
 #define AVANT_FLAG_REM 16u
+/* Young large object reached from a heap slot. It must be promoted:
+ * a mature object can hold it, and that edge is not in the remembered
+ * set (a large payload has no block). A buffer reached only from the
+ * stack stays young so the next collection can free it. */
+#define AVANT_FLAG_LOS_KEEP 128u
 
 static int rem_locked(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
@@ -584,28 +589,53 @@ static void free_large(Large *L) {
   release_large(L);
 }
 
+static void promote_young_large(Large *L) {
+  size_t chunk = large_chunk(L);
+  L->header.flags = (uint16_t)(L->header.flags &
+                                (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_LOS_KEEP));
+  if (g_young_large >= chunk) {
+    g_young_large -= chunk;
+  }
+  if (g_young_large_n > 0) {
+    g_young_large_n--;
+  }
+  g_mature_since_full += chunk;
+}
+
 /* Unmarked young large objects are unreachable and are freed. A marked
- * one is promoted: a later young collection does not free it out from
- * under a mature object that still holds the pointer. */
+ * one is promoted when a heap object points at it, or when the stack
+ * is holding a working set at least as big as the young limit. A
+ * stack-only buffer stays young, so the next collection can free it
+ * once that local is gone. */
 static void reclaim_young_large(void) {
-  Large *L = g_large;
+  Large *L;
+  size_t stay_bytes = 0;
+  for (L = g_large; L; L = L->next) {
+    if ((L->header.flags & AVANT_FLAG_YOUNG) == 0) {
+      continue;
+    }
+    if ((L->header.flags & AVANT_FLAG_MARKED) == 0) {
+      continue;
+    }
+    if (L->header.flags & (AVANT_FLAG_PINNED | AVANT_FLAG_LOS_KEEP)) {
+      continue;
+    }
+    stay_bytes += large_chunk(L);
+  }
+  int promote_stay = stay_bytes >= g_young_bytes;
+  L = g_large;
   while (L) {
     Large *next = L->next;
     if (L->header.flags & AVANT_FLAG_YOUNG) {
-      if ((L->header.flags & AVANT_FLAG_MARKED) == 0 &&
-          (L->header.flags & AVANT_FLAG_PINNED) == 0) {
+      int marked = (L->header.flags & AVANT_FLAG_MARKED) != 0;
+      int pinned = (L->header.flags & AVANT_FLAG_PINNED) != 0;
+      int keep = (L->header.flags & AVANT_FLAG_LOS_KEEP) != 0;
+      if (!marked && !pinned) {
         release_large(L);
+      } else if (pinned || keep || promote_stay) {
+        promote_young_large(L);
       } else {
-        size_t chunk = large_chunk(L);
-        L->header.flags =
-            (uint16_t)(L->header.flags & (uint16_t)~AVANT_FLAG_YOUNG);
-        if (g_young_large >= chunk) {
-          g_young_large -= chunk;
-        }
-        if (g_young_large_n > 0) {
-          g_young_large_n--;
-        }
-        g_mature_since_full += chunk;
+        L->header.flags = (uint16_t)(L->header.flags & (uint16_t)~AVANT_FLAG_LOS_KEEP);
       }
     }
     L = next;
@@ -784,7 +814,8 @@ static void clear_all_marks(void) {
   }
   Large *L;
   for (L = g_large; L; L = L->next) {
-    L->header.flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+    L->header.flags &=
+        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
   }
 }
 
@@ -1202,12 +1233,16 @@ static void remember_young_edge(void **slot, void *payload) {
 }
 
 static void copy_from_slot(void **slot);
+static int g_from_heap_slot;
 static void trace_mature(void *p, int from_mature);
 
 static void copy_payload_children(void *p) {
   AvantHeader *h = avant_header(p);
   uint32_t id = h->type_id;
+  int saved = g_from_heap_slot;
+  g_from_heap_slot = 1;
   if (id == AVANT_TYPE_BYTES) {
+    g_from_heap_slot = saved;
     return;
   }
   if (id == AVANT_TYPE_PTRS) {
@@ -1216,9 +1251,11 @@ static void copy_payload_children(void *p) {
     for (i = 0; i < n; i++) {
       copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
     }
+    g_from_heap_slot = saved;
     return;
   }
   if (id >= MAX_TYPES || !g_type_set[id]) {
+    g_from_heap_slot = saved;
     return;
   }
   uint64_t bits = g_type_bits[id];
@@ -1228,6 +1265,7 @@ static void copy_payload_children(void *p) {
       copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
     }
   }
+  g_from_heap_slot = saved;
 }
 
 /* A remembered object is an old-to-young edge, not a root. Scanning
@@ -1237,10 +1275,20 @@ static void copy_payload_children(void *p) {
  * Scan a mature or large object when a root or a young object points
  * at it. From inside a mature object, scan a remembered child or a
  * young large child. A mature tree that is not remembered is not walked. */
+static void note_los_keep(AvantHeader *h, int from_mature) {
+  if ((h->flags & AVANT_FLAG_YOUNG) == 0) {
+    return;
+  }
+  if (from_mature || g_from_heap_slot) {
+    h->flags |= AVANT_FLAG_LOS_KEEP;
+  }
+}
+
 static void trace_mature(void *p, int from_mature) {
   AvantHeader *h = avant_header(p);
   int saved;
   if (h->flags & AVANT_FLAG_MARKED) {
+    note_los_keep(h, from_mature);
     return;
   }
   /* A mature parent's young child is usually in the nursery and is
@@ -1251,6 +1299,7 @@ static void trace_mature(void *p, int from_mature) {
     return;
   }
   h->flags |= AVANT_FLAG_MARKED;
+  note_los_keep(h, from_mature);
   if (g_probe) {
     note_marked(p);
   }
@@ -2053,7 +2102,8 @@ static void clear_mark_flags(void) {
     foreach_block_object(b, clear_mark_flag_one);
   }
   for (L = g_large; L; L = L->next) {
-    L->header.flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+    L->header.flags &=
+        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
   }
 }
 

@@ -1,5 +1,13 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+* `Buf` can be indexed. `b[i]` reads one byte as an `Int`. `b[i] = n` writes the low byte. A loop keeps that byte pointer when the buffer cannot be replaced.
+
+### Changed
+* A scalar buffer of at least 6144 bytes that is reachable only from the stack stays young. The next young collection frees it when nothing marks it. It becomes mature when a heap object points at it, or when the marked buffers are at least as large as the young limit. A live matrix is not collected before every allocation.
+
 ## 0.11.0 - 2026-10-22
 
 ### Changed

@@ -127,8 +127,15 @@ char *avant_buf_to_str(void *buf);
 int32_t avant_buf_size(void *buf);
 void avant_buf_clear(void *buf);
 void avant_buf_ensure(void *buf, int32_t n);
+void avant_bytes_ensure(void *buf, int32_t n);
 void avant_buf_append(void *buf, const void *p, int32_t n);
 void avant_buf_set_size(void *buf, int32_t n);
+void avant_buf_set_ident(void *buf, int32_t n);
+/* Append-only fills of `buf`: copy len bytes from src_off to dst_off, then
+ * write one extra byte. Source and dest are the same buffer. */
+void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras, int32_t n);
+/* Copy n slices from src into dst. Offsets are byte indexes. */
+void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs, void *lens, int32_t n);
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
 
@@ -182,6 +189,12 @@ void *avant_array_pop_slot(void *arr, uint64_t elem_size);
 void avant_array_sort_i32(void *arr);
 void avant_array_fill_i32(void *arr, int32_t v);
 void avant_array_fill_u8(void *arr, int32_t v);
+/* Burrows–Wheeler of an Int buffer of bytes. Scratch: sa, rank, tmp
+ * (each size >= n) and count (size > every rank, so size >= n).
+ * `out` receives n bytes. Returns the original-string slot. */
+int32_t avant_bwt_transform(void *input, void *sa, void *rank, void *tmp, void *count, void *out);
+/* Inverse. `next` is scratch of size >= n. `out` receives n bytes. */
+void avant_bwt_inverse(void *bwt, void *next, void *out, int32_t start);
 
 void *avant_spawn(void *fn, void *arg);
 int32_t avant_join(void *handle);
