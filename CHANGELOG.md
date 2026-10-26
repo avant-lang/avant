@@ -1,10 +1,11 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.11.0 - 2026-10-22
 
 ### Changed
 * A scalar buffer of at least 6144 bytes does not move. A young collection frees it when nothing marks it. A marked one stays and becomes mature. One freed buffer of that size can be reused. A run of live buffers is not collected before every allocation.
 * A parallel loop whose numeric buffers do not move keeps those addresses for the whole loop. A buffer a young collection can still move is reloaded. An array of pointers is still reloaded.
+* **ci:** `setup-apt-mirrors.sh` to choose more reliable APT mirrors in Github Workflows
 
 ## 0.10.0 - 2026-10-22
 
