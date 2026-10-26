@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.12.0 - 2026-10-26
 
 ### Added
 * `Buf` can be indexed. `b[i]` reads one byte as an `Int`. `b[i] = n` writes the low byte. A loop keeps that byte pointer when the buffer cannot be replaced.
@@ -8,14 +8,14 @@
 ### Changed
 * A scalar buffer of at least 6144 bytes that is reachable only from the stack stays young. The next young collection frees it when nothing marks it. It becomes mature when a heap object points at it, or when the marked buffers are at least as large as the young limit. A live matrix is not collected before every allocation.
 
-## 0.11.0 - 2026-10-22
+## 0.11.0 - 2026-10-26
 
 ### Changed
 * A scalar buffer of at least 6144 bytes does not move. A young collection frees it when nothing marks it. A marked one stays and becomes mature. One freed buffer of that size can be reused. A run of live buffers is not collected before every allocation.
 * A parallel loop whose numeric buffers do not move keeps those addresses for the whole loop. A buffer a young collection can still move is reloaded. An array of pointers is still reloaded.
 * **ci:** `setup-apt-mirrors.sh` to choose more reliable APT mirrors in Github Workflows
 
-## 0.10.0 - 2026-10-22
+## 0.10.0 - 2026-10-24
 
 ### Changed
 * CI takes `myc-llvm` from the safepoints `v0.4.0` release. A new `avant-linux-x86_64.tar.gz` contains the compiler only. Set `AVANT_MYC_LLVM` to the extracted safepoints binary.

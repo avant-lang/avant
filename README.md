@@ -32,7 +32,7 @@ The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted an
 
 ### Requirements
 
-A published `avant` compiler (the `v0.9.0` seed or newer), a C compiler (`cc`), LLVM 20, libpcre2, re2c, and `myc-llvm` from the safepoints `v0.4.0` release (`myc-llvm-linux-x86_64.tar.gz`, [repo](https://github.com/avant-lang/safepoints)). The Avant release archive does not include that binary. Set `AVANT_MYC_LLVM` to the extracted `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard. A string literal at `re_compile` is compiled with re2c. A computed pattern uses PCRE2. Without `re2c`, that literal stays on PCRE2.
+A published `avant` compiler (the `v0.11.0` seed or newer), a C compiler (`cc`), LLVM 20, libpcre2, re2c, and `myc-llvm` from the safepoints `v0.4.0` release (`myc-llvm-linux-x86_64.tar.gz`, [repo](https://github.com/avant-lang/safepoints)). The Avant release archive does not include that binary. Set `AVANT_MYC_LLVM` to the extracted `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard. A string literal at `re_compile` is compiled with re2c. A computed pattern uses PCRE2. Without `re2c`, that literal stays on PCRE2.
 
 ### Build a compiler
 
