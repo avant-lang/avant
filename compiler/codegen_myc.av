@@ -735,6 +735,9 @@ pub class MycGen {
   hoist_ptrs: Array(String)
   hoist_ems: Array(String)
   hoist_young: Array(String)
+  // 1 while emitting the stable copy of a parallel loop. Hoisted
+  // numeric buffers are not young, so indexes use the plain address.
+  bits_only: Int = 0
   root_loop: Int = 0
   early_indent: Int = 0
   early_out: Buf
@@ -827,6 +830,7 @@ pub class MycGen {
     self.hoist_ems = he
     hy: Array(String) = []
     self.hoist_young = hy
+    self.bits_only = 0
     self.root_loop = 0
     self.early_indent = 0
     eb = buf_new()
@@ -3278,22 +3282,103 @@ pub class MycGen {
     self.early_myc = emc
   }
 
-  pub fn emit_while(stmt: Stmt) {
-    nhoist = self.begin_loop_hoists(stmt)
-    outer = false
-    if self.root_loop == 0 {
-      outer = true
-      fresh = buf_new()
-      self.early_out = fresh
-      self.early_indent = self.indent
-      en: Array(String) = []
-      self.early_names = en
-      emc: Array(String) = []
-      self.early_myc = emc
+  pub fn stmt_has_while(stmt: Stmt): Bool {
+    if stmt.kind == st_while() {
+      return true
     }
-    saved = self.out
-    body = buf_new()
-    self.out = body
+    if self.stmts_have_while(stmt.then_body) {
+      return true
+    }
+    if self.stmts_have_while(stmt.else_body) {
+      return true
+    }
+    self.stmts_have_while(stmt.body)
+  }
+
+  pub fn stmts_have_while(body: Array(Stmt)): Bool {
+    i = 0
+    while i < body.size {
+      if self.stmt_has_while(body[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn hoist_em_is_scalar(em: String): Bool {
+    if str_eq(em, "f64") || str_eq(em, "i32") || str_eq(em, "i64") || str_eq(em, "u8") || str_eq(em, "u32") || str_eq(em, "u64") {
+      return true
+    }
+    false
+  }
+
+  pub fn has_scalar_hoist: Bool {
+    i = 0
+    while i < self.hoist_ems.size {
+      if self.hoist_em_is_scalar(self.hoist_ems[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  // A leaf parallel loop indexes numeric buffers hoisted outside it.
+  // When every numeric buffer is stable, that copy uses the plain
+  // address and can vectorize. The other copy reloads, for a buffer a
+  // young collection can still move. Pointer buffers keep their check.
+  // Splitting only the leaf keeps the duplicated body to one loop.
+  pub fn should_split_while(stmt: Stmt): Bool {
+    if self.may_share {
+    } else {
+      return false
+    }
+    if self.bits_only != 0 {
+      return false
+    }
+    if self.has_scalar_hoist {
+    } else {
+      return false
+    }
+    if self.loop_may_collect(stmt) {
+      return false
+    }
+    if self.stmts_have_while(stmt.body) {
+      return false
+    }
+    true
+  }
+
+  pub fn emit_scalar_hoists_are_stable: String {
+    stable = self.new_temp
+    self.line("PUSH 1")
+    self.line("LOCAL :${stable} :i32")
+    self.line("STORE")
+    i = 0
+    while i < self.hoist_young.size {
+      if self.hoist_em_is_scalar(self.hoist_ems[i]) {
+        young = self.hoist_young[i]
+        self.line("LOCAL :${young}")
+        self.line("PUSH 0")
+        self.line("BINARY :not_eq")
+        self.line("IF")
+        self.indent = self.indent + 1
+        self.line("THEN")
+        self.indent = self.indent + 1
+        self.line("PUSH 0")
+        self.line("LOCAL :${stable}")
+        self.line("STORE")
+        self.indent = self.indent - 1
+        self.indent = self.indent - 1
+        self.line("ENDIF")
+      }
+      i = i + 1
+    }
+    stable
+  }
+
+  pub fn emit_while_loop(stmt: Stmt, outer: Bool) {
     self.root_loop = self.root_loop + 1
     self.line("LOOP")
     self.indent = self.indent + 1
@@ -3314,6 +3399,47 @@ pub class MycGen {
     self.indent = self.indent - 1
     self.line("ENDLOOP")
     self.root_loop = self.root_loop - 1
+  }
+
+  pub fn emit_while(stmt: Stmt) {
+    nhoist = self.begin_loop_hoists(stmt)
+    outer = false
+    if self.root_loop == 0 {
+      outer = true
+      fresh = buf_new()
+      self.early_out = fresh
+      self.early_indent = self.indent
+      en: Array(String) = []
+      self.early_names = en
+      emc: Array(String) = []
+      self.early_myc = emc
+    }
+    saved = self.out
+    body = buf_new()
+    self.out = body
+    if self.should_split_while(stmt) {
+      stable = self.emit_scalar_hoists_are_stable
+      self.line("LOCAL :${stable}")
+      self.line("PUSH 0")
+      self.line("BINARY :not_eq")
+      self.line("IF")
+      self.indent = self.indent + 1
+      self.line("THEN")
+      self.indent = self.indent + 1
+      saved_bits = self.bits_only
+      self.bits_only = 1
+      self.emit_while_loop(stmt, outer)
+      self.bits_only = saved_bits
+      self.indent = self.indent - 1
+      self.line("ELSE")
+      self.indent = self.indent + 1
+      self.emit_while_loop(stmt, outer)
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDIF")
+    } else {
+      self.emit_while_loop(stmt, outer)
+    }
     self.end_loop_hoists(nhoist)
     self.out = saved
     if outer {
@@ -5107,7 +5233,18 @@ pub class MycGen {
     self.line("LOCAL :${ixt} :i32")
     self.line("STORE")
     addr = self.new_temp
+    branch = false
     if self.may_share {
+      if self.bits_only == 0 {
+        branch = true
+      } else {
+        if self.hoist_em_is_scalar(em) {
+        } else {
+          branch = true
+        }
+      }
+    }
+    if branch {
       young = self.hoist_young[hi]
       self.line("LOCAL :${young}")
       self.line("PUSH 0")
