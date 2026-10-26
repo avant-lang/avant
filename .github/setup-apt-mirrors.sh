@@ -4,21 +4,23 @@
 # the local mirror list before any apt-get update, so a sick Azure mirror
 # cannot block the rewrite itself.
 #
-# Primary is xTom (https://mirrors.xtom.com/ubuntu/), a Launchpad archive
-# mirror in the United States, 10 Gbps, marked up to date, and serving
-# noble-updates. kernel.org is the second full archive. archive.ubuntu.com
-# is only the last resort: APT tries it when both of the others fail, so
-# ordinary jobs do not add load there.
+# Pilot Fiber is first. xTom and kernel.org follow. archive.ubuntu.com
+# is the last resort, so ordinary jobs do not add load there.
 #
-# Enzu is listed at 100 Gbps, but mirror.enzu.com does not currently
-# publish noble-updates, so it is not a candidate.
+# The mirror file is URI<TAB>priority:N. A space is not a separator:
+# apt encodes it as %20 and requests a path that does not exist.
 set -Eeuo pipefail
 
 readonly MIRROR_FILE="/etc/apt/apt-mirrors.txt"
 readonly APT_CONFIG_FILE="/etc/apt/apt.conf.d/99-ci-apt-reliability"
 
-readonly PRIMARY_URI="https://mirrors.xtom.com/ubuntu/"
-readonly SECOND_URI="https://mirrors.kernel.org/ubuntu/"
+# Pilot Fiber is a Launchpad archive mirror (50 Gbps, United States).
+# noble-updates there matches the Canonical publish time.
+# xTom and kernel.org are the next full archives. archive.ubuntu.com
+# is only reached when the three above fail.
+readonly PRIMARY_URI="https://mirror.pilotfiber.com/ubuntu/"
+readonly SECOND_URI="https://mirrors.xtom.com/ubuntu/"
+readonly THIRD_URI="https://mirrors.kernel.org/ubuntu/"
 readonly ARCHIVE_URI="https://archive.ubuntu.com/ubuntu/"
 
 readonly APT_RETRIES="${CI_APT_RETRIES:-5}"
@@ -100,11 +102,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cat >"$tmp_mirrors" <<EOF
-${PRIMARY_URI} priority:1
-${SECOND_URI} priority:2
-${ARCHIVE_URI} priority:3
-EOF
+{
+  printf '%s\tpriority:1\n' "$PRIMARY_URI"
+  printf '%s\tpriority:2\n' "$SECOND_URI"
+  printf '%s\tpriority:3\n' "$THIRD_URI"
+  printf '%s\tpriority:4\n' "$ARCHIVE_URI"
+} >"$tmp_mirrors"
 
 "${SUDO[@]}" install \
   -o root \
