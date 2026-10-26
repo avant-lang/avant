@@ -64,6 +64,15 @@ pub fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
 }
 
 pub fn is_op_fn_name(name: String): Bool {
+  if str_eq(name, "&+") {
+    return true
+  }
+  if str_eq(name, "&-") {
+    return true
+  }
+  if str_eq(name, "&*") {
+    return true
+  }
   if str_eq(name, "+") {
     return true
   }
@@ -306,6 +315,19 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_array_sort_i32",
     "avant_array_fill_i32",
     "avant_array_fill_u8",
+    "avant_trap_bounds",
+    "avant_trap_div_zero",
+    "avant_trap_overflow",
+    "avant_checked_add_i64",
+    "avant_checked_sub_i64",
+    "avant_checked_mul_i64",
+    "avant_checked_add_u64",
+    "avant_checked_sub_u64",
+    "avant_checked_mul_u64",
+    "avant_checked_div_i64",
+    "avant_checked_rem_i64",
+    "avant_checked_div_u64",
+    "avant_checked_rem_u64",
     "avant_spawn",
     "avant_join",
     "avant_parallel_for",
@@ -531,6 +553,21 @@ pub class Checker {
   lambda_infer: Bool = false
   inferred_ret: Ty
   spawn_skip: Array(String)
+  pending_handles: Array(String)
+  pending_arrays: Array(String)
+  fact_var: Array(String)
+  fact_cont: Array(String)
+  fact_slack: Array(Int)
+  fact_live: Array(Int)
+  sv_var: Array(String)
+  sv_cont: Array(String)
+  bv_var: Array(String)
+  bv_cont: Array(String)
+  bv_delta: Array(Int)
+  cs_cont: Array(String)
+  cs_var: Array(String)
+  cs_delta: Array(Int)
+  nn_var: Array(String)
   adopted: Hash(String, Int)
   adopt_pending: Bool = false
   ready_adopt: Bool = false
@@ -603,6 +640,36 @@ pub class Checker {
     self.inferred_ret = ty_void()
     ss: Array(String) = []
     self.spawn_skip = ss
+    ph: Array(String) = []
+    self.pending_handles = ph
+    pa: Array(String) = []
+    self.pending_arrays = pa
+    fv: Array(String) = []
+    self.fact_var = fv
+    fc: Array(String) = []
+    self.fact_cont = fc
+    fs: Array(Int) = []
+    self.fact_slack = fs
+    fl: Array(Int) = []
+    self.fact_live = fl
+    svv: Array(String) = []
+    self.sv_var = svv
+    svc: Array(String) = []
+    self.sv_cont = svc
+    bvv: Array(String) = []
+    self.bv_var = bvv
+    bvc: Array(String) = []
+    self.bv_cont = bvc
+    bvd: Array(Int) = []
+    self.bv_delta = bvd
+    csc: Array(String) = []
+    self.cs_cont = csc
+    csvv: Array(String) = []
+    self.cs_var = csvv
+    csd: Array(Int) = []
+    self.cs_delta = csd
+    nnv: Array(String) = []
+    self.nn_var = nnv
     ad = Hash(String, Int).new
     self.adopted = ad
     self.adopt_pending = false
@@ -3304,6 +3371,36 @@ pub class Checker {
       return
     }
     self.return_type = ret
+    ph0: Array(String) = []
+    self.pending_handles = ph0
+    pa0: Array(String) = []
+    self.pending_arrays = pa0
+    fv0: Array(String) = []
+    self.fact_var = fv0
+    fc0: Array(String) = []
+    self.fact_cont = fc0
+    fs0: Array(Int) = []
+    self.fact_slack = fs0
+    fl0: Array(Int) = []
+    self.fact_live = fl0
+    svv0: Array(String) = []
+    self.sv_var = svv0
+    svc0: Array(String) = []
+    self.sv_cont = svc0
+    bvv0: Array(String) = []
+    self.bv_var = bvv0
+    bvc0: Array(String) = []
+    self.bv_cont = bvc0
+    bvd0: Array(Int) = []
+    self.bv_delta = bvd0
+    csc0: Array(String) = []
+    self.cs_cont = csc0
+    csvv0: Array(String) = []
+    self.cs_var = csvv0
+    csd0: Array(Int) = []
+    self.cs_delta = csd0
+    nnv0: Array(String) = []
+    self.nn_var = nnv0
     if ret.is_void {
     } else {
       if fnn.body.size == 0 {
@@ -3373,6 +3470,199 @@ pub class Checker {
     self.current_module = saved_mod
   }
 
+  pub fn annotate_vstep(prev: Stmt, stmt: Stmt) {
+    if prev.kind != st_assign() {
+      return
+    }
+    if prev.op != tk_eq() {
+      return
+    }
+    if t = prev.target {
+      if v = prev.value {
+        if t.kind == ex_name() {
+          if v.kind == ex_int() {
+            if v.int_bits <= 1000000u64 {
+              ivar = t.ident
+              if c = stmt.cond {
+                cc = c
+                if cc.kind == ex_binary() {
+                  if cc.op == tk_amp_amp() {
+                    if cl0 = cc.left {
+                      cc = cl0
+                    }
+                  }
+                }
+                if cc.kind == ex_binary() {
+                  is_le = false
+                  coff = 0
+                  matched = false
+                  if cc.op == tk_less() || cc.op == tk_less_eq() {
+                    if cc.op == tk_less_eq() {
+                      is_le = true
+                    }
+                    if cl = cc.left {
+                      if cl.kind == ex_name() {
+                        if str_eq(cl.ident, ivar) {
+                          matched = true
+                        }
+                      } else if cl.kind == ex_binary() {
+                        if cl.op == tk_plus() {
+                          if cll = cl.left {
+                            if clr = cl.right {
+                              if cll.kind == ex_name() {
+                                if str_eq(cll.ident, ivar) {
+                                  if self.lit_small(clr) {
+                                    coff = clr.int_bits.to_i
+                                    matched = true
+                                  }
+                                }
+                              }
+                              if clr.kind == ex_name() {
+                                if str_eq(clr.ident, ivar) {
+                                  if self.lit_small(cll) {
+                                    coff = cll.int_bits.to_i
+                                    matched = true
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  if matched {
+                    step = self.body_vstep(stmt.body, ivar)
+                    if step > 0 {
+                      stmt.vstep = step
+                      stmt.vstart = v.int_bits.to_i
+                      stmt.vle = is_le
+                      stmt.vcoff = coff
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn body_vstep(body: Array(Stmt), ivar: String): Int {
+    step = 0 - 1
+    i = 0
+    while i < body.size {
+      got = self.stmt_vstep(body[i], ivar)
+      if got == 0 - 2 {
+        return 0 - 1
+      }
+      if got > 0 {
+        if step < 0 {
+          step = got
+        } else if step == got {
+        } else {
+          return 0 - 1
+        }
+      }
+      i = i + 1
+    }
+    step
+  }
+
+  pub fn stmt_vstep(s: Stmt, ivar: String): Int {
+    if s.kind == st_assign() {
+      if t = s.target {
+        if t.kind == ex_name() {
+          if str_eq(t.ident, ivar) {
+            if s.op == tk_plus_eq() {
+              if v = s.value {
+                if v.kind == ex_int() {
+                  if v.int_bits >= 1u64 {
+                    if v.int_bits <= 1000000u64 {
+                      return v.int_bits.to_i
+                    }
+                  }
+                }
+              }
+              return 0 - 2
+            }
+            if s.op == tk_eq() {
+              if v = s.value {
+                if v.kind == ex_binary() {
+                  if v.op == tk_plus() {
+                    if l = v.left {
+                      if r = v.right {
+                        if l.kind == ex_name() {
+                          if str_eq(l.ident, ivar) {
+                            if r.kind == ex_int() {
+                              if r.int_bits >= 1u64 {
+                                if r.int_bits <= 1000000u64 {
+                                  return r.int_bits.to_i
+                                }
+                              }
+                            }
+                          }
+                        }
+                        if r.kind == ex_name() {
+                          if str_eq(r.ident, ivar) {
+                            if l.kind == ex_int() {
+                              if l.int_bits >= 1u64 {
+                                if l.int_bits <= 1000000u64 {
+                                  return l.int_bits.to_i
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              return 0 - 2
+            }
+            return 0 - 2
+          }
+        }
+      }
+    }
+    i = 0
+    while i < s.then_body.size {
+      got = self.stmt_vstep(s.then_body[i], ivar)
+      if got == 0 - 2 {
+        return 0 - 2
+      }
+      if got > 0 {
+        return got
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < s.else_body.size {
+      got = self.stmt_vstep(s.else_body[i], ivar)
+      if got == 0 - 2 {
+        return 0 - 2
+      }
+      if got > 0 {
+        return got
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < s.body.size {
+      got = self.stmt_vstep(s.body[i], ivar)
+      if got == 0 - 2 {
+        return 0 - 2
+      }
+      if got > 0 {
+        return got
+      }
+      i = i + 1
+    }
+    0 - 1
+  }
+
   pub fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     i = 0
     while i < body.size {
@@ -3382,7 +3672,15 @@ pub class Checker {
           last = true
         }
       }
+      if body[i].kind == st_while() {
+        if i > 0 {
+          self.annotate_vstep(body[i - 1], body[i])
+        }
+      }
+      self.scan_pending_stmt(body[i])
       self.check_stmt(body[i], expected, last)
+      self.register_spawn_pending(body[i])
+      self.fact_after_stmt(body[i])
       i = i + 1
     }
   }
@@ -3456,6 +3754,10 @@ pub class Checker {
         self.check_if_assign(stmt, expected, at_tail)
         return
       }
+      saved_facts = self.fact_var.size
+      if cond = stmt.cond {
+        self.push_loop_facts(cond, stmt.then_body)
+      }
       if cond = stmt.cond {
         ct = self.check_expr(cond)
         if ct.is_bool {
@@ -3463,7 +3765,18 @@ pub class Checker {
           self.fail(cond.loc, "if condition must be Bool, got ${ct.show}")
         }
       }
+      if cond = stmt.cond {
+        self.push_loop_facts(cond, stmt.then_body)
+        fi = saved_facts
+        while fi < self.fact_var.size {
+          if self.body_shrinks(stmt.then_body, self.fact_cont[fi]) {
+            self.fact_live[fi] = 0
+          }
+          fi = fi + 1
+        }
+      }
       self.check_block(stmt.then_body, expected, false)
+      self.pop_loop_facts(saved_facts)
       if stmt.else_body.size > 0 {
         self.check_block(stmt.else_body, expected, false)
       }
@@ -3489,6 +3802,10 @@ pub class Checker {
       return
     }
     if k == st_while() {
+      saved_facts = self.fact_var.size
+      if cond = stmt.cond {
+        self.push_loop_facts(cond, stmt.body)
+      }
       if cond = stmt.cond {
         ct = self.check_expr(cond)
         if ct.is_bool {
@@ -3499,6 +3816,7 @@ pub class Checker {
       self.loop_depth = self.loop_depth + 1
       self.check_block(stmt.body, expected, false)
       self.loop_depth = self.loop_depth - 1
+      self.pop_loop_facts(saved_facts)
       if at_tail {
         if expected.is_void {
         } else {
@@ -3787,6 +4105,23 @@ pub class Checker {
         if place.is_numeric {
         } else {
           self.fail(stmt.loc, "compound assignment expects a numeric target, got ${place.show}")
+        }
+        if target.kind == ex_name() {
+          if value.kind == ex_int() {
+            if stmt.op == tk_plus_eq() {
+              s = self.fact_any_slack(target.ident)
+              if s >= 0 {
+                if value.int_bits <= s.to_u64 + 1u64 {
+                  stmt.proven = true
+                }
+              }
+            }
+            if stmt.op == tk_minus_eq() {
+              if self.fact_any_slack(target.ident) >= 0 || self.nn_has(target.ident) {
+                stmt.proven = true
+              }
+            }
+          }
         }
         return
       }
@@ -4273,6 +4608,57 @@ pub class Checker {
   pub fn check_index(expr: Expr): Ty {
     if arr = expr.left {
       if ix = expr.right {
+        if arr.kind == ex_name() {
+          if arr.implicit_field {
+          } else {
+            cont = arr.ident
+            if ix.kind == ex_name() {
+              if self.fact_slack_of(ix.ident, cont) >= 0 {
+                expr.proven = true
+              }
+            } else if ix.kind == ex_binary() {
+              if ix.op == tk_plus() {
+                if il = ix.left {
+                  if ir = ix.right {
+                    if il.kind == ex_name() {
+                      if self.lit_small(ir) {
+                        sl = self.fact_slack_of(il.ident, cont)
+                        if sl >= 0 {
+                          if ir.int_bits <= sl.to_u64 {
+                            expr.proven = true
+                            ix.proven = true
+                          }
+                        }
+                      }
+                    }
+                    if ir.kind == ex_name() {
+                      if self.lit_small(il) {
+                        sl = self.fact_slack_of(ir.ident, cont)
+                        if sl >= 0 {
+                          if il.int_bits <= sl.to_u64 {
+                            expr.proven = true
+                            ix.proven = true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if ix.kind == ex_binary() {
+          if ix.op == tk_plus() || ix.op == tk_minus() {
+            if il = ix.left {
+              if ir = ix.right {
+                if il.kind == ex_int() || ir.kind == ex_int() {
+                  ix.proven = true
+                }
+              }
+            }
+          }
+        }
         container = self.check_expr(arr)
         if container.is_string || container.is_buf {
           got = self.check_expr_as(ix, self.t_int())
@@ -4963,6 +5349,15 @@ pub class Checker {
             return self.t_string()
           }
         }
+        if op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star() {
+          if left.is_integer {
+            if right.same_as(left) {
+              return left
+            }
+          }
+          self.fail(expr.loc, "wrapping operator expects matching integer operands")
+          return left
+        }
         if op == tk_percent() {
           if left.is_integer {
             if right.same_as(left) {
@@ -4996,6 +5391,37 @@ pub class Checker {
         if left.is_integer {
           if right.is_integer {
             if left.same_as(right) {
+              if op == tk_plus() {
+                if l.kind == ex_name() {
+                  if r.kind == ex_int() {
+                    s = self.fact_any_slack(l.ident)
+                    if s >= 0 {
+                      if r.int_bits <= s.to_u64 + 1u64 {
+                        expr.proven = true
+                      }
+                    }
+                  }
+                }
+                if r.kind == ex_name() {
+                  if l.kind == ex_int() {
+                    s = self.fact_any_slack(r.ident)
+                    if s >= 0 {
+                      if l.int_bits <= s.to_u64 + 1u64 {
+                        expr.proven = true
+                      }
+                    }
+                  }
+                }
+              }
+              if op == tk_minus() {
+                if l.kind == ex_name() {
+                  if r.kind == ex_int() {
+                    if self.fact_any_slack(l.ident) >= 0 || self.nn_has(l.ident) {
+                      expr.proven = true
+                    }
+                  }
+                }
+              }
               return self.int_binary(op, left)
             }
             self.fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}")
@@ -5865,6 +6291,19 @@ pub class Checker {
       self.fail(expr.loc, "String.to_i takes no arguments")
       return self.t_int()
     }
+    if str_eq(expr.callee, "get") {
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "get takes one Int")
+        return ty_nilable(self.t_int())
+      }
+      got = self.check_expr_as(expr.args[0], self.t_int())
+      if got.is_int {
+      } else {
+        self.fail(expr.args[0].loc, "get index must be Int")
+      }
+      return ty_nilable(self.t_int())
+    }
     self.fail(expr.loc, "no method ${expr.callee} on String")
     self.t_string()
   }
@@ -5984,6 +6423,19 @@ pub class Checker {
       }
       self.fail(expr.loc, "clear takes no arguments")
       return self.t_void()
+    }
+    if str_eq(expr.callee, "get") {
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "get takes one Int")
+        return ty_nilable(self.t_int())
+      }
+      got = self.check_expr_as(expr.args[0], self.t_int())
+      if got.is_int {
+      } else {
+        self.fail(expr.args[0].loc, "get index must be Int")
+      }
+      return ty_nilable(self.t_int())
     }
     self.fail(expr.loc, "no method ${expr.callee} on Buf")
     self.t_void()
@@ -6124,6 +6576,32 @@ pub class Checker {
         self.fail(expr.args[0].loc, "reserve expects Int")
       }
       return self.t_void()
+    }
+    if str_eq(expr.callee, "get") {
+      if b = expr.block {
+        self.fail(expr.loc, "get does not take a block")
+        if e = array.inner {
+          return ty_nilable(e)
+        }
+        return self.t_int()
+      }
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "get takes one Int")
+        if e = array.inner {
+          return ty_nilable(e)
+        }
+        return self.t_int()
+      }
+      got = self.check_expr_as(expr.args[0], self.t_int())
+      if got.is_int {
+      } else {
+        self.fail(expr.args[0].loc, "get index must be Int")
+      }
+      if e = array.inner {
+        return ty_nilable(e)
+      }
+      return ty_nilable(self.t_int())
     }
     if str_eq(expr.callee, "parallel") {
       return self.check_parallel(expr, array)
@@ -6598,6 +7076,10 @@ pub class Checker {
           if ty = self.lookup(target.ident) {
             self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only (D35)")
           }
+        } else if self.spawn_array_frozen(target) {
+          root = self.expr_root_name(target)
+          self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+          self.walk_spawn_expr(target, node, seen)
         } else {
           self.walk_spawn_expr(target, node, seen)
         }
@@ -6632,6 +7114,12 @@ pub class Checker {
         }
       }
       if recv = expr.receiver {
+        if self.array_mutator(expr.callee) {
+          if self.spawn_array_frozen(recv) {
+            root = self.expr_root_name(recv)
+            self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+          }
+        }
         self.walk_spawn_expr(recv, node, seen)
       }
       i = 0
@@ -6752,6 +7240,1275 @@ pub class Checker {
       i = i + 1
     }
     false
+  }
+
+  pub fn expr_root_name(expr: Expr): String {
+    k = expr.kind
+    if k == ex_name() {
+      return expr.ident
+    }
+    if k == ex_field() {
+      if obj = expr.object {
+        return self.expr_root_name(obj)
+      }
+    }
+    if k == ex_index() {
+      if l = expr.left {
+        return self.expr_root_name(l)
+      }
+    }
+    ""
+  }
+
+  pub fn array_mutator(name: String): Bool {
+    if str_eq(name, "push") {
+      return true
+    }
+    if str_eq(name, "pop") {
+      return true
+    }
+    if str_eq(name, "clear") {
+      return true
+    }
+    if str_eq(name, "fill") {
+      return true
+    }
+    if str_eq(name, "sort") {
+      return true
+    }
+    str_eq(name, "reserve")
+  }
+
+  pub fn spawn_array_frozen(expr: Expr): Bool {
+    root = self.expr_root_name(expr)
+    if root.size == 0 {
+      return false
+    }
+    if self.spawn_skip_has(root) {
+      return false
+    }
+    if ty = self.lookup(root) {
+      return ty.is_array
+    }
+    false
+  }
+
+  pub fn pending_has_array(name: String): Bool {
+    i = 0
+    while i < self.pending_arrays.size {
+      if str_eq(self.pending_arrays[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn pending_join(handle: String) {
+    kept_h: Array(String) = []
+    kept_a: Array(String) = []
+    i = 0
+    while i < self.pending_handles.size {
+      if str_eq(self.pending_handles[i], handle) {
+      } else {
+        kept_h.push(self.pending_handles[i])
+        kept_a.push(self.pending_arrays[i])
+      }
+      i = i + 1
+    }
+    self.pending_handles = kept_h
+    self.pending_arrays = kept_a
+  }
+
+  pub fn scan_pending_stmt(stmt: Stmt) {
+    if e = stmt.expr {
+      self.scan_pending_expr(e)
+    }
+    if c = stmt.cond {
+      self.scan_pending_expr(c)
+    }
+    if t = stmt.target {
+      self.scan_pending_target(t)
+    }
+    if v = stmt.value {
+      self.scan_pending_expr(v)
+    }
+    i = 0
+    while i < stmt.then_body.size {
+      self.scan_pending_stmt(stmt.then_body[i])
+      i = i + 1
+    }
+    i = 0
+    while i < stmt.else_body.size {
+      self.scan_pending_stmt(stmt.else_body[i])
+      i = i + 1
+    }
+    i = 0
+    while i < stmt.body.size {
+      self.scan_pending_stmt(stmt.body[i])
+      i = i + 1
+    }
+  }
+
+  pub fn scan_pending_target(target: Expr) {
+    if target.kind == ex_name() {
+      return
+    }
+    root = self.expr_root_name(target)
+    if root.size > 0 {
+      if self.pending_has_array(root) {
+        self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+      }
+    }
+    self.scan_pending_expr(target)
+  }
+
+  pub fn scan_pending_expr(expr: Expr) {
+    k = expr.kind
+    if k == ex_field() {
+      if str_eq(expr.ident, "join") {
+        if obj = expr.object {
+          if obj.kind == ex_name() {
+            self.pending_join(obj.ident)
+            return
+          }
+        }
+      }
+    }
+    if k == ex_call() {
+      if str_eq(expr.callee, "join") {
+        if recv = expr.receiver {
+          if recv.kind == ex_name() {
+            self.pending_join(recv.ident)
+          }
+        }
+      }
+      if recv = expr.receiver {
+        if self.array_mutator(expr.callee) {
+          root = self.expr_root_name(recv)
+          if root.size > 0 {
+            if self.pending_has_array(root) {
+              self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+            }
+          }
+        }
+      }
+    }
+    if inner = expr.inner {
+      self.scan_pending_expr(inner)
+    }
+    if l = expr.left {
+      self.scan_pending_expr(l)
+    }
+    if r = expr.right {
+      self.scan_pending_expr(r)
+    }
+    if obj = expr.object {
+      self.scan_pending_expr(obj)
+    }
+    if recv = expr.receiver {
+      self.scan_pending_expr(recv)
+    }
+    i = 0
+    while i < expr.args.size {
+      self.scan_pending_expr(expr.args[i])
+      i = i + 1
+    }
+    i = 0
+    while i < expr.elems.size {
+      self.scan_pending_expr(expr.elems[i])
+      i = i + 1
+    }
+    i = 0
+    while i < expr.field_exprs.size {
+      self.scan_pending_expr(expr.field_exprs[i])
+      i = i + 1
+    }
+    if sz = expr.size_expr {
+      self.scan_pending_expr(sz)
+    }
+    if c = expr.cond {
+      self.scan_pending_expr(c)
+    }
+    if b = expr.block {
+      j = 0
+      while j < b.body.size {
+        self.scan_pending_stmt(b.body[j])
+        j = j + 1
+      }
+    }
+    i = 0
+    while i < expr.cases.size {
+      cs = expr.cases[i]
+      j = 0
+      while j < cs.body.size {
+        self.scan_pending_stmt(cs.body[j])
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < expr.else_body.size {
+      self.scan_pending_stmt(expr.else_body[i])
+      i = i + 1
+    }
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if inner = part.expr {
+        self.scan_pending_expr(inner)
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn register_spawn_pending(stmt: Stmt) {
+    if stmt.kind == st_assign() {
+      if v = stmt.value {
+        if v.kind == ex_call() {
+          if str_eq(v.callee, "spawn") {
+            handle = ""
+            if t = stmt.target {
+              if t.kind == ex_name() {
+                handle = t.ident
+              }
+            }
+            i = 0
+            while i < v.cap_names.size {
+              if v.cap_tys[i].is_array {
+                self.pending_handles.push(handle)
+                self.pending_arrays.push(v.cap_names[i])
+              }
+              i = i + 1
+            }
+            return
+          }
+        }
+      }
+    }
+    if e = stmt.expr {
+      if e.kind == ex_call() {
+        if str_eq(e.callee, "spawn") {
+          i = 0
+          while i < e.cap_names.size {
+            if e.cap_tys[i].is_array {
+              self.pending_handles.push("")
+              self.pending_arrays.push(e.cap_names[i])
+            }
+            i = i + 1
+          }
+        }
+      }
+    }
+  }
+
+  pub fn nn_has(name: String): Bool {
+    str_index(self.nn_var, name) >= 0
+  }
+
+  pub fn nn_add(name: String) {
+    if self.nn_has(name) {
+      return
+    }
+    self.nn_var.push(name)
+  }
+
+  pub fn nn_remove(name: String) {
+    kept: Array(String) = []
+    i = 0
+    while i < self.nn_var.size {
+      if str_eq(self.nn_var[i], name) {
+      } else {
+        kept.push(self.nn_var[i])
+      }
+      i = i + 1
+    }
+    self.nn_var = kept
+  }
+
+  pub fn sv_put(v: String, cont: String) {
+    i = 0
+    while i < self.sv_var.size {
+      if str_eq(self.sv_var[i], v) {
+        self.sv_cont[i] = cont
+        return
+      }
+      i = i + 1
+    }
+    self.sv_var.push(v)
+    self.sv_cont.push(cont)
+  }
+
+  pub fn sv_get(v: String): String {
+    i = 0
+    while i < self.sv_var.size {
+      if str_eq(self.sv_var[i], v) {
+        return self.sv_cont[i]
+      }
+      i = i + 1
+    }
+    ""
+  }
+
+  pub fn sv_remove_var(v: String) {
+    kept_v: Array(String) = []
+    kept_c: Array(String) = []
+    i = 0
+    while i < self.sv_var.size {
+      if str_eq(self.sv_var[i], v) {
+      } else {
+        kept_v.push(self.sv_var[i])
+        kept_c.push(self.sv_cont[i])
+      }
+      i = i + 1
+    }
+    self.sv_var = kept_v
+    self.sv_cont = kept_c
+  }
+
+  pub fn fact_slack_of(v: String, cont: String): Int {
+    best = 0 - 1
+    i = 0
+    while i < self.fact_var.size {
+      if self.fact_live[i] == 1 {
+        if str_eq(self.fact_var[i], v) {
+          if str_eq(self.fact_cont[i], cont) {
+            if self.fact_slack[i] > best {
+              best = self.fact_slack[i]
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    best
+  }
+
+  pub fn fact_any_slack(v: String): Int {
+    best = 0 - 1
+    i = 0
+    while i < self.fact_var.size {
+      if self.fact_live[i] == 1 {
+        if str_eq(self.fact_var[i], v) {
+          if self.fact_slack[i] > best {
+            best = self.fact_slack[i]
+          }
+        }
+      }
+      i = i + 1
+    }
+    best
+  }
+
+  pub fn kill_facts_for(v: String) {
+    i = 0
+    while i < self.fact_var.size {
+      if str_eq(self.fact_var[i], v) {
+        self.fact_live[i] = 0
+      }
+      if str_eq(self.fact_cont[i], v) {
+        self.fact_live[i] = 0
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn bv_put(v: String, cont: String, delta: Int) {
+    i = 0
+    while i < self.bv_var.size {
+      if str_eq(self.bv_var[i], v) {
+        self.bv_cont[i] = cont
+        self.bv_delta[i] = delta
+        return
+      }
+      i = i + 1
+    }
+    self.bv_var.push(v)
+    self.bv_cont.push(cont)
+    self.bv_delta.push(delta)
+  }
+
+  pub fn bv_get(v: String): String {
+    i = 0
+    while i < self.bv_var.size {
+      if str_eq(self.bv_var[i], v) {
+        return self.bv_cont[i]
+      }
+      i = i + 1
+    }
+    ""
+  }
+
+  pub fn bv_delta_of(v: String): Int {
+    i = 0
+    while i < self.bv_var.size {
+      if str_eq(self.bv_var[i], v) {
+        return self.bv_delta[i]
+      }
+      i = i + 1
+    }
+    0
+  }
+
+  pub fn bv_remove_var(v: String) {
+    kept_v: Array(String) = []
+    kept_c: Array(String) = []
+    kept_d: Array(Int) = []
+    i = 0
+    while i < self.bv_var.size {
+      if str_eq(self.bv_var[i], v) {
+      } else {
+        kept_v.push(self.bv_var[i])
+        kept_c.push(self.bv_cont[i])
+        kept_d.push(self.bv_delta[i])
+      }
+      i = i + 1
+    }
+    self.bv_var = kept_v
+    self.bv_cont = kept_c
+    self.bv_delta = kept_d
+  }
+
+  pub fn cs_put(cont: String, v: String, delta: Int) {
+    i = 0
+    while i < self.cs_cont.size {
+      if str_eq(self.cs_cont[i], cont) {
+        self.cs_var[i] = v
+        self.cs_delta[i] = delta
+        return
+      }
+      i = i + 1
+    }
+    self.cs_cont.push(cont)
+    self.cs_var.push(v)
+    self.cs_delta.push(delta)
+  }
+
+  pub fn cs_cont_of_var(v: String): String {
+    i = 0
+    while i < self.cs_var.size {
+      if str_eq(self.cs_var[i], v) {
+        return self.cs_cont[i]
+      }
+      i = i + 1
+    }
+    ""
+  }
+
+  pub fn cs_delta_of_var(v: String): Int {
+    i = 0
+    while i < self.cs_var.size {
+      if str_eq(self.cs_var[i], v) {
+        return self.cs_delta[i]
+      }
+      i = i + 1
+    }
+    0
+  }
+
+  pub fn bound_cont_of(e: Expr): String {
+    if e.kind == ex_field() {
+      if str_eq(e.ident, "size") {
+        if obj = e.object {
+          if obj.kind == ex_name() {
+            if obj.implicit_field {
+              return ""
+            }
+            return obj.ident
+          }
+        }
+      }
+      return ""
+    }
+    if e.kind == ex_name() {
+      got = self.sv_get(e.ident)
+      if got.size > 0 {
+        return got
+      }
+      gotb = self.bv_get(e.ident)
+      if gotb.size > 0 {
+        return gotb
+      }
+      return self.cs_cont_of_var(e.ident)
+    }
+    if e.kind == ex_binary() {
+      if e.op == tk_minus() || e.op == tk_plus() {
+        if l = e.left {
+          return self.bound_cont_of(l)
+        }
+      }
+    }
+    ""
+  }
+
+  pub fn bound_delta_of(e: Expr): Int {
+    if e.kind == ex_field() {
+      return 0
+    }
+    if e.kind == ex_name() {
+      got = self.sv_get(e.ident)
+      if got.size > 0 {
+        return 0
+      }
+      bg = self.bv_get(e.ident)
+      if bg.size > 0 {
+        return self.bv_delta_of(e.ident)
+      }
+      cc = self.cs_cont_of_var(e.ident)
+      if cc.size > 0 {
+        return 0 - self.cs_delta_of_var(e.ident)
+      }
+      return 0
+    }
+    if e.kind == ex_binary() {
+      if l = e.left {
+        if r = e.right {
+          base = self.bound_delta_of(l)
+          if self.lit_small(r) {
+            if e.op == tk_minus() {
+              return base - r.int_bits.to_i
+            }
+            return base + r.int_bits.to_i
+          }
+        }
+      }
+    }
+    0
+  }
+
+  pub fn lit_small(e: Expr): Bool {
+    if e.kind == ex_int() {
+      return e.int_bits <= 1000000u64
+    }
+    false
+  }
+
+  pub fn value_is_nonneg(val: Expr, selfname: String): Bool {
+    if val.kind == ex_int() {
+      return true
+    }
+    if val.kind == ex_field() {
+      if str_eq(val.ident, "size") {
+        return true
+      }
+    }
+    if val.kind == ex_name() {
+      return self.nn_has(val.ident)
+    }
+    if val.kind == ex_binary() {
+      if val.op == tk_star() {
+        if l = val.left {
+          if r = val.right {
+            lok = false
+            if l.kind == ex_int() {
+              lok = true
+            } else if l.kind == ex_name() {
+              if self.nn_has(l.ident) {
+                lok = true
+              }
+            }
+            rok = false
+            if r.kind == ex_int() {
+              rok = true
+            } else if r.kind == ex_name() {
+              if self.nn_has(r.ident) {
+                rok = true
+              }
+            }
+            if lok {
+              return rok
+            }
+            return false
+          }
+        }
+      }
+      if val.op == tk_plus() || val.op == tk_minus() {
+        if l = val.left {
+          if r = val.right {
+            lok = false
+            if l.kind == ex_int() {
+              lok = true
+            } else if l.kind == ex_name() {
+              if self.nn_has(l.ident) {
+                lok = true
+              }
+              if str_eq(l.ident, selfname) {
+                if self.nn_has(selfname) {
+                  lok = true
+                }
+              }
+            }
+            rok = false
+            if r.kind == ex_int() {
+              rok = true
+            } else if r.kind == ex_name() {
+              if self.nn_has(r.ident) {
+                rok = true
+              }
+            }
+            if val.op == tk_minus() {
+              if r.kind == ex_int() {
+                return lok
+              }
+              return false
+            }
+            if lok {
+              return rok
+            }
+          }
+        }
+      }
+    }
+    false
+  }
+
+  pub fn fact_after_stmt(stmt: Stmt) {
+    if stmt.kind == st_assign() {
+      if t = stmt.target {
+        if t.kind == ex_name() {
+          v = t.ident
+          self.kill_facts_for(v)
+          if val = stmt.value {
+            if self.value_is_nonneg(val, v) {
+              self.nn_add(v)
+            } else {
+              self.nn_remove(v)
+            }
+            sv_done = false
+            if val.kind == ex_field() {
+              if str_eq(val.ident, "size") {
+                if obj = val.object {
+                  if obj.kind == ex_name() {
+                    self.sv_put(v, obj.ident)
+                    sv_done = true
+                  }
+                }
+              }
+            }
+            if val.kind == ex_array_new() {
+              if sz = val.size_expr {
+                if sz.kind == ex_name() {
+                  self.sv_put(sz.ident, v)
+                  self.cs_put(v, sz.ident, 0)
+                  sv_done = true
+                } else if sz.kind == ex_binary() {
+                  if sz.op == tk_plus() || sz.op == tk_minus() {
+                    if sl2 = sz.left {
+                      if sr2 = sz.right {
+                        if sl2.kind == ex_name() {
+                          if self.lit_small(sr2) {
+                            d = sr2.int_bits.to_i
+                            if sz.op == tk_minus() {
+                              d = 0 - d
+                            }
+                            self.cs_put(v, sl2.ident, d)
+                          }
+                        }
+                        if sr2.kind == ex_name() {
+                          if self.lit_small(sl2) {
+                            if sz.op == tk_plus() {
+                              self.cs_put(v, sr2.ident, sl2.int_bits.to_i)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if sv_done {
+            } else {
+              self.sv_remove_var(v)
+            }
+            bc = self.bound_cont_of(val)
+            if bc.size > 0 {
+              self.bv_put(v, bc, self.bound_delta_of(val))
+            } else {
+              self.bv_remove_var(v)
+            }
+          }
+        }
+      }
+    }
+    i = 0
+    while i < self.fact_var.size {
+      if self.fact_live[i] == 1 {
+        if self.deep_shrinks_stmt(stmt, self.fact_cont[i]) {
+          self.fact_live[i] = 0
+        }
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn deep_shrinks_stmt(s: Stmt, cont: String): Bool {
+    if s.kind == st_assign() {
+      if t = s.target {
+        if t.kind == ex_name() {
+          if str_eq(t.ident, cont) {
+            return true
+          }
+        }
+      }
+    }
+    if e = s.expr {
+      if self.deep_shrinks_expr(e, cont) {
+        return true
+      }
+    }
+    if c = s.cond {
+      if self.deep_shrinks_expr(c, cont) {
+        return true
+      }
+    }
+    if t = s.target {
+      if self.deep_shrinks_expr(t, cont) {
+        return true
+      }
+    }
+    if v = s.value {
+      if self.deep_shrinks_expr(v, cont) {
+        return true
+      }
+    }
+    i = 0
+    while i < s.then_body.size {
+      if self.deep_shrinks_stmt(s.then_body[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < s.else_body.size {
+      if self.deep_shrinks_stmt(s.else_body[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < s.body.size {
+      if self.deep_shrinks_stmt(s.body[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn deep_shrinks_expr(e: Expr, cont: String): Bool {
+    if e.kind == ex_call() {
+      if str_eq(e.callee, "pop") || str_eq(e.callee, "clear") {
+        if recv = e.receiver {
+          if str_eq(self.expr_root_name(recv), cont) {
+            return true
+          }
+        }
+      }
+    }
+    if inner = e.inner {
+      if self.deep_shrinks_expr(inner, cont) {
+        return true
+      }
+    }
+    if l = e.left {
+      if self.deep_shrinks_expr(l, cont) {
+        return true
+      }
+    }
+    if r = e.right {
+      if self.deep_shrinks_expr(r, cont) {
+        return true
+      }
+    }
+    if obj = e.object {
+      if self.deep_shrinks_expr(obj, cont) {
+        return true
+      }
+    }
+    if recv = e.receiver {
+      if self.deep_shrinks_expr(recv, cont) {
+        return true
+      }
+    }
+    i = 0
+    while i < e.args.size {
+      if self.deep_shrinks_expr(e.args[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.elems.size {
+      if self.deep_shrinks_expr(e.elems[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_exprs.size {
+      if self.deep_shrinks_expr(e.field_exprs[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    if sz = e.size_expr {
+      if self.deep_shrinks_expr(sz, cont) {
+        return true
+      }
+    }
+    if c = e.cond {
+      if self.deep_shrinks_expr(c, cont) {
+        return true
+      }
+    }
+    if b = e.block {
+      j = 0
+      while j < b.body.size {
+        if self.deep_shrinks_stmt(b.body[j], cont) {
+          return true
+        }
+        j = j + 1
+      }
+    }
+    i = 0
+    while i < e.cases.size {
+      cs = e.cases[i]
+      j = 0
+      while j < cs.body.size {
+        if self.deep_shrinks_stmt(cs.body[j], cont) {
+          return true
+        }
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.else_body.size {
+      if self.deep_shrinks_stmt(e.else_body[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.parts.size {
+      part = e.parts[i]
+      if inner = part.expr {
+        if self.deep_shrinks_expr(inner, cont) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn step_is_nonneg(v: Expr): Bool {
+    if v.kind == ex_int() {
+      return true
+    }
+    if v.kind == ex_name() {
+      return self.nn_has(v.ident)
+    }
+    false
+  }
+
+  pub fn deep_ivar_ok_stmt(s: Stmt, ivar: String): Bool {
+    if s.kind == st_assign() {
+      if t = s.target {
+        if t.kind == ex_name() {
+          if str_eq(t.ident, ivar) {
+            if s.op == tk_plus_eq() {
+              if v = s.value {
+                if self.step_is_nonneg(v) {
+                  return self.deep_ivar_ok_rest(s, ivar)
+                }
+              }
+              return false
+            }
+            if s.op == tk_eq() {
+              if v = s.value {
+                if v.kind == ex_binary() {
+                  if v.op == tk_plus() {
+                    if l = v.left {
+                      if r = v.right {
+                        if l.kind == ex_name() {
+                          if str_eq(l.ident, ivar) {
+                            if self.step_is_nonneg(r) {
+                              return self.deep_ivar_ok_rest(s, ivar)
+                            }
+                          }
+                        }
+                        if r.kind == ex_name() {
+                          if str_eq(r.ident, ivar) {
+                            if self.step_is_nonneg(l) {
+                              return self.deep_ivar_ok_rest(s, ivar)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              return false
+            }
+            return false
+          }
+        }
+      }
+    }
+    self.deep_ivar_ok_rest(s, ivar)
+  }
+
+  pub fn deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
+    if e = s.expr {
+      if self.deep_ivar_ok_expr(e, ivar) {
+      } else {
+        return false
+      }
+    }
+    if c = s.cond {
+      if self.deep_ivar_ok_expr(c, ivar) {
+      } else {
+        return false
+      }
+    }
+    if v = s.value {
+      if self.deep_ivar_ok_expr(v, ivar) {
+      } else {
+        return false
+      }
+    }
+    i = 0
+    while i < s.then_body.size {
+      if self.deep_ivar_ok_stmt(s.then_body[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < s.else_body.size {
+      if self.deep_ivar_ok_stmt(s.else_body[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < s.body.size {
+      if self.deep_ivar_ok_stmt(s.body[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    true
+  }
+
+  pub fn deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
+    if inner = e.inner {
+      if self.deep_ivar_ok_expr(inner, ivar) {
+      } else {
+        return false
+      }
+    }
+    if l = e.left {
+      if self.deep_ivar_ok_expr(l, ivar) {
+      } else {
+        return false
+      }
+    }
+    if r = e.right {
+      if self.deep_ivar_ok_expr(r, ivar) {
+      } else {
+        return false
+      }
+    }
+    if obj = e.object {
+      if self.deep_ivar_ok_expr(obj, ivar) {
+      } else {
+        return false
+      }
+    }
+    if recv = e.receiver {
+      if self.deep_ivar_ok_expr(recv, ivar) {
+      } else {
+        return false
+      }
+    }
+    i = 0
+    while i < e.args.size {
+      if self.deep_ivar_ok_expr(e.args[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.elems.size {
+      if self.deep_ivar_ok_expr(e.elems[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_exprs.size {
+      if self.deep_ivar_ok_expr(e.field_exprs[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    if sz = e.size_expr {
+      if self.deep_ivar_ok_expr(sz, ivar) {
+      } else {
+        return false
+      }
+    }
+    if c = e.cond {
+      if self.deep_ivar_ok_expr(c, ivar) {
+      } else {
+        return false
+      }
+    }
+    if b = e.block {
+      j = 0
+      while j < b.body.size {
+        if self.deep_ivar_ok_stmt(b.body[j], ivar) {
+        } else {
+          return false
+        }
+        j = j + 1
+      }
+    }
+    i = 0
+    while i < e.cases.size {
+      cs = e.cases[i]
+      j = 0
+      while j < cs.body.size {
+        if self.deep_ivar_ok_stmt(cs.body[j], ivar) {
+        } else {
+          return false
+        }
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.else_body.size {
+      if self.deep_ivar_ok_stmt(e.else_body[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    true
+  }
+
+  pub fn body_ivar_ok(body: Array(Stmt), ivar: String): Bool {
+    i = 0
+    while i < body.size {
+      if self.deep_ivar_ok_stmt(body[i], ivar) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    true
+  }
+
+  pub fn body_shrinks(body: Array(Stmt), cont: String): Bool {
+    i = 0
+    while i < body.size {
+      if self.deep_shrinks_stmt(body[i], cont) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn collect_cond_nn(e: Expr, into: Array(String)) {
+    if e.kind == ex_binary() {
+      if e.op == tk_amp_amp() {
+        if l = e.left {
+          self.collect_cond_nn(l, into)
+        }
+        if r = e.right {
+          self.collect_cond_nn(r, into)
+        }
+        return
+      }
+      if e.op == 47 {
+        if l = e.left {
+          if r = e.right {
+            if l.kind == ex_name() {
+              if r.kind == ex_int() {
+                if r.int_bits == 0u64 {
+                  into.push(l.ident)
+                }
+              }
+            }
+          }
+        }
+      }
+      if e.op == tk_less_eq() {
+        if l = e.left {
+          if r = e.right {
+            if r.kind == ex_name() {
+              if l.kind == ex_int() {
+                if l.int_bits == 0u64 {
+                  into.push(r.ident)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  pub fn fact_from_cond(e: Expr, body: Array(Stmt), nnl: Array(String)) {
+    if e.kind != ex_binary() {
+      return
+    }
+    if e.op == tk_amp_amp() {
+      if l = e.left {
+        self.fact_from_cond(l, body, nnl)
+      }
+      if r = e.right {
+        self.fact_from_cond(r, body, nnl)
+      }
+      return
+    }
+    ivar = ""
+    bound: Expr? = nil
+    slack = 0
+    is_le = false
+    if e.op == tk_less() {
+      if l = e.left {
+        if l.kind == ex_name() {
+          ivar = l.ident
+          if r = e.right {
+            bound = r
+          }
+        }
+      }
+    } else if e.op == tk_less_eq() {
+      is_le = true
+      if l = e.left {
+        if l.kind == ex_name() {
+          ivar = l.ident
+          if r = e.right {
+            bound = r
+          }
+        }
+      }
+    } else if e.op == 47 {
+      if r = e.right {
+        if r.kind == ex_name() {
+          ivar = r.ident
+          if l = e.left {
+            bound = l
+          }
+        }
+      }
+    } else if e.op == 48 {
+      is_le = true
+      if r = e.right {
+        if r.kind == ex_name() {
+          ivar = r.ident
+          if l = e.left {
+            bound = l
+          }
+        }
+      }
+    } else {
+      return
+    }
+    if ivar.size == 0 {
+      return
+    }
+    if b = bound {
+      cont = self.bound_cont_of(b)
+      if cont.size == 0 {
+        if is_le {
+          return
+        }
+        nonneg2 = false
+        if self.nn_has(ivar) {
+          nonneg2 = true
+        }
+        if str_index(nnl, ivar) >= 0 {
+          nonneg2 = true
+        }
+        if nonneg2 {
+        } else {
+          return
+        }
+        if self.body_ivar_ok(body, ivar) {
+          self.fact_var.push(ivar)
+          self.fact_cont.push("")
+          self.fact_slack.push(0)
+          self.fact_live.push(1)
+        }
+        return
+      }
+      delta = self.bound_delta_of(b)
+      if is_le {
+        slack = (0 - delta) - 1
+      } else {
+        slack = 0 - delta
+      }
+      if slack < 0 {
+        return
+      }
+      direct = false
+      if b.kind == ex_field() {
+        direct = true
+      }
+      nonneg = false
+      if self.nn_has(ivar) {
+        nonneg = true
+      }
+      if str_index(nnl, ivar) >= 0 {
+        nonneg = true
+      }
+      if nonneg {
+      } else {
+        return
+      }
+      if direct {
+      } else {
+        if self.body_shrinks(body, cont) {
+          return
+        }
+      }
+      if self.body_ivar_ok(body, ivar) {
+        self.fact_var.push(ivar)
+        self.fact_cont.push(cont)
+        self.fact_slack.push(slack)
+        self.fact_live.push(1)
+      }
+    }
+  }
+
+  pub fn push_loop_facts(cond: Expr, body: Array(Stmt)) {
+    nnl: Array(String) = []
+    self.collect_cond_nn(cond, nnl)
+    self.fact_from_cond(cond, body, nnl)
+  }
+
+  pub fn pop_loop_facts(saved: Int) {
+    while self.fact_var.size > saved {
+      dropped_s = self.fact_var.pop
+      dropped_c = self.fact_cont.pop
+      dropped_k = self.fact_slack.pop
+      dropped_l = self.fact_live.pop
+    }
   }
 
   pub fn note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {

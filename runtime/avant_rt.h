@@ -196,6 +196,22 @@ int32_t avant_bwt_transform(void *input, void *sa, void *rank, void *tmp, void *
 /* Inverse. `next` is scratch of size >= n. `out` receives n bytes. */
 void avant_bwt_inverse(void *bwt, void *next, void *out, int32_t start);
 
+/* Wave B safety floor (Q67-A/Q68-A): language traps. Each prints one
+ * diagnostic to stderr and exits 1. They never return. */
+void avant_trap_bounds(int32_t index, int32_t size);
+void avant_trap_div_zero(void);
+void avant_trap_overflow(void);
+int64_t avant_checked_add_i64(int64_t a, int64_t b);
+int64_t avant_checked_sub_i64(int64_t a, int64_t b);
+int64_t avant_checked_mul_i64(int64_t a, int64_t b);
+uint64_t avant_checked_add_u64(uint64_t a, uint64_t b);
+uint64_t avant_checked_sub_u64(uint64_t a, uint64_t b);
+uint64_t avant_checked_mul_u64(uint64_t a, uint64_t b);
+int64_t avant_checked_div_i64(int64_t a, int64_t b);
+int64_t avant_checked_rem_i64(int64_t a, int64_t b);
+uint64_t avant_checked_div_u64(uint64_t a, uint64_t b);
+uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
+
 void *avant_spawn(void *fn, void *arg);
 int32_t avant_join(void *handle);
 void avant_parallel_for(int32_t n, void *fn, void *ctx);

@@ -428,7 +428,7 @@ pub fn u64_pow2(word: Int): UInt64 {
   p = 1u64
   i = 0
   while i < word {
-    p = p * 2u64
+    p = p << 1
     i = i + 1
   }
   p
@@ -730,6 +730,7 @@ pub class MycGen {
   // move objects stay inside the set. Loop hoisting keeps the strict walk.
   leaf_walk: Int = 0
   leaf_open: Hash(String, Int)
+  versioned: Array(String)
   hoist_names: Array(String)
   hoist_bits: Array(String)
   hoist_ptrs: Array(String)
@@ -820,6 +821,8 @@ pub class MycGen {
     self.leaf_walk = 0
     opened = Hash(String, Int).new
     self.leaf_open = opened
+    vs: Array(String) = []
+    self.versioned = vs
     hn: Array(String) = []
     self.hoist_names = hn
     hb: Array(String) = []
@@ -1132,6 +1135,19 @@ pub class MycGen {
     self.ext("avant_array_sort_i32", "ptr<void>", "")
     self.ext("avant_array_fill_i32", "ptr<void>,i32", "")
     self.ext("avant_array_fill_u8", "ptr<void>,i32", "")
+    self.ext("avant_trap_bounds", "i32,i32", "")
+    self.ext("avant_trap_div_zero", "", "")
+    self.ext("avant_trap_overflow", "", "")
+    self.ext("avant_checked_add_i64", "i64,i64", "i64")
+    self.ext("avant_checked_sub_i64", "i64,i64", "i64")
+    self.ext("avant_checked_mul_i64", "i64,i64", "i64")
+    self.ext("avant_checked_add_u64", "u64,u64", "u64")
+    self.ext("avant_checked_sub_u64", "u64,u64", "u64")
+    self.ext("avant_checked_mul_u64", "u64,u64", "u64")
+    self.ext("avant_checked_div_i64", "i64,i64", "i64")
+    self.ext("avant_checked_rem_i64", "i64,i64", "i64")
+    self.ext("avant_checked_div_u64", "u64,u64", "u64")
+    self.ext("avant_checked_rem_u64", "u64,u64", "u64")
     self.ext("avant_zlib_compress", "ptr<u8>", "ptr<u8>")
     self.ext("avant_zlib_uncompress", "ptr<u8>", "ptr<u8>")
     self.ext("avant_sha256", "ptr<u8>", "ptr<u8>")
@@ -3386,6 +3402,563 @@ pub class MycGen {
     stable
   }
 
+  pub fn versioned_for(arr: Expr): Bool {
+    if arr.kind == ex_name() {
+      if arr.implicit_field {
+        return false
+      }
+      return self.versioned_has(arr.ident)
+    }
+    false
+  }
+
+  pub fn versioned_has(name: String): Bool {
+    i = 0
+    while i < self.versioned.size {
+      if str_eq(self.versioned[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+
+  pub fn cg_root_name(e: Expr): String {
+    if e.kind == ex_name() {
+      return e.ident
+    }
+    if e.kind == ex_field() {
+      if obj = e.object {
+        return self.cg_root_name(obj)
+      }
+    }
+    if e.kind == ex_index() {
+      if l = e.left {
+        return self.cg_root_name(l)
+      }
+    }
+    ""
+  }
+
+  pub fn mentions_name(e: Expr, name: String): Bool {
+    if e.kind == ex_name() {
+      return str_eq(e.ident, name)
+    }
+    if inner = e.inner {
+      if self.mentions_name(inner, name) {
+        return true
+      }
+    }
+    if l = e.left {
+      if self.mentions_name(l, name) {
+        return true
+      }
+    }
+    if r = e.right {
+      if self.mentions_name(r, name) {
+        return true
+      }
+    }
+    if obj = e.object {
+      if self.mentions_name(obj, name) {
+        return true
+      }
+    }
+    if recv = e.receiver {
+      if self.mentions_name(recv, name) {
+        return true
+      }
+    }
+    i = 0
+    while i < e.args.size {
+      if self.mentions_name(e.args[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.elems.size {
+      if self.mentions_name(e.elems[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_exprs.size {
+      if self.mentions_name(e.field_exprs[i], name) {
+        return true
+      }
+      i = i + 1
+    }
+    if sz = e.size_expr {
+      if self.mentions_name(sz, name) {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn vscan_expr(e: Expr, buf_name: String, ivar: String, state: Array(Int)) {
+    if e.kind == ex_index() {
+      if l = e.left {
+        if l.kind == ex_name() {
+          if str_eq(l.ident, buf_name) {
+            if r = e.right {
+              if r.kind == ex_name() {
+                if str_eq(r.ident, ivar) {
+                  state[1] = 1
+                } else {
+                  state[0] = 1
+                }
+              } else if r.kind == ex_binary() {
+                if r.op == tk_plus() {
+                  ok = false
+                  if rl = r.left {
+                    if rr = r.right {
+                      if rl.kind == ex_name() {
+                        if str_eq(rl.ident, ivar) {
+                          if rr.kind == ex_int() {
+                            if rr.int_bits <= 1000000u64 {
+                              off = rr.int_bits.to_i
+                              if off > state[2] {
+                                state[2] = off
+                              }
+                              state[1] = 1
+                              ok = true
+                            }
+                          }
+                        }
+                      }
+                      if rr.kind == ex_name() {
+                        if str_eq(rr.ident, ivar) {
+                          if rl.kind == ex_int() {
+                            if rl.int_bits <= 1000000u64 {
+                              off = rl.int_bits.to_i
+                              if off > state[2] {
+                                state[2] = off
+                              }
+                              state[1] = 1
+                              ok = true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  if ok {
+                  } else {
+                    state[0] = 1
+                  }
+                } else {
+                  state[0] = 1
+                }
+              } else {
+                state[0] = 1
+              }
+            }
+          }
+        }
+      }
+    }
+    if e.kind == ex_call() {
+      if recv = e.receiver {
+        if self.mentions_name(recv, buf_name) {
+          if recv.kind == ex_index() {
+          } else if str_eq(self.cg_root_name(recv), buf_name) {
+            state[0] = 1
+          }
+        }
+      }
+      ai = 0
+      while ai < e.args.size {
+        if self.mentions_name(e.args[ai], buf_name) {
+          state[0] = 1
+        }
+        ai = ai + 1
+      }
+    }
+    if b = e.block {
+      i = 0
+      while i < b.params.size {
+        if str_eq(b.params[i], ivar) || str_eq(b.params[i], buf_name) {
+          state[0] = 1
+        }
+        i = i + 1
+      }
+      j = 0
+      while j < b.body.size {
+        self.vscan_stmt(b.body[j], buf_name, ivar, state)
+        j = j + 1
+      }
+    }
+    if inner = e.inner {
+      self.vscan_expr(inner, buf_name, ivar, state)
+    }
+    if l = e.left {
+      self.vscan_expr(l, buf_name, ivar, state)
+    }
+    if r = e.right {
+      self.vscan_expr(r, buf_name, ivar, state)
+    }
+    if obj = e.object {
+      self.vscan_expr(obj, buf_name, ivar, state)
+    }
+    if recv = e.receiver {
+      self.vscan_expr(recv, buf_name, ivar, state)
+    }
+    i = 0
+    while i < e.args.size {
+      self.vscan_expr(e.args[i], buf_name, ivar, state)
+      i = i + 1
+    }
+    i = 0
+    while i < e.elems.size {
+      self.vscan_expr(e.elems[i], buf_name, ivar, state)
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_exprs.size {
+      self.vscan_expr(e.field_exprs[i], buf_name, ivar, state)
+      i = i + 1
+    }
+    if sz = e.size_expr {
+      self.vscan_expr(sz, buf_name, ivar, state)
+    }
+    if c = e.cond {
+      self.vscan_expr(c, buf_name, ivar, state)
+    }
+    i = 0
+    while i < e.cases.size {
+      cs = e.cases[i]
+      j = 0
+      while j < cs.body.size {
+        self.vscan_stmt(cs.body[j], buf_name, ivar, state)
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.else_body.size {
+      self.vscan_stmt(e.else_body[i], buf_name, ivar, state)
+      i = i + 1
+    }
+    i = 0
+    while i < e.parts.size {
+      part = e.parts[i]
+      if inner = part.expr {
+        self.vscan_expr(inner, buf_name, ivar, state)
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn vscan_stmt(s: Stmt, buf_name: String, ivar: String, state: Array(Int)) {
+    if s.kind == st_assign() {
+      if t = s.target {
+        if t.kind == ex_name() {
+          if str_eq(t.ident, buf_name) {
+            state[0] = 1
+          }
+        }
+      }
+    }
+    if e = s.expr {
+      self.vscan_expr(e, buf_name, ivar, state)
+    }
+    if c = s.cond {
+      self.vscan_expr(c, buf_name, ivar, state)
+    }
+    if t = s.target {
+      self.vscan_expr(t, buf_name, ivar, state)
+    }
+    if v = s.value {
+      self.vscan_expr(v, buf_name, ivar, state)
+    }
+    i = 0
+    while i < s.then_body.size {
+      self.vscan_stmt(s.then_body[i], buf_name, ivar, state)
+      i = i + 1
+    }
+    i = 0
+    while i < s.else_body.size {
+      self.vscan_stmt(s.else_body[i], buf_name, ivar, state)
+      i = i + 1
+    }
+    i = 0
+    while i < s.body.size {
+      self.vscan_stmt(s.body[i], buf_name, ivar, state)
+      i = i + 1
+    }
+  }
+
+  pub fn vassign_scan_stmt(s: Stmt, ivar: String, in_block: Bool, state: Array(Int)) {
+    if s.kind == st_assign() {
+      if t = s.target {
+        if t.kind == ex_name() {
+          if str_eq(t.ident, ivar) {
+            state[1] = 1
+            if in_block {
+              state[0] = 1
+            } else {
+              ok = false
+              if s.op == tk_plus_eq() {
+                if v = s.value {
+                  if v.kind == ex_int() {
+                    ok = true
+                  }
+                }
+              }
+              if s.op == tk_eq() {
+                if v = s.value {
+                  if v.kind == ex_binary() {
+                    if v.op == tk_plus() {
+                      if l = v.left {
+                        if r = v.right {
+                          if l.kind == ex_name() {
+                            if str_eq(l.ident, ivar) {
+                              if r.kind == ex_int() {
+                                ok = true
+                              }
+                            }
+                          }
+                          if r.kind == ex_name() {
+                            if str_eq(r.ident, ivar) {
+                              if l.kind == ex_int() {
+                                ok = true
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              if ok {
+              } else {
+                state[0] = 1
+              }
+            }
+          }
+        }
+      }
+    }
+    if e = s.expr {
+      self.vassign_scan_expr(e, ivar, in_block, state)
+    }
+    if c = s.cond {
+      self.vassign_scan_expr(c, ivar, in_block, state)
+    }
+    if v = s.value {
+      self.vassign_scan_expr(v, ivar, in_block, state)
+    }
+    i = 0
+    while i < s.then_body.size {
+      self.vassign_scan_stmt(s.then_body[i], ivar, in_block, state)
+      i = i + 1
+    }
+    i = 0
+    while i < s.else_body.size {
+      self.vassign_scan_stmt(s.else_body[i], ivar, in_block, state)
+      i = i + 1
+    }
+    i = 0
+    while i < s.body.size {
+      self.vassign_scan_stmt(s.body[i], ivar, in_block, state)
+      i = i + 1
+    }
+  }
+
+  pub fn vassign_scan_expr(e: Expr, ivar: String, in_block: Bool, state: Array(Int)) {
+    nb = in_block
+    if b = e.block {
+      j = 0
+      while j < b.body.size {
+        self.vassign_scan_stmt(b.body[j], ivar, true, state)
+        j = j + 1
+      }
+      nb = true
+    }
+    if inner = e.inner {
+      self.vassign_scan_expr(inner, ivar, nb, state)
+    }
+    if l = e.left {
+      self.vassign_scan_expr(l, ivar, nb, state)
+    }
+    if r = e.right {
+      self.vassign_scan_expr(r, ivar, nb, state)
+    }
+    if obj = e.object {
+      self.vassign_scan_expr(obj, ivar, nb, state)
+    }
+    if recv = e.receiver {
+      self.vassign_scan_expr(recv, ivar, nb, state)
+    }
+    i = 0
+    while i < e.args.size {
+      self.vassign_scan_expr(e.args[i], ivar, nb, state)
+      i = i + 1
+    }
+    i = 0
+    while i < e.elems.size {
+      self.vassign_scan_expr(e.elems[i], ivar, nb, state)
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_exprs.size {
+      self.vassign_scan_expr(e.field_exprs[i], ivar, nb, state)
+      i = i + 1
+    }
+    if sz = e.size_expr {
+      self.vassign_scan_expr(sz, ivar, nb, state)
+    }
+    if c = e.cond {
+      self.vassign_scan_expr(c, ivar, nb, state)
+    }
+    i = 0
+    while i < e.cases.size {
+      cs = e.cases[i]
+      j = 0
+      while j < cs.body.size {
+        self.vassign_scan_stmt(cs.body[j], ivar, true, state)
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.else_body.size {
+      self.vassign_scan_stmt(e.else_body[i], ivar, true, state)
+      i = i + 1
+    }
+    i = 0
+    while i < e.parts.size {
+      part = e.parts[i]
+      if inner = part.expr {
+        self.vassign_scan_expr(inner, ivar, nb, state)
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn vcand_expr(e: Expr, names: Array(String), exprs: Array(Expr)) {
+    if e.kind == ex_index() {
+      if l = e.left {
+        if l.kind == ex_name() {
+          if l.implicit_field {
+          } else {
+            if self.name_is_boxed(l.ident) {
+            } else {
+              if self.cap_index(l.ident) >= 0 {
+              } else {
+                found = false
+                i = 0
+                while i < names.size {
+                  if str_eq(names[i], l.ident) {
+                    found = true
+                  }
+                  i = i + 1
+                }
+                if found {
+                } else {
+                  names.push(l.ident)
+                  exprs.push(l)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if b = e.block {
+      j = 0
+      while j < b.body.size {
+        self.vcand_stmt(b.body[j], names, exprs)
+        j = j + 1
+      }
+    }
+    if inner = e.inner {
+      self.vcand_expr(inner, names, exprs)
+    }
+    if l = e.left {
+      self.vcand_expr(l, names, exprs)
+    }
+    if r = e.right {
+      self.vcand_expr(r, names, exprs)
+    }
+    if obj = e.object {
+      self.vcand_expr(obj, names, exprs)
+    }
+    if recv = e.receiver {
+      self.vcand_expr(recv, names, exprs)
+    }
+    i = 0
+    while i < e.args.size {
+      self.vcand_expr(e.args[i], names, exprs)
+      i = i + 1
+    }
+    i = 0
+    while i < e.elems.size {
+      self.vcand_expr(e.elems[i], names, exprs)
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_exprs.size {
+      self.vcand_expr(e.field_exprs[i], names, exprs)
+      i = i + 1
+    }
+    if sz = e.size_expr {
+      self.vcand_expr(sz, names, exprs)
+    }
+    if c = e.cond {
+      self.vcand_expr(c, names, exprs)
+    }
+    i = 0
+    while i < e.cases.size {
+      cs = e.cases[i]
+      j = 0
+      while j < cs.body.size {
+        self.vcand_stmt(cs.body[j], names, exprs)
+        j = j + 1
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < e.else_body.size {
+      self.vcand_stmt(e.else_body[i], names, exprs)
+      i = i + 1
+    }
+  }
+
+  pub fn vcand_stmt(s: Stmt, names: Array(String), exprs: Array(Expr)) {
+    if e = s.expr {
+      self.vcand_expr(e, names, exprs)
+    }
+    if c = s.cond {
+      self.vcand_expr(c, names, exprs)
+    }
+    if t = s.target {
+      self.vcand_expr(t, names, exprs)
+    }
+    if v = s.value {
+      self.vcand_expr(v, names, exprs)
+    }
+    i = 0
+    while i < s.then_body.size {
+      self.vcand_stmt(s.then_body[i], names, exprs)
+      i = i + 1
+    }
+    i = 0
+    while i < s.else_body.size {
+      self.vcand_stmt(s.else_body[i], names, exprs)
+      i = i + 1
+    }
+    i = 0
+    while i < s.body.size {
+      self.vcand_stmt(s.body[i], names, exprs)
+      i = i + 1
+    }
+  }
+
   pub fn emit_while_loop(stmt: Stmt, outer: Bool) {
     self.root_loop = self.root_loop + 1
     self.line("LOOP")
@@ -3425,7 +3998,231 @@ pub class MycGen {
     saved = self.out
     body = buf_new()
     self.out = body
-    if self.should_split_while(stmt) {
+    vbufs: Array(String) = []
+    vmaxs: Array(Int) = []
+    cand_names: Array(String) = []
+    cand_exprs: Array(Expr) = []
+    vivar = ""
+    vle2 = false
+    vcoff2 = 0
+    vbound: Expr? = nil
+    if true {
+      if true {
+        if c = stmt.cond {
+          cc = c
+          if cc.kind == ex_binary() {
+            if cc.op == tk_amp_amp() {
+              if cl0 = cc.left {
+                cc = cl0
+              }
+            }
+          }
+          if cc.kind == ex_binary() {
+            if cc.op == tk_less() || cc.op == tk_less_eq() {
+              if cc.op == tk_less_eq() {
+                vle2 = true
+              }
+              if cl = cc.left {
+                if cr = cc.right {
+                  vbound = cr
+                  if cl.kind == ex_name() {
+                    vivar = cl.ident
+                  } else if cl.kind == ex_binary() {
+                    if cl.op == tk_plus() {
+                      if cll = cl.left {
+                        if clr = cl.right {
+                          if cll.kind == ex_name() {
+                            if clr.kind == ex_int() {
+                              vivar = cll.ident
+                              vcoff2 = clr.int_bits.to_i
+                            }
+                          }
+                          if clr.kind == ex_name() {
+                            if cll.kind == ex_int() {
+                              vivar = clr.ident
+                              vcoff2 = cll.int_bits.to_i
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if vivar.size > 0 {
+      ci0 = 0
+      while ci0 < stmt.body.size {
+        self.vcand_stmt(stmt.body[ci0], cand_names, cand_exprs)
+        ci0 = ci0 + 1
+      }
+      bi = 0
+      while bi < cand_names.size {
+        bname = cand_names[bi]
+        state: Array(Int) = [0, 0, 0]
+        si = 0
+        while si < stmt.body.size {
+          self.vscan_stmt(stmt.body[si], bname, vivar, state)
+          si = si + 1
+        }
+        if state[0] == 0 {
+          if state[1] == 1 {
+            ast: Array(Int) = [0, 0]
+            first_assign = 0 - 1
+            sj = 0
+            while sj < stmt.body.size {
+              ust: Array(Int) = [0, 0, 0]
+              self.vscan_stmt(stmt.body[sj], bname, vivar, ust)
+              ast2: Array(Int) = [0, 0]
+              self.vassign_scan_stmt(stmt.body[sj], vivar, false, ast2)
+              if ast2[1] == 1 {
+                if first_assign < 0 {
+                  first_assign = sj
+                  if ust[1] == 1 {
+                    state[0] = 1
+                  }
+                }
+              } else {
+                if first_assign >= 0 {
+                  if ust[1] == 1 {
+                    state[0] = 1
+                  }
+                }
+              }
+              if ast2[0] == 1 {
+                state[0] = 1
+              }
+              sj = sj + 1
+            }
+            if state[0] == 0 {
+              vbufs.push(bname)
+              vmaxs.push(state[2])
+            }
+          }
+        }
+        bi = bi + 1
+      }
+    }
+    if vbufs.size > 0 {
+      if vb = vbound {
+        self.emit_expr(vb)
+        bt2 = self.new_temp
+        self.line("LOCAL :${bt2} :i32")
+        self.line("STORE")
+        self.line("PUSH ${vcoff2} :i64")
+        self.line("LOCAL :${bt2}")
+        self.line("AS :i64")
+        self.line("BINARY :sub")
+        bet = self.new_temp
+        self.line("LOCAL :${bet} :i64")
+        self.line("STORE")
+        adj = 1
+        if vle2 {
+          adj = 0
+        }
+        lastt = ""
+        maxt = ""
+        if stmt.vstep > 0 {
+          if (stmt.vle && vle2) || (!stmt.vle && !vle2) {
+            if stmt.vcoff == vcoff2 {
+              sub_amt = adj + stmt.vstart
+              self.line("PUSH ${sub_amt} :i64")
+              self.line("LOCAL :${bet}")
+              self.line("BINARY :sub")
+              t2 = self.new_temp
+              self.line("LOCAL :${t2} :i64")
+              self.line("STORE")
+              self.line("PUSH ${stmt.vstep} :i64")
+              self.line("LOCAL :${t2}")
+              self.line("BINARY :div")
+              t3 = self.new_temp
+              self.line("LOCAL :${t3} :i64")
+              self.line("STORE")
+              self.line("PUSH ${stmt.vstep} :i64")
+              self.line("LOCAL :${t3}")
+              self.line("BINARY :mul")
+              self.line("PUSH ${stmt.vstart} :i64")
+              self.line("BINARY :add")
+              lastt = self.new_temp
+              self.line("LOCAL :${lastt} :i64")
+              self.line("STORE")
+            }
+          }
+        }
+        if lastt.size == 0 {
+          self.line("PUSH ${adj} :i64")
+          self.line("LOCAL :${bet}")
+          self.line("BINARY :sub")
+          maxt = self.new_temp
+          self.line("LOCAL :${maxt} :i64")
+          self.line("STORE")
+        }
+        self.line("PUSH true")
+        vi = 0
+        while vi < vbufs.size {
+          bname = vbufs[vi]
+          bexpr: Expr? = nil
+          ci1 = 0
+          while ci1 < cand_names.size {
+            if str_eq(cand_names[ci1], bname) {
+              bexpr = cand_exprs[ci1]
+            }
+            ci1 = ci1 + 1
+          }
+          bty = ty_int()
+          if be = bexpr {
+            bty = expr_ty(be)
+          }
+          if bty.is_string {
+            self.line("LOCAL :${bname}")
+            self.line("CALL :avant_str_size")
+            self.line("AS :i64")
+          } else if bty.is_buf {
+            self.line("LOCAL :${bname}")
+            self.line("AS :ptr<AvantBuf>")
+            self.line("DEREF")
+            self.line("FIELD 1")
+            self.line("AS :i64")
+          } else {
+            self.line("LOCAL :${bname}")
+            self.line("DEREF")
+            self.line("FIELD 1")
+            self.line("AS :i64")
+          }
+          if lastt.size > 0 {
+            self.line("LOCAL :${lastt}")
+          } else {
+            self.line("LOCAL :${maxt}")
+          }
+          self.line("PUSH ${vmaxs[vi]} :i64")
+          self.line("BINARY :add")
+          self.line("BINARY :less")
+          self.line("BINARY :and")
+          vi = vi + 1
+        }
+        self.line("IF")
+        self.indent = self.indent + 1
+        self.line("THEN")
+        self.indent = self.indent + 1
+        saved_ver = self.versioned
+        self.versioned = vbufs
+        self.emit_while_loop(stmt, outer)
+        self.versioned = saved_ver
+        self.indent = self.indent - 1
+        self.line("ELSE")
+        self.indent = self.indent + 1
+        self.emit_while_loop(stmt, outer)
+        self.indent = self.indent - 1
+        self.indent = self.indent - 1
+        self.line("ENDIF")
+      } else {
+        self.emit_while_loop(stmt, outer)
+      }
+    } else if self.should_split_while(stmt) {
       stable = self.emit_scalar_hoists_are_stable
       self.line("LOCAL :${stable}")
       self.line("PUSH 0")
@@ -3826,8 +4623,7 @@ pub class MycGen {
           self.emit_expr(v)
         }
         self.line("LOCAL :${tmp}")
-        op = myc_binop(compound_to_binop(stmt.op))
-        self.line("BINARY :${op}")
+        self.emit_checked_binary(compound_to_binop(stmt.op), ty, stmt.proven)
       }
     }
     if t = stmt.target {
@@ -5157,6 +5953,18 @@ pub class MycGen {
     if str_eq(name, "avant_array_fill_u8") {
       return true
     }
+    if str_eq(name, "avant_trap_bounds") || str_eq(name, "avant_trap_div_zero") || str_eq(name, "avant_trap_overflow") {
+      return true
+    }
+    if str_eq(name, "avant_checked_add_i64") || str_eq(name, "avant_checked_sub_i64") || str_eq(name, "avant_checked_mul_i64") {
+      return true
+    }
+    if str_eq(name, "avant_checked_add_u64") || str_eq(name, "avant_checked_sub_u64") || str_eq(name, "avant_checked_mul_u64") {
+      return true
+    }
+    if str_eq(name, "avant_checked_div_i64") || str_eq(name, "avant_checked_rem_i64") || str_eq(name, "avant_checked_div_u64") || str_eq(name, "avant_checked_rem_u64") {
+      return true
+    }
     if str_eq(name, "avant_str_size") || str_eq(name, "avant_str_byte") || str_eq(name, "avant_str_eq") {
       return true
     }
@@ -5254,7 +6062,43 @@ pub class MycGen {
     }
   }
 
-  pub fn emit_hoisted_index(ix: Expr, hi: Int) {
+  pub fn index_proven(ix: Expr, arr: Expr): Bool {
+    if ix.kind == ex_int() {
+      if arr.kind == ex_array() {
+        n = arr.elems.size
+        if ix.int_bits < n.to_u64 {
+          return true
+        }
+      }
+      if arr.kind == ex_string() {
+        n = arr.value_str.size
+        if ix.int_bits < n.to_u64 {
+          return true
+        }
+      }
+    }
+    false
+  }
+
+  pub fn emit_bounds_check(idx: String, size: String) {
+    self.line("LOCAL :${size}")
+    self.line("AS :u32")
+    self.line("LOCAL :${idx}")
+    self.line("AS :u32")
+    self.line("BINARY :more_eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${size}")
+    self.line("LOCAL :${idx}")
+    self.line("CALL :avant_trap_bounds")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+  }
+
+  pub fn emit_hoisted_index(ix: Expr, hi: Int, proven: Bool) {
     em = self.hoist_ems[hi]
     bits = self.hoist_bits[hi]
     ptr = self.hoist_ptrs[hi]
@@ -5262,6 +6106,75 @@ pub class MycGen {
     ixt = self.new_temp
     self.line("LOCAL :${ixt} :i32")
     self.line("STORE")
+    if proven || self.versioned_has(self.hoist_names[hi]) {
+      addr = self.new_temp
+      branch = false
+      if self.may_share {
+        if self.bits_only == 0 {
+          branch = true
+        } else {
+          if self.hoist_em_is_scalar(em) {
+          } else {
+            branch = true
+          }
+        }
+      }
+      if branch {
+        young = self.hoist_young[hi]
+        self.line("LOCAL :${young}")
+        self.line("PUSH 0")
+        self.line("BINARY :not_eq")
+        self.line("IF")
+        self.indent = self.indent + 1
+        self.line("THEN")
+        self.indent = self.indent + 1
+        self.line("LOCAL :${ptr}")
+        self.line("LOCAL :${ixt}")
+        self.line("STACK :swap2")
+        self.line("BINARY :add")
+        self.line("AS :i64")
+        self.line("LOCAL :${addr} :i64")
+        self.line("STORE")
+        self.indent = self.indent - 1
+        self.line("ELSE")
+        self.indent = self.indent + 1
+        self.line("LOCAL :${bits}")
+        self.line("AS :ptr<${em}>")
+        self.line("LOCAL :${ixt}")
+        self.line("STACK :swap2")
+        self.line("BINARY :add")
+        self.line("AS :i64")
+        self.line("LOCAL :${addr} :i64")
+        self.line("STORE")
+        self.indent = self.indent - 1
+        self.indent = self.indent - 1
+        self.line("ENDIF")
+      } else {
+        self.line("LOCAL :${bits}")
+        self.line("AS :ptr<${em}>")
+        self.line("LOCAL :${ixt}")
+        self.line("STACK :swap2")
+        self.line("BINARY :add")
+        self.line("AS :i64")
+        self.line("LOCAL :${addr} :i64")
+        self.line("STORE")
+      }
+      self.line("LOCAL :${addr}")
+      self.line("AS :ptr<${em}>")
+      self.line("DEREF")
+      return
+    }
+    hname = self.hoist_names[hi]
+    self.line("LOCAL :${hname}")
+    if str_eq(em, "u8") {
+      self.line("AS :ptr<AvantBuf>")
+    }
+    self.line("DEREF")
+    self.line("FIELD 1")
+    szt = self.new_temp
+    self.line("LOCAL :${szt} :i32")
+    self.line("STORE")
+    self.emit_bounds_check(ixt, szt)
     addr = self.new_temp
     branch = false
     if self.may_share {
@@ -5329,7 +6242,7 @@ pub class MycGen {
             } else {
               hi = self.hoist_index(arr.ident)
               if hi >= 0 {
-                self.emit_hoisted_index(ix, hi)
+                self.emit_hoisted_index(ix, hi, expr.proven)
                 return
               }
             }
@@ -5339,6 +6252,21 @@ pub class MycGen {
           self.line("LOCAL :${ixt} :i32")
           self.line("STORE")
           self.emit_expr(arr)
+          bt = self.new_temp
+          self.line("LOCAL :${bt} :ptr<void>")
+          self.line("STORE")
+          if self.index_proven(ix, arr) || expr.proven || self.versioned_for(arr) {
+          } else {
+            self.line("LOCAL :${bt}")
+            self.line("AS :ptr<AvantBuf>")
+            self.line("DEREF")
+            self.line("FIELD 1")
+            szt = self.new_temp
+            self.line("LOCAL :${szt} :i32")
+            self.line("STORE")
+            self.emit_bounds_check(ixt, szt)
+          }
+          self.line("LOCAL :${bt}")
           self.line("AS :ptr<AvantBuf>")
           self.line("DEREF")
           self.line("FIELD 0")
@@ -5360,6 +6288,15 @@ pub class MycGen {
           st = self.new_temp
           self.line("LOCAL :${st} :ptr<u8>")
           self.line("STORE")
+          if self.index_proven(ix, arr) || expr.proven || self.versioned_for(arr) {
+          } else {
+            self.line("LOCAL :${st}")
+            self.line("CALL :avant_str_size")
+            szt = self.new_temp
+            self.line("LOCAL :${szt} :i32")
+            self.line("STORE")
+            self.emit_bounds_check(ixt, szt)
+          }
           self.line("LOCAL :${ixt}")
           self.line("LOCAL :${st}")
           self.line("BINARY :add")
@@ -5379,7 +6316,7 @@ pub class MycGen {
             } else {
               hi = self.hoist_index(arr.ident)
               if hi >= 0 {
-                self.emit_hoisted_index(ix, hi)
+                self.emit_hoisted_index(ix, hi, expr.proven)
                 return
               }
             }
@@ -5389,6 +6326,22 @@ pub class MycGen {
           self.line("LOCAL :${ixt} :i32")
           self.line("STORE")
           self.emit_expr(arr)
+          arrn = self.new_temp
+          am = ty_myc(array_ty)
+          self.line("LOCAL :${arrn} :${am}")
+          self.line("STORE")
+          self.ensure_root(arrn, array_ty)
+          if self.index_proven(ix, arr) || expr.proven || self.versioned_for(arr) {
+          } else {
+            self.line("LOCAL :${arrn}")
+            self.line("DEREF")
+            self.line("FIELD 1")
+            szt = self.new_temp
+            self.line("LOCAL :${szt} :i32")
+            self.line("STORE")
+            self.emit_bounds_check(ixt, szt)
+          }
+          self.line("LOCAL :${arrn}")
           self.line("DEREF")
           self.line("FIELD 0")
           ptr_tmp = self.new_temp
@@ -5402,12 +6355,32 @@ pub class MycGen {
           self.line("DEREF")
         } else {
           self.emit_expr(arr)
+          arrn = self.new_temp
+          am2 = ty_myc(array_ty)
+          self.line("LOCAL :${arrn} :${am2}")
+          self.line("STORE")
+          self.ensure_root(arrn, array_ty)
+          self.emit_expr(ix)
+          ixt = self.new_temp
+          self.line("LOCAL :${ixt} :i32")
+          self.line("STORE")
+          if self.index_proven(ix, arr) || expr.proven || self.versioned_for(arr) {
+          } else {
+            self.line("LOCAL :${arrn}")
+            self.line("DEREF")
+            self.line("FIELD 1")
+            szt = self.new_temp
+            self.line("LOCAL :${szt} :i32")
+            self.line("STORE")
+            self.emit_bounds_check(ixt, szt)
+          }
+          self.line("LOCAL :${arrn}")
           self.line("DEREF")
           self.line("FIELD 0")
           ptr_tmp = self.new_temp
           self.line("LOCAL :${ptr_tmp} :ptr<i32>")
           self.line("STORE")
-          self.emit_expr(ix)
+          self.line("LOCAL :${ixt}")
           self.line("LOCAL :${ptr_tmp}")
           self.line("BINARY :add")
           self.line("DEREF")
@@ -5730,12 +6703,225 @@ pub class MycGen {
     }
     op = expr.op
     if op == tk_minus() {
+      if inner = expr.inner {
+        ity = expr_ty(inner)
+        if ity.is_int || ity.is_int64 {
+          m = ty_myc(ity)
+          vt = self.new_temp
+          self.line("LOCAL :${vt} :${m}")
+          self.line("STORE")
+          self.line("LOCAL :${vt}")
+          self.line("AS :i64")
+          if ity.is_int {
+            self.line("PUSH 1 :i64")
+            self.line("PUSH -2147483647 :i64")
+            self.line("BINARY :sub")
+          } else {
+            self.line("PUSH 9223372036854775807 :i64")
+            self.line("UNARY :neg")
+            self.line("PUSH 1 :i64")
+            self.line("BINARY :sub")
+          }
+          self.line("BINARY :eq")
+          self.line("IF")
+          self.indent = self.indent + 1
+          self.line("THEN")
+          self.indent = self.indent + 1
+          self.emit_trap_overflow
+          self.indent = self.indent - 1
+          self.indent = self.indent - 1
+          self.line("ENDIF")
+          self.line("LOCAL :${vt}")
+        }
+      }
       self.line("UNARY :neg")
     } else if op == tk_bang() {
       self.line("UNARY :lnot")
     } else if op == tk_tilde() {
       self.line("UNARY :bnot")
     }
+  }
+
+  pub fn emit_trap_overflow {
+    self.line("CALL :avant_trap_overflow")
+  }
+
+  pub fn emit_checked_binary(op: Int, ty: Ty, proven: Bool) {
+    if proven {
+      plain0 = myc_binop(op)
+      if op == tk_greater_greater() {
+        if ty.is_uint64 {
+          plain0 = "shr"
+        }
+      }
+      if op == tk_amp_plus() {
+        plain0 = "add"
+      }
+      if op == tk_amp_minus() {
+        plain0 = "sub"
+      }
+      if op == tk_amp_star() {
+        plain0 = "mul"
+      }
+      self.line("BINARY :${plain0}")
+      return
+    }
+    plain = myc_binop(op)
+    if op == tk_greater_greater() {
+      if ty.is_uint64 {
+        plain = "shr"
+      }
+    }
+    wrap = false
+    if op == tk_amp_plus() {
+      wrap = true
+      plain = "add"
+    }
+    if op == tk_amp_minus() {
+      wrap = true
+      plain = "sub"
+    }
+    if op == tk_amp_star() {
+      wrap = true
+      plain = "mul"
+    }
+    if wrap {
+      self.line("BINARY :${plain}")
+      return
+    }
+    arith = false
+    if op == tk_plus() {
+      arith = true
+    }
+    if op == tk_minus() {
+      arith = true
+    }
+    if op == tk_star() {
+      arith = true
+    }
+    is_div = false
+    if op == tk_slash() {
+      is_div = true
+    }
+    if op == tk_percent() {
+      is_div = true
+    }
+    if ty.is_int {
+      if arith || is_div {
+        m = ty_myc(ty)
+        lt = self.new_temp
+        self.line("LOCAL :${lt} :${m}")
+        self.line("STORE")
+        rt = self.new_temp
+        self.line("LOCAL :${rt} :${m}")
+        self.line("STORE")
+        if is_div {
+          self.line("LOCAL :${rt}")
+          self.line("PUSH 0")
+          self.line("BINARY :eq")
+          self.line("IF")
+          self.indent = self.indent + 1
+          self.line("THEN")
+          self.indent = self.indent + 1
+          self.line("CALL :avant_trap_div_zero")
+          self.indent = self.indent - 1
+          self.indent = self.indent - 1
+          self.line("ENDIF")
+          self.line("LOCAL :${lt}")
+          self.line("AS :i64")
+          self.line("PUSH 1 :i64")
+          self.line("PUSH -2147483647 :i64")
+          self.line("BINARY :sub")
+          self.line("BINARY :eq")
+          self.line("LOCAL :${rt}")
+          self.line("PUSH -1")
+          self.line("BINARY :eq")
+          self.line("BINARY :and")
+          self.line("IF")
+          self.indent = self.indent + 1
+          self.line("THEN")
+          self.indent = self.indent + 1
+          self.emit_trap_overflow
+          self.indent = self.indent - 1
+          self.indent = self.indent - 1
+          self.line("ENDIF")
+          self.line("LOCAL :${rt}")
+          self.line("LOCAL :${lt}")
+          self.line("BINARY :${plain}")
+          return
+        }
+        self.line("LOCAL :${rt}")
+        self.line("AS :i64")
+        self.line("LOCAL :${lt}")
+        self.line("AS :i64")
+        self.line("BINARY :${plain}")
+        wt = self.new_temp
+        self.line("LOCAL :${wt} :i64")
+        self.line("STORE")
+        self.line("LOCAL :${wt}")
+        self.line("AS :i32")
+        self.line("AS :i64")
+        self.line("LOCAL :${wt}")
+        self.line("BINARY :not_eq")
+        self.line("IF")
+        self.indent = self.indent + 1
+        self.line("THEN")
+        self.indent = self.indent + 1
+        self.emit_trap_overflow
+        self.indent = self.indent - 1
+        self.indent = self.indent - 1
+        self.line("ENDIF")
+        self.line("LOCAL :${wt}")
+        self.line("AS :i32")
+        return
+      }
+      self.line("BINARY :${plain}")
+      return
+    }
+    if ty.is_int64 || ty.is_uint64 {
+      if arith || is_div {
+        m = ty_myc(ty)
+        lt = self.new_temp
+        self.line("LOCAL :${lt} :${m}")
+        self.line("STORE")
+        rt = self.new_temp
+        self.line("LOCAL :${rt} :${m}")
+        self.line("STORE")
+        fn_name = ""
+        if ty.is_int64 {
+          if op == tk_plus() {
+            fn_name = "avant_checked_add_i64"
+          } else if op == tk_minus() {
+            fn_name = "avant_checked_sub_i64"
+          } else if op == tk_star() {
+            fn_name = "avant_checked_mul_i64"
+          } else if op == tk_slash() {
+            fn_name = "avant_checked_div_i64"
+          } else {
+            fn_name = "avant_checked_rem_i64"
+          }
+        } else {
+          if op == tk_plus() {
+            fn_name = "avant_checked_add_u64"
+          } else if op == tk_minus() {
+            fn_name = "avant_checked_sub_u64"
+          } else if op == tk_star() {
+            fn_name = "avant_checked_mul_u64"
+          } else if op == tk_slash() {
+            fn_name = "avant_checked_div_u64"
+          } else {
+            fn_name = "avant_checked_rem_u64"
+          }
+        }
+        self.line("LOCAL :${rt}")
+        self.line("LOCAL :${lt}")
+        self.line("CALL :${fn_name}")
+        return
+      }
+      self.line("BINARY :${plain}")
+      return
+    }
+    self.line("BINARY :${plain}")
   }
 
   pub fn emit_binary(expr: Expr) {
@@ -5790,13 +6976,7 @@ pub class MycGen {
         }
       }
       self.line("LOCAL :${tmp}")
-      op = myc_binop(expr.op)
-      if expr.op == tk_greater_greater() {
-        if left_ty.is_uint64 {
-          op = "shr"
-        }
-      }
-      self.line("BINARY :${op}")
+      self.emit_checked_binary(expr.op, left_ty, expr.proven)
     }
   }
 
@@ -6183,6 +7363,12 @@ pub class MycGen {
   }
 
   pub fn emit_array_method(expr: Expr, ty: Ty) {
+    if str_eq(expr.callee, "get") {
+      if recv = expr.receiver {
+        self.emit_array_get(recv, ty, expr)
+      }
+      return
+    }
     if str_eq(expr.callee, "push") {
       self.emit_array_push(expr, ty)
       return
@@ -6330,6 +7516,16 @@ pub class MycGen {
           ixt = self.new_temp
           self.line("LOCAL :${ixt} :i32")
           self.line("STORE")
+          if self.index_proven(ix, arr) || target.proven || self.versioned_for(arr) {
+          } else {
+            self.line("LOCAL :${arrn}")
+            self.line("DEREF")
+            self.line("FIELD 1")
+            szt = self.new_temp
+            self.line("LOCAL :${szt} :i32")
+            self.line("STORE")
+            self.emit_bounds_check(ixt, szt)
+          }
           self.line("LOCAL :${val}")
           self.line("LOCAL :${ixt}")
           self.line("LOCAL :${arrn}")
@@ -6337,6 +7533,185 @@ pub class MycGen {
         }
       }
     }
+  }
+
+  pub fn emit_array_get(recv: Expr, array_ty: Ty, expr: Expr) {
+    elem = ty_int()
+    if e = array_ty.inner {
+      elem = e
+    }
+    want = ty_nilable(elem)
+    wm = ty_myc(want)
+    self.emit_expr(recv)
+    arrn = self.new_temp
+    am = ty_myc(array_ty)
+    self.line("LOCAL :${arrn} :${am}")
+    self.line("STORE")
+    self.ensure_root(arrn, array_ty)
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    } else {
+      self.line("PUSH 0")
+    }
+    ixt = self.new_temp
+    self.line("LOCAL :${ixt} :i32")
+    self.line("STORE")
+    self.line("LOCAL :${arrn}")
+    self.line("DEREF")
+    self.line("FIELD 1")
+    szt = self.new_temp
+    self.line("LOCAL :${szt} :i32")
+    self.line("STORE")
+    dest = self.new_temp
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.line("PUSH 0")
+    self.line("LOCAL :${ixt}")
+    self.line("BINARY :more_eq")
+    self.line("LOCAL :${szt}")
+    self.line("LOCAL :${ixt}")
+    self.line("BINARY :less")
+    self.line("BINARY :and")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    em = ty_myc(elem)
+    if heap_ptr_value(elem) {
+      self.line("LOCAL :${ixt}")
+      self.line("LOCAL :${arrn}")
+      self.line("CALL :avant_array_get_ptr")
+      self.line("AS :${em}")
+    } else {
+      self.line("LOCAL :${arrn}")
+      self.line("DEREF")
+      self.line("FIELD 0")
+      ptr_tmp = self.new_temp
+      self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
+      self.line("STORE")
+      self.line("LOCAL :${ixt}")
+      self.line("LOCAL :${ptr_tmp}")
+      self.line("BINARY :add")
+      self.line("DEREF")
+    }
+    self.emit_wrap_union(elem, want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${dest}")
+  }
+
+  pub fn emit_string_get(recv: Expr, expr: Expr) {
+    want = ty_nilable(ty_int())
+    wm = ty_myc(want)
+    self.emit_expr(recv)
+    st = self.new_temp
+    self.line("LOCAL :${st} :ptr<u8>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    } else {
+      self.line("PUSH 0")
+    }
+    ixt = self.new_temp
+    self.line("LOCAL :${ixt} :i32")
+    self.line("STORE")
+    self.line("LOCAL :${st}")
+    self.line("CALL :avant_str_size")
+    szt = self.new_temp
+    self.line("LOCAL :${szt} :i32")
+    self.line("STORE")
+    dest = self.new_temp
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.line("PUSH 0")
+    self.line("LOCAL :${ixt}")
+    self.line("BINARY :more_eq")
+    self.line("LOCAL :${szt}")
+    self.line("LOCAL :${ixt}")
+    self.line("BINARY :less")
+    self.line("BINARY :and")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${ixt}")
+    self.line("LOCAL :${st}")
+    self.line("BINARY :add")
+    self.line("DEREF")
+    self.line("TO :i32")
+    self.emit_wrap_union(ty_int(), want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${dest}")
+  }
+
+  pub fn emit_buf_get(recv: Expr, expr: Expr) {
+    want = ty_nilable(ty_int())
+    wm = ty_myc(want)
+    self.emit_expr(recv)
+    bt = self.new_temp
+    self.line("LOCAL :${bt} :ptr<void>")
+    self.line("STORE")
+    if expr.args.size > 0 {
+      self.emit_expr(expr.args[0])
+    } else {
+      self.line("PUSH 0")
+    }
+    ixt = self.new_temp
+    self.line("LOCAL :${ixt} :i32")
+    self.line("STORE")
+    self.line("LOCAL :${bt}")
+    self.line("AS :ptr<AvantBuf>")
+    self.line("DEREF")
+    self.line("FIELD 1")
+    szt = self.new_temp
+    self.line("LOCAL :${szt} :i32")
+    self.line("STORE")
+    dest = self.new_temp
+    self.emit_zero(ty_nil())
+    self.emit_wrap_union(ty_nil(), want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.line("PUSH 0")
+    self.line("LOCAL :${ixt}")
+    self.line("BINARY :more_eq")
+    self.line("LOCAL :${szt}")
+    self.line("LOCAL :${ixt}")
+    self.line("BINARY :less")
+    self.line("BINARY :and")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    self.line("LOCAL :${bt}")
+    self.line("AS :ptr<AvantBuf>")
+    self.line("DEREF")
+    self.line("FIELD 0")
+    ptr_tmp = self.new_temp
+    self.line("LOCAL :${ptr_tmp} :ptr<u8>")
+    self.line("STORE")
+    self.line("LOCAL :${ixt}")
+    self.line("LOCAL :${ptr_tmp}")
+    self.line("BINARY :add")
+    self.line("DEREF")
+    self.line("TO :i32")
+    self.emit_wrap_union(ty_int(), want)
+    self.line("LOCAL :${dest} :${wm}")
+    self.line("STORE")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${dest}")
   }
 
   pub fn emit_array_push(expr: Expr, ty: Ty) {
@@ -7945,6 +9320,12 @@ pub class MycGen {
   }
 
   pub fn emit_string_method(expr: Expr) {
+    if str_eq(expr.callee, "get") {
+      if recv = expr.receiver {
+        self.emit_string_get(recv, expr)
+      }
+      return
+    }
     if recv = expr.receiver {
       self.emit_expr(recv)
     }
@@ -8048,6 +9429,12 @@ pub class MycGen {
   }
 
   pub fn emit_buf_method(expr: Expr) {
+    if str_eq(expr.callee, "get") {
+      if recv = expr.receiver {
+        self.emit_buf_get(recv, expr)
+      }
+      return
+    }
     if str_eq(expr.callee, "push_byte") {
       if expr.args.size > 0 {
         self.emit_expr(expr.args[0])

@@ -591,6 +591,98 @@ FUNC :avant_array_fill_u8
     TYPE :i32
 ENDFUNC
 
+FUNC :avant_trap_bounds
+  ARGS
+    TYPE :i32
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_trap_div_zero
+ENDFUNC
+
+FUNC :avant_trap_overflow
+ENDFUNC
+
+FUNC :avant_checked_add_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_sub_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_mul_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_add_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_sub_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_mul_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_div_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_rem_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_div_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_rem_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
 FUNC :avant_zlib_compress
   RETURN
     TYPE :ptr<u8>
@@ -909,192 +1001,201 @@ FUNC :sieve
     LOCAL :__t4
     ADDR
     CALL :avant_gc_root
-    LOOP
-      COND
-        LOCAL :i :i32
-        LOCAL :__t6 :i32
-        STORE
-        LOCAL :n :i32
-        LOCAL :__t6
-        BINARY :less
-      BODY
-        PUSH 1
-        LOCAL :i :i32
-        LOCAL :__t7 :i32
-        STORE
-        LOCAL :__t5
-        AS :ptr<i32>
-        LOCAL :__t7
-        STACK :swap2
-        BINARY :add
-        AS :i64
-        LOCAL :__t8 :i64
-        STORE
-        LOCAL :__t8
-        AS :ptr<i32>
-        DEREF
-        STORE
-        LOCAL :i :i32
-        LOCAL :__t9 :i32
-        STORE
-        PUSH 1
-        LOCAL :__t9
-        BINARY :add
-        LOCAL :i :i32
-        STORE
-    ENDLOOP
+    LOCAL :n :i32
+    LOCAL :__t6 :i32
+    STORE
+    PUSH 0 :i64
+    LOCAL :__t6
+    AS :i64
+    BINARY :sub
+    LOCAL :__t7 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t7
+    BINARY :sub
+    LOCAL :__t8 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t8
+    BINARY :div
+    LOCAL :__t9 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t9
+    BINARY :mul
+    PUSH 0 :i64
+    BINARY :add
+    LOCAL :__t10 :i64
+    STORE
+    PUSH true
+    LOCAL :flags
+    DEREF
+    FIELD 1
+    AS :i64
+    LOCAL :__t10
+    PUSH 0 :i64
+    BINARY :add
+    BINARY :less
+    BINARY :and
+    IF
+      THEN
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t11 :i32
+            STORE
+            LOCAL :n :i32
+            LOCAL :__t11
+            BINARY :less
+          BODY
+            PUSH 1
+            LOCAL :i :i32
+            LOCAL :__t12 :i32
+            STORE
+            LOCAL :__t5
+            AS :ptr<i32>
+            LOCAL :__t12
+            STACK :swap2
+            BINARY :add
+            AS :i64
+            LOCAL :__t13 :i64
+            STORE
+            LOCAL :__t13
+            AS :ptr<i32>
+            DEREF
+            STORE
+            LOCAL :i :i32
+            LOCAL :__t14 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t14
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+        ENDLOOP
+      ELSE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t15 :i32
+            STORE
+            LOCAL :n :i32
+            LOCAL :__t15
+            BINARY :less
+          BODY
+            PUSH 1
+            LOCAL :i :i32
+            LOCAL :__t16 :i32
+            STORE
+            LOCAL :__t5
+            AS :ptr<i32>
+            LOCAL :__t16
+            STACK :swap2
+            BINARY :add
+            AS :i64
+            LOCAL :__t17 :i64
+            STORE
+            LOCAL :__t17
+            AS :ptr<i32>
+            DEREF
+            STORE
+            LOCAL :i :i32
+            LOCAL :__t18 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t18
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+        ENDLOOP
+    ENDIF
     PUSH 0
     AS :ptr<i32>
     LOCAL :__t4
     STORE
     PUSH 0
     PUSH 0
-    LOCAL :__t10 :i32
+    LOCAL :__t19 :i32
     STORE
     LOCAL :flags :ptr<Array_Int>
+    LOCAL :__t20 :ptr<Array_Int>
+    STORE
+    LOCAL :__t20
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t20
+    DEREF
+    FIELD 1
+    LOCAL :__t21 :i32
+    STORE
+    LOCAL :__t21
+    AS :u32
+    LOCAL :__t19
+    AS :u32
+    BINARY :more_eq
+    IF
+      THEN
+        LOCAL :__t21
+        LOCAL :__t19
+        CALL :avant_trap_bounds
+    ENDIF
+    LOCAL :__t20
     DEREF
     FIELD 0
-    LOCAL :__t11 :ptr<i32>
+    LOCAL :__t22 :ptr<i32>
     STORE
-    LOCAL :__t10
-    LOCAL :__t11
+    LOCAL :__t19
+    LOCAL :__t22
     BINARY :add
     DEREF
     STORE
     LOCAL :n :i32
-    LOCAL :__t12 :i32
+    LOCAL :__t23 :i32
     STORE
     PUSH 1
-    LOCAL :__t12
+    LOCAL :__t23
     BINARY :more
     IF
       THEN
         PUSH 0
         PUSH 1
-        LOCAL :__t13 :i32
+        LOCAL :__t24 :i32
         STORE
         LOCAL :flags :ptr<Array_Int>
+        LOCAL :__t25 :ptr<Array_Int>
+        STORE
+        LOCAL :__t25
+        ADDR
+        CALL :avant_gc_root
+        LOCAL :__t25
+        DEREF
+        FIELD 1
+        LOCAL :__t26 :i32
+        STORE
+        LOCAL :__t26
+        AS :u32
+        LOCAL :__t24
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t26
+            LOCAL :__t24
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t25
         DEREF
         FIELD 0
-        LOCAL :__t14 :ptr<i32>
+        LOCAL :__t27 :ptr<i32>
         STORE
-        LOCAL :__t13
-        LOCAL :__t14
+        LOCAL :__t24
+        LOCAL :__t27
         BINARY :add
         DEREF
         STORE
     ENDIF
     PUSH 2
     LOCAL :p :i32
-    STORE
-    LOCAL :flags
-    DEREF
-    FIELD 0
-    LOCAL :__t15 :ptr<i32>
-    STORE
-    LOCAL :__t15
-    AS :i64
-    LOCAL :__t16 :i64
-    STORE
-    LOCAL :__t15
-    ADDR
-    CALL :avant_gc_root
-    LOOP
-      COND
-        LOCAL :p :i32
-        LOCAL :__t18 :i32
-        STORE
-        LOCAL :p :i32
-        LOCAL :__t18
-        BINARY :mul
-        LOCAL :__t17 :i32
-        STORE
-        LOCAL :n :i32
-        LOCAL :__t17
-        BINARY :less
-      BODY
-        LOCAL :p :i32
-        LOCAL :__t20 :i32
-        STORE
-        LOCAL :__t16
-        AS :ptr<i32>
-        LOCAL :__t20
-        STACK :swap2
-        BINARY :add
-        AS :i64
-        LOCAL :__t21 :i64
-        STORE
-        LOCAL :__t21
-        AS :ptr<i32>
-        DEREF
-        LOCAL :__t19 :i32
-        STORE
-        PUSH 1
-        LOCAL :__t19
-        BINARY :eq
-        IF
-          THEN
-            LOCAL :p :i32
-            LOCAL :__t22 :i32
-            STORE
-            LOCAL :p :i32
-            LOCAL :__t22
-            BINARY :mul
-            LOCAL :k :i32
-            STORE
-            LOOP
-              COND
-                LOCAL :k :i32
-                LOCAL :__t23 :i32
-                STORE
-                LOCAL :n :i32
-                LOCAL :__t23
-                BINARY :less
-              BODY
-                PUSH 0
-                LOCAL :k :i32
-                LOCAL :__t24 :i32
-                STORE
-                LOCAL :__t16
-                AS :ptr<i32>
-                LOCAL :__t24
-                STACK :swap2
-                BINARY :add
-                AS :i64
-                LOCAL :__t25 :i64
-                STORE
-                LOCAL :__t25
-                AS :ptr<i32>
-                DEREF
-                STORE
-                LOCAL :k :i32
-                LOCAL :__t26 :i32
-                STORE
-                LOCAL :p :i32
-                LOCAL :__t26
-                BINARY :add
-                LOCAL :k :i32
-                STORE
-            ENDLOOP
-        ENDIF
-        LOCAL :p :i32
-        LOCAL :__t27 :i32
-        STORE
-        PUSH 1
-        LOCAL :__t27
-        BINARY :add
-        LOCAL :p :i32
-        STORE
-    ENDLOOP
-    PUSH 0
-    AS :ptr<i32>
-    LOCAL :__t15
-    STORE
-    PUSH 0
-    LOCAL :count :i32
-    STORE
-    PUSH 0
-    LOCAL :i :i32
     STORE
     LOCAL :flags
     DEREF
@@ -1110,55 +1211,394 @@ FUNC :sieve
     CALL :avant_gc_root
     LOOP
       COND
-        LOCAL :i :i32
+        LOCAL :p :i32
+        LOCAL :__t31 :i32
+        STORE
+        LOCAL :p :i32
+        LOCAL :__t31
+        LOCAL :__t32 :i32
+        STORE
+        LOCAL :__t33 :i32
+        STORE
+        LOCAL :__t33
+        AS :i64
+        LOCAL :__t32
+        AS :i64
+        BINARY :mul
+        LOCAL :__t34 :i64
+        STORE
+        LOCAL :__t34
+        AS :i32
+        AS :i64
+        LOCAL :__t34
+        BINARY :not_eq
+        IF
+          THEN
+            CALL :avant_trap_overflow
+        ENDIF
+        LOCAL :__t34
+        AS :i32
         LOCAL :__t30 :i32
         STORE
         LOCAL :n :i32
         LOCAL :__t30
         BINARY :less
       BODY
-        LOCAL :i :i32
-        LOCAL :__t32 :i32
+        LOCAL :p :i32
+        LOCAL :__t36 :i32
         STORE
+        LOCAL :flags
+        DEREF
+        FIELD 1
+        LOCAL :__t37 :i32
+        STORE
+        LOCAL :__t37
+        AS :u32
+        LOCAL :__t36
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t37
+            LOCAL :__t36
+            CALL :avant_trap_bounds
+        ENDIF
         LOCAL :__t29
         AS :ptr<i32>
-        LOCAL :__t32
+        LOCAL :__t36
         STACK :swap2
         BINARY :add
         AS :i64
-        LOCAL :__t33 :i64
+        LOCAL :__t38 :i64
         STORE
-        LOCAL :__t33
+        LOCAL :__t38
         AS :ptr<i32>
         DEREF
-        LOCAL :__t31 :i32
-        STORE
-        PUSH 1
-        LOCAL :__t31
-        BINARY :eq
-        IF
-          THEN
-            LOCAL :count :i32
-            LOCAL :__t34 :i32
-            STORE
-            PUSH 1
-            LOCAL :__t34
-            BINARY :add
-            LOCAL :count :i32
-            STORE
-        ENDIF
-        LOCAL :i :i32
         LOCAL :__t35 :i32
         STORE
         PUSH 1
         LOCAL :__t35
+        BINARY :eq
+        IF
+          THEN
+            LOCAL :p :i32
+            LOCAL :__t39 :i32
+            STORE
+            LOCAL :p :i32
+            LOCAL :__t39
+            LOCAL :__t40 :i32
+            STORE
+            LOCAL :__t41 :i32
+            STORE
+            LOCAL :__t41
+            AS :i64
+            LOCAL :__t40
+            AS :i64
+            BINARY :mul
+            LOCAL :__t42 :i64
+            STORE
+            LOCAL :__t42
+            AS :i32
+            AS :i64
+            LOCAL :__t42
+            BINARY :not_eq
+            IF
+              THEN
+                CALL :avant_trap_overflow
+            ENDIF
+            LOCAL :__t42
+            AS :i32
+            LOCAL :k :i32
+            STORE
+            LOOP
+              COND
+                LOCAL :k :i32
+                LOCAL :__t43 :i32
+                STORE
+                LOCAL :n :i32
+                LOCAL :__t43
+                BINARY :less
+              BODY
+                PUSH 0
+                LOCAL :k :i32
+                LOCAL :__t44 :i32
+                STORE
+                LOCAL :__t29
+                AS :ptr<i32>
+                LOCAL :__t44
+                STACK :swap2
+                BINARY :add
+                AS :i64
+                LOCAL :__t45 :i64
+                STORE
+                LOCAL :__t45
+                AS :ptr<i32>
+                DEREF
+                STORE
+                LOCAL :k :i32
+                LOCAL :__t46 :i32
+                STORE
+                LOCAL :p :i32
+                LOCAL :__t46
+                LOCAL :__t47 :i32
+                STORE
+                LOCAL :__t48 :i32
+                STORE
+                LOCAL :__t48
+                AS :i64
+                LOCAL :__t47
+                AS :i64
+                BINARY :add
+                LOCAL :__t49 :i64
+                STORE
+                LOCAL :__t49
+                AS :i32
+                AS :i64
+                LOCAL :__t49
+                BINARY :not_eq
+                IF
+                  THEN
+                    CALL :avant_trap_overflow
+                ENDIF
+                LOCAL :__t49
+                AS :i32
+                LOCAL :k :i32
+                STORE
+            ENDLOOP
+        ENDIF
+        LOCAL :p :i32
+        LOCAL :__t50 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t50
+        LOCAL :__t51 :i32
+        STORE
+        LOCAL :__t52 :i32
+        STORE
+        LOCAL :__t52
+        AS :i64
+        LOCAL :__t51
+        AS :i64
         BINARY :add
-        LOCAL :i :i32
+        LOCAL :__t53 :i64
+        STORE
+        LOCAL :__t53
+        AS :i32
+        AS :i64
+        LOCAL :__t53
+        BINARY :not_eq
+        IF
+          THEN
+            CALL :avant_trap_overflow
+        ENDIF
+        LOCAL :__t53
+        AS :i32
+        LOCAL :p :i32
         STORE
     ENDLOOP
     PUSH 0
     AS :ptr<i32>
     LOCAL :__t28
+    STORE
+    PUSH 0
+    LOCAL :count :i32
+    STORE
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    LOCAL :flags
+    DEREF
+    FIELD 0
+    LOCAL :__t54 :ptr<i32>
+    STORE
+    LOCAL :__t54
+    AS :i64
+    LOCAL :__t55 :i64
+    STORE
+    LOCAL :__t54
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :n :i32
+    LOCAL :__t56 :i32
+    STORE
+    PUSH 0 :i64
+    LOCAL :__t56
+    AS :i64
+    BINARY :sub
+    LOCAL :__t57 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t57
+    BINARY :sub
+    LOCAL :__t58 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t58
+    BINARY :div
+    LOCAL :__t59 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t59
+    BINARY :mul
+    PUSH 0 :i64
+    BINARY :add
+    LOCAL :__t60 :i64
+    STORE
+    PUSH true
+    LOCAL :flags
+    DEREF
+    FIELD 1
+    AS :i64
+    LOCAL :__t60
+    PUSH 0 :i64
+    BINARY :add
+    BINARY :less
+    BINARY :and
+    IF
+      THEN
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t61 :i32
+            STORE
+            LOCAL :n :i32
+            LOCAL :__t61
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t63 :i32
+            STORE
+            LOCAL :__t55
+            AS :ptr<i32>
+            LOCAL :__t63
+            STACK :swap2
+            BINARY :add
+            AS :i64
+            LOCAL :__t64 :i64
+            STORE
+            LOCAL :__t64
+            AS :ptr<i32>
+            DEREF
+            LOCAL :__t62 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t62
+            BINARY :eq
+            IF
+              THEN
+                LOCAL :count :i32
+                LOCAL :__t65 :i32
+                STORE
+                PUSH 1
+                LOCAL :__t65
+                LOCAL :__t66 :i32
+                STORE
+                LOCAL :__t67 :i32
+                STORE
+                LOCAL :__t67
+                AS :i64
+                LOCAL :__t66
+                AS :i64
+                BINARY :add
+                LOCAL :__t68 :i64
+                STORE
+                LOCAL :__t68
+                AS :i32
+                AS :i64
+                LOCAL :__t68
+                BINARY :not_eq
+                IF
+                  THEN
+                    CALL :avant_trap_overflow
+                ENDIF
+                LOCAL :__t68
+                AS :i32
+                LOCAL :count :i32
+                STORE
+            ENDIF
+            LOCAL :i :i32
+            LOCAL :__t69 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t69
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+        ENDLOOP
+      ELSE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t70 :i32
+            STORE
+            LOCAL :n :i32
+            LOCAL :__t70
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t72 :i32
+            STORE
+            LOCAL :__t55
+            AS :ptr<i32>
+            LOCAL :__t72
+            STACK :swap2
+            BINARY :add
+            AS :i64
+            LOCAL :__t73 :i64
+            STORE
+            LOCAL :__t73
+            AS :ptr<i32>
+            DEREF
+            LOCAL :__t71 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t71
+            BINARY :eq
+            IF
+              THEN
+                LOCAL :count :i32
+                LOCAL :__t74 :i32
+                STORE
+                PUSH 1
+                LOCAL :__t74
+                LOCAL :__t75 :i32
+                STORE
+                LOCAL :__t76 :i32
+                STORE
+                LOCAL :__t76
+                AS :i64
+                LOCAL :__t75
+                AS :i64
+                BINARY :add
+                LOCAL :__t77 :i64
+                STORE
+                LOCAL :__t77
+                AS :i32
+                AS :i64
+                LOCAL :__t77
+                BINARY :not_eq
+                IF
+                  THEN
+                    CALL :avant_trap_overflow
+                ENDIF
+                LOCAL :__t77
+                AS :i32
+                LOCAL :count :i32
+                STORE
+            ENDIF
+            LOCAL :i :i32
+            LOCAL :__t78 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t78
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+        ENDLOOP
+    ENDIF
+    PUSH 0
+    AS :ptr<i32>
+    LOCAL :__t54
     STORE
     LOCAL :count :i32
     CALL :avant_gc_leave

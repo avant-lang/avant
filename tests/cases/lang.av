@@ -12,7 +12,11 @@ fn test_lang(c: Checks) {
   c.expect(true && false || true, "logical")
   c.eq_int("abc"[0], 97, "string byte")
   c.eq_int("abc"[1], 98, "string byte 1")
-  c.eq_int("abc"[3], 0, "string byte at nul")
+  if v = "abc".get(3) {
+    c.expect(false, "string get at end is nil")
+  } else {
+    c.expect(true, "string get at end is nil")
+  }
   c.eq_str("item_${7}", "item_7", "prefix int interp")
   c.eq_str("n_${0 - 3}", "n_-3", "prefix negative interp")
 
@@ -171,10 +175,10 @@ fn test_lang(c: Checks) {
   b.push_str("b")
   b.push_fmt_i(12)
   c.eq_str(b.to_s, "ab12", "Buf")
-  bi = buf_new(3)
-  bi[0] = 65
-  bi[1] = 66
-  bi[2] = 67
+  bi = buf_new()
+  bi.push_byte(65)
+  bi.push_byte(66)
+  bi.push_byte(67)
   c.eq_int(bi[0], 65, "Buf index 0")
   c.eq_int(bi[1] + bi[2], 133, "Buf index sum")
   bf = buf_new(8)

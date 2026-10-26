@@ -1,62 +1,57 @@
 # Avant
 
-Avant is a systems language: required braces, type inference, automatic memory management with GenImmix, and ahead-of-time compilation to native code.
+Avant is a programming language for people who want the productivity of a modern, type-inferred language without giving up native speed. You write short, C-flavoured code with curly braces; Avant compiles it ahead of time to a native binary, and a garbage collector (GenImmix) manages memory for you. No borrow checker, no manual `free`, no interpreter.
 
-The compiler you run is written in Avant (`compiler/*.av`). It is self-hosted and compiles itself. The backend is still [myc](https://github.com/kostya/myc): the compiler emits myc IR and runs `myc-llvm`. Building `myc-llvm` from the safepoints shard still uses Crystal. That Crystal is not in this repository.
+If you have written JavaScript, Go, or Crystal, the code below will already look familiar. That is the point: Crystal-like density, C-like shape, performance in the C/Rust neighbourhood on the LangArena suite (see [Benchmarks](#benchmarks) for the honest, same-machine version of that claim).
+
+## Hello World
+
+```avant
+fn main {
+  puts("Hello Avant")
+}
+```
+
+Save it as `hello.av`. That is a complete program: `fn main` is the entry point, the last expression of a function is its value, and there are no semicolons.
+
+## Install
+
+Today, on Linux x86_64:
+
+1. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it.
+2. Download `myc-llvm-linux-x86_64.tar.gz` from the [safepoints v0.4.0 release](https://github.com/avant-lang/safepoints/releases/tag/v0.4.0), extract it, and point Avant at it: `export AVANT_MYC_LLVM=/path/to/myc-llvm`. (The Avant archive does not bundle this backend binary.)
+3. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
+4. Optional but recommended: put both binaries on your `PATH` — `~/.local/bin` needs no sudo (make sure it is on your `PATH`), or use `/usr/local/bin` for a system-wide install. Keep `myc-llvm` next to `avant` there; the `AVANT_MYC_LLVM` export above is still how the compiler finds it today.
+5. Run your first program:
+
+```
+avant run hello.av          # compile and run
+avant compile hello.av hi   # or build a binary named hi
+```
+
+That is enough to write and run Avant today. Building the Avant compiler itself is covered at the end, under [Advanced: building the compiler](#advanced-building-the-compiler).
 
 ## Index
 
-1. [Getting started](#getting-started)
-2. [Programs](#programs)
-3. [Structs and classes](#structs-and-classes)
-4. [Types](#types)
-5. [Control flow](#control-flow)
-6. [Modules](#modules)
-7. [Errors](#errors)
-8. [Strings and collections](#strings-and-collections)
-9. [Memory](#memory)
-10. [C interop](#c-interop)
-11. [Concurrency](#concurrency)
-12. [Macros](#macros)
-13. [Formatter](#formatter)
-14. [Regex](#regex)
-15. [Builtins](#builtins)
-16. [Toolchain](#toolchain)
-17. [Tests](#tests)
-18. [Not built yet](#not-built-yet)
-19. [Benchmarks](#benchmarks)
-20. [Goals](#goals)
-21. [License](#license)
-
-## Getting started
-
-### Requirements
-
-A published `avant` compiler (the `v0.11.0` seed or newer), a C compiler (`cc`), LLVM 20, libpcre2, re2c, and `myc-llvm` from the safepoints `v0.4.0` release (`myc-llvm-linux-x86_64.tar.gz`, [repo](https://github.com/avant-lang/safepoints)). The Avant release archive does not include that binary. Set `AVANT_MYC_LLVM` to the extracted `myc-llvm`. `avant bind` needs libclang. Crystal is required only to build `myc-llvm` from that shard. A string literal at `re_compile` is compiled with re2c. A computed pattern uses PCRE2. Without `re2c`, that literal stays on PCRE2.
-
-### Build a compiler
-
-From this directory:
-
-```
-sh runtime/build.sh
-/path/to/avant compile compiler/main.av bin/avant
-./bin/avant run examples/hello.av
-```
-
-The published compiler builds the next one. After `bin/avant` exists, rebuild with it:
-
-```
-./bin/avant compile compiler/main.av bin/avant
-```
-
-`AVANT_ROOT` overrides where the compiler looks for `runtime/build`.
-
-### How a build is code-generated
-
-Daily compiles pass myc-llvm `--debug`. That is fast instruction selection. The compiler's own frontend takes about the same time either way. Safepoints stay on, so the copying nursery still sees stack maps.
-
-`AVANT_MYC_DEBUG=0` restores myc's default codegen. `AVANT_MYC_FINAL=1` asks for `--final` (slower compile, more LLVM optimization). A daily compiler passes `--debug`.
+1. [Programs](#programs)
+2. [Structs and classes](#structs-and-classes)
+3. [Types](#types)
+4. [Control flow](#control-flow)
+5. [Modules](#modules)
+6. [Errors](#errors)
+7. [Strings and collections](#strings-and-collections)
+8. [Memory](#memory)
+9. [C interop](#c-interop)
+10. [Concurrency](#concurrency)
+11. [Macros](#macros)
+12. [Formatter](#formatter)
+13. [Regex](#regex)
+14. [Builtins](#builtins)
+15. [Not built yet](#not-built-yet)
+16. [Benchmarks](#benchmarks)
+17. [Goals](#goals)
+18. [Advanced: building the compiler](#advanced-building-the-compiler)
+19. [License](#license)
 
 ## Programs
 
@@ -507,6 +502,8 @@ fn main {
 
 Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
+Indexing an `Array`, `String`, or `Buf` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted. Compile errors print to stderr and exit non-zero; runtime traps do the same in the compiled program.
+
 ```avant
 fn main {
   xs: Array(Int) = [1, 2]
@@ -573,6 +570,8 @@ JSON in the examples is yyjson. The loopback HTTP example is uSockets (C, not C+
 `spawn { }` runs the block on a pool of OS threads. The pool size is the number of processors online, read once when the pool starts. `AVANT_THREADS` replaces that size and must be a positive integer. Extra tasks wait in a queue.
 
 The block's result is `Int`. `.join` waits for it. Calling `.join` or `.parallel` from inside a pool worker is an error. A nested `spawn` from a worker is allowed.
+
+An `Array` captured from the enclosing scope is read-shared: it is read-only inside the block, and the sender may not mutate it until the handle is joined. Both are compile errors. Mutation crosses a task boundary through a `Mutex(Array)`, a `Channel`, or `.parallel` instead.
 
 ```avant
 fn six_times_seven: Int {
@@ -664,136 +663,24 @@ Stdout is the default. `--write` replaces the file. `--check` prints `canonical`
 
 ## Regex
 
-You can pass regex patterns as strings to `re_compile`, `re_find`, and `re_count`.
-
-### `re_compile`
-
-```
-re_compile(pattern: String, flags: Int): Ptr(Void)
-```
-
-`pattern` is the regular expression. `flags` is `0` for a case-sensitive match and `1` for a case-insensitive one. The result is a handle for `re_find`.
-
-A string literal is compiled with re2c. A value computed at runtime stays on PCRE2, and so does a literal re2c cannot express.
-
-```avant
-fn main {
-  re = re_compile("x(y)", 0)
-  bot = re_compile("bot", 1)
-  built = "a"
-  built = built + "+"
-  dyn = re_compile(built, 0)
-}
-```
-
-`"x(y)"` and `"bot"` are literals. `built` is computed, so `dyn` is a PCRE2 handle. A literal backreference is also PCRE2, and the compiler prints why:
-
-```avant
-fn main {
-  re = re_compile("(a)\\1", 0)
-}
-```
-
-### `re_find`
-
-```
-re_find(re: Ptr(Void), text: String, from: Int): Int
-```
-
-`re` is a handle from `re_compile`. `text` is the string to search. `from` is the byte index to start at. The result is `1` when a match is found and `0` when it is not. The next successful find overwrites the previous span.
-
-`re_m0` and `re_m1` are the byte bounds of the whole match. `re_c0` and `re_c1` are the first capturing group. With no group they repeat the whole match.
+Three calls: `re_compile(pattern, flags)` returns a handle (`flags` 1 means case-insensitive), `re_find(handle, text, from)` returns 1 on a match, and `re_count(pattern, text, flags)` counts non-overlapping matches. After a find, `re_m0()`/`re_m1()` are the match bounds and `re_c0()`/`re_c1()` the first capture group.
 
 ```avant
 fn main {
   re = re_compile("x(y)", 0)
   if re_find(re, "zxy", 0) == 1 {
-    puts(re_m0())
-    puts(re_m1())
-    puts(re_c0())
-    puts(re_c1())
+    puts(re_m0())  // 1
+    puts(re_c0())  // 2
   }
+  puts(re_count("a+", "aa ba", 0))  // 2
 }
 ```
 
-That prints `1`, `3`, `2`, and `3`: the whole match is `xy`, and the group is `y`.
-
-A second find continues after the previous match:
-
-```avant
-fn main {
-  re = re_compile("a+", 0)
-  i = 0
-  text = "xxaa"
-  if re_find(re, text, i) == 1 {
-    puts(re_m0())
-    i = re_m1()
-  }
-}
-```
-
-`re_m0` is `2` and `re_m1` is `4`.
-
-### `re_count`
-
-```
-re_count(pattern: String, text: String, flags: Int): Int
-```
-
-`pattern` and `flags` are the same as for `re_compile`. `text` is the string to scan. The result is how many non-overlapping matches are in `text`. This call always uses PCRE2, including when `pattern` is a string literal.
-
-```avant
-fn main {
-  puts(re_count("a+", "aa ba", 0))
-  built = "a"
-  built = built + "+"
-  puts(re_count(built, "aa ba", 0))
-}
-```
-
-Both lines print `2`.
-
-### Under the hood
-
-A string literal at `re_compile` is compiled with [re2c](https://re2c.org) (`-b`) while the program is compiled. The generated C is linked into the binary, and `re_find` runs that scanner. A pattern built at runtime stays on PCRE2 with JIT.
-
-re2c does not take a backreference, a lookahead, or a lookbehind. The non-greedy form it does take is `.*?` before a one- or two-character literal, as in `\{\{(.*?)\}\}`. Anything else in a literal stays on PCRE2, and the compiler prints `re2c: pattern stays on PCRE2`. If `re2c` is not installed, a literal stays on PCRE2 the same way. `AVANT_RE2C` overrides the `re2c` binary.
+A string-literal pattern is compiled to a native scanner with re2c at compile time; a computed pattern (or one re2c cannot express, such as a backreference) stays on PCRE2 with JIT, and the compiler says so. `re_count` always uses PCRE2. Without `re2c` installed, literals use PCRE2 too; `AVANT_RE2C` overrides the binary.
 
 ## Builtins
 
-These examples run on the identity compiler: `examples/hello.av`, `fact.av`, `vec2.av`, `sieve.av`, `methods.av`, `trees.av`, `binarytrees.av`, `switch.av`, `defaults.av`, `sqrt.av`, `zlib.av` (`--lib z`), `add.av` (`--cc examples/c/add.c`), `errors.av`, `collect.av`, `json.av`, `http.av`, `spawn.av`. `matmul.av` checks that the sequential and spawned checksums match.
-
-Helpers the native suite uses, beyond the core language: `sha256`, `zlib_compress`, `json_parse` / `json_int` / `json_str` / `json_root` / `json_get` / `json_free` / `json_gen_body` / `json_gen_into`, base64, `re_compile` / `re_find` / `re_count` (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, `process_run` / `process_run_out`. A host-only name is ported when a failing native test needs it, not before.
-
-## Toolchain
-
-```
-.av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
-```
-
-New language goes in `compiler/*.av`. The compiler is that tree. A published seed builds it. Git history still has the old Crystal host.
-
-```
-./bin/avant-av-b run FILE.av
-./bin/avant-av-b compile FILE.av OUT
-./bin/avant-av-b dump FILE.av
-```
-
-`dump` prints myc IR. It does not link a binary.
-
-## Tests
-
-The daily proof is the native suite on B or on the next compiler, C.
-
-```
-AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
-./bin/avant-av-b compile compiler/main.av bin/avant-av-c
-AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
-```
-
-Adding `tests/cases/foo.av` does not require an edit to `tests/run.av`. The runner stitches `tests/harness.av` and `tests/cases/*.av` into one program.
-
-`--coverage` or `AVANT_COVERAGE=1` instruments the identity compiler and writes `lcov.info`. `AVANT_COVERAGE_LCOV=0` disables that file. A path overrides the name. The compiler stays quiet unless `AVANT_COVERAGE_REPORT=1`. A program compiled with `--coverage` still prints its own table. The runner writes `junit.xml` from the same pass and fail events (`AVANT_JUNIT=0` disables it). Dump goldens live in `tests/goldens/`.
+Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, `zlib_compress`, the `json_*` family, base64, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`.
 
 ## Not built yet
 
@@ -807,71 +694,105 @@ These are decided and currently do not compile.
 
 ## Benchmarks
 
-Latest 50-task prod, 2026-10-26, Ryzen 7 5700G, `--final`. C, Rust, and Go are the 2026-10-21 LangArena snapshot (`C/Clang`, `Rust`, `Go`) on a Ryzen 7 3800X. Seconds and megabytes, lower is better. **Bold** is the lowest in that row. This run is not the adopted official number.
+Seconds, lower is better. **Bold** is fastest. Median of 3 runs on one machine (Ryzen 7 5700G, 2026-10-26), every language built here, checksums 50/50 in every run. Full provenance and raw data: `results/2026-10-26-waveA/SUMMARY.md`.
 
-| | Avant | C | Rust | Go |
-| --- | ---: | ---: | ---: | ---: |
-| Wall sum | **40.470** | 54.179 | 54.823 | 114.472 |
-| RSS average | **22.24** | 23.41 | 29.48 | 67.37 |
+Three honest caveats. `Etc::TextRaytracer` (‡) is invalid for Avant and is excluded from the totals: `--final` hoists its pure render out of the loop (0.013s; honest `--debug` run 10.86s vs C 0.936s). JSON, Base64, hashing and regex rows lean on C libraries (yyjson, aklomp, PCRE2) in every language, so they measure bindings as much as languages. Memory is not ranked here: Avant averages 29.67 MB per task, while the other ports run the whole suite in one process and only expose a suite peak. This is not the adopted official number; that remains the 2026-09-27 run.
 
-| Task | Avant | C | Rust | Go |
-| --- | ---: | ---: | ---: | ---: |
-| `Etc::Sieve` | 1.276 | 1.221 | 1.119 | **1.090** |
-| `Binarytrees::Obj` | **1.172** | 2.463 | 2.607 | 1.258 |
-| `Binarytrees::Arena` | 0.508 | 0.314 | **0.301** | 0.329 |
-| `Matmul::Single` | **1.398** | 4.947 | 5.142 | 5.019 |
-| `Matmul::T4` | **0.465** | 1.293 | 1.328 | 1.305 |
-| `Matmul::T8` | **0.363** | 0.682 | 0.699 | 0.682 |
-| `Matmul::T16` | **0.317** | 0.351 | 0.520 | 0.490 |
-| `Sort::Quick` | 1.376 | 1.143 | **1.140** | 1.324 |
-| `Sort::Merge` | 1.132 | **1.098** | 1.616 | 1.550 |
-| `Sort::Self` | **0.138** | 1.991 | 0.417 | 1.282 |
-| `CLBG::Mandelbrot` | 0.980 | **0.905** | 0.949 | 0.919 |
-| `CLBG::Fannkuchredux` | 1.147 | 1.160 | **1.022** | 1.084 |
-| `CLBG::Spectralnorm` | 1.040 | 0.924 | 0.924 | **0.875** |
-| `CLBG::Nbody` | **1.286** | 1.502 | 1.384 | 1.662 |
-| `Brainfuck::Array` | 1.718 | 1.519 | **1.514** | 1.901 |
-| `Brainfuck::Recursion` | 1.951 | 1.632 | **1.630** | 1.874 |
-| `Etc::GameOfLife` | 1.921 | 1.946 | 1.693 | **0.881** |
-| `Etc::TextRaytracer` | **0.014** | 1.088 | 1.061 | 1.688 |
-| `Etc::NeuralNet` | 1.342 | **1.051** | 1.183 | 2.028 |
-| `Etc::CacheSimulation` | **0.540** | 0.829 | 0.839 | 1.737 |
-| `Etc::Words` | 1.649 | 2.001 | **1.040** | 1.098 |
-| `Graph::BFS` | **1.014** | 1.193 | 1.387 | 1.955 |
-| `Graph::DFS` | 0.952 | **0.880** | 1.092 | 1.253 |
-| `Graph::AStar` | **0.537** | 1.078 | 1.986 | 2.652 |
-| `Hash::CRC32` | 0.324 | 0.285 | **0.284** | 4.056 |
-| `Hash::SHA256` | 1.317 | 0.923 | **0.904** | 1.082 |
-| `Distance::Jaro` | 0.926 | **0.847** | 0.971 | 0.981 |
-| `Distance::NGram` | 0.779 | 1.811 | **0.533** | 0.626 |
-| `Base64::Encode` | 0.107 | **0.101** | 0.298 | 2.074 |
-| `Base64::Decode` | **0.127** | 0.130 | 0.324 | 1.609 |
-| `Json::Generate` | 0.746 | 0.499 | **0.290** | 2.398 |
-| `Json::ParseDom` | **0.079** | 0.083 | 1.682 | 3.762 |
-| `Json::ParseMapping` | **0.195** | 0.203 | 0.424 | 2.614 |
-| `CSV::Parse` | 2.296 | 2.334 | **0.815** | 3.022 |
-| `Template::Regex` | **0.914** | 1.236 | 3.650 | 8.977 |
-| `Template::Parse` | 0.799 | 0.918 | 0.951 | **0.743** |
-| `Maze::Generator` | 0.441 | **0.435** | 0.859 | 0.972 |
-| `Maze::BFS` | 0.524 | **0.436** | 0.811 | 1.244 |
-| `Maze::AStar` | 0.971 | **0.957** | 1.049 | 2.419 |
-| `Etc::LogParser` | 0.469 | 0.489 | **0.302** | 30.764 |
-| `Calculator::Ast` | **0.262** | 1.052 | 0.608 | 0.540 |
-| `Calculator::Interpreter` | **0.456** | 1.225 | 0.784 | 0.638 |
-| `Compress::BWTEncode` | 0.436 | 0.739 | **0.418** | 1.669 |
-| `Compress::BWTDecode` | **0.691** | 0.888 | 0.879 | 1.133 |
-| `Compress::HuffEncode` | **0.535** | 0.812 | 0.673 | 0.905 |
-| `Compress::HuffDecode` | 0.504 | **0.445** | 0.820 | 1.567 |
-| `Compress::ArithEncode` | **1.101** | 1.169 | 1.151 | 1.254 |
-| `Compress::ArithDecode` | **0.895** | 0.957 | 1.483 | 1.088 |
-| `Compress::LZWEncode` | **0.154** | 1.440 | 0.666 | 1.072 |
-| `Compress::LZWDecode` | **0.185** | 0.554 | 0.601 | 1.327 |
+| Language | 49 tasks (s) | 50 as recorded (s) |
+| --- | ---: | ---: |
+| Avant | **40.245** | 40.258 |
+| C | 45.443 | 46.379 |
+| Rust | 46.587 | 47.402 |
+| Crystal | 75.241 | 76.352 |
+| Go | 96.233 | 97.758 |
+
+| Task | Avant | C | Rust | Crystal | Go |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `Etc::Sieve` | 1.286 | **1.092** | 1.146 | 1.939 | 1.568 |
+| `Binarytrees::Obj` | 1.167 | 2.224 | 2.331 | **1.069** | 1.564 |
+| `Binarytrees::Arena` | 0.508 | **0.233** | 0.262 | 0.604 | 0.265 |
+| `Matmul::Single` | **1.401** | 4.656 | 4.826 | 4.980 | 4.879 |
+| `Matmul::T4` | **0.473** | 1.190 | 1.225 | 2.995 | 1.299 |
+| `Matmul::T8` | **0.345** | 0.610 | 0.629 | 4.791 | 0.718 |
+| `Matmul::T16` | **0.332** | 0.430 | 0.432 | 4.875 | 0.634 |
+| `Sort::Quick` | 1.363 | **0.981** | 0.982 | 1.285 | 1.111 |
+| `Sort::Merge` | **1.136** | 1.188 | 1.288 | 1.927 | 1.362 |
+| `Sort::Self` | **0.131** | 1.776 | 0.290 | 0.888 | 1.131 |
+| `CLBG::Mandelbrot` | 0.980 | **0.814** | 0.845 | 0.821 | 0.838 |
+| `CLBG::Fannkuchredux` | 1.161 | 1.004 | **0.947** | 1.005 | 0.976 |
+| `CLBG::Spectralnorm` | 1.041 | **0.853** | 0.854 | 0.864 | 0.892 |
+| `CLBG::Nbody` | 1.295 | 1.044 | **0.994** | 1.077 | 1.205 |
+| `Brainfuck::Array` | 1.671 | **1.287** | 2.726 | 1.957 | 1.425 |
+| `Brainfuck::Recursion` | 1.830 | **1.427** | 1.593 | 1.696 | 1.702 |
+| `Etc::GameOfLife` | 1.882 | 1.307 | 1.237 | 2.369 | **0.812** |
+| `Etc::TextRaytracer` | 0.013 | 0.936 | **0.815** | 1.111 | 1.525 |
+| `Etc::NeuralNet` | 1.359 | **0.957** | 0.963 | 1.049 | 1.841 |
+| `Etc::CacheSimulation` | **0.541** | 0.631 | 0.697 | 1.090 | 1.389 |
+| `Etc::Words` | 1.639 | 1.660 | **0.718** | 0.805 | 1.017 |
+| `Graph::BFS` | **1.018** | 1.024 | 1.411 | 2.465 | 2.061 |
+| `Graph::DFS` | 0.954 | **0.931** | 1.116 | 1.638 | 1.283 |
+| `Graph::AStar` | **0.530** | 0.572 | 0.564 | 1.585 | 3.107 |
+| `Hash::CRC32` | 0.323 | 1.119 | **0.260** | 0.811 | 3.492 |
+| `Hash::SHA256` | 1.325 | **0.887** | 1.021 | 1.001 | 1.014 |
+| `Distance::Jaro` | 0.934 | **0.756** | 0.760 | 1.069 | 0.773 |
+| `Distance::NGram` | 0.782 | 1.415 | **0.411** | 0.656 | 0.776 |
+| `Base64::Encode` | 0.107 | **0.106** | 0.251 | 1.224 | 2.010 |
+| `Base64::Decode` | 0.131 | **0.121** | 0.285 | 1.246 | 1.444 |
+| `Json::Generate` | 0.752 | **0.239** | 0.271 | 0.959 | 1.026 |
+| `Json::ParseDom` | 0.081 | **0.073** | 0.749 | 0.525 | 1.168 |
+| `Json::ParseMapping` | 0.194 | **0.183** | 0.334 | 1.314 | 2.316 |
+| `CSV::Parse` | 2.319 | 1.853 | **0.672** | 3.092 | 2.119 |
+| `Template::Regex` | **0.889** | 1.144 | 3.465 | 1.445 | 6.662 |
+| `Template::Parse` | **0.758** | 0.946 | 1.027 | 2.349 | 0.784 |
+| `Maze::Generator` | 0.438 | **0.409** | 0.713 | 1.443 | 0.921 |
+| `Maze::BFS` | 0.513 | **0.442** | 0.912 | 1.889 | 1.523 |
+| `Maze::AStar` | 0.953 | **0.729** | 1.081 | 2.482 | 3.165 |
+| `Etc::LogParser` | 0.474 | 0.398 | **0.270** | 1.002 | 23.826 |
+| `Calculator::Ast` | **0.264** | 0.695 | 0.524 | 0.440 | 0.472 |
+| `Calculator::Interpreter` | **0.439** | 0.840 | 0.730 | 0.921 | 0.767 |
+| `Compress::BWTEncode` | 0.436 | 0.399 | **0.299** | 1.196 | 1.962 |
+| `Compress::BWTDecode` | 0.693 | **0.360** | 0.391 | 0.594 | 0.607 |
+| `Compress::HuffEncode` | **0.537** | 0.600 | 0.559 | 0.971 | 0.758 |
+| `Compress::HuffDecode` | 0.506 | 0.676 | **0.471** | 0.834 | 1.121 |
+| `Compress::ArithEncode` | 1.111 | 0.863 | **0.805** | 0.948 | 0.840 |
+| `Compress::ArithDecode` | 0.903 | **0.720** | 1.119 | 0.786 | 0.753 |
+| `Compress::LZWEncode` | **0.153** | 1.106 | 0.590 | 1.207 | 1.224 |
+| `Compress::LZWDecode` | **0.187** | 0.473 | 0.541 | 1.063 | 1.631 |
 
 ## Goals
 
-Beginners are welcome. Advanced programmers are not blocked. Memory is managed for you. Errors are values. The public scoreboard is LangArena: Crystal's expressiveness, runtime nearer C and Rust than Crystal is today and clearly faster than Go, and memory better than Crystal without giving up the collector.
+Beginners welcome, advanced programmers unblocked, memory managed, errors as values. The target: Crystal-class expressiveness, runtime nearer C/Rust than Crystal is today, clearly faster than Go, memory better than Crystal without giving up the collector. LangArena is the public scoreboard.
 
-Official LangArena numbers are still the 2026-09-27 run. A daily `--debug` build is the development compiler. A scored run uses `AVANT_MYC_FINAL=1` when that run is asked for.
+## Advanced: building the compiler
+
+Everything below is for compiler developers, not for writing Avant programs.
+
+The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compiles itself. It emits [myc](https://github.com/kostya/myc) IR and runs `myc-llvm` from the safepoints shard (which still uses Crystal; that Crystal is not in this repository).
+
+```
+.av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
+```
+
+Build the next compiler with a published one (the `v0.11.0` seed or newer; `avant bind` additionally needs libclang):
+
+```
+sh runtime/build.sh
+/path/to/avant compile compiler/main.av bin/avant
+./bin/avant run examples/hello.av
+./bin/avant compile compiler/main.av bin/avant   # rebuild with itself
+```
+
+`AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Daily compiles use myc-llvm `--debug` (fast); `AVANT_MYC_DEBUG=0` restores myc's default codegen and `AVANT_MYC_FINAL=1` selects `--final`. The same choice is available as flags on `avant compile` (and `run`): `--debug` selects the fast daily codegen and `--release` selects `--final`, the scored mode used in [Benchmarks](#benchmarks). An explicit flag wins over the env vars; the env vars keep working for one transition and must not carry scored state. Safepoints stay on in every mode. `dump FILE.av` prints myc IR without linking.
+
+Tests are the native suite, run on the compiler you just built (B) and, for a release, on the next one (C):
+
+```
+AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
+./bin/avant-av-b compile compiler/main.av bin/avant-av-c
+AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
+```
+
+Adding `tests/cases/foo.av` needs no edit to `tests/run.av`. `--coverage` (or `AVANT_COVERAGE=1`) writes `lcov.info`; goldens live in `tests/goldens/`.
 
 ## License
 

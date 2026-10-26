@@ -591,6 +591,98 @@ FUNC :avant_array_fill_u8
     TYPE :i32
 ENDFUNC
 
+FUNC :avant_trap_bounds
+  ARGS
+    TYPE :i32
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_trap_div_zero
+ENDFUNC
+
+FUNC :avant_trap_overflow
+ENDFUNC
+
+FUNC :avant_checked_add_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_sub_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_mul_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_add_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_sub_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_mul_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_div_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_rem_i64
+  RETURN
+    TYPE :i64
+  ARGS
+    TYPE :i64
+    TYPE :i64
+ENDFUNC
+
+FUNC :avant_checked_div_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_checked_rem_u64
+  RETURN
+    TYPE :u64
+  ARGS
+    TYPE :u64
+    TYPE :u64
+ENDFUNC
+
 FUNC :avant_zlib_compress
   RETURN
     TYPE :ptr<u8>
@@ -956,7 +1048,28 @@ FUNC :main
         STORE
         LOCAL :n :i32
         LOCAL :__t7
+        LOCAL :__t8 :i32
+        STORE
+        LOCAL :__t9 :i32
+        STORE
+        LOCAL :__t9
+        AS :i64
+        LOCAL :__t8
+        AS :i64
         BINARY :add
+        LOCAL :__t10 :i64
+        STORE
+        LOCAL :__t10
+        AS :i32
+        AS :i64
+        LOCAL :__t10
+        BINARY :not_eq
+        IF
+          THEN
+            CALL :avant_trap_overflow
+        ENDIF
+        LOCAL :__t10
+        AS :i32
         LOCAL :sum :i32
         STORE
         PUSH 1
@@ -986,28 +1099,9 @@ FUNC :main
     ADDR
     CALL :avant_gc_root
     PUSH 10
-    LOCAL :__t8 :i32
-    STORE
-    PUSH "a"
-    LOCAL :__t9 :ptr<u8>
-    STORE
-    LOCAL :__t9
-    ADDR
-    CALL :avant_gc_root
-    LOCAL :h :ptr<void>
-    LOCAL :__t10 :ptr<void>
-    STORE
-    LOCAL :__t10
-    ADDR
-    CALL :avant_gc_root
-    LOCAL :__t8
-    LOCAL :__t9
-    LOCAL :__t10
-    CALL :avant_hash_set_i32
-    PUSH 20
     LOCAL :__t11 :i32
     STORE
-    PUSH "b"
+    PUSH "a"
     LOCAL :__t12 :ptr<u8>
     STORE
     LOCAL :__t12
@@ -1023,55 +1117,74 @@ FUNC :main
     LOCAL :__t12
     LOCAL :__t13
     CALL :avant_hash_set_i32
-    PUSH 0
+    PUSH 20
     LOCAL :__t14 :i32
     STORE
-    PUSH "a"
+    PUSH "b"
     LOCAL :__t15 :ptr<u8>
     STORE
+    LOCAL :__t15
+    ADDR
+    CALL :avant_gc_root
     LOCAL :h :ptr<void>
     LOCAL :__t16 :ptr<void>
     STORE
-    LOCAL :__t14
+    LOCAL :__t16
     ADDR
+    CALL :avant_gc_root
+    LOCAL :__t14
     LOCAL :__t15
     LOCAL :__t16
-    CALL :avant_hash_get_i32
+    CALL :avant_hash_set_i32
+    PUSH 0
     LOCAL :__t17 :i32
     STORE
-    LOCAL :__t14
+    PUSH "a"
+    LOCAL :__t18 :ptr<u8>
+    STORE
+    LOCAL :h :ptr<void>
+    LOCAL :__t19 :ptr<void>
+    STORE
+    LOCAL :__t17
+    ADDR
+    LOCAL :__t18
+    LOCAL :__t19
+    CALL :avant_hash_get_i32
+    LOCAL :__t20 :i32
+    STORE
+    LOCAL :__t17
     PUSH 1
     BINARY :eq
     IF
       THEN
-        LOCAL :__t17
-        LOCAL :__t19 :i32
+        LOCAL :__t20
+        LOCAL :__t22 :i32
         STORE
-        LOCAL :__t19
+        LOCAL :__t22
         PUSH 0
         CREATE :U_Int_Nil
-        LOCAL :__t18 :U_Int_Nil
+        LOCAL :__t21 :U_Int_Nil
         STORE
       ELSE
         PUSH 0
-        LOCAL :__t20 :i32
+        LOCAL :__t23 :i32
         STORE
         PUSH 0
         PUSH 1
         CREATE :U_Int_Nil
-        LOCAL :__t18 :U_Int_Nil
+        LOCAL :__t21 :U_Int_Nil
         STORE
     ENDIF
-    LOCAL :__t18
-    LOCAL :__t21 :U_Int_Nil
-    STORE
     LOCAL :__t21
+    LOCAL :__t24 :U_Int_Nil
+    STORE
+    LOCAL :__t24
     FIELD 0
     PUSH 1
     BINARY :not_eq
     IF
       THEN
-        LOCAL :__t21
+        LOCAL :__t24
         FIELD 1
         LOCAL :v :i32
         STORE
@@ -1084,13 +1197,13 @@ FUNC :main
     PUSH "%d\n"
     PRINTF 1
     PUSH "hi "
-    LOCAL :__t22 :ptr<u8>
+    LOCAL :__t25 :ptr<u8>
     STORE
-    LOCAL :__t22
+    LOCAL :__t25
     ADDR
     CALL :avant_gc_root
     PUSH "avant"
-    LOCAL :__t22
+    LOCAL :__t25
     CALL :avant_str_concat
     PUSH "%s\n"
     PRINTF 1
