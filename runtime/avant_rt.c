@@ -37,6 +37,12 @@
 #define BLOCK_HASH 4096
 #define LARGE_HASH 4096
 #define LOS_LIMIT 8192
+/* Numeric buffers at or above this size are young large objects.
+ * They do not move, so a parallel loop can keep the address in a
+ * register, and a young collection still frees them when unmarked.
+ * 900 doubles is 7200 bytes: under LOS_LIMIT, but large enough that
+ * copying the row is the slow path. */
+#define SCALAR_LOS_MIN 6144
 /* 1 MiB retraced one depth-20 tree 93 times (3.85s, copied bytes
  * about equal to allocated bytes). 16 MiB is the measured default.
  * The full threshold stays 32 MiB, so young collection still runs.
@@ -118,6 +124,11 @@ static Large *g_los_spare;
 /* Bytes in young scalar large objects. They do not move. A young
  * collection frees the ones the mark does not reach. */
 static uint64_t g_young_large;
+static int g_young_large_n;
+/* Set when a young large object survived a collection. Further
+ * same-sized allocs are live rows, not a replaced buffer, so they
+ * must not collect on every malloc. */
+static int g_los_eager_hold;
 static __thread Frame *g_frame;
 static __thread int g_gc_quiet;
 static __thread Frame *g_frame_free;
@@ -543,6 +554,9 @@ static void account_large_gone(Large *L, int keep_bytes) {
     if (g_young_large >= chunk) {
       g_young_large -= chunk;
     }
+    if (g_young_large_n > 0) {
+      g_young_large_n--;
+    }
   } else if (g_mature_since_full >= chunk) {
     g_mature_since_full -= chunk;
   }
@@ -587,6 +601,9 @@ static void reclaim_young_large(void) {
             (uint16_t)(L->header.flags & (uint16_t)~AVANT_FLAG_YOUNG);
         if (g_young_large >= chunk) {
           g_young_large -= chunk;
+        }
+        if (g_young_large_n > 0) {
+          g_young_large_n--;
         }
         g_mature_since_full += chunk;
       }
@@ -2227,6 +2244,8 @@ static void collect(int full) {
     g_nursery_held = g_mark_sum;
     g_mature_since_full = 0;
     g_young_large = 0;
+    g_young_large_n = 0;
+    g_los_eager_hold = 0;
     for (L = g_large; L; L = L->next) {
       L->header.flags =
           (uint16_t)(L->header.flags & (uint16_t)~AVANT_FLAG_YOUNG);
@@ -2303,6 +2322,7 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   if (young) {
     L->header.flags |= AVANT_FLAG_YOUNG;
     g_young_large += chunk;
+    g_young_large_n++;
   } else {
     g_mature_since_full += chunk;
   }
@@ -2647,6 +2667,13 @@ void avant_world_unlock(void) {
   pthread_mutex_unlock(&g_world);
 }
 
+static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
+  if (total > LOS_LIMIT) {
+    return 1;
+  }
+  return type_id == AVANT_TYPE_BYTES && payload >= SCALAR_LOS_MIN;
+}
+
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   init_gc();
   if (nbytes > UINT32_MAX) {
@@ -2658,11 +2685,13 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
 
   size_t payload = (size_t)nbytes;
   size_t total = align_up(sizeof(AvantHeader) + payload);
+  int large = alloc_is_large(type_id, payload, total);
   /* Single mutator, under the young threshold: bump and return.
    * Collection stays on the locked path, with the caller's roots
-   * already spilled. This is the same contract as avant_bump_alloc. */
+   * already spilled. This is the same contract as avant_bump_alloc.
+   * Medium numeric buffers take the large path so their address stays. */
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !g_gc_defer &&
-      !g_collecting && !g_nursery_off && !g_alloc_mature && total <= LOS_LIMIT &&
+      !g_collecting && !g_nursery_off && !g_alloc_mature && !large &&
       g_mature_since_full < FULL_BYTES && g_nursery_held + total < g_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
@@ -2676,11 +2705,19 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   pthread_mutex_lock(&g_world);
   maybe_collect();
 
-  if (total > LOS_LIMIT) {
-    /* The previous scalar buffer is often already dead. Reclaim it
-     * before this allocation so the spare slot can satisfy the request. */
-    if (g_young_large > 0 && !g_nursery_off && !g_alloc_mature && !g_gc_defer) {
+  if (large) {
+    /* One replaced scalar buffer is reclaimed into the spare slot.
+     * A survived buffer sets the hold so a run of live rows does not
+     * collect on every allocation. The byte threshold still runs. */
+    if (!g_nursery_off && !g_alloc_mature && !g_gc_defer && g_young_large_n > 0 &&
+        (g_young_large >= g_young_bytes || (!g_los_eager_hold && g_young_large_n == 1))) {
+      uint64_t mature_before = g_mature_since_full;
       collect(0);
+      if (g_young_large_n > 0 || g_mature_since_full > mature_before) {
+        g_los_eager_hold = 1;
+      } else {
+        g_los_eager_hold = 0;
+      }
     }
     void *obj = los_alloc(payload, type_id);
     g_stats.allocated_bytes += total;
