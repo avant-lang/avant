@@ -214,6 +214,7 @@ pub class Loader {
   mods: Array(ModInfo)
   failed: Bool = false
   err: CompileError? = nil
+  errors: DiagBag
 
   fn initialize {
     h = Hash(String, Int).new
@@ -228,14 +229,34 @@ pub class Loader {
     self.mods = m
     self.failed = false
     self.err = nil
+    self.errors = DiagBag.new
   }
 
   pub fn fail(loc: Location, message: String) {
-    if self.failed {
-      return
+    e = CompileError.new(loc, diag_code(5, message), message)
+    if self.errors.count == 0 {
+      self.err = e
     }
     self.failed = true
-    self.err = CompileError.new(loc, message)
+    self.errors.push(e)
+  }
+
+  pub fn absorb(bag: DiagBag) {
+    i = 0
+    while i < bag.items.size {
+      e = bag.items[i]
+      if self.errors.count == 0 {
+        self.err = e
+      }
+      self.failed = true
+      self.errors.push(e)
+      i = i + 1
+    }
+    self.errors.suppressed = self.errors.suppressed + bag.suppressed
+  }
+
+  pub fn err_count: Int {
+    self.errors.count
   }
 
   pub fn load_root(path: String): Program? {
@@ -277,14 +298,14 @@ pub class Loader {
       tokens = lex.tokenize
       if e = lex.err {
         dummy2 = self.stack.pop
-        self.fail(e.loc, e.message)
+        self.absorb(lex.errors)
         return nil
       }
       parser = Parser.new(file, tokens)
       program = parser.parse
-      if e = parser.err {
+      if e2 = parser.err {
         dummy3 = self.stack.pop
-        self.fail(e.loc, e.message)
+        self.absorb(parser.errors)
         return nil
       }
       name = module_name_of(path)
@@ -295,23 +316,19 @@ pub class Loader {
       imports: Array(String) = []
       i = 0
       while i < program.imports.size {
-        if self.failed {
-          dummy4 = self.stack.pop
-          return nil
-        }
         imp = program.imports[i]
         if prev = seen.get(imp.name) {
-          dummy5 = self.stack.pop
           self.fail(imp.loc, "already imported ${imp.name}")
-          return nil
+          i = i + 1
+          continue
         }
         seen[imp.name] = 1
         child = child_av_path(path, imp.name)
         if file_exists(child) {
         } else {
-          dummy6 = self.stack.pop
           self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path}")
-          return nil
+          i = i + 1
+          continue
         }
         dummy7 = self.load_file(child)
         imports.push(module_name_of(child))

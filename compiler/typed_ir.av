@@ -1,0 +1,156 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+
+pub class FuncSig {
+  name: String = ""
+  node: Function
+  params: Array(Ty)
+  ret: Ty
+  owner: String = ""
+
+  fn initialize(name: String, node: Function, params: Array(Ty), ret: Ty) {
+    self.name = name
+    self.node = node
+    self.params = params
+    self.ret = ret
+    self.owner = ""
+  }
+
+  pub fn mangled: String {
+    self.node.emit_name
+  }
+}
+
+pub class CFunSig {
+  name: String = ""
+  lib_name: String = ""
+  params: Array(Ty)
+  ret: Ty
+
+  fn initialize(name: String, lib_name: String, params: Array(Ty), ret: Ty) {
+    self.name = name
+    self.lib_name = lib_name
+    self.params = params
+    self.ret = ret
+  }
+}
+
+pub fn required_arity(fnn: Function): Int {
+  i = 0
+  while i < fnn.params.size {
+    if d = fnn.params[i].default {
+      return i
+    }
+    i = i + 1
+  }
+  fnn.params.size
+}
+
+pub fn arity_ok(fnn: Function, argc: Int): Bool {
+  req = required_arity(fnn)
+  if argc < req {
+    return false
+  }
+  argc <= fnn.params.size
+}
+
+pub fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i].same_as(b[i]) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn sig_mangle(base: String, params: Array(Ty)): String {
+  buf = buf_new()
+  buf.push_str(base)
+  i = 0
+  while i < params.size {
+    buf.push_str("__")
+    buf.push_str(mangle_ty(params[i]))
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub class SymbolTable {
+  resolver: TypeResolver
+  functions: Array(FuncSig)
+  fn_index: Hash(String, Int)
+  methods: Array(FuncSig)
+  method_index: Hash(String, Int)
+  cfuns: Array(CFunSig)
+  cfun_index: Hash(String, Int)
+
+  fn initialize(resolver: TypeResolver) {
+    self.resolver = resolver
+    fns: Array(FuncSig) = []
+    self.functions = fns
+    fi = Hash(String, Int).new
+    self.fn_index = fi
+    ms: Array(FuncSig) = []
+    self.methods = ms
+    mi = Hash(String, Int).new
+    self.method_index = mi
+    cf: Array(CFunSig) = []
+    self.cfuns = cf
+    cfi = Hash(String, Int).new
+    self.cfun_index = cfi
+  }
+
+  pub fn add_function(sig: FuncSig) {
+    self.functions.push(sig)
+    if sig.node.emit_name.size > 0 {
+      self.fn_index[sig.node.emit_name] = self.functions.size - 1
+    }
+  }
+
+  pub fn add_method(sig: FuncSig) {
+    self.methods.push(sig)
+    if sig.node.emit_name.size > 0 {
+      self.method_index[sig.node.emit_name] = self.methods.size - 1
+    }
+  }
+
+  pub fn add_cfun(sig: CFunSig) {
+    self.cfuns.push(sig)
+    key = "${sig.lib_name}.${sig.name}"
+    self.cfun_index[key] = self.cfuns.size - 1
+  }
+
+  pub fn find_fn(emit: String): FuncSig? {
+    if id = self.fn_index.get(emit) {
+      return self.functions[id]
+    }
+    nil
+  }
+
+  pub fn find_method_emit(emit: String): FuncSig? {
+    if id = self.method_index.get(emit) {
+      return self.methods[id]
+    }
+    nil
+  }
+
+  pub fn find_cfun(lib_name: String, name: String): CFunSig? {
+    key = "${lib_name}.${name}"
+    if id = self.cfun_index.get(key) {
+      return self.cfuns[id]
+    }
+    nil
+  }
+}

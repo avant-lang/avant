@@ -469,6 +469,375 @@ void avant_array_sort_i32(void *arr) {
   sort_i32((int32_t *)a->buf, a->size);
 }
 
+static int cmp_i64(const void *a, const void *b) {
+  int64_t x = *(const int64_t *)a;
+  int64_t y = *(const int64_t *)b;
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+static int cmp_u64(const void *a, const void *b) {
+  uint64_t x = *(const uint64_t *)a;
+  uint64_t y = *(const uint64_t *)b;
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+static int cmp_f64(const void *a, const void *b) {
+  double x = *(const double *)a;
+  double y = *(const double *)b;
+  int xn = x != x;
+  int yn = y != y;
+  if (xn && yn) {
+    return 0;
+  }
+  if (xn) {
+    return 1;
+  }
+  if (yn) {
+    return -1;
+  }
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+static int str_cmp_raw(const char *a, const char *b) {
+  size_t na = avant_str_n(a);
+  size_t nb = avant_str_n(b);
+  size_t n = na < nb ? na : nb;
+  int c = n ? memcmp(a ? a : "", b ? b : "", n) : 0;
+  if (c != 0) {
+    return c;
+  }
+  return na < nb ? -1 : (na > nb ? 1 : 0);
+}
+
+static int cmp_str(const void *a, const void *b) {
+  return str_cmp_raw(*(const char *const *)a, *(const char *const *)b);
+}
+
+void avant_array_sort_i64(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  if (a && a->buf && a->size > 1) {
+    qsort(a->buf, (size_t)a->size, sizeof(int64_t), cmp_i64);
+  }
+}
+
+void avant_array_sort_u64(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  if (a && a->buf && a->size > 1) {
+    qsort(a->buf, (size_t)a->size, sizeof(uint64_t), cmp_u64);
+  }
+}
+
+void avant_array_sort_f64(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  if (a && a->buf && a->size > 1) {
+    qsort(a->buf, (size_t)a->size, sizeof(double), cmp_f64);
+  }
+}
+
+void avant_array_sort_str(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  if (a && a->buf && a->size > 1) {
+    qsort(a->buf, (size_t)a->size, sizeof(char *), cmp_str);
+  }
+}
+
+void avant_array_sort_bool(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int32_t zeros = 0;
+  if (!a || !a->buf || a->size <= 1) {
+    return;
+  }
+  {
+    int8_t *p = (int8_t *)a->buf;
+    for (i = 0; i < a->size; i++) {
+      if (!p[i]) {
+        zeros++;
+      }
+    }
+    for (i = 0; i < a->size; i++) {
+      p[i] = i < zeros ? 0 : 1;
+    }
+  }
+}
+
+void avant_array_reverse(void *arr, uint64_t elem_size) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int32_t j;
+  uint8_t tmp[64];
+  if (!a || !a->buf || a->size <= 1 || elem_size == 0) {
+    return;
+  }
+  if (elem_size > sizeof(tmp)) {
+    uint8_t *big = (uint8_t *)malloc((size_t)elem_size);
+    if (!big) {
+      return;
+    }
+    i = 0;
+    j = a->size - 1;
+    while (i < j) {
+      uint8_t *x = (uint8_t *)a->buf + (size_t)i * (size_t)elem_size;
+      uint8_t *y = (uint8_t *)a->buf + (size_t)j * (size_t)elem_size;
+      memcpy(big, x, (size_t)elem_size);
+      memcpy(x, y, (size_t)elem_size);
+      memcpy(y, big, (size_t)elem_size);
+      i++;
+      j--;
+    }
+    free(big);
+    return;
+  }
+  i = 0;
+  j = a->size - 1;
+  while (i < j) {
+    uint8_t *x = (uint8_t *)a->buf + (size_t)i * (size_t)elem_size;
+    uint8_t *y = (uint8_t *)a->buf + (size_t)j * (size_t)elem_size;
+    memcpy(tmp, x, (size_t)elem_size);
+    memcpy(x, y, (size_t)elem_size);
+    memcpy(y, tmp, (size_t)elem_size);
+    i++;
+    j--;
+  }
+}
+
+void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  AvantArray *r;
+  avant_gc_defer_enter();
+  r = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
+  if (a && a->buf && a->size > 0) {
+    void *nbuf = avant_alloc((uint64_t)a->size * elem_size, buf_type_id);
+    memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
+    r->buf = nbuf;
+    r->size = a->size;
+    r->cap = a->size;
+  }
+  avant_gc_defer_leave();
+  return r;
+}
+
+int32_t avant_array_contains_i32(void *arr, int32_t v) { return avant_array_index_i32(arr, v) >= 0 ? 1 : 0; }
+int32_t avant_array_contains_i64(void *arr, int64_t v) { return avant_array_index_i64(arr, v) >= 0 ? 1 : 0; }
+int32_t avant_array_contains_u64(void *arr, uint64_t v) { return avant_array_index_u64(arr, v) >= 0 ? 1 : 0; }
+int32_t avant_array_contains_f64(void *arr, double v) { return avant_array_index_f64(arr, v) >= 0 ? 1 : 0; }
+int32_t avant_array_contains_str(void *arr, const char *v) { return avant_array_index_str(arr, v) >= 0 ? 1 : 0; }
+int32_t avant_array_contains_ptr(void *arr, void *v) { return avant_array_index_ptr(arr, v) >= 0 ? 1 : 0; }
+
+int32_t avant_array_index_i32(void *arr, int32_t v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if (((int32_t *)a->buf)[i] == v) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_index_i64(void *arr, int64_t v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if (((int64_t *)a->buf)[i] == v) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_index_u64(void *arr, uint64_t v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if (((uint64_t *)a->buf)[i] == v) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_index_f64(void *arr, double v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if (((double *)a->buf)[i] == v) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_index_str(void *arr, const char *v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if (avant_str_eq(((char **)a->buf)[i], v)) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_contains_bool(void *arr, int32_t v) { return avant_array_index_bool(arr, v) >= 0 ? 1 : 0; }
+
+int32_t avant_array_index_bool(void *arr, int32_t v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if ((((int8_t *)a->buf)[i] != 0) == (v != 0)) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_index_ptr(void *arr, void *v) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  if (!a || !a->buf) { return -1; }
+  for (i = 0; i < a->size; i++) { if (((void **)a->buf)[i] == v) { return i; } }
+  return -1;
+}
+
+int32_t avant_array_min_i32(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int32_t best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((int32_t *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { if (((int32_t *)a->buf)[i] < best) { best = ((int32_t *)a->buf)[i]; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+int64_t avant_array_min_i64(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int64_t best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((int64_t *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { if (((int64_t *)a->buf)[i] < best) { best = ((int64_t *)a->buf)[i]; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+uint64_t avant_array_min_u64(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  uint64_t best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((uint64_t *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { if (((uint64_t *)a->buf)[i] < best) { best = ((uint64_t *)a->buf)[i]; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+double avant_array_min_f64(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  double best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((double *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v < best) { best = v; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+const char *avant_array_min_str(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  const char *best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return ""; }
+  best = ((char **)a->buf)[0];
+  for (i = 1; i < a->size; i++) { const char *v = ((char **)a->buf)[i]; if (str_cmp_raw(v, best) < 0) { best = v; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+int32_t avant_array_max_i32(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int32_t best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((int32_t *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { if (((int32_t *)a->buf)[i] > best) { best = ((int32_t *)a->buf)[i]; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+int64_t avant_array_max_i64(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int64_t best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((int64_t *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { if (((int64_t *)a->buf)[i] > best) { best = ((int64_t *)a->buf)[i]; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+uint64_t avant_array_max_u64(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  uint64_t best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((uint64_t *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { if (((uint64_t *)a->buf)[i] > best) { best = ((uint64_t *)a->buf)[i]; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+double avant_array_max_f64(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  double best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return 0; }
+  best = ((double *)a->buf)[0];
+  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v > best) { best = v; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+const char *avant_array_max_str(void *arr, int32_t *found) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  const char *best;
+  if (found) { *found = 0; }
+  if (!a || !a->buf || a->size <= 0) { return ""; }
+  best = ((char **)a->buf)[0];
+  for (i = 1; i < a->size; i++) { const char *v = ((char **)a->buf)[i]; if (str_cmp_raw(v, best) > 0) { best = v; } }
+  if (found) { *found = 1; }
+  return best;
+}
+
+int32_t avant_array_sum_i32(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int64_t s = 0;
+  if (!a || !a->buf) { return 0; }
+  for (i = 0; i < a->size; i++) { s += ((int32_t *)a->buf)[i]; }
+  return (int32_t)s;
+}
+
+int64_t avant_array_sum_i64(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  int64_t s = 0;
+  if (!a || !a->buf) { return 0; }
+  for (i = 0; i < a->size; i++) { s += ((int64_t *)a->buf)[i]; }
+  return s;
+}
+
+uint64_t avant_array_sum_u64(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  uint64_t s = 0;
+  if (!a || !a->buf) { return 0; }
+  for (i = 0; i < a->size; i++) { s += ((uint64_t *)a->buf)[i]; }
+  return s;
+}
+
+double avant_array_sum_f64(void *arr) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t i;
+  double s = 0;
+  if (!a || !a->buf) { return 0; }
+  for (i = 0; i < a->size; i++) { s += ((double *)a->buf)[i]; }
+  return s;
+}
+
 void avant_array_fill_u8(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
   if (!a || !a->buf || a->size <= 0) {

@@ -51,24 +51,25 @@ pub fn argv_filter_coverage(args: Array(String)): Array(String) {
 pub fn show_usage {
   puts("Avant compiler")
   puts("")
-  puts("  avant-av run FILE.av [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av run FILE.av [--coverage] [--debug|--release] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av dump FILE.av [--coverage]")
-  puts("  avant-av compile FILE.av [OUT] [--coverage] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av compile FILE.av [OUT] [--coverage] [--debug|--release] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av format FILE.av [--write] [--check]")
   puts("  avant-av bind [--lib NAME] HEADER.h")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
+  puts("--release is --final, the scored mode. --debug is the fast daily mode.")
 }
 
 pub fn driver_format(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
-    puts("format needs a .av file")
+    diag_puts("format needs a .av file")
     show_usage()
     return
   }
   if split.paths.size > 1 {
-    puts("format takes one root .av (use import)")
+    diag_puts("format takes one root .av (use import)")
     show_usage()
     return
   }
@@ -83,7 +84,7 @@ pub fn driver_format(args: Array(String)) {
     } else if str_eq(flag, "--write") {
       write = true
     } else {
-      puts("unknown format argument ${flag}")
+      diag_puts("unknown format argument ${flag}")
       show_usage()
       return
     }
@@ -93,7 +94,7 @@ pub fn driver_format(args: Array(String)) {
     got = format_source(path, text)
     if got.ok {
     } else {
-      puts(got.err)
+      diag_puts(got.err)
       return
     }
     if check {
@@ -107,97 +108,106 @@ pub fn driver_format(args: Array(String)) {
     if write {
       w = file_write(path, got.text)
       if w != 0 {
-        puts("cannot write ${path}")
+        diag_puts("cannot write ${path}")
+        return
       }
       return
     }
     print_format(got.text)
   } else {
-    puts("cannot read ${path}")
+    diag_puts("cannot read ${path}")
+    return
   }
 }
 
 pub fn driver_dump(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
-    puts("dump needs a .av file")
+    diag_puts("dump needs a .av file")
     show_usage()
-    return
+    diag_exit(1)
   }
   if split.paths.size > 1 {
-    puts("dump takes one root .av (use import)")
+    diag_puts("dump takes one root .av (use import)")
     show_usage()
-    return
+    diag_exit(1)
   }
   box = compile_av_paths(split.paths)
   if box.ok {
     print_ir(box.text)
+    return
   }
+  diag_exit(1)
 }
 
 pub fn driver_run(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
-    puts("run needs a .av file")
+    diag_puts("run needs a .av file")
     show_usage()
-    return
+    diag_exit(1)
   }
   if split.paths.size > 1 {
-    puts("run takes one root .av (use import)")
+    diag_puts("run takes one root .av (use import)")
     show_usage()
-    return
+    diag_exit(1)
   }
   job = parse_link(split.rest)
   if job.err.size > 0 {
-    puts(job.err)
-    return
+    diag_puts(job.err)
+    diag_exit(1)
   }
   box = compile_av_paths(split.paths)
   if box.ok {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    code = invoke_myc(box.text, "r", job.objects, job.flags, "", box.quiet_leaves)
+    code = invoke_myc(box.text, "r", job.objects, job.flags, "", box.quiet_leaves, job.codegen)
     if code != 0 {
-      puts("myc-llvm failed (${code})")
+      diag_exit(code)
     }
+    return
   }
+  diag_exit(1)
 }
 
 pub fn driver_compile(args: Array(String)) {
   split = take_av_files(args)
   if split.paths.size == 0 {
-    puts("compile needs a .av file")
+    diag_puts("compile needs a .av file")
     show_usage()
-    return
+    diag_exit(1)
   }
   if split.paths.size > 1 {
-    puts("compile takes one root .av (use import)")
+    diag_puts("compile takes one root .av (use import)")
     show_usage()
-    return
+    diag_exit(1)
   }
   last = split.paths[split.paths.size - 1]
   out_split = take_out_path(split.rest, last)
   if out_split.paths.size == 0 {
-    puts("compile needs an output path")
-    return
+    diag_puts("compile needs an output path")
+    diag_exit(1)
   }
   out_path = out_split.paths[0]
   job = parse_link(out_split.rest)
   if job.err.size > 0 {
-    puts(job.err)
-    return
+    diag_puts(job.err)
+    diag_exit(1)
   }
   box = compile_av_paths(split.paths)
   if box.ok {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves)
+    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves, job.codegen)
     if code != 0 {
-      puts("myc-llvm failed (${code})")
+      diag_puts("myc-llvm failed (${code})")
+      diag_exit(1)
     }
+    return
   }
+  diag_exit(1)
 }
 
 pub fn driver_bind(args: Array(String)) {
@@ -322,6 +332,7 @@ fn main {
     driver_run(args)
     return
   }
-  puts("unknown command ${command}")
+  diag_puts("unknown command ${command}")
   show_usage()
+  diag_exit(1)
 }

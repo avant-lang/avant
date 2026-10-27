@@ -1,0 +1,139 @@
+// Stdlib micro-bench (Wave E). Run with the built compiler:
+//   AVANT_MYC_LLVM=../safepoints/myc-llvm ./bin/avant-c run bench/stdlib_bench.av
+// Each operation is timed over repeated rounds; the best round is reported
+// and a checksum is printed so the work cannot be optimised away.
+
+fn bench_sort_int: Int {
+  acc = 0
+  round = 0
+  best = 1000000000
+  while round < 5 {
+    xs: Array(Int) = []
+    i = 0
+    while i < 200000 {
+      xs.push(200000 - i)
+      i = i + 1
+    }
+    t0 = now_ms()
+    xs.sort
+    t1 = now_ms()
+    acc = acc + xs[0] + xs[199999]
+    if t1 - t0 < best {
+      best = t1 - t0
+    }
+    round = round + 1
+  }
+  puts("sort_int best_ms=${best} checksum=${acc}")
+  acc
+}
+
+fn bench_sort_string: Int {
+  acc = 0
+  round = 0
+  best = 1000000000
+  while round < 5 {
+    xs: Array(String) = []
+    i = 0
+    while i < 30000 {
+      xs.push("key-${30000 - i}")
+      i = i + 1
+    }
+    t0 = now_ms()
+    xs.sort
+    t1 = now_ms()
+    acc = acc + xs[0].size + xs[29999].size
+    if t1 - t0 < best {
+      best = t1 - t0
+    }
+    round = round + 1
+  }
+  puts("sort_string best_ms=${best} checksum=${acc}")
+  acc
+}
+
+fn bench_split_fields: Int {
+  acc = 0
+  round = 0
+  best = 1000000000
+  line = "alpha,beta,gamma,delta,epsilon,zeta,eta,theta"
+  text = "  one two  three\tfour five\nsix seven  "
+  while round < 20 {
+    t0 = now_ms()
+    i = 0
+    n = 0
+    while i < 2000 {
+      n = n + line.split(",").size + text.fields().size
+      i = i + 1
+    }
+    t1 = now_ms()
+    acc = acc + n
+    if t1 - t0 < best {
+      best = t1 - t0
+    }
+    round = round + 1
+  }
+  puts("split_fields best_ms=${best} checksum=${acc}")
+  acc
+}
+
+fn bench_hash: Int {
+  acc = 0
+  round = 0
+  best = 1000000000
+  while round < 10 {
+    h = Hash(String, Int).new
+    i = 0
+    while i < 5000 {
+      dummy = h.inc("k-${i % 500}")
+      i = i + 1
+    }
+    t0 = now_ms()
+    total = 0
+    j = 0
+    while j < 200 {
+      ks = h.keys
+      total = total + ks.size + h.values.sum
+      j = j + 1
+    }
+    t1 = now_ms()
+    acc = acc + total
+    if t1 - t0 < best {
+      best = t1 - t0
+    }
+    round = round + 1
+  }
+  puts("hash_keys_values best_ms=${best} checksum=${acc}")
+  acc
+}
+
+fn bench_bytes: Int {
+  acc = 0
+  round = 0
+  best = 1000000000
+  src = "the quick brown fox jumps over the lazy dog"
+  while round < 10 {
+    t0 = now_ms()
+    i = 0
+    n = 0
+    while i < 5000 {
+      b = src.bytes
+      if s = String.from_utf8(b) {
+        n = n + s.strip().size + b[0]
+      }
+      i = i + 1
+    }
+    t1 = now_ms()
+    acc = acc + n
+    if t1 - t0 < best {
+      best = t1 - t0
+    }
+    round = round + 1
+  }
+  puts("bytes_utf8_strip best_ms=${best} checksum=${acc}")
+  acc
+}
+
+fn main {
+  total = bench_sort_int() + bench_sort_string() + bench_split_fields() + bench_hash() + bench_bytes()
+  puts("total_checksum=${total}")
+}

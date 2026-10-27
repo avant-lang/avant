@@ -396,3 +396,231 @@ int32_t avant_checksum_f64(double v) {
   snprintf(buf, sizeof(buf), "%.7f", v);
   return avant_checksum_str(buf);
 }
+
+static int is_ascii_space(unsigned char c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+/* mode 0 = both ends, 1 = left, 2 = right. */
+char *avant_str_strip(const char *s, int32_t mode) {
+  size_t i = 0;
+  size_t len;
+  if (!s) {
+    s = "";
+  }
+  len = avant_str_n(s);
+  if (mode == 0 || mode == 1) {
+    while (i < len && is_ascii_space((unsigned char)s[i])) {
+      i++;
+    }
+  }
+  if (mode == 0 || mode == 2) {
+    while (len > i && is_ascii_space((unsigned char)s[len - 1])) {
+      len--;
+    }
+  }
+  if (i == 0 && len == avant_str_n(s)) {
+    return (char *)s;
+  }
+  if (len <= i) {
+    return empty_str();
+  }
+  return dup_bytes(s + i, len - i);
+}
+
+static void *str_array_build(char **items, int32_t n) {
+  avant_gc_defer_enter();
+  AvantArray *a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
+  char **buf = NULL;
+  int32_t i;
+  if (n > 0) {
+    buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
+    for (i = 0; i < n; i++) {
+      buf[i] = items[i];
+    }
+  }
+  a->buf = buf;
+  a->size = n;
+  a->cap = n;
+  avant_gc_defer_leave();
+  return a;
+}
+
+/* Keeps empty fields. Empty separator traps. */
+void *avant_str_split(const char *s, const char *sep) {
+  size_t n;
+  size_t m;
+  size_t i;
+  size_t start;
+  int32_t count = 1;
+  int32_t idx = 0;
+  char **items;
+  if (!s) {
+    s = "";
+  }
+  if (!sep) {
+    sep = "";
+  }
+  n = avant_str_n(s);
+  m = avant_str_n(sep);
+  if (m == 0) {
+    fprintf(stderr, "avant runtime: split separator is empty\n");
+    exit(1);
+  }
+  for (i = 0; i + m <= n; i++) {
+    if (memcmp(s + i, sep, m) == 0) {
+      count++;
+      i += m - 1;
+    }
+  }
+  items = (char **)malloc((size_t)count * sizeof(char *));
+  if (!items) {
+    return str_array_build(NULL, 0);
+  }
+  start = 0;
+  i = 0;
+  while (i + m <= n) {
+    if (memcmp(s + i, sep, m) == 0) {
+      items[idx++] = dup_bytes(s + start, i - start);
+      i += m;
+      start = i;
+    } else {
+      i++;
+    }
+  }
+  items[idx++] = dup_bytes(s + start, n - start);
+  {
+    void *r = str_array_build(items, idx);
+    free(items);
+    return r;
+  }
+}
+
+/* Splits on runs of ASCII whitespace and drops empty fields. */
+void *avant_str_fields(const char *s) {
+  size_t n;
+  size_t i = 0;
+  int32_t count = 0;
+  int32_t idx = 0;
+  char **items;
+  if (!s) {
+    s = "";
+  }
+  n = avant_str_n(s);
+  while (i < n) {
+    while (i < n && is_ascii_space((unsigned char)s[i])) {
+      i++;
+    }
+    if (i >= n) {
+      break;
+    }
+    count++;
+    while (i < n && !is_ascii_space((unsigned char)s[i])) {
+      i++;
+    }
+  }
+  if (count == 0) {
+    return str_array_build(NULL, 0);
+  }
+  items = (char **)malloc((size_t)count * sizeof(char *));
+  if (!items) {
+    return str_array_build(NULL, 0);
+  }
+  i = 0;
+  while (i < n && idx < count) {
+    size_t st;
+    while (i < n && is_ascii_space((unsigned char)s[i])) {
+      i++;
+    }
+    if (i >= n) {
+      break;
+    }
+    st = i;
+    while (i < n && !is_ascii_space((unsigned char)s[i])) {
+      i++;
+    }
+    items[idx++] = dup_bytes(s + st, i - st);
+  }
+  {
+    void *r = str_array_build(items, idx);
+    free(items);
+    return r;
+  }
+}
+
+static int utf8_valid(const unsigned char *s, size_t n) {
+  size_t i = 0;
+  while (i < n) {
+    unsigned char c = s[i];
+    uint32_t cp;
+    int extra;
+    if (c < 0x80) {
+      i++;
+      continue;
+    }
+    if ((c & 0xe0) == 0xc0) {
+      if (c < 0xc2) {
+        return 0;
+      }
+      extra = 1;
+      cp = c & 0x1f;
+    } else if ((c & 0xf0) == 0xe0) {
+      extra = 2;
+      cp = c & 0x0f;
+    } else if ((c & 0xf8) == 0xf0) {
+      if (c > 0xf4) {
+        return 0;
+      }
+      extra = 3;
+      cp = c & 0x07;
+    } else {
+      return 0;
+    }
+    if (i + (size_t)extra >= n) {
+      return 0;
+    }
+    {
+      int k;
+      for (k = 1; k <= extra; k++) {
+        unsigned char cc = s[i + (size_t)k];
+        if ((cc & 0xc0) != 0x80) {
+          return 0;
+        }
+        cp = (cp << 6) | (cc & 0x3f);
+      }
+    }
+    if (extra == 2) {
+      if (cp < 0x800) {
+        return 0;
+      }
+      if (cp >= 0xd800 && cp <= 0xdfff) {
+        return 0;
+      }
+    }
+    if (extra == 3) {
+      if (cp < 0x10000 || cp > 0x10ffff) {
+        return 0;
+      }
+    }
+    i += (size_t)extra + 1;
+  }
+  return 1;
+}
+
+char *avant_str_from_utf8(const char *s, int32_t *found) {
+  size_t n;
+  if (!s) {
+    s = "";
+  }
+  n = avant_str_n(s);
+  if (!utf8_valid((const unsigned char *)s, n)) {
+    if (found) {
+      *found = 0;
+    }
+    return empty_str();
+  }
+  if (found) {
+    *found = 1;
+  }
+  return (char *)s;
+}

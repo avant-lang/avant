@@ -180,6 +180,15 @@ char *avant_buf_to_str(void *buf) {
   return p;
 }
 
+void *avant_bytes_to_buf(const char *s) {
+  size_t n = avant_str_n(s);
+  void *buf = avant_buf_new(n > 0 ? (int32_t)n : 16);
+  if (n > 0) {
+    avant_buf_append(buf, s, (int32_t)n);
+  }
+  return buf;
+}
+
 int32_t avant_buf_size(void *buf) {
   AvantBuf *b = (AvantBuf *)buf;
   return b ? b->size : 0;

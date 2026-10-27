@@ -10,6 +10,7 @@ import parser
 import loader
 import expand
 import checker
+import typed_ir
 import codegen_myc
 import re2c_pat
 
@@ -27,10 +28,39 @@ pub class IrBox {
   }
 }
 
+lib posix {
+  fun write(fd: Int, buf: String, count: Int): Int
+  fun exit(code: Int)
+}
+
+pub fn diag_puts(s: String) {
+  line = "${s}\n"
+  dummy = posix.write(2, line, line.size)
+}
+
+pub fn diag_exit(code: Int) {
+  posix.exit(code)
+}
+
+pub fn diag_bag(bag: DiagBag) {
+  if bag.is_empty {
+    return
+  }
+  text = bag.render_all
+  if text.size > 0 {
+    if text[text.size - 1] == 10 {
+      diag_puts(str_slice(text, 0, text.size - 1))
+      return
+    }
+  }
+  diag_puts(text)
+}
+
 pub class LinkJob {
   objects: Array(String)
   flags: Array(String)
   err: String = ""
+  codegen: String = ""
 
   fn initialize {
     o: Array(String) = []
@@ -38,6 +68,7 @@ pub class LinkJob {
     self.objects = o
     self.flags = f
     self.err = ""
+    self.codegen = ""
   }
 }
 
@@ -171,17 +202,17 @@ pub fn compile_source(src: Source): IrBox {
   lex = Lexer.new(src)
   tokens = lex.tokenize
   if e = lex.err {
-    puts(e.show)
+    diag_bag(lex.errors)
     return IrBox.new("", false)
   }
   parser = Parser.new(src, tokens)
   program = parser.parse
   if e = parser.err {
-    puts(e.show)
+    diag_bag(parser.errors)
     return IrBox.new("", false)
   }
   if program.imports.size > 0 {
-    puts("import needs a .av file root")
+    diag_puts("import needs a .av file root")
     return IrBox.new("", false)
   }
   name = module_name_of(src.path)
@@ -196,13 +227,13 @@ pub fn compile_program(src: Source, program: Program): IrBox {
   expander = Expander.new(src, program)
   dummy_e = expander.expand
   if e = expander.err {
-    puts(e.show)
+    diag_bag(expander.errors)
     return IrBox.new("", false)
   }
   checker = Checker.new(src, program)
   dummy = checker.check
   if e = checker.err {
-    puts(e.show)
+    diag_bag(checker.errors)
     return IrBox.new("", false)
   }
   plan = re2c_plan(program)
@@ -213,7 +244,7 @@ pub fn compile_program(src: Source, program: Program): IrBox {
       program.re2c_obj = obj
     }
   }
-  ir = emit_myc(program)
+  ir = emit_myc(program, checker.symbol_table())
   box = IrBox.new(ir, true)
   box.re2c_obj = program.re2c_obj
   box.quiet_leaves = program.quiet_leaves
@@ -224,7 +255,7 @@ pub fn compile_av_path(path: String): IrBox {
   loader = Loader.new()
   if program = loader.load_root(path) {
     if e = loader.err {
-      puts(e.show)
+      diag_bag(loader.errors)
       return IrBox.new("", false)
     }
     src = Source.new(path, "")
@@ -234,18 +265,18 @@ pub fn compile_av_path(path: String): IrBox {
     return compile_program(src, program)
   }
   if e = loader.err {
-    puts(e.show)
+    diag_bag(loader.errors)
   }
   IrBox.new("", false)
 }
 
 pub fn compile_av_paths(paths: Array(String)): IrBox {
   if paths.size == 0 {
-    puts("compile needs a .av file")
+    diag_puts("compile needs a .av file")
     return IrBox.new("", false)
   }
   if paths.size > 1 {
-    puts("compile takes one root .av (use import)")
+    diag_puts("compile takes one root .av (use import)")
     return IrBox.new("", false)
   }
   compile_av_path(paths[0])
@@ -305,7 +336,7 @@ pub fn compile_re2c(src: String): String {
   log_path = "${base}.log"
   w = file_write(re_path, src)
   if w != 0 {
-    puts("re2c: cannot write ${re_path}")
+    diag_puts("re2c: cannot write ${re_path}")
     return ""
   }
   args: Array(String) = []
@@ -315,9 +346,9 @@ pub fn compile_re2c(src: String): String {
   args.push(re_path)
   code = process_run_out(re2c_bin(), args, log_path)
   if code != 0 {
-    puts("re2c: generator failed, pattern stays on PCRE2")
+    diag_puts("re2c: generator failed, pattern stays on PCRE2")
     if text = file_read(log_path) {
-      puts(text)
+      diag_puts(text)
     }
     return ""
   }
@@ -333,7 +364,7 @@ pub fn compile_re2c(src: String): String {
   cc.push(c_path)
   code = run_cc(cc)
   if code != 0 {
-    puts("re2c: C compile failed, pattern stays on PCRE2")
+    diag_puts("re2c: C compile failed, pattern stays on PCRE2")
     return ""
   }
   obj
@@ -342,7 +373,7 @@ pub fn compile_re2c(src: String): String {
 pub fn compile_c_file(path: String): String {
   if file_exists(path) {
   } else {
-    puts("C source is missing: ${path}")
+    diag_puts("C source is missing: ${path}")
     return ""
   }
   dir = path_dirname(path)
@@ -361,7 +392,7 @@ pub fn compile_c_file(path: String): String {
   args.push(path)
   code = run_cc(args)
   if code != 0 {
-    puts("failed to compile C: ${path}")
+    diag_puts("failed to compile C: ${path}")
     return ""
   }
   obj
@@ -372,7 +403,28 @@ pub fn parse_link(args: Array(String)): LinkJob {
   i = 0
   while i < args.size {
     arg = args[i]
-    if str_eq(arg, "--lib") {
+    if str_eq(arg, "--debug") {
+      if job.codegen.size > 0 {
+        job.err = "choose one of --debug, --release"
+        return job
+      }
+      job.codegen = "debug"
+      i = i + 1
+    } else if str_eq(arg, "--release") {
+      if job.codegen.size > 0 {
+        job.err = "choose one of --debug, --release"
+        return job
+      }
+      job.codegen = "release"
+      i = i + 1
+    } else if str_eq(arg, "--final") {
+      if job.codegen.size > 0 {
+        job.err = "choose one of --debug, --release"
+        return job
+      }
+      job.codegen = "release"
+      i = i + 1
+    } else if str_eq(arg, "--lib") {
       if i + 1 >= args.size {
         job.err = "--lib needs a name"
         return job
@@ -513,18 +565,37 @@ pub fn myc_wants_debug: Bool {
   true
 }
 
-pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String): Int {
+pub fn myc_mode(codegen: String): String {
+  if str_eq(codegen, "release") {
+    return "final"
+  }
+  if str_eq(codegen, "debug") {
+    return "debug"
+  }
+  if str_eq(codegen, "default") {
+    return "default"
+  }
+  if myc_wants_final() {
+    return "final"
+  }
+  if myc_wants_debug() {
+    return "debug"
+  }
+  "default"
+}
+
+pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String, codegen: String): Int {
   stamp = now_ms()
   ir_path = "/tmp/avant-av-${stamp}.myc"
   w = file_write(ir_path, ir)
   if w != 0 {
-    puts("cannot write ${ir_path}")
+    diag_puts("cannot write ${ir_path}")
     return 1
   }
   myc = myc_llvm_path()
   if file_exists(myc) {
   } else {
-    puts("myc-llvm not found (${myc})")
+    diag_puts("myc-llvm not found (${myc})")
     return 1
   }
   flags = linker_flags_s(extra_flags)
@@ -532,9 +603,10 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   args.push("MYC_LINKER_FLAGS=${flags}")
   args.push(myc)
   args.push(mode)
-  if myc_wants_final() {
+  sel = myc_mode(codegen)
+  if str_eq(sel, "final") {
     args.push("--final")
-  } else if myc_wants_debug() {
+  } else if str_eq(sel, "debug") {
     args.push("--debug")
   }
   // myc-llvm GC safepoints: names stay Avant C symbols; myc only sees these flags.
@@ -544,7 +616,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   args.push("--gc-leave=avant_gc_leave")
   // String size and the numeric conversions lower from fields, not calls,
   // so a quiet leaf can contain them. They do not allocate.
-  leaves = "avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_is_heap,avant_is_young,avant_exp,avant_bump_alloc,avant_gc_quiet_enter,avant_gc_quiet_leave,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr,avant_array_clear,avant_array_fill_i32,avant_array_fill_u8,avant_str_size,avant_str_byte,avant_str_eq,avant_str_to_f,avant_str_to_i,avant_str_to_f_slice,avant_checksum_str,avant_checksum_f64,avant_buf_size,avant_buf_starts,avant_wide_op,avant_wide_hi,avant_now_ms,avant_now_us"
+  leaves = "avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_is_heap,avant_is_young,avant_exp,avant_bump_alloc,avant_gc_quiet_enter,avant_gc_quiet_leave,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr,avant_array_clear,avant_array_fill_i32,avant_array_fill_u8,avant_str_size,avant_str_byte,avant_str_eq,avant_str_to_f,avant_str_to_i,avant_str_to_f_slice,avant_checksum_str,avant_checksum_f64,avant_buf_size,avant_buf_starts,avant_wide_op,avant_wide_hi,avant_now_ms,avant_now_us,avant_trap_bounds,avant_trap_div_zero,avant_trap_overflow,avant_checked_add_i64,avant_checked_sub_i64,avant_checked_mul_i64,avant_checked_add_u64,avant_checked_sub_u64,avant_checked_mul_u64,avant_checked_div_i64,avant_checked_rem_i64,avant_checked_div_u64,avant_checked_rem_u64"
   if quiet.size > 0 {
     leaves = "${leaves},${quiet}"
   }
@@ -567,6 +639,6 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   if file_exists("/usr/bin/env") {
     return process_run("/usr/bin/env", args)
   }
-  puts("cannot find /usr/bin/env")
+  diag_puts("cannot find /usr/bin/env")
   1
 }

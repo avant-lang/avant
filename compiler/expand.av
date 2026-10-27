@@ -44,6 +44,7 @@ pub class Expander {
   ctx_field: Field? = nil
   failed: Bool = false
   err: CompileError? = nil
+  errors: DiagBag
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -52,6 +53,7 @@ pub class Expander {
     self.ctx_var = ""
     self.failed = false
     self.err = nil
+    self.errors = DiagBag.new
   }
 
   pub fn has_err: Bool {
@@ -59,11 +61,12 @@ pub class Expander {
   }
 
   pub fn fail(loc: Location, message: String) {
-    if self.failed {
-      return
+    e = CompileError.new(loc, diag_code(6, message), message)
+    if self.errors.count == 0 {
+      self.err = e
     }
     self.failed = true
-    self.err = CompileError.new(loc, message)
+    self.errors.push(e)
   }
 
   pub fn expand: Program {
@@ -107,9 +110,6 @@ pub class Expander {
   pub fn expand_quotes(quotes: Array(QuoteDecl), owner: String) {
     i = 0
     while i < quotes.size {
-      if self.has_err {
-        return
-      }
       q = quotes[i]
       own = owner
       if own.size == 0 {
@@ -128,9 +128,6 @@ pub class Expander {
   pub fn expand_walks(walks: Array(ComptimeWalk), owner: String) {
     i = 0
     while i < walks.size {
-      if self.has_err {
-        return
-      }
       walk = walks[i]
       fields = self.find_fields(walk.type_name, walk.loc)
       own = owner

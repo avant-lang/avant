@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -629,6 +630,220 @@ static int bytes_eq_concat(const char *slot, size_t ns, const char *a, size_t na
     return 0;
   }
   return 1;
+}
+
+typedef struct {
+  void *buf;
+  int32_t size;
+  int32_t cap;
+} AvantArrayBox;
+
+static void *hash_array_str(char **items, int32_t n) {
+  avant_gc_defer_enter();
+  AvantArrayBox *a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  char **buf = NULL;
+  int32_t i;
+  if (n > 0) {
+    buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
+    for (i = 0; i < n; i++) {
+      buf[i] = items[i];
+    }
+  }
+  a->buf = buf;
+  a->size = n;
+  a->cap = n;
+  avant_gc_defer_leave();
+  return a;
+}
+
+static void *hash_array_i32(int32_t *items, int32_t n) {
+  avant_gc_defer_enter();
+  AvantArrayBox *a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  int32_t *buf = NULL;
+  int32_t i;
+  if (n > 0) {
+    buf = (int32_t *)avant_alloc((uint64_t)n * sizeof(int32_t), AVANT_TYPE_BYTES);
+    for (i = 0; i < n; i++) {
+      buf[i] = items[i];
+    }
+  }
+  a->buf = buf;
+  a->size = n;
+  a->cap = n;
+  avant_gc_defer_leave();
+  return a;
+}
+
+int32_t avant_hash_has_str(void *hp, const char *key) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  if (!h) {
+    return 0;
+  }
+  return lookup_str(h, key, &i) ? 1 : 0;
+}
+
+int32_t avant_hash_has_i32k(void *hp, int32_t key) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  if (!h) {
+    return 0;
+  }
+  return lookup(h, (int64_t)key, hash_i32(key), &i) ? 1 : 0;
+}
+
+int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  if (!h) {
+    return 0;
+  }
+  avant_gc_defer_enter();
+  if (lookup_str(h, key, &i)) {
+    int32_t c = ((int32_t *)h->vals)[i] + by;
+    ((int32_t *)h->vals)[i] = c;
+    avant_gc_defer_leave();
+    return c;
+  }
+  ensure_cap(h);
+  lookup_str(h, key, &i);
+  store_key(h, i, (int64_t)(uintptr_t)key);
+  if (h->keys) {
+    avant_barrier(h->keys);
+  }
+  store_val_i32(h, i, by);
+  if (h->state && h->key_kind == AVANT_HASH_KEY_STR) {
+    hashes_of(h)[i] = hash_str(key);
+  }
+  if (!slot_full(h->state[i])) {
+    h->state[i] = occ_mark(key, avant_str_n(key));
+    h->size += 1;
+  }
+  avant_gc_defer_leave();
+  return by;
+}
+
+int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  if (!h) {
+    return 0;
+  }
+  avant_gc_defer_enter();
+  if (lookup(h, (int64_t)key, hash_i32(key), &i)) {
+    int32_t c = ((int32_t *)h->vals)[i] + by;
+    ((int32_t *)h->vals)[i] = c;
+    avant_gc_defer_leave();
+    return c;
+  }
+  ensure_cap(h);
+  lookup(h, (int64_t)key, hash_i32(key), &i);
+  store_key(h, i, (int64_t)key);
+  store_val_i32(h, i, by);
+  if (!slot_full(h->state[i])) {
+    h->state[i] = 1;
+    h->size += 1;
+  }
+  avant_gc_defer_leave();
+  return by;
+}
+
+int32_t avant_hash_get_or_i32(void *hp, const char *key, int32_t fallback) {
+  int32_t found = 0;
+  int32_t v = avant_hash_get_i32(hp, key, &found);
+  return found ? v : fallback;
+}
+
+const char *avant_hash_get_or_str(void *hp, const char *key, const char *fallback) {
+  int32_t found = 0;
+  const char *v = avant_hash_get_str(hp, key, &found);
+  return found ? v : (fallback ? fallback : "");
+}
+
+int32_t avant_hash_get_or_i32k_i32(void *hp, int32_t key, int32_t fallback) {
+  int32_t found = 0;
+  int32_t v = avant_hash_get_i32k_i32(hp, key, &found);
+  return found ? v : fallback;
+}
+
+void *avant_hash_keys_str(void *hp) {
+  AvantHash *h = (AvantHash *)hp;
+  char **items = NULL;
+  int32_t n = 0;
+  int32_t i;
+  void *r;
+  if (!h || h->size <= 0) {
+    return hash_array_str(NULL, 0);
+  }
+  items = (char **)malloc((size_t)h->size * sizeof(char *));
+  for (i = 0; i < h->cap; i++) {
+    if (slot_full(h->state[i])) {
+      items[n++] = (char *)(uintptr_t)load_key(h, i);
+    }
+  }
+  r = hash_array_str(items, n);
+  free(items);
+  return r;
+}
+
+void *avant_hash_keys_i32(void *hp) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t *items = NULL;
+  int32_t n = 0;
+  int32_t i;
+  void *r;
+  if (!h || h->size <= 0) {
+    return hash_array_i32(NULL, 0);
+  }
+  items = (int32_t *)malloc((size_t)h->size * sizeof(int32_t));
+  for (i = 0; i < h->cap; i++) {
+    if (slot_full(h->state[i])) {
+      items[n++] = (int32_t)load_key(h, i);
+    }
+  }
+  r = hash_array_i32(items, n);
+  free(items);
+  return r;
+}
+
+void *avant_hash_vals_str(void *hp) {
+  AvantHash *h = (AvantHash *)hp;
+  char **items = NULL;
+  int32_t n = 0;
+  int32_t i;
+  void *r;
+  if (!h || h->size <= 0) {
+    return hash_array_str(NULL, 0);
+  }
+  items = (char **)malloc((size_t)h->size * sizeof(char *));
+  for (i = 0; i < h->cap; i++) {
+    if (slot_full(h->state[i])) {
+      items[n++] = ((char **)h->vals)[i];
+    }
+  }
+  r = hash_array_str(items, n);
+  free(items);
+  return r;
+}
+
+void *avant_hash_vals_i32(void *hp) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t *items = NULL;
+  int32_t n = 0;
+  int32_t i;
+  void *r;
+  if (!h || h->size <= 0) {
+    return hash_array_i32(NULL, 0);
+  }
+  items = (int32_t *)malloc((size_t)h->size * sizeof(int32_t));
+  for (i = 0; i < h->cap; i++) {
+    if (slot_full(h->state[i])) {
+      items[n++] = ((int32_t *)h->vals)[i];
+    }
+  }
+  r = hash_array_i32(items, n);
+  free(items);
+  return r;
 }
 
 int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *found) {
