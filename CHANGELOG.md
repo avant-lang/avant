@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.14.0 - 2026-10-27
 
 ### Added
 * `for i in a..b { ... }` (end-exclusive, bounds evaluated once) and `for x in xs { ... }` over an array, with `break`, `continue`, and `return` as in `while`; the loop variable exists only inside the loop.
