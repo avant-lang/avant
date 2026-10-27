@@ -624,3 +624,106 @@ char *avant_str_from_utf8(const char *s, int32_t *found) {
   }
   return (char *)s;
 }
+
+static size_t utf8_char_len(const unsigned char *s, size_t n, size_t i, int *valid) {
+  unsigned char c = s[i];
+  uint32_t cp;
+  int extra;
+  int k;
+  *valid = 1;
+  if (c < 0x80) {
+    return 1;
+  }
+  if ((c & 0xe0) == 0xc0 && c >= 0xc2) {
+    extra = 1;
+    cp = c & 0x1f;
+  } else if ((c & 0xf0) == 0xe0) {
+    extra = 2;
+    cp = c & 0x0f;
+  } else if ((c & 0xf8) == 0xf0 && c <= 0xf4) {
+    extra = 3;
+    cp = c & 0x07;
+  } else {
+    *valid = 0;
+    return 1;
+  }
+  if (i + (size_t)extra >= n) {
+    *valid = 0;
+    return 1;
+  }
+  for (k = 1; k <= extra; k++) {
+    unsigned char cc = s[i + (size_t)k];
+    if ((cc & 0xc0) != 0x80) {
+      *valid = 0;
+      return 1;
+    }
+    cp = (cp << 6) | (uint32_t)(cc & 0x3f);
+  }
+  if (extra == 1 && cp < 0x80) {
+    *valid = 0;
+    return 1;
+  }
+  if (extra == 2 && (cp < 0x800 || (cp >= 0xd800 && cp <= 0xdfff))) {
+    *valid = 0;
+    return 1;
+  }
+  if (extra == 3 && (cp < 0x10000 || cp > 0x10ffff)) {
+    *valid = 0;
+    return 1;
+  }
+  return (size_t)extra + 1;
+}
+
+static void *chars_build(const char *s, int strict) {
+  size_t n;
+  size_t i = 0;
+  int32_t count = 0;
+  int32_t idx = 0;
+  char **items;
+  if (!s) {
+    s = "";
+  }
+  n = avant_str_n(s);
+  if (strict && !utf8_valid((const unsigned char *)s, n)) {
+    fprintf(stderr, "avant runtime: Bytes.chars needs valid UTF-8\n");
+    exit(1);
+  }
+  while (i < n) {
+    int valid = 0;
+    size_t len = utf8_char_len((const unsigned char *)s, n, i, &valid);
+    (void)valid;
+    count++;
+    i += len;
+  }
+  if (count == 0) {
+    return str_array_build(NULL, 0);
+  }
+  items = (char **)malloc((size_t)count * sizeof(char *));
+  if (!items) {
+    return str_array_build(NULL, 0);
+  }
+  i = 0;
+  while (i < n && idx < count) {
+    int valid = 0;
+    size_t len = utf8_char_len((const unsigned char *)s, n, i, &valid);
+    if (valid) {
+      items[idx++] = dup_bytes(s + i, len);
+    } else {
+      items[idx++] = dup_bytes("\xef\xbf\xbd", 3);
+    }
+    i += len;
+  }
+  {
+    void *r = str_array_build(items, idx);
+    free(items);
+    return r;
+  }
+}
+
+void *avant_str_chars(const char *s) {
+  return chars_build(s, 0);
+}
+
+void *avant_bytes_chars(const char *s) {
+  return chars_build(s, 1);
+}
