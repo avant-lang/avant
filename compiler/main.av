@@ -13,6 +13,7 @@ import codegen_myc
 import pipeline
 import format
 import bindgen
+import pkg
 
 pub fn argv_user: Array(String) {
   args = argv()
@@ -56,6 +57,7 @@ pub fn show_usage {
   puts("  avant-av compile FILE.av [OUT] [--coverage] [--debug|--release] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av format FILE.av [--write] [--check]")
   puts("  avant-av bind [--lib NAME] HEADER.h")
+  puts("  avant-av fetch [DIR] [--update]")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
   puts("--release is --final, the scored mode. --debug is the fast daily mode.")
@@ -270,6 +272,37 @@ pub fn driver_bind(args: Array(String)) {
   diag_exit(1)
 }
 
+pub fn driver_fetch(args: Array(String)) {
+  dir = "."
+  seen_dir = false
+  update = false
+  i = 0
+  while i < args.size {
+    arg = args[i]
+    if str_eq(arg, "--update") {
+      update = true
+      i = i + 1
+    } else if str_starts(arg, "-") {
+      diag_puts("unknown fetch argument ${arg}")
+      show_usage()
+      diag_exit(1)
+    } else {
+      if seen_dir {
+        diag_puts("fetch takes one directory")
+        show_usage()
+        diag_exit(1)
+      }
+      seen_dir = true
+      dir = arg
+      i = i + 1
+    }
+  }
+  if pkg_fetch(dir, update) {
+    return
+  }
+  diag_exit(1)
+}
+
 fn main {
   args = argv_filter_coverage(argv_user())
   if args.size == 0 {
@@ -319,6 +352,10 @@ fn main {
   }
   if str_eq(command, "c") {
     driver_compile(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "fetch") {
+    driver_fetch(argv_drop_first(args))
     return
   }
   if str_eq(command, "bind") {

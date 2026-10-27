@@ -1,5 +1,10 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+* Packages: a project may carry `avant.toml` (`[package]` plus git-only `[dependencies]`, no registry), and `avant fetch [DIR] [--update]` clones dependencies into `deps/`, checks out the exact commits recorded in the generated `avant.lock`, and fetches transitive dependencies; the compiler then finds imported modules beside the importer first and in the fetched checkouts second, with two checkouts providing the same module name reported as an ambiguity error instead of a guess.
+
 ## 0.15.0 - 2026-10-27
 
 ### Added

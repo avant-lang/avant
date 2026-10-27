@@ -215,6 +215,8 @@ pub class Loader {
   failed: Bool = false
   err: CompileError? = nil
   errors: DiagBag
+  dep_dirs: Array(String)
+  project_dir: String = ""
 
   fn initialize {
     h = Hash(String, Int).new
@@ -230,6 +232,46 @@ pub class Loader {
     self.failed = false
     self.err = nil
     self.errors = DiagBag.new
+    dd: Array(String) = []
+    self.dep_dirs = dd
+    self.project_dir = ""
+  }
+
+  pub fn setup_deps(root_path: String) {
+    self.project_dir = path_dirname(root_path)
+    deps_root = "${self.project_dir}/deps"
+    entries = dir_list(deps_root)
+    i = 0
+    while i < entries.size {
+      full = "${deps_root}/${entries[i]}"
+      if file_exists("${full}/.git") {
+        self.dep_dirs.push(full)
+      } else if file_exists("${full}/avant.toml") {
+        self.dep_dirs.push(full)
+      }
+      i = i + 1
+    }
+  }
+
+  pub fn dep_child(name: String): String {
+    hit = ""
+    hits = 0
+    i = 0
+    while i < self.dep_dirs.size {
+      cand = "${self.dep_dirs[i]}/${name}.av"
+      if file_exists(cand) {
+        hits = hits + 1
+        hit = cand
+      }
+      i = i + 1
+    }
+    if hits == 1 {
+      return hit
+    }
+    if hits > 1 {
+      return "ambiguous:${hits}"
+    }
+    ""
   }
 
   pub fn fail(loc: Location, message: String) {
@@ -265,6 +307,7 @@ pub class Loader {
       self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
       return nil
     }
+    self.setup_deps(path)
     dummy = self.load_file(path)
     if self.failed {
       return nil
@@ -326,9 +369,22 @@ pub class Loader {
         child = child_av_path(path, imp.name)
         if file_exists(child) {
         } else {
-          self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path}")
-          i = i + 1
-          continue
+          dep = self.dep_child(imp.name)
+          if str_eq(dep, "") {
+            if file_exists("${self.project_dir}/avant.toml") {
+              self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path} or in fetched deps (run: avant fetch ${self.project_dir})")
+            } else {
+              self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path}")
+            }
+            i = i + 1
+            continue
+          }
+          if dep.size > 10 && str_eq(str_slice(dep, 0, 10), "ambiguous:") {
+            self.fail(imp.loc, "import ${imp.name} is ambiguous: more than one fetched dependency provides ${imp.name}.av")
+            i = i + 1
+            continue
+          }
+          child = dep
         }
         dummy7 = self.load_file(child)
         imports.push(module_name_of(child))

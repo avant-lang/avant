@@ -1,0 +1,760 @@
+import location
+import diagnostic
+import source
+import loader
+import pipeline
+
+pub class PkgDep {
+  name: String = ""
+  git: String = ""
+  rev: String = ""
+
+  fn initialize(name: String, git: String, rev: String) {
+    self.name = name
+    self.git = git
+    self.rev = rev
+  }
+}
+
+pub class PkgManifest {
+  name: String = ""
+  version: String = ""
+  deps: Array(PkgDep)
+  ok: Bool = false
+  err: String = ""
+
+  fn initialize {
+    d: Array(PkgDep) = []
+    self.deps = d
+    self.ok = false
+    self.err = ""
+  }
+}
+
+pub class PkgLockEnt {
+  name: String = ""
+  git: String = ""
+  sha: String = ""
+
+  fn initialize(name: String, git: String, sha: String) {
+    self.name = name
+    self.git = git
+    self.sha = sha
+  }
+}
+
+pub class PkgLock {
+  ents: Array(PkgLockEnt)
+
+  fn initialize {
+    e: Array(PkgLockEnt) = []
+    self.ents = e
+  }
+
+  pub fn find(name: String): PkgLockEnt? {
+    i = 0
+    while i < self.ents.size {
+      if str_eq(self.ents[i].name, name) {
+        return self.ents[i]
+      }
+      i = i + 1
+    }
+    nil
+  }
+}
+
+pub fn pkg_trim(s: String): String {
+  start = 0
+  n = s.size
+  while start < n {
+    c = s[start]
+    if c == 32 || c == 10 || c == 9 || c == 13 {
+      start = start + 1
+    } else {
+      break
+    }
+  }
+  stop = n
+  while stop > start {
+    c = s[stop - 1]
+    if c == 32 || c == 10 || c == 9 || c == 13 {
+      stop = stop - 1
+    } else {
+      break
+    }
+  }
+  str_slice(s, start, stop)
+}
+
+pub fn pkg_strip_comment(line: String): String {
+  in_str = false
+  i = 0
+  while i < line.size {
+    c = line[i]
+    if in_str {
+      if c == 92 {
+        i = i + 2
+        continue
+      }
+      if c == 34 {
+        in_str = false
+      }
+    } else {
+      if c == 34 {
+        in_str = true
+      } else if c == 35 {
+        return str_slice(line, 0, i)
+      }
+    }
+    i = i + 1
+  }
+  line
+}
+
+pub fn pkg_parse_string(s: String, err: String): String {
+  t = pkg_trim(s)
+  if t.size < 2 {
+    return ""
+  }
+  if t[0] != 34 {
+    return ""
+  }
+  b = buf_new()
+  i = 1
+  while i < t.size {
+    c = t[i]
+    if c == 34 {
+      return b.to_s
+    }
+    if c == 92 {
+      if i + 1 >= t.size {
+        return ""
+      }
+      n = t[i + 1]
+      if n == 110 {
+        b.push_byte(10)
+      } else if n == 116 {
+        b.push_byte(9)
+      } else {
+        b.push_byte(n)
+      }
+      i = i + 2
+      continue
+    }
+    b.push_byte(c)
+    i = i + 1
+  }
+  ""
+}
+
+pub fn pkg_string_closed(s: String): Bool {
+  t = pkg_trim(s)
+  if t.size < 2 {
+    return false
+  }
+  if t[0] != 34 {
+    return false
+  }
+  i = 1
+  while i < t.size {
+    c = t[i]
+    if c == 92 {
+      i = i + 2
+      continue
+    }
+    if c == 34 {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn pkg_find_eq(line: String): Int {
+  in_str = false
+  i = 0
+  while i < line.size {
+    c = line[i]
+    if in_str {
+      if c == 92 {
+        i = i + 2
+        continue
+      }
+      if c == 34 {
+        in_str = false
+      }
+    } else {
+      if c == 34 {
+        in_str = true
+      } else if c == 61 {
+        return i
+      }
+    }
+    i = i + 1
+  }
+  -1
+}
+
+pub fn pkg_is_sha(s: String): Bool {
+  if s.size != 40 {
+    return false
+  }
+  i = 0
+  while i < s.size {
+    c = s[i]
+    ok = false
+    if c >= 48 && c <= 57 {
+      ok = true
+    }
+    if c >= 97 && c <= 102 {
+      ok = true
+    }
+    if c >= 65 && c <= 70 {
+      ok = true
+    }
+    if ok {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn pkg_apply_pair(m: PkgManifest, dep_idx: Int, key: String, val: String, path: String, line_no: Int): Bool {
+  k = pkg_trim(key)
+  if dep_idx >= 0 {
+    dep = m.deps[dep_idx]
+    if str_eq(k, "git") {
+      dep.git = pkg_parse_string(val, "")
+      if dep.git.size == 0 {
+        m.err = "${path}:${line_no}: dependency ${dep.name} has a bad git value"
+        return false
+      }
+      return true
+    }
+    if str_eq(k, "rev") || str_eq(k, "tag") || str_eq(k, "branch") {
+      dep.rev = pkg_parse_string(val, "")
+      if dep.rev.size == 0 {
+        m.err = "${path}:${line_no}: dependency ${dep.name} has a bad ${k} value"
+        return false
+      }
+      return true
+    }
+    m.err = "${path}:${line_no}: unknown dependency key ${k} (want git, rev, tag, or branch)"
+    return false
+  }
+  if str_eq(k, "name") {
+    m.name = pkg_parse_string(val, "")
+    return true
+  }
+  if str_eq(k, "version") {
+    m.version = pkg_parse_string(val, "")
+    return true
+  }
+  m.err = "${path}:${line_no}: unknown package key ${k} (want name or version)"
+  false
+}
+
+pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String, line_no: Int): Bool {
+  t = pkg_trim(val)
+  if t.size < 2 || t[0] != 123 || t[t.size - 1] != 125 {
+    dep = m.deps[dep_idx]
+    m.err = "${path}:${line_no}: dependency ${dep.name} needs an inline table like { git = \"URL\", rev = \"SHA\" }"
+    return false
+  }
+  inner = str_slice(t, 1, t.size - 1)
+  i = 0
+  n = inner.size
+  while i < n {
+    while i < n && (inner[i] == 32 || inner[i] == 44 || inner[i] == 9) {
+      i = i + 1
+    }
+    if i >= n {
+      break
+    }
+    start = i
+    while i < n && inner[i] != 61 {
+      i = i + 1
+    }
+    if i >= n {
+      m.err = "${path}:${line_no}: bad inline table for dependency ${m.deps[dep_idx].name}"
+      return false
+    }
+    key = str_slice(inner, start, i)
+    i = i + 1
+    while i < n && (inner[i] == 32 || inner[i] == 9) {
+      i = i + 1
+    }
+    if i >= n || inner[i] != 34 {
+      m.err = "${path}:${line_no}: inline table values must be strings"
+      return false
+    }
+    vstart = i
+    i = i + 1
+    closed = false
+    while i < n {
+      if inner[i] == 92 {
+        i = i + 2
+        continue
+      }
+      if inner[i] == 34 {
+        closed = true
+        i = i + 1
+        break
+      }
+      i = i + 1
+    }
+    if closed {
+    } else {
+      m.err = "${path}:${line_no}: unterminated string in inline table"
+      return false
+    }
+    vtext = str_slice(inner, vstart, i)
+    if pkg_apply_pair(m, dep_idx, key, vtext, path, line_no) {
+    } else {
+      return false
+    }
+  }
+  true
+}
+
+pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
+  m = PkgManifest.new
+  section = ""
+  dep_idx = -1
+  lines: Array(String) = []
+  start = 0
+  i = 0
+  while i <= text.size {
+    if i == text.size || text[i] == 10 {
+      lines.push(str_slice(text, start, i))
+      start = i + 1
+    }
+    i = i + 1
+  }
+  li = 0
+  while li < lines.size {
+    line_no = li + 1
+    raw = pkg_strip_comment(lines[li])
+    line = pkg_trim(raw)
+    li = li + 1
+    if line.size == 0 {
+      continue
+    }
+    if line[0] == 91 {
+      if line.size < 3 || line[line.size - 1] != 93 {
+        m.err = "${path}:${line_no}: bad section header"
+        return m
+      }
+      inner = pkg_trim(str_slice(line, 1, line.size - 1))
+      if str_eq(inner, "package") {
+        section = "package"
+        dep_idx = -1
+        continue
+      }
+      if str_eq(inner, "dependencies") {
+        section = "dependencies"
+        dep_idx = -1
+        continue
+      }
+      if str_starts(inner, "dependencies.") {
+        dname = pkg_trim(str_slice(inner, 13, inner.size))
+        if dname.size == 0 {
+          m.err = "${path}:${line_no}: bad dependency section"
+          return m
+        }
+        j = 0
+        found = -1
+        while j < m.deps.size {
+          if str_eq(m.deps[j].name, dname) {
+            found = j
+          }
+          j = j + 1
+        }
+        if found >= 0 {
+          dep_idx = found
+        } else {
+          m.deps.push(PkgDep.new(dname, "", ""))
+          dep_idx = m.deps.size - 1
+        }
+        section = "dep"
+        continue
+      }
+      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package] or [dependencies])"
+      return m
+    }
+    eq = pkg_find_eq(line)
+    if eq < 0 {
+      m.err = "${path}:${line_no}: expected key = value"
+      return m
+    }
+    key = pkg_trim(str_slice(line, 0, eq))
+    val = pkg_trim(str_slice(line, eq + 1, line.size))
+    if str_eq(section, "package") {
+      if pkg_string_closed(val) {
+      } else {
+        m.err = "${path}:${line_no}: unterminated string"
+        return m
+      }
+      if pkg_apply_pair(m, -1, key, val, path, line_no) {
+      } else {
+        return m
+      }
+      continue
+    }
+    if str_eq(section, "dep") {
+      if dep_idx < 0 {
+        m.err = "${path}:${line_no}: dependency key outside a dependency"
+        return m
+      }
+      if pkg_string_closed(val) {
+      } else {
+        m.err = "${path}:${line_no}: unterminated string"
+        return m
+      }
+      if pkg_apply_pair(m, dep_idx, key, val, path, line_no) {
+      } else {
+        return m
+      }
+      continue
+    }
+    if str_eq(section, "dependencies") {
+      if key.size == 0 {
+        m.err = "${path}:${line_no}: bad dependency name"
+        return m
+      }
+      j = 0
+      dup = false
+      while j < m.deps.size {
+        if str_eq(m.deps[j].name, key) {
+          dup = true
+        }
+        j = j + 1
+      }
+      if dup {
+        m.err = "${path}:${line_no}: duplicate dependency ${key}"
+        return m
+      }
+      m.deps.push(PkgDep.new(key, "", ""))
+      didx = m.deps.size - 1
+      if val.size > 0 && val[0] == 123 {
+        if pkg_parse_inline(m, didx, val, path, line_no) {
+        } else {
+          return m
+        }
+      } else {
+        m.err = "${path}:${line_no}: dependency ${key} needs an inline table like { git = \"URL\", rev = \"SHA\" } (there is no registry)"
+        return m
+      }
+      continue
+    }
+    m.err = "${path}:${line_no}: key outside a section"
+    return m
+  }
+  i2 = 0
+  while i2 < m.deps.size {
+    dep = m.deps[i2]
+    if dep.git.size == 0 {
+      m.err = "${path}: dependency ${dep.name} has no git URL"
+      return m
+    }
+    i2 = i2 + 1
+  }
+  m.ok = true
+  m
+}
+
+pub fn pkg_parse_lock(text: String): PkgLock {
+  lock = PkgLock.new
+  in_pkg = false
+  cur_name = ""
+  cur_source = ""
+  lines: Array(String) = []
+  start = 0
+  i = 0
+  while i <= text.size {
+    if i == text.size || text[i] == 10 {
+      lines.push(str_slice(text, start, i))
+      start = i + 1
+    }
+    i = i + 1
+  }
+  li = 0
+  while li < lines.size {
+    line = pkg_trim(pkg_strip_comment(lines[li]))
+    li = li + 1
+    if line.size == 0 {
+      continue
+    }
+    if str_eq(line, "[[package]]") {
+      if cur_name.size > 0 {
+        pkg_lock_push(lock, cur_name, cur_source)
+      }
+      cur_name = ""
+      cur_source = ""
+      in_pkg = true
+      continue
+    }
+    if in_pkg {
+      eq = pkg_find_eq(line)
+      if eq < 0 {
+        continue
+      }
+      key = pkg_trim(str_slice(line, 0, eq))
+      val = str_slice(line, eq + 1, line.size)
+      if str_eq(key, "name") {
+        cur_name = pkg_parse_string(val, "")
+      } else if str_eq(key, "source") {
+        cur_source = pkg_parse_string(val, "")
+      }
+    }
+  }
+  if cur_name.size > 0 {
+    pkg_lock_push(lock, cur_name, cur_source)
+  }
+  lock
+}
+
+pub fn pkg_lock_push(lock: PkgLock, name: String, source: String) {
+  git = source
+  sha = ""
+  if str_starts(source, "git+") {
+    rest = str_slice(source, 4, source.size)
+    h = rest.size - 1
+    while h >= 0 {
+      if rest[h] == 35 {
+        git = str_slice(rest, 0, h)
+        sha = str_slice(rest, h + 1, rest.size)
+        break
+      }
+      h = h - 1
+    }
+  }
+  lock.ents.push(PkgLockEnt.new(name, git, sha))
+}
+
+pub fn pkg_lock_render(ents: Array(PkgLockEnt)): String {
+  b = buf_new()
+  b.push_str("# avant.lock - generated by avant fetch. Do not edit.\n")
+  b.push_str("version = 1\n")
+  i = 0
+  while i < ents.size {
+    e = ents[i]
+    b.push_str("\n[[package]]\n")
+    b.push_str("name = \"")
+    b.push_str(e.name)
+    b.push_str("\"\n")
+    b.push_str("source = \"git+")
+    b.push_str(e.git)
+    b.push_str("#")
+    b.push_str(e.sha)
+    b.push_str("\"\n")
+    i = i + 1
+  }
+  b.to_s
+}
+
+pub fn pkg_git_bin: String {
+  if file_exists("/usr/bin/git") {
+    return "/usr/bin/git"
+  }
+  if file_exists("/usr/local/bin/git") {
+    return "/usr/local/bin/git"
+  }
+  if file_exists("/bin/git") {
+    return "/bin/git"
+  }
+  ""
+}
+
+pub fn pkg_git(args: Array(String), what: String, tag: String): Bool {
+  git = pkg_git_bin()
+  if git.size == 0 {
+    diag_puts("avant fetch: git not found (looked in /usr/bin, /usr/local/bin, /bin)")
+    return false
+  }
+  log = "/tmp/avant-fetch-${now_ms()}-${tag}.log"
+  code = process_run_out(git, args, log)
+  if code != 0 {
+    diag_puts("avant fetch: git ${what} failed (${code})")
+    if text = file_read(log) {
+      t = pkg_trim(text)
+      if t.size > 0 {
+        diag_puts(t)
+      }
+    }
+    return false
+  }
+  true
+}
+
+pub fn pkg_git_out(args: Array(String), what: String, tag: String): String {
+  git = pkg_git_bin()
+  if git.size == 0 {
+    diag_puts("avant fetch: git not found (looked in /usr/bin, /usr/local/bin, /bin)")
+    return ""
+  }
+  log = "/tmp/avant-fetch-${now_ms()}-${tag}.log"
+  code = process_run_out(git, args, log)
+  if code != 0 {
+    diag_puts("avant fetch: git ${what} failed (${code})")
+    if text = file_read(log) {
+      t = pkg_trim(text)
+      if t.size > 0 {
+        diag_puts(t)
+      }
+    }
+    return ""
+  }
+  if text = file_read(log) {
+    return pkg_trim(text)
+  }
+  ""
+}
+
+pub fn pkg_join(dir: String, leaf: String): String {
+  if str_eq(dir, ".") {
+    return leaf
+  }
+  if dir.size > 0 && dir[dir.size - 1] == 47 {
+    return "${dir}${leaf}"
+  }
+  "${dir}/${leaf}"
+}
+
+pub fn pkg_fetch(dir: String, update: Bool): Bool {
+  manifest_path = pkg_join(dir, "avant.toml")
+  text = ""
+  if t = file_read(manifest_path) {
+    text = t
+  } else {
+    diag_puts("avant fetch: cannot read ${manifest_path}")
+    return false
+  }
+  m = pkg_parse_manifest(text, manifest_path)
+  if m.ok {
+  } else {
+    diag_puts("avant fetch: ${m.err}")
+    return false
+  }
+  lock = PkgLock.new
+  if update {
+  } else {
+    lock_path = pkg_join(dir, "avant.lock")
+    if lt = file_read(lock_path) {
+      lock = pkg_parse_lock(lt)
+    }
+  }
+  resolved: Array(PkgLockEnt) = []
+  seen = Hash(String, String).new
+  queue: Array(PkgDep) = []
+  i = 0
+  while i < m.deps.size {
+    queue.push(m.deps[i])
+    i = i + 1
+  }
+  qi = 0
+  while qi < queue.size {
+    dep = queue[qi]
+    qi = qi + 1
+    dest = pkg_join(dir, "deps/${dep.name}")
+    if update && file_exists(dest) {
+      rm_args: Array(String) = []
+      rm_args.push("-rf")
+      rm_args.push(dest)
+      dummy_rm = process_run("/bin/rm", rm_args)
+    }
+    locked_sha = ""
+    if ent = lock.find(dep.name) {
+      if str_eq(ent.git, dep.git) {
+        locked_sha = ent.sha
+      }
+    }
+    target = dep.rev
+    if pkg_is_sha(dep.rev) {
+      target = dep.rev
+    } else if locked_sha.size > 0 {
+      target = locked_sha
+    }
+    if file_exists("${dest}/.git") {
+      fa: Array(String) = []
+      fa.push("-C")
+      fa.push(dest)
+      fa.push("fetch")
+      fa.push("origin")
+      if pkg_git(fa, "fetch for ${dep.name}", "fetch-${dep.name}") {
+      } else {
+        return false
+      }
+    } else {
+      if file_exists(dest) {
+        diag_puts("avant fetch: ${dest} exists and is not a git checkout; move it away or run fetch --update")
+        return false
+      }
+      ca: Array(String) = []
+      ca.push("clone")
+      ca.push(dep.git)
+      ca.push(dest)
+      if pkg_git(ca, "clone for ${dep.name}", "clone-${dep.name}") {
+      } else {
+        return false
+      }
+    }
+    ref = target
+    if ref.size == 0 {
+      ref = "HEAD"
+    }
+    co: Array(String) = []
+    co.push("-C")
+    co.push(dest)
+    co.push("checkout")
+    co.push(ref)
+    if pkg_git(co, "checkout ${ref} for ${dep.name}", "checkout-${dep.name}") {
+    } else {
+      return false
+    }
+    ra: Array(String) = []
+    ra.push("-C")
+    ra.push(dest)
+    ra.push("rev-parse")
+    ra.push("HEAD")
+    sha = pkg_git_out(ra, "rev-parse for ${dep.name}", "revparse-${dep.name}")
+    if sha.size == 0 {
+      diag_puts("avant fetch: cannot resolve a commit for ${dep.name}")
+      return false
+    }
+    key = "${dep.git}#${sha}"
+    if prev = seen.get(dep.name) {
+      if str_eq(prev, key) {
+        continue
+      }
+      diag_puts("avant fetch: dependency ${dep.name} resolves to two different commits (${prev} vs ${key}); one version per name in this spike")
+      return false
+    }
+    seen[dep.name] = key
+    resolved.push(PkgLockEnt.new(dep.name, dep.git, sha))
+    puts("fetched ${dep.name} ${sha}")
+    sub_path = pkg_join(dest, "avant.toml")
+    if st = file_read(sub_path) {
+      sub = pkg_parse_manifest(st, sub_path)
+      if sub.ok {
+      } else {
+        diag_puts("avant fetch: ${sub.err}")
+        return false
+      }
+      j = 0
+      while j < sub.deps.size {
+        queue.push(sub.deps[j])
+        j = j + 1
+      }
+    }
+  }
+  lock_path2 = pkg_join(dir, "avant.lock")
+  w = file_write(lock_path2, pkg_lock_render(resolved))
+  if w != 0 {
+    diag_puts("avant fetch: cannot write ${lock_path2}")
+    return false
+  }
+  true
+}
