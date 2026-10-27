@@ -1,13 +1,19 @@
-# v0.15.0 is the published compiler. avant-linux-x86_64.tar.gz contains
+# AVANT_SEED_VERSION below is the published compiler. Its avant-linux-x86_64.tar.gz contains
 # `avant`. This job asks that compiler to compile today's compiler/main.av
 # and pass the suite, without coverage. `native` compiles B from the same
-# pin with coverage on. AVANT_MYC_LLVM is safepoints v0.4.0, checked by
+# pin with coverage on. AVANT_MYC_LLVM is the safepoints release (SAFEPOINTS_VERSION below), checked by
 # sha256. This job does not install Crystal and does not compile myc-llvm.
 #
 # Runtime objects come from runtime/build.sh. `re2c` compiles a string
 # literal at `re_compile`; computed patterns use PCRE2.
 
 name: seed
+
+env:
+  AVANT_SEED_VERSION: v0.16.0
+  AVANT_SEED_SHA256: aedc2a9b6da27fd5b2c280146592e323b8979150cf628483935882d6f0227cec
+  SAFEPOINTS_VERSION: v0.4.0
+  MYC_LLVM_SHA256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e
 
 "on":
   push:
@@ -23,7 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  v0_15_0:
+  v0_16_0:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -50,21 +56,21 @@ jobs:
       - name: Build runtime objects
         run: sh runtime/build.sh
 
-      - name: Download v0.15.0 compiler
+      - name: Download ${{ env.AVANT_SEED_VERSION }} compiler
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/avant-seed.tar.gz \
-            https://github.com/avant-lang/avant/releases/download/v0.15.0/avant-linux-x86_64.tar.gz
-          echo "fff772dff41a666d521d59dd0dcfd65333d34cf6e617722dcc14ed0961789750  /tmp/avant-seed.tar.gz" | sha256sum -c -
+            "https://github.com/avant-lang/avant/releases/download/${AVANT_SEED_VERSION}/avant-linux-x86_64.tar.gz"
+          echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
-      - name: Download safepoints v0.4.0 myc-llvm
+      - name: Download safepoints ${{ env.SAFEPOINTS_VERSION }} myc-llvm
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
-            https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz
-          echo "790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
+            "https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
+          echo "${MYC_LLVM_SHA256}  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
           test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
 
