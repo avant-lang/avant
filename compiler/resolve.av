@@ -527,13 +527,7 @@ pub class TypeResolver {
   }
 
   pub fn make_pattern(kind: Int, origin: String, args: Array(Ty)): Ty {
-    t = Ty.new(kind)
-    t.origin = origin
-    t.name = origin
-    t.label = self.format_app(origin, args)
-    t.ty_args = args
-    t.template = false
-    t
+    ty_app(kind, origin, origin, self.format_app(origin, args), args)
   }
 
   pub fn clone_subst_field(field: Field, from: Array(String), to: Array(TypeName)): Field {
@@ -644,12 +638,7 @@ pub class TypeResolver {
       self.inst_depth = self.inst_depth - 1
       return self.t_int
     }
-    shell = Ty.new(kind)
-    shell.name = key
-    shell.origin = tn.name
-    shell.label = label
-    shell.ty_args = arg_tys
-    shell.template = false
+    shell = ty_app(kind, key, tn.name, label, arg_tys)
     dummy_id = self.put_named(key, shell)
     if p = self.program {
       fields: Array(Field) = []

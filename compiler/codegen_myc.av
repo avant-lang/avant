@@ -8,7 +8,7 @@ import ast
 import resolve
 import parser
 import loader
-import checker
+import typed_ir
 import re2c_pat
 
 pub fn myc_id_part(s: String): String {
@@ -740,6 +740,7 @@ pub class MycGen {
   // numeric buffers are not young, so indexes use the plain address.
   bits_only: Int = 0
   root_loop: Int = 0
+  symbols: SymbolTable? = nil
   early_indent: Int = 0
   early_out: Buf
   early_names: Array(String)
@@ -843,6 +844,7 @@ pub class MycGen {
     emc: Array(String) = []
     self.early_myc = emc
     self.may_share = false
+    self.symbols = nil
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -1201,23 +1203,34 @@ pub class MycGen {
       lib_def = self.program.libs[i]
       j = 0
       while j < lib_def.funs.size {
-        self.emit_lib_fun(lib_def.funs[j])
+        self.emit_lib_fun(lib_def.name, lib_def.funs[j])
         j = j + 1
       }
       i = i + 1
     }
   }
 
-  pub fn emit_lib_fun(fnn: FunDecl) {
+  pub fn emit_lib_fun(lib_name: String, fnn: FunDecl) {
     params: Array(Ty) = []
-    i = 0
-    while i < fnn.params.size {
-      params.push(self.resolver.resolve_value(fnn.params[i].type))
-      i = i + 1
-    }
     ret = ty_void()
-    if t = fnn.return_type {
-      ret = self.resolver.resolve(t)
+    shared = false
+    if s = self.symbols {
+      if csig = s.find_cfun(lib_name, fnn.name) {
+        params = csig.params
+        ret = csig.ret
+        shared = true
+      }
+    }
+    if shared {
+    } else {
+      i = 0
+      while i < fnn.params.size {
+        params.push(self.resolver.resolve_value(fnn.params[i].type))
+        i = i + 1
+      }
+      if t = fnn.return_type {
+        ret = self.resolver.resolve(t)
+      }
     }
     self.line("FUNC :${fnn.name}")
     self.indent = self.indent + 1
@@ -1700,9 +1713,17 @@ pub class MycGen {
     if self.cov {
       self.cov_map_path = coverage_map_path()
     }
-    self.resolver = load_types(self.program)
-    self.collect_sigs
-    self.collect_methods
+    if s = self.symbols {
+      self.resolver = s.resolver
+      self.functions = s.functions
+      self.fn_index = s.fn_index
+      self.methods = s.methods
+      self.method_index = s.method_index
+    } else {
+      self.resolver = load_types(self.program)
+      self.collect_sigs
+      self.collect_methods
+    }
     self.mark_numeric_leaves
     self.may_share = self.program_may_share
     self.mark_quiet_leaves
@@ -10231,5 +10252,11 @@ pub class MycGen {
 
 pub fn emit_myc(program: Program): String {
   gen = MycGen.new(program)
+  gen.emit
+}
+
+pub fn emit_myc(program: Program, symbols: SymbolTable): String {
+  gen = MycGen.new(program)
+  gen.symbols = symbols
   gen.emit
 }

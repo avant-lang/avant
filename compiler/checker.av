@@ -8,60 +8,7 @@ import ast
 import resolve
 import parser
 import loader
-
-pub class FuncSig {
-  name: String = ""
-  node: Function
-  params: Array(Ty)
-  ret: Ty
-  owner: String = ""
-
-  fn initialize(name: String, node: Function, params: Array(Ty), ret: Ty) {
-    self.name = name
-    self.node = node
-    self.params = params
-    self.ret = ret
-    self.owner = ""
-  }
-
-  pub fn mangled: String {
-    self.node.emit_name
-  }
-}
-
-pub fn required_arity(fnn: Function): Int {
-  i = 0
-  while i < fnn.params.size {
-    if d = fnn.params[i].default {
-      return i
-    }
-    i = i + 1
-  }
-  fnn.params.size
-}
-
-pub fn arity_ok(fnn: Function, argc: Int): Bool {
-  req = required_arity(fnn)
-  if argc < req {
-    return false
-  }
-  argc <= fnn.params.size
-}
-
-pub fn params_same(a: Array(Ty), b: Array(Ty)): Bool {
-  if a.size != b.size {
-    return false
-  }
-  i = 0
-  while i < a.size {
-    if a[i].same_as(b[i]) {
-    } else {
-      return false
-    }
-    i = i + 1
-  }
-  true
-}
+import typed_ir
 
 pub fn is_op_fn_name(name: String): Bool {
   if str_eq(name, "&+") {
@@ -208,20 +155,6 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     return tn
   }
   TypeName.new(loc, ty.name)
-}
-
-pub class CFunSig {
-  name: String = ""
-  lib_name: String = ""
-  params: Array(Ty)
-  ret: Ty
-
-  fn initialize(name: String, lib_name: String, params: Array(Ty), ret: Ty) {
-    self.name = name
-    self.lib_name = lib_name
-    self.params = params
-    self.ret = ret
-  }
 }
 
 pub fn reserved_c_names: Hash(String, Int) {
@@ -1294,6 +1227,35 @@ pub class Checker {
     nil
   }
 
+  pub fn symbol_table: SymbolTable {
+    table = SymbolTable.new(self.resolver)
+    i = 1
+    while i < self.functions.size {
+      sig = self.functions[i]
+      if sig.node.generic {
+      } else {
+        table.add_function(sig)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.methods.size {
+      sig = self.methods[i]
+      if sig.node.generic {
+      } else if self.resolver.has_template(sig.owner) {
+      } else {
+        table.add_method(sig)
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < self.cfuns.size {
+      table.add_cfun(self.cfuns[i])
+      i = i + 1
+    }
+    table
+  }
+
   pub fn alloc_ol(fnn: Function) {
     fnn.ol_index = self.next_ol
     self.next_ol = self.next_ol + 1
@@ -1654,16 +1616,12 @@ pub class Checker {
     }
     from = sig.node.type_params
     to: Array(TypeName) = []
-    buf = buf_new()
-    buf.push_str(sig.node.name)
     i = 0
     while i < from.size {
       to.push(ty_to_type_name(subst[i], loc))
-      buf.push_str("__")
-      buf.push_str(mangle_ty(subst[i]))
       i = i + 1
     }
-    emit = buf.to_s
+    emit = sig_mangle(sig.node.name, subst)
     if existing = self.find_instance(emit) {
       return self.find_sig_by_node(existing)
     }
@@ -2495,15 +2453,7 @@ pub class Checker {
       if g <= 1 {
         sig.node.emit_name = base
       } else {
-        buf = buf_new()
-        buf.push_str(base)
-        k = 0
-        while k < sig.params.size {
-          buf.push_str("__")
-          buf.push_str(mangle_ty(sig.params[k]))
-          k = k + 1
-        }
-        sig.node.emit_name = buf.to_s
+        sig.node.emit_name = sig_mangle(base, sig.params)
       }
       }
       i = i + 1
@@ -2539,17 +2489,7 @@ pub class Checker {
       if n <= 1 {
         sig.node.emit_name = "${owner}__${sanitized}"
       } else {
-        buf = buf_new()
-        buf.push_str(owner)
-        buf.push_str("__")
-        buf.push_str(sanitized)
-        k = 0
-        while k < sig.params.size {
-          buf.push_str("__")
-          buf.push_str(mangle_ty(sig.params[k]))
-          k = k + 1
-        }
-        sig.node.emit_name = buf.to_s
+        sig.node.emit_name = sig_mangle("${owner}__${sanitized}", sig.params)
       }
       }
       i = i + 1
@@ -3250,17 +3190,7 @@ pub class Checker {
             if n <= 1 {
               other.node.emit_name = "${owner}__${sanitized}"
             } else {
-              buf = buf_new()
-              buf.push_str(owner)
-              buf.push_str("__")
-              buf.push_str(sanitized)
-              k = 0
-              while k < other.params.size {
-                buf.push_str("__")
-                buf.push_str(mangle_ty(other.params[k]))
-                k = k + 1
-              }
-              other.node.emit_name = buf.to_s
+              other.node.emit_name = sig_mangle("${owner}__${sanitized}", other.params)
             }
           }
         }
@@ -9574,13 +9504,7 @@ pub class Checker {
           args.push(self.subst_ty(ty.ty_args[i], keys, vals))
           i = i + 1
         }
-        out = Ty.new(ty.kind)
-        out.origin = ty.origin
-        out.name = ty.origin
-        out.ty_args = args
-        out.label = self.resolver.format_app(ty.origin, args)
-        out.template = false
-        return out
+        return ty_app(ty.kind, ty.origin, ty.origin, self.resolver.format_app(ty.origin, args), args)
       }
     }
     ty

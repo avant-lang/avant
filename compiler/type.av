@@ -56,6 +56,11 @@ pub class TyField {
 }
 
 pub class Ty {
+  // Sum type: `kind` is the variant tag (tyk_* values, unchanged since
+  // Stage 11; the runtime tag in emitted IR derives from it). Each variant
+  // owns a subset of the payload fields below; the ty_* constructors in
+  // this file are the only construction path, and agg shells get their
+  // `fields` filled once by resolve before any read.
   kind: Int = 0
   name: String = ""
   label: String = ""
@@ -720,6 +725,16 @@ pub fn ty_fn(params: Array(Ty), ret: Ty): Ty {
   t = Ty.new(tyk_fn())
   t.members = params
   t.inner = ret
+  t
+}
+
+pub fn ty_app(kind: Int, name: String, origin: String, label: String, args: Array(Ty)): Ty {
+  t = Ty.new(kind)
+  t.name = name
+  t.origin = origin
+  t.label = label
+  t.ty_args = args
+  t.template = false
   t
 }
 
