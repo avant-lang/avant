@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.15.0 - 2026-10-27
 
 ### Added
 * `pin(value) { ... }` pins a heap value for the block and unpins it on every way out; pins are counted, so a scoped pin never clears the process pin a C field store takes.
