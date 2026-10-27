@@ -84,6 +84,24 @@ pub class CliSplit {
   }
 }
 
+pub fn str_contains(s: String, needle: String): Bool {
+  if needle.size == 0 {
+    return true
+  }
+  if needle.size > s.size {
+    return false
+  }
+  i = 0
+  last = s.size - needle.size
+  while i <= last {
+    if str_eq(str_slice(s, i, i + needle.size), needle) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
 pub fn str_starts(s: String, pre: String): Bool {
   if pre.size > s.size {
     return false
@@ -121,28 +139,91 @@ pub fn avant_root: String {
   "."
 }
 
-pub fn myc_llvm_path: String {
-  if v = env_get("AVANT_MYC_LLVM") {
-    if file_exists(v) {
-      return v
+pub fn myc_probe_ir: String {
+  "FUNC :avant_gc_root\n  ARGS\n    TYPE :ptr<void>\nENDFUNC\n\nFUNC :avant_gc_reload\n  RETURN\n    TYPE :ptr<void>\n  ARGS\n    TYPE :ptr<void>\nENDFUNC\n\nFUNC :avant_gc_enter\nENDFUNC\n\nFUNC :avant_gc_leave\nENDFUNC\n\nFUNC :probe_alloc\n  RETURN\n    TYPE :ptr<void>\n  ARGS\n    TYPE :u64\nENDFUNC\n\nFUNC :main\n  RETURN\n    TYPE :i32\n  ARGS\n    TYPE :i32\n    TYPE :ptr<ptr<u8>>\n  BODY\n    CALL :avant_gc_enter\n    PUSH 8\n    AS :u64\n    CALL :probe_alloc\n    LOCAL :t :ptr<void>\n    STORE\n    LOCAL :t\n    ADDR\n    CALL :avant_gc_root\n    PUSH 8\n    AS :u64\n    CALL :probe_alloc\n    STACK :drop\n    CALL :avant_gc_leave\n    PUSH 0\n    RET\nENDFUNC\n"
+}
+
+pub fn myc_accepts_safepoints(path: String): Bool {
+  stamp = now_ms()
+  ir_path = "/tmp/avant-myc-probe-${stamp}.myc"
+  out_path = "/tmp/avant-myc-probe-${stamp}.log"
+  w = file_write(ir_path, myc_probe_ir())
+  if w != 0 {
+    return false
+  }
+  args: Array(String) = []
+  args.push("dump")
+  args.push("--gc-root=avant_gc_root")
+  args.push("--gc-reload=avant_gc_reload")
+  args.push("--gc-enter=avant_gc_enter")
+  args.push("--gc-leave=avant_gc_leave")
+  args.push(ir_path)
+  code = process_run_out(path, args, out_path)
+  if code != 0 {
+    return false
+  }
+  if text = file_read(out_path) {
+    return str_contains(text, "gc.statepoint")
+  }
+  false
+}
+
+pub fn myc_llvm_candidates: Array(String) {
+  out: Array(String) = []
+  if path_env = env_get("PATH") {
+    start = 0
+    i = 0
+    while i <= path_env.size {
+      if i == path_env.size || path_env[i] == 58 {
+        if i > start {
+          out.push("${str_slice(path_env, start, i)}/myc-llvm")
+        }
+        start = i + 1
+      }
+      i = i + 1
     }
   }
-  root = avant_root()
-  shard = "${root}/../safepoints/myc-llvm"
-  if file_exists(shard) {
-    return shard
+  args = argv()
+  if args.size > 0 {
+    if str_contains(args[0], "/") {
+      out.push("${path_dirname(args[0])}/myc-llvm")
+    }
   }
-  if file_exists("../safepoints/myc-llvm") {
-    return "../safepoints/myc-llvm"
+  if v = env_get("AVANT_MYC_LLVM") {
+    out.push(v)
   }
-  sibling = "${root}/../myc/myc-llvm"
-  if file_exists(sibling) {
-    return sibling
+  out
+}
+
+pub fn myc_llvm_path: String {
+  cands = myc_llvm_candidates()
+  i = 0
+  while i < cands.size {
+    cand = cands[i]
+    if file_exists(cand) {
+      if myc_accepts_safepoints(cand) {
+        return cand
+      }
+      diag_puts("myc-llvm at ${cand} does not accept the safepoints GC flags; refusing to build GC-unsafe code (tried ${cand})")
+      return ""
+    }
+    i = i + 1
   }
-  if file_exists("../myc/myc-llvm") {
-    return "../myc/myc-llvm"
+  if v = env_get("AVANT_MYC_LLVM") {
+    diag_puts("AVANT_MYC_LLVM points at a missing file: ${v}")
+    return ""
   }
-  shard
+  tried = ""
+  i = 0
+  while i < cands.size {
+    if i > 0 {
+      tried = "${tried}, "
+    }
+    tried = "${tried}${cands[i]}"
+    i = i + 1
+  }
+  diag_puts("myc-llvm not found (tried: ${tried})")
+  ""
 }
 
 pub fn runtime_object_names: Array(String) {
@@ -593,9 +674,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
     return 1
   }
   myc = myc_llvm_path()
-  if file_exists(myc) {
-  } else {
-    diag_puts("myc-llvm not found (${myc})")
+  if myc.size == 0 {
     return 1
   }
   flags = linker_flags_s(extra_flags)
@@ -616,7 +695,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   args.push("--gc-leave=avant_gc_leave")
   // String size and the numeric conversions lower from fields, not calls,
   // so a quiet leaf can contain them. They do not allocate.
-  leaves = "avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_is_heap,avant_is_young,avant_exp,avant_bump_alloc,avant_gc_quiet_enter,avant_gc_quiet_leave,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr,avant_array_clear,avant_array_fill_i32,avant_array_fill_u8,avant_str_size,avant_str_byte,avant_str_eq,avant_str_to_f,avant_str_to_i,avant_str_to_f_slice,avant_checksum_str,avant_checksum_f64,avant_buf_size,avant_buf_starts,avant_wide_op,avant_wide_hi,avant_now_ms,avant_now_us,avant_trap_bounds,avant_trap_div_zero,avant_trap_overflow,avant_checked_add_i64,avant_checked_sub_i64,avant_checked_mul_i64,avant_checked_add_u64,avant_checked_sub_u64,avant_checked_mul_u64,avant_checked_div_i64,avant_checked_rem_i64,avant_checked_div_u64,avant_checked_rem_u64"
+  leaves = "avant_type_map,avant_barrier,avant_cov_hit,avant_cov_init,avant_pin,avant_unpin,avant_is_heap,avant_is_young,avant_exp,avant_bump_alloc,avant_gc_quiet_enter,avant_gc_quiet_leave,avant_array_get_ptr,avant_array_set_ptr,avant_array_pop_ptr,avant_array_clear,avant_array_fill_i32,avant_array_fill_u8,avant_str_size,avant_str_byte,avant_str_eq,avant_str_to_f,avant_str_to_i,avant_str_to_f_slice,avant_checksum_str,avant_checksum_f64,avant_buf_size,avant_buf_starts,avant_wide_op,avant_wide_hi,avant_now_ms,avant_now_us,avant_trap_bounds,avant_trap_div_zero,avant_trap_overflow,avant_checked_add_i64,avant_checked_sub_i64,avant_checked_mul_i64,avant_checked_add_u64,avant_checked_sub_u64,avant_checked_mul_u64,avant_checked_div_i64,avant_checked_rem_i64,avant_checked_div_u64,avant_checked_rem_u64"
   if quiet.size > 0 {
     leaves = "${leaves},${quiet}"
   }

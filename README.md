@@ -19,9 +19,10 @@ Save it as `hello.av`. That is a complete program: `fn main` is the entry point,
 Today, on Linux x86_64:
 
 1. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it.
-2. Download `myc-llvm-linux-x86_64.tar.gz` from the [safepoints v0.4.0 release](https://github.com/avant-lang/safepoints/releases/tag/v0.4.0), extract it, and point Avant at it: `export AVANT_MYC_LLVM=/path/to/myc-llvm`. (The Avant archive does not bundle this backend binary.)
-3. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
-4. Optional but recommended: put both binaries on your `PATH` — `~/.local/bin` needs no sudo (make sure it is on your `PATH`), or use `/usr/local/bin` for a system-wide install. Keep `myc-llvm` next to `avant` there; the `AVANT_MYC_LLVM` export above is still how the compiler finds it today.
+2. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
+3. Optional but recommended: put the binaries on your `PATH` — `~/.local/bin` needs no sudo (make sure it is on your `PATH`), or use `/usr/local/bin` for a system-wide install.
+
+The compiler finds its `myc-llvm` backend in this order: `myc-llvm` on `PATH`, then a `myc-llvm` beside the `avant` binary, then `AVANT_MYC_LLVM`. The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used. Current release archives bundle `myc-llvm` beside `avant`, so step 2 of older instructions (a separate backend download plus the export) is only needed with an older archive.
 5. Run your first program:
 
 ```
@@ -559,7 +560,7 @@ Heap allocation goes through `runtime/avant_rt.c`. The collector is precise GenI
 
 `AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_STACKMAP=0` skips the stack-map walk. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
 
-A heap object stored into a C field is pinned for the process. Pinned objects are not copied. See [C interop](#c-interop).
+A heap object stored into a C field is pinned for the process. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never clears a process pin. See [C interop](#c-interop).
 
 ## C interop
 
@@ -599,6 +600,8 @@ fn (p: Ptr(Point)) sum: Int {
 ```
 
 `Ptr(Int)` is rejected. `Ptr` of a layout, and `Ptr(Void)`, are the pointer types this is for. A `String` stored into a C field is pinned for the process, so the collector will not move it while C holds the pointer.
+
+A `fun` parameter may be an Avant `fn` type; that declares a C callback. Pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments (libc `qsort` with an Avant comparator is the proven shape). A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile.
 
 JSON in the examples is yyjson. The loopback HTTP example is uSockets (C, not C++). Both live under `runtime/third_party/`.
 

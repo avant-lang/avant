@@ -161,6 +161,7 @@ static uint32_t g_sm_nsites;
 typedef struct PinEnt {
   struct PinEnt *next;
   void *payload;
+  int count;
 } PinEnt;
 
 static PinEnt *g_pins;
@@ -2724,8 +2725,13 @@ void avant_pin(void *payload) {
   }
   AvantHeader *h = avant_header(payload);
   if (h->flags & AVANT_FLAG_PINNED) {
-    pthread_mutex_unlock(&g_world);
-    return;
+    for (PinEnt *p = g_pins; p; p = p->next) {
+      if (p->payload == payload) {
+        p->count += 1;
+        pthread_mutex_unlock(&g_world);
+        return;
+      }
+    }
   }
   PinEnt *e = (PinEnt *)malloc(sizeof(PinEnt));
   if (!e) {
@@ -2734,9 +2740,20 @@ void avant_pin(void *payload) {
   }
   h->flags |= AVANT_FLAG_PINNED;
   e->payload = payload;
+  e->count = 1;
   e->next = g_pins;
   g_pins = e;
   pthread_mutex_unlock(&g_world);
+}
+
+int avant_pin_count(void) {
+  int n = 0;
+  pthread_mutex_lock(&g_world);
+  for (PinEnt *p = g_pins; p; p = p->next) {
+    n += 1;
+  }
+  pthread_mutex_unlock(&g_world);
+  return n;
 }
 
 void avant_unpin(void *payload) {
@@ -2754,10 +2771,14 @@ void avant_unpin(void *payload) {
     pthread_mutex_unlock(&g_world);
     return;
   }
-  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
   pp = &g_pins;
   while (*pp) {
     if ((*pp)->payload == payload) {
+      (*pp)->count -= 1;
+      if ((*pp)->count > 0) {
+        pthread_mutex_unlock(&g_world);
+        return;
+      }
       PinEnt *dead = *pp;
       *pp = dead->next;
       free(dead);
@@ -2765,6 +2786,7 @@ void avant_unpin(void *payload) {
     }
     pp = &(*pp)->next;
   }
+  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
   pthread_mutex_unlock(&g_world);
 }
 
