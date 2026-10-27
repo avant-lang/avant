@@ -83,6 +83,7 @@ pub class Parser {
   int_bits: UInt64 = 0u64
   int_suffix: String = ""
   in_quote: Bool = false
+  for_id: Int = 0
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -95,6 +96,7 @@ pub class Parser {
     self.int_bits = 0u64
     self.int_suffix = ""
     self.in_quote = false
+    self.for_id = 0
   }
 
   pub fn has_err: Bool {
@@ -258,6 +260,9 @@ pub class Parser {
 
   pub fn infix_prec(kind: Int): Int {
     switch kind {
+      case 74 {
+        0
+      }
       case 52 {
         1
       }
@@ -477,11 +482,7 @@ pub class Parser {
     dummy = self.expect(tk_l_brace())
     self.skip_newlines
     for_tok = self.current
-    if for_tok.kind == tk_ident() {
-      if str_eq(for_tok.value, "for") {
-      } else {
-        self.fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
-      }
+    if for_tok.kind == tk_for() {
     } else {
       self.fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
@@ -490,11 +491,7 @@ pub class Parser {
     var_tok = self.expect(tk_ident())
     self.skip_newlines
     in_tok = self.current
-    if in_tok.kind == tk_ident() {
-      if str_eq(in_tok.value, "in") {
-      } else {
-        self.fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
-      }
+    if in_tok.kind == tk_in() {
     } else {
       self.fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
@@ -1266,6 +1263,9 @@ pub class Parser {
     if k == tk_while() {
       return self.parse_while
     }
+    if k == tk_for() {
+      return self.parse_for
+    }
     if k == tk_break() {
       return self.parse_break
     }
@@ -1340,6 +1340,12 @@ pub class Parser {
   }
 
   pub fn maybe_trailing_block(expr: Expr): Expr {
+    if expr.kind == ex_unary() {
+      if inner = expr.inner {
+        expr.inner = self.maybe_trailing_block(inner)
+      }
+      return expr
+    }
     i = self.index
     while i < self.tokens.size {
       if self.tokens[i].kind != tk_newline() {
@@ -1422,6 +1428,122 @@ pub class Parser {
     s.cond = cond
     s.body = body
     s
+  }
+
+  pub fn for_name_expr(loc: Location, name: String): Expr {
+    e = Expr.new(ex_name(), loc)
+    e.ident = name
+    e
+  }
+
+  pub fn for_int_expr(loc: Location, bits: UInt64): Expr {
+    e = Expr.new(ex_int(), loc)
+    e.int_bits = bits
+    e
+  }
+
+  pub fn for_assign(loc: Location, name: String, value: Expr): Stmt {
+    s = Stmt.new(st_assign(), loc)
+    s.target = self.for_name_expr(loc, name)
+    s.value = value
+    s.op = tk_eq()
+    s
+  }
+
+  pub fn for_binary(loc: Location, op: Int, left: Expr, right: Expr): Expr {
+    e = Expr.new(ex_binary(), loc)
+    e.op = op
+    e.left = left
+    e.right = right
+    e
+  }
+
+  pub fn for_inc(loc: Location, name: String): Stmt {
+    self.for_assign(loc, name, self.for_binary(loc, tk_plus(), self.for_name_expr(loc, name), self.for_int_expr(loc, 1u64)))
+  }
+
+  pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
+    out: Array(Stmt) = []
+    i = 0
+    while i < body.size {
+      s = body[i]
+      if s.kind == st_continue() {
+        out.push(self.for_inc(loc, counter))
+        out.push(s)
+      } else if s.kind == st_if() {
+        s.then_body = self.for_advance(s.then_body, counter, loc)
+        s.else_body = self.for_advance(s.else_body, counter, loc)
+        out.push(s)
+      } else if s.kind == st_expr() {
+        if e = s.expr {
+          if e.kind == ex_switch() {
+            ci = 0
+            while ci < e.cases.size {
+              e.cases[ci].body = self.for_advance(e.cases[ci].body, counter, loc)
+              ci = ci + 1
+            }
+            e.else_body = self.for_advance(e.else_body, counter, loc)
+          }
+        }
+        out.push(s)
+      } else {
+        out.push(s)
+      }
+      i = i + 1
+    }
+    out
+  }
+
+  pub fn parse_for: Stmt {
+    loc = self.expect(tk_for()).loc
+    self.skip_newlines
+    var_tok = self.expect(tk_ident())
+    self.skip_newlines
+    dummy_in = self.expect(tk_in())
+    self.skip_newlines
+    first = self.parse_expr
+    self.skip_newlines
+    id = self.for_id
+    self.for_id = self.for_id + 1
+    if self.current.kind == tk_dot_dot() {
+      dummy_dd = self.bump
+      self.skip_newlines
+      end_expr = self.parse_expr
+      self.skip_newlines
+      raw_body = self.parse_block
+      end_name = "__for${id}_end"
+      s = Stmt.new(st_while(), loc)
+      s.for_kind = 1
+      s.pre.push(self.for_assign(loc, var_tok.value, first))
+      s.pre.push(self.for_assign(loc, end_name, end_expr))
+      s.cond = self.for_binary(loc, tk_less(), self.for_name_expr(loc, var_tok.value), self.for_name_expr(loc, end_name))
+      s.body = self.for_advance(raw_body, var_tok.value, loc)
+      s.body.push(self.for_inc(loc, var_tok.value))
+      return s
+    }
+    raw_body2 = self.parse_block
+    xs_name = "__for${id}_xs"
+    idx_name = "__for${id}_i"
+    s2 = Stmt.new(st_while(), loc)
+    s2.for_kind = 2
+    s2.pre.push(self.for_assign(loc, xs_name, first))
+    s2.pre.push(self.for_assign(loc, idx_name, self.for_int_expr(loc, 0u64)))
+    size_expr = Expr.new(ex_field(), loc)
+    size_expr.object = self.for_name_expr(loc, xs_name)
+    size_expr.ident = "size"
+    s2.cond = self.for_binary(loc, tk_less(), self.for_name_expr(loc, idx_name), size_expr)
+    elem_expr = Expr.new(ex_index(), loc)
+    elem_expr.left = self.for_name_expr(loc, xs_name)
+    elem_expr.right = self.for_name_expr(loc, idx_name)
+    s2.body.push(self.for_assign(loc, var_tok.value, elem_expr))
+    adv = self.for_advance(raw_body2, idx_name, loc)
+    bi = 0
+    while bi < adv.size {
+      s2.body.push(adv[bi])
+      bi = bi + 1
+    }
+    s2.body.push(self.for_inc(loc, idx_name))
+    s2
   }
 
   pub fn parse_switch: Expr {
@@ -1525,8 +1647,38 @@ pub class Parser {
     old = self.allow_struct_lit
     self.allow_struct_lit = false
     expr = self.parse_expr
+    if self.pred_block_ahead {
+      expr = self.maybe_trailing_block(expr)
+    }
     self.allow_struct_lit = old
     expr
+  }
+
+  pub fn pred_block_ahead: Bool {
+    i = self.index
+    while i < self.tokens.size {
+      if self.tokens[i].kind != tk_newline() {
+        break
+      }
+      i = i + 1
+    }
+    if i >= self.tokens.size {
+      return false
+    }
+    if self.tokens[i].kind != tk_l_brace() {
+      return false
+    }
+    j = i + 1
+    while j < self.tokens.size {
+      if self.tokens[j].kind != tk_newline() {
+        break
+      }
+      j = j + 1
+    }
+    if j >= self.tokens.size {
+      return false
+    }
+    self.tokens[j].kind == tk_pipe() || self.tokens[j].kind == tk_pipe_pipe()
   }
 
   pub fn parse_break: Stmt {
@@ -1545,7 +1697,7 @@ pub class Parser {
     k = self.current.kind
     if k == tk_newline() || k == tk_r_brace() || k == tk_eof() {
     } else {
-      expr = self.parse_expr
+      expr = self.maybe_trailing_block(self.parse_expr)
     }
     stmt_return(loc, expr)
   }
@@ -1564,7 +1716,11 @@ pub class Parser {
       }
       op = self.bump
       self.skip_newlines
-      right = self.parse_expr_min(prec + 1)
+      next_prec = prec + 1
+      if op.kind == tk_question_question() {
+        next_prec = prec
+      }
+      right = self.parse_expr_min(next_prec)
       bin = Expr.new(ex_binary(), op.loc)
       bin.op = op.kind
       bin.left = left
@@ -1777,7 +1933,7 @@ pub class Parser {
       self.skip_newlines
       old = self.allow_struct_lit
       self.allow_struct_lit = true
-      expr = self.parse_expr
+      expr = self.maybe_trailing_block(self.parse_expr)
       self.allow_struct_lit = old
       self.skip_newlines
       dummy2 = self.expect(tk_r_paren())
@@ -2200,7 +2356,7 @@ pub class Parser {
     args: Array(Expr) = []
     if self.current.kind != tk_r_paren() {
       while true {
-        args.push(self.parse_expr)
+        args.push(self.maybe_trailing_block(self.parse_expr))
         self.skip_newlines
         if self.match_tok(tk_comma()) {
           self.skip_newlines

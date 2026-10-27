@@ -1089,6 +1089,8 @@ pub class MycGen {
     self.ext("avant_str_strip", "ptr<u8>,i32", "ptr<u8>")
     self.ext("avant_str_split", "ptr<u8>,ptr<u8>", "ptr<void>")
     self.ext("avant_str_fields", "ptr<u8>", "ptr<void>")
+    self.ext("avant_str_chars", "ptr<u8>", "ptr<void>")
+    self.ext("avant_bytes_chars", "ptr<u8>", "ptr<void>")
     self.ext("avant_str_from_utf8", "ptr<u8>,ptr<i32>", "ptr<u8>")
     self.ext("avant_bytes_to_buf", "ptr<u8>", "ptr<void>")
     self.ext("avant_checksum_f64", "f64", "i32")
@@ -1553,6 +1555,7 @@ pub class MycGen {
         self.collect_stmts(stmt.then_body)
         self.collect_stmts(stmt.else_body)
       } else if k == st_while() {
+        self.collect_stmts(stmt.pre)
         if c = stmt.cond {
           self.collect_expr(c)
         }
@@ -4403,6 +4406,9 @@ pub class MycGen {
         }
       }
       case 4 {
+        if stmt.pre.size > 0 {
+          self.emit_stmts(stmt.pre, false)
+        }
         self.emit_while(stmt)
       }
       case 5 {
@@ -4879,6 +4885,57 @@ pub class MycGen {
     self.emit_ret
   }
 
+  pub fn emit_coalesce(left: Expr, right: Expr, result: Ty) {
+    uty = expr_ty(left)
+    self.emit_expr(left)
+    tmp = self.new_temp
+    um = ty_myc(uty)
+    self.line("LOCAL :${tmp} :${um}")
+    self.line("STORE")
+    self.ensure_root(tmp, uty)
+    dest = self.new_temp
+    rm = ty_myc(result)
+    nil_tag = uty.tag_of(ty_nil())
+    self.line("LOCAL :${tmp}")
+    self.line("FIELD 0")
+    self.line("PUSH ${nil_tag}")
+    self.line("BINARY :eq")
+    self.line("IF")
+    self.indent = self.indent + 1
+    self.line("THEN")
+    self.indent = self.indent + 1
+    right_ty = expr_ty(right)
+    if right_ty.is_nil {
+      self.emit_zero(ty_nil())
+      self.emit_wrap_union(ty_nil(), result)
+    } else if right_ty.same_as(result) {
+      self.emit_expr(right)
+    } else if result.is_union {
+      self.emit_expr(right)
+      self.emit_wrap_union(right_ty, result)
+    } else {
+      self.emit_expr(right)
+    }
+    self.line("LOCAL :${dest} :${rm}")
+    self.line("STORE")
+    self.ensure_root(dest, result)
+    self.indent = self.indent - 1
+    self.line("ELSE")
+    self.indent = self.indent + 1
+    if result.same_as(uty) {
+      self.line("LOCAL :${tmp}")
+    } else {
+      self.emit_unwrap(tmp, uty, ty_without_nil(uty))
+    }
+    self.line("LOCAL :${dest} :${rm}")
+    self.line("STORE")
+    self.ensure_root(dest, result)
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDIF")
+    self.line("LOCAL :${dest}")
+  }
+
   pub fn emit_try(expr: Expr) {
     if inner = expr.inner {
       uty = expr_ty(inner)
@@ -5156,11 +5213,19 @@ pub class MycGen {
               } else if str_eq(expr.ident, "to_i") {
                 self.line("CALL :avant_str_to_i")
               } else if str_eq(expr.ident, "bytes") {
+              } else if str_eq(expr.ident, "chars") {
+                self.line("CALL :avant_str_chars")
+                m = ty_myc(expr_ty(expr))
+                self.line("AS :${m}")
               }
             } else if object_ty.is_bytes {
               self.emit_expr(obj)
               if str_eq(expr.ident, "to_buf") {
                 self.line("CALL :avant_bytes_to_buf")
+              } else if str_eq(expr.ident, "chars") {
+                self.line("CALL :avant_bytes_chars")
+                m = ty_myc(expr_ty(expr))
+                self.line("AS :${m}")
               }
             } else if object_ty.is_buf {
               self.emit_expr(obj)
@@ -5220,6 +5285,11 @@ pub class MycGen {
                 self.line("CALL :avant_str_size")
               } else if str_eq(expr.ident, "bytes") {
                 self.emit_expr(obj)
+              } else if str_eq(expr.ident, "chars") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_str_chars")
+                m = ty_myc(expr_ty(expr))
+                self.line("AS :${m}")
               } else if str_eq(expr.ident, "to_f") {
                 self.emit_expr(obj)
                 self.line("CALL :avant_str_to_f")
@@ -5233,6 +5303,11 @@ pub class MycGen {
               if str_eq(expr.ident, "size") {
                 self.emit_expr(obj)
                 self.line("CALL :avant_str_size")
+              } else if str_eq(expr.ident, "chars") {
+                self.emit_expr(obj)
+                self.line("CALL :avant_bytes_chars")
+                m = ty_myc(expr_ty(expr))
+                self.line("AS :${m}")
               } else {
                 self.emit_lvalue(expr)
               }
@@ -7101,6 +7176,14 @@ pub class MycGen {
         }
       }
     }
+    if expr.op == tk_question_question() {
+      if l = expr.left {
+        if r = expr.right {
+          self.emit_coalesce(l, r, expr_ty(expr))
+        }
+      }
+      return
+    }
     if expr.op == tk_amp_amp() {
       self.emit_logical(expr)
       return
@@ -7984,6 +8067,105 @@ pub class MycGen {
     res
   }
 
+  pub fn emit_pred_block(b: Block, val: String, elem: Ty): String {
+    em = ty_myc(elem)
+    p0 = b.params[0]
+    self.line("LOCAL :${val}")
+    self.line("LOCAL :${p0} :${em}")
+    self.line("STORE")
+    self.ensure_root(p0, elem)
+    i = 0
+    while i < b.body.size - 1 {
+      self.emit_stmt(b.body[i], false)
+      i = i + 1
+    }
+    if b.body.size > 0 {
+      last = b.body[b.body.size - 1]
+      if e = last.expr {
+        self.emit_expr(e)
+      }
+    }
+    res = self.new_temp
+    self.line("LOCAL :${res} :bool")
+    self.line("STORE")
+    res
+  }
+
+  pub fn emit_array_predicate(expr: Expr, ty: Ty, is_any: Bool) {
+    if b = expr.block {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      arr = self.new_temp
+      m = ty_myc(ty)
+      self.line("LOCAL :${arr} :${m}")
+      self.line("STORE")
+      self.ensure_root(arr, ty)
+      result = self.new_temp
+      if is_any {
+        self.line("PUSH false")
+      } else {
+        self.line("PUSH true")
+      }
+      self.line("LOCAL :${result} :bool")
+      self.line("STORE")
+      i = self.new_temp
+      self.line("PUSH 0")
+      self.line("LOCAL :${i} :i32")
+      self.line("STORE")
+      self.line("LOOP")
+      self.indent = self.indent + 1
+      self.line("COND")
+      self.indent = self.indent + 1
+      self.line("LOCAL :${arr}")
+      self.line("DEREF")
+      self.line("FIELD 1")
+      self.line("LOCAL :${i}")
+      self.line("BINARY :less")
+      self.indent = self.indent - 1
+      self.line("BODY")
+      self.indent = self.indent + 1
+      if e = ty.inner {
+        self.emit_arr_load(arr, i, e)
+        v = self.new_temp
+        em = ty_myc(e)
+        self.line("LOCAL :${v} :${em}")
+        self.line("STORE")
+        self.ensure_root(v, e)
+        pred = self.emit_pred_block(b, v, e)
+        self.line("LOCAL :${pred}")
+        if is_any {
+        } else {
+          self.line("UNARY :lnot")
+        }
+        self.line("IF")
+        self.indent = self.indent + 1
+        self.line("THEN")
+        self.indent = self.indent + 1
+        if is_any {
+          self.line("PUSH true")
+        } else {
+          self.line("PUSH false")
+        }
+        self.line("LOCAL :${result} :bool")
+        self.line("STORE")
+        self.line("BREAK")
+        self.indent = self.indent - 1
+        self.indent = self.indent - 1
+        self.line("ENDIF")
+      }
+      self.line("PUSH 1")
+      self.line("LOCAL :${i}")
+      self.line("BINARY :add")
+      self.line("LOCAL :${i} :i32")
+      self.line("STORE")
+      self.indent = self.indent - 1
+      self.indent = self.indent - 1
+      self.line("ENDLOOP")
+      self.line("LOCAL :${result}")
+    }
+  }
+
   pub fn emit_comparator_sort(arr: String, ty: Ty, b: Block) {
     if e = ty.inner {
       em = ty_myc(e)
@@ -8164,6 +8346,14 @@ pub class MycGen {
     }
     if str_eq(expr.callee, "each") {
       self.emit_array_each(expr, ty)
+      return
+    }
+    if str_eq(expr.callee, "any") {
+      self.emit_array_predicate(expr, ty, true)
+      return
+    }
+    if str_eq(expr.callee, "all") {
+      self.emit_array_predicate(expr, ty, false)
       return
     }
     if str_eq(expr.callee, "sort") {
@@ -8822,6 +9012,14 @@ pub class MycGen {
         }
       }
       rty = expr_ty(recv)
+      if str_eq(expr.callee, "or") {
+        if rty.is_nilable {
+          if expr.args.size > 0 {
+            self.emit_coalesce(recv, expr.args[0], expr_ty(expr))
+            return
+          }
+        }
+      }
       if rty.is_bytes {
         self.emit_bytes_method(expr)
         return
@@ -9464,6 +9662,7 @@ pub class MycGen {
       return
     }
     if k == st_while() {
+      self.collect_spawn_box_stmts(stmt.pre, caps, into)
       if c = stmt.cond {
         self.collect_spawn_box_expr(c, caps, into)
       }
@@ -10393,6 +10592,15 @@ pub class MycGen {
       self.line("CALL :avant_bytes_to_buf")
       return
     }
+    if str_eq(expr.callee, "chars") {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_bytes_chars")
+      m = ty_myc(expr_ty(expr))
+      self.line("AS :${m}")
+      return
+    }
     if recv = expr.receiver {
       self.emit_expr(recv)
     }
@@ -10454,6 +10662,15 @@ pub class MycGen {
       if recv = expr.receiver {
         self.emit_expr(recv)
       }
+      return
+    }
+    if str_eq(expr.callee, "chars") {
+      if recv = expr.receiver {
+        self.emit_expr(recv)
+      }
+      self.line("CALL :avant_str_chars")
+      m = ty_myc(expr_ty(expr))
+      self.line("AS :${m}")
       return
     }
     if recv = expr.receiver {
@@ -10717,6 +10934,8 @@ pub class MycGen {
       self.line("LOCAL :${s}")
       self.line("LOCAL :${buf}")
       self.line("CALL :avant_buf_starts")
+      self.line("PUSH 1")
+      self.line("BINARY :eq")
       return
     }
     if str_eq(expr.callee, "to_s") {

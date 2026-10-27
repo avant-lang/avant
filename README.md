@@ -443,7 +443,21 @@ fn name_of(kind: Int): String {
 
 `xs.each { |n| ... }` walks an array. The block is not a `fn` value. The compiler inlines the loop.
 
-There is no general `for`. The only `for` is the comptime field walk in [Macros](#macros).
+`for` walks a range or an array. The range is end-exclusive and its bounds are evaluated once; the loop variable is a new name that exists only inside the loop, and `break`, `continue`, and `return` behave as they do in `while`:
+
+```avant
+fn main {
+  sum = 0
+  for i in 0..10 {
+    sum = sum + i
+  }
+  for x in xs {
+    sum = sum + x
+  }
+}
+```
+
+The comptime field walk in [Macros](#macros) is the other `for`, and it keeps its own spelling.
 
 ## Modules
 
@@ -516,6 +530,10 @@ fn main {
 `size` is the byte length. Strings are not mutated in place. Concatenation allocates a new string.
 
 `split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`.
+
+Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
+
+On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value when `v` is nil, with the fallback evaluated only then. Predicate methods return `Bool`, including `Buf.starts_with`, and arrays add the short-circuiting scans `any { |x| ... }` and `all { |x| ... }` with a `Bool`-returning block.
 
 ### Arrays, again
 
@@ -711,7 +729,7 @@ These are decided and currently do not compile.
 | --- | --- |
 | `parallel { }` with no receiver | decided, not shipping |
 | Packages, an HTTP server | decided, not shipping |
-| A general `for` loop | not part of the language yet; `each` and `while` are the loops |
+| An inclusive range (`a..=b`) | not part of the language yet; write `a..b + 1` |
 
 ## Benchmarks
 

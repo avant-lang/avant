@@ -2,29 +2,31 @@
 
 ## Unreleased
 
-Nothing yet.
+### Added
+* `for i in a..b { ... }` (end-exclusive, bounds evaluated once) and `for x in xs { ... }` over an array, with `break`, `continue`, and `return` as in `while`; the loop variable exists only inside the loop.
+* `v ?? fallback` and `v.or(fallback)` on a `T?` value: the unwrapped value, or the fallback (evaluated only when `v` is nil).
+* Raw strings `r"..."`: single-line, no escapes, no interpolation.
+* `String.chars` and `Bytes.chars` return one `String` per Unicode codepoint; `Bytes` traps on invalid UTF-8.
+* `Array.any { |x| ... }` and `Array.all { |x| ... }` scan with a `Bool`-returning block and stop early.
+
+### Changed
+* Predicate methods return `Bool`; `Buf.starts_with` previously returned `Int`, so code comparing its result to `1` must use it as a condition instead.
 
 ## 0.13.0 - 2026-10-27
 
 ### Added
-* Compile-time diagnostics: every compile error carries a stable code (`E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion), shows the offending source line with a caret, and the compiler recovers per statement, function, and file to report up to 20 errors in one run (plus a count of any beyond that) instead of stopping at the first.
-* Wrapping arithmetic operators: `&+`, `&-`, and `&*` on integers wrap on overflow. They are the explicit spelling of the old unchecked arithmetic.
-* `.get(i)` on `Array`, `String`, `Buf`, and `Bytes` returns `T?`: the element or byte when `i` is in bounds, nil when it is not.
-* `avant compile` and `avant run` accept `--debug` and `--release`. `--release` is `--final`, the scored codegen mode. A flag wins over `AVANT_MYC_FINAL` and `AVANT_MYC_DEBUG`, which still work.
-* `Array.sort` and `Array.sorted` order `Int`, `Int64`, `UInt64`, `Float64`, `String`, `Bytes`, and `Bool` elements. `Float64` NaN sorts last, and `String` and `Bytes` sort in byte order. Any element type sorts with a comparator block, as in `items.sort { |a, b| a.key < b.key }`. `sort` mutates in place. `sorted` returns a new array and leaves the original alone.
-* `Array.reverse` reverses in place. `Array.contains(x)` and `Array.index_of(x)` test and locate an element. `Array.min` and `Array.max` return `T?`. `Array.sum` totals a numeric array and is `0` for an empty one.
-* `String.split(sep)` splits on a separator string and keeps empty fields, so `"a,,b"` splits into three pieces. `String.fields()` splits on runs of whitespace and drops empty fields. `String.strip()`, `strip_left()`, and `strip_right()` trim whitespace from the ends.
-* Hashes have `keys` and `values` (both in unspecified order), `has_key(k)`, `get_or(k, default)`, `inc(k)` and `inc(k, by)` on a `Hash(K, Int)`, and `each { |k, v| ... }` over every entry.
-* `Bytes` is an immutable byte string, distinct from `String`. `s.bytes` views a string's bytes without copying. `String.from_utf8(b)` returns `String?`: the text when `b` is valid UTF-8, nil when it is not. `Bytes` has `size`, the same trapping indexing and `.get(i)` as `String`, and `.slice(a, b)`. `Buf.to_bytes` copies a buffer into a `Bytes`, `Bytes.to_buf` copies it back into a fresh `Buf`, and `Buf.push_bytes(b)` appends a `Bytes`.
+* Compile-time diagnostics: every error carries a stable code (`E1xxx`–`E6xxx` by phase), shows the source line with a caret, and the compiler reports up to 20 errors per run (plus a count of any beyond) instead of stopping at the first.
+* `.get(i)` on `Array`, `String`, `Buf`, and `Bytes` returns `T?` (nil out of bounds); `avant compile` and `avant run` accept `--debug` / `--release` (a flag wins over `AVANT_MYC_FINAL` / `AVANT_MYC_DEBUG`).
+* Collections: `Array.sort` / `sorted` (known element types, or any type with a comparator block; NaN last, strings in byte order), `reverse`, `contains`, `index_of`, `min` / `max` (`T?`), and `sum`; `String.split` / `fields` / `strip` family; hash `keys`, `values`, `has_key`, `get_or`, `inc`, and `each { |k, v| ... }`.
+* `Bytes`, an immutable byte string distinct from `String`, with `s.bytes`, `String.from_utf8(b)` (`String?`), `size`, trapping indexing and `.get(i)`, `.slice(a, b)`, and `Buf` conversions (`to_bytes`, `to_buf`, `push_bytes`).
+* Wrapping integer operators `&+`, `&-`, `&*`: the explicit spelling of unchecked arithmetic.
 
 ### Changed
-* Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` now traps at runtime, for reads and writes. `Bytes` itself is immutable, so only its reads trap. The program prints one diagnostic to stderr (for example `avant runtime: index 10 out of bounds (size 3)`) and exits with status 1. An out-of-bounds read previously returned 0 or whatever byte followed the buffer.
-* Integer `+`, `-`, `*`, `/`, and `%` are checked, including compound assignments (`+=`, `-=`, `*=`, `/=`) and `Int64` and `UInt64` arithmetic. Overflow and division by zero trap with a stderr diagnostic and exit status 1, instead of wrapping silently or killing the process with a floating-point exception. Arithmetic the compiler can prove cannot overflow, and indexes it can prove in bounds, carries no check.
-* Compile errors print to stderr and the compiler exits with a non-zero status. `avant run` exits with the compiled program's status. `avant format` is unchanged here: its diagnostics stay and it still exits 0.
-* An `Array` captured by a `spawn` block is read-only inside the block, and the sender may not mutate it until the handle is joined. Both are compile errors. Mutation crosses a task boundary through a `Mutex(Array)`, a `Channel`, or `.parallel`.
+* Checked semantics: integer arithmetic (including `Int64` / `UInt64` and compound assignments) and indexing on `Array`, `String`, `Buf`, and `Bytes` trap on overflow, division by zero, or an out-of-bounds index, with one stderr diagnostic and exit status 1; arithmetic and indexes the compiler proves safe carry no check.
+* Compile errors print to stderr and exit non-zero; `avant run` exits with the program's status. An `Array` captured by a `spawn` block is read-only in the block, and the sender may not mutate it until join (mutation crosses through `Mutex(Array)`, `Channel`, or `.parallel`).
 
 ### Fixed
-* `==` and `!=` on two `String` values (and now on two `Bytes` values) compile and compare the bytes. They previously reached the backend in a form it rejected, so a program that compared strings that way did not build at all.
+* `==` and `!=` on two `String` (and `Bytes`) values compile and compare bytes; they previously did not build at all.
 
 ## 0.12.0 - 2026-10-26
 

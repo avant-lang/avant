@@ -322,8 +322,14 @@ pub class Expander {
     }
     if k == st_while() {
       out = Stmt.new(st_while(), s.loc)
+      out.for_kind = s.for_kind
       if c = s.cond {
         out.cond = self.fill_expr(c)
+      }
+      i = 0
+      while i < s.pre.size {
+        out.pre.push(self.fill_stmt(s.pre[i]))
+        i = i + 1
       }
       i = 0
       while i < s.body.size {
@@ -763,6 +769,7 @@ pub class Expander {
         self.collect_introduced(s.then_body, into)
         self.collect_introduced(s.else_body, into)
       } else if k == st_while() {
+        self.collect_introduced(s.pre, into)
         if c = s.cond {
           self.collect_introduced_expr(c, into)
         }
@@ -935,9 +942,11 @@ pub class Expander {
     }
     if k == st_while() {
       out = Stmt.new(st_while(), s.loc)
+      out.for_kind = s.for_kind
       if c = s.cond {
         out.cond = self.rename_expr(c, map)
       }
+      out.pre = self.rename_stmt_list(s.pre, map)
       out.body = self.rename_stmt_list(s.body, map)
       return out
     }
@@ -1140,7 +1149,9 @@ pub class Expander {
         out.push(n)
       } else if k == st_while() {
         n = Stmt.new(st_while(), s.loc)
+        n.for_kind = s.for_kind
         n.cond = s.cond
+        n.pre = self.expand_stmt_list(s.pre)
         n.body = self.expand_stmt_list(s.body)
         out.push(n)
       } else if k == st_expr() {

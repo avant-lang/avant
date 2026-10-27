@@ -434,6 +434,68 @@ pub class Lexer {
     }
   }
 
+  pub fn is_raw_string_start: Bool {
+    if self.peek == 114 {
+      if self.peek_next == 34 {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn read_raw_string_body {
+    buf = buf_new()
+    while true {
+      if self.at_end {
+        dummy = self.fail_tok(self.here, "unterminated string")
+        self.str_frag = ""
+        self.str_kind = 2
+        return
+      }
+      c = self.peek
+      if c == 34 {
+        self.bump
+        self.str_frag = self.intern_str(buf.to_s)
+        self.str_kind = 0
+        return
+      }
+      if c == 10 {
+        dummy = self.fail_tok(self.here, "unterminated string")
+        self.str_frag = ""
+        self.str_kind = 2
+        return
+      }
+      self.bump
+      buf.push_byte(c)
+    }
+  }
+
+  pub fn read_raw_string_token(loc: Location): Token {
+    if self.keep_comments {
+      return self.read_raw_string_token_format(loc)
+    }
+    self.bump
+    self.bump
+    mark = self.err_count
+    self.read_raw_string_body
+    if self.new_err_since(mark) {
+      return Token.new(tk_eof(), loc, "")
+    }
+    Token.new(tk_string(), loc, self.intern_str(self.str_frag))
+  }
+
+  pub fn read_raw_string_token_format(loc: Location): Token {
+    open_pos = self.pos
+    self.bump
+    self.bump
+    self.read_raw_string_body
+    if self.has_err {
+      return Token.new(tk_eof(), loc, "")
+    }
+    raw = str_slice(self.source.text, open_pos, self.pos)
+    Token.new(tk_string(), loc, raw)
+  }
+
   pub fn lex_interp_expr: Array(Token) {
     tokens: Array(Token) = []
     depth = 0
@@ -560,6 +622,9 @@ pub class Lexer {
   pub fn read_token: Token {
     loc = self.here
     c = self.peek
+    if self.is_raw_string_start {
+      return self.read_raw_string_token(loc)
+    }
     if ch_is_digit(c) {
       return self.read_number(loc)
     }
@@ -636,11 +701,21 @@ pub class Lexer {
       }
       case 63 {
         self.bump
-        Token.new(tk_question(), loc, "")
+        kind = tk_question()
+        if self.peek == 63 {
+          self.bump
+          kind = tk_question_question()
+        }
+        Token.new(kind, loc, "")
       }
       case 46 {
         self.bump
-        Token.new(tk_dot(), loc, "")
+        kind = tk_dot()
+        if self.peek == 46 {
+          self.bump
+          kind = tk_dot_dot()
+        }
+        Token.new(kind, loc, "")
       }
       case 43 {
         self.bump

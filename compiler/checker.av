@@ -3801,6 +3801,51 @@ pub class Checker {
       return
     }
     if k == st_while() {
+      has_pre = stmt.pre.size > 0
+      if has_pre {
+        self.push_scope
+        pi = 0
+        while pi < stmt.pre.size {
+          self.annotate_vstep(stmt.pre[pi], stmt)
+          self.clear_poison
+          self.check_stmt(stmt.pre[pi], self.t_void(), false)
+          if self.has_err {
+          } else {
+            self.fact_after_stmt(stmt.pre[pi])
+          }
+          pi = pi + 1
+        }
+        if stmt.for_kind == 1 {
+          if pt = stmt.pre[0].target {
+            if pty = self.lookup(pt.ident) {
+              if pty.is_int {
+              } else {
+                self.fail(stmt.loc, "for range bounds must be Int, got ${pty.show}")
+              }
+            }
+          }
+          if stmt.pre.size > 1 {
+            if pt2 = stmt.pre[1].target {
+              if pty2 = self.lookup(pt2.ident) {
+                if pty2.is_int {
+                } else {
+                  self.fail(stmt.loc, "for range bounds must be Int, got ${pty2.show}")
+                }
+              }
+            }
+          }
+        }
+        if stmt.for_kind == 2 {
+          if pt = stmt.pre[0].target {
+            if pty = self.lookup(pt.ident) {
+              if pty.is_array {
+              } else {
+                self.fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show}")
+              }
+            }
+          }
+        }
+      }
       saved_facts = self.fact_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.body)
@@ -3821,6 +3866,9 @@ pub class Checker {
         } else {
           self.fail(stmt.loc, "missing return value")
         }
+      }
+      if has_pre {
+        self.pop_scope
       }
       return
     }
@@ -4232,6 +4280,31 @@ pub class Checker {
     self.t_int()
   }
 
+  pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
+    payload = ty_without_nil(left)
+    if right_expr.kind == ex_nil() {
+      dummy = self.check_expr(right_expr)
+      return left
+    }
+    right = self.check_expr_as(right_expr, payload)
+    if right.is_nil {
+      return left
+    }
+    if right.is_nilable {
+      rp = ty_without_nil(right)
+      if rp.same_as(payload) {
+        return left
+      }
+      self.fail(loc, "${opname} fallback must be ${payload.show}, got ${right.show}")
+      return left
+    }
+    if ty_assignable(right, payload) {
+      return payload
+    }
+    self.fail(loc, "${opname} fallback must be ${payload.show}, got ${right.show}")
+    payload
+  }
+
   pub fn split_try_success(got: Ty, loc: Location): Ty {
     if got.is_union {
       if got.includes_nil {
@@ -4368,6 +4441,10 @@ pub class Checker {
           expr.method_call = true
           return self.t_bytes()
         }
+        if str_eq(expr.ident, "chars") {
+          expr.method_call = true
+          return ty_array(self.t_string())
+        }
         if str_eq(expr.ident, "to_f") {
           expr.method_call = true
           return self.t_float()
@@ -4386,6 +4463,10 @@ pub class Checker {
         if str_eq(expr.ident, "to_buf") {
           expr.method_call = true
           return self.t_buf()
+        }
+        if str_eq(expr.ident, "chars") {
+          expr.method_call = true
+          return ty_array(self.t_string())
         }
         self.fail(expr.loc, "Bytes has no field ${expr.ident} (did you mean size?)")
         return self.t_int()
@@ -5342,6 +5423,15 @@ pub class Checker {
     if l = expr.left {
       if r = expr.right {
         op = expr.op
+        if op == tk_question_question() {
+          left = self.check_expr(l)
+          if left.is_nilable {
+            return self.coalesce_result(left, r, expr.loc, "??")
+          }
+          dummy = self.check_expr(r)
+          self.fail(expr.loc, "?? needs a nilable left side, got ${left.show}")
+          return left
+        }
         if op == tk_amp_amp() {
           left = self.check_expr(l)
           right = self.check_expr(r)
@@ -6260,6 +6350,22 @@ pub class Checker {
       }
     }
     object = self.check_expr(recv)
+    if str_eq(expr.callee, "or") {
+      if b = expr.block {
+        self.fail(expr.loc, "or does not take a block")
+        return object
+      }
+      if expr.args.size == 1 {
+        if object.is_nilable {
+          return self.coalesce_result(object, expr.args[0], expr.loc, "or")
+        }
+        dummy = self.check_expr(expr.args[0])
+        self.fail(expr.loc, "or needs a nilable receiver, got ${object.show}")
+        return object
+      }
+      self.fail(expr.loc, "or takes one fallback")
+      return object
+    }
     if str_eq(expr.callee, "with") {
       if self.is_mutex_ty(object) {
         return self.check_mutex_with(expr, object)
@@ -6441,6 +6547,13 @@ pub class Checker {
       self.fail(expr.loc, "to_buf takes no arguments")
       return self.t_buf()
     }
+    if str_eq(expr.callee, "chars") {
+      if expr.args.size == 0 {
+        return ty_array(self.t_string())
+      }
+      self.fail(expr.loc, "chars takes no arguments")
+      return ty_array(self.t_string())
+    }
     self.fail(expr.loc, "no method ${expr.callee} on Bytes")
     self.t_bytes()
   }
@@ -6497,6 +6610,13 @@ pub class Checker {
       }
       self.fail(expr.loc, "bytes takes no arguments")
       return self.t_bytes()
+    }
+    if str_eq(expr.callee, "chars") {
+      if expr.args.size == 0 {
+        return ty_array(self.t_string())
+      }
+      self.fail(expr.loc, "chars takes no arguments")
+      return ty_array(self.t_string())
     }
     if str_eq(expr.callee, "to_f") {
       if expr.args.size == 0 {
@@ -6642,14 +6762,14 @@ pub class Checker {
       if expr.args.size == 1 {
       } else {
         self.fail(expr.loc, "starts_with takes one String")
-        return self.t_int()
+        return self.t_bool()
       }
       s = self.check_expr_as(expr.args[0], self.t_string())
       if ty_assignable(s, self.t_string()) {
       } else {
         self.fail(expr.args[0].loc, "starts_with expects String")
       }
-      return self.t_int()
+      return self.t_bool()
     }
     if str_eq(expr.callee, "to_s") {
       if expr.args.size == 0 {
@@ -6848,6 +6968,34 @@ pub class Checker {
           self.fail(expr.args[0].loc, "contains expects ${e.show}")
         }
       }
+      return self.t_bool()
+    }
+    if str_eq(expr.callee, "any") || str_eq(expr.callee, "all") {
+      pred_name = expr.callee
+      if expr.args.size == 0 {
+      } else {
+        self.fail(expr.loc, "${pred_name} takes a block, not arguments")
+        return self.t_bool()
+      }
+      if b = expr.block {
+        if b.params.size == 1 {
+        } else {
+          self.fail(b.loc, "${pred_name} { |x| ... } takes one block parameter")
+          return self.t_bool()
+        }
+        if e = array.inner {
+          self.push_scope
+          self.bind(b.params[0], e)
+          bt = self.check_block_value(b)
+          self.pop_scope
+          if bt.is_bool {
+          } else {
+            self.fail(b.loc, "${pred_name} predicate must return Bool")
+          }
+        }
+        return self.t_bool()
+      }
+      self.fail(expr.loc, "${pred_name} needs a block")
       return self.t_bool()
     }
     if str_eq(expr.callee, "index_of") {
@@ -7634,6 +7782,7 @@ pub class Checker {
       return
     }
     if k == st_while() {
+      self.walk_spawn_stmts(stmt.pre, node, seen)
       if c = stmt.cond {
         self.walk_spawn_expr(c, node, seen)
       }
