@@ -1,0 +1,32 @@
+fn test_testing_docs(c: Checks) {
+  c.suite("tests/cases/testing_docs.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+
+    greet_src = "/tmp/avant-wavei-${stamp}-test-greet.av"
+    greet_body = "fn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn check(cond: Bool, name: String) {\n  if cond {\n    puts(\"PASS \${name}\")\n  } else {\n    puts(\"FAIL \${name}\")\n  }\n}\n\nfn main {\n  check(greet(\"Ada\") == \"Hello, Ada\", \"greet uses the name\")\n  check(greet(\"\") == \"Hello, \", \"greet handles empty\")\n}\n"
+    dummy_g = file_write(greet_src, greet_body)
+    greet_log = "/tmp/avant-wavei-${stamp}-greet.log"
+    greet_code = run_av_cmd(compiler, greet_src, greet_log)
+    c.eq_int(greet_code, 0, "README greet test runs")
+    if text = file_read(greet_log) {
+      c.eq_str(text, "PASS greet uses the name\nPASS greet handles empty\n", "README greet test output")
+    } else {
+      c.expect(false, "README greet test output")
+    }
+
+    table_src = "/tmp/avant-wavei-${stamp}-test-table.av"
+    table_body = "fn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn check(cond: Bool, name: String) {\n  if cond {\n    puts(\"PASS \${name}\")\n  } else {\n    puts(\"FAIL \${name}\")\n  }\n}\n\nfn main {\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  i = 0\n  while i < names.size {\n    check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n    i = i + 1\n  }\n}\n"
+    dummy_t = file_write(table_src, table_body)
+    table_log = "/tmp/avant-wavei-${stamp}-table.log"
+    table_code = run_av_cmd(compiler, table_src, table_log)
+    c.eq_int(table_code, 0, "README table test runs")
+    if text = file_read(table_log) {
+      c.eq_str(text, "PASS greet Ada\nPASS greet Bo\nPASS greet Cy\n", "README table test output")
+    } else {
+      c.expect(false, "README table test output")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}

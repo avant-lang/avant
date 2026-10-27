@@ -118,15 +118,34 @@ fn xml_escape(s: String): String {
 }
 
 fn junit_path: String {
+  base = "junit.xml"
   if v = env_get("AVANT_JUNIT") {
     if str_eq(v, "0") {
       return ""
     }
     if v.size > 0 {
-      return v
+      base = v
     }
   }
-  "junit.xml"
+  if shard = env_get("AVANT_TEST_SHARD") {
+    if shard.size > 0 {
+      tag = shard
+      i = 0
+      while i < tag.size {
+        if tag[i] == 47 {
+          tag = "${str_slice(tag, 0, i)}of${str_slice(tag, i + 1, tag.size)}"
+          i = tag.size
+        } else {
+          i = i + 1
+        }
+      }
+      if str_ends(base, ".xml") {
+        return "${str_slice(base, 0, base.size - 4)}-shard${tag}.xml"
+      }
+      return "${base}-shard${tag}"
+    }
+  }
+  base
 }
 
 fn avant_test_root: String {
@@ -368,6 +387,9 @@ fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
   args.push("compile")
   args.push(src)
   args.push(bin)
+  // Test programs are compiled fast, as before Wave I made bare
+  // compile select myc default. toolchain.av covers the verb default.
+  args.push("--debug")
   process_run_out(compiler, args, log)
 }
 
@@ -376,10 +398,24 @@ fn compile_av_flags(compiler: String, src: String, bin: String, log: String, ext
   args.push("compile")
   args.push(src)
   args.push(bin)
+  has_codegen = false
   i = 0
   while i < extra.size {
+    if str_eq(extra[i], "--debug") {
+      has_codegen = true
+    }
+    if str_eq(extra[i], "--release") {
+      has_codegen = true
+    }
+    if str_eq(extra[i], "--final") {
+      has_codegen = true
+    }
     args.push(extra[i])
     i = i + 1
+  }
+  if has_codegen {
+  } else {
+    args.push("--debug")
   }
   process_run_out(compiler, args, log)
 }

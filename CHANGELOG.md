@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+* Test runner parallelism: `AVANT_TEST_JOBS=N` runs the suite across parallel shard processes (`AVANT_TEST_CASES` selects cases, `AVANT_TEST_SHARD=i/n` runs one shard); isolated cases still run alone, and each shard writes its own JUnit file.
+* README Testing section, with its examples exercised by `tests/cases/testing_docs.av`.
+
+### Changed
+* Codegen splits by verb: bare `avant run` keeps `--debug`; bare `avant compile` uses myc `default` (75.5% faster at runtime on the 49-task gate scope). Explicit `--debug`/`--release`/`--final` win on either verb; `AVANT_MYC_FINAL` and `AVANT_MYC_DEBUG` no longer select codegen.
+* Coverage moved out of the required `native` gate into a separate `coverage` workflow; the suite's internal compiles pin `--debug`.
+
 ## 0.16.0 - 2026-10-27
 
 ### Added

@@ -1,5 +1,24 @@
 // Directory runner. Concat is generated; adding tests/cases/foo.av does not edit this file.
 //   AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
+//
+// Selection and parallelism (all optional; no env means the full suite,
+// sequentially, as always). These variables are internal harness
+// plumbing, not user-facing usage: when `avant test` ships (Wave L in
+// avant-ledgers/stages/make-it-right.md), these knobs belong to that
+// verb as flags, and this runner is rebuilt on top of it or the wave
+// records why not.
+//   AVANT_TEST_CASES=ffi,sugar   run only these cases (stem or file name)
+//   AVANT_TEST_SHARD=2/4         run shard 2 of 4 of the parallel-safe cases
+//   AVANT_TEST_JOBS=4            run 4 shard processes in parallel, then the
+//                                serial and isolated cases sequentially
+// Cases in isolated_cases() never run inside a shard: they compile the
+// compiler, probe the collector, rewrite PATH for children, or use git.
+// Run one on its own with AVANT_TEST_CASES, or let AVANT_TEST_JOBS run
+// them after the shards. Cases in serial_cases() share the working
+// directory and likewise stay out of shards. Each shard writes its own
+// junit file (AVANT_JUNIT with a -shardIofN suffix). In CI, the matrix
+// equivalent is one job per AVANT_TEST_SHARD plus one job per isolated
+// case via AVANT_TEST_CASES.
 
 fn str_eq(a: String, b: String): Bool {
   if a.size != b.size {
@@ -77,6 +96,224 @@ fn valid_case_name(name: String): Bool {
     i = i + 1
   }
   true
+}
+
+fn isolated_cases: Array(String) {
+  names: Array(String) = []
+  names.push("fixed_point.av")
+  names.push("gc.av")
+  names.push("safepoints.av")
+  names.push("packages.av")
+  names.push("ffi.av")
+  names
+}
+
+fn serial_cases: Array(String) {
+  names: Array(String) = []
+  names.push("coverage.av")
+  names
+}
+
+fn in_names(list: Array(String), name: String): Bool {
+  i = 0
+  while i < list.size {
+    if str_eq(list[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn parse_small_int(s: String): Int {
+  v = 0
+  i = 0
+  while i < s.size {
+    ch = s[i]
+    if ch >= 48 {
+      if ch <= 57 {
+        v = v * 10 +(ch - 48)
+      } else {
+        return 0
+      }
+    } else {
+      return 0
+    }
+    i = i + 1
+  }
+  v
+}
+
+fn shard_part(spec: String, want_index: Bool): Int {
+  i = 0
+  while i < spec.size {
+    if spec[i] == 47 {
+      if want_index {
+        return parse_small_int(str_slice(spec, 0, i))
+      }
+      return parse_small_int(str_slice(spec, i + 1, spec.size))
+    }
+    i = i + 1
+  }
+  0
+}
+
+fn cases_filter(picked: Array(String), csv: String): Array(String) {
+  want: Array(String) = []
+  parts = csv.split(",")
+  i = 0
+  while i < parts.size {
+    p = parts[i].strip()
+    if p.size > 0 {
+      if str_ends(p, ".av") {
+        want.push(p)
+      } else {
+        want.push("${p}.av")
+      }
+    }
+    i = i + 1
+  }
+  out: Array(String) = []
+  i = 0
+  while i < picked.size {
+    if in_names(want, picked[i]) {
+      out.push(picked[i])
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn parallel_subset(picked: Array(String)): Array(String) {
+  out: Array(String) = []
+  i = 0
+  while i < picked.size {
+    name = picked[i]
+    if in_names(isolated_cases(), name) {
+    } else if in_names(serial_cases(), name) {
+    } else {
+      out.push(name)
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn run_shards(compiler: String, jobs: Int, stamp: Int): Bool {
+  script = "/tmp/avant-s10-${stamp}-jobs.sh"
+  b = buf_new()
+  b.push_str("#!/bin/sh\n")
+  k = 1
+  while k <= jobs {
+    log = "/tmp/avant-s10-${stamp}-shard${k}.log"
+    rc = "/tmp/avant-s10-${stamp}-shard${k}.rc"
+    b.push_str("AVANT_TEST_JOBS= AVANT_TEST_SHARD=${k}/${jobs} ${compiler} run tests/run.av > ${log} 2>&1; echo $? > ${rc} &\n")
+    k = k + 1
+  }
+  b.push_str("wait\n")
+  w = file_write(script, b.to_s)
+  if w != 0 {
+    puts("FAIL  tests/run.av")
+    puts("cannot write shard script ${script}")
+    return false
+  }
+  chmod_args: Array(String) = []
+  chmod_args.push("+x")
+  chmod_args.push(script)
+  dummy_c = process_run("/bin/chmod", chmod_args)
+  sh_args: Array(String) = []
+  sh_args.push(script)
+  dummy_s = process_run("/bin/sh", sh_args)
+  ok = true
+  k = 1
+  while k <= jobs {
+    log = "/tmp/avant-s10-${stamp}-shard${k}.log"
+    if text = file_read(log) {
+      puts(text)
+      if str_has(text, " failed,") {
+        ok = false
+      }
+      if str_has(text, "FAIL  tests/run.av") {
+        ok = false
+      }
+    } else {
+      puts("FAIL  tests/run.av")
+      puts("missing shard log ${log}")
+      ok = false
+    }
+    rc_path = "/tmp/avant-s10-${stamp}-shard${k}.rc"
+    if rc_text = file_read(rc_path) {
+      if str_eq(rc_text.strip(), "0") {
+      } else {
+        ok = false
+      }
+    } else {
+      ok = false
+    }
+    k = k + 1
+  }
+  // Serial and isolated cases run alone, after the shards.
+  tail: Array(String) = []
+  iso = isolated_cases()
+  i = 0
+  while i < iso.size {
+    tail.push(drop_av(iso[i]))
+    i = i + 1
+  }
+  ser = serial_cases()
+  i = 0
+  while i < ser.size {
+    tail.push(drop_av(ser[i]))
+    i = i + 1
+  }
+  csv = ""
+  i = 0
+  while i < tail.size {
+    if i > 0 {
+      csv = "${csv},"
+    }
+    csv = "${csv}${tail[i]}"
+    i = i + 1
+  }
+  tail_log = "/tmp/avant-s10-${stamp}-tail.log"
+  tail_args: Array(String) = []
+  tail_args.push("AVANT_TEST_JOBS=")
+  tail_args.push("AVANT_TEST_CASES=${csv}")
+  tail_args.push(compiler)
+  tail_args.push("run")
+  tail_args.push("tests/run.av")
+  tail_code = process_run_out("/usr/bin/env", tail_args, tail_log)
+  if text = file_read(tail_log) {
+    puts(text)
+    if str_has(text, " failed,") {
+      ok = false
+    }
+    if str_has(text, "FAIL  tests/run.av") {
+      ok = false
+    }
+  }
+  if tail_code != 0 {
+    ok = false
+  }
+  ok
+}
+
+fn str_has(s: String, needle: String): Bool {
+  if needle.size == 0 {
+    return true
+  }
+  if needle.size > s.size {
+    return false
+  }
+  i = 0
+  last = s.size - needle.size
+  while i <= last {
+    if str_eq(str_slice(s, i, i + needle.size), needle) {
+      return true
+    }
+    i = i + 1
+  }
+  false
 }
 
 fn avant_test_root: String {
@@ -193,12 +430,83 @@ fn main {
       write_runner_junit_fail()
       return
     }
+    picked.sort
+    all_names = picked
     stamp = now_ms()
+    if jobs_v = env_get("AVANT_TEST_JOBS") {
+      jobs = parse_small_int(jobs_v.strip())
+      shard_set = false
+      if s = env_get("AVANT_TEST_SHARD") {
+        if s.size > 0 {
+          shard_set = true
+        }
+      }
+      cases_set = false
+      if cv = env_get("AVANT_TEST_CASES") {
+        if cv.size > 0 {
+          cases_set = true
+        }
+      }
+      if jobs > 1 {
+        if shard_set {
+        } else if cases_set {
+        } else {
+          if run_shards(compiler, jobs, stamp) {
+            return
+          }
+          puts("FAIL  tests/run.av")
+          write_runner_junit_fail()
+          return
+        }
+      }
+    }
+    if cv = env_get("AVANT_TEST_CASES") {
+      if cv.strip().size > 0 {
+        picked = cases_filter(picked, cv)
+      }
+    } else if spec = env_get("AVANT_TEST_SHARD") {
+      if spec.strip().size > 0 {
+        idx = shard_part(spec.strip(), true)
+        cnt = shard_part(spec.strip(), false)
+        if idx < 1 {
+          puts("FAIL  tests/run.av")
+          puts("bad AVANT_TEST_SHARD ${spec}")
+          write_runner_junit_fail()
+          return
+        }
+        if cnt < idx {
+          puts("FAIL  tests/run.av")
+          puts("bad AVANT_TEST_SHARD ${spec}")
+          write_runner_junit_fail()
+          return
+        }
+        par = parallel_subset(picked)
+        sharded: Array(String) = []
+        i = 0
+        while i < par.size {
+          if i % cnt == idx - 1 {
+            sharded.push(par[i])
+          }
+          i = i + 1
+        }
+        picked = sharded
+      }
+    }
+    if picked.size == 0 {
+      puts("FAIL  tests/run.av")
+      puts("no tests/cases/*.av selected")
+      write_runner_junit_fail()
+      return
+    }
     suite_src = "/tmp/avant-s10-${stamp}-suite.av"
     bin = "/tmp/avant-s10-${stamp}-suite.bin"
     log = "/tmp/avant-s10-${stamp}-suite.log"
+    // Stitch every case file, not only the selected ones: case files
+    // share top-level helpers (s12_* from modules.av is used by
+    // diagnostics, errors, and interfaces). Only the selected
+    // test_* functions are called.
     generated = generate_main(picked)
-    if text = stitch_suite(harness, cases, picked, generated) {
+    if text = stitch_suite(harness, cases, all_names, generated) {
       dummy = file_write(suite_src, text)
     } else {
       puts("FAIL  tests/run.av")
@@ -210,6 +518,7 @@ fn main {
     args.push("compile")
     args.push(suite_src)
     args.push(bin)
+    args.push("--debug")
     code = process_run_out(compiler, args, log)
     if code != 0 {
       puts("FAIL  tests/run.av")
