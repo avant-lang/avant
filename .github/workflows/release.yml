@@ -1,7 +1,7 @@
-# On a version tag: the v0.12.0 seed builds B, the suite runs on B,
+# On a version tag: the v0.13.0 seed builds B, the suite runs on B,
 # then a draft GitHub Release is opened with the linux-x86_64 compiler.
 #
-# The seed is avant-linux-x86_64.tar.gz from v0.12.0. It contains `avant`.
+# The seed is avant-linux-x86_64.tar.gz from v0.13.0. It contains `avant`.
 # `myc-llvm` is the safepoints v0.4.0 release, checked by sha256, and is
 # not copied into the new asset. This job does not install Crystal and
 # does not compile myc-llvm.
@@ -9,7 +9,7 @@
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
-# is named `avant`. Do not dispatch this workflow onto v0.12.0: that
+# is named `avant`. Do not dispatch this workflow onto v0.13.0: that
 # tag's asset is the seed, and an upload would replace it.
 #
 # The suite runs before any release is created. A new tag becomes a
@@ -28,7 +28,7 @@ name: release-binary
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and attach (not v0.12.0)
+        description: Existing tag to build and attach (not v0.13.0)
         required: true
         type: string
 
@@ -70,11 +70,11 @@ jobs:
       - name: Build runtime objects
         run: sh runtime/build.sh
 
-      - name: Download v0.12.0 compiler
+      - name: Download v0.13.0 compiler
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/avant-seed.tar.gz \
-            https://github.com/avant-lang/avant/releases/download/v0.12.0/avant-linux-x86_64.tar.gz
+            https://github.com/avant-lang/avant/releases/download/v0.13.0/avant-linux-x86_64.tar.gz
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
@@ -125,7 +125,7 @@ jobs:
             fi
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
-            echo "built-by: v0.12.0"
+            echo "built-by: v0.13.0"
             echo "seed: yes"
             echo "binary: avant"
           } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
@@ -134,7 +134,7 @@ jobs:
           {
             echo "linux-x86_64 compiler \`avant\`."
             echo
-            echo "Built by the v0.12.0 seed. This asset does not contain \`myc-llvm\`."
+            echo "Built by the v0.13.0 seed. This asset does not contain \`myc-llvm\`."
             echo "Download safepoints v0.4.0 \`myc-llvm-linux-x86_64.tar.gz\` and set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
             echo "https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz"
             echo "sha256 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e"
