@@ -1,5 +1,9 @@
 # Avant Language changelog
 
+## Unreleased
+
+Nothing yet.
+
 ## 0.13.0 - 2026-10-27
 
 ### Added
