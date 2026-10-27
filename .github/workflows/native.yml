@@ -1,11 +1,12 @@
 # The published seed (AVANT_SEED_VERSION below) → B, then native suite on B. Required gate.
 #
 # The seed is the published asset avant-linux-x86_64.tar.gz. `avant` in
-# that asset compiles compiler/main.av into B. Coverage is collected by
-# the separate `coverage` workflow, not here: an instrumented B made
-# every child compile in the suite pay for coverage, roughly doubling
-# this gate's suite time (365s against 159-183s for the same suite in
-# the `seed` and `release` workflows on the same runner image).
+# that asset compiles compiler/main.av into B with coverage on. Per-PR
+# coverage is a deliberate, accepted cost: an instrumented B makes
+# every child compile in the suite pay for coverage (suite 365s
+# against 159-183s uninstrumented on the same runner image), and
+# Codecov needs the master-push data as its diff baseline, so this
+# job runs on pull requests and on pushes to master alike.
 # `myc-llvm` is the safepoints release (SAFEPOINTS_VERSION below), checked by sha256.
 # This job does not install Crystal and does not compile myc-llvm.
 # AVANT_MYC_LLVM points at the extracted backend.
@@ -19,10 +20,12 @@
 # with this same safepoints myc-llvm). Since Wave G the Avant
 # asset bundles myc-llvm beside avant; this job still uses its own
 # hash-pinned backend through AVANT_MYC_LLVM.
-# `native` also writes junit.xml (soft Codecov test analytics; not the
-# merge gate). Coverage (lcov.info) is the `coverage` workflow's job.
-# The compiler CLI is quiet anyway so `run FILE.av` stdout stays the
-# program. A `--coverage` fixture still prints.
+# `native` also writes junit.xml and lcov.info (soft Codecov; not the
+# merge gate). Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is
+# quiet anyway so `run FILE.av` stdout stays the program. A
+# `--coverage` fixture still prints. The suite runs sequentially
+# here (no AVANT_TEST_JOBS): parallel shard processes would run
+# several instrumented compilers against one shared coverage map.
 # Push is `master` only so a same-repo PR is not a second identical run
 # (`pull_request` already covers the branch; tags never hit this workflow).
 
@@ -94,10 +97,16 @@ jobs:
           test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
 
       - name: Seed → B
+        env:
+          AVANT_COVERAGE: "1"
+          AVANT_COVERAGE_MAP: ${{ github.workspace }}/coverage.map
         run: |
           set -euo pipefail
           /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-av-b --debug
 
+      # Do not inherit AVANT_COVERAGE here. B would compile hello with
+      # coverage and overwrite coverage.map, and the suite would then
+      # report examples/hello.av instead of compiler/*.av.
       - name: Smoke hello
         run: ./bin/avant-av-b run examples/hello.av
 
@@ -105,10 +114,8 @@ jobs:
         env:
           AVANT_COMPILER: ./bin/avant-av-b
           AVANT_JUNIT: junit.xml
-          # Three shard processes in parallel; serial and isolated
-          # cases still run alone afterwards (tests/run.av). Each
-          # shard writes junit-shardIofN.xml beside junit.xml.
-          AVANT_TEST_JOBS: "3"
+          AVANT_COVERAGE_LCOV: lcov.info
+          AVANT_COVERAGE_REPORT: "0"
         run: |
           set -euo pipefail
           ./bin/avant-av-b run tests/run.av | tee native.log
@@ -121,14 +128,25 @@ jobs:
           grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
           grep -q 'Ran all test suites.' native.log
 
-      - name: Upload JUnit
+      - name: Upload LCOV and JUnit
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: native-reports
           path: |
-            junit*.xml
+            junit.xml
+            lcov.info
           if-no-files-found: warn
+
+      - name: Codecov coverage (soft)
+        if: always()
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
+          disable_search: true
 
       - name: Codecov test analytics (soft)
         if: always()
