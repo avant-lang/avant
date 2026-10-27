@@ -515,11 +515,15 @@ fn main {
 
 `size` is the byte length. Strings are not mutated in place. Concatenation allocates a new string.
 
+`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`.
+
 ### Arrays, again
 
 Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
-Indexing an `Array`, `String`, or `Buf` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
+Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
+
+`sort` orders `Int`, `Int64`, `UInt64`, `Float64` (NaN last), `String` and `Bytes` (byte order), and `Bool` elements in place, or any element type with a comparator block `sort { |a, b| ... }` returning `Bool`; `sorted` returns a new array and leaves the original alone. `reverse`, `contains(x)`, `index_of(x): Int?`, `min` / `max: T?`, and `sum` cover the other common scans. Hashes add `keys`, `values`, `has_key(k)`, `get_or(k, default)`, `inc(k, by = 1)`, and `each { |k, v| ... }`; `keys` and `values` are in unspecified order.
 
 ```avant
 fn main {

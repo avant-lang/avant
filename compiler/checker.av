@@ -101,6 +101,9 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
   if k == tyk_buf() {
     return TypeName.new(loc, "Buf")
   }
+  if k == tyk_bytes() {
+    return TypeName.new(loc, "Bytes")
+  }
   if k == tyk_nil() {
     return TypeName.new(loc, "Nil")
   }
@@ -2543,6 +2546,61 @@ pub class Checker {
   pub fn t_void: Ty { self.resolver.t_void }
   pub fn t_nil: Ty { self.resolver.t_nil }
   pub fn t_buf: Ty { self.resolver.t_buf }
+  pub fn t_bytes: Ty { self.resolver.t_bytes }
+
+  pub fn is_ordered_ty(ty: Ty): Bool {
+    if ty.is_int {
+      return true
+    }
+    if ty.is_int64 {
+      return true
+    }
+    if ty.is_uint64 {
+      return true
+    }
+    if ty.is_float {
+      return true
+    }
+    if ty.is_string {
+      return true
+    }
+    if ty.is_bool {
+      return true
+    }
+    ty.is_bytes
+  }
+
+  pub fn is_numeric_ty(ty: Ty): Bool {
+    if ty.is_int {
+      return true
+    }
+    if ty.is_int64 {
+      return true
+    }
+    if ty.is_uint64 {
+      return true
+    }
+    ty.is_float
+  }
+
+  pub fn is_eq_ty(ty: Ty): Bool {
+    if self.is_ordered_ty(ty) {
+      return true
+    }
+    if ty.is_class {
+      return true
+    }
+    if ty.is_array {
+      return true
+    }
+    if ty.is_hash {
+      return true
+    }
+    if ty.is_buf {
+      return true
+    }
+    ty.is_bytes
+  }
 
   pub fn check: Program {
     self.resolver = load_types(self.program)
@@ -4306,6 +4364,10 @@ pub class Checker {
         if str_eq(expr.ident, "size") {
           return self.t_int()
         }
+        if str_eq(expr.ident, "bytes") {
+          expr.method_call = true
+          return self.t_bytes()
+        }
         if str_eq(expr.ident, "to_f") {
           expr.method_call = true
           return self.t_float()
@@ -4315,6 +4377,17 @@ pub class Checker {
           return self.t_int()
         }
         self.fail(expr.loc, "String has no field ${expr.ident} (did you mean size?)")
+        return self.t_int()
+      }
+      if object.is_bytes {
+        if str_eq(expr.ident, "size") {
+          return self.t_int()
+        }
+        if str_eq(expr.ident, "to_buf") {
+          expr.method_call = true
+          return self.t_buf()
+        }
+        self.fail(expr.loc, "Bytes has no field ${expr.ident} (did you mean size?)")
         return self.t_int()
       }
       if object.is_array {
@@ -4335,12 +4408,66 @@ pub class Checker {
         if str_eq(expr.ident, "sort") {
           expr.method_call = true
           if e = object.inner {
-            if e.is_int {
+            if self.is_ordered_ty(e) {
             } else {
-              self.fail(expr.loc, "Array.sort is Int-only in Stage 7")
+              self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
             }
           }
           return self.t_void()
+        }
+        if str_eq(expr.ident, "sorted") {
+          expr.method_call = true
+          if e = object.inner {
+            if self.is_ordered_ty(e) {
+            } else {
+              self.fail(expr.loc, "Array.sorted needs an ordered element type or a comparator block")
+            }
+            return ty_array(e)
+          }
+          return ty_array(self.t_int())
+        }
+        if str_eq(expr.ident, "reverse") {
+          expr.method_call = true
+          return self.t_void()
+        }
+        if str_eq(expr.ident, "min") {
+          expr.method_call = true
+          if e = object.inner {
+            if self.is_ordered_ty(e) {
+              if e.is_bool {
+                self.fail(expr.loc, "Array.min needs an ordered element type")
+              }
+            } else {
+              self.fail(expr.loc, "Array.min needs an ordered element type")
+            }
+            return ty_nilable(e)
+          }
+          return ty_nilable(self.t_int())
+        }
+        if str_eq(expr.ident, "max") {
+          expr.method_call = true
+          if e = object.inner {
+            if self.is_ordered_ty(e) {
+              if e.is_bool {
+                self.fail(expr.loc, "Array.max needs an ordered element type")
+              }
+            } else {
+              self.fail(expr.loc, "Array.max needs an ordered element type")
+            }
+            return ty_nilable(e)
+          }
+          return ty_nilable(self.t_int())
+        }
+        if str_eq(expr.ident, "sum") {
+          expr.method_call = true
+          if e = object.inner {
+            if self.is_numeric_ty(e) {
+              return e
+            }
+            self.fail(expr.loc, "Array.sum needs a numeric element type")
+            return e
+          }
+          return self.t_int()
         }
         self.fail(expr.loc, "${object.show} has no field ${expr.ident} (did you mean size?)")
         return self.t_int()
@@ -4348,6 +4475,20 @@ pub class Checker {
       if object.is_hash {
         if str_eq(expr.ident, "size") {
           return self.t_int()
+        }
+        if str_eq(expr.ident, "keys") {
+          expr.method_call = true
+          if k = object.key {
+            return ty_array(k)
+          }
+          return ty_array(self.t_int())
+        }
+        if str_eq(expr.ident, "values") {
+          expr.method_call = true
+          if v = object.val {
+            return ty_array(v)
+          }
+          return ty_array(self.t_int())
         }
         if str_eq(expr.ident, "clear") {
           expr.method_call = true
@@ -4359,6 +4500,10 @@ pub class Checker {
       if object.is_buf {
         if str_eq(expr.ident, "size") {
           return self.t_int()
+        }
+        if str_eq(expr.ident, "to_bytes") {
+          expr.method_call = true
+          return self.t_bytes()
         }
         if str_eq(expr.ident, "to_s") {
           expr.method_call = true
@@ -4606,7 +4751,7 @@ pub class Checker {
           }
         }
         container = self.check_expr(arr)
-        if container.is_string || container.is_buf {
+        if container.is_string || container.is_buf || container.is_bytes {
           got = self.check_expr_as(ix, self.t_int())
           if got.is_int {
           } else {
@@ -5258,6 +5403,9 @@ pub class Checker {
         } else if left.is_string {
           right_has = true
           right_want = left
+        } else if left.is_bytes {
+          right_has = true
+          right_want = left
         }
         right = self.check_expr_flag(r, right_has, right_want)
         if left.is_fn {
@@ -5293,6 +5441,18 @@ pub class Checker {
             }
             self.fail(expr.loc, "unsupported operator on String")
             return self.t_string()
+          }
+        }
+        if left.is_bytes {
+          if right.is_bytes {
+            if op == tk_eq_eq() {
+              return self.t_bool()
+            }
+            if op == tk_not_eq() {
+              return self.t_bool()
+            }
+            self.fail(expr.loc, "unsupported operator on Bytes")
+            return self.t_bool()
           }
         }
         if op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star() {
@@ -6082,6 +6242,23 @@ pub class Checker {
         i = i + 1
       }
     }
+    if recv.kind == ex_name() {
+      if str_eq(recv.ident, "String") {
+        if str_eq(expr.callee, "from_utf8") {
+          if expr.args.size == 1 {
+          } else {
+            self.fail(expr.loc, "String.from_utf8 takes one Bytes")
+            return ty_nilable(self.t_string())
+          }
+          got = self.check_expr_as(expr.args[0], self.t_bytes())
+          if got.is_bytes {
+          } else {
+            self.fail(expr.args[0].loc, "String.from_utf8 expects Bytes")
+          }
+          return ty_nilable(self.t_string())
+        }
+      }
+    }
     object = self.check_expr(recv)
     if str_eq(expr.callee, "with") {
       if self.is_mutex_ty(object) {
@@ -6096,6 +6273,9 @@ pub class Checker {
     }
     if object.is_string {
       return self.check_string_method(expr)
+    }
+    if object.is_bytes {
+      return self.check_bytes_method(expr)
     }
     if object.is_array {
       return self.check_array_method(expr, object)
@@ -6218,10 +6398,105 @@ pub class Checker {
     object
   }
 
+  pub fn check_bytes_method(expr: Expr): Ty {
+    if b = expr.block {
+      self.fail(expr.loc, "Bytes.${expr.callee} does not take a block")
+      return self.t_bytes()
+    }
+    if str_eq(expr.callee, "get") {
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "get takes one Int")
+        return ty_nilable(self.t_int())
+      }
+      got = self.check_expr_as(expr.args[0], self.t_int())
+      if got.is_int {
+      } else {
+        self.fail(expr.args[0].loc, "get index must be Int")
+      }
+      return ty_nilable(self.t_int())
+    }
+    if str_eq(expr.callee, "slice") {
+      if expr.args.size == 2 {
+      } else {
+        self.fail(expr.loc, "slice takes start and stop")
+        return self.t_bytes()
+      }
+      a = self.check_expr_as(expr.args[0], self.t_int())
+      bb = self.check_expr_as(expr.args[1], self.t_int())
+      if a.is_int {
+        if bb.is_int {
+        } else {
+          self.fail(expr.loc, "slice bounds must be Int")
+        }
+      } else {
+        self.fail(expr.loc, "slice bounds must be Int")
+      }
+      return self.t_bytes()
+    }
+    if str_eq(expr.callee, "to_buf") {
+      if expr.args.size == 0 {
+        return self.t_buf()
+      }
+      self.fail(expr.loc, "to_buf takes no arguments")
+      return self.t_buf()
+    }
+    self.fail(expr.loc, "no method ${expr.callee} on Bytes")
+    self.t_bytes()
+  }
+
   pub fn check_string_method(expr: Expr): Ty {
     if b = expr.block {
       self.fail(expr.loc, "String.${expr.callee} does not take a block")
       return self.t_string()
+    }
+    if str_eq(expr.callee, "split") {
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "split takes one String separator")
+        return ty_array(self.t_string())
+      }
+      got = self.check_expr_as(expr.args[0], self.t_string())
+      if ty_assignable(got, self.t_string()) {
+      } else {
+        self.fail(expr.args[0].loc, "split expects String separator")
+      }
+      return ty_array(self.t_string())
+    }
+    if str_eq(expr.callee, "fields") {
+      if expr.args.size == 0 {
+        return ty_array(self.t_string())
+      }
+      self.fail(expr.loc, "fields takes no arguments")
+      return ty_array(self.t_string())
+    }
+    if str_eq(expr.callee, "strip") {
+      if expr.args.size == 0 {
+        return self.t_string()
+      }
+      self.fail(expr.loc, "strip takes no arguments")
+      return self.t_string()
+    }
+    if str_eq(expr.callee, "strip_left") {
+      if expr.args.size == 0 {
+        return self.t_string()
+      }
+      self.fail(expr.loc, "strip_left takes no arguments")
+      return self.t_string()
+    }
+    if str_eq(expr.callee, "strip_right") {
+      if expr.args.size == 0 {
+        return self.t_string()
+      }
+      self.fail(expr.loc, "strip_right takes no arguments")
+      return self.t_string()
+    }
+    if str_eq(expr.callee, "bytes") {
+      if expr.args.size == 0 {
+        return self.t_bytes()
+      }
+      self.fail(expr.loc, "bytes takes no arguments")
+      return self.t_bytes()
     }
     if str_eq(expr.callee, "to_f") {
       if expr.args.size == 0 {
@@ -6258,6 +6533,26 @@ pub class Checker {
     if b = expr.block {
       self.fail(expr.loc, "Buf.${expr.callee} does not take a block")
       return self.t_void()
+    }
+    if str_eq(expr.callee, "push_bytes") {
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "push_bytes takes one Bytes")
+        return self.t_void()
+      }
+      got = self.check_expr_as(expr.args[0], self.t_bytes())
+      if got.is_bytes {
+      } else {
+        self.fail(expr.args[0].loc, "push_bytes expects Bytes")
+      }
+      return self.t_void()
+    }
+    if str_eq(expr.callee, "to_bytes") {
+      if expr.args.size == 0 {
+        return self.t_bytes()
+      }
+      self.fail(expr.loc, "to_bytes takes no arguments")
+      return self.t_bytes()
     }
     if str_eq(expr.callee, "push_byte") {
       if expr.args.size == 1 {
@@ -6448,21 +6743,204 @@ pub class Checker {
       return self.t_void()
     }
     if str_eq(expr.callee, "sort") {
-      if b = expr.block {
-        self.fail(expr.loc, "sort does not take a block")
+      if expr.args.size == 0 {
+      } else {
+        self.fail(expr.loc, "sort takes no arguments")
         return self.t_void()
       }
-      if expr.args.size == 0 {
+      if b = expr.block {
+        if b.params.size == 2 {
+        } else {
+          self.fail(b.loc, "sort { |a, b| ... } takes two block parameters")
+          return self.t_void()
+        }
         if e = array.inner {
-          if e.is_int {
+          self.push_scope
+          self.bind(b.params[0], e)
+          self.bind(b.params[1], e)
+          bt = self.check_block_value(b)
+          self.pop_scope
+          if bt.is_bool {
           } else {
-            self.fail(expr.loc, "Array.sort is Int-only in Stage 7")
+            self.fail(b.loc, "sort comparator must return Bool")
           }
         }
         return self.t_void()
       }
-      self.fail(expr.loc, "sort takes no arguments")
+      if e = array.inner {
+        if self.is_ordered_ty(e) {
+        } else {
+          self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
+        }
+      }
       return self.t_void()
+    }
+    if str_eq(expr.callee, "sorted") {
+      if expr.args.size == 0 {
+      } else {
+        self.fail(expr.loc, "sorted takes no arguments")
+        if e = array.inner {
+          return ty_array(e)
+        }
+        return ty_array(self.t_int())
+      }
+      if b = expr.block {
+        if b.params.size == 2 {
+        } else {
+          self.fail(b.loc, "sorted { |a, b| ... } takes two block parameters")
+          if e = array.inner {
+            return ty_array(e)
+          }
+          return ty_array(self.t_int())
+        }
+        if e = array.inner {
+          self.push_scope
+          self.bind(b.params[0], e)
+          self.bind(b.params[1], e)
+          bt = self.check_block_value(b)
+          self.pop_scope
+          if bt.is_bool {
+          } else {
+            self.fail(b.loc, "sorted comparator must return Bool")
+          }
+          return ty_array(e)
+        }
+        return ty_array(self.t_int())
+      }
+      if e = array.inner {
+        if self.is_ordered_ty(e) {
+        } else {
+          self.fail(expr.loc, "Array.sorted needs an ordered element type or a comparator block")
+        }
+        return ty_array(e)
+      }
+      return ty_array(self.t_int())
+    }
+    if str_eq(expr.callee, "reverse") {
+      if b = expr.block {
+        self.fail(expr.loc, "reverse does not take a block")
+        return self.t_void()
+      }
+      if expr.args.size == 0 {
+        return self.t_void()
+      }
+      self.fail(expr.loc, "reverse takes no arguments")
+      return self.t_void()
+    }
+    if str_eq(expr.callee, "contains") {
+      if b = expr.block {
+        self.fail(expr.loc, "contains does not take a block")
+        return self.t_bool()
+      }
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "contains takes one argument")
+        return self.t_bool()
+      }
+      if e = array.inner {
+        if self.is_eq_ty(e) {
+        } else {
+          self.fail(expr.loc, "Array.contains needs an equality element type")
+        }
+        got = self.check_expr_as(expr.args[0], e)
+        if ty_assignable(got, e) {
+        } else {
+          self.fail(expr.args[0].loc, "contains expects ${e.show}")
+        }
+      }
+      return self.t_bool()
+    }
+    if str_eq(expr.callee, "index_of") {
+      if b = expr.block {
+        self.fail(expr.loc, "index_of does not take a block")
+        return ty_nilable(self.t_int())
+      }
+      if expr.args.size == 1 {
+      } else {
+        self.fail(expr.loc, "index_of takes one argument")
+        return ty_nilable(self.t_int())
+      }
+      if e = array.inner {
+        if self.is_eq_ty(e) {
+        } else {
+          self.fail(expr.loc, "Array.index_of needs an equality element type")
+        }
+        got = self.check_expr_as(expr.args[0], e)
+        if ty_assignable(got, e) {
+        } else {
+          self.fail(expr.args[0].loc, "index_of expects ${e.show}")
+        }
+      }
+      return ty_nilable(self.t_int())
+    }
+    if str_eq(expr.callee, "min") {
+      if b = expr.block {
+        self.fail(expr.loc, "min does not take a block")
+        if e = array.inner {
+          return ty_nilable(e)
+        }
+        return ty_nilable(self.t_int())
+      }
+      if expr.args.size == 0 {
+      } else {
+        self.fail(expr.loc, "min takes no arguments")
+      }
+      if e = array.inner {
+        if self.is_ordered_ty(e) {
+          if e.is_bool {
+            self.fail(expr.loc, "Array.min needs an ordered element type")
+          }
+        } else {
+          self.fail(expr.loc, "Array.min needs an ordered element type")
+        }
+        return ty_nilable(e)
+      }
+      return ty_nilable(self.t_int())
+    }
+    if str_eq(expr.callee, "max") {
+      if b = expr.block {
+        self.fail(expr.loc, "max does not take a block")
+        if e = array.inner {
+          return ty_nilable(e)
+        }
+        return ty_nilable(self.t_int())
+      }
+      if expr.args.size == 0 {
+      } else {
+        self.fail(expr.loc, "max takes no arguments")
+      }
+      if e = array.inner {
+        if self.is_ordered_ty(e) {
+          if e.is_bool {
+            self.fail(expr.loc, "Array.max needs an ordered element type")
+          }
+        } else {
+          self.fail(expr.loc, "Array.max needs an ordered element type")
+        }
+        return ty_nilable(e)
+      }
+      return ty_nilable(self.t_int())
+    }
+    if str_eq(expr.callee, "sum") {
+      if b = expr.block {
+        self.fail(expr.loc, "sum does not take a block")
+        if e = array.inner {
+          return e
+        }
+        return self.t_int()
+      }
+      if expr.args.size == 0 {
+      } else {
+        self.fail(expr.loc, "sum takes no arguments")
+      }
+      if e = array.inner {
+        if self.is_numeric_ty(e) {
+          return e
+        }
+        self.fail(expr.loc, "Array.sum needs a numeric element type")
+        return e
+      }
+      return self.t_int()
     }
     if str_eq(expr.callee, "clear") {
       if b = expr.block {
@@ -6590,6 +7068,152 @@ pub class Checker {
   }
 
   pub fn check_hash_method(expr: Expr, hash: Ty): Ty {
+    if str_eq(expr.callee, "keys") {
+      if expr.args.size == 0 {
+        if b = expr.block {
+          self.fail(expr.loc, "keys takes no arguments")
+        }
+        if k = hash.key {
+          return ty_array(k)
+        }
+        return ty_array(self.t_int())
+      }
+      self.fail(expr.loc, "keys takes no arguments")
+      if k = hash.key {
+        return ty_array(k)
+      }
+      return ty_array(self.t_int())
+    }
+    if str_eq(expr.callee, "values") {
+      if expr.args.size == 0 {
+        if b = expr.block {
+          self.fail(expr.loc, "values takes no arguments")
+        }
+        if v = hash.val {
+          return ty_array(v)
+        }
+        return ty_array(self.t_int())
+      }
+      self.fail(expr.loc, "values takes no arguments")
+      if v = hash.val {
+        return ty_array(v)
+      }
+      return ty_array(self.t_int())
+    }
+    if str_eq(expr.callee, "has_key") {
+      if expr.args.size == 1 {
+        if b = expr.block {
+          self.fail(expr.loc, "has_key takes one key")
+          return self.t_bool()
+        }
+      } else {
+        self.fail(expr.loc, "has_key takes one key")
+        return self.t_bool()
+      }
+      if k = hash.key {
+        got = self.check_expr_as(expr.args[0], k)
+        if ty_assignable(got, k) {
+        } else {
+          self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        }
+      }
+      return self.t_bool()
+    }
+    if str_eq(expr.callee, "get_or") {
+      if expr.args.size == 2 {
+        if b = expr.block {
+          self.fail(expr.loc, "get_or takes key and default")
+          if v = hash.val {
+            return v
+          }
+          return self.t_int()
+        }
+      } else {
+        self.fail(expr.loc, "get_or takes key and default")
+        if v = hash.val {
+          return v
+        }
+        return self.t_int()
+      }
+      if k = hash.key {
+        got = self.check_expr_as(expr.args[0], k)
+        if ty_assignable(got, k) {
+        } else {
+          self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        }
+      }
+      if v = hash.val {
+        got2 = self.check_expr_as(expr.args[1], v)
+        if ty_assignable(got2, v) {
+        } else {
+          self.fail(expr.args[1].loc, "get_or default must be ${v.show}")
+        }
+        return v
+      }
+      return self.t_int()
+    }
+    if str_eq(expr.callee, "inc") {
+      if expr.args.size == 1 || expr.args.size == 2 {
+        if b = expr.block {
+          self.fail(expr.loc, "inc takes key and optional amount")
+          return self.t_int()
+        }
+      } else {
+        self.fail(expr.loc, "inc takes key and optional amount")
+        return self.t_int()
+      }
+      ok = false
+      if v = hash.val {
+        if v.is_int {
+          ok = true
+        }
+      }
+      if ok {
+      } else {
+        self.fail(expr.loc, "inc is Hash(K, Int) only")
+      }
+      if k = hash.key {
+        got = self.check_expr_as(expr.args[0], k)
+        if ty_assignable(got, k) {
+        } else {
+          self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        }
+      }
+      if expr.args.size == 2 {
+        by = self.check_expr_as(expr.args[1], self.t_int())
+        if by.is_int {
+        } else {
+          self.fail(expr.args[1].loc, "inc amount must be Int")
+        }
+      }
+      return self.t_int()
+    }
+    if str_eq(expr.callee, "each") {
+      if b = expr.block {
+        if expr.args.size == 0 {
+        } else {
+          self.fail(expr.loc, "each takes a block, not arguments")
+          return self.t_void()
+        }
+        if b.params.size == 2 {
+        } else {
+          self.fail(b.loc, "each { |k, v| ... } takes two block parameters")
+          return self.t_void()
+        }
+        if k = hash.key {
+          if v = hash.val {
+            self.push_scope
+            self.bind(b.params[0], k)
+            self.bind(b.params[1], v)
+            self.check_body(b.body, self.t_void(), false)
+            self.pop_scope
+          }
+        }
+        return self.t_void()
+      }
+      self.fail(expr.loc, "each needs a block")
+      return self.t_void()
+    }
     if str_eq(expr.callee, "clear") {
       if expr.args.size == 0 {
         if b = expr.block {
@@ -7220,6 +7844,9 @@ pub class Checker {
       return true
     }
     if str_eq(name, "sort") {
+      return true
+    }
+    if str_eq(name, "reverse") {
       return true
     }
     str_eq(name, "reserve")

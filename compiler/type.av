@@ -26,6 +26,7 @@ pub fn tyk_module: Int { 19 }
 pub fn tyk_clayout: Int { 20 }
 pub fn tyk_fn: Int { 21 }
 pub fn tyk_iface: Int { 22 }
+pub fn tyk_bytes: Int { 23 }
 
 pub fn str_lt(a: String, b: String): Bool {
   n = a.size
@@ -110,6 +111,7 @@ pub class Ty {
   pub fn is_union: Bool { self.kind == tyk_union() }
   pub fn is_hash: Bool { self.kind == tyk_hash() }
   pub fn is_buf: Bool { self.kind == tyk_buf() }
+  pub fn is_bytes: Bool { self.kind == tyk_bytes() }
   pub fn is_join: Bool { self.kind == tyk_join() }
   pub fn is_opaque: Bool { self.kind == tyk_opaque() }
   pub fn is_clayout: Bool { self.kind == tyk_clayout() }
@@ -184,6 +186,9 @@ pub class Ty {
       return true
     }
     if k == tyk_buf() {
+      return true
+    }
+    if k == tyk_bytes() {
       return true
     }
     if k == tyk_array() {
@@ -425,6 +430,9 @@ pub class Ty {
     if k == tyk_buf() {
       return "Buf"
     }
+    if k == tyk_bytes() {
+      return "Bytes"
+    }
     if k == tyk_var() {
       return self.name
     }
@@ -536,6 +544,7 @@ pub fn ty_string: Ty { Ty.new(tyk_string()) }
 pub fn ty_void: Ty { Ty.new(tyk_void()) }
 pub fn ty_nil: Ty { Ty.new(tyk_nil()) }
 pub fn ty_buf: Ty { Ty.new(tyk_buf()) }
+pub fn ty_bytes: Ty { Ty.new(tyk_bytes()) }
 
 pub fn ty_var(name: String): Ty {
   t = Ty.new(tyk_var())
@@ -607,6 +616,9 @@ pub fn mangle_ty(ty: Ty): String {
   }
   if k == tyk_buf() {
     return "Buf"
+  }
+  if k == tyk_bytes() {
+    return "Bytes"
   }
   if k == tyk_array() {
     if e = ty.inner {
@@ -879,6 +891,9 @@ pub fn type_is_builtin(name: String): Bool {
     return true
   }
   if str_eq(name, "Buf") {
+    return true
+  }
+  if str_eq(name, "Bytes") {
     return true
   }
   if str_eq(name, "Nil") {
