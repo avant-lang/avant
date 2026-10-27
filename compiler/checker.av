@@ -466,6 +466,9 @@ pub class Checker {
   scopes: Array(Scope)
   failed: Bool = false
   err: CompileError? = nil
+  errors: DiagBag
+  resolver_pulled: Int = 0
+  poisoned: Bool = false
   return_type: Ty
   loop_depth: Int = 0
   self_ty: Ty? = nil
@@ -545,6 +548,9 @@ pub class Checker {
     self.scopes = sc
     self.failed = false
     self.err = nil
+    self.errors = DiagBag.new
+    self.resolver_pulled = 0
+    self.poisoned = false
     self.return_type = ty_void()
     self.loop_depth = 0
     self.self_name = ""
@@ -626,20 +632,45 @@ pub class Checker {
   }
 
   pub fn has_err: Bool {
+    self.poisoned
+  }
+
+  pub fn any_err: Bool {
     self.failed
   }
 
+  pub fn err_count: Int {
+    self.errors.count
+  }
+
+  pub fn new_err_since(mark: Int): Bool {
+    self.errors.count > mark
+  }
+
+  pub fn clear_poison {
+    self.poisoned = false
+  }
+
   pub fn fail(loc: Location, message: String) {
-    if self.failed {
-      return
+    e = CompileError.new(loc, diag_code(4, message), message)
+    if self.errors.count == 0 {
+      self.err = e
     }
     self.failed = true
-    self.err = CompileError.new(loc, message)
+    self.poisoned = true
+    self.errors.push(e)
   }
 
   pub fn pull_resolve {
-    if e = self.resolver.err {
-      self.fail(e.loc, e.message)
+    while self.resolver_pulled < self.resolver.errors.count {
+      re = self.resolver.errors.items[self.resolver_pulled]
+      if self.errors.count == 0 {
+        self.err = re
+      }
+      self.failed = true
+      self.poisoned = true
+      self.errors.push(re)
+      self.resolver_pulled = self.resolver_pulled + 1
     }
     if self.ready_adopt {
       if self.in_adopt {
@@ -2516,20 +2547,16 @@ pub class Checker {
   pub fn check: Program {
     self.resolver = load_types(self.program)
     self.pull_resolve
-    if self.has_err {
-      return self.program
-    }
     self.note_modules
     i = 0
     while i < self.program.libs.size {
+      self.clear_poison
       self.register_lib(self.program.libs[i])
       i = i + 1
     }
-    if self.has_err {
-      return self.program
-    }
     i = 0
     while i < self.program.functions.size {
+      self.clear_poison
       fnn = self.program.functions[i]
       if fn_is_method(fnn) {
         self.register_method(fnn)
@@ -2539,28 +2566,19 @@ pub class Checker {
       i = i + 1
     }
     self.ready_adopt = true
+    self.clear_poison
     self.check_interface_sigs
-    if self.has_err {
-      return self.program
-    }
+    self.clear_poison
     self.adopt_new_types
-    if self.has_err {
-      return self.program
-    }
+    self.clear_poison
     self.apply_late_opt_ins
-    if self.has_err {
-      return self.program
-    }
+    self.clear_poison
     self.reserve_constructors
-    if self.has_err {
-      return self.program
-    }
+    self.clear_poison
     self.assign_emit_names
-    if self.has_err {
-      return self.program
-    }
+    self.clear_poison
     self.check_field_defaults
-    if self.has_err {
+    if self.any_err {
       return self.program
     }
     has_entry = false
@@ -2596,9 +2614,6 @@ pub class Checker {
     self.adopt_pending = true
     i = 0
     while i < fns.size {
-      if self.has_err {
-        return self.program
-      }
       fnn = fns[i]
       if fnn.generic {
       } else {
@@ -2608,9 +2623,6 @@ pub class Checker {
     }
     i = 0
     while i < self.pending.size {
-      if self.has_err {
-        return self.program
-      }
       self.check_function(self.pending[i])
       i = i + 1
     }
@@ -3049,7 +3061,7 @@ pub class Checker {
         sdef.methods[j].generic = true
       } else {
         self.register_method(sdef.methods[j])
-        if self.failed {
+        if self.has_err {
           return
         }
       }
@@ -3068,7 +3080,7 @@ pub class Checker {
         cdef.methods[j].generic = true
       } else {
         self.register_method(cdef.methods[j])
-        if self.failed {
+        if self.has_err {
           return
         }
       }
@@ -3078,7 +3090,7 @@ pub class Checker {
       return
     }
     self.check_decl_opts(cdef.name, cdef.opt_ins, cdef.mod_name, cdef.loc)
-    if self.failed {
+    if self.has_err {
       return
     }
     if self.adopt_pending {
@@ -3109,16 +3121,12 @@ pub class Checker {
     if self.in_adopt {
       return
     }
-    if self.failed {
+    if self.has_err {
       return
     }
     self.in_adopt = true
     grow = true
     while grow {
-      if self.failed {
-        self.in_adopt = false
-        return
-      }
       grow = false
       i = 0
       while i < self.program.structs.size {
@@ -3128,10 +3136,7 @@ pub class Checker {
           self.adopted[sdef.name] = 1
           self.note_type_owner(sdef.name, sdef.mod_name, sdef.vis)
           self.adopt_one_struct(sdef)
-          if self.failed {
-            self.in_adopt = false
-            return
-          }
+          self.clear_poison
           grow = true
         }
         i = i + 1
@@ -3144,10 +3149,7 @@ pub class Checker {
           self.adopted[cdef.name] = 1
           self.note_type_owner(cdef.name, cdef.mod_name, cdef.vis)
           self.adopt_one_class(cdef)
-          if self.failed {
-            self.in_adopt = false
-            return
-          }
+          self.clear_poison
           grow = true
         }
         i = i + 1
@@ -3288,6 +3290,7 @@ pub class Checker {
   }
 
   pub fn check_function(fnn: Function) {
+    self.clear_poison
     saved_mod = self.current_module
     self.current_module = fnn.mod_name
     ret = self.t_void()
@@ -3348,6 +3351,7 @@ pub class Checker {
         self.self_name = fn_self_name(fnn)
         if existing = self.lookup(self.self_name) {
           self.fail(fnn.loc, "duplicate parameter ${self.self_name}")
+          self.pop_scope
           self.current_module = saved_mod
           return
         }
@@ -3360,6 +3364,7 @@ pub class Checker {
             self.self_name = recv.name
             if existing = self.lookup(self.self_name) {
               self.fail(fnn.loc, "duplicate parameter ${self.self_name}")
+              self.pop_scope
               self.current_module = saved_mod
               return
             }
@@ -3373,6 +3378,7 @@ pub class Checker {
       param = fnn.params[i]
       if existing = self.lookup(param.name) {
         self.fail(param.loc, "duplicate parameter ${param.name}")
+        self.pop_scope
         self.current_module = saved_mod
         return
       }
@@ -3385,6 +3391,7 @@ pub class Checker {
         if ty_assignable(got, params[i]) {
         } else {
           self.fail(default.loc, "cannot assign ${got.show} to ${params[i].show}")
+          self.pop_scope
           self.current_module = saved_mod
           return
         }
@@ -3607,10 +3614,14 @@ pub class Checker {
           self.annotate_vstep(body[i - 1], body[i])
         }
       }
+      self.clear_poison
       self.scan_pending_stmt(body[i])
       self.check_stmt(body[i], expected, last)
-      self.register_spawn_pending(body[i])
-      self.fact_after_stmt(body[i])
+      if self.has_err {
+      } else {
+        self.register_spawn_pending(body[i])
+        self.fact_after_stmt(body[i])
+      }
       i = i + 1
     }
   }
@@ -4070,7 +4081,12 @@ pub class Checker {
     if self.has_err {
       return self.t_int()
     }
+    mark = self.err_count
     kind = self.check_expr_core(expr, has_want, want)
+    if self.new_err_since(mark) {
+      expr.ty = kind
+      return kind
+    }
     if has_want {
       if ty_has_var(want) {
       } else {

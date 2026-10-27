@@ -64,6 +64,7 @@ pub class Lexer {
   keywords: Hash(String, Int)
   failed: Bool = false
   err: CompileError? = nil
+  errors: DiagBag
   str_kind: Int = 0
   str_frag: String = ""
   keep_comments: Bool = false
@@ -82,6 +83,7 @@ pub class Lexer {
     self.keywords = keyword_table()
     self.failed = false
     self.err = nil
+    self.errors = DiagBag.new
     self.str_kind = 0
     self.str_frag = ""
     self.keep_comments = false
@@ -89,6 +91,14 @@ pub class Lexer {
 
   pub fn has_err: Bool {
     self.failed
+  }
+
+  pub fn err_count: Int {
+    self.errors.count
+  }
+
+  pub fn new_err_since(mark: Int): Bool {
+    self.errors.count > mark
   }
 
   pub fn at_end: Bool {
@@ -205,11 +215,12 @@ pub class Lexer {
   }
 
   pub fn fail_tok(loc: Location, message: String): Token {
-    if self.failed {
-      return Token.new(tk_eof(), loc, "")
+    e = CompileError.new(loc, diag_code(1, message), message)
+    if self.errors.count == 0 {
+      self.err = e
     }
     self.failed = true
-    self.err = CompileError.new(loc, message)
+    self.errors.push(e)
     Token.new(tk_eof(), loc, "")
   }
 
@@ -396,8 +407,9 @@ pub class Lexer {
       }
       if c == 92 {
         self.bump
+        mark = self.err_count
         e = self.read_escape
-        if self.has_err {
+        if self.new_err_since(mark) {
           self.str_frag = ""
           self.str_kind = 2
           return
@@ -425,8 +437,9 @@ pub class Lexer {
   pub fn lex_interp_expr: Array(Token) {
     tokens: Array(Token) = []
     depth = 0
+    mark0 = self.err_count
     while true {
-      if self.has_err {
+      if self.new_err_since(mark0) {
         return tokens
       }
       self.skip_spaces
@@ -478,13 +491,14 @@ pub class Lexer {
 
   pub fn lex_interpolation: Array(Token) {
     tokens: Array(Token) = []
+    mark0 = self.err_count
     while true {
-      if self.has_err {
+      if self.new_err_since(mark0) {
         return tokens
       }
       expr = self.lex_interp_expr
       self.read_string_body
-      if self.has_err {
+      if self.new_err_since(mark0) {
         return tokens
       }
       if self.str_kind == 0 {
@@ -513,8 +527,9 @@ pub class Lexer {
       return self.read_string_token_format(loc)
     }
     self.bump
+    mark = self.err_count
     self.read_string_body
-    if self.has_err {
+    if self.new_err_since(mark) {
       return Token.new(tk_eof(), loc, "")
     }
     if self.str_kind == 0 {
@@ -728,9 +743,6 @@ pub class Lexer {
     tokens: Array(Token) = []
     last_kind = 0 - 1
     while true {
-      if self.has_err {
-        break
-      }
       self.skip_spaces
       if self.at_end {
         if self.queue_empty {
@@ -753,7 +765,21 @@ pub class Lexer {
           }
           continue
         }
+        before = self.pos
+        mark = self.err_count
         t = self.read_token
+        if t.kind == tk_eof() {
+          if self.new_err_since(mark) {
+            if self.pos == before {
+              if self.at_end {
+              } else {
+                self.bump
+              }
+            }
+            continue
+          }
+          break
+        }
         tokens.push(t)
         last_kind = t.kind
       } else {

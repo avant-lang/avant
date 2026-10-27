@@ -42,6 +42,20 @@ pub fn diag_exit(code: Int) {
   posix.exit(code)
 }
 
+pub fn diag_bag(bag: DiagBag) {
+  if bag.is_empty {
+    return
+  }
+  text = bag.render_all
+  if text.size > 0 {
+    if text[text.size - 1] == 10 {
+      diag_puts(str_slice(text, 0, text.size - 1))
+      return
+    }
+  }
+  diag_puts(text)
+}
+
 pub class LinkJob {
   objects: Array(String)
   flags: Array(String)
@@ -188,13 +202,13 @@ pub fn compile_source(src: Source): IrBox {
   lex = Lexer.new(src)
   tokens = lex.tokenize
   if e = lex.err {
-    diag_puts(e.show)
+    diag_bag(lex.errors)
     return IrBox.new("", false)
   }
   parser = Parser.new(src, tokens)
   program = parser.parse
   if e = parser.err {
-    diag_puts(e.show)
+    diag_bag(parser.errors)
     return IrBox.new("", false)
   }
   if program.imports.size > 0 {
@@ -213,13 +227,13 @@ pub fn compile_program(src: Source, program: Program): IrBox {
   expander = Expander.new(src, program)
   dummy_e = expander.expand
   if e = expander.err {
-    diag_puts(e.show)
+    diag_bag(expander.errors)
     return IrBox.new("", false)
   }
   checker = Checker.new(src, program)
   dummy = checker.check
   if e = checker.err {
-    diag_puts(e.show)
+    diag_bag(checker.errors)
     return IrBox.new("", false)
   }
   plan = re2c_plan(program)
@@ -241,7 +255,7 @@ pub fn compile_av_path(path: String): IrBox {
   loader = Loader.new()
   if program = loader.load_root(path) {
     if e = loader.err {
-      diag_puts(e.show)
+      diag_bag(loader.errors)
       return IrBox.new("", false)
     }
     src = Source.new(path, "")
@@ -251,7 +265,7 @@ pub fn compile_av_path(path: String): IrBox {
     return compile_program(src, program)
   }
   if e = loader.err {
-    diag_puts(e.show)
+    diag_bag(loader.errors)
   }
   IrBox.new("", false)
 }

@@ -79,6 +79,7 @@ pub class Parser {
   allow_struct_lit: Bool = true
   failed: Bool = false
   err: CompileError? = nil
+  errors: DiagBag
   int_bits: UInt64 = 0u64
   int_suffix: String = ""
   in_quote: Bool = false
@@ -90,6 +91,7 @@ pub class Parser {
     self.allow_struct_lit = true
     self.failed = false
     self.err = nil
+    self.errors = DiagBag.new
     self.int_bits = 0u64
     self.int_suffix = ""
     self.in_quote = false
@@ -100,11 +102,95 @@ pub class Parser {
   }
 
   pub fn fail(loc: Location, message: String) {
-    if self.failed {
-      return
+    e = CompileError.new(loc, diag_code(2, message), message)
+    if self.errors.count == 0 {
+      self.err = e
     }
     self.failed = true
-    self.err = CompileError.new(loc, message)
+    self.errors.push(e)
+  }
+
+  pub fn err_count: Int {
+    self.errors.count
+  }
+
+  pub fn new_err_since(mark: Int): Bool {
+    self.errors.count > mark
+  }
+
+  pub fn is_top_starter(kind: Int): Bool {
+    if kind == tk_fn() {
+      return true
+    }
+    if kind == tk_struct() {
+      return true
+    }
+    if kind == tk_class() {
+      return true
+    }
+    if kind == tk_lib() {
+      return true
+    }
+    if kind == tk_interface() {
+      return true
+    }
+    if kind == tk_import() {
+      return true
+    }
+    if kind == tk_pub() {
+      return true
+    }
+    if kind == tk_quote() {
+      return true
+    }
+    if kind == tk_comptime() {
+      return true
+    }
+    if kind == tk_ident() {
+      return true
+    }
+    false
+  }
+
+  pub fn sync_top {
+    while true {
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.is_top_starter(self.current.kind) {
+        break
+      }
+      dummy = self.bump
+    }
+  }
+
+  pub fn sync_stmt {
+    while true {
+      if self.current.kind == tk_eof() {
+        break
+      }
+      if self.current.kind == tk_newline() {
+        break
+      }
+      if self.current.kind == tk_r_brace() {
+        break
+      }
+      dummy = self.bump
+    }
+  }
+
+  pub fn truncate_errors(mark: Int) {
+    while self.errors.items.size > mark {
+      dummy = self.errors.items.pop
+    }
+    self.errors.suppressed = 0
+    if mark == 0 {
+      self.failed = false
+      self.err = nil
+    } else {
+      self.failed = true
+      self.err = self.errors.items[0]
+    }
   }
 
   pub fn dummy_type(loc: Location): TypeName {
@@ -264,9 +350,8 @@ pub class Parser {
     loc = self.current.loc
     program = Program.new(loc)
     while self.current.kind != tk_eof() {
-      if self.has_err {
-        return program
-      }
+      mark = self.err_count
+      start_idx = self.index
       vis = false
       if self.current.kind == tk_pub() {
         vis = true
@@ -277,9 +362,9 @@ pub class Parser {
       if k == tk_import() {
         if vis {
           self.fail(self.current.loc, "import cannot be pub")
-          return program
+        } else {
+          program.imports.push(self.parse_import)
         }
-        program.imports.push(self.parse_import)
       } else if k == tk_struct() {
         program.structs.push(self.parse_struct(vis))
       } else if k == tk_class() {
@@ -295,25 +380,31 @@ pub class Parser {
       } else if k == tk_quote() {
         if vis {
           self.fail(self.current.loc, "quote cannot be pub; mark the fns inside")
-          return program
+        } else {
+          program.quotes.push(self.parse_quote_decl(""))
         }
-        program.quotes.push(self.parse_quote_decl(""))
       } else if k == tk_comptime() {
         if vis {
           self.fail(self.current.loc, "comptime cannot be pub")
-          return program
+        } else {
+          program.comptimes.push(self.parse_comptime_walk(""))
         }
-        program.comptimes.push(self.parse_comptime_walk(""))
       } else if k == tk_fun() {
         self.fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
-        return program
       } else {
         if vis {
           self.fail(self.current.loc, "pub prefixes struct, class, lib, fn, or interface")
-          return program
+        } else {
+          self.fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${k}")
         }
-        self.fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${k}")
-        return program
+      }
+      if self.new_err_since(mark) {
+        self.sync_top
+        if self.index == start_idx {
+          if self.current.kind != tk_eof() {
+            dummy2 = self.bump
+          }
+        }
       }
       self.skip_newlines
     }
@@ -338,6 +429,7 @@ pub class Parser {
     self.in_quote = true
     q = QuoteDecl.new(loc)
     q.owner = owner
+    mark0 = self.err_count
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -345,7 +437,7 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.has_err {
+      if self.new_err_since(mark0) {
         break
       }
       vis = false
@@ -635,6 +727,7 @@ pub class Parser {
     self.skip_newlines
     dummy = self.expect(tk_l_brace())
     self.skip_newlines
+    mark0 = self.err_count
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -642,7 +735,7 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.has_err {
+      if self.new_err_since(mark0) {
         break
       }
       if self.current.kind == tk_fn() {
@@ -716,6 +809,7 @@ pub class Parser {
     self.skip_newlines
     defn = LibDef.new(loc, name)
     defn.vis = vis
+    mark0 = self.err_count
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -725,7 +819,7 @@ pub class Parser {
       }
       if self.current.kind == tk_struct() {
         defn.layouts.push(self.parse_clayout(vis))
-        if self.has_err {
+        if self.new_err_since(mark0) {
           break
         }
         self.skip_newlines
@@ -737,7 +831,7 @@ pub class Parser {
         break
       } else {
         defn.funs.push(self.parse_fun_decl)
-        if self.has_err {
+        if self.new_err_since(mark0) {
           break
         }
         self.skip_newlines
@@ -759,6 +853,7 @@ pub class Parser {
     self.skip_newlines
     layout = CLayout.new(loc, name)
     layout.vis = vis
+    mark0 = self.err_count
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -792,13 +887,13 @@ pub class Parser {
         break
       }
       layout.fields.push(field)
-      if self.has_err {
+      if self.new_err_since(mark0) {
         break
       }
       self.skip_newlines
     }
     if layout.fields.size == 0 {
-      if self.has_err {
+      if self.new_err_since(mark0) {
       } else {
         self.fail(loc, "C layout needs a field")
       }
@@ -853,6 +948,7 @@ pub class Parser {
     dummy = self.expect(tk_l_brace())
     self.skip_newlines
     body = TypeBody.new()
+    mark0 = self.err_count
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -860,7 +956,7 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.has_err {
+      if self.new_err_since(mark0) {
         break
       }
       vis = false
@@ -1139,10 +1235,19 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.has_err {
-        break
-      }
+      mark = self.err_count
+      start_idx = self.index
       stmts.push(self.parse_stmt)
+      if self.new_err_since(mark) {
+        self.sync_stmt
+        if self.index == start_idx {
+          if self.current.kind != tk_eof() {
+            if self.current.kind != tk_r_brace() {
+              dummy3 = self.bump
+            }
+          }
+        }
+      }
       self.skip_newlines
     }
     dummy2 = self.expect(tk_r_brace())
@@ -1748,18 +1853,16 @@ pub class Parser {
       return nil
     }
     saved_index = self.index
-    saved_failed = self.failed
-    saved_err = self.err
+    saved_mark = self.err_count
     dummy = self.bump
     self.skip_newlines
     args: Array(TypeName) = []
     if self.current.kind != tk_r_paren() {
       while true {
         args.push(self.parse_type_name)
-        if self.failed {
+        if self.new_err_since(saved_mark) {
           self.index = saved_index
-          self.failed = saved_failed
-          self.err = saved_err
+          self.truncate_errors(saved_mark)
           return nil
         }
         self.skip_newlines
@@ -1772,15 +1875,13 @@ pub class Parser {
     }
     if self.current.kind != tk_r_paren() {
       self.index = saved_index
-      self.failed = saved_failed
-      self.err = saved_err
+      self.truncate_errors(saved_mark)
       return nil
     }
     dummy2 = self.bump
     if args.size == 0 {
       self.index = saved_index
-      self.failed = saved_failed
-      self.err = saved_err
+      self.truncate_errors(saved_mark)
       return nil
     }
     ahead = self.look_ahead_non_nl
@@ -1802,8 +1903,7 @@ pub class Parser {
       }
     }
     self.index = saved_index
-    self.failed = saved_failed
-    self.err = saved_err
+    self.truncate_errors(saved_mark)
     nil
   }
 
@@ -2047,10 +2147,19 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.has_err {
-        break
-      }
+      mark = self.err_count
+      start_idx = self.index
       block.body.push(self.parse_stmt)
+      if self.new_err_since(mark) {
+        self.sync_stmt
+        if self.index == start_idx {
+          if self.current.kind != tk_eof() {
+            if self.current.kind != tk_r_brace() {
+              dummy4 = self.bump
+            }
+          }
+        }
+      }
       self.skip_newlines
     }
     dummy3 = self.expect(tk_r_brace())

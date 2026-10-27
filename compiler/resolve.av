@@ -12,6 +12,7 @@ pub class TypeResolver {
   interned: Array(Ty)
   failed: Bool = false
   err: CompileError? = nil
+  errors: DiagBag
   t_int: Ty
   t_int64: Ty
   t_uint64: Ty
@@ -54,6 +55,7 @@ pub class TypeResolver {
     self.inst_depth = 0
     self.failed = false
     self.err = nil
+    self.errors = DiagBag.new
   }
 
   pub fn set_tparams(names: Array(String)) {
@@ -81,11 +83,20 @@ pub class TypeResolver {
   }
 
   pub fn fail(loc: Location, message: String) {
-    if self.failed {
-      return
+    e = CompileError.new(loc, diag_code(3, message), message)
+    if self.errors.count == 0 {
+      self.err = e
     }
     self.failed = true
-    self.err = CompileError.new(loc, message)
+    self.errors.push(e)
+  }
+
+  pub fn err_count: Int {
+    self.errors.count
+  }
+
+  pub fn new_err_since(mark: Int): Bool {
+    self.errors.count > mark
   }
 
   pub fn intern(ty: Ty): Int {
@@ -480,10 +491,11 @@ pub class TypeResolver {
       return self.t_int
     }
     arg_tys: Array(Ty) = []
+    mark0 = self.err_count
     i = 0
     while i < tn.args.size {
       arg_tys.push(self.resolve(tn.args[i]))
-      if self.failed {
+      if self.new_err_since(mark0) {
         return self.t_int
       }
       i = i + 1
@@ -544,6 +556,7 @@ pub class TypeResolver {
   pub fn fill_inst_fields(ty: Ty, fields: Array(Field)) {
     resolved: Array(TyField) = []
     seen = Hash(String, Int).new
+    mark0 = self.err_count
     i = 0
     while i < fields.size {
       field = fields[i]
@@ -553,7 +566,7 @@ pub class TypeResolver {
       }
       seen[field.name] = 1
       resolved.push(TyField.new(field.name, self.resolve_value(field.type)))
-      if self.failed {
+      if self.new_err_since(mark0) {
         return
       }
       i = i + 1
@@ -562,9 +575,6 @@ pub class TypeResolver {
   }
 
   pub fn instantiate_template(tn: TypeName): Ty {
-    if self.failed {
-      return self.t_int
-    }
     is_struct = false
     kind = tyk_class()
     params: Array(String) = []
@@ -610,10 +620,11 @@ pub class TypeResolver {
       return self.t_int
     }
     arg_tys: Array(Ty) = []
+    mark0 = self.err_count
     i = 0
     while i < tn.args.size {
       arg_tys.push(self.resolve(tn.args[i]))
-      if self.failed {
+      if self.new_err_since(mark0) {
         return self.t_int
       }
       i = i + 1
@@ -892,8 +903,9 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
       return
     }
     seen[field.name] = 1
+    markf = resolver.err_count
     ty = resolver.resolve(field.type)
-    if resolver.failed {
+    if resolver.new_err_since(markf) {
       return
     }
     if ty.is_clayout {
@@ -944,13 +956,11 @@ pub fn load_types(program: Program): TypeResolver {
     sdef = program.structs[i]
     if existing = resolver.get_named(sdef.name) {
       resolver.fail(sdef.loc, "${sdef.name} is already defined")
-      return resolver
+      i = i + 1
+      continue
     }
     if sdef.type_params.size > 0 {
       resolver.check_type_params(sdef.loc, sdef.name, sdef.type_params)
-      if resolver.failed {
-        return resolver
-      }
     }
     sty = ty_named(tyk_struct(), sdef.name)
     if sdef.type_params.size > 0 {
@@ -964,13 +974,11 @@ pub fn load_types(program: Program): TypeResolver {
     cdef = program.classes[i]
     if already = resolver.get_named(cdef.name) {
       resolver.fail(cdef.loc, "${cdef.name} is already defined")
-      return resolver
+      i = i + 1
+      continue
     }
     if cdef.type_params.size > 0 {
       resolver.check_type_params(cdef.loc, cdef.name, cdef.type_params)
-      if resolver.failed {
-        return resolver
-      }
     }
     cty = ty_named(tyk_class(), cdef.name)
     if cdef.type_params.size > 0 {
@@ -984,13 +992,11 @@ pub fn load_types(program: Program): TypeResolver {
     idef = program.interfaces[i]
     if existing = resolver.get_named(idef.name) {
       resolver.fail(idef.loc, "${idef.name} is already defined")
-      return resolver
+      i = i + 1
+      continue
     }
     if idef.type_params.size > 0 {
       resolver.check_type_params(idef.loc, idef.name, idef.type_params)
-      if resolver.failed {
-        return resolver
-      }
     }
     ity = ty_named(tyk_iface(), idef.name)
     if idef.type_params.size > 0 {
@@ -1007,7 +1013,8 @@ pub fn load_types(program: Program): TypeResolver {
       lay = lib_def.layouts[j]
       if existing = resolver.get_named(lay.name) {
         resolver.fail(lay.loc, "${lay.name} is already defined")
-        return resolver
+        j = j + 1
+        continue
       }
       resolver.put_named(lay.name, ty_named(tyk_clayout(), lay.name))
       j = j + 1
@@ -1019,16 +1026,12 @@ pub fn load_types(program: Program): TypeResolver {
     lib_def = program.libs[i]
     if existing = resolver.get_named(lib_def.name) {
       resolver.fail(lib_def.loc, "lib ${lib_def.name} collides with a type")
-      return resolver
     }
     i = i + 1
   }
   collect_opaques(program, resolver)
   i = 0
   while i < program.structs.size {
-    if resolver.failed {
-      return resolver
-    }
     sdef2 = program.structs[i]
     if sdef2.type_params.size > 0 {
     } else {
@@ -1038,9 +1041,6 @@ pub fn load_types(program: Program): TypeResolver {
   }
   i = 0
   while i < program.classes.size {
-    if resolver.failed {
-      return resolver
-    }
     cdef2 = program.classes[i]
     if cdef2.type_params.size > 0 {
     } else {
@@ -1055,9 +1055,6 @@ pub fn load_types(program: Program): TypeResolver {
     j = 0
     while j < lib_def.layouts.size {
       fill_clayout_fields(resolver, lib_def.layouts[j], ready)
-      if resolver.failed {
-        return resolver
-      }
       j = j + 1
     }
     i = i + 1

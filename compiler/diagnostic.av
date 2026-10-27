@@ -1,15 +1,209 @@
 import location
 
+pub fn diag_eq(a: String, b: String): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i] != b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn diag_has(hay: String, needle: String): Bool {
+  if needle.size == 0 {
+    return true
+  }
+  if needle.size > hay.size {
+    return false
+  }
+  i = 0
+  while i + needle.size <= hay.size {
+    if diag_eq(str_slice(hay, i, i + needle.size), needle) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn diag_category(message: String): Int {
+  if diag_has(message, "unterminated") {
+    return 5
+  }
+  if diag_has(message, "unexpected character") {
+    return 6
+  }
+  if diag_has(message, "unknown") {
+    return 1
+  }
+  if diag_has(message, "already") {
+    return 2
+  }
+  if diag_has(message, "duplicate") {
+    return 2
+  }
+  if diag_has(message, "collides") {
+    return 2
+  }
+  if diag_has(message, "arguments") {
+    return 3
+  }
+  if diag_has(message, "argument") {
+    return 3
+  }
+  if diag_has(message, "expected") {
+    return 4
+  }
+  if diag_has(message, "missing return") {
+    return 7
+  }
+  0
+}
+
+pub fn diag_code(phase: Int, message: String): String {
+  cat = diag_category(message)
+  "E${phase}00${cat}"
+}
+
+pub fn diag_line_text(text: String, want_line: Int): String {
+  line = 1
+  start = 0
+  i = 0
+  while i < text.size {
+    if text[i] == 10 {
+      if line == want_line {
+        return str_slice(text, start, i)
+      }
+      line = line + 1
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if line == want_line {
+    return str_slice(text, start, text.size)
+  }
+  ""
+}
+
 pub class CompileError {
   loc: Location
+  code: String = ""
   message: String = ""
 
-  fn initialize(loc: Location, message: String) {
+  fn initialize(loc: Location, code: String, message: String) {
     self.loc = loc
+    self.code = code
     self.message = message
   }
 
   pub fn show: String {
     "${self.loc.show}: ${self.message}"
+  }
+
+  pub fn render: String {
+    buf = buf_new()
+    buf.push_str("error[${self.code}]: ${self.message}\n")
+    buf.push_str("  --> ${self.loc.show}\n")
+    if self.loc.path.size > 0 {
+      if text = file_read(self.loc.path) {
+        line_text = diag_line_text(text, self.loc.line)
+        if line_text.size > 0 {
+          num = "${self.loc.line}"
+          buf.push_str("${num} | ${line_text}\n")
+          pad = buf_new()
+          j = 0
+          while j < num.size {
+            pad.push_str(" ")
+            j = j + 1
+          }
+          buf.push_str("${pad.to_s} | ")
+          k = 1
+          while k < self.loc.column {
+            buf.push_str(" ")
+            k = k + 1
+          }
+          buf.push_str("^\n")
+        }
+      }
+    }
+    buf.to_s
+  }
+}
+
+pub class DiagBag {
+  items: Array(CompileError)
+  suppressed: Int = 0
+
+  fn initialize {
+    xs: Array(CompileError) = []
+    self.items = xs
+    self.suppressed = 0
+  }
+
+  pub fn count: Int {
+    self.items.size
+  }
+
+  pub fn total: Int {
+    self.items.size + self.suppressed
+  }
+
+  pub fn is_empty: Bool {
+    self.items.size == 0
+  }
+
+  pub fn push(e: CompileError) {
+    i = 0
+    while i < self.items.size {
+      old = self.items[i]
+      if old.loc.line == e.loc.line {
+        if old.loc.column == e.loc.column {
+          if diag_eq(old.loc.path, e.loc.path) {
+            if diag_eq(old.code, e.code) {
+              if diag_eq(old.message, e.message) {
+                return
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
+    }
+    if self.items.size >= 20 {
+      self.suppressed = self.suppressed + 1
+      return
+    }
+    self.items.push(e)
+  }
+
+  pub fn extend(other: DiagBag) {
+    i = 0
+    while i < other.items.size {
+      self.push(other.items[i])
+      i = i + 1
+    }
+    self.suppressed = self.suppressed + other.suppressed
+  }
+
+  pub fn render_all: String {
+    buf = buf_new()
+    i = 0
+    while i < self.items.size {
+      buf.push_str(self.items[i].render)
+      buf.push_str("\n")
+      i = i + 1
+    }
+    if self.items.size > 1 {
+      buf.push_str("error: aborting due to ${self.items.size} previous errors\n")
+    }
+    if self.suppressed > 0 {
+      buf.push_str("error: and ${self.suppressed} more errors (limit 20)\n")
+    }
+    buf.to_s
   }
 }

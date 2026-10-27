@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+* Compile-time diagnostics: every compile error carries a stable code (`E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion), shows the offending source line with a caret, and the compiler recovers per statement, function, and file to report up to 20 errors in one run (plus a count of any beyond that) instead of stopping at the first.
 * Wrapping arithmetic operators: `&+`, `&-`, and `&*` on integers wrap on overflow. They are the explicit spelling of the old unchecked arithmetic.
 * `.get(i)` on `Array`, `String`, and `Buf` returns `T?`: the element or byte when `i` is in bounds, nil when it is not.
 * `avant compile` and `avant run` accept `--debug` and `--release`. `--release` is `--final`, the scored codegen mode. A flag wins over `AVANT_MYC_FINAL` and `AVANT_MYC_DEBUG`, which still work.

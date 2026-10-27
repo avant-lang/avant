@@ -482,6 +482,23 @@ If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
 
 `if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
 
+### Compiled errors
+
+Compile errors print to stderr and exit non-zero; runtime traps do the same in the compiled program.
+
+Compile errors carry a stable code and show the offending line with a caret. The compiler recovers after an error and reports the rest of the program in the same run — up to 20 errors, with a count of any beyond that — so one compile shows every independent mistake it can find:
+
+```
+error[E4001]: unknown name nosuch1
+  --> src/main.av:3:10
+3 |   puts(nosuch1)
+  |          ^
+```
+
+With several errors, the run ends with a summary line: `error: aborting due to N previous errors`.
+
+The first digit of the code names the phase that found the error: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion. Recovery is per statement: a bad statement does not hide errors in later statements, functions, or imported files.
+
 ## Strings and collections
 
 ### Strings
@@ -502,7 +519,7 @@ fn main {
 
 Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
-Indexing an `Array`, `String`, or `Buf` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted. Compile errors print to stderr and exit non-zero; runtime traps do the same in the compiled program.
+Indexing an `Array`, `String`, or `Buf` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
 
 ```avant
 fn main {
