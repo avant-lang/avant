@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.13.0 - 2026-10-27
 
 ### Added
 * Compile-time diagnostics: every compile error carries a stable code (`E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion), shows the offending source line with a caret, and the compiler recovers per statement, function, and file to report up to 20 errors in one run (plus a count of any beyond that) instead of stopping at the first.
