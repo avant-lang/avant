@@ -755,6 +755,12 @@ pub class MycGen {
   early_names: Array(String)
   early_myc: Array(String)
   may_share: Bool = false
+  pin_temps: Array(String)
+  pin_loops: Array(Int)
+  cb_names: Array(String)
+  cb_targets: Array(String)
+  cb_tys: Array(Ty)
+  cb_lambda: Array(Int)
 
   fn initialize(program: Program) {
     self.program = program
@@ -854,6 +860,18 @@ pub class MycGen {
     self.early_myc = emc
     self.may_share = false
     self.symbols = nil
+    pt: Array(String) = []
+    self.pin_temps = pt
+    pl: Array(Int) = []
+    self.pin_loops = pl
+    cbn: Array(String) = []
+    self.cb_names = cbn
+    cbt: Array(String) = []
+    self.cb_targets = cbt
+    cbty: Array(Ty) = []
+    self.cb_tys = cbty
+    cbl: Array(Int) = []
+    self.cb_lambda = cbl
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -1055,6 +1073,7 @@ pub class MycGen {
     self.ext("avant_bump_alloc", "u64,u32", "ptr<void>")
     self.ext("avant_nursery_reclaim", "", "")
     self.ext("avant_pin", "ptr<void>", "")
+    self.ext("avant_unpin", "ptr<void>", "")
     self.ext("avant_gc_enter", "", "")
     self.ext("avant_gc_leave", "", "")
     self.ext("avant_gc_quiet_enter", "", "")
@@ -1309,8 +1328,12 @@ pub class MycGen {
       self.indent = self.indent + 1
       i = 0
       while i < params.size {
-        m = ty_myc(params[i])
-        self.line("TYPE :${m}")
+        if params[i].is_fn {
+          self.line("TYPE :ptr<void>")
+        } else {
+          m = ty_myc(params[i])
+          self.line("TYPE :${m}")
+        }
         i = i + 1
       }
       self.indent = self.indent - 1
@@ -1558,6 +1581,11 @@ pub class MycGen {
         self.collect_stmts(stmt.pre)
         if c = stmt.cond {
           self.collect_expr(c)
+        }
+        self.collect_stmts(stmt.body)
+      } else if k == st_pin() {
+        if e = stmt.expr {
+          self.collect_expr(e)
         }
         self.collect_stmts(stmt.body)
       } else if k == st_assign() {
@@ -1923,6 +1951,11 @@ pub class MycGen {
           self.emit_fn_trampoline(fns[i])
         }
       }
+      i = i + 1
+    }
+    i = 0
+    while i < self.cb_names.size {
+      self.emit_cb_thunk(i)
       i = i + 1
     }
     if self.has_fn("main") {
@@ -3219,7 +3252,82 @@ pub class MycGen {
     }
   }
 
+  pub fn emit_unpin_temp(t: String) {
+    self.line("LOCAL :${t}")
+    self.line("AS :ptr<void>")
+    self.line("CALL :avant_unpin")
+  }
+
+  pub fn emit_unpin_all {
+    i = self.pin_temps.size - 1
+    while i >= 0 {
+      self.emit_unpin_temp(self.pin_temps[i])
+      i = i - 1
+    }
+    pt: Array(String) = []
+    self.pin_temps = pt
+    pl: Array(Int) = []
+    self.pin_loops = pl
+  }
+
+  pub fn emit_unpin_loop {
+    i = self.pin_temps.size - 1
+    while i >= 0 {
+      if self.pin_loops[i] == self.root_loop {
+        self.emit_unpin_temp(self.pin_temps[i])
+        i = i - 1
+      } else {
+        break
+      }
+    }
+  }
+
+  pub fn emit_pin_stmt(stmt: Stmt) {
+    if e = stmt.expr {
+      self.emit_expr(e)
+      et = expr_ty(e)
+      t = self.new_temp
+      m = ty_myc(et)
+      self.line("LOCAL :${t} :${m}")
+      self.line("STORE")
+      self.ensure_root(t, et)
+      self.line("LOCAL :${t}")
+      self.line("AS :ptr<void>")
+      self.line("CALL :avant_pin")
+      self.pin_temps.push(t)
+      self.pin_loops.push(self.root_loop)
+      self.emit_stmts(stmt.body, false)
+      i = 0
+      found = false
+      while i < self.pin_temps.size {
+        if str_eq(self.pin_temps[i], t) {
+          found = true
+        }
+        i = i + 1
+      }
+      if found {
+        self.emit_unpin_temp(t)
+        kept_t: Array(String) = []
+        kept_l: Array(Int) = []
+        i = 0
+        while i < self.pin_temps.size {
+          if str_eq(self.pin_temps[i], t) {
+          } else {
+            kept_t.push(self.pin_temps[i])
+            kept_l.push(self.pin_loops[i])
+          }
+          i = i + 1
+        }
+        self.pin_temps = kept_t
+        self.pin_loops = kept_l
+      }
+    } else {
+      self.emit_stmts(stmt.body, false)
+    }
+  }
+
   pub fn emit_ret {
+    self.emit_unpin_all
     if self.quiet_guard != 0 {
       self.line("CALL :avant_gc_quiet_leave")
     }
@@ -4412,10 +4520,15 @@ pub class MycGen {
         self.emit_while(stmt)
       }
       case 5 {
+        self.emit_unpin_loop
         self.line("BREAK")
       }
       case 6 {
+        self.emit_unpin_loop
         self.line("NEXT")
+      }
+      case 9 {
+        self.emit_pin_stmt(stmt)
       }
       case 7 {
         self.emit_assign(stmt)
@@ -6097,6 +6210,9 @@ pub class MycGen {
       return true
     }
     if str_eq(name, "avant_pin") {
+      return true
+    }
+    if str_eq(name, "avant_unpin") {
       return true
     }
     if str_eq(name, "avant_is_heap") {
@@ -8995,7 +9111,7 @@ pub class MycGen {
       return
     }
     if expr.lib_name.size > 0 {
-      self.emit_call_named(expr.callee, expr.args)
+      self.emit_lib_call(expr)
       return
     }
     if recv = expr.receiver {
@@ -9665,6 +9781,13 @@ pub class MycGen {
       self.collect_spawn_box_stmts(stmt.pre, caps, into)
       if c = stmt.cond {
         self.collect_spawn_box_expr(c, caps, into)
+      }
+      self.collect_spawn_box_stmts(stmt.body, caps, into)
+      return
+    }
+    if k == st_pin() {
+      if e = stmt.expr {
+        self.collect_spawn_box_expr(e, caps, into)
       }
       self.collect_spawn_box_stmts(stmt.body, caps, into)
       return
@@ -10951,6 +11074,170 @@ pub class MycGen {
       }
       self.line("CALL :avant_buf_clear")
     }
+  }
+
+  pub fn c_params_of(lib_name: String, name: String): Array(Ty) {
+    params: Array(Ty) = []
+    if s = self.symbols {
+      if csig = s.find_cfun(lib_name, name) {
+        return csig.params
+      }
+    }
+    i = 0
+    while i < self.program.libs.size {
+      lib_def = self.program.libs[i]
+      if str_eq(lib_def.name, lib_name) {
+        j = 0
+        while j < lib_def.funs.size {
+          fnn = lib_def.funs[j]
+          if str_eq(fnn.name, name) {
+            k = 0
+            while k < fnn.params.size {
+              params.push(self.resolver.resolve_value(fnn.params[k].type))
+              k = k + 1
+            }
+            return params
+          }
+          j = j + 1
+        }
+      }
+      i = i + 1
+    }
+    params
+  }
+
+  pub fn emit_cb_pointer(arg: Expr, fty: Ty) {
+    name = "__cb_${arg.resolved}"
+    seen = false
+    i = 0
+    while i < self.cb_names.size {
+      if str_eq(self.cb_names[i], name) {
+        seen = true
+      }
+      i = i + 1
+    }
+    if seen {
+    } else {
+      self.cb_names.push(name)
+      self.cb_targets.push(arg.resolved)
+      self.cb_tys.push(fty)
+      if arg.kind == ex_lambda() {
+        self.cb_lambda.push(1)
+      } else {
+        self.cb_lambda.push(0)
+      }
+    }
+    self.line("ADDR :${name}")
+    self.line("AS :ptr<void>")
+  }
+
+  pub fn emit_lib_call(expr: Expr) {
+    params = self.c_params_of(expr.lib_name, expr.callee)
+    has_cb = false
+    i = 0
+    while i < params.size {
+      if params[i].is_fn {
+        has_cb = true
+      }
+      i = i + 1
+    }
+    if has_cb {
+    } else {
+      self.emit_call_named(expr.callee, expr.args)
+      return
+    }
+    if expr.args.size <= 1 {
+      if expr.args.size == 1 {
+        if params[0].is_fn {
+          self.emit_cb_pointer(expr.args[0], params[0])
+        } else {
+          self.emit_expr(expr.args[0])
+          self.emit_coerce(expr_ty(expr.args[0]), params[0])
+        }
+      }
+      self.line("CALL :${expr.callee}")
+      return
+    }
+    tmps: Array(String) = []
+    i = 0
+    while i < expr.args.size {
+      arg = expr.args[i]
+      if params[i].is_fn {
+        self.emit_cb_pointer(arg, params[i])
+        tmp = self.new_temp
+        self.line("LOCAL :${tmp} :ptr<void>")
+        self.line("STORE")
+        tmps.push(tmp)
+      } else {
+        self.emit_expr(arg)
+        got = expr_ty(arg)
+        self.emit_coerce(got, params[i])
+        if params[i].is_union {
+          if params[i].includes_member(got) {
+            got = params[i]
+          }
+        }
+        tmp = self.new_temp
+        m = ty_myc(got)
+        self.line("LOCAL :${tmp} :${m}")
+        self.line("STORE")
+        self.ensure_root(tmp, got)
+        tmps.push(tmp)
+      }
+      i = i + 1
+    }
+    i = tmps.size - 1
+    while i >= 0 {
+      self.line("LOCAL :${tmps[i]}")
+      i = i - 1
+    }
+    self.line("CALL :${expr.callee}")
+  }
+
+  pub fn emit_cb_thunk(idx: Int) {
+    name = self.cb_names[idx]
+    target = self.cb_targets[idx]
+    fty = self.cb_tys[idx]
+    is_lambda = self.cb_lambda[idx] == 1
+    saved_ret = self.return_type
+    saved_main = self.c_main
+    self.c_main = false
+    ret = ty_void()
+    if r = fty.inner {
+      ret = r
+    }
+    self.return_type = ret
+    self.line("FUNC :${name}")
+    self.indent = self.indent + 1
+    self.line("ARGS")
+    self.indent = self.indent + 1
+    i = 0
+    while i < fty.members.size {
+      m = ty_myc(fty.members[i])
+      self.line("TYPE :${m}")
+      i = i + 1
+    }
+    self.indent = self.indent - 1
+    self.emit_return_header
+    self.line("BODY")
+    self.indent = self.indent + 1
+    i = fty.members.size - 1
+    while i >= 0 {
+      self.line("PARAM ${i}")
+      i = i - 1
+    }
+    if is_lambda {
+      self.line("PUSH 0")
+      self.line("AS :ptr<void>")
+    }
+    self.line("CALL :${target}")
+    self.line("RET")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
+    self.return_type = saved_ret
+    self.c_main = saved_main
   }
 
   pub fn emit_call_named(name: String, args: Array(Expr)) {

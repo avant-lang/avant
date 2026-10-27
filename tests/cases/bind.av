@@ -152,7 +152,7 @@ fn test_bind(c: Checks) {
     by_flags: Array(String) = []
     by_flags.push("${root}/examples/c/layout_byval.h")
     by_code = s23_run(compiler, "bind", by_log, by_flags)
-    c.eq_int(by_code, 0, "by-value exits 0")
+    c.eq_int(by_code, 1, "by-value exits non-zero")
     by_txt = s23_read(by_log)
     c.expect(str_has(by_txt, "C struct passed by value is not supported"), "by-value diagnostic")
     c.expect(!str_has(by_txt, "struct Point"), "by-value hides the partial lib")
@@ -201,6 +201,38 @@ fn test_bind(c: Checks) {
     many_txt = s23_read(many_log)
     c.expect(str_has(many_txt, "bind takes one header"), "one header")
     c.expect(!s23_has_lib(many_txt), "two headers print no lib")
+
+    u32_h = "/tmp/avant_s23_${stamp}_u32.h"
+    dummy_u32 = file_write(u32_h, "unsigned int widen(unsigned int x);\nint add(int a, int b);\n")
+    u32_log = "/tmp/avant-s23-${stamp}-u32.log"
+    u32_flags: Array(String) = []
+    u32_flags.push(u32_h)
+    u32_code = s23_run(compiler, "bind", u32_log, u32_flags)
+    c.eq_int(u32_code, 1, "unsigned 32-bit fun exits non-zero")
+    u32_txt = s23_read(u32_log)
+    c.expect(str_has(u32_txt, "unsigned 32-bit C type unsigned int has no Avant type"), "unsigned 32-bit fun diagnostic")
+    c.expect(!s23_has_lib(u32_txt), "unsigned 32-bit fun prints no lib")
+
+    u32f_h = "/tmp/avant_s23_${stamp}_u32f.h"
+    dummy_u32f = file_write(u32f_h, "struct Counter { unsigned int n; int tag; };\nint get_tag(struct Counter *c);\n")
+    u32f_log = "/tmp/avant-s23-${stamp}-u32f.log"
+    u32f_flags: Array(String) = []
+    u32f_flags.push(u32f_h)
+    u32f_code = s23_run(compiler, "bind", u32f_log, u32f_flags)
+    c.eq_int(u32f_code, 1, "unsigned 32-bit field exits non-zero")
+    u32f_txt = s23_read(u32f_log)
+    c.expect(str_has(u32f_txt, "unsigned 32-bit field has no Avant type"), "unsigned 32-bit field diagnostic")
+    c.expect(!s23_has_lib(u32f_txt), "unsigned 32-bit field prints no lib")
+
+    u64_h = "/tmp/avant_s23_${stamp}_u64.h"
+    dummy_u64 = file_write(u64_h, "unsigned long long widen64(unsigned long long x);\n")
+    u64_log = "/tmp/avant-s23-${stamp}-u64.log"
+    u64_flags: Array(String) = []
+    u64_flags.push(u64_h)
+    u64_code = s23_run(compiler, "bind", u64_log, u64_flags)
+    c.eq_int(u64_code, 0, "unsigned 64-bit fun exits 0")
+    u64_txt = s23_read(u64_log)
+    c.expect(str_has(u64_txt, "fun widen64(x: UInt64): UInt64"), "unsigned 64-bit maps to UInt64")
 
     gen_src = "/tmp/avant-s23-${stamp}-gen.av"
     gen_buf = buf_new()

@@ -1263,6 +1263,9 @@ pub class Parser {
     if k == tk_while() {
       return self.parse_while
     }
+    if k == tk_pin() {
+      return self.parse_pin
+    }
     if k == tk_for() {
       return self.parse_for
     }
@@ -1415,6 +1418,22 @@ pub class Parser {
     s.then_body = then_body
     s.else_body = else_body
     s.bind = bind
+    s
+  }
+
+  pub fn parse_pin: Stmt {
+    loc = self.expect(tk_pin()).loc
+    self.skip_newlines
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    value = self.parse_expr
+    self.skip_newlines
+    dummy2 = self.expect(tk_r_paren())
+    self.skip_newlines
+    body = self.parse_block
+    s = Stmt.new(st_pin(), loc)
+    s.expr = value
+    s.body = body
     s
   }
 

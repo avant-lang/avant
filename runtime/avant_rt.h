@@ -59,6 +59,8 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id);
 void avant_nursery_reclaim(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
+/* Number of distinct pinned payloads (refcounted pins share one entry). */
+int avant_pin_count(void);
 int avant_is_heap(void *payload);
 int32_t avant_is_young(void *payload);
 void avant_gc_defer_enter(void);

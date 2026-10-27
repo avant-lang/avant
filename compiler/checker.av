@@ -168,6 +168,7 @@ pub fn reserved_c_names: Hash(String, Int) {
     "avant_bump_alloc",
     "avant_nursery_reclaim",
     "avant_pin",
+    "avant_unpin",
     "avant_gc_enter",
     "avant_gc_leave",
     "avant_gc_quiet_enter",
@@ -1115,8 +1116,8 @@ pub class Checker {
       return
     }
     if ty.is_ptr {
-      if pin = ty.inner {
-        self.ensure_pub_sig_ty(pin, loc, fnn)
+      if inner = ty.inner {
+        self.ensure_pub_sig_ty(inner, loc, fnn)
       }
       return
     }
@@ -2727,8 +2728,23 @@ pub class Checker {
         pty = self.resolver.resolve_value(cfun.params[k].type)
         self.pull_resolve
         if pty.is_fn {
-          self.fail(cfun.params[k].loc, "C function pointers are not supported")
-          return
+          mi = 0
+          bad = false
+          while mi < pty.members.size {
+            if pty.members[mi].is_fn {
+              bad = true
+            }
+            mi = mi + 1
+          }
+          if r = pty.inner {
+            if r.is_fn {
+              bad = true
+            }
+          }
+          if bad {
+            self.fail(cfun.params[k].loc, "C callback signature cannot contain a function type")
+            return
+          }
         }
         params.push(pty)
         k = k + 1
@@ -3796,6 +3812,24 @@ pub class Checker {
           } else {
             self.fail(stmt.loc, "missing return value")
           }
+        }
+      }
+      return
+    }
+    if k == st_pin() {
+      if e = stmt.expr {
+        et = self.check_expr(e)
+        heap = et.is_string || et.is_bytes || et.is_buf || et.is_array || et.is_hash || et.is_class || et.is_fn || et.is_join
+        if heap {
+        } else {
+          self.fail(e.loc, "pin needs a heap value, got ${et.show}")
+        }
+      }
+      self.check_block(stmt.body, expected, false)
+      if at_tail {
+        if expected.is_void {
+        } else {
+          self.fail(stmt.loc, "missing return value")
         }
       }
       return
@@ -6011,7 +6045,20 @@ pub class Checker {
     i = 0
     while i < expr.args.size {
       call_arg = expr.args[i]
-      got = self.check_expr_as(call_arg, params[i])
+      got = self.t_int()
+      if params[i].is_fn {
+        if call_arg.kind == ex_name() {
+          if local = self.lookup(call_arg.ident) {
+            got = self.check_expr_as(call_arg, params[i])
+          } else {
+            got = self.check_fn_arg(call_arg, params[i])
+          }
+        } else {
+          got = self.check_fn_arg(call_arg, params[i])
+        }
+      } else {
+        got = self.check_expr_as(call_arg, params[i])
+      }
       if ty_assignable(got, params[i]) {
       } else {
         n = i + 1
@@ -6211,6 +6258,24 @@ pub class Checker {
     if id = self.cfun_index.get(key) {
       sig = self.cfuns[id]
       self.check_args(expr, sig.params, "${lib_name}.${expr.callee}")
+      if self.has_err {
+        return sig.ret
+      }
+      i = 0
+      while i < expr.args.size {
+        if sig.params[i].is_fn {
+          arg = expr.args[i]
+          if arg.kind == ex_lambda() {
+            if arg.cap_names.size > 0 {
+              self.fail(arg.loc, "C callback cannot capture ${arg.cap_names[0]}")
+            }
+          } else if arg.fn_ref {
+          } else {
+            self.fail(arg.loc, "C callback must be a function name or a lambda that captures nothing")
+          }
+        }
+        i = i + 1
+      }
       expr.lib_name = lib_name
       return sig.ret
     }

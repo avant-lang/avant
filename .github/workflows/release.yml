@@ -1,15 +1,15 @@
-# On a version tag: the v0.13.0 seed builds B, the suite runs on B,
+# On a version tag: the v0.14.0 seed builds B, the suite runs on B,
 # then a draft GitHub Release is opened with the linux-x86_64 compiler.
 #
-# The seed is avant-linux-x86_64.tar.gz from v0.13.0. It contains `avant`.
+# The seed is avant-linux-x86_64.tar.gz from v0.14.0. It contains `avant`.
 # `myc-llvm` is the safepoints v0.4.0 release, checked by sha256, and is
-# not copied into the new asset. This job does not install Crystal and
-# does not compile myc-llvm.
+# bundled beside `avant` in the new asset (Wave G). This job does not
+# install Crystal and does not compile myc-llvm.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
-# is named `avant`. Do not dispatch this workflow onto v0.13.0: that
+# is named `avant`. Do not dispatch this workflow onto v0.14.0: that
 # tag's asset is the seed, and an upload would replace it.
 #
 # The suite runs before any release is created. A new tag becomes a
@@ -28,7 +28,7 @@ name: release-binary
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build and attach (not v0.13.0)
+        description: Existing tag to build and attach (not v0.14.0)
         required: true
         type: string
 
@@ -70,11 +70,12 @@ jobs:
       - name: Build runtime objects
         run: sh runtime/build.sh
 
-      - name: Download v0.13.0 compiler
+      - name: Download v0.14.0 compiler
         run: |
           set -euo pipefail
           curl -fsSL -o /tmp/avant-seed.tar.gz \
-            https://github.com/avant-lang/avant/releases/download/v0.13.0/avant-linux-x86_64.tar.gz
+            https://github.com/avant-lang/avant/releases/download/v0.14.0/avant-linux-x86_64.tar.gz
+          echo "a1aed1a59ee1ac7bce03539eaf8aa237b92ac2662beac639f2c0a09c45216c58  /tmp/avant-seed.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
@@ -113,7 +114,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist/avant-linux-x86_64
           cp -f bin/avant-av-b dist/avant-linux-x86_64/avant
-          chmod +x dist/avant-linux-x86_64/avant
+          cp -f /tmp/myc-llvm-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
+          chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
@@ -125,17 +127,18 @@ jobs:
             fi
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
-            echo "built-by: v0.13.0"
+            echo "built-by: v0.14.0"
             echo "seed: yes"
             echo "binary: avant"
+            echo "bundled: myc-llvm (safepoints v0.4.0) beside avant"
           } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
           tar -C dist -czf dist/avant-linux-x86_64.tar.gz avant-linux-x86_64
           sha256sum dist/avant-linux-x86_64.tar.gz | tee dist/avant-linux-x86_64.tar.gz.sha256
           {
             echo "linux-x86_64 compiler \`avant\`."
             echo
-            echo "Built by the v0.13.0 seed. This asset does not contain \`myc-llvm\`."
-            echo "Download safepoints v0.4.0 \`myc-llvm-linux-x86_64.tar.gz\` and set \`AVANT_MYC_LLVM\` to the extracted \`myc-llvm\`."
+            echo "Built by the v0.14.0 seed. This asset bundles \`myc-llvm\` beside \`avant\`, so no environment is needed to compile."
+            echo "The bundled backend is safepoints v0.4.0 \`myc-llvm-linux-x86_64.tar.gz\`."
             echo "https://github.com/avant-lang/safepoints/releases/download/v0.4.0/myc-llvm-linux-x86_64.tar.gz"
             echo "sha256 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e"
             echo "Needs the source tree (\`runtime/\`, \`cc\`), LLVM 20, libpcre2, and re2c to compile programs."

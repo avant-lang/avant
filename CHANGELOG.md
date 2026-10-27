@@ -1,5 +1,15 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+* `pin(value) { ... }` pins a heap value for the block and unpins it on every way out; pins are counted, so a scoped pin never clears the process pin a C field store takes.
+* C callbacks: a `lib` `fun` parameter may be an Avant `fn` type, filled by a function name or a lambda that captures nothing (libc `qsort` with an Avant comparator is the proven shape).
+
+### Changed
+* `avant bind` fails the whole header with a diagnostic and a non-zero exit for a C unsigned 32-bit type instead of silently mapping it to `Int`.
+* `myc-llvm` is found on `PATH`, then beside the `avant` binary, then through `AVANT_MYC_LLVM`; the first binary found must accept the safepoints GC flags or compilation stops with an error naming the path. Release archives bundle `myc-llvm` beside `avant`, and CI verifies the seed archive by sha256 before using it.
+
 ## 0.14.0 - 2026-10-27
 
 ### Added
