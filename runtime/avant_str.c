@@ -56,6 +56,65 @@ static int str_meta_len(const char *s, size_t *out) {
   return 1;
 }
 
+/* One-entry length cache. A hit needs the same pointer, a generation
+ * with no collection since the entry was stored (so the object cannot
+ * have moved or been freed: both happen only inside a collection),
+ * the identical 8 header bytes, and the terminator still in place.
+ * Strings are immutable, so that object still has the stored length.
+ * Entries are stored only after avant_is_heap or str_meta_len has
+ * validated the pointer, so a raw C pointer is never promoted into a
+ * heap reading: it reaches the cache only by occupying the exact
+ * address of a validated heap string with its header bytes untouched
+ * and no collection in between, in which case the uncached heap path
+ * would read the same header and return the same length. */
+typedef struct {
+  const char *ptr;
+  size_t n;
+  uint64_t hdr;
+  uint32_t gen;
+} LenSlot;
+
+static __thread LenSlot g_len_slots[4];
+static __thread unsigned g_len_victim;
+
+static void len_cache_store(const char *s, size_t n) {
+  LenSlot *slot = &g_len_slots[g_len_victim & 3u];
+  uint64_t hdr = 0;
+  g_len_victim++;
+  memcpy(&hdr, avant_header((void *)s), sizeof(hdr));
+  slot->ptr = s;
+  slot->n = n;
+  slot->hdr = hdr;
+  slot->gen = avant_str_generation();
+}
+
+static size_t str_n_long(const char *s) __attribute__((noinline));
+static size_t str_n_long(const char *s) {
+  uint32_t gen = avant_str_generation();
+  int i;
+  for (i = 0; i < 4; i++) {
+    LenSlot *slot = &g_len_slots[i];
+    uint64_t hdr = 0;
+    if (s != slot->ptr || gen != slot->gen) {
+      continue;
+    }
+    memcpy(&hdr, avant_header((void *)s), sizeof(hdr));
+    if (hdr == slot->hdr && s[slot->n] == 0) {
+      return slot->n;
+    }
+  }
+  if (((uintptr_t)s % 8) == 0) {
+    AvantHeader *h = avant_header((void *)s);
+    if ((h->flags & AVANT_FLAG_HEAP) && h->type_id == AVANT_TYPE_BYTES && h->size > 0
+        && avant_is_heap((void *)s)) {
+      size_t n = (size_t)h->size - 1;
+      len_cache_store(s, n);
+      return n;
+    }
+  }
+  return strlen(s);
+}
+
 size_t avant_str_n(const char *s) {
   size_t meta = 0;
   if (!s) {
@@ -64,14 +123,7 @@ size_t avant_str_n(const char *s) {
   if (str_meta_len(s, &meta)) {
     return meta;
   }
-  if (((uintptr_t)s % 8) == 0) {
-    AvantHeader *h = avant_header((void *)s);
-    if ((h->flags & AVANT_FLAG_HEAP) && h->type_id == AVANT_TYPE_BYTES && h->size > 0
-        && avant_is_heap((void *)s)) {
-      return (size_t)h->size - 1;
-    }
-  }
-  return strlen(s);
+  return str_n_long(s);
 }
 
 char *avant_str_empty(void) {
@@ -292,9 +344,109 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   return p;
 }
 
+/* Exact fast float parse. Accepts only [-]digits[.digits][(e|E)[-]digits]
+ * (either digit run may be empty, not both) whose mantissa fits in 53 bits
+ * with at most 15 significant digits and whose decimal exponent is within
+ * 22. The true value is then mantissa * 10^e with both operands exactly
+ * representable, so one IEEE multiply or divide rounds it exactly as the
+ * correctly rounded strtod does. Anything else returns 0 and the caller
+ * falls back to strtod on the same bytes. */
+static int fast_f64(const char *p, size_t len, double *out) {
+  static const double pow10_exact[23] = {
+      1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+      1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+  size_t i = 0;
+  int neg = 0;
+  uint64_t mant = 0;
+  int sig = 0;
+  int started = 0;
+  long exp10 = 0;
+  size_t ndig = 0;
+  if (i < len && (p[i] == '-' || p[i] == '+')) {
+    neg = p[i] == '-';
+    i++;
+  }
+  while (i < len && p[i] >= '0' && p[i] <= '9') {
+    int d = p[i] - '0';
+    if (d != 0 || started) {
+      started = 1;
+      sig++;
+      if (sig > 15) {
+        return 0;
+      }
+      mant = mant * 10u + (uint64_t)d;
+    }
+    ndig++;
+    i++;
+  }
+  if (i < len && p[i] == '.') {
+    i++;
+    while (i < len && p[i] >= '0' && p[i] <= '9') {
+      int d = p[i] - '0';
+      exp10--;
+      if (d != 0 || started) {
+        started = 1;
+        sig++;
+        if (sig > 15) {
+          return 0;
+        }
+        mant = mant * 10u + (uint64_t)d;
+      }
+      ndig++;
+      i++;
+    }
+  }
+  if (ndig == 0) {
+    return 0;
+  }
+  if (i < len && (p[i] == 'e' || p[i] == 'E')) {
+    long e = 0;
+    int eneg = 0;
+    size_t j = i + 1;
+    if (j < len && (p[j] == '-' || p[j] == '+')) {
+      eneg = p[j] == '-';
+      j++;
+    }
+    if (j >= len) {
+      return 0;
+    }
+    for (; j < len; j++) {
+      if (p[j] < '0' || p[j] > '9') {
+        return 0;
+      }
+      e = e * 10 + (p[j] - '0');
+      if (e > 1000) {
+        return 0;
+      }
+    }
+    exp10 += eneg ? -e : e;
+    i = len;
+  }
+  if (i != len || mant >= (1ull << 53)) {
+    return 0;
+  }
+  if (exp10 > 22 || exp10 < -22) {
+    return 0;
+  }
+  {
+    double v = (double)mant;
+    if (exp10 > 0) {
+      v = v * pow10_exact[exp10];
+    } else if (exp10 < 0) {
+      v = v / pow10_exact[-exp10];
+    }
+    *out = neg ? -v : v;
+    return 1;
+  }
+}
+
 double avant_str_to_f(const char *s) {
   if (!s) {
     return 0.0;
+  }
+  double v = 0.0;
+  if (fast_f64(s, avant_str_n(s), &v)) {
+    return v;
   }
   return strtod(s, NULL);
 }
@@ -308,6 +460,12 @@ double avant_str_to_f_slice(const char *s, int32_t start, int32_t stop) {
   clamp_range(avant_str_n(s), start, stop, &i, &len);
   if (len == 0) {
     return 0.0;
+  }
+  {
+    double fv = 0.0;
+    if (fast_f64(s + i, len, &fv)) {
+      return fv;
+    }
   }
   if (len < 128) {
     char buf[128];
