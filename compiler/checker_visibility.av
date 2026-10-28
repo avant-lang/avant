@@ -1,0 +1,526 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import checker_names
+import checker
+
+pub fn (checker_self: Checker) note_modules {
+  checker_self.root_module = checker_self.program.root_module
+  checker_self.current_module = checker_self.root_module
+  km = Hash(String, Int).new
+  i = 0
+  while i < checker_self.program.mods.size {
+    info = checker_self.program.mods[i]
+    km[info.name] = 1
+    j = 0
+    while j < info.imports.size {
+      km[info.imports[j]] = 1
+      j = j + 1
+    }
+    i = i + 1
+  }
+  checker_self.known_mods = km
+  tm = Hash(String, String).new
+  tv = Hash(String, Int).new
+  i = 0
+  while i < checker_self.program.structs.size {
+    sdef = checker_self.program.structs[i]
+    tm[sdef.name] = sdef.mod_name
+    if sdef.vis {
+      tv[sdef.name] = 1
+    } else {
+      tv[sdef.name] = 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.program.classes.size {
+    cdef = checker_self.program.classes[i]
+    tm[cdef.name] = cdef.mod_name
+    if cdef.vis {
+      tv[cdef.name] = 1
+    } else {
+      tv[cdef.name] = 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.program.interfaces.size {
+    idef = checker_self.program.interfaces[i]
+    tm[idef.name] = idef.mod_name
+    if idef.vis {
+      tv[idef.name] = 1
+    } else {
+      tv[idef.name] = 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.program.libs.size {
+    lib_def = checker_self.program.libs[i]
+    j = 0
+    while j < lib_def.layouts.size {
+      lay = lib_def.layouts[j]
+      tm[lay.name] = lib_def.mod_name
+      if lib_def.vis {
+        tv[lay.name] = 1
+      } else {
+        tv[lay.name] = 0
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  checker_self.type_mod = tm
+  checker_self.type_vis = tv
+}
+
+pub fn (checker_self: Checker) imported_by(from_mod: String, target: String): Bool {
+  if str_eq(from_mod, target) {
+    return true
+  }
+  i = 0
+  while i < checker_self.program.mods.size {
+    info = checker_self.program.mods[i]
+    if str_eq(info.name, from_mod) {
+      j = 0
+      while j < info.imports.size {
+        if str_eq(info.imports[j], target) {
+          return true
+        }
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) qualifier_ok(qual: String, from_mod: String): Bool {
+  if str_eq(qual, from_mod) {
+    return true
+  }
+  checker_self.imported_by(from_mod, qual)
+}
+
+pub fn (checker_self: Checker) type_is_visible(name: String, from_mod: String, qual: String): Bool {
+  if named = checker_self.resolver.get_named(name) {
+  } else {
+    return true
+  }
+  owner = from_mod
+  if o = checker_self.type_mod.get(name) {
+    owner = o
+  }
+  if qual.size > 0 {
+    if str_eq(owner, qual) {
+    } else {
+      return false
+    }
+    if checker_self.qualifier_ok(qual, from_mod) {
+    } else {
+      return false
+    }
+    if str_eq(owner, from_mod) {
+      return true
+    }
+    if v = checker_self.type_vis.get(name) {
+      return v == 1
+    }
+    return false
+  }
+  if str_eq(owner, from_mod) {
+    return true
+  }
+  if v = checker_self.type_vis.get(name) {
+    if v == 1 {
+      return checker_self.imported_by(from_mod, owner)
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): Bool {
+  owner = from_mod
+  if o = checker_self.lib_mod.get(name) {
+    owner = o
+  }
+  if str_eq(owner, from_mod) {
+    return true
+  }
+  if v = checker_self.lib_vis.get(name) {
+    if v == 1 {
+      return checker_self.imported_by(from_mod, owner)
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): Bool {
+  if str_eq(fnn.mod_name, from_mod) {
+    return true
+  }
+  if fnn.mod_name.size == 0 {
+    return true
+  }
+  if from_mod.size == 0 {
+    return true
+  }
+  if fnn.vis {
+    return checker_self.imported_by(from_mod, fnn.mod_name)
+  }
+  false
+}
+
+pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
+  if fnn.vis {
+    return true
+  }
+  if str_eq(fnn.name, "initialize") {
+    return true
+  }
+  if str_eq(fnn.mod_name, from_mod) {
+    return true
+  }
+  if fnn.mod_name.size == 0 {
+    return true
+  }
+  if from_mod.size == 0 {
+    return true
+  }
+  false
+}
+
+pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String): Bool {
+  origins: Array(String) = []
+  if o = checker_self.type_mod.get(name) {
+    if checker_self.type_is_visible(name, from_mod, "") {
+      origins.push("type:${o}")
+    }
+  }
+  if id = checker_self.lib_names.get(name) {
+    if checker_self.lib_is_visible(name, from_mod) {
+      owner = from_mod
+      if o = checker_self.lib_mod.get(name) {
+        owner = o
+      }
+      origins.push("lib:${owner}")
+    }
+  }
+  fn_mods = Hash(String, Int).new
+  i = 1
+  while i < checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if str_eq(sig.name, name) {
+      if checker_self.fn_is_visible(sig.node, from_mod) {
+        if seen = fn_mods.get(sig.node.mod_name) {
+        } else {
+          fn_mods[sig.node.mod_name] = 1
+          origins.push("fn:${sig.node.mod_name}")
+        }
+      }
+    }
+    i = i + 1
+  }
+  type_owners = 0
+  has_type = false
+  has_fn = false
+  i = 0
+  while i < origins.size {
+    o = origins[i]
+    if o.size >= 5 {
+      if str_eq(str_slice(o, 0, 5), "type:") {
+        type_owners = type_owners + 1
+        has_type = true
+      } else if str_eq(str_slice(o, 0, 4), "lib:") {
+        type_owners = type_owners + 1
+        has_type = true
+      } else if str_eq(str_slice(o, 0, 3), "fn:") {
+        has_fn = true
+      }
+    }
+    i = i + 1
+  }
+  if type_owners > 1 {
+    return true
+  }
+  if type_owners >= 1 {
+    if has_fn {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qual: String): Ty? {
+  if checker_self.clash_unqualified(name, checker_self.current_module) {
+    if qual.size == 0 {
+      checker_self.fail(loc, "ambiguous name ${name}; qualify it")
+      return nil
+    }
+  }
+  if ty = checker_self.resolver.get_named(name) {
+    if checker_self.type_is_visible(name, checker_self.current_module, qual) {
+    } else {
+      checker_self.fail(loc, "unknown type ${name}")
+      return nil
+    }
+    if qual.size > 0 {
+      owner = ""
+      if o = checker_self.type_mod.get(name) {
+        owner = o
+      }
+      if str_eq(owner, qual) {
+      } else {
+        checker_self.fail(loc, "unknown type ${qual}.${name}")
+        return nil
+      }
+    }
+    return ty
+  }
+  checker_self.fail(loc, "unknown type ${name}")
+  nil
+}
+
+pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
+  if tn.mod_name.size > 0 {
+    if checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
+    } else {
+      checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
+      return checker_self.t_int()
+    }
+    if named = checker_self.resolver.get_named(tn.name) {
+      owner = ""
+      if o = checker_self.type_mod.get(tn.name) {
+        owner = o
+      }
+      if str_eq(owner, tn.mod_name) {
+      } else {
+        checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+        return checker_self.t_int()
+      }
+      if checker_self.type_is_visible(tn.name, checker_self.current_module, tn.mod_name) {
+      } else {
+        checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+      return checker_self.t_int()
+    }
+  } else {
+    if named = checker_self.resolver.get_named(tn.name) {
+      if checker_self.clash_unqualified(tn.name, checker_self.current_module) {
+        checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+        return checker_self.t_int()
+      }
+      if checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
+      } else {
+        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        return checker_self.t_int()
+      }
+    }
+  }
+  checker_self.resolver.resolve(tn)
+}
+
+pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
+  if tn.mod_name.size > 0 {
+    if checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
+    } else {
+      checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
+      return checker_self.t_int()
+    }
+  } else {
+    if named = checker_self.resolver.get_named(tn.name) {
+      if checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
+      } else {
+        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        return checker_self.t_int()
+      }
+      if checker_self.clash_unqualified(tn.name, checker_self.current_module) {
+        checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+        return checker_self.t_int()
+      }
+    }
+  }
+  checker_self.resolver.resolve_value(tn)
+}
+
+pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Function) {
+  if fnn.vis {
+  } else {
+    return
+  }
+  if ty.is_agg {
+    owner = fnn.mod_name
+    if o = checker_self.type_mod.get(ty.name) {
+      owner = o
+    }
+    if str_eq(owner, fnn.mod_name) {
+    } else {
+      vis = 0
+      if flag = checker_self.type_vis.get(ty.name) {
+        vis = flag
+      }
+      if vis == 1 {
+      } else {
+        checker_self.fail(loc, "pub signature cannot use private type ${ty.name}")
+      }
+    }
+    return
+  }
+  if ty.is_array {
+    if elem = ty.inner {
+      checker_self.ensure_pub_sig_ty(elem, loc, fnn)
+    }
+    return
+  }
+  if ty.is_hash {
+    if hk = ty.key {
+      checker_self.ensure_pub_sig_ty(hk, loc, fnn)
+    }
+    if hv = ty.val {
+      checker_self.ensure_pub_sig_ty(hv, loc, fnn)
+    }
+    return
+  }
+  if ty.is_ptr {
+    if inner = ty.inner {
+      checker_self.ensure_pub_sig_ty(inner, loc, fnn)
+    }
+    return
+  }
+  if ty.is_clayout {
+    owner = fnn.mod_name
+    if o = checker_self.type_mod.get(ty.name) {
+      owner = o
+    }
+    if str_eq(owner, fnn.mod_name) {
+    } else {
+      vis = 0
+      if flag = checker_self.type_vis.get(ty.name) {
+        vis = flag
+      }
+      if vis == 1 {
+      } else {
+        checker_self.fail(loc, "pub signature cannot use private type ${ty.name}")
+      }
+    }
+    return
+  }
+  if ty.is_join {
+    if jin = ty.inner {
+      checker_self.ensure_pub_sig_ty(jin, loc, fnn)
+    }
+    return
+  }
+  if ty.is_union {
+    i = 0
+    while i < ty.members.size {
+      checker_self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
+      i = i + 1
+    }
+    return
+  }
+  if ty.is_fn {
+    i = 0
+    while i < ty.members.size {
+      checker_self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
+      i = i + 1
+    }
+    if r = ty.inner {
+      checker_self.ensure_pub_sig_ty(r, loc, fnn)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) lookup_module_type(mod: String, name: String, loc: Location): Ty? {
+  if ty = checker_self.resolver.get_named(name) {
+    owner = ""
+    if o = checker_self.type_mod.get(name) {
+      owner = o
+    }
+    if str_eq(owner, mod) {
+      if checker_self.type_is_visible(name, checker_self.current_module, mod) {
+        return ty
+      }
+    }
+  }
+  checker_self.fail(loc, "unknown type ${mod}.${name}")
+  nil
+}
+
+pub fn (checker_self: Checker) type_from_recv(recv: Expr, loc: Location): Ty? {
+  if recv.kind == ex_name() {
+    return checker_self.lookup_named_type(recv.ident, recv.loc, "")
+  }
+  if recv.kind == ex_field() {
+    if obj = recv.object {
+      object = checker_self.check_expr(obj)
+      if object.is_module {
+      } else {
+        checker_self.fail(loc, "new is a type constructor")
+        return nil
+      }
+      return checker_self.lookup_module_type(object.name, recv.ident, recv.loc)
+    }
+  }
+  checker_self.fail(loc, "new is a type constructor")
+  nil
+}
+
+pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String): Ty {
+  if str_eq(expr.callee, "new") {
+    checker_self.fail(expr.loc, "new is a type constructor")
+    return checker_self.t_int()
+  }
+  saved = checker_self.current_module
+  arg_tys: Array(Ty) = []
+  i = 0
+  while i < expr.args.size {
+    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    i = i + 1
+  }
+  checker_self.current_module = mod
+  none: Ty? = nil
+  if sig = checker_self.match_func(expr.callee, arg_tys, none, expr.loc) {
+    if str_eq(sig.node.mod_name, mod) {
+    } else {
+      checker_self.fail(expr.loc, "unknown function ${mod}.${expr.callee}")
+      checker_self.current_module = saved
+      return checker_self.t_int()
+    }
+    checker_self.fill_defaults(expr, sig.node)
+    i = 0
+    while i < expr.args.size {
+      got = checker_self.t_int()
+      if i < arg_tys.size {
+        got = arg_tys[i]
+      } else {
+        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+      }
+      got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
+      if ty_assignable(got, sig.params[i]) {
+      } else {
+        n = i + 1
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+      }
+      i = i + 1
+    }
+    expr.resolved = sig.node.emit_name
+    expr.receiver = nil
+    checker_self.current_module = saved
+    return sig.ret
+  }
+  checker_self.current_module = saved
+  checker_self.t_int()
+}

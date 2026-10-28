@@ -1,0 +1,566 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import checker_names
+import checker
+
+pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
+  if str_eq(ty.origin, "Channel") {
+    return true
+  }
+  if str_eq(ty.name, "Channel") {
+    return true
+  }
+  if str_eq(ty.origin, "Mutex") {
+    return true
+  }
+  str_eq(ty.name, "Mutex")
+}
+
+pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
+  if checker_self.is_share_ty(ty) {
+    return true
+  }
+  if ty.is_array {
+    return true
+  }
+  checker_self.copyable_bits(ty)
+}
+
+pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
+  if ty.is_int {
+    return true
+  }
+  if ty.is_int64 {
+    return true
+  }
+  if ty.is_uint64 {
+    return true
+  }
+  if ty.is_bool {
+    return true
+  }
+  if ty.is_float {
+    return true
+  }
+  if ty.is_string {
+    return true
+  }
+  if ty.is_struct {
+    i = 0
+    while i < ty.fields.size {
+      if checker_self.copyable_bits(ty.fields[i].ty) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    return true
+  }
+  false
+}
+
+pub fn (checker_self: Checker) collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
+  seen = Hash(String, Int).new
+  checker_self.walk_spawn_stmts(body, expr, seen)
+}
+
+pub fn (checker_self: Checker) walk_spawn_stmts(body: Array(Stmt), node: Expr, seen: Hash(String, Int)) {
+  i = 0
+  while i < body.size {
+    checker_self.walk_spawn_stmt(body[i], node, seen)
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Hash(String, Int)) {
+  k = stmt.kind
+  if k == st_return() {
+    if e = stmt.expr {
+      checker_self.walk_spawn_expr(e, node, seen)
+    }
+    return
+  }
+  if k == st_if() {
+    if c = stmt.cond {
+      checker_self.walk_spawn_expr(c, node, seen)
+    }
+    checker_self.walk_spawn_stmts(stmt.then_body, node, seen)
+    checker_self.walk_spawn_stmts(stmt.else_body, node, seen)
+    return
+  }
+  if k == st_while() {
+    checker_self.walk_spawn_stmts(stmt.pre, node, seen)
+    if c = stmt.cond {
+      checker_self.walk_spawn_expr(c, node, seen)
+    }
+    checker_self.walk_spawn_stmts(stmt.body, node, seen)
+    return
+  }
+  if k == st_assign() {
+    if target = stmt.target {
+      if target.kind == ex_name() {
+        if ty = checker_self.lookup(target.ident) {
+          checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only (D35)")
+        }
+      } else if checker_self.spawn_array_frozen(target) {
+        root = checker_self.expr_root_name(target)
+        checker_self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        checker_self.walk_spawn_expr(target, node, seen)
+      } else {
+        checker_self.walk_spawn_expr(target, node, seen)
+      }
+    }
+    if v = stmt.value {
+      checker_self.walk_spawn_expr(v, node, seen)
+    }
+    return
+  }
+  if k == st_expr() {
+    if e = stmt.expr {
+      checker_self.walk_spawn_expr(e, node, seen)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Hash(String, Int)) {
+  k = expr.kind
+  if k == ex_name() {
+    checker_self.note_spawn_capture(expr, node, seen)
+    return
+  }
+  if k == ex_call() {
+    if inner = expr.inner {
+      checker_self.walk_spawn_expr(inner, node, seen)
+    }
+    if expr.indirect {
+      if expr.callee.size > 0 {
+        name = Expr.new(ex_name(), expr.loc)
+        name.ident = expr.callee
+        checker_self.note_spawn_capture(name, node, seen)
+      }
+    }
+    if recv = expr.receiver {
+      if checker_self.array_mutator(expr.callee) {
+        if checker_self.spawn_array_frozen(recv) {
+          root = checker_self.expr_root_name(recv)
+          checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        }
+      }
+      checker_self.walk_spawn_expr(recv, node, seen)
+    }
+    i = 0
+    while i < expr.args.size {
+      checker_self.walk_spawn_expr(expr.args[i], node, seen)
+      i = i + 1
+    }
+    if b = expr.block {
+      checker_self.walk_spawn_stmts(b.body, node, seen)
+    }
+    return
+  }
+  if k == ex_unary() {
+    if inner = expr.inner {
+      checker_self.walk_spawn_expr(inner, node, seen)
+    }
+    return
+  }
+  if k == ex_binary() {
+    if l = expr.left {
+      checker_self.walk_spawn_expr(l, node, seen)
+    }
+    if r = expr.right {
+      checker_self.walk_spawn_expr(r, node, seen)
+    }
+    return
+  }
+  if k == ex_field() {
+    if obj = expr.object {
+      checker_self.walk_spawn_expr(obj, node, seen)
+    }
+    return
+  }
+  if k == ex_index() {
+    if l = expr.left {
+      checker_self.walk_spawn_expr(l, node, seen)
+    }
+    if r = expr.right {
+      checker_self.walk_spawn_expr(r, node, seen)
+    }
+    return
+  }
+  if k == ex_struct() {
+    i = 0
+    while i < expr.field_exprs.size {
+      checker_self.walk_spawn_expr(expr.field_exprs[i], node, seen)
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_array() {
+    i = 0
+    while i < expr.elems.size {
+      checker_self.walk_spawn_expr(expr.elems[i], node, seen)
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_array_new() {
+    if size = expr.size_expr {
+      checker_self.walk_spawn_expr(size, node, seen)
+    }
+    return
+  }
+  if k == ex_try() {
+    if inner = expr.inner {
+      checker_self.walk_spawn_expr(inner, node, seen)
+    }
+    return
+  }
+  if k == ex_interp() {
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if inner = part.expr {
+        checker_self.walk_spawn_expr(inner, node, seen)
+      }
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_switch() {
+    if c = expr.cond {
+      checker_self.walk_spawn_expr(c, node, seen)
+    }
+    i = 0
+    while i < expr.cases.size {
+      checker_self.walk_spawn_stmts(expr.cases[i].body, node, seen)
+      i = i + 1
+    }
+    if expr.has_else {
+      checker_self.walk_spawn_stmts(expr.else_body, node, seen)
+    }
+    return
+  }
+  if k == ex_lambda() {
+    if b = expr.block {
+      mark = checker_self.spawn_skip.size
+      i = 0
+      while i < b.params.size {
+        checker_self.spawn_skip.push(b.params[i])
+        i = i + 1
+      }
+      checker_self.walk_spawn_stmts(b.body, node, seen)
+      while checker_self.spawn_skip.size > mark {
+        dropped = checker_self.spawn_skip.pop
+      }
+    }
+  }
+}
+
+pub fn (checker_self: Checker) spawn_skip_has(name: String): Bool {
+  i = 0
+  while i < checker_self.spawn_skip.size {
+    if str_eq(checker_self.spawn_skip[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) expr_root_name(expr: Expr): String {
+  k = expr.kind
+  if k == ex_name() {
+    return expr.ident
+  }
+  if k == ex_field() {
+    if obj = expr.object {
+      return checker_self.expr_root_name(obj)
+    }
+  }
+  if k == ex_index() {
+    if l = expr.left {
+      return checker_self.expr_root_name(l)
+    }
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) array_mutator(name: String): Bool {
+  if str_eq(name, "push") {
+    return true
+  }
+  if str_eq(name, "pop") {
+    return true
+  }
+  if str_eq(name, "clear") {
+    return true
+  }
+  if str_eq(name, "fill") {
+    return true
+  }
+  if str_eq(name, "sort") {
+    return true
+  }
+  if str_eq(name, "reverse") {
+    return true
+  }
+  str_eq(name, "reserve")
+}
+
+pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
+  root = checker_self.expr_root_name(expr)
+  if root.size == 0 {
+    return false
+  }
+  if checker_self.spawn_skip_has(root) {
+    return false
+  }
+  if ty = checker_self.lookup(root) {
+    return ty.is_array
+  }
+  false
+}
+
+pub fn (checker_self: Checker) pending_has_array(name: String): Bool {
+  i = 0
+  while i < checker_self.pending_arrays.size {
+    if str_eq(checker_self.pending_arrays[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) pending_join(handle: String) {
+  kept_h: Array(String) = []
+  kept_a: Array(String) = []
+  i = 0
+  while i < checker_self.pending_handles.size {
+    if str_eq(checker_self.pending_handles[i], handle) {
+    } else {
+      kept_h.push(checker_self.pending_handles[i])
+      kept_a.push(checker_self.pending_arrays[i])
+    }
+    i = i + 1
+  }
+  checker_self.pending_handles = kept_h
+  checker_self.pending_arrays = kept_a
+}
+
+pub fn (checker_self: Checker) scan_pending_stmt(stmt: Stmt) {
+  if e = stmt.expr {
+    checker_self.scan_pending_expr(e)
+  }
+  if c = stmt.cond {
+    checker_self.scan_pending_expr(c)
+  }
+  if t = stmt.target {
+    checker_self.scan_pending_target(t)
+  }
+  if v = stmt.value {
+    checker_self.scan_pending_expr(v)
+  }
+  i = 0
+  while i < stmt.then_body.size {
+    checker_self.scan_pending_stmt(stmt.then_body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < stmt.else_body.size {
+    checker_self.scan_pending_stmt(stmt.else_body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < stmt.body.size {
+    checker_self.scan_pending_stmt(stmt.body[i])
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
+  if target.kind == ex_name() {
+    return
+  }
+  root = checker_self.expr_root_name(target)
+  if root.size > 0 {
+    if checker_self.pending_has_array(root) {
+      checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+    }
+  }
+  checker_self.scan_pending_expr(target)
+}
+
+pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
+  k = expr.kind
+  if k == ex_field() {
+    if str_eq(expr.ident, "join") {
+      if obj = expr.object {
+        if obj.kind == ex_name() {
+          checker_self.pending_join(obj.ident)
+          return
+        }
+      }
+    }
+  }
+  if k == ex_call() {
+    if str_eq(expr.callee, "join") {
+      if recv = expr.receiver {
+        if recv.kind == ex_name() {
+          checker_self.pending_join(recv.ident)
+        }
+      }
+    }
+    if recv = expr.receiver {
+      if checker_self.array_mutator(expr.callee) {
+        root = checker_self.expr_root_name(recv)
+        if root.size > 0 {
+          if checker_self.pending_has_array(root) {
+            checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+          }
+        }
+      }
+    }
+  }
+  if inner = expr.inner {
+    checker_self.scan_pending_expr(inner)
+  }
+  if l = expr.left {
+    checker_self.scan_pending_expr(l)
+  }
+  if r = expr.right {
+    checker_self.scan_pending_expr(r)
+  }
+  if obj = expr.object {
+    checker_self.scan_pending_expr(obj)
+  }
+  if recv = expr.receiver {
+    checker_self.scan_pending_expr(recv)
+  }
+  i = 0
+  while i < expr.args.size {
+    checker_self.scan_pending_expr(expr.args[i])
+    i = i + 1
+  }
+  i = 0
+  while i < expr.elems.size {
+    checker_self.scan_pending_expr(expr.elems[i])
+    i = i + 1
+  }
+  i = 0
+  while i < expr.field_exprs.size {
+    checker_self.scan_pending_expr(expr.field_exprs[i])
+    i = i + 1
+  }
+  if sz = expr.size_expr {
+    checker_self.scan_pending_expr(sz)
+  }
+  if c = expr.cond {
+    checker_self.scan_pending_expr(c)
+  }
+  if b = expr.block {
+    j = 0
+    while j < b.body.size {
+      checker_self.scan_pending_stmt(b.body[j])
+      j = j + 1
+    }
+  }
+  i = 0
+  while i < expr.cases.size {
+    cs = expr.cases[i]
+    j = 0
+    while j < cs.body.size {
+      checker_self.scan_pending_stmt(cs.body[j])
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.else_body.size {
+    checker_self.scan_pending_stmt(expr.else_body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < expr.parts.size {
+    part = expr.parts[i]
+    if inner = part.expr {
+      checker_self.scan_pending_expr(inner)
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
+  if stmt.kind == st_assign() {
+    if v = stmt.value {
+      if v.kind == ex_call() {
+        if str_eq(v.callee, "spawn") {
+          handle = ""
+          if t = stmt.target {
+            if t.kind == ex_name() {
+              handle = t.ident
+            }
+          }
+          i = 0
+          while i < v.cap_names.size {
+            if v.cap_tys[i].is_array {
+              checker_self.pending_handles.push(handle)
+              checker_self.pending_arrays.push(v.cap_names[i])
+            }
+            i = i + 1
+          }
+          return
+        }
+      }
+    }
+  }
+  if e = stmt.expr {
+    if e.kind == ex_call() {
+      if str_eq(e.callee, "spawn") {
+        i = 0
+        while i < e.cap_names.size {
+          if e.cap_tys[i].is_array {
+            checker_self.pending_handles.push("")
+            checker_self.pending_arrays.push(e.cap_names[i])
+          }
+          i = i + 1
+        }
+      }
+    }
+  }
+}
+
+pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {
+  if checker_self.spawn_skip_has(expr.ident) {
+    return
+  }
+  if checker_self.place_depth > 0 {
+    if str_eq(expr.ident, checker_self.place_name) {
+      checker_self.fail(expr.loc, "mutex place cannot escape")
+      return
+    }
+  }
+  if ty = checker_self.lookup(expr.ident) {
+    if checker_self.copyable_for_spawn(ty) {
+    } else {
+      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show} is not copied at send (D35)")
+      return
+    }
+    if prev = seen.get(expr.ident) {
+      return
+    }
+    seen[expr.ident] = 1
+    node.cap_names.push(expr.ident)
+    node.cap_tys.push(ty)
+  }
+}

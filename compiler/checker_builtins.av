@@ -1,0 +1,1692 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import checker_names
+import checker
+
+pub fn (checker_self: Checker) expect_no_args(expr: Expr, ret: Ty, message: String): Ty {
+  if expr.args.size == 0 {
+    return ret
+  }
+  checker_self.fail(expr.loc, message)
+  ret
+}
+
+pub fn (checker_self: Checker) check_float_method(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "Float64.${expr.callee} does not take a block")
+    return checker_self.t_float()
+  }
+  if str_eq(expr.callee, "sqrt") {
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
+  }
+  if str_eq(expr.callee, "abs") {
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
+  }
+  if str_eq(expr.callee, "floor") {
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
+  }
+  if str_eq(expr.callee, "exp") {
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "Float64.${expr.callee} takes no arguments")
+  }
+  if str_eq(expr.callee, "to_i") {
+    return checker_self.expect_no_args(expr, checker_self.t_int(), "Float64.to_i takes no arguments")
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on Float64")
+  checker_self.t_float()
+}
+
+pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${object.show}.${expr.callee} does not take a block")
+    return object
+  }
+  if str_eq(expr.callee, "to_f") {
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "${object.show}.to_f takes no arguments")
+  }
+  if str_eq(expr.callee, "abs") {
+    return checker_self.expect_no_args(expr, object, "${object.show}.abs takes no arguments")
+  }
+  if str_eq(expr.callee, "to_i") {
+    return checker_self.expect_no_args(expr, checker_self.t_int(), "${object.show}.to_i takes no arguments")
+  }
+  if str_eq(expr.callee, "to_i64") {
+    return checker_self.expect_no_args(expr, checker_self.t_int64(), "${object.show}.to_i64 takes no arguments")
+  }
+  if str_eq(expr.callee, "to_u64") {
+    return checker_self.expect_no_args(expr, checker_self.t_uint64(), "${object.show}.to_u64 takes no arguments")
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
+  object
+}
+
+pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "Bytes.${expr.callee} does not take a block")
+    return checker_self.t_bytes()
+  }
+  if str_eq(expr.callee, "get") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "get takes one Int")
+      return ty_nilable(checker_self.t_int())
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if got.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "get index must be Int")
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "slice") {
+    if expr.args.size == 2 {
+    } else {
+      checker_self.fail(expr.loc, "slice takes start and stop")
+      return checker_self.t_bytes()
+    }
+    a = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    bb = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if a.is_int {
+      if bb.is_int {
+      } else {
+        checker_self.fail(expr.loc, "slice bounds must be Int")
+      }
+    } else {
+      checker_self.fail(expr.loc, "slice bounds must be Int")
+    }
+    return checker_self.t_bytes()
+  }
+  if str_eq(expr.callee, "to_buf") {
+    return checker_self.expect_no_args(expr, checker_self.t_buf(), "to_buf takes no arguments")
+  }
+  if str_eq(expr.callee, "chars") {
+    return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on Bytes")
+  checker_self.t_bytes()
+}
+
+pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "String.${expr.callee} does not take a block")
+    return checker_self.t_string()
+  }
+  if str_eq(expr.callee, "split") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "split takes one String separator")
+      return ty_array(checker_self.t_string())
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(got, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "split expects String separator")
+    }
+    return ty_array(checker_self.t_string())
+  }
+  if str_eq(expr.callee, "fields") {
+    return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "fields takes no arguments")
+  }
+  if str_eq(expr.callee, "strip") {
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "strip takes no arguments")
+  }
+  if str_eq(expr.callee, "strip_left") {
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "strip_left takes no arguments")
+  }
+  if str_eq(expr.callee, "strip_right") {
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "strip_right takes no arguments")
+  }
+  if str_eq(expr.callee, "bytes") {
+    return checker_self.expect_no_args(expr, checker_self.t_bytes(), "bytes takes no arguments")
+  }
+  if str_eq(expr.callee, "chars") {
+    return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
+  }
+  if str_eq(expr.callee, "to_f") {
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "String.to_f takes no arguments")
+  }
+  if str_eq(expr.callee, "to_i") {
+    return checker_self.expect_no_args(expr, checker_self.t_int(), "String.to_i takes no arguments")
+  }
+  if str_eq(expr.callee, "get") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "get takes one Int")
+      return ty_nilable(checker_self.t_int())
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if got.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "get index must be Int")
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on String")
+  checker_self.t_string()
+}
+
+pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "Buf.${expr.callee} does not take a block")
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "push_bytes") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "push_bytes takes one Bytes")
+      return checker_self.t_void()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_bytes())
+    if got.is_bytes {
+    } else {
+      checker_self.fail(expr.args[0].loc, "push_bytes expects Bytes")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "to_bytes") {
+    return checker_self.expect_no_args(expr, checker_self.t_bytes(), "to_bytes takes no arguments")
+  }
+  if str_eq(expr.callee, "push_byte") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "push_byte takes one Int")
+      return checker_self.t_void()
+    }
+    bty = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if bty.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "byte must be Int")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "push_str") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "push_str takes one String")
+      return checker_self.t_void()
+    }
+    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(s, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "push_str expects String")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "push_slice") {
+    if expr.args.size == 3 {
+    } else {
+      checker_self.fail(expr.loc, "push_slice takes string, start, stop")
+      return checker_self.t_void()
+    }
+    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(s, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "push_slice expects String")
+    }
+    start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
+    if start.is_int {
+      if stop.is_int {
+      } else {
+        checker_self.fail(expr.loc, "start and stop must be Int")
+      }
+    } else {
+      checker_self.fail(expr.loc, "start and stop must be Int")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "push_fmt_f") {
+    if expr.args.size == 2 {
+    } else {
+      checker_self.fail(expr.loc, "push_fmt_f takes Float64 and Int")
+      return checker_self.t_void()
+    }
+    v = checker_self.check_expr(expr.args[0])
+    if v.is_numeric {
+    } else {
+      checker_self.fail(expr.args[0].loc, "push_fmt_f expects Float64")
+    }
+    if v.is_float {
+    } else {
+      expr.args[0].ty = checker_self.t_float()
+    }
+    prec = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if prec.is_int {
+    } else {
+      checker_self.fail(expr.args[1].loc, "precision must be Int")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "push_fmt_i") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "push_fmt_i takes one Int")
+      return checker_self.t_void()
+    }
+    n = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if n.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "push_fmt_i expects Int")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "starts_with") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "starts_with takes one String")
+      return checker_self.t_bool()
+    }
+    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(s, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "starts_with expects String")
+    }
+    return checker_self.t_bool()
+  }
+  if str_eq(expr.callee, "to_s") {
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "to_s takes no arguments")
+  }
+  if str_eq(expr.callee, "clear") {
+    return checker_self.expect_no_args(expr, checker_self.t_void(), "clear takes no arguments")
+  }
+  if str_eq(expr.callee, "get") {
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "get takes one Int")
+      return ty_nilable(checker_self.t_int())
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if got.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "get index must be Int")
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on Buf")
+  checker_self.t_void()
+}
+
+pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
+  if str_eq(expr.callee, "push") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "push does not take a block")
+      return checker_self.t_void()
+    }
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "push takes one argument")
+      return checker_self.t_void()
+    }
+    if e = array.inner {
+      got = checker_self.check_expr_as(expr.args[0], e)
+      if ty_assignable(got, e) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "push expects ${e.show}, got ${got.show}")
+      }
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "pop") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "pop does not take a block")
+      if e = array.inner {
+        return e
+      }
+      return checker_self.t_int()
+    }
+    if expr.args.size == 0 {
+      if e = array.inner {
+        return e
+      }
+      return checker_self.t_int()
+    }
+    checker_self.fail(expr.loc, "pop takes no arguments")
+    if e = array.inner {
+      return e
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "each") {
+    if b = expr.block {
+      if expr.args.size == 0 {
+      } else {
+        checker_self.fail(expr.loc, "each takes a block, not arguments")
+        return checker_self.t_void()
+      }
+      if b.params.size == 1 {
+      } else {
+        checker_self.fail(b.loc, "each { |x| ... } takes one block parameter")
+        return checker_self.t_void()
+      }
+      if e = array.inner {
+        checker_self.check_block_void(b, b.params[0], e)
+      }
+      return checker_self.t_void()
+    }
+    checker_self.fail(expr.loc, "each needs a block")
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "sort") {
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "sort takes no arguments")
+      return checker_self.t_void()
+    }
+    if b = expr.block {
+      if b.params.size == 2 {
+      } else {
+        checker_self.fail(b.loc, "sort { |a, b| ... } takes two block parameters")
+        return checker_self.t_void()
+      }
+      if e = array.inner {
+        checker_self.push_scope
+        checker_self.bind(b.params[0], e)
+        checker_self.bind(b.params[1], e)
+        bt = checker_self.check_block_value(b)
+        checker_self.pop_scope
+        if bt.is_bool {
+        } else {
+          checker_self.fail(b.loc, "sort comparator must return Bool")
+        }
+      }
+      return checker_self.t_void()
+    }
+    if e = array.inner {
+      if checker_self.is_ordered_ty(e) {
+      } else {
+        checker_self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
+      }
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "sorted") {
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "sorted takes no arguments")
+      if e = array.inner {
+        return ty_array(e)
+      }
+      return ty_array(checker_self.t_int())
+    }
+    if b = expr.block {
+      if b.params.size == 2 {
+      } else {
+        checker_self.fail(b.loc, "sorted { |a, b| ... } takes two block parameters")
+        if e = array.inner {
+          return ty_array(e)
+        }
+        return ty_array(checker_self.t_int())
+      }
+      if e = array.inner {
+        checker_self.push_scope
+        checker_self.bind(b.params[0], e)
+        checker_self.bind(b.params[1], e)
+        bt = checker_self.check_block_value(b)
+        checker_self.pop_scope
+        if bt.is_bool {
+        } else {
+          checker_self.fail(b.loc, "sorted comparator must return Bool")
+        }
+        return ty_array(e)
+      }
+      return ty_array(checker_self.t_int())
+    }
+    if e = array.inner {
+      if checker_self.is_ordered_ty(e) {
+      } else {
+        checker_self.fail(expr.loc, "Array.sorted needs an ordered element type or a comparator block")
+      }
+      return ty_array(e)
+    }
+    return ty_array(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "reverse") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "reverse does not take a block")
+      return checker_self.t_void()
+    }
+    return checker_self.expect_no_args(expr, checker_self.t_void(), "reverse takes no arguments")
+  }
+  if str_eq(expr.callee, "contains") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "contains does not take a block")
+      return checker_self.t_bool()
+    }
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "contains takes one argument")
+      return checker_self.t_bool()
+    }
+    if e = array.inner {
+      if checker_self.is_eq_ty(e) {
+      } else {
+        checker_self.fail(expr.loc, "Array.contains needs an equality element type")
+      }
+      got = checker_self.check_expr_as(expr.args[0], e)
+      if ty_assignable(got, e) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "contains expects ${e.show}")
+      }
+    }
+    return checker_self.t_bool()
+  }
+  if str_eq(expr.callee, "any") || str_eq(expr.callee, "all") {
+    pred_name = expr.callee
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "${pred_name} takes a block, not arguments")
+      return checker_self.t_bool()
+    }
+    if b = expr.block {
+      if b.params.size == 1 {
+      } else {
+        checker_self.fail(b.loc, "${pred_name} { |x| ... } takes one block parameter")
+        return checker_self.t_bool()
+      }
+      if e = array.inner {
+        checker_self.push_scope
+        checker_self.bind(b.params[0], e)
+        bt = checker_self.check_block_value(b)
+        checker_self.pop_scope
+        if bt.is_bool {
+        } else {
+          checker_self.fail(b.loc, "${pred_name} predicate must return Bool")
+        }
+      }
+      return checker_self.t_bool()
+    }
+    checker_self.fail(expr.loc, "${pred_name} needs a block")
+    return checker_self.t_bool()
+  }
+  if str_eq(expr.callee, "index_of") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "index_of does not take a block")
+      return ty_nilable(checker_self.t_int())
+    }
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "index_of takes one argument")
+      return ty_nilable(checker_self.t_int())
+    }
+    if e = array.inner {
+      if checker_self.is_eq_ty(e) {
+      } else {
+        checker_self.fail(expr.loc, "Array.index_of needs an equality element type")
+      }
+      got = checker_self.check_expr_as(expr.args[0], e)
+      if ty_assignable(got, e) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "index_of expects ${e.show}")
+      }
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "min") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "min does not take a block")
+      if e = array.inner {
+        return ty_nilable(e)
+      }
+      return ty_nilable(checker_self.t_int())
+    }
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "min takes no arguments")
+    }
+    if e = array.inner {
+      if checker_self.is_ordered_ty(e) {
+        if e.is_bool {
+          checker_self.fail(expr.loc, "Array.min needs an ordered element type")
+        }
+      } else {
+        checker_self.fail(expr.loc, "Array.min needs an ordered element type")
+      }
+      return ty_nilable(e)
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "max") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "max does not take a block")
+      if e = array.inner {
+        return ty_nilable(e)
+      }
+      return ty_nilable(checker_self.t_int())
+    }
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "max takes no arguments")
+    }
+    if e = array.inner {
+      if checker_self.is_ordered_ty(e) {
+        if e.is_bool {
+          checker_self.fail(expr.loc, "Array.max needs an ordered element type")
+        }
+      } else {
+        checker_self.fail(expr.loc, "Array.max needs an ordered element type")
+      }
+      return ty_nilable(e)
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "sum") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "sum does not take a block")
+      if e = array.inner {
+        return e
+      }
+      return checker_self.t_int()
+    }
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "sum takes no arguments")
+    }
+    if e = array.inner {
+      if checker_self.is_numeric_ty(e) {
+        return e
+      }
+      checker_self.fail(expr.loc, "Array.sum needs a numeric element type")
+      return e
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "clear") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "clear does not take a block")
+      return checker_self.t_void()
+    }
+    return checker_self.expect_no_args(expr, checker_self.t_void(), "clear takes no arguments")
+  }
+  if str_eq(expr.callee, "fill") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "fill does not take a block")
+      return checker_self.t_void()
+    }
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "fill takes one argument")
+      return checker_self.t_void()
+    }
+    if e = array.inner {
+      if e.is_int {
+        got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+        if got.is_int {
+        } else {
+          checker_self.fail(expr.args[0].loc, "fill expects Int")
+        }
+      } else if e.is_bool {
+        got = checker_self.check_expr_as(expr.args[0], checker_self.t_bool())
+        if got.is_bool {
+        } else {
+          checker_self.fail(expr.args[0].loc, "fill expects Bool")
+        }
+      } else {
+        checker_self.fail(expr.loc, "Array.fill is Int or Bool")
+      }
+    } else {
+      checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "reserve") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "reserve does not take a block")
+      return checker_self.t_void()
+    }
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "reserve takes one Int")
+      return checker_self.t_void()
+    }
+    n = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if n.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "reserve expects Int")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "get") {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "get does not take a block")
+      if e = array.inner {
+        return ty_nilable(e)
+      }
+      return checker_self.t_int()
+    }
+    if expr.args.size == 1 {
+    } else {
+      checker_self.fail(expr.loc, "get takes one Int")
+      if e = array.inner {
+        return ty_nilable(e)
+      }
+      return checker_self.t_int()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if got.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "get index must be Int")
+    }
+    if e = array.inner {
+      return ty_nilable(e)
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "parallel") {
+    return checker_self.check_parallel(expr, array)
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on Array")
+  checker_self.t_int()
+}
+
+pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
+  if checker_self.in_task > 0 {
+    checker_self.fail(expr.loc, "parallel inside a pool worker")
+    return ty_array(checker_self.t_int())
+  }
+  if b = expr.block {
+    if expr.args.size == 0 {
+    } else {
+      checker_self.fail(expr.loc, "parallel takes a block, not arguments")
+      return ty_array(checker_self.t_int())
+    }
+    if b.params.size == 1 {
+    } else {
+      checker_self.fail(b.loc, "parallel { |x| ... } takes one block parameter")
+      return ty_array(checker_self.t_int())
+    }
+    if e = array.inner {
+      checker_self.push_scope
+      checker_self.bind(b.params[0], e)
+      checker_self.in_task = checker_self.in_task + 1
+      result = checker_self.check_block_value(b)
+      checker_self.in_task = checker_self.in_task - 1
+      checker_self.pop_scope
+      checker_self.collect_spawn_captures(expr, b.body)
+      return ty_array(result)
+    }
+    checker_self.fail(expr.loc, "parallel needs an element type")
+    return ty_array(checker_self.t_int())
+  }
+  checker_self.fail(expr.loc, "parallel needs a block")
+  ty_array(checker_self.t_int())
+}
+
+pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
+  if str_eq(expr.callee, "keys") {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "keys takes no arguments")
+      }
+      if k = hash.key {
+        return ty_array(k)
+      }
+      return ty_array(checker_self.t_int())
+    }
+    checker_self.fail(expr.loc, "keys takes no arguments")
+    if k = hash.key {
+      return ty_array(k)
+    }
+    return ty_array(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "values") {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "values takes no arguments")
+      }
+      if v = hash.val {
+        return ty_array(v)
+      }
+      return ty_array(checker_self.t_int())
+    }
+    checker_self.fail(expr.loc, "values takes no arguments")
+    if v = hash.val {
+      return ty_array(v)
+    }
+    return ty_array(checker_self.t_int())
+  }
+  if str_eq(expr.callee, "has_key") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "has_key takes one key")
+        return checker_self.t_bool()
+      }
+    } else {
+      checker_self.fail(expr.loc, "has_key takes one key")
+      return checker_self.t_bool()
+    }
+    if k = hash.key {
+      got = checker_self.check_expr_as(expr.args[0], k)
+      if ty_assignable(got, k) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+      }
+    }
+    return checker_self.t_bool()
+  }
+  if str_eq(expr.callee, "get_or") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "get_or takes key and default")
+        if v = hash.val {
+          return v
+        }
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "get_or takes key and default")
+      if v = hash.val {
+        return v
+      }
+      return checker_self.t_int()
+    }
+    if k = hash.key {
+      got = checker_self.check_expr_as(expr.args[0], k)
+      if ty_assignable(got, k) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+      }
+    }
+    if v = hash.val {
+      got2 = checker_self.check_expr_as(expr.args[1], v)
+      if ty_assignable(got2, v) {
+      } else {
+        checker_self.fail(expr.args[1].loc, "get_or default must be ${v.show}")
+      }
+      return v
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "inc") {
+    if expr.args.size == 1 || expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "inc takes key and optional amount")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "inc takes key and optional amount")
+      return checker_self.t_int()
+    }
+    ok = false
+    if v = hash.val {
+      if v.is_int {
+        ok = true
+      }
+    }
+    if ok {
+    } else {
+      checker_self.fail(expr.loc, "inc is Hash(K, Int) only")
+    }
+    if k = hash.key {
+      got = checker_self.check_expr_as(expr.args[0], k)
+      if ty_assignable(got, k) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+      }
+    }
+    if expr.args.size == 2 {
+      by = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+      if by.is_int {
+      } else {
+        checker_self.fail(expr.args[1].loc, "inc amount must be Int")
+      }
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "each") {
+    if b = expr.block {
+      if expr.args.size == 0 {
+      } else {
+        checker_self.fail(expr.loc, "each takes a block, not arguments")
+        return checker_self.t_void()
+      }
+      if b.params.size == 2 {
+      } else {
+        checker_self.fail(b.loc, "each { |k, v| ... } takes two block parameters")
+        return checker_self.t_void()
+      }
+      if k = hash.key {
+        if v = hash.val {
+          checker_self.push_scope
+          checker_self.bind(b.params[0], k)
+          checker_self.bind(b.params[1], v)
+          checker_self.check_body(b.body, checker_self.t_void(), false)
+          checker_self.pop_scope
+        }
+      }
+      return checker_self.t_void()
+    }
+    checker_self.fail(expr.loc, "each needs a block")
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "clear") {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "clear takes no arguments")
+        return checker_self.t_void()
+      }
+      return checker_self.t_void()
+    }
+    checker_self.fail(expr.loc, "clear takes no arguments")
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "get") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "get takes one key")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "get takes one key")
+      return checker_self.t_int()
+    }
+    if k = hash.key {
+      got = checker_self.check_expr_as(expr.args[0], k)
+      if ty_assignable(got, k) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+      }
+    }
+    if v = hash.val {
+      return ty_nilable(v)
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "delete") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "delete takes one key")
+        return checker_self.t_void()
+      }
+    } else {
+      checker_self.fail(expr.loc, "delete takes one key")
+      return checker_self.t_void()
+    }
+    if k = hash.key {
+      got = checker_self.check_expr_as(expr.args[0], k)
+      if ty_assignable(got, k) {
+      } else {
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+      }
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "inc_slice") {
+    if expr.args.size == 3 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "inc_slice takes string, start, stop")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "inc_slice takes string, start, stop")
+      return checker_self.t_int()
+    }
+    ok = false
+    if k = hash.key {
+      if v = hash.val {
+        if k.is_string {
+          if v.is_int {
+            ok = true
+          }
+        }
+      }
+    }
+    if ok {
+    } else {
+      checker_self.fail(expr.loc, "inc_slice is Hash(String, Int) only")
+    }
+    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(s, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "inc_slice expects String")
+    }
+    start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
+    if start.is_int {
+      if stop.is_int {
+      } else {
+        checker_self.fail(expr.loc, "start and stop must be Int")
+      }
+    } else {
+      checker_self.fail(expr.loc, "start and stop must be Int")
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "get_slice") {
+    if expr.args.size == 3 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "get_slice takes string, start, stop")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "get_slice takes string, start, stop")
+      return checker_self.t_int()
+    }
+    ok = false
+    if k = hash.key {
+      if v = hash.val {
+        if k.is_string {
+          if v.is_string {
+            ok = true
+          }
+        }
+      }
+    }
+    if ok {
+    } else {
+      checker_self.fail(expr.loc, "get_slice is Hash(String, String) only")
+    }
+    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(s, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "get_slice expects String")
+    }
+    start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
+    if start.is_int {
+      if stop.is_int {
+      } else {
+        checker_self.fail(expr.loc, "start and stop must be Int")
+      }
+    } else {
+      checker_self.fail(expr.loc, "start and stop must be Int")
+    }
+    if v = hash.val {
+      return ty_nilable(v)
+    }
+    return ty_nilable(checker_self.t_string())
+  }
+  if str_eq(expr.callee, "get_concat") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "get_concat takes two Strings")
+        return ty_nilable(checker_self.t_int())
+      }
+    } else {
+      checker_self.fail(expr.loc, "get_concat takes two Strings")
+      return ty_nilable(checker_self.t_int())
+    }
+    ok = false
+    if k = hash.key {
+      if v = hash.val {
+        if k.is_string {
+          if v.is_int {
+            ok = true
+          }
+        }
+      }
+    }
+    if ok {
+    } else {
+      checker_self.fail(expr.loc, "get_concat is Hash(String, Int) only")
+    }
+    a = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    bstr = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+    if ty_assignable(a, checker_self.t_string()) {
+      if ty_assignable(bstr, checker_self.t_string()) {
+      } else {
+        checker_self.fail(expr.loc, "get_concat expects String keys")
+      }
+    } else {
+      checker_self.fail(expr.loc, "get_concat expects String keys")
+    }
+    return ty_nilable(checker_self.t_int())
+  }
+  checker_self.fail(expr.loc, "no method ${expr.callee} on Hash")
+  checker_self.t_int()
+}
+
+pub fn (checker_self: Checker) check_json_walk_call(expr: Expr): Ty? {
+  if str_eq(expr.callee, "json_root") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_root takes a document")
+        return ty_ptr(checker_self.t_void())
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_root takes a document")
+      return ty_ptr(checker_self.t_void())
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_root expects Ptr(Void)")
+    }
+    return ty_ptr(checker_self.t_void())
+  }
+  if str_eq(expr.callee, "json_get") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_get takes a value and a key")
+        return ty_nilable(ty_ptr(checker_self.t_void()))
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_get takes a value and a key")
+      return ty_nilable(ty_ptr(checker_self.t_void()))
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_get expects Ptr(Void)")
+    }
+    key = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+    if ty_assignable(key, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[1].loc, "key must be String")
+    }
+    return ty_nilable(ty_ptr(checker_self.t_void()))
+  }
+  if str_eq(expr.callee, "json_len") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_len takes an array value")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_len takes an array value")
+      return checker_self.t_int()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_len expects Ptr(Void)")
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "json_at") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_at takes an array and an index")
+        return ty_nilable(ty_ptr(checker_self.t_void()))
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_at takes an array and an index")
+      return ty_nilable(ty_ptr(checker_self.t_void()))
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_at expects Ptr(Void)")
+    }
+    idx = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if idx.is_int {
+    } else {
+      checker_self.fail(expr.args[1].loc, "index must be Int")
+    }
+    return ty_nilable(ty_ptr(checker_self.t_void()))
+  }
+  if str_eq(expr.callee, "json_f64") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_f64 takes an object and a key")
+        return ty_nilable(checker_self.t_float())
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_f64 takes an object and a key")
+      return ty_nilable(checker_self.t_float())
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_f64 expects Ptr(Void)")
+    }
+    key = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+    if ty_assignable(key, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[1].loc, "key must be String")
+    }
+    return ty_nilable(checker_self.t_float())
+  }
+  if str_eq(expr.callee, "json_sum_f64") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_sum_f64 takes an array and a key")
+        return checker_self.t_float()
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_sum_f64 takes an array and a key")
+      return checker_self.t_float()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_sum_f64 expects Ptr(Void)")
+    }
+    key = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+    if ty_assignable(key, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[1].loc, "key must be String")
+    }
+    return checker_self.t_float()
+  }
+  if str_eq(expr.callee, "json_free") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_free takes a document")
+        return checker_self.t_void()
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_free takes a document")
+      return checker_self.t_void()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_free expects Ptr(Void)")
+    }
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "json_gen_body") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_gen_body takes one Int")
+        return checker_self.t_string()
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_gen_body takes one Int")
+      return checker_self.t_string()
+    }
+    n = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if n.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_gen_body expects Int")
+    }
+    return checker_self.t_string()
+  }
+  if str_eq(expr.callee, "json_gen_into") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "json_gen_into takes Buf and Int")
+        return checker_self.t_void()
+      }
+    } else {
+      checker_self.fail(expr.loc, "json_gen_into takes Buf and Int")
+      return checker_self.t_void()
+    }
+    buf = checker_self.check_expr(expr.args[0])
+    if buf.is_buf {
+    } else {
+      checker_self.fail(expr.args[0].loc, "json_gen_into expects Buf")
+    }
+    n = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if n.is_int {
+    } else {
+      checker_self.fail(expr.args[1].loc, "json_gen_into expects Int")
+    }
+    return checker_self.t_void()
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) check_codec_call(expr: Expr): Ty? {
+  if str_eq(expr.callee, "b64_encode") {
+    return checker_self.check_one_string(expr, checker_self.t_string())
+  }
+  if str_eq(expr.callee, "b64_decode") {
+    return checker_self.check_one_string(expr, checker_self.t_string())
+  }
+  if str_eq(expr.callee, "zlib_compress") {
+    return checker_self.check_one_string(expr, checker_self.t_string())
+  }
+  if str_eq(expr.callee, "zlib_uncompress") {
+    return checker_self.check_one_string(expr, checker_self.t_string())
+  }
+  if str_eq(expr.callee, "sha256") {
+    return checker_self.check_one_string(expr, checker_self.t_string())
+  }
+  if str_eq(expr.callee, "b64_encode_buf") {
+    return checker_self.check_buf_string(expr)
+  }
+  if str_eq(expr.callee, "b64_decode_buf") {
+    return checker_self.check_buf_string(expr)
+  }
+  if str_eq(expr.callee, "crc32_bytes") {
+    return checker_self.check_i32_bytes(expr)
+  }
+  if str_eq(expr.callee, "sha256_word0") {
+    return checker_self.check_i32_bytes(expr)
+  }
+  if str_eq(expr.callee, "re_count") {
+    if expr.args.size == 3 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "re_count takes pattern, text, and caseless")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "re_count takes pattern, text, and caseless")
+      return checker_self.t_int()
+    }
+    pat = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    text = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+    flags = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
+    if ty_assignable(pat, checker_self.t_string()) {
+      if ty_assignable(text, checker_self.t_string()) {
+      } else {
+        checker_self.fail(expr.loc, "re_count expects String pattern and text")
+      }
+    } else {
+      checker_self.fail(expr.loc, "re_count expects String pattern and text")
+    }
+    if flags.is_int {
+    } else {
+      checker_self.fail(expr.args[2].loc, "caseless must be Int")
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "re_compile") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "re_compile takes a pattern and flags")
+        return ty_ptr(checker_self.t_void())
+      }
+    } else {
+      checker_self.fail(expr.loc, "re_compile takes a pattern and flags")
+      return ty_ptr(checker_self.t_void())
+    }
+    pat = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    flags = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if ty_assignable(pat, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "re_compile expects String")
+    }
+    if flags.is_int {
+    } else {
+      checker_self.fail(expr.args[1].loc, "flags must be Int")
+    }
+    return ty_ptr(checker_self.t_void())
+  }
+  if str_eq(expr.callee, "re_find") {
+    if expr.args.size == 3 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "re_find takes a pattern, a string, and a start")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "re_find takes a pattern, a string, and a start")
+      return checker_self.t_int()
+    }
+    re = checker_self.check_expr(expr.args[0])
+    if re.is_ptr {
+    } else {
+      checker_self.fail(expr.args[0].loc, "re_find expects Ptr(Void)")
+    }
+    text = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+    from = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
+    if ty_assignable(text, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[1].loc, "re_find expects String")
+    }
+    if from.is_int {
+    } else {
+      checker_self.fail(expr.args[2].loc, "start must be Int")
+    }
+    return checker_self.t_int()
+  }
+  if checker_self.re_mark_name(expr.callee) {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "${expr.callee} takes no arguments")
+        return checker_self.t_int()
+      }
+      return checker_self.t_int()
+    }
+    checker_self.fail(expr.loc, "${expr.callee} takes no arguments")
+    return checker_self.t_int()
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) re_mark_name(name: String): Bool {
+  if str_eq(name, "re_m0") {
+    return true
+  }
+  if str_eq(name, "re_m1") {
+    return true
+  }
+  if str_eq(name, "re_c0") {
+    return true
+  }
+  str_eq(name, "re_c1")
+}
+
+pub fn (checker_self: Checker) check_one_string(expr: Expr, ret: Ty): Ty {
+  if expr.args.size == 1 {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${expr.callee} takes one String")
+      return ret
+    }
+  } else {
+    checker_self.fail(expr.loc, "${expr.callee} takes one String")
+    return ret
+  }
+  got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+  if ty_assignable(got, checker_self.t_string()) {
+  } else {
+    checker_self.fail(expr.args[0].loc, "${expr.callee} expects String")
+  }
+  ret
+}
+
+pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
+  if expr.args.size == 2 {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${expr.callee} takes Buf and String")
+      return checker_self.t_void()
+    }
+  } else {
+    checker_self.fail(expr.loc, "${expr.callee} takes Buf and String")
+    return checker_self.t_void()
+  }
+  buf = checker_self.check_expr(expr.args[0])
+  if buf.is_buf {
+  } else {
+    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Buf")
+  }
+  s = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+  if ty_assignable(s, checker_self.t_string()) {
+  } else {
+    checker_self.fail(expr.args[1].loc, "${expr.callee} expects String")
+  }
+  checker_self.t_void()
+}
+
+pub fn (checker_self: Checker) check_i32_bytes(expr: Expr): Ty {
+  if expr.args.size == 1 {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${expr.callee} takes Array(Int)")
+      return checker_self.t_int()
+    }
+  } else {
+    checker_self.fail(expr.loc, "${expr.callee} takes Array(Int)")
+    return checker_self.t_int()
+  }
+  got = checker_self.check_expr(expr.args[0])
+  ok = false
+  if got.is_array {
+    if e = got.inner {
+      if e.is_int {
+        ok = true
+      }
+    }
+  }
+  if ok {
+  } else {
+    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Array(Int)")
+  }
+  checker_self.t_int()
+}
+
+pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
+  if str_eq(expr.callee, "now_us") {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "now_us takes no arguments")
+        return checker_self.t_int()
+      }
+      return checker_self.t_int()
+    }
+    checker_self.fail(expr.loc, "now_us takes no arguments")
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "repeat_byte") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "repeat_byte takes a byte and a count")
+        return checker_self.t_string()
+      }
+    } else {
+      checker_self.fail(expr.loc, "repeat_byte takes a byte and a count")
+      return checker_self.t_string()
+    }
+    bty = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    n = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if bty.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "repeat_byte expects Int byte")
+    }
+    if n.is_int {
+    } else {
+      checker_self.fail(expr.args[1].loc, "repeat_byte expects Int count")
+    }
+    return checker_self.t_string()
+  }
+  if str_eq(expr.callee, "bytes_to_str") {
+    return checker_self.check_i32_bytes_to_str(expr)
+  }
+  if str_eq(expr.callee, "fmt_float") {
+    if expr.args.size == 2 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "fmt_float takes Float64 and Int")
+        return checker_self.t_string()
+      }
+    } else {
+      checker_self.fail(expr.loc, "fmt_float takes Float64 and Int")
+      return checker_self.t_string()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_numeric {
+    } else {
+      checker_self.fail(expr.args[0].loc, "fmt_float expects Float64")
+    }
+    if got.is_float {
+    } else {
+      expr.args[0].ty = checker_self.t_float()
+    }
+    prec = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    if prec.is_int {
+    } else {
+      checker_self.fail(expr.args[1].loc, "precision must be Int")
+    }
+    return checker_self.t_string()
+  }
+  if str_eq(expr.callee, "str_to_f_slice") {
+    if expr.args.size == 3 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "str_to_f_slice takes String, start, stop")
+        return checker_self.t_float()
+      }
+    } else {
+      checker_self.fail(expr.loc, "str_to_f_slice takes String, start, stop")
+      return checker_self.t_float()
+    }
+    s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if ty_assignable(s, checker_self.t_string()) {
+    } else {
+      checker_self.fail(expr.args[0].loc, "str_to_f_slice expects String")
+    }
+    start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
+    stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
+    if start.is_int {
+      if stop.is_int {
+      } else {
+        checker_self.fail(expr.loc, "start and stop must be Int")
+      }
+    } else {
+      checker_self.fail(expr.loc, "start and stop must be Int")
+    }
+    return checker_self.t_float()
+  }
+  if str_eq(expr.callee, "hash_last_key") {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "hash_last_key takes no arguments")
+        return checker_self.t_string()
+      }
+      return checker_self.t_string()
+    }
+    checker_self.fail(expr.loc, "hash_last_key takes no arguments")
+    return checker_self.t_string()
+  }
+  if str_eq(expr.callee, "exp") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "exp takes one Float64")
+        return checker_self.t_float()
+      }
+    } else {
+      checker_self.fail(expr.loc, "exp takes one Float64")
+      return checker_self.t_float()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_numeric {
+    } else {
+      checker_self.fail(expr.args[0].loc, "exp expects Float64")
+    }
+    if got.is_float {
+    } else {
+      expr.args[0].ty = checker_self.t_float()
+    }
+    return checker_self.t_float()
+  }
+  if str_eq(expr.callee, "sqrt") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "sqrt takes one Float64")
+        return checker_self.t_float()
+      }
+    } else {
+      checker_self.fail(expr.loc, "sqrt takes one Float64")
+      return checker_self.t_float()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_numeric {
+    } else {
+      checker_self.fail(expr.args[0].loc, "sqrt expects Float64")
+    }
+    if got.is_float {
+    } else {
+      expr.args[0].ty = checker_self.t_float()
+    }
+    return checker_self.t_float()
+  }
+  if str_eq(expr.callee, "wide_op") {
+    if expr.args.size == 5 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "wide_op takes five Ints")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "wide_op takes five Ints")
+      return checker_self.t_int()
+    }
+    i = 0
+    while i < expr.args.size {
+      got = checker_self.check_expr_as(expr.args[i], checker_self.t_int())
+      if got.is_int {
+      } else {
+        checker_self.fail(expr.args[i].loc, "wide_op expects Int")
+      }
+      i = i + 1
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "wide_hi") {
+    if expr.args.size == 0 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "wide_hi takes no arguments")
+        return checker_self.t_int()
+      }
+      return checker_self.t_int()
+    }
+    checker_self.fail(expr.loc, "wide_hi takes no arguments")
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "checksum_f64") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
+        return checker_self.t_int()
+      }
+    } else {
+      checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
+      return checker_self.t_int()
+    }
+    got = checker_self.check_expr(expr.args[0])
+    if got.is_numeric {
+    } else {
+      checker_self.fail(expr.args[0].loc, "checksum_f64 expects Float64")
+    }
+    if got.is_float {
+    } else {
+      expr.args[0].ty = checker_self.t_float()
+    }
+    return checker_self.t_int()
+  }
+  if str_eq(expr.callee, "checksum_str") {
+    return checker_self.check_one_string(expr, checker_self.t_int())
+  }
+  if str_eq(expr.callee, "puts_u") {
+    if expr.args.size == 1 {
+      if b = expr.block {
+        checker_self.fail(expr.loc, "puts_u takes one Int")
+        return checker_self.t_void()
+      }
+    } else {
+      checker_self.fail(expr.loc, "puts_u takes one Int")
+      return checker_self.t_void()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if got.is_int {
+    } else {
+      checker_self.fail(expr.args[0].loc, "puts_u expects Int")
+    }
+    return checker_self.t_void()
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) check_i32_bytes_to_str(expr: Expr): Ty {
+  if expr.args.size == 1 {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "bytes_to_str takes Array(Int)")
+      return checker_self.t_string()
+    }
+  } else {
+    checker_self.fail(expr.loc, "bytes_to_str takes Array(Int)")
+    return checker_self.t_string()
+  }
+  got = checker_self.check_expr(expr.args[0])
+  ok = false
+  if got.is_array {
+    if e = got.inner {
+      if e.is_int {
+        ok = true
+      }
+    }
+  }
+  if ok {
+  } else {
+    checker_self.fail(expr.args[0].loc, "bytes_to_str expects Array(Int)")
+  }
+  checker_self.t_string()
+}
+
+pub fn (checker_self: Checker) check_json_get(expr: Expr, val: Ty): Ty {
+  if expr.args.size == 2 {
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${expr.callee} takes a document and a key")
+      return ty_nilable(val)
+    }
+  } else {
+    checker_self.fail(expr.loc, "${expr.callee} takes a document and a key")
+    return ty_nilable(val)
+  }
+  doc = checker_self.check_expr(expr.args[0])
+  if doc.is_ptr {
+  } else {
+    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Ptr(Void)")
+  }
+  key = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
+  if ty_assignable(key, checker_self.t_string()) {
+  } else {
+    checker_self.fail(expr.args[1].loc, "key must be String")
+  }
+  ty_nilable(val)
+}

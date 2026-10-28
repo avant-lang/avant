@@ -1,0 +1,678 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+
+pub fn myc_id_part(s: String): String {
+  buf = buf_new(s.size)
+  i = 0
+  while i < s.size {
+    c = s[i]
+    ok = false
+    if c >= 48 {
+      if c <= 57 {
+        ok = true
+      }
+    }
+    if c >= 65 {
+      if c <= 90 {
+        ok = true
+      }
+    }
+    if c >= 97 {
+      if c <= 122 {
+        ok = true
+      }
+    }
+    if ok {
+      buf.push_byte(c)
+    } else {
+      buf.push_byte(95)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub fn ty_myc_id(ty: Ty): String {
+  if ty.is_struct {
+    return ty.name
+  }
+  if ty.is_class {
+    return ty.name
+  }
+  if ty.is_clayout {
+    return ty.name
+  }
+  if ty.is_opaque {
+    return ty.name
+  }
+  ty.show
+}
+
+pub fn ty_layout_myc(ty: Ty): String {
+  if ty.is_array {
+    if e = ty.inner {
+      return "Array_${myc_id_part(ty_myc_id(e))}"
+    }
+    return "Array_"
+  }
+  if ty.is_union {
+    buf = buf_new()
+    buf.push_str("U_")
+    i = 0
+    while i < ty.members.size {
+      if i > 0 {
+        buf.push_str("_")
+      }
+      buf.push_str(myc_id_part(ty_myc_id(ty.members[i])))
+      i = i + 1
+    }
+    return buf.to_s
+  }
+  ty.name
+}
+
+pub fn ty_self_ptr_myc(ty: Ty): String {
+  "ptr<${ty_layout_myc(ty)}>"
+}
+
+pub fn fn_layout_name(ty: Ty): String {
+  mangle_ty(ty)
+}
+
+pub fn fn_code_myc(ty: Ty): String {
+  buf = buf_new()
+  buf.push_str("fn<ptr<void>")
+  i = 0
+  while i < ty.members.size {
+    buf.push_str(", ")
+    buf.push_str(ty_myc(ty.members[i]))
+    i = i + 1
+  }
+  buf.push_str(", ")
+  if r = ty.inner {
+    if r.is_void {
+      buf.push_str("void")
+    } else {
+      buf.push_str(ty_myc(r))
+    }
+  } else {
+    buf.push_str("void")
+  }
+  buf.push_str(">")
+  buf.to_s
+}
+
+pub fn box_layout_name(ty: Ty): String {
+  "Box_${mangle_ty(ty)}"
+}
+
+pub fn ty_myc(ty: Ty): String {
+  k = ty.kind
+  if k == tyk_int() {
+    return "i32"
+  }
+  if k == tyk_int64() {
+    return "i64"
+  }
+  if k == tyk_uint64() {
+    return "u64"
+  }
+  if k == tyk_bool() {
+    return "bool"
+  }
+  if k == tyk_float() {
+    return "f64"
+  }
+  if k == tyk_string() {
+    return "ptr<u8>"
+  }
+  if k == tyk_void() {
+    return "void"
+  }
+  if k == tyk_nil() {
+    return "i32"
+  }
+  if k == tyk_buf() {
+    return "ptr<void>"
+  }
+  if k == tyk_bytes() {
+    return "ptr<u8>"
+  }
+  if k == tyk_hash() {
+    return "ptr<void>"
+  }
+  if k == tyk_join() {
+    return "ptr<void>"
+  }
+  if k == tyk_array() {
+    return ty_self_ptr_myc(ty)
+  }
+  if k == tyk_class() {
+    return ty_self_ptr_myc(ty)
+  }
+  if k == tyk_struct() {
+    return ty_layout_myc(ty)
+  }
+  if k == tyk_clayout() {
+    return ty.name
+  }
+  if k == tyk_union() {
+    return ty_layout_myc(ty)
+  }
+  if k == tyk_ptr() {
+    if inner = ty.inner {
+      if inner.is_opaque {
+        return "ptr<void>"
+      }
+      if inner.is_void {
+        return "ptr<void>"
+      }
+      return "ptr<${ty_myc(inner)}>"
+    }
+    return "ptr<void>"
+  }
+  if k == tyk_fn() {
+    return fn_layout_name(ty)
+  }
+  "void"
+}
+
+pub fn ty_has_heap(ty: Ty): Bool {
+  if ty.is_fn {
+    return true
+  }
+  if ty.is_class {
+    return true
+  }
+  if ty.is_array {
+    return true
+  }
+  if ty.is_string {
+    return true
+  }
+  if ty.is_hash {
+    return true
+  }
+  if ty.is_buf {
+    return true
+  }
+  if ty.is_bytes {
+    return true
+  }
+  if ty.is_join {
+    return true
+  }
+  if ty.is_union {
+    i = 0
+    while i < ty.members.size {
+      m = ty.members[i]
+      if m.is_nil {
+      } else {
+        if ty_has_heap(m) {
+          return true
+        }
+      }
+      i = i + 1
+    }
+    return false
+  }
+  if ty.is_struct {
+    i = 0
+    while i < ty.fields.size {
+      if ty_has_heap(ty.fields[i].ty) {
+        return true
+      }
+      i = i + 1
+    }
+  }
+  false
+}
+
+pub fn heap_ptr_value(ty: Ty): Bool {
+  if ty.is_class {
+    return true
+  }
+  if ty.is_array {
+    return true
+  }
+  if ty.is_string {
+    return true
+  }
+  if ty.is_hash {
+    return true
+  }
+  if ty.is_buf {
+    return true
+  }
+  if ty.is_bytes {
+    return true
+  }
+  ty.is_join
+}
+
+pub fn scalar_array_elem(ty: Ty): Bool {
+  if ty.is_integer {
+    return true
+  }
+  if ty.is_bool {
+    return true
+  }
+  ty.is_float
+}
+
+// Int, bool, and float stay in an i64. A class, array, string, hash,
+// buffer, or join is one pointer word. A fn value is two words, and a
+// struct element is inline, so neither is hoisted this way.
+
+pub fn hoist_array_elem(ty: Ty): Bool {
+  if scalar_array_elem(ty) {
+    return true
+  }
+  pointer_root_ty(ty)
+}
+
+pub fn pointer_root_ty(ty: Ty): Bool {
+  if ty.is_fn {
+    return false
+  }
+  if scalar_array_elem(ty) {
+    return false
+  }
+  heap_ptr_value(ty)
+}
+
+pub fn array_type_id(elem: Ty): Int {
+  if elem.is_fn {
+    return 65535
+  }
+  if heap_ptr_value(elem) {
+    return 65535
+  }
+  0
+}
+
+// A store into a mature object can keep a young pointer. Node? is a
+// union around a class pointer, so the field type itself is not a
+// heap pointer. The payload word still is.
+
+pub fn needs_heap_barrier(ty: Ty): Bool {
+  if heap_ptr_value(ty) {
+    return true
+  }
+  if ty.is_fn {
+    return true
+  }
+  if ty.is_union {
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      if needs_heap_barrier(payloads[i]) {
+        return true
+      }
+      i = i + 1
+    }
+    return false
+  }
+  if ty.is_struct {
+    i = 0
+    while i < ty.fields.size {
+      if needs_heap_barrier(ty.fields[i].ty) {
+        return true
+      }
+      i = i + 1
+    }
+    return false
+  }
+  false
+}
+
+pub fn abi_align(ty: Ty): Int {
+  if ty.is_fn {
+    return 8
+  }
+  if ty.is_int {
+    return 4
+  }
+  if ty.is_nil {
+    return 4
+  }
+  if ty.is_int64 {
+    return 8
+  }
+  if ty.is_uint64 {
+    return 8
+  }
+  if ty.is_bool {
+    return 1
+  }
+  if ty.is_union {
+    best = 4
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      a = abi_align(payloads[i])
+      if a > best {
+        best = a
+      }
+      i = i + 1
+    }
+    return best
+  }
+  if ty.is_struct {
+    if ty.fields.size == 0 {
+      return 1
+    }
+    best = 1
+    i = 0
+    while i < ty.fields.size {
+      a = abi_align(ty.fields[i].ty)
+      if a > best {
+        best = a
+      }
+      i = i + 1
+    }
+    return best
+  }
+  8
+}
+
+pub fn abi_size(ty: Ty): Int {
+  if ty.is_fn {
+    return 16
+  }
+  if ty.is_int {
+    return 4
+  }
+  if ty.is_nil {
+    return 4
+  }
+  if ty.is_int64 {
+    return 8
+  }
+  if ty.is_uint64 {
+    return 8
+  }
+  if ty.is_bool {
+    return 1
+  }
+  if ty.is_union {
+    offset = 4
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      fty = payloads[i]
+      offset = align_up_i(offset, abi_align(fty))
+      offset = offset + abi_size(fty)
+      i = i + 1
+    }
+    return align_up_i(offset, abi_align(ty))
+  }
+  if ty.is_struct {
+    offset = 0
+    i = 0
+    while i < ty.fields.size {
+      fty = ty.fields[i].ty
+      offset = align_up_i(offset, abi_align(fty))
+      offset = offset + abi_size(fty)
+      i = i + 1
+    }
+    return align_up_i(offset, abi_align(ty))
+  }
+  8
+}
+
+pub fn align_up_i(n: Int, align: Int): Int {
+  (n + align - 1) / align * align
+}
+
+pub fn u64_pow2(word: Int): UInt64 {
+  p = 1u64
+  i = 0
+  while i < word {
+    p = p << 1
+    i = i + 1
+  }
+  p
+}
+
+pub fn word_bit(offset: Int, bits: UInt64): UInt64 {
+  word = offset / 8
+  bits | u64_pow2(word)
+}
+
+pub fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
+  if ty.is_fn {
+    return word_bit(offset, bits)
+  }
+  if heap_ptr_value(ty) {
+    return word_bit(offset, bits)
+  }
+  if ty.is_union {
+    off = align_up_i(offset + 4, 8)
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      m = payloads[i]
+      off = align_up_i(off, abi_align(m))
+      bits = add_ptr_bits(m, off, bits)
+      off = off + abi_size(m)
+      i = i + 1
+    }
+    return bits
+  }
+  if ty.is_struct {
+    off = offset
+    i = 0
+    while i < ty.fields.size {
+      fty = ty.fields[i].ty
+      off = align_up_i(off, abi_align(fty))
+      bits = add_ptr_bits(fty, off, bits)
+      off = off + abi_size(fty)
+      i = i + 1
+    }
+    return bits
+  }
+  bits
+}
+
+pub fn pointer_word_bits(ty: Ty): UInt64 {
+  bits = 0u64
+  offset = 0
+  i = 0
+  while i < ty.fields.size {
+    fty = ty.fields[i].ty
+    offset = align_up_i(offset, abi_align(fty))
+    bits = add_ptr_bits(fty, offset, bits)
+    offset = offset + abi_size(fty)
+    i = i + 1
+  }
+  bits
+}
+
+pub fn myc_quote(value: String): String {
+  buf = buf_new(value.size + 2)
+  buf.push_byte(34)
+  i = 0
+  while i < value.size {
+    c = value[i]
+    if c == 10 {
+      buf.push_str("\\n")
+    } else if c == 9 {
+      buf.push_str("\\t")
+    } else if c == 13 {
+      buf.push_str("\\r")
+    } else if c == 34 {
+      buf.push_str("\\\"")
+    } else if c == 92 {
+      buf.push_str("\\\\")
+    } else {
+      buf.push_byte(c)
+    }
+    i = i + 1
+  }
+  buf.push_byte(34)
+  buf.to_s
+}
+
+pub fn myc_float_literal(text: String): String {
+  epos = 0 - 1
+  i = 0
+  while i < text.size {
+    c = text[i]
+    if c == 101 || c == 69 {
+      epos = i
+    }
+    i = i + 1
+  }
+  if epos < 0 {
+    return text
+  }
+  head = str_slice(text, 0, epos)
+  j = epos + 1
+  neg = false
+  if j < text.size {
+    c = text[j]
+    if c == 43 || c == 45 {
+      if c == 45 {
+        neg = true
+      }
+      j = j + 1
+    }
+  }
+  while j < text.size && text[j] == 48 {
+    j = j + 1
+  }
+  digits = str_slice(text, j, text.size)
+  if digits.size == 0 {
+    return "${head}e0"
+  }
+  if neg {
+    return "${head}e-${digits}"
+  }
+  "${head}e${digits}"
+}
+
+pub fn myc_binop(op: Int): String {
+  switch op {
+    case 37 {
+      "add"
+    }
+    case 38 {
+      "sub"
+    }
+    case 39 {
+      "mul"
+    }
+    case 40 {
+      "div"
+    }
+    case 41 {
+      "rem"
+    }
+    case 53 {
+      "and"
+    }
+    case 51 {
+      "or"
+    }
+    case 55 {
+      "xor"
+    }
+    case 57 {
+      "shl"
+    }
+    case 58 {
+      "sar"
+    }
+    case 43 {
+      "eq"
+    }
+    case 44 {
+      "not_eq"
+    }
+    case 45 {
+      "less"
+    }
+    case 46 {
+      "less_eq"
+    }
+    case 47 {
+      "more"
+    }
+    case 48 {
+      "more_eq"
+    }
+    else {
+      "add"
+    }
+  }
+}
+
+pub fn compound_to_binop(op: Int): Int {
+  if op == 24 {
+    return 37
+  }
+  if op == 25 {
+    return 38
+  }
+  if op == 26 {
+    return 39
+  }
+  if op == 27 {
+    return 40
+  }
+  op
+}
+
+pub fn split_comma(s: String): Array(String) {
+  out: Array(String) = []
+  if s.size == 0 {
+    return out
+  }
+  s.split(",")
+}
+pub fn expr_ty(e: Expr): Ty {
+  if t = e.ty {
+    return t
+  }
+  ty_void()
+}
+
+pub fn coverage_wanted: Bool {
+  if v = env_get("AVANT_COVERAGE") {
+    if v.size > 0 {
+      if str_eq(v, "0") {
+      } else {
+        return true
+      }
+    }
+  }
+  args = argv()
+  i = 0
+  while i < args.size {
+    if str_eq(args[i], "--coverage") {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn coverage_map_path: String {
+  if v = env_get("AVANT_COVERAGE_MAP") {
+    if v.size > 0 {
+      return v
+    }
+  }
+  stamp = now_ms()
+  "/tmp/avant-cov-${stamp}.map"
+}

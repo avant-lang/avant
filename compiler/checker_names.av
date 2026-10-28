@@ -1,0 +1,435 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+
+pub fn reserved_c_names: Hash(String, Int) {
+  h = Hash(String, Int).new
+  names = [
+  "main",
+  "avant_alloc",
+  "avant_bump_alloc",
+  "avant_nursery_reclaim",
+  "avant_pin",
+  "avant_unpin",
+  "avant_gc_enter",
+  "avant_gc_leave",
+  "avant_gc_quiet_enter",
+  "avant_gc_quiet_leave",
+  "avant_gc_root",
+  "avant_gc_reload",
+  "avant_type_map",
+  "avant_barrier",
+  "avant_str_concat",
+  "avant_str_from_i32_bytes",
+  "avant_str_repeat_byte",
+  "avant_str_slice",
+  "avant_str_from_int",
+  "avant_str_from_i64",
+  "avant_str_from_u64",
+  "avant_str_from_float",
+  "avant_str_from_bool",
+  "avant_str_from_byte",
+  "avant_str_fmt_float",
+  "avant_str_eq",
+  "avant_str_size",
+  "avant_str_byte",
+  "avant_str_to_f",
+  "avant_str_to_f_slice",
+  "avant_str_to_i",
+  "avant_checksum_str",
+  "avant_checksum_f64",
+  "avant_wide_op",
+  "avant_wide_hi",
+  "avant_exp",
+  "avant_buf_new",
+  "avant_buf_push_byte",
+  "avant_buf_push_str",
+  "avant_buf_push_slice",
+  "avant_buf_push_fmt_f",
+  "avant_buf_push_fmt_i",
+  "avant_buf_to_str",
+  "avant_buf_size",
+  "avant_buf_clear",
+  "avant_buf_starts",
+  "avant_buf_ensure",
+  "avant_b64_encode",
+  "avant_b64_decode",
+  "avant_b64_encode_buf",
+  "avant_b64_decode_buf",
+  "avant_crc32_i32",
+  "avant_sha256_word0",
+  "avant_zlib_compress",
+  "avant_zlib_uncompress",
+  "avant_sha256",
+  "avant_re_compile",
+  "avant_re_find",
+  "avant_re_m0",
+  "avant_re_m1",
+  "avant_re_c0",
+  "avant_re_c1",
+  "avant_re_count",
+  "avant_hash_new",
+  "avant_hash_size",
+  "avant_hash_set_i32",
+  "avant_hash_set_str",
+  "avant_hash_set_i32k_i32",
+  "avant_hash_get_i32",
+  "avant_hash_get_str",
+  "avant_hash_get_i32k_i32",
+  "avant_hash_del",
+  "avant_hash_del_i32k",
+  "avant_hash_inc_slice",
+  "avant_hash_last_key",
+  "avant_hash_get_str_slice",
+  "avant_hash_get_concat",
+  "avant_array_push_slot",
+  "avant_array_push_ptr",
+  "avant_array_set_ptr",
+  "avant_array_get_ptr",
+  "avant_array_pop_ptr",
+  "avant_array_push_i32",
+  "avant_array_clear",
+  "avant_array_reserve",
+  "avant_array_pop_slot",
+  "avant_array_sort_i32",
+  "avant_array_fill_i32",
+  "avant_array_fill_u8",
+  "avant_trap_bounds",
+  "avant_trap_div_zero",
+  "avant_trap_overflow",
+  "avant_checked_add_i64",
+  "avant_checked_sub_i64",
+  "avant_checked_mul_i64",
+  "avant_checked_add_u64",
+  "avant_checked_sub_u64",
+  "avant_checked_mul_u64",
+  "avant_checked_div_i64",
+  "avant_checked_rem_i64",
+  "avant_checked_div_u64",
+  "avant_checked_rem_u64",
+  "avant_spawn",
+  "avant_join",
+  "avant_parallel_for",
+  "avant_gate_new",
+  "avant_gate_lock",
+  "avant_gate_unlock",
+  "avant_gate_wait",
+  "avant_gate_signal",
+  "avant_gate_broadcast",
+  "avant_now_ms",
+  "avant_now_us",
+  "avant_io_init_argv",
+  "avant_argv",
+  "avant_file_read",
+  "avant_file_write",
+  "avant_process_run",
+  "avant_process_run_out",
+  "avant_env_get",
+  "avant_file_exists",
+  "avant_dir_list",
+  "avant_cov_init",
+  "avant_cov_hit",
+  "avant_json_parse",
+  "avant_json_free",
+  "avant_json_gen_body",
+  "avant_json_gen_into",
+  "avant_json_get_int",
+  "avant_json_get_str",
+  "avant_json_root",
+  "avant_json_obj_get",
+  "avant_json_arr_len",
+  "avant_json_arr_get",
+  "avant_json_as_f64",
+  "avant_json_obj_f64",
+  "avant_json_arr_sum_f64",
+  "avant_http_roundtrip"
+  ]
+  for name in names {
+    h[name] = 1
+  }
+  h
+}
+
+pub fn is_op_fn_name(name: String): Bool {
+  if str_eq(name, "&+") {
+    return true
+  }
+  if str_eq(name, "&-") {
+    return true
+  }
+  if str_eq(name, "&*") {
+    return true
+  }
+  if str_eq(name, "+") {
+    return true
+  }
+  if str_eq(name, "-") {
+    return true
+  }
+  if str_eq(name, "*") {
+    return true
+  }
+  if str_eq(name, "/") {
+    return true
+  }
+  if str_eq(name, "%") {
+    return true
+  }
+  if str_eq(name, "==") {
+    return true
+  }
+  if str_eq(name, "!=") {
+    return true
+  }
+  if str_eq(name, "<") {
+    return true
+  }
+  if str_eq(name, "<=") {
+    return true
+  }
+  if str_eq(name, ">") {
+    return true
+  }
+  if str_eq(name, ">=") {
+    return true
+  }
+  false
+}
+
+pub fn binary_op_method_name(op: Int): String {
+  fn_op_name(op)
+}
+
+pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
+  if ty.is_union {
+    if ty.is_nilable {
+      inner = ty_without_nil(ty)
+      tn = ty_to_type_name(inner, loc)
+      if tn.nilable {
+      } else {
+        tn.nilable = true
+      }
+      return tn
+    }
+    out = TypeName.new(loc, "")
+    for m in ty.members {
+      out.members.push(ty_to_type_name(m, loc))
+    }
+    return out
+  }
+  k = ty.kind
+  if k == tyk_int() {
+    return TypeName.new(loc, "Int")
+  }
+  if k == tyk_int64() {
+    return TypeName.new(loc, "Int64")
+  }
+  if k == tyk_uint64() {
+    return TypeName.new(loc, "UInt64")
+  }
+  if k == tyk_bool() {
+    return TypeName.new(loc, "Bool")
+  }
+  if k == tyk_float() {
+    return TypeName.new(loc, "Float64")
+  }
+  if k == tyk_string() {
+    return TypeName.new(loc, "String")
+  }
+  if k == tyk_buf() {
+    return TypeName.new(loc, "Buf")
+  }
+  if k == tyk_bytes() {
+    return TypeName.new(loc, "Bytes")
+  }
+  if k == tyk_nil() {
+    return TypeName.new(loc, "Nil")
+  }
+  if k == tyk_void() {
+    return TypeName.new(loc, "Void")
+  }
+  if k == tyk_array() {
+    tn = TypeName.new(loc, "Array")
+    if e = ty.inner {
+      tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_hash() {
+    tn = TypeName.new(loc, "Hash")
+    if ke = ty.key {
+      tn.args.push(ty_to_type_name(ke, loc))
+    }
+    if va = ty.val {
+      tn.args.push(ty_to_type_name(va, loc))
+    }
+    return tn
+  }
+  if k == tyk_ptr() {
+    tn = TypeName.new(loc, "Ptr")
+    if e = ty.inner {
+      tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_join() {
+    tn = TypeName.new(loc, "JoinHandle")
+    if e = ty.inner {
+      tn.args.push(ty_to_type_name(e, loc))
+    }
+    return tn
+  }
+  if k == tyk_fn() {
+    tn = TypeName.new(loc, "")
+    tn.fn_type = true
+    for m in ty.members {
+      tn.args.push(ty_to_type_name(m, loc))
+    }
+    if r = ty.inner {
+      if r.is_void {
+      } else {
+        tn.ret = ty_to_type_name(r, loc)
+      }
+    }
+    return tn
+  }
+  TypeName.new(loc, ty.name)
+}
+
+pub class ImplFact {
+  type_key: String = ""
+  iface_key: String = ""
+  mod_name: String = ""
+  vis: Bool = false
+
+  fn initialize {
+  }
+}
+
+pub fn str_index(names: Array(String), name: String): Int {
+  for i in 0..names.size {
+    if str_eq(names[i], name) {
+      return i
+    }
+  }
+  0 - 1
+}
+
+pub fn iface_key_of(name: String, args: Array(Ty)): String {
+  if args.size == 0 {
+    return name
+  }
+  buf = buf_new()
+  buf.push_str(name)
+  i = 0
+  while i < args.size {
+    buf.push_str("__")
+    buf.push_str(mangle_ty(args[i]))
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub fn impl_type_key(ty: Ty): String {
+  if ty.is_ptr {
+    return mangle_ty(ty)
+  }
+  ty.name
+}
+
+pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
+  if a.is_var {
+    if b.is_var {
+      ia = str_index(ap, a.name)
+      ib = str_index(bp, b.name)
+      if ia < 0 {
+        return false
+      }
+      return ia == ib
+    }
+    return false
+  }
+  if b.is_var {
+    return false
+  }
+  if a.kind != b.kind {
+    return false
+  }
+  if a.is_fn {
+    if a.members.size != b.members.size {
+      return false
+    }
+    i = 0
+    while i < a.members.size {
+      if ty_eq_sig(a.members[i], b.members[i], ap, bp) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    if ar = a.inner {
+      if br = b.inner {
+        return ty_eq_sig(ar, br, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_union {
+    if a.members.size != b.members.size {
+      return false
+    }
+    i = 0
+    while i < a.members.size {
+      if ty_eq_sig(a.members[i], b.members[i], ap, bp) {
+      } else {
+        return false
+      }
+      i = i + 1
+    }
+    return true
+  }
+  if a.is_ptr {
+    if ae = a.inner {
+      if be = b.inner {
+        return ty_eq_sig(ae, be, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_array {
+    if ae = a.inner {
+      if be = b.inner {
+        return ty_eq_sig(ae, be, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_join {
+    if ae = a.inner {
+      if be = b.inner {
+        return ty_eq_sig(ae, be, ap, bp)
+      }
+    }
+    return false
+  }
+  if a.is_hash {
+    if ak = a.key {
+      if av = a.val {
+        if bk = b.key {
+          if bv = b.val {
+            if ty_eq_sig(ak, bk, ap, bp) {
+              return ty_eq_sig(av, bv, ap, bp)
+            }
+          }
+        }
+      }
+    }
+    return false
+  }
+  a.same_as(b)
+}

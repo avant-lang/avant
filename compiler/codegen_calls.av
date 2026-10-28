@@ -1,0 +1,2364 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import codegen_types
+import re2c_pat
+import codegen_myc
+
+pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
+  if expr.indirect {
+    codegen_self.emit_indirect(expr)
+    return
+  }
+  if expr.lib_name.size > 0 {
+    codegen_self.emit_lib_call(expr)
+    return
+  }
+  if recv = expr.receiver {
+    if str_eq(expr.callee, "new") || str_eq(expr.callee, "bump") {
+      codegen_self.emit_ctor_call(expr, recv)
+      return
+    }
+    if recv.kind == ex_name() {
+      if str_eq(recv.ident, "String") {
+        if str_eq(expr.callee, "from_utf8") {
+          codegen_self.emit_from_utf8(expr)
+          return
+        }
+      }
+    }
+    rty = expr_ty(recv)
+    if str_eq(expr.callee, "or") {
+      if rty.is_nilable {
+        if expr.args.size > 0 {
+          codegen_self.emit_coalesce(recv, expr.args[0], expr_ty(expr))
+          return
+        }
+      }
+    }
+    if rty.is_bytes {
+      codegen_self.emit_bytes_method(expr)
+      return
+    }
+    if rty.is_float {
+      codegen_self.emit_float_method(expr)
+      return
+    }
+    if rty.is_integer {
+      codegen_self.emit_int_method(expr)
+      return
+    }
+    if rty.is_string {
+      codegen_self.emit_string_method(expr)
+      return
+    }
+    if rty.is_array {
+      codegen_self.emit_array_method(expr, rty)
+      return
+    }
+    if rty.is_hash {
+      codegen_self.emit_hash_method(expr, rty)
+      return
+    }
+    if rty.is_buf {
+      codegen_self.emit_buf_method(expr)
+      return
+    }
+    if rty.is_join {
+      codegen_self.emit_join(expr)
+      return
+    }
+    if str_eq(expr.callee, "with") {
+      if str_eq(rty.origin, "Mutex") {
+        codegen_self.emit_mutex_with(expr, rty)
+        return
+      }
+    }
+    codegen_self.emit_method_invoke(recv, expr.resolved, expr.args)
+    return
+  }
+  if str_eq(expr.callee, "puts") {
+    if expr.args.size > 0 {
+      codegen_self.emit_puts(expr.args[0])
+    }
+    return
+  }
+  if str_eq(expr.callee, "spawn") {
+    codegen_self.emit_spawn(expr)
+    return
+  }
+  if str_eq(expr.callee, "avant_gate_new") {
+    codegen_self.line("CALL :avant_gate_new")
+    return
+  }
+  if codegen_self.is_gate_callee(expr.callee) {
+    codegen_self.emit_args(expr.args)
+    codegen_self.line("CALL :${expr.callee}")
+    return
+  }
+  if str_eq(expr.callee, "now_ms") {
+    codegen_self.line("CALL :avant_now_ms")
+    return
+  }
+  if str_eq(expr.callee, "file_read") {
+    codegen_self.emit_opt_cstr(expr, "avant_file_read")
+    return
+  }
+  if str_eq(expr.callee, "file_write") {
+    codegen_self.emit_call_named("avant_file_write", expr.args)
+    return
+  }
+  if str_eq(expr.callee, "argv") {
+    codegen_self.line("CALL :avant_argv")
+    m = ty_myc(expr_ty(expr))
+    codegen_self.line("AS :${m}")
+    return
+  }
+  if str_eq(expr.callee, "process_run") {
+    codegen_self.emit_process_run(expr)
+    return
+  }
+  if str_eq(expr.callee, "process_run_out") {
+    codegen_self.emit_process_run_out(expr)
+    return
+  }
+  if str_eq(expr.callee, "env_get") {
+    codegen_self.emit_opt_cstr(expr, "avant_env_get")
+    return
+  }
+  if str_eq(expr.callee, "file_exists") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_file_exists")
+    codegen_self.line("PUSH 1")
+    codegen_self.line("BINARY :eq")
+    return
+  }
+  if str_eq(expr.callee, "dir_list") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_dir_list")
+    m = ty_myc(expr_ty(expr))
+    codegen_self.line("AS :${m}")
+    return
+  }
+  if str_eq(expr.callee, "now_us") {
+    codegen_self.line("CALL :avant_now_us")
+    return
+  }
+  if str_eq(expr.callee, "chr") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_str_from_byte")
+    return
+  }
+  if str_eq(expr.callee, "repeat_byte") {
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_str_repeat_byte")
+    return
+  }
+  if str_eq(expr.callee, "bytes_to_str") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_str_from_i32_bytes")
+    return
+  }
+  if str_eq(expr.callee, "fmt_float") {
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_str_fmt_float")
+    return
+  }
+  if str_eq(expr.callee, "str_to_f_slice") {
+    if expr.args.size > 2 {
+      codegen_self.emit_expr(expr.args[2])
+    }
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_str_to_f_slice")
+    return
+  }
+  if str_eq(expr.callee, "json_free") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_json_free")
+    return
+  }
+  if str_eq(expr.callee, "b64_encode") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_b64_encode")
+    return
+  }
+  if str_eq(expr.callee, "b64_decode") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_b64_decode")
+    return
+  }
+  if str_eq(expr.callee, "b64_encode_buf") {
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_b64_encode_buf")
+    return
+  }
+  if str_eq(expr.callee, "b64_decode_buf") {
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_b64_decode_buf")
+    return
+  }
+  if str_eq(expr.callee, "zlib_compress") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_zlib_compress")
+    return
+  }
+  if str_eq(expr.callee, "zlib_uncompress") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_zlib_uncompress")
+    return
+  }
+  if str_eq(expr.callee, "sha256") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_sha256")
+    return
+  }
+  if str_eq(expr.callee, "crc32_bytes") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_crc32_i32")
+    return
+  }
+  if str_eq(expr.callee, "sha256_word0") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_sha256_word0")
+    return
+  }
+  if str_eq(expr.callee, "re_count") {
+    if expr.args.size == 3 {
+      rid = codegen_self.re2c_call_id(expr.args[0], expr.args[2])
+      if rid > 0 {
+        codegen_self.emit_expr(expr.args[1])
+        codegen_self.line("PUSH ${rid}")
+        codegen_self.line("CALL :avant_re2c_count")
+        return
+      }
+    }
+    if expr.args.size > 2 {
+      codegen_self.emit_expr(expr.args[2])
+    }
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_re_count")
+    return
+  }
+  if str_eq(expr.callee, "re_compile") {
+    if expr.args.size == 2 {
+      rid = codegen_self.re2c_call_id(expr.args[0], expr.args[1])
+      if rid > 0 {
+        codegen_self.line("PUSH ${rid}")
+        codegen_self.line("CALL :avant_re2c_handle")
+        return
+      }
+    }
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_re_compile")
+    return
+  }
+  if str_eq(expr.callee, "re_find") {
+    if expr.args.size > 2 {
+      codegen_self.emit_expr(expr.args[2])
+    }
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_re_find")
+    return
+  }
+  if codegen_self.re_mark_callee(expr.callee) {
+    codegen_self.line("CALL :avant_${expr.callee}")
+    return
+  }
+  if str_eq(expr.callee, "hash_last_key") {
+    codegen_self.line("CALL :avant_hash_last_key")
+    return
+  }
+  if str_eq(expr.callee, "exp") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_exp")
+    return
+  }
+  if str_eq(expr.callee, "sqrt") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("UNARY :sqrt")
+    return
+  }
+  if str_eq(expr.callee, "json_root") {
+    codegen_self.emit_json_root(expr)
+    return
+  }
+  if str_eq(expr.callee, "json_get") {
+    codegen_self.emit_json_obj_get(expr)
+    return
+  }
+  if str_eq(expr.callee, "json_len") {
+    codegen_self.emit_json_len(expr)
+    return
+  }
+  if str_eq(expr.callee, "json_at") {
+    codegen_self.emit_json_at(expr)
+    return
+  }
+  if str_eq(expr.callee, "json_f64") {
+    codegen_self.emit_json_f64(expr)
+    return
+  }
+  if str_eq(expr.callee, "json_sum_f64") {
+    codegen_self.emit_json_sum_f64(expr)
+    return
+  }
+  if str_eq(expr.callee, "wide_op") {
+    if expr.args.size > 4 {
+      codegen_self.emit_expr(expr.args[4])
+    }
+    if expr.args.size > 3 {
+      codegen_self.emit_expr(expr.args[3])
+    }
+    if expr.args.size > 2 {
+      codegen_self.emit_expr(expr.args[2])
+    }
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_wide_op")
+    return
+  }
+  if str_eq(expr.callee, "wide_hi") {
+    codegen_self.line("CALL :avant_wide_hi")
+    return
+  }
+  if str_eq(expr.callee, "checksum_f64") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_checksum_f64")
+    return
+  }
+  if str_eq(expr.callee, "checksum_str") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_checksum_str")
+    return
+  }
+  if str_eq(expr.callee, "puts_u") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("PUSH \"%u\\n\"")
+    codegen_self.line("PRINTF 1")
+    return
+  }
+  if str_eq(expr.callee, "str_slice") {
+    if expr.args.size > 2 {
+      codegen_self.emit_expr(expr.args[2])
+    }
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_str_slice")
+    return
+  }
+  if str_eq(expr.callee, "nursery_reclaim") {
+    codegen_self.line("CALL :avant_nursery_reclaim")
+    return
+  }
+  if str_eq(expr.callee, "buf_new") {
+    if expr.args.size == 0 {
+      codegen_self.line("PUSH 0")
+    } else {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_buf_new")
+    return
+  }
+  if str_eq(expr.callee, "json_parse") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_json_parse")
+    return
+  }
+  if str_eq(expr.callee, "json_gen_body") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_json_gen_body")
+    return
+  }
+  if str_eq(expr.callee, "json_gen_into") {
+    if expr.args.size > 1 {
+      codegen_self.emit_expr(expr.args[1])
+    }
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_json_gen_into")
+    return
+  }
+  if str_eq(expr.callee, "json_int") {
+    codegen_self.emit_json_get(expr, false)
+    return
+  }
+  if str_eq(expr.callee, "json_str") {
+    codegen_self.emit_json_get(expr, true)
+    return
+  }
+  if str_eq(expr.callee, "http_roundtrip") {
+    if expr.args.size > 0 {
+      codegen_self.emit_expr(expr.args[0])
+    }
+    codegen_self.line("CALL :avant_http_roundtrip")
+    return
+  }
+  name = expr.resolved
+  if name.size == 0 {
+    name = expr.callee
+  }
+  if sig = codegen_self.find_fn(name) {
+    codegen_self.emit_typed_args(expr.args, sig.params)
+    codegen_self.line("CALL :${name}")
+  } else {
+    codegen_self.emit_call_named(name, expr.args)
+  }
+}
+
+pub fn (codegen_self: MycGen) is_struct_self(name: String): Bool {
+  if st = codegen_self.self_ty {
+    if st.is_struct {
+      return str_eq(codegen_self.self_name, name)
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) emit_self_field(field: String) {
+  if st = codegen_self.self_ty {
+    m = ty_self_ptr_myc(st)
+    codegen_self.line("LOCAL :${codegen_self.self_name} :${m}")
+    codegen_self.line("DEREF")
+    fi = st.field_index(field)
+    codegen_self.line("FIELD ${fi}")
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_self_ptr(recv: Expr) {
+  ty = expr_ty(recv)
+  if ty.is_class {
+    codegen_self.emit_expr(recv)
+    return
+  }
+  codegen_self.emit_lvalue(recv)
+  codegen_self.line("ADDR")
+}
+
+pub fn (codegen_self: MycGen) emit_method_invoke(recv: Expr, name: String, args: Array(Expr)) {
+  codegen_self.emit_args(args)
+  rty = expr_ty(recv)
+  if rty.is_ptr {
+    codegen_self.emit_expr(recv)
+  } else {
+    codegen_self.emit_self_ptr(recv)
+  }
+  codegen_self.line("CALL :${name}")
+}
+
+pub fn (codegen_self: MycGen) c_layout_heap_store(target: Expr): Bool {
+  if target.kind == ex_field() {
+  } else {
+    return false
+  }
+  if ty_has_heap(expr_ty(target)) {
+  } else {
+    return false
+  }
+  if obj = target.object {
+    ot = expr_ty(obj)
+    if ot.is_clayout {
+      return true
+    }
+    if ot.is_ptr {
+      if inner = ot.inner {
+        if inner.is_clayout {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) emit_ctor_call(expr: Expr, recv: Expr) {
+  ctor = expr.resolved
+  if ctor.size == 0 {
+    if recv.kind == ex_name() {
+      ctor = "${recv.ident}__new"
+    }
+  }
+  if ctor.size > 0 {
+    codegen_self.emit_call_named(ctor, expr.args)
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_spawn_cap_layout(call: Expr) {
+  if call.cap_names.size == 0 {
+    return
+  }
+  name = call.spawn_thunk
+  codegen_self.line("STRUCT :${name}_cap")
+  codegen_self.indent = codegen_self.indent + 1
+  i = 0
+  while i < call.cap_tys.size {
+    m = ty_myc(call.cap_tys[i])
+    codegen_self.line("TYPE :${m}")
+    i = i + 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_spawn(expr: Expr) {
+  name = expr.spawn_thunk
+  if expr.cap_names.size == 0 {
+    codegen_self.line("PUSH 0")
+    codegen_self.line("AS :ptr<void>")
+  } else {
+    cap_id = codegen_self.closure_type_id("${name}_cap")
+    codegen_self.emit_alloc_sizeof("${name}_cap", cap_id)
+    codegen_self.line("AS :ptr<${name}_cap>")
+    holder = codegen_self.new_temp
+    codegen_self.line("LOCAL :${holder} :ptr<${name}_cap>")
+    codegen_self.line("STORE")
+    codegen_self.line("LOCAL :${holder}")
+    codegen_self.line("AS :ptr<void>")
+    codegen_self.line("CALL :avant_pin")
+    i = 0
+    while i < expr.cap_names.size {
+      cname = expr.cap_names[i]
+      cm = ty_myc(expr.cap_tys[i])
+      if codegen_self.name_is_boxed(cname) {
+        codegen_self.emit_box_lvalue(cname, expr.cap_tys[i])
+      } else {
+        sci = codegen_self.cap_index(cname)
+        if sci >= 0 {
+          codegen_self.emit_cap_lvalue(sci)
+        } else {
+          codegen_self.line("LOCAL :${cname} :${cm}")
+        }
+      }
+      codegen_self.line("LOCAL :${holder}")
+      codegen_self.line("DEREF")
+      codegen_self.line("FIELD ${i}")
+      codegen_self.line("STORE")
+      i = i + 1
+    }
+    codegen_self.line("LOCAL :${holder}")
+    codegen_self.line("AS :ptr<void>")
+  }
+  codegen_self.line("ADDR :${name}")
+  codegen_self.line("AS :ptr<void>")
+  codegen_self.line("CALL :avant_spawn")
+}
+
+pub fn (codegen_self: MycGen) note_spawn_box(name: String, caps: Array(String), into: Array(String)) {
+  found = false
+  i = 0
+  while i < caps.size {
+    if str_eq(caps[i], name) {
+      found = true
+    }
+    i = i + 1
+  }
+  if found {
+  } else {
+    return
+  }
+  j = 0
+  while j < into.size {
+    if str_eq(into[j], name) {
+      return
+    }
+    j = j + 1
+  }
+  into.push(name)
+}
+
+pub fn (codegen_self: MycGen) collect_spawn_box_stmts(body: Array(Stmt), caps: Array(String), into: Array(String)) {
+  i = 0
+  while i < body.size {
+    codegen_self.collect_spawn_box_stmt(body[i], caps, into)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_spawn_box_stmt(stmt: Stmt, caps: Array(String), into: Array(String)) {
+  k = stmt.kind
+  if k == st_return() {
+    if e = stmt.expr {
+      codegen_self.collect_spawn_box_expr(e, caps, into)
+    }
+    return
+  }
+  if k == st_if() {
+    if c = stmt.cond {
+      codegen_self.collect_spawn_box_expr(c, caps, into)
+    }
+    codegen_self.collect_spawn_box_stmts(stmt.then_body, caps, into)
+    codegen_self.collect_spawn_box_stmts(stmt.else_body, caps, into)
+    return
+  }
+  if k == st_while() {
+    codegen_self.collect_spawn_box_stmts(stmt.pre, caps, into)
+    if c = stmt.cond {
+      codegen_self.collect_spawn_box_expr(c, caps, into)
+    }
+    codegen_self.collect_spawn_box_stmts(stmt.body, caps, into)
+    return
+  }
+  if k == st_pin() {
+    if e = stmt.expr {
+      codegen_self.collect_spawn_box_expr(e, caps, into)
+    }
+    codegen_self.collect_spawn_box_stmts(stmt.body, caps, into)
+    return
+  }
+  if k == st_assign() {
+    if target = stmt.target {
+      codegen_self.collect_spawn_box_expr(target, caps, into)
+    }
+    if v = stmt.value {
+      codegen_self.collect_spawn_box_expr(v, caps, into)
+    }
+    return
+  }
+  if k == st_expr() {
+    if e = stmt.expr {
+      codegen_self.collect_spawn_box_expr(e, caps, into)
+    }
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_spawn_box_expr(expr: Expr, caps: Array(String), into: Array(String)) {
+  k = expr.kind
+  if k == ex_lambda() {
+    i = 0
+    while i < expr.cap_names.size {
+      codegen_self.note_spawn_box(expr.cap_names[i], caps, into)
+      i = i + 1
+    }
+    if b = expr.block {
+      codegen_self.collect_spawn_box_stmts(b.body, caps, into)
+    }
+    return
+  }
+  if k == ex_call() {
+    if inner = expr.inner {
+      codegen_self.collect_spawn_box_expr(inner, caps, into)
+    }
+    if recv = expr.receiver {
+      codegen_self.collect_spawn_box_expr(recv, caps, into)
+    }
+    i = 0
+    while i < expr.args.size {
+      codegen_self.collect_spawn_box_expr(expr.args[i], caps, into)
+      i = i + 1
+    }
+    if b = expr.block {
+      codegen_self.collect_spawn_box_stmts(b.body, caps, into)
+    }
+    return
+  }
+  if k == ex_unary() {
+    if inner = expr.inner {
+      codegen_self.collect_spawn_box_expr(inner, caps, into)
+    }
+    return
+  }
+  if k == ex_binary() {
+    if l = expr.left {
+      codegen_self.collect_spawn_box_expr(l, caps, into)
+    }
+    if r = expr.right {
+      codegen_self.collect_spawn_box_expr(r, caps, into)
+    }
+    return
+  }
+  if k == ex_field() {
+    if obj = expr.object {
+      codegen_self.collect_spawn_box_expr(obj, caps, into)
+    }
+    return
+  }
+  if k == ex_index() {
+    if l = expr.left {
+      codegen_self.collect_spawn_box_expr(l, caps, into)
+    }
+    if r = expr.right {
+      codegen_self.collect_spawn_box_expr(r, caps, into)
+    }
+    return
+  }
+  if k == ex_struct() {
+    i = 0
+    while i < expr.field_exprs.size {
+      codegen_self.collect_spawn_box_expr(expr.field_exprs[i], caps, into)
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_array() {
+    i = 0
+    while i < expr.elems.size {
+      codegen_self.collect_spawn_box_expr(expr.elems[i], caps, into)
+      i = i + 1
+    }
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_spawn_thunk(call: Expr) {
+  if b = call.block {
+    saved_indent = codegen_self.indent
+    saved_count = codegen_self.temps
+    saved_ret = codegen_self.return_type
+    saved_rooted = codegen_self.rooted
+    saved_self = codegen_self.self_ty
+    saved_self_name = codegen_self.self_name
+    saved_main = codegen_self.c_main
+    codegen_self.indent = 0
+    codegen_self.temps = 0
+    codegen_self.return_type = ty_int()
+    codegen_self.self_ty = nil
+    codegen_self.self_name = ""
+    codegen_self.c_main = false
+    name = call.spawn_thunk
+    codegen_self.line("FUNC :${name}")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("ARGS")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("TYPE :ptr<void>")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("RETURN")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("TYPE :i32")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("BODY")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.reset_rooted
+    codegen_self.line("CALL :avant_gc_enter")
+    codegen_self.line("PARAM 0")
+    boxed: Array(String) = []
+    codegen_self.collect_spawn_box_stmts(b.body, call.cap_names, boxed)
+    if call.cap_names.size == 0 {
+      codegen_self.line("STACK :drop")
+      codegen_self.begin_fn_frame(boxed)
+    } else {
+      codegen_self.line("AS :ptr<${name}_cap>")
+      holder = codegen_self.new_temp
+      codegen_self.line("LOCAL :${holder} :ptr<${name}_cap>")
+      codegen_self.line("STORE")
+      codegen_self.begin_fn_frame(boxed)
+      i = 0
+      while i < call.cap_names.size {
+        cname = call.cap_names[i]
+        cm = ty_myc(call.cap_tys[i])
+        codegen_self.line("LOCAL :${holder}")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD ${i}")
+        if codegen_self.name_is_boxed(cname) {
+          tmp = codegen_self.new_temp
+          codegen_self.line("LOCAL :${tmp} :${cm}")
+          codegen_self.line("STORE")
+          codegen_self.ensure_root(tmp, call.cap_tys[i])
+          codegen_self.ensure_box(cname, call.cap_tys[i])
+          codegen_self.line("LOCAL :${tmp}")
+          codegen_self.store_box_value(cname, call.cap_tys[i])
+        } else {
+          codegen_self.line("LOCAL :${cname} :${cm}")
+          codegen_self.line("STORE")
+          codegen_self.ensure_root(cname, call.cap_tys[i])
+        }
+        i = i + 1
+      }
+    }
+    i = 0
+    while i < b.body.size {
+      stmt = b.body[i]
+      if i == b.body.size - 1 {
+        if e = stmt.expr {
+          codegen_self.emit_expr(e)
+          codegen_self.emit_ret
+        } else {
+          codegen_self.emit_stmt(stmt, false)
+          codegen_self.emit_ret
+        }
+      } else {
+        codegen_self.emit_stmt(stmt, false)
+      }
+      i = i + 1
+    }
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDFUNC")
+    codegen_self.blank
+    codegen_self.indent = saved_indent
+    codegen_self.temps = saved_count
+    codegen_self.return_type = saved_ret
+    codegen_self.rooted = saved_rooted
+    codegen_self.self_ty = saved_self
+    codegen_self.self_name = saved_self_name
+    codegen_self.c_main = saved_main
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_parallel_layout(call: Expr) {
+  name = call.spawn_thunk
+  codegen_self.line("STRUCT :${name}_cap")
+  codegen_self.indent = codegen_self.indent + 1
+  if recv = call.receiver {
+    inm = ty_myc(expr_ty(recv))
+    codegen_self.line("TYPE :${inm}")
+  }
+  outm = ty_myc(expr_ty(call))
+  codegen_self.line("TYPE :${outm}")
+  i = 0
+  while i < call.cap_tys.size {
+    cm = ty_myc(call.cap_tys[i])
+    codegen_self.line("TYPE :${cm}")
+    i = i + 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_parallel(expr: Expr, array_ty: Ty) {
+  name = expr.spawn_thunk
+  layout = "${name}_cap"
+  if recv = expr.receiver {
+    codegen_self.emit_expr(recv)
+  }
+  arr = codegen_self.new_temp
+  am = ty_myc(array_ty)
+  codegen_self.line("LOCAL :${arr} :${am}")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(arr, array_ty)
+  codegen_self.line("LOCAL :${arr}")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 1")
+  n = codegen_self.new_temp
+  codegen_self.line("LOCAL :${n} :i32")
+  codegen_self.line("STORE")
+  out_ty = expr_ty(expr)
+  elem = ty_int()
+  if e = out_ty.inner {
+    elem = e
+  }
+  ptr = codegen_self.new_temp
+  codegen_self.line("LOCAL :${n}")
+  em = ty_myc(elem)
+  codegen_self.emit_alloc_count(elem)
+  codegen_self.line("LOCAL :${ptr} :ptr<${em}>")
+  codegen_self.line("STORE")
+  codegen_self.emit_ptr_root(ptr)
+  codegen_self.emit_array_header(out_ty, ptr, n, n)
+  dst = codegen_self.new_temp
+  om = ty_myc(out_ty)
+  codegen_self.line("LOCAL :${dst} :${om}")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(dst, out_ty)
+  tid = codegen_self.closure_type_id(layout)
+  codegen_self.emit_alloc_sizeof(layout, tid)
+  codegen_self.line("AS :ptr<${layout}>")
+  ctx = codegen_self.new_temp
+  codegen_self.line("LOCAL :${ctx} :ptr<${layout}>")
+  codegen_self.line("STORE")
+  codegen_self.emit_ptr_root(ctx)
+  codegen_self.line("LOCAL :${ctx}")
+  codegen_self.line("AS :ptr<void>")
+  codegen_self.line("CALL :avant_pin")
+  codegen_self.line("LOCAL :${arr}")
+  codegen_self.line("LOCAL :${ctx}")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 0")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${dst}")
+  codegen_self.line("LOCAL :${ctx}")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 1")
+  codegen_self.line("STORE")
+  i = 0
+  while i < expr.cap_names.size {
+    cname = expr.cap_names[i]
+    cm = ty_myc(expr.cap_tys[i])
+    if codegen_self.name_is_boxed(cname) {
+      codegen_self.emit_box_lvalue(cname, expr.cap_tys[i])
+    } else {
+      sci = codegen_self.cap_index(cname)
+      if sci >= 0 {
+        codegen_self.emit_cap_lvalue(sci)
+      } else {
+        codegen_self.line("LOCAL :${cname} :${cm}")
+      }
+    }
+    fi = i + 2
+    codegen_self.line("LOCAL :${ctx}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD ${fi}")
+    codegen_self.line("STORE")
+    i = i + 1
+  }
+  codegen_self.line("LOCAL :${ctx}")
+  codegen_self.line("AS :ptr<void>")
+  codegen_self.line("ADDR :${name}")
+  codegen_self.line("AS :ptr<void>")
+  codegen_self.line("LOCAL :${n}")
+  codegen_self.line("CALL :avant_parallel_for")
+  codegen_self.line("LOCAL :${dst}")
+}
+
+pub fn (codegen_self: MycGen) emit_parallel_thunk(call: Expr) {
+  if b = call.block {
+    saved_indent = codegen_self.indent
+    saved_count = codegen_self.temps
+    saved_ret = codegen_self.return_type
+    saved_rooted = codegen_self.rooted
+    saved_self = codegen_self.self_ty
+    saved_self_name = codegen_self.self_name
+    saved_main = codegen_self.c_main
+    saved_place = codegen_self.place_name
+    saved_ph = codegen_self.place_holder
+    saved_pf = codegen_self.place_field
+    codegen_self.indent = 0
+    codegen_self.temps = 0
+    codegen_self.return_type = ty_void()
+    codegen_self.self_ty = nil
+    codegen_self.self_name = ""
+    codegen_self.c_main = false
+    codegen_self.place_name = ""
+    codegen_self.place_holder = ""
+    codegen_self.place_field = 0
+    name = call.spawn_thunk
+    layout = "${name}_cap"
+    codegen_self.line("FUNC :${name}")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("ARGS")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("TYPE :i32")
+    codegen_self.line("TYPE :ptr<void>")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("BODY")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.reset_rooted
+    codegen_self.line("CALL :avant_gc_enter")
+    codegen_self.line("PARAM 0")
+    idx = codegen_self.new_temp
+    codegen_self.line("LOCAL :${idx} :i32")
+    codegen_self.line("STORE")
+    codegen_self.line("PARAM 1")
+    codegen_self.line("AS :ptr<${layout}>")
+    holder = codegen_self.new_temp
+    codegen_self.line("LOCAL :${holder} :ptr<${layout}>")
+    codegen_self.line("STORE")
+    codegen_self.emit_ptr_root(holder)
+    boxed: Array(String) = []
+    codegen_self.collect_spawn_box_stmts(b.body, call.cap_names, boxed)
+    codegen_self.begin_fn_frame(boxed)
+    in_ty = ty_void()
+    if recv = call.receiver {
+      in_ty = expr_ty(recv)
+    }
+    am = ty_myc(in_ty)
+    codegen_self.line("LOCAL :${holder}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD 0")
+    arr = codegen_self.new_temp
+    codegen_self.line("LOCAL :${arr} :${am}")
+    codegen_self.line("STORE")
+    codegen_self.ensure_root(arr, in_ty)
+    out_ty = expr_ty(call)
+    elem = ty_int()
+    if e = out_ty.inner {
+      elem = e
+    }
+    em = ty_myc(elem)
+    om = ty_myc(out_ty)
+    codegen_self.line("LOCAL :${holder}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD 1")
+    dst = codegen_self.new_temp
+    codegen_self.line("LOCAL :${dst} :${om}")
+    codegen_self.line("STORE")
+    codegen_self.ensure_root(dst, out_ty)
+    pname = b.params[0]
+    in_elem = ty_int()
+    if ie = in_ty.inner {
+      in_elem = ie
+    }
+    iem = ty_myc(in_elem)
+    if heap_ptr_value(in_elem) {
+      codegen_self.line("LOCAL :${idx}")
+      codegen_self.line("LOCAL :${arr}")
+      codegen_self.line("CALL :avant_array_get_ptr")
+      codegen_self.line("AS :${iem}")
+    } else {
+      buf = codegen_self.new_temp
+      codegen_self.line("LOCAL :${arr}")
+      codegen_self.line("DEREF")
+      codegen_self.line("FIELD 0")
+      codegen_self.line("LOCAL :${buf} :ptr<${iem}>")
+      codegen_self.line("STORE")
+      codegen_self.emit_ptr_root(buf)
+      codegen_self.line("LOCAL :${idx}")
+      codegen_self.line("LOCAL :${buf}")
+      codegen_self.line("BINARY :add")
+      codegen_self.line("DEREF")
+    }
+    codegen_self.line("LOCAL :${pname} :${iem}")
+    codegen_self.line("STORE")
+    codegen_self.ensure_root(pname, in_elem)
+    i = 0
+    while i < call.cap_names.size {
+      cname = call.cap_names[i]
+      cm = ty_myc(call.cap_tys[i])
+      fi = i + 2
+      codegen_self.line("LOCAL :${holder}")
+      codegen_self.line("DEREF")
+      codegen_self.line("FIELD ${fi}")
+      if codegen_self.name_is_boxed(cname) {
+        tmp = codegen_self.new_temp
+        codegen_self.line("LOCAL :${tmp} :${cm}")
+        codegen_self.line("STORE")
+        codegen_self.ensure_root(tmp, call.cap_tys[i])
+        codegen_self.ensure_box(cname, call.cap_tys[i])
+        codegen_self.line("LOCAL :${tmp}")
+        codegen_self.store_box_value(cname, call.cap_tys[i])
+      } else {
+        codegen_self.line("LOCAL :${cname} :${cm}")
+        codegen_self.line("STORE")
+        codegen_self.ensure_root(cname, call.cap_tys[i])
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < b.body.size {
+      stmt = b.body[i]
+      if i == b.body.size - 1 {
+        if last = stmt.expr {
+          codegen_self.emit_expr(last)
+          codegen_self.emit_coerce(expr_ty(last), elem)
+          val = codegen_self.new_temp
+          codegen_self.line("LOCAL :${val} :${em}")
+          codegen_self.line("STORE")
+          codegen_self.ensure_root(val, elem)
+          if heap_ptr_value(elem) {
+            codegen_self.line("LOCAL :${val}")
+            codegen_self.line("LOCAL :${idx}")
+            codegen_self.line("LOCAL :${dst}")
+            codegen_self.line("CALL :avant_array_set_ptr")
+          } else {
+            slot = codegen_self.new_temp
+            codegen_self.line("LOCAL :${dst}")
+            codegen_self.line("DEREF")
+            codegen_self.line("FIELD 0")
+            codegen_self.line("LOCAL :${slot} :ptr<${em}>")
+            codegen_self.line("STORE")
+            codegen_self.emit_ptr_root(slot)
+            codegen_self.line("LOCAL :${val}")
+            codegen_self.line("LOCAL :${idx}")
+            codegen_self.line("LOCAL :${slot}")
+            codegen_self.line("BINARY :add")
+            codegen_self.line("DEREF")
+            codegen_self.line("STORE")
+          }
+          codegen_self.emit_ret
+        } else {
+          codegen_self.emit_stmt(stmt, false)
+          codegen_self.emit_ret
+        }
+      } else {
+        codegen_self.emit_stmt(stmt, false)
+      }
+      i = i + 1
+    }
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDFUNC")
+    codegen_self.blank
+    codegen_self.indent = saved_indent
+    codegen_self.temps = saved_count
+    codegen_self.return_type = saved_ret
+    codegen_self.rooted = saved_rooted
+    codegen_self.self_ty = saved_self
+    codegen_self.self_name = saved_self_name
+    codegen_self.c_main = saved_main
+    codegen_self.place_name = saved_place
+    codegen_self.place_holder = saved_ph
+    codegen_self.place_field = saved_pf
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_mutex_with(expr: Expr, mutex_ty: Ty) {
+  if recv = expr.receiver {
+    codegen_self.emit_expr(recv)
+  }
+  holder = codegen_self.new_temp
+  m = ty_myc(mutex_ty)
+  codegen_self.line("LOCAL :${holder} :${m}")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(holder, mutex_ty)
+  gate_i = mutex_ty.field_index("gate")
+  codegen_self.line("LOCAL :${holder}")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD ${gate_i}")
+  codegen_self.line("CALL :avant_gate_lock")
+  saved_name = codegen_self.place_name
+  saved_holder = codegen_self.place_holder
+  saved_field = codegen_self.place_field
+  codegen_self.place_holder = holder
+  codegen_self.place_field = mutex_ty.field_index("cell")
+  codegen_self.place_name = ""
+  if b = expr.block {
+    if b.params.size > 0 {
+      codegen_self.place_name = b.params[0]
+    }
+    i = 0
+    while i < b.body.size {
+      stmt = b.body[i]
+      if i == b.body.size - 1 {
+        if e = stmt.expr {
+          codegen_self.emit_expr(e)
+        } else {
+          codegen_self.emit_stmt(stmt, false)
+        }
+      } else {
+        codegen_self.emit_stmt(stmt, false)
+      }
+      i = i + 1
+    }
+  }
+  val_ty = expr_ty(expr)
+  if val_ty.is_void {
+    codegen_self.line("LOCAL :${holder}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD ${gate_i}")
+    codegen_self.line("CALL :avant_gate_unlock")
+  } else {
+    tmp = codegen_self.new_temp
+    vm = ty_myc(val_ty)
+    codegen_self.line("LOCAL :${tmp} :${vm}")
+    codegen_self.line("STORE")
+    codegen_self.ensure_root(tmp, val_ty)
+    codegen_self.line("LOCAL :${holder}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD ${gate_i}")
+    codegen_self.line("CALL :avant_gate_unlock")
+    codegen_self.line("LOCAL :${tmp}")
+  }
+  codegen_self.place_name = saved_name
+  codegen_self.place_holder = saved_holder
+  codegen_self.place_field = saved_field
+}
+
+pub fn (codegen_self: MycGen) emit_join(expr: Expr) {
+  if recv = expr.receiver {
+    codegen_self.emit_expr(recv)
+  }
+  codegen_self.line("CALL :avant_join")
+}
+
+pub fn (codegen_self: MycGen) emit_json_get(expr: Expr, as_str: Bool) {
+  found = codegen_self.new_temp
+  codegen_self.line("PUSH 0")
+  codegen_self.line("LOCAL :${found} :i32")
+  codegen_self.line("STORE")
+  codegen_self.emit_expr(expr.args[1])
+  key = codegen_self.new_temp
+  codegen_self.line("LOCAL :${key} :ptr<u8>")
+  codegen_self.line("STORE")
+  codegen_self.emit_expr(expr.args[0])
+  doc = codegen_self.new_temp
+  codegen_self.line("LOCAL :${doc} :ptr<void>")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${found}")
+  codegen_self.line("ADDR")
+  codegen_self.line("LOCAL :${key}")
+  codegen_self.line("LOCAL :${doc}")
+  val_ty = ty_int()
+  if as_str {
+    codegen_self.line("CALL :avant_json_get_str")
+    val_ty = ty_string()
+  } else {
+    codegen_self.line("CALL :avant_json_get_int")
+    val_ty = ty_int()
+  }
+  val = codegen_self.new_temp
+  vm = ty_myc(val_ty)
+  codegen_self.line("LOCAL :${val} :${vm}")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(val, val_ty)
+  want = expr_ty(expr)
+  wm = ty_myc(want)
+  slot = codegen_self.new_temp
+  codegen_self.line("LOCAL :${found}")
+  codegen_self.line("PUSH 1")
+  codegen_self.line("BINARY :eq")
+  codegen_self.line("IF")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("THEN")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("LOCAL :${val}")
+  codegen_self.emit_wrap_union(val_ty, want)
+  codegen_self.line("LOCAL :${slot} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ELSE")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.emit_zero(ty_nil())
+  codegen_self.emit_wrap_union(ty_nil(), want)
+  codegen_self.line("LOCAL :${slot} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDIF")
+  codegen_self.line("LOCAL :${slot}")
+}
+
+pub fn (codegen_self: MycGen) emit_nullable_ptr {
+  ptr_ty = ty_ptr(ty_void())
+  want = ty_nilable(ptr_ty)
+  val = codegen_self.new_temp
+  codegen_self.line("LOCAL :${val} :ptr<void>")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(val, ptr_ty)
+  held = codegen_self.new_temp
+  codegen_self.line("LOCAL :${val}")
+  codegen_self.line("PUSH 0")
+  codegen_self.line("AS :ptr<void>")
+  codegen_self.line("BINARY :not_eq")
+  codegen_self.line("IF")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("THEN")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("LOCAL :${val}")
+  codegen_self.emit_wrap_union(ptr_ty, want)
+  wm = ty_myc(want)
+  codegen_self.line("LOCAL :${held} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ELSE")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.emit_zero(ty_nil())
+  codegen_self.emit_wrap_union(ty_nil(), want)
+  codegen_self.line("LOCAL :${held} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDIF")
+  codegen_self.line("LOCAL :${held}")
+}
+
+pub fn (codegen_self: MycGen) emit_json_root(expr: Expr) {
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  codegen_self.line("CALL :avant_json_root")
+}
+
+pub fn (codegen_self: MycGen) emit_json_obj_get(expr: Expr) {
+  if expr.args.size > 1 {
+    codegen_self.emit_expr(expr.args[1])
+  }
+  key = codegen_self.new_temp
+  codegen_self.line("LOCAL :${key} :ptr<u8>")
+  codegen_self.line("STORE")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  obj = codegen_self.new_temp
+  codegen_self.line("LOCAL :${obj} :ptr<void>")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${key}")
+  codegen_self.line("LOCAL :${obj}")
+  codegen_self.line("CALL :avant_json_obj_get")
+  codegen_self.emit_nullable_ptr
+}
+
+pub fn (codegen_self: MycGen) emit_json_len(expr: Expr) {
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  codegen_self.line("CALL :avant_json_arr_len")
+}
+
+pub fn (codegen_self: MycGen) emit_json_at(expr: Expr) {
+  if expr.args.size > 1 {
+    codegen_self.emit_expr(expr.args[1])
+  }
+  idx = codegen_self.new_temp
+  codegen_self.line("LOCAL :${idx} :i32")
+  codegen_self.line("STORE")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  arr = codegen_self.new_temp
+  codegen_self.line("LOCAL :${arr} :ptr<void>")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${idx}")
+  codegen_self.line("LOCAL :${arr}")
+  codegen_self.line("CALL :avant_json_arr_get")
+  codegen_self.emit_nullable_ptr
+}
+
+pub fn (codegen_self: MycGen) emit_json_f64(expr: Expr) {
+  found = codegen_self.new_temp
+  codegen_self.line("PUSH 0")
+  codegen_self.line("LOCAL :${found} :i32")
+  codegen_self.line("STORE")
+  if expr.args.size > 1 {
+    codegen_self.emit_expr(expr.args[1])
+  }
+  key = codegen_self.new_temp
+  codegen_self.line("LOCAL :${key} :ptr<u8>")
+  codegen_self.line("STORE")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  obj = codegen_self.new_temp
+  codegen_self.line("LOCAL :${obj} :ptr<void>")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${found}")
+  codegen_self.line("ADDR")
+  codegen_self.line("LOCAL :${key}")
+  codegen_self.line("LOCAL :${obj}")
+  codegen_self.line("CALL :avant_json_obj_f64")
+  val_ty = ty_float()
+  val = codegen_self.new_temp
+  codegen_self.line("LOCAL :${val} :f64")
+  codegen_self.line("STORE")
+  want = ty_nilable(val_ty)
+  held = codegen_self.new_temp
+  codegen_self.line("LOCAL :${found}")
+  codegen_self.line("PUSH 1")
+  codegen_self.line("BINARY :eq")
+  codegen_self.line("IF")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("THEN")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("LOCAL :${val}")
+  codegen_self.emit_wrap_union(val_ty, want)
+  wm = ty_myc(want)
+  codegen_self.line("LOCAL :${held} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ELSE")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.emit_zero(ty_nil())
+  codegen_self.emit_wrap_union(ty_nil(), want)
+  codegen_self.line("LOCAL :${held} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDIF")
+  codegen_self.line("LOCAL :${held}")
+}
+
+pub fn (codegen_self: MycGen) emit_json_sum_f64(expr: Expr) {
+  if expr.args.size > 1 {
+    codegen_self.emit_expr(expr.args[1])
+  }
+  key = codegen_self.new_temp
+  codegen_self.line("LOCAL :${key} :ptr<u8>")
+  codegen_self.line("STORE")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  arr = codegen_self.new_temp
+  codegen_self.line("LOCAL :${arr} :ptr<void>")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${key}")
+  codegen_self.line("LOCAL :${arr}")
+  codegen_self.line("CALL :avant_json_arr_sum_f64")
+}
+
+pub fn (codegen_self: MycGen) emit_opt_cstr(expr: Expr, cname: String) {
+  found = codegen_self.new_temp
+  codegen_self.line("PUSH 0")
+  codegen_self.line("LOCAL :${found} :i32")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${found}")
+  codegen_self.line("ADDR")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  codegen_self.line("CALL :${cname}")
+  val_ty = ty_string()
+  val = codegen_self.new_temp
+  vm = ty_myc(val_ty)
+  codegen_self.line("LOCAL :${val} :${vm}")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(val, val_ty)
+  want = expr_ty(expr)
+  wm = ty_myc(want)
+  slot = codegen_self.new_temp
+  codegen_self.line("LOCAL :${found}")
+  codegen_self.line("PUSH 1")
+  codegen_self.line("BINARY :eq")
+  codegen_self.line("IF")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("THEN")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("LOCAL :${val}")
+  codegen_self.emit_wrap_union(val_ty, want)
+  codegen_self.line("LOCAL :${slot} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ELSE")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.emit_zero(ty_nil())
+  codegen_self.emit_wrap_union(ty_nil(), want)
+  codegen_self.line("LOCAL :${slot} :${wm}")
+  codegen_self.line("STORE")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDIF")
+  codegen_self.line("LOCAL :${slot}")
+}
+
+pub fn (codegen_self: MycGen) emit_process_run(expr: Expr) {
+  if expr.args.size > 1 {
+    codegen_self.emit_expr(expr.args[1])
+  }
+  codegen_self.line("AS :ptr<void>")
+  args = codegen_self.new_temp
+  codegen_self.line("LOCAL :${args} :ptr<void>")
+  codegen_self.line("STORE")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  path = codegen_self.new_temp
+  codegen_self.line("LOCAL :${path} :ptr<u8>")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(path, ty_string())
+  codegen_self.line("LOCAL :${args}")
+  codegen_self.line("LOCAL :${path}")
+  codegen_self.line("CALL :avant_process_run")
+}
+
+pub fn (codegen_self: MycGen) emit_process_run_out(expr: Expr) {
+  if expr.args.size > 2 {
+    codegen_self.emit_expr(expr.args[2])
+  }
+  outp = codegen_self.new_temp
+  codegen_self.line("LOCAL :${outp} :ptr<u8>")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(outp, ty_string())
+  if expr.args.size > 1 {
+    codegen_self.emit_expr(expr.args[1])
+  }
+  codegen_self.line("AS :ptr<void>")
+  args = codegen_self.new_temp
+  codegen_self.line("LOCAL :${args} :ptr<void>")
+  codegen_self.line("STORE")
+  if expr.args.size > 0 {
+    codegen_self.emit_expr(expr.args[0])
+  }
+  path = codegen_self.new_temp
+  codegen_self.line("LOCAL :${path} :ptr<u8>")
+  codegen_self.line("STORE")
+  codegen_self.ensure_root(path, ty_string())
+  codegen_self.line("LOCAL :${outp}")
+  codegen_self.line("LOCAL :${args}")
+  codegen_self.line("LOCAL :${path}")
+  codegen_self.line("CALL :avant_process_run_out")
+}
+
+pub fn (codegen_self: MycGen) c_params_of(lib_name: String, name: String): Array(Ty) {
+  params: Array(Ty) = []
+  if s = codegen_self.symbols {
+    if csig = s.find_cfun(lib_name, name) {
+      return csig.params
+    }
+  }
+  i = 0
+  while i < codegen_self.program.libs.size {
+    lib_def = codegen_self.program.libs[i]
+    if str_eq(lib_def.name, lib_name) {
+      j = 0
+      while j < lib_def.funs.size {
+        fnn = lib_def.funs[j]
+        if str_eq(fnn.name, name) {
+          k = 0
+          while k < fnn.params.size {
+            params.push(codegen_self.resolver.resolve_value(fnn.params[k].type))
+            k = k + 1
+          }
+          return params
+        }
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+  params
+}
+
+pub fn (codegen_self: MycGen) emit_cb_pointer(arg: Expr, fty: Ty) {
+  name = "__cb_${arg.resolved}"
+  seen = false
+  i = 0
+  while i < codegen_self.cb_names.size {
+    if str_eq(codegen_self.cb_names[i], name) {
+      seen = true
+    }
+    i = i + 1
+  }
+  if seen {
+  } else {
+    codegen_self.cb_names.push(name)
+    codegen_self.cb_targets.push(arg.resolved)
+    codegen_self.cb_tys.push(fty)
+    if arg.kind == ex_lambda() {
+      codegen_self.cb_lambda.push(1)
+    } else {
+      codegen_self.cb_lambda.push(0)
+    }
+  }
+  codegen_self.line("ADDR :${name}")
+  codegen_self.line("AS :ptr<void>")
+}
+
+pub fn (codegen_self: MycGen) emit_lib_call(expr: Expr) {
+  params = codegen_self.c_params_of(expr.lib_name, expr.callee)
+  has_cb = false
+  i = 0
+  while i < params.size {
+    if params[i].is_fn {
+      has_cb = true
+    }
+    i = i + 1
+  }
+  if has_cb {
+  } else {
+    codegen_self.emit_call_named(expr.callee, expr.args)
+    return
+  }
+  if expr.args.size <= 1 {
+    if expr.args.size == 1 {
+      if params[0].is_fn {
+        codegen_self.emit_cb_pointer(expr.args[0], params[0])
+      } else {
+        codegen_self.emit_expr(expr.args[0])
+        codegen_self.emit_coerce(expr_ty(expr.args[0]), params[0])
+      }
+    }
+    codegen_self.line("CALL :${expr.callee}")
+    return
+  }
+  tmps: Array(String) = []
+  i = 0
+  while i < expr.args.size {
+    arg = expr.args[i]
+    if params[i].is_fn {
+      codegen_self.emit_cb_pointer(arg, params[i])
+      tmp = codegen_self.new_temp
+      codegen_self.line("LOCAL :${tmp} :ptr<void>")
+      codegen_self.line("STORE")
+      tmps.push(tmp)
+    } else {
+      codegen_self.emit_expr(arg)
+      got = expr_ty(arg)
+      codegen_self.emit_coerce(got, params[i])
+      if params[i].is_union {
+        if params[i].includes_member(got) {
+          got = params[i]
+        }
+      }
+      tmp = codegen_self.new_temp
+      m = ty_myc(got)
+      codegen_self.line("LOCAL :${tmp} :${m}")
+      codegen_self.line("STORE")
+      codegen_self.ensure_root(tmp, got)
+      tmps.push(tmp)
+    }
+    i = i + 1
+  }
+  i = tmps.size - 1
+  while i >= 0 {
+    codegen_self.line("LOCAL :${tmps[i]}")
+    i = i - 1
+  }
+  codegen_self.line("CALL :${expr.callee}")
+}
+
+pub fn (codegen_self: MycGen) emit_cb_thunk(idx: Int) {
+  name = codegen_self.cb_names[idx]
+  target = codegen_self.cb_targets[idx]
+  fty = codegen_self.cb_tys[idx]
+  is_lambda = codegen_self.cb_lambda[idx] == 1
+  saved_ret = codegen_self.return_type
+  saved_main = codegen_self.c_main
+  codegen_self.c_main = false
+  ret = ty_void()
+  if r = fty.inner {
+    ret = r
+  }
+  codegen_self.return_type = ret
+  codegen_self.line("FUNC :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("ARGS")
+  codegen_self.indent = codegen_self.indent + 1
+  i = 0
+  while i < fty.members.size {
+    m = ty_myc(fty.members[i])
+    codegen_self.line("TYPE :${m}")
+    i = i + 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.emit_return_header
+  codegen_self.line("BODY")
+  codegen_self.indent = codegen_self.indent + 1
+  i = fty.members.size - 1
+  while i >= 0 {
+    codegen_self.line("PARAM ${i}")
+    i = i - 1
+  }
+  if is_lambda {
+    codegen_self.line("PUSH 0")
+    codegen_self.line("AS :ptr<void>")
+  }
+  codegen_self.line("CALL :${target}")
+  codegen_self.line("RET")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDFUNC")
+  codegen_self.blank
+  codegen_self.return_type = saved_ret
+  codegen_self.c_main = saved_main
+}
+
+pub fn (codegen_self: MycGen) emit_call_named(name: String, args: Array(Expr)) {
+  codegen_self.emit_args(args)
+  codegen_self.line("CALL :${name}")
+}
+
+pub fn (codegen_self: MycGen) emit_args(args: Array(Expr)) {
+  none: Array(Ty) = []
+  codegen_self.emit_typed_args(args, none)
+}
+
+pub fn (codegen_self: MycGen) emit_typed_args(args: Array(Expr), types: Array(Ty)) {
+  if args.size <= 1 {
+    if args.size == 1 {
+      codegen_self.emit_expr(args[0])
+      if types.size > 0 {
+        codegen_self.emit_coerce(expr_ty(args[0]), types[0])
+      }
+    }
+    return
+  }
+  tmps: Array(String) = []
+  i = 0
+  while i < args.size {
+    arg = args[i]
+    codegen_self.emit_expr(arg)
+    got = expr_ty(arg)
+    if i < types.size {
+      codegen_self.emit_coerce(got, types[i])
+      if types[i].is_union {
+        if types[i].includes_member(got) {
+          got = types[i]
+        }
+      }
+    }
+    tmp = codegen_self.new_temp
+    m = ty_myc(got)
+    codegen_self.line("LOCAL :${tmp} :${m}")
+    codegen_self.line("STORE")
+    codegen_self.ensure_root(tmp, got)
+    tmps.push(tmp)
+    i = i + 1
+  }
+  i = tmps.size - 1
+  while i >= 0 {
+    t = tmps[i]
+    codegen_self.line("LOCAL :${t}")
+    i = i - 1
+  }
+}
+
+pub fn (codegen_self: MycGen) begin_fn_frame(boxes: Array(String)) {
+  codegen_self.in_lambda = false
+  codegen_self.env_layout = ""
+  caps: Array(String) = []
+  codegen_self.cap_list = caps
+  ctys: Array(Ty) = []
+  codegen_self.cap_tys_now = ctys
+  bs: Array(String) = []
+  i = 0
+  while i < boxes.size {
+    n = boxes[i]
+    skip = false
+    if codegen_self.self_name.size > 0 {
+      if str_eq(n, codegen_self.self_name) {
+        skip = true
+      }
+    }
+    if skip {
+    } else {
+      bs.push(n)
+    }
+    i = i + 1
+  }
+  codegen_self.box_list = bs
+  ready = Hash(String, Int).new
+  codegen_self.box_ready = ready
+}
+
+pub fn (codegen_self: MycGen) cap_index(name: String): Int {
+  i = 0
+  while i < codegen_self.cap_list.size {
+    if str_eq(codegen_self.cap_list[i], name) {
+      return i
+    }
+    i = i + 1
+  }
+  0 - 1
+}
+
+pub fn (codegen_self: MycGen) name_is_boxed(name: String): Bool {
+  i = 0
+  while i < codegen_self.box_list.size {
+    if str_eq(codegen_self.box_list[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) is_gate_callee(name: String): Bool {
+  if str_eq(name, "avant_gate_new") {
+    return true
+  }
+  if str_eq(name, "avant_gate_lock") {
+    return true
+  }
+  if str_eq(name, "avant_gate_unlock") {
+    return true
+  }
+  if str_eq(name, "avant_gate_wait") {
+    return true
+  }
+  if str_eq(name, "avant_gate_signal") {
+    return true
+  }
+  str_eq(name, "avant_gate_broadcast")
+}
+
+pub fn (codegen_self: MycGen) re2c_call_id(pat: Expr, flags: Expr): Int {
+  if pat.kind == ex_string() {
+  } else {
+    return 0
+  }
+  if flags.kind == ex_int() {
+  } else {
+    return 0
+  }
+  key = re2c_key(pat.value_str, flags.int_bits.to_i)
+  if id = codegen_self.program.re2c_ids.get(key) {
+    return id
+  }
+  0
+}
+
+pub fn (codegen_self: MycGen) re_mark_callee(name: String): Bool {
+  if str_eq(name, "re_m0") {
+    return true
+  }
+  if str_eq(name, "re_m1") {
+    return true
+  }
+  if str_eq(name, "re_c0") {
+    return true
+  }
+  str_eq(name, "re_c1")
+}
+
+pub fn (codegen_self: MycGen) note_words(name: String, tys: Array(Ty)) {
+  bits = 0u64
+  offset = 0
+  i = 0
+  while i < tys.size {
+    fty = tys[i]
+    offset = align_up_i(offset, abi_align(fty))
+    bits = add_ptr_bits(fty, offset, bits)
+    offset = offset + abi_size(fty)
+    i = i + 1
+  }
+  if bits == 0u64 {
+    return
+  }
+  j = 0
+  while j < codegen_self.closure_names.size {
+    if str_eq(codegen_self.closure_names[j], name) {
+      return
+    }
+    j = j + 1
+  }
+  codegen_self.closure_names.push(name)
+  codegen_self.closure_bits.push(bits)
+}
+
+pub fn (codegen_self: MycGen) closure_type_id(name: String): Int {
+  i = 0
+  while i < codegen_self.closure_names.size {
+    if str_eq(codegen_self.closure_names[i], name) {
+      return 400 + i
+    }
+    i = i + 1
+  }
+  0
+}
+
+pub fn (codegen_self: MycGen) note_box(ty: Ty) {
+  codegen_self.note_ty(ty)
+  layout = box_layout_name(ty)
+  i = 0
+  while i < codegen_self.box_tys.size {
+    if str_eq(box_layout_name(codegen_self.box_tys[i]), layout) {
+      return
+    }
+    i = i + 1
+  }
+  codegen_self.box_tys.push(ty)
+  bits = add_ptr_bits(ty, 0, 0u64)
+  codegen_self.closure_names.push(layout)
+  codegen_self.closure_bits.push(bits)
+}
+
+pub fn (codegen_self: MycGen) note_env(name: String, count: Int) {
+  bits = 0u64
+  i = 0
+  while i < count {
+    bits = word_bit(i * 8, bits)
+    i = i + 1
+  }
+  codegen_self.closure_names.push(name)
+  codegen_self.closure_bits.push(bits)
+}
+
+pub fn (codegen_self: MycGen) collect_lambda(expr: Expr) {
+  n = codegen_self.lam_id
+  expr.resolved = "__lam_${n}"
+  codegen_self.lam_id = n + 1
+  codegen_self.lambdas.push(expr)
+  i = 0
+  while i < expr.cap_tys.size {
+    codegen_self.note_box(expr.cap_tys[i])
+    i = i + 1
+  }
+  if expr.cap_names.size > 0 {
+    env = "${expr.resolved}_env"
+    codegen_self.note_env(env, expr.cap_names.size)
+  }
+  if b = expr.block {
+    codegen_self.collect_stmts(b.body)
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_fn_def(ty: Ty) {
+  name = fn_layout_name(ty)
+  code = fn_code_myc(ty)
+  codegen_self.line("STRUCT :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("TYPE :ptr<void>")
+  codegen_self.line("TYPE \"${code}\"")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_box_def(ty: Ty) {
+  name = box_layout_name(ty)
+  m = ty_myc(ty)
+  codegen_self.line("STRUCT :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("TYPE :${m}")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_env_defs {
+  i = 0
+  while i < codegen_self.lambdas.size {
+    lam = codegen_self.lambdas[i]
+    if lam.cap_names.size > 0 {
+      name = "${lam.resolved}_env"
+      codegen_self.line("STRUCT :${name}")
+      codegen_self.indent = codegen_self.indent + 1
+      j = 0
+      while j < lam.cap_tys.size {
+        box = box_layout_name(lam.cap_tys[j])
+        codegen_self.line("TYPE :ptr<${box}>")
+        j = j + 1
+      }
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.line("ENDSTRUCT")
+      codegen_self.blank
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_param_stores(names: Array(String), types: Array(Ty), index_base: Int): Array(String) {
+  raws: Array(String) = []
+  i = 0
+  while i < names.size {
+    m = ty_myc(types[i])
+    slot = index_base + i
+    codegen_self.line("PARAM ${slot}")
+    if codegen_self.name_is_boxed(names[i]) {
+      tmp = codegen_self.new_temp
+      codegen_self.line("LOCAL :${tmp} :${m}")
+      codegen_self.line("STORE")
+      raws.push(tmp)
+    } else {
+      codegen_self.line("LOCAL :${names[i]} :${m}")
+      codegen_self.line("STORE")
+      raws.push("")
+    }
+    i = i + 1
+  }
+  raws
+}
+
+pub fn (codegen_self: MycGen) emit_param_finish(names: Array(String), types: Array(Ty), raws: Array(String)) {
+  i = 0
+  while i < names.size {
+    if codegen_self.name_is_boxed(names[i]) {
+      codegen_self.ensure_root(raws[i], types[i])
+      codegen_self.ensure_box(names[i], types[i])
+      codegen_self.line("LOCAL :${raws[i]}")
+      codegen_self.store_box_value(names[i], types[i])
+    } else {
+      codegen_self.ensure_root(names[i], types[i])
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_param_group(names: Array(String), types: Array(Ty), index_base: Int) {
+  raws = codegen_self.emit_param_stores(names, types, index_base)
+  codegen_self.emit_param_finish(names, types, raws)
+}
+
+pub fn (codegen_self: MycGen) ensure_box(name: String, ty: Ty) {
+  if v = codegen_self.box_ready.get(name) {
+    return
+  }
+  box = box_layout_name(ty)
+  id = codegen_self.closure_type_id(box)
+  codegen_self.emit_alloc_sizeof(box, id)
+  codegen_self.line("AS :ptr<${box}>")
+  codegen_self.line("LOCAL :${name} :ptr<${box}>")
+  codegen_self.line("STORE")
+  codegen_self.emit_zero(ty)
+  codegen_self.store_box_value(name, ty)
+  codegen_self.emit_ptr_root(name)
+  codegen_self.box_ready[name] = 1
+}
+
+pub fn (codegen_self: MycGen) store_box_value(name: String, ty: Ty) {
+  box = box_layout_name(ty)
+  codegen_self.line("LOCAL :${name} :ptr<${box}>")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 0")
+  codegen_self.line("STORE")
+}
+
+pub fn (codegen_self: MycGen) emit_box_lvalue(name: String, ty: Ty) {
+  box = box_layout_name(ty)
+  codegen_self.line("LOCAL :${name} :ptr<${box}>")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 0")
+}
+
+pub fn (codegen_self: MycGen) emit_cap_lvalue(index: Int) {
+  codegen_self.line("LOCAL :__env :ptr<${codegen_self.env_layout}>")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD ${index}")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 0")
+}
+
+pub fn (codegen_self: MycGen) emit_box_pointer(name: String, ty: Ty) {
+  ci = codegen_self.cap_index(name)
+  if ci >= 0 {
+    codegen_self.line("LOCAL :__env :ptr<${codegen_self.env_layout}>")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD ${ci}")
+    return
+  }
+  codegen_self.ensure_box(name, ty)
+  box = box_layout_name(ty)
+  codegen_self.line("LOCAL :${name} :ptr<${box}>")
+}
+
+pub fn (codegen_self: MycGen) emit_named_value(name: String) {
+  ci = codegen_self.cap_index(name)
+  if ci >= 0 {
+    codegen_self.emit_cap_lvalue(ci)
+    return
+  }
+  if codegen_self.name_is_boxed(name) {
+    codegen_self.line("LOCAL :${name}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD 0")
+    return
+  }
+  codegen_self.line("LOCAL :${name}")
+}
+
+pub fn (codegen_self: MycGen) emit_fn_value(code_sym: String, fty: Ty, hold: String) {
+  code = fn_code_myc(fty)
+  layout = fn_layout_name(fty)
+  // CREATE stores field 0 from the top of the stack. Push the code word, then the env.
+  codegen_self.line("ADDR :${code_sym}")
+  codegen_self.line("AS \"${code}\"")
+  if hold.size == 0 {
+    codegen_self.line("PUSH 0")
+    codegen_self.line("AS :ptr<void>")
+  } else {
+    codegen_self.line("LOCAL :${hold}")
+    codegen_self.line("AS :ptr<void>")
+  }
+  codegen_self.line("CREATE :${layout}")
+}
+
+pub fn (codegen_self: MycGen) emit_fn_ref(expr: Expr) {
+  tramp = "__fn_${expr.resolved}"
+  codegen_self.emit_fn_value(tramp, expr_ty(expr), "")
+}
+
+pub fn (codegen_self: MycGen) emit_lambda(expr: Expr) {
+  fty = expr_ty(expr)
+  if expr.cap_names.size == 0 {
+    codegen_self.emit_fn_value(expr.resolved, fty, "")
+    return
+  }
+  env = "${expr.resolved}_env"
+  id = codegen_self.closure_type_id(env)
+  codegen_self.emit_alloc_sizeof(env, id)
+  codegen_self.line("AS :ptr<${env}>")
+  hold = codegen_self.new_temp
+  codegen_self.line("LOCAL :${hold} :ptr<${env}>")
+  codegen_self.line("STORE")
+  codegen_self.emit_ptr_root(hold)
+  i = 0
+  while i < expr.cap_names.size {
+    codegen_self.emit_box_pointer(expr.cap_names[i], expr.cap_tys[i])
+    codegen_self.line("LOCAL :${hold}")
+    codegen_self.line("DEREF")
+    codegen_self.line("FIELD ${i}")
+    codegen_self.line("STORE")
+    i = i + 1
+  }
+  codegen_self.emit_fn_value(expr.resolved, fty, hold)
+}
+
+pub fn (codegen_self: MycGen) emit_indirect(expr: Expr) {
+  layout = expr.resolved
+  if inner = expr.inner {
+    codegen_self.emit_expr(inner)
+    layout = ty_myc(expr_ty(inner))
+  } else {
+    codegen_self.emit_named_value(expr.callee)
+  }
+  tmp = codegen_self.new_temp
+  codegen_self.line("LOCAL :${tmp} :${layout}")
+  codegen_self.line("STORE")
+  codegen_self.emit_ptr_root(tmp)
+  codegen_self.emit_typed_args(expr.args, expr.cap_tys)
+  codegen_self.line("LOCAL :${tmp}")
+  codegen_self.line("FIELD 0")
+  codegen_self.line("LOCAL :${tmp}")
+  codegen_self.line("FIELD 1")
+  codegen_self.line("INVOKE")
+}
+
+pub fn (codegen_self: MycGen) emit_body_fallthrough(body: Array(Stmt)) {
+  if body.size == 0 {
+    codegen_self.emit_ret
+    return
+  }
+  last = body[body.size - 1]
+  if last.kind == st_return() {
+    return
+  }
+  if last.kind == st_expr() {
+    if codegen_self.return_type.is_void {
+    } else {
+      return
+    }
+  }
+  codegen_self.emit_ret
+}
+
+pub fn (codegen_self: MycGen) emit_lambda_thunk(expr: Expr) {
+  saved_indent = codegen_self.indent
+  saved_temps = codegen_self.temps
+  saved_ret = codegen_self.return_type
+  saved_main = codegen_self.c_main
+  saved_rooted = codegen_self.rooted
+  saved_self = codegen_self.self_ty
+  saved_self_name = codegen_self.self_name
+  saved_guard = codegen_self.quiet_guard
+  codegen_self.indent = 0
+  codegen_self.temps = 0
+  codegen_self.c_main = false
+  codegen_self.self_ty = nil
+  codegen_self.self_name = ""
+  codegen_self.quiet_guard = 0
+  codegen_self.in_lambda = true
+  codegen_self.env_layout = ""
+  if expr.cap_names.size > 0 {
+    codegen_self.env_layout = "${expr.resolved}_env"
+  }
+  caps: Array(String) = []
+  ctys: Array(Ty) = []
+  i = 0
+  while i < expr.cap_names.size {
+    caps.push(expr.cap_names[i])
+    ctys.push(expr.cap_tys[i])
+    i = i + 1
+  }
+  codegen_self.cap_list = caps
+  codegen_self.cap_tys_now = ctys
+  boxes: Array(String) = []
+  i = 0
+  while i < expr.box_names.size {
+    boxes.push(expr.box_names[i])
+    i = i + 1
+  }
+  codegen_self.box_list = boxes
+  ready = Hash(String, Int).new
+  codegen_self.box_ready = ready
+  fty = expr_ty(expr)
+  ret = ty_void()
+  if r = fty.inner {
+    ret = r
+  }
+  codegen_self.return_type = ret
+  name = expr.resolved
+  codegen_self.line("FUNC :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("ARGS")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("TYPE :ptr<void>")
+  i = 0
+  while i < fty.members.size {
+    m = ty_myc(fty.members[i])
+    codegen_self.line("TYPE :${m}")
+    i = i + 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.emit_return_header
+  codegen_self.line("BODY")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.reset_rooted
+  codegen_self.line("CALL :avant_gc_enter")
+  codegen_self.line("PARAM 0")
+  if expr.cap_names.size == 0 {
+    codegen_self.line("STACK :drop")
+  } else {
+    codegen_self.line("AS :ptr<${codegen_self.env_layout}>")
+    codegen_self.line("LOCAL :__env :ptr<${codegen_self.env_layout}>")
+    codegen_self.line("STORE")
+    codegen_self.emit_ptr_root("__env")
+  }
+  if b = expr.block {
+    ptys: Array(Ty) = []
+    i = 0
+    while i < b.params.size {
+      if i < fty.members.size {
+        ptys.push(fty.members[i])
+      } else {
+        ptys.push(ty_void())
+      }
+      i = i + 1
+    }
+    codegen_self.emit_param_group(b.params, ptys, 1)
+    codegen_self.emit_stmts(b.body, true)
+    codegen_self.emit_body_fallthrough(b.body)
+  } else {
+    codegen_self.emit_ret
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDFUNC")
+  codegen_self.blank
+  codegen_self.indent = saved_indent
+  codegen_self.temps = saved_temps
+  codegen_self.return_type = saved_ret
+  codegen_self.c_main = saved_main
+  codegen_self.rooted = saved_rooted
+  codegen_self.self_ty = saved_self
+  codegen_self.self_name = saved_self_name
+  codegen_self.quiet_guard = saved_guard
+  codegen_self.in_lambda = false
+}
+
+pub fn (codegen_self: MycGen) emit_fn_trampoline(fnn: Function) {
+  if sig = codegen_self.find_fn(fnn.emit_name) {
+    name = "__fn_${fnn.emit_name}"
+    saved_ret = codegen_self.return_type
+    saved_main = codegen_self.c_main
+    codegen_self.c_main = false
+    codegen_self.return_type = sig.ret
+    codegen_self.line("FUNC :${name}")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("ARGS")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("TYPE :ptr<void>")
+    i = 0
+    while i < sig.params.size {
+      m = ty_myc(sig.params[i])
+      codegen_self.line("TYPE :${m}")
+      i = i + 1
+    }
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.emit_return_header
+    codegen_self.line("BODY")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("PARAM 0")
+    codegen_self.line("STACK :drop")
+    i = sig.params.size - 1
+    while i >= 0 {
+      slot = i + 1
+      codegen_self.line("PARAM ${slot}")
+      i = i - 1
+    }
+    codegen_self.line("CALL :${fnn.emit_name}")
+    codegen_self.line("RET")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDFUNC")
+    codegen_self.blank
+    codegen_self.return_type = saved_ret
+    codegen_self.c_main = saved_main
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_puts(arg: Expr) {
+  codegen_self.emit_expr(arg)
+  ty = expr_ty(arg)
+  if ty.is_int {
+    codegen_self.line("PUSH \"%d\\n\"")
+    codegen_self.line("PRINTF 1")
+    return
+  }
+  if ty.is_int64 {
+    codegen_self.line("PUSH \"%lld\\n\"")
+    codegen_self.line("PRINTF 1")
+    return
+  }
+  if ty.is_uint64 {
+    codegen_self.line("PUSH \"%llu\\n\"")
+    codegen_self.line("PRINTF 1")
+    return
+  }
+  if ty.is_string {
+    codegen_self.line("PUSH \"%s\\n\"")
+    codegen_self.line("PRINTF 1")
+    return
+  }
+  if ty.is_float {
+    codegen_self.line("PUSH \"%g\\n\"")
+    codegen_self.line("PRINTF 1")
+    return
+  }
+  if ty.is_bool {
+    codegen_self.line("AS :i32")
+    codegen_self.line("PUSH \"%d\\n\"")
+    codegen_self.line("PRINTF 1")
+  }
+}

@@ -1,0 +1,1077 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import checker_names
+import checker
+
+pub fn (checker_self: Checker) find_fn(name: String): FuncSig? {
+  if id = checker_self.fn_index.get(name) {
+    return checker_self.functions[id]
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) find_method(owner: String, name: String): FuncSig? {
+  key = "${owner}__${name}"
+  if id = checker_self.method_index.get(key) {
+    return checker_self.methods[id]
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) symbol_table: SymbolTable {
+  table = SymbolTable.new(checker_self.resolver)
+  i = 1
+  while i < checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if sig.node.generic {
+    } else {
+      table.add_function(sig)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.methods.size {
+    sig = checker_self.methods[i]
+    if sig.node.generic {
+    } else if checker_self.resolver.has_template(sig.owner) {
+    } else {
+      table.add_method(sig)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.cfuns.size {
+    table.add_cfun(checker_self.cfuns[i])
+    i = i + 1
+  }
+  table
+}
+
+pub fn (checker_self: Checker) check_trailing_defaults(fnn: Function) {
+  seen = false
+  i = 0
+  while i < fnn.params.size {
+    p = fnn.params[i]
+    if d = p.default {
+      seen = true
+    } else {
+      if seen {
+        checker_self.fail(p.loc, "default arguments must be trailing")
+        return
+      }
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) count_named_fns(name: String): Int {
+  n = 0
+  i = 1
+  while i < checker_self.functions.size {
+    if str_eq(checker_self.functions[i].name, name) {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  n
+}
+
+pub fn (checker_self: Checker) count_named_methods(owner: String, name: String): Int {
+  n = 0
+  i = 0
+  while i < checker_self.methods.size {
+    sig = checker_self.methods[i]
+    if str_eq(sig.owner, owner) {
+      if str_eq(sig.name, name) {
+        n = n + 1
+      }
+    }
+    i = i + 1
+  }
+  n
+}
+
+pub fn (checker_self: Checker) find_sig_by_node(fnn: Function): FuncSig? {
+  i = 1
+  while i < checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if sig.node.ol_index == fnn.ol_index {
+      return sig
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.methods.size {
+    sig = checker_self.methods[i]
+    if sig.node.ol_index == fnn.ol_index {
+      return sig
+    }
+    i = i + 1
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) find_instance(emit: String): Function? {
+  i = 0
+  while i < checker_self.instances.size {
+    inst = checker_self.instances[i]
+    if str_eq(inst.emit_name, emit) {
+      return inst
+    }
+    i = i + 1
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) assign_emit_names {
+  i = 1
+  while i < checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if sig.node.generic {
+    } else {
+      name = sig.name
+      if str_eq(name, "main") {
+        nroot = 0
+        j = 1
+        while j < checker_self.functions.size {
+          other = checker_self.functions[j]
+          if other.node.generic {
+          } else {
+            if str_eq(other.name, name) {
+              if str_eq(other.node.mod_name, checker_self.root_module) {
+                nroot = nroot + 1
+              } else {
+                if checker_self.root_module.size == 0 {
+                  nroot = nroot + 1
+                } else {
+                  if other.node.mod_name.size == 0 {
+                    nroot = nroot + 1
+                  }
+                }
+              }
+            }
+          }
+          j = j + 1
+        }
+        if nroot > 1 {
+          checker_self.fail(sig.node.loc, "function ${name} is already defined")
+          return
+        }
+      }
+      if str_eq(name, "run") {
+        nroot = 0
+        j = 1
+        while j < checker_self.functions.size {
+          other = checker_self.functions[j]
+          if other.node.generic {
+          } else {
+            if str_eq(other.name, name) {
+              if str_eq(other.node.mod_name, checker_self.root_module) {
+                nroot = nroot + 1
+              } else {
+                if checker_self.root_module.size == 0 {
+                  nroot = nroot + 1
+                } else {
+                  if other.node.mod_name.size == 0 {
+                    nroot = nroot + 1
+                  }
+                }
+              }
+            }
+          }
+          j = j + 1
+        }
+        if nroot > 1 {
+          checker_self.fail(sig.node.loc, "function ${name} is already defined")
+          return
+        }
+      }
+      mods: Array(String) = []
+      j = 1
+      while j < checker_self.functions.size {
+        other = checker_self.functions[j]
+        if other.node.generic {
+        } else {
+          if str_eq(other.name, name) {
+            found = false
+            m = 0
+            while m < mods.size {
+              if str_eq(mods[m], other.node.mod_name) {
+                found = true
+              }
+              m = m + 1
+            }
+            if found {
+            } else {
+              mods.push(other.node.mod_name)
+            }
+          }
+        }
+        j = j + 1
+      }
+      base = name
+      if mods.size > 1 {
+        if sig.node.vis {
+        } else {
+          if sig.node.mod_name.size > 0 {
+            base = "${sig.node.mod_name}__${name}"
+          }
+        }
+      }
+      g = 0
+      j = 1
+      while j < checker_self.functions.size {
+        other = checker_self.functions[j]
+        if other.node.generic {
+        } else {
+          if str_eq(other.name, name) {
+            if sig.node.vis {
+              if other.node.vis {
+                g = g + 1
+              }
+            } else {
+              if other.node.vis {
+              } else {
+                if str_eq(other.node.mod_name, sig.node.mod_name) {
+                  g = g + 1
+                }
+              }
+            }
+          }
+        }
+        j = j + 1
+      }
+      if g == 0 {
+        j = 1
+        while j < checker_self.functions.size {
+          other = checker_self.functions[j]
+          if other.node.generic {
+          } else {
+            if str_eq(other.name, name) {
+              g = g + 1
+            }
+          }
+          j = j + 1
+        }
+      }
+      if g <= 1 {
+        sig.node.emit_name = base
+      } else {
+        sig.node.emit_name = sig_mangle(base, sig.params)
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.methods.size {
+    sig = checker_self.methods[i]
+    if sig.node.generic {
+    } else {
+      name = sig.name
+      owner = sig.owner
+      if str_eq(name, "initialize") {
+        if checker_self.count_named_methods(owner, name) > 1 {
+          checker_self.fail(sig.node.loc, "initialize cannot be overloaded")
+          return
+        }
+      }
+      n = 0
+      j = 0
+      while j < checker_self.methods.size {
+        other = checker_self.methods[j]
+        if other.node.generic {
+        } else {
+          if str_eq(other.owner, owner) {
+            if str_eq(other.name, name) {
+              n = n + 1
+            }
+          }
+        }
+        j = j + 1
+      }
+      sanitized = emit_op_name(name)
+      if n <= 1 {
+        sig.node.emit_name = "${owner}__${sanitized}"
+      } else {
+        sig.node.emit_name = sig_mangle("${owner}__${sanitized}", sig.params)
+      }
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) implicit_field(name: String): Ty? {
+  if st = checker_self.self_ty {
+    return st.field_named(name)
+  }
+  nil
+}
+
+pub fn (checker_self: Checker) check: Program {
+  checker_self.resolver = load_types(checker_self.program)
+  checker_self.pull_resolve
+  checker_self.note_modules
+  i = 0
+  while i < checker_self.program.libs.size {
+    checker_self.clear_poison
+    checker_self.register_lib(checker_self.program.libs[i])
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.program.functions.size {
+    checker_self.clear_poison
+    fnn = checker_self.program.functions[i]
+    if fn_is_method(fnn) {
+      checker_self.register_method(fnn)
+    } else {
+      checker_self.register_function(fnn)
+    }
+    i = i + 1
+  }
+  checker_self.ready_adopt = true
+  checker_self.clear_poison
+  checker_self.check_interface_sigs
+  checker_self.clear_poison
+  checker_self.adopt_new_types
+  checker_self.clear_poison
+  checker_self.apply_late_opt_ins
+  checker_self.clear_poison
+  checker_self.reserve_constructors
+  checker_self.clear_poison
+  checker_self.assign_emit_names
+  checker_self.clear_poison
+  checker_self.check_field_defaults
+  if checker_self.any_err {
+    return checker_self.program
+  }
+  has_entry = false
+  i = 1
+  while i < checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if str_eq(sig.name, "main") {
+      if str_eq(sig.node.mod_name, checker_self.root_module) {
+        has_entry = true
+      } else {
+        if checker_self.root_module.size == 0 {
+          has_entry = true
+        }
+      }
+    }
+    if str_eq(sig.name, "run") {
+      if str_eq(sig.node.mod_name, checker_self.root_module) {
+        has_entry = true
+      } else {
+        if checker_self.root_module.size == 0 {
+          has_entry = true
+        }
+      }
+    }
+    i = i + 1
+  }
+  if has_entry {
+  } else {
+    checker_self.fail(checker_self.program.loc, "program needs fn main or fn run")
+    return checker_self.program
+  }
+  fns = program_all_functions(checker_self.program)
+  checker_self.adopt_pending = true
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    if fnn.generic {
+    } else {
+      checker_self.check_function(fnn)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.pending.size {
+    checker_self.check_function(checker_self.pending[i])
+    i = i + 1
+  }
+  checker_self.program
+}
+
+pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
+  if id = checker_self.lib_names.get(lib_def.name) {
+    checker_self.fail(lib_def.loc, "lib ${lib_def.name} is already defined")
+    return
+  }
+  if named = checker_self.resolver.get_named(lib_def.name) {
+    checker_self.fail(lib_def.loc, "lib ${lib_def.name} collides with a type")
+    return
+  }
+  checker_self.lib_names[lib_def.name] = 1
+  j = 0
+  while j < lib_def.funs.size {
+    cfun = lib_def.funs[j]
+    key = "${lib_def.name}.${cfun.name}"
+    if taken = checker_self.cfun_index.get(key) {
+      checker_self.fail(cfun.loc, "fun ${cfun.name} is already defined in lib ${lib_def.name}")
+      return
+    }
+    if existing = checker_self.find_fn(cfun.name) {
+      checker_self.fail(cfun.loc, "C function ${cfun.name} collides with an Avant function")
+      return
+    }
+    if id = checker_self.method_index.get(cfun.name) {
+      checker_self.fail(cfun.loc, "C function ${cfun.name} collides with an Avant function")
+      return
+    }
+    if bound = checker_self.c_symbols.get(cfun.name) {
+      checker_self.fail(cfun.loc, "C function ${cfun.name} is already bound as ${bound}")
+      return
+    }
+    if rid = checker_self.reserved.get(cfun.name) {
+      checker_self.fail(cfun.loc, "C function ${cfun.name} is reserved")
+      return
+    }
+    params: Array(Ty) = []
+    k = 0
+    while k < cfun.params.size {
+      pty = checker_self.resolver.resolve_value(cfun.params[k].type)
+      checker_self.pull_resolve
+      if pty.is_fn {
+        mi = 0
+        bad = false
+        while mi < pty.members.size {
+          if pty.members[mi].is_fn {
+            bad = true
+          }
+          mi = mi + 1
+        }
+        if r = pty.inner {
+          if r.is_fn {
+            bad = true
+          }
+        }
+        if bad {
+          checker_self.fail(cfun.params[k].loc, "C callback signature cannot contain a function type")
+          return
+        }
+      }
+      params.push(pty)
+      k = k + 1
+    }
+    ret = checker_self.t_void()
+    if t = cfun.return_type {
+      ty = checker_self.resolver.resolve(t)
+      checker_self.pull_resolve
+      if ty.is_opaque {
+        checker_self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+        return
+      }
+      if ty.is_clayout {
+        checker_self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+        return
+      }
+      if ty.is_fn {
+        checker_self.fail(t.loc, "C function pointers are not supported")
+        return
+      }
+      ret = ty
+    }
+    sig = CFunSig.new(cfun.name, lib_def.name, params, ret)
+    checker_self.cfuns.push(sig)
+    checker_self.cfun_index[key] = checker_self.cfuns.size - 1
+    checker_self.c_symbols[cfun.name] = key
+    j = j + 1
+  }
+  checker_self.lib_mod[lib_def.name] = lib_def.mod_name
+  if lib_def.vis {
+    checker_self.lib_vis[lib_def.name] = 1
+  } else {
+    checker_self.lib_vis[lib_def.name] = 0
+  }
+}
+
+pub fn (checker_self: Checker) register_function(fnn: Function) {
+  if is_op_fn_name(fnn.name) {
+    checker_self.fail(fnn.loc, "operator methods need a receiver")
+    return
+  }
+  if str_eq(fnn.name, "main") {
+    if checker_self.root_module.size > 0 {
+      if str_eq(fnn.mod_name, checker_self.root_module) {
+      } else {
+        if fnn.mod_name.size > 0 {
+          checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
+          return
+        }
+      }
+    }
+  }
+  if str_eq(fnn.name, "run") {
+    if checker_self.root_module.size > 0 {
+      if str_eq(fnn.mod_name, checker_self.root_module) {
+      } else {
+        if fnn.mod_name.size > 0 {
+          checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
+          return
+        }
+      }
+    }
+  }
+  if id = checker_self.lib_names.get(fnn.name) {
+    checker_self.fail(fnn.loc, "function ${fnn.name} collides with a lib")
+    return
+  }
+  if bound = checker_self.c_symbols.get(fnn.name) {
+    checker_self.fail(fnn.loc, "function ${fnn.name} collides with a C function")
+    return
+  }
+  if named = checker_self.resolver.get_named(fnn.name) {
+    owner = ""
+    if o = checker_self.type_mod.get(fnn.name) {
+      owner = o
+    }
+    collide = false
+    if owner.size == 0 {
+      collide = true
+    }
+    if str_eq(owner, fnn.mod_name) {
+      collide = true
+    }
+    if fnn.mod_name.size == 0 {
+      collide = true
+    }
+    if collide {
+      checker_self.fail(fnn.loc, "function ${fnn.name} collides with a type")
+      return
+    }
+  }
+  checker_self.check_trailing_defaults(fnn)
+  if checker_self.has_err {
+    return
+  }
+  tparams = collect_fn_type_params(fnn, checker_self.resolver.named)
+  if str_eq(fnn.name, "main") {
+    if tparams.size > 0 {
+      checker_self.fail(fnn.loc, "main cannot be generic")
+      return
+    }
+  }
+  if str_eq(fnn.name, "run") {
+    if tparams.size > 0 {
+      checker_self.fail(fnn.loc, "run cannot be generic")
+      return
+    }
+  }
+  fnn.type_params = tparams
+  fnn.generic = tparams.size > 0
+  checker_self.attach_bounds(fnn)
+  if checker_self.has_err {
+    return
+  }
+  saved_mod = checker_self.current_module
+  checker_self.current_module = fnn.mod_name
+  checker_self.resolver.set_tparams(tparams)
+  params: Array(Ty) = []
+  i = 0
+  while i < fnn.params.size {
+    params.push(checker_self.resolve_value_in_module(fnn.params[i].type))
+    checker_self.pull_resolve
+    i = i + 1
+  }
+  ret = checker_self.t_void()
+  if t = fnn.return_type {
+    ty = checker_self.resolve_in_module(t)
+    checker_self.pull_resolve
+    if ty.is_opaque {
+      checker_self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+      checker_self.resolver.clear_tparams
+      checker_self.current_module = saved_mod
+      return
+    }
+    if ty.is_clayout {
+      checker_self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+      checker_self.resolver.clear_tparams
+      checker_self.current_module = saved_mod
+      return
+    }
+    ret = ty
+  }
+  checker_self.resolver.clear_tparams
+  i = 0
+  while i < params.size {
+    checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    i = i + 1
+  }
+  checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  checker_self.current_module = saved_mod
+  i = 1
+  while i < checker_self.functions.size {
+    existing = checker_self.functions[i]
+    if str_eq(existing.name, fnn.name) {
+      if params_same(existing.params, params) {
+        same_mod = false
+        if str_eq(existing.node.mod_name, fnn.mod_name) {
+          same_mod = true
+        }
+        if existing.node.mod_name.size == 0 {
+          same_mod = true
+        }
+        if fnn.mod_name.size == 0 {
+          same_mod = true
+        }
+        if same_mod {
+          checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
+          return
+        }
+        if existing.node.vis {
+          checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
+          return
+        }
+        if fnn.vis {
+          checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
+          return
+        }
+      }
+    }
+    i = i + 1
+  }
+  checker_self.alloc_ol(fnn)
+  sig = FuncSig.new(fnn.name, fnn, params, ret)
+  checker_self.functions.push(sig)
+  if taken = checker_self.fn_index.get(fnn.name) {
+  } else {
+    checker_self.fn_index[fnn.name] = checker_self.functions.size - 1
+  }
+}
+
+pub fn (checker_self: Checker) ptr_method_ok(ty: Ty): Bool {
+  if ty.is_ptr {
+    if inner = ty.inner {
+      if inner.is_void {
+        return true
+      }
+      if inner.is_opaque {
+        return true
+      }
+      if inner.is_clayout {
+        return true
+      }
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) method_owner_name(ty: Ty): String {
+  if ty.is_ptr {
+    return mangle_ty(ty)
+  }
+  ty.name
+}
+
+pub fn (checker_self: Checker) register_method(fnn: Function) {
+  saved_mod = checker_self.current_module
+  checker_self.current_module = fnn.mod_name
+  owner_ty = checker_self.t_int()
+  owner_key = ""
+  has_owner = false
+  tparams = collect_fn_type_params(fnn, checker_self.resolver.named)
+  checker_self.resolver.set_tparams(tparams)
+  if fnn.owner.size > 0 {
+    if found = checker_self.lookup_named_type(fnn.owner, fnn.loc, "") {
+      owner_ty = found
+      owner_key = found.name
+      has_owner = true
+    } else {
+      checker_self.resolver.clear_tparams
+      checker_self.current_module = saved_mod
+      return
+    }
+  } else {
+    if recv = fnn.receiver {
+      ty = checker_self.resolve_in_module(recv.type)
+      checker_self.pull_resolve
+      if ty.is_agg {
+        fnn.owner = ty.name
+        owner_ty = ty
+        owner_key = ty.name
+        has_owner = true
+      } else if checker_self.ptr_method_ok(ty) {
+        if tparams.size > 0 {
+          checker_self.fail(recv.loc, "Ptr methods are not generic")
+          checker_self.resolver.clear_tparams
+          checker_self.current_module = saved_mod
+          return
+        }
+        owner_key = checker_self.method_owner_name(ty)
+        fnn.owner = owner_key
+        owner_ty = ty
+        has_owner = true
+      } else if ty.is_ptr {
+        checker_self.fail(recv.loc, "methods on ${ty.show} are not Stage 18 Ptr methods")
+        checker_self.resolver.clear_tparams
+        checker_self.current_module = saved_mod
+        return
+      } else {
+        checker_self.fail(recv.loc, "methods can only extend a struct or class, not ${ty.show}")
+        checker_self.resolver.clear_tparams
+        checker_self.current_module = saved_mod
+        return
+      }
+    } else {
+      checker_self.fail(fnn.loc, "unknown type")
+      checker_self.resolver.clear_tparams
+      checker_self.current_module = saved_mod
+      return
+    }
+  }
+  if has_owner {
+  } else {
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  if str_eq(fnn.name, "new") {
+    checker_self.fail(fnn.loc, "new is reserved; write initialize")
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  field_owner = owner_ty
+  if owner_ty.is_ptr {
+    if inner = owner_ty.inner {
+      field_owner = inner
+    }
+  }
+  if field_ty = field_owner.field_named(fnn.name) {
+    checker_self.fail(fnn.loc, "${field_owner.name}.${fnn.name} is both a field and a method")
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  checker_self.check_trailing_defaults(fnn)
+  if checker_self.has_err {
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  fnn.type_params = tparams
+  fnn.generic = tparams.size > 0
+  checker_self.attach_bounds(fnn)
+  if checker_self.has_err {
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  params: Array(Ty) = []
+  i = 0
+  while i < fnn.params.size {
+    params.push(checker_self.resolve_value_in_module(fnn.params[i].type))
+    checker_self.pull_resolve
+    i = i + 1
+  }
+  ret = checker_self.t_void()
+  if t = fnn.return_type {
+    ty = checker_self.resolve_in_module(t)
+    checker_self.pull_resolve
+    if ty.is_opaque {
+      checker_self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+      checker_self.resolver.clear_tparams
+      checker_self.current_module = saved_mod
+      return
+    }
+    if ty.is_clayout {
+      checker_self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+      checker_self.resolver.clear_tparams
+      checker_self.current_module = saved_mod
+      return
+    }
+    ret = ty
+  }
+  checker_self.resolver.clear_tparams
+  i = 0
+  while i < params.size {
+    checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    i = i + 1
+  }
+  checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  checker_self.current_module = saved_mod
+  if str_eq(fnn.name, "initialize") {
+    if ret.is_void {
+    } else {
+      checker_self.fail(fnn.loc, "initialize cannot return a value")
+      return
+    }
+    if fnn.generic {
+      checker_self.fail(fnn.loc, "initialize cannot be generic")
+      return
+    }
+  }
+  i = 0
+  while i < checker_self.methods.size {
+    existing = checker_self.methods[i]
+    if str_eq(existing.owner, owner_key) {
+      if str_eq(existing.name, fnn.name) {
+        if params_same(existing.params, params) {
+          checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
+          return
+        }
+      }
+    }
+    i = i + 1
+  }
+  checker_self.alloc_ol(fnn)
+  sig = FuncSig.new(fnn.name, fnn, params, ret)
+  sig.owner = owner_key
+  checker_self.methods.push(sig)
+  key = "${owner_key}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    if fnn.generic {
+    } else {
+      checker_self.assign_one_method_emit(sig)
+      checker_self.pending.push(fnn)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) adopt_one_struct(sdef: StructDef) {
+  j = 0
+  while j < sdef.methods.size {
+    if sdef.type_params.size > 0 {
+      sdef.methods[j].generic = true
+    } else {
+      checker_self.register_method(sdef.methods[j])
+      if checker_self.has_err {
+        return
+      }
+    }
+    j = j + 1
+  }
+  if sdef.type_params.size > 0 {
+    return
+  }
+  checker_self.check_decl_opts(sdef.name, sdef.opt_ins, sdef.mod_name, sdef.loc)
+}
+
+pub fn (checker_self: Checker) adopt_one_class(cdef: ClassDef) {
+  j = 0
+  while j < cdef.methods.size {
+    if cdef.type_params.size > 0 {
+      cdef.methods[j].generic = true
+    } else {
+      checker_self.register_method(cdef.methods[j])
+      if checker_self.has_err {
+        return
+      }
+    }
+    j = j + 1
+  }
+  if cdef.type_params.size > 0 {
+    return
+  }
+  checker_self.check_decl_opts(cdef.name, cdef.opt_ins, cdef.mod_name, cdef.loc)
+  if checker_self.has_err {
+    return
+  }
+  if checker_self.adopt_pending {
+    name = "${cdef.name}__new"
+    if taken = checker_self.find_fn(name) {
+      checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
+      return
+    }
+    if id = checker_self.method_index.get(name) {
+      checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
+    }
+  }
+}
+
+pub fn (checker_self: Checker) note_type_owner(name: String, mod_name: String, vis: Bool) {
+  if o = checker_self.type_mod.get(name) {
+    return
+  }
+  checker_self.type_mod[name] = mod_name
+  if vis {
+    checker_self.type_vis[name] = 1
+  } else {
+    checker_self.type_vis[name] = 0
+  }
+}
+
+pub fn (checker_self: Checker) adopt_new_types {
+  if checker_self.in_adopt {
+    return
+  }
+  if checker_self.has_err {
+    return
+  }
+  checker_self.in_adopt = true
+  grow = true
+  while grow {
+    grow = false
+    i = 0
+    while i < checker_self.program.structs.size {
+      sdef = checker_self.program.structs[i]
+      if seen = checker_self.adopted.get(sdef.name) {
+      } else {
+        checker_self.adopted[sdef.name] = 1
+        checker_self.note_type_owner(sdef.name, sdef.mod_name, sdef.vis)
+        checker_self.adopt_one_struct(sdef)
+        checker_self.clear_poison
+        grow = true
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < checker_self.program.classes.size {
+      cdef = checker_self.program.classes[i]
+      if seen = checker_self.adopted.get(cdef.name) {
+      } else {
+        checker_self.adopted[cdef.name] = 1
+        checker_self.note_type_owner(cdef.name, cdef.mod_name, cdef.vis)
+        checker_self.adopt_one_class(cdef)
+        checker_self.clear_poison
+        grow = true
+      }
+      i = i + 1
+    }
+  }
+  checker_self.in_adopt = false
+}
+
+pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
+  name = sig.name
+  owner = sig.owner
+  n = 0
+  j = 0
+  while j < checker_self.methods.size {
+    other = checker_self.methods[j]
+    if other.node.generic {
+    } else {
+      if str_eq(other.owner, owner) {
+        if str_eq(other.name, name) {
+          n = n + 1
+        }
+      }
+    }
+    j = j + 1
+  }
+  if str_eq(name, "initialize") {
+    if n > 1 {
+      checker_self.fail(sig.node.loc, "initialize cannot be overloaded")
+      return
+    }
+  }
+  sanitized = emit_op_name(name)
+  j = 0
+  while j < checker_self.methods.size {
+    other = checker_self.methods[j]
+    if other.node.generic {
+    } else {
+      if str_eq(other.owner, owner) {
+        if str_eq(other.name, name) {
+          if n <= 1 {
+            other.node.emit_name = "${owner}__${sanitized}"
+          } else {
+            other.node.emit_name = sig_mangle("${owner}__${sanitized}", other.params)
+          }
+        }
+      }
+    }
+    j = j + 1
+  }
+}
+
+pub fn (checker_self: Checker) reserve_constructors {
+  i = 0
+  while i < checker_self.program.classes.size {
+    cdef = checker_self.program.classes[i]
+    if cdef.type_params.size > 0 {
+      i = i + 1
+      continue
+    }
+    name = "${cdef.name}__new"
+    if taken = checker_self.find_fn(name) {
+      checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
+    }
+    if id = checker_self.method_index.get(name) {
+      checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) trivial_default(expr: Expr): Bool {
+  k = expr.kind
+  if k == ex_int() {
+    return true
+  }
+  if k == ex_float() {
+    return true
+  }
+  if k == ex_string() {
+    return true
+  }
+  if k == ex_bool() {
+    return true
+  }
+  if k == ex_nil() {
+    return true
+  }
+  if k == ex_unary() {
+    if expr.op == tk_minus() {
+      if inner = expr.inner {
+        return inner.kind == ex_int()
+      }
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) check_field_defaults {
+  saved = checker_self.self_ty
+  saved_name = checker_self.self_name
+  checker_self.self_ty = nil
+  checker_self.self_name = ""
+  i = 0
+  while i < checker_self.program.classes.size {
+    defn = checker_self.program.classes[i]
+    if defn.type_params.size > 0 {
+      i = i + 1
+      continue
+    }
+    checker_self.current_module = defn.mod_name
+    if ty = checker_self.resolver.get_named(defn.name) {
+      j = 0
+      while j < defn.fields.size {
+        field = defn.fields[j]
+        if default = field.default {
+          if checker_self.trivial_default(default) {
+          } else {
+            checker_self.fail(default.loc, "field default must be a literal or nil")
+            return
+          }
+          if want = ty.field_named(field.name) {
+            checker_self.push_scope
+            got = checker_self.check_expr_as(default, want)
+            if ty_assignable(got, want) {
+            } else {
+              checker_self.fail(default.loc, "cannot assign ${got.show} to ${want.show}")
+            }
+            checker_self.pop_scope
+          }
+        }
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+  checker_self.self_ty = saved
+  checker_self.self_name = saved_name
+}

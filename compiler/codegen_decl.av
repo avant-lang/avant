@@ -1,0 +1,798 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import codegen_types
+import re2c_pat
+import codegen_myc
+
+pub fn (codegen_self: MycGen) find_fn(name: String): FuncSig? {
+  if id = codegen_self.fn_index.get(name) {
+    return codegen_self.functions[id]
+  }
+  nil
+}
+
+pub fn (codegen_self: MycGen) has_fn(name: String): Bool {
+  if id = codegen_self.fn_index.get(name) {
+    return true
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) ext(name: String, args_s: String, ret: String) {
+  codegen_self.line("FUNC :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  if ret.size > 0 {
+    codegen_self.line("RETURN")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("TYPE :${ret}")
+    codegen_self.indent = codegen_self.indent - 1
+  }
+  args = split_comma(args_s)
+  if args.size > 0 {
+    codegen_self.line("ARGS")
+    codegen_self.indent = codegen_self.indent + 1
+    i = 0
+    while i < args.size {
+      a = args[i]
+      codegen_self.line("TYPE :${a}")
+      i = i + 1
+    }
+    codegen_self.indent = codegen_self.indent - 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDFUNC")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_runtime_decl {
+  // Declaring avant_gc_root is what myc-llvm keys off, via --gc-root from
+  // pipeline.av. The copying-nursery contract is avant-ledgers/stages/safepoints.md.
+  codegen_self.ext("avant_alloc", "u64,u32", "ptr<void>")
+  codegen_self.ext("avant_bump_alloc", "u64,u32", "ptr<void>")
+  codegen_self.ext("avant_nursery_reclaim", "", "")
+  codegen_self.ext("avant_pin", "ptr<void>", "")
+  codegen_self.ext("avant_unpin", "ptr<void>", "")
+  codegen_self.ext("avant_gc_enter", "", "")
+  codegen_self.ext("avant_gc_leave", "", "")
+  codegen_self.ext("avant_gc_quiet_enter", "", "")
+  codegen_self.ext("avant_gc_quiet_leave", "", "")
+  codegen_self.ext("avant_gc_root", "ptr<void>", "")
+  codegen_self.line("GLOBAL :g_avant_shared")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("TYPE :i32")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDGLOBAL")
+  codegen_self.ext("avant_gc_reload", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_type_map", "u32,u64", "")
+  codegen_self.ext("avant_barrier", "ptr<void>", "")
+  codegen_self.ext("avant_str_concat", "ptr<u8>,ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_str_cat_i32", "ptr<u8>,i32", "ptr<u8>")
+  codegen_self.ext("avant_str_from_int", "i32", "ptr<u8>")
+  codegen_self.ext("avant_str_from_i64", "i64", "ptr<u8>")
+  codegen_self.ext("avant_str_from_u64", "u64", "ptr<u8>")
+  codegen_self.ext("avant_str_from_float", "f64", "ptr<u8>")
+  codegen_self.ext("avant_str_from_bool", "i32", "ptr<u8>")
+  codegen_self.ext("avant_str_from_byte", "i32", "ptr<u8>")
+  codegen_self.ext("avant_str_from_i32_bytes", "ptr<void>", "ptr<u8>")
+  codegen_self.ext("avant_str_repeat_byte", "i32,i32", "ptr<u8>")
+  codegen_self.ext("avant_str_slice", "ptr<u8>,i32,i32", "ptr<u8>")
+  codegen_self.ext("avant_str_fmt_float", "f64,i32", "ptr<u8>")
+  codegen_self.ext("avant_str_eq", "ptr<u8>,ptr<u8>", "i32")
+  codegen_self.ext("avant_str_size", "ptr<u8>", "i32")
+  codegen_self.ext("avant_str_byte", "ptr<u8>,i32", "i32")
+  codegen_self.ext("avant_str_to_f", "ptr<u8>", "f64")
+  codegen_self.ext("avant_str_to_f_slice", "ptr<u8>,i32,i32", "f64")
+  codegen_self.ext("avant_str_to_i", "ptr<u8>", "i32")
+  codegen_self.ext("avant_str_strip", "ptr<u8>,i32", "ptr<u8>")
+  codegen_self.ext("avant_str_split", "ptr<u8>,ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_str_fields", "ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_str_chars", "ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_bytes_chars", "ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_str_from_utf8", "ptr<u8>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_bytes_to_buf", "ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_checksum_f64", "f64", "i32")
+  codegen_self.ext("avant_checksum_str", "ptr<u8>", "i32")
+  codegen_self.ext("avant_wide_op", "i32,i32,i32,i32,i32", "i32")
+  codegen_self.ext("avant_wide_hi", "", "i32")
+  codegen_self.ext("avant_exp", "f64", "f64")
+  codegen_self.ext("avant_is_young", "ptr<void>", "i32")
+  codegen_self.ext("avant_hash_new", "i32,i32", "ptr<void>")
+  codegen_self.ext("avant_hash_size", "ptr<void>", "i32")
+  codegen_self.ext("avant_hash_clear", "ptr<void>", "")
+  codegen_self.ext("avant_hash_set_i32", "ptr<void>,ptr<u8>,i32", "")
+  codegen_self.ext("avant_hash_set_str", "ptr<void>,ptr<u8>,ptr<u8>", "")
+  codegen_self.ext("avant_hash_set_i32k_i32", "ptr<void>,i32,i32", "")
+  codegen_self.ext("avant_hash_get_i32", "ptr<void>,ptr<u8>,ptr<i32>", "i32")
+  codegen_self.ext("avant_hash_get_str", "ptr<void>,ptr<u8>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_hash_get_i32k_i32", "ptr<void>,i32,ptr<i32>", "i32")
+  codegen_self.ext("avant_hash_del", "ptr<void>,ptr<u8>", "")
+  codegen_self.ext("avant_hash_del_i32k", "ptr<void>,i32", "")
+  codegen_self.ext("avant_hash_inc_slice", "ptr<void>,ptr<u8>,i32,i32", "i32")
+  codegen_self.ext("avant_hash_last_key", "", "ptr<u8>")
+  codegen_self.ext("avant_hash_get_str_slice", "ptr<void>,ptr<u8>,i32,i32,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_hash_get_concat", "ptr<void>,ptr<u8>,ptr<u8>,ptr<i32>", "i32")
+  codegen_self.ext("avant_hash_has_str", "ptr<void>,ptr<u8>", "i32")
+  codegen_self.ext("avant_hash_has_i32k", "ptr<void>,i32", "i32")
+  codegen_self.ext("avant_hash_inc_str", "ptr<void>,ptr<u8>,i32", "i32")
+  codegen_self.ext("avant_hash_inc_i32k", "ptr<void>,i32,i32", "i32")
+  codegen_self.ext("avant_hash_get_or_i32", "ptr<void>,ptr<u8>,i32", "i32")
+  codegen_self.ext("avant_hash_get_or_str", "ptr<void>,ptr<u8>,ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_hash_get_or_i32k_i32", "ptr<void>,i32,i32", "i32")
+  codegen_self.ext("avant_hash_keys_str", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_hash_keys_i32", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_hash_vals_str", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_hash_vals_i32", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_buf_new", "i32", "ptr<void>")
+  codegen_self.ext("avant_buf_push_byte", "ptr<void>,i32", "")
+  codegen_self.ext("avant_buf_push_str", "ptr<void>,ptr<u8>", "")
+  codegen_self.ext("avant_buf_push_slice", "ptr<void>,ptr<u8>,i32,i32", "")
+  codegen_self.ext("avant_buf_push_fmt_f", "ptr<void>,f64,i32", "")
+  codegen_self.ext("avant_buf_push_fmt_i", "ptr<void>,i32", "")
+  codegen_self.ext("avant_buf_to_str", "ptr<void>", "ptr<u8>")
+  codegen_self.ext("avant_buf_size", "ptr<void>", "i32")
+  codegen_self.ext("avant_buf_clear", "ptr<void>", "")
+  codegen_self.ext("avant_buf_starts", "ptr<void>,ptr<u8>", "i32")
+  codegen_self.ext("avant_b64_encode", "ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_b64_decode", "ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_b64_encode_buf", "ptr<void>,ptr<u8>", "")
+  codegen_self.ext("avant_b64_decode_buf", "ptr<void>,ptr<u8>", "")
+  codegen_self.ext("avant_crc32_i32", "ptr<void>", "i32")
+  codegen_self.ext("avant_sha256_word0", "ptr<void>", "i32")
+  codegen_self.ext("avant_re_compile", "ptr<u8>,i32", "ptr<void>")
+  codegen_self.ext("avant_re_find", "ptr<void>,ptr<u8>,i32", "i32")
+  codegen_self.ext("avant_re_m0", "", "i32")
+  codegen_self.ext("avant_re_m1", "", "i32")
+  codegen_self.ext("avant_re_c0", "", "i32")
+  codegen_self.ext("avant_re_c1", "", "i32")
+  codegen_self.ext("avant_re_count", "ptr<u8>,ptr<u8>,i32", "i32")
+  if codegen_self.program.re2c_obj.size > 0 {
+    codegen_self.ext("avant_re2c_count", "i32,ptr<u8>", "i32")
+    codegen_self.ext("avant_re2c_handle", "i32", "ptr<void>")
+  }
+  codegen_self.ext("avant_array_push_slot", "ptr<void>,u64,u32", "ptr<void>")
+  codegen_self.ext("avant_array_push_ptr", "ptr<void>,ptr<void>,u32", "")
+  codegen_self.ext("avant_array_set_ptr", "ptr<void>,i32,ptr<void>", "")
+  codegen_self.ext("avant_array_get_ptr", "ptr<void>,i32", "ptr<void>")
+  codegen_self.ext("avant_array_pop_ptr", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_array_push_i32", "ptr<void>,i32", "")
+  codegen_self.ext("avant_array_clear", "ptr<void>", "")
+  codegen_self.ext("avant_array_reserve", "ptr<void>,i32,u64,u32", "")
+  codegen_self.ext("avant_array_pop_slot", "ptr<void>,u64", "ptr<void>")
+  codegen_self.ext("avant_array_sort_i32", "ptr<void>", "")
+  codegen_self.ext("avant_array_sort_i64", "ptr<void>", "")
+  codegen_self.ext("avant_array_sort_u64", "ptr<void>", "")
+  codegen_self.ext("avant_array_sort_f64", "ptr<void>", "")
+  codegen_self.ext("avant_array_sort_str", "ptr<void>", "")
+  codegen_self.ext("avant_array_sort_bool", "ptr<void>", "")
+  codegen_self.ext("avant_array_reverse", "ptr<void>,u64", "")
+  codegen_self.ext("avant_array_copy", "ptr<void>,u64,u32", "ptr<void>")
+  codegen_self.ext("avant_array_contains_i32", "ptr<void>,i32", "i32")
+  codegen_self.ext("avant_array_contains_i64", "ptr<void>,i64", "i32")
+  codegen_self.ext("avant_array_contains_u64", "ptr<void>,u64", "i32")
+  codegen_self.ext("avant_array_contains_f64", "ptr<void>,f64", "i32")
+  codegen_self.ext("avant_array_contains_str", "ptr<void>,ptr<u8>", "i32")
+  codegen_self.ext("avant_array_contains_ptr", "ptr<void>,ptr<void>", "i32")
+  codegen_self.ext("avant_array_contains_bool", "ptr<void>,i32", "i32")
+  codegen_self.ext("avant_array_index_i32", "ptr<void>,i32", "i32")
+  codegen_self.ext("avant_array_index_i64", "ptr<void>,i64", "i32")
+  codegen_self.ext("avant_array_index_u64", "ptr<void>,u64", "i32")
+  codegen_self.ext("avant_array_index_f64", "ptr<void>,f64", "i32")
+  codegen_self.ext("avant_array_index_str", "ptr<void>,ptr<u8>", "i32")
+  codegen_self.ext("avant_array_index_ptr", "ptr<void>,ptr<void>", "i32")
+  codegen_self.ext("avant_array_index_bool", "ptr<void>,i32", "i32")
+  codegen_self.ext("avant_array_min_i32", "ptr<void>,ptr<i32>", "i32")
+  codegen_self.ext("avant_array_min_i64", "ptr<void>,ptr<i32>", "i64")
+  codegen_self.ext("avant_array_min_u64", "ptr<void>,ptr<i32>", "u64")
+  codegen_self.ext("avant_array_min_f64", "ptr<void>,ptr<i32>", "f64")
+  codegen_self.ext("avant_array_min_str", "ptr<void>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_array_max_i32", "ptr<void>,ptr<i32>", "i32")
+  codegen_self.ext("avant_array_max_i64", "ptr<void>,ptr<i32>", "i64")
+  codegen_self.ext("avant_array_max_u64", "ptr<void>,ptr<i32>", "u64")
+  codegen_self.ext("avant_array_max_f64", "ptr<void>,ptr<i32>", "f64")
+  codegen_self.ext("avant_array_max_str", "ptr<void>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_array_sum_i32", "ptr<void>", "i32")
+  codegen_self.ext("avant_array_sum_i64", "ptr<void>", "i64")
+  codegen_self.ext("avant_array_sum_u64", "ptr<void>", "u64")
+  codegen_self.ext("avant_array_sum_f64", "ptr<void>", "f64")
+  codegen_self.ext("avant_array_fill_i32", "ptr<void>,i32", "")
+  codegen_self.ext("avant_array_fill_u8", "ptr<void>,i32", "")
+  codegen_self.ext("avant_trap_bounds", "i32,i32", "")
+  codegen_self.ext("avant_trap_div_zero", "", "")
+  codegen_self.ext("avant_trap_overflow", "", "")
+  codegen_self.ext("avant_checked_add_i64", "i64,i64", "i64")
+  codegen_self.ext("avant_checked_sub_i64", "i64,i64", "i64")
+  codegen_self.ext("avant_checked_mul_i64", "i64,i64", "i64")
+  codegen_self.ext("avant_checked_add_u64", "u64,u64", "u64")
+  codegen_self.ext("avant_checked_sub_u64", "u64,u64", "u64")
+  codegen_self.ext("avant_checked_mul_u64", "u64,u64", "u64")
+  codegen_self.ext("avant_checked_div_i64", "i64,i64", "i64")
+  codegen_self.ext("avant_checked_rem_i64", "i64,i64", "i64")
+  codegen_self.ext("avant_checked_div_u64", "u64,u64", "u64")
+  codegen_self.ext("avant_checked_rem_u64", "u64,u64", "u64")
+  codegen_self.ext("avant_zlib_compress", "ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_zlib_uncompress", "ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_sha256", "ptr<u8>", "ptr<u8>")
+  codegen_self.ext("avant_spawn", "ptr<void>,ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_join", "ptr<void>", "i32")
+  codegen_self.ext("avant_now_ms", "", "i32")
+  codegen_self.ext("avant_now_us", "", "i32")
+  codegen_self.ext("avant_io_init_argv", "i32,ptr<void>", "")
+  codegen_self.ext("avant_argv", "", "ptr<void>")
+  codegen_self.ext("avant_file_read", "ptr<u8>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_file_write", "ptr<u8>,ptr<u8>", "i32")
+  codegen_self.ext("avant_process_run", "ptr<u8>,ptr<void>", "i32")
+  codegen_self.ext("avant_process_run_out", "ptr<u8>,ptr<void>,ptr<u8>", "i32")
+  codegen_self.ext("avant_env_get", "ptr<u8>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_file_exists", "ptr<u8>", "i32")
+  codegen_self.ext("avant_dir_list", "ptr<u8>", "ptr<void>")
+  if codegen_self.cov {
+    codegen_self.ext("avant_cov_init", "ptr<u8>", "")
+    codegen_self.ext("avant_cov_hit", "i32", "")
+  }
+  codegen_self.ext("avant_json_parse", "ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_json_free", "ptr<void>", "")
+  codegen_self.ext("avant_json_gen_body", "i32", "ptr<u8>")
+  codegen_self.ext("avant_json_gen_into", "ptr<void>,i32", "")
+  codegen_self.ext("avant_json_get_int", "ptr<void>,ptr<u8>,ptr<i32>", "i32")
+  codegen_self.ext("avant_json_get_str", "ptr<void>,ptr<u8>,ptr<i32>", "ptr<u8>")
+  codegen_self.ext("avant_json_root", "ptr<void>", "ptr<void>")
+  codegen_self.ext("avant_json_obj_get", "ptr<void>,ptr<u8>", "ptr<void>")
+  codegen_self.ext("avant_json_arr_len", "ptr<void>", "i32")
+  codegen_self.ext("avant_json_arr_get", "ptr<void>,i32", "ptr<void>")
+  codegen_self.ext("avant_json_as_f64", "ptr<void>,ptr<i32>", "f64")
+  codegen_self.ext("avant_json_obj_f64", "ptr<void>,ptr<u8>,ptr<i32>", "f64")
+  codegen_self.ext("avant_json_arr_sum_f64", "ptr<void>,ptr<u8>", "f64")
+  codegen_self.ext("avant_http_roundtrip", "ptr<u8>", "ptr<u8>")
+  if codegen_self.need_parallel != 0 {
+    codegen_self.ext("avant_parallel_for", "i32,ptr<void>,ptr<void>", "")
+  }
+  if codegen_self.need_gate != 0 {
+    codegen_self.ext("avant_gate_new", "", "u64")
+    codegen_self.ext("avant_gate_lock", "u64", "")
+    codegen_self.ext("avant_gate_unlock", "u64", "")
+    codegen_self.ext("avant_gate_wait", "u64", "")
+    codegen_self.ext("avant_gate_signal", "u64", "")
+    codegen_self.ext("avant_gate_broadcast", "u64", "")
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_lib_decls {
+  i = 0
+  while i < codegen_self.program.libs.size {
+    lib_def = codegen_self.program.libs[i]
+    j = 0
+    while j < lib_def.funs.size {
+      codegen_self.emit_lib_fun(lib_def.name, lib_def.funs[j])
+      j = j + 1
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_lib_fun(lib_name: String, fnn: FunDecl) {
+  params: Array(Ty) = []
+  ret = ty_void()
+  shared = false
+  if s = codegen_self.symbols {
+    if csig = s.find_cfun(lib_name, fnn.name) {
+      params = csig.params
+      ret = csig.ret
+      shared = true
+    }
+  }
+  if shared {
+  } else {
+    i = 0
+    while i < fnn.params.size {
+      params.push(codegen_self.resolver.resolve_value(fnn.params[i].type))
+      i = i + 1
+    }
+    if t = fnn.return_type {
+      ret = codegen_self.resolver.resolve(t)
+    }
+  }
+  codegen_self.line("FUNC :${fnn.name}")
+  codegen_self.indent = codegen_self.indent + 1
+  if ret.is_void {
+  } else {
+    codegen_self.line("RETURN")
+    codegen_self.indent = codegen_self.indent + 1
+    m = ty_myc(ret)
+    codegen_self.line("TYPE :${m}")
+    codegen_self.indent = codegen_self.indent - 1
+  }
+  if params.size > 0 {
+    codegen_self.line("ARGS")
+    codegen_self.indent = codegen_self.indent + 1
+    i = 0
+    while i < params.size {
+      if params[i].is_fn {
+        codegen_self.line("TYPE :ptr<void>")
+      } else {
+        m = ty_myc(params[i])
+        codegen_self.line("TYPE :${m}")
+      }
+      i = i + 1
+    }
+    codegen_self.indent = codegen_self.indent - 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDFUNC")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) collect_sigs {
+  i = 0
+  while i < codegen_self.program.functions.size {
+    fnn = codegen_self.program.functions[i]
+    if fn_is_method(fnn) {
+    } else {
+      if fnn.generic {
+      } else {
+        params: Array(Ty) = []
+        j = 0
+        while j < fnn.params.size {
+          params.push(codegen_self.resolver.resolve_value(fnn.params[j].type))
+          j = j + 1
+        }
+        ret = ty_void()
+        if t = fnn.return_type {
+          ret = codegen_self.resolver.resolve(t)
+        }
+        sig = FuncSig.new(fnn.name, fnn, params, ret)
+        codegen_self.functions.push(sig)
+        codegen_self.fn_index[fnn.emit_name] = codegen_self.functions.size - 1
+      }
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_methods {
+  fns = program_all_functions(codegen_self.program)
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    if fn_is_method(fnn) {
+      if fnn.generic {
+      } else if codegen_self.owner_is_template(fnn.owner) {
+      } else {
+        owner = fnn.owner
+        if owner.size == 0 {
+          if r = fnn.receiver {
+            ty = codegen_self.resolver.resolve(r.type)
+            owner = ty.name
+            fnn.owner = owner
+          }
+        }
+        params: Array(Ty) = []
+        j = 0
+        while j < fnn.params.size {
+          params.push(codegen_self.resolver.resolve_value(fnn.params[j].type))
+          j = j + 1
+        }
+        ret = ty_void()
+        if t = fnn.return_type {
+          ret = codegen_self.resolver.resolve(t)
+        }
+        sig = FuncSig.new(fnn.name, fnn, params, ret)
+        sig.owner = owner
+        codegen_self.methods.push(sig)
+        codegen_self.method_index[fnn.emit_name] = codegen_self.methods.size - 1
+      }
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) assign_class_ids {
+  n = 1
+  i = 0
+  while i < codegen_self.program.classes.size {
+    cdef = codegen_self.program.classes[i]
+    if cdef.type_params.size > 0 {
+    } else {
+      codegen_self.class_ids[cdef.name] = n
+      n = n + 1
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) find_method(owner: String, name: String): FuncSig? {
+  key = "${owner}__${name}"
+  if id = codegen_self.method_index.get(key) {
+    return codegen_self.methods[id]
+  }
+  nil
+}
+
+pub fn (codegen_self: MycGen) find_method_emit(emit: String): FuncSig? {
+  if id = codegen_self.method_index.get(emit) {
+    return codegen_self.methods[id]
+  }
+  nil
+}
+
+pub fn (codegen_self: MycGen) find_initialize(owner: String): FuncSig? {
+  i = 0
+  while i < codegen_self.methods.size {
+    sig = codegen_self.methods[i]
+    if str_eq(sig.owner, owner) {
+      if str_eq(sig.name, "initialize") {
+        return sig
+      }
+    }
+    i = i + 1
+  }
+  nil
+}
+
+pub fn (codegen_self: MycGen) note_ty(ty: Ty) {
+  if ty.is_fn {
+    layout = fn_layout_name(ty)
+    i = 0
+    while i < codegen_self.fn_tys.size {
+      if str_eq(fn_layout_name(codegen_self.fn_tys[i]), layout) {
+        return
+      }
+      i = i + 1
+    }
+    codegen_self.fn_tys.push(ty)
+    i = 0
+    while i < ty.members.size {
+      codegen_self.note_ty(ty.members[i])
+      i = i + 1
+    }
+    if r = ty.inner {
+      codegen_self.note_ty(r)
+    }
+    return
+  }
+  if ty.is_array {
+    layout = ty_layout_myc(ty)
+    i = 0
+    while i < codegen_self.array_tys.size {
+      if str_eq(ty_layout_myc(codegen_self.array_tys[i]), layout) {
+        return
+      }
+      i = i + 1
+    }
+    codegen_self.array_tys.push(ty)
+    if e = ty.inner {
+      codegen_self.note_ty(e)
+    }
+    return
+  }
+  if ty.is_union {
+    layout = ty_layout_myc(ty)
+    seen = false
+    i = 0
+    while i < codegen_self.union_tys.size {
+      if str_eq(ty_layout_myc(codegen_self.union_tys[i]), layout) {
+        seen = true
+      }
+      i = i + 1
+    }
+    if seen {
+    } else {
+      codegen_self.union_tys.push(ty)
+    }
+    i = 0
+    while i < ty.members.size {
+      codegen_self.note_ty(ty.members[i])
+      i = i + 1
+    }
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_arrays {
+  i = 0
+  while i < codegen_self.functions.size {
+    sig = codegen_self.functions[i]
+    j = 0
+    while j < sig.params.size {
+      codegen_self.note_ty(sig.params[j])
+      j = j + 1
+    }
+    codegen_self.note_ty(sig.ret)
+    i = i + 1
+  }
+  i = 0
+  while i < codegen_self.methods.size {
+    sig = codegen_self.methods[i]
+    j = 0
+    while j < sig.params.size {
+      codegen_self.note_ty(sig.params[j])
+      j = j + 1
+    }
+    codegen_self.note_ty(sig.ret)
+    i = i + 1
+  }
+  i = 0
+  while i < codegen_self.program.structs.size {
+    sdef = codegen_self.program.structs[i]
+    if ty = codegen_self.resolver.get_named(sdef.name) {
+      j = 0
+      while j < ty.fields.size {
+        codegen_self.note_ty(ty.fields[j].ty)
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < codegen_self.program.classes.size {
+    cdef = codegen_self.program.classes[i]
+    if ty = codegen_self.resolver.get_named(cdef.name) {
+      j = 0
+      while j < ty.fields.size {
+        codegen_self.note_ty(ty.fields[j].ty)
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+  fns = program_all_functions(codegen_self.program)
+  i = 0
+  while i < fns.size {
+    if fns[i].generic {
+    } else {
+      codegen_self.collect_stmts(fns[i].body)
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_stmts(body: Array(Stmt)) {
+  i = 0
+  while i < body.size {
+    stmt = body[i]
+    k = stmt.kind
+    if k == st_if() {
+      if c = stmt.cond {
+        codegen_self.collect_expr(c)
+      }
+      codegen_self.collect_stmts(stmt.then_body)
+      codegen_self.collect_stmts(stmt.else_body)
+    } else if k == st_while() {
+      codegen_self.collect_stmts(stmt.pre)
+      if c = stmt.cond {
+        codegen_self.collect_expr(c)
+      }
+      codegen_self.collect_stmts(stmt.body)
+    } else if k == st_pin() {
+      if e = stmt.expr {
+        codegen_self.collect_expr(e)
+      }
+      codegen_self.collect_stmts(stmt.body)
+    } else if k == st_assign() {
+      if t = stmt.target {
+        codegen_self.collect_expr(t)
+      }
+      if v = stmt.value {
+        codegen_self.collect_expr(v)
+      }
+    } else if k == st_expr() {
+      if e = stmt.expr {
+        codegen_self.collect_expr(e)
+      }
+    } else if k == st_return() {
+      if e = stmt.expr {
+        codegen_self.collect_expr(e)
+      }
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_expr(expr: Expr) {
+  codegen_self.note_ty(expr_ty(expr))
+  k = expr.kind
+  if k == ex_call() {
+    if inner = expr.inner {
+      codegen_self.collect_expr(inner)
+    }
+    if recv = expr.receiver {
+      codegen_self.collect_expr(recv)
+      if str_eq(expr.callee, "each") {
+        rt = expr_ty(recv)
+        if rt.is_hash {
+          if kk = rt.key {
+            codegen_self.note_ty(ty_array(kk))
+          }
+          if vv = rt.val {
+            codegen_self.note_ty(ty_nilable(vv))
+          }
+        }
+      }
+      if str_eq(expr.callee, "parallel") {
+        n = codegen_self.spawn_id
+        expr.spawn_thunk = "__par_${n}"
+        codegen_self.spawn_id = n + 1
+        codegen_self.pending.push(expr)
+        codegen_self.need_parallel = 1
+        words: Array(Ty) = []
+        words.push(expr_ty(recv))
+        words.push(expr_ty(expr))
+        wi = 0
+        while wi < expr.cap_tys.size {
+          words.push(expr.cap_tys[wi])
+          wi = wi + 1
+        }
+        codegen_self.note_words("${expr.spawn_thunk}_cap", words)
+      }
+      if str_eq(expr.callee, "with") {
+        if str_eq(expr_ty(recv).origin, "Mutex") {
+          codegen_self.need_gate = 1
+        }
+      }
+    } else {
+      if str_eq(expr.callee, "spawn") {
+        if b = expr.block {
+          n = codegen_self.spawn_id
+          expr.spawn_thunk = "__spawn_${n}"
+          codegen_self.spawn_id = n + 1
+          codegen_self.pending.push(expr)
+          if expr.cap_names.size > 0 {
+            codegen_self.note_words("${expr.spawn_thunk}_cap", expr.cap_tys)
+          }
+        }
+      }
+      if codegen_self.is_gate_callee(expr.callee) {
+        codegen_self.need_gate = 1
+      }
+    }
+    i = 0
+    while i < expr.args.size {
+      codegen_self.collect_expr(expr.args[i])
+      i = i + 1
+    }
+    if b = expr.block {
+      codegen_self.collect_stmts(b.body)
+    }
+    return
+  }
+  if k == ex_unary() {
+    if inner = expr.inner {
+      codegen_self.collect_expr(inner)
+    }
+    return
+  }
+  if k == ex_binary() {
+    if l = expr.left {
+      codegen_self.collect_expr(l)
+    }
+    if r = expr.right {
+      codegen_self.collect_expr(r)
+    }
+    return
+  }
+  if k == ex_field() {
+    if obj = expr.object {
+      codegen_self.collect_expr(obj)
+    }
+    return
+  }
+  if k == ex_index() {
+    if l = expr.left {
+      codegen_self.collect_expr(l)
+    }
+    if r = expr.right {
+      codegen_self.collect_expr(r)
+    }
+    return
+  }
+  if k == ex_struct() {
+    i = 0
+    while i < expr.field_exprs.size {
+      codegen_self.collect_expr(expr.field_exprs[i])
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_array() {
+    i = 0
+    while i < expr.elems.size {
+      codegen_self.collect_expr(expr.elems[i])
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_array_new() {
+    if size = expr.size_expr {
+      codegen_self.collect_expr(size)
+    }
+    return
+  }
+  if k == ex_try() {
+    if inner = expr.inner {
+      codegen_self.collect_expr(inner)
+    }
+    return
+  }
+  if k == ex_interp() {
+    i = 0
+    while i < expr.parts.size {
+      part = expr.parts[i]
+      if inner = part.expr {
+        codegen_self.collect_expr(inner)
+      }
+      i = i + 1
+    }
+    return
+  }
+  if k == ex_lambda() {
+    codegen_self.collect_lambda(expr)
+    return
+  }
+  if k == ex_switch() {
+    if c = expr.cond {
+      codegen_self.collect_expr(c)
+    }
+    i = 0
+    while i < expr.cases.size {
+      codegen_self.collect_stmts(expr.cases[i].body)
+      i = i + 1
+    }
+    if expr.has_else {
+      codegen_self.collect_stmts(expr.else_body)
+    }
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_layout(ty: Ty) {
+  name = ty_layout_myc(ty)
+  codegen_self.line("STRUCT :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  i = 0
+  while i < ty.fields.size {
+    m = ty_myc(ty.fields[i].ty)
+    codegen_self.line("TYPE :${m}")
+    i = i + 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_array_def(ty: Ty) {
+  name = ty_layout_myc(ty)
+  codegen_self.line("STRUCT :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  if e = ty.inner {
+    em = ty_myc(e)
+    codegen_self.line("TYPE :ptr<${em}>")
+  }
+  codegen_self.line("TYPE :i32")
+  codegen_self.line("TYPE :i32")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}
+
+pub fn (codegen_self: MycGen) emit_union_def(ty: Ty) {
+  name = ty_layout_myc(ty)
+  codegen_self.line("STRUCT :${name}")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("TYPE :i32")
+  payloads = ty.payload_members
+  i = 0
+  while i < payloads.size {
+    m = ty_myc(payloads[i])
+    codegen_self.line("TYPE :${m}")
+    i = i + 1
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDSTRUCT")
+  codegen_self.blank
+}

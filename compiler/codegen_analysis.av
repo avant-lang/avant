@@ -1,0 +1,725 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import codegen_types
+import re2c_pat
+import codegen_myc
+
+pub fn (codegen_self: MycGen) owner_is_template(owner: String): Bool {
+  if owner.size == 0 {
+    return false
+  }
+  i = 0
+  while i < codegen_self.program.structs.size {
+    sdef = codegen_self.program.structs[i]
+    if str_eq(sdef.name, owner) {
+      return sdef.type_params.size > 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < codegen_self.program.classes.size {
+    cdef = codegen_self.program.classes[i]
+    if str_eq(cdef.name, owner) {
+      return cdef.type_params.size > 0
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) mark_numeric_leaves {
+  found = Hash(String, Int).new
+  fns = program_all_functions(codegen_self.program)
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    if codegen_self.fn_can_skip_frame(fnn) {
+      found[fnn.emit_name] = 1
+    }
+    i = i + 1
+  }
+  codegen_self.numeric_leaves = found
+}
+
+// A function that cannot collect needs no frame and no safepoint.
+// Another thread can collect while this one holds a raw pointer, so
+// this stays off when the program spawns or uses .parallel.
+//
+// A recursive call is not itself a collection. Every candidate starts
+// in the set, and a function drops out when it calls something that
+// is already out. Integer casts and hash get, clear, delete, and size
+// do not move. Array clear and fill do not allocate. A hash or array
+// index store is not a call in this walk. Array.each is inlined, so
+// the call is not a collection; the block is.
+// Those helpers defer, and a private mutator does not move inside that
+// window.
+
+pub fn (codegen_self: MycGen) mark_quiet_leaves {
+  buf = buf_new()
+  first = 1
+  if codegen_self.may_share {
+    codegen_self.program.quiet_leaves = ""
+    return
+  }
+  open = Hash(String, Int).new
+  fns = program_all_functions(codegen_self.program)
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    if codegen_self.quiet_candidate(fnn) {
+      if v = codegen_self.numeric_leaves.get(fnn.emit_name) {
+      } else {
+        open[fnn.emit_name] = 1
+      }
+    }
+    i = i + 1
+  }
+  codegen_self.leaf_open = open
+  codegen_self.leaf_walk = 1
+  guard = 0
+  while guard < fns.size {
+    removed = 0
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if v = open.get(fnn.emit_name) {
+        if v == 1 {
+          if codegen_self.stmts_may_collect(fnn.body) {
+            open[fnn.emit_name] = 0
+            removed = 1
+          }
+        }
+      }
+      i = i + 1
+    }
+    if removed == 0 {
+      guard = fns.size
+    } else {
+      guard = guard + 1
+    }
+  }
+  codegen_self.leaf_walk = 0
+  // A numeric leaf already omits its frame. Callers still statepoint
+  // the call unless the name is on this list.
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    if fnn.emit_name.size > 0 {
+      if v = codegen_self.numeric_leaves.get(fnn.emit_name) {
+        if v == 1 {
+          if first == 0 {
+            buf.push_str(",")
+          }
+          first = 0
+          buf.push_str(fnn.emit_name)
+        }
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < fns.size {
+    fnn = fns[i]
+    if v = open.get(fnn.emit_name) {
+      if v == 1 {
+        codegen_self.numeric_leaves[fnn.emit_name] = 1
+        if first == 0 {
+          buf.push_str(",")
+        }
+        first = 0
+        buf.push_str(fnn.emit_name)
+      }
+    }
+    i = i + 1
+  }
+  // These helpers do not move when this thread is the only mutator.
+  // Set grows under defer. Get, clear, delete, and size do not allocate.
+  // A program that spawns does not reach this list.
+  if first == 0 {
+    buf.push_str(",")
+  }
+  buf.push_str("avant_hash_get_i32,avant_hash_get_str,avant_hash_get_i32k_i32")
+  buf.push_str(",avant_hash_set_i32,avant_hash_set_str,avant_hash_set_i32k_i32")
+  buf.push_str(",avant_hash_clear,avant_hash_size,avant_hash_del,avant_hash_del_i32k")
+  buf.push_str(",avant_hash_get_str_slice,avant_hash_inc_slice")
+  buf.push_str(",avant_buf_clear,avant_buf_push_byte,avant_buf_push_str,avant_buf_push_slice")
+  buf.push_str(",avant_buf_push_fmt_i,avant_buf_push_fmt_f")
+  buf.push_str(",avant_re_find,avant_re_count,avant_re_m0,avant_re_m1,avant_re_c0,avant_re_c1")
+  i = 0
+  while i < codegen_self.program.classes.size {
+    cdef = codegen_self.program.classes[i]
+    if cdef.type_params.size > 0 {
+    } else {
+      buf.push_str(",${cdef.name}__bump")
+    }
+    i = i + 1
+  }
+  codegen_self.program.quiet_leaves = buf.to_s
+}
+
+pub fn (codegen_self: MycGen) quiet_candidate(fnn: Function): Bool {
+  if fnn.generic {
+    return false
+  }
+  if str_eq(fnn.name, "main") {
+    return false
+  }
+  if fnn.emit_name.size == 0 {
+    return false
+  }
+  if fnn.box_names.size > 0 {
+    return false
+  }
+  true
+}
+
+pub fn (codegen_self: MycGen) leaf_named(name: String): Bool {
+  if v = codegen_self.numeric_leaves.get(name) {
+    return true
+  }
+  false
+}
+
+// spawn and .parallel register a second thread, which can collect
+// while this thread holds an interior pointer. A program with neither
+// keeps g_avant_shared at 0, so the flag load is dead.
+
+pub fn (codegen_self: MycGen) program_may_share: Bool {
+  fns = program_all_functions(codegen_self.program)
+  i = 0
+  while i < fns.size {
+    if codegen_self.stmts_may_share(fns[i].body) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmts_may_share(body: Array(Stmt)): Bool {
+  i = 0
+  while i < body.size {
+    if codegen_self.stmt_may_share(body[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmt_may_share(stmt: Stmt): Bool {
+  if e = stmt.expr {
+    if codegen_self.expr_may_share(e) {
+      return true
+    }
+  }
+  if c = stmt.cond {
+    if codegen_self.expr_may_share(c) {
+      return true
+    }
+  }
+  if t = stmt.target {
+    if codegen_self.expr_may_share(t) {
+      return true
+    }
+  }
+  if v = stmt.value {
+    if codegen_self.expr_may_share(v) {
+      return true
+    }
+  }
+  if codegen_self.stmts_may_share(stmt.then_body) {
+    return true
+  }
+  if codegen_self.stmts_may_share(stmt.else_body) {
+    return true
+  }
+  codegen_self.stmts_may_share(stmt.body)
+}
+
+pub fn (codegen_self: MycGen) expr_may_share(expr: Expr): Bool {
+  if expr.kind == ex_call() {
+    if str_eq(expr.callee, "spawn") {
+      return true
+    }
+    if str_eq(expr.callee, "parallel") {
+      return true
+    }
+  }
+  if inner = expr.inner {
+    if codegen_self.expr_may_share(inner) {
+      return true
+    }
+  }
+  if l = expr.left {
+    if codegen_self.expr_may_share(l) {
+      return true
+    }
+  }
+  if r = expr.right {
+    if codegen_self.expr_may_share(r) {
+      return true
+    }
+  }
+  if obj = expr.object {
+    if codegen_self.expr_may_share(obj) {
+      return true
+    }
+  }
+  if c = expr.cond {
+    if codegen_self.expr_may_share(c) {
+      return true
+    }
+  }
+  if recv = expr.receiver {
+    if codegen_self.expr_may_share(recv) {
+      return true
+    }
+  }
+  if sz = expr.size_expr {
+    if codegen_self.expr_may_share(sz) {
+      return true
+    }
+  }
+  i = 0
+  while i < expr.args.size {
+    if codegen_self.expr_may_share(expr.args[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.elems.size {
+    if codegen_self.expr_may_share(expr.elems[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.field_exprs.size {
+    if codegen_self.expr_may_share(expr.field_exprs[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.parts.size {
+    part = expr.parts[i]
+    if pe = part.expr {
+      if codegen_self.expr_may_share(pe) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.cases.size {
+    if codegen_self.stmts_may_share(expr.cases[i].body) {
+      return true
+    }
+    i = i + 1
+  }
+  if codegen_self.stmts_may_share(expr.else_body) {
+    return true
+  }
+  if b = expr.block {
+    if codegen_self.stmts_may_share(b.body) {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) fn_can_skip_frame(fnn: Function): Bool {
+  if fnn.generic {
+    return false
+  }
+  if fn_is_method(fnn) {
+    return false
+  }
+  if str_eq(fnn.name, "main") {
+    return false
+  }
+  if fnn.box_names.size > 0 {
+    return false
+  }
+  if sig = codegen_self.find_fn(fnn.emit_name) {
+    i = 0
+    while i < sig.params.size {
+      if ty_has_heap(sig.params[i]) {
+        return false
+      }
+      i = i + 1
+    }
+    if ty_has_heap(sig.ret) {
+      return false
+    }
+  } else {
+    return false
+  }
+  if codegen_self.stmts_need_frame(fnn.body) {
+    return false
+  }
+  true
+}
+
+pub fn (codegen_self: MycGen) stmts_need_frame(body: Array(Stmt)): Bool {
+  i = 0
+  while i < body.size {
+    if codegen_self.stmt_needs_frame(body[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmt_needs_frame(stmt: Stmt): Bool {
+  if e = stmt.expr {
+    if codegen_self.expr_needs_frame(e) {
+      return true
+    }
+  }
+  if c = stmt.cond {
+    if codegen_self.expr_needs_frame(c) {
+      return true
+    }
+  }
+  if t = stmt.target {
+    if codegen_self.expr_needs_frame(t) {
+      return true
+    }
+  }
+  if v = stmt.value {
+    if codegen_self.expr_needs_frame(v) {
+      return true
+    }
+  }
+  if codegen_self.stmts_need_frame(stmt.then_body) {
+    return true
+  }
+  if codegen_self.stmts_need_frame(stmt.else_body) {
+    return true
+  }
+  if codegen_self.stmts_need_frame(stmt.body) {
+    return true
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) expr_needs_frame(expr: Expr): Bool {
+  if ty_has_heap(expr_ty(expr)) {
+    return true
+  }
+  k = expr.kind
+  if k == ex_call() {
+    return true
+  }
+  if k == ex_lambda() {
+    return true
+  }
+  if k == ex_array() {
+    return true
+  }
+  if k == ex_array_new() {
+    return true
+  }
+  if k == ex_hash_new() {
+    return true
+  }
+  if k == ex_interp() {
+    return true
+  }
+  if k == ex_splice() {
+    return true
+  }
+  if k == ex_binary() {
+    if expr.resolved.size > 0 {
+      return true
+    }
+  }
+  if k == ex_field() {
+    if expr.method_call {
+      return true
+    }
+  }
+  if inner = expr.inner {
+    if codegen_self.expr_needs_frame(inner) {
+      return true
+    }
+  }
+  if l = expr.left {
+    if codegen_self.expr_needs_frame(l) {
+      return true
+    }
+  }
+  if r = expr.right {
+    if codegen_self.expr_needs_frame(r) {
+      return true
+    }
+  }
+  if obj = expr.object {
+    if codegen_self.expr_needs_frame(obj) {
+      return true
+    }
+  }
+  if c = expr.cond {
+    if codegen_self.expr_needs_frame(c) {
+      return true
+    }
+  }
+  if recv = expr.receiver {
+    if codegen_self.expr_needs_frame(recv) {
+      return true
+    }
+  }
+  if sz = expr.size_expr {
+    if codegen_self.expr_needs_frame(sz) {
+      return true
+    }
+  }
+  i = 0
+  while i < expr.args.size {
+    if codegen_self.expr_needs_frame(expr.args[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.elems.size {
+    if codegen_self.expr_needs_frame(expr.elems[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.field_exprs.size {
+    if codegen_self.expr_needs_frame(expr.field_exprs[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.parts.size {
+    part = expr.parts[i]
+    if pe = part.expr {
+      if codegen_self.expr_needs_frame(pe) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.cases.size {
+    if codegen_self.stmts_need_frame(expr.cases[i].body) {
+      return true
+    }
+    i = i + 1
+  }
+  if codegen_self.stmts_need_frame(expr.else_body) {
+    return true
+  }
+  if b = expr.block {
+    if codegen_self.stmts_need_frame(b.body) {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmts_call_heap(body: Array(Stmt)): Bool {
+  i = 0
+  while i < body.size {
+    if codegen_self.stmt_calls_heap(body[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmt_calls_heap(stmt: Stmt): Bool {
+  if e = stmt.expr {
+    if codegen_self.expr_calls_heap(e) {
+      return true
+    }
+  }
+  if c = stmt.cond {
+    if codegen_self.expr_calls_heap(c) {
+      return true
+    }
+  }
+  if v = stmt.value {
+    if codegen_self.expr_calls_heap(v) {
+      return true
+    }
+  }
+  if t = stmt.target {
+    if codegen_self.expr_calls_heap(t) {
+      return true
+    }
+  }
+  if codegen_self.stmts_call_heap(stmt.then_body) {
+    return true
+  }
+  if codegen_self.stmts_call_heap(stmt.else_body) {
+    return true
+  }
+  if codegen_self.stmts_call_heap(stmt.body) {
+    return true
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) expr_calls_heap(expr: Expr): Bool {
+  if expr.kind == ex_call() {
+    if ty_has_heap(expr_ty(expr)) {
+      return true
+    }
+  }
+  i = 0
+  while i < expr.args.size {
+    if codegen_self.expr_calls_heap(expr.args[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  if recv = expr.receiver {
+    if codegen_self.expr_calls_heap(recv) {
+      return true
+    }
+  }
+  if l = expr.left {
+    if codegen_self.expr_calls_heap(l) {
+      return true
+    }
+  }
+  if r = expr.right {
+    if codegen_self.expr_calls_heap(r) {
+      return true
+    }
+  }
+  if obj = expr.object {
+    if codegen_self.expr_calls_heap(obj) {
+      return true
+    }
+  }
+  if inner = expr.inner {
+    if codegen_self.expr_calls_heap(inner) {
+      return true
+    }
+  }
+  if b = expr.block {
+    if codegen_self.stmts_call_heap(b.body) {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) class_uses_bump(name: String): Bool {
+  fns = program_all_functions(codegen_self.program)
+  i = 0
+  while i < fns.size {
+    if codegen_self.stmts_use_bump(fns[i].body, name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmts_use_bump(body: Array(Stmt), name: String): Bool {
+  i = 0
+  while i < body.size {
+    if codegen_self.stmt_use_bump(body[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmt_use_bump(stmt: Stmt, name: String): Bool {
+  if e = stmt.expr {
+    if codegen_self.expr_use_bump(e, name) {
+      return true
+    }
+  }
+  if c = stmt.cond {
+    if codegen_self.expr_use_bump(c, name) {
+      return true
+    }
+  }
+  if v = stmt.value {
+    if codegen_self.expr_use_bump(v, name) {
+      return true
+    }
+  }
+  if codegen_self.stmts_use_bump(stmt.then_body, name) {
+    return true
+  }
+  if codegen_self.stmts_use_bump(stmt.else_body, name) {
+    return true
+  }
+  if codegen_self.stmts_use_bump(stmt.body, name) {
+    return true
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) expr_use_bump(expr: Expr, name: String): Bool {
+  if expr.kind == ex_call() {
+    if str_eq(expr.callee, "bump") {
+      if recv = expr.receiver {
+        if recv.kind == ex_name() {
+          if str_eq(recv.ident, name) {
+            return true
+          }
+        }
+      }
+    }
+  }
+  i = 0
+  while i < expr.args.size {
+    if codegen_self.expr_use_bump(expr.args[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  if recv = expr.receiver {
+    if codegen_self.expr_use_bump(recv, name) {
+      return true
+    }
+  }
+  if l = expr.left {
+    if codegen_self.expr_use_bump(l, name) {
+      return true
+    }
+  }
+  if r = expr.right {
+    if codegen_self.expr_use_bump(r, name) {
+      return true
+    }
+  }
+  if obj = expr.object {
+    if codegen_self.expr_use_bump(obj, name) {
+      return true
+    }
+  }
+  if inner = expr.inner {
+    if codegen_self.expr_use_bump(inner, name) {
+      return true
+    }
+  }
+  false
+}

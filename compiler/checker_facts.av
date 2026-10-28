@@ -1,0 +1,1215 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import checker_names
+import checker
+
+pub fn (checker_self: Checker) nn_has(name: String): Bool {
+  str_index(checker_self.nn_var, name) >= 0
+}
+
+pub fn (checker_self: Checker) nn_add(name: String) {
+  if checker_self.nn_has(name) {
+    return
+  }
+  checker_self.nn_var.push(name)
+}
+
+pub fn (checker_self: Checker) nn_remove(name: String) {
+  kept: Array(String) = []
+  i = 0
+  while i < checker_self.nn_var.size {
+    if str_eq(checker_self.nn_var[i], name) {
+    } else {
+      kept.push(checker_self.nn_var[i])
+    }
+    i = i + 1
+  }
+  checker_self.nn_var = kept
+}
+
+pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
+  if prev.kind != st_assign() {
+    return
+  }
+  if prev.op != tk_eq() {
+    return
+  }
+  if t = prev.target {
+    if v = prev.value {
+      if t.kind == ex_name() {
+        if v.kind == ex_int() {
+          if v.int_bits <= 1000000u64 {
+            ivar = t.ident
+            if c = stmt.cond {
+              cc = c
+              if cc.kind == ex_binary() {
+                if cc.op == tk_amp_amp() {
+                  if cl0 = cc.left {
+                    cc = cl0
+                  }
+                }
+              }
+              if cc.kind == ex_binary() {
+                is_le = false
+                coff = 0
+                matched = false
+                if cc.op == tk_less() || cc.op == tk_less_eq() {
+                  if cc.op == tk_less_eq() {
+                    is_le = true
+                  }
+                  if cl = cc.left {
+                    if cl.kind == ex_name() {
+                      if str_eq(cl.ident, ivar) {
+                        matched = true
+                      }
+                    } else if cl.kind == ex_binary() {
+                      if cl.op == tk_plus() {
+                        if cll = cl.left {
+                          if clr = cl.right {
+                            if cll.kind == ex_name() {
+                              if str_eq(cll.ident, ivar) {
+                                if checker_self.lit_small(clr) {
+                                  coff = clr.int_bits.to_i
+                                  matched = true
+                                }
+                              }
+                            }
+                            if clr.kind == ex_name() {
+                              if str_eq(clr.ident, ivar) {
+                                if checker_self.lit_small(cll) {
+                                  coff = cll.int_bits.to_i
+                                  matched = true
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                if matched {
+                  step = checker_self.body_vstep(stmt.body, ivar)
+                  if step > 0 {
+                    stmt.vstep = step
+                    stmt.vstart = v.int_bits.to_i
+                    stmt.vle = is_le
+                    stmt.vcoff = coff
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn (checker_self: Checker) body_vstep(body: Array(Stmt), ivar: String): Int {
+  step = 0 - 1
+  i = 0
+  while i < body.size {
+    got = checker_self.stmt_vstep(body[i], ivar)
+    if got == 0 - 2 {
+      return 0 - 1
+    }
+    if got > 0 {
+      if step < 0 {
+        step = got
+      } else if step == got {
+      } else {
+        return 0 - 1
+      }
+    }
+    i = i + 1
+  }
+  step
+}
+
+pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
+  if s.kind == st_assign() {
+    if t = s.target {
+      if t.kind == ex_name() {
+        if str_eq(t.ident, ivar) {
+          if s.op == tk_plus_eq() {
+            if v = s.value {
+              if v.kind == ex_int() {
+                if v.int_bits >= 1u64 {
+                  if v.int_bits <= 1000000u64 {
+                    return v.int_bits.to_i
+                  }
+                }
+              }
+            }
+            return 0 - 2
+          }
+          if s.op == tk_eq() {
+            if v = s.value {
+              if v.kind == ex_binary() {
+                if v.op == tk_plus() {
+                  if l = v.left {
+                    if r = v.right {
+                      if l.kind == ex_name() {
+                        if str_eq(l.ident, ivar) {
+                          if r.kind == ex_int() {
+                            if r.int_bits >= 1u64 {
+                              if r.int_bits <= 1000000u64 {
+                                return r.int_bits.to_i
+                              }
+                            }
+                          }
+                        }
+                      }
+                      if r.kind == ex_name() {
+                        if str_eq(r.ident, ivar) {
+                          if l.kind == ex_int() {
+                            if l.int_bits >= 1u64 {
+                              if l.int_bits <= 1000000u64 {
+                                return l.int_bits.to_i
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            return 0 - 2
+          }
+          return 0 - 2
+        }
+      }
+    }
+  }
+  i = 0
+  while i < s.then_body.size {
+    got = checker_self.stmt_vstep(s.then_body[i], ivar)
+    if got == 0 - 2 {
+      return 0 - 2
+    }
+    if got > 0 {
+      return got
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    got = checker_self.stmt_vstep(s.else_body[i], ivar)
+    if got == 0 - 2 {
+      return 0 - 2
+    }
+    if got > 0 {
+      return got
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    got = checker_self.stmt_vstep(s.body[i], ivar)
+    if got == 0 - 2 {
+      return 0 - 2
+    }
+    if got > 0 {
+      return got
+    }
+    i = i + 1
+  }
+  0 - 1
+}
+
+pub fn (checker_self: Checker) sv_put(v: String, cont: String) {
+  i = 0
+  while i < checker_self.sv_var.size {
+    if str_eq(checker_self.sv_var[i], v) {
+      checker_self.sv_cont[i] = cont
+      return
+    }
+    i = i + 1
+  }
+  checker_self.sv_var.push(v)
+  checker_self.sv_cont.push(cont)
+}
+
+pub fn (checker_self: Checker) sv_get(v: String): String {
+  i = 0
+  while i < checker_self.sv_var.size {
+    if str_eq(checker_self.sv_var[i], v) {
+      return checker_self.sv_cont[i]
+    }
+    i = i + 1
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) sv_remove_var(v: String) {
+  kept_v: Array(String) = []
+  kept_c: Array(String) = []
+  i = 0
+  while i < checker_self.sv_var.size {
+    if str_eq(checker_self.sv_var[i], v) {
+    } else {
+      kept_v.push(checker_self.sv_var[i])
+      kept_c.push(checker_self.sv_cont[i])
+    }
+    i = i + 1
+  }
+  checker_self.sv_var = kept_v
+  checker_self.sv_cont = kept_c
+}
+
+pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
+  best = 0 - 1
+  i = 0
+  while i < checker_self.fact_var.size {
+    if checker_self.fact_live[i] == 1 {
+      if str_eq(checker_self.fact_var[i], v) {
+        if str_eq(checker_self.fact_cont[i], cont) {
+          if checker_self.fact_slack[i] > best {
+            best = checker_self.fact_slack[i]
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  best
+}
+
+pub fn (checker_self: Checker) fact_any_slack(v: String): Int {
+  best = 0 - 1
+  i = 0
+  while i < checker_self.fact_var.size {
+    if checker_self.fact_live[i] == 1 {
+      if str_eq(checker_self.fact_var[i], v) {
+        if checker_self.fact_slack[i] > best {
+          best = checker_self.fact_slack[i]
+        }
+      }
+    }
+    i = i + 1
+  }
+  best
+}
+
+pub fn (checker_self: Checker) kill_facts_for(v: String) {
+  i = 0
+  while i < checker_self.fact_var.size {
+    if str_eq(checker_self.fact_var[i], v) {
+      checker_self.fact_live[i] = 0
+    }
+    if str_eq(checker_self.fact_cont[i], v) {
+      checker_self.fact_live[i] = 0
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int) {
+  i = 0
+  while i < checker_self.bv_var.size {
+    if str_eq(checker_self.bv_var[i], v) {
+      checker_self.bv_cont[i] = cont
+      checker_self.bv_delta[i] = delta
+      return
+    }
+    i = i + 1
+  }
+  checker_self.bv_var.push(v)
+  checker_self.bv_cont.push(cont)
+  checker_self.bv_delta.push(delta)
+}
+
+pub fn (checker_self: Checker) bv_get(v: String): String {
+  i = 0
+  while i < checker_self.bv_var.size {
+    if str_eq(checker_self.bv_var[i], v) {
+      return checker_self.bv_cont[i]
+    }
+    i = i + 1
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) bv_delta_of(v: String): Int {
+  i = 0
+  while i < checker_self.bv_var.size {
+    if str_eq(checker_self.bv_var[i], v) {
+      return checker_self.bv_delta[i]
+    }
+    i = i + 1
+  }
+  0
+}
+
+pub fn (checker_self: Checker) bv_remove_var(v: String) {
+  kept_v: Array(String) = []
+  kept_c: Array(String) = []
+  kept_d: Array(Int) = []
+  i = 0
+  while i < checker_self.bv_var.size {
+    if str_eq(checker_self.bv_var[i], v) {
+    } else {
+      kept_v.push(checker_self.bv_var[i])
+      kept_c.push(checker_self.bv_cont[i])
+      kept_d.push(checker_self.bv_delta[i])
+    }
+    i = i + 1
+  }
+  checker_self.bv_var = kept_v
+  checker_self.bv_cont = kept_c
+  checker_self.bv_delta = kept_d
+}
+
+pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int) {
+  i = 0
+  while i < checker_self.cs_cont.size {
+    if str_eq(checker_self.cs_cont[i], cont) {
+      checker_self.cs_var[i] = v
+      checker_self.cs_delta[i] = delta
+      return
+    }
+    i = i + 1
+  }
+  checker_self.cs_cont.push(cont)
+  checker_self.cs_var.push(v)
+  checker_self.cs_delta.push(delta)
+}
+
+pub fn (checker_self: Checker) cs_cont_of_var(v: String): String {
+  i = 0
+  while i < checker_self.cs_var.size {
+    if str_eq(checker_self.cs_var[i], v) {
+      return checker_self.cs_cont[i]
+    }
+    i = i + 1
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) cs_delta_of_var(v: String): Int {
+  i = 0
+  while i < checker_self.cs_var.size {
+    if str_eq(checker_self.cs_var[i], v) {
+      return checker_self.cs_delta[i]
+    }
+    i = i + 1
+  }
+  0
+}
+
+pub fn (checker_self: Checker) bound_cont_of(e: Expr): String {
+  if e.kind == ex_field() {
+    if str_eq(e.ident, "size") {
+      if obj = e.object {
+        if obj.kind == ex_name() {
+          if obj.implicit_field {
+            return ""
+          }
+          return obj.ident
+        }
+      }
+    }
+    return ""
+  }
+  if e.kind == ex_name() {
+    got = checker_self.sv_get(e.ident)
+    if got.size > 0 {
+      return got
+    }
+    gotb = checker_self.bv_get(e.ident)
+    if gotb.size > 0 {
+      return gotb
+    }
+    return checker_self.cs_cont_of_var(e.ident)
+  }
+  if e.kind == ex_binary() {
+    if e.op == tk_minus() || e.op == tk_plus() {
+      if l = e.left {
+        return checker_self.bound_cont_of(l)
+      }
+    }
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) bound_delta_of(e: Expr): Int {
+  if e.kind == ex_field() {
+    return 0
+  }
+  if e.kind == ex_name() {
+    got = checker_self.sv_get(e.ident)
+    if got.size > 0 {
+      return 0
+    }
+    bg = checker_self.bv_get(e.ident)
+    if bg.size > 0 {
+      return checker_self.bv_delta_of(e.ident)
+    }
+    cc = checker_self.cs_cont_of_var(e.ident)
+    if cc.size > 0 {
+      return 0 - checker_self.cs_delta_of_var(e.ident)
+    }
+    return 0
+  }
+  if e.kind == ex_binary() {
+    if l = e.left {
+      if r = e.right {
+        base = checker_self.bound_delta_of(l)
+        if checker_self.lit_small(r) {
+          if e.op == tk_minus() {
+            return base - r.int_bits.to_i
+          }
+          return base + r.int_bits.to_i
+        }
+      }
+    }
+  }
+  0
+}
+
+pub fn (checker_self: Checker) lit_small(e: Expr): Bool {
+  if e.kind == ex_int() {
+    return e.int_bits <= 1000000u64
+  }
+  false
+}
+
+pub fn (checker_self: Checker) value_is_nonneg(val: Expr, selfname: String): Bool {
+  if val.kind == ex_int() {
+    return true
+  }
+  if val.kind == ex_field() {
+    if str_eq(val.ident, "size") {
+      return true
+    }
+  }
+  if val.kind == ex_name() {
+    return checker_self.nn_has(val.ident)
+  }
+  if val.kind == ex_binary() {
+    if val.op == tk_star() {
+      if l = val.left {
+        if r = val.right {
+          lok = false
+          if l.kind == ex_int() {
+            lok = true
+          } else if l.kind == ex_name() {
+            if checker_self.nn_has(l.ident) {
+              lok = true
+            }
+          }
+          rok = false
+          if r.kind == ex_int() {
+            rok = true
+          } else if r.kind == ex_name() {
+            if checker_self.nn_has(r.ident) {
+              rok = true
+            }
+          }
+          if lok {
+            return rok
+          }
+          return false
+        }
+      }
+    }
+    if val.op == tk_plus() || val.op == tk_minus() {
+      if l = val.left {
+        if r = val.right {
+          lok = false
+          if l.kind == ex_int() {
+            lok = true
+          } else if l.kind == ex_name() {
+            if checker_self.nn_has(l.ident) {
+              lok = true
+            }
+            if str_eq(l.ident, selfname) {
+              if checker_self.nn_has(selfname) {
+                lok = true
+              }
+            }
+          }
+          rok = false
+          if r.kind == ex_int() {
+            rok = true
+          } else if r.kind == ex_name() {
+            if checker_self.nn_has(r.ident) {
+              rok = true
+            }
+          }
+          if val.op == tk_minus() {
+            if r.kind == ex_int() {
+              return lok
+            }
+            return false
+          }
+          if lok {
+            return rok
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
+  if stmt.kind == st_assign() {
+    if t = stmt.target {
+      if t.kind == ex_name() {
+        v = t.ident
+        checker_self.kill_facts_for(v)
+        if val = stmt.value {
+          if checker_self.value_is_nonneg(val, v) {
+            checker_self.nn_add(v)
+          } else {
+            checker_self.nn_remove(v)
+          }
+          sv_done = false
+          if val.kind == ex_field() {
+            if str_eq(val.ident, "size") {
+              if obj = val.object {
+                if obj.kind == ex_name() {
+                  checker_self.sv_put(v, obj.ident)
+                  sv_done = true
+                }
+              }
+            }
+          }
+          if val.kind == ex_array_new() {
+            if sz = val.size_expr {
+              if sz.kind == ex_name() {
+                checker_self.sv_put(sz.ident, v)
+                checker_self.cs_put(v, sz.ident, 0)
+                sv_done = true
+              } else if sz.kind == ex_binary() {
+                if sz.op == tk_plus() || sz.op == tk_minus() {
+                  if sl2 = sz.left {
+                    if sr2 = sz.right {
+                      if sl2.kind == ex_name() {
+                        if checker_self.lit_small(sr2) {
+                          d = sr2.int_bits.to_i
+                          if sz.op == tk_minus() {
+                            d = 0 - d
+                          }
+                          checker_self.cs_put(v, sl2.ident, d)
+                        }
+                      }
+                      if sr2.kind == ex_name() {
+                        if checker_self.lit_small(sl2) {
+                          if sz.op == tk_plus() {
+                            checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if sv_done {
+          } else {
+            checker_self.sv_remove_var(v)
+          }
+          bc = checker_self.bound_cont_of(val)
+          if bc.size > 0 {
+            checker_self.bv_put(v, bc, checker_self.bound_delta_of(val))
+          } else {
+            checker_self.bv_remove_var(v)
+          }
+        }
+      }
+    }
+  }
+  i = 0
+  while i < checker_self.fact_var.size {
+    if checker_self.fact_live[i] == 1 {
+      if checker_self.deep_shrinks_stmt(stmt, checker_self.fact_cont[i]) {
+        checker_self.fact_live[i] = 0
+      }
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
+  if s.kind == st_assign() {
+    if t = s.target {
+      if t.kind == ex_name() {
+        if str_eq(t.ident, cont) {
+          return true
+        }
+      }
+    }
+  }
+  if e = s.expr {
+    if checker_self.deep_shrinks_expr(e, cont) {
+      return true
+    }
+  }
+  if c = s.cond {
+    if checker_self.deep_shrinks_expr(c, cont) {
+      return true
+    }
+  }
+  if t = s.target {
+    if checker_self.deep_shrinks_expr(t, cont) {
+      return true
+    }
+  }
+  if v = s.value {
+    if checker_self.deep_shrinks_expr(v, cont) {
+      return true
+    }
+  }
+  i = 0
+  while i < s.then_body.size {
+    if checker_self.deep_shrinks_stmt(s.then_body[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    if checker_self.deep_shrinks_stmt(s.else_body[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    if checker_self.deep_shrinks_stmt(s.body[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
+  if e.kind == ex_call() {
+    if str_eq(e.callee, "pop") || str_eq(e.callee, "clear") {
+      if recv = e.receiver {
+        if str_eq(checker_self.expr_root_name(recv), cont) {
+          return true
+        }
+      }
+    }
+  }
+  if inner = e.inner {
+    if checker_self.deep_shrinks_expr(inner, cont) {
+      return true
+    }
+  }
+  if l = e.left {
+    if checker_self.deep_shrinks_expr(l, cont) {
+      return true
+    }
+  }
+  if r = e.right {
+    if checker_self.deep_shrinks_expr(r, cont) {
+      return true
+    }
+  }
+  if obj = e.object {
+    if checker_self.deep_shrinks_expr(obj, cont) {
+      return true
+    }
+  }
+  if recv = e.receiver {
+    if checker_self.deep_shrinks_expr(recv, cont) {
+      return true
+    }
+  }
+  i = 0
+  while i < e.args.size {
+    if checker_self.deep_shrinks_expr(e.args[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    if checker_self.deep_shrinks_expr(e.elems[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    if checker_self.deep_shrinks_expr(e.field_exprs[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    if checker_self.deep_shrinks_expr(sz, cont) {
+      return true
+    }
+  }
+  if c = e.cond {
+    if checker_self.deep_shrinks_expr(c, cont) {
+      return true
+    }
+  }
+  if b = e.block {
+    j = 0
+    while j < b.body.size {
+      if checker_self.deep_shrinks_stmt(b.body[j], cont) {
+        return true
+      }
+      j = j + 1
+    }
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      if checker_self.deep_shrinks_stmt(cs.body[j], cont) {
+        return true
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    if checker_self.deep_shrinks_stmt(e.else_body[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    part = e.parts[i]
+    if inner = part.expr {
+      if checker_self.deep_shrinks_expr(inner, cont) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) step_is_nonneg(v: Expr): Bool {
+  if v.kind == ex_int() {
+    return true
+  }
+  if v.kind == ex_name() {
+    return checker_self.nn_has(v.ident)
+  }
+  false
+}
+
+pub fn (checker_self: Checker) deep_ivar_ok_stmt(s: Stmt, ivar: String): Bool {
+  if s.kind == st_assign() {
+    if t = s.target {
+      if t.kind == ex_name() {
+        if str_eq(t.ident, ivar) {
+          if s.op == tk_plus_eq() {
+            if v = s.value {
+              if checker_self.step_is_nonneg(v) {
+                return checker_self.deep_ivar_ok_rest(s, ivar)
+              }
+            }
+            return false
+          }
+          if s.op == tk_eq() {
+            if v = s.value {
+              if v.kind == ex_binary() {
+                if v.op == tk_plus() {
+                  if l = v.left {
+                    if r = v.right {
+                      if l.kind == ex_name() {
+                        if str_eq(l.ident, ivar) {
+                          if checker_self.step_is_nonneg(r) {
+                            return checker_self.deep_ivar_ok_rest(s, ivar)
+                          }
+                        }
+                      }
+                      if r.kind == ex_name() {
+                        if str_eq(r.ident, ivar) {
+                          if checker_self.step_is_nonneg(l) {
+                            return checker_self.deep_ivar_ok_rest(s, ivar)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            return false
+          }
+          return false
+        }
+      }
+    }
+  }
+  checker_self.deep_ivar_ok_rest(s, ivar)
+}
+
+pub fn (checker_self: Checker) deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
+  if e = s.expr {
+    if checker_self.deep_ivar_ok_expr(e, ivar) {
+    } else {
+      return false
+    }
+  }
+  if c = s.cond {
+    if checker_self.deep_ivar_ok_expr(c, ivar) {
+    } else {
+      return false
+    }
+  }
+  if v = s.value {
+    if checker_self.deep_ivar_ok_expr(v, ivar) {
+    } else {
+      return false
+    }
+  }
+  i = 0
+  while i < s.then_body.size {
+    if checker_self.deep_ivar_ok_stmt(s.then_body[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    if checker_self.deep_ivar_ok_stmt(s.else_body[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    if checker_self.deep_ivar_ok_stmt(s.body[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
+  if inner = e.inner {
+    if checker_self.deep_ivar_ok_expr(inner, ivar) {
+    } else {
+      return false
+    }
+  }
+  if l = e.left {
+    if checker_self.deep_ivar_ok_expr(l, ivar) {
+    } else {
+      return false
+    }
+  }
+  if r = e.right {
+    if checker_self.deep_ivar_ok_expr(r, ivar) {
+    } else {
+      return false
+    }
+  }
+  if obj = e.object {
+    if checker_self.deep_ivar_ok_expr(obj, ivar) {
+    } else {
+      return false
+    }
+  }
+  if recv = e.receiver {
+    if checker_self.deep_ivar_ok_expr(recv, ivar) {
+    } else {
+      return false
+    }
+  }
+  i = 0
+  while i < e.args.size {
+    if checker_self.deep_ivar_ok_expr(e.args[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    if checker_self.deep_ivar_ok_expr(e.elems[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    if checker_self.deep_ivar_ok_expr(e.field_exprs[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    if checker_self.deep_ivar_ok_expr(sz, ivar) {
+    } else {
+      return false
+    }
+  }
+  if c = e.cond {
+    if checker_self.deep_ivar_ok_expr(c, ivar) {
+    } else {
+      return false
+    }
+  }
+  if b = e.block {
+    j = 0
+    while j < b.body.size {
+      if checker_self.deep_ivar_ok_stmt(b.body[j], ivar) {
+      } else {
+        return false
+      }
+      j = j + 1
+    }
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      if checker_self.deep_ivar_ok_stmt(cs.body[j], ivar) {
+      } else {
+        return false
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    if checker_self.deep_ivar_ok_stmt(e.else_body[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn (checker_self: Checker) body_ivar_ok(body: Array(Stmt), ivar: String): Bool {
+  i = 0
+  while i < body.size {
+    if checker_self.deep_ivar_ok_stmt(body[i], ivar) {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn (checker_self: Checker) body_shrinks(body: Array(Stmt), cont: String): Bool {
+  i = 0
+  while i < body.size {
+    if checker_self.deep_shrinks_stmt(body[i], cont) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) collect_cond_nn(e: Expr, into: Array(String)) {
+  if e.kind == ex_binary() {
+    if e.op == tk_amp_amp() {
+      if l = e.left {
+        checker_self.collect_cond_nn(l, into)
+      }
+      if r = e.right {
+        checker_self.collect_cond_nn(r, into)
+      }
+      return
+    }
+    if e.op == 47 {
+      if l = e.left {
+        if r = e.right {
+          if l.kind == ex_name() {
+            if r.kind == ex_int() {
+              if r.int_bits == 0u64 {
+                into.push(l.ident)
+              }
+            }
+          }
+        }
+      }
+    }
+    if e.op == tk_less_eq() {
+      if l = e.left {
+        if r = e.right {
+          if r.kind == ex_name() {
+            if l.kind == ex_int() {
+              if l.int_bits == 0u64 {
+                into.push(r.ident)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub fn (checker_self: Checker) fact_from_cond(e: Expr, body: Array(Stmt), nnl: Array(String)) {
+  if e.kind != ex_binary() {
+    return
+  }
+  if e.op == tk_amp_amp() {
+    if l = e.left {
+      checker_self.fact_from_cond(l, body, nnl)
+    }
+    if r = e.right {
+      checker_self.fact_from_cond(r, body, nnl)
+    }
+    return
+  }
+  ivar = ""
+  bound: Expr? = nil
+  slack = 0
+  is_le = false
+  if e.op == tk_less() {
+    if l = e.left {
+      if l.kind == ex_name() {
+        ivar = l.ident
+        if r = e.right {
+          bound = r
+        }
+      }
+    }
+  } else if e.op == tk_less_eq() {
+    is_le = true
+    if l = e.left {
+      if l.kind == ex_name() {
+        ivar = l.ident
+        if r = e.right {
+          bound = r
+        }
+      }
+    }
+  } else if e.op == 47 {
+    if r = e.right {
+      if r.kind == ex_name() {
+        ivar = r.ident
+        if l = e.left {
+          bound = l
+        }
+      }
+    }
+  } else if e.op == 48 {
+    is_le = true
+    if r = e.right {
+      if r.kind == ex_name() {
+        ivar = r.ident
+        if l = e.left {
+          bound = l
+        }
+      }
+    }
+  } else {
+    return
+  }
+  if ivar.size == 0 {
+    return
+  }
+  if b = bound {
+    cont = checker_self.bound_cont_of(b)
+    if cont.size == 0 {
+      if is_le {
+        return
+      }
+      nonneg2 = false
+      if checker_self.nn_has(ivar) {
+        nonneg2 = true
+      }
+      if str_index(nnl, ivar) >= 0 {
+        nonneg2 = true
+      }
+      if nonneg2 {
+      } else {
+        return
+      }
+      if checker_self.body_ivar_ok(body, ivar) {
+        checker_self.fact_var.push(ivar)
+        checker_self.fact_cont.push("")
+        checker_self.fact_slack.push(0)
+        checker_self.fact_live.push(1)
+      }
+      return
+    }
+    delta = checker_self.bound_delta_of(b)
+    if is_le {
+      slack =(0 - delta) - 1
+    } else {
+      slack = 0 - delta
+    }
+    if slack < 0 {
+      return
+    }
+    direct = false
+    if b.kind == ex_field() {
+      direct = true
+    }
+    nonneg = false
+    if checker_self.nn_has(ivar) {
+      nonneg = true
+    }
+    if str_index(nnl, ivar) >= 0 {
+      nonneg = true
+    }
+    if nonneg {
+    } else {
+      return
+    }
+    if direct {
+    } else {
+      if checker_self.body_shrinks(body, cont) {
+        return
+      }
+    }
+    if checker_self.body_ivar_ok(body, ivar) {
+      checker_self.fact_var.push(ivar)
+      checker_self.fact_cont.push(cont)
+      checker_self.fact_slack.push(slack)
+      checker_self.fact_live.push(1)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) push_loop_facts(cond: Expr, body: Array(Stmt)) {
+  nnl: Array(String) = []
+  checker_self.collect_cond_nn(cond, nnl)
+  checker_self.fact_from_cond(cond, body, nnl)
+}
+
+pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
+  while checker_self.fact_var.size > saved {
+    dropped_s = checker_self.fact_var.pop
+    dropped_c = checker_self.fact_cont.pop
+    dropped_k = checker_self.fact_slack.pop
+    dropped_l = checker_self.fact_live.pop
+  }
+}

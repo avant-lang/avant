@@ -1,0 +1,2165 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import parser
+import loader
+import typed_ir
+import codegen_types
+import re2c_pat
+import codegen_myc
+
+pub fn (codegen_self: MycGen) is_codegen_temp(name: String): Bool {
+  if name.size < 3 {
+    return false
+  }
+  str_eq(str_slice(name, 0, 3), "__t")
+}
+
+pub fn (codegen_self: MycGen) note_loop_temp(name: String, myc: String) {
+  if codegen_self.root_loop == 0 {
+    return
+  }
+  if codegen_self.is_codegen_temp(name) {
+  } else {
+    return
+  }
+  i = 0
+  while i < codegen_self.early_names.size {
+    if str_eq(codegen_self.early_names[i], name) {
+      return
+    }
+    i = i + 1
+  }
+  codegen_self.early_names.push(name)
+  codegen_self.early_myc.push(myc)
+}
+
+pub fn (codegen_self: MycGen) clear_early_temps {
+  i = 0
+  while i < codegen_self.early_names.size {
+    codegen_self.line("PUSH 0")
+    codegen_self.line("AS :${codegen_self.early_myc[i]}")
+    codegen_self.line("LOCAL :${codegen_self.early_names[i]}")
+    codegen_self.line("STORE")
+    i = i + 1
+  }
+  en: Array(String) = []
+  codegen_self.early_names = en
+  emc: Array(String) = []
+  codegen_self.early_myc = emc
+}
+
+pub fn (codegen_self: MycGen) stmt_has_while(stmt: Stmt): Bool {
+  if stmt.kind == st_while() {
+    return true
+  }
+  if codegen_self.stmts_have_while(stmt.then_body) {
+    return true
+  }
+  if codegen_self.stmts_have_while(stmt.else_body) {
+    return true
+  }
+  codegen_self.stmts_have_while(stmt.body)
+}
+
+pub fn (codegen_self: MycGen) stmts_have_while(body: Array(Stmt)): Bool {
+  i = 0
+  while i < body.size {
+    if codegen_self.stmt_has_while(body[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) hoist_em_is_scalar(em: String): Bool {
+  if str_eq(em, "f64") || str_eq(em, "i32") || str_eq(em, "i64") || str_eq(em, "u8") || str_eq(em, "u32") || str_eq(em, "u64") {
+    return true
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) has_scalar_hoist: Bool {
+  i = 0
+  while i < codegen_self.hoist_ems.size {
+    if codegen_self.hoist_em_is_scalar(codegen_self.hoist_ems[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+// A leaf parallel loop indexes numeric buffers hoisted outside it.
+// When every numeric buffer is stable, that copy uses the plain
+// address and can vectorize. The other copy reloads, for a buffer a
+// young collection can still move. Pointer buffers keep their check.
+// Splitting only the leaf keeps the duplicated body to one loop.
+
+pub fn (codegen_self: MycGen) should_split_while(stmt: Stmt): Bool {
+  if codegen_self.may_share {
+  } else {
+    return false
+  }
+  if codegen_self.bits_only != 0 {
+    return false
+  }
+  if codegen_self.has_scalar_hoist {
+  } else {
+    return false
+  }
+  if codegen_self.loop_may_collect(stmt) {
+    return false
+  }
+  if codegen_self.stmts_have_while(stmt.body) {
+    return false
+  }
+  true
+}
+
+pub fn (codegen_self: MycGen) emit_scalar_hoists_are_stable: String {
+  stable = codegen_self.new_temp
+  codegen_self.line("PUSH 1")
+  codegen_self.line("LOCAL :${stable} :i32")
+  codegen_self.line("STORE")
+  i = 0
+  while i < codegen_self.hoist_young.size {
+    if codegen_self.hoist_em_is_scalar(codegen_self.hoist_ems[i]) {
+      young = codegen_self.hoist_young[i]
+      codegen_self.line("LOCAL :${young}")
+      codegen_self.line("PUSH 0")
+      codegen_self.line("BINARY :not_eq")
+      codegen_self.line("IF")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.line("THEN")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.line("PUSH 0")
+      codegen_self.line("LOCAL :${stable}")
+      codegen_self.line("STORE")
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.line("ENDIF")
+    }
+    i = i + 1
+  }
+  stable
+}
+
+pub fn (codegen_self: MycGen) versioned_for(arr: Expr): Bool {
+  if arr.kind == ex_name() {
+    if arr.implicit_field {
+      return false
+    }
+    return codegen_self.versioned_has(arr.ident)
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) versioned_has(name: String): Bool {
+  i = 0
+  while i < codegen_self.versioned.size {
+    if str_eq(codegen_self.versioned[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) cg_root_name(e: Expr): String {
+  if e.kind == ex_name() {
+    return e.ident
+  }
+  if e.kind == ex_field() {
+    if obj = e.object {
+      return codegen_self.cg_root_name(obj)
+    }
+  }
+  if e.kind == ex_index() {
+    if l = e.left {
+      return codegen_self.cg_root_name(l)
+    }
+  }
+  ""
+}
+
+pub fn (codegen_self: MycGen) mentions_name(e: Expr, name: String): Bool {
+  if e.kind == ex_name() {
+    return str_eq(e.ident, name)
+  }
+  if inner = e.inner {
+    if codegen_self.mentions_name(inner, name) {
+      return true
+    }
+  }
+  if l = e.left {
+    if codegen_self.mentions_name(l, name) {
+      return true
+    }
+  }
+  if r = e.right {
+    if codegen_self.mentions_name(r, name) {
+      return true
+    }
+  }
+  if obj = e.object {
+    if codegen_self.mentions_name(obj, name) {
+      return true
+    }
+  }
+  if recv = e.receiver {
+    if codegen_self.mentions_name(recv, name) {
+      return true
+    }
+  }
+  i = 0
+  while i < e.args.size {
+    if codegen_self.mentions_name(e.args[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    if codegen_self.mentions_name(e.elems[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    if codegen_self.mentions_name(e.field_exprs[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    if codegen_self.mentions_name(sz, name) {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) vscan_expr(e: Expr, buf_name: String, ivar: String, state: Array(Int)) {
+  if e.kind == ex_index() {
+    if l = e.left {
+      if l.kind == ex_name() {
+        if str_eq(l.ident, buf_name) {
+          if r = e.right {
+            if r.kind == ex_name() {
+              if str_eq(r.ident, ivar) {
+                state[1] = 1
+              } else {
+                state[0] = 1
+              }
+            } else if r.kind == ex_binary() {
+              if r.op == tk_plus() {
+                ok = false
+                if rl = r.left {
+                  if rr = r.right {
+                    if rl.kind == ex_name() {
+                      if str_eq(rl.ident, ivar) {
+                        if rr.kind == ex_int() {
+                          if rr.int_bits <= 1000000u64 {
+                            off = rr.int_bits.to_i
+                            if off > state[2] {
+                              state[2] = off
+                            }
+                            state[1] = 1
+                            ok = true
+                          }
+                        }
+                      }
+                    }
+                    if rr.kind == ex_name() {
+                      if str_eq(rr.ident, ivar) {
+                        if rl.kind == ex_int() {
+                          if rl.int_bits <= 1000000u64 {
+                            off = rl.int_bits.to_i
+                            if off > state[2] {
+                              state[2] = off
+                            }
+                            state[1] = 1
+                            ok = true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                if ok {
+                } else {
+                  state[0] = 1
+                }
+              } else {
+                state[0] = 1
+              }
+            } else {
+              state[0] = 1
+            }
+          }
+        }
+      }
+    }
+  }
+  if e.kind == ex_call() {
+    if recv = e.receiver {
+      if codegen_self.mentions_name(recv, buf_name) {
+        if recv.kind == ex_index() {
+        } else if str_eq(codegen_self.cg_root_name(recv), buf_name) {
+          state[0] = 1
+        }
+      }
+    }
+    ai = 0
+    while ai < e.args.size {
+      if codegen_self.mentions_name(e.args[ai], buf_name) {
+        state[0] = 1
+      }
+      ai = ai + 1
+    }
+  }
+  if b = e.block {
+    i = 0
+    while i < b.params.size {
+      if str_eq(b.params[i], ivar) || str_eq(b.params[i], buf_name) {
+        state[0] = 1
+      }
+      i = i + 1
+    }
+    j = 0
+    while j < b.body.size {
+      codegen_self.vscan_stmt(b.body[j], buf_name, ivar, state)
+      j = j + 1
+    }
+  }
+  if inner = e.inner {
+    codegen_self.vscan_expr(inner, buf_name, ivar, state)
+  }
+  if l = e.left {
+    codegen_self.vscan_expr(l, buf_name, ivar, state)
+  }
+  if r = e.right {
+    codegen_self.vscan_expr(r, buf_name, ivar, state)
+  }
+  if obj = e.object {
+    codegen_self.vscan_expr(obj, buf_name, ivar, state)
+  }
+  if recv = e.receiver {
+    codegen_self.vscan_expr(recv, buf_name, ivar, state)
+  }
+  i = 0
+  while i < e.args.size {
+    codegen_self.vscan_expr(e.args[i], buf_name, ivar, state)
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    codegen_self.vscan_expr(e.elems[i], buf_name, ivar, state)
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    codegen_self.vscan_expr(e.field_exprs[i], buf_name, ivar, state)
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    codegen_self.vscan_expr(sz, buf_name, ivar, state)
+  }
+  if c = e.cond {
+    codegen_self.vscan_expr(c, buf_name, ivar, state)
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      codegen_self.vscan_stmt(cs.body[j], buf_name, ivar, state)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    codegen_self.vscan_stmt(e.else_body[i], buf_name, ivar, state)
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    part = e.parts[i]
+    if inner = part.expr {
+      codegen_self.vscan_expr(inner, buf_name, ivar, state)
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) vscan_stmt(s: Stmt, buf_name: String, ivar: String, state: Array(Int)) {
+  if s.kind == st_assign() {
+    if t = s.target {
+      if t.kind == ex_name() {
+        if str_eq(t.ident, buf_name) {
+          state[0] = 1
+        }
+      }
+    }
+  }
+  if e = s.expr {
+    codegen_self.vscan_expr(e, buf_name, ivar, state)
+  }
+  if c = s.cond {
+    codegen_self.vscan_expr(c, buf_name, ivar, state)
+  }
+  if t = s.target {
+    codegen_self.vscan_expr(t, buf_name, ivar, state)
+  }
+  if v = s.value {
+    codegen_self.vscan_expr(v, buf_name, ivar, state)
+  }
+  i = 0
+  while i < s.then_body.size {
+    codegen_self.vscan_stmt(s.then_body[i], buf_name, ivar, state)
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    codegen_self.vscan_stmt(s.else_body[i], buf_name, ivar, state)
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    codegen_self.vscan_stmt(s.body[i], buf_name, ivar, state)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) vassign_scan_stmt(s: Stmt, ivar: String, in_block: Bool, state: Array(Int)) {
+  if s.kind == st_assign() {
+    if t = s.target {
+      if t.kind == ex_name() {
+        if str_eq(t.ident, ivar) {
+          state[1] = 1
+          if in_block {
+            state[0] = 1
+          } else {
+            ok = false
+            if s.op == tk_plus_eq() {
+              if v = s.value {
+                if v.kind == ex_int() {
+                  ok = true
+                }
+              }
+            }
+            if s.op == tk_eq() {
+              if v = s.value {
+                if v.kind == ex_binary() {
+                  if v.op == tk_plus() {
+                    if l = v.left {
+                      if r = v.right {
+                        if l.kind == ex_name() {
+                          if str_eq(l.ident, ivar) {
+                            if r.kind == ex_int() {
+                              ok = true
+                            }
+                          }
+                        }
+                        if r.kind == ex_name() {
+                          if str_eq(r.ident, ivar) {
+                            if l.kind == ex_int() {
+                              ok = true
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if ok {
+            } else {
+              state[0] = 1
+            }
+          }
+        }
+      }
+    }
+  }
+  if e = s.expr {
+    codegen_self.vassign_scan_expr(e, ivar, in_block, state)
+  }
+  if c = s.cond {
+    codegen_self.vassign_scan_expr(c, ivar, in_block, state)
+  }
+  if v = s.value {
+    codegen_self.vassign_scan_expr(v, ivar, in_block, state)
+  }
+  i = 0
+  while i < s.then_body.size {
+    codegen_self.vassign_scan_stmt(s.then_body[i], ivar, in_block, state)
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    codegen_self.vassign_scan_stmt(s.else_body[i], ivar, in_block, state)
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    codegen_self.vassign_scan_stmt(s.body[i], ivar, in_block, state)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) vassign_scan_expr(e: Expr, ivar: String, in_block: Bool, state: Array(Int)) {
+  nb = in_block
+  if b = e.block {
+    j = 0
+    while j < b.body.size {
+      codegen_self.vassign_scan_stmt(b.body[j], ivar, true, state)
+      j = j + 1
+    }
+    nb = true
+  }
+  if inner = e.inner {
+    codegen_self.vassign_scan_expr(inner, ivar, nb, state)
+  }
+  if l = e.left {
+    codegen_self.vassign_scan_expr(l, ivar, nb, state)
+  }
+  if r = e.right {
+    codegen_self.vassign_scan_expr(r, ivar, nb, state)
+  }
+  if obj = e.object {
+    codegen_self.vassign_scan_expr(obj, ivar, nb, state)
+  }
+  if recv = e.receiver {
+    codegen_self.vassign_scan_expr(recv, ivar, nb, state)
+  }
+  i = 0
+  while i < e.args.size {
+    codegen_self.vassign_scan_expr(e.args[i], ivar, nb, state)
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    codegen_self.vassign_scan_expr(e.elems[i], ivar, nb, state)
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    codegen_self.vassign_scan_expr(e.field_exprs[i], ivar, nb, state)
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    codegen_self.vassign_scan_expr(sz, ivar, nb, state)
+  }
+  if c = e.cond {
+    codegen_self.vassign_scan_expr(c, ivar, nb, state)
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      codegen_self.vassign_scan_stmt(cs.body[j], ivar, true, state)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    codegen_self.vassign_scan_stmt(e.else_body[i], ivar, true, state)
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    part = e.parts[i]
+    if inner = part.expr {
+      codegen_self.vassign_scan_expr(inner, ivar, nb, state)
+    }
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) vcand_expr(e: Expr, names: Array(String), exprs: Array(Expr)) {
+  if e.kind == ex_index() {
+    if l = e.left {
+      if l.kind == ex_name() {
+        if l.implicit_field {
+        } else {
+          if codegen_self.name_is_boxed(l.ident) {
+          } else {
+            if codegen_self.cap_index(l.ident) >= 0 {
+            } else {
+              found = false
+              i = 0
+              while i < names.size {
+                if str_eq(names[i], l.ident) {
+                  found = true
+                }
+                i = i + 1
+              }
+              if found {
+              } else {
+                names.push(l.ident)
+                exprs.push(l)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if b = e.block {
+    j = 0
+    while j < b.body.size {
+      codegen_self.vcand_stmt(b.body[j], names, exprs)
+      j = j + 1
+    }
+  }
+  if inner = e.inner {
+    codegen_self.vcand_expr(inner, names, exprs)
+  }
+  if l = e.left {
+    codegen_self.vcand_expr(l, names, exprs)
+  }
+  if r = e.right {
+    codegen_self.vcand_expr(r, names, exprs)
+  }
+  if obj = e.object {
+    codegen_self.vcand_expr(obj, names, exprs)
+  }
+  if recv = e.receiver {
+    codegen_self.vcand_expr(recv, names, exprs)
+  }
+  i = 0
+  while i < e.args.size {
+    codegen_self.vcand_expr(e.args[i], names, exprs)
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    codegen_self.vcand_expr(e.elems[i], names, exprs)
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    codegen_self.vcand_expr(e.field_exprs[i], names, exprs)
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    codegen_self.vcand_expr(sz, names, exprs)
+  }
+  if c = e.cond {
+    codegen_self.vcand_expr(c, names, exprs)
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      codegen_self.vcand_stmt(cs.body[j], names, exprs)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    codegen_self.vcand_stmt(e.else_body[i], names, exprs)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) vcand_stmt(s: Stmt, names: Array(String), exprs: Array(Expr)) {
+  if e = s.expr {
+    codegen_self.vcand_expr(e, names, exprs)
+  }
+  if c = s.cond {
+    codegen_self.vcand_expr(c, names, exprs)
+  }
+  if t = s.target {
+    codegen_self.vcand_expr(t, names, exprs)
+  }
+  if v = s.value {
+    codegen_self.vcand_expr(v, names, exprs)
+  }
+  i = 0
+  while i < s.then_body.size {
+    codegen_self.vcand_stmt(s.then_body[i], names, exprs)
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    codegen_self.vcand_stmt(s.else_body[i], names, exprs)
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    codegen_self.vcand_stmt(s.body[i], names, exprs)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_while_loop(stmt: Stmt, outer: Bool) {
+  codegen_self.root_loop = codegen_self.root_loop + 1
+  codegen_self.line("LOOP")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("COND")
+  codegen_self.indent = codegen_self.indent + 1
+  if c = stmt.cond {
+    codegen_self.emit_expr(c)
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("BODY")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.cov_branch(stmt.loc)
+  codegen_self.emit_stmts(stmt.body, false)
+  if outer {
+    codegen_self.clear_early_temps
+  }
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDLOOP")
+  codegen_self.root_loop = codegen_self.root_loop - 1
+}
+
+pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
+  nhoist = codegen_self.begin_loop_hoists(stmt)
+  outer = false
+  if codegen_self.root_loop == 0 {
+    outer = true
+    fresh = buf_new()
+    codegen_self.early_out = fresh
+    codegen_self.early_indent = codegen_self.indent
+    en: Array(String) = []
+    codegen_self.early_names = en
+    emc: Array(String) = []
+    codegen_self.early_myc = emc
+  }
+  saved = codegen_self.out
+  body = buf_new()
+  codegen_self.out = body
+  vbufs: Array(String) = []
+  vmaxs: Array(Int) = []
+  cand_names: Array(String) = []
+  cand_exprs: Array(Expr) = []
+  vivar = ""
+  vle2 = false
+  vcoff2 = 0
+  vbound: Expr? = nil
+  if true {
+    if true {
+      if c = stmt.cond {
+        cc = c
+        if cc.kind == ex_binary() {
+          if cc.op == tk_amp_amp() {
+            if cl0 = cc.left {
+              cc = cl0
+            }
+          }
+        }
+        if cc.kind == ex_binary() {
+          if cc.op == tk_less() || cc.op == tk_less_eq() {
+            if cc.op == tk_less_eq() {
+              vle2 = true
+            }
+            if cl = cc.left {
+              if cr = cc.right {
+                vbound = cr
+                if cl.kind == ex_name() {
+                  vivar = cl.ident
+                } else if cl.kind == ex_binary() {
+                  if cl.op == tk_plus() {
+                    if cll = cl.left {
+                      if clr = cl.right {
+                        if cll.kind == ex_name() {
+                          if clr.kind == ex_int() {
+                            vivar = cll.ident
+                            vcoff2 = clr.int_bits.to_i
+                          }
+                        }
+                        if clr.kind == ex_name() {
+                          if cll.kind == ex_int() {
+                            vivar = clr.ident
+                            vcoff2 = cll.int_bits.to_i
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if vivar.size > 0 {
+    ci0 = 0
+    while ci0 < stmt.body.size {
+      codegen_self.vcand_stmt(stmt.body[ci0], cand_names, cand_exprs)
+      ci0 = ci0 + 1
+    }
+    bi = 0
+    while bi < cand_names.size {
+      bname = cand_names[bi]
+      state: Array(Int) = [0, 0, 0]
+      si = 0
+      while si < stmt.body.size {
+        codegen_self.vscan_stmt(stmt.body[si], bname, vivar, state)
+        si = si + 1
+      }
+      if state[0] == 0 {
+        if state[1] == 1 {
+          ast: Array(Int) = [0, 0]
+          first_assign = 0 - 1
+          sj = 0
+          while sj < stmt.body.size {
+            ust: Array(Int) = [0, 0, 0]
+            codegen_self.vscan_stmt(stmt.body[sj], bname, vivar, ust)
+            ast2: Array(Int) = [0, 0]
+            codegen_self.vassign_scan_stmt(stmt.body[sj], vivar, false, ast2)
+            if ast2[1] == 1 {
+              if first_assign < 0 {
+                first_assign = sj
+                if ust[1] == 1 {
+                  state[0] = 1
+                }
+              }
+            } else {
+              if first_assign >= 0 {
+                if ust[1] == 1 {
+                  state[0] = 1
+                }
+              }
+            }
+            if ast2[0] == 1 {
+              state[0] = 1
+            }
+            sj = sj + 1
+          }
+          if state[0] == 0 {
+            vbufs.push(bname)
+            vmaxs.push(state[2])
+          }
+        }
+      }
+      bi = bi + 1
+    }
+  }
+  if vbufs.size > 0 {
+    if vb = vbound {
+      codegen_self.emit_expr(vb)
+      bt2 = codegen_self.new_temp
+      codegen_self.line("LOCAL :${bt2} :i32")
+      codegen_self.line("STORE")
+      codegen_self.line("PUSH ${vcoff2} :i64")
+      codegen_self.line("LOCAL :${bt2}")
+      codegen_self.line("AS :i64")
+      codegen_self.line("BINARY :sub")
+      bet = codegen_self.new_temp
+      codegen_self.line("LOCAL :${bet} :i64")
+      codegen_self.line("STORE")
+      adj = 1
+      if vle2 {
+        adj = 0
+      }
+      lastt = ""
+      maxt = ""
+      if stmt.vstep > 0 {
+        if(stmt.vle && vle2) ||(!stmt.vle && !vle2) {
+          if stmt.vcoff == vcoff2 {
+            sub_amt = adj + stmt.vstart
+            codegen_self.line("PUSH ${sub_amt} :i64")
+            codegen_self.line("LOCAL :${bet}")
+            codegen_self.line("BINARY :sub")
+            t2 = codegen_self.new_temp
+            codegen_self.line("LOCAL :${t2} :i64")
+            codegen_self.line("STORE")
+            codegen_self.line("PUSH ${stmt.vstep} :i64")
+            codegen_self.line("LOCAL :${t2}")
+            codegen_self.line("BINARY :div")
+            t3 = codegen_self.new_temp
+            codegen_self.line("LOCAL :${t3} :i64")
+            codegen_self.line("STORE")
+            codegen_self.line("PUSH ${stmt.vstep} :i64")
+            codegen_self.line("LOCAL :${t3}")
+            codegen_self.line("BINARY :mul")
+            codegen_self.line("PUSH ${stmt.vstart} :i64")
+            codegen_self.line("BINARY :add")
+            lastt = codegen_self.new_temp
+            codegen_self.line("LOCAL :${lastt} :i64")
+            codegen_self.line("STORE")
+          }
+        }
+      }
+      if lastt.size == 0 {
+        codegen_self.line("PUSH ${adj} :i64")
+        codegen_self.line("LOCAL :${bet}")
+        codegen_self.line("BINARY :sub")
+        maxt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${maxt} :i64")
+        codegen_self.line("STORE")
+      }
+      codegen_self.line("PUSH true")
+      vi = 0
+      while vi < vbufs.size {
+        bname = vbufs[vi]
+        bexpr: Expr? = nil
+        ci1 = 0
+        while ci1 < cand_names.size {
+          if str_eq(cand_names[ci1], bname) {
+            bexpr = cand_exprs[ci1]
+          }
+          ci1 = ci1 + 1
+        }
+        bty = ty_int()
+        if be = bexpr {
+          bty = expr_ty(be)
+        }
+        if bty.is_string {
+          codegen_self.line("LOCAL :${bname}")
+          codegen_self.line("CALL :avant_str_size")
+          codegen_self.line("AS :i64")
+        } else if bty.is_buf {
+          codegen_self.line("LOCAL :${bname}")
+          codegen_self.line("AS :ptr<AvantBuf>")
+          codegen_self.line("DEREF")
+          codegen_self.line("FIELD 1")
+          codegen_self.line("AS :i64")
+        } else {
+          codegen_self.line("LOCAL :${bname}")
+          codegen_self.line("DEREF")
+          codegen_self.line("FIELD 1")
+          codegen_self.line("AS :i64")
+        }
+        if lastt.size > 0 {
+          codegen_self.line("LOCAL :${lastt}")
+        } else {
+          codegen_self.line("LOCAL :${maxt}")
+        }
+        codegen_self.line("PUSH ${vmaxs[vi]} :i64")
+        codegen_self.line("BINARY :add")
+        codegen_self.line("BINARY :less")
+        codegen_self.line("BINARY :and")
+        vi = vi + 1
+      }
+      codegen_self.line("IF")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.line("THEN")
+      codegen_self.indent = codegen_self.indent + 1
+      saved_ver = codegen_self.versioned
+      codegen_self.versioned = vbufs
+      codegen_self.emit_while_loop(stmt, outer)
+      codegen_self.versioned = saved_ver
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.line("ELSE")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.emit_while_loop(stmt, outer)
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.line("ENDIF")
+    } else {
+      codegen_self.emit_while_loop(stmt, outer)
+    }
+  } else if codegen_self.should_split_while(stmt) {
+    stable = codegen_self.emit_scalar_hoists_are_stable
+    codegen_self.line("LOCAL :${stable}")
+    codegen_self.line("PUSH 0")
+    codegen_self.line("BINARY :not_eq")
+    codegen_self.line("IF")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("THEN")
+    codegen_self.indent = codegen_self.indent + 1
+    saved_bits = codegen_self.bits_only
+    codegen_self.bits_only = 1
+    codegen_self.emit_while_loop(stmt, outer)
+    codegen_self.bits_only = saved_bits
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ELSE")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.emit_while_loop(stmt, outer)
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDIF")
+  } else {
+    codegen_self.emit_while_loop(stmt, outer)
+  }
+  codegen_self.end_loop_hoists(nhoist)
+  codegen_self.out = saved
+  if outer {
+    codegen_self.out.push_str(codegen_self.early_out.to_s)
+  }
+  codegen_self.out.push_str(body.to_s)
+}
+
+pub fn (codegen_self: MycGen) begin_loop_hoists(stmt: Stmt): Int {
+  if codegen_self.loop_may_collect(stmt) {
+    return 0
+  }
+  names = codegen_self.plan_loop_hoists(stmt)
+  i = 0
+  while i < names.size {
+    codegen_self.emit_buf_hoist(names[i])
+    i = i + 1
+  }
+  names.size
+}
+
+pub fn (codegen_self: MycGen) end_loop_hoists(n: Int) {
+  left = n
+  while left > 0 {
+    // The hoisted buffer slot stays a root for the rest of the frame.
+    // Clear it when the loop ends so the next allocation can free the
+    // buffer once the array local is overwritten.
+    if codegen_self.cur_leaf == 0 {
+      ptr = codegen_self.hoist_ptrs[codegen_self.hoist_ptrs.size - 1]
+      em = codegen_self.hoist_ems[codegen_self.hoist_ems.size - 1]
+      codegen_self.line("PUSH 0")
+      codegen_self.line("AS :ptr<${em}>")
+      codegen_self.line("LOCAL :${ptr}")
+      codegen_self.line("STORE")
+    }
+    codegen_self.hoist_names.pop
+    codegen_self.hoist_bits.pop
+    codegen_self.hoist_ptrs.pop
+    codegen_self.hoist_ems.pop
+    if codegen_self.may_share {
+      codegen_self.hoist_young.pop
+    }
+    left = left - 1
+  }
+}
+
+pub fn (codegen_self: MycGen) plan_loop_hoists(stmt: Stmt): Array(String) {
+  found: Array(String) = []
+  assigned = codegen_self.loop_assigned(stmt)
+  if c = stmt.cond {
+    codegen_self.collect_hoist_names(c, assigned, found)
+  }
+  codegen_self.collect_hoist_stmts(stmt.body, assigned, found)
+  found
+}
+
+pub fn (codegen_self: MycGen) collect_hoist_stmts(body: Array(Stmt), assigned: Array(String), found: Array(String)) {
+  i = 0
+  while i < body.size {
+    codegen_self.collect_hoist_stmt(body[i], assigned, found)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_hoist_stmt(stmt: Stmt, assigned: Array(String), found: Array(String)) {
+  if e = stmt.expr {
+    codegen_self.collect_hoist_names(e, assigned, found)
+  }
+  if c = stmt.cond {
+    codegen_self.collect_hoist_names(c, assigned, found)
+  }
+  if t = stmt.target {
+    codegen_self.collect_hoist_names(t, assigned, found)
+  }
+  if v = stmt.value {
+    codegen_self.collect_hoist_names(v, assigned, found)
+  }
+  codegen_self.collect_hoist_stmts(stmt.then_body, assigned, found)
+  codegen_self.collect_hoist_stmts(stmt.else_body, assigned, found)
+  codegen_self.collect_hoist_stmts(stmt.body, assigned, found)
+}
+
+pub fn (codegen_self: MycGen) collect_hoist_names(expr: Expr, assigned: Array(String), found: Array(String)) {
+  if expr.kind == ex_index() {
+    if arr = expr.left {
+      if arr.kind == ex_name() {
+        if arr.implicit_field {
+        } else {
+          if codegen_self.name_is_boxed(arr.ident) {
+          } else {
+            if codegen_self.cap_index(arr.ident) >= 0 {
+            } else {
+              container = expr_ty(arr)
+              hoist_em = ""
+              if container.is_array {
+                if e = container.inner {
+                  if hoist_array_elem(e) {
+                    hoist_em = ty_myc(e)
+                  }
+                }
+              }
+              if container.is_buf {
+                hoist_em = "u8"
+              }
+              if hoist_em.size > 0 {
+                if codegen_self.name_listed(arr.ident, assigned) {
+                } else {
+                  if codegen_self.hoist_index(arr.ident) >= 0 {
+                  } else {
+                    if codegen_self.name_listed(arr.ident, found) {
+                    } else {
+                      found.push(arr.ident)
+                      codegen_self.hoist_ems.push(hoist_em)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if inner = expr.inner {
+    codegen_self.collect_hoist_names(inner, assigned, found)
+  }
+  if l = expr.left {
+    codegen_self.collect_hoist_names(l, assigned, found)
+  }
+  if r = expr.right {
+    codegen_self.collect_hoist_names(r, assigned, found)
+  }
+  if obj = expr.object {
+    codegen_self.collect_hoist_names(obj, assigned, found)
+  }
+  if c = expr.cond {
+    codegen_self.collect_hoist_names(c, assigned, found)
+  }
+  if recv = expr.receiver {
+    codegen_self.collect_hoist_names(recv, assigned, found)
+  }
+  if sz = expr.size_expr {
+    codegen_self.collect_hoist_names(sz, assigned, found)
+  }
+  i = 0
+  while i < expr.args.size {
+    codegen_self.collect_hoist_names(expr.args[i], assigned, found)
+    i = i + 1
+  }
+  i = 0
+  while i < expr.elems.size {
+    codegen_self.collect_hoist_names(expr.elems[i], assigned, found)
+    i = i + 1
+  }
+  i = 0
+  while i < expr.field_exprs.size {
+    codegen_self.collect_hoist_names(expr.field_exprs[i], assigned, found)
+    i = i + 1
+  }
+  i = 0
+  while i < expr.parts.size {
+    part = expr.parts[i]
+    if pe = part.expr {
+      codegen_self.collect_hoist_names(pe, assigned, found)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.cases.size {
+    codegen_self.collect_hoist_stmts(expr.cases[i].body, assigned, found)
+    i = i + 1
+  }
+  codegen_self.collect_hoist_stmts(expr.else_body, assigned, found)
+  if b = expr.block {
+    codegen_self.collect_hoist_stmts(b.body, assigned, found)
+  }
+}
+
+pub fn (codegen_self: MycGen) loop_assigned(stmt: Stmt): Array(String) {
+  found: Array(String) = []
+  if c = stmt.cond {
+    codegen_self.collect_assigned_expr(c, found)
+  }
+  codegen_self.collect_assigned_stmts(stmt.body, found)
+  found
+}
+
+pub fn (codegen_self: MycGen) collect_assigned_stmts(body: Array(Stmt), found: Array(String)) {
+  i = 0
+  while i < body.size {
+    codegen_self.collect_assigned_stmt(body[i], found)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_assigned_stmt(stmt: Stmt, found: Array(String)) {
+  if stmt.bind.size > 0 {
+    if codegen_self.name_listed(stmt.bind, found) {
+    } else {
+      found.push(stmt.bind)
+    }
+  }
+  if t = stmt.target {
+    if t.kind == ex_name() {
+      if t.implicit_field {
+      } else {
+        if codegen_self.name_listed(t.ident, found) {
+        } else {
+          found.push(t.ident)
+        }
+      }
+    }
+  }
+  codegen_self.collect_assigned_stmts(stmt.then_body, found)
+  codegen_self.collect_assigned_stmts(stmt.else_body, found)
+  codegen_self.collect_assigned_stmts(stmt.body, found)
+  if e = stmt.expr {
+    codegen_self.collect_assigned_expr(e, found)
+  }
+}
+
+pub fn (codegen_self: MycGen) collect_assigned_expr(expr: Expr, found: Array(String)) {
+  i = 0
+  while i < expr.cases.size {
+    codegen_self.collect_assigned_stmts(expr.cases[i].body, found)
+    i = i + 1
+  }
+  codegen_self.collect_assigned_stmts(expr.else_body, found)
+  if b = expr.block {
+    codegen_self.collect_assigned_stmts(b.body, found)
+  }
+  if inner = expr.inner {
+    codegen_self.collect_assigned_expr(inner, found)
+  }
+  if l = expr.left {
+    codegen_self.collect_assigned_expr(l, found)
+  }
+  if r = expr.right {
+    codegen_self.collect_assigned_expr(r, found)
+  }
+  if obj = expr.object {
+    codegen_self.collect_assigned_expr(obj, found)
+  }
+  if c = expr.cond {
+    codegen_self.collect_assigned_expr(c, found)
+  }
+  i = 0
+  while i < expr.args.size {
+    codegen_self.collect_assigned_expr(expr.args[i], found)
+    i = i + 1
+  }
+  i = 0
+  while i < expr.elems.size {
+    codegen_self.collect_assigned_expr(expr.elems[i], found)
+    i = i + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) loop_may_collect(stmt: Stmt): Bool {
+  if c = stmt.cond {
+    if codegen_self.expr_may_collect(c) {
+      return true
+    }
+  }
+  codegen_self.stmts_may_collect(stmt.body)
+}
+
+pub fn (codegen_self: MycGen) stmts_may_collect(body: Array(Stmt)): Bool {
+  i = 0
+  while i < body.size {
+    if codegen_self.stmt_may_collect(body[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) stmt_may_collect(stmt: Stmt): Bool {
+  if e = stmt.expr {
+    if codegen_self.expr_may_collect(e) {
+      return true
+    }
+  }
+  if c = stmt.cond {
+    if codegen_self.expr_may_collect(c) {
+      return true
+    }
+  }
+  if t = stmt.target {
+    if codegen_self.expr_may_collect(t) {
+      return true
+    }
+  }
+  if v = stmt.value {
+    if codegen_self.expr_may_collect(v) {
+      return true
+    }
+  }
+  if codegen_self.stmts_may_collect(stmt.then_body) {
+    return true
+  }
+  if codegen_self.stmts_may_collect(stmt.else_body) {
+    return true
+  }
+  codegen_self.stmts_may_collect(stmt.body)
+}
+
+pub fn (codegen_self: MycGen) expr_may_collect(expr: Expr): Bool {
+  k = expr.kind
+  if k == ex_call() {
+    if codegen_self.call_may_collect(expr) {
+      return true
+    }
+  }
+  if k == ex_lambda() {
+    return true
+  }
+  if k == ex_array() {
+    return true
+  }
+  if k == ex_array_new() {
+    return true
+  }
+  if k == ex_hash_new() {
+    return true
+  }
+  if k == ex_interp() {
+    return true
+  }
+  if k == ex_splice() {
+    return true
+  }
+  if k == ex_binary() {
+    if expr.resolved.size > 0 {
+      return true
+    }
+    if l = expr.left {
+      if expr_ty(l).is_string {
+        return true
+      }
+    }
+  }
+  if k == ex_field() {
+    if expr.method_call {
+      if codegen_self.field_call_blocks(expr) {
+        return true
+      }
+    }
+  }
+  if inner = expr.inner {
+    if codegen_self.expr_may_collect(inner) {
+      return true
+    }
+  }
+  if l = expr.left {
+    if codegen_self.expr_may_collect(l) {
+      return true
+    }
+  }
+  if r = expr.right {
+    if codegen_self.expr_may_collect(r) {
+      return true
+    }
+  }
+  if obj = expr.object {
+    if codegen_self.expr_may_collect(obj) {
+      return true
+    }
+  }
+  if c = expr.cond {
+    if codegen_self.expr_may_collect(c) {
+      return true
+    }
+  }
+  if recv = expr.receiver {
+    if codegen_self.expr_may_collect(recv) {
+      return true
+    }
+  }
+  if sz = expr.size_expr {
+    if codegen_self.expr_may_collect(sz) {
+      return true
+    }
+  }
+  i = 0
+  while i < expr.args.size {
+    if codegen_self.expr_may_collect(expr.args[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.elems.size {
+    if codegen_self.expr_may_collect(expr.elems[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.field_exprs.size {
+    if codegen_self.expr_may_collect(expr.field_exprs[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.parts.size {
+    part = expr.parts[i]
+    if pe = part.expr {
+      if codegen_self.expr_may_collect(pe) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < expr.cases.size {
+    if codegen_self.stmts_may_collect(expr.cases[i].body) {
+      return true
+    }
+    i = i + 1
+  }
+  if codegen_self.stmts_may_collect(expr.else_body) {
+    return true
+  }
+  if b = expr.block {
+    if codegen_self.stmts_may_collect(b.body) {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) call_may_collect(expr: Expr): Bool {
+  if codegen_self.leaf_walk == 1 {
+    return codegen_self.call_blocks_leaf(expr)
+  }
+  if expr.indirect {
+    return true
+  }
+  if expr.fn_ref {
+    return true
+  }
+  // A method used to block buffer hoisting even when it cannot collect.
+  // next_int, to_i, and fill are in that set. A push is not: it can
+  // replace the buffer.
+  if recv = expr.receiver {
+    if codegen_self.receiver_stays_put(expr_ty(recv), expr.callee) {
+      return false
+    }
+  }
+  if codegen_self.name_stays_put(expr.callee) {
+    return false
+  }
+  if codegen_self.name_stays_put(expr.resolved) {
+    return false
+  }
+  true
+}
+
+// True when this call can move a heap pointer. Hash lookup and
+// integer casts do not. The name is the emit name when the callee
+// is one of ours still in the open set.
+
+pub fn (codegen_self: MycGen) call_blocks_leaf(expr: Expr): Bool {
+  if expr.indirect {
+    return true
+  }
+  if expr.fn_ref {
+    return true
+  }
+  if recv = expr.receiver {
+    if codegen_self.receiver_stays_put(expr_ty(recv), expr.callee) {
+      return false
+    }
+  }
+  if codegen_self.name_stays_put(expr.callee) {
+    return false
+  }
+  if codegen_self.name_stays_put(expr.resolved) {
+    return false
+  }
+  true
+}
+
+pub fn (codegen_self: MycGen) field_call_blocks(expr: Expr): Bool {
+  if obj = expr.object {
+    if codegen_self.receiver_stays_put(expr_ty(obj), expr.ident) {
+      return false
+    }
+  }
+  if codegen_self.name_stays_put(expr.resolved) {
+    return false
+  }
+  true
+}
+
+pub fn (codegen_self: MycGen) name_stays_put(name: String): Bool {
+  if name.size == 0 {
+    return false
+  }
+  if codegen_self.runtime_leaf(name) {
+    return true
+  }
+  if v = codegen_self.numeric_leaves.get(name) {
+    return true
+  }
+  if v = codegen_self.leaf_open.get(name) {
+    if v == 1 {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) receiver_stays_put(ty: Ty, name: String): Bool {
+  if ty.is_hash {
+    if str_eq(name, "get") {
+      return true
+    }
+    if str_eq(name, "get_slice") {
+      return true
+    }
+    if str_eq(name, "size") {
+      return true
+    }
+    if str_eq(name, "clear") {
+      return true
+    }
+    if str_eq(name, "delete") {
+      return true
+    }
+    // inc_slice copies a new key under defer. It does not collect,
+    // so it does not safepoint the scan that calls it.
+    if str_eq(name, "inc_slice") {
+      return true
+    }
+    return false
+  }
+  if ty.is_buf {
+    // clear and size do not allocate. A push writes into spare
+    // capacity, or grows under defer, so the call does not collect.
+    if str_eq(name, "clear") {
+      return true
+    }
+    if str_eq(name, "size") {
+      return true
+    }
+    if str_eq(name, "push_byte") {
+      return true
+    }
+    if str_eq(name, "push_str") {
+      return true
+    }
+    if str_eq(name, "push_slice") {
+      return true
+    }
+    // Formats into spare capacity, or grows under defer.
+    if str_eq(name, "push_fmt_i") {
+      return true
+    }
+    if str_eq(name, "push_fmt_f") {
+      return true
+    }
+    return false
+  }
+  if ty.is_integer {
+    if str_eq(name, "to_i") {
+      return true
+    }
+    if str_eq(name, "to_i64") {
+      return true
+    }
+    if str_eq(name, "to_u64") {
+      return true
+    }
+    if str_eq(name, "to_f") {
+      return true
+    }
+    if str_eq(name, "abs") {
+      return true
+    }
+    return false
+  }
+  if ty.is_float {
+    if str_eq(name, "sqrt") {
+      return true
+    }
+    if str_eq(name, "abs") {
+      return true
+    }
+    if str_eq(name, "floor") {
+      return true
+    }
+    if str_eq(name, "to_i") {
+      return true
+    }
+    return false
+  }
+  if ty.is_array {
+    if str_eq(name, "each") {
+      return true
+    }
+    if str_eq(name, "clear") {
+      return true
+    }
+    if str_eq(name, "fill") {
+      return true
+    }
+    return false
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) runtime_leaf(name: String): Bool {
+  if str_eq(name, "avant_gc_root") {
+    return true
+  }
+  if str_eq(name, "avant_gc_reload") {
+    return true
+  }
+  if str_eq(name, "avant_gc_enter") {
+    return true
+  }
+  if str_eq(name, "avant_gc_leave") {
+    return true
+  }
+  if str_eq(name, "avant_type_map") {
+    return true
+  }
+  if str_eq(name, "avant_barrier") {
+    return true
+  }
+  if str_eq(name, "avant_cov_hit") {
+    return true
+  }
+  if str_eq(name, "avant_cov_init") {
+    return true
+  }
+  if str_eq(name, "avant_pin") {
+    return true
+  }
+  if str_eq(name, "avant_unpin") {
+    return true
+  }
+  if str_eq(name, "avant_is_heap") {
+    return true
+  }
+  if str_eq(name, "avant_is_young") {
+    return true
+  }
+  if str_eq(name, "avant_bump_alloc") {
+    return true
+  }
+  if str_eq(name, "bump") {
+    return true
+  }
+  if str_eq(name, "avant_exp") {
+    return true
+  }
+  // The call in source is `exp`, rewritten to avant_exp. It does not
+  // allocate. Naming only the runtime symbol left calculate_output
+  // as a collecting frame.
+  if str_eq(name, "exp") {
+    return true
+  }
+  // `sqrt(...)` lowers to UNARY. It does not allocate. The method
+  // form was already a leaf; the call form left move_from_i collecting.
+  if str_eq(name, "sqrt") {
+    return true
+  }
+  if str_eq(name, "re_find") {
+    return true
+  }
+  if str_eq(name, "avant_re_find") {
+    return true
+  }
+  if str_eq(name, "re_count") {
+    return true
+  }
+  if str_eq(name, "avant_re_count") {
+    return true
+  }
+  if str_eq(name, "re_m0") || str_eq(name, "avant_re_m0") {
+    return true
+  }
+  if str_eq(name, "re_m1") || str_eq(name, "avant_re_m1") {
+    return true
+  }
+  if str_eq(name, "re_c0") || str_eq(name, "avant_re_c0") {
+    return true
+  }
+  if str_eq(name, "re_c1") || str_eq(name, "avant_re_c1") {
+    return true
+  }
+  if str_eq(name, "avant_buf_clear") {
+    return true
+  }
+  if str_eq(name, "avant_buf_push_byte") {
+    return true
+  }
+  if str_eq(name, "avant_buf_push_str") {
+    return true
+  }
+  if str_eq(name, "avant_buf_push_slice") {
+    return true
+  }
+  if str_eq(name, "avant_buf_push_fmt_i") {
+    return true
+  }
+  if str_eq(name, "avant_buf_push_fmt_f") {
+    return true
+  }
+  if str_eq(name, "avant_hash_get_str_slice") {
+    return true
+  }
+  if str_eq(name, "avant_hash_inc_slice") {
+    return true
+  }
+  if str_eq(name, "inc_slice") {
+    return true
+  }
+  if str_eq(name, "avant_array_get_ptr") {
+    return true
+  }
+  if str_eq(name, "avant_array_set_ptr") {
+    return true
+  }
+  if str_eq(name, "avant_array_pop_ptr") {
+    return true
+  }
+  if str_eq(name, "avant_array_clear") {
+    return true
+  }
+  if str_eq(name, "avant_array_fill_i32") {
+    return true
+  }
+  if str_eq(name, "avant_array_fill_u8") {
+    return true
+  }
+  if str_eq(name, "avant_trap_bounds") || str_eq(name, "avant_trap_div_zero") || str_eq(name, "avant_trap_overflow") {
+    return true
+  }
+  if str_eq(name, "avant_checked_add_i64") || str_eq(name, "avant_checked_sub_i64") || str_eq(name, "avant_checked_mul_i64") {
+    return true
+  }
+  if str_eq(name, "avant_checked_add_u64") || str_eq(name, "avant_checked_sub_u64") || str_eq(name, "avant_checked_mul_u64") {
+    return true
+  }
+  if str_eq(name, "avant_checked_div_i64") || str_eq(name, "avant_checked_rem_i64") || str_eq(name, "avant_checked_div_u64") || str_eq(name, "avant_checked_rem_u64") {
+    return true
+  }
+  if str_eq(name, "avant_str_size") || str_eq(name, "avant_str_byte") || str_eq(name, "avant_str_eq") {
+    return true
+  }
+  if str_eq(name, "avant_str_to_f") || str_eq(name, "avant_str_to_i") || str_eq(name, "avant_str_to_f_slice") {
+    return true
+  }
+  if str_eq(name, "avant_checksum_str") || str_eq(name, "avant_checksum_f64") {
+    return true
+  }
+  if str_eq(name, "avant_buf_size") || str_eq(name, "avant_buf_starts") {
+    return true
+  }
+  if str_eq(name, "avant_wide_op") || str_eq(name, "avant_wide_hi") {
+    return true
+  }
+  if str_eq(name, "avant_now_ms") || str_eq(name, "avant_now_us") {
+    return true
+  }
+  if str_eq(name, "printf") {
+    return true
+  }
+  if str_eq(name, "memset") {
+    return true
+  }
+  if str_eq(name, "memcpy") {
+    return true
+  }
+  if str_eq(name, "memmove") {
+    return true
+  }
+  if str_eq(name, "malloc") {
+    return true
+  }
+  if str_eq(name, "calloc") {
+    return true
+  }
+  if str_eq(name, "free") {
+    return true
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) name_listed(name: String, names: Array(String)): Bool {
+  names.contains(name)
+}
+
+pub fn (codegen_self: MycGen) hoist_index(name: String): Int {
+  i = 0
+  while i < codegen_self.hoist_names.size {
+    if str_eq(codegen_self.hoist_names[i], name) {
+      return i
+    }
+    i = i + 1
+  }
+  0 - 1
+}
+
+pub fn (codegen_self: MycGen) emit_buf_hoist(name: String) {
+  hi = codegen_self.hoist_names.size
+  em = codegen_self.hoist_ems[hi]
+  codegen_self.line("LOCAL :${name}")
+  if str_eq(em, "u8") {
+    codegen_self.line("AS :ptr<AvantBuf>")
+  }
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 0")
+  ptr = codegen_self.new_temp
+  codegen_self.line("LOCAL :${ptr} :ptr<${em}>")
+  codegen_self.line("STORE")
+  codegen_self.line("LOCAL :${ptr}")
+  codegen_self.line("AS :i64")
+  bits = codegen_self.new_temp
+  codegen_self.line("LOCAL :${bits} :i64")
+  codegen_self.line("STORE")
+  if codegen_self.cur_leaf == 0 {
+    codegen_self.emit_ptr_root(ptr)
+  }
+  codegen_self.hoist_names.push(name)
+  codegen_self.hoist_bits.push(bits)
+  codegen_self.hoist_ptrs.push(ptr)
+  if codegen_self.may_share {
+    codegen_self.line("LOCAL :${ptr}")
+    codegen_self.line("CALL :avant_is_young")
+    young = codegen_self.new_temp
+    codegen_self.line("LOCAL :${young} :i32")
+    codegen_self.line("STORE")
+    codegen_self.hoist_young.push(young)
+  }
+}
+
+pub fn (codegen_self: MycGen) index_proven(ix: Expr, arr: Expr): Bool {
+  if ix.kind == ex_int() {
+    if arr.kind == ex_array() {
+      n = arr.elems.size
+      if ix.int_bits < n.to_u64 {
+        return true
+      }
+    }
+    if arr.kind == ex_string() {
+      n = arr.value_str.size
+      if ix.int_bits < n.to_u64 {
+        return true
+      }
+    }
+  }
+  false
+}
+
+pub fn (codegen_self: MycGen) emit_bounds_check(idx: String, size: String) {
+  codegen_self.line("LOCAL :${size}")
+  codegen_self.line("AS :u32")
+  codegen_self.line("LOCAL :${idx}")
+  codegen_self.line("AS :u32")
+  codegen_self.line("BINARY :more_eq")
+  codegen_self.line("IF")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("THEN")
+  codegen_self.indent = codegen_self.indent + 1
+  codegen_self.line("LOCAL :${size}")
+  codegen_self.line("LOCAL :${idx}")
+  codegen_self.line("CALL :avant_trap_bounds")
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.indent = codegen_self.indent - 1
+  codegen_self.line("ENDIF")
+}
+
+pub fn (codegen_self: MycGen) emit_hoisted_index(ix: Expr, hi: Int, proven: Bool) {
+  em = codegen_self.hoist_ems[hi]
+  bits = codegen_self.hoist_bits[hi]
+  ptr = codegen_self.hoist_ptrs[hi]
+  codegen_self.emit_expr(ix)
+  ixt = codegen_self.new_temp
+  codegen_self.line("LOCAL :${ixt} :i32")
+  codegen_self.line("STORE")
+  if proven || codegen_self.versioned_has(codegen_self.hoist_names[hi]) {
+    addr = codegen_self.new_temp
+    branch = false
+    if codegen_self.may_share {
+      if codegen_self.bits_only == 0 {
+        branch = true
+      } else {
+        if codegen_self.hoist_em_is_scalar(em) {
+        } else {
+          branch = true
+        }
+      }
+    }
+    if branch {
+      young = codegen_self.hoist_young[hi]
+      codegen_self.line("LOCAL :${young}")
+      codegen_self.line("PUSH 0")
+      codegen_self.line("BINARY :not_eq")
+      codegen_self.line("IF")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.line("THEN")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.line("LOCAL :${ptr}")
+      codegen_self.line("LOCAL :${ixt}")
+      codegen_self.line("STACK :swap2")
+      codegen_self.line("BINARY :add")
+      codegen_self.line("AS :i64")
+      codegen_self.line("LOCAL :${addr} :i64")
+      codegen_self.line("STORE")
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.line("ELSE")
+      codegen_self.indent = codegen_self.indent + 1
+      codegen_self.line("LOCAL :${bits}")
+      codegen_self.line("AS :ptr<${em}>")
+      codegen_self.line("LOCAL :${ixt}")
+      codegen_self.line("STACK :swap2")
+      codegen_self.line("BINARY :add")
+      codegen_self.line("AS :i64")
+      codegen_self.line("LOCAL :${addr} :i64")
+      codegen_self.line("STORE")
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.indent = codegen_self.indent - 1
+      codegen_self.line("ENDIF")
+    } else {
+      codegen_self.line("LOCAL :${bits}")
+      codegen_self.line("AS :ptr<${em}>")
+      codegen_self.line("LOCAL :${ixt}")
+      codegen_self.line("STACK :swap2")
+      codegen_self.line("BINARY :add")
+      codegen_self.line("AS :i64")
+      codegen_self.line("LOCAL :${addr} :i64")
+      codegen_self.line("STORE")
+    }
+    codegen_self.line("LOCAL :${addr}")
+    codegen_self.line("AS :ptr<${em}>")
+    codegen_self.line("DEREF")
+    return
+  }
+  hname = codegen_self.hoist_names[hi]
+  codegen_self.line("LOCAL :${hname}")
+  if str_eq(em, "u8") {
+    codegen_self.line("AS :ptr<AvantBuf>")
+  }
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 1")
+  szt = codegen_self.new_temp
+  codegen_self.line("LOCAL :${szt} :i32")
+  codegen_self.line("STORE")
+  codegen_self.emit_bounds_check(ixt, szt)
+  addr = codegen_self.new_temp
+  branch = false
+  if codegen_self.may_share {
+    if codegen_self.bits_only == 0 {
+      branch = true
+    } else {
+      if codegen_self.hoist_em_is_scalar(em) {
+      } else {
+        branch = true
+      }
+    }
+  }
+  if branch {
+    young = codegen_self.hoist_young[hi]
+    codegen_self.line("LOCAL :${young}")
+    codegen_self.line("PUSH 0")
+    codegen_self.line("BINARY :not_eq")
+    codegen_self.line("IF")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("THEN")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("LOCAL :${ptr}")
+    codegen_self.line("LOCAL :${ixt}")
+    codegen_self.line("STACK :swap2")
+    codegen_self.line("BINARY :add")
+    codegen_self.line("AS :i64")
+    codegen_self.line("LOCAL :${addr} :i64")
+    codegen_self.line("STORE")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ELSE")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("LOCAL :${bits}")
+    codegen_self.line("AS :ptr<${em}>")
+    codegen_self.line("LOCAL :${ixt}")
+    codegen_self.line("STACK :swap2")
+    codegen_self.line("BINARY :add")
+    codegen_self.line("AS :i64")
+    codegen_self.line("LOCAL :${addr} :i64")
+    codegen_self.line("STORE")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDIF")
+  } else {
+    codegen_self.line("LOCAL :${bits}")
+    codegen_self.line("AS :ptr<${em}>")
+    codegen_self.line("LOCAL :${ixt}")
+    codegen_self.line("STACK :swap2")
+    codegen_self.line("BINARY :add")
+    codegen_self.line("AS :i64")
+    codegen_self.line("LOCAL :${addr} :i64")
+    codegen_self.line("STORE")
+  }
+  codegen_self.line("LOCAL :${addr}")
+  codegen_self.line("AS :ptr<${em}>")
+  codegen_self.line("DEREF")
+}
+
+pub fn (codegen_self: MycGen) emit_index_lvalue(expr: Expr) {
+  if arr = expr.left {
+    if ix = expr.right {
+      container = expr_ty(arr)
+      if container.is_buf {
+        if arr.kind == ex_name() {
+          if arr.implicit_field {
+          } else {
+            hi = codegen_self.hoist_index(arr.ident)
+            if hi >= 0 {
+              codegen_self.emit_hoisted_index(ix, hi, expr.proven)
+              return
+            }
+          }
+        }
+        codegen_self.emit_expr(ix)
+        ixt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ixt} :i32")
+        codegen_self.line("STORE")
+        codegen_self.emit_expr(arr)
+        bt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${bt} :ptr<void>")
+        codegen_self.line("STORE")
+        if codegen_self.index_proven(ix, arr) || expr.proven || codegen_self.versioned_for(arr) {
+        } else {
+          codegen_self.line("LOCAL :${bt}")
+          codegen_self.line("AS :ptr<AvantBuf>")
+          codegen_self.line("DEREF")
+          codegen_self.line("FIELD 1")
+          szt = codegen_self.new_temp
+          codegen_self.line("LOCAL :${szt} :i32")
+          codegen_self.line("STORE")
+          codegen_self.emit_bounds_check(ixt, szt)
+        }
+        codegen_self.line("LOCAL :${bt}")
+        codegen_self.line("AS :ptr<AvantBuf>")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 0")
+        ptr_tmp = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ptr_tmp} :ptr<u8>")
+        codegen_self.line("STORE")
+        codegen_self.line("LOCAL :${ixt}")
+        codegen_self.line("LOCAL :${ptr_tmp}")
+        codegen_self.line("BINARY :add")
+        codegen_self.line("DEREF")
+        return
+      }
+      if container.is_string || container.is_bytes {
+        codegen_self.emit_expr(ix)
+        ixt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ixt} :i32")
+        codegen_self.line("STORE")
+        codegen_self.emit_expr(arr)
+        st = codegen_self.new_temp
+        codegen_self.line("LOCAL :${st} :ptr<u8>")
+        codegen_self.line("STORE")
+        if codegen_self.index_proven(ix, arr) || expr.proven || codegen_self.versioned_for(arr) {
+        } else {
+          codegen_self.line("LOCAL :${st}")
+          codegen_self.line("CALL :avant_str_size")
+          szt = codegen_self.new_temp
+          codegen_self.line("LOCAL :${szt} :i32")
+          codegen_self.line("STORE")
+          codegen_self.emit_bounds_check(ixt, szt)
+        }
+        codegen_self.line("LOCAL :${ixt}")
+        codegen_self.line("LOCAL :${st}")
+        codegen_self.line("BINARY :add")
+        codegen_self.line("DEREF")
+        codegen_self.line("TO :i32")
+        return
+      }
+      if container.is_hash {
+        codegen_self.emit_hash_get(expr, container)
+        return
+      }
+      array_ty = container
+      if e = array_ty.inner {
+        em = ty_myc(e)
+        if arr.kind == ex_name() {
+          if arr.implicit_field {
+          } else {
+            hi = codegen_self.hoist_index(arr.ident)
+            if hi >= 0 {
+              codegen_self.emit_hoisted_index(ix, hi, expr.proven)
+              return
+            }
+          }
+        }
+        codegen_self.emit_expr(ix)
+        ixt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ixt} :i32")
+        codegen_self.line("STORE")
+        codegen_self.emit_expr(arr)
+        arrn = codegen_self.new_temp
+        am = ty_myc(array_ty)
+        codegen_self.line("LOCAL :${arrn} :${am}")
+        codegen_self.line("STORE")
+        codegen_self.ensure_root(arrn, array_ty)
+        if codegen_self.index_proven(ix, arr) || expr.proven || codegen_self.versioned_for(arr) {
+        } else {
+          codegen_self.line("LOCAL :${arrn}")
+          codegen_self.line("DEREF")
+          codegen_self.line("FIELD 1")
+          szt = codegen_self.new_temp
+          codegen_self.line("LOCAL :${szt} :i32")
+          codegen_self.line("STORE")
+          codegen_self.emit_bounds_check(ixt, szt)
+        }
+        codegen_self.line("LOCAL :${arrn}")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 0")
+        ptr_tmp = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ptr_tmp} :ptr<${em}>")
+        codegen_self.line("STORE")
+        codegen_self.note_loop_temp(ptr_tmp, "ptr<${em}>")
+        codegen_self.emit_root_if_shared(ptr_tmp)
+        codegen_self.line("LOCAL :${ixt}")
+        codegen_self.line("LOCAL :${ptr_tmp}")
+        codegen_self.line("BINARY :add")
+        codegen_self.line("DEREF")
+      } else {
+        codegen_self.emit_expr(arr)
+        arrn = codegen_self.new_temp
+        am2 = ty_myc(array_ty)
+        codegen_self.line("LOCAL :${arrn} :${am2}")
+        codegen_self.line("STORE")
+        codegen_self.ensure_root(arrn, array_ty)
+        codegen_self.emit_expr(ix)
+        ixt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ixt} :i32")
+        codegen_self.line("STORE")
+        if codegen_self.index_proven(ix, arr) || expr.proven || codegen_self.versioned_for(arr) {
+        } else {
+          codegen_self.line("LOCAL :${arrn}")
+          codegen_self.line("DEREF")
+          codegen_self.line("FIELD 1")
+          szt = codegen_self.new_temp
+          codegen_self.line("LOCAL :${szt} :i32")
+          codegen_self.line("STORE")
+          codegen_self.emit_bounds_check(ixt, szt)
+        }
+        codegen_self.line("LOCAL :${arrn}")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 0")
+        ptr_tmp = codegen_self.new_temp
+        codegen_self.line("LOCAL :${ptr_tmp} :ptr<i32>")
+        codegen_self.line("STORE")
+        codegen_self.line("LOCAL :${ixt}")
+        codegen_self.line("LOCAL :${ptr_tmp}")
+        codegen_self.line("BINARY :add")
+        codegen_self.line("DEREF")
+      }
+    }
+  }
+}

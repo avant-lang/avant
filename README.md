@@ -1017,7 +1017,7 @@ A string-literal pattern is compiled to a native scanner with re2c at compile ti
 
 ## Testing
 
-Avant has no `avant test` command yet, and no assertion builtin. A test today is an ordinary Avant program that checks its expectations and prints one `PASS` or `FAIL` line per check. This section shows exactly that, with no hidden machinery. A user-facing test framework is planned as its own wave (Wave L in `avant-ledgers/stages/make-it-right.md`); until it lands, the patterns below are the supported way to test an Avant program.
+Avant has no `avant test` command yet, and no assertion builtin. A test today is an ordinary Avant program that checks its expectations and prints one `PASS` or `FAIL` line per check. This section shows exactly that, with no hidden machinery. A user-facing test framework is planned as its own wave and, until it lands, the patterns below are the supported way to test an Avant program.
 
 Write a check helper once per test file. The helper prints the verdict; it cannot fail the process, because `fn main` does not set the exit code. The shell loop further down turns any `FAIL` line into a failing run, which is how this repository's own CI reads its suite.
 
