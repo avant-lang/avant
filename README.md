@@ -1108,6 +1108,8 @@ Seconds, lower is better. **Bold** is fastest. Median of 3 runs on one machine (
 
 Three honest caveats. `Etc::TextRaytracer` (‡) is invalid for Avant and is excluded from the totals: `--final` hoists its pure render out of the loop (0.013s; honest `--debug` run 10.86s vs C 0.936s). JSON, Base64, hashing and regex rows lean on C libraries (yyjson, aklomp, PCRE2) in every language, so they measure bindings as much as languages. Memory is not ranked here: Avant averages 29.67 MB per task, while the other ports run the whole suite in one process and only expose a suite peak. This is not the adopted official number; that remains the 2026-09-27 run.
 
+**Update, 2026-10-28 (Avant only, not comparable to the table above).** The table's Avant column predates the language's mandated checked semantics (bounds, division, and overflow traps), which raised the honest 49-task total to 55.731s. Wave K (Honest Re-optimization) then recovered part of that cost through compiler and runtime work alone — checker range proofs, loop versioning, GC and string/runtime improvements, no benchmark changes — reaching **50.876s** (median of three `--final` passes on this machine class, checksums 50/50, no task more than 5% slower than the checked baseline). The two Avant totals measure different languages in one honest sense: the first without the safety floor, the second with it, faster. Full provenance: `results/2026-10-28-waveK/GATE.md` and the successor baseline in `results/2026-10-28-waveK-baseline/`.
+
 | Language | 49 tasks (s) | 50 as recorded (s) |
 | --- | ---: | ---: |
 | Avant | **40.245** | 40.258 |
