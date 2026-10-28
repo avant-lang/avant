@@ -630,10 +630,12 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
           } else {
             checker_self.bv_remove_var(v)
           }
+          checker_self.cap_after_assign(v, stmt.op, val)
         }
       }
     }
   }
+  checker_self.cap_kill_captures_stmt(stmt)
   i = 0
   while i < checker_self.fact_var.size {
     if checker_self.fact_live[i] == 1 {
@@ -1211,5 +1213,869 @@ pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
     dropped_c = checker_self.fact_cont.pop
     dropped_k = checker_self.fact_slack.pop
     dropped_l = checker_self.fact_live.pop
+  }
+}
+
+pub fn (checker_self: Checker) cap_put(name: String, val: Int64) {
+  i = 0
+  while i < checker_self.cap_var.size {
+    if str_eq(checker_self.cap_var[i], name) {
+      checker_self.cap_val[i] = val
+      return
+    }
+    i = i + 1
+  }
+  checker_self.cap_var.push(name)
+  checker_self.cap_val.push(val)
+}
+
+pub fn (checker_self: Checker) cap_get(name: String): Int64 {
+  i = 0
+  while i < checker_self.cap_var.size {
+    if str_eq(checker_self.cap_var[i], name) {
+      return checker_self.cap_val[i]
+    }
+    i = i + 1
+  }
+  0i64 - 1i64
+}
+
+pub fn (checker_self: Checker) cap_remove(name: String) {
+  kept_v: Array(String) = []
+  kept_c: Array(Int64) = []
+  i = 0
+  while i < checker_self.cap_var.size {
+    if str_eq(checker_self.cap_var[i], name) {
+    } else {
+      kept_v.push(checker_self.cap_var[i])
+      kept_c.push(checker_self.cap_val[i])
+    }
+    i = i + 1
+  }
+  checker_self.cap_var = kept_v
+  checker_self.cap_val = kept_c
+}
+
+pub fn (checker_self: Checker) gcap_put(name: String, val: Int64) {
+  checker_self.gcap_var.push(name)
+  checker_self.gcap_val.push(val)
+  checker_self.gcap_live.push(1)
+}
+
+pub fn (checker_self: Checker) gcap_get(name: String): Int64 {
+  best = 0i64 - 1i64
+  i = 0
+  while i < checker_self.gcap_var.size {
+    if checker_self.gcap_live[i] == 1 {
+      if str_eq(checker_self.gcap_var[i], name) {
+        if best < 0i64 || checker_self.gcap_val[i] < best {
+          best = checker_self.gcap_val[i]
+        }
+      }
+    }
+    i = i + 1
+  }
+  best
+}
+
+pub fn (checker_self: Checker) cap_of(name: String): Int64 {
+  a = checker_self.cap_get(name)
+  g = checker_self.gcap_get(name)
+  if a < 0i64 {
+    return g
+  }
+  if g < 0i64 {
+    return a
+  }
+  if a < g {
+    return a
+  }
+  g
+}
+
+pub fn (checker_self: Checker) gnn_put(name: String) {
+  checker_self.gnn_var.push(name)
+  checker_self.gnn_live.push(1)
+}
+
+pub fn (checker_self: Checker) gpos_put(name: String) {
+  checker_self.gpos_var.push(name)
+  checker_self.gpos_live.push(1)
+}
+
+pub fn (checker_self: Checker) gne_put(name: String) {
+  checker_self.gne_var.push(name)
+  checker_self.gne_live.push(1)
+}
+
+pub fn (checker_self: Checker) gnn_has(name: String): Bool {
+  i = 0
+  while i < checker_self.gnn_var.size {
+    if checker_self.gnn_live[i] == 1 {
+      if str_eq(checker_self.gnn_var[i], name) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) gpos_has(name: String): Bool {
+  i = 0
+  while i < checker_self.gpos_var.size {
+    if checker_self.gpos_live[i] == 1 {
+      if str_eq(checker_self.gpos_var[i], name) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) gne_has(name: String): Bool {
+  i = 0
+  while i < checker_self.gne_var.size {
+    if checker_self.gne_live[i] == 1 {
+      if str_eq(checker_self.gne_var[i], name) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+pub fn (checker_self: Checker) nn_proven(name: String): Bool {
+  if checker_self.nn_has(name) {
+    return true
+  }
+  checker_self.gnn_has(name)
+}
+
+pub fn (checker_self: Checker) cap_kill_guards(name: String) {
+  i = 0
+  while i < checker_self.gcap_var.size {
+    if str_eq(checker_self.gcap_var[i], name) {
+      checker_self.gcap_live[i] = 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.gnn_var.size {
+    if str_eq(checker_self.gnn_var[i], name) {
+      checker_self.gnn_live[i] = 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.gpos_var.size {
+    if str_eq(checker_self.gpos_var[i], name) {
+      checker_self.gpos_live[i] = 0
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < checker_self.gne_var.size {
+    if str_eq(checker_self.gne_var[i], name) {
+      checker_self.gne_live[i] = 0
+    }
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) pop_guard_facts(sg: Int, sn: Int, sp: Int, se: Int) {
+  while checker_self.gcap_var.size > sg {
+    dv = checker_self.gcap_var.pop
+    dc = checker_self.gcap_val.pop
+    dl = checker_self.gcap_live.pop
+  }
+  while checker_self.gnn_var.size > sn {
+    dv2 = checker_self.gnn_var.pop
+    dl2 = checker_self.gnn_live.pop
+  }
+  while checker_self.gpos_var.size > sp {
+    dv3 = checker_self.gpos_var.pop
+    dl3 = checker_self.gpos_live.pop
+  }
+  while checker_self.gne_var.size > se {
+    dv4 = checker_self.gne_var.pop
+    dl4 = checker_self.gne_live.pop
+  }
+}
+
+pub fn (checker_self: Checker) is_sqrt_toi(e: Expr): Bool {
+  if e.kind != ex_field() {
+    return false
+  }
+  if str_eq(e.ident, "to_i") {
+  } else {
+    return false
+  }
+  if obj = e.object {
+    if obj.kind == ex_field() {
+      if str_eq(obj.ident, "sqrt") {
+        if o2 = obj.object {
+          if o2.kind == ex_field() {
+            if str_eq(o2.ident, "to_f") {
+              if src = o2.object {
+                if t = src.ty {
+                  return t.is_int
+                }
+                if src.kind == ex_name() {
+                  return true
+                }
+                if src.kind == ex_int() {
+                  return true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) sqrt_src_nonneg(e: Expr): Bool {
+  if obj = e.object {
+    if o2 = obj.object {
+      if src = o2.object {
+        return checker_self.expr_nonneg(src)
+      }
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) expr_nonneg(e: Expr): Bool {
+  if e.kind == ex_int() {
+    return true
+  }
+  if e.kind == ex_name() {
+    return checker_self.nn_proven(e.ident)
+  }
+  if e.kind == ex_field() {
+    if str_eq(e.ident, "size") {
+      return true
+    }
+    if checker_self.is_sqrt_toi(e) {
+      return checker_self.sqrt_src_nonneg(e)
+    }
+    return false
+  }
+  if e.kind == ex_binary() {
+    if e.op == tk_star() || e.op == tk_plus() {
+      if l = e.left {
+        if r = e.right {
+          if checker_self.expr_nonneg(l) {
+            return checker_self.expr_nonneg(r)
+          }
+        }
+      }
+      return false
+    }
+    if e.op == tk_minus() {
+      if l = e.left {
+        if r = e.right {
+          if r.kind == ex_int() {
+            return checker_self.expr_nonneg(l)
+          }
+        }
+      }
+      return false
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int64 {
+  if e.kind == ex_int() {
+    if e.int_bits <= 4611686018427387904u64 {
+      return e.int_bits.to_i64()
+    }
+    return 0i64 - 1i64
+  }
+  if e.kind == ex_name() {
+    return checker_self.cap_of(e.ident)
+  }
+  if e.kind == ex_field() {
+    if str_eq(e.ident, "size") {
+      return 2147483647i64
+    }
+    if checker_self.is_sqrt_toi(e) {
+      if checker_self.sqrt_src_nonneg(e) {
+        return 46340i64
+      }
+    }
+    return 0i64 - 1i64
+  }
+  if e.kind == ex_binary() {
+    if l = e.left {
+      if r = e.right {
+        cl = checker_self.cap_of_expr(l)
+        if cl < 0i64 {
+          return 0i64 - 1i64
+        }
+        if e.op == tk_plus() {
+          cr = checker_self.cap_of_expr(r)
+          if cr < 0i64 {
+            return 0i64 - 1i64
+          }
+          if cl > 2305843009213693952i64 - cr {
+            return 0i64 - 1i64
+          }
+          return cl + cr
+        }
+        if e.op == tk_star() {
+          cr = checker_self.cap_of_expr(r)
+          if cr < 0i64 {
+            return 0i64 - 1i64
+          }
+          if cl == 0i64 || cr == 0i64 {
+            return 0i64
+          }
+          if cl > 9223372036854775807i64 / cr {
+            return 0i64 - 1i64
+          }
+          return cl * cr
+        }
+        if e.op == tk_minus() {
+          if checker_self.expr_nonneg(r) {
+            return cl
+          }
+          return 0i64 - 1i64
+        }
+      }
+    }
+  }
+  0i64 - 1i64
+}
+
+pub fn (checker_self: Checker) flip_cmp(op: Int): Int {
+  if op == tk_less() {
+    return tk_greater()
+  }
+  if op == tk_less_eq() {
+    return tk_greater_eq()
+  }
+  if op == tk_greater() {
+    return tk_less()
+  }
+  if op == tk_greater_eq() {
+    return tk_less_eq()
+  }
+  op
+}
+
+pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
+  if e.kind != ex_binary() {
+    return
+  }
+  if e.op == tk_amp_amp() {
+    if l = e.left {
+      checker_self.push_guard_facts(l)
+    }
+    if r = e.right {
+      checker_self.push_guard_facts(r)
+    }
+    return
+  }
+  op = e.op
+  v = ""
+  bound: Expr? = nil
+  flipped = false
+  if l = e.left {
+    if r = e.right {
+      if l.kind == ex_name() {
+        v = l.ident
+        bound = r
+      } else if r.kind == ex_name() {
+        v = r.ident
+        bound = l
+        flipped = true
+      }
+    }
+  }
+  if v.size == 0 {
+    return
+  }
+  if flipped {
+    op = checker_self.flip_cmp(op)
+  }
+  if b = bound {
+    if op == tk_less() || op == tk_less_eq() {
+      cb = checker_self.cap_of_expr(b)
+      if cb >= 0i64 {
+        cap = cb
+        if op == tk_less() {
+          cap = cb - 1i64
+        }
+        if cap >= 0i64 {
+          checker_self.gcap_put(v, cap)
+        }
+      }
+      return
+    }
+    if op == tk_greater() || op == tk_greater_eq() {
+      if b.kind == ex_int() {
+        if b.int_bits <= 4611686018427387904u64 {
+          low = b.int_bits.to_i64()
+          if op == tk_greater() {
+            low = low + 1i64
+          }
+          if low >= 1i64 {
+            checker_self.gnn_put(v)
+            checker_self.gpos_put(v)
+            checker_self.gne_put(v)
+          } else if low == 0i64 {
+            checker_self.gnn_put(v)
+          }
+        }
+      }
+      return
+    }
+    if op == tk_not_eq() {
+      if b.kind == ex_int() {
+        if b.int_bits == 0u64 {
+          checker_self.gne_put(v)
+        }
+      }
+      return
+    }
+    if op == tk_eq_eq() {
+      cb2 = checker_self.cap_of_expr(b)
+      if cb2 >= 0i64 {
+        checker_self.gcap_put(v, cb2)
+      }
+      if b.kind == ex_int() {
+        if b.int_bits <= 4611686018427387904u64 {
+          lv = b.int_bits.to_i64()
+          checker_self.gnn_put(v)
+          if lv >= 1i64 {
+            checker_self.gpos_put(v)
+            checker_self.gne_put(v)
+          }
+        }
+      }
+      return
+    }
+  }
+}
+
+pub fn (checker_self: Checker) cap_sum_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
+  if ty.is_int {
+    if cl > 2147483647i64 - cr {
+      return false
+    }
+    return true
+  }
+  if cl > 2147483647i64 {
+    return false
+  }
+  if cr > 2147483647i64 {
+    return false
+  }
+  true
+}
+
+pub fn (checker_self: Checker) cap_prod_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
+  if ty.is_int {
+    if cl == 0i64 || cr == 0i64 {
+      return true
+    }
+    if cl > 2147483647i64 / cr {
+      return false
+    }
+    return true
+  }
+  if cl > 2147483647i64 {
+    return false
+  }
+  if cr > 2147483647i64 {
+    return false
+  }
+  true
+}
+
+pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int64, cr: Int64, ty: Ty): Bool {
+  if cl < 0i64 || cr < 0i64 {
+    return false
+  }
+  if op == tk_plus() {
+    return checker_self.cap_sum_ok(cl, cr, ty)
+  }
+  if op == tk_star() {
+    return checker_self.cap_prod_ok(cl, cr, ty)
+  }
+  if op == tk_minus() {
+    if ty.is_uint64 {
+      return false
+    }
+    if cl > 2147483647i64 {
+      return false
+    }
+    if cr > 2147483647i64 {
+      return false
+    }
+    return true
+  }
+  false
+}
+
+pub fn (checker_self: Checker) arith_proven(op: Int, l: Expr, r: Expr, ty: Ty): Bool {
+  if checker_self.expr_nonneg(l) {
+  } else {
+    return false
+  }
+  if checker_self.expr_nonneg(r) {
+  } else {
+    return false
+  }
+  cl = checker_self.cap_of_expr(l)
+  cr = checker_self.cap_of_expr(r)
+  checker_self.cap_pair_proven(op, cl, cr, ty)
+}
+
+pub fn (checker_self: Checker) compound_proven(op: Int, target: String, value: Expr, ty: Ty): Bool {
+  if checker_self.nn_proven(target) {
+  } else {
+    return false
+  }
+  if checker_self.expr_nonneg(value) {
+  } else {
+    return false
+  }
+  ct = checker_self.cap_of(target)
+  cv = checker_self.cap_of_expr(value)
+  if op == tk_plus_eq() {
+    return checker_self.cap_pair_proven(tk_plus(), ct, cv, ty)
+  }
+  if op == tk_star_eq() {
+    return checker_self.cap_pair_proven(tk_star(), ct, cv, ty)
+  }
+  if op == tk_minus_eq() {
+    return checker_self.cap_pair_proven(tk_minus(), ct, cv, ty)
+  }
+  false
+}
+
+pub fn (checker_self: Checker) divisor_proven(r: Expr): Bool {
+  if r.kind == ex_int() {
+    return r.int_bits != 0u64
+  }
+  if r.kind == ex_name() {
+    if checker_self.gpos_has(r.ident) {
+      return true
+    }
+    if checker_self.nn_proven(r.ident) {
+      if checker_self.gne_has(r.ident) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
+  old_cap = checker_self.cap_of(v)
+  checker_self.cap_kill_guards(v)
+  if op == tk_eq() {
+    if checker_self.is_sqrt_toi(val) {
+      if checker_self.sqrt_src_nonneg(val) {
+        checker_self.cap_put(v, 46340i64)
+        checker_self.nn_add(v)
+        return
+      }
+    }
+    c = checker_self.cap_of_expr(val)
+    if c >= 0i64 {
+      if val.kind == ex_field() {
+        if str_eq(val.ident, "size") {
+          checker_self.cap_remove(v)
+          return
+        }
+      }
+      checker_self.cap_put(v, c)
+    } else {
+      checker_self.cap_remove(v)
+    }
+    return
+  }
+  if op == tk_plus_eq() {
+    cv = checker_self.cap_of_expr(val)
+    if old_cap >= 0i64 && cv >= 0i64 {
+      if old_cap > 2305843009213693952i64 - cv {
+        checker_self.cap_remove(v)
+      } else {
+        checker_self.cap_put(v, old_cap + cv)
+      }
+    } else {
+      checker_self.cap_remove(v)
+    }
+    return
+  }
+  if op == tk_minus_eq() {
+    if checker_self.expr_nonneg(val) {
+      if old_cap >= 0i64 {
+        checker_self.cap_put(v, old_cap)
+      } else {
+        checker_self.cap_remove(v)
+      }
+    } else {
+      checker_self.cap_remove(v)
+    }
+    return
+  }
+  if op == tk_star_eq() {
+    cv2 = checker_self.cap_of_expr(val)
+    if old_cap >= 0i64 && cv2 >= 0i64 {
+      if old_cap == 0i64 || cv2 == 0i64 {
+        checker_self.cap_put(v, 0i64)
+      } else if old_cap > 9223372036854775807i64 / cv2 {
+        checker_self.cap_remove(v)
+      } else {
+        checker_self.cap_put(v, old_cap * cv2)
+      }
+    } else {
+      checker_self.cap_remove(v)
+    }
+    return
+  }
+  checker_self.cap_remove(v)
+}
+
+pub fn (checker_self: Checker) cap_collect_assigned_stmt(s: Stmt, into: Array(String)) {
+  if s.kind == st_assign() {
+    if t = s.target {
+      if t.kind == ex_name() {
+        if str_index(into, t.ident) < 0 {
+          into.push(t.ident)
+        }
+      }
+    }
+  }
+  if e = s.expr {
+    checker_self.cap_collect_assigned_expr(e, into)
+  }
+  if c = s.cond {
+    checker_self.cap_collect_assigned_expr(c, into)
+  }
+  if t = s.target {
+    checker_self.cap_collect_assigned_expr(t, into)
+  }
+  if v = s.value {
+    checker_self.cap_collect_assigned_expr(v, into)
+  }
+  i = 0
+  while i < s.then_body.size {
+    checker_self.cap_collect_assigned_stmt(s.then_body[i], into)
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    checker_self.cap_collect_assigned_stmt(s.else_body[i], into)
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    checker_self.cap_collect_assigned_stmt(s.body[i], into)
+    i = i + 1
+  }
+  i = 0
+  while i < s.pre.size {
+    checker_self.cap_collect_assigned_stmt(s.pre[i], into)
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) cap_collect_assigned_expr(e: Expr, into: Array(String)) {
+  if b = e.block {
+    j = 0
+    while j < b.body.size {
+      checker_self.cap_collect_assigned_stmt(b.body[j], into)
+      j = j + 1
+    }
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      checker_self.cap_collect_assigned_stmt(cs.body[j], into)
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    checker_self.cap_collect_assigned_stmt(e.else_body[i], into)
+    i = i + 1
+  }
+  if inner = e.inner {
+    checker_self.cap_collect_assigned_expr(inner, into)
+  }
+  if l = e.left {
+    checker_self.cap_collect_assigned_expr(l, into)
+  }
+  if r = e.right {
+    checker_self.cap_collect_assigned_expr(r, into)
+  }
+  if obj = e.object {
+    checker_self.cap_collect_assigned_expr(obj, into)
+  }
+  if recv = e.receiver {
+    checker_self.cap_collect_assigned_expr(recv, into)
+  }
+  i = 0
+  while i < e.args.size {
+    checker_self.cap_collect_assigned_expr(e.args[i], into)
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    checker_self.cap_collect_assigned_expr(e.elems[i], into)
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    checker_self.cap_collect_assigned_expr(e.field_exprs[i], into)
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    checker_self.cap_collect_assigned_expr(sz, into)
+  }
+  if c = e.cond {
+    checker_self.cap_collect_assigned_expr(c, into)
+  }
+}
+
+pub fn (checker_self: Checker) cap_kill_assigned_in(body: Array(Stmt)) {
+  names: Array(String) = []
+  i = 0
+  while i < body.size {
+    checker_self.cap_collect_assigned_stmt(body[i], names)
+    i = i + 1
+  }
+  i = 0
+  while i < names.size {
+    checker_self.cap_remove(names[i])
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) cap_kill_captures_stmt(s: Stmt) {
+  checker_self.cap_kill_captures_rest(s)
+}
+
+pub fn (checker_self: Checker) cap_kill_captures_rest(s: Stmt) {
+  if e = s.expr {
+    checker_self.cap_kill_captures_expr(e)
+  }
+  if c = s.cond {
+    checker_self.cap_kill_captures_expr(c)
+  }
+  if t = s.target {
+    checker_self.cap_kill_captures_expr(t)
+  }
+  if v = s.value {
+    checker_self.cap_kill_captures_expr(v)
+  }
+  i = 0
+  while i < s.then_body.size {
+    checker_self.cap_kill_captures_rest(s.then_body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < s.else_body.size {
+    checker_self.cap_kill_captures_rest(s.else_body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < s.body.size {
+    checker_self.cap_kill_captures_rest(s.body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < s.pre.size {
+    checker_self.cap_kill_captures_rest(s.pre[i])
+    i = i + 1
+  }
+}
+
+pub fn (checker_self: Checker) cap_kill_captures_expr(e: Expr) {
+  i = 0
+  while i < e.cap_names.size {
+    checker_self.cap_remove(e.cap_names[i])
+    checker_self.cap_kill_guards(e.cap_names[i])
+    i = i + 1
+  }
+  if inner = e.inner {
+    checker_self.cap_kill_captures_expr(inner)
+  }
+  if l = e.left {
+    checker_self.cap_kill_captures_expr(l)
+  }
+  if r = e.right {
+    checker_self.cap_kill_captures_expr(r)
+  }
+  if obj = e.object {
+    checker_self.cap_kill_captures_expr(obj)
+  }
+  if recv = e.receiver {
+    checker_self.cap_kill_captures_expr(recv)
+  }
+  i = 0
+  while i < e.args.size {
+    checker_self.cap_kill_captures_expr(e.args[i])
+    i = i + 1
+  }
+  i = 0
+  while i < e.elems.size {
+    checker_self.cap_kill_captures_expr(e.elems[i])
+    i = i + 1
+  }
+  i = 0
+  while i < e.field_exprs.size {
+    checker_self.cap_kill_captures_expr(e.field_exprs[i])
+    i = i + 1
+  }
+  if sz = e.size_expr {
+    checker_self.cap_kill_captures_expr(sz)
+  }
+  if c = e.cond {
+    checker_self.cap_kill_captures_expr(c)
+  }
+  if b = e.block {
+    j = 0
+    while j < b.body.size {
+      checker_self.cap_kill_captures_rest(b.body[j])
+      j = j + 1
+    }
+  }
+  i = 0
+  while i < e.cases.size {
+    cs = e.cases[i]
+    j = 0
+    while j < cs.body.size {
+      checker_self.cap_kill_captures_rest(cs.body[j])
+      j = j + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.else_body.size {
+    checker_self.cap_kill_captures_rest(e.else_body[i])
+    i = i + 1
+  }
+  i = 0
+  while i < e.parts.size {
+    part = e.parts[i]
+    if inner2 = part.expr {
+      checker_self.cap_kill_captures_expr(inner2)
+    }
+    i = i + 1
   }
 }
