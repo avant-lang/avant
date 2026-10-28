@@ -850,6 +850,8 @@ int avant_is_heap(void *payload) {
   return is_heap_payload(payload, NULL, NULL);
 }
 
+_Atomic uint32_t g_avant_str_gen;
+
 /* 1 when a young collection can move this buffer. Mature and large
  * objects stay put, so a parallel numeric loop can keep the address. */
 int32_t avant_is_young(void *payload) {
@@ -2312,6 +2314,7 @@ static void collect(int full) {
     die("GC reentered");
   }
   g_collecting = 1;
+  atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   g_stats.collections++;
   g_live = 0;
   g_work_n = 0;

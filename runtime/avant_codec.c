@@ -117,7 +117,7 @@ void avant_b64_decode_buf(void *buf, const char *s) {
   avant_gc_defer_leave();
 }
 
-static uint32_t crc_table[256];
+static uint32_t crc_table[4][256];
 static int crc_ready;
 
 static void crc_init(void) {
@@ -131,7 +131,14 @@ static void crc_init(void) {
     for (j = 0; j < 8; j++) {
       c = (c & 1u) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
     }
-    crc_table[i] = c;
+    crc_table[0][i] = c;
+  }
+  for (i = 0; i < 256; i++) {
+    uint32_t c = crc_table[0][i];
+    for (j = 1; j < 4; j++) {
+      c = crc_table[0][c & 255u] ^ (c >> 8);
+      crc_table[j][i] = c;
+    }
   }
   crc_ready = 1;
 }
@@ -140,15 +147,23 @@ int32_t avant_crc32_i32(void *arr) {
   crc_init();
   AvantArray *a = (AvantArray *)arr;
   uint32_t crc = 0xFFFFFFFFu;
-  int32_t i;
+  int32_t i = 0;
   int32_t n = 0;
   const int32_t *src = NULL;
   if (a && a->buf && a->size > 0) {
     n = a->size;
     src = (const int32_t *)a->buf;
   }
-  for (i = 0; i < n; i++) {
-    crc = crc_table[(crc ^ (uint8_t)(src[i] & 255)) & 255u] ^ (crc >> 8);
+  /* Slicing by 4: the same CRC recurrence applied to four bytes at
+   * once through the derived tables; the result is bit-identical. */
+  for (; i + 4 <= n; i += 4) {
+    uint32_t c = crc ^ (uint8_t)(src[i] & 255);
+    crc = crc_table[3][c & 255u] ^ crc_table[2][((c >> 8) ^ (uint8_t)(src[i + 1] & 255)) & 255u] ^
+          crc_table[1][((c >> 16) ^ (uint8_t)(src[i + 2] & 255)) & 255u] ^
+          crc_table[0][((c >> 24) ^ (uint8_t)(src[i + 3] & 255)) & 255u];
+  }
+  for (; i < n; i++) {
+    crc = crc_table[0][(crc ^ (uint8_t)(src[i] & 255)) & 255u] ^ (crc >> 8);
   }
   return (int32_t)(crc ^ 0xFFFFFFFFu);
 }
@@ -336,7 +351,18 @@ int32_t avant_sha256_word0(void *arr) {
     n = a->size;
     src = (const int32_t *)a->buf;
   }
-  for (i = 0; i < n; i++) {
+  /* Eight independent chains (index i & 7): eight steps at a time keep
+   * the same per-element arithmetic and the same result. */
+  for (i = 0; i + 8 <= n; i += 8) {
+    int k;
+    for (k = 0; k < 8; k++) {
+      uint32_t hash = hashes[k];
+      hash = ((hash << 5) + hash) + (uint8_t)(src[i + k] & 255);
+      hash = (hash + (hash << 10)) ^ (hash >> 6);
+      hashes[k] = hash;
+    }
+  }
+  for (; i < n; i++) {
     uint32_t idx = (uint32_t)i & 7u;
     uint32_t hash = hashes[idx];
     hash = ((hash << 5) + hash) + (uint8_t)(src[i] & 255);

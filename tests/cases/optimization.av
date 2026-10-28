@@ -289,6 +289,43 @@ fn test_optimization(c: Checks) {
   c.eq_int(ftape[0], 0, "dispatch backward jump to size minus one boundary tape")
   c.eq_int(fsteps, 2, "dispatch backward jump to size minus one boundary steps")
 
+  s127 = repeat_byte(97, 127)
+  c.eq_int(s127.size, 127, "string length 127 below tagged threshold")
+  c.eq_int(s127[126], 97, "string byte at 126")
+  s128 = repeat_byte(97, 128)
+  c.eq_int(s128.size, 128, "string length 128 above tagged threshold")
+  c.eq_int(s128[127], 97, "string byte at 127 of 128")
+  s129 = repeat_byte(97, 129)
+  c.eq_int(s129.size, 129, "string length 129 above tagged threshold")
+  c.eq_int(s129[128], 97, "string byte at 128 of 129")
+  long_s = repeat_byte(98, 20000)
+  c.eq_int(long_s.size, 20000, "long string length")
+  c.eq_int(long_s[0], 98, "long string first byte")
+  c.eq_int(long_s[19999], 98, "long string last byte")
+  c.eq_str(str_slice(long_s, 19990, 20000), repeat_byte(98, 10), "long string tail slice")
+  byte_sum = 0
+  bi = 0
+  while bi < long_s.size {
+    byte_sum = byte_sum + long_s[bi]
+    bi = bi + 1
+  }
+  c.eq_int(byte_sum, 1960000, "long string per-byte sum")
+  churn = 0
+  ci = 0
+  while ci < 2000 {
+    junk = repeat_byte(99, 500)
+    churn = churn + junk.size
+    ci = ci + 1
+  }
+  c.eq_int(churn, 1000000, "allocation churn total")
+  c.eq_int(long_s.size, 20000, "long string length after churn")
+  c.eq_int(long_s[19999], 98, "long string last byte after churn")
+  c.eq_str(fmt_float("0.1".to_f, 10), "0.1000000000", "float parse 0.1")
+  c.eq_str(fmt_float(str_to_f_slice("xx1.25yy", 2, 6), 10), "1.2500000000", "float slice parse 1.25")
+  c.eq_str(fmt_float("1e3".to_f, 2), "1000.00", "float parse exponent")
+  c.eq_str(fmt_float("123456789012345678".to_f, 2), "123456789012345680.00", "float parse long digits fallback")
+  c.eq_str(fmt_float("-0.5".to_f, 10), "-0.5000000000", "float parse negative")
+
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
 
