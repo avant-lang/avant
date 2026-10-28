@@ -326,6 +326,30 @@ fn test_optimization(c: Checks) {
   c.eq_str(fmt_float("123456789012345678".to_f, 2), "123456789012345680.00", "float parse long digits fallback")
   c.eq_str(fmt_float("-0.5".to_f, 10), "-0.5000000000", "float parse negative")
 
+  decl_s = "abca"
+  decl_t = "a"
+  decl_m: Array(Int) = []
+  decl_di = 0
+  while decl_di < 4 {
+    decl_m.push(0)
+    decl_di = decl_di + 1
+  }
+  decl_hits = 0
+  decl_i = 0
+  while decl_i < 4 {
+    decl_j = 0
+    decl_fin = decl_i
+    while decl_j <= decl_fin && decl_j < 4 {
+      if decl_m[decl_j] == 0 && decl_s[decl_j] == decl_t[0] {
+        decl_hits = decl_hits + 1
+        decl_m[decl_j] = 1
+      }
+      decl_j = decl_j + 1
+    }
+    decl_i = decl_i + 1
+  }
+  c.eq_int(decl_hits, 2, "call-sized decline string loop computes")
+
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
 
@@ -350,6 +374,7 @@ fn test_optimization(c: Checks) {
     expect_trap_opt(c, compiler, stamp, "dispatch-invalid-table-slow-tape-trap", "fn main {\n  cmds = [62, 43]\n  jumps = [0, 99]\n  tape = [0]\n  pos = 0\n  pc = 0\n  n = cmds.size\n  while pc < n {\n    c = cmds[pc]\n    if c == 62 {\n      pos = pos + 1\n    } else if c == 43 {\n      tape[pos] = (tape[pos] + 1) & 255\n    } else if c == 91 {\n      if tape[pos] == 0 {\n        pc = jumps[pc]\n      }\n    }\n    pc = pc + 1\n  }\n  puts(tape[0])\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "dispatch-entry-eq-n-slow-tape-traps", "fn main {\n  cmds = [62, 43]\n  jumps = [0, 2]\n  tape = [0]\n  pos = 0\n  pc = 0\n  n = cmds.size\n  while pc < n {\n    c = cmds[pc]\n    if c == 62 {\n      pos = pos + 1\n    } else if c == 43 {\n      tape[pos] = (tape[pos] + 1) & 255\n    } else if c == 91 {\n      if tape[pos] == 0 {\n        pc = jumps[pc]\n      }\n    }\n    pc = pc + 1\n  }\n  puts(tape[0])\n}\n", "out of bounds")
     expect_trap_opt(c, compiler, stamp, "dispatch-entry-at-bound-use-traps", "fn main {\n  cmds = [91, 43, 46]\n  jumps = [3, 0, 0]\n  tape = [0, 0]\n  pos = 0\n  pc = 0\n  n = cmds.size\n  while pc < n {\n    c = cmds[pc]\n    if c == 91 {\n      if tape[pos] == 0 {\n        pc = jumps[pc]\n      }\n    }\n    puts(cmds[pc])\n    pc = pc + 1\n  }\n}\n", "out of bounds")
+    expect_trap_opt(c, compiler, stamp, "call-sized-decline-string-traps", "fn main {\n  s = \"abc\"\n  m = [0, 0, 0]\n  i = 0\n  acc = 0\n  while i < 3 {\n    j = 0\n    fin = i + 3\n    while j <= fin && j < 9 {\n      acc = acc + s[j] + m[j]\n      j = j + 1\n    }\n    i = i + 1\n  }\n  puts(acc)\n}\n", "out of bounds")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

@@ -2375,7 +2375,7 @@ pub fn (codegen_self: MycGen) vcand_stmt(s: Stmt, names: Array(String), exprs: A
   }
 }
 
-pub fn (codegen_self: MycGen) d_qualify(stmt: Stmt, gvbufs: Array(String), vbufs: Array(String), gvar_l: Array(String), gle_l: Array(Int), gok_l: Array(Int), gbound_l: Array(Expr), gcand_names: Array(String), oq: Array(String), otbl: Array(String), odv: Array(String), ogidx: Array(Int), onode: Array(Expr)) {
+pub fn (codegen_self: MycGen) d_qualify(stmt: Stmt, gvbufs: Array(String), vbufs: Array(String), gvar_l: Array(String), gle_l: Array(Int), gok_l: Array(Int), gbound_l: Array(Expr), gcand_names: Array(String), gcand_exprs: Array(Expr), oq: Array(String), otbl: Array(String), odv: Array(String), ogidx: Array(Int), onode: Array(Expr)) {
   dbufs: Array(String) = []
   dtbl = ""
   ddv = ""
@@ -2458,7 +2458,10 @@ pub fn (codegen_self: MycGen) d_qualify(stmt: Stmt, gvbufs: Array(String), vbufs
                               }
                               if dst[4] == 0 {
                                 if dst[0] == 0 {
-                                  qual.push(gcand_names[dbi])
+                                  if expr_ty(gcand_exprs[dbi]).is_string {
+                                  } else {
+                                    qual.push(gcand_names[dbi])
+                                  }
                                 }
                               }
                               dbi = dbi + 1
@@ -3018,12 +3021,29 @@ pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
           gui = gui + 1
         }
         if gbad == 0 {
-          gvbufs.push(gbname)
+          if expr_ty(gcand_exprs[gbi]).is_string {
+          } else {
+            gvbufs.push(gbname)
+          }
         }
       }
     }
     }
     gbi = gbi + 1
+  }
+  if gvbufs.size > 0 {
+    gdecline_all = 0
+    gci9 = 0
+    while gci9 < gcand_exprs.size {
+      if expr_ty(gcand_exprs[gci9]).is_string {
+        gdecline_all = 1
+      }
+      gci9 = gci9 + 1
+    }
+    if gdecline_all == 1 {
+      gempty0: Array(String) = []
+      gvbufs = gempty0
+    }
   }
   }
   if gvbufs.size > 0 {
@@ -3289,7 +3309,7 @@ pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
   dqdv: Array(String) = []
   dqgidx: Array(Int) = []
   dqnode: Array(Expr) = []
-  codegen_self.d_qualify(stmt, gvbufs, vbufs, gvar_l, gle_l, gok_l, gbound_l, gcand_names, dqbufs, dqtbl, dqdv, dqgidx, dqnode)
+  codegen_self.d_qualify(stmt, gvbufs, vbufs, gvar_l, gle_l, gok_l, gbound_l, gcand_names, gcand_exprs, dqbufs, dqtbl, dqdv, dqgidx, dqnode)
   if gdone {
   } else if dqbufs.size > 0 {
     codegen_self.d_emit(stmt, outer, dqgidx[0], gbound_l, gcand_names, gcand_exprs, dqbufs, dqtbl[0], dqdv[0], dqnode)
