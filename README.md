@@ -1104,72 +1104,69 @@ These are decided and currently do not compile.
 
 ## Benchmarks
 
-Seconds, lower is better. **Bold** is fastest. Median of 3 runs on one machine (Ryzen 7 5700G, 2026-10-26), every language built here, checksums 50/50 in every run. Full provenance and raw data: `results/2026-10-26-waveA/SUMMARY.md`.
+Seconds, lower is better. **Bold** is fastest. Median of 3 runs on one idle machine (Ryzen 7 5700G), every language built here, checksums 50/50 in every run. Avant's column is the 2026-10-28 Wave K close; the other columns are the same machine's 2026-10-26 run, kept because those languages did not change. Full provenance: `results/2026-10-28-waveK/GATE.md` (Avant) and `results/2026-10-26-waveA/SUMMARY.md` (the rest).
 
-Three honest caveats. `Etc::TextRaytracer` (‡) is invalid for Avant and is excluded from the totals: `--final` hoists its pure render out of the loop (0.013s; honest `--debug` run 10.86s vs C 0.936s). JSON, Base64, hashing and regex rows lean on C libraries (yyjson, aklomp, PCRE2) in every language, so they measure bindings as much as languages. Memory is not ranked here: Avant averages 29.67 MB per task, while the other ports run the whole suite in one process and only expose a suite peak. This is not the adopted official number; that remains the 2026-09-27 run.
-
-**Update, 2026-10-28 (Avant only, not comparable to the table above).** The table's Avant column predates the language's mandated checked semantics (bounds, division, and overflow traps), which raised the honest 49-task total to 55.731s. Wave K (Honest Re-optimization) then recovered part of that cost through compiler and runtime work alone — checker range proofs, loop versioning, GC and string/runtime improvements, no benchmark changes — reaching **50.876s** (median of three `--final` passes on this machine class, checksums 50/50, no task more than 5% slower than the checked baseline). The two Avant totals measure different languages in one honest sense: the first without the safety floor, the second with it, faster. Full provenance: `results/2026-10-28-waveK/GATE.md` and the successor baseline in `results/2026-10-28-waveK-baseline/`.
-
-| Language | 49 tasks (s) | 50 as recorded (s) |
-| --- | ---: | ---: |
-| Avant | **40.245** | 40.258 |
-| C | 45.443 | 46.379 |
-| Rust | 46.587 | 47.402 |
-| Crystal | 75.241 | 76.352 |
-| Go | 96.233 | 97.758 |
+| Language | 49 tasks (s) | Memory |
+| --- | ---: | --- |
+| Avant | 50.876 | 33.6 MB † |
+| C | **45.443** | 131 MB ‡ |
+| Rust | 46.587 | 194 MB ‡ |
+| Crystal | 75.241 | 1108 MB ‡ |
+| Go | 96.233 | 2668 MB ‡ |
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `Etc::Sieve` | 1.286 | **1.092** | 1.146 | 1.939 | 1.568 |
-| `Binarytrees::Obj` | 1.167 | 2.224 | 2.331 | **1.069** | 1.564 |
-| `Binarytrees::Arena` | 0.508 | **0.233** | 0.262 | 0.604 | 0.265 |
-| `Matmul::Single` | **1.401** | 4.656 | 4.826 | 4.980 | 4.879 |
-| `Matmul::T4` | **0.473** | 1.190 | 1.225 | 2.995 | 1.299 |
-| `Matmul::T8` | **0.345** | 0.610 | 0.629 | 4.791 | 0.718 |
-| `Matmul::T16` | **0.332** | 0.430 | 0.432 | 4.875 | 0.634 |
-| `Sort::Quick` | 1.363 | **0.981** | 0.982 | 1.285 | 1.111 |
-| `Sort::Merge` | **1.136** | 1.188 | 1.288 | 1.927 | 1.362 |
-| `Sort::Self` | **0.131** | 1.776 | 0.290 | 0.888 | 1.131 |
-| `CLBG::Mandelbrot` | 0.980 | **0.814** | 0.845 | 0.821 | 0.838 |
-| `CLBG::Fannkuchredux` | 1.161 | 1.004 | **0.947** | 1.005 | 0.976 |
-| `CLBG::Spectralnorm` | 1.041 | **0.853** | 0.854 | 0.864 | 0.892 |
-| `CLBG::Nbody` | 1.295 | 1.044 | **0.994** | 1.077 | 1.205 |
-| `Brainfuck::Array` | 1.671 | **1.287** | 2.726 | 1.957 | 1.425 |
-| `Brainfuck::Recursion` | 1.830 | **1.427** | 1.593 | 1.696 | 1.702 |
-| `Etc::GameOfLife` | 1.882 | 1.307 | 1.237 | 2.369 | **0.812** |
-| `Etc::TextRaytracer` | 0.013 | 0.936 | **0.815** | 1.111 | 1.525 |
-| `Etc::NeuralNet` | 1.359 | **0.957** | 0.963 | 1.049 | 1.841 |
-| `Etc::CacheSimulation` | **0.541** | 0.631 | 0.697 | 1.090 | 1.389 |
-| `Etc::Words` | 1.639 | 1.660 | **0.718** | 0.805 | 1.017 |
-| `Graph::BFS` | **1.018** | 1.024 | 1.411 | 2.465 | 2.061 |
-| `Graph::DFS` | 0.954 | **0.931** | 1.116 | 1.638 | 1.283 |
-| `Graph::AStar` | **0.530** | 0.572 | 0.564 | 1.585 | 3.107 |
-| `Hash::CRC32` | 0.323 | 1.119 | **0.260** | 0.811 | 3.492 |
-| `Hash::SHA256` | 1.325 | **0.887** | 1.021 | 1.001 | 1.014 |
-| `Distance::Jaro` | 0.934 | **0.756** | 0.760 | 1.069 | 0.773 |
-| `Distance::NGram` | 0.782 | 1.415 | **0.411** | 0.656 | 0.776 |
-| `Base64::Encode` | 0.107 | **0.106** | 0.251 | 1.224 | 2.010 |
-| `Base64::Decode` | 0.131 | **0.121** | 0.285 | 1.246 | 1.444 |
-| `Json::Generate` | 0.752 | **0.239** | 0.271 | 0.959 | 1.026 |
-| `Json::ParseDom` | 0.081 | **0.073** | 0.749 | 0.525 | 1.168 |
-| `Json::ParseMapping` | 0.194 | **0.183** | 0.334 | 1.314 | 2.316 |
-| `CSV::Parse` | 2.319 | 1.853 | **0.672** | 3.092 | 2.119 |
-| `Template::Regex` | **0.889** | 1.144 | 3.465 | 1.445 | 6.662 |
-| `Template::Parse` | **0.758** | 0.946 | 1.027 | 2.349 | 0.784 |
-| `Maze::Generator` | 0.438 | **0.409** | 0.713 | 1.443 | 0.921 |
-| `Maze::BFS` | 0.513 | **0.442** | 0.912 | 1.889 | 1.523 |
-| `Maze::AStar` | 0.953 | **0.729** | 1.081 | 2.482 | 3.165 |
-| `Etc::LogParser` | 0.474 | 0.398 | **0.270** | 1.002 | 23.826 |
-| `Calculator::Ast` | **0.264** | 0.695 | 0.524 | 0.440 | 0.472 |
-| `Calculator::Interpreter` | **0.439** | 0.840 | 0.730 | 0.921 | 0.767 |
+| `Etc::Sieve` | 1.710 | **1.092** | 1.146 | 1.939 | 1.568 |
+| `Binarytrees::Obj` | **1.037** | 2.224 | 2.331 | 1.069 | 1.564 |
+| `Binarytrees::Arena` | 0.643 | **0.233** | 0.262 | 0.604 | 0.265 |
+| `Matmul::Single` | **1.406** | 4.656 | 4.826 | 4.980 | 4.879 |
+| `Matmul::T4` | 1.755 | **1.190** | 1.225 | 2.995 | 1.299 |
+| `Matmul::T8` | 1.156 | **0.610** | 0.629 | 4.791 | 0.718 |
+| `Matmul::T16` | 1.160 | **0.430** | 0.432 | 4.875 | 0.634 |
+| `Sort::Quick` | 1.988 | **0.981** | 0.982 | 1.285 | 1.111 |
+| `Sort::Merge` | 2.634 | **1.188** | 1.288 | 1.927 | 1.362 |
+| `Sort::Self` | **0.139** | 1.776 | 0.290 | 0.888 | 1.131 |
+| `CLBG::Mandelbrot` | 0.977 | **0.814** | 0.845 | 0.821 | 0.838 |
+| `CLBG::Fannkuchredux` | 1.744 | 1.004 | **0.947** | 1.005 | 0.976 |
+| `CLBG::Spectralnorm` | 1.053 | **0.853** | 0.854 | 0.864 | 0.892 |
+| `CLBG::Nbody` | 1.290 | 1.044 | **0.994** | 1.077 | 1.205 |
+| `Brainfuck::Array` | 2.351 | **1.287** | 2.726 | 1.957 | 1.425 |
+| `Brainfuck::Recursion` | 2.629 | **1.427** | 1.593 | 1.696 | 1.702 |
+| `Etc::GameOfLife` | 2.260 | 1.307 | 1.237 | 2.369 | **0.812** |
+| `Etc::NeuralNet` | 1.372 | **0.957** | 0.963 | 1.049 | 1.841 |
+| `Etc::CacheSimulation` | **0.586** | 0.631 | 0.697 | 1.090 | 1.389 |
+| `Etc::Words` | 1.381 | 1.660 | **0.718** | 0.805 | 1.017 |
+| `Graph::BFS` | 1.222 | **1.024** | 1.411 | 2.465 | 2.061 |
+| `Graph::DFS` | 1.257 | **0.931** | 1.116 | 1.638 | 1.283 |
+| `Graph::AStar` | 1.018 | 0.572 | **0.564** | 1.585 | 3.107 |
+| `Hash::CRC32` | **0.136** | 1.119 | 0.260 | 0.811 | 3.492 |
+| `Hash::SHA256` | **0.610** | 0.887 | 1.021 | 1.001 | 1.014 |
+| `Distance::Jaro` | 1.165 | **0.756** | 0.760 | 1.069 | 0.773 |
+| `Distance::NGram` | 1.155 | 1.415 | **0.411** | 0.656 | 0.776 |
+| `Base64::Encode` | **0.106** | **0.106** | 0.251 | 1.224 | 2.010 |
+| `Base64::Decode` | 0.127 | **0.121** | 0.285 | 1.246 | 1.444 |
+| `Json::Generate` | 0.753 | **0.239** | 0.271 | 0.959 | 1.026 |
+| `Json::ParseDom` | 0.080 | **0.073** | 0.749 | 0.525 | 1.168 |
+| `Json::ParseMapping` | 0.195 | **0.183** | 0.334 | 1.314 | 2.316 |
+| `CSV::Parse` | 1.024 | 1.853 | **0.672** | 3.092 | 2.119 |
+| `Template::Regex` | **0.848** | 1.144 | 3.465 | 1.445 | 6.662 |
+| `Template::Parse` | 1.027 | 0.946 | 1.027 | 2.349 | **0.784** |
+| `Maze::Generator` | 0.703 | **0.409** | 0.713 | 1.443 | 0.921 |
+| `Maze::BFS` | 0.717 | **0.442** | 0.912 | 1.889 | 1.523 |
+| `Maze::AStar` | 1.358 | **0.729** | 1.081 | 2.482 | 3.165 |
+| `Etc::LogParser` | 0.478 | 0.398 | **0.270** | 1.002 | 23.826 |
+| `Calculator::Ast` | 0.571 | 0.695 | 0.524 | **0.440** | 0.472 |
+| `Calculator::Interpreter` | **0.440** | 0.840 | 0.730 | 0.921 | 0.767 |
 | `Compress::BWTEncode` | 0.436 | 0.399 | **0.299** | 1.196 | 1.962 |
-| `Compress::BWTDecode` | 0.693 | **0.360** | 0.391 | 0.594 | 0.607 |
-| `Compress::HuffEncode` | **0.537** | 0.600 | 0.559 | 0.971 | 0.758 |
-| `Compress::HuffDecode` | 0.506 | 0.676 | **0.471** | 0.834 | 1.121 |
-| `Compress::ArithEncode` | 1.111 | 0.863 | **0.805** | 0.948 | 0.840 |
-| `Compress::ArithDecode` | 0.903 | **0.720** | 1.119 | 0.786 | 0.753 |
-| `Compress::LZWEncode` | **0.153** | 1.106 | 0.590 | 1.207 | 1.224 |
-| `Compress::LZWDecode` | **0.187** | 0.473 | 0.541 | 1.063 | 1.631 |
+| `Compress::BWTDecode` | 0.689 | **0.360** | 0.391 | 0.594 | 0.607 |
+| `Compress::HuffEncode` | 0.684 | 0.600 | **0.559** | 0.971 | 0.758 |
+| `Compress::HuffDecode` | 0.764 | 0.676 | **0.471** | 0.834 | 1.121 |
+| `Compress::ArithEncode` | 1.935 | 0.863 | **0.805** | 0.948 | 0.840 |
+| `Compress::ArithDecode` | 1.698 | **0.720** | 1.119 | 0.786 | 0.753 |
+| `Compress::LZWEncode` | **0.154** | 1.106 | 0.590 | 1.207 | 1.224 |
+| `Compress::LZWDecode` | **0.255** | 0.473 | 0.541 | 1.063 | 1.631 |
+
+Notes. The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--final` hoists its pure render; honest `--debug` run 10.86s). Avant's numbers include its mandated bounds, division, and overflow checks; an earlier unchecked Avant measured 40.245s on this scope and is not shown, because the checked language is the language. JSON, Base64, hashing, and regex rows lean on C libraries (yyjson, aklomp, PCRE2) in every language, so they measure bindings as much as languages. † Avant memory is the mean per-task peak RSS; ‡ the other ports run the whole suite in one process, so only a whole-suite peak exists — the two statistics differ and no memory ranking is claimed beyond Avant's own figure. This is not the adopted official number; that remains the 2026-09-27 run.
 
 ## Goals
 
