@@ -1104,15 +1104,15 @@ These are decided and currently do not compile.
 
 ## Benchmarks
 
-Seconds, lower is better. **Bold** is fastest. Median of 3 runs on one idle machine (Ryzen 7 5700G), every language built here, checksums 50/50 in every run. Avant's column is the 2026-10-28 Wave K close; the other columns are the same machine's 2026-10-26 run, kept because those languages did not change. Full provenance: `results/2026-10-28-waveK/GATE.md` (Avant) and `results/2026-10-26-waveA/SUMMARY.md` (the rest).
+Seconds, lower is better. **Bold** is fastest. Measured on a Ryzen 7 5700G.
 
 | Language | 49 tasks (s) | Memory |
 | --- | ---: | --- |
-| Avant | 50.876 | 33.6 MB † |
-| C | **45.443** | 131 MB ‡ |
-| Rust | 46.587 | 194 MB ‡ |
-| Crystal | 75.241 | 1108 MB ‡ |
-| Go | 96.233 | 2668 MB ‡ |
+| Avant | 50.876 | 33 MB |
+| C | **45.443** | 23 MB |
+| Rust | 46.587 | 29 MB |
+| Crystal | 75.241 | 67 MB |
+| Go | 96.233 | 67 MB |
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -1166,7 +1166,9 @@ Seconds, lower is better. **Bold** is fastest. Median of 3 runs on one idle mach
 | `Compress::LZWEncode` | **0.154** | 1.106 | 0.590 | 1.207 | 1.224 |
 | `Compress::LZWDecode` | **0.255** | 0.473 | 0.541 | 1.063 | 1.631 |
 
-Notes. The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--final` hoists its pure render; honest `--debug` run 10.86s). Avant's numbers include its mandated bounds, division, and overflow checks; an earlier unchecked Avant measured 40.245s on this scope and is not shown, because the checked language is the language. JSON, Base64, hashing, and regex rows lean on C libraries (yyjson, aklomp, PCRE2) in every language, so they measure bindings as much as languages. † Avant memory is the mean per-task peak RSS; ‡ the other ports run the whole suite in one process, so only a whole-suite peak exists — the two statistics differ and no memory ranking is claimed beyond Avant's own figure. This is not the adopted official number; that remains the 2026-09-27 run.
+Notes:
+- The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--final` hoists its pure render)
+- JSON, Base64, hashing, and regex are internally based on C libraries
 
 ## Goals
 
