@@ -2510,174 +2510,6 @@ pub fn (codegen_self: MycGen) d_qualify(stmt: Stmt, gvbufs: Array(String), vbufs
   }
 }
 
-pub fn (codegen_self: MycGen) d_emit(stmt: Stmt, outer: Bool, dgidx: Int, gbound_l: Array(Expr), gcand_names: Array(String), gcand_exprs: Array(Expr), dbufs: Array(String), dtbl: String, ddv: String, dnode: Array(Expr)) {
-    codegen_self.emit_expr(gbound_l[dgidx])
-    dbt = codegen_self.new_temp
-    codegen_self.line("LOCAL :${dbt} :i32")
-    codegen_self.line("STORE")
-    codegen_self.line("LOCAL :${dbt}")
-    codegen_self.line("AS :i64")
-    dbound = codegen_self.new_temp
-    codegen_self.line("LOCAL :${dbound} :i64")
-    codegen_self.line("STORE")
-    dsizes: Array(String) = []
-    dvb = 0
-    while dvb < dbufs.size {
-      dbname = dbufs[dvb]
-      dbexpr: Expr? = nil
-      dci = 0
-      while dci < gcand_names.size {
-        if str_eq(gcand_names[dci], dbname) {
-          dbexpr = gcand_exprs[dci]
-        }
-        dci = dci + 1
-      }
-      dbty = ty_int()
-      if dbe = dbexpr {
-        dbty = expr_ty(dbe)
-      }
-      if dbty.is_string {
-        codegen_self.line("LOCAL :${dbname}")
-        codegen_self.line("CALL :avant_str_size")
-        codegen_self.line("AS :i64")
-      } else if dbty.is_buf {
-        codegen_self.line("LOCAL :${dbname}")
-        codegen_self.line("AS :ptr<AvantBuf>")
-        codegen_self.line("DEREF")
-        codegen_self.line("FIELD 1")
-        codegen_self.line("AS :i64")
-      } else {
-        codegen_self.line("LOCAL :${dbname}")
-        codegen_self.line("DEREF")
-        codegen_self.line("FIELD 1")
-        codegen_self.line("AS :i64")
-      }
-      dsz = codegen_self.new_temp
-      codegen_self.line("LOCAL :${dsz} :i64")
-      codegen_self.line("STORE")
-      dsizes.push(dsz)
-      dvb = dvb + 1
-    }
-    dtsz = dsizes[0]
-    dvb = 0
-    while dvb < dbufs.size {
-      if str_eq(dbufs[dvb], dtbl) {
-        dtsz = dsizes[dvb]
-      }
-      dvb = dvb + 1
-    }
-    ddi = codegen_self.new_temp
-    ddok = codegen_self.new_temp
-    codegen_self.line("PUSH 0")
-    codegen_self.line("LOCAL :${ddi} :i32")
-    codegen_self.line("STORE")
-    codegen_self.line("PUSH 1 :i64")
-    codegen_self.line("LOCAL :${ddok} :i64")
-    codegen_self.line("STORE")
-    codegen_self.line("LOOP")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("COND")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("LOCAL :${dtsz}")
-    codegen_self.line("LOCAL :${ddi}")
-    codegen_self.line("AS :i64")
-    codegen_self.line("BINARY :less")
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("BODY")
-    codegen_self.indent = codegen_self.indent + 1
-    dtnode = dnode[0]
-    dtx = clone_expr(dtnode)
-    dtx.ty = dtnode.ty
-    if dlo = dtnode.left {
-      if dlc = dtx.left {
-        dlc.ty = dlo.ty
-      }
-    }
-    if dtr = dtnode.right {
-      dtx.right = clone_expr(dtr)
-      if dtrc = dtx.right {
-        dtrc.ty = dtr.ty
-      }
-    }
-    if dtr2 = dtx.right {
-      dtr2.ident = ddi
-    }
-    codegen_self.emit_expr(dtx)
-    dent = codegen_self.new_temp
-    codegen_self.line("LOCAL :${dent} :i32")
-    codegen_self.line("STORE")
-    codegen_self.line("PUSH 0 :i64")
-    codegen_self.line("LOCAL :${dent}")
-    codegen_self.line("AS :i64")
-    codegen_self.line("BINARY :less")
-    codegen_self.line("IF")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("THEN")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("PUSH 0 :i64")
-    codegen_self.line("LOCAL :${ddok} :i64")
-    codegen_self.line("STORE")
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ENDIF")
-    codegen_self.line("LOCAL :${dbound}")
-    codegen_self.line("LOCAL :${dent}")
-    codegen_self.line("AS :i64")
-    codegen_self.line("BINARY :more_eq")
-    codegen_self.line("IF")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("THEN")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("PUSH 0 :i64")
-    codegen_self.line("LOCAL :${ddok} :i64")
-    codegen_self.line("STORE")
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ENDIF")
-    codegen_self.line("LOCAL :${ddi}")
-    codegen_self.line("PUSH 1")
-    codegen_self.line("BINARY :add")
-    codegen_self.line("LOCAL :${ddi} :i32")
-    codegen_self.line("STORE")
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ENDLOOP")
-    codegen_self.line("PUSH true")
-    codegen_self.line("PUSH 0 :i64")
-    codegen_self.line("LOCAL :${ddv}")
-    codegen_self.line("AS :i64")
-    codegen_self.line("BINARY :more_eq")
-    codegen_self.line("BINARY :and")
-    dvb = 0
-    while dvb < dbufs.size {
-      codegen_self.line("LOCAL :${dsizes[dvb]}")
-      codegen_self.line("PUSH 1 :i64")
-      codegen_self.line("LOCAL :${dbound}")
-      codegen_self.line("BINARY :sub")
-      codegen_self.line("BINARY :less")
-      codegen_self.line("BINARY :and")
-      dvb = dvb + 1
-    }
-    codegen_self.line("LOCAL :${ddok}")
-    codegen_self.line("PUSH 0 :i64")
-    codegen_self.line("BINARY :not_eq")
-    codegen_self.line("BINARY :and")
-    codegen_self.line("IF")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("THEN")
-    codegen_self.indent = codegen_self.indent + 1
-    saved_verd = codegen_self.versioned
-    codegen_self.versioned = dbufs
-    codegen_self.emit_while_loop(stmt, outer)
-    codegen_self.versioned = saved_verd
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ELSE")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.emit_while_loop(stmt, outer)
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ENDIF")
-}
 
 pub fn (codegen_self: MycGen) emit_while_loop(stmt: Stmt, outer: Bool) {
   codegen_self.root_loop = codegen_self.root_loop + 1
@@ -2702,22 +2534,76 @@ pub fn (codegen_self: MycGen) emit_while_loop(stmt: Stmt, outer: Bool) {
   codegen_self.root_loop = codegen_self.root_loop - 1
 }
 
-pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
-  nhoist = codegen_self.begin_loop_hoists(stmt)
-  outer = false
-  if codegen_self.root_loop == 0 {
-    outer = true
-    fresh = buf_new()
-    codegen_self.early_out = fresh
-    codegen_self.early_indent = codegen_self.indent
-    en: Array(String) = []
-    codegen_self.early_names = en
-    emc: Array(String) = []
-    codegen_self.early_myc = emc
+pub class WhilePlan {
+  vbufs: Array(String)
+  vmaxs: Array(Int)
+  cand_names: Array(String)
+  cand_exprs: Array(Expr)
+  vivar: String = ""
+  vle2: Bool = false
+  vcoff2: Int = 0
+  vbound: Expr? = nil
+  gvbufs: Array(String)
+  gvar_l: Array(String)
+  gle_l: Array(Int)
+  gcoff_l: Array(Int)
+  gbound_l: Array(Expr)
+  gok_l: Array(Int)
+  gcand_names: Array(String)
+  gcand_exprs: Array(Expr)
+  gassigned: Array(String)
+  dqbufs: Array(String)
+  dqtbl: Array(String)
+  dqdv: Array(String)
+  dqgidx: Array(Int)
+  dqnode: Array(Expr)
+  verbufs: Array(String)
+  mode: Int = 0
+
+  fn initialize {
+    a: Array(String) = []
+    self.vbufs = a
+    ai: Array(Int) = []
+    self.vmaxs = ai
+    b: Array(String) = []
+    self.cand_names = b
+    ce: Array(Expr) = []
+    self.cand_exprs = ce
+    c: Array(String) = []
+    self.gvbufs = c
+    d: Array(String) = []
+    self.gvar_l = d
+    ei: Array(Int) = []
+    self.gle_l = ei
+    fi: Array(Int) = []
+    self.gcoff_l = fi
+    ge: Array(Expr) = []
+    self.gbound_l = ge
+    gi: Array(Int) = []
+    self.gok_l = gi
+    h: Array(String) = []
+    self.gcand_names = h
+    ie: Array(Expr) = []
+    self.gcand_exprs = ie
+    j: Array(String) = []
+    self.gassigned = j
+    k: Array(String) = []
+    self.dqbufs = k
+    l: Array(String) = []
+    self.dqtbl = l
+    m: Array(String) = []
+    self.dqdv = m
+    ni: Array(Int) = []
+    self.dqgidx = ni
+    oe: Array(Expr) = []
+    self.dqnode = oe
+    q: Array(String) = []
+    self.verbufs = q
   }
-  saved = codegen_self.out
-  body = buf_new()
-  codegen_self.out = body
+}
+
+
+pub fn (codegen_self: MycGen) wplan_analyze(stmt: Stmt): WhilePlan {
   vbufs: Array(String) = []
   vmaxs: Array(Int) = []
   cand_names: Array(String) = []
@@ -3063,376 +2949,595 @@ pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
       }
     }
   }
-  if gvbufs.size > 0 {
-    gbet: Array(String) = []
-    gused_all: Array(String) = []
-    gmin_var: Array(String) = []
-    gmin_off: Array(Int) = []
-    gvb = 0
-    while gvb < gvbufs.size {
-      erk: Array(Int) = []
-      erg: Array(String) = []
-      ero: Array(Int) = []
-      erinv: Array(Expr) = []
-      estate: Array(Int) = [0]
-      esi = 0
-      while esi < stmt.body.size {
-        codegen_self.vscan2_stmt(stmt.body[esi], gvbufs[gvb], gvar_l, gassigned, erk, erg, ero, erinv, estate, false)
-        esi = esi + 1
-      }
-      eri = 0
-      while eri < erk.size {
-        if erk[eri] != 1 {
-          if erk[eri] != 3 {
-            if codegen_self.name_listed(erg[eri], gused_all) {
-            } else {
-              gused_all.push(erg[eri])
-            }
-          }
-        }
-        if erk[eri] == 0 {
-          gmi = 0
-          gfound_min = 0
-          while gmi < gmin_var.size {
-            if str_eq(gmin_var[gmi], erg[eri]) {
-              gfound_min = 1
-              if ero[eri] < gmin_off[gmi] {
-                gmin_off[gmi] = ero[eri]
-              }
-            }
-            gmi = gmi + 1
-          }
-          if gfound_min == 0 {
-            gmin_var.push(erg[eri])
-            gmin_off.push(ero[eri])
-          }
-        }
-        eri = eri + 1
-      }
-      gvb = gvb + 1
-    }
-    ggi = 0
-    while ggi < gvar_l.size {
-      if gok_l[ggi] == 1 {
-        if codegen_self.name_listed(gvar_l[ggi], gused_all) {
-          codegen_self.emit_expr(gbound_l[ggi])
-          gbt = codegen_self.new_temp
-          codegen_self.line("LOCAL :${gbt} :i32")
-          codegen_self.line("STORE")
-          codegen_self.line("PUSH ${gcoff_l[ggi]} :i64")
-          codegen_self.line("LOCAL :${gbt}")
-          codegen_self.line("AS :i64")
-          codegen_self.line("BINARY :sub")
-          gbet_t = codegen_self.new_temp
-          codegen_self.line("LOCAL :${gbet_t} :i64")
-          codegen_self.line("STORE")
-          gbet.push(gbet_t)
-        } else {
-          gbet.push("")
-        }
-      } else {
-        gbet.push("")
-      }
-      ggi = ggi + 1
-    }
-    gmax_l: Array(String) = []
-    ggi2 = 0
-    while ggi2 < gvar_l.size {
-      if gbet[ggi2].size > 0 {
-        gadj2 = 1
-        if gle_l[ggi2] == 1 {
-          gadj2 = 0
-        }
-        codegen_self.line("PUSH ${gadj2} :i64")
-        codegen_self.line("LOCAL :${gbet[ggi2]}")
-        codegen_self.line("BINARY :sub")
-        gmx = codegen_self.new_temp
-        codegen_self.line("LOCAL :${gmx} :i64")
-        codegen_self.line("STORE")
-        gmax_l.push(gmx)
-      } else {
-        gmax_l.push("")
-      }
-      ggi2 = ggi2 + 1
-    }
-    codegen_self.line("PUSH true")
-    gui2 = 0
-    while gui2 < gmin_var.size {
-      codegen_self.line("PUSH 0 :i64")
-      codegen_self.line("LOCAL :${gmin_var[gui2]}")
-      codegen_self.line("AS :i64")
-      codegen_self.line("PUSH ${gmin_off[gui2]} :i64")
-      codegen_self.line("BINARY :add")
-      codegen_self.line("BINARY :more_eq")
-      codegen_self.line("BINARY :and")
-      gui2 = gui2 + 1
-    }
-    gvb = 0
-    while gvb < gvbufs.size {
-      gbname2 = gvbufs[gvb]
-      bexpr2: Expr? = nil
-      gci1 = 0
-      while gci1 < gcand_names.size {
-        if str_eq(gcand_names[gci1], gbname2) {
-          bexpr2 = gcand_exprs[gci1]
-        }
-        gci1 = gci1 + 1
-      }
-      bty2 = ty_int()
-      if be2 = bexpr2 {
-        bty2 = expr_ty(be2)
-      }
-      if bty2.is_string {
-        codegen_self.line("LOCAL :${gbname2}")
-        codegen_self.line("CALL :avant_str_size")
-        codegen_self.line("AS :i64")
-      } else if bty2.is_buf {
-        codegen_self.line("LOCAL :${gbname2}")
-        codegen_self.line("AS :ptr<AvantBuf>")
-        codegen_self.line("DEREF")
-        codegen_self.line("FIELD 1")
-        codegen_self.line("AS :i64")
-      } else {
-        codegen_self.line("LOCAL :${gbname2}")
-        codegen_self.line("DEREF")
-        codegen_self.line("FIELD 1")
-        codegen_self.line("AS :i64")
-      }
-      gsz = codegen_self.new_temp
-      codegen_self.line("LOCAL :${gsz} :i64")
-      codegen_self.line("STORE")
-      erk: Array(Int) = []
-      erg: Array(String) = []
-      ero: Array(Int) = []
-      erinv: Array(Expr) = []
-      estate: Array(Int) = [0]
-      esi = 0
-      while esi < stmt.body.size {
-        codegen_self.vscan2_stmt(stmt.body[esi], gbname2, gvar_l, gassigned, erk, erg, ero, erinv, estate, false)
-        esi = esi + 1
-      }
-      eri = 0
-      while eri < erk.size {
-        givt = ""
-        if erk[eri] == 3 {
-          bmax3 = ero[eri]
-          if bmax3 < 0 {
-            bmo3: Array(Int) = []
-            if codegen_self.g_byte_name_bound(stmt, erg[eri], gbname2, bmo3) {
-              bmax3 = bmo3[0]
-            }
-          }
-          if bmax3 < 0 {
-            codegen_self.line("PUSH false")
-            codegen_self.line("BINARY :and")
-          } else {
-            codegen_self.line("LOCAL :${gsz}")
-            codegen_self.line("PUSH ${bmax3} :i64")
-            codegen_self.line("BINARY :less")
-            codegen_self.line("BINARY :and")
-          }
-        } else if erk[eri] == 1 {
-          codegen_self.emit_expr(erinv[eri])
-          codegen_self.line("AS :i64")
-          gvt = codegen_self.new_temp
-          codegen_self.line("LOCAL :${gvt} :i64")
-          codegen_self.line("STORE")
-          codegen_self.line("LOCAL :${gsz}")
-          codegen_self.line("LOCAL :${gvt}")
-          codegen_self.line("BINARY :less")
-          codegen_self.line("BINARY :and")
-          codegen_self.line("PUSH 0 :i64")
-          codegen_self.line("LOCAL :${gvt}")
-          codegen_self.line("BINARY :more_eq")
-          codegen_self.line("BINARY :and")
-        } else {
-          if erk[eri] == 2 {
-            codegen_self.emit_expr(erinv[eri])
-            codegen_self.line("AS :i64")
-            givt = codegen_self.new_temp
-            codegen_self.line("LOCAL :${givt} :i64")
-            codegen_self.line("STORE")
-            codegen_self.line("PUSH 0 :i64")
-            codegen_self.line("LOCAL :${givt}")
-            codegen_self.line("LOCAL :${erg[eri]}")
-            codegen_self.line("AS :i64")
-            codegen_self.line("BINARY :add")
-            codegen_self.line("PUSH ${ero[eri]} :i64")
-            codegen_self.line("BINARY :add")
-            codegen_self.line("BINARY :more_eq")
-            codegen_self.line("BINARY :and")
-          }
-          ggj = 0
-          while ggj < gvar_l.size {
-            if str_eq(gvar_l[ggj], erg[eri]) {
-              if gok_l[ggj] == 1 {
-                codegen_self.line("LOCAL :${gsz}")
-                if erk[eri] == 2 {
-                  codegen_self.line("LOCAL :${givt}")
-                  codegen_self.line("LOCAL :${gmax_l[ggj]}")
-                  codegen_self.line("BINARY :add")
-                } else {
-                  codegen_self.line("LOCAL :${gmax_l[ggj]}")
-                }
-                codegen_self.line("PUSH ${ero[eri]} :i64")
-                codegen_self.line("BINARY :add")
-                codegen_self.line("BINARY :less")
-                codegen_self.line("BINARY :and")
-              }
-            }
-            ggj = ggj + 1
-          }
-        }
-        eri = eri + 1
-      }
-      gvb = gvb + 1
-    }
-    codegen_self.line("IF")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.line("THEN")
-    codegen_self.indent = codegen_self.indent + 1
-    saved_ver2 = codegen_self.versioned
-    codegen_self.versioned = gvbufs
-    codegen_self.emit_while_loop(stmt, outer)
-    codegen_self.versioned = saved_ver2
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ELSE")
-    codegen_self.indent = codegen_self.indent + 1
-    codegen_self.emit_while_loop(stmt, outer)
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.indent = codegen_self.indent - 1
-    codegen_self.line("ENDIF")
-    gdone = true
-  }
   dqbufs: Array(String) = []
   dqtbl: Array(String) = []
   dqdv: Array(String) = []
   dqgidx: Array(Int) = []
   dqnode: Array(Expr) = []
   codegen_self.d_qualify(stmt, gvbufs, vbufs, gvar_l, gle_l, gok_l, gbound_l, gcand_names, gcand_exprs, dqbufs, dqtbl, dqdv, dqgidx, dqnode)
-  if gdone {
+  plan = WhilePlan.new
+  plan.vbufs = vbufs
+  plan.vmaxs = vmaxs
+  plan.cand_names = cand_names
+  plan.cand_exprs = cand_exprs
+  plan.vivar = vivar
+  plan.vle2 = vle2
+  plan.vcoff2 = vcoff2
+  plan.vbound = vbound
+  plan.gvbufs = gvbufs
+  plan.gvar_l = gvar_l
+  plan.gle_l = gle_l
+  plan.gcoff_l = gcoff_l
+  plan.gbound_l = gbound_l
+  plan.gok_l = gok_l
+  plan.gcand_names = gcand_names
+  plan.gcand_exprs = gcand_exprs
+  plan.gassigned = gassigned
+  plan.dqbufs = dqbufs
+  plan.dqtbl = dqtbl
+  plan.dqdv = dqdv
+  plan.dqgidx = dqgidx
+  plan.dqnode = dqnode
+  if gvbufs.size > 0 {
+    plan.mode = 1
+    plan.verbufs = gvbufs
   } else if dqbufs.size > 0 {
-    codegen_self.d_emit(stmt, outer, dqgidx[0], gbound_l, gcand_names, gcand_exprs, dqbufs, dqtbl[0], dqdv[0], dqnode)
+    plan.mode = 2
+    plan.verbufs = dqbufs
   } else if vbufs.size > 0 {
-    if vb = vbound {
-      codegen_self.emit_expr(vb)
-      bt2 = codegen_self.new_temp
-      codegen_self.line("LOCAL :${bt2} :i32")
-      codegen_self.line("STORE")
-      codegen_self.line("PUSH ${vcoff2} :i64")
-      codegen_self.line("LOCAL :${bt2}")
-      codegen_self.line("AS :i64")
-      codegen_self.line("BINARY :sub")
-      bet = codegen_self.new_temp
-      codegen_self.line("LOCAL :${bet} :i64")
-      codegen_self.line("STORE")
-      adj = 1
-      if vle2 {
-        adj = 0
-      }
-      lastt = ""
-      maxt = ""
-      if stmt.vstep > 0 {
-        if(stmt.vle && vle2) ||(!stmt.vle && !vle2) {
-          if stmt.vcoff == vcoff2 {
-            sub_amt = adj + stmt.vstart
-            codegen_self.line("PUSH ${sub_amt} :i64")
-            codegen_self.line("LOCAL :${bet}")
-            codegen_self.line("BINARY :sub")
-            t2 = codegen_self.new_temp
-            codegen_self.line("LOCAL :${t2} :i64")
-            codegen_self.line("STORE")
-            codegen_self.line("PUSH ${stmt.vstep} :i64")
-            codegen_self.line("LOCAL :${t2}")
-            codegen_self.line("BINARY :div")
-            t3 = codegen_self.new_temp
-            codegen_self.line("LOCAL :${t3} :i64")
-            codegen_self.line("STORE")
-            codegen_self.line("PUSH ${stmt.vstep} :i64")
-            codegen_self.line("LOCAL :${t3}")
-            codegen_self.line("BINARY :mul")
-            codegen_self.line("PUSH ${stmt.vstart} :i64")
-            codegen_self.line("BINARY :add")
-            lastt = codegen_self.new_temp
-            codegen_self.line("LOCAL :${lastt} :i64")
-            codegen_self.line("STORE")
-          }
-        }
-      }
-      if lastt.size == 0 {
-        codegen_self.line("PUSH ${adj} :i64")
-        codegen_self.line("LOCAL :${bet}")
-        codegen_self.line("BINARY :sub")
-        maxt = codegen_self.new_temp
-        codegen_self.line("LOCAL :${maxt} :i64")
-        codegen_self.line("STORE")
-      }
-      codegen_self.line("PUSH true")
-      vi = 0
-      while vi < vbufs.size {
-        bname = vbufs[vi]
-        bexpr: Expr? = nil
-        ci1 = 0
-        while ci1 < cand_names.size {
-          if str_eq(cand_names[ci1], bname) {
-            bexpr = cand_exprs[ci1]
-          }
-          ci1 = ci1 + 1
-        }
-        bty = ty_int()
-        if be = bexpr {
-          bty = expr_ty(be)
-        }
-        if bty.is_string {
-          codegen_self.line("LOCAL :${bname}")
-          codegen_self.line("CALL :avant_str_size")
-          codegen_self.line("AS :i64")
-        } else if bty.is_buf {
-          codegen_self.line("LOCAL :${bname}")
-          codegen_self.line("AS :ptr<AvantBuf>")
-          codegen_self.line("DEREF")
-          codegen_self.line("FIELD 1")
-          codegen_self.line("AS :i64")
-        } else {
-          codegen_self.line("LOCAL :${bname}")
-          codegen_self.line("DEREF")
-          codegen_self.line("FIELD 1")
-          codegen_self.line("AS :i64")
-        }
-        if lastt.size > 0 {
-          codegen_self.line("LOCAL :${lastt}")
-        } else {
-          codegen_self.line("LOCAL :${maxt}")
-        }
-        codegen_self.line("PUSH ${vmaxs[vi]} :i64")
-        codegen_self.line("BINARY :add")
-        codegen_self.line("BINARY :less")
-        codegen_self.line("BINARY :and")
-        vi = vi + 1
-      }
-      codegen_self.line("IF")
-      codegen_self.indent = codegen_self.indent + 1
-      codegen_self.line("THEN")
-      codegen_self.indent = codegen_self.indent + 1
-      saved_ver = codegen_self.versioned
-      codegen_self.versioned = vbufs
-      codegen_self.emit_while_loop(stmt, outer)
-      codegen_self.versioned = saved_ver
-      codegen_self.indent = codegen_self.indent - 1
-      codegen_self.line("ELSE")
-      codegen_self.indent = codegen_self.indent + 1
-      codegen_self.emit_while_loop(stmt, outer)
-      codegen_self.indent = codegen_self.indent - 1
-      codegen_self.indent = codegen_self.indent - 1
-      codegen_self.line("ENDIF")
-    } else {
-      codegen_self.emit_while_loop(stmt, outer)
+    if vbq = vbound {
+      plan.mode = 3
+      plan.verbufs = vbufs
     }
   } else if codegen_self.should_split_while(stmt) {
-    stable = codegen_self.emit_scalar_hoists_are_stable
-    codegen_self.line("LOCAL :${stable}")
+    plan.mode = 4
+  }
+  plan
+}
+
+pub fn (codegen_self: MycGen) wtest_general(stmt: Stmt, plan: WhilePlan) {
+  gvbufs = plan.gvbufs
+  gvar_l = plan.gvar_l
+  gle_l = plan.gle_l
+  gcoff_l = plan.gcoff_l
+  gbound_l = plan.gbound_l
+  gok_l = plan.gok_l
+  gcand_names = plan.gcand_names
+  gcand_exprs = plan.gcand_exprs
+  gbet: Array(String) = []
+  gused_all: Array(String) = []
+  gmin_var: Array(String) = []
+  gmin_off: Array(Int) = []
+  gvb = 0
+  while gvb < gvbufs.size {
+    erk: Array(Int) = []
+    erg: Array(String) = []
+    ero: Array(Int) = []
+    erinv: Array(Expr) = []
+    estate: Array(Int) = [0]
+    esi = 0
+    while esi < stmt.body.size {
+      codegen_self.vscan2_stmt(stmt.body[esi], gvbufs[gvb], gvar_l, gassigned, erk, erg, ero, erinv, estate, false)
+      esi = esi + 1
+    }
+    eri = 0
+    while eri < erk.size {
+      if erk[eri] != 1 {
+        if erk[eri] != 3 {
+          if codegen_self.name_listed(erg[eri], gused_all) {
+          } else {
+            gused_all.push(erg[eri])
+          }
+        }
+      }
+      if erk[eri] == 0 {
+        gmi = 0
+        gfound_min = 0
+        while gmi < gmin_var.size {
+          if str_eq(gmin_var[gmi], erg[eri]) {
+            gfound_min = 1
+            if ero[eri] < gmin_off[gmi] {
+              gmin_off[gmi] = ero[eri]
+            }
+          }
+          gmi = gmi + 1
+        }
+        if gfound_min == 0 {
+          gmin_var.push(erg[eri])
+          gmin_off.push(ero[eri])
+        }
+      }
+      eri = eri + 1
+    }
+    gvb = gvb + 1
+  }
+  ggi = 0
+  while ggi < gvar_l.size {
+    if gok_l[ggi] == 1 {
+      if codegen_self.name_listed(gvar_l[ggi], gused_all) {
+        codegen_self.emit_expr(gbound_l[ggi])
+        gbt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${gbt} :i32")
+        codegen_self.line("STORE")
+        codegen_self.line("PUSH ${gcoff_l[ggi]} :i64")
+        codegen_self.line("LOCAL :${gbt}")
+        codegen_self.line("AS :i64")
+        codegen_self.line("BINARY :sub")
+        gbet_t = codegen_self.new_temp
+        codegen_self.line("LOCAL :${gbet_t} :i64")
+        codegen_self.line("STORE")
+        gbet.push(gbet_t)
+      } else {
+        gbet.push("")
+      }
+    } else {
+      gbet.push("")
+    }
+    ggi = ggi + 1
+  }
+  gmax_l: Array(String) = []
+  ggi2 = 0
+  while ggi2 < gvar_l.size {
+    if gbet[ggi2].size > 0 {
+      gadj2 = 1
+      if gle_l[ggi2] == 1 {
+        gadj2 = 0
+      }
+      codegen_self.line("PUSH ${gadj2} :i64")
+      codegen_self.line("LOCAL :${gbet[ggi2]}")
+      codegen_self.line("BINARY :sub")
+      gmx = codegen_self.new_temp
+      codegen_self.line("LOCAL :${gmx} :i64")
+      codegen_self.line("STORE")
+      gmax_l.push(gmx)
+    } else {
+      gmax_l.push("")
+    }
+    ggi2 = ggi2 + 1
+  }
+  codegen_self.line("PUSH true")
+  gui2 = 0
+  while gui2 < gmin_var.size {
+    codegen_self.line("PUSH 0 :i64")
+    codegen_self.line("LOCAL :${gmin_var[gui2]}")
+    codegen_self.line("AS :i64")
+    codegen_self.line("PUSH ${gmin_off[gui2]} :i64")
+    codegen_self.line("BINARY :add")
+    codegen_self.line("BINARY :more_eq")
+    codegen_self.line("BINARY :and")
+    gui2 = gui2 + 1
+  }
+  gvb = 0
+  while gvb < gvbufs.size {
+    gbname2 = gvbufs[gvb]
+    bexpr2: Expr? = nil
+    gci1 = 0
+    while gci1 < gcand_names.size {
+      if str_eq(gcand_names[gci1], gbname2) {
+        bexpr2 = gcand_exprs[gci1]
+      }
+      gci1 = gci1 + 1
+    }
+    bty2 = ty_int()
+    if be2 = bexpr2 {
+      bty2 = expr_ty(be2)
+    }
+    if bty2.is_string {
+      codegen_self.line("LOCAL :${gbname2}")
+      codegen_self.line("CALL :avant_str_size")
+      codegen_self.line("AS :i64")
+    } else if bty2.is_buf {
+      codegen_self.line("LOCAL :${gbname2}")
+      codegen_self.line("AS :ptr<AvantBuf>")
+      codegen_self.line("DEREF")
+      codegen_self.line("FIELD 1")
+      codegen_self.line("AS :i64")
+    } else {
+      codegen_self.line("LOCAL :${gbname2}")
+      codegen_self.line("DEREF")
+      codegen_self.line("FIELD 1")
+      codegen_self.line("AS :i64")
+    }
+    gsz = codegen_self.new_temp
+    codegen_self.line("LOCAL :${gsz} :i64")
+    codegen_self.line("STORE")
+    erk: Array(Int) = []
+    erg: Array(String) = []
+    ero: Array(Int) = []
+    erinv: Array(Expr) = []
+    estate: Array(Int) = [0]
+    esi = 0
+    while esi < stmt.body.size {
+      codegen_self.vscan2_stmt(stmt.body[esi], gbname2, gvar_l, gassigned, erk, erg, ero, erinv, estate, false)
+      esi = esi + 1
+    }
+    eri = 0
+    while eri < erk.size {
+      givt = ""
+      if erk[eri] == 3 {
+        bmax3 = ero[eri]
+        if bmax3 < 0 {
+          bmo3: Array(Int) = []
+          if codegen_self.g_byte_name_bound(stmt, erg[eri], gbname2, bmo3) {
+            bmax3 = bmo3[0]
+          }
+        }
+        if bmax3 < 0 {
+          codegen_self.line("PUSH false")
+          codegen_self.line("BINARY :and")
+        } else {
+          codegen_self.line("LOCAL :${gsz}")
+          codegen_self.line("PUSH ${bmax3} :i64")
+          codegen_self.line("BINARY :less")
+          codegen_self.line("BINARY :and")
+        }
+      } else if erk[eri] == 1 {
+        codegen_self.emit_expr(erinv[eri])
+        codegen_self.line("AS :i64")
+        gvt = codegen_self.new_temp
+        codegen_self.line("LOCAL :${gvt} :i64")
+        codegen_self.line("STORE")
+        codegen_self.line("LOCAL :${gsz}")
+        codegen_self.line("LOCAL :${gvt}")
+        codegen_self.line("BINARY :less")
+        codegen_self.line("BINARY :and")
+        codegen_self.line("PUSH 0 :i64")
+        codegen_self.line("LOCAL :${gvt}")
+        codegen_self.line("BINARY :more_eq")
+        codegen_self.line("BINARY :and")
+      } else {
+        if erk[eri] == 2 {
+          codegen_self.emit_expr(erinv[eri])
+          codegen_self.line("AS :i64")
+          givt = codegen_self.new_temp
+          codegen_self.line("LOCAL :${givt} :i64")
+          codegen_self.line("STORE")
+          codegen_self.line("PUSH 0 :i64")
+          codegen_self.line("LOCAL :${givt}")
+          codegen_self.line("LOCAL :${erg[eri]}")
+          codegen_self.line("AS :i64")
+          codegen_self.line("BINARY :add")
+          codegen_self.line("PUSH ${ero[eri]} :i64")
+          codegen_self.line("BINARY :add")
+          codegen_self.line("BINARY :more_eq")
+          codegen_self.line("BINARY :and")
+        }
+        ggj = 0
+        while ggj < gvar_l.size {
+          if str_eq(gvar_l[ggj], erg[eri]) {
+            if gok_l[ggj] == 1 {
+              codegen_self.line("LOCAL :${gsz}")
+              if erk[eri] == 2 {
+                codegen_self.line("LOCAL :${givt}")
+                codegen_self.line("LOCAL :${gmax_l[ggj]}")
+                codegen_self.line("BINARY :add")
+              } else {
+                codegen_self.line("LOCAL :${gmax_l[ggj]}")
+              }
+              codegen_self.line("PUSH ${ero[eri]} :i64")
+              codegen_self.line("BINARY :add")
+              codegen_self.line("BINARY :less")
+              codegen_self.line("BINARY :and")
+            }
+          }
+          ggj = ggj + 1
+        }
+      }
+      eri = eri + 1
+    }
+    gvb = gvb + 1
+  }
+}
+
+pub fn (codegen_self: MycGen) wtest_simple(stmt: Stmt, plan: WhilePlan) {
+  vbufs = plan.vbufs
+  vmaxs = plan.vmaxs
+  cand_names = plan.cand_names
+  cand_exprs = plan.cand_exprs
+  vbound = plan.vbound
+  vcoff2 = plan.vcoff2
+  vle2 = plan.vle2
+  if vb = vbound {
+    codegen_self.emit_expr(vb)
+    bt2 = codegen_self.new_temp
+    codegen_self.line("LOCAL :${bt2} :i32")
+    codegen_self.line("STORE")
+    codegen_self.line("PUSH ${vcoff2} :i64")
+    codegen_self.line("LOCAL :${bt2}")
+    codegen_self.line("AS :i64")
+    codegen_self.line("BINARY :sub")
+    bet = codegen_self.new_temp
+    codegen_self.line("LOCAL :${bet} :i64")
+    codegen_self.line("STORE")
+    adj = 1
+    if vle2 {
+      adj = 0
+    }
+    lastt = ""
+    maxt = ""
+    if stmt.vstep > 0 {
+      if(stmt.vle && vle2) ||(!stmt.vle && !vle2) {
+        if stmt.vcoff == vcoff2 {
+          sub_amt = adj + stmt.vstart
+          codegen_self.line("PUSH ${sub_amt} :i64")
+          codegen_self.line("LOCAL :${bet}")
+          codegen_self.line("BINARY :sub")
+          t2 = codegen_self.new_temp
+          codegen_self.line("LOCAL :${t2} :i64")
+          codegen_self.line("STORE")
+          codegen_self.line("PUSH ${stmt.vstep} :i64")
+          codegen_self.line("LOCAL :${t2}")
+          codegen_self.line("BINARY :div")
+          t3 = codegen_self.new_temp
+          codegen_self.line("LOCAL :${t3} :i64")
+          codegen_self.line("STORE")
+          codegen_self.line("PUSH ${stmt.vstep} :i64")
+          codegen_self.line("LOCAL :${t3}")
+          codegen_self.line("BINARY :mul")
+          codegen_self.line("PUSH ${stmt.vstart} :i64")
+          codegen_self.line("BINARY :add")
+          lastt = codegen_self.new_temp
+          codegen_self.line("LOCAL :${lastt} :i64")
+          codegen_self.line("STORE")
+        }
+      }
+    }
+    if lastt.size == 0 {
+      codegen_self.line("PUSH ${adj} :i64")
+      codegen_self.line("LOCAL :${bet}")
+      codegen_self.line("BINARY :sub")
+      maxt = codegen_self.new_temp
+      codegen_self.line("LOCAL :${maxt} :i64")
+      codegen_self.line("STORE")
+    }
+    codegen_self.line("PUSH true")
+    vi = 0
+    while vi < vbufs.size {
+      bname = vbufs[vi]
+      bexpr: Expr? = nil
+      ci1 = 0
+      while ci1 < cand_names.size {
+        if str_eq(cand_names[ci1], bname) {
+          bexpr = cand_exprs[ci1]
+        }
+        ci1 = ci1 + 1
+      }
+      bty = ty_int()
+      if be = bexpr {
+        bty = expr_ty(be)
+      }
+      if bty.is_string {
+        codegen_self.line("LOCAL :${bname}")
+        codegen_self.line("CALL :avant_str_size")
+        codegen_self.line("AS :i64")
+      } else if bty.is_buf {
+        codegen_self.line("LOCAL :${bname}")
+        codegen_self.line("AS :ptr<AvantBuf>")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 1")
+        codegen_self.line("AS :i64")
+      } else {
+        codegen_self.line("LOCAL :${bname}")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 1")
+        codegen_self.line("AS :i64")
+      }
+      if lastt.size > 0 {
+        codegen_self.line("LOCAL :${lastt}")
+      } else {
+        codegen_self.line("LOCAL :${maxt}")
+      }
+      codegen_self.line("PUSH ${vmaxs[vi]} :i64")
+      codegen_self.line("BINARY :add")
+      codegen_self.line("BINARY :less")
+      codegen_self.line("BINARY :and")
+      vi = vi + 1
+    }
+  }
+}
+
+pub fn (codegen_self: MycGen) wtest_dispatch(stmt: Stmt, plan: WhilePlan) {
+  dgidx = plan.dqgidx[0]
+  gbound_l = plan.gbound_l
+  gcand_names = plan.gcand_names
+  gcand_exprs = plan.gcand_exprs
+  dbufs = plan.dqbufs
+  dtbl = plan.dqtbl[0]
+  ddv = plan.dqdv[0]
+  dnode = plan.dqnode
+    codegen_self.emit_expr(gbound_l[dgidx])
+    dbt = codegen_self.new_temp
+    codegen_self.line("LOCAL :${dbt} :i32")
+    codegen_self.line("STORE")
+    codegen_self.line("LOCAL :${dbt}")
+    codegen_self.line("AS :i64")
+    dbound = codegen_self.new_temp
+    codegen_self.line("LOCAL :${dbound} :i64")
+    codegen_self.line("STORE")
+    dsizes: Array(String) = []
+    dvb = 0
+    while dvb < dbufs.size {
+      dbname = dbufs[dvb]
+      dbexpr: Expr? = nil
+      dci = 0
+      while dci < gcand_names.size {
+        if str_eq(gcand_names[dci], dbname) {
+          dbexpr = gcand_exprs[dci]
+        }
+        dci = dci + 1
+      }
+      dbty = ty_int()
+      if dbe = dbexpr {
+        dbty = expr_ty(dbe)
+      }
+      if dbty.is_string {
+        codegen_self.line("LOCAL :${dbname}")
+        codegen_self.line("CALL :avant_str_size")
+        codegen_self.line("AS :i64")
+      } else if dbty.is_buf {
+        codegen_self.line("LOCAL :${dbname}")
+        codegen_self.line("AS :ptr<AvantBuf>")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 1")
+        codegen_self.line("AS :i64")
+      } else {
+        codegen_self.line("LOCAL :${dbname}")
+        codegen_self.line("DEREF")
+        codegen_self.line("FIELD 1")
+        codegen_self.line("AS :i64")
+      }
+      dsz = codegen_self.new_temp
+      codegen_self.line("LOCAL :${dsz} :i64")
+      codegen_self.line("STORE")
+      dsizes.push(dsz)
+      dvb = dvb + 1
+    }
+    dtsz = dsizes[0]
+    dvb = 0
+    while dvb < dbufs.size {
+      if str_eq(dbufs[dvb], dtbl) {
+        dtsz = dsizes[dvb]
+      }
+      dvb = dvb + 1
+    }
+    ddi = codegen_self.new_temp
+    ddok = codegen_self.new_temp
     codegen_self.line("PUSH 0")
+    codegen_self.line("LOCAL :${ddi} :i32")
+    codegen_self.line("STORE")
+    codegen_self.line("PUSH 1 :i64")
+    codegen_self.line("LOCAL :${ddok} :i64")
+    codegen_self.line("STORE")
+    codegen_self.line("LOOP")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("COND")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("LOCAL :${dtsz}")
+    codegen_self.line("LOCAL :${ddi}")
+    codegen_self.line("AS :i64")
+    codegen_self.line("BINARY :less")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("BODY")
+    codegen_self.indent = codegen_self.indent + 1
+    dtnode = dnode[0]
+    dtx = clone_expr(dtnode)
+    dtx.ty = dtnode.ty
+    if dlo = dtnode.left {
+      if dlc = dtx.left {
+        dlc.ty = dlo.ty
+      }
+    }
+    if dtr = dtnode.right {
+      dtx.right = clone_expr(dtr)
+      if dtrc = dtx.right {
+        dtrc.ty = dtr.ty
+      }
+    }
+    if dtr2 = dtx.right {
+      dtr2.ident = ddi
+    }
+    codegen_self.emit_expr(dtx)
+    dent = codegen_self.new_temp
+    codegen_self.line("LOCAL :${dent} :i32")
+    codegen_self.line("STORE")
+    codegen_self.line("PUSH 0 :i64")
+    codegen_self.line("LOCAL :${dent}")
+    codegen_self.line("AS :i64")
+    codegen_self.line("BINARY :less")
+    codegen_self.line("IF")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("THEN")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("PUSH 0 :i64")
+    codegen_self.line("LOCAL :${ddok} :i64")
+    codegen_self.line("STORE")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDIF")
+    codegen_self.line("LOCAL :${dbound}")
+    codegen_self.line("LOCAL :${dent}")
+    codegen_self.line("AS :i64")
+    codegen_self.line("BINARY :more_eq")
+    codegen_self.line("IF")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("THEN")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("PUSH 0 :i64")
+    codegen_self.line("LOCAL :${ddok} :i64")
+    codegen_self.line("STORE")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDIF")
+    codegen_self.line("LOCAL :${ddi}")
+    codegen_self.line("PUSH 1")
+    codegen_self.line("BINARY :add")
+    codegen_self.line("LOCAL :${ddi} :i32")
+    codegen_self.line("STORE")
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDLOOP")
+    codegen_self.line("PUSH true")
+    codegen_self.line("PUSH 0 :i64")
+    codegen_self.line("LOCAL :${ddv}")
+    codegen_self.line("AS :i64")
+    codegen_self.line("BINARY :more_eq")
+    codegen_self.line("BINARY :and")
+    dvb = 0
+    while dvb < dbufs.size {
+      codegen_self.line("LOCAL :${dsizes[dvb]}")
+      codegen_self.line("PUSH 1 :i64")
+      codegen_self.line("LOCAL :${dbound}")
+      codegen_self.line("BINARY :sub")
+      codegen_self.line("BINARY :less")
+      codegen_self.line("BINARY :and")
+      dvb = dvb + 1
+    }
+    codegen_self.line("LOCAL :${ddok}")
+    codegen_self.line("PUSH 0 :i64")
     codegen_self.line("BINARY :not_eq")
+    codegen_self.line("BINARY :and")
+}
+
+pub fn (codegen_self: MycGen) wtest_split(stmt: Stmt, plan: WhilePlan) {
+  stable = codegen_self.emit_scalar_hoists_are_stable
+  codegen_self.line("LOCAL :${stable}")
+  codegen_self.line("PUSH 0")
+  codegen_self.line("BINARY :not_eq")
+}
+
+pub fn (codegen_self: MycGen) wplan_emit_test(stmt: Stmt, plan: WhilePlan) {
+  if plan.mode == 1 {
+    codegen_self.wtest_general(stmt, plan)
+  } else if plan.mode == 2 {
+    codegen_self.wtest_dispatch(stmt, plan)
+  } else if plan.mode == 3 {
+    codegen_self.wtest_simple(stmt, plan)
+  } else if plan.mode == 4 {
+    codegen_self.wtest_split(stmt, plan)
+  }
+}
+
+pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
+  nhoist = codegen_self.begin_loop_hoists(stmt)
+  outer = false
+  if codegen_self.root_loop == 0 {
+    outer = true
+    fresh = buf_new()
+    codegen_self.early_out = fresh
+    codegen_self.early_indent = codegen_self.indent
+    en: Array(String) = []
+    codegen_self.early_names = en
+    emc: Array(String) = []
+    codegen_self.early_myc = emc
+  }
+  saved = codegen_self.out
+  body = buf_new()
+  codegen_self.out = body
+  plan = codegen_self.wplan_analyze(stmt)
+  codegen_self.wplan_emit_test(stmt, plan)
+  if plan.mode == 0 {
+    codegen_self.emit_while_loop(stmt, outer)
+  } else if plan.mode == 4 {
     codegen_self.line("IF")
     codegen_self.indent = codegen_self.indent + 1
     codegen_self.line("THEN")
@@ -3449,7 +3554,21 @@ pub fn (codegen_self: MycGen) emit_while(stmt: Stmt) {
     codegen_self.indent = codegen_self.indent - 1
     codegen_self.line("ENDIF")
   } else {
+    codegen_self.line("IF")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.line("THEN")
+    codegen_self.indent = codegen_self.indent + 1
+    saved_ver = codegen_self.versioned
+    codegen_self.versioned = plan.verbufs
     codegen_self.emit_while_loop(stmt, outer)
+    codegen_self.versioned = saved_ver
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ELSE")
+    codegen_self.indent = codegen_self.indent + 1
+    codegen_self.emit_while_loop(stmt, outer)
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.indent = codegen_self.indent - 1
+    codegen_self.line("ENDIF")
   }
   codegen_self.end_loop_hoists(nhoist)
   codegen_self.out = saved
