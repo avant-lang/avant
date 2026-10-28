@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.17.0 - 2026-10-27
 
 ### Added
 * Test runner parallelism: `AVANT_TEST_JOBS=N` runs the suite across parallel shard processes (`AVANT_TEST_CASES` selects cases, `AVANT_TEST_SHARD=i/n` runs one shard); isolated cases still run alone, and each shard writes its own JUnit file.
