@@ -1,7 +1,12 @@
 # The published seed (AVANT_SEED_VERSION below) → B, then native suite on B. Required gate.
 #
 # The seed is the published asset avant-linux-x86_64.tar.gz. `avant` in
-# that asset compiles compiler/main.av into B with coverage on.
+# that asset compiles compiler/main.av into B with coverage on. Per-PR
+# coverage is a deliberate, accepted cost: an instrumented B makes
+# every child compile in the suite pay for coverage (suite 365s
+# against 159-183s uninstrumented on the same runner image), and
+# Codecov needs the master-push data as its diff baseline, so this
+# job runs on pull requests and on pushes to master alike.
 # `myc-llvm` is the safepoints release (SAFEPOINTS_VERSION below), checked by sha256.
 # This job does not install Crystal and does not compile myc-llvm.
 # AVANT_MYC_LLVM points at the extracted backend.
@@ -15,9 +20,12 @@
 # with this same safepoints myc-llvm). Since Wave G the Avant
 # asset bundles myc-llvm beside avant; this job still uses its own
 # hash-pinned backend through AVANT_MYC_LLVM.
-# `native` also writes junit.xml and lcov.info (soft Codecov; not the merge gate).
-# Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is quiet anyway so
-# `run FILE.av` stdout stays the program. A `--coverage` fixture still prints.
+# `native` also writes junit.xml and lcov.info (soft Codecov; not the
+# merge gate). Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is
+# quiet anyway so `run FILE.av` stdout stays the program. A
+# `--coverage` fixture still prints. The suite runs sequentially
+# here (no AVANT_TEST_JOBS): parallel shard processes would run
+# several instrumented compilers against one shared coverage map.
 # Push is `master` only so a same-repo PR is not a second identical run
 # (`pull_request` already covers the branch; tags never hit this workflow).
 
@@ -94,7 +102,7 @@ jobs:
           AVANT_COVERAGE_MAP: ${{ github.workspace }}/coverage.map
         run: |
           set -euo pipefail
-          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-av-b
+          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-av-b --debug
 
       # Do not inherit AVANT_COVERAGE here. B would compile hello with
       # coverage and overwrite coverage.map, and the suite would then

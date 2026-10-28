@@ -625,25 +625,14 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
   split
 }
 
-pub fn myc_wants_final: Bool {
-  if v = env_get("AVANT_MYC_FINAL") {
-    if str_eq(v, "1") {
-      return true
-    }
+pub fn verb_codegen(codegen: String, verb: String): String {
+  if codegen.size > 0 {
+    return codegen
   }
-  false
-}
-
-pub fn myc_wants_debug: Bool {
-  if myc_wants_final() {
-    return false
+  if str_eq(verb, "compile") {
+    return "default"
   }
-  if v = env_get("AVANT_MYC_DEBUG") {
-    if str_eq(v, "0") {
-      return false
-    }
-  }
-  true
+  "debug"
 }
 
 pub fn myc_mode(codegen: String): String {
@@ -656,13 +645,7 @@ pub fn myc_mode(codegen: String): String {
   if str_eq(codegen, "default") {
     return "default"
   }
-  if myc_wants_final() {
-    return "final"
-  }
-  if myc_wants_debug() {
-    return "debug"
-  }
-  "default"
+  "debug"
 }
 
 pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String, codegen: String): Int {

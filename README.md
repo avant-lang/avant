@@ -18,16 +18,29 @@ Save it as `hello.av`. That is a complete program: `fn main` is the entry point,
 
 Today, on Linux x86_64:
 
-1. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it.
-2. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
-3. Optional but recommended: put the binaries on your `PATH` — `~/.local/bin` needs no sudo (make sure it is on your `PATH`), or use `/usr/local/bin` for a system-wide install.
+1. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
+2. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it. The archive holds two binaries side by side: `avant` and its `myc-llvm` backend.
+3. Install both binaries into `~/.local/bin` (recommended: it needs no sudo, and keeping `avant` and `myc-llvm` together means the compiler finds its backend with no configuration). For a system-wide install, use `/usr/local/bin` instead (that one needs sudo).
 
-The compiler finds its `myc-llvm` backend in this order: `myc-llvm` on `PATH`, then a `myc-llvm` beside the `avant` binary, then `AVANT_MYC_LLVM`. The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used. Current release archives bundle `myc-llvm` beside `avant`, so step 2 of older instructions (a separate backend download plus the export) is only needed with an older archive.
-5. Run your first program:
-
+```sh
+mkdir -p ~/.local/bin
+install -m 755 avant myc-llvm ~/.local/bin/
 ```
+
+Make sure `~/.local/bin` is on your `PATH`; if it is not, add it once:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"   # add this line to your ~/.bashrc or ~/.zshrc to keep it
+```
+
+No environment variable needs to be set for the compiler itself. The compiler finds its `myc-llvm` backend in this order: `myc-llvm` on `PATH`, then a `myc-llvm` beside the `avant` binary, then `AVANT_MYC_LLVM` (an advanced override for unusual layouts). The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used. Because the release archive bundles `myc-llvm` beside `avant`, installing both as above is enough; a separate backend download is only needed with an older archive.
+
+4. Run your first program:
+
+```sh
 avant run hello.av          # compile and run
 avant compile hello.av hi   # or build a binary named hi
+./hi
 ```
 
 That is enough to write and run Avant today. Building the Avant compiler itself is covered at the end, under [Advanced: building the compiler](#advanced-building-the-compiler).
@@ -47,12 +60,13 @@ That is enough to write and run Avant today. Building the Avant compiler itself 
 11. [Macros](#macros)
 12. [Formatter](#formatter)
 13. [Regex](#regex)
-14. [Builtins](#builtins)
-15. [Not built yet](#not-built-yet)
-16. [Benchmarks](#benchmarks)
-17. [Goals](#goals)
-18. [Advanced: building the compiler](#advanced-building-the-compiler)
-19. [License](#license)
+14. [Testing](#testing)
+15. [Builtins](#builtins)
+16. [Not built yet](#not-built-yet)
+17. [Benchmarks](#benchmarks)
+18. [Goals](#goals)
+19. [Advanced: building the compiler](#advanced-building-the-compiler)
+20. [License](#license)
 
 ## Programs
 
@@ -1001,6 +1015,79 @@ fn main {
 
 A string-literal pattern is compiled to a native scanner with re2c at compile time; a computed pattern (or one re2c cannot express, such as a backreference) stays on PCRE2 with JIT, and the compiler says so. `re_count` always uses PCRE2. Without `re2c` installed, literals use PCRE2 too; `AVANT_RE2C` overrides the binary.
 
+## Testing
+
+Avant has no `avant test` command yet, and no assertion builtin. A test today is an ordinary Avant program that checks its expectations and prints one `PASS` or `FAIL` line per check. This section shows exactly that, with no hidden machinery. A user-facing test framework is planned as its own wave (Wave L in `avant-ledgers/stages/make-it-right.md`); until it lands, the patterns below are the supported way to test an Avant program.
+
+Write a check helper once per test file. The helper prints the verdict; it cannot fail the process, because `fn main` does not set the exit code. The shell loop further down turns any `FAIL` line into a failing run, which is how this repository's own CI reads its suite.
+
+```avant
+fn greet(name: String): String {
+  "Hello, ${name}"
+}
+
+fn check(cond: Bool, name: String) {
+  if cond {
+    puts("PASS ${name}")
+  } else {
+    puts("FAIL ${name}")
+  }
+}
+
+fn main {
+  check(greet("Ada") == "Hello, Ada", "greet uses the name")
+  check(greet("") == "Hello, ", "greet handles empty")
+}
+```
+
+Save it as `test_greet.av` and run it with `avant run test_greet.av`. It prints `PASS greet uses the name` and `PASS greet handles empty`. A failing check prints `FAIL` with its name and the run continues, so one run reports every failure, not just the first.
+
+Several cases over the same function read better as a table. Keep the inputs and the expected values in two arrays of the same length, and check them in one loop.
+
+```avant
+fn main {
+  names = ["Ada", "Bo", "Cy"]
+  wants = ["Hello, Ada", "Hello, Bo", "Hello, Cy"]
+  i = 0
+  while i < names.size {
+    check(greet(names[i]) == wants[i], "greet ${names[i]}")
+    i = i + 1
+  }
+}
+```
+
+This replaces the two `check` calls in `main`; `greet` and `check` stay as they are. Name each check after the case it covers, so a `FAIL` line alone says what broke.
+
+For a program whose whole behavior is its output, compare the output with a saved file instead of writing checks. Save the expected output once, then diff every run against it.
+
+```sh
+avant run hello.av > got.txt
+diff want.txt got.txt && echo "golden ok"
+```
+
+Update `want.txt` only by hand, after reading the new output. Regenerating it from the program on every run would make the test agree with whatever the program does, including its bugs.
+
+A program that must not compile is tested the same way from the shell: compile it, require a non-zero exit, and match the diagnostic. The compiler prints diagnostics to stderr and exits non-zero when a program is wrong.
+
+```sh
+avant compile bad.av bad-bin 2> err.txt
+test $? -ne 0 && grep -q "unknown name" err.txt && echo "rejected as expected"
+```
+
+Run every test file in one loop. The loop runs each file, and the final `grep` fails the whole run when any file printed a `FAIL` line.
+
+```sh
+for t in test_*.av; do
+  avant run "$t"
+done > all-tests.txt
+cat all-tests.txt
+! grep -q "^FAIL" all-tests.txt
+```
+
+Keep one test file per area (`test_greet.av`, `test_parse.av`), and name files with the `test_` prefix so the loop finds them. Put the functions under test in their own module and `import` it from both the program and the test file, rather than copying the code into the test.
+
+Testing the compiler itself is different, and is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler): the native suite in `tests/cases/` is auto-discovered, selects cases with `AVANT_TEST_CASES`, shards with `AVANT_TEST_SHARD`, and runs shards in parallel with `AVANT_TEST_JOBS`. The two Avant programs above are exercised verbatim by that suite (`tests/cases/testing_docs.av`), so what this section shows is what the compiler actually runs.
+
 ## Builtins
 
 Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, `zlib_compress`, the `json_*` family, base64, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`.
@@ -1100,22 +1187,22 @@ Build the next compiler with a published one (the `v0.11.0` seed or newer; `avan
 
 ```
 sh runtime/build.sh
-/path/to/avant compile compiler/main.av bin/avant
+/path/to/avant compile compiler/main.av bin/avant --debug
 ./bin/avant run examples/hello.av
-./bin/avant compile compiler/main.av bin/avant   # rebuild with itself
+./bin/avant compile compiler/main.av bin/avant --debug   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Daily compiles use myc-llvm `--debug` (fast); `AVANT_MYC_DEBUG=0` restores myc's default codegen and `AVANT_MYC_FINAL=1` selects `--final`. The same choice is available as flags on `avant compile` (and `run`): `--debug` selects the fast daily codegen and `--release` selects `--final`, the scored mode used in [Benchmarks](#benchmarks). An explicit flag wins over the env vars; the env vars keep working for one transition and must not carry scored state. Safepoints stay on in every mode. `dump FILE.av` prints myc IR without linking.
+`AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Codegen splits by verb: `avant run` with no flag uses myc-llvm `--debug` (fast), and `avant compile` with no flag uses myc's default codegen, which measured 75.5% faster at runtime on the 49-task gate scope for kept artifacts. On either verb, `--debug` selects the fast codegen explicitly and `--release` (or `--final`) selects `--final`, the scored mode used in [Benchmarks](#benchmarks); an explicit flag always wins over the verb default, and no environment variable selects codegen. Safepoints stay on in every mode. `dump FILE.av` prints myc IR without linking.
 
 Tests are the native suite, run on the compiler you just built (B) and, for a release, on the next one (C):
 
 ```
 AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
-./bin/avant-av-b compile compiler/main.av bin/avant-av-c
+./bin/avant-av-b compile compiler/main.av bin/avant-av-c --debug
 AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
 ```
 
-Adding `tests/cases/foo.av` needs no edit to `tests/run.av`. `--coverage` (or `AVANT_COVERAGE=1`) writes `lcov.info`; goldens live in `tests/goldens/`.
+Adding `tests/cases/foo.av` needs no edit to `tests/run.av`. Run one case with `AVANT_TEST_CASES=foo`, one shard of the parallel-safe cases with `AVANT_TEST_SHARD=2/4`, or the whole suite across parallel shard processes with `AVANT_TEST_JOBS=4` (serial and isolated cases — compiler-building, collector, package, and FFI cases — still run alone afterwards; each shard writes its own `junit-shardIofN.xml`). `--coverage` (or `AVANT_COVERAGE=1`) writes `lcov.info`; goldens live in `tests/goldens/`.
 
 ## License
 

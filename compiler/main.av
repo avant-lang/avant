@@ -60,7 +60,8 @@ pub fn show_usage {
   puts("  avant-av fetch [DIR] [--update]")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
-  puts("--release is --final, the scored mode. --debug is the fast daily mode.")
+  puts("With no flag, run uses --debug (fast) and compile uses myc default (kept artifacts).")
+  puts("--release (or --final) is --final, the scored mode. --debug is the fast mode.")
 }
 
 pub fn driver_format(args: Array(String)) {
@@ -159,6 +160,7 @@ pub fn driver_run(args: Array(String)) {
     diag_puts(job.err)
     diag_exit(1)
   }
+  job.codegen = verb_codegen(job.codegen, "run")
   box = compile_av_paths(split.paths)
   if box.ok {
     if box.re2c_obj.size > 0 {
@@ -197,6 +199,7 @@ pub fn driver_compile(args: Array(String)) {
     diag_puts(job.err)
     diag_exit(1)
   }
+  job.codegen = verb_codegen(job.codegen, "compile")
   box = compile_av_paths(split.paths)
   if box.ok {
     if box.re2c_obj.size > 0 {
