@@ -146,11 +146,16 @@ fn test_safepoints(c: Checks) {
       ccbin = "/tmp/avant-s17-${stamp}-cc"
       cclog = "/tmp/avant-s17-${stamp}-cc.log"
       ccenv: Array(String) = []
+      // Audit rule: any in-test compile of compiler/main.av pins
+      // --debug. Bare compile selects myc default since Wave I,
+      // which costs ~236s on the compiler itself against ~30s for
+      // --debug, and no proof in this file depends on backend mode.
       ccenv.push("AVANT_NURSERY=1")
       ccenv.push(compiler)
       ccenv.push("compile")
       ccenv.push("compiler/main.av")
       ccenv.push(ccbin)
+      ccenv.push("--debug")
       cccode = process_run_out("/usr/bin/env", ccenv, cclog)
       c.eq_int(cccode, 0, "compile-compiler with nursery (from-space discarded)")
       c.expect(file_exists(ccbin), "nursery compile-compiler wrote a binary")
