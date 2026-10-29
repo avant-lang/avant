@@ -476,9 +476,21 @@ The comptime field walk in [Macros](#macros) is the other `for`, and it keeps it
 
 ## Modules
 
-A file is a module. `import name` loads `name.av` beside the importer. Names are module-private unless marked `pub`. Cycles are an error. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
+A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. There is no `module` line, and a directory is not a module.
 
-Public names enter the importer's scope. If two imports publish the same name, qualify to resolve the clash.
+The compiler looks beside the importing file, then under the nearest `avant.toml` above the compilation root, then in each fetched dependency. Two different files for one import are an error. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
+
+A file under `tests/math/` can import the project next to `avant.toml` and use the public names unqualified:
+
+```avant
+import vec
+import http.server
+
+fn main {
+  v = Vec2 { x: 1, y: 2 }
+  s = Server.new
+}
+```
 
 ```avant
 import vec
@@ -568,7 +580,7 @@ If any dependency cannot be cloned or checked out, fetch prints the git output, 
 
 #### Importing an installed package
 
-Nothing about `import` changes. You import a module by its file name, not by the dependency name: if the `greeter` checkout contains `greeter.av` at its root, your root file imports it exactly like a file of your own:
+You import a module by its path from the checkout root, not by the dependency's package name. A file `greeter.av` at the root of the checkout is `greeter`. A nested file `http/server.av` in that checkout is `http.server`, with no package prefix. The checkout does not search your tree:
 
 ```avant
 import greeter
@@ -592,7 +604,7 @@ Compiling and running the project needs no extra flags:
 avant run main.av
 ```
 
-The compiler looks for `greeter.av` beside `main.av` first, then in each fetched checkout under `deps/`. Visibility is the same as for your own files: only `pub` names enter your scope, and a module inside a dependency may itself import other modules, including modules from other fetched dependencies. If the module cannot be found and the project has a manifest, the error tells you the remedy:
+The compiler looks beside the importing file, then under the project's `avant.toml`, then in each fetched checkout under `deps/`. Visibility is the same as for your own files: only `pub` names enter your scope, and a module inside a dependency may itself import other modules, including modules from other fetched dependencies. If the module cannot be found and the project has a manifest, the error tells you the remedy:
 
 ```text
 error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: avant fetch .)

@@ -73,11 +73,15 @@ pub class Ty {
   members: Array(Ty)
   fields: Array(TyField)
   ty_args: Array(Ty)
+  mod_name: String = ""
+  emit_base: String = ""
 
   fn initialize(kind: Int) {
     self.kind = kind
     self.label = ""
     self.origin = ""
+    self.mod_name = ""
+    self.emit_base = ""
     self.template = false
     m: Array(Ty) = []
     self.members = m
@@ -373,6 +377,14 @@ pub class Ty {
   }
 
   pub fn same_agg(other: Ty): Bool {
+    if self.mod_name.size > 0 {
+      if other.mod_name.size > 0 {
+        if str_eq(self.mod_name, other.mod_name) {
+        } else {
+          return false
+        }
+      }
+    }
     if self.origin.size > 0 {
       if other.origin.size > 0 {
         if str_eq(self.origin, other.origin) {
@@ -683,7 +695,11 @@ pub fn mangle_ty(ty: Ty): String {
   if ty.origin.size > 0 {
     if ty.ty_args.size > 0 {
       buf = buf_new()
-      buf.push_str(ty.origin)
+      base = ty.origin
+      if ty.emit_base.size > 0 {
+        base = ty.emit_base
+      }
+      buf.push_str(base)
       i = 0
       while i < ty.ty_args.size {
         buf.push_str("__")
@@ -693,7 +709,32 @@ pub fn mangle_ty(ty: Ty): String {
       return buf.to_s
     }
   }
+  if ty.emit_base.size > 0 {
+    return ty.emit_base
+  }
   ty.name
+}
+
+pub fn mod_emit_prefix(mod_name: String): String {
+  buf = buf_new()
+  i = 0
+  while i < mod_name.size {
+    if mod_name[i] == 46 {
+      buf.push_str("__")
+    } else {
+      buf.push_str(str_slice(mod_name, i, i + 1))
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub fn ty_owned_symbol(ty: Ty, suffix: String): String {
+  base = ty.name
+  if ty.emit_base.size > 0 {
+    base = ty.emit_base
+  }
+  "${base}__${suffix}"
 }
 
 pub fn ty_module(name: String): Ty {

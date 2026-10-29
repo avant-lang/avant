@@ -56,6 +56,120 @@ pub fn child_av_path(importer: String, name: String): String {
   "${dir}/${name}.av"
 }
 
+pub fn path_under(dir: String, path: String): Bool {
+  if str_eq(dir, ".") {
+    if path.size == 0 {
+      return false
+    }
+    if path[0] == 47 {
+      return false
+    }
+    return true
+  }
+  prefix = dir.size
+  if path.size <= prefix {
+    return false
+  }
+  if str_eq(str_slice(path, 0, prefix), dir) {
+    if path[prefix] == 47 {
+      return true
+    }
+  }
+  false
+}
+
+pub fn join_dir(dir: String, rel: String): String {
+  if str_eq(dir, ".") {
+    return rel
+  }
+  if str_eq(dir, "/") {
+    return "/${rel}"
+  }
+  "${dir}/${rel}"
+}
+
+pub fn import_rel(name: String): String {
+  buf = buf_new()
+  i = 0
+  while i < name.size {
+    if name[i] == 46 {
+      buf.push_str("/")
+    } else {
+      buf.push_str(str_slice(name, i, i + 1))
+    }
+    i = i + 1
+  }
+  buf.push_str(".av")
+  buf.to_s
+}
+
+pub fn rel_module_name(dir: String, path: String): String {
+  rel = path
+  if str_eq(dir, ".") {
+  } else {
+    if path_under(dir, path) {
+      rel = str_slice(path, dir.size + 1, path.size)
+    }
+  }
+  if rel.size > 3 {
+    n = rel.size
+    if rel[n - 3] == 46 {
+      if rel[n - 2] == 97 {
+        if rel[n - 1] == 118 {
+          rel = str_slice(rel, 0, n - 3)
+        }
+      }
+    }
+  }
+  buf = buf_new()
+  i = 0
+  while i < rel.size {
+    if rel[i] == 47 {
+      buf.push_str(".")
+    } else {
+      buf.push_str(str_slice(rel, i, i + 1))
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub fn find_manifest(start: String): String {
+  dir = start
+  guard = 0
+  while guard < 64 {
+    guard = guard + 1
+    cand = "avant.toml"
+    if str_eq(dir, ".") {
+    } else {
+      cand = "${dir}/avant.toml"
+    }
+    if file_exists(cand) {
+      return dir
+    }
+    if str_eq(dir, ".") {
+      return ""
+    }
+    parent = path_dirname(dir)
+    if str_eq(parent, dir) {
+      return ""
+    }
+    dir = parent
+  }
+  ""
+}
+
+pub fn hit_listed(list: Array(String), path: String): Bool {
+  i = 0
+  while i < list.size {
+    if str_eq(list[i], path) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
 pub fn tag_module(program: Program, name: String, path: String) {
   program.module_name = name
   program.module_path = path
@@ -217,6 +331,8 @@ pub class Loader {
   errors: DiagBag
   dep_dirs: Array(String)
   project_dir: String = ""
+  manifest_dir: String = ""
+  mod_paths: Hash(String, String)
 
   fn initialize {
     h = Hash(String, Int).new
@@ -235,11 +351,19 @@ pub class Loader {
     dd: Array(String) = []
     self.dep_dirs = dd
     self.project_dir = ""
+    self.manifest_dir = ""
+    mp = Hash(String, String).new
+    self.mod_paths = mp
   }
 
   pub fn setup_deps(root_path: String) {
     self.project_dir = path_dirname(root_path)
-    deps_root = "${self.project_dir}/deps"
+    self.manifest_dir = find_manifest(self.project_dir)
+    deps_at = self.project_dir
+    if self.manifest_dir.size > 0 {
+      deps_at = self.manifest_dir
+    }
+    deps_root = "${deps_at}/deps"
     entries = dir_list(deps_root)
     i = 0
     while i < entries.size {
@@ -250,6 +374,115 @@ pub class Loader {
         self.dep_dirs.push(full)
       }
       i = i + 1
+    }
+  }
+
+  pub fn dep_root_of(path: String): String {
+    i = 0
+    while i < self.dep_dirs.size {
+      if path_under(self.dep_dirs[i], path) {
+        return self.dep_dirs[i]
+      }
+      i = i + 1
+    }
+    ""
+  }
+
+  pub fn logical_name(path: String): String {
+    dep = self.dep_root_of(path)
+    if dep.size > 0 {
+      return rel_module_name(dep, path)
+    }
+    if path_under(self.project_dir, path) {
+      return rel_module_name(self.project_dir, path)
+    }
+    if str_eq(path_dirname(path), self.project_dir) {
+      return rel_module_name(self.project_dir, path)
+    }
+    if self.manifest_dir.size > 0 {
+      if path_under(self.manifest_dir, path) {
+        return rel_module_name(self.manifest_dir, path)
+      }
+      if str_eq(path_dirname(path), self.manifest_dir) {
+        return rel_module_name(self.manifest_dir, path)
+      }
+    }
+    module_name_of(path)
+  }
+
+  pub fn consider_hit(hits: Array(String), path: String) {
+    if file_exists(path) {
+      if hit_listed(hits, path) {
+      } else {
+        hits.push(path)
+      }
+    }
+  }
+
+  pub fn resolve_import(importer: String, name: String, loc: Location): String {
+    rel = import_rel(name)
+    hits: Array(String) = []
+    dep = self.dep_root_of(importer)
+    if dep.size > 0 {
+      self.consider_hit(hits, join_dir(path_dirname(importer), rel))
+      self.consider_hit(hits, join_dir(dep, rel))
+      i = 0
+      while i < self.dep_dirs.size {
+        if str_eq(self.dep_dirs[i], dep) {
+        } else {
+          self.consider_hit(hits, join_dir(self.dep_dirs[i], rel))
+        }
+        i = i + 1
+      }
+    } else {
+      self.consider_hit(hits, join_dir(path_dirname(importer), rel))
+      if self.manifest_dir.size > 0 {
+        self.consider_hit(hits, join_dir(self.manifest_dir, rel))
+      }
+      i = 0
+      while i < self.dep_dirs.size {
+        self.consider_hit(hits, join_dir(self.dep_dirs[i], rel))
+        i = i + 1
+      }
+    }
+    if hits.size == 0 {
+      anchor = self.project_dir
+      if self.manifest_dir.size > 0 {
+        anchor = self.manifest_dir
+      }
+      if file_exists("${anchor}/avant.toml") {
+        self.fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${anchor})")
+      } else {
+        if file_exists("${self.project_dir}/avant.toml") {
+          self.fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${self.project_dir})")
+        } else {
+          self.fail(loc, "cannot find ${name}.av next to ${importer}")
+        }
+      }
+      return ""
+    }
+    if hits.size > 1 {
+      buf = buf_new()
+      buf.push_str("import ${name} is ambiguous:")
+      i = 0
+      while i < hits.size {
+        buf.push_str(" ${hits[i]}")
+        i = i + 1
+      }
+      self.fail(loc, buf.to_s)
+      return ""
+    }
+    hits[0]
+  }
+
+  pub fn note_module_path(name: String, path: String, loc: Location) {
+    if prev = self.mod_paths.get(name) {
+      if str_eq(prev, path) {
+      } else {
+        self.fail(loc, "module ${name} is both ${prev} and ${path}")
+      }
+    } else {
+      self.mod_paths[name] = path
     }
   }
 
@@ -324,11 +557,11 @@ pub class Loader {
         if i > 0 {
           buf.push_str(" -> ")
         }
-        buf.push_str(module_name_of(self.stack[i]))
+        buf.push_str(self.logical_name(self.stack[i]))
         i = i + 1
       }
       buf.push_str(" -> ")
-      buf.push_str(module_name_of(path))
+      buf.push_str(self.logical_name(path))
       self.fail(Location.new(path, 1, 1, 0), buf.to_s)
       return nil
     }
@@ -351,11 +584,13 @@ pub class Loader {
         self.absorb(parser.errors)
         return nil
       }
-      name = module_name_of(path)
+      name = self.logical_name(path)
+      self.note_module_path(name, path, program.loc)
       tag_module(program, name, path)
       self.programs.push(program)
       self.loaded[path] = self.programs.size - 1
       seen = Hash(String, Int).new
+      seen_path = Hash(String, String).new
       imports: Array(String) = []
       i = 0
       while i < program.imports.size {
@@ -366,28 +601,19 @@ pub class Loader {
           continue
         }
         seen[imp.name] = 1
-        child = child_av_path(path, imp.name)
-        if file_exists(child) {
-        } else {
-          dep = self.dep_child(imp.name)
-          if str_eq(dep, "") {
-            if file_exists("${self.project_dir}/avant.toml") {
-              self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path} or in fetched deps (run: avant fetch ${self.project_dir})")
-            } else {
-              self.fail(imp.loc, "cannot find ${imp.name}.av next to ${path}")
-            }
-            i = i + 1
-            continue
-          }
-          if dep.size > 10 && str_eq(str_slice(dep, 0, 10), "ambiguous:") {
-            self.fail(imp.loc, "import ${imp.name} is ambiguous: more than one fetched dependency provides ${imp.name}.av")
-            i = i + 1
-            continue
-          }
-          child = dep
+        child = self.resolve_import(path, imp.name, imp.loc)
+        if str_eq(child, "") {
+          i = i + 1
+          continue
         }
+        if prior = seen_path.get(child) {
+          self.fail(imp.loc, "import ${prior} and ${imp.name} open the same file ${child}")
+          i = i + 1
+          continue
+        }
+        seen_path[child] = imp.name
         dummy7 = self.load_file(child)
-        imports.push(module_name_of(child))
+        imports.push(self.logical_name(child))
         i = i + 1
       }
       info = ModInfo.new(name, path)

@@ -50,6 +50,8 @@ pub class Checker {
   root_module: String = ""
   type_mod: Hash(String, String)
   type_vis: Hash(String, Int)
+  type_list: Hash(String, String)
+  type_multi: Hash(String, Int)
   lib_mod: Hash(String, String)
   lib_vis: Hash(String, Int)
   known_mods: Hash(String, Int)
@@ -146,6 +148,10 @@ pub class Checker {
     self.type_mod = tm
     tv = Hash(String, Int).new
     self.type_vis = tv
+    tl = Hash(String, String).new
+    self.type_list = tl
+    tmu = Hash(String, Int).new
+    self.type_multi = tmu
     lm = Hash(String, String).new
     self.lib_mod = lm
     lv = Hash(String, Int).new
@@ -482,7 +488,22 @@ pub class Checker {
     self.self_name = ""
     self.push_scope
     if fn_is_method(fnn) {
-      if owner = self.resolver.get_named(fnn.owner) {
+      got_owner = false
+      owner = self.t_int()
+      if fnn.owner_mod.size > 0 {
+        if o = self.resolver.get_named_in(fnn.owner_mod, fnn.owner) {
+          owner = o
+          got_owner = true
+        }
+      }
+      if got_owner {
+      } else {
+        if o2 = self.resolver.get_named(fnn.owner) {
+          owner = o2
+          got_owner = true
+        }
+      }
+      if got_owner {
         self.self_ty = owner
         self.self_name = fn_self_name(fnn)
         if existing = self.lookup(self.self_name) {
@@ -1578,7 +1599,7 @@ pub class Checker {
         if has_zero {
           arg_tys: Array(Ty) = []
           none: Ty? = nil
-          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc, object.name) {
+          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc, object.name, object.mod_name) {
             expr.method_call = true
             expr.resolved = sig.node.emit_name
             return sig.ret
@@ -1689,7 +1710,7 @@ pub class Checker {
     if has_zero {
       arg_tys: Array(Ty) = []
       none: Ty? = nil
-      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show) {
+      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, object.mod_name) {
         expr.method_call = true
         expr.resolved = sig.node.emit_name
         return sig.ret
@@ -1913,7 +1934,7 @@ pub class Checker {
       }
       return self.check_struct_fields(expr, ty, true)
     }
-    if tmpl = self.find_struct_template(expr.type_name) {
+    if tmpl = self.find_struct_template(expr.type_name, expr.mod_name) {
       return self.infer_struct_literal(expr, tmpl, has_want, want)
     }
     if ty = self.lookup_named_type(expr.type_name, expr.loc, expr.mod_name) {
@@ -1974,39 +1995,69 @@ pub class Checker {
     ty
   }
 
-  pub fn find_struct_template(name: String): StructDef? {
+  pub fn find_struct_template(name: String, mod_name: String): StructDef? {
+    found: StructDef? = nil
+    count = 0
     i = 0
     while i < self.program.structs.size {
       sdef = self.program.structs[i]
       if str_eq(sdef.name, name) {
         if sdef.type_params.size > 0 {
-          return sdef
+          if mod_name.size > 0 {
+            if str_eq(sdef.mod_name, mod_name) {
+              return sdef
+            }
+          } else {
+            count = count + 1
+            found = sdef
+          }
         }
       }
       i = i + 1
     }
+    if mod_name.size > 0 {
+      return nil
+    }
+    if count == 1 {
+      return found
+    }
     nil
   }
 
-  pub fn find_class_template(name: String): ClassDef? {
+  pub fn find_class_template(name: String, mod_name: String): ClassDef? {
+    found: ClassDef? = nil
+    count = 0
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
       if str_eq(cdef.name, name) {
         if cdef.type_params.size > 0 {
-          return cdef
+          if mod_name.size > 0 {
+            if str_eq(cdef.mod_name, mod_name) {
+              return cdef
+            }
+          } else {
+            count = count + 1
+            found = cdef
+          }
         }
       }
       i = i + 1
+    }
+    if mod_name.size > 0 {
+      return nil
+    }
+    if count == 1 {
+      return found
     }
     nil
   }
 
   pub fn is_generic_template(name: String): Bool {
-    if s = self.find_struct_template(name) {
+    if s = self.find_struct_template(name, "") {
       return true
     }
-    if c = self.find_class_template(name) {
+    if c = self.find_class_template(name, "") {
       return true
     }
     false
@@ -2405,7 +2456,7 @@ pub class Checker {
               arg_tys: Array(Ty) = []
               arg_tys.push(right)
               none: Ty? = nil
-              if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name) {
+              if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name) {
                 expr.resolved = sig.node.emit_name
                 return sig.ret
               }
@@ -2979,8 +3030,9 @@ pub class Checker {
   }
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
+    recv = self.flatten_type_chain(recv)
     if recv.kind == ex_name() {
-      if cdef = self.find_class_template(recv.ident) {
+      if cdef = self.find_class_template(recv.ident, recv.mod_name) {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name
@@ -3004,7 +3056,7 @@ pub class Checker {
     if recv.kind == ex_field() {
       if obj = recv.object {
         if obj.kind == ex_name() {
-          if cdef = self.find_class_template(recv.ident) {
+          if cdef = self.find_class_template(recv.ident, obj.ident) {
             return self.infer_new(expr, recv, cdef, obj.ident, has_want, want)
           }
         }
@@ -3120,7 +3172,7 @@ pub class Checker {
           }
         }
         none: Ty? = nil
-        if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown) {
+        if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name) {
           self.fill_defaults(expr, sig.node)
           i = 0
           while i < expr.args.size {
@@ -3155,7 +3207,7 @@ pub class Checker {
           self.fail(expr.loc, "${shown}.new takes no arguments")
         }
       }
-      expr.resolved = "${ty.name}__new"
+      expr.resolved = ty_owned_symbol(ty, "new")
       return ty
     }
     shown = ty.show
@@ -3249,7 +3301,99 @@ pub class Checker {
     self.check_method_call(expr, call, has_want, want)
   }
 
+  pub fn ident_chain(expr: Expr, segs: Array(String)): Bool {
+    if expr.kind == ex_name() {
+      segs.push(expr.ident)
+      return true
+    }
+    if expr.kind == ex_field() {
+      if obj = expr.object {
+        if self.ident_chain(obj, segs) {
+          segs.push(expr.ident)
+          return true
+        }
+      }
+    }
+    false
+  }
+
+  pub fn join_segs(segs: Array(String), n: Int): String {
+    buf = buf_new()
+    i = 0
+    while i < n {
+      if i > 0 {
+        buf.push_str(".")
+      }
+      buf.push_str(segs[i])
+      i = i + 1
+    }
+    buf.to_s
+  }
+
+  pub fn longest_module(segs: Array(String), allow_full: Bool): Int {
+    limit = segs.size
+    if allow_full {
+    } else {
+      if segs.size == 0 {
+        return 0
+      }
+      limit = segs.size - 1
+    }
+    best = 0
+    n = 1
+    while n <= limit {
+      mod = self.join_segs(segs, n)
+      if self.qualifier_ok(mod, self.current_module) {
+        best = n
+      }
+      n = n + 1
+    }
+    best
+  }
+
+  pub fn flatten_module_receiver(recv: Expr): Expr {
+    segs: Array(String) = []
+    if self.ident_chain(recv, segs) {
+      if segs.size > 1 {
+        best = self.longest_module(segs, true)
+        if best == segs.size {
+          mod = self.join_segs(segs, best)
+          name_expr = Expr.new(ex_name(), recv.loc)
+          name_expr.ident = mod
+          return name_expr
+        }
+      }
+    }
+    recv
+  }
+
+  pub fn flatten_type_chain(recv: Expr): Expr {
+    segs: Array(String) = []
+    if self.ident_chain(recv, segs) {
+      if segs.size > 2 {
+        best = self.longest_module(segs, false)
+        if best > 0 {
+          if best == segs.size - 1 {
+            mod = self.join_segs(segs, best)
+            name_expr = Expr.new(ex_name(), recv.loc)
+            name_expr.ident = mod
+            flat = Expr.new(ex_field(), recv.loc)
+            flat.object = name_expr
+            flat.ident = segs[best]
+            return flat
+          }
+        }
+      }
+    }
+    recv
+  }
+
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
+    recv = self.flatten_module_receiver(recv)
+    if str_eq(expr.callee, "new") {
+      recv = self.flatten_type_chain(recv)
+    }
+    expr.receiver = recv
     if recv.kind == ex_name() {
       if recv.type_args.size > 0 {
         if self.is_generic_template(recv.ident) {
@@ -3292,7 +3436,7 @@ pub class Checker {
         return ty
       }
       if ty.is_class {
-        expr.resolved = "${ty.name}__bump"
+        expr.resolved = ty_owned_symbol(ty, "bump")
         return ty_nilable(ty)
       }
       return ty
