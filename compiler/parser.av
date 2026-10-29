@@ -420,7 +420,16 @@ pub class Parser {
     loc = self.expect(tk_import()).loc
     self.skip_newlines
     name = self.expect(tk_ident())
-    ImportDecl.new(loc, name.value)
+    buf = buf_new()
+    buf.push_str(name.value)
+    while self.current.kind == tk_dot() {
+      dummy_dot = self.bump
+      self.skip_newlines
+      next = self.expect(tk_ident())
+      buf.push_str(".")
+      buf.push_str(next.value)
+    }
+    ImportDecl.new(loc, buf.to_s)
   }
 
   pub fn parse_quote_decl(owner: String): QuoteDecl {
@@ -1188,12 +1197,26 @@ pub class Parser {
       return self.parse_fn_type
     }
     tok = self.expect(tk_ident())
-    qual = ""
-    if self.current.kind == tk_dot() {
-      qual = tok.value
+    parts: Array(String) = []
+    parts.push(tok.value)
+    while self.current.kind == tk_dot() {
       dummy_dot = self.bump
       self.skip_newlines
       tok = self.expect(tk_ident())
+      parts.push(tok.value)
+    }
+    qual = ""
+    if parts.size > 1 {
+      buf = buf_new()
+      i = 0
+      while i < parts.size - 1 {
+        if i > 0 {
+          buf.push_str(".")
+        }
+        buf.push_str(parts[i])
+        i = i + 1
+      }
+      qual = buf.to_s
     }
     tn = TypeName.new(tok.loc, tok.value)
     tn.mod_name = qual
@@ -1777,8 +1800,9 @@ pub class Parser {
           field = self.expect(tk_ident())
           if self.current.kind == tk_l_paren() {
             took_type = false
-            if cur.kind == ex_name() {
-              if app = self.parse_maybe_type_app(field, cur.ident) {
+            qual_pre = self.qual_of(cur)
+            if qual_pre.size > 0 {
+              if app = self.parse_maybe_type_app(field, qual_pre) {
                 cur = app
                 took_type = true
               }
@@ -1799,11 +1823,7 @@ pub class Parser {
             cur = call
           } else if self.allow_struct_lit {
             if self.struct_literal_ahead {
-              qual = ""
-              if cur.kind == ex_name() {
-                qual = cur.ident
-              }
-              cur = self.parse_struct_literal(field, qual)
+              cur = self.parse_struct_literal(field, self.qual_of(cur))
             } else {
               fa = Expr.new(ex_field(), at)
               fa.object = cur
@@ -2184,6 +2204,39 @@ pub class Parser {
     }
     dummy = self.expect(tk_r_bracket())
     e
+  }
+
+  pub fn collect_idents(expr: Expr, segs: Array(String)): Bool {
+    if expr.kind == ex_name() {
+      segs.push(expr.ident)
+      return true
+    }
+    if expr.kind == ex_field() {
+      if obj = expr.object {
+        if self.collect_idents(obj, segs) {
+          segs.push(expr.ident)
+          return true
+        }
+      }
+    }
+    false
+  }
+
+  pub fn qual_of(expr: Expr): String {
+    segs: Array(String) = []
+    if self.collect_idents(expr, segs) {
+      buf = buf_new()
+      i = 0
+      while i < segs.size {
+        if i > 0 {
+          buf.push_str(".")
+        }
+        buf.push_str(segs[i])
+        i = i + 1
+      }
+      return buf.to_s
+    }
+    ""
   }
 
   pub fn parse_struct_literal(name: Token, qual: String): Expr {

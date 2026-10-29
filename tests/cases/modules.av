@@ -58,17 +58,43 @@ fn test_modules(c: Checks) {
       c.expect(false, "import cycle")
     }
 
-    s12_write(dir, "one", "pub class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
-    s12_write(dir, "two", "pub class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
+    s12_write(dir, "one", "pub class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n  pub fn draw: Int { self.n }\n}\n")
+    s12_write(dir, "two", "pub class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n  pub fn draw: Int { self.n + 10 }\n}\n")
     s12_write(dir, "clash", "import one\nimport two\nfn main {\n  puts(1)\n}\n")
     clash_bin = "${dir}/clash.bin"
     clash_log = "${dir}/clash.log"
-    dummy_k = compile_av(compiler, "${dir}/clash.av", clash_bin, clash_log)
-    c.expect(!file_exists(clash_bin), "dup pub bin absent")
-    if err = file_read(clash_log) {
-      c.expect(str_has(err, "already defined"), "dup pub name")
+    clash_out = "${dir}/clash.out"
+    clash_code = compile_av(compiler, "${dir}/clash.av", clash_bin, clash_log)
+    c.eq_int(clash_code, 0, "two Box types compile")
+    chmod_x(clash_bin)
+    dummy_k = run_av_bin(clash_bin, clash_out)
+    if got = file_read(clash_out) {
+      c.eq_str(got, "1\n", "two Box types unused")
     } else {
-      c.expect(false, "dup pub name")
+      c.expect(false, "two Box types unused")
+    }
+    s12_write(dir, "bare", "import one\nimport two\nfn main {\n  b = Box.new(1)\n  puts(b.n)\n}\n")
+    bare_bin = "${dir}/bare.bin"
+    bare_log = "${dir}/bare.log"
+    dummy_bare = compile_av(compiler, "${dir}/bare.av", bare_bin, bare_log)
+    c.expect(!file_exists(bare_bin), "bare Box bin absent")
+    if err = file_read(bare_log) {
+      c.expect(str_has(err, "ambiguous name Box"), "bare Box ambiguous")
+    } else {
+      c.expect(false, "bare Box ambiguous")
+    }
+    s12_write(dir, "qualbox", "import one\nimport two\nfn main {\n  a = one.Box.new(1)\n  b = two.Box.new(2)\n  puts(a.draw())\n  puts(b.draw())\n}\n")
+    qb_bin = "${dir}/qualbox.bin"
+    qb_log = "${dir}/qualbox.log"
+    qb_out = "${dir}/qualbox.out"
+    qb_code = compile_av(compiler, "${dir}/qualbox.av", qb_bin, qb_log)
+    c.eq_int(qb_code, 0, "qualified Box types")
+    chmod_x(qb_bin)
+    dummy_qb = run_av_bin(qb_bin, qb_out)
+    if got = file_read(qb_out) {
+      c.eq_str(got, "1\n12\n", "qualified Box draw")
+    } else {
+      c.expect(false, "qualified Box draw")
     }
 
     s12_write(dir, "show_int", "pub fn show(n: Int): Int {\n  n\n}\n")
@@ -117,6 +143,95 @@ fn test_modules(c: Checks) {
       c.eq_str(got, "2\n6\n", "D20 doubled")
     } else {
       c.expect(false, "D20 doubled")
+    }
+
+    proj = "${dir}/proj"
+    s12_mkdir("${proj}/tests/math")
+    s12_mkdir("${proj}/http")
+    dummy_toml = file_write("${proj}/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n")
+    dummy_vec = file_write("${proj}/vec.av", "pub struct Vec2 {\n  x: Int\n  y: Int\n}\n")
+    dummy_srv = file_write("${proj}/http/server.av", "pub class Server {\n  fn initialize {\n  }\n  pub fn port: Int { 80 }\n}\n")
+    dummy_test = file_write("${proj}/tests/math/test_add.av", "import vec\nimport http.server\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  s = Server.new\n  puts(v.x)\n  puts(s.port())\n}\n")
+    nest_bin = "${dir}/nest.bin"
+    nest_log = "${dir}/nest.log"
+    nest_out = "${dir}/nest.out"
+    nest_code = compile_av(compiler, "${proj}/tests/math/test_add.av", nest_bin, nest_log)
+    c.eq_int(nest_code, 0, "nested import from tests/")
+    chmod_x(nest_bin)
+    dummy_nest = run_av_bin(nest_bin, nest_out)
+    if got = file_read(nest_out) {
+      c.eq_str(got, "1\n80\n", "unqualified nested names")
+    } else {
+      c.expect(false, "unqualified nested names")
+    }
+
+    dep_app = "${dir}/depapp"
+    s12_mkdir("${dep_app}/deps/greeter/http")
+    dummy_dt = file_write("${dep_app}/avant.toml", "[package]\nname = \"depapp\"\nversion = \"0.1.0\"\n")
+    dummy_gt = file_write("${dep_app}/deps/greeter/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
+    dummy_gs = file_write("${dep_app}/deps/greeter/http/server.av", "pub fn listen: Int { 7 }\n")
+    dummy_dm = file_write("${dep_app}/main.av", "import http.server\nfn main {\n  puts(listen())\n}\n")
+    dep_bin = "${dir}/dep.bin"
+    dep_log = "${dir}/dep.log"
+    dep_out = "${dir}/dep.out"
+    dep_code = compile_av(compiler, "${dep_app}/main.av", dep_bin, dep_log)
+    c.eq_int(dep_code, 0, "dep nested import")
+    chmod_x(dep_bin)
+    dummy_dep = run_av_bin(dep_bin, dep_out)
+    if got = file_read(dep_out) {
+      c.eq_str(got, "7\n", "dep nested listen")
+    } else {
+      c.expect(false, "dep nested listen")
+    }
+
+    sh = "${dir}/shadow"
+    s12_mkdir("${sh}/nest")
+    dummy_sht = file_write("${sh}/avant.toml", "[package]\nname = \"shadow\"\nversion = \"0.1.0\"\n")
+    dummy_shv = file_write("${sh}/vec.av", "pub fn from_root: Int { 1 }\n")
+    dummy_shn = file_write("${sh}/nest/vec.av", "pub fn from_nest: Int { 2 }\n")
+    dummy_shm = file_write("${sh}/nest/main.av", "import vec\nfn main {\n  puts(1)\n}\n")
+    sh_bin = "${dir}/shadow.bin"
+    sh_log = "${dir}/shadow.log"
+    dummy_shc = compile_av(compiler, "${sh}/nest/main.av", sh_bin, sh_log)
+    c.expect(!file_exists(sh_bin), "shadow bin absent")
+    if err = file_read(sh_log) {
+      c.expect(str_has(err, "import vec is ambiguous"), "shadow names both")
+      c.expect(str_has(err, "nest/vec.av"), "shadow beside path")
+      c.expect(str_has(err, "/vec.av"), "shadow manifest path")
+    } else {
+      c.expect(false, "shadow names both")
+    }
+
+    cyc = "${dir}/cyc"
+    s12_mkdir("${cyc}/sub")
+    dummy_ct = file_write("${cyc}/avant.toml", "[package]\nname = \"cyc\"\nversion = \"0.1.0\"\n")
+    dummy_ca = file_write("${cyc}/a.av", "import sub.b\npub fn from_a: Int { 1 }\n")
+    dummy_cb = file_write("${cyc}/sub/b.av", "import a\npub fn from_b: Int { from_a() }\n")
+    dummy_cm = file_write("${cyc}/main.av", "import a\nfn main {\n  puts(from_a())\n}\n")
+    cyc_bin = "${dir}/cyc.bin"
+    cyc_log = "${dir}/cyc.log"
+    dummy_cc = compile_av(compiler, "${cyc}/main.av", cyc_bin, cyc_log)
+    c.expect(!file_exists(cyc_bin), "cross-dir cycle bin absent")
+    if err = file_read(cyc_log) {
+      c.expect(str_has(err, "import cycle"), "cross-dir cycle")
+    } else {
+      c.expect(false, "cross-dir cycle")
+    }
+
+    tw = "${dir}/twice"
+    s12_mkdir("${tw}/http")
+    dummy_tt = file_write("${tw}/avant.toml", "[package]\nname = \"twice\"\nversion = \"0.1.0\"\n")
+    dummy_ts = file_write("${tw}/http/server.av", "pub fn listen: Int { 1 }\n")
+    dummy_tc = file_write("${tw}/http/client.av", "import server\nimport http.server\npub fn go: Int { listen() }\n")
+    dummy_tm = file_write("${tw}/main.av", "import http.client\nfn main {\n  puts(go())\n}\n")
+    tw_bin = "${dir}/twice.bin"
+    tw_log = "${dir}/twice.log"
+    dummy_tw = compile_av(compiler, "${tw}/main.av", tw_bin, tw_log)
+    c.expect(!file_exists(tw_bin), "two spellings bin absent")
+    if err = file_read(tw_log) {
+      c.expect(str_has(err, "open the same file"), "two spellings")
+    } else {
+      c.expect(false, "two spellings")
     }
 
     s12_write(dir, "solo", "fn main {\n  puts(1)\n}\n")

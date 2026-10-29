@@ -30,37 +30,28 @@ pub fn (checker_self: Checker) note_modules {
   checker_self.known_mods = km
   tm = Hash(String, String).new
   tv = Hash(String, Int).new
+  checker_self.type_mod = tm
+  checker_self.type_vis = tv
+  tlist = Hash(String, String).new
+  checker_self.type_list = tlist
+  tmulti = Hash(String, Int).new
+  checker_self.type_multi = tmulti
   i = 0
   while i < checker_self.program.structs.size {
     sdef = checker_self.program.structs[i]
-    tm[sdef.name] = sdef.mod_name
-    if sdef.vis {
-      tv[sdef.name] = 1
-    } else {
-      tv[sdef.name] = 0
-    }
+    checker_self.remember_type(sdef.name, sdef.mod_name, sdef.vis)
     i = i + 1
   }
   i = 0
   while i < checker_self.program.classes.size {
     cdef = checker_self.program.classes[i]
-    tm[cdef.name] = cdef.mod_name
-    if cdef.vis {
-      tv[cdef.name] = 1
-    } else {
-      tv[cdef.name] = 0
-    }
+    checker_self.remember_type(cdef.name, cdef.mod_name, cdef.vis)
     i = i + 1
   }
   i = 0
   while i < checker_self.program.interfaces.size {
     idef = checker_self.program.interfaces[i]
-    tm[idef.name] = idef.mod_name
-    if idef.vis {
-      tv[idef.name] = 1
-    } else {
-      tv[idef.name] = 0
-    }
+    checker_self.remember_type(idef.name, idef.mod_name, idef.vis)
     i = i + 1
   }
   i = 0
@@ -69,18 +60,78 @@ pub fn (checker_self: Checker) note_modules {
     j = 0
     while j < lib_def.layouts.size {
       lay = lib_def.layouts[j]
-      tm[lay.name] = lib_def.mod_name
-      if lib_def.vis {
-        tv[lay.name] = 1
-      } else {
-        tv[lay.name] = 0
-      }
+      checker_self.remember_type(lay.name, lib_def.mod_name, lib_def.vis)
       j = j + 1
     }
     i = i + 1
   }
-  checker_self.type_mod = tm
-  checker_self.type_vis = tv
+}
+
+pub fn type_slot(mod_name: String, name: String): String {
+  "${mod_name}@@${name}"
+}
+
+pub fn (checker_self: Checker) remember_type(name: String, mod_name: String, vis: Bool) {
+  slot = type_slot(mod_name, name)
+  if prev = checker_self.type_mod.get(slot) {
+    return
+  }
+  checker_self.type_mod[slot] = mod_name
+  if vis {
+    checker_self.type_vis[slot] = 1
+  } else {
+    checker_self.type_vis[slot] = 0
+  }
+  if listed = checker_self.type_list.get(name) {
+    checker_self.type_list[name] = "${listed}\n${mod_name}"
+    checker_self.type_multi[name] = 1
+  } else {
+    checker_self.type_list[name] = mod_name
+    checker_self.type_mod[name] = mod_name
+    if vis {
+      checker_self.type_vis[name] = 1
+    } else {
+      checker_self.type_vis[name] = 0
+    }
+  }
+}
+
+pub fn (checker_self: Checker) mods_of_type(name: String): Array(String) {
+  out: Array(String) = []
+  if s = checker_self.type_list.get(name) {
+    start = 0
+    i = 0
+    while i <= s.size {
+      brk = false
+      if i == s.size {
+        brk = true
+      } else {
+        if s[i] == 10 {
+          brk = true
+        }
+      }
+      if brk {
+        if i > start {
+          out.push(str_slice(s, start, i))
+        }
+        start = i + 1
+      }
+      i = i + 1
+    }
+  }
+  out
+}
+
+pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String, from_mod: String): Bool {
+  if str_eq(mod_name, from_mod) {
+    return true
+  }
+  if v = checker_self.type_vis.get(type_slot(mod_name, name)) {
+    if v == 1 {
+      return checker_self.imported_by(from_mod, mod_name)
+    }
+  }
+  false
 }
 
 pub fn (checker_self: Checker) imported_by(from_mod: String, target: String): Bool {
@@ -111,41 +162,39 @@ pub fn (checker_self: Checker) qualifier_ok(qual: String, from_mod: String): Boo
   checker_self.imported_by(from_mod, qual)
 }
 
-pub fn (checker_self: Checker) type_is_visible(name: String, from_mod: String, qual: String): Bool {
-  if named = checker_self.resolver.get_named(name) {
-  } else {
-    return true
-  }
-  owner = from_mod
-  if o = checker_self.type_mod.get(name) {
-    owner = o
-  }
+pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, qual: String): String {
   if qual.size > 0 {
-    if str_eq(owner, qual) {
-    } else {
-      return false
+    if o = checker_self.type_mod.get(type_slot(qual, name)) {
+      if checker_self.qualifier_ok(qual, from_mod) {
+        if checker_self.type_slot_visible(name, qual, from_mod) {
+          return qual
+        }
+      }
     }
-    if checker_self.qualifier_ok(qual, from_mod) {
-    } else {
-      return false
-    }
-    if str_eq(owner, from_mod) {
-      return true
-    }
-    if v = checker_self.type_vis.get(name) {
-      return v == 1
-    }
-    return false
+    return ""
   }
-  if str_eq(owner, from_mod) {
+  owners = checker_self.mods_of_type(name)
+  found = ""
+  n = 0
+  i = 0
+  while i < owners.size {
+    if checker_self.type_slot_visible(name, owners[i], from_mod) {
+      n = n + 1
+      found = owners[i]
+    }
+    i = i + 1
+  }
+  if n == 1 {
+    return found
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) type_is_visible(name: String, from_mod: String, qual: String): Bool {
+  if checker_self.mods_of_type(name).size == 0 {
     return true
   }
-  if v = checker_self.type_vis.get(name) {
-    if v == 1 {
-      return checker_self.imported_by(from_mod, owner)
-    }
-  }
-  false
+  checker_self.visible_type_mod(name, from_mod, qual).size > 0
 }
 
 pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): Bool {
@@ -201,10 +250,13 @@ pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String
 
 pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String): Bool {
   origins: Array(String) = []
-  if o = checker_self.type_mod.get(name) {
-    if checker_self.type_is_visible(name, from_mod, "") {
-      origins.push("type:${o}")
+  type_mods = checker_self.mods_of_type(name)
+  ti = 0
+  while ti < type_mods.size {
+    if checker_self.type_slot_visible(name, type_mods[ti], from_mod) {
+      origins.push("type:${type_mods[ti]}")
     }
+    ti = ti + 1
   }
   if id = checker_self.lib_names.get(name) {
     if checker_self.lib_is_visible(name, from_mod) {
@@ -230,7 +282,7 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     }
     i = i + 1
   }
-  type_owners = 0
+  owner_count = 0
   has_type = false
   has_fn = false
   i = 0
@@ -238,10 +290,10 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     o = origins[i]
     if o.size >= 5 {
       if str_eq(str_slice(o, 0, 5), "type:") {
-        type_owners = type_owners + 1
+        owner_count = owner_count + 1
         has_type = true
       } else if str_eq(str_slice(o, 0, 4), "lib:") {
-        type_owners = type_owners + 1
+        owner_count = owner_count + 1
         has_type = true
       } else if str_eq(str_slice(o, 0, 3), "fn:") {
         has_fn = true
@@ -249,10 +301,10 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     }
     i = i + 1
   }
-  if type_owners > 1 {
+  if owner_count > 1 {
     return true
   }
-  if type_owners >= 1 {
+  if owner_count >= 1 {
     if has_fn {
       return true
     }
@@ -267,26 +319,22 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
       return nil
     }
   }
+  owner = checker_self.visible_type_mod(name, checker_self.current_module, qual)
+  if owner.size > 0 {
+    if ty = checker_self.resolver.get_named_in(owner, name) {
+      return ty
+    }
+  }
   if ty = checker_self.resolver.get_named(name) {
     if checker_self.type_is_visible(name, checker_self.current_module, qual) {
-    } else {
-      checker_self.fail(loc, "unknown type ${name}")
-      return nil
+      return ty
     }
-    if qual.size > 0 {
-      owner = ""
-      if o = checker_self.type_mod.get(name) {
-        owner = o
-      }
-      if str_eq(owner, qual) {
-      } else {
-        checker_self.fail(loc, "unknown type ${qual}.${name}")
-        return nil
-      }
-    }
-    return ty
   }
-  checker_self.fail(loc, "unknown type ${name}")
+  if qual.size > 0 {
+    checker_self.fail(loc, "unknown type ${qual}.${name}")
+  } else {
+    checker_self.fail(loc, "unknown type ${name}")
+  }
   nil
 }
 
@@ -297,27 +345,17 @@ pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
       checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
       return checker_self.t_int()
     }
-    if named = checker_self.resolver.get_named(tn.name) {
-      owner = ""
-      if o = checker_self.type_mod.get(tn.name) {
-        owner = o
-      }
-      if str_eq(owner, tn.mod_name) {
-      } else {
-        checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
-        return checker_self.t_int()
-      }
+    owners = checker_self.mods_of_type(tn.name)
+    if owners.size > 0 {
       if checker_self.type_is_visible(tn.name, checker_self.current_module, tn.mod_name) {
       } else {
         checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
         return checker_self.t_int()
       }
-    } else {
-      checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
-      return checker_self.t_int()
     }
   } else {
-    if named = checker_self.resolver.get_named(tn.name) {
+    owners = checker_self.mods_of_type(tn.name)
+    if owners.size > 0 {
       if checker_self.clash_unqualified(tn.name, checker_self.current_module) {
         checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
         return checker_self.t_int()
@@ -326,6 +364,18 @@ pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
       } else {
         checker_self.fail(tn.loc, "unknown type ${tn.name}")
         return checker_self.t_int()
+      }
+      if flag = checker_self.type_multi.get(tn.name) {
+        owner = checker_self.visible_type_mod(tn.name, checker_self.current_module, "")
+        use = TypeName.new(tn.loc, tn.name)
+        use.mod_name = owner
+        use.nilable = tn.nilable
+        use.fn_type = tn.fn_type
+        use.args = tn.args
+        use.members = tn.members
+        use.bounds = tn.bounds
+        use.ret = tn.ret
+        return checker_self.resolver.resolve(use)
       }
     }
   }
@@ -362,14 +412,22 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
   }
   if ty.is_agg {
     owner = fnn.mod_name
-    if o = checker_self.type_mod.get(ty.name) {
-      owner = o
+    if ty.mod_name.size > 0 {
+      owner = ty.mod_name
+    } else {
+      if o = checker_self.type_mod.get(ty.name) {
+        owner = o
+      }
     }
     if str_eq(owner, fnn.mod_name) {
     } else {
       vis = 0
-      if flag = checker_self.type_vis.get(ty.name) {
+      if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
         vis = flag
+      } else {
+        if flag2 = checker_self.type_vis.get(ty.name) {
+          vis = flag2
+        }
       }
       if vis == 1 {
       } else {
@@ -401,14 +459,22 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
   }
   if ty.is_clayout {
     owner = fnn.mod_name
-    if o = checker_self.type_mod.get(ty.name) {
-      owner = o
+    if ty.mod_name.size > 0 {
+      owner = ty.mod_name
+    } else {
+      if o = checker_self.type_mod.get(ty.name) {
+        owner = o
+      }
     }
     if str_eq(owner, fnn.mod_name) {
     } else {
       vis = 0
-      if flag = checker_self.type_vis.get(ty.name) {
+      if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
         vis = flag
+      } else {
+        if flag2 = checker_self.type_vis.get(ty.name) {
+          vis = flag2
+        }
       }
       if vis == 1 {
       } else {
@@ -444,15 +510,9 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
 }
 
 pub fn (checker_self: Checker) lookup_module_type(mod: String, name: String, loc: Location): Ty? {
-  if ty = checker_self.resolver.get_named(name) {
-    owner = ""
-    if o = checker_self.type_mod.get(name) {
-      owner = o
-    }
-    if str_eq(owner, mod) {
-      if checker_self.type_is_visible(name, checker_self.current_module, mod) {
-        return ty
-      }
+  if ty = checker_self.resolver.get_named_in(mod, name) {
+    if checker_self.type_is_visible(name, checker_self.current_module, mod) {
+      return ty
     }
   }
   checker_self.fail(loc, "unknown type ${mod}.${name}")

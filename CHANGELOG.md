@@ -1,5 +1,14 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+* Nested modules: `import http.server` loads `http/server.av`. The module name is that path. Its `pub` names enter the importer unqualified, and a clash is qualified with the full name (`http.server.Server`).
+
+### Changed
+* An import is looked up beside the importing file, then under the nearest `avant.toml`, then in fetched `deps/`. Two different files for one import are an error. A file inside a dependency is named from that checkout, with no package prefix.
+* Two modules may each define a type of the same name. The types stay distinct; an unqualified use of both is an error. Emit names stay as they are unless two symbols would otherwise collide, in which case each gains its module.
+
 ## 0.18.0 - 2026-10-29
 
 * Memory management and GC improvements on efficiency and correctness, inclusing the split of  emit_while analysis into WhilePlan helpers

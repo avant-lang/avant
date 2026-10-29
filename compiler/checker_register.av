@@ -85,14 +85,16 @@ pub fn (checker_self: Checker) count_named_fns(name: String): Int {
   n
 }
 
-pub fn (checker_self: Checker) count_named_methods(owner: String, name: String): Int {
+pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, owner_mod: String): Int {
   n = 0
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
     if str_eq(sig.owner, owner) {
-      if str_eq(sig.name, name) {
-        n = n + 1
+      if str_eq(sig.node.owner_mod, owner_mod) {
+        if str_eq(sig.name, name) {
+          n = n + 1
+        }
       }
     }
     i = i + 1
@@ -278,8 +280,9 @@ pub fn (checker_self: Checker) assign_emit_names {
     } else {
       name = sig.name
       owner = sig.owner
+      owner_mod = sig.node.owner_mod
       if str_eq(name, "initialize") {
-        if checker_self.count_named_methods(owner, name) > 1 {
+        if checker_self.count_named_methods(owner, name, owner_mod) > 1 {
           checker_self.fail(sig.node.loc, "initialize cannot be overloaded")
           return
         }
@@ -291,18 +294,24 @@ pub fn (checker_self: Checker) assign_emit_names {
         if other.node.generic {
         } else {
           if str_eq(other.owner, owner) {
-            if str_eq(other.name, name) {
-              n = n + 1
+            if str_eq(other.node.owner_mod, owner_mod) {
+              if str_eq(other.name, name) {
+                n = n + 1
+              }
             }
           }
         }
         j = j + 1
       }
+      shown = owner
+      if flag = checker_self.resolver.collide.get(owner) {
+        shown = "${mod_emit_prefix(owner_mod)}__${owner}"
+      }
       sanitized = emit_op_name(name)
       if n <= 1 {
-        sig.node.emit_name = "${owner}__${sanitized}"
+        sig.node.emit_name = "${shown}__${sanitized}"
       } else {
-        sig.node.emit_name = sig_mangle("${owner}__${sanitized}", sig.params)
+        sig.node.emit_name = sig_mangle("${shown}__${sanitized}", sig.params)
       }
     }
     i = i + 1
@@ -403,7 +412,11 @@ pub fn (checker_self: Checker) check: Program {
 
 pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
   if id = checker_self.lib_names.get(lib_def.name) {
-    checker_self.fail(lib_def.loc, "lib ${lib_def.name} is already defined")
+    other = ""
+    if o = checker_self.lib_mod.get(lib_def.name) {
+      other = o
+    }
+    checker_self.fail(lib_def.loc, "lib ${lib_def.name} is already defined in ${other} and ${lib_def.mod_name}")
     return
   }
   if named = checker_self.resolver.get_named(lib_def.name) {
@@ -529,25 +542,9 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     checker_self.fail(fnn.loc, "function ${fnn.name} collides with a C function")
     return
   }
-  if named = checker_self.resolver.get_named(fnn.name) {
-    owner = ""
-    if o = checker_self.type_mod.get(fnn.name) {
-      owner = o
-    }
-    collide = false
-    if owner.size == 0 {
-      collide = true
-    }
-    if str_eq(owner, fnn.mod_name) {
-      collide = true
-    }
-    if fnn.mod_name.size == 0 {
-      collide = true
-    }
-    if collide {
-      checker_self.fail(fnn.loc, "function ${fnn.name} collides with a type")
-      return
-    }
+  if named = checker_self.resolver.get_named_in(fnn.mod_name, fnn.name) {
+    checker_self.fail(fnn.loc, "function ${fnn.name} collides with a type")
+    return
   }
   checker_self.check_trailing_defaults(fnn)
   if checker_self.has_err {
@@ -684,6 +681,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     if found = checker_self.lookup_named_type(fnn.owner, fnn.loc, "") {
       owner_ty = found
       owner_key = found.name
+      fnn.owner_mod = found.mod_name
       has_owner = true
     } else {
       checker_self.resolver.clear_tparams
@@ -696,6 +694,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       checker_self.pull_resolve
       if ty.is_agg {
         fnn.owner = ty.name
+        fnn.owner_mod = ty.mod_name
         owner_ty = ty
         owner_key = ty.name
         has_owner = true
@@ -814,10 +813,12 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   while i < checker_self.methods.size {
     existing = checker_self.methods[i]
     if str_eq(existing.owner, owner_key) {
-      if str_eq(existing.name, fnn.name) {
-        if params_same(existing.params, params) {
-          checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
-          return
+      if str_eq(existing.node.owner_mod, fnn.owner_mod) {
+        if str_eq(existing.name, fnn.name) {
+          if params_same(existing.params, params) {
+            checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
+            return
+          }
         }
       }
     }
@@ -882,6 +883,9 @@ pub fn (checker_self: Checker) adopt_one_class(cdef: ClassDef) {
   }
   if checker_self.adopt_pending {
     name = "${cdef.name}__new"
+    if flag = checker_self.resolver.collide.get(cdef.name) {
+      name = "${mod_emit_prefix(cdef.mod_name)}__${cdef.name}__new"
+    }
     if taken = checker_self.find_fn(name) {
       checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
       return
@@ -893,15 +897,7 @@ pub fn (checker_self: Checker) adopt_one_class(cdef: ClassDef) {
 }
 
 pub fn (checker_self: Checker) note_type_owner(name: String, mod_name: String, vis: Bool) {
-  if o = checker_self.type_mod.get(name) {
-    return
-  }
-  checker_self.type_mod[name] = mod_name
-  if vis {
-    checker_self.type_vis[name] = 1
-  } else {
-    checker_self.type_vis[name] = 0
-  }
+  checker_self.remember_type(name, mod_name, vis)
 }
 
 pub fn (checker_self: Checker) adopt_new_types {
@@ -918,9 +914,10 @@ pub fn (checker_self: Checker) adopt_new_types {
     i = 0
     while i < checker_self.program.structs.size {
       sdef = checker_self.program.structs[i]
-      if seen = checker_self.adopted.get(sdef.name) {
+      slot = "${sdef.mod_name}@@${sdef.name}"
+      if seen = checker_self.adopted.get(slot) {
       } else {
-        checker_self.adopted[sdef.name] = 1
+        checker_self.adopted[slot] = 1
         checker_self.note_type_owner(sdef.name, sdef.mod_name, sdef.vis)
         checker_self.adopt_one_struct(sdef)
         checker_self.clear_poison
@@ -931,9 +928,10 @@ pub fn (checker_self: Checker) adopt_new_types {
     i = 0
     while i < checker_self.program.classes.size {
       cdef = checker_self.program.classes[i]
-      if seen = checker_self.adopted.get(cdef.name) {
+      slot = "${cdef.mod_name}@@${cdef.name}"
+      if seen = checker_self.adopted.get(slot) {
       } else {
-        checker_self.adopted[cdef.name] = 1
+        checker_self.adopted[slot] = 1
         checker_self.note_type_owner(cdef.name, cdef.mod_name, cdef.vis)
         checker_self.adopt_one_class(cdef)
         checker_self.clear_poison
@@ -955,8 +953,10 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
     if other.node.generic {
     } else {
       if str_eq(other.owner, owner) {
-        if str_eq(other.name, name) {
-          n = n + 1
+        if str_eq(other.node.owner_mod, sig.node.owner_mod) {
+          if str_eq(other.name, name) {
+            n = n + 1
+          }
         }
       }
     }
@@ -969,17 +969,23 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
     }
   }
   sanitized = emit_op_name(name)
+  shown = owner
+  if flag = checker_self.resolver.collide.get(owner) {
+    shown = "${mod_emit_prefix(sig.node.owner_mod)}__${owner}"
+  }
   j = 0
   while j < checker_self.methods.size {
     other = checker_self.methods[j]
     if other.node.generic {
     } else {
       if str_eq(other.owner, owner) {
-        if str_eq(other.name, name) {
-          if n <= 1 {
-            other.node.emit_name = "${owner}__${sanitized}"
-          } else {
-            other.node.emit_name = sig_mangle("${owner}__${sanitized}", other.params)
+        if str_eq(other.node.owner_mod, sig.node.owner_mod) {
+          if str_eq(other.name, name) {
+            if n <= 1 {
+              other.node.emit_name = "${shown}__${sanitized}"
+            } else {
+              other.node.emit_name = sig_mangle("${shown}__${sanitized}", other.params)
+            }
           }
         }
       }
@@ -997,6 +1003,9 @@ pub fn (checker_self: Checker) reserve_constructors {
       continue
     }
     name = "${cdef.name}__new"
+    if flag = checker_self.resolver.collide.get(cdef.name) {
+      name = "${mod_emit_prefix(cdef.mod_name)}__${cdef.name}__new"
+    }
     if taken = checker_self.find_fn(name) {
       checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
     }

@@ -159,7 +159,11 @@ pub fn (codegen_self: MycGen) mark_quiet_leaves {
     cdef = codegen_self.program.classes[i]
     if cdef.type_params.size > 0 {
     } else {
-      buf.push_str(",${cdef.name}__bump")
+      sym = "${cdef.name}__bump"
+      if ty = codegen_self.resolver.get_named_for(cdef.mod_name, cdef.name) {
+        sym = ty_owned_symbol(ty, "bump")
+      }
+      buf.push_str(",${sym}")
     }
     i = i + 1
   }

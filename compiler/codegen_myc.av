@@ -379,7 +379,7 @@ pub class MycGen {
       sdef = self.program.structs[i]
       if sdef.type_params.size > 0 {
       } else {
-        if ty = self.resolver.get_named(sdef.name) {
+        if ty = self.resolver.get_named_for(sdef.mod_name, sdef.name) {
           self.emit_layout(ty)
         }
       }
@@ -390,7 +390,7 @@ pub class MycGen {
       cdef = self.program.classes[i]
       if cdef.type_params.size > 0 {
       } else {
-        if ty = self.resolver.get_named(cdef.name) {
+        if ty = self.resolver.get_named_for(cdef.mod_name, cdef.name) {
           self.emit_layout(ty)
         }
       }
@@ -402,7 +402,7 @@ pub class MycGen {
       j = 0
       while j < lib_def.layouts.size {
         lay = lib_def.layouts[j]
-        if ty = self.resolver.get_named(lay.name) {
+        if ty = self.resolver.get_named_for(lay.mod_name, lay.name) {
           self.emit_layout(ty)
         }
         j = j + 1
@@ -459,7 +459,7 @@ pub class MycGen {
       cdef = self.program.classes[i]
       if cdef.type_params.size > 0 {
       } else {
-        if ty = self.resolver.get_named(cdef.name) {
+        if ty = self.resolver.get_named_for(cdef.mod_name, cdef.name) {
           self.emit_constructor(ty)
           if self.class_uses_bump(cdef.name) {
             self.emit_bump_constructor(ty)
@@ -523,7 +523,22 @@ pub class MycGen {
       if sig = self.find_method_emit(fnn.emit_name) {
         self.return_type = sig.ret
         self.self_name = fn_self_name(fnn)
-        if owner = self.resolver.get_named(sig.owner) {
+        got_owner = false
+        owner = ty_void()
+        if sig.node.owner_mod.size > 0 {
+          if o = self.resolver.get_named_for(sig.node.owner_mod, sig.owner) {
+            owner = o
+            got_owner = true
+          }
+        }
+        if got_owner {
+        } else {
+          if o2 = self.resolver.get_named(sig.owner) {
+            owner = o2
+            got_owner = true
+          }
+        }
+        if got_owner {
           self.self_ty = owner
           self.emit_method_func(fnn, sig)
         } else {
@@ -825,8 +840,8 @@ pub class MycGen {
     self.self_name = ""
     none: Array(String) = []
     self.begin_fn_frame(none)
-    init_sig = self.find_initialize(ty.name)
-    ctor = "${ty.name}__new"
+    init_sig = self.find_initialize(ty.name, ty.mod_name)
+    ctor = ty_owned_symbol(ty, "new")
     self.line("FUNC :${ctor}")
     self.indent = self.indent + 1
     if sig = init_sig {
@@ -864,7 +879,7 @@ pub class MycGen {
       }
     }
     tid = 1
-    if id = self.class_ids.get(ty.name) {
+    if id = self.class_ids.get(self.class_id_key(ty)) {
       tid = id
     }
     layout = ty_layout_myc(ty)
@@ -909,8 +924,8 @@ pub class MycGen {
     self.self_name = ""
     none: Array(String) = []
     self.begin_fn_frame(none)
-    init_sig = self.find_initialize(ty.name)
-    ctor = "${ty.name}__bump"
+    init_sig = self.find_initialize(ty.name, ty.mod_name)
+    ctor = ty_owned_symbol(ty, "bump")
     self.line("FUNC :${ctor}")
     self.indent = self.indent + 1
     if sig = init_sig {
@@ -946,7 +961,7 @@ pub class MycGen {
       }
     }
     tid = 1
-    if id = self.class_ids.get(ty.name) {
+    if id = self.class_ids.get(self.class_id_key(ty)) {
       tid = id
     }
     layout = ty_layout_myc(ty)
@@ -1062,9 +1077,9 @@ pub class MycGen {
       cdef = self.program.classes[i]
       if cdef.type_params.size > 0 {
       } else {
-        if ty = self.resolver.get_named(cdef.name) {
+        if ty = self.resolver.get_named_for(cdef.mod_name, cdef.name) {
           bits = pointer_word_bits(ty)
-          if id = self.class_ids.get(cdef.name) {
+          if id = self.class_ids.get(self.class_id_key_of(cdef.mod_name, cdef.name)) {
             self.line("PUSH ${bits} :u64")
             self.line("PUSH ${id} :u32")
             self.line("CALL :avant_type_map")

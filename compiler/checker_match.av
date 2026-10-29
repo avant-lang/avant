@@ -490,13 +490,23 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   chosen
 }
 
-pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String): FuncSig? {
+pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String, owner_mod: String): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
     if str_eq(sig.owner, owner) {
+      mod_ok = true
+      if owner_mod.size > 0 {
+        if sig.node.owner_mod.size > 0 {
+          if str_eq(sig.node.owner_mod, owner_mod) {
+          } else {
+            mod_ok = false
+          }
+        }
+      }
+      if mod_ok {
       if str_eq(sig.name, name) {
         is_inst = false
         j = 0
@@ -532,6 +542,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
             }
           }
         }
+      }
       }
     }
     i = i + 1
@@ -970,7 +981,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
     arg_tys.push(checker_self.check_expr(expr.args[i]))
     i = i + 1
   }
-  if sig = checker_self.match_method(owner, expr.callee, arg_tys, expected, expr.loc, shown) {
+  if sig = checker_self.match_method(owner, expr.callee, arg_tys, expected, expr.loc, shown, object.mod_name) {
     checker_self.fill_defaults(expr, sig.node)
     i = 0
     while i < expr.args.size {
