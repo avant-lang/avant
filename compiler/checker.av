@@ -74,6 +74,17 @@ pub class Checker {
   cs_var: Array(String)
   cs_delta: Array(Int)
   nn_var: Array(String)
+  cap_var: Array(String)
+  cap_val: Array(Int64)
+  gcap_var: Array(String)
+  gcap_val: Array(Int64)
+  gcap_live: Array(Int)
+  gnn_var: Array(String)
+  gnn_live: Array(Int)
+  gpos_var: Array(String)
+  gpos_live: Array(Int)
+  gne_var: Array(String)
+  gne_live: Array(Int)
   adopted: Hash(String, Int)
   adopt_pending: Bool = false
   ready_adopt: Bool = false
@@ -179,6 +190,28 @@ pub class Checker {
     self.cs_delta = csd
     nnv: Array(String) = []
     self.nn_var = nnv
+    cpv: Array(String) = []
+    self.cap_var = cpv
+    cpvl: Array(Int64) = []
+    self.cap_val = cpvl
+    gcv: Array(String) = []
+    self.gcap_var = gcv
+    gcvl: Array(Int64) = []
+    self.gcap_val = gcvl
+    gcl: Array(Int) = []
+    self.gcap_live = gcl
+    gnv: Array(String) = []
+    self.gnn_var = gnv
+    gnl: Array(Int) = []
+    self.gnn_live = gnl
+    gpv: Array(String) = []
+    self.gpos_var = gpv
+    gpl: Array(Int) = []
+    self.gpos_live = gpl
+    gev: Array(String) = []
+    self.gne_var = gev
+    gel: Array(Int) = []
+    self.gne_live = gel
     ad = Hash(String, Int).new
     self.adopted = ad
     self.adopt_pending = false
@@ -415,6 +448,28 @@ pub class Checker {
     self.cs_delta = csd0
     nnv0: Array(String) = []
     self.nn_var = nnv0
+    cpv0: Array(String) = []
+    self.cap_var = cpv0
+    cpvl0: Array(Int64) = []
+    self.cap_val = cpvl0
+    gcv0: Array(String) = []
+    self.gcap_var = gcv0
+    gcvl0: Array(Int64) = []
+    self.gcap_val = gcvl0
+    gcl0: Array(Int) = []
+    self.gcap_live = gcl0
+    gnv0: Array(String) = []
+    self.gnn_var = gnv0
+    gnl0: Array(Int) = []
+    self.gnn_live = gnl0
+    gpv0: Array(String) = []
+    self.gpos_var = gpv0
+    gpl0: Array(Int) = []
+    self.gpos_live = gpl0
+    gev0: Array(String) = []
+    self.gne_var = gev0
+    gel0: Array(Int) = []
+    self.gne_live = gel0
     if ret.is_void {
     } else {
       if fnn.body.size == 0 {
@@ -594,8 +649,13 @@ pub class Checker {
           self.fail(cond.loc, "if condition must be Bool, got ${ct.show}")
         }
       }
+      saved_gcap = self.gcap_var.size
+      saved_gnn = self.gnn_var.size
+      saved_gpos = self.gpos_var.size
+      saved_gne = self.gne_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
+        self.push_guard_facts(cond)
         fi = saved_facts
         while fi < self.fact_var.size {
           if self.body_shrinks(stmt.then_body, self.fact_cont[fi]) {
@@ -605,9 +665,12 @@ pub class Checker {
         }
       }
       self.check_block(stmt.then_body, expected, false)
+      self.cap_kill_assigned_in(stmt.then_body)
+      self.pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       self.pop_loop_facts(saved_facts)
       if stmt.else_body.size > 0 {
         self.check_block(stmt.else_body, expected, false)
+        self.cap_kill_assigned_in(stmt.else_body)
       }
       if at_tail {
         if expected.is_void {
@@ -705,9 +768,19 @@ pub class Checker {
           self.fail(cond.loc, "while condition must be Bool, got ${ct.show}")
         }
       }
+      saved_gcap = self.gcap_var.size
+      saved_gnn = self.gnn_var.size
+      saved_gpos = self.gpos_var.size
+      saved_gne = self.gne_var.size
+      if cond = stmt.cond {
+        self.push_guard_facts(cond)
+      }
+      self.cap_kill_assigned_in(stmt.body)
       self.loop_depth = self.loop_depth + 1
       self.check_block(stmt.body, expected, false)
       self.loop_depth = self.loop_depth - 1
+      self.cap_kill_assigned_in(stmt.body)
+      self.pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       self.pop_loop_facts(saved_facts)
       if at_tail {
         if expected.is_void {
@@ -1015,6 +1088,16 @@ pub class Checker {
               if self.fact_any_slack(target.ident) >= 0 || self.nn_has(target.ident) {
                 stmt.proven = true
               }
+            }
+          }
+          if stmt.op == tk_plus_eq() || stmt.op == tk_minus_eq() || stmt.op == tk_star_eq() {
+            if self.compound_proven(stmt.op, target.ident, value, place) {
+              stmt.proven = true
+            }
+          }
+          if stmt.op == tk_slash_eq() {
+            if self.divisor_proven(value) {
+              stmt.proven = true
             }
           }
         }
@@ -2405,6 +2488,9 @@ pub class Checker {
         if op == tk_percent() {
           if left.is_integer {
             if right.same_as(left) {
+              if self.divisor_proven(r) {
+                expr.proven = true
+              }
               return left
             }
           }
@@ -2464,6 +2550,16 @@ pub class Checker {
                       expr.proven = true
                     }
                   }
+                }
+              }
+              if op == tk_plus() || op == tk_star() || op == tk_minus() {
+                if self.arith_proven(op, l, r, left) {
+                  expr.proven = true
+                }
+              }
+              if op == tk_slash() {
+                if self.divisor_proven(r) {
+                  expr.proven = true
                 }
               }
               return self.int_binary(op, left)

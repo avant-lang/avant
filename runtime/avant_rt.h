@@ -1,6 +1,7 @@
 #ifndef AVANT_RT_H
 #define AVANT_RT_H
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -62,6 +63,13 @@ void avant_unpin(void *payload);
 /* Number of distinct pinned payloads (refcounted pins share one entry). */
 int avant_pin_count(void);
 int avant_is_heap(void *payload);
+/* Bumped by every collection. A length cache tagged with the generation
+ * cannot outlive a move or a free, because both happen only inside a
+ * collection. */
+extern _Atomic uint32_t g_avant_str_gen;
+static inline uint32_t avant_str_generation(void) {
+  return atomic_load_explicit(&g_avant_str_gen, memory_order_acquire);
+}
 int32_t avant_is_young(void *payload);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);

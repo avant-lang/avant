@@ -850,6 +850,8 @@ int avant_is_heap(void *payload) {
   return is_heap_payload(payload, NULL, NULL);
 }
 
+_Atomic uint32_t g_avant_str_gen;
+
 /* 1 when a young collection can move this buffer. Mature and large
  * objects stay put, so a parallel numeric loop can keep the address. */
 int32_t avant_is_young(void *payload) {
@@ -1114,10 +1116,9 @@ static Block *new_block(uint8_t space) {
       g_stats.peak_heap = g_heap_bytes;
     }
   }
-  /* The whole block is zero, including every byte a later bump will
-   * claim. Fresh allocation then skips the per-object memset. A hole
-   * in a recycled block is not fresh and still clears its payload. */
-  memset(b->base, 0, BLOCK_SIZE);
+  /* Block memory is not pre-zeroed. Every allocation zeroes its own
+   * payload in init_object, so a fresh or recycled block costs no
+   * whole-block clearing pass ahead of the mutator's own writes. */
   b->space = space;
   b->search = 0;
   b->bump = b->base;
@@ -1232,6 +1233,11 @@ static AvantHeader *place_bump(size_t total) {
     return NULL;
   }
   cur = g_alloc_cur[space];
+  /* Steady state: the global cursor already mirrors the nursery block.
+   * Take from it directly instead of re-syncing through try_bump. */
+  if (cur && g_cur == cur && g_bump && g_bump + total <= g_limit) {
+    return (AvantHeader *)bump_take(total);
+  }
   if (cur && try_bump(cur, total)) {
     return (AvantHeader *)bump_take(total);
   }
@@ -2308,6 +2314,7 @@ static void collect(int full) {
     die("GC reentered");
   }
   g_collecting = 1;
+  atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   g_stats.collections++;
   g_live = 0;
   g_work_n = 0;
@@ -2483,9 +2490,9 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   return payload_of(&L->header);
 }
 
-/* Payload is already zero when the object landed in a fresh block.
- * g_alloc_fresh stays set only while the cursor bumps forward through
- * memory new_block cleared. A hole clears the flag and must be zeroed. */
+/* Block memory is never pre-zeroed, so every allocation zeroes its
+ * own payload here. Callers pass zeroed=1 only for memory already
+ * cleared by its allocator (the large-object path). */
 static void init_object(AvantHeader *h, size_t payload, uint32_t type_id, int young, int zeroed) {
   h->size = (uint32_t)payload;
   h->type_id = (uint16_t)type_id;
@@ -2864,8 +2871,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
       g_mature_since_full < FULL_BYTES && g_nursery_held + total < g_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
-      int zeroed = g_alloc_fresh[SPACE_NURSERY];
-      init_object(fast, payload, type_id, 1, zeroed);
+      init_object(fast, payload, type_id, 1, 0);
       account_alloc(total, 1);
       return payload_of(fast);
     }
@@ -2900,7 +2906,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     space = SPACE_MATURE;
   }
   AvantHeader *h = place(total, space, 0);
-  init_object(h, payload, type_id, space == SPACE_NURSERY, g_alloc_fresh[space]);
+  init_object(h, payload, type_id, space == SPACE_NURSERY, 0);
   account_alloc(total, space == SPACE_NURSERY);
   void *obj = payload_of(h);
   pthread_mutex_unlock(&g_world);
@@ -2930,7 +2936,7 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
   if (!h) {
     return NULL;
   }
-  init_object(h, payload, type_id, 1, g_alloc_fresh[SPACE_NURSERY]);
+  init_object(h, payload, type_id, 1, 0);
   account_alloc(total, 1);
   return payload_of(h);
 }
