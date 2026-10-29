@@ -1,5 +1,10 @@
 # Avant Language changelog
 
+## 0.18.0 - 2026-10-29
+
+* Memory management and GC improvements on efficiency and correctness, inclusing the split of  emit_while analysis into WhilePlan helpers
+* Revision of performance numbers after the changes aimed towards correctness
+
 ## 0.17.0 - 2026-10-27
 
 ### Added

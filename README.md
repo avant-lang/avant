@@ -991,9 +991,9 @@ quote {
 Stdout is the default. `--write` replaces the file. `--check` prints `canonical` or `would change PATH` and does not write. A lex error prints the diagnostic and leaves the file alone.
 
 ```
-./bin/avant-av-b format FILE.av
-./bin/avant-av-b format FILE.av --check
-./bin/avant-av-b format FILE.av --write
+avant format FILE.av
+avant format FILE.av --check
+avant format FILE.av --write
 ```
 
 `compile`, `run`, and `dump` still drop comments. Formatting is a separate command so a format bug cannot change what a program means.
@@ -1198,9 +1198,9 @@ sh runtime/build.sh
 Tests are the native suite, run on the compiler you just built (B) and, for a release, on the next one (C):
 
 ```
-AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/run.av
-./bin/avant-av-b compile compiler/main.av bin/avant-av-c --debug
-AVANT_COMPILER=./bin/avant-av-c ./bin/avant-av-c run tests/run.av
+AVANT_COMPILER=./bin/avant-b ./bin/avant-b run tests/run.av
+./bin/avant-b compile compiler/main.av bin/avant-c --debug
+AVANT_COMPILER=./bin/avant-c ./bin/avant-c run tests/run.av
 ```
 
 Adding `tests/cases/foo.av` needs no edit to `tests/run.av`. Run one case with `AVANT_TEST_CASES=foo`, one shard of the parallel-safe cases with `AVANT_TEST_SHARD=2/4`, or the whole suite across parallel shard processes with `AVANT_TEST_JOBS=4` (serial and isolated cases — compiler-building, collector, package, and FFI cases — still run alone afterwards; each shard writes its own `junit-shardIofN.xml`). `--coverage` (or `AVANT_COVERAGE=1`) writes `lcov.info`; goldens live in `tests/goldens/`.
