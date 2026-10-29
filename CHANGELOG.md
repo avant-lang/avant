@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.19.0 - 2026-10-29
 
 ### Added
 * Nested modules: `import http.server` loads `http/server.av`. The module name is that path. Its `pub` names enter the importer unqualified, and a clash is qualified with the full name (`http.server.Server`).
