@@ -476,7 +476,7 @@ The comptime field walk in [Macros](#macros) is the other `for`, and it keeps it
 
 ## Modules
 
-A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. There is no `module` line, and a directory is not a module.
+A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. A keyword after a dot is a name, so `import http.spawn` loads `http/spawn.av` and a clash is qualified as `http.spawn.Server`. A keyword that starts a phrase stays that keyword. There is no `module` line, and a directory is not a module.
 
 The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
 

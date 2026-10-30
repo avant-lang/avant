@@ -307,6 +307,74 @@ fn test_modules(c: Checks) {
       c.expect(false, "dep does not see consumer")
     }
 
+    kw = "${dir}/kw"
+    s12_mkdir("${kw}/pkg")
+    dummy_kf = file_write("${kw}/pkg/spawn.av", "pub struct Node {\n  n: Int\n}\npub fn from_spawn: Int { 3 }\n")
+    dummy_ko = file_write("${kw}/other.av", "pub struct Node {\n  n: Int\n}\n")
+    dummy_km = file_write("${kw}/main.av", "import pkg.spawn\nimport other\nfn main {\n  v = pkg.spawn.Node { n: 1 }\n  w = other.Node { n: 2 }\n  puts(v.n)\n  puts(w.n)\n  puts(from_spawn())\n}\n")
+    kw_bin = "${dir}/kw.bin"
+    kw_log = "${dir}/kw.log"
+    kw_out = "${dir}/kw.out"
+    kw_code = compile_av(compiler, "${kw}/main.av", kw_bin, kw_log)
+    c.eq_int(kw_code, 0, "keyword after a dot")
+    c.expect(file_exists(kw_bin), "keyword after a dot bin")
+    chmod_x(kw_bin)
+    dummy_kr = run_av_bin(kw_bin, kw_out)
+    if got = file_read(kw_out) {
+      c.eq_str(got, "1\n2\n3\n", "keyword segment and qualifier")
+    } else {
+      c.expect(false, "keyword segment and qualifier")
+    }
+
+    member = "${dir}/member.av"
+    dummy_mf = file_write(member, "struct Box {\n  n: Int\n}\nfn main {\n  b = Box { n: 1 }\n  puts(b.for)\n}\n")
+    member_bin = "${dir}/member.bin"
+    member_log = "${dir}/member.log"
+    dummy_mc = compile_av(compiler, member, member_bin, member_log)
+    c.expect(!file_exists(member_bin), "keyword member bin absent")
+    if err = file_read(member_log) {
+      c.expect(str_has(err, "no field for"), "keyword member is a name")
+      c.expect(!str_has(err, "expected 2"), "keyword member is not a parse error")
+    } else {
+      c.expect(false, "keyword member is a name")
+    }
+
+    lead = "${dir}/lead.av"
+    dummy_lf = file_write(lead, "import spawn\nfn main {\n  puts(1)\n}\n")
+    lead_bin = "${dir}/lead.bin"
+    lead_log = "${dir}/lead.log"
+    dummy_lc = compile_av(compiler, lead, lead_bin, lead_log)
+    c.expect(!file_exists(lead_bin), "leading keyword import bin absent")
+    if err = file_read(lead_log) {
+      c.expect(str_has(err, "expected 2, found 19"), "leading keyword import")
+    } else {
+      c.expect(false, "leading keyword import")
+    }
+
+    decl = "${dir}/decl.av"
+    dummy_df = file_write(decl, "fn spawn: Int { 1 }\nfn main {\n  puts(spawn())\n}\n")
+    decl_bin = "${dir}/decl.bin"
+    decl_log = "${dir}/decl.log"
+    dummy_dc = compile_av(compiler, decl, decl_bin, decl_log)
+    c.expect(!file_exists(decl_bin), "keyword function name bin absent")
+    if err = file_read(decl_log) {
+      c.expect(str_has(err, "expected function name"), "keyword function name")
+    } else {
+      c.expect(false, "keyword function name")
+    }
+
+    label = "${dir}/label.av"
+    dummy_af = file_write(label, "struct Point {\n  x: Int\n}\nfn main {\n  p = Point { for: 1 }\n  puts(p.x)\n}\n")
+    label_bin = "${dir}/label.bin"
+    label_log = "${dir}/label.log"
+    dummy_ac = compile_av(compiler, label, label_bin, label_log)
+    c.expect(!file_exists(label_bin), "keyword field label bin absent")
+    if err = file_read(label_log) {
+      c.expect(str_has(err, "expected expression, found 28"), "keyword field label")
+    } else {
+      c.expect(false, "keyword field label")
+    }
+
     s12_write(dir, "solo", "fn main {\n  puts(1)\n}\n")
     solo_bin = "${dir}/solo.bin"
     solo_log = "${dir}/solo.log"

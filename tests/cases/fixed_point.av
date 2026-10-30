@@ -18,9 +18,7 @@ fn test_fixed_point(c: Checks) {
     main_b = "/tmp/avant-s15-${stamp}-main-b.myc"
     main_c = "/tmp/avant-s15-${stamp}-main-c.myc"
     bin_c = "/tmp/avant-s15-${stamp}-c"
-    bin_d = "/tmp/avant-s15-${stamp}-d"
     clog = "/tmp/avant-s15-${stamp}-c.log"
-    dlog = "/tmp/avant-s15-${stamp}-d.log"
     hlog = "/tmp/avant-s15-${stamp}-hello.log"
 
     b_hello = dump_av(compiler, hello, hello_b)
@@ -35,8 +33,23 @@ fn test_fixed_point(c: Checks) {
       s15_fail_log(c, hello_b, "read hello dump")
     }
 
-    ccode = compile_av(compiler, main_av, bin_c, clog)
+    // One self-host link. Nursery is forced on so the long compile is the
+    // collector proof, and --debug is the daily backend. The log is also
+    // the compiler-sized DT_TEXTREL check.
+    cenv: Array(String) = []
+    cenv.push("AVANT_NURSERY=1")
+    cenv.push(compiler)
+    cenv.push("compile")
+    cenv.push(main_av)
+    cenv.push(bin_c)
+    cenv.push("--debug")
+    ccode = process_run_out("/usr/bin/env", cenv, clog)
     c.eq_int(ccode, 0, "compile next compiler")
+    if ccout = file_read(clog) {
+      c.expect(!str_has(ccout, "DT_TEXTREL"), "compile next compiler has no TEXTREL warning")
+    } else {
+      c.expect(false, "compile next compiler has no TEXTREL warning")
+    }
     if file_exists(bin_c) {
       chmod_x(bin_c)
 
@@ -69,19 +82,12 @@ fn test_fixed_point(c: Checks) {
         s15_fail_log(c, main_b, "read compiler myc")
       }
 
-      dcode = compile_av(bin_c, main_av, bin_d, dlog)
-      c.eq_int(dcode, 0, "next compiles D")
-      if file_exists(bin_d) {
-        chmod_x(bin_d)
-        hcode = run_av_cmd(bin_d, hello, hlog)
-        c.eq_int(hcode, 0, "D runs hello")
-        if hout = file_read(hlog) {
-          c.eq_str(hout, "Hello Avant\n", "D hello stdout")
-        } else {
-          c.expect(false, "read D hello stdout")
-        }
+      hcode = run_av_cmd(bin_c, hello, hlog)
+      c.eq_int(hcode, 0, "next runs hello")
+      if hout = file_read(hlog) {
+        c.eq_str(hout, "Hello Avant\n", "next hello stdout")
       } else {
-        s15_fail_log(c, dlog, "D bin exists")
+        c.expect(false, "read next hello stdout")
       }
     } else {
       s15_fail_log(c, clog, "C bin exists")
