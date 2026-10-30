@@ -240,6 +240,21 @@ pub class Parser {
     self.bump
   }
 
+  // A keyword after a dot is a name. A keyword that starts a phrase stays the keyword.
+  pub fn take_name_after_dot: Token {
+    tok = self.current
+    if tok.kind == tk_ident() {
+      return self.bump
+    }
+    spell = keyword_spelling(tok.kind)
+    if spell.size > 0 {
+      dummy = self.bump
+      return Token.new(tk_ident(), tok.loc, spell)
+    }
+    self.fail(tok.loc, "expected ${tk_ident()}, found ${tok.kind}")
+    tok
+  }
+
   pub fn skip_newlines {
     while self.current.kind == tk_newline() {
       dummy = self.bump
@@ -425,7 +440,7 @@ pub class Parser {
     while self.current.kind == tk_dot() {
       dummy_dot = self.bump
       self.skip_newlines
-      next = self.expect(tk_ident())
+      next = self.take_name_after_dot
       buf.push_str(".")
       buf.push_str(next.value)
     }
@@ -510,7 +525,7 @@ pub class Parser {
     self.skip_newlines
     dummy_dot = self.expect(tk_dot())
     self.skip_newlines
-    fields_tok = self.expect(tk_ident())
+    fields_tok = self.take_name_after_dot
     if str_eq(fields_tok.value, "fields") {
     } else {
       self.fail(fields_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
@@ -603,7 +618,7 @@ pub class Parser {
     if self.current.kind == tk_dot() {
       at = self.bump.loc
       self.skip_newlines
-      field = self.expect(tk_ident())
+      field = self.take_name_after_dot
       fa = Expr.new(ex_field(), at)
       fa.object = left
       fa.ident = field.value
@@ -1202,7 +1217,7 @@ pub class Parser {
     while self.current.kind == tk_dot() {
       dummy_dot = self.bump
       self.skip_newlines
-      tok = self.expect(tk_ident())
+      tok = self.take_name_after_dot
       parts.push(tok.value)
     }
     qual = ""
@@ -1797,7 +1812,7 @@ pub class Parser {
             cur = fa
           }
         } else {
-          field = self.expect(tk_ident())
+          field = self.take_name_after_dot
           if self.current.kind == tk_l_paren() {
             took_type = false
             qual_pre = self.qual_of(cur)
@@ -2139,7 +2154,7 @@ pub class Parser {
     self.skip_newlines
     dummy3 = self.expect(tk_dot())
     self.skip_newlines
-    meth = self.expect(tk_ident())
+    meth = self.take_name_after_dot
     if str_eq(meth.value, "new") {
     } else {
       self.fail(meth.loc, "Array(T) only supports .new")
@@ -2168,7 +2183,7 @@ pub class Parser {
     self.skip_newlines
     dummy4 = self.expect(tk_dot())
     self.skip_newlines
-    meth = self.expect(tk_ident())
+    meth = self.take_name_after_dot
     if str_eq(meth.value, "new") {
     } else {
       self.fail(meth.loc, "Hash(K, V) only supports .new")
