@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.22.0 - 2026-10-30
 
 ### Changed
 * The compiler's checker and codegen sources live in `compiler/checker/` and `compiler/codegen/`. A file there is imported by that path (`import checker.facts`, `import codegen.loops`, `import checker.spawn`).
