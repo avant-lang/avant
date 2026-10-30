@@ -234,6 +234,79 @@ fn test_modules(c: Checks) {
       c.expect(false, "two spellings")
     }
 
+    rootp = "${dir}/rootprobe"
+    s12_mkdir("${rootp}/compiler/checker")
+    s12_mkdir("${rootp}/compiler/codegen")
+    dummy_rt = file_write("${rootp}/avant.toml", "[package]\nname = \"rootprobe\"\nversion = \"0.1.0\"\n")
+    dummy_rl = file_write("${rootp}/compiler/loader.av", "pub fn answer: Int { 4 }\n")
+    dummy_rc = file_write("${rootp}/compiler/codegen/calls.av", "pub fn ring: Int { 3 }\n")
+    dummy_ru = file_write("${rootp}/compiler/checker/use.av", "import codegen.calls\nimport loader\npub fn go: Int { ring() + answer() }\n")
+    dummy_rm = file_write("${rootp}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
+    rp_bin = "${dir}/rootprobe.bin"
+    rp_log = "${dir}/rootprobe.log"
+    rp_out = "${dir}/rootprobe.out"
+    rp_code = compile_av(compiler, "${rootp}/compiler/main.av", rp_bin, rp_log)
+    c.eq_int(rp_code, 0, "compilation root probe")
+    chmod_x(rp_bin)
+    dummy_rp = run_av_bin(rp_bin, rp_out)
+    if got = file_read(rp_out) {
+      c.eq_str(got, "7\n", "nested import under compiled file")
+    } else {
+      c.expect(false, "nested import under compiled file")
+    }
+
+    both = "${dir}/bothroot"
+    s12_mkdir("${both}/src/nest")
+    dummy_bt = file_write("${both}/avant.toml", "[package]\nname = \"bothroot\"\nversion = \"0.1.0\"\n")
+    dummy_bv = file_write("${both}/vec.av", "pub fn from_manifest: Int { 1 }\n")
+    dummy_bs = file_write("${both}/src/vec.av", "pub fn from_root: Int { 2 }\n")
+    dummy_bn = file_write("${both}/src/nest/use.av", "import vec\npub fn go: Int { 1 }\n")
+    dummy_bm = file_write("${both}/src/main.av", "import nest.use\nfn main {\n  puts(go())\n}\n")
+    both_bin = "${dir}/bothroot.bin"
+    both_log = "${dir}/bothroot.log"
+    dummy_bc = compile_av(compiler, "${both}/src/main.av", both_bin, both_log)
+    c.expect(!file_exists(both_bin), "root and manifest bin absent")
+    if err = file_read(both_log) {
+      c.expect(str_has(err, "import vec is ambiguous"), "root and manifest")
+      c.expect(str_has(err, "src/vec.av"), "root path")
+      c.expect(str_has(err, "bothroot/vec.av"), "manifest path")
+    } else {
+      c.expect(false, "root and manifest")
+    }
+
+    spell = "${dir}/spell"
+    s12_mkdir("${spell}/compiler/checker")
+    dummy_st = file_write("${spell}/avant.toml", "[package]\nname = \"spell\"\nversion = \"0.1.0\"\n")
+    dummy_sf = file_write("${spell}/compiler/checker/facts.av", "pub fn n: Int { 1 }\n")
+    dummy_su = file_write("${spell}/compiler/checker/use.av", "import facts\nimport checker.facts\npub fn go: Int { n() }\n")
+    dummy_sm = file_write("${spell}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
+    spell_bin = "${dir}/spell.bin"
+    spell_log = "${dir}/spell.log"
+    dummy_sc = compile_av(compiler, "${spell}/compiler/main.av", spell_bin, spell_log)
+    c.expect(!file_exists(spell_bin), "root two spellings bin absent")
+    if err = file_read(spell_log) {
+      c.expect(str_has(err, "open the same file"), "root two spellings")
+    } else {
+      c.expect(false, "root two spellings")
+    }
+
+    seal = "${dir}/seal"
+    s12_mkdir("${seal}/deps/lib")
+    dummy_slt = file_write("${seal}/avant.toml", "[package]\nname = \"seal\"\nversion = \"0.1.0\"\n")
+    dummy_sld = file_write("${seal}/deps/lib/avant.toml", "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n")
+    dummy_slh = file_write("${seal}/hidden.av", "pub fn hidden: Int { 1 }\n")
+    dummy_slg = file_write("${seal}/deps/lib/greeter.av", "import hidden\npub fn go: Int { hidden() }\n")
+    dummy_slm = file_write("${seal}/main.av", "import greeter\nfn main {\n  puts(go())\n}\n")
+    seal_bin = "${dir}/seal.bin"
+    seal_log = "${dir}/seal.log"
+    dummy_slc = compile_av(compiler, "${seal}/main.av", seal_bin, seal_log)
+    c.expect(!file_exists(seal_bin), "dep does not see consumer bin absent")
+    if err = file_read(seal_log) {
+      c.expect(str_has(err, "cannot find hidden.av"), "dep does not see consumer")
+    } else {
+      c.expect(false, "dep does not see consumer")
+    }
+
     s12_write(dir, "solo", "fn main {\n  puts(1)\n}\n")
     solo_bin = "${dir}/solo.bin"
     solo_log = "${dir}/solo.log"
