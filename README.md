@@ -478,7 +478,7 @@ The comptime field walk in [Macros](#macros) is the other `for`, and it keeps it
 
 A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. There is no `module` line, and a directory is not a module.
 
-The compiler looks beside the importing file, then under the nearest `avant.toml` above the compilation root, then in each fetched dependency. Two different files for one import are an error. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
+The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
 
 A file under `tests/math/` can import the project next to `avant.toml` and use the public names unqualified:
 
@@ -604,7 +604,7 @@ Compiling and running the project needs no extra flags:
 avant run main.av
 ```
 
-The compiler looks beside the importing file, then under the project's `avant.toml`, then in each fetched checkout under `deps/`. Visibility is the same as for your own files: only `pub` names enter your scope, and a module inside a dependency may itself import other modules, including modules from other fetched dependencies. If the module cannot be found and the project has a manifest, the error tells you the remedy:
+The compiler looks beside the importing file, then in the directory of the file being compiled, then under the project's `avant.toml`, then in each fetched checkout under `deps/`. A file inside a dependency uses that checkout as its root and does not look back into your program. Visibility is the same as for your own files: only `pub` names enter your scope, and a module inside a dependency may itself import other modules, including modules from other fetched dependencies. If the module cannot be found and the project has a manifest, the error tells you the remedy:
 
 ```text
 error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: avant fetch .)
