@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.20.0 - 2026-10-30
 
 ### Changed
 * An import is also looked up in the directory of the file passed to `compile`, `run`, or `dump`, after the importing file's directory and before the nearest `avant.toml`. One path found twice is one file. A dependency still does not search the program that imported it. This is what lets a nested file name another file under that root (`import codegen.calls` from `compiler/checker/use.av` when the root is `compiler/main.av`).
