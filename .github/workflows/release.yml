@@ -113,16 +113,16 @@ jobs:
       - name: Seed → B
         run: |
           set -euo pipefail
-          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-av-b --debug
-          ./bin/avant-av-b run examples/hello.av
+          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-b --debug
+          ./bin/avant-b run examples/hello.av
 
       - name: Native suite on B
         env:
-          AVANT_COMPILER: ./bin/avant-av-b
-          AVANT_TEST_JOBS: "4"
+          AVANT_COMPILER: ./bin/avant-b
+          # AVANT_TEST_JOBS: "4"
         run: |
           set -euo pipefail
-          ./bin/avant-av-b run tests/run.av | tee native.log
+          ./bin/avant-b run tests/run.av | tee native.log
           if grep -q 'FAIL  tests/run.av' native.log; then
             exit 1
           fi
@@ -136,7 +136,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/avant-linux-x86_64
-          cp -f bin/avant-av-b dist/avant-linux-x86_64/avant
+          cp -f bin/avant-b dist/avant-linux-x86_64/avant
           cp -f /tmp/myc-llvm-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
           chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
           {
