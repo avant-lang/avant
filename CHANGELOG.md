@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.21.0 - 2026-10-30
 
 ### Changed
 * A keyword after a dot is a name. `import http.spawn` loads `http/spawn.av`, a clash is qualified as `http.spawn.Server`, and a member is `box.spawn`. A keyword that starts a phrase stays that keyword (`spawn { }`, `import spawn`, a function name, a field label).
