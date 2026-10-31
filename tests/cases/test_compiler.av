@@ -3,7 +3,7 @@ import harness
 fn test_compiler(c: Checks) {
   c.suite("tests/cases/test_compiler.av")
   stamp = now_ms()
-  echo_out = "/tmp/avant-compiler-s10-${stamp}-echo.txt"
+  echo_out = "/tmp/avant-compiler-${stamp}-echo.txt"
   echo_args: Array(String) = []
   echo_args.push("ok")
   echo_code = process_run_out("/bin/echo", echo_args, echo_out)
@@ -17,11 +17,11 @@ fn test_compiler(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     c.expect(file_exists(compiler), "AVANT_COMPILER exists")
 
-    hello_src = "/tmp/avant-compiler-s10-${stamp}-hello.av"
-    hello_bin = "/tmp/avant-compiler-s10-${stamp}-hello.bin"
-    hello_out = "/tmp/avant-compiler-s10-${stamp}-hello.txt"
-    hello_log = "/tmp/avant-compiler-s10-${stamp}-hello.log"
-    hello_dump = "/tmp/avant-compiler-s10-${stamp}-hello.myc"
+    hello_src = "/tmp/avant-compiler-${stamp}-hello.av"
+    hello_bin = "/tmp/avant-compiler-${stamp}-hello.bin"
+    hello_out = "/tmp/avant-compiler-${stamp}-hello.txt"
+    hello_log = "/tmp/avant-compiler-${stamp}-hello.log"
+    hello_dump = "/tmp/avant-compiler-${stamp}-hello.myc"
     hello_body = "fn main {\n  w = file_write(\"${hello_out}\", \"Hello Avant\")\n}\n"
     w = file_write(hello_src, hello_body)
     c.eq_int(w, 0, "write hello fixture")
@@ -46,10 +46,10 @@ fn test_compiler(c: Checks) {
       c.expect(false, "dump hello fixture")
     }
 
-    fact_src = "/tmp/avant-compiler-s10-${stamp}-fact.av"
-    fact_bin = "/tmp/avant-compiler-s10-${stamp}-fact.bin"
-    fact_out = "/tmp/avant-compiler-s10-${stamp}-fact.txt"
-    fact_log = "/tmp/avant-compiler-s10-${stamp}-fact.log"
+    fact_src = "/tmp/avant-compiler-${stamp}-fact.av"
+    fact_bin = "/tmp/avant-compiler-${stamp}-fact.bin"
+    fact_out = "/tmp/avant-compiler-${stamp}-fact.txt"
+    fact_log = "/tmp/avant-compiler-${stamp}-fact.log"
     fact_body = "fn fact(n: Int): Int {\n  if n <= 1 { return 1 }\n  n * fact(n - 1)\n}\nfn main {\n  n = fact(5)\n  b = buf_new()\n  b.push_fmt_i(n)\n  w = file_write(\"${fact_out}\", b.to_s)\n}\n"
     w2 = file_write(fact_src, fact_body)
     c.eq_int(w2, 0, "write fact fixture")
@@ -65,9 +65,9 @@ fn test_compiler(c: Checks) {
       c.expect(false, "fact(5)")
     }
 
-    bad_src = "/tmp/avant-compiler-s10-${stamp}-bad.av"
-    bad_bin = "/tmp/avant-compiler-s10-${stamp}-bad.bin"
-    bad_log = "/tmp/avant-compiler-s10-${stamp}-bad.log"
+    bad_src = "/tmp/avant-compiler-${stamp}-bad.av"
+    bad_bin = "/tmp/avant-compiler-${stamp}-bad.bin"
+    bad_log = "/tmp/avant-compiler-${stamp}-bad.log"
     w3 = file_write(bad_src, "fn main {\n  puts(x)\n}\n")
     c.eq_int(w3, 0, "write bad fixture")
     bad_code = compile_av(compiler, bad_src, bad_bin, bad_log)

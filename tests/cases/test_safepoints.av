@@ -4,11 +4,11 @@ fn test_safepoints(c: Checks) {
   c.suite("tests/cases/test_safepoints.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "/tmp/avant-safepoints-s17-${stamp}-churn.av"
-    bin = "/tmp/avant-safepoints-s17-${stamp}-churn"
-    clog = "/tmp/avant-safepoints-s17-${stamp}-compile.log"
-    rlog = "/tmp/avant-safepoints-s17-${stamp}-run.log"
-    slog = "/tmp/avant-safepoints-s17-${stamp}-stats.log"
+    src = "/tmp/avant-safepoints-${stamp}-churn.av"
+    bin = "/tmp/avant-safepoints-${stamp}-churn"
+    clog = "/tmp/avant-safepoints-${stamp}-compile.log"
+    rlog = "/tmp/avant-safepoints-${stamp}-run.log"
+    slog = "/tmp/avant-safepoints-${stamp}-stats.log"
     body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) + check(n.right, depth - 1) + n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write nursery churn")
@@ -50,7 +50,7 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "read gc stats")
       }
 
-      dlog = "/tmp/avant-safepoints-s17-${stamp}-discard.log"
+      dlog = "/tmp/avant-safepoints-${stamp}-discard.log"
       disc: Array(String) = []
       disc.push("AVANT_NURSERY=1")
       disc.push("AVANT_NURSERY_DISCARD=1")
@@ -64,7 +64,7 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "read discard stdout")
       }
 
-      mlog = "/tmp/avant-safepoints-s17-${stamp}-stackmap.log"
+      mlog = "/tmp/avant-safepoints-${stamp}-stackmap.log"
       sm: Array(String) = []
       sm.push("AVANT_NURSERY=1")
       sm.push("AVANT_YOUNG_MB=1")
@@ -83,10 +83,10 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "read stackmap stats")
       }
 
-      bsrc = "/tmp/avant-safepoints-s17-${stamp}-barrier.av"
-      bbin = "/tmp/avant-safepoints-s17-${stamp}-barrier"
-      blog = "/tmp/avant-safepoints-s17-${stamp}-barrier-cc.log"
-      brun = "/tmp/avant-safepoints-s17-${stamp}-barrier-run.log"
+      bsrc = "/tmp/avant-safepoints-${stamp}-barrier.av"
+      bbin = "/tmp/avant-safepoints-${stamp}-barrier"
+      blog = "/tmp/avant-safepoints-${stamp}-barrier-cc.log"
+      brun = "/tmp/avant-safepoints-${stamp}-barrier-run.log"
       bbody = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts(a.left.item)\n}\n"
       bw = file_write(bsrc, bbody)
       c.eq_int(bw, 0, "write old-object store")
@@ -109,11 +109,11 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "barrier binary exists")
       }
 
-      bsrc2 = "/tmp/avant-safepoints-s17-${stamp}-bump.av"
-      bbin2 = "/tmp/avant-safepoints-s17-${stamp}-bump"
-      blog2 = "/tmp/avant-safepoints-s17-${stamp}-bump-cc.log"
-      brun2 = "/tmp/avant-safepoints-s17-${stamp}-bump-run.log"
-      bdump = "/tmp/avant-safepoints-s17-${stamp}-bump.myc"
+      bsrc2 = "/tmp/avant-safepoints-${stamp}-bump.av"
+      bbin2 = "/tmp/avant-safepoints-${stamp}-bump"
+      blog2 = "/tmp/avant-safepoints-${stamp}-bump-cc.log"
+      brun2 = "/tmp/avant-safepoints-${stamp}-bump-run.log"
+      bdump = "/tmp/avant-safepoints-${stamp}-bump.myc"
       bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      shift = 1 << (depth - 1)\n      if l = make_tree(item - shift, depth - 1) {\n        if r = make_tree(item + shift, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  nursery_reclaim()\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
       bw2 = file_write(bsrc2, bbody2)
       c.eq_int(bw2, 0, "write bump tree")

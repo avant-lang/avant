@@ -4,10 +4,10 @@ fn test_coverage(c: Checks) {
   c.suite("tests/cases/test_coverage.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "/tmp/avant-coverage-s10-${stamp}-cov.av"
-    bin = "/tmp/avant-coverage-s10-${stamp}-cov.bin"
-    log = "/tmp/avant-coverage-s10-${stamp}-cov.log"
-    dump_log = "/tmp/avant-coverage-s10-${stamp}-cov.myc"
+    src = "/tmp/avant-coverage-${stamp}-cov.av"
+    bin = "/tmp/avant-coverage-${stamp}-cov.bin"
+    log = "/tmp/avant-coverage-${stamp}-cov.log"
+    dump_log = "/tmp/avant-coverage-${stamp}-cov.myc"
     body = "fn covered(n: Int): Int {\n  r = 0\n  if n > 0 {\n    r = 1\n  } else {\n    r = 2\n  }\n  r\n}\nfn unused(n: Int): Int {\n  n + 1\n}\nfn main {\n  x = covered(1)\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write coverage fixture")
@@ -49,7 +49,7 @@ fn test_coverage(c: Checks) {
       c.expect(str_has(lcov, "SF:"), "lcov has SF:")
       c.expect(str_has(lcov, "DA:"), "lcov has DA:")
       c.expect(str_has(lcov, "end_of_record"), "lcov has end_of_record")
-      c.expect(str_has(lcov, "SF:avant-coverage-s10-${stamp}-cov.av\n"), "absolute path keeps its file name")
+      c.expect(str_has(lcov, "SF:avant-coverage-${stamp}-cov.av\n"), "absolute path keeps its file name")
     } else {
       c.expect(false, "fixture lcov")
     }
@@ -62,8 +62,8 @@ fn test_coverage(c: Checks) {
     dummy_rel = process_run("/bin/mkdir", mkdir_rel)
     rel_w = file_write(rel_src, body)
     c.eq_int(rel_w, 0, "write relative coverage fixture")
-    rel_bin = "/tmp/avant-coverage-s10-${stamp}-covrel.bin"
-    rel_log = "/tmp/avant-coverage-s10-${stamp}-covrel.log"
+    rel_bin = "/tmp/avant-coverage-${stamp}-covrel.bin"
+    rel_log = "/tmp/avant-coverage-${stamp}-covrel.log"
     rel_code = compile_av_cov(compiler, rel_src, rel_bin, rel_log)
     c.eq_int(rel_code, 0, "compile relative coverage fixture")
     chmod_x(rel_bin)
@@ -80,7 +80,7 @@ fn test_coverage(c: Checks) {
       c.expect(false, "relative lcov")
     }
 
-    jdir = "/tmp/avant-coverage-s10-${stamp}-jcases"
+    jdir = "/tmp/avant-coverage-${stamp}-jcases"
     mkdir_args: Array(String) = []
     mkdir_args.push("-p")
     mkdir_args.push(jdir)
@@ -89,8 +89,8 @@ fn test_coverage(c: Checks) {
     jbody = "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"ok\")\n  t.finish\n}\n"
     jw = file_write(jcase, jbody)
     c.eq_int(jw, 0, "write junit mini case")
-    junit = "/tmp/avant-coverage-s10-${stamp}-junit.xml"
-    jlog = "/tmp/avant-coverage-s10-${stamp}-junit.log"
+    junit = "/tmp/avant-coverage-${stamp}-junit.xml"
+    jlog = "/tmp/avant-coverage-${stamp}-junit.log"
     env_args: Array(String) = []
     env_args.push("AVANT_ROOT=${avant_test_root()}")
     env_args.push("AVANT_COVERAGE_LCOV=0")

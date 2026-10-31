@@ -1,26 +1,26 @@
 import harness
 
-interface S21Show {
+interface Show {
   fn to_s: String
 }
 
-interface S21Eq(T) {
+interface Eq(T) {
   fn ==(other: T): Bool
 }
 
-interface S21Enumerable(T) {
+interface Enumerable(T) {
   fn each(block: fn(T): Nil)
 }
 
-interface S21Fold(T) {
+interface Fold(T) {
   fn fold(init: U, f: fn(U, T): U): U
 }
 
-interface S21Full {
+interface Full {
   fn take(n: Int, m: Int): Int
 }
 
-struct S21Vec: S21Show + S21Eq(S21Vec) {
+struct Vec: Show + Eq(Vec) {
   x: Int
   y: Int
 
@@ -28,7 +28,7 @@ struct S21Vec: S21Show + S21Eq(S21Vec) {
     "vec"
   }
 
-  fn ==(other: S21Vec): Bool {
+  fn ==(other: Vec): Bool {
     if x == other.x {
       return y == other.y
     }
@@ -36,23 +36,23 @@ struct S21Vec: S21Show + S21Eq(S21Vec) {
   }
 }
 
-struct S21Tag {
+struct Tag {
   n: Int
 }
 
-fn (v: S21Tag) to_s: String {
+fn (v: Tag) to_s: String {
   "tag"
 }
 
-S21Tag: S21Show
+Tag: Show
 
-struct S21Name: S21Show {
+struct Name: Show {
   fn to_s: String {
     "name"
   }
 }
 
-class S21Box(T): S21Enumerable(T) + S21Fold(T) {
+class Box(T): Enumerable(T) + Fold(T) {
   value: T
 
   fn initialize(value: T) {
@@ -73,75 +73,75 @@ class S21Box(T): S21Enumerable(T) + S21Fold(T) {
   }
 }
 
-S21Box(Int): S21Show
+Box(Int): Show
 
-struct S21Def: S21Full {
+struct Def: Full {
   fn take(n: Int, m: Int = 0): Int {
     n + m
   }
 }
 
-fn s21_show(v: T: S21Show): String {
+fn show(v: T: Show): String {
   v.to_s
 }
 
-fn s21_same(a: T: S21Eq(T), b: T): Bool {
+fn same(a: T: Eq(T), b: T): Bool {
   if a == b {
     return true
   }
   false
 }
 
-fn s21_both(v: T: S21Show + S21Eq(T)): String {
+fn both(v: T: Show + Eq(T)): String {
   v.to_s
 }
 
-fn s21_sum(b: E: S21Fold(Int)): Int {
+fn sum(b: E: Fold(Int)): Int {
   b.fold(0) { |acc, x| acc + x }
 }
 
-fn s21_word(b: E: S21Fold(String)): String {
+fn word(b: E: Fold(String)): String {
   b.fold("") { |acc, x| x }
 }
 
-fn s21_touch(b: E: S21Enumerable(Int)): Int {
+fn touch(b: E: Enumerable(Int)): Int {
   b.each { |x| nil }
   1
 }
 
-fn s21_take(v: T: S21Full): Int {
+fn take(v: T: Full): Int {
   v.take(3, 4)
 }
 
 fn test_interfaces(c: Checks) {
   c.suite("tests/cases/test_interfaces.av")
-  v = S21Vec { x: 1, y: 2 }
-  w = S21Vec { x: 1, y: 2 }
-  z = S21Vec { x: 3, y: 4 }
-  c.eq_str(s21_show(v), "vec", "show vec")
-  c.eq_str(s21_show(S21Name { }), "name", "show name")
-  c.eq_str(s21_show(S21Tag { n: 1 }), "tag", "external witness")
-  c.expect(s21_same(v, w), "eq same")
-  c.expect(!s21_same(v, z), "eq different")
-  c.eq_str(s21_both(v), "vec", "bound plus")
-  b = S21Box.new(4)
-  c.eq_str(s21_show(b), "box", "later opt-in")
-  c.eq_int(s21_sum(b), 4, "fold int")
-  c.eq_int(s21_touch(b), 1, "each int")
-  s = S21Box.new("hi")
-  c.eq_str(s21_word(s), "hi", "fold string")
-  c.eq_int(s21_touch(S21Box.new(9)), 1, "each on another box")
-  c.eq_int(s21_take(S21Def { }), 7, "default fills the full witness")
+  v = Vec { x: 1, y: 2 }
+  w = Vec { x: 1, y: 2 }
+  z = Vec { x: 3, y: 4 }
+  c.eq_str(show(v), "vec", "show vec")
+  c.eq_str(show(Name { }), "name", "show name")
+  c.eq_str(show(Tag { n: 1 }), "tag", "external witness")
+  c.expect(same(v, w), "eq same")
+  c.expect(!same(v, z), "eq different")
+  c.eq_str(both(v), "vec", "bound plus")
+  b = Box.new(4)
+  c.eq_str(show(b), "box", "later opt-in")
+  c.eq_int(sum(b), 4, "fold int")
+  c.eq_int(touch(b), 1, "each int")
+  s = Box.new("hi")
+  c.eq_str(word(s), "hi", "fold string")
+  c.eq_int(touch(Box.new(9)), 1, "each on another box")
+  c.eq_int(take(Def { }), 7, "default fills the full witness")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    dir = "/tmp/avant-interfaces-s21-${stamp}"
-    s12_mkdir(dir)
-    s12_write(dir, "s21show", "pub interface Show {\n  fn to_s: String\n}\npub struct Tag {\n  n: Int\n}\npub fn (v: Tag) to_s: String {\n  \"tag\"\n}\npub Tag: Show\n")
-    s12_write(dir, "s21main", "import s21show\nfn present(v: T: Show): String {\n  v.to_s\n}\nfn main {\n  puts(present(Tag { n: 1 }))\n}\n")
+    dir = "/tmp/avant-interfaces-${stamp}"
+    mkdir_p(dir)
+    write_av(dir, "show", "pub interface Show {\n  fn to_s: String\n}\npub struct Tag {\n  n: Int\n}\npub fn (v: Tag) to_s: String {\n  \"tag\"\n}\npub Tag: Show\n")
+    write_av(dir, "main", "import show\nfn present(v: T: Show): String {\n  v.to_s\n}\nfn main {\n  puts(present(Tag { n: 1 }))\n}\n")
     bin = "${dir}/ok.bin"
     log = "${dir}/ok.log"
     out = "${dir}/ok.out"
-    code = compile_av(compiler, "${dir}/s21main.av", bin, log)
+    code = compile_av(compiler, "${dir}/main.av", bin, log)
     c.eq_int(code, 0, "pub later opt-in")
     c.expect(file_exists(bin), "pub later opt-in bin")
     chmod_x(bin)

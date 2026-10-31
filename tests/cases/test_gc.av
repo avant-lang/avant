@@ -4,8 +4,8 @@ fn test_gc(c: Checks) {
   c.suite("tests/cases/test_gc.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "/tmp/avant-gc-s10-${stamp}-gc.av"
-    dump = "/tmp/avant-gc-s10-${stamp}-gc.myc"
+    src = "/tmp/avant-gc-${stamp}-gc.av"
+    dump = "/tmp/avant-gc-${stamp}-gc.myc"
     body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  puts(a.left.item)\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write gc fixture")
@@ -28,7 +28,7 @@ fn test_gc(c: Checks) {
 
     golden = "${avant_test_root()}/tests/goldens/hello.myc"
     hello = "${avant_test_root()}/examples/hello.av"
-    hello_dump = "/tmp/avant-gc-s10-${stamp}-hello-golden.myc"
+    hello_dump = "/tmp/avant-gc-${stamp}-hello-golden.myc"
     if file_exists(golden) {
       gcode = dump_av(compiler, hello, hello_dump)
       c.eq_int(gcode, 0, "dump hello golden")

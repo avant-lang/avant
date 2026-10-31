@@ -1,9 +1,9 @@
 import harness
 
 fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
-  src = "/tmp/avant-errors-s10-${stamp}-${tag}.av"
-  bin = "/tmp/avant-errors-s10-${stamp}-${tag}.bin"
-  log = "/tmp/avant-errors-s10-${stamp}-${tag}.log"
+  src = "/tmp/avant-errors-${stamp}-${tag}.av"
+  bin = "/tmp/avant-errors-${stamp}-${tag}.bin"
+  log = "/tmp/avant-errors-${stamp}-${tag}.log"
   dummy = file_write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(!file_exists(bin), "${tag} bin absent")
@@ -79,8 +79,8 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fn-retstmt", "fn main {\n  f: fn(): Bool = { ||\n    return 1\n  }\n  puts(1)\n}\n", "expected Bool, got Int")
     expect_err(c, compiler, stamp, "fn-void", "fn go(f: fn()) {\n  f()\n}\nfn main {\n  go() { || 1 }\n  puts(1)\n}\n", "unused Int value")
     expect_err(c, compiler, stamp, "fn-empty", "fn main {\n  f: fn(): Int = { || }\n  puts(1)\n}\n", "missing return value")
-    expect_err(c, compiler, stamp, "fn-self", "struct S19Rec {\n  base: Int\n  fn off: fn(): Int {\n    { || base }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda cannot capture the method receiver")
-    expect_err(c, compiler, stamp, "fn-selfdot", "struct S19Rec {\n  base: Int\n  fn off: fn(): Int {\n    { || self.base }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda cannot capture the method receiver")
+    expect_err(c, compiler, stamp, "fn-self", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    { || base }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda cannot capture the method receiver")
+    expect_err(c, compiler, stamp, "fn-selfdot", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    { || self.base }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda cannot capture the method receiver")
     expect_err(c, compiler, stamp, "fn-spawn", "fn main {\n  f: fn(): Int = { || 1 }\n  h = spawn { f() }\n  puts(h.join)\n}\n", "spawn cannot capture")
     expect_err(c, compiler, stamp, "fn-lam-int", "fn main {\n  n: Int = { || 1 }\n  puts(n)\n}\n", "expected Int, got a lambda")
     expect_err(c, compiler, stamp, "fn-generic-want", "fn id(x: T): T {\n  x\n}\nfn main {\n  f: fn(Int): Int = id\n  puts(1)\n}\n", "generic function is not a value")
@@ -91,7 +91,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gen-call", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nfn main {\n  n = 1\n  x = Box(n)\n  puts(1)\n}\n", "type argument expected")
     expect_err(c, compiler, stamp, "gen-conflict", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nfn main {\n  p: Pair(String, Int) = Pair { a: 1, b: \"x\" }\n  puts(1)\n}\n", "expected String, got Int")
     expect_err(c, compiler, stamp, "gen-lib", "lib math {\n  struct Point(T) {\n    x: Int\n  }\n}\nfn main {\n  puts(1)\n}\n", "lib structs take no type parameters")
-    expect_err(c, compiler, stamp, "gen-comptime", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\ncomptime {\n  for f in Box.fields {\n    quote {\n      fn s20_walk: Int {\n        1\n      }\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "cannot walk generic type")
+    expect_err(c, compiler, stamp, "gen-comptime", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\ncomptime {\n  for f in Box.fields {\n    quote {\n      fn walk: Int {\n        1\n      }\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "cannot walk generic type")
     expect_err(c, compiler, stamp, "gen-deep", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nstruct Evil(T) {\n  x: Evil(Box(T))\n}\nfn main {\n  e: Evil(Int)? = nil\n  puts(1)\n}\n", "type instantiation too deep")
     expect_err(c, compiler, stamp, "gen-invar", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n  fn get: T {\n    value\n  }\n}\nfn take(b: Box(Int)): Int {\n  b.get\n}\nfn main {\n  s = Box.new(\"hi\")\n  take(s)\n  puts(1)\n}\n", "expected Box(Int)")
     expect_err(c, compiler, stamp, "gen-arity", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nfn main {\n  p = Pair(Int) { a: 1, b: 2 }\n  puts(1)\n}\n", "takes 2 type argument")
@@ -119,35 +119,35 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "iface-empty", "interface Show() {\n  fn to_s: String\n}\nfn main {\n  puts(1)\n}\n", "type parameter list is empty")
     expect_err(c, compiler, stamp, "iface-builtin", "interface Enumerable(T) {\n  fn each(block: fn(T): Nil)\n}\nArray(Int): Enumerable(Int)\nfn main {\n  puts(1)\n}\n", "cannot opt into")
     expect_err(c, compiler, stamp, "iface-ptr-int", "interface Show {\n  fn to_s: String\n}\nfn (p: Ptr(Int)) to_s: String { \"n\" }\nPtr(Int): Show\nfn main {\n  puts(1)\n}\n", "not Stage 18")
-    dir = "/tmp/avant-errors-s21-${stamp}"
-    s12_mkdir(dir)
-    s12_write(dir, "s21priv", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  fn to_s: String { \"p\" }\n}\npub Hide: Show\n")
-    s12_write(dir, "s21privmain", "import s21priv\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
+    dir = "/tmp/avant-errors-${stamp}"
+    mkdir_p(dir)
+    write_av(dir, "priv", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  fn to_s: String { \"p\" }\n}\npub Hide: Show\n")
+    write_av(dir, "priv_main", "import priv\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     priv_bin = "${dir}/priv.bin"
     priv_log = "${dir}/priv.log"
-    dummy_p = compile_av(compiler, "${dir}/s21privmain.av", priv_bin, priv_log)
+    dummy_p = compile_av(compiler, "${dir}/priv_main.av", priv_bin, priv_log)
     c.expect(!file_exists(priv_bin), "iface-private bin absent")
     if err = file_read(priv_log) {
       c.expect(str_has(err, "does not implement"), "iface-private")
     } else {
       c.expect(false, "iface-private")
     }
-    s12_write(dir, "s21hid", "interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"h\" }\n}\npub Hide: Show\n")
-    s12_write(dir, "s21hidmain", "import s21hid\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
+    write_av(dir, "hid", "interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"h\" }\n}\npub Hide: Show\n")
+    write_av(dir, "hid_main", "import hid\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     hid_bin = "${dir}/hid.bin"
     hid_log = "${dir}/hid.log"
-    dummy_h = compile_av(compiler, "${dir}/s21hidmain.av", hid_bin, hid_log)
+    dummy_h = compile_av(compiler, "${dir}/hid_main.av", hid_bin, hid_log)
     c.expect(!file_exists(hid_bin), "iface-vis bin absent")
     if err = file_read(hid_log) {
       c.expect(str_has(err, "unknown type Show"), "iface-vis")
     } else {
       c.expect(false, "iface-vis")
     }
-    s12_write(dir, "s21quiet", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"q\" }\n}\nHide: Show\n")
-    s12_write(dir, "s21quietmain", "import s21quiet\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
+    write_av(dir, "quiet", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"q\" }\n}\nHide: Show\n")
+    write_av(dir, "quiet_main", "import quiet\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     quiet_bin = "${dir}/quiet.bin"
     quiet_log = "${dir}/quiet.log"
-    dummy_q = compile_av(compiler, "${dir}/s21quietmain.av", quiet_bin, quiet_log)
+    dummy_q = compile_av(compiler, "${dir}/quiet_main.av", quiet_bin, quiet_log)
     c.expect(!file_exists(quiet_bin), "iface-opt-vis bin absent")
     if err = file_read(quiet_log) {
       c.expect(str_has(err, "does not implement"), "iface-opt-vis")
