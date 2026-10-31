@@ -1,0 +1,107 @@
+import harness
+
+fn s15_fail_log(c: Checks, log: String, msg: String) {
+  c.expect(false, msg)
+  if err = file_read(log) {
+    puts(err)
+  }
+}
+
+fn test_fixed_point(c: Checks) {
+  c.suite("tests/cases/test_fixed_point.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    stamp = now_ms()
+    hello = "${root}/examples/hello.av"
+    golden = "${root}/tests/goldens/hello.myc"
+    main_av = "${root}/compiler/main.av"
+    hello_b = "/tmp/avant-fixed_point-s15-${stamp}-hello-b.myc"
+    hello_c = "/tmp/avant-fixed_point-s15-${stamp}-hello-c.myc"
+    main_b = "/tmp/avant-fixed_point-s15-${stamp}-main-b.myc"
+    main_c = "/tmp/avant-fixed_point-s15-${stamp}-main-c.myc"
+    bin_c = "/tmp/avant-fixed_point-s15-${stamp}-c"
+    clog = "/tmp/avant-fixed_point-s15-${stamp}-c.log"
+    hlog = "/tmp/avant-fixed_point-s15-${stamp}-hello.log"
+
+    b_hello = dump_av(compiler, hello, hello_b)
+    c.eq_int(b_hello, 0, "dump hello")
+    if got = file_read(hello_b) {
+      if want = file_read(golden) {
+        c.eq_str(got, want, "hello dump matches golden")
+      } else {
+        c.expect(false, "read golden hello.myc")
+      }
+    } else {
+      s15_fail_log(c, hello_b, "read hello dump")
+    }
+
+    // One self-host link. Nursery is forced on so the long compile is the
+    // collector proof, and --debug is the daily backend. The log is also
+    // the compiler-sized DT_TEXTREL check.
+    cenv: Array(String) = []
+    cenv.push("AVANT_NURSERY=1")
+    cenv.push(compiler)
+    cenv.push("compile")
+    cenv.push(main_av)
+    cenv.push(bin_c)
+    cenv.push("--debug")
+    ccode = process_run_out("/usr/bin/env", cenv, clog)
+    c.eq_int(ccode, 0, "compile next compiler")
+    if ccout = file_read(clog) {
+      c.expect(!str_has(ccout, "DT_TEXTREL"), "compile next compiler has no TEXTREL warning")
+    } else {
+      c.expect(false, "compile next compiler has no TEXTREL warning")
+    }
+    if file_exists(bin_c) {
+      chmod_x(bin_c)
+
+      c_hello = dump_av(bin_c, hello, hello_c)
+      c.eq_int(c_hello, 0, "next dump hello")
+      if got_c = file_read(hello_c) {
+        if want = file_read(golden) {
+          c.eq_str(got_c, want, "next hello dump matches golden")
+        } else {
+          c.expect(false, "read golden hello.myc")
+        }
+        if got_b = file_read(hello_b) {
+          c.eq_str(got_c, got_b, "next hello dump matches this compiler")
+        }
+      } else {
+        s15_fail_log(c, hello_c, "read next hello dump")
+      }
+
+      b_main = dump_av(compiler, main_av, main_b)
+      c.eq_int(b_main, 0, "dump compiler myc")
+      c_main = dump_av(bin_c, main_av, main_c)
+      c.eq_int(c_main, 0, "next dump compiler myc")
+      if ir_b = file_read(main_b) {
+        if ir_c = file_read(main_c) {
+          c.eq_str(sha256(ir_b), sha256(ir_c), "compiler myc digest matches next")
+        } else {
+          s15_fail_log(c, main_c, "read next compiler myc")
+        }
+      } else {
+        s15_fail_log(c, main_b, "read compiler myc")
+      }
+
+      hcode = run_av_cmd(bin_c, hello, hlog)
+      c.eq_int(hcode, 0, "next runs hello")
+      if hout = file_read(hlog) {
+        c.eq_str(hout, "Hello Avant\n", "next hello stdout")
+      } else {
+        c.expect(false, "read next hello stdout")
+      }
+    } else {
+      s15_fail_log(c, clog, "C bin exists")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_fixed_point(c)
+  c.finish
+}

@@ -1,0 +1,54 @@
+import harness
+
+fn wavec_show(n: Int): Int {
+  n + 1
+}
+
+fn wavec_show(s: String): Int {
+  s.size
+}
+
+fn wavec_id(x: T): T {
+  x
+}
+
+struct WavecBox(T) {
+  v: T
+
+  fn get: T {
+    v
+  }
+}
+
+class WavecCounter {
+  n: Int = 0
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+
+  fn add(by: Int): Int {
+    n = n + by
+    n
+  }
+}
+
+fn test_typed_ir(c: Checks) {
+  c.suite("tests/cases/test_typed_ir.av")
+  c.eq_int(wavec_show(41), 42, "shared table overload int")
+  c.eq_int(wavec_show("abcd"), 4, "shared table overload string")
+  c.eq_int(wavec_id(7), 7, "shared table generic fn")
+  b = WavecBox(Int) { v: 9 }
+  c.eq_int(b.get, 9, "shared table generic struct method")
+  bs = WavecBox(String) { v: "xy" }
+  c.eq_int(bs.get.size, 2, "shared table generic struct string")
+  ctr = WavecCounter.new(10)
+  c.eq_int(ctr.add(5), 15, "shared table method")
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_typed_ir(c)
+  c.finish
+}

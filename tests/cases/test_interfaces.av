@@ -1,0 +1,181 @@
+import harness
+
+interface S21Show {
+  fn to_s: String
+}
+
+interface S21Eq(T) {
+  fn ==(other: T): Bool
+}
+
+interface S21Enumerable(T) {
+  fn each(block: fn(T): Nil)
+}
+
+interface S21Fold(T) {
+  fn fold(init: U, f: fn(U, T): U): U
+}
+
+interface S21Full {
+  fn take(n: Int, m: Int): Int
+}
+
+struct S21Vec: S21Show + S21Eq(S21Vec) {
+  x: Int
+  y: Int
+
+  fn to_s: String {
+    "vec"
+  }
+
+  fn ==(other: S21Vec): Bool {
+    if x == other.x {
+      return y == other.y
+    }
+    false
+  }
+}
+
+struct S21Tag {
+  n: Int
+}
+
+fn (v: S21Tag) to_s: String {
+  "tag"
+}
+
+S21Tag: S21Show
+
+struct S21Name: S21Show {
+  fn to_s: String {
+    "name"
+  }
+}
+
+class S21Box(T): S21Enumerable(T) + S21Fold(T) {
+  value: T
+
+  fn initialize(value: T) {
+    self.value = value
+  }
+
+  fn each(block: fn(T): Nil) {
+    block(value)
+    return
+  }
+
+  fn fold(init: U, f: fn(U, T): U): U {
+    f(init, value)
+  }
+
+  fn to_s: String {
+    "box"
+  }
+}
+
+S21Box(Int): S21Show
+
+struct S21Def: S21Full {
+  fn take(n: Int, m: Int = 0): Int {
+    n + m
+  }
+}
+
+fn s21_show(v: T: S21Show): String {
+  v.to_s
+}
+
+fn s21_same(a: T: S21Eq(T), b: T): Bool {
+  if a == b {
+    return true
+  }
+  false
+}
+
+fn s21_both(v: T: S21Show + S21Eq(T)): String {
+  v.to_s
+}
+
+fn s21_sum(b: E: S21Fold(Int)): Int {
+  b.fold(0) { |acc, x| acc + x }
+}
+
+fn s21_word(b: E: S21Fold(String)): String {
+  b.fold("") { |acc, x| x }
+}
+
+fn s21_touch(b: E: S21Enumerable(Int)): Int {
+  b.each { |x| nil }
+  1
+}
+
+fn s21_take(v: T: S21Full): Int {
+  v.take(3, 4)
+}
+
+fn test_interfaces(c: Checks) {
+  c.suite("tests/cases/test_interfaces.av")
+  v = S21Vec { x: 1, y: 2 }
+  w = S21Vec { x: 1, y: 2 }
+  z = S21Vec { x: 3, y: 4 }
+  c.eq_str(s21_show(v), "vec", "show vec")
+  c.eq_str(s21_show(S21Name { }), "name", "show name")
+  c.eq_str(s21_show(S21Tag { n: 1 }), "tag", "external witness")
+  c.expect(s21_same(v, w), "eq same")
+  c.expect(!s21_same(v, z), "eq different")
+  c.eq_str(s21_both(v), "vec", "bound plus")
+  b = S21Box.new(4)
+  c.eq_str(s21_show(b), "box", "later opt-in")
+  c.eq_int(s21_sum(b), 4, "fold int")
+  c.eq_int(s21_touch(b), 1, "each int")
+  s = S21Box.new("hi")
+  c.eq_str(s21_word(s), "hi", "fold string")
+  c.eq_int(s21_touch(S21Box.new(9)), 1, "each on another box")
+  c.eq_int(s21_take(S21Def { }), 7, "default fills the full witness")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    dir = "/tmp/avant-interfaces-s21-${stamp}"
+    s12_mkdir(dir)
+    s12_write(dir, "s21show", "pub interface Show {\n  fn to_s: String\n}\npub struct Tag {\n  n: Int\n}\npub fn (v: Tag) to_s: String {\n  \"tag\"\n}\npub Tag: Show\n")
+    s12_write(dir, "s21main", "import s21show\nfn present(v: T: Show): String {\n  v.to_s\n}\nfn main {\n  puts(present(Tag { n: 1 }))\n}\n")
+    bin = "${dir}/ok.bin"
+    log = "${dir}/ok.log"
+    out = "${dir}/ok.out"
+    code = compile_av(compiler, "${dir}/s21main.av", bin, log)
+    c.eq_int(code, 0, "pub later opt-in")
+    c.expect(file_exists(bin), "pub later opt-in bin")
+    chmod_x(bin)
+    run_code = run_av_bin(bin, out)
+    c.eq_int(run_code, 0, "pub later opt-in run")
+    if got = file_read(out) {
+      c.eq_str(got, "tag\n", "imported show")
+    } else {
+      c.expect(false, "imported show")
+    }
+
+    csrc = "${dir}/point.c"
+    asrc = "${dir}/point.av"
+    clog = "${dir}/point.txt"
+    dummy = file_write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; } Point;\nPoint *point_new(int x) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  return p;\n}\n")
+    dummy2 = file_write(asrc, "interface Show {\n  fn to_s: String\n}\nlib math {\n  struct Point {\n    x: Int\n  }\n  fun point_new(x: Int): Ptr(Point)\n}\nfn (p: Ptr(Point)) to_s: String {\n  \"pt\"\n}\nPtr(Point): Show\nfn present(v: T: Show): String {\n  v.to_s\n}\nfn main {\n  puts(present(math.point_new(1)))\n}\n")
+    flags: Array(String) = []
+    flags.push("--cc")
+    flags.push(csrc)
+    pcode = run_av_cmd_flags(compiler, asrc, clog, flags)
+    c.eq_int(pcode, 0, "ptr opt-in")
+    if pg = file_read(clog) {
+      c.eq_str(pg, "pt\n", "ptr show")
+    } else {
+      c.expect(false, "ptr show")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_interfaces(c)
+  c.finish
+}

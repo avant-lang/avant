@@ -12,9 +12,9 @@
 # is named `avant`. Do not dispatch this workflow onto the seed tag
 # (AVANT_SEED_VERSION): that tag's asset is the seed, and an upload would replace it.
 #
-# The suite runs before any release is created. AVANT_TEST_JOBS=4 was
-# measured slower on GitHub and the line stays commented out, so the
-# suite is serial. A new tag becomes a
+# The suite runs before any release is created. It is `avant test` with
+# the default job count. The old AVANT_TEST_JOBS=4 measurement compiled
+# the stitched suite four times. A new tag becomes a
 # draft (`gh release create --draft`). Publishing the draft is a
 # separate act. Git tags cannot hold files.
 #
@@ -24,8 +24,8 @@
 name: release-binary
 
 env:
-  AVANT_SEED_VERSION: v0.22.0
-  AVANT_SEED_SHA256: 2e11a14185dece7881a014682ede6bea619d187b54b9d177c500351a3d30f2ae
+  AVANT_SEED_VERSION: v0.23.0
+  AVANT_SEED_SHA256: 5369f8a2283708acc90dc1296758284e8e2a1f7680029a6f967773a7add87a46
   SAFEPOINTS_VERSION: v0.4.0
   MYC_LLVM_SHA256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e
 
@@ -119,18 +119,9 @@ jobs:
       - name: Native suite on B
         env:
           AVANT_COMPILER: ./bin/avant-b
-          # AVANT_TEST_JOBS: "4"
         run: |
           set -euo pipefail
-          ./bin/avant-b run tests/run.av | tee native.log
-          if grep -q 'FAIL  tests/run.av' native.log; then
-            exit 1
-          fi
-          if grep -qE 'Test Suites:.*failed' native.log; then
-            exit 1
-          fi
-          grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
-          grep -q 'Ran all test suites.' native.log
+          ./bin/avant-b test
 
       - name: Package linux-x86_64 B
         run: |

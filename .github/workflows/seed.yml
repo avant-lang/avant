@@ -3,8 +3,9 @@
 # and pass the suite, without coverage. It is the pull-request correctness
 # gate. `native` compiles an instrumented B from the same pin and runs the
 # suite on pull requests and on master, so Codecov can compare them.
-# AVANT_TEST_JOBS=4 was measured slower on GitHub and the line stays
-# commented out, so this suite is serial. AVANT_MYC_LLVM is the safepoints release (SAFEPOINTS_VERSION below), checked by
+# The suite is `avant test` with the default job count. The old
+# AVANT_TEST_JOBS=4 measurement compiled the stitched suite four times.
+# AVANT_MYC_LLVM is the safepoints release (SAFEPOINTS_VERSION below), checked by
 # sha256. This job does not install Crystal and does not compile myc-llvm.
 #
 # Runtime objects come from runtime/build.sh. `re2c` compiles a string
@@ -13,8 +14,8 @@
 name: seed
 
 env:
-  AVANT_SEED_VERSION: v0.22.0
-  AVANT_SEED_SHA256: 2e11a14185dece7881a014682ede6bea619d187b54b9d177c500351a3d30f2ae
+  AVANT_SEED_VERSION: v0.23.0
+  AVANT_SEED_SHA256: 5369f8a2283708acc90dc1296758284e8e2a1f7680029a6f967773a7add87a46
   SAFEPOINTS_VERSION: v0.4.0
   MYC_LLVM_SHA256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e
 
@@ -86,15 +87,6 @@ jobs:
       - name: Native suite on the seed-built compiler
         env:
           AVANT_COMPILER: ./bin/avant-from-seed
-          # AVANT_TEST_JOBS: "4"
         run: |
           set -euo pipefail
-          ./bin/avant-from-seed run tests/run.av | tee native.log
-          if grep -q 'FAIL  tests/run.av' native.log; then
-            exit 1
-          fi
-          if grep -qE 'Test Suites:.*failed' native.log; then
-            exit 1
-          fi
-          grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
-          grep -q 'Ran all test suites.' native.log
+          ./bin/avant-from-seed test

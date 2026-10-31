@@ -956,7 +956,7 @@ fn main {
 
 ### Channel and Mutex
 
-`Channel(T)` and `Mutex(T)` are ordinary generic classes. Nothing imports them for you. The proof is `tests/cases/s35.av`.
+`Channel(T)` and `Mutex(T)` are ordinary generic classes. Nothing imports them for you. The proof is `tests/cases/test_s35.av`.
 
 `Channel(T).new` is a rendezvous channel. `Channel(T).new(n)` is buffered. `recv` returns `T?`. `Mutex(T).with { |x| ... }` holds the lock for the block. `x` is a place that dies with the block. `return` inside `with` is an error. Waiting and waking go through the runtime's `avant_gate_*` functions.
 
@@ -1140,7 +1140,7 @@ avant run prog.av -- hello
 
 `--junit PATH` writes one JUnit case per file. It is off unless you pass it. Other flags are an error, including `--jobs 0`.
 
-Testing the compiler itself is different, and is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler). The programs in this section are exercised by `tests/cases/testing_docs.av`.
+Testing the compiler itself is different, and is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler). The programs in this section are exercised by `tests/cases/test_testing_docs.av`.
 
 ## Builtins
 
@@ -1252,12 +1252,12 @@ sh runtime/build.sh
 Tests are the native suite, run on the compiler you just built (B) and, for a release, on the next one (C):
 
 ```
-AVANT_COMPILER=./bin/avant-b ./bin/avant-b run tests/run.av
+AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
 ./bin/avant-b compile compiler/main.av bin/avant-c --debug
-AVANT_COMPILER=./bin/avant-c ./bin/avant-c run tests/run.av
+AVANT_COMPILER=./bin/avant-c ./bin/avant-c test
 ```
 
-Adding `tests/cases/foo.av` needs no edit to `tests/run.av`. Run one case with `AVANT_TEST_CASES=foo`, one shard of the parallel-safe cases with `AVANT_TEST_SHARD=2/4`, or the whole suite across parallel shard processes with `AVANT_TEST_JOBS=4` (serial and isolated cases — compiler-building, collector, package, and FFI cases — still run alone afterwards; each shard writes its own `junit-shardIofN.xml`). `--coverage` (or `AVANT_COVERAGE=1`) writes `lcov.info`; goldens live in `tests/goldens/`.
+Each file in `tests/cases/` named `test_*.av` is one program. A helper shared by two of them lives in `tests/cases/harness.av` and is imported. Run one file with `avant test tests/cases/test_ffi.av`. `--shard 2/4` runs one slice. A shard that would include a file listed in `[test] exclusive` needs `--skip-exclusive`, and those files run in a command that does not pass `--shard`. The exclusive files are the ones that compile the compiler, probe the collector, rewrite `PATH`, use git, or write a coverage report of their own. `--jobs` defaults to the number of online processors. `--junit PATH` writes one case per file. `--coverage` (or `AVANT_COVERAGE=1`) on a program writes that program's coverage; the compiler's own report is the hit file of the instrumented compiler, and `lcov.info` is written once after the processes that update it have finished. Goldens live in `tests/goldens/`.
 
 ## License
 

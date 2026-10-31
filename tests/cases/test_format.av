@@ -1,0 +1,325 @@
+import harness
+
+fn run_format(compiler: String, cmd: String, src: String, log: String, flags: Array(String)): Int {
+  args: Array(String) = []
+  args.push(cmd)
+  if src.size > 0 {
+    args.push(src)
+  }
+  i = 0
+  while i < flags.size {
+    args.push(flags[i])
+    i = i + 1
+  }
+  process_run_out(compiler, args, log)
+}
+
+fn read_or_empty(path: String): String {
+  if text = file_read(path) {
+    return text
+  }
+  ""
+}
+
+fn test_format(c: Checks) {
+  c.suite("tests/cases/test_format.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    c.expect(file_exists(compiler), "AVANT_COMPILER exists")
+    root = avant_test_root()
+    stamp = now_ms()
+    messy = "${root}/tests/fixtures/format/surface.av"
+    want_path = "${root}/tests/fixtures/format/surface.want.av"
+    log = "/tmp/avant-format-s22-${stamp}-surface.log"
+    empty_flags: Array(String) = []
+    code = run_format(compiler, "format", messy, log, empty_flags)
+    c.eq_int(code, 0, "format surface exits 0")
+    if got = file_read(log) {
+      if want = file_read(want_path) {
+        c.eq_str(got, want, "surface spacing")
+        c.expect(str_has(got, "import zebra\nimport alpha"), "import order stays")
+        c.expect(str_has(got, "fn (c: Counter) scaled"), "receiver keeps a space")
+        c.expect(str_has(got, "f: fn(T): U"), "fn type stays tight")
+        c.expect(str_has(got, "echo \\\${HOME}"), "string bytes stay")
+        c.expect(str_has(got, "it costs $5"), "literal dollar stays")
+        c.expect(str_has(got, "hello \${name}"), "interpolation is spaced")
+        c.expect(str_has(got, "a \${x} b \${y} c"), "second interpolation is spaced")
+        c.expect(str_has(got, "// file: fixture/demo.av\n"), "file directive line stays")
+        c.expect(str_has(got, " // file: inside.av\n"), "indented file directive stays")
+        c.expect(str_has(got, "// greeting"), "comment stays")
+        c.expect(str_has(got, "x = 1 //note"), "trailing comment stays")
+        c.expect(str_has(got, "1 . 5"), "number dot number stays three tokens")
+        c.expect(str_has(got, "n2 = 1.5"), "float token stays")
+        c.expect(str_has(got, "! = 1"), "bang and eq stay apart")
+        c.expect(str_has(got, "- = 1"), "minus and eq stay apart")
+        c.expect(str_has(got, "ys: Array(Int) = []"), "array literal keeps a space")
+        c.expect(str_has(got, "for i in 0..n {"), "for range spacing")
+        c.expect(str_has(got, "for w in words {"), "for each spacing")
+        c.expect(str_has(got, "pick = maybe ?? fallback"), "coalesce spacing")
+        c.expect(str_has(got, "pin(s) {"), "pin spacing")
+        c.expect(str_has(got, "raw = r\"C:\\tmp\\x\""), "raw string stays")
+        c.expect(str_has(got, "xs[i] = f([])"), "index stays tight")
+        c.expect(str_has(got, "} else {"), "same-line else gains spaces")
+        c.expect(str_has(got, "}\n  else {"), "newline before else stays")
+        c.expect(!str_has(got, "cannot read"), "format does not load imports")
+      } else {
+        c.expect(false, "read surface.want.av")
+      }
+    } else {
+      c.expect(false, "read surface format")
+    }
+
+    check_flags: Array(String) = []
+    check_flags.push("--check")
+    check_log = "/tmp/avant-format-s22-${stamp}-check.log"
+    check_code = run_format(compiler, "format", messy, check_log, check_flags)
+    c.eq_int(check_code, 0, "check messy exits 0")
+    if check_out = file_read(check_log) {
+      c.expect(str_has(check_out, "would change ${messy}"), "check reports drift")
+    } else {
+      c.expect(false, "read check log")
+    }
+
+    canon_log = "/tmp/avant-format-s22-${stamp}-canon.log"
+    canon_code = run_format(compiler, "f", want_path, canon_log, check_flags)
+    c.eq_int(canon_code, 0, "f --check exits 0")
+    if canon_out = file_read(canon_log) {
+      c.eq_str(canon_out, "canonical\n", "want file is canonical")
+    } else {
+      c.expect(false, "read canonical log")
+    }
+
+    copy = "/tmp/avant-format-s22-${stamp}-copy.av"
+    if body = file_read(want_path) {
+      wcopy = file_write(copy, body)
+      c.eq_int(wcopy, 0, "write copy")
+      write_flags: Array(String) = []
+      write_flags.push("--write")
+      write_log = "/tmp/avant-format-s22-${stamp}-write.log"
+      write_code = run_format(compiler, "format", copy, write_log, write_flags)
+      c.eq_int(write_code, 0, "write canonical exits 0")
+      c.eq_str(read_or_empty(write_log), "", "write is silent")
+      if again = file_read(copy) {
+        c.eq_str(again, body, "format is idempotent")
+      } else {
+        c.expect(false, "read written copy")
+      }
+      both: Array(String) = []
+      both.push("--check")
+      both.push("--write")
+      both_log = "/tmp/avant-format-s22-${stamp}-both.log"
+      dirty = "/tmp/avant-format-s22-${stamp}-dirty.av"
+      wdirty = file_write(dirty, "fn main{\n}\n")
+      c.eq_int(wdirty, 0, "write dirty")
+      both_code = run_format(compiler, "format", dirty, both_log, both)
+      c.eq_int(both_code, 0, "check with write exits 0")
+      if still = file_read(dirty) {
+        c.eq_str(still, "fn main{\n}\n", "check does not write")
+      } else {
+        c.expect(false, "read dirty")
+      }
+    } else {
+      c.expect(false, "read want for idempotence")
+    }
+
+    op_src = "/tmp/avant-format-s22-${stamp}-op.av"
+    op_body = "fn (v:Vec2) +(other:Vec2):Vec2{\nv\n}\n"
+    wop = file_write(op_src, op_body)
+    c.eq_int(wop, 0, "write operator receiver")
+    op_log = "/tmp/avant-format-s22-${stamp}-op.log"
+    op_code = run_format(compiler, "format", op_src, op_log, empty_flags)
+    c.eq_int(op_code, 0, "format operator receiver")
+    if op = file_read(op_log) {
+      c.eq_str(op, "fn (v: Vec2) +(other: Vec2): Vec2 {\n  v\n}\n", "operator receiver")
+    } else {
+      c.expect(false, "read operator receiver")
+    }
+
+    tab_src = "/tmp/avant-format-s22-${stamp}-tab.av"
+    tab_body = "fn main {\n\tx = 1\n}\n"
+    wtab = file_write(tab_src, tab_body)
+    c.eq_int(wtab, 0, "write tab")
+    tab_log = "/tmp/avant-format-s22-${stamp}-tab.log"
+    tab_code = run_format(compiler, "format", tab_src, tab_log, empty_flags)
+    c.eq_int(tab_code, 0, "format tab")
+    if tab = file_read(tab_log) {
+      c.eq_str(tab, "fn main {\n  x = 1\n}\n", "tab becomes two spaces")
+    } else {
+      c.expect(false, "read tab")
+    }
+
+    blank_src = "/tmp/avant-format-s22-${stamp}-blank.av"
+    blank_body = "fn a {\n}\n\n\n\nfn b {\n}\n"
+    wblank = file_write(blank_src, blank_body)
+    c.eq_int(wblank, 0, "write blanks")
+    blank_log = "/tmp/avant-format-s22-${stamp}-blank.log"
+    blank_code = run_format(compiler, "format", blank_src, blank_log, empty_flags)
+    c.eq_int(blank_code, 0, "format blanks")
+    if blanks = file_read(blank_log) {
+      c.eq_str(blanks, "fn a {\n}\n\nfn b {\n}\n", "blank lines collapse to one")
+    } else {
+      c.expect(false, "read blanks")
+    }
+
+    tail_src = "/tmp/avant-format-s22-${stamp}-tail.av"
+    tail_body = "fn main {\n}"
+    wtail = file_write(tail_src, tail_body)
+    c.eq_int(wtail, 0, "write no trailing newline")
+    tail_flags: Array(String) = []
+    tail_flags.push("--write")
+    tail_log = "/tmp/avant-format-s22-${stamp}-tail.log"
+    tail_code = run_format(compiler, "format", tail_src, tail_log, tail_flags)
+    c.eq_int(tail_code, 0, "write no trailing newline exits 0")
+    if tail = file_read(tail_src) {
+      c.eq_str(tail, "fn main {\n}", "author newline is kept")
+    } else {
+      c.expect(false, "read no trailing newline")
+    }
+
+    empty_src = "/tmp/avant-format-s22-${stamp}-empty.av"
+    wempty = file_write(empty_src, "")
+    c.eq_int(wempty, 0, "write empty")
+    empty_log = "/tmp/avant-format-s22-${stamp}-empty.log"
+    empty_code = run_format(compiler, "format", empty_src, empty_log, empty_flags)
+    c.eq_int(empty_code, 0, "format empty")
+    c.eq_str(read_or_empty(empty_log), "", "empty file prints nothing")
+
+    bad_src = "/tmp/avant-format-s22-${stamp}-bad.av"
+    bad_body = "fn main { @ }\n"
+    wbad = file_write(bad_src, bad_body)
+    c.eq_int(wbad, 0, "write lex error")
+    bad_log = "/tmp/avant-format-s22-${stamp}-bad.log"
+    bad_flags: Array(String) = []
+    bad_flags.push("--write")
+    bad_code = run_format(compiler, "format", bad_src, bad_log, bad_flags)
+    c.eq_int(bad_code, 0, "lex error exits 0")
+    if bad = file_read(bad_log) {
+      c.expect(str_has(bad, "unexpected character"), "lex error diagnostic")
+      c.expect(!str_has(bad, "would change"), "lex error is not a diff")
+    } else {
+      c.expect(false, "read lex error")
+    }
+    if bad_file = file_read(bad_src) {
+      c.eq_str(bad_file, bad_body, "lex error does not write")
+    } else {
+      c.expect(false, "read bad file")
+    }
+
+    str_src = "/tmp/avant-format-s22-${stamp}-str.av"
+    wstr = file_write(str_src, "fn main {\n  s = \"hi\n}\n")
+    c.eq_int(wstr, 0, "write unterminated string")
+    str_log = "/tmp/avant-format-s22-${stamp}-str.log"
+    str_code = run_format(compiler, "format", str_src, str_log, empty_flags)
+    c.eq_int(str_code, 0, "unterminated string exits 0")
+    if str_err = file_read(str_log) {
+      c.expect(str_has(str_err, "unterminated string"), "unterminated string diagnostic")
+    } else {
+      c.expect(false, "read unterminated string")
+    }
+
+    nest_src = "/tmp/avant-format-s22-${stamp}-nest.av"
+    nest_body = "fn main {\n  s = \"\${\"\${x}\"}\"\n}\n"
+    wnest = file_write(nest_src, nest_body)
+    c.eq_int(wnest, 0, "write nested interpolation")
+    nest_log = "/tmp/avant-format-s22-${stamp}-nest.log"
+    nest_code = run_format(compiler, "format", nest_src, nest_log, empty_flags)
+    c.eq_int(nest_code, 0, "nested interpolation exits 0")
+    if nest = file_read(nest_log) {
+      c.expect(str_has(nest, "nested string interpolation"), "nested interpolation diagnostic")
+    } else {
+      c.expect(false, "read nested interpolation")
+    }
+
+    esc_src = "/tmp/avant-format-s22-${stamp}-esc.av"
+    wesc = file_write(esc_src, "fn main {\n  s = \"\\q\"\n}\n")
+    c.eq_int(wesc, 0, "write bad escape")
+    esc_log = "/tmp/avant-format-s22-${stamp}-esc.log"
+    esc_code = run_format(compiler, "format", esc_src, esc_log, empty_flags)
+    c.eq_int(esc_code, 0, "bad escape exits 0")
+    if esc = file_read(esc_log) {
+      c.expect(str_has(esc, "unknown string escape"), "bad escape diagnostic")
+    } else {
+      c.expect(false, "read bad escape")
+    }
+
+    dump_src = "/tmp/avant-format-s22-${stamp}-dump.av"
+    dump_body = "fn main{\nputs( \"ok\" )\n}\n"
+    wdump = file_write(dump_src, dump_body)
+    c.eq_int(wdump, 0, "write dump fixture")
+    before = "/tmp/avant-format-s22-${stamp}-before.myc"
+    after = "/tmp/avant-format-s22-${stamp}-after.myc"
+    before_code = dump_av(compiler, dump_src, before)
+    c.eq_int(before_code, 0, "dump before format")
+    dump_flags: Array(String) = []
+    dump_flags.push("--write")
+    dump_log = "/tmp/avant-format-s22-${stamp}-dump.log"
+    dump_fmt = run_format(compiler, "format", dump_src, dump_log, dump_flags)
+    c.eq_int(dump_fmt, 0, "format dump fixture")
+    if dumped = file_read(dump_src) {
+      c.eq_str(dumped, "fn main {\n  puts(\"ok\")\n}\n", "dump fixture spacing")
+    } else {
+      c.expect(false, "read dump fixture")
+    }
+    after_code = dump_av(compiler, dump_src, after)
+    c.eq_int(after_code, 0, "dump after format")
+    if ir0 = file_read(before) {
+      if ir1 = file_read(after) {
+        c.eq_str(ir0, ir1, "myc dump is unchanged")
+      } else {
+        c.expect(false, "read dump after")
+      }
+    } else {
+      c.expect(false, "read dump before")
+    }
+
+    missing_log = "/tmp/avant-format-s22-${stamp}-missing.log"
+    missing = "/tmp/avant-format-s22-${stamp}-missing.av"
+    missing_code = run_format(compiler, "format", missing, missing_log, empty_flags)
+    c.eq_int(missing_code, 0, "missing file exits 0")
+    if missing_out = file_read(missing_log) {
+      c.expect(str_has(missing_out, "cannot read ${missing}"), "missing file diagnostic")
+    } else {
+      c.expect(false, "read missing log")
+    }
+
+    two_log = "/tmp/avant-format-s22-${stamp}-two.log"
+    two_flags: Array(String) = []
+    two_flags.push(want_path)
+    two_code = run_format(compiler, "format", messy, two_log, two_flags)
+    c.eq_int(two_code, 0, "two files exits 0")
+    if two = file_read(two_log) {
+      c.expect(str_has(two, "format takes one root"), "two files diagnostic")
+    } else {
+      c.expect(false, "read two files")
+    }
+
+    none_log = "/tmp/avant-format-s22-${stamp}-none.log"
+    none_code = run_format(compiler, "format", "", none_log, empty_flags)
+    c.eq_int(none_code, 0, "format with no file exits 0")
+    if none = file_read(none_log) {
+      c.expect(str_has(none, "format needs a .av file"), "format needs a file")
+      c.expect(str_has(none, "format FILE.av"), "usage lists format")
+    } else {
+      c.expect(false, "read usage")
+    }
+
+    flag_log = "/tmp/avant-format-s22-${stamp}-flag.log"
+    flag_flags: Array(String) = []
+    flag_flags.push("--nope")
+    flag_code = run_format(compiler, "format", want_path, flag_log, flag_flags)
+    c.eq_int(flag_code, 0, "unknown flag exits 0")
+    if flag = file_read(flag_log) {
+      c.expect(str_has(flag, "unknown format argument --nope"), "unknown flag diagnostic")
+    } else {
+      c.expect(false, "read unknown flag")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_format(c)
+  c.finish
+}
