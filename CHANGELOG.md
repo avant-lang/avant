@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.23.0 - 2026-10-31
 
 ### Added
 * `avant test` discovers `test_*.av` under `tests/` and runs each file as its own program. `import std.testing` is the check library. `fn main: Int` and `fn run: Int` are the process status. Files run in parallel by default. The compiler suite stays on `tests/run.av` until a later round.
