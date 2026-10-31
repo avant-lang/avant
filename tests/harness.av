@@ -443,6 +443,24 @@ fn dump_lex(dumper: String, flag: String, src: String, log: String): Int {
   process_run_out(dumper, args, log)
 }
 
+fn compiler_abs(path: String): String {
+  if path.size > 0 && path[0] == 47 {
+    return path
+  }
+  log = "/tmp/avant-compiler-abs-${now_ms()}.txt"
+  args: Array(String) = []
+  args.push("-c")
+  args.push("pwd -P")
+  dummy = process_run_out("/bin/sh", args, log)
+  if text = file_read(log) {
+    cwd = text.strip()
+    if cwd.size > 0 {
+      return "${cwd}/${path}"
+    }
+  }
+  path
+}
+
 fn run_av_bin(bin: String, log: String): Int {
   process_run_out(bin, empty_strs(), log)
 }
