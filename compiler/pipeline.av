@@ -701,26 +701,28 @@ pub fn myc_mode(codegen: String): String {
   "debug"
 }
 
-fn compiler_pid: String {
-  if text = file_read("/proc/self/stat") {
-    i = 0
-    while i < text.size {
-      if text[i] == 32 {
-        return str_slice(text, 0, i)
-      }
-      i = i + 1
-    }
-    if text.size > 0 {
-      return text.strip()
-    }
+fn myc_tmp_tag(out_path: String): String {
+  src = out_path
+  if src.size == 0 {
+    src = "${now_us()}"
   }
-  "0"
+  b = buf_new()
+  i = 0
+  while i < src.size {
+    c = src[i]
+    if c == 47 {
+      b.push_byte(95)
+    } else {
+      b.push_byte(c)
+    }
+    i = i + 1
+  }
+  b.to_s
 }
 
 pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String, codegen: String, capture: Bool): Int {
-  stamp = now_ms()
-  pid = compiler_pid()
-  ir_path = "/tmp/avant-av-${pid}-${stamp}.myc"
+  tag = myc_tmp_tag(out_path)
+  ir_path = "/tmp/avant-av-${tag}.myc"
   w = file_write(ir_path, ir)
   if w != 0 {
     diag_puts("cannot write ${ir_path}")
@@ -770,7 +772,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   }
   if file_exists("/usr/bin/env") {
     if capture {
-      log = "/tmp/avant-av-${pid}-${stamp}.log"
+      log = "/tmp/avant-av-${tag}.log"
       code = process_run_out("/usr/bin/env", args, log)
       if code != 0 {
         if text = file_read(log) {
