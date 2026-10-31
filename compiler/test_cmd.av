@@ -1,0 +1,868 @@
+import loader
+import pipeline
+import pkg
+import source
+
+pub class FileRun {
+  abs: String = ""
+  rel: String = ""
+  bin: String = ""
+  output: String = ""
+  parallels: Array(String)
+  par_logs: Array(String)
+  ok: Bool = true
+  compiled: Bool = false
+  exclusive: Bool = false
+
+  fn initialize(abs: String, rel: String, bin: String) {
+    self.abs = abs
+    self.rel = rel
+    self.bin = bin
+    self.output = ""
+    names: Array(String) = []
+    self.parallels = names
+    logs: Array(String) = []
+    self.par_logs = logs
+    self.ok = true
+    self.compiled = false
+    self.exclusive = false
+  }
+}
+
+pub class ShellCmd {
+  line: String = ""
+  log: String = ""
+  rc_path: String = ""
+
+  fn initialize(line: String, log: String, rc_path: String) {
+    self.line = line
+    self.log = log
+    self.rc_path = rc_path
+  }
+}
+
+pub class TestHost {
+  compiler: String = ""
+  stamp: Int = 0
+  seq: Int = 0
+  jobs: Int = 1
+
+  fn initialize(compiler: String, stamp: Int, jobs: Int) {
+    self.compiler = compiler
+    self.stamp = stamp
+    self.seq = 0
+    self.jobs = jobs
+  }
+
+  pub fn fresh: String {
+    self.seq = self.seq + 1
+    "/tmp/avant-t-${self.stamp}-${self.seq}"
+  }
+}
+
+fn test_quote(s: String): String {
+  b = buf_new()
+  b.push_str("'")
+  i = 0
+  while i < s.size {
+    if s[i] == 39 {
+      b.push_str("'\\''")
+    } else {
+      b.push_byte(s[i])
+    }
+    i = i + 1
+  }
+  b.push_str("'")
+  b.to_s
+}
+
+fn parse_u(s: String): Int {
+  if s.size == 0 {
+    return -1
+  }
+  n = 0
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c < 48 || c > 57 {
+      return -1
+    }
+    n = n * 10 + (c - 48)
+    i = i + 1
+  }
+  n
+}
+
+fn count_range(part: String): Int {
+  t = part.strip()
+  if t.size == 0 {
+    return 0
+  }
+  dash = -1
+  i = 0
+  while i < t.size {
+    if t[i] == 45 {
+      dash = i
+    }
+    i = i + 1
+  }
+  if dash < 0 {
+    if parse_u(t) < 0 {
+      return 0
+    }
+    return 1
+  }
+  lo = parse_u(str_slice(t, 0, dash))
+  hi = parse_u(str_slice(t, dash + 1, t.size))
+  if lo < 0 || hi < lo {
+    return 0
+  }
+  hi - lo + 1
+}
+
+fn count_online: Int {
+  if text = file_read("/sys/devices/system/cpu/online") {
+    spec = text.strip()
+    if spec.size == 0 {
+      return 1
+    }
+    total = 0
+    start = 0
+    i = 0
+    while i <= spec.size {
+      if i == spec.size || spec[i] == 44 {
+        total = total + count_range(str_slice(spec, start, i))
+        start = i + 1
+      }
+      i = i + 1
+    }
+    if total < 1 {
+      return 1
+    }
+    return total
+  }
+  1
+}
+
+fn read_cwd: String {
+  log = "/tmp/avant-t-cwd-${now_ms()}.txt"
+  args: Array(String) = []
+  args.push("-c")
+  args.push("pwd -P")
+  dummy = process_run_out("/bin/sh", args, log)
+  if text = file_read(log) {
+    t = text.strip()
+    if t.size > 0 {
+      return t
+    }
+  }
+  "."
+}
+
+fn abs_join(dir: String, rel: String): String {
+  if rel.size > 0 && rel[0] == 47 {
+    return rel
+  }
+  if str_eq(dir, "/") {
+    return "/${rel}"
+  }
+  "${dir}/${rel}"
+}
+
+fn rel_of(cwd: String, abs: String): String {
+  prefix = "${cwd}/"
+  if str_starts(abs, prefix) {
+    return str_slice(abs, prefix.size, abs.size)
+  }
+  abs
+}
+
+fn is_test_name(name: String): Bool {
+  if str_starts(name, "test_") {
+    return str_ends(name, ".av")
+  }
+  false
+}
+
+fn path_less(a: String, b: String): Bool {
+  n = a.size
+  if b.size < n {
+    n = b.size
+  }
+  i = 0
+  while i < n {
+    if a[i] < b[i] {
+      return true
+    }
+    if a[i] > b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  a.size < b.size
+}
+
+fn sort_files(files: Array(FileRun)) {
+  i = 1
+  while i < files.size {
+    j = i
+    while j > 0 {
+      if path_less(files[j].rel, files[j - 1].rel) {
+        tmp = files[j]
+        files[j] = files[j - 1]
+        files[j - 1] = tmp
+        j = j - 1
+      } else {
+        break
+      }
+    }
+    i = i + 1
+  }
+}
+
+fn walk_tests(dir: String, cwd: String, into: Array(FileRun), stamp: Int, seq: Int): Int {
+  names = dir_list(dir)
+  i = 0
+  nseq = seq
+  while i < names.size {
+    name = names[i]
+    i = i + 1
+    if name.size == 0 {
+      continue
+    }
+    if name[0] == 46 {
+      continue
+    }
+    if str_eq(name, "deps") {
+      continue
+    }
+    path = abs_join(dir, name)
+    if is_test_name(name) {
+      nseq = nseq + 1
+      into.push(FileRun.new(path, rel_of(cwd, path), "/tmp/avant-t-${stamp}-bin-${nseq}"))
+    } else {
+      sub = dir_list(path)
+      if sub.size > 0 {
+        nseq = walk_tests(path, cwd, into, stamp, nseq)
+      }
+    }
+  }
+  nseq
+}
+
+fn read_text(path: String): String {
+  if text = file_read(path) {
+    return text
+  }
+  ""
+}
+
+fn read_rc(path: String): Int {
+  n = parse_u(read_text(path).strip())
+  if n < 0 {
+    return 1
+  }
+  n
+}
+
+fn listed(paths: Array(String), path: String): Bool {
+  i = 0
+  while i < paths.size {
+    if str_eq(paths[i], path) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn env_plain(compiler: String): String {
+  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY="
+}
+
+fn env_list(compiler: String): String {
+  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST=1 AVANT_TEST_ONLY="
+}
+
+fn env_only(compiler: String, name: String): String {
+  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)}"
+}
+
+fn run_script(body: String, host: TestHost) {
+  path = "${host.fresh()}.sh"
+  w = file_write(path, body)
+  if w != 0 {
+    return
+  }
+  chmod_args: Array(String) = []
+  chmod_args.push("+x")
+  chmod_args.push(path)
+  dummy = process_run("/bin/chmod", chmod_args)
+  sh_args: Array(String) = []
+  sh_args.push(path)
+  dummy_sh = process_run("/bin/sh", sh_args)
+}
+
+fn run_waves(host: TestHost, cmds: Array(ShellCmd)) {
+  i = 0
+  while i < cmds.size {
+    b = buf_new()
+    b.push_str("#!/bin/sh\n")
+    n = 0
+    while n < host.jobs && i < cmds.size {
+      b.push_str(cmds[i].line)
+      b.push_str(" &\n")
+      i = i + 1
+      n = n + 1
+    }
+    b.push_str("wait\n")
+    run_script(b.to_s, host)
+  }
+}
+
+fn make_cmd(host: TestHost, line: String): ShellCmd {
+  base = host.fresh()
+  ShellCmd.new(line, "${base}.log", "${base}.rc")
+}
+
+fn redirect(cmd: ShellCmd): String {
+  "( ${cmd.line} > ${test_quote(cmd.log)} 2>&1; echo $? > ${test_quote(cmd.rc_path)} )"
+}
+
+fn parallel_names(text: String): Array(String) {
+  out: Array(String) = []
+  start = 0
+  i = 0
+  while i <= text.size {
+    if i == text.size || text[i] == 10 {
+      line = str_slice(text, start, i)
+      if line.size > 0 && line[line.size - 1] == 13 {
+        line = str_slice(line, 0, line.size - 1)
+      }
+      pre = "AVANT_PARALLEL "
+      if str_starts(line, pre) {
+        out.push(str_slice(line, pre.size, line.size))
+      }
+      start = i + 1
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn chmod_bin(path: String) {
+  args: Array(String) = []
+  args.push("+x")
+  args.push(path)
+  dummy = process_run("/bin/chmod", args)
+}
+
+fn append_text(into: String, chunk: String): String {
+  if chunk.size == 0 {
+    return into
+  }
+  if into.size == 0 {
+    return chunk
+  }
+  "${into}${chunk}"
+}
+
+fn run_many(host: TestHost, files: Array(FileRun)) {
+  if files.size == 0 {
+    return
+  }
+  compiles: Array(ShellCmd) = []
+  i = 0
+  while i < files.size {
+    f = files[i]
+    cmd = make_cmd(host, "${env_plain(host.compiler)} ${test_quote(host.compiler)} compile ${test_quote(f.abs)} ${test_quote(f.bin)} --debug")
+    cmd.line = redirect(cmd)
+    compiles.push(cmd)
+    i = i + 1
+  }
+  run_waves(host, compiles)
+  i = 0
+  while i < files.size {
+    f = files[i]
+    cmd = compiles[i]
+    if read_rc(cmd.rc_path) != 0 {
+      f.ok = false
+      f.compiled = false
+      f.output = read_text(cmd.log)
+    } else {
+      f.compiled = true
+      chmod_bin(f.bin)
+    }
+    i = i + 1
+  }
+  lists: Array(ShellCmd) = []
+  list_at: Array(Int) = []
+  i = 0
+  while i < files.size {
+    f = files[i]
+    if f.compiled {
+      cmd = make_cmd(host, "${env_list(host.compiler)} ${test_quote(f.bin)}")
+      cmd.line = redirect(cmd)
+      lists.push(cmd)
+      list_at.push(i)
+    }
+    i = i + 1
+  }
+  run_waves(host, lists)
+  i = 0
+  while i < lists.size {
+    f = files[list_at[i]]
+    cmd = lists[i]
+    names = parallel_names(read_text(cmd.log))
+    seen: Array(String) = []
+    k = 0
+    while k < names.size {
+      name = names[k]
+      if listed(seen, name) {
+        f.ok = false
+        f.output = append_text(f.output, "duplicate parallel name ${name}\n")
+      } else {
+        seen.push(name)
+        f.parallels.push(name)
+      }
+      k = k + 1
+    }
+    if read_rc(cmd.rc_path) != 0 {
+      f.ok = false
+      f.output = append_text(f.output, read_text(cmd.log))
+    }
+    i = i + 1
+  }
+  serials: Array(ShellCmd) = []
+  serial_at: Array(Int) = []
+  i = 0
+  while i < files.size {
+    f = files[i]
+    if f.compiled {
+      cmd = make_cmd(host, "${env_plain(host.compiler)} ${test_quote(f.bin)}")
+      cmd.line = redirect(cmd)
+      serials.push(cmd)
+      serial_at.push(i)
+    }
+    i = i + 1
+  }
+  run_waves(host, serials)
+  i = 0
+  while i < serials.size {
+    f = files[serial_at[i]]
+    cmd = serials[i]
+    f.output = append_text(f.output, read_text(cmd.log))
+    if read_rc(cmd.rc_path) != 0 {
+      f.ok = false
+    }
+    i = i + 1
+  }
+  pars: Array(ShellCmd) = []
+  par_file: Array(Int) = []
+  i = 0
+  while i < files.size {
+    f = files[i]
+    if f.compiled {
+      k = 0
+      while k < f.parallels.size {
+        name = f.parallels[k]
+        cmd = make_cmd(host, "${env_only(host.compiler, name)} ${test_quote(f.bin)}")
+        cmd.line = redirect(cmd)
+        pars.push(cmd)
+        par_file.push(i)
+        f.par_logs.push(cmd.log)
+        k = k + 1
+      }
+    }
+    i = i + 1
+  }
+  run_waves(host, pars)
+  i = 0
+  while i < files.size {
+    f = files[i]
+    k = 0
+    while k < f.par_logs.size {
+      f.output = append_text(f.output, read_text(f.par_logs[k]))
+      k = k + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < pars.size {
+    f = files[par_file[i]]
+    if read_rc(pars[i].rc_path) != 0 {
+      f.ok = false
+    }
+    i = i + 1
+  }
+}
+
+fn xml_escape(s: String): String {
+  b = buf_new()
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c == 38 {
+      b.push_str("&amp;")
+    } else if c == 60 {
+      b.push_str("&lt;")
+    } else if c == 62 {
+      b.push_str("&gt;")
+    } else if c == 34 {
+      b.push_str("&quot;")
+    } else {
+      b.push_byte(c)
+    }
+    i = i + 1
+  }
+  b.to_s
+}
+
+fn write_junit(path: String, files: Array(FileRun)) {
+  bad = 0
+  i = 0
+  while i < files.size {
+    if files[i].ok {
+    } else {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  b = buf_new()
+  b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+  b.push_str("<testsuites tests=\"${files.size}\" failures=\"${bad}\">\n")
+  b.push_str("  <testsuite name=\"avant test\" tests=\"${files.size}\" failures=\"${bad}\">\n")
+  i = 0
+  while i < files.size {
+    f = files[i]
+    b.push_str("    <testcase name=\"")
+    b.push_str(xml_escape(f.rel))
+    b.push_str("\" classname=\"")
+    b.push_str(xml_escape(f.rel))
+    b.push_str("\"")
+    if f.ok {
+      b.push_str("/>\n")
+    } else {
+      b.push_str(">\n      <failure message=\"failed\"><![CDATA[")
+      b.push_str(f.output)
+      b.push_str("]]></failure>\n    </testcase>\n")
+    }
+    i = i + 1
+  }
+  b.push_str("  </testsuite>\n</testsuites>\n")
+  w = file_write(path, b.to_s)
+  if w != 0 {
+    diag_puts("cannot write ${path}")
+    diag_exit(1)
+  }
+}
+
+fn shard_index(spec: String, want_index: Bool): Int {
+  slash = -1
+  i = 0
+  while i < spec.size {
+    if spec[i] == 47 {
+      slash = i
+    }
+    i = i + 1
+  }
+  if slash < 1 {
+    return -1
+  }
+  if want_index {
+    return parse_u(str_slice(spec, 0, slash))
+  }
+  parse_u(str_slice(spec, slash + 1, spec.size))
+}
+
+fn test_fail(message: String) {
+  diag_puts(message)
+  diag_exit(1)
+}
+
+pub fn driver_test(args: Array(String)) {
+  jobs = -1
+  shard = ""
+  junit = ""
+  skip_ex = false
+  paths: Array(String) = []
+  i = 0
+  while i < args.size {
+    arg = args[i]
+    if str_eq(arg, "--jobs") {
+      if i + 1 >= args.size {
+        test_fail("--jobs needs an integer")
+      }
+      jobs = parse_u(args[i + 1])
+      if jobs < 1 {
+        test_fail("--jobs needs an integer greater than 0")
+      }
+      i = i + 2
+    } else if str_starts(arg, "--jobs=") {
+      jobs = parse_u(str_slice(arg, 7, arg.size))
+      if jobs < 1 {
+        test_fail("--jobs needs an integer greater than 0")
+      }
+      i = i + 1
+    } else if str_eq(arg, "--shard") {
+      if i + 1 >= args.size {
+        test_fail("--shard needs I/N")
+      }
+      shard = args[i + 1]
+      i = i + 2
+    } else if str_starts(arg, "--shard=") {
+      shard = str_slice(arg, 8, arg.size)
+      i = i + 1
+    } else if str_eq(arg, "--junit") {
+      if i + 1 >= args.size {
+        test_fail("--junit needs a path")
+      }
+      junit = args[i + 1]
+      i = i + 2
+    } else if str_starts(arg, "--junit=") {
+      junit = str_slice(arg, 8, arg.size)
+      i = i + 1
+    } else if str_eq(arg, "--skip-exclusive") {
+      skip_ex = true
+      i = i + 1
+    } else if str_eq(arg, "-h") || str_eq(arg, "--help") {
+      diag_puts("avant test [TEST-OPTIONS] [PATH...]")
+      diag_puts("--jobs N   test processes at once (default: online processors)")
+      diag_puts("--jobs 1   one file at a time")
+      diag_puts("--shard I/N   slice I of N, 1-based, round-robin")
+      diag_puts("--junit PATH   one case per file")
+      diag_puts("--skip-exclusive   omit [test] exclusive files")
+      diag_exit(0)
+    } else if str_eq(arg, "--") {
+      test_fail("avant test does not take program arguments")
+    } else if str_starts(arg, "-") {
+      test_fail("unknown test argument ${arg}")
+    } else {
+      paths.push(arg)
+      i = i + 1
+    }
+  }
+  if jobs < 1 {
+    jobs = count_online()
+  }
+  cwd = read_cwd()
+  man_dir = find_manifest(cwd)
+  test_dir = ""
+  test_entry = ""
+  exclusive: Array(String) = []
+  if man_dir.size > 0 {
+    man_path = abs_join(man_dir, "avant.toml")
+    if text = file_read(man_path) {
+      m = pkg_parse_manifest(text, man_path)
+      if m.ok {
+      } else {
+        test_fail(m.err)
+      }
+      if m.test_err.size > 0 {
+        test_fail(m.test_err)
+      }
+      if m.test_dir.size > 0 && m.test_entry.size > 0 {
+        test_fail("${man_path}: [test] dir and entry cannot both be set")
+      }
+      test_dir = m.test_dir
+      test_entry = m.test_entry
+      k = 0
+      while k < m.test_exclusive.size {
+        exclusive.push(m.test_exclusive[k])
+        k = k + 1
+      }
+    }
+  }
+  anchor = cwd
+  if man_dir.size > 0 {
+    anchor = man_dir
+  }
+  stamp = now_ms()
+  files: Array(FileRun) = []
+  if paths.size == 0 {
+    if test_entry.size > 0 {
+      entry = abs_join(anchor, test_entry)
+      if file_exists(entry) {
+      } else {
+        test_fail("test entry does not exist: ${test_entry}")
+      }
+      files.push(FileRun.new(entry, rel_of(cwd, entry), "/tmp/avant-t-${stamp}-bin-1"))
+    } else {
+      root = abs_join(anchor, "tests")
+      if test_dir.size > 0 {
+        root = abs_join(anchor, test_dir)
+        if file_exists(root) {
+        } else {
+          test_fail("test dir does not exist: ${test_dir}")
+        }
+      }
+      if file_exists(root) {
+        dummy_seq = walk_tests(root, cwd, files, stamp, 0)
+      }
+    }
+  } else {
+    p = 0
+    seq = 0
+    while p < paths.size {
+      arg = paths[p]
+      if file_exists(arg) {
+      } else {
+        test_fail("test path does not exist: ${arg}")
+      }
+      abs = arg
+      if arg.size == 0 || arg[0] != 47 {
+        abs = abs_join(cwd, arg)
+      }
+      if str_ends(arg, ".av") {
+        seq = seq + 1
+        files.push(FileRun.new(abs, rel_of(cwd, abs), "/tmp/avant-t-${stamp}-bin-${seq}"))
+      } else {
+        seq = walk_tests(abs, cwd, files, stamp, seq)
+      }
+      p = p + 1
+    }
+  }
+  sort_files(files)
+  ex_abs: Array(String) = []
+  e = 0
+  while e < exclusive.size {
+    ex_abs.push(abs_join(anchor, exclusive[e]))
+    e = e + 1
+  }
+  if paths.size == 0 {
+    e = 0
+    while e < ex_abs.size {
+      found = false
+      f = 0
+      while f < files.size {
+        if str_eq(files[f].abs, ex_abs[e]) {
+          found = true
+        }
+        f = f + 1
+      }
+      if found {
+      } else {
+        test_fail("exclusive path is not a selected test: ${exclusive[e]}")
+      }
+      e = e + 1
+    }
+  }
+  f = 0
+  while f < files.size {
+    if listed(ex_abs, files[f].abs) {
+      files[f].exclusive = true
+    }
+    f = f + 1
+  }
+  if shard.size > 0 {
+    idx = shard_index(shard, true)
+    cnt = shard_index(shard, false)
+    if idx < 1 || cnt < 1 || idx > cnt {
+      test_fail("bad --shard ${shard}")
+    }
+    has_ex = false
+    f = 0
+    while f < files.size {
+      if files[f].exclusive {
+        has_ex = true
+      }
+      f = f + 1
+    }
+    if has_ex {
+      if skip_ex {
+      } else {
+        test_fail("--shard cannot include an exclusive file (pass --skip-exclusive)")
+      }
+    }
+    pool: Array(FileRun) = []
+    f = 0
+    while f < files.size {
+      if skip_ex && files[f].exclusive {
+      } else {
+        pool.push(files[f])
+      }
+      f = f + 1
+    }
+    picked: Array(FileRun) = []
+    f = 0
+    while f < pool.size {
+      if f % cnt == idx - 1 {
+        picked.push(pool[f])
+      }
+      f = f + 1
+    }
+    files = picked
+  } else if skip_ex {
+    kept: Array(FileRun) = []
+    f = 0
+    while f < files.size {
+      if files[f].exclusive {
+      } else {
+        kept.push(files[f])
+      }
+      f = f + 1
+    }
+    files = kept
+  }
+  if files.size == 0 {
+    test_fail("no tests selected")
+  }
+  argv0 = "avant"
+  args0 = argv()
+  if args0.size > 0 {
+    argv0 = args0[0]
+  }
+  host = TestHost.new(argv0, stamp, jobs)
+  if jobs == 1 {
+    run_many(host, files)
+  } else {
+    normals: Array(FileRun) = []
+    excls: Array(FileRun) = []
+    f = 0
+    while f < files.size {
+      if files[f].exclusive {
+        excls.push(files[f])
+      } else {
+        normals.push(files[f])
+      }
+      f = f + 1
+    }
+    run_many(host, normals)
+    f = 0
+    while f < excls.size {
+      alone: Array(FileRun) = []
+      alone.push(excls[f])
+      run_many(host, alone)
+      f = f + 1
+    }
+  }
+  if junit.size > 0 {
+    write_junit(junit, files)
+  }
+  bad = 0
+  good = 0
+  f = 0
+  while f < files.size {
+    file = files[f]
+    if file.output.size > 0 {
+      text = file.output
+      if text[text.size - 1] == 10 {
+        text = str_slice(text, 0, text.size - 1)
+      }
+      puts(text)
+    }
+    if file.ok {
+      puts("ok ${file.rel}")
+      good = good + 1
+    } else {
+      puts("FAIL ${file.rel}")
+      bad = bad + 1
+    }
+    f = f + 1
+  }
+  puts("${bad} failed, ${good} passed")
+  if bad > 0 {
+    diag_exit(1)
+  }
+  diag_exit(0)
+}

@@ -419,7 +419,79 @@ pub class Loader {
     }
   }
 
+  pub fn std_import(name: String): Bool {
+    if str_eq(name, "std") {
+      return true
+    }
+    if name.size > 4 {
+      if str_eq(str_slice(name, 0, 4), "std.") {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn std_root: String {
+    if v = env_get("AVANT_ROOT") {
+      return v
+    }
+    args = argv()
+    if args.size > 0 {
+      dir = path_dirname(args[0])
+      base = path_basename(dir)
+      if str_eq(base, "bin") {
+        parent = path_dirname(dir)
+        probe = "${parent}/runtime/build/avant_rt.o"
+        if file_exists(probe) {
+          return parent
+        }
+      }
+    }
+    if file_exists("runtime/build/avant_rt.o") {
+      return "."
+    }
+    "."
+  }
+
+  pub fn binary_dir: String {
+    args = argv()
+    if args.size > 0 {
+      return path_dirname(args[0])
+    }
+    "."
+  }
+
+  pub fn resolve_std(name: String, loc: Location): String {
+    if str_eq(name, "std") {
+      self.fail(loc, "import std needs a module")
+      return ""
+    }
+    rel = import_rel(name)
+    hits: Array(String) = []
+    self.consider_hit(hits, join_dir(self.std_root(), "lib/${rel}"))
+    self.consider_hit(hits, join_dir(self.binary_dir(), "lib/${rel}"))
+    if hits.size == 0 {
+      self.fail(loc, "cannot find ${name} in the standard library")
+      return ""
+    }
+    if hits.size > 1 {
+      buf = buf_new()
+      buf.push_str("import ${name} is ambiguous:")
+      i = 0
+      while i < hits.size {
+        buf.push_str(" ${hits[i]}")
+        i = i + 1
+      }
+      self.fail(loc, buf.to_s)
+      return ""
+    }
+    hits[0]
+  }
+
   pub fn resolve_import(importer: String, name: String, loc: Location): String {
+    if self.std_import(name) {
+      return self.resolve_std(name, loc)
+    }
     rel = import_rel(name)
     hits: Array(String) = []
     dep = self.dep_root_of(importer)

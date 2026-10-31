@@ -1,0 +1,416 @@
+lib avant_testing_io {
+  fun write(fd: Int, buf: String, count: Int): Int
+}
+
+fn testing_write(s: String) {
+  line = "${s}\n"
+  dummy = avant_testing_io.write(1, line, line.size)
+}
+
+fn testing_quote(s: String): String {
+  b = buf_new()
+  b.push_str("'")
+  i = 0
+  while i < s.size {
+    if s[i] == 39 {
+      b.push_str("'\\''")
+    } else {
+      b.push_byte(s[i])
+    }
+    i = i + 1
+  }
+  b.push_str("'")
+  b.to_s
+}
+
+fn testing_slice(s: String, start: Int, stop: Int): String {
+  b = buf_new()
+  b.push_slice(s, start, stop)
+  b.to_s
+}
+
+fn testing_has(hay: String, needle: String): Bool {
+  if needle.size == 0 {
+    return true
+  }
+  if needle.size > hay.size {
+    return false
+  }
+  last = hay.size - needle.size
+  i = 0
+  while i <= last {
+    if testing_slice(hay, i, i + needle.size) == needle {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn testing_bool_eq(a: Bool, b: Bool): Bool {
+  if a {
+    return b
+  }
+  if b {
+    return false
+  }
+  true
+}
+
+fn testing_read(path: String): String {
+  if text = file_read(path) {
+    return text
+  }
+  ""
+}
+
+fn testing_rc(path: String): Int {
+  text = testing_read(path).strip()
+  if text.size == 0 {
+    return 1
+  }
+  n = 0
+  i = 0
+  while i < text.size {
+    c = text[i]
+    if c < 48 || c > 57 {
+      return 1
+    }
+    n = n * 10 + (c - 48)
+    i = i + 1
+  }
+  n
+}
+
+fn testing_shell(bin: String, args: Array(String), out_path: String, err_path: String, rc_path: String): Int {
+  b = buf_new()
+  b.push_str("#!/bin/sh\n")
+  b.push_str(testing_quote(bin))
+  i = 0
+  while i < args.size {
+    b.push_str(" ")
+    b.push_str(testing_quote(args[i]))
+    i = i + 1
+  }
+  b.push_str(" > ")
+  b.push_str(testing_quote(out_path))
+  b.push_str(" 2> ")
+  b.push_str(testing_quote(err_path))
+  b.push_str("; echo $? > ")
+  b.push_str(testing_quote(rc_path))
+  b.push_str("\n")
+  script = "${rc_path}.sh"
+  w = file_write(script, b.to_s)
+  if w != 0 {
+    return 1
+  }
+  chmod_args: Array(String) = []
+  chmod_args.push("+x")
+  chmod_args.push(script)
+  dummy = process_run("/bin/chmod", chmod_args)
+  sh_args: Array(String) = []
+  sh_args.push(script)
+  dummy_sh = process_run("/bin/sh", sh_args)
+  testing_rc(rc_path)
+}
+
+pub class Test {
+  passed: Int = 0
+  failed: Int = 0
+  depth: Int = 0
+  mode: Int = 0
+  seq: Int = 0
+  dup: Bool = false
+  only: String = ""
+  names: Array(String)
+
+  fn initialize {
+    self.passed = 0
+    self.failed = 0
+    self.depth = 0
+    self.mode = 0
+    self.seq = 0
+    self.dup = false
+    self.only = ""
+    ns: Array(String) = []
+    self.names = ns
+    if v = env_get("AVANT_TEST_ONLY") {
+      if v.size > 0 {
+        self.mode = 2
+        self.only = v
+      }
+    }
+    if v = env_get("AVANT_TEST_LIST") {
+        if v == "1" {
+        self.mode = 1
+      }
+    }
+  }
+
+  fn quiet: Bool {
+    if self.mode == 1 {
+      return true
+    }
+    if self.mode == 2 {
+      if self.depth == 0 {
+        return true
+      }
+    }
+    false
+  }
+
+  fn pass_line(name: String) {
+    self.passed = self.passed + 1
+    testing_write("PASS ${name}")
+  }
+
+  fn fail_line(name: String) {
+    self.failed = self.failed + 1
+    testing_write("FAIL ${name}")
+  }
+
+  fn note_name(name: String): Bool {
+    i = 0
+    while i < self.names.size {
+      if self.names[i] == name {
+        return true
+      }
+      i = i + 1
+    }
+    self.names.push(name)
+    false
+  }
+
+  fn temp_dir: String {
+    self.seq = self.seq + 1
+    "/tmp/avant-std-${now_ms()}-${self.seq}"
+  }
+
+  pub fn check(cond: Bool, name: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    if cond {
+      self.pass_line(name)
+    } else {
+      self.fail_line(name)
+    }
+    nil
+  }
+
+  pub fn check_eq(got: Int, want: Int, name: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    if got == want {
+      self.pass_line(name)
+    } else {
+      self.fail_line(name)
+      testing_write("  got: ${got}")
+      testing_write("  want: ${want}")
+    }
+    nil
+  }
+
+  pub fn check_eq(got: Bool, want: Bool, name: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    if testing_bool_eq(got, want) {
+      self.pass_line(name)
+    } else {
+      self.fail_line(name)
+      testing_write("  got: ${got}")
+      testing_write("  want: ${want}")
+    }
+    nil
+  }
+
+  pub fn check_eq(got: String, want: String, name: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    if got == want {
+      self.pass_line(name)
+    } else {
+      self.fail_line(name)
+      testing_write("  got: ${got}")
+      testing_write("  want: ${want}")
+    }
+    nil
+  }
+
+  pub fn test(name: String, body: fn(): Nil): Nil {
+    if self.mode == 1 {
+      return nil
+    }
+    if self.mode == 2 {
+      return nil
+    }
+    self.depth = self.depth + 1
+    body()
+    self.depth = self.depth - 1
+    nil
+  }
+
+  pub fn parallel(name: String, body: fn(): Nil): Nil {
+    if self.mode == 1 {
+      if name.size == 0 || testing_has(name, "\n") {
+        self.dup = true
+        testing_write("FAIL parallel name must be one line")
+        return nil
+      }
+      if self.note_name(name) {
+        self.dup = true
+        testing_write("FAIL duplicate parallel name ${name}")
+        return nil
+      }
+      testing_write("AVANT_PARALLEL ${name}")
+      return nil
+    }
+    if self.mode == 2 {
+      if name == self.only {
+        self.depth = self.depth + 1
+        body()
+        self.depth = self.depth - 1
+      }
+      return nil
+    }
+    nil
+  }
+
+  pub fn golden(path: String, got: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    label = "golden ${path}"
+    if text = file_read(path) {
+      if text == got {
+        self.pass_line(label)
+      } else {
+        self.fail_line(label)
+        testing_write("  got: ${got}")
+        testing_write("  want: ${text}")
+      }
+    } else {
+      self.fail_line(label)
+      testing_write("  missing ${path}")
+    }
+    nil
+  }
+
+  pub fn run_golden(program: String, want: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    label = "run_golden ${program}"
+    compiler = ""
+    if c = env_get("AVANT_COMPILER") {
+      compiler = c
+    }
+    if compiler.size == 0 {
+      self.fail_line(label)
+      testing_write("  AVANT_COMPILER is not set")
+      return nil
+    }
+    base = self.temp_dir
+    out = "${base}.bin"
+    compile_log = "${base}.compile"
+    args: Array(String) = []
+    args.push("compile")
+    args.push(program)
+    args.push(out)
+    args.push("--debug")
+    code = process_run_out(compiler, args, compile_log)
+    if code != 0 {
+      self.fail_line(label)
+      testing_write("  compile failed")
+      testing_write(testing_read(compile_log))
+      return nil
+    }
+    chmod_args: Array(String) = []
+    chmod_args.push("+x")
+    chmod_args.push(out)
+    dummy = process_run("/bin/chmod", chmod_args)
+    empty: Array(String) = []
+    stdout_path = "${base}.out"
+    stderr_path = "${base}.err"
+    rc_path = "${base}.rc"
+    run_code = testing_shell(out, empty, stdout_path, stderr_path, rc_path)
+    got = testing_read(stdout_path)
+    if want_text = file_read(want) {
+      if run_code != 0 {
+        self.fail_line(label)
+        testing_write("  exit ${run_code}")
+        testing_write(testing_read(stderr_path))
+        return nil
+      }
+      if got == want_text {
+        self.pass_line(label)
+      } else {
+        self.fail_line(label)
+        testing_write("  got: ${got}")
+        testing_write("  want: ${want_text}")
+      }
+    } else {
+      self.fail_line(label)
+      testing_write("  missing ${want}")
+    }
+    nil
+  }
+
+  pub fn rejects(source: String, substring: String): Nil {
+    if self.quiet {
+      return nil
+    }
+    label = "rejects ${source}"
+    compiler = ""
+    if c = env_get("AVANT_COMPILER") {
+      compiler = c
+    }
+    if compiler.size == 0 {
+      self.fail_line(label)
+      testing_write("  AVANT_COMPILER is not set")
+      return nil
+    }
+    base = self.temp_dir
+    out = "${base}.bin"
+    stdout_path = "${base}.out"
+    stderr_path = "${base}.err"
+    rc_path = "${base}.rc"
+    args: Array(String) = []
+    args.push("compile")
+    args.push(source)
+    args.push(out)
+    args.push("--debug")
+    code = testing_shell(compiler, args, stdout_path, stderr_path, rc_path)
+    err = testing_read(stderr_path)
+    if code == 0 {
+      self.fail_line(label)
+      testing_write("  compiled successfully")
+      return nil
+    }
+    if testing_has(err, substring) {
+      self.pass_line(label)
+    } else {
+      self.fail_line(label)
+      testing_write("  diagnostic did not contain ${substring}")
+      testing_write(err)
+    }
+    nil
+  }
+
+  pub fn finish: Int {
+    if self.mode == 1 {
+      if self.dup {
+        return 1
+      }
+      return 0
+    }
+    testing_write("${self.failed} failed, ${self.passed} passed")
+    if self.failed > 0 || self.dup {
+      return 1
+    }
+    0
+  }
+}

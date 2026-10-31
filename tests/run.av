@@ -332,7 +332,7 @@ fn avant_cases_dir: String {
 
 fn generate_main(names: Array(String)): String {
   b = buf_new()
-  b.push_str("fn main {\n")
+  b.push_str("fn main: Int {\n")
   b.push_str("  c = Checks.new()\n")
   b.push_str("  c.started = now_ms()\n")
   i = 0
@@ -395,14 +395,14 @@ fn stitch_suite(harness: String, cases: String, names: Array(String), generated:
   buf.to_s
 }
 
-fn main {
+fn main: Int {
   if compiler = env_get("AVANT_COMPILER") {
     if file_exists(compiler) {
     } else {
       puts("FAIL  tests/run.av")
       puts("AVANT_COMPILER does not exist: ${compiler}")
       write_runner_junit_fail()
-      return
+      return 1
     }
     root = avant_test_root()
     harness = "${root}/tests/harness.av"
@@ -412,7 +412,7 @@ fn main {
       puts("FAIL  tests/run.av")
       puts("missing harness ${harness}")
       write_runner_junit_fail()
-      return
+      return 1
     }
     names = dir_list(cases)
     picked: Array(String) = []
@@ -428,7 +428,7 @@ fn main {
       puts("FAIL  tests/run.av")
       puts("no tests/cases/*.av under ${cases}")
       write_runner_junit_fail()
-      return
+      return 1
     }
     picked.sort
     all_names = picked
@@ -452,11 +452,11 @@ fn main {
         } else if cases_set {
         } else {
           if run_shards(compiler, jobs, stamp) {
-            return
+            return 0
           }
           puts("FAIL  tests/run.av")
           write_runner_junit_fail()
-          return
+          return 1
         }
       }
     }
@@ -472,13 +472,13 @@ fn main {
           puts("FAIL  tests/run.av")
           puts("bad AVANT_TEST_SHARD ${spec}")
           write_runner_junit_fail()
-          return
+          return 1
         }
         if cnt < idx {
           puts("FAIL  tests/run.av")
           puts("bad AVANT_TEST_SHARD ${spec}")
           write_runner_junit_fail()
-          return
+          return 1
         }
         par = parallel_subset(picked)
         sharded: Array(String) = []
@@ -496,7 +496,7 @@ fn main {
       puts("FAIL  tests/run.av")
       puts("no tests/cases/*.av selected")
       write_runner_junit_fail()
-      return
+      return 1
     }
     suite_src = "/tmp/avant-s10-${stamp}-suite.av"
     bin = "/tmp/avant-s10-${stamp}-suite.bin"
@@ -512,7 +512,7 @@ fn main {
       puts("FAIL  tests/run.av")
       puts("failed to stitch suite sources")
       write_runner_junit_fail()
-      return
+      return 1
     }
     args: Array(String) = []
     args.push("compile")
@@ -527,7 +527,7 @@ fn main {
         puts(err)
       }
       write_runner_junit_fail()
-      return
+      return 1
     }
     if file_exists(bin) {
     } else {
@@ -537,7 +537,7 @@ fn main {
         puts(err)
       }
       write_runner_junit_fail()
-      return
+      return 1
     }
     chmod_args: Array(String) = []
     chmod_args.push("+x")
@@ -564,10 +564,13 @@ fn main {
           write_runner_junit_fail()
         }
       }
+      return 1
     }
+    return 0
   } else {
     puts("FAIL  tests/run.av")
     puts("AVANT_COMPILER is not set")
     write_runner_junit_fail()
+    return 1
   }
 }

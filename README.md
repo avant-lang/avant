@@ -19,12 +19,13 @@ Save it as `hello.av`. That is a complete program: `fn main` is the entry point,
 Today, on Linux x86_64:
 
 1. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
-2. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it. The archive holds two binaries side by side: `avant` and its `myc-llvm` backend.
+2. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it. The archive holds `avant`, its `myc-llvm` backend, and `lib/std/testing.av` beside the compiler.
 3. Install both binaries into `~/.local/bin` (recommended: it needs no sudo, and keeping `avant` and `myc-llvm` together means the compiler finds its backend with no configuration). For a system-wide install, use `/usr/local/bin` instead (that one needs sudo).
 
 ```sh
-mkdir -p ~/.local/bin
+mkdir -p ~/.local/bin/lib/std
 install -m 755 avant myc-llvm ~/.local/bin/
+install -m 644 lib/std/testing.av ~/.local/bin/lib/std/testing.av
 ```
 
 Make sure `~/.local/bin` is on your `PATH`; if it is not, add it once:
@@ -478,7 +479,7 @@ The comptime field walk in [Macros](#macros) is the other `for`, and it keeps it
 
 A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. A keyword after a dot is a name, so `import http.spawn` loads `http/spawn.av` and a clash is qualified as `http.spawn.Server`. A keyword that starts a phrase stays that keyword. There is no `module` line, and a directory is not a module.
 
-The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate.
+The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate. The first segment `std` is reserved for the standard library. `import std.testing` loads the bundled test library, and a project file cannot take that name.
 
 A file under `tests/math/` can import the project next to `avant.toml` and use the public names unqualified:
 
@@ -1029,76 +1030,117 @@ A string-literal pattern is compiled to a native scanner with re2c at compile ti
 
 ## Testing
 
-Avant has no `avant test` command yet, and no assertion builtin. A test today is an ordinary Avant program that checks its expectations and prints one `PASS` or `FAIL` line per check. This section shows exactly that, with no hidden machinery. A user-facing test framework is planned as its own wave and, until it lands, the patterns below are the supported way to test an Avant program.
-
-Write a check helper once per test file. The helper prints the verdict; it cannot fail the process, because `fn main` does not set the exit code. The shell loop further down turns any `FAIL` line into a failing run, which is how this repository's own CI reads its suite.
+`avant test` discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A void `fn main` is still a successful program and does not change. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
 
 ```avant
+import std.testing
+
 fn greet(name: String): String {
   "Hello, ${name}"
 }
 
-fn check(cond: Bool, name: String) {
-  if cond {
-    puts("PASS ${name}")
-  } else {
-    puts("FAIL ${name}")
-  }
-}
-
-fn main {
-  check(greet("Ada") == "Hello, Ada", "greet uses the name")
-  check(greet("") == "Hello, ", "greet handles empty")
+fn main: Int {
+  t = Test.new
+  t.check(greet("Ada") == "Hello, Ada", "greet uses the name")
+  t.check_eq(greet(""), "Hello, ", "greet handles empty")
+  t.finish
 }
 ```
 
-Save it as `test_greet.av` and run it with `avant run test_greet.av`. It prints `PASS greet uses the name` and `PASS greet handles empty`. A failing check prints `FAIL` with its name and the run continues, so one run reports every failure, not just the first.
+Save it as `tests/test_greet.av` and run `avant test`. With no path, that walks `tests/` recursively for `test_*.av`, relative to the nearest `avant.toml`, or relative to the current directory when there is no manifest. `avant test DIR` is the same walk. `avant test FILE.av` runs that file even when the name does not match. An empty selection exits 1. The file prints `PASS greet uses the name`, `PASS greet handles empty`, and `0 failed, 2 passed`. A failing check prints `FAIL` and the name, then the run continues, so one file reports every failure. `finish` returns 1 when any check failed.
+
+`check_eq` is an overload for `Int`, `Bool`, and `String`. On failure it prints `got` and `want` under the `FAIL` line.
 
 Several cases over the same function read better as a table. Keep the inputs and the expected values in two arrays of the same length, and check them in one loop.
 
 ```avant
-fn main {
+import std.testing
+
+fn greet(name: String): String {
+  "Hello, ${name}"
+}
+
+fn main: Int {
+  t = Test.new
   names = ["Ada", "Bo", "Cy"]
   wants = ["Hello, Ada", "Hello, Bo", "Hello, Cy"]
   i = 0
   while i < names.size {
-    check(greet(names[i]) == wants[i], "greet ${names[i]}")
+    t.check(greet(names[i]) == wants[i], "greet ${names[i]}")
     i = i + 1
   }
+  t.finish
 }
 ```
 
-This replaces the two `check` calls in `main`; `greet` and `check` stay as they are. Name each check after the case it covers, so a `FAIL` line alone says what broke.
+Name each check after the case it covers, so a `FAIL` line alone says what broke. Put the functions under test in their own module and `import` it. A test sees `pub` names only.
 
-For a program whose whole behavior is its output, compare the output with a saved file instead of writing checks. Save the expected output once, then diff every run against it.
+Checks written in the file, and bodies passed to `t.test`, run one at a time in source order. `t.parallel` overlaps other parallel tests of that same file, and only after the file's serial work. Each parallel test is a new process of the same binary. The file runs again, serial checks and `t.test` bodies do not, and only that parallel body does. Code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, so parallel bodies do not run until `avant test` starts them.
 
-```sh
-avant run hello.av > got.txt
-diff want.txt got.txt && echo "golden ok"
+```avant
+import std.testing
+
+fn main: Int {
+  t = Test.new
+  t.test("adds") {
+    t.check(1 + 2 == 3, "1+2")
+  }
+  t.parallel("other") {
+    t.check(true, "other")
+  }
+  t.finish
+}
 ```
 
-Update `want.txt` only by hand, after reading the new output. Regenerating it from the program on every run would make the test agree with whatever the program does, including its bugs.
+Files run at the same time by default. `--jobs` is how many test processes may run at once. It defaults to the number of online processors and does not read `AVANT_THREADS`. `--jobs 1` runs one file at a time. `--shard I/N` runs one slice of the selection, counted from 1, and may be combined with `--jobs`. It does not launch the other slices. The log is flushed in path order, and within a file in source order. The runner then prints `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total. Its own status is 1 when any file failed, when nothing was selected, or when the command was refused.
 
-A program that must not compile is tested the same way from the shell: compile it, require a non-zero exit, and match the diagnostic. The compiler prints diagnostics to stderr and exits non-zero when a program is wrong.
+A file listed in `[test] exclusive` runs only while no other selected test file is compiling or running. A benchmark that needs a quiet machine, as far as the other tests are concerned, is its own exclusive file. The list does not discover files. On a command with no path, every listed path has to be one of the discovered tests. `--shard` is an error when the selection contains an exclusive file, unless `--skip-exclusive` is also passed. With `--jobs 1`, every file is already alone and the list does not change the order.
 
-```sh
-avant compile bad.av bad-bin 2> err.txt
-test $? -ne 0 && grep -q "unknown name" err.txt && echo "rejected as expected"
+```toml
+[test]
+dir = "tests"
+exclusive = ["tests/test_bench.av"]
 ```
 
-Run every test file in one loop. The loop runs each file, and the final `grep` fails the whole run when any file printed a `FAIL` line.
+`dir` replaces the default `tests/` walk. `entry` names one file and replaces the walk. Setting both is an error. A path on the command overrides `dir` and `entry`. There is no command string and no `jobs` key. Paths in the section are relative to the manifest.
 
-```sh
-for t in test_*.av; do
-  avant run "$t"
-done > all-tests.txt
-cat all-tests.txt
-! grep -q "^FAIL" all-tests.txt
+`golden` compares a string to a saved file. `run_golden` compiles and runs a program and compares its stdout to a saved file. `rejects` compiles a source file and requires a non-zero status whose stderr contains a substring. Nothing rewrites an expected file from the program's output. Update the saved file by hand, after reading the new output.
+
+```avant
+import std.testing
+
+fn main: Int {
+  t = Test.new
+  t.golden("want.txt", "Hello Avant\n")
+  t.run_golden("hello.av", "hello.want")
+  t.rejects("bad.av", "unknown name")
+  t.finish
+}
 ```
 
-Keep one test file per area (`test_greet.av`, `test_parse.av`), and name files with the `test_` prefix so the loop finds them. Put the functions under test in their own module and `import` it from both the program and the test file, rather than copying the code into the test.
+`want.txt` and `hello.want` are the exact bytes, including a trailing newline when the program prints one. `run_golden` fails the check when the program's status is non-zero. `rejects` fails the check when the source compiles or the diagnostic does not contain the substring.
 
-Testing the compiler itself is different, and is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler): the native suite in `tests/cases/` is auto-discovered, selects cases with `AVANT_TEST_CASES`, shards with `AVANT_TEST_SHARD`, and runs shards in parallel with `AVANT_TEST_JOBS`. The two Avant programs above are exercised verbatim by that suite (`tests/cases/testing_docs.av`), so what this section shows is what the compiler actually runs.
+`avant test` compiles each file and runs that binary, so the process status is the file's. `avant run FILE.av --` does the same when the program takes arguments. `avant run FILE.av` without `--` stays on the fast path and does not forward the status.
+
+`avant run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]` is how a program receives arguments. Options may sit before the file or after it, up to `--`, so `avant run FILE.av --debug` still works. Arguments after `--` are the program's, starting at `argv()` index 1. `avant test` does not forward arguments.
+
+```avant
+fn main: Int {
+  args = argv()
+  if args.size > 1 {
+    puts(args[1])
+  }
+  0
+}
+```
+
+```sh
+avant run prog.av -- hello
+```
+
+`--junit PATH` writes one JUnit case per file. It is off unless you pass it. Other flags are an error, including `--jobs 0`.
+
+Testing the compiler itself is different, and is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler). The programs in this section are exercised by `tests/cases/testing_docs.av`.
 
 ## Builtins
 
