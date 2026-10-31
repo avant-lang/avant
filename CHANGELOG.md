@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.24.0 - 2026-10-31
 
 ### Changed
 * The compiler suite is `avant test`. Each file in `tests/cases/` is its own program (`test_<stem>.av`) and imports `tests/cases/harness.av`. `tests/run.av` is gone. CI uses the default job count. The instrumented coverage report is written once after the suite, from the shared hit file.
