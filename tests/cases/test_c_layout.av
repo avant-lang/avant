@@ -8,7 +8,7 @@ fn test_c_layout(c: Checks) {
     flags: Array(String) = []
     flags.push("--cc")
     flags.push("${root}/examples/c/layout.c")
-    log = "/tmp/avant-c_layout-s18-${stamp}-layout.txt"
+    log = "/tmp/avant-c_layout-${stamp}-layout.txt"
     code = run_av_cmd_flags(compiler, "${root}/examples/layout.av", log, flags)
     c.eq_int(code, 0, "run layout.av")
     if got = file_read(log) {
@@ -16,9 +16,9 @@ fn test_c_layout(c: Checks) {
     } else {
       c.expect(false, "layout stdout")
     }
-    csrc = "/tmp/avant-c_layout-s18-${stamp}-fields.c"
-    asrc = "/tmp/avant-c_layout-s18-${stamp}-fields.av"
-    clog = "/tmp/avant-c_layout-s18-${stamp}-fields.txt"
+    csrc = "/tmp/avant-c_layout-${stamp}-fields.c"
+    asrc = "/tmp/avant-c_layout-${stamp}-fields.av"
+    clog = "/tmp/avant-c_layout-${stamp}-fields.txt"
     dummy = file_write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; int y; } Point;\nPoint *point_new(int x, int y) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  p->y = y;\n  return p;\n}\n")
     dummy2 = file_write(asrc, "lib math {\n  struct Point {\n    x: Int\n    y: Int\n  }\n  fun point_new(x: Int, y: Int): Ptr(Point)\n}\ncomptime {\n  for f in Point.fields {\n    quote {\n      fn #(f.name)(p: Ptr(Point)): #(f.type) {\n        p.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  p = math.point_new(3, 4)\n  puts(x(p))\n  puts(y(p))\n}\n")
     fflags: Array(String) = []

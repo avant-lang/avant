@@ -1,19 +1,18 @@
 import harness
 
-
-struct S35Pair {
+struct Pair {
   a: Int
   b: Int
 }
 
-fn test_s35(c: Checks) {
-  c.suite("tests/cases/test_s35.av")
+fn test_tasks(c: Checks) {
+  c.suite("tests/cases/test_tasks.av")
 
   s = "hello"
   hs = spawn { s.size }
   c.eq_int(hs.join, 5, "string spawn")
 
-  p = S35Pair { a: 2, b: 5 }
+  p = Pair { a: 2, b: 5 }
   hp = spawn { p.a + p.b }
   c.eq_int(hp.join, 7, "struct spawn")
 
@@ -138,14 +137,14 @@ fn test_s35(c: Checks) {
   again = mu.with { |x| x }
   c.eq_int(again, 2, "mutex read")
 
-  box = Mutex(S35Box).new(S35Box.new(1))
+  box = Mutex(Held).new(Held.new(1))
   bn = box.with { |x|
     x.n = x.n + 1
     x.n
   }
   c.eq_int(bn, 2, "mutex class")
 
-  cell = Mutex(S35Cell).new(S35Cell { n: 1 })
+  cell = Mutex(Cell).new(Cell { n: 1 })
   cn = cell.with { |x|
     x.n = x.n + 4
     x.n
@@ -167,6 +166,6 @@ fn test_s35(c: Checks) {
 fn main: Int {
   c = Checks.new()
   c.started = now_ms()
-  test_s35(c)
+  test_tasks(c)
   c.finish
 }

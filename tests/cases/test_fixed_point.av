@@ -1,6 +1,6 @@
 import harness
 
-fn s15_fail_log(c: Checks, log: String, msg: String) {
+fn fail_log(c: Checks, log: String, msg: String) {
   c.expect(false, msg)
   if err = file_read(log) {
     puts(err)
@@ -15,13 +15,13 @@ fn test_fixed_point(c: Checks) {
     hello = "${root}/examples/hello.av"
     golden = "${root}/tests/goldens/hello.myc"
     main_av = "${root}/compiler/main.av"
-    hello_b = "/tmp/avant-fixed_point-s15-${stamp}-hello-b.myc"
-    hello_c = "/tmp/avant-fixed_point-s15-${stamp}-hello-c.myc"
-    main_b = "/tmp/avant-fixed_point-s15-${stamp}-main-b.myc"
-    main_c = "/tmp/avant-fixed_point-s15-${stamp}-main-c.myc"
-    bin_c = "/tmp/avant-fixed_point-s15-${stamp}-c"
-    clog = "/tmp/avant-fixed_point-s15-${stamp}-c.log"
-    hlog = "/tmp/avant-fixed_point-s15-${stamp}-hello.log"
+    hello_b = "/tmp/avant-fixed_point-${stamp}-hello-b.myc"
+    hello_c = "/tmp/avant-fixed_point-${stamp}-hello-c.myc"
+    main_b = "/tmp/avant-fixed_point-${stamp}-main-b.myc"
+    main_c = "/tmp/avant-fixed_point-${stamp}-main-c.myc"
+    bin_c = "/tmp/avant-fixed_point-${stamp}-c"
+    clog = "/tmp/avant-fixed_point-${stamp}-c.log"
+    hlog = "/tmp/avant-fixed_point-${stamp}-hello.log"
 
     b_hello = dump_av(compiler, hello, hello_b)
     c.eq_int(b_hello, 0, "dump hello")
@@ -32,7 +32,7 @@ fn test_fixed_point(c: Checks) {
         c.expect(false, "read golden hello.myc")
       }
     } else {
-      s15_fail_log(c, hello_b, "read hello dump")
+      fail_log(c, hello_b, "read hello dump")
     }
 
     // One self-host link. Nursery is forced on so the long compile is the
@@ -67,7 +67,7 @@ fn test_fixed_point(c: Checks) {
           c.eq_str(got_c, got_b, "next hello dump matches this compiler")
         }
       } else {
-        s15_fail_log(c, hello_c, "read next hello dump")
+        fail_log(c, hello_c, "read next hello dump")
       }
 
       b_main = dump_av(compiler, main_av, main_b)
@@ -78,10 +78,10 @@ fn test_fixed_point(c: Checks) {
         if ir_c = file_read(main_c) {
           c.eq_str(sha256(ir_b), sha256(ir_c), "compiler myc digest matches next")
         } else {
-          s15_fail_log(c, main_c, "read next compiler myc")
+          fail_log(c, main_c, "read next compiler myc")
         }
       } else {
-        s15_fail_log(c, main_b, "read compiler myc")
+        fail_log(c, main_b, "read compiler myc")
       }
 
       hcode = run_av_cmd(bin_c, hello, hlog)
@@ -92,7 +92,7 @@ fn test_fixed_point(c: Checks) {
         c.expect(false, "read next hello stdout")
       }
     } else {
-      s15_fail_log(c, clog, "C bin exists")
+      fail_log(c, clog, "C bin exists")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

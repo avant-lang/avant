@@ -956,7 +956,7 @@ fn main {
 
 ### Channel and Mutex
 
-`Channel(T)` and `Mutex(T)` are ordinary generic classes. Nothing imports them for you. The proof is `tests/cases/test_s35.av`.
+`Channel(T)` and `Mutex(T)` are ordinary generic classes. Nothing imports them for you. The proof is `tests/cases/test_tasks.av`.
 
 `Channel(T).new` is a rendezvous channel. `Channel(T).new(n)` is buffered. `recv` returns `T?`. `Mutex(T).with { |x| ... }` holds the lock for the block. `x` is a place that dies with the block. `return` inside `with` is an error. Waiting and waking go through the runtime's `avant_gate_*` functions.
 
@@ -1030,7 +1030,7 @@ A string-literal pattern is compiled to a native scanner with re2c at compile ti
 
 ## Testing
 
-`avant test` discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A void `fn main` is still a successful program and does not change. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
+`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A void `fn main` is still a successful program and does not change. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
 
 ```avant
 import std.testing
@@ -1047,9 +1047,49 @@ fn main: Int {
 }
 ```
 
-Save it as `tests/test_greet.av` and run `avant test`. With no path, that walks `tests/` recursively for `test_*.av`, relative to the nearest `avant.toml`, or relative to the current directory when there is no manifest. `avant test DIR` is the same walk. `avant test FILE.av` runs that file even when the name does not match. An empty selection exits 1. The file prints `PASS greet uses the name`, `PASS greet handles empty`, and `0 failed, 2 passed`. A failing check prints `FAIL` and the name, then the run continues, so one file reports every failure. `finish` returns 1 when any check failed.
+Save it as `tests/test_greet.av` and run `avant test`. The file prints `PASS greet uses the name`, `PASS greet handles empty`, and `0 failed, 2 passed`. A failing check prints `FAIL` and the name, then the run continues, so one file reports every failure. `finish` returns 1 when any check failed. Put the functions under test in their own module and `import` it. A test sees `pub` names only.
 
-`check_eq` is an overload for `Int`, `Bool`, and `String`. On failure it prints `got` and `want` under the `FAIL` line.
+### Commands
+
+| Command | What it runs |
+| --- | --- |
+| `avant test` | `test_*.av` under `tests/`, recursively |
+| `avant t` | the same walk |
+| `avant test DIR` | the same walk, starting at `DIR` |
+| `avant test FILE.av` | that file, even when the name does not match `test_*.av` |
+| `avant test A.av B.av` | those files, and no directory walk |
+
+With no path, `tests/` is relative to the nearest `avant.toml`, or to the current directory when that walk finds none. The walk skips a name that starts with `.` and a directory named `deps`. Results are sorted bytewise by relative path. An empty selection exits 1.
+
+### Flags
+
+`avant test` accepts these flags. `--jobs=N`, `--shard=I/N`, and `--junit=PATH` are the same as the two-word form. An unknown flag is an error. `--jobs 0` is an error. `avant test` does not forward arguments to the test program, and a `--` on the command is an error.
+
+| Flag | Meaning |
+| --- | --- |
+| `--jobs N` | How many test processes may run at once. Default: the number of online processors. Does not read `AVANT_THREADS`. |
+| `--jobs 1` | One file at a time. |
+| `--shard I/N` | Slice `I` of `N`, counted from 1. May be combined with `--jobs`. Does not launch the other slices. |
+| `--junit PATH` | Write one JUnit case per file. Off unless you pass it. |
+| `--skip-exclusive` | Omit files listed in `[test] exclusive`. Required when `--shard` would include one of them. |
+| `-h`, `--help` | Print the flag list and exit 0. |
+
+The log is flushed in path order, and within a file in source order. The runner then prints `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused.
+
+### Checks
+
+`Test` is the value from `import std.testing`. Create it with `Test.new`. Every check takes a `name: String`. Name it after the case, so a `FAIL` line alone says what broke.
+
+| Method | Passes when |
+| --- | --- |
+| `check(cond, name)` | `cond` is true. |
+| `check_eq(got, want, name)` | `got` equals `want`. Overloads: `Int`, `Bool`, and `String`. On failure it prints `got` and `want` under the `FAIL` line. |
+| `golden(path, got)` | The bytes in `path` equal `got`. A missing file fails the check. Nothing rewrites the file. |
+| `run_golden(program, want)` | `AVANT_COMPILER` compiles `program` with `--debug`, the program exits 0, and its stdout equals the bytes in `want`. |
+| `rejects(source, substring)` | Compiling `source` exits non-zero, and stderr contains `substring`. |
+| `finish` | Returns `0` when every check passed, `1` otherwise. Prints `N failed, M passed`. |
+
+`Float64` has no `check_eq`. Compare it in a `check` when you have decided what equality means, including NaN.
 
 Several cases over the same function read better as a table. Keep the inputs and the expected values in two arrays of the same length, and check them in one loop.
 
@@ -1073,7 +1113,23 @@ fn main: Int {
 }
 ```
 
-Name each check after the case it covers, so a `FAIL` line alone says what broke. Put the functions under test in their own module and `import` it. A test sees `pub` names only.
+Saved files compared by `golden` and `run_golden` are the exact bytes, including a trailing newline when the program prints one. Update a saved file by hand, after reading the new output.
+
+```avant
+import std.testing
+
+fn main: Int {
+  t = Test.new
+  t.golden("want.txt", "Hello Avant\n")
+  t.run_golden("hello.av", "hello.want")
+  t.rejects("bad.av", "unknown name")
+  t.finish
+}
+```
+
+`run_golden` and `rejects` need `AVANT_COMPILER` set to the compiler under test. A user project that only calls `check` does not.
+
+### Order inside a file
 
 Checks written in the file, and bodies passed to `t.test`, run one at a time in source order. `t.parallel` overlaps other parallel tests of that same file, and only after the file's serial work. Each parallel test is a new process of the same binary. The file runs again, serial checks and `t.test` bodies do not, and only that parallel body does. Code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, so parallel bodies do not run until `avant test` starts them.
 
@@ -1092,7 +1148,7 @@ fn main: Int {
 }
 ```
 
-Files run at the same time by default. `--jobs` is how many test processes may run at once. It defaults to the number of online processors and does not read `AVANT_THREADS`. `--jobs 1` runs one file at a time. `--shard I/N` runs one slice of the selection, counted from 1, and may be combined with `--jobs`. It does not launch the other slices. The log is flushed in path order, and within a file in source order. The runner then prints `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total. Its own status is 1 when any file failed, when nothing was selected, or when the command was refused.
+### Files that must run alone
 
 A file listed in `[test] exclusive` runs only while no other selected test file is compiling or running. A benchmark that needs a quiet machine, as far as the other tests are concerned, is its own exclusive file. The list does not discover files. On a command with no path, every listed path has to be one of the discovered tests. `--shard` is an error when the selection contains an exclusive file, unless `--skip-exclusive` is also passed. With `--jobs 1`, every file is already alone and the list does not change the order.
 
@@ -1102,27 +1158,38 @@ dir = "tests"
 exclusive = ["tests/test_bench.av"]
 ```
 
-`dir` replaces the default `tests/` walk. `entry` names one file and replaces the walk. Setting both is an error. A path on the command overrides `dir` and `entry`. There is no command string and no `jobs` key. Paths in the section are relative to the manifest.
+| Key | Meaning |
+| --- | --- |
+| `dir` | One directory. Replaces the default `tests/` walk. |
+| `entry` | One file. Replaces the walk. |
+| `exclusive` | Paths that run alone. A string, or a list of strings. |
 
-`golden` compares a string to a saved file. `run_golden` compiles and runs a program and compares its stdout to a saved file. `rejects` compiles a source file and requires a non-zero status whose stderr contains a substring. Nothing rewrites an expected file from the program's output. Update the saved file by hand, after reading the new output.
+`dir` and `entry` together are an error. A path on the command overrides both. There is no command string and no `jobs` key. Paths are relative to the manifest.
 
-```avant
-import std.testing
+### Reports
 
-fn main: Int {
-  t = Test.new
-  t.golden("want.txt", "Hello Avant\n")
-  t.run_golden("hello.av", "hello.want")
-  t.rejects("bad.av", "unknown name")
-  t.finish
-}
-```
+JUnit is the test-analytics file. Coverage is a separate report, for one instrumented program. They are not the same output.
 
-`want.txt` and `hello.want` are the exact bytes, including a trailing newline when the program prints one. `run_golden` fails the check when the program's status is non-zero. `rejects` fails the check when the source compiles or the diagnostic does not contain the substring.
+`--junit PATH` writes one `<testcase>` per test file. The name is that file's path. It is off unless you pass it. A project does not gain a `junit.xml` by surprise. The file is what an analytics uploader reads. It does not contain one case per `check`.
+
+Coverage instruments a program at compile time. `avant test` has no coverage flag. The knobs are on `compile` and `dump`, and on the environment of the program that was built with them.
+
+| Knob | When it applies | Effect |
+| --- | --- | --- |
+| `--coverage` | `avant compile`, `avant dump` | Emit hit counters for that program. |
+| `AVANT_COVERAGE=1` | The compiler's environment | Same as `--coverage`, for that invocation. `0` turns it off. |
+| `AVANT_COVERAGE_MAP` | Compile time | Path of the slot map baked into the binary. Unset, the map is a temporary file. |
+| `AVANT_COVERAGE_LCOV` | The instrumented program | Where it writes `lcov.info`. `0` writes nothing. Unset, it writes `lcov.info` in the current directory. |
+| `AVANT_COVERAGE_REPORT` | The instrumented program | `0` hides the text table when the program is the compiler. `1` forces the table. A program that is not the compiler still prints the table. |
+| `AVANT_COVERAGE_COLOR` | The instrumented program | `0` or `1` forces color in the text table. Unset, color follows the terminal. |
+
+Hit counters for one binary are a shared map. Several processes of that same binary add into it. Each of those processes would otherwise truncate the same `lcov.info`. Set `AVANT_COVERAGE_LCOV=0` while they run, then run the binary once with `AVANT_COVERAGE_LCOV` pointed at the report path.
+
+### Program arguments
 
 `avant test` compiles each file and runs that binary, so the process status is the file's. `avant run FILE.av --` does the same when the program takes arguments. `avant run FILE.av` without `--` stays on the fast path and does not forward the status.
 
-`avant run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]` is how a program receives arguments. Options may sit before the file or after it, up to `--`, so `avant run FILE.av --debug` still works. Arguments after `--` are the program's, starting at `argv()` index 1. `avant test` does not forward arguments.
+`avant run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]` is how a program receives arguments. Options may sit before the file or after it, up to `--`, so `avant run FILE.av --debug` still works. Arguments after `--` are the program's, starting at `argv()` index 1.
 
 ```avant
 fn main: Int {
@@ -1138,9 +1205,9 @@ fn main: Int {
 avant run prog.av -- hello
 ```
 
-`--junit PATH` writes one JUnit case per file. It is off unless you pass it. Other flags are an error, including `--jobs 0`.
+### The compiler's own suite
 
-Testing the compiler itself is different, and is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler). The programs in this section are exercised by `tests/cases/test_testing_docs.av`.
+Testing the compiler itself is covered for contributors under [Advanced: building the compiler](#advanced-building-the-compiler). The programs in this section are exercised by `tests/cases/test_testing_docs.av`.
 
 ## Builtins
 

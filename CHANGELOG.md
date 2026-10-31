@@ -1,5 +1,10 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Changed
+* The compiler suite names tests and helpers for what they check. The `Channel` and `Mutex` proof is `tests/cases/test_tasks.av`.
+
 ## 0.24.0 - 2026-10-31
 
 ### Changed
