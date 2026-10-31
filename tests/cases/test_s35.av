@@ -1,0 +1,172 @@
+import harness
+
+
+struct S35Pair {
+  a: Int
+  b: Int
+}
+
+fn test_s35(c: Checks) {
+  c.suite("tests/cases/test_s35.av")
+
+  s = "hello"
+  hs = spawn { s.size }
+  c.eq_int(hs.join, 5, "string spawn")
+
+  p = S35Pair { a: 2, b: 5 }
+  hp = spawn { p.a + p.b }
+  c.eq_int(hp.join, 7, "struct spawn")
+
+  xs = [1, 2, 3, 4]
+  ys = xs.parallel { |item| item * 10 }
+  c.eq_int(ys.size, 4, "parallel size")
+  c.eq_int(ys[0], 10, "parallel 0")
+  c.eq_int(ys[1], 20, "parallel 1")
+  c.eq_int(ys[2], 30, "parallel 2")
+  c.eq_int(ys[3], 40, "parallel 3")
+
+  add = 7
+  zs = xs.parallel { |item| item + add }
+  c.eq_int(zs[0], 8, "parallel capture")
+  c.eq_int(zs[3], 11, "parallel capture last")
+
+  empty = Array(Int).new(0)
+  none = empty.parallel { |item| item + 1 }
+  c.eq_int(none.size, 0, "parallel empty")
+
+  words = ["a", "bb", "ccc"]
+  lens = words.parallel { |item| item.size }
+  c.eq_int(lens[0], 1, "parallel string 0")
+  c.eq_int(lens[1], 2, "parallel string 1")
+  c.eq_int(lens[2], 3, "parallel string 2")
+
+  buf = Channel(Int).new(2)
+  kept = 4
+  buf.send(kept)
+  buf.send(5)
+  c.eq_int(kept, 4, "sender stays")
+  buf.close
+  if a = buf.recv {
+    c.eq_int(a, 4, "fifo 0")
+  } else {
+    c.expect(false, "fifo 0")
+  }
+  if b = buf.recv {
+    c.eq_int(b, 5, "fifo 1")
+  } else {
+    c.expect(false, "fifo 1")
+  }
+  if extra = buf.recv {
+    c.expect(false, "closed empty")
+  } else {
+    c.expect(true, "closed empty")
+  }
+
+  wrap = Channel(Int).new(2)
+  wrap.send(1)
+  wrap.send(2)
+  if w0 = wrap.recv {
+    c.eq_int(w0, 1, "wrap pop")
+  } else {
+    c.expect(false, "wrap pop")
+  }
+  wrap.send(3)
+  if w1 = wrap.recv {
+    c.eq_int(w1, 2, "wrap mid")
+  } else {
+    c.expect(false, "wrap mid")
+  }
+  if w2 = wrap.recv {
+    c.eq_int(w2, 3, "wrap last")
+  } else {
+    c.expect(false, "wrap last")
+  }
+
+  ch = Channel(Int).new
+  hr = spawn {
+    ch.send(7)
+    1
+  }
+  if n = ch.recv {
+    c.eq_int(n, 7, "rendezvous")
+  } else {
+    c.expect(false, "rendezvous")
+  }
+  c.eq_int(hr.join, 1, "rendezvous join")
+
+  many = Channel(Int).new(2)
+  h1 = spawn {
+    many.send(1)
+    1
+  }
+  h2 = spawn {
+    many.send(2)
+    1
+  }
+  sum = 0
+  if m0 = many.recv {
+    sum = sum + m0
+  } else {
+    c.expect(false, "two senders 0")
+  }
+  if m1 = many.recv {
+    sum = sum + m1
+  } else {
+    c.expect(false, "two senders 1")
+  }
+  c.eq_int(sum, 3, "two senders")
+  c.eq_int(h1.join + h2.join, 2, "two joins")
+
+  cs = Channel(String).new
+  hcs = spawn {
+    cs.send("hi")
+    1
+  }
+  if msg = cs.recv {
+    c.eq_str(msg, "hi", "channel string")
+  } else {
+    c.expect(false, "channel string")
+  }
+  c.eq_int(hcs.join, 1, "channel string join")
+
+  mu = Mutex(Int).new(1)
+  bumped = mu.with { |x|
+    x = x + 1
+    x
+  }
+  c.eq_int(bumped, 2, "mutex with")
+  again = mu.with { |x| x }
+  c.eq_int(again, 2, "mutex read")
+
+  box = Mutex(S35Box).new(S35Box.new(1))
+  bn = box.with { |x|
+    x.n = x.n + 1
+    x.n
+  }
+  c.eq_int(bn, 2, "mutex class")
+
+  cell = Mutex(S35Cell).new(S35Cell { n: 1 })
+  cn = cell.with { |x|
+    x.n = x.n + 4
+    x.n
+  }
+  c.eq_int(cn, 5, "mutex struct")
+
+  shared = Mutex(Int).new(1)
+  hm = spawn {
+    shared.with { |x|
+      x = x + 10
+      1
+    }
+  }
+  c.eq_int(hm.join, 1, "mutex spawn")
+  after = shared.with { |x| x }
+  c.eq_int(after, 11, "mutex after spawn")
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_s35(c)
+  c.finish
+}

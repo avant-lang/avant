@@ -1,0 +1,132 @@
+import harness
+
+fn test_coverage(c: Checks) {
+  c.suite("tests/cases/test_coverage.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-coverage-s10-${stamp}-cov.av"
+    bin = "/tmp/avant-coverage-s10-${stamp}-cov.bin"
+    log = "/tmp/avant-coverage-s10-${stamp}-cov.log"
+    dump_log = "/tmp/avant-coverage-s10-${stamp}-cov.myc"
+    body = "fn covered(n: Int): Int {\n  r = 0\n  if n > 0 {\n    r = 1\n  } else {\n    r = 2\n  }\n  r\n}\nfn unused(n: Int): Int {\n  n + 1\n}\nfn main {\n  x = covered(1)\n}\n"
+    w = file_write(src, body)
+    c.eq_int(w, 0, "write coverage fixture")
+
+    dump_code = dump_av_cov(compiler, src, dump_log)
+    c.eq_int(dump_code, 0, "dump --coverage")
+    if ir = file_read(dump_log) {
+      c.expect(str_has(ir, "avant_cov_hit"), "dump IR has avant_cov_hit")
+      c.expect(str_has(ir, "avant_cov_init"), "dump IR has avant_cov_init")
+    } else {
+      c.expect(false, "dump --coverage")
+    }
+
+    code = compile_av_cov(compiler, src, bin, log)
+    c.eq_int(code, 0, "compile --coverage")
+    c.expect(file_exists(bin), "coverage bin exists")
+    chmod_x(bin)
+    // REPORT=0 must not hide a --coverage program's table.
+    // The fixture writes its own lcov. The compiler's report is a different file.
+    fix_lcov = "/tmp/avant-coverage-${stamp}-fixture.lcov"
+    cov_run: Array(String) = []
+    cov_run.push("AVANT_COVERAGE_LCOV=${fix_lcov}")
+    cov_run.push("AVANT_COVERAGE_REPORT=0")
+    cov_run.push(bin)
+    run_code = process_run_out("/usr/bin/env", cov_run, log)
+    c.eq_int(run_code, 0, "run coverage fixture")
+    if out = file_read(log) {
+      c.expect(str_has(out, "% Stmts"), "coverage has % Stmts")
+      c.expect(str_has(out, "% Branch"), "coverage has % Branch")
+      c.expect(str_has(out, "% Funcs"), "coverage has % Funcs")
+      c.expect(str_has(out, "% Lines"), "coverage has % Lines")
+      c.expect(str_has(out, "Uncovered Line"), "coverage has Uncovered Line")
+      c.expect(str_has(out, "All files"), "coverage has All files")
+    } else {
+      c.expect(false, "coverage table")
+    }
+    if lcov = file_read(fix_lcov) {
+      c.expect(str_has(lcov, "TN:"), "lcov has TN:")
+      c.expect(str_has(lcov, "SF:"), "lcov has SF:")
+      c.expect(str_has(lcov, "DA:"), "lcov has DA:")
+      c.expect(str_has(lcov, "end_of_record"), "lcov has end_of_record")
+      c.expect(str_has(lcov, "SF:avant-coverage-s10-${stamp}-cov.av\n"), "absolute path keeps its file name")
+    } else {
+      c.expect(false, "fixture lcov")
+    }
+
+    rel_dir = "covrel-coverage-${stamp}"
+    rel_src = "${rel_dir}/sample.av"
+    mkdir_rel: Array(String) = []
+    mkdir_rel.push("-p")
+    mkdir_rel.push(rel_dir)
+    dummy_rel = process_run("/bin/mkdir", mkdir_rel)
+    rel_w = file_write(rel_src, body)
+    c.eq_int(rel_w, 0, "write relative coverage fixture")
+    rel_bin = "/tmp/avant-coverage-s10-${stamp}-covrel.bin"
+    rel_log = "/tmp/avant-coverage-s10-${stamp}-covrel.log"
+    rel_code = compile_av_cov(compiler, rel_src, rel_bin, rel_log)
+    c.eq_int(rel_code, 0, "compile relative coverage fixture")
+    chmod_x(rel_bin)
+    rel_lcov_path = "/tmp/avant-coverage-${stamp}-rel.lcov"
+    rel_run: Array(String) = []
+    rel_run.push("AVANT_COVERAGE_LCOV=${rel_lcov_path}")
+    rel_run.push("AVANT_COVERAGE_REPORT=0")
+    rel_run.push(rel_bin)
+    rel_run_code = process_run_out("/usr/bin/env", rel_run, rel_log)
+    c.eq_int(rel_run_code, 0, "run relative coverage fixture")
+    if rel_lcov = file_read(rel_lcov_path) {
+      c.expect(str_has(rel_lcov, "SF:${rel_src}\n"), "relative SF keeps the directory")
+    } else {
+      c.expect(false, "relative lcov")
+    }
+
+    jdir = "/tmp/avant-coverage-s10-${stamp}-jcases"
+    mkdir_args: Array(String) = []
+    mkdir_args.push("-p")
+    mkdir_args.push(jdir)
+    dummy_mkdir = process_run("/bin/mkdir", mkdir_args)
+    jcase = "${jdir}/test_ok.av"
+    jbody = "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"ok\")\n  t.finish\n}\n"
+    jw = file_write(jcase, jbody)
+    c.eq_int(jw, 0, "write junit mini case")
+    junit = "/tmp/avant-coverage-s10-${stamp}-junit.xml"
+    jlog = "/tmp/avant-coverage-s10-${stamp}-junit.log"
+    env_args: Array(String) = []
+    env_args.push("AVANT_ROOT=${avant_test_root()}")
+    env_args.push("AVANT_COVERAGE_LCOV=0")
+    env_args.push("AVANT_COVERAGE_REPORT=0")
+    if myc = env_get("AVANT_MYC_LLVM") {
+      env_args.push("AVANT_MYC_LLVM=${myc}")
+    }
+    env_args.push(compiler)
+    env_args.push("test")
+    env_args.push("--junit")
+    env_args.push(junit)
+    env_args.push(jdir)
+    jcode = process_run_out("/usr/bin/env", env_args, jlog)
+    c.eq_int(jcode, 0, "mini suite for junit")
+    if jout = file_read(jlog) {
+      c.expect(str_has(jout, "PASS ok"), "mini suite prints PASS")
+      c.expect(str_has(jout, "ok ${jcase}"), "runner names the file")
+    } else {
+      c.expect(false, "mini suite log")
+    }
+    if xml = file_read(junit) {
+      c.expect(str_has(xml, "<testsuites"), "junit has testsuites")
+      c.expect(str_has(xml, "<testcase"), "junit has testcase")
+      c.expect(str_has(xml, "name=\"${jcase}\""), "junit names the file")
+      c.expect(str_has(xml, "classname=\"${jcase}\""), "junit classname is the file")
+    } else {
+      c.expect(false, "junit.xml")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_coverage(c)
+  c.finish
+}

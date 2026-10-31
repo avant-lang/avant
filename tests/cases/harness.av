@@ -1,0 +1,436 @@
+pub fn str_eq(a: String, b: String): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i] != b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+pub fn str_has(hay: String, needle: String): Bool {
+  if needle.size > hay.size {
+    return false
+  }
+  if needle.size == 0 {
+    return true
+  }
+  i = 0
+  while i + needle.size <= hay.size {
+    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn fmt_counts(bad: Int, ok: Int): String {
+  total = bad + ok
+  if bad == 0 {
+    return "${ok} passed, ${total} total"
+  }
+  if ok == 0 {
+    return "${bad} failed, ${total} total"
+  }
+  "${bad} failed, ${ok} passed, ${total} total"
+}
+
+pub fn nth_line(s: String, n: Int): String {
+  start = 0
+  i = 0
+  line = 0
+  while i < s.size {
+    if s[i] == 10 {
+      if line == n {
+        return str_slice(s, start, i)
+      }
+      line = line + 1
+      start = i + 1
+    }
+    i = i + 1
+  }
+  if line == n {
+    return str_slice(s, start, s.size)
+  }
+  ""
+}
+
+pub fn count_lines(s: String): Int {
+  n = 0
+  i = 0
+  while i < s.size {
+    if s[i] == 10 {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  n
+}
+
+pub fn avant_test_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  "."
+}
+
+pub class Checks {
+  passed: Int = 0
+  failed: Int = 0
+  suites_ok: Int = 0
+  suites_bad: Int = 0
+  suite_name: String = ""
+  suite_failed_at: Int = 0
+  started: Int = 0
+  case_at: Int = 0
+  lines: Array(String)
+
+  fn initialize {
+    ls: Array(String) = []
+    self.lines = ls
+  }
+
+  fn flush_suite {
+    if self.suite_name.size == 0 {
+      return
+    }
+    nfail = self.failed - self.suite_failed_at
+    if nfail == 0 {
+      puts(" PASS  ${self.suite_name}")
+      self.suites_ok = self.suites_ok + 1
+    } else {
+      puts(" FAIL  ${self.suite_name}")
+      self.suites_bad = self.suites_bad + 1
+    }
+    i = 0
+    while i < self.lines.size {
+      puts(self.lines[i])
+      i = i + 1
+    }
+    empty: Array(String) = []
+    self.lines = empty
+    self.suite_name = ""
+  }
+
+  pub fn suite(name: String) {
+    self.flush_suite()
+    self.suite_name = name
+    self.suite_failed_at = self.failed
+    self.case_at = now_ms()
+  }
+
+  pub fn expect(cond: Bool, msg: String) {
+    if cond {
+      self.passed = self.passed + 1
+      self.lines.push("    ✓ ${msg}")
+    } else {
+      self.failed = self.failed + 1
+      self.lines.push("    ✕ ${msg}")
+      self.lines.push("")
+      self.lines.push("  ● ${self.suite_name} › ${msg}")
+      self.lines.push("")
+    }
+  }
+
+  pub fn eq_int(got: Int, want: Int, msg: String) {
+    if got == want {
+      self.passed = self.passed + 1
+      self.lines.push("    ✓ ${msg}")
+    } else {
+      self.failed = self.failed + 1
+      self.lines.push("    ✕ ${msg}")
+      self.lines.push("")
+      self.lines.push("  ● ${self.suite_name} › ${msg}")
+      self.lines.push("")
+      self.lines.push("    got ${got}, want ${want}")
+      self.lines.push("")
+    }
+  }
+
+  pub fn eq_str(got: String, want: String, msg: String) {
+    if str_eq(got, want) {
+      self.passed = self.passed + 1
+      self.lines.push("    ✓ ${msg}")
+    } else {
+      self.failed = self.failed + 1
+      self.lines.push("    ✕ ${msg}")
+      self.lines.push("")
+      self.lines.push("  ● ${self.suite_name} › ${msg}")
+      self.lines.push("")
+      self.lines.push("    got ${got}, want ${want}")
+      self.lines.push("")
+    }
+  }
+
+  pub fn finish: Int {
+    self.flush_suite()
+    ms = now_ms() - self.started
+    puts("")
+    puts("Test Suites: ${fmt_counts(self.suites_bad, self.suites_ok)}")
+    puts("Tests:       ${fmt_counts(self.failed, self.passed)}")
+    puts("Time:        ${ms} ms")
+    puts("Ran all test suites.")
+    if self.failed != 0 {
+      return 1
+    }
+    if self.suites_bad != 0 {
+      return 1
+    }
+    0
+  }
+}
+
+pub fn empty_strs: Array(String) {
+  a: Array(String) = []
+  a
+}
+
+pub fn chmod_x(path: String) {
+  args: Array(String) = []
+  args.push("+x")
+  args.push(path)
+  dummy = process_run("/bin/chmod", args)
+}
+
+pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push(src)
+  args.push(bin)
+  // Test programs are compiled fast, as before Wave I made bare
+  // compile select myc default. toolchain.av covers the verb default.
+  args.push("--debug")
+  process_run_out(compiler, args, log)
+}
+
+pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String, extra: Array(String)): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push(src)
+  args.push(bin)
+  has_codegen = false
+  i = 0
+  while i < extra.size {
+    if str_eq(extra[i], "--debug") {
+      has_codegen = true
+    }
+    if str_eq(extra[i], "--release") {
+      has_codegen = true
+    }
+    if str_eq(extra[i], "--final") {
+      has_codegen = true
+    }
+    args.push(extra[i])
+    i = i + 1
+  }
+  if has_codegen {
+  } else {
+    args.push("--debug")
+  }
+  process_run_out(compiler, args, log)
+}
+
+pub fn dump_av(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("dump")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+pub fn dump_lex(dumper: String, flag: String, src: String, log: String): Int {
+  args: Array(String) = []
+  if flag.size > 0 {
+    args.push(flag)
+  }
+  args.push(src)
+  process_run_out(dumper, args, log)
+}
+
+pub fn compiler_abs(tag: String, path: String): String {
+  if path.size > 0 && path[0] == 47 {
+    return path
+  }
+  log = "/tmp/avant-${tag}-compiler-abs-${now_us()}.txt"
+  args: Array(String) = []
+  args.push("-c")
+  args.push("pwd -P")
+  dummy = process_run_out("/bin/sh", args, log)
+  if text = file_read(log) {
+    cwd = text.strip()
+    if cwd.size > 0 {
+      return "${cwd}/${path}"
+    }
+  }
+  path
+}
+
+pub fn run_av_bin(bin: String, log: String): Int {
+  process_run_out(bin, empty_strs(), log)
+}
+
+pub fn run_av_cmd(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("run")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array(String)): Int {
+  args: Array(String) = []
+  args.push("run")
+  args.push(src)
+  i = 0
+  while i < extra.size {
+    args.push(extra[i])
+    i = i + 1
+  }
+  process_run_out(compiler, args, log)
+}
+
+pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push("--coverage")
+  args.push(src)
+  args.push(bin)
+  process_run_out(compiler, args, log)
+}
+
+pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
+  args: Array(String) = []
+  args.push("dump")
+  args.push("--coverage")
+  args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
+  path = "/tmp/avant-${stem}-${stamp}-${name}"
+  dummy = file_write(path, body)
+  path
+}
+
+pub class S35Box {
+  n: Int
+
+  pub fn initialize(n: Int) {
+    self.n = n
+  }
+}
+
+pub struct S35Cell {
+  n: Int
+}
+
+pub fn s12_mkdir(path: String) {
+  args: Array(String) = []
+  args.push("-p")
+  args.push(path)
+  dummy = process_run("/bin/mkdir", args)
+}
+
+pub fn s12_write(dir: String, name: String, body: String) {
+  dummy = file_write("${dir}/${name}.av", body)
+}
+
+pub class Channel(T) {
+  slots: Array(T)
+  cap: Int
+  count: Int
+  head: Int
+  closed: Int
+  has: Int
+  gate: UInt64
+  cell: T
+
+  fn initialize(n: Int = 0) {
+    self.cap = n
+    self.count = 0
+    self.head = 0
+    self.closed = 0
+    self.has = 0
+    self.gate = avant_gate_new()
+    self.slots = Array(T).new(n)
+  }
+
+  pub fn send(value: T) {
+    avant_gate_lock(gate)
+    if cap == 0 {
+      while has == 1 {
+        avant_gate_wait(gate)
+      }
+      self.cell = value
+      self.has = 1
+      avant_gate_broadcast(gate)
+      while has == 1 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+    } else {
+      while count == cap {
+        avant_gate_wait(gate)
+      }
+      slots[(head + count) % cap] = value
+      self.count = count + 1
+      avant_gate_broadcast(gate)
+    }
+    avant_gate_unlock(gate)
+  }
+
+  pub fn recv: T? {
+    avant_gate_lock(gate)
+    got: T? = nil
+    if cap == 0 {
+      while has == 0 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+      if has == 1 {
+        got = cell
+        self.has = 0
+        avant_gate_broadcast(gate)
+      }
+    } else {
+      while count == 0 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+      if count > 0 {
+        got = slots[head]
+        self.head = (head + 1) % cap
+        self.count = count - 1
+        avant_gate_broadcast(gate)
+      }
+    }
+    avant_gate_unlock(gate)
+    got
+  }
+
+  pub fn close {
+    avant_gate_lock(gate)
+    self.closed = 1
+    avant_gate_broadcast(gate)
+    avant_gate_unlock(gate)
+  }
+}
+
+pub class Mutex(T) {
+  cell: T
+  gate: UInt64
+
+  fn initialize(value: T) {
+    self.cell = value
+    self.gate = avant_gate_new()
+  }
+}

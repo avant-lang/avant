@@ -1,0 +1,225 @@
+import harness
+
+fn pkg_mkdir(path: String) {
+  args: Array(String) = []
+  args.push("-p")
+  args.push(path)
+  dummy = process_run("/bin/mkdir", args)
+}
+
+fn pkg_git(dir: String, a1: String, a2: String, log: String): Int {
+  args: Array(String) = []
+  args.push("-C")
+  args.push(dir)
+  args.push(a1)
+  if a2.size > 0 {
+    args.push(a2)
+  }
+  process_run_out("/usr/bin/git", args, log)
+}
+
+fn pkg_git_commit(dir: String, msg: String, log: String): Int {
+  args: Array(String) = []
+  args.push("-C")
+  args.push(dir)
+  args.push("-c")
+  args.push("user.email=avant-tests@example.invalid")
+  args.push("-c")
+  args.push("user.name=avant-tests")
+  args.push("commit")
+  args.push("-qm")
+  args.push(msg)
+  process_run_out("/usr/bin/git", args, log)
+}
+
+fn pkg_fetch(compiler: String, dir: String, update: Bool, log: String): Int {
+  args: Array(String) = []
+  args.push("fetch")
+  args.push(dir)
+  if update {
+    args.push("--update")
+  }
+  process_run_out(compiler, args, log)
+}
+
+fn test_packages(c: Checks) {
+  c.suite("tests/cases/test_packages.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    c.expect(file_exists("/usr/bin/git"), "git is available for package tests")
+    stamp = now_ms()
+    base = "/tmp/avant-packages-waveh-${stamp}"
+    dep = "${base}/dep"
+    app = "${base}/app"
+    dep_a = "${base}/depA"
+    dep_b = "${base}/depB"
+    app2 = "${base}/app2"
+    inner = "${base}/inner"
+    outer = "${base}/outer"
+    app3 = "${base}/app3"
+    bad = "${base}/bad"
+    malformed = "${base}/malformed"
+    pkg_mkdir(dep)
+    pkg_mkdir(app)
+    pkg_mkdir(dep_a)
+    pkg_mkdir(dep_b)
+    pkg_mkdir(app2)
+    pkg_mkdir(inner)
+    pkg_mkdir(outer)
+    pkg_mkdir(app3)
+    pkg_mkdir(bad)
+    pkg_mkdir(malformed)
+    glog = "${base}/git.log"
+
+    dummy_dep_src = file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello from greeter\"\n}\n")
+    dummy_dep_toml = file_write("${dep}/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
+    c.eq_int(pkg_git(dep, "init", "-q", glog), 0, "git init dep")
+    c.eq_int(pkg_git(dep, "add", "-A", glog), 0, "git add dep")
+    c.eq_int(pkg_git_commit(dep, "v1", glog), 0, "git commit dep v1")
+
+    dummy_app_src = file_write("${app}/main.av", "import greeter\nfn main {\n  puts(greeting())\n}\n")
+    dummy_app_toml = file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${dep}\", rev = \"HEAD\" }\n")
+
+    pre_bin = "${base}/pre-bin"
+    pre_log = "${base}/pre.log"
+    pre_code = compile_av(compiler, "${app}/main.av", pre_bin, pre_log)
+    c.expect(pre_code != 0, "compile before fetch fails")
+    if pre_txt = file_read(pre_log) {
+      c.expect(str_has(pre_txt, "run: avant fetch"), "missing dep diagnostic points at avant fetch")
+    } else {
+      c.expect(false, "read pre-fetch log")
+    }
+
+    fetch_log = "${base}/fetch.log"
+    c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "avant fetch succeeds")
+    c.expect(file_exists("${app}/avant.lock"), "fetch writes avant.lock")
+    c.expect(file_exists("${app}/deps/greeter/greeter.av"), "fetch clones the dep under deps/")
+    if lock_txt = file_read("${app}/avant.lock") {
+      c.expect(str_has(lock_txt, "name = \"greeter\""), "lockfile names the dep")
+      c.expect(str_has(lock_txt, "source = \"git+${dep}#"), "lockfile pins the dep source")
+    } else {
+      c.expect(false, "read lockfile")
+    }
+
+    app_bin = "${base}/app-bin"
+    app_clog = "${base}/app-compile.log"
+    app_rlog = "${base}/app-run.log"
+    c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile with fetched dep")
+    if file_exists(app_bin) {
+      chmod_x(app_bin)
+      c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run app with fetched dep")
+      if out = file_read(app_rlog) {
+        c.eq_str(out, "hello from greeter\n", "app uses the git dependency")
+      } else {
+        c.expect(false, "read app output")
+      }
+    } else {
+      c.expect(false, "app binary exists")
+    }
+
+    dummy_v2 = file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello v2\"\n}\n")
+    c.eq_int(pkg_git(dep, "add", "-A", glog), 0, "git add dep v2")
+    c.eq_int(pkg_git_commit(dep, "v2", glog), 0, "git commit dep v2")
+    c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "second fetch succeeds")
+    c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile after second fetch")
+    chmod_x(app_bin)
+    c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run after second fetch")
+    if out2 = file_read(app_rlog) {
+      c.eq_str(out2, "hello from greeter\n", "locked fetch keeps the pinned commit")
+    } else {
+      c.expect(false, "read locked output")
+    }
+    c.eq_int(pkg_fetch(compiler, app, true, fetch_log), 0, "fetch --update succeeds")
+    c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile after update")
+    chmod_x(app_bin)
+    c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run after update")
+    if out3 = file_read(app_rlog) {
+      c.eq_str(out3, "hello v2\n", "fetch --update advances to the new commit")
+    } else {
+      c.expect(false, "read updated output")
+    }
+
+    dummy_a = file_write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
+    dummy_b = file_write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
+    c.eq_int(pkg_git(dep_a, "init", "-q", glog), 0, "git init depA")
+    c.eq_int(pkg_git(dep_a, "add", "-A", glog), 0, "git add depA")
+    c.eq_int(pkg_git_commit(dep_a, "a1", glog), 0, "git commit depA")
+    c.eq_int(pkg_git(dep_b, "init", "-q", glog), 0, "git init depB")
+    c.eq_int(pkg_git(dep_b, "add", "-A", glog), 0, "git add depB")
+    c.eq_int(pkg_git_commit(dep_b, "b1", glog), 0, "git commit depB")
+    dummy_app2_src = file_write("${app2}/main.av", "import shared\nfn main {\n  puts(who())\n}\n")
+    dummy_app2_toml = file_write("${app2}/avant.toml", "[package]\nname = \"app2\"\nversion = \"0.1.0\"\n\n[dependencies]\ndepa = { git = \"${dep_a}\", rev = \"HEAD\" }\ndepb = { git = \"${dep_b}\", rev = \"HEAD\" }\n")
+    c.eq_int(pkg_fetch(compiler, app2, false, fetch_log), 0, "fetch for ambiguity case")
+    amb_bin = "${base}/amb-bin"
+    amb_log = "${base}/amb.log"
+    amb_code = compile_av(compiler, "${app2}/main.av", amb_bin, amb_log)
+    c.expect(amb_code != 0, "ambiguous import does not compile")
+    if amb_txt = file_read(amb_log) {
+      c.expect(str_has(amb_txt, "import shared is ambiguous"), "ambiguous import diagnostic")
+    } else {
+      c.expect(false, "read ambiguity log")
+    }
+
+    dummy_inner = file_write("${inner}/deep.av", "pub fn deep: String {\n  \"deep\"\n}\n")
+    c.eq_int(pkg_git(inner, "init", "-q", glog), 0, "git init inner")
+    c.eq_int(pkg_git(inner, "add", "-A", glog), 0, "git add inner")
+    c.eq_int(pkg_git_commit(inner, "i1", glog), 0, "git commit inner")
+    dummy_outer = file_write("${outer}/outer.av", "import deep\npub fn outer_msg: String {\n  \"outer+\" + deep()\n}\n")
+    dummy_outer_toml = file_write("${outer}/avant.toml", "[package]\nname = \"outer\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"HEAD\" }\n")
+    c.eq_int(pkg_git(outer, "init", "-q", glog), 0, "git init outer")
+    c.eq_int(pkg_git(outer, "add", "-A", glog), 0, "git add outer")
+    c.eq_int(pkg_git_commit(outer, "o1", glog), 0, "git commit outer")
+    dummy_app3_src = file_write("${app3}/main.av", "import outer\nfn main {\n  puts(outer_msg())\n}\n")
+    dummy_app3_toml = file_write("${app3}/avant.toml", "[package]\nname = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nouter = { git = \"${outer}\", rev = \"HEAD\" }\n")
+    c.eq_int(pkg_fetch(compiler, app3, false, fetch_log), 0, "fetch transitive deps")
+    if lock3 = file_read("${app3}/avant.lock") {
+      c.expect(str_has(lock3, "name = \"inner\""), "lockfile records the transitive dep")
+    } else {
+      c.expect(false, "read transitive lockfile")
+    }
+    app3_bin = "${base}/app3-bin"
+    app3_clog = "${base}/app3-compile.log"
+    app3_rlog = "${base}/app3-run.log"
+    c.eq_int(compile_av(compiler, "${app3}/main.av", app3_bin, app3_clog), 0, "compile transitive app")
+    if file_exists(app3_bin) {
+      chmod_x(app3_bin)
+      c.eq_int(run_av_bin(app3_bin, app3_rlog), 0, "run transitive app")
+      if out4 = file_read(app3_rlog) {
+        c.eq_str(out4, "outer+deep\n", "transitive dep resolves through the fallback")
+      } else {
+        c.expect(false, "read transitive output")
+      }
+    } else {
+      c.expect(false, "transitive binary exists")
+    }
+
+    dummy_bad = file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
+    bad_log = "${base}/bad.log"
+    bad_code = pkg_fetch(compiler, bad, false, bad_log)
+    c.expect(bad_code != 0, "fetch of a missing repo fails")
+    c.expect(!file_exists("${bad}/avant.lock"), "failed fetch writes no lockfile")
+    if bad_txt = file_read(bad_log) {
+      c.expect(str_has(bad_txt, "avant fetch:"), "failed fetch diagnostic")
+    } else {
+      c.expect(false, "read bad fetch log")
+    }
+
+    dummy_mal = file_write("${malformed}/avant.toml", "[package]\nname = \"oops\n")
+    mal_log = "${base}/malformed.log"
+    mal_code = pkg_fetch(compiler, malformed, false, mal_log)
+    c.expect(mal_code != 0, "malformed manifest fails")
+    if mal_txt = file_read(mal_log) {
+      c.expect(str_has(mal_txt, "unterminated string"), "malformed manifest diagnostic")
+    } else {
+      c.expect(false, "read malformed log")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_packages(c)
+  c.finish
+}

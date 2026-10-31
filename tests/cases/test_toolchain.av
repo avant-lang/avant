@@ -1,0 +1,129 @@
+import harness
+
+fn tc_fake_dir(stamp: Int, tag: String): String {
+  dir = "/tmp/avant-toolchain-wavei-${stamp}-${tag}"
+  mkdir_args: Array(String) = []
+  mkdir_args.push("-p")
+  mkdir_args.push(dir)
+  dummy_mk = process_run("/bin/mkdir", mkdir_args)
+  args_log = "${dir}/args.log"
+  script = "#!/bin/sh\necho \"$@\" >> ${args_log}\nif [ \"$1\" = \"dump\" ]; then\n  echo gc.statepoint\nfi\nexit 0\n"
+  dummy_sh = file_write("${dir}/myc-llvm", script)
+  chmod_x("${dir}/myc-llvm")
+  dir
+}
+
+fn tc_invoke(compiler: String, dir: String, args: Array(String), extra_env: String, log: String): Int {
+  env_args: Array(String) = []
+  env_args.push("PATH=${dir}:/usr/bin:/bin")
+  if extra_env.size > 0 {
+    env_args.push(extra_env)
+  }
+  env_args.push(compiler)
+  i = 0
+  while i < args.size {
+    env_args.push(args[i])
+    i = i + 1
+  }
+  process_run_out("/usr/bin/env", env_args, log)
+}
+
+fn tc_args(c: Checks, dir: String, label: String): String {
+  if text = file_read("${dir}/args.log") {
+    return text
+  }
+  c.expect(false, label)
+  ""
+}
+
+fn test_toolchain(c: Checks) {
+  c.suite("tests/cases/test_toolchain.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-toolchain-wavei-${stamp}-hello.av"
+    dummy_src = file_write(src, "fn main {\n  puts(\"hi\")\n}\n")
+
+    run_dir = tc_fake_dir(stamp, "run")
+    run_args: Array(String) = []
+    run_args.push("run")
+    run_args.push(src)
+    code = tc_invoke(compiler, run_dir, run_args, "", "/tmp/avant-toolchain-wavei-${stamp}-run.log")
+    c.expect(code == 0, "bare run with fake backend exits zero")
+    got = tc_args(c, run_dir, "bare run records backend args")
+    c.expect(str_has(got, "--debug"), "bare run uses --debug codegen")
+    c.expect(!str_has(got, "--final"), "bare run does not use --final codegen")
+
+    cmp_dir = tc_fake_dir(stamp, "compile")
+    cmp_args: Array(String) = []
+    cmp_args.push("compile")
+    cmp_args.push(src)
+    cmp_args.push("/tmp/avant-toolchain-wavei-${stamp}-hi.bin")
+    code2 = tc_invoke(compiler, cmp_dir, cmp_args, "", "/tmp/avant-toolchain-wavei-${stamp}-compile.log")
+    c.expect(code2 == 0, "bare compile with fake backend exits zero")
+    got2 = tc_args(c, cmp_dir, "bare compile records backend args")
+    c.expect(!str_has(got2, "--debug"), "bare compile does not use --debug codegen")
+    c.expect(!str_has(got2, "--final"), "bare compile does not use --final codegen")
+
+    rel_dir = tc_fake_dir(stamp, "release")
+    rel_args: Array(String) = []
+    rel_args.push("compile")
+    rel_args.push(src)
+    rel_args.push("/tmp/avant-toolchain-wavei-${stamp}-hi-rel.bin")
+    rel_args.push("--release")
+    code3 = tc_invoke(compiler, rel_dir, rel_args, "", "/tmp/avant-toolchain-wavei-${stamp}-release.log")
+    c.expect(code3 == 0, "compile --release with fake backend exits zero")
+    got3 = tc_args(c, rel_dir, "compile --release records backend args")
+    c.expect(str_has(got3, "--final"), "compile --release uses --final codegen")
+
+    fin_dir = tc_fake_dir(stamp, "final")
+    fin_args: Array(String) = []
+    fin_args.push("compile")
+    fin_args.push(src)
+    fin_args.push("/tmp/avant-toolchain-wavei-${stamp}-hi-fin.bin")
+    fin_args.push("--final")
+    code4 = tc_invoke(compiler, fin_dir, fin_args, "", "/tmp/avant-toolchain-wavei-${stamp}-final.log")
+    c.expect(code4 == 0, "compile --final with fake backend exits zero")
+    got4 = tc_args(c, fin_dir, "compile --final records backend args")
+    c.expect(str_has(got4, "--final"), "compile --final alias uses --final codegen")
+
+    dbg_dir = tc_fake_dir(stamp, "debug")
+    dbg_args: Array(String) = []
+    dbg_args.push("compile")
+    dbg_args.push(src)
+    dbg_args.push("/tmp/avant-toolchain-wavei-${stamp}-hi-dbg.bin")
+    dbg_args.push("--debug")
+    code5 = tc_invoke(compiler, dbg_dir, dbg_args, "", "/tmp/avant-toolchain-wavei-${stamp}-debug.log")
+    c.expect(code5 == 0, "compile --debug with fake backend exits zero")
+    got5 = tc_args(c, dbg_dir, "compile --debug records backend args")
+    c.expect(str_has(got5, "--debug"), "compile --debug uses --debug codegen")
+
+    env_dir = tc_fake_dir(stamp, "envfinal")
+    env_args2: Array(String) = []
+    env_args2.push("compile")
+    env_args2.push(src)
+    env_args2.push("/tmp/avant-toolchain-wavei-${stamp}-hi-env.bin")
+    code6 = tc_invoke(compiler, env_dir, env_args2, "AVANT_MYC_FINAL=1", "/tmp/avant-toolchain-wavei-${stamp}-env.log")
+    c.expect(code6 == 0, "bare compile with legacy env exits zero")
+    got6 = tc_args(c, env_dir, "bare compile with legacy env records backend args")
+    c.expect(!str_has(got6, "--final"), "AVANT_MYC_FINAL no longer selects codegen")
+    c.expect(!str_has(got6, "--debug"), "bare compile keeps default codegen under legacy env")
+
+    env2_dir = tc_fake_dir(stamp, "envdebug")
+    env2_args: Array(String) = []
+    env2_args.push("run")
+    env2_args.push(src)
+    code7 = tc_invoke(compiler, env2_dir, env2_args, "AVANT_MYC_DEBUG=0", "/tmp/avant-toolchain-wavei-${stamp}-env2.log")
+    c.expect(code7 == 0, "bare run with legacy env exits zero")
+    got7 = tc_args(c, env2_dir, "bare run with legacy env records backend args")
+    c.expect(str_has(got7, "--debug"), "AVANT_MYC_DEBUG no longer selects codegen")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_toolchain(c)
+  c.finish
+}

@@ -1,0 +1,186 @@
+import harness
+
+fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
+  src = "/tmp/avant-safety-waveb-${stamp}-${tag}.av"
+  bin = "/tmp/avant-safety-waveb-${stamp}-${tag}.bin"
+  clog = "/tmp/avant-safety-waveb-${stamp}-${tag}.clog"
+  rlog = "/tmp/avant-safety-waveb-${stamp}-${tag}.rlog"
+  dummy = file_write(src, body)
+  code = compile_av(compiler, src, bin, clog)
+  c.expect(code == 0, "${tag} compiles")
+  c.expect(file_exists(bin), "${tag} bin exists")
+  rcode = run_av_bin(bin, rlog)
+  c.expect(rcode != 0, "${tag} exits non-zero")
+  if err = file_read(rlog) {
+    c.expect(str_has(err, needle), tag)
+  } else {
+    c.expect(false, tag)
+  }
+}
+
+fn test_safety(c: Checks) {
+  c.suite("tests/cases/test_safety.av")
+
+  xs = [10, 20, 30]
+  if v = xs.get(1) {
+    c.eq_int(v, 20, "array get hit")
+  } else {
+    c.expect(false, "array get hit")
+  }
+  if v = xs.get(0) {
+    c.eq_int(v, 10, "array get first")
+  } else {
+    c.expect(false, "array get first")
+  }
+  if v = xs.get(3) {
+    c.expect(false, "array get oob is nil")
+  } else {
+    c.expect(true, "array get oob is nil")
+  }
+  if v = xs.get(0 - 1) {
+    c.expect(false, "array get neg is nil")
+  } else {
+    c.expect(true, "array get neg is nil")
+  }
+
+  s = "hi"
+  if v = s.get(1) {
+    c.eq_int(v, 105, "string get hit")
+  } else {
+    c.expect(false, "string get hit")
+  }
+  if v = s.get(2) {
+    c.expect(false, "string get oob is nil")
+  } else {
+    c.expect(true, "string get oob is nil")
+  }
+
+  b = buf_new()
+  b.push_byte(65)
+  b.push_byte(66)
+  if v = b.get(0) {
+    c.eq_int(v, 65, "buf get hit")
+  } else {
+    c.expect(false, "buf get hit")
+  }
+  if v = b.get(2) {
+    c.expect(false, "buf get oob is nil")
+  } else {
+    c.expect(true, "buf get oob is nil")
+  }
+
+  c.eq_int(40 + 2, 42, "checked add")
+  c.eq_int(40 - 2, 38, "checked sub")
+  c.eq_int(6 * 7, 42, "checked mul")
+  c.eq_int(7 / 2, 3, "checked div")
+  c.eq_int(7 % 2, 1, "checked rem")
+  big = 2147483647
+  c.eq_int(big &+ 1, 0 - 2147483647 - 1, "wrap add")
+  low = 0 - 2147483647 - 1
+  c.eq_int(low &- 1, 2147483647, "wrap sub")
+  c.eq_int(65536 &* 65536, 0, "wrap mul")
+
+  shared = [1, 2, 3]
+  h = spawn {
+    shared[0] + shared[1] + shared[2]
+  }
+  c.eq_int(h.join, 6, "spawn reads shared array")
+  shared.push(4)
+  c.eq_int(shared.size, 4, "sender mutates after join")
+  shared[0] = 99
+  c.eq_int(shared[0], 99, "sender stores after join")
+
+  seed_arr: Array(Int) = [1, 2]
+  mu = Mutex.new(seed_arr)
+  n = mu.with { |x|
+    x.push(3)
+    x.size
+  }
+  c.eq_int(n, 3, "mutex array push")
+  m = mu.with { |x| x[2] }
+  c.eq_int(m, 3, "mutex array read")
+
+  ch: Channel(Array(Int)) = Channel.new(1)
+  ch.send([9, 8])
+  if got = ch.recv {
+    c.eq_int(got[1], 8, "channel array")
+  } else {
+    c.expect(false, "channel array")
+  }
+
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+
+    expect_trap_waveb(c, compiler, stamp, "oob-read", "fn main {\n  xs = [1, 2, 3]\n  puts(xs[10])\n}\n", "out of bounds")
+    expect_trap_waveb(c, compiler, stamp, "oob-neg", "fn main {\n  xs = [1, 2, 3]\n  i = 0 - 1\n  puts(xs[i])\n}\n", "out of bounds")
+    expect_trap_waveb(c, compiler, stamp, "oob-store", "fn main {\n  xs = [1, 2, 3]\n  xs[5] = 9\n  puts(xs[0])\n}\n", "out of bounds")
+    expect_trap_waveb(c, compiler, stamp, "str-oob", "fn main {\n  s = \"hi\"\n  puts(s[10])\n}\n", "out of bounds")
+    expect_trap_waveb(c, compiler, stamp, "buf-oob", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  puts(b[5])\n}\n", "out of bounds")
+    expect_trap_waveb(c, compiler, stamp, "div-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x / y)\n}\n", "division by zero")
+    expect_trap_waveb(c, compiler, stamp, "rem-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x % y)\n}\n", "division by zero")
+    expect_trap_waveb(c, compiler, stamp, "overflow-add", "fn main {\n  x = 2147483647\n  y = 1\n  puts(x + y)\n}\n", "integer overflow")
+    expect_trap_waveb(c, compiler, stamp, "overflow-mul", "fn main {\n  x = 100000\n  y = 100000\n  puts(x * y)\n}\n", "integer overflow")
+    expect_trap_waveb(c, compiler, stamp, "overflow-compound", "fn main {\n  x = 2147483647\n  x += 1\n  puts(x)\n}\n", "integer overflow")
+    expect_trap_waveb(c, compiler, stamp, "overflow-i64", "fn main {\n  x = 9223372036854775807i64\n  y = 1i64\n  puts(x + y)\n}\n", "integer overflow")
+    expect_trap_waveb(c, compiler, stamp, "overflow-u64", "fn main {\n  x = 18446744073709551615u64\n  y = 1u64\n  puts(x + y)\n}\n", "integer overflow")
+    expect_trap_waveb(c, compiler, stamp, "div-overflow", "fn main {\n  x = 0 - 2147483647 - 1\n  y = 0 - 1\n  puts(x / y)\n}\n", "integer overflow")
+
+    bad_src = "/tmp/avant-safety-waveb-${stamp}-unknown.av"
+    bad_bin = "/tmp/avant-safety-waveb-${stamp}-unknown.bin"
+    bad_log = "/tmp/avant-safety-waveb-${stamp}-unknown.log"
+    dummy_b = file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
+    code_b = compile_av(compiler, bad_src, bad_bin, bad_log)
+    c.expect(code_b != 0, "unknown-fn compile exits non-zero")
+    c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
+    if err = file_read(bad_log) {
+      c.expect(str_has(err, "unknown function"), "unknown-fn diagnostic")
+    } else {
+      c.expect(false, "unknown-fn diagnostic")
+    }
+    run_log = "/tmp/avant-safety-waveb-${stamp}-unknown-run.log"
+    code_r = run_av_cmd(compiler, bad_src, run_log)
+    c.expect(code_r != 0, "unknown-fn run exits non-zero")
+
+    hi_src = "/tmp/avant-safety-waveb-${stamp}-hi.av"
+    dummy_h = file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
+    dbg_bin = "/tmp/avant-safety-waveb-${stamp}-hi-dbg.bin"
+    dbg_log = "/tmp/avant-safety-waveb-${stamp}-hi-dbg.log"
+    dbg_flags: Array(String) = []
+    dbg_flags.push("--debug")
+    code_d = compile_av_flags(compiler, hi_src, dbg_bin, dbg_log, dbg_flags)
+    c.expect(code_d == 0, "--debug compile exits zero")
+    out_d = "/tmp/avant-safety-waveb-${stamp}-hi-dbg.out"
+    code_dr = run_av_bin(dbg_bin, out_d)
+    c.expect(code_dr == 0, "--debug binary runs")
+    if text = file_read(out_d) {
+      c.expect(str_has(text, "hi"), "--debug binary output")
+    } else {
+      c.expect(false, "--debug binary output")
+    }
+    rel_bin = "/tmp/avant-safety-waveb-${stamp}-hi-rel.bin"
+    rel_log = "/tmp/avant-safety-waveb-${stamp}-hi-rel.log"
+    rel_flags: Array(String) = []
+    rel_flags.push("--release")
+    code_e = compile_av_flags(compiler, hi_src, rel_bin, rel_log, rel_flags)
+    c.expect(code_e == 0, "--release compile exits zero")
+    out_e = "/tmp/avant-safety-waveb-${stamp}-hi-rel.out"
+    code_er = run_av_bin(rel_bin, out_e)
+    c.expect(code_er == 0, "--release binary runs")
+    both_bin = "/tmp/avant-safety-waveb-${stamp}-hi-both.bin"
+    both_log = "/tmp/avant-safety-waveb-${stamp}-hi-both.log"
+    both_flags: Array(String) = []
+    both_flags.push("--debug")
+    both_flags.push("--release")
+    code_f = compile_av_flags(compiler, hi_src, both_bin, both_log, both_flags)
+    c.expect(code_f != 0, "--debug with --release exits non-zero")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_safety(c)
+  c.finish
+}

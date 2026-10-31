@@ -1,0 +1,85 @@
+import harness
+
+fn re_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
+  src = "/tmp/avant-re-s10-${stamp}-${tag}.av"
+  bin = "/tmp/avant-re-s10-${stamp}-${tag}.bin"
+  clog = "/tmp/avant-re-s10-${stamp}-${tag}.log"
+  rlog = "/tmp/avant-re-s10-${stamp}-${tag}.out"
+  dummy = file_write(src, body)
+  code = compile_av(compiler, src, bin, clog)
+  c.eq_int(code, 0, "compile ${tag}")
+  c.expect(file_exists(bin), "${tag} bin")
+  if err = file_read(clog) {
+    if compile_has.size > 0 {
+      c.expect(str_has(err, compile_has), "${tag} compile says ${compile_has}")
+    }
+    if compile_lacks.size > 0 {
+      c.expect(!str_has(err, compile_lacks), "${tag} compile lacks ${compile_lacks}")
+    }
+  } else {
+    if compile_has.size > 0 {
+      c.expect(false, "${tag} compile log")
+    }
+  }
+  chmod_x(bin)
+  run_code = run_av_bin(bin, rlog)
+  c.eq_int(run_code, 0, "run ${tag}")
+  if got = file_read(rlog) {
+    c.eq_str(got, out, "${tag} stdout")
+  } else {
+    c.expect(false, "${tag} stdout missing")
+  }
+}
+
+fn test_re(c: Checks) {
+  c.suite("tests/cases/test_re.av")
+  lit = re_compile("a+", 0)
+  c.eq_int(re_find(lit, "xxaa", 0), 1, "literal find")
+  c.eq_int(re_m0(), 2, "literal m0")
+  c.eq_int(re_m1(), 4, "literal m1")
+  cap = re_compile("x(y)", 0)
+  c.eq_int(re_find(cap, "xy", 0), 1, "literal capture")
+  c.eq_int(re_c0(), 1, "literal c0")
+  c.eq_int(re_c1(), 2, "literal c1")
+  word = re_compile("bot", 1)
+  c.eq_int(re_find(word, "GoogleBot", 0), 1, "literal caseless")
+  c.eq_int(re_m0(), 6, "literal caseless m0")
+  braces = re_compile("\\{\\{(.*?)\\}\\}", 0)
+  c.eq_int(re_find(braces, "{{TITLE}}{{a}b}}", 0), 1, "literal non-greedy")
+  c.eq_int(re_m0(), 0, "literal non-greedy m0")
+  c.eq_int(re_m1(), 9, "literal non-greedy m1")
+  c.eq_int(re_c0(), 2, "literal non-greedy c0")
+  c.eq_int(re_c1(), 7, "literal non-greedy c1")
+
+  built = "x"
+  built = built + "(y)"
+  dyn = re_compile(built, 0)
+  c.eq_int(re_find(dyn, "zxy", 0), 1, "computed find")
+  c.eq_int(re_m0(), 1, "computed m0")
+  c.eq_int(re_c0(), 2, "computed c0")
+  c.eq_int(re_c1(), 3, "computed c1")
+  counted = "a+"
+  c.eq_int(re_count(counted, "aa ba", 0), 2, "computed re_count")
+  back = "(a)\\1"
+  bref = re_compile(back, 0)
+  c.eq_int(re_find(bref, "baa", 0), 1, "computed backref")
+  c.eq_int(re_m0(), 1, "computed backref m0")
+  c.eq_int(re_m1(), 3, "computed backref m1")
+
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    literal = "fn main {\n  re = re_compile(\"a+\", 0)\n  puts(re_find(re, \"xxaa\", 0))\n  puts(re_m0())\n  puts(re_m1())\n  cap = re_compile(\"x(y)\", 0)\n  puts(re_find(cap, \"xy\", 0))\n  puts(re_c0())\n  puts(re_c1())\n}\n"
+    re_child(c, compiler, stamp, "re-literal", literal, "", "stays on PCRE2", "1\n2\n4\n1\n1\n2\n")
+    computed = "fn main {\n  p = \"a\"\n  p = p + \"+\"\n  re = re_compile(p, 0)\n  puts(re_find(re, \"xxaa\", 0))\n  puts(re_m0())\n  puts(re_m1())\n}\n"
+    re_child(c, compiler, stamp, "re-computed", computed, "", "stays on PCRE2", "1\n2\n4\n")
+    unsupported = "fn main {\n  re = re_compile(\"(a)\\\\1\", 0)\n  puts(re_find(re, \"baa\", 0))\n  puts(re_m0())\n  puts(re_m1())\n}\n"
+    re_child(c, compiler, stamp, "re-backref", unsupported, "stays on PCRE2", "", "1\n1\n3\n")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_re(c)
+  c.finish
+}

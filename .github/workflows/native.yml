@@ -1,5 +1,6 @@
-# Coverage suite. The seed workflow runs the same suite without coverage,
-# serially. Four jobs were measured slower on GitHub and stay commented out.
+# Coverage suite. The seed workflow runs the same suite without coverage.
+# Both use `avant test` and the default job count. The old four-job
+# measurement compiled the stitched suite four times.
 # This job runs the suite on an instrumented B, on
 # pull requests and on pushes to master: Codecov compares the pull
 # request report with the master report. An instrumented B makes every
@@ -24,17 +25,17 @@
 # `native` also writes junit.xml and lcov.info (soft Codecov; not the
 # merge gate). Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is
 # quiet anyway so `run FILE.av` stdout stays the program. A
-# `--coverage` fixture still prints. The suite runs sequentially
-# here (no AVANT_TEST_JOBS): parallel shard processes would run
-# several instrumented compilers against one shared coverage map.
+# `--coverage` fixture still prints. Hit counters are one shared map.
+# The suite sets AVANT_COVERAGE_LCOV=0. A later step writes lcov.info
+# once, after those processes have exited.
 # Push is `master` only so a same-repo PR is not a second identical run
 # (tags never hit this workflow).
 
 name: native
 
 env:
-  AVANT_SEED_VERSION: v0.22.0
-  AVANT_SEED_SHA256: 2e11a14185dece7881a014682ede6bea619d187b54b9d177c500351a3d30f2ae
+  AVANT_SEED_VERSION: v0.23.0
+  AVANT_SEED_SHA256: 5369f8a2283708acc90dc1296758284e8e2a1f7680029a6f967773a7add87a46
   SAFEPOINTS_VERSION: v0.4.0
   MYC_LLVM_SHA256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e
 
@@ -114,20 +115,23 @@ jobs:
       - name: Native suite on B
         env:
           AVANT_COMPILER: ./bin/avant-b
-          AVANT_JUNIT: junit.xml
-          AVANT_COVERAGE_LCOV: lcov.info
+          AVANT_COVERAGE_LCOV: "0"
           AVANT_COVERAGE_REPORT: "0"
         run: |
           set -euo pipefail
-          ./bin/avant-b run tests/run.av | tee native.log
-          if grep -q 'FAIL  tests/run.av' native.log; then
-            exit 1
+          ./bin/avant-b test --junit junit.xml
+
+      # One writer. The suite left the hit file complete and did not open
+      # lcov.info. This process reads that file and writes the report.
+      - name: Write coverage report
+        if: always()
+        env:
+          AVANT_COVERAGE_LCOV: lcov.info
+          AVANT_COVERAGE_REPORT: "0"
+        run: |
+          if [ -x ./bin/avant-b ]; then
+            ./bin/avant-b help
           fi
-          if grep -qE 'Test Suites:.*failed' native.log; then
-            exit 1
-          fi
-          grep -qE 'Test Suites: [0-9]+ passed, [0-9]+ total' native.log
-          grep -q 'Ran all test suites.' native.log
 
       - name: Upload LCOV and JUnit
         if: always()

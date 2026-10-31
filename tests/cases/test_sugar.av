@@ -1,0 +1,204 @@
+import harness
+
+fn sugar_expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
+  src = "/tmp/avant-sugar-wavef-${stamp}-${tag}.av"
+  bin = "/tmp/avant-sugar-wavef-${stamp}-${tag}.bin"
+  log = "/tmp/avant-sugar-wavef-${stamp}-${tag}.log"
+  dummy = file_write(src, body)
+  code = compile_av(compiler, src, bin, log)
+  c.expect(code != 0, "${tag} exits non-zero")
+  if err = file_read(log) {
+    c.expect(str_has(err, needle), "${tag} reports ${needle}")
+  } else {
+    c.expect(false, "${tag} log readable")
+  }
+}
+
+fn sugar_count_fallback(seen: Array(Int)): Int {
+  seen.push(99)
+  5
+}
+
+fn sugar_early(xs: Array(Int)): Int {
+  for x in xs {
+    if x == 2 {
+      return 99
+    }
+  }
+  0
+}
+
+fn test_sugar(c: Checks) {
+  c.suite("tests/cases/test_sugar.av")
+
+  raw_path = r"C:\Users\ada\file.txt"
+  c.eq_str(raw_path, "C:\\Users\\ada\\file.txt", "raw backslashes literal")
+  raw_tmpl = r"echo ${HOME} and \n stays"
+  c.eq_str(raw_tmpl, "echo $" + "{HOME} and \\n stays", "raw no interpolation or escapes")
+  c.eq_str(r"", "", "raw empty")
+  r = 41
+  c.eq_int(r + 1, 42, "r still a plain identifier")
+
+  ch = "héllo".chars
+  c.eq_int(ch.size, 5, "chars counts codepoints")
+  c.eq_str(ch[0], "h", "chars ascii")
+  c.eq_str(ch[1], "é", "chars multibyte")
+  c.eq_int("héllo".size, 6, "String size still bytes")
+  c.eq_int("".chars.size, 0, "chars empty")
+  c.eq_str("abc".chars()[2], "c", "chars call form")
+  bch = "héllo".bytes.chars
+  c.eq_int(bch.size, 5, "Bytes chars codepoints")
+  c.eq_str(bch[1], "é", "Bytes chars multibyte")
+
+  xs: Array(Int) = [1, 2, 3]
+  c.expect(xs.any { |x| x > 2 }, "any hit")
+  c.expect(!xs.any { |x| x > 9 }, "any miss")
+  c.expect(xs.all { |x| x > 0 }, "all hit")
+  c.expect(!xs.all { |x| x > 1 }, "all miss")
+  empty_xs: Array(Int) = []
+  c.expect(!empty_xs.any { |x| true }, "any empty false")
+  c.expect(empty_xs.all { |x| false }, "all empty true")
+  seen = 0
+  short_any = xs.any { |x| seen = seen + 1
+    x == 1 }
+  c.expect(short_any, "any short-circuit value")
+  c.eq_int(seen, 1, "any short-circuits")
+  seen_all = 0
+  short_all = xs.all { |x| seen_all = seen_all + 1
+    x > 1 }
+  c.expect(!short_all, "all short-circuit value")
+  c.eq_int(seen_all, 1, "all short-circuits")
+
+  if xs.any { |x| x > 2 } {
+    c.expect(true, "any in if condition")
+  } else {
+    c.expect(false, "any in if condition")
+  }
+  if xs.contains(2) {
+    c.expect(true, "call condition still parses")
+  } else {
+    c.expect(false, "call condition still parses")
+  }
+
+  bb = buf_new()
+  bb.push_str("GET /")
+  c.expect(bb.starts_with("GET "), "Buf starts_with is Bool")
+
+  some_v: Int? = 7
+  none_v: Int? = nil
+  c.eq_int(some_v ?? 42, 7, "?? keeps value")
+  c.eq_int(none_v ?? 42, 42, "?? fallback")
+  c.eq_int(none_v.or(9), 9, "or fallback")
+  c.eq_int(some_v.or(9), 7, "or keeps value")
+  c.eq_int(none_v ?? none_v ?? 3, 3, "?? chain")
+  counter: Array(Int) = []
+  lazy_r = some_v ?? sugar_count_fallback(counter)
+  c.eq_int(lazy_r, 7, "?? lazy value")
+  c.eq_int(counter.size, 0, "?? fallback not evaluated")
+  lazy_r2 = none_v ?? sugar_count_fallback(counter)
+  c.eq_int(lazy_r2, 5, "?? fallback evaluated when nil")
+  c.eq_int(counter.size, 1, "?? fallback evaluated once")
+  lazy_s: String? = nil
+  c.eq_str(lazy_s ?? "fallback", "fallback", "?? String fallback")
+  sum_for = 0
+  for i in 0..5 {
+    sum_for = sum_for + i
+  }
+  c.eq_int(sum_for, 10, "for range sum")
+  sum_arr = 0
+  for x in xs {
+    sum_arr = sum_arr + x
+  }
+  c.eq_int(sum_arr, 6, "for array sum")
+  empty_count = 0
+  for i in 5..5 {
+    empty_count = empty_count + 1
+  }
+  for i in 5..2 {
+    empty_count = empty_count + 1
+  }
+  c.eq_int(empty_count, 0, "for empty ranges")
+  cont_sum = 0
+  for i in 0..6 {
+    if i == 2 {
+      continue
+    }
+    cont_sum = cont_sum + i
+  }
+  c.eq_int(cont_sum, 13, "for continue advances")
+  cont_arr = 0
+  for x in xs {
+    if x == 2 {
+      continue
+    }
+    cont_arr = cont_arr + x
+  }
+  c.eq_int(cont_arr, 4, "for array continue advances")
+  brk = 0
+  for i in 0..100 {
+    if i == 3 {
+      break
+    }
+    brk = i
+  }
+  c.eq_int(brk, 2, "for break")
+  nested = 0
+  for i in 0..3 {
+    for j in 0..3 {
+      nested = nested + 1
+    }
+  }
+  c.eq_int(nested, 9, "for nested")
+  eval_once = 0
+  bounds_arr: Array(Int) = [10, 20]
+  for x in bounds_arr {
+    bounds_arr.push(30)
+    eval_once = eval_once + 1
+    if eval_once > 5 {
+      break
+    }
+  }
+  c.expect(eval_once >= 3, "for array live size")
+  mut_i = 0
+  for i in 0..10 {
+    mut_i = i
+    i += 4
+  }
+  c.eq_int(mut_i, 5, "for var assignment affects iteration")
+  c.eq_int(sugar_early(xs), 99, "return inside for")
+  max_count = 0
+  for i in 2147483645..2147483647 {
+    max_count = max_count + 1
+  }
+  c.eq_int(max_count, 2, "for end at Int max")
+  f_sum = 0.0
+  f_sum = 1.5 + 1.5
+  c.expect(f_sum == 3.0, "float literal still lexes")
+
+  still: Int? = none_v ?? nil
+  if v = still {
+    c.expect(false, "?? nil stays nil")
+  } else {
+    c.expect(true, "?? nil stays nil")
+  }
+
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    sugar_expect_err(c, compiler, stamp, "raw-newline", "fn main {\n  a = r\"one\ntwo\"\n}\n", "unterminated string")
+    sugar_expect_err(c, compiler, stamp, "backtick", "fn main {\n  a = `hi`\n}\n", "unexpected character")
+    sugar_expect_err(c, compiler, stamp, "any-nonbool", "fn main {\n  xs: Array(Int) = [1]\n  b = xs.any { |x| x }\n}\n", "any predicate must return Bool")
+    sugar_expect_err(c, compiler, stamp, "qq-nonil", "fn main {\n  x = 1 ?? 2\n}\n", "?? needs a nilable left side")
+    sugar_expect_err(c, compiler, stamp, "qq-badfb", "fn main {\n  x: Int? = nil\n  y = x ?? \"s\"\n}\n", "?? fallback must be Int")
+    sugar_expect_err(c, compiler, stamp, "or-nonil", "fn main {\n  x = 1\n  y = x.or(2)\n}\n", "or needs a nilable receiver")
+    sugar_expect_err(c, compiler, stamp, "for-nonarray", "fn main {\n  for x in 42 {\n    puts(x)\n  }\n}\n", "for needs a range (a..b) or an Array")
+    sugar_expect_err(c, compiler, stamp, "for-badrange", "fn main {\n  for i in \"a\"..\"b\" {\n    puts(i)\n  }\n}\n", "for range bounds must be Int")
+    sugar_expect_err(c, compiler, stamp, "for-scope", "fn main {\n  for i in 0..2 {\n    puts(i)\n  }\n  puts(i)\n}\n", "unknown name i")
+  }
+}
+
+fn main: Int {
+  c = Checks.new()
+  c.started = now_ms()
+  test_sugar(c)
+  c.finish
+}
