@@ -12,9 +12,9 @@
 # is named `avant`. Do not dispatch this workflow onto the seed tag
 # (AVANT_SEED_VERSION): that tag's asset is the seed, and an upload would replace it.
 #
-# The suite runs before any release is created, with AVANT_TEST_JOBS.
-# Coverage is off, so shards do not share a coverage map. The isolated
-# cases still run alone. A new tag becomes a
+# The suite runs before any release is created. AVANT_TEST_JOBS=4 was
+# measured slower on GitHub and the line stays commented out, so the
+# suite is serial. A new tag becomes a
 # draft (`gh release create --draft`). Publishing the draft is a
 # separate act. Git tags cannot hold files.
 #
@@ -24,8 +24,8 @@
 name: release-binary
 
 env:
-  AVANT_SEED_VERSION: v0.21.0
-  AVANT_SEED_SHA256: cb00ce0a12808568747d8cec75122ed100c7538bd5be5995770578e9875981fe
+  AVANT_SEED_VERSION: v0.22.0
+  AVANT_SEED_SHA256: 2e11a14185dece7881a014682ede6bea619d187b54b9d177c500351a3d30f2ae
   SAFEPOINTS_VERSION: v0.4.0
   MYC_LLVM_SHA256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e
 
@@ -135,9 +135,10 @@ jobs:
       - name: Package linux-x86_64 B
         run: |
           set -euo pipefail
-          mkdir -p dist/avant-linux-x86_64
+          mkdir -p dist/avant-linux-x86_64/lib/std
           cp -f bin/avant-b dist/avant-linux-x86_64/avant
           cp -f /tmp/myc-llvm-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
+          cp -f lib/std/testing.av dist/avant-linux-x86_64/lib/std/testing.av
           chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
           {
             echo "tag: ${TAG_NAME}"

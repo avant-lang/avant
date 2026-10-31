@@ -1,30 +1,168 @@
+fn td_quote(s: String): String {
+  b = buf_new()
+  b.push_str("'")
+  i = 0
+  while i < s.size {
+    if s[i] == 39 {
+      b.push_str("'\\''")
+    } else {
+      b.push_byte(s[i])
+    }
+    i = i + 1
+  }
+  b.push_str("'")
+  b.to_s
+}
+
+fn td_has(hay: String, needle: String): Bool {
+  if needle.size == 0 {
+    return true
+  }
+  if needle.size > hay.size {
+    return false
+  }
+  last = hay.size - needle.size
+  i = 0
+  while i <= last {
+    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn td_at(hay: String, needle: String): Int {
+  if needle.size == 0 {
+    return 0
+  }
+  if needle.size > hay.size {
+    return -1
+  }
+  last = hay.size - needle.size
+  i = 0
+  while i <= last {
+    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+      return i
+    }
+    i = i + 1
+  }
+  -1
+}
+
+fn td_sh(body: String, rc_path: String): Int {
+  script = "${rc_path}.sh"
+  w = file_write(script, body)
+  if w != 0 {
+    return 1
+  }
+  chmod_args: Array(String) = []
+  chmod_args.push("+x")
+  chmod_args.push(script)
+  dummy = process_run("/bin/chmod", chmod_args)
+  sh_args: Array(String) = []
+  sh_args.push(script)
+  dummy_sh = process_run("/bin/sh", sh_args)
+  if text = file_read(rc_path) {
+    t = text.strip()
+    n = 0
+    i = 0
+    while i < t.size {
+      c = t[i]
+      if c < 48 || c > 57 {
+        return 1
+      }
+      n = n * 10 + (c - 48)
+      i = i + 1
+    }
+    return n
+  }
+  1
+}
+
 fn test_testing_docs(c: Checks) {
   c.suite("tests/cases/testing_docs.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
+    dir = "/tmp/avant-docs-${stamp}"
+    mkdir_args: Array(String) = []
+    mkdir_args.push("-p")
+    mkdir_args.push(dir)
+    dummy_mk = process_run("/bin/mkdir", mkdir_args)
 
-    greet_src = "/tmp/avant-wavei-${stamp}-test-greet.av"
-    greet_body = "fn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn check(cond: Bool, name: String) {\n  if cond {\n    puts(\"PASS \${name}\")\n  } else {\n    puts(\"FAIL \${name}\")\n  }\n}\n\nfn main {\n  check(greet(\"Ada\") == \"Hello, Ada\", \"greet uses the name\")\n  check(greet(\"\") == \"Hello, \", \"greet handles empty\")\n}\n"
-    dummy_g = file_write(greet_src, greet_body)
-    greet_log = "/tmp/avant-wavei-${stamp}-greet.log"
-    greet_code = run_av_cmd(compiler, greet_src, greet_log)
+    greet_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = Test.new\n  t.check(greet(\"Ada\") == \"Hello, Ada\", \"greet uses the name\")\n  t.check_eq(greet(\"\"), \"Hello, \", \"greet handles empty\")\n  t.finish\n}\n"
+    dummy_g = file_write("${dir}/test_greet.av", greet_body)
+    greet_log = "${dir}/greet.log"
+    greet_rc = "${dir}/greet.rc"
+    greet_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run test_greet.av -- > ${td_quote(greet_log)} 2>${td_quote(dir)}/greet.err; echo $? > ${td_quote(greet_rc)}\n"
+    greet_code = td_sh(greet_sh, greet_rc)
     c.eq_int(greet_code, 0, "README greet test runs")
     if text = file_read(greet_log) {
-      c.eq_str(text, "PASS greet uses the name\nPASS greet handles empty\n", "README greet test output")
+      c.eq_str(text, "PASS greet uses the name\nPASS greet handles empty\n0 failed, 2 passed\n", "README greet test output")
     } else {
       c.expect(false, "README greet test output")
     }
 
-    table_src = "/tmp/avant-wavei-${stamp}-test-table.av"
-    table_body = "fn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn check(cond: Bool, name: String) {\n  if cond {\n    puts(\"PASS \${name}\")\n  } else {\n    puts(\"FAIL \${name}\")\n  }\n}\n\nfn main {\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  i = 0\n  while i < names.size {\n    check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n    i = i + 1\n  }\n}\n"
-    dummy_t = file_write(table_src, table_body)
-    table_log = "/tmp/avant-wavei-${stamp}-table.log"
-    table_code = run_av_cmd(compiler, table_src, table_log)
+    table_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = Test.new\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  i = 0\n  while i < names.size {\n    t.check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n    i = i + 1\n  }\n  t.finish\n}\n"
+    dummy_t = file_write("${dir}/test_table.av", table_body)
+    table_log = "${dir}/table.log"
+    table_rc = "${dir}/table.rc"
+    table_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run test_table.av -- > ${td_quote(table_log)} 2>${td_quote(dir)}/table.err; echo $? > ${td_quote(table_rc)}\n"
+    table_code = td_sh(table_sh, table_rc)
     c.eq_int(table_code, 0, "README table test runs")
     if text = file_read(table_log) {
-      c.eq_str(text, "PASS greet Ada\nPASS greet Bo\nPASS greet Cy\n", "README table test output")
+      c.eq_str(text, "PASS greet Ada\nPASS greet Bo\nPASS greet Cy\n0 failed, 3 passed\n", "README table test output")
     } else {
       c.expect(false, "README table test output")
+    }
+
+    par_body = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"1+2\")\n  }\n  t.parallel(\"other\") {\n    t.check(true, \"other\")\n  }\n  t.finish\n}\n"
+    dummy_p = file_write("${dir}/test_parallel.av", par_body)
+    par_log = "${dir}/parallel.log"
+    par_rc = "${dir}/parallel.rc"
+    par_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} test test_parallel.av > ${td_quote(par_log)} 2>&1; echo $? > ${td_quote(par_rc)}\n"
+    par_code = td_sh(par_sh, par_rc)
+    c.eq_int(par_code, 0, "README parallel test runs")
+    if text = file_read(par_log) {
+      add_at = td_at(text, "PASS 1+2")
+      other_at = td_at(text, "PASS other")
+      c.expect(add_at >= 0, "README parallel serial line")
+      c.expect(other_at > add_at, "README parallel line follows serial")
+    } else {
+      c.expect(false, "README parallel test output")
+    }
+
+    dummy_w = file_write("${dir}/want.txt", "Hello Avant\n")
+    dummy_hw = file_write("${dir}/hello.want", "Hello Avant\n")
+    dummy_h = file_write("${dir}/hello.av", "fn main {\n  puts(\"Hello Avant\")\n}\n")
+    dummy_b = file_write("${dir}/bad.av", "fn main {\n  missing\n}\n")
+    gold_body = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.golden(\"want.txt\", \"Hello Avant\\n\")\n  t.run_golden(\"hello.av\", \"hello.want\")\n  t.rejects(\"bad.av\", \"unknown name\")\n  t.finish\n}\n"
+    dummy_gold = file_write("${dir}/test_gold.av", gold_body)
+    gold_log = "${dir}/gold.log"
+    gold_rc = "${dir}/gold.rc"
+    gold_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} test test_gold.av > ${td_quote(gold_log)} 2>&1; echo $? > ${td_quote(gold_rc)}\n"
+    gold_code = td_sh(gold_sh, gold_rc)
+    c.eq_int(gold_code, 0, "README golden test runs")
+    if text = file_read(gold_log) {
+      c.expect(td_has(text, "PASS golden want.txt"), "README golden check")
+      c.expect(td_has(text, "PASS run_golden hello.av"), "README run_golden check")
+      c.expect(td_has(text, "PASS rejects bad.av"), "README rejects check")
+      c.expect(td_has(text, "ok test_gold.av"), "README golden file ok")
+    } else {
+      c.expect(false, "README golden test output")
+    }
+
+    arg_body = "fn main: Int {\n  args = argv()\n  if args.size > 1 {\n    puts(args[1])\n  }\n  0\n}\n"
+    dummy_a = file_write("${dir}/prog.av", arg_body)
+    arg_log = "${dir}/arg.log"
+    arg_rc = "${dir}/arg.rc"
+    arg_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run prog.av -- hello > ${td_quote(arg_log)} 2>${td_quote(dir)}/arg.err; echo $? > ${td_quote(arg_rc)}\n"
+    arg_code = td_sh(arg_sh, arg_rc)
+    c.eq_int(arg_code, 0, "README program arguments run")
+    if text = file_read(arg_log) {
+      c.eq_str(text, "hello\n", "README program arguments output")
+    } else {
+      c.expect(false, "README program arguments output")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

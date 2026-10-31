@@ -24,6 +24,7 @@ import pipeline
 import pkg
 import resolve
 import source
+import test_cmd
 import token
 import type
 
@@ -58,7 +59,8 @@ pub fn argv_filter_coverage(args: Array(String)): Array(String) {
 pub fn show_usage {
   puts("Avant compiler")
   puts("")
-  puts("  avant-av run FILE.av [--coverage] [--debug|--release] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]")
+  puts("  avant-av test [TEST-OPTIONS] [PATH...]")
   puts("  avant-av dump FILE.av [--coverage]")
   puts("  avant-av compile FILE.av [OUT] [--coverage] [--debug|--release] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av format FILE.av [--write] [--check]")
@@ -68,6 +70,9 @@ pub fn show_usage {
   puts("FILE.av is the program root. import name loads name.av beside it.")
   puts("With no flag, run uses --debug (fast) and compile uses myc default (kept artifacts).")
   puts("--release (or --final) is --final, the scored mode. --debug is the fast mode.")
+  puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
+  puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive.")
+  puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
 }
 
 pub fn driver_format(args: Array(String)) {
@@ -150,29 +155,40 @@ pub fn driver_dump(args: Array(String)) {
 }
 
 pub fn driver_run(args: Array(String)) {
-  split = take_av_files(args)
-  if split.paths.size == 0 {
-    diag_puts("run needs a .av file")
+  split = split_run_args(args)
+  if split.err.size > 0 {
+    diag_puts(split.err)
     show_usage()
     diag_exit(1)
   }
-  if split.paths.size > 1 {
-    diag_puts("run takes one root .av (use import)")
-    show_usage()
-    diag_exit(1)
-  }
-  job = parse_link(split.rest)
+  job = parse_link(split.link)
   if job.err.size > 0 {
     diag_puts(job.err)
     diag_exit(1)
   }
   job.codegen = verb_codegen(job.codegen, "run")
-  box = compile_av_paths(split.paths)
+  paths: Array(String) = []
+  paths.push(split.file)
+  box = compile_av_paths(paths)
   if box.ok {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    code = invoke_myc(box.text, "r", job.objects, job.flags, "", box.quiet_leaves, job.codegen)
+    if split.has_dash {
+      out = "/tmp/avant-run-${now_ms()}.bin"
+      code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
+      if code != 0 {
+        diag_puts("myc-llvm failed (${code})")
+        diag_exit(1)
+      }
+      chmod_args: Array(String) = []
+      chmod_args.push("+x")
+      chmod_args.push(out)
+      dummy_chmod = process_run("/bin/chmod", chmod_args)
+      rc = process_run(out, split.program)
+      diag_exit(rc)
+    }
+    code = invoke_myc(box.text, "r", job.objects, job.flags, "", box.quiet_leaves, job.codegen, false)
     if code != 0 {
       diag_exit(code)
     }
@@ -211,7 +227,7 @@ pub fn driver_compile(args: Array(String)) {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves, job.codegen)
+    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves, job.codegen, false)
     if code != 0 {
       diag_puts("myc-llvm failed (${code})")
       diag_exit(1)
@@ -345,6 +361,14 @@ fn main {
   }
   if str_eq(command, "r") {
     driver_run(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "test") {
+    driver_test(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "t") {
+    driver_test(argv_drop_first(args))
     return
   }
   if str_eq(command, "compile") {

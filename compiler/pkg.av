@@ -22,12 +22,21 @@ pub class PkgManifest {
   deps: Array(PkgDep)
   ok: Bool = false
   err: String = ""
+  test_dir: String = ""
+  test_entry: String = ""
+  test_exclusive: Array(String)
+  test_err: String = ""
 
   fn initialize {
     d: Array(PkgDep) = []
     self.deps = d
     self.ok = false
     self.err = ""
+    self.test_dir = ""
+    self.test_entry = ""
+    self.test_err = ""
+    ex: Array(String) = []
+    self.test_exclusive = ex
   }
 }
 
@@ -237,6 +246,135 @@ pub fn pkg_apply_pair(m: PkgManifest, dep_idx: Int, key: String, val: String, pa
   false
 }
 
+pub fn pkg_note_test(m: PkgManifest, message: String) {
+  if m.test_err.size == 0 {
+    m.test_err = message
+  }
+}
+
+pub class PkgStrings {
+  items: Array(String)
+  ok: Bool = false
+
+  fn initialize {
+    xs: Array(String) = []
+    self.items = xs
+    self.ok = false
+  }
+}
+
+pub fn pkg_string_list(val: String): PkgStrings {
+  got = PkgStrings.new
+  t = pkg_trim(val)
+  if t.size == 0 {
+    return got
+  }
+  if t[0] == 34 {
+    if pkg_string_closed(t) {
+    } else {
+      return got
+    }
+    got.items.push(pkg_parse_string(t, ""))
+    got.ok = true
+    return got
+  }
+  if t.size < 2 || t[0] != 91 || t[t.size - 1] != 93 {
+    return got
+  }
+  inner = str_slice(t, 1, t.size - 1)
+  i = 0
+  n = inner.size
+  while i < n {
+    while i < n && (inner[i] == 32 || inner[i] == 44 || inner[i] == 9) {
+      i = i + 1
+    }
+    if i >= n {
+      break
+    }
+    if inner[i] != 34 {
+      return got
+    }
+    start = i
+    i = i + 1
+    closed = false
+    while i < n {
+      if inner[i] == 92 {
+        i = i + 2
+        continue
+      }
+      if inner[i] == 34 {
+        closed = true
+        i = i + 1
+        break
+      }
+      i = i + 1
+    }
+    if closed {
+    } else {
+      return got
+    }
+    item = pkg_parse_string(str_slice(inner, start, i), "")
+    got.items.push(item)
+  }
+  got.ok = true
+  got
+}
+
+pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
+  k = pkg_trim(key)
+  if str_eq(k, "dir") {
+    if m.test_dir.size > 0 {
+      pkg_note_test(m, "${path}:${line_no}: duplicate test key dir")
+      return true
+    }
+    if pkg_string_closed(val) {
+    } else {
+      pkg_note_test(m, "${path}:${line_no}: dir needs a string")
+      return true
+    }
+    m.test_dir = pkg_parse_string(val, "")
+    if m.test_dir.size == 0 {
+      pkg_note_test(m, "${path}:${line_no}: dir needs a string")
+    }
+    return true
+  }
+  if str_eq(k, "entry") {
+    if m.test_entry.size > 0 {
+      pkg_note_test(m, "${path}:${line_no}: duplicate test key entry")
+      return true
+    }
+    if pkg_string_closed(val) {
+    } else {
+      pkg_note_test(m, "${path}:${line_no}: entry needs a string")
+      return true
+    }
+    m.test_entry = pkg_parse_string(val, "")
+    if m.test_entry.size == 0 {
+      pkg_note_test(m, "${path}:${line_no}: entry needs a string")
+    }
+    return true
+  }
+  if str_eq(k, "exclusive") {
+    if m.test_exclusive.size > 0 {
+      pkg_note_test(m, "${path}:${line_no}: duplicate test key exclusive")
+      return true
+    }
+    list = pkg_string_list(val)
+    if list.ok {
+      i = 0
+      while i < list.items.size {
+        m.test_exclusive.push(list.items[i])
+        i = i + 1
+      }
+    } else {
+      pkg_note_test(m, "${path}:${line_no}: exclusive needs a string or a list of strings")
+    }
+    return true
+  }
+  pkg_note_test(m, "${path}:${line_no}: unknown test key ${k} (want dir, entry, or exclusive)")
+  true
+}
+
 pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String, line_no: Int): Bool {
   t = pkg_trim(val)
   if t.size < 2 || t[0] != 123 || t[t.size - 1] != 125 {
@@ -362,7 +500,12 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         section = "dep"
         continue
       }
-      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package] or [dependencies])"
+      if str_eq(inner, "test") {
+        section = "test"
+        dep_idx = -1
+        continue
+      }
+      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package], [dependencies], or [test])"
       return m
     }
     eq = pkg_find_eq(line)
@@ -426,6 +569,13 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         }
       } else {
         m.err = "${path}:${line_no}: dependency ${key} needs an inline table like { git = \"URL\", rev = \"SHA\" } (there is no registry)"
+        return m
+      }
+      continue
+    }
+    if str_eq(section, "test") {
+      if pkg_apply_test(m, key, val, path, line_no) {
+      } else {
         return m
       }
       continue

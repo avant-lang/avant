@@ -1018,11 +1018,15 @@ pub class MycGen {
 
   pub fn emit_wrapper_main {
     run_void = true
+    run_int = false
     if sig = self.find_fn("run") {
       if sig.ret.is_void {
         run_void = true
       } else {
         run_void = false
+        if sig.ret.is_int {
+          run_int = true
+        }
       }
     }
     self.line("FUNC :main")
@@ -1044,11 +1048,20 @@ pub class MycGen {
     self.emit_cov_init
     self.line("CALL :run")
     if run_void {
+    } else if run_int {
+      self.line("LOCAL :run_status :i32")
+      self.line("STORE")
     } else {
       self.line("STACK :drop")
     }
     self.line("CALL :avant_gc_leave")
-    self.line("PUSH 0")
+    if run_void {
+      self.line("PUSH 0")
+    } else if run_int {
+      self.line("LOCAL :run_status")
+    } else {
+      self.line("PUSH 0")
+    }
     self.line("RET")
     self.indent = self.indent - 1
     self.indent = self.indent - 1
@@ -1174,6 +1187,15 @@ pub class MycGen {
   }
 
   pub fn emit_ret {
+    status_slot = ""
+    if self.c_main {
+      if self.return_type.is_void {
+      } else {
+        status_slot = self.new_temp
+        self.line("LOCAL :${status_slot} :i32")
+        self.line("STORE")
+      }
+    }
     self.emit_unpin_all
     if self.quiet_guard != 0 {
       self.line("CALL :avant_gc_quiet_leave")
@@ -1182,7 +1204,11 @@ pub class MycGen {
       self.line("CALL :avant_gc_leave")
     }
     if self.c_main {
-      self.line("PUSH 0")
+      if status_slot.size > 0 {
+        self.line("LOCAL :${status_slot}")
+      } else {
+        self.line("PUSH 0")
+      }
     }
     self.line("RET")
   }
@@ -1201,6 +1227,10 @@ pub class MycGen {
       } else {
         return
       }
+    }
+    if self.return_type.is_void {
+    } else {
+      return
     }
     self.emit_ret
   }

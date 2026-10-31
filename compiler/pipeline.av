@@ -84,6 +84,24 @@ pub class CliSplit {
   }
 }
 
+pub class RunSplit {
+  file: String = ""
+  link: Array(String)
+  program: Array(String)
+  has_dash: Bool = false
+  err: String = ""
+
+  fn initialize {
+    self.file = ""
+    lk: Array(String) = []
+    self.link = lk
+    pg: Array(String) = []
+    self.program = pg
+    self.has_dash = false
+    self.err = ""
+  }
+}
+
 pub fn str_contains(s: String, needle: String): Bool {
   if needle.size == 0 {
     return true
@@ -564,6 +582,41 @@ pub fn parse_link(args: Array(String)): LinkJob {
   job
 }
 
+pub fn split_run_args(args: Array(String)): RunSplit {
+  split = RunSplit.new
+  left: Array(String) = []
+  i = 0
+  seen = false
+  while i < args.size {
+    if seen {
+      split.program.push(args[i])
+    } else if str_eq(args[i], "--") {
+      seen = true
+    } else {
+      left.push(args[i])
+    }
+    i = i + 1
+  }
+  split.has_dash = seen
+  files = 0
+  j = 0
+  while j < left.size {
+    if str_ends(left[j], ".av") {
+      files = files + 1
+      split.file = left[j]
+    } else {
+      split.link.push(left[j])
+    }
+    j = j + 1
+  }
+  if files == 0 {
+    split.err = "run needs a .av file"
+  } else if files > 1 {
+    split.err = "run takes one root .av (use import)"
+  }
+  split
+}
+
 pub fn take_av_files(args: Array(String)): CliSplit {
   split = CliSplit.new
   i = 0
@@ -648,9 +701,26 @@ pub fn myc_mode(codegen: String): String {
   "debug"
 }
 
-pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String, codegen: String): Int {
+fn compiler_pid: String {
+  if text = file_read("/proc/self/stat") {
+    i = 0
+    while i < text.size {
+      if text[i] == 32 {
+        return str_slice(text, 0, i)
+      }
+      i = i + 1
+    }
+    if text.size > 0 {
+      return text.strip()
+    }
+  }
+  "0"
+}
+
+pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String, codegen: String, capture: Bool): Int {
   stamp = now_ms()
-  ir_path = "/tmp/avant-av-${stamp}.myc"
+  pid = compiler_pid()
+  ir_path = "/tmp/avant-av-${pid}-${stamp}.myc"
   w = file_write(ir_path, ir)
   if w != 0 {
     diag_puts("cannot write ${ir_path}")
@@ -699,6 +769,16 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
     args.push(out_path)
   }
   if file_exists("/usr/bin/env") {
+    if capture {
+      log = "/tmp/avant-av-${pid}-${stamp}.log"
+      code = process_run_out("/usr/bin/env", args, log)
+      if code != 0 {
+        if text = file_read(log) {
+          diag_puts(text)
+        }
+      }
+      return code
+    }
     return process_run("/usr/bin/env", args)
   }
   diag_puts("cannot find /usr/bin/env")

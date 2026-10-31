@@ -605,6 +605,14 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   }
   checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   checker_self.current_module = saved_mod
+  if str_eq(fnn.name, "main") || str_eq(fnn.name, "run") {
+    if ret.is_void {
+    } else if ret.is_int {
+    } else {
+      checker_self.fail(fnn.loc, "fn ${fnn.name} returns ${ret.show}; the process status is Int")
+      return
+    }
+  }
   i = 1
   while i < checker_self.functions.size {
     existing = checker_self.functions[i]
