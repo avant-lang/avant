@@ -2,6 +2,7 @@ import loader
 import pipeline
 import pkg
 import source
+import cov_report
 
 pub class FileRun {
   abs: String = ""
@@ -13,6 +14,7 @@ pub class FileRun {
   ok: Bool = true
   compiled: Bool = false
   exclusive: Bool = false
+  map: String = ""
 
   fn initialize(abs: String, rel: String, bin: String) {
     self.abs = abs
@@ -26,6 +28,7 @@ pub class FileRun {
     self.ok = true
     self.compiled = false
     self.exclusive = false
+    self.map = ""
   }
 }
 
@@ -46,12 +49,16 @@ pub class TestHost {
   stamp: Int = 0
   seq: Int = 0
   jobs: Int = 1
+  coverage: Bool = false
+  cov: CovReport
 
   fn initialize(compiler: String, stamp: Int, jobs: Int) {
     self.compiler = compiler
     self.stamp = stamp
     self.seq = 0
     self.jobs = jobs
+    self.coverage = false
+    self.cov = CovReport.new("")
   }
 
   pub fn fresh: String {
@@ -276,16 +283,38 @@ fn listed(paths: Array(String), path: String): Bool {
   false
 }
 
-fn env_plain(compiler: String): String {
-  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES="
+fn env_plain(compiler: String, coverage: Bool, map: String): String {
+  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES="
+  if coverage {
+    return "${base} AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${test_quote(map)}"
+  }
+  base
 }
 
-fn env_serial(compiler: String, names: String): String {
-  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES=${test_quote(names)}"
+fn env_serial(compiler: String, names: String, coverage: Bool): String {
+  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES=${test_quote(names)}"
+  if coverage {
+    return "${base} AVANT_COVERAGE= AVANT_COVERAGE_LCOV=0 AVANT_COVERAGE_REPORT=0"
+  }
+  base
 }
 
-fn env_only(compiler: String, name: String): String {
-  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)} AVANT_TEST_NAMES="
+fn env_only(compiler: String, name: String, coverage: Bool): String {
+  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)} AVANT_TEST_NAMES="
+  if coverage {
+    return "${base} AVANT_COVERAGE= AVANT_COVERAGE_LCOV=0 AVANT_COVERAGE_REPORT=0"
+  }
+  base
+}
+
+fn rm_file(path: String) {
+  if path.size == 0 {
+    return
+  }
+  args: Array(String) = []
+  args.push("-f")
+  args.push(path)
+  dummy = process_run("/bin/rm", args)
 }
 
 fn run_script(body: String, host: TestHost) {
@@ -374,7 +403,10 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
   i = 0
   while i < files.size {
     f = files[i]
-    cmd = make_cmd(host, "${env_plain(host.compiler)} ${test_quote(host.compiler)} compile ${test_quote(f.abs)} ${test_quote(f.bin)} --debug")
+    if host.coverage {
+      f.map = "${host.fresh()}.map"
+    }
+    cmd = make_cmd(host, "${env_plain(host.compiler, host.coverage, f.map)} ${test_quote(host.compiler)} compile ${test_quote(f.abs)} ${test_quote(f.bin)} --debug")
     cmd.line = redirect(cmd)
     compiles.push(cmd)
     i = i + 1
@@ -403,7 +435,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     if f.compiled {
       base = host.fresh()
       names = "${base}.names"
-      line = "${env_serial(host.compiler, names)} ${test_quote(f.bin)}"
+      line = "${env_serial(host.compiler, names, host.coverage)} ${test_quote(f.bin)}"
       cmd = ShellCmd.new(line, "${base}.log", "${base}.rc")
       cmd.line = redirect(cmd)
       serials.push(cmd)
@@ -446,7 +478,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       k = 0
       while k < f.parallels.size {
         name = f.parallels[k]
-        cmd = make_cmd(host, "${env_only(host.compiler, name)} ${test_quote(f.bin)}")
+        cmd = make_cmd(host, "${env_only(host.compiler, name, host.coverage)} ${test_quote(f.bin)}")
         cmd.line = redirect(cmd)
         pars.push(cmd)
         par_file.push(i)
@@ -474,6 +506,20 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       f.ok = false
     }
     i = i + 1
+  }
+  if host.coverage {
+    i = 0
+    while i < files.size {
+      f = files[i]
+      if f.compiled {
+        host.cov.merge_map(f.map)
+      }
+      rm_file(f.map)
+      if f.map.size > 0 {
+        rm_file("${f.map}.hits")
+      }
+      i = i + 1
+    }
   }
 }
 
@@ -560,11 +606,28 @@ fn test_fail(message: String) {
   diag_exit(1)
 }
 
+fn is_dir(path: String): Bool {
+  file_exists("${path}/.")
+}
+
+fn require_cov_dir(anchor: String, rel: String, key: String) {
+  path = abs_join(anchor, rel)
+  if file_exists(path) {
+  } else {
+    test_fail("${key} directory does not exist: ${rel}")
+  }
+  if is_dir(path) {
+  } else {
+    test_fail("${key} path is not a directory: ${rel}")
+  }
+}
+
 pub fn driver_test(args: Array(String)) {
   jobs = -1
   shard = ""
   junit = ""
   skip_ex = false
+  coverage = false
   paths: Array(String) = []
   i = 0
   while i < args.size {
@@ -605,6 +668,9 @@ pub fn driver_test(args: Array(String)) {
     } else if str_eq(arg, "--skip-exclusive") {
       skip_ex = true
       i = i + 1
+    } else if str_eq(arg, "--coverage") {
+      coverage = true
+      i = i + 1
     } else if str_eq(arg, "-h") || str_eq(arg, "--help") {
       diag_puts("avant test [TEST-OPTIONS] [PATH...]")
       diag_puts("--jobs N   test processes at once (default: online processors)")
@@ -612,6 +678,7 @@ pub fn driver_test(args: Array(String)) {
       diag_puts("--shard I/N   slice I of N, 1-based, round-robin")
       diag_puts("--junit PATH   one case per file")
       diag_puts("--skip-exclusive   omit [test] exclusive files")
+      diag_puts("--coverage   instrument tests and print one coverage table")
       diag_exit(0)
     } else if str_eq(arg, "--") {
       test_fail("avant test does not take program arguments")
@@ -630,6 +697,8 @@ pub fn driver_test(args: Array(String)) {
   test_dir = ""
   test_entry = ""
   exclusive: Array(String) = []
+  cov_include: Array(String) = []
+  cov_exclude: Array(String) = []
   if man_dir.size > 0 {
     man_path = abs_join(man_dir, "avant.toml")
     if text = file_read(man_path) {
@@ -641,6 +710,9 @@ pub fn driver_test(args: Array(String)) {
       if m.test_err.size > 0 {
         test_fail(m.test_err)
       }
+      if m.cov_err.size > 0 {
+        test_fail(m.cov_err)
+      }
       if m.test_dir.size > 0 && m.test_entry.size > 0 {
         test_fail("${man_path}: [test] dir and entry cannot both be set")
       }
@@ -651,11 +723,33 @@ pub fn driver_test(args: Array(String)) {
         exclusive.push(m.test_exclusive[k])
         k = k + 1
       }
+      k = 0
+      while k < m.cov_include.size {
+        cov_include.push(m.cov_include[k])
+        k = k + 1
+      }
+      k = 0
+      while k < m.cov_exclude.size {
+        cov_exclude.push(m.cov_exclude[k])
+        k = k + 1
+      }
     }
   }
   anchor = cwd
   if man_dir.size > 0 {
     anchor = man_dir
+  }
+  if coverage {
+    k = 0
+    while k < cov_include.size {
+      require_cov_dir(anchor, cov_include[k], "include")
+      k = k + 1
+    }
+    k = 0
+    while k < cov_exclude.size {
+      require_cov_dir(anchor, cov_exclude[k], "exclude")
+      k = k + 1
+    }
   }
   stamp = now_ms()
   files: Array(FileRun) = []
@@ -793,6 +887,11 @@ pub fn driver_test(args: Array(String)) {
     argv0 = args0[0]
   }
   host = TestHost.new(argv0, stamp, jobs)
+  host.coverage = coverage
+  if coverage {
+    host.cov = CovReport.new(anchor)
+    host.cov.use_excludes(cov_exclude)
+  }
   if jobs == 1 {
     run_many(host, files)
   } else {
@@ -841,6 +940,17 @@ pub fn driver_test(args: Array(String)) {
     f = f + 1
   }
   puts("${bad} failed, ${good} passed")
+  if coverage {
+    k = 0
+    while k < cov_include.size {
+      host.cov.add_tree(abs_join(anchor, cov_include[k]), cov_exclude)
+      k = k + 1
+    }
+    if host.cov.has_rows {
+      host.cov.write_lcov("lcov.info")
+      host.cov.print_table
+    }
+  }
   if bad > 0 {
     diag_exit(1)
   }

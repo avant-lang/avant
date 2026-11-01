@@ -8,6 +8,10 @@ import ast
 import resolve
 import parser
 
+lib oslink {
+  fun readlink(path: String, buf: String, n: Int): Int
+}
+
 pub fn path_basename(path: String): String {
   i = path.size - 1
   while i >= 0 {
@@ -431,34 +435,25 @@ pub class Loader {
     false
   }
 
-  pub fn std_root: String {
-    if v = env_get("AVANT_ROOT") {
-      return v
+  pub fn exe_path: String {
+    raw_buf = buf_new()
+    nfill = 0
+    while nfill < 4096 {
+      raw_buf.push_byte(0)
+      nfill = nfill + 1
     }
-    args = argv()
-    if args.size > 0 {
-      dir = path_dirname(args[0])
-      base = path_basename(dir)
-      if str_eq(base, "bin") {
-        parent = path_dirname(dir)
-        probe = "${parent}/runtime/build/avant_rt.o"
-        if file_exists(probe) {
-          return parent
-        }
+    raw = raw_buf.to_s
+    n = oslink.readlink("/proc/self/exe", raw, 4095)
+    if n > 0 {
+      if n < 4096 {
+        return str_slice(raw, 0, n)
       }
     }
-    if file_exists("runtime/build/avant_rt.o") {
-      return "."
-    }
-    "."
-  }
-
-  pub fn binary_dir: String {
     args = argv()
     if args.size > 0 {
-      return path_dirname(args[0])
+      return args[0]
     }
-    "."
+    ""
   }
 
   pub fn resolve_std(name: String, loc: Location): String {
@@ -467,25 +462,31 @@ pub class Loader {
       return ""
     }
     rel = import_rel(name)
-    hits: Array(String) = []
-    self.consider_hit(hits, join_dir(self.std_root(), "lib/${rel}"))
-    self.consider_hit(hits, join_dir(self.binary_dir(), "lib/${rel}"))
-    if hits.size == 0 {
+    suffix = "lib/${rel}"
+    if v = env_get("AVANT_ROOT") {
+      path = join_dir(v, suffix)
+      if file_exists(path) {
+        return path
+      }
       self.fail(loc, "cannot find ${name} in the standard library")
       return ""
     }
-    if hits.size > 1 {
-      buf = buf_new()
-      buf.push_str("import ${name} is ambiguous:")
-      i = 0
-      while i < hits.size {
-        buf.push_str(" ${hits[i]}")
-        i = i + 1
+    dir = path_dirname(self.exe_path())
+    guard = 0
+    while guard < 64 {
+      cand = join_dir(dir, suffix)
+      if file_exists(cand) {
+        return cand
       }
-      self.fail(loc, buf.to_s)
-      return ""
+      parent = path_dirname(dir)
+      if str_eq(parent, dir) {
+        break
+      }
+      dir = parent
+      guard = guard + 1
     }
-    hits[0]
+    self.fail(loc, "cannot find ${name} in the standard library")
+    ""
   }
 
   pub fn resolve_import(importer: String, name: String, loc: Location): String {

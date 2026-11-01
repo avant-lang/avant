@@ -45,24 +45,13 @@ pub fn argv_drop_first(args: Array(String)): Array(String) {
   rest
 }
 
-pub fn argv_filter_coverage(args: Array(String)): Array(String) {
-  rest: Array(String) = []
-  for i in 0..args.size {
-    if str_eq(args[i], "--coverage") {
-    } else {
-      rest.push(args[i])
-    }
-  }
-  rest
-}
-
 pub fn show_usage {
   puts("Avant compiler")
   puts("")
   puts("  avant-av run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]")
   puts("  avant-av test [TEST-OPTIONS] [PATH...]")
-  puts("  avant-av dump FILE.av [--coverage]")
-  puts("  avant-av compile FILE.av [OUT] [--coverage] [--debug|--release] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av dump FILE.av")
+  puts("  avant-av compile FILE.av [OUT] [--debug|--release] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av format FILE.av [--write] [--check]")
   puts("  avant-av bind [--lib NAME] HEADER.h")
   puts("  avant-av fetch [DIR] [--update]")
@@ -71,7 +60,7 @@ pub fn show_usage {
   puts("With no flag, run uses --debug (fast) and compile uses myc default (kept artifacts).")
   puts("--release (or --final) is --final, the scored mode. --debug is the fast mode.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
-  puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive.")
+  puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
 }
 
@@ -143,6 +132,11 @@ pub fn driver_dump(args: Array(String)) {
   }
   if split.paths.size > 1 {
     diag_puts("dump takes one root .av (use import)")
+    show_usage()
+    diag_exit(1)
+  }
+  if split.rest.size > 0 {
+    diag_puts("unknown dump argument ${split.rest[0]}")
     show_usage()
     diag_exit(1)
   }
@@ -329,7 +323,7 @@ pub fn driver_fetch(args: Array(String)) {
 }
 
 fn main {
-  args = argv_filter_coverage(argv_user())
+  args = argv_user()
   if args.size == 0 {
     show_usage()
     return
