@@ -1131,7 +1131,7 @@ fn main: Int {
 
 ### Order inside a file
 
-Checks written in the file, and bodies passed to `t.test`, run one at a time in source order. `t.parallel` overlaps other parallel tests of that same file, and only after the file's serial work. Each parallel test is a new process of the same binary. The file runs again, serial checks and `t.test` bodies do not, and only that parallel body does. Code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, so parallel bodies do not run until `avant test` starts them.
+Checks written in the file, and bodies passed to `t.test`, run one at a time in source order. `t.parallel` overlaps other parallel tests of that same file, and only after the file's serial work. That run records each parallel name. `avant test` does not start the file an extra time only to list them. Each parallel test is then a new process of the same binary. The file runs again, serial checks and `t.test` bodies do not, and only that parallel body does. Code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, so parallel bodies do not run until `avant test` starts them.
 
 ```avant
 import std.testing

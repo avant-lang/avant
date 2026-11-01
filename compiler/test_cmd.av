@@ -277,15 +277,15 @@ fn listed(paths: Array(String), path: String): Bool {
 }
 
 fn env_plain(compiler: String): String {
-  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY="
+  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES="
 }
 
-fn env_list(compiler: String): String {
-  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST=1 AVANT_TEST_ONLY="
+fn env_serial(compiler: String, names: String): String {
+  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES=${test_quote(names)}"
 }
 
 fn env_only(compiler: String, name: String): String {
-  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)}"
+  "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)} AVANT_TEST_NAMES="
 }
 
 fn run_script(body: String, host: TestHost) {
@@ -329,7 +329,7 @@ fn redirect(cmd: ShellCmd): String {
   "( ${cmd.line} > ${test_quote(cmd.log)} 2>&1; echo $? > ${test_quote(cmd.rc_path)} )"
 }
 
-fn parallel_names(text: String): Array(String) {
+fn name_lines(text: String): Array(String) {
   out: Array(String) = []
   start = 0
   i = 0
@@ -339,9 +339,8 @@ fn parallel_names(text: String): Array(String) {
       if line.size > 0 && line[line.size - 1] == 13 {
         line = str_slice(line, 0, line.size - 1)
       }
-      pre = "AVANT_PARALLEL "
-      if str_starts(line, pre) {
-        out.push(str_slice(line, pre.size, line.size))
+      if line.size > 0 {
+        out.push(line)
       }
       start = i + 1
     }
@@ -395,54 +394,21 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     }
     i = i + 1
   }
-  lists: Array(ShellCmd) = []
-  list_at: Array(Int) = []
-  i = 0
-  while i < files.size {
-    f = files[i]
-    if f.compiled {
-      cmd = make_cmd(host, "${env_list(host.compiler)} ${test_quote(f.bin)}")
-      cmd.line = redirect(cmd)
-      lists.push(cmd)
-      list_at.push(i)
-    }
-    i = i + 1
-  }
-  run_waves(host, lists)
-  i = 0
-  while i < lists.size {
-    f = files[list_at[i]]
-    cmd = lists[i]
-    names = parallel_names(read_text(cmd.log))
-    seen: Array(String) = []
-    k = 0
-    while k < names.size {
-      name = names[k]
-      if listed(seen, name) {
-        f.ok = false
-        f.output = append_text(f.output, "duplicate parallel name ${name}\n")
-      } else {
-        seen.push(name)
-        f.parallels.push(name)
-      }
-      k = k + 1
-    }
-    if read_rc(cmd.rc_path) != 0 {
-      f.ok = false
-      f.output = append_text(f.output, read_text(cmd.log))
-    }
-    i = i + 1
-  }
   serials: Array(ShellCmd) = []
   serial_at: Array(Int) = []
+  serial_names: Array(String) = []
   i = 0
   while i < files.size {
     f = files[i]
     if f.compiled {
-      cmd = make_cmd(host, "${env_plain(host.compiler)} ${test_quote(f.bin)}")
+      base = host.fresh()
+      names = "${base}.names"
+      line = "${env_serial(host.compiler, names)} ${test_quote(f.bin)}"
+      cmd = ShellCmd.new(line, "${base}.log", "${base}.rc")
       cmd.line = redirect(cmd)
       serials.push(cmd)
       serial_at.push(i)
+      serial_names.push(names)
     }
     i = i + 1
   }
@@ -454,6 +420,20 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     f.output = append_text(f.output, read_text(cmd.log))
     if read_rc(cmd.rc_path) != 0 {
       f.ok = false
+    }
+    found = name_lines(read_text(serial_names[i]))
+    seen: Array(String) = []
+    k = 0
+    while k < found.size {
+      name = found[k]
+      if listed(seen, name) {
+        f.ok = false
+        f.output = append_text(f.output, "duplicate parallel name ${name}\n")
+      } else {
+        seen.push(name)
+        f.parallels.push(name)
+      }
+      k = k + 1
     }
     i = i + 1
   }

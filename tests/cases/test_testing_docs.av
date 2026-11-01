@@ -54,10 +54,10 @@ fn td_at(hay: String, needle: String): Int {
 
 fn td_sh(body: String, rc_path: String): Int {
   script = "${rc_path}.sh"
-  // The suite runner lists names with AVANT_TEST_LIST=1, and this process
-  // inherits that. A program under test that imports std.testing would
-  // then skip its checks. Clear it for the child.
-  wrapped = "#!/bin/sh\nunset AVANT_TEST_LIST\nunset AVANT_TEST_ONLY\n${body}"
+  // A program under test that imports std.testing must not inherit the
+  // runner's listing or name-file variables, or it would skip checks or
+  // write its parallel names into this file's list.
+  wrapped = "#!/bin/sh\nunset AVANT_TEST_LIST\nunset AVANT_TEST_ONLY\nunset AVANT_TEST_NAMES\n${body}"
   w = file_write(script, wrapped)
   if w != 0 {
     return 1
