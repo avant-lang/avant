@@ -1,5 +1,11 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Changed
+* `avant test` records parallel names during the run that executes the checks, and does not start the file once only to list them.
+* The compiler suite returns before its checks when the test runner is only listing parallel names, so each file runs those checks once. `avant test` in CI keeps the default job count. On a 4-CPU pin, `--jobs 1` and `--jobs 2` were slower than four jobs, and on 16 threads `--jobs 1` and `--jobs 8` were slower than the default.
+
 ## 0.24.1 - 2026-10-31
 
 ### Changed

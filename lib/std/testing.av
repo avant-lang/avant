@@ -85,6 +85,9 @@ fn testing_rc(path: String): Int {
 fn testing_shell(bin: String, args: Array(String), out_path: String, err_path: String, rc_path: String): Int {
   b = buf_new()
   b.push_str("#!/bin/sh\n")
+  b.push_str("unset AVANT_TEST_LIST\n")
+  b.push_str("unset AVANT_TEST_ONLY\n")
+  b.push_str("unset AVANT_TEST_NAMES\n")
   b.push_str(testing_quote(bin))
   i = 0
   while i < args.size {
@@ -122,6 +125,7 @@ pub class Test {
   seq: Int = 0
   dup: Bool = false
   only: String = ""
+  names_path: String = ""
   names: Array(String)
 
   fn initialize {
@@ -132,6 +136,7 @@ pub class Test {
     self.seq = 0
     self.dup = false
     self.only = ""
+    self.names_path = ""
     ns: Array(String) = []
     self.names = ns
     if v = env_get("AVANT_TEST_ONLY") {
@@ -143,6 +148,13 @@ pub class Test {
     if v = env_get("AVANT_TEST_LIST") {
         if v == "1" {
         self.mode = 1
+      }
+    }
+    if self.mode == 0 {
+      if v = env_get("AVANT_TEST_NAMES") {
+        if v.size > 0 {
+          self.names_path = v
+        }
       }
     }
   }
@@ -253,19 +265,39 @@ pub class Test {
     nil
   }
 
+  fn remember_parallel(name: String): Bool {
+    if name.size == 0 || testing_has(name, "\n") {
+      self.dup = true
+      testing_write("FAIL parallel name must be one line")
+      return false
+    }
+    if self.note_name(name) {
+      self.dup = true
+      testing_write("FAIL duplicate parallel name ${name}")
+      return false
+    }
+    true
+  }
+
+  fn write_parallel_names() {
+    if self.names_path.size == 0 {
+      return
+    }
+    b = buf_new()
+    i = 0
+    while i < self.names.size {
+      b.push_str(self.names[i])
+      b.push_str("\n")
+      i = i + 1
+    }
+    dummy = file_write(self.names_path, b.to_s)
+  }
+
   pub fn parallel(name: String, body: fn(): Nil): Nil {
     if self.mode == 1 {
-      if name.size == 0 || testing_has(name, "\n") {
-        self.dup = true
-        testing_write("FAIL parallel name must be one line")
-        return nil
+      if self.remember_parallel(name) {
+        testing_write("AVANT_PARALLEL ${name}")
       }
-      if self.note_name(name) {
-        self.dup = true
-        testing_write("FAIL duplicate parallel name ${name}")
-        return nil
-      }
-      testing_write("AVANT_PARALLEL ${name}")
       return nil
     }
     if self.mode == 2 {
@@ -275,6 +307,11 @@ pub class Test {
         self.depth = self.depth - 1
       }
       return nil
+    }
+    if self.names_path.size > 0 {
+      if self.remember_parallel(name) {
+        self.write_parallel_names()
+      }
     }
     nil
   }

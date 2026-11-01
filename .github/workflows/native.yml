@@ -1,6 +1,11 @@
 # Coverage suite. The seed workflow runs the same suite without coverage.
-# Both use `avant test` and the default job count. The old four-job
-# measurement compiled the stitched suite four times.
+# Both use `avant test` and the default job count. Wave N measured that
+# default against smaller counts and kept it: on a 4-CPU pin, `--jobs 1`
+# was 188s and `--jobs 2` was 177s, against 168s for four jobs. On 16
+# threads, `--jobs 1` was 194s and `--jobs 8` was 163s, against 153s for
+# the default. The suite mains return before the checks when the runner
+# is only listing parallel names, so each file's checks run once.
+# The old four-job measurement compiled the stitched suite four times.
 # This job runs the suite on an instrumented B, on
 # pull requests and on pushes to master: Codecov compares the pull
 # request report with the master report. An instrumented B makes every
@@ -34,8 +39,8 @@
 name: native
 
 env:
-  AVANT_SEED_VERSION: v0.24.0
-  AVANT_SEED_SHA256: 9bb4ce020d5d23d8153de6e7e0e518027190ee2e474a6848a3fcc57b22bcb4e4
+  AVANT_SEED_VERSION: v0.24.1
+  AVANT_SEED_SHA256: 7c95a6d985aeb8f620cc78015d041a3ca27f9004aabeba1e32c2841c7950c750
   SAFEPOINTS_VERSION: v0.4.0
   MYC_LLVM_SHA256: 790472e25cd191b838271f6fae8b59eb1aa1e31f4c7ca7b7069eccbda0f29e5e
 
