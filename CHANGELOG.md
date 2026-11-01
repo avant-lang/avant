@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.24.2 - 2026-11-01
 
 ### Changed
 * `avant test` records parallel names during the run that executes the checks, and does not start the file once only to list them.
