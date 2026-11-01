@@ -13,24 +13,22 @@ fn test_coverage(c: Checks) {
     c.eq_int(w, 0, "write coverage fixture")
 
     dump_code = dump_av_cov(compiler, src, dump_log)
-    c.eq_int(dump_code, 0, "dump --coverage")
+    c.eq_int(dump_code, 0, "dump with AVANT_COVERAGE")
     if ir = file_read(dump_log) {
       c.expect(str_has(ir, "avant_cov_hit"), "dump IR has avant_cov_hit")
       c.expect(str_has(ir, "avant_cov_init"), "dump IR has avant_cov_init")
     } else {
-      c.expect(false, "dump --coverage")
+      c.expect(false, "dump with AVANT_COVERAGE")
     }
 
     code = compile_av_cov(compiler, src, bin, log)
-    c.eq_int(code, 0, "compile --coverage")
+    c.eq_int(code, 0, "compile with AVANT_COVERAGE")
     c.expect(file_exists(bin), "coverage bin exists")
     chmod_x(bin)
-    // REPORT=0 must not hide a --coverage program's table.
     // The fixture writes its own lcov. The compiler's report is a different file.
     fix_lcov = "/tmp/avant-coverage-${stamp}-fixture.lcov"
     cov_run: Array(String) = []
     cov_run.push("AVANT_COVERAGE_LCOV=${fix_lcov}")
-    cov_run.push("AVANT_COVERAGE_REPORT=0")
     cov_run.push(bin)
     run_code = process_run_out("/usr/bin/env", cov_run, log)
     c.eq_int(run_code, 0, "run coverage fixture")
@@ -74,6 +72,15 @@ fn test_coverage(c: Checks) {
     rel_run.push(rel_bin)
     rel_run_code = process_run_out("/usr/bin/env", rel_run, rel_log)
     c.eq_int(rel_run_code, 0, "run relative coverage fixture")
+    if rel_out = file_read(rel_log) {
+      if str_has(rel_out, "% Stmts") {
+        c.expect(false, "REPORT=0 hides the table")
+      } else {
+        c.expect(true, "REPORT=0 hides the table")
+      }
+    } else {
+      c.expect(false, "REPORT=0 log")
+    }
     if rel_lcov = file_read(rel_lcov_path) {
       c.expect(str_has(rel_lcov, "SF:${rel_src}\n"), "relative SF keeps the directory")
     } else {
@@ -119,6 +126,172 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "junit.xml")
     }
+
+    abs_compiler = compiler_abs("coverage", compiler)
+    flag_src = "/tmp/avant-coverage-${stamp}-flag.av"
+    flag_w = file_write(flag_src, "fn main {\n  puts(1)\n}\n")
+    c.eq_int(flag_w, 0, "write flag fixture")
+    flag_log = "/tmp/avant-coverage-${stamp}-flag.log"
+    flag_args: Array(String) = []
+    flag_args.push("compile")
+    flag_args.push(flag_src)
+    flag_args.push("/tmp/avant-coverage-${stamp}-flag.bin")
+    flag_args.push("--coverage")
+    flag_code = process_run_out(abs_compiler, flag_args, flag_log)
+    c.expect(flag_code != 0, "compile rejects --coverage")
+    if flag_txt = file_read(flag_log) {
+      c.expect(str_has(flag_txt, "unknown"), "compile names the unknown flag")
+    } else {
+      c.expect(false, "compile flag log")
+    }
+    dump_flag_args: Array(String) = []
+    dump_flag_args.push("dump")
+    dump_flag_args.push(flag_src)
+    dump_flag_args.push("--coverage")
+    dump_flag_log = "/tmp/avant-coverage-${stamp}-dump-flag.log"
+    dump_flag_code = process_run_out(abs_compiler, dump_flag_args, dump_flag_log)
+    c.expect(dump_flag_code != 0, "dump rejects --coverage")
+
+    repo = compiler_abs("covrepo", ".")
+    miss_root = "/tmp/avant-coverage-${stamp}-noroot"
+    miss_mkdir: Array(String) = []
+    miss_mkdir.push("-p")
+    miss_mkdir.push(miss_root)
+    dummy_miss = process_run("/bin/mkdir", miss_mkdir)
+    miss_src = "/tmp/avant-coverage-${stamp}-stdimp.av"
+    miss_w = file_write(miss_src, "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"x\")\n  t.finish\n}\n")
+    c.eq_int(miss_w, 0, "write std import")
+    miss_log = "/tmp/avant-coverage-${stamp}-stdmiss.log"
+    miss_env: Array(String) = []
+    miss_env.push("AVANT_ROOT=${miss_root}")
+    if myc = env_get("AVANT_MYC_LLVM") {
+      miss_env.push("AVANT_MYC_LLVM=${myc}")
+    }
+    miss_env.push(abs_compiler)
+    miss_env.push("compile")
+    miss_env.push(miss_src)
+    miss_env.push("/tmp/avant-coverage-${stamp}-stdmiss.bin")
+    miss_env.push("--debug")
+    miss_code = process_run_out("/usr/bin/env", miss_env, miss_log)
+    c.expect(miss_code != 0, "AVANT_ROOT without lib/std fails")
+    if miss_txt = file_read(miss_log) {
+      c.expect(str_has(miss_txt, "cannot find std.testing"), "missing std names the module")
+    } else {
+      c.expect(false, "missing std log")
+    }
+
+    walk_log = "/tmp/avant-coverage-${stamp}-stdwalk.log"
+    walk_rc = "/tmp/avant-coverage-${stamp}-stdwalk.rc"
+    walk_sh = "/tmp/avant-coverage-${stamp}-stdwalk.sh"
+    walk_body = "#!/bin/sh\ncd /tmp\nunset AVANT_ROOT\n"
+    if myc = env_get("AVANT_MYC_LLVM") {
+      walk_body = "${walk_body}export AVANT_MYC_LLVM='${myc}'\n"
+    }
+    walk_body = "${walk_body}${abs_compiler} compile ${miss_src} /tmp/avant-coverage-${stamp}-stdwalk.bin --debug > ${walk_log} 2>&1\necho $? > ${walk_rc}\n"
+    walk_w = file_write(walk_sh, walk_body)
+    c.eq_int(walk_w, 0, "write std walk script")
+    chmod_x(walk_sh)
+    walk_run: Array(String) = []
+    walk_run.push(walk_sh)
+    dummy_walk = process_run("/bin/sh", walk_run)
+    walk_code = 1
+    if walk_text = file_read(walk_rc) {
+      walk_code = 0
+      wt = walk_text.strip()
+      wi = 0
+      while wi < wt.size {
+        wc = wt[wi]
+        if wc < 48 || wc > 57 {
+          walk_code = 1
+          break
+        }
+        walk_code = walk_code * 10 + (wc - 48)
+        wi = wi + 1
+      }
+    }
+    c.eq_int(walk_code, 0, "std walks up from the compiler")
+
+    proj = "/tmp/avant-coverage-${stamp}-proj"
+    proj_mkdir: Array(String) = []
+    proj_mkdir.push("-p")
+    proj_mkdir.push("${proj}/src")
+    proj_mkdir.push("${proj}/tests")
+    dummy_proj = process_run("/bin/mkdir", proj_mkdir)
+    toml_w = file_write("${proj}/avant.toml", "[package]\nname = \"covproj\"\nversion = \"0.0.1\"\n\n[coverage]\ninclude = [\"src\"]\nexclude = [\"tests\"]\n")
+    c.eq_int(toml_w, 0, "write coverage manifest")
+    greet_w = file_write("${proj}/src/greet.av", "pub fn greet: Int {\n  1\n}\npub fn other: Int {\n  2\n}\n")
+    c.eq_int(greet_w, 0, "write greet")
+    unused_w = file_write("${proj}/src/unused.av", "// not loaded\nfn unused: Int {\n  3\n}\n")
+    c.eq_int(unused_w, 0, "write unused")
+    ta_w = file_write("${proj}/tests/test_a.av", "import src.greet\nimport std.testing\nfn main: Int {\n  t = Test.new\n  t.check(greet() == 1, \"greet\")\n  t.finish\n}\n")
+    c.eq_int(ta_w, 0, "write test_a")
+    tb_w = file_write("${proj}/tests/test_b.av", "import src.greet\nimport std.testing\nfn main: Int {\n  t = Test.new\n  t.check(other() == 2, \"other\")\n  t.finish\n}\n")
+    c.eq_int(tb_w, 0, "write test_b")
+    proj_log = "/tmp/avant-coverage-${stamp}-proj.log"
+    proj_rc = "/tmp/avant-coverage-${stamp}-proj.rc"
+    proj_sh = "/tmp/avant-coverage-${stamp}-proj.sh"
+    proj_body = "#!/bin/sh\ncd ${proj}\nexport AVANT_ROOT='${repo}'\n"
+    if myc = env_get("AVANT_MYC_LLVM") {
+      proj_body = "${proj_body}export AVANT_MYC_LLVM='${myc}'\n"
+    }
+    proj_body = "${proj_body}${abs_compiler} test --coverage --jobs 2 > ${proj_log} 2>&1\necho $? > ${proj_rc}\n"
+    proj_sw = file_write(proj_sh, proj_body)
+    c.eq_int(proj_sw, 0, "write coverage project script")
+    chmod_x(proj_sh)
+    proj_run: Array(String) = []
+    proj_run.push(proj_sh)
+    dummy_proj_run = process_run("/bin/sh", proj_run)
+    proj_code = 1
+    if proj_text = file_read(proj_rc) {
+      proj_code = 0
+      pt = proj_text.strip()
+      pi = 0
+      while pi < pt.size {
+        pc = pt[pi]
+        if pc < 48 || pc > 57 {
+          proj_code = 1
+          break
+        }
+        proj_code = proj_code * 10 + (pc - 48)
+        pi = pi + 1
+      }
+    }
+    c.eq_int(proj_code, 0, "avant test --coverage")
+    if proj_out = file_read(proj_log) {
+      c.expect(str_has(proj_out, "0 failed, 2 passed"), "coverage run passes")
+      c.expect(str_has(proj_out, "% Stmts"), "coverage table has % Stmts")
+      c.expect(str_has(proj_out, "All files"), "coverage table has All files")
+      c.expect(str_has(proj_out, "src/unused.av"), "unloaded file is in the table")
+      c.expect(str_has(proj_out, "src/greet.av"), "imported file is in the table")
+    } else {
+      c.expect(false, "coverage project log")
+    }
+    if proj_lcov = file_read("${proj}/lcov.info") {
+      c.expect(str_has(proj_lcov, "SF:src/greet.av\n"), "lcov has greet")
+      c.expect(str_has(proj_lcov, "SF:src/unused.av\n"), "lcov has unused")
+      c.expect(str_has(proj_lcov, "DA:"), "lcov has line records")
+      if str_has(proj_lcov, "test_a.av") {
+        c.expect(false, "exclude drops the test file")
+      } else {
+        c.expect(true, "exclude drops the test file")
+      }
+      if str_has(proj_lcov, "FNDA:0,greet") {
+        c.expect(false, "merged greet was hit")
+      } else {
+        c.expect(str_has(proj_lcov, "greet"), "merged greet was hit")
+      }
+      if str_has(proj_lcov, "FNDA:0,other") {
+        c.expect(false, "merged other was hit")
+      } else {
+        c.expect(str_has(proj_lcov, "other"), "merged other was hit")
+      }
+    } else {
+      c.expect(false, "project lcov")
+    }
+    rm_lcov: Array(String) = []
+    rm_lcov.push("-f")
+    rm_lcov.push("${proj}/lcov.info")
+    dummy_rm = process_run("/bin/rm", rm_lcov)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

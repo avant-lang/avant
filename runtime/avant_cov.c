@@ -101,6 +101,9 @@ static int should_report(void) {
   int fd;
   ssize_t n;
 
+  if (r && r[0] == '0' && r[1] == 0) {
+    return 0;
+  }
   if (r && r[0] == '1' && r[1] == 0) {
     return 1;
   }

@@ -26,6 +26,9 @@ pub class PkgManifest {
   test_entry: String = ""
   test_exclusive: Array(String)
   test_err: String = ""
+  cov_include: Array(String)
+  cov_exclude: Array(String)
+  cov_err: String = ""
 
   fn initialize {
     d: Array(PkgDep) = []
@@ -37,6 +40,11 @@ pub class PkgManifest {
     self.test_err = ""
     ex: Array(String) = []
     self.test_exclusive = ex
+    inc: Array(String) = []
+    self.cov_include = inc
+    exc: Array(String) = []
+    self.cov_exclude = exc
+    self.cov_err = ""
   }
 }
 
@@ -252,6 +260,12 @@ pub fn pkg_note_test(m: PkgManifest, message: String) {
   }
 }
 
+pub fn pkg_note_cov(m: PkgManifest, message: String) {
+  if m.cov_err.size == 0 {
+    m.cov_err = message
+  }
+}
+
 pub class PkgStrings {
   items: Array(String)
   ok: Bool = false
@@ -372,6 +386,40 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     return true
   }
   pkg_note_test(m, "${path}:${line_no}: unknown test key ${k} (want dir, entry, or exclusive)")
+  true
+}
+
+pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
+  k = pkg_trim(key)
+  if str_eq(k, "include") || str_eq(k, "exclude") {
+    if str_eq(k, "include") {
+      if m.cov_include.size > 0 {
+        pkg_note_cov(m, "${path}:${line_no}: duplicate coverage key include")
+        return true
+      }
+    } else {
+      if m.cov_exclude.size > 0 {
+        pkg_note_cov(m, "${path}:${line_no}: duplicate coverage key exclude")
+        return true
+      }
+    }
+    list = pkg_string_list(val)
+    if list.ok {
+      i = 0
+      while i < list.items.size {
+        if str_eq(k, "include") {
+          m.cov_include.push(list.items[i])
+        } else {
+          m.cov_exclude.push(list.items[i])
+        }
+        i = i + 1
+      }
+    } else {
+      pkg_note_cov(m, "${path}:${line_no}: ${k} needs a string or a list of strings")
+    }
+    return true
+  }
+  pkg_note_cov(m, "${path}:${line_no}: unknown coverage key ${k} (want include or exclude)")
   true
 }
 
@@ -505,7 +553,12 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         dep_idx = -1
         continue
       }
-      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package], [dependencies], or [test])"
+      if str_eq(inner, "coverage") {
+        section = "coverage"
+        dep_idx = -1
+        continue
+      }
+      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package], [dependencies], [test], or [coverage])"
       return m
     }
     eq = pkg_find_eq(line)
@@ -575,6 +628,13 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
     }
     if str_eq(section, "test") {
       if pkg_apply_test(m, key, val, path, line_no) {
+      } else {
+        return m
+      }
+      continue
+    }
+    if str_eq(section, "coverage") {
+      if pkg_apply_coverage(m, key, val, path, line_no) {
       } else {
         return m
       }

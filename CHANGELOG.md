@@ -1,5 +1,11 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Changed
+* `import std.testing` walks upward from the compiler and uses the first `lib/std/testing.av` it finds. `AVANT_ROOT` is that directory when it is set. The release still ships the file beside `avant`.
+* `avant test --coverage` instruments the selected tests, writes one `lcov.info`, and prints one coverage table after the summary. `compile`, `dump`, and `run` no longer take `--coverage`.
+
 ## 0.24.2 - 2026-11-01
 
 ### Changed
