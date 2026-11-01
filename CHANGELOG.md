@@ -1,6 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
+## 0.25.0 - 2026-11-01
 
 ### Changed
 * `import std.testing` walks upward from the compiler and uses the first `lib/std/testing.av` it finds. `AVANT_ROOT` is that directory when it is set. The release still ships the file beside `avant`.
