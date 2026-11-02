@@ -1219,7 +1219,7 @@ Testing the compiler itself is covered for contributors under [Advanced: buildin
 
 ## Builtins
 
-Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, `zlib_compress`, the `json_*` family, base64, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`.
+Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, the `json_*` family, base64, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`. `import std.zlib` adds `Bytes.compress` and `Bytes.uncompress` and is what links zlib.
 
 ## Not built yet
 

@@ -517,7 +517,7 @@ pub class Checker {
         if recv = fnn.receiver {
           ty = self.resolve_in_module(recv.type)
           self.pull_resolve
-          if self.ptr_method_ok(ty) {
+          if self.ptr_method_ok(ty) || ty.is_bytes || ty.is_string || ty.is_buf {
             self.self_name = recv.name
             if existing = self.lookup(self.self_name) {
               self.fail(fnn.loc, "duplicate parameter ${self.self_name}")
@@ -918,16 +918,15 @@ pub class Checker {
 
   pub fn if_assign_success(got: Ty, loc: Location): Ty {
     if got.is_union {
-      if got.includes_nil {
-        success = ty_without_nil(got)
-        if success.is_union {
-          self.fail(loc, "if-assign needs a single success type, got ${got.show}")
-          return self.t_int()
-        }
+      if success = if_assign_payload(got) {
         return success
       }
+      if got.includes_nil {
+        self.fail(loc, "if-assign needs a single success type, got ${got.show}")
+        return self.t_int()
+      }
     }
-    self.fail(loc, "if-assign expects T?, got ${got.show}")
+    self.fail(loc, "if-assign expects T? or T | Error, got ${got.show}")
     self.t_int()
   }
 
@@ -1405,6 +1404,9 @@ pub class Checker {
           expr.method_call = true
           return self.t_int()
         }
+        if got = self.builtin_ext_call(expr, object) {
+          return got
+        }
         self.fail(expr.loc, "String has no field ${expr.ident} (did you mean size?)")
         return self.t_int()
       }
@@ -1419,6 +1421,9 @@ pub class Checker {
         if str_eq(expr.ident, "chars") {
           expr.method_call = true
           return ty_array(self.t_string())
+        }
+        if got = self.builtin_ext_call(expr, object) {
+          return got
         }
         self.fail(expr.loc, "Bytes has no field ${expr.ident} (did you mean size?)")
         return self.t_int()
@@ -1545,6 +1550,9 @@ pub class Checker {
         if str_eq(expr.ident, "clear") {
           expr.method_call = true
           return self.t_void()
+        }
+        if got = self.builtin_ext_call(expr, object) {
+          return got
         }
         self.fail(expr.loc, "Buf has no field ${expr.ident}")
         return self.t_int()
@@ -1677,6 +1685,35 @@ pub class Checker {
       return true
     }
     false
+  }
+
+  pub fn builtin_ext_call(expr: Expr, object: Ty): Ty? {
+    owner = object.show
+    has_zero = false
+    mi = 0
+    while mi < self.methods.size {
+      ms = self.methods[mi]
+      if str_eq(ms.owner, owner) {
+        if str_eq(ms.name, expr.ident) {
+          if arity_ok(ms.node, 0) {
+            if self.method_is_visible(ms.node, self.current_module) {
+              has_zero = true
+            }
+          }
+        }
+      }
+      mi = mi + 1
+    }
+    if has_zero {
+      arg_tys: Array(Ty) = []
+      none: Ty? = nil
+      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, "") {
+        expr.method_call = true
+        expr.resolved = sig.node.emit_name
+        return sig.ret
+      }
+    }
+    nil
   }
 
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {

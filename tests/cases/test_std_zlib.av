@@ -1,0 +1,47 @@
+import harness
+import std.zlib
+
+fn test_std_zlib(c: Checks) {
+  c.suite("tests/cases/test_std_zlib.av")
+  raw = "hello".bytes
+  if back = raw.compress.uncompress {
+    text = String.from_utf8(back) ?? ""
+    c.eq_str(text, "hello", "roundtrip")
+  } else {
+    c.expect(false, "roundtrip")
+  }
+  plain = "nope".bytes
+  if ignored = plain.uncompress {
+    c.expect(false, "plain text is not zlib")
+  } else {
+    c.expect(true, "plain text is not zlib")
+  }
+  dst = buf_new(64)
+  if err = raw.compress_into(dst) {
+    c.expect(false, "compress_into ${err.message}")
+  } else {
+    if back2 = dst.to_bytes.uncompress {
+      text2 = String.from_utf8(back2) ?? ""
+      c.eq_str(text2, "hello", "compress_into")
+    } else {
+      c.expect(false, "compress_into")
+    }
+  }
+  udst = buf_new(64)
+  if err2 = raw.compress.uncompress_into(udst) {
+    c.expect(false, "uncompress_into ${err2.message}")
+  } else {
+    text3 = String.from_utf8(udst.to_bytes) ?? ""
+    c.eq_str(text3, "hello", "uncompress_into")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_zlib(c)
+  c.finish
+}

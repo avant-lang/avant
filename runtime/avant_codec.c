@@ -6,7 +6,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h>
 
 typedef struct {
   void *buf;
@@ -274,65 +273,6 @@ char *avant_sha256(const char *s) {
     out[i * 8 + 7] = HEX[v & 15];
   }
   out[64] = 0;
-  avant_str_tag(out);
-  avant_gc_defer_leave();
-  return out;
-}
-
-char *avant_zlib_compress(const char *s) {
-  size_t n = avant_str_n(s);
-  uLong bound = compressBound((uLong)n);
-  uLong dest_len = bound;
-  uint8_t *raw;
-  char *out;
-  avant_gc_defer_enter();
-  raw = (uint8_t *)malloc((size_t)bound);
-  if (!raw) {
-    avant_gc_defer_leave();
-    return avant_str_empty();
-  }
-  if (compress(raw, &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
-    free(raw);
-    avant_gc_defer_leave();
-    return avant_str_empty();
-  }
-  out = (char *)avant_alloc((uint64_t)dest_len + 5, AVANT_TYPE_BYTES);
-  out[0] = (char)((n >> 24) & 255);
-  out[1] = (char)((n >> 16) & 255);
-  out[2] = (char)((n >> 8) & 255);
-  out[3] = (char)(n & 255);
-  memcpy(out + 4, raw, (size_t)dest_len);
-  out[4 + dest_len] = 0;
-  avant_str_tag(out);
-  free(raw);
-  avant_gc_defer_leave();
-  return out;
-}
-
-char *avant_zlib_uncompress(const char *s) {
-  size_t n = avant_str_n(s);
-  const uint8_t *p = (const uint8_t *)(s ? s : "");
-  uint32_t orig;
-  uLong dest_len;
-  char *out;
-  if (n < 4) {
-    return avant_str_empty();
-  }
-  orig = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-  dest_len = orig;
-  avant_gc_defer_enter();
-  out = (char *)avant_alloc((uint64_t)orig + 1, AVANT_TYPE_BYTES);
-  if (orig == 0) {
-    out[0] = 0;
-    avant_str_tag(out);
-    avant_gc_defer_leave();
-    return out;
-  }
-  if (uncompress((Bytef *)out, &dest_len, p + 4, (uLong)(n - 4)) != Z_OK || dest_len != orig) {
-    avant_gc_defer_leave();
-    return avant_str_empty();
-  }
-  out[orig] = 0;
   avant_str_tag(out);
   avant_gc_defer_leave();
   return out;

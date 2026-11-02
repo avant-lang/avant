@@ -110,8 +110,8 @@ pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
   if str_eq(expr.callee, "chars") {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Bytes")
-  checker_self.t_bytes()
+  none: Ty? = nil
+  checker_self.dispatch_method(expr, checker_self.t_bytes(), none)
 }
 
 pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
@@ -169,8 +169,8 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
     }
     return ty_nilable(checker_self.t_int())
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on String")
-  checker_self.t_string()
+  none: Ty? = nil
+  checker_self.dispatch_method(expr, checker_self.t_string(), none)
 }
 
 pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
@@ -310,8 +310,8 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
     }
     return ty_nilable(checker_self.t_int())
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Buf")
-  checker_self.t_void()
+  none: Ty? = nil
+  checker_self.dispatch_method(expr, checker_self.t_buf(), none)
 }
 
 pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
@@ -1230,12 +1230,6 @@ pub fn (checker_self: Checker) check_codec_call(expr: Expr): Ty? {
     return checker_self.check_one_string(expr, checker_self.t_string())
   }
   if str_eq(expr.callee, "b64_decode") {
-    return checker_self.check_one_string(expr, checker_self.t_string())
-  }
-  if str_eq(expr.callee, "zlib_compress") {
-    return checker_self.check_one_string(expr, checker_self.t_string())
-  }
-  if str_eq(expr.callee, "zlib_uncompress") {
     return checker_self.check_one_string(expr, checker_self.t_string())
   }
   if str_eq(expr.callee, "sha256") {

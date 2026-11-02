@@ -1979,16 +1979,20 @@ pub class MycGen {
     if cond = stmt.cond {
       uty = expr_ty(cond)
       success = ty_without_nil(uty)
+      if payload = if_assign_payload(uty) {
+        success = payload
+      }
       self.emit_expr(cond)
       tmp = self.new_temp
       um = ty_myc(uty)
       self.line("LOCAL :${tmp} :${um}")
       self.line("STORE")
       self.ensure_root(tmp, uty)
-      nil_tag = uty.tag_of(ty_nil())
+      fail_ty = if_assign_failure(uty)
+      fail_tag = uty.tag_of(fail_ty)
       self.line("LOCAL :${tmp}")
       self.line("FIELD 0")
-      self.line("PUSH ${nil_tag}")
+      self.line("PUSH ${fail_tag}")
       self.line("BINARY :not_eq")
       self.line("IF")
       self.indent = self.indent + 1
@@ -2219,6 +2223,8 @@ pub class MycGen {
                 self.line("CALL :avant_str_chars")
                 m = ty_myc(expr_ty(expr))
                 self.line("AS :${m}")
+              } else if expr.resolved.size > 0 {
+                self.line("CALL :${expr.resolved}")
               }
             } else if object_ty.is_bytes {
               self.emit_expr(obj)
@@ -2228,6 +2234,8 @@ pub class MycGen {
                 self.line("CALL :avant_bytes_chars")
                 m = ty_myc(expr_ty(expr))
                 self.line("AS :${m}")
+              } else if expr.resolved.size > 0 {
+                self.line("CALL :${expr.resolved}")
               }
             } else if object_ty.is_buf {
               self.emit_expr(obj)
@@ -2237,6 +2245,8 @@ pub class MycGen {
                 self.line("CALL :avant_buf_to_str")
               } else if str_eq(expr.ident, "clear") {
                 self.line("CALL :avant_buf_clear")
+              } else if expr.resolved.size > 0 {
+                self.line("CALL :${expr.resolved}")
               }
             } else if object_ty.is_hash {
               if str_eq(expr.ident, "keys") || str_eq(expr.ident, "values") {

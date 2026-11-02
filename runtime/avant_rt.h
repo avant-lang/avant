@@ -162,6 +162,9 @@ int32_t avant_crc32_i32(void *arr);
 int32_t avant_sha256_word0(void *arr);
 char *avant_zlib_compress(const char *s);
 char *avant_zlib_uncompress(const char *s);
+int32_t avant_zlib_compress_into(const char *s, void *buf);
+int32_t avant_zlib_uncompress_into(const char *s, void *buf);
+int32_t avant_zlib_take_status(void);
 char *avant_sha256(const char *s);
 
 void *avant_re_compile(const char *pat, int32_t flags);
