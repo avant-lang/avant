@@ -1161,6 +1161,13 @@ FUNC :avant_dir_list
     TYPE :ptr<u8>
 ENDFUNC
 
+FUNC :avant_http_roundtrip
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<u8>
+ENDFUNC
+
 FUNC :avant_json_parse
   RETURN
     TYPE :ptr<void>
@@ -1168,40 +1175,14 @@ FUNC :avant_json_parse
     TYPE :ptr<u8>
 ENDFUNC
 
-FUNC :avant_json_free
-  ARGS
-    TYPE :ptr<void>
-ENDFUNC
-
-FUNC :avant_json_gen_body
-  RETURN
-    TYPE :ptr<u8>
-  ARGS
-    TYPE :i32
-ENDFUNC
-
-FUNC :avant_json_gen_into
-  ARGS
-    TYPE :ptr<void>
-    TYPE :i32
-ENDFUNC
-
-FUNC :avant_json_get_int
+FUNC :avant_json_take_status
   RETURN
     TYPE :i32
-  ARGS
-    TYPE :ptr<void>
-    TYPE :ptr<u8>
-    TYPE :ptr<i32>
 ENDFUNC
 
-FUNC :avant_json_get_str
+FUNC :avant_json_take_pool
   RETURN
     TYPE :ptr<u8>
-  ARGS
-    TYPE :ptr<void>
-    TYPE :ptr<u8>
-    TYPE :ptr<i32>
 ENDFUNC
 
 FUNC :avant_json_root
@@ -1211,7 +1192,14 @@ FUNC :avant_json_root
     TYPE :ptr<void>
 ENDFUNC
 
-FUNC :avant_json_obj_get
+FUNC :avant_json_kind
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_json_get
   RETURN
     TYPE :ptr<void>
   ARGS
@@ -1219,19 +1207,34 @@ FUNC :avant_json_obj_get
     TYPE :ptr<u8>
 ENDFUNC
 
-FUNC :avant_json_arr_len
+FUNC :avant_json_at
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_json_len
   RETURN
     TYPE :i32
   ARGS
     TYPE :ptr<void>
 ENDFUNC
 
-FUNC :avant_json_arr_get
+FUNC :avant_json_as_int
   RETURN
-    TYPE :ptr<void>
+    TYPE :i32
   ARGS
     TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_json_obj_int
+  RETURN
     TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
 ENDFUNC
 
 FUNC :avant_json_as_f64
@@ -1239,7 +1242,6 @@ FUNC :avant_json_as_f64
     TYPE :f64
   ARGS
     TYPE :ptr<void>
-    TYPE :ptr<i32>
 ENDFUNC
 
 FUNC :avant_json_obj_f64
@@ -1248,27 +1250,90 @@ FUNC :avant_json_obj_f64
   ARGS
     TYPE :ptr<void>
     TYPE :ptr<u8>
-    TYPE :ptr<i32>
 ENDFUNC
 
-FUNC :avant_json_arr_sum_f64
+FUNC :avant_json_as_bool
   RETURN
-    TYPE :f64
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_json_obj_bool
+  RETURN
+    TYPE :i32
   ARGS
     TYPE :ptr<void>
     TYPE :ptr<u8>
 ENDFUNC
 
-FUNC :avant_http_roundtrip
+FUNC :avant_json_as_str
   RETURN
     TYPE :ptr<u8>
   ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_json_obj_str
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
     TYPE :ptr<u8>
 ENDFUNC
 
-STRUCT :U_Int_Nil
+FUNC :avant_json_key_at
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_json_text
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+STRUCT :Json
+  TYPE :ptr<void>
+  TYPE :ptr<u8>
+ENDSTRUCT
+
+STRUCT :JsonError
+  TYPE :ptr<u8>
+ENDSTRUCT
+
+STRUCT :JsonValue
   TYPE :i32
   TYPE :i32
+  TYPE :f64
+  TYPE :ptr<u8>
+  TYPE :bool
+  TYPE :ptr<Array_JsonValue>
+  TYPE :ptr<Array_String>
+  TYPE :ptr<Array_JsonValue>
+ENDSTRUCT
+
+STRUCT :JsonBuilder
+  TYPE :ptr<void>
+  TYPE :ptr<Array_Int>
+  TYPE :ptr<Array_Int>
+  TYPE :bool
+  TYPE :bool
+ENDSTRUCT
+
+STRUCT :U_Json_JsonError
+  TYPE :i32
+  TYPE :Json
+  TYPE :ptr<JsonError>
+ENDSTRUCT
+
+STRUCT :U_Json_Nil
+  TYPE :i32
+  TYPE :Json
 ENDSTRUCT
 
 STRUCT :U_Nil_String
@@ -1276,11 +1341,622 @@ STRUCT :U_Nil_String
   TYPE :ptr<u8>
 ENDSTRUCT
 
+STRUCT :U_Int_Nil
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :U_Float64_Nil
+  TYPE :i32
+  TYPE :f64
+ENDSTRUCT
+
+STRUCT :U_Bool_Nil
+  TYPE :i32
+  TYPE :bool
+ENDSTRUCT
+
+STRUCT :U_JsonValue_Nil
+  TYPE :i32
+  TYPE :ptr<JsonValue>
+ENDSTRUCT
+
+STRUCT :Array_JsonValue
+  TYPE :ptr<ptr<JsonValue>>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :Array_String
+  TYPE :ptr<ptr<u8>>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :Array_Int
+  TYPE :ptr<i32>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
 STRUCT :AvantBuf
   TYPE :ptr<u8>
   TYPE :i32
   TYPE :i32
 ENDSTRUCT
+
+FUNC :json_error
+  ARGS
+    TYPE :i32
+  RETURN
+    TYPE :ptr<JsonError>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :code :i32
+    STORE
+    LOCAL :code :i32
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t1
+    BINARY :eq
+    IF
+      THEN
+        PUSH "invalid JSON document"
+        CALL :JsonError__new
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    PUSH "JSON error"
+    CALL :JsonError__new
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :builder_escape
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
+  BODY
+    PARAM 0
+    LOCAL :buf :ptr<void>
+    STORE
+    PARAM 1
+    LOCAL :s :ptr<u8>
+    STORE
+    PUSH "0123456789abcdef"
+    LOCAL :hex :ptr<u8>
+    STORE
+    PUSH "\""
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :buf :ptr<void>
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_str
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    LOCAL :s :ptr<u8>
+    CALL :avant_str_size
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0 :i64
+    LOCAL :__t3
+    AS :i64
+    BINARY :sub
+    LOCAL :__t4 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t4
+    BINARY :sub
+    LOCAL :__t5 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t5
+    BINARY :div
+    LOCAL :__t6 :i64
+    STORE
+    PUSH 1 :i64
+    LOCAL :__t6
+    BINARY :mul
+    PUSH 0 :i64
+    BINARY :add
+    LOCAL :__t7 :i64
+    STORE
+    PUSH true
+    LOCAL :s
+    CALL :avant_str_size
+    AS :i64
+    LOCAL :__t7
+    PUSH 0 :i64
+    BINARY :add
+    BINARY :less
+    BINARY :and
+    IF
+      THEN
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t8 :i32
+            STORE
+            LOCAL :s :ptr<u8>
+            CALL :avant_str_size
+            LOCAL :__t8
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t9 :i32
+            STORE
+            LOCAL :s :ptr<u8>
+            LOCAL :__t10 :ptr<u8>
+            STORE
+            LOCAL :__t9
+            LOCAL :__t10
+            BINARY :add
+            DEREF
+            TO :i32
+            LOCAL :c :i32
+            STORE
+            LOCAL :c :i32
+            LOCAL :__t11 :i32
+            STORE
+            PUSH 34
+            LOCAL :__t11
+            BINARY :eq
+            IF
+              THEN
+                PUSH "\\\""
+                LOCAL :__t12 :ptr<u8>
+                STORE
+                LOCAL :buf :ptr<void>
+                LOCAL :__t13 :ptr<void>
+                STORE
+                LOCAL :__t12
+                LOCAL :__t13
+                CALL :avant_buf_push_str
+              ELSE
+                LOCAL :c :i32
+                LOCAL :__t14 :i32
+                STORE
+                PUSH 92
+                LOCAL :__t14
+                BINARY :eq
+                IF
+                  THEN
+                    PUSH "\\\\"
+                    LOCAL :__t15 :ptr<u8>
+                    STORE
+                    LOCAL :buf :ptr<void>
+                    LOCAL :__t16 :ptr<void>
+                    STORE
+                    LOCAL :__t15
+                    LOCAL :__t16
+                    CALL :avant_buf_push_str
+                  ELSE
+                    LOCAL :c :i32
+                    LOCAL :__t17 :i32
+                    STORE
+                    PUSH 10
+                    LOCAL :__t17
+                    BINARY :eq
+                    IF
+                      THEN
+                        PUSH "\\n"
+                        LOCAL :__t18 :ptr<u8>
+                        STORE
+                        LOCAL :buf :ptr<void>
+                        LOCAL :__t19 :ptr<void>
+                        STORE
+                        LOCAL :__t18
+                        LOCAL :__t19
+                        CALL :avant_buf_push_str
+                      ELSE
+                        LOCAL :c :i32
+                        LOCAL :__t20 :i32
+                        STORE
+                        PUSH 13
+                        LOCAL :__t20
+                        BINARY :eq
+                        IF
+                          THEN
+                            PUSH "\\r"
+                            LOCAL :__t21 :ptr<u8>
+                            STORE
+                            LOCAL :buf :ptr<void>
+                            LOCAL :__t22 :ptr<void>
+                            STORE
+                            LOCAL :__t21
+                            LOCAL :__t22
+                            CALL :avant_buf_push_str
+                          ELSE
+                            LOCAL :c :i32
+                            LOCAL :__t23 :i32
+                            STORE
+                            PUSH 9
+                            LOCAL :__t23
+                            BINARY :eq
+                            IF
+                              THEN
+                                PUSH "\\t"
+                                LOCAL :__t24 :ptr<u8>
+                                STORE
+                                LOCAL :buf :ptr<void>
+                                LOCAL :__t25 :ptr<void>
+                                STORE
+                                LOCAL :__t24
+                                LOCAL :__t25
+                                CALL :avant_buf_push_str
+                              ELSE
+                                LOCAL :c :i32
+                                LOCAL :__t26 :i32
+                                STORE
+                                PUSH 32
+                                LOCAL :__t26
+                                BINARY :less
+                                IF
+                                  THEN
+                                    PUSH "\\u00"
+                                    LOCAL :__t27 :ptr<u8>
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t28 :ptr<void>
+                                    STORE
+                                    LOCAL :__t27
+                                    LOCAL :__t28
+                                    CALL :avant_buf_push_str
+                                    LOCAL :c :i32
+                                    LOCAL :__t29 :i32
+                                    STORE
+                                    PUSH 16
+                                    LOCAL :__t29
+                                    BINARY :div
+                                    LOCAL :__t30 :i32
+                                    STORE
+                                    LOCAL :hex :ptr<u8>
+                                    LOCAL :__t31 :ptr<u8>
+                                    STORE
+                                    LOCAL :__t31
+                                    CALL :avant_str_size
+                                    LOCAL :__t32 :i32
+                                    STORE
+                                    LOCAL :__t32
+                                    AS :u32
+                                    LOCAL :__t30
+                                    AS :u32
+                                    BINARY :more_eq
+                                    IF
+                                      THEN
+                                        LOCAL :__t32
+                                        LOCAL :__t30
+                                        CALL :avant_trap_bounds
+                                    ENDIF
+                                    LOCAL :__t30
+                                    LOCAL :__t31
+                                    BINARY :add
+                                    DEREF
+                                    TO :i32
+                                    LOCAL :__t33 :i32
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t34 :ptr<void>
+                                    STORE
+                                    LOCAL :__t33
+                                    LOCAL :__t34
+                                    CALL :avant_buf_push_byte
+                                    LOCAL :c :i32
+                                    LOCAL :__t35 :i32
+                                    STORE
+                                    PUSH 16
+                                    LOCAL :__t35
+                                    BINARY :rem
+                                    LOCAL :__t36 :i32
+                                    STORE
+                                    LOCAL :hex :ptr<u8>
+                                    LOCAL :__t37 :ptr<u8>
+                                    STORE
+                                    LOCAL :__t37
+                                    CALL :avant_str_size
+                                    LOCAL :__t38 :i32
+                                    STORE
+                                    LOCAL :__t38
+                                    AS :u32
+                                    LOCAL :__t36
+                                    AS :u32
+                                    BINARY :more_eq
+                                    IF
+                                      THEN
+                                        LOCAL :__t38
+                                        LOCAL :__t36
+                                        CALL :avant_trap_bounds
+                                    ENDIF
+                                    LOCAL :__t36
+                                    LOCAL :__t37
+                                    BINARY :add
+                                    DEREF
+                                    TO :i32
+                                    LOCAL :__t39 :i32
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t40 :ptr<void>
+                                    STORE
+                                    LOCAL :__t39
+                                    LOCAL :__t40
+                                    CALL :avant_buf_push_byte
+                                  ELSE
+                                    LOCAL :c :i32
+                                    LOCAL :__t41 :i32
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t42 :ptr<void>
+                                    STORE
+                                    LOCAL :__t41
+                                    LOCAL :__t42
+                                    CALL :avant_buf_push_byte
+                                ENDIF
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+            LOCAL :i :i32
+            LOCAL :__t43 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t43
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+        ENDLOOP
+      ELSE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t44 :i32
+            STORE
+            LOCAL :s :ptr<u8>
+            CALL :avant_str_size
+            LOCAL :__t44
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t45 :i32
+            STORE
+            LOCAL :s :ptr<u8>
+            LOCAL :__t46 :ptr<u8>
+            STORE
+            LOCAL :__t45
+            LOCAL :__t46
+            BINARY :add
+            DEREF
+            TO :i32
+            LOCAL :c :i32
+            STORE
+            LOCAL :c :i32
+            LOCAL :__t47 :i32
+            STORE
+            PUSH 34
+            LOCAL :__t47
+            BINARY :eq
+            IF
+              THEN
+                PUSH "\\\""
+                LOCAL :__t48 :ptr<u8>
+                STORE
+                LOCAL :buf :ptr<void>
+                LOCAL :__t49 :ptr<void>
+                STORE
+                LOCAL :__t48
+                LOCAL :__t49
+                CALL :avant_buf_push_str
+              ELSE
+                LOCAL :c :i32
+                LOCAL :__t50 :i32
+                STORE
+                PUSH 92
+                LOCAL :__t50
+                BINARY :eq
+                IF
+                  THEN
+                    PUSH "\\\\"
+                    LOCAL :__t51 :ptr<u8>
+                    STORE
+                    LOCAL :buf :ptr<void>
+                    LOCAL :__t52 :ptr<void>
+                    STORE
+                    LOCAL :__t51
+                    LOCAL :__t52
+                    CALL :avant_buf_push_str
+                  ELSE
+                    LOCAL :c :i32
+                    LOCAL :__t53 :i32
+                    STORE
+                    PUSH 10
+                    LOCAL :__t53
+                    BINARY :eq
+                    IF
+                      THEN
+                        PUSH "\\n"
+                        LOCAL :__t54 :ptr<u8>
+                        STORE
+                        LOCAL :buf :ptr<void>
+                        LOCAL :__t55 :ptr<void>
+                        STORE
+                        LOCAL :__t54
+                        LOCAL :__t55
+                        CALL :avant_buf_push_str
+                      ELSE
+                        LOCAL :c :i32
+                        LOCAL :__t56 :i32
+                        STORE
+                        PUSH 13
+                        LOCAL :__t56
+                        BINARY :eq
+                        IF
+                          THEN
+                            PUSH "\\r"
+                            LOCAL :__t57 :ptr<u8>
+                            STORE
+                            LOCAL :buf :ptr<void>
+                            LOCAL :__t58 :ptr<void>
+                            STORE
+                            LOCAL :__t57
+                            LOCAL :__t58
+                            CALL :avant_buf_push_str
+                          ELSE
+                            LOCAL :c :i32
+                            LOCAL :__t59 :i32
+                            STORE
+                            PUSH 9
+                            LOCAL :__t59
+                            BINARY :eq
+                            IF
+                              THEN
+                                PUSH "\\t"
+                                LOCAL :__t60 :ptr<u8>
+                                STORE
+                                LOCAL :buf :ptr<void>
+                                LOCAL :__t61 :ptr<void>
+                                STORE
+                                LOCAL :__t60
+                                LOCAL :__t61
+                                CALL :avant_buf_push_str
+                              ELSE
+                                LOCAL :c :i32
+                                LOCAL :__t62 :i32
+                                STORE
+                                PUSH 32
+                                LOCAL :__t62
+                                BINARY :less
+                                IF
+                                  THEN
+                                    PUSH "\\u00"
+                                    LOCAL :__t63 :ptr<u8>
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t64 :ptr<void>
+                                    STORE
+                                    LOCAL :__t63
+                                    LOCAL :__t64
+                                    CALL :avant_buf_push_str
+                                    LOCAL :c :i32
+                                    LOCAL :__t65 :i32
+                                    STORE
+                                    PUSH 16
+                                    LOCAL :__t65
+                                    BINARY :div
+                                    LOCAL :__t66 :i32
+                                    STORE
+                                    LOCAL :hex :ptr<u8>
+                                    LOCAL :__t67 :ptr<u8>
+                                    STORE
+                                    LOCAL :__t67
+                                    CALL :avant_str_size
+                                    LOCAL :__t68 :i32
+                                    STORE
+                                    LOCAL :__t68
+                                    AS :u32
+                                    LOCAL :__t66
+                                    AS :u32
+                                    BINARY :more_eq
+                                    IF
+                                      THEN
+                                        LOCAL :__t68
+                                        LOCAL :__t66
+                                        CALL :avant_trap_bounds
+                                    ENDIF
+                                    LOCAL :__t66
+                                    LOCAL :__t67
+                                    BINARY :add
+                                    DEREF
+                                    TO :i32
+                                    LOCAL :__t69 :i32
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t70 :ptr<void>
+                                    STORE
+                                    LOCAL :__t69
+                                    LOCAL :__t70
+                                    CALL :avant_buf_push_byte
+                                    LOCAL :c :i32
+                                    LOCAL :__t71 :i32
+                                    STORE
+                                    PUSH 16
+                                    LOCAL :__t71
+                                    BINARY :rem
+                                    LOCAL :__t72 :i32
+                                    STORE
+                                    LOCAL :hex :ptr<u8>
+                                    LOCAL :__t73 :ptr<u8>
+                                    STORE
+                                    LOCAL :__t73
+                                    CALL :avant_str_size
+                                    LOCAL :__t74 :i32
+                                    STORE
+                                    LOCAL :__t74
+                                    AS :u32
+                                    LOCAL :__t72
+                                    AS :u32
+                                    BINARY :more_eq
+                                    IF
+                                      THEN
+                                        LOCAL :__t74
+                                        LOCAL :__t72
+                                        CALL :avant_trap_bounds
+                                    ENDIF
+                                    LOCAL :__t72
+                                    LOCAL :__t73
+                                    BINARY :add
+                                    DEREF
+                                    TO :i32
+                                    LOCAL :__t75 :i32
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t76 :ptr<void>
+                                    STORE
+                                    LOCAL :__t75
+                                    LOCAL :__t76
+                                    CALL :avant_buf_push_byte
+                                  ELSE
+                                    LOCAL :c :i32
+                                    LOCAL :__t77 :i32
+                                    STORE
+                                    LOCAL :buf :ptr<void>
+                                    LOCAL :__t78 :ptr<void>
+                                    STORE
+                                    LOCAL :__t77
+                                    LOCAL :__t78
+                                    CALL :avant_buf_push_byte
+                                ENDIF
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+            LOCAL :i :i32
+            LOCAL :__t79 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t79
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+        ENDLOOP
+    ENDIF
+    PUSH "\""
+    LOCAL :__t80 :ptr<u8>
+    STORE
+    LOCAL :buf :ptr<void>
+    LOCAL :__t81 :ptr<void>
+    STORE
+    LOCAL :__t80
+    LOCAL :__t81
+    CALL :avant_buf_push_str
+    RET
+ENDFUNC
 
 FUNC :main
   ARGS
@@ -1299,141 +1975,3700 @@ FUNC :main
     PUSH 7 :u64
     PUSH 1023 :u32
     CALL :avant_type_map
+    PUSH 1 :u64
+    PUSH 1 :u32
+    CALL :avant_type_map
+    PUSH 116 :u64
+    PUSH 2 :u32
+    CALL :avant_type_map
+    PUSH 7 :u64
+    PUSH 3 :u32
+    CALL :avant_type_map
     PARAM 1
     PARAM 0
     CALL :avant_io_init_argv
     PUSH "{\"n\": 7, \"name\": \"ada\"}"
-    CALL :avant_json_parse
-    LOCAL :doc :ptr<void>
-    STORE
-    PUSH 0
-    LOCAL :__t1 :i32
-    STORE
-    PUSH "n"
-    LOCAL :__t2 :ptr<u8>
-    STORE
-    LOCAL :doc :ptr<void>
-    LOCAL :__t3 :ptr<void>
+    CALL :Json__parse
+    LOCAL :__t1 :U_Json_JsonError
     STORE
     LOCAL :__t1
+    FIELD 1
     ADDR
-    LOCAL :__t2
-    LOCAL :__t3
-    CALL :avant_json_get_int
-    LOCAL :__t4 :i32
-    STORE
+    CALL :avant_gc_root
     LOCAL :__t1
-    PUSH 1
-    BINARY :eq
-    IF
-      THEN
-        LOCAL :__t4
-        LOCAL :__t6 :i32
-        STORE
-        LOCAL :__t6
-        PUSH 0
-        CREATE :U_Int_Nil
-        LOCAL :__t5 :U_Int_Nil
-        STORE
-      ELSE
-        PUSH 0
-        LOCAL :__t7 :i32
-        STORE
-        PUSH 0
-        PUSH 1
-        CREATE :U_Int_Nil
-        LOCAL :__t5 :U_Int_Nil
-        STORE
-    ENDIF
-    LOCAL :__t5
-    LOCAL :__t8 :U_Int_Nil
-    STORE
-    LOCAL :__t8
+    FIELD 2
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t1
     FIELD 0
     PUSH 1
     BINARY :not_eq
     IF
       THEN
-        LOCAL :__t8
+        LOCAL :__t1
         FIELD 1
-        LOCAL :n :i32
+        LOCAL :doc :Json
         STORE
-        LOCAL :n :i32
-        PUSH "%d\n"
-        PRINTF 1
+        LOCAL :doc
+        ADDR
+        CALL :avant_gc_root
+        PUSH "n"
+        LOCAL :doc :Json
+        ADDR
+        CALL :Json__int__String
+        LOCAL :__t2 :U_Int_Nil
+        STORE
+        LOCAL :__t2
+        FIELD 0
+        PUSH 1
+        BINARY :not_eq
+        IF
+          THEN
+            LOCAL :__t2
+            FIELD 1
+            LOCAL :n :i32
+            STORE
+            LOCAL :n :i32
+            PUSH "%d\n"
+            PRINTF 1
+        ENDIF
+        PUSH "name"
+        LOCAL :doc :Json
+        ADDR
+        CALL :Json__str__String
+        LOCAL :__t3 :U_Nil_String
+        STORE
+        LOCAL :__t3
+        FIELD 1
+        ADDR
+        CALL :avant_gc_root
+        LOCAL :__t3
+        FIELD 0
+        PUSH 0
+        BINARY :not_eq
+        IF
+          THEN
+            LOCAL :__t3
+            FIELD 1
+            LOCAL :name :ptr<u8>
+            STORE
+            LOCAL :name
+            ADDR
+            CALL :avant_gc_root
+            LOCAL :name :ptr<u8>
+            PUSH "%s\n"
+            PRINTF 1
+        ENDIF
     ENDIF
+    CALL :avant_gc_leave
     PUSH 0
-    LOCAL :__t9 :i32
+    RET
+ENDFUNC
+
+FUNC :Json__parse
+  ARGS
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_Json_JsonError
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :text :ptr<u8>
     STORE
-    PUSH "name"
-    LOCAL :__t10 :ptr<u8>
-    STORE
-    LOCAL :doc :ptr<void>
-    LOCAL :__t11 :ptr<void>
-    STORE
-    LOCAL :__t9
-    ADDR
-    LOCAL :__t10
-    LOCAL :__t11
-    CALL :avant_json_get_str
-    LOCAL :__t12 :ptr<u8>
-    STORE
-    LOCAL :__t12
+    LOCAL :text
     ADDR
     CALL :avant_gc_root
-    LOCAL :__t9
+    LOCAL :text :ptr<u8>
+    CALL :avant_json_parse
+    LOCAL :doc :ptr<void>
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :code :i32
+    STORE
+    LOCAL :code :i32
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    IF
+      THEN
+        LOCAL :code :i32
+        CALL :json_error
+        LOCAL :__t2 :ptr<JsonError>
+        STORE
+        LOCAL :__t2
+        ADDR
+        CALL :avant_gc_root
+        LOCAL :__t2
+        PUSH 0
+        AS :ptr<u8>
+        PUSH 0
+        AS :ptr<void>
+        CREATE :Json
+        PUSH 1
+        CREATE :U_Json_JsonError
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :pool :ptr<u8>
+    STORE
+    CALL :avant_json_take_pool
+    LOCAL :pool :ptr<u8>
+    STORE
+    LOCAL :pool
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :doc :ptr<void>
+    CALL :avant_json_root
+    LOCAL :__t3 :ptr<void>
+    STORE
+    LOCAL :pool :ptr<u8>
+    LOCAL :__t4 :ptr<u8>
+    STORE
+    LOCAL :__t4
+    LOCAL :__t3
+    CREATE :Json
+    LOCAL :__t5 :Json
+    STORE
+    LOCAL :__t5
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<JsonError>
+    LOCAL :__t5
+    PUSH 0
+    CREATE :U_Json_JsonError
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__obj
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PUSH 0
+    AS :ptr<JsonBuilder>
+    LOCAL :b :ptr<JsonBuilder>
+    STORE
+    CALL :JsonBuilder__new
+    LOCAL :b :ptr<JsonBuilder>
+    STORE
+    LOCAL :b
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :b :ptr<JsonBuilder>
+    CALL :JsonBuilder__obj
+    STACK :drop
+    LOCAL :b :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__arr
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PUSH 0
+    AS :ptr<JsonBuilder>
+    LOCAL :b :ptr<JsonBuilder>
+    STORE
+    CALL :JsonBuilder__new
+    LOCAL :b :ptr<JsonBuilder>
+    STORE
+    LOCAL :b
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :b :ptr<JsonBuilder>
+    CALL :JsonBuilder__arr
+    STACK :drop
+    LOCAL :b :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__kind
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :i32
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    CALL :avant_json_kind
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_null
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
     PUSH 1
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_bool
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 2
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_int
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 3
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_float
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 4
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_str
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 5
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_arr
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 6
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__is_obj
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 7
+    LOCAL :__t1
+    BINARY :eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__len
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :i32
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    CALL :avant_json_len
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__get
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_Json_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :key :ptr<u8>
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_get
+    LOCAL :child_node :ptr<void>
+    STORE
+    LOCAL :child_node :ptr<void>
+    CALL :avant_json_kind
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
     BINARY :eq
     IF
       THEN
-        LOCAL :__t12
-        LOCAL :__t14 :ptr<u8>
-        STORE
-        LOCAL :__t14
-        ADDR
-        CALL :avant_gc_root
-        LOCAL :__t14
-        PUSH 1
-        CREATE :U_Nil_String
-        LOCAL :__t13 :U_Nil_String
-        STORE
-      ELSE
         PUSH 0
-        LOCAL :__t15 :i32
+        LOCAL :__t4 :i32
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        PUSH 0
+        AS :ptr<void>
+        CREATE :Json
+        PUSH 1
+        CREATE :U_Json_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :child_node :ptr<void>
+    LOCAL :__t5 :ptr<void>
+    STORE
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 1
+    LOCAL :__t6 :ptr<u8>
+    STORE
+    LOCAL :__t6
+    LOCAL :__t5
+    CREATE :Json
+    LOCAL :__t7 :Json
+    STORE
+    LOCAL :__t7
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t7
+    PUSH 0
+    CREATE :U_Json_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__at
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :i32
+  RETURN
+    TYPE :U_Json_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :index :i32
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :index :i32
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_at
+    LOCAL :child_node :ptr<void>
+    STORE
+    LOCAL :child_node :ptr<void>
+    CALL :avant_json_kind
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        PUSH 0
+        AS :ptr<void>
+        CREATE :Json
+        PUSH 1
+        CREATE :U_Json_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :child_node :ptr<void>
+    LOCAL :__t5 :ptr<void>
+    STORE
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 1
+    LOCAL :__t6 :ptr<u8>
+    STORE
+    LOCAL :__t6
+    LOCAL :__t5
+    CREATE :Json
+    LOCAL :__t7 :Json
+    STORE
+    LOCAL :__t7
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t7
+    PUSH 0
+    CREATE :U_Json_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__key_at
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :i32
+  RETURN
+    TYPE :U_Nil_String
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :index :i32
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :index :i32
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_key_at
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    CALL :avant_json_take_status
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
         STORE
         PUSH 0
         AS :ptr<u8>
         PUSH 0
         CREATE :U_Nil_String
-        LOCAL :__t13 :U_Nil_String
-        STORE
+        CALL :avant_gc_leave
+        RET
     ENDIF
-    LOCAL :__t13
-    LOCAL :__t16 :U_Nil_String
+    LOCAL :key :ptr<u8>
+    LOCAL :__t5 :ptr<u8>
     STORE
-    LOCAL :__t16
-    FIELD 1
+    LOCAL :__t5
     ADDR
     CALL :avant_gc_root
-    LOCAL :__t16
+    LOCAL :__t5
+    PUSH 1
+    CREATE :U_Nil_String
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__int
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :U_Int_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
     FIELD 0
+    CALL :avant_json_as_int
+    LOCAL :v :i32
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :__t1 :i32
+    STORE
     PUSH 0
+    LOCAL :__t1
     BINARY :not_eq
     IF
       THEN
-        LOCAL :__t16
-        FIELD 1
-        LOCAL :name :ptr<u8>
+        PUSH 0
+        LOCAL :__t2 :i32
         STORE
-        LOCAL :name
+        PUSH 0
+        PUSH 1
+        CREATE :U_Int_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :i32
+    LOCAL :__t3 :i32
+    STORE
+    LOCAL :__t3
+    PUSH 0
+    CREATE :U_Int_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__int__String
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_Int_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :key :ptr<u8>
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_obj_int
+    LOCAL :v :i32
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
+        STORE
+        PUSH 0
+        PUSH 1
+        CREATE :U_Int_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :i32
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :__t5
+    PUSH 0
+    CREATE :U_Int_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__f64
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :U_Float64_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    CALL :avant_json_as_f64
+    LOCAL :v :f64
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t2 :i32
+        STORE
+        PUSH 0 :f64
+        PUSH 1
+        CREATE :U_Float64_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :f64
+    LOCAL :__t3 :f64
+    STORE
+    LOCAL :__t3
+    PUSH 0
+    CREATE :U_Float64_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__f64__String
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_Float64_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :key :ptr<u8>
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_obj_f64
+    LOCAL :v :f64
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
+        STORE
+        PUSH 0 :f64
+        PUSH 1
+        CREATE :U_Float64_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :f64
+    LOCAL :__t5 :f64
+    STORE
+    LOCAL :__t5
+    PUSH 0
+    CREATE :U_Float64_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__str
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :U_Nil_String
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    CALL :avant_json_as_str
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    CALL :avant_json_take_status
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t2 :i32
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        PUSH 0
+        CREATE :U_Nil_String
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t3
+    PUSH 1
+    CREATE :U_Nil_String
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__str__String
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_Nil_String
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :key :ptr<u8>
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_obj_str
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    CALL :avant_json_take_status
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        PUSH 0
+        CREATE :U_Nil_String
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :ptr<u8>
+    LOCAL :__t5 :ptr<u8>
+    STORE
+    LOCAL :__t5
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t5
+    PUSH 1
+    CREATE :U_Nil_String
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__bool
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :U_Bool_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    CALL :avant_json_as_bool
+    LOCAL :v :i32
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t2 :i32
+        STORE
+        PUSH false
+        PUSH 1
+        CREATE :U_Bool_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :i32
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    LOCAL :__t4 :bool
+    STORE
+    LOCAL :__t4
+    PUSH 0
+    CREATE :U_Bool_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__bool__String
+  ARGS
+    TYPE :ptr<Json>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_Bool_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    PARAM 1
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :key :ptr<u8>
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_json_obj_bool
+    LOCAL :v :i32
+    STORE
+    CALL :avant_json_take_status
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
+        STORE
+        PUSH false
+        PUSH 1
+        CREATE :U_Bool_Nil
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :v :i32
+    LOCAL :__t5 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t5
+    BINARY :not_eq
+    LOCAL :__t6 :bool
+    STORE
+    LOCAL :__t6
+    PUSH 0
+    CREATE :U_Bool_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__text
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :ptr<u8>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    FIELD 0
+    CALL :avant_json_text
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Json__to_value
+  ARGS
+    TYPE :ptr<Json>
+  RETURN
+    TYPE :ptr<JsonValue>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Json>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<JsonValue>
+    LOCAL :v :ptr<JsonValue>
+    STORE
+    CALL :JsonValue__new
+    LOCAL :v :ptr<JsonValue>
+    STORE
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__kind
+    LOCAL :v :ptr<JsonValue>
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :self :ptr<Json>
+    DEREF
+    ADDR
+    CALL :Json__is_int
+    IF
+      THEN
+        LOCAL :self :ptr<Json>
+        DEREF
+        ADDR
+        CALL :Json__int
+        LOCAL :__t1 :U_Int_Nil
+        STORE
+        LOCAL :__t1
+        FIELD 0
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            PUSH 0
+            LOCAL :__t2 :i32
+            STORE
+          ELSE
+            LOCAL :__t1
+            FIELD 1
+            LOCAL :__t2 :i32
+            STORE
+        ENDIF
+        LOCAL :__t2
+        LOCAL :v :ptr<JsonValue>
+        DEREF
+        FIELD 1
+        STORE
+      ELSE
+        LOCAL :self :ptr<Json>
+        DEREF
+        ADDR
+        CALL :Json__is_float
+        IF
+          THEN
+            LOCAL :self :ptr<Json>
+            DEREF
+            ADDR
+            CALL :Json__f64
+            LOCAL :__t3 :U_Float64_Nil
+            STORE
+            LOCAL :__t3
+            FIELD 0
+            PUSH 1
+            BINARY :eq
+            IF
+              THEN
+                PUSH 0.0
+                LOCAL :__t4 :f64
+                STORE
+              ELSE
+                LOCAL :__t3
+                FIELD 1
+                LOCAL :__t4 :f64
+                STORE
+            ENDIF
+            LOCAL :__t4
+            LOCAL :v :ptr<JsonValue>
+            DEREF
+            FIELD 2
+            STORE
+          ELSE
+            LOCAL :self :ptr<Json>
+            DEREF
+            ADDR
+            CALL :Json__is_str
+            IF
+              THEN
+                LOCAL :self :ptr<Json>
+                DEREF
+                ADDR
+                CALL :Json__str
+                LOCAL :__t5 :U_Nil_String
+                STORE
+                LOCAL :__t5
+                FIELD 1
+                ADDR
+                CALL :avant_gc_root
+                LOCAL :__t5
+                FIELD 0
+                PUSH 0
+                BINARY :eq
+                IF
+                  THEN
+                    PUSH ""
+                    LOCAL :__t6 :ptr<u8>
+                    STORE
+                    LOCAL :__t6
+                    ADDR
+                    CALL :avant_gc_root
+                  ELSE
+                    LOCAL :__t5
+                    FIELD 1
+                    LOCAL :__t6 :ptr<u8>
+                    STORE
+                ENDIF
+                LOCAL :__t6
+                LOCAL :__t7 :ptr<u8>
+                STORE
+                LOCAL :v
+                CALL :avant_barrier
+                LOCAL :__t7
+                LOCAL :v
+                DEREF
+                FIELD 3
+                STORE
+              ELSE
+                LOCAL :self :ptr<Json>
+                DEREF
+                ADDR
+                CALL :Json__is_bool
+                IF
+                  THEN
+                    LOCAL :self :ptr<Json>
+                    DEREF
+                    ADDR
+                    CALL :Json__bool
+                    LOCAL :__t8 :U_Bool_Nil
+                    STORE
+                    LOCAL :__t8
+                    FIELD 0
+                    PUSH 1
+                    BINARY :eq
+                    IF
+                      THEN
+                        PUSH false
+                        LOCAL :__t9 :bool
+                        STORE
+                      ELSE
+                        LOCAL :__t8
+                        FIELD 1
+                        LOCAL :__t9 :bool
+                        STORE
+                    ENDIF
+                    LOCAL :__t9
+                    LOCAL :v :ptr<JsonValue>
+                    DEREF
+                    FIELD 4
+                    STORE
+                  ELSE
+                    LOCAL :self :ptr<Json>
+                    DEREF
+                    ADDR
+                    CALL :Json__is_arr
+                    IF
+                      THEN
+                        PUSH 0
+                        LOCAL :i :i32
+                        STORE
+                        PUSH 0
+                        AS :ptr<JsonValue>
+                        LOCAL :__t12 :ptr<JsonValue>
+                        STORE
+                        LOCAL :__t12
+                        ADDR
+                        CALL :avant_gc_root
+                        PUSH 0
+                        AS :ptr<Array_JsonValue>
+                        LOCAL :__t13 :ptr<Array_JsonValue>
+                        STORE
+                        LOCAL :__t13
+                        ADDR
+                        CALL :avant_gc_root
+                        LOOP
+                          COND
+                            LOCAL :i :i32
+                            LOCAL :__t10 :i32
+                            STORE
+                            LOCAL :self :ptr<Json>
+                            DEREF
+                            ADDR
+                            CALL :Json__len
+                            LOCAL :__t10
+                            BINARY :less
+                          BODY
+                            LOCAL :i :i32
+                            LOCAL :self :ptr<Json>
+                            DEREF
+                            ADDR
+                            CALL :Json__at
+                            LOCAL :__t11 :U_Json_Nil
+                            STORE
+                            LOCAL :__t11
+                            FIELD 1
+                            ADDR
+                            CALL :avant_gc_root
+                            LOCAL :__t11
+                            FIELD 0
+                            PUSH 1
+                            BINARY :not_eq
+                            IF
+                              THEN
+                                LOCAL :__t11
+                                FIELD 1
+                                LOCAL :child :Json
+                                STORE
+                                LOCAL :child
+                                ADDR
+                                CALL :avant_gc_root
+                                LOCAL :child :Json
+                                ADDR
+                                CALL :Json__to_value
+                                LOCAL :__t12 :ptr<JsonValue>
+                                STORE
+                                LOCAL :v :ptr<JsonValue>
+                                DEREF
+                                FIELD 5
+                                LOCAL :__t13 :ptr<Array_JsonValue>
+                                STORE
+                                PUSH 65535 :u32
+                                LOCAL :__t12
+                                LOCAL :__t13
+                                CALL :avant_array_push_ptr
+                            ENDIF
+                            LOCAL :i :i32
+                            LOCAL :__t14 :i32
+                            STORE
+                            PUSH 1
+                            LOCAL :__t14
+                            BINARY :add
+                            LOCAL :i :i32
+                            STORE
+                            PUSH 0
+                            AS :ptr<JsonValue>
+                            LOCAL :__t12
+                            STORE
+                            PUSH 0
+                            AS :ptr<Array_JsonValue>
+                            LOCAL :__t13
+                            STORE
+                        ENDLOOP
+                      ELSE
+                        LOCAL :self :ptr<Json>
+                        DEREF
+                        ADDR
+                        CALL :Json__is_obj
+                        IF
+                          THEN
+                            PUSH 0
+                            LOCAL :i :i32
+                            STORE
+                            PUSH 0
+                            AS :ptr<u8>
+                            LOCAL :key :ptr<u8>
+                            STORE
+                            LOCAL :key
+                            ADDR
+                            CALL :avant_gc_root
+                            PUSH 0
+                            AS :ptr<u8>
+                            LOCAL :__t18 :ptr<u8>
+                            STORE
+                            LOCAL :__t18
+                            ADDR
+                            CALL :avant_gc_root
+                            PUSH 0
+                            AS :ptr<Array_String>
+                            LOCAL :__t19 :ptr<Array_String>
+                            STORE
+                            LOCAL :__t19
+                            ADDR
+                            CALL :avant_gc_root
+                            PUSH 0
+                            AS :ptr<JsonValue>
+                            LOCAL :__t20 :ptr<JsonValue>
+                            STORE
+                            LOCAL :__t20
+                            ADDR
+                            CALL :avant_gc_root
+                            PUSH 0
+                            AS :ptr<Array_JsonValue>
+                            LOCAL :__t21 :ptr<Array_JsonValue>
+                            STORE
+                            LOCAL :__t21
+                            ADDR
+                            CALL :avant_gc_root
+                            LOOP
+                              COND
+                                LOCAL :i :i32
+                                LOCAL :__t15 :i32
+                                STORE
+                                LOCAL :self :ptr<Json>
+                                DEREF
+                                ADDR
+                                CALL :Json__len
+                                LOCAL :__t15
+                                BINARY :less
+                              BODY
+                                LOCAL :i :i32
+                                LOCAL :self :ptr<Json>
+                                DEREF
+                                ADDR
+                                CALL :Json__key_at
+                                LOCAL :__t16 :U_Nil_String
+                                STORE
+                                LOCAL :__t16
+                                FIELD 1
+                                ADDR
+                                CALL :avant_gc_root
+                                LOCAL :__t16
+                                FIELD 0
+                                PUSH 0
+                                BINARY :not_eq
+                                IF
+                                  THEN
+                                    LOCAL :__t16
+                                    FIELD 1
+                                    LOCAL :key :ptr<u8>
+                                    STORE
+                                    LOCAL :key :ptr<u8>
+                                    LOCAL :self :ptr<Json>
+                                    DEREF
+                                    ADDR
+                                    CALL :Json__get
+                                    LOCAL :__t17 :U_Json_Nil
+                                    STORE
+                                    LOCAL :__t17
+                                    FIELD 1
+                                    ADDR
+                                    CALL :avant_gc_root
+                                    LOCAL :__t17
+                                    FIELD 0
+                                    PUSH 1
+                                    BINARY :not_eq
+                                    IF
+                                      THEN
+                                        LOCAL :__t17
+                                        FIELD 1
+                                        LOCAL :child :Json
+                                        STORE
+                                        LOCAL :key :ptr<u8>
+                                        LOCAL :__t18 :ptr<u8>
+                                        STORE
+                                        LOCAL :v :ptr<JsonValue>
+                                        DEREF
+                                        FIELD 6
+                                        LOCAL :__t19 :ptr<Array_String>
+                                        STORE
+                                        PUSH 65535 :u32
+                                        LOCAL :__t18
+                                        LOCAL :__t19
+                                        CALL :avant_array_push_ptr
+                                        LOCAL :child :Json
+                                        ADDR
+                                        CALL :Json__to_value
+                                        LOCAL :__t20 :ptr<JsonValue>
+                                        STORE
+                                        LOCAL :v :ptr<JsonValue>
+                                        DEREF
+                                        FIELD 7
+                                        LOCAL :__t21 :ptr<Array_JsonValue>
+                                        STORE
+                                        PUSH 65535 :u32
+                                        LOCAL :__t20
+                                        LOCAL :__t21
+                                        CALL :avant_array_push_ptr
+                                    ENDIF
+                                ENDIF
+                                LOCAL :i :i32
+                                LOCAL :__t22 :i32
+                                STORE
+                                PUSH 1
+                                LOCAL :__t22
+                                BINARY :add
+                                LOCAL :i :i32
+                                STORE
+                                PUSH 0
+                                AS :ptr<u8>
+                                LOCAL :__t18
+                                STORE
+                                PUSH 0
+                                AS :ptr<Array_String>
+                                LOCAL :__t19
+                                STORE
+                                PUSH 0
+                                AS :ptr<JsonValue>
+                                LOCAL :__t20
+                                STORE
+                                PUSH 0
+                                AS :ptr<Array_JsonValue>
+                                LOCAL :__t21
+                                STORE
+                            ENDLOOP
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    ENDIF
+    LOCAL :v :ptr<JsonValue>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonError__initialize
+  ARGS
+    TYPE :ptr<JsonError>
+    TYPE :ptr<u8>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonError>
+    STORE
+    PARAM 1
+    LOCAL :message :ptr<u8>
+    STORE
+    LOCAL :message :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t1
+    LOCAL :self
+    DEREF
+    FIELD 0
+    STORE
+    RET
+ENDFUNC
+
+FUNC :JsonValue__initialize
+  ARGS
+    TYPE :ptr<JsonValue>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonValue>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :a :ptr<Array_JsonValue>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :ptr<JsonValue>
+    BINARY :mul
+    PUSH 65535 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<ptr<JsonValue>>
+    LOCAL :__t1 :ptr<ptr<JsonValue>>
+    STORE
+    LOCAL :__t1
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    LOCAL :__t2 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t3 :ptr<Array_JsonValue>
+    STORE
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t3 :ptr<Array_JsonValue>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_JsonValue
+    CALL :avant_alloc
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t3 :ptr<Array_JsonValue>
+    STORE
+    LOCAL :__t3
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t1
+    LOCAL :__t3
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t2
+    LOCAL :__t3
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t2
+    LOCAL :__t3
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t3
+    CALL :avant_barrier
+    LOCAL :__t3
+    LOCAL :a :ptr<Array_JsonValue>
+    STORE
+    LOCAL :a
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :a :ptr<Array_JsonValue>
+    LOCAL :__t4 :ptr<Array_JsonValue>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t4
+    LOCAL :self
+    DEREF
+    FIELD 5
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :k :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :ptr<u8>
+    BINARY :mul
+    PUSH 65535 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<ptr<u8>>
+    LOCAL :__t5 :ptr<ptr<u8>>
+    STORE
+    LOCAL :__t5
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    LOCAL :__t6 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t7 :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t7 :ptr<Array_String>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_String
+    CALL :avant_alloc
+    AS :ptr<Array_String>
+    LOCAL :__t7 :ptr<Array_String>
+    STORE
+    LOCAL :__t7
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t5
+    LOCAL :__t7
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t6
+    LOCAL :__t7
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t6
+    LOCAL :__t7
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t7
+    CALL :avant_barrier
+    LOCAL :__t7
+    LOCAL :k :ptr<Array_String>
+    STORE
+    LOCAL :k
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :k :ptr<Array_String>
+    LOCAL :__t8 :ptr<Array_String>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t8
+    LOCAL :self
+    DEREF
+    FIELD 6
+    STORE
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :v :ptr<Array_JsonValue>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :ptr<JsonValue>
+    BINARY :mul
+    PUSH 65535 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<ptr<JsonValue>>
+    LOCAL :__t9 :ptr<ptr<JsonValue>>
+    STORE
+    LOCAL :__t9
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    LOCAL :__t10 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t11 :ptr<Array_JsonValue>
+    STORE
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t11 :ptr<Array_JsonValue>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_JsonValue
+    CALL :avant_alloc
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t11 :ptr<Array_JsonValue>
+    STORE
+    LOCAL :__t11
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t9
+    LOCAL :__t11
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t10
+    LOCAL :__t11
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t10
+    LOCAL :__t11
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t11
+    CALL :avant_barrier
+    LOCAL :__t11
+    LOCAL :v :ptr<Array_JsonValue>
+    STORE
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v :ptr<Array_JsonValue>
+    LOCAL :__t12 :ptr<Array_JsonValue>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t12
+    LOCAL :self
+    DEREF
+    FIELD 7
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonValue__get
+  ARGS
+    TYPE :ptr<JsonValue>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :U_JsonValue_Nil
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonValue>
+    STORE
+    PARAM 1
+    LOCAL :key :ptr<u8>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :key
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t3 :ptr<Array_String>
+    STORE
+    LOCAL :__t3
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<Array_JsonValue>
+    LOCAL :__t8 :ptr<Array_JsonValue>
+    STORE
+    LOCAL :__t8
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<JsonValue>
+    LOCAL :__t11 :ptr<JsonValue>
+    STORE
+    LOCAL :__t11
+    ADDR
+    CALL :avant_gc_root
+    LOOP
+      COND
+        LOCAL :i :i32
+        LOCAL :__t1 :i32
+        STORE
+        LOCAL :self :ptr<JsonValue>
+        DEREF
+        FIELD 6
+        DEREF
+        FIELD 1
+        LOCAL :__t1
+        BINARY :less
+      BODY
+        LOCAL :i :i32
+        LOCAL :__t2 :i32
+        STORE
+        LOCAL :self :ptr<JsonValue>
+        DEREF
+        FIELD 6
+        LOCAL :__t3 :ptr<Array_String>
+        STORE
+        LOCAL :__t3
+        DEREF
+        FIELD 1
+        LOCAL :__t4 :i32
+        STORE
+        LOCAL :__t4
+        AS :u32
+        LOCAL :__t2
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t4
+            LOCAL :__t2
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t3
+        DEREF
+        FIELD 0
+        LOCAL :__t5 :ptr<ptr<u8>>
+        STORE
+        LOCAL :__t2
+        LOCAL :__t5
+        BINARY :add
+        DEREF
+        LOCAL :__t6 :ptr<u8>
+        STORE
+        LOCAL :key :ptr<u8>
+        LOCAL :__t6
+        CALL :avant_str_eq
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            LOCAL :i :i32
+            LOCAL :__t7 :i32
+            STORE
+            LOCAL :self :ptr<JsonValue>
+            DEREF
+            FIELD 7
+            LOCAL :__t8 :ptr<Array_JsonValue>
+            STORE
+            LOCAL :__t8
+            DEREF
+            FIELD 1
+            LOCAL :__t9 :i32
+            STORE
+            LOCAL :__t9
+            AS :u32
+            LOCAL :__t7
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t9
+                LOCAL :__t7
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t8
+            DEREF
+            FIELD 0
+            LOCAL :__t10 :ptr<ptr<JsonValue>>
+            STORE
+            LOCAL :__t7
+            LOCAL :__t10
+            BINARY :add
+            DEREF
+            LOCAL :__t11 :ptr<JsonValue>
+            STORE
+            LOCAL :__t11
+            PUSH 0
+            CREATE :U_JsonValue_Nil
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :i :i32
+        LOCAL :__t12 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t12
+        BINARY :add
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_String>
+        LOCAL :__t3
+        STORE
+        PUSH 0
+        AS :ptr<ptr<u8>>
+        LOCAL :__t5
+        STORE
+        PUSH 0
+        AS :ptr<Array_JsonValue>
+        LOCAL :__t8
+        STORE
+        PUSH 0
+        AS :ptr<ptr<JsonValue>>
+        LOCAL :__t10
+        STORE
+        PUSH 0
+        AS :ptr<JsonValue>
+        LOCAL :__t11
+        STORE
+    ENDLOOP
+    PUSH 0
+    LOCAL :__t13 :i32
+    STORE
+    PUSH 0
+    AS :ptr<JsonValue>
+    PUSH 1
+    CREATE :U_JsonValue_Nil
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__initialize
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    CALL :avant_buf_new
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t1
+    LOCAL :self
+    DEREF
+    FIELD 0
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :st :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :i32
+    BINARY :mul
+    PUSH 0 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<i32>
+    LOCAL :__t2 :ptr<i32>
+    STORE
+    LOCAL :__t2
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_Int
+    CALL :avant_alloc
+    AS :ptr<Array_Int>
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    LOCAL :__t4
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t2
+    LOCAL :__t4
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t3
+    LOCAL :__t4
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t3
+    LOCAL :__t4
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t4
+    CALL :avant_barrier
+    LOCAL :__t4
+    LOCAL :st :ptr<Array_Int>
+    STORE
+    LOCAL :st
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :st :ptr<Array_Int>
+    LOCAL :__t5 :ptr<Array_Int>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t5
+    LOCAL :self
+    DEREF
+    FIELD 1
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :ct :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :i32
+    BINARY :mul
+    PUSH 0 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<i32>
+    LOCAL :__t6 :ptr<i32>
+    STORE
+    LOCAL :__t6
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    LOCAL :__t7 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t8 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t8 :ptr<Array_Int>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_Int
+    CALL :avant_alloc
+    AS :ptr<Array_Int>
+    LOCAL :__t8 :ptr<Array_Int>
+    STORE
+    LOCAL :__t8
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t6
+    LOCAL :__t8
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t7
+    LOCAL :__t8
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t7
+    LOCAL :__t8
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t8
+    CALL :avant_barrier
+    LOCAL :__t8
+    LOCAL :ct :ptr<Array_Int>
+    STORE
+    LOCAL :ct
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :ct :ptr<Array_Int>
+    LOCAL :__t9 :ptr<Array_Int>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t9
+    LOCAL :self
+    DEREF
+    FIELD 2
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__into
+  ARGS
+    TYPE :ptr<void>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :dst :ptr<void>
+    STORE
+    LOCAL :dst
+    ADDR
+    CALL :avant_gc_root
+    PUSH 0
+    AS :ptr<JsonBuilder>
+    LOCAL :b :ptr<JsonBuilder>
+    STORE
+    CALL :JsonBuilder__new
+    LOCAL :b :ptr<JsonBuilder>
+    STORE
+    LOCAL :b
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :dst :ptr<void>
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :b
+    CALL :avant_barrier
+    LOCAL :__t1
+    LOCAL :b
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :b :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__before_value
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    DEREF
+    FIELD 1
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :eq
+    IF
+      THEN
+        PUSH true
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 4
+        STORE
+        RET
+    ENDIF
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    DEREF
+    FIELD 1
+    LOCAL :__t2 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t2
+    BINARY :sub
+    LOCAL :__t3 :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    LOCAL :__t4
+    DEREF
+    FIELD 1
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :__t5
+    AS :u32
+    LOCAL :__t3
+    AS :u32
+    BINARY :more_eq
+    IF
+      THEN
+        LOCAL :__t5
+        LOCAL :__t3
+        CALL :avant_trap_bounds
+    ENDIF
+    LOCAL :__t4
+    DEREF
+    FIELD 0
+    LOCAL :__t6 :ptr<i32>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t6
+    BINARY :add
+    DEREF
+    LOCAL :top :i32
+    STORE
+    LOCAL :top :i32
+    LOCAL :__t7 :i32
+    STORE
+    PUSH 2
+    LOCAL :__t7
+    BINARY :eq
+    IF
+      THEN
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 2
+        DEREF
+        FIELD 1
+        LOCAL :__t9 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t9
+        BINARY :sub
+        LOCAL :__t10 :i32
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 2
+        LOCAL :__t11 :ptr<Array_Int>
+        STORE
+        LOCAL :__t11
+        DEREF
+        FIELD 1
+        LOCAL :__t12 :i32
+        STORE
+        LOCAL :__t12
+        AS :u32
+        LOCAL :__t10
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t12
+            LOCAL :__t10
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t11
+        DEREF
+        FIELD 0
+        LOCAL :__t13 :ptr<i32>
+        STORE
+        LOCAL :__t10
+        LOCAL :__t13
+        BINARY :add
+        DEREF
+        LOCAL :__t8 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t8
+        BINARY :more
+        IF
+          THEN
+            PUSH ","
+            LOCAL :__t14 :ptr<u8>
+            STORE
+            LOCAL :self :ptr<JsonBuilder>
+            DEREF
+            FIELD 0
+            LOCAL :__t15 :ptr<void>
+            STORE
+            LOCAL :__t14
+            LOCAL :__t15
+            CALL :avant_buf_push_str
+        ENDIF
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 2
+        DEREF
+        FIELD 1
+        LOCAL :__t17 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t17
+        BINARY :sub
+        LOCAL :__t18 :i32
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 2
+        LOCAL :__t19 :ptr<Array_Int>
+        STORE
+        LOCAL :__t19
+        DEREF
+        FIELD 1
+        LOCAL :__t20 :i32
+        STORE
+        LOCAL :__t20
+        AS :u32
+        LOCAL :__t18
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t20
+            LOCAL :__t18
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t19
+        DEREF
+        FIELD 0
+        LOCAL :__t21 :ptr<i32>
+        STORE
+        LOCAL :__t18
+        LOCAL :__t21
+        BINARY :add
+        DEREF
+        LOCAL :__t16 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t16
+        LOCAL :__t22 :i32
+        STORE
+        LOCAL :__t23 :i32
+        STORE
+        LOCAL :__t23
+        AS :i64
+        LOCAL :__t22
+        AS :i64
+        BINARY :add
+        LOCAL :__t24 :i64
+        STORE
+        LOCAL :__t24
+        AS :i32
+        AS :i64
+        LOCAL :__t24
+        BINARY :not_eq
+        IF
+          THEN
+            CALL :avant_trap_overflow
+        ENDIF
+        LOCAL :__t24
+        AS :i32
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 2
+        DEREF
+        FIELD 1
+        LOCAL :__t25 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t25
+        BINARY :sub
+        LOCAL :__t26 :i32
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 2
+        LOCAL :__t27 :ptr<Array_Int>
+        STORE
+        LOCAL :__t27
+        DEREF
+        FIELD 1
+        LOCAL :__t28 :i32
+        STORE
+        LOCAL :__t28
+        AS :u32
+        LOCAL :__t26
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t28
+            LOCAL :__t26
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t27
+        DEREF
+        FIELD 0
+        LOCAL :__t29 :ptr<i32>
+        STORE
+        LOCAL :__t26
+        LOCAL :__t29
+        BINARY :add
+        DEREF
+        STORE
+      ELSE
+        PUSH false
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 3
+        STORE
+    ENDIF
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__obj
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    PUSH "{"
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_str
+    PUSH 1
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    CALL :avant_array_push_i32
+    PUSH 0
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    CALL :avant_array_push_i32
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__arr
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    PUSH "["
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_str
+    PUSH 2
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    CALL :avant_array_push_i32
+    PUSH 0
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    CALL :avant_array_push_i32
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__end
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    DEREF
+    FIELD 1
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :eq
+    IF
+      THEN
+        LOCAL :self :ptr<JsonBuilder>
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    DEREF
+    FIELD 1
+    LOCAL :__t2 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t2
+    BINARY :sub
+    LOCAL :__t3 :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    LOCAL :__t4
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t4
+    DEREF
+    FIELD 1
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :__t5
+    AS :u32
+    LOCAL :__t3
+    AS :u32
+    BINARY :more_eq
+    IF
+      THEN
+        LOCAL :__t5
+        LOCAL :__t3
+        CALL :avant_trap_bounds
+    ENDIF
+    LOCAL :__t4
+    DEREF
+    FIELD 0
+    LOCAL :__t6 :ptr<i32>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t6
+    BINARY :add
+    DEREF
+    LOCAL :top :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 1
+    LOCAL :__t7 :ptr<Array_Int>
+    STORE
+    LOCAL :__t7
+    ADDR
+    CALL :avant_gc_root
+    SIZEOF :i32
+    AS :u64
+    LOCAL :__t7
+    CALL :avant_array_pop_slot
+    AS :ptr<i32>
+    LOCAL :__t8 :ptr<i32>
+    STORE
+    LOCAL :__t8
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t8
+    DEREF
+    LOCAL :dummy :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    LOCAL :__t9 :ptr<Array_Int>
+    STORE
+    LOCAL :__t9
+    ADDR
+    CALL :avant_gc_root
+    SIZEOF :i32
+    AS :u64
+    LOCAL :__t9
+    CALL :avant_array_pop_slot
+    AS :ptr<i32>
+    LOCAL :__t10 :ptr<i32>
+    STORE
+    LOCAL :__t10
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :__t10
+    DEREF
+    LOCAL :dummy2 :i32
+    STORE
+    LOCAL :top :i32
+    LOCAL :__t11 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t11
+    BINARY :eq
+    IF
+      THEN
+        PUSH "}"
+        LOCAL :__t12 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t13 :ptr<void>
+        STORE
+        LOCAL :__t12
+        LOCAL :__t13
+        CALL :avant_buf_push_str
+      ELSE
+        PUSH "]"
+        LOCAL :__t14 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t15 :ptr<void>
+        STORE
+        LOCAL :__t14
+        LOCAL :__t15
+        CALL :avant_buf_push_str
+    ENDIF
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__key
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    DEREF
+    FIELD 1
+    LOCAL :__t2 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t2
+    BINARY :sub
+    LOCAL :__t3 :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    LOCAL :__t4
+    DEREF
+    FIELD 1
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :__t5
+    AS :u32
+    LOCAL :__t3
+    AS :u32
+    BINARY :more_eq
+    IF
+      THEN
+        LOCAL :__t5
+        LOCAL :__t3
+        CALL :avant_trap_bounds
+    ENDIF
+    LOCAL :__t4
+    DEREF
+    FIELD 0
+    LOCAL :__t6 :ptr<i32>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t6
+    BINARY :add
+    DEREF
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :more
+    IF
+      THEN
+        PUSH ","
+        LOCAL :__t7 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t8 :ptr<void>
+        STORE
+        LOCAL :__t7
+        LOCAL :__t8
+        CALL :avant_buf_push_str
+    ENDIF
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    DEREF
+    FIELD 1
+    LOCAL :__t10 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t10
+    BINARY :sub
+    LOCAL :__t11 :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    LOCAL :__t12 :ptr<Array_Int>
+    STORE
+    LOCAL :__t12
+    DEREF
+    FIELD 1
+    LOCAL :__t13 :i32
+    STORE
+    LOCAL :__t13
+    AS :u32
+    LOCAL :__t11
+    AS :u32
+    BINARY :more_eq
+    IF
+      THEN
+        LOCAL :__t13
+        LOCAL :__t11
+        CALL :avant_trap_bounds
+    ENDIF
+    LOCAL :__t12
+    DEREF
+    FIELD 0
+    LOCAL :__t14 :ptr<i32>
+    STORE
+    LOCAL :__t11
+    LOCAL :__t14
+    BINARY :add
+    DEREF
+    LOCAL :__t9 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t9
+    LOCAL :__t15 :i32
+    STORE
+    LOCAL :__t16 :i32
+    STORE
+    LOCAL :__t16
+    AS :i64
+    LOCAL :__t15
+    AS :i64
+    BINARY :add
+    LOCAL :__t17 :i64
+    STORE
+    LOCAL :__t17
+    AS :i32
+    AS :i64
+    LOCAL :__t17
+    BINARY :not_eq
+    IF
+      THEN
+        CALL :avant_trap_overflow
+    ENDIF
+    LOCAL :__t17
+    AS :i32
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    DEREF
+    FIELD 1
+    LOCAL :__t18 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t18
+    BINARY :sub
+    LOCAL :__t19 :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 2
+    LOCAL :__t20 :ptr<Array_Int>
+    STORE
+    LOCAL :__t20
+    DEREF
+    FIELD 1
+    LOCAL :__t21 :i32
+    STORE
+    LOCAL :__t21
+    AS :u32
+    LOCAL :__t19
+    AS :u32
+    BINARY :more_eq
+    IF
+      THEN
+        LOCAL :__t21
+        LOCAL :__t19
+        CALL :avant_trap_bounds
+    ENDIF
+    LOCAL :__t20
+    DEREF
+    FIELD 0
+    LOCAL :__t22 :ptr<i32>
+    STORE
+    LOCAL :__t19
+    LOCAL :__t22
+    BINARY :add
+    DEREF
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t23 :ptr<void>
+    STORE
+    LOCAL :name :ptr<u8>
+    LOCAL :__t24 :ptr<u8>
+    STORE
+    LOCAL :__t24
+    LOCAL :__t23
+    CALL :builder_escape
+    PUSH ":"
+    LOCAL :__t25 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t26 :ptr<void>
+    STORE
+    LOCAL :__t25
+    LOCAL :__t26
+    CALL :avant_buf_push_str
+    PUSH true
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 3
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__null
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    PUSH "null"
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_str
+    LOCAL :self :ptr<JsonBuilder>
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__value__Int
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :i32
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    LOCAL :v :i32
+    LOCAL :__t1 :i32
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_fmt_i
+    LOCAL :self :ptr<JsonBuilder>
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__value__Float64
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :f64
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :f64
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    LOCAL :v :f64
+    LOCAL :__t1 :f64
+    STORE
+    LOCAL :v :f64
+    LOCAL :__t1
+    BINARY :sub
+    LOCAL :d :f64
+    STORE
+    LOCAL :d :f64
+    LOCAL :__t2 :f64
+    STORE
+    PUSH 0.0
+    LOCAL :__t2
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH "null"
+        LOCAL :__t3 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t4 :ptr<void>
+        STORE
+        LOCAL :__t3
+        LOCAL :__t4
+        CALL :avant_buf_push_str
+      ELSE
+        LOCAL :v :f64
+        CALL :avant_str_from_float
+        LOCAL :__t5 :ptr<u8>
+        STORE
+        LOCAL :__t5
         ADDR
         CALL :avant_gc_root
-        LOCAL :name :ptr<u8>
-        PUSH "%s\n"
-        PRINTF 1
+        LOCAL :__t5
+        LOCAL :__t6 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t7 :ptr<void>
+        STORE
+        LOCAL :__t6
+        LOCAL :__t7
+        CALL :avant_buf_push_str
     ENDIF
+    LOCAL :self :ptr<JsonBuilder>
     CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__value__String
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :v :ptr<u8>
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :builder_escape
+    LOCAL :self :ptr<JsonBuilder>
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__value__Bool
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :bool
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :bool
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    LOCAL :v :bool
+    IF
+      THEN
+        PUSH "true"
+        LOCAL :__t1 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t2 :ptr<void>
+        STORE
+        LOCAL :__t1
+        LOCAL :__t2
+        CALL :avant_buf_push_str
+      ELSE
+        PUSH "false"
+        LOCAL :__t3 :ptr<u8>
+        STORE
+        LOCAL :self :ptr<JsonBuilder>
+        DEREF
+        FIELD 0
+        LOCAL :__t4 :ptr<void>
+        STORE
+        LOCAL :__t3
+        LOCAL :__t4
+        CALL :avant_buf_push_str
+    ENDIF
+    LOCAL :self :ptr<JsonBuilder>
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__value__Json
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :Json
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :Json
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    LOCAL :v :Json
+    ADDR
+    CALL :Json__text
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_str
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__value__JsonBuilder
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__before_value
+    LOCAL :v :ptr<JsonBuilder>
+    CALL :JsonBuilder__to_s
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_buf_push_str
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__add__Int
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :i32
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :i32
+    STORE
+    LOCAL :v :i32
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Int
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__add__Float64
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :f64
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :f64
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v :f64
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Float64
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__add__String
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :v :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__String
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__add__Bool
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :bool
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :bool
+    STORE
+    LOCAL :v :bool
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Bool
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__add__Json
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :Json
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :Json
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v :Json
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Json
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__add__JsonBuilder
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :v :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v :ptr<JsonBuilder>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__JsonBuilder
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set__String__Int
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+    TYPE :i32
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :v :i32
+    STORE
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :v :i32
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Int
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set__String__Float64
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+    TYPE :f64
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :v :f64
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :name
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :v :f64
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Float64
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set__String__String
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :v :ptr<u8>
+    STORE
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :v :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__String
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set__String__Bool
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+    TYPE :bool
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :v :bool
+    STORE
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :v :bool
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Bool
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set__String__Json
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+    TYPE :Json
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :v :Json
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :name
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :v :Json
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__Json
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set__String__JsonBuilder
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :v :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :name
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :v
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :v :ptr<JsonBuilder>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__value__JsonBuilder
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__set_null
+  ARGS
+    TYPE :ptr<JsonBuilder>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    PARAM 1
+    LOCAL :name :ptr<u8>
+    STORE
+    LOCAL :name :ptr<u8>
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__key
+    STACK :drop
+    LOCAL :self :ptr<JsonBuilder>
+    CALL :JsonBuilder__null
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__to_s
+  ARGS
+    TYPE :ptr<JsonBuilder>
+  RETURN
+    TYPE :ptr<u8>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self :ptr<JsonBuilder>
+    DEREF
+    FIELD 0
+    CALL :avant_buf_to_str
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonError__new
+  ARGS
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :ptr<JsonError>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :message :ptr<u8>
+    STORE
+    LOCAL :message
+    ADDR
+    CALL :avant_gc_root
+    PUSH 1 :u32
+    SIZEOF :JsonError
+    CALL :avant_alloc
+    AS :ptr<JsonError>
+    LOCAL :self :ptr<JsonError>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :message
+    LOCAL :self
+    CALL :JsonError__initialize
+    LOCAL :self
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonValue__new
+  RETURN
+    TYPE :ptr<JsonValue>
+  BODY
+    CALL :avant_gc_enter
+    PUSH 2 :u32
+    SIZEOF :JsonValue
+    CALL :avant_alloc
+    AS :ptr<JsonValue>
+    LOCAL :self :ptr<JsonValue>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
     PUSH 0
+    LOCAL :self
+    DEREF
+    FIELD 0
+    STORE
+    PUSH 0
+    LOCAL :self
+    DEREF
+    FIELD 1
+    STORE
+    PUSH 0.0
+    LOCAL :self
+    DEREF
+    FIELD 2
+    STORE
+    PUSH ""
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :__t1
+    ADDR
+    CALL :avant_gc_root
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t1
+    LOCAL :self
+    DEREF
+    FIELD 3
+    STORE
+    PUSH false
+    LOCAL :self
+    DEREF
+    FIELD 4
+    STORE
+    LOCAL :self
+    CALL :JsonValue__initialize
+    LOCAL :self
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :JsonBuilder__new
+  RETURN
+    TYPE :ptr<JsonBuilder>
+  BODY
+    CALL :avant_gc_enter
+    PUSH 3 :u32
+    SIZEOF :JsonBuilder
+    CALL :avant_alloc
+    AS :ptr<JsonBuilder>
+    LOCAL :self :ptr<JsonBuilder>
+    STORE
+    LOCAL :self
+    ADDR
+    CALL :avant_gc_root
+    PUSH false
+    LOCAL :self
+    DEREF
+    FIELD 3
+    STORE
+    PUSH false
+    LOCAL :self
+    DEREF
+    FIELD 4
+    STORE
+    LOCAL :self
+    CALL :JsonBuilder__initialize
+    LOCAL :self
+    CALL :avant_gc_leave
     RET
 ENDFUNC
 
