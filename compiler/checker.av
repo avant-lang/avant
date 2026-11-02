@@ -487,7 +487,7 @@ pub class Checker {
     self.self_ty = nil
     self.self_name = ""
     self.push_scope
-    if fn_is_method(fnn) {
+    if fn_is_method(fnn) && !fnn.type_method {
       got_owner = false
       owner = self.t_int()
       if fnn.owner_mod.size > 0 {
@@ -2237,6 +2237,12 @@ pub class Checker {
 
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
     if str_eq(expr.ident, "self") {
+      if cf = self.current_fn {
+        if cf.type_method {
+          self.fail(expr.loc, "self is not available in a type-level function")
+          return self.t_int()
+        }
+      }
       if st = self.self_ty {
       } else {
         if existing = self.lookup("self") {
@@ -3462,6 +3468,12 @@ pub class Checker {
             }
           }
         }
+      }
+    }
+    if str_eq(expr.callee, "new") {
+    } else {
+      if ty = self.type_call_target(recv, expr.callee) {
+        return self.check_type_call(expr, ty)
       }
     }
     if str_eq(expr.callee, "new") {

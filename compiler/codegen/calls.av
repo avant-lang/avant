@@ -14,6 +14,15 @@ import re2c_pat
 import codegen.myc
 
 pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
+  if expr.type_call {
+    if sig = codegen_self.find_method_emit(expr.resolved) {
+      codegen_self.emit_typed_args(expr.args, sig.params)
+      codegen_self.line("CALL :${expr.resolved}")
+    } else {
+      codegen_self.emit_call_named(expr.resolved, expr.args)
+    }
+    return
+  }
   if expr.indirect {
     codegen_self.emit_indirect(expr)
     return

@@ -496,6 +496,10 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
+    if sig.node.type_method {
+      i = i + 1
+      continue
+    }
     if str_eq(sig.owner, owner) {
       mod_ok = true
       if owner_mod.size > 0 {
@@ -605,6 +609,122 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     return nil
   }
   chosen
+}
+
+pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty? {
+  none: Ty? = nil
+  segs: Array(String) = []
+  if checker_self.ident_chain(recv, segs) {
+  } else {
+    return none
+  }
+  ty: Ty? = nil
+  if segs.size == 1 {
+    if found = checker_self.lookup(segs[0]) {
+      return none
+    }
+    if t = checker_self.resolver.get_named(segs[0]) {
+      ty = t
+    }
+  } else if segs.size > 1 {
+    mod = checker_self.join_segs(segs, segs.size - 1)
+    if checker_self.qualifier_ok(mod, checker_self.current_module) {
+      if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]) {
+        ty = t
+      }
+    }
+  }
+  if tt = ty {
+    i = 0
+    while i < checker_self.methods.size {
+      sig = checker_self.methods[i]
+      if sig.node.type_method {
+        if str_eq(sig.owner, tt.name) {
+          if str_eq(sig.name, callee) {
+            return ty
+          }
+        }
+      }
+      i = i + 1
+    }
+  }
+  none
+}
+
+pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${ty.show}.${expr.callee} does not take a block")
+    return checker_self.t_int()
+  }
+  arg_tys: Array(Ty) = []
+  i = 0
+  while i < expr.args.size {
+    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    i = i + 1
+  }
+  cands: Array(FuncSig) = []
+  saw_instance = false
+  i = 0
+  while i < checker_self.methods.size {
+    sig = checker_self.methods[i]
+    if str_eq(sig.owner, ty.name) {
+      mod_ok = true
+      if ty.mod_name.size > 0 {
+        if sig.node.owner_mod.size > 0 {
+          if str_eq(sig.node.owner_mod, ty.mod_name) {
+          } else {
+            mod_ok = false
+          }
+        }
+      }
+      if mod_ok {
+        if str_eq(sig.name, expr.callee) {
+          if sig.node.type_method {
+            if checker_self.method_is_visible(sig.node, checker_self.current_module) {
+              if arity_ok(sig.node, arg_tys.size) {
+                ok = true
+                k = 0
+                while k < arg_tys.size {
+                  if ty_assignable(arg_tys[k], sig.params[k]) {
+                  } else {
+                    ok = false
+                  }
+                  k = k + 1
+                }
+                if ok {
+                  cands.push(sig)
+                }
+              }
+            }
+          } else {
+            saw_instance = true
+          }
+        }
+      }
+    }
+    i = i + 1
+  }
+  if cands.size == 0 {
+    if saw_instance {
+      checker_self.fail(expr.loc, "${ty.show}.${expr.callee} is an instance method; call it on a value")
+    } else {
+      checker_self.fail(expr.loc, "no type-level function ${expr.callee} on ${ty.show}")
+    }
+    return checker_self.t_int()
+  }
+  if cands.size > 1 {
+    checker_self.fail(expr.loc, "ambiguous call to ${ty.show}.${expr.callee}")
+    return checker_self.t_int()
+  }
+  sig = cands[0]
+  if sig.node.generic {
+    checker_self.fail(expr.loc, "type-level functions on generic types are not supported yet")
+    return checker_self.t_int()
+  }
+  checker_self.fill_defaults(expr, sig.node)
+  expr.resolved = sig.node.emit_name
+  expr.type_call = true
+  sig.ret
 }
 
 pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
@@ -812,6 +932,10 @@ pub fn (checker_self: Checker) collect_method_deferred(expr: Expr, owner: String
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
+    if sig.node.type_method {
+      i = i + 1
+      continue
+    }
     if str_eq(sig.name, expr.callee) {
       if checker_self.method_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {

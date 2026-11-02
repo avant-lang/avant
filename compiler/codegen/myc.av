@@ -519,7 +519,7 @@ pub class MycGen {
     self.c_main = false
     self.self_ty = nil
     self.self_name = ""
-    if fn_is_method(fnn) {
+    if fn_is_method(fnn) && !fnn.type_method {
       if sig = self.find_method_emit(fnn.emit_name) {
         self.return_type = sig.ret
         self.self_name = fn_self_name(fnn)
@@ -557,6 +557,11 @@ pub class MycGen {
       }
       self.emit_plain_func(fnn, sig.params)
       self.c_main = false
+    } else if fnn.type_method {
+      if sig = self.find_method_emit(fnn.emit_name) {
+        self.return_type = sig.ret
+        self.emit_plain_func(fnn, sig.params)
+      }
     }
   }
 

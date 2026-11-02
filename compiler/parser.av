@@ -1084,7 +1084,22 @@ pub class Parser {
       fnn_hold.body = self.parse_block
       return fnn_hold
     }
-    name = self.parse_fn_name
+    type_meth = false
+    if owner.size > 0 {
+      if self.current.kind == tk_self() {
+        dummy_s = self.bump
+        dummy_d = self.expect(tk_dot())
+        name = self.expect(tk_ident()).value
+        type_meth = true
+      } else {
+        name = self.parse_fn_name
+      }
+    } else {
+      if self.current.kind == tk_self() {
+        self.fail(self.current.loc, "a type-level function belongs in a type body: fn self.name(...)")
+      }
+      name = self.parse_fn_name
+    }
     if str_eq(name, "new") {
       if owner.size > 0 {
         self.fail(name_loc, "new is reserved; write initialize")
@@ -1097,6 +1112,7 @@ pub class Parser {
     fnn.receiver = receiver
     fnn.owner = owner
     fnn.vis = vis
+    fnn.type_method = type_meth
     if self.current.kind == tk_l_paren() {
       dummy = self.bump
       self.skip_newlines
