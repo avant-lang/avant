@@ -337,6 +337,7 @@ pub class Loader {
   project_dir: String = ""
   manifest_dir: String = ""
   mod_paths: Hash(String, String)
+  std_names: Hash(String, String)
 
   fn initialize {
     h = Hash(String, Int).new
@@ -358,6 +359,15 @@ pub class Loader {
     self.manifest_dir = ""
     mp = Hash(String, String).new
     self.mod_paths = mp
+    sn = Hash(String, String).new
+    self.std_names = sn
+  }
+
+  pub fn module_label(path: String): String {
+    if n = self.std_names.get(path) {
+      return n
+    }
+    self.logical_name(path)
   }
 
   pub fn setup_deps(root_path: String) {
@@ -466,6 +476,7 @@ pub class Loader {
     if v = env_get("AVANT_ROOT") {
       path = join_dir(v, suffix)
       if file_exists(path) {
+        self.std_names[path] = name
         return path
       }
       self.fail(loc, "cannot find ${name} in the standard library")
@@ -476,6 +487,7 @@ pub class Loader {
     while guard < 64 {
       cand = join_dir(dir, suffix)
       if file_exists(cand) {
+        self.std_names[cand] = name
         return cand
       }
       parent = path_dirname(dir)
@@ -631,11 +643,11 @@ pub class Loader {
         if i > 0 {
           buf.push_str(" -> ")
         }
-        buf.push_str(self.logical_name(self.stack[i]))
+        buf.push_str(self.module_label(self.stack[i]))
         i = i + 1
       }
       buf.push_str(" -> ")
-      buf.push_str(self.logical_name(path))
+      buf.push_str(self.module_label(path))
       self.fail(Location.new(path, 1, 1, 0), buf.to_s)
       return nil
     }
@@ -658,7 +670,7 @@ pub class Loader {
         self.absorb(parser.errors)
         return nil
       }
-      name = self.logical_name(path)
+      name = self.module_label(path)
       self.note_module_path(name, path, program.loc)
       tag_module(program, name, path)
       self.programs.push(program)
@@ -687,7 +699,7 @@ pub class Loader {
         }
         seen_path[child] = imp.name
         dummy7 = self.load_file(child)
-        imports.push(self.logical_name(child))
+        imports.push(self.module_label(child))
         i = i + 1
       }
       info = ModInfo.new(name, path)

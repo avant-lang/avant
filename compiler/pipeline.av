@@ -19,12 +19,18 @@ pub class IrBox {
   ok: Bool = false
   re2c_obj: String = ""
   quiet_leaves: String = ""
+  std_objects: Array(String)
+  std_flags: Array(String)
 
   fn initialize(text: String, ok: Bool) {
     self.text = text
     self.ok = ok
     self.re2c_obj = ""
     self.quiet_leaves = ""
+    objs: Array(String) = []
+    flags: Array(String) = []
+    self.std_objects = objs
+    self.std_flags = flags
   }
 }
 
@@ -282,7 +288,7 @@ pub fn runtime_objects(root: String): Array(String) {
 
 pub fn linker_flags_s(extra: Array(String)): String {
   buf = buf_new()
-  buf.push_str("-pthread -lm -lpcre2-8 -lz")
+  buf.push_str("-pthread -lm -lpcre2-8")
   i = 0
   while i < extra.size {
     buf.push_str(" ")
@@ -347,7 +353,33 @@ pub fn compile_program(src: Source, program: Program): IrBox {
   box = IrBox.new(ir, true)
   box.re2c_obj = program.re2c_obj
   box.quiet_leaves = program.quiet_leaves
+  fill_std_link(program, box)
   box
+}
+
+pub fn fill_std_link(program: Program, box: IrBox) {
+  root = avant_root()
+  i = 0
+  while i < program.mods.size {
+    if str_eq(program.mods[i].name, "std.zlib") {
+      box.std_objects.push("${root}/runtime/build/avant_zlib.o")
+      box.std_flags.push("-lz")
+    }
+    i = i + 1
+  }
+}
+
+pub fn attach_std_link(box: IrBox, job: LinkJob) {
+  i = 0
+  while i < box.std_objects.size {
+    job.objects.push(box.std_objects[i])
+    i = i + 1
+  }
+  i = 0
+  while i < box.std_flags.size {
+    job.flags.push(box.std_flags[i])
+    i = i + 1
+  }
 }
 
 pub fn compile_av_path(path: String): IrBox {

@@ -1858,6 +1858,14 @@ pub fn (codegen_self: MycGen) emit_bytes_method(expr: Expr) {
     codegen_self.line("AS :${m}")
     return
   }
+  if expr.resolved.size > 0 {
+    if recv = expr.receiver {
+      codegen_self.emit_args(expr.args)
+      codegen_self.emit_expr(recv)
+      codegen_self.line("CALL :${expr.resolved}")
+    }
+    return
+  }
   if recv = expr.receiver {
     codegen_self.emit_expr(recv)
   }
@@ -1928,6 +1936,14 @@ pub fn (codegen_self: MycGen) emit_string_method(expr: Expr) {
     codegen_self.line("CALL :avant_str_chars")
     m = ty_myc(expr_ty(expr))
     codegen_self.line("AS :${m}")
+    return
+  }
+  if expr.resolved.size > 0 {
+    if recv = expr.receiver {
+      codegen_self.emit_args(expr.args)
+      codegen_self.emit_expr(recv)
+      codegen_self.line("CALL :${expr.resolved}")
+    }
     return
   }
   if recv = expr.receiver {
@@ -2115,5 +2131,13 @@ pub fn (codegen_self: MycGen) emit_buf_method(expr: Expr) {
       codegen_self.emit_expr(recv)
     }
     codegen_self.line("CALL :avant_buf_clear")
+    return
+  }
+  if expr.resolved.size > 0 {
+    if recv = expr.receiver {
+      codegen_self.emit_args(expr.args)
+      codegen_self.emit_expr(recv)
+      codegen_self.line("CALL :${expr.resolved}")
+    }
   }
 }

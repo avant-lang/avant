@@ -1,0 +1,53 @@
+lib zlibc {
+  fun avant_zlib_compress(data: Bytes): Bytes
+  fun avant_zlib_uncompress(data: Bytes): Bytes
+  fun avant_zlib_compress_into(data: Bytes, dst: Buf): Int
+  fun avant_zlib_uncompress_into(data: Bytes, dst: Buf): Int
+  fun avant_zlib_take_status: Int
+}
+
+pub class ZlibError {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+fn zlib_error(code: Int): ZlibError {
+  if code == 1 {
+    return ZlibError.new("invalid zlib data")
+  }
+  ZlibError.new("zlib error")
+}
+
+pub fn (b: Bytes) compress: Bytes {
+  out = zlibc.avant_zlib_compress(b)
+  dummy = zlibc.avant_zlib_take_status()
+  out
+}
+
+pub fn (b: Bytes) compress_into(dst: Buf): ZlibError? {
+  code = zlibc.avant_zlib_compress_into(b, dst)
+  if code != 0 {
+    return zlib_error(code)
+  }
+  nil
+}
+
+pub fn (b: Bytes) uncompress: Bytes | ZlibError {
+  out = zlibc.avant_zlib_uncompress(b)
+  code = zlibc.avant_zlib_take_status()
+  if code != 0 {
+    return zlib_error(code)
+  }
+  out
+}
+
+pub fn (b: Bytes) uncompress_into(dst: Buf): ZlibError? {
+  code = zlibc.avant_zlib_uncompress_into(b, dst)
+  if code != 0 {
+    return zlib_error(code)
+  }
+  nil
+}

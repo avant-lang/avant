@@ -230,6 +230,12 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
+  if str_eq(fnn.owner, "Bytes") || str_eq(fnn.owner, "String") || str_eq(fnn.owner, "Buf") {
+    if str_eq(fnn.mod_name, from_mod) {
+      return true
+    }
+    return checker_self.imported_by(from_mod, fnn.mod_name)
+  }
   if fnn.vis {
     return true
   }

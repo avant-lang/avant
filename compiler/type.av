@@ -875,6 +875,47 @@ pub fn ty_without_nil(ty: Ty): Ty {
   ty_union_build(kept)
 }
 
+pub fn if_assign_payload(ty: Ty): Ty? {
+  if ty.is_union {
+    if ty.includes_nil {
+      success = ty_without_nil(ty)
+      if success.is_union {
+        return nil
+      }
+      return success
+    }
+    if ty.members.size == 2 {
+      a = ty.members[0]
+      b = ty.members[1]
+      if a.is_class {
+        if b.is_class {
+          return nil
+        }
+        return b
+      }
+      if b.is_class {
+        return a
+      }
+    }
+  }
+  nil
+}
+
+pub fn if_assign_failure(ty: Ty): Ty {
+  if ty.includes_nil {
+    return ty_nil()
+  }
+  i = 0
+  while i < ty.members.size {
+    m = ty.members[i]
+    if m.is_class {
+      return m
+    }
+    i = i + 1
+  }
+  ty_nil()
+}
+
 pub fn ty_assignable(got: Ty, want: Ty): Bool {
   if got.same_as(want) {
     return true

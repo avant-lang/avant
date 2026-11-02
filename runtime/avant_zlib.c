@@ -1,0 +1,162 @@
+#include "avant_rt.h"
+
+#include <stdint.h>
+#include <string.h>
+#include <zlib.h>
+
+/* 0 ok, 1 bad input, 2 any other zlib failure. Thread-local so a
+ * returning call can hand back the bytes and the status separately. */
+static __thread int32_t g_zlib_status;
+
+static void set_status(int32_t code) {
+  g_zlib_status = code;
+}
+
+int32_t avant_zlib_take_status(void) {
+  int32_t code = g_zlib_status;
+  g_zlib_status = 0;
+  return code;
+}
+
+/* The collector records the allocation size. The string length is that
+ * size minus the trailing NUL, so a compressBound slack is dropped by
+ * rewriting the header before the object is observed. */
+static void tag_len(char *out, size_t n) {
+  AvantHeader *h = avant_header(out);
+  h->size = (uint32_t)(n + 1);
+  out[n] = 0;
+  avant_str_tag(out);
+}
+
+static void write_len(uint8_t *p, size_t n) {
+  p[0] = (uint8_t)((n >> 24) & 255);
+  p[1] = (uint8_t)((n >> 16) & 255);
+  p[2] = (uint8_t)((n >> 8) & 255);
+  p[3] = (uint8_t)(n & 255);
+}
+
+static uint32_t read_len(const uint8_t *p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+char *avant_zlib_compress(const char *s) {
+  size_t n = avant_str_n(s);
+  uLong bound = compressBound((uLong)n);
+  uLong dest_len = bound;
+  char *out;
+  set_status(0);
+  avant_gc_defer_enter();
+  out = (char *)avant_alloc((uint64_t)bound + 5, AVANT_TYPE_BYTES);
+  write_len((uint8_t *)out, n);
+  if (compress((Bytef *)(out + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
+    set_status(2);
+    avant_gc_defer_leave();
+    return avant_str_empty();
+  }
+  tag_len(out, 4 + (size_t)dest_len);
+  avant_gc_defer_leave();
+  return out;
+}
+
+char *avant_zlib_uncompress(const char *s) {
+  size_t n = avant_str_n(s);
+  const uint8_t *p = (const uint8_t *)(s ? s : "");
+  uint32_t orig;
+  uLong dest_len;
+  char *out;
+  set_status(0);
+  if (n < 4) {
+    set_status(1);
+    return avant_str_empty();
+  }
+  orig = read_len(p);
+  dest_len = orig;
+  avant_gc_defer_enter();
+  out = (char *)avant_alloc((uint64_t)orig + 1, AVANT_TYPE_BYTES);
+  if (orig == 0) {
+    out[0] = 0;
+    avant_str_tag(out);
+    avant_gc_defer_leave();
+    return out;
+  }
+  if (uncompress((Bytef *)out, &dest_len, p + 4, (uLong)(n - 4)) != Z_OK || dest_len != orig) {
+    set_status(1);
+    avant_gc_defer_leave();
+    return avant_str_empty();
+  }
+  out[orig] = 0;
+  avant_str_tag(out);
+  avant_gc_defer_leave();
+  return out;
+}
+
+int32_t avant_zlib_compress_into(const char *s, void *buf) {
+  size_t n = avant_str_n(s);
+  uLong bound = compressBound((uLong)n);
+  uLong dest_len = bound;
+  int32_t at;
+  int32_t need;
+  uint8_t *data;
+  set_status(0);
+  if (!buf) {
+    set_status(2);
+    return 2;
+  }
+  at = avant_buf_size(buf);
+  need = at + 4 + (int32_t)bound;
+  if (need < at) {
+    set_status(2);
+    return 2;
+  }
+  avant_buf_ensure(buf, need);
+  data = avant_buf_bytes(buf);
+  if (!data) {
+    set_status(2);
+    return 2;
+  }
+  write_len(data + at, n);
+  if (compress((Bytef *)(data + at + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
+    set_status(2);
+    return 2;
+  }
+  avant_buf_set_size(buf, at + 4 + (int32_t)dest_len);
+  return 0;
+}
+
+int32_t avant_zlib_uncompress_into(const char *s, void *buf) {
+  size_t n = avant_str_n(s);
+  const uint8_t *p = (const uint8_t *)(s ? s : "");
+  uint32_t orig;
+  uLong dest_len;
+  int32_t at;
+  int32_t need;
+  uint8_t *data;
+  set_status(0);
+  if (!buf || n < 4) {
+    set_status(1);
+    return 1;
+  }
+  orig = read_len(p);
+  dest_len = orig;
+  at = avant_buf_size(buf);
+  need = at + (int32_t)orig;
+  if (need < at) {
+    set_status(2);
+    return 2;
+  }
+  if (orig == 0) {
+    return 0;
+  }
+  avant_buf_ensure(buf, need);
+  data = avant_buf_bytes(buf);
+  if (!data) {
+    set_status(2);
+    return 2;
+  }
+  if (uncompress((Bytef *)(data + at), &dest_len, p + 4, (uLong)(n - 4)) != Z_OK || dest_len != orig) {
+    set_status(1);
+    return 1;
+  }
+  avant_buf_set_size(buf, at + (int32_t)orig);
+  return 0;
+}
