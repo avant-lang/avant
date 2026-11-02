@@ -13,7 +13,7 @@ compile() {
 
 for name in \
   avant_rt.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
-  avant_json.c avant_http.c avant_wide.c avant_codec.c avant_zlib.c avant_re.c avant_io.c avant_cov.c
+  avant_json.c avant_http.c avant_wide.c avant_codec.c avant_zlib.c avant_base64.c avant_re.c avant_io.c avant_cov.c
 do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
@@ -34,11 +34,9 @@ esac
 # shellcheck disable=SC2086
 ( cd "$b64" && env $simd make lib/libbase64.o )
 cp "$b64/lib/libbase64.o" "$root/build/libbase64.o"
-# Fold the library into avant_codec.o so the link list stays the one
-# the compiler already passes. The SIMD codecs need their own -m flags,
-# so they cannot be one translation unit with avant_codec.c.
-ld -r -o "$root/build/avant_codec.merge.o" "$root/build/avant_codec.o" "$root/build/libbase64.o"
-mv "$root/build/avant_codec.merge.o" "$root/build/avant_codec.o"
+# The aklomp object stays separate: the compiler links it only for a
+# program that imports std.base64. The SIMD codecs need their own -m
+# flags, so they cannot be one translation unit with avant_base64.c.
 
 us="$root/third_party/uSockets/src"
 compile "$us/bsd.c" "$root/build/us_bsd.o"
