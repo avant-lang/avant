@@ -1,5 +1,9 @@
 # Avant Language changelog
 
+## 0.26.0 - 2026-11-02
+
+* `zlib` moved to stdlib as `std.zlib`
+
 ## 0.25.0 - 2026-11-01
 
 ### Changed
