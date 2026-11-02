@@ -154,10 +154,11 @@ void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs,
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
 
-char *avant_b64_encode(const char *s);
-char *avant_b64_decode(const char *s);
-void avant_b64_encode_buf(void *buf, const char *s);
-void avant_b64_decode_buf(void *buf, const char *s);
+char *avant_base64_encode(const char *s);
+char *avant_base64_decode(const char *s);
+int32_t avant_base64_encode_into(const char *s, void *buf);
+int32_t avant_base64_decode_into(const char *s, void *buf);
+int32_t avant_base64_take_status(void);
 int32_t avant_crc32_i32(void *arr);
 int32_t avant_sha256_word0(void *arr);
 char *avant_zlib_compress(const char *s);
