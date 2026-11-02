@@ -1,0 +1,84 @@
+import harness
+import std.base64
+
+fn test_std_base64(c: Checks) {
+  c.suite("tests/cases/test_std_base64.av")
+  c.eq_str("".bytes.to_base64, "", "encode empty")
+  c.eq_str("a".bytes.to_base64, "YQ==", "encode one byte")
+  c.eq_str("aa".bytes.to_base64, "YWE=", "encode two bytes")
+  c.eq_str("aaa".bytes.to_base64, "YWFh", "encode three bytes")
+  c.eq_str("hello".bytes.to_base64, "aGVsbG8=", "encode hello")
+  if back = "aGVsbG8=".bytes.from_base64 {
+    text = String.from_utf8(back) ?? ""
+    c.eq_str(text, "hello", "decode hello")
+  } else {
+    c.expect(false, "decode hello")
+  }
+  if empty = "".bytes.from_base64 {
+    c.eq_int(empty.size, 0, "decode empty")
+  } else {
+    c.expect(false, "decode empty")
+  }
+  bin = buf_new(4)
+  bin.push_byte(0)
+  bin.push_byte(1)
+  bin.push_byte(254)
+  bin.push_byte(255)
+  raw = bin.to_bytes
+  if back2 = raw.to_base64.bytes.from_base64 {
+    c.eq_int(back2.size, 4, "binary roundtrip size")
+    if v = back2.get(0) {
+      c.eq_int(v, 0, "binary roundtrip byte 0")
+    } else {
+      c.expect(false, "binary roundtrip byte 0")
+    }
+    if v = back2.get(3) {
+      c.eq_int(v, 255, "binary roundtrip byte 3")
+    } else {
+      c.expect(false, "binary roundtrip byte 3")
+    }
+  } else {
+    c.expect(false, "binary roundtrip")
+  }
+  if bad = "not base64!".bytes.from_base64 {
+    c.expect(false, "invalid characters are an error")
+  } else {
+    c.expect(true, "invalid characters are an error")
+  }
+  if short = "YQ".bytes.from_base64 {
+    c.expect(false, "short input is an error")
+  } else {
+    c.expect(true, "short input is an error")
+  }
+  dst = buf_new(64)
+  dst.push_str("x")
+  if err = "aaa".bytes.to_base64_into(dst) {
+    c.expect(false, "encode_into ${err.message}")
+  } else {
+    c.eq_str(dst.to_s, "xYWFh", "encode_into appends")
+  }
+  dst.clear()
+  if err2 = "YWFh".bytes.from_base64_into(dst) {
+    c.expect(false, "decode_into ${err2.message}")
+  } else {
+    c.eq_str(dst.to_s, "aaa", "decode_into after clear")
+  }
+  keep = buf_new(64)
+  keep.push_str("keep")
+  if err3 = "!!!".bytes.from_base64_into(keep) {
+    c.expect(true, "decode_into invalid is an error")
+  } else {
+    c.expect(false, "decode_into invalid is an error")
+  }
+  c.eq_str(keep.to_s, "keep", "failed decode_into keeps the buffer")
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_base64(c)
+  c.finish
+}

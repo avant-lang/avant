@@ -1,0 +1,51 @@
+lib base64c {
+  fun avant_base64_encode(data: Bytes): String
+  fun avant_base64_decode(data: Bytes): Bytes
+  fun avant_base64_encode_into(data: Bytes, dst: Buf): Int
+  fun avant_base64_decode_into(data: Bytes, dst: Buf): Int
+  fun avant_base64_take_status: Int
+}
+
+pub class Base64Error {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+fn base64_error(code: Int): Base64Error {
+  if code == 1 {
+    return Base64Error.new("invalid base64 data")
+  }
+  Base64Error.new("base64 error")
+}
+
+pub fn (b: Bytes) to_base64: String {
+  base64c.avant_base64_encode(b)
+}
+
+pub fn (b: Bytes) to_base64_into(dst: Buf): Base64Error? {
+  code = base64c.avant_base64_encode_into(b, dst)
+  if code != 0 {
+    return base64_error(code)
+  }
+  nil
+}
+
+pub fn (b: Bytes) from_base64: Bytes | Base64Error {
+  out = base64c.avant_base64_decode(b)
+  code = base64c.avant_base64_take_status()
+  if code != 0 {
+    return base64_error(code)
+  }
+  out
+}
+
+pub fn (b: Bytes) from_base64_into(dst: Buf): Base64Error? {
+  code = base64c.avant_base64_decode_into(b, dst)
+  if code != 0 {
+    return base64_error(code)
+  }
+  nil
+}

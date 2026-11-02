@@ -1,8 +1,5 @@
 #include "avant_rt.h"
 
-#define BASE64_STATIC_DEFINE
-#include "libbase64.h"
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,109 +9,6 @@ typedef struct {
   int32_t size;
   int32_t cap;
 } AvantArray;
-
-static size_t b64_encoded_len(size_t n) {
-  return ((n + 2) / 3) * 4;
-}
-
-static size_t b64_write(char *out, const unsigned char *p, size_t n) {
-  size_t wrote = 0;
-  base64_encode((const char *)p, n, out, &wrote, 0);
-  return wrote;
-}
-
-char *avant_b64_encode(const char *s) {
-  size_t n = avant_str_n(s);
-  size_t out_n = b64_encoded_len(n);
-  const unsigned char *p = (const unsigned char *)(s ? s : "");
-  avant_gc_defer_enter();
-  char *out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
-  b64_write(out, p, n);
-  out[out_n] = 0;
-  avant_str_tag(out);
-  avant_gc_defer_leave();
-  return out;
-}
-
-void avant_b64_encode_buf(void *buf, const char *s) {
-  size_t n = avant_str_n(s);
-  size_t out_n = b64_encoded_len(n);
-  const unsigned char *p = (const unsigned char *)(s ? s : "");
-  if (out_n > (size_t)INT32_MAX) {
-    avant_buf_clear(buf);
-    return;
-  }
-  avant_gc_defer_enter();
-  avant_buf_clear(buf);
-  avant_buf_ensure(buf, (int32_t)out_n);
-  char *dst = (char *)avant_buf_bytes(buf);
-  size_t wrote = 0;
-  if (dst) {
-    wrote = b64_write(dst, p, n);
-  }
-  if (wrote > out_n) {
-    wrote = out_n;
-  }
-  avant_buf_set_size(buf, (int32_t)wrote);
-  avant_gc_defer_leave();
-}
-
-static size_t b64_decoded_len(const unsigned char *p, size_t n) {
-  size_t out_n = (n / 4) * 3;
-  if (out_n > 0 && n > 0 && p[n - 1] == '=') {
-    out_n -= 1;
-  }
-  if (out_n > 0 && n > 1 && p[n - 2] == '=') {
-    out_n -= 1;
-  }
-  return out_n;
-}
-
-static size_t b64_decode_write(char *out, const unsigned char *p, size_t n, size_t out_n) {
-  size_t wrote = 0;
-  int ok;
-  if (!out) {
-    return 0;
-  }
-  ok = base64_decode((const char *)p, n, out, &wrote, 0);
-  if (ok != 1 || wrote > out_n) {
-    return 0;
-  }
-  return wrote;
-}
-
-char *avant_b64_decode(const char *s) {
-  size_t n = avant_str_n(s);
-  const unsigned char *p = (const unsigned char *)(s ? s : "");
-  size_t out_n = b64_decoded_len(p, n);
-  avant_gc_defer_enter();
-  char *out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
-  size_t o = b64_decode_write(out, p, n, out_n);
-  out[o] = 0;
-  avant_str_tag(out);
-  avant_gc_defer_leave();
-  return out;
-}
-
-void avant_b64_decode_buf(void *buf, const char *s) {
-  size_t n = avant_str_n(s);
-  const unsigned char *p = (const unsigned char *)(s ? s : "");
-  size_t out_n = b64_decoded_len(p, n);
-  if (out_n > (size_t)INT32_MAX) {
-    avant_buf_clear(buf);
-    return;
-  }
-  avant_gc_defer_enter();
-  avant_buf_clear(buf);
-  avant_buf_ensure(buf, (int32_t)out_n);
-  char *dst = (char *)avant_buf_bytes(buf);
-  size_t o = 0;
-  if (dst) {
-    o = b64_decode_write(dst, p, n, out_n);
-  }
-  avant_buf_set_size(buf, (int32_t)o);
-  avant_gc_defer_leave();
-}
 
 static uint32_t crc_table[4][256];
 static int crc_ready;

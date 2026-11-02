@@ -1,16 +1,28 @@
 import harness
 import std.zlib
+import std.base64
 
 fn test_holes(c: Checks) {
   c.suite("tests/cases/test_holes.av")
-  c.eq_str(b64_encode("aaa"), "YWFh", "b64_encode")
-  c.eq_str(b64_decode(b64_encode("aaa")), "aaa", "b64_decode")
+  c.eq_str("aaa".bytes.to_base64, "YWFh", "to_base64")
+  if dec = "aaa".bytes.to_base64.bytes.from_base64 {
+    text = String.from_utf8(dec) ?? ""
+    c.eq_str(text, "aaa", "from_base64")
+  } else {
+    c.expect(false, "from_base64")
+  }
   bb = buf_new(8)
-  b64_encode_buf(bb, "aaa")
-  c.eq_str(bb.to_s, "YWFh", "b64_encode_buf")
+  if err = "aaa".bytes.to_base64_into(bb) {
+    c.expect(false, "to_base64_into ${err.message}")
+  } else {
+    c.eq_str(bb.to_s, "YWFh", "to_base64_into")
+  }
   db = buf_new(8)
-  b64_decode_buf(db, bb.to_s)
-  c.eq_str(db.to_s, "aaa", "b64_decode_buf")
+  if err2 = bb.to_s.bytes.from_base64_into(db) {
+    c.expect(false, "from_base64_into ${err2.message}")
+  } else {
+    c.eq_str(db.to_s, "aaa", "from_base64_into")
+  }
 
   c.eq_int(re_count("a+", "aa ba", 0), 2, "re_count")
   c.eq_str(sha256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256")
