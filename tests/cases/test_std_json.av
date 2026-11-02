@@ -1,0 +1,163 @@
+import harness
+import std.json
+
+fn churn(rounds: Int) {
+  keep: Array(String) = []
+  r = 0
+  while r < rounds {
+    a: Array(String) = []
+    i = 0
+    while i < 500 {
+      a.push("churn-${r}-${i}-abcdefghij0123456789")
+      i = i + 1
+    }
+    keep.push(a[499])
+    if keep.size > 20 {
+      keep.clear()
+    }
+    r = r + 1
+  }
+}
+
+fn test_std_json(c: Checks) {
+  c.suite("tests/cases/test_std_json.av")
+  if doc = Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {
+    if n = doc.int("n") {
+      c.eq_int(n, 7, "int by key")
+    } else {
+      c.expect(false, "int by key")
+    }
+    if name = doc.str("name") {
+      c.eq_str(name, "ada", "str by key")
+    } else {
+      c.expect(false, "str by key")
+    }
+    if pi = doc.f64("pi") {
+      c.eq_int((pi * 10.0).to_i, 35, "f64 by key")
+    } else {
+      c.expect(false, "f64 by key")
+    }
+    if ok = doc.bool("ok") {
+      c.expect(ok, "bool by key")
+    } else {
+      c.expect(false, "bool by key")
+    }
+    if missing = doc.int("missing") {
+      c.expect(false, "missing key is nil")
+    } else {
+      c.expect(true, "missing key is nil")
+    }
+    if wrong = doc.int("name") {
+      c.expect(false, "wrong kind is nil")
+    } else {
+      c.expect(true, "wrong kind is nil")
+    }
+    if tags = doc.get("tags") {
+      c.eq_int(tags.len, 2, "array len")
+      if first = tags.at(0) {
+        if s = first.str {
+          c.eq_str(s, "x", "str by node")
+        } else {
+          c.expect(false, "str by node")
+        }
+      } else {
+        c.expect(false, "at 0")
+      }
+      if oob = tags.at(9) {
+        c.expect(false, "at out of range is nil")
+      } else {
+        c.expect(true, "at out of range is nil")
+      }
+    } else {
+      c.expect(false, "get tags")
+    }
+    if point = doc.get("point") {
+      if x = point.int("x") {
+        c.eq_int(x, 1, "nested int")
+      } else {
+        c.expect(false, "nested int")
+      }
+      c.eq_int(point.len, 2, "object len")
+      if k0 = point.key_at(0) {
+        c.eq_str(k0, "x", "key_at 0")
+      } else {
+        c.expect(false, "key_at 0")
+      }
+    } else {
+      c.expect(false, "get point")
+    }
+    if nothing = doc.get("nothing") {
+      c.expect(nothing.is_null, "null kind")
+    } else {
+      c.expect(false, "get null")
+    }
+    value = doc.to_value
+    c.eq_int(value.kind, 7, "to_value object kind")
+    if nv = value.get("n") {
+      c.eq_int(nv.int_val, 7, "to_value int")
+    } else {
+      c.expect(false, "to_value int")
+    }
+    churn(30)
+    if n2 = doc.int("n") {
+      c.eq_int(n2, 7, "read after churn")
+    } else {
+      c.expect(false, "read after churn")
+    }
+  } else {
+    c.expect(false, "parse object")
+  }
+  if bad = Json.parse("{not json") {
+    c.expect(false, "invalid JSON is an error")
+  } else {
+    c.expect(true, "invalid JSON is an error")
+  }
+  if empty = Json.parse("") {
+    c.expect(false, "empty input is an error")
+  } else {
+    c.expect(true, "empty input is an error")
+  }
+  built = Json.obj()
+  built.set("n", 7)
+  built.set("name", "a\"b\\c\nd")
+  built.key("tags").arr.add("x").add("y").end
+  built.key("point").obj.set("x", 1).set("y", 2).end
+  built.set("ok", true)
+  built.set("pi", 3.5)
+  built.set_null("nothing")
+  built.end
+  if doc2 = Json.parse(built.to_s) {
+    if name2 = doc2.str("name") {
+      c.eq_str(name2, "a\"b\\c\nd", "builder escapes strings")
+    } else {
+      c.expect(false, "builder escapes strings")
+    }
+    if tags2 = doc2.get("tags") {
+      c.eq_int(tags2.len, 2, "builder array")
+    } else {
+      c.expect(false, "builder array")
+    }
+    if n3 = doc2.int("n") {
+      c.eq_int(n3, 7, "builder int")
+    } else {
+      c.expect(false, "builder int")
+    }
+  } else {
+    c.expect(false, "parse built")
+  }
+  dst = buf_new()
+  dst.push_str("prefix:")
+  into = JsonBuilder.into(dst)
+  into.obj.set("a", 1).end
+  c.eq_str(dst.to_s, "prefix:{\"a\":1}", "builder writes into caller Buf")
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_json(c)
+  c.finish
+}

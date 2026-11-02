@@ -2753,29 +2753,6 @@ pub class Checker {
       self.fail(expr.loc, "now_ms takes no arguments")
       return self.t_int()
     }
-    if str_eq(expr.callee, "json_parse") {
-      if expr.args.size == 1 {
-        if b = expr.block {
-          self.fail(expr.loc, "json_parse takes one String")
-          return ty_ptr(self.t_void())
-        }
-      } else {
-        self.fail(expr.loc, "json_parse takes one String")
-        return ty_ptr(self.t_void())
-      }
-      got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
-        self.fail(expr.args[0].loc, "json_parse expects String")
-      }
-      return ty_ptr(self.t_void())
-    }
-    if str_eq(expr.callee, "json_int") {
-      return self.check_json_get(expr, self.t_int())
-    }
-    if str_eq(expr.callee, "json_str") {
-      return self.check_json_get(expr, self.t_string())
-    }
     if str_eq(expr.callee, "http_roundtrip") {
       if expr.args.size == 1 {
         if b = expr.block {
@@ -2944,9 +2921,6 @@ pub class Checker {
         self.fail(expr.args[0].loc, "dir_list expects String")
       }
       return ty_array(self.t_string())
-    }
-    if ty = self.check_json_walk_call(expr) {
-      return ty
     }
     if ty = self.check_codec_call(expr) {
       return ty
