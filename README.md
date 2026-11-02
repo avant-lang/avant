@@ -1219,7 +1219,7 @@ Testing the compiler itself is covered for contributors under [Advanced: buildin
 
 ## Builtins
 
-Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, the `json_*` family, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`. `import std.zlib` adds `Bytes.compress` and `Bytes.uncompress` and is what links zlib. `import std.base64` adds `Bytes.to_base64` and `Bytes.from_base64` and is what links the aklomp Base64 codec.
+Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`. `import std.zlib` adds `Bytes.compress` and `Bytes.uncompress` and is what links zlib. `import std.base64` adds `Bytes.to_base64` and `Bytes.from_base64` and is what links the aklomp Base64 codec. `import std.json` adds `Json.parse` and is what links yyjson; a type-level function is declared in a type body as `fn self.name(...)` and called on the type, as `Json.parse` is.
 
 ## Not built yet
 
