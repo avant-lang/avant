@@ -1,5 +1,11 @@
 # Avant Language changelog
 
+## 0.27.0 - 2026-11-02
+
+### Changed
+
+* `base64` moved to stdlib as `std.base64`
+
 ## 0.26.0 - 2026-11-02
 
 ### Changed
