@@ -12,7 +12,7 @@ compile() {
 }
 
 for name in \
-  avant_rt.c avant_rt_traps.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
+  avant_rt.c avant_rt_traps.c avant_gc_stackmap.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
   avant_json.c avant_http.c avant_wide.c avant_codec.c avant_zlib.c avant_base64.c avant_re.c avant_io.c avant_cov.c
 do
   compile "$root/$name" "$root/build/${name%.c}.o"
@@ -23,7 +23,7 @@ compile "$root/third_party/yyjson/yyjson.c" "$root/build/yyjson.o"
 # avant_rt_traps.o folds into avant_rt.o: the seed's link table names
 # avant_rt.o only, so a new core object could not be linked by the old
 # seed. The source split is organizational; the link surface is not.
-ld -r -o "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o" "$root/build/avant_rt_traps.o"
+ld -r -o "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o" "$root/build/avant_rt_traps.o" "$root/build/avant_gc_stackmap.o"
 mv "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o"
 
 # aklomp/base64 e4cc438. LangArena's C port calls this library.
