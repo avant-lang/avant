@@ -154,6 +154,19 @@ static uint64_t g_peak_live;
 static uint64_t g_root_calls;
 static uint64_t g_reload_calls;
 static uint64_t g_enter_calls;
+/* Remembered-set observability (Collector II Wave 2): scans counts every
+ * remembered-set scan in gen_young_copy (probe and real passes alike),
+ * entries/fields sum the set size and field slots visited at each scan,
+ * peak is the largest frontier seen at a scan start, adds counts
+ * successful rem_add inserts, cleared counts frontier evictions.
+ * Reported by AVANT_GC_STATS. Internal only: not part of AvantGcStats,
+ * whose field order is an ABI for generated code. */
+static uint64_t g_rem_scans;
+static uint64_t g_rem_entries;
+static uint64_t g_rem_fields;
+static uint64_t g_rem_peak;
+static uint64_t g_rem_adds;
+static uint64_t g_rem_cleared;
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -303,6 +316,7 @@ static void rem_add(void *obj) {
     g_remset = xrealloc(g_remset, g_rem_cap * sizeof(void *));
   }
   g_remset[g_rem_n++] = obj;
+  g_rem_adds++;
   if (locked) {
     pthread_mutex_unlock(&g_rem_mu);
   }
@@ -1480,6 +1494,22 @@ static void rem_scrub(void) {
   }
 }
 
+/* Field slots copy_payload_children would visit for one object. */
+static uint64_t rem_field_count(void *p) {
+  AvantHeader *h = avant_header(p);
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_BYTES) {
+    return 0;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    return (uint64_t)((size_t)h->size / sizeof(void *));
+  }
+  if (id >= MAX_TYPES || !g_type_set[id]) {
+    return 0;
+  }
+  return (uint64_t)__builtin_popcountll(g_type_bits[id]);
+}
+
 static void gen_young_copy(void) {
   if (!g_probe) {
     fwd_reset();
@@ -1514,12 +1544,18 @@ static void gen_young_copy(void) {
     if (locked) {
       pthread_mutex_lock(&g_rem_mu);
     }
+    g_rem_scans++;
+    g_rem_entries += g_rem_n;
+    if (g_rem_n > g_rem_peak) {
+      g_rem_peak = g_rem_n;
+    }
     for (ri = 0; ri < g_rem_n; ri++) {
       void *obj = g_remset[ri];
       if (is_heap_payload(obj, NULL, NULL)) {
         /* A remembered object is a root this cycle: mark it so the
          * probe pass's rem_scrub keeps it in the set. */
         avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+        g_rem_fields += rem_field_count(obj);
         copy_payload_children(obj);
       }
     }
@@ -2196,7 +2232,8 @@ static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
-          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu\n",
+          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu "
+          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2217,7 +2254,14 @@ static void print_stats(void) {
           (unsigned long long)g_root_calls,
           (unsigned long long)g_reload_calls,
           (unsigned long long)g_enter_calls,
-          (unsigned long long)avant_inline_allocs);
+          (unsigned long long)avant_inline_allocs,
+          (unsigned long long)g_rem_scans,
+          (unsigned long long)g_rem_entries,
+          (unsigned long long)g_rem_fields,
+          (unsigned long long)g_rem_peak,
+          (unsigned long long)g_rem_n,
+          (unsigned long long)g_rem_adds,
+          (unsigned long long)g_rem_cleared);
 }
 
 static void init_gc(void) {
