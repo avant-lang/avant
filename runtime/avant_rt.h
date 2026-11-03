@@ -12,16 +12,16 @@
  * sees is the payload; the header sits immediately before it so field
  * indices in myc IR stay the language layout.
  *
- * Collector is GenImmix (copying nursery, Immix mature). Stage 17 is
- * growing myc-llvm pointer safepoints so the copying nursery can be
- * the default. Until compile-compiler stays honest with young copy
- * and from-space discarded, the nursery is off unless AVANT_NURSERY=1.
- * AVANT_NURSERY_DISCARD=1 frees from-space after young copy (pinned
- * nursery blocks stay). LLVM stack maps are walked when the nursery
- * is on (AVANT_NURSERY_STACKMAP=0 disables). Discard compile-compiler
- * needs that walk so leftover myc spills are rewritten. AVANT_NURSERY=0
- * is the Stage 7 full (non-moving) collect. AVANT_FLAG_PINNED is the C-escape seam:
- * pinned objects are not moved and are young-GC roots.
+ * Collector is GenImmix (copying nursery, Immix mature) and the copying
+ * nursery is the product default (AVANT_NURSERY=0 restores the Stage 7
+ * full, non-moving collect). From-space is discarded after a young copy
+ * unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis. LLVM stack
+ * maps are walked while the nursery is on (AVANT_NURSERY_STACKMAP=0
+ * disables) so leftover myc spills can be rewritten. Remembered-set
+ * members are roots for the young generation. AVANT_FLAG_PINNED is the
+ * C-escape seam: pinned objects are not moved and are young-GC roots.
+ * The full invariant list and knob table live in
+ * avant-ledgers/stages/collector.md.
  */
 
 #define AVANT_TYPE_BYTES 0
