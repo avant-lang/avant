@@ -1,5 +1,21 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* `import std.json` — JSON on top of yyjson, linked only by programs that import it. `Json.parse(text)` returns `Json | JsonError`. Values walk with `get`/`at`, typed accessors (`int`, `f64`, `str`, `bool`, by key or on a node) return `T?` with a string copied only when a field is taken, `first`/`iter` scan arrays in linear time, `f64s(key)` projects a numeric field of every element into an `Array(Float64)`, `to_value` builds an explicit value tree, and `JsonBuilder` writes JSON into its own buffer or a caller-owned `Buf`. A parsed document is one collector-owned buffer: there is no `close` and no finalizer.
+* Type-level functions: `fn self.name(...)` in a type body declares a function called on the type itself, as `Json.parse` is. The body has no `self`; calling a type-level function on a value, or an instance method on a type, is an error.
+
+### Changed
+
+* The `json_*` and `json_free` prelude functions are removed. Programs use `std.json`; hello no longer links yyjson.
+
+### Fixed
+
+* A zero value can now be emitted for a struct member of a union, so types such as `SomeStruct | SomeError` can be returned.
+* `tests/bless_goldens.av` builds its dump tool with `--debug` (as the test harness already did), bringing a golden re-bless from about nine minutes to under a minute with identical output.
+
 ## 0.27.0 - 2026-11-02
 
 ### Changed
