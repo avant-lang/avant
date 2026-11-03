@@ -12,16 +12,16 @@
  * sees is the payload; the header sits immediately before it so field
  * indices in myc IR stay the language layout.
  *
- * Collector is GenImmix (copying nursery, Immix mature). Stage 17 is
- * growing myc-llvm pointer safepoints so the copying nursery can be
- * the default. Until compile-compiler stays honest with young copy
- * and from-space discarded, the nursery is off unless AVANT_NURSERY=1.
- * AVANT_NURSERY_DISCARD=1 frees from-space after young copy (pinned
- * nursery blocks stay). LLVM stack maps are walked when the nursery
- * is on (AVANT_NURSERY_STACKMAP=0 disables). Discard compile-compiler
- * needs that walk so leftover myc spills are rewritten. AVANT_NURSERY=0
- * is the Stage 7 full (non-moving) collect. AVANT_FLAG_PINNED is the C-escape seam:
- * pinned objects are not moved and are young-GC roots.
+ * Collector is GenImmix (copying nursery, Immix mature) and the copying
+ * nursery is the product default (AVANT_NURSERY=0 restores the Stage 7
+ * full, non-moving collect). From-space is discarded after a young copy
+ * unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis. LLVM stack
+ * maps are walked while the nursery is on (AVANT_NURSERY_STACKMAP=0
+ * disables) so leftover myc spills can be rewritten. Remembered-set
+ * members are roots for the young generation. AVANT_FLAG_PINNED is the
+ * C-escape seam: pinned objects are not moved and are young-GC roots.
+ * The full invariant list and knob table live in
+ * avant-ledgers/stages/collector.md.
  */
 
 #define AVANT_TYPE_BYTES 0
@@ -84,7 +84,37 @@ void avant_gc_leave(void);
 void avant_gc_quiet_enter(void);
 void avant_gc_quiet_leave(void);
 void avant_gc_root(void *slot);
+/* Batched root registration (Collector II Wave 0): generated code calls
+ * this once at frame entry with the frame's root count, stores each
+ * slot address into the returned array at its fixed index, and the
+ * collector scans the first count entries. The per-slot avant_gc_root
+ * above stays for binaries compiled before the batch existed. */
+void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
+
+/* Inline nursery fast path (Collector II Wave 1). Generated code may
+ * allocate without a call only while avant_gc_fast_ok is set: it bumps
+ * avant_gc_bump by the aligned total, writes the header (HEAP|YOUNG),
+ * zeroes the payload, sets the block start bit through
+ * avant_gc_starts/avant_gc_base, and adds the total to
+ * avant_g_stats.allocated_bytes, avant_since_gc, and
+ * avant_nursery_held. avant_gc_limit is the block limit capped by the
+ * young threshold, and the runtime alone publishes or clears this
+ * state. AvantGcStats field order is part of this ABI
+ * (allocated_bytes at offset 24). */
+extern __thread uint8_t *avant_gc_bump;
+extern __thread uint8_t *avant_gc_limit;
+extern __thread uint8_t *avant_gc_base;
+extern __thread uint64_t *avant_gc_starts;
+/* Current nursery Block; generated code also stores the new cursor
+ * into its bump field (offset 32 in struct Block, avant_gc_internal.h)
+ * so the C cursor and the block never disagree. */
+extern __thread void *avant_gc_block;
+extern __thread uint32_t avant_gc_fast_ok;
+extern uint64_t avant_nursery_held;
+extern uint64_t avant_young_bytes;
+extern uint64_t avant_since_gc;
+extern uint64_t avant_inline_allocs;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 void avant_barrier(void *obj);
 
@@ -98,6 +128,7 @@ typedef struct AvantGcStats {
   uint64_t peak_heap;
 } AvantGcStats;
 
+extern AvantGcStats avant_g_stats;
 void avant_gc_stats(AvantGcStats *out);
 void avant_gc_collect(void);
 void avant_gc_register_thread(void);

@@ -1,0 +1,316 @@
+import harness
+
+fn tree_fixture: String {
+  "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) &+ check(n.right, depth - 1) &+ n.item\n}\n\nfn main: Int {\n  long_lived = make(0, 15)\n  sum = 0\n  i = 0\n  while i < 20 {\n    t = make(i, 15)\n    sum = sum &+ check(t, 15)\n    i = i + 1\n  }\n  puts(sum)\n  puts(check(long_lived, 15))\n  0\n}\n"
+}
+
+fn churn_fixture: String {
+  "lib gc {\n  fun avant_gc_collect()\n}\n\nclass Link {\n  v: Int\n  next: Link?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main: Int {\n  first = Link.new(0)\n  prev = first\n  i = 1\n  while i < 5000 {\n    n = Link.new(i)\n    prev.next = n\n    prev = n\n    i = i + 1\n  }\n  prev.next = first\n  gc.avant_gc_collect()\n  sum = 0\n  cur = first\n  i = 0\n  while i < 5000 {\n    sum = sum &+ cur.v\n    if nxt = cur.next {\n      cur = nxt\n    }\n    i = i + 1\n  }\n  puts(sum)\n  a: Array(Int) = []\n  i = 0\n  while i < 100000 {\n    a.push(i)\n    i = i + 1\n  }\n  gc.avant_gc_collect()\n  s2 = 0\n  i = 0\n  while i < a.size {\n    s2 = s2 &+ a[i]\n    i = i + 1\n  }\n  puts(s2)\n  s = \"\"\n  i = 0\n  while i < 2000 {\n    s = s + \"x\"\n    i = i + 1\n  }\n  puts(s.size)\n  0\n}\n"
+}
+
+fn roots_fixture: String {
+  "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn main: Int {\n  a = make(1, 10)\n  b = make(2, 10)\n  c = make(3, 10)\n  d = make(4, 10)\n  e = make(5, 10)\n  f = make(6, 10)\n  g = make(7, 10)\n  h = make(8, 10)\n  maybe: Node? = make(9, 10)\n  sum = 0\n  i = 0\n  while i < 30 {\n    t = make(i, 11)\n    sum = sum &+ check(t, 11)\n    sum = sum &+ check(a, 10) &+ check(b, 10) &+ check(c, 10) &+ check(d, 10)\n    sum = sum &+ check(e, 10) &+ check(f, 10) &+ check(g, 10) &+ check(h, 10)\n    if m = maybe {\n      sum = sum &+ check(m, 10)\n    }\n    i = i + 1\n  }\n  puts(sum)\n  0\n}\n"
+}
+
+fn roots_line_fixture: String {
+  "class Node {\n  item: Int\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn churn(k: Int): Int {\n  s = 0\n  i = 0\n  while i < 60000 {\n    n = Node.new(i * k)\n    s = s &+ n.item\n    i = i + 1\n  }\n  s\n}\n\nfn pick(k: Int): Node {\n  a = Node.new(k)\n  b = Node.new(k + 1)\n  c = Node.new(k + 2)\n  a.item = a.item + b.item + c.item\n  a\n}\n\nfn main: Int {\n  x = pick(10)\n  y = pick(20)\n  z = pick(30)\n  sum = 0\n  sum = sum &+ churn(1)\n  sum = sum &+ x.item &+ y.item &+ z.item\n  sum = sum &+ churn(2)\n  sum = sum &+ x.item &+ y.item &+ z.item\n  puts(sum)\n  0\n}\n"
+}
+
+fn alloc_fixture: String {
+  "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn make_bump(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      if l = make_bump(item &* 2, depth - 1) {\n        if r = make_bump(item &* 2 &+ 1, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\n\nfn bump_sum(depth: Int): Int {\n  if t = make_bump(0, depth) {\n    return check(t, depth)\n  }\n  0\n}\n\nfn main: Int {\n  root = make(0, 12)\n  sum = 0\n  i = 0\n  while i < 40 {\n    fresh = make(i, 10)\n    root.left = fresh\n    root.right = make(i + 1, 10)\n    sum = sum &+ check(fresh, 10)\n    sum = sum &+ bump_sum(12)\n    xs: Array(Int) = []\n    j = 0\n    while j < 2000 {\n      xs.push(j * i)\n      j = j + 1\n    }\n    sum = sum &+ xs[1999]\n    nursery_reclaim()\n    i = i + 1\n  }\n  sum = sum &+ check(root, 12)\n  puts(sum)\n  0\n}\n"
+}
+
+fn frontier_fixture: String {
+  "class GNode {\n  v: Int\n  a: GNode?\n  b: GNode?\n  kid: GNode?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn build(v: Int, depth: Int, flat: Array(GNode)): GNode {\n  n = GNode.new(v)\n  flat.push(n)\n  if depth > 0 {\n    n.a = build(v &* 2, depth - 1, flat)\n    n.b = build(v &* 2 &+ 1, depth - 1, flat)\n  }\n  n\n}\n\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = GNode.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\n\nfn main: Int {\n  flat: Array(GNode) = []\n  root = build(1, 10, flat)\n  warm = churn(12, 7)\n  i = 0\n  while i < flat.size {\n    flat[i].kid = GNode.new(flat[i].v &+ 100000)\n    i = i + 1\n  }\n  mid = churn(4, 13)\n  round = 0\n  while round < 60 {\n    j = round % 97\n    while j < flat.size {\n      flat[j].kid = GNode.new(flat[j].v &+ round)\n      j = j + 97\n    }\n    warm = warm &+ churn(1, 29 &+ round)\n    round = round + 1\n  }\n  total = warm &+ mid &+ root.v\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v\n    if kid = flat[k].kid {\n      total = total &+ kid.v % 89\n    }\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
+}
+
+fn defrag_fixture: String {
+  "lib gc {\n  fun avant_gc_collect()\n}\nclass Chunk {\n  v: Int\n  f1: Int\n  f2: Int\n  f3: Int\n  f4: Int\n  f5: Int\n  f6: Int\n  f7: Int\n  f8: Int\n  f9: Int\n  f10: Int\n  f11: Int\n  f12: Int\n  f13: Int\n  f14: Int\n  f15: Int\n  f16: Int\n  f17: Int\n  f18: Int\n  f19: Int\n  f20: Int\n  f21: Int\n  f22: Int\n  f23: Int\n  f24: Int\n  f25: Int\n  f26: Int\n  f27: Int\n  f28: Int\n  f29: Int\n  f30: Int\n  fn initialize(v: Int) {\n    self.v = v\n    self.f30 = v\n  }\n}\nclass Spur {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = Spur.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\nfn build_pruned(warm: Int): Array(Chunk) {\n  flat: Array(Chunk) = []\n  i = 0\n  while i < 8192 {\n    flat.push(Chunk.new(i &+ 1))\n    i = i + 1\n  }\n  warm2 = warm &+ churn(12, 7)\n  keep: Array(Chunk) = []\n  j = 0\n  while j < flat.size {\n    if j % 8 == 0 {\n      keep.push(flat[j])\n    }\n    j = j + 1\n  }\n  if warm2 == 424242 {\n    puts(flat.size)\n  }\n  keep\n}\nfn main: Int {\n  flat = build_pruned(0)\n  gc.avant_gc_collect()\n  gc.avant_gc_collect()\n  warm = churn(2, 13)\n  gc.avant_gc_collect()\n  total = warm &+ flat.size\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v &+ flat[k].f30\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
+}
+
+fn sizing_fixture: String {
+  "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn main: Int {\n  kept: Array(Node) = []\n  sum = 0\n  r = 0\n  while r < 48 {\n    t = make(r, 12)\n    sum = sum &+ check(t, 12)\n    if r % 6 == 5 {\n      kept.push(t)\n    }\n    r = r + 1\n  }\n  k = 0\n  while k < kept.size {\n    sum = sum &+ check(kept[k], 12)\n    k = k + 1\n  }\n  puts(sum)\n  puts(kept.size)\n  0\n}\n"
+}
+
+fn run_with_env(bin: String, name: String, value: String, log: String): Int {
+  args: Array(String) = []
+  args.push("${name}=${value}")
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
+fn test_gc_behavior(c: Checks) {
+  c.suite("tests/cases/test_gc_behavior.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-gcb-${stamp}.av"
+    bin = "/tmp/avant-gcb-${stamp}.bin"
+    w = file_write(src, tree_fixture())
+    c.eq_int(w, 0, "write tree fixture")
+    code = compile_av(compiler, src, bin, "/tmp/avant-gcb-${stamp}.clog")
+    c.eq_int(code, 0, "compile tree fixture")
+    want = "-1432311182\n715795115\n"
+    log1 = "/tmp/avant-gcb-${stamp}.run1"
+    rc1 = run_av_bin(bin, log1)
+    c.eq_int(rc1, 0, "trees survive at default young size")
+    if out1 = file_read(log1) {
+      c.eq_str(out1, want, "tree checksums at default young size")
+    } else {
+      c.expect(false, "read default run")
+    }
+    // A 1 MB young space forces hundreds of young collections through
+    // the build. A mature tree interior that tenured together with its
+    // children used to become invisible to later young collections, and
+    // its fields kept pointing at from-space addresses (F1 in
+    // experiments/gc-baseline-2026-11-03.md): this run segfaulted.
+    log2 = "/tmp/avant-gcb-${stamp}.run2"
+    rc2 = run_with_env(bin, "AVANT_YOUNG_MB", "1", log2)
+    c.eq_int(rc2, 0, "trees survive at 1 MB young size")
+    if out2 = file_read(log2) {
+      c.eq_str(out2, want, "tree checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read small-young run")
+    }
+    log3 = "/tmp/avant-gcb-${stamp}.run3"
+    rc3 = run_with_env(bin, "AVANT_NURSERY", "0", log3)
+    c.eq_int(rc3, 0, "trees survive with nursery off")
+    if out3 = file_read(log3) {
+      c.eq_str(out3, want, "tree checksums with nursery off")
+    } else {
+      c.expect(false, "read nursery-off run")
+    }
+
+    src2 = "/tmp/avant-gcb-${stamp}-churn.av"
+    bin2 = "/tmp/avant-gcb-${stamp}-churn.bin"
+    w2 = file_write(src2, churn_fixture())
+    c.eq_int(w2, 0, "write churn fixture")
+    code2 = compile_av(compiler, src2, bin2, "/tmp/avant-gcb-${stamp}-churn.clog")
+    c.eq_int(code2, 0, "compile churn fixture")
+    want2 = "12497500\n704982704\n2000\n"
+    log4 = "/tmp/avant-gcb-${stamp}.run4"
+    rc4 = run_av_bin(bin2, log4)
+    c.eq_int(rc4, 0, "cycle, array growth, and string churn survive")
+    if out4 = file_read(log4) {
+      c.eq_str(out4, want2, "churn checksums at default young size")
+    } else {
+      c.expect(false, "read churn run")
+    }
+    log5 = "/tmp/avant-gcb-${stamp}.run5"
+    rc5 = run_with_env(bin2, "AVANT_YOUNG_MB", "1", log5)
+    c.eq_int(rc5, 0, "churn survives at 1 MB young size")
+    if out5 = file_read(log5) {
+      c.eq_str(out5, want2, "churn checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read churn small-young run")
+    }
+    // Rooting survives cheap registration (Collector II Wave 0): many
+    // pointer locals and one optional local stay live across collecting
+    // calls in a loop while fresh trees churn through the nursery. If a
+    // live local stops being registered as a root, the small-young run
+    // reads from-space addresses and the checksum breaks or segfaults.
+    src3 = "/tmp/avant-gcb-${stamp}-roots.av"
+    bin3 = "/tmp/avant-gcb-${stamp}-roots.bin"
+    w3 = file_write(src3, roots_fixture())
+    c.eq_int(w3, 0, "write roots fixture")
+    code3 = compile_av(compiler, src3, bin3, "/tmp/avant-gcb-${stamp}-roots.clog")
+    c.eq_int(code3, 0, "compile roots fixture")
+    want3 = "297457169\n"
+    log6 = "/tmp/avant-gcb-${stamp}.run6"
+    rc6 = run_av_bin(bin3, log6)
+    c.eq_int(rc6, 0, "rooted locals survive at default young size")
+    if out6 = file_read(log6) {
+      c.eq_str(out6, want3, "roots checksums at default young size")
+    } else {
+      c.expect(false, "read roots run")
+    }
+    log7 = "/tmp/avant-gcb-${stamp}.run7"
+    rc7 = run_with_env(bin3, "AVANT_YOUNG_MB", "1", log7)
+    c.eq_int(rc7, 0, "rooted locals survive at 1 MB young size")
+    if out7 = file_read(log7) {
+      c.eq_str(out7, want3, "roots checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read roots small-young run")
+    }
+    // Registration lands at frame entry, before any collecting call in
+    // the entry block: pick is one straight-line block, so a batch
+    // planted at the end of that block would run after its frame left
+    // and publish its slots into the caller's frame (Collector II
+    // Wave 0 regression shape, first seen on Graph::BFS).
+    src4 = "/tmp/avant-gcb-${stamp}-rootsline.av"
+    bin4 = "/tmp/avant-gcb-${stamp}-rootsline.bin"
+    w4 = file_write(src4, roots_line_fixture())
+    c.eq_int(w4, 0, "write roots-line fixture")
+    code4 = compile_av(compiler, src4, bin4, "/tmp/avant-gcb-${stamp}-rootsline.clog")
+    c.eq_int(code4, 0, "compile roots-line fixture")
+    want4 = "1104943082\n"
+    log8 = "/tmp/avant-gcb-${stamp}.run8"
+    rc8 = run_av_bin(bin4, log8)
+    c.eq_int(rc8, 0, "straight-line roots survive at default young size")
+    if out8 = file_read(log8) {
+      c.eq_str(out8, want4, "roots-line checksums at default young size")
+    } else {
+      c.expect(false, "read roots-line run")
+    }
+    log9 = "/tmp/avant-gcb-${stamp}.run9"
+    rc9 = run_with_env(bin4, "AVANT_YOUNG_MB", "1", log9)
+    c.eq_int(rc9, 0, "straight-line roots survive at 1 MB young size")
+    if out9 = file_read(log9) {
+      c.eq_str(out9, want4, "roots-line checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read roots-line small-young run")
+    }
+    // Allocation and barrier fast paths (Collector II Wave 1): young
+    // trees are stored into a mature root (the barrier frontier), bump
+    // arena trees are reclaimed in a loop, and arrays grow through the
+    // nursery. A fast path that skips the barrier, the payload zeroing,
+    // or the start bit breaks the checksum under a small nursery.
+    src5 = "/tmp/avant-gcb-${stamp}-alloc.av"
+    bin5 = "/tmp/avant-gcb-${stamp}-alloc.bin"
+    w5 = file_write(src5, alloc_fixture())
+    c.eq_int(w5, 0, "write alloc fixture")
+    code5 = compile_av(compiler, src5, bin5, "/tmp/avant-gcb-${stamp}-alloc.clog")
+    c.eq_int(code5, 0, "compile alloc fixture")
+    want5 = "1679073713\n"
+    log10 = "/tmp/avant-gcb-${stamp}.run10"
+    rc10 = run_av_bin(bin5, log10)
+    c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
+    if out10 = file_read(log10) {
+      c.eq_str(out10, want5, "alloc checksums at default young size")
+    } else {
+      c.expect(false, "read alloc run")
+    }
+    log11 = "/tmp/avant-gcb-${stamp}.run11"
+    rc11 = run_with_env(bin5, "AVANT_YOUNG_MB", "1", log11)
+    c.eq_int(rc11, 0, "alloc and barrier paths survive at 1 MB young size")
+    if out11 = file_read(log11) {
+      c.eq_str(out11, want5, "alloc checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read alloc small-young run")
+    }
+    // Remembered set as a dirty frontier (Collector II Wave 2): a
+    // tenured graph is dirtied whole, then only a strided subset is
+    // re-dirtied while nursery churn forces young collections. An
+    // eviction that loses a young edge leaves a mature field pointing
+    // at from-space (the F1 shape), which breaks this checksum or
+    // segfaults at the small young size; the checksum is identical
+    // with the frontier disabled and under every frontier policy.
+    src6 = "/tmp/avant-gcb-${stamp}-frontier.av"
+    bin6 = "/tmp/avant-gcb-${stamp}-frontier.bin"
+    w6 = file_write(src6, frontier_fixture())
+    c.eq_int(w6, 0, "write frontier fixture")
+    code6 = compile_av(compiler, src6, bin6, "/tmp/avant-gcb-${stamp}-frontier.clog")
+    c.eq_int(code6, 0, "compile frontier fixture")
+    want6 = "-1524741201\n"
+    log12 = "/tmp/avant-gcb-${stamp}.run12"
+    rc12 = run_av_bin(bin6, log12)
+    c.eq_int(rc12, 0, "frontier graph survives at default young size")
+    if out12 = file_read(log12) {
+      c.eq_str(out12, want6, "frontier checksums at default young size")
+    } else {
+      c.expect(false, "read frontier run")
+    }
+    log13 = "/tmp/avant-gcb-${stamp}.run13"
+    rc13 = run_with_env(bin6, "AVANT_YOUNG_MB", "1", log13)
+    c.eq_int(rc13, 0, "frontier graph survives at 1 MB young size")
+    if out13 = file_read(log13) {
+      c.eq_str(out13, want6, "frontier checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read frontier small-young run")
+    }
+    // Mature defragmentation (Collector II Wave 3): a tenured set of
+    // one-line objects is pruned to every 8th survivor inside a helper
+    // whose frame is gone before explicit full collections, so the
+    // mature blocks sit at 33-64 of 128 live lines. A defragmenting
+    // collection that moves a survivor without fixing every root and
+    // field, or that frees a block still holding a live survivor,
+    // breaks this checksum or segfaults; the checksum is identical
+    // with defragmentation disabled and at a 1 MB young size.
+    src7 = "/tmp/avant-gcb-${stamp}-defrag.av"
+    bin7 = "/tmp/avant-gcb-${stamp}-defrag.bin"
+    w7 = file_write(src7, defrag_fixture())
+    c.eq_int(w7, 0, "write defrag fixture")
+    code7 = compile_av(compiler, src7, bin7, "/tmp/avant-gcb-${stamp}-defrag.clog")
+    c.eq_int(code7, 0, "compile defrag fixture")
+    want7 = "58508488\n"
+    log14 = "/tmp/avant-gcb-${stamp}.run14"
+    rc14 = run_av_bin(bin7, log14)
+    c.eq_int(rc14, 0, "defrag survivors survive at default young size")
+    if out14 = file_read(log14) {
+      c.eq_str(out14, want7, "defrag checksums at default young size")
+    } else {
+      c.expect(false, "read defrag run")
+    }
+    log15 = "/tmp/avant-gcb-${stamp}.run15"
+    rc15 = run_with_env(bin7, "AVANT_YOUNG_MB", "1", log15)
+    c.eq_int(rc15, 0, "defrag survivors survive at 1 MB young size")
+    if out15 = file_read(log15) {
+      c.eq_str(out15, want7, "defrag checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read defrag small-young run")
+    }
+    log16 = "/tmp/avant-gcb-${stamp}.run16"
+    rc16 = run_with_env(bin7, "AVANT_NURSERY", "0", log16)
+    c.eq_int(rc16, 0, "defrag survivors survive with nursery off")
+    if out16 = file_read(log16) {
+      c.eq_str(out16, want7, "defrag checksums with nursery off")
+    } else {
+      c.expect(false, "read defrag nursery-off run")
+    }
+    // Survival-capped growth (Collector II Wave 4): retained trees grow
+    // in steps while fresh trees churn and die around them. Whatever
+    // the young threshold does, retained trees must stay reachable and
+    // read back with the same values; a sizing or reserve bug that
+    // loses a survivor breaks the checksum or segfaults.
+    src8 = "/tmp/avant-gcb-${stamp}-sizing.av"
+    bin8 = "/tmp/avant-gcb-${stamp}-sizing.bin"
+    w8 = file_write(src8, sizing_fixture())
+    c.eq_int(w8, 0, "write sizing fixture")
+    code8 = compile_av(compiler, src8, bin8, "/tmp/avant-gcb-${stamp}-sizing.clog")
+    c.eq_int(code8, 0, "compile sizing fixture")
+    want8 = "447162624\n8\n"
+    log17 = "/tmp/avant-gcb-${stamp}.run17"
+    rc17 = run_av_bin(bin8, log17)
+    c.eq_int(rc17, 0, "sizing survivors survive at default young size")
+    if out17 = file_read(log17) {
+      c.eq_str(out17, want8, "sizing checksums at default young size")
+    } else {
+      c.expect(false, "read sizing run")
+    }
+    log18 = "/tmp/avant-gcb-${stamp}.run18"
+    rc18 = run_with_env(bin8, "AVANT_GC_YOUNG_SIZING", "0", log18)
+    c.eq_int(rc18, 0, "sizing survivors survive with growth cap off")
+    if out18 = file_read(log18) {
+      c.eq_str(out18, want8, "sizing checksums with growth cap off")
+    } else {
+      c.expect(false, "read sizing cap-off run")
+    }
+    log19 = "/tmp/avant-gcb-${stamp}.run19"
+    rc19 = run_with_env(bin8, "AVANT_GC_COPY_RESERVE", "0", log19)
+    c.eq_int(rc19, 0, "sizing survivors survive with copy reserve off")
+    if out19 = file_read(log19) {
+      c.eq_str(out19, want8, "sizing checksums with copy reserve off")
+    } else {
+      c.expect(false, "read sizing reserve-off run")
+    }
+    log20 = "/tmp/avant-gcb-${stamp}.run20"
+    rc20 = run_with_env(bin8, "AVANT_YOUNG_MB", "1", log20)
+    c.eq_int(rc20, 0, "sizing survivors survive at 1 MB young size")
+    if out20 = file_read(log20) {
+      c.eq_str(out20, want8, "sizing checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read sizing small-young run")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_gc_behavior(c)
+  c.finish
+}

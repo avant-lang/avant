@@ -170,10 +170,12 @@ fn read_cwd: String {
   dummy = process_run_out("/bin/sh", args, log)
   if text = file_read(log) {
     t = text.strip()
+    rm_file(log)
     if t.size > 0 {
       return t
     }
   }
+  rm_file(log)
   "."
 }
 
@@ -341,6 +343,7 @@ fn run_script(body: String, host: TestHost) {
   sh_args: Array(String) = []
   sh_args.push(path)
   dummy_sh = process_run("/bin/sh", sh_args)
+  rm_file(path)
 }
 
 fn make_cmd(host: TestHost, line: String): ShellCmd {
@@ -453,6 +456,8 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
         f.compiled = true
         chmod_bin(f.bin)
       }
+      rm_file(cmd.log)
+      rm_file(cmd.rc_path)
       i = i + 1
     }
   }
@@ -501,7 +506,10 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       if read_rc(cmd.rc_path) != 0 {
         f.ok = false
       }
+      rm_file(cmd.log)
+      rm_file(cmd.rc_path)
       found = name_lines(read_text(serial_names[i]))
+      rm_file(serial_names[i])
       seen: Array(String) = []
       k = 0
       while k < found.size {
@@ -578,6 +586,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
             k = 0
             while k < f.par_logs.size {
               f.output = append_text(f.output, read_text(f.par_logs[k]))
+              rm_file(f.par_logs[k])
               k = k + 1
             }
             j = 0
@@ -605,6 +614,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
         k = 0
         while k < f.par_logs.size {
           f.output = append_text(f.output, read_text(f.par_logs[k]))
+          rm_file(f.par_logs[k])
           k = k + 1
         }
         j = 0
@@ -621,6 +631,11 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     }
     i = i + 1
   }
+  i = 0
+  while i < pars.size {
+    rm_file(pars[i].rc_path)
+    i = i + 1
+  }
   if host.coverage {
     i = 0
     while i < files.size {
@@ -634,6 +649,13 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       }
       i = i + 1
     }
+  }
+  i = 0
+  while i < files.size {
+    if files[i].compiled {
+      rm_file(files[i].bin)
+    }
+    i = i + 1
   }
 }
 
@@ -756,6 +778,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
     k = 0
     while k < f.frags.size {
       fragtext = append_text(fragtext, read_text(f.frags[k]))
+      rm_file(f.frags[k])
       k = k + 1
     }
     if fragtext.size > 0 {

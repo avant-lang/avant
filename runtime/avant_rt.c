@@ -2,6 +2,7 @@
 #define _DEFAULT_SOURCE
 
 #include "avant_rt.h"
+#include "avant_gc_internal.h"
 
 #include <elf.h>
 #include <fcntl.h>
@@ -29,61 +30,15 @@
  * allocation and collection take a world lock.
  */
 
-#define ALIGN 8
-#define LINE_SIZE 256
-#define LINES_PER_BLOCK 128
-#define BLOCK_SIZE (LINE_SIZE * LINES_PER_BLOCK)
-#define START_WORDS 64
-#define BLOCK_HASH 4096
-#define LARGE_HASH 4096
-#define LOS_LIMIT 8192
 /* Numeric buffers at or above this size are young large objects.
  * They do not move, so a parallel loop can keep the address in a
  * register, and a young collection still frees them when unmarked.
  * 900 doubles is 7200 bytes: under LOS_LIMIT, but large enough that
  * copying the row is the slow path. */
-#define SCALAR_LOS_MIN 6144
-/* 1 MiB retraced one depth-20 tree 93 times (3.85s, copied bytes
- * about equal to allocated bytes). 16 MiB is the measured default.
- * The full threshold stays 32 MiB, so young collection still runs.
- * AVANT_YOUNG_MB overrides this. */
-#define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
-#define FULL_BYTES (32u * 1024u * 1024u)
-#define MAX_TYPES 1024
-#define CACHE_BLOCKS 2
 
-#define SPACE_MATURE 0
-#define SPACE_NURSERY 1
-#define SPACE_FROM 2
 /* Survivors of a low-survival young collection are copied here, then the
  * block is retagged as nursery. Mature space is for objects that have
  * already survived a collection. */
-#define SPACE_TO 3
-
-typedef struct Block {
-  struct Block *hash_next;
-  struct Block *next;
-  uint8_t *base;
-  uint8_t space;
-  uint16_t search;
-  uint8_t *bump;
-  uint8_t *limit;
-  uint8_t line_mark[LINES_PER_BLOCK];
-  uint64_t start[START_WORDS];
-} Block;
-
-typedef struct Large {
-  struct Large *next;
-  struct Large *hash_next;
-  AvantHeader header;
-} Large;
-
-typedef struct Frame {
-  struct Frame *prev;
-  void ***slots;
-  uint32_t n;
-  uint32_t cap;
-} Frame;
 
 typedef struct FwdEnt {
   void *from;
@@ -92,10 +47,10 @@ typedef struct FwdEnt {
 
 static int g_inited;
 static int g_collecting;
-static int g_saw_pinned_nursery;
+int g_saw_pinned_nursery;
 static int g_nursery_off;
 static int g_discard_from;
-static int g_stackmap_walk;
+int g_stackmap_walk;
 
 static Block *g_bht[BLOCK_HASH];
 static Block *g_mature;
@@ -106,8 +61,23 @@ static Block *g_cache;
 static int g_cache_n;
 
 static Block *g_cur;
-static uint8_t *g_bump;
 static uint8_t *g_limit;
+/* Inline nursery fast path (Collector II Wave 1): generated code bumps
+ * avant_gc_bump directly when avant_gc_fast_ok is set, bounded by
+ * avant_gc_limit (the block limit capped by the young threshold) and
+ * writing the start bit through avant_gc_starts/avant_gc_base. The C
+ * cursor g_bump is the same storage, so both sides share one cursor.
+ * Only the runtime publishes or clears the fast state; see
+ * gc_fast_refresh below. */
+__thread uint8_t *avant_gc_bump;
+__thread uint8_t *avant_gc_limit;
+__thread uint8_t *avant_gc_base;
+__thread uint64_t *avant_gc_starts;
+__thread void *avant_gc_block;
+__thread uint32_t avant_gc_fast_ok;
+static Block *g_fast_block;
+static void gc_fast_clear(void);
+#define g_bump avant_gc_bump
 /* Per-space bump cursor. A full block used to send the next allocation
  * back through every older block (take_from_list + find_hole). Workers
  * allocate in mature space, and that walk dominated Matmul::T16.
@@ -134,14 +104,7 @@ static __thread int g_gc_quiet;
 static __thread Frame *g_frame_free;
 static __thread int g_alloc_mature;
 
-typedef struct ThreadReg {
-  struct ThreadReg *next;
-  Frame **head;
-  void *stack_lo;
-  void *stack_hi;
-} ThreadReg;
-
-static __thread ThreadReg g_self_reg;
+__thread ThreadReg g_self_reg;
 static ThreadReg *g_threads;
 /* Becomes 1 when a second thread registers, and stays 1. A single
  * mutator collects only at its own allocating call, so an interior
@@ -151,12 +114,8 @@ atomic_int g_avant_shared;
 static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_gc_defer;
-static int g_stack_scan;
+int g_stack_scan;
 static uint64_t g_interior_slots;
-static uint64_t g_sm_walks;
-static uint64_t g_sm_hits;
-static uint64_t g_sm_leftover;
-static uint32_t g_sm_nsites;
 
 typedef struct PinEnt {
   struct PinEnt *next;
@@ -181,11 +140,152 @@ static uint32_t g_keep_cap;
 static void **g_noted;
 static uint32_t g_noted_n;
 static uint32_t g_noted_cap;
-static uint64_t g_young_bytes;
+uint64_t avant_young_bytes;
+#define g_young_bytes avant_young_bytes
 /* 0 when AVANT_YOUNG_MB pinned the threshold (tests). */
 static int g_young_adapt;
-static uint64_t g_nursery_held;
+uint64_t avant_nursery_held;
+#define g_nursery_held avant_nursery_held
 static uint64_t g_mature_since_full;
+static uint64_t g_peak_live;
+/* Root bookkeeping call counts (Collector II Wave 0): every call to
+ * avant_gc_root, avant_gc_reload, and avant_gc_enter, so a profile can
+ * split call volume from per-call cost. Reported by AVANT_GC_STATS. */
+static uint64_t g_root_calls;
+static uint64_t g_reload_calls;
+static uint64_t g_enter_calls;
+/* Remembered-set observability (Collector II Wave 2): scans counts every
+ * remembered-set scan in gen_young_copy (probe and real passes alike),
+ * entries/fields sum the set size and field slots visited at each scan,
+ * peak is the largest frontier seen at a scan start, adds counts
+ * successful rem_add inserts, cleared counts frontier evictions.
+ * Reported by AVANT_GC_STATS. Internal only: not part of AvantGcStats,
+ * whose field order is an ABI for generated code. */
+static uint64_t g_rem_scans;
+static uint64_t g_rem_entries;
+static uint64_t g_rem_fields;
+static uint64_t g_rem_peak;
+static uint64_t g_rem_adds;
+static uint64_t g_rem_cleared;
+/* Frontier clearing (Collector II Wave 2): AVANT_GC_REM_FRONTIER=0
+ * disables it. Dirty is tracked during the remembered scan itself, per
+ * set index, so no second field walk is needed. Hysteresis (evict after
+ * N clean scans) and probation (a second list scanned every K young
+ * collections) were measured against immediate clearing on
+ * bench/graph_frontier.av and lost (0.20s vs 0.19s at AVANT_YOUNG_MB=1,
+ * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
+static int g_rem_mode = 1;
+static uint8_t *g_rem_dirty;
+/* Mature defragmentation observability (Collector II Wave 3, step 1):
+ * per-block live-line histogram built from the line marks a full
+ * collection already makes. Buckets by live lines in a 128-line block:
+ * 0, 1-32, 33-64, 65-96, 97-127, 128. Wasted bytes count only partly
+ * live blocks ((128 - live) * LINE_SIZE); empty blocks are freed whole
+ * by the existing sweep and are not fragmentation waste. Counters are
+ * cumulative over full collections and runtime-internal. */
+static uint64_t g_def_blocks;
+static uint64_t g_def_live_lines;
+static uint64_t g_def_wasted;
+static uint64_t g_def_hist[6];
+/* Evacuation (step 2): AVANT_GC_DEFRAG=0 disables it, histogram stays
+ * on. Candidates are mature blocks at or below 64 of 128 live lines
+ * with no pinned object; per full collection the live lines evacuated
+ * stay at or below 25% of that mark's mature live lines, worst first. */
+static int g_defrag_mode = 1;
+static uint64_t g_def_evac_blocks;
+static uint64_t g_def_evac_bytes;
+static uint64_t g_def_freed_blocks;
+static uint64_t g_def_skipped;
+/* Survival and peak-heap observability (Collector II Wave 4, step 1):
+ * probes counts adaptive survival probes, used/surv sum the nursery
+ * bytes in use and the surviving bytes at each probe, min/max are the
+ * extreme surviving-byte readings, and hist buckets the surv/used
+ * ratio in percent (0, 1-10, 10-25, 25-50, 50-75, 75-100) so phase
+ * oscillation is visible. yng_min/yng_max bound the adaptive young
+ * threshold over the run. cpy_peak is the largest from-space plus
+ * to-space object bytes held during one young copy. The pk_* fields
+ * snapshot the heap composition (block bytes per space, large-object
+ * bytes, cached block bytes) at the moment peak_heap was last set.
+ * Reported by AVANT_GC_STATS. Internal only, like the rem/def counters. */
+static uint64_t g_srv_probes;
+static uint64_t g_srv_used;
+static uint64_t g_srv_surv;
+static uint64_t g_srv_min;
+static uint64_t g_srv_max;
+static uint64_t g_srv_hist[6];
+static uint64_t g_yng_min;
+static uint64_t g_yng_max;
+static uint64_t g_cpy_peak;
+static uint64_t g_pk_nursery;
+static uint64_t g_pk_mature;
+static uint64_t g_pk_from;
+static uint64_t g_pk_to;
+static uint64_t g_pk_large;
+static uint64_t g_pk_cache;
+/* Large-object observability (Collector II Wave 5, step 1): allocs and
+ * alloc_bytes count every los_alloc by chunk bytes (the heap charge for
+ * a large object); callocs counts fresh calloc calls, spare_hits counts
+ * exact-size spare reuses, spare_cached counts dead young Bytes buffers
+ * kept into the single spare slot, spare_dropped counts spares freed
+ * unused, and freed counts large objects returned to free. scalar counts
+ * Bytes allocations that are large only through SCALAR_LOS_MIN, big
+ * counts allocations large through LOS_LIMIT. young/mature split the
+ * birth space. hist buckets payload bytes: under 16 KiB, 16-64 KiB,
+ * 64-256 KiB, 256 KiB-1 MiB, 1-4 MiB, at least 4 MiB. live samples the
+ * marked large bytes at the liveness decision of each collection
+ * (reclaim_young_large for young, sweep_large for full): sum over
+ * samples, peak the largest single sample. promoted counts young large
+ * objects tenured by promote_young_large. Reported by AVANT_GC_STATS.
+ * Internal only, like the rem/def/srv counters. */
+static uint64_t g_los_allocs;
+static uint64_t g_los_alloc_bytes;
+static uint64_t g_los_callocs;
+static uint64_t g_los_spare_hits;
+static uint64_t g_los_spare_cached;
+static uint64_t g_los_spare_dropped;
+static uint64_t g_los_freed;
+static uint64_t g_los_scalar_allocs;
+static uint64_t g_los_scalar_bytes;
+static uint64_t g_los_big_allocs;
+static uint64_t g_los_big_bytes;
+static uint64_t g_los_young_allocs;
+static uint64_t g_los_young_bytes;
+static uint64_t g_los_mature_allocs;
+static uint64_t g_los_mature_bytes;
+static uint64_t g_los_hist[6];
+static uint64_t g_los_live_sum;
+static uint64_t g_los_live_peak;
+static uint64_t g_los_live_samples;
+static uint64_t g_los_promoted;
+static uint64_t g_los_promoted_bytes;
+/* Survival-capped growth and copy reserve (Collector II Wave 4, step 2,
+ * as amended by Q-W4-6): sticky growth of the young threshold is capped
+ * at YOUNG_SURVIVAL_FACTOR times the probe's measured survival, plus
+ * slack, because the uncapped growth to 42 MiB on trees was the peak
+ * heap driver while a typical probe survives only a few MiB. The
+ * dead-based shrink after low-survival copies stays as it was: sizing
+ * the nursery from survival alone was measured at factors 2, 1.5, and
+ * 1.25 and lost at every one (wall up 26-36% on trees, copied bytes
+ * doubled, the peak itself worse at the two smaller factors), because
+ * a smaller nursery tenures partly-built trees into mature space. The
+ * reserve is the same survival-scaled amount, charged as already spent
+ * by heap-limit decisions outside a collection so a copy always has
+ * its room; inside a collection the reserve is being spent and is not
+ * charged. Kill switches: AVANT_GC_YOUNG_SIZING=0 (the growth cap),
+ * AVANT_GC_COPY_RESERVE=0. */
+static int g_sizing_mode = 1;
+static int g_reserve_mode = 1;
+static uint64_t g_copy_reserve;
+#define YOUNG_SURVIVAL_FACTOR 1.5
+#define YOUNG_SIZING_FLOOR (4ull * 1024ull * 1024ull)
+#define YOUNG_SIZING_SLACK (1ull * 1024ull * 1024ull)
+/* Mature growth that triggers the next full collection. Starts at
+ * FULL_BYTES and adapts after every full collection to twice the
+ * live set plus slack, so a program with a small live set and heavy
+ * mature churn (a parsed document per iteration) does not grow the
+ * heap to 32 MB before reclaiming, while a program whose live set is
+ * large keeps today's spacing. */
+static uint64_t g_full_trigger = FULL_BYTES;
 static uint64_t g_to_bytes;
 static uint64_t g_sticky_grows;
 static int g_probe;
@@ -208,13 +308,17 @@ static FwdEnt *g_fwd;
 static size_t g_fwd_cap;
 static size_t g_fwd_used;
 
-static uint64_t g_since_gc;
+uint64_t avant_since_gc;
+#define g_since_gc avant_since_gc
 static uint64_t g_heap_bytes;
 static uint64_t g_heap_max;
-static uint64_t g_live;
+uint64_t g_live;
 static uint64_t g_last_full_at;
 
-static AvantGcStats g_stats;
+AvantGcStats avant_g_stats;
+#define g_stats avant_g_stats
+/* Nursery allocations taken by generated code without a call. */
+uint64_t avant_inline_allocs;
 
 static size_t align_up(size_t n) {
   return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
@@ -223,103 +327,6 @@ static size_t align_up(size_t n) {
 static void die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
-}
-
-void avant_trap_bounds(int32_t index, int32_t size) {
-  fprintf(stderr, "avant runtime: index %d out of bounds (size %d)\n", index, size);
-  exit(1);
-}
-
-void avant_trap_div_zero(void) {
-  fprintf(stderr, "avant runtime: division by zero\n");
-  exit(1);
-}
-
-void avant_trap_overflow(void) {
-  fprintf(stderr, "avant runtime: integer overflow\n");
-  exit(1);
-}
-
-int64_t avant_checked_add_i64(int64_t a, int64_t b) {
-  int64_t r;
-  if (__builtin_add_overflow(a, b, &r)) {
-    avant_trap_overflow();
-  }
-  return r;
-}
-
-int64_t avant_checked_sub_i64(int64_t a, int64_t b) {
-  int64_t r;
-  if (__builtin_sub_overflow(a, b, &r)) {
-    avant_trap_overflow();
-  }
-  return r;
-}
-
-int64_t avant_checked_mul_i64(int64_t a, int64_t b) {
-  int64_t r;
-  if (__builtin_mul_overflow(a, b, &r)) {
-    avant_trap_overflow();
-  }
-  return r;
-}
-
-uint64_t avant_checked_add_u64(uint64_t a, uint64_t b) {
-  uint64_t r;
-  if (__builtin_add_overflow(a, b, &r)) {
-    avant_trap_overflow();
-  }
-  return r;
-}
-
-uint64_t avant_checked_sub_u64(uint64_t a, uint64_t b) {
-  uint64_t r;
-  if (__builtin_sub_overflow(a, b, &r)) {
-    avant_trap_overflow();
-  }
-  return r;
-}
-
-uint64_t avant_checked_mul_u64(uint64_t a, uint64_t b) {
-  uint64_t r;
-  if (__builtin_mul_overflow(a, b, &r)) {
-    avant_trap_overflow();
-  }
-  return r;
-}
-
-int64_t avant_checked_div_i64(int64_t a, int64_t b) {
-  if (b == 0) {
-    avant_trap_div_zero();
-  }
-  if (a == INT64_MIN && b == -1) {
-    avant_trap_overflow();
-  }
-  return a / b;
-}
-
-int64_t avant_checked_rem_i64(int64_t a, int64_t b) {
-  if (b == 0) {
-    avant_trap_div_zero();
-  }
-  if (a == INT64_MIN && b == -1) {
-    return 0;
-  }
-  return a % b;
-}
-
-uint64_t avant_checked_div_u64(uint64_t a, uint64_t b) {
-  if (b == 0) {
-    avant_trap_div_zero();
-  }
-  return a / b;
-}
-
-uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b) {
-  if (b == 0) {
-    avant_trap_div_zero();
-  }
-  return a % b;
 }
 
 void avant_gc_register_thread(void) {
@@ -384,7 +391,7 @@ static void *xrealloc(void *p, size_t n) {
   return q;
 }
 
-static void work_push(void *p) {
+void work_push(void *p) {
   if (g_work_n == g_work_cap) {
     g_work_cap = g_work_cap ? g_work_cap * 2 : 256;
     g_work = xrealloc(g_work, g_work_cap * sizeof(void *));
@@ -419,14 +426,17 @@ static void rem_add(void *obj) {
   if (g_rem_n == g_rem_cap) {
     g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
     g_remset = xrealloc(g_remset, g_rem_cap * sizeof(void *));
+    g_rem_dirty = xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
   }
+  g_rem_dirty[g_rem_n] = 0;
   g_remset[g_rem_n++] = obj;
+  g_rem_adds++;
   if (locked) {
     pthread_mutex_unlock(&g_rem_mu);
   }
 }
 
-static int is_heap_payload(void *p, Block **ob, Large **ol);
+int is_heap_payload(void *p, Block **ob, Large **ol);
 
 static void rem_forget(void) {
   uint32_t i;
@@ -488,7 +498,7 @@ static void fwd_grow(void) {
   free(old);
 }
 
-static void fwd_put(void *from, void *to) {
+void fwd_put(void *from, void *to) {
   if (g_fwd_used * 10 > g_fwd_cap * 7) {
     fwd_grow();
   }
@@ -503,7 +513,7 @@ static void fwd_put(void *from, void *to) {
   g_fwd[j].to = to;
 }
 
-static void *fwd_get(void *from) {
+void *fwd_get(void *from) {
   if (!g_fwd_cap || !from) {
     return NULL;
   }
@@ -591,7 +601,7 @@ static int block_live_lines(Block *b) {
   return n;
 }
 
-static size_t obj_total(const AvantHeader *h) {
+size_t obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
 }
 
@@ -635,6 +645,7 @@ static void los_spare_drop(void) {
   free(g_los_spare);
   g_los_spare = NULL;
   g_heap_bytes -= chunk;
+  g_los_spare_dropped++;
 }
 
 static void unlink_large(Large *L) {
@@ -678,8 +689,10 @@ static void release_large(Large *L) {
   if (cache) {
     L->hash_next = NULL;
     g_los_spare = L;
+    g_los_spare_cached++;
   } else {
     free(L);
+    g_los_freed++;
   }
 }
 
@@ -687,8 +700,25 @@ static void free_large(Large *L) {
   release_large(L);
 }
 
+static void los_note_live(void) {
+  Large *L;
+  uint64_t live = 0;
+  for (L = g_large; L; L = L->next) {
+    if (L->header.flags & AVANT_FLAG_MARKED) {
+      live += (uint64_t)large_chunk(L);
+    }
+  }
+  g_los_live_samples++;
+  g_los_live_sum += live;
+  if (live > g_los_live_peak) {
+    g_los_live_peak = live;
+  }
+}
+
 static void promote_young_large(Large *L) {
   size_t chunk = large_chunk(L);
+  g_los_promoted++;
+  g_los_promoted_bytes += (uint64_t)chunk;
   L->header.flags = (uint16_t)(L->header.flags &
                                 (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_LOS_KEEP));
   if (g_young_large >= chunk) {
@@ -708,6 +738,7 @@ static void promote_young_large(Large *L) {
 static void reclaim_young_large(void) {
   Large *L;
   size_t stay_bytes = 0;
+  los_note_live();
   for (L = g_large; L; L = L->next) {
     if ((L->header.flags & AVANT_FLAG_YOUNG) == 0) {
       continue;
@@ -753,7 +784,7 @@ static Large *large_of(void *payload) {
   return NULL;
 }
 
-static int is_heap_payload(void *p, Block **ob, Large **ol) {
+int is_heap_payload(void *p, Block **ob, Large **ol) {
   if (!p || (uintptr_t)p % ALIGN) {
     return 0;
   }
@@ -926,7 +957,7 @@ static void zero_line_marks(Block *list) {
   }
 }
 
-static void mark_object_lines(void *p) {
+void mark_object_lines(void *p) {
   Block *b = NULL;
   if (!is_heap_payload(p, &b, NULL) || !b) {
     return;
@@ -1071,6 +1102,9 @@ static void cache_or_free_block(Block *b) {
     g_bump = NULL;
     g_limit = NULL;
   }
+  if (g_fast_block == b) {
+    gc_fast_clear();
+  }
   block_unregister(b);
   if (g_cache_n < CACHE_BLOCKS) {
     memset(b->line_mark, 0, sizeof(b->line_mark));
@@ -1085,8 +1119,57 @@ static void cache_or_free_block(Block *b) {
   g_heap_bytes -= BLOCK_SIZE;
 }
 
+static uint64_t space_block_bytes(Block *b) {
+  uint64_t n = 0;
+  for (; b; b = b->next) {
+    n += BLOCK_SIZE;
+  }
+  return n;
+}
+
+/* Wave 4 step 1: when the heap high-water mark moves, snapshot what
+ * the heap is made of, so a peak can be decomposed after the fact. */
+static void note_peak(void) {
+  Large *L;
+  uint64_t large = 0;
+  if (g_heap_bytes <= g_stats.peak_heap) {
+    return;
+  }
+  g_stats.peak_heap = g_heap_bytes;
+  g_pk_nursery = space_block_bytes(g_nursery);
+  g_pk_mature = space_block_bytes(g_mature);
+  g_pk_from = space_block_bytes(g_from);
+  g_pk_to = space_block_bytes(g_to);
+  g_pk_cache = (uint64_t)g_cache_n * BLOCK_SIZE;
+  for (L = g_large; L; L = L->next) {
+    large += align_up(sizeof(Large) + L->header.size);
+  }
+  g_pk_large = large;
+}
+
+/* Wave 4 step 2: outside a collection the copy reserve counts as
+ * spent, so fresh block growth stops early enough that the next copy
+ * has its destination room under the heap limit. The charge is soft:
+ * it makes allocation collect earlier, never fail, so the retry after
+ * a collection (g_reserve_retry) and any allocation inside a
+ * collection (where the reserve is what is being spent) are charged
+ * only the true heap bytes. Cached blocks are already owned and are
+ * never refused by this test. */
+static int g_reserve_retry;
+static int heap_block_fits(void) {
+  uint64_t spent;
+  if (!g_heap_max) {
+    return 1;
+  }
+  spent = g_heap_bytes + BLOCK_SIZE;
+  if (!g_collecting && !g_reserve_retry && g_reserve_mode) {
+    spent += g_copy_reserve;
+  }
+  return spent <= g_heap_max;
+}
+
 static Block *new_block(uint8_t space) {
-  if (g_heap_max && g_heap_bytes + BLOCK_SIZE > g_heap_max && g_cache == NULL) {
+  if (!heap_block_fits() && g_cache == NULL) {
     return NULL;
   }
   Block *b = NULL;
@@ -1099,7 +1182,7 @@ static Block *new_block(uint8_t space) {
     b->next = NULL;
     b->hash_next = NULL;
   } else {
-    if (g_heap_max && g_heap_bytes + BLOCK_SIZE > g_heap_max) {
+    if (!heap_block_fits()) {
       return NULL;
     }
     b = calloc(1, sizeof(Block));
@@ -1112,9 +1195,7 @@ static Block *new_block(uint8_t space) {
     }
     b->base = mem;
     g_heap_bytes += BLOCK_SIZE;
-    if (g_heap_bytes > g_stats.peak_heap) {
-      g_stats.peak_heap = g_heap_bytes;
-    }
+    note_peak();
   }
   /* Block memory is not pre-zeroed. Every allocation zeroes its own
    * payload in init_object, so a fresh or recycled block costs no
@@ -1141,6 +1222,25 @@ static void use_block(Block *b) {
   g_cur = b;
   g_bump = b->bump;
   g_limit = b->limit;
+  if (b->space == SPACE_NURSERY) {
+    /* Keep the inline fast path's mirror on the block the cursor is
+     * actually in. A slow allocation that switches blocks would
+     * otherwise leave generated code writing start bits through the
+     * previous block's base. A recycled block clears the fast path:
+     * its start bits need the clearing only bump_take does. */
+    if (!g_collecting && b == g_alloc_cur[SPACE_NURSERY] &&
+        g_alloc_fresh[SPACE_NURSERY]) {
+      uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
+      uint8_t *cap = g_bump + rem;
+      g_fast_block = b;
+      avant_gc_base = b->base;
+      avant_gc_starts = b->start;
+      avant_gc_block = b;
+      avant_gc_limit = g_limit && cap > g_limit ? g_limit : cap;
+    } else {
+      gc_fast_clear();
+    }
+  }
 }
 
 static int bump_fits(size_t need) {
@@ -1159,7 +1259,43 @@ static void *bump_take(size_t need) {
   void *h = g_bump;
   g_bump += need;
   b->bump = g_bump;
+  if (b == g_fast_block) {
+    uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
+    uint8_t *cap = g_bump + rem;
+    avant_gc_limit = g_limit && cap > g_limit ? g_limit : cap;
+  }
   return h;
+}
+
+static void gc_fast_clear(void) {
+  avant_gc_fast_ok = 0;
+  avant_gc_limit = NULL;
+  g_fast_block = NULL;
+}
+
+/* Publish the inline fast path when every C fast-path condition holds
+ * and the current nursery block is fresh (a recycled block needs the
+ * start-bit clearing only bump_take does). Anything else clears it, so
+ * generated code only ever checks fast_ok, the shared flag, and the
+ * cursor against the limit. Called at slow allocation entries; state
+ * transitions clear eagerly below. */
+static void gc_fast_refresh(void) {
+  Block *cur = g_alloc_cur[SPACE_NURSERY];
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
+      !g_gc_defer && !g_collecting && !g_nursery_off && !g_alloc_mature &&
+      g_mature_since_full < FULL_BYTES && cur && g_cur == cur &&
+      g_alloc_fresh[SPACE_NURSERY] && g_bump) {
+    uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
+    uint8_t *cap = g_bump + rem;
+    g_fast_block = cur;
+    avant_gc_base = cur->base;
+    avant_gc_starts = cur->start;
+    avant_gc_block = cur;
+    avant_gc_limit = g_limit && cap > g_limit ? g_limit : cap;
+    avant_gc_fast_ok = 1;
+  } else {
+    gc_fast_clear();
+  }
 }
 
 static int try_bump(Block *b, size_t total) {
@@ -1210,8 +1346,16 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   Block *b = new_block(space);
   if (!b) {
     if (!tried_gc && !g_collecting) {
+      /* The reserve charge is soft (see heap_block_fits): collect,
+       * then retry charged only the true heap bytes, so a reserve
+       * refusal can never become a spurious heap-limit death. */
       collect(1);
-      return place(total, space, 1);
+      g_reserve_retry = 1;
+      {
+        AvantHeader *retry = place(total, space, 1);
+        g_reserve_retry = 0;
+        return retry;
+      }
     }
     die("heap limit");
   }
@@ -1336,8 +1480,25 @@ static void remember_young_edge(void **slot, void *payload) {
   keep_add(owner);
 }
 
-static void copy_from_slot(void **slot);
+void copy_from_slot(void **slot);
 static int g_from_heap_slot;
+/* Set while a remembered object is being scanned: copy_from_slot then
+ * records whether any direct field names a young object afterwards. */
+static int g_rem_track;
+static int g_rem_track_dirty;
+
+static int names_young(void *p) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start) {
+    return 0;
+  }
+  if (ol) {
+    return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
+  }
+  return b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
+}
 static void trace_mature(void *p, int from_mature);
 
 static void copy_payload_children(void *p) {
@@ -1409,11 +1570,19 @@ static void trace_mature(void *p, int from_mature) {
   }
   saved = g_from_mature;
   g_from_mature = 1;
-  copy_payload_children(p);
+  /* Nested mature scans do not dirty the remembered parent: only its
+   * direct fields count, and the outer copy_from_slot judges that slot
+   * itself once this returns. */
+  {
+    int track_saved = g_rem_track;
+    g_rem_track = 0;
+    copy_payload_children(p);
+    g_rem_track = track_saved;
+  }
   g_from_mature = saved;
 }
 
-static void *copy_nursery(void *p) {
+void *copy_nursery(void *p) {
   Block *b = NULL;
   if (g_probe) {
     die("probe copied");
@@ -1459,7 +1628,7 @@ static void *copy_nursery(void *p) {
   return np;
 }
 
-static void copy_from_slot(void **slot) {
+void copy_from_slot(void **slot) {
   void *p = *slot;
   Block *b = NULL;
   Large *ol = NULL;
@@ -1472,6 +1641,11 @@ static void copy_from_slot(void **slot) {
   }
   if (b && b->space == SPACE_NURSERY) {
     if (g_probe) {
+      /* A nursery child is a young edge by definition; the probe must
+       * record it, or the frontier would evict this parent as clean. */
+      if (g_rem_track) {
+        g_rem_track_dirty = 1;
+      }
       probe_note(start);
       return;
     }
@@ -1479,6 +1653,9 @@ static void copy_from_slot(void **slot) {
     void *np = copy_nursery(start);
     *slot = (uint8_t *)np + delta;
     remember_young_edge(slot, np);
+    if (g_rem_track && names_young(*slot)) {
+      g_rem_track_dirty = 1;
+    }
     return;
   }
   /* Mature and large objects stay put. Follow one when this slot is a
@@ -1486,6 +1663,9 @@ static void copy_from_slot(void **slot) {
    * followed only when that child is remembered. */
   if (ol || (b && b->space == SPACE_MATURE)) {
     trace_mature(start, g_from_mature);
+  }
+  if (g_rem_track && names_young(*slot)) {
+    g_rem_track_dirty = 1;
   }
 }
 
@@ -1505,494 +1685,18 @@ static void relocate_root_location(void ***slot_loc) {
   *slot_loc = (void **)((uint8_t *)np + delta);
 }
 
-/*
- * LLVM spill slots hold heap pointers that avant_gc_root never sees.
- * After precise copy, from-space object-starts on the live C stack are
- * rewritten to to-space when the object was already forwarded. Words
- * that only appear here are pinned in place (D34-shaped) so we do not
- * treat a packed i32 pair as a root that gets copied. Do not walk
- * interiors: that smashed compile-compiler.
- */
-static void pin_nursery_in_place(void *p) {
-  if (fwd_get(p)) {
-    return;
-  }
-  AvantHeader *h = avant_header(p);
-  if (h->flags & AVANT_FLAG_PINNED) {
-    copy_nursery(p);
-    return;
-  }
-  fwd_put(p, p);
-  g_saw_pinned_nursery = 1;
-  if (!(h->flags & AVANT_FLAG_MARKED)) {
-    h->flags |= AVANT_FLAG_MARKED;
-    mark_object_lines(p);
-    g_live += obj_total(h);
-    work_push(p);
-  }
-}
-
-static void copy_from_c_stack(void) {
-  uint8_t *sp;
-  uint8_t *hi;
-  uint8_t *p;
-  uint8_t *lo;
-  if (!g_stack_scan) {
-    return;
-  }
-  sp = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!hi || !sp || sp >= (uint8_t *)hi) {
-    return;
-  }
-  if (lo && sp < (uint8_t *)lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)sp & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      void *to = fwd_get(w);
-      if (to) {
-        *(void **)p = to;
-      } else {
-        pin_nursery_in_place(w);
-      }
-    }
-  }
-}
-
-extern char __LLVM_StackMaps[] __attribute__((weak));
-
-#define SM_DIRECT 2
-#define SM_INDIRECT 3
-#define DWARF_X64_RBP 6
-#define DWARF_X64_RSP 7
-
-typedef struct SmSite {
-  uintptr_t site;
-  const uint8_t *rec;
-  uint32_t fsize;
-} SmSite;
-
-static const uint8_t *g_sm_sec;
-static uintptr_t g_load_bias;
-static SmSite *g_sm_sites;
-
-static uint16_t sm_u16(const uint8_t *p) {
-  uint16_t v;
-  memcpy(&v, p, 2);
-  return v;
-}
-
-static uint32_t sm_u32(const uint8_t *p) {
-  uint32_t v;
-  memcpy(&v, p, 4);
-  return v;
-}
-
-static uint64_t sm_u64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-  return v;
-}
-
-static int32_t sm_i32(const uint8_t *p) {
-  int32_t v;
-  memcpy(&v, p, 4);
-  return v;
-}
-
-static unsigned sm_record_size(const uint8_t *rec) {
-  uint16_t nloc = sm_u16(rec + 14);
-  unsigned loc_end = ((16u + 12u * nloc) + 7u) & ~7u;
-  unsigned nlo_off = loc_end + 2u;
-  uint16_t nlive = sm_u16(rec + nlo_off);
-  unsigned rec_end = nlo_off + 2u + 4u * nlive;
-  return (rec_end + 7u) & ~7u;
-}
-
-static void sm_apply_record(const uint8_t *rec, void *rbp, void *rsp) {
-  uint16_t nloc = sm_u16(rec + 14);
-  const uint8_t *loc = rec + 16;
-  uint16_t i;
-  for (i = 0; i < nloc; i++, loc += 12) {
-    uint8_t kind = loc[0];
-    uint16_t size = sm_u16(loc + 2);
-    uint16_t reg = sm_u16(loc + 4);
-    int32_t off = sm_i32(loc + 8);
-    uint8_t *base;
-    if (size != sizeof(void *)) {
-      continue;
-    }
-    if (kind != SM_INDIRECT && kind != SM_DIRECT) {
-      continue;
-    }
-    if (reg == DWARF_X64_RBP) {
-      base = (uint8_t *)rbp;
-    } else if (reg == DWARF_X64_RSP && rsp) {
-      base = (uint8_t *)rsp;
-    } else {
-      continue;
-    }
-    copy_from_slot((void **)(base + off));
-  }
-}
-
-static int sm_phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
-  int *seen = (int *)data;
-  (void)size;
-  if (*seen) {
+/* Frontier decision for one live, marked hot entry whose scan result
+ * is dirty (a direct field names a young object). Returns 1 to keep the
+ * entry. On 0 the caller drops it with REM already clear; the barrier
+ * re-adds it on the next young store. Caller holds g_rem_mu when the
+ * set is shared. */
+static int rem_frontier_decide(void *obj, int dirty) {
+  if (g_rem_mode == 0 || dirty) {
     return 1;
   }
-  g_load_bias = (uintptr_t)info->dlpi_addr;
-  *seen = 1;
-  return 1;
-}
-
-/*
- * LLVM emits __LLVM_StackMaps as a local section label. The runtime's
- * weak extern stays UND in dynsym, so the pointer is always NULL.
- * Find .llvm_stackmaps via ELF section headers of /proc/self/exe.
- */
-static const uint8_t *sm_section_from_exe(void) {
-  int fd;
-  Elf64_Ehdr eh;
-  Elf64_Shdr *sh;
-  char *names;
-  const uint8_t *sec = NULL;
-  size_t bytes;
-  uint32_t i;
-  uint32_t strndx;
-
-  fd = open("/proc/self/exe", O_RDONLY);
-  if (fd < 0) {
-    return NULL;
-  }
-  if (read(fd, &eh, sizeof(eh)) != (ssize_t)sizeof(eh) ||
-      memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 ||
-      eh.e_ident[EI_CLASS] != ELFCLASS64 ||
-      eh.e_shentsize != sizeof(Elf64_Shdr) ||
-      eh.e_shoff == 0 || eh.e_shnum == 0) {
-    close(fd);
-    return NULL;
-  }
-  bytes = (size_t)eh.e_shnum * sizeof(Elf64_Shdr);
-  sh = malloc(bytes);
-  if (!sh) {
-    close(fd);
-    return NULL;
-  }
-  if (lseek(fd, (off_t)eh.e_shoff, SEEK_SET) != (off_t)eh.e_shoff ||
-      (size_t)read(fd, sh, bytes) != bytes) {
-    free(sh);
-    close(fd);
-    return NULL;
-  }
-  strndx = eh.e_shstrndx;
-  if (strndx >= eh.e_shnum) {
-    free(sh);
-    close(fd);
-    return NULL;
-  }
-  names = malloc(sh[strndx].sh_size + 1);
-  if (!names) {
-    free(sh);
-    close(fd);
-    return NULL;
-  }
-  if (lseek(fd, (off_t)sh[strndx].sh_offset, SEEK_SET) !=
-          (off_t)sh[strndx].sh_offset ||
-      (size_t)read(fd, names, sh[strndx].sh_size) != sh[strndx].sh_size) {
-    free(names);
-    free(sh);
-    close(fd);
-    return NULL;
-  }
-  names[sh[strndx].sh_size] = 0;
-  for (i = 0; i < eh.e_shnum; i++) {
-    uint32_t no = sh[i].sh_name;
-    if (no >= sh[strndx].sh_size) {
-      continue;
-    }
-    if (strcmp(names + no, ".llvm_stackmaps") != 0) {
-      continue;
-    }
-    sec = (const uint8_t *)(g_load_bias + (uintptr_t)sh[i].sh_addr);
-    break;
-  }
-  free(names);
-  free(sh);
-  close(fd);
-  return sec;
-}
-
-static int sm_site_cmp(const void *a, const void *b) {
-  const SmSite *x = (const SmSite *)a;
-  const SmSite *y = (const SmSite *)b;
-  if (x->site < y->site) {
-    return -1;
-  }
-  if (x->site > y->site) {
-    return 1;
-  }
+  avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
+  g_rem_cleared++;
   return 0;
-}
-
-static void sm_index_records(void) {
-  const uint8_t *sec = g_sm_sec;
-  uint32_t nfn, nconst, nrec, fi, ri;
-  const uint8_t *fnp;
-  const uint8_t *rec;
-  uint32_t cap;
-
-  if (!sec || sec[0] != 3) {
-    return;
-  }
-  nfn = sm_u32(sec + 4);
-  nconst = sm_u32(sec + 8);
-  nrec = sm_u32(sec + 12);
-  if (nrec == 0 || nrec > 10000000u) {
-    return;
-  }
-  fnp = sec + 16;
-  rec = fnp + (unsigned)nfn * 24u + (unsigned)nconst * 8u;
-  cap = nrec;
-  g_sm_sites = malloc((size_t)cap * sizeof(SmSite));
-  if (!g_sm_sites) {
-    return;
-  }
-  ri = 0;
-  for (fi = 0; fi < nfn; fi++) {
-    uint64_t faddr = sm_u64(fnp + (unsigned)fi * 24u);
-    uint64_t fcount = sm_u64(fnp + (unsigned)fi * 24u + 16u);
-    uint64_t k;
-    uintptr_t fbase = (uintptr_t)faddr;
-    /*
-     * R_X86_64_RELATIVE in .llvm_stackmaps (TEXTREL) rewrites faddr to
-     * the runtime VA. If the loader left the ELF vaddr, add the bias.
-     */
-    if (g_load_bias && fbase < g_load_bias) {
-      fbase += g_load_bias;
-    }
-    uint64_t fsize = sm_u64(fnp + (unsigned)fi * 24u + 8u);
-    uint32_t fsize32 = 0;
-    if (fsize && fsize != UINT64_MAX && fsize <= (1u << 20)) {
-      fsize32 = (uint32_t)fsize;
-    }
-    for (k = 0; k < fcount && ri < nrec; k++, ri++) {
-      uint32_t inst_off = sm_u32(rec + 8);
-      /* LLVM records the return address (next insn after CALL). */
-      g_sm_sites[g_sm_nsites].site = fbase + inst_off;
-      g_sm_sites[g_sm_nsites].rec = rec;
-      g_sm_sites[g_sm_nsites].fsize = fsize32;
-      g_sm_nsites++;
-      rec += sm_record_size(rec);
-    }
-  }
-  if (g_sm_nsites) {
-    qsort(g_sm_sites, g_sm_nsites, sizeof(SmSite), sm_site_cmp);
-  }
-}
-
-static void sm_init(void) {
-  int seen = 0;
-  if (g_sm_sec || !g_stackmap_walk) {
-    return;
-  }
-  dl_iterate_phdr(sm_phdr_cb, &seen);
-  if (__LLVM_StackMaps && (unsigned char)__LLVM_StackMaps[0] == 3) {
-    g_sm_sec = (const uint8_t *)__LLVM_StackMaps;
-  } else {
-    g_sm_sec = sm_section_from_exe();
-  }
-  sm_index_records();
-}
-
-static SmSite *sm_find_site(void *ret) {
-  uintptr_t retu = (uintptr_t)ret;
-  uint32_t lo = 0;
-  uint32_t hi;
-  if (!g_sm_nsites) {
-    return NULL;
-  }
-  hi = g_sm_nsites;
-  while (lo < hi) {
-    uint32_t mid = lo + (hi - lo) / 2;
-    if (g_sm_sites[mid].site < retu) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  if (lo >= g_sm_nsites || g_sm_sites[lo].site != retu) {
-    return NULL;
-  }
-  return &g_sm_sites[lo];
-}
-
-static int sm_lookup_apply(void *ret, void *caller_rbp, void *callee_rbp) {
-  SmSite *site;
-  const uint8_t *rec;
-  void *rsp;
-  site = sm_find_site(ret);
-  if (!site) {
-    return 0;
-  }
-  rec = site->rec;
-  /*
-   * Callee prologue: push rbp; mov rsp, rbp. Caller's RSP at the CALL
-   * (before pushing the return address, after any stack args) is
-   * callee_rbp + 16. LLVM stack size is one number per function, so
-   * rbp - fsize is wrong at callsites that push extra stack arguments.
-   */
-  rsp = callee_rbp ? (uint8_t *)callee_rbp + 16 : NULL;
-  sm_apply_record(rec, caller_rbp, rsp);
-  g_sm_hits++;
-  return 1;
-}
-
-static void rewrite_if_forwarded(void **slot) {
-  void *w = *slot;
-  void *to = fwd_get(w);
-  if (to && to != w) {
-    *slot = to;
-  }
-}
-
-/*
- * After the work queue drains, every copied object is in the forwarding
- * table. Stackmap apply ran earlier as a *root* walk (copy_from_slot).
- * LLVM still leaves extra as(0) spills of the same pointer bits that
- * were never in gc-live. Rewrite those words in the matched myc frame
- * (LLVM stack size from the callsite RSP) so discard does not alias.
- * Exact fwd_get only: packed i32s that are not a copied payload stay.
- */
-static void sm_rewrite_frame(void *rsp, uint32_t fsize) {
-  uint8_t *p;
-  uint8_t *end;
-  uint8_t *hi;
-  if (!rsp || fsize < sizeof(void *)) {
-    return;
-  }
-  p = (uint8_t *)rsp;
-  end = p + fsize;
-  hi = g_self_reg.stack_hi;
-  if (hi && end > hi) {
-    end = hi;
-  }
-  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= end; p += ALIGN) {
-    rewrite_if_forwarded((void **)p);
-  }
-}
-
-static int sm_lookup_rewrite(void *ret, void *caller_rbp, void *callee_rbp) {
-  SmSite *site;
-  void *rsp;
-  (void)caller_rbp;
-  site = sm_find_site(ret);
-  if (!site) {
-    return 0;
-  }
-  rsp = callee_rbp ? (uint8_t *)callee_rbp + 16 : NULL;
-  sm_rewrite_frame(rsp, site->fsize);
-  return 1;
-}
-
-static void walk_c_frames(int roots) {
-  uint8_t *fp;
-  uint8_t *hi;
-  uint8_t *lo;
-  uint32_t n;
-  if (!g_stackmap_walk || !g_sm_nsites) {
-    return;
-  }
-  fp = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!fp || !hi) {
-    return;
-  }
-  for (n = 0; n < 256 && fp; n++) {
-    uint8_t *next;
-    void *ret;
-    if (lo && fp < lo) {
-      break;
-    }
-    if (fp >= hi) {
-      break;
-    }
-    if (((uintptr_t)fp & 7u) != 0) {
-      break;
-    }
-    next = *(uint8_t **)fp;
-    ret = *((void **)fp + 1);
-    if (ret) {
-      if (roots) {
-        g_sm_walks++;
-        sm_lookup_apply(ret, next, fp);
-      } else {
-        sm_lookup_rewrite(ret, next, fp);
-      }
-    }
-    if (!next || next <= fp) {
-      break;
-    }
-    fp = next;
-  }
-}
-
-static void copy_from_stackmaps(void) {
-  /*
-   * On with AVANT_NURSERY=1 unless AVANT_NURSERY_STACKMAP=0. Callsite
-   * RSP is callee_rbp+16 (not LLVM stack size). Mapped slots are roots
-   * (copy_from_slot). Leftover spills in the same frame are rewritten
-   * after the work queue (rewrite_from_stackmaps).
-   */
-  walk_c_frames(1);
-}
-
-static void rewrite_from_stackmaps(void) {
-  walk_c_frames(0);
-}
-
-static void count_c_stack_nursery(void) {
-  uint8_t *p;
-  uint8_t *hi;
-  uint8_t *lo;
-  if (!g_stackmap_walk) {
-    return;
-  }
-  p = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!hi || !p) {
-    return;
-  }
-  if (lo && p < lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      void *to = fwd_get(w);
-      /* Copied to to-space, but this stack word still names from-space. */
-      if (to && to != w) {
-        g_sm_leftover++;
-      }
-    }
-  }
 }
 
 static void rem_scrub(void) {
@@ -2010,7 +1714,15 @@ static void rem_scrub(void) {
     }
     h = avant_header(obj);
     if (h->flags & AVANT_FLAG_MARKED) {
-      g_remset[w++] = obj;
+      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
+      if (!rem_frontier_decide(obj, dirty)) {
+        continue;
+      }
+      g_remset[w] = obj;
+      if (g_rem_dirty) {
+        g_rem_dirty[w] = (uint8_t)dirty;
+      }
+      w++;
     } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
       Large *L = large_of(obj);
       /* A dead expression buffer is a large object. Leaving it on the
@@ -2028,6 +1740,22 @@ static void rem_scrub(void) {
   if (locked) {
     pthread_mutex_unlock(&g_rem_mu);
   }
+}
+
+/* Field slots copy_payload_children would visit for one object. */
+static uint64_t rem_field_count(void *p) {
+  AvantHeader *h = avant_header(p);
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_BYTES) {
+    return 0;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    return (uint64_t)((size_t)h->size / sizeof(void *));
+  }
+  if (id >= MAX_TYPES || !g_type_set[id]) {
+    return 0;
+  }
+  return (uint64_t)__builtin_popcountll(g_type_bits[id]);
 }
 
 static void gen_young_copy(void) {
@@ -2052,6 +1780,43 @@ static void gen_young_copy(void) {
     }
   }
   pthread_mutex_unlock(&g_threads_mu);
+  /* Remembered mature objects are roots for the young generation.
+   * Their nursery children must be copied and their fields updated
+   * even when no root or young object reaches them this cycle: a
+   * mature tree interior that tenured together with its children is
+   * otherwise never scanned again, and its fields keep pointing at
+   * from-space addresses that later collections reuse. */
+  {
+    uint32_t ri;
+    int locked = rem_locked();
+    if (locked) {
+      pthread_mutex_lock(&g_rem_mu);
+    }
+    g_rem_scans++;
+    g_rem_entries += g_rem_n;
+    if (g_rem_n > g_rem_peak) {
+      g_rem_peak = g_rem_n;
+    }
+    for (ri = 0; ri < g_rem_n; ri++) {
+      void *obj = g_remset[ri];
+      if (is_heap_payload(obj, NULL, NULL)) {
+        /* A remembered object is a root this cycle: mark it so the
+         * probe pass's rem_scrub keeps it in the set. */
+        avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+        g_rem_fields += rem_field_count(obj);
+        g_rem_track = 1;
+        g_rem_track_dirty = 0;
+        copy_payload_children(obj);
+        g_rem_track = 0;
+        if (g_rem_dirty) {
+          g_rem_dirty[ri] = (uint8_t)g_rem_track_dirty;
+        }
+      }
+    }
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
+    }
+  }
   if (!g_probe) {
     copy_from_c_stack();
   }
@@ -2171,6 +1936,7 @@ static void filter_blocks(Block **list, int (*keep)(Block *)) {
 
 static void sweep_large(void) {
   Large **pp = &g_large;
+  los_note_live();
   while (*pp) {
     Large *L = *pp;
     if (L->header.flags & AVANT_FLAG_MARKED) {
@@ -2181,6 +1947,7 @@ static void sweep_large(void) {
       *pp = L->next;
       free(L);
       g_heap_bytes -= chunk;
+      g_los_freed++;
     }
   }
 }
@@ -2244,10 +2011,37 @@ static void rem_commit_kept(void) {
   uint32_t n = g_keep_n;
   void **kept = g_keep;
   uint32_t i;
+  uint32_t w = 0;
+  int locked = rem_locked();
   g_keep = NULL;
   g_keep_n = 0;
   g_keep_cap = 0;
-  rem_forget();
+  /* A remembered object with a nursery child stays remembered: the
+   * scan just proved that edge. A live member with no nursery child
+   * leaves the hot set under the frontier policy (the barrier re-adds
+   * it on the next young store); only members whose memory is gone
+   * leave unconditionally, as before. */
+  if (locked) {
+    pthread_mutex_lock(&g_rem_mu);
+  }
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    if (is_heap_payload(obj, NULL, NULL)) {
+      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
+      if (!rem_frontier_decide(obj, dirty)) {
+        continue;
+      }
+      g_remset[w] = obj;
+      if (g_rem_dirty) {
+        g_rem_dirty[w] = (uint8_t)dirty;
+      }
+      w++;
+    }
+  }
+  g_rem_n = w;
+  if (locked) {
+    pthread_mutex_unlock(&g_rem_mu);
+  }
   for (i = 0; i < n; i++) {
     if (is_heap_payload(kept[i], NULL, NULL)) {
       rem_add(kept[i]);
@@ -2265,6 +2059,12 @@ static int young_pause(uint64_t used, uint64_t surv) {
   if (g_heap_max && g_heap_bytes + g_young_bytes > g_heap_max) {
     return 0;
   }
+  if (g_heap_max && g_reserve_mode &&
+      g_heap_bytes + g_young_bytes + g_copy_reserve > g_heap_max) {
+    /* Pausing would leave the nursery in place with no copy room
+     * under the limit; copy instead (Wave 4 reserve, Q-W4-2). */
+    return 0;
+  }
   dead = used > surv ? used - surv : 0;
   if (dead >= STICKY_MIN && dead >= surv) {
     next = used + (dead - surv) + (64ull * 1024ull);
@@ -2277,6 +2077,21 @@ static int young_pause(uint64_t used, uint64_t surv) {
   if (next > YOUNG_BYTES_MAX) {
     next = YOUNG_BYTES_MAX;
   }
+  if (g_sizing_mode) {
+    /* Survival cap (Wave 4 step 2, Q-W4-6): growth may not outrun what
+     * the probe just saw survive by more than the factor and slack.
+     * The floor keeps a minimum working nursery when survival reads
+     * near zero; a cap at or below the current threshold simply means
+     * no growth this time, so the copy proceeds instead of pausing. */
+    uint64_t cap =
+        (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv) + YOUNG_SIZING_SLACK;
+    if (cap < YOUNG_SIZING_FLOOR) {
+      cap = YOUNG_SIZING_FLOOR;
+    }
+    if (next > cap) {
+      next = cap;
+    }
+  }
   if (next <= g_young_bytes) {
     return 0;
   }
@@ -2285,12 +2100,478 @@ static int young_pause(uint64_t used, uint64_t surv) {
   return 1;
 }
 
+static int g_verify;
+
+static int verify_ptr(void *p, const char *where, void *holder, long off) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start || !b || b->space != SPACE_NURSERY) {
+    return 0;
+  }
+  void *to = fwd_get(start);
+  if (to && to != start) {
+    AvantHeader *ch = avant_header(start);
+    fprintf(stderr,
+            "avant gc verify: stale %s reference holder=%p off=%ld "
+            "points at from-space %p (forwarded to %p) coll=%llu "
+            "child_flags=0x%x\n",
+            where, holder, off, start, to,
+            (unsigned long long)g_stats.collections, ch->flags);
+    return 1;
+  }
+  return 0;
+}
+
+static void verify_trace(void *p) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start) {
+    return;
+  }
+  AvantHeader *h = avant_header(start);
+  if (h->flags & AVANT_FLAG_FORWARDED) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_FORWARDED;
+  work_push(start);
+}
+
+static void verify_tls_slot(void **slot) {
+  verify_trace(*slot);
+}
+
+/* Independent reachability, ignoring the collector's own tracing
+ * gates: a holder counts as live when a root reaches it through any
+ * field. This is what keeps the checker sensitive to the F1 class
+ * (a live holder the young copy itself never traced) while staying
+ * silent about dead mature objects, whose fields legitimately name
+ * copied objects. FORWARDED is free here: clear_mark_flags resets
+ * it at the end of the collection. */
+static void verify_mark_reachable(void) {
+  ThreadReg *t;
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      uint32_t i;
+      for (i = 0; i < f->n; i++) {
+        verify_trace(*f->slots[i]);
+      }
+    }
+  }
+  for (PinEnt *p = g_pins; p; p = p->next) {
+    verify_trace(p->payload);
+  }
+  {
+    uint32_t ri;
+    for (ri = 0; ri < g_rem_n; ri++) {
+      verify_trace(g_remset[ri]);
+    }
+  }
+  avant_hash_walk_tls(verify_tls_slot);
+  while (g_work_n) {
+    void *p = g_work[--g_work_n];
+    AvantHeader *h = avant_header(p);
+    uint32_t id = h->type_id;
+    if (id == AVANT_TYPE_BYTES) {
+      continue;
+    }
+    if (id == AVANT_TYPE_PTRS) {
+      size_t n = (size_t)h->size / sizeof(void *);
+      size_t i;
+      for (i = 0; i < n; i++) {
+        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
+      }
+      continue;
+    }
+    if (id >= MAX_TYPES || !g_type_set[id]) {
+      continue;
+    }
+    uint64_t bits = g_type_bits[id];
+    size_t i;
+    for (i = 0; i < 64; i++) {
+      if (bits & (1ULL << i)) {
+        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
+      }
+    }
+  }
+}
+
+static void verify_obj_fields(AvantHeader *h, Block *b) {
+  (void)b;
+  if (!(h->flags & AVANT_FLAG_FORWARDED)) {
+    return;
+  }
+  void *p = payload_of(h);
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    size_t n = (size_t)h->size / sizeof(void *);
+    size_t i;
+    for (i = 0; i < n; i++) {
+      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
+                     (long)(i * sizeof(void *)))) {
+        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
+                h->flags, b ? (int)b->space : -1);
+      }
+    }
+    return;
+  }
+  if (id >= MAX_TYPES || !g_type_set[id]) {
+    return;
+  }
+  uint64_t bits = g_type_bits[id];
+  size_t i;
+  for (i = 0; i < 64; i++) {
+    if (bits & (1ULL << i)) {
+      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
+                     (long)(i * sizeof(void *)))) {
+        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
+                h->flags, b ? (int)b->space : -1);
+      }
+    }
+  }
+}
+
+static uint64_t g_verify_left_seen;
+
+static void verify_young_copy(void) {
+  ThreadReg *t;
+  Block *b;
+  if (g_sm_leftover > g_verify_left_seen) {
+    fprintf(stderr,
+            "avant gc verify: %llu stack words still name from-space "
+            "after rewrite (cumulative %llu)\n",
+            (unsigned long long)(g_sm_leftover - g_verify_left_seen),
+            (unsigned long long)g_sm_leftover);
+    g_verify_left_seen = g_sm_leftover;
+  }
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      uint32_t i;
+      for (i = 0; i < f->n; i++) {
+        verify_ptr(*f->slots[i], "root", (void *)f->slots[i], (long)i);
+      }
+    }
+  }
+  verify_mark_reachable();
+  for (b = g_to; b; b = b->next) {
+    foreach_block_object(b, verify_obj_fields);
+  }
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, verify_obj_fields);
+  }
+}
+
+typedef struct DefCand {
+  Block *b;
+  int live;
+  uint64_t bytes;
+} DefCand;
+
+static int def_cand_cmp(const void *a, const void *b) {
+  const DefCand *x = (const DefCand *)a;
+  const DefCand *y = (const DefCand *)b;
+  if (x->live != y->live) {
+    return x->live - y->live;
+  }
+  return (x->b > y->b) - (x->b < y->b);
+}
+
+static void defrag_rewrite_slot(void **slot) {
+  void *w = *slot;
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(w, &b, &ol);
+  void *to;
+  if (!start) {
+    return;
+  }
+  to = fwd_get(start);
+  if (to && to != start) {
+    *slot = (void *)((uint8_t *)to + ((uint8_t *)w - (uint8_t *)start));
+  }
+}
+
+static void defrag_rewrite_tls(void **slot) {
+  defrag_rewrite_slot(slot);
+}
+
+static void defrag_scan_payload(void *p) {
+  AvantHeader *h = avant_header(p);
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    size_t n = (size_t)h->size / sizeof(void *);
+    size_t i;
+    for (i = 0; i < n; i++) {
+      defrag_rewrite_slot((void **)((uint8_t *)p + i * sizeof(void *)));
+    }
+    return;
+  }
+  if (id >= MAX_TYPES || !g_type_set[id]) {
+    return;
+  }
+  {
+    uint64_t bits = g_type_bits[id];
+    size_t i;
+    for (i = 0; i < 64; i++) {
+      if (bits & (1ULL << i)) {
+        defrag_rewrite_slot((void **)((uint8_t *)p + i * sizeof(void *)));
+      }
+    }
+  }
+}
+
+static void defrag_fix_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_MARKED) {
+    defrag_scan_payload(payload_of(h));
+  }
+}
+
+static void mature_unlink(Block *b) {
+  Block **pp = &g_mature;
+  while (*pp) {
+    if (*pp == b) {
+      *pp = b->next;
+      b->next = NULL;
+      return;
+    }
+    pp = &(*pp)->next;
+  }
+}
+
+/* Copying defragmentation of the mature space, run inside a full
+ * collection after marking (line marks and MARKED flags are the live
+ * set) and before the sweep. Live objects in candidate blocks are
+ * copied into fresh destination blocks, every root, heap field,
+ * remembered entry, and stackmap spill naming them is rewritten
+ * through the forwarding table, and the emptied blocks are freed
+ * whole. Destination blocks are allocated before anything moves; if
+ * one cannot be allocated under the heap limit, nothing moves and the
+ * ordinary non-moving collection completes (g_def_skipped counts it),
+ * so defragmentation can never make a collection fail. */
+static void defrag_evacuate(uint64_t live_lines_this) {
+  DefCand *cand = NULL;
+  size_t ncand = 0;
+  size_t ccap = 0;
+  size_t i;
+  Block *b;
+  uint64_t budget;
+  uint64_t evac_lines = 0;
+  uint64_t evac_bytes = 0;
+  Block **dest = NULL;
+  size_t ndest = 0;
+  size_t dest_cap_blocks;
+  if (!g_defrag_mode || live_lines_this == 0) {
+    return;
+  }
+  for (b = g_mature; b; b = b->next) {
+    int live = block_live_lines(b);
+    DefCand *c;
+    if (live <= 0 || live > 64 || block_has_pinned(b)) {
+      continue;
+    }
+    if (ncand == ccap) {
+      ccap = ccap ? ccap * 2 : 32;
+      cand = (DefCand *)xrealloc(cand, ccap * sizeof(DefCand));
+    }
+    c = &cand[ncand++];
+    c->b = b;
+    c->live = live;
+    c->bytes = 0;
+    {
+      int w;
+      for (w = 0; w < START_WORDS; w++) {
+        uint64_t bits = b->start[w];
+        while (bits) {
+          int bit = __builtin_ctzll(bits);
+          size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
+          AvantHeader *h = (AvantHeader *)(b->base + off);
+          if (h->flags & AVANT_FLAG_MARKED) {
+            c->bytes += obj_total(h);
+          }
+          bits &= bits - 1;
+        }
+      }
+    }
+  }
+  if (ncand == 0) {
+    free(cand);
+    return;
+  }
+  qsort(cand, ncand, sizeof(DefCand), def_cand_cmp);
+  budget = live_lines_this / 4;
+  i = 0;
+  while (i < ncand && evac_lines + (uint64_t)cand[i].live <= budget) {
+    evac_lines += (uint64_t)cand[i].live;
+    evac_bytes += cand[i].bytes;
+    i++;
+  }
+  ncand = i;
+  if (ncand == 0) {
+    free(cand);
+    return;
+  }
+  dest_cap_blocks = (size_t)(evac_bytes / BLOCK_SIZE) + 2;
+  dest = (Block **)xrealloc(NULL, dest_cap_blocks * sizeof(Block *));
+  for (i = 0; i < dest_cap_blocks; i++) {
+    Block *nb = new_block(SPACE_MATURE);
+    if (!nb) {
+      size_t j;
+      for (j = 0; j < ndest; j++) {
+        mature_unlink(dest[j]);
+        cache_or_free_block(dest[j]);
+      }
+      free(dest);
+      free(cand);
+      g_def_skipped++;
+      return;
+    }
+    dest[ndest++] = nb;
+  }
+  fwd_reset();
+  {
+    Block *db = dest[0];
+    size_t di = 0;
+    uint8_t *bump = db->base;
+    size_t ci;
+    size_t evac_done = 0;
+    int stopped = 0;
+    for (ci = 0; ci < ncand && !stopped; ci++) {
+      Block *cb = cand[ci].b;
+      int w;
+      for (w = 0; w < START_WORDS && !stopped; w++) {
+        uint64_t bits = cb->start[w];
+        while (bits) {
+          int bit = __builtin_ctzll(bits);
+          size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
+          AvantHeader *h = (AvantHeader *)(cb->base + off);
+          size_t total;
+          AvantHeader *nh;
+          if (!(h->flags & AVANT_FLAG_MARKED)) {
+            bits &= bits - 1;
+            continue;
+          }
+          total = obj_total(h);
+          if (bump + total > db->base + BLOCK_SIZE) {
+            di++;
+            if (di >= ndest) {
+              Block *nb = new_block(SPACE_MATURE);
+              if (!nb) {
+                /* Heap limit mid-evacuation: stop here. Objects
+                 * already copied are forwarded and fixed up below;
+                 * this block keeps the rest and is not freed. */
+                stopped = 1;
+                break;
+              }
+              if (ndest == dest_cap_blocks) {
+                dest_cap_blocks = dest_cap_blocks * 2 + 4;
+                dest = (Block **)xrealloc(dest, dest_cap_blocks * sizeof(Block *));
+              }
+              dest[ndest++] = nb;
+            }
+            db = dest[di];
+            bump = db->base;
+          }
+          nh = (AvantHeader *)bump;
+          memcpy(nh, h, total);
+          set_start(db, (size_t)(bump - db->base));
+          mark_lines(db, (size_t)(bump - db->base), total);
+          fwd_put(payload_of(h), payload_of(nh));
+          g_def_evac_bytes += total;
+          bump += total;
+          db->bump = bump;
+          bits &= bits - 1;
+        }
+      }
+      if (!stopped) {
+        evac_done = ci + 1;
+        g_def_evac_blocks++;
+      }
+    }
+    ncand = evac_done;
+    if (stopped) {
+      g_def_skipped++;
+    }
+  }
+  {
+    ThreadReg *t;
+    uint32_t fi;
+    pthread_mutex_lock(&g_threads_mu);
+    for (t = g_threads; t; t = t->next) {
+      Frame *f;
+      for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+        for (fi = 0; fi < f->n; fi++) {
+          defrag_rewrite_slot(f->slots[fi]);
+        }
+      }
+    }
+    pthread_mutex_unlock(&g_threads_mu);
+  }
+  {
+    PinEnt *p;
+    for (p = g_pins; p; p = p->next) {
+      defrag_rewrite_slot(&p->payload);
+    }
+  }
+  avant_hash_walk_tls(defrag_rewrite_tls);
+  {
+    uint32_t ri;
+    int locked = rem_locked();
+    if (locked) {
+      pthread_mutex_lock(&g_rem_mu);
+    }
+    for (ri = 0; ri < g_rem_n; ri++) {
+      defrag_rewrite_slot((void **)&g_remset[ri]);
+    }
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
+    }
+  }
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, defrag_fix_one);
+  }
+  for (b = g_nursery; b; b = b->next) {
+    foreach_block_object(b, defrag_fix_one);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, defrag_fix_one);
+  }
+  {
+    Large *L;
+    for (L = g_large; L; L = L->next) {
+      if (L->header.flags & AVANT_FLAG_MARKED) {
+        defrag_scan_payload(payload_of(&L->header));
+      }
+    }
+  }
+  rewrite_from_stackmaps();
+  for (i = 0; i < ncand; i++) {
+    mature_unlink(cand[i].b);
+    cache_or_free_block(cand[i].b);
+    g_def_freed_blocks++;
+  }
+  free(dest);
+  free(cand);
+}
+
 static void young_copy_out(int tenure) {
   g_force_tenure = tenure;
   g_to_bytes = 0;
   g_keep_n = 0;
   zero_line_marks(g_nursery);
   gen_young_copy();
+  if (g_verify) {
+    verify_young_copy();
+  }
   clear_alloc_cur(SPACE_NURSERY);
   if (g_discard_from) {
     discard_nursery_from();
@@ -2299,6 +2580,9 @@ static void young_copy_out(int tenure) {
   }
   adopt_to_space();
   rem_commit_kept();
+  if (g_nursery_held + g_to_bytes > g_cpy_peak) {
+    g_cpy_peak = g_nursery_held + g_to_bytes;
+  }
   g_nursery_held = g_to_bytes;
   g_to_bytes = 0;
   g_force_tenure = 0;
@@ -2318,6 +2602,7 @@ static void collect(int full) {
   g_stats.collections++;
   g_live = 0;
   g_work_n = 0;
+  gc_fast_clear();
   g_cur = NULL;
   g_bump = NULL;
   g_limit = NULL;
@@ -2340,6 +2625,24 @@ static void collect(int full) {
         gen_young_copy();
         g_probe = 0;
         surv = g_probe_nursery_bytes;
+        g_srv_probes++;
+        g_srv_used += used;
+        g_srv_surv += surv;
+        if (g_srv_probes == 1 || surv < g_srv_min) {
+          g_srv_min = surv;
+        }
+        if (surv > g_srv_max) {
+          g_srv_max = surv;
+        }
+        {
+          uint64_t pct = used ? (surv * 100) / used : 0;
+          int bucket = pct == 0 ? 0 : pct <= 10 ? 1 : pct <= 25 ? 2 : pct <= 50 ? 3 : pct <= 75 ? 4 : 5;
+          g_srv_hist[bucket]++;
+        }
+        if (g_reserve_mode) {
+          g_copy_reserve =
+              (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
+        }
         rem_scrub();
         reclaim_young_large();
         clear_noted();
@@ -2385,6 +2688,22 @@ static void collect(int full) {
     zero_line_marks(g_nursery);
     zero_line_marks(g_from);
     mark_roots();
+    {
+      Block *db;
+      uint64_t live_lines_this = 0;
+      for (db = g_mature; db; db = db->next) {
+        int live = block_live_lines(db);
+        int bucket = live == 0 ? 0 : live <= 32 ? 1 : live <= 64 ? 2 : live <= 96 ? 3 : live < LINES_PER_BLOCK ? 4 : 5;
+        g_def_blocks++;
+        g_def_live_lines += (uint64_t)live;
+        live_lines_this += (uint64_t)live;
+        g_def_hist[bucket]++;
+        if (live > 0 && live < LINES_PER_BLOCK) {
+          g_def_wasted += (uint64_t)(LINES_PER_BLOCK - live) * LINE_SIZE;
+        }
+      }
+      defrag_evacuate(live_lines_this);
+    }
     sweep_large();
     filter_blocks(&g_mature, keep_if_live);
     filter_blocks(&g_nursery, keep_if_live);
@@ -2408,8 +2727,27 @@ static void collect(int full) {
     g_last_full_at = g_stats.allocated_bytes;
   }
 
+  if (full) {
+    uint64_t next = g_live * 2 + (4ull * 1024ull * 1024ull);
+    if (next < (4ull * 1024ull * 1024ull)) {
+      next = 4ull * 1024ull * 1024ull;
+    }
+    if (next > FULL_BYTES) {
+      next = FULL_BYTES;
+    }
+    g_full_trigger = next;
+  }
+  if (g_yng_min == 0 || g_young_bytes < g_yng_min) {
+    g_yng_min = g_young_bytes;
+  }
+  if (g_young_bytes > g_yng_max) {
+    g_yng_max = g_young_bytes;
+  }
   g_since_gc = 0;
   g_stats.live_bytes = g_live;
+  if (g_live > g_peak_live) {
+    g_peak_live = g_live;
+  }
   g_collecting = 0;
 }
 
@@ -2429,16 +2767,16 @@ static void maybe_collect(void) {
    * collection for that window.
    */
   if (g_nursery_off) {
-    if (g_since_gc >= FULL_BYTES) {
+    if (g_since_gc >= g_full_trigger) {
       collect(1);
     }
     return;
   }
   /* Nursery garbage is reclaimed by a young collection. A full
    * collection runs when mature space, including promotions and large
-   * objects, has grown by FULL_BYTES. Counting every nursery byte here
+   * objects, has grown by g_full_trigger. Counting every nursery byte here
    * marked a live tree that a young collection should have discarded. */
-  if (g_mature_since_full >= FULL_BYTES) {
+  if (g_mature_since_full >= g_full_trigger) {
     collect(1);
   } else if (g_nursery_held >= g_young_bytes) {
     collect(0);
@@ -2460,16 +2798,38 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
       die("heap limit");
     }
   }
+  g_los_allocs++;
+  g_los_alloc_bytes += (uint64_t)chunk;
+  {
+    int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
+    g_los_hist[bucket]++;
+    if (type_id == AVANT_TYPE_BYTES && align_up(sizeof(AvantHeader) + payload) <= LOS_LIMIT) {
+      g_los_scalar_allocs++;
+      g_los_scalar_bytes += (uint64_t)chunk;
+    } else {
+      g_los_big_allocs++;
+      g_los_big_bytes += (uint64_t)chunk;
+    }
+    if (young) {
+      g_los_young_allocs++;
+      g_los_young_bytes += (uint64_t)chunk;
+    } else {
+      g_los_mature_allocs++;
+      g_los_mature_bytes += (uint64_t)chunk;
+    }
+  }
   if (g_los_spare && g_los_spare->header.size == (uint32_t)payload) {
     L = g_los_spare;
     g_los_spare = NULL;
     memset(payload_of(&L->header), 0, payload);
+    g_los_spare_hits++;
   } else {
     L = calloc(1, chunk);
     if (!L) {
       die("out of memory");
     }
     g_heap_bytes += chunk;
+    g_los_callocs++;
   }
   L->header.size = (uint32_t)payload;
   L->header.type_id = (uint16_t)type_id;
@@ -2484,9 +2844,7 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   L->next = g_large;
   g_large = L;
   large_hash_add(L);
-  if (g_heap_bytes > g_stats.peak_heap) {
-    g_stats.peak_heap = g_heap_bytes;
-  }
+  note_peak();
   return payload_of(&L->header);
 }
 
@@ -2510,22 +2868,41 @@ static void account_alloc(size_t total, int nursery) {
   } else {
     g_mature_since_full += total;
   }
-  if (g_heap_bytes > g_stats.peak_heap) {
-    g_stats.peak_heap = g_heap_bytes;
-  }
+  note_peak();
 }
 
+static uint64_t g_los_now;
+static uint64_t g_los_now_bytes;
+static uint64_t g_los_spare_bytes;
+
 static void print_stats(void) {
+  {
+    Large *L;
+    g_los_now = 0;
+    g_los_now_bytes = 0;
+    for (L = g_large; L; L = L->next) {
+      g_los_now++;
+      g_los_now_bytes += (uint64_t)large_chunk(L);
+    }
+    g_los_spare_bytes = g_los_spare ? (uint64_t)large_chunk(g_los_spare) : 0;
+  }
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
-          "alloc=%llu copied=%llu live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
-          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu\n",
+          "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
+          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu "
+          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu "
+          "def_blocks=%llu def_live_lines=%llu def_wasted=%llu def_hist=%llu,%llu,%llu,%llu,%llu,%llu "
+          "def_evac_blocks=%llu def_evac_bytes=%llu def_freed_blocks=%llu def_skipped=%llu "
+          "srv_probes=%llu srv_used=%llu srv_surv=%llu srv_min=%llu srv_max=%llu srv_hist=%llu,%llu,%llu,%llu,%llu,%llu "
+          "yng_min=%llu yng_max=%llu cpy_peak=%llu pk_nursery=%llu pk_mature=%llu pk_from=%llu pk_to=%llu pk_large=%llu pk_cache=%llu srv_reserve=%llu "
+          "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
           (unsigned long long)g_stats.allocated_bytes,
           (unsigned long long)g_stats.copied_bytes,
           (unsigned long long)g_stats.live_bytes,
+          (unsigned long long)g_peak_live,
           (unsigned long long)g_stats.peak_heap,
           (unsigned long long)g_interior_slots,
           (unsigned long long)g_sm_walks,
@@ -2535,7 +2912,81 @@ static void print_stats(void) {
           (unsigned long long)g_sticky_grows,
           (unsigned long long)(g_young_bytes / (1024ull * 1024ull)),
           (unsigned long long)g_nursery_held,
-          (unsigned long long)g_mature_since_full);
+          (unsigned long long)g_mature_since_full,
+          (unsigned long long)g_root_calls,
+          (unsigned long long)g_reload_calls,
+          (unsigned long long)g_enter_calls,
+          (unsigned long long)avant_inline_allocs,
+          (unsigned long long)g_rem_scans,
+          (unsigned long long)g_rem_entries,
+          (unsigned long long)g_rem_fields,
+          (unsigned long long)g_rem_peak,
+          (unsigned long long)g_rem_n,
+          (unsigned long long)g_rem_adds,
+          (unsigned long long)g_rem_cleared,
+          (unsigned long long)g_def_blocks,
+          (unsigned long long)g_def_live_lines,
+          (unsigned long long)g_def_wasted,
+          (unsigned long long)g_def_hist[0],
+          (unsigned long long)g_def_hist[1],
+          (unsigned long long)g_def_hist[2],
+          (unsigned long long)g_def_hist[3],
+          (unsigned long long)g_def_hist[4],
+          (unsigned long long)g_def_hist[5],
+          (unsigned long long)g_def_evac_blocks,
+          (unsigned long long)g_def_evac_bytes,
+          (unsigned long long)g_def_freed_blocks,
+          (unsigned long long)g_def_skipped,
+          (unsigned long long)g_srv_probes,
+          (unsigned long long)g_srv_used,
+          (unsigned long long)g_srv_surv,
+          (unsigned long long)g_srv_min,
+          (unsigned long long)g_srv_max,
+          (unsigned long long)g_srv_hist[0],
+          (unsigned long long)g_srv_hist[1],
+          (unsigned long long)g_srv_hist[2],
+          (unsigned long long)g_srv_hist[3],
+          (unsigned long long)g_srv_hist[4],
+          (unsigned long long)g_srv_hist[5],
+          (unsigned long long)g_yng_min,
+          (unsigned long long)g_yng_max,
+          (unsigned long long)g_cpy_peak,
+          (unsigned long long)g_pk_nursery,
+          (unsigned long long)g_pk_mature,
+          (unsigned long long)g_pk_from,
+          (unsigned long long)g_pk_to,
+          (unsigned long long)g_pk_large,
+          (unsigned long long)g_pk_cache,
+          (unsigned long long)g_copy_reserve,
+          (unsigned long long)g_los_allocs,
+          (unsigned long long)g_los_alloc_bytes,
+          (unsigned long long)g_los_callocs,
+          (unsigned long long)g_los_spare_hits,
+          (unsigned long long)g_los_spare_cached,
+          (unsigned long long)g_los_spare_dropped,
+          (unsigned long long)g_los_freed,
+          (unsigned long long)g_los_scalar_allocs,
+          (unsigned long long)g_los_scalar_bytes,
+          (unsigned long long)g_los_big_allocs,
+          (unsigned long long)g_los_big_bytes,
+          (unsigned long long)g_los_young_allocs,
+          (unsigned long long)g_los_young_bytes,
+          (unsigned long long)g_los_mature_allocs,
+          (unsigned long long)g_los_mature_bytes,
+          (unsigned long long)g_los_hist[0],
+          (unsigned long long)g_los_hist[1],
+          (unsigned long long)g_los_hist[2],
+          (unsigned long long)g_los_hist[3],
+          (unsigned long long)g_los_hist[4],
+          (unsigned long long)g_los_hist[5],
+          (unsigned long long)g_los_live_peak,
+          (unsigned long long)g_los_live_sum,
+          (unsigned long long)g_los_live_samples,
+          (unsigned long long)g_los_promoted,
+          (unsigned long long)g_los_promoted_bytes,
+          (unsigned long long)g_los_now,
+          (unsigned long long)g_los_now_bytes,
+          (unsigned long long)g_los_spare_bytes);
 }
 
 static void init_gc(void) {
@@ -2597,6 +3048,23 @@ static void init_gc(void) {
   if (g_stackmap_walk) {
     sm_init();
   }
+  {
+    const char *v = getenv("AVANT_GC_REM_FRONTIER");
+    g_rem_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
+  }
+  {
+    const char *v = getenv("AVANT_GC_DEFRAG");
+    g_defrag_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
+  }
+  {
+    const char *v = getenv("AVANT_GC_YOUNG_SIZING");
+    g_sizing_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
+  }
+  {
+    const char *v = getenv("AVANT_GC_COPY_RESERVE");
+    g_reserve_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
+  }
+  g_verify = getenv("AVANT_GC_VERIFY") != NULL;
   if (getenv("AVANT_GC_STATS")) {
     atexit(print_stats);
   }
@@ -2618,6 +3086,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
  * (Brainfuck) and numeric methods spent the call on that pair. Frames
  * are kept on a thread-local freelist; the slot array is reused too. */
 void avant_gc_enter(void) {
+  g_enter_calls++;
   init_gc();
   avant_gc_register_thread();
   Frame *f = g_frame_free;
@@ -2656,6 +3125,7 @@ void avant_gc_quiet_leave(void) {
 }
 
 void avant_gc_root(void *slot) {
+  g_root_calls++;
   if (g_gc_quiet) {
     return;
   }
@@ -2682,8 +3152,27 @@ void avant_gc_root(void *slot) {
   f->slots[f->n++] = (void **)slot;
 }
 
+void *avant_gc_root_begin(uint32_t count) {
+  g_root_calls += count;
+  if (!g_frame) {
+    die("gc root begin without enter");
+  }
+  Frame *f = g_frame;
+  if (count > f->cap) {
+    uint32_t cap = f->cap ? f->cap : 8;
+    while (cap < count) {
+      cap *= 2;
+    }
+    f->slots = xrealloc(f->slots, cap * sizeof(void **));
+    f->cap = cap;
+  }
+  f->n = g_gc_quiet ? 0 : count;
+  return f->slots;
+}
+
 __attribute__((noinline))
 void *avant_gc_reload(void *slot) {
+  g_reload_calls++;
   /*
    * Stage 17: myc-llvm stores this return into the rooted alloca after
    * a collecting CALL. The load is opaque to LLVM isel, so a pre-call
@@ -2799,6 +3288,7 @@ void avant_unpin(void *payload) {
 
 void avant_gc_defer_enter(void) {
   init_gc();
+  gc_fast_clear();
   pthread_mutex_lock(&g_world);
   /*
    * Helpers wrap avant_alloc in defer so C-held pointers are not swept.
@@ -2831,6 +3321,9 @@ void avant_gc_defer_leave(void) {
 }
 
 void avant_alloc_in_mature(int32_t on) {
+  if (on) {
+    gc_fast_clear();
+  }
   g_alloc_mature = on ? 1 : 0;
 }
 
@@ -2852,6 +3345,7 @@ static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   init_gc();
+  gc_fast_refresh();
   if (nbytes > UINT32_MAX) {
     die("object too large");
   }
@@ -2930,6 +3424,7 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
     return NULL;
   }
   init_gc();
+  gc_fast_refresh();
   payload = (size_t)nbytes;
   total = align_up(sizeof(AvantHeader) + payload);
   h = place_bump(total);

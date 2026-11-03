@@ -1,0 +1,53 @@
+// Large-object churn bench (Collector II Wave 5). Run with the built
+// compiler, for example:
+//   sh runtime/build.sh
+//   AVANT_MYC_LLVM=<myc-llvm> ./bin/avant-b compile bench/large_churn.av /tmp/large_churn --release
+//   AVANT_GC_STATS=1 /tmp/large_churn
+//   AVANT_GC_LOS_POOL=0 AVANT_GC_STATS=1 /tmp/large_churn
+// Each round builds two large Float64 buffers (8000 and 16000 doubles,
+// 64,000 and 128,000 payload bytes, both large through LOS_LIMIT),
+// reads them back, and drops them before an explicit full collection,
+// which is the JSON pool shape compressed: a same-size large Bytes
+// buffer is allocated, used, and dead at the next collection, round
+// after round. The buffers are built inside a helper whose frame is
+// gone before the collection runs, so no stale root slot can keep a
+// dropped buffer alive. The checksum covers every element read back,
+// so the work cannot be optimised away.
+
+lib gc {
+  fun avant_gc_collect()
+}
+
+fn build_and_sum(n: Int, seed: Int): Int {
+  xs = Array(Float64).new(n)
+  i = 0
+  while i < n {
+    xs[i] = (seed &+ i).to_f
+    i = i &+ 1
+  }
+  sum = 0
+  j = 0
+  while j < n {
+    sum = sum &+ xs[j].to_i
+    j = j &+ 1
+  }
+  sum
+}
+
+fn round(seed: Int): Int {
+  a = build_and_sum(8000, seed)
+  b = build_and_sum(16000, seed &+ 3)
+  a &+ b
+}
+
+fn main: Int {
+  total = 0
+  r = 0
+  while r < 4000 {
+    total = total &+ round(r)
+    gc.avant_gc_collect()
+    r = r &+ 1
+  }
+  puts(total)
+  0
+}

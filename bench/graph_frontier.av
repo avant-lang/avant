@@ -1,0 +1,82 @@
+// Mature-graph frontier bench (Collector II Wave 2). Run with the built
+// compiler, for example:
+//   sh runtime/build.sh
+//   AVANT_MYC_LLVM=<myc-llvm> ./bin/avant-b compile bench/graph_frontier.av /tmp/graph_frontier --release
+//   AVANT_YOUNG_MB=1 AVANT_GC_STATS=1 /usr/bin/time -v /tmp/graph_frontier
+// A complete tree is built once and tenured by churn, then every mature
+// node is given a young child (dirtying the whole remembered set), then a
+// long phase re-dirties only a sparse strided subset while short-lived
+// nursery work forces young collections. Without frontier clearing every
+// young collection rescans every remembered node's fields; with it the
+// scan should shrink to the subset dirtied since the previous scan. The
+// checksum covers structure and surviving young children so the work
+// cannot be optimised away.
+
+class GNode {
+  v: Int
+  a: GNode?
+  b: GNode?
+  kid: GNode?
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+fn build(v: Int, depth: Int, flat: Array(GNode)): GNode {
+  n = GNode.new(v)
+  flat.push(n)
+  if depth > 0 {
+    n.a = build(v &* 2, depth - 1, flat)
+    n.b = build(v &* 2 &+ 1, depth - 1, flat)
+  }
+  n
+}
+
+fn churn(rounds: Int, seed: Int): Int {
+  sum = 0
+  r = 0
+  while r < rounds {
+    i = 0
+    while i < 20000 {
+      t = GNode.new(seed &+ r &* 20000 &+ i)
+      sum = sum &+ t.v
+      i = i + 1
+    }
+    r = r + 1
+  }
+  sum
+}
+
+fn main: Int {
+  flat: Array(GNode) = []
+  root = build(1, 14, flat)
+  warm = churn(30, 7)
+  i = 0
+  while i < flat.size {
+    flat[i].kid = GNode.new(flat[i].v &+ 1000000)
+    i = i + 1
+  }
+  mid = churn(10, 13)
+  round = 0
+  while round < 120 {
+    j = round % 997
+    while j < flat.size {
+      flat[j].kid = GNode.new(flat[j].v &+ round)
+      j = j + 997
+    }
+    warm = warm &+ churn(2, 29 &+ round)
+    round = round + 1
+  }
+  total = warm &+ mid &+ root.v
+  k = 0
+  while k < flat.size {
+    total = total &+ flat[k].v
+    if kid = flat[k].kid {
+      total = total &+ kid.v % 97
+    }
+    k = k + 1
+  }
+  puts(total)
+  0
+}
