@@ -196,6 +196,32 @@ static uint64_t g_def_evac_blocks;
 static uint64_t g_def_evac_bytes;
 static uint64_t g_def_freed_blocks;
 static uint64_t g_def_skipped;
+/* Survival and peak-heap observability (Collector II Wave 4, step 1):
+ * probes counts adaptive survival probes, used/surv sum the nursery
+ * bytes in use and the surviving bytes at each probe, min/max are the
+ * extreme surviving-byte readings, and hist buckets the surv/used
+ * ratio in percent (0, 1-10, 10-25, 25-50, 50-75, 75-100) so phase
+ * oscillation is visible. yng_min/yng_max bound the adaptive young
+ * threshold over the run. cpy_peak is the largest from-space plus
+ * to-space object bytes held during one young copy. The pk_* fields
+ * snapshot the heap composition (block bytes per space, large-object
+ * bytes, cached block bytes) at the moment peak_heap was last set.
+ * Reported by AVANT_GC_STATS. Internal only, like the rem/def counters. */
+static uint64_t g_srv_probes;
+static uint64_t g_srv_used;
+static uint64_t g_srv_surv;
+static uint64_t g_srv_min;
+static uint64_t g_srv_max;
+static uint64_t g_srv_hist[6];
+static uint64_t g_yng_min;
+static uint64_t g_yng_max;
+static uint64_t g_cpy_peak;
+static uint64_t g_pk_nursery;
+static uint64_t g_pk_mature;
+static uint64_t g_pk_from;
+static uint64_t g_pk_to;
+static uint64_t g_pk_large;
+static uint64_t g_pk_cache;
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -1015,6 +1041,34 @@ static void cache_or_free_block(Block *b) {
   g_heap_bytes -= BLOCK_SIZE;
 }
 
+static uint64_t space_block_bytes(Block *b) {
+  uint64_t n = 0;
+  for (; b; b = b->next) {
+    n += BLOCK_SIZE;
+  }
+  return n;
+}
+
+/* Wave 4 step 1: when the heap high-water mark moves, snapshot what
+ * the heap is made of, so a peak can be decomposed after the fact. */
+static void note_peak(void) {
+  Large *L;
+  uint64_t large = 0;
+  if (g_heap_bytes <= g_stats.peak_heap) {
+    return;
+  }
+  g_stats.peak_heap = g_heap_bytes;
+  g_pk_nursery = space_block_bytes(g_nursery);
+  g_pk_mature = space_block_bytes(g_mature);
+  g_pk_from = space_block_bytes(g_from);
+  g_pk_to = space_block_bytes(g_to);
+  g_pk_cache = (uint64_t)g_cache_n * BLOCK_SIZE;
+  for (L = g_large; L; L = L->next) {
+    large += align_up(sizeof(Large) + L->header.size);
+  }
+  g_pk_large = large;
+}
+
 static Block *new_block(uint8_t space) {
   if (g_heap_max && g_heap_bytes + BLOCK_SIZE > g_heap_max && g_cache == NULL) {
     return NULL;
@@ -1042,9 +1096,7 @@ static Block *new_block(uint8_t space) {
     }
     b->base = mem;
     g_heap_bytes += BLOCK_SIZE;
-    if (g_heap_bytes > g_stats.peak_heap) {
-      g_stats.peak_heap = g_heap_bytes;
-    }
+    note_peak();
   }
   /* Block memory is not pre-zeroed. Every allocation zeroes its own
    * payload in init_object, so a fresh or recycled block costs no
@@ -2398,6 +2450,9 @@ static void young_copy_out(int tenure) {
   }
   adopt_to_space();
   rem_commit_kept();
+  if (g_nursery_held + g_to_bytes > g_cpy_peak) {
+    g_cpy_peak = g_nursery_held + g_to_bytes;
+  }
   g_nursery_held = g_to_bytes;
   g_to_bytes = 0;
   g_force_tenure = 0;
@@ -2440,6 +2495,20 @@ static void collect(int full) {
         gen_young_copy();
         g_probe = 0;
         surv = g_probe_nursery_bytes;
+        g_srv_probes++;
+        g_srv_used += used;
+        g_srv_surv += surv;
+        if (g_srv_probes == 1 || surv < g_srv_min) {
+          g_srv_min = surv;
+        }
+        if (surv > g_srv_max) {
+          g_srv_max = surv;
+        }
+        {
+          uint64_t pct = used ? (surv * 100) / used : 0;
+          int bucket = pct == 0 ? 0 : pct <= 10 ? 1 : pct <= 25 ? 2 : pct <= 50 ? 3 : pct <= 75 ? 4 : 5;
+          g_srv_hist[bucket]++;
+        }
         rem_scrub();
         reclaim_young_large();
         clear_noted();
@@ -2534,6 +2603,12 @@ static void collect(int full) {
     }
     g_full_trigger = next;
   }
+  if (g_yng_min == 0 || g_young_bytes < g_yng_min) {
+    g_yng_min = g_young_bytes;
+  }
+  if (g_young_bytes > g_yng_max) {
+    g_yng_max = g_young_bytes;
+  }
   g_since_gc = 0;
   g_stats.live_bytes = g_live;
   if (g_live > g_peak_live) {
@@ -2613,9 +2688,7 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   L->next = g_large;
   g_large = L;
   large_hash_add(L);
-  if (g_heap_bytes > g_stats.peak_heap) {
-    g_stats.peak_heap = g_heap_bytes;
-  }
+  note_peak();
   return payload_of(&L->header);
 }
 
@@ -2639,9 +2712,7 @@ static void account_alloc(size_t total, int nursery) {
   } else {
     g_mature_since_full += total;
   }
-  if (g_heap_bytes > g_stats.peak_heap) {
-    g_stats.peak_heap = g_heap_bytes;
-  }
+  note_peak();
 }
 
 static void print_stats(void) {
@@ -2651,7 +2722,9 @@ static void print_stats(void) {
           "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu "
           "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu "
           "def_blocks=%llu def_live_lines=%llu def_wasted=%llu def_hist=%llu,%llu,%llu,%llu,%llu,%llu "
-          "def_evac_blocks=%llu def_evac_bytes=%llu def_freed_blocks=%llu def_skipped=%llu\n",
+          "def_evac_blocks=%llu def_evac_bytes=%llu def_freed_blocks=%llu def_skipped=%llu "
+          "srv_probes=%llu srv_used=%llu srv_surv=%llu srv_min=%llu srv_max=%llu srv_hist=%llu,%llu,%llu,%llu,%llu,%llu "
+          "yng_min=%llu yng_max=%llu cpy_peak=%llu pk_nursery=%llu pk_mature=%llu pk_from=%llu pk_to=%llu pk_large=%llu pk_cache=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2692,7 +2765,27 @@ static void print_stats(void) {
           (unsigned long long)g_def_evac_blocks,
           (unsigned long long)g_def_evac_bytes,
           (unsigned long long)g_def_freed_blocks,
-          (unsigned long long)g_def_skipped);
+          (unsigned long long)g_def_skipped,
+          (unsigned long long)g_srv_probes,
+          (unsigned long long)g_srv_used,
+          (unsigned long long)g_srv_surv,
+          (unsigned long long)g_srv_min,
+          (unsigned long long)g_srv_max,
+          (unsigned long long)g_srv_hist[0],
+          (unsigned long long)g_srv_hist[1],
+          (unsigned long long)g_srv_hist[2],
+          (unsigned long long)g_srv_hist[3],
+          (unsigned long long)g_srv_hist[4],
+          (unsigned long long)g_srv_hist[5],
+          (unsigned long long)g_yng_min,
+          (unsigned long long)g_yng_max,
+          (unsigned long long)g_cpy_peak,
+          (unsigned long long)g_pk_nursery,
+          (unsigned long long)g_pk_mature,
+          (unsigned long long)g_pk_from,
+          (unsigned long long)g_pk_to,
+          (unsigned long long)g_pk_large,
+          (unsigned long long)g_pk_cache);
 }
 
 static void init_gc(void) {
