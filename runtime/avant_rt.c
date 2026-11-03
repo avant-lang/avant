@@ -130,6 +130,13 @@ static uint64_t g_young_bytes;
 static int g_young_adapt;
 static uint64_t g_nursery_held;
 static uint64_t g_mature_since_full;
+/* Mature growth that triggers the next full collection. Starts at
+ * FULL_BYTES and adapts after every full collection to twice the
+ * live set plus slack, so a program with a small live set and heavy
+ * mature churn (a parsed document per iteration) does not grow the
+ * heap to 32 MB before reclaiming, while a program whose live set is
+ * large keeps today's spacing. */
+static uint64_t g_full_trigger = FULL_BYTES;
 static uint64_t g_to_bytes;
 static uint64_t g_sticky_grows;
 static int g_probe;
@@ -1889,6 +1896,16 @@ static void collect(int full) {
     g_last_full_at = g_stats.allocated_bytes;
   }
 
+  if (full) {
+    uint64_t next = g_live * 2 + (4ull * 1024ull * 1024ull);
+    if (next < (4ull * 1024ull * 1024ull)) {
+      next = 4ull * 1024ull * 1024ull;
+    }
+    if (next > FULL_BYTES) {
+      next = FULL_BYTES;
+    }
+    g_full_trigger = next;
+  }
   g_since_gc = 0;
   g_stats.live_bytes = g_live;
   g_collecting = 0;
@@ -1910,16 +1927,16 @@ static void maybe_collect(void) {
    * collection for that window.
    */
   if (g_nursery_off) {
-    if (g_since_gc >= FULL_BYTES) {
+    if (g_since_gc >= g_full_trigger) {
       collect(1);
     }
     return;
   }
   /* Nursery garbage is reclaimed by a young collection. A full
    * collection runs when mature space, including promotions and large
-   * objects, has grown by FULL_BYTES. Counting every nursery byte here
+   * objects, has grown by g_full_trigger. Counting every nursery byte here
    * marked a live tree that a young collection should have discarded. */
-  if (g_mature_since_full >= FULL_BYTES) {
+  if (g_mature_since_full >= g_full_trigger) {
     collect(1);
   } else if (g_nursery_held >= g_young_bytes) {
     collect(0);
