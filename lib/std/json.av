@@ -6,6 +6,9 @@ lib jsonc {
   fun avant_json_kind(node: Ptr(Void)): Int
   fun avant_json_get(node: Ptr(Void), key: String): Ptr(Void)
   fun avant_json_at(node: Ptr(Void), index: Int): Ptr(Void)
+  fun avant_json_first(node: Ptr(Void)): Ptr(Void)
+  fun avant_json_next(node: Ptr(Void)): Ptr(Void)
+  fun avant_json_f64s(node: Ptr(Void), key: String): Array(Float64)
   fun avant_json_len(node: Ptr(Void)): Int
   fun avant_json_as_int(node: Ptr(Void)): Int
   fun avant_json_obj_int(node: Ptr(Void), key: String): Int
@@ -143,6 +146,26 @@ pub struct Json {
     Json { node: child_node, pool: self.pool }
   }
 
+  pub fn first: Json? {
+    child_node = jsonc.avant_json_first(self.node)
+    if jsonc.avant_json_kind(child_node) == 0 {
+      return nil
+    }
+    Json { node: child_node, pool: self.pool }
+  }
+
+  pub fn iter: JsonIter {
+    JsonIter.new(self.node, self.pool, self.len)
+  }
+
+  pub fn f64s(key: String): Array(Float64)? {
+    values = jsonc.avant_json_f64s(self.node, key)
+    if jsonc.avant_json_take_status() != 0 {
+      return nil
+    }
+    values
+  }
+
   pub fn key_at(index: Int): String? {
     key = jsonc.avant_json_key_at(self.node, index)
     if jsonc.avant_json_take_status() != 0 {
@@ -251,6 +274,37 @@ pub struct Json {
       }
     }
     v
+  }
+}
+
+pub class JsonIter {
+  arr: Ptr(Void)
+  cur: Ptr(Void)
+  idx: Int = 0
+  max: Int = 0
+  pool: Bytes
+
+  fn initialize(arr: Ptr(Void), pool: Bytes, max: Int) {
+    self.arr = arr
+    self.cur = arr
+    self.pool = pool
+    self.max = max
+  }
+
+  pub fn next: Json? {
+    if self.idx >= self.max {
+      return nil
+    }
+    if self.idx == 0 {
+      self.cur = jsonc.avant_json_first(self.arr)
+    } else {
+      self.cur = jsonc.avant_json_next(self.cur)
+    }
+    self.idx = self.idx + 1
+    if jsonc.avant_json_kind(self.cur) == 0 {
+      return nil
+    }
+    Json { node: self.cur, pool: self.pool }
   }
 }
 

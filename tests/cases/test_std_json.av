@@ -145,6 +145,64 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(false, "parse built")
   }
+  if arr = Json.parse("[10, 20, 30]") {
+    if head = arr.first {
+      if hv = head.int {
+        c.eq_int(hv, 10, "first element")
+      } else {
+        c.expect(false, "first element")
+      }
+    } else {
+      c.expect(false, "first element")
+    }
+    it = arr.iter
+    total = 0
+    count = 0
+    walking = true
+    while walking {
+      if cell = it.next {
+        total = total +(cell.int ?? 0)
+        count = count + 1
+      } else {
+        walking = false
+      }
+    }
+    c.eq_int(total, 60, "iterator sum")
+    c.eq_int(count, 3, "iterator count")
+    if extra = it.next {
+      c.expect(false, "iterator stays done")
+    } else {
+      c.expect(true, "iterator stays done")
+    }
+    if scalars = arr.f64s("x") {
+      c.expect(false, "f64s on scalar elements is nil")
+    } else {
+      c.expect(true, "f64s on scalar elements is nil")
+    }
+  } else {
+    c.expect(false, "parse array")
+  }
+  if objs = Json.parse("[{\"x\": 1.5}, {\"x\": 2.5}, {\"x\": 3.0}]") {
+    if xs = objs.f64s("x") {
+      c.eq_int(xs.size, 3, "f64s size")
+      c.eq_int((xs[0] * 10.0).to_i, 15, "f64s first")
+      c.eq_int((xs[2] * 10.0).to_i, 30, "f64s last")
+    } else {
+      c.expect(false, "f64s")
+    }
+    if badp = objs.f64s("missing") {
+      c.expect(false, "f64s missing key is nil")
+    } else {
+      c.expect(true, "f64s missing key is nil")
+    }
+    if notarr = objs.int {
+      c.expect(false, "int on array is nil")
+    } else {
+      c.expect(true, "int on array is nil")
+    }
+  } else {
+    c.expect(false, "parse objects")
+  }
   dst = buf_new()
   dst.push_str("prefix:")
   into = JsonBuilder.into(dst)

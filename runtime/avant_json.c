@@ -121,6 +121,70 @@ void *avant_json_at(void *nodep, int32_t i) {
   return yyjson_arr_get(v, (size_t)i);
 }
 
+void *avant_json_first(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_arr(v)) {
+    return NULL;
+  }
+  return yyjson_arr_get_first(v);
+}
+
+/* One sibling step. Only meaningful while a next sibling exists; the
+ * Avant iterator tracks the element count, so it never steps past. */
+void *avant_json_next(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v) {
+    return NULL;
+  }
+  return unsafe_yyjson_get_next(v);
+}
+
+typedef struct {
+  void *buf;
+  int32_t size;
+  int32_t cap;
+} AvantArrayBox;
+
+/* One sequential C traversal that projects a numeric field of every
+ * element into a collector Array(Float64). NULL with status 1 when the
+ * receiver is not an array or any element lacks a numeric field. */
+void *avant_json_f64s(void *nodep, const char *key) {
+  yyjson_val *arr = (yyjson_val *)nodep;
+  yyjson_arr_iter iter;
+  yyjson_val *el;
+  AvantArrayBox *out;
+  double *buf = NULL;
+  size_t n;
+  size_t i = 0;
+  set_status(0);
+  if (!arr || !key || !yyjson_is_arr(arr)) {
+    set_status(1);
+    return NULL;
+  }
+  n = yyjson_arr_size(arr);
+  avant_gc_defer_enter();
+  out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  if (n > 0) {
+    buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
+  }
+  out->buf = buf;
+  out->size = (int32_t)n;
+  out->cap = (int32_t)n;
+  iter = yyjson_arr_iter_with(arr);
+  while ((el = yyjson_arr_iter_next(&iter)) != NULL) {
+    yyjson_val *field = yyjson_is_obj(el) ? yyjson_obj_get(el, key) : NULL;
+    if (!field || !yyjson_is_num(field)) {
+      set_status(1);
+      avant_gc_defer_leave();
+      return NULL;
+    }
+    buf[i] = yyjson_get_num(field);
+    i++;
+  }
+  avant_gc_defer_leave();
+  return out;
+}
+
 int32_t avant_json_len(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v) {
