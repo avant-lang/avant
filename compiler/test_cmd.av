@@ -343,23 +343,6 @@ fn run_script(body: String, host: TestHost) {
   dummy_sh = process_run("/bin/sh", sh_args)
 }
 
-fn run_waves(host: TestHost, cmds: Array(ShellCmd)) {
-  i = 0
-  while i < cmds.size {
-    b = buf_new()
-    b.push_str("#!/bin/sh\n")
-    n = 0
-    while n < host.jobs && i < cmds.size {
-      b.push_str(cmds[i].line)
-      b.push_str(" &\n")
-      i = i + 1
-      n = n + 1
-    }
-    b.push_str("wait\n")
-    run_script(b.to_s, host)
-  }
-}
-
 fn make_cmd(host: TestHost, line: String): ShellCmd {
   base = host.fresh()
   ShellCmd.new(line, "${base}.log", "${base}.rc")
@@ -416,13 +399,13 @@ fn emit_file(host: TestHost, f: FileRun) {
     if text[text.size - 1] == 10 {
       text = str_slice(text, 0, text.size - 1)
     }
-    puts(text)
+    out_puts(text)
   }
   if f.ok {
-    puts("ok ${f.rel}")
+    out_puts("ok ${f.rel}")
     host.good = host.good + 1
   } else {
-    puts("FAIL ${f.rel}")
+    out_puts("FAIL ${f.rel}")
     host.bad = host.bad + 1
   }
 }
@@ -443,21 +426,35 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     compiles.push(cmd)
     i = i + 1
   }
-  run_waves(host, compiles)
-  i = 0
-  while i < files.size {
-    f = files[i]
-    cmd = compiles[i]
-    if read_rc(cmd.rc_path) != 0 {
-      f.ok = false
-      f.compiled = false
-      f.output = read_text(cmd.log)
-      emit_file(host, f)
-    } else {
-      f.compiled = true
-      chmod_bin(f.bin)
+  wi = 0
+  while wi < compiles.size {
+    b = buf_new()
+    b.push_str("#!/bin/sh\n")
+    n = 0
+    start = wi
+    while n < host.jobs && wi < compiles.size {
+      b.push_str(compiles[wi].line)
+      b.push_str(" &\n")
+      wi = wi + 1
+      n = n + 1
     }
-    i = i + 1
+    b.push_str("wait\n")
+    run_script(b.to_s, host)
+    i = start
+    while i < wi {
+      f = files[i]
+      cmd = compiles[i]
+      if read_rc(cmd.rc_path) != 0 {
+        f.ok = false
+        f.compiled = false
+        f.output = read_text(cmd.log)
+        emit_file(host, f)
+      } else {
+        f.compiled = true
+        chmod_bin(f.bin)
+      }
+      i = i + 1
+    }
   }
   serials: Array(ShellCmd) = []
   serial_at: Array(Int) = []
@@ -482,33 +479,47 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     }
     i = i + 1
   }
-  run_waves(host, serials)
-  i = 0
-  while i < serials.size {
-    f = files[serial_at[i]]
-    cmd = serials[i]
-    f.output = append_text(f.output, read_text(cmd.log))
-    if read_rc(cmd.rc_path) != 0 {
-      f.ok = false
+  wi = 0
+  while wi < serials.size {
+    b = buf_new()
+    b.push_str("#!/bin/sh\n")
+    n = 0
+    start = wi
+    while n < host.jobs && wi < serials.size {
+      b.push_str(serials[wi].line)
+      b.push_str(" &\n")
+      wi = wi + 1
+      n = n + 1
     }
-    found = name_lines(read_text(serial_names[i]))
-    seen: Array(String) = []
-    k = 0
-    while k < found.size {
-      name = found[k]
-      if listed(seen, name) {
+    b.push_str("wait\n")
+    run_script(b.to_s, host)
+    i = start
+    while i < wi {
+      f = files[serial_at[i]]
+      cmd = serials[i]
+      f.output = append_text(f.output, read_text(cmd.log))
+      if read_rc(cmd.rc_path) != 0 {
         f.ok = false
-        f.output = append_text(f.output, "duplicate parallel name ${name}\n")
-      } else {
-        seen.push(name)
-        f.parallels.push(name)
       }
-      k = k + 1
+      found = name_lines(read_text(serial_names[i]))
+      seen: Array(String) = []
+      k = 0
+      while k < found.size {
+        name = found[k]
+        if listed(seen, name) {
+          f.ok = false
+          f.output = append_text(f.output, "duplicate parallel name ${name}\n")
+        } else {
+          seen.push(name)
+          f.parallels.push(name)
+        }
+        k = k + 1
+      }
+      if f.parallels.size == 0 {
+        emit_file(host, f)
+      }
+      i = i + 1
     }
-    if f.parallels.size == 0 {
-      emit_file(host, f)
-    }
-    i = i + 1
   }
   pars: Array(ShellCmd) = []
   par_file: Array(Int) = []
