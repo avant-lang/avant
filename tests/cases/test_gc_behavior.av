@@ -24,6 +24,10 @@ fn frontier_fixture: String {
   "class GNode {\n  v: Int\n  a: GNode?\n  b: GNode?\n  kid: GNode?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn build(v: Int, depth: Int, flat: Array(GNode)): GNode {\n  n = GNode.new(v)\n  flat.push(n)\n  if depth > 0 {\n    n.a = build(v &* 2, depth - 1, flat)\n    n.b = build(v &* 2 &+ 1, depth - 1, flat)\n  }\n  n\n}\n\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = GNode.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\n\nfn main: Int {\n  flat: Array(GNode) = []\n  root = build(1, 10, flat)\n  warm = churn(12, 7)\n  i = 0\n  while i < flat.size {\n    flat[i].kid = GNode.new(flat[i].v &+ 100000)\n    i = i + 1\n  }\n  mid = churn(4, 13)\n  round = 0\n  while round < 60 {\n    j = round % 97\n    while j < flat.size {\n      flat[j].kid = GNode.new(flat[j].v &+ round)\n      j = j + 97\n    }\n    warm = warm &+ churn(1, 29 &+ round)\n    round = round + 1\n  }\n  total = warm &+ mid &+ root.v\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v\n    if kid = flat[k].kid {\n      total = total &+ kid.v % 89\n    }\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
 }
 
+fn defrag_fixture: String {
+  "lib gc {\n  fun avant_gc_collect()\n}\nclass Chunk {\n  v: Int\n  f1: Int\n  f2: Int\n  f3: Int\n  f4: Int\n  f5: Int\n  f6: Int\n  f7: Int\n  f8: Int\n  f9: Int\n  f10: Int\n  f11: Int\n  f12: Int\n  f13: Int\n  f14: Int\n  f15: Int\n  f16: Int\n  f17: Int\n  f18: Int\n  f19: Int\n  f20: Int\n  f21: Int\n  f22: Int\n  f23: Int\n  f24: Int\n  f25: Int\n  f26: Int\n  f27: Int\n  f28: Int\n  f29: Int\n  f30: Int\n  fn initialize(v: Int) {\n    self.v = v\n    self.f30 = v\n  }\n}\nclass Spur {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = Spur.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\nfn build_pruned(warm: Int): Array(Chunk) {\n  flat: Array(Chunk) = []\n  i = 0\n  while i < 8192 {\n    flat.push(Chunk.new(i &+ 1))\n    i = i + 1\n  }\n  warm2 = warm &+ churn(12, 7)\n  keep: Array(Chunk) = []\n  j = 0\n  while j < flat.size {\n    if j % 8 == 0 {\n      keep.push(flat[j])\n    }\n    j = j + 1\n  }\n  if warm2 == 424242 {\n    puts(flat.size)\n  }\n  keep\n}\nfn main: Int {\n  flat = build_pruned(0)\n  gc.avant_gc_collect()\n  gc.avant_gc_collect()\n  warm = churn(2, 13)\n  gc.avant_gc_collect()\n  total = warm &+ flat.size\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v &+ flat[k].f30\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -208,6 +212,45 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out13, want6, "frontier checksums at 1 MB young size")
     } else {
       c.expect(false, "read frontier small-young run")
+    }
+    // Mature defragmentation (Collector II Wave 3): a tenured set of
+    // one-line objects is pruned to every 8th survivor inside a helper
+    // whose frame is gone before explicit full collections, so the
+    // mature blocks sit at 33-64 of 128 live lines. A defragmenting
+    // collection that moves a survivor without fixing every root and
+    // field, or that frees a block still holding a live survivor,
+    // breaks this checksum or segfaults; the checksum is identical
+    // with defragmentation disabled and at a 1 MB young size.
+    src7 = "/tmp/avant-gcb-${stamp}-defrag.av"
+    bin7 = "/tmp/avant-gcb-${stamp}-defrag.bin"
+    w7 = file_write(src7, defrag_fixture())
+    c.eq_int(w7, 0, "write defrag fixture")
+    code7 = compile_av(compiler, src7, bin7, "/tmp/avant-gcb-${stamp}-defrag.clog")
+    c.eq_int(code7, 0, "compile defrag fixture")
+    want7 = "58508488\n"
+    log14 = "/tmp/avant-gcb-${stamp}.run14"
+    rc14 = run_av_bin(bin7, log14)
+    c.eq_int(rc14, 0, "defrag survivors survive at default young size")
+    if out14 = file_read(log14) {
+      c.eq_str(out14, want7, "defrag checksums at default young size")
+    } else {
+      c.expect(false, "read defrag run")
+    }
+    log15 = "/tmp/avant-gcb-${stamp}.run15"
+    rc15 = run_with_env(bin7, "AVANT_YOUNG_MB", "1", log15)
+    c.eq_int(rc15, 0, "defrag survivors survive at 1 MB young size")
+    if out15 = file_read(log15) {
+      c.eq_str(out15, want7, "defrag checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read defrag small-young run")
+    }
+    log16 = "/tmp/avant-gcb-${stamp}.run16"
+    rc16 = run_with_env(bin7, "AVANT_NURSERY", "0", log16)
+    c.eq_int(rc16, 0, "defrag survivors survive with nursery off")
+    if out16 = file_read(log16) {
+      c.eq_str(out16, want7, "defrag checksums with nursery off")
+    } else {
+      c.expect(false, "read defrag nursery-off run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")
