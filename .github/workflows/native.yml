@@ -7,8 +7,9 @@
 # is only listing parallel names, so each file's checks run once.
 # The old four-job measurement compiled the stitched suite four times.
 # This job runs the suite on an instrumented B, on
-# pull requests and on pushes to master: Codecov compares the pull
-# request report with the master report. An instrumented B makes every
+# pull requests and on pushes to any branch: Codecov compares the pull
+# request report with the master report, and branch pushes give feature
+# branches their own coverage and test-analytics data. An instrumented B makes every
 # child compile pay for coverage (suite 365s against 159-183s
 # uninstrumented on the same runner image).
 #
@@ -34,8 +35,9 @@
 # Hit counters are one shared map.
 # The suite sets AVANT_COVERAGE_LCOV=0. A later step writes lcov.info
 # once, after those processes have exited.
-# Push is `master` only so a same-repo PR is not a second identical run
-# (tags never hit this workflow).
+# Push runs on every branch so branch uploads reach Codecov; a
+# same-repo PR therefore also runs once for its branch push (tags never
+# hit this workflow).
 
 name: native
 
@@ -47,8 +49,6 @@ env:
 
 "on":
   push:
-    branches:
-      - master
   pull_request:
 
 permissions:
