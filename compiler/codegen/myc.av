@@ -1241,10 +1241,11 @@ pub class MycGen {
   }
 
   pub fn emit_ptr_root(name: String) {
+    // Collector II Wave 0: myc-llvm registers every pointer local at
+    // frame entry (batched through avant_gc_root_begin), so the Avant
+    // side no longer emits a per-local avant_gc_root call. The rooted
+    // bookkeeping stays: callers still ask which locals are rooted.
     self.rooted[name] = 1
-    self.line("LOCAL :${name}")
-    self.line("ADDR")
-    self.line("CALL :avant_gc_root")
   }
 
   // Root an interior pointer only after a second thread exists.
@@ -1287,30 +1288,14 @@ pub class MycGen {
     }
     self.rooted[name] = 1
     if ty.is_union {
-      i = 0
-      field_i = 1
-      while i < ty.members.size {
-        m = ty.members[i]
-        if m.is_nil {
-        } else {
-          if ty_has_heap(m) {
-            self.line("LOCAL :${name}")
-            self.line("FIELD ${field_i}")
-            self.line("ADDR")
-            self.line("CALL :avant_gc_root")
-          }
-          field_i = field_i + 1
-        }
-        i = i + 1
-      }
+      // myc-llvm registers each heap field of a union local at frame
+      // entry, the same way it registers a plain pointer local.
       return
     }
-    // The root call is idempotent. Inside a loop it ran on every
-    // iteration and walked the frame's slot list. Register the slot
-    // once, before the outermost loop. It holds null until the loop
-    // stores the real pointer. myc-llvm reloads the slot after a
-    // collecting call. A union stays rooted at the store: its fields
-    // are not one pointer word.
+    // Inside a loop the slot is declared and zeroed before the
+    // outermost loop, so the entry registration sees a valid slot for
+    // the whole loop. It holds null until the loop stores the real
+    // pointer. myc-llvm reloads the slot after a collecting call.
     if self.root_loop > 0 && pointer_root_ty(ty) {
       self.emit_early_root(name, ty)
       return
@@ -1332,12 +1317,6 @@ pub class MycGen {
     decl.push_str(m)
     self.line(decl.to_s)
     self.line("STORE")
-    use = buf_new()
-    use.push_str("LOCAL :")
-    use.push_str(name)
-    self.line(use.to_s)
-    self.line("ADDR")
-    self.line("CALL :avant_gc_root")
     self.out = saved_out
     self.indent = saved_indent
     // A temp rooted for the whole loop keeps its last pointer until the
