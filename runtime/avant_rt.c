@@ -61,8 +61,23 @@ static Block *g_cache;
 static int g_cache_n;
 
 static Block *g_cur;
-static uint8_t *g_bump;
 static uint8_t *g_limit;
+/* Inline nursery fast path (Collector II Wave 1): generated code bumps
+ * avant_gc_bump directly when avant_gc_fast_ok is set, bounded by
+ * avant_gc_limit (the block limit capped by the young threshold) and
+ * writing the start bit through avant_gc_starts/avant_gc_base. The C
+ * cursor g_bump is the same storage, so both sides share one cursor.
+ * Only the runtime publishes or clears the fast state; see
+ * gc_fast_refresh below. */
+__thread uint8_t *avant_gc_bump;
+__thread uint8_t *avant_gc_limit;
+__thread uint8_t *avant_gc_base;
+__thread uint64_t *avant_gc_starts;
+__thread void *avant_gc_block;
+__thread uint32_t avant_gc_fast_ok;
+static Block *g_fast_block;
+static void gc_fast_clear(void);
+#define g_bump avant_gc_bump
 /* Per-space bump cursor. A full block used to send the next allocation
  * back through every older block (take_from_list + find_hole). Workers
  * allocate in mature space, and that walk dominated Matmul::T16.
@@ -125,10 +140,12 @@ static uint32_t g_keep_cap;
 static void **g_noted;
 static uint32_t g_noted_n;
 static uint32_t g_noted_cap;
-static uint64_t g_young_bytes;
+uint64_t avant_young_bytes;
+#define g_young_bytes avant_young_bytes
 /* 0 when AVANT_YOUNG_MB pinned the threshold (tests). */
 static int g_young_adapt;
-static uint64_t g_nursery_held;
+uint64_t avant_nursery_held;
+#define g_nursery_held avant_nursery_held
 static uint64_t g_mature_since_full;
 static uint64_t g_peak_live;
 /* Root bookkeeping call counts (Collector II Wave 0): every call to
@@ -166,13 +183,17 @@ static FwdEnt *g_fwd;
 static size_t g_fwd_cap;
 static size_t g_fwd_used;
 
-static uint64_t g_since_gc;
+uint64_t avant_since_gc;
+#define g_since_gc avant_since_gc
 static uint64_t g_heap_bytes;
 static uint64_t g_heap_max;
 uint64_t g_live;
 static uint64_t g_last_full_at;
 
-static AvantGcStats g_stats;
+AvantGcStats avant_g_stats;
+#define g_stats avant_g_stats
+/* Nursery allocations taken by generated code without a call. */
+uint64_t avant_inline_allocs;
 
 static size_t align_up(size_t n) {
   return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
@@ -932,6 +953,9 @@ static void cache_or_free_block(Block *b) {
     g_bump = NULL;
     g_limit = NULL;
   }
+  if (g_fast_block == b) {
+    gc_fast_clear();
+  }
   block_unregister(b);
   if (g_cache_n < CACHE_BLOCKS) {
     memset(b->line_mark, 0, sizeof(b->line_mark));
@@ -1002,6 +1026,25 @@ static void use_block(Block *b) {
   g_cur = b;
   g_bump = b->bump;
   g_limit = b->limit;
+  if (b->space == SPACE_NURSERY) {
+    /* Keep the inline fast path's mirror on the block the cursor is
+     * actually in. A slow allocation that switches blocks would
+     * otherwise leave generated code writing start bits through the
+     * previous block's base. A recycled block clears the fast path:
+     * its start bits need the clearing only bump_take does. */
+    if (!g_collecting && b == g_alloc_cur[SPACE_NURSERY] &&
+        g_alloc_fresh[SPACE_NURSERY]) {
+      uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
+      uint8_t *cap = g_bump + rem;
+      g_fast_block = b;
+      avant_gc_base = b->base;
+      avant_gc_starts = b->start;
+      avant_gc_block = b;
+      avant_gc_limit = g_limit && cap > g_limit ? g_limit : cap;
+    } else {
+      gc_fast_clear();
+    }
+  }
 }
 
 static int bump_fits(size_t need) {
@@ -1020,7 +1063,43 @@ static void *bump_take(size_t need) {
   void *h = g_bump;
   g_bump += need;
   b->bump = g_bump;
+  if (b == g_fast_block) {
+    uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
+    uint8_t *cap = g_bump + rem;
+    avant_gc_limit = g_limit && cap > g_limit ? g_limit : cap;
+  }
   return h;
+}
+
+static void gc_fast_clear(void) {
+  avant_gc_fast_ok = 0;
+  avant_gc_limit = NULL;
+  g_fast_block = NULL;
+}
+
+/* Publish the inline fast path when every C fast-path condition holds
+ * and the current nursery block is fresh (a recycled block needs the
+ * start-bit clearing only bump_take does). Anything else clears it, so
+ * generated code only ever checks fast_ok, the shared flag, and the
+ * cursor against the limit. Called at slow allocation entries; state
+ * transitions clear eagerly below. */
+static void gc_fast_refresh(void) {
+  Block *cur = g_alloc_cur[SPACE_NURSERY];
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
+      !g_gc_defer && !g_collecting && !g_nursery_off && !g_alloc_mature &&
+      g_mature_since_full < FULL_BYTES && cur && g_cur == cur &&
+      g_alloc_fresh[SPACE_NURSERY] && g_bump) {
+    uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
+    uint8_t *cap = g_bump + rem;
+    g_fast_block = cur;
+    avant_gc_base = cur->base;
+    avant_gc_starts = cur->start;
+    avant_gc_block = cur;
+    avant_gc_limit = g_limit && cap > g_limit ? g_limit : cap;
+    avant_gc_fast_ok = 1;
+  } else {
+    gc_fast_clear();
+  }
 }
 
 static int try_bump(Block *b, size_t total) {
@@ -1902,6 +1981,7 @@ static void collect(int full) {
   g_stats.collections++;
   g_live = 0;
   g_work_n = 0;
+  gc_fast_clear();
   g_cur = NULL;
   g_bump = NULL;
   g_limit = NULL;
@@ -2116,7 +2196,7 @@ static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
-          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu\n",
+          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2136,7 +2216,8 @@ static void print_stats(void) {
           (unsigned long long)g_mature_since_full,
           (unsigned long long)g_root_calls,
           (unsigned long long)g_reload_calls,
-          (unsigned long long)g_enter_calls);
+          (unsigned long long)g_enter_calls,
+          (unsigned long long)avant_inline_allocs);
 }
 
 static void init_gc(void) {
@@ -2422,6 +2503,7 @@ void avant_unpin(void *payload) {
 
 void avant_gc_defer_enter(void) {
   init_gc();
+  gc_fast_clear();
   pthread_mutex_lock(&g_world);
   /*
    * Helpers wrap avant_alloc in defer so C-held pointers are not swept.
@@ -2454,6 +2536,9 @@ void avant_gc_defer_leave(void) {
 }
 
 void avant_alloc_in_mature(int32_t on) {
+  if (on) {
+    gc_fast_clear();
+  }
   g_alloc_mature = on ? 1 : 0;
 }
 
@@ -2475,6 +2560,7 @@ static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   init_gc();
+  gc_fast_refresh();
   if (nbytes > UINT32_MAX) {
     die("object too large");
   }
@@ -2553,6 +2639,7 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
     return NULL;
   }
   init_gc();
+  gc_fast_refresh();
   payload = (size_t)nbytes;
   total = align_up(sizeof(AvantHeader) + payload);
   h = place_bump(total);
