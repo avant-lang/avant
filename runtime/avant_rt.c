@@ -2052,6 +2052,31 @@ static void gen_young_copy(void) {
     }
   }
   pthread_mutex_unlock(&g_threads_mu);
+  /* Remembered mature objects are roots for the young generation.
+   * Their nursery children must be copied and their fields updated
+   * even when no root or young object reaches them this cycle: a
+   * mature tree interior that tenured together with its children is
+   * otherwise never scanned again, and its fields keep pointing at
+   * from-space addresses that later collections reuse. */
+  {
+    uint32_t ri;
+    int locked = rem_locked();
+    if (locked) {
+      pthread_mutex_lock(&g_rem_mu);
+    }
+    for (ri = 0; ri < g_rem_n; ri++) {
+      void *obj = g_remset[ri];
+      if (is_heap_payload(obj, NULL, NULL)) {
+        /* A remembered object is a root this cycle: mark it so the
+         * probe pass's rem_scrub keeps it in the set. */
+        avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+        copy_payload_children(obj);
+      }
+    }
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
+    }
+  }
   if (!g_probe) {
     copy_from_c_stack();
   }
@@ -2244,10 +2269,28 @@ static void rem_commit_kept(void) {
   uint32_t n = g_keep_n;
   void **kept = g_keep;
   uint32_t i;
+  uint32_t w = 0;
+  int locked = rem_locked();
   g_keep = NULL;
   g_keep_n = 0;
   g_keep_cap = 0;
-  rem_forget();
+  /* A remembered object stays remembered while it is live: dropping
+   * it here would make its nursery children invisible to the next
+   * young collection unless a root happens to reach it again. Only
+   * members whose memory is gone leave the set. */
+  if (locked) {
+    pthread_mutex_lock(&g_rem_mu);
+  }
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    if (is_heap_payload(obj, NULL, NULL)) {
+      g_remset[w++] = obj;
+    }
+  }
+  g_rem_n = w;
+  if (locked) {
+    pthread_mutex_unlock(&g_rem_mu);
+  }
   for (i = 0; i < n; i++) {
     if (is_heap_payload(kept[i], NULL, NULL)) {
       rem_add(kept[i]);
@@ -2285,12 +2328,93 @@ static int young_pause(uint64_t used, uint64_t surv) {
   return 1;
 }
 
+static int g_verify;
+
+static int verify_ptr(void *p, const char *where, void *holder, long off) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start || !b || b->space != SPACE_NURSERY) {
+    return 0;
+  }
+  void *to = fwd_get(start);
+  if (to && to != start) {
+    AvantHeader *ch = avant_header(start);
+    fprintf(stderr,
+            "avant gc verify: stale %s reference holder=%p off=%ld "
+            "points at from-space %p (forwarded to %p) coll=%llu "
+            "child_flags=0x%x\n",
+            where, holder, off, start, to,
+            (unsigned long long)g_stats.collections, ch->flags);
+    return 1;
+  }
+  return 0;
+}
+
+static void verify_obj_fields(AvantHeader *h, Block *b) {
+  (void)b;
+  void *p = payload_of(h);
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    size_t n = (size_t)h->size / sizeof(void *);
+    size_t i;
+    for (i = 0; i < n; i++) {
+      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
+                     (long)(i * sizeof(void *)))) {
+        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
+                h->flags, b ? (int)b->space : -1);
+      }
+    }
+    return;
+  }
+  if (id >= MAX_TYPES || !g_type_set[id]) {
+    return;
+  }
+  uint64_t bits = g_type_bits[id];
+  size_t i;
+  for (i = 0; i < 64; i++) {
+    if (bits & (1ULL << i)) {
+      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
+                     (long)(i * sizeof(void *)))) {
+        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
+                h->flags, b ? (int)b->space : -1);
+      }
+    }
+  }
+}
+
+static void verify_young_copy(void) {
+  ThreadReg *t;
+  Block *b;
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      uint32_t i;
+      for (i = 0; i < f->n; i++) {
+        verify_ptr(*f->slots[i], "root", (void *)f->slots[i], (long)i);
+      }
+    }
+  }
+  for (b = g_to; b; b = b->next) {
+    foreach_block_object(b, verify_obj_fields);
+  }
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, verify_obj_fields);
+  }
+}
+
 static void young_copy_out(int tenure) {
   g_force_tenure = tenure;
   g_to_bytes = 0;
   g_keep_n = 0;
   zero_line_marks(g_nursery);
   gen_young_copy();
+  if (g_verify) {
+    verify_young_copy();
+  }
   clear_alloc_cur(SPACE_NURSERY);
   if (g_discard_from) {
     discard_nursery_from();
@@ -2597,6 +2721,7 @@ static void init_gc(void) {
   if (g_stackmap_walk) {
     sm_init();
   }
+  g_verify = getenv("AVANT_GC_VERIFY") != NULL;
   if (getenv("AVANT_GC_STATS")) {
     atexit(print_stats);
   }

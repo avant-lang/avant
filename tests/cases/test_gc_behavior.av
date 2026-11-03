@@ -1,0 +1,67 @@
+import harness
+
+fn tree_fixture: String {
+  "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) &+ check(n.right, depth - 1) &+ n.item\n}\n\nfn main: Int {\n  long_lived = make(0, 15)\n  sum = 0\n  i = 0\n  while i < 20 {\n    t = make(i, 15)\n    sum = sum &+ check(t, 15)\n    i = i + 1\n  }\n  puts(sum)\n  puts(check(long_lived, 15))\n  0\n}\n"
+}
+
+fn run_with_env(bin: String, name: String, value: String, log: String): Int {
+  args: Array(String) = []
+  args.push("${name}=${value}")
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
+fn test_gc_behavior(c: Checks) {
+  c.suite("tests/cases/test_gc_behavior.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-gcb-${stamp}.av"
+    bin = "/tmp/avant-gcb-${stamp}.bin"
+    w = file_write(src, tree_fixture())
+    c.eq_int(w, 0, "write tree fixture")
+    code = compile_av(compiler, src, bin, "/tmp/avant-gcb-${stamp}.clog")
+    c.eq_int(code, 0, "compile tree fixture")
+    want = "-1432311182\n715795115\n"
+    log1 = "/tmp/avant-gcb-${stamp}.run1"
+    rc1 = run_av_bin(bin, log1)
+    c.eq_int(rc1, 0, "trees survive at default young size")
+    if out1 = file_read(log1) {
+      c.eq_str(out1, want, "tree checksums at default young size")
+    } else {
+      c.expect(false, "read default run")
+    }
+    // A 1 MB young space forces hundreds of young collections through
+    // the build. A mature tree interior that tenured together with its
+    // children used to become invisible to later young collections, and
+    // its fields kept pointing at from-space addresses (F1 in
+    // experiments/gc-baseline-2026-11-03.md): this run segfaulted.
+    log2 = "/tmp/avant-gcb-${stamp}.run2"
+    rc2 = run_with_env(bin, "AVANT_YOUNG_MB", "1", log2)
+    c.eq_int(rc2, 0, "trees survive at 1 MB young size")
+    if out2 = file_read(log2) {
+      c.eq_str(out2, want, "tree checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read small-young run")
+    }
+    log3 = "/tmp/avant-gcb-${stamp}.run3"
+    rc3 = run_with_env(bin, "AVANT_NURSERY", "0", log3)
+    c.eq_int(rc3, 0, "trees survive with nursery off")
+    if out3 = file_read(log3) {
+      c.eq_str(out3, want, "tree checksums with nursery off")
+    } else {
+      c.expect(false, "read nursery-off run")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_gc_behavior(c)
+  c.finish
+}
