@@ -167,6 +167,25 @@ static uint64_t g_rem_fields;
 static uint64_t g_rem_peak;
 static uint64_t g_rem_adds;
 static uint64_t g_rem_cleared;
+/* Frontier policies (Collector II Wave 2), chosen by AVANT_GC_REM_FRONTIER:
+ * 0 off, 1 immediate, 2 hysteresis, 3 probation. Hysteresis evicts after
+ * AVANT_GC_REM_HYSTERESIS consecutive clean scans (default 2); probation
+ * demotes clean entries to a list scanned every AVANT_GC_REM_PROBATION
+ * young collections (default 4). Dirty is tracked during the remembered
+ * scan itself, per set index, so no second field walk is needed. */
+static int g_rem_mode = 1;
+static uint32_t g_rem_hyst_n = 2;
+static uint32_t g_rem_prob_k = 4;
+static uint64_t g_young_seq;
+static uint8_t *g_rem_dirty;
+static uint8_t *g_rem_clean;
+static void **g_prob;
+static uint32_t g_prob_n;
+static uint32_t g_prob_cap;
+static uint8_t *g_prob_dirty;
+/* Probation entries present when the latest gen_young_copy scanned the
+ * list; entries demoted after that scan are not committed this pass. */
+static uint32_t g_prob_scanned;
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -288,6 +307,11 @@ void work_push(void *p) {
 }
 
 #define AVANT_FLAG_REM 16u
+/* On the probation list (Collector II Wave 2): not scanned every young
+ * collection, but the barrier promotes it back on the next young store.
+ * REM stays clear while PROB is set, so the inline barrier flag test in
+ * generated code falls through to avant_barrier for such an object. */
+#define AVANT_FLAG_PROB 256u
 /* Young large object reached from a heap slot. It must be promoted:
  * a mature object can hold it, and that edge is not in the remembered
  * set (a large payload has no block). A buffer reached only from the
@@ -296,6 +320,29 @@ void work_push(void *p) {
 
 static int rem_locked(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
+}
+
+/* Caller holds g_rem_mu when the set is shared (see rem_locked). */
+static void prob_remove_locked(void *obj) {
+  uint32_t i;
+  for (i = 0; i < g_prob_n; i++) {
+    if (g_prob[i] == obj) {
+      g_prob_n--;
+      g_prob[i] = g_prob[g_prob_n];
+      g_prob_dirty[i] = g_prob_dirty[g_prob_n];
+      return;
+    }
+  }
+}
+
+static void prob_add_locked(void *obj) {
+  if (g_prob_n == g_prob_cap) {
+    g_prob_cap = g_prob_cap ? g_prob_cap * 2 : 64;
+    g_prob = xrealloc(g_prob, g_prob_cap * sizeof(void *));
+    g_prob_dirty = xrealloc(g_prob_dirty, g_prob_cap * sizeof(uint8_t));
+  }
+  g_prob_dirty[g_prob_n] = 0;
+  g_prob[g_prob_n++] = obj;
 }
 
 static void rem_add(void *obj) {
@@ -310,11 +357,19 @@ static void rem_add(void *obj) {
     }
     return;
   }
+  if (h->flags & AVANT_FLAG_PROB) {
+    prob_remove_locked(obj);
+    h->flags &= (uint16_t)~AVANT_FLAG_PROB;
+  }
   h->flags |= AVANT_FLAG_REM;
   if (g_rem_n == g_rem_cap) {
     g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
     g_remset = xrealloc(g_remset, g_rem_cap * sizeof(void *));
+    g_rem_dirty = xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
+    g_rem_clean = xrealloc(g_rem_clean, g_rem_cap * sizeof(uint8_t));
   }
+  g_rem_dirty[g_rem_n] = 0;
+  g_rem_clean[g_rem_n] = 0;
   g_remset[g_rem_n++] = obj;
   g_rem_adds++;
   if (locked) {
@@ -1292,6 +1347,23 @@ static void remember_young_edge(void **slot, void *payload) {
 
 void copy_from_slot(void **slot);
 static int g_from_heap_slot;
+/* Set while a remembered object is being scanned: copy_from_slot then
+ * records whether any direct field names a young object afterwards. */
+static int g_rem_track;
+static int g_rem_track_dirty;
+
+static int names_young(void *p) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start) {
+    return 0;
+  }
+  if (ol) {
+    return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
+  }
+  return b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
+}
 static void trace_mature(void *p, int from_mature);
 
 static void copy_payload_children(void *p) {
@@ -1363,7 +1435,15 @@ static void trace_mature(void *p, int from_mature) {
   }
   saved = g_from_mature;
   g_from_mature = 1;
-  copy_payload_children(p);
+  /* Nested mature scans do not dirty the remembered parent: only its
+   * direct fields count, and the outer copy_from_slot judges that slot
+   * itself once this returns. */
+  {
+    int track_saved = g_rem_track;
+    g_rem_track = 0;
+    copy_payload_children(p);
+    g_rem_track = track_saved;
+  }
   g_from_mature = saved;
 }
 
@@ -1426,6 +1506,11 @@ void copy_from_slot(void **slot) {
   }
   if (b && b->space == SPACE_NURSERY) {
     if (g_probe) {
+      /* A nursery child is a young edge by definition; the probe must
+       * record it, or the frontier would evict this parent as clean. */
+      if (g_rem_track) {
+        g_rem_track_dirty = 1;
+      }
       probe_note(start);
       return;
     }
@@ -1433,6 +1518,9 @@ void copy_from_slot(void **slot) {
     void *np = copy_nursery(start);
     *slot = (uint8_t *)np + delta;
     remember_young_edge(slot, np);
+    if (g_rem_track && names_young(*slot)) {
+      g_rem_track_dirty = 1;
+    }
     return;
   }
   /* Mature and large objects stay put. Follow one when this slot is a
@@ -1440,6 +1528,9 @@ void copy_from_slot(void **slot) {
    * followed only when that child is remembered. */
   if (ol || (b && b->space == SPACE_MATURE)) {
     trace_mature(start, g_from_mature);
+  }
+  if (g_rem_track && names_young(*slot)) {
+    g_rem_track_dirty = 1;
   }
 }
 
@@ -1459,6 +1550,84 @@ static void relocate_root_location(void ***slot_loc) {
   *slot_loc = (void **)((uint8_t *)np + delta);
 }
 
+/* Frontier decision for one live, marked hot entry whose scan result
+ * is dirty (a direct field names a young object). Returns 1 to keep the
+ * entry hot. On 0 the caller drops it: REM is already clear, and under
+ * probation the entry is on the probation list with PROB set. Caller
+ * holds g_rem_mu when the set is shared. */
+static int rem_frontier_decide(void *obj, int dirty, uint8_t *clean_io) {
+  AvantHeader *h = avant_header(obj);
+  if (g_rem_mode == 0 || dirty) {
+    *clean_io = 0;
+    return 1;
+  }
+  if (g_rem_mode == 2) {
+    if (*clean_io < 255) {
+      (*clean_io)++;
+    }
+    if (*clean_io < g_rem_hyst_n) {
+      return 1;
+    }
+  }
+  h->flags &= (uint16_t)~AVANT_FLAG_REM;
+  g_rem_cleared++;
+  if (g_rem_mode == 3) {
+    h->flags |= AVANT_FLAG_PROB;
+    prob_add_locked(obj);
+  }
+  return 0;
+}
+
+/* Probation commit for a due scan: dirty entries return hot, clean
+ * entries leave entirely, dead entries drop. Runs after the hot set
+ * has been compacted, so promotions append through rem_add. Caller
+ * does not hold g_rem_mu; rem_add takes it when shared. */
+static void prob_commit(void) {
+  uint32_t i;
+  uint32_t w = 0;
+  void **promote;
+  uint32_t np = 0;
+  if (g_rem_mode != 3 || g_prob_scanned == 0) {
+    return;
+  }
+  promote = xrealloc(NULL, g_prob_scanned * sizeof(void *));
+  {
+    int locked = rem_locked();
+    if (locked) {
+      pthread_mutex_lock(&g_rem_mu);
+    }
+    for (i = 0; i < g_prob_n; i++) {
+      void *obj = g_prob[i];
+      if (i >= g_prob_scanned) {
+        /* Demoted after this pass scanned probation: stays listed. */
+        g_prob[w] = obj;
+        g_prob_dirty[w] = g_prob_dirty[i];
+        w++;
+        continue;
+      }
+      if (!is_heap_payload(obj, NULL, NULL)) {
+        continue;
+      }
+      if (g_prob_dirty[i]) {
+        promote[np++] = obj;
+      } else {
+        avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_PROB;
+        g_rem_cleared++;
+      }
+    }
+    g_prob_n = w;
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
+    }
+  }
+  g_prob_scanned = 0;
+  for (i = 0; i < np; i++) {
+    avant_header(promote[i])->flags &= (uint16_t)~AVANT_FLAG_PROB;
+    rem_add(promote[i]);
+  }
+  free(promote);
+}
+
 static void rem_scrub(void) {
   uint32_t i;
   uint32_t w = 0;
@@ -1474,7 +1643,19 @@ static void rem_scrub(void) {
     }
     h = avant_header(obj);
     if (h->flags & AVANT_FLAG_MARKED) {
-      g_remset[w++] = obj;
+      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
+      uint8_t clean = g_rem_clean ? g_rem_clean[i] : 0;
+      if (!rem_frontier_decide(obj, dirty, &clean)) {
+        continue;
+      }
+      g_remset[w] = obj;
+      if (g_rem_dirty) {
+        g_rem_dirty[w] = (uint8_t)dirty;
+      }
+      if (g_rem_clean) {
+        g_rem_clean[w] = clean;
+      }
+      w++;
     } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
       Large *L = large_of(obj);
       /* A dead expression buffer is a large object. Leaving it on the
@@ -1492,6 +1673,7 @@ static void rem_scrub(void) {
   if (locked) {
     pthread_mutex_unlock(&g_rem_mu);
   }
+  prob_commit();
 }
 
 /* Field slots copy_payload_children would visit for one object. */
@@ -1556,7 +1738,42 @@ static void gen_young_copy(void) {
          * probe pass's rem_scrub keeps it in the set. */
         avant_header(obj)->flags |= AVANT_FLAG_MARKED;
         g_rem_fields += rem_field_count(obj);
+        g_rem_track = 1;
+        g_rem_track_dirty = 0;
         copy_payload_children(obj);
+        g_rem_track = 0;
+        if (g_rem_dirty) {
+          g_rem_dirty[ri] = (uint8_t)g_rem_track_dirty;
+        }
+      }
+    }
+    if (locked) {
+      pthread_mutex_unlock(&g_rem_mu);
+    }
+  }
+  /* Probation entries are roots only on their due collections. A young
+   * edge on such an entry between due scans cannot exist undiscovered:
+   * it was clean at demotion, and the barrier promotes the entry back
+   * to the hot set on the next young store. */
+  g_prob_scanned = 0;
+  if (g_rem_mode == 3 && g_prob_n > 0 &&
+      (g_young_seq % g_rem_prob_k) == 0) {
+    uint32_t pi;
+    int locked = rem_locked();
+    g_prob_scanned = g_prob_n;
+    if (locked) {
+      pthread_mutex_lock(&g_rem_mu);
+    }
+    for (pi = 0; pi < g_prob_n; pi++) {
+      void *obj = g_prob[pi];
+      if (is_heap_payload(obj, NULL, NULL)) {
+        avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+        g_rem_fields += rem_field_count(obj);
+        g_rem_track = 1;
+        g_rem_track_dirty = 0;
+        copy_payload_children(obj);
+        g_rem_track = 0;
+        g_prob_dirty[pi] = (uint8_t)g_rem_track_dirty;
       }
     }
     if (locked) {
@@ -1760,23 +1977,37 @@ static void rem_commit_kept(void) {
   g_keep = NULL;
   g_keep_n = 0;
   g_keep_cap = 0;
-  /* A remembered object stays remembered while it is live: dropping
-   * it here would make its nursery children invisible to the next
-   * young collection unless a root happens to reach it again. Only
-   * members whose memory is gone leave the set. */
+  /* A remembered object with a nursery child stays remembered: the
+   * scan just proved that edge. A live member with no nursery child
+   * leaves the hot set under the frontier policy (the barrier re-adds
+   * it on the next young store); only members whose memory is gone
+   * leave unconditionally, as before. */
   if (locked) {
     pthread_mutex_lock(&g_rem_mu);
   }
   for (i = 0; i < g_rem_n; i++) {
     void *obj = g_remset[i];
     if (is_heap_payload(obj, NULL, NULL)) {
-      g_remset[w++] = obj;
+      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
+      uint8_t clean = g_rem_clean ? g_rem_clean[i] : 0;
+      if (!rem_frontier_decide(obj, dirty, &clean)) {
+        continue;
+      }
+      g_remset[w] = obj;
+      if (g_rem_dirty) {
+        g_rem_dirty[w] = (uint8_t)dirty;
+      }
+      if (g_rem_clean) {
+        g_rem_clean[w] = clean;
+      }
+      w++;
     }
   }
   g_rem_n = w;
   if (locked) {
     pthread_mutex_unlock(&g_rem_mu);
   }
+  prob_commit();
   for (i = 0; i < n; i++) {
     if (is_heap_payload(kept[i], NULL, NULL)) {
       rem_add(kept[i]);
@@ -2023,6 +2254,7 @@ static void collect(int full) {
   g_limit = NULL;
 
   if (!full) {
+    g_young_seq++;
 #if defined(__x86_64__)
     /* Spill myc callee-saved GPRs into collect's frame so the C-stack
      * walk can rewrite or pin them. Without this, a heap pointer can
@@ -2233,7 +2465,7 @@ static void print_stats(void) {
           "avant gc: collections=%llu young=%llu full=%llu "
           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
           "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu "
-          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu\n",
+          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu rem_prob=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2261,7 +2493,8 @@ static void print_stats(void) {
           (unsigned long long)g_rem_peak,
           (unsigned long long)g_rem_n,
           (unsigned long long)g_rem_adds,
-          (unsigned long long)g_rem_cleared);
+          (unsigned long long)g_rem_cleared,
+          (unsigned long long)g_prob_n);
 }
 
 static void init_gc(void) {
@@ -2322,6 +2555,26 @@ static void init_gc(void) {
   }
   if (g_stackmap_walk) {
     sm_init();
+  }
+  {
+    const char *v = getenv("AVANT_GC_REM_FRONTIER");
+    if (v && v[0] == '0' && v[1] == 0) {
+      g_rem_mode = 0;
+    } else if (v && strcmp(v, "hysteresis") == 0) {
+      g_rem_mode = 2;
+    } else if (v && strcmp(v, "probation") == 0) {
+      g_rem_mode = 3;
+    } else {
+      g_rem_mode = 1;
+    }
+    {
+      uint64_t n = env_u64("AVANT_GC_REM_HYSTERESIS", 2);
+      g_rem_hyst_n = n ? (uint32_t)n : 1;
+    }
+    {
+      uint64_t n = env_u64("AVANT_GC_REM_PROBATION", 4);
+      g_rem_prob_k = n ? (uint32_t)n : 1;
+    }
   }
   g_verify = getenv("AVANT_GC_VERIFY") != NULL;
   if (getenv("AVANT_GC_STATS")) {

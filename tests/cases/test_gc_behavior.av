@@ -20,6 +20,10 @@ fn alloc_fixture: String {
   "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn make_bump(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      if l = make_bump(item &* 2, depth - 1) {\n        if r = make_bump(item &* 2 &+ 1, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\n\nfn bump_sum(depth: Int): Int {\n  if t = make_bump(0, depth) {\n    return check(t, depth)\n  }\n  0\n}\n\nfn main: Int {\n  root = make(0, 12)\n  sum = 0\n  i = 0\n  while i < 40 {\n    fresh = make(i, 10)\n    root.left = fresh\n    root.right = make(i + 1, 10)\n    sum = sum &+ check(fresh, 10)\n    sum = sum &+ bump_sum(12)\n    xs: Array(Int) = []\n    j = 0\n    while j < 2000 {\n      xs.push(j * i)\n      j = j + 1\n    }\n    sum = sum &+ xs[1999]\n    nursery_reclaim()\n    i = i + 1\n  }\n  sum = sum &+ check(root, 12)\n  puts(sum)\n  0\n}\n"
 }
 
+fn frontier_fixture: String {
+  "class GNode {\n  v: Int\n  a: GNode?\n  b: GNode?\n  kid: GNode?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn build(v: Int, depth: Int, flat: Array(GNode)): GNode {\n  n = GNode.new(v)\n  flat.push(n)\n  if depth > 0 {\n    n.a = build(v &* 2, depth - 1, flat)\n    n.b = build(v &* 2 &+ 1, depth - 1, flat)\n  }\n  n\n}\n\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = GNode.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\n\nfn main: Int {\n  flat: Array(GNode) = []\n  root = build(1, 10, flat)\n  warm = churn(12, 7)\n  i = 0\n  while i < flat.size {\n    flat[i].kid = GNode.new(flat[i].v &+ 100000)\n    i = i + 1\n  }\n  mid = churn(4, 13)\n  round = 0\n  while round < 60 {\n    j = round % 97\n    while j < flat.size {\n      flat[j].kid = GNode.new(flat[j].v &+ round)\n      j = j + 97\n    }\n    warm = warm &+ churn(1, 29 &+ round)\n    round = round + 1\n  }\n  total = warm &+ mid &+ root.v\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v\n    if kid = flat[k].kid {\n      total = total &+ kid.v % 89\n    }\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -174,6 +178,36 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out11, want5, "alloc checksums at 1 MB young size")
     } else {
       c.expect(false, "read alloc small-young run")
+    }
+    // Remembered set as a dirty frontier (Collector II Wave 2): a
+    // tenured graph is dirtied whole, then only a strided subset is
+    // re-dirtied while nursery churn forces young collections. An
+    // eviction that loses a young edge leaves a mature field pointing
+    // at from-space (the F1 shape), which breaks this checksum or
+    // segfaults at the small young size; the checksum is identical
+    // with the frontier disabled and under every frontier policy.
+    src6 = "/tmp/avant-gcb-${stamp}-frontier.av"
+    bin6 = "/tmp/avant-gcb-${stamp}-frontier.bin"
+    w6 = file_write(src6, frontier_fixture())
+    c.eq_int(w6, 0, "write frontier fixture")
+    code6 = compile_av(compiler, src6, bin6, "/tmp/avant-gcb-${stamp}-frontier.clog")
+    c.eq_int(code6, 0, "compile frontier fixture")
+    want6 = "-1524741201\n"
+    log12 = "/tmp/avant-gcb-${stamp}.run12"
+    rc12 = run_av_bin(bin6, log12)
+    c.eq_int(rc12, 0, "frontier graph survives at default young size")
+    if out12 = file_read(log12) {
+      c.eq_str(out12, want6, "frontier checksums at default young size")
+    } else {
+      c.expect(false, "read frontier run")
+    }
+    log13 = "/tmp/avant-gcb-${stamp}.run13"
+    rc13 = run_with_env(bin6, "AVANT_YOUNG_MB", "1", log13)
+    c.eq_int(rc13, 0, "frontier graph survives at 1 MB young size")
+    if out13 = file_read(log13) {
+      c.eq_str(out13, want6, "frontier checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read frontier small-young run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")
