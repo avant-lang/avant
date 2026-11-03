@@ -1,5 +1,9 @@
 # Avant Language changelog
 
+## Unreleased
+
+Collector II (on `refactor/collector`, not yet released): the garbage collector got faster and leaner with no language or API change. Root registration is batched at frame entry and reloads are inline, allocation and the write barrier have inline fast paths in generated code, the remembered set is a dirty frontier so young collections scan what changed instead of the whole mature graph, sparse mature blocks are evacuated during full collections, and nursery growth is capped by measured survival with a copy reserve charged softly before allocation. Trees at depth 16 runs about 38% faster than the stage baseline and its peak heap fell from 54.7 MB to 33.7 MB; the `Json::*` and `Etc::Words` workloads are unchanged in wall and memory, and a measured spare-pool prototype for large objects was tried and removed because it moved wall on no workload. New runtime switches, each disabling one mechanism for comparison: `AVANT_GC_REM_FRONTIER=0`, `AVANT_GC_DEFRAG=0`, `AVANT_GC_YOUNG_SIZING=0`, and `AVANT_GC_COPY_RESERVE=0`. `AVANT_GC_STATS=1` additionally reports root, remembered-set, defragmentation, survival, peak-composition, and large-object counters. The speed waves require a `myc-llvm` built from the `safepoints` shard's Collector II branch; making that build the default is a separate release decision and has not happened.
+
 ## 0.28.0 - 2026-11-02
 
 ### Added
