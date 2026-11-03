@@ -16,6 +16,10 @@ fn roots_line_fixture: String {
   "class Node {\n  item: Int\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn churn(k: Int): Int {\n  s = 0\n  i = 0\n  while i < 60000 {\n    n = Node.new(i * k)\n    s = s &+ n.item\n    i = i + 1\n  }\n  s\n}\n\nfn pick(k: Int): Node {\n  a = Node.new(k)\n  b = Node.new(k + 1)\n  c = Node.new(k + 2)\n  a.item = a.item + b.item + c.item\n  a\n}\n\nfn main: Int {\n  x = pick(10)\n  y = pick(20)\n  z = pick(30)\n  sum = 0\n  sum = sum &+ churn(1)\n  sum = sum &+ x.item &+ y.item &+ z.item\n  sum = sum &+ churn(2)\n  sum = sum &+ x.item &+ y.item &+ z.item\n  puts(sum)\n  0\n}\n"
 }
 
+fn alloc_fixture: String {
+  "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn make_bump(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      if l = make_bump(item &* 2, depth - 1) {\n        if r = make_bump(item &* 2 &+ 1, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\n\nfn bump_sum(depth: Int): Int {\n  if t = make_bump(0, depth) {\n    return check(t, depth)\n  }\n  0\n}\n\nfn main: Int {\n  root = make(0, 12)\n  sum = 0\n  i = 0\n  while i < 40 {\n    fresh = make(i, 10)\n    root.left = fresh\n    root.right = make(i + 1, 10)\n    sum = sum &+ check(fresh, 10)\n    sum = sum &+ bump_sum(12)\n    xs: Array(Int) = []\n    j = 0\n    while j < 2000 {\n      xs.push(j * i)\n      j = j + 1\n    }\n    sum = sum &+ xs[1999]\n    nursery_reclaim()\n    i = i + 1\n  }\n  sum = sum &+ check(root, 12)\n  puts(sum)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -142,6 +146,34 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out9, want4, "roots-line checksums at 1 MB young size")
     } else {
       c.expect(false, "read roots-line small-young run")
+    }
+    // Allocation and barrier fast paths (Collector II Wave 1): young
+    // trees are stored into a mature root (the barrier frontier), bump
+    // arena trees are reclaimed in a loop, and arrays grow through the
+    // nursery. A fast path that skips the barrier, the payload zeroing,
+    // or the start bit breaks the checksum under a small nursery.
+    src5 = "/tmp/avant-gcb-${stamp}-alloc.av"
+    bin5 = "/tmp/avant-gcb-${stamp}-alloc.bin"
+    w5 = file_write(src5, alloc_fixture())
+    c.eq_int(w5, 0, "write alloc fixture")
+    code5 = compile_av(compiler, src5, bin5, "/tmp/avant-gcb-${stamp}-alloc.clog")
+    c.eq_int(code5, 0, "compile alloc fixture")
+    want5 = "1679073713\n"
+    log10 = "/tmp/avant-gcb-${stamp}.run10"
+    rc10 = run_av_bin(bin5, log10)
+    c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
+    if out10 = file_read(log10) {
+      c.eq_str(out10, want5, "alloc checksums at default young size")
+    } else {
+      c.expect(false, "read alloc run")
+    }
+    log11 = "/tmp/avant-gcb-${stamp}.run11"
+    rc11 = run_with_env(bin5, "AVANT_YOUNG_MB", "1", log11)
+    c.eq_int(rc11, 0, "alloc and barrier paths survive at 1 MB young size")
+    if out11 = file_read(log11) {
+      c.eq_str(out11, want5, "alloc checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read alloc small-young run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")
