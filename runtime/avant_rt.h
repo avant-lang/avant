@@ -84,6 +84,12 @@ void avant_gc_leave(void);
 void avant_gc_quiet_enter(void);
 void avant_gc_quiet_leave(void);
 void avant_gc_root(void *slot);
+/* Batched root registration (Collector II Wave 0): generated code calls
+ * this once at frame entry with the frame's root count, stores each
+ * slot address into the returned array at its fixed index, and the
+ * collector scans the first count entries. The per-slot avant_gc_root
+ * above stays for binaries compiled before the batch existed. */
+void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 void avant_barrier(void *obj);

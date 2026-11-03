@@ -131,6 +131,12 @@ static int g_young_adapt;
 static uint64_t g_nursery_held;
 static uint64_t g_mature_since_full;
 static uint64_t g_peak_live;
+/* Root bookkeeping call counts (Collector II Wave 0): every call to
+ * avant_gc_root, avant_gc_reload, and avant_gc_enter, so a profile can
+ * split call volume from per-call cost. Reported by AVANT_GC_STATS. */
+static uint64_t g_root_calls;
+static uint64_t g_reload_calls;
+static uint64_t g_enter_calls;
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -2110,7 +2116,7 @@ static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
-          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu\n",
+          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2127,7 +2133,10 @@ static void print_stats(void) {
           (unsigned long long)g_sticky_grows,
           (unsigned long long)(g_young_bytes / (1024ull * 1024ull)),
           (unsigned long long)g_nursery_held,
-          (unsigned long long)g_mature_since_full);
+          (unsigned long long)g_mature_since_full,
+          (unsigned long long)g_root_calls,
+          (unsigned long long)g_reload_calls,
+          (unsigned long long)g_enter_calls);
 }
 
 static void init_gc(void) {
@@ -2211,6 +2220,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
  * (Brainfuck) and numeric methods spent the call on that pair. Frames
  * are kept on a thread-local freelist; the slot array is reused too. */
 void avant_gc_enter(void) {
+  g_enter_calls++;
   init_gc();
   avant_gc_register_thread();
   Frame *f = g_frame_free;
@@ -2249,6 +2259,7 @@ void avant_gc_quiet_leave(void) {
 }
 
 void avant_gc_root(void *slot) {
+  g_root_calls++;
   if (g_gc_quiet) {
     return;
   }
@@ -2275,8 +2286,27 @@ void avant_gc_root(void *slot) {
   f->slots[f->n++] = (void **)slot;
 }
 
+void *avant_gc_root_begin(uint32_t count) {
+  g_root_calls += count;
+  if (!g_frame) {
+    die("gc root begin without enter");
+  }
+  Frame *f = g_frame;
+  if (count > f->cap) {
+    uint32_t cap = f->cap ? f->cap : 8;
+    while (cap < count) {
+      cap *= 2;
+    }
+    f->slots = xrealloc(f->slots, cap * sizeof(void **));
+    f->cap = cap;
+  }
+  f->n = g_gc_quiet ? 0 : count;
+  return f->slots;
+}
+
 __attribute__((noinline))
 void *avant_gc_reload(void *slot) {
+  g_reload_calls++;
   /*
    * Stage 17: myc-llvm stores this return into the rooted alloca after
    * a collecting CALL. The load is opaque to LLVM isel, so a pre-call
