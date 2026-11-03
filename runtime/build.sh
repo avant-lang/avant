@@ -20,6 +20,12 @@ done
 
 compile "$root/third_party/yyjson/yyjson.c" "$root/build/yyjson.o"
 
+# avant_rt_traps.o folds into avant_rt.o: the seed's link table names
+# avant_rt.o only, so a new core object could not be linked by the old
+# seed. The source split is organizational; the link surface is not.
+ld -r -o "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o" "$root/build/avant_rt_traps.o"
+mv "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o"
+
 # aklomp/base64 e4cc438. LangArena's C port calls this library.
 # x86_64 builds the SIMD codecs; other machines get the plain codec.
 # The runtime picks a codec from CPUID on first use.
