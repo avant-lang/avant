@@ -1,9 +1,48 @@
 import harness
 
-fn expect_file(c: Checks, got_path: String, want_path: String, msg: String) {
+fn prefix_at(s: String, at: Int, p: String): Bool {
+  if at + p.size > s.size {
+    return false
+  }
+  j = 0
+  while j < p.size {
+    if s[at + j] != p[j] {
+      return false
+    }
+    j = j + 1
+  }
+  true
+}
+
+// A check dump can carry the root as an absolute path in a diagnostic
+// while the golden records it relative. Compare with the root spelled
+// the golden's way.
+fn strip_root(text: String, root: String): String {
+  if root.size == 0 {
+    return text
+  }
+  if str_eq(root, ".") {
+    return text
+  }
+  prefix = "${root}/"
+  out = buf_new()
+  i = 0
+  while i < text.size {
+    if prefix_at(text, i, prefix) {
+      out.push_str("./")
+      i = i + prefix.size
+    } else {
+      out.push_byte(text[i])
+      i = i + 1
+    }
+  }
+  out.to_s
+}
+
+fn expect_file(c: Checks, got_path: String, want_path: String, msg: String, root: String) {
   if got = file_read(got_path) {
     if want = file_read(want_path) {
-      c.eq_str(got, want, msg)
+      c.eq_str(strip_root(got, root), want, msg)
     } else {
       c.expect(false, "read golden ${want_path}")
     }
@@ -12,27 +51,27 @@ fn expect_file(c: Checks, got_path: String, want_path: String, msg: String) {
   }
 }
 
-fn dump_layer(c: Checks, dumper: String, flag: String, src: String, golden: String, stamp: Int, key: String) {
+fn dump_layer(c: Checks, dumper: String, flag: String, src: String, golden: String, stamp: Int, key: String, root: String) {
   out = "/tmp/avant-goldens-${stamp}-${key}.out"
   code = dump_lex(dumper, flag, src, out)
   c.eq_int(code, 0, "dump ${key}")
-  expect_file(c, out, golden, key)
+  expect_file(c, out, golden, key, root)
 }
 
-fn dump_myc(c: Checks, compiler: String, src: String, golden: String, stamp: Int, key: String) {
+fn dump_myc(c: Checks, compiler: String, src: String, golden: String, stamp: Int, key: String, root: String) {
   out = "/tmp/avant-goldens-${stamp}-${key}.out"
   code = dump_av(compiler, src, out)
   c.eq_int(code, 0, "dump ${key}")
-  expect_file(c, out, golden, key)
+  expect_file(c, out, golden, key, root)
 }
 
 fn dump_all(c: Checks, dumper: String, compiler: String, root: String, stamp: Int, src_rel: String, stem: String, key: String) {
   src = "${root}/${src_rel}"
   base = "${root}/tests/goldens/${stem}"
-  dump_layer(c, dumper, "", src, "${base}.tok", stamp, "${key}-tok")
-  dump_layer(c, dumper, "--ast", src, "${base}.ast", stamp, "${key}-ast")
-  dump_layer(c, dumper, "--check", src, "${base}.check", stamp, "${key}-check")
-  dump_myc(c, compiler, src, "${base}.myc", stamp, "${key}-myc")
+  dump_layer(c, dumper, "", src, "${base}.tok", stamp, "${key}-tok", root)
+  dump_layer(c, dumper, "--ast", src, "${base}.ast", stamp, "${key}-ast", root)
+  dump_layer(c, dumper, "--check", src, "${base}.check", stamp, "${key}-check", root)
+  dump_myc(c, compiler, src, "${base}.myc", stamp, "${key}-myc", root)
 }
 
 fn test_goldens(c: Checks) {
@@ -86,9 +125,9 @@ fn test_goldens(c: Checks) {
       dump_all(c, dumper, compiler, root, stamp, "tests/fixtures/macros/method.av", "macros/method", "method")
       modules_src = "${root}/tests/fixtures/modules/main.av"
       modules_golden = "${root}/tests/goldens/modules/main"
-      dump_layer(c, dumper, "", modules_src, "${modules_golden}.tok", stamp, "modules-tok")
-      dump_layer(c, dumper, "--ast", modules_src, "${modules_golden}.ast", stamp, "modules-ast")
-      dump_myc(c, compiler, modules_src, "${modules_golden}.myc", stamp, "modules-myc")
+      dump_layer(c, dumper, "", modules_src, "${modules_golden}.tok", stamp, "modules-tok", root)
+      dump_layer(c, dumper, "--ast", modules_src, "${modules_golden}.ast", stamp, "modules-ast", root)
+      dump_myc(c, compiler, modules_src, "${modules_golden}.myc", stamp, "modules-myc", root)
       hello_g = "${root}/tests/goldens/hello.myc"
       hello_ex = "${root}/tests/goldens/examples/hello.myc"
       if hg = file_read(hello_g) {
