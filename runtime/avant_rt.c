@@ -176,6 +176,17 @@ static uint64_t g_rem_cleared;
  * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
 static int g_rem_mode = 1;
 static uint8_t *g_rem_dirty;
+/* Mature defragmentation observability (Collector II Wave 3, step 1):
+ * per-block live-line histogram built from the line marks a full
+ * collection already makes. Buckets by live lines in a 128-line block:
+ * 0, 1-32, 33-64, 65-96, 97-127, 128. Wasted bytes count only partly
+ * live blocks ((128 - live) * LINE_SIZE); empty blocks are freed whole
+ * by the existing sweep and are not fragmentation waste. Counters are
+ * cumulative over full collections and runtime-internal. */
+static uint64_t g_def_blocks;
+static uint64_t g_def_live_lines;
+static uint64_t g_def_wasted;
+static uint64_t g_def_hist[6];
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -2169,6 +2180,19 @@ static void collect(int full) {
     zero_line_marks(g_nursery);
     zero_line_marks(g_from);
     mark_roots();
+    {
+      Block *db;
+      for (db = g_mature; db; db = db->next) {
+        int live = block_live_lines(db);
+        int bucket = live == 0 ? 0 : live <= 32 ? 1 : live <= 64 ? 2 : live <= 96 ? 3 : live < LINES_PER_BLOCK ? 4 : 5;
+        g_def_blocks++;
+        g_def_live_lines += (uint64_t)live;
+        g_def_hist[bucket]++;
+        if (live > 0 && live < LINES_PER_BLOCK) {
+          g_def_wasted += (uint64_t)(LINES_PER_BLOCK - live) * LINE_SIZE;
+        }
+      }
+    }
     sweep_large();
     filter_blocks(&g_mature, keep_if_live);
     filter_blocks(&g_nursery, keep_if_live);
@@ -2317,7 +2341,8 @@ static void print_stats(void) {
           "avant gc: collections=%llu young=%llu full=%llu "
           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
           "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu "
-          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu\n",
+          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu "
+          "def_blocks=%llu def_live_lines=%llu def_wasted=%llu def_hist=%llu,%llu,%llu,%llu,%llu,%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2345,7 +2370,16 @@ static void print_stats(void) {
           (unsigned long long)g_rem_peak,
           (unsigned long long)g_rem_n,
           (unsigned long long)g_rem_adds,
-          (unsigned long long)g_rem_cleared);
+          (unsigned long long)g_rem_cleared,
+          (unsigned long long)g_def_blocks,
+          (unsigned long long)g_def_live_lines,
+          (unsigned long long)g_def_wasted,
+          (unsigned long long)g_def_hist[0],
+          (unsigned long long)g_def_hist[1],
+          (unsigned long long)g_def_hist[2],
+          (unsigned long long)g_def_hist[3],
+          (unsigned long long)g_def_hist[4],
+          (unsigned long long)g_def_hist[5]);
 }
 
 static void init_gc(void) {

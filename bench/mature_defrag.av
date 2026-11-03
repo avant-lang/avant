@@ -1,0 +1,117 @@
+// Mature defragmentation bench (Collector II Wave 3). Run with the built
+// compiler, for example:
+//   sh runtime/build.sh
+//   AVANT_MYC_LLVM=<myc-llvm> ./bin/avant-b compile bench/mature_defrag.av /tmp/mature_defrag --release
+//   AVANT_YOUNG_MB=1 AVANT_GC_STATS=1 /usr/bin/time -v /tmp/mature_defrag
+// A large set of one-line objects is built and tenured, then only every
+// 8th object is kept. The survivors stay scattered across the mature
+// blocks while the lines between them are dead, which is the
+// fragmentation shape a defragmenting full collection would evacuate.
+// The pruning runs in a helper whose frame is gone before the explicit
+// full collections, so no stale root slot can keep the dropped array
+// alive. The checksum covers every survivor so the work cannot be
+// optimised away.
+
+lib gc {
+  fun avant_gc_collect()
+}
+
+class Chunk {
+  v: Int
+  f1: Int
+  f2: Int
+  f3: Int
+  f4: Int
+  f5: Int
+  f6: Int
+  f7: Int
+  f8: Int
+  f9: Int
+  f10: Int
+  f11: Int
+  f12: Int
+  f13: Int
+  f14: Int
+  f15: Int
+  f16: Int
+  f17: Int
+  f18: Int
+  f19: Int
+  f20: Int
+  f21: Int
+  f22: Int
+  f23: Int
+  f24: Int
+  f25: Int
+  f26: Int
+  f27: Int
+  f28: Int
+  f29: Int
+  f30: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+    self.f30 = v
+  }
+}
+
+class Spur {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+fn churn(rounds: Int, seed: Int): Int {
+  sum = 0
+  r = 0
+  while r < rounds {
+    i = 0
+    while i < 20000 {
+      t = Spur.new(seed &+ r &* 20000 &+ i)
+      sum = sum &+ t.v
+      i = i + 1
+    }
+    r = r + 1
+  }
+  sum
+}
+
+fn build_pruned(warm: Int): Array(Chunk) {
+  flat: Array(Chunk) = []
+  i = 0
+  while i < 32768 {
+    flat.push(Chunk.new(i &+ 1))
+    i = i + 1
+  }
+  warm2 = warm &+ churn(24, 7)
+  keep: Array(Chunk) = []
+  j = 0
+  while j < flat.size {
+    if j % 8 == 0 {
+      keep.push(flat[j])
+    }
+    j = j + 1
+  }
+  if warm2 == 424242 {
+    puts(flat.size)
+  }
+  keep
+}
+
+fn main: Int {
+  flat = build_pruned(0)
+  gc.avant_gc_collect()
+  gc.avant_gc_collect()
+  warm = churn(4, 13)
+  gc.avant_gc_collect()
+  total = warm &+ flat.size
+  k = 0
+  while k < flat.size {
+    total = total &+ flat[k].v &+ flat[k].f30
+    k = k + 1
+  }
+  puts(total)
+  0
+}
