@@ -4,6 +4,10 @@ fn tree_fixture: String {
   "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) &+ check(n.right, depth - 1) &+ n.item\n}\n\nfn main: Int {\n  long_lived = make(0, 15)\n  sum = 0\n  i = 0\n  while i < 20 {\n    t = make(i, 15)\n    sum = sum &+ check(t, 15)\n    i = i + 1\n  }\n  puts(sum)\n  puts(check(long_lived, 15))\n  0\n}\n"
 }
 
+fn churn_fixture: String {
+  "lib gc {\n  fun avant_gc_collect()\n}\n\nclass Link {\n  v: Int\n  next: Link?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main: Int {\n  first = Link.new(0)\n  prev = first\n  i = 1\n  while i < 5000 {\n    n = Link.new(i)\n    prev.next = n\n    prev = n\n    i = i + 1\n  }\n  prev.next = first\n  gc.avant_gc_collect()\n  sum = 0\n  cur = first\n  i = 0\n  while i < 5000 {\n    sum = sum &+ cur.v\n    if nxt = cur.next {\n      cur = nxt\n    }\n    i = i + 1\n  }\n  puts(sum)\n  a: Array(Int) = []\n  i = 0\n  while i < 100000 {\n    a.push(i)\n    i = i + 1\n  }\n  gc.avant_gc_collect()\n  s2 = 0\n  i = 0\n  while i < a.size {\n    s2 = s2 &+ a[i]\n    i = i + 1\n  }\n  puts(s2)\n  s = \"\"\n  i = 0\n  while i < 2000 {\n    s = s + \"x\"\n    i = i + 1\n  }\n  puts(s.size)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -50,6 +54,30 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out3, want, "tree checksums with nursery off")
     } else {
       c.expect(false, "read nursery-off run")
+    }
+
+    src2 = "/tmp/avant-gcb-${stamp}-churn.av"
+    bin2 = "/tmp/avant-gcb-${stamp}-churn.bin"
+    w2 = file_write(src2, churn_fixture())
+    c.eq_int(w2, 0, "write churn fixture")
+    code2 = compile_av(compiler, src2, bin2, "/tmp/avant-gcb-${stamp}-churn.clog")
+    c.eq_int(code2, 0, "compile churn fixture")
+    want2 = "12497500\n704982704\n2000\n"
+    log4 = "/tmp/avant-gcb-${stamp}.run4"
+    rc4 = run_av_bin(bin2, log4)
+    c.eq_int(rc4, 0, "cycle, array growth, and string churn survive")
+    if out4 = file_read(log4) {
+      c.eq_str(out4, want2, "churn checksums at default young size")
+    } else {
+      c.expect(false, "read churn run")
+    }
+    log5 = "/tmp/avant-gcb-${stamp}.run5"
+    rc5 = run_with_env(bin2, "AVANT_YOUNG_MB", "1", log5)
+    c.eq_int(rc5, 0, "churn survives at 1 MB young size")
+    if out5 = file_read(log5) {
+      c.eq_str(out5, want2, "churn checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read churn small-young run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")
