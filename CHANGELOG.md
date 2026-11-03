@@ -16,6 +16,8 @@
 
 * A young collection could lose track of a mature object's nursery children: the remembered set was never scanned, and remembered objects that were not re-kept in a cycle were dropped from it, so fields kept pointing at reused from-space memory and programs segfaulted at small young sizes (`AVANT_YOUNG_MB=1` on a tree workload). Remembered objects are now roots for the young generation. `AVANT_GC_VERIFY=1` enables a post-copy stale-reference checker, and `tests/cases/test_gc_behavior.av` covers trees, cycles, array growth, and string churn across the collector knobs.
 * The full-collection trigger no longer waits for a fixed 32 MB of mature growth: it adapts to twice the live set plus slack after each full collection. Churn with a small live set (a parsed JSON document per iteration) peaks at about a third of the former RSS; large-live-set programs keep the previous spacing.
+* `avant test` now removes its temporary files (scripts, logs, result files, fragments, test binaries) as soon as their contents are read; suite runs previously leaked them into the temp directory until the filesystem filled.
+* GC stats now report `peak_live`, the largest live set seen at any collection, and `AVANT_GC_VERIFY` additionally proves reachability after each young collection and reports leftover C-stack words that still name from-space.
 * A zero value can now be emitted for a struct member of a union, so types such as `SomeStruct | SomeError` can be returned.
 * `tests/bless_goldens.av` builds its dump tool with `--debug` (as the test harness already did), bringing a golden re-bless from about nine minutes to under a minute with identical output.
 
