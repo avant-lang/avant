@@ -10,6 +10,7 @@
 ### Changed
 
 * The `json_*` and `json_free` prelude functions are removed. Programs use `std.json`; hello no longer links yyjson.
+* `avant test --junit PATH` again writes one testcase per check, with per-check durations, for files whose checks record them (the compiler suite and `std.testing` both do); files that record nothing keep one file-level case. `avant test` also prints each file's output as soon as that file finishes instead of after the whole run; totals, exit codes, and coverage are unchanged.
 
 ### Fixed
 
