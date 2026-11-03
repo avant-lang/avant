@@ -14,6 +14,7 @@ pub class FileRun {
   ok: Bool = true
   compiled: Bool = false
   exclusive: Bool = false
+  reported: Bool = false
   map: String = ""
   frags: Array(String)
 
@@ -29,6 +30,7 @@ pub class FileRun {
     self.ok = true
     self.compiled = false
     self.exclusive = false
+    self.reported = false
     self.map = ""
     fr: Array(String) = []
     self.frags = fr
@@ -54,6 +56,8 @@ pub class TestHost {
   jobs: Int = 1
   coverage: Bool = false
   junit: Bool = false
+  good: Int = 0
+  bad: Int = 0
   cov: CovReport
 
   fn initialize(compiler: String, stamp: Int, jobs: Int) {
@@ -63,6 +67,8 @@ pub class TestHost {
     self.jobs = jobs
     self.coverage = false
     self.junit = false
+    self.good = 0
+    self.bad = 0
     self.cov = CovReport.new("")
   }
 
@@ -400,6 +406,27 @@ fn append_text(into: String, chunk: String): String {
   "${into}${chunk}"
 }
 
+fn emit_file(host: TestHost, f: FileRun) {
+  if f.reported {
+    return
+  }
+  f.reported = true
+  if f.output.size > 0 {
+    text = f.output
+    if text[text.size - 1] == 10 {
+      text = str_slice(text, 0, text.size - 1)
+    }
+    puts(text)
+  }
+  if f.ok {
+    puts("ok ${f.rel}")
+    host.good = host.good + 1
+  } else {
+    puts("FAIL ${f.rel}")
+    host.bad = host.bad + 1
+  }
+}
+
 fn run_many(host: TestHost, files: Array(FileRun)) {
   if files.size == 0 {
     return
@@ -425,6 +452,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       f.ok = false
       f.compiled = false
       f.output = read_text(cmd.log)
+      emit_file(host, f)
     } else {
       f.compiled = true
       chmod_bin(f.bin)
@@ -477,6 +505,9 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       }
       k = k + 1
     }
+    if f.parallels.size == 0 {
+      emit_file(host, f)
+    }
     i = i + 1
   }
   pars: Array(ShellCmd) = []
@@ -503,22 +534,79 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     }
     i = i + 1
   }
-  run_waves(host, pars)
+  wi = 0
+  while wi < pars.size {
+    b = buf_new()
+    b.push_str("#!/bin/sh\n")
+    n = 0
+    while n < host.jobs && wi < pars.size {
+      b.push_str(pars[wi].line)
+      b.push_str(" &\n")
+      wi = wi + 1
+      n = n + 1
+    }
+    b.push_str("wait\n")
+    run_script(b.to_s, host)
+    i = 0
+    while i < files.size {
+      f = files[i]
+      if f.compiled && f.parallels.size > 0 {
+        if f.reported {
+        } else {
+          done = true
+          j = 0
+          while j < pars.size {
+            if par_file[j] == i {
+              if read_text(pars[j].rc_path).size == 0 {
+                done = false
+              }
+            }
+            j = j + 1
+          }
+          if done {
+            k = 0
+            while k < f.par_logs.size {
+              f.output = append_text(f.output, read_text(f.par_logs[k]))
+              k = k + 1
+            }
+            j = 0
+            while j < pars.size {
+              if par_file[j] == i {
+                if read_rc(pars[j].rc_path) != 0 {
+                  f.ok = false
+                }
+              }
+              j = j + 1
+            }
+            emit_file(host, f)
+          }
+        }
+      }
+      i = i + 1
+    }
+  }
   i = 0
   while i < files.size {
     f = files[i]
-    k = 0
-    while k < f.par_logs.size {
-      f.output = append_text(f.output, read_text(f.par_logs[k]))
-      k = k + 1
-    }
-    i = i + 1
-  }
-  i = 0
-  while i < pars.size {
-    f = files[par_file[i]]
-    if read_rc(pars[i].rc_path) != 0 {
-      f.ok = false
+    if f.compiled {
+      if f.reported {
+      } else {
+        k = 0
+        while k < f.par_logs.size {
+          f.output = append_text(f.output, read_text(f.par_logs[k]))
+          k = k + 1
+        }
+        j = 0
+        while j < pars.size {
+          if par_file[j] == i {
+            if read_rc(pars[j].rc_path) != 0 {
+              f.ok = false
+            }
+          }
+          j = j + 1
+        }
+        emit_file(host, f)
+      }
     }
     i = i + 1
   }
@@ -1040,27 +1128,8 @@ pub fn driver_test(args: Array(String)) {
   if junit.size > 0 {
     write_junit(junit, files)
   }
-  bad = 0
-  good = 0
-  f = 0
-  while f < files.size {
-    file = files[f]
-    if file.output.size > 0 {
-      text = file.output
-      if text[text.size - 1] == 10 {
-        text = str_slice(text, 0, text.size - 1)
-      }
-      puts(text)
-    }
-    if file.ok {
-      puts("ok ${file.rel}")
-      good = good + 1
-    } else {
-      puts("FAIL ${file.rel}")
-      bad = bad + 1
-    }
-    f = f + 1
-  }
+  bad = host.bad
+  good = host.good
   puts("${bad} failed, ${good} passed")
   if coverage {
     k = 0
