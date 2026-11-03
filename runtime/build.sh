@@ -12,7 +12,7 @@ compile() {
 }
 
 for name in \
-  avant_rt.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
+  avant_rt.c avant_rt_traps.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
   avant_json.c avant_http.c avant_wide.c avant_codec.c avant_zlib.c avant_base64.c avant_re.c avant_io.c avant_cov.c
 do
   compile "$root/$name" "$root/build/${name%.c}.o"
