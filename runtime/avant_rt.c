@@ -130,6 +130,7 @@ static uint64_t g_young_bytes;
 static int g_young_adapt;
 static uint64_t g_nursery_held;
 static uint64_t g_mature_since_full;
+static uint64_t g_peak_live;
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -1908,6 +1909,9 @@ static void collect(int full) {
   }
   g_since_gc = 0;
   g_stats.live_bytes = g_live;
+  if (g_live > g_peak_live) {
+    g_peak_live = g_live;
+  }
   g_collecting = 0;
 }
 
@@ -2016,7 +2020,7 @@ static void account_alloc(size_t total, int nursery) {
 static void print_stats(void) {
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "
-          "alloc=%llu copied=%llu live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
+          "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
           "sticky=%llu young_mb=%llu held=%llu mature_since=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
@@ -2024,6 +2028,7 @@ static void print_stats(void) {
           (unsigned long long)g_stats.allocated_bytes,
           (unsigned long long)g_stats.copied_bytes,
           (unsigned long long)g_stats.live_bytes,
+          (unsigned long long)g_peak_live,
           (unsigned long long)g_stats.peak_heap,
           (unsigned long long)g_interior_slots,
           (unsigned long long)g_sm_walks,
