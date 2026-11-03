@@ -1313,7 +1313,7 @@ The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compil
 .av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
 ```
 
-Build the next compiler with a published one (the `v0.11.0` seed or newer; `avant bind` additionally needs libclang):
+Build the next compiler with a published release (`avant bind` additionally needs libclang):
 
 ```
 sh runtime/build.sh
