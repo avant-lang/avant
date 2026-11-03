@@ -127,6 +127,10 @@ pub class Test {
   only: String = ""
   names_path: String = ""
   names: Array(String)
+  rec_name: Array(String)
+  rec_ok: Array(Int)
+  rec_ms: Array(Int)
+  rec_at: Int = 0
 
   fn initialize {
     self.passed = 0
@@ -139,6 +143,13 @@ pub class Test {
     self.names_path = ""
     ns: Array(String) = []
     self.names = ns
+    rn: Array(String) = []
+    self.rec_name = rn
+    ro: Array(Int) = []
+    self.rec_ok = ro
+    rm: Array(Int) = []
+    self.rec_ms = rm
+    self.rec_at = now_ms()
     if v = env_get("AVANT_TEST_ONLY") {
       if v.size > 0 {
         self.mode = 2
@@ -171,13 +182,105 @@ pub class Test {
     false
   }
 
+  fn record(okv: Bool, name: String) {
+    now = now_ms()
+    dur = 0
+    if self.rec_at > 0 {
+      dur = now - self.rec_at
+    }
+    self.rec_at = now
+    self.rec_name.push(name)
+    if okv {
+      self.rec_ok.push(1)
+    } else {
+      self.rec_ok.push(0)
+    }
+    self.rec_ms.push(dur)
+  }
+
+  fn junit_escape(s: String): String {
+    b = buf_new()
+    i = 0
+    while i < s.size {
+      c = s[i]
+      if c == 38 {
+        b.push_str("&amp;")
+      } else if c == 60 {
+        b.push_str("&lt;")
+      } else if c == 62 {
+        b.push_str("&gt;")
+      } else if c == 34 {
+        b.push_str("&quot;")
+      } else if c == 39 {
+        b.push_str("&apos;")
+      } else {
+        b.push_byte(c)
+      }
+      i = i + 1
+    }
+    b.to_s
+  }
+
+  fn junit_secs(ms: Int): String {
+    whole = ms / 1000
+    frac = ms % 1000
+    fs = "${frac}"
+    while fs.size < 3 {
+      fs = "0${fs}"
+    }
+    "${whole}.${fs}"
+  }
+
+  fn write_junit {
+    if self.mode == 1 {
+      return
+    }
+    frag = ""
+    if v = env_get("AVANT_JUNIT_FRAGMENT") {
+      frag = v
+    }
+    if frag.size == 0 {
+      return
+    }
+    if self.rec_name.size == 0 {
+      return
+    }
+    n = self.rec_name.size
+    badn = 0
+    total = 0
+    i = 0
+    while i < n {
+      total = total + self.rec_ms[i]
+      if self.rec_ok[i] == 0 {
+        badn = badn + 1
+      }
+      i = i + 1
+    }
+    b = buf_new()
+    b.push_str("<testsuite name=\"std.testing\" tests=\"${n}\" failures=\"${badn}\" time=\"${self.junit_secs(total)}\">\n")
+    i = 0
+    while i < n {
+      b.push_str("  <testcase classname=\"std.testing\" name=\"${self.junit_escape(self.rec_name[i])}\" time=\"${self.junit_secs(self.rec_ms[i])}\"")
+      if self.rec_ok[i] == 0 {
+        b.push_str(">\n    <failure message=\"check failed\"/>\n  </testcase>\n")
+      } else {
+        b.push_str("/>\n")
+      }
+      i = i + 1
+    }
+    b.push_str("</testsuite>\n")
+    dummy = file_write(frag, b.to_s)
+  }
+
   fn pass_line(name: String) {
     self.passed = self.passed + 1
+    self.record(true, name)
     testing_write("PASS ${name}")
   }
 
   fn fail_line(name: String) {
     self.failed = self.failed + 1
+    self.record(false, name)
     testing_write("FAIL ${name}")
   }
 
@@ -438,6 +541,7 @@ pub class Test {
   }
 
   pub fn finish: Int {
+    self.write_junit()
     if self.mode == 1 {
       if self.dup {
         return 1

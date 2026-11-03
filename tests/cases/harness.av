@@ -98,10 +98,40 @@ pub class Checks {
   started: Int = 0
   case_at: Int = 0
   lines: Array(String)
+  rec_suite: Array(String)
+  rec_name: Array(String)
+  rec_ok: Array(Int)
+  rec_ms: Array(Int)
+  rec_at: Int = 0
 
   fn initialize {
     ls: Array(String) = []
     self.lines = ls
+    rs: Array(String) = []
+    self.rec_suite = rs
+    rn: Array(String) = []
+    self.rec_name = rn
+    ro: Array(Int) = []
+    self.rec_ok = ro
+    rm: Array(Int) = []
+    self.rec_ms = rm
+  }
+
+  fn record(okv: Bool, msg: String) {
+    now = now_ms()
+    dur = 0
+    if self.rec_at > 0 {
+      dur = now - self.rec_at
+    }
+    self.rec_at = now
+    self.rec_suite.push(self.suite_name)
+    self.rec_name.push(msg)
+    if okv {
+      self.rec_ok.push(1)
+    } else {
+      self.rec_ok.push(0)
+    }
+    self.rec_ms.push(dur)
   }
 
   fn flush_suite {
@@ -131,9 +161,88 @@ pub class Checks {
     self.suite_name = name
     self.suite_failed_at = self.failed
     self.case_at = now_ms()
+    self.rec_at = now_ms()
+  }
+
+  fn junit_escape(s: String): String {
+    b = buf_new()
+    i = 0
+    while i < s.size {
+      c = s[i]
+      if c == 38 {
+        b.push_str("&amp;")
+      } else if c == 60 {
+        b.push_str("&lt;")
+      } else if c == 62 {
+        b.push_str("&gt;")
+      } else if c == 34 {
+        b.push_str("&quot;")
+      } else if c == 39 {
+        b.push_str("&apos;")
+      } else {
+        b.push_byte(c)
+      }
+      i = i + 1
+    }
+    b.to_s
+  }
+
+  fn junit_secs(ms: Int): String {
+    whole = ms / 1000
+    frac = ms % 1000
+    fs = "${frac}"
+    while fs.size < 3 {
+      fs = "0${fs}"
+    }
+    "${whole}.${fs}"
+  }
+
+  fn write_junit {
+    frag = ""
+    if v = env_get("AVANT_JUNIT_FRAGMENT") {
+      frag = v
+    }
+    if frag.size == 0 {
+      return
+    }
+    if self.rec_name.size == 0 {
+      return
+    }
+    b = buf_new()
+    i = 0
+    while i < self.rec_name.size {
+      suite = self.rec_suite[i]
+      j = i
+      n = 0
+      badn = 0
+      total = 0
+      while j < self.rec_name.size && str_eq(self.rec_suite[j], suite) {
+        n = n + 1
+        total = total + self.rec_ms[j]
+        if self.rec_ok[j] == 0 {
+          badn = badn + 1
+        }
+        j = j + 1
+      }
+      b.push_str("<testsuite name=\"${self.junit_escape(suite)}\" tests=\"${n}\" failures=\"${badn}\" time=\"${self.junit_secs(total)}\">\n")
+      k = i
+      while k < j {
+        b.push_str("  <testcase classname=\"${self.junit_escape(suite)}\" name=\"${self.junit_escape(self.rec_name[k])}\" time=\"${self.junit_secs(self.rec_ms[k])}\"")
+        if self.rec_ok[k] == 0 {
+          b.push_str(">\n    <failure message=\"check failed\"/>\n  </testcase>\n")
+        } else {
+          b.push_str("/>\n")
+        }
+        k = k + 1
+      }
+      b.push_str("</testsuite>\n")
+      i = j
+    }
+    dummy = file_write(frag, b.to_s)
   }
 
   pub fn expect(cond: Bool, msg: String) {
+    self.record(cond, msg)
     if cond {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
@@ -147,6 +256,7 @@ pub class Checks {
   }
 
   pub fn eq_int(got: Int, want: Int, msg: String) {
+    self.record(got == want, msg)
     if got == want {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
@@ -162,6 +272,7 @@ pub class Checks {
   }
 
   pub fn eq_str(got: String, want: String, msg: String) {
+    self.record(str_eq(got, want), msg)
     if str_eq(got, want) {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
@@ -178,6 +289,7 @@ pub class Checks {
 
   pub fn finish: Int {
     self.flush_suite()
+    self.write_junit()
     ms = now_ms() - self.started
     puts("")
     puts("Test Suites: ${fmt_counts(self.suites_bad, self.suites_ok)}")

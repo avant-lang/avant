@@ -15,6 +15,7 @@ pub class FileRun {
   compiled: Bool = false
   exclusive: Bool = false
   map: String = ""
+  frags: Array(String)
 
   fn initialize(abs: String, rel: String, bin: String) {
     self.abs = abs
@@ -29,6 +30,8 @@ pub class FileRun {
     self.compiled = false
     self.exclusive = false
     self.map = ""
+    fr: Array(String) = []
+    self.frags = fr
   }
 }
 
@@ -50,6 +53,7 @@ pub class TestHost {
   seq: Int = 0
   jobs: Int = 1
   coverage: Bool = false
+  junit: Bool = false
   cov: CovReport
 
   fn initialize(compiler: String, stamp: Int, jobs: Int) {
@@ -58,6 +62,7 @@ pub class TestHost {
     self.seq = 0
     self.jobs = jobs
     self.coverage = false
+    self.junit = false
     self.cov = CovReport.new("")
   }
 
@@ -284,23 +289,23 @@ fn listed(paths: Array(String), path: String): Bool {
 }
 
 fn env_plain(compiler: String, coverage: Bool, map: String): String {
-  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES="
+  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES= AVANT_JUNIT_FRAGMENT="
   if coverage {
     return "${base} AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${test_quote(map)}"
   }
   base
 }
 
-fn env_serial(compiler: String, names: String, coverage: Bool): String {
-  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES=${test_quote(names)}"
+fn env_serial(compiler: String, names: String, coverage: Bool, frag: String): String {
+  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES=${test_quote(names)} AVANT_JUNIT_FRAGMENT=${test_quote(frag)}"
   if coverage {
     return "${base} AVANT_COVERAGE= AVANT_COVERAGE_LCOV=0 AVANT_COVERAGE_REPORT=0"
   }
   base
 }
 
-fn env_only(compiler: String, name: String, coverage: Bool): String {
-  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)} AVANT_TEST_NAMES="
+fn env_only(compiler: String, name: String, coverage: Bool, frag: String): String {
+  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)} AVANT_TEST_NAMES= AVANT_JUNIT_FRAGMENT=${test_quote(frag)}"
   if coverage {
     return "${base} AVANT_COVERAGE= AVANT_COVERAGE_LCOV=0 AVANT_COVERAGE_REPORT=0"
   }
@@ -435,7 +440,12 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     if f.compiled {
       base = host.fresh()
       names = "${base}.names"
-      line = "${env_serial(host.compiler, names, host.coverage)} ${test_quote(f.bin)}"
+      frag = ""
+      if host.junit {
+        frag = "${base}.junit"
+        f.frags.push(frag)
+      }
+      line = "${env_serial(host.compiler, names, host.coverage, frag)} ${test_quote(f.bin)}"
       cmd = ShellCmd.new(line, "${base}.log", "${base}.rc")
       cmd.line = redirect(cmd)
       serials.push(cmd)
@@ -478,7 +488,12 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       k = 0
       while k < f.parallels.size {
         name = f.parallels[k]
-        cmd = make_cmd(host, "${env_only(host.compiler, name, host.coverage)} ${test_quote(f.bin)}")
+        frag = ""
+        if host.junit {
+          frag = "${host.fresh()}.junit"
+          f.frags.push(frag)
+        }
+        cmd = make_cmd(host, "${env_only(host.compiler, name, host.coverage, frag)} ${test_quote(f.bin)}")
         cmd.line = redirect(cmd)
         pars.push(cmd)
         par_file.push(i)
@@ -544,38 +559,144 @@ fn xml_escape(s: String): String {
   b.to_s
 }
 
+fn find_from(text: String, needle: String, from: Int): Int {
+  if needle.size == 0 {
+    return -1
+  }
+  last = text.size - needle.size
+  i = from
+  while i <= last {
+    if str_eq(str_slice(text, i, i + needle.size), needle) {
+      return i
+    }
+    i = i + 1
+  }
+  -1
+}
+
+fn attr_sum(text: String, key: String): Int {
+  total = 0
+  from = 0
+  while true {
+    at = find_from(text, key, from)
+    if at < 0 {
+      return total
+    }
+    j = at + key.size
+    n = 0
+    while j < text.size && text[j] >= 48 && text[j] <= 57 {
+      n = n * 10 + (text[j] - 48)
+      j = j + 1
+    }
+    total = total + n
+    from = j
+  }
+  total
+}
+
+fn suite_time_ms(text: String): Int {
+  total = 0
+  from = 0
+  while true {
+    at = find_from(text, "<testsuite", from)
+    if at < 0 {
+      return total
+    }
+    t = find_from(text, "time=\"", at)
+    if t < 0 {
+      return total
+    }
+    j = t + 6
+    whole = 0
+    while j < text.size && text[j] >= 48 && text[j] <= 57 {
+      whole = whole * 10 + (text[j] - 48)
+      j = j + 1
+    }
+    frac = 0
+    digits = 0
+    if j < text.size && text[j] == 46 {
+      j = j + 1
+      while j < text.size && text[j] >= 48 && text[j] <= 57 && digits < 3 {
+        frac = frac * 10 + (text[j] - 48)
+        digits = digits + 1
+        j = j + 1
+      }
+    }
+    while digits < 3 {
+      frac = frac * 10
+      digits = digits + 1
+    }
+    total = total + whole * 1000 + frac
+    from = j
+  }
+  total
+}
+
+fn secs_str(ms: Int): String {
+  whole = ms / 1000
+  frac = ms % 1000
+  fs = "${frac}"
+  while fs.size < 3 {
+    fs = "0${fs}"
+  }
+  "${whole}.${fs}"
+}
+
 fn write_junit(path: String, files: Array(FileRun)) {
+  tests = 0
   bad = 0
+  total_ms = 0
+  body = buf_new()
+  fb = buf_new()
+  fb_tests = 0
+  fb_bad = 0
   i = 0
   while i < files.size {
-    if files[i].ok {
+    f = files[i]
+    fragtext = ""
+    k = 0
+    while k < f.frags.size {
+      fragtext = append_text(fragtext, read_text(f.frags[k]))
+      k = k + 1
+    }
+    if fragtext.size > 0 {
+      body.push_str(fragtext)
+      if fragtext[fragtext.size - 1] != 10 {
+        body.push_str("\n")
+      }
+      tests = tests + attr_sum(fragtext, "tests=\"")
+      bad = bad + attr_sum(fragtext, "failures=\"")
+      total_ms = total_ms + suite_time_ms(fragtext)
     } else {
-      bad = bad + 1
+      fb_tests = fb_tests + 1
+      tests = tests + 1
+      fb.push_str("    <testcase name=\"")
+      fb.push_str(xml_escape(f.rel))
+      fb.push_str("\" classname=\"")
+      fb.push_str(xml_escape(f.rel))
+      fb.push_str("\" time=\"0.000\"")
+      if f.ok {
+        fb.push_str("/>\n")
+      } else {
+        fb_bad = fb_bad + 1
+        bad = bad + 1
+        fb.push_str(">\n      <failure message=\"failed\"><![CDATA[")
+        fb.push_str(f.output)
+        fb.push_str("]]></failure>\n    </testcase>\n")
+      }
     }
     i = i + 1
   }
   b = buf_new()
   b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-  b.push_str("<testsuites tests=\"${files.size}\" failures=\"${bad}\">\n")
-  b.push_str("  <testsuite name=\"avant test\" tests=\"${files.size}\" failures=\"${bad}\">\n")
-  i = 0
-  while i < files.size {
-    f = files[i]
-    b.push_str("    <testcase name=\"")
-    b.push_str(xml_escape(f.rel))
-    b.push_str("\" classname=\"")
-    b.push_str(xml_escape(f.rel))
-    b.push_str("\"")
-    if f.ok {
-      b.push_str("/>\n")
-    } else {
-      b.push_str(">\n      <failure message=\"failed\"><![CDATA[")
-      b.push_str(f.output)
-      b.push_str("]]></failure>\n    </testcase>\n")
-    }
-    i = i + 1
+  b.push_str("<testsuites tests=\"${tests}\" failures=\"${bad}\" time=\"${secs_str(total_ms)}\">\n")
+  b.push_str(body.to_s)
+  if fb_tests > 0 {
+    b.push_str("  <testsuite name=\"avant test\" tests=\"${fb_tests}\" failures=\"${fb_bad}\" time=\"0.000\">\n")
+    b.push_str(fb.to_s)
+    b.push_str("  </testsuite>\n")
   }
-  b.push_str("  </testsuite>\n</testsuites>\n")
+  b.push_str("</testsuites>\n")
   w = file_write(path, b.to_s)
   if w != 0 {
     diag_puts("cannot write ${path}")
@@ -888,6 +1009,7 @@ pub fn driver_test(args: Array(String)) {
   }
   host = TestHost.new(argv0, stamp, jobs)
   host.coverage = coverage
+  host.junit = junit.size > 0
   if coverage {
     host.cov = CovReport.new(anchor)
     host.cov.use_excludes(cov_exclude)
