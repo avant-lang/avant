@@ -1716,8 +1716,86 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
   return 0;
 }
 
+static void verify_trace(void *p) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = object_payload(p, &b, &ol);
+  if (!start) {
+    return;
+  }
+  AvantHeader *h = avant_header(start);
+  if (h->flags & AVANT_FLAG_FORWARDED) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_FORWARDED;
+  work_push(start);
+}
+
+static void verify_tls_slot(void **slot) {
+  verify_trace(*slot);
+}
+
+/* Independent reachability, ignoring the collector's own tracing
+ * gates: a holder counts as live when a root reaches it through any
+ * field. This is what keeps the checker sensitive to the F1 class
+ * (a live holder the young copy itself never traced) while staying
+ * silent about dead mature objects, whose fields legitimately name
+ * copied objects. FORWARDED is free here: clear_mark_flags resets
+ * it at the end of the collection. */
+static void verify_mark_reachable(void) {
+  ThreadReg *t;
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      uint32_t i;
+      for (i = 0; i < f->n; i++) {
+        verify_trace(*f->slots[i]);
+      }
+    }
+  }
+  for (PinEnt *p = g_pins; p; p = p->next) {
+    verify_trace(p->payload);
+  }
+  {
+    uint32_t ri;
+    for (ri = 0; ri < g_rem_n; ri++) {
+      verify_trace(g_remset[ri]);
+    }
+  }
+  avant_hash_walk_tls(verify_tls_slot);
+  while (g_work_n) {
+    void *p = g_work[--g_work_n];
+    AvantHeader *h = avant_header(p);
+    uint32_t id = h->type_id;
+    if (id == AVANT_TYPE_BYTES) {
+      continue;
+    }
+    if (id == AVANT_TYPE_PTRS) {
+      size_t n = (size_t)h->size / sizeof(void *);
+      size_t i;
+      for (i = 0; i < n; i++) {
+        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
+      }
+      continue;
+    }
+    if (id >= MAX_TYPES || !g_type_set[id]) {
+      continue;
+    }
+    uint64_t bits = g_type_bits[id];
+    size_t i;
+    for (i = 0; i < 64; i++) {
+      if (bits & (1ULL << i)) {
+        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
+      }
+    }
+  }
+}
+
 static void verify_obj_fields(AvantHeader *h, Block *b) {
   (void)b;
+  if (!(h->flags & AVANT_FLAG_FORWARDED)) {
+    return;
+  }
   void *p = payload_of(h);
   uint32_t id = h->type_id;
   if (id == AVANT_TYPE_BYTES) {
@@ -1751,9 +1829,19 @@ static void verify_obj_fields(AvantHeader *h, Block *b) {
   }
 }
 
+static uint64_t g_verify_left_seen;
+
 static void verify_young_copy(void) {
   ThreadReg *t;
   Block *b;
+  if (g_sm_leftover > g_verify_left_seen) {
+    fprintf(stderr,
+            "avant gc verify: %llu stack words still name from-space "
+            "after rewrite (cumulative %llu)\n",
+            (unsigned long long)(g_sm_leftover - g_verify_left_seen),
+            (unsigned long long)g_sm_leftover);
+    g_verify_left_seen = g_sm_leftover;
+  }
   for (t = g_threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
@@ -1763,6 +1851,7 @@ static void verify_young_copy(void) {
       }
     }
   }
+  verify_mark_reachable();
   for (b = g_to; b; b = b->next) {
     foreach_block_object(b, verify_obj_fields);
   }
