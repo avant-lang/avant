@@ -2,7 +2,15 @@
 
 ## Unreleased
 
-Collector II (on `refactor/collector`, not yet released): the garbage collector got faster and leaner with no language or API change. Root registration is batched at frame entry and reloads are inline, allocation and the write barrier have inline fast paths in generated code, the remembered set is a dirty frontier so young collections scan what changed instead of the whole mature graph, sparse mature blocks are evacuated during full collections, and nursery growth is capped by measured survival with a copy reserve charged softly before allocation. Trees at depth 16 runs about 38% faster than the stage baseline and its peak heap fell from 54.7 MB to 33.7 MB; the `Json::*` and `Etc::Words` workloads are unchanged in wall and memory, and a measured spare-pool prototype for large objects was tried and removed because it moved wall on no workload. New runtime switches, each disabling one mechanism for comparison: `AVANT_GC_REM_FRONTIER=0`, `AVANT_GC_DEFRAG=0`, `AVANT_GC_YOUNG_SIZING=0`, and `AVANT_GC_COPY_RESERVE=0`. `AVANT_GC_STATS=1` additionally reports root, remembered-set, defragmentation, survival, peak-composition, and large-object counters. The speed waves' backend is the `myc-llvm` published with the `safepoints` shard's v0.5.0 release, which the `native`, `seed`, and `release` workflows now download (checked by sha256) for every build and bundle beside `avant` in new release assets.
+### Changed
+
+* Root registration is batched at frame entry, and pointer reloads after a collecting call are inline. There is no per-local or per-slot call.
+* Allocation and the write barrier have inline fast paths in generated code; the runtime call remains the fallback.
+* The garbage collector scans only the remembered objects that changed since the last young collection, instead of every remembered object.
+* Sparse mature blocks are evacuated during full collections and freed whole.
+* Nursery growth is capped by measured survival, and room for the next copy is reserved before allocation. On a binary-trees workload this holds peak heap at 33.7 MB where it previously reached 54.7 MB.
+* `AVANT_GC_STATS=1` reports more counters (roots, remembered set, defragmentation, survival, peak composition, large objects). Each new collector behavior can be disabled separately for comparison: `AVANT_GC_REM_FRONTIER=0`, `AVANT_GC_DEFRAG=0`, `AVANT_GC_YOUNG_SIZING=0`, `AVANT_GC_COPY_RESERVE=0`.
+* Builds and release assets use the `myc-llvm` from the safepoints v0.5.0 release, downloaded and checked by sha256.
 
 ## 0.28.0 - 2026-11-02
 
