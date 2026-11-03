@@ -28,6 +28,10 @@ fn defrag_fixture: String {
   "lib gc {\n  fun avant_gc_collect()\n}\nclass Chunk {\n  v: Int\n  f1: Int\n  f2: Int\n  f3: Int\n  f4: Int\n  f5: Int\n  f6: Int\n  f7: Int\n  f8: Int\n  f9: Int\n  f10: Int\n  f11: Int\n  f12: Int\n  f13: Int\n  f14: Int\n  f15: Int\n  f16: Int\n  f17: Int\n  f18: Int\n  f19: Int\n  f20: Int\n  f21: Int\n  f22: Int\n  f23: Int\n  f24: Int\n  f25: Int\n  f26: Int\n  f27: Int\n  f28: Int\n  f29: Int\n  f30: Int\n  fn initialize(v: Int) {\n    self.v = v\n    self.f30 = v\n  }\n}\nclass Spur {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = Spur.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\nfn build_pruned(warm: Int): Array(Chunk) {\n  flat: Array(Chunk) = []\n  i = 0\n  while i < 8192 {\n    flat.push(Chunk.new(i &+ 1))\n    i = i + 1\n  }\n  warm2 = warm &+ churn(12, 7)\n  keep: Array(Chunk) = []\n  j = 0\n  while j < flat.size {\n    if j % 8 == 0 {\n      keep.push(flat[j])\n    }\n    j = j + 1\n  }\n  if warm2 == 424242 {\n    puts(flat.size)\n  }\n  keep\n}\nfn main: Int {\n  flat = build_pruned(0)\n  gc.avant_gc_collect()\n  gc.avant_gc_collect()\n  warm = churn(2, 13)\n  gc.avant_gc_collect()\n  total = warm &+ flat.size\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v &+ flat[k].f30\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
 }
 
+fn sizing_fixture: String {
+  "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn main: Int {\n  kept: Array(Node) = []\n  sum = 0\n  r = 0\n  while r < 48 {\n    t = make(r, 12)\n    sum = sum &+ check(t, 12)\n    if r % 6 == 5 {\n      kept.push(t)\n    }\n    r = r + 1\n  }\n  k = 0\n  while k < kept.size {\n    sum = sum &+ check(kept[k], 12)\n    k = k + 1\n  }\n  puts(sum)\n  puts(kept.size)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -251,6 +255,50 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out16, want7, "defrag checksums with nursery off")
     } else {
       c.expect(false, "read defrag nursery-off run")
+    }
+    // Survival-capped growth (Collector II Wave 4): retained trees grow
+    // in steps while fresh trees churn and die around them. Whatever
+    // the young threshold does, retained trees must stay reachable and
+    // read back with the same values; a sizing or reserve bug that
+    // loses a survivor breaks the checksum or segfaults.
+    src8 = "/tmp/avant-gcb-${stamp}-sizing.av"
+    bin8 = "/tmp/avant-gcb-${stamp}-sizing.bin"
+    w8 = file_write(src8, sizing_fixture())
+    c.eq_int(w8, 0, "write sizing fixture")
+    code8 = compile_av(compiler, src8, bin8, "/tmp/avant-gcb-${stamp}-sizing.clog")
+    c.eq_int(code8, 0, "compile sizing fixture")
+    want8 = "447162624\n8\n"
+    log17 = "/tmp/avant-gcb-${stamp}.run17"
+    rc17 = run_av_bin(bin8, log17)
+    c.eq_int(rc17, 0, "sizing survivors survive at default young size")
+    if out17 = file_read(log17) {
+      c.eq_str(out17, want8, "sizing checksums at default young size")
+    } else {
+      c.expect(false, "read sizing run")
+    }
+    log18 = "/tmp/avant-gcb-${stamp}.run18"
+    rc18 = run_with_env(bin8, "AVANT_GC_YOUNG_SIZING", "0", log18)
+    c.eq_int(rc18, 0, "sizing survivors survive with growth cap off")
+    if out18 = file_read(log18) {
+      c.eq_str(out18, want8, "sizing checksums with growth cap off")
+    } else {
+      c.expect(false, "read sizing cap-off run")
+    }
+    log19 = "/tmp/avant-gcb-${stamp}.run19"
+    rc19 = run_with_env(bin8, "AVANT_GC_COPY_RESERVE", "0", log19)
+    c.eq_int(rc19, 0, "sizing survivors survive with copy reserve off")
+    if out19 = file_read(log19) {
+      c.eq_str(out19, want8, "sizing checksums with copy reserve off")
+    } else {
+      c.expect(false, "read sizing reserve-off run")
+    }
+    log20 = "/tmp/avant-gcb-${stamp}.run20"
+    rc20 = run_with_env(bin8, "AVANT_YOUNG_MB", "1", log20)
+    c.eq_int(rc20, 0, "sizing survivors survive at 1 MB young size")
+    if out20 = file_read(log20) {
+      c.eq_str(out20, want8, "sizing checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read sizing small-young run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

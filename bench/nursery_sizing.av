@@ -1,0 +1,70 @@
+// Nursery sizing bench (Collector II Wave 4). Run with the built
+// compiler, for example:
+//   sh runtime/build.sh
+//   AVANT_MYC_LLVM=<myc-llvm> ./bin/avant-b compile bench/nursery_sizing.av /tmp/nursery_sizing --release
+//   AVANT_GC_STATS=1 /usr/bin/time -v /tmp/nursery_sizing
+// Alternating phases exercise survival-driven young sizing the way real
+// allocation mixes do: a retained set of trees grows in steps and
+// tenures (high survival while it is young), while between the steps
+// fresh trees are built, checked, and dropped (near-zero survival).
+// A nursery sized from dead volume stays as large as the churn phase;
+// a nursery sized from measured survival should shrink during churn
+// and grow again for the retained steps, cutting peak heap without
+// copying more. The checksum covers retained and dropped trees alike
+// so the work cannot be optimised away.
+
+class Node {
+  item: Int
+  left: Node?
+  right: Node?
+
+  fn initialize(item: Int) {
+    self.item = item
+  }
+}
+
+fn make(item: Int, depth: Int): Node {
+  n = Node.new(item)
+  if depth > 0 {
+    n.left = make(item &* 2, depth - 1)
+    n.right = make(item &* 2 &+ 1, depth - 1)
+  }
+  n
+}
+
+fn check(n: Node, depth: Int): Int {
+  if depth == 0 {
+    return n.item
+  }
+  a = 0
+  if l = n.left {
+    a = check(l, depth - 1)
+  }
+  b = 0
+  if r = n.right {
+    b = check(r, depth - 1)
+  }
+  a &+ b &+ n.item
+}
+
+fn main: Int {
+  kept: Array(Node) = []
+  sum = 0
+  r = 0
+  while r < 640 {
+    t = make(r, 13)
+    sum = sum &+ check(t, 13)
+    if r % 16 == 15 {
+      kept.push(t)
+    }
+    r = r + 1
+  }
+  k = 0
+  while k < kept.size {
+    sum = sum &+ check(kept[k], 13)
+    k = k + 1
+  }
+  puts(sum)
+  puts(kept.size)
+  0
+}

@@ -222,6 +222,27 @@ static uint64_t g_pk_from;
 static uint64_t g_pk_to;
 static uint64_t g_pk_large;
 static uint64_t g_pk_cache;
+/* Survival-capped growth and copy reserve (Collector II Wave 4, step 2,
+ * as amended by Q-W4-6): sticky growth of the young threshold is capped
+ * at YOUNG_SURVIVAL_FACTOR times the probe's measured survival, plus
+ * slack, because the uncapped growth to 42 MiB on trees was the peak
+ * heap driver while a typical probe survives only a few MiB. The
+ * dead-based shrink after low-survival copies stays as it was: sizing
+ * the nursery from survival alone was measured at factors 2, 1.5, and
+ * 1.25 and lost at every one (wall up 26-36% on trees, copied bytes
+ * doubled, the peak itself worse at the two smaller factors), because
+ * a smaller nursery tenures partly-built trees into mature space. The
+ * reserve is the same survival-scaled amount, charged as already spent
+ * by heap-limit decisions outside a collection so a copy always has
+ * its room; inside a collection the reserve is being spent and is not
+ * charged. Kill switches: AVANT_GC_YOUNG_SIZING=0 (the growth cap),
+ * AVANT_GC_COPY_RESERVE=0. */
+static int g_sizing_mode = 1;
+static int g_reserve_mode = 1;
+static uint64_t g_copy_reserve;
+#define YOUNG_SURVIVAL_FACTOR 1.5
+#define YOUNG_SIZING_FLOOR (4ull * 1024ull * 1024ull)
+#define YOUNG_SIZING_SLACK (1ull * 1024ull * 1024ull)
 /* Mature growth that triggers the next full collection. Starts at
  * FULL_BYTES and adapts after every full collection to twice the
  * live set plus slack, so a program with a small live set and heavy
@@ -1069,8 +1090,29 @@ static void note_peak(void) {
   g_pk_large = large;
 }
 
+/* Wave 4 step 2: outside a collection the copy reserve counts as
+ * spent, so fresh block growth stops early enough that the next copy
+ * has its destination room under the heap limit. The charge is soft:
+ * it makes allocation collect earlier, never fail, so the retry after
+ * a collection (g_reserve_retry) and any allocation inside a
+ * collection (where the reserve is what is being spent) are charged
+ * only the true heap bytes. Cached blocks are already owned and are
+ * never refused by this test. */
+static int g_reserve_retry;
+static int heap_block_fits(void) {
+  uint64_t spent;
+  if (!g_heap_max) {
+    return 1;
+  }
+  spent = g_heap_bytes + BLOCK_SIZE;
+  if (!g_collecting && !g_reserve_retry && g_reserve_mode) {
+    spent += g_copy_reserve;
+  }
+  return spent <= g_heap_max;
+}
+
 static Block *new_block(uint8_t space) {
-  if (g_heap_max && g_heap_bytes + BLOCK_SIZE > g_heap_max && g_cache == NULL) {
+  if (!heap_block_fits() && g_cache == NULL) {
     return NULL;
   }
   Block *b = NULL;
@@ -1083,7 +1125,7 @@ static Block *new_block(uint8_t space) {
     b->next = NULL;
     b->hash_next = NULL;
   } else {
-    if (g_heap_max && g_heap_bytes + BLOCK_SIZE > g_heap_max) {
+    if (!heap_block_fits()) {
       return NULL;
     }
     b = calloc(1, sizeof(Block));
@@ -1247,8 +1289,16 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   Block *b = new_block(space);
   if (!b) {
     if (!tried_gc && !g_collecting) {
+      /* The reserve charge is soft (see heap_block_fits): collect,
+       * then retry charged only the true heap bytes, so a reserve
+       * refusal can never become a spurious heap-limit death. */
       collect(1);
-      return place(total, space, 1);
+      g_reserve_retry = 1;
+      {
+        AvantHeader *retry = place(total, space, 1);
+        g_reserve_retry = 0;
+        return retry;
+      }
     }
     die("heap limit");
   }
@@ -1950,6 +2000,12 @@ static int young_pause(uint64_t used, uint64_t surv) {
   if (g_heap_max && g_heap_bytes + g_young_bytes > g_heap_max) {
     return 0;
   }
+  if (g_heap_max && g_reserve_mode &&
+      g_heap_bytes + g_young_bytes + g_copy_reserve > g_heap_max) {
+    /* Pausing would leave the nursery in place with no copy room
+     * under the limit; copy instead (Wave 4 reserve, Q-W4-2). */
+    return 0;
+  }
   dead = used > surv ? used - surv : 0;
   if (dead >= STICKY_MIN && dead >= surv) {
     next = used + (dead - surv) + (64ull * 1024ull);
@@ -1961,6 +2017,21 @@ static int young_pause(uint64_t used, uint64_t surv) {
   }
   if (next > YOUNG_BYTES_MAX) {
     next = YOUNG_BYTES_MAX;
+  }
+  if (g_sizing_mode) {
+    /* Survival cap (Wave 4 step 2, Q-W4-6): growth may not outrun what
+     * the probe just saw survive by more than the factor and slack.
+     * The floor keeps a minimum working nursery when survival reads
+     * near zero; a cap at or below the current threshold simply means
+     * no growth this time, so the copy proceeds instead of pausing. */
+    uint64_t cap =
+        (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv) + YOUNG_SIZING_SLACK;
+    if (cap < YOUNG_SIZING_FLOOR) {
+      cap = YOUNG_SIZING_FLOOR;
+    }
+    if (next > cap) {
+      next = cap;
+    }
   }
   if (next <= g_young_bytes) {
     return 0;
@@ -2509,6 +2580,10 @@ static void collect(int full) {
           int bucket = pct == 0 ? 0 : pct <= 10 ? 1 : pct <= 25 ? 2 : pct <= 50 ? 3 : pct <= 75 ? 4 : 5;
           g_srv_hist[bucket]++;
         }
+        if (g_reserve_mode) {
+          g_copy_reserve =
+              (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
+        }
         rem_scrub();
         reclaim_young_large();
         clear_noted();
@@ -2724,7 +2799,7 @@ static void print_stats(void) {
           "def_blocks=%llu def_live_lines=%llu def_wasted=%llu def_hist=%llu,%llu,%llu,%llu,%llu,%llu "
           "def_evac_blocks=%llu def_evac_bytes=%llu def_freed_blocks=%llu def_skipped=%llu "
           "srv_probes=%llu srv_used=%llu srv_surv=%llu srv_min=%llu srv_max=%llu srv_hist=%llu,%llu,%llu,%llu,%llu,%llu "
-          "yng_min=%llu yng_max=%llu cpy_peak=%llu pk_nursery=%llu pk_mature=%llu pk_from=%llu pk_to=%llu pk_large=%llu pk_cache=%llu\n",
+          "yng_min=%llu yng_max=%llu cpy_peak=%llu pk_nursery=%llu pk_mature=%llu pk_from=%llu pk_to=%llu pk_large=%llu pk_cache=%llu srv_reserve=%llu\n",
           (unsigned long long)g_stats.collections,
           (unsigned long long)g_stats.young_collections,
           (unsigned long long)g_stats.full_collections,
@@ -2785,7 +2860,8 @@ static void print_stats(void) {
           (unsigned long long)g_pk_from,
           (unsigned long long)g_pk_to,
           (unsigned long long)g_pk_large,
-          (unsigned long long)g_pk_cache);
+          (unsigned long long)g_pk_cache,
+          (unsigned long long)g_copy_reserve);
 }
 
 static void init_gc(void) {
@@ -2854,6 +2930,14 @@ static void init_gc(void) {
   {
     const char *v = getenv("AVANT_GC_DEFRAG");
     g_defrag_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
+  }
+  {
+    const char *v = getenv("AVANT_GC_YOUNG_SIZING");
+    g_sizing_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
+  }
+  {
+    const char *v = getenv("AVANT_GC_COPY_RESERVE");
+    g_reserve_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
   }
   g_verify = getenv("AVANT_GC_VERIFY") != NULL;
   if (getenv("AVANT_GC_STATS")) {
