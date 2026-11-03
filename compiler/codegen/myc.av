@@ -519,7 +519,7 @@ pub class MycGen {
     self.c_main = false
     self.self_ty = nil
     self.self_name = ""
-    if fn_is_method(fnn) {
+    if fn_is_method(fnn) && !fnn.type_method {
       if sig = self.find_method_emit(fnn.emit_name) {
         self.return_type = sig.ret
         self.self_name = fn_self_name(fnn)
@@ -557,6 +557,11 @@ pub class MycGen {
       }
       self.emit_plain_func(fnn, sig.params)
       self.c_main = false
+    } else if fnn.type_method {
+      if sig = self.find_method_emit(fnn.emit_name) {
+        self.return_type = sig.ret
+        self.emit_plain_func(fnn, sig.params)
+      }
     }
   }
 
@@ -2760,6 +2765,16 @@ pub class MycGen {
     }
     if ty.is_bool {
       self.line("PUSH false")
+      return
+    }
+    if ty.is_struct {
+      i = ty.fields.size - 1
+      while i >= 0 {
+        self.emit_zero(ty.fields[i].ty)
+        i = i - 1
+      }
+      m = ty_myc(ty)
+      self.line("CREATE :${m}")
       return
     }
     self.line("PUSH 0")

@@ -1,130 +1,69 @@
 #include "avant_rt.h"
 #include "yyjson.h"
 
-#include <math.h>
-#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-#define AVANT_RNG_IM 139968
-#define AVANT_RNG_IA 3877
-#define AVANT_RNG_IC 29573
+/* std.json backing (yyjson). A parsed document lives in one pool buffer
+ * allocated in mature collector space (yyjson_alc_pool_init): the Avant
+ * Json value roots that buffer, interior yyjson pointers never move,
+ * and the collector reclaims the whole document when the last Json is
+ * dropped. Accessors report a missing key or a wrong kind through the
+ * thread-local status, in the zlib/base64 shape. */
+
+/* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
+static __thread int32_t g_json_status;
+static __thread char *g_json_pool;
+
+static void set_status(int32_t code) {
+  g_json_status = code;
+}
+
+int32_t avant_json_take_status(void) {
+  int32_t code = g_json_status;
+  g_json_status = 0;
+  return code;
+}
+
+/* The pool buffer of the most recent successful parse, handed to the
+ * Avant side once so the Json value can root it. */
+char *avant_json_take_pool(void) {
+  char *pool = g_json_pool;
+  g_json_pool = NULL;
+  return pool ? pool : avant_str_empty();
+}
 
 void *avant_json_parse(const char *s) {
-  if (!s) {
-    s = "";
-  }
-  return yyjson_read(s, avant_str_n(s), 0);
-}
-
-void avant_json_free(void *doc) {
-  if (doc) {
-    yyjson_doc_free((yyjson_doc *)doc);
-  }
-}
-
-static int32_t rng_step(int32_t *last) {
-  *last = (*last * AVANT_RNG_IA + AVANT_RNG_IC) % AVANT_RNG_IM;
-  return *last;
-}
-
-static double rng_float(int32_t *last) {
-  rng_step(last);
-  return (double)(*last) / (double)AVANT_RNG_IM;
-}
-
-static double round8(double x) {
-  return floor(x * 100000000.0 + 0.5) / 100000000.0;
-}
-
-static const char JSON_HDR[] = "{\"coordinates\":[";
-static const char JSON_FTR[] = "],\"info\":\"some info\"}";
-
-static void json_write_body(void *buf, int32_t n) {
-  int32_t last = 42;
-  int32_t i;
-  int32_t need = 32 + (n > 0 ? n * 64 : 0);
-  avant_buf_clear(buf);
-  avant_buf_ensure(buf, need);
-  avant_buf_append(buf, JSON_HDR, (int32_t)(sizeof(JSON_HDR) - 1));
-  for (i = 0; i < n; i++) {
-    char tmp[80];
-    int k;
-    double x = round8(rng_float(&last));
-    double y = round8(rng_float(&last));
-    double z = round8(rng_float(&last));
-    rng_float(&last);
-    rng_step(&last);
-    if (i > 0) {
-      avant_buf_append(buf, ",", 1);
+  size_t n = avant_str_n(s);
+  int attempt;
+  set_status(0);
+  g_json_pool = NULL;
+  for (attempt = 0; attempt < 2; attempt++) {
+    size_t pool_n = n * (attempt == 0 ? 24 : 96) + 8192;
+    yyjson_alc alc;
+    yyjson_read_err err;
+    yyjson_doc *doc;
+    char *pool;
+    avant_alloc_in_mature(1);
+    pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
+    avant_alloc_in_mature(0);
+    if (!yyjson_alc_pool_init(&alc, pool, pool_n)) {
+      set_status(2);
+      return NULL;
     }
-    k = snprintf(tmp, sizeof(tmp), "{\"x\":%.8f,\"y\":%.8f,\"z\":%.8f}", x, y, z);
-    if (k > 0) {
-      avant_buf_append(buf, tmp, k);
+    doc = yyjson_read_opts((char *)(s ? s : ""), n, 0, &alc, &err);
+    if (doc) {
+      g_json_pool = pool;
+      return doc;
+    }
+    if (err.code != YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
+      set_status(1);
+      return NULL;
     }
   }
-  avant_buf_append(buf, JSON_FTR, (int32_t)(sizeof(JSON_FTR) - 1));
-}
-
-void avant_json_gen_into(void *buf, int32_t n) {
-  if (n < 0) {
-    n = 0;
-  }
-  json_write_body(buf, n);
-}
-
-char *avant_json_gen_body(int32_t n) {
-  if (n < 0) {
-    n = 0;
-  }
-  avant_gc_defer_enter();
-  void *buf = avant_buf_new(n > 0 ? n * 48 : 32);
-  json_write_body(buf, n);
-  char *out = avant_buf_to_str(buf);
-  avant_gc_defer_leave();
-  return out;
-}
-
-int32_t avant_json_get_int(void *docp, const char *key, int32_t *found) {
-  yyjson_doc *doc = (yyjson_doc *)docp;
-  if (found) {
-    *found = 0;
-  }
-  if (!doc || !key) {
-    return 0;
-  }
-  yyjson_val *root = yyjson_doc_get_root(doc);
-  if (!root || !yyjson_is_obj(root)) {
-    return 0;
-  }
-  yyjson_val *v = yyjson_obj_get(root, key);
-  if (!v || !yyjson_is_int(v)) {
-    return 0;
-  }
-  if (found) {
-    *found = 1;
-  }
-  return (int32_t)yyjson_get_int(v);
-}
-
-const char *avant_json_get_str(void *docp, const char *key, int32_t *found) {
-  yyjson_doc *doc = (yyjson_doc *)docp;
-  if (found) {
-    *found = 0;
-  }
-  if (!doc || !key) {
-    return "";
-  }
-  yyjson_val *root = yyjson_doc_get_root(doc);
-  if (!root || !yyjson_is_obj(root)) {
-    return "";
-  }
-  yyjson_val *v = yyjson_obj_get(root, key);
-  if (!v || !yyjson_is_str(v)) {
-    return "";
-  }
-  if (found) {
-    *found = 1;
-  }
-  return yyjson_get_str(v);
+  set_status(2);
+  return NULL;
 }
 
 void *avant_json_root(void *docp) {
@@ -135,66 +74,257 @@ void *avant_json_root(void *docp) {
   return yyjson_doc_get_root(doc);
 }
 
-void *avant_json_obj_get(void *valp, const char *key) {
-  yyjson_val *v = (yyjson_val *)valp;
+/* Kinds: 0 no value, 1 null, 2 bool, 3 int, 4 float, 5 string, 6 array,
+ * 7 object. */
+int32_t avant_json_kind(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v) {
+    return 0;
+  }
+  if (yyjson_is_null(v)) {
+    return 1;
+  }
+  if (yyjson_is_bool(v)) {
+    return 2;
+  }
+  if (yyjson_is_int(v) || yyjson_is_uint(v)) {
+    return 3;
+  }
+  if (yyjson_is_num(v)) {
+    return 4;
+  }
+  if (yyjson_is_str(v)) {
+    return 5;
+  }
+  if (yyjson_is_arr(v)) {
+    return 6;
+  }
+  if (yyjson_is_obj(v)) {
+    return 7;
+  }
+  return 0;
+}
+
+void *avant_json_get(void *nodep, const char *key) {
+  yyjson_val *v = (yyjson_val *)nodep;
   if (!v || !key || !yyjson_is_obj(v)) {
     return NULL;
   }
   return yyjson_obj_get(v, key);
 }
 
-int32_t avant_json_arr_len(void *valp) {
-  yyjson_val *v = (yyjson_val *)valp;
-  if (!v || !yyjson_is_arr(v)) {
-    return 0;
-  }
-  return (int32_t)yyjson_arr_size(v);
-}
-
-void *avant_json_arr_get(void *valp, int32_t i) {
-  yyjson_val *v = (yyjson_val *)valp;
-  if (!v || !yyjson_is_arr(v) || i < 0) {
+void *avant_json_at(void *nodep, int32_t i) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || i < 0 || !yyjson_is_arr(v)) {
     return NULL;
   }
   return yyjson_arr_get(v, (size_t)i);
 }
 
-double avant_json_as_f64(void *valp, int32_t *found) {
-  yyjson_val *v = (yyjson_val *)valp;
-  if (found) {
-    *found = 0;
+void *avant_json_first(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_arr(v)) {
+    return NULL;
   }
+  return yyjson_arr_get_first(v);
+}
+
+/* One sibling step. Only meaningful while a next sibling exists; the
+ * Avant iterator tracks the element count, so it never steps past. */
+void *avant_json_next(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v) {
+    return NULL;
+  }
+  return unsafe_yyjson_get_next(v);
+}
+
+typedef struct {
+  void *buf;
+  int32_t size;
+  int32_t cap;
+} AvantArrayBox;
+
+/* One sequential C traversal that projects a numeric field of every
+ * element into a collector Array(Float64). NULL with status 1 when the
+ * receiver is not an array or any element lacks a numeric field. */
+void *avant_json_f64s(void *nodep, const char *key) {
+  yyjson_val *arr = (yyjson_val *)nodep;
+  yyjson_arr_iter iter;
+  yyjson_val *el;
+  AvantArrayBox *out;
+  double *buf = NULL;
+  size_t n;
+  size_t i = 0;
+  set_status(0);
+  if (!arr || !key || !yyjson_is_arr(arr)) {
+    set_status(1);
+    return NULL;
+  }
+  n = yyjson_arr_size(arr);
+  avant_gc_defer_enter();
+  out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  if (n > 0) {
+    buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
+  }
+  out->buf = buf;
+  out->size = (int32_t)n;
+  out->cap = (int32_t)n;
+  iter = yyjson_arr_iter_with(arr);
+  while ((el = yyjson_arr_iter_next(&iter)) != NULL) {
+    yyjson_val *field = yyjson_is_obj(el) ? yyjson_obj_get(el, key) : NULL;
+    if (!field || !yyjson_is_num(field)) {
+      set_status(1);
+      avant_gc_defer_leave();
+      return NULL;
+    }
+    buf[i] = yyjson_get_num(field);
+    i++;
+  }
+  avant_gc_defer_leave();
+  return out;
+}
+
+int32_t avant_json_len(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v) {
+    return 0;
+  }
+  if (yyjson_is_arr(v)) {
+    return (int32_t)yyjson_arr_size(v);
+  }
+  if (yyjson_is_obj(v)) {
+    return (int32_t)yyjson_obj_size(v);
+  }
+  return 0;
+}
+
+static char *copy_str(const char *p, size_t n) {
+  char *out;
+  avant_gc_defer_enter();
+  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  if (p && n > 0) {
+    memcpy(out, p, n);
+  }
+  out[n] = 0;
+  avant_str_tag(out);
+  avant_gc_defer_leave();
+  return out;
+}
+
+static int32_t node_int(yyjson_val *v) {
   if (!v || !yyjson_is_num(v)) {
+    set_status(1);
+    return 0;
+  }
+  set_status(0);
+  if (yyjson_is_int(v)) {
+    return (int32_t)yyjson_get_sint(v);
+  }
+  if (yyjson_is_uint(v)) {
+    return (int32_t)yyjson_get_uint(v);
+  }
+  return (int32_t)yyjson_get_real(v);
+}
+
+static double node_f64(yyjson_val *v) {
+  if (!v || !yyjson_is_num(v)) {
+    set_status(1);
     return 0.0;
   }
-  if (found) {
-    *found = 1;
-  }
+  set_status(0);
   return yyjson_get_num(v);
 }
 
-double avant_json_obj_f64(void *valp, const char *key, int32_t *found) {
-  return avant_json_as_f64(avant_json_obj_get(valp, key), found);
+static int32_t node_bool(yyjson_val *v) {
+  if (!v || !yyjson_is_bool(v)) {
+    set_status(1);
+    return 0;
+  }
+  set_status(0);
+  return yyjson_get_bool(v) ? 1 : 0;
 }
 
-double avant_json_arr_sum_f64(void *arrp, const char *key) {
-  yyjson_val *arr = (yyjson_val *)arrp;
-  yyjson_val *el;
-  double sum = 0.0;
-  size_t idx;
-  size_t max;
-  if (!arr || !key || !yyjson_is_arr(arr)) {
-    return 0.0;
+static char *node_str(yyjson_val *v) {
+  if (!v || !yyjson_is_str(v)) {
+    set_status(1);
+    return avant_str_empty();
   }
-  yyjson_arr_foreach(arr, idx, max, el) {
-    yyjson_val *v;
-    if (!el || !yyjson_is_obj(el)) {
-      continue;
-    }
-    v = yyjson_obj_get(el, key);
-    if (v && yyjson_is_num(v)) {
-      sum += yyjson_get_num(v);
-    }
+  set_status(0);
+  return copy_str(yyjson_get_str(v), yyjson_get_len(v));
+}
+
+int32_t avant_json_as_int(void *nodep) {
+  return node_int((yyjson_val *)nodep);
+}
+
+int32_t avant_json_obj_int(void *nodep, const char *key) {
+  return node_int((yyjson_val *)avant_json_get(nodep, key));
+}
+
+double avant_json_as_f64(void *nodep) {
+  return node_f64((yyjson_val *)nodep);
+}
+
+double avant_json_obj_f64(void *nodep, const char *key) {
+  return node_f64((yyjson_val *)avant_json_get(nodep, key));
+}
+
+int32_t avant_json_as_bool(void *nodep) {
+  return node_bool((yyjson_val *)nodep);
+}
+
+int32_t avant_json_obj_bool(void *nodep, const char *key) {
+  return node_bool((yyjson_val *)avant_json_get(nodep, key));
+}
+
+char *avant_json_as_str(void *nodep) {
+  return node_str((yyjson_val *)nodep);
+}
+
+char *avant_json_obj_str(void *nodep, const char *key) {
+  return node_str((yyjson_val *)avant_json_get(nodep, key));
+}
+
+char *avant_json_key_at(void *nodep, int32_t i) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  yyjson_val *key;
+  yyjson_obj_iter iter;
+  int32_t at = 0;
+  set_status(0);
+  if (!v || i < 0 || !yyjson_is_obj(v)) {
+    set_status(1);
+    return avant_str_empty();
   }
-  return sum;
+  iter = yyjson_obj_iter_with(v);
+  while ((key = yyjson_obj_iter_next(&iter)) != NULL) {
+    if (at == i) {
+      return copy_str(yyjson_get_str(key), yyjson_get_len(key));
+    }
+    at++;
+  }
+  set_status(1);
+  return avant_str_empty();
+}
+
+/* The node's own JSON text, copied into collector memory. */
+char *avant_json_text(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  size_t len = 0;
+  char *raw;
+  if (!v) {
+    set_status(1);
+    return avant_str_empty();
+  }
+  raw = yyjson_val_write_opts(v, 0, NULL, &len, NULL);
+  if (!raw) {
+    set_status(1);
+    return avant_str_empty();
+  }
+  set_status(0);
+  {
+    char *out = copy_str(raw, len);
+    free(raw);
+    return out;
+  }
 }

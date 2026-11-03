@@ -44,6 +44,11 @@ pub fn diag_puts(s: String) {
   dummy = posix.write(2, line, line.size)
 }
 
+pub fn out_puts(s: String) {
+  line = "${s}\n"
+  dummy = posix.write(1, line, line.size)
+}
+
 pub fn diag_exit(code: Int) {
   posix.exit(code)
 }
@@ -258,14 +263,12 @@ pub fn runtime_object_names: Array(String) {
   names.push("avant_hash.o")
   names.push("avant_array.o")
   names.push("avant_task.o")
-  names.push("avant_json.o")
   names.push("avant_http.o")
   names.push("avant_wide.o")
   names.push("avant_codec.o")
   names.push("avant_re.o")
   names.push("avant_io.o")
   names.push("avant_cov.o")
-  names.push("yyjson.o")
   names.push("us_bsd.o")
   names.push("us_context.o")
   names.push("us_loop.o")
@@ -368,6 +371,10 @@ pub fn fill_std_link(program: Program, box: IrBox) {
     if str_eq(program.mods[i].name, "std.base64") {
       box.std_objects.push("${root}/runtime/build/avant_base64.o")
       box.std_objects.push("${root}/runtime/build/libbase64.o")
+    }
+    if str_eq(program.mods[i].name, "std.json") {
+      box.std_objects.push("${root}/runtime/build/avant_json.o")
+      box.std_objects.push("${root}/runtime/build/yyjson.o")
     }
     i = i + 1
   }

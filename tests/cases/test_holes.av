@@ -1,6 +1,7 @@
 import harness
 import std.zlib
 import std.base64
+import std.json
 
 fn test_holes(c: Checks) {
   c.suite("tests/cases/test_holes.av")
@@ -34,31 +35,40 @@ fn test_holes(c: Checks) {
     c.expect(false, "zlib roundtrip")
   }
 
-  doc = json_parse("{\"coordinates\":[{\"x\":1.0,\"y\":2.0,\"z\":3.0}]}")
-  root = json_root(doc)
-  if coords = json_get(root, "coordinates") {
-    if cell = json_at(coords, 0) {
-      if x = json_f64(cell, "x") {
-        if y = json_f64(cell, "y") {
-          if z = json_f64(cell, "z") {
-            c.eq_int((x + y + z).to_i, 6, "json walk")
+  if doc = Json.parse("{\"coordinates\":[{\"x\":1.0,\"y\":2.0,\"z\":3.0}]}") {
+    if coords = doc.get("coordinates") {
+      if cell = coords.at(0) {
+        if x = cell.f64("x") {
+          if y = cell.f64("y") {
+            if z = cell.f64("z") {
+              c.eq_int((x + y + z).to_i, 6, "json walk")
+            } else {
+              c.expect(false, "json walk z")
+            }
           } else {
-            c.expect(false, "json walk z")
+            c.expect(false, "json walk y")
           }
         } else {
-          c.expect(false, "json walk y")
+          c.expect(false, "json walk x")
         }
       } else {
-        c.expect(false, "json walk x")
+        c.expect(false, "at")
       }
+      sum = 0.0
+      ci = 0
+      while ci < coords.len {
+        if cell2 = coords.at(ci) {
+          sum = sum + (cell2.f64("x") ?? 0.0) + (cell2.f64("y") ?? 0.0) + (cell2.f64("z") ?? 0.0)
+        }
+        ci = ci + 1
+      }
+      c.eq_int(sum.to_i, 6, "coordinate sum")
     } else {
-      c.expect(false, "json_at")
+      c.expect(false, "get coordinates")
     }
-    c.eq_int(json_sum_f64(coords, "x").to_i + json_sum_f64(coords, "y").to_i + json_sum_f64(coords, "z").to_i, 6, "json_sum_f64")
   } else {
-    c.expect(false, "json_get coordinates")
+    c.expect(false, "parse")
   }
-  json_free(doc)
 
   hs = Hash(String, Int).new
   c.eq_int(hs.inc_slice("ab ab", 0, 2), 1, "inc_slice 1")
@@ -79,11 +89,10 @@ fn test_holes(c: Checks) {
   cs = checksum_f64(1.0)
   c.expect(cs != 0, "checksum_f64")
   c.eq_int(sqrt(4.0).to_i, 2, "sqrt")
-  body = json_gen_body(0)
-  c.eq_str(str_slice(body, 0, 15), "{\"coordinates\":", "json_gen_body")
   jb = buf_new(64)
-  json_gen_into(jb, 0)
-  c.expect(jb.starts_with("{\"coordinates\":"), "json_gen_into")
+  gen = JsonBuilder.into(jb)
+  gen.obj.key("coordinates").arr.end.set("info", "some info").end
+  c.expect(jb.starts_with("{\"coordinates\":"), "json builder into")
   re = re_compile("a+", 0)
   c.eq_int(re_find(re, "xxaa", 0), 1, "re_find")
   c.eq_int(re_m0(), 2, "re_m0")

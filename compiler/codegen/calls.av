@@ -14,6 +14,15 @@ import re2c_pat
 import codegen.myc
 
 pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
+  if expr.type_call {
+    if sig = codegen_self.find_method_emit(expr.resolved) {
+      codegen_self.emit_typed_args(expr.args, sig.params)
+      codegen_self.line("CALL :${expr.resolved}")
+    } else {
+      codegen_self.emit_call_named(expr.resolved, expr.args)
+    }
+    return
+  }
   if expr.indirect {
     codegen_self.emit_indirect(expr)
     return
@@ -203,13 +212,6 @@ pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
     codegen_self.line("CALL :avant_str_to_f_slice")
     return
   }
-  if str_eq(expr.callee, "json_free") {
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_json_free")
-    return
-  }
   if str_eq(expr.callee, "sha256") {
     if expr.args.size > 0 {
       codegen_self.emit_expr(expr.args[0])
@@ -306,30 +308,6 @@ pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
     codegen_self.line("UNARY :sqrt")
     return
   }
-  if str_eq(expr.callee, "json_root") {
-    codegen_self.emit_json_root(expr)
-    return
-  }
-  if str_eq(expr.callee, "json_get") {
-    codegen_self.emit_json_obj_get(expr)
-    return
-  }
-  if str_eq(expr.callee, "json_len") {
-    codegen_self.emit_json_len(expr)
-    return
-  }
-  if str_eq(expr.callee, "json_at") {
-    codegen_self.emit_json_at(expr)
-    return
-  }
-  if str_eq(expr.callee, "json_f64") {
-    codegen_self.emit_json_f64(expr)
-    return
-  }
-  if str_eq(expr.callee, "json_sum_f64") {
-    codegen_self.emit_json_sum_f64(expr)
-    return
-  }
   if str_eq(expr.callee, "wide_op") {
     if expr.args.size > 4 {
       codegen_self.emit_expr(expr.args[4])
@@ -399,38 +377,6 @@ pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
       codegen_self.emit_expr(expr.args[0])
     }
     codegen_self.line("CALL :avant_buf_new")
-    return
-  }
-  if str_eq(expr.callee, "json_parse") {
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_json_parse")
-    return
-  }
-  if str_eq(expr.callee, "json_gen_body") {
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_json_gen_body")
-    return
-  }
-  if str_eq(expr.callee, "json_gen_into") {
-    if expr.args.size > 1 {
-      codegen_self.emit_expr(expr.args[1])
-    }
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_json_gen_into")
-    return
-  }
-  if str_eq(expr.callee, "json_int") {
-    codegen_self.emit_json_get(expr, false)
-    return
-  }
-  if str_eq(expr.callee, "json_str") {
-    codegen_self.emit_json_get(expr, true)
     return
   }
   if str_eq(expr.callee, "http_roundtrip") {
@@ -1194,220 +1140,6 @@ pub fn (codegen_self: MycGen) emit_join(expr: Expr) {
     codegen_self.emit_expr(recv)
   }
   codegen_self.line("CALL :avant_join")
-}
-
-pub fn (codegen_self: MycGen) emit_json_get(expr: Expr, as_str: Bool) {
-  found = codegen_self.new_temp
-  codegen_self.line("PUSH 0")
-  codegen_self.line("LOCAL :${found} :i32")
-  codegen_self.line("STORE")
-  codegen_self.emit_expr(expr.args[1])
-  key = codegen_self.new_temp
-  codegen_self.line("LOCAL :${key} :ptr<u8>")
-  codegen_self.line("STORE")
-  codegen_self.emit_expr(expr.args[0])
-  doc = codegen_self.new_temp
-  codegen_self.line("LOCAL :${doc} :ptr<void>")
-  codegen_self.line("STORE")
-  codegen_self.line("LOCAL :${found}")
-  codegen_self.line("ADDR")
-  codegen_self.line("LOCAL :${key}")
-  codegen_self.line("LOCAL :${doc}")
-  val_ty = ty_int()
-  if as_str {
-    codegen_self.line("CALL :avant_json_get_str")
-    val_ty = ty_string()
-  } else {
-    codegen_self.line("CALL :avant_json_get_int")
-    val_ty = ty_int()
-  }
-  val = codegen_self.new_temp
-  vm = ty_myc(val_ty)
-  codegen_self.line("LOCAL :${val} :${vm}")
-  codegen_self.line("STORE")
-  codegen_self.ensure_root(val, val_ty)
-  want = expr_ty(expr)
-  wm = ty_myc(want)
-  slot = codegen_self.new_temp
-  codegen_self.line("LOCAL :${found}")
-  codegen_self.line("PUSH 1")
-  codegen_self.line("BINARY :eq")
-  codegen_self.line("IF")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.line("THEN")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.line("LOCAL :${val}")
-  codegen_self.emit_wrap_union(val_ty, want)
-  codegen_self.line("LOCAL :${slot} :${wm}")
-  codegen_self.line("STORE")
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.line("ELSE")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.emit_zero(ty_nil())
-  codegen_self.emit_wrap_union(ty_nil(), want)
-  codegen_self.line("LOCAL :${slot} :${wm}")
-  codegen_self.line("STORE")
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.line("ENDIF")
-  codegen_self.line("LOCAL :${slot}")
-}
-
-pub fn (codegen_self: MycGen) emit_nullable_ptr {
-  ptr_ty = ty_ptr(ty_void())
-  want = ty_nilable(ptr_ty)
-  val = codegen_self.new_temp
-  codegen_self.line("LOCAL :${val} :ptr<void>")
-  codegen_self.line("STORE")
-  codegen_self.ensure_root(val, ptr_ty)
-  held = codegen_self.new_temp
-  codegen_self.line("LOCAL :${val}")
-  codegen_self.line("PUSH 0")
-  codegen_self.line("AS :ptr<void>")
-  codegen_self.line("BINARY :not_eq")
-  codegen_self.line("IF")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.line("THEN")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.line("LOCAL :${val}")
-  codegen_self.emit_wrap_union(ptr_ty, want)
-  wm = ty_myc(want)
-  codegen_self.line("LOCAL :${held} :${wm}")
-  codegen_self.line("STORE")
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.line("ELSE")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.emit_zero(ty_nil())
-  codegen_self.emit_wrap_union(ty_nil(), want)
-  codegen_self.line("LOCAL :${held} :${wm}")
-  codegen_self.line("STORE")
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.line("ENDIF")
-  codegen_self.line("LOCAL :${held}")
-}
-
-pub fn (codegen_self: MycGen) emit_json_root(expr: Expr) {
-  if expr.args.size > 0 {
-    codegen_self.emit_expr(expr.args[0])
-  }
-  codegen_self.line("CALL :avant_json_root")
-}
-
-pub fn (codegen_self: MycGen) emit_json_obj_get(expr: Expr) {
-  if expr.args.size > 1 {
-    codegen_self.emit_expr(expr.args[1])
-  }
-  key = codegen_self.new_temp
-  codegen_self.line("LOCAL :${key} :ptr<u8>")
-  codegen_self.line("STORE")
-  if expr.args.size > 0 {
-    codegen_self.emit_expr(expr.args[0])
-  }
-  obj = codegen_self.new_temp
-  codegen_self.line("LOCAL :${obj} :ptr<void>")
-  codegen_self.line("STORE")
-  codegen_self.line("LOCAL :${key}")
-  codegen_self.line("LOCAL :${obj}")
-  codegen_self.line("CALL :avant_json_obj_get")
-  codegen_self.emit_nullable_ptr
-}
-
-pub fn (codegen_self: MycGen) emit_json_len(expr: Expr) {
-  if expr.args.size > 0 {
-    codegen_self.emit_expr(expr.args[0])
-  }
-  codegen_self.line("CALL :avant_json_arr_len")
-}
-
-pub fn (codegen_self: MycGen) emit_json_at(expr: Expr) {
-  if expr.args.size > 1 {
-    codegen_self.emit_expr(expr.args[1])
-  }
-  idx = codegen_self.new_temp
-  codegen_self.line("LOCAL :${idx} :i32")
-  codegen_self.line("STORE")
-  if expr.args.size > 0 {
-    codegen_self.emit_expr(expr.args[0])
-  }
-  arr = codegen_self.new_temp
-  codegen_self.line("LOCAL :${arr} :ptr<void>")
-  codegen_self.line("STORE")
-  codegen_self.line("LOCAL :${idx}")
-  codegen_self.line("LOCAL :${arr}")
-  codegen_self.line("CALL :avant_json_arr_get")
-  codegen_self.emit_nullable_ptr
-}
-
-pub fn (codegen_self: MycGen) emit_json_f64(expr: Expr) {
-  found = codegen_self.new_temp
-  codegen_self.line("PUSH 0")
-  codegen_self.line("LOCAL :${found} :i32")
-  codegen_self.line("STORE")
-  if expr.args.size > 1 {
-    codegen_self.emit_expr(expr.args[1])
-  }
-  key = codegen_self.new_temp
-  codegen_self.line("LOCAL :${key} :ptr<u8>")
-  codegen_self.line("STORE")
-  if expr.args.size > 0 {
-    codegen_self.emit_expr(expr.args[0])
-  }
-  obj = codegen_self.new_temp
-  codegen_self.line("LOCAL :${obj} :ptr<void>")
-  codegen_self.line("STORE")
-  codegen_self.line("LOCAL :${found}")
-  codegen_self.line("ADDR")
-  codegen_self.line("LOCAL :${key}")
-  codegen_self.line("LOCAL :${obj}")
-  codegen_self.line("CALL :avant_json_obj_f64")
-  val_ty = ty_float()
-  val = codegen_self.new_temp
-  codegen_self.line("LOCAL :${val} :f64")
-  codegen_self.line("STORE")
-  want = ty_nilable(val_ty)
-  held = codegen_self.new_temp
-  codegen_self.line("LOCAL :${found}")
-  codegen_self.line("PUSH 1")
-  codegen_self.line("BINARY :eq")
-  codegen_self.line("IF")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.line("THEN")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.line("LOCAL :${val}")
-  codegen_self.emit_wrap_union(val_ty, want)
-  wm = ty_myc(want)
-  codegen_self.line("LOCAL :${held} :${wm}")
-  codegen_self.line("STORE")
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.line("ELSE")
-  codegen_self.indent = codegen_self.indent + 1
-  codegen_self.emit_zero(ty_nil())
-  codegen_self.emit_wrap_union(ty_nil(), want)
-  codegen_self.line("LOCAL :${held} :${wm}")
-  codegen_self.line("STORE")
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.indent = codegen_self.indent - 1
-  codegen_self.line("ENDIF")
-  codegen_self.line("LOCAL :${held}")
-}
-
-pub fn (codegen_self: MycGen) emit_json_sum_f64(expr: Expr) {
-  if expr.args.size > 1 {
-    codegen_self.emit_expr(expr.args[1])
-  }
-  key = codegen_self.new_temp
-  codegen_self.line("LOCAL :${key} :ptr<u8>")
-  codegen_self.line("STORE")
-  if expr.args.size > 0 {
-    codegen_self.emit_expr(expr.args[0])
-  }
-  arr = codegen_self.new_temp
-  codegen_self.line("LOCAL :${arr} :ptr<void>")
-  codegen_self.line("STORE")
-  codegen_self.line("LOCAL :${key}")
-  codegen_self.line("LOCAL :${arr}")
-  codegen_self.line("CALL :avant_json_arr_sum_f64")
 }
 
 pub fn (codegen_self: MycGen) emit_opt_cstr(expr: Expr, cname: String) {

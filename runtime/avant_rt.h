@@ -303,18 +303,26 @@ void avant_cov_init(const char *map_path);
 void avant_cov_hit(int32_t slot);
 
 void *avant_json_parse(const char *s);
-void avant_json_free(void *doc);
-char *avant_json_gen_body(int32_t n);
-void avant_json_gen_into(void *buf, int32_t n);
-int32_t avant_json_get_int(void *doc, const char *key, int32_t *found);
-const char *avant_json_get_str(void *doc, const char *key, int32_t *found);
+int32_t avant_json_take_status(void);
+char *avant_json_take_pool(void);
 void *avant_json_root(void *doc);
-void *avant_json_obj_get(void *val, const char *key);
-int32_t avant_json_arr_len(void *val);
-void *avant_json_arr_get(void *val, int32_t i);
-double avant_json_as_f64(void *val, int32_t *found);
-double avant_json_obj_f64(void *val, const char *key, int32_t *found);
-double avant_json_arr_sum_f64(void *arr, const char *key);
+int32_t avant_json_kind(void *node);
+void *avant_json_get(void *node, const char *key);
+void *avant_json_at(void *node, int32_t i);
+void *avant_json_first(void *node);
+void *avant_json_next(void *node);
+void *avant_json_f64s(void *node, const char *key);
+int32_t avant_json_len(void *node);
+int32_t avant_json_as_int(void *node);
+int32_t avant_json_obj_int(void *node, const char *key);
+double avant_json_as_f64(void *node);
+double avant_json_obj_f64(void *node, const char *key);
+int32_t avant_json_as_bool(void *node);
+int32_t avant_json_obj_bool(void *node, const char *key);
+char *avant_json_as_str(void *node);
+char *avant_json_obj_str(void *node, const char *key);
+char *avant_json_key_at(void *node, int32_t i);
+char *avant_json_text(void *node);
 
 const char *avant_http_roundtrip(const char *body);
 
