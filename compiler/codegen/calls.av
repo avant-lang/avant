@@ -15,6 +15,43 @@ import codegen.myc
 
 pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
   if expr.type_call {
+    if str_eq(expr.resolved, "Regex__compile") {
+      if expr.args.size >= 2 {
+        rid = codegen_self.re2c_call_id(expr.args[0], expr.args[1])
+        if rid > 0 {
+          groups = codegen_self.re2c_call_groups(rid)
+          tmps: Array(String) = []
+          t1 = codegen_self.new_temp
+          codegen_self.line("PUSH ${rid}")
+          codegen_self.line("LOCAL :${t1} :i32")
+          codegen_self.line("STORE")
+          tmps.push(t1)
+          t2 = codegen_self.new_temp
+          codegen_self.line("PUSH ${groups}")
+          codegen_self.line("LOCAL :${t2} :i32")
+          codegen_self.line("STORE")
+          tmps.push(t2)
+          codegen_self.emit_expr(expr.args[0])
+          t3 = codegen_self.new_temp
+          codegen_self.line("LOCAL :${t3} :ptr<u8>")
+          codegen_self.line("STORE")
+          codegen_self.ensure_root(t3, expr_ty(expr.args[0]))
+          tmps.push(t3)
+          codegen_self.emit_expr(expr.args[1])
+          t4 = codegen_self.new_temp
+          codegen_self.line("LOCAL :${t4} :bool")
+          codegen_self.line("STORE")
+          tmps.push(t4)
+          i = tmps.size - 1
+          while i >= 0 {
+            codegen_self.line("LOCAL :${tmps[i]}")
+            i = i - 1
+          }
+          codegen_self.line("CALL :regex_from_re2c")
+          return
+        }
+      }
+    }
     if sig = codegen_self.find_method_emit(expr.resolved) {
       codegen_self.emit_typed_args(expr.args, sig.params)
       codegen_self.line("CALL :${expr.resolved}")
@@ -231,63 +268,6 @@ pub fn (codegen_self: MycGen) emit_call(expr: Expr) {
       codegen_self.emit_expr(expr.args[0])
     }
     codegen_self.line("CALL :avant_sha256_word0")
-    return
-  }
-  if str_eq(expr.callee, "re_count") {
-    if expr.args.size == 3 {
-      rid = codegen_self.re2c_call_id(expr.args[0], expr.args[2])
-      if rid > 0 {
-        codegen_self.emit_expr(expr.args[1])
-        codegen_self.line("PUSH ${rid}")
-        codegen_self.line("CALL :avant_re2c_count")
-        return
-      }
-    }
-    if expr.args.size > 2 {
-      codegen_self.emit_expr(expr.args[2])
-    }
-    if expr.args.size > 1 {
-      codegen_self.emit_expr(expr.args[1])
-    }
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_re_count")
-    return
-  }
-  if str_eq(expr.callee, "re_compile") {
-    if expr.args.size == 2 {
-      rid = codegen_self.re2c_call_id(expr.args[0], expr.args[1])
-      if rid > 0 {
-        codegen_self.line("PUSH ${rid}")
-        codegen_self.line("CALL :avant_re2c_handle")
-        return
-      }
-    }
-    if expr.args.size > 1 {
-      codegen_self.emit_expr(expr.args[1])
-    }
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_re_compile")
-    return
-  }
-  if str_eq(expr.callee, "re_find") {
-    if expr.args.size > 2 {
-      codegen_self.emit_expr(expr.args[2])
-    }
-    if expr.args.size > 1 {
-      codegen_self.emit_expr(expr.args[1])
-    }
-    if expr.args.size > 0 {
-      codegen_self.emit_expr(expr.args[0])
-    }
-    codegen_self.line("CALL :avant_re_find")
-    return
-  }
-  if codegen_self.re_mark_callee(expr.callee) {
-    codegen_self.line("CALL :avant_${expr.callee}")
     return
   }
   if str_eq(expr.callee, "hash_last_key") {
@@ -1424,6 +1404,11 @@ pub fn (codegen_self: MycGen) emit_typed_args(args: Array(Expr), types: Array(Ty
     arg = args[i]
     codegen_self.emit_expr(arg)
     got = expr_ty(arg)
+    if got.is_void {
+      if i < types.size {
+        got = types[i]
+      }
+    }
     if i < types.size {
       codegen_self.emit_coerce(got, types[i])
       if types[i].is_union {
@@ -1523,27 +1508,30 @@ pub fn (codegen_self: MycGen) re2c_call_id(pat: Expr, flags: Expr): Int {
     return 0
   }
   if flags.kind == ex_int() {
-  } else {
+    key = re2c_key(pat.value_str, flags.int_bits.to_i)
+    if id = codegen_self.program.re2c_ids.get(key) {
+      return id
+    }
     return 0
   }
-  key = re2c_key(pat.value_str, flags.int_bits.to_i)
-  if id = codegen_self.program.re2c_ids.get(key) {
-    return id
+  if flags.kind == ex_bool() {
+    fv = 0
+    if flags.bool_val {
+      fv = 1
+    }
+    key = re2c_key(pat.value_str, fv)
+    if id = codegen_self.program.re2c_ids.get(key) {
+      return id
+    }
   }
   0
 }
 
-pub fn (codegen_self: MycGen) re_mark_callee(name: String): Bool {
-  if str_eq(name, "re_m0") {
-    return true
+pub fn (codegen_self: MycGen) re2c_call_groups(id: Int): Int {
+  if id >= 1 && id <= codegen_self.program.re2c_groups.size {
+    return codegen_self.program.re2c_groups[id - 1]
   }
-  if str_eq(name, "re_m1") {
-    return true
-  }
-  if str_eq(name, "re_c0") {
-    return true
-  }
-  str_eq(name, "re_c1")
+  0
 }
 
 pub fn (codegen_self: MycGen) note_words(name: String, tys: Array(Ty)) {

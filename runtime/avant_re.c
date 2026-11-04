@@ -2,37 +2,26 @@
 #include "avant_rt.h"
 
 #include <pcre2.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define CACHE_N 32
+/* std.regex backing (PCRE2, plus re2c scanners for literal patterns).
+ * A compiled pattern is a cache entry: entries are keyed by pattern text
+ * and flags, shared between Regex handles, reference counted, and kept
+ * for reuse after the last handle closes until the bounded cache evicts
+ * the least recently used idle entry. The mutex guards only the cache
+ * table and the counts; matching itself is lock free on the shared code
+ * with a thread-local match data. Match results leave this file as one
+ * collector Bytes holding little-endian int32 span pairs, so a find
+ * allocates exactly that buffer and nothing else. */
 
-typedef struct {
-  char *pat;
-  int32_t caseless;
-  pcre2_code *code;
-} ReCache;
+/* 0 ok, 1 invalid pattern, 2 allocation failure. */
+static __thread int32_t g_re_status;
 
-static ReCache g_cache[CACHE_N];
-static int g_cache_used;
-
-static __thread int32_t g_m0;
-static __thread int32_t g_m1;
-static __thread int32_t g_c0;
-static __thread int32_t g_c1;
-
-static pcre2_code *compile_pat(const char *pat, int32_t flags) {
-  int err = 0;
-  PCRE2_SIZE erroff = 0;
-  uint32_t opts = 0;
-  pcre2_code *code;
-  if (flags & 1) {
-    opts |= PCRE2_CASELESS;
-  }
-  code = pcre2_compile((PCRE2_SPTR)pat, PCRE2_ZERO_TERMINATED, opts, &err, &erroff, NULL);
-  if (code) {
-    (void)pcre2_jit_compile(code, PCRE2_JIT_COMPLETE);
-  }
+int32_t avant_regex_take_status(void) {
+  int32_t code = g_re_status;
+  g_re_status = 0;
   return code;
 }
 
@@ -60,156 +49,375 @@ static pcre2_match_data *md_for(pcre2_code *code) {
   return md;
 }
 
-void *avant_re_compile(const char *pat, int32_t flags) {
-  if (!pat) {
-    pat = "";
-  }
-  return compile_pat(pat, flags);
-}
-
-int32_t avant_re_m0(void) {
-  return g_m0;
-}
-
-int32_t avant_re_m1(void) {
-  return g_m1;
-}
-
-int32_t avant_re_c0(void) {
-  return g_c0;
-}
-
-int32_t avant_re_c1(void) {
-  return g_c1;
-}
-
-void avant_re_set_span(int32_t m0, int32_t m1, int32_t c0, int32_t c1) {
-  g_m0 = m0;
-  g_m1 = m1;
-  g_c0 = c0;
-  g_c1 = c1;
-}
-
+/* re2c scanners, when the compiler generated them for this program.
+ * The generated object provides the strong versions; these weak
+ * defaults keep a program without literal patterns linkable. */
 __attribute__((weak)) int32_t avant_re2c_owns(void *re) {
   (void)re;
   return 0;
 }
 
-__attribute__((weak)) int32_t avant_re2c_find_dispatch(void *re, const char *s, int32_t from) {
-  (void)re;
+__attribute__((weak)) void *avant_re2c_handle(int32_t id) {
+  (void)id;
+  return NULL;
+}
+
+__attribute__((weak)) int32_t avant_re2c_count(int32_t id, const char *s) {
+  (void)id;
   (void)s;
-  (void)from;
   return 0;
 }
 
-int32_t avant_re_find(void *re, const char *s, int32_t from) {
-  pcre2_code *code = (pcre2_code *)re;
-  pcre2_match_data *md;
-  size_t n;
-  int rc;
-  PCRE2_SIZE *ov;
-  g_m0 = g_m1 = g_c0 = g_c1 = 0;
-  if (avant_re2c_owns(re)) {
-    return avant_re2c_find_dispatch(re, s, from);
-  }
-  if (!code) {
-    return 0;
-  }
-  if (!s) {
-    s = "";
-  }
-  n = avant_str_n(s);
-  if (from < 0) {
-    from = 0;
-  }
-  if ((size_t)from > n) {
-    return 0;
-  }
-  md = md_for(code);
-  if (!md) {
-    return 0;
-  }
-  rc = pcre2_match(code, (PCRE2_SPTR)s, n, (PCRE2_SIZE)from, 0, md, NULL);
-  if (rc < 0) {
-    return 0;
-  }
-  ov = pcre2_get_ovector_pointer(md);
-  g_m0 = (int32_t)ov[0];
-  g_m1 = (int32_t)ov[1];
-  if (rc > 1) {
-    g_c0 = (int32_t)ov[2];
-    g_c1 = (int32_t)ov[3];
-  } else {
-    g_c0 = g_m0;
-    g_c1 = g_m1;
-  }
-  return 1;
+__attribute__((weak)) int32_t avant_re2c_groups(int32_t id) {
+  (void)id;
+  return 0;
 }
 
-static pcre2_code *cached(const char *pat, int32_t caseless) {
-  int i;
-  if (!pat) {
-    pat = "";
+__attribute__((weak)) int32_t avant_re2c_find_into(void *re, const char *s,
+                                                   int32_t from,
+                                                   int32_t *spans,
+                                                   int32_t max_pairs) {
+  (void)re;
+  (void)s;
+  (void)from;
+  (void)spans;
+  (void)max_pairs;
+  return 0;
+}
+
+#define RE_CACHE_MAX 128
+
+typedef struct {
+  char *pat;
+  int32_t flags;
+  pcre2_code *code;
+  int32_t ngroups;
+  int32_t refs;
+  int32_t cached;
+  uint64_t used;
+} ReEntry;
+
+static ReEntry *g_cache[RE_CACHE_MAX];
+static int32_t g_cache_n;
+static uint64_t g_cache_tick;
+static pthread_mutex_t g_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static pcre2_code *compile_pat(const char *pat, int32_t flags, int32_t *ngroups) {
+  int err = 0;
+  PCRE2_SIZE erroff = 0;
+  uint32_t opts = 0;
+  pcre2_code *code;
+  if (flags & 1) {
+    opts |= PCRE2_CASELESS;
   }
-  for (i = 0; i < g_cache_used; i++) {
-    if (g_cache[i].caseless == caseless && g_cache[i].pat && strcmp(g_cache[i].pat, pat) == 0) {
-      return g_cache[i].code;
-    }
-  }
-  pcre2_code *code = compile_pat(pat, caseless);
-  if (!code) {
-    return NULL;
-  }
-  if (g_cache_used < CACHE_N) {
-    size_t n = strlen(pat);
-    char *copy = (char *)malloc(n + 1);
-    if (copy) {
-      memcpy(copy, pat, n + 1);
-      g_cache[g_cache_used].pat = copy;
-      g_cache[g_cache_used].caseless = caseless;
-      g_cache[g_cache_used].code = code;
-      g_cache_used += 1;
+  code = pcre2_compile((PCRE2_SPTR)pat, PCRE2_ZERO_TERMINATED, opts, &err,
+                       &erroff, NULL);
+  if (code) {
+    uint32_t caps = 0;
+    (void)pcre2_jit_compile(code, PCRE2_JIT_COMPLETE);
+    if (pcre2_pattern_info(code, PCRE2_INFO_CAPTURECOUNT, &caps) == 0) {
+      *ngroups = (int32_t)caps;
+    } else {
+      *ngroups = 0;
     }
   }
   return code;
 }
 
-int32_t avant_re_count(const char *pat, const char *s, int32_t caseless) {
-  pcre2_code *re = cached(pat, caseless ? 1 : 0);
+static ReEntry *cache_find(const char *pat, int32_t flags) {
+  int32_t i;
+  for (i = 0; i < g_cache_n; i++) {
+    if (g_cache[i]->flags == flags && strcmp(g_cache[i]->pat, pat) == 0) {
+      return g_cache[i];
+    }
+  }
+  return NULL;
+}
+
+static void entry_free(ReEntry *e) {
+  if (e->code) {
+    pcre2_code_free(e->code);
+  }
+  free(e->pat);
+  free(e);
+}
+
+/* Caller holds g_cache_mu. Evicts the least recently used idle entry. */
+static int32_t cache_evict_idle(void) {
+  int32_t i;
+  int32_t best = -1;
+  for (i = 0; i < g_cache_n; i++) {
+    if (g_cache[i]->refs == 0) {
+      if (best < 0 || g_cache[i]->used < g_cache[best]->used) {
+        best = i;
+      }
+    }
+  }
+  if (best < 0) {
+    return 0;
+  }
+  entry_free(g_cache[best]);
+  g_cache_n -= 1;
+  g_cache[best] = g_cache[g_cache_n];
+  return 1;
+}
+
+void *avant_regex_compile(const char *pat, int32_t flags) {
+  ReEntry *e;
+  pcre2_code *code;
+  int32_t ngroups = 0;
+  size_t n;
+  char *copy;
+  if (!pat) {
+    pat = "";
+  }
+  flags = flags ? 1 : 0;
+  g_re_status = 0;
+  pthread_mutex_lock(&g_cache_mu);
+  e = cache_find(pat, flags);
+  if (e) {
+    e->refs += 1;
+    g_cache_tick += 1;
+    e->used = g_cache_tick;
+    pthread_mutex_unlock(&g_cache_mu);
+    return e;
+  }
+  pthread_mutex_unlock(&g_cache_mu);
+
+  code = compile_pat(pat, flags, &ngroups);
+  if (!code) {
+    g_re_status = 1;
+    return NULL;
+  }
+  n = strlen(pat);
+  copy = (char *)malloc(n + 1);
+  e = (ReEntry *)malloc(sizeof(ReEntry));
+  if (!copy || !e) {
+    free(copy);
+    free(e);
+    pcre2_code_free(code);
+    g_re_status = 2;
+    return NULL;
+  }
+  memcpy(copy, pat, n + 1);
+  e->pat = copy;
+  e->flags = flags;
+  e->code = code;
+  e->ngroups = ngroups;
+  e->refs = 1;
+  e->cached = 0;
+  e->used = 0;
+
+  pthread_mutex_lock(&g_cache_mu);
+  {
+    ReEntry *again = cache_find(pat, flags);
+    if (again) {
+      entry_free(e);
+      again->refs += 1;
+      g_cache_tick += 1;
+      again->used = g_cache_tick;
+      pthread_mutex_unlock(&g_cache_mu);
+      return again;
+    }
+  }
+  if (g_cache_n < RE_CACHE_MAX || cache_evict_idle()) {
+    g_cache_tick += 1;
+    e->used = g_cache_tick;
+    e->cached = 1;
+    g_cache[g_cache_n] = e;
+    g_cache_n += 1;
+  }
+  pthread_mutex_unlock(&g_cache_mu);
+  return e;
+}
+
+void avant_regex_release(void *handle) {
+  ReEntry *e;
+  if (!handle || avant_re2c_owns(handle)) {
+    return;
+  }
+  e = (ReEntry *)handle;
+  pthread_mutex_lock(&g_cache_mu);
+  if (e->refs > 0) {
+    e->refs -= 1;
+  }
+  if (!e->cached && e->refs == 0) {
+    entry_free(e);
+  }
+  pthread_mutex_unlock(&g_cache_mu);
+}
+
+int32_t avant_regex_groups(void *handle) {
+  ReEntry *e;
+  if (!handle) {
+    return 0;
+  }
+  if (avant_re2c_owns(handle)) {
+    return avant_re2c_groups((int32_t)(uintptr_t)handle);
+  }
+  e = (ReEntry *)handle;
+  return e->ngroups;
+}
+
+int32_t avant_regex_group_index(void *handle, const char *name) {
+  ReEntry *e;
+  int rc;
+  if (!handle || !name || avant_re2c_owns(handle)) {
+    return -1;
+  }
+  e = (ReEntry *)handle;
+  rc = pcre2_substring_number_from_name(e->code, (PCRE2_SPTR)name);
+  if (rc <= 0) {
+    return -1;
+  }
+  return rc;
+}
+
+int64_t avant_regex_find(void *handle, const char *s, int32_t from);
+
+/* Span pairs of this thread's most recent avant_regex_find, copied
+ * out of the PCRE2 ovector before any later match can overwrite it.
+ * The Avant side reads the pairs it needs into the Match value at
+ * once, so no allocation happens on the find path. */
+static __thread int32_t g_last_spans[128];
+static __thread int32_t g_last_pairs;
+
+/* Packed (lo, hi) of pair i of the last match, or -1 when the pair
+ * did not participate or does not exist. */
+int64_t avant_regex_span_pair(int32_t i) {
+  int32_t lo;
+  int32_t hi;
+  if (i < 0 || i >= g_last_pairs) {
+    return -1;
+  }
+  lo = g_last_spans[2 * i];
+  hi = g_last_spans[2 * i + 1];
+  return ((int64_t)lo << 32) | (uint32_t)hi;
+}
+
+/* Packed (lo, hi) of pair i of the match at or after `from`,
+ * recomputed without allocating. This is the path for groups beyond
+ * the ones a Match value carries inline. */
+int64_t avant_regex_span_at(void *handle, const char *s, int32_t from,
+                            int32_t i) {
+  if (avant_regex_find(handle, s, from) < 0) {
+    return -1;
+  }
+  return avant_regex_span_pair(i);
+}
+
+/* Finds the first match at or after `from` and keeps its span pairs
+ * in thread-local scratch for avant_regex_span_pair. Returns the
+ * packed whole-match pair, or -1 on no match. */
+int64_t avant_regex_find(void *handle, const char *s, int32_t from) {
+  ReEntry *e;
+  pcre2_match_data *md;
+  size_t n;
+  int rc;
+  PCRE2_SIZE *ov;
+  int32_t pairs;
+  int32_t i;
+  g_last_pairs = 0;
+  if (!handle) {
+    return -1;
+  }
+  if (!s) {
+    s = "";
+  }
+  if (avant_re2c_owns(handle)) {
+    int32_t local[4];
+    int32_t groups = avant_re2c_groups((int32_t)(uintptr_t)handle);
+    local[0] = local[1] = local[2] = local[3] = -1;
+    if (!avant_re2c_find_into(handle, s, from, local, 2)) {
+      return -1;
+    }
+    pairs = groups + 1;
+    if (pairs > 64) {
+      pairs = 64;
+    }
+    g_last_spans[0] = local[0];
+    g_last_spans[1] = local[1];
+    if (pairs > 1) {
+      g_last_spans[2] = local[2];
+      g_last_spans[3] = local[3];
+    }
+    g_last_pairs = pairs;
+    return avant_regex_span_pair(0);
+  }
+  e = (ReEntry *)handle;
+  n = avant_str_n(s);
+  if (from < 0) {
+    from = 0;
+  }
+  if ((size_t)from > n) {
+    return -1;
+  }
+  md = md_for(e->code);
+  if (!md) {
+    return -1;
+  }
+  rc = pcre2_match(e->code, (PCRE2_SPTR)s, n, (PCRE2_SIZE)from, 0, md, NULL);
+  if (rc < 0) {
+    return -1;
+  }
+  ov = pcre2_get_ovector_pointer(md);
+  pairs = e->ngroups + 1;
+  if (pairs > 64) {
+    pairs = 64;
+  }
+  for (i = 0; i < pairs; i++) {
+    PCRE2_SIZE a = ov[2 * i];
+    PCRE2_SIZE b = ov[2 * i + 1];
+    if (a == PCRE2_UNSET) {
+      g_last_spans[2 * i] = -1;
+      g_last_spans[2 * i + 1] = -1;
+    } else {
+      g_last_spans[2 * i] = (int32_t)a;
+      g_last_spans[2 * i + 1] = (int32_t)b;
+    }
+  }
+  g_last_pairs = pairs;
+  return avant_regex_span_pair(0);
+}
+
+int32_t avant_regex_count(void *handle, const char *s) {
+  ReEntry *e;
   pcre2_match_data *md;
   size_t slen;
   PCRE2_SIZE start = 0;
   int32_t n = 0;
-  if (!re) {
+  int jit = 1;
+  if (!handle) {
     return 0;
   }
   if (!s) {
     s = "";
   }
+  if (avant_re2c_owns(handle)) {
+    return avant_re2c_count((int32_t)(uintptr_t)handle, s);
+  }
+  e = (ReEntry *)handle;
   slen = avant_str_n(s);
-  md = md_for(re);
+  md = md_for(e->code);
   if (!md) {
     return 0;
   }
-  /*
-   * C's log scan calls pcre2_jit_match. pcre2_match reaches the same
-   * JIT code after a heavier entry. A pattern that was not JIT-compiled
-   * falls back for the rest of this call.
-   */
-  int jit = 1;
+  /* pcre2_jit_match reaches the JIT code after a lighter entry than
+   * pcre2_match. A pattern that was not JIT-compiled falls back for
+   * the rest of this call. */
   while (start <= slen) {
     int rc;
-    if (jit) {
-      rc = pcre2_jit_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
-      if (rc == PCRE2_ERROR_JIT_BADOPTION) {
-        jit = 0;
-        rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
-      }
-    } else {
-      rc = pcre2_match(re, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
-    }
     PCRE2_SIZE *ov;
     PCRE2_SIZE next;
+    if (jit) {
+      rc = pcre2_jit_match(e->code, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+      if (rc == PCRE2_ERROR_JIT_BADOPTION) {
+        jit = 0;
+        rc = pcre2_match(e->code, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+      }
+    } else {
+      rc = pcre2_match(e->code, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
+    }
     if (rc < 0) {
       break;
     }

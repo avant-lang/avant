@@ -1,0 +1,383 @@
+lib rec {
+  fun avant_regex_compile(pat: String, flags: Int): Ptr(Void)
+  fun avant_regex_take_status: Int
+  fun avant_regex_release(code: Ptr(Void))
+  fun avant_regex_groups(code: Ptr(Void)): Int
+  fun avant_regex_group_index(code: Ptr(Void), name: String): Int
+  fun avant_regex_find(code: Ptr(Void), text: String, from: Int): Int64
+  fun avant_regex_span_pair(i: Int): Int64
+  fun avant_regex_span_at(code: Ptr(Void), text: String, from: Int, i: Int): Int64
+  fun avant_regex_count(code: Ptr(Void), text: String): Int
+  fun avant_re2c_handle(id: Int): Ptr(Void)
+}
+
+pub class RegexError {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+pub struct Span {
+  lo: Int
+  hi: Int
+}
+
+pub struct Match {
+  text: String
+  code: Ptr(Void)
+  ngroups: Int
+  at: Int
+  start: Int
+  end: Int
+  g1lo: Int
+  g1hi: Int
+  g2lo: Int
+  g2hi: Int
+  g3lo: Int
+  g3hi: Int
+
+  fn group_lo(i: Int): Int {
+    if i == 1 {
+      return self.g1lo
+    }
+    if i == 2 {
+      return self.g2lo
+    }
+    self.g3lo
+  }
+
+  fn group_hi(i: Int): Int {
+    if i == 1 {
+      return self.g1hi
+    }
+    if i == 2 {
+      return self.g2hi
+    }
+    self.g3hi
+  }
+
+  pub fn span(i: Int): Span? {
+    if i < 0 || i > self.ngroups {
+      return nil
+    }
+    if i == 0 {
+      return Span { lo: self.start, hi: self.end }
+    }
+    if i <= 3 {
+      lo = self.group_lo(i)
+      if lo < 0 {
+        return nil
+      }
+      return Span { lo: lo, hi: self.group_hi(i) }
+    }
+    v = rec.avant_regex_span_at(self.code, self.text, self.at, i)
+    lo = pair_lo(v)
+    if lo < 0 {
+      return nil
+    }
+    Span { lo: lo, hi: pair_hi(v) }
+  }
+
+  pub fn group(i: Int): String? {
+    if sp = self.span(i) {
+      return str_slice(self.text, sp.lo, sp.hi)
+    }
+    nil
+  }
+
+  pub fn group(name: String): String? {
+    idx = rec.avant_regex_group_index(self.code, name)
+    if idx < 0 {
+      return nil
+    }
+    self.group(idx)
+  }
+
+  pub fn group_count: Int {
+    self.ngroups
+  }
+}
+
+fn pair_lo(v: Int64): Int {
+  (v >> 32).to_i
+}
+
+fn pair_hi(v: Int64): Int {
+  h = v & 4294967295i64
+  if h >= 2147483648i64 {
+    h = h - 4294967296i64
+  }
+  h.to_i
+}
+
+fn push_replacement(dst: Buf, repl: String, m: Match) {
+  i = 0
+  while i < repl.size {
+    c = repl[i]
+    if c == 36 && i + 1 < repl.size {
+      n = repl[i + 1]
+      if n == 36 {
+        dst.push_byte(36)
+        i = i + 2
+      } else if n == 123 {
+        j = i + 2
+        while j < repl.size && repl[j] != 125 {
+          j = j + 1
+        }
+        if j < repl.size && j > i + 2 {
+          name = str_slice(repl, i + 2, j)
+          if is_digits(name) {
+            if g = m.group(name.to_i) {
+              dst.push_str(g)
+            }
+          } else {
+            if g = m.group(name) {
+              dst.push_str(g)
+            }
+          }
+          i = j + 1
+        } else {
+          dst.push_byte(c)
+          i = i + 1
+        }
+      } else if n >= 48 && n <= 57 {
+        if g = m.group(n - 48) {
+          dst.push_str(g)
+        }
+        i = i + 2
+      } else {
+        dst.push_byte(c)
+        i = i + 1
+      }
+    } else {
+      dst.push_byte(c)
+      i = i + 1
+    }
+  }
+}
+
+fn is_digits(s: String): Bool {
+  if s.size == 0 {
+    return false
+  }
+  i = 0
+  while i < s.size {
+    if s[i] < 48 || s[i] > 57 {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+// A Regex is a value holding one hold on a compiled pattern, in the
+// shape of Json: the struct form is what lets Regex | RegexError open
+// with if-assign, since the error must be the union's one class.
+// Copies of a Regex value are the same handle; close it once, through
+// one of them.
+pub struct Regex {
+  code: Ptr(Void)
+  scan: Ptr(Void)
+  ngroups: Int
+  closed: Bool
+
+  // Compiles `pattern` on PCRE2 with JIT. A pattern written as a string
+  // literal may instead be compiled by re2c into a scanner; that path
+  // exposes group 0 and group 1 only and has no named groups, so a
+  // literal with named groups or more than one group stays on PCRE2.
+  // PCRE2 backtracking can be catastrophic on adversarial patterns and
+  // texts; that cost is the caller's to bound, as with the built-ins.
+  pub fn self.compile(pattern: String, caseless: Bool = false): Regex | RegexError {
+    flags = 0
+    if caseless {
+      flags = 1
+    }
+    code = rec.avant_regex_compile(pattern, flags)
+    status = rec.avant_regex_take_status()
+    if status != 0 {
+      return RegexError.new("invalid regular expression")
+    }
+    Regex { code: code, scan: code, ngroups: rec.avant_regex_groups(code), closed: false }
+  }
+
+  // Releases this handle's hold on the compiled pattern. The C side may
+  // keep the pattern in its bounded cache for the next compile; other
+  // handles on the same pattern are unaffected. Closing twice is a
+  // no-op, and every operation on a closed Regex reports no match.
+  pub fn close {
+    if self.closed {
+      return
+    }
+    self.closed = true
+    rec.avant_regex_release(self.code)
+  }
+
+  pub fn is_closed: Bool {
+    self.closed
+  }
+
+  // Runs the block with this Regex and closes it on exit.
+  pub fn scoped(body: fn(Regex)) {
+    body(self)
+    self.close
+  }
+
+  pub fn find(text: String, from: Int = 0): Match? {
+    if self.closed {
+      return nil
+    }
+    p0 = rec.avant_regex_find(self.scan, text, from)
+    if p0 == -1i64 {
+      return nil
+    }
+    p1 = -1i64
+    p2 = -1i64
+    p3 = -1i64
+    if self.ngroups >= 1 {
+      p1 = rec.avant_regex_span_pair(1)
+    }
+    if self.ngroups >= 2 {
+      p2 = rec.avant_regex_span_pair(2)
+    }
+    if self.ngroups >= 3 {
+      p3 = rec.avant_regex_span_pair(3)
+    }
+    Match {
+      text: text,
+      code: self.code,
+      ngroups: self.ngroups,
+      at: from,
+      start: pair_lo(p0),
+      end: pair_hi(p0),
+      g1lo: pair_lo(p1),
+      g1hi: pair_hi(p1),
+      g2lo: pair_lo(p2),
+      g2hi: pair_hi(p2),
+      g3lo: pair_lo(p3),
+      g3hi: pair_hi(p3)
+    }
+  }
+
+  pub fn count(text: String): Int {
+    if self.closed {
+      return 0
+    }
+    rec.avant_regex_count(self.code, text)
+  }
+
+  pub fn matches(text: String): MatchIter {
+    MatchIter.new(self, text)
+  }
+
+  // Replaces every non-overlapping match. In `repl`, `$1` to `$9`,
+  // `${1}`, and `${name}` insert a group (nothing when the group did
+  // not participate), and `$$` is a literal dollar.
+  pub fn replace(text: String, repl: String): String {
+    buf = buf_new()
+    self.replace_into(buf, text, repl)
+    buf.to_s
+  }
+
+  pub fn replace_into(dst: Buf, text: String, repl: String) {
+    if self.closed {
+      return
+    }
+    last = 0
+    at = 0
+    while at <= text.size {
+      if m = self.find(text, at) {
+        dst.push_slice(text, last, m.start)
+        push_replacement(dst, repl, m)
+        last = m.end
+        if m.end == m.start {
+          if m.end < text.size {
+            dst.push_slice(text, m.end, m.end + 1)
+            last = m.end + 1
+            at = m.end + 1
+          } else {
+            at = text.size + 1
+          }
+        } else {
+          at = m.end
+        }
+      } else {
+        break
+      }
+    }
+    dst.push_slice(text, last, text.size)
+  }
+
+  // Splits on every non-overlapping match, keeping empty pieces, in
+  // the shape of String.split. Empty-width matches are not split
+  // points; their bytes stay in the surrounding piece.
+  pub fn split(text: String): Array(String) {
+    parts: Array(String) = []
+    if self.closed {
+      parts.push(text)
+      return parts
+    }
+    last = 0
+    at = 0
+    while at <= text.size {
+      if m = self.find(text, at) {
+        if m.end == m.start {
+          at = m.end + 1
+        } else {
+          parts.push(str_slice(text, last, m.start))
+          last = m.end
+          at = m.end
+        }
+      } else {
+        break
+      }
+    }
+    parts.push(str_slice(text, last, text.size))
+    parts
+  }
+}
+
+pub class MatchIter {
+  re: Regex
+  text: String
+  at: Int = 0
+  done: Bool = false
+
+  fn initialize(re: Regex, text: String) {
+    self.re = re
+    self.text = text
+  }
+
+  pub fn next: Match? {
+    if self.done {
+      return nil
+    }
+    if m = self.re.find(self.text, self.at) {
+      if m.end == m.start {
+        self.at = m.end + 1
+      } else {
+        self.at = m.end
+      }
+      if self.at > self.text.size {
+        self.done = true
+      }
+      return m
+    }
+    self.done = true
+    nil
+  }
+}
+
+fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool): Regex | RegexError {
+  flags = 0
+  if caseless {
+    flags = 1
+  }
+  code = rec.avant_regex_compile(pattern, flags)
+  status = rec.avant_regex_take_status()
+  if status != 0 {
+    return RegexError.new("invalid regular expression")
+  }
+  Regex { code: code, scan: rec.avant_re2c_handle(id), ngroups: groups, closed: false }
+}

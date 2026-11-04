@@ -153,7 +153,7 @@ pub fn (codegen_self: MycGen) mark_quiet_leaves {
   buf.push_str(",avant_hash_get_str_slice,avant_hash_inc_slice")
   buf.push_str(",avant_buf_clear,avant_buf_push_byte,avant_buf_push_str,avant_buf_push_slice")
   buf.push_str(",avant_buf_push_fmt_i,avant_buf_push_fmt_f")
-  buf.push_str(",avant_re_find,avant_re_count,avant_re_m0,avant_re_m1,avant_re_c0,avant_re_c1")
+  buf.push_str(",avant_regex_find,avant_regex_span_pair,avant_regex_span_at,avant_regex_count")
   i = 0
   while i < codegen_self.program.classes.size {
     cdef = codegen_self.program.classes[i]
@@ -343,12 +343,60 @@ pub fn (codegen_self: MycGen) expr_may_share(expr: Expr): Bool {
   false
 }
 
+pub fn (codegen_self: MycGen) method_owner_ty(sig: FuncSig): Ty? {
+  if sig.node.owner_mod.size > 0 {
+    if o = codegen_self.resolver.get_named_for(sig.node.owner_mod, sig.owner) {
+      return o
+    }
+  }
+  codegen_self.resolver.get_named(sig.owner)
+}
+
 pub fn (codegen_self: MycGen) fn_can_skip_frame(fnn: Function): Bool {
   if fnn.generic {
     return false
   }
   if fn_is_method(fnn) {
-    return false
+    // A struct method may skip its frame when nothing it touches can
+    // collect: the owner carries no heap fields, the signature is
+    // heap-free, and the body needs no frame. Class receivers are a
+    // heap pointer and always keep their frame, as do shared programs,
+    // where another thread may collect while the method holds the raw
+    // receiver pointer.
+    if fnn.type_method {
+      return false
+    }
+    if codegen_self.may_share {
+      return false
+    }
+    if sig = codegen_self.find_method_emit(fnn.emit_name) {
+      if o = codegen_self.method_owner_ty(sig) {
+        if !o.is_struct {
+          return false
+        }
+        if ty_has_heap(o) {
+          return false
+        }
+        i = 0
+        while i < sig.params.size {
+          if ty_has_heap(sig.params[i]) {
+            return false
+          }
+          i = i + 1
+        }
+        if ty_has_heap(sig.ret) {
+          return false
+        }
+      } else {
+        return false
+      }
+    } else {
+      return false
+    }
+    if codegen_self.stmts_need_frame(fnn.body) {
+      return false
+    }
+    return true
   }
   if str_eq(fnn.name, "main") {
     return false

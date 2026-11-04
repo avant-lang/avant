@@ -32,6 +32,10 @@ fn sizing_fixture: String {
   "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn main: Int {\n  kept: Array(Node) = []\n  sum = 0\n  r = 0\n  while r < 48 {\n    t = make(r, 12)\n    sum = sum &+ check(t, 12)\n    if r % 6 == 5 {\n      kept.push(t)\n    }\n    r = r + 1\n  }\n  k = 0\n  while k < kept.size {\n    sum = sum &+ check(kept[k], 12)\n    k = k + 1\n  }\n  puts(sum)\n  puts(kept.size)\n  0\n}\n"
 }
 
+fn leaf_method_fixture: String {
+  "struct Pair {\n  a: Int\n  b: Int\n  fn sum: Int {\n    self.a + self.b\n  }\n  fn scaled(k: Int): Int {\n    (self.a + self.b) * k\n  }\n}\n\nstruct Named {\n  s: String\n  n: Int\n  fn total: Int {\n    self.n + self.s.size\n  }\n}\n\nclass Box {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n  fn get: Int {\n    self.v\n  }\n}\n\nfn main: Int {\n  p = Pair { a: 3, b: 4 }\n  named = Named { s: \"abcd\", n: 5 }\n  box = Box.new(42)\n  junk: Array(String) = []\n  acc = 0\n  i = 0\n  while i < 20000 {\n    acc = acc + p.sum + p.scaled(2) + named.total + box.get\n    junk.push(\"abcdefghij\")\n    if junk.size > 4000 {\n      junk.clear\n    }\n    i = i + 1\n  }\n  puts(acc)\n  puts(named.s)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -299,6 +303,33 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out20, want8, "sizing checksums at 1 MB young size")
     } else {
       c.expect(false, "read sizing small-young run")
+    }
+    // Frame-skip for methods: a heap-free struct method called in a
+    // churning loop must stay correct whether or not it skips its
+    // frame, and the heap-carrying struct and class neighbours beside
+    // it must stay correct too (they keep their frames).
+    src9 = "/tmp/avant-gcb-${stamp}-leaf.av"
+    bin9 = "/tmp/avant-gcb-${stamp}-leaf.bin"
+    w9 = file_write(src9, leaf_method_fixture())
+    c.eq_int(w9, 0, "write leaf method fixture")
+    code9 = compile_av(compiler, src9, bin9, "/tmp/avant-gcb-${stamp}-leaf.clog")
+    c.eq_int(code9, 0, "compile leaf method fixture")
+    want9 = "1440000\nabcd\n"
+    log21 = "/tmp/avant-gcb-${stamp}.run21"
+    rc21 = run_av_bin(bin9, log21)
+    c.eq_int(rc21, 0, "struct methods survive churn at default young size")
+    if out21 = file_read(log21) {
+      c.eq_str(out21, want9, "leaf method checksums at default young size")
+    } else {
+      c.expect(false, "read leaf method run")
+    }
+    log22 = "/tmp/avant-gcb-${stamp}.run22"
+    rc22 = run_with_env(bin9, "AVANT_YOUNG_MB", "1", log22)
+    c.eq_int(rc22, 0, "struct methods survive churn at 1 MB young size")
+    if out22 = file_read(log22) {
+      c.eq_str(out22, want9, "leaf method checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read leaf method small-young run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

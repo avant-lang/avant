@@ -2,6 +2,7 @@ import harness
 import std.zlib
 import std.base64
 import std.json
+import std.regex
 
 fn test_holes(c: Checks) {
   c.suite("tests/cases/test_holes.av")
@@ -25,7 +26,6 @@ fn test_holes(c: Checks) {
     c.eq_str(db.to_s, "aaa", "from_base64_into")
   }
 
-  c.eq_int(re_count("a+", "aa ba", 0), 2, "re_count")
   c.eq_str(sha256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256")
   raw = "hello".bytes
   if back = raw.compress.uncompress {
@@ -93,14 +93,28 @@ fn test_holes(c: Checks) {
   gen = JsonBuilder.into(jb)
   gen.obj.key("coordinates").arr.end.set("info", "some info").end
   c.expect(jb.starts_with("{\"coordinates\":"), "json builder into")
-  re = re_compile("a+", 0)
-  c.eq_int(re_find(re, "xxaa", 0), 1, "re_find")
-  c.eq_int(re_m0(), 2, "re_m0")
-  c.eq_int(re_m1(), 4, "re_m1")
-  cap = re_compile("x(y)", 0)
-  c.eq_int(re_find(cap, "xy", 0), 1, "re_find cap")
-  c.eq_int(re_c0(), 1, "re_c0")
-  c.eq_int(re_c1(), 2, "re_c1")
+  if re = Regex.compile("a+") {
+    c.eq_int(re.count("aa ba"), 2, "regex count")
+    if m = re.find("xxaa") {
+      c.eq_int(m.start, 2, "regex start")
+      c.eq_int(m.end, 4, "regex end")
+    } else {
+      c.expect(false, "regex find")
+    }
+    re.close
+  } else {
+    c.expect(false, "regex compile")
+  }
+  if cap = Regex.compile("x(y)") {
+    if m = cap.find("xy") {
+      c.eq_str(m.group(1) ?? "", "y", "regex group")
+    } else {
+      c.expect(false, "regex capture find")
+    }
+    cap.close
+  } else {
+    c.expect(false, "regex capture compile")
+  }
   us = now_us()
   c.expect(us == us, "now_us")
 }
