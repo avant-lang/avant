@@ -1,7 +1,6 @@
 # Avant Language changelog
 
-## Unreleased
-
+## 0.30.0 - 2026-11-04
 ### Added
 
 * `import std.regex`, regex on top of PCRE2 (with re2c scanners for literal patterns), linked only by programs that import it. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`; `re.find(text, from = 0)` returns a `Match` value with bounds, indexed and named groups, and no global match cursors; `re.count`, `re.matches`, `re.replace`, and `re.split` complete the surface. A compiled pattern is a handle released with `re.close` or a `re.scoped` block, backed by a bounded cache of compiled patterns.
