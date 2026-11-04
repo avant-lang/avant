@@ -63,11 +63,12 @@ That is enough to write and run Avant today. Building the Avant compiler itself 
 13. [Regex](#regex)
 14. [Testing](#testing)
 15. [Builtins](#builtins)
-16. [Not built yet](#not-built-yet)
-17. [Benchmarks](#benchmarks)
-18. [Goals](#goals)
-19. [Advanced: building the compiler](#advanced-building-the-compiler)
-20. [License](#license)
+16. [Standard Library](#standard-library)
+17. [Not built yet](#not-built-yet)
+18. [Benchmarks](#benchmarks)
+19. [Goals](#goals)
+20. [Advanced: building the compiler](#advanced-building-the-compiler)
+21. [License](#license)
 
 ## Programs
 
@@ -1222,7 +1223,131 @@ Testing the compiler itself is covered for contributors under [Advanced: buildin
 
 ## Builtins
 
-Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`. `import std.zlib` adds `Bytes.compress` and `Bytes.uncompress` and is what links zlib. `import std.base64` adds `Bytes.to_base64` and `Bytes.from_base64` and is what links the aklomp Base64 codec. `import std.json` adds `Json.parse` and is what links yyjson; `import std.regex` adds `Regex.compile` and is what links PCRE2 (see [Regex](#regex)); a parsed value walks with `get`/`at`, scans with `iter`, and projects a numeric field of every element with `f64s(key)`. A type-level function is declared in a type body as `fn self.name(...)` and called on the type, as `Json.parse` is.
+Builtins are the prelude: names every program can use with no import. Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). The core language (strings, arrays, hashes, buffers, tasks) is covered in its own sections above; this section is the free-function surface that remains.
+
+| Area | Names |
+| --- | --- |
+| Time | `now_ms`, `now_us` |
+| Files | `file_read`, `file_write`, `file_exists`, `dir_list` |
+| Process and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
+| Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt` |
+| Networking proof | `http_roundtrip` (a loopback proof; the real server is `std.http`, not built yet) |
+
+### Files, process, and environment
+
+```avant
+fn main: Int {
+  if text = file_read("notes.txt") {
+    puts(text.size)
+  }
+  if home = env_get("HOME") {
+    puts(home)
+  }
+  args = argv()
+  if args.size > 1 {
+    puts(args[1])
+  }
+  0
+}
+```
+
+### Time, hashing, and math
+
+```avant
+fn main {
+  t0 = now_us()
+  puts(now_us() >= t0)
+  puts(sha256("avant").size)
+  puts(sqrt(144.0))
+}
+```
+
+## Standard Library
+
+The standard library is imported, and importing is what links the C library behind a module: a program that never imports a module does not carry its library. Modules may add methods to `Bytes`, `String`, and `Buf`, and may declare type-level functions (written `fn self.name(...)` in a type body and called on the type, as `Json.parse` and `Regex.compile` are). A module's logical name is its import name: the file that implements `std.regex` is `lib/std/regex.av`.
+
+| Module | Adds | Links |
+| --- | --- | --- |
+| `std.zlib` | `Bytes.compress`, `Bytes.uncompress` (plus `Buf` counterparts) | zlib |
+| `std.base64` | `Bytes.to_base64`, `Bytes.from_base64` (plus `Buf` counterparts) | vendored Base64 codec |
+| `std.json` | `Json.parse` and the parsed-value walk | yyjson |
+| `std.regex` | `Regex.compile` and `Match` values | PCRE2 (re2c scanners for literal patterns) |
+| `std.testing` | the support library the test runner loads | — |
+
+### `std.zlib`
+
+Compression returns values, and failure to decompress is a `ZlibError` value:
+
+```avant
+import std.zlib
+
+fn main {
+  small = "avant avant avant".bytes.compress
+  if back = small.uncompress {
+    puts(String.from_utf8(back) ?? "")
+  }
+}
+```
+
+Each operation also has a `Buf` counterpart (`compress_into`, `uncompress_into`) that writes into a buffer the caller owns instead of allocating a fresh result.
+
+### `std.base64`
+
+```avant
+import std.base64
+
+fn main {
+  enc = "avant".bytes.to_base64
+  puts(enc)
+  if raw = enc.bytes.from_base64 {
+    puts(String.from_utf8(raw) ?? "")
+  }
+}
+```
+
+Encoding never fails; decoding reports a `Base64Error` on malformed input. `to_base64_into` and `from_base64_into` are the `Buf` counterparts.
+
+### `std.json`
+
+`Json.parse` returns a `Json` document on success or a `JsonError` value on malformed input. A parsed value walks with `get`/`at`, scans its children with `iter`, and projects a numeric field of every array element with `f64s(key)`:
+
+```avant
+import std.json
+
+fn main {
+  if doc = Json.parse("{\"n\": 7, \"name\": \"ada\"}") {
+    if n = doc.int("n") {
+      puts(n)
+    }
+    if name = doc.str("name") {
+      puts(name)
+    }
+  }
+}
+```
+
+The document owns its values and its text buffer; there is nothing to close.
+
+### `std.regex`
+
+`Regex.compile` returns a compiled pattern or a `RegexError`; `find` returns a `Match` value with bounds and groups, and there are no global match cursors. The full surface (`count`, the `matches` iterator, `replace`, `split`, named groups, pattern lifetimes) is in [Regex](#regex):
+
+```avant
+import std.regex
+
+fn main {
+  if re = Regex.compile("x(y)") {
+    if m = re.find("zxy") {
+      puts(m.group(1) ?? "")
+    }
+    re.close
+  }
+}
+```
+
+### `std.testing`
+
+`std.testing` is the support library the `avant test` runner itself loads (output plumbing for test binaries). Test files use the `Checks` style shown in [Testing](#testing); `std.testing` is not an assertion API of its own.
 
 ## Not built yet
 
