@@ -1845,6 +1845,7 @@ static void gen_young_copy(void) {
    * copied object is in the forwarding table.
    */
   rewrite_from_stackmaps();
+  rewrite_c_stack();
   count_c_stack_nursery();
 }
 
@@ -3316,6 +3317,33 @@ void avant_gc_defer_leave(void) {
   pthread_mutex_lock(&g_world);
   if (g_gc_defer > 0) {
     g_gc_defer -= 1;
+  }
+  pthread_mutex_unlock(&g_world);
+}
+
+/* Q128 heap-goal collection for workloads whose allocations all pass
+ * through C helpers under defer (the HTTP request path), which never
+ * reach maybe_collect undeferred. Callers must be at a boundary where
+ * their C frames hold no heap pointers yet (the HTTP dispatch calls
+ * this before materializing the request), so the full, non-moving
+ * collection strands nothing; defragmentation stays off for the same
+ * reason (it moves mature objects). The trigger is an allocation
+ * budget since the last full collection — the larger of the live
+ * bytes it saw and 4 MB — plus the mature-growth trigger, so the
+ * boundary costs one marking per budget of allocation. */
+void avant_gc_heap_goal_collect(void) {
+  init_gc();
+  pthread_mutex_lock(&g_world);
+  if (!g_nursery_off && !g_collecting && !g_gc_defer &&
+      (g_mature_since_full >= g_full_trigger ||
+       g_stats.allocated_bytes - g_last_full_at >=
+           (g_live > (4ull * 1024ull * 1024ull)
+                ? g_live
+                : (4ull * 1024ull * 1024ull)))) {
+    int defrag_saved = g_defrag_mode;
+    g_defrag_mode = 0;
+    collect(1);
+    g_defrag_mode = defrag_saved;
   }
   pthread_mutex_unlock(&g_world);
 }

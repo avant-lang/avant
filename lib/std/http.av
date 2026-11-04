@@ -10,7 +10,9 @@ lib httpc {
   fun avant_http_req_body(req: Ptr(Void)): Bytes
   fun avant_http_req_headers(req: Ptr(Void)): Bytes
   fun avant_http_req_respond(req: Ptr(Void), status: Int, head: String, body: Bytes)
-  fun avant_http_listen(host: String, port: Int, max_body: Int): Ptr(Void)
+  fun avant_gc_defer_enter
+  fun avant_gc_defer_leave
+  fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)): Int): Int
   fun avant_http_close(srv: Ptr(Void)): Int
@@ -226,7 +228,13 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)): Int {
     body: req_body
   }
   resp = state.dispatch(req)
+  // The response head and body travel into C as raw heap pointers;
+  // hold collections off from materializing them until the write is
+  // done, so a collection on another loop thread cannot move them
+  // mid-write (the C respond entry defers again around the write).
+  httpc.avant_gc_defer_enter()
   httpc.avant_http_req_respond(raw, resp.status, resp.head_block, resp.body)
+  httpc.avant_gc_defer_leave()
   0
 }
 
@@ -597,9 +605,14 @@ pub class Http {
   // Binds a server now (so a bad port fails here, and an ephemeral
   // port is known through `server.port` before serving) and returns
   // it ready for routes. The body limit is in bytes; a larger request
-  // body is answered 413.
-  pub fn self.listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576): Server | HttpError {
-    handle = httpc.avant_http_listen(host, port, max_body)
+  // body is answered 413. `loops` is the number of event loops (one
+  // thread each, all bound to the same port); when it is 0 the
+  // program's chosen thread count is used (the `--threads` value, or
+  // the machine's thread count). Loops plus `spawn` workers can
+  // oversubscribe the machine; that is the documented consequence of
+  // one chosen count.
+  pub fn self.listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576, loops: Int = 0): Server | HttpError {
+    handle = httpc.avant_http_listen(host, port, max_body, loops)
     if httpc.avant_http_take_status() != 0 {
       return HttpError.new("could not listen on ${host}:${port}")
     }

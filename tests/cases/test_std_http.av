@@ -63,6 +63,22 @@ fn client_round(port: Int, out: Channel(String)): Int {
   0
 }
 
+fn hammer_round(port: Int, out: Channel(String), rounds: Int): Int {
+  base = "http://127.0.0.1:${port}"
+  ok = 0
+  i = 0
+  while i < rounds {
+    if resp = Http.get("${base}/ping") {
+      if resp.status == 200 && body_text(resp) == "pong" {
+        ok = ok + 1
+      }
+    }
+    i = i + 1
+  }
+  out.send("hammer=${ok}/${rounds}")
+  0
+}
+
 fn raw_round(port: Int, script: String, stamp: Int, mode: String): String {
   log = "/tmp/avant-http-raw-${stamp}-${mode}.log"
   args: Array(String) = []
@@ -253,6 +269,70 @@ fn test_std_http(c: Checks) {
     }
   } else {
     c.expect(false, "listen for close test")
+  }
+
+  // Multi-loop (Q124-A): explicit loop count, concurrent clients on
+  // several connections at once, clean stop through a handler.
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 4) {
+    server = opened
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(8)
+    done = Channel(Int).new(8)
+    h1 = spawn {
+      r = hammer_round(port, out, 25)
+      done.send(1)
+      r
+    }
+    h2 = spawn {
+      r = hammer_round(port, out, 25)
+      done.send(1)
+      r
+    }
+    h3 = spawn {
+      r = hammer_round(port, out, 25)
+      done.send(1)
+      r
+    }
+    h4 = spawn {
+      r = hammer_round(port, out, 25)
+      done.send(1)
+      r
+    }
+    stopper = spawn {
+      got = 0
+      while got < 4 {
+        if d = done.recv {
+          got = got + d
+        }
+      }
+      if resp = Http.get("http://127.0.0.1:${port}/__stop") {
+      }
+      0
+    }
+    server.serve
+    c.eq_int(h1.join, 0, "hammer task 1")
+    c.eq_int(h2.join, 0, "hammer task 2")
+    c.eq_int(h3.join, 0, "hammer task 3")
+    c.eq_int(h4.join, 0, "hammer task 4")
+    c.eq_int(stopper.join, 0, "hammer stopper")
+    i = 0
+    while i < 4 {
+      if line = out.recv {
+        c.eq_str(line, "hammer=25/25", "hammer round ${i}")
+      } else {
+        c.expect(false, "hammer round ${i} present")
+      }
+      i = i + 1
+    }
+  } else {
+    c.expect(false, "listen for multi-loop test")
   }
 }
 

@@ -86,6 +86,7 @@ void sm_init(void);
 void copy_from_c_stack(void);
 void copy_from_stackmaps(void);
 void rewrite_from_stackmaps(void);
+void rewrite_c_stack(void);
 void count_c_stack_nursery(void);
 
 #endif

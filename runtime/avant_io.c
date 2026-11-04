@@ -42,10 +42,61 @@ static char *cstr_dup(const char *s) {
   return p;
 }
 
+/* The program flag --threads (Q125-A): the generated startup calls
+ * this before anything can start the pool or the HTTP server, so
+ * scanning here records the override in time, and removing the flag
+ * from the array means the program's own argv() never sees it. Both
+ * spellings are one implementation; the flag wins over AVANT_THREADS;
+ * scanning stops at a literal "--". A malformed value dies loudly,
+ * in the AVANT_THREADS diagnostic style. */
+static void scan_threads_flag(void) {
+  int32_t i;
+  int32_t w = 1;
+  for (i = 1; i < g_argc; i++) {
+    const char *a = g_argv[i] ? g_argv[i] : "";
+    const char *val = NULL;
+    int consumed = 0;
+    if (strcmp(a, "--") == 0) {
+      for (; i < g_argc; i++) {
+        g_argv[w++] = g_argv[i];
+      }
+      break;
+    }
+    if (strcmp(a, "--threads") == 0) {
+      if (i + 1 >= g_argc) {
+        fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
+        abort();
+      }
+      val = g_argv[i + 1];
+      consumed = 2;
+    } else if (strncmp(a, "--threads=", 10) == 0) {
+      val = a + 10;
+      consumed = 1;
+    }
+    if (val) {
+      char *end = NULL;
+      unsigned long long v = strtoull(val, &end, 10);
+      if (end == val || *end != '\0' || v < 1 || v > 1073741824ull) {
+        fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
+        abort();
+      }
+      avant_set_flag_threads((long)v);
+      i += consumed - 1;
+      continue;
+    }
+    g_argv[w++] = g_argv[i];
+  }
+  g_argc = w;
+  if (g_argc > 0) {
+    g_argv[g_argc] = NULL;
+  }
+}
+
 void avant_io_init_argv(int32_t argc, void *argv) {
   g_argc = argc < 0 ? 0 : argc;
   g_argv = (char **)argv;
   g_argv_set = 1;
+  scan_threads_flag();
 }
 
 void *avant_argv(void) {

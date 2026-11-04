@@ -10,10 +10,10 @@
 
 /*
  * Bounded pool shared by spawn and .parallel (D35, Q38-A).
- * The size is the online processor count, read once, unless
- * AVANT_THREADS sets a positive integer. Workers never touch
- * g_world. Join or .parallel from a worker waits for a pool
- * thread, so a full pool deadlocks; those calls die.
+ * The size is the program's chosen thread count (avant_chosen_threads:
+ * --threads, else AVANT_THREADS, else online processors). Workers
+ * never touch g_world. Join or .parallel from a worker waits for a
+ * pool thread, so a full pool deadlocks; those calls die.
  */
 
 typedef int32_t (*avant_task_fn)(void *);
@@ -72,7 +72,20 @@ static void enqueue(Job *job) {
   pthread_cond_signal(&queue_cv);
 }
 
-static long pool_count(void) {
+/* The program's one chosen thread count: the --threads flag when the
+ * generated startup recorded one, else AVANT_THREADS (deprecated
+ * fallback, Q125-A), else the online processor count. The pool and
+ * the HTTP server's loop count both read this one value. */
+static long g_flag_threads;
+
+void avant_set_flag_threads(long n) {
+  g_flag_threads = n;
+}
+
+int32_t avant_chosen_threads(void) {
+  if (g_flag_threads > 0) {
+    return (int32_t)g_flag_threads;
+  }
   const char *s = getenv("AVANT_THREADS");
   if (s && s[0]) {
     char *end = NULL;
@@ -80,13 +93,17 @@ static long pool_count(void) {
     if (end == s || *end != '\0' || v < 1 || v > (unsigned long long)LONG_MAX) {
       die_task("AVANT_THREADS must be a positive integer");
     }
-    return (long)v;
+    return (int32_t)v;
   }
   long n = sysconf(_SC_NPROCESSORS_ONLN);
   if (n < 1) {
     n = 1;
   }
-  return n;
+  return (int32_t)n;
+}
+
+static long pool_count(void) {
+  return (long)avant_chosen_threads();
 }
 
 static void ensure_pool(void) {

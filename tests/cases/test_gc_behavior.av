@@ -47,6 +47,14 @@ fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   process_run_out("/usr/bin/env", args, log)
 }
 
+fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
+  args: Array(String) = []
+  args.push("${n1}=${v1}")
+  args.push("${n2}=${v2}")
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
 fn test_gc_behavior(c: Checks) {
   c.suite("tests/cases/test_gc_behavior.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -364,6 +372,18 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out24, want10, "literal checksums at 1 MB young size")
     } else {
       c.expect(false, "read literal small-young run")
+    }
+    // Q123-A: no stack word may still name from-space after a young
+    // copy. The verifier prints those words on stderr, which the run
+    // log captures, so an exact-output match is the zero-report
+    // assertion. AVANT_GC_STACK_REWRITE=0 restores the reports.
+    log25 = "/tmp/avant-gcb-${stamp}.run25"
+    rc25 = run_with_env2(bin10, "AVANT_GC_VERIFY", "1", "AVANT_YOUNG_MB", "1", log25)
+    c.eq_int(rc25, 0, "struct literal verify run exits clean")
+    if out25 = file_read(log25) {
+      c.eq_str(out25, want10, "no stale stack words under the verifier")
+    } else {
+      c.expect(false, "read literal verify run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

@@ -1203,11 +1203,18 @@ FUNC :avant_http_req_respond
     TYPE :ptr<u8>
 ENDFUNC
 
+FUNC :avant_gc_defer_enter
+ENDFUNC
+
+FUNC :avant_gc_defer_leave
+ENDFUNC
+
 FUNC :avant_http_listen
   RETURN
     TYPE :ptr<void>
   ARGS
     TYPE :ptr<u8>
+    TYPE :i32
     TYPE :i32
     TYPE :i32
 ENDFUNC
@@ -1932,6 +1939,7 @@ FUNC :http_dispatch
     CALL :HttpState__dispatch
     LOCAL :resp :Response
     STORE
+    CALL :avant_gc_defer_enter
     LOCAL :raw :ptr<void>
     LOCAL :__t19 :ptr<void>
     STORE
@@ -1953,6 +1961,7 @@ FUNC :http_dispatch
     LOCAL :__t20
     LOCAL :__t19
     CALL :avant_http_req_respond
+    CALL :avant_gc_defer_leave
     PUSH 0
     CALL :avant_gc_leave
     RET
@@ -5348,19 +5357,23 @@ FUNC :main
     PUSH 1048576
     LOCAL :__t3 :i32
     STORE
+    PUSH 0
+    LOCAL :__t4 :i32
+    STORE
+    LOCAL :__t4
     LOCAL :__t3
     LOCAL :__t2
     LOCAL :__t1
     CALL :Http__listen
-    LOCAL :__t4 :U_HttpError_Server
+    LOCAL :__t5 :U_HttpError_Server
     STORE
-    LOCAL :__t4
+    LOCAL :__t5
     FIELD 0
     PUSH 0
     BINARY :not_eq
     IF
       THEN
-        LOCAL :__t4
+        LOCAL :__t5
         FIELD 2
         PUSH 400 :u32
         SIZEOF :Box_Server
@@ -5382,28 +5395,28 @@ FUNC :main
         FIELD 0
         STORE
         PUSH "/"
-        LOCAL :__t5 :ptr<u8>
+        LOCAL :__t6 :ptr<u8>
         STORE
         PUSH 401 :u32
         SIZEOF :__lam_0_env
         CALL :avant_alloc
         AS :ptr<__lam_0_env>
-        LOCAL :__t6 :ptr<__lam_0_env>
+        LOCAL :__t7 :ptr<__lam_0_env>
         STORE
         LOCAL :server :ptr<Box_Server>
-        LOCAL :__t6
+        LOCAL :__t7
         DEREF
         FIELD 0
         STORE
         ADDR :__lam_0
         AS "fn<ptr<void>, Request, Response>"
-        LOCAL :__t6
+        LOCAL :__t7
         AS :ptr<void>
         CREATE :Fn_Request__Response
-        LOCAL :__t7 :Fn_Request__Response
+        LOCAL :__t8 :Fn_Request__Response
         STORE
-        LOCAL :__t7
-        LOCAL :__t5
+        LOCAL :__t8
+        LOCAL :__t6
         LOCAL :server :ptr<Box_Server>
         DEREF
         FIELD 0
@@ -5425,17 +5438,17 @@ FUNC :main
         SIZEOF :__spawn_0_cap
         CALL :avant_alloc
         AS :ptr<__spawn_0_cap>
-        LOCAL :__t8 :ptr<__spawn_0_cap>
+        LOCAL :__t9 :ptr<__spawn_0_cap>
         STORE
-        LOCAL :__t8
+        LOCAL :__t9
         AS :ptr<void>
         CALL :avant_pin
         LOCAL :port :i32
-        LOCAL :__t8
+        LOCAL :__t9
         DEREF
         FIELD 0
         STORE
-        LOCAL :__t8
+        LOCAL :__t9
         AS :ptr<void>
         ADDR :__spawn_0
         AS :ptr<void>
@@ -6739,6 +6752,7 @@ FUNC :Http__listen
     TYPE :i32
     TYPE :ptr<u8>
     TYPE :i32
+    TYPE :i32
   RETURN
     TYPE :U_HttpError_Server
   BODY
@@ -6752,6 +6766,9 @@ FUNC :Http__listen
     PARAM 2
     LOCAL :max_body :i32
     STORE
+    PARAM 3
+    LOCAL :loops :i32
+    STORE
     LOCAL :host :ptr<u8>
     LOCAL :__t1 :ptr<u8>
     STORE
@@ -6761,6 +6778,10 @@ FUNC :Http__listen
     LOCAL :max_body :i32
     LOCAL :__t3 :i32
     STORE
+    LOCAL :loops :i32
+    LOCAL :__t4 :i32
+    STORE
+    LOCAL :__t4
     LOCAL :__t3
     LOCAL :__t2
     LOCAL :__t1
@@ -6768,33 +6789,28 @@ FUNC :Http__listen
     LOCAL :handle :ptr<void>
     STORE
     CALL :avant_http_take_status
-    LOCAL :__t4 :i32
+    LOCAL :__t5 :i32
     STORE
     PUSH 0
-    LOCAL :__t4
+    LOCAL :__t5
     BINARY :not_eq
     IF
       THEN
         PUSH "could not listen on "
-        LOCAL :__t5 :ptr<u8>
-        STORE
-        LOCAL :host :ptr<u8>
         LOCAL :__t6 :ptr<u8>
         STORE
-        PUSH ":"
+        LOCAL :host :ptr<u8>
         LOCAL :__t7 :ptr<u8>
+        STORE
+        PUSH ":"
+        LOCAL :__t8 :ptr<u8>
         STORE
         LOCAL :port :i32
         CALL :avant_str_from_int
-        LOCAL :__t8 :ptr<u8>
-        STORE
-        LOCAL :__t6
-        LOCAL :__t5
-        CALL :avant_str_concat
         LOCAL :__t9 :ptr<u8>
         STORE
         LOCAL :__t7
-        LOCAL :__t9
+        LOCAL :__t6
         CALL :avant_str_concat
         LOCAL :__t10 :ptr<u8>
         STORE
@@ -6803,16 +6819,21 @@ FUNC :Http__listen
         CALL :avant_str_concat
         LOCAL :__t11 :ptr<u8>
         STORE
+        LOCAL :__t9
         LOCAL :__t11
+        CALL :avant_str_concat
+        LOCAL :__t12 :ptr<u8>
+        STORE
+        LOCAL :__t12
         CALL :HttpError__new
-        LOCAL :__t12 :ptr<HttpError>
+        LOCAL :__t13 :ptr<HttpError>
         STORE
         PUSH 0
         AS :ptr<HttpState>
         PUSH 0
         AS :ptr<void>
         CREATE :Server
-        LOCAL :__t12
+        LOCAL :__t13
         PUSH 0
         CREATE :U_HttpError_Server
         CALL :avant_gc_leave
@@ -6832,17 +6853,17 @@ FUNC :Http__listen
     FIELD 3
     STORE
     LOCAL :handle :ptr<void>
-    LOCAL :__t13 :ptr<void>
+    LOCAL :__t14 :ptr<void>
     STORE
     LOCAL :state :ptr<HttpState>
-    LOCAL :__t14 :ptr<HttpState>
-    STORE
-    LOCAL :__t14
-    LOCAL :__t13
-    CREATE :Server
-    LOCAL :__t15 :Server
+    LOCAL :__t15 :ptr<HttpState>
     STORE
     LOCAL :__t15
+    LOCAL :__t14
+    CREATE :Server
+    LOCAL :__t16 :Server
+    STORE
+    LOCAL :__t16
     PUSH 0
     AS :ptr<HttpError>
     PUSH 1

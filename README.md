@@ -1381,15 +1381,15 @@ There is no TLS and no WebSocket support yet: an `https` URL is an `HttpError`, 
 
 #### Hello-world servers compared
 
-The most basic hello-world server (`GET /` answered with `hello`, and the WebSocket equivalent where the language has one) in Avant, C, Rust, Go, and Crystal, measured on loopback on the workbench machine (Ryzen 7 5700G): HTTP with `wrk` (4 threads, 64 connections, 10 s), WebSockets with a ping-pong loader (8 connections, 10 s, one round trip at a time per connection). RSS is the server's peak resident set (VmHWM) at the end of each phase. Avant's WebSocket column is empty because `std.http` has no WebSocket support yet; the other languages' WebSocket servers are hand-written or standard-library equivalents of the same hello world. Avant's peak RSS is the garbage collector's grown heap under sustained allocation load (idle RSS is about 3 MB); the throughput gap to Go and Rust is mostly cores: the Avant server runs one event-loop thread, while the Go and Rust servers spread connections across the machine's 16 hardware threads (the single-threaded C and Crystal servers land in Avant's range per core).
+The most basic hello-world server (`GET /` answered with `hello`, and the WebSocket equivalent where the language has one) in Avant, C, Rust, Go, and Crystal, measured on loopback on the workbench machine (Ryzen 7 5700G) with the harness in `bench/http/`: HTTP with `wrk` (4 threads, 64 connections, 10 s), WebSockets with an echo loader (8 connections, 10 s, one round trip at a time per connection). RSS is the server's peak resident set (VmHWM) at the end of each phase. Avant's WebSocket column is empty because `std.http` has no WebSocket support yet; the other languages' WebSocket servers are hand-written or standard-library equivalents of the same hello world. The Avant server spreads connections over as many event loops as the program has chosen threads (16 here, `--threads` or `Http.listen`'s `loops` argument), which puts it ahead of Go and within reach of Rust; its peak RSS is the collector's heap-goal working set under sustained allocation load (idle RSS is about 3 MB).
 
 | Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Avant (`std.http`) | 171,036 | 220 MB | — | — |
-| C (raw epoll) | 192,278 | 3.8 MB | 192,972 | 6.7 MB |
-| Rust (std, thread per connection) | 507,685 | 3.3 MB | 332,754 | 3.3 MB |
-| Go (`net/http`) | 355,770 | 18 MB | 249,360 | 18 MB |
-| Crystal (`HTTP::Server`) | 144,749 | 15 MB | 167,165 | 18 MB |
+| Avant (`std.http`) | 470,950 | 9.2 MB | — | — |
+| C (raw epoll) | 210,648 | 2.7 MB | 90,567 | 7.3 MB |
+| Rust (std, thread per connection) | 507,573 | 3.3 MB | 253,728 | 2.6 MB |
+| Go (`net/http`) | 348,686 | 18 MB | 215,352 | 12 MB |
+| Crystal (`HTTP::Server`) | 142,542 | 15 MB | 112,095 | 11 MB |
 
 ### `std.testing`
 

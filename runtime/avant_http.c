@@ -2,7 +2,12 @@
 #include "libusockets.h"
 #include "picohttpparser.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <pthread.h>
 #include <stdint.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -219,17 +224,29 @@ typedef struct Conn {
   int sent_continue;
 } Conn;
 
-struct AvantHttpServer {
+/* One event loop per loop thread, all binding the same port through
+ * SO_REUSEPORT (the vendored default). Route state is shared and
+ * read-only while serving; each loop owns its connection list, so
+ * loop threads never touch each other's lists. */
+typedef struct HttpLoop {
+  AvantHttpServer *srv;
   struct us_loop_t *loop;
   struct us_socket_context_t *ctx;
   struct us_listen_socket_t *listen;
+  struct ConnNode *conns_head;
+  pthread_t thread;
+  int spawned;
+} HttpLoop;
+
+struct AvantHttpServer {
+  HttpLoop *loops;
+  int nloops;
   void *state;
   AvantHttpDispatch dispatch;
   volatile int closing;
   int running;
   int port;
   int32_t max_body;
-  struct ConnNode *conns_head;
 };
 
 typedef struct ConnNode {
@@ -238,9 +255,9 @@ typedef struct ConnNode {
   struct ConnNode *next;
 } ConnNode;
 
-static AvantHttpServer *srv_of_socket(struct us_socket_t *s) {
+static HttpLoop *loop_of_socket(struct us_socket_t *s) {
   struct us_socket_context_t *ctx = us_socket_context(0, s);
-  return *(AvantHttpServer **)us_socket_context_ext(0, ctx);
+  return *(HttpLoop **)us_socket_context_ext(0, ctx);
 }
 
 static const char *reason_phrase(int32_t status) {
@@ -385,6 +402,11 @@ char *avant_http_req_method(void *reqp) {
 
 char *avant_http_req_target(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
+  /* First getter of every dispatch: the heap-goal boundary. This
+   * frame holds no Avant heap pointers yet, so the collection it may
+   * run strands nothing; without it the request path, which
+   * allocates only under defer, never collects. */
+  avant_gc_heap_goal_collect();
   return make_string(req->target, req->target_len);
 }
 
@@ -413,12 +435,18 @@ void avant_http_req_respond(void *reqp, int32_t status, const char *head,
                             const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
+  /* The head and body pointers name Avant heap objects held only in
+   * C registers here; a collection triggered on another loop thread
+   * must not move them while the response is written. The dispatch
+   * side enters the same defer before materializing the pointers. */
+  avant_gc_defer_enter();
   if (!req->keep_alive) {
     conn_header = "close";
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
   write_response(req->sock, status, head, body, conn_header);
+  avant_gc_defer_leave();
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -578,15 +606,15 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
 static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
                                        char *ip, int ip_length) {
   ConnNode *node = (ConnNode *)us_socket_ext(0, s);
-  AvantHttpServer *srv = srv_of_socket(s);
+  HttpLoop *hl = loop_of_socket(s);
   (void)is_client;
   (void)ip;
   (void)ip_length;
   memset(node, 0, sizeof(ConnNode));
-  node->conn.srv = srv;
+  node->conn.srv = hl->srv;
   node->sock = s;
-  node->next = srv->conns_head;
-  srv->conns_head = node;
+  node->next = hl->conns_head;
+  hl->conns_head = node;
   us_socket_timeout(0, s, 30);
   return s;
 }
@@ -621,14 +649,14 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
 static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
                                         void *reason) {
   ConnNode *node = (ConnNode *)us_socket_ext(0, s);
-  AvantHttpServer *srv = node->conn.srv;
+  HttpLoop *hl = loop_of_socket(s);
   ConnNode **link;
   (void)code;
   (void)reason;
   free(node->conn.buf);
   node->conn.buf = NULL;
-  if (srv) {
-    link = &srv->conns_head;
+  if (hl) {
+    link = &hl->conns_head;
     while (*link && *link != node) {
       link = &(*link)->next;
     }
@@ -653,20 +681,20 @@ static struct us_socket_t *srv_on_writable(struct us_socket_t *s) {
 }
 
 static void srv_on_wakeup(struct us_loop_t *loop) {
-  AvantHttpServer *srv = *(AvantHttpServer **)us_loop_ext(loop);
-  if (!srv || !srv->closing) {
+  HttpLoop *hl = *(HttpLoop **)us_loop_ext(loop);
+  if (!hl || !hl->srv->closing) {
     return;
   }
-  if (srv->listen) {
-    us_listen_socket_close(0, srv->listen);
-    srv->listen = NULL;
+  if (hl->listen) {
+    us_listen_socket_close(0, hl->listen);
+    hl->listen = NULL;
   }
   {
     /* Answered connections are already shut down with their response
      * queued ahead of the FIN; leave them to close from the peer side
      * so the last response is not discarded. Idle connections are
      * closed here so the loop can drain. */
-    ConnNode *node = srv->conns_head;
+    ConnNode *node = hl->conns_head;
     while (node) {
       ConnNode *next = node->next;
       if (!node->conn.answered) {
@@ -685,50 +713,214 @@ static void srv_post(struct us_loop_t *loop) {
   (void)loop;
 }
 
-void *avant_http_listen(const char *host, int32_t port, int32_t max_body) {
+/* Bound (host, port) pairs owned by live servers in this process.
+ * SO_REUSEPORT lets every loop of one server share its port, but it
+ * would also let a second server bind the same port; the wave-5
+ * contract is that a second listen fails. The registry keeps the
+ * sharing intra-server. */
+typedef struct ListenReg {
+  char host[64];
+  int32_t port;
   AvantHttpServer *srv;
+} ListenReg;
+
+static pthread_mutex_t g_listen_mu = PTHREAD_MUTEX_INITIALIZER;
+static ListenReg *g_listen_regs;
+static int g_listen_n;
+static int g_listen_cap;
+
+static int listen_port_taken(const char *host, int32_t port,
+                             AvantHttpServer *self) {
+  int i;
+  int taken = 0;
+  pthread_mutex_lock(&g_listen_mu);
+  for (i = 0; i < g_listen_n; i++) {
+    if (g_listen_regs[i].srv != self &&
+        g_listen_regs[i].port == port &&
+        strcmp(g_listen_regs[i].host, host) == 0) {
+      taken = 1;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&g_listen_mu);
+  return taken;
+}
+
+static void listen_reg_add(const char *host, int32_t port,
+                           AvantHttpServer *srv) {
+  pthread_mutex_lock(&g_listen_mu);
+  if (g_listen_n == g_listen_cap) {
+    int cap = g_listen_cap ? g_listen_cap * 2 : 8;
+    ListenReg *next = (ListenReg *)realloc(g_listen_regs,
+                                           (size_t)cap * sizeof(ListenReg));
+    if (!next) {
+      pthread_mutex_unlock(&g_listen_mu);
+      return;
+    }
+    g_listen_regs = next;
+    g_listen_cap = cap;
+  }
+  snprintf(g_listen_regs[g_listen_n].host,
+           sizeof(g_listen_regs[g_listen_n].host), "%s", host);
+  g_listen_regs[g_listen_n].port = port;
+  g_listen_regs[g_listen_n].srv = srv;
+  g_listen_n++;
+  pthread_mutex_unlock(&g_listen_mu);
+}
+
+static void listen_reg_remove(AvantHttpServer *srv) {
+  int i;
+  pthread_mutex_lock(&g_listen_mu);
+  for (i = 0; i < g_listen_n; i++) {
+    if (g_listen_regs[i].srv == srv) {
+      g_listen_n--;
+      g_listen_regs[i] = g_listen_regs[g_listen_n];
+      break;
+    }
+  }
+  pthread_mutex_unlock(&g_listen_mu);
+}
+
+static void loop_teardown(HttpLoop *hl) {
+  if (hl->listen) {
+    us_listen_socket_close(0, hl->listen);
+    hl->listen = NULL;
+  }
+  if (hl->ctx) {
+    us_socket_context_free(0, hl->ctx);
+    hl->ctx = NULL;
+  }
+  if (hl->loop) {
+    us_loop_free(hl->loop);
+    hl->loop = NULL;
+  }
+}
+
+static void srv_teardown(AvantHttpServer *srv) {
+  int i;
+  listen_reg_remove(srv);
+  for (i = 0; i < srv->nloops; i++) {
+    loop_teardown(&srv->loops[i]);
+  }
+  free(srv->loops);
+  free(srv);
+}
+
+/* Creates one loop; binds it to `port` (loop 0 may pass 0 and learn
+ * the ephemeral port, later loops reuse srv->port). Returns 0 ok. */
+static int loop_create(AvantHttpServer *srv, HttpLoop *hl, const char *host,
+                       int32_t port) {
   struct us_socket_context_options_t options;
+  hl->srv = srv;
+  hl->loop = us_create_loop(0, srv_on_wakeup, srv_pre, srv_post,
+                            (unsigned int)sizeof(HttpLoop *));
+  if (!hl->loop) {
+    return 1;
+  }
+  *(HttpLoop **)us_loop_ext(hl->loop) = hl;
+  memset(&options, 0, sizeof(options));
+  hl->ctx = us_create_socket_context(0, hl->loop, (int)sizeof(HttpLoop *),
+                                     options);
+  if (!hl->ctx) {
+    return 1;
+  }
+  *(HttpLoop **)us_socket_context_ext(0, hl->ctx) = hl;
+  us_socket_context_on_open(0, hl->ctx, srv_on_open);
+  us_socket_context_on_data(0, hl->ctx, srv_on_data);
+  us_socket_context_on_writable(0, hl->ctx, srv_on_writable);
+  us_socket_context_on_close(0, hl->ctx, srv_on_close);
+  us_socket_context_on_timeout(0, hl->ctx, srv_on_timeout);
+  us_socket_context_on_end(0, hl->ctx, srv_on_end);
+  hl->listen = us_socket_context_listen(0, hl->ctx, host, (int)port, 0,
+                                        (int)sizeof(ConnNode));
+  if (!hl->listen) {
+    return 1;
+  }
+  return 0;
+}
+
+/* Picks a free loopback port for an ephemeral (0) request: the
+ * vendored listen path enables SO_REUSEPORT only for a non-zero
+ * port, so every loop must bind a concrete port for all of them to
+ * share it. The probe socket is closed before the loops bind; the
+ * race window is the usual one for port 0. */
+static int32_t pick_ephemeral_port(const char *host) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  struct sockaddr_in addr;
+  socklen_t len = sizeof(addr);
+  int32_t port = 0;
+  if (fd < 0) {
+    return 0;
+  }
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  if (strcmp(host, "127.0.0.1") != 0 && strcmp(host, "localhost") != 0) {
+    struct in_addr ia;
+    if (inet_pton(AF_INET, host, &ia) == 1) {
+      addr.sin_addr = ia;
+    }
+  }
+  if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0 &&
+      getsockname(fd, (struct sockaddr *)&addr, &len) == 0) {
+    port = (int32_t)ntohs(addr.sin_port);
+  }
+  close(fd);
+  return port;
+}
+
+/* `loops` <= 0 means the runtime's chosen thread count (Q124-A). */
+void *avant_http_listen(const char *host, int32_t port, int32_t max_body,
+                        int32_t loops) {
+  AvantHttpServer *srv;
+  int n;
+  int i;
   set_status(0);
+  if (port == 0) {
+    port = pick_ephemeral_port(host);
+    if (port == 0) {
+      set_status(1);
+      return NULL;
+    }
+  }
+  n = loops > 0 ? loops : avant_chosen_threads();
+  if (n < 1) {
+    n = 1;
+  }
   srv = (AvantHttpServer *)calloc(1, sizeof(AvantHttpServer));
   if (!srv) {
     set_status(4);
     return NULL;
   }
   srv->max_body = max_body;
-  srv->loop = us_create_loop(0, srv_on_wakeup, srv_pre, srv_post,
-                             (unsigned int)sizeof(AvantHttpServer *));
-  if (!srv->loop) {
+  srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
+  if (!srv->loops) {
+    free(srv);
+    set_status(4);
+    return NULL;
+  }
+  srv->nloops = n;
+  if (listen_port_taken(host, port, srv)) {
+    free(srv->loops);
     free(srv);
     set_status(1);
     return NULL;
   }
-  *(AvantHttpServer **)us_loop_ext(srv->loop) = srv;
-  memset(&options, 0, sizeof(options));
-  srv->ctx = us_create_socket_context(0, srv->loop,
-                                      (int)sizeof(AvantHttpServer *), options);
-  if (!srv->ctx) {
-    us_loop_free(srv->loop);
-    free(srv);
-    set_status(1);
-    return NULL;
+  for (i = 0; i < n; i++) {
+    int32_t p = i == 0 ? port : srv->port;
+    if (loop_create(srv, &srv->loops[i], host, p) != 0) {
+      srv->nloops = i + 1;
+      srv_teardown(srv);
+      set_status(1);
+      return NULL;
+    }
+    if (i == 0) {
+      srv->port = us_socket_local_port(
+          0, (struct us_socket_t *)srv->loops[0].listen);
+    }
   }
-  *(AvantHttpServer **)us_socket_context_ext(0, srv->ctx) = srv;
-  us_socket_context_on_open(0, srv->ctx, srv_on_open);
-  us_socket_context_on_data(0, srv->ctx, srv_on_data);
-  us_socket_context_on_writable(0, srv->ctx, srv_on_writable);
-  us_socket_context_on_close(0, srv->ctx, srv_on_close);
-  us_socket_context_on_timeout(0, srv->ctx, srv_on_timeout);
-  us_socket_context_on_end(0, srv->ctx, srv_on_end);
-  srv->listen = us_socket_context_listen(0, srv->ctx, host, (int)port, 0,
-                                         (int)sizeof(ConnNode));
-  if (!srv->listen) {
-    us_socket_context_free(0, srv->ctx);
-    us_loop_free(srv->loop);
-    free(srv);
-    set_status(1);
-    return NULL;
-  }
-  srv->port = us_socket_local_port(0, (struct us_socket_t *)srv->listen);
+  listen_reg_add(host, srv->port, srv);
   return srv;
 }
 
@@ -737,32 +929,54 @@ int32_t avant_http_port(void *srvp) {
   return srv ? srv->port : 0;
 }
 
-static void srv_teardown(AvantHttpServer *srv) {
-  if (srv->listen) {
-    us_listen_socket_close(0, srv->listen);
-    srv->listen = NULL;
-  }
-  if (srv->ctx) {
-    us_socket_context_free(0, srv->ctx);
-    srv->ctx = NULL;
-  }
-  if (srv->loop) {
-    us_loop_free(srv->loop);
-    srv->loop = NULL;
-  }
-  free(srv);
+/* Loop threads follow the pool's registration model: register with
+ * the collector before the first dispatch, allocate in the
+ * non-moving mature space while serving, unregister after the loop
+ * has drained (no Avant frame is active then). */
+static void *loop_thread_main(void *arg) {
+  HttpLoop *hl = (HttpLoop *)arg;
+  avant_gc_register_thread();
+  avant_alloc_in_mature(1);
+  /* The C callback trampoline batches its roots into the current
+   * frame without entering (it forwards to the entering dispatch
+   * function), so a loop thread needs a base frame for the whole
+   * serve, the way the serving thread already has its `serve` frame.
+   * Its slots name the pinned state and a C request pointer, never a
+   * nursery object, so scanning it between dispatches is safe. */
+  avant_gc_enter();
+  us_loop_run(hl->loop);
+  avant_gc_leave();
+  avant_gc_unregister_thread();
+  return NULL;
 }
 
 int32_t avant_http_serve(void *srvp, void *state, void *cb) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
-  if (!srv || !srv->loop) {
+  int i;
+  if (!srv || !srv->loops || srv->nloops < 1) {
     set_status(1);
     return 1;
   }
   srv->state = state;
   srv->dispatch = (AvantHttpDispatch)cb;
   srv->running = 1;
-  us_loop_run(srv->loop);
+  for (i = 1; i < srv->nloops; i++) {
+    if (pthread_create(&srv->loops[i].thread, NULL, loop_thread_main,
+                       &srv->loops[i]) == 0) {
+      srv->loops[i].spawned = 1;
+    } else {
+      /* A loop that could not start still has its listen socket
+       * closed by close/teardown; serving continues on fewer loops. */
+      srv->loops[i].spawned = 0;
+    }
+  }
+  us_loop_run(srv->loops[0].loop);
+  for (i = 1; i < srv->nloops; i++) {
+    if (srv->loops[i].spawned) {
+      pthread_join(srv->loops[i].thread, NULL);
+      srv->loops[i].spawned = 0;
+    }
+  }
   srv->running = 0;
   srv_teardown(srv);
   return 0;
@@ -770,12 +984,17 @@ int32_t avant_http_serve(void *srvp, void *state, void *cb) {
 
 int32_t avant_http_close(void *srvp) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
+  int i;
   if (!srv) {
     return 0;
   }
   if (srv->running) {
     srv->closing = 1;
-    us_wakeup_loop(srv->loop);
+    for (i = 0; i < srv->nloops; i++) {
+      if (srv->loops[i].loop) {
+        us_wakeup_loop(srv->loops[i].loop);
+      }
+    }
     return 0;
   }
   srv_teardown(srv);

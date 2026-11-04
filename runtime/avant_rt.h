@@ -71,6 +71,7 @@ static inline uint32_t avant_str_generation(void) {
   return atomic_load_explicit(&g_avant_str_gen, memory_order_acquire);
 }
 int32_t avant_is_young(void *payload);
+void avant_gc_heap_goal_collect(void);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
 void avant_world_lock(void);
@@ -308,6 +309,8 @@ int64_t avant_checked_rem_i64(int64_t a, int64_t b);
 uint64_t avant_checked_div_u64(uint64_t a, uint64_t b);
 uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
 
+int32_t avant_chosen_threads(void);
+void avant_set_flag_threads(long n);
 void *avant_spawn(void *fn, void *arg);
 int32_t avant_join(void *handle);
 void avant_parallel_for(int32_t n, void *fn, void *ctx);
@@ -367,7 +370,7 @@ char *avant_http_req_body(void *req);
 char *avant_http_req_headers(void *req);
 void avant_http_req_respond(void *req, int32_t status, const char *head,
                             const char *body);
-void *avant_http_listen(const char *host, int32_t port, int32_t max_body);
+void *avant_http_listen(const char *host, int32_t port, int32_t max_body, int32_t loops);
 int32_t avant_http_port(void *srv);
 int32_t avant_http_serve(void *srv, void *state, void *cb);
 int32_t avant_http_close(void *srv);
