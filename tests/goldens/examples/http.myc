@@ -1217,6 +1217,7 @@ FUNC :avant_http_listen
     TYPE :i32
     TYPE :i32
     TYPE :i32
+    TYPE :i32
 ENDFUNC
 
 FUNC :avant_http_port
@@ -1233,6 +1234,7 @@ FUNC :avant_http_serve
     TYPE :ptr<void>
     TYPE :ptr<HttpState>
     TYPE :ptr<void>
+    TYPE :ptr<void>
 ENDFUNC
 
 FUNC :avant_http_close
@@ -1240,6 +1242,229 @@ FUNC :avant_http_close
     TYPE :i32
   ARGS
     TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_http_req_is_ws
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_http_req_ws_upgrade
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_http_req_ws_id
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_http_req_ws_server
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_http_req_ws_conn
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_conn
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_send_text_direct
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_send_text_bytes_direct
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_send_bytes_direct
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_close_direct
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :i32
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_event_kind
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_conn_id
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_server
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_path
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_is_text
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_data
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_code
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_event_reason
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_send_text_by_id
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :i32
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_send_text_bytes_by_id
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :i32
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_send_bytes_by_id
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :i32
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_close_by_id
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :i32
+    TYPE :i32
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_client_connect
+  RETURN
+    TYPE :ptr<void>
+  ARGS
+    TYPE :ptr<u8>
+    TYPE :i32
+    TYPE :ptr<u8>
+    TYPE :ptr<u8>
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_ws_client_recv
+  RETURN
+    TYPE :ptr<u8>
+  ARGS
+    TYPE :ptr<void>
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_ws_client_last_is_text
+  RETURN
+    TYPE :i32
+ENDFUNC
+
+FUNC :avant_ws_client_close_code
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_client_send_text
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_client_send_bytes
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<u8>
+ENDFUNC
+
+FUNC :avant_ws_client_close
+  RETURN
+    TYPE :i32
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
+FUNC :avant_ws_client_key
+  RETURN
+    TYPE :ptr<u8>
 ENDFUNC
 
 FUNC :avant_http_fetch
@@ -1297,10 +1522,40 @@ STRUCT :Response
   TYPE :ptr<u8>
 ENDSTRUCT
 
+STRUCT :WsMessage
+  TYPE :bool
+  TYPE :ptr<u8>
+ENDSTRUCT
+
+STRUCT :WsSender
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :WsConn
+  TYPE :ptr<void>
+  TYPE :i32
+  TYPE :ptr<void>
+ENDSTRUCT
+
 STRUCT :Route
   TYPE :ptr<u8>
   TYPE :ptr<u8>
   TYPE :Fn_Request__Response
+ENDSTRUCT
+
+STRUCT :WsRoute
+  TYPE :ptr<u8>
+  TYPE :Fn_WsConn_WsMessage__Void
+ENDSTRUCT
+
+STRUCT :WsOpenRoute
+  TYPE :ptr<u8>
+  TYPE :Fn_WsConn__Void
+ENDSTRUCT
+
+STRUCT :WsCloseRoute
+  TYPE :ptr<u8>
+  TYPE :Fn_WsConn_Int_String__Void
 ENDSTRUCT
 
 STRUCT :Server
@@ -1315,18 +1570,30 @@ STRUCT :UrlParts
   TYPE :ptr<u8>
 ENDSTRUCT
 
+STRUCT :WsConnection
+  TYPE :ptr<void>
+ENDSTRUCT
+
 STRUCT :HttpError
   TYPE :ptr<u8>
 ENDSTRUCT
 
 STRUCT :HttpState
   TYPE :ptr<Array_Route>
+  TYPE :ptr<Array_WsRoute>
+  TYPE :ptr<Array_WsOpenRoute>
+  TYPE :ptr<Array_WsCloseRoute>
+  TYPE :ptr<Array_Int>
+  TYPE :ptr<Array_String>
   TYPE :bool
   TYPE :bool
   TYPE :i32
 ENDSTRUCT
 
 STRUCT :Http
+ENDSTRUCT
+
+STRUCT :Ws
 ENDSTRUCT
 
 STRUCT :U_Nil_UrlParts
@@ -1345,10 +1612,21 @@ STRUCT :U_HttpError_Response
   TYPE :Response
 ENDSTRUCT
 
+STRUCT :U_Nil_WsMessage
+  TYPE :i32
+  TYPE :WsMessage
+ENDSTRUCT
+
 STRUCT :U_HttpError_Server
   TYPE :i32
   TYPE :ptr<HttpError>
   TYPE :Server
+ENDSTRUCT
+
+STRUCT :U_HttpError_WsConnection
+  TYPE :i32
+  TYPE :ptr<HttpError>
+  TYPE :WsConnection
 ENDSTRUCT
 
 STRUCT :Array_Header
@@ -1369,6 +1647,30 @@ STRUCT :Array_Route
   TYPE :i32
 ENDSTRUCT
 
+STRUCT :Array_WsRoute
+  TYPE :ptr<WsRoute>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :Array_WsOpenRoute
+  TYPE :ptr<WsOpenRoute>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :Array_WsCloseRoute
+  TYPE :ptr<WsCloseRoute>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
+STRUCT :Array_Int
+  TYPE :ptr<i32>
+  TYPE :i32
+  TYPE :i32
+ENDSTRUCT
+
 STRUCT :AvantBuf
   TYPE :ptr<u8>
   TYPE :i32
@@ -1380,9 +1682,24 @@ STRUCT :Fn_Request__Response
   TYPE "fn<ptr<void>, Request, Response>"
 ENDSTRUCT
 
-STRUCT :Fn_HttpState_Ptr_Void__Int
+STRUCT :Fn_WsConn_WsMessage__Void
   TYPE :ptr<void>
-  TYPE "fn<ptr<void>, ptr<HttpState>, ptr<void>, i32>"
+  TYPE "fn<ptr<void>, WsConn, WsMessage, void>"
+ENDSTRUCT
+
+STRUCT :Fn_WsConn__Void
+  TYPE :ptr<void>
+  TYPE "fn<ptr<void>, WsConn, void>"
+ENDSTRUCT
+
+STRUCT :Fn_WsConn_Int_String__Void
+  TYPE :ptr<void>
+  TYPE "fn<ptr<void>, WsConn, i32, ptr<u8>, void>"
+ENDSTRUCT
+
+STRUCT :Fn_HttpState_Ptr_Void__Void
+  TYPE :ptr<void>
+  TYPE "fn<ptr<void>, ptr<HttpState>, ptr<void>, void>"
 ENDSTRUCT
 
 STRUCT :Box_Server
@@ -1736,8 +2053,6 @@ FUNC :http_dispatch
   ARGS
     TYPE :ptr<HttpState>
     TYPE :ptr<void>
-  RETURN
-    TYPE :i32
   BODY
     CALL :avant_gc_enter
     PARAM 0
@@ -1883,6 +2198,88 @@ FUNC :http_dispatch
         LOCAL :__t8
         STORE
     ENDLOOP
+    LOCAL :raw :ptr<void>
+    CALL :avant_http_req_is_ws
+    LOCAL :__t14 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t14
+    BINARY :not_eq
+    IF
+      THEN
+        LOCAL :path :ptr<u8>
+        LOCAL :state :ptr<HttpState>
+        CALL :HttpState__has_ws_route
+        LOCAL :__t13 :bool
+        STORE
+      ELSE
+        PUSH false
+        LOCAL :__t13 :bool
+        STORE
+    ENDIF
+    LOCAL :__t13
+    IF
+      THEN
+        LOCAL :raw :ptr<void>
+        CALL :avant_http_req_ws_upgrade
+        LOCAL :__t15 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t15
+        BINARY :not_eq
+        IF
+          THEN
+            LOCAL :raw :ptr<void>
+            CALL :avant_http_req_ws_id
+            LOCAL :wid :i32
+            STORE
+            LOCAL :raw :ptr<void>
+            CALL :avant_http_req_ws_server
+            LOCAL :wsrv :ptr<void>
+            STORE
+            LOCAL :raw :ptr<void>
+            CALL :avant_http_req_ws_conn
+            LOCAL :whandle :ptr<void>
+            STORE
+            LOCAL :wsrv :ptr<void>
+            LOCAL :__t16 :ptr<void>
+            STORE
+            LOCAL :wid :i32
+            LOCAL :__t17 :i32
+            STORE
+            LOCAL :whandle :ptr<void>
+            LOCAL :__t18 :ptr<void>
+            STORE
+            LOCAL :__t18
+            LOCAL :__t17
+            LOCAL :__t16
+            CREATE :WsConn
+            LOCAL :conn :WsConn
+            STORE
+            LOCAL :wid :i32
+            LOCAL :__t19 :i32
+            STORE
+            LOCAL :path :ptr<u8>
+            LOCAL :__t20 :ptr<u8>
+            STORE
+            LOCAL :__t20
+            LOCAL :__t19
+            LOCAL :state :ptr<HttpState>
+            CALL :HttpState__register_ws_conn
+            LOCAL :path :ptr<u8>
+            LOCAL :__t21 :ptr<u8>
+            STORE
+            LOCAL :conn :WsConn
+            LOCAL :__t22 :WsConn
+            STORE
+            LOCAL :__t22
+            LOCAL :__t21
+            LOCAL :state :ptr<HttpState>
+            CALL :HttpState__ws_open_dispatch
+        ENDIF
+        CALL :avant_gc_leave
+        RET
+    ENDIF
     PUSH 0
     AS :ptr<u8>
     LOCAL :method :ptr<u8>
@@ -1908,29 +2305,29 @@ FUNC :http_dispatch
     LOCAL :req_body :ptr<u8>
     STORE
     LOCAL :method :ptr<u8>
-    LOCAL :__t13 :ptr<u8>
+    LOCAL :__t23 :ptr<u8>
     STORE
     LOCAL :path :ptr<u8>
-    LOCAL :__t14 :ptr<u8>
+    LOCAL :__t24 :ptr<u8>
     STORE
     LOCAL :query :U_Nil_String
-    LOCAL :__t15 :U_Nil_String
+    LOCAL :__t25 :U_Nil_String
     STORE
     LOCAL :raw_headers :ptr<u8>
-    LOCAL :__t16 :ptr<u8>
+    LOCAL :__t26 :ptr<u8>
     STORE
-    LOCAL :__t16
+    LOCAL :__t26
     CREATE :Headers
-    LOCAL :__t17 :Headers
+    LOCAL :__t27 :Headers
     STORE
     LOCAL :req_body :ptr<u8>
-    LOCAL :__t18 :ptr<u8>
+    LOCAL :__t28 :ptr<u8>
     STORE
-    LOCAL :__t18
-    LOCAL :__t17
-    LOCAL :__t15
-    LOCAL :__t14
-    LOCAL :__t13
+    LOCAL :__t28
+    LOCAL :__t27
+    LOCAL :__t25
+    LOCAL :__t24
+    LOCAL :__t23
     CREATE :Request
     LOCAL :req :Request
     STORE
@@ -1941,28 +2338,737 @@ FUNC :http_dispatch
     STORE
     CALL :avant_gc_defer_enter
     LOCAL :raw :ptr<void>
-    LOCAL :__t19 :ptr<void>
+    LOCAL :__t29 :ptr<void>
     STORE
     LOCAL :resp :Response
     FIELD 0
-    LOCAL :__t20 :i32
+    LOCAL :__t30 :i32
     STORE
     LOCAL :resp :Response
     ADDR
     CALL :Response__head_block
-    LOCAL :__t21 :ptr<u8>
+    LOCAL :__t31 :ptr<u8>
     STORE
     LOCAL :resp :Response
     FIELD 3
-    LOCAL :__t22 :ptr<u8>
+    LOCAL :__t32 :ptr<u8>
     STORE
-    LOCAL :__t22
-    LOCAL :__t21
-    LOCAL :__t20
-    LOCAL :__t19
+    LOCAL :__t32
+    LOCAL :__t31
+    LOCAL :__t30
+    LOCAL :__t29
     CALL :avant_http_req_respond
     CALL :avant_gc_defer_leave
-    PUSH 0
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :ws_dispatch
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<void>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :state :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :raw :ptr<void>
+    STORE
+    LOCAL :raw :ptr<void>
+    CALL :avant_ws_event_kind
+    LOCAL :kind :i32
+    STORE
+    LOCAL :raw :ptr<void>
+    CALL :avant_ws_event_conn_id
+    LOCAL :wid :i32
+    STORE
+    LOCAL :raw :ptr<void>
+    CALL :avant_ws_event_server
+    LOCAL :wsrv :ptr<void>
+    STORE
+    LOCAL :raw :ptr<void>
+    CALL :avant_ws_event_conn
+    LOCAL :whandle :ptr<void>
+    STORE
+    LOCAL :wsrv :ptr<void>
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :wid :i32
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :whandle :ptr<void>
+    LOCAL :__t3 :ptr<void>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    LOCAL :__t1
+    CREATE :WsConn
+    LOCAL :conn :WsConn
+    STORE
+    LOCAL :kind :i32
+    LOCAL :__t4 :i32
+    STORE
+    PUSH 1
+    LOCAL :__t4
+    BINARY :eq
+    IF
+      THEN
+        PUSH ""
+        LOCAL :path :ptr<u8>
+        STORE
+        PUSH 0
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_Int>
+        LOCAL :__t8 :ptr<Array_Int>
+        STORE
+        PUSH 0
+        AS :ptr<Array_String>
+        LOCAL :__t12 :ptr<Array_String>
+        STORE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t5 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 4
+            DEREF
+            FIELD 1
+            LOCAL :__t5
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t7 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 4
+            LOCAL :__t8 :ptr<Array_Int>
+            STORE
+            LOCAL :__t8
+            DEREF
+            FIELD 1
+            LOCAL :__t9 :i32
+            STORE
+            LOCAL :__t9
+            AS :u32
+            LOCAL :__t7
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t9
+                LOCAL :__t7
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t8
+            DEREF
+            FIELD 0
+            LOCAL :__t10 :ptr<i32>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t7
+            LOCAL :__t10
+            BINARY :add
+            DEREF
+            LOCAL :__t6 :i32
+            STORE
+            LOCAL :wid :i32
+            LOCAL :__t6
+            BINARY :eq
+            IF
+              THEN
+                LOCAL :i :i32
+                LOCAL :__t11 :i32
+                STORE
+                LOCAL :state :ptr<HttpState>
+                DEREF
+                FIELD 5
+                LOCAL :__t12 :ptr<Array_String>
+                STORE
+                LOCAL :__t12
+                DEREF
+                FIELD 1
+                LOCAL :__t13 :i32
+                STORE
+                LOCAL :__t13
+                AS :u32
+                LOCAL :__t11
+                AS :u32
+                BINARY :more_eq
+                IF
+                  THEN
+                    LOCAL :__t13
+                    LOCAL :__t11
+                    CALL :avant_trap_bounds
+                ENDIF
+                LOCAL :__t12
+                DEREF
+                FIELD 0
+                LOCAL :__t14 :ptr<ptr<u8>>
+                STORE
+                PUSH 0
+                GLOBAL :g_avant_shared
+                BINARY :not_eq
+                IF
+                  THEN
+                ENDIF
+                LOCAL :__t11
+                LOCAL :__t14
+                BINARY :add
+                DEREF
+                LOCAL :path :ptr<u8>
+                STORE
+                LOCAL :state :ptr<HttpState>
+                DEREF
+                FIELD 4
+                DEREF
+                FIELD 1
+                LOCAL :i :i32
+                STORE
+              ELSE
+                LOCAL :i :i32
+                LOCAL :__t15 :i32
+                STORE
+                PUSH 1
+                LOCAL :__t15
+                LOCAL :__t16 :i32
+                STORE
+                LOCAL :__t17 :i32
+                STORE
+                LOCAL :__t17
+                AS :i64
+                LOCAL :__t16
+                AS :i64
+                BINARY :add
+                LOCAL :__t18 :i64
+                STORE
+                LOCAL :__t18
+                AS :i32
+                AS :i64
+                LOCAL :__t18
+                BINARY :not_eq
+                IF
+                  THEN
+                    CALL :avant_trap_overflow
+                ENDIF
+                LOCAL :__t18
+                AS :i32
+                LOCAL :i :i32
+                STORE
+            ENDIF
+            PUSH 0
+            AS :ptr<Array_Int>
+            LOCAL :__t8
+            STORE
+            PUSH 0
+            AS :ptr<i32>
+            LOCAL :__t10
+            STORE
+            PUSH 0
+            AS :ptr<Array_String>
+            LOCAL :__t12
+            STORE
+            PUSH 0
+            AS :ptr<ptr<u8>>
+            LOCAL :__t14
+            STORE
+        ENDLOOP
+        LOCAL :path :ptr<u8>
+        CALL :avant_str_size
+        LOCAL :__t19 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t19
+        BINARY :eq
+        IF
+          THEN
+            PUSH 0
+            AS :ptr<u8>
+            LOCAL :path :ptr<u8>
+            STORE
+            LOCAL :raw :ptr<void>
+            CALL :avant_ws_event_path
+            LOCAL :path :ptr<u8>
+            STORE
+        ENDIF
+        LOCAL :raw :ptr<void>
+        CALL :avant_ws_event_is_text
+        LOCAL :__t20 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t20
+        BINARY :not_eq
+        LOCAL :is_text :bool
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        LOCAL :data :ptr<u8>
+        STORE
+        LOCAL :raw :ptr<void>
+        CALL :avant_ws_event_data
+        LOCAL :data :ptr<u8>
+        STORE
+        LOCAL :is_text :bool
+        LOCAL :__t21 :bool
+        STORE
+        LOCAL :data :ptr<u8>
+        LOCAL :__t22 :ptr<u8>
+        STORE
+        LOCAL :__t22
+        LOCAL :__t21
+        CREATE :WsMessage
+        LOCAL :msg :WsMessage
+        STORE
+        PUSH 0
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_WsRoute>
+        LOCAL :__t25 :ptr<Array_WsRoute>
+        STORE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t23 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 1
+            DEREF
+            FIELD 1
+            LOCAL :__t23
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t24 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 1
+            LOCAL :__t25 :ptr<Array_WsRoute>
+            STORE
+            LOCAL :__t25
+            DEREF
+            FIELD 1
+            LOCAL :__t26 :i32
+            STORE
+            LOCAL :__t26
+            AS :u32
+            LOCAL :__t24
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t26
+                LOCAL :__t24
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t25
+            DEREF
+            FIELD 0
+            LOCAL :__t27 :ptr<WsRoute>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t24
+            LOCAL :__t27
+            BINARY :add
+            DEREF
+            LOCAL :r :WsRoute
+            STORE
+            LOCAL :r :WsRoute
+            FIELD 0
+            LOCAL :__t28 :ptr<u8>
+            STORE
+            LOCAL :path :ptr<u8>
+            LOCAL :__t28
+            CALL :avant_str_eq
+            PUSH 1
+            BINARY :eq
+            IF
+              THEN
+                LOCAL :r :WsRoute
+                FIELD 1
+                LOCAL :__t29 :Fn_WsConn_WsMessage__Void
+                STORE
+                LOCAL :conn :WsConn
+                LOCAL :__t30 :WsConn
+                STORE
+                LOCAL :msg :WsMessage
+                LOCAL :__t31 :WsMessage
+                STORE
+                LOCAL :__t31
+                LOCAL :__t30
+                LOCAL :__t29
+                FIELD 0
+                LOCAL :__t29
+                FIELD 1
+                INVOKE
+            ENDIF
+            LOCAL :i :i32
+            LOCAL :__t32 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t32
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+            PUSH 0
+            AS :ptr<Array_WsRoute>
+            LOCAL :__t25
+            STORE
+            PUSH 0
+            AS :ptr<WsRoute>
+            LOCAL :__t27
+            STORE
+        ENDLOOP
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :kind :i32
+    LOCAL :__t33 :i32
+    STORE
+    PUSH 2
+    LOCAL :__t33
+    BINARY :eq
+    IF
+      THEN
+        PUSH ""
+        LOCAL :path :ptr<u8>
+        STORE
+        PUSH 0
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_Int>
+        LOCAL :__t37 :ptr<Array_Int>
+        STORE
+        PUSH 0
+        AS :ptr<Array_String>
+        LOCAL :__t41 :ptr<Array_String>
+        STORE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t34 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 4
+            DEREF
+            FIELD 1
+            LOCAL :__t34
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t36 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 4
+            LOCAL :__t37 :ptr<Array_Int>
+            STORE
+            LOCAL :__t37
+            DEREF
+            FIELD 1
+            LOCAL :__t38 :i32
+            STORE
+            LOCAL :__t38
+            AS :u32
+            LOCAL :__t36
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t38
+                LOCAL :__t36
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t37
+            DEREF
+            FIELD 0
+            LOCAL :__t39 :ptr<i32>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t36
+            LOCAL :__t39
+            BINARY :add
+            DEREF
+            LOCAL :__t35 :i32
+            STORE
+            LOCAL :wid :i32
+            LOCAL :__t35
+            BINARY :eq
+            IF
+              THEN
+                LOCAL :i :i32
+                LOCAL :__t40 :i32
+                STORE
+                LOCAL :state :ptr<HttpState>
+                DEREF
+                FIELD 5
+                LOCAL :__t41 :ptr<Array_String>
+                STORE
+                LOCAL :__t41
+                DEREF
+                FIELD 1
+                LOCAL :__t42 :i32
+                STORE
+                LOCAL :__t42
+                AS :u32
+                LOCAL :__t40
+                AS :u32
+                BINARY :more_eq
+                IF
+                  THEN
+                    LOCAL :__t42
+                    LOCAL :__t40
+                    CALL :avant_trap_bounds
+                ENDIF
+                LOCAL :__t41
+                DEREF
+                FIELD 0
+                LOCAL :__t43 :ptr<ptr<u8>>
+                STORE
+                PUSH 0
+                GLOBAL :g_avant_shared
+                BINARY :not_eq
+                IF
+                  THEN
+                ENDIF
+                LOCAL :__t40
+                LOCAL :__t43
+                BINARY :add
+                DEREF
+                LOCAL :path :ptr<u8>
+                STORE
+                LOCAL :state :ptr<HttpState>
+                DEREF
+                FIELD 4
+                DEREF
+                FIELD 1
+                LOCAL :i :i32
+                STORE
+              ELSE
+                LOCAL :i :i32
+                LOCAL :__t44 :i32
+                STORE
+                PUSH 1
+                LOCAL :__t44
+                LOCAL :__t45 :i32
+                STORE
+                LOCAL :__t46 :i32
+                STORE
+                LOCAL :__t46
+                AS :i64
+                LOCAL :__t45
+                AS :i64
+                BINARY :add
+                LOCAL :__t47 :i64
+                STORE
+                LOCAL :__t47
+                AS :i32
+                AS :i64
+                LOCAL :__t47
+                BINARY :not_eq
+                IF
+                  THEN
+                    CALL :avant_trap_overflow
+                ENDIF
+                LOCAL :__t47
+                AS :i32
+                LOCAL :i :i32
+                STORE
+            ENDIF
+            PUSH 0
+            AS :ptr<Array_Int>
+            LOCAL :__t37
+            STORE
+            PUSH 0
+            AS :ptr<i32>
+            LOCAL :__t39
+            STORE
+            PUSH 0
+            AS :ptr<Array_String>
+            LOCAL :__t41
+            STORE
+            PUSH 0
+            AS :ptr<ptr<u8>>
+            LOCAL :__t43
+            STORE
+        ENDLOOP
+        LOCAL :path :ptr<u8>
+        CALL :avant_str_size
+        LOCAL :__t48 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t48
+        BINARY :eq
+        IF
+          THEN
+            PUSH 0
+            AS :ptr<u8>
+            LOCAL :path :ptr<u8>
+            STORE
+            LOCAL :raw :ptr<void>
+            CALL :avant_ws_event_path
+            LOCAL :path :ptr<u8>
+            STORE
+        ENDIF
+        LOCAL :raw :ptr<void>
+        CALL :avant_ws_event_code
+        LOCAL :code :i32
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        LOCAL :reason :ptr<u8>
+        STORE
+        LOCAL :raw :ptr<void>
+        CALL :avant_ws_event_reason
+        LOCAL :reason :ptr<u8>
+        STORE
+        PUSH 0
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_WsCloseRoute>
+        LOCAL :__t51 :ptr<Array_WsCloseRoute>
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        LOCAL :__t58 :ptr<u8>
+        STORE
+        LOOP
+          COND
+            LOCAL :i :i32
+            LOCAL :__t49 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 3
+            DEREF
+            FIELD 1
+            LOCAL :__t49
+            BINARY :less
+          BODY
+            LOCAL :i :i32
+            LOCAL :__t50 :i32
+            STORE
+            LOCAL :state :ptr<HttpState>
+            DEREF
+            FIELD 3
+            LOCAL :__t51 :ptr<Array_WsCloseRoute>
+            STORE
+            LOCAL :__t51
+            DEREF
+            FIELD 1
+            LOCAL :__t52 :i32
+            STORE
+            LOCAL :__t52
+            AS :u32
+            LOCAL :__t50
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t52
+                LOCAL :__t50
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t51
+            DEREF
+            FIELD 0
+            LOCAL :__t53 :ptr<WsCloseRoute>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t50
+            LOCAL :__t53
+            BINARY :add
+            DEREF
+            LOCAL :rc :WsCloseRoute
+            STORE
+            LOCAL :rc :WsCloseRoute
+            FIELD 0
+            LOCAL :__t54 :ptr<u8>
+            STORE
+            LOCAL :path :ptr<u8>
+            LOCAL :__t54
+            CALL :avant_str_eq
+            PUSH 1
+            BINARY :eq
+            IF
+              THEN
+                LOCAL :rc :WsCloseRoute
+                FIELD 1
+                LOCAL :__t55 :Fn_WsConn_Int_String__Void
+                STORE
+                LOCAL :conn :WsConn
+                LOCAL :__t56 :WsConn
+                STORE
+                LOCAL :code :i32
+                LOCAL :__t57 :i32
+                STORE
+                LOCAL :reason :ptr<u8>
+                LOCAL :__t58 :ptr<u8>
+                STORE
+                LOCAL :__t58
+                LOCAL :__t57
+                LOCAL :__t56
+                LOCAL :__t55
+                FIELD 0
+                LOCAL :__t55
+                FIELD 1
+                INVOKE
+            ENDIF
+            LOCAL :i :i32
+            LOCAL :__t59 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t59
+            BINARY :add
+            LOCAL :i :i32
+            STORE
+            PUSH 0
+            AS :ptr<Array_WsCloseRoute>
+            LOCAL :__t51
+            STORE
+            PUSH 0
+            AS :ptr<WsCloseRoute>
+            LOCAL :__t53
+            STORE
+            PUSH 0
+            AS :ptr<u8>
+            LOCAL :__t58
+            STORE
+        ENDLOOP
+        LOCAL :wid :i32
+        LOCAL :state :ptr<HttpState>
+        CALL :HttpState__unregister_ws_conn
+    ENDIF
     CALL :avant_gc_leave
     RET
 ENDFUNC
@@ -5333,11 +6439,14 @@ FUNC :main
     PUSH 1 :u64
     PUSH 1 :u32
     CALL :avant_type_map
-    PUSH 1 :u64
+    PUSH 63 :u64
     PUSH 2 :u32
     CALL :avant_type_map
     PUSH 0 :u64
     PUSH 3 :u32
+    CALL :avant_type_map
+    PUSH 0 :u64
+    PUSH 4 :u32
     CALL :avant_type_map
     PUSH 2 :u64
     PUSH 400 :u32
@@ -5360,20 +6469,24 @@ FUNC :main
     PUSH 0
     LOCAL :__t4 :i32
     STORE
+    PUSH 1048576
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :__t5
     LOCAL :__t4
     LOCAL :__t3
     LOCAL :__t2
     LOCAL :__t1
     CALL :Http__listen
-    LOCAL :__t5 :U_HttpError_Server
+    LOCAL :__t6 :U_HttpError_Server
     STORE
-    LOCAL :__t5
+    LOCAL :__t6
     FIELD 0
     PUSH 0
     BINARY :not_eq
     IF
       THEN
-        LOCAL :__t5
+        LOCAL :__t6
         FIELD 2
         PUSH 400 :u32
         SIZEOF :Box_Server
@@ -5395,28 +6508,28 @@ FUNC :main
         FIELD 0
         STORE
         PUSH "/"
-        LOCAL :__t6 :ptr<u8>
+        LOCAL :__t7 :ptr<u8>
         STORE
         PUSH 401 :u32
         SIZEOF :__lam_0_env
         CALL :avant_alloc
         AS :ptr<__lam_0_env>
-        LOCAL :__t7 :ptr<__lam_0_env>
+        LOCAL :__t8 :ptr<__lam_0_env>
         STORE
         LOCAL :server :ptr<Box_Server>
-        LOCAL :__t7
+        LOCAL :__t8
         DEREF
         FIELD 0
         STORE
         ADDR :__lam_0
         AS "fn<ptr<void>, Request, Response>"
-        LOCAL :__t7
+        LOCAL :__t8
         AS :ptr<void>
         CREATE :Fn_Request__Response
-        LOCAL :__t8 :Fn_Request__Response
+        LOCAL :__t9 :Fn_Request__Response
         STORE
-        LOCAL :__t8
-        LOCAL :__t6
+        LOCAL :__t9
+        LOCAL :__t7
         LOCAL :server :ptr<Box_Server>
         DEREF
         FIELD 0
@@ -5438,17 +6551,17 @@ FUNC :main
         SIZEOF :__spawn_0_cap
         CALL :avant_alloc
         AS :ptr<__spawn_0_cap>
-        LOCAL :__t9 :ptr<__spawn_0_cap>
+        LOCAL :__t10 :ptr<__spawn_0_cap>
         STORE
-        LOCAL :__t9
+        LOCAL :__t10
         AS :ptr<void>
         CALL :avant_pin
         LOCAL :port :i32
-        LOCAL :__t9
+        LOCAL :__t10
         DEREF
         FIELD 0
         STORE
-        LOCAL :__t9
+        LOCAL :__t10
         AS :ptr<void>
         ADDR :__spawn_0
         AS :ptr<void>
@@ -6067,6 +7180,448 @@ FUNC :Response__head_block
     RET
 ENDFUNC
 
+FUNC :WsMessage__is_binary
+  ARGS
+    TYPE :ptr<WsMessage>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsMessage>
+    STORE
+    LOCAL :self :ptr<WsMessage>
+    DEREF
+    FIELD 0
+    UNARY :lnot
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsMessage__text
+  ARGS
+    TYPE :ptr<WsMessage>
+  RETURN
+    TYPE :U_Nil_String
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsMessage>
+    STORE
+    LOCAL :self :ptr<WsMessage>
+    DEREF
+    FIELD 0
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t1 :i32
+        STORE
+        LOCAL :__t1
+        ADDR
+        LOCAL :self :ptr<WsMessage>
+        DEREF
+        FIELD 1
+        CALL :avant_str_from_utf8
+        LOCAL :__t2 :ptr<u8>
+        STORE
+        LOCAL :__t1
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            LOCAL :__t2
+            LOCAL :__t4 :ptr<u8>
+            STORE
+            LOCAL :__t4
+            PUSH 1
+            CREATE :U_Nil_String
+            LOCAL :__t3 :U_Nil_String
+            STORE
+          ELSE
+            PUSH 0
+            LOCAL :__t5 :i32
+            STORE
+            PUSH 0
+            AS :ptr<u8>
+            PUSH 0
+            CREATE :U_Nil_String
+            LOCAL :__t3 :U_Nil_String
+            STORE
+        ENDIF
+        LOCAL :__t3
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    PUSH 0
+    LOCAL :__t6 :i32
+    STORE
+    PUSH 0
+    AS :ptr<u8>
+    PUSH 0
+    CREATE :U_Nil_String
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsSender__send_text
+  ARGS
+    TYPE :ptr<WsSender>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsSender>
+    STORE
+    PARAM 1
+    LOCAL :text :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsSender>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :text :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_send_text_by_id
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsSender__send_bytes
+  ARGS
+    TYPE :ptr<WsSender>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsSender>
+    STORE
+    PARAM 1
+    LOCAL :data :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsSender>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :data :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_send_bytes_by_id
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsSender__send_message
+  ARGS
+    TYPE :ptr<WsSender>
+    TYPE :WsMessage
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsSender>
+    STORE
+    PARAM 1
+    LOCAL :msg :WsMessage
+    STORE
+    LOCAL :msg :WsMessage
+    FIELD 0
+    IF
+      THEN
+        LOCAL :self :ptr<WsSender>
+        DEREF
+        FIELD 0
+        LOCAL :__t2 :i32
+        STORE
+        LOCAL :msg :WsMessage
+        FIELD 1
+        LOCAL :__t3 :ptr<u8>
+        STORE
+        LOCAL :__t3
+        LOCAL :__t2
+        CALL :avant_ws_send_text_bytes_by_id
+        LOCAL :__t1 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t1
+        BINARY :not_eq
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :self :ptr<WsSender>
+    DEREF
+    FIELD 0
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :msg :WsMessage
+    FIELD 1
+    LOCAL :__t6 :ptr<u8>
+    STORE
+    LOCAL :__t6
+    LOCAL :__t5
+    CALL :avant_ws_send_bytes_by_id
+    LOCAL :__t4 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t4
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsSender__close
+  ARGS
+    TYPE :ptr<WsSender>
+    TYPE :i32
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsSender>
+    STORE
+    PARAM 1
+    LOCAL :code :i32
+    STORE
+    PARAM 2
+    LOCAL :reason :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsSender>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :code :i32
+    LOCAL :__t3 :i32
+    STORE
+    LOCAL :reason :ptr<u8>
+    LOCAL :__t4 :ptr<u8>
+    STORE
+    LOCAL :__t4
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_close_by_id
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConn__sender
+  ARGS
+    TYPE :ptr<WsConn>
+  RETURN
+    TYPE :WsSender
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConn>
+    STORE
+    LOCAL :self :ptr<WsConn>
+    DEREF
+    FIELD 1
+    LOCAL :__t1 :i32
+    STORE
+    LOCAL :__t1
+    CREATE :WsSender
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConn__send_text
+  ARGS
+    TYPE :ptr<WsConn>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConn>
+    STORE
+    PARAM 1
+    LOCAL :text :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsConn>
+    DEREF
+    FIELD 2
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :text :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_send_text_direct
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConn__send_bytes
+  ARGS
+    TYPE :ptr<WsConn>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConn>
+    STORE
+    PARAM 1
+    LOCAL :data :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsConn>
+    DEREF
+    FIELD 2
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :data :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_send_bytes_direct
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConn__send_message
+  ARGS
+    TYPE :ptr<WsConn>
+    TYPE :WsMessage
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConn>
+    STORE
+    PARAM 1
+    LOCAL :msg :WsMessage
+    STORE
+    LOCAL :msg :WsMessage
+    FIELD 0
+    IF
+      THEN
+        LOCAL :self :ptr<WsConn>
+        DEREF
+        FIELD 2
+        LOCAL :__t2 :ptr<void>
+        STORE
+        LOCAL :msg :WsMessage
+        FIELD 1
+        LOCAL :__t3 :ptr<u8>
+        STORE
+        LOCAL :__t3
+        LOCAL :__t2
+        CALL :avant_ws_send_text_bytes_direct
+        LOCAL :__t1 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t1
+        BINARY :not_eq
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :self :ptr<WsConn>
+    DEREF
+    FIELD 2
+    LOCAL :__t5 :ptr<void>
+    STORE
+    LOCAL :msg :WsMessage
+    FIELD 1
+    LOCAL :__t6 :ptr<u8>
+    STORE
+    LOCAL :__t6
+    LOCAL :__t5
+    CALL :avant_ws_send_bytes_direct
+    LOCAL :__t4 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t4
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConn__close
+  ARGS
+    TYPE :ptr<WsConn>
+    TYPE :i32
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConn>
+    STORE
+    PARAM 1
+    LOCAL :code :i32
+    STORE
+    PARAM 2
+    LOCAL :reason :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsConn>
+    DEREF
+    FIELD 2
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :code :i32
+    LOCAL :__t3 :i32
+    STORE
+    LOCAL :reason :ptr<u8>
+    LOCAL :__t4 :ptr<u8>
+    STORE
+    LOCAL :__t4
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_close_direct
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
 FUNC :Server__port
   ARGS
     TYPE :ptr<Server>
@@ -6081,7 +7636,7 @@ FUNC :Server__port
     DEREF
     FIELD 1
     DEREF
-    FIELD 3
+    FIELD 8
     CALL :avant_gc_leave
     RET
 ENDFUNC
@@ -6330,6 +7885,114 @@ FUNC :Server__route
     RET
 ENDFUNC
 
+FUNC :Server__websocket
+  ARGS
+    TYPE :ptr<Server>
+    TYPE :ptr<u8>
+    TYPE :Fn_WsConn_WsMessage__Void
+  RETURN
+    TYPE :Server
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Server>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :handler :Fn_WsConn_WsMessage__Void
+    STORE
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :handler :Fn_WsConn_WsMessage__Void
+    LOCAL :__t2 :Fn_WsConn_WsMessage__Void
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    LOCAL :self :ptr<Server>
+    DEREF
+    FIELD 1
+    CALL :HttpState__add_ws
+    LOCAL :self :ptr<Server>
+    DEREF
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Server__websocket_open
+  ARGS
+    TYPE :ptr<Server>
+    TYPE :ptr<u8>
+    TYPE :Fn_WsConn__Void
+  RETURN
+    TYPE :Server
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Server>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :handler :Fn_WsConn__Void
+    STORE
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :handler :Fn_WsConn__Void
+    LOCAL :__t2 :Fn_WsConn__Void
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    LOCAL :self :ptr<Server>
+    DEREF
+    FIELD 1
+    CALL :HttpState__add_ws_open
+    LOCAL :self :ptr<Server>
+    DEREF
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Server__websocket_close
+  ARGS
+    TYPE :ptr<Server>
+    TYPE :ptr<u8>
+    TYPE :Fn_WsConn_Int_String__Void
+  RETURN
+    TYPE :Server
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Server>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :handler :Fn_WsConn_Int_String__Void
+    STORE
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :handler :Fn_WsConn_Int_String__Void
+    LOCAL :__t2 :Fn_WsConn_Int_String__Void
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    LOCAL :self :ptr<Server>
+    DEREF
+    FIELD 1
+    CALL :HttpState__add_ws_close
+    LOCAL :self :ptr<Server>
+    DEREF
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
 FUNC :Server__serve
   ARGS
     TYPE :ptr<Server>
@@ -6342,7 +8005,7 @@ FUNC :Server__serve
     DEREF
     FIELD 1
     DEREF
-    FIELD 1
+    FIELD 6
     IF
       THEN
         CALL :avant_gc_leave
@@ -6353,7 +8016,7 @@ FUNC :Server__serve
     DEREF
     FIELD 1
     DEREF
-    FIELD 2
+    FIELD 7
     STORE
     LOCAL :self :ptr<Server>
     DEREF
@@ -6377,6 +8040,11 @@ FUNC :Server__serve
     AS :ptr<void>
     LOCAL :__t4 :ptr<void>
     STORE
+    ADDR :__cb_ws_dispatch
+    AS :ptr<void>
+    LOCAL :__t5 :ptr<void>
+    STORE
+    LOCAL :__t5
     LOCAL :__t4
     LOCAL :__t3
     LOCAL :__t2
@@ -6391,7 +8059,7 @@ FUNC :Server__serve
     DEREF
     FIELD 1
     DEREF
-    FIELD 2
+    FIELD 7
     STORE
     CALL :avant_gc_leave
     RET
@@ -6409,7 +8077,7 @@ FUNC :Server__close
     DEREF
     FIELD 1
     DEREF
-    FIELD 1
+    FIELD 6
     IF
       THEN
         CALL :avant_gc_leave
@@ -6420,12 +8088,193 @@ FUNC :Server__close
     DEREF
     FIELD 1
     DEREF
-    FIELD 1
+    FIELD 6
     STORE
     LOCAL :self :ptr<Server>
     DEREF
     FIELD 0
     CALL :avant_http_close
+    LOCAL :dummy :i32
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConnection__send_text
+  ARGS
+    TYPE :ptr<WsConnection>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConnection>
+    STORE
+    PARAM 1
+    LOCAL :text :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsConnection>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :text :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_client_send_text
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConnection__send_bytes
+  ARGS
+    TYPE :ptr<WsConnection>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConnection>
+    STORE
+    PARAM 1
+    LOCAL :data :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsConnection>
+    DEREF
+    FIELD 0
+    LOCAL :__t2 :ptr<void>
+    STORE
+    LOCAL :data :ptr<u8>
+    LOCAL :__t3 :ptr<u8>
+    STORE
+    LOCAL :__t3
+    LOCAL :__t2
+    CALL :avant_ws_client_send_bytes
+    LOCAL :__t1 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t1
+    BINARY :not_eq
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConnection__recv
+  ARGS
+    TYPE :ptr<WsConnection>
+    TYPE :i32
+  RETURN
+    TYPE :U_Nil_WsMessage
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConnection>
+    STORE
+    PARAM 1
+    LOCAL :timeout_ms :i32
+    STORE
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :data :ptr<u8>
+    STORE
+    LOCAL :self :ptr<WsConnection>
+    DEREF
+    FIELD 0
+    LOCAL :__t1 :ptr<void>
+    STORE
+    LOCAL :timeout_ms :i32
+    LOCAL :__t2 :i32
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :avant_ws_client_recv
+    LOCAL :data :ptr<u8>
+    STORE
+    CALL :avant_http_take_status
+    LOCAL :__t3 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t3
+    BINARY :not_eq
+    IF
+      THEN
+        PUSH 0
+        LOCAL :__t4 :i32
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        PUSH false
+        CREATE :WsMessage
+        PUSH 0
+        CREATE :U_Nil_WsMessage
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    CALL :avant_ws_client_last_is_text
+    LOCAL :__t5 :i32
+    STORE
+    PUSH 0
+    LOCAL :__t5
+    BINARY :not_eq
+    LOCAL :is_text :bool
+    STORE
+    LOCAL :is_text :bool
+    LOCAL :__t6 :bool
+    STORE
+    LOCAL :data :ptr<u8>
+    LOCAL :__t7 :ptr<u8>
+    STORE
+    LOCAL :__t7
+    LOCAL :__t6
+    CREATE :WsMessage
+    LOCAL :__t8 :WsMessage
+    STORE
+    LOCAL :__t8
+    PUSH 1
+    CREATE :U_Nil_WsMessage
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConnection__close_code
+  ARGS
+    TYPE :ptr<WsConnection>
+  RETURN
+    TYPE :i32
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConnection>
+    STORE
+    LOCAL :self :ptr<WsConnection>
+    DEREF
+    FIELD 0
+    CALL :avant_ws_client_close_code
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :WsConnection__close
+  ARGS
+    TYPE :ptr<WsConnection>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<WsConnection>
+    STORE
+    LOCAL :self :ptr<WsConnection>
+    DEREF
+    FIELD 0
+    CALL :avant_ws_client_close
     LOCAL :dummy :i32
     STORE
     CALL :avant_gc_leave
@@ -6527,6 +8376,311 @@ FUNC :HttpState__initialize
     DEREF
     FIELD 0
     STORE
+    PUSH 0
+    AS :ptr<Array_WsRoute>
+    LOCAL :wr :ptr<Array_WsRoute>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :WsRoute
+    BINARY :mul
+    PUSH 0 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<WsRoute>
+    LOCAL :__t5 :ptr<WsRoute>
+    STORE
+    PUSH 0
+    LOCAL :__t6 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsRoute>
+    LOCAL :__t7 :ptr<Array_WsRoute>
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsRoute>
+    LOCAL :__t7 :ptr<Array_WsRoute>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_WsRoute
+    CALL :avant_alloc
+    AS :ptr<Array_WsRoute>
+    LOCAL :__t7 :ptr<Array_WsRoute>
+    STORE
+    LOCAL :__t5
+    LOCAL :__t7
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t6
+    LOCAL :__t7
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t6
+    LOCAL :__t7
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t7
+    CALL :avant_barrier
+    LOCAL :__t7
+    LOCAL :wr :ptr<Array_WsRoute>
+    STORE
+    LOCAL :wr :ptr<Array_WsRoute>
+    LOCAL :__t8 :ptr<Array_WsRoute>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t8
+    LOCAL :self
+    DEREF
+    FIELD 1
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsOpenRoute>
+    LOCAL :wo :ptr<Array_WsOpenRoute>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :WsOpenRoute
+    BINARY :mul
+    PUSH 0 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<WsOpenRoute>
+    LOCAL :__t9 :ptr<WsOpenRoute>
+    STORE
+    PUSH 0
+    LOCAL :__t10 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsOpenRoute>
+    LOCAL :__t11 :ptr<Array_WsOpenRoute>
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsOpenRoute>
+    LOCAL :__t11 :ptr<Array_WsOpenRoute>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_WsOpenRoute
+    CALL :avant_alloc
+    AS :ptr<Array_WsOpenRoute>
+    LOCAL :__t11 :ptr<Array_WsOpenRoute>
+    STORE
+    LOCAL :__t9
+    LOCAL :__t11
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t10
+    LOCAL :__t11
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t10
+    LOCAL :__t11
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t11
+    CALL :avant_barrier
+    LOCAL :__t11
+    LOCAL :wo :ptr<Array_WsOpenRoute>
+    STORE
+    LOCAL :wo :ptr<Array_WsOpenRoute>
+    LOCAL :__t12 :ptr<Array_WsOpenRoute>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t12
+    LOCAL :self
+    DEREF
+    FIELD 2
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsCloseRoute>
+    LOCAL :wc :ptr<Array_WsCloseRoute>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :WsCloseRoute
+    BINARY :mul
+    PUSH 0 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<WsCloseRoute>
+    LOCAL :__t13 :ptr<WsCloseRoute>
+    STORE
+    PUSH 0
+    LOCAL :__t14 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsCloseRoute>
+    LOCAL :__t15 :ptr<Array_WsCloseRoute>
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsCloseRoute>
+    LOCAL :__t15 :ptr<Array_WsCloseRoute>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_WsCloseRoute
+    CALL :avant_alloc
+    AS :ptr<Array_WsCloseRoute>
+    LOCAL :__t15 :ptr<Array_WsCloseRoute>
+    STORE
+    LOCAL :__t13
+    LOCAL :__t15
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t14
+    LOCAL :__t15
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t14
+    LOCAL :__t15
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t15
+    CALL :avant_barrier
+    LOCAL :__t15
+    LOCAL :wc :ptr<Array_WsCloseRoute>
+    STORE
+    LOCAL :wc :ptr<Array_WsCloseRoute>
+    LOCAL :__t16 :ptr<Array_WsCloseRoute>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t16
+    LOCAL :self
+    DEREF
+    FIELD 3
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :wi :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :i32
+    BINARY :mul
+    PUSH 0 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<i32>
+    LOCAL :__t17 :ptr<i32>
+    STORE
+    PUSH 0
+    LOCAL :__t18 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t19 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t19 :ptr<Array_Int>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_Int
+    CALL :avant_alloc
+    AS :ptr<Array_Int>
+    LOCAL :__t19 :ptr<Array_Int>
+    STORE
+    LOCAL :__t17
+    LOCAL :__t19
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t18
+    LOCAL :__t19
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t18
+    LOCAL :__t19
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t19
+    CALL :avant_barrier
+    LOCAL :__t19
+    LOCAL :wi :ptr<Array_Int>
+    STORE
+    LOCAL :wi :ptr<Array_Int>
+    LOCAL :__t20 :ptr<Array_Int>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t20
+    LOCAL :self
+    DEREF
+    FIELD 4
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :wp :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :u64
+    SIZEOF :ptr<u8>
+    BINARY :mul
+    PUSH 65535 :u32
+    STACK :swap2
+    CALL :avant_alloc
+    AS :ptr<ptr<u8>>
+    LOCAL :__t21 :ptr<ptr<u8>>
+    STORE
+    PUSH 0
+    LOCAL :__t22 :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t23 :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t23 :ptr<Array_String>
+    STORE
+    PUSH 1022 :u32
+    SIZEOF :Array_String
+    CALL :avant_alloc
+    AS :ptr<Array_String>
+    LOCAL :__t23 :ptr<Array_String>
+    STORE
+    LOCAL :__t21
+    LOCAL :__t23
+    DEREF
+    FIELD 0
+    STORE
+    LOCAL :__t22
+    LOCAL :__t23
+    DEREF
+    FIELD 1
+    STORE
+    LOCAL :__t22
+    LOCAL :__t23
+    DEREF
+    FIELD 2
+    STORE
+    LOCAL :__t23
+    CALL :avant_barrier
+    LOCAL :__t23
+    LOCAL :wp :ptr<Array_String>
+    STORE
+    LOCAL :wp :ptr<Array_String>
+    LOCAL :__t24 :ptr<Array_String>
+    STORE
+    LOCAL :self
+    CALL :avant_barrier
+    LOCAL :__t24
+    LOCAL :self
+    DEREF
+    FIELD 5
+    STORE
     CALL :avant_gc_leave
     RET
 ENDFUNC
@@ -6581,6 +8735,954 @@ FUNC :HttpState__add
     STACK :swap2
     DEREF
     STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__add_ws
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<u8>
+    TYPE :Fn_WsConn_WsMessage__Void
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :handler :Fn_WsConn_WsMessage__Void
+    STORE
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :handler :Fn_WsConn_WsMessage__Void
+    LOCAL :__t2 :Fn_WsConn_WsMessage__Void
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CREATE :WsRoute
+    LOCAL :__t3 :WsRoute
+    STORE
+    LOCAL :self :ptr<HttpState>
+    DEREF
+    FIELD 1
+    LOCAL :__t4 :ptr<Array_WsRoute>
+    STORE
+    PUSH 0 :u32
+    SIZEOF :WsRoute
+    AS :u64
+    LOCAL :__t4
+    CALL :avant_array_push_slot
+    AS :ptr<WsRoute>
+    LOCAL :__t3
+    STACK :swap2
+    DEREF
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__add_ws_open
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<u8>
+    TYPE :Fn_WsConn__Void
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :handler :Fn_WsConn__Void
+    STORE
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :handler :Fn_WsConn__Void
+    LOCAL :__t2 :Fn_WsConn__Void
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CREATE :WsOpenRoute
+    LOCAL :__t3 :WsOpenRoute
+    STORE
+    LOCAL :self :ptr<HttpState>
+    DEREF
+    FIELD 2
+    LOCAL :__t4 :ptr<Array_WsOpenRoute>
+    STORE
+    PUSH 0 :u32
+    SIZEOF :WsOpenRoute
+    AS :u64
+    LOCAL :__t4
+    CALL :avant_array_push_slot
+    AS :ptr<WsOpenRoute>
+    LOCAL :__t3
+    STACK :swap2
+    DEREF
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__add_ws_close
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<u8>
+    TYPE :Fn_WsConn_Int_String__Void
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :handler :Fn_WsConn_Int_String__Void
+    STORE
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :handler :Fn_WsConn_Int_String__Void
+    LOCAL :__t2 :Fn_WsConn_Int_String__Void
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CREATE :WsCloseRoute
+    LOCAL :__t3 :WsCloseRoute
+    STORE
+    LOCAL :self :ptr<HttpState>
+    DEREF
+    FIELD 3
+    LOCAL :__t4 :ptr<Array_WsCloseRoute>
+    STORE
+    PUSH 0 :u32
+    SIZEOF :WsCloseRoute
+    AS :u64
+    LOCAL :__t4
+    CALL :avant_array_push_slot
+    AS :ptr<WsCloseRoute>
+    LOCAL :__t3
+    STACK :swap2
+    DEREF
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__has_ws_route
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<u8>
+  RETURN
+    TYPE :bool
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsRoute>
+    LOCAL :__t3 :ptr<Array_WsRoute>
+    STORE
+    LOOP
+      COND
+        LOCAL :i :i32
+        LOCAL :__t1 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 1
+        DEREF
+        FIELD 1
+        LOCAL :__t1
+        BINARY :less
+      BODY
+        LOCAL :i :i32
+        LOCAL :__t2 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 1
+        LOCAL :__t3 :ptr<Array_WsRoute>
+        STORE
+        LOCAL :__t3
+        DEREF
+        FIELD 1
+        LOCAL :__t4 :i32
+        STORE
+        LOCAL :__t4
+        AS :u32
+        LOCAL :__t2
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t4
+            LOCAL :__t2
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t3
+        DEREF
+        FIELD 0
+        LOCAL :__t5 :ptr<WsRoute>
+        STORE
+        PUSH 0
+        GLOBAL :g_avant_shared
+        BINARY :not_eq
+        IF
+          THEN
+        ENDIF
+        LOCAL :__t2
+        LOCAL :__t5
+        BINARY :add
+        DEREF
+        FIELD 0
+        LOCAL :__t6 :ptr<u8>
+        STORE
+        LOCAL :path :ptr<u8>
+        LOCAL :__t6
+        CALL :avant_str_eq
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            PUSH true
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :i :i32
+        LOCAL :__t7 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t7
+        BINARY :add
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_WsRoute>
+        LOCAL :__t3
+        STORE
+        PUSH 0
+        AS :ptr<WsRoute>
+        LOCAL :__t5
+        STORE
+    ENDLOOP
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsOpenRoute>
+    LOCAL :__t10 :ptr<Array_WsOpenRoute>
+    STORE
+    LOOP
+      COND
+        LOCAL :i :i32
+        LOCAL :__t8 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 2
+        DEREF
+        FIELD 1
+        LOCAL :__t8
+        BINARY :less
+      BODY
+        LOCAL :i :i32
+        LOCAL :__t9 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 2
+        LOCAL :__t10 :ptr<Array_WsOpenRoute>
+        STORE
+        LOCAL :__t10
+        DEREF
+        FIELD 1
+        LOCAL :__t11 :i32
+        STORE
+        LOCAL :__t11
+        AS :u32
+        LOCAL :__t9
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t11
+            LOCAL :__t9
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t10
+        DEREF
+        FIELD 0
+        LOCAL :__t12 :ptr<WsOpenRoute>
+        STORE
+        PUSH 0
+        GLOBAL :g_avant_shared
+        BINARY :not_eq
+        IF
+          THEN
+        ENDIF
+        LOCAL :__t9
+        LOCAL :__t12
+        BINARY :add
+        DEREF
+        FIELD 0
+        LOCAL :__t13 :ptr<u8>
+        STORE
+        LOCAL :path :ptr<u8>
+        LOCAL :__t13
+        CALL :avant_str_eq
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            PUSH true
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :i :i32
+        LOCAL :__t14 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t14
+        BINARY :add
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_WsOpenRoute>
+        LOCAL :__t10
+        STORE
+        PUSH 0
+        AS :ptr<WsOpenRoute>
+        LOCAL :__t12
+        STORE
+    ENDLOOP
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsCloseRoute>
+    LOCAL :__t17 :ptr<Array_WsCloseRoute>
+    STORE
+    LOOP
+      COND
+        LOCAL :i :i32
+        LOCAL :__t15 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 3
+        DEREF
+        FIELD 1
+        LOCAL :__t15
+        BINARY :less
+      BODY
+        LOCAL :i :i32
+        LOCAL :__t16 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 3
+        LOCAL :__t17 :ptr<Array_WsCloseRoute>
+        STORE
+        LOCAL :__t17
+        DEREF
+        FIELD 1
+        LOCAL :__t18 :i32
+        STORE
+        LOCAL :__t18
+        AS :u32
+        LOCAL :__t16
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t18
+            LOCAL :__t16
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t17
+        DEREF
+        FIELD 0
+        LOCAL :__t19 :ptr<WsCloseRoute>
+        STORE
+        PUSH 0
+        GLOBAL :g_avant_shared
+        BINARY :not_eq
+        IF
+          THEN
+        ENDIF
+        LOCAL :__t16
+        LOCAL :__t19
+        BINARY :add
+        DEREF
+        FIELD 0
+        LOCAL :__t20 :ptr<u8>
+        STORE
+        LOCAL :path :ptr<u8>
+        LOCAL :__t20
+        CALL :avant_str_eq
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            PUSH true
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :i :i32
+        LOCAL :__t21 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t21
+        BINARY :add
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_WsCloseRoute>
+        LOCAL :__t17
+        STORE
+        PUSH 0
+        AS :ptr<WsCloseRoute>
+        LOCAL :__t19
+        STORE
+    ENDLOOP
+    PUSH false
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__register_ws_conn
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :i32
+    TYPE :ptr<u8>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :id :i32
+    STORE
+    PARAM 2
+    LOCAL :path :ptr<u8>
+    STORE
+    LOCAL :id :i32
+    LOCAL :self :ptr<HttpState>
+    DEREF
+    FIELD 4
+    CALL :avant_array_push_i32
+    LOCAL :path :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    LOCAL :self :ptr<HttpState>
+    DEREF
+    FIELD 5
+    LOCAL :__t2 :ptr<Array_String>
+    STORE
+    PUSH 65535 :u32
+    LOCAL :__t1
+    LOCAL :__t2
+    CALL :avant_array_push_ptr
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__unregister_ws_conn
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :i32
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :id :i32
+    STORE
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t4 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t9 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t13 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t17 :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :__t20 :ptr<u8>
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t21 :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :ptr<Array_Int>
+    LOCAL :__t24 :ptr<Array_Int>
+    STORE
+    PUSH 0
+    AS :ptr<Array_String>
+    LOCAL :__t26 :ptr<Array_String>
+    STORE
+    PUSH 0
+    AS :ptr<u8>
+    LOCAL :dummy2 :ptr<u8>
+    STORE
+    LOOP
+      COND
+        LOCAL :i :i32
+        LOCAL :__t1 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 4
+        DEREF
+        FIELD 1
+        LOCAL :__t1
+        BINARY :less
+      BODY
+        LOCAL :i :i32
+        LOCAL :__t3 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 4
+        LOCAL :__t4 :ptr<Array_Int>
+        STORE
+        LOCAL :__t4
+        DEREF
+        FIELD 1
+        LOCAL :__t5 :i32
+        STORE
+        LOCAL :__t5
+        AS :u32
+        LOCAL :__t3
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t5
+            LOCAL :__t3
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t4
+        DEREF
+        FIELD 0
+        LOCAL :__t6 :ptr<i32>
+        STORE
+        PUSH 0
+        GLOBAL :g_avant_shared
+        BINARY :not_eq
+        IF
+          THEN
+        ENDIF
+        LOCAL :__t3
+        LOCAL :__t6
+        BINARY :add
+        DEREF
+        LOCAL :__t2 :i32
+        STORE
+        LOCAL :id :i32
+        LOCAL :__t2
+        BINARY :eq
+        IF
+          THEN
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 4
+            DEREF
+            FIELD 1
+            LOCAL :__t7 :i32
+            STORE
+            PUSH 1
+            LOCAL :__t7
+            BINARY :sub
+            LOCAL :last :i32
+            STORE
+            LOCAL :last :i32
+            LOCAL :__t8 :i32
+            STORE
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 4
+            LOCAL :__t9 :ptr<Array_Int>
+            STORE
+            LOCAL :__t9
+            DEREF
+            FIELD 1
+            LOCAL :__t10 :i32
+            STORE
+            LOCAL :__t10
+            AS :u32
+            LOCAL :__t8
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t10
+                LOCAL :__t8
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t9
+            DEREF
+            FIELD 0
+            LOCAL :__t11 :ptr<i32>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t8
+            LOCAL :__t11
+            BINARY :add
+            DEREF
+            LOCAL :i :i32
+            LOCAL :__t12 :i32
+            STORE
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 4
+            LOCAL :__t13 :ptr<Array_Int>
+            STORE
+            LOCAL :__t13
+            DEREF
+            FIELD 1
+            LOCAL :__t14 :i32
+            STORE
+            LOCAL :__t14
+            AS :u32
+            LOCAL :__t12
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t14
+                LOCAL :__t12
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t13
+            DEREF
+            FIELD 0
+            LOCAL :__t15 :ptr<i32>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t12
+            LOCAL :__t15
+            BINARY :add
+            DEREF
+            STORE
+            LOCAL :last :i32
+            LOCAL :__t16 :i32
+            STORE
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 5
+            LOCAL :__t17 :ptr<Array_String>
+            STORE
+            LOCAL :__t17
+            DEREF
+            FIELD 1
+            LOCAL :__t18 :i32
+            STORE
+            LOCAL :__t18
+            AS :u32
+            LOCAL :__t16
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t18
+                LOCAL :__t16
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t17
+            DEREF
+            FIELD 0
+            LOCAL :__t19 :ptr<ptr<u8>>
+            STORE
+            PUSH 0
+            GLOBAL :g_avant_shared
+            BINARY :not_eq
+            IF
+              THEN
+            ENDIF
+            LOCAL :__t16
+            LOCAL :__t19
+            BINARY :add
+            DEREF
+            LOCAL :__t20 :ptr<u8>
+            STORE
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 5
+            LOCAL :__t21 :ptr<Array_String>
+            STORE
+            LOCAL :i :i32
+            LOCAL :__t22 :i32
+            STORE
+            LOCAL :__t21
+            DEREF
+            FIELD 1
+            LOCAL :__t23 :i32
+            STORE
+            LOCAL :__t23
+            AS :u32
+            LOCAL :__t22
+            AS :u32
+            BINARY :more_eq
+            IF
+              THEN
+                LOCAL :__t23
+                LOCAL :__t22
+                CALL :avant_trap_bounds
+            ENDIF
+            LOCAL :__t20
+            LOCAL :__t22
+            LOCAL :__t21
+            CALL :avant_array_set_ptr
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 4
+            LOCAL :__t24 :ptr<Array_Int>
+            STORE
+            SIZEOF :i32
+            AS :u64
+            LOCAL :__t24
+            CALL :avant_array_pop_slot
+            AS :ptr<i32>
+            LOCAL :__t25 :ptr<i32>
+            STORE
+            LOCAL :__t25
+            DEREF
+            LOCAL :dummy1 :i32
+            STORE
+            PUSH 0
+            AS :ptr<u8>
+            LOCAL :dummy2 :ptr<u8>
+            STORE
+            LOCAL :self :ptr<HttpState>
+            DEREF
+            FIELD 5
+            LOCAL :__t26 :ptr<Array_String>
+            STORE
+            LOCAL :__t26
+            CALL :avant_array_pop_ptr
+            AS :ptr<u8>
+            LOCAL :dummy2 :ptr<u8>
+            STORE
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :i :i32
+        LOCAL :__t27 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t27
+        BINARY :add
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_Int>
+        LOCAL :__t4
+        STORE
+        PUSH 0
+        AS :ptr<i32>
+        LOCAL :__t6
+        STORE
+        PUSH 0
+        AS :ptr<Array_Int>
+        LOCAL :__t9
+        STORE
+        PUSH 0
+        AS :ptr<i32>
+        LOCAL :__t11
+        STORE
+        PUSH 0
+        AS :ptr<Array_Int>
+        LOCAL :__t13
+        STORE
+        PUSH 0
+        AS :ptr<i32>
+        LOCAL :__t15
+        STORE
+        PUSH 0
+        AS :ptr<Array_String>
+        LOCAL :__t17
+        STORE
+        PUSH 0
+        AS :ptr<ptr<u8>>
+        LOCAL :__t19
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        LOCAL :__t20
+        STORE
+        PUSH 0
+        AS :ptr<Array_String>
+        LOCAL :__t21
+        STORE
+        PUSH 0
+        AS :ptr<Array_Int>
+        LOCAL :__t24
+        STORE
+        PUSH 0
+        AS :ptr<Array_String>
+        LOCAL :__t26
+        STORE
+    ENDLOOP
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :HttpState__ws_open_dispatch
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<u8>
+    TYPE :WsConn
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<HttpState>
+    STORE
+    PARAM 1
+    LOCAL :path :ptr<u8>
+    STORE
+    PARAM 2
+    LOCAL :conn :WsConn
+    STORE
+    PUSH 0
+    LOCAL :i :i32
+    STORE
+    PUSH 0
+    AS :ptr<Array_WsOpenRoute>
+    LOCAL :__t3 :ptr<Array_WsOpenRoute>
+    STORE
+    LOOP
+      COND
+        LOCAL :i :i32
+        LOCAL :__t1 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 2
+        DEREF
+        FIELD 1
+        LOCAL :__t1
+        BINARY :less
+      BODY
+        LOCAL :i :i32
+        LOCAL :__t2 :i32
+        STORE
+        LOCAL :self :ptr<HttpState>
+        DEREF
+        FIELD 2
+        LOCAL :__t3 :ptr<Array_WsOpenRoute>
+        STORE
+        LOCAL :__t3
+        DEREF
+        FIELD 1
+        LOCAL :__t4 :i32
+        STORE
+        LOCAL :__t4
+        AS :u32
+        LOCAL :__t2
+        AS :u32
+        BINARY :more_eq
+        IF
+          THEN
+            LOCAL :__t4
+            LOCAL :__t2
+            CALL :avant_trap_bounds
+        ENDIF
+        LOCAL :__t3
+        DEREF
+        FIELD 0
+        LOCAL :__t5 :ptr<WsOpenRoute>
+        STORE
+        PUSH 0
+        GLOBAL :g_avant_shared
+        BINARY :not_eq
+        IF
+          THEN
+        ENDIF
+        LOCAL :__t2
+        LOCAL :__t5
+        BINARY :add
+        DEREF
+        LOCAL :r :WsOpenRoute
+        STORE
+        LOCAL :r :WsOpenRoute
+        FIELD 0
+        LOCAL :__t6 :ptr<u8>
+        STORE
+        LOCAL :path :ptr<u8>
+        LOCAL :__t6
+        CALL :avant_str_eq
+        PUSH 1
+        BINARY :eq
+        IF
+          THEN
+            LOCAL :r :WsOpenRoute
+            FIELD 1
+            LOCAL :__t7 :Fn_WsConn__Void
+            STORE
+            LOCAL :conn :WsConn
+            LOCAL :__t7
+            FIELD 0
+            LOCAL :__t7
+            FIELD 1
+            INVOKE
+        ENDIF
+        LOCAL :i :i32
+        LOCAL :__t8 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t8
+        BINARY :add
+        LOCAL :i :i32
+        STORE
+        PUSH 0
+        AS :ptr<Array_WsOpenRoute>
+        LOCAL :__t3
+        STORE
+        PUSH 0
+        AS :ptr<WsOpenRoute>
+        LOCAL :__t5
+        STORE
+    ENDLOOP
     CALL :avant_gc_leave
     RET
 ENDFUNC
@@ -6753,6 +9855,7 @@ FUNC :Http__listen
     TYPE :ptr<u8>
     TYPE :i32
     TYPE :i32
+    TYPE :i32
   RETURN
     TYPE :U_HttpError_Server
   BODY
@@ -6769,6 +9872,9 @@ FUNC :Http__listen
     PARAM 3
     LOCAL :loops :i32
     STORE
+    PARAM 4
+    LOCAL :max_message :i32
+    STORE
     LOCAL :host :ptr<u8>
     LOCAL :__t1 :ptr<u8>
     STORE
@@ -6781,6 +9887,10 @@ FUNC :Http__listen
     LOCAL :loops :i32
     LOCAL :__t4 :i32
     STORE
+    LOCAL :max_message :i32
+    LOCAL :__t5 :i32
+    STORE
+    LOCAL :__t5
     LOCAL :__t4
     LOCAL :__t3
     LOCAL :__t2
@@ -6789,33 +9899,28 @@ FUNC :Http__listen
     LOCAL :handle :ptr<void>
     STORE
     CALL :avant_http_take_status
-    LOCAL :__t5 :i32
+    LOCAL :__t6 :i32
     STORE
     PUSH 0
-    LOCAL :__t5
+    LOCAL :__t6
     BINARY :not_eq
     IF
       THEN
         PUSH "could not listen on "
-        LOCAL :__t6 :ptr<u8>
-        STORE
-        LOCAL :host :ptr<u8>
         LOCAL :__t7 :ptr<u8>
         STORE
-        PUSH ":"
+        LOCAL :host :ptr<u8>
         LOCAL :__t8 :ptr<u8>
+        STORE
+        PUSH ":"
+        LOCAL :__t9 :ptr<u8>
         STORE
         LOCAL :port :i32
         CALL :avant_str_from_int
-        LOCAL :__t9 :ptr<u8>
-        STORE
-        LOCAL :__t7
-        LOCAL :__t6
-        CALL :avant_str_concat
         LOCAL :__t10 :ptr<u8>
         STORE
         LOCAL :__t8
-        LOCAL :__t10
+        LOCAL :__t7
         CALL :avant_str_concat
         LOCAL :__t11 :ptr<u8>
         STORE
@@ -6824,16 +9929,21 @@ FUNC :Http__listen
         CALL :avant_str_concat
         LOCAL :__t12 :ptr<u8>
         STORE
+        LOCAL :__t10
         LOCAL :__t12
+        CALL :avant_str_concat
+        LOCAL :__t13 :ptr<u8>
+        STORE
+        LOCAL :__t13
         CALL :HttpError__new
-        LOCAL :__t13 :ptr<HttpError>
+        LOCAL :__t14 :ptr<HttpError>
         STORE
         PUSH 0
         AS :ptr<HttpState>
         PUSH 0
         AS :ptr<void>
         CREATE :Server
-        LOCAL :__t13
+        LOCAL :__t14
         PUSH 0
         CREATE :U_HttpError_Server
         CALL :avant_gc_leave
@@ -6850,20 +9960,20 @@ FUNC :Http__listen
     CALL :avant_http_port
     LOCAL :state :ptr<HttpState>
     DEREF
-    FIELD 3
+    FIELD 8
     STORE
     LOCAL :handle :ptr<void>
-    LOCAL :__t14 :ptr<void>
+    LOCAL :__t15 :ptr<void>
     STORE
     LOCAL :state :ptr<HttpState>
-    LOCAL :__t15 :ptr<HttpState>
-    STORE
-    LOCAL :__t15
-    LOCAL :__t14
-    CREATE :Server
-    LOCAL :__t16 :Server
+    LOCAL :__t16 :ptr<HttpState>
     STORE
     LOCAL :__t16
+    LOCAL :__t15
+    CREATE :Server
+    LOCAL :__t17 :Server
+    STORE
+    LOCAL :__t17
     PUSH 0
     AS :ptr<HttpError>
     PUSH 1
@@ -7625,6 +10735,304 @@ FUNC :Http__request
     RET
 ENDFUNC
 
+FUNC :Ws__initialize
+  ARGS
+    TYPE :ptr<Ws>
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :self :ptr<Ws>
+    STORE
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Ws__connect
+  ARGS
+    TYPE :ptr<u8>
+    TYPE :i32
+  RETURN
+    TYPE :U_HttpError_WsConnection
+  BODY
+    CALL :avant_gc_enter
+    PARAM 0
+    LOCAL :url :ptr<u8>
+    STORE
+    PARAM 1
+    LOCAL :timeout_ms :i32
+    STORE
+    LOCAL :url :ptr<u8>
+    LOCAL :__t1 :ptr<u8>
+    STORE
+    PUSH "wss://"
+    LOCAL :__t2 :ptr<u8>
+    STORE
+    LOCAL :__t2
+    LOCAL :__t1
+    CALL :starts_with
+    IF
+      THEN
+        PUSH "wss is not supported until the TLS wave"
+        CALL :HttpError__new
+        LOCAL :__t3 :ptr<HttpError>
+        STORE
+        PUSH 0
+        AS :ptr<void>
+        CREATE :WsConnection
+        LOCAL :__t3
+        PUSH 0
+        CREATE :U_HttpError_WsConnection
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    LOCAL :url :ptr<u8>
+    LOCAL :__t4 :ptr<u8>
+    STORE
+    PUSH "ws://"
+    LOCAL :__t5 :ptr<u8>
+    STORE
+    LOCAL :__t5
+    LOCAL :__t4
+    CALL :starts_with
+    UNARY :lnot
+    IF
+      THEN
+        PUSH "only ws:// URLs are supported"
+        CALL :HttpError__new
+        LOCAL :__t6 :ptr<HttpError>
+        STORE
+        PUSH 0
+        AS :ptr<void>
+        CREATE :WsConnection
+        LOCAL :__t6
+        PUSH 0
+        CREATE :U_HttpError_WsConnection
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    PUSH "http://"
+    LOCAL :__t7 :ptr<u8>
+    STORE
+    LOCAL :url :ptr<u8>
+    CALL :avant_str_size
+    PUSH 5
+    LOCAL :url :ptr<u8>
+    CALL :avant_str_slice
+    LOCAL :__t8 :ptr<u8>
+    STORE
+    LOCAL :__t8
+    LOCAL :__t7
+    CALL :avant_str_concat
+    LOCAL :__t9 :ptr<u8>
+    STORE
+    LOCAL :__t9
+    CALL :http_parse_url
+    LOCAL :parsed :U_Nil_UrlParts
+    STORE
+    LOCAL :parsed :U_Nil_UrlParts
+    LOCAL :__t10 :U_Nil_UrlParts
+    STORE
+    LOCAL :__t10
+    FIELD 0
+    PUSH 0
+    BINARY :not_eq
+    IF
+      THEN
+        LOCAL :__t10
+        FIELD 1
+        LOCAL :p :UrlParts
+        STORE
+        PUSH 0
+        AS :ptr<u8>
+        LOCAL :key :ptr<u8>
+        STORE
+        CALL :avant_ws_client_key
+        LOCAL :key :ptr<u8>
+        STORE
+        LOCAL :p :UrlParts
+        FIELD 0
+        LOCAL :__t11 :ptr<u8>
+        STORE
+        LOCAL :p :UrlParts
+        FIELD 1
+        LOCAL :__t12 :i32
+        STORE
+        LOCAL :p :UrlParts
+        FIELD 3
+        LOCAL :__t13 :ptr<u8>
+        STORE
+        LOCAL :key :ptr<u8>
+        LOCAL :__t14 :ptr<u8>
+        STORE
+        LOCAL :timeout_ms :i32
+        LOCAL :__t15 :i32
+        STORE
+        LOCAL :__t15
+        LOCAL :__t14
+        LOCAL :__t13
+        LOCAL :__t12
+        LOCAL :__t11
+        CALL :avant_ws_client_connect
+        LOCAL :handle :ptr<void>
+        STORE
+        CALL :avant_http_take_status
+        LOCAL :code :i32
+        STORE
+        LOCAL :code :i32
+        LOCAL :__t16 :i32
+        STORE
+        PUSH 1
+        LOCAL :__t16
+        BINARY :eq
+        IF
+          THEN
+            PUSH "could not connect to "
+            LOCAL :__t17 :ptr<u8>
+            STORE
+            LOCAL :p :UrlParts
+            FIELD 2
+            LOCAL :__t18 :ptr<u8>
+            STORE
+            LOCAL :__t18
+            LOCAL :__t17
+            CALL :avant_str_concat
+            LOCAL :__t19 :ptr<u8>
+            STORE
+            LOCAL :__t19
+            CALL :HttpError__new
+            LOCAL :__t20 :ptr<HttpError>
+            STORE
+            PUSH 0
+            AS :ptr<void>
+            CREATE :WsConnection
+            LOCAL :__t20
+            PUSH 0
+            CREATE :U_HttpError_WsConnection
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :code :i32
+        LOCAL :__t21 :i32
+        STORE
+        PUSH 2
+        LOCAL :__t21
+        BINARY :eq
+        IF
+          THEN
+            PUSH "connection to "
+            LOCAL :__t22 :ptr<u8>
+            STORE
+            LOCAL :p :UrlParts
+            FIELD 2
+            LOCAL :__t23 :ptr<u8>
+            STORE
+            PUSH " timed out"
+            LOCAL :__t24 :ptr<u8>
+            STORE
+            LOCAL :__t23
+            LOCAL :__t22
+            CALL :avant_str_concat
+            LOCAL :__t25 :ptr<u8>
+            STORE
+            LOCAL :__t24
+            LOCAL :__t25
+            CALL :avant_str_concat
+            LOCAL :__t26 :ptr<u8>
+            STORE
+            LOCAL :__t26
+            CALL :HttpError__new
+            LOCAL :__t27 :ptr<HttpError>
+            STORE
+            PUSH 0
+            AS :ptr<void>
+            CREATE :WsConnection
+            LOCAL :__t27
+            PUSH 0
+            CREATE :U_HttpError_WsConnection
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :code :i32
+        LOCAL :__t28 :i32
+        STORE
+        PUSH 0
+        LOCAL :__t28
+        BINARY :not_eq
+        IF
+          THEN
+            PUSH "websocket handshake with "
+            LOCAL :__t29 :ptr<u8>
+            STORE
+            LOCAL :p :UrlParts
+            FIELD 2
+            LOCAL :__t30 :ptr<u8>
+            STORE
+            PUSH " failed"
+            LOCAL :__t31 :ptr<u8>
+            STORE
+            LOCAL :__t30
+            LOCAL :__t29
+            CALL :avant_str_concat
+            LOCAL :__t32 :ptr<u8>
+            STORE
+            LOCAL :__t31
+            LOCAL :__t32
+            CALL :avant_str_concat
+            LOCAL :__t33 :ptr<u8>
+            STORE
+            LOCAL :__t33
+            CALL :HttpError__new
+            LOCAL :__t34 :ptr<HttpError>
+            STORE
+            PUSH 0
+            AS :ptr<void>
+            CREATE :WsConnection
+            LOCAL :__t34
+            PUSH 0
+            CREATE :U_HttpError_WsConnection
+            CALL :avant_gc_leave
+            RET
+        ENDIF
+        LOCAL :handle :ptr<void>
+        LOCAL :__t35 :ptr<void>
+        STORE
+        LOCAL :__t35
+        CREATE :WsConnection
+        LOCAL :__t36 :WsConnection
+        STORE
+        LOCAL :__t36
+        PUSH 0
+        AS :ptr<HttpError>
+        PUSH 1
+        CREATE :U_HttpError_WsConnection
+        CALL :avant_gc_leave
+        RET
+    ENDIF
+    PUSH "invalid URL: "
+    LOCAL :__t37 :ptr<u8>
+    STORE
+    LOCAL :url :ptr<u8>
+    LOCAL :__t38 :ptr<u8>
+    STORE
+    LOCAL :__t38
+    LOCAL :__t37
+    CALL :avant_str_concat
+    LOCAL :__t39 :ptr<u8>
+    STORE
+    LOCAL :__t39
+    CALL :HttpError__new
+    LOCAL :__t40 :ptr<HttpError>
+    STORE
+    PUSH 0
+    AS :ptr<void>
+    CREATE :WsConnection
+    LOCAL :__t40
+    PUSH 0
+    CREATE :U_HttpError_WsConnection
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
 FUNC :HttpError__new
   ARGS
     TYPE :ptr<u8>
@@ -7663,17 +11071,17 @@ FUNC :HttpState__new
     PUSH false
     LOCAL :self
     DEREF
-    FIELD 1
+    FIELD 6
     STORE
     PUSH false
     LOCAL :self
     DEREF
-    FIELD 2
+    FIELD 7
     STORE
     PUSH 0
     LOCAL :self
     DEREF
-    FIELD 3
+    FIELD 8
     STORE
     LOCAL :self
     CALL :HttpState__initialize
@@ -7695,6 +11103,24 @@ FUNC :Http__new
     STORE
     LOCAL :self
     CALL :Http__initialize
+    LOCAL :self
+    CALL :avant_gc_leave
+    RET
+ENDFUNC
+
+FUNC :Ws__new
+  RETURN
+    TYPE :ptr<Ws>
+  BODY
+    CALL :avant_gc_enter
+    PUSH 4 :u32
+    SIZEOF :Ws
+    CALL :avant_alloc
+    AS :ptr<Ws>
+    LOCAL :self :ptr<Ws>
+    STORE
+    LOCAL :self
+    CALL :Ws__initialize
     LOCAL :self
     CALL :avant_gc_leave
     RET
@@ -7862,8 +11288,6 @@ FUNC :__fn_http_dispatch
     TYPE :ptr<void>
     TYPE :ptr<HttpState>
     TYPE :ptr<void>
-  RETURN
-    TYPE :i32
   BODY
     PARAM 0
     STACK :drop
@@ -7873,16 +11297,39 @@ FUNC :__fn_http_dispatch
     RET
 ENDFUNC
 
+FUNC :__fn_ws_dispatch
+  ARGS
+    TYPE :ptr<void>
+    TYPE :ptr<HttpState>
+    TYPE :ptr<void>
+  BODY
+    PARAM 0
+    STACK :drop
+    PARAM 2
+    PARAM 1
+    CALL :ws_dispatch
+    RET
+ENDFUNC
+
 FUNC :__cb_http_dispatch
   ARGS
     TYPE :ptr<HttpState>
     TYPE :ptr<void>
-  RETURN
-    TYPE :i32
   BODY
     PARAM 1
     PARAM 0
     CALL :http_dispatch
+    RET
+ENDFUNC
+
+FUNC :__cb_ws_dispatch
+  ARGS
+    TYPE :ptr<HttpState>
+    TYPE :ptr<void>
+  BODY
+    PARAM 1
+    PARAM 0
+    CALL :ws_dispatch
     RET
 ENDFUNC
 

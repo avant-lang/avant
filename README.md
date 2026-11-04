@@ -918,7 +918,7 @@ JSON in the examples is yyjson. HTTP in `std.http` is uSockets and picohttpparse
 
 ### spawn
 
-`spawn { }` runs the block on a pool of OS threads. The pool size is the number of processors online, read once when the pool starts. `AVANT_THREADS` replaces that size and must be a positive integer. Extra tasks wait in a queue.
+`spawn { }` runs the block on a pool of OS threads. The pool size is the number of processors online, read once when the pool starts. `--threads N` (or `--threads=N`) on the program's command line replaces it, and `AVANT_THREADS` is a deprecated fallback. Extra tasks wait in a queue.
 
 The block's result is `Int`. `.join` waits for it. Calling `.join` or `.parallel` from inside a pool worker is an error. A nested `spawn` from a worker is allowed.
 
@@ -1270,7 +1270,7 @@ The standard library is imported, and importing is what links the C library behi
 | `std.base64` | `Bytes.to_base64`, `Bytes.from_base64` (plus `Buf` counterparts) | vendored Base64 codec |
 | `std.json` | `Json.parse` and the parsed-value walk | yyjson |
 | `std.regex` | `Regex.compile` and `Match` values | PCRE2 (re2c scanners for literal patterns) |
-| `std.http` | an HTTP/1.1 server and client (`Http.listen`, `Http.get`) | uSockets and picohttpparser (vendored) |
+| `std.http` | HTTP server and client, WebSocket server and client | uSockets and picohttpparser (vendored) |
 | `std.testing` | the support library the test runner loads | — |
 
 ### `std.zlib`
@@ -1346,7 +1346,11 @@ fn main {
 
 ### `std.http`
 
-A cleartext HTTP/1.1 server and a blocking client, on uSockets with picohttpparser parsing the wire. `Http.listen` binds immediately and returns a `Server` (or an `HttpError`); routes are exact paths registered with trailing blocks; `serve` runs the event loop until `close` is called, from a handler or from any task that can reach the server:
+Cleartext HTTP and WebSockets: a server, a blocking HTTP client, and a blocking WebSocket client.
+
+#### Server
+
+`Http.listen` binds now and returns `Server | HttpError`. Routes are exact paths. `serve` runs until `close` is called.
 
 ```avant
 import std.http
@@ -1364,7 +1368,15 @@ fn main {
 }
 ```
 
-Handlers receive a `Request` value (method, path, raw query, headers, body) and return a `Response` value (`Response.text`, `Response.bytes`, refined with `.header(name, value)`). Received headers live in a `Headers` value that copies only the values a program actually reads. Bodies are buffered whole up to a limit set at listen time (1 MiB by default); a larger body is answered 413, a chunked request body is answered 411 for now, and HTTP/1.1 connections are kept alive. Handlers must not block the loop: hand CPU work to `spawn`. The client is one blocking request at a time on its own connection, follows redirects, and decodes chunked responses:
+- A handler gets a `Request` (method, path, query, headers, body) and returns a `Response` (`Response.text`, `Response.bytes`, `.header(name, value)`).
+- Bodies are buffered up to `max_body` (1 MiB default): larger is answered 413, chunked request bodies 411, malformed requests 400.
+- Connections are kept alive. One event loop runs per elected thread (`loops` at listen time to override).
+- Handlers must not block the loop. Hand CPU work to `spawn`.
+- A server that is never closed leaks its socket. There is no finalizer.
+
+#### HTTP client
+
+One blocking request at a time. Redirects are followed (at most five). Chunked responses are decoded.
 
 ```avant
 import std.http
@@ -1377,19 +1389,55 @@ fn main {
 }
 ```
 
-There is no TLS and no WebSocket support yet: an `https` URL is an `HttpError`, never a silent downgrade. A server that is never closed leaks its listen socket until the process exits; there is no finalizer.
+#### WebSockets
+
+WebSocket routes share the HTTP server and port. A handler runs once per complete message. Text reads as `msg.text`; binary stays `msg.body`.
+
+```avant
+server.websocket("/echo") { |conn, msg|
+  sent = conn.send_message(msg)
+}
+server.websocket_close("/echo") { |conn, code, reason|
+  puts(code)
+}
+```
+
+- Ping, the close handshake, and fragmentation are handled for you.
+- A message over `max_message` (1 MiB default) is closed with code 1009 and never reaches the handler.
+- `server.close` sends close code 1001 to open connections.
+- A `WsConn` stays on its loop thread. Capture `conn.sender` to answer from a `spawn` block.
+
+#### WebSocket client
+
+`Ws.connect` returns `WsConnection | HttpError`. `recv` blocks, so never call it from a server handler.
+
+```avant
+import std.http
+
+fn main {
+  if conn = Ws.connect("ws://127.0.0.1:8080/echo") {
+    sent = conn.send_text("hi")
+    if msg = conn.recv() {
+      puts(msg.text ?? "")
+    }
+    conn.close
+  }
+}
+```
+
+There is no TLS yet: `https` and `wss` URLs are an `HttpError`, never a silent downgrade.
 
 #### Hello-world servers compared
 
-The most basic hello-world server (`GET /` answered with `hello`, and the WebSocket equivalent where the language has one) in Avant, C, Rust, Go, and Crystal, measured on loopback on the workbench machine (Ryzen 7 5700G) with the harness in `bench/http/`: HTTP with `wrk` (4 threads, 64 connections, 10 s), WebSockets with an echo loader (8 connections, 10 s, one round trip at a time per connection). RSS is the server's peak resident set (VmHWM) at the end of each phase. Avant's WebSocket column is empty because `std.http` has no WebSocket support yet; the other languages' WebSocket servers are hand-written or standard-library equivalents of the same hello world. The Avant server spreads connections over as many event loops as the program has chosen threads (16 here, `--threads` or `Http.listen`'s `loops` argument), which puts it ahead of Go and within reach of Rust; its peak RSS is the collector's heap-goal working set under sustained allocation load (idle RSS is about 3 MB).
+The most basic hello-world server: `GET /` answered with `hello` and the WebSocket equivalent.
 
 | Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Avant (`std.http`) | 470,950 | 9.2 MB | — | — |
-| C (raw epoll) | 210,648 | 2.7 MB | 90,567 | 7.3 MB |
-| Rust (std, thread per connection) | 507,573 | 3.3 MB | 253,728 | 2.6 MB |
-| Go (`net/http`) | 348,686 | 18 MB | 215,352 | 12 MB |
-| Crystal (`HTTP::Server`) | 142,542 | 15 MB | 112,095 | 11 MB |
+| Avant (`std.http`) | 471,127 | 8.9 MB | 249,735 | 7.8 MB |
+| C (h2o) | 484,026 | 8.4 MB | 251,006 | 8.5 MB |
+| Rust (std, thread per connection) | 507,603 | 3.4 MB | 252,175 | 2.6 MB |
+| Go (`net/http`) | 349,436 | 18 MB | 215,594 | 12 MB |
+| Crystal (`HTTP::Server`) | 521,997 | 15 MB | 264,813 | 11 MB |
 
 ### `std.testing`
 
@@ -1402,7 +1450,7 @@ These are decided and currently do not compile.
 | What | Status |
 | --- | --- |
 | `parallel { }` with no receiver | decided, not shipping |
-| WebSockets and TLS for `std.http` | decided, not shipping |
+| TLS for `std.http` | decided, not shipping |
 | An inclusive range (`a..=b`) | not part of the language yet; write `a..b + 1` |
 
 ## Benchmarks

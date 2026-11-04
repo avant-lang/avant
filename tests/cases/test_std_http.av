@@ -107,6 +107,36 @@ fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int): Int
   0
 }
 
+fn ws_client_round(port: Int, out: Channel(String)): Int {
+  if conn = Ws.connect("ws://127.0.0.1:${port}/shout") {
+    sent = conn.send_text("abc")
+    if msg = conn.recv(5000) {
+      first = msg.text ?? ""
+      sent2 = conn.send_bytes("xy".bytes)
+      if msg2 = conn.recv(5000) {
+        out.send("ws-client=${first}:${msg2.is_binary}:${msg2.body.size}")
+      } else {
+        out.send("ws-client=BAD2")
+      }
+    } else {
+      out.send("ws-client=BAD1")
+    }
+    conn.close
+    conn.close
+  } else {
+    out.send("ws-client=BAD0")
+  }
+  0
+}
+
+fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+  out.send(raw_round(port, script, stamp, "wsecho"))
+  out.send(raw_round(port, script, stamp, "wsproto"))
+  if resp = Http.get("http://127.0.0.1:${port}/__stop") {
+  }
+  0
+}
+
 fn test_std_http(c: Checks) {
   c.suite("tests/cases/test_std_http.av")
 
@@ -124,6 +154,18 @@ fn test_std_http(c: Checks) {
     c.expect(false, "empty host is HttpError")
   } else {
     c.expect(true, "empty host is HttpError")
+  }
+  if wse = Ws.connect("wss://127.0.0.1:1/echo") {
+    c.expect(false, "wss is HttpError")
+    wse.close
+  } else {
+    c.expect(true, "wss is HttpError")
+  }
+  if wse2 = Ws.connect("http://127.0.0.1:1/echo") {
+    c.expect(false, "http scheme is HttpError for Ws")
+    wse2.close
+  } else {
+    c.expect(true, "http scheme is HttpError for Ws")
   }
 
   if opened = Http.listen(0) {
@@ -234,6 +276,97 @@ fn test_std_http(c: Checks) {
     }
   } else {
     c.expect(false, "listen with body limit")
+  }
+
+  // WebSockets (wave 5C): echo of both kinds, ping, fragmentation,
+  // close codes, the spawn-sender path, and protocol-error closes,
+  // spoken by a raw-socket Python helper like the cases above.
+  wscript = "/tmp/avant-ws-raw-${stamp}.py"
+  wpy = "import socket,sys,struct\nport=int(sys.argv[1])\nmode=sys.argv[2]\ndef hs(path):\n    s=socket.create_connection((\"127.0.0.1\",port))\n    s.sendall((\"GET %s HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n\" % path).encode())\n    b=b\"\"\n    while b\"\\r\\n\\r\\n\" not in b:\n        b+=s.recv(4096)\n    h,r=b.split(b\"\\r\\n\\r\\n\",1)\n    return s,h.decode(\"latin1\"),r\ndef sf(s,op,payload,fin=True,masked=True):\n    b0=(128 if fin else 0)|op\n    n=len(payload)\n    mb=128 if masked else 0\n    if n<126:\n        head=struct.pack(\"!BB\",b0,mb|n)\n    elif n<=65535:\n        head=struct.pack(\"!BBH\",b0,mb|126,n)\n    else:\n        head=struct.pack(\"!BBQ\",b0,mb|127,n)\n    if masked:\n        m=b\"\\x01\\x02\\x03\\x04\"\n        s.sendall(head+m+bytes(x^m[i&3] for i,x in enumerate(payload)))\n    else:\n        s.sendall(head+payload)\ndef rx(s,buf,n):\n    while len(buf)<n:\n        chunk=s.recv(4096)\n        if not chunk:\n            raise EOFError()\n        buf+=chunk\n    return buf[:n],buf[n:]\ndef rf(s,buf=b\"\"):\n    h,buf=rx(s,buf,2)\n    op=h[0]&15\n    n=h[1]&127\n    if n==126:\n        e,buf=rx(s,buf,2)\n        n=struct.unpack(\"!H\",e)[0]\n    elif n==127:\n        e,buf=rx(s,buf,8)\n        n=struct.unpack(\"!Q\",e)[0]\n    if h[1]&128:\n        m,buf=rx(s,buf,4)\n    else:\n        m=None\n    p,buf=rx(s,buf,n)\n    if m:\n        p=bytes(x^m[i&3] for i,x in enumerate(p))\n    return op,p,buf\nok=True\ntry:\n    if mode==\"wsecho\":\n        s,h,r=hs(\"/echo\")\n        ok=ok and \"101\" in h.split(\"\\r\\n\")[0] and \"s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\" in h\n        sf(s,1,b\"hi avant\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"hi avant\"\n        sf(s,2,b\"\\x00\\x01\\x02\")\n        op,p,r=rf(s,r)\n        ok=ok and op==2 and p==b\"\\x00\\x01\\x02\"\n        sf(s,9,b\"zz\")\n        op,p,r=rf(s,r)\n        ok=ok and op==10 and p==b\"zz\"\n        sf(s,1,b\"hel\",fin=False)\n        sf(s,0,b\"lo\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"hello\"\n        sf(s,8,struct.pack(\"!H\",1000)+b\"bye\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1000)\n        s.close()\n        s,h,r=hs(\"/shout\")\n        sf(s,1,b\"abc\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"text:abc\"\n        sf(s,2,b\"\\x01\\x02\")\n        op,p,r=rf(s,r)\n        ok=ok and op==2 and p==b\"\\x01\\x02\"\n        s.close()\n        s,h,r=hs(\"/work\")\n        sf(s,1,b\"go\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"worked\"\n        s.close()\n        s,h,r=hs(\"/bye\")\n        sf(s,1,b\"x\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p==struct.pack(\"!H\",1000)+b\"done\"\n        s.close()\n        print(\"ws-echo=ok\" if ok else \"ws-echo=BAD\")\n    else:\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"hi\",masked=False)\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1002)\n        s.close()\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"x\"*100)\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1009)\n        s.close()\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"\\xff\\xfe\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1007)\n        s.close()\n        s2=socket.create_connection((\"127.0.0.1\",port))\n        s2.sendall(b\"GET /echo HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 12\\r\\n\\r\\n\")\n        ok=ok and b\"400\" in s2.recv(4096).split(b\"\\r\\n\")[0]\n        s2.close()\n        s,h,r=hs(\"/nope\")\n        ok=ok and \"404\" in h.split(\"\\r\\n\")[0]\n        s.close()\n        print(\"ws-proto=ok\" if ok else \"ws-proto=BAD\")\nexcept Exception as e:\n    print((\"ws-echo=BAD:\" if mode==\"wsecho\" else \"ws-proto=BAD:\") + type(e).__name__)\n"
+  dummy_wpy = file_write(wscript, wpy)
+
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 2, 64) {
+    server = opened
+    server.websocket("/echo") { |conn, msg|
+      sent = conn.send_message(msg)
+    }
+    server.websocket("/shout") { |conn, msg|
+      if msg.is_text {
+        sent = conn.send_text("text:${msg.text ?? ""}")
+      } else {
+        sent = conn.send_bytes(msg.body)
+      }
+    }
+    server.websocket("/work") { |conn, msg|
+      sender = conn.sender
+      handle = spawn {
+        sent = sender.send_text("worked")
+        0
+      }
+    }
+    server.websocket("/bye") { |conn, msg|
+      sent = conn.close(1000, "done")
+    }
+    events = Channel(String).new(16)
+    server.websocket_open("/echo") { |conn|
+      events.send("open")
+    }
+    server.websocket_close("/echo") { |conn, code, reason|
+      events.send("close=${code}:${reason}")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    out = Channel(String).new(4)
+    cout = Channel(String).new(2)
+    port = server.port
+    handle = spawn {
+      ws_round(port, out, wscript, stamp)
+    }
+    chandle = spawn {
+      ws_client_round(port, cout)
+    }
+    server.serve
+    c.eq_int(handle.join, 0, "ws round task")
+    c.eq_int(chandle.join, 0, "ws client task")
+    if line = cout.recv {
+      c.eq_str(line, "ws-client=text:abc:true:2", "ws client round")
+    } else {
+      c.expect(false, "ws client round present")
+    }
+    want: Array(String) = []
+    want.push("ws-echo=ok")
+    want.push("ws-proto=ok")
+    i = 0
+    while i < want.size {
+      if line = out.recv {
+        c.eq_str(line, want[i], "ws round ${i}")
+      } else {
+        c.expect(false, "ws round ${i} present")
+      }
+      i = i + 1
+    }
+    evwant: Array(String) = []
+    evwant.push("open")
+    evwant.push("close=1000:bye")
+    evwant.push("open")
+    evwant.push("close=1002:")
+    evwant.push("open")
+    evwant.push("close=1009:")
+    evwant.push("open")
+    evwant.push("close=1007:")
+    i = 0
+    while i < evwant.size {
+      if line = events.recv {
+        c.eq_str(line, evwant[i], "ws event ${i}")
+      } else {
+        c.expect(false, "ws event ${i} present")
+      }
+      i = i + 1
+    }
+  } else {
+    c.expect(false, "listen for ws test")
   }
 
   sport = 18347
