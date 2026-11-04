@@ -7,6 +7,7 @@ Avant wraps these; it does not reimplement JSON or HTTP.
 | `yyjson/` | JSON (D8) | MIT, copyright YaoYuan | v0.10.0 (`yyjson.h` / `yyjson.c`) |
 | `uSockets/` | HTTP evented sockets (D8, D37: C only) | Apache-2.0 | `7a7c820` (`src/` only) |
 | `base64/` | Base64 codec (aklomp/base64) | BSD-style, copyright Nick Galbreath, Wojciech Muła, Matthieu Darbois, and Alfred Klomp (see `base64/LICENSE`) | `e4cc438b7a8f2780b15f88aed24a89927f6bd6c6` (`base64/PIN`) |
+| `picohttpparser/` | HTTP/1 request/response parser (h2o/picohttpparser) | MIT (dual-licensed MIT/Perl; the MIT side is taken), copyright Kazuho Oku, Tokuhiro Matsuno, Daisuke Murase, and Shigeo Mitsunari (see the license header in `picohttpparser.h`) | `dd573d8` |
 
 Attribution: uSockets is licensed under the Apache License, Version 2.0 (`uSockets/LICENSE`); this notice satisfies its redistribution terms for the vendored `src/` tree. The base64 tree keeps its own `LICENSE` file in place, as its terms require.
 

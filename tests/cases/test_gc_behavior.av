@@ -36,9 +36,21 @@ fn leaf_method_fixture: String {
   "struct Pair {\n  a: Int\n  b: Int\n  fn sum: Int {\n    self.a + self.b\n  }\n  fn scaled(k: Int): Int {\n    (self.a + self.b) * k\n  }\n}\n\nstruct Named {\n  s: String\n  n: Int\n  fn total: Int {\n    self.n + self.s.size\n  }\n}\n\nclass Box {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n  fn get: Int {\n    self.v\n  }\n}\n\nfn main: Int {\n  p = Pair { a: 3, b: 4 }\n  named = Named { s: \"abcd\", n: 5 }\n  box = Box.new(42)\n  junk: Array(String) = []\n  acc = 0\n  i = 0\n  while i < 20000 {\n    acc = acc + p.sum + p.scaled(2) + named.total + box.get\n    junk.push(\"abcdefghij\")\n    if junk.size > 4000 {\n      junk.clear\n    }\n    i = i + 1\n  }\n  puts(acc)\n  puts(named.s)\n  0\n}\n"
 }
 
+fn literal_fixture: String {
+  "struct Pair2 {\n  name: String\n  value: String\n}\n\nstruct Resp2 {\n  status: Int\n  out: Array(Pair2)\n  body: Bytes\n}\n\nfn make_resp(body: String): Resp2 {\n  hs: Array(Pair2) = []\n  hs.push(Pair2 { name: \"Content-Type\", value: \"text/plain\" })\n  Resp2 { status: 200, out: hs, body: body.bytes }\n}\n\nfn main: Int {\n  total = 0\n  i = 0\n  while i < 300000 {\n    r = make_resp(\"hello\")\n    total = total &+ r.out[0].name.size &+ r.out[0].value.size &+ r.body.size &+ r.status\n    i = i &+ 1\n  }\n  puts(total)\n  0\n}\n"
+}
+
 fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
+fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
+  args: Array(String) = []
+  args.push("${n1}=${v1}")
+  args.push("${n2}=${v2}")
   args.push(bin)
   process_run_out("/usr/bin/env", args, log)
 }
@@ -330,6 +342,48 @@ fn test_gc_behavior(c: Checks) {
       c.eq_str(out22, want9, "leaf method checksums at 1 MB young size")
     } else {
       c.expect(false, "read leaf method small-young run")
+    }
+    // Struct-literal field roots: a struct built field by field and
+    // returned by value, with an Array field that received a pushed
+    // struct before a later field allocated, used to leave the early
+    // field temps naming from-space after a young copy (found by
+    // std.http under load: the response's header array went stale and
+    // the server segfaulted in route matching). The checksum reads
+    // every field back after each return.
+    src10 = "/tmp/avant-gcb-${stamp}-literal.av"
+    bin10 = "/tmp/avant-gcb-${stamp}-literal.bin"
+    w10 = file_write(src10, literal_fixture())
+    c.eq_int(w10, 0, "write literal fixture")
+    code10 = compile_av(compiler, src10, bin10, "/tmp/avant-gcb-${stamp}-literal.clog")
+    c.eq_int(code10, 0, "compile literal fixture")
+    want10 = "68100000\n"
+    log23 = "/tmp/avant-gcb-${stamp}.run23"
+    rc23 = run_av_bin(bin10, log23)
+    c.eq_int(rc23, 0, "struct literal fields survive at default young size")
+    if out23 = file_read(log23) {
+      c.eq_str(out23, want10, "literal checksums at default young size")
+    } else {
+      c.expect(false, "read literal run")
+    }
+    log24 = "/tmp/avant-gcb-${stamp}.run24"
+    rc24 = run_with_env(bin10, "AVANT_YOUNG_MB", "1", log24)
+    c.eq_int(rc24, 0, "struct literal fields survive at 1 MB young size")
+    if out24 = file_read(log24) {
+      c.eq_str(out24, want10, "literal checksums at 1 MB young size")
+    } else {
+      c.expect(false, "read literal small-young run")
+    }
+    // Q123-A: no stack word may still name from-space after a young
+    // copy. The verifier prints those words on stderr, which the run
+    // log captures, so an exact-output match is the zero-report
+    // assertion. AVANT_GC_STACK_REWRITE=0 restores the reports.
+    log25 = "/tmp/avant-gcb-${stamp}.run25"
+    rc25 = run_with_env2(bin10, "AVANT_GC_VERIFY", "1", "AVANT_YOUNG_MB", "1", log25)
+    c.eq_int(rc25, 0, "struct literal verify run exits clean")
+    if out25 = file_read(log25) {
+      c.eq_str(out25, want10, "no stale stack words under the verifier")
+    } else {
+      c.expect(false, "read literal verify run")
     }
   } else {
     c.expect(false, "AVANT_COMPILER")

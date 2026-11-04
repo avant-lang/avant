@@ -472,6 +472,55 @@ void rewrite_from_stackmaps(void) {
   walk_c_frames(0);
 }
 
+/*
+ * The frame walk above rewrites only frames with a stackmap site.
+ * Copies of a forwarded pointer also survive outside those frames:
+ * callee-saved register saves in C frames on the call chain into the
+ * collector, and spills of struct-typed temps the statepoint did not
+ * name. Rewrite every exact forwarded start left on this thread's
+ * stack, with the same predicate count_c_stack_nursery verifies, so
+ * no stack word still names from-space after a young copy. Interiors
+ * are not touched (fwd_get keys on object starts), and a word that
+ * was not forwarded keeps its bits. AVANT_GC_STACK_REWRITE=0 is the
+ * kill switch.
+ */
+void rewrite_c_stack(void) {
+  static int enabled = -1;
+  uint8_t *p;
+  uint8_t *hi;
+  uint8_t *lo;
+  if (!g_stackmap_walk) {
+    return;
+  }
+  if (enabled < 0) {
+    const char *v = getenv("AVANT_GC_STACK_REWRITE");
+    enabled = !(v && v[0] == '0' && v[1] == 0);
+  }
+  if (!enabled) {
+    return;
+  }
+  p = (uint8_t *)__builtin_frame_address(0);
+  lo = g_self_reg.stack_lo;
+  hi = g_self_reg.stack_hi;
+  if (!hi || !p) {
+    return;
+  }
+  if (lo && p < (uint8_t *)lo) {
+    return;
+  }
+  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
+    void *w = *(void **)p;
+    Block *b = NULL;
+    if (!is_heap_payload(w, &b, NULL)) {
+      continue;
+    }
+    if (b && b->space == SPACE_NURSERY) {
+      rewrite_if_forwarded((void **)p);
+    }
+  }
+}
+
 void count_c_stack_nursery(void) {
   uint8_t *p;
   uint8_t *hi;

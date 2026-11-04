@@ -4,6 +4,30 @@ fn inc(n: Int): Int {
   n + 1
 }
 
+pub class PayloadError {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+struct Payload {
+  n: Int
+
+  fn doubled: Int {
+    self.n * 2
+  }
+
+  fn bump {
+    self.n = self.n + 1
+  }
+}
+
+fn make_payload: Payload | PayloadError {
+  Payload { n: 21 }
+}
+
 fn map(xs: Array(T), f: fn(T): U): Array(U) {
   ys: Array(U) = []
   xs.each { |x|
@@ -160,6 +184,17 @@ fn test_fn(c: Checks) {
   msg = "ke" + "pt"
   read: fn(): String = { || msg }
   c.eq_str(read(), "kept", "capture string")
+  if p = make_payload() {
+    stored: Array(fn(): Int) = []
+    stored.push({ ||
+      p.bump
+      p.doubled
+    })
+    c.eq_int((stored[0])(), 44, "capture if-assign payload")
+    c.eq_int(p.n, 22, "payload mutation visible")
+  } else {
+    c.expect(false, "make payload")
+  }
   bare = inc
   c.eq_int(bare(2), 3, "bare fn value")
   ann = { |n: Int| n + 1 }

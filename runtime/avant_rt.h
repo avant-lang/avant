@@ -71,6 +71,7 @@ static inline uint32_t avant_str_generation(void) {
   return atomic_load_explicit(&g_avant_str_gen, memory_order_acquire);
 }
 int32_t avant_is_young(void *payload);
+void avant_gc_heap_goal_collect(void);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
 void avant_world_lock(void);
@@ -308,6 +309,8 @@ int64_t avant_checked_rem_i64(int64_t a, int64_t b);
 uint64_t avant_checked_div_u64(uint64_t a, uint64_t b);
 uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
 
+int32_t avant_chosen_threads(void);
+void avant_set_flag_threads(long n);
 void *avant_spawn(void *fn, void *arg);
 int32_t avant_join(void *handle);
 void avant_parallel_for(int32_t n, void *fn, void *ctx);
@@ -355,7 +358,58 @@ char *avant_json_obj_str(void *node, const char *key);
 char *avant_json_key_at(void *node, int32_t i);
 char *avant_json_text(void *node);
 
-const char *avant_http_roundtrip(const char *body);
+int32_t avant_http_take_status(void);
+int32_t avant_http_header_count(const char *data);
+int32_t avant_http_header_has(const char *data, const char *name);
+char *avant_http_header_at(const char *data, const char *name, int32_t index);
+char *avant_http_header_name_at(const char *data, int32_t index);
+char *avant_http_header_value_at(const char *data, int32_t index);
+char *avant_http_req_method(void *req);
+char *avant_http_req_target(void *req);
+char *avant_http_req_body(void *req);
+char *avant_http_req_headers(void *req);
+void avant_http_req_respond(void *req, int32_t status, const char *head,
+                            const char *body);
+void *avant_http_listen(const char *host, int32_t port, int32_t max_body, int32_t loops, int32_t max_message);
+int32_t avant_http_port(void *srv);
+int32_t avant_http_serve(void *srv, void *state, void *cb, void *ws_cb);
+int32_t avant_http_close(void *srv);
+int32_t avant_http_req_is_ws(void *req);
+int32_t avant_http_req_ws_upgrade(void *req);
+int32_t avant_http_req_ws_id(void *req);
+int32_t avant_ws_event_kind(void *ev);
+int32_t avant_ws_event_conn_id(void *ev);
+void *avant_ws_event_server(void *ev);
+char *avant_ws_event_path(void *ev);
+int32_t avant_ws_event_is_text(void *ev);
+char *avant_ws_event_data(void *ev);
+int32_t avant_ws_event_code(void *ev);
+char *avant_ws_event_reason(void *ev);
+void *avant_http_req_ws_server(void *req);
+void *avant_http_req_ws_conn(void *req);
+void *avant_ws_event_conn(void *ev);
+int32_t avant_ws_send_text_direct(void *handle, const char *data);
+int32_t avant_ws_send_text_bytes_direct(void *handle, const char *data);
+int32_t avant_ws_send_bytes_direct(void *handle, const char *data);
+int32_t avant_ws_close_direct(void *handle, int32_t code, const char *reason);
+int32_t avant_ws_close_conn(void *srv, int32_t id, int32_t code, const char *reason);
+int32_t avant_ws_send_text_by_id(int32_t id, const char *data);
+int32_t avant_ws_send_text_bytes_by_id(int32_t id, const char *data);
+int32_t avant_ws_send_bytes_by_id(int32_t id, const char *data);
+int32_t avant_ws_close_by_id(int32_t id, int32_t code, const char *reason);
+void *avant_ws_client_connect(const char *host, int32_t port, const char *target, const char *key_b64, int32_t timeout_ms);
+char *avant_ws_client_recv(void *handle, int32_t timeout_ms);
+int32_t avant_ws_client_last_is_text(void);
+int32_t avant_ws_client_close_code(void *handle);
+int32_t avant_ws_client_send_text(void *handle, const char *data);
+int32_t avant_ws_client_send_bytes(void *handle, const char *data);
+int32_t avant_ws_client_close(void *handle);
+char *avant_ws_client_key(void);
+char *avant_http_fetch(const char *host, int32_t port, const char *request,
+                       int32_t timeout_ms);
+int32_t avant_http_resp_status(const char *raw);
+char *avant_http_resp_headers(const char *raw);
+char *avant_http_resp_body(const char *raw);
 
 #define AVANT_HASH_KEY_I32 0
 #define AVANT_HASH_KEY_STR 1

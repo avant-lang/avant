@@ -1,3 +1,19 @@
+import std.http
+
 fn main {
-  puts(http_roundtrip("Hello Avant"))
+  if server = Http.listen(0) {
+    server.get("/") { |req|
+      server.close
+      Response.text("Hello Avant")
+    }
+    port = server.port
+    handle = spawn {
+      if resp = Http.get("http://127.0.0.1:${port}/") {
+        puts(String.from_utf8(resp.body) ?? "")
+      }
+      0
+    }
+    server.serve
+    dummy = handle.join
+  }
 }

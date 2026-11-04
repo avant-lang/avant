@@ -1,0 +1,163 @@
+import harness
+
+fn threads_fixture: String {
+  "lib task {\n  fun avant_chosen_threads: Int\n}\n\nfn main: Int {\n  args = argv()\n  out = \"\"\n  i = 0\n  while i < args.size {\n    if i > 0 {\n      out = out + \",\"\n    }\n    out = out + args[i]\n    i = i + 1\n  }\n  puts(out)\n  puts(task.avant_chosen_threads())\n  0\n}\n"
+}
+
+fn has_sub(s: String, needle: String): Bool {
+  if needle.size == 0 {
+    return true
+  }
+  if needle.size > s.size {
+    return false
+  }
+  i = 0
+  last = s.size - needle.size
+  while i <= last {
+    if str_slice(s, i, i + needle.size) == needle {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn run_args(bin: String, args: Array(String), log: String): Int {
+  process_run_out(bin, args, log)
+}
+
+fn run_env_args(bin: String, name: String, value: String, args: Array(String), log: String): Int {
+  full: Array(String) = []
+  full.push("${name}=${value}")
+  full.push(bin)
+  i = 0
+  while i < args.size {
+    full.push(args[i])
+    i = i + 1
+  }
+  process_run_out("/usr/bin/env", full, log)
+}
+
+fn test_threads(c: Checks) {
+  c.suite("tests/cases/test_threads.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    src = "/tmp/avant-threads-${stamp}.av"
+    bin = "/tmp/avant-threads-${stamp}.bin"
+    w = file_write(src, threads_fixture())
+    c.eq_int(w, 0, "write threads fixture")
+    code = compile_av(compiler, src, bin, "/tmp/avant-threads-${stamp}.clog")
+    c.eq_int(code, 0, "compile threads fixture")
+
+    // No flag: argv passes through, count is the machine default (>0).
+    log1 = "/tmp/avant-threads-${stamp}.run1"
+    a1: Array(String) = []
+    a1.push("alpha")
+    rc1 = run_args(bin, a1, log1)
+    c.eq_int(rc1, 0, "plain run exits")
+    if out1 = file_read(log1) {
+      lines = out1.split("\n")
+      c.expect(lines.size >= 2, "plain run prints two lines")
+      if lines.size >= 2 {
+        c.expect(lines[1].size > 0 && lines[1] != "0", "default chosen count is positive")
+      }
+      // argv[0] is the binary path; the program arg survives.
+      c.expect(has_sub(out1, "alpha"), "program arg survives without flag")
+    } else {
+      c.expect(false, "read plain run")
+    }
+
+    // Space spelling: flag removed from argv, count is the flag value.
+    log2 = "/tmp/avant-threads-${stamp}.run2"
+    a2: Array(String) = []
+    a2.push("--threads")
+    a2.push("3")
+    a2.push("alpha")
+    rc2 = run_args(bin, a2, log2)
+    c.eq_int(rc2, 0, "space flag run exits")
+    if out2 = file_read(log2) {
+      c.expect(!has_sub(out2, "--threads"), "space flag removed from argv")
+      c.expect(has_sub(out2, "alpha"), "program arg survives space flag")
+      c.expect(has_sub(out2, "\n3\n"), "chosen count is the space flag value")
+    } else {
+      c.expect(false, "read space flag run")
+    }
+
+    // Equals spelling: same behavior, one implementation.
+    log3 = "/tmp/avant-threads-${stamp}.run3"
+    a3: Array(String) = []
+    a3.push("--threads=4")
+    rc3 = run_args(bin, a3, log3)
+    c.eq_int(rc3, 0, "equals flag run exits")
+    if out3 = file_read(log3) {
+      c.expect(!has_sub(out3, "--threads"), "equals flag removed from argv")
+      c.expect(has_sub(out3, "\n4\n"), "chosen count is the equals flag value")
+    } else {
+      c.expect(false, "read equals flag run")
+    }
+
+    // Precedence (Q125-A): flag wins over the environment fallback.
+    log4 = "/tmp/avant-threads-${stamp}.run4"
+    a4: Array(String) = []
+    a4.push("--threads")
+    a4.push("2")
+    rc4 = run_env_args(bin, "AVANT_THREADS", "7", a4, log4)
+    c.eq_int(rc4, 0, "precedence run exits")
+    if out4 = file_read(log4) {
+      c.expect(has_sub(out4, "\n2\n"), "flag wins over AVANT_THREADS")
+    } else {
+      c.expect(false, "read precedence run")
+    }
+
+    // Environment alone still works for one release (deprecated).
+    log5 = "/tmp/avant-threads-${stamp}.run5"
+    a5: Array(String) = []
+    rc5 = run_env_args(bin, "AVANT_THREADS", "6", a5, log5)
+    c.eq_int(rc5, 0, "env run exits")
+    if out5 = file_read(log5) {
+      c.expect(has_sub(out5, "\n6\n"), "AVANT_THREADS fallback still honored")
+    } else {
+      c.expect(false, "read env run")
+    }
+
+    // Malformed values die loudly (nonzero exit).
+    log6 = "/tmp/avant-threads-${stamp}.run6"
+    a6: Array(String) = []
+    a6.push("--threads")
+    a6.push("0")
+    rc6 = run_args(bin, a6, log6)
+    c.expect(rc6 != 0, "zero threads is rejected")
+    log7 = "/tmp/avant-threads-${stamp}.run7"
+    a7: Array(String) = []
+    a7.push("--threads=abc")
+    rc7 = run_args(bin, a7, log7)
+    c.expect(rc7 != 0, "non-numeric threads is rejected")
+
+    // After a literal -- the flag is program data, not ours.
+    log8 = "/tmp/avant-threads-${stamp}.run8"
+    a8: Array(String) = []
+    a8.push("--")
+    a8.push("--threads")
+    a8.push("9")
+    rc8 = run_args(bin, a8, log8)
+    c.eq_int(rc8, 0, "dashdash run exits")
+    if out8 = file_read(log8) {
+      c.expect(has_sub(out8, "--threads"), "flag after -- stays in argv")
+      c.expect(!has_sub(out8, "\n9\n"), "flag after -- does not set the count")
+    } else {
+      c.expect(false, "read dashdash run")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_threads(c)
+  c.finish
+}

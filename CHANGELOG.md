@@ -1,5 +1,27 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* `import std.http`: HTTP/1.1 server and blocking client (`Http.listen`, `Http.get`, `Http.post`, `Http.request`), linked only by programs that import it.
+* WebSockets in `std.http` (`ws://` only): `server.websocket(path)`, `websocket_open`, `websocket_close`, and the `Ws.connect(url)` client.
+* `--threads N` / `--threads=N` program flags set the runtime thread count and are stripped from the program's arguments.
+
+### Changed
+
+* The HTTP server runs one event loop per elected thread on one port; `AVANT_THREADS` remains as a deprecated fallback when no `--threads` flag is given.
+* The collector keeps a server's heap near a goal set from its live set: benchmark peak RSS drops from about 220 MB to about 9 MB.
+
+### Removed
+
+* The `http_roundtrip` prelude function is removed with no shim. Programs use `std.http`.
+
+### Fixed
+
+* Struct-typed temporaries are now collector roots and the young copy rewrites forwarded pointers left on the stack; the old gap could segfault in allocation-heavy code, including the HTTP server under load.
+* A lambda capturing an `if x = expr { }` binding no longer crashes the backend when the payload is a struct.
+
 ## 0.30.0 - 2026-11-04
 
 ### Added
