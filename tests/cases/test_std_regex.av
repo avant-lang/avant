@@ -1,0 +1,247 @@
+import harness
+import std.regex
+
+fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
+  src = "/tmp/avant-regex-${stamp}-${tag}.av"
+  bin = "/tmp/avant-regex-${stamp}-${tag}.bin"
+  clog = "/tmp/avant-regex-${stamp}-${tag}.log"
+  rlog = "/tmp/avant-regex-${stamp}-${tag}.out"
+  dummy = file_write(src, body)
+  code = compile_av(compiler, src, bin, clog)
+  c.eq_int(code, 0, "compile ${tag}")
+  c.expect(file_exists(bin), "${tag} bin")
+  if err = file_read(clog) {
+    if compile_has.size > 0 {
+      c.expect(str_has(err, compile_has), "${tag} compile says ${compile_has}")
+    }
+    if compile_lacks.size > 0 {
+      c.expect(!str_has(err, compile_lacks), "${tag} compile lacks ${compile_lacks}")
+    }
+  } else {
+    if compile_has.size > 0 {
+      c.expect(false, "${tag} compile log")
+    }
+  }
+  chmod_x(bin)
+  run_code = run_av_bin(bin, rlog)
+  c.eq_int(run_code, 0, "run ${tag}")
+  if got = file_read(rlog) {
+    c.eq_str(got, out, "${tag} stdout")
+  } else {
+    c.expect(false, "${tag} stdout missing")
+  }
+}
+
+fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
+  if re = Regex.compile(pat, caseless) {
+    return re
+  }
+  c.expect(false, "compile ${label}")
+  must_compile(c, "a+", false, "fallback")
+}
+
+fn test_std_regex(c: Checks) {
+  c.suite("tests/cases/test_std_regex.av")
+
+  lit = must_compile(c, "a+", false, "literal")
+  if m = lit.find("xxaa") {
+    c.eq_int(m.start, 2, "literal start")
+    c.eq_int(m.end, 4, "literal end")
+    c.eq_str(m.group(0) ?? "", "aa", "literal group 0")
+  } else {
+    c.expect(false, "literal find")
+  }
+  if none = lit.find("xx") {
+    c.expect(false, "no match is nil")
+  } else {
+    c.expect(true, "no match is nil")
+  }
+  if later = lit.find("xxaa", 3) {
+    c.eq_int(later.start, 3, "find from offset")
+  } else {
+    c.expect(false, "find from offset")
+  }
+  lit.close
+
+  cap = must_compile(c, "x(y)", false, "capture")
+  if m = cap.find("xy") {
+    c.eq_str(m.group(1) ?? "", "y", "capture group")
+    if sp = m.span(1) {
+      c.eq_int(sp.lo, 1, "capture span lo")
+      c.eq_int(sp.hi, 2, "capture span hi")
+    } else {
+      c.expect(false, "capture span")
+    }
+    if g5 = m.group(5) {
+      c.expect(false, "group beyond count is nil")
+    } else {
+      c.expect(true, "group beyond count is nil")
+    }
+    c.eq_int(m.group_count, 1, "group count")
+  } else {
+    c.expect(false, "capture find")
+  }
+  cap.close
+
+  word = must_compile(c, "bot", true, "caseless")
+  if m = word.find("GoogleBot") {
+    c.eq_int(m.start, 6, "caseless start")
+  } else {
+    c.expect(false, "caseless find")
+  }
+  word.close
+
+  braces = must_compile(c, "\\{\\{(.*?)\\}\\}", false, "braces")
+  if m = braces.find("{{TITLE}}{{a}b}}") {
+    c.eq_int(m.start, 0, "non-greedy start")
+    c.eq_int(m.end, 9, "non-greedy end")
+    c.eq_str(m.group(1) ?? "", "TITLE", "non-greedy group")
+  } else {
+    c.expect(false, "non-greedy find")
+  }
+  braces.close
+
+  built = "x"
+  built = built + "(y)"
+  dyn = must_compile(c, built, false, "computed")
+  if m = dyn.find("zxy") {
+    c.eq_int(m.start, 1, "computed start")
+    c.eq_str(m.group(1) ?? "", "y", "computed group")
+  } else {
+    c.expect(false, "computed find")
+  }
+  dyn.close
+
+  counted = must_compile(c, "a+", false, "count")
+  c.eq_int(counted.count("aa ba"), 2, "count")
+  c.eq_int(counted.count("zz"), 0, "count none")
+  counted.close
+
+  back = "(a)\\1"
+  bref = must_compile(c, back, false, "backref")
+  if m = bref.find("baa") {
+    c.eq_int(m.start, 1, "backref start")
+    c.eq_int(m.end, 3, "backref end")
+  } else {
+    c.expect(false, "backref find")
+  }
+  bref.close
+
+  if bad = Regex.compile("(unclosed") {
+    c.expect(false, "bad pattern is RegexError")
+    bad.close
+  } else {
+    c.expect(true, "bad pattern is RegexError")
+  }
+
+  named = must_compile(c, "(?<word>[a-z]+)([0-9]+)", false, "named")
+  if m = named.find("abc123") {
+    c.eq_str(m.group("word") ?? "", "abc", "named group")
+    c.eq_str(m.group(2) ?? "", "123", "named second group")
+    if nope = m.group("missing") {
+      c.expect(false, "missing name is nil")
+    } else {
+      c.expect(true, "missing name is nil")
+    }
+  } else {
+    c.expect(false, "named find")
+  }
+  named.close
+
+  multi = must_compile(c, "(a)(b)?", false, "optional group")
+  if m = multi.find("xa") {
+    c.eq_str(m.group(1) ?? "", "a", "first of two groups")
+    if g2 = m.group(2) {
+      c.expect(false, "unmatched group is nil")
+    } else {
+      c.expect(true, "unmatched group is nil")
+    }
+    if sp2 = m.span(2) {
+      c.expect(false, "unmatched span is nil")
+    } else {
+      c.expect(true, "unmatched span is nil")
+    }
+  } else {
+    c.expect(false, "optional group find")
+  }
+  multi.close
+
+  iter_re = must_compile(c, "a+", false, "iterator")
+  total = 0
+  iter = iter_re.matches("aa ba aaa")
+  done = false
+  while !done {
+    if m = iter.next {
+      total = total + (m.end - m.start)
+    } else {
+      done = true
+    }
+  }
+  c.eq_int(total, 6, "iterator total length")
+  if extra = iter.next {
+    c.expect(false, "iterator stays done")
+  } else {
+    c.expect(true, "iterator stays done")
+  }
+  c.eq_str(iter_re.replace("aa ba", "<$0>"), "<aa> b<a>", "replace whole")
+  c.eq_str(iter_re.replace("aa", "$$1"), "$1", "replace dollar escape")
+  parts = iter_re.split("aa ba a")
+  c.eq_int(parts.size, 4, "split size")
+  c.eq_str(parts[1], " b", "split piece")
+  dst = buf_new()
+  iter_re.replace_into(dst, "aa ba", "[$0]")
+  c.eq_str(dst.to_s, "[aa] b[a]", "replace_into")
+  iter_re.close
+
+  swap = must_compile(c, "(a+)(b+)", false, "swap groups")
+  c.eq_str(swap.replace("aabb", "$2$1"), "bbaa", "replace with groups")
+  c.eq_str(swap.replace("aabb", r"${2}-${1}"), "bb-aa", "replace with braced groups")
+  swap.close
+
+  shared_a = must_compile(c, "zz+", false, "shared a")
+  shared_b = must_compile(c, "zz+", false, "shared b")
+  shared_a.close
+  shared_a.close
+  if m = shared_b.find("azzz") {
+    c.eq_int(m.end, 4, "shared pattern survives sibling close")
+  } else {
+    c.expect(false, "shared pattern survives sibling close")
+  }
+  if gone = shared_a.find("azzz") {
+    c.expect(false, "closed regex finds nothing")
+  } else {
+    c.expect(true, "closed regex finds nothing")
+  }
+  c.eq_int(shared_a.count("zzz"), 0, "closed regex counts zero")
+  shared_b.close
+
+  scoped_len = 0
+  if re = Regex.compile("q+") {
+    re.scoped { |r|
+      if m = r.find("aqq") {
+        scoped_len = m.end
+      }
+    }
+  }
+  c.eq_int(scoped_len, 3, "scoped block result")
+
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    literal = "import std.regex\nfn main {\n  if re = Regex.compile(\"a+\") {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
+    regex_child(c, compiler, stamp, "regex-literal", literal, "", "stays on PCRE2", "2\n4\n")
+    computed = "import std.regex\nfn main {\n  p = \"a\"\n  p = p + \"+\"\n  if re = Regex.compile(p) {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
+    regex_child(c, compiler, stamp, "regex-computed", computed, "", "stays on PCRE2", "2\n4\n")
+    unsupported = "import std.regex\nfn main {\n  if re = Regex.compile(\"(a)\\\\1\") {\n    if m = re.find(\"baa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
+    regex_child(c, compiler, stamp, "regex-backref", unsupported, "stays on PCRE2", "", "1\n3\n")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_regex(c)
+  c.finish
+}

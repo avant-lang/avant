@@ -1013,20 +1013,23 @@ avant format FILE.av --write
 
 ## Regex
 
-Three calls: `re_compile(pattern, flags)` returns a handle (`flags` 1 means case-insensitive), `re_find(handle, text, from)` returns 1 on a match, and `re_count(pattern, text, flags)` counts non-overlapping matches. After a find, `re_m0()`/`re_m1()` are the match bounds and `re_c0()`/`re_c1()` the first capture group.
+Regex lives in the standard library: `import std.regex` is what links PCRE2. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`, `re.find(text, from = 0)` returns a `Match?` value carrying the bounds (`m.start`, `m.end`, `m.span(i)`) and the groups (`m.group(i)`, or `m.group("name")` for a named group), `re.count(text)` counts non-overlapping matches, `re.matches(text)` iterates them, and `re.replace` / `re.split` work on every match. A compiled pattern is a handle: `re.close` releases it (the compiler keeps a bounded cache of compiled patterns, so compiling the same pattern again is cheap), `re.scoped { |r| ... }` closes on exit, and operations on a closed `Regex` report no match.
 
 ```avant
+import std.regex
+
 fn main {
-  re = re_compile("x(y)", 0)
-  if re_find(re, "zxy", 0) == 1 {
-    puts(re_m0())  // 1
-    puts(re_c0())  // 2
+  if re = Regex.compile("x(y)") {
+    if m = re.find("zxy") {
+      puts(m.start)       // 1
+      puts(m.group(1))    // y
+    }
+    re.close
   }
-  puts(re_count("a+", "aa ba", 0))  // 2
 }
 ```
 
-A string-literal pattern is compiled to a native scanner with re2c at compile time; a computed pattern (or one re2c cannot express, such as a backreference) stays on PCRE2 with JIT, and the compiler says so. `re_count` always uses PCRE2. Without `re2c` installed, literals use PCRE2 too; `AVANT_RE2C` overrides the binary.
+A string-literal pattern is compiled to a native scanner with re2c at compile time when it needs at most one capture group and no named groups; any other pattern stays on PCRE2 with JIT, and the compiler says so. Without `re2c` installed, literals use PCRE2 too; `AVANT_RE2C` overrides the binary. PCRE2 backtracking can be catastrophic on adversarial patterns and texts; that cost is the caller's to bound.
 
 ## Testing
 
@@ -1219,7 +1222,7 @@ Testing the compiler itself is covered for contributors under [Advanced: buildin
 
 ## Builtins
 
-Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, the `re_*` family (see [Regex](#regex)), `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`. `import std.zlib` adds `Bytes.compress` and `Bytes.uncompress` and is what links zlib. `import std.base64` adds `Bytes.to_base64` and `Bytes.from_base64` and is what links the aklomp Base64 codec. `import std.json` adds `Json.parse` and is what links yyjson; a parsed value walks with `get`/`at`, scans with `iter`, and projects a numeric field of every element with `f64s(key)`. A type-level function is declared in a type body as `fn self.name(...)` and called on the type, as `Json.parse` is.
+Runnable examples live in `examples/` (`hello`, `sieve`, `errors`, `collect`, `json`, `spawn`, `matmul`, and more). Beyond the core language, programs can use `sha256`, `sqrt`, `dir_list`, `now_ms` / `now_us`, `file_read` / `file_write` / `file_exists`, `argv`, `env_get`, and `process_run` / `process_run_out`. `import std.zlib` adds `Bytes.compress` and `Bytes.uncompress` and is what links zlib. `import std.base64` adds `Bytes.to_base64` and `Bytes.from_base64` and is what links the aklomp Base64 codec. `import std.json` adds `Json.parse` and is what links yyjson; `import std.regex` adds `Regex.compile` and is what links PCRE2 (see [Regex](#regex)); a parsed value walks with `get`/`at`, scans with `iter`, and projects a numeric field of every element with `f64s(key)`. A type-level function is declared in a type body as `fn self.name(...)` and called on the type, as `Json.parse` is.
 
 ## Not built yet
 

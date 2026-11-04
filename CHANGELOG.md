@@ -1,5 +1,19 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* `import std.regex`, regex on top of PCRE2 (with re2c scanners for literal patterns), linked only by programs that import it. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`; `re.find(text, from = 0)` returns a `Match` value with bounds, indexed and named groups, and no global match cursors; `re.count`, `re.matches`, `re.replace`, and `re.split` complete the surface. A compiled pattern is a handle released with `re.close` or a `re.scoped` block, backed by a bounded cache of compiled patterns.
+
+### Changed
+
+* The `re_compile`, `re_find`, `re_m0`, `re_m1`, `re_c0`, `re_c1`, and `re_count` prelude functions are removed. Programs use `std.regex`; hello no longer links PCRE2.
+
+### Fixed
+
+* A multi-argument call whose later argument was filled from a declared default crashed the backend (the filled argument's temporary was declared with no type). Filled arguments now take the parameter's type.
+
 ## 0.29.0 - 2026-11-04
 
 ### Changed

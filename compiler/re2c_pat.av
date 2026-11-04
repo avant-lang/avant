@@ -4,14 +4,58 @@ import ast
 pub class Re2cPlan {
   src: String = ""
   ids: Hash(String, Int)
+  groups: Array(Int)
   count: Int = 0
 
   fn initialize {
     h = Hash(String, Int).new
     self.ids = h
+    g: Array(Int) = []
+    self.groups = g
     self.src = ""
     self.count = 0
   }
+}
+
+// Capture groups a re2c scanner can serve: group 0 and group 1 only,
+// and no named groups. Returns -1 when the pattern must stay on PCRE2
+// for correctness (more than one group, a named group, or a "(?"
+// construct other than "(?:").
+pub fn re2c_capture_groups(pat: String): Int {
+  n = 0
+  in_class = false
+  i = 0
+  while i < pat.size {
+    c = pat[i]
+    if c == 92 {
+      i = i + 2
+    } else if in_class {
+      if c == 93 {
+        in_class = false
+      }
+      i = i + 1
+    } else if c == 91 {
+      in_class = true
+      i = i + 1
+    } else if c == 40 {
+      if i + 1 < pat.size && pat[i + 1] == 63 {
+        if i + 2 < pat.size && pat[i + 2] == 58 {
+          i = i + 3
+        } else {
+          return -1
+        }
+      } else {
+        n = n + 1
+        if n > 1 {
+          return -1
+        }
+        i = i + 1
+      }
+    } else {
+      i = i + 1
+    }
+  }
+  n
 }
 
 pub class RePat {
@@ -655,6 +699,7 @@ pub class Re2cCollect {
   ids: Hash(String, Int)
   pats: Array(String)
   flags: Array(Int)
+  groups: Array(Int)
   bodies: Array(String)
 
   fn initialize {
@@ -664,6 +709,8 @@ pub class Re2cCollect {
     self.pats = p
     f: Array(Int) = []
     self.flags = f
+    g: Array(Int) = []
+    self.groups = g
     b: Array(String) = []
     self.bodies = b
   }
@@ -677,6 +724,11 @@ pub class Re2cCollect {
     if id = self.ids.get(key) {
       return
     }
+    ngroups = re2c_capture_groups(pat)
+    if ngroups < 0 {
+      puts("re2c: pattern stays on PCRE2 (capture groups beyond the first): ${re2c_show(pat)}")
+      return
+    }
     tr = RePat.new
     body = tr.translate(pat, flags)
     if tr.bad {
@@ -685,18 +737,34 @@ pub class Re2cCollect {
     }
     self.pats.push(pat)
     self.flags.push(flags)
+    self.groups.push(ngroups)
     self.bodies.push(body)
     self.ids[key] = self.pats.size
   }
 
   pub fn note_call(expr: Expr) {
-    if str_eq(expr.callee, "re_compile") {
-      if expr.args.size == 2 {
-        pat = expr.args[0]
-        fl = expr.args[1]
-        if pat.kind == ex_string() {
-          if fl.kind == ex_int() {
-            self.note_pat(pat.value_str, fl.int_bits.to_i)
+    if expr.type_call {
+      if str_eq(expr.resolved, "Regex__compile") {
+        if expr.args.size >= 1 {
+          pat = expr.args[0]
+          if pat.kind == ex_string() {
+            fv = 0
+            ok = true
+            if expr.args.size >= 2 {
+              fl = expr.args[1]
+              if fl.kind == ex_bool() {
+                if fl.bool_val {
+                  fv = 1
+                }
+              } else if fl.kind == ex_int() {
+                fv = fl.int_bits.to_i
+              } else {
+                ok = false
+              }
+            }
+            if ok {
+              self.note_pat(pat.value_str, fv)
+            }
           }
         }
       }
@@ -899,7 +967,7 @@ pub class Re2cCollect {
     buf.push_str("void *avant_re2c_handle(int32_t id) {\n")
     buf.push_str("  return (void *)(uintptr_t)id;\n")
     buf.push_str("}\n\n")
-    buf.push_str("int32_t avant_re2c_find_dispatch(void *re, const char *s, int32_t from) {\n")
+    buf.push_str("int32_t avant_re2c_find_into(void *re, const char *s, int32_t from, int32_t *spans, int32_t max_pairs) {\n")
     buf.push_str("  int32_t id = (int32_t)(uintptr_t)re;\n")
     buf.push_str("  int32_t m0 = 0, m1 = 0, c0 = 0, c1 = 0, rc = 0;\n")
     buf.push_str("  if (!s) s = \"\";\n")
@@ -912,8 +980,26 @@ pub class Re2cCollect {
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
-    buf.push_str("  if (rc) avant_re_set_span(m0, m1, c0, c1);\n")
+    buf.push_str("  if (rc && spans && max_pairs > 0) {\n")
+    buf.push_str("    spans[0] = m0;\n")
+    buf.push_str("    spans[1] = m1;\n")
+    buf.push_str("    if (max_pairs > 1) {\n")
+    buf.push_str("      spans[2] = c0;\n")
+    buf.push_str("      spans[3] = c1;\n")
+    buf.push_str("    }\n")
+    buf.push_str("  }\n")
     buf.push_str("  return rc;\n")
+    buf.push_str("}\n\n")
+    buf.push_str("int32_t avant_re2c_groups(int32_t id) {\n")
+    buf.push_str("  switch (id) {\n")
+    i = 0
+    while i < self.bodies.size {
+      id = i + 1
+      buf.push_str("    case ${id}: return ${self.groups[i]};\n")
+      i = i + 1
+    }
+    buf.push_str("    default: return 0;\n")
+    buf.push_str("  }\n")
     buf.push_str("}\n\n")
     buf.push_str("int32_t avant_re2c_count(int32_t id, const char *s) {\n")
     buf.push_str("  switch (id) {\n")
@@ -948,6 +1034,7 @@ pub fn re2c_plan(program: Program): Re2cPlan {
     return plan
   }
   plan.ids = col.ids
+  plan.groups = col.groups
   plan.count = col.pats.size
   plan.src = col.source
   plan
