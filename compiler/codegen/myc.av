@@ -1986,9 +1986,14 @@ pub class MycGen {
       self.emit_unwrap(tmp, uty, success)
       bind = stmt.bind
       sm = ty_myc(success)
-      self.line("LOCAL :${bind} :${sm}")
-      self.line("STORE")
-      self.ensure_root(bind, success)
+      if self.name_is_boxed(bind) {
+        self.ensure_box(bind, success)
+        self.store_box_value(bind, success)
+      } else {
+        self.line("LOCAL :${bind} :${sm}")
+        self.line("STORE")
+        self.ensure_root(bind, success)
+      }
       self.emit_stmts(stmt.then_body, false)
       self.indent = self.indent - 1
       if stmt.else_body.size > 0 {

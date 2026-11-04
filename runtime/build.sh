@@ -5,7 +5,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cc=${CC:-cc}
 mkdir -p "$root/build"
-cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -DLIBUS_NO_SSL"
+cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
 compile() {
   "$cc" -c $cflags -o "$2" "$1"
@@ -19,6 +19,13 @@ do
 done
 
 compile "$root/third_party/yyjson/yyjson.c" "$root/build/yyjson.o"
+compile "$root/third_party/picohttpparser/picohttpparser.c" "$root/build/picohttpparser.o"
+
+# picohttpparser folds into avant_http.o: the seed's link table names
+# avant_http.o only, so a new object could not be linked by the old
+# seed. The compiler's std.http row names avant_http.o for the pair.
+ld -r -o "$root/build/avant_http_merged.o" "$root/build/avant_http.o" "$root/build/picohttpparser.o"
+mv "$root/build/avant_http_merged.o" "$root/build/avant_http.o"
 
 # avant_rt_traps.o folds into avant_rt.o: the seed's link table names
 # avant_rt.o only, so a new core object could not be linked by the old

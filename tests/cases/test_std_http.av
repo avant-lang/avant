@@ -1,0 +1,267 @@
+import harness
+import std.http
+
+fn body_text(resp: Response): String {
+  String.from_utf8(resp.body) ?? ""
+}
+
+fn client_round(port: Int, out: Channel(String)): Int {
+  base = "http://127.0.0.1:${port}"
+  if resp = Http.get("${base}/hello") {
+    out.send("hello=${resp.status}:${body_text(resp)}")
+  } else {
+    out.send("hello=ERR")
+  }
+  if resp = Http.get("${base}/q?lang=avant&x=1") {
+    out.send("q=${body_text(resp)}")
+  } else {
+    out.send("q=ERR")
+  }
+  if resp = Http.post("${base}/echo", "abc123") {
+    out.send("echo=${body_text(resp)}")
+  } else {
+    out.send("echo=ERR")
+  }
+  if resp = Http.get("${base}/missing") {
+    out.send("missing=${resp.status}")
+  } else {
+    out.send("missing=ERR")
+  }
+  if resp = Http.post("${base}/hello", "x") {
+    out.send("mismatch=${resp.status}")
+  } else {
+    out.send("mismatch=ERR")
+  }
+  hs: Array(Header) = []
+  hs.push(Header { name: "X-Dup", value: "one" })
+  hs.push(Header { name: "X-Dup", value: "two" })
+  hs.push(Header { name: "X-One", value: "yes" })
+  if resp = Http.request("GET", "${base}/hdr", "".bytes, hs) {
+    out.send("hdr=${body_text(resp)}")
+  } else {
+    out.send("hdr=ERR")
+  }
+  if resp = Http.get("${base}/old") {
+    out.send("redir=${resp.status}:${body_text(resp)}")
+  } else {
+    out.send("redir=ERR")
+  }
+  if resp = Http.get("${base}/old", false) {
+    loc = resp.headers.get("Location") ?? ""
+    out.send("redir-off=${resp.status}:${loc}")
+  } else {
+    out.send("redir-off=ERR")
+  }
+  if resp = Http.get("${base}/meta") {
+    made = resp.headers.get("X-Made") ?? ""
+    out.send("meta=${resp.status}:${made}")
+  } else {
+    out.send("meta=ERR")
+  }
+  if resp = Http.get("${base}/__stop") {
+  }
+  0
+}
+
+fn raw_round(port: Int, script: String, stamp: Int, mode: String): String {
+  log = "/tmp/avant-http-raw-${stamp}-${mode}.log"
+  args: Array(String) = []
+  args.push(script)
+  args.push("${port}")
+  args.push(mode)
+  dummy = process_run_out("/usr/bin/python3", args, log)
+  if text = file_read(log) {
+    return nth_line(text, 0)
+  }
+  ""
+}
+
+fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+  base = "http://127.0.0.1:${port}"
+  if resp = Http.post("${base}/echo", "0123456789abcdefghij") {
+    out.send("big=${resp.status}")
+  } else {
+    out.send("big=ERR")
+  }
+  out.send(raw_round(port, script, stamp, "keepalive"))
+  out.send("chunked=${raw_round(port, script, stamp, "chunked")}")
+  out.send("malformed=${raw_round(port, script, stamp, "malformed")}")
+  if resp = Http.get("${base}/__stop") {
+  }
+  0
+}
+
+fn test_std_http(c: Checks) {
+  c.suite("tests/cases/test_std_http.av")
+
+  if e = Http.get("https://example.com/") {
+    c.expect(false, "https is HttpError")
+  } else {
+    c.expect(true, "https is HttpError")
+  }
+  if e = Http.get("ftp://example.com/") {
+    c.expect(false, "ftp is HttpError")
+  } else {
+    c.expect(true, "ftp is HttpError")
+  }
+  if e = Http.get("http://") {
+    c.expect(false, "empty host is HttpError")
+  } else {
+    c.expect(true, "empty host is HttpError")
+  }
+
+  if opened = Http.listen(0) {
+    server = opened
+    server.get("/hello") { |req|
+      Response.text("hello http")
+    }
+    server.get("/q") { |req|
+      Response.text("${req.path}|${req.query ?? ""}")
+    }
+    server.post("/echo") { |req|
+      Response.bytes(req.body)
+    }
+    server.get("/hdr") { |req|
+      dups = req.headers.get_all("X-Dup")
+      first = req.headers.get("x-dup") ?? ""
+      Response.text("${first}/${dups.size}/${req.headers.has("X-One")}")
+    }
+    server.get("/old") { |req|
+      Response.text("", 302).header("Location", "/new")
+    }
+    server.get("/new") { |req|
+      Response.text("landed")
+    }
+    server.get("/meta") { |req|
+      Response.text("created", 201).header("X-Made", "yes")
+    }
+    port = server.port
+    c.expect(port > 0, "ephemeral port bound")
+
+    if again = Http.listen(port) {
+      c.expect(false, "second listen on same port fails")
+      again.close
+    } else {
+      c.expect(true, "second listen on same port fails")
+    }
+
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    out = Channel(String).new(16)
+    handle = spawn {
+      client_round(port, out)
+    }
+    server.serve
+    c.eq_int(handle.join, 0, "client round task")
+    want: Array(String) = []
+    want.push("hello=200:hello http")
+    want.push("q=/q|lang=avant&x=1")
+    want.push("echo=abc123")
+    want.push("missing=404")
+    want.push("mismatch=404")
+    want.push("hdr=one/2/true")
+    want.push("redir=200:landed")
+    want.push("redir-off=302:/new")
+    want.push("meta=201:yes")
+    i = 0
+    while i < want.size {
+      if line = out.recv {
+        c.eq_str(line, want[i], "round ${i}")
+      } else {
+        c.expect(false, "round ${i} present")
+      }
+      i = i + 1
+    }
+  } else {
+    c.expect(false, "listen")
+  }
+
+  stamp = now_ms()
+  script = "/tmp/avant-http-raw-${stamp}.py"
+  py = "import socket, sys\nport = int(sys.argv[1])\nmode = sys.argv[2]\ns = socket.create_connection((\"127.0.0.1\", port))\nif mode == \"chunked\":\n    s.sendall(b\"POST /echo HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r\\n0\\r\\n\\r\\n\")\nelif mode == \"keepalive\":\n    s.sendall(b\"GET /ping HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    s.settimeout(5)\n    data = b\"\"\n    try:\n        while data.count(b\"pong\") < 2:\n            chunk = s.recv(4096)\n            if not chunk:\n                break\n            data += chunk\n    except Exception:\n        pass\n    print(\"keepalive=\" + \",\".join([\"pong\"] * data.count(b\"pong\")))\n    sys.exit(0)\nelse:\n    s.sendall(b\"this is not http\\r\\n\\r\\n\")\ndata = b\"\"\ntry:\n    while True:\n        chunk = s.recv(4096)\n        if not chunk:\n            break\n        data += chunk\nexcept Exception:\n    pass\nprint(data.decode(\"latin1\").split(\"\\r\\n\")[0])\n"
+  dummy_py = file_write(script, py)
+
+  if opened = Http.listen(0, "127.0.0.1", 8) {
+    server = opened
+    server.post("/echo") { |req|
+      Response.bytes(req.body)
+    }
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    out = Channel(String).new(8)
+    port = server.port
+    handle = spawn {
+      limit_round(port, out, script, stamp)
+    }
+    server.serve
+    c.eq_int(handle.join, 0, "limit round task")
+    want: Array(String) = []
+    want.push("big=413")
+    want.push("keepalive=pong,pong")
+    want.push("chunked=HTTP/1.1 411 Length Required")
+    want.push("malformed=HTTP/1.1 400 Bad Request")
+    i = 0
+    while i < want.size {
+      if line = out.recv {
+        c.eq_str(line, want[i], "limit ${i}")
+      } else {
+        c.expect(false, "limit ${i} present")
+      }
+      i = i + 1
+    }
+  } else {
+    c.expect(false, "listen with body limit")
+  }
+
+  sport = 18347
+  script2 = "/tmp/avant-http-chunked-${stamp}.py"
+  py2 = "import socket, sys\nport = int(sys.argv[1])\nsrv = socket.socket()\nsrv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsrv.bind((\"127.0.0.1\", port))\nsrv.listen(1)\nconn, _ = srv.accept()\nconn.recv(4096)\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n5\\r\\nhello\\r\\n8\\r\\n chunked\\r\\n6\\r\\n world\\r\\n0\\r\\n\\r\\n\")\nconn.close()\nsrv.close()\n"
+  dummy_py2 = file_write(script2, py2)
+  log2 = "/tmp/avant-http-chunked-${stamp}.log"
+  handle2 = spawn {
+    args2: Array(String) = []
+    args2.push(script2)
+    args2.push("${sport}")
+    dummy = process_run_out("/usr/bin/python3", args2, log2)
+    0
+  }
+  got_body = ""
+  deadline = now_ms() + 5000
+  while got_body.size == 0 && now_ms() < deadline {
+    if resp = Http.get("http://127.0.0.1:${sport}/") {
+      got_body = body_text(resp)
+    }
+  }
+  c.eq_str(got_body, "hello chunked world", "chunked response decoded")
+  dummy_join2 = handle2.join
+
+  if opened = Http.listen(0) {
+    port = opened.port
+    opened.close
+    opened.close
+    if resp = Http.get("http://127.0.0.1:${port}/") {
+      c.expect(false, "closed port refuses")
+    } else {
+      c.expect(true, "closed port refuses")
+    }
+  } else {
+    c.expect(false, "listen for close test")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_http(c)
+  c.finish
+}

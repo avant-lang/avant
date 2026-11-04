@@ -1,0 +1,663 @@
+lib httpc {
+  fun avant_http_take_status: Int
+  fun avant_http_header_count(data: Bytes): Int
+  fun avant_http_header_has(data: Bytes, name: String): Int
+  fun avant_http_header_at(data: Bytes, name: String, index: Int): String
+  fun avant_http_header_name_at(data: Bytes, index: Int): String
+  fun avant_http_header_value_at(data: Bytes, index: Int): String
+  fun avant_http_req_method(req: Ptr(Void)): String
+  fun avant_http_req_target(req: Ptr(Void)): String
+  fun avant_http_req_body(req: Ptr(Void)): Bytes
+  fun avant_http_req_headers(req: Ptr(Void)): Bytes
+  fun avant_http_req_respond(req: Ptr(Void), status: Int, head: String, body: Bytes)
+  fun avant_http_listen(host: String, port: Int, max_body: Int): Ptr(Void)
+  fun avant_http_port(srv: Ptr(Void)): Int
+  fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)): Int): Int
+  fun avant_http_close(srv: Ptr(Void)): Int
+  fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int): Bytes
+  fun avant_http_resp_status(raw: Bytes): Int
+  fun avant_http_resp_headers(raw: Bytes): Bytes
+  fun avant_http_resp_body(raw: Bytes): Bytes
+}
+
+pub class HttpError {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+pub struct Header {
+  name: String
+  value: String
+}
+
+// The headers of a received message. This is one collector buffer the
+// C side builds at parse time: a small offset table over the raw
+// header block, so reading a header copies only that value. The set is
+// immutable, keeps wire order and duplicates, and lookup never touches
+// the process-wide Hash. Look headers up by name (case-insensitive,
+// first value wins); `get_all` is for the rare repeated header.
+pub struct Headers {
+  data: Bytes
+
+  pub fn count: Int {
+    httpc.avant_http_header_count(self.data)
+  }
+
+  pub fn has(name: String): Bool {
+    httpc.avant_http_header_has(self.data, name) != 0
+  }
+
+  pub fn get(name: String): String? {
+    v = httpc.avant_http_header_at(self.data, name, 0)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn get_all(name: String): Array(String) {
+    out: Array(String) = []
+    i = 0
+    while true {
+      v = httpc.avant_http_header_at(self.data, name, i)
+      if httpc.avant_http_take_status() != 0 {
+        return out
+      }
+      out.push(v)
+      i = i + 1
+    }
+    out
+  }
+
+  pub fn name_at(index: Int): String? {
+    v = httpc.avant_http_header_name_at(self.data, index)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn value_at(index: Int): String? {
+    v = httpc.avant_http_header_value_at(self.data, index)
+    if httpc.avant_http_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+}
+
+fn empty_headers: Headers {
+  Headers { data: "".bytes }
+}
+
+// A received request. `method`, `path` and `body` are values copied out
+// of the socket buffer before the handler runs; `query` is the raw
+// query string without the `?`, or nil when the target has none.
+pub struct Request {
+  method: String
+  path: String
+  query: String?
+  headers: Headers
+  body: Bytes
+}
+
+// A response, in both directions: a handler returns one, and the
+// client returns one. `headers` is the received header set (empty for
+// a response built in code); headers set with `header` are kept
+// separately until the response is written. Content-Length and
+// Connection are managed by the server and the client; setting them
+// with `header` has no effect.
+pub struct Response {
+  status: Int
+  headers: Headers
+  head: String
+  body: Bytes
+
+  pub fn self.text(body: String, status: Int = 200): Response {
+    Response { status: status, headers: empty_headers(), head: "Content-Type: text/plain; charset=utf-8\r\n", body: body.bytes }
+  }
+
+  pub fn self.bytes(body: Bytes, status: Int = 200): Response {
+    Response { status: status, headers: empty_headers(), head: "Content-Type: application/octet-stream\r\n", body: body }
+  }
+
+  pub fn header(name: String, value: String): Response {
+    if is_managed_header(name) {
+      return self
+    }
+    Response { status: self.status, headers: self.headers, head: "${self.head}${name}: ${value}\r\n", body: self.body }
+  }
+
+  fn head_block: String {
+    self.head
+  }
+}
+
+fn is_managed_header(name: String): Bool {
+  name_is(name, "content-length") || name_is(name, "connection")
+}
+
+fn name_is(name: String, lit: String): Bool {
+  if name.size != lit.size {
+    return false
+  }
+  i = 0
+  while i < name.size {
+    a = name[i]
+    b = lit[i]
+    if a >= 65 && a <= 90 {
+      a = a + 32
+    }
+    if a != b {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+struct Route {
+  method: String
+  path: String
+  handler: fn(Request): Response
+}
+
+// The mutable half of a Server, held by reference so every copy of the
+// Server value registers routes on, closes, and serves the same
+// server. Not public: programs meet Server, not this.
+class HttpState {
+  routes: Array(Route)
+  closed: Bool = false
+  serving: Bool = false
+  bound_port: Int = 0
+
+  fn initialize {
+    r: Array(Route) = []
+    self.routes = r
+  }
+
+  fn add(method: String, path: String, handler: fn(Request): Response) {
+    self.routes.push(Route { method: method, path: path, handler: handler })
+  }
+
+  fn dispatch(req: Request): Response {
+    i = 0
+    while i < self.routes.size {
+      r = self.routes[i]
+      if r.method == req.method && r.path == req.path {
+        return (r.handler)(req)
+      }
+      i = i + 1
+    }
+    Response.text("not found", 404)
+  }
+}
+
+// The C loop calls this named function once per complete request. It
+// is a plain function, not a closure: the server state arrives as its
+// first argument, in the shape the C callback rule allows.
+fn http_dispatch(state: HttpState, raw: Ptr(Void)): Int {
+  target = httpc.avant_http_req_target(raw)
+  path = target
+  query: String? = nil
+  q = 0
+  while q < target.size {
+    if target[q] == 63 {
+      path = str_slice(target, 0, q)
+      query = str_slice(target, q + 1, target.size)
+      q = target.size
+    } else {
+      q = q + 1
+    }
+  }
+  // Without a query the path is the target; the slice above is the
+  // only copy, so a plain request allocates no second string here.
+  method = httpc.avant_http_req_method(raw)
+  raw_headers = httpc.avant_http_req_headers(raw)
+  req_body = httpc.avant_http_req_body(raw)
+  req = Request {
+    method: method,
+    path: path,
+    query: query,
+    headers: Headers { data: raw_headers },
+    body: req_body
+  }
+  resp = state.dispatch(req)
+  httpc.avant_http_req_respond(raw, resp.status, resp.head_block, resp.body)
+  0
+}
+
+// A cleartext HTTP/1.1 server on uSockets with picohttpparser.
+// Handlers must not block the event loop: a handler that blocks (a
+// long computation, a blocking client call, a sleep) stalls every
+// connection on the server. Hand CPU work to `spawn` and answer from
+// there, or keep handlers to request-shaped work. Routes match exact
+// paths only; there is no pattern router, no middleware, and no
+// streaming: a request body is buffered whole, up to the server's
+// body limit (1 MiB by default, set at listen time), and a larger
+// body is answered 413 and the connection closed. A chunked request
+// body is answered 411 in this wave. HTTP/1.1 connections are kept
+// alive unless the client asks to close them (HTTP/1.0 the reverse),
+// and pipelined requests are answered in order. There is no TLS: an
+// `https` claim would be a lie, here and in the client below.
+pub struct Server {
+  handle: Ptr(Void)
+  state: HttpState
+
+  // The port the server is bound to. With port 0 at listen time this
+  // is the ephemeral port the OS chose.
+  pub fn port: Int {
+    self.state.bound_port
+  }
+
+  pub fn get(path: String, handler: fn(Request): Response): Server {
+    self.state.add("GET", path, handler)
+    self
+  }
+
+  pub fn post(path: String, handler: fn(Request): Response): Server {
+    self.state.add("POST", path, handler)
+    self
+  }
+
+  pub fn put(path: String, handler: fn(Request): Response): Server {
+    self.state.add("PUT", path, handler)
+    self
+  }
+
+  pub fn delete(path: String, handler: fn(Request): Response): Server {
+    self.state.add("DELETE", path, handler)
+    self
+  }
+
+  pub fn patch(path: String, handler: fn(Request): Response): Server {
+    self.state.add("PATCH", path, handler)
+    self
+  }
+
+  pub fn route(method: String, path: String, handler: fn(Request): Response): Server {
+    self.state.add(method, path, handler)
+    self
+  }
+
+  // Runs the event loop until `close` is called from another task.
+  // Register every route before serving: the route table is read on
+  // the loop thread while `serve` blocks. Returns when the loop has
+  // drained, after which the listen port is released.
+  pub fn serve {
+    if self.state.closed {
+      return
+    }
+    self.state.serving = true
+    pin(self.state) {
+      dummy = httpc.avant_http_serve(self.handle, self.state, http_dispatch)
+    }
+    self.state.serving = false
+  }
+
+  // Stops the server: wakes the loop, closes the listen socket and
+  // every open connection, and lets `serve` return. Safe to call
+  // more than once, and safe to call without ever serving, in which
+  // case the port is released immediately. A server that is never
+  // closed leaks its listen socket until the process exits; there is
+  // no finalizer.
+  pub fn close {
+    if self.state.closed {
+      return
+    }
+    self.state.closed = true
+    dummy = httpc.avant_http_close(self.handle)
+  }
+}
+
+struct UrlParts {
+  host: String
+  port: Int
+  authority: String
+  target: String
+}
+
+fn starts_with(s: String, prefix: String): Bool {
+  if s.size < prefix.size {
+    return false
+  }
+  str_slice(s, 0, prefix.size) == prefix
+}
+
+fn parse_port(text: String): Int {
+  n = 0
+  i = 0
+  if text.size == 0 {
+    return -1
+  }
+  while i < text.size {
+    c = text[i]
+    if c < 48 || c > 57 {
+      return -1
+    }
+    n = n * 10 + (c - 48)
+    if n > 65535 {
+      return -1
+    }
+    i = i + 1
+  }
+  if n == 0 {
+    return -1
+  }
+  n
+}
+
+// Splits an http:// URL. Returns nil for anything that is not a
+// well-formed absolute http URL with a host; the caller turns that
+// into an HttpError with a message.
+fn http_parse_url(url: String): UrlParts? {
+  rest = str_slice(url, 7, url.size)
+  auth_end = rest.size
+  i = 0
+  while i < rest.size {
+    c = rest[i]
+    if c == 47 || c == 63 || c == 35 {
+      auth_end = i
+      i = rest.size
+    } else {
+      i = i + 1
+    }
+  }
+  authority = str_slice(rest, 0, auth_end)
+  tail = str_slice(rest, auth_end, rest.size)
+  if authority.size == 0 {
+    return nil
+  }
+  at = 0
+  while at < authority.size {
+    if authority[at] == 64 {
+      return nil
+    }
+    at = at + 1
+  }
+  host = authority
+  port = 80
+  if str_slice(authority, 0, 1) == "[" {
+    close = 0
+    j = 0
+    while j < authority.size {
+      if authority[j] == 93 {
+        close = j
+        j = authority.size
+      } else {
+        j = j + 1
+      }
+    }
+    if close == 0 {
+      return nil
+    }
+    host = str_slice(authority, 1, close)
+    if close + 1 < authority.size {
+      if authority[close + 1] != 58 {
+        return nil
+      }
+      port = parse_port(str_slice(authority, close + 2, authority.size))
+      if port < 0 {
+        return nil
+      }
+    }
+  } else {
+    colon = -1
+    j = 0
+    while j < authority.size {
+      if authority[j] == 58 {
+        colon = j
+      }
+      j = j + 1
+    }
+    if colon >= 0 {
+      host = str_slice(authority, 0, colon)
+      port = parse_port(str_slice(authority, colon + 1, authority.size))
+      if port < 0 {
+        return nil
+      }
+    }
+  }
+  if host.size == 0 {
+    return nil
+  }
+  target = tail
+  if target.size == 0 {
+    target = "/"
+  } else if str_slice(target, 0, 1) == "?" {
+    target = "/${target}"
+  }
+  hash = 0
+  while hash < target.size {
+    if target[hash] == 35 {
+      target = str_slice(target, 0, hash)
+      hash = target.size
+    } else {
+      hash = hash + 1
+    }
+  }
+  UrlParts { host: host, port: port, authority: authority, target: target }
+}
+
+// RFC 3986 dot-segment removal, over `/`-separated segments.
+fn remove_dot_segments(path: String): String {
+  parts = path.split("/")
+  kept: Array(String) = []
+  i = 0
+  while i < parts.size {
+    seg = parts[i]
+    if seg == "." {
+    } else if seg == ".." {
+      if kept.size > 1 {
+        dummy = kept.pop
+      }
+    } else {
+      kept.push(seg)
+    }
+    i = i + 1
+  }
+  buf = buf_new()
+  i = 0
+  while i < kept.size {
+    if i > 0 {
+      buf.push_str("/")
+    }
+    buf.push_str(kept[i])
+    i = i + 1
+  }
+  out = buf.to_s
+  if out.size == 0 {
+    return "/"
+  }
+  if str_slice(out, 0, 1) != "/" {
+    out = "/${out}"
+  }
+  out
+}
+
+// Resolves a redirect Location against the URL that produced it.
+fn resolve_url(base: String, loc: String): String? {
+  if starts_with(loc, "http://") {
+    return loc
+  }
+  if starts_with(loc, "https://") {
+    return nil
+  }
+  if starts_with(loc, "//") {
+    return "http:${loc}"
+  }
+  parts = http_parse_url(base)
+  if p = parts {
+    origin = "http://${p.authority}"
+    if starts_with(loc, "/") {
+      return "${origin}${loc}"
+    }
+    if starts_with(loc, "?") {
+      return "${origin}${p.target}${loc}"
+    }
+    if loc.size == 0 {
+      return base
+    }
+    base_path = p.target
+    qi = 0
+    while qi < base_path.size {
+      if base_path[qi] == 63 {
+        base_path = str_slice(base_path, 0, qi)
+        qi = base_path.size
+      } else {
+        qi = qi + 1
+      }
+    }
+    slash = -1
+    j = 0
+    while j < base_path.size {
+      if base_path[j] == 47 {
+        slash = j
+      }
+      j = j + 1
+    }
+    merged = "${str_slice(base_path, 0, slash + 1)}${loc}"
+    return "${origin}${remove_dot_segments(merged)}"
+  }
+  nil
+}
+
+fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), timeout_ms: Int): Response | HttpError {
+  if starts_with(url, "https://") {
+    return HttpError.new("https is not supported until the TLS wave")
+  }
+  if !starts_with(url, "http://") {
+    return HttpError.new("only http:// URLs are supported")
+  }
+  parsed = http_parse_url(url)
+  if p = parsed {
+    buf = buf_new()
+    buf.push_str(method)
+    buf.push_str(" ")
+    buf.push_str(p.target)
+    buf.push_str(" HTTP/1.1\r\nHost: ")
+    buf.push_str(p.authority)
+    buf.push_str("\r\n")
+    i = 0
+    while i < headers.size {
+      buf.push_str(headers[i].name)
+      buf.push_str(": ")
+      buf.push_str(headers[i].value)
+      buf.push_str("\r\n")
+      i = i + 1
+    }
+    buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
+    if body.size > 0 {
+      text = String.from_utf8(body) ?? ""
+      buf.push_str(text)
+    }
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, timeout_ms)
+    code = httpc.avant_http_take_status()
+    if code == 1 {
+      return HttpError.new("could not connect to ${p.authority}")
+    }
+    if code == 2 {
+      return HttpError.new("request to ${p.authority} timed out")
+    }
+    if code != 0 {
+      return HttpError.new("request to ${p.authority} failed")
+    }
+    status = httpc.avant_http_resp_status(raw)
+    if httpc.avant_http_take_status() != 0 {
+      return HttpError.new("invalid HTTP response from ${p.authority}")
+    }
+    resp_body = httpc.avant_http_resp_body(raw)
+    if httpc.avant_http_take_status() != 0 {
+      return HttpError.new("invalid HTTP response body from ${p.authority}")
+    }
+    resp_headers = httpc.avant_http_resp_headers(raw)
+    return Response {
+      status: status,
+      headers: Headers { data: resp_headers },
+      head: "",
+      body: resp_body
+    }
+  }
+  HttpError.new("invalid URL: ${url}")
+}
+
+// The client half of the module: one blocking request at a time on
+// its own connection, in the shape of the fetch primitive below it.
+// A call blocks the calling thread until the response is complete,
+// so do not call it from a server handler; hand the work to `spawn`
+// first. Redirects are followed at most five times when `follow` is
+// set. There is no connection pooling and no TLS in this wave.
+pub class Http {
+  fn initialize {
+  }
+
+  // Binds a server now (so a bad port fails here, and an ephemeral
+  // port is known through `server.port` before serving) and returns
+  // it ready for routes. The body limit is in bytes; a larger request
+  // body is answered 413.
+  pub fn self.listen(port: Int, host: String = "127.0.0.1", max_body: Int = 1048576): Server | HttpError {
+    handle = httpc.avant_http_listen(host, port, max_body)
+    if httpc.avant_http_take_status() != 0 {
+      return HttpError.new("could not listen on ${host}:${port}")
+    }
+    state = HttpState.new
+    state.bound_port = httpc.avant_http_port(handle)
+    Server { handle: handle, state: state }
+  }
+
+  pub fn self.get(url: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
+    hs: Array(Header) = []
+    Http.request("GET", url, "".bytes, hs, follow, timeout_ms)
+  }
+
+  pub fn self.post(url: String, body: String, follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
+    hs: Array(Header) = []
+    hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" })
+    Http.request("POST", url, body.bytes, hs, follow, timeout_ms)
+  }
+
+  pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
+    cur_method = method
+    cur_url = url
+    cur_body = body
+    hops = 0
+    while true {
+      got = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)
+      if resp = got {
+        if !follow {
+          return resp
+        }
+        redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
+        if !redirect {
+          return resp
+        }
+        loc = resp.headers.get("Location")
+        if location = loc {
+          hops = hops + 1
+          if hops > 5 {
+            return HttpError.new("too many redirects")
+          }
+          next = resolve_url(cur_url, location)
+          if next_url = next {
+            if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
+              cur_method = "GET"
+              cur_body = "".bytes
+            }
+            cur_url = next_url
+          } else {
+            return HttpError.new("invalid redirect location: ${location}")
+          }
+        } else {
+          return resp
+        }
+      } else {
+        return got
+      }
+    }
+    HttpError.new("too many redirects")
+  }
+}
+

@@ -912,7 +912,7 @@ fn (p: Ptr(Point)) sum: Int {
 
 A `fun` parameter may be an Avant `fn` type; that declares a C callback. Pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments (libc `qsort` with an Avant comparator is the proven shape). A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile.
 
-JSON in the examples is yyjson. The loopback HTTP example is uSockets (C, not C++). Both live under `runtime/third_party/`.
+JSON in the examples is yyjson. HTTP in `std.http` is uSockets and picohttpparser (C, not C++). All live under `runtime/third_party/`.
 
 ## Concurrency
 
@@ -1231,8 +1231,6 @@ Builtins are the prelude: names every program can use with no import. Runnable e
 | Files | `file_read`, `file_write`, `file_exists`, `dir_list` |
 | Process and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
 | Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt` |
-| Networking proof | `http_roundtrip` (a loopback proof; the real server is `std.http`, not built yet) |
-
 ### Files, process, and environment
 
 ```avant
@@ -1272,6 +1270,7 @@ The standard library is imported, and importing is what links the C library behi
 | `std.base64` | `Bytes.to_base64`, `Bytes.from_base64` (plus `Buf` counterparts) | vendored Base64 codec |
 | `std.json` | `Json.parse` and the parsed-value walk | yyjson |
 | `std.regex` | `Regex.compile` and `Match` values | PCRE2 (re2c scanners for literal patterns) |
+| `std.http` | an HTTP/1.1 server and client (`Http.listen`, `Http.get`) | uSockets and picohttpparser (vendored) |
 | `std.testing` | the support library the test runner loads | — |
 
 ### `std.zlib`
@@ -1345,6 +1344,53 @@ fn main {
 }
 ```
 
+### `std.http`
+
+A cleartext HTTP/1.1 server and a blocking client, on uSockets with picohttpparser parsing the wire. `Http.listen` binds immediately and returns a `Server` (or an `HttpError`); routes are exact paths registered with trailing blocks; `serve` runs the event loop until `close` is called, from a handler or from any task that can reach the server:
+
+```avant
+import std.http
+
+fn main {
+  if server = Http.listen(8080) {
+    server.get("/") { |req|
+      Response.text("hello")
+    }
+    server.post("/echo") { |req|
+      Response.bytes(req.body)
+    }
+    server.serve
+  }
+}
+```
+
+Handlers receive a `Request` value (method, path, raw query, headers, body) and return a `Response` value (`Response.text`, `Response.bytes`, refined with `.header(name, value)`). Received headers live in a `Headers` value that copies only the values a program actually reads. Bodies are buffered whole up to a limit set at listen time (1 MiB by default); a larger body is answered 413, a chunked request body is answered 411 for now, and HTTP/1.1 connections are kept alive. Handlers must not block the loop: hand CPU work to `spawn`. The client is one blocking request at a time on its own connection, follows redirects, and decodes chunked responses:
+
+```avant
+import std.http
+
+fn main {
+  if resp = Http.get("http://127.0.0.1:8080/") {
+    puts(resp.status)
+    puts(String.from_utf8(resp.body) ?? "")
+  }
+}
+```
+
+There is no TLS and no WebSocket support yet: an `https` URL is an `HttpError`, never a silent downgrade. A server that is never closed leaks its listen socket until the process exits; there is no finalizer.
+
+#### Hello-world servers compared
+
+The most basic hello-world server (`GET /` answered with `hello`, and the WebSocket equivalent where the language has one) in Avant, C, Rust, Go, and Crystal, measured on loopback on the workbench machine (Ryzen 7 5700G): HTTP with `wrk` (4 threads, 64 connections, 10 s), WebSockets with a ping-pong loader (8 connections, 10 s, one round trip at a time per connection). RSS is the server's peak resident set (VmHWM) at the end of each phase. Avant's WebSocket column is empty because `std.http` has no WebSocket support yet; the other languages' WebSocket servers are hand-written or standard-library equivalents of the same hello world. Avant's peak RSS is the garbage collector's grown heap under sustained allocation load (idle RSS is about 3 MB); the throughput gap to Go and Rust is mostly cores: the Avant server runs one event-loop thread, while the Go and Rust servers spread connections across the machine's 16 hardware threads (the single-threaded C and Crystal servers land in Avant's range per core).
+
+| Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| Avant (`std.http`) | 171,036 | 220 MB | — | — |
+| C (raw epoll) | 192,278 | 3.8 MB | 192,972 | 6.7 MB |
+| Rust (std, thread per connection) | 507,685 | 3.3 MB | 332,754 | 3.3 MB |
+| Go (`net/http`) | 355,770 | 18 MB | 249,360 | 18 MB |
+| Crystal (`HTTP::Server`) | 144,749 | 15 MB | 167,165 | 18 MB |
+
 ### `std.testing`
 
 `std.testing` is the support library the `avant test` runner itself loads (output plumbing for test binaries). Test files use the `Checks` style shown in [Testing](#testing); `std.testing` is not an assertion API of its own.
@@ -1356,7 +1402,7 @@ These are decided and currently do not compile.
 | What | Status |
 | --- | --- |
 | `parallel { }` with no receiver | decided, not shipping |
-| An HTTP server | decided, not shipping |
+| WebSockets and TLS for `std.http` | decided, not shipping |
 | An inclusive range (`a..=b`) | not part of the language yet; write `a..b + 1` |
 
 ## Benchmarks

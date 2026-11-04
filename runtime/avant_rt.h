@@ -355,7 +355,27 @@ char *avant_json_obj_str(void *node, const char *key);
 char *avant_json_key_at(void *node, int32_t i);
 char *avant_json_text(void *node);
 
-const char *avant_http_roundtrip(const char *body);
+int32_t avant_http_take_status(void);
+int32_t avant_http_header_count(const char *data);
+int32_t avant_http_header_has(const char *data, const char *name);
+char *avant_http_header_at(const char *data, const char *name, int32_t index);
+char *avant_http_header_name_at(const char *data, int32_t index);
+char *avant_http_header_value_at(const char *data, int32_t index);
+char *avant_http_req_method(void *req);
+char *avant_http_req_target(void *req);
+char *avant_http_req_body(void *req);
+char *avant_http_req_headers(void *req);
+void avant_http_req_respond(void *req, int32_t status, const char *head,
+                            const char *body);
+void *avant_http_listen(const char *host, int32_t port, int32_t max_body);
+int32_t avant_http_port(void *srv);
+int32_t avant_http_serve(void *srv, void *state, void *cb);
+int32_t avant_http_close(void *srv);
+char *avant_http_fetch(const char *host, int32_t port, const char *request,
+                       int32_t timeout_ms);
+int32_t avant_http_resp_status(const char *raw);
+char *avant_http_resp_headers(const char *raw);
+char *avant_http_resp_body(const char *raw);
 
 #define AVANT_HASH_KEY_I32 0
 #define AVANT_HASH_KEY_STR 1
