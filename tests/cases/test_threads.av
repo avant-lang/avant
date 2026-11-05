@@ -42,15 +42,15 @@ fn test_threads(c: Checks) {
   c.suite("tests/cases/test_threads.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "/tmp/avant-threads-${stamp}.av"
-    bin = "/tmp/avant-threads-${stamp}.bin"
+    src = "${scratch()}/threads-${stamp}.av"
+    bin = "${scratch()}/threads-${stamp}.bin"
     w = file_write(src, threads_fixture())
     c.eq_int(w, 0, "write threads fixture")
-    code = compile_av(compiler, src, bin, "/tmp/avant-threads-${stamp}.clog")
+    code = compile_av(compiler, src, bin, "${scratch()}/threads-${stamp}.clog")
     c.eq_int(code, 0, "compile threads fixture")
 
     // No flag: argv passes through, count is the machine default (>0).
-    log1 = "/tmp/avant-threads-${stamp}.run1"
+    log1 = "${scratch()}/threads-${stamp}.run1"
     a1: Array(String) = []
     a1.push("alpha")
     rc1 = run_args(bin, a1, log1)
@@ -68,7 +68,7 @@ fn test_threads(c: Checks) {
     }
 
     // Space spelling: flag removed from argv, count is the flag value.
-    log2 = "/tmp/avant-threads-${stamp}.run2"
+    log2 = "${scratch()}/threads-${stamp}.run2"
     a2: Array(String) = []
     a2.push("--threads")
     a2.push("3")
@@ -84,7 +84,7 @@ fn test_threads(c: Checks) {
     }
 
     // Equals spelling: same behavior, one implementation.
-    log3 = "/tmp/avant-threads-${stamp}.run3"
+    log3 = "${scratch()}/threads-${stamp}.run3"
     a3: Array(String) = []
     a3.push("--threads=4")
     rc3 = run_args(bin, a3, log3)
@@ -97,7 +97,7 @@ fn test_threads(c: Checks) {
     }
 
     // Precedence (Q125-A): flag wins over the environment fallback.
-    log4 = "/tmp/avant-threads-${stamp}.run4"
+    log4 = "${scratch()}/threads-${stamp}.run4"
     a4: Array(String) = []
     a4.push("--threads")
     a4.push("2")
@@ -110,7 +110,7 @@ fn test_threads(c: Checks) {
     }
 
     // Environment alone still works for one release (deprecated).
-    log5 = "/tmp/avant-threads-${stamp}.run5"
+    log5 = "${scratch()}/threads-${stamp}.run5"
     a5: Array(String) = []
     rc5 = run_env_args(bin, "AVANT_THREADS", "6", a5, log5)
     c.eq_int(rc5, 0, "env run exits")
@@ -121,20 +121,20 @@ fn test_threads(c: Checks) {
     }
 
     // Malformed values die loudly (nonzero exit).
-    log6 = "/tmp/avant-threads-${stamp}.run6"
+    log6 = "${scratch()}/threads-${stamp}.run6"
     a6: Array(String) = []
     a6.push("--threads")
     a6.push("0")
     rc6 = run_args(bin, a6, log6)
     c.expect(rc6 != 0, "zero threads is rejected")
-    log7 = "/tmp/avant-threads-${stamp}.run7"
+    log7 = "${scratch()}/threads-${stamp}.run7"
     a7: Array(String) = []
     a7.push("--threads=abc")
     rc7 = run_args(bin, a7, log7)
     c.expect(rc7 != 0, "non-numeric threads is rejected")
 
     // After a literal -- the flag is program data, not ours.
-    log8 = "/tmp/avant-threads-${stamp}.run8"
+    log8 = "${scratch()}/threads-${stamp}.run8"
     a8: Array(String) = []
     a8.push("--")
     a8.push("--threads")

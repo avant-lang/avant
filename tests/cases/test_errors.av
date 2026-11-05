@@ -1,9 +1,9 @@
 import harness
 
 fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
-  src = "/tmp/avant-errors-${stamp}-${tag}.av"
-  bin = "/tmp/avant-errors-${stamp}-${tag}.bin"
-  log = "/tmp/avant-errors-${stamp}-${tag}.log"
+  src = "${scratch()}/errors-${stamp}-${tag}.av"
+  bin = "${scratch()}/errors-${stamp}-${tag}.bin"
+  log = "${scratch()}/errors-${stamp}-${tag}.log"
   dummy = file_write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(!file_exists(bin), "${tag} bin absent")
@@ -119,7 +119,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "iface-empty", "interface Show() {\n  fn to_s: String\n}\nfn main {\n  puts(1)\n}\n", "type parameter list is empty")
     expect_err(c, compiler, stamp, "iface-builtin", "interface Enumerable(T) {\n  fn each(block: fn(T): Nil)\n}\nArray(Int): Enumerable(Int)\nfn main {\n  puts(1)\n}\n", "cannot opt into")
     expect_err(c, compiler, stamp, "iface-ptr-int", "interface Show {\n  fn to_s: String\n}\nfn (p: Ptr(Int)) to_s: String { \"n\" }\nPtr(Int): Show\nfn main {\n  puts(1)\n}\n", "not Stage 18")
-    dir = "/tmp/avant-errors-${stamp}"
+    dir = "${scratch()}/errors-${stamp}"
     mkdir_p(dir)
     write_av(dir, "priv", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  fn to_s: String { \"p\" }\n}\npub Hide: Show\n")
     write_av(dir, "priv_main", "import priv\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
