@@ -87,12 +87,16 @@ jobs:
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      - name: Install LLVM 20 and link libraries
+      # The backend (safepoints v0.6.0) has LLVM linked in and needs nothing
+      # from apt. libclang (with llvm-config, from llvm-20) is for the bind
+      # helper that runtime/build.sh builds and the release ships; zlib1g-dev
+      # is for examples/zlib.av, which binds the system zlib itself.
+      - name: Install the C toolchain and libclang
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            llvm-20-dev \
+            llvm-20 \
             libclang-20-dev \
             zlib1g-dev
 
