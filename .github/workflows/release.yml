@@ -134,13 +134,7 @@ jobs:
       - name: Package linux-x86_64 B
         run: |
           set -euo pipefail
-          mkdir -p dist/avant-linux-x86_64/lib/std
-          cp -f bin/avant-b dist/avant-linux-x86_64/avant
-          cp -f /tmp/myc-llvm-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
-          test -x runtime/build/avant-bind
-          cp -f runtime/build/avant-bind dist/avant-linux-x86_64/avant-bind
-          cp -f lib/std/*.av dist/avant-linux-x86_64/lib/std/
-          chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm dist/avant-linux-x86_64/avant-bind
+          mkdir -p dist
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
@@ -157,9 +151,10 @@ jobs:
             echo "binary: avant"
             echo "bundled: myc-llvm (safepoints ${SAFEPOINTS_VERSION}) beside avant"
             echo "bundled: avant-bind (tools/bind.c, libclang $(llvm-config-20 --version)) beside avant"
-          } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
-          tar -C dist -czf dist/avant-linux-x86_64.tar.gz avant-linux-x86_64
-          sha256sum dist/avant-linux-x86_64.tar.gz | tee dist/avant-linux-x86_64.tar.gz.sha256
+          } | tee dist/versions.txt
+          # The layout is tools/package.sh's (D148), the same script local proofs use.
+          sh tools/package.sh dist bin/avant-b /tmp/myc-llvm-linux-x86_64/myc-llvm dist/versions.txt
+          cat dist/avant-linux-x86_64.tar.gz.sha256
           {
             echo "linux-x86_64 compiler \`avant\`."
             echo
