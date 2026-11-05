@@ -21,11 +21,15 @@ if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
   echo "usage: sh tools/package.sh OUT_DIR COMPILER MYC_LLVM RE2C [VERSIONS_FILE]" >&2
   exit 2
 fi
-out=$1
-compiler=$2
-myc=$3
-re2c=$4
+# Absolute paths: the glibc-floor step below runs the packaged compiler
+# from another directory, so a relative OUT_DIR (the release job passes
+# `dist`) would not resolve there.
+out=$(realpath -m "$1")
+compiler=$(realpath -m "$2")
+myc=$(realpath -m "$3")
+re2c=$(realpath -m "$4")
 versions=${5:-}
+[ -z "$versions" ] || versions=$(realpath -m "$versions")
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 name=avant-linux-x86_64
 dir="$out/$name"
