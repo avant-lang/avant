@@ -75,6 +75,11 @@ pub fn count_lines(s: String): Int {
 lib harness_rt {
   fun avant_tmp_dir: String
   fun avant_tmp_new_dir: String
+  fun avant_fs_unlink(path: String): Int
+  fun avant_fs_remove_tree(path: String): Int
+  fun avant_fs_chmod_x(path: String): Int
+  fun avant_fs_mkdir_p(path: String): Int
+  fun avant_fs_cwd: String
 }
 
 // The process's private scratch directory (D127): created on first use,
@@ -327,11 +332,22 @@ pub fn empty_strs: Array(String) {
   a
 }
 
+// chmod +x, rm -f, rm -rf, mkdir -p, and pwd -P without starting a tool
+// (D140); runtime/avant_io.c.
 pub fn chmod_x(path: String) {
-  args: Array(String) = []
-  args.push("+x")
-  args.push(path)
-  dummy = process_run("/bin/chmod", args)
+  dummy = harness_rt.avant_fs_chmod_x(path)
+}
+
+pub fn rm_f(path: String) {
+  dummy = harness_rt.avant_fs_unlink(path)
+}
+
+pub fn rm_rf(path: String) {
+  dummy = harness_rt.avant_fs_remove_tree(path)
+}
+
+pub fn cwd_here: String {
+  harness_rt.avant_fs_cwd()
 }
 
 pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
@@ -392,18 +408,11 @@ pub fn compiler_abs(tag: String, path: String): String {
   if path.size > 0 && path[0] == 47 {
     return path
   }
-  log = "${scratch()}/${tag}-compiler-abs-${now_us()}.txt"
-  args: Array(String) = []
-  args.push("-c")
-  args.push("pwd -P")
-  dummy = process_run_out("/bin/sh", args, log)
-  if text = file_read(log) {
-    cwd = text.strip()
-    if cwd.size > 0 {
-      return "${cwd}/${path}"
-    }
+  here = cwd_here()
+  if str_eq(here, ".") {
+    return path
   }
-  path
+  "${here}/${path}"
 }
 
 pub fn run_av_bin(bin: String, log: String): Int {
@@ -455,10 +464,7 @@ pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
 }
 
 pub fn mkdir_p(path: String) {
-  args: Array(String) = []
-  args.push("-p")
-  args.push(path)
-  dummy = process_run("/bin/mkdir", args)
+  dummy = harness_rt.avant_fs_mkdir_p(path)
 }
 
 pub fn write_av(dir: String, name: String, body: String) {

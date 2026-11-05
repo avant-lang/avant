@@ -405,13 +405,7 @@ fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: 
 }
 
 fn rm_file(path: String) {
-  if path.size == 0 {
-    return
-  }
-  args: Array(String) = []
-  args.push("-f")
-  args.push(path)
-  dummy = process_run("/bin/rm", args)
+  dummy = fs_unlink(path)
 }
 
 fn name_lines(text: String): Array(String) {
@@ -435,10 +429,7 @@ fn name_lines(text: String): Array(String) {
 }
 
 fn chmod_bin(path: String) {
-  args: Array(String) = []
-  args.push("+x")
-  args.push(path)
-  dummy = process_run("/bin/chmod", args)
+  dummy = fs_chmod_x(path)
 }
 
 fn append_text(into: String, chunk: String): String {
@@ -1210,10 +1201,7 @@ pub fn driver_test(args: Array(String)) {
       k = k + 1
     }
     if host.cov.has_rows {
-      mkdir_args: Array(String) = []
-      mkdir_args.push("-p")
-      mkdir_args.push("coverage")
-      dummy_mk = process_run("/bin/mkdir", mkdir_args)
+      dummy_mk = fs_mkdir_p("coverage")
       host.cov.write_lcov("coverage/lcov.info")
       host.cov.print_table
     }

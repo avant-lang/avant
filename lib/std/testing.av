@@ -6,25 +6,15 @@ lib avant_testing_tmp {
   fun avant_tmp_new_dir: String
 }
 
+// File and process helpers in runtime/avant_io.c (D140). Internal.
+lib avant_testing_fs {
+  fun avant_fs_chmod_x(path: String): Int
+  fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+}
+
 fn testing_write(s: String) {
   line = "${s}\n"
   dummy = avant_testing_io.write(1, line, line.size)
-}
-
-fn testing_quote(s: String): String {
-  b = buf_new()
-  b.push_str("'")
-  i = 0
-  while i < s.size {
-    if s[i] == 39 {
-      b.push_str("'\\''")
-    } else {
-      b.push_byte(s[i])
-    }
-    i = i + 1
-  }
-  b.push_str("'")
-  b.to_s
 }
 
 fn testing_slice(s: String, start: Int, stop: Int): String {
@@ -68,57 +58,24 @@ fn testing_read(path: String): String {
   ""
 }
 
-fn testing_rc(path: String): Int {
-  text = testing_read(path).strip()
-  if text.size == 0 {
-    return 1
-  }
-  n = 0
-  i = 0
-  while i < text.size {
-    c = text[i]
-    if c < 48 || c > 57 {
-      return 1
-    }
-    n = n * 10 + (c - 48)
-    i = i + 1
-  }
-  n
-}
-
-fn testing_shell(bin: String, args: Array(String), out_path: String, err_path: String, rc_path: String): Int {
-  b = buf_new()
-  b.push_str("#!/bin/sh\n")
-  b.push_str("unset AVANT_TEST_LIST\n")
-  b.push_str("unset AVANT_TEST_ONLY\n")
-  b.push_str("unset AVANT_TEST_NAMES\n")
-  b.push_str(testing_quote(bin))
+// Runs bin with args, stdout and stderr to their own files, and returns
+// its status (D140): no sh script. /usr/bin/env -u keeps the runner's
+// listing and selection variables away from the program it starts.
+fn testing_run(bin: String, args: Array(String), out_path: String, err_path: String): Int {
+  wrapped: Array(String) = []
+  wrapped.push("-u")
+  wrapped.push("AVANT_TEST_LIST")
+  wrapped.push("-u")
+  wrapped.push("AVANT_TEST_ONLY")
+  wrapped.push("-u")
+  wrapped.push("AVANT_TEST_NAMES")
+  wrapped.push(bin)
   i = 0
   while i < args.size {
-    b.push_str(" ")
-    b.push_str(testing_quote(args[i]))
+    wrapped.push(args[i])
     i = i + 1
   }
-  b.push_str(" > ")
-  b.push_str(testing_quote(out_path))
-  b.push_str(" 2> ")
-  b.push_str(testing_quote(err_path))
-  b.push_str("; echo $? > ")
-  b.push_str(testing_quote(rc_path))
-  b.push_str("\n")
-  script = "${rc_path}.sh"
-  w = file_write(script, b.to_s)
-  if w != 0 {
-    return 1
-  }
-  chmod_args: Array(String) = []
-  chmod_args.push("+x")
-  chmod_args.push(script)
-  dummy = process_run("/bin/chmod", chmod_args)
-  sh_args: Array(String) = []
-  sh_args.push(script)
-  dummy_sh = process_run("/bin/sh", sh_args)
-  testing_rc(rc_path)
+  avant_testing_fs.avant_process_run_split("/usr/bin/env", wrapped, out_path, err_path)
 }
 
 pub class Test {
@@ -472,15 +429,11 @@ pub class Test {
       testing_write(testing_read(compile_log))
       return nil
     }
-    chmod_args: Array(String) = []
-    chmod_args.push("+x")
-    chmod_args.push(out)
-    dummy = process_run("/bin/chmod", chmod_args)
+    dummy = avant_testing_fs.avant_fs_chmod_x(out)
     empty: Array(String) = []
     stdout_path = "${base}.out"
     stderr_path = "${base}.err"
-    rc_path = "${base}.rc"
-    run_code = testing_shell(out, empty, stdout_path, stderr_path, rc_path)
+    run_code = testing_run(out, empty, stdout_path, stderr_path)
     got = testing_read(stdout_path)
     if want_text = file_read(want) {
       if run_code != 0 {
@@ -521,13 +474,12 @@ pub class Test {
     out = "${base}.bin"
     stdout_path = "${base}.out"
     stderr_path = "${base}.err"
-    rc_path = "${base}.rc"
     args: Array(String) = []
     args.push("compile")
     args.push(source)
     args.push(out)
     args.push("--debug")
-    code = testing_shell(compiler, args, stdout_path, stderr_path, rc_path)
+    code = testing_run(compiler, args, stdout_path, stderr_path)
     err = testing_read(stderr_path)
     if code == 0 {
       self.fail_line(label)

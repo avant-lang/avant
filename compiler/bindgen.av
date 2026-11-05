@@ -53,21 +53,6 @@ fn bind_push_words(into: Array(String), text: String) {
     into.push(w)
   }
 }
-fn bind_sh_quote(s: String): String {
-  buf = buf_new()
-  buf.push_str("'")
-  i = 0
-  while i < s.size {
-    if s[i] == 39 {
-      buf.push_str("'\\''")
-    } else {
-      buf.push_str(str_slice(s, i, i + 1))
-    }
-    i = i + 1
-  }
-  buf.push_str("'")
-  buf.to_s
-}
 
 fn bind_llvm_config: String {
   if v = env_get("LLVM_CONFIG") {
@@ -189,19 +174,10 @@ fn bind_ensure(root: String): String {
 }
 
 fn bind_split(bin: String, lib_name: String, header: String, out_path: String, err_path: String): Int {
-  qbin = bind_sh_quote(bin)
-  qlib = bind_sh_quote(lib_name)
-  qheader = bind_sh_quote(header)
-  qout = bind_sh_quote(out_path)
-  qerr = bind_sh_quote(err_path)
-  script = "${qbin} ${qlib} ${qheader} > ${qout} 2> ${qerr}"
   args: Array(String) = []
-  args.push("-c")
-  args.push(script)
-  if file_exists("/bin/sh") {
-    return process_run("/bin/sh", args)
-  }
-  process_run("/usr/bin/sh", args)
+  args.push(lib_name)
+  args.push(header)
+  process_run_split(bin, args, out_path, err_path)
 }
 
 pub fn bind_generate(lib_name: String, header: String): BindResult {
