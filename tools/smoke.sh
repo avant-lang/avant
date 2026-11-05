@@ -266,6 +266,15 @@ EOF
   else
     fail avant-bind "exit status $?"
   fi
+  if run path-bind env PATH="$work/prefix/avant-linux-x86_64:/usr/bin:/bin" avant bind add.h; then
+    if grep -q "add" "$work/logs/path-bind.log"; then
+      pass path-bind
+    else
+      fail path-bind "the lib block does not name add"
+    fi
+  else
+    fail path-bind "exit status $?"
+  fi
 else
   echo "skip avant-bind (the helper's libraries are not all present)"
 fi

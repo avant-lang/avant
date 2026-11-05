@@ -34,7 +34,7 @@ Make sure `~/.local/bin` is on your `PATH`; if it is not, add it once:
 export PATH="$HOME/.local/bin:$PATH"   # add this line to your ~/.bashrc or ~/.zshrc to keep it
 ```
 
-No environment variable needs to be set for the compiler itself. The compiler finds its `myc-llvm` backend in this order: `myc-llvm` on `PATH`, then a `myc-llvm` beside the `avant` binary, then `AVANT_MYC_LLVM` (an advanced override for unusual layouts). The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used. Because the release archive bundles `myc-llvm` beside `avant`, installing both as above is enough; a separate backend download is only needed with an older archive.
+No environment variable needs to be set for the compiler itself. The compiler finds its `myc-llvm` backend in this order: `AVANT_MYC_LLVM` (an explicit override; if it names a missing file, that is an error, not a reason to try another backend), then the `myc-llvm` beside the `avant` binary (the one the release ships), then `myc-llvm` on `PATH`. The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used. Because the release archive bundles `myc-llvm` beside `avant`, installing both as above is enough; a separate backend download is only needed with an older archive.
 
 4. Run your first program:
 

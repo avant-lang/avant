@@ -348,8 +348,19 @@ pub fn myc_probe_once {
   }
 }
 
+// Where the compiler looks for its backend, in order (D150, amending D54):
+// AVANT_MYC_LLVM (an explicit choice wins); the myc-llvm beside the
+// compiler's own executable (the backend it ships with); then each PATH
+// directory (an ambient one, last).
 pub fn myc_llvm_candidates: Array(String) {
   out: Array(String) = []
+  if v = env_get("AVANT_MYC_LLVM") {
+    out.push(v)
+  }
+  exe = self_exe_path()
+  if str_contains(exe, "/") {
+    out.push("${path_dirname(exe)}/myc-llvm")
+  }
   if path_env = env_get("PATH") {
     start = 0
     i = 0
@@ -363,19 +374,20 @@ pub fn myc_llvm_candidates: Array(String) {
       i = i + 1
     }
   }
-  args = argv()
-  if args.size > 0 {
-    if str_contains(args[0], "/") {
-      out.push("${path_dirname(args[0])}/myc-llvm")
-    }
-  }
-  if v = env_get("AVANT_MYC_LLVM") {
-    out.push(v)
-  }
   out
 }
 
+// The first candidate that exists must be a safepoints build; a stock
+// myc-llvm is refused, never skipped. An AVANT_MYC_LLVM that names a
+// missing file is an error, not a reason to fall back to another backend.
 pub fn myc_llvm_path: String {
+  if v = env_get("AVANT_MYC_LLVM") {
+    if file_exists(v) {
+    } else {
+      diag_puts("AVANT_MYC_LLVM points at a missing file: ${v}")
+      return ""
+    }
+  }
   cands = myc_llvm_candidates()
   i = 0
   while i < cands.size {
@@ -388,10 +400,6 @@ pub fn myc_llvm_path: String {
       return ""
     }
     i = i + 1
-  }
-  if v = env_get("AVANT_MYC_LLVM") {
-    diag_puts("AVANT_MYC_LLVM points at a missing file: ${v}")
-    return ""
   }
   tried = ""
   i = 0
@@ -646,15 +654,20 @@ pub fn run_cc(args: Array(String)): Int {
   process_run("/usr/bin/env", wrapped)
 }
 
+// re2c, in the backend's order (D150): AVANT_RE2C, the re2c beside the
+// compiler's own executable (a release ships one, D151), then the system's.
 pub fn re2c_bin: String {
   if v = env_get("AVANT_RE2C") {
     if file_exists(v) {
       return v
     }
   }
-  local = "${avant_root()}/bin/re2c"
-  if file_exists(local) {
-    return local
+  exe = self_exe_path()
+  if str_contains(exe, "/") {
+    beside = "${path_dirname(exe)}/re2c"
+    if file_exists(beside) {
+      return beside
+    }
   }
   if file_exists("/usr/bin/re2c") {
     return "/usr/bin/re2c"

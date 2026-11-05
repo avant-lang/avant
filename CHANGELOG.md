@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+* The compiler looks for its `myc-llvm` backend in a new order: `AVANT_MYC_LLVM` first, then the `myc-llvm` beside `avant`, then `PATH`. Before, `PATH` came first, so an explicit `AVANT_MYC_LLVM` lost to any `myc-llvm` on `PATH`. An `AVANT_MYC_LLVM` that names a missing file is now always an error. `re2c` and the `bind` helper are also looked up beside the compiler's real executable, so they are found when `avant` is started through `PATH`.
+
 ### Fixed
 
+* The release archive can compile programs outside a source checkout. It shipped no runtime objects, so every link failed with `cannot find ./runtime/build/avant_rt.o` (and a regex literal could not find `avant_rt.h`). The archive now carries `runtime/build/*.o` and `runtime/avant_rt.h`, and the compiler uses them when it is not run inside a checkout.
 * `file_read` reads a file to its end instead of trusting the size the file reports. Files under `/proc` (which report size 0) read as empty before, and a sysfs file that reports 4096 bytes failed to read, so `avant test` used one job on such kernels (the GitHub runners among them).
 
 ## 0.33.0 - 2026-11-05

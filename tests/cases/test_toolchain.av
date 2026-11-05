@@ -10,8 +10,13 @@ fn tc_fake_dir(stamp: Int, tag: String): String {
   dir
 }
 
+// Runs the compiler with only the fake backend in dir on PATH. The suite's
+// AVANT_MYC_LLVM is unset: it comes first in the lookup (D150) and would
+// otherwise pick the real backend.
 fn tc_invoke(compiler: String, dir: String, args: Array(String), extra_env: String, log: String): Int {
   env_args: Array(String) = []
+  env_args.push("-u")
+  env_args.push("AVANT_MYC_LLVM")
   env_args.push("PATH=${dir}:/usr/bin:/bin")
   if extra_env.size > 0 {
     env_args.push(extra_env)
@@ -139,6 +144,58 @@ fn test_toolchain(c: Checks) {
     pr_code3 = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=${key}", "${scratch()}/toolchain-wavei-${stamp}-probe3.log")
     pr3 = tc_args(c, pr_dir, "probe fixture records backend args a third time")
     c.expect(pr_code3 == 0 && str_has(pr3, "dump --gc-root"), "a changed backend is probed again")
+
+    // The lookup order (D150): AVANT_MYC_LLVM, then the backend beside the
+    // compiler's own executable, then PATH.
+    ord_args: Array(String) = []
+    ord_args.push("compile")
+    ord_args.push(src)
+    ord_args.push("${scratch()}/toolchain-wavei-${stamp}-order.bin")
+    on_path = tc_fake_dir(stamp, "order-path")
+    explicit = tc_fake_dir(stamp, "order-explicit")
+    ord_env: Array(String) = []
+    ord_env.push("PATH=${on_path}:/usr/bin:/bin")
+    ord_env.push("AVANT_MYC_LLVM=${explicit}/myc-llvm")
+    ord_env.push("AVANT_MYC_PROBED=")
+    ord_env.push(compiler)
+    i = 0
+    while i < ord_args.size {
+      ord_env.push(ord_args[i])
+      i = i + 1
+    }
+    ord_code = process_run_out("/usr/bin/env", ord_env, "${scratch()}/toolchain-wavei-${stamp}-order1.log")
+    c.expect(ord_code == 0 && file_exists("${explicit}/args.log"), "AVANT_MYC_LLVM is used")
+    c.expect(!file_exists("${on_path}/args.log"), "AVANT_MYC_LLVM beats a myc-llvm on PATH")
+
+    beside = tc_fake_dir(stamp, "order-beside")
+    copy_code = copy_file(compiler, "${beside}/avant")
+    chmod_x("${beside}/avant")
+    c.eq_int(copy_code, 0, "copy the compiler beside a fake backend")
+    rm_f("${on_path}/args.log")
+    bs_code = tc_invoke("${beside}/avant", on_path, ord_args, "AVANT_MYC_PROBED=", "${scratch()}/toolchain-wavei-${stamp}-order2.log")
+    c.expect(bs_code == 0 && file_exists("${beside}/args.log"), "the backend beside the compiler is used")
+    c.expect(!file_exists("${on_path}/args.log"), "the backend beside the compiler beats one on PATH")
+    rm_f("${beside}/avant")
+
+    rm_f("${on_path}/args.log")
+    miss_env: Array(String) = []
+    miss_env.push("PATH=${on_path}:/usr/bin:/bin")
+    miss_env.push("AVANT_MYC_LLVM=${scratch()}/toolchain-wavei-${stamp}-missing/myc-llvm")
+    miss_env.push(compiler)
+    i = 0
+    while i < ord_args.size {
+      miss_env.push(ord_args[i])
+      i = i + 1
+    }
+    miss_log = "${scratch()}/toolchain-wavei-${stamp}-order3.log"
+    miss_code = process_run_out("/usr/bin/env", miss_env, miss_log)
+    c.expect(miss_code != 0, "a missing AVANT_MYC_LLVM fails")
+    c.expect(!file_exists("${on_path}/args.log"), "a missing AVANT_MYC_LLVM does not fall back to PATH")
+    if miss_txt = file_read(miss_log) {
+      c.expect(str_has(miss_txt, "AVANT_MYC_LLVM points at a missing file"), "a missing AVANT_MYC_LLVM is named")
+    } else {
+      c.expect(false, "read the missing-backend log")
+    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
