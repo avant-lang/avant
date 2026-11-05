@@ -1083,7 +1083,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | `--coverage` | Instrument the tests and, after the summary, print one coverage table. Also writes `coverage/lcov.info` in the current directory. |
 | `-h`, `--help` | Print the flag list and exit 0. |
 
-The log is flushed in path order, and within a file in source order. The runner then prints `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused.
+Ctrl-C or `SIGTERM` stops the whole run: the runner stops every test process it started, then removes its temporary files. The log is flushed in path order, and within a file in source order. The runner then prints `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused.
 
 ### Checks
 

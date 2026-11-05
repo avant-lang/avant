@@ -335,6 +335,9 @@ void *avant_dir_list(const char *path);
 char *avant_tmp_dir(void);
 char *avant_tmp_new_dir(void);
 void avant_tmp_keep(void);
+int32_t avant_job_start(const char *path, void *args, const char *out_path);
+int32_t avant_job_wait(void);
+int32_t avant_job_status(void);
 
 void avant_cov_init(const char *map_path);
 void avant_cov_hit(int32_t slot);

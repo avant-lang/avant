@@ -58,8 +58,11 @@ fn path_base(p: String): String {
   p
 }
 
+// Children start with keep off, so this file also passes under --keep-tmp;
+// a test that wants keep passes AVANT_KEEP_TMP=1 after it.
 fn run_env(env: Array(String), bin: String, log: String): Int {
   args: Array(String) = []
+  args.push("AVANT_KEEP_TMP=")
   i = 0
   while i < env.size {
     args.push(env[i])
@@ -79,6 +82,7 @@ fn run_signalled(sig: String, bin: String, out: String, log: String): Int {
   // sh), and an ignored signal is deliberately left ignored.
   args.push("/usr/bin/env")
   args.push("--default-signal=${sig}")
+  args.push("AVANT_KEEP_TMP=")
   args.push("SCRATCH_MODE=wait")
   args.push("SCRATCH_OUT=${out}")
   args.push(bin)
@@ -177,7 +181,7 @@ fn test_scratch(c: Checks) {
     c.eq_int(std_code, 0, "std.testing temp_dir program compiles")
     chmod_x(std_bin)
     std_log = "${work}/std_temp.log"
-    std_run = run_av_bin(std_bin, std_log)
+    std_run = run_env(none, std_bin, std_log)
     std_text = read_all(std_log)
     c.eq_int(std_run, 0, "t.temp_dir checks pass")
     c.expect(str_has(std_text, "0 failed, 3 passed"), "t.temp_dir program reports its checks")
@@ -185,9 +189,49 @@ fn test_scratch(c: Checks) {
     c.expect(str_has(std_dir, "${root}/avant-"), "t.temp_dir nests in the scratch directory")
     c.expect(std_dir.size > 0 && !file_exists(std_dir), "t.temp_dir removed at exit")
 
+    // Q146/D131: an interrupted avant test stops its jobs and leaves nothing.
+    proj = scratch_dir()
+    mkdir_p("${proj}/tests")
+    // The job's sleep records its own pid (exec keeps it), so the check
+    // looks at exactly that process.
+    job_body = "fn main: Int {\n  args: Array(String) = []\n  args.push(\"-c\")\n  args.push(\"echo $$ > ${proj}/sleep.pid; echo 1 > ${proj}/started; exec sleep 30\")\n  dummy = process_run(\"/bin/sh\", args)\n  0\n}\n"
+    dummy_j = file_write("${proj}/tests/test_slow.av", job_body)
+    abs_c = compiler_abs("scratch", compiler)
+    isigs: Array(String) = []
+    isigs.push("TERM")
+    isigs.push("INT")
+    iwant: Array(Int) = []
+    iwant.push(143)
+    iwant.push(130)
+    q = 0
+    while q < isigs.size {
+      sig = isigs[q]
+      base_dir = scratch_dir()
+      rc = "${work}/int-${sig}.rc"
+      script = "#!/bin/sh\ncd '${proj}' || exit 9\nrm -f started sleep.pid\nAVANT_KEEP_TMP= TMPDIR='${base_dir}' env --default-signal=${sig} '${abs_c}' test --jobs 2 > '${work}/int-${sig}.log' 2>&1 &\nr=$!\nn=0\nwhile [ ! -f started ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\nkill -${sig} $r\nwait $r\necho $? > '${rc}'\n"
+      sh_path = "${work}/int-${sig}.sh"
+      dummy_s = file_write(sh_path, script)
+      sh_args: Array(String) = []
+      sh_args.push(sh_path)
+      dummy_r = process_run("/bin/sh", sh_args)
+      c.eq_int(nth_line(read_all(rc), 0).to_i, iwant[q], "interrupted runner (SIG${sig}) exits ${iwant[q]}")
+      // Gone, or a zombie about to be reaped, means stopped.
+      spid = read_all("${proj}/sleep.pid")
+      st_args: Array(String) = []
+      st_args.push("-c")
+      st_args.push("s=$(ps -o stat= -p ${spid} 2>/dev/null); case \"$s\" in ''|Z*) exit 0 ;; *) exit 1 ;; esac")
+      stopped = process_run("/bin/sh", st_args)
+      c.expect(spid.size > 0, "SIG${sig} job recorded its sleep")
+      c.eq_int(stopped, 0, "SIG${sig} stops the runner's jobs")
+      left: Array(String) = dir_list(base_dir)
+      c.eq_int(left.size, 0, "SIG${sig} leaves nothing in TMPDIR")
+      q = q + 1
+    }
+
     unset_args: Array(String) = []
     unset_args.push("-u")
     unset_args.push("TMPDIR")
+    unset_args.push("AVANT_KEEP_TMP=")
     unset_args.push(bin)
     unset_log = "${work}/unset.log"
     unset_code = process_run_out("/usr/bin/env", unset_args, unset_log)

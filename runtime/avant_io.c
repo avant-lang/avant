@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct {
@@ -204,85 +205,85 @@ int32_t avant_file_write(const char *path, const char *body) {
   return 0;
 }
 
-static int32_t run_child(const char *path, void *args, const char *out_path) {
-  if (!path) {
-    return 1;
+static void free_argv(char **argv) {
+  int32_t i;
+  if (!argv) {
+    return;
   }
+  for (i = 0; argv[i]; i++) {
+    free(argv[i]);
+  }
+  free(argv);
+}
 
+/* argv for execv: path, then the Avant Array(String) args; NULL on OOM. */
+static char **build_argv(const char *path, void *args) {
   AvantArray *extra = (AvantArray *)args;
   int32_t extra_n = 0;
   char **extra_buf = NULL;
+  int32_t i;
   if (extra && extra->size > 0) {
     extra_n = extra->size;
     extra_buf = (char **)extra->buf;
   }
-
-  int32_t argc = extra_n + 1;
-  char **argv = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
+  char **argv = (char **)calloc((size_t)extra_n + 2, sizeof(char *));
   if (!argv) {
-    return 1;
+    return NULL;
   }
-
   argv[0] = cstr_dup(path);
   if (!argv[0]) {
     free(argv);
-    return 1;
+    return NULL;
   }
-  int32_t i;
   for (i = 0; i < extra_n; i++) {
     const char *s = extra_buf && extra_buf[i] ? extra_buf[i] : "";
     argv[i + 1] = cstr_dup(s);
     if (!argv[i + 1]) {
-      int32_t j;
-      for (j = 0; j <= i; j++) {
-        free(argv[j]);
-      }
-      free(argv);
-      return 1;
+      free_argv(argv);
+      return NULL;
     }
   }
-  argv[argc] = NULL;
+  return argv;
+}
 
-  fflush(stdout);
-  fflush(stderr);
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    for (i = 0; i < argc; i++) {
-      free(argv[i]);
-    }
-    free(argv);
-    return 1;
-  }
-  if (pid == 0) {
-    if (out_path && out_path[0]) {
-      int fd = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-      if (fd < 0) {
-        _exit(127);
-      }
-      if (dup2(fd, STDOUT_FILENO) < 0) {
-        _exit(127);
-      }
-      if (dup2(fd, STDERR_FILENO) < 0) {
-        _exit(127);
-      }
-      if (fd > STDERR_FILENO) {
-        close(fd);
+/* In the forked child: optional stdout+stderr file; a job (D131) also gets
+ * its own process group, /dev/null stdin, and default signal dispositions,
+ * so the runner can stop the whole job and a job never reads the terminal. */
+static void child_exec(const char *path, char **argv, const char *out_path, int job) {
+  if (job) {
+    int devnull;
+    setpgid(0, 0);
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTERM, SIG_DFL);
+    signal(SIGHUP, SIG_DFL);
+    devnull = open("/dev/null", O_RDONLY);
+    if (devnull >= 0) {
+      dup2(devnull, STDIN_FILENO);
+      if (devnull > STDERR_FILENO) {
+        close(devnull);
       }
     }
-    execv(path, argv);
-    _exit(127);
   }
+  if (out_path && out_path[0]) {
+    int fd = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) {
+      _exit(127);
+    }
+    if (dup2(fd, STDOUT_FILENO) < 0) {
+      _exit(127);
+    }
+    if (dup2(fd, STDERR_FILENO) < 0) {
+      _exit(127);
+    }
+    if (fd > STDERR_FILENO) {
+      close(fd);
+    }
+  }
+  execv(path, argv);
+  _exit(127);
+}
 
-  for (i = 0; i < argc; i++) {
-    free(argv[i]);
-  }
-  free(argv);
-
-  int st = 0;
-  if (waitpid(pid, &st, 0) < 0) {
-    return 1;
-  }
+static int32_t exit_code_of(int st) {
   if (WIFEXITED(st)) {
     return WEXITSTATUS(st);
   }
@@ -290,6 +291,111 @@ static int32_t run_child(const char *path, void *args, const char *out_path) {
     return 128 + WTERMSIG(st);
   }
   return 1;
+}
+
+/* The child a blocking process_run waits on, and the live jobs (each the
+ * leader of its own process group). The scratch signal handler reads
+ * these to stop children before it removes the directory (D131). */
+#define JOB_MAX 1024
+static volatile pid_t g_wait_child;
+static volatile pid_t g_jobs[JOB_MAX];
+static volatile int32_t g_njobs;
+static int32_t g_job_status;
+
+static int32_t run_child(const char *path, void *args, const char *out_path) {
+  char **argv;
+  pid_t pid;
+  int st = 0;
+  if (!path) {
+    return 1;
+  }
+  argv = build_argv(path, args);
+  if (!argv) {
+    return 1;
+  }
+  fflush(stdout);
+  fflush(stderr);
+  pid = fork();
+  if (pid < 0) {
+    free_argv(argv);
+    return 1;
+  }
+  if (pid == 0) {
+    child_exec(path, argv, out_path, 0);
+  }
+  free_argv(argv);
+  g_wait_child = pid;
+  while (waitpid(pid, &st, 0) < 0) {
+    if (errno != EINTR) {
+      g_wait_child = 0;
+      return 1;
+    }
+  }
+  g_wait_child = 0;
+  return exit_code_of(st);
+}
+
+/* Starts a job without waiting: path with args, stdout and stderr to
+ * out_path, stdin /dev/null, its own process group. Returns its pid, or
+ * -1 when it cannot start. Internal to the test runner (D131). */
+int32_t avant_job_start(const char *path, void *args, const char *out_path) {
+  char **argv;
+  pid_t pid;
+  if (!path || g_njobs >= JOB_MAX) {
+    return -1;
+  }
+  argv = build_argv(path, args);
+  if (!argv) {
+    return -1;
+  }
+  fflush(stdout);
+  fflush(stderr);
+  pid = fork();
+  if (pid < 0) {
+    free_argv(argv);
+    return -1;
+  }
+  if (pid == 0) {
+    child_exec(path, argv, out_path, 1);
+  }
+  free_argv(argv);
+  setpgid(pid, pid);
+  g_jobs[g_njobs] = pid;
+  g_njobs = g_njobs + 1;
+  return (int32_t)pid;
+}
+
+/* Waits for any started job to finish. Returns its pid, or -1 when no job
+ * is running; avant_job_status then gives its exit code (128+n for a
+ * signal). */
+int32_t avant_job_wait(void) {
+  for (;;) {
+    int st = 0;
+    int32_t i;
+    pid_t pid;
+    if (g_njobs == 0) {
+      return -1;
+    }
+    pid = waitpid(-1, &st, 0);
+    if (pid < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return -1;
+    }
+    for (i = 0; i < g_njobs; i++) {
+      if (g_jobs[i] == pid) {
+        g_jobs[i] = g_jobs[g_njobs - 1];
+        g_njobs = g_njobs - 1;
+        g_job_status = exit_code_of(st);
+        return (int32_t)pid;
+      }
+    }
+  }
+}
+
+int32_t avant_job_status(void) {
+  return g_job_status;
 }
 
 int32_t avant_process_run(const char *path, void *args) {
@@ -484,13 +590,28 @@ static void tmp_empty_dir(int fd, int depth) {
   }
 }
 
+/* A child that outlives this process's own work (a job's shell writing its
+ * status file after a signal reached only us) can add a file between the
+ * last emptying pass and rmdir. Once rmdir succeeds nothing can recreate
+ * the directory, so empty and rmdir again, pausing 10 ms, for up to about
+ * a second. nanosleep is async-signal-safe. */
 static void tmp_remove(void) {
-  int fd = open(g_tmp_dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-  if (fd >= 0) {
-    tmp_empty_dir(fd, 0);
-    close(fd);
+  int attempt;
+  struct timespec pause = {0, 10 * 1000 * 1000};
+  for (attempt = 0; attempt < 100; attempt++) {
+    int fd = open(g_tmp_dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd >= 0) {
+      tmp_empty_dir(fd, 0);
+      close(fd);
+    }
+    if (rmdir(g_tmp_dir) == 0 || errno == ENOENT) {
+      return;
+    }
+    if (errno != ENOTEMPTY && errno != EEXIST) {
+      return;
+    }
+    nanosleep(&pause, NULL);
   }
-  rmdir(g_tmp_dir);
 }
 
 static void tmp_say_kept(void) {
@@ -517,8 +638,59 @@ static void tmp_finish(void) {
   tmp_remove();
 }
 
+/* Stops what this process started before the directory goes (D131):
+ * SIGTERM to every job's group and to the child a blocking process_run
+ * waits on, then reap them for up to about two seconds, then SIGKILL
+ * whatever is left and reap briefly. Async-signal-safe calls only. */
+static void tmp_stop_children(void) {
+  struct timespec pause = {0, 10 * 1000 * 1000};
+  int32_t i;
+  int round;
+  pid_t child = g_wait_child;
+  int32_t n = g_njobs;
+  if (n == 0 && child <= 0) {
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    kill(-g_jobs[i], SIGTERM);
+  }
+  if (child > 0) {
+    kill(child, SIGTERM);
+  }
+  for (round = 0; round < 250; round++) {
+    int st;
+    pid_t got;
+    int live = 0;
+    while ((got = waitpid(-1, &st, WNOHANG)) > 0) {
+    }
+    for (i = 0; i < n; i++) {
+      if (kill(-g_jobs[i], 0) == 0) {
+        live = 1;
+      }
+    }
+    if (child > 0 && kill(child, 0) == 0) {
+      live = 1;
+    }
+    if (!live) {
+      return;
+    }
+    if (round == 200) {
+      for (i = 0; i < n; i++) {
+        kill(-g_jobs[i], SIGKILL);
+      }
+      if (child > 0) {
+        kill(child, SIGKILL);
+      }
+    }
+    nanosleep(&pause, NULL);
+  }
+}
+
 static void tmp_on_signal(int sig) {
   struct sigaction sa;
+  if (g_tmp_ready && getpid() == g_tmp_owner) {
+    tmp_stop_children();
+  }
   tmp_finish();
   memset(&sa, 0, sizeof sa);
   sa.sa_handler = SIG_DFL;

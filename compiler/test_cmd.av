@@ -37,15 +37,84 @@ pub class FileRun {
   }
 }
 
-pub class ShellCmd {
-  line: String = ""
-  log: String = ""
-  rc_path: String = ""
+lib job_rt {
+  fun avant_job_start(path: String, args: Array(String), out: String): Int
+  fun avant_job_wait: Int
+  fun avant_job_status: Int
+}
 
-  fn initialize(line: String, log: String, rc_path: String) {
-    self.line = line
+// One test job (D131): /usr/bin/env with its variables and command as
+// arguments, stdout and stderr to log. No shell: statuses come from
+// waitpid, and the runtime can stop every job's process group on a signal.
+pub class JobCmd {
+  args: Array(String)
+  log: String = ""
+  pid: Int = 0
+  code: Int = 0
+  finished: Bool = false
+
+  fn initialize(args: Array(String), log: String) {
+    self.args = args
     self.log = log
-    self.rc_path = rc_path
+    self.pid = 0
+    self.code = 0
+    self.finished = false
+  }
+}
+
+// Keeps up to limit jobs running and hands back each one as it finishes,
+// so a slow job never holds back the next start (no batch barrier).
+pub class JobPool {
+  cmds: Array(JobCmd)
+  limit: Int = 1
+  next: Int = 0
+  running: Int = 0
+
+  fn initialize(cmds: Array(JobCmd), limit: Int) {
+    self.cmds = cmds
+    self.limit = limit
+    if self.limit < 1 {
+      self.limit = 1
+    }
+    self.next = 0
+    self.running = 0
+  }
+
+  // The index of the next finished job, or -1 when every job has finished.
+  pub fn wait_one: Int {
+    while self.running < self.limit && self.next < self.cmds.size {
+      cmd = self.cmds[self.next]
+      pid = job_rt.avant_job_start("/usr/bin/env", cmd.args, cmd.log)
+      if pid < 0 {
+        cmd.code = 127
+        cmd.finished = true
+        at = self.next
+        self.next = self.next + 1
+        return at
+      }
+      cmd.pid = pid
+      self.running = self.running + 1
+      self.next = self.next + 1
+    }
+    if self.running == 0 {
+      return -1
+    }
+    got = job_rt.avant_job_wait()
+    if got < 0 {
+      return -1
+    }
+    self.running = self.running - 1
+    i = 0
+    while i < self.next {
+      cmd = self.cmds[i]
+      if cmd.pid == got && !cmd.finished {
+        cmd.code = job_rt.avant_job_status()
+        cmd.finished = true
+        return i
+      }
+      i = i + 1
+    }
+    self.wait_one
   }
 }
 
@@ -74,22 +143,6 @@ pub class TestHost {
     self.seq = self.seq + 1
     tmp_path("t-${self.seq}")
   }
-}
-
-fn test_quote(s: String): String {
-  b = buf_new()
-  b.push_str("'")
-  i = 0
-  while i < s.size {
-    if s[i] == 39 {
-      b.push_str("'\\''")
-    } else {
-      b.push_byte(s[i])
-    }
-    i = i + 1
-  }
-  b.push_str("'")
-  b.to_s
 }
 
 fn parse_u(s: String): Int {
@@ -262,14 +315,6 @@ fn read_text(path: String): String {
   ""
 }
 
-fn read_rc(path: String): Int {
-  n = parse_u(read_text(path).strip())
-  if n < 0 {
-    return 1
-  }
-  n
-}
-
 fn listed(paths: Array(String), path: String): Bool {
   i = 0
   while i < paths.size {
@@ -281,28 +326,33 @@ fn listed(paths: Array(String), path: String): Bool {
   false
 }
 
-fn env_plain(compiler: String, coverage: Bool, map: String): String {
-  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES= AVANT_JUNIT_FRAGMENT="
-  if coverage {
-    return "${base} AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${test_quote(map)}"
-  }
-  base
+fn env_base(compiler: String, names: String, only: String, frag: String): Array(String) {
+  a: Array(String) = []
+  a.push("AVANT_COMPILER=${compiler}")
+  a.push("AVANT_TEST_LIST=")
+  a.push("AVANT_TEST_ONLY=${only}")
+  a.push("AVANT_TEST_NAMES=${names}")
+  a.push("AVANT_JUNIT_FRAGMENT=${frag}")
+  a
 }
 
-fn env_serial(compiler: String, names: String, coverage: Bool, frag: String): String {
-  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY= AVANT_TEST_NAMES=${test_quote(names)} AVANT_JUNIT_FRAGMENT=${test_quote(frag)}"
+fn env_plain(compiler: String, coverage: Bool, map: String): Array(String) {
+  a = env_base(compiler, "", "", "")
   if coverage {
-    return "${base} AVANT_COVERAGE= AVANT_COVERAGE_LCOV=0 AVANT_COVERAGE_REPORT=0"
+    a.push("AVANT_COVERAGE=1")
+    a.push("AVANT_COVERAGE_MAP=${map}")
   }
-  base
+  a
 }
 
-fn env_only(compiler: String, name: String, coverage: Bool, frag: String): String {
-  base = "env AVANT_COMPILER=${test_quote(compiler)} AVANT_TEST_LIST= AVANT_TEST_ONLY=${test_quote(name)} AVANT_TEST_NAMES= AVANT_JUNIT_FRAGMENT=${test_quote(frag)}"
+fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: String): Array(String) {
+  a = env_base(compiler, names, only, frag)
   if coverage {
-    return "${base} AVANT_COVERAGE= AVANT_COVERAGE_LCOV=0 AVANT_COVERAGE_REPORT=0"
+    a.push("AVANT_COVERAGE=")
+    a.push("AVANT_COVERAGE_LCOV=0")
+    a.push("AVANT_COVERAGE_REPORT=0")
   }
-  base
+  a
 }
 
 fn rm_file(path: String) {
@@ -313,31 +363,6 @@ fn rm_file(path: String) {
   args.push("-f")
   args.push(path)
   dummy = process_run("/bin/rm", args)
-}
-
-fn run_script(body: String, host: TestHost) {
-  path = "${host.fresh()}.sh"
-  w = file_write(path, body)
-  if w != 0 {
-    return
-  }
-  chmod_args: Array(String) = []
-  chmod_args.push("+x")
-  chmod_args.push(path)
-  dummy = process_run("/bin/chmod", chmod_args)
-  sh_args: Array(String) = []
-  sh_args.push(path)
-  dummy_sh = process_run("/bin/sh", sh_args)
-  rm_file(path)
-}
-
-fn make_cmd(host: TestHost, line: String): ShellCmd {
-  base = host.fresh()
-  ShellCmd.new(line, "${base}.log", "${base}.rc")
-}
-
-fn redirect(cmd: ShellCmd): String {
-  "( ${cmd.line} > ${test_quote(cmd.log)} 2>&1; echo $? > ${test_quote(cmd.rc_path)} )"
 }
 
 fn name_lines(text: String): Array(String) {
@@ -402,51 +427,42 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
   if files.size == 0 {
     return
   }
-  compiles: Array(ShellCmd) = []
+  compiles: Array(JobCmd) = []
   i = 0
   while i < files.size {
     f = files[i]
     if host.coverage {
       f.map = "${host.fresh()}.map"
     }
-    cmd = make_cmd(host, "${env_plain(host.compiler, host.coverage, f.map)} ${test_quote(host.compiler)} compile ${test_quote(f.abs)} ${test_quote(f.bin)} --debug")
-    cmd.line = redirect(cmd)
-    compiles.push(cmd)
+    args = env_plain(host.compiler, host.coverage, f.map)
+    args.push(host.compiler)
+    args.push("compile")
+    args.push(f.abs)
+    args.push(f.bin)
+    args.push("--debug")
+    compiles.push(JobCmd.new(args, "${host.fresh()}.log"))
     i = i + 1
   }
-  wi = 0
-  while wi < compiles.size {
-    b = buf_new()
-    b.push_str("#!/bin/sh\n")
-    n = 0
-    start = wi
-    while n < host.jobs && wi < compiles.size {
-      b.push_str(compiles[wi].line)
-      b.push_str(" &\n")
-      wi = wi + 1
-      n = n + 1
+  pool = JobPool.new(compiles, host.jobs)
+  while true {
+    i = pool.wait_one
+    if i < 0 {
+      break
     }
-    b.push_str("wait\n")
-    run_script(b.to_s, host)
-    i = start
-    while i < wi {
-      f = files[i]
-      cmd = compiles[i]
-      if read_rc(cmd.rc_path) != 0 {
-        f.ok = false
-        f.compiled = false
-        f.output = read_text(cmd.log)
-        emit_file(host, f)
-      } else {
-        f.compiled = true
-        chmod_bin(f.bin)
-      }
-      rm_file(cmd.log)
-      rm_file(cmd.rc_path)
-      i = i + 1
+    f = files[i]
+    cmd = compiles[i]
+    if cmd.code != 0 {
+      f.ok = false
+      f.compiled = false
+      f.output = read_text(cmd.log)
+      emit_file(host, f)
+    } else {
+      f.compiled = true
+      chmod_bin(f.bin)
     }
+    rm_file(cmd.log)
   }
-  serials: Array(ShellCmd) = []
+  serials: Array(JobCmd) = []
   serial_at: Array(Int) = []
   serial_names: Array(String) = []
   i = 0
@@ -460,61 +476,47 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
         frag = "${base}.junit"
         f.frags.push(frag)
       }
-      line = "${env_serial(host.compiler, names, host.coverage, frag)} ${test_quote(f.bin)}"
-      cmd = ShellCmd.new(line, "${base}.log", "${base}.rc")
-      cmd.line = redirect(cmd)
-      serials.push(cmd)
+      args = env_run(host.compiler, names, "", host.coverage, frag)
+      args.push(f.bin)
+      serials.push(JobCmd.new(args, "${base}.log"))
       serial_at.push(i)
       serial_names.push(names)
     }
     i = i + 1
   }
-  wi = 0
-  while wi < serials.size {
-    b = buf_new()
-    b.push_str("#!/bin/sh\n")
-    n = 0
-    start = wi
-    while n < host.jobs && wi < serials.size {
-      b.push_str(serials[wi].line)
-      b.push_str(" &\n")
-      wi = wi + 1
-      n = n + 1
+  pool = JobPool.new(serials, host.jobs)
+  while true {
+    i = pool.wait_one
+    if i < 0 {
+      break
     }
-    b.push_str("wait\n")
-    run_script(b.to_s, host)
-    i = start
-    while i < wi {
-      f = files[serial_at[i]]
-      cmd = serials[i]
-      f.output = append_text(f.output, read_text(cmd.log))
-      if read_rc(cmd.rc_path) != 0 {
+    f = files[serial_at[i]]
+    cmd = serials[i]
+    f.output = append_text(f.output, read_text(cmd.log))
+    if cmd.code != 0 {
+      f.ok = false
+    }
+    rm_file(cmd.log)
+    found = name_lines(read_text(serial_names[i]))
+    rm_file(serial_names[i])
+    seen: Array(String) = []
+    k = 0
+    while k < found.size {
+      name = found[k]
+      if listed(seen, name) {
         f.ok = false
+        f.output = append_text(f.output, "duplicate parallel name ${name}\n")
+      } else {
+        seen.push(name)
+        f.parallels.push(name)
       }
-      rm_file(cmd.log)
-      rm_file(cmd.rc_path)
-      found = name_lines(read_text(serial_names[i]))
-      rm_file(serial_names[i])
-      seen: Array(String) = []
-      k = 0
-      while k < found.size {
-        name = found[k]
-        if listed(seen, name) {
-          f.ok = false
-          f.output = append_text(f.output, "duplicate parallel name ${name}\n")
-        } else {
-          seen.push(name)
-          f.parallels.push(name)
-        }
-        k = k + 1
-      }
-      if f.parallels.size == 0 {
-        emit_file(host, f)
-      }
-      i = i + 1
+      k = k + 1
+    }
+    if f.parallels.size == 0 {
+      emit_file(host, f)
     }
   }
-  pars: Array(ShellCmd) = []
+  pars: Array(JobCmd) = []
   par_file: Array(Int) = []
   i = 0
   while i < files.size {
@@ -528,8 +530,9 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
           frag = "${host.fresh()}.junit"
           f.frags.push(frag)
         }
-        cmd = make_cmd(host, "${env_only(host.compiler, name, host.coverage, frag)} ${test_quote(f.bin)}")
-        cmd.line = redirect(cmd)
+        args = env_run(host.compiler, "", name, host.coverage, frag)
+        args.push(f.bin)
+        cmd = JobCmd.new(args, "${host.fresh()}.log")
         pars.push(cmd)
         par_file.push(i)
         f.par_logs.push(cmd.log)
@@ -538,56 +541,40 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     }
     i = i + 1
   }
-  wi = 0
-  while wi < pars.size {
-    b = buf_new()
-    b.push_str("#!/bin/sh\n")
-    n = 0
-    while n < host.jobs && wi < pars.size {
-      b.push_str(pars[wi].line)
-      b.push_str(" &\n")
-      wi = wi + 1
-      n = n + 1
+  pool = JobPool.new(pars, host.jobs)
+  while true {
+    p = pool.wait_one
+    if p < 0 {
+      break
     }
-    b.push_str("wait\n")
-    run_script(b.to_s, host)
-    i = 0
-    while i < files.size {
-      f = files[i]
-      if f.compiled && f.parallels.size > 0 {
-        if f.reported {
-        } else {
-          done = true
-          j = 0
-          while j < pars.size {
-            if par_file[j] == i {
-              if read_text(pars[j].rc_path).size == 0 {
-                done = false
-              }
-            }
-            j = j + 1
-          }
-          if done {
-            k = 0
-            while k < f.par_logs.size {
-              f.output = append_text(f.output, read_text(f.par_logs[k]))
-              rm_file(f.par_logs[k])
-              k = k + 1
-            }
-            j = 0
-            while j < pars.size {
-              if par_file[j] == i {
-                if read_rc(pars[j].rc_path) != 0 {
-                  f.ok = false
-                }
-              }
-              j = j + 1
-            }
-            emit_file(host, f)
-          }
-        }
+    i = par_file[p]
+    f = files[i]
+    if f.reported {
+      continue
+    }
+    done = true
+    j = 0
+    while j < pars.size {
+      if par_file[j] == i && !pars[j].finished {
+        done = false
       }
-      i = i + 1
+      j = j + 1
+    }
+    if done {
+      k = 0
+      while k < f.par_logs.size {
+        f.output = append_text(f.output, read_text(f.par_logs[k]))
+        rm_file(f.par_logs[k])
+        k = k + 1
+      }
+      j = 0
+      while j < pars.size {
+        if par_file[j] == i && pars[j].code != 0 {
+          f.ok = false
+        }
+        j = j + 1
+      }
+      emit_file(host, f)
     }
   }
   i = 0
@@ -604,21 +591,14 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
         }
         j = 0
         while j < pars.size {
-          if par_file[j] == i {
-            if read_rc(pars[j].rc_path) != 0 {
-              f.ok = false
-            }
+          if par_file[j] == i && pars[j].code != 0 {
+            f.ok = false
           }
           j = j + 1
         }
         emit_file(host, f)
       }
     }
-    i = i + 1
-  }
-  i = 0
-  while i < pars.size {
-    rm_file(pars[i].rc_path)
     i = i + 1
   }
   if host.coverage {

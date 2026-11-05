@@ -13,6 +13,11 @@
 * Objects built from `.c` files passed to `compile` go to that directory instead of beside the C source.
 * The coverage report is `coverage/lcov.info` (was `lcov.info`), for `avant test --coverage` and for an instrumented program's default.
 * Without `AVANT_COVERAGE_MAP`, an instrumented `compile` writes its slot map beside the binary as `OUT.covmap` (was a stamped file in `/tmp`).
+* `avant test --jobs` keeps up to N test processes running and starts the next as soon as one finishes (was batches of N that waited for their slowest member), with no shell scripts in between.
+
+### Fixed
+
+* Ctrl-C or `SIGTERM` on `avant test` now stops every test process; before, tests kept running after the runner was interrupted.
 
 ## 0.31.0 - 2026-11-04
 
