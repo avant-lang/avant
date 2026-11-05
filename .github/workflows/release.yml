@@ -160,18 +160,18 @@ jobs:
           # The layout is tools/package.sh's (D148), the same script local proofs use.
           sh tools/package.sh dist bin/avant-b /tmp/myc-llvm-linux-x86_64/myc-llvm bin/re2c dist/versions.txt
           cat dist/avant-linux-x86_64.tar.gz.sha256
+          sh tools/container-test.sh ubuntu:24.04 dist
+          cp install.sh dist/install.sh
           {
             echo "linux-x86_64 compiler \`avant\`."
             echo
-            echo "Built by the ${AVANT_SEED_VERSION} seed. This asset bundles \`myc-llvm\` beside \`avant\`, so no environment is needed to compile."
-            echo "The bundled backend is safepoints ${SAFEPOINTS_VERSION} \`myc-llvm-linux-x86_64.tar.gz\`."
-            echo "https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
-            echo "sha256 ${MYC_LLVM_SHA256}"
-            echo "Needs the source tree (\`runtime/\`, \`cc\`), LLVM 20, libpcre2, and re2c to compile programs."
-            echo "A string literal at \`re_compile\` is compiled with re2c. A computed pattern uses PCRE2."
+            echo "Install: \`curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash\` (or extract this archive and put its directory on PATH)."
+            echo
+            echo "Built by the ${AVANT_SEED_VERSION} seed. The archive carries \`avant\`, its \`myc-llvm\` backend (safepoints ${SAFEPOINTS_VERSION}, LLVM linked in), \`re2c\`, the \`avant-bind\` helper, the standard library, and the runtime (PCRE2 and zlib inside)."
+            echo "Compiling a program needs a C compiler and the C library development files (Debian/Ubuntu: gcc libc6-dev; Fedora: gcc glibc-devel), and glibc at or above the \`glibc-floor\` below. \`avant bind\` also needs libclang 20."
             echo "This asset can be the next compiler pin after it is published. It is not the oracle."
             echo
-            cat dist/versions.txt
+            cat dist/avant-linux-x86_64/versions.txt
             echo
             echo '```'
             cat dist/avant-linux-x86_64.tar.gz.sha256
@@ -187,11 +187,13 @@ jobs:
             gh release upload "${TAG_NAME}" \
               dist/avant-linux-x86_64.tar.gz \
               dist/avant-linux-x86_64.tar.gz.sha256 \
+              dist/install.sh \
               --clobber
           else
             gh release create "${TAG_NAME}" \
               dist/avant-linux-x86_64.tar.gz \
               dist/avant-linux-x86_64.tar.gz.sha256 \
+              dist/install.sh \
               --title "${TAG_NAME}" \
               --notes-file dist/notes.md \
               --draft \

@@ -101,3 +101,13 @@ jobs:
         run: |
           set -euo pipefail
           ./bin/avant-from-seed test
+
+      # The release layout, installed by install.sh into a clean container
+      # (only gcc and libc6-dev; no LLVM, PCRE2, zlib headers, or re2c) and
+      # smoke-tested outside any checkout (D147). Needs the static backend
+      # (safepoints v0.6.0 or later): a dynamic myc-llvm fails here.
+      - name: Install the release layout in a clean container
+        run: |
+          set -euo pipefail
+          sh tools/package.sh /tmp/dist bin/avant-from-seed /tmp/myc-llvm-linux-x86_64/myc-llvm bin/re2c
+          sh tools/container-test.sh ubuntu:24.04 /tmp/dist

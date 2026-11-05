@@ -67,6 +67,57 @@ else
   } > "$dir/versions.txt"
 fi
 
+# The glibc floor (D152): the highest GLIBC_ symbol version the shipped
+# binaries need, and that a program linked from the shipped runtime needs
+# (an object records no symbol versions; its references bind where the
+# user links). The program uses every runtime object: the core and each
+# std module. It is compiled by the packaged compiler outside the checkout,
+# so this is also a first self-test of the archive.
+floor_dir=$(mktemp -d "${TMPDIR:-/tmp}/avant-floor-XXXXXX")
+trap 'rm -rf "$floor_dir"' EXIT
+cat > "$floor_dir/all.av" <<'EOF_AV'
+import std.json
+import std.regex
+import std.zlib
+import std.base64
+import std.http
+
+fn main {
+  if doc = Json.parse("{\"n\": 1}") {
+    puts(doc.int("n") ?? 0)
+  }
+  if re = Regex.compile("a+") {
+    puts(re.count("aa"))
+  }
+  p = "b"
+  if re2 = Regex.compile(p + "+") {
+    puts(re2.count("bb"))
+  }
+  if back = "z".bytes.compress.uncompress {
+    puts(back.size)
+  }
+  puts("a".bytes.to_base64)
+  if server = Http.listen(0) {
+    server.close
+  }
+  h = spawn {
+    1
+  }
+  puts(h.join)
+}
+EOF_AV
+( cd "$floor_dir" && env -i HOME="$floor_dir" PATH=/usr/bin:/bin TMPDIR="$floor_dir" \
+    "$dir/avant" compile all.av all --release < /dev/null > compile.log 2>&1 ) || {
+  cat "$floor_dir/compile.log" >&2
+  fail "the packaged compiler could not compile the glibc-floor program"
+}
+floor=$(for f in "$dir/avant" "$dir/myc-llvm" "$dir/avant-bind" "$floor_dir/all"; do
+  objdump -T "$f" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' || true
+done | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
+[ -n "$floor" ] || fail "could not measure the glibc floor"
+echo "glibc-floor: $floor" >> "$dir/versions.txt"
+echo "package: glibc floor $floor"
+
 # Reproducible archive metadata: sorted names, fixed owner and mode bits.
 tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner -czf "$out/$name.tar.gz" "$name"
 ( cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )

@@ -1,9 +1,10 @@
 #!/bin/sh
 # Out-of-checkout smoke test of a release tarball (Wave D, D147, D148).
 #
-#   sh tools/smoke.sh TARBALL
+#   sh tools/smoke.sh TARBALL | INSTALL_DIR
 #
-# Extracts TARBALL into a temporary prefix and, from a temporary project
+# Extracts TARBALL into a temporary prefix (or uses INSTALL_DIR, an
+# installed release such as ~/.avant, in place) and, from a temporary project
 # directory with an empty environment (only HOME, PATH=/usr/bin:/bin, and
 # TMPDIR, all inside the work directory), compiles and runs programs that
 # use every std module, runs `avant test` on a small project, and runs
@@ -15,12 +16,12 @@
 set -u
 
 if [ "$#" -ne 1 ]; then
-  echo "usage: sh tools/smoke.sh TARBALL" >&2
+  echo "usage: sh tools/smoke.sh TARBALL | INSTALL_DIR" >&2
   exit 2
 fi
 tarball=$1
-if [ ! -f "$tarball" ]; then
-  echo "smoke: no such tarball: $tarball" >&2
+if [ ! -e "$tarball" ]; then
+  echo "smoke: no such tarball or directory: $tarball" >&2
   exit 2
 fi
 
@@ -35,14 +36,20 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-mkdir -p "$work/prefix" "$work/proj" "$work/home" "$work/tmp" "$work/logs"
-tar -C "$work/prefix" -xzf "$tarball" || { echo "smoke: cannot extract $tarball" >&2; exit 1; }
-avant="$work/prefix/avant-linux-x86_64/avant"
+mkdir -p "$work/proj" "$work/home" "$work/tmp" "$work/logs"
+if [ -d "$tarball" ]; then
+  inst=$(CDPATH= cd -- "$tarball" && pwd)
+else
+  mkdir -p "$work/prefix"
+  tar -C "$work/prefix" -xzf "$tarball" || { echo "smoke: cannot extract $tarball" >&2; exit 1; }
+  inst="$work/prefix/avant-linux-x86_64"
+fi
+avant="$inst/avant"
 if [ ! -x "$avant" ]; then
-  echo "smoke: the tarball has no avant-linux-x86_64/avant" >&2
+  echo "smoke: no avant in $inst" >&2
   exit 1
 fi
-before=$(cd "$work/prefix" && find . -printf '%p %s %T@\n' | sort)
+before=$(cd "$inst" && find . -printf '%p %s %T@\n' | sort)
 
 passed=0
 failed=0
@@ -100,7 +107,7 @@ EOF
 expect run-hello "hello from avant" "$avant" run hello.av
 
 # Started through PATH, as an install is used: argv[0] has no directory.
-expect path-hello "hello from avant" env PATH="$work/prefix/avant-linux-x86_64:/usr/bin:/bin" avant run hello.av
+expect path-hello "hello from avant" env PATH="$inst:/usr/bin:/bin" avant run hello.av
 
 if run compile-hello "$avant" compile hello.av hello; then
   expect exec-hello "hello from avant" ./hello
@@ -252,7 +259,7 @@ else
   fail avant-test "exit status $?"
 fi
 
-helper="$work/prefix/avant-linux-x86_64/avant-bind"
+helper="$inst/avant-bind"
 if [ -x "$helper" ] && ! ldd "$helper" 2>&1 | grep -q "not found"; then
   src add.h <<'EOF'
 int add(int a, int b);
@@ -266,7 +273,7 @@ EOF
   else
     fail avant-bind "exit status $?"
   fi
-  if run path-bind env PATH="$work/prefix/avant-linux-x86_64:/usr/bin:/bin" avant bind add.h; then
+  if run path-bind env PATH="$inst:/usr/bin:/bin" avant bind add.h; then
     if grep -q "add" "$work/logs/path-bind.log"; then
       pass path-bind
     else
@@ -279,7 +286,7 @@ else
   echo "skip avant-bind (the helper's libraries are not all present)"
 fi
 
-after=$(cd "$work/prefix" && find . -printf '%p %s %T@\n' | sort)
+after=$(cd "$inst" && find . -printf '%p %s %T@\n' | sort)
 if [ "$before" = "$after" ]; then
   pass install-untouched
 else
