@@ -40,10 +40,7 @@ fn ut_sh(body: String, rc_path: String): Int {
   if w != 0 {
     return 1
   }
-  chmod_args: Array(String) = []
-  chmod_args.push("+x")
-  chmod_args.push(script)
-  dummy = process_run("/bin/chmod", chmod_args)
+  chmod_x(script)
   sh_args: Array(String) = []
   sh_args.push(script)
   dummy_sh = process_run("/bin/sh", sh_args)
@@ -67,6 +64,21 @@ fn ut_sh(body: String, rc_path: String): Int {
     }
   }
   1
+}
+
+fn ut_index(hay: String, needle: String): Int {
+  if needle.size == 0 || needle.size > hay.size {
+    return -1
+  }
+  last = hay.size - needle.size
+  i = 0
+  while i <= last {
+    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+      return i
+    }
+    i = i + 1
+  }
+  -1
 }
 
 fn ut_read_ms(path: String): Int {
@@ -96,13 +108,10 @@ fn test_user_test(c: Checks) {
     compiler = compiler_abs("user_test", compiler)
     stamp = now_ms()
     root = "${scratch()}/user_test-user-${stamp}"
-    mkdir_args: Array(String) = []
-    mkdir_args.push("-p")
-    mkdir_args.push("${root}/proj/tests")
-    mkdir_args.push("${root}/proj/std")
-    mkdir_args.push("${root}/empty")
-    mkdir_args.push("${root}/fetch")
-    dummy_mk = process_run("/bin/mkdir", mkdir_args)
+    mkdir_p("${root}/proj/tests")
+    mkdir_p("${root}/proj/std")
+    mkdir_p("${root}/empty")
+    mkdir_p("${root}/fetch")
 
     status_body = "fn main: Int {\n  7\n}\n"
     dummy_st = file_write("${root}/status.av", status_body)
@@ -208,20 +217,14 @@ fn test_user_test(c: Checks) {
 
     both_body = "[package]\nname = \"both\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nentry = \"main.av\"\n"
     dummy_both = file_write("${root}/both.toml", both_body)
-    mkdir_both: Array(String) = []
-    mkdir_both.push("-p")
-    mkdir_both.push("${root}/both")
-    dummy_both_mk = process_run("/bin/mkdir", mkdir_both)
+    mkdir_p("${root}/both")
     dummy_both_w = file_write("${root}/both/avant.toml", both_body)
     both_rc = "${root}/both.rc"
     both_sh = "#!/bin/sh\ncd ${ut_quote(root)}/both && ${ut_quote(compiler)} test > ${ut_quote(root)}/both.log 2>&1; echo $? > ${ut_quote(both_rc)}\n"
     c.eq_int(ut_sh(both_sh, both_rc), 1, "dir and entry together are an error")
 
     clock = "${root}/clock"
-    mkdir_clock: Array(String) = []
-    mkdir_clock.push("-p")
-    mkdir_clock.push("${clock}/tests")
-    dummy_clock = process_run("/bin/mkdir", mkdir_clock)
+    mkdir_p("${clock}/tests")
     dummy_clock_toml = file_write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
     piece = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = env_get(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    nap()\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish\n}\n"
     left = ut_fill(piece, clock)
@@ -258,6 +261,38 @@ fn test_user_test(c: Checks) {
     }
     right_hi = re
     c.expect(ms >= left_hi && ms >= right_hi, "exclusive file does not overlap other files")
+
+    // [test] first (D136): with one job, the listed file compiles and runs
+    // before the next file compiles (no phase barrier), so its ok line
+    // comes before the broken file's FAIL line, though it sorts after it.
+    order = "${root}/order"
+    mkdir_p("${order}/tests")
+    dummy_order_toml = file_write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
+    dummy_oa = file_write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
+    dummy_oz = file_write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"z\")\n  t.finish\n}\n")
+    order_rc = "${root}/order.rc"
+    order_sh = "#!/bin/sh\ncd ${ut_quote(order)} && ${ut_quote(compiler)} test --jobs 1 > ${ut_quote(root)}/order.log 2>&1; echo $? > ${ut_quote(order_rc)}\n"
+    c.eq_int(ut_sh(order_sh, order_rc), 1, "first fixture fails on its broken file")
+    order_text = ""
+    if ot = file_read("${root}/order.log") {
+      order_text = ot
+    }
+    zi = ut_index(order_text, "ok tests/test_z.av")
+    ai = ut_index(order_text, "FAIL tests/test_a.av")
+    c.expect(zi >= 0 && ai > zi, "a first file runs before a later file compiles")
+
+    nofirst = "${root}/nofirst"
+    mkdir_p("${nofirst}/tests")
+    dummy_nf_toml = file_write("${nofirst}/avant.toml", "[package]\nname = \"nofirst\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_gone.av\"]\n")
+    dummy_nf = file_write("${nofirst}/tests/test_here.av", "fn main: Int {\n  0\n}\n")
+    nf_rc = "${root}/nofirst.rc"
+    nf_sh = "#!/bin/sh\ncd ${ut_quote(nofirst)} && ${ut_quote(compiler)} test > ${ut_quote(root)}/nofirst.log 2>&1; echo $? > ${ut_quote(nf_rc)}\n"
+    c.eq_int(ut_sh(nf_sh, nf_rc), 1, "a first path that is not a test is an error")
+    nf_text = ""
+    if nt = file_read("${root}/nofirst.log") {
+      nf_text = nt
+    }
+    c.expect(ut_has(nf_text, "first path is not a selected test"), "first error names the path rule")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

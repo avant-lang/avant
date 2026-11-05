@@ -52,9 +52,8 @@ static char *cstr_dup(const char *s) {
  * this before anything can start the pool or the HTTP server, so
  * scanning here records the override in time, and removing the flag
  * from the array means the program's own argv() never sees it. Both
- * spellings are one implementation; the flag wins over AVANT_THREADS;
- * scanning stops at a literal "--". A malformed value dies loudly,
- * in the AVANT_THREADS diagnostic style. */
+ * spellings are one implementation; scanning stops at a literal "--".
+ * A malformed value dies loudly. */
 static void scan_threads_flag(void) {
   int32_t i;
   int32_t w = 1;
@@ -246,10 +245,27 @@ static char **build_argv(const char *path, void *args) {
   return argv;
 }
 
-/* In the forked child: optional stdout+stderr file; a job (D131) also gets
- * its own process group, /dev/null stdin, and default signal dispositions,
- * so the runner can stop the whole job and a job never reads the terminal. */
-static void child_exec(const char *path, char **argv, const char *out_path, int job) {
+static void child_redirect(const char *file, int fd_a, int fd_b) {
+  int fd = open(file, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if (fd < 0) {
+    _exit(127);
+  }
+  if (dup2(fd, fd_a) < 0) {
+    _exit(127);
+  }
+  if (fd_b >= 0 && dup2(fd, fd_b) < 0) {
+    _exit(127);
+  }
+  if (fd > STDERR_FILENO) {
+    close(fd);
+  }
+}
+
+/* In the forked child: optional stdout file, and stderr to err_path when
+ * given, else to the stdout file; a job (D131) also gets its own process
+ * group, /dev/null stdin, and default signal dispositions, so the runner
+ * can stop the whole job and a job never reads the terminal. */
+static void child_exec(const char *path, char **argv, const char *out_path, const char *err_path, int job) {
   if (job) {
     int devnull;
     setpgid(0, 0);
@@ -264,20 +280,13 @@ static void child_exec(const char *path, char **argv, const char *out_path, int 
       }
     }
   }
-  if (out_path && out_path[0]) {
-    int fd = open(out_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd < 0) {
-      _exit(127);
+  if (err_path && err_path[0]) {
+    if (out_path && out_path[0]) {
+      child_redirect(out_path, STDOUT_FILENO, -1);
     }
-    if (dup2(fd, STDOUT_FILENO) < 0) {
-      _exit(127);
-    }
-    if (dup2(fd, STDERR_FILENO) < 0) {
-      _exit(127);
-    }
-    if (fd > STDERR_FILENO) {
-      close(fd);
-    }
+    child_redirect(err_path, STDERR_FILENO, -1);
+  } else if (out_path && out_path[0]) {
+    child_redirect(out_path, STDOUT_FILENO, STDERR_FILENO);
   }
   execv(path, argv);
   _exit(127);
@@ -302,7 +311,7 @@ static volatile pid_t g_jobs[JOB_MAX];
 static volatile int32_t g_njobs;
 static int32_t g_job_status;
 
-static int32_t run_child(const char *path, void *args, const char *out_path) {
+static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path) {
   char **argv;
   pid_t pid;
   int st = 0;
@@ -321,7 +330,7 @@ static int32_t run_child(const char *path, void *args, const char *out_path) {
     return 1;
   }
   if (pid == 0) {
-    child_exec(path, argv, out_path, 0);
+    child_exec(path, argv, out_path, err_path, 0);
   }
   free_argv(argv);
   g_wait_child = pid;
@@ -356,7 +365,7 @@ int32_t avant_job_start(const char *path, void *args, const char *out_path) {
     return -1;
   }
   if (pid == 0) {
-    child_exec(path, argv, out_path, 1);
+    child_exec(path, argv, out_path, NULL, 1);
   }
   free_argv(argv);
   setpgid(pid, pid);
@@ -399,11 +408,167 @@ int32_t avant_job_status(void) {
 }
 
 int32_t avant_process_run(const char *path, void *args) {
-  return run_child(path, args, NULL);
+  return run_child(path, args, NULL, NULL);
 }
 
 int32_t avant_process_run_out(const char *path, void *args, const char *out_path) {
-  return run_child(path, args, out_path);
+  return run_child(path, args, out_path, NULL);
+}
+
+/* A blocking run with stdout and stderr in separate files (D140): what
+ * std.testing's run_golden and rejects and bind's output split asked of
+ * sh. Like process_run, it forwards a signal to its child. Internal. */
+int32_t avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path) {
+  return run_child(path, args, out_path, err_path);
+}
+
+/* Internal file helpers (D140), bound with lib/fun, no prelude name
+ * (D132): the runner, the harness, std.testing, and the compiler use them
+ * instead of starting /bin/rm, chmod, mkdir, or sh -c pwd. Each returns 0
+ * on success, 1 otherwise. */
+
+/* rm -f: 0 when the path is gone, including when it never existed. */
+int32_t avant_fs_unlink(const char *path) {
+  if (!path || !path[0]) {
+    return 0;
+  }
+  if (unlink(path) == 0 || errno == ENOENT) {
+    return 0;
+  }
+  return 1;
+}
+
+/* chmod +x for the usual case: execute wherever read is granted, so the
+ * umask that shaped the read bits shapes the execute bits too. */
+int32_t avant_fs_chmod_x(const char *path) {
+  struct stat st;
+  mode_t add = 0;
+  if (!path || stat(path, &st) != 0) {
+    return 1;
+  }
+  if (st.st_mode & S_IRUSR) {
+    add |= S_IXUSR;
+  }
+  if (st.st_mode & S_IRGRP) {
+    add |= S_IXGRP;
+  }
+  if (st.st_mode & S_IROTH) {
+    add |= S_IXOTH;
+  }
+  return chmod(path, (st.st_mode & 07777) | add) == 0 ? 0 : 1;
+}
+
+/* mkdir -p, mode 0777 under the umask. */
+int32_t avant_fs_mkdir_p(const char *path) {
+  char buf[4096];
+  size_t n;
+  size_t i;
+  struct stat st;
+  if (!path || !path[0]) {
+    return 1;
+  }
+  n = strlen(path);
+  if (n >= sizeof buf) {
+    return 1;
+  }
+  memcpy(buf, path, n + 1);
+  for (i = 1; i <= n; i++) {
+    if (buf[i] == '/' || buf[i] == 0) {
+      char keep = buf[i];
+      buf[i] = 0;
+      if (mkdir(buf, 0777) != 0 && errno != EEXIST) {
+        return 1;
+      }
+      buf[i] = keep;
+    }
+  }
+  return stat(path, &st) == 0 && S_ISDIR(st.st_mode) ? 0 : 1;
+}
+
+/* cp: copies src to dst byte for byte, with src's permission bits, through
+ * a temporary beside dst renamed into place, so dst is never half
+ * written (D138: a gate keeps the fixed point's next compiler). It uses
+ * stdio, not read()/write(): an Avant program's own fn read or fn write is
+ * a global symbol of the same name and would replace libc's for every
+ * caller in the process. */
+int32_t avant_fs_copy(const char *src, const char *dst) {
+  char tmp[4096];
+  char buf[65536];
+  struct stat st;
+  FILE *in;
+  FILE *out;
+  size_t n;
+  int bad = 0;
+  if (!src || !dst || snprintf(tmp, sizeof tmp, "%s.part-%ld", dst, (long)getpid()) >= (int)sizeof tmp) {
+    return 1;
+  }
+  if (stat(src, &st) != 0) {
+    return 1;
+  }
+  in = fopen(src, "rb");
+  if (!in) {
+    return 1;
+  }
+  out = fopen(tmp, "wb");
+  if (!out) {
+    fclose(in);
+    return 1;
+  }
+  while ((n = fread(buf, 1, sizeof buf, in)) > 0) {
+    if (fwrite(buf, 1, n, out) != n) {
+      bad = 1;
+      break;
+    }
+  }
+  if (ferror(in)) {
+    bad = 1;
+  }
+  fclose(in);
+  if (fclose(out) != 0) {
+    bad = 1;
+  }
+  if (bad || chmod(tmp, st.st_mode & 07777) != 0 || rename(tmp, dst) != 0) {
+    unlink(tmp);
+    return 1;
+  }
+  return 0;
+}
+
+/* The identity of a file for the safepoint probe cache (D139): device,
+ * inode, size, and change time to the nanosecond, or "" when it cannot be
+ * read. Replacing or rewriting the file changes it. */
+char *avant_file_identity(const char *path) {
+  struct stat st;
+  char buf[160];
+  int n;
+  if (!path || stat(path, &st) != 0) {
+    return dup_bytes("", 0);
+  }
+  n = snprintf(buf, sizeof buf, "%llu:%llu:%lld:%lld.%09ld", (unsigned long long)st.st_dev, (unsigned long long)st.st_ino, (long long)st.st_size, (long long)st.st_ctim.tv_sec, (long)st.st_ctim.tv_nsec);
+  if (n < 0 || (size_t)n >= sizeof buf) {
+    return dup_bytes("", 0);
+  }
+  return dup_bytes(buf, (size_t)n);
+}
+
+/* Sets an environment variable for this process and the children it
+ * starts. Internal plumbing (the probe cache, D139), no prelude name. */
+void avant_env_set(const char *name, const char *value) {
+  if (name && name[0] && value) {
+    setenv(name, value, 1);
+  }
+}
+
+/* pwd -P: the physical working directory, or "." when it cannot be read. */
+char *avant_fs_cwd(void) {
+  char *cwd = getcwd(NULL, 0);
+  char *out;
+  if (!cwd) {
+    return dup_bytes(".", 1);
+  }
+  out = dup_bytes(cwd, strlen(cwd));
+  free(cwd);
+  return out;
 }
 
 char *avant_env_get(const char *name, int32_t *ok) {
@@ -588,6 +753,32 @@ static void tmp_empty_dir(int fd, int depth) {
       }
     }
   }
+}
+
+/* rm -rf (D140): a file or a symbolic link is unlinked; a directory is
+ * emptied depth-first without following links, then removed. 0 when the
+ * path is gone. */
+int32_t avant_fs_remove_tree(const char *path) {
+  int fd;
+  if (!path || !path[0]) {
+    return 0;
+  }
+  if (unlink(path) == 0 || errno == ENOENT) {
+    return 0;
+  }
+  if (errno != EISDIR && errno != EPERM) {
+    return 1;
+  }
+  fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd < 0) {
+    return 1;
+  }
+  tmp_empty_dir(fd, 0);
+  close(fd);
+  if (rmdir(path) == 0 || errno == ENOENT) {
+    return 0;
+  }
+  return 1;
 }
 
 /* A child that outlives this process's own work (a job's shell writing its

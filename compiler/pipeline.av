@@ -46,6 +46,44 @@ lib scratch_rt {
   fun avant_tmp_keep
 }
 
+// File and process helpers in runtime/avant_io.c (D140): no /bin/rm,
+// chmod, mkdir, or sh -c pwd. Internal; no prelude name (D132).
+lib fs_rt {
+  fun avant_fs_unlink(path: String): Int
+  fun avant_fs_remove_tree(path: String): Int
+  fun avant_fs_chmod_x(path: String): Int
+  fun avant_fs_mkdir_p(path: String): Int
+  fun avant_fs_cwd: String
+  fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+  fun avant_file_identity(path: String): String
+  fun avant_env_set(name: String, value: String)
+}
+
+// rm -f
+pub fn fs_unlink(path: String): Int {
+  fs_rt.avant_fs_unlink(path)
+}
+
+// rm -rf
+pub fn fs_remove_tree(path: String): Int {
+  fs_rt.avant_fs_remove_tree(path)
+}
+
+// chmod +x
+pub fn fs_chmod_x(path: String): Int {
+  fs_rt.avant_fs_chmod_x(path)
+}
+
+// mkdir -p
+pub fn fs_mkdir_p(path: String): Int {
+  fs_rt.avant_fs_mkdir_p(path)
+}
+
+// Runs path with args and waits; stdout to out, stderr to err.
+pub fn process_run_split(path: String, args: Array(String), out: String, err: String): Int {
+  fs_rt.avant_process_run_split(path, args, out, err)
+}
+
 // The process's private scratch directory (D127). Every temporary the
 // compiler writes lives in it; it is removed at exit, and children nest
 // inside it through TMPDIR.
@@ -175,6 +213,31 @@ pub fn drop_av_suffix(path: String): String {
   base
 }
 
+// The checkout the compiler runs from, or "" when it is not in one (a
+// release install): AVANT_ROOT, else the parent of the compiler's bin/
+// when it holds runtime/build/avant_rt.o, else the current directory when
+// it does.
+pub fn avant_checkout_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  args = argv()
+  if args.size > 0 {
+    dir = path_dirname(args[0])
+    base = path_basename(dir)
+    if str_eq(base, "bin") {
+      parent = path_dirname(dir)
+      if file_exists("${parent}/runtime/build/avant_rt.o") {
+        return parent
+      }
+    }
+  }
+  if file_exists("runtime/build/avant_rt.o") {
+    return "."
+  }
+  ""
+}
+
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
@@ -226,6 +289,52 @@ pub fn myc_accepts_safepoints(path: String): Bool {
   false
 }
 
+// The probe cache key for the backend at path (D139): its device, inode,
+// size, and nanosecond change time, then the path; "" when unreadable.
+pub fn myc_probe_key(path: String): String {
+  id = fs_rt.avant_file_identity(path)
+  if id.size == 0 {
+    return ""
+  }
+  "${id}:${path}"
+}
+
+// Whether the backend at path accepts the safepoint flags, probed once per
+// run (D139). A process that probes successfully exports AVANT_MYC_PROBED
+// (internal) with the key; a child whose chosen backend has the same key
+// skips the probe, and any other path or identity is probed again.
+pub fn myc_safepoints_ok(path: String): Bool {
+  key = myc_probe_key(path)
+  if key.size > 0 {
+    if have = env_get("AVANT_MYC_PROBED") {
+      if str_eq(have, key) {
+        return true
+      }
+    }
+  }
+  if myc_accepts_safepoints(path) {
+    if key.size > 0 {
+      fs_rt.avant_env_set("AVANT_MYC_PROBED", key)
+    }
+    return true
+  }
+  false
+}
+
+// avant test probes once before its jobs (D139), quietly: a missing or
+// refused backend is reported by the compiles that need it.
+pub fn myc_probe_once {
+  cands = myc_llvm_candidates()
+  i = 0
+  while i < cands.size {
+    if file_exists(cands[i]) {
+      dummy = myc_safepoints_ok(cands[i])
+      return
+    }
+    i = i + 1
+  }
+}
+
 pub fn myc_llvm_candidates: Array(String) {
   out: Array(String) = []
   if path_env = env_get("PATH") {
@@ -259,7 +368,7 @@ pub fn myc_llvm_path: String {
   while i < cands.size {
     cand = cands[i]
     if file_exists(cand) {
-      if myc_accepts_safepoints(cand) {
+      if myc_safepoints_ok(cand) {
         return cand
       }
       diag_puts("myc-llvm at ${cand} does not accept the safepoints GC flags; refusing to build GC-unsafe code (tried ${cand})")
@@ -479,18 +588,7 @@ pub fn compile_av_paths(paths: Array(String), cov_map: String): IrBox {
 
 // The physical working directory, or "." when it cannot be read.
 pub fn cwd_physical: String {
-  log = "${tmp_new_dir()}/cwd.txt"
-  args: Array(String) = []
-  args.push("-c")
-  args.push("pwd -P")
-  dummy = process_run_out("/bin/sh", args, log)
-  if text = file_read(log) {
-    t = text.strip()
-    if t.size > 0 {
-      return t
-    }
-  }
-  "."
+  fs_rt.avant_fs_cwd()
 }
 
 // The coverage map default for a binary written to out (D129): beside

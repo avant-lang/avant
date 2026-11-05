@@ -52,8 +52,52 @@ fn test_bind(c: Checks) {
     root = avant_test_root()
     stamp = now_ms()
     none: Array(String) = []
-    stale_w = file_write("${root}/bin/avant-bind.src", "stale")
-    c.eq_int(stale_w, 0, "stale stamp is written")
+    // Where the helper comes from (D135, D141): a build product, found in
+    // runtime/build/ inside a checkout and beside the compiler otherwise.
+    // Each layout runs from a directory outside any checkout.
+    abs_compiler = compiler_abs("bind", compiler)
+    here = cwd_here()
+    real_helper = "${here}/runtime/build/avant-bind"
+    abs_h = "${here}/examples/c/add.h"
+    lay = scratch_dir()
+    mkdir_p("${lay}/rel")
+    dummy_rc = copy_file(abs_compiler, "${lay}/rel/avant")
+    dummy_rh = copy_file(real_helper, "${lay}/rel/avant-bind")
+    mkdir_p("${lay}/co/bin")
+    mkdir_p("${lay}/co/runtime/build")
+    dummy_cc = copy_file(abs_compiler, "${lay}/co/bin/avant")
+    dummy_co = file_write("${lay}/co/runtime/build/avant_rt.o", "")
+    dummy_ch = copy_file(real_helper, "${lay}/co/runtime/build/avant-bind")
+    dummy_stale = file_write("${lay}/co/bin/avant-bind", "#!/bin/sh\necho STALE\nexit 3\n")
+    chmod_x("${lay}/co/bin/avant-bind")
+    mkdir_p("${lay}/none")
+    dummy_nc = copy_file(abs_compiler, "${lay}/none/avant")
+    lay_runs: Array(String) = []
+    lay_runs.push("${lay}/rel/avant")
+    lay_runs.push("${lay}/co/bin/avant")
+    lay_runs.push("${lay}/none/avant")
+    lay_codes: Array(Int) = []
+    lay_texts: Array(String) = []
+    k = 0
+    while k < lay_runs.size {
+      la: Array(String) = []
+      la.push("-u")
+      la.push("AVANT_ROOT")
+      la.push("-C")
+      la.push(lay)
+      la.push(lay_runs[k])
+      la.push("bind")
+      la.push(abs_h)
+      la_log = "${lay}/run-${k}.log"
+      lay_codes.push(process_run_out("/usr/bin/env", la, la_log))
+      lay_texts.push(read(la_log))
+      k = k + 1
+    }
+    c.expect(lay_codes[0] == 0 && str_has(lay_texts[0], "lib add {"), "a release layout finds avant-bind beside the compiler")
+    c.expect(lay_codes[1] == 0 && str_has(lay_texts[1], "lib add {"), "a checkout uses runtime/build/avant-bind")
+    c.expect(!str_has(lay_texts[1], "STALE"), "a checkout ignores an old avant-bind beside the compiler")
+    c.expect(lay_codes[2] != 0, "bind without the helper fails")
+    c.expect(str_has(lay_texts[2], "avant-bind not found") && str_has(lay_texts[2], "runtime/build.sh"), "bind without the helper says how to build it")
 
     add_h = "${root}/examples/c/add.h"
     add_log = "${scratch()}/bind-${stamp}-add.log"

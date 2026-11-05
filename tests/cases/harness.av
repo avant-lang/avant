@@ -75,6 +75,66 @@ pub fn count_lines(s: String): Int {
 lib harness_rt {
   fun avant_tmp_dir: String
   fun avant_tmp_new_dir: String
+  fun avant_fs_unlink(path: String): Int
+  fun avant_fs_remove_tree(path: String): Int
+  fun avant_fs_chmod_x(path: String): Int
+  fun avant_fs_mkdir_p(path: String): Int
+  fun avant_fs_cwd: String
+  fun avant_file_identity(path: String): String
+  fun avant_fs_copy(src: String, dst: String): Int
+  fun avant_job_start(path: String, args: Array(String), out: String): Int
+  fun avant_job_wait: Int
+  fun avant_job_status: Int
+}
+
+// One command for run_jobs: path and args, stdout and stderr to log.
+pub class HJob {
+  path: String = ""
+  args: Array(String)
+  log: String = ""
+  pid: Int = 0
+  code: Int = 127
+
+  fn initialize(path: String, args: Array(String), log: String) {
+    self.path = path
+    self.args = args
+    self.log = log
+    self.pid = 0
+    self.code = 127
+  }
+}
+
+// Starts every job at once on the runtime job interface (D131, D138) and
+// waits for all of them; each job's code is its exit status (127 when it
+// could not start, 128+n for a signal).
+pub fn run_jobs(jobs: Array(HJob)) {
+  running = 0
+  i = 0
+  while i < jobs.size {
+    j = jobs[i]
+    j.pid = harness_rt.avant_job_start(j.path, j.args, j.log)
+    if j.pid > 0 {
+      running = running + 1
+    } else {
+      j.code = 127
+    }
+    i = i + 1
+  }
+  while running > 0 {
+    got = harness_rt.avant_job_wait()
+    if got < 0 {
+      break
+    }
+    st = harness_rt.avant_job_status()
+    k = 0
+    while k < jobs.size {
+      if jobs[k].pid == got {
+        jobs[k].code = st
+      }
+      k = k + 1
+    }
+    running = running - 1
+  }
 }
 
 // The process's private scratch directory (D127): created on first use,
@@ -327,11 +387,31 @@ pub fn empty_strs: Array(String) {
   a
 }
 
+// chmod +x, rm -f, rm -rf, mkdir -p, and pwd -P without starting a tool
+// (D140); runtime/avant_io.c.
 pub fn chmod_x(path: String) {
-  args: Array(String) = []
-  args.push("+x")
-  args.push(path)
-  dummy = process_run("/bin/chmod", args)
+  dummy = harness_rt.avant_fs_chmod_x(path)
+}
+
+pub fn rm_f(path: String) {
+  dummy = harness_rt.avant_fs_unlink(path)
+}
+
+pub fn rm_rf(path: String) {
+  dummy = harness_rt.avant_fs_remove_tree(path)
+}
+
+// The safepoint probe cache key the compiler uses for a backend (D139).
+pub fn myc_probe_key(path: String): String {
+  "${harness_rt.avant_file_identity(path)}:${path}"
+}
+
+pub fn copy_file(src: String, dst: String): Int {
+  harness_rt.avant_fs_copy(src, dst)
+}
+
+pub fn cwd_here: String {
+  harness_rt.avant_fs_cwd()
 }
 
 pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
@@ -379,31 +459,24 @@ pub fn dump_av(compiler: String, src: String, log: String): Int {
   process_run_out(compiler, args, log)
 }
 
-pub fn dump_lex(dumper: String, flag: String, src: String, log: String): Int {
+// A hidden front-end dump (D137): flag is --tokens, --ast, or --check.
+pub fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args: Array(String) = []
-  if flag.size > 0 {
-    args.push(flag)
-  }
+  args.push("dump")
+  args.push(flag)
   args.push(src)
-  process_run_out(dumper, args, log)
+  process_run_out(compiler, args, log)
 }
 
 pub fn compiler_abs(tag: String, path: String): String {
   if path.size > 0 && path[0] == 47 {
     return path
   }
-  log = "${scratch()}/${tag}-compiler-abs-${now_us()}.txt"
-  args: Array(String) = []
-  args.push("-c")
-  args.push("pwd -P")
-  dummy = process_run_out("/bin/sh", args, log)
-  if text = file_read(log) {
-    cwd = text.strip()
-    if cwd.size > 0 {
-      return "${cwd}/${path}"
-    }
+  here = cwd_here()
+  if str_eq(here, ".") {
+    return path
   }
-  path
+  "${here}/${path}"
 }
 
 pub fn run_av_bin(bin: String, log: String): Int {
@@ -455,10 +528,7 @@ pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
 }
 
 pub fn mkdir_p(path: String) {
-  args: Array(String) = []
-  args.push("-p")
-  args.push(path)
-  dummy = process_run("/bin/mkdir", args)
+  dummy = harness_rt.avant_fs_mkdir_p(path)
 }
 
 pub fn write_av(dir: String, name: String, body: String) {

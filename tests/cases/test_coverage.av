@@ -63,10 +63,7 @@ fn test_coverage(c: Checks) {
     rel_cwd = scratch_dir()
     rel_dir = "covrel-coverage-${stamp}"
     rel_src = "${rel_dir}/sample.av"
-    mkdir_rel: Array(String) = []
-    mkdir_rel.push("-p")
-    mkdir_rel.push("${rel_cwd}/${rel_dir}")
-    dummy_rel = process_run("/bin/mkdir", mkdir_rel)
+    mkdir_p("${rel_cwd}/${rel_dir}")
     rel_w = file_write("${rel_cwd}/${rel_src}", body)
     c.eq_int(rel_w, 0, "write relative coverage fixture")
     rel_bin = "${scratch()}/coverage-${stamp}-covrel.bin"
@@ -105,10 +102,7 @@ fn test_coverage(c: Checks) {
     }
 
     jdir = "${scratch()}/coverage-${stamp}-jcases"
-    mkdir_args: Array(String) = []
-    mkdir_args.push("-p")
-    mkdir_args.push(jdir)
-    dummy_mkdir = process_run("/bin/mkdir", mkdir_args)
+    mkdir_p(jdir)
     jcase = "${jdir}/test_ok.av"
     jbody = "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"ok\")\n  t.finish\n}\n"
     jw = file_write(jcase, jbody)
@@ -171,10 +165,7 @@ fn test_coverage(c: Checks) {
 
     repo = compiler_abs("covrepo", ".")
     miss_root = "${scratch()}/coverage-${stamp}-noroot"
-    miss_mkdir: Array(String) = []
-    miss_mkdir.push("-p")
-    miss_mkdir.push(miss_root)
-    dummy_miss = process_run("/bin/mkdir", miss_mkdir)
+    mkdir_p(miss_root)
     miss_src = "${scratch()}/coverage-${stamp}-stdimp.av"
     miss_w = file_write(miss_src, "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"x\")\n  t.finish\n}\n")
     c.eq_int(miss_w, 0, "write std import")
@@ -229,11 +220,8 @@ fn test_coverage(c: Checks) {
     c.eq_int(walk_code, 0, "std walks up from the compiler")
 
     proj = "${scratch()}/coverage-${stamp}-proj"
-    proj_mkdir: Array(String) = []
-    proj_mkdir.push("-p")
-    proj_mkdir.push("${proj}/src")
-    proj_mkdir.push("${proj}/tests")
-    dummy_proj = process_run("/bin/mkdir", proj_mkdir)
+    mkdir_p("${proj}/src")
+    mkdir_p("${proj}/tests")
     toml_w = file_write("${proj}/avant.toml", "[package]\nname = \"covproj\"\nversion = \"0.0.1\"\n\n[coverage]\ninclude = [\"src\"]\nexclude = [\"tests\"]\n")
     c.eq_int(toml_w, 0, "write coverage manifest")
     greet_w = file_write("${proj}/src/greet.av", "pub fn greet: Int {\n  1\n}\npub fn other: Int {\n  2\n}\n")
@@ -306,10 +294,7 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "project lcov")
     }
-    rm_lcov: Array(String) = []
-    rm_lcov.push("-rf")
-    rm_lcov.push("${proj}/coverage")
-    dummy_rm = process_run("/bin/rm", rm_lcov)
+    rm_rf("${proj}/coverage")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

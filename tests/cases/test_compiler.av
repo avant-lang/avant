@@ -14,6 +14,38 @@ fn test_compiler(c: Checks) {
     c.expect(false, "process_run_out capture")
   }
 
+  // The file helpers that replaced /bin/mkdir, chmod, rm, and sh -c pwd
+  // (D140).
+  fs = scratch_dir()
+  mkdir_p("${fs}/a/b/c")
+  c.expect(file_exists("${fs}/a/b/c"), "mkdir_p makes nested directories")
+  script = "${fs}/a/run.sh"
+  dummy_script = file_write(script, "#!/bin/sh\nexit 3\n")
+  chmod_x(script)
+  c.eq_int(process_run(script, empty_strs()), 3, "chmod_x makes a file executable")
+  rm_f(script)
+  rm_f(script)
+  c.expect(!file_exists(script), "rm_f removes a file and ignores a missing one")
+  keep = "${fs}/keep.txt"
+  dummy_keep = file_write(keep, "kept")
+  ln_args: Array(String) = []
+  ln_args.push("-s")
+  ln_args.push(keep)
+  ln_args.push("${fs}/a/b/link")
+  dummy_ln = process_run("/bin/ln", ln_args)
+  rm_rf("${fs}/a")
+  c.expect(!file_exists("${fs}/a"), "rm_rf removes a tree")
+  c.expect(file_exists(keep), "rm_rf does not follow a symbolic link")
+  pwd_out = "${fs}/pwd.txt"
+  pwd_args: Array(String) = []
+  pwd_args.push("-P")
+  dummy_pwd = process_run_out("/bin/pwd", pwd_args, pwd_out)
+  pwd_text = ""
+  if pt = file_read(pwd_out) {
+    pwd_text = pt.strip()
+  }
+  c.eq_str(cwd_here(), pwd_text, "cwd_here is the physical working directory")
+
   if compiler = env_get("AVANT_COMPILER") {
     c.expect(file_exists(compiler), "AVANT_COMPILER exists")
 

@@ -58,3 +58,25 @@ compile "$us/loop.c" "$root/build/us_loop.o"
 compile "$us/socket.c" "$root/build/us_socket.o"
 compile "$us/udp.c" "$root/build/us_udp.o"
 compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
+
+# The bind helper (D135, D141): tools/bind.c against libclang, into
+# runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;
+# the release ships it beside avant. Without llvm-config or libclang it is
+# skipped with a notice, and `avant bind` says how to build it.
+llvm_config=${LLVM_CONFIG:-llvm-config}
+bind_src="$root/../tools/bind.c"
+bind_out="$root/build/avant-bind"
+if command -v "$llvm_config" > /dev/null 2>&1 && [ -f "$bind_src" ]; then
+  llvm_cflags=$("$llvm_config" --cflags)
+  llvm_libdir=$("$llvm_config" --libdir)
+  # shellcheck disable=SC2086
+  if "$cc" -O2 -std=c11 $llvm_cflags "$bind_src" -o "$bind_out.part" -L"$llvm_libdir" -lclang -Wl,-rpath,"$llvm_libdir"; then
+    mv "$bind_out.part" "$bind_out"
+  else
+    rm -f "$bind_out.part" "$bind_out"
+    echo "runtime/build.sh: skipped avant-bind: libclang did not link (avant bind will not work)" >&2
+  fi
+else
+  rm -f "$bind_out"
+  echo "runtime/build.sh: skipped avant-bind: $llvm_config not found (avant bind needs llvm-config and libclang)" >&2
+fi

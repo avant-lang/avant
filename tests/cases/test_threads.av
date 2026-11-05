@@ -50,6 +50,7 @@ fn test_threads(c: Checks) {
     c.eq_int(code, 0, "compile threads fixture")
 
     // No flag: argv passes through, count is the machine default (>0).
+    default_count = ""
     log1 = "${scratch()}/threads-${stamp}.run1"
     a1: Array(String) = []
     a1.push("alpha")
@@ -60,6 +61,7 @@ fn test_threads(c: Checks) {
       c.expect(lines.size >= 2, "plain run prints two lines")
       if lines.size >= 2 {
         c.expect(lines[1].size > 0 && lines[1] != "0", "default chosen count is positive")
+        default_count = lines[1]
       }
       // argv[0] is the binary path; the program arg survives.
       c.expect(has_sub(out1, "alpha"), "program arg survives without flag")
@@ -96,7 +98,7 @@ fn test_threads(c: Checks) {
       c.expect(false, "read equals flag run")
     }
 
-    // Precedence (Q125-A): flag wins over the environment fallback.
+    // The flag is used when AVANT_THREADS is set too.
     log4 = "${scratch()}/threads-${stamp}.run4"
     a4: Array(String) = []
     a4.push("--threads")
@@ -104,21 +106,26 @@ fn test_threads(c: Checks) {
     rc4 = run_env_args(bin, "AVANT_THREADS", "7", a4, log4)
     c.eq_int(rc4, 0, "precedence run exits")
     if out4 = file_read(log4) {
-      c.expect(has_sub(out4, "\n2\n"), "flag wins over AVANT_THREADS")
+      c.expect(has_sub(out4, "\n2\n"), "flag is used with AVANT_THREADS set")
     } else {
       c.expect(false, "read precedence run")
     }
 
-    // Environment alone still works for one release (deprecated).
+    // AVANT_THREADS is removed (Q125-A): it is not read, so the count
+    // stays the machine default and a malformed value is no error.
     log5 = "${scratch()}/threads-${stamp}.run5"
     a5: Array(String) = []
     rc5 = run_env_args(bin, "AVANT_THREADS", "6", a5, log5)
     c.eq_int(rc5, 0, "env run exits")
     if out5 = file_read(log5) {
-      c.expect(has_sub(out5, "\n6\n"), "AVANT_THREADS fallback still honored")
+      lines5 = out5.split("\n")
+      c.expect(lines5.size >= 2 && default_count.size > 0 && lines5[1] == default_count, "AVANT_THREADS is ignored")
     } else {
       c.expect(false, "read env run")
     }
+    log5b = "${scratch()}/threads-${stamp}.run5b"
+    rc5b = run_env_args(bin, "AVANT_THREADS", "abc", a5, log5b)
+    c.eq_int(rc5b, 0, "a malformed AVANT_THREADS is ignored")
 
     // Malformed values die loudly (nonzero exit).
     log6 = "${scratch()}/threads-${stamp}.run6"

@@ -38,25 +38,6 @@ fn mkdir_p(path: String) {
   dummy = process_run("/bin/mkdir", args)
 }
 
-fn chmod_x(path: String) {
-  args: Array(String) = []
-  args.push("+x")
-  args.push(path)
-  dummy = process_run("/bin/chmod", args)
-}
-
-fn compile_av(compiler: String, src: String, bin: String, log: String): Int {
-  args: Array(String) = []
-  args.push("compile")
-  args.push(src)
-  args.push(bin)
-  // Same as harness compile_av: bare compile selects myc default, which
-  // takes minutes on a compiler-sized program. The dumper's front-end
-  // output does not depend on the codegen mode.
-  args.push("--debug")
-  process_run_out(compiler, args, log)
-}
-
 fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
@@ -64,13 +45,14 @@ fn dump_av(compiler: String, src: String, log: String): Int {
   process_run_out(compiler, args, log)
 }
 
-fn dump_lex(dumper: String, flag: String, src: String, log: String): Int {
+// A hidden front-end dump of the compiler under test (D137): flag is
+// --tokens, --ast, or --check.
+fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args: Array(String) = []
-  if flag.size > 0 {
-    args.push(flag)
-  }
+  args.push("dump")
+  args.push(flag)
   args.push(src)
-  process_run_out(dumper, args, log)
+  process_run_out(compiler, args, log)
 }
 
 fn bless_fail(msg: String) {
@@ -78,8 +60,8 @@ fn bless_fail(msg: String) {
   puts(msg)
 }
 
-fn bless_layer(dumper: String, flag: String, src: String, dest: String, tag: String): Bool {
-  code = dump_lex(dumper, flag, src, dest)
+fn bless_layer(compiler: String, flag: String, src: String, dest: String, tag: String): Bool {
+  code = dump_layer(compiler, flag, src, dest)
   if code != 0 {
     bless_fail("dump ${tag} exited ${code}")
     if err = file_read(dest) {
@@ -110,18 +92,33 @@ fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
   false
 }
 
-fn bless_all(dumper: String, compiler: String, root: String, src_rel: String, stem: String): Bool {
+// A program that imports has no --check golden (D142).
+fn bless_imports(compiler: String, root: String, src_rel: String, stem: String): Bool {
   src = "${root}/${src_rel}"
   base = "${root}/tests/goldens/${stem}"
-  if bless_layer(dumper, "", src, "${base}.tok", "${stem}.tok") {
+  if bless_layer(compiler, "--tokens", src, "${base}.tok", "${stem}.tok") {
   } else {
     return false
   }
-  if bless_layer(dumper, "--ast", src, "${base}.ast", "${stem}.ast") {
+  if bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast") {
   } else {
     return false
   }
-  if bless_layer(dumper, "--check", src, "${base}.check", "${stem}.check") {
+  bless_myc(compiler, src, "${base}.myc", "${stem}.myc")
+}
+
+fn bless_all(compiler: String, root: String, src_rel: String, stem: String): Bool {
+  src = "${root}/${src_rel}"
+  base = "${root}/tests/goldens/${stem}"
+  if bless_layer(compiler, "--tokens", src, "${base}.tok", "${stem}.tok") {
+  } else {
+    return false
+  }
+  if bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast") {
+  } else {
+    return false
+  }
+  if bless_layer(compiler, "--check", src, "${base}.check", "${stem}.check") {
   } else {
     return false
   }
@@ -141,184 +138,164 @@ fn main {
     mkdir_p("${root}/tests/goldens/overloading")
     mkdir_p("${root}/tests/goldens/modules")
     mkdir_p("${root}/tests/goldens/macros")
-    stamp = now_ms()
-    dumper = "${scratch()}/${stamp}-lex-dump"
-    dlog = "${scratch()}/${stamp}-lex-dump.log"
-    dcode = compile_av(compiler, "${root}/compiler/lex_dump.av", dumper, dlog)
-    if dcode != 0 {
-      bless_fail("compile lex_dump failed (${dcode})")
-      if err = file_read(dlog) {
-        puts(err)
-      }
-      return
-    }
-    if file_exists(dumper) {
-    } else {
-      bless_fail("lex_dump bin missing")
-      if err = file_read(dlog) {
-        puts(err)
-      }
-      return
-    }
-    chmod_x(dumper)
     ok = true
-    if bless_all(dumper, compiler, root, "examples/hello.av", "examples/hello") {
+    if bless_all(compiler, root, "examples/hello.av", "examples/hello") {
     } else { ok = false }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/fact.av", "examples/fact") {
+      if bless_all(compiler, root, "examples/fact.av", "examples/fact") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/vec2.av", "examples/vec2") {
+      if bless_all(compiler, root, "examples/vec2.av", "examples/vec2") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/sieve.av", "examples/sieve") {
+      if bless_all(compiler, root, "examples/sieve.av", "examples/sieve") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/methods.av", "examples/methods") {
+      if bless_all(compiler, root, "examples/methods.av", "examples/methods") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/trees.av", "examples/trees") {
+      if bless_all(compiler, root, "examples/trees.av", "examples/trees") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/binarytrees.av", "examples/binarytrees") {
+      if bless_all(compiler, root, "examples/binarytrees.av", "examples/binarytrees") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/switch.av", "examples/switch") {
+      if bless_all(compiler, root, "examples/switch.av", "examples/switch") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/defaults.av", "examples/defaults") {
+      if bless_all(compiler, root, "examples/defaults.av", "examples/defaults") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/sqrt.av", "examples/sqrt") {
+      if bless_all(compiler, root, "examples/sqrt.av", "examples/sqrt") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/zlib.av", "examples/zlib") {
+      if bless_all(compiler, root, "examples/zlib.av", "examples/zlib") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/add.av", "examples/add") {
+      if bless_all(compiler, root, "examples/add.av", "examples/add") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/errors.av", "examples/errors") {
+      if bless_all(compiler, root, "examples/errors.av", "examples/errors") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/collect.av", "examples/collect") {
+      if bless_all(compiler, root, "examples/collect.av", "examples/collect") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/json.av", "examples/json") {
+      if bless_imports(compiler, root, "examples/json.av", "examples/json") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/http.av", "examples/http") {
+      if bless_imports(compiler, root, "examples/http.av", "examples/http") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/spawn.av", "examples/spawn") {
+      if bless_all(compiler, root, "examples/spawn.av", "examples/spawn") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "examples/matmul.av", "examples/matmul") {
+      if bless_all(compiler, root, "examples/matmul.av", "examples/matmul") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/chr.av", "part3/chr") {
+      if bless_all(compiler, root, "tests/fixtures/part3/chr.av", "part3/chr") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/slice.av", "part3/slice") {
+      if bless_all(compiler, root, "tests/fixtures/part3/slice.av", "part3/slice") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/index.av", "part3/index") {
+      if bless_all(compiler, root, "tests/fixtures/part3/index.av", "part3/index") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/buf.av", "part3/buf") {
+      if bless_all(compiler, root, "tests/fixtures/part3/buf.av", "part3/buf") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/conv.av", "part3/conv") {
+      if bless_all(compiler, root, "tests/fixtures/part3/conv.av", "part3/conv") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/exists.av", "part3/exists") {
+      if bless_all(compiler, root, "tests/fixtures/part3/exists.av", "part3/exists") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/argv.av", "part3/argv") {
+      if bless_all(compiler, root, "tests/fixtures/part3/argv.av", "part3/argv") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/env.av", "part3/env") {
+      if bless_all(compiler, root, "tests/fixtures/part3/env.av", "part3/env") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/interp.av", "part3/interp") {
+      if bless_all(compiler, root, "tests/fixtures/part3/interp.av", "part3/interp") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/pop.av", "part3/pop") {
+      if bless_all(compiler, root, "tests/fixtures/part3/pop.av", "part3/pop") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/part3/run.av", "part3/run") {
+      if bless_all(compiler, root, "tests/fixtures/part3/run.av", "part3/run") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/overloading/defaults.av", "overloading/defaults") {
+      if bless_all(compiler, root, "tests/fixtures/overloading/defaults.av", "overloading/defaults") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/overloading/overload.av", "overloading/overload") {
+      if bless_all(compiler, root, "tests/fixtures/overloading/overload.av", "overloading/overload") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/overloading/operator.av", "overloading/operator") {
+      if bless_all(compiler, root, "tests/fixtures/overloading/operator.av", "overloading/operator") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/overloading/generic.av", "overloading/generic") {
+      if bless_all(compiler, root, "tests/fixtures/overloading/generic.av", "overloading/generic") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/macros/quote_fn.av", "macros/quote_fn") {
+      if bless_all(compiler, root, "tests/fixtures/macros/quote_fn.av", "macros/quote_fn") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/macros/splice_name.av", "macros/splice_name") {
+      if bless_all(compiler, root, "tests/fixtures/macros/splice_name.av", "macros/splice_name") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/macros/hygiene.av", "macros/hygiene") {
+      if bless_all(compiler, root, "tests/fixtures/macros/hygiene.av", "macros/hygiene") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/macros/fields.av", "macros/fields") {
+      if bless_all(compiler, root, "tests/fixtures/macros/fields.av", "macros/fields") {
       } else { ok = false }
     }
     if ok {
-      if bless_all(dumper, compiler, root, "tests/fixtures/macros/method.av", "macros/method") {
+      if bless_all(compiler, root, "tests/fixtures/macros/method.av", "macros/method") {
       } else { ok = false }
     }
     if ok {
       modules_src = "${root}/tests/fixtures/modules/main.av"
       modules_golden = "${root}/tests/goldens/modules/main"
-      if bless_layer(dumper, "", modules_src, "${modules_golden}.tok", "modules/main.tok") {
+      if bless_layer(compiler, "--tokens", modules_src, "${modules_golden}.tok", "modules/main.tok") {
       } else { ok = false }
       if ok {
-        if bless_layer(dumper, "--ast", modules_src, "${modules_golden}.ast", "modules/main.ast") {
+        if bless_layer(compiler, "--ast", modules_src, "${modules_golden}.ast", "modules/main.ast") {
         } else { ok = false }
       }
       if ok {

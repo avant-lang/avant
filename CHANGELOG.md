@@ -1,5 +1,21 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* `[test] first` in `avant.toml`: the listed test files start before the others, in the listed order.
+
+### Changed
+
+* `avant bind` works in a release install: the `bind` helper (`avant-bind`) ships beside `avant`, and in a checkout `sh runtime/build.sh` builds it into `runtime/build/`. Before, the command built the helper on first use into `bin/` (two files in the repository) and failed in a release install with `bind source is missing`.
+* `avant test` starts a file's run as soon as that file has compiled, instead of after every file has compiled, and a free job slot takes a waiting run before a waiting compile.
+
+### Removed
+
+* `AVANT_THREADS`, deprecated in 0.31.0: the thread count is `--threads N` on the program's command line, else the number of online processors. The variable is no longer read.
+* `compiler/lex_dump.av`. Its token, AST, and checked-tree dumps are now hidden `avant dump --tokens`, `--ast`, and `--check` modes, so the golden tests use the compiler under test instead of building a second compiler.
+
 ## 0.32.0 - 2026-11-05
 
 ### Added
