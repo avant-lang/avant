@@ -12,6 +12,7 @@ import expand
 import checker
 import typed_ir
 import codegen.myc
+import codegen.types
 import re2c_pat
 
 pub class IrBox {
@@ -37,6 +38,34 @@ pub class IrBox {
 lib posix {
   fun write(fd: Int, buf: String, count: Int): Int
   fun exit(code: Int)
+}
+
+lib scratch_rt {
+  fun avant_tmp_dir: String
+  fun avant_tmp_new_dir: String
+  fun avant_tmp_keep
+}
+
+// The process's private scratch directory (D127). Every temporary the
+// compiler writes lives in it; it is removed at exit, and children nest
+// inside it through TMPDIR.
+pub fn tmp_dir: String {
+  scratch_rt.avant_tmp_dir()
+}
+
+// A fresh, created directory inside tmp_dir, for a group of files that
+// must not collide with another group in the same process.
+pub fn tmp_new_dir: String {
+  scratch_rt.avant_tmp_new_dir()
+}
+
+pub fn tmp_path(name: String): String {
+  "${tmp_dir()}/${name}"
+}
+
+// --keep-tmp: keep this process's scratch directory and every nested one.
+pub fn tmp_keep {
+  scratch_rt.avant_tmp_keep()
 }
 
 pub fn diag_puts(s: String) {
@@ -173,9 +202,9 @@ pub fn myc_probe_ir: String {
 }
 
 pub fn myc_accepts_safepoints(path: String): Bool {
-  stamp = now_ms()
-  ir_path = "/tmp/avant-myc-probe-${stamp}.myc"
-  out_path = "/tmp/avant-myc-probe-${stamp}.log"
+  dir = tmp_new_dir()
+  ir_path = "${dir}/probe.myc"
+  out_path = "${dir}/probe.log"
   w = file_write(ir_path, myc_probe_ir())
   if w != 0 {
     return false
@@ -324,6 +353,12 @@ pub fn compile_source(src: Source): IrBox {
 }
 
 pub fn compile_program(src: Source, program: Program): IrBox {
+  compile_program(src, program, "")
+}
+
+// cov_map is the coverage slot map's default path (D129); empty means
+// the scratch directory, for a program that runs inside this process.
+pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   expander = Expander.new(src, program)
   dummy_e = expander.expand
   if e = expander.err {
@@ -345,7 +380,11 @@ pub fn compile_program(src: Source, program: Program): IrBox {
       program.re2c_obj = obj
     }
   }
-  ir = emit_myc(program, checker.symbol_table())
+  map = cov_map
+  if map.size == 0 && coverage_wanted() {
+    map = tmp_path("coverage.map")
+  }
+  ir = emit_myc(program, checker.symbol_table(), map)
   box = IrBox.new(ir, true)
   box.re2c_obj = program.re2c_obj
   box.quiet_leaves = program.quiet_leaves
@@ -400,6 +439,10 @@ pub fn attach_std_link(box: IrBox, job: LinkJob) {
 }
 
 pub fn compile_av_path(path: String): IrBox {
+  compile_av_path(path, "")
+}
+
+pub fn compile_av_path(path: String, cov_map: String): IrBox {
   loader = Loader.new()
   if program = loader.load_root(path) {
     if e = loader.err {
@@ -410,7 +453,7 @@ pub fn compile_av_path(path: String): IrBox {
     if text = file_read(path) {
       src = Source.new(path, text)
     }
-    return compile_program(src, program)
+    return compile_program(src, program, cov_map)
   }
   if e = loader.err {
     diag_bag(loader.errors)
@@ -419,6 +462,10 @@ pub fn compile_av_path(path: String): IrBox {
 }
 
 pub fn compile_av_paths(paths: Array(String)): IrBox {
+  compile_av_paths(paths, "")
+}
+
+pub fn compile_av_paths(paths: Array(String), cov_map: String): IrBox {
   if paths.size == 0 {
     diag_puts("compile needs a .av file")
     return IrBox.new("", false)
@@ -427,7 +474,35 @@ pub fn compile_av_paths(paths: Array(String)): IrBox {
     diag_puts("compile takes one root .av (use import)")
     return IrBox.new("", false)
   }
-  compile_av_path(paths[0])
+  compile_av_path(paths[0], cov_map)
+}
+
+// The physical working directory, or "." when it cannot be read.
+pub fn cwd_physical: String {
+  log = "${tmp_new_dir()}/cwd.txt"
+  args: Array(String) = []
+  args.push("-c")
+  args.push("pwd -P")
+  dummy = process_run_out("/bin/sh", args, log)
+  if text = file_read(log) {
+    t = text.strip()
+    if t.size > 0 {
+      return t
+    }
+  }
+  "."
+}
+
+// The coverage map default for a binary written to out (D129): beside
+// it, absolute, since the program opens it from wherever it runs.
+pub fn coverage_map_beside(out: String): String {
+  if coverage_wanted() {
+    if out.size > 0 && out[0] == 47 {
+      return "${out}.covmap"
+    }
+    return "${cwd_physical()}/${out}.covmap"
+  }
+  ""
 }
 
 pub fn print_ir(ir: String) {
@@ -477,8 +552,7 @@ pub fn re2c_bin: String {
 }
 
 pub fn compile_re2c(src: String): String {
-  stamp = now_ms()
-  base = "/tmp/avant-re2c-${stamp}"
+  base = "${tmp_new_dir()}/re2c"
   re_path = "${base}.re"
   c_path = "${base}.c"
   log_path = "${base}.log"
@@ -524,13 +598,12 @@ pub fn compile_c_file(path: String): String {
     diag_puts("C source is missing: ${path}")
     return ""
   }
-  dir = path_dirname(path)
   base = path_basename(path)
   name = base
   if str_ends(base, ".c") {
     name = str_slice(base, 0, base.size - 2)
   }
-  obj = "${dir}/${name}.o"
+  obj = "${tmp_new_dir()}/${name}.o"
   args: Array(String) = []
   args.push("-c")
   args.push("-O2")
@@ -750,28 +823,10 @@ pub fn myc_mode(codegen: String): String {
   "debug"
 }
 
-fn myc_tmp_tag(out_path: String): String {
-  src = out_path
-  if src.size == 0 {
-    src = "${now_us()}"
-  }
-  b = buf_new()
-  i = 0
-  while i < src.size {
-    c = src[i]
-    if c == 47 {
-      b.push_byte(95)
-    } else {
-      b.push_byte(c)
-    }
-    i = i + 1
-  }
-  b.to_s
-}
-
 pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_flags: Array(String), out_path: String, quiet: String, codegen: String, capture: Bool): Int {
-  tag = myc_tmp_tag(out_path)
-  ir_path = "/tmp/avant-av-${tag}.myc"
+  // myc-llvm writes its object beside its input, so both stay here.
+  work = tmp_new_dir()
+  ir_path = "${work}/main.myc"
   w = file_write(ir_path, ir)
   if w != 0 {
     diag_puts("cannot write ${ir_path}")
@@ -821,7 +876,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   }
   if file_exists("/usr/bin/env") {
     if capture {
-      log = "/tmp/avant-av-${tag}.log"
+      log = "${work}/myc.log"
       code = process_run_out("/usr/bin/env", args, log)
       if code != 0 {
         if text = file_read(log) {

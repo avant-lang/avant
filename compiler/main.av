@@ -62,6 +62,42 @@ pub fn show_usage {
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
+  puts("--keep-tmp keeps the private temporary directory of compile, run, test, fetch, or bind and prints its path.")
+}
+
+// --keep-tmp (D127) may sit anywhere before a literal --. It is taken out
+// here, so no command's own parser sees it.
+fn take_keep_tmp(args: Array(String)): Array(String) {
+  rest: Array(String) = []
+  program = false
+  i = 0
+  while i < args.size {
+    a = args[i]
+    if program {
+      rest.push(a)
+    } else if str_eq(a, "--") {
+      program = true
+      rest.push(a)
+    } else if str_eq(a, "--keep-tmp") {
+      tmp_keep()
+    } else {
+      rest.push(a)
+    }
+    i = i + 1
+  }
+  rest
+}
+
+// The commands that spawn children create the scratch directory first
+// (Q138), so TMPDIR is exported before any child runs.
+fn spawns_children(command: String): Bool {
+  if str_eq(command, "run") || str_eq(command, "r") || str_eq(command, "test") || str_eq(command, "t") {
+    return true
+  }
+  if str_eq(command, "compile") || str_eq(command, "c") || str_eq(command, "fetch") || str_eq(command, "bind") || str_eq(command, "b") {
+    return true
+  }
+  str_ends(command, ".av")
 }
 
 pub fn driver_format(args: Array(String)) {
@@ -170,7 +206,7 @@ pub fn driver_run(args: Array(String)) {
     }
     attach_std_link(box, job)
     if split.has_dash {
-      out = "/tmp/avant-run-${now_ms()}.bin"
+      out = tmp_path("run.bin")
       code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
       if code != 0 {
         diag_puts("myc-llvm failed (${code})")
@@ -217,7 +253,7 @@ pub fn driver_compile(args: Array(String)) {
     diag_exit(1)
   }
   job.codegen = verb_codegen(job.codegen, "compile")
-  box = compile_av_paths(split.paths)
+  box = compile_av_paths(split.paths, coverage_map_beside(out_path))
   if box.ok {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
@@ -325,12 +361,15 @@ pub fn driver_fetch(args: Array(String)) {
 }
 
 fn main {
-  args = argv_user()
+  args = take_keep_tmp(argv_user())
   if args.size == 0 {
     show_usage()
     return
   }
   command = args[0]
+  if spawns_children(command) {
+    dummy_tmp = tmp_dir()
+  }
   if str_eq(command, "-h") {
     show_usage()
     return

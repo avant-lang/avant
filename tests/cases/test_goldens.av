@@ -52,14 +52,14 @@ fn expect_file(c: Checks, got_path: String, want_path: String, msg: String, root
 }
 
 fn dump_layer(c: Checks, dumper: String, flag: String, src: String, golden: String, stamp: Int, key: String, root: String) {
-  out = "/tmp/avant-goldens-${stamp}-${key}.out"
+  out = "${scratch()}/goldens-${stamp}-${key}.out"
   code = dump_lex(dumper, flag, src, out)
   c.eq_int(code, 0, "dump ${key}")
   expect_file(c, out, golden, key, root)
 }
 
 fn dump_myc(c: Checks, compiler: String, src: String, golden: String, stamp: Int, key: String, root: String) {
-  out = "/tmp/avant-goldens-${stamp}-${key}.out"
+  out = "${scratch()}/goldens-${stamp}-${key}.out"
   code = dump_av(compiler, src, out)
   c.eq_int(code, 0, "dump ${key}")
   expect_file(c, out, golden, key, root)
@@ -79,8 +79,8 @@ fn test_goldens(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
-    dumper = "/tmp/avant-goldens-${stamp}-lex-dump"
-    dlog = "/tmp/avant-goldens-${stamp}-lex-dump.log"
+    dumper = "${scratch()}/goldens-${stamp}-lex-dump"
+    dlog = "${scratch()}/goldens-${stamp}-lex-dump.log"
     dcode = compile_av(compiler, "${root}/compiler/lex_dump.av", dumper, dlog)
     c.eq_int(dcode, 0, "compile lex_dump")
     if file_exists(dumper) {

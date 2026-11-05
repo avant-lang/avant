@@ -106,10 +106,10 @@ fn bind_run_tool(cmd: String, args: Array(String), log: String): Int {
 }
 
 fn bind_compile_bin(src: String, bin: String): String {
-  stamp = now_ms()
-  cflags_log = "/tmp/avant-bind-${stamp}-cflags"
-  libdir_log = "/tmp/avant-bind-${stamp}-libdir"
-  cc_log = "/tmp/avant-bind-${stamp}-cc"
+  work = tmp_new_dir()
+  cflags_log = "${work}/cflags.log"
+  libdir_log = "${work}/libdir.log"
+  cc_log = "${work}/cc.log"
   tool = bind_llvm_config()
   cargs: Array(String) = []
   cargs.push("--cflags")
@@ -211,9 +211,9 @@ pub fn bind_generate(lib_name: String, header: String): BindResult {
     return BindResult.new(false, "", ensured)
   }
   bin = "${root}/bin/avant-bind"
-  stamp = now_ms()
-  out_path = "/tmp/avant-bind-${stamp}.out"
-  err_path = "/tmp/avant-bind-${stamp}.err"
+  work = tmp_new_dir()
+  out_path = "${work}/bind.out"
+  err_path = "${work}/bind.err"
   code = bind_split(bin, lib_name, header, out_path, err_path)
   out_txt = bind_read(out_path)
   err_txt = bind_read(err_path)

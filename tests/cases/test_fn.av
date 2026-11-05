@@ -351,11 +351,11 @@ fn test_fn(c: Checks) {
   c.eq_int(nil_f(nil), 0, "nilable lambda nil")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "/tmp/avant-fn-${stamp}.av"
-    bin = "/tmp/avant-fn-${stamp}"
-    clog = "/tmp/avant-fn-${stamp}-compile.log"
-    rlog = "/tmp/avant-fn-${stamp}-run.log"
-    slog = "/tmp/avant-fn-${stamp}-stats.log"
+    src = "${scratch()}/fn-${stamp}.av"
+    bin = "${scratch()}/fn-${stamp}"
+    clog = "${scratch()}/fn-${stamp}-compile.log"
+    rlog = "${scratch()}/fn-${stamp}-run.log"
+    slog = "${scratch()}/fn-${stamp}-stats.log"
     body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nclass Hold {\n  f: fn(): String\n  g: fn(Int): Int\n  fn initialize {\n  }\n}\nstruct Inner {\n  f: fn(): String\n}\nclass Nest {\n  inner: Inner\n  fn initialize {\n  }\n}\nfn ident(n: Int): Int {\n  n + 1\n}\nfn main {\n  h = Hold.new()\n  s = \"ke\" + \"pt\"\n  h.f = { || s }\n  h.g = ident\n  arr: Array(fn(): String) = []\n  arr.push({ || s })\n  nest = Nest.new()\n  nest.inner = Inner { f: { || s } }\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts((h.f)())\n  puts((arr[0])())\n  puts((h.g)(41))\n  puts((nest.inner.f)())\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write nursery fn")
@@ -395,8 +395,8 @@ fn test_fn(c: Checks) {
         c.expect(false, err)
       }
     }
-    each_src = "/tmp/avant-fn-${stamp}-each.av"
-    each_log = "/tmp/avant-fn-${stamp}-each.log"
+    each_src = "${scratch()}/fn-${stamp}-each.av"
+    each_log = "${scratch()}/fn-${stamp}-each.log"
     each_body = "fn main {\n  xs = [1, 2, 3]\n  sum = 0\n  xs.each { |i| sum = sum + i }\n  puts(sum)\n}\n"
     dummy = file_write(each_src, each_body)
     d1 = dump_av(compiler, each_src, each_log)
@@ -406,8 +406,8 @@ fn test_fn(c: Checks) {
     } else {
       c.expect(false, "read each dump")
     }
-    lam_src = "/tmp/avant-fn-${stamp}-lam.av"
-    lam_log = "/tmp/avant-fn-${stamp}-lam.log"
+    lam_src = "${scratch()}/fn-${stamp}-lam.av"
+    lam_log = "${scratch()}/fn-${stamp}-lam.log"
     lam_body = "fn main {\n  n = 1\n  f: fn(): Int = { || n }\n  puts(f())\n}\n"
     dummy2 = file_write(lam_src, lam_body)
     d2 = dump_av(compiler, lam_src, lam_log)

@@ -21,7 +21,7 @@
  * members are roots for the young generation. AVANT_FLAG_PINNED is the
  * C-escape seam: pinned objects are not moved and are young-GC roots.
  * The full invariant list and knob table live in
- * avant-ledgers/stages/collector.md.
+ * avant-ledgers/archive/stages/collector.md.
  */
 
 #define AVANT_TYPE_BYTES 0
@@ -332,6 +332,12 @@ int32_t avant_process_run_out(const char *path, void *args, const char *out_path
 char *avant_env_get(const char *name, int32_t *ok);
 int32_t avant_file_exists(const char *path);
 void *avant_dir_list(const char *path);
+char *avant_tmp_dir(void);
+char *avant_tmp_new_dir(void);
+void avant_tmp_keep(void);
+int32_t avant_job_start(const char *path, void *args, const char *out_path);
+int32_t avant_job_wait(void);
+int32_t avant_job_status(void);
 
 void avant_cov_init(const char *map_path);
 void avant_cov_hit(int32_t slot);

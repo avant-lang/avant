@@ -1,10 +1,10 @@
 import harness
 
 fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
-  src = "/tmp/avant-safety-waveb-${stamp}-${tag}.av"
-  bin = "/tmp/avant-safety-waveb-${stamp}-${tag}.bin"
-  clog = "/tmp/avant-safety-waveb-${stamp}-${tag}.clog"
-  rlog = "/tmp/avant-safety-waveb-${stamp}-${tag}.rlog"
+  src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
+  bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
+  clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
+  rlog = "${scratch()}/safety-waveb-${stamp}-${tag}.rlog"
   dummy = file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
@@ -125,9 +125,9 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "overflow-u64", "fn main {\n  x = 18446744073709551615u64\n  y = 1u64\n  puts(x + y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "div-overflow", "fn main {\n  x = 0 - 2147483647 - 1\n  y = 0 - 1\n  puts(x / y)\n}\n", "integer overflow")
 
-    bad_src = "/tmp/avant-safety-waveb-${stamp}-unknown.av"
-    bad_bin = "/tmp/avant-safety-waveb-${stamp}-unknown.bin"
-    bad_log = "/tmp/avant-safety-waveb-${stamp}-unknown.log"
+    bad_src = "${scratch()}/safety-waveb-${stamp}-unknown.av"
+    bad_bin = "${scratch()}/safety-waveb-${stamp}-unknown.bin"
+    bad_log = "${scratch()}/safety-waveb-${stamp}-unknown.log"
     dummy_b = file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
     code_b = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
@@ -137,19 +137,19 @@ fn test_safety(c: Checks) {
     } else {
       c.expect(false, "unknown-fn diagnostic")
     }
-    run_log = "/tmp/avant-safety-waveb-${stamp}-unknown-run.log"
+    run_log = "${scratch()}/safety-waveb-${stamp}-unknown-run.log"
     code_r = run_av_cmd(compiler, bad_src, run_log)
     c.expect(code_r != 0, "unknown-fn run exits non-zero")
 
-    hi_src = "/tmp/avant-safety-waveb-${stamp}-hi.av"
+    hi_src = "${scratch()}/safety-waveb-${stamp}-hi.av"
     dummy_h = file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
-    dbg_bin = "/tmp/avant-safety-waveb-${stamp}-hi-dbg.bin"
-    dbg_log = "/tmp/avant-safety-waveb-${stamp}-hi-dbg.log"
+    dbg_bin = "${scratch()}/safety-waveb-${stamp}-hi-dbg.bin"
+    dbg_log = "${scratch()}/safety-waveb-${stamp}-hi-dbg.log"
     dbg_flags: Array(String) = []
     dbg_flags.push("--debug")
     code_d = compile_av_flags(compiler, hi_src, dbg_bin, dbg_log, dbg_flags)
     c.expect(code_d == 0, "--debug compile exits zero")
-    out_d = "/tmp/avant-safety-waveb-${stamp}-hi-dbg.out"
+    out_d = "${scratch()}/safety-waveb-${stamp}-hi-dbg.out"
     code_dr = run_av_bin(dbg_bin, out_d)
     c.expect(code_dr == 0, "--debug binary runs")
     if text = file_read(out_d) {
@@ -157,17 +157,17 @@ fn test_safety(c: Checks) {
     } else {
       c.expect(false, "--debug binary output")
     }
-    rel_bin = "/tmp/avant-safety-waveb-${stamp}-hi-rel.bin"
-    rel_log = "/tmp/avant-safety-waveb-${stamp}-hi-rel.log"
+    rel_bin = "${scratch()}/safety-waveb-${stamp}-hi-rel.bin"
+    rel_log = "${scratch()}/safety-waveb-${stamp}-hi-rel.log"
     rel_flags: Array(String) = []
     rel_flags.push("--release")
     code_e = compile_av_flags(compiler, hi_src, rel_bin, rel_log, rel_flags)
     c.expect(code_e == 0, "--release compile exits zero")
-    out_e = "/tmp/avant-safety-waveb-${stamp}-hi-rel.out"
+    out_e = "${scratch()}/safety-waveb-${stamp}-hi-rel.out"
     code_er = run_av_bin(rel_bin, out_e)
     c.expect(code_er == 0, "--release binary runs")
-    both_bin = "/tmp/avant-safety-waveb-${stamp}-hi-both.bin"
-    both_log = "/tmp/avant-safety-waveb-${stamp}-hi-both.log"
+    both_bin = "${scratch()}/safety-waveb-${stamp}-hi-both.bin"
+    both_log = "${scratch()}/safety-waveb-${stamp}-hi-both.log"
     both_flags: Array(String) = []
     both_flags.push("--debug")
     both_flags.push("--release")

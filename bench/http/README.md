@@ -12,4 +12,4 @@ One hello-world server per language, with identical behavior: HTTP answers `GET 
 
 Run it with `sh bench/http/run.sh [avant|h2o|rust|go|crystal|all]`. HTTP is measured with `wrk -t4 -c64 -d10s --latency`; WebSocket is measured with [ws_load.go](avant/bench/http/ws_load.go) using 8 connections for 10 seconds. Each phase also reports the server's peak RSS, and the Avant HTTP phase reports allocated bytes per request.
 
-Binaries are built into `/tmp/http-ws-bench-build` (override with `HTTP_BENCH_BUILD`). Avant is compiled with `bin/avant-b` (override with `AVANT_BENCH_COMPILER`). The h2o servers need a clone of `h2o-project/h2o` next to this workbench (override with `H2O_SRC`) and the wslay library, either from the system or extracted under `/tmp/wslay` (`WSLAY_ROOT`).
+Binaries are built into `/tmp/http-ws-bench-build` (override with `HTTP_BENCH_BUILD`). Avant is compiled with `bin/avant-b` (override with `AVANT_BENCH_COMPILER`). The h2o servers need a clone of `h2o-project/h2o` at the workbench's `refs/h2o` (override with `H2O_SRC`) and the wslay library, either from the system or extracted under `/tmp/wslay` (`WSLAY_ROOT`).

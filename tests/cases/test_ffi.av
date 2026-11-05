@@ -60,10 +60,10 @@ fn test_ffi(c: Checks) {
     root = avant_test_root()
     stamp = now_ms()
 
-    cb_src = "/tmp/avant-ffi-waveg-${stamp}-cb.av"
-    cb_bin = "/tmp/avant-ffi-waveg-${stamp}-cb"
-    cb_clog = "/tmp/avant-ffi-waveg-${stamp}-cb-cc.log"
-    cb_rlog = "/tmp/avant-ffi-waveg-${stamp}-cb-run.log"
+    cb_src = "${scratch()}/ffi-waveg-${stamp}-cb.av"
+    cb_bin = "${scratch()}/ffi-waveg-${stamp}-cb"
+    cb_clog = "${scratch()}/ffi-waveg-${stamp}-cb-cc.log"
+    cb_rlog = "${scratch()}/ffi-waveg-${stamp}-cb-run.log"
     cb_body = "lib libc {\n  struct CInt {\n    v: Int\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int)\n  fun cb_buf_new(n: Int): Ptr(CInt)\n  fun cb_buf_set(b: Ptr(CInt), i: Int, v: Int)\n  fun cb_buf_get(b: Ptr(CInt), i: Int): Int\n  fun cb_buf_free(b: Ptr(CInt))\n}\nfn cmp_asc(a: Ptr(CInt), b: Ptr(CInt)): Int {\n  if a.v < b.v {\n    return -1\n  }\n  if a.v > b.v {\n    return 1\n  }\n  0\n}\nfn cmp_desc(a: Ptr(CInt), b: Ptr(CInt)): Int {\n  if a.v > b.v {\n    return -1\n  }\n  if a.v < b.v {\n    return 1\n  }\n  0\n}\nfn show(buf: Ptr(CInt), n: Int): String {\n  out = \"\"\n  i = 0\n  while i < n {\n    out = \"\${out}\${libc.cb_buf_get(buf, i)}\"\n    i = i + 1\n  }\n  out\n}\nfn main {\n  n = 6\n  buf = libc.cb_buf_new(n)\n  vals = [5, 2, 9, 1, 7, 3]\n  i = 0\n  while i < n {\n    libc.cb_buf_set(buf, i, vals[i])\n    i = i + 1\n  }\n  libc.qsort(buf, n, 4, cmp_asc)\n  puts(show(buf, n))\n  libc.qsort(buf, n, 4, cmp_desc)\n  puts(show(buf, n))\n  libc.qsort(buf, n, 4, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v })\n  puts(show(buf, n))\n  libc.cb_buf_free(buf)\n}\n"
     cw = file_write(cb_src, cb_body)
     c.eq_int(cw, 0, "write callback proof")
@@ -85,9 +85,9 @@ fn test_ffi(c: Checks) {
       c.expect(false, "callback binary exists")
     }
 
-    cap_src = "/tmp/avant-ffi-waveg-${stamp}-cap.av"
-    cap_bin = "/tmp/avant-ffi-waveg-${stamp}-cap"
-    cap_log = "/tmp/avant-ffi-waveg-${stamp}-cap.log"
+    cap_src = "${scratch()}/ffi-waveg-${stamp}-cap.av"
+    cap_bin = "${scratch()}/ffi-waveg-${stamp}-cap"
+    cap_log = "${scratch()}/ffi-waveg-${stamp}-cap.log"
     cap_body = "lib libc {\n  struct CInt {\n    v: Int\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int)\n  fun cb_buf_new(n: Int): Ptr(CInt)\n}\nfn main {\n  buf = libc.cb_buf_new(2)\n  bias = 3\n  libc.qsort(buf, 2, 4, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v + bias })\n}\n"
     dummy_cap = file_write(cap_src, cap_body)
     cap_code = compile_av(compiler, cap_src, cap_bin, cap_log)
@@ -98,9 +98,9 @@ fn test_ffi(c: Checks) {
       c.expect(false, "read capturing callback log")
     }
 
-    var_src = "/tmp/avant-ffi-waveg-${stamp}-var.av"
-    var_bin = "/tmp/avant-ffi-waveg-${stamp}-var"
-    var_log = "/tmp/avant-ffi-waveg-${stamp}-var.log"
+    var_src = "${scratch()}/ffi-waveg-${stamp}-var.av"
+    var_bin = "${scratch()}/ffi-waveg-${stamp}-var"
+    var_log = "${scratch()}/ffi-waveg-${stamp}-var.log"
     var_body = "lib libc {\n  struct CInt {\n    v: Int\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int)\n  fun cb_buf_new(n: Int): Ptr(CInt)\n}\nfn cmp_asc(a: Ptr(CInt), b: Ptr(CInt)): Int {\n  a.v - b.v\n}\nfn main {\n  buf = libc.cb_buf_new(2)\n  f = cmp_asc\n  libc.qsort(buf, 2, 4, f)\n}\n"
     dummy_var = file_write(var_src, var_body)
     var_code = compile_av(compiler, var_src, var_bin, var_log)
@@ -111,9 +111,9 @@ fn test_ffi(c: Checks) {
       c.expect(false, "read fn variable log")
     }
 
-    pin_src = "/tmp/avant-ffi-waveg-${stamp}-pin.av"
-    pin_bin = "/tmp/avant-ffi-waveg-${stamp}-pin"
-    pin_log = "/tmp/avant-ffi-waveg-${stamp}-pin.log"
+    pin_src = "${scratch()}/ffi-waveg-${stamp}-pin.av"
+    pin_bin = "${scratch()}/ffi-waveg-${stamp}-pin"
+    pin_log = "${scratch()}/ffi-waveg-${stamp}-pin.log"
     dummy_pin = file_write(pin_src, "fn main {\n  pin(42) {\n    puts(\"no\")\n  }\n}\n")
     pin_code = compile_av(compiler, pin_src, pin_bin, pin_log)
     c.expect(pin_code != 0, "pin of an Int does not compile")
@@ -123,16 +123,16 @@ fn test_ffi(c: Checks) {
       c.expect(false, "read pin log")
     }
 
-    hello_src = "/tmp/avant-ffi-waveg-${stamp}-hello.av"
+    hello_src = "${scratch()}/ffi-waveg-${stamp}-hello.av"
     dummy_hello = file_write(hello_src, "fn main {\n  puts(\"hi\")\n}\n")
-    stock_dir = "/tmp/avant-ffi-waveg-${stamp}-stock"
+    stock_dir = "${scratch()}/ffi-waveg-${stamp}-stock"
     mkdir_args: Array(String) = []
     mkdir_args.push("-p")
     mkdir_args.push(stock_dir)
     dummy_mk = process_run("/bin/mkdir", mkdir_args)
     dummy_stock = file_write("${stock_dir}/myc-llvm", "#!/bin/sh\necho 'define i32 @main(i32 %0, ptr %1) { ret i32 0 }'\nexit 0\n")
     chmod_x("${stock_dir}/myc-llvm")
-    stock_log = "/tmp/avant-ffi-waveg-${stamp}-stock.log"
+    stock_log = "${scratch()}/ffi-waveg-${stamp}-stock.log"
     stock_args: Array(String) = []
     stock_args.push("PATH=${stock_dir}:/usr/bin:/bin")
     stock_args.push(compiler)
@@ -146,9 +146,9 @@ fn test_ffi(c: Checks) {
       c.expect(false, "read stock log")
     }
 
-    miss_log = "/tmp/avant-ffi-waveg-${stamp}-miss.log"
+    miss_log = "${scratch()}/ffi-waveg-${stamp}-miss.log"
     miss_args: Array(String) = []
-    miss_args.push("AVANT_MYC_LLVM=/tmp/avant-ffi-waveg-missing/myc-llvm")
+    miss_args.push("AVANT_MYC_LLVM=${scratch()}/ffi-waveg-missing/myc-llvm")
     miss_args.push(compiler)
     miss_args.push("run")
     miss_args.push(hello_src)

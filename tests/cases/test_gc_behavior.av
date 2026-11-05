@@ -59,14 +59,14 @@ fn test_gc_behavior(c: Checks) {
   c.suite("tests/cases/test_gc_behavior.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "/tmp/avant-gcb-${stamp}.av"
-    bin = "/tmp/avant-gcb-${stamp}.bin"
+    src = "${scratch()}/gcb-${stamp}.av"
+    bin = "${scratch()}/gcb-${stamp}.bin"
     w = file_write(src, tree_fixture())
     c.eq_int(w, 0, "write tree fixture")
-    code = compile_av(compiler, src, bin, "/tmp/avant-gcb-${stamp}.clog")
+    code = compile_av(compiler, src, bin, "${scratch()}/gcb-${stamp}.clog")
     c.eq_int(code, 0, "compile tree fixture")
     want = "-1432311182\n715795115\n"
-    log1 = "/tmp/avant-gcb-${stamp}.run1"
+    log1 = "${scratch()}/gcb-${stamp}.run1"
     rc1 = run_av_bin(bin, log1)
     c.eq_int(rc1, 0, "trees survive at default young size")
     if out1 = file_read(log1) {
@@ -78,8 +78,8 @@ fn test_gc_behavior(c: Checks) {
     // the build. A mature tree interior that tenured together with its
     // children used to become invisible to later young collections, and
     // its fields kept pointing at from-space addresses (F1 in
-    // experiments/gc-baseline-2026-11-03.md): this run segfaulted.
-    log2 = "/tmp/avant-gcb-${stamp}.run2"
+    // avant-ledgers/archive/experiments/gc-baseline-2026-11-03.md): this run segfaulted.
+    log2 = "${scratch()}/gcb-${stamp}.run2"
     rc2 = run_with_env(bin, "AVANT_YOUNG_MB", "1", log2)
     c.eq_int(rc2, 0, "trees survive at 1 MB young size")
     if out2 = file_read(log2) {
@@ -87,7 +87,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read small-young run")
     }
-    log3 = "/tmp/avant-gcb-${stamp}.run3"
+    log3 = "${scratch()}/gcb-${stamp}.run3"
     rc3 = run_with_env(bin, "AVANT_NURSERY", "0", log3)
     c.eq_int(rc3, 0, "trees survive with nursery off")
     if out3 = file_read(log3) {
@@ -96,14 +96,14 @@ fn test_gc_behavior(c: Checks) {
       c.expect(false, "read nursery-off run")
     }
 
-    src2 = "/tmp/avant-gcb-${stamp}-churn.av"
-    bin2 = "/tmp/avant-gcb-${stamp}-churn.bin"
+    src2 = "${scratch()}/gcb-${stamp}-churn.av"
+    bin2 = "${scratch()}/gcb-${stamp}-churn.bin"
     w2 = file_write(src2, churn_fixture())
     c.eq_int(w2, 0, "write churn fixture")
-    code2 = compile_av(compiler, src2, bin2, "/tmp/avant-gcb-${stamp}-churn.clog")
+    code2 = compile_av(compiler, src2, bin2, "${scratch()}/gcb-${stamp}-churn.clog")
     c.eq_int(code2, 0, "compile churn fixture")
     want2 = "12497500\n704982704\n2000\n"
-    log4 = "/tmp/avant-gcb-${stamp}.run4"
+    log4 = "${scratch()}/gcb-${stamp}.run4"
     rc4 = run_av_bin(bin2, log4)
     c.eq_int(rc4, 0, "cycle, array growth, and string churn survive")
     if out4 = file_read(log4) {
@@ -111,7 +111,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read churn run")
     }
-    log5 = "/tmp/avant-gcb-${stamp}.run5"
+    log5 = "${scratch()}/gcb-${stamp}.run5"
     rc5 = run_with_env(bin2, "AVANT_YOUNG_MB", "1", log5)
     c.eq_int(rc5, 0, "churn survives at 1 MB young size")
     if out5 = file_read(log5) {
@@ -124,14 +124,14 @@ fn test_gc_behavior(c: Checks) {
     // calls in a loop while fresh trees churn through the nursery. If a
     // live local stops being registered as a root, the small-young run
     // reads from-space addresses and the checksum breaks or segfaults.
-    src3 = "/tmp/avant-gcb-${stamp}-roots.av"
-    bin3 = "/tmp/avant-gcb-${stamp}-roots.bin"
+    src3 = "${scratch()}/gcb-${stamp}-roots.av"
+    bin3 = "${scratch()}/gcb-${stamp}-roots.bin"
     w3 = file_write(src3, roots_fixture())
     c.eq_int(w3, 0, "write roots fixture")
-    code3 = compile_av(compiler, src3, bin3, "/tmp/avant-gcb-${stamp}-roots.clog")
+    code3 = compile_av(compiler, src3, bin3, "${scratch()}/gcb-${stamp}-roots.clog")
     c.eq_int(code3, 0, "compile roots fixture")
     want3 = "297457169\n"
-    log6 = "/tmp/avant-gcb-${stamp}.run6"
+    log6 = "${scratch()}/gcb-${stamp}.run6"
     rc6 = run_av_bin(bin3, log6)
     c.eq_int(rc6, 0, "rooted locals survive at default young size")
     if out6 = file_read(log6) {
@@ -139,7 +139,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read roots run")
     }
-    log7 = "/tmp/avant-gcb-${stamp}.run7"
+    log7 = "${scratch()}/gcb-${stamp}.run7"
     rc7 = run_with_env(bin3, "AVANT_YOUNG_MB", "1", log7)
     c.eq_int(rc7, 0, "rooted locals survive at 1 MB young size")
     if out7 = file_read(log7) {
@@ -152,14 +152,14 @@ fn test_gc_behavior(c: Checks) {
     // planted at the end of that block would run after its frame left
     // and publish its slots into the caller's frame (Collector II
     // Wave 0 regression shape, first seen on Graph::BFS).
-    src4 = "/tmp/avant-gcb-${stamp}-rootsline.av"
-    bin4 = "/tmp/avant-gcb-${stamp}-rootsline.bin"
+    src4 = "${scratch()}/gcb-${stamp}-rootsline.av"
+    bin4 = "${scratch()}/gcb-${stamp}-rootsline.bin"
     w4 = file_write(src4, roots_line_fixture())
     c.eq_int(w4, 0, "write roots-line fixture")
-    code4 = compile_av(compiler, src4, bin4, "/tmp/avant-gcb-${stamp}-rootsline.clog")
+    code4 = compile_av(compiler, src4, bin4, "${scratch()}/gcb-${stamp}-rootsline.clog")
     c.eq_int(code4, 0, "compile roots-line fixture")
     want4 = "1104943082\n"
-    log8 = "/tmp/avant-gcb-${stamp}.run8"
+    log8 = "${scratch()}/gcb-${stamp}.run8"
     rc8 = run_av_bin(bin4, log8)
     c.eq_int(rc8, 0, "straight-line roots survive at default young size")
     if out8 = file_read(log8) {
@@ -167,7 +167,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read roots-line run")
     }
-    log9 = "/tmp/avant-gcb-${stamp}.run9"
+    log9 = "${scratch()}/gcb-${stamp}.run9"
     rc9 = run_with_env(bin4, "AVANT_YOUNG_MB", "1", log9)
     c.eq_int(rc9, 0, "straight-line roots survive at 1 MB young size")
     if out9 = file_read(log9) {
@@ -180,14 +180,14 @@ fn test_gc_behavior(c: Checks) {
     // arena trees are reclaimed in a loop, and arrays grow through the
     // nursery. A fast path that skips the barrier, the payload zeroing,
     // or the start bit breaks the checksum under a small nursery.
-    src5 = "/tmp/avant-gcb-${stamp}-alloc.av"
-    bin5 = "/tmp/avant-gcb-${stamp}-alloc.bin"
+    src5 = "${scratch()}/gcb-${stamp}-alloc.av"
+    bin5 = "${scratch()}/gcb-${stamp}-alloc.bin"
     w5 = file_write(src5, alloc_fixture())
     c.eq_int(w5, 0, "write alloc fixture")
-    code5 = compile_av(compiler, src5, bin5, "/tmp/avant-gcb-${stamp}-alloc.clog")
+    code5 = compile_av(compiler, src5, bin5, "${scratch()}/gcb-${stamp}-alloc.clog")
     c.eq_int(code5, 0, "compile alloc fixture")
     want5 = "1679073713\n"
-    log10 = "/tmp/avant-gcb-${stamp}.run10"
+    log10 = "${scratch()}/gcb-${stamp}.run10"
     rc10 = run_av_bin(bin5, log10)
     c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
     if out10 = file_read(log10) {
@@ -195,7 +195,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read alloc run")
     }
-    log11 = "/tmp/avant-gcb-${stamp}.run11"
+    log11 = "${scratch()}/gcb-${stamp}.run11"
     rc11 = run_with_env(bin5, "AVANT_YOUNG_MB", "1", log11)
     c.eq_int(rc11, 0, "alloc and barrier paths survive at 1 MB young size")
     if out11 = file_read(log11) {
@@ -210,14 +210,14 @@ fn test_gc_behavior(c: Checks) {
     // at from-space (the F1 shape), which breaks this checksum or
     // segfaults at the small young size; the checksum is identical
     // with the frontier disabled and under every frontier policy.
-    src6 = "/tmp/avant-gcb-${stamp}-frontier.av"
-    bin6 = "/tmp/avant-gcb-${stamp}-frontier.bin"
+    src6 = "${scratch()}/gcb-${stamp}-frontier.av"
+    bin6 = "${scratch()}/gcb-${stamp}-frontier.bin"
     w6 = file_write(src6, frontier_fixture())
     c.eq_int(w6, 0, "write frontier fixture")
-    code6 = compile_av(compiler, src6, bin6, "/tmp/avant-gcb-${stamp}-frontier.clog")
+    code6 = compile_av(compiler, src6, bin6, "${scratch()}/gcb-${stamp}-frontier.clog")
     c.eq_int(code6, 0, "compile frontier fixture")
     want6 = "-1524741201\n"
-    log12 = "/tmp/avant-gcb-${stamp}.run12"
+    log12 = "${scratch()}/gcb-${stamp}.run12"
     rc12 = run_av_bin(bin6, log12)
     c.eq_int(rc12, 0, "frontier graph survives at default young size")
     if out12 = file_read(log12) {
@@ -225,7 +225,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read frontier run")
     }
-    log13 = "/tmp/avant-gcb-${stamp}.run13"
+    log13 = "${scratch()}/gcb-${stamp}.run13"
     rc13 = run_with_env(bin6, "AVANT_YOUNG_MB", "1", log13)
     c.eq_int(rc13, 0, "frontier graph survives at 1 MB young size")
     if out13 = file_read(log13) {
@@ -241,14 +241,14 @@ fn test_gc_behavior(c: Checks) {
     // field, or that frees a block still holding a live survivor,
     // breaks this checksum or segfaults; the checksum is identical
     // with defragmentation disabled and at a 1 MB young size.
-    src7 = "/tmp/avant-gcb-${stamp}-defrag.av"
-    bin7 = "/tmp/avant-gcb-${stamp}-defrag.bin"
+    src7 = "${scratch()}/gcb-${stamp}-defrag.av"
+    bin7 = "${scratch()}/gcb-${stamp}-defrag.bin"
     w7 = file_write(src7, defrag_fixture())
     c.eq_int(w7, 0, "write defrag fixture")
-    code7 = compile_av(compiler, src7, bin7, "/tmp/avant-gcb-${stamp}-defrag.clog")
+    code7 = compile_av(compiler, src7, bin7, "${scratch()}/gcb-${stamp}-defrag.clog")
     c.eq_int(code7, 0, "compile defrag fixture")
     want7 = "58508488\n"
-    log14 = "/tmp/avant-gcb-${stamp}.run14"
+    log14 = "${scratch()}/gcb-${stamp}.run14"
     rc14 = run_av_bin(bin7, log14)
     c.eq_int(rc14, 0, "defrag survivors survive at default young size")
     if out14 = file_read(log14) {
@@ -256,7 +256,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read defrag run")
     }
-    log15 = "/tmp/avant-gcb-${stamp}.run15"
+    log15 = "${scratch()}/gcb-${stamp}.run15"
     rc15 = run_with_env(bin7, "AVANT_YOUNG_MB", "1", log15)
     c.eq_int(rc15, 0, "defrag survivors survive at 1 MB young size")
     if out15 = file_read(log15) {
@@ -264,7 +264,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read defrag small-young run")
     }
-    log16 = "/tmp/avant-gcb-${stamp}.run16"
+    log16 = "${scratch()}/gcb-${stamp}.run16"
     rc16 = run_with_env(bin7, "AVANT_NURSERY", "0", log16)
     c.eq_int(rc16, 0, "defrag survivors survive with nursery off")
     if out16 = file_read(log16) {
@@ -277,14 +277,14 @@ fn test_gc_behavior(c: Checks) {
     // the young threshold does, retained trees must stay reachable and
     // read back with the same values; a sizing or reserve bug that
     // loses a survivor breaks the checksum or segfaults.
-    src8 = "/tmp/avant-gcb-${stamp}-sizing.av"
-    bin8 = "/tmp/avant-gcb-${stamp}-sizing.bin"
+    src8 = "${scratch()}/gcb-${stamp}-sizing.av"
+    bin8 = "${scratch()}/gcb-${stamp}-sizing.bin"
     w8 = file_write(src8, sizing_fixture())
     c.eq_int(w8, 0, "write sizing fixture")
-    code8 = compile_av(compiler, src8, bin8, "/tmp/avant-gcb-${stamp}-sizing.clog")
+    code8 = compile_av(compiler, src8, bin8, "${scratch()}/gcb-${stamp}-sizing.clog")
     c.eq_int(code8, 0, "compile sizing fixture")
     want8 = "447162624\n8\n"
-    log17 = "/tmp/avant-gcb-${stamp}.run17"
+    log17 = "${scratch()}/gcb-${stamp}.run17"
     rc17 = run_av_bin(bin8, log17)
     c.eq_int(rc17, 0, "sizing survivors survive at default young size")
     if out17 = file_read(log17) {
@@ -292,7 +292,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read sizing run")
     }
-    log18 = "/tmp/avant-gcb-${stamp}.run18"
+    log18 = "${scratch()}/gcb-${stamp}.run18"
     rc18 = run_with_env(bin8, "AVANT_GC_YOUNG_SIZING", "0", log18)
     c.eq_int(rc18, 0, "sizing survivors survive with growth cap off")
     if out18 = file_read(log18) {
@@ -300,7 +300,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read sizing cap-off run")
     }
-    log19 = "/tmp/avant-gcb-${stamp}.run19"
+    log19 = "${scratch()}/gcb-${stamp}.run19"
     rc19 = run_with_env(bin8, "AVANT_GC_COPY_RESERVE", "0", log19)
     c.eq_int(rc19, 0, "sizing survivors survive with copy reserve off")
     if out19 = file_read(log19) {
@@ -308,7 +308,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read sizing reserve-off run")
     }
-    log20 = "/tmp/avant-gcb-${stamp}.run20"
+    log20 = "${scratch()}/gcb-${stamp}.run20"
     rc20 = run_with_env(bin8, "AVANT_YOUNG_MB", "1", log20)
     c.eq_int(rc20, 0, "sizing survivors survive at 1 MB young size")
     if out20 = file_read(log20) {
@@ -320,14 +320,14 @@ fn test_gc_behavior(c: Checks) {
     // churning loop must stay correct whether or not it skips its
     // frame, and the heap-carrying struct and class neighbours beside
     // it must stay correct too (they keep their frames).
-    src9 = "/tmp/avant-gcb-${stamp}-leaf.av"
-    bin9 = "/tmp/avant-gcb-${stamp}-leaf.bin"
+    src9 = "${scratch()}/gcb-${stamp}-leaf.av"
+    bin9 = "${scratch()}/gcb-${stamp}-leaf.bin"
     w9 = file_write(src9, leaf_method_fixture())
     c.eq_int(w9, 0, "write leaf method fixture")
-    code9 = compile_av(compiler, src9, bin9, "/tmp/avant-gcb-${stamp}-leaf.clog")
+    code9 = compile_av(compiler, src9, bin9, "${scratch()}/gcb-${stamp}-leaf.clog")
     c.eq_int(code9, 0, "compile leaf method fixture")
     want9 = "1440000\nabcd\n"
-    log21 = "/tmp/avant-gcb-${stamp}.run21"
+    log21 = "${scratch()}/gcb-${stamp}.run21"
     rc21 = run_av_bin(bin9, log21)
     c.eq_int(rc21, 0, "struct methods survive churn at default young size")
     if out21 = file_read(log21) {
@@ -335,7 +335,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read leaf method run")
     }
-    log22 = "/tmp/avant-gcb-${stamp}.run22"
+    log22 = "${scratch()}/gcb-${stamp}.run22"
     rc22 = run_with_env(bin9, "AVANT_YOUNG_MB", "1", log22)
     c.eq_int(rc22, 0, "struct methods survive churn at 1 MB young size")
     if out22 = file_read(log22) {
@@ -350,14 +350,14 @@ fn test_gc_behavior(c: Checks) {
     // std.http under load: the response's header array went stale and
     // the server segfaulted in route matching). The checksum reads
     // every field back after each return.
-    src10 = "/tmp/avant-gcb-${stamp}-literal.av"
-    bin10 = "/tmp/avant-gcb-${stamp}-literal.bin"
+    src10 = "${scratch()}/gcb-${stamp}-literal.av"
+    bin10 = "${scratch()}/gcb-${stamp}-literal.bin"
     w10 = file_write(src10, literal_fixture())
     c.eq_int(w10, 0, "write literal fixture")
-    code10 = compile_av(compiler, src10, bin10, "/tmp/avant-gcb-${stamp}-literal.clog")
+    code10 = compile_av(compiler, src10, bin10, "${scratch()}/gcb-${stamp}-literal.clog")
     c.eq_int(code10, 0, "compile literal fixture")
     want10 = "68100000\n"
-    log23 = "/tmp/avant-gcb-${stamp}.run23"
+    log23 = "${scratch()}/gcb-${stamp}.run23"
     rc23 = run_av_bin(bin10, log23)
     c.eq_int(rc23, 0, "struct literal fields survive at default young size")
     if out23 = file_read(log23) {
@@ -365,7 +365,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read literal run")
     }
-    log24 = "/tmp/avant-gcb-${stamp}.run24"
+    log24 = "${scratch()}/gcb-${stamp}.run24"
     rc24 = run_with_env(bin10, "AVANT_YOUNG_MB", "1", log24)
     c.eq_int(rc24, 0, "struct literal fields survive at 1 MB young size")
     if out24 = file_read(log24) {
@@ -377,7 +377,7 @@ fn test_gc_behavior(c: Checks) {
     // copy. The verifier prints those words on stderr, which the run
     // log captures, so an exact-output match is the zero-report
     // assertion. AVANT_GC_STACK_REWRITE=0 restores the reports.
-    log25 = "/tmp/avant-gcb-${stamp}.run25"
+    log25 = "${scratch()}/gcb-${stamp}.run25"
     rc25 = run_with_env2(bin10, "AVANT_GC_VERIFY", "1", "AVANT_YOUNG_MB", "1", log25)
     c.eq_int(rc25, 0, "struct literal verify run exits clean")
     if out25 = file_read(log25) {

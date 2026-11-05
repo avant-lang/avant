@@ -2,6 +2,10 @@ lib avant_testing_io {
   fun write(fd: Int, buf: String, count: Int): Int
 }
 
+lib avant_testing_tmp {
+  fun avant_tmp_new_dir: String
+}
+
 fn testing_write(s: String) {
   line = "${s}\n"
   dummy = avant_testing_io.write(1, line, line.size)
@@ -122,7 +126,6 @@ pub class Test {
   failed: Int = 0
   depth: Int = 0
   mode: Int = 0
-  seq: Int = 0
   dup: Bool = false
   only: String = ""
   names_path: String = ""
@@ -137,7 +140,6 @@ pub class Test {
     self.failed = 0
     self.depth = 0
     self.mode = 0
-    self.seq = 0
     self.dup = false
     self.only = ""
     self.names_path = ""
@@ -296,9 +298,11 @@ pub class Test {
     false
   }
 
-  fn temp_dir: String {
-    self.seq = self.seq + 1
-    "/tmp/avant-std-${now_ms()}-${self.seq}"
+  // A new, empty directory for the test's files (D128, Go's t.TempDir).
+  // Each call makes another. They live in the program's private scratch
+  // directory and are removed when the program exits.
+  pub fn temp_dir: String {
+    avant_testing_tmp.avant_tmp_new_dir()
   }
 
   pub fn check(cond: Bool, name: String): Nil {
@@ -453,7 +457,7 @@ pub class Test {
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
-    base = self.temp_dir
+    base = "${self.temp_dir}/case"
     out = "${base}.bin"
     compile_log = "${base}.compile"
     args: Array(String) = []
@@ -513,7 +517,7 @@ pub class Test {
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
-    base = self.temp_dir
+    base = "${self.temp_dir}/case"
     out = "${base}.bin"
     stdout_path = "${base}.out"
     stderr_path = "${base}.err"

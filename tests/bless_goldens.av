@@ -1,6 +1,15 @@
 // Regenerate tests/goldens from compiler B (D48).
 //   AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/bless_goldens.av
 
+lib bless_rt {
+  fun avant_tmp_dir: String
+}
+
+// The private scratch directory (D127), removed when this tool exits.
+fn scratch: String {
+  bless_rt.avant_tmp_dir()
+}
+
 fn str_eq(a: String, b: String): Bool {
   if a.size != b.size {
     return false
@@ -133,8 +142,8 @@ fn main {
     mkdir_p("${root}/tests/goldens/modules")
     mkdir_p("${root}/tests/goldens/macros")
     stamp = now_ms()
-    dumper = "/tmp/avant-${stamp}-lex-dump"
-    dlog = "/tmp/avant-${stamp}-lex-dump.log"
+    dumper = "${scratch()}/${stamp}-lex-dump"
+    dlog = "${scratch()}/${stamp}-lex-dump.log"
     dcode = compile_av(compiler, "${root}/compiler/lex_dump.av", dumper, dlog)
     if dcode != 0 {
       bless_fail("compile lex_dump failed (${dcode})")

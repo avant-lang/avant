@@ -91,7 +91,7 @@ fn test_testing_docs(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     compiler = compiler_abs("testing_docs", compiler)
     stamp = now_ms()
-    dir = "/tmp/avant-testing_docs-docs-${stamp}"
+    dir = "${scratch()}/testing_docs-docs-${stamp}"
     mkdir_args: Array(String) = []
     mkdir_args.push("-p")
     mkdir_args.push(dir)
@@ -121,6 +121,19 @@ fn test_testing_docs(c: Checks) {
       c.eq_str(text, "PASS greet Ada\nPASS greet Bo\nPASS greet Cy\n0 failed, 3 passed\n", "README table test output")
     } else {
       c.expect(false, "README table test output")
+    }
+
+    tmp_body = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  dir = t.temp_dir\n  t.check(file_write(\"\${dir}/notes.txt\", \"hi\") == 0, \"write in temp_dir\")\n  t.finish\n}\n"
+    dummy_tmp = file_write("${dir}/test_tmp.av", tmp_body)
+    tmp_log = "${dir}/tmp.log"
+    tmp_rc = "${dir}/tmp.rc"
+    tmp_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run test_tmp.av -- > ${td_quote(tmp_log)} 2>${td_quote(dir)}/tmp.err; echo $? > ${td_quote(tmp_rc)}\n"
+    tmp_code = td_sh(tmp_sh, tmp_rc)
+    c.eq_int(tmp_code, 0, "README temp_dir test runs")
+    if text = file_read(tmp_log) {
+      c.eq_str(text, "PASS write in temp_dir\n0 failed, 1 passed\n", "README temp_dir test output")
+    } else {
+      c.expect(false, "README temp_dir test output")
     }
 
     par_body = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"1+2\")\n  }\n  t.parallel(\"other\") {\n    t.check(true, \"other\")\n  }\n  t.finish\n}\n"
