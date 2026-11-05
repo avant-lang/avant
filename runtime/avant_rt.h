@@ -21,7 +21,7 @@
  * members are roots for the young generation. AVANT_FLAG_PINNED is the
  * C-escape seam: pinned objects are not moved and are young-GC roots.
  * The full invariant list and knob table live in
- * avant-ledgers/stages/collector.md.
+ * avant-ledgers/archive/stages/collector.md.
  */
 
 #define AVANT_TYPE_BYTES 0

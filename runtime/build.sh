@@ -1,6 +1,6 @@
 #!/bin/sh
-# Compile runtime/*.o the way src/avant/runtime.cr does.
-# The seed path uses this so Crystal is not required to produce the objects.
+# Compile the runtime objects into runtime/build/.
+# The compiler links these objects; no Crystal is involved.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cc=${CC:-cc}

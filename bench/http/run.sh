@@ -12,16 +12,16 @@ set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AVANT_ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
 BUILD=${HTTP_BENCH_BUILD:-/tmp/http-ws-bench-build}
-# h2o (the C row) builds from a sibling clone of h2o-project/h2o;
+# h2o (the C row) builds from the workbench clone at refs/h2o;
 # libh2o-evloop and its generated flag file live in H2O_BUILD, and
 # wslay (h2o's WebSocket dependency) comes from pkg-config when the
 # system has it, else from a /tmp/wslay extraction (WSLAY_ROOT).
-H2O_SRC=${H2O_SRC:-$AVANT_ROOT/../h2o}
+H2O_SRC=${H2O_SRC:-$AVANT_ROOT/../refs/h2o}
 H2O_BUILD=${H2O_BUILD:-/tmp/h2o-build}
 WSLAY_ROOT=${WSLAY_ROOT:-/tmp/wslay/root/usr}
 mkdir -p "$BUILD"
 COMPILER=${AVANT_BENCH_COMPILER:-$AVANT_ROOT/bin/avant-b}
-export AVANT_MYC_LLVM=${AVANT_MYC_LLVM:-$AVANT_ROOT/bin/v0.30.0/myc-llvm}
+export AVANT_MYC_LLVM=${AVANT_MYC_LLVM:-$AVANT_ROOT/bin/v0.31.0/myc-llvm}
 HPORT=18301
 WPORT=18311
 ONLY=${1:-all}
