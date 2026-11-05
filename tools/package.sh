@@ -3,10 +3,11 @@
 # release workflow and local proofs, so the shipped layout can be tested
 # before a tag.
 #
-#   sh tools/package.sh OUT_DIR COMPILER MYC_LLVM [VERSIONS_FILE]
+#   sh tools/package.sh OUT_DIR COMPILER MYC_LLVM RE2C [VERSIONS_FILE]
 #
 # COMPILER is the avant binary to ship (the release job's B), MYC_LLVM the
-# backend to bundle beside it. The bind helper and the runtime objects come
+# backend to bundle beside it, RE2C the static re2c to bundle (D151,
+# tools/build-re2c.sh). The bind helper and the runtime objects come
 # from runtime/build/ (run `sh runtime/build.sh` first); runtime/avant_rt.h
 # ships too, for the scanners re2c generates. The compiler finds this
 # runtime beside its executable (D149). VERSIONS_FILE, when
@@ -16,14 +17,15 @@
 # and OUT_DIR/avant-linux-x86_64.tar.gz.sha256 (checkable from OUT_DIR).
 set -eu
 
-if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
-  echo "usage: sh tools/package.sh OUT_DIR COMPILER MYC_LLVM [VERSIONS_FILE]" >&2
+if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+  echo "usage: sh tools/package.sh OUT_DIR COMPILER MYC_LLVM RE2C [VERSIONS_FILE]" >&2
   exit 2
 fi
 out=$1
 compiler=$2
 myc=$3
-versions=${4:-}
+re2c=$4
+versions=${5:-}
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 name=avant-linux-x86_64
 dir="$out/$name"
@@ -35,6 +37,7 @@ fail() {
 
 [ -x "$compiler" ] || fail "compiler is not an executable file: $compiler"
 [ -x "$myc" ] || fail "myc-llvm is not an executable file: $myc"
+[ -x "$re2c" ] || fail "re2c is not an executable file: $re2c (build it with sh tools/build-re2c.sh)"
 [ -f "$root/runtime/build/avant_rt.o" ] || fail "runtime/build/avant_rt.o is missing (run sh runtime/build.sh)"
 [ -x "$root/runtime/build/avant-bind" ] || fail "runtime/build/avant-bind is missing (run sh runtime/build.sh with llvm-config and libclang)"
 [ -z "$versions" ] || [ -f "$versions" ] || fail "versions file is missing: $versions"
@@ -45,6 +48,7 @@ mkdir -p "$dir/lib/std" "$dir/runtime/build"
 
 install -m 755 "$compiler" "$dir/avant"
 install -m 755 "$myc" "$dir/myc-llvm"
+install -m 755 "$re2c" "$dir/re2c"
 install -m 755 "$root/runtime/build/avant-bind" "$dir/avant-bind"
 for f in "$root"/lib/std/*.av; do
   install -m 644 "$f" "$dir/lib/std/"

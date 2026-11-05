@@ -7,6 +7,7 @@
 # install Crystal and does not compile myc-llvm.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
+# The release bundles a static re2c built from the pinned upstream release.
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
 # is named `avant`. Do not dispatch this workflow onto the seed tag
@@ -93,11 +94,15 @@ jobs:
             build-essential \
             llvm-20-dev \
             libclang-20-dev \
-            zlib1g-dev \
-            re2c
+            zlib1g-dev
 
       - name: Build runtime objects
         run: sh runtime/build.sh
+
+      - name: Build the bundled re2c
+        # The static re2c a release ships (D151, tools/build-re2c.sh), beside
+        # bin/avant-b so the suite uses it (D150).
+        run: sh tools/build-re2c.sh bin/re2c
 
       - name: Download ${{ env.AVANT_SEED_VERSION }} compiler
         run: |
@@ -150,9 +155,10 @@ jobs:
             echo "binary: avant"
             echo "bundled: myc-llvm (safepoints ${SAFEPOINTS_VERSION}) beside avant"
             echo "bundled: avant-bind (tools/bind.c, libclang $(llvm-config-20 --version)) beside avant"
+            echo "bundled: re2c ($(bin/re2c --version), static, tools/build-re2c.sh) beside avant"
           } | tee dist/versions.txt
           # The layout is tools/package.sh's (D148), the same script local proofs use.
-          sh tools/package.sh dist bin/avant-b /tmp/myc-llvm-linux-x86_64/myc-llvm dist/versions.txt
+          sh tools/package.sh dist bin/avant-b /tmp/myc-llvm-linux-x86_64/myc-llvm bin/re2c dist/versions.txt
           cat dist/avant-linux-x86_64.tar.gz.sha256
           {
             echo "linux-x86_64 compiler \`avant\`."

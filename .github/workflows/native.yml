@@ -25,7 +25,8 @@
 # Runtime objects come from runtime/build.sh.
 #
 # `re2c` is a build tool, like `cc`. A string literal at `re_compile` is
-# compiled with it and linked in. Without `re2c` that call stays on PCRE2.
+# compiled with it and linked in. The job builds the pinned static re2c a
+# release ships (tools/build-re2c.sh) into bin/re2c, beside the compiler.
 # Computed patterns use PCRE2, vendored in runtime/third_party/pcre2 (D146).
 #
 # Tag pushes are `release.yml` (the seed builds that binary too,
@@ -86,11 +87,15 @@ jobs:
             build-essential \
             llvm-20-dev \
             libclang-20-dev \
-            zlib1g-dev \
-            re2c
+            zlib1g-dev
 
       - name: Build runtime objects
         run: sh runtime/build.sh
+
+      - name: Build the bundled re2c
+        # The static re2c a release ships (D151, tools/build-re2c.sh), beside
+        # bin/avant-b so the suite uses it (D150).
+        run: sh tools/build-re2c.sh bin/re2c
 
       - name: Download ${{ env.AVANT_SEED_VERSION }} compiler
         run: |
