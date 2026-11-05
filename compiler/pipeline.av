@@ -55,6 +55,8 @@ lib fs_rt {
   fun avant_fs_mkdir_p(path: String): Int
   fun avant_fs_cwd: String
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+  fun avant_file_identity(path: String): String
+  fun avant_env_set(name: String, value: String)
 }
 
 // rm -f
@@ -262,6 +264,52 @@ pub fn myc_accepts_safepoints(path: String): Bool {
   false
 }
 
+// The probe cache key for the backend at path (D139): its device, inode,
+// size, and nanosecond change time, then the path; "" when unreadable.
+pub fn myc_probe_key(path: String): String {
+  id = fs_rt.avant_file_identity(path)
+  if id.size == 0 {
+    return ""
+  }
+  "${id}:${path}"
+}
+
+// Whether the backend at path accepts the safepoint flags, probed once per
+// run (D139). A process that probes successfully exports AVANT_MYC_PROBED
+// (internal) with the key; a child whose chosen backend has the same key
+// skips the probe, and any other path or identity is probed again.
+pub fn myc_safepoints_ok(path: String): Bool {
+  key = myc_probe_key(path)
+  if key.size > 0 {
+    if have = env_get("AVANT_MYC_PROBED") {
+      if str_eq(have, key) {
+        return true
+      }
+    }
+  }
+  if myc_accepts_safepoints(path) {
+    if key.size > 0 {
+      fs_rt.avant_env_set("AVANT_MYC_PROBED", key)
+    }
+    return true
+  }
+  false
+}
+
+// avant test probes once before its jobs (D139), quietly: a missing or
+// refused backend is reported by the compiles that need it.
+pub fn myc_probe_once {
+  cands = myc_llvm_candidates()
+  i = 0
+  while i < cands.size {
+    if file_exists(cands[i]) {
+      dummy = myc_safepoints_ok(cands[i])
+      return
+    }
+    i = i + 1
+  }
+}
+
 pub fn myc_llvm_candidates: Array(String) {
   out: Array(String) = []
   if path_env = env_get("PATH") {
@@ -295,7 +343,7 @@ pub fn myc_llvm_path: String {
   while i < cands.size {
     cand = cands[i]
     if file_exists(cand) {
-      if myc_accepts_safepoints(cand) {
+      if myc_safepoints_ok(cand) {
         return cand
       }
       diag_puts("myc-llvm at ${cand} does not accept the safepoints GC flags; refusing to build GC-unsafe code (tried ${cand})")

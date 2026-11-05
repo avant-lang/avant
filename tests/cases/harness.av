@@ -80,6 +80,7 @@ lib harness_rt {
   fun avant_fs_chmod_x(path: String): Int
   fun avant_fs_mkdir_p(path: String): Int
   fun avant_fs_cwd: String
+  fun avant_file_identity(path: String): String
   fun avant_job_start(path: String, args: Array(String), out: String): Int
   fun avant_job_wait: Int
   fun avant_job_status: Int
@@ -397,6 +398,11 @@ pub fn rm_f(path: String) {
 
 pub fn rm_rf(path: String) {
   dummy = harness_rt.avant_fs_remove_tree(path)
+}
+
+// The safepoint probe cache key the compiler uses for a backend (D139).
+pub fn myc_probe_key(path: String): String {
+  "${harness_rt.avant_file_identity(path)}:${path}"
 }
 
 pub fn cwd_here: String {

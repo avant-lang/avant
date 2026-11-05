@@ -335,6 +335,8 @@ int32_t avant_fs_remove_tree(const char *path);
 int32_t avant_fs_chmod_x(const char *path);
 int32_t avant_fs_mkdir_p(const char *path);
 char *avant_fs_cwd(void);
+char *avant_file_identity(const char *path);
+void avant_env_set(const char *name, const char *value);
 char *avant_env_get(const char *name, int32_t *ok);
 int32_t avant_file_exists(const char *path);
 void *avant_dir_list(const char *path);

@@ -113,6 +113,32 @@ fn test_toolchain(c: Checks) {
     c.expect(code7 == 0, "bare run with legacy env exits zero")
     got7 = tc_args(c, env2_dir, "bare run with legacy env records backend args")
     c.expect(str_has(got7, "--debug"), "AVANT_MYC_DEBUG no longer selects codegen")
+
+    // The safepoint probe runs once per run (D139): a backend with an
+    // unknown key is probed, a matching AVANT_MYC_PROBED skips the probe,
+    // and a changed backend is probed again under the old key.
+    pr_dir = tc_fake_dir(stamp, "probe")
+    pr_args: Array(String) = []
+    pr_args.push("compile")
+    pr_args.push(src)
+    pr_args.push("${scratch()}/toolchain-wavei-${stamp}-probe.bin")
+    pr_code = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=", "${scratch()}/toolchain-wavei-${stamp}-probe1.log")
+    pr1 = tc_args(c, pr_dir, "probe fixture records backend args")
+    c.expect(pr_code == 0 && str_has(pr1, "dump --gc-root"), "a backend with no probe key is probed")
+    key = myc_probe_key("${pr_dir}/myc-llvm")
+    rm_f("${pr_dir}/args.log")
+    pr_code2 = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=${key}", "${scratch()}/toolchain-wavei-${stamp}-probe2.log")
+    pr2 = tc_args(c, pr_dir, "probe fixture records backend args again")
+    c.expect(pr_code2 == 0 && !str_has(pr2, "dump --gc-root") && str_has(pr2, "--gc-root"), "a matching probe key skips the probe")
+    rm_f("${pr_dir}/args.log")
+    old = ""
+    if t = file_read("${pr_dir}/myc-llvm") {
+      old = t
+    }
+    dummy_new = file_write("${pr_dir}/myc-llvm", "${old}# changed\n")
+    pr_code3 = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=${key}", "${scratch()}/toolchain-wavei-${stamp}-probe3.log")
+    pr3 = tc_args(c, pr_dir, "probe fixture records backend args a third time")
+    c.expect(pr_code3 == 0 && str_has(pr3, "dump --gc-root"), "a changed backend is probed again")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

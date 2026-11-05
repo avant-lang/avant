@@ -486,6 +486,31 @@ int32_t avant_fs_mkdir_p(const char *path) {
   return stat(path, &st) == 0 && S_ISDIR(st.st_mode) ? 0 : 1;
 }
 
+/* The identity of a file for the safepoint probe cache (D139): device,
+ * inode, size, and change time to the nanosecond, or "" when it cannot be
+ * read. Replacing or rewriting the file changes it. */
+char *avant_file_identity(const char *path) {
+  struct stat st;
+  char buf[160];
+  int n;
+  if (!path || stat(path, &st) != 0) {
+    return dup_bytes("", 0);
+  }
+  n = snprintf(buf, sizeof buf, "%llu:%llu:%lld:%lld.%09ld", (unsigned long long)st.st_dev, (unsigned long long)st.st_ino, (long long)st.st_size, (long long)st.st_ctim.tv_sec, (long)st.st_ctim.tv_nsec);
+  if (n < 0 || (size_t)n >= sizeof buf) {
+    return dup_bytes("", 0);
+  }
+  return dup_bytes(buf, (size_t)n);
+}
+
+/* Sets an environment variable for this process and the children it
+ * starts. Internal plumbing (the probe cache, D139), no prelude name. */
+void avant_env_set(const char *name, const char *value) {
+  if (name && name[0] && value) {
+    setenv(name, value, 1);
+  }
+}
+
 /* pwd -P: the physical working directory, or "." when it cannot be read. */
 char *avant_fs_cwd(void) {
   char *cwd = getcwd(NULL, 0);
