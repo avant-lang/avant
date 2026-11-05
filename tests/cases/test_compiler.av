@@ -14,6 +14,20 @@ fn test_compiler(c: Checks) {
     c.expect(false, "process_run_out capture")
   }
 
+  // file_read reads to end of file whatever size the file reports: /proc
+  // reports 0, and some kernels' sysfs reports 4096 (the runner's
+  // processor count reads /sys/devices/system/cpu/online).
+  proc_text = ""
+  if pt = file_read("/proc/self/status") {
+    proc_text = pt
+  }
+  c.expect(str_has(proc_text, "Name:"), "file_read reads a /proc file that reports size 0")
+  online = ""
+  if ot = file_read("/sys/devices/system/cpu/online") {
+    online = ot.strip()
+  }
+  c.expect(online.size > 0, "file_read reads the sysfs processor list")
+
   // The file helpers that replaced /bin/mkdir, chmod, rm, and sh -c pwd
   // (D140).
   fs = scratch_dir()

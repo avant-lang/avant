@@ -1,5 +1,11 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Fixed
+
+* `file_read` reads a file to its end instead of trusting the size the file reports. Files under `/proc` (which report size 0) read as empty before, and a sysfs file that reports 4096 bytes failed to read, so `avant test` used one job on such kernels (the GitHub runners among them).
+
 ## 0.33.0 - 2026-11-05
 
 ### Added

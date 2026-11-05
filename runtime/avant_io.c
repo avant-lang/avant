@@ -134,6 +134,11 @@ void *avant_argv(void) {
   return a;
 }
 
+/* The size a file reports is only a first buffer size: /proc files report
+ * 0 and sysfs attributes report 4096 whatever they hold, so the read runs
+ * to end of file. Trusting the size made /proc read empty and made the
+ * test runner's processor count fall back to 1 on kernels whose sysfs
+ * reports 4096 (Wave T close). stdio only (Q160). */
 char *avant_file_read(const char *path, int32_t *ok) {
   if (ok) {
     *ok = 0;
@@ -146,30 +151,45 @@ char *avant_file_read(const char *path, int32_t *ok) {
   if (!f) {
     return NULL;
   }
-  if (fseek(f, 0, SEEK_END) != 0) {
-    fclose(f);
-    return NULL;
-  }
-  long sz = ftell(f);
-  if (sz < 0) {
-    fclose(f);
-    return NULL;
+  size_t cap = 4096;
+  if (fseek(f, 0, SEEK_END) == 0) {
+    long sz = ftell(f);
+    if (sz > 0) {
+      cap = (size_t)sz + 1;
+    }
   }
   if (fseek(f, 0, SEEK_SET) != 0) {
-    fclose(f);
-    return NULL;
+    rewind(f);
   }
 
-  size_t n = (size_t)sz;
-  char *raw = (char *)malloc(n + 1);
+  char *raw = (char *)malloc(cap + 1);
   if (!raw) {
     fclose(f);
     return NULL;
   }
-  if (n && fread(raw, 1, n, f) != n) {
-    free(raw);
-    fclose(f);
-    return NULL;
+  size_t n = 0;
+  for (;;) {
+    if (n == cap) {
+      size_t ncap = cap * 2;
+      char *grown = (char *)realloc(raw, ncap + 1);
+      if (!grown) {
+        free(raw);
+        fclose(f);
+        return NULL;
+      }
+      raw = grown;
+      cap = ncap;
+    }
+    size_t got = fread(raw + n, 1, cap - n, f);
+    n += got;
+    if (got == 0) {
+      if (ferror(f)) {
+        free(raw);
+        fclose(f);
+        return NULL;
+      }
+      break;
+    }
   }
   raw[n] = 0;
   fclose(f);
