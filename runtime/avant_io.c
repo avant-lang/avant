@@ -1,11 +1,16 @@
+#define _GNU_SOURCE
 #include "avant_rt.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -392,4 +397,238 @@ void *avant_dir_list(const char *path) {
   a->cap = n;
   avant_gc_defer_leave();
   return a;
+}
+
+/* ---- Scratch directory (D127) ------------------------------------------
+ *
+ * One private directory per process, created on first use with mkdtemp
+ * under $TMPDIR (else /tmp) and named avant-XXXXXX. Every temporary path
+ * the compiler, the test runner, and std.testing produce lives inside it.
+ * TMPDIR is then exported, so every child (nested Avant processes and
+ * third-party tools alike: myc-llvm, cc, re2c, git) nests inside it, and
+ * one removal at the top cleans the whole tree. An empty .avant-scratch
+ * marker in each directory tells a child that it is nested.
+ *
+ * Removal runs at exit (atexit covers normal and error exits, traps
+ * included) and on SIGINT, SIGTERM, and SIGHUP, after which the signal is
+ * re-raised so the status stays 128+n. Only the creating process removes:
+ * a forked child that never execs must not delete its parent's tree. A
+ * crash or kill -9 leaves one directory. AVANT_KEEP_TMP=1 (set by the
+ * compiler's --keep-tmp) keeps it; the top-level process prints the path.
+ *
+ * The removal walk uses only async-signal-safe calls (openat, getdents64,
+ * unlinkat, close, lseek), so the signal handler and atexit share it. */
+
+#define TMP_PATH_MAX 4064
+
+static pthread_mutex_t g_tmp_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_tmp_dir[TMP_PATH_MAX];
+static int g_tmp_ready;
+static int g_tmp_keep;
+static int g_tmp_nested;
+static pid_t g_tmp_owner;
+static unsigned g_tmp_seq;
+
+struct tmp_dirent64 {
+  uint64_t d_ino;
+  int64_t d_off;
+  unsigned short d_reclen;
+  unsigned char d_type;
+  char d_name[];
+};
+
+static int tmp_is_dot(const char *n) {
+  return n[0] == '.' && (n[1] == 0 || (n[1] == '.' && n[2] == 0));
+}
+
+/* Empties the directory open at fd, depth-first. Deleting while reading
+ * can skip entries, so each level re-reads from the start until a pass
+ * finds nothing left to delete. */
+static void tmp_empty_dir(int fd, int depth) {
+  char buf[2048];
+  int again = 1;
+  int passes = 0;
+  if (depth > 64) {
+    return;
+  }
+  while (again && passes < 16) {
+    again = 0;
+    passes++;
+    lseek(fd, 0, SEEK_SET);
+    for (;;) {
+      long n = syscall(SYS_getdents64, fd, buf, sizeof buf);
+      long off = 0;
+      if (n <= 0) {
+        break;
+      }
+      while (off < n) {
+        struct tmp_dirent64 *d = (struct tmp_dirent64 *)(buf + off);
+        off += d->d_reclen;
+        if (tmp_is_dot(d->d_name)) {
+          continue;
+        }
+        again = 1;
+        if (unlinkat(fd, d->d_name, 0) == 0) {
+          continue;
+        }
+        if (errno == EISDIR || errno == EPERM) {
+          int sub = openat(fd, d->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+          if (sub >= 0) {
+            tmp_empty_dir(sub, depth + 1);
+            close(sub);
+          }
+          unlinkat(fd, d->d_name, AT_REMOVEDIR);
+        }
+      }
+    }
+  }
+}
+
+static void tmp_remove(void) {
+  int fd = open(g_tmp_dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd >= 0) {
+    tmp_empty_dir(fd, 0);
+    close(fd);
+  }
+  rmdir(g_tmp_dir);
+}
+
+static void tmp_say_kept(void) {
+  static const char a[] = "avant: kept temporary directory ";
+  size_t n = strlen(g_tmp_dir);
+  ssize_t w;
+  w = write(2, a, sizeof a - 1);
+  w = write(2, g_tmp_dir, n);
+  w = write(2, "\n", 1);
+  (void)w;
+}
+
+static void tmp_finish(void) {
+  if (!g_tmp_ready || getpid() != g_tmp_owner) {
+    return;
+  }
+  g_tmp_ready = 0;
+  if (g_tmp_keep) {
+    if (!g_tmp_nested) {
+      tmp_say_kept();
+    }
+    return;
+  }
+  tmp_remove();
+}
+
+static void tmp_on_signal(int sig) {
+  struct sigaction sa;
+  tmp_finish();
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = SIG_DFL;
+  sigemptyset(&sa.sa_mask);
+  sigaction(sig, &sa, NULL);
+  raise(sig);
+}
+
+/* An ignored signal stays ignored (nohup, a parent's choice); a handler
+ * someone else installed stays theirs. Only the default is replaced. */
+static void tmp_catch(int sig) {
+  struct sigaction old;
+  struct sigaction sa;
+  if (sigaction(sig, NULL, &old) != 0) {
+    return;
+  }
+  if (old.sa_handler != SIG_DFL || (old.sa_flags & SA_SIGINFO)) {
+    return;
+  }
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = tmp_on_signal;
+  sigfillset(&sa.sa_mask);
+  sigaction(sig, &sa, NULL);
+}
+
+static int tmp_env_on(const char *name) {
+  const char *v = getenv(name);
+  return v && v[0] && !(v[0] == '0' && v[1] == 0);
+}
+
+static void tmp_die(const char *what, const char *path) {
+  fprintf(stderr, "avant: cannot %s %s: %s\n", what, path, strerror(errno));
+  exit(1);
+}
+
+static void tmp_create(void) {
+  const char *base = getenv("TMPDIR");
+  char marker[TMP_PATH_MAX + 32];
+  size_t n;
+  int fd;
+  if (!base || !base[0]) {
+    base = "/tmp";
+  }
+  n = strlen(base);
+  while (n > 1 && base[n - 1] == '/') {
+    n--;
+  }
+  if (snprintf(marker, sizeof marker, "%.*s/.avant-scratch", (int)n, base) >= (int)sizeof marker) {
+    errno = ENAMETOOLONG;
+    tmp_die("use TMPDIR", base);
+  }
+  g_tmp_nested = access(marker, F_OK) == 0;
+  if (snprintf(g_tmp_dir, sizeof g_tmp_dir, "%.*s/avant-XXXXXX", (int)n, base) >= (int)sizeof g_tmp_dir) {
+    errno = ENAMETOOLONG;
+    tmp_die("use TMPDIR", base);
+  }
+  if (!mkdtemp(g_tmp_dir)) {
+    tmp_die("create a temporary directory under", base);
+  }
+  g_tmp_owner = getpid();
+  g_tmp_keep = tmp_env_on("AVANT_KEEP_TMP");
+  g_tmp_ready = 1;
+  atexit(tmp_finish);
+  tmp_catch(SIGINT);
+  tmp_catch(SIGTERM);
+  tmp_catch(SIGHUP);
+  snprintf(marker, sizeof marker, "%s/.avant-scratch", g_tmp_dir);
+  fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  if (fd >= 0) {
+    close(fd);
+  }
+  setenv("TMPDIR", g_tmp_dir, 1);
+}
+
+/* The process's scratch directory, created on first call. */
+char *avant_tmp_dir(void) {
+  pthread_mutex_lock(&g_tmp_lock);
+  if (!g_tmp_ready || g_tmp_owner != getpid()) {
+    tmp_create();
+  }
+  pthread_mutex_unlock(&g_tmp_lock);
+  return dup_bytes(g_tmp_dir, strlen(g_tmp_dir));
+}
+
+/* A fresh, created directory inside the scratch directory (std.testing's
+ * temp_dir, D128). */
+char *avant_tmp_new_dir(void) {
+  char path[TMP_PATH_MAX + 32];
+  pthread_mutex_lock(&g_tmp_lock);
+  if (!g_tmp_ready || g_tmp_owner != getpid()) {
+    tmp_create();
+  }
+  for (;;) {
+    g_tmp_seq++;
+    snprintf(path, sizeof path, "%s/d%u", g_tmp_dir, g_tmp_seq);
+    if (mkdir(path, 0700) == 0) {
+      break;
+    }
+    if (errno != EEXIST) {
+      tmp_die("create a directory", path);
+    }
+  }
+  pthread_mutex_unlock(&g_tmp_lock);
+  return dup_bytes(path, strlen(path));
+}
+
+/* --keep-tmp: keep this process's directory and every nested one. */
+void avant_tmp_keep(void) {
+  pthread_mutex_lock(&g_tmp_lock);
+  g_tmp_keep = 1;
+  setenv("AVANT_KEEP_TMP", "1", 1);
+  pthread_mutex_unlock(&g_tmp_lock);
 }

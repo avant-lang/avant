@@ -1,0 +1,193 @@
+import harness
+
+// D127: one private scratch directory per process, nested through TMPDIR,
+// removed at exit and on SIGINT, SIGTERM, and SIGHUP, kept by AVANT_KEEP_TMP.
+
+fn scratch_child_src: String {
+  b = buf_new()
+  b.push_str("lib rt {\n  fun avant_tmp_dir: String\n}\n")
+  b.push_str("fn main: Int {\n")
+  b.push_str("  d = rt.avant_tmp_dir()\n")
+  b.push_str("  dummy = file_write(\"\${d}/payload.txt\", \"x\")\n")
+  b.push_str("  puts(d)\n")
+  b.push_str("  mode = \"\"\n")
+  b.push_str("  if v = env_get(\"SCRATCH_MODE\") {\n    mode = v\n  }\n")
+  b.push_str("  if mode == \"fail\" {\n    return 3\n  }\n")
+  b.push_str("  if mode == \"wait\" {\n")
+  b.push_str("    if out = env_get(\"SCRATCH_OUT\") {\n      dummy2 = file_write(out, d)\n    }\n")
+  b.push_str("    start = now_ms()\n")
+  b.push_str("    while now_ms() - start < 30000 {\n    }\n")
+  b.push_str("  }\n")
+  b.push_str("  0\n")
+  b.push_str("}\n")
+  b.to_s
+}
+
+// The child's path line. A kept top-level directory's notice is written
+// at exit, ahead of buffered stdout, so the path is the line starting "/".
+fn first_line(path: String): String {
+  if text = file_read(path) {
+    n = count_lines(text)
+    i = 0
+    while i < n {
+      line = nth_line(text, i).strip()
+      if line.size > 0 && line[0] == 47 {
+        return line
+      }
+      i = i + 1
+    }
+  }
+  ""
+}
+
+fn read_all(path: String): String {
+  if text = file_read(path) {
+    return text.strip()
+  }
+  ""
+}
+
+fn path_base(p: String): String {
+  i = p.size - 1
+  while i >= 0 {
+    if p[i] == 47 {
+      return str_slice(p, i + 1, p.size)
+    }
+    i = i - 1
+  }
+  p
+}
+
+fn run_env(env: Array(String), bin: String, log: String): Int {
+  args: Array(String) = []
+  i = 0
+  while i < env.size {
+    args.push(env[i])
+    i = i + 1
+  }
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
+fn run_signalled(sig: String, bin: String, out: String, log: String): Int {
+  args: Array(String) = []
+  args.push("--preserve-status")
+  args.push("-s")
+  args.push(sig)
+  args.push("1")
+  // A test binary may start with SIGINT ignored (an asynchronous job of
+  // sh), and an ignored signal is deliberately left ignored.
+  args.push("/usr/bin/env")
+  args.push("--default-signal=${sig}")
+  args.push("SCRATCH_MODE=wait")
+  args.push("SCRATCH_OUT=${out}")
+  args.push(bin)
+  process_run_out("/usr/bin/timeout", args, log)
+}
+
+fn test_scratch(c: Checks) {
+  c.suite("tests/cases/test_scratch.av")
+  root = scratch()
+  c.eq_str(scratch(), root, "one directory per process")
+  c.expect(str_has(path_base(root), "avant-"), "named avant-XXXXXX")
+  c.eq_int(path_base(root).size, 12, "mkdtemp suffix")
+  c.expect(file_exists(root), "directory exists")
+  c.expect(file_exists("${root}/.avant-scratch"), "nesting marker")
+  if t = env_get("TMPDIR") {
+    c.eq_str(t, root, "TMPDIR exported to children")
+  } else {
+    c.expect(false, "TMPDIR exported to children")
+  }
+  d1 = scratch_dir()
+  d2 = scratch_dir()
+  c.expect(d1 != d2, "fresh directories differ")
+  c.expect(file_exists(d1) && file_exists(d2), "fresh directories exist")
+  c.expect(str_has(d1, "${root}/"), "fresh directory inside scratch")
+
+  if compiler = env_get("AVANT_COMPILER") {
+    work = scratch_dir()
+    src = "${work}/child.av"
+    dummy_w = file_write(src, scratch_child_src())
+    bin = "${work}/child.bin"
+    code = compile_av(compiler, src, bin, "${work}/child.clog")
+    c.eq_int(code, 0, "child compiles")
+    chmod_x(bin)
+
+    none: Array(String) = []
+    ok_log = "${work}/ok.log"
+    ok_code = run_env(none, bin, ok_log)
+    ok_dir = first_line(ok_log)
+    c.eq_int(ok_code, 0, "child exits 0")
+    c.expect(str_has(ok_dir, "${root}/avant-"), "child nests inside parent")
+    c.expect(!file_exists(ok_dir), "removed at normal exit")
+
+    fail_env: Array(String) = []
+    fail_env.push("SCRATCH_MODE=fail")
+    fail_log = "${work}/fail.log"
+    fail_code = run_env(fail_env, bin, fail_log)
+    fail_dir = first_line(fail_log)
+    c.eq_int(fail_code, 3, "error exit status kept")
+    c.expect(fail_dir.size > 0 && !file_exists(fail_dir), "removed at error exit")
+
+    sigs: Array(String) = []
+    sigs.push("TERM")
+    sigs.push("INT")
+    sigs.push("HUP")
+    want: Array(Int) = []
+    want.push(143)
+    want.push(130)
+    want.push(129)
+    k = 0
+    while k < sigs.size {
+      out = "${work}/sig-${sigs[k]}.path"
+      sig_code = run_signalled(sigs[k], bin, out, "${work}/sig-${sigs[k]}.log")
+      sig_dir = read_all(out)
+      c.eq_int(sig_code, want[k], "SIG${sigs[k]} status kept")
+      c.expect(sig_dir.size > 0 && !file_exists(sig_dir), "removed on SIG${sigs[k]}")
+      k = k + 1
+    }
+
+    keep_env: Array(String) = []
+    keep_env.push("AVANT_KEEP_TMP=1")
+    keep_log = "${work}/keep.log"
+    keep_code = run_env(keep_env, bin, keep_log)
+    c.eq_int(keep_code, 0, "kept child exits 0")
+    keep_dir = first_line(keep_log)
+    c.expect(file_exists("${keep_dir}/payload.txt"), "AVANT_KEEP_TMP keeps the directory")
+    keep_text = read_all(keep_log)
+    c.expect(!str_has(keep_text, "kept temporary directory"), "nested keep is silent")
+
+    top = scratch_dir()
+    top_env: Array(String) = []
+    top_env.push("AVANT_KEEP_TMP=1")
+    top_env.push("TMPDIR=${top}")
+    top_log = "${work}/top.log"
+    top_code = run_env(top_env, bin, top_log)
+    c.eq_int(top_code, 0, "top-level kept child exits 0")
+    top_dir = first_line(top_log)
+    c.expect(str_has(top_dir, "${top}/avant-"), "TMPDIR is the base")
+    c.expect(file_exists(top_dir), "top-level keep keeps")
+    c.expect(str_has(read_all(top_log), "avant: kept temporary directory ${top_dir}"), "top-level keep prints the path")
+
+    unset_args: Array(String) = []
+    unset_args.push("-u")
+    unset_args.push("TMPDIR")
+    unset_args.push(bin)
+    unset_log = "${work}/unset.log"
+    unset_code = process_run_out("/usr/bin/env", unset_args, unset_log)
+    unset_dir = first_line(unset_log)
+    c.eq_int(unset_code, 0, "no TMPDIR exits 0")
+    c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
+    c.expect(!file_exists(unset_dir), "fallback directory removed")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_scratch(c)
+  c.finish
+}
