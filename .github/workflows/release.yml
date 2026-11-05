@@ -132,8 +132,10 @@ jobs:
           mkdir -p dist/avant-linux-x86_64/lib/std
           cp -f bin/avant-b dist/avant-linux-x86_64/avant
           cp -f /tmp/myc-llvm-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
+          test -x runtime/build/avant-bind
+          cp -f runtime/build/avant-bind dist/avant-linux-x86_64/avant-bind
           cp -f lib/std/*.av dist/avant-linux-x86_64/lib/std/
-          chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm
+          chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm dist/avant-linux-x86_64/avant-bind
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
@@ -149,6 +151,7 @@ jobs:
             echo "seed: yes"
             echo "binary: avant"
             echo "bundled: myc-llvm (safepoints ${SAFEPOINTS_VERSION}) beside avant"
+            echo "bundled: avant-bind (tools/bind.c, libclang $(llvm-config-20 --version)) beside avant"
           } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
           tar -C dist -czf dist/avant-linux-x86_64.tar.gz avant-linux-x86_64
           sha256sum dist/avant-linux-x86_64.tar.gz | tee dist/avant-linux-x86_64.tar.gz.sha256

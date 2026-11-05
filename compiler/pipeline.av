@@ -213,6 +213,31 @@ pub fn drop_av_suffix(path: String): String {
   base
 }
 
+// The checkout the compiler runs from, or "" when it is not in one (a
+// release install): AVANT_ROOT, else the parent of the compiler's bin/
+// when it holds runtime/build/avant_rt.o, else the current directory when
+// it does.
+pub fn avant_checkout_root: String {
+  if v = env_get("AVANT_ROOT") {
+    return v
+  }
+  args = argv()
+  if args.size > 0 {
+    dir = path_dirname(args[0])
+    base = path_basename(dir)
+    if str_eq(base, "bin") {
+      parent = path_dirname(dir)
+      if file_exists("${parent}/runtime/build/avant_rt.o") {
+        return parent
+      }
+    }
+  }
+  if file_exists("runtime/build/avant_rt.o") {
+    return "."
+  }
+  ""
+}
+
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v

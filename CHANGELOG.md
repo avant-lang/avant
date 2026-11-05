@@ -8,6 +8,7 @@
 
 ### Changed
 
+* `avant bind` works in a release install: the `bind` helper (`avant-bind`) ships beside `avant`, and in a checkout `sh runtime/build.sh` builds it into `runtime/build/`. Before, the command built the helper on first use into `bin/` (two files in the repository) and failed in a release install with `bind source is missing`.
 * `avant test` starts a file's run as soon as that file has compiled, instead of after every file has compiled, and a free job slot takes a waiting run before a waiting compile.
 
 ### Removed
