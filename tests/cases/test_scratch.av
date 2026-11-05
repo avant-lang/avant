@@ -13,10 +13,16 @@ fn scratch_child_src: String {
   b.push_str("  mode = \"\"\n")
   b.push_str("  if v = env_get(\"SCRATCH_MODE\") {\n    mode = v\n  }\n")
   b.push_str("  if mode == \"fail\" {\n    return 3\n  }\n")
+  // wait: block in a child (D131 forwards the signal to it), the child's
+  // pid recorded next to the directory path so the test can check it.
   b.push_str("  if mode == \"wait\" {\n")
-  b.push_str("    if out = env_get(\"SCRATCH_OUT\") {\n      dummy2 = file_write(out, d)\n    }\n")
-  b.push_str("    start = now_ms()\n")
-  b.push_str("    while now_ms() - start < 30000 {\n    }\n")
+  b.push_str("    if out = env_get(\"SCRATCH_OUT\") {\n")
+  b.push_str("      args: Array(String) = []\n")
+  b.push_str("      args.push(\"-c\")\n")
+  b.push_str("      args.push(\"echo $$ > \${out}.pid; exec sleep 30\")\n")
+  b.push_str("      dummy2 = file_write(out, d)\n")
+  b.push_str("      dummy3 = process_run(\"/bin/sh\", args)\n")
+  b.push_str("    }\n")
   b.push_str("  }\n")
   b.push_str("  0\n")
   b.push_str("}\n")
@@ -148,6 +154,12 @@ fn test_scratch(c: Checks) {
       sig_dir = read_all(out)
       c.eq_int(sig_code, want[k], "SIG${sigs[k]} status kept")
       c.expect(sig_dir.size > 0 && !file_exists(sig_dir), "removed on SIG${sigs[k]}")
+      child_pid = read_all("${out}.pid")
+      gone_args: Array(String) = []
+      gone_args.push("-c")
+      gone_args.push("s=$(ps -o stat= -p ${child_pid} 2>/dev/null); case \"$s\" in ''|Z*) exit 0 ;; *) exit 1 ;; esac")
+      c.expect(child_pid.size > 0, "SIG${sigs[k]} child recorded its pid")
+      c.eq_int(process_run("/bin/sh", gone_args), 0, "SIG${sigs[k]} reaches the blocking child")
       k = k + 1
     }
 
