@@ -116,6 +116,17 @@ fn test_fixed_point(c: Checks) {
       } else {
         c.expect(false, "read next hello stdout")
       }
+
+      // Opt-in for gates (D138): keep this C, built by this compiler from
+      // compiler/main.av, at AVANT_FIXED_POINT_KEEP, only when every check
+      // passed. Internal; not a check.
+      if keep = env_get("AVANT_FIXED_POINT_KEEP") {
+        if keep.size > 0 && c.failed == 0 {
+          if copy_file(bin_c, keep) != 0 {
+            puts("AVANT_FIXED_POINT_KEEP: cannot copy the next compiler to ${keep}")
+          }
+        }
+      }
     } else {
       fail_log(c, clog, "C bin exists")
     }

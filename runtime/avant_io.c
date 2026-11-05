@@ -486,6 +486,74 @@ int32_t avant_fs_mkdir_p(const char *path) {
   return stat(path, &st) == 0 && S_ISDIR(st.st_mode) ? 0 : 1;
 }
 
+/* cp: copies src to dst byte for byte, with src's permission bits, through
+ * a temporary beside dst renamed into place, so dst is never half
+ * written (D138: a gate keeps the fixed point's next compiler). */
+int32_t avant_fs_copy(const char *src, const char *dst) {
+  char tmp[4096];
+  char buf[65536];
+  struct stat st;
+  int in;
+  int out;
+  ssize_t n;
+  if (!src || !dst || snprintf(tmp, sizeof tmp, "%s.part-%ld", dst, (long)getpid()) >= (int)sizeof tmp) {
+    return 1;
+  }
+  in = open(src, O_RDONLY | O_CLOEXEC);
+  if (in < 0) {
+    return 1;
+  }
+  if (fstat(in, &st) != 0) {
+    close(in);
+    return 1;
+  }
+  out = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (out < 0) {
+    close(in);
+    return 1;
+  }
+  for (;;) {
+    n = read(in, buf, sizeof buf);
+    if (n == 0) {
+      break;
+    }
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      break;
+    }
+    {
+      char *p = buf;
+      while (n > 0) {
+        ssize_t w = write(out, p, (size_t)n);
+        if (w < 0) {
+          if (errno == EINTR) {
+            continue;
+          }
+          n = -1;
+          break;
+        }
+        p += w;
+        n -= w;
+      }
+    }
+    if (n < 0) {
+      break;
+    }
+  }
+  close(in);
+  if (n < 0 || fchmod(out, st.st_mode & 07777) != 0 || close(out) != 0) {
+    unlink(tmp);
+    return 1;
+  }
+  if (rename(tmp, dst) != 0) {
+    unlink(tmp);
+    return 1;
+  }
+  return 0;
+}
+
 /* The identity of a file for the safepoint probe cache (D139): device,
  * inode, size, and change time to the nanosecond, or "" when it cannot be
  * read. Replacing or rewriting the file changes it. */
