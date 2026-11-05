@@ -10,6 +10,10 @@
 
 * `avant test` starts a file's run as soon as that file has compiled, instead of after every file has compiled, and a free job slot takes a waiting run before a waiting compile.
 
+### Removed
+
+* `compiler/lex_dump.av`. Its token, AST, and checked-tree dumps are now hidden `avant dump --tokens`, `--ast`, and `--check` modes, so the golden tests use the compiler under test instead of building a second compiler.
+
 ## 0.32.0 - 2026-11-05
 
 ### Added

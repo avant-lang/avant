@@ -15,6 +15,9 @@ import codegen.decl
 import codegen.loops
 import codegen.myc
 import diagnostic
+import dump_ast
+import dump_check
+import expand
 import format
 import lexer
 import loader
@@ -159,7 +162,71 @@ pub fn driver_format(args: Array(String)) {
   }
 }
 
+// The hidden front-end dumps of one file (D137): tokens, AST, or the
+// checked tree, read without the loader, for the goldens. Not in the usage
+// text. The dumps are the bytes compiler/lex_dump.av printed; a front-end
+// error goes to stderr with status 1, as in dump (D142), so a golden can
+// never record one. A program that imports has no --check golden.
+fn dump_layer_mode(arg: String): Bool {
+  if str_eq(arg, "--tokens") {
+    return true
+  }
+  if str_eq(arg, "--ast") {
+    return true
+  }
+  str_eq(arg, "--check")
+}
+
+fn driver_dump_layer(mode: String, path: String) {
+  if src = source_read(path) {
+    lex = Lexer.new(src)
+    tokens = lex.tokenize
+    if e = lex.err {
+      diag_puts(e.show)
+      diag_exit(1)
+    }
+    if str_eq(mode, "--tokens") {
+      dump_tokens(tokens)
+      return
+    }
+    parser = Parser.new(src, tokens)
+    program = parser.parse
+    if e = parser.err {
+      diag_puts(e.show)
+      diag_exit(1)
+    }
+    if str_eq(mode, "--ast") {
+      puts(dump_program(program))
+      return
+    }
+    expander = Expander.new(src, program)
+    dummy_e = expander.expand
+    if e = expander.err {
+      diag_puts(e.show)
+      diag_exit(1)
+    }
+    checker = Checker.new(src, program)
+    dummy = checker.check
+    if e = checker.err {
+      diag_puts(e.show)
+      diag_exit(1)
+    }
+    puts(dump_typed_program(program))
+    return
+  }
+  diag_puts("cannot read ${path}")
+  diag_exit(1)
+}
+
 pub fn driver_dump(args: Array(String)) {
+  if args.size > 0 && dump_layer_mode(args[0]) {
+    if args.size != 2 {
+      diag_puts("dump ${args[0]} takes one .av file")
+      diag_exit(1)
+    }
+    driver_dump_layer(args[0], args[1])
+    return
+  }
   split = take_av_files(args)
   if split.paths.size == 0 {
     diag_puts("dump needs a .av file")
