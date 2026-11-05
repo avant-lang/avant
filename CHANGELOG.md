@@ -1,5 +1,18 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* `--keep-tmp` on `compile`, `run`, `test`, `fetch`, and `bind` keeps the command's temporary directory and prints its path (`AVANT_KEEP_TMP=1` does the same for a program run on its own).
+
+### Changed
+
+* No more files left in `/tmp` or beside sources: each command keeps its intermediate files in one private `avant-XXXXXX` directory under `$TMPDIR` (or `/tmp`), removed at exit, on errors, and on Ctrl-C or `SIGTERM`. Tools and programs the command starts get it as their `TMPDIR`.
+* Objects built from `.c` files passed to `compile` go to that directory instead of beside the C source.
+* The coverage report is `coverage/lcov.info` (was `lcov.info`), for `avant test --coverage` and for an instrumented program's default.
+* Without `AVANT_COVERAGE_MAP`, an instrumented `compile` writes its slot map beside the binary as `OUT.covmap` (was a stamped file in `/tmp`).
+
 ## 0.31.0 - 2026-11-04
 
 ### Added

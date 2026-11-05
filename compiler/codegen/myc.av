@@ -35,6 +35,7 @@ pub class MycGen {
   cov: Bool = false
   cov_n: Int = 0
   cov_map_path: String = ""
+  cov_map_default: String = ""
   cov_kinds: Array(Int)
   cov_paths: Array(String)
   cov_lines: Array(Int)
@@ -119,6 +120,7 @@ pub class MycGen {
     self.cov = false
     self.cov_n = 0
     self.cov_map_path = ""
+    self.cov_map_default = ""
     ck: Array(Int) = []
     self.cov_kinds = ck
     cp: Array(String) = []
@@ -354,7 +356,7 @@ pub class MycGen {
   pub fn emit: String {
     self.cov = coverage_wanted()
     if self.cov {
-      self.cov_map_path = coverage_map_path()
+      self.cov_map_path = coverage_map_path(self.cov_map_default)
     }
     if s = self.symbols {
       self.resolver = s.resolver
@@ -3169,5 +3171,12 @@ pub fn emit_myc(program: Program): String {
 pub fn emit_myc(program: Program, symbols: SymbolTable): String {
   gen = MycGen.new(program)
   gen.symbols = symbols
+  gen.emit
+}
+
+pub fn emit_myc(program: Program, symbols: SymbolTable, cov_map: String): String {
+  gen = MycGen.new(program)
+  gen.symbols = symbols
+  gen.cov_map_default = cov_map
   gen.emit
 }

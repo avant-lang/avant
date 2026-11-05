@@ -24,6 +24,10 @@ fn test_coverage(c: Checks) {
     code = compile_av_cov(compiler, src, bin, log)
     c.eq_int(code, 0, "compile with AVANT_COVERAGE")
     c.expect(file_exists(bin), "coverage bin exists")
+    c.expect(file_exists("${bin}.covmap"), "slot map defaults beside the binary")
+    if ir_map = file_read(dump_log) {
+      c.expect(str_has(ir_map, "/coverage.map"), "dump keeps its slot map in the scratch directory")
+    }
     chmod_x(bin)
     // The fixture writes its own lcov. The compiler's report is a different file.
     // native runs the suite with AVANT_COVERAGE_REPORT=0. Force the table here.
@@ -268,7 +272,8 @@ fn test_coverage(c: Checks) {
     } else {
       c.expect(false, "coverage project log")
     }
-    if proj_lcov = file_read("${proj}/lcov.info") {
+    c.expect(!file_exists("${proj}/lcov.info"), "no lcov.info beside the manifest")
+    if proj_lcov = file_read("${proj}/coverage/lcov.info") {
       c.expect(str_has(proj_lcov, "SF:src/greet.av\n"), "lcov has greet")
       c.expect(str_has(proj_lcov, "SF:src/unused.av\n"), "lcov has unused")
       c.expect(str_has(proj_lcov, "DA:"), "lcov has line records")
@@ -291,8 +296,8 @@ fn test_coverage(c: Checks) {
       c.expect(false, "project lcov")
     }
     rm_lcov: Array(String) = []
-    rm_lcov.push("-f")
-    rm_lcov.push("${proj}/lcov.info")
+    rm_lcov.push("-rf")
+    rm_lcov.push("${proj}/coverage")
     dummy_rm = process_run("/bin/rm", rm_lcov)
   } else {
     c.expect(false, "AVANT_COMPILER")

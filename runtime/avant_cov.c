@@ -443,6 +443,9 @@ static const char *lcov_sf_path(const char *path) {
   return display_path(path);
 }
 
+/* The report's fixed, overwritten location (D129, Jest's coverage/). */
+#define AVANT_LCOV_DEFAULT "coverage/lcov.info"
+
 static const char *lcov_out_path(void) {
   const char *env = getenv("AVANT_COVERAGE_LCOV");
   if (env && env[0] == '0' && env[1] == 0) {
@@ -451,7 +454,7 @@ static const char *lcov_out_path(void) {
   if (env && env[0]) {
     return env;
   }
-  return "lcov.info";
+  return AVANT_LCOV_DEFAULT;
 }
 
 static void write_lcov(void) {
@@ -474,6 +477,9 @@ static void write_lcov(void) {
     }
   }
 
+  if (strcmp(out_path, AVANT_LCOV_DEFAULT) == 0) {
+    mkdir("coverage", 0777);
+  }
   out = fopen(out_path, "w");
   if (!out) {
     for (i = 0; i < file_n; i++) {

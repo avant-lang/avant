@@ -44,6 +44,10 @@ avant compile hello.av hi   # or build a binary named hi
 ./hi
 ```
 
+### Temporary files
+
+`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, or `SIGTERM`; only `kill -9` or a crash leaves it behind. The tools the compiler runs (`myc-llvm`, `cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
+
 That is enough to write and run Avant today. Building the Avant compiler itself is covered at the end, under [Advanced: building the compiler](#advanced-building-the-compiler).
 
 ## Index
@@ -1076,7 +1080,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | `--shard I/N` | Slice `I` of `N`, counted from 1. May be combined with `--jobs`. Does not launch the other slices. |
 | `--junit PATH` | Write one JUnit case per file. Off unless you pass it. |
 | `--skip-exclusive` | Omit files listed in `[test] exclusive`. Required when `--shard` would include one of them. |
-| `--coverage` | Instrument the tests and, after the summary, print one coverage table. Also writes `lcov.info` in the current directory. |
+| `--coverage` | Instrument the tests and, after the summary, print one coverage table. Also writes `coverage/lcov.info` in the current directory. |
 | `-h`, `--help` | Print the flag list and exit 0. |
 
 The log is flushed in path order, and within a file in source order. The runner then prints `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused.
@@ -1177,9 +1181,9 @@ JUnit is the test-analytics file. Coverage is a separate report, for one instrum
 
 `--junit PATH` writes one `<testcase>` per test file. The name is that file's path. It is off unless you pass it. A project does not gain a `junit.xml` by surprise. The file is what an analytics uploader reads. It does not contain one case per `check`.
 
-Coverage is a report of the tests. `avant test --coverage` compiles each selected file with counters, runs them, and after the summary prints one table. It also writes `lcov.info` in the current directory. The default `avant test` does not instrument and does not write that file. `compile`, `dump`, and `run` do not take `--coverage`.
+Coverage is a report of the tests. `avant test --coverage` compiles each selected file with counters, runs them, and after the summary prints one table. It also writes `coverage/lcov.info` in the current directory, one fixed file overwritten by each run. The default `avant test` does not instrument and does not write that file. `compile`, `dump`, and `run` do not take `--coverage`.
 
-With no `[coverage]` section, the table and `lcov.info` are the test file plus what it imports. An optional section widens that set. `include` and `exclude` are directories relative to the manifest, a string or a list of strings. The walk takes `*.av` under `include`, recursively, and skips a directory whose name starts with `.`. There are no globs. A file under `exclude` is left out, including a test file when `exclude` names `tests`. A file no test loaded is listed at 0% lines, with no branch map.
+With no `[coverage]` section, the table and `coverage/lcov.info` are the test file plus what it imports. An optional section widens that set. `include` and `exclude` are directories relative to the manifest, a string or a list of strings. The walk takes `*.av` under `include`, recursively, and skips a directory whose name starts with `.`. There are no globs. A file under `exclude` is left out, including a test file when `exclude` names `tests`. A file no test loaded is listed at 0% lines, with no branch map.
 
 ```toml
 [coverage]
@@ -1190,12 +1194,12 @@ exclude = ["tests", "deps"]
 | Knob | When it applies | Effect |
 | --- | --- | --- |
 | `AVANT_COVERAGE=1` | The compiler's environment | Emit hit counters for that compilation. `0` turns it off. The test runner sets this. A person does not. |
-| `AVANT_COVERAGE_MAP` | Compile time | Path of the slot map baked into the binary. Unset, the map is a temporary file. |
-| `AVANT_COVERAGE_LCOV` | The instrumented program | Where it writes `lcov.info`. `0` writes nothing. Unset, it writes `lcov.info` in the current directory. |
+| `AVANT_COVERAGE_MAP` | Compile time | Path of the slot map baked into the binary. Unset, `compile` writes it beside the binary as `OUT.covmap` (the program adds `OUT.covmap.hits` when it runs); `dump` and `run` keep it in the command's temporary directory. |
+| `AVANT_COVERAGE_LCOV` | The instrumented program | Where it writes the LCOV report. `0` writes nothing. Unset, it writes `coverage/lcov.info` in the current directory, creating `coverage/`. |
 | `AVANT_COVERAGE_REPORT` | The instrumented program | `0` hides the text table. `1` prints it. Unset, a program prints the table and the compiler command line does not. |
 | `AVANT_COVERAGE_COLOR` | The text table | `0` or `1` forces color. Unset, color follows the terminal. |
 
-Hit counters for one binary are a shared map. Several processes of that same binary add into it. `avant test --coverage` keeps those processes from writing `lcov.info` or printing a table, then merges every test by file, kind, line, and name and writes one report.
+Hit counters for one binary are a shared map. Several processes of that same binary add into it. `avant test --coverage` keeps those processes from writing the report or printing a table, then merges every test by file, kind, line, and name and writes one report.
 
 ### Program arguments
 
@@ -1554,7 +1558,7 @@ AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
 AVANT_COMPILER=./bin/avant-c ./bin/avant-c test
 ```
 
-Each file in `tests/cases/` named `test_*.av` is one program. A helper shared by two of them lives in `tests/cases/harness.av` and is imported. Run one file with `avant test tests/cases/test_ffi.av`. `--shard 2/4` runs one slice. A shard that would include a file listed in `[test] exclusive` needs `--skip-exclusive`, and those files run in a command that does not pass `--shard`. The exclusive files are the ones that compile the compiler, probe the collector, rewrite `PATH`, use git, or write a coverage report of their own. `--jobs` defaults to the number of online processors. `--junit PATH` writes one case per check, with durations, for files whose checks record them (the compiler suite and `std.testing` both do), and one case per file otherwise. Each file's output is printed as soon as that file finishes, in completion order; the summary line still totals the whole run. The compiler's own report is the hit file of an instrumented compiler build, and `lcov.info` for that build is written once after the processes that update it have finished. `avant test --coverage` is a separate report, of the tests. Goldens live in `tests/goldens/`.
+Each file in `tests/cases/` named `test_*.av` is one program. A helper shared by two of them lives in `tests/cases/harness.av` and is imported. Run one file with `avant test tests/cases/test_ffi.av`. `--shard 2/4` runs one slice. A shard that would include a file listed in `[test] exclusive` needs `--skip-exclusive`, and those files run in a command that does not pass `--shard`. The exclusive files are the ones that compile the compiler, probe the collector, rewrite `PATH`, use git, or write a coverage report of their own. `--jobs` defaults to the number of online processors. `--junit PATH` writes one case per check, with durations, for files whose checks record them (the compiler suite and `std.testing` both do), and one case per file otherwise. Each file's output is printed as soon as that file finishes, in completion order; the summary line still totals the whole run. The compiler's own report is the hit file of an instrumented compiler build, and `coverage/lcov.info` for that build is written once after the processes that update it have finished. `avant test --coverage` is a separate report, of the tests. Goldens live in `tests/goldens/`.
 
 ## License
 

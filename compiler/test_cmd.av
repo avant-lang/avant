@@ -51,7 +51,6 @@ pub class ShellCmd {
 
 pub class TestHost {
   compiler: String = ""
-  stamp: Int = 0
   seq: Int = 0
   jobs: Int = 1
   coverage: Bool = false
@@ -60,9 +59,8 @@ pub class TestHost {
   bad: Int = 0
   cov: CovReport
 
-  fn initialize(compiler: String, stamp: Int, jobs: Int) {
+  fn initialize(compiler: String, jobs: Int) {
     self.compiler = compiler
-    self.stamp = stamp
     self.seq = 0
     self.jobs = jobs
     self.coverage = false
@@ -74,7 +72,7 @@ pub class TestHost {
 
   pub fn fresh: String {
     self.seq = self.seq + 1
-    "/tmp/avant-t-${self.stamp}-${self.seq}"
+    tmp_path("t-${self.seq}")
   }
 }
 
@@ -163,20 +161,7 @@ fn count_online: Int {
 }
 
 fn read_cwd: String {
-  log = "/tmp/avant-t-cwd-${now_ms()}.txt"
-  args: Array(String) = []
-  args.push("-c")
-  args.push("pwd -P")
-  dummy = process_run_out("/bin/sh", args, log)
-  if text = file_read(log) {
-    t = text.strip()
-    rm_file(log)
-    if t.size > 0 {
-      return t
-    }
-  }
-  rm_file(log)
-  "."
+  cwd_physical()
 }
 
 fn abs_join(dir: String, rel: String): String {
@@ -240,7 +225,7 @@ fn sort_files(files: Array(FileRun)) {
   }
 }
 
-fn walk_tests(dir: String, cwd: String, into: Array(FileRun), stamp: Int, seq: Int): Int {
+fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
   names = dir_list(dir)
   i = 0
   nseq = seq
@@ -259,11 +244,11 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), stamp: Int, seq: I
     path = abs_join(dir, name)
     if is_test_name(name) {
       nseq = nseq + 1
-      into.push(FileRun.new(path, rel_of(cwd, path), "/tmp/avant-t-${stamp}-bin-${nseq}"))
+      into.push(FileRun.new(path, rel_of(cwd, path), tmp_path("bin-${nseq}")))
     } else {
       sub = dir_list(path)
       if sub.size > 0 {
-        nseq = walk_tests(path, cwd, into, stamp, nseq)
+        nseq = walk_tests(path, cwd, into, nseq)
       }
     }
   }
@@ -994,7 +979,6 @@ pub fn driver_test(args: Array(String)) {
       k = k + 1
     }
   }
-  stamp = now_ms()
   files: Array(FileRun) = []
   if paths.size == 0 {
     if test_entry.size > 0 {
@@ -1003,7 +987,7 @@ pub fn driver_test(args: Array(String)) {
       } else {
         test_fail("test entry does not exist: ${test_entry}")
       }
-      files.push(FileRun.new(entry, rel_of(cwd, entry), "/tmp/avant-t-${stamp}-bin-1"))
+      files.push(FileRun.new(entry, rel_of(cwd, entry), tmp_path("bin-1")))
     } else {
       root = abs_join(anchor, "tests")
       if test_dir.size > 0 {
@@ -1014,7 +998,7 @@ pub fn driver_test(args: Array(String)) {
         }
       }
       if file_exists(root) {
-        dummy_seq = walk_tests(root, cwd, files, stamp, 0)
+        dummy_seq = walk_tests(root, cwd, files, 0)
       }
     }
   } else {
@@ -1032,9 +1016,9 @@ pub fn driver_test(args: Array(String)) {
       }
       if str_ends(arg, ".av") {
         seq = seq + 1
-        files.push(FileRun.new(abs, rel_of(cwd, abs), "/tmp/avant-t-${stamp}-bin-${seq}"))
+        files.push(FileRun.new(abs, rel_of(cwd, abs), tmp_path("bin-${seq}")))
       } else {
-        seq = walk_tests(abs, cwd, files, stamp, seq)
+        seq = walk_tests(abs, cwd, files, seq)
       }
       p = p + 1
     }
@@ -1129,7 +1113,7 @@ pub fn driver_test(args: Array(String)) {
   if args0.size > 0 {
     argv0 = args0[0]
   }
-  host = TestHost.new(argv0, stamp, jobs)
+  host = TestHost.new(argv0, jobs)
   host.coverage = coverage
   host.junit = junit.size > 0
   if coverage {
@@ -1172,7 +1156,11 @@ pub fn driver_test(args: Array(String)) {
       k = k + 1
     }
     if host.cov.has_rows {
-      host.cov.write_lcov("lcov.info")
+      mkdir_args: Array(String) = []
+      mkdir_args.push("-p")
+      mkdir_args.push("coverage")
+      dummy_mk = process_run("/bin/mkdir", mkdir_args)
+      host.cov.write_lcov("coverage/lcov.info")
       host.cov.print_table
     }
   }
