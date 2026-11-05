@@ -17,6 +17,7 @@ pub class FileRun {
   reported: Bool = false
   map: String = ""
   frags: Array(String)
+  pending: Int = 0
 
   fn initialize(abs: String, rel: String, bin: String) {
     self.abs = abs
@@ -34,6 +35,7 @@ pub class FileRun {
     self.map = ""
     fr: Array(String) = []
     self.frags = fr
+    self.pending = 0
   }
 }
 
@@ -46,55 +48,102 @@ lib job_rt {
 // One test job (D131): /usr/bin/env with its variables and command as
 // arguments, stdout and stderr to log. No shell: statuses come from
 // waitpid, and the runtime can stop every job's process group on a signal.
+// kind 0 compiles file, 1 runs its serial work, 2 runs one parallel name.
 pub class JobCmd {
   args: Array(String)
   log: String = ""
   pid: Int = 0
   code: Int = 0
   finished: Bool = false
+  started: Bool = false
+  kind: Int = 0
+  file: Int = 0
+  names: String = ""
 
-  fn initialize(args: Array(String), log: String) {
+  fn initialize(args: Array(String), log: String, kind: Int, file: Int) {
     self.args = args
     self.log = log
     self.pid = 0
     self.code = 0
     self.finished = false
+    self.started = false
+    self.kind = kind
+    self.file = file
+    self.names = ""
   }
 }
 
-// Keeps up to limit jobs running and hands back each one as it finishes,
-// so a slow job never holds back the next start (no batch barrier).
-pub class JobPool {
-  cmds: Array(JobCmd)
+// Keeps up to limit jobs running and hands back each one as it finishes
+// (D136). Jobs are added while others run, so a file's run starts as soon
+// as its own compile is done: there is no phase barrier. A free slot takes
+// a waiting run before a waiting compile, and the earliest file first.
+pub class JobSched {
+  jobs: Array(JobCmd)
   limit: Int = 1
-  next: Int = 0
   running: Int = 0
 
-  fn initialize(cmds: Array(JobCmd), limit: Int) {
-    self.cmds = cmds
+  fn initialize(limit: Int) {
+    js: Array(JobCmd) = []
+    self.jobs = js
     self.limit = limit
     if self.limit < 1 {
       self.limit = 1
     }
-    self.next = 0
     self.running = 0
   }
 
-  // The index of the next finished job, or -1 when every job has finished.
+  pub fn add(cmd: JobCmd) {
+    self.jobs.push(cmd)
+  }
+
+  fn better(a: JobCmd, b: JobCmd): Bool {
+    if a.kind > 0 {
+      if b.kind == 0 {
+        return true
+      }
+    } else {
+      if b.kind > 0 {
+        return false
+      }
+    }
+    a.file < b.file
+  }
+
+  fn pick: Int {
+    best = -1
+    i = 0
+    while i < self.jobs.size {
+      cmd = self.jobs[i]
+      if !cmd.started {
+        if best < 0 {
+          best = i
+        } else if self.better(cmd, self.jobs[best]) {
+          best = i
+        }
+      }
+      i = i + 1
+    }
+    best
+  }
+
+  // The index of the next finished job, or -1 when every added job has
+  // finished.
   pub fn wait_one: Int {
-    while self.running < self.limit && self.next < self.cmds.size {
-      cmd = self.cmds[self.next]
+    while self.running < self.limit {
+      k = self.pick
+      if k < 0 {
+        break
+      }
+      cmd = self.jobs[k]
+      cmd.started = true
       pid = job_rt.avant_job_start("/usr/bin/env", cmd.args, cmd.log)
       if pid < 0 {
         cmd.code = 127
         cmd.finished = true
-        at = self.next
-        self.next = self.next + 1
-        return at
+        return k
       }
       cmd.pid = pid
       self.running = self.running + 1
-      self.next = self.next + 1
     }
     if self.running == 0 {
       return -1
@@ -105,9 +154,9 @@ pub class JobPool {
     }
     self.running = self.running - 1
     i = 0
-    while i < self.next {
-      cmd = self.cmds[i]
-      if cmd.pid == got && !cmd.finished {
+    while i < self.jobs.size {
+      cmd = self.jobs[i]
+      if cmd.started && cmd.pid == got && !cmd.finished {
         cmd.code = job_rt.avant_job_status()
         cmd.finished = true
         return i
@@ -423,11 +472,93 @@ fn emit_file(host: TestHost, f: FileRun) {
   }
 }
 
+fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
+  base = host.fresh()
+  names = "${base}.names"
+  frag = ""
+  if host.junit {
+    frag = "${base}.junit"
+    f.frags.push(frag)
+  }
+  args = env_run(host.compiler, names, "", host.coverage, frag)
+  args.push(f.bin)
+  run = JobCmd.new(args, "${base}.log", 1, at)
+  run.names = names
+  sched.add(run)
+}
+
+fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
+  k = 0
+  while k < f.parallels.size {
+    name = f.parallels[k]
+    frag = ""
+    if host.junit {
+      frag = "${host.fresh()}.junit"
+      f.frags.push(frag)
+    }
+    args = env_run(host.compiler, "", name, host.coverage, frag)
+    args.push(f.bin)
+    cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
+    sched.add(cmd)
+    f.par_logs.push(cmd.log)
+    f.pending = f.pending + 1
+    k = k + 1
+  }
+}
+
+fn take_par_logs(f: FileRun) {
+  k = 0
+  while k < f.par_logs.size {
+    f.output = append_text(f.output, read_text(f.par_logs[k]))
+    rm_file(f.par_logs[k])
+    k = k + 1
+  }
+}
+
+// [test] first (D136): the listed files move to the front in the listed
+// order and the rest keep walk order. Applied after --shard picks its
+// slice, so a shard's files do not depend on the list.
+fn order_first(files: Array(FileRun), first_abs: Array(String)): Array(FileRun) {
+  if first_abs.size == 0 {
+    return files
+  }
+  out: Array(FileRun) = []
+  taken: Array(Int) = []
+  f = 0
+  while f < files.size {
+    taken.push(0)
+    f = f + 1
+  }
+  e = 0
+  while e < first_abs.size {
+    f = 0
+    while f < files.size {
+      if taken[f] == 0 && str_eq(files[f].abs, first_abs[e]) {
+        taken[f] = 1
+        out.push(files[f])
+      }
+      f = f + 1
+    }
+    e = e + 1
+  }
+  f = 0
+  while f < files.size {
+    if taken[f] == 0 {
+      out.push(files[f])
+    }
+    f = f + 1
+  }
+  out
+}
+
+// Runs files through one scheduler (D136): each file's serial work is
+// queued when its compile finishes, its parallel names when its serial
+// work finishes (D84), and the file is reported when its last job ends.
 fn run_many(host: TestHost, files: Array(FileRun)) {
   if files.size == 0 {
     return
   }
-  compiles: Array(JobCmd) = []
+  sched = JobSched.new(host.jobs)
   i = 0
   while i < files.size {
     f = files[i]
@@ -440,141 +571,63 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     args.push(f.abs)
     args.push(f.bin)
     args.push("--debug")
-    compiles.push(JobCmd.new(args, "${host.fresh()}.log"))
+    sched.add(JobCmd.new(args, "${host.fresh()}.log", 0, i))
     i = i + 1
   }
-  pool = JobPool.new(compiles, host.jobs)
   while true {
-    i = pool.wait_one
-    if i < 0 {
+    k = sched.wait_one
+    if k < 0 {
       break
     }
-    f = files[i]
-    cmd = compiles[i]
-    if cmd.code != 0 {
-      f.ok = false
-      f.compiled = false
-      f.output = read_text(cmd.log)
-      emit_file(host, f)
-    } else {
-      f.compiled = true
-      chmod_bin(f.bin)
-    }
-    rm_file(cmd.log)
-  }
-  serials: Array(JobCmd) = []
-  serial_at: Array(Int) = []
-  serial_names: Array(String) = []
-  i = 0
-  while i < files.size {
-    f = files[i]
-    if f.compiled {
-      base = host.fresh()
-      names = "${base}.names"
-      frag = ""
-      if host.junit {
-        frag = "${base}.junit"
-        f.frags.push(frag)
-      }
-      args = env_run(host.compiler, names, "", host.coverage, frag)
-      args.push(f.bin)
-      serials.push(JobCmd.new(args, "${base}.log"))
-      serial_at.push(i)
-      serial_names.push(names)
-    }
-    i = i + 1
-  }
-  pool = JobPool.new(serials, host.jobs)
-  while true {
-    i = pool.wait_one
-    if i < 0 {
-      break
-    }
-    f = files[serial_at[i]]
-    cmd = serials[i]
-    f.output = append_text(f.output, read_text(cmd.log))
-    if cmd.code != 0 {
-      f.ok = false
-    }
-    rm_file(cmd.log)
-    found = name_lines(read_text(serial_names[i]))
-    rm_file(serial_names[i])
-    seen: Array(String) = []
-    k = 0
-    while k < found.size {
-      name = found[k]
-      if listed(seen, name) {
+    cmd = sched.jobs[k]
+    f = files[cmd.file]
+    if cmd.kind == 0 {
+      if cmd.code != 0 {
         f.ok = false
-        f.output = append_text(f.output, "duplicate parallel name ${name}\n")
+        f.compiled = false
+        f.output = read_text(cmd.log)
+        emit_file(host, f)
       } else {
-        seen.push(name)
-        f.parallels.push(name)
+        f.compiled = true
+        chmod_bin(f.bin)
+        queue_run(host, sched, f, cmd.file)
       }
-      k = k + 1
-    }
-    if f.parallels.size == 0 {
-      emit_file(host, f)
-    }
-  }
-  pars: Array(JobCmd) = []
-  par_file: Array(Int) = []
-  i = 0
-  while i < files.size {
-    f = files[i]
-    if f.compiled {
-      k = 0
-      while k < f.parallels.size {
-        name = f.parallels[k]
-        frag = ""
-        if host.junit {
-          frag = "${host.fresh()}.junit"
-          f.frags.push(frag)
-        }
-        args = env_run(host.compiler, "", name, host.coverage, frag)
-        args.push(f.bin)
-        cmd = JobCmd.new(args, "${host.fresh()}.log")
-        pars.push(cmd)
-        par_file.push(i)
-        f.par_logs.push(cmd.log)
-        k = k + 1
+      rm_file(cmd.log)
+    } else if cmd.kind == 1 {
+      f.output = append_text(f.output, read_text(cmd.log))
+      if cmd.code != 0 {
+        f.ok = false
       }
-    }
-    i = i + 1
-  }
-  pool = JobPool.new(pars, host.jobs)
-  while true {
-    p = pool.wait_one
-    if p < 0 {
-      break
-    }
-    i = par_file[p]
-    f = files[i]
-    if f.reported {
-      continue
-    }
-    done = true
-    j = 0
-    while j < pars.size {
-      if par_file[j] == i && !pars[j].finished {
-        done = false
-      }
-      j = j + 1
-    }
-    if done {
-      k = 0
-      while k < f.par_logs.size {
-        f.output = append_text(f.output, read_text(f.par_logs[k]))
-        rm_file(f.par_logs[k])
-        k = k + 1
-      }
-      j = 0
-      while j < pars.size {
-        if par_file[j] == i && pars[j].code != 0 {
+      rm_file(cmd.log)
+      found = name_lines(read_text(cmd.names))
+      rm_file(cmd.names)
+      seen: Array(String) = []
+      n = 0
+      while n < found.size {
+        name = found[n]
+        if listed(seen, name) {
           f.ok = false
+          f.output = append_text(f.output, "duplicate parallel name ${name}\n")
+        } else {
+          seen.push(name)
+          f.parallels.push(name)
         }
-        j = j + 1
+        n = n + 1
       }
-      emit_file(host, f)
+      if f.parallels.size == 0 {
+        emit_file(host, f)
+      } else {
+        queue_parallels(host, sched, f, cmd.file)
+      }
+    } else {
+      if cmd.code != 0 {
+        f.ok = false
+      }
+      f.pending = f.pending - 1
+      if f.pending == 0 {
+        take_par_logs(f)
+        emit_file(host, f)
+      }
     }
   }
   i = 0
@@ -583,19 +636,9 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     if f.compiled {
       if f.reported {
       } else {
-        k = 0
-        while k < f.par_logs.size {
-          f.output = append_text(f.output, read_text(f.par_logs[k]))
-          rm_file(f.par_logs[k])
-          k = k + 1
-        }
-        j = 0
-        while j < pars.size {
-          if par_file[j] == i && pars[j].code != 0 {
-            f.ok = false
-          }
-          j = j + 1
-        }
+        take_par_logs(f)
+        f.ok = false
+        f.output = append_text(f.output, "test jobs did not finish\n")
         emit_file(host, f)
       }
     }
@@ -905,6 +948,7 @@ pub fn driver_test(args: Array(String)) {
   test_dir = ""
   test_entry = ""
   exclusive: Array(String) = []
+  first: Array(String) = []
   cov_include: Array(String) = []
   cov_exclude: Array(String) = []
   if man_dir.size > 0 {
@@ -929,6 +973,11 @@ pub fn driver_test(args: Array(String)) {
       k = 0
       while k < m.test_exclusive.size {
         exclusive.push(m.test_exclusive[k])
+        k = k + 1
+      }
+      k = 0
+      while k < m.test_first.size {
+        first.push(m.test_first[k])
         k = k + 1
       }
       k = 0
@@ -1028,6 +1077,30 @@ pub fn driver_test(args: Array(String)) {
       e = e + 1
     }
   }
+  first_abs: Array(String) = []
+  e = 0
+  while e < first.size {
+    first_abs.push(abs_join(anchor, first[e]))
+    e = e + 1
+  }
+  if paths.size == 0 {
+    e = 0
+    while e < first_abs.size {
+      found = false
+      f = 0
+      while f < files.size {
+        if str_eq(files[f].abs, first_abs[e]) {
+          found = true
+        }
+        f = f + 1
+      }
+      if found {
+      } else {
+        test_fail("first path is not a selected test: ${first[e]}")
+      }
+      e = e + 1
+    }
+  }
   f = 0
   while f < files.size {
     if listed(ex_abs, files[f].abs) {
@@ -1088,6 +1161,7 @@ pub fn driver_test(args: Array(String)) {
   if files.size == 0 {
     test_fail("no tests selected")
   }
+  run_order = order_first(files, first_abs)
   argv0 = "avant"
   args0 = argv()
   if args0.size > 0 {
@@ -1101,16 +1175,16 @@ pub fn driver_test(args: Array(String)) {
     host.cov.use_excludes(cov_exclude)
   }
   if jobs == 1 {
-    run_many(host, files)
+    run_many(host, run_order)
   } else {
     normals: Array(FileRun) = []
     excls: Array(FileRun) = []
     f = 0
-    while f < files.size {
-      if files[f].exclusive {
-        excls.push(files[f])
+    while f < run_order.size {
+      if run_order[f].exclusive {
+        excls.push(run_order[f])
       } else {
-        normals.push(files[f])
+        normals.push(run_order[f])
       }
       f = f + 1
     }

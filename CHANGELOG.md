@@ -1,5 +1,15 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* `[test] first` in `avant.toml`: the listed test files start before the others, in the listed order.
+
+### Changed
+
+* `avant test` starts a file's run as soon as that file has compiled, instead of after every file has compiled, and a free job slot takes a waiting run before a waiting compile.
+
 ## 0.32.0 - 2026-11-05
 
 ### Added

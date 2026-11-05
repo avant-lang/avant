@@ -1180,11 +1180,14 @@ dir = "tests"
 exclusive = ["tests/test_bench.av"]
 ```
 
+A file listed in `[test] first` starts before the others, in the listed order; the rest keep their sorted order. List the slowest files there so a long file does not start last and hold up the end of the run. Each file's run starts as soon as that file has compiled, and a free job slot takes a waiting run before a waiting compile. On a command with no path, every listed path has to be one of the discovered tests. `--shard` picks its slice before the list is applied, so the list does not move files between shards.
+
 | Key | Meaning |
 | --- | --- |
 | `dir` | One directory. Replaces the default `tests/` walk. |
 | `entry` | One file. Replaces the walk. |
 | `exclusive` | Paths that run alone. A string, or a list of strings. |
+| `first` | Paths that start before the other files, in the listed order. A string, or a list of strings. |
 
 `dir` and `entry` together are an error. A path on the command overrides both. There is no command string and no `jobs` key. Paths are relative to the manifest.
 
@@ -1571,7 +1574,7 @@ AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
 AVANT_COMPILER=./bin/avant-c ./bin/avant-c test
 ```
 
-Each file in `tests/cases/` named `test_*.av` is one program. A helper shared by two of them lives in `tests/cases/harness.av` and is imported. Run one file with `avant test tests/cases/test_ffi.av`. `--shard 2/4` runs one slice. A shard that would include a file listed in `[test] exclusive` needs `--skip-exclusive`, and those files run in a command that does not pass `--shard`. The exclusive files are the ones that compile the compiler, probe the collector, rewrite `PATH`, use git, or write a coverage report of their own. `--jobs` defaults to the number of online processors. `--junit PATH` writes one case per check, with durations, for files whose checks record them (the compiler suite and `std.testing` both do), and one case per file otherwise. Each file's output is printed as soon as that file finishes, in completion order; the summary line still totals the whole run. The compiler's own report is the hit file of an instrumented compiler build, and `coverage/lcov.info` for that build is written once after the processes that update it have finished. `avant test --coverage` is a separate report, of the tests. Goldens live in `tests/goldens/`.
+Each file in `tests/cases/` named `test_*.av` is one program. A helper shared by two of them lives in `tests/cases/harness.av` and is imported. Run one file with `avant test tests/cases/test_ffi.av`. `--shard 2/4` runs one slice. A shard that would include a file listed in `[test] exclusive` needs `--skip-exclusive`, and those files run in a command that does not pass `--shard`. `test_fixed_point.av`, which compiles the compiler, is listed in `[test] first` so it starts before the rest; it no longer runs alone. The exclusive files are the ones that probe the collector, rewrite `PATH`, use git, or write a coverage report of their own. `--jobs` defaults to the number of online processors. `--junit PATH` writes one case per check, with durations, for files whose checks record them (the compiler suite and `std.testing` both do), and one case per file otherwise. Each file's output is printed as soon as that file finishes, in completion order; the summary line still totals the whole run. The compiler's own report is the hit file of an instrumented compiler build, and `coverage/lcov.info` for that build is written once after the processes that update it have finished. `avant test --coverage` is a separate report, of the tests. Goldens live in `tests/goldens/`.
 
 ## License
 

@@ -25,6 +25,7 @@ pub class PkgManifest {
   test_dir: String = ""
   test_entry: String = ""
   test_exclusive: Array(String)
+  test_first: Array(String)
   test_err: String = ""
   cov_include: Array(String)
   cov_exclude: Array(String)
@@ -40,6 +41,8 @@ pub class PkgManifest {
     self.test_err = ""
     ex: Array(String) = []
     self.test_exclusive = ex
+    fi: Array(String) = []
+    self.test_first = fi
     inc: Array(String) = []
     self.cov_include = inc
     exc: Array(String) = []
@@ -385,7 +388,24 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     }
     return true
   }
-  pkg_note_test(m, "${path}:${line_no}: unknown test key ${k} (want dir, entry, or exclusive)")
+  if str_eq(k, "first") {
+    if m.test_first.size > 0 {
+      pkg_note_test(m, "${path}:${line_no}: duplicate test key first")
+      return true
+    }
+    list = pkg_string_list(val)
+    if list.ok {
+      i = 0
+      while i < list.items.size {
+        m.test_first.push(list.items[i])
+        i = i + 1
+      }
+    } else {
+      pkg_note_test(m, "${path}:${line_no}: first needs a string or a list of strings")
+    }
+    return true
+  }
+  pkg_note_test(m, "${path}:${line_no}: unknown test key ${k} (want dir, entry, exclusive, or first)")
   true
 }
 

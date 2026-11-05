@@ -69,6 +69,21 @@ fn ut_sh(body: String, rc_path: String): Int {
   1
 }
 
+fn ut_index(hay: String, needle: String): Int {
+  if needle.size == 0 || needle.size > hay.size {
+    return -1
+  }
+  last = hay.size - needle.size
+  i = 0
+  while i <= last {
+    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+      return i
+    }
+    i = i + 1
+  }
+  -1
+}
+
 fn ut_read_ms(path: String): Int {
   if text = file_read(path) {
     return text.strip().to_i
@@ -258,6 +273,38 @@ fn test_user_test(c: Checks) {
     }
     right_hi = re
     c.expect(ms >= left_hi && ms >= right_hi, "exclusive file does not overlap other files")
+
+    // [test] first (D136): with one job, the listed file compiles and runs
+    // before the next file compiles (no phase barrier), so its ok line
+    // comes before the broken file's FAIL line, though it sorts after it.
+    order = "${root}/order"
+    mkdir_p("${order}/tests")
+    dummy_order_toml = file_write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
+    dummy_oa = file_write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
+    dummy_oz = file_write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"z\")\n  t.finish\n}\n")
+    order_rc = "${root}/order.rc"
+    order_sh = "#!/bin/sh\ncd ${ut_quote(order)} && ${ut_quote(compiler)} test --jobs 1 > ${ut_quote(root)}/order.log 2>&1; echo $? > ${ut_quote(order_rc)}\n"
+    c.eq_int(ut_sh(order_sh, order_rc), 1, "first fixture fails on its broken file")
+    order_text = ""
+    if ot = file_read("${root}/order.log") {
+      order_text = ot
+    }
+    zi = ut_index(order_text, "ok tests/test_z.av")
+    ai = ut_index(order_text, "FAIL tests/test_a.av")
+    c.expect(zi >= 0 && ai > zi, "a first file runs before a later file compiles")
+
+    nofirst = "${root}/nofirst"
+    mkdir_p("${nofirst}/tests")
+    dummy_nf_toml = file_write("${nofirst}/avant.toml", "[package]\nname = \"nofirst\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_gone.av\"]\n")
+    dummy_nf = file_write("${nofirst}/tests/test_here.av", "fn main: Int {\n  0\n}\n")
+    nf_rc = "${root}/nofirst.rc"
+    nf_sh = "#!/bin/sh\ncd ${ut_quote(nofirst)} && ${ut_quote(compiler)} test > ${ut_quote(root)}/nofirst.log 2>&1; echo $? > ${ut_quote(nf_rc)}\n"
+    c.eq_int(ut_sh(nf_sh, nf_rc), 1, "a first path that is not a test is an error")
+    nf_text = ""
+    if nt = file_read("${root}/nofirst.log") {
+      nf_text = nt
+    }
+    c.expect(ut_has(nf_text, "first path is not a selected test"), "first error names the path rule")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
