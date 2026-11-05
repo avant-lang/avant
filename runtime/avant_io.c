@@ -52,9 +52,8 @@ static char *cstr_dup(const char *s) {
  * this before anything can start the pool or the HTTP server, so
  * scanning here records the override in time, and removing the flag
  * from the array means the program's own argv() never sees it. Both
- * spellings are one implementation; the flag wins over AVANT_THREADS;
- * scanning stops at a literal "--". A malformed value dies loudly,
- * in the AVANT_THREADS diagnostic style. */
+ * spellings are one implementation; scanning stops at a literal "--".
+ * A malformed value dies loudly. */
 static void scan_threads_flag(void) {
   int32_t i;
   int32_t w = 1;

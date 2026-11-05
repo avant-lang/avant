@@ -13,6 +13,7 @@
 
 ### Removed
 
+* `AVANT_THREADS`, deprecated in 0.31.0: the thread count is `--threads N` on the program's command line, else the number of online processors. The variable is no longer read.
 * `compiler/lex_dump.av`. Its token, AST, and checked-tree dumps are now hidden `avant dump --tokens`, `--ast`, and `--check` modes, so the golden tests use the compiler under test instead of building a second compiler.
 
 ## 0.32.0 - 2026-11-05

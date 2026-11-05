@@ -922,7 +922,7 @@ JSON in the examples is yyjson. HTTP in `std.http` is uSockets and picohttpparse
 
 ### spawn
 
-`spawn { }` runs the block on a pool of OS threads. The pool size is the number of processors online, read once when the pool starts. `--threads N` (or `--threads=N`) on the program's command line replaces it, and `AVANT_THREADS` is a deprecated fallback. Extra tasks wait in a queue.
+`spawn { }` runs the block on a pool of OS threads. The pool size is the number of processors online, read once when the pool starts. `--threads N` (or `--threads=N`) on the program's command line replaces it. Extra tasks wait in a queue.
 
 The block's result is `Int`. `.join` waits for it. Calling `.join` or `.parallel` from inside a pool worker is an error. A nested `spawn` from a worker is allowed.
 
@@ -1075,7 +1075,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 
 | Flag | Meaning |
 | --- | --- |
-| `--jobs N` | How many test processes may run at once. Default: the number of online processors. Does not read `AVANT_THREADS`. |
+| `--jobs N` | How many test processes may run at once. Default: the number of online processors. |
 | `--jobs 1` | One file at a time. |
 | `--shard I/N` | Slice `I` of `N`, counted from 1. May be combined with `--jobs`. Does not launch the other slices. |
 | `--junit PATH` | Write one JUnit case per file. Off unless you pass it. |
