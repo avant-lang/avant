@@ -169,6 +169,22 @@ fn test_scratch(c: Checks) {
     c.expect(file_exists(top_dir), "top-level keep keeps")
     c.expect(str_has(read_all(top_log), "avant: kept temporary directory ${top_dir}"), "top-level keep prints the path")
 
+    std_src = "${work}/std_temp.av"
+    std_body = "import std.testing\nfn main: Int {\n  t = Test.new\n  a = t.temp_dir\n  b = t.temp_dir\n  puts(a)\n  t.check(a != b, \"fresh per call\")\n  t.check(file_exists(a) && file_exists(b), \"created\")\n  t.check(file_write(\"\${a}/x.txt\", \"x\") == 0, \"writable\")\n  t.finish\n}\n"
+    dummy_sw = file_write(std_src, std_body)
+    std_bin = "${work}/std_temp.bin"
+    std_code = compile_av(compiler, std_src, std_bin, "${work}/std_temp.clog")
+    c.eq_int(std_code, 0, "std.testing temp_dir program compiles")
+    chmod_x(std_bin)
+    std_log = "${work}/std_temp.log"
+    std_run = run_av_bin(std_bin, std_log)
+    std_text = read_all(std_log)
+    c.eq_int(std_run, 0, "t.temp_dir checks pass")
+    c.expect(str_has(std_text, "0 failed, 3 passed"), "t.temp_dir program reports its checks")
+    std_dir = first_line(std_log)
+    c.expect(str_has(std_dir, "${root}/avant-"), "t.temp_dir nests in the scratch directory")
+    c.expect(std_dir.size > 0 && !file_exists(std_dir), "t.temp_dir removed at exit")
+
     unset_args: Array(String) = []
     unset_args.push("-u")
     unset_args.push("TMPDIR")

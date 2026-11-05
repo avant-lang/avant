@@ -4,6 +4,7 @@
 
 ### Added
 
+* `std.testing`: `t.temp_dir` returns a new, empty directory per call, removed when the test program exits.
 * `--keep-tmp` on `compile`, `run`, `test`, `fetch`, and `bind` keeps the command's temporary directory and prints its path (`AVANT_KEEP_TMP=1` does the same for a program run on its own).
 
 ### Changed
