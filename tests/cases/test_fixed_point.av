@@ -7,6 +7,13 @@ fn fail_log(c: Checks, log: String, msg: String) {
   }
 }
 
+fn dump_args(src: String): Array(String) {
+  a: Array(String) = []
+  a.push("dump")
+  a.push(src)
+  a
+}
+
 fn test_fixed_point(c: Checks) {
   c.suite("tests/cases/test_fixed_point.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -23,7 +30,29 @@ fn test_fixed_point(c: Checks) {
     clog = "${scratch()}/fixed_point-${stamp}-c.log"
     hlog = "${scratch()}/fixed_point-${stamp}-hello.log"
 
-    b_hello = dump_av(compiler, hello, hello_b)
+    // Two waves of concurrent work (D138). Wave 1, all with this
+    // compiler: compile the next compiler, dump hello, dump the compiler.
+    // Wave 2, with the next compiler: dump hello, dump the compiler, run
+    // hello. Checks are recorded afterwards in the order they always had.
+    // One self-host link. Nursery is forced on so the long compile is the
+    // collector proof, and --debug is the daily backend. The log is also
+    // the compiler-sized DT_TEXTREL check.
+    cenv: Array(String) = []
+    cenv.push("AVANT_NURSERY=1")
+    cenv.push(compiler)
+    cenv.push("compile")
+    cenv.push(main_av)
+    cenv.push(bin_c)
+    cenv.push("--debug")
+    wave1: Array(HJob) = []
+    wave1.push(HJob.new("/usr/bin/env", cenv, clog))
+    wave1.push(HJob.new(compiler, dump_args(hello), hello_b))
+    wave1.push(HJob.new(compiler, dump_args(main_av), main_b))
+    run_jobs(wave1)
+    ccode = wave1[0].code
+    b_hello = wave1[1].code
+    b_main = wave1[2].code
+
     c.eq_int(b_hello, 0, "dump hello")
     if got = file_read(hello_b) {
       if want = file_read(golden) {
@@ -35,17 +64,6 @@ fn test_fixed_point(c: Checks) {
       fail_log(c, hello_b, "read hello dump")
     }
 
-    // One self-host link. Nursery is forced on so the long compile is the
-    // collector proof, and --debug is the daily backend. The log is also
-    // the compiler-sized DT_TEXTREL check.
-    cenv: Array(String) = []
-    cenv.push("AVANT_NURSERY=1")
-    cenv.push(compiler)
-    cenv.push("compile")
-    cenv.push(main_av)
-    cenv.push(bin_c)
-    cenv.push("--debug")
-    ccode = process_run_out("/usr/bin/env", cenv, clog)
     c.eq_int(ccode, 0, "compile next compiler")
     if ccout = file_read(clog) {
       c.expect(!str_has(ccout, "DT_TEXTREL"), "compile next compiler has no TEXTREL warning")
@@ -54,8 +72,18 @@ fn test_fixed_point(c: Checks) {
     }
     if file_exists(bin_c) {
       chmod_x(bin_c)
+      run_args: Array(String) = []
+      run_args.push("run")
+      run_args.push(hello)
+      wave2: Array(HJob) = []
+      wave2.push(HJob.new(bin_c, dump_args(hello), hello_c))
+      wave2.push(HJob.new(bin_c, dump_args(main_av), main_c))
+      wave2.push(HJob.new(bin_c, run_args, hlog))
+      run_jobs(wave2)
+      c_hello = wave2[0].code
+      c_main = wave2[1].code
+      hcode = wave2[2].code
 
-      c_hello = dump_av(bin_c, hello, hello_c)
       c.eq_int(c_hello, 0, "next dump hello")
       if got_c = file_read(hello_c) {
         if want = file_read(golden) {
@@ -70,9 +98,7 @@ fn test_fixed_point(c: Checks) {
         fail_log(c, hello_c, "read next hello dump")
       }
 
-      b_main = dump_av(compiler, main_av, main_b)
       c.eq_int(b_main, 0, "dump compiler myc")
-      c_main = dump_av(bin_c, main_av, main_c)
       c.eq_int(c_main, 0, "next dump compiler myc")
       if ir_b = file_read(main_b) {
         if ir_c = file_read(main_c) {
@@ -84,7 +110,6 @@ fn test_fixed_point(c: Checks) {
         fail_log(c, main_b, "read compiler myc")
       }
 
-      hcode = run_av_cmd(bin_c, hello, hlog)
       c.eq_int(hcode, 0, "next runs hello")
       if hout = file_read(hlog) {
         c.eq_str(hout, "Hello Avant\n", "next hello stdout")

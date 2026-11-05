@@ -80,6 +80,59 @@ lib harness_rt {
   fun avant_fs_chmod_x(path: String): Int
   fun avant_fs_mkdir_p(path: String): Int
   fun avant_fs_cwd: String
+  fun avant_job_start(path: String, args: Array(String), out: String): Int
+  fun avant_job_wait: Int
+  fun avant_job_status: Int
+}
+
+// One command for run_jobs: path and args, stdout and stderr to log.
+pub class HJob {
+  path: String = ""
+  args: Array(String)
+  log: String = ""
+  pid: Int = 0
+  code: Int = 127
+
+  fn initialize(path: String, args: Array(String), log: String) {
+    self.path = path
+    self.args = args
+    self.log = log
+    self.pid = 0
+    self.code = 127
+  }
+}
+
+// Starts every job at once on the runtime job interface (D131, D138) and
+// waits for all of them; each job's code is its exit status (127 when it
+// could not start, 128+n for a signal).
+pub fn run_jobs(jobs: Array(HJob)) {
+  running = 0
+  i = 0
+  while i < jobs.size {
+    j = jobs[i]
+    j.pid = harness_rt.avant_job_start(j.path, j.args, j.log)
+    if j.pid > 0 {
+      running = running + 1
+    } else {
+      j.code = 127
+    }
+    i = i + 1
+  }
+  while running > 0 {
+    got = harness_rt.avant_job_wait()
+    if got < 0 {
+      break
+    }
+    st = harness_rt.avant_job_status()
+    k = 0
+    while k < jobs.size {
+      if jobs[k].pid == got {
+        jobs[k].code = st
+      }
+      k = k + 1
+    }
+    running = running - 1
+  }
 }
 
 // The process's private scratch directory (D127): created on first use,
