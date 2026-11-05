@@ -285,20 +285,29 @@ static void child_redirect(const char *file, int fd_a, int fd_b) {
  * given, else to the stdout file; a job (D131) also gets its own process
  * group, /dev/null stdin, and default signal dispositions, so the runner
  * can stop the whole job and a job never reads the terminal. */
-static void child_exec(const char *path, char **argv, const char *out_path, const char *err_path, int job) {
+static void child_stdin_null(void) {
+  int devnull = open("/dev/null", O_RDONLY);
+  if (devnull >= 0) {
+    dup2(devnull, STDIN_FILENO);
+    if (devnull > STDERR_FILENO) {
+      close(devnull);
+    }
+  }
+}
+
+/* job: a runner job (D131). no_stdin: stdin from /dev/null, for a tool the
+ * compiler runs (Wave D): myc-llvm reads all of a non-terminal stdin before
+ * its arguments, so an inherited pipe or socket made it hang or take the
+ * input as a source file. */
+static void child_exec(const char *path, char **argv, const char *out_path, const char *err_path, int job, int no_stdin) {
   if (job) {
-    int devnull;
     setpgid(0, 0);
     signal(SIGINT, SIG_DFL);
     signal(SIGTERM, SIG_DFL);
     signal(SIGHUP, SIG_DFL);
-    devnull = open("/dev/null", O_RDONLY);
-    if (devnull >= 0) {
-      dup2(devnull, STDIN_FILENO);
-      if (devnull > STDERR_FILENO) {
-        close(devnull);
-      }
-    }
+  }
+  if (job || no_stdin) {
+    child_stdin_null();
   }
   if (err_path && err_path[0]) {
     if (out_path && out_path[0]) {
@@ -331,7 +340,7 @@ static volatile pid_t g_jobs[JOB_MAX];
 static volatile int32_t g_njobs;
 static int32_t g_job_status;
 
-static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path) {
+static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path, int no_stdin) {
   char **argv;
   pid_t pid;
   int st = 0;
@@ -350,7 +359,7 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
     return 1;
   }
   if (pid == 0) {
-    child_exec(path, argv, out_path, err_path, 0);
+    child_exec(path, argv, out_path, err_path, 0, no_stdin);
   }
   free_argv(argv);
   g_wait_child = pid;
@@ -385,7 +394,7 @@ int32_t avant_job_start(const char *path, void *args, const char *out_path) {
     return -1;
   }
   if (pid == 0) {
-    child_exec(path, argv, out_path, NULL, 1);
+    child_exec(path, argv, out_path, NULL, 1, 1);
   }
   free_argv(argv);
   setpgid(pid, pid);
@@ -428,18 +437,26 @@ int32_t avant_job_status(void) {
 }
 
 int32_t avant_process_run(const char *path, void *args) {
-  return run_child(path, args, NULL, NULL);
+  return run_child(path, args, NULL, NULL, 0);
 }
 
 int32_t avant_process_run_out(const char *path, void *args, const char *out_path) {
-  return run_child(path, args, out_path, NULL);
+  return run_child(path, args, out_path, NULL, 0);
+}
+
+/* A blocking run of a tool the compiler starts (myc-llvm, cc, re2c, the
+ * bind helper, git): like process_run, with stdout (and stderr, unless
+ * err_path names its own file) to out_path when given, and stdin from
+ * /dev/null. Internal (no prelude name, D132). */
+int32_t avant_tool_run(const char *path, void *args, const char *out_path, const char *err_path) {
+  return run_child(path, args, out_path, err_path, 1);
 }
 
 /* A blocking run with stdout and stderr in separate files (D140): what
  * std.testing's run_golden and rejects and bind's output split asked of
  * sh. Like process_run, it forwards a signal to its child. Internal. */
 int32_t avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path) {
-  return run_child(path, args, out_path, err_path);
+  return run_child(path, args, out_path, err_path, 0);
 }
 
 /* Internal file helpers (D140), bound with lib/fun, no prelude name

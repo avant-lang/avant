@@ -8,6 +8,7 @@
 
 ### Fixed
 
+* `avant` no longer passes its own stdin to the tools it runs (`myc-llvm`, `cc`, `re2c`, the `bind` helper, `git`); they get `/dev/null`. `myc-llvm` reads all of a non-terminal stdin before its arguments, so piping into `avant` (`echo x | avant run prog.av`) failed with a false "does not accept the safepoints GC flags", and a compile started with an open pipe or socket as stdin (as some CI runners and editors do) hung. `avant run` now compiles the program and runs it itself, so piped input reaches the program.
 * The release archive can compile programs outside a source checkout. It shipped no runtime objects, so every link failed with `cannot find ./runtime/build/avant_rt.o` (and a regex literal could not find `avant_rt.h`). The archive now carries `runtime/build/*.o` and `runtime/avant_rt.h`, and the compiler uses them when it is not run inside a checkout.
 * `file_read` reads a file to its end instead of trusting the size the file reports. Files under `/proc` (which report size 0) read as empty before, and a sysfs file that reports 4096 bytes failed to read, so `avant test` used one job on such kernels (the GitHub runners among them).
 

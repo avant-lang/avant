@@ -55,6 +55,7 @@ lib fs_rt {
   fun avant_fs_mkdir_p(path: String): Int
   fun avant_fs_cwd: String
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+  fun avant_tool_run(path: String, args: Array(String), out: String, err: String): Int
   fun avant_file_identity(path: String): String
   fun avant_env_set(name: String, value: String)
 }
@@ -82,6 +83,24 @@ pub fn fs_mkdir_p(path: String): Int {
 // Runs path with args and waits; stdout to out, stderr to err.
 pub fn process_run_split(path: String, args: Array(String), out: String, err: String): Int {
   fs_rt.avant_process_run_split(path, args, out, err)
+}
+
+// A tool the compiler runs (myc-llvm, cc, re2c, the bind helper, git):
+// stdin is /dev/null, never the compiler's own (Wave D). myc-llvm reads all
+// of a non-terminal stdin before its arguments, so an inherited pipe made
+// it take the input as a source file and an open socket made it hang.
+pub fn tool_run(path: String, args: Array(String)): Int {
+  fs_rt.avant_tool_run(path, args, "", "")
+}
+
+// tool_run with stdout and stderr to out.
+pub fn tool_run_out(path: String, args: Array(String), out: String): Int {
+  fs_rt.avant_tool_run(path, args, out, "")
+}
+
+// tool_run with stdout to out and stderr to err.
+pub fn tool_run_split(path: String, args: Array(String), out: String, err: String): Int {
+  fs_rt.avant_tool_run(path, args, out, err)
 }
 
 // The process's private scratch directory (D127). Every temporary the
@@ -292,7 +311,7 @@ pub fn myc_accepts_safepoints(path: String): Bool {
   args.push("--gc-enter=avant_gc_enter")
   args.push("--gc-leave=avant_gc_leave")
   args.push(ir_path)
-  code = process_run_out(path, args, out_path)
+  code = tool_run_out(path, args, out_path)
   if code != 0 {
     return false
   }
@@ -638,11 +657,11 @@ pub fn print_ir(ir: String) {
 pub fn run_cc(args: Array(String)): Int {
   if v = env_get("CC") {
     if file_exists(v) {
-      return process_run(v, args)
+      return tool_run(v, args)
     }
   }
   if file_exists("/usr/bin/cc") {
-    return process_run("/usr/bin/cc", args)
+    return tool_run("/usr/bin/cc", args)
   }
   wrapped: Array(String) = []
   wrapped.push("cc")
@@ -651,7 +670,7 @@ pub fn run_cc(args: Array(String)): Int {
     wrapped.push(args[i])
     i = i + 1
   }
-  process_run("/usr/bin/env", wrapped)
+  tool_run("/usr/bin/env", wrapped)
 }
 
 // re2c, in the backend's order (D150): AVANT_RE2C, the re2c beside the
@@ -690,7 +709,7 @@ pub fn compile_re2c(src: String): String {
   args.push("-o")
   args.push(c_path)
   args.push(re_path)
-  code = process_run_out(re2c_bin(), args, log_path)
+  code = tool_run_out(re2c_bin(), args, log_path)
   if code != 0 {
     diag_puts("re2c: generator failed, pattern stays on PCRE2")
     if text = file_read(log_path) {
@@ -1001,7 +1020,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   if file_exists("/usr/bin/env") {
     if capture {
       log = "${work}/myc.log"
-      code = process_run_out("/usr/bin/env", args, log)
+      code = tool_run_out("/usr/bin/env", args, log)
       if code != 0 {
         if text = file_read(log) {
           diag_puts(text)
@@ -1009,7 +1028,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
       }
       return code
     }
-    return process_run("/usr/bin/env", args)
+    return tool_run("/usr/bin/env", args)
   }
   diag_puts("cannot find /usr/bin/env")
   1

@@ -272,22 +272,19 @@ pub fn driver_run(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
-    if split.has_dash {
-      out = tmp_path("run.bin")
-      code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
-      if code != 0 {
-        diag_puts("myc-llvm failed (${code})")
-        diag_exit(1)
-      }
-      dummy_chmod = fs_chmod_x(out)
-      rc = process_run(out, split.program)
-      diag_exit(rc)
-    }
-    code = invoke_myc(box.text, "r", job.objects, job.flags, "", box.quiet_leaves, job.codegen, false)
+    // Compile, then run the program here with the user's stdin. myc-llvm's
+    // own run mode is not used: the backend reads all of a non-terminal
+    // stdin before it compiles, so piped input never reached the program
+    // (Wave D). The backend gets /dev/null (tool_run).
+    out = tmp_path("run.bin")
+    code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
     if code != 0 {
-      diag_exit(code)
+      diag_puts("myc-llvm failed (${code})")
+      diag_exit(1)
     }
-    return
+    dummy_chmod = fs_chmod_x(out)
+    rc = process_run(out, split.program)
+    diag_exit(rc)
   }
   diag_exit(1)
 }

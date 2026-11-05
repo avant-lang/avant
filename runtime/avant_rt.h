@@ -330,6 +330,7 @@ int32_t avant_file_write(const char *path, const char *body);
 int32_t avant_process_run(const char *path, void *args);
 int32_t avant_process_run_out(const char *path, void *args, const char *out_path);
 int32_t avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path);
+int32_t avant_tool_run(const char *path, void *args, const char *out_path, const char *err_path);
 int32_t avant_fs_unlink(const char *path);
 int32_t avant_fs_remove_tree(const char *path);
 int32_t avant_fs_chmod_x(const char *path);

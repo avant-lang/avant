@@ -4,7 +4,9 @@ fn tc_fake_dir(stamp: Int, tag: String): String {
   dir = "${scratch()}/toolchain-wavei-${stamp}-${tag}"
   mkdir_p(dir)
   args_log = "${dir}/args.log"
-  script = "#!/bin/sh\necho \"$@\" >> ${args_log}\nif [ \"$1\" = \"dump\" ]; then\n  echo gc.statepoint\nfi\nexit 0\n"
+  // In c mode the last argument is the executable to write; avant run
+  // runs it, so the fake writes one that exits 0.
+  script = "#!/bin/sh\necho \"$@\" >> ${args_log}\nif [ \"$1\" = \"dump\" ]; then\n  echo gc.statepoint\nfi\nif [ \"$1\" = \"c\" ]; then\n  for a in \"$@\"; do last=$a; done\n  printf '#!/bin/sh\\nexit 0\\n' > \"$last\"\n  chmod +x \"$last\"\nfi\nexit 0\n"
   dummy_sh = file_write("${dir}/myc-llvm", script)
   chmod_x("${dir}/myc-llvm")
   dir
@@ -191,6 +193,43 @@ fn test_toolchain(c: Checks) {
     miss_code = process_run_out("/usr/bin/env", miss_env, miss_log)
     c.expect(miss_code != 0, "a missing AVANT_MYC_LLVM fails")
     c.expect(!file_exists("${on_path}/args.log"), "a missing AVANT_MYC_LLVM does not fall back to PATH")
+    // A tool the compiler runs gets /dev/null as stdin (Wave D): myc-llvm
+    // reads all of a non-terminal stdin first, so piped input reached the
+    // backend instead of the program, and an open pipe hung the compile.
+    // These go through sh because they are about stdin plumbing.
+    if real_myc = env_get("AVANT_MYC_LLVM") {
+      cat_src = "${scratch()}/toolchain-wavei-${stamp}-stdin.av"
+      dummy_cat = file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
+      pipe_out = "${scratch()}/toolchain-wavei-${stamp}-pipe.out"
+      pipe_sh = "${scratch()}/toolchain-wavei-${stamp}-pipe.sh"
+      dummy_ps = file_write(pipe_sh, "printf 'piped input' | AVANT_MYC_LLVM='${real_myc}' '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
+      sh_args: Array(String) = []
+      sh_args.push(pipe_sh)
+      pipe_code = process_run("/bin/sh", sh_args)
+      c.eq_int(pipe_code, 0, "avant run with piped stdin exits zero")
+      if pt = file_read(pipe_out) {
+        c.expect(str_has(pt, "piped input"), "piped stdin reaches the program avant run starts")
+      } else {
+        c.expect(false, "read the piped run output")
+      }
+
+      open_sh = "${scratch()}/toolchain-wavei-${stamp}-open.sh"
+      open_bin = "${scratch()}/toolchain-wavei-${stamp}-open.bin"
+      // The pipe's writer stays open until the compile is done (a flag
+      // file), capped at 10 s so a regression cannot hang the suite: a
+      // compile that waits for its stdin takes the whole cap.
+      open_flag = "${scratch()}/toolchain-wavei-${stamp}-open.done"
+      dummy_os = file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { AVANT_MYC_LLVM='${real_myc}' AVANT_MYC_PROBED= '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
+      open_args: Array(String) = []
+      open_args.push(open_sh)
+      started = now_ms()
+      dummy_open = process_run("/bin/sh", open_args)
+      c.expect(file_exists(open_bin), "a compile with an open pipe as stdin finishes")
+      c.expect(now_ms() - started < 8000, "a compile does not wait for its stdin to close")
+    } else {
+      c.expect(false, "AVANT_MYC_LLVM for the stdin checks")
+    }
+
     if miss_txt = file_read(miss_log) {
       c.expect(str_has(miss_txt, "AVANT_MYC_LLVM points at a missing file"), "a missing AVANT_MYC_LLVM is named")
     } else {
