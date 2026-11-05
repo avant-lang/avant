@@ -238,6 +238,12 @@ pub fn avant_checkout_root: String {
   ""
 }
 
+// The root whose runtime/ the compiler links and compiles against (D149):
+// AVANT_ROOT; else a checkout (the parent of the compiler's bin/, then the
+// current directory) when it holds runtime/build/avant_rt.o; else the
+// compiler's own install, the directory of its executable, when that holds
+// one (the release layout, D148); else ".". A checkout wins so that a seed
+// in bin/vX/ links the runtime of the tree it builds.
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
@@ -256,6 +262,13 @@ pub fn avant_root: String {
   }
   if file_exists("runtime/build/avant_rt.o") {
     return "."
+  }
+  exe = self_exe_path()
+  if exe.size > 0 {
+    home = path_dirname(exe)
+    if file_exists("${home}/runtime/build/avant_rt.o") {
+      return home
+    }
   }
   "."
 }

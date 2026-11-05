@@ -99,6 +99,9 @@ fn main {
 EOF
 expect run-hello "hello from avant" "$avant" run hello.av
 
+# Started through PATH, as an install is used: argv[0] has no directory.
+expect path-hello "hello from avant" env PATH="$work/prefix/avant-linux-x86_64:/usr/bin:/bin" avant run hello.av
+
 if run compile-hello "$avant" compile hello.av hello; then
   expect exec-hello "hello from avant" ./hello
 else
