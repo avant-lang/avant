@@ -16,27 +16,21 @@ Save it as `hello.av`. That is a complete program: `fn main` is the entry point,
 
 ## Install
 
-Today, on Linux x86_64:
-
-1. Make sure a C compiler (`cc`), LLVM 20, and libpcre2 are installed (`re2c` is optional; without it, regex literals use PCRE2).
-2. Download the latest `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases) and extract it. The archive holds `avant`, its `myc-llvm` backend, and `lib/std/testing.av` beside the compiler.
-3. Install both binaries into `~/.local/bin` (recommended: it needs no sudo, and keeping `avant` and `myc-llvm` together means the compiler finds its backend with no configuration). For a system-wide install, use `/usr/local/bin` instead (that one needs sudo).
+On Linux x86_64 with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39, or later):
 
 ```sh
-mkdir -p ~/.local/bin/lib/std
-install -m 755 avant myc-llvm ~/.local/bin/
-install -m 644 lib/std/testing.av ~/.local/bin/lib/std/testing.av
+curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash
 ```
 
-Make sure `~/.local/bin` is on your `PATH`; if it is not, add it once:
+The script downloads the release archive, checks its SHA-256, installs it into `~/.avant`, adds that directory to `PATH` in your shell's configuration, and compiles and runs a hello program to prove the install works. Options: a version (`bash install.sh v0.34.0`, or `AVANT_VERSION`), `--no-modify-path` to print the `PATH` line instead of editing your configuration, and `AVANT_INSTALL` to choose another directory. Running it again updates the install in place.
 
-```sh
-export PATH="$HOME/.local/bin:$PATH"   # add this line to your ~/.bashrc or ~/.zshrc to keep it
-```
+The one prerequisite is a C compiler with the C library's development files, which Avant uses to link programs (and which C interop needs anyway): `sudo apt install gcc libc6-dev` on Debian and Ubuntu, `sudo dnf install gcc glibc-devel` on Fedora. If it is missing, the installer says so and prints that line. Nothing else is needed: the archive carries `avant`, its `myc-llvm` backend with LLVM linked in, `re2c`, the standard library, and the runtime with PCRE2 and zlib inside. `avant bind` (C header to `lib` block) also needs libclang 20 (`sudo apt install libclang1-20`).
 
-No environment variable needs to be set for the compiler itself. The compiler finds its `myc-llvm` backend in this order: `myc-llvm` on `PATH`, then a `myc-llvm` beside the `avant` binary, then `AVANT_MYC_LLVM` (an advanced override for unusual layouts). The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used. Because the release archive bundles `myc-llvm` beside `avant`, installing both as above is enough; a separate backend download is only needed with an older archive.
+To install by hand instead, download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds its backend, `re2c`, the standard library, and the runtime beside itself.
 
-4. Run your first program:
+No environment variable needs to be set. The compiler finds its `myc-llvm` backend in this order: `AVANT_MYC_LLVM` (an explicit override; if it names a missing file, that is an error, not a reason to try another backend), then the `myc-llvm` beside the `avant` binary (the one the release ships), then `myc-llvm` on `PATH`. The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used.
+
+Run your first program:
 
 ```sh
 avant run hello.av          # compile and run
@@ -1034,7 +1028,7 @@ fn main {
 }
 ```
 
-A string-literal pattern is compiled to a native scanner with re2c at compile time when it needs at most one capture group and no named groups; any other pattern stays on PCRE2 with JIT, and the compiler says so. Without `re2c` installed, literals use PCRE2 too; `AVANT_RE2C` overrides the binary. PCRE2 backtracking can be catastrophic on adversarial patterns and texts; that cost is the caller's to bound.
+A string-literal pattern is compiled to a native scanner with re2c at compile time when it needs at most one capture group and no named groups; any other pattern stays on PCRE2 with JIT, and the compiler says so. A release ships `re2c` beside `avant`; without any `re2c`, literals use PCRE2 too, and `AVANT_RE2C` overrides the binary. PCRE2 is compiled into the runtime, so a program that uses `std.regex` needs no PCRE2 library on the machine. PCRE2 backtracking can be catastrophic on adversarial patterns and texts; that cost is the caller's to bound.
 
 ## Testing
 
@@ -1555,7 +1549,7 @@ The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compil
 .av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
 ```
 
-Build the next compiler with a published release (`avant bind` additionally needs libclang):
+Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release:
 
 ```
 sh runtime/build.sh

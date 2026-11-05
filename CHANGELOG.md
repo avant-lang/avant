@@ -1,5 +1,24 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Added
+
+* A one-line installer: `curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash`. It checks the archive's SHA-256 and the system's glibc, installs into `~/.avant`, adds it to `PATH` (or prints the line with `--no-modify-path`), and compiles and runs a hello program; a missing C compiler or C library headers are reported with the distribution's install command. `install.sh` is a release asset.
+* The release archive is self-contained apart from a C compiler: `myc-llvm` links LLVM statically (safepoints v0.6.0), and `re2c` (4.6, static) ships beside `avant`, so regex literals compile to native scanners on every machine.
+* `versions.txt` in the archive records `glibc-floor`, the oldest glibc the release works with (2.38 for this release's build).
+
+### Changed
+
+* Installing no longer needs LLVM 20, libpcre2, zlib development files, or re2c. PCRE2 10.49 and zlib 1.3.2 are compiled into the runtime (`std.regex` and `std.zlib` programs no longer link `-lpcre2-8` or `-lz`), and their symbols stay private to it.
+* The compiler looks for its `myc-llvm` backend in a new order: `AVANT_MYC_LLVM` first, then the `myc-llvm` beside `avant`, then `PATH`. Before, `PATH` came first, so an explicit `AVANT_MYC_LLVM` lost to any `myc-llvm` on `PATH`. An `AVANT_MYC_LLVM` that names a missing file is now always an error. `re2c` and the `bind` helper are also looked up beside the compiler's real executable, so they are found when `avant` is started through `PATH`.
+
+### Fixed
+
+* `avant` no longer passes its own stdin to the tools it runs (`myc-llvm`, `cc`, `re2c`, the `bind` helper, `git`); they get `/dev/null`. `myc-llvm` reads all of a non-terminal stdin before its arguments, so piping into `avant` (`echo x | avant run prog.av`) failed with a false "does not accept the safepoints GC flags", and a compile started with an open pipe or socket as stdin (as some CI runners and editors do) hung. `avant run` now compiles the program and runs it itself, so piped input reaches the program.
+* The release archive can compile programs outside a source checkout. It shipped no runtime objects, so every link failed with `cannot find ./runtime/build/avant_rt.o` (and a regex literal could not find `avant_rt.h`). The archive now carries `runtime/build/*.o` and `runtime/avant_rt.h`, and the compiler uses them when it is not run inside a checkout.
+* `file_read` reads a file to its end instead of trusting the size the file reports. Files under `/proc` (which report size 0) read as empty before, and a sysfs file that reports 4096 bytes failed to read, so `avant test` used one job on such kernels (the GitHub runners among them).
+
 ## 0.33.0 - 2026-11-05
 
 ### Added

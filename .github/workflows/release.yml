@@ -7,6 +7,7 @@
 # install Crystal and does not compile myc-llvm.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
+# The release bundles a static re2c built from the pinned upstream release.
 #
 # The asset is `avant-linux-x86_64.tar.gz`. Inside it, the compiler
 # is named `avant`. Do not dispatch this workflow onto the seed tag
@@ -17,7 +18,12 @@
 # `--jobs 1` was 188s and `--jobs 2` was 177s, against 168s for four
 # jobs. The suite mains return before the checks when the runner is only
 # listing parallel names. The old AVANT_TEST_JOBS=4 measurement compiled
-# the stitched suite four times. A new tag becomes a
+# the stitched suite four times.
+# Until the file_read fix after v0.33.0, that default was 1 on GitHub
+# runners: sysfs there reports 4096 bytes for /sys/devices/system/cpu/online,
+# file_read trusted the size and failed, and the suite ran serially (the
+# PR 48 seed log shows exclusive files interleaved in walk order).
+# A new tag becomes a
 # draft (`gh release create --draft`). Publishing the draft is a
 # separate act. Git tags cannot hold files.
 #
@@ -27,10 +33,10 @@
 name: release-binary
 
 env:
-  AVANT_SEED_VERSION: v0.32.0
-  AVANT_SEED_SHA256: 5ded457ddf2dfe5dfa29efb6d93725980706fde613e64f47572efe200d8a2c40
-  SAFEPOINTS_VERSION: v0.5.0
-  MYC_LLVM_SHA256: 0b04ce07501234ca4ee18b2c52f2309884fc7d00f3cec036757493a76c8a507d
+  AVANT_SEED_VERSION: v0.33.0
+  AVANT_SEED_SHA256: 4b2710e51ccbb13a0e3678aecc7f645b0c76326fabe09e3a14013900e8f2cc21
+  SAFEPOINTS_VERSION: v0.6.0
+  MYC_LLVM_SHA256: f6776ede1f2154cab0af6d9eeaec064c180df6c86867a8d57d48745d116b4437
 
 "on":
   push:
@@ -81,19 +87,26 @@ jobs:
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      - name: Install LLVM 20 and link libraries
+      # The backend (safepoints v0.6.0) has LLVM linked in and needs nothing
+      # from apt. libclang (with llvm-config, from llvm-20) is for the bind
+      # helper that runtime/build.sh builds and the release ships; zlib1g-dev
+      # is for examples/zlib.av, which binds the system zlib itself.
+      - name: Install the C toolchain and libclang
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            llvm-20-dev \
+            llvm-20 \
             libclang-20-dev \
-            libpcre2-dev \
-            zlib1g-dev \
-            re2c
+            zlib1g-dev
 
       - name: Build runtime objects
         run: sh runtime/build.sh
+
+      - name: Build the bundled re2c
+        # The static re2c a release ships (D151, tools/build-re2c.sh), beside
+        # bin/avant-b so the suite uses it (D150).
+        run: sh tools/build-re2c.sh bin/re2c
 
       - name: Download ${{ env.AVANT_SEED_VERSION }} compiler
         run: |
@@ -129,13 +142,7 @@ jobs:
       - name: Package linux-x86_64 B
         run: |
           set -euo pipefail
-          mkdir -p dist/avant-linux-x86_64/lib/std
-          cp -f bin/avant-b dist/avant-linux-x86_64/avant
-          cp -f /tmp/myc-llvm-linux-x86_64/myc-llvm dist/avant-linux-x86_64/myc-llvm
-          test -x runtime/build/avant-bind
-          cp -f runtime/build/avant-bind dist/avant-linux-x86_64/avant-bind
-          cp -f lib/std/*.av dist/avant-linux-x86_64/lib/std/
-          chmod +x dist/avant-linux-x86_64/avant dist/avant-linux-x86_64/myc-llvm dist/avant-linux-x86_64/avant-bind
+          mkdir -p dist
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
@@ -152,21 +159,23 @@ jobs:
             echo "binary: avant"
             echo "bundled: myc-llvm (safepoints ${SAFEPOINTS_VERSION}) beside avant"
             echo "bundled: avant-bind (tools/bind.c, libclang $(llvm-config-20 --version)) beside avant"
-          } | tee dist/avant-linux-x86_64/versions.txt dist/versions.txt
-          tar -C dist -czf dist/avant-linux-x86_64.tar.gz avant-linux-x86_64
-          sha256sum dist/avant-linux-x86_64.tar.gz | tee dist/avant-linux-x86_64.tar.gz.sha256
+            echo "bundled: re2c ($(bin/re2c --version), static, tools/build-re2c.sh) beside avant"
+          } | tee dist/versions.txt
+          # The layout is tools/package.sh's (D148), the same script local proofs use.
+          sh tools/package.sh dist bin/avant-b /tmp/myc-llvm-linux-x86_64/myc-llvm bin/re2c dist/versions.txt
+          cat dist/avant-linux-x86_64.tar.gz.sha256
+          sh tools/container-test.sh ubuntu:24.04 dist
+          cp install.sh dist/install.sh
           {
             echo "linux-x86_64 compiler \`avant\`."
             echo
-            echo "Built by the ${AVANT_SEED_VERSION} seed. This asset bundles \`myc-llvm\` beside \`avant\`, so no environment is needed to compile."
-            echo "The bundled backend is safepoints ${SAFEPOINTS_VERSION} \`myc-llvm-linux-x86_64.tar.gz\`."
-            echo "https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
-            echo "sha256 ${MYC_LLVM_SHA256}"
-            echo "Needs the source tree (\`runtime/\`, \`cc\`), LLVM 20, libpcre2, and re2c to compile programs."
-            echo "A string literal at \`re_compile\` is compiled with re2c. A computed pattern uses PCRE2."
+            echo "Install: \`curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash\` (or extract this archive and put its directory on PATH)."
+            echo
+            echo "Built by the ${AVANT_SEED_VERSION} seed. The archive carries \`avant\`, its \`myc-llvm\` backend (safepoints ${SAFEPOINTS_VERSION}, LLVM linked in), \`re2c\`, the \`avant-bind\` helper, the standard library, and the runtime (PCRE2 and zlib inside)."
+            echo "Compiling a program needs a C compiler and the C library development files (Debian/Ubuntu: gcc libc6-dev; Fedora: gcc glibc-devel), and glibc at or above the \`glibc-floor\` below. \`avant bind\` also needs libclang 20."
             echo "This asset can be the next compiler pin after it is published. It is not the oracle."
             echo
-            cat dist/versions.txt
+            cat dist/avant-linux-x86_64/versions.txt
             echo
             echo '```'
             cat dist/avant-linux-x86_64.tar.gz.sha256
@@ -182,11 +191,13 @@ jobs:
             gh release upload "${TAG_NAME}" \
               dist/avant-linux-x86_64.tar.gz \
               dist/avant-linux-x86_64.tar.gz.sha256 \
+              dist/install.sh \
               --clobber
           else
             gh release create "${TAG_NAME}" \
               dist/avant-linux-x86_64.tar.gz \
               dist/avant-linux-x86_64.tar.gz.sha256 \
+              dist/install.sh \
               --title "${TAG_NAME}" \
               --notes-file dist/notes.md \
               --draft \

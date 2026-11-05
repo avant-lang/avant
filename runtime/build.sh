@@ -13,10 +13,51 @@ compile() {
 
 for name in \
   avant_rt.c avant_rt_traps.c avant_gc_stackmap.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
-  avant_json.c avant_http.c avant_wide.c avant_codec.c avant_zlib.c avant_base64.c avant_re.c avant_io.c avant_cov.c
+  avant_json.c avant_http.c avant_wide.c avant_codec.c avant_base64.c avant_io.c avant_cov.c
 do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
+
+# zlib (D146), vendored at the pin in third_party/zlib/PIN: the library
+# files compress and uncompress need, built as zlib's own configure builds
+# them (-O3 -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN). It folds into
+# avant_zlib.o, the object the compiler's std.zlib row names, so a program
+# needs no -lz; only the avant_* symbols stay global, so a program that
+# binds a system zlib itself (examples/zlib.av) cannot clash.
+zl="$root/third_party/zlib"
+zl_out="$root/build/zlib"
+rm -rf "$zl_out"
+mkdir -p "$zl_out"
+for f in adler32 compress crc32 deflate inffast inflate inftrees trees uncompr zutil; do
+  "$cc" -c -O3 -pthread -fno-omit-frame-pointer -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN \
+    -I"$zl" -o "$zl_out/$f.o" "$zl/$f.c"
+done
+"$cc" -c $cflags -I"$zl" -o "$root/build/avant_zlib_own.o" "$root/avant_zlib.c"
+ld -r -o "$root/build/avant_zlib.o" "$root/build/avant_zlib_own.o" "$zl_out"/*.o
+objcopy -w --keep-global-symbol='avant_*' "$root/build/avant_zlib.o"
+rm -rf "$zl_out" "$root/build/avant_zlib_own.o"
+
+# PCRE2 (D146), vendored at the pin in third_party/pcre2/PIN: the 8-bit
+# library with JIT, configured as the system library std.regex linked
+# before (third_party/pcre2/src/config.h). It folds into avant_re.o, the one
+# object the compiler's std.regex row names, so a program needs no libpcre2.
+# Its symbols are made local after the merge: nothing outside avant_re.c
+# calls PCRE2, and a program that binds a system PCRE2 itself cannot clash.
+pcre="$root/third_party/pcre2"
+pcre_out="$root/build/pcre2"
+rm -rf "$pcre_out"
+mkdir -p "$pcre_out"
+for f in auto_possess chkdint chartables compile compile_cgroup compile_class config context convert \
+  dfa_match error extuni find_bracket jit_compile maketables match match_data match_next newline ord2utf \
+  pattern_info script_run serialize string_utils study substitute substring tables ucd valid_utf xclass
+do
+  "$cc" -c -O2 -pthread -fno-omit-frame-pointer -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
+    -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
+done
+"$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
+ld -r -o "$root/build/avant_re.o" "$root/build/avant_re_own.o" "$pcre_out"/*.o
+objcopy -w --localize-symbol='pcre2_*' --localize-symbol='_pcre2_*' "$root/build/avant_re.o"
+rm -rf "$pcre_out" "$root/build/avant_re_own.o"
 
 compile "$root/third_party/yyjson/yyjson.c" "$root/build/yyjson.o"
 compile "$root/third_party/picohttpparser/picohttpparser.c" "$root/build/picohttpparser.o"

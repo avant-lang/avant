@@ -55,6 +55,7 @@ lib fs_rt {
   fun avant_fs_mkdir_p(path: String): Int
   fun avant_fs_cwd: String
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+  fun avant_tool_run(path: String, args: Array(String), out: String, err: String): Int
   fun avant_file_identity(path: String): String
   fun avant_env_set(name: String, value: String)
 }
@@ -82,6 +83,24 @@ pub fn fs_mkdir_p(path: String): Int {
 // Runs path with args and waits; stdout to out, stderr to err.
 pub fn process_run_split(path: String, args: Array(String), out: String, err: String): Int {
   fs_rt.avant_process_run_split(path, args, out, err)
+}
+
+// A tool the compiler runs (myc-llvm, cc, re2c, the bind helper, git):
+// stdin is /dev/null, never the compiler's own (Wave D). myc-llvm reads all
+// of a non-terminal stdin before its arguments, so an inherited pipe made
+// it take the input as a source file and an open socket made it hang.
+pub fn tool_run(path: String, args: Array(String)): Int {
+  fs_rt.avant_tool_run(path, args, "", "")
+}
+
+// tool_run with stdout and stderr to out.
+pub fn tool_run_out(path: String, args: Array(String), out: String): Int {
+  fs_rt.avant_tool_run(path, args, out, "")
+}
+
+// tool_run with stdout to out and stderr to err.
+pub fn tool_run_split(path: String, args: Array(String), out: String, err: String): Int {
+  fs_rt.avant_tool_run(path, args, out, err)
 }
 
 // The process's private scratch directory (D127). Every temporary the
@@ -238,6 +257,12 @@ pub fn avant_checkout_root: String {
   ""
 }
 
+// The root whose runtime/ the compiler links and compiles against (D149):
+// AVANT_ROOT; else a checkout (the parent of the compiler's bin/, then the
+// current directory) when it holds runtime/build/avant_rt.o; else the
+// compiler's own install, the directory of its executable, when that holds
+// one (the release layout, D148); else ".". A checkout wins so that a seed
+// in bin/vX/ links the runtime of the tree it builds.
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
@@ -256,6 +281,13 @@ pub fn avant_root: String {
   }
   if file_exists("runtime/build/avant_rt.o") {
     return "."
+  }
+  exe = self_exe_path()
+  if exe.size > 0 {
+    home = path_dirname(exe)
+    if file_exists("${home}/runtime/build/avant_rt.o") {
+      return home
+    }
   }
   "."
 }
@@ -279,7 +311,7 @@ pub fn myc_accepts_safepoints(path: String): Bool {
   args.push("--gc-enter=avant_gc_enter")
   args.push("--gc-leave=avant_gc_leave")
   args.push(ir_path)
-  code = process_run_out(path, args, out_path)
+  code = tool_run_out(path, args, out_path)
   if code != 0 {
     return false
   }
@@ -335,8 +367,19 @@ pub fn myc_probe_once {
   }
 }
 
+// Where the compiler looks for its backend, in order (D150, amending D54):
+// AVANT_MYC_LLVM (an explicit choice wins); the myc-llvm beside the
+// compiler's own executable (the backend it ships with); then each PATH
+// directory (an ambient one, last).
 pub fn myc_llvm_candidates: Array(String) {
   out: Array(String) = []
+  if v = env_get("AVANT_MYC_LLVM") {
+    out.push(v)
+  }
+  exe = self_exe_path()
+  if str_contains(exe, "/") {
+    out.push("${path_dirname(exe)}/myc-llvm")
+  }
   if path_env = env_get("PATH") {
     start = 0
     i = 0
@@ -350,19 +393,20 @@ pub fn myc_llvm_candidates: Array(String) {
       i = i + 1
     }
   }
-  args = argv()
-  if args.size > 0 {
-    if str_contains(args[0], "/") {
-      out.push("${path_dirname(args[0])}/myc-llvm")
-    }
-  }
-  if v = env_get("AVANT_MYC_LLVM") {
-    out.push(v)
-  }
   out
 }
 
+// The first candidate that exists must be a safepoints build; a stock
+// myc-llvm is refused, never skipped. An AVANT_MYC_LLVM that names a
+// missing file is an error, not a reason to fall back to another backend.
 pub fn myc_llvm_path: String {
+  if v = env_get("AVANT_MYC_LLVM") {
+    if file_exists(v) {
+    } else {
+      diag_puts("AVANT_MYC_LLVM points at a missing file: ${v}")
+      return ""
+    }
+  }
   cands = myc_llvm_candidates()
   i = 0
   while i < cands.size {
@@ -375,10 +419,6 @@ pub fn myc_llvm_path: String {
       return ""
     }
     i = i + 1
-  }
-  if v = env_get("AVANT_MYC_LLVM") {
-    diag_puts("AVANT_MYC_LLVM points at a missing file: ${v}")
-    return ""
   }
   tried = ""
   i = 0
@@ -506,8 +546,8 @@ pub fn fill_std_link(program: Program, box: IrBox) {
   i = 0
   while i < program.mods.size {
     if str_eq(program.mods[i].name, "std.zlib") {
+      // zlib is vendored inside avant_zlib.o (D146): no -lz.
       box.std_objects.push("${root}/runtime/build/avant_zlib.o")
-      box.std_flags.push("-lz")
     }
     if str_eq(program.mods[i].name, "std.base64") {
       box.std_objects.push("${root}/runtime/build/avant_base64.o")
@@ -518,8 +558,8 @@ pub fn fill_std_link(program: Program, box: IrBox) {
       box.std_objects.push("${root}/runtime/build/yyjson.o")
     }
     if str_eq(program.mods[i].name, "std.regex") {
+      // PCRE2 is vendored inside avant_re.o (D146): no -lpcre2-8.
       box.std_objects.push("${root}/runtime/build/avant_re.o")
-      box.std_flags.push("-lpcre2-8")
     }
     if str_eq(program.mods[i].name, "std.http") {
       box.std_objects.push("${root}/runtime/build/avant_http.o")
@@ -617,11 +657,11 @@ pub fn print_ir(ir: String) {
 pub fn run_cc(args: Array(String)): Int {
   if v = env_get("CC") {
     if file_exists(v) {
-      return process_run(v, args)
+      return tool_run(v, args)
     }
   }
   if file_exists("/usr/bin/cc") {
-    return process_run("/usr/bin/cc", args)
+    return tool_run("/usr/bin/cc", args)
   }
   wrapped: Array(String) = []
   wrapped.push("cc")
@@ -630,18 +670,23 @@ pub fn run_cc(args: Array(String)): Int {
     wrapped.push(args[i])
     i = i + 1
   }
-  process_run("/usr/bin/env", wrapped)
+  tool_run("/usr/bin/env", wrapped)
 }
 
+// re2c, in the backend's order (D150): AVANT_RE2C, the re2c beside the
+// compiler's own executable (a release ships one, D151), then the system's.
 pub fn re2c_bin: String {
   if v = env_get("AVANT_RE2C") {
     if file_exists(v) {
       return v
     }
   }
-  local = "${avant_root()}/bin/re2c"
-  if file_exists(local) {
-    return local
+  exe = self_exe_path()
+  if str_contains(exe, "/") {
+    beside = "${path_dirname(exe)}/re2c"
+    if file_exists(beside) {
+      return beside
+    }
   }
   if file_exists("/usr/bin/re2c") {
     return "/usr/bin/re2c"
@@ -664,7 +709,7 @@ pub fn compile_re2c(src: String): String {
   args.push("-o")
   args.push(c_path)
   args.push(re_path)
-  code = process_run_out(re2c_bin(), args, log_path)
+  code = tool_run_out(re2c_bin(), args, log_path)
   if code != 0 {
     diag_puts("re2c: generator failed, pattern stays on PCRE2")
     if text = file_read(log_path) {
@@ -975,7 +1020,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
   if file_exists("/usr/bin/env") {
     if capture {
       log = "${work}/myc.log"
-      code = process_run_out("/usr/bin/env", args, log)
+      code = tool_run_out("/usr/bin/env", args, log)
       if code != 0 {
         if text = file_read(log) {
           diag_puts(text)
@@ -983,7 +1028,7 @@ pub fn invoke_myc(ir: String, mode: String, extra_objs: Array(String), extra_fla
       }
       return code
     }
-    return process_run("/usr/bin/env", args)
+    return tool_run("/usr/bin/env", args)
   }
   diag_puts("cannot find /usr/bin/env")
   1

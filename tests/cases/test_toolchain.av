@@ -4,14 +4,21 @@ fn tc_fake_dir(stamp: Int, tag: String): String {
   dir = "${scratch()}/toolchain-wavei-${stamp}-${tag}"
   mkdir_p(dir)
   args_log = "${dir}/args.log"
-  script = "#!/bin/sh\necho \"$@\" >> ${args_log}\nif [ \"$1\" = \"dump\" ]; then\n  echo gc.statepoint\nfi\nexit 0\n"
+  // In c mode the last argument is the executable to write; avant run
+  // runs it, so the fake writes one that exits 0.
+  script = "#!/bin/sh\necho \"$@\" >> ${args_log}\nif [ \"$1\" = \"dump\" ]; then\n  echo gc.statepoint\nfi\nif [ \"$1\" = \"c\" ]; then\n  for a in \"$@\"; do last=$a; done\n  printf '#!/bin/sh\\nexit 0\\n' > \"$last\"\n  chmod +x \"$last\"\nfi\nexit 0\n"
   dummy_sh = file_write("${dir}/myc-llvm", script)
   chmod_x("${dir}/myc-llvm")
   dir
 }
 
+// Runs the compiler with only the fake backend in dir on PATH. The suite's
+// AVANT_MYC_LLVM is unset: it comes first in the lookup (D150) and would
+// otherwise pick the real backend.
 fn tc_invoke(compiler: String, dir: String, args: Array(String), extra_env: String, log: String): Int {
   env_args: Array(String) = []
+  env_args.push("-u")
+  env_args.push("AVANT_MYC_LLVM")
   env_args.push("PATH=${dir}:/usr/bin:/bin")
   if extra_env.size > 0 {
     env_args.push(extra_env)
@@ -139,6 +146,95 @@ fn test_toolchain(c: Checks) {
     pr_code3 = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=${key}", "${scratch()}/toolchain-wavei-${stamp}-probe3.log")
     pr3 = tc_args(c, pr_dir, "probe fixture records backend args a third time")
     c.expect(pr_code3 == 0 && str_has(pr3, "dump --gc-root"), "a changed backend is probed again")
+
+    // The lookup order (D150): AVANT_MYC_LLVM, then the backend beside the
+    // compiler's own executable, then PATH.
+    ord_args: Array(String) = []
+    ord_args.push("compile")
+    ord_args.push(src)
+    ord_args.push("${scratch()}/toolchain-wavei-${stamp}-order.bin")
+    on_path = tc_fake_dir(stamp, "order-path")
+    explicit = tc_fake_dir(stamp, "order-explicit")
+    ord_env: Array(String) = []
+    ord_env.push("PATH=${on_path}:/usr/bin:/bin")
+    ord_env.push("AVANT_MYC_LLVM=${explicit}/myc-llvm")
+    ord_env.push("AVANT_MYC_PROBED=")
+    ord_env.push(compiler)
+    i = 0
+    while i < ord_args.size {
+      ord_env.push(ord_args[i])
+      i = i + 1
+    }
+    ord_code = process_run_out("/usr/bin/env", ord_env, "${scratch()}/toolchain-wavei-${stamp}-order1.log")
+    c.expect(ord_code == 0 && file_exists("${explicit}/args.log"), "AVANT_MYC_LLVM is used")
+    c.expect(!file_exists("${on_path}/args.log"), "AVANT_MYC_LLVM beats a myc-llvm on PATH")
+
+    beside = tc_fake_dir(stamp, "order-beside")
+    copy_code = copy_file(compiler, "${beside}/avant")
+    chmod_x("${beside}/avant")
+    c.eq_int(copy_code, 0, "copy the compiler beside a fake backend")
+    rm_f("${on_path}/args.log")
+    bs_code = tc_invoke("${beside}/avant", on_path, ord_args, "AVANT_MYC_PROBED=", "${scratch()}/toolchain-wavei-${stamp}-order2.log")
+    c.expect(bs_code == 0 && file_exists("${beside}/args.log"), "the backend beside the compiler is used")
+    c.expect(!file_exists("${on_path}/args.log"), "the backend beside the compiler beats one on PATH")
+    rm_f("${beside}/avant")
+
+    rm_f("${on_path}/args.log")
+    miss_env: Array(String) = []
+    miss_env.push("PATH=${on_path}:/usr/bin:/bin")
+    miss_env.push("AVANT_MYC_LLVM=${scratch()}/toolchain-wavei-${stamp}-missing/myc-llvm")
+    miss_env.push(compiler)
+    i = 0
+    while i < ord_args.size {
+      miss_env.push(ord_args[i])
+      i = i + 1
+    }
+    miss_log = "${scratch()}/toolchain-wavei-${stamp}-order3.log"
+    miss_code = process_run_out("/usr/bin/env", miss_env, miss_log)
+    c.expect(miss_code != 0, "a missing AVANT_MYC_LLVM fails")
+    c.expect(!file_exists("${on_path}/args.log"), "a missing AVANT_MYC_LLVM does not fall back to PATH")
+    // A tool the compiler runs gets /dev/null as stdin (Wave D): myc-llvm
+    // reads all of a non-terminal stdin first, so piped input reached the
+    // backend instead of the program, and an open pipe hung the compile.
+    // These go through sh because they are about stdin plumbing.
+    if real_myc = env_get("AVANT_MYC_LLVM") {
+      cat_src = "${scratch()}/toolchain-wavei-${stamp}-stdin.av"
+      dummy_cat = file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
+      pipe_out = "${scratch()}/toolchain-wavei-${stamp}-pipe.out"
+      pipe_sh = "${scratch()}/toolchain-wavei-${stamp}-pipe.sh"
+      dummy_ps = file_write(pipe_sh, "printf 'piped input' | AVANT_MYC_LLVM='${real_myc}' '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
+      sh_args: Array(String) = []
+      sh_args.push(pipe_sh)
+      pipe_code = process_run("/bin/sh", sh_args)
+      c.eq_int(pipe_code, 0, "avant run with piped stdin exits zero")
+      if pt = file_read(pipe_out) {
+        c.expect(str_has(pt, "piped input"), "piped stdin reaches the program avant run starts")
+      } else {
+        c.expect(false, "read the piped run output")
+      }
+
+      open_sh = "${scratch()}/toolchain-wavei-${stamp}-open.sh"
+      open_bin = "${scratch()}/toolchain-wavei-${stamp}-open.bin"
+      // The pipe's writer stays open until the compile is done (a flag
+      // file), capped at 10 s so a regression cannot hang the suite: a
+      // compile that waits for its stdin takes the whole cap.
+      open_flag = "${scratch()}/toolchain-wavei-${stamp}-open.done"
+      dummy_os = file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { AVANT_MYC_LLVM='${real_myc}' AVANT_MYC_PROBED= '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
+      open_args: Array(String) = []
+      open_args.push(open_sh)
+      started = now_ms()
+      dummy_open = process_run("/bin/sh", open_args)
+      c.expect(file_exists(open_bin), "a compile with an open pipe as stdin finishes")
+      c.expect(now_ms() - started < 8000, "a compile does not wait for its stdin to close")
+    } else {
+      c.expect(false, "AVANT_MYC_LLVM for the stdin checks")
+    }
+
+    if miss_txt = file_read(miss_log) {
+      c.expect(str_has(miss_txt, "AVANT_MYC_LLVM points at a missing file"), "a missing AVANT_MYC_LLVM is named")
+    } else {
+      c.expect(false, "read the missing-backend log")
+    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
