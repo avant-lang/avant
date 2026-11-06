@@ -247,11 +247,15 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
 
 pub fn mir_term_text(ts: MTypes, t: MTerm): String {
   k = t.kind
+  cold = ""
+  if t.cold > 0 {
+    cold = " cold"
+  }
   if k == mtk_goto() {
-    return "goto bb${t.targets[0]}"
+    return "goto bb${t.targets[0]}${cold}"
   }
   if k == mtk_branch() {
-    return "branch ${mir_opt_text(ts, t.cond)}, bb${t.targets[0]}, bb${t.targets[1]}"
+    return "branch ${mir_opt_text(ts, t.cond)}, bb${t.targets[0]}, bb${t.targets[1]}${cold}"
   }
   if k == mtk_switch() {
     buf = buf_new()

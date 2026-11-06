@@ -71,6 +71,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   out.push_str(body)
   out.push_str(maps)
   out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" }\n")
+  ll_loop_md(e, out)
   out.to_s
 }
 
@@ -497,16 +498,44 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
 
 // ---- terminators (4.5)
 
+// The loop metadata of a cold back edge (W9b: the checked copy that loop
+// versioning keeps): one distinct node per loop header of the function,
+// numbered in emission order; node !0 is the shared unroll-disable hint.
+fn ll_cold_md(e: LlEmit, t: MTerm): String {
+  if t.cold <= 0 {
+    return ""
+  }
+  key = "${e.f.symbol}|${t.cold}"
+  if got = e.loop_md.get(key) {
+    return ", !llvm.loop !${got}"
+  }
+  e.loop_md_n = e.loop_md_n + 1
+  e.loop_md[key] = e.loop_md_n
+  ", !llvm.loop !${e.loop_md_n}"
+}
+
+fn ll_loop_md(e: LlEmit, out: Buf) {
+  if e.loop_md_n == 0 {
+    return
+  }
+  out.push_str("\n!0 = !{!\"llvm.loop.unroll.disable\"}\n")
+  i = 1
+  while i <= e.loop_md_n {
+    out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    i = i + 1
+  }
+}
+
 fn ll_term(e: LlEmit, t: MTerm) {
   k = t.kind
   if k == mtk_goto() {
-    e.line("br label %bb${t.targets[0]}")
+    e.line("br label %bb${t.targets[0]}${ll_cold_md(e, t)}")
   } else if k == mtk_branch() {
     c = "false"
     if o = t.cond {
       c = e.value(o)
     }
-    e.line("br i1 ${c}, label %bb${t.targets[0]}, label %bb${t.targets[1]}")
+    e.line("br i1 ${c}, label %bb${t.targets[0]}, label %bb${t.targets[1]}${ll_cold_md(e, t)}")
   } else if k == mtk_switch() {
     if o = t.cond {
       c = e.value(o)
