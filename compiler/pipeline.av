@@ -579,17 +579,18 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   box
 }
 
-// AVANT_BACKEND (D176, internal): "llvm" selects the new back end (the
-// lowering to MIR, then llvm/driver.av); unset, empty, or "myc" the old
-// one; any other value is returned for compile_program to refuse.
+// AVANT_BACKEND (D176, internal): unset, empty, or "llvm" selects the new
+// back end (the lowering to MIR, then llvm/driver.av; the default since
+// Stage 28 W10); "myc" the old one (myc-llvm, until it retires at W11);
+// any other value is returned for compile_program to refuse.
 pub fn backend_choice: String {
   if v = env_get("AVANT_BACKEND") {
-    if v.size == 0 || str_eq(v, "myc") {
-      return "myc"
+    if v.size == 0 || str_eq(v, "llvm") {
+      return "llvm"
     }
     return v
   }
-  "myc"
+  "llvm"
 }
 
 // The new back end's half of compile_program (Stage 28 W5b): the checked

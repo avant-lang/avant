@@ -8,8 +8,11 @@ import backends
 // for the fixtures with goldens, (b) `avant dump` under AVANT_BACKEND=llvm
 // prints exactly tests/goldens/<stem>.mir (D171); and (c) a construct
 // outside the subset stops the compile with the L0001 diagnostic at its
-// location, writing nothing; AVANT_BACKEND=myc is the default and any
-// other value is refused.
+// location, writing nothing; the new back end is the default (Stage 28
+// W10: AVANT_BACKEND unset), AVANT_BACKEND=myc selects the old one, and
+// any other value is refused; (d) `compile` creates a missing parent
+// directory of its output on both back ends (the old driver's myc-llvm
+// did; W10 gave the new driver the same).
 
 // The programs, relative to the root; those with a golden first.
 fn golden_progs: Array(String) {
@@ -79,7 +82,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < progs.size {
     k = key_of(progs[i])
-    jobs.push(compile_job("", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
+    jobs.push(compile_job("AVANT_BACKEND=myc", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
     i = i + 1
   }
@@ -97,9 +100,13 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   d: Array(String) = []
   d.push("dump")
   d.push("${root}/examples/hello.av")
-  jobs.push(env_job("AVANT_BACKEND=myc", compiler, d, "${dir}/hello.myc-env.dump"))
+  jobs.push(env_job("AVANT_BACKEND=llvm", compiler, d, "${dir}/hello.llvm-env.dump"))
   // The default is AVANT_BACKEND unset (not the suite's own setting).
   jobs.push(env_job("-u AVANT_BACKEND", compiler, d, "${dir}/hello.default.dump"))
+  jobs.push(env_job("AVANT_BACKEND=myc", compiler, d, "${dir}/hello.myc-env.dump"))
+  // A missing parent directory of the output is created (W10).
+  jobs.push(compile_job("AVANT_BACKEND=myc", compiler, "${root}/examples/hello.av", "${dir}/outdir-myc/a/b/hello", "${dir}/outdir-myc.log"))
+  jobs.push(compile_job("-u AVANT_BACKEND", compiler, "${root}/examples/hello.av", "${dir}/outdir-llvm/a/b/hello", "${dir}/outdir-llvm.log"))
   run_waves(jobs)
 
   i = 0
@@ -132,8 +139,16 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   bg = jobs[base + 1]
   c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
   c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be myc or llvm, not bogus"), "AVANT_BACKEND=bogus: refused")
-  c.eq_int(jobs[base + 2].code, 0, "AVANT_BACKEND=myc dump: exit 0")
-  c.eq_str(log_text(jobs[base + 2].log), log_text(jobs[base + 3].log), "AVANT_BACKEND=myc is the default back end")
+  c.eq_int(jobs[base + 2].code, 0, "AVANT_BACKEND=llvm dump: exit 0")
+  c.eq_int(jobs[base + 3].code, 0, "default dump: exit 0")
+  c.eq_str(log_text(jobs[base + 2].log), log_text(jobs[base + 3].log), "the llvm back end is the default back end")
+  c.expect(str_has(log_text(jobs[base + 3].log), "fn main"), "the default dump is MIR")
+  c.eq_int(jobs[base + 4].code, 0, "AVANT_BACKEND=myc dump: exit 0")
+  c.expect(str_has(log_text(jobs[base + 4].log), "FUNC :main"), "AVANT_BACKEND=myc dump is myc IR")
+  c.eq_int(jobs[base + 5].code, 0, "myc: compile into a missing directory exits 0")
+  c.expect(file_exists("${dir}/outdir-myc/a/b/hello"), "myc: the missing output directory is created")
+  c.eq_int(jobs[base + 6].code, 0, "default (llvm): compile into a missing directory exits 0")
+  c.expect(file_exists("${dir}/outdir-llvm/a/b/hello"), "default (llvm): the missing output directory is created")
 
   // Wave 2: every program from both back ends.
   runs: Array(HJob) = []
@@ -144,7 +159,13 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     runs.push(run_job(dir, "${k}.new", "${k}.b"))
     i = i + 1
   }
+  runs.push(run_job(dir, "outdir-myc/a/b/hello", "outdir-myc"))
+  runs.push(run_job(dir, "outdir-llvm/a/b/hello", "outdir-llvm"))
   run_waves(runs)
+  od = 2 * progs.size
+  c.eq_int(runs[od].code, 0, "myc: the program in the created directory runs")
+  c.eq_int(runs[od + 1].code, 0, "default (llvm): the program in the created directory runs")
+  c.eq_str(log_text("${dir}/outdir-llvm.out"), log_text("${dir}/outdir-myc.out"), "the programs in the created directories print the same")
   i = 0
   while i < progs.size {
     p = progs[i]

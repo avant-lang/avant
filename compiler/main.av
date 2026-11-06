@@ -66,8 +66,10 @@ pub fn show_usage {
   puts("  avant-av fetch [DIR] [--update]")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
-  puts("With no flag, run uses --debug (fast) and compile uses myc default (kept artifacts).")
-  puts("--release (or --final) is --final, the scored mode. --debug is the fast mode.")
+  puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
+  puts("With no flag, run uses --debug (fast) and compile uses the default optimization (kept artifacts).")
+  puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
+  puts("AVANT_BACKEND=myc selects the old myc-llvm back end until it retires.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
@@ -615,7 +617,7 @@ fn driver_emit_ll(args: Array(String)) {
     diag_exit(1)
   }
   if !str_eq(backend_choice(), "llvm") {
-    diag_puts("__emit-ll needs AVANT_BACKEND=llvm")
+    diag_puts("__emit-ll needs the llvm back end (AVANT_BACKEND unset or llvm)")
     diag_exit(1)
   }
   paths: Array(String) = []

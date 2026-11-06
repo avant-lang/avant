@@ -54,7 +54,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < progs.size {
     k = key_of(progs[i])
-    jobs.push(compile_job("", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
+    jobs.push(compile_job("AVANT_BACKEND=myc", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
     i = i + 1
   }
@@ -72,7 +72,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
     i = i + 1
   }
-  jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-old.map", compiler, cov_src, "${dir}/cov.old", "${dir}/cov.old.log"))
+  jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-old.map AVANT_BACKEND=myc", compiler, cov_src, "${dir}/cov.old", "${dir}/cov.old.log"))
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
   // W9b (D207): slot accesses are volatile in a shared module only.
   vol_srcs = ["tests/fixtures/threads/spawn.av", "tests/fixtures/heap/loops.av"]

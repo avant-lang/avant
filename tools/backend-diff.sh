@@ -6,11 +6,16 @@
 #   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types,closures,ffi,threads] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
-# compile and to the run). Both default to bin/avant-c with the seed's
-# backend, so today the oracle compares myc with itself:
-#   BDIFF_A_COMPILER / BDIFF_B_COMPILER   default bin/avant-c
-#   BDIFF_A_ENV / BDIFF_B_ENV             default AVANT_MYC_LLVM=<root>/bin/v0.34.0/myc-llvm
-#                                         (a later wave sets e.g. BDIFF_B_ENV="... AVANT_BACKEND=llvm")
+# compile and to the run). Any AVANT_BACKEND of the caller's environment is
+# removed first, so a side's back end is only what its words say: without
+# AVANT_BACKEND the compiler's default (the new back end since Stage 28
+# W10). Both sides default to the old back end, named explicitly, so with
+# no settings the oracle compares myc with itself:
+#   BDIFF_A_COMPILER / BDIFF_B_COMPILER   default bin/avant-c-llvm (the
+#                                         default gate's C'; it hosts both back ends)
+#   BDIFF_A_ENV / BDIFF_B_ENV             default AVANT_MYC_LLVM=<root>/bin/v0.34.0/myc-llvm AVANT_BACKEND=myc
+#                                         (the new back end on side B, as the default:
+#                                         BDIFF_B_ENV="AVANT_MYC_LLVM=<root>/bin/v0.34.0/myc-llvm")
 #   BDIFF_MODE    compile flag for both sides: --debug (default), --release, or "" (bare)
 #   BDIFF_OUT     report directory (default results/backend-diff-YYYYmmdd-HHMMSS)
 #   BDIFF_KEEP=1  keep the work directory (binaries, outputs) in BDIFF_OUT/work
@@ -29,8 +34,8 @@
 #              (Stage 28 W5b, mir.md W5.7): every tests/fixtures/scalars/*.av
 #              (fn run programs included), examples/hello.av, fact.av,
 #              switch.av, and the fixtures the scalar lowering accepts
-#              (scalar_programs below); run it with
-#              BDIFF_B_ENV="... AVANT_BACKEND=llvm"
+#              (scalar_programs below); run it with side B on the new
+#              back end (a BDIFF_B_ENV without AVANT_BACKEND=myc)
 #   strings    not in the default: the heap-string programs (Stage 28 W6a,
 #              mir.md W6a.7): every tests/fixtures/strings/*.av and the
 #              fixtures the string lowering accepts (string_programs below)
@@ -144,9 +149,9 @@ done
 for a in "$@"; do explicit="$explicit $a"; done
 has_set() { case ",$sets," in *",$1,"*) return 0 ;; esac; return 1; }
 
-default_env="AVANT_MYC_LLVM=$root/bin/v0.34.0/myc-llvm"
-A_COMPILER=$(realpath -m "${BDIFF_A_COMPILER:-bin/avant-c}")
-B_COMPILER=$(realpath -m "${BDIFF_B_COMPILER:-bin/avant-c}")
+default_env="AVANT_MYC_LLVM=$root/bin/v0.34.0/myc-llvm AVANT_BACKEND=myc"
+A_COMPILER=$(realpath -m "${BDIFF_A_COMPILER:-bin/avant-c-llvm}")
+B_COMPILER=$(realpath -m "${BDIFF_B_COMPILER:-bin/avant-c-llvm}")
 A_ENV=${BDIFF_A_ENV-$default_env}
 B_ENV=${BDIFF_B_ENV-$default_env}
 MODE=${BDIFF_MODE---debug}
@@ -282,7 +287,7 @@ side() {
   d=$work/$1
   rm -f "$d/$3.bin"
   # shellcheck disable=SC2046,SC2086 # senv and flags are words
-  env $senv timeout -k 10 120 "$comp" compile "$root/$2" "$d/$3.bin" $MODE $(flags_of "$2") > "$d/$3.clog" 2>&1 < /dev/null
+  env -u AVANT_BACKEND $senv timeout -k 10 120 "$comp" compile "$root/$2" "$d/$3.bin" $MODE $(flags_of "$2") > "$d/$3.clog" 2>&1 < /dev/null
   crc=$?
   rrc=""
   : > "$d/$3.out"; : > "$d/$3.err"
@@ -290,7 +295,7 @@ side() {
   rm -rf "$work/run"; mkdir "$work/run"
   cp "$d/$3.bin" "$work/run/prog"
   # shellcheck disable=SC2086
-  (cd "$work/run" && exec env $senv timeout -k 10 120 ./prog > "$d/$3.out" 2> "$d/$3.err" < /dev/null)
+  (cd "$work/run" && exec env -u AVANT_BACKEND $senv timeout -k 10 120 ./prog > "$d/$3.out" 2> "$d/$3.err" < /dev/null)
   rrc=$?
   rm -rf "$work/run"; mkdir "$work/run"
 }
@@ -329,7 +334,7 @@ la_side() { # SIDE TASKS
   list=""
   [ -n "$2" ] && list="AVANT_TASK_LIST=$2"  # the harness reads an empty list as "no task"
   # shellcheck disable=SC2086
-  env -u AVANT_SKIP_OK -u AVANT_PROBE_SCALE -u AVANT_TASK_LIST $senv AVANT_COMPILER="$comp" AVANT_CODEGEN=$codegen \
+  env -u AVANT_SKIP_OK -u AVANT_PROBE_SCALE -u AVANT_TASK_LIST -u AVANT_BACKEND $senv AVANT_COMPILER="$comp" AVANT_CODEGEN=$codegen \
     AVANT_RESULTS_DIR="$work/la-$1" $list AVANT_TASK_TIMEOUT_S=120 AVANT_COMPILE_TIMEOUT_S=120 \
     timeout -k 10 2700 "$work/measure" test > "$out/langarena-$1.log" 2>&1 < /dev/null
   echo "harness $1 rc=$?" >> "$out/langarena-$1.log"

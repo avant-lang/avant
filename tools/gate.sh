@@ -3,12 +3,19 @@
 #
 #   sh tools/gate.sh        (any directory; stdin from /dev/null)
 #
-# Rebuilds the runtime, B (the seed builds it), C (B builds it); runs the
-# suite on B and on C with JUnit and /usr/bin/time -p; snapshots /tmp and the
-# repository before and after each suite (no litter); checks the fixed point
-# (`dump compiler/main.av` from B and from C, byte for byte). Prints one
-# summary line per suite, the fixed point, and a final `GATE PASS` or
-# `GATE FAIL: ...` line; exits 0 only on PASS (1 on any failure, 2 on usage).
+# The default (Stage 28 W10: the new back end is the compiler's default):
+# rebuilds the runtime, B (the seed builds it, on the old back end, the
+# only one the seed has), C' (B compiles the compiler on the new back end,
+# bin/avant-c-llvm); runs the suite on B and on C' with AVANT_BACKEND
+# unset (the compiler's default, so the suite proves what users get), with
+# JUnit and /usr/bin/time -p; snapshots /tmp and the repository before and
+# after each suite (no litter); builds D' (C' compiles the compiler,
+# bin/avant-d-llvm); checks the fixed point (the pre-optimization .ll of
+# compiler/main.av, `avant __emit-ll`, from C' and from D', byte for byte)
+# and C' = D' byte for byte. GATE_BACKEND=myc runs the old letters instead
+# (until the old back end retires at W11). Prints one summary line per
+# suite, the fixed point, and a final `GATE PASS` or `GATE FAIL: ...`
+# line; exits 0 only on PASS (1 on any failure, 2 on usage).
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant and myc-llvm (default bin/seeds/s28-w2 when present, D189, else bin/v0.34.0)
@@ -19,18 +26,18 @@
 #                   test_fixed_point kept (AVANT_FIXED_POINT_KEEP, D138), else
 #                   B builds it. "proof": keeps it, builds C too, and records
 #                   whether the two are byte-identical (a difference fails).
-#   GATE_SUITE_ENV  extra VAR=value words passed to both suites only (for a
-#                   later per-backend run, e.g. AVANT_BACKEND=llvm, D176); the
-#                   letters are always built with the seed's backend.
-#   GATE_BACKEND    myc (default) or llvm (Stage 28 W9, D171). myc: the steps
-#                   above. llvm: the llvm letters instead of C: C' (B
-#                   compiles the compiler with AVANT_BACKEND=llvm, bin/avant-
-#                   c-llvm), the suite under AVANT_BACKEND=llvm on B and on
-#                   C', D' (C' compiles the compiler likewise, bin/avant-d-
-#                   llvm), the fixed point on the pre-optimization .ll of
-#                   compiler/main.av (`avant __emit-ll`) from C' and from D',
-#                   and C' = D' byte for byte. GATE_REUSE_C then concerns C'
-#                   (the B suite's test_fixed_point builds C' under llvm).
+#   GATE_SUITE_ENV  extra VAR=value words passed to both suites only (e.g.
+#                   a GC environment); the letters' back ends are fixed by
+#                   tools/letters.sh.
+#   GATE_BACKEND    llvm (default since Stage 28 W10; D171, D206) or myc.
+#                   llvm: the letters b, c-llvm (C'), d-llvm (D') and the
+#                   steps above; GATE_REUSE_C concerns C' (the B suite's
+#                   test_fixed_point builds C' on the default back end).
+#                   myc (the old letters, until W11): B, C (B compiles the
+#                   compiler on the old back end, bin/avant-c), the suite on
+#                   B and on C under AVANT_BACKEND=myc, and the fixed point
+#                   on `dump compiler/main.av` (myc IR) from B and from C,
+#                   byte for byte (no D).
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, compiler build and
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
@@ -38,13 +45,14 @@
 # letters' incantation, with those timeouts inside).
 # AVANT_MYC_LLVM is always passed explicitly (the seed's myc-llvm).
 #
-# Output files in GATE_OUT: build-{runtime,b,c}.log and time-build-{b,c}.txt;
-# suite-{b,c}.log, junit-{b,c}.xml, time-{b,c}.txt; {before,after}-{b,c}.{tmp,repo}
-# snapshots and the new-/gone- differences; fixed-point.txt; reuse.txt when
-# GATE_REUSE_C is set; summary.txt (everything printed at the end). With
-# GATE_BACKEND=llvm the second letter's files are named c-llvm (build-c-
-# llvm.log, suite-c-llvm.log, ...), plus build-d-llvm.log, time-build-d-
-# llvm.txt, and identity.txt (C' against D').
+# Output files in GATE_OUT (L is b and the second letter: c-llvm by
+# default, c with GATE_BACKEND=myc): build-runtime.log, build-L.log and
+# time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
+# {before,after}-L.{tmp,repo} snapshots and the new-/gone- differences;
+# fixed-point.txt; reuse.txt when GATE_REUSE_C is set; summary.txt
+# (everything printed at the end); by default also build-d-llvm.log,
+# time-build-d-llvm.txt, emit-{c,d}-llvm.log, and identity.txt (C'
+# against D').
 set -u
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -62,10 +70,12 @@ mkdir -p "$out" || exit 2
 REUSE=${GATE_REUSE_C:-}
 case "$REUSE" in ''|1|proof) ;; *) echo "gate: GATE_REUSE_C must be unset, 1, or proof" >&2; exit 2 ;; esac
 SUITE_ENV=${GATE_SUITE_ENV:-}
-BACKEND=${GATE_BACKEND:-myc}
+BACKEND=${GATE_BACKEND:-llvm}
+# BACKEND_ENV: the env(1) words that set the suites' back end: unset for
+# the default (what a user gets), explicit for the old one.
 case "$BACKEND" in
-  myc) C=c; BACKEND_ENV="" ;;
-  llvm) C=c-llvm; BACKEND_ENV="AVANT_BACKEND=llvm" ;;
+  myc) C=c; BACKEND_ENV="AVANT_BACKEND=myc" ;;
+  llvm) C=c-llvm; BACKEND_ENV="-u AVANT_BACKEND" ;;
   *) echo "gate: GATE_BACKEND must be myc or llvm" >&2; exit 2 ;;
 esac
 
@@ -122,7 +132,7 @@ for L in b $C; do
   rm -f "$out/junit-$L.xml" "$out/time-$L.txt"
   snap "$out/before-$L"
   # shellcheck disable=SC2086 # BACKEND_ENV, SUITE_ENV, keep are VAR=value words
-  env AVANT_MYC_LLVM="$M" $BACKEND_ENV $keep $SUITE_ENV timeout -k 10 900 /usr/bin/time -p -o "$out/time-$L.txt" ./bin/avant-$L test --junit "$out/junit-$L.xml" > "$out/suite-$L.log" 2>&1 < /dev/null
+  env $BACKEND_ENV AVANT_MYC_LLVM="$M" $keep $SUITE_ENV timeout -k 10 900 /usr/bin/time -p -o "$out/time-$L.txt" ./bin/avant-$L test --junit "$out/junit-$L.xml" > "$out/suite-$L.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$L.log"
   [ $rc -eq 0 ] || fail "suite on $L failed (rc=$rc)"
@@ -137,8 +147,8 @@ for L in b $C; do
 done
 
 if [ "$BACKEND" = myc ]; then
-  AVANT_MYC_LLVM=$M timeout -k 10 900 ./bin/avant-b dump compiler/main.av > "$out/dump-b.myc" 2>&1 < /dev/null || fail "dump on B failed (rc=$?)"
-  AVANT_MYC_LLVM=$M timeout -k 10 900 ./bin/avant-c dump compiler/main.av > "$out/dump-c.myc" 2>&1 < /dev/null || fail "dump on C failed (rc=$?)"
+  AVANT_BACKEND=myc AVANT_MYC_LLVM=$M timeout -k 10 900 ./bin/avant-b dump compiler/main.av > "$out/dump-b.myc" 2>&1 < /dev/null || fail "dump on B failed (rc=$?)"
+  AVANT_BACKEND=myc AVANT_MYC_LLVM=$M timeout -k 10 900 ./bin/avant-c dump compiler/main.av > "$out/dump-c.myc" 2>&1 < /dev/null || fail "dump on C failed (rc=$?)"
   if cmp -s "$out/dump-b.myc" "$out/dump-c.myc"; then
     echo "fixed point: identical" > "$out/fixed-point.txt"
   else
@@ -152,7 +162,7 @@ else
   # the executables' identity.
   letters d-llvm > "$out/build-d-llvm.log" 2>&1 || { fail "d-llvm build failed (rc=$?)"; finish; }
   for L in c-llvm d-llvm; do
-    AVANT_BACKEND=llvm timeout -k 10 900 ./bin/avant-$L __emit-ll compiler/main.av "$out/main-$L.ll" > "$out/emit-$L.log" 2>&1 < /dev/null || fail "__emit-ll on $L failed (rc=$?)"
+    env -u AVANT_BACKEND timeout -k 10 900 ./bin/avant-$L __emit-ll compiler/main.av "$out/main-$L.ll" > "$out/emit-$L.log" 2>&1 < /dev/null || fail "__emit-ll on $L failed (rc=$?)"
   done
   if cmp -s "$out/main-c-llvm.ll" "$out/main-d-llvm.ll"; then
     echo "fixed point (.ll): identical" > "$out/fixed-point.txt"
