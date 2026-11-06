@@ -3,7 +3,9 @@
 // W7a): every instance is its own monomorphic function or layout
 // (`av.generics/id[Int]`, `%generics.Pair(Int,String)`,
 // `av.generics/Stack(Int).push`), generic methods of a plain struct
-// (`Box.wrap[Int]`), instances holding unions and nested instances.
+// (`Box.wrap[Int]`), instances holding unions and nested instances,
+// literal field defaults of a generic class (they reach the lowering
+// without their checked type and take the field's).
 
 interface Show {
   fn show: String
@@ -25,6 +27,8 @@ struct Pair(A, B) {
 class Stack(T) {
   items: Array(T)
   last: T?
+  label: String = "stack"
+  depth: Int = 0
 
   fn initialize {
     xs: Array(T) = []
@@ -35,6 +39,7 @@ class Stack(T) {
   fn push(v: T) {
     items.push(v)
     last = v
+    depth += 1
   }
 
   fn top: T? {
@@ -128,6 +133,7 @@ fn main {
   }
   puts(s.last ?? -1)
   puts(count(s))
+  puts("${s.label} ${s.depth}")
   ss = Stack(String).new
   if t2 = ss.top {
     puts(t2)
