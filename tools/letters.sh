@@ -1,25 +1,32 @@
 #!/bin/sh
 # The letters, in one place (Stage 28): the runtime, B (the seed builds it),
-# and C (B builds it). Never compile the compiler with the compiler under
-# test: B always comes from the seed, C from B.
+# and the compilers B builds. Never compile the compiler with the compiler
+# under test: B always comes from the seed, C' from B, D' from C'.
 #
-#   sh tools/letters.sh [STEP...]     (any directory; default: runtime b c)
+#   sh tools/letters.sh [STEP...]     (any directory; default: runtime b c-llvm)
 #
 # STEP is one of:
 #   runtime  sh runtime/build.sh (it also builds runtime/build/avant_llvm.o
 #            through tools/build-llvm.sh, cached)
 #   b        the seed compiles compiler/main.av into bin/avant-b, --debug
-#   c        bin/avant-b compiles compiler/main.av into bin/avant-c, --debug
-#   c-llvm   C' (Stage 28 W9): bin/avant-b compiles compiler/main.av into
-#            bin/avant-c-llvm with AVANT_BACKEND=llvm, --debug
+#            (on the old back end: the seed has no other)
+#   c-llvm   C', the default compiler (Stage 28 W9, W10): bin/avant-b
+#            compiles compiler/main.av into bin/avant-c-llvm with
+#            AVANT_BACKEND=llvm, --debug
 #   d-llvm   D': bin/avant-c-llvm compiles compiler/main.av into
 #            bin/avant-d-llvm with AVANT_BACKEND=llvm, --debug
+#   c        the old C (until W11): bin/avant-b compiles compiler/main.av
+#            into bin/avant-c with AVANT_BACKEND=myc, --debug
+#
+# The names keep the letter and the back end that built it: C' and D' are
+# c-llvm and d-llvm (the new back end, the default since W10), C is c
+# (myc). W11 retires c with the old back end.
 #
 # The llvm letters (D171, D176): C' is built by B on the new back end and
 # D' by C'; C' is judged only by D' and the suite (C' = D' byte for byte,
 # and the pre-optimization .ll of compiler/main.av from both, through
-# `avant __emit-ll`, is the new fixed point; tools/gate.sh with
-# GATE_BACKEND=llvm runs it). The new back end needs no myc-llvm; the
+# `avant __emit-ll`, is the new fixed point; tools/gate.sh runs it by
+# default). The new back end needs no myc-llvm; the
 # AVANT_MYC_LLVM variable is still passed (the compiler's myc probe for
 # a myc compile inside, e.g. a test, reads it).
 #
@@ -55,7 +62,7 @@ M=$seed/myc-llvm
 time_dir=${LETTERS_TIME_DIR:-}
 
 steps="$*"
-[ -n "$steps" ] || steps="runtime b c"
+[ -n "$steps" ] || steps="runtime b c-llvm"
 for s in $steps; do
   case "$s" in
     runtime|b|c|c-llvm|d-llvm) ;;
