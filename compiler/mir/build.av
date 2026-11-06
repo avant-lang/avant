@@ -1,0 +1,524 @@
+// The MIR builder (Stage 28 W4; stages/stage28/mir.md 12.3): what the
+// lowering (W5-W8) and the tests build MIR with. Module-level helpers
+// (files, string constants, layouts, type ids, externals), then functions:
+// begin_fn, locals, blocks, and statements appended to the current block.
+// Places, operands, and rvalues are fresh objects (never shared), so a
+// test may adjust one after building it. A statement or terminator
+// appended after a terminator opens a fresh block (code after a return).
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+
+pub fn mir_module(name: String): MModule {
+  MModule.new(name)
+}
+
+pub fn mir_loc(file: Int, line: Int, col: Int): MLoc {
+  MLoc { file: file, line: line, col: col }
+}
+
+pub class MirBuilder {
+  module: MModule
+  types: MTypes
+  func: MFunc
+  cur_bb: Int = 0
+  cur_loc: MLoc
+  file_id: Int = 0
+
+  fn initialize(m: MModule) {
+    self.module = m
+    self.types = m.types
+    self.cur_loc = mir_loc(0, 0, 0)
+    self.func = MFunc.new("", 0, self.cur_loc)
+  }
+
+  // ---- module level
+
+  // The file-table index of path (added on first use); it becomes the
+  // current file for at_loc and here.
+  pub fn file(path: String): Int {
+    i = 0
+    while i < self.module.files.size {
+      if str_eq(self.module.files[i], path) {
+        self.file_id = i
+        return i
+      }
+      i = i + 1
+    }
+    self.module.files.push(path)
+    self.file_id = self.module.files.size - 1
+    self.file_id
+  }
+
+  pub fn here(line: Int, col: Int): MLoc {
+    mir_loc(self.file_id, line, col)
+  }
+
+  pub fn str_const(text: String): MOperand {
+    id = 0
+    if got = self.module.str_index.get(text) {
+      id = got
+    } else {
+      id = self.module.strs.size
+      self.module.strs.push(text)
+      self.module.str_index[text] = id
+    }
+    o = MOperand.new(mok_str(), mt_str())
+    o.sid = id
+    o
+  }
+
+  pub fn note_layout(name: String, kind: Int, fields: Array(Int), names: Array(String)): Int {
+    self.types.note_layout(name, kind, fields, names)
+  }
+
+  // A union layout `%U` with its members' payload types in member order
+  // and the index of the nil member (-1: none), 2.4.
+  pub fn note_union(name: String, payloads: Array(Int), nil_tag: Int): Int {
+    fields: Array(Int) = []
+    names: Array(String) = []
+    fields.push(mt_i32())
+    names.push("tag")
+    i = 0
+    while i < payloads.size {
+      fields.push(payloads[i])
+      names.push("m${i}")
+      i = i + 1
+    }
+    l = self.types.note_layout(name, mlk_union(), fields, names)
+    self.types.layouts[l].nil_tag = nil_tag
+    l
+  }
+
+  // The D186 allocator (3.3): a class or record takes the next dynamic id;
+  // an element buffer takes 65535 (one ref word or a fnval), 0 (no heap
+  // reference word), or its own dynamic id; fixed kinds keep theirs.
+  pub fn type_id(layout: Int): Int {
+    l = self.types.layouts[layout]
+    if l.type_id != 0 {
+      return l.type_id
+    }
+    if l.kind == mlk_elems() {
+      e = l.fields[0]
+      el = self.types.layout_of(e)
+      if self.types.is_refkind(e) || (self.types.kind(e) == mk_agg() && self.types.layouts[el].kind == mlk_fnval()) {
+        l.type_id = 65535
+        return 65535
+      }
+      if l.ref_words.size == 0 {
+        return 0
+      }
+    } else if l.kind != mlk_class() && l.kind != mlk_record() {
+      return 0
+    }
+    id = 1 + self.module.next_dyn
+    if id >= 1021 {
+      id = id + 3
+    }
+    self.module.next_dyn = self.module.next_dyn + 1
+    if id > 65534 {
+      self.module.error = "this program needs type id ${id}; the runtime's limit is 65534"
+    }
+    l.type_id = id
+    self.module.maps.push(MTypeMap.new(id, layout))
+    id
+  }
+
+  fn declare(e: MExtern): Int {
+    if got = self.module.extern_index.get(e.name) {
+      return got
+    }
+    id = self.module.externs.size
+    self.module.externs.push(e)
+    self.module.extern_index[e.name] = id
+    id
+  }
+
+  // A call-table row, declared on first use: its signature, class, and
+  // flags from the table. -1 when the name is not a row.
+  pub fn extern_rt(name: String): Int {
+    if got = self.module.extern_index.get(name) {
+      return got
+    }
+    if r = self.module.rt.find(name) {
+      sg = self.module.rt.sig_of(r, self.types)
+      if sg < 0 {
+        return -1
+      }
+      e = MExtern.new(name, sg, r.cls)
+      e.alloc = r.alloc
+      e.slot_row = r.slot
+      e.noreturn = r.noreturn
+      return self.declare(e)
+    }
+    -1
+  }
+
+  // A lib/fun binding: class from the table when the C name is a row,
+  // else collects. The first declaration of a C name wins (3.5); a call
+  // through another binding carries its own signature (MStmt.sig).
+  pub fn extern_c(name: String, sig: Int): Int {
+    self.declare(MExtern.new(name, sig, self.module.rt.class_of(name)))
+  }
+
+  // ---- types
+  pub fn ref_to(layout: Int): Int { self.types.ref_to(layout) }
+  pub fn ptr_to(ty: Int): Int { self.types.ptr_to(ty) }
+  pub fn addr_of(ty: Int): Int { self.types.addr_of(ty) }
+  pub fn agg(layout: Int): Int { self.types.agg(layout) }
+  pub fn code(sig: Int): Int { self.types.code(sig) }
+  pub fn sig(params: Array(Int), ret: Int, varargs: Bool): Int { self.types.sig(params, ret, varargs) }
+
+  // ---- functions and blocks
+
+  // Creates _0 (the return place, or the void placeholder) and the
+  // parameters _1 .. _p from the signature, and bb0 as the current block.
+  pub fn begin_fn(symbol: String, sig: Int, loc: MLoc, source_name: String): MFunc {
+    f = MFunc.new(symbol, sig, loc)
+    f.source_name = source_name
+    s = self.types.sigs[sig]
+    f.locals.push(MLocal.new(s.ret, ""))
+    i = 0
+    while i < s.params.size {
+      f.locals.push(MLocal.new(s.params[i], ""))
+      i = i + 1
+    }
+    f.nparams = s.params.size
+    f.blocks.push(MBlock.new(0))
+    self.module.func_index[symbol] = self.module.funcs.size
+    self.module.funcs.push(f)
+    self.func = f
+    self.cur_bb = 0
+    self.cur_loc = loc
+    f
+  }
+
+  pub fn param(i: Int): Int { i }
+
+  pub fn name_param(i: Int, name: String) {
+    self.func.locals[i].name = name
+  }
+
+  pub fn local(ty: Int, name: String): Int {
+    self.func.locals.push(MLocal.new(ty, name))
+    self.func.locals.size - 1
+  }
+
+  pub fn temp(ty: Int): Int {
+    self.local(ty, "")
+  }
+
+  pub fn set_kind(kind: Int) {
+    self.func.kind = kind
+  }
+
+  pub fn set_slot(local: Int) {
+    self.func.locals[local].slot = true
+  }
+
+  pub fn set_external {
+    self.func.external = true
+  }
+
+  // A new block (not current); blocks are numbered in creation order.
+  pub fn block: Int {
+    self.func.blocks.push(MBlock.new(self.func.blocks.size))
+    self.func.blocks.size - 1
+  }
+
+  pub fn at(bb: Int) {
+    self.cur_bb = bb
+  }
+
+  pub fn at_loc(line: Int, col: Int) {
+    self.cur_loc = mir_loc(self.file_id, line, col)
+  }
+
+  pub fn end_fn {
+    self.cur_bb = 0
+  }
+
+  fn open: MBlock {
+    blk = self.func.blocks[self.cur_bb]
+    if t = blk.term {
+      self.cur_bb = self.block
+      return self.func.blocks[self.cur_bb]
+    }
+    blk
+  }
+
+  fn push(st: MStmt): MStmt {
+    self.open.stmts.push(st)
+    st
+  }
+
+  fn term(t: MTerm): MTerm {
+    self.open.term = t
+    t
+  }
+
+  // ---- places and operands (fresh objects)
+  pub fn pl(local: Int): MPlace { MPlace.new(local) }
+
+  fn extend(p: MPlace, pr: MProj): MPlace {
+    q = MPlace.new(p.local)
+    i = 0
+    while i < p.proj.size {
+      q.proj.push(p.proj[i])
+      i = i + 1
+    }
+    q.proj.push(pr)
+    q
+  }
+
+  pub fn deref(p: MPlace): MPlace { self.extend(p, MProj.new(mpk_deref(), 0)) }
+  pub fn field(p: MPlace, k: Int): MPlace { self.extend(p, MProj.new(mpk_field(), k)) }
+
+  pub fn index(p: MPlace, o: MOperand): MPlace {
+    pr = MProj.new(mpk_index(), 0)
+    pr.index = o
+    self.extend(p, pr)
+  }
+
+  pub fn copy(p: MPlace): MOperand {
+    o = MOperand.new(mok_copy(), -1)
+    o.place = p
+    o
+  }
+
+  pub fn copy_local(local: Int): MOperand { self.copy(self.pl(local)) }
+
+  fn c_int(ty: Int, v: Int64): MOperand {
+    o = MOperand.new(mok_int(), ty)
+    o.ival = v
+    o
+  }
+
+  pub fn c_i32(v: Int): MOperand { self.c_int(mt_i32(), v.to_i64) }
+  pub fn c_u32(v: Int): MOperand { self.c_int(mt_u32(), v.to_i64) }
+  pub fn c_i64(v: Int64): MOperand { self.c_int(mt_i64(), v) }
+  pub fn c_u64(v: Int64): MOperand { self.c_int(mt_u64(), v) }
+
+  pub fn c_bool(v: Bool): MOperand {
+    o = MOperand.new(mok_bool(), mt_bool())
+    if v {
+      o.ival = 1i64
+    }
+    o
+  }
+
+  // An f64 constant: its bit pattern and its %g rendering (printed as a
+  // comment; empty prints none).
+  pub fn c_f64(bits: Int64, shown: String): MOperand {
+    o = MOperand.new(mok_f64(), mt_f64())
+    o.ival = bits
+    o.text = shown
+    o
+  }
+
+  pub fn c_null(ty: Int): MOperand { MOperand.new(mok_null(), ty) }
+
+  // `const fn SYMBOL`: its type is the code type of the function's
+  // signature, resolved by the verifier (the function may come later).
+  pub fn c_fn(symbol: String): MOperand {
+    o = MOperand.new(mok_fn(), -1)
+    o.text = symbol
+    o
+  }
+
+  // ---- rvalues
+  pub fn rv_use(o: MOperand): MRvalue {
+    r = MRvalue.new(mrk_use())
+    r.a = o
+    r
+  }
+
+  pub fn rv_zero: MRvalue { MRvalue.new(mrk_zero()) }
+
+  pub fn rv_un(op: Int, a: MOperand): MRvalue {
+    r = MRvalue.new(mrk_unary())
+    r.op = op
+    r.a = a
+    r
+  }
+
+  fn rv2(kind: Int, op: Int, a: MOperand, b: MOperand): MRvalue {
+    r = MRvalue.new(kind)
+    r.op = op
+    r.a = a
+    r.b = b
+    r
+  }
+
+  pub fn rv_bin(op: Int, a: MOperand, b: MOperand): MRvalue { self.rv2(mrk_binary(), op, a, b) }
+  pub fn rv_chk(op: Int, a: MOperand, b: MOperand): MRvalue { self.rv2(mrk_checked(), op, a, b) }
+  pub fn rv_cmp(op: Int, a: MOperand, b: MOperand): MRvalue { self.rv2(mrk_cmp(), op, a, b) }
+
+  pub fn rv_cast(a: MOperand, ty: Int): MRvalue {
+    r = MRvalue.new(mrk_cast())
+    r.a = a
+    r.ty = ty
+    r
+  }
+
+  pub fn rv_addr(p: MPlace): MRvalue {
+    r = MRvalue.new(mrk_addr())
+    r.place = p
+    r
+  }
+
+  pub fn rv_addr_raw(p: MPlace): MRvalue {
+    r = MRvalue.new(mrk_addr_raw())
+    r.place = p
+    r
+  }
+
+  pub fn rv_struct(layout: Int, ops: Array(MOperand)): MRvalue {
+    r = MRvalue.new(mrk_struct())
+    r.ty = self.types.agg(layout)
+    r.ops = ops
+    r
+  }
+
+  pub fn rv_union(layout: Int, tag: Int, o: MOperand): MRvalue {
+    r = self.rv_union_nil(layout, tag)
+    r.a = o
+    r
+  }
+
+  pub fn rv_union_nil(layout: Int, tag: Int): MRvalue {
+    r = MRvalue.new(mrk_union())
+    r.ty = self.types.agg(layout)
+    r.op = tag
+    r
+  }
+
+  pub fn rv_fnval(layout: Int, env: MOperand, code: MOperand): MRvalue {
+    r = MRvalue.new(mrk_fnval())
+    r.ty = self.types.agg(layout)
+    r.a = env
+    r.b = code
+    r
+  }
+
+  // ---- statements (appended to the current block; returned so a test
+  // may adjust one)
+  pub fn assign(p: MPlace, rv: MRvalue): MStmt {
+    st = MStmt.new(msk_assign(), self.cur_loc)
+    st.place = p
+    st.rv = rv
+    self.push(st)
+  }
+
+  pub fn assign_fresh(p: MPlace, rv: MRvalue): MStmt {
+    st = self.assign(p, rv)
+    st.fresh = true
+    st
+  }
+
+  // The mark of a call to callee (4.6): an Avant function collects unless
+  // it is a leaf; an external by its class (quiet collects only in a
+  // shared module). A table row is declared on first use.
+  pub fn mark(callee: String): Bool {
+    if f = self.module.func(callee) {
+      return f.kind != mfk_leaf()
+    }
+    if str_starts_mir(callee, "av.") {
+      return true
+    }
+    if e = self.module.ext(callee) {
+      return mir_class_collects(e.cls, self.module.shared)
+    }
+    dummy = self.extern_rt(callee)
+    mir_class_collects(self.module.rt.class_of(callee), self.module.shared)
+  }
+
+  pub fn call(dest: Int, callee: String, args: Array(MOperand)): MStmt {
+    st = MStmt.new(msk_call(), self.cur_loc)
+    st.dest = dest
+    st.callee = callee
+    st.args = args
+    st.collects = self.mark(callee)
+    self.push(st)
+  }
+
+  pub fn call_indirect(dest: Int, fnval: MOperand, args: Array(MOperand)): MStmt {
+    st = MStmt.new(msk_call(), self.cur_loc)
+    st.dest = dest
+    st.indirect = fnval
+    st.args = args
+    st.collects = true
+    self.push(st)
+  }
+
+  fn stmt1(kind: Int, o: MOperand): MStmt {
+    st = MStmt.new(kind, self.cur_loc)
+    st.args.push(o)
+    self.push(st)
+  }
+
+  pub fn barrier(h: Int): MStmt { self.stmt1(msk_barrier(), self.copy_local(h)) }
+  pub fn barrier_at(a: Int): MStmt { self.stmt1(msk_barrier_at(), self.copy_local(a)) }
+
+  pub fn check_bounds(i: MOperand, n: MOperand): MStmt {
+    st = self.stmt1(msk_check_bounds(), i)
+    st.args.push(n)
+    st
+  }
+
+  // The frame statements (5.1): the frame pass inserts them; the tests
+  // write final-stage MIR by hand.
+  pub fn gc_enter: MStmt { self.push(MStmt.new(msk_gc_enter(), self.cur_loc)) }
+  pub fn gc_leave: MStmt { self.push(MStmt.new(msk_gc_leave(), self.cur_loc)) }
+
+  pub fn gc_roots(locals: Array(Int)): MStmt {
+    st = MStmt.new(msk_gc_roots(), self.cur_loc)
+    st.locals = locals
+    self.push(st)
+  }
+
+  // ---- terminators
+  pub fn goto(bb: Int): MTerm {
+    t = MTerm.new(mtk_goto(), self.cur_loc)
+    t.targets.push(bb)
+    self.term(t)
+  }
+
+  pub fn branch(c: MOperand, bt: Int, bf: Int): MTerm {
+    t = MTerm.new(mtk_branch(), self.cur_loc)
+    t.cond = c
+    t.targets.push(bt)
+    t.targets.push(bf)
+    self.term(t)
+  }
+
+  // targets[i] is the block for values[i]; other is the else block.
+  pub fn switch_on(o: MOperand, values: Array(Int64), targets: Array(Int), other: Int): MTerm {
+    t = MTerm.new(mtk_switch(), self.cur_loc)
+    t.cond = o
+    t.values = values
+    i = 0
+    while i < targets.size {
+      t.targets.push(targets[i])
+      i = i + 1
+    }
+    t.targets.push(other)
+    self.term(t)
+  }
+
+  pub fn ret: MTerm { self.term(MTerm.new(mtk_return(), self.cur_loc)) }
+  pub fn unreachable: MTerm { self.term(MTerm.new(mtk_unreachable(), self.cur_loc)) }
+}
+
+// Whether a call to an external of class cls is marked collects (4.6).
+pub fn mir_class_collects(cls: Int, shared: Bool): Bool {
+  if cls == mcc_never() {
+    return false
+  }
+  if cls == mcc_quiet() {
+    return shared
+  }
+  true
+}

@@ -1,0 +1,471 @@
+// MIR types and layouts (Stage 28 W4; stages/stage28/mir.md section 2).
+// One MType per distinct type, interned by its printed text; ids 0-12 are
+// the fixed scalar and untyped kinds below. Layouts compute their C-rule
+// offsets, size, alignment, heap reference words, and root words (2.10)
+// when noted.
+
+import source
+
+pub fn mk_void: Int { 0 }
+pub fn mk_bool: Int { 1 }
+pub fn mk_int: Int { 2 }
+pub fn mk_f64: Int { 3 }
+pub fn mk_ref: Int { 4 }
+pub fn mk_str: Int { 5 }
+pub fn mk_task: Int { 6 }
+pub fn mk_ptr: Int { 7 }
+pub fn mk_addr: Int { 8 }
+pub fn mk_code: Int { 9 }
+pub fn mk_agg: Int { 10 }
+
+// The fixed type ids (interned first, in this order, by MTypes.new).
+pub fn mt_void: Int { 0 }
+pub fn mt_bool: Int { 1 }
+pub fn mt_u8: Int { 2 }
+pub fn mt_i32: Int { 3 }
+pub fn mt_u32: Int { 4 }
+pub fn mt_i64: Int { 5 }
+pub fn mt_u64: Int { 6 }
+pub fn mt_f64: Int { 7 }
+pub fn mt_ref: Int { 8 }
+pub fn mt_str: Int { 9 }
+pub fn mt_task: Int { 10 }
+pub fn mt_ptr: Int { 11 }
+pub fn mt_addr: Int { 12 }
+
+// Layout kinds (2.4).
+pub fn mlk_struct: Int { 1 }
+pub fn mlk_class: Int { 2 }
+pub fn mlk_union: Int { 3 }
+pub fn mlk_fnval: Int { 4 }
+pub fn mlk_clayout: Int { 5 }
+pub fn mlk_record: Int { 6 }
+pub fn mlk_array: Int { 7 }
+pub fn mlk_elems: Int { 8 }
+pub fn mlk_hash: Int { 9 }
+pub fn mlk_buf: Int { 10 }
+
+pub fn mlk_name(k: Int): String {
+  names = ["?", "struct", "class", "union", "fnval", "clayout", "record", "array", "elems", "hash", "buf"]
+  if k < 0 || k >= names.size {
+    return "?"
+  }
+  names[k]
+}
+
+pub fn mlk_parse(s: String): Int {
+  k = 1
+  while k <= 10 {
+    if str_eq(mlk_name(k), s) {
+      return k
+    }
+    k = k + 1
+  }
+  0
+}
+
+pub class MType {
+  id: Int = 0
+  kind: Int = 0
+  bits: Int = 0
+  signed: Bool = false
+  pointee: Int = -1
+  layout: Int = -1
+  sig: Int = -1
+  text: String = ""
+
+  fn initialize(kind: Int, text: String) {
+    self.kind = kind
+    self.text = text
+    self.pointee = -1
+    self.layout = -1
+    self.sig = -1
+  }
+}
+
+pub class MLayout {
+  name: String = ""
+  kind: Int = 0
+  fields: Array(Int)
+  names: Array(String)
+  offsets: Array(Int)
+  size: Int = 0
+  align: Int = 1
+  ref_words: Array(Int)
+  root_words: Array(Int)
+  type_id: Int = 0
+  nil_tag: Int = -1
+
+  fn initialize(name: String, kind: Int) {
+    self.name = name
+    self.kind = kind
+    f: Array(Int) = []
+    self.fields = f
+    n: Array(String) = []
+    self.names = n
+    o: Array(Int) = []
+    self.offsets = o
+    r: Array(Int) = []
+    self.ref_words = r
+    w: Array(Int) = []
+    self.root_words = w
+  }
+}
+
+pub class MSig {
+  params: Array(Int)
+  ret: Int = 0
+  varargs: Bool = false
+  text: String = ""
+
+  fn initialize(params: Array(Int), ret: Int, varargs: Bool, text: String) {
+    self.params = params
+    self.ret = ret
+    self.varargs = varargs
+    self.text = text
+  }
+}
+
+pub fn mir_align_up(n: Int, a: Int): Int {
+  if a <= 1 {
+    return n
+  }
+  ((n + a - 1) / a) * a
+}
+
+pub class MTypes {
+  all: Array(MType)
+  index: Hash(String, Int)
+  layouts: Array(MLayout)
+  layout_index: Hash(String, Int)
+  sigs: Array(MSig)
+  sig_index: Hash(String, Int)
+
+  fn initialize {
+    a: Array(MType) = []
+    self.all = a
+    self.index = Hash(String, Int).new
+    l: Array(MLayout) = []
+    self.layouts = l
+    self.layout_index = Hash(String, Int).new
+    s: Array(MSig) = []
+    self.sigs = s
+    self.sig_index = Hash(String, Int).new
+    self.prim(mk_void(), 0, false, "void")
+    self.prim(mk_bool(), 1, false, "bool")
+    self.prim(mk_int(), 8, false, "u8")
+    self.prim(mk_int(), 32, true, "i32")
+    self.prim(mk_int(), 32, false, "u32")
+    self.prim(mk_int(), 64, true, "i64")
+    self.prim(mk_int(), 64, false, "u64")
+    self.prim(mk_f64(), 64, true, "f64")
+    self.prim(mk_ref(), 64, false, "ref")
+    self.prim(mk_str(), 64, false, "ref str")
+    self.prim(mk_task(), 64, false, "ref task")
+    self.prim(mk_ptr(), 64, false, "ptr")
+    self.prim(mk_addr(), 64, false, "addr")
+  }
+
+  fn prim(kind: Int, bits: Int, signed: Bool, text: String) {
+    t = MType.new(kind, text)
+    t.bits = bits
+    t.signed = signed
+    dummy = self.add(t)
+  }
+
+  fn add(t: MType): Int {
+    if i = self.index.get(t.text) {
+      return i
+    }
+    t.id = self.all.size
+    self.all.push(t)
+    self.index[t.text] = t.id
+    t.id
+  }
+
+  pub fn get(id: Int): MType {
+    self.all[id]
+  }
+
+  pub fn text(id: Int): String {
+    if id < 0 || id >= self.all.size {
+      return "?"
+    }
+    self.all[id].text
+  }
+
+  pub fn kind(id: Int): Int {
+    if id < 0 || id >= self.all.size {
+      return -1
+    }
+    self.all[id].kind
+  }
+
+  // ref %L (L a layout index).
+  pub fn ref_to(layout: Int): Int {
+    t = MType.new(mk_ref(), "ref %${self.layouts[layout].name}")
+    t.layout = layout
+    self.add(t)
+  }
+
+  pub fn ptr_to(ty: Int): Int {
+    t = MType.new(mk_ptr(), "ptr ${self.text(ty)}")
+    t.pointee = ty
+    self.add(t)
+  }
+
+  pub fn addr_of(ty: Int): Int {
+    t = MType.new(mk_addr(), "addr ${self.text(ty)}")
+    t.pointee = ty
+    self.add(t)
+  }
+
+  pub fn agg(layout: Int): Int {
+    t = MType.new(mk_agg(), "%${self.layouts[layout].name}")
+    t.layout = layout
+    self.add(t)
+  }
+
+  pub fn code(sig: Int): Int {
+    t = MType.new(mk_code(), "code${self.sigs[sig].text}")
+    t.sig = sig
+    self.add(t)
+  }
+
+  // A signature, interned by its text "(P, ...) -> R".
+  pub fn sig(params: Array(Int), ret: Int, varargs: Bool): Int {
+    buf = buf_new()
+    buf.push_str("(")
+    i = 0
+    while i < params.size {
+      if i > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str(self.text(params[i]))
+      i = i + 1
+    }
+    if varargs {
+      if params.size > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str("...")
+    }
+    buf.push_str(") -> ${self.text(ret)}")
+    key = buf.to_s
+    if got = self.sig_index.get(key) {
+      return got
+    }
+    copy: Array(Int) = []
+    k = 0
+    while k < params.size {
+      copy.push(params[k])
+      k = k + 1
+    }
+    id = self.sigs.size
+    self.sigs.push(MSig.new(copy, ret, varargs, key))
+    self.sig_index[key] = id
+    id
+  }
+
+  // The type a call-table text names: a scalar, `ref`, `ref str`,
+  // `ref task`, `ptr`, `ptr <scalar>`, or `addr`; -1 otherwise.
+  pub fn parse_text(s: String): Int {
+    if i = self.index.get(s) {
+      if i <= mt_addr() {
+        return i
+      }
+    }
+    if str_starts_mir(s, "ptr ") {
+      inner = self.parse_text(str_slice(s, 4, s.size))
+      if inner >= 0 {
+        return self.ptr_to(inner)
+      }
+    }
+    -1
+  }
+
+  pub fn layout_named(name: String): Int {
+    if i = self.layout_index.get(name) {
+      return i
+    }
+    -1
+  }
+
+  // Notes a layout and computes its byte layout and word sets (2.4, 2.10).
+  // Idempotent by name: a second note returns the first index.
+  pub fn note_layout(name: String, kind: Int, fields: Array(Int), names: Array(String)): Int {
+    if i = self.layout_index.get(name) {
+      return i
+    }
+    l = MLayout.new(name, kind)
+    off = 0
+    al = 1
+    i = 0
+    while i < fields.size {
+      fa = self.align_of(fields[i])
+      off = mir_align_up(off, fa)
+      l.fields.push(fields[i])
+      if i < names.size {
+        l.names.push(names[i])
+      } else {
+        l.names.push("")
+      }
+      l.offsets.push(off)
+      self.words(fields[i], off, l.ref_words, l.root_words)
+      off = off + self.size_of(fields[i])
+      if fa > al {
+        al = fa
+      }
+      i = i + 1
+    }
+    l.align = al
+    l.size = mir_align_up(off, al)
+    if kind == mlk_array() {
+      l.type_id = 1022
+    } else if kind == mlk_buf() {
+      l.type_id = 1021
+    } else if kind == mlk_hash() {
+      l.type_id = 1023
+    }
+    id = self.layouts.size
+    self.layouts.push(l)
+    self.layout_index[name] = id
+    id
+  }
+
+  pub fn size_of(ty: Int): Int {
+    k = self.kind(ty)
+    if k == mk_void() {
+      return 0
+    }
+    if k == mk_bool() {
+      return 1
+    }
+    if k == mk_int() {
+      return self.all[ty].bits / 8
+    }
+    if k == mk_agg() {
+      return self.layouts[self.all[ty].layout].size
+    }
+    8
+  }
+
+  pub fn align_of(ty: Int): Int {
+    k = self.kind(ty)
+    if k == mk_agg() {
+      return self.layouts[self.all[ty].layout].align
+    }
+    s = self.size_of(ty)
+    if s < 1 {
+      return 1
+    }
+    s
+  }
+
+  // Appends the heap reference words and the root words of a value of type
+  // ty at byte offset base (2.10). Code words are neither.
+  pub fn words(ty: Int, base: Int, refs: Array(Int), roots: Array(Int)) {
+    k = self.kind(ty)
+    if self.is_refkind(ty) {
+      refs.push(base / 8)
+      roots.push(base / 8)
+    } else if k == mk_ptr() || k == mk_addr() {
+      roots.push(base / 8)
+    } else if k == mk_agg() {
+      l = self.layouts[self.all[ty].layout]
+      i = 0
+      while i < l.fields.size {
+        self.words(l.fields[i], base + l.offsets[i], refs, roots)
+        i = i + 1
+      }
+    }
+  }
+
+  pub fn root_count(ty: Int): Int {
+    refs: Array(Int) = []
+    roots: Array(Int) = []
+    self.words(ty, 0, refs, roots)
+    roots.size
+  }
+
+  // Traced: the type has root words. Reference-carrying: heap ref words.
+  pub fn traced(ty: Int): Bool {
+    self.root_count(ty) > 0
+  }
+
+  pub fn ref_carrying(ty: Int): Bool {
+    refs: Array(Int) = []
+    roots: Array(Int) = []
+    self.words(ty, 0, refs, roots)
+    refs.size > 0
+  }
+
+  pub fn is_refkind(ty: Int): Bool {
+    k = self.kind(ty)
+    k == mk_ref() || k == mk_str() || k == mk_task()
+  }
+
+  pub fn is_int(ty: Int): Bool {
+    self.kind(ty) == mk_int()
+  }
+
+  pub fn is_signed_int(ty: Int): Bool {
+    self.is_int(ty) && self.all[ty].signed
+  }
+
+  pub fn is_ptr(ty: Int): Bool {
+    self.kind(ty) == mk_ptr()
+  }
+
+  pub fn is_addr(ty: Int): Bool {
+    self.kind(ty) == mk_addr()
+  }
+
+  pub fn layout_of(ty: Int): Int {
+    if ty < 0 || ty >= self.all.size {
+      return -1
+    }
+    self.all[ty].layout
+  }
+
+  pub fn pointee(ty: Int): Int {
+    if ty < 0 || ty >= self.all.size {
+      return -1
+    }
+    self.all[ty].pointee
+  }
+
+  // compat (2.11). at_call adds the call-result retyping: untyped `ref`
+  // to any reference, and untyped `addr` (the slot rows' result) to any
+  // `addr T`.
+  pub fn compat(src: Int, dst: Int, at_call: Bool): Bool {
+    if src < 0 || dst < 0 {
+      return false
+    }
+    if src == dst {
+      return true
+    }
+    if dst == mt_ref() && self.is_refkind(src) {
+      return true
+    }
+    if dst == mt_ptr() && (self.is_ptr(src) || self.kind(src) == mk_code()) {
+      return true
+    }
+    if at_call {
+      if src == mt_ref() && self.is_refkind(dst) {
+        return true
+      }
+      if src == mt_addr() && self.is_addr(dst) {
+        return true
+      }
+    }
+    false
+  }
+}
+
+pub fn str_starts_mir(s: String, pre: String): Bool {
+  if pre.size > s.size {
+    return false
+  }
+  str_eq(str_slice(s, 0, pre.size), pre)
+}
