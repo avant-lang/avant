@@ -115,6 +115,11 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "oob-neg", "fn main {\n  xs = [1, 2, 3]\n  i = 0 - 1\n  puts(xs[i])\n}\n", "out of bounds")
     expect_trap_waveb(c, compiler, stamp, "oob-store", "fn main {\n  xs = [1, 2, 3]\n  xs[5] = 9\n  puts(xs[0])\n}\n", "out of bounds")
     expect_trap_waveb(c, compiler, stamp, "str-oob", "fn main {\n  s = \"hi\"\n  puts(s[10])\n}\n", "out of bounds")
+    // C9 (W10b): pop on an empty array is the index trap at size - 1, for
+    // Int, struct, and reference elements.
+    expect_trap_waveb(c, compiler, stamp, "pop-empty-int", "fn main {\n  xs: Array(Int) = []\n  puts(xs.pop)\n}\n", "index -1 out of bounds (size 0)")
+    expect_trap_waveb(c, compiler, stamp, "pop-empty-struct", "struct P {\n  a: Int\n  b: Int\n}\nfn main {\n  xs: Array(P) = []\n  q = xs.pop()\n  puts(q.a)\n}\n", "index -1 out of bounds (size 0)")
+    expect_trap_waveb(c, compiler, stamp, "pop-empty-ref", "fn main {\n  xs = [\"a\"]\n  puts(xs.pop)\n  puts(xs.pop)\n}\n", "index -1 out of bounds (size 0)")
     expect_trap_waveb(c, compiler, stamp, "buf-oob", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  puts(b[5])\n}\n", "out of bounds")
     expect_trap_waveb(c, compiler, stamp, "div-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x / y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "rem-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x % y)\n}\n", "division by zero")

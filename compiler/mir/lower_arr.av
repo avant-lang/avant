@@ -550,6 +550,13 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if str_eq(name, "pop") {
+    // C9 (W10b): pop reads the element at size - 1, so an empty array
+    // traps as indexing it there does ("index -1 out of bounds (size 0)")
+    // instead of reading through the runtime's null (non-references) or
+    // yielding a null reference.
+    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+    last = lw.tmp(mt_i32(), b.rv_bin(mop_sub(), lw.dup(n), b.c_i32(1)))
+    dummy0 = b.check_bounds(last, n)
     if b.types.is_refkind(et) {
       return lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
     }
