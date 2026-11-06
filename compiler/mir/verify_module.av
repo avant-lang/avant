@@ -1,0 +1,124 @@
+// The verifier's module-level rules (Stage 28 W4; stages/stage28/mir.md
+// 6): V10 on layouts and externals (no field or external parameter is a
+// derived address; only `slot` rows return one) and V20 (unique, mangled
+// symbols; only main has C linkage; the type-map registry and the layouts'
+// type ids, 3.3).
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.flow
+import mir.mangle
+import mir.verify_core
+
+pub fn mir_verify_module(v: MVerifier) {
+  ts = v.ts
+  k = 0
+  while k < ts.layouts.size {
+    l = ts.layouts[k]
+    x = 0
+    while x < l.fields.size {
+      if ts.is_addr(l.fields[x]) {
+        v.merr(10, "field ${x} of %${l.name} is a derived address")
+      }
+      x = x + 1
+    }
+    mir_layout_id_rule(v, k, l)
+    k = k + 1
+  }
+  k = 0
+  while k < v.m.externs.size {
+    e = v.m.externs[k]
+    s = ts.sigs[e.sig]
+    x = 0
+    while x < s.params.size {
+      if ts.is_addr(s.params[x]) {
+        v.merr(10, "extern ${e.name} takes a derived address")
+      }
+      x = x + 1
+    }
+    if ts.is_addr(s.ret) && !e.slot_row {
+      v.merr(10, "extern ${e.name} returns a derived address")
+    }
+    k = k + 1
+  }
+  seen = Hash(String, Int).new
+  k = 0
+  while k < v.m.funcs.size {
+    g = v.m.funcs[k]
+    if seen.has_key(g.symbol) {
+      v.merr(20, "symbol ${g.symbol} is defined twice")
+    }
+    seen[g.symbol] = k
+    if mir_flip(g.external, str_eq(g.symbol, "main")) {
+      v.merr(20, "${g.symbol}: only main has C linkage")
+    } else if !g.external && !mir_mangled_ok(g.symbol) {
+      v.merr(20, "${g.symbol} is not a mangled Avant symbol (8.2)")
+    }
+    k = k + 1
+  }
+  ids = Hash(String, Int).new
+  k = 0
+  while k < v.m.maps.size {
+    tm = v.m.maps[k]
+    key = "${tm.id}"
+    if ids.has_key(key) {
+      v.merr(20, "type id ${tm.id} is registered twice")
+    }
+    ids[key] = k
+    if tm.layout < 0 {
+      if tm.id < 1021 || tm.id > 1023 {
+        v.merr(20, "fixed map with id ${tm.id}")
+      }
+    } else if !mir_dyn_id(tm.id) {
+      v.merr(20, "dynamic map %${ts.layouts[tm.layout].name} has id ${tm.id}")
+    } else if ts.layouts[tm.layout].type_id != tm.id {
+      v.merr(20, "map ${tm.id} names %${ts.layouts[tm.layout].name}, whose id is ${ts.layouts[tm.layout].type_id}")
+    }
+    k = k + 1
+  }
+}
+
+// V20 on one layout's type id (3.3).
+fn mir_layout_id_rule(v: MVerifier, k: Int, l: MLayout) {
+  id = l.type_id
+  if id == 0 {
+    return
+  }
+  fixed = 0
+  if l.kind == mlk_array() {
+    fixed = 1022
+  } else if l.kind == mlk_buf() {
+    fixed = 1021
+  } else if l.kind == mlk_hash() {
+    fixed = 1023
+  }
+  if fixed > 0 || id == 1021 || id == 1022 || id == 1023 {
+    if id != fixed {
+      v.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id ${id}")
+    }
+    return
+  }
+  if id == 65535 {
+    if l.kind != mlk_elems() {
+      v.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id 65535")
+    }
+    return
+  }
+  if !(l.kind == mlk_class() || l.kind == mlk_record() || l.kind == mlk_elems()) || !mir_dyn_id(id) {
+    v.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id ${id}")
+    return
+  }
+  owners = 0
+  x = 0
+  while x < v.m.maps.size {
+    if v.m.maps[x].id == id && v.m.maps[x].layout == k {
+      owners = owners + 1
+    }
+    x = x + 1
+  }
+  if owners != 1 {
+    v.merr(20, "%${l.name} carries type id ${id} without its registry entry")
+  }
+}

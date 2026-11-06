@@ -5,17 +5,19 @@
 // compiler's diagnostic form). Stage lowered (mst_lowered) runs V1-V10,
 // V13, V14, V18, V20, V21; stage final (mst_final) every rule but V9.
 // The rules live in verify_core.av (structure, types, barrier, marks,
-// module, allocations) and verify_gc.av (dataflow and GC shape).
+// allocations), verify_module.av (module level), and verify_gc.av
+// (dataflow and GC shape).
 
 import source
 import mir.types
 import mir.ir
 import mir.verify_core
 import mir.verify_gc
+import mir.verify_module
 
 pub fn mir_verify_errors(m: MModule, stage: Int): Array(MVerr) {
   v = MVerifier.new(m, stage)
-  v.module_rules()
+  mir_verify_module(v)
   k = 0
   while k < m.funcs.size {
     v.func = m.funcs[k]
