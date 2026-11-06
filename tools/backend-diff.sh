@@ -58,16 +58,16 @@
 #                       modules that do not exist), not programs
 #   examples/matmul.av  compared on stdout lines 1-2 only: lines 3-4 are the
 #                       milliseconds the sequential and spawned passes took
-#   tests/fixtures/types/coerce.av, tests/fixtures/types/order.av  skipped:
-#                       expected differences (D196, Stage 28 W7a): the old
-#                       back end fails to compile them (a bare T or nil into a
-#                       T? struct-literal field, C5; T or nil to a T?
-#                       parameter of a plain function or method; a union into
-#                       a wider union; postfix ? with a union success part; a
-#                       nil default in a generic class; a union crossing
-#                       between two member orders of same-named types,
-#                       order.av), the new back end converts as the checker
-#                       allows; tests/cases/test_types.av checks their output
+#   tests/fixtures/types/coerce.av  skipped: an expected difference (D196,
+#                       Stage 28 W7a): the old back end fails to compile it
+#                       (a bare T or nil into a T? struct-literal field, C5;
+#                       T or nil to a T? parameter of a plain function or
+#                       method; a union into a wider union; postfix ? with a
+#                       union success part; a nil default in a generic
+#                       class), the new back end converts as the checker
+#                       allows; tests/cases/test_types.av checks its output
+#                       (order.av left this list in W7b: the checker's member
+#                       order fix, C15, makes both back ends compile it)
 #
 # Per program: compile and run each under `timeout -k 10 120` with stdin from
 # /dev/null; the run happens in one empty directory with the binary at the
@@ -154,7 +154,7 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
   case "$1" in
     examples/http.av) echo "opens a loopback listener and connects to it (no network ports in the oracle)" ;;
     tests/fixtures/format/*) echo "formatter input, not a program" ;;
-    tests/fixtures/types/coerce.av|tests/fixtures/types/order.av) echo "expected difference (D196): the old back end fails to compile it; test_types.av checks the new back end" ;;
+    tests/fixtures/types/coerce.av) echo "expected difference (D196): the old back end fails to compile it; test_types.av checks the new back end" ;;
   esac
 }
 flags_of() { # PATH -> the extra compile flags the suite uses
