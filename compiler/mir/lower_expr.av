@@ -128,10 +128,22 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   if k == ex_switch() {
     return lw.lower_switch(e)
   }
-  what = "this expression"
   if k == ex_interp() {
-    what = "string interpolation (heap strings, W6)"
-  } else if k == ex_index() {
+    return lw.lower_interp(e)
+  }
+  if k == ex_index() {
+    if arr = e.left {
+      if ix = e.right {
+        if at = arr.ty {
+          if mir_is_str_ty(at) {
+            return lw.lower_str_index(e, arr, ix)
+          }
+        }
+      }
+    }
+  }
+  what = "this expression"
+  if k == ex_index() {
     what = "indexing (heap values, W6)"
   } else if k == ex_struct() {
     what = "a struct literal (W6)"
@@ -294,8 +306,7 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
         return zero
       }
       if lt == mt_str() {
-        lw.refuse(e.loc, "a string operation (heap strings, W6)")
-        return zero
+        return lw.lower_str_binary(e, l, r)
       }
       a = lw.snap(lw.lower_expr(l), r)
       c = lw.lower_expr(r)

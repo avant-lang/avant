@@ -158,7 +158,11 @@ pub class MVerifier {
         ty = l.fields[pr.field]
       } else {
         if o = pr.index {
+          // op_ty of a `copy` index reenters place_ty, which resets
+          // via_ptr (a W6a fix: `(*_p)[copy _k]` through a ptr).
+          vp = self.via_ptr
           it = self.op_ty(o, b, i, loc)
+          self.via_ptr = vp
           if it >= 0 && it != mt_i32() && it != mt_i64() {
             self.err(4, b, i, loc, "index operand of type ${self.tx(it)}")
             return -1

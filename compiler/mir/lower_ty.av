@@ -8,9 +8,9 @@ import source
 import type
 import mir.types
 
-// The MIR type of t in this wave's subset (2.9), or -1: Int i32, Int64
-// i64, UInt64 u64, Bool bool, Float64 f64, Void void, String `ref str`
-// (a literal's constant; no allocation reaches the subset).
+// The MIR type of t in the supported subset (2.9), or -1: Int i32, Int64
+// i64, UInt64 u64, Bool bool, Float64 f64, Void void, String and Bytes
+// `ref str` (a literal's constant or a heap string, W6a).
 pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_int {
     return mt_i32()
@@ -30,10 +30,30 @@ pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_void {
     return mt_void()
   }
-  if t.is_string {
+  if t.is_string || t.is_bytes {
     return mt_str()
   }
   return -1
+}
+
+// Whether a String or Bytes value (both are `ref str`).
+pub fn mir_is_str_ty(t: Ty): Bool {
+  t.is_string || t.is_bytes
+}
+
+// The arity of a string builtin (lower_str.av; calls.av:205-249,
+// 320-346), or -1 when c is not one.
+pub fn mir_str_builtin_arity(c: String): Int {
+  if str_eq(c, "chr") || str_eq(c, "checksum_str") {
+    return 1
+  }
+  if str_eq(c, "repeat_byte") || str_eq(c, "fmt_float") {
+    return 2
+  }
+  if str_eq(c, "str_slice") || str_eq(c, "str_to_f_slice") {
+    return 3
+  }
+  -1
 }
 
 // mty (8.2) for the types a W5 signature can hold; any other type is
@@ -56,6 +76,9 @@ pub fn mir_mty(t: Ty): String {
   }
   if t.is_string {
     return "String"
+  }
+  if t.is_bytes {
+    return "Bytes"
   }
   if t.is_void {
     return "Void"

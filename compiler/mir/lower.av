@@ -2,13 +2,14 @@
 // mir.md 5.9 step 1, W5.3). This file holds the lowering's state, the
 // program and function level, locations, and refusals; statements are in
 // lower_stmt.av, expressions in lower_expr.av, types and names in
-// lower_ty.av. The result is stage-lowered MIR (Avant calls `collects`,
-// no gc.*, kinds unset); mir_lower_program then runs the minimal frame
-// pass (frames.av) so the module is ready for verify(final) and emission.
+// lower_ty.av; heap strings in lower_str.av. The result is stage-lowered
+// MIR (Avant calls `collects`, no gc.*, kinds unset); mir_lower_program
+// verifies it at stage lowered, then runs the leaf and root-slot passes
+// (gc.av, 5.9) so the module is ready for verify(final) and emission.
 //
-// W5's subset is the scalars: every other construct stops the lowering
-// with `not yet supported by the llvm back end: <what>` at its location
-// (refuse), and the module is not used.
+// The subset is the scalars (W5) and heap strings (W6a): every other
+// construct stops the lowering with `not yet supported by the llvm back
+// end: <what>` at its location (refuse), and the module is not used.
 //
 // Field names carry the `lw_` prefix: a field's name is in scope inside a
 // method, so a local of the same name would silently write the field.
@@ -23,7 +24,9 @@ import mir.types
 import mir.ir
 import mir.build
 import mir.lower_ty
-import mir.frames
+import mir.verify_core
+import mir.verify
+import mir.gc
 
 pub class MirLowered {
   module: MModule
@@ -380,7 +383,9 @@ pub class MirLower {
 }
 
 // The entry (pipeline.av under AVANT_BACKEND=llvm): the module after the
-// minimal frame pass, or the first refusal (err, ready for diag_puts).
+// GC passes, or the first refusal (err, ready for diag_puts). A module the
+// verifier rejects at stage lowered is a lowering bug: its errors are the
+// message, prefixed so they read as internal.
 // root_path is the root source file; avant_root the Avant root (std).
 pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String): MirLowered {
   dir = ""
@@ -397,6 +402,18 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
   if lw.failed {
     return MirLowered.new(lw.lw_m, lw.lw_err)
   }
-  mir_frames_minimal(lw.lw_m)
+  errs = mir_verify_errors(lw.lw_m, mst_lowered())
+  if errs.size > 0 {
+    buf = buf_new()
+    buf.push_str("internal error: the llvm back end's lowering broke the MIR verifier at stage lowered:")
+    j = 0
+    while j < errs.size {
+      buf.push_str("\n")
+      buf.push_str(errs[j].show)
+      j = j + 1
+    }
+    return MirLowered.new(lw.lw_m, buf.to_s)
+  }
+  mir_gc_passes(lw.lw_m)
   MirLowered.new(lw.lw_m, "")
 }
