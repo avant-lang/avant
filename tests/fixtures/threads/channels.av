@@ -1,0 +1,171 @@
+// Channels between tasks on the new back end (Stage 28 W8b, mir.md
+// W8b): Channel(T) is an ordinary generic class written on the gate
+// builtins (avant_gate_new, lock, unlock, wait, broadcast; the suite's
+// harness.av has the same class), so it needs no lowering of its own.
+// Producers and a consumer exchange Ints and Strings through bounded
+// and unbuffered channels; the consumer sums what it receives and the
+// main thread prints after every join, in order.
+
+class Channel(T) {
+  slots: Array(T)
+  cap: Int
+  count: Int
+  head: Int
+  closed: Int
+  has: Int
+  gate: UInt64
+  cell: T
+
+  fn initialize(n: Int = 0) {
+    self.cap = n
+    self.count = 0
+    self.head = 0
+    self.closed = 0
+    self.has = 0
+    self.gate = avant_gate_new()
+    self.slots = Array(T).new(n)
+  }
+
+  fn send(value: T) {
+    avant_gate_lock(gate)
+    if cap == 0 {
+      while has == 1 {
+        avant_gate_wait(gate)
+      }
+      self.cell = value
+      self.has = 1
+      avant_gate_broadcast(gate)
+      while has == 1 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+    } else {
+      while count == cap {
+        avant_gate_wait(gate)
+      }
+      slots[(head + count) % cap] = value
+      self.count = count + 1
+      avant_gate_broadcast(gate)
+    }
+    avant_gate_unlock(gate)
+  }
+
+  fn recv: T? {
+    avant_gate_lock(gate)
+    got: T? = nil
+    if cap == 0 {
+      while has == 0 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+      if has == 1 {
+        got = cell
+        self.has = 0
+        avant_gate_broadcast(gate)
+      }
+    } else {
+      while count == 0 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+      if count > 0 {
+        got = slots[head]
+        self.head = (head + 1) % cap
+        self.count = count - 1
+        avant_gate_broadcast(gate)
+      }
+    }
+    avant_gate_unlock(gate)
+    got
+  }
+
+  fn close {
+    avant_gate_lock(gate)
+    self.closed = 1
+    avant_gate_broadcast(gate)
+    avant_gate_unlock(gate)
+  }
+}
+
+fn produce(out: Channel(Int), from: Int, n: Int): Int {
+  i = 0
+  while i < n {
+    out.send(from + i)
+    i = i + 1
+  }
+  n
+}
+
+fn main {
+  nums = Channel(Int).new(8)
+  p1 = spawn { produce(nums, 0, 500) }
+  p2 = spawn { produce(nums, 1000, 500) }
+  total = 0
+  got = 0
+  while got < 1000 {
+    if v = nums.recv {
+      total = total + v
+      got = got + 1
+    }
+  }
+  puts(p1.join)
+  puts(p2.join)
+  puts(total)
+  texts = Channel(String).new(0)
+  prefix = "msg"
+  st = spawn {
+    i = 0
+    while i < 50 {
+      texts.send("${prefix}-${i}")
+      i = i + 1
+    }
+    texts.close
+    50
+  }
+  lens = 0
+  count = 0
+  last = ""
+  done = false
+  while !done {
+    if s = texts.recv {
+      lens = lens + s.size
+      count = count + 1
+      last = s
+    } else {
+      done = true
+    }
+  }
+  puts(st.join)
+  puts(count)
+  puts(lens)
+  puts(last)
+  replies = Channel(String).new(4)
+  workers: Array(JoinHandle(Int)) = []
+  i = 0
+  while i < 4 {
+    id = i
+    workers.push(spawn {
+      replies.send("worker${id}")
+      id
+    })
+    i = i + 1
+  }
+  names: Array(String) = []
+  while names.size < 4 {
+    if r = replies.recv {
+      names.push(r)
+    }
+  }
+  sum = 0
+  workers.each { |w| sum = sum + w.join }
+  puts(sum)
+  sorted = names.sorted { |a, b| a.size < b.size || (a.size == b.size && a[6] < b[6]) }
+  puts(sorted[0])
+  puts(sorted[3])
+}

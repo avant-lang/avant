@@ -3,7 +3,7 @@
 # once per side and compares what they observably do (stdout, stderr, exit
 # status), program by program.
 #
-#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types,closures,ffi] [PROGRAM...]
+#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types,closures,ffi,threads] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
 # compile and to the run). Both default to bin/avant-c with the seed's
@@ -36,12 +36,12 @@
 #              fixtures the string lowering accepts (string_programs below)
 #   objects    not in the default: the struct and class programs (Stage 28
 #              W6b, mir.md W6b.7): every tests/fixtures/objects/*.av with
-#              `fn main` (refuse_join.av, the L0001 case, has none) and the
-#              examples and fixtures the lowering accepts (object_programs)
+#              `fn main` and the examples and fixtures the lowering
+#              accepts (object_programs)
 #   heap       not in the default: the array, hash, and Buf programs (Stage
 #              28 W6c, mir.md W6c.7): every tests/fixtures/heap/*.av with
-#              `fn main` (refuse_spawn.av, the L0001 case, has none) and the
-#              examples and fixtures the lowering accepts (heap_programs)
+#              `fn main` and the examples and fixtures the lowering
+#              accepts (heap_programs)
 #   types      not in the default: the union, method, overload, operator,
 #              generic, and interface programs (Stage 28 W7a, mir.md
 #              W7a.7): every tests/fixtures/types/*.av with `fn main` except
@@ -57,6 +57,11 @@
 #              except the expected differences below (built with --cc
 #              tests/fixtures/ffi/ffi.c), and the examples that call C
 #              (add, digest, json, layout, sqrt, zlib) (ffi_programs)
+#   threads    not in the default: spawn, JoinHandle, channels, .parallel,
+#              Mutex.with, and coverage programs (Stage 28 W8b, mir.md
+#              W8b): every tests/fixtures/threads/*.av with `fn main` except
+#              the expected difference below, tests/fixtures/coverage/*.av,
+#              examples/spawn.av and examples/matmul.av (thread_programs)
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
 # file (run as a program; an example gets its suite flags) or a LangArena
 # task name such as Etc::Sieve. --set limits the sets; both may be combined.
@@ -96,6 +101,12 @@
 #                       block loop's test without the increment), and the old
 #                       back end fails to compile a captured block parameter
 #                       and a captured union; tests/cases/test_closures.av
+#                       checks the new back end's output
+#   tests/fixtures/threads/fresh.av  skipped: an expected difference (D196,
+#                       Stage 28 W8b): the old back end fails to compile a
+#                       lambda in a .parallel block that captures the block
+#                       parameter, and a reference stored into a field of a
+#                       class held in a Mutex cell; test_threads_llvm.av
 #                       checks the new back end's output
 #
 # Per program: compile and run each under `timeout -k 10 120` with stdin from
@@ -186,6 +197,7 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
     tests/fixtures/types/coerce.av) echo "expected difference (D196): the old back end fails to compile it; test_types.av checks the new back end" ;;
     tests/fixtures/ffi/byval.av) echo "expected difference (D196, C3): structs by value to C follow the C ABI only in the new back end; test_ffi_llvm.av checks it" ;;
     tests/fixtures/ffi/fresh.av) echo "expected difference (D196, C20, C21): the old back end leaks a pin after a return, and cannot pin an fn value; test_ffi_llvm.av checks the new back end" ;;
+    tests/fixtures/threads/fresh.av) echo "expected difference (D196): the old back end fails to compile it; test_threads_llvm.av checks the new back end" ;;
     tests/fixtures/closures/fresh.av) echo "expected difference (D196): the old back end loops forever or fails to compile it; test_closures.av checks the new back end" ;;
   esac
 }
@@ -250,6 +262,11 @@ closure_programs() { # the closures set, one path per line
 ffi_programs() { # the ffi set, one path per line
   for f in tests/fixtures/ffi/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
   for x in add digest json layout sqrt zlib; do echo "examples/$x.av"; done
+}
+thread_programs() { # the threads set, one path per line
+  for f in tests/fixtures/threads/*.av tests/fixtures/coverage/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
+  echo examples/spawn.av
+  echo examples/matmul.av
 }
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
@@ -385,6 +402,9 @@ else
   fi
   if has_set ffi; then
     for f in $(ffi_programs); do program "$f"; done
+  fi
+  if has_set threads; then
+    for f in $(thread_programs); do program "$f"; done
   fi
   has_set langarena && langarena ""
 fi

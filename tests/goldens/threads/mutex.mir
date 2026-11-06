@@ -1,0 +1,754 @@
+module mutex shared
+file 0 "mutex.av"
+
+layout %mutex.Held = class { 0 n: i32, 1 log: ref str }  size 16 align 8 id 1
+layout %mutex.Mutex(Int) = class { 0 cell: i32, 1 gate: u64 }  size 16 align 8 id 2
+layout %mutex.Mutex(mutex.Held) = class { 0 cell: ref %mutex.Held, 1 gate: u64 }  size 16 align 8 id 3
+layout %mutex.Mutex(mutex.Cell) = class { 0 cell: %mutex.Cell, 1 gate: u64 }  size 24 align 8 id 4
+layout %mutex.Mutex(String) = class { 0 cell: ref str, 1 gate: u64 }  size 16 align 8 id 5
+layout %mutex.Cell = struct { 0 n: i32, 1 name: ref str }  size 16 align 8
+layout %spawn_cap(av.mutex/main#spawn1) = record { 0 count: ref %mutex.Mutex(Int) }  size 8 align 8 id 6
+layout %spawn_cap(av.mutex/main#spawn2) = record { 0 held: ref %mutex.Mutex(mutex.Held) }  size 8 align 8 id 7
+layout %spawn_cap(av.mutex/main#spawn3) = record { 0 cell: ref %mutex.Mutex(mutex.Cell) }  size 8 align 8 id 8
+layout %spawn_cap(av.mutex/main#spawn4) = record { 0 text: ref %mutex.Mutex(String) }  size 8 align 8 id 9
+layout %elems(JoinHandle(Int)) = elems { 0: ref }  size 8 align 8 id 65535
+layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+
+const str.0 = "%d\0A"
+const str.1 = "c"
+const str.2 = "%s\0A"
+const str.3 = ""
+const str.4 = "x"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %mutex.Held stride 0 bits [0x2]
+typemap 2 %mutex.Mutex(Int) stride 0 bits [0x0]
+typemap 3 %mutex.Mutex(mutex.Held) stride 0 bits [0x1]
+typemap 4 %mutex.Mutex(mutex.Cell) stride 0 bits [0x2]
+typemap 5 %mutex.Mutex(String) stride 0 bits [0x1]
+typemap 6 %spawn_cap(av.mutex/main#spawn1) stride 0 bits [0x1]
+typemap 7 %spawn_cap(av.mutex/main#spawn2) stride 0 bits [0x1]
+typemap 8 %spawn_cap(av.mutex/main#spawn3) stride 0 bits [0x1]
+typemap 9 %spawn_cap(av.mutex/main#spawn4) stride 0 bits [0x1]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_gate_lock(u64) -> void collects
+extern avant_gate_new() -> u64 collects
+extern avant_gate_unlock(u64) -> void collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_join(ref) -> i32 collects
+extern avant_pin(ref) -> void never
+extern avant_spawn(ptr, ref) -> ref collects
+extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_size(ref str) -> i32 never
+extern printf(ref str, ...) -> i32 never
+
+fn av.mutex/bump(_1: ref %mutex.Mutex(Int), _2: i32) -> i32 frame @mutex.av:35:1 {
+  let _0: i32
+  let _1 (m): ref %mutex.Mutex(Int) slot
+  let _2 (times): i32
+  let _3 (i): i32
+  let _4: bool
+  let _5: ref %mutex.Mutex(Int) slot
+  let _6: u64
+  let _7: i32
+  let _8: i32
+  let _9: i32
+  let _10: u64
+  let _11: i32
+
+bb0:
+  _5 = zero   @35:1
+  gc.enter   @35:1
+  gc.roots _1, _5   @35:1
+  _3 = const i32 0   @36:5
+  goto bb1   @37:3
+
+bb1:
+  _4 = lt copy _3, copy _2   @37:11
+  branch copy _4, bb2, bb3   @37:3
+
+bb2:
+  _5 = copy _1   @38:12
+  _6 = copy (*_5).1   @38:12
+  call avant_gate_lock(copy _6) collects   @38:12
+  _7 = copy (*_5).0   @39:11
+  _8 = add.chk copy _7, const i32 1   @39:13
+  (*_5).0 = copy _8   @39:9
+  _9 = const i32 0   @38:12
+  _10 = copy (*_5).1   @38:12
+  call avant_gate_unlock(copy _10) collects   @38:12
+  _11 = add copy _3, const i32 1   @42:11
+  _3 = copy _11   @42:7
+  goto bb1   @37:3
+
+bb3:
+  _0 = copy _2   @44:3
+  gc.leave   @44:3
+  return   @44:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @mutex.av:47:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: ref %mutex.Mutex(Int)
+  let _4 (count): ref %mutex.Mutex(Int) slot
+  let _5: ref %elems(JoinHandle(Int)) slot
+  let _6: ref %Array(JoinHandle(Int))
+  let _7 (hs): ref %Array(JoinHandle(Int)) slot
+  let _8 (i): i32
+  let _9: bool
+  let _10: ref %spawn_cap(av.mutex/main#spawn1) slot
+  let _11: ref slot
+  let _12: i32
+  let _13 (ran): i32
+  let _14: ref %Array(JoinHandle(Int)) slot
+  let _15: i32
+  let _16: i32
+  let _17: bool
+  let _18: ref %elems(JoinHandle(Int))
+  let _19: ref
+  let _20 (h): ref slot
+  let _21: i32
+  let _22: i32
+  let _23: ref %mutex.Mutex(Int) slot
+  let _24: u64
+  let _25: i32
+  let _26: i32
+  let _27: u64
+  let _28: ref %mutex.Held
+  let _29: ref %mutex.Mutex(mutex.Held)
+  let _30 (held): ref %mutex.Mutex(mutex.Held) slot
+  let _31: ref %spawn_cap(av.mutex/main#spawn2) slot
+  let _32: ref
+  let _33 (hh): ref slot
+  let _34: i32
+  let _35: ref %mutex.Mutex(mutex.Held) slot
+  let _36: u64
+  let _37: ref %mutex.Held
+  let _38: i32
+  let _39: i32
+  let _40: ref %mutex.Held
+  let _41: ref %mutex.Held
+  let _42: i32
+  let _43: i32
+  let _44: u64
+  let _45 (after): i32
+  let _46: %mutex.Cell
+  let _47: ref %mutex.Mutex(mutex.Cell)
+  let _48 (cell): ref %mutex.Mutex(mutex.Cell) slot
+  let _49: ref %spawn_cap(av.mutex/main#spawn3) slot
+  let _50: ref
+  let _51 (hc): ref slot
+  let _52: i32
+  let _53: ref %mutex.Mutex(mutex.Cell) slot
+  let _54: u64
+  let _55: ref str
+  let _56: ref str slot
+  let _57: u64
+  let _58: ref %mutex.Mutex(String)
+  let _59 (text): ref %mutex.Mutex(String) slot
+  let _60: ref %elems(JoinHandle(Int)) slot
+  let _61: ref %Array(JoinHandle(Int))
+  let _62 (ts): ref %Array(JoinHandle(Int)) slot
+  let _63: bool
+  let _64: ref %spawn_cap(av.mutex/main#spawn4) slot
+  let _65: ref slot
+  let _66: i32
+  let _67 (sum): i32
+  let _68: ref %Array(JoinHandle(Int)) slot
+  let _69: i32
+  let _70: i32
+  let _71: bool
+  let _72: ref %elems(JoinHandle(Int))
+  let _73: ref
+  let _74 (t): ref slot
+  let _75: i32
+  let _76: i32
+  let _77: ref %mutex.Mutex(String) slot
+  let _78: u64
+  let _79: ref str
+  let _80: i32
+  let _81: i32
+  let _82: u64
+  let _83: ref %mutex.Mutex(Int)
+  let _84 (plain): ref %mutex.Mutex(Int) slot
+  let _85: ref %mutex.Mutex(Int) slot
+  let _86: u64
+  let _87: i32
+  let _88: i32
+  let _89: i32
+  let _90: i32
+  let _91: u64
+  let _92: ref %mutex.Mutex(Int) slot
+  let _93: u64
+  let _94: i32
+  let _95: i32
+  let _96: i32
+  let _97: u64
+
+bb0:
+  _4 = zero   @47:1
+  _5 = zero   @47:1
+  _7 = zero   @47:1
+  _10 = zero   @47:1
+  _11 = zero   @47:1
+  _14 = zero   @47:1
+  _20 = zero   @47:1
+  _23 = zero   @47:1
+  _30 = zero   @47:1
+  _31 = zero   @47:1
+  _33 = zero   @47:1
+  _35 = zero   @47:1
+  _48 = zero   @47:1
+  _49 = zero   @47:1
+  _51 = zero   @47:1
+  _53 = zero   @47:1
+  _56 = zero   @47:1
+  _59 = zero   @47:1
+  _60 = zero   @47:1
+  _62 = zero   @47:1
+  _64 = zero   @47:1
+  _65 = zero   @47:1
+  _68 = zero   @47:1
+  _74 = zero   @47:1
+  _77 = zero   @47:1
+  _84 = zero   @47:1
+  _85 = zero   @47:1
+  _92 = zero   @47:1
+  gc.enter   @47:1
+  gc.roots _2, _4, _5, _7, _10, _11, _14, _20, _23, _30, _31, _33, _35, _48, _49, _51, _53, _56, _59, _60, _62, _64, _65, _68, _74, _77, _84, _85, _92   @47:1
+  call __avant_type_maps() nocollect   @47:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @47:1
+  _3 = call av.mutex/Mutex(Int).new(const i32 0) collects   @48:21
+  _4 = copy _3   @48:9
+  _5 = call avant_alloc(const u64 0, const u32 65535) collects   @49:32
+  _6 = call avant_alloc(const u64 16, const u32 1022) collects   @49:32
+  barrier copy _6   @49:32
+  (*_6).0 = copy _5   @49:32
+  (*_6).1 = const i32 0   @49:32
+  (*_6).2 = const i32 0   @49:32
+  _7 = copy _6   @49:3
+  _8 = const i32 0   @50:5
+  goto bb1   @51:3
+
+bb1:
+  _9 = lt copy _8, const i32 8   @51:11
+  branch copy _9, bb2, bb3   @51:3
+
+bb2:
+  _10 = call avant_alloc(const u64 8, const u32 6) collects   @52:13
+  call avant_pin(copy _10) nocollect   @52:13
+  barrier copy _10   @52:13
+  (*_10).0 = copy _4   @52:13
+  _11 = call avant_spawn(const fn av.mutex/main#spawn1, copy _10) collects   @52:13
+  call avant_array_push_ptr(copy _7, copy _11, const u32 65535) collects   @52:7
+  _12 = add copy _8, const i32 1   @53:11
+  _8 = copy _12   @53:7
+  goto bb1   @51:3
+
+bb3:
+  _13 = const i32 0   @55:7
+  _14 = copy _7   @56:3
+  _15 = const i32 0   @56:11
+  goto bb4   @56:11
+
+bb4:
+  _16 = copy (*_14).1   @56:11
+  _17 = lt copy _15, copy _16   @56:11
+  branch copy _17, bb5, bb7   @56:11
+
+bb5:
+  _18 = copy (*_14).0   @56:11
+  _19 = copy (*_18)[copy _15]   @56:11
+  _20 = copy _19   @56:11
+  _21 = call avant_join(copy _20) collects   @56:30
+  _22 = add.chk copy _13, copy _21   @56:27
+  _13 = copy _22   @56:21
+  goto bb6   @56:11
+
+bb6:
+  _15 = add copy _15, const i32 1   @56:11
+  goto bb4   @56:11
+
+bb7:
+  call printf(const str.0, copy _13) nocollect   @57:3
+  _23 = copy _4   @58:19
+  _24 = copy (*_23).1   @58:19
+  call avant_gate_lock(copy _24) collects   @58:19
+  _25 = copy (*_23).0   @58:25
+  _26 = copy _25   @58:19
+  _27 = copy (*_23).1   @58:19
+  call avant_gate_unlock(copy _27) collects   @58:19
+  call printf(const str.0, copy _26) nocollect   @58:3
+  _28 = call av.mutex/Held.new(const i32 5) collects   @59:30
+  _29 = call av.mutex/Mutex(mutex.Held).new(copy _28) collects   @59:21
+  _30 = copy _29   @59:8
+  _31 = call avant_alloc(const u64 8, const u32 7) collects   @60:8
+  call avant_pin(copy _31) nocollect   @60:8
+  barrier copy _31   @60:8
+  (*_31).0 = copy _30   @60:8
+  _32 = call avant_spawn(const fn av.mutex/main#spawn2, copy _31) collects   @60:8
+  _33 = copy _32   @60:6
+  _34 = call avant_join(copy _33) collects   @66:10
+  call printf(const str.0, copy _34) nocollect   @66:3
+  _35 = copy _30   @67:21
+  _36 = copy (*_35).1   @67:21
+  call avant_gate_lock(copy _36) collects   @67:21
+  _37 = copy (*_35).0   @68:11
+  _38 = copy (*_37).0   @68:12
+  _39 = mul.chk copy _38, const i32 2   @68:15
+  _40 = copy (*_35).0   @68:5
+  (*_40).0 = copy _39   @68:9
+  _41 = copy (*_35).0   @69:5
+  _42 = copy (*_41).0   @69:6
+  _43 = copy _42   @67:21
+  _44 = copy (*_35).1   @67:21
+  call avant_gate_unlock(copy _44) collects   @67:21
+  _45 = copy _43   @67:9
+  call printf(const str.0, copy _45) nocollect   @71:3
+  _46 = struct %mutex.Cell (const i32 1, const str.1)   @72:26
+  _47 = call av.mutex/Mutex(mutex.Cell).new(copy _46) collects   @72:21
+  _48 = copy _47   @72:8
+  _49 = call avant_alloc(const u64 8, const u32 8) collects   @73:8
+  call avant_pin(copy _49) nocollect   @73:8
+  barrier copy _49   @73:8
+  (*_49).0 = copy _48   @73:8
+  _50 = call avant_spawn(const fn av.mutex/main#spawn3, copy _49) collects   @73:8
+  _51 = copy _50   @73:6
+  _52 = call avant_join(copy _51) collects   @85:10
+  call printf(const str.0, copy _52) nocollect   @85:3
+  _53 = copy _48   @86:18
+  _54 = copy (*_53).1   @86:18
+  call avant_gate_lock(copy _54) collects   @86:18
+  _55 = copy (*_53).0.1   @86:25
+  _56 = copy _55   @86:18
+  _57 = copy (*_53).1   @86:18
+  call avant_gate_unlock(copy _57) collects   @86:18
+  call printf(const str.2, copy _56) nocollect   @86:3
+  _58 = call av.mutex/Mutex(String).new(const str.3) collects   @87:23
+  _59 = copy _58   @87:8
+  _60 = call avant_alloc(const u64 0, const u32 65535) collects   @88:32
+  _61 = call avant_alloc(const u64 16, const u32 1022) collects   @88:32
+  barrier copy _61   @88:32
+  (*_61).0 = copy _60   @88:32
+  (*_61).1 = const i32 0   @88:32
+  (*_61).2 = const i32 0   @88:32
+  _62 = copy _61   @88:3
+  _8 = const i32 0   @89:5
+  goto bb8   @90:3
+
+bb8:
+  _63 = lt copy _8, const i32 4   @90:11
+  branch copy _63, bb9, bb10   @90:3
+
+bb9:
+  _64 = call avant_alloc(const u64 8, const u32 9) collects   @91:13
+  call avant_pin(copy _64) nocollect   @91:13
+  barrier copy _64   @91:13
+  (*_64).0 = copy _59   @91:13
+  _65 = call avant_spawn(const fn av.mutex/main#spawn4, copy _64) collects   @91:13
+  call avant_array_push_ptr(copy _62, copy _65, const u32 65535) collects   @91:7
+  _66 = add copy _8, const i32 1   @102:11
+  _8 = copy _66   @102:7
+  goto bb8   @90:3
+
+bb10:
+  _67 = const i32 0   @104:7
+  _68 = copy _62   @105:3
+  _69 = const i32 0   @105:11
+  goto bb11   @105:11
+
+bb11:
+  _70 = copy (*_68).1   @105:11
+  _71 = lt copy _69, copy _70   @105:11
+  branch copy _71, bb12, bb14   @105:11
+
+bb12:
+  _72 = copy (*_68).0   @105:11
+  _73 = copy (*_72)[copy _69]   @105:11
+  _74 = copy _73   @105:11
+  _75 = call avant_join(copy _74) collects   @105:30
+  _76 = add.chk copy _67, copy _75   @105:27
+  _67 = copy _76   @105:21
+  goto bb13   @105:11
+
+bb13:
+  _69 = add copy _69, const i32 1   @105:11
+  goto bb11   @105:11
+
+bb14:
+  call printf(const str.0, copy _67) nocollect   @106:3
+  _77 = copy _59   @107:18
+  _78 = copy (*_77).1   @107:18
+  call avant_gate_lock(copy _78) collects   @107:18
+  _79 = copy (*_77).0   @107:24
+  _80 = call avant_str_size(copy _79) nocollect   @107:25
+  _81 = copy _80   @107:18
+  _82 = copy (*_77).1   @107:18
+  call avant_gate_unlock(copy _82) collects   @107:18
+  call printf(const str.0, copy _81) nocollect   @107:3
+  _83 = call av.mutex/Mutex(Int).new(const i32 3) collects   @108:21
+  _84 = copy _83   @108:9
+  _85 = copy _84   @109:14
+  _86 = copy (*_85).1   @109:14
+  call avant_gate_lock(copy _86) collects   @109:14
+  _87 = copy (*_85).0   @110:7
+  _88 = add.chk copy _87, const i32 4   @110:7
+  (*_85).0 = copy _88   @110:7
+  _89 = copy (*_85).0   @111:5
+  _90 = copy _89   @109:14
+  _91 = copy (*_85).1   @109:14
+  call avant_gate_unlock(copy _91) collects   @109:14
+  _92 = copy _84   @113:19
+  _93 = copy (*_92).1   @113:19
+  call avant_gate_lock(copy _93) collects   @113:19
+  _94 = copy (*_92).0   @113:25
+  _95 = mul.chk copy _94, const i32 2   @113:27
+  _96 = copy _95   @113:19
+  _97 = copy (*_92).1   @113:19
+  call avant_gate_unlock(copy _97) collects   @113:19
+  call printf(const str.0, copy _96) nocollect   @113:3
+  _0 = const i32 0   @47:1
+  gc.leave   @47:1
+  return   @47:1
+}
+
+fn av.mutex/Held.initialize(_1: ref %mutex.Held, _2: i32) -> void frame @mutex.av:14:3 {
+  let _1 (self): ref %mutex.Held
+  let _2 (n): i32
+
+bb0:
+  gc.enter   @14:3
+  gc.roots   @14:3
+  (*_1).0 = copy _2   @15:12
+  barrier copy _1   @16:14
+  (*_1).1 = const str.3   @16:14
+  gc.leave   @14:3
+  return   @14:3
+}
+
+fn av.mutex/Mutex(Int).initialize(_1: ref %mutex.Mutex(Int), _2: i32) -> void frame @mutex.av:29:3 {
+  let _1 (self): ref %mutex.Mutex(Int) slot
+  let _2 (value): i32
+  let _3: u64
+
+bb0:
+  gc.enter   @29:3
+  gc.roots _1   @29:3
+  (*_1).0 = copy _2   @30:15
+  _3 = call avant_gate_new() collects   @31:17
+  (*_1).1 = copy _3   @31:15
+  gc.leave   @29:3
+  return   @29:3
+}
+
+fn av.mutex/Mutex(mutex.Held).initialize(_1: ref %mutex.Mutex(mutex.Held), _2: ref %mutex.Held) -> void frame @mutex.av:29:3 {
+  let _1 (self): ref %mutex.Mutex(mutex.Held) slot
+  let _2 (value): ref %mutex.Held
+  let _3: u64
+
+bb0:
+  gc.enter   @29:3
+  gc.roots _1   @29:3
+  barrier copy _1   @30:15
+  (*_1).0 = copy _2   @30:15
+  _3 = call avant_gate_new() collects   @31:17
+  (*_1).1 = copy _3   @31:15
+  gc.leave   @29:3
+  return   @29:3
+}
+
+fn av.mutex/Mutex(mutex.Cell).initialize(_1: ref %mutex.Mutex(mutex.Cell), _2: %mutex.Cell) -> void frame @mutex.av:29:3 {
+  let _1 (self): ref %mutex.Mutex(mutex.Cell) slot
+  let _2 (value): %mutex.Cell
+  let _3: u64
+
+bb0:
+  gc.enter   @29:3
+  gc.roots _1   @29:3
+  barrier copy _1   @30:15
+  (*_1).0 = copy _2   @30:15
+  _3 = call avant_gate_new() collects   @31:17
+  (*_1).1 = copy _3   @31:15
+  gc.leave   @29:3
+  return   @29:3
+}
+
+fn av.mutex/Mutex(String).initialize(_1: ref %mutex.Mutex(String), _2: ref str) -> void frame @mutex.av:29:3 {
+  let _1 (self): ref %mutex.Mutex(String) slot
+  let _2 (value): ref str
+  let _3: u64
+
+bb0:
+  gc.enter   @29:3
+  gc.roots _1   @29:3
+  barrier copy _1   @30:15
+  (*_1).0 = copy _2   @30:15
+  _3 = call avant_gate_new() collects   @31:17
+  (*_1).1 = copy _3   @31:15
+  gc.leave   @29:3
+  return   @29:3
+}
+
+fn av.mutex/Held.new(_1: i32) -> ref %mutex.Held frame @mutex.av:10:1 {
+  let _0: ref %mutex.Held
+  let _1 (n): i32
+  let _2: ref %mutex.Held slot
+
+bb0:
+  _2 = zero   @10:1
+  gc.enter   @10:1
+  gc.roots _2   @10:1
+  _2 = call avant_alloc(const u64 16, const u32 1) collects   @10:1
+  call av.mutex/Held.initialize(copy _2, copy _1) collects   @10:1
+  _0 = copy _2   @10:1
+  gc.leave   @10:1
+  return   @10:1
+}
+
+fn av.mutex/Mutex(Int).new(_1: i32) -> ref %mutex.Mutex(Int) frame @mutex.av:25:1 {
+  let _0: ref %mutex.Mutex(Int)
+  let _1 (value): i32
+  let _2: ref %mutex.Mutex(Int) slot
+
+bb0:
+  _2 = zero   @25:1
+  gc.enter   @25:1
+  gc.roots _2   @25:1
+  _2 = call avant_alloc(const u64 16, const u32 2) collects   @25:1
+  call av.mutex/Mutex(Int).initialize(copy _2, copy _1) collects   @25:1
+  _0 = copy _2   @25:1
+  gc.leave   @25:1
+  return   @25:1
+}
+
+fn av.mutex/Mutex(mutex.Held).new(_1: ref %mutex.Held) -> ref %mutex.Mutex(mutex.Held) frame @mutex.av:25:1 {
+  let _0: ref %mutex.Mutex(mutex.Held)
+  let _1 (value): ref %mutex.Held slot
+  let _2: ref %mutex.Mutex(mutex.Held) slot
+
+bb0:
+  _2 = zero   @25:1
+  gc.enter   @25:1
+  gc.roots _1, _2   @25:1
+  _2 = call avant_alloc(const u64 16, const u32 3) collects   @25:1
+  call av.mutex/Mutex(mutex.Held).initialize(copy _2, copy _1) collects   @25:1
+  _0 = copy _2   @25:1
+  gc.leave   @25:1
+  return   @25:1
+}
+
+fn av.mutex/Mutex(mutex.Cell).new(_1: %mutex.Cell) -> ref %mutex.Mutex(mutex.Cell) frame @mutex.av:25:1 {
+  let _0: ref %mutex.Mutex(mutex.Cell)
+  let _1 (value): %mutex.Cell slot
+  let _2: ref %mutex.Mutex(mutex.Cell) slot
+
+bb0:
+  _2 = zero   @25:1
+  gc.enter   @25:1
+  gc.roots _1, _2   @25:1
+  _2 = call avant_alloc(const u64 24, const u32 4) collects   @25:1
+  call av.mutex/Mutex(mutex.Cell).initialize(copy _2, copy _1) collects   @25:1
+  _0 = copy _2   @25:1
+  gc.leave   @25:1
+  return   @25:1
+}
+
+fn av.mutex/Mutex(String).new(_1: ref str) -> ref %mutex.Mutex(String) frame @mutex.av:25:1 {
+  let _0: ref %mutex.Mutex(String)
+  let _1 (value): ref str slot
+  let _2: ref %mutex.Mutex(String) slot
+
+bb0:
+  _2 = zero   @25:1
+  gc.enter   @25:1
+  gc.roots _1, _2   @25:1
+  _2 = call avant_alloc(const u64 16, const u32 5) collects   @25:1
+  call av.mutex/Mutex(String).initialize(copy _2, copy _1) collects   @25:1
+  _0 = copy _2   @25:1
+  gc.leave   @25:1
+  return   @25:1
+}
+
+fn av.mutex/main#spawn1(_1: ref) -> i32 frame @mutex.av:52:13 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.mutex/main#spawn1)
+  let _3: ref %mutex.Mutex(Int)
+  let _4 (count): ref %mutex.Mutex(Int)
+  let _5: i32
+
+bb0:
+  gc.enter   @52:13
+  gc.roots   @52:13
+  _2 = cast copy _1 to ref %spawn_cap(av.mutex/main#spawn1)   @52:13
+  _3 = copy (*_2).0   @52:13
+  _4 = copy _3   @52:13
+  _5 = call av.mutex/bump(copy _4, const i32 1000) collects   @52:21
+  _0 = copy _5   @52:13
+  gc.leave   @52:13
+  return   @52:13
+}
+
+fn av.mutex/main#spawn2(_1: ref) -> i32 frame @mutex.av:60:8 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.mutex/main#spawn2)
+  let _3: ref %mutex.Mutex(mutex.Held)
+  let _4 (held): ref %mutex.Mutex(mutex.Held)
+  let _5: ref %mutex.Mutex(mutex.Held) slot
+  let _6: u64
+  let _7: ref %mutex.Held
+  let _8: i32
+  let _9: i32
+  let _10: ref %mutex.Held
+  let _11: ref %mutex.Held
+  let _12: i32
+  let _13: i32
+  let _14: u64
+
+bb0:
+  _5 = zero   @60:8
+  gc.enter   @60:8
+  gc.roots _5   @60:8
+  _2 = cast copy _1 to ref %spawn_cap(av.mutex/main#spawn2)   @60:8
+  _3 = copy (*_2).0   @60:8
+  _4 = copy _3   @60:8
+  _5 = copy _4   @61:15
+  _6 = copy (*_5).1   @61:15
+  call avant_gate_lock(copy _6) collects   @61:15
+  _7 = copy (*_5).0   @62:13
+  _8 = copy (*_7).0   @62:14
+  _9 = add.chk copy _8, const i32 10   @62:17
+  _10 = copy (*_5).0   @62:7
+  (*_10).0 = copy _9   @62:11
+  _11 = copy (*_5).0   @63:7
+  _12 = copy (*_11).0   @63:8
+  _13 = copy _12   @61:15
+  _14 = copy (*_5).1   @61:15
+  call avant_gate_unlock(copy _14) collects   @61:15
+  _0 = copy _13   @60:8
+  gc.leave   @60:8
+  return   @60:8
+}
+
+fn av.mutex/main#spawn3(_1: ref) -> i32 frame @mutex.av:73:8 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.mutex/main#spawn3)
+  let _3: ref %mutex.Mutex(mutex.Cell)
+  let _4 (cell): ref %mutex.Mutex(mutex.Cell) slot
+  let _5 (j): i32
+  let _6: bool
+  let _7: ref %mutex.Mutex(mutex.Cell) slot
+  let _8: u64
+  let _9: i32
+  let _10: i32
+  let _11: i32
+  let _12: ref str
+  let _13: i32
+  let _14: u64
+  let _15: i32
+
+bb0:
+  _4 = zero   @73:8
+  _7 = zero   @73:8
+  gc.enter   @73:8
+  gc.roots _4, _7   @73:8
+  _2 = cast copy _1 to ref %spawn_cap(av.mutex/main#spawn3)   @73:8
+  _3 = copy (*_2).0   @73:8
+  _4 = copy _3   @73:8
+  _5 = const i32 0   @74:7
+  goto bb1   @75:5
+
+bb1:
+  _6 = lt copy _5, const i32 100   @75:13
+  branch copy _6, bb2, bb3   @75:5
+
+bb2:
+  _7 = copy _4   @76:17
+  _8 = copy (*_7).1   @76:17
+  call avant_gate_lock(copy _8) collects   @76:17
+  _9 = copy (*_7).0.0   @77:16
+  _10 = add.chk copy _9, const i32 2   @77:19
+  (*_7).0.0 = copy _10   @77:13
+  _11 = copy (*_7).0.0   @78:23
+  _12 = call avant_str_cat_i32(const str.1, copy _11) collects   @78:18
+  barrier copy _7   @78:16
+  (*_7).0.1 = copy _12   @78:16
+  _13 = const i32 0   @76:17
+  _14 = copy (*_7).1   @76:17
+  call avant_gate_unlock(copy _14) collects   @76:17
+  _15 = add.chk copy _5, const i32 1   @81:13
+  _5 = copy _15   @81:9
+  goto bb1   @75:5
+
+bb3:
+  _0 = const i32 1   @73:8
+  gc.leave   @73:8
+  return   @73:8
+}
+
+fn av.mutex/main#spawn4(_1: ref) -> i32 frame @mutex.av:91:13 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.mutex/main#spawn4)
+  let _3: ref %mutex.Mutex(String)
+  let _4 (text): ref %mutex.Mutex(String) slot
+  let _5 (k): i32
+  let _6: bool
+  let _7: ref %mutex.Mutex(String) slot
+  let _8: u64
+  let _9: ref str slot
+  let _10: ref str
+  let _11: ref str
+  let _12: i32
+  let _13: i32
+  let _14: u64
+  let _15: i32
+
+bb0:
+  _4 = zero   @91:13
+  _7 = zero   @91:13
+  _9 = zero   @91:13
+  gc.enter   @91:13
+  gc.roots _4, _7, _9   @91:13
+  _2 = cast copy _1 to ref %spawn_cap(av.mutex/main#spawn4)   @91:13
+  _3 = copy (*_2).0   @91:13
+  _4 = copy _3   @91:13
+  _5 = const i32 0   @92:9
+  goto bb1   @93:7
+
+bb1:
+  _6 = lt copy _5, const i32 50   @93:15
+  branch copy _6, bb2, bb3   @93:7
+
+bb2:
+  _7 = copy _4   @94:19
+  _8 = copy (*_7).1   @94:19
+  call avant_gate_lock(copy _8) collects   @94:19
+  _9 = copy (*_7).0   @95:15
+  _10 = call avant_str_concat(copy _9, const str.4) collects   @95:17
+  barrier copy _7   @95:13
+  (*_7).0 = copy _10   @95:13
+  _11 = copy (*_7).0   @96:11
+  _12 = call avant_str_size(copy _11) nocollect   @96:12
+  _13 = copy _12   @94:19
+  _14 = copy (*_7).1   @94:19
+  call avant_gate_unlock(copy _14) collects   @94:19
+  _15 = add.chk copy _5, const i32 1   @98:15
+  _5 = copy _15   @98:11
+  goto bb1   @93:7
+
+bb3:
+  _0 = const i32 50   @91:13
+  gc.leave   @91:13
+  return   @91:13
+}

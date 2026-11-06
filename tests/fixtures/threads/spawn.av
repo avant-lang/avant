@@ -1,0 +1,116 @@
+// spawn and JoinHandle on the new back end (Stage 28 W8b, mir.md W8b):
+// tasks with no captures, scalar captures, captured references (a
+// string, an array of strings, a struct holding a string), a capture
+// whose variable a lambda boxes in the spawning frame (the spawn copies
+// its value), a lambda inside the block that captures a capture (boxed
+// again in the thunk), captures that change between spawns in a loop,
+// handles in a local, in an array, and in a class field, and tasks that
+// allocate (strings and arrays in the worker's mature space) while the
+// main thread waits. Every result is printed after the joins, in order,
+// so the output is deterministic.
+
+struct Rec {
+  id: Int
+  name: String
+}
+
+class Holder {
+  h: JoinHandle(Int)
+  tag: String
+
+  fn initialize(h: JoinHandle(Int), tag: String) {
+    self.h = h
+    self.tag = tag
+  }
+}
+
+fn work(n: Int): Int {
+  acc = 0
+  i = 0
+  while i < n {
+    acc = acc &+ i * 3
+    i = i + 1
+  }
+  acc
+}
+
+// Strings and arrays made and dropped inside a task.
+fn churn_sum(tag: String, rounds: Int): Int {
+  keep: Array(String) = []
+  total = 0
+  i = 0
+  while i < rounds {
+    s = "${tag}-${i}"
+    keep.push(s)
+    if keep.size > 64 {
+      total = total + keep[0].size + keep[64].size
+      keep.clear
+    }
+    i = i + 1
+  }
+  total + keep.size
+}
+
+fn make_words(n: Int): Array(String) {
+  out: Array(String) = []
+  i = 0
+  while i < n {
+    out.push("word${i}")
+    i = i + 1
+  }
+  out
+}
+
+fn main {
+  h0 = spawn { work(1000) }
+  n = 500
+  k = 7
+  h1 = spawn { work(n) + k }
+  name = "alpha"
+  words = ["one", "two", "three"]
+  rec = Rec { id: 3, name: "rec-name" }
+  h2 = spawn { name.size * 100 + words[2].size * 10 + rec.name.size + rec.id }
+  many = make_words(300)
+  h3 = spawn {
+    total = 0
+    i = 0
+    while i < many.size {
+      total = total + many[i].size
+      i = i + 1
+    }
+    total
+  }
+  b = 10
+  inc = { || b = b + 1 }
+  inc()
+  hb = spawn { b * 2 }
+  inc()
+  hl = spawn {
+    f: fn(Int): Int = { |x| x + n }
+    g = { || name.size + n }
+    f(1) + f(2) + g()
+  }
+  hs: Array(JoinHandle(Int)) = []
+  tags: Array(String) = []
+  i = 0
+  while i < 24 {
+    tag = "t${i}"
+    tags.push(tag)
+    hs.push(spawn { churn_sum(tag, 3000) + tag.size })
+    i = i + 1
+  }
+  holder = Holder.new(spawn { churn_sum("held", 500) }, "holder")
+  puts(h0.join)
+  puts(h1.join)
+  puts(h2.join)
+  puts(h3.join)
+  puts(hb.join)
+  puts(b)
+  puts(hl.join)
+  sum = 0
+  hs.each { |h| sum = sum + h.join }
+  puts(sum)
+  puts(holder.h.join)
+  puts(holder.tag)
+  puts(tags[23])
+}

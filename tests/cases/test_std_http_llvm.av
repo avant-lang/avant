@@ -1,0 +1,61 @@
+import harness
+import backends
+
+// Stage 28 W8b: std.http on the new back end (AVANT_BACKEND=llvm, D176;
+// stages/stage28/mir.md W8b): tests/cases/test_std_http.av, compiled by
+// the new back end, passes plain and under AVANT_YOUNG_MB=1. Its server
+// and client tasks are spawn blocks, its event logs Channels. This file
+// is exclusive (avant.toml): it uses the ports test_std_http.av uses, so
+// the two never run at once; its two runs are sequential.
+//
+// The compile runs with AVANT_NURSERY=0 in the compiler's environment
+// (the program it writes does not depend on it): the compiler under
+// test crashed while compiling this file with the new back end in the
+// W8b fast loop (a pinned young array of the runtime, avant_argv's,
+// kept a buffer a young collection freed; W8b record, "Surprises"),
+// a runtime defect outside this wave (D163), so the compile avoids the
+// copying nursery until W13.
+
+fn test_std_http_llvm(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("AVANT_BACKEND=llvm AVANT_NURSERY=0", compiler, "${root}/tests/cases/test_std_http.av", "${dir}/http.new", "${dir}/http.new.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "test_std_http.av: compiles under llvm")
+  envs = ["", "AVANT_YOUNG_MB=1"]
+  i = 0
+  while i < envs.size {
+    // From the suite's own directory: the test's child compiles use
+    // AVANT_COMPILER, which may be relative. One run at a time.
+    a: Array(String) = []
+    a.push("-c")
+    a.push("exec env AVANT_ROOT=${root} ${envs[i]} ${dir}/http.new > ${dir}/http.${i}.out 2> ${dir}/http.${i}.err < /dev/null")
+    run: Array(HJob) = []
+    run.push(HJob.new("/bin/sh", a, "${dir}/http.${i}.sh.log"))
+    run_waves(run)
+    what = "plain"
+    if envs[i].size > 0 {
+      what = "under ${envs[i]}"
+    }
+    c.eq_int(run[0].code, 0, "test_std_http.av built by the llvm back end, ${what}: passes")
+    i = i + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_std_http_llvm.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_std_http_llvm(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
