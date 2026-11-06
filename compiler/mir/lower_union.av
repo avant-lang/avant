@@ -90,19 +90,14 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
 // v lowered and converted to want (the MIR type ty of a place).
 pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
   if v.kind == ex_nil() && want.is_union && want.includes_nil {
-    // A field default of a generic instance arrives without its checked
-    // type (the old back end fails to compile it, D196).
+    // `nil` into a union place: the nil tag directly.
     lw.at(v.loc)
     b = lw.lw_b
     return lw.tmp(ty, b.rv_union_nil(b.types.layout_of(ty), want.tag_of(ty_nil())))
   }
-  if t0 = v.ty {
-  } else if !want.is_union && (v.kind == ex_int() || v.kind == ex_float() || v.kind == ex_bool() || v.kind == ex_string()) {
-    // The same: an untyped literal default takes its field's type (the
-    // checker accepted it against that type; the old back end emits the
-    // literal as is).
-    v.ty = want
-  }
+  // Every value here is checked: the field defaults of generic class
+  // instances too, since the checker types them by their fields (C14,
+  // W10b; until then this typed untyped literal defaults itself).
   o = lw.lower_expr(v)
   if t = v.ty {
     return lw.coerce(o, t, want, v.loc)
