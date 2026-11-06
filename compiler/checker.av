@@ -3402,6 +3402,33 @@ pub class Checker {
     recv
   }
 
+  // Whether a receiver is a value rather than a type: anything but a chain
+  // of names, or a chain whose first name is a local, `self`, or a field
+  // of self. A type is written `Name` or `mod.Name` (a module qualifier is
+  // never a value).
+  pub fn names_value(recv: Expr): Bool {
+    segs: Array(String) = []
+    if self.ident_chain(recv, segs) {
+    } else {
+      return true
+    }
+    if recv.kind == ex_name() {
+      if recv.type_args.size > 0 {
+        return false
+      }
+    }
+    if str_eq(segs[0], "self") {
+      return true
+    }
+    if found = self.lookup(segs[0]) {
+      return true
+    }
+    if f = self.implicit_field(segs[0]) {
+      return true
+    }
+    false
+  }
+
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_module_receiver(recv)
     if str_eq(expr.callee, "new") {
@@ -3451,7 +3478,12 @@ pub class Checker {
     if str_eq(expr.callee, "new") {
       return self.check_constructor(expr, recv, has_want, want)
     }
-    if str_eq(expr.callee, "bump") {
+    if str_eq(expr.callee, "bump") && self.names_value(recv) {
+      // `v.bump(...)` on a value is an ordinary method call; only a type
+      // (`Node.bump(...)`, `m.Node.bump(...)`) takes the bump constructor.
+      // The back ends tell the two apart by this flag (ast_is_ctor_call).
+      expr.method_call = true
+    } else if str_eq(expr.callee, "bump") {
       ty = self.check_constructor(expr, recv, has_want, want)
       if self.has_err {
         return ty

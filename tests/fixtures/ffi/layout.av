@@ -2,8 +2,9 @@
 // struct with Int, String, Bool, a nested C struct, Int64, and Ptr(Void)
 // fields, laid out by the C rule (offsets checked against C's offsetof),
 // read and written through `Ptr(Rec)` (compound assignments too, nested
-// fields through the outer pointer), methods on `Ptr(Rec)` receivers,
-// and heap strings stored into the C struct's `String` field: each is
+// fields through the outer pointer), methods on `Ptr(Rec)` receivers
+// (one named `bump`: called on a value it is a method, not the bump
+// constructor, W10b), and heap strings stored into the C struct's `String` field: each is
 // pinned (never unpinned), so C reads it after collections moved
 // everything else. Built with `--cc tests/fixtures/ffi/ffi.c`.
 
@@ -43,7 +44,7 @@ fn (r: Ptr(Rec)) norm2: Float64 {
   (r.at.x * r.at.x) + (r.at.y * r.at.y)
 }
 
-fn (r: Ptr(Rec)) grow(by: Int) {
+fn (r: Ptr(Rec)) bump(by: Int) {
   r.id += by
   r.big = r.big * 2i64
 }
@@ -107,7 +108,7 @@ fn main {
   puts(lay.ffi_rec_big(r))
   puts(r.norm2)
   puts(r.norm2())
-  r.grow(8)
+  r.bump(8)
   puts(r.id)
   puts(r.big)
   puts(r.label)
