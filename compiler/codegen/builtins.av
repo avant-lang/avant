@@ -1336,6 +1336,20 @@ pub fn (codegen_self: MycGen) emit_array_pop(recv: Expr, ty: Ty) {
   codegen_self.line("LOCAL :${arr} :${m}")
   codegen_self.line("STORE")
   codegen_self.ensure_root(arr, ty)
+  // C9 (W10b): an empty array traps as indexing it at size - 1 does.
+  codegen_self.line("LOCAL :${arr}")
+  codegen_self.line("DEREF")
+  codegen_self.line("FIELD 1")
+  szt = codegen_self.new_temp
+  codegen_self.line("LOCAL :${szt} :i32")
+  codegen_self.line("STORE")
+  codegen_self.line("PUSH 1")
+  codegen_self.line("LOCAL :${szt}")
+  codegen_self.line("BINARY :sub")
+  lastt = codegen_self.new_temp
+  codegen_self.line("LOCAL :${lastt} :i32")
+  codegen_self.line("STORE")
+  codegen_self.emit_bounds_check(lastt, szt)
   if e = ty.inner {
     em = ty_myc(e)
     if heap_ptr_value(e) {

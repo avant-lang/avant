@@ -1,0 +1,61 @@
+// Loop exits the checker accepts (Stage 28 W10b): `break` in a block
+// builtin with no `while` around it (the six block builtins are loops,
+// and `break` leaves the block's loop, as it does inside a `while`), and
+// `break`/`continue` of a loop inside a lambda body inside an outer loop.
+// The rejected forms (a lambda body is not inside the loop around it;
+// `Mutex.with` cannot be left by `break`) are refuse_break.av and
+// with_break.av. Both back ends print the same (`continue` inside a block
+// is left out: on the old back end it never ends, C16).
+
+fn first_big(xs: Array(Int)): Int {
+  found = -1
+  xs.each { |x|
+    if x > 10 {
+      found = x
+      break
+    }
+  }
+  found
+}
+
+fn main {
+  puts(first_big([3, 12, 40]))
+  seen = 0
+  h = Hash(String, Int).new
+  h["a"] = 1
+  h["b"] = 2
+  h.each { |k, v|
+    seen = seen + v
+    break
+  }
+  puts(seen)
+  hit = [1, 2, 3].any { |x|
+    if x == 9 {
+      break
+    }
+    x == 2
+  }
+  puts(hit)
+  total = 0
+  i = 0
+  while i < 3 {
+    f: fn(Int): Int = { |n: Int|
+      s = 0
+      j = 0
+      while j < 10 {
+        j = j + 1
+        if j == 2 {
+          continue
+        }
+        if j > n {
+          break
+        }
+        s = s + j
+      }
+      s
+    }
+    total = total + f(i + 3)
+    i = i + 1
+  }
+  puts(total)
+}

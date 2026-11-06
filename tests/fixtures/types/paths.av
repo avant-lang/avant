@@ -1,0 +1,99 @@
+// Calls on paths followed by a member (Stage 28 W10b), compiled by both
+// back ends (the front end is shared): a call whose arguments all read as
+// types, followed by a member. The parser cannot tell `get(ty).bits` from
+// a type application `Box(Int).new`; the checker took the call's receiver
+// path as one name (`unknown name self.ts`) and its arguments as types
+// (`job.flags` as the type `flags` of module `job`: `unknown name flags`;
+// `o.node` likewise). Also a type-level function in field form
+// (`Money.zero`, declared `fn self.zero: Money`, as `a.twice` calls a
+// method without parameters), alone and followed by a member.
+
+class Info {
+  bits: Int
+
+  fn initialize(b: Int) {
+    bits = b
+  }
+}
+
+class Table {
+  xs: Array(Info)
+
+  fn initialize {
+    xs = [Info.new(8), Info.new(16), Info.new(32)]
+  }
+
+  fn get(i: Int): Info {
+    xs[i]
+  }
+}
+
+class Gen {
+  ts: Table
+  at: Int = 2
+
+  fn initialize {
+    ts = Table.new
+  }
+
+  fn width(ty: Int): Int {
+    self.ts.get(ty).bits
+  }
+
+  fn implicit_width: Int {
+    ts.get(at).bits
+  }
+}
+
+struct Money {
+  c: Int
+
+  fn self.zero: Money {
+    Money { c: 0 }
+  }
+
+  fn self.of(n: Int): Money {
+    Money { c: n }
+  }
+
+  fn twice: Int {
+    c * 2
+  }
+}
+
+fn flags_s(n: Int): String {
+  "a b c ${n}"
+}
+
+class Job {
+  flags: Int = 3
+}
+
+class Node {
+  node: Int = 7
+}
+
+class Sink {
+  fn take(n: Int): Int {
+    n * 2
+  }
+}
+
+fn main {
+  g = Gen.new
+  puts(g.width(1))
+  puts(g.implicit_width)
+  job = Job.new
+  parts = flags_s(job.flags).split(" ")
+  puts(parts.size)
+  puts(parts[3])
+  puts(Money.zero.c)
+  puts(Money.zero.twice)
+  m = Money.zero
+  puts(m.c)
+  o = Node.new
+  puts(Money.of(o.node).c)
+  s = Sink.new
+  puts(s.take(o.node))
+  puts(Money.of(s.take(o.node)).twice)
+}

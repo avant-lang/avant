@@ -1,0 +1,183 @@
+import harness
+import backends
+
+// Stage 28 W10b: front-end corrections, proven on both back ends (the
+// front end is shared). The fixed forms compile under both back ends and
+// print their known output, also under AVANT_GC_VERIFY=1 and
+// AVANT_YOUNG_MB=1: types/paths.av (a call whose arguments read as types
+// followed by a member, `self.ts.get(ty).bits`, `f(job.flags).split(" ")`,
+// `Money.of(o.node).c`; a type-level function in field form,
+// `Money.zero.c`), types/bump_method.av (a method named `bump` called on
+// a value), types/generic_defaults.av (literal and nil field defaults of
+// generic class instances, typed by the checker, C14),
+// closures/block_break.av (`break` in a block builtin with no
+// `while` around it; `break`/`continue` of a loop inside a lambda). The
+// checker rejects `break` in a lambda body inside a `while`
+// (closures/refuse_break.av) and `break` inside `Mutex.with`
+// (closures/with_break.av) on both back ends, at the statement, writing
+// no program.
+
+fn ok_progs: Array(String) {
+  out: Array(String) = ["tests/fixtures/types/paths.av", "tests/fixtures/types/bump_method.av", "tests/fixtures/types/generic_defaults.av", "tests/fixtures/closures/block_break.av"]
+  out
+}
+
+fn ok_wants: Array(String) {
+  paths = "16\n32\n4\n3\n0\n0\n0\n7\n14\n28\n"
+  bumps = "2\n5\n8\n9\n"
+  defaults = "no last\n5\nstack 1 0.5 true\nnone\nstack 0\n"
+  blocks = "12\n1\n1\n25\n"
+  out: Array(String) = [paths, bumps, defaults, blocks]
+  out
+}
+
+fn bad_progs: Array(String) {
+  out: Array(String) = ["tests/fixtures/closures/refuse_break.av", "tests/fixtures/closures/with_break.av"]
+  out
+}
+
+fn bad_wants: Array(String) {
+  out: Array(String) = ["error[E4000]: break is only valid inside a loop", "error[E4000]: break inside Mutex.with"]
+  out
+}
+
+fn bad_locs: Array(String) {
+  out: Array(String) = ["refuse_break.av:14:7", "with_break.av:25:9"]
+  out
+}
+
+fn backs: Array(String) {
+  ["myc", "llvm"]
+}
+
+// The output name of a compile under back end b (never `*.myc`: the old
+// driver takes that suffix for its own IR).
+fn out_of(k: String, b: String): String {
+  if str_eq(b, "myc") {
+    return "${k}.old"
+  }
+  "${k}.new"
+}
+
+fn run_envs: Array(String) {
+  ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1"]
+}
+
+fn test_frontend(c: Checks, compiler: String, root: String, dir: String) {
+  ok = ok_progs()
+  bad = bad_progs()
+  bs = backs()
+  jobs: Array(HJob) = []
+  i = 0
+  while i < ok.size {
+    k = key_of(ok[i])
+    b = 0
+    while b < bs.size {
+      jobs.push(compile_job("AVANT_BACKEND=${bs[b]}", compiler, "${root}/${ok[i]}", "${dir}/${out_of(k, bs[b])}", "${dir}/${out_of(k, bs[b])}.log"))
+      b = b + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < bad.size {
+    k = key_of(bad[i])
+    b = 0
+    while b < bs.size {
+      jobs.push(compile_job("AVANT_BACKEND=${bs[b]}", compiler, "${root}/${bad[i]}", "${dir}/${out_of(k, bs[b])}", "${dir}/${out_of(k, bs[b])}.log"))
+      b = b + 1
+    }
+    i = i + 1
+  }
+  run_waves(jobs)
+  i = 0
+  while i < ok.size {
+    b = 0
+    while b < bs.size {
+      c.eq_int(jobs[bs.size * i + b].code, 0, "${ok[i]}: compiles under ${bs[b]}")
+      b = b + 1
+    }
+    i = i + 1
+  }
+  base = bs.size * ok.size
+  bw = bad_wants()
+  bl = bad_locs()
+  i = 0
+  while i < bad.size {
+    k = key_of(bad[i])
+    b = 0
+    while b < bs.size {
+      j = jobs[base + bs.size * i + b]
+      c.eq_int(j.code, 1, "${bad[i]} under ${bs[b]}: exit 1")
+      t = log_text(j.log)
+      c.expect(str_has(t, bw[i]), "${bad[i]} under ${bs[b]}: ${bw[i]}")
+      c.expect(str_has(t, bl[i]), "${bad[i]} under ${bs[b]}: at ${bl[i]}")
+      c.expect(!file_exists("${dir}/${out_of(k, bs[b])}"), "${bad[i]} under ${bs[b]}: no program written")
+      b = b + 1
+    }
+    i = i + 1
+  }
+
+  envs = run_envs()
+  runs: Array(HJob) = []
+  i = 0
+  while i < ok.size {
+    k = key_of(ok[i])
+    b = 0
+    while b < bs.size {
+      e = 0
+      while e < envs.size {
+        if envs[e].size == 0 {
+          runs.push(run_job(dir, out_of(k, bs[b]), "${out_of(k, bs[b])}.r${e}"))
+        } else {
+          runs.push(run_job_env(dir, out_of(k, bs[b]), "${out_of(k, bs[b])}.r${e}", envs[e]))
+        }
+        e = e + 1
+      }
+      b = b + 1
+    }
+    i = i + 1
+  }
+  run_waves(runs)
+  wants = ok_wants()
+  at = 0
+  i = 0
+  while i < ok.size {
+    k = key_of(ok[i])
+    b = 0
+    while b < bs.size {
+      e = 0
+      while e < envs.size {
+        label = "${ok[i]} from ${bs[b]}"
+        if envs[e].size > 0 {
+          label = "${label} under ${envs[e]}"
+        }
+        c.eq_int(runs[at].code, 0, "${label}: exit 0")
+        c.eq_str(log_text("${dir}/${out_of(k, bs[b])}.r${e}.out"), wants[i], "${label}: the known stdout")
+        c.eq_str(log_text("${dir}/${out_of(k, bs[b])}.r${e}.err"), "", "${label}: no stderr (no verifier report)")
+        at = at + 1
+        e = e + 1
+      }
+      b = b + 1
+    }
+    i = i + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_frontend.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_frontend(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

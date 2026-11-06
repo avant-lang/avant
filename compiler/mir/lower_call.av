@@ -119,7 +119,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       }
       // A user method on any type (Expr.resolved names a program method;
       // the builtin members have none, W6a.1).
-      if !str_eq(e.callee, "new") && !str_eq(e.callee, "bump") && e.resolved.size > 0 {
+      if !ast_is_ctor_call(e) && e.resolved.size > 0 {
         if sym0 = lw.lw_fn_syms.get(e.resolved) {
           if ms0 = lw.lw_syms.find_method_emit(e.resolved) {
             return lw.lower_method_call(e, recv, rt, sym0, e.args)
@@ -146,13 +146,13 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       if rt.is_buf {
         return lw.buf_member(e, recv, e.callee, e.args)
       }
-      if (rt.is_class || rt.is_struct) && !str_eq(e.callee, "new") && !str_eq(e.callee, "bump") {
+      if (rt.is_class || rt.is_struct) && !ast_is_ctor_call(e) {
         if sym = lw.lw_fn_syms.get(e.resolved) {
           return lw.lower_method_call(e, recv, rt, sym, e.args)
         }
       }
     }
-    if str_eq(e.callee, "new") || str_eq(e.callee, "bump") {
+    if ast_is_ctor_call(e) {
       if str_eq(e.callee, "bump") {
         lw.lw_bumps[e.resolved] = 1
       }

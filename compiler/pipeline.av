@@ -557,6 +557,15 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   if map.size == 0 && coverage_wanted() {
     map = tmp_path("coverage.map")
   }
+  if coverage_wanted() {
+    // Both back ends write the slot map while they lower, before the
+    // driver creates a missing output directory (W10b): its directory
+    // exists first.
+    if err = cov_map_dir(coverage_map_path(map)) {
+      diag_puts(err)
+      return IrBox.new("", false)
+    }
+  }
   if str_eq(backend, "llvm") {
     // AVANT_COVERAGE_MAP wins over the default (myc.av emit:
     // coverage_map_path).
@@ -577,6 +586,23 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   box.quiet_leaves = program.quiet_leaves
   fill_std_link(program, box)
   box
+}
+
+// Creates the directory of the coverage slot map at path when it is
+// missing; the error text when that fails.
+pub fn cov_map_dir(path: String): String? {
+  i = path.size - 1
+  while i > 0 {
+    if path[i] == 47 {
+      dir = str_slice(path, 0, i)
+      if fs_mkdir_p(dir) != 0 {
+        return "cannot create the coverage map directory ${dir}"
+      }
+      return nil
+    }
+    i = i - 1
+  }
+  nil
 }
 
 // AVANT_BACKEND (D176, internal): unset, empty, or "llvm" selects the new

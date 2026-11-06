@@ -83,8 +83,9 @@
 #                       (a bare T or nil into a T? struct-literal field, C5;
 #                       T or nil to a T? parameter of a plain function or
 #                       method; a union into a wider union; postfix ? with a
-#                       union success part; a nil default in a generic
-#                       class), the new back end converts as the checker
+#                       union success part; its nil default in a generic
+#                       class compiles on both since W10b, C14), the new
+#                       back end converts as the checker
 #                       allows; tests/cases/test_types.av checks its output
 #                       (order.av left this list in W7b: the checker's member
 #                       order fix, C15, makes both back ends compile it)

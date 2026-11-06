@@ -1,0 +1,47 @@
+// A method named `bump` called on a value (Stage 28 W10b): only a type
+// takes the bump constructor (`Leaf.bump(9)`, nil when the bump fails);
+// `k.bump(2)` on a value is the method (until W10b the checker took every
+// `.bump(...)` call for the constructor: `unknown type k`). Field and
+// implicit-field receivers too. tests/fixtures/ffi/layout.av has the
+// `Ptr(Rec)` receiver case.
+
+class Counter {
+  n: Int = 0
+
+  fn bump(by: Int): Int {
+    n = n + by
+    n
+  }
+}
+
+class Leaf {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+class Holder {
+  c: Counter
+
+  fn initialize {
+    c = Counter.new
+  }
+
+  fn twice(by: Int): Int {
+    c.bump(by)
+    self.c.bump(by)
+  }
+}
+
+fn main {
+  k = Counter.new
+  puts(k.bump(2))
+  puts(k.bump(3))
+  h = Holder.new
+  puts(h.twice(4))
+  if lf = Leaf.bump(9) {
+    puts(lf.v)
+  }
+}
