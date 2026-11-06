@@ -1,9 +1,9 @@
 import harness
 import backends
 
-// Stage 28 W10b: front-end corrections, proven on both back ends (the
-// front end is shared). The fixed forms compile under both back ends and
-// print their known output, also under AVANT_GC_VERIFY=1 and
+// Stage 28 W10b: front-end corrections (proven on both back ends until
+// the old one retired at W11). The fixed forms compile and print their
+// known output, also under AVANT_GC_VERIFY=1 and
 // AVANT_YOUNG_MB=1: types/paths.av (a call whose arguments read as types
 // followed by a member, `self.ts.get(ty).bits`, `f(job.flags).split(" ")`,
 // `Money.of(o.node).c`; a type-level function in field form,
@@ -14,8 +14,7 @@ import backends
 // `while` around it; `break`/`continue` of a loop inside a lambda). The
 // checker rejects `break` in a lambda body inside a `while`
 // (closures/refuse_break.av) and `break` inside `Mutex.with`
-// (closures/with_break.av) on both back ends, at the statement, writing
-// no program.
+// (closures/with_break.av) at the statement, writing no program.
 
 fn ok_progs: Array(String) {
   out: Array(String) = ["tests/fixtures/types/paths.av", "tests/fixtures/types/bump_method.av", "tests/fixtures/types/generic_defaults.av", "tests/fixtures/closures/block_break.av"]
@@ -47,16 +46,12 @@ fn bad_locs: Array(String) {
 }
 
 fn backs: Array(String) {
-  ["myc", "llvm"]
+  ["llvm"]
 }
 
-// The output name of a compile under back end b (never `*.myc`: the old
-// driver takes that suffix for its own IR).
+// The output name of a compile under back end b.
 fn out_of(k: String, b: String): String {
-  if str_eq(b, "myc") {
-    return "${k}.old"
-  }
-  "${k}.new"
+  "${k}.${b}"
 }
 
 fn run_envs: Array(String) {

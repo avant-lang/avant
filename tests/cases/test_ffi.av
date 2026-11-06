@@ -122,64 +122,6 @@ fn test_ffi(c: Checks) {
     } else {
       c.expect(false, "read pin log")
     }
-
-    hello_src = "${scratch()}/ffi-waveg-${stamp}-hello.av"
-    dummy_hello = file_write(hello_src, "fn main {\n  puts(\"hi\")\n}\n")
-    stock_dir = "${scratch()}/ffi-waveg-${stamp}-stock"
-    mkdir_p(stock_dir)
-    dummy_stock = file_write("${stock_dir}/myc-llvm", "#!/bin/sh\necho 'define i32 @main(i32 %0, ptr %1) { ret i32 0 }'\nexit 0\n")
-    chmod_x("${stock_dir}/myc-llvm")
-    stock_log = "${scratch()}/ffi-waveg-${stamp}-stock.log"
-    // The myc-llvm lookup is the old back end's (AVANT_BACKEND=myc, Stage
-    // 28 W9); the new back end needs no myc-llvm (checked below).
-    stock_args: Array(String) = []
-    stock_args.push("-u")
-    stock_args.push("AVANT_MYC_LLVM")
-    stock_args.push("AVANT_BACKEND=myc")
-    stock_args.push("PATH=${stock_dir}:/usr/bin:/bin")
-    stock_args.push(compiler)
-    stock_args.push("run")
-    stock_args.push(hello_src)
-    stock_code = process_run_out("/usr/bin/env", stock_args, stock_log)
-    c.expect(stock_code != 0, "stock myc-llvm first on PATH fails")
-    if stock_txt = file_read(stock_log) {
-      c.expect(str_has(stock_txt, "does not accept the safepoints GC flags"), "stock myc-llvm diagnostic names the tried path")
-    } else {
-      c.expect(false, "read stock log")
-    }
-
-    miss_log = "${scratch()}/ffi-waveg-${stamp}-miss.log"
-    miss_args: Array(String) = []
-    miss_args.push("AVANT_BACKEND=myc")
-    miss_args.push("AVANT_MYC_LLVM=${scratch()}/ffi-waveg-missing/myc-llvm")
-    miss_args.push(compiler)
-    miss_args.push("run")
-    miss_args.push(hello_src)
-    miss_code = process_run_out("/usr/bin/env", miss_args, miss_log)
-    c.expect(miss_code != 0, "missing AVANT_MYC_LLVM fails")
-    if miss_txt = file_read(miss_log) {
-      c.expect(str_has(miss_txt, "AVANT_MYC_LLVM points at a missing file"), "missing myc-llvm diagnostic")
-    } else {
-      c.expect(false, "read missing log")
-    }
-
-    // The new back end runs no myc-llvm: neither a stock one first on
-    // PATH nor a missing AVANT_MYC_LLVM matters to it.
-    none_log = "${scratch()}/ffi-waveg-${stamp}-none.log"
-    none_args: Array(String) = []
-    none_args.push("AVANT_BACKEND=llvm")
-    none_args.push("AVANT_MYC_LLVM=${scratch()}/ffi-waveg-missing/myc-llvm")
-    none_args.push("PATH=${stock_dir}:/usr/bin:/bin")
-    none_args.push(compiler)
-    none_args.push("run")
-    none_args.push(hello_src)
-    none_code = process_run_out("/usr/bin/env", none_args, none_log)
-    c.eq_int(none_code, 0, "llvm back end: runs without myc-llvm")
-    if none_txt = file_read(none_log) {
-      c.eq_str(none_txt, "hi\n", "llvm back end: program output without myc-llvm")
-    } else {
-      c.expect(false, "read llvm no-myc log")
-    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

@@ -3,9 +3,11 @@ import backends
 
 // Stage 28 W7b: fn values, lambdas, closures, and the builtins that take
 // a block on the new back end (AVANT_BACKEND=llvm, D176;
-// stages/stage28/mir.md W7b). For every program of the closures subset: (a) it compiles under both back ends
-// (--debug), and the two programs' stdout, stderr, and exit status are
-// equal (D184); (b) the new back end's program prints the same under
+// stages/stage28/mir.md W7b). For every program of the closures subset:
+// (a) it compiles (--debug), and its stdout, stderr, and exit status are
+// its run golden (tests/goldens/runs, frozen from the old back end at
+// W11; until then the two back ends were compared, D184); (b) the
+// program prints the same under
 // AVANT_GC_VERIFY=1, under AVANT_YOUNG_MB=1, under both, and under
 // AVANT_NURSERY=0, and the verifier reports nothing; for the fixtures
 // with goldens, (c) `avant dump` under AVANT_BACKEND=llvm prints exactly
@@ -18,7 +20,7 @@ fn golden_names: Array(String) {
   ["blocks", "churn", "fresh", "lambdas", "values"]
 }
 
-// The programs compared with the old back end.
+// The programs with a run golden from the old back end.
 fn both_progs: Array(String) {
   xs: Array(String) = []
   names = ["blocks", "churn", "lambdas", "values"]
@@ -49,12 +51,11 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
   np = new_progs()
   gn = golden_names()
 
-  // Wave 1: compiles (both back ends, or the new one only), and the dumps.
+  // Wave 1: the compiles, and the dumps.
   jobs: Array(HJob) = []
   i = 0
   while i < progs.size {
     k = key_of(progs[i])
-    jobs.push(compile_job("AVANT_BACKEND=myc", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
     i = i + 1
   }
@@ -75,11 +76,10 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(jobs)
   i = 0
   while i < progs.size {
-    c.eq_int(jobs[2 * i].code, 0, "${progs[i]}: compiles under myc")
-    c.eq_int(jobs[2 * i + 1].code, 0, "${progs[i]}: compiles under llvm")
+    c.eq_int(jobs[i].code, 0, "${progs[i]}: compiles under llvm")
     i = i + 1
   }
-  base = 2 * progs.size
+  base = progs.size
   i = 0
   while i < np.size {
     c.eq_int(jobs[base + i].code, 0, "${np[i]}: compiles under llvm")
@@ -100,12 +100,11 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
 
   // Wave 2: every program, then the new ones under each GC environment.
   envs = gc_envs()
-  per = 2 + envs.size
+  per = 1 + envs.size
   runs: Array(HJob) = []
   i = 0
   while i < progs.size {
     k = key_of(progs[i])
-    runs.push(run_job(dir, "${k}.old", "${k}.a"))
     runs.push(run_job(dir, "${k}.new", "${k}.b"))
     e = 0
     while e < envs.size {
@@ -131,17 +130,17 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     p = progs[i]
     k = key_of(p)
-    want_out = log_text("${dir}/${k}.a.out")
-    want_err = log_text("${dir}/${k}.a.err")
-    want_code = runs[per * i].code
-    c.eq_int(runs[per * i + 1].code, want_code, "${p}: the same exit status")
-    c.eq_str(log_text("${dir}/${k}.b.out"), want_out, "${p}: the same stdout")
-    c.eq_str(log_text("${dir}/${k}.b.err"), want_err, "${p}: the same stderr")
+    want_out = golden_out(root, p)
+    want_err = golden_err(root, p)
+    want_code = golden_status(root, p)
+    c.eq_int(runs[per * i].code, want_code, "${p}: the golden exit status")
+    c.eq_str(log_text("${dir}/${k}.b.out"), want_out, "${p}: the golden stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), want_err, "${p}: the golden stderr")
     e = 0
     while e < envs.size {
-      c.eq_int(runs[per * i + 2 + e].code, want_code, "${p} under ${envs[e]}: the same exit status")
-      c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the same stdout")
-      c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the same stderr (no verifier report)")
+      c.eq_int(runs[per * i + 1 + e].code, want_code, "${p} under ${envs[e]}: the golden exit status")
+      c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the golden stdout")
+      c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
       e = e + 1
     }
     i = i + 1

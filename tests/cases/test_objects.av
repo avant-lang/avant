@@ -3,9 +3,10 @@ import backends
 
 // Stage 28 W6b: structs and classes on the new back end
 // (AVANT_BACKEND=llvm, D176; stages/stage28/mir.md W6b). For every
-// program of the object subset: (a) it compiles under both back ends (--debug), and the two
-// programs' stdout, stderr, and exit status are equal (D184); (b) the new
-// back end's program prints the same under AVANT_GC_VERIFY=1, under
+// program of the object subset: (a) it compiles (--debug), and its
+// stdout, stderr, and exit status are its run golden (tests/goldens/runs,
+// frozen from the old back end at W11; until then the two back ends were
+// compared, D184); (b) the program prints the same under AVANT_GC_VERIFY=1, under
 // AVANT_YOUNG_MB=1 (a 1 MB nursery: many young collections), under
 // both, and under AVANT_NURSERY=0 (full collections only), and the
 // verifier reports nothing (stderr unchanged); for the
@@ -68,12 +69,11 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
     i = i + 1
   }
 
-  // Wave 1: compiles under both back ends, and the dumps.
+  // Wave 1: the compiles and the dumps.
   jobs: Array(HJob) = []
   i = 0
   while i < progs.size {
     k = key_of(progs[i])
-    jobs.push(compile_job("AVANT_BACKEND=myc", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
     i = i + 1
   }
@@ -90,11 +90,10 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < progs.size {
     p = progs[i]
-    c.eq_int(jobs[2 * i].code, 0, "${p}: compiles under myc")
-    c.eq_int(jobs[2 * i + 1].code, 0, "${p}: compiles under llvm")
+    c.eq_int(jobs[i].code, 0, "${p}: compiles under llvm")
     i = i + 1
   }
-  base = 2 * progs.size
+  base = progs.size
   i = 0
   while i < gp.size {
     j = jobs[base + i]
@@ -107,15 +106,14 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
     i = i + 1
   }
 
-  // Wave 2: every program from both back ends, then the new one under
+  // Wave 2: every program, then again under
   // each GC environment.
   envs = gc_envs()
-  per = 2 + envs.size
+  per = 1 + envs.size
   runs: Array(HJob) = []
   i = 0
   while i < progs.size {
     k = key_of(progs[i])
-    runs.push(run_job(dir, "${k}.old", "${k}.a"))
     runs.push(run_job(dir, "${k}.new", "${k}.b"))
     e = 0
     while e < envs.size {
@@ -129,16 +127,16 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     p = progs[i]
     k = key_of(p)
-    want_out = log_text("${dir}/${k}.a.out")
-    want_err = log_text("${dir}/${k}.a.err")
-    c.eq_int(runs[per * i + 1].code, runs[per * i].code, "${p}: the same exit status")
-    c.eq_str(log_text("${dir}/${k}.b.out"), want_out, "${p}: the same stdout")
-    c.eq_str(log_text("${dir}/${k}.b.err"), want_err, "${p}: the same stderr")
+    want_out = golden_out(root, p)
+    want_err = golden_err(root, p)
+    c.eq_int(runs[per * i].code, golden_status(root, p), "${p}: the golden exit status")
+    c.eq_str(log_text("${dir}/${k}.b.out"), want_out, "${p}: the golden stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), want_err, "${p}: the golden stderr")
     e = 0
     while e < envs.size {
-      c.eq_int(runs[per * i + 2 + e].code, runs[per * i].code, "${p} under ${envs[e]}: the same exit status")
-      c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the same stdout")
-      c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the same stderr (no verifier report)")
+      c.eq_int(runs[per * i + 1 + e].code, golden_status(root, p), "${p} under ${envs[e]}: the golden exit status")
+      c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the golden stdout")
+      c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
       e = e + 1
     }
     i = i + 1

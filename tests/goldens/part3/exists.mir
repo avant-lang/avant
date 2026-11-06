@@ -1,0 +1,44 @@
+module exists
+file 0 "exists.av"
+
+const str.0 = "/"
+const str.1 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_file_exists(ref str) -> i32 collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @exists.av:1:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: i32
+  let _4: bool
+
+bb0:
+  gc.enter   @1:1
+  gc.roots _2   @1:1
+  call __avant_type_maps() nocollect   @1:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @1:1
+  _3 = call avant_file_exists(const str.0) collects   @2:6
+  _4 = eq copy _3, const i32 1   @2:6
+  branch copy _4, bb1, bb2   @2:3
+
+bb1:
+  call printf(const str.1, const i32 1) nocollect   @3:5
+  goto bb3   @2:3
+
+bb2:
+  call printf(const str.1, const i32 0) nocollect   @5:5
+  goto bb3   @2:3
+
+bb3:
+  _0 = const i32 0   @1:1
+  gc.leave   @1:1
+  return   @1:1
+}
