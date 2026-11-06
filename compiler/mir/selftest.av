@@ -390,64 +390,80 @@ fn st_rejecting(out: Buf) {
   st_case(out, "v21_wrong_type_id", lo, b.module)
 }
 
+// The accepting cases that verify at both stages, by name (also what
+// `avant __mir-build` emits, W5a).
+pub fn mir_selftest_finals: Array(String) {
+  xs: Array(String) = []
+  xs.push("ok_base")
+  xs.push("ok_ref_across_nocollect")
+  xs.push("ok_fresh_fill_closed")
+  xs.push("ok_addr_in_slot")
+  xs
+}
+
+pub fn st_ok_module(name: String): MModule {
+  b = st_base(false)
+  vd = mt_void()
+  if str_eq(name, "ok_ref_across_nocollect") {
+    // A ref held across nocollect calls needs no slot.
+    st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+    l1 = b.local(mt_str(), "")
+    b.gc_enter
+    b.gc_roots(st_ints(-1, -1))
+    b.call(l1, "av.t/mk", st_none())
+    b.call(-1, "avant_str_size", st_one(b.copy_local(l1)))
+    b.call(-1, "printf", st_two(b.str_const("%s\n"), b.copy_local(l1)))
+    b.gc_leave
+    b.ret
+  } else if str_eq(name, "ok_fresh_fill_closed") {
+    // A fresh fill held in a slot, closed by its barrier.
+    box_ref = b.ref_to(st_box(b))
+    st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
+    b.set_slot(0)
+    b.set_slot(1)
+    b.assign(b.pl(0), b.rv_zero)
+    b.gc_enter
+    b.gc_roots(st_ints(0, 1))
+    b.call(0, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+    b.assign_fresh(b.field(b.deref(b.pl(0)), 0), b.rv_use(b.copy_local(1)))
+    b.barrier(0)
+    b.gc_leave
+    b.ret
+  } else if str_eq(name, "ok_addr_in_slot") {
+    // A derived address live across a collecting call, in a slot.
+    box_ref = b.ref_to(st_box(b))
+    st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
+    b.set_slot(1)
+    l2 = b.local(b.addr_of(mt_str()), "")
+    b.set_slot(l2)
+    b.assign(b.pl(l2), b.rv_zero)
+    b.gc_enter
+    b.gc_roots(st_ints(1, l2))
+    b.assign(b.pl(l2), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
+    b.call(-1, "av.t/churn", st_none())
+    b.call(-1, "av.t/use", st_one(b.copy(b.deref(b.pl(l2)))))
+    b.gc_leave
+    b.ret
+  }
+  b.module
+}
+
 // ---- accepting cases near each boundary.
 fn st_accepting(out: Buf) {
   lo = mst_lowered()
   fi = mst_final()
   vd = mt_void()
 
-  st_both(out, "ok_base", st_base(false).module)
+  st_both(out, "ok_base", st_ok_module("ok_base"))
 
   b = st_base(false)
   st_fn(b, "f", st_tys(mt_bool(), -1), mt_i32(), mfk_unset())
   st_diamond(b, true)
   st_case(out, "ok_defined_on_all_paths", lo, b.module)
 
-  // A ref held across nocollect calls needs no slot.
-  b = st_base(false)
-  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
-  l1 = b.local(mt_str(), "")
-  b.gc_enter
-  b.gc_roots(st_ints(-1, -1))
-  b.call(l1, "av.t/mk", st_none())
-  b.call(-1, "avant_str_size", st_one(b.copy_local(l1)))
-  b.call(-1, "printf", st_two(b.str_const("%s\n"), b.copy_local(l1)))
-  b.gc_leave
-  b.ret
-  st_both(out, "ok_ref_across_nocollect", b.module)
-
-  // A fresh fill held in a slot, closed by its barrier.
-  b = st_base(false)
-  box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
-  b.set_slot(0)
-  b.set_slot(1)
-  b.assign(b.pl(0), b.rv_zero)
-  b.gc_enter
-  b.gc_roots(st_ints(0, 1))
-  b.call(0, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
-  b.assign_fresh(b.field(b.deref(b.pl(0)), 0), b.rv_use(b.copy_local(1)))
-  b.barrier(0)
-  b.gc_leave
-  b.ret
-  st_both(out, "ok_fresh_fill_closed", b.module)
-
-  // A derived address live across a collecting call, in a slot.
-  b = st_base(false)
-  box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
-  b.set_slot(1)
-  l2 = b.local(b.addr_of(mt_str()), "")
-  b.set_slot(l2)
-  b.assign(b.pl(l2), b.rv_zero)
-  b.gc_enter
-  b.gc_roots(st_ints(1, l2))
-  b.assign(b.pl(l2), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
-  b.call(-1, "av.t/churn", st_none())
-  b.call(-1, "av.t/use", st_one(b.copy(b.deref(b.pl(l2)))))
-  b.gc_leave
-  b.ret
-  st_both(out, "ok_addr_in_slot", b.module)
+  st_both(out, "ok_ref_across_nocollect", st_ok_module("ok_ref_across_nocollect"))
+  st_both(out, "ok_fresh_fill_closed", st_ok_module("ok_fresh_fill_closed"))
+  st_both(out, "ok_addr_in_slot", st_ok_module("ok_addr_in_slot"))
 
   // V13 forms 2, 3, 4: barrier_at on an addr holder, a pin before a store
   // into C memory, a by-value push through a slot row's address.

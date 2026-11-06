@@ -1,0 +1,289 @@
+// The GC contract as emitted (Stage 28 W5a; stages/stage28/mir.md 5.1,
+// 5.2, 5.5, 5.6, 11.3): frame enter and leave, root registration, the
+// barrier (inline fast path, or the call form), and allocation (the
+// inline fast path of 5.5 with the null-bump test of 10.3, or the call
+// form). The runtime ABI is the frozen one (D163); the sequences reproduce
+// the old back end's (audit 4.1-4.4).
+
+import source
+import mir.types
+import mir.ir
+import llvm.emit_core
+
+// gc.roots (5.2): avant_gc_root_begin(n) with n the root words of every
+// listed slot, then one store per word, slots in the listed order and
+// words in offset order; nothing else in between. Empty: nothing.
+pub fn ll_gc_roots(e: LlEmit, locals: Array(Int)) {
+  n = 0
+  i = 0
+  while i < locals.size {
+    n = n + e.ts.root_count(e.f.locals[locals[i]].ty)
+    i = i + 1
+  }
+  if n == 0 {
+    return
+  }
+  e.need("avant_gc_root_begin")
+  e.line("%r = call ptr @avant_gc_root_begin(i32 ${n})")
+  w = 0
+  i = 0
+  while i < locals.size {
+    l = locals[i]
+    refs: Array(Int) = []
+    roots: Array(Int) = []
+    e.ts.words(e.f.locals[l].ty, 0, refs, roots)
+    j = 0
+    while j < roots.size {
+      at = e.local_name(l)
+      if roots[j] > 0 {
+        at = e.tmp
+        e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${roots[j] * 8}")
+      }
+      slot = "%r"
+      if w > 0 {
+        slot = "%r.${w}"
+        e.line("${slot} = getelementptr inbounds ptr, ptr %r, i64 ${w}")
+      }
+      e.line("store ptr ${at}, ptr ${slot}, align 8")
+      w = w + 1
+      j = j + 1
+    }
+    i = i + 1
+  }
+}
+
+pub fn ll_gc_call(e: LlEmit, name: String) {
+  e.need(name)
+  e.line("call void @${name}()")
+}
+
+// barrier copy _h (5.6): the holder is read once (E1); null, or a heap
+// object already young or remembered, skips the call. The call form when
+// inline fast paths are off.
+pub fn ll_barrier(e: LlEmit, o: MOperand) {
+  e.need("avant_barrier")
+  h = e.value(o)
+  if !e.inline_fast {
+    e.line("call void @avant_barrier(ptr ${h})")
+    return
+  }
+  test = e.part("test")
+  call = e.part("call")
+  cont = e.part("cont")
+  z = e.tmp
+  e.line("${z} = icmp eq ptr ${h}, null")
+  e.line("br i1 ${z}, label %${cont}, label %${test}")
+  e.block(test)
+  fp = e.tmp
+  e.line("${fp} = getelementptr inbounds i8, ptr ${h}, i64 -2")
+  fl = e.tmp
+  e.line("${fl} = load i16, ptr ${fp}, align 2")
+  a = e.tmp
+  e.line("${a} = and i16 ${fl}, -32768")
+  ha = e.tmp
+  e.line("${ha} = icmp ne i16 ${a}, 0")
+  b = e.tmp
+  e.line("${b} = and i16 ${fl}, 48")
+  hb = e.tmp
+  e.line("${hb} = icmp ne i16 ${b}, 0")
+  skip = e.tmp
+  e.line("${skip} = and i1 ${ha}, ${hb}")
+  e.line("br i1 ${skip}, label %${cont}, label %${call}")
+  e.block(call)
+  e.line("call void @avant_barrier(ptr ${h})")
+  e.line("br label %${cont}")
+  e.block(cont)
+}
+
+// barrier_at copy _a: the unknown-holder form, always a call.
+pub fn ll_barrier_at(e: LlEmit, o: MOperand) {
+  e.need("avant_barrier_at")
+  a = e.value(o)
+  e.line("call void @avant_barrier_at(ptr ${a})")
+}
+
+// The allocation call form; returns the result value.
+fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
+  e.need(callee)
+  r = e.tmp
+  e.line("${r} = call ptr @${callee}(i64 ${size}, i32 ${ty})")
+  r
+}
+
+// _d = call avant_alloc(size, type) (or avant_bump_alloc): the inline
+// fast path of 5.5, then the slow call, joined by a phi; returns the
+// pointer to store into _d. A constant size and type fold the size tests
+// (and choose the call form when the fast path can never be taken).
+pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
+  size = e.value(args[0])
+  ty = e.value(args[1])
+  const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
+  sz = args[0].ival
+  tid = args[1].ival
+  total = "0"
+  if const_size {
+    tot = (sz + 15i64) & -8i64
+    if !e.inline_fast || tot > 8192i64 || (tid == 0i64 && sz >= 6144i64) {
+      return ll_alloc_call(e, callee, size, ty)
+    }
+    total = "${tot}"
+  } else if !e.inline_fast {
+    return ll_alloc_call(e, callee, size, ty)
+  }
+  e.used_alloc_globals = true
+  e.need(callee)
+  e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+  sh = e.tmp
+  e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
+  c1 = e.tmp
+  e.line("${c1} = icmp eq i32 ${sh}, 0")
+  ok = e.tmp
+  e.line("${ok} = load i32, ptr @avant_gc_fast_ok, align 4")
+  c2 = e.tmp
+  e.line("${c2} = icmp eq i32 ${ok}, 1")
+  bump = e.tmp
+  e.line("${bump} = load ptr, ptr @avant_gc_bump, align 8")
+  lim = e.tmp
+  e.line("${lim} = load ptr, ptr @avant_gc_limit, align 8")
+  if !const_size {
+    t15 = e.tmp
+    e.line("${t15} = add i64 ${size}, 15")
+    total = e.tmp
+    e.line("${total} = and i64 ${t15}, -8")
+  }
+  bi = e.tmp
+  e.line("${bi} = ptrtoint ptr ${bump} to i64")
+  c3 = e.tmp
+  e.line("${c3} = icmp ne i64 ${bi}, 0")
+  ei = e.tmp
+  e.line("${ei} = add i64 ${bi}, ${total}")
+  li = e.tmp
+  e.line("${li} = ptrtoint ptr ${lim} to i64")
+  c4 = e.tmp
+  e.line("${c4} = icmp ule i64 ${ei}, ${li}")
+  a12 = e.tmp
+  e.line("${a12} = and i1 ${c1}, ${c2}")
+  a34 = e.tmp
+  e.line("${a34} = and i1 ${c3}, ${c4}")
+  go = e.tmp
+  e.line("${go} = and i1 ${a12}, ${a34}")
+  if !const_size {
+    c5 = e.tmp
+    e.line("${c5} = icmp ule i64 ${total}, 8192")
+    t0 = e.tmp
+    e.line("${t0} = icmp eq i32 ${ty}, 0")
+    big = e.tmp
+    e.line("${big} = icmp uge i64 ${size}, 6144")
+    both = e.tmp
+    e.line("${both} = and i1 ${t0}, ${big}")
+    c6 = e.tmp
+    e.line("${c6} = xor i1 ${both}, true")
+    a56 = e.tmp
+    e.line("${a56} = and i1 ${c5}, ${c6}")
+    g2 = e.tmp
+    e.line("${g2} = and i1 ${go}, ${a56}")
+    go = g2
+  }
+  fast = e.part("fast")
+  slow = e.part("slow")
+  cont = e.part("cont")
+  e.line("br i1 ${go}, label %${fast}, label %${slow}")
+
+  e.block(fast)
+  end = e.tmp
+  e.line("${end} = getelementptr inbounds i8, ptr ${bump}, i64 ${total}")
+  e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
+  blk = e.tmp
+  e.line("${blk} = load ptr, ptr @avant_gc_block, align 8")
+  bp = e.tmp
+  e.line("${bp} = getelementptr inbounds i8, ptr ${blk}, i64 32")
+  e.line("store ptr ${end}, ptr ${bp}, align 8")
+  // The header: size | type << 32 | (HEAP | YOUNG) << 48.
+  if const_size {
+    hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
+    e.line("store i64 ${hdr.to_i64}, ptr ${bump}, align 8")
+  } else {
+    tz = e.tmp
+    e.line("${tz} = zext i32 ${ty} to i64")
+    tsh = e.tmp
+    e.line("${tsh} = shl i64 ${tz}, 32")
+    h1 = e.tmp
+    e.line("${h1} = or i64 ${size}, ${tsh}")
+    h2 = e.tmp
+    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).to_i64}")
+    e.line("store i64 ${h2}, ptr ${bump}, align 8")
+  }
+  obj = e.tmp
+  e.line("${obj} = getelementptr inbounds i8, ptr ${bump}, i64 8")
+  e.line("call void @llvm.memset.p0.i64(ptr ${obj}, i8 0, i64 ${size}, i1 false)")
+  // set_start: avant_gc_starts[off >> 9] |= 1 << ((off >> 3) & 63).
+  base = e.tmp
+  e.line("${base} = load ptr, ptr @avant_gc_base, align 8")
+  pi = e.tmp
+  e.line("${pi} = ptrtoint ptr ${bump} to i64")
+  bsi = e.tmp
+  e.line("${bsi} = ptrtoint ptr ${base} to i64")
+  off = e.tmp
+  e.line("${off} = sub i64 ${pi}, ${bsi}")
+  st = e.tmp
+  e.line("${st} = load ptr, ptr @avant_gc_starts, align 8")
+  wd = e.tmp
+  e.line("${wd} = lshr i64 ${off}, 9")
+  b3 = e.tmp
+  e.line("${b3} = lshr i64 ${off}, 3")
+  bit = e.tmp
+  e.line("${bit} = and i64 ${b3}, 63")
+  mask = e.tmp
+  e.line("${mask} = shl i64 1, ${bit}")
+  wp = e.tmp
+  e.line("${wp} = getelementptr inbounds i64, ptr ${st}, i64 ${wd}")
+  old = e.tmp
+  e.line("${old} = load i64, ptr ${wp}, align 8")
+  nw = e.tmp
+  e.line("${nw} = or i64 ${old}, ${mask}")
+  e.line("store i64 ${nw}, ptr ${wp}, align 8")
+  // The counters: allocated_bytes (avant_g_stats + 24), since_gc,
+  // nursery_held by total; inline_allocs by one.
+  sp = e.tmp
+  e.line("${sp} = getelementptr inbounds i8, ptr @avant_g_stats, i64 24")
+  ll_bump_counter(e, sp, total)
+  ll_bump_counter(e, "@avant_since_gc", total)
+  ll_bump_counter(e, "@avant_nursery_held", total)
+  ll_bump_counter(e, "@avant_inline_allocs", "1")
+  e.line("br label %${cont}")
+
+  e.block(slow)
+  s = ll_alloc_call(e, callee, size, ty)
+  e.line("br label %${cont}")
+
+  e.block(cont)
+  r = e.tmp
+  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
+  r
+}
+
+fn ll_bump_counter(e: LlEmit, ptr: String, by: String) {
+  x = e.tmp
+  e.line("${x} = load i64, ptr ${ptr}, align 8")
+  y = e.tmp
+  e.line("${y} = add i64 ${x}, ${by}")
+  e.line("store i64 ${y}, ptr ${ptr}, align 8")
+}
+
+// The runtime globals the allocation fast path reads (5.5), in the
+// order of 10.3.
+pub fn ll_alloc_globals: String {
+  buf = buf_new()
+  buf.push_str("@g_avant_shared = external global i32\n")
+  buf.push_str("@avant_gc_fast_ok = external thread_local global i32\n")
+  buf.push_str("@avant_gc_bump = external thread_local global ptr\n")
+  buf.push_str("@avant_gc_limit = external thread_local global ptr\n")
+  buf.push_str("@avant_gc_block = external thread_local global ptr\n")
+  buf.push_str("@avant_gc_base = external thread_local global ptr\n")
+  buf.push_str("@avant_gc_starts = external thread_local global ptr\n")
+  buf.push_str("@avant_g_stats = external global i64\n")
+  buf.push_str("@avant_since_gc = external global i64\n")
+  buf.push_str("@avant_nursery_held = external global i64\n")
+  buf.push_str("@avant_inline_allocs = external global i64\n")
+  buf.to_s
+}

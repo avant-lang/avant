@@ -1,0 +1,244 @@
+import harness
+
+// Stage 28 W5a: the LLVM emitter (compiler/llvm/emit*.av) and the driver
+// (compiler/llvm/driver.av) through the internal hook
+// `avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
+// [--object] [--call-forms]`, which builds a builder-made MIR module,
+// verifies it at stage final, emits the .ll, compiles it in process, and
+// links it with the runtime as the old driver links a program. Checked:
+// (a) the 10.2 example's .ll is byte-identical to
+// tests/fixtures/mir/example.ll (mir.md 10.3 up to temporary and
+// statement-part names, see the W5a record) and the same in every mode;
+// (b) it runs in all three modes; (c) under AVANT_GC_VERIFY=1
+// AVANT_YOUNG_MB=1 it is silent and its GC statistics are 10.3's (W3);
+// the call forms run too; `constructs` (the rest of mir.md 4.3-4.5) and
+// `traps` give their output and exit codes in every mode; (d) every
+// selftest module that verifies at final compiles to an object (the
+// glue's verifier passes); (e) a module the verifier rejects is never
+// emitted: the driver exits 1 with the rule's diagnostic.
+
+fn mode_tag(mode: String): String {
+  if mode.size == 0 {
+    return "bare"
+  }
+  str_slice(mode, 2, mode.size)
+}
+
+fn log_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+fn modes: Array(String) {
+  ms: Array(String) = []
+  ms.push("--debug")
+  ms.push("")
+  ms.push("--release")
+  ms
+}
+
+// avant __mir-build NAME OUT MODE [extra...]
+fn build_job(compiler: String, name: String, out: String, mode: String, extra: Array(String), log: String): HJob {
+  a: Array(String) = []
+  a.push("__mir-build")
+  a.push(name)
+  a.push(out)
+  if mode.size > 0 {
+    a.push(mode)
+  }
+  i = 0
+  while i < extra.size {
+    a.push(extra[i])
+    i = i + 1
+  }
+  HJob.new(compiler, a, log)
+}
+
+fn emit_ll(path: String): Array(String) {
+  a: Array(String) = []
+  a.push("--emit-ll")
+  a.push(path)
+  a
+}
+
+// /usr/bin/env [VAR=value...] BIN [args...]
+fn run_job(envs: String, bin: String, args: String, log: String): HJob {
+  a: Array(String) = []
+  if envs.size > 0 {
+    ws = envs.split(" ")
+    i = 0
+    while i < ws.size {
+      a.push(ws[i])
+      i = i + 1
+    }
+  }
+  a.push(bin)
+  if args.size > 0 {
+    ws2 = args.split(" ")
+    i = 0
+    while i < ws2.size {
+      a.push(ws2[i])
+      i = i + 1
+    }
+  }
+  HJob.new("/usr/bin/env", a, log)
+}
+
+fn constructs_out: String {
+  "42\n8\n8000000000000\n0 3 2\n1 -4\n-7 15\n5.25\n5 1\n11 9\n1 12345\n42 20 30\n777\n5 0\n"
+}
+
+fn finals: Array(String) {
+  xs: Array(String) = []
+  xs.push("ok_base")
+  xs.push("ok_ref_across_nocollect")
+  xs.push("ok_fresh_fill_closed")
+  xs.push("ok_addr_in_slot")
+  xs
+}
+
+fn gc_stats_10_3(c: Checks, text: String, what: String) {
+  c.expect(!str_has(text, "avant gc verify"), "${what}: the GC verifier is silent")
+  c.expect(str_has(text, "collections=6 young=6 "), "${what}: collections=6 young=6")
+  c.expect(str_has(text, " copied=96 "), "${what}: copied=96")
+  c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
+  c.expect(str_has(text, " enters=400005 "), "${what}: enters=400005")
+}
+
+fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
+  ms = modes()
+  none: Array(String) = []
+
+  // Wave 1: every build at once.
+  builds: Array(HJob) = []
+  i = 0
+  while i < ms.size {
+    t = mode_tag(ms[i])
+    builds.push(build_job(compiler, "example", "${dir}/ex-${t}", ms[i], emit_ll("${dir}/ex-${t}.ll"), "${dir}/ex-${t}.build.log"))
+    builds.push(build_job(compiler, "constructs", "${dir}/cons-${t}", ms[i], none, "${dir}/cons-${t}.build.log"))
+    builds.push(build_job(compiler, "traps", "${dir}/traps-${t}", ms[i], none, "${dir}/traps-${t}.build.log"))
+    i = i + 1
+  }
+  cf: Array(String) = []
+  cf.push("--call-forms")
+  builds.push(build_job(compiler, "example", "${dir}/ex-calls", "--debug", cf, "${dir}/ex-calls.build.log"))
+  fs = finals()
+  i = 0
+  while i < fs.size {
+    ex = emit_ll("${dir}/${fs[i]}.ll")
+    ex.push("--object")
+    builds.push(build_job(compiler, fs[i], "${dir}/${fs[i]}.o", "--debug", ex, "${dir}/${fs[i]}.build.log"))
+    i = i + 1
+  }
+  builds.push(build_job(compiler, "example_no_barrier", "${dir}/nb", "--debug", emit_ll("${dir}/nb.ll"), "${dir}/nb.build.log"))
+  run_jobs(builds)
+  i = 0
+  while i < builds.size - 1 {
+    b = builds[i]
+    c.eq_int(b.code, 0, "__mir-build ${b.args[1]} ${b.args[2]}")
+    c.eq_str(log_text(b.log), "", "__mir-build ${b.args[1]} ${b.args[2]} is silent")
+    i = i + 1
+  }
+
+  // (a) the .ll: the fixture, and the same text in every mode (D192).
+  want = "(no fixture)"
+  if t = file_read("${root}/tests/fixtures/mir/example.ll") {
+    want = t
+  }
+  got = log_text("${dir}/ex-debug.ll")
+  c.eq_str(got, want, "the 10.2 example's .ll is tests/fixtures/mir/example.ll")
+  c.eq_str(log_text("${dir}/ex-bare.ll"), got, "the example's .ll in the bare mode is the debug one")
+  c.eq_str(log_text("${dir}/ex-release.ll"), got, "the example's .ll in --release is the debug one")
+
+  // (d) the selftest's final-stage modules: verified and compiled.
+  i = 0
+  while i < fs.size {
+    c.expect(file_exists("${dir}/${fs[i]}.o"), "${fs[i]}: an object")
+    c.expect(str_has(log_text("${dir}/${fs[i]}.ll"), "define internal void @\"av.t/churn\"()"), "${fs[i]}: its .ll defines the module's functions")
+    i = i + 1
+  }
+
+  // (e) rejected by the verifier: no .ll, no program, the diagnostic.
+  nb = builds[builds.size - 1]
+  c.eq_int(nb.code, 1, "example_no_barrier: exit 1")
+  e = log_text(nb.log)
+  c.expect(str_has(e, "error[V13]: av.main/tag: bb1[1]: reference store through (*_2).0 without its barrier"), "example_no_barrier: the V13 diagnostic")
+  c.expect(str_has(e, "--> ex.av:12:5"), "example_no_barrier: at the MIR's source location")
+  c.expect(!file_exists("${dir}/nb.ll"), "example_no_barrier: no .ll written")
+  c.expect(!file_exists("${dir}/nb"), "example_no_barrier: no program linked")
+
+  // Wave 2: every run at once.
+  gcv = "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1"
+  runs: Array(HJob) = []
+  i = 0
+  while i < ms.size {
+    t = mode_tag(ms[i])
+    runs.push(run_job("", "${dir}/ex-${t}", "", "${dir}/ex-${t}.run.log"))
+    runs.push(run_job("${gcv} AVANT_GC_STATS=1", "${dir}/ex-${t}", "", "${dir}/ex-${t}.gc.log"))
+    runs.push(run_job(gcv, "${dir}/cons-${t}", "", "${dir}/cons-${t}.run.log"))
+    runs.push(run_job(gcv, "${dir}/traps-${t}", "", "${dir}/traps-${t}.ok.log"))
+    runs.push(run_job(gcv, "${dir}/traps-${t}", "a", "${dir}/traps-${t}.ovf.log"))
+    runs.push(run_job(gcv, "${dir}/traps-${t}", "a b", "${dir}/traps-${t}.div0.log"))
+    runs.push(run_job(gcv, "${dir}/traps-${t}", "a b c", "${dir}/traps-${t}.bounds.log"))
+    runs.push(run_job(gcv, "${dir}/traps-${t}", "a b c d", "${dir}/traps-${t}.min.log"))
+    i = i + 1
+  }
+  runs.push(run_job("${gcv} AVANT_GC_STATS=1", "${dir}/ex-calls", "", "${dir}/ex-calls.gc.log"))
+  run_jobs(runs)
+
+  i = 0
+  while i < ms.size {
+    t = mode_tag(ms[i])
+    k = i * 8
+    // (b)
+    c.eq_int(runs[k].code, 0, "example ${t}: exit 0")
+    c.eq_str(log_text(runs[k].log), "199999\nsmall\n", "example ${t}: output")
+    // (c)
+    gl = log_text(runs[k + 1].log)
+    c.eq_int(runs[k + 1].code, 0, "example ${t} under the GC verifier: exit 0")
+    c.expect(str_has(gl, "199999\nsmall\n"), "example ${t} under the GC verifier: output")
+    gc_stats_10_3(c, gl, "example ${t}")
+    c.expect(str_has(gl, " inline_allocs=10 "), "example ${t}: inline_allocs=10")
+    // constructs and traps
+    c.eq_int(runs[k + 2].code, 0, "constructs ${t}: exit 0")
+    c.eq_str(log_text(runs[k + 2].log), constructs_out(), "constructs ${t}: output, GC verifier silent")
+    c.eq_int(runs[k + 3].code, 0, "traps ${t} without a trap: exit 0")
+    c.eq_str(log_text(runs[k + 3].log), "ok\n", "traps ${t} without a trap: output")
+    c.eq_int(runs[k + 4].code, 1, "traps ${t} add.chk overflow: exit 1")
+    c.eq_str(log_text(runs[k + 4].log), "avant runtime: integer overflow\n", "traps ${t} add.chk overflow: message")
+    c.eq_int(runs[k + 5].code, 1, "traps ${t} div.chk by zero: exit 1")
+    c.eq_str(log_text(runs[k + 5].log), "avant runtime: division by zero\n", "traps ${t} div.chk by zero: message")
+    c.eq_int(runs[k + 6].code, 1, "traps ${t} check.bounds: exit 1")
+    c.eq_str(log_text(runs[k + 6].log), "avant runtime: index 4 out of bounds (size 4)\n", "traps ${t} check.bounds: message")
+    c.eq_int(runs[k + 7].code, 1, "traps ${t} div.chk MIN by -1: exit 1")
+    c.eq_str(log_text(runs[k + 7].log), "avant runtime: integer overflow\n", "traps ${t} div.chk MIN by -1: message")
+    i = i + 1
+  }
+  last = runs[runs.size - 1]
+  cl = log_text(last.log)
+  c.eq_int(last.code, 0, "example with the call forms: exit 0")
+  c.expect(str_has(cl, "199999\nsmall\n"), "example with the call forms: output")
+  gc_stats_10_3(c, cl, "example with the call forms")
+  c.expect(str_has(cl, " inline_allocs=0 "), "example with the call forms: no inline allocation")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_mir_emit.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_mir_emit(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

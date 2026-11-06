@@ -1,0 +1,379 @@
+// The modules `avant __mir-build NAME` builds (Stage 28 W5a), each with the
+// builder in its final form (the leaf and frame passes are W6's; here by
+// hand): the 10.2 example; the selftest's accepting cases that verify at
+// final (mir_selftest_finals; libraries without `main`, so they compile to
+// an object only); `constructs`, a program that exercises the rest of 4.3
+// to 4.5 (checked arithmetic, casts, f64, struct, union with a heap
+// payload in an aggregate slot across a collection, fnval and an indirect
+// call, switch, addr and barrier_at, an element buffer with an inline
+// allocation of dynamic size and bounds checks, addr.raw); `traps`, whose
+// argument count selects a trap; and `example_no_barrier`, the example
+// with tag's barrier removed, which the verifier rejects (V13).
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.build
+import mir.example
+import mir.selftest
+
+pub fn mir_build_names: Array(String) {
+  xs: Array(String) = []
+  xs.push("example")
+  xs.push("constructs")
+  xs.push("traps")
+  xs.push("example_no_barrier")
+  finals = mir_selftest_finals()
+  i = 0
+  while i < finals.size {
+    xs.push(finals[i])
+    i = i + 1
+  }
+  xs
+}
+
+pub fn mir_build_module(name: String): MModule? {
+  if str_eq(name, "example") {
+    return mir_example()
+  }
+  if str_eq(name, "constructs") {
+    return ec_constructs()
+  }
+  if str_eq(name, "traps") {
+    return ec_traps()
+  }
+  if str_eq(name, "example_no_barrier") {
+    m = mir_example()
+    if f = m.func("av.main/tag") {
+      blk = f.blocks[1]
+      kept: Array(MStmt) = []
+      i = 0
+      while i < blk.stmts.size {
+        if blk.stmts[i].kind != msk_barrier() {
+          kept.push(blk.stmts[i])
+        }
+        i = i + 1
+      }
+      blk.stmts = kept
+    }
+    return m
+  }
+  finals = mir_selftest_finals()
+  i = 0
+  while i < finals.size {
+    if str_eq(finals[i], name) {
+      return st_ok_module(name)
+    }
+    i = i + 1
+  }
+  nil
+}
+
+fn ec0: Array(MOperand) {
+  xs: Array(MOperand) = []
+  xs
+}
+
+fn ec1(a: MOperand): Array(MOperand) {
+  xs = ec0()
+  xs.push(a)
+  xs
+}
+
+fn ec2(a: MOperand, b: MOperand): Array(MOperand) {
+  xs = ec1(a)
+  xs.push(b)
+  xs
+}
+
+fn ec3(a: MOperand, b: MOperand, c: MOperand): Array(MOperand) {
+  xs = ec2(a, b)
+  xs.push(c)
+  xs
+}
+
+fn ec_tys(a: Int, b: Int): Array(Int) {
+  xs: Array(Int) = []
+  if a >= 0 {
+    xs.push(a)
+  }
+  if b >= 0 {
+    xs.push(b)
+  }
+  xs
+}
+
+fn ec_names(a: String, b: String): Array(String) {
+  xs: Array(String) = []
+  xs.push(a)
+  if b.size > 0 {
+    xs.push(b)
+  }
+  xs
+}
+
+// main(argc, argv) -> i32, frame, external; its slots are argv and the
+// listed locals (in local order), zeroed, entered, registered; then the
+// type maps and avant_io_init_argv (3.6).
+fn ec_main_begin(b: MirBuilder) {
+  ps = ec_tys(mt_i32(), mt_ptr())
+  b.begin_fn("main", b.sig(ps, mt_i32(), false), b.here(1, 1), "main")
+  b.set_kind(mfk_frame())
+  b.set_external
+  b.name_param(1, "argc")
+  b.name_param(2, "argv")
+  b.set_slot(2)
+}
+
+fn ec_prologue(b: MirBuilder) {
+  slots: Array(Int) = []
+  i = 0
+  while i < b.func.locals.size {
+    if b.func.locals[i].slot {
+      slots.push(i)
+      if !b.func.is_param(i) {
+        b.assign(b.pl(i), b.rv_zero)
+      }
+    }
+    i = i + 1
+  }
+  b.gc_enter
+  b.gc_roots(slots)
+  b.call(-1, "__avant_type_maps", ec0())
+  dummy = b.call(-1, "avant_io_init_argv", ec2(b.copy_local(1), b.copy_local(2)))
+}
+
+fn ec_main_end(b: MirBuilder) {
+  b.assign(b.pl(0), b.rv_use(b.c_i32(0)))
+  b.gc_leave
+  b.ret
+  b.end_fn
+}
+
+fn ec_print(b: MirBuilder, fmt: String, args: Array(MOperand)) {
+  all = ec1(b.str_const(fmt))
+  i = 0
+  while i < args.size {
+    all.push(args[i])
+    i = i + 1
+  }
+  dummy = b.call(-1, "printf", all)
+}
+
+fn ec_f64(b: MirBuilder, bits: Int64, shown: String): MOperand {
+  b.c_f64(bits, shown)
+}
+
+fn ec_constructs: MModule {
+  m = mir_module("main")
+  b = MirBuilder.new(m)
+  b.file("constructs.av")
+  pair = b.note_layout("main.Pair", mlk_struct(), ec_tys(mt_i32(), mt_i64()), ec_names("a", "b"))
+  rec = b.note_layout("main.Rec", mlk_struct(), ec_tys(mt_str(), -1), ec_names("s", ""))
+  un = b.note_union("(Int|String)", ec_tys(mt_i32(), mt_str()), -1)
+  csig = b.sig(ec_tys(mt_ref(), mt_i32()), mt_i32(), false)
+  fnl = b.note_layout("fn(Int):Int", mlk_fnval(), ec_tys(mt_ref(), b.code(csig)), ec_names("env", "code"))
+  elems = b.note_layout("elems(Int)", mlk_elems(), ec_tys(mt_i32(), -1), ec_names("", ""))
+
+  // twice#fnval(env, n) = n * 2 (checked): a leaf with a trap block.
+  b.begin_fn("av.main/twice#fnval", csig, b.here(2, 1), "twice")
+  b.set_kind(mfk_leaf())
+  b.name_param(2, "n")
+  b.assign(b.pl(0), b.rv_chk(mop_mul(), b.copy_local(2), b.c_i32(2)))
+  b.ret
+  b.end_fn
+
+  // Rec.set(self: addr %Rec, s): the unknown-holder barrier (V13 form 2).
+  b.begin_fn("av.main/Rec.set", b.sig(ec_tys(b.addr_of(b.agg(rec)), mt_str()), mt_void(), false), b.here(3, 1), "set")
+  b.set_kind(mfk_leaf())
+  b.name_param(1, "self")
+  b.name_param(2, "s")
+  b.barrier_at(1)
+  b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
+  b.ret
+  b.end_fn
+
+  // classify(n): switch n [0: 10, 1: 20] else 30.
+  b.begin_fn("av.main/classify", b.sig(ec_tys(mt_i32(), -1), mt_i32(), false), b.here(4, 1), "classify")
+  b.set_kind(mfk_leaf())
+  b.name_param(1, "n")
+  c1 = b.block
+  c2 = b.block
+  c3 = b.block
+  vals: Array(Int64) = []
+  vals.push(0i64)
+  vals.push(1i64)
+  b.switch_on(b.copy_local(1), vals, ec_tys(c1, c2), c3)
+  b.at(c1)
+  b.assign(b.pl(0), b.rv_use(b.c_i32(10)))
+  b.ret
+  b.at(c2)
+  b.assign(b.pl(0), b.rv_use(b.c_i32(20)))
+  b.ret
+  b.at(c3)
+  b.assign(b.pl(0), b.rv_use(b.c_i32(30)))
+  b.ret
+  b.end_fn
+
+  ec_main_begin(b)
+  x = b.local(mt_i32(), "x")
+  x2 = b.local(mt_i32(), "x2")
+  y = b.local(mt_i64(), "y")
+  z = b.local(mt_f64(), "z")
+  p = b.local(b.agg(pair), "p")
+  u = b.local(b.agg(un), "u")
+  r = b.local(b.agg(rec), "r")
+  a = b.local(b.addr_of(b.agg(rec)), "a")
+  fv = b.local(b.agg(fnl), "fv")
+  buf = b.local(b.ref_to(elems), "buf")
+  s = b.local(mt_str(), "s")
+  c = b.local(mt_bool(), "c")
+  n = b.local(mt_u64(), "n")
+  pp = b.local(b.ptr_to(mt_i32()), "pp")
+  t = b.local(mt_i32(), "t")
+  uu = b.local(mt_u32(), "uu")
+  b.set_slot(u)
+  b.set_slot(r)
+  b.set_slot(a)
+  b.set_slot(fv)
+  b.set_slot(buf)
+  b.set_slot(s)
+  b.set_slot(pp)
+  ec_prologue(b)
+
+  // Checked arithmetic.
+  b.assign(b.pl(x), b.rv_chk(mop_add(), b.c_i32(40), b.c_i32(2)))
+  ec_print(b, "%d\n", ec1(b.copy_local(x)))
+  b.assign(b.pl(x), b.rv_chk(mop_sub(), b.copy_local(x), b.c_i32(50)))
+  b.assign(b.pl(x), b.rv_un(mop_neg_chk(), b.copy_local(x)))
+  ec_print(b, "%d\n", ec1(b.copy_local(x)))
+  b.assign(b.pl(y), b.rv_cast(b.copy_local(x), mt_i64()))
+  b.assign(b.pl(y), b.rv_chk(mop_mul(), b.copy_local(y), b.c_i64(1000000000000i64)))
+  ec_print(b, "%lld\n", ec1(b.copy_local(y)))
+  b.assign(b.pl(x), b.rv_chk(mop_rem(), b.c_i32(-2147483647 - 1), b.c_i32(-1)))
+  b.assign(b.pl(x2), b.rv_chk(mop_div(), b.c_i32(17), b.c_i32(5)))
+  b.assign(b.pl(t), b.rv_chk(mop_rem(), b.c_i32(17), b.c_i32(5)))
+  ec_print(b, "%d %d %d\n", ec3(b.copy_local(x), b.copy_local(x2), b.copy_local(t)))
+
+  // Bits, unsigned compare and shift, bool to int.
+  b.assign(b.pl(uu), b.rv_cast(b.c_i32(-1), mt_u32()))
+  b.assign(b.pl(c), b.rv_cmp(mop_gt(), b.copy_local(uu), b.c_u32(1)))
+  b.assign(b.pl(x), b.rv_cast(b.copy_local(c), mt_i32()))
+  b.assign(b.pl(x2), b.rv_bin(mop_shr(), b.c_i32(-16), b.c_i32(2)))
+  ec_print(b, "%d %d\n", ec2(b.copy_local(x), b.copy_local(x2)))
+  b.assign(b.pl(x), b.rv_bin(mop_shl(), b.c_i32(3), b.c_i32(4)))
+  b.assign(b.pl(x), b.rv_bin(mop_or(), b.copy_local(x), b.c_i32(1)))
+  b.assign(b.pl(x), b.rv_bin(mop_and(), b.copy_local(x), b.c_i32(15)))
+  b.assign(b.pl(x), b.rv_bin(mop_xor(), b.copy_local(x), b.c_i32(7)))
+  b.assign(b.pl(x), b.rv_un(mop_not(), b.copy_local(x)))
+  b.assign(b.pl(uu), b.rv_bin(mop_shr(), b.copy_local(uu), b.c_u32(28)))
+  b.assign(b.pl(x2), b.rv_cast(b.copy_local(uu), mt_i32()))
+  ec_print(b, "%d %d\n", ec2(b.copy_local(x), b.copy_local(x2)))
+
+  // f64.
+  b.assign(b.pl(z), b.rv_cast(b.copy_local(x), mt_f64()))
+  b.assign(b.pl(z), b.rv_bin(mop_mul(), b.copy_local(z), ec_f64(b, 4609434218613702656i64, "1.5")))
+  b.assign(b.pl(z), b.rv_bin(mop_div(), b.copy_local(z), ec_f64(b, 4611686018427387904i64, "2")))
+  b.assign(b.pl(z), b.rv_un(mop_neg(), b.copy_local(z)))
+  ec_print(b, "%g\n", ec1(b.copy_local(z)))
+  b.assign(b.pl(x), b.rv_cast(b.copy_local(z), mt_i32()))
+  b.assign(b.pl(c), b.rv_cmp(mop_lt(), b.copy_local(z), ec_f64(b, 4618441417868443648i64, "6")))
+  b.assign(b.pl(x2), b.rv_cast(b.copy_local(c), mt_i32()))
+  ec_print(b, "%d %d\n", ec2(b.copy_local(x), b.copy_local(x2)))
+
+  // A struct by value, a field store.
+  b.assign(b.pl(p), b.rv_struct(pair, ec2(b.c_i32(7), b.c_i64(9i64))))
+  b.assign(b.field(b.pl(p), 0), b.rv_use(b.c_i32(11)))
+  ec_print(b, "%d %lld\n", ec2(b.copy(b.field(b.pl(p), 0)), b.copy(b.field(b.pl(p), 1))))
+
+  // A union whose reference payload (word 1) is the only root of a heap
+  // string across a collection.
+  b.call(s, "avant_str_from_int", ec1(b.c_i32(12345)))
+  b.assign(b.pl(u), b.rv_union(un, 1, b.copy_local(s)))
+  b.assign(b.pl(s), b.rv_zero)
+  b.call(-1, "avant_gc_collect", ec0())
+  b.assign(b.pl(t), b.rv_use(b.copy(b.field(b.pl(u), 0))))
+  b.assign(b.pl(s), b.rv_use(b.copy(b.field(b.pl(u), 2))))
+  ec_print(b, "%d %s\n", ec2(b.copy_local(t), b.copy_local(s)))
+
+  // A fnval and an indirect call; a switch in a leaf.
+  b.assign(b.pl(fv), b.rv_fnval(fnl, b.c_null(mt_ref()), b.c_fn("av.main/twice#fnval")))
+  b.call_indirect(x, b.copy_local(fv), ec1(b.c_i32(21)))
+  b.call(x2, "av.main/classify", ec1(b.c_i32(1)))
+  b.call(t, "av.main/classify", ec1(b.c_i32(5)))
+  ec_print(b, "%d %d %d\n", ec3(b.copy_local(x), b.copy_local(x2), b.copy_local(t)))
+
+  // addr of a struct slot, a store through it behind barrier_at, then a
+  // collection: the struct's word is a root.
+  b.assign(b.pl(r), b.rv_struct(rec, ec1(b.str_const("rec"))))
+  b.assign(b.pl(a), b.rv_addr(b.pl(r)))
+  b.call(s, "avant_str_from_int", ec1(b.c_i32(777)))
+  b.call(-1, "av.main/Rec.set", ec2(b.copy_local(a), b.copy_local(s)))
+  b.assign(b.pl(s), b.rv_zero)
+  b.call(-1, "avant_gc_collect", ec0())
+  b.assign(b.pl(s), b.rv_use(b.copy(b.field(b.pl(r), 0))))
+  ec_print(b, "%s\n", ec1(b.copy_local(s)))
+
+  // An element buffer of four Ints (dynamic size: the inline path's
+  // runtime size tests), bounds-checked stores and loads.
+  b.assign(b.pl(n), b.rv_use(b.c_u64(16i64)))
+  b.call(buf, "avant_alloc", ec2(b.copy_local(n), b.c_u32(0)))
+  b.check_bounds(b.c_i32(2), b.c_i32(4))
+  b.assign(b.index(b.deref(b.pl(buf)), b.c_i32(2)), b.rv_use(b.c_i32(5)))
+  b.assign(b.pl(t), b.rv_use(b.c_i32(2)))
+  b.check_bounds(b.copy_local(t), b.c_i32(4))
+  b.assign(b.pl(x2), b.rv_use(b.copy(b.index(b.deref(b.pl(buf)), b.copy_local(t)))))
+
+  // addr.raw of a frame local for a C out-parameter.
+  b.assign(b.pl(t), b.rv_use(b.c_i32(99)))
+  b.assign(b.pl(pp), b.rv_addr_raw(b.pl(t)))
+  b.call(-1, "memset", ec3(b.copy_local(pp), b.c_i32(0), b.c_u64(4i64)))
+  ec_print(b, "%d %d\n", ec2(b.copy_local(x2), b.copy_local(t)))
+  ec_main_end(b)
+  m
+}
+
+// traps: argc 1 prints ok; 2 overflows an add; 3 divides by zero; 4 fails
+// a bounds check; 5 divides MIN by -1.
+fn ec_traps: MModule {
+  m = mir_module("main")
+  b = MirBuilder.new(m)
+  b.file("traps.av")
+  ec_main_begin(b)
+  x = b.local(mt_i32(), "x")
+  d = b.local(mt_i32(), "d")
+  ec_prologue(b)
+  t1 = b.block
+  t2 = b.block
+  t3 = b.block
+  t4 = b.block
+  done = b.block
+  vals: Array(Int64) = []
+  vals.push(2i64)
+  vals.push(3i64)
+  vals.push(4i64)
+  vals.push(5i64)
+  targets = ec_tys(t1, t2)
+  targets.push(t3)
+  targets.push(t4)
+  b.switch_on(b.copy_local(1), vals, targets, done)
+  b.at(t1)
+  b.assign(b.pl(x), b.rv_chk(mop_add(), b.c_i32(2147483647), b.copy_local(1)))
+  b.goto(done)
+  b.at(t2)
+  b.assign(b.pl(d), b.rv_bin(mop_sub(), b.copy_local(1), b.c_i32(3)))
+  b.assign(b.pl(x), b.rv_chk(mop_div(), b.c_i32(1), b.copy_local(d)))
+  b.goto(done)
+  b.at(t3)
+  b.check_bounds(b.copy_local(1), b.c_i32(4))
+  b.goto(done)
+  b.at(t4)
+  b.assign(b.pl(d), b.rv_bin(mop_sub(), b.copy_local(1), b.c_i32(6)))
+  b.assign(b.pl(x), b.rv_chk(mop_div(), b.c_i32(-2147483647 - 1), b.copy_local(d)))
+  b.goto(done)
+  b.at(done)
+  ec_print(b, "ok\n", ec0())
+  ec_main_end(b)
+  m
+}

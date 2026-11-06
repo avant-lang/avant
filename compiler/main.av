@@ -20,6 +20,8 @@ import dump_check
 import expand
 import format
 import lexer
+import llvm.driver
+import llvm.emit_cases
 import llvm.glue
 import mir.selftest
 import loader
@@ -456,6 +458,84 @@ fn driver_llvm_obj(args: Array(String)) {
   }
 }
 
+// Internal (Stage 28 W5a), not in the usage text: builds one of the
+// builder-made MIR modules by name (llvm/emit_cases.av), verifies it at
+// stage final, emits the .ll, compiles it with the in-process LLVM, and
+// links it like a program (llvm/driver.av).
+//   avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
+//                    [--object] [--call-forms] [--time]
+//   avant __mir-build --list
+// No flag is compile's bare mode. --object stops at the object (OUT); a
+// module without `main` needs it. --call-forms emits allocation and the
+// barrier as calls. --time prints the phases' microseconds on stderr.
+// Exit 0, or 1 with the message on stderr.
+fn driver_mir_build(args: Array(String)) {
+  job = LlvmJob.new("default")
+  files: Array(String) = []
+  object = false
+  timed = false
+  i = 0
+  while i < args.size {
+    a = args[i]
+    if str_eq(a, "--list") {
+      names = mir_build_names()
+      k = 0
+      while k < names.size {
+        out_puts(names[k])
+        k = k + 1
+      }
+      return
+    } else if str_eq(a, "--debug") {
+      job.codegen = "debug"
+    } else if str_eq(a, "--release") {
+      job.codegen = "release"
+    } else if str_eq(a, "--emit-ll") && i + 1 < args.size {
+      job.keep_ll = args[i + 1]
+      i = i + 1
+    } else if str_eq(a, "--object") {
+      object = true
+    } else if str_eq(a, "--call-forms") {
+      job.inline_fast = false
+    } else if str_eq(a, "--time") {
+      timed = true
+    } else if str_starts(a, "-") {
+      diag_puts("__mir-build: unknown flag ${a}")
+      diag_exit(1)
+    } else {
+      files.push(a)
+    }
+    i = i + 1
+  }
+  if files.size != 2 {
+    diag_puts("usage: avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE] [--object] [--call-forms] [--time]")
+    diag_exit(1)
+  }
+  if m = mir_build_module(files[0]) {
+    err = ""
+    has_main = false
+    if g = m.func("main") {
+      has_main = true
+    }
+    if object {
+      err = llvm_object(m, job, files[1])
+    } else if !has_main {
+      err = "__mir-build: ${files[0]} has no main (use --object)"
+    } else {
+      err = llvm_build(m, job, files[1])
+    }
+    if timed {
+      diag_puts("emit_us=${job.emit_us} compile_us=${job.compile_us} link_us=${job.link_us}")
+    }
+    if err.size > 0 {
+      diag_puts(err)
+      diag_exit(1)
+    }
+    return
+  }
+  diag_puts("__mir-build: no module named ${files[0]} (see --list)")
+  diag_exit(1)
+}
+
 fn main {
   args = take_keep_tmp(argv_user())
   if args.size == 0 {
@@ -532,6 +612,10 @@ fn main {
   }
   if str_eq(command, "__llvm-obj") {
     driver_llvm_obj(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__mir-build") {
+    driver_mir_build(argv_drop_first(args))
     return
   }
   if str_eq(command, "__mir-selftest") {
