@@ -292,6 +292,10 @@ pub class Function {
   box_names: Array(String)
   as_value: Bool = false
   bounds: Array(TypeBound)
+  // A generic function's or method's instance: the type arguments the
+  // checker substituted (checker/match.av instantiate_function and
+  // instantiate_method), in type-parameter order; empty otherwise.
+  inst_args: Array(Ty)
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -307,6 +311,8 @@ pub class Function {
     self.box_names = bx
     bd: Array(TypeBound) = []
     self.bounds = bd
+    ia: Array(Ty) = []
+    self.inst_args = ia
     self.generic = false
     self.ol_index = 0
     self.vis = false
@@ -1058,6 +1064,11 @@ pub fn clone_function(fnn: Function): Function {
   while i < fnn.bounds.size {
     b = fnn.bounds[i]
     out.bounds.push(TypeBound.new(b.param, clone_type_name(b.iface)))
+    i = i + 1
+  }
+  i = 0
+  while i < fnn.inst_args.size {
+    out.inst_args.push(fnn.inst_args[i])
     i = i + 1
   }
   out.generic = fnn.generic

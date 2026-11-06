@@ -11,10 +11,8 @@
 // of them reaches the MIR (2.9).
 //
 // A symbol is `av.<module>/<item>` (8.2): item = [owner "."] name, then
-// `[targs]` for a generic instance, or `(params)` when the name is
-// overloaded in its scope; the targs are recovered from the instance's
-// checked signature against its template's (the instance's emit name,
-// `sig_mangle(name, targs)`, confirms the match).
+// `[targs]` for a generic instance (the checker's Function.inst_args),
+// or `(params)` when the name is overloaded in its scope.
 
 import location
 import source
@@ -32,154 +30,24 @@ import mir.lower_call
 import mir.lower_agg
 import mir.lower_union
 
-// Binds the type parameters of params that the TypeName pattern tn
-// names, against the checked type ty (structurally: a parameter, a
-// nilable parameter, Array, Hash, Ptr, JoinHandle, a generic struct or
-// class, and fn types; union patterns are skipped).
-pub fn mir_bind_tparams(tn: TypeName, ty: Ty, params: Array(String), tys: Array(Ty), bound: Array(Bool)) {
-  i = 0
-  while i < params.size {
-    if str_eq(tn.name, params[i]) && tn.args.size == 0 && !tn.fn_type {
-      t = ty
-      if tn.nilable && ty.is_union {
-        t = ty_without_nil(ty)
-      }
-      if !bound[i] {
-        tys[i] = t
-        bound[i] = true
-      }
-      return
-    }
-    i = i + 1
-  }
-  if tn.fn_type && ty.is_fn {
-    j = 0
-    while j < tn.args.size && j < ty.members.size {
-      mir_bind_tparams(tn.args[j], ty.members[j], params, tys, bound)
-      j = j + 1
-    }
-    if r = tn.ret {
-      if rt = ty.inner {
-        mir_bind_tparams(r, rt, params, tys, bound)
-      }
-    }
-    return
-  }
-  if tn.args.size == 0 || tn.members.size > 0 {
-    return
-  }
-  if ty.is_hash && tn.args.size == 2 {
-    if k = ty.key {
-      mir_bind_tparams(tn.args[0], k, params, tys, bound)
-    }
-    if v = ty.val {
-      mir_bind_tparams(tn.args[1], v, params, tys, bound)
-    }
-    return
-  }
-  if (ty.is_array || ty.is_ptr || ty.is_join) && tn.args.size == 1 {
-    if inner = ty.inner {
-      mir_bind_tparams(tn.args[0], inner, params, tys, bound)
-    }
-    return
-  }
-  j = 0
-  while j < tn.args.size && j < ty.ty_args.size {
-    mir_bind_tparams(tn.args[j], ty.ty_args[j], params, tys, bound)
-    j = j + 1
-  }
-}
-
-fn mir_str_ends(s: String, suffix: String): Bool {
-  if suffix.size > s.size {
-    return false
-  }
-  str_eq(str_slice(s, s.size - suffix.size, s.size), suffix)
-}
-
-// The `[targs]` part of fnn's symbol when it is a generic instance (a
-// generic template of the same scope matches its checked signature, and
-// its emit name is the instance name the checker gives those targs), else
-// "".
+// The `[targs]` part of fnn's symbol when it is a generic instance (the
+// type arguments the checker substituted, Function.inst_args), else "".
 pub fn (lw: MirLower) instance_suffix(fnn: Function): String {
-  if fnn.generic {
+  if fnn.inst_args.size == 0 {
     return ""
   }
-  method = fn_is_method(fnn)
-  params: Array(Ty) = []
-  ret = ty_void()
-  if method {
-    if ms = lw.lw_syms.find_method_emit(fnn.emit_name) {
-      params = ms.params
-      ret = ms.ret
-    } else {
-      return ""
+  buf = buf_new()
+  buf.push_str("[")
+  j = 0
+  while j < fnn.inst_args.size {
+    if j > 0 {
+      buf.push_str(",")
     }
-  } else {
-    if fs = lw.lw_syms.find_fn(fnn.emit_name) {
-      params = fs.params
-      ret = fs.ret
-    } else {
-      return ""
-    }
+    buf.push_str(mir_mty(fnn.inst_args[j]))
+    j = j + 1
   }
-  i = 0
-  while i < lw.lw_all.size {
-    t = lw.lw_all[i]
-    tm = fn_is_method(t)
-    same = t.generic && str_eq(t.name, fnn.name) && str_eq(t.mod_name, fnn.mod_name) && ((tm && method) || (!tm && !method))
-    if same && method {
-      same = str_eq(t.owner, fnn.owner) && str_eq(t.owner_mod, fnn.owner_mod)
-    }
-    if same && t.params.size == params.size && t.type_params.size > 0 {
-      tys: Array(Ty) = []
-      bound: Array(Bool) = []
-      j = 0
-      while j < t.type_params.size {
-        tys.push(ty_void())
-        bound.push(false)
-        j = j + 1
-      }
-      j = 0
-      while j < t.params.size {
-        mir_bind_tparams(t.params[j].type, params[j], t.type_params, tys, bound)
-        j = j + 1
-      }
-      if rt = t.return_type {
-        mir_bind_tparams(rt, ret, t.type_params, tys, bound)
-      }
-      all = true
-      j = 0
-      while j < bound.size {
-        all = all && bound[j]
-        j = j + 1
-      }
-      if all {
-        ok = false
-        if method {
-          ok = mir_str_ends(fnn.emit_name, sig_mangle("", tys))
-        } else {
-          ok = str_eq(fnn.emit_name, sig_mangle(fnn.name, tys))
-        }
-        if ok {
-          buf = buf_new()
-          buf.push_str("[")
-          j = 0
-          while j < tys.size {
-            if j > 0 {
-              buf.push_str(",")
-            }
-            buf.push_str(mir_mty(tys[j]))
-            j = j + 1
-          }
-          buf.push_str("]")
-          return buf.to_s
-        }
-      }
-    }
-    i = i + 1
-  }
-  ""
+  buf.push_str("]")
+  buf.to_s
 }
 
 fn mir_params_text(params: Array(Ty)): String {
