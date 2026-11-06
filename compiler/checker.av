@@ -784,7 +784,11 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        self.fail(stmt.loc, "break is only valid inside while")
+        if self.place_depth > 0 {
+          self.fail(stmt.loc, "break inside Mutex.with")
+        } else {
+          self.fail(stmt.loc, "break is only valid inside a loop")
+        }
       }
       if at_tail {
         if expected.is_void {
@@ -796,7 +800,11 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        self.fail(stmt.loc, "continue is only valid inside while")
+        if self.place_depth > 0 {
+          self.fail(stmt.loc, "continue inside Mutex.with")
+        } else {
+          self.fail(stmt.loc, "continue is only valid inside a loop")
+        }
       }
       if at_tail {
         if expected.is_void {
@@ -3691,7 +3699,10 @@ pub class Checker {
         return ty_join(self.t_int())
       }
       self.in_task = self.in_task + 1
+      saved_loops = self.loop_depth
+      self.loop_depth = 0
       result = self.check_block_value(b)
+      self.loop_depth = saved_loops
       self.in_task = self.in_task - 1
       if result.is_int {
       } else {
@@ -3839,7 +3850,12 @@ pub class Checker {
       self.bind(b.params[0], t)
       self.place_name = b.params[0]
       self.place_depth = self.place_depth + 1
+      // As `return`, a `break` or `continue` cannot leave the block: the
+      // lock is released at its end only (W10b: both back ends hung).
+      saved_loops = self.loop_depth
+      self.loop_depth = 0
       result = self.check_block_value(b)
+      self.loop_depth = saved_loops
       self.place_name = saved_name
       self.place_depth = saved_depth
       self.pop_scope

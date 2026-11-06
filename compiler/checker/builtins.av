@@ -367,7 +367,9 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_void()
       }
       if e = array.inner {
+        checker_self.loop_depth = checker_self.loop_depth + 1
         checker_self.check_block_void(b, b.params[0], e)
+        checker_self.loop_depth = checker_self.loop_depth - 1
       }
       return checker_self.t_void()
     }
@@ -390,7 +392,9 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.push_scope
         checker_self.bind(b.params[0], e)
         checker_self.bind(b.params[1], e)
+        checker_self.loop_depth = checker_self.loop_depth + 1
         bt = checker_self.check_block_value(b)
+        checker_self.loop_depth = checker_self.loop_depth - 1
         checker_self.pop_scope
         if bt.is_bool {
         } else {
@@ -429,7 +433,9 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.push_scope
         checker_self.bind(b.params[0], e)
         checker_self.bind(b.params[1], e)
+        checker_self.loop_depth = checker_self.loop_depth + 1
         bt = checker_self.check_block_value(b)
+        checker_self.loop_depth = checker_self.loop_depth - 1
         checker_self.pop_scope
         if bt.is_bool {
         } else {
@@ -494,7 +500,9 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       if e = array.inner {
         checker_self.push_scope
         checker_self.bind(b.params[0], e)
+        checker_self.loop_depth = checker_self.loop_depth + 1
         bt = checker_self.check_block_value(b)
+        checker_self.loop_depth = checker_self.loop_depth - 1
         checker_self.pop_scope
         if bt.is_bool {
         } else {
@@ -706,7 +714,10 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       checker_self.push_scope
       checker_self.bind(b.params[0], e)
       checker_self.in_task = checker_self.in_task + 1
+      saved_loops = checker_self.loop_depth
+      checker_self.loop_depth = 0
       result = checker_self.check_block_value(b)
+      checker_self.loop_depth = saved_loops
       checker_self.in_task = checker_self.in_task - 1
       checker_self.pop_scope
       checker_self.collect_spawn_captures(expr, b.body)
@@ -857,7 +868,9 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
           checker_self.push_scope
           checker_self.bind(b.params[0], k)
           checker_self.bind(b.params[1], v)
+          checker_self.loop_depth = checker_self.loop_depth + 1
           checker_self.check_body(b.body, checker_self.t_void(), false)
+          checker_self.loop_depth = checker_self.loop_depth - 1
           checker_self.pop_scope
         }
       }

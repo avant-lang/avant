@@ -6,13 +6,13 @@ import backends
 // (a) it compiles under both back ends (--debug), and the two programs'
 // stdout, stderr, and exit status are equal (the differential, D184);
 // for the fixtures with goldens, (b) `avant dump` under AVANT_BACKEND=llvm
-// prints exactly tests/goldens/<stem>.mir (D171); and (c) a construct
-// outside the subset stops the compile with the L0001 diagnostic at its
-// location, writing nothing; the new back end is the default (Stage 28
-// W10: AVANT_BACKEND unset), AVANT_BACKEND=myc selects the old one, and
-// any other value is refused; (d) `compile` creates a missing parent
-// directory of its output on both back ends (the old driver's myc-llvm
-// did; W10 gave the new driver the same).
+// prints exactly tests/goldens/<stem>.mir (D171); (c) the new back end
+// is the default (Stage 28 W10: AVANT_BACKEND unset), AVANT_BACKEND=myc
+// selects the old one, and any other value is refused; (d) `compile`
+// creates a missing parent directory of its output on both back ends (the
+// old driver's myc-llvm did; W10 gave the new driver the same). (The
+// L0001 probe of this file, `break` in a lambda inside a `while`, left
+// with W10b: the checker rejects it, tests/cases/test_frontend.av.)
 
 // The programs, relative to the root; those with a golden first.
 fn golden_progs: Array(String) {
@@ -95,7 +95,6 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
     i = i + 1
   }
-  jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/tests/fixtures/closures/refuse_break.av", "${dir}/refuse.llvm", "${dir}/refuse.llvm.log"))
   jobs.push(compile_job("AVANT_BACKEND=bogus", compiler, "${root}/examples/hello.av", "${dir}/bogus", "${dir}/bogus.log"))
   d: Array(String) = []
   d.push("dump")
@@ -130,24 +129,18 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     i = i + 1
   }
   base = base + gp.size
-  sv = jobs[base]
-  c.eq_int(sv.code, 1, "closures/refuse_break.av under llvm: exit 1")
-  sl = log_text(sv.log)
-  c.expect(str_has(sl, "error[L0001]: not yet supported by the llvm back end: break or next outside a loop"), "closures/refuse_break.av: the not-yet-supported diagnostic")
-  c.expect(str_has(sl, "refuse_break.av:13:7"), "closures/refuse_break.av: at the construct's location")
-  c.expect(!file_exists("${dir}/refuse.llvm"), "closures/refuse_break.av: no program written")
-  bg = jobs[base + 1]
+  bg = jobs[base]
   c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
   c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be myc or llvm, not bogus"), "AVANT_BACKEND=bogus: refused")
-  c.eq_int(jobs[base + 2].code, 0, "AVANT_BACKEND=llvm dump: exit 0")
-  c.eq_int(jobs[base + 3].code, 0, "default dump: exit 0")
-  c.eq_str(log_text(jobs[base + 2].log), log_text(jobs[base + 3].log), "the llvm back end is the default back end")
-  c.expect(str_has(log_text(jobs[base + 3].log), "fn main"), "the default dump is MIR")
-  c.eq_int(jobs[base + 4].code, 0, "AVANT_BACKEND=myc dump: exit 0")
-  c.expect(str_has(log_text(jobs[base + 4].log), "FUNC :main"), "AVANT_BACKEND=myc dump is myc IR")
-  c.eq_int(jobs[base + 5].code, 0, "myc: compile into a missing directory exits 0")
+  c.eq_int(jobs[base + 1].code, 0, "AVANT_BACKEND=llvm dump: exit 0")
+  c.eq_int(jobs[base + 2].code, 0, "default dump: exit 0")
+  c.eq_str(log_text(jobs[base + 1].log), log_text(jobs[base + 2].log), "the llvm back end is the default back end")
+  c.expect(str_has(log_text(jobs[base + 2].log), "fn main"), "the default dump is MIR")
+  c.eq_int(jobs[base + 3].code, 0, "AVANT_BACKEND=myc dump: exit 0")
+  c.expect(str_has(log_text(jobs[base + 3].log), "FUNC :main"), "AVANT_BACKEND=myc dump is myc IR")
+  c.eq_int(jobs[base + 4].code, 0, "myc: compile into a missing directory exits 0")
   c.expect(file_exists("${dir}/outdir-myc/a/b/hello"), "myc: the missing output directory is created")
-  c.eq_int(jobs[base + 6].code, 0, "default (llvm): compile into a missing directory exits 0")
+  c.eq_int(jobs[base + 5].code, 0, "default (llvm): compile into a missing directory exits 0")
   c.expect(file_exists("${dir}/outdir-llvm/a/b/hello"), "default (llvm): the missing output directory is created")
 
   // Wave 2: every program from both back ends.

@@ -8,32 +8,38 @@ import backends
 // followed by a member, `self.ts.get(ty).bits`, `f(job.flags).split(" ")`,
 // `Money.of(o.node).c`; a type-level function in field form,
 // `Money.zero.c`), types/bump_method.av (a method named `bump` called on
-// a value).
+// a value), closures/block_break.av (`break` in a block builtin with no
+// `while` around it; `break`/`continue` of a loop inside a lambda). The
+// checker rejects `break` in a lambda body inside a `while`
+// (closures/refuse_break.av) and `break` inside `Mutex.with`
+// (closures/with_break.av) on both back ends, at the statement, writing
+// no program.
 
 fn ok_progs: Array(String) {
-  out: Array(String) = ["tests/fixtures/types/paths.av", "tests/fixtures/types/bump_method.av"]
+  out: Array(String) = ["tests/fixtures/types/paths.av", "tests/fixtures/types/bump_method.av", "tests/fixtures/closures/block_break.av"]
   out
 }
 
 fn ok_wants: Array(String) {
   paths = "16\n32\n4\n3\n0\n0\n0\n7\n14\n28\n"
   bumps = "2\n5\n8\n9\n"
-  out: Array(String) = [paths, bumps]
+  blocks = "12\n1\n1\n25\n"
+  out: Array(String) = [paths, bumps, blocks]
   out
 }
 
 fn bad_progs: Array(String) {
-  out: Array(String) = []
+  out: Array(String) = ["tests/fixtures/closures/refuse_break.av", "tests/fixtures/closures/with_break.av"]
   out
 }
 
 fn bad_wants: Array(String) {
-  out: Array(String) = []
+  out: Array(String) = ["error[E4000]: break is only valid inside a loop", "error[E4000]: break inside Mutex.with"]
   out
 }
 
 fn bad_locs: Array(String) {
-  out: Array(String) = []
+  out: Array(String) = ["refuse_break.av:14:7", "with_break.av:25:9"]
   out
 }
 

@@ -795,6 +795,10 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     ft: Array(Ty) = []
     expr.cap_tys = ft
     checker_self.push_lambda(expr)
+    // A lambda body is a function of its own: a loop around the lambda is
+    // not one its `break` or `continue` can leave.
+    saved_loops = checker_self.loop_depth
+    checker_self.loop_depth = 0
     i = 0
     while i < b.params.size {
       pty = want.members[i]
@@ -839,6 +843,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     } else {
       checker_self.check_body(b.body, ret, true)
     }
+    checker_self.loop_depth = saved_loops
     checker_self.pop_lambda
     if result_ret.is_void {
     } else {
