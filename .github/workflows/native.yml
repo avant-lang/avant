@@ -18,10 +18,13 @@
 # uninstrumented on the same runner image).
 #
 # The seed is the published asset avant-linux-x86_64.tar.gz. `avant` in
-# that asset compiles compiler/main.av into B with coverage on.
-# `myc-llvm` is the safepoints release (SAFEPOINTS_VERSION below), checked by sha256.
+# that asset compiles compiler/main.av into B with coverage on (the seed's
+# old back end; B's own default is the new back end since Stage 28 W10, so
+# the suite's compiles on B use it). AVANT_MYC_LLVM points at the seed's
+# bundled myc-llvm (pinned by the seed's sha256; no separate safepoints
+# download): the seed needs it, and the suite's tests of the old back end
+# (AVANT_BACKEND=myc) use it until that back end retires (W11).
 # This job does not install Crystal and does not compile myc-llvm.
-# AVANT_MYC_LLVM points at the extracted backend.
 # Runtime objects come from runtime/build.sh.
 #
 # `re2c` is a build tool, like `cc`. A string literal at `re_compile` is
@@ -29,10 +32,8 @@
 # release ships (tools/build-re2c.sh) into bin/re2c, beside the compiler.
 # Computed patterns use PCRE2, vendored in runtime/third_party/pcre2 (D146).
 #
-# Tag pushes are `release.yml` (the seed builds that binary too,
-# with this same safepoints myc-llvm). Since Wave G the Avant
-# asset bundles myc-llvm beside avant; this job still uses its own
-# hash-pinned backend through AVANT_MYC_LLVM.
+# Tag pushes are `release.yml` (the same seed builds B there, and B the
+# shipped compiler on the new back end).
 # `native` also writes junit.xml and coverage/lcov.info (soft Codecov; not the
 # merge gate). Suite sets AVANT_COVERAGE_REPORT=0; the compiler CLI is
 # quiet anyway so `run FILE.av` stdout stays the program.
@@ -50,8 +51,6 @@ name: native
 env:
   AVANT_SEED_VERSION: v0.34.0
   AVANT_SEED_SHA256: 9ab2e12f539d5eaa051232dbf0d95b5d4cd89769aeb68fa9adcae8954e42cfff
-  SAFEPOINTS_VERSION: v0.6.0
-  MYC_LLVM_SHA256: f6776ede1f2154cab0af6d9eeaec064c180df6c86867a8d57d48745d116b4437
 
 "on":
   push:
@@ -73,15 +72,15 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: /tmp/myc-llvm-linux-x86_64/myc-llvm
+      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
     steps:
       - uses: actions/checkout@v7
 
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      # The backend (safepoints v0.6.0) has LLVM linked in and needs nothing
-      # from apt. libclang (with llvm-config, from llvm-20) is for the bind
+      # The seed's myc-llvm has LLVM linked in and needs nothing from apt.
+      # libclang (with llvm-config, from llvm-20) is for the bind
       # helper that runtime/build.sh builds and the release ships; zlib1g-dev
       # is for examples/zlib.av, which binds the system zlib itself.
       # llvm-20-dev (static LLVM archives) and libzstd-dev are for
@@ -115,15 +114,7 @@ jobs:
           echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
-
-      - name: Download safepoints ${{ env.SAFEPOINTS_VERSION }} myc-llvm
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
-            "https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
-          echo "${MYC_LLVM_SHA256}  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
-          tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
-          test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
+          test -x /tmp/avant-linux-x86_64/myc-llvm
 
       - name: Seed → B
         env:

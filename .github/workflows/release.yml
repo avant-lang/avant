@@ -1,10 +1,15 @@
-# On a version tag: the seed (AVANT_SEED_VERSION below) builds B, the suite runs on B,
-# then a draft GitHub Release is opened with the linux-x86_64 compiler.
+# On a version tag: the seed (AVANT_SEED_VERSION below) builds B, B builds the
+# shipped compiler on the new back end with --release (bin/avant-c-release,
+# Stage 28 W10, D208), the suite runs on it, then a draft GitHub Release is
+# opened with the linux-x86_64 compiler.
 #
-# The seed is the avant-linux-x86_64.tar.gz asset of AVANT_SEED_VERSION. It contains `avant`.
-# `myc-llvm` is the safepoints release (SAFEPOINTS_VERSION below), checked by sha256, and is
-# bundled beside `avant` in the new asset (Wave G). This job does not
-# install Crystal and does not compile myc-llvm.
+# The seed is the avant-linux-x86_64.tar.gz asset of AVANT_SEED_VERSION. It
+# contains `avant` and its bundled `myc-llvm` (pinned by the seed's sha256;
+# no separate safepoints download): the seed needs it to build B, and the
+# suite's tests of the old back end (AVANT_BACKEND=myc) use it until that
+# back end retires (W11). The new asset has no myc-llvm: the compiler's
+# default back end is the in-process LLVM linked into it (D172). This job
+# does not install Crystal and does not compile myc-llvm.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 # The release bundles a static re2c built from the pinned upstream release.
@@ -35,8 +40,6 @@ name: release-binary
 env:
   AVANT_SEED_VERSION: v0.34.0
   AVANT_SEED_SHA256: 9ab2e12f539d5eaa051232dbf0d95b5d4cd89769aeb68fa9adcae8954e42cfff
-  SAFEPOINTS_VERSION: v0.6.0
-  MYC_LLVM_SHA256: f6776ede1f2154cab0af6d9eeaec064c180df6c86867a8d57d48745d116b4437
 
 "on":
   push:
@@ -63,7 +66,7 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: /tmp/myc-llvm-linux-x86_64/myc-llvm
+      AVANT_MYC_LLVM: /tmp/avant-linux-x86_64/myc-llvm
       TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
@@ -87,8 +90,8 @@ jobs:
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      # The backend (safepoints v0.6.0) has LLVM linked in and needs nothing
-      # from apt. libclang (with llvm-config, from llvm-20) is for the bind
+      # The seed's myc-llvm has LLVM linked in and needs nothing from apt.
+      # libclang (with llvm-config, from llvm-20) is for the bind
       # helper that runtime/build.sh builds and the release ships; zlib1g-dev
       # is for examples/zlib.av, which binds the system zlib itself.
       # llvm-20-dev (static LLVM archives) and libzstd-dev are for
@@ -122,53 +125,43 @@ jobs:
           echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
+          test -x /tmp/avant-linux-x86_64/myc-llvm
 
-      - name: Download safepoints ${{ env.SAFEPOINTS_VERSION }} myc-llvm
+      # tools/letters.sh holds the letters' one incantation (D190): b is
+      # the seed's build of compiler/main.av (bin/avant-b), c-release is
+      # B's build on the new back end with --release (bin/avant-c-release),
+      # the compiler this release ships.
+      - name: Seed → B → the shipped compiler
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
-            "https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
-          echo "${MYC_LLVM_SHA256}  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
-          tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
-          test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
+          LETTERS_SEED=/tmp/avant-linux-x86_64 sh tools/letters.sh b c-release
+          env -u AVANT_MYC_LLVM ./bin/avant-c-release run examples/hello.av
 
-      - name: Seed → B
-        run: |
-          set -euo pipefail
-          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o
-          ./bin/avant-b run examples/hello.av
-
-      - name: Native suite on B
+      - name: Native suite on the shipped compiler
         env:
-          AVANT_COMPILER: ./bin/avant-b
+          AVANT_COMPILER: ./bin/avant-c-release
         run: |
           set -euo pipefail
-          ./bin/avant-b test
+          ./bin/avant-c-release test
 
-      - name: Package linux-x86_64 B
+      - name: Package linux-x86_64
         run: |
           set -euo pipefail
           mkdir -p dist
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
-            echo "myc-llvm: https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
-            echo "myc-llvm-sha256: ${MYC_LLVM_SHA256}"
-            if [ -f /tmp/myc-llvm-linux-x86_64/versions.txt ]; then
-              echo "myc-llvm-origin:"
-              sed 's/^/  /' /tmp/myc-llvm-linux-x86_64/versions.txt
-            fi
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
-            echo "built-by: ${AVANT_SEED_VERSION}"
+            echo "built-by: B (the ${AVANT_SEED_VERSION} seed's build of this tree), on the in-process LLVM back end, --release"
+            echo "backend: in-process LLVM $(llvm-config-20 --version), linked into avant (runtime/avant_llvm.c, tools/build-llvm.sh); no myc-llvm"
             echo "seed: yes"
             echo "binary: avant"
-            echo "bundled: myc-llvm (safepoints ${SAFEPOINTS_VERSION}) beside avant"
             echo "bundled: avant-bind (tools/bind.c, libclang $(llvm-config-20 --version)) beside avant"
             echo "bundled: re2c ($(bin/re2c --version), static, tools/build-re2c.sh) beside avant"
           } | tee dist/versions.txt
           # The layout is tools/package.sh's (D148), the same script local proofs use.
-          sh tools/package.sh dist bin/avant-b /tmp/myc-llvm-linux-x86_64/myc-llvm bin/re2c dist/versions.txt
+          sh tools/package.sh dist bin/avant-c-release bin/re2c dist/versions.txt
           cat dist/avant-linux-x86_64.tar.gz.sha256
           sh tools/container-test.sh ubuntu:24.04 dist
           cp install.sh dist/install.sh
@@ -177,7 +170,7 @@ jobs:
             echo
             echo "Install: \`curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash\` (or extract this archive and put its directory on PATH)."
             echo
-            echo "Built by the ${AVANT_SEED_VERSION} seed. The archive carries \`avant\`, its \`myc-llvm\` backend (safepoints ${SAFEPOINTS_VERSION}, LLVM linked in), \`re2c\`, the \`avant-bind\` helper, the standard library, and the runtime (PCRE2 and zlib inside)."
+            echo "Built from the ${AVANT_SEED_VERSION} seed through B. The archive carries \`avant\` (LLVM linked in: no \`myc-llvm\` and no other backend process), \`re2c\`, the \`avant-bind\` helper, the standard library, and the runtime (PCRE2 and zlib inside)."
             echo "Compiling a program needs a C compiler and the C library development files (Debian/Ubuntu: gcc libc6-dev; Fedora: gcc glibc-devel), and glibc at or above the \`glibc-floor\` below. \`avant bind\` also needs libclang 20."
             echo "This asset can be the next compiler pin after it is published. It is not the oracle."
             echo
