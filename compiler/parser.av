@@ -2116,6 +2116,20 @@ pub class Parser {
       e.ident = tok.value
       e.mod_name = qual
       e.type_args = args
+      // The same text is also a call followed by a member when the name is
+      // not a type (`get(ty).bits`, `f(job.flags).split(" ")`): only the
+      // checker can tell. Keep the arguments read as expressions too (the
+      // call reading); the checker drops them when it takes the type.
+      after = self.index
+      self.index = saved_index
+      call_mark = self.err_count
+      exprs = self.parse_arg_list
+      if self.new_err_since(call_mark) {
+        self.truncate_errors(call_mark)
+      } else if self.index == after {
+        e.args = exprs
+      }
+      self.index = after
       return e
     }
     if ahead.kind == tk_l_brace() {

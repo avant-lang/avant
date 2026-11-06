@@ -1335,9 +1335,20 @@ pub class Checker {
 
   pub fn check_field(expr: Expr): Ty {
     if obj = expr.object {
+      if ty = self.type_call_target(obj, expr.ident) {
+        // A type-level function in field form (`Money.zero`, declared
+        // `fn self.zero: Money`), as a method without parameters is called
+        // `a.twice`: the expression becomes that call.
+        expr.kind = ex_call()
+        expr.callee = expr.ident
+        expr.receiver = obj
+        expr.object = nil
+        return self.check_type_call(expr, ty)
+      }
       if obj.kind == ex_name() {
         if obj.type_args.size > 0 {
           if self.is_generic_template(obj.ident) {
+            self.take_type_app(obj)
           } else {
             call = self.type_app_as_call(obj)
             expr.object = call
@@ -3247,13 +3258,37 @@ pub class Checker {
     call
   }
 
+  // The call reading of `name(args).member` (the parser could not tell it
+  // from a type application `Name(T).member`, parse_maybe_type_app). The
+  // qualifier is the receiver path as written (the parser takes one only
+  // from a chain of names), rebuilt as that chain: `self.ts.get(ty)` is a
+  // method call on `self.ts`, `m.f(x)` a call in module `m`
+  // (flatten_module_receiver). The arguments are the parser's expression
+  // reading when it had one (`o.node`, `x?`), else rebuilt from the types.
   pub fn type_app_as_call(recv: Expr): Expr {
     call = Expr.new(ex_call(), recv.loc)
     call.callee = recv.ident
     if recv.mod_name.size > 0 {
-      mod = Expr.new(ex_name(), recv.loc)
-      mod.ident = recv.mod_name
-      call.receiver = mod
+      segs = recv.mod_name.split(".")
+      path = Expr.new(ex_name(), recv.loc)
+      path.ident = segs[0]
+      i = 1
+      while i < segs.size {
+        fa = Expr.new(ex_field(), recv.loc)
+        fa.object = path
+        fa.ident = segs[i]
+        path = fa
+        i = i + 1
+      }
+      call.receiver = path
+    }
+    if recv.args.size == recv.type_args.size {
+      i = 0
+      while i < recv.args.size {
+        call.args.push(recv.args[i])
+        i = i + 1
+      }
+      return call
     }
     i = 0
     while i < recv.type_args.size {
@@ -3261,6 +3296,17 @@ pub class Checker {
       i = i + 1
     }
     call
+  }
+
+  // The type reading of `Name(T).member`: the parser's call reading of the
+  // arguments (type_app_as_call) is dropped so no later walk meets it.
+  pub fn take_type_app(recv: Expr) {
+    if recv.kind == ex_name() {
+      if recv.type_args.size > 0 {
+        none: Array(Expr) = []
+        recv.args = none
+      }
+    }
   }
 
   pub fn rewrite_type_app_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
@@ -3365,6 +3411,7 @@ pub class Checker {
     if recv.kind == ex_name() {
       if recv.type_args.size > 0 {
         if self.is_generic_template(recv.ident) {
+          self.take_type_app(recv)
           if str_eq(expr.callee, "new") {
           } else {
             self.fail(recv.loc, "${recv.ident} is a type")
