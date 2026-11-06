@@ -71,6 +71,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   out.push_str(body)
   out.push_str(maps)
   out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" }\n")
+  ll_loop_md(e, out)
   out.to_s
 }
 
@@ -129,10 +130,10 @@ fn ll_declarations(e: LlEmit, out: Buf) {
       if ll_cabi_needed(e.ts, x.sig) {
         out.push_str(ll_cabi_declare(e.ts, name, x.sig))
       } else {
-        out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn))
+        out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn, e.m.rt.attrs_of(name)))
       }
     } else if r = e.m.rt.find(name) {
-      out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn))
+      out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn, r.attrs))
     }
     i = i + 1
   }
@@ -167,8 +168,9 @@ fn ll_insert_sorted(xs: Array(String), s: String) {
 }
 
 // `declare <ret> @name(<params>)`: `zeroext` on a C boolean (14, 8.5);
-// the traps are `noreturn nounwind cold` (11.1).
-fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool): String {
+// the traps are `noreturn nounwind cold` (11.1); a call-table row's
+// attributes follow (W9b: the pure readers, runtime.av mir_rt_attrs).
+fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String): String {
   s = ts.sigs[sig]
   buf = buf_new()
   buf.push_str("declare ${ll_c_type(ts, s.ret)} ${ll_sym(name)}(")
@@ -189,6 +191,9 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool): String {
   buf.push_str(")")
   if noreturn {
     buf.push_str(" noreturn nounwind cold")
+  }
+  if attrs.size > 0 {
+    buf.push_str(" ${attrs}")
   }
   buf.push_str("\n")
   buf.to_s
@@ -283,7 +288,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   i = 1
   while i <= f.nparams {
-    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), f.locals[i].slot)
+    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
     i = i + 1
   }
   e.line("br label %bb0")
@@ -405,7 +410,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
   }
   if st.dest >= 0 {
     d = st.dest
-    e.store(e.f.locals[d].ty, result, e.local_name(d), e.f.locals[d].slot)
+    e.store(e.f.locals[d].ty, result, e.local_name(d), e.slot_vol(d))
   }
 }
 
@@ -497,16 +502,44 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
 
 // ---- terminators (4.5)
 
+// The loop metadata of a cold back edge (W9b: the checked copy that loop
+// versioning keeps): one distinct node per loop header of the function,
+// numbered in emission order; node !0 is the shared unroll-disable hint.
+fn ll_cold_md(e: LlEmit, t: MTerm): String {
+  if t.cold <= 0 {
+    return ""
+  }
+  key = "${e.f.symbol}|${t.cold}"
+  if got = e.loop_md.get(key) {
+    return ", !llvm.loop !${got}"
+  }
+  e.loop_md_n = e.loop_md_n + 1
+  e.loop_md[key] = e.loop_md_n
+  ", !llvm.loop !${e.loop_md_n}"
+}
+
+fn ll_loop_md(e: LlEmit, out: Buf) {
+  if e.loop_md_n == 0 {
+    return
+  }
+  out.push_str("\n!0 = !{!\"llvm.loop.unroll.disable\"}\n")
+  i = 1
+  while i <= e.loop_md_n {
+    out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    i = i + 1
+  }
+}
+
 fn ll_term(e: LlEmit, t: MTerm) {
   k = t.kind
   if k == mtk_goto() {
-    e.line("br label %bb${t.targets[0]}")
+    e.line("br label %bb${t.targets[0]}${ll_cold_md(e, t)}")
   } else if k == mtk_branch() {
     c = "false"
     if o = t.cond {
       c = e.value(o)
     }
-    e.line("br i1 ${c}, label %bb${t.targets[0]}, label %bb${t.targets[1]}")
+    e.line("br i1 ${c}, label %bb${t.targets[0]}, label %bb${t.targets[1]}${ll_cold_md(e, t)}")
   } else if k == mtk_switch() {
     if o = t.cond {
       c = e.value(o)
@@ -524,7 +557,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
   } else if k == mtk_return() {
     if e.f.has_ret {
       ty = e.f.locals[0].ty
-      x = e.load(ty, e.local_name(0), e.f.locals[0].slot)
+      x = e.load(ty, e.local_name(0), e.slot_vol(0))
       e.line("ret ${e.llt(ty)} ${x}")
     } else {
       e.line("ret void")

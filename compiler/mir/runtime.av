@@ -41,6 +41,7 @@ pub class MRtRow {
   slot: Bool = false
   noreturn: Bool = false
   varargs: Bool = false
+  attrs: String = ""
 
   fn initialize(name: String, params: String, ret: String, cls: Int) {
     self.name = name
@@ -59,6 +60,7 @@ pub class MRtTable {
     self.rows = r
     self.index = Hash(String, Int).new
     mir_rt_fill(self)
+    mir_rt_attrs(self)
   }
 
   // flags: "", or space-separated alloc slot noreturn varargs.
@@ -81,6 +83,21 @@ pub class MRtTable {
     }
     self.index[name] = self.rows.size
     self.rows.push(r)
+  }
+
+  // W9b (D207): LLVM function attributes for the declaration of a row
+  // whose C body is a pure reader (each proven in mir_rt_attrs).
+  pub fn set_attrs(name: String, text: String) {
+    if r = self.find(name) {
+      r.attrs = text
+    }
+  }
+
+  pub fn attrs_of(name: String): String {
+    if r = self.find(name) {
+      return r.attrs
+    }
+    ""
   }
 
   pub fn find(name: String): MRtRow? {
@@ -327,4 +344,30 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_crc32_i32", "ref", "i32", c, "")
   t.row("avant_sha256_word0", "ref", "i32", c, "")
   t.row("avant_nursery_reclaim", "", "void", c, "")
+}
+
+// The declarations' attributes (W9b, D207 pass 3; mir.md W9b.3), each
+// read from the C body at refactor/llvm 053c726. Only `never` rows: a
+// call that cannot collect may let LLVM keep values across it. The string
+// readers end in avant_str_n (runtime/avant_str.c:118-127), which reads
+// the string's header and bytes (its argument), the GC's block and large
+// tables through avant_is_heap (avant_rt.c:957-959, is_heap_payload
+// avant_rt.c:864-893: reads only when its out-parameters are NULL), and
+// g_avant_str_gen (an acquire load, avant_rt.h:70-72: not nosync); it
+// writes only its per-thread length cache (g_len_slots and g_len_victim,
+// static __thread in avant_str.c:77-89, memory no module code can name:
+// inaccessiblemem), and it keeps the pointer in that cache (so no
+// nocapture). It allocates, frees, and unwinds nothing and always returns.
+fn mir_rt_attrs(t: MRtTable) {
+  str_reader = "nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)"
+  // avant_str.c:524-526: avant_str_n.
+  t.set_attrs("avant_str_size", str_reader)
+  // avant_str.c:509-522: avant_str_n twice, memcmp.
+  t.set_attrs("avant_str_eq", str_reader)
+  // avant_str.c:539-550: avant_str_n, a byte loop.
+  t.set_attrs("avant_checksum_str", str_reader)
+  // avant_buf.c:349-362: avant_str_n, field reads of the Buf, memcmp.
+  t.set_attrs("avant_buf_starts", str_reader)
+  // avant_buf.c:192-195: one field read of its argument.
+  t.set_attrs("avant_buf_size", "nounwind willreturn nofree nosync memory(argmem: read)")
 }

@@ -1,0 +1,257 @@
+// Loop versioning on the new back end (Stage 28 W9b, mir.md W9b): the
+// loop shapes the pass versions (one range test before the loop, a copy
+// without the bounds checks) and the shapes it must leave alone, each
+// with a checksum, so both back ends print the same lines. Some loops
+// allocate in the body (strings, arrays): under AVANT_YOUNG_MB=1 they
+// collect while the versioned copy runs, and every buffer is still read
+// through its holder after each collecting call.
+
+class Box {
+  xs: Array(Int)
+
+  fn initialize(n: Int) {
+    self.xs = Array(Int).new(n)
+  }
+}
+
+fn fill(n: Int, seed: Int): Array(Int) {
+  xs = Array(Int).new(n)
+  i = 0
+  while i < n {
+    xs[i] = (i * 7 + seed) % 31
+    i = i + 1
+  }
+  xs
+}
+
+// A local bound, offsets on both sides, `<=`.
+fn sums(xs: Array(Int)): Int {
+  n = xs.size
+  s = 0
+  i = 0
+  while i < n {
+    s = s + xs[i]
+    i = i + 1
+  }
+  i = 1
+  while i < n - 1 {
+    s = s + xs[i - 1] * 3 + xs[i + 1] - xs[i]
+    i = i + 1
+  }
+  i = 0
+  while i <= n - 2 {
+    s = s + xs[i + 1]
+    i = i + 1
+  }
+  s
+}
+
+// A step of 4 with offsets up to 3, then the remainder.
+fn steps(xs: Array(Int)): Int {
+  n = xs.size
+  n4 = n - n % 4
+  a = 0
+  b = 0
+  k = 0
+  while k < n4 {
+    a = a + xs[k] + xs[k + 1]
+    b = b + xs[k + 2] * xs[k + 3]
+    k = k + 4
+  }
+  while k < n {
+    a = a + xs[k]
+    k = k + 1
+  }
+  a * 1000 + b
+}
+
+// Invariant indices and a constant index inside a counted loop.
+fn invariant(xs: Array(Int), ys: Array(Int), m: Int): Int {
+  s = 0
+  i = 0
+  while i < ys.size {
+    s = s + ys[i] * xs[m] + xs[m + 1] + xs[2]
+    i = i + 1
+  }
+  s
+}
+
+// Byte indices: a Buf byte (0..255) and a masked value index a table.
+fn bytes(b: Buf, tab: Array(Int)): Int {
+  n = b.size
+  i = 0
+  while i < n {
+    tab[b[i]] = tab[b[i]] + 1
+    tab[(i * 13) & 255] = tab[(i * 13) & 255] + 2
+    i = i + 1
+  }
+  s = 0
+  i = 0
+  while i < 256 {
+    s = s + tab[i] * (i + 1)
+    i = i + 1
+  }
+  s
+}
+
+// Strings: the bound is a local, the index the variable and an offset.
+fn strings(s: String, t: String): Int {
+  n = s.size
+  m = t.size
+  c = 0
+  i = 0
+  while i < n - 1 {
+    j = 0
+    while j < m {
+      if s[i] == t[j] || s[i + 1] == t[j] {
+        c = c + j
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+  c
+}
+
+// Nested loops over rows (a matmul shape, small).
+fn grid(rows: Array(Array(Int)), n: Int): Int {
+  s = 0
+  i = 0
+  while i < n {
+    r = rows[i]
+    j = 0
+    while j < n {
+      s = s + r[j] * (i + 1) + rows[j][i]
+      j = j + 1
+    }
+    i = i + 1
+  }
+  s
+}
+
+// The body allocates (a string and an array per element; ys[i] is not
+// proven by the checker, whose bound is xs's size, so the loop is
+// versioned): the versioned copy runs across collections, and ys (a root
+// slot) is reread after every collecting call (repeat_byte allocates
+// outside defer, so it collects in every collector mode).
+fn churn(xs: Array(Int), ys: Array(Int), rounds: Int): Int {
+  n = xs.size
+  acc = 0
+  keep = "start"
+  r = 0
+  while r < rounds {
+    i = 0
+    while i < n {
+      t = "v${ys[i]}:${i}"
+      tmp = fill(24, i + r)
+      pad = repeat_byte(65 + i % 3, 40)
+      acc = acc + t.size + ys[i] + tmp[23] + pad[i % 40]
+      if i % 10 == 0 {
+        keep = t
+      }
+      i = i + 1
+    }
+    r = r + 1
+  }
+  acc + keep.size
+}
+
+// Not versioned: the loop pushes onto the array it indexes.
+fn grows(xs: Array(Int)): Int {
+  n = xs.size
+  i = 0
+  s = 0
+  while i < n {
+    s = s + xs[i]
+    if i % 3 == 0 {
+      xs.push(i)
+    }
+    i = i + 1
+  }
+  s + xs.size
+}
+
+// Not versioned: a callee shrinks an array the loop reads (through a
+// field of another object, an alias the loop cannot see).
+fn drop_last(b: Box) {
+  if b.xs.size > 0 {
+    v = b.xs.pop
+  }
+}
+
+fn aliased(b: Box, n: Int): Int {
+  xs = b.xs
+  s = 0
+  i = 0
+  while i < n && i < xs.size {
+    s = s + xs[i]
+    drop_last(b)
+    i = i + 1
+  }
+  s * 100 + xs.size
+}
+
+// The guard fails (the bound is past the array) but the loop leaves
+// before an index goes out of range: the checked copy runs, no trap.
+fn early(xs: Array(Int)): Int {
+  i = 0
+  s = 0
+  while i < 1000 {
+    if xs[i] == 30 {
+      break
+    }
+    s = s + xs[i]
+    i = i + 1
+  }
+  s * 1000 + i
+}
+
+// Not versioned: the variable goes down in the loop.
+fn wobble(xs: Array(Int)): Int {
+  i = 0
+  s = 0
+  n = xs.size
+  while i < n {
+    s = s + xs[i]
+    if s % 5 == 0 && i > 2 {
+      i = i - 2
+      s = s + 1
+    }
+    i = i + 1
+  }
+  s
+}
+
+fn main {
+  xs = fill(103, 5)
+  puts(sums(xs))
+  puts(steps(xs))
+  puts(steps(fill(8, 1)))
+  puts(invariant(xs, fill(20, 2), 4))
+  b = buf_new(0)
+  i = 0
+  while i < 500 {
+    b.push_byte((i * 37) % 256)
+    i = i + 1
+  }
+  puts(bytes(b, Array(Int).new(256)))
+  puts(strings("the quick brown fox", "jumps over the lazy dog"))
+  rows: Array(Array(Int)) = []
+  i = 0
+  while i < 12 {
+    rows.push(fill(12, i))
+    i = i + 1
+  }
+  puts(grid(rows, 12))
+  puts(churn(xs, fill(103, 9), 1500))
+  puts(grows(fill(10, 3)))
+  bx = Box.new(0)
+  i = 0
+  while i < 10 {
+    bx.xs.push(i * 2)
+    i = i + 1
+  }
+  puts(aliased(bx, 10))
+  puts(early(fill(40, 0)))
+  puts(wobble(fill(30, 4)))
+}

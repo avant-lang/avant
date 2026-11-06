@@ -69,11 +69,11 @@ define internal ptr @"av.main/Box.new"(ptr %a1) #0 {
 alloca:
   %_0 = alloca ptr, align 8
   %_1.name = alloca ptr, align 8
-  store volatile ptr %a1, ptr %_1.name, align 8
+  store ptr %a1, ptr %_1.name, align 8
   br label %bb0
 
 bb0:
-  store volatile ptr null, ptr %_0, align 8
+  store ptr null, ptr %_0, align 8
   call void @avant_gc_enter()
   %r = call ptr @avant_gc_root_begin(i32 2)
   store ptr %_0, ptr %r, align 8
@@ -138,12 +138,12 @@ bb0.s3.slow:
 
 bb0.s3.cont:
   %t40 = phi ptr [ %t17, %bb0.s3.fast ], [ %t39, %bb0.s3.slow ]
-  store volatile ptr %t40, ptr %_0, align 8
-  %t41 = load volatile ptr, ptr %_0, align 8
-  %t42 = load volatile ptr, ptr %_1.name, align 8
+  store ptr %t40, ptr %_0, align 8
+  %t41 = load ptr, ptr %_0, align 8
+  %t42 = load ptr, ptr %_1.name, align 8
   call void @"av.main/Box.initialize"(ptr %t41, ptr %t42)
   call void @avant_gc_leave()
-  %t43 = load volatile ptr, ptr %_0, align 8
+  %t43 = load ptr, ptr %_0, align 8
   ret ptr %t43
 }
 
@@ -158,9 +158,9 @@ alloca:
   br label %bb0
 
 bb0:
-  store volatile ptr null, ptr %_0, align 8
-  store volatile ptr null, ptr %_2.b, align 8
-  store volatile ptr null, ptr %_4, align 8
+  store ptr null, ptr %_0, align 8
+  store ptr null, ptr %_2.b, align 8
+  store ptr null, ptr %_4, align 8
   call void @avant_gc_enter()
   %r = call ptr @avant_gc_root_begin(i32 3)
   store ptr %_0, ptr %r, align 8
@@ -169,7 +169,7 @@ bb0:
   %r.2 = getelementptr inbounds ptr, ptr %r, i64 2
   store ptr %_4, ptr %r.2, align 8
   %t0 = call ptr @"av.main/Box.new"(ptr @str.0)
-  store volatile ptr %t0, ptr %_2.b, align 8
+  store ptr %t0, ptr %_2.b, align 8
   %t1 = load i32, ptr %_1.n, align 4
   %t2 = icmp sgt i32 %t1, 9
   store i1 %t2, ptr %_3, align 1
@@ -179,8 +179,8 @@ bb0:
 bb1:
   %t4 = load i32, ptr %_1.n, align 4
   %t5 = call ptr @avant_str_from_int(i32 %t4)
-  store volatile ptr %t5, ptr %_4, align 8
-  %t6 = load volatile ptr, ptr %_2.b, align 8
+  store ptr %t5, ptr %_4, align 8
+  %t6 = load ptr, ptr %_2.b, align 8
   %t7 = icmp eq ptr %t6, null
   br i1 %t7, label %bb1.s1.cont, label %bb1.s1.test
 
@@ -199,19 +199,19 @@ bb1.s1.call:
   br label %bb1.s1.cont
 
 bb1.s1.cont:
-  %t15 = load volatile ptr, ptr %_4, align 8
-  %t16 = load volatile ptr, ptr %_2.b, align 8
+  %t15 = load ptr, ptr %_4, align 8
+  %t16 = load ptr, ptr %_2.b, align 8
   %t17 = getelementptr inbounds %"main.Box", ptr %t16, i32 0, i32 0
   store ptr %t15, ptr %t17, align 8
   br label %bb2
 
 bb2:
-  %t18 = load volatile ptr, ptr %_2.b, align 8
+  %t18 = load ptr, ptr %_2.b, align 8
   %t19 = getelementptr inbounds %"main.Box", ptr %t18, i32 0, i32 0
   %t20 = load ptr, ptr %t19, align 8
-  store volatile ptr %t20, ptr %_0, align 8
+  store ptr %t20, ptr %_0, align 8
   call void @avant_gc_leave()
-  %t21 = load volatile ptr, ptr %_0, align 8
+  %t21 = load ptr, ptr %_0, align 8
   ret ptr %t21
 }
 
@@ -225,12 +225,12 @@ alloca:
   %_5 = alloca i1, align 1
   %_6 = alloca ptr, align 8
   store i32 %a1, ptr %_1.argc, align 4
-  store volatile ptr %a2, ptr %_2.argv, align 8
+  store ptr %a2, ptr %_2.argv, align 8
   br label %bb0
 
 bb0:
-  store volatile ptr null, ptr %_3.last, align 8
-  store volatile ptr null, ptr %_6, align 8
+  store ptr null, ptr %_3.last, align 8
+  store ptr null, ptr %_6, align 8
   call void @avant_gc_enter()
   %r = call ptr @avant_gc_root_begin(i32 3)
   store ptr %_2.argv, ptr %r, align 8
@@ -240,10 +240,10 @@ bb0:
   store ptr %_6, ptr %r.2, align 8
   call void @__avant_type_maps()
   %t0 = load i32, ptr %_1.argc, align 4
-  %t1 = load volatile ptr, ptr %_2.argv, align 8
+  %t1 = load ptr, ptr %_2.argv, align 8
   call void @avant_io_init_argv(i32 %t0, ptr %t1)
   %t2 = call ptr @"av.main/tag"(i32 0)
-  store volatile ptr %t2, ptr %_3.last, align 8
+  store ptr %t2, ptr %_3.last, align 8
   store i32 0, ptr %_4.i, align 4
   br label %bb1
 
@@ -257,18 +257,18 @@ bb1:
 bb2:
   %t6 = load i32, ptr %_4.i, align 4
   %t7 = call ptr @"av.main/tag"(i32 %t6)
-  store volatile ptr %t7, ptr %_3.last, align 8
+  store ptr %t7, ptr %_3.last, align 8
   %t8 = load i32, ptr %_4.i, align 4
   %t9 = add i32 %t8, 1
   store i32 %t9, ptr %_4.i, align 4
   br label %bb1
 
 bb3:
-  %t10 = load volatile ptr, ptr %_3.last, align 8
+  %t10 = load ptr, ptr %_3.last, align 8
   %t11 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t10)
   %t12 = call ptr @"av.main/tag"(i32 3)
-  store volatile ptr %t12, ptr %_6, align 8
-  %t13 = load volatile ptr, ptr %_6, align 8
+  store ptr %t12, ptr %_6, align 8
+  %t13 = load ptr, ptr %_6, align 8
   %t14 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t13)
   store i32 0, ptr %_0, align 4
   call void @avant_gc_leave()

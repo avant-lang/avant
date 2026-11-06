@@ -74,6 +74,17 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   }
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-old.map", compiler, cov_src, "${dir}/cov.old", "${dir}/cov.old.log"))
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
+  // W9b (D207): slot accesses are volatile in a shared module only.
+  vol_srcs = ["tests/fixtures/threads/spawn.av", "tests/fixtures/heap/loops.av"]
+  i = 0
+  while i < vol_srcs.size {
+    a: Array(String) = []
+    a.push("__emit-ll")
+    a.push("${root}/${vol_srcs[i]}")
+    a.push("${dir}/vol${i}.ll")
+    jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/vol${i}.log"))
+    i = i + 1
+  }
   run_waves(jobs)
   i = 0
   while i < progs.size {
@@ -102,6 +113,18 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   base = base + gn.size
   c.eq_int(jobs[base].code, 0, "coverage/points.av: a coverage build under myc")
   c.eq_int(jobs[base + 1].code, 0, "coverage/points.av: a coverage build under llvm")
+  c.eq_int(jobs[base + 2].code, 0, "threads/spawn.av: __emit-ll exits 0")
+  c.eq_int(jobs[base + 3].code, 0, "heap/loops.av: __emit-ll exits 0")
+  vol_shared = "(no .ll)"
+  if t = file_read("${dir}/vol0.ll") {
+    vol_shared = t
+  }
+  vol_single = "(no .ll) volatile"
+  if t = file_read("${dir}/vol1.ll") {
+    vol_single = t
+  }
+  c.expect(str_has(vol_shared, "load volatile ptr"), "threads/spawn.av (shared): slot loads are volatile")
+  c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access")
 
   // Wave 2: every program, then the new ones under each GC environment,
   // then the coverage builds (each writes its own lcov).
