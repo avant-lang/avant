@@ -80,15 +80,19 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   if e.indirect {
-    lw.refuse(e.loc, "an indirect call (fn values, W7)")
-    return zero
+    return lw.lower_indirect(e)
   }
   if e.lib_name.size > 0 {
     lw.refuse(e.loc, "a lib/fun call (FFI, W8)")
     return zero
   }
   if bl = e.block {
-    lw.refuse(e.loc, "a call with a block")
+    // W7b: the block forms of the Array and Hash builtins (lower_block.av);
+    // spawn, .parallel, and Mutex.with are W8's.
+    if got = lw.lower_block_call(e) {
+      return got
+    }
+    lw.refuse(e.loc, "a call with a block (${e.callee})")
     return zero
   }
   if recv = e.receiver {

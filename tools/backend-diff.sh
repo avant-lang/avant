@@ -3,7 +3,7 @@
 # once per side and compares what they observably do (stdout, stderr, exit
 # status), program by program.
 #
-#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types] [PROGRAM...]
+#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types,closures] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
 # compile and to the run). Both default to bin/avant-c with the seed's
@@ -36,17 +36,22 @@
 #              fixtures the string lowering accepts (string_programs below)
 #   objects    not in the default: the struct and class programs (Stage 28
 #              W6b, mir.md W6b.7): every tests/fixtures/objects/*.av with
-#              `fn main` (refuse_fn.av, the L0001 case, has none) and the
+#              `fn main` (refuse_ptr.av, the L0001 case, has none) and the
 #              examples and fixtures the lowering accepts (object_programs)
 #   heap       not in the default: the array, hash, and Buf programs (Stage
 #              28 W6c, mir.md W6c.7): every tests/fixtures/heap/*.av with
-#              `fn main` (refuse_block.av, the L0001 case, has none) and the
+#              `fn main` (refuse_spawn.av, the L0001 case, has none) and the
 #              examples and fixtures the lowering accepts (heap_programs)
 #   types      not in the default: the union, method, overload, operator,
 #              generic, and interface programs (Stage 28 W7a, mir.md
 #              W7a.7): every tests/fixtures/types/*.av with `fn main` except
 #              the expected differences below, and the examples and
 #              fixtures the lowering accepts (type_programs)
+#   closures   not in the default: the fn value, lambda, closure, and block
+#              programs (Stage 28 W7b, mir.md W7b): every
+#              tests/fixtures/closures/*.av with `fn main` except the
+#              expected difference below, and examples/collect.av
+#              (closure_programs)
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
 # file (run as a program; an example gets its suite flags) or a LangArena
 # task name such as Etc::Sieve. --set limits the sets; both may be combined.
@@ -58,16 +63,23 @@
 #                       modules that do not exist), not programs
 #   examples/matmul.av  compared on stdout lines 1-2 only: lines 3-4 are the
 #                       milliseconds the sequential and spawned passes took
-#   tests/fixtures/types/coerce.av, tests/fixtures/types/order.av  skipped:
-#                       expected differences (D196, Stage 28 W7a): the old
-#                       back end fails to compile them (a bare T or nil into a
-#                       T? struct-literal field, C5; T or nil to a T?
-#                       parameter of a plain function or method; a union into
-#                       a wider union; postfix ? with a union success part; a
-#                       nil default in a generic class; a union crossing
-#                       between two member orders of same-named types,
-#                       order.av), the new back end converts as the checker
-#                       allows; tests/cases/test_types.av checks their output
+#   tests/fixtures/types/coerce.av  skipped: an expected difference (D196,
+#                       Stage 28 W7a): the old back end fails to compile it
+#                       (a bare T or nil into a T? struct-literal field, C5;
+#                       T or nil to a T? parameter of a plain function or
+#                       method; a union into a wider union; postfix ? with a
+#                       union success part; a nil default in a generic
+#                       class), the new back end converts as the checker
+#                       allows; tests/cases/test_types.av checks its output
+#                       (order.av left this list in W7b: the checker's member
+#                       order fix, C15, makes both back ends compile it)
+#   tests/fixtures/closures/fresh.av  skipped: an expected difference (D196,
+#                       Stage 28 W7b): `continue` in an `each` or `any` block
+#                       never ends in the old back end (it jumps back to the
+#                       block loop's test without the increment), and the old
+#                       back end fails to compile a captured block parameter
+#                       and a captured union; tests/cases/test_closures.av
+#                       checks the new back end's output
 #
 # Per program: compile and run each under `timeout -k 10 120` with stdin from
 # /dev/null; the run happens in one empty directory with the binary at the
@@ -154,7 +166,8 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
   case "$1" in
     examples/http.av) echo "opens a loopback listener and connects to it (no network ports in the oracle)" ;;
     tests/fixtures/format/*) echo "formatter input, not a program" ;;
-    tests/fixtures/types/coerce.av|tests/fixtures/types/order.av) echo "expected difference (D196): the old back end fails to compile it; test_types.av checks the new back end" ;;
+    tests/fixtures/types/coerce.av) echo "expected difference (D196): the old back end fails to compile it; test_types.av checks the new back end" ;;
+    tests/fixtures/closures/fresh.av) echo "expected difference (D196): the old back end loops forever or fails to compile it; test_closures.av checks the new back end" ;;
   esac
 }
 flags_of() { # PATH -> the extra compile flags the suite uses
@@ -209,6 +222,10 @@ type_programs() { # the types set, one path per line
   echo tests/fixtures/part3/argv.av
   echo tests/fixtures/part3/env.av
   echo tests/fixtures/part3/exists.av
+}
+closure_programs() { # the closures set, one path per line
+  for f in tests/fixtures/closures/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
+  echo examples/collect.av
 }
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
@@ -338,6 +355,9 @@ else
   fi
   if has_set types; then
     for f in $(type_programs); do program "$f"; done
+  fi
+  if has_set closures; then
+    for f in $(closure_programs); do program "$f"; done
   fi
   has_set langarena && langarena ""
 fi

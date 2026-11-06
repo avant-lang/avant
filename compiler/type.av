@@ -803,6 +803,94 @@ pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
   }
 }
 
+// Union member order (D200, C15): by shown name; equal shown names (same-named
+// types from different modules) are ordered by their module-qualified key, so
+// both written orders build one member list. Distinct shown names keep the
+// order and tags they always had.
+pub fn ty_member_before(a: Ty, b: Ty): Bool {
+  sa = a.show
+  sb = b.show
+  if str_lt(sa, sb) {
+    return true
+  }
+  if str_eq(sa, sb) {
+    return str_lt(ty_qual_key(a), ty_qual_key(b))
+  }
+  false
+}
+
+fn ty_qual_list(buf: Buf, tys: Array(Ty), sep: String) {
+  i = 0
+  while i < tys.size {
+    if i > 0 {
+      buf.push_str(sep)
+    }
+    buf.push_str(ty_qual_key(tys[i]))
+    i = i + 1
+  }
+}
+
+// The member-order tie-break key: `show` with every nominal type prefixed by
+// its defining module.
+pub fn ty_qual_key(ty: Ty): String {
+  k = ty.kind
+  buf = buf_new()
+  if k == tyk_union() {
+    ty_qual_list(buf, ty.members, "|")
+    return buf.to_s
+  }
+  if k == tyk_fn() {
+    buf.push_str("fn(")
+    ty_qual_list(buf, ty.members, ",")
+    buf.push_str("):")
+    if r = ty.inner {
+      buf.push_str(ty_qual_key(r))
+    }
+    return buf.to_s
+  }
+  if k == tyk_hash() {
+    buf.push_str("Hash(")
+    if ke = ty.key {
+      buf.push_str(ty_qual_key(ke))
+    }
+    buf.push_str(",")
+    if va = ty.val {
+      buf.push_str(ty_qual_key(va))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if k == tyk_array() || k == tyk_ptr() || k == tyk_join() {
+    if k == tyk_array() {
+      buf.push_str("Array(")
+    } else {
+      if k == tyk_ptr() {
+        buf.push_str("Ptr(")
+      } else {
+        buf.push_str("JoinHandle(")
+      }
+    }
+    if e = ty.inner {
+      buf.push_str(ty_qual_key(e))
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  if ty.mod_name.size > 0 {
+    buf.push_str(ty.mod_name)
+    buf.push_str(".")
+  }
+  if ty.origin.size > 0 && ty.ty_args.size > 0 {
+    buf.push_str(ty.origin)
+    buf.push_str("(")
+    ty_qual_list(buf, ty.ty_args, ",")
+    buf.push_str(")")
+    return buf.to_s
+  }
+  buf.push_str(ty.show)
+  buf.to_s
+}
+
 pub fn ty_union_build(types: Array(Ty)): Ty {
   flat: Array(Ty) = []
   i = 0
@@ -832,7 +920,7 @@ pub fn ty_union_build(types: Array(Ty)): Ty {
   while i < uniq.size {
     j = i
     while j > 0 {
-      if str_lt(uniq[j].show, uniq[j - 1].show) {
+      if ty_member_before(uniq[j], uniq[j - 1]) {
         tmp = uniq[j - 1]
         uniq[j - 1] = uniq[j]
         uniq[j] = tmp

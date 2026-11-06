@@ -11,7 +11,7 @@ import backends
 // verifier reports nothing (stderr unchanged); for the
 // fixtures with goldens, (c) `avant dump` under AVANT_BACKEND=llvm prints
 // exactly tests/goldens/objects/<name>.mir (D171). (d) A class field of
-// fn type is refused with L0001 (fn values, W7b).
+// type Ptr(Void) is refused with L0001 (C layouts and pointers, W8).
 
 fn golden_progs: Array(String) {
   xs: Array(String) = []
@@ -85,12 +85,12 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
     i = i + 1
   }
-  ref_src = "tests/fixtures/objects/refuse_fn.av"
+  ref_src = "tests/fixtures/objects/refuse_ptr.av"
   jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${ref_src}", "${dir}/refuse.new", "${dir}/refuse.new.log"))
   run_waves(jobs)
   rj = jobs[jobs.size - 1]
   c.eq_int(rj.code, 1, "${ref_src}: refused under llvm")
-  c.expect(str_contains_obj(log_text(rj.log), "error[L0001]: not yet supported by the llvm back end: a field of type fn(Int): Int"), "${ref_src}: the L0001 message")
+  c.expect(str_contains_obj(log_text(rj.log), "error[L0001]: not yet supported by the llvm back end: a field of type Ptr(Void)"), "${ref_src}: the L0001 message")
   i = 0
   while i < progs.size {
     p = progs[i]

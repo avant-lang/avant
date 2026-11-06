@@ -345,9 +345,7 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
       b.branch(ok, bt, bf)
       b.at(bt)
       v = lw.unwrap(src, uty, success, st.loc)
-      k = lw.var_get(st.bind, sty)
-      lw.at(st.loc)
-      dummy = b.assign(b.pl(k), b.rv_use(v))
+      lw.bind_name(st.bind, success, sty, v, st.loc, false)
       lw.lower_stmts(st.then_body)
       lw.goto_if_open(join, st.loc)
       if st.else_body.size > 0 {
@@ -674,6 +672,7 @@ pub fn (lw: MirLower) lower_bump(cdef: ClassDef, t: Ty) {
   }
   opt = ty_nilable(t)
   lw.lw_vars = Hash(String, Int).new
+  lw.reset_closures
   lw.lw_fn_loc = cdef.loc
   cty = lw.value_agg_ty(t, cdef.loc)
   oty = lw.ty_at(opt, cdef.loc, "a result")

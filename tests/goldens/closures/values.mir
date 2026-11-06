@@ -1,0 +1,788 @@
+module values
+file 0 "values.av"
+
+layout %values.Holder = class { 0 op: %fn(Int):Int, 1 name: %fn(String):String, 2 inner: %values.Ops }  size 64 align 8 id 1
+layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i32) -> i32 }  size 16 align 8
+layout %fn(String):String = fnval { 0 env: ref, 1 code: code(ref, ref str) -> ref str }  size 16 align 8
+layout %fn(Int,Int):Int = fnval { 0 env: ref, 1 code: code(ref, i32, i32) -> i32 }  size 16 align 8
+layout %values.Ops = struct { 0 a: %fn(Int):Int, 1 b: %fn(Int,Int):Int }  size 32 align 8
+layout %fn(String):Int = fnval { 0 env: ref, 1 code: code(ref, ref str) -> i32 }  size 16 align 8
+layout %fn(String):Void = fnval { 0 env: ref, 1 code: code(ref, ref str) -> void }  size 16 align 8
+layout %elems(fn(Int):Int) = elems { 0: %fn(Int):Int }  size 16 align 8 id 65535
+layout %Array(fn(Int):Int) = array { 0 data: ref %elems(fn(Int):Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
+layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems(values.Ops) = elems { 0: %values.Ops }  size 32 align 8 id 2
+layout %Array(values.Ops) = array { 0 data: ref %elems(values.Ops), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+
+const str.0 = "!"
+const str.1 = "abcd"
+const str.2 = "%s\0A"
+const str.3 = "%d\0A"
+const str.4 = "hey"
+const str.5 = "a"
+const str.6 = "bb"
+const str.7 = "void fn value"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %values.Holder stride 0 bits [0x55]
+typemap 2 %elems(values.Ops) stride 4 bits [0x5]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_push_i32(ref, i32) -> void collects
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_array_push_slot(ref, u64, u32) -> addr collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_size(ref str) -> i32 never
+extern printf(ref str, ...) -> i32 never
+
+fn av.values/inc(_1: i32) -> i32 leaf @values.av:9:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2: i32
+
+bb0:
+  _2 = add.chk copy _1, const i32 1   @10:5
+  _0 = copy _2   @10:5
+  return   @10:5
+}
+
+fn av.values/twice(_1: i32) -> i32 leaf @values.av:13:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2: i32
+
+bb0:
+  _2 = mul.chk copy _1, const i32 2   @14:5
+  _0 = copy _2   @14:5
+  return   @14:5
+}
+
+fn av.values/pair(_1: i32, _2: i32) -> i32 leaf @values.av:17:1 {
+  let _0: i32
+  let _1 (a): i32
+  let _2 (b): i32
+  let _3: i32
+  let _4: i32
+
+bb0:
+  _3 = mul.chk copy _1, const i32 10   @18:5
+  _4 = add.chk copy _3, copy _2   @18:10
+  _0 = copy _4   @18:10
+  return   @18:10
+}
+
+fn av.values/shout(_1: ref str) -> ref str frame @values.av:21:1 {
+  let _0: ref str
+  let _1 (s): ref str slot
+  let _2: ref str
+
+bb0:
+  gc.enter   @21:1
+  gc.roots _1   @21:1
+  _2 = call avant_str_concat(copy _1, const str.0) collects   @22:5
+  _0 = copy _2   @22:5
+  gc.leave   @22:5
+  return   @22:5
+}
+
+fn av.values/pick(Int)(_1: i32) -> i32 leaf @values.av:25:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2: i32
+
+bb0:
+  _2 = add.chk copy _1, const i32 100   @26:5
+  _0 = copy _2   @26:5
+  return   @26:5
+}
+
+fn av.values/pick(String)(_1: ref str) -> i32 leaf @values.av:29:1 {
+  let _0: i32
+  let _1 (s): ref str
+  let _2: i32
+
+bb0:
+  _2 = call avant_str_size(copy _1) nocollect   @30:4
+  _0 = copy _2   @30:4
+  return   @30:4
+}
+
+fn av.values/take_int(_1: %fn(Int):Int) -> i32 frame @values.av:33:1 {
+  let _0: i32
+  let _1 (f): %fn(Int):Int
+  let _2: %fn(Int):Int
+  let _3: i32
+
+bb0:
+  gc.enter   @33:1
+  gc.roots   @33:1
+  _2 = copy _1   @34:3
+  _3 = call indirect copy _2(const i32 10) collects   @34:3
+  _0 = copy _3   @34:3
+  gc.leave   @34:3
+  return   @34:3
+}
+
+fn av.values/take_str(_1: %fn(String):Int) -> i32 frame @values.av:37:1 {
+  let _0: i32
+  let _1 (f): %fn(String):Int
+  let _2: %fn(String):Int
+  let _3: i32
+
+bb0:
+  gc.enter   @37:1
+  gc.roots   @37:1
+  _2 = copy _1   @38:3
+  _3 = call indirect copy _2(const str.1) collects   @38:3
+  _0 = copy _3   @38:3
+  gc.leave   @38:3
+  return   @38:3
+}
+
+fn av.values/apply(_1: %fn(Int):Int, _2: i32) -> i32 frame @values.av:41:1 {
+  let _0: i32
+  let _1 (f): %fn(Int):Int
+  let _2 (n): i32
+  let _3: %fn(Int):Int
+  let _4: i32
+
+bb0:
+  gc.enter   @41:1
+  gc.roots   @41:1
+  _3 = copy _1   @42:3
+  _4 = call indirect copy _3(copy _2) collects   @42:3
+  _0 = copy _4   @42:3
+  gc.leave   @42:3
+  return   @42:3
+}
+
+fn av.values/compose_pick(_1: bool) -> %fn(Int):Int leaf @values.av:45:1 {
+  let _0: %fn(Int):Int
+  let _1 (first): bool
+  let _2: %fn(Int):Int
+  let _3: %fn(Int):Int
+
+bb0:
+  branch copy _1, bb1, bb2   @46:3
+
+bb1:
+  _2 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @47:12
+  _0 = copy _2   @47:5
+  return   @47:5
+
+bb2:
+  _3 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @49:3
+  _0 = copy _3   @49:3
+  return   @49:3
+}
+
+fn av.values/say(_1: ref str) -> void leaf @values.av:60:1 {
+  let _1 (s): ref str
+
+bb0:
+  call printf(const str.2, copy _1) nocollect   @61:3
+  return   @60:1
+}
+
+fn av.values/run_void(_1: %fn(String):Void, _2: ref str) -> void frame @values.av:64:1 {
+  let _1 (f): %fn(String):Void
+  let _2 (s): ref str
+  let _3: %fn(String):Void
+
+bb0:
+  gc.enter   @64:1
+  gc.roots   @64:1
+  _3 = copy _1   @65:3
+  call indirect copy _3(copy _2) collects   @65:3
+  gc.leave   @64:1
+  return   @64:1
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @values.av:82:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: %fn(Int):Int
+  let _4 (f): %fn(Int):Int
+  let _5: %fn(Int):Int
+  let _6: i32
+  let _7: %fn(Int):Int
+  let _8 (bare): %fn(Int):Int
+  let _9: %fn(Int):Int
+  let _10: i32
+  let _11: %fn(Int,Int):Int
+  let _12 (p2): %fn(Int,Int):Int
+  let _13: %fn(Int,Int):Int
+  let _14: i32
+  let _15: %fn(Int):Int
+  let _16: i32
+  let _17: %fn(Int):Int
+  let _18: i32
+  let _19: %fn(Int):Int
+  let _20: i32
+  let _21: %fn(String):Int
+  let _22: i32
+  let _23: %fn(Int):Int
+  let _24: %fn(Int):Int
+  let _25: i32
+  let _26: %fn(Int):Int
+  let _27: %fn(Int):Int
+  let _28: i32
+  let _29: ref %values.Holder
+  let _30 (h): ref %values.Holder slot
+  let _31: %fn(Int):Int
+  let _32: %fn(String):String
+  let _33: %fn(Int):Int
+  let _34: %fn(Int,Int):Int
+  let _35: %values.Ops
+  let _36: %fn(Int):Int
+  let _37: %fn(Int):Int
+  let _38: i32
+  let _39: %fn(String):String
+  let _40: %fn(String):String
+  let _41: ref str
+  let _42: %fn(Int):Int
+  let _43: %fn(Int):Int
+  let _44: i32
+  let _45: %fn(Int,Int):Int
+  let _46: %fn(Int,Int):Int
+  let _47: i32
+  let _48: %fn(Int):Int
+  let _49: %fn(Int):Int
+  let _50: %fn(Int):Int
+  let _51: i32
+  let _52: %values.Ops
+  let _53 (ops): %values.Ops
+  let _54: %fn(Int):Int
+  let _55: %fn(Int):Int
+  let _56: %fn(Int):Int
+  let _57: i32
+  let _58: %fn(Int):Int
+  let _59: %fn(Int):Int
+  let _60: i32
+  let _61: ref %elems(fn(Int):Int) slot
+  let _62: ref %Array(fn(Int):Int)
+  let _63 (fs): ref %Array(fn(Int):Int) slot
+  let _64: %fn(Int):Int slot
+  let _65: addr %fn(Int):Int
+  let _66: %fn(Int):Int slot
+  let _67: addr %fn(Int):Int
+  let _68: %fn(Int):Int slot
+  let _69: addr %fn(Int):Int
+  let _70 (total): i32
+  let _71 (i): i32
+  let _72: i32
+  let _73: bool
+  let _74: ref %elems(fn(Int):Int)
+  let _75: %fn(Int):Int
+  let _76: %fn(Int):Int
+  let _77: i32
+  let _78: i32
+  let _79: i32
+  let _80: i32
+  let _81: %fn(Int):Int
+  let _82: i32
+  let _83: ref %elems(fn(Int):Int)
+  let _84: i32
+  let _85: ref %elems(fn(Int):Int)
+  let _86: %fn(Int):Int
+  let _87: %fn(Int):Int
+  let _88: i32
+  let _89: ref %elems(Int) slot
+  let _90: ref %Array(Int)
+  let _91: %fn(Int):Int
+  let _92: ref %Array(Int)
+  let _93 (ys): ref %Array(Int)
+  let _94: i32
+  let _95: ref %elems(Int)
+  let _96: i32
+  let _97: i32
+  let _98: ref %elems(Int)
+  let _99: i32
+  let _100: i32
+  let _101: i32
+  let _102: ref %elems(Int)
+  let _103: i32
+  let _104: i32
+  let _105: ref %elems(String) slot
+  let _106: ref %Array(String)
+  let _107: %fn(String):String
+  let _108: ref %Array(String)
+  let _109 (ss): ref %Array(String)
+  let _110: i32
+  let _111: ref %elems(String)
+  let _112: ref str
+  let _113: %fn(String):Void
+  let _114: ref %elems(values.Ops) slot
+  let _115: ref %Array(values.Ops)
+  let _116 (table): ref %Array(values.Ops) slot
+  let _117: %fn(Int):Int
+  let _118: %fn(Int,Int):Int
+  let _119: %values.Ops slot
+  let _120: addr %values.Ops
+  let _121: %fn(Int):Int
+  let _122: %fn(Int,Int):Int
+  let _123: %values.Ops slot
+  let _124: addr %values.Ops
+  let _125: i32
+  let _126: ref %elems(values.Ops)
+  let _127: %fn(Int):Int
+  let _128: %fn(Int):Int
+  let _129: i32
+
+bb0:
+  _30 = zero   @82:1
+  _61 = zero   @82:1
+  _63 = zero   @82:1
+  _64 = zero   @82:1
+  _66 = zero   @82:1
+  _68 = zero   @82:1
+  _89 = zero   @82:1
+  _105 = zero   @82:1
+  _114 = zero   @82:1
+  _116 = zero   @82:1
+  _119 = zero   @82:1
+  _123 = zero   @82:1
+  gc.enter   @82:1
+  gc.roots _2, _30, _61, _63, _64, _66, _68, _89, _105, _114, _116, _119, _123   @82:1
+  call __avant_type_maps() nocollect   @82:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @82:1
+  _3 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @83:21
+  _4 = copy _3   @83:3
+  _5 = copy _4   @84:8
+  _6 = call indirect copy _5(const i32 2) collects   @84:8
+  call printf(const str.3, copy _6) nocollect   @84:3
+  _7 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @85:10
+  _8 = copy _7   @85:8
+  _9 = copy _8   @86:8
+  _10 = call indirect copy _9(const i32 21) collects   @86:8
+  call printf(const str.3, copy _10) nocollect   @86:3
+  _11 = fnval %fn(Int,Int):Int (const ref null, const fn av.values/pair#fnval)   @87:27
+  _12 = copy _11   @87:3
+  _13 = copy _12   @88:8
+  _14 = call indirect copy _13(const i32 4, const i32 2) collects   @88:8
+  call printf(const str.3, copy _14) nocollect   @88:3
+  _15 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @89:14
+  _16 = call av.values/apply(copy _15, const i32 41) collects   @89:8
+  call printf(const str.3, copy _16) nocollect   @89:3
+  _17 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @90:14
+  _18 = call av.values/apply(copy _17, const i32 8) collects   @90:8
+  call printf(const str.3, copy _18) nocollect   @90:3
+  _19 = fnval %fn(Int):Int (const ref null, const fn av.values/pick(Int)#fnval)   @91:17
+  _20 = call av.values/take_int(copy _19) collects   @91:8
+  call printf(const str.3, copy _20) nocollect   @91:3
+  _21 = fnval %fn(String):Int (const ref null, const fn av.values/pick(String)#fnval)   @92:17
+  _22 = call av.values/take_str(copy _21) collects   @92:8
+  call printf(const str.3, copy _22) nocollect   @92:3
+  _23 = call av.values/compose_pick(const bool true) nocollect   @93:8
+  _24 = copy _23   @93:26
+  _25 = call indirect copy _24(const i32 5) collects   @93:26
+  call printf(const str.3, copy _25) nocollect   @93:3
+  _26 = call av.values/compose_pick(const bool false) nocollect   @94:8
+  _27 = copy _26   @94:27
+  _28 = call indirect copy _27(const i32 5) collects   @94:27
+  call printf(const str.3, copy _28) nocollect   @94:3
+  _29 = call av.values/Holder.new() collects   @95:13
+  _30 = copy _29   @95:5
+  _31 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @96:10
+  barrier copy _30   @96:8
+  (*_30).0 = copy _31   @96:8
+  _32 = fnval %fn(String):String (const ref null, const fn av.values/shout#fnval)   @97:12
+  barrier copy _30   @97:10
+  (*_30).1 = copy _32   @97:10
+  _33 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @98:22
+  _34 = fnval %fn(Int,Int):Int (const ref null, const fn av.values/pair#fnval)   @98:30
+  _35 = struct %values.Ops (copy _33, copy _34)   @98:13
+  barrier copy _30   @98:11
+  (*_30).2 = copy _35   @98:11
+  _36 = copy (*_30).0   @99:10
+  _37 = copy _36   @99:14
+  _38 = call indirect copy _37(const i32 7) collects   @99:14
+  call printf(const str.3, copy _38) nocollect   @99:3
+  _39 = copy (*_30).1   @100:10
+  _40 = copy _39   @100:16
+  _41 = call indirect copy _40(const str.4) collects   @100:16
+  call printf(const str.2, copy _41) nocollect   @100:3
+  _42 = copy (*_30).2.0   @101:16
+  _43 = copy _42   @101:19
+  _44 = call indirect copy _43(const i32 1) collects   @101:19
+  call printf(const str.3, copy _44) nocollect   @101:3
+  _45 = copy (*_30).2.1   @102:16
+  _46 = copy _45   @102:19
+  _47 = call indirect copy _46(const i32 3, const i32 4) collects   @102:19
+  call printf(const str.3, copy _47) nocollect   @102:3
+  _48 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @103:10
+  barrier copy _30   @103:8
+  (*_30).0 = copy _48   @103:8
+  _49 = copy (*_30).0   @104:10
+  _50 = copy _49   @104:14
+  _51 = call indirect copy _50(const i32 7) collects   @104:14
+  call printf(const str.3, copy _51) nocollect   @104:3
+  _52 = copy (*_30).2   @105:10
+  _53 = copy _52   @105:7
+  _54 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @106:11
+  _53.0 = copy _54   @106:9
+  _55 = copy _53.0   @107:12
+  _56 = copy _55   @107:15
+  _57 = call indirect copy _56(const i32 9) collects   @107:15
+  call printf(const str.3, copy _57) nocollect   @107:3
+  _58 = copy (*_30).2.0   @108:16
+  _59 = copy _58   @108:19
+  _60 = call indirect copy _59(const i32 9) collects   @108:19
+  call printf(const str.3, copy _60) nocollect   @108:3
+  _61 = call avant_alloc(const u64 0, const u32 65535) collects   @109:29
+  _62 = call avant_alloc(const u64 16, const u32 1022) collects   @109:29
+  barrier copy _62   @109:29
+  (*_62).0 = copy _61   @109:29
+  (*_62).1 = const i32 0   @109:29
+  (*_62).2 = const i32 0   @109:29
+  _63 = copy _62   @109:3
+  _64 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @110:11
+  _65 = call avant_array_push_slot(copy _63, const u64 16, const u32 65535) collects   @110:5
+  (*_65) = copy _64   @110:5
+  _66 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @111:11
+  _67 = call avant_array_push_slot(copy _63, const u64 16, const u32 65535) collects   @111:5
+  (*_67) = copy _66   @111:5
+  _68 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @112:11
+  _69 = call avant_array_push_slot(copy _63, const u64 16, const u32 65535) collects   @112:5
+  (*_69) = copy _68   @112:5
+  _70 = const i32 0   @113:9
+  _71 = const i32 0   @114:5
+  goto bb1   @115:3
+
+bb1:
+  _72 = copy (*_63).1   @115:15
+  _73 = lt copy _71, copy _72   @115:11
+  branch copy _73, bb2, bb3   @115:3
+
+bb2:
+  _74 = copy (*_63).0   @116:24
+  _75 = copy (*_74)[copy _71]   @116:24
+  _76 = copy _75   @116:28
+  _77 = add copy _71, const i32 1   @116:31
+  _78 = call indirect copy _76(copy _77) collects   @116:28
+  _79 = add.chk copy _70, copy _78   @116:19
+  _70 = copy _79   @116:11
+  _80 = add copy _71, const i32 1   @117:11
+  _71 = copy _80   @117:7
+  goto bb1   @115:3
+
+bb3:
+  call printf(const str.3, copy _70) nocollect   @119:3
+  _81 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @120:11
+  _82 = copy (*_63).1   @120:5
+  check.bounds const i32 1, copy _82   @120:5
+  _83 = copy (*_63).0   @120:5
+  barrier copy _83   @120:9
+  (*_83)[const i32 1] = copy _81   @120:9
+  _84 = copy (*_63).1   @121:11
+  check.bounds const i32 1, copy _84   @121:11
+  _85 = copy (*_63).0   @121:11
+  _86 = copy (*_85)[const i32 1]   @121:11
+  _87 = copy _86   @121:15
+  _88 = call indirect copy _87(const i32 1) collects   @121:15
+  call printf(const str.3, copy _88) nocollect   @121:3
+  _89 = call avant_alloc(const u64 12, const u32 0) collects   @122:12
+  (*_89)[const i32 0] = const i32 1   @122:13
+  (*_89)[const i32 1] = const i32 2   @122:16
+  (*_89)[const i32 2] = const i32 3   @122:19
+  _90 = call avant_alloc(const u64 16, const u32 1022) collects   @122:12
+  barrier copy _90   @122:12
+  (*_90).0 = copy _89   @122:12
+  (*_90).1 = const i32 3   @122:12
+  (*_90).2 = const i32 3   @122:12
+  _91 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @122:23
+  _92 = call av.values/map[Int,Int](copy _90, copy _91) collects   @122:8
+  _93 = copy _92   @122:6
+  _94 = copy (*_93).1   @123:10
+  check.bounds const i32 0, copy _94   @123:10
+  _95 = copy (*_93).0   @123:10
+  _96 = copy (*_95)[const i32 0]   @123:10
+  _97 = copy (*_93).1   @123:18
+  check.bounds const i32 1, copy _97   @123:18
+  _98 = copy (*_93).0   @123:18
+  _99 = copy (*_98)[const i32 1]   @123:18
+  _100 = add.chk copy _96, copy _99   @123:14
+  _101 = copy (*_93).1   @123:26
+  check.bounds const i32 2, copy _101   @123:26
+  _102 = copy (*_93).0   @123:26
+  _103 = copy (*_102)[const i32 2]   @123:26
+  _104 = add.chk copy _100, copy _103   @123:22
+  call printf(const str.3, copy _104) nocollect   @123:3
+  _105 = call avant_alloc(const u64 16, const u32 65535) collects   @124:12
+  (*_105)[const i32 0] = const str.5 fresh   @124:13
+  (*_105)[const i32 1] = const str.6 fresh   @124:18
+  barrier copy _105   @124:12
+  _106 = call avant_alloc(const u64 16, const u32 1022) collects   @124:12
+  barrier copy _106   @124:12
+  (*_106).0 = copy _105   @124:12
+  (*_106).1 = const i32 2   @124:12
+  (*_106).2 = const i32 2   @124:12
+  _107 = fnval %fn(String):String (const ref null, const fn av.values/shout#fnval)   @124:25
+  _108 = call av.values/map[String,String](copy _106, copy _107) collects   @124:8
+  _109 = copy _108   @124:6
+  _110 = copy (*_109).1   @125:10
+  check.bounds const i32 1, copy _110   @125:10
+  _111 = copy (*_109).0   @125:10
+  _112 = copy (*_111)[const i32 1]   @125:10
+  call printf(const str.2, copy _112) nocollect   @125:3
+  _113 = fnval %fn(String):Void (const ref null, const fn av.values/say#fnval)   @126:12
+  call av.values/run_void(copy _113, const str.7) collects   @126:3
+  _114 = call avant_alloc(const u64 0, const u32 2) collects   @127:23
+  _115 = call avant_alloc(const u64 16, const u32 1022) collects   @127:23
+  barrier copy _115   @127:23
+  (*_115).0 = copy _114   @127:23
+  (*_115).1 = const i32 0   @127:23
+  (*_115).2 = const i32 0   @127:23
+  _116 = copy _115   @127:3
+  _117 = fnval %fn(Int):Int (const ref null, const fn av.values/inc#fnval)   @128:23
+  _118 = fnval %fn(Int,Int):Int (const ref null, const fn av.values/pair#fnval)   @128:31
+  _119 = struct %values.Ops (copy _117, copy _118)   @128:14
+  _120 = call avant_array_push_slot(copy _116, const u64 32, const u32 2) collects   @128:8
+  (*_120) = copy _119   @128:8
+  _121 = fnval %fn(Int):Int (const ref null, const fn av.values/twice#fnval)   @129:23
+  _122 = fnval %fn(Int,Int):Int (const ref null, const fn av.values/pair#fnval)   @129:33
+  _123 = struct %values.Ops (copy _121, copy _122)   @129:14
+  _124 = call avant_array_push_slot(copy _116, const u64 32, const u32 2) collects   @129:8
+  (*_124) = copy _123   @129:8
+  _125 = copy (*_116).1   @130:14
+  check.bounds const i32 1, copy _125   @130:14
+  _126 = copy (*_116).0   @130:14
+  _127 = copy (*_126)[const i32 1].0   @130:17
+  _128 = copy _127   @130:20
+  _129 = call indirect copy _128(const i32 50) collects   @130:20
+  call printf(const str.3, copy _129) nocollect   @130:3
+  _0 = const i32 0   @82:1
+  gc.leave   @82:1
+  return   @82:1
+}
+
+fn av.values/map[Int,Int](_1: ref %Array(Int), _2: %fn(Int):Int) -> ref %Array(Int) frame @values.av:52:1 {
+  let _0: ref %Array(Int)
+  let _1 (xs): ref %Array(Int) slot
+  let _2 (f): %fn(Int):Int slot
+  let _3: ref %elems(Int) slot
+  let _4: ref %Array(Int)
+  let _5 (ys): ref %Array(Int) slot
+  let _6: ref %Array(Int) slot
+  let _7: i32
+  let _8: i32
+  let _9: bool
+  let _10: ref %elems(Int)
+  let _11: i32
+  let _12 (x): i32
+  let _13: %fn(Int):Int
+  let _14: i32
+
+bb0:
+  _3 = zero   @52:1
+  _5 = zero   @52:1
+  _6 = zero   @52:1
+  gc.enter   @52:1
+  gc.roots _1, _2, _3, _5, _6   @52:1
+  _3 = call avant_alloc(const u64 0, const u32 0) collects   @53:18
+  _4 = call avant_alloc(const u64 16, const u32 1022) collects   @53:18
+  barrier copy _4   @53:18
+  (*_4).0 = copy _3   @53:18
+  (*_4).1 = const i32 0   @53:18
+  (*_4).2 = const i32 0   @53:18
+  _5 = copy _4   @53:3
+  _6 = copy _1   @54:3
+  _7 = const i32 0   @54:11
+  goto bb1   @54:11
+
+bb1:
+  _8 = copy (*_6).1   @54:11
+  _9 = lt copy _7, copy _8   @54:11
+  branch copy _9, bb2, bb4   @54:11
+
+bb2:
+  _10 = copy (*_6).0   @54:11
+  _11 = copy (*_10)[copy _7]   @54:11
+  _12 = copy _11   @54:11
+  _13 = copy _2   @55:13
+  _14 = call indirect copy _13(copy _12) collects   @55:13
+  call avant_array_push_i32(copy _5, copy _14) collects   @55:7
+  goto bb3   @54:11
+
+bb3:
+  _7 = add copy _7, const i32 1   @54:11
+  goto bb1   @54:11
+
+bb4:
+  _0 = copy _5   @57:3
+  gc.leave   @57:3
+  return   @57:3
+}
+
+fn av.values/map[String,String](_1: ref %Array(String), _2: %fn(String):String) -> ref %Array(String) frame @values.av:52:1 {
+  let _0: ref %Array(String)
+  let _1 (xs): ref %Array(String) slot
+  let _2 (f): %fn(String):String slot
+  let _3: ref %elems(String) slot
+  let _4: ref %Array(String)
+  let _5 (ys): ref %Array(String) slot
+  let _6: ref %Array(String) slot
+  let _7: i32
+  let _8: i32
+  let _9: bool
+  let _10: ref %elems(String)
+  let _11: ref str
+  let _12 (x): ref str
+  let _13: %fn(String):String
+  let _14: ref str slot
+
+bb0:
+  _3 = zero   @52:1
+  _5 = zero   @52:1
+  _6 = zero   @52:1
+  _14 = zero   @52:1
+  gc.enter   @52:1
+  gc.roots _1, _2, _3, _5, _6, _14   @52:1
+  _3 = call avant_alloc(const u64 0, const u32 65535) collects   @53:18
+  _4 = call avant_alloc(const u64 16, const u32 1022) collects   @53:18
+  barrier copy _4   @53:18
+  (*_4).0 = copy _3   @53:18
+  (*_4).1 = const i32 0   @53:18
+  (*_4).2 = const i32 0   @53:18
+  _5 = copy _4   @53:3
+  _6 = copy _1   @54:3
+  _7 = const i32 0   @54:11
+  goto bb1   @54:11
+
+bb1:
+  _8 = copy (*_6).1   @54:11
+  _9 = lt copy _7, copy _8   @54:11
+  branch copy _9, bb2, bb4   @54:11
+
+bb2:
+  _10 = copy (*_6).0   @54:11
+  _11 = copy (*_10)[copy _7]   @54:11
+  _12 = copy _11   @54:11
+  _13 = copy _2   @55:13
+  _14 = call indirect copy _13(copy _12) collects   @55:13
+  call avant_array_push_ptr(copy _5, copy _14, const u32 65535) collects   @55:7
+  goto bb3   @54:11
+
+bb3:
+  _7 = add copy _7, const i32 1   @54:11
+  goto bb1   @54:11
+
+bb4:
+  _0 = copy _5   @57:3
+  gc.leave   @57:3
+  return   @57:3
+}
+
+fn av.values/Holder.initialize(_1: ref %values.Holder) -> void leaf @values.av:73:3 {
+  let _1 (self): ref %values.Holder
+
+bb0:
+  return   @73:3
+}
+
+fn av.values/Holder.new() -> ref %values.Holder frame @values.av:68:1 {
+  let _0: ref %values.Holder
+  let _1: ref %values.Holder
+
+bb0:
+  gc.enter   @68:1
+  gc.roots   @68:1
+  _1 = call avant_alloc(const u64 64, const u32 1) collects   @68:1
+  call av.values/Holder.initialize(copy _1) nocollect   @68:1
+  _0 = copy _1   @68:1
+  gc.leave   @68:1
+  return   @68:1
+}
+
+fn av.values/inc#fnval(_1: ref, _2: i32) -> i32 leaf @values.av:9:1 {
+  let _0: i32
+  let _1 (env): ref
+  let _2 (n): i32
+  let _3: i32
+
+bb0:
+  _3 = call av.values/inc(copy _2) nocollect   @9:1
+  _0 = copy _3   @9:1
+  return   @9:1
+}
+
+fn av.values/twice#fnval(_1: ref, _2: i32) -> i32 leaf @values.av:13:1 {
+  let _0: i32
+  let _1 (env): ref
+  let _2 (n): i32
+  let _3: i32
+
+bb0:
+  _3 = call av.values/twice(copy _2) nocollect   @13:1
+  _0 = copy _3   @13:1
+  return   @13:1
+}
+
+fn av.values/pair#fnval(_1: ref, _2: i32, _3: i32) -> i32 leaf @values.av:17:1 {
+  let _0: i32
+  let _1 (env): ref
+  let _2 (a): i32
+  let _3 (b): i32
+  let _4: i32
+
+bb0:
+  _4 = call av.values/pair(copy _2, copy _3) nocollect   @17:1
+  _0 = copy _4   @17:1
+  return   @17:1
+}
+
+fn av.values/shout#fnval(_1: ref, _2: ref str) -> ref str frame @values.av:21:1 {
+  let _0: ref str
+  let _1 (env): ref
+  let _2 (s): ref str
+  let _3: ref str
+
+bb0:
+  gc.enter   @21:1
+  gc.roots   @21:1
+  _3 = call av.values/shout(copy _2) collects   @21:1
+  _0 = copy _3   @21:1
+  gc.leave   @21:1
+  return   @21:1
+}
+
+fn av.values/pick(Int)#fnval(_1: ref, _2: i32) -> i32 leaf @values.av:25:1 {
+  let _0: i32
+  let _1 (env): ref
+  let _2 (n): i32
+  let _3: i32
+
+bb0:
+  _3 = call av.values/pick(Int)(copy _2) nocollect   @25:1
+  _0 = copy _3   @25:1
+  return   @25:1
+}
+
+fn av.values/pick(String)#fnval(_1: ref, _2: ref str) -> i32 leaf @values.av:29:1 {
+  let _0: i32
+  let _1 (env): ref
+  let _2 (s): ref str
+  let _3: i32
+
+bb0:
+  _3 = call av.values/pick(String)(copy _2) nocollect   @29:1
+  _0 = copy _3   @29:1
+  return   @29:1
+}
+
+fn av.values/say#fnval(_1: ref, _2: ref str) -> void leaf @values.av:60:1 {
+  let _1 (env): ref
+  let _2 (s): ref str
+
+bb0:
+  call av.values/say(copy _2) nocollect   @60:1
+  return   @60:1
+}

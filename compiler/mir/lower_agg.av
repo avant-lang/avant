@@ -88,6 +88,13 @@ pub fn (lw: MirLower) note_classes {
 // The MIR type of a value of struct or class type t (a local, a
 // parameter, a result): `%S` or `ref %C`; -1 after refusing.
 pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
+  if t.is_fn {
+    l0 = lw.fn_layout(t, loc)
+    if l0 < 0 {
+      return -1
+    }
+    return lw.lw_m.types.agg(l0)
+  }
   if t.is_array || t.is_hash || t.is_buf {
     return lw.container_ty(t, loc)
   }
@@ -298,6 +305,11 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
       }
       lw.refuse(e.loc, "a field outside a method")
       return b.pl(0)
+    }
+    if lw.name_in_box(e.ident) {
+      if t0 = e.ty {
+        return lw.box_place(e.ident, t0, e.loc)
+      }
     }
     if lw.is_struct_self(e) {
       return b.deref(b.pl(lw.lw_self))
@@ -584,6 +596,7 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
     sym = got
   }
   lw.lw_vars = Hash(String, Int).new
+  lw.reset_closures
   lw.lw_self = 0
   lw.lw_self_struct = false
   lw.lw_self_name = ""
