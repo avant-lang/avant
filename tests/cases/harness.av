@@ -85,6 +85,17 @@ lib harness_rt {
   fun avant_job_start(path: String, args: Array(String), out: String): Int
   fun avant_job_wait: Int
   fun avant_job_status: Int
+  fun avant_env_set(name: String, value: String)
+}
+
+// A test file whose every check is about one back end (Stage 28 W9,
+// D176): sets AVANT_BACKEND in this process, so every compiler it starts
+// uses that back end whatever the suite runs under (`avant test` under
+// AVANT_BACKEND=llvm still compiles this file itself with llvm). Used by
+// the files that test the old back end's own machinery (myc-llvm lookup,
+// stackmaps); they retire with it (W11).
+pub fn use_backend(name: String) {
+  harness_rt.avant_env_set("AVANT_BACKEND", name)
 }
 
 // One command for run_jobs: path and args, stdout and stderr to log.
@@ -452,11 +463,18 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   process_run_out(compiler, args, log)
 }
 
+// `dump` on the old back end: its .myc IR text, which the callers inspect
+// (Stage 28 W9: pinned with AVANT_BACKEND=myc, so a suite run under
+// AVANT_BACKEND=llvm still checks the old back end's IR, and a negative
+// check on that text is not vacuous; the new back end's MIR dump has its
+// own goldens). Retires with the old back end (W11).
 pub fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
+  args.push("AVANT_BACKEND=myc")
+  args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out("/usr/bin/env", args, log)
 }
 
 // A hidden front-end dump (D137): flag is --tokens, --ast, or --check.
@@ -512,8 +530,10 @@ pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): 
   process_run_out("/usr/bin/env", args, log)
 }
 
+// The old back end's IR with coverage on (as dump_av).
 pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
+  args.push("AVANT_BACKEND=myc")
   args.push("AVANT_COVERAGE=1")
   args.push(compiler)
   args.push("dump")

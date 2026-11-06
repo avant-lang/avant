@@ -14,6 +14,33 @@ fn dump_args(src: String): Array(String) {
   a
 }
 
+// The back end this run's compilers use (Stage 28 W9, D171): under
+// AVANT_BACKEND=llvm the next compiler is built by the new back end (C'
+// from B, D' from C'), the hello golden is its MIR (examples/hello.mir),
+// and the compiler's fixed point is the pre-optimization .ll of
+// compiler/main.av (`avant __emit-ll`); otherwise the old back end's
+// .myc dumps, as before.
+fn fp_llvm: Bool {
+  if v = env_get("AVANT_BACKEND") {
+    return str_eq(v, "llvm")
+  }
+  false
+}
+
+// The job that writes the compiler's fixed-point text to out: the .myc
+// dump on stdout (out is the log), or __emit-ll writing out (its log
+// beside it).
+fn fp_main_job(compiler: String, main_av: String, out: String): HJob {
+  if fp_llvm() {
+    a: Array(String) = []
+    a.push("__emit-ll")
+    a.push(main_av)
+    a.push(out)
+    return HJob.new(compiler, a, "${out}.log")
+  }
+  HJob.new(compiler, dump_args(main_av), out)
+}
+
 fn test_fixed_point(c: Checks) {
   c.suite("tests/cases/test_fixed_point.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -21,11 +48,18 @@ fn test_fixed_point(c: Checks) {
     stamp = now_ms()
     hello = "${root}/examples/hello.av"
     golden = "${root}/tests/goldens/hello.myc"
+    ext = "myc"
+    what = "myc"
+    if fp_llvm() {
+      golden = "${root}/tests/goldens/examples/hello.mir"
+      ext = "ll"
+      what = ".ll"
+    }
     main_av = "${root}/compiler/main.av"
-    hello_b = "${scratch()}/fixed_point-${stamp}-hello-b.myc"
-    hello_c = "${scratch()}/fixed_point-${stamp}-hello-c.myc"
-    main_b = "${scratch()}/fixed_point-${stamp}-main-b.myc"
-    main_c = "${scratch()}/fixed_point-${stamp}-main-c.myc"
+    hello_b = "${scratch()}/fixed_point-${stamp}-hello-b.dump"
+    hello_c = "${scratch()}/fixed_point-${stamp}-hello-c.dump"
+    main_b = "${scratch()}/fixed_point-${stamp}-main-b.${ext}"
+    main_c = "${scratch()}/fixed_point-${stamp}-main-c.${ext}"
     bin_c = "${scratch()}/fixed_point-${stamp}-c"
     clog = "${scratch()}/fixed_point-${stamp}-c.log"
     vlog = "${scratch()}/fixed_point-${stamp}-verify.log"
@@ -50,7 +84,7 @@ fn test_fixed_point(c: Checks) {
     wave1: Array(HJob) = []
     wave1.push(HJob.new("/usr/bin/env", cenv, clog))
     wave1.push(HJob.new(compiler, dump_args(hello), hello_b))
-    wave1.push(HJob.new(compiler, dump_args(main_av), main_b))
+    wave1.push(fp_main_job(compiler, main_av, main_b))
     // The compiler's own heap is fully traced (D188): dumping itself under
     // the collector's verifier prints no untraced-reference report. The
     // v0.34.0 seed's type maps drop every reference word past payload
@@ -83,7 +117,7 @@ fn test_fixed_point(c: Checks) {
       if want = file_read(golden) {
         c.eq_str(got, want, "hello dump matches golden")
       } else {
-        c.expect(false, "read golden hello.myc")
+        c.expect(false, "read the hello golden")
       }
     } else {
       fail_log(c, hello_b, "read hello dump")
@@ -102,7 +136,7 @@ fn test_fixed_point(c: Checks) {
       run_args.push(hello)
       wave2: Array(HJob) = []
       wave2.push(HJob.new(bin_c, dump_args(hello), hello_c))
-      wave2.push(HJob.new(bin_c, dump_args(main_av), main_c))
+      wave2.push(fp_main_job(bin_c, main_av, main_c))
       wave2.push(HJob.new(bin_c, run_args, hlog))
       run_jobs(wave2)
       c_hello = wave2[0].code
@@ -114,7 +148,7 @@ fn test_fixed_point(c: Checks) {
         if want = file_read(golden) {
           c.eq_str(got_c, want, "next hello dump matches golden")
         } else {
-          c.expect(false, "read golden hello.myc")
+          c.expect(false, "read the hello golden")
         }
         if got_b = file_read(hello_b) {
           c.eq_str(got_c, got_b, "next hello dump matches this compiler")
@@ -123,16 +157,16 @@ fn test_fixed_point(c: Checks) {
         fail_log(c, hello_c, "read next hello dump")
       }
 
-      c.eq_int(b_main, 0, "dump compiler myc")
-      c.eq_int(c_main, 0, "next dump compiler myc")
+      c.eq_int(b_main, 0, "dump compiler ${what}")
+      c.eq_int(c_main, 0, "next dump compiler ${what}")
       if ir_b = file_read(main_b) {
         if ir_c = file_read(main_c) {
-          c.eq_str(sha256(ir_b), sha256(ir_c), "compiler myc digest matches next")
+          c.eq_str(sha256(ir_b), sha256(ir_c), "compiler ${what} digest matches next")
         } else {
-          fail_log(c, main_c, "read next compiler myc")
+          fail_log(c, main_c, "read next compiler ${what}")
         }
       } else {
-        fail_log(c, main_b, "read compiler myc")
+        fail_log(c, main_b, "read compiler ${what}")
       }
 
       c.eq_int(hcode, 0, "next runs hello")
