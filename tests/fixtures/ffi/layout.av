@@ -1,0 +1,139 @@
+// C layouts through pointers (Stage 28 W8a, audit 1.7, 4.6 (4)): a C
+// struct with Int, String, Bool, a nested C struct, Int64, and Ptr(Void)
+// fields, laid out by the C rule (offsets checked against C's offsetof),
+// read and written through `Ptr(Rec)` (compound assignments too, nested
+// fields through the outer pointer), methods on `Ptr(Rec)` receivers,
+// and heap strings stored into the C struct's `String` field: each is
+// pinned (never unpinned), so C reads it after collections moved
+// everything else. Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib lay {
+  struct Pt {
+    x: Float64
+    y: Float64
+  }
+  struct Rec {
+    id: Int
+    name: String
+    on: Bool
+    at: Pt
+    big: Int64
+    link: Ptr(Void)
+  }
+  fun ffi_rec_new(id: Int): Ptr(Rec)
+  fun ffi_rec_id(r: Ptr(Rec)): Int
+  fun ffi_rec_name(r: Ptr(Rec)): String
+  fun ffi_rec_name_len(r: Ptr(Rec)): Int
+  fun ffi_rec_on(r: Ptr(Rec)): Int
+  fun ffi_rec_x(r: Ptr(Rec)): Float64
+  fun ffi_rec_big(r: Ptr(Rec)): Int64
+  fun ffi_rec_off_name: Int
+  fun ffi_rec_off_on: Int
+  fun ffi_rec_off_at: Int
+  fun ffi_rec_off_big: Int
+  fun ffi_rec_off_link: Int
+  fun ffi_rec_size: Int
+  fun ffi_rec_free(r: Ptr(Rec))
+  fun ffi_cell_new(v: Int): Ptr(Void)
+  fun ffi_cell_get(p: Ptr(Void)): Int
+  fun avant_pin_count: Int
+}
+
+fn (r: Ptr(Rec)) norm2: Float64 {
+  (r.at.x * r.at.x) + (r.at.y * r.at.y)
+}
+
+fn (r: Ptr(Rec)) grow(by: Int) {
+  r.id += by
+  r.big = r.big * 2i64
+}
+
+fn (r: Ptr(Rec)) label: String {
+  "rec ${r.id}"
+}
+
+class Owner {
+  rec: Ptr(Rec)
+  tag: String
+
+  fn initialize(rec: Ptr(Rec), tag: String) {
+    self.rec = rec
+    self.tag = tag
+  }
+}
+
+// Allocates n strings and keeps the last 500 alive (a rolling window),
+// so young collections copy live data while the program's pins and C
+// pointers are held.
+fn churn(n: Int): Int {
+  t = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "churn ${i} " + "more text to fill the nursery"
+    keep.push(s)
+    if keep.size > 500 {
+      keep = []
+    }
+    t = t + s.size
+    i = i + 1
+  }
+  t + keep.size
+}
+
+fn main {
+  puts(lay.ffi_rec_off_name())
+  puts(lay.ffi_rec_off_on())
+  puts(lay.ffi_rec_off_at())
+  puts(lay.ffi_rec_off_big())
+  puts(lay.ffi_rec_off_link())
+  puts(lay.ffi_rec_size())
+  r = lay.ffi_rec_new(5)
+  puts(r.id)
+  puts(r.on)
+  puts(r.at.x)
+  puts(r.at.y)
+  puts(r.big)
+  r.id = 12
+  r.on = true
+  r.at.x = 3.0
+  r.at.y = 4.0
+  r.big = 1i64 << 40i64
+  r.id += 30
+  r.at.y -= 1.0
+  puts(lay.ffi_rec_id(r))
+  puts(lay.ffi_rec_on(r))
+  puts(lay.ffi_rec_x(r))
+  puts(lay.ffi_rec_big(r))
+  puts(r.norm2)
+  puts(r.norm2())
+  r.grow(8)
+  puts(r.id)
+  puts(r.big)
+  puts(r.label)
+  base = lay.avant_pin_count()
+  name = "name-" + "on-the-heap"
+  r.name = name
+  puts(lay.avant_pin_count() - base)
+  puts(churn(30000))
+  puts(lay.ffi_rec_name(r))
+  puts(lay.ffi_rec_name_len(r))
+  puts(r.name)
+  i = 0
+  while i < 40 {
+    r.name = "round ${i}" + "/40"
+    i = i + 1
+  }
+  puts(lay.avant_pin_count() - base)
+  puts(churn(30000))
+  puts(lay.ffi_rec_name(r))
+  r.link = lay.ffi_cell_new(99)
+  puts(lay.ffi_cell_get(r.link))
+  o = Owner.new(r, "owner" + "!")
+  puts(churn(10000))
+  puts(o.rec.id)
+  o.rec.id = 7
+  puts(lay.ffi_rec_id(r))
+  puts(o.tag)
+  lay.ffi_rec_free(r)
+}

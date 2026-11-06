@@ -3,7 +3,7 @@
 # once per side and compares what they observably do (stdout, stderr, exit
 # status), program by program.
 #
-#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types,closures] [PROGRAM...]
+#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap,types,closures,ffi] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
 # compile and to the run). Both default to bin/avant-c with the seed's
@@ -36,7 +36,7 @@
 #              fixtures the string lowering accepts (string_programs below)
 #   objects    not in the default: the struct and class programs (Stage 28
 #              W6b, mir.md W6b.7): every tests/fixtures/objects/*.av with
-#              `fn main` (refuse_ptr.av, the L0001 case, has none) and the
+#              `fn main` (refuse_join.av, the L0001 case, has none) and the
 #              examples and fixtures the lowering accepts (object_programs)
 #   heap       not in the default: the array, hash, and Buf programs (Stage
 #              28 W6c, mir.md W6c.7): every tests/fixtures/heap/*.av with
@@ -52,6 +52,11 @@
 #              tests/fixtures/closures/*.av with `fn main` except the
 #              expected difference below, and examples/collect.av
 #              (closure_programs)
+#   ffi        not in the default: the C interface programs (Stage 28 W8a,
+#              mir.md W8a): every tests/fixtures/ffi/*.av with `fn main`
+#              except the expected differences below (built with --cc
+#              tests/fixtures/ffi/ffi.c), and the examples that call C
+#              (add, digest, json, layout, sqrt, zlib) (ffi_programs)
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
 # file (run as a program; an example gets its suite flags) or a LangArena
 # task name such as Etc::Sieve. --set limits the sets; both may be combined.
@@ -73,6 +78,18 @@
 #                       allows; tests/cases/test_types.av checks its output
 #                       (order.av left this list in W7b: the checker's member
 #                       order fix, C15, makes both back ends compile it)
+#   tests/fixtures/ffi/byval.av  skipped: an expected difference (D196, Stage
+#                       28 W8a, C3): Avant structs passed to and returned
+#                       from C by value; the new back end follows the SysV
+#                       x86-64 C ABI, the old one passes LLVM aggregates (it
+#                       crashes); tests/cases/test_ffi_llvm.av checks the
+#                       new back end's output
+#   tests/fixtures/ffi/fresh.av  skipped: an expected difference (D196, Stage
+#                       28 W8a): a return inside a pin block whose end is
+#                       reachable leaves the pin on the fall-through path in
+#                       the old back end (C20); a pinned fn value does not
+#                       compile there (C21); test_ffi_llvm.av checks the new
+#                       back end's output
 #   tests/fixtures/closures/fresh.av  skipped: an expected difference (D196,
 #                       Stage 28 W7b): `continue` in an `each` or `any` block
 #                       never ends in the old back end (it jumps back to the
@@ -167,6 +184,8 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
     examples/http.av) echo "opens a loopback listener and connects to it (no network ports in the oracle)" ;;
     tests/fixtures/format/*) echo "formatter input, not a program" ;;
     tests/fixtures/types/coerce.av) echo "expected difference (D196): the old back end fails to compile it; test_types.av checks the new back end" ;;
+    tests/fixtures/ffi/byval.av) echo "expected difference (D196, C3): structs by value to C follow the C ABI only in the new back end; test_ffi_llvm.av checks it" ;;
+    tests/fixtures/ffi/fresh.av) echo "expected difference (D196, C20, C21): the old back end leaks a pin after a return, and cannot pin an fn value; test_ffi_llvm.av checks the new back end" ;;
     tests/fixtures/closures/fresh.av) echo "expected difference (D196): the old back end loops forever or fails to compile it; test_closures.av checks the new back end" ;;
   esac
 }
@@ -175,6 +194,7 @@ flags_of() { # PATH -> the extra compile flags the suite uses
     examples/add.av) echo "--cc $root/examples/c/add.c" ;;
     examples/layout.av) echo "--cc $root/examples/c/layout.c" ;;
     examples/zlib.av) echo "--lib z" ;;
+    tests/fixtures/ffi/*) echo "--cc $root/tests/fixtures/ffi/ffi.c" ;;
   esac
 }
 scalar_programs() { # the scalars set, one path per line
@@ -226,6 +246,10 @@ type_programs() { # the types set, one path per line
 closure_programs() { # the closures set, one path per line
   for f in tests/fixtures/closures/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
   echo examples/collect.av
+}
+ffi_programs() { # the ffi set, one path per line
+  for f in tests/fixtures/ffi/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
+  for x in add digest json layout sqrt zlib; do echo "examples/$x.av"; done
 }
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
@@ -358,6 +382,9 @@ else
   fi
   if has_set closures; then
     for f in $(closure_programs); do program "$f"; done
+  fi
+  if has_set ffi; then
+    for f in $(ffi_programs); do program "$f"; done
   fi
   has_set langarena && langarena ""
 fi
