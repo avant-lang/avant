@@ -1,0 +1,165 @@
+// Pinned young objects and their children (Stage 28 W8c, C29). A pinned
+// nursery object survives a young copy in place; its children must still
+// be traced, copied, and its fields updated by every later young
+// collection, and a young child stored into it afterwards must be found.
+// Before the fix the runtime traced such an object only in the first
+// collection after it was pinned, so its young children were freed with
+// their blocks: `argv()` lost its buffer (the runtime pins its young
+// array), and a `pin` block's value lost its fields. Each part churns
+// garbage so many young collections run, and checks every child each
+// round; it must print the same under AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1,
+// both, and AVANT_NURSERY=0 on both back ends.
+
+class Box {
+  n: Int
+  s: String
+
+  fn initialize(n: Int) {
+    self.n = n
+    s = "box-${n}"
+  }
+}
+
+class Holder {
+  tag: String
+  items: Array(String)
+  box: Box
+
+  fn initialize(tag: String) {
+    self.tag = tag
+    items = []
+    box = Box.new(0)
+  }
+}
+
+class Keeper {
+  holders: Array(Holder)
+
+  fn initialize {
+    holders = []
+  }
+}
+
+// Garbage, with a rolling window of live strings so young collections
+// copy live data too.
+fn churn(n: Int): Int {
+  t = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "churn ${i}" + " padding padding padding"
+    keep.push(s)
+    if keep.size > 200 {
+      keep = []
+    }
+    t = t + s.size
+    i = i + 1
+  }
+  t
+}
+
+fn check(h: Holder, want: Int, tag: String): Int {
+  bad = 0
+  if h.items.size != want {
+    bad = bad + 1
+  }
+  i = 0
+  while i < h.items.size {
+    if !(h.items[i] == "${tag}-${i}") {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  if !(h.box.s == "box-${h.box.n}") {
+    bad = bad + 1
+  }
+  if !(h.tag == tag) {
+    bad = bad + 1
+  }
+  bad
+}
+
+// Young stores into h (a fresh array, a fresh box) and into its young
+// array, with collections between them.
+fn round(h: Holder, r: Int, tag: String): Int {
+  h.items.push("${tag}-${h.items.size}")
+  if r % 7 == 6 {
+    fresh: Array(String) = []
+    h.items.each { |s| fresh.push(s + "") }
+    h.items = fresh
+    h.box = Box.new(r)
+  }
+  churn(20000)
+  check(h, r + 1, tag)
+}
+
+// argv(): the runtime's pinned young array and its buffer.
+fn part_argv: Int {
+  a = argv()
+  first = a[0] + ""
+  bad = 0
+  r = 0
+  while r < 30 {
+    churn(20000)
+    b = argv()
+    if b.size != a.size || !(b[0] == first) || !(a[0] == first) {
+      bad = bad + 1
+    }
+    r = r + 1
+  }
+  bad
+}
+
+// A `pin` block over a young holder, stored into while pinned; then the
+// same holder unpinned and still used through a local.
+fn part_pin: Int {
+  h = Holder.new("p" + "in")
+  bad = 0
+  r = 0
+  pin(h) {
+    while r < 30 {
+      bad = bad + round(h, r, "pin")
+      r = r + 1
+    }
+  }
+  while r < 60 {
+    bad = bad + round(h, r, "pin")
+    r = r + 1
+  }
+  bad
+}
+
+// A holder pinned while young and then reachable only through another
+// object's array (no root names it): its young children must be found
+// through the remembered set.
+fn fill(k: Keeper, r: Int): Int {
+  h = k.holders[0]
+  round(h, r, "kept")
+}
+
+fn add(k: Keeper) {
+  h = Holder.new("ke" + "pt")
+  pin(h) {
+    k.holders.push(h)
+    churn(6000)
+  }
+}
+
+fn part_kept: Int {
+  k = Keeper.new
+  churn(20000)
+  add(k)
+  bad = 0
+  r = 0
+  while r < 40 {
+    bad = bad + fill(k, r)
+    r = r + 1
+  }
+  bad
+}
+
+fn main {
+  puts("argv bad: ${part_argv()}")
+  puts("pin bad: ${part_pin()}")
+  puts("kept bad: ${part_kept()}")
+}

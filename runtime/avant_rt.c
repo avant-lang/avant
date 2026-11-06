@@ -22,7 +22,9 @@
  *
  * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
  * stay put (those blocks remain `SPACE_FROM` so their address is stable,
- * D34). After young copy, unpinned from-space is discarded. Set
+ * D34) and are promoted in place: from then on they are mature objects,
+ * traced and remembered like any other (C29, promote_pinned_one). After
+ * young copy, unpinned from-space is discarded. Set
  * `AVANT_NURSERY_DISCARD=0` to park all nursery blocks instead (leftover
  * pointer diagnosis). Objects that escape to C should be pinned.
  *
@@ -1519,7 +1521,11 @@ static void remember_young_edge(void **slot, void *payload) {
   if (!owner) {
     return;
   }
-  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO)) {
+  /* A pinned nursery owner is not copied: it stays in its block and is
+   * promoted in place when this collection ends (promote_pinned_one),
+   * so its young edge needs the remembered set like a mature owner's. */
+  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO) &&
+      (avant_header(owner)->flags & AVANT_FLAG_PINNED) == 0) {
     return;
   }
   keep_add(owner);
@@ -1683,8 +1689,11 @@ void copy_from_slot(void **slot) {
   }
   /* Mature and large objects stay put. Follow one when this slot is a
    * root or a field of a young object. A field of a mature object is
-   * followed only when that child is remembered. */
-  if (ol || (b && b->space == SPACE_MATURE)) {
+   * followed only when that child is remembered. A live object in a
+   * from-space block is a pinned survivor promoted in place
+   * (promote_pinned_one): it is mature, and its young children are
+   * reached the same way (C29). */
+  if (ol || (b && (b->space == SPACE_MATURE || b->space == SPACE_FROM))) {
     trace_mature(start, g_from_mature);
   }
   if (g_rem_track && names_young(*slot)) {
@@ -1878,6 +1887,28 @@ static void gen_young_copy(void) {
 
 static int g_block_has_pin;
 
+/*
+ * C29 (Stage 28 W8c). A pinned nursery object survives a young copy in
+ * place, and its block stays as SPACE_FROM. It is promoted in place
+ * here: YOUNG and SURVIVED are cleared, so from now on it is a mature
+ * object that happens to live in a from-space block. That restores
+ * the generational invariant for it: the barrier (inline and
+ * avant_barrier) remembers it when a young child is stored into it,
+ * copy_from_slot follows it like a mature object (a root, a young
+ * parent, or a remembered parent reaches it), and remember_young_edge
+ * keeps it remembered while its fields name young objects. Before,
+ * it kept YOUNG (so no barrier) while no later young collection
+ * looked inside it (copy_nursery skips non-nursery blocks), and its
+ * young children were discarded with their blocks.
+ */
+static void promote_pinned_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_PINNED) {
+    g_block_has_pin = 1;
+    h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+  }
+}
+
 static void note_pinned_in_block(AvantHeader *h, Block *b) {
   (void)b;
   if (h->flags & AVANT_FLAG_PINNED) {
@@ -1888,6 +1919,12 @@ static void note_pinned_in_block(AvantHeader *h, Block *b) {
 static int block_has_pinned(Block *b) {
   g_block_has_pin = 0;
   foreach_block_object(b, note_pinned_in_block);
+  return g_block_has_pin;
+}
+
+static int block_keep_pinned(Block *b) {
+  g_block_has_pin = 0;
+  foreach_block_object(b, promote_pinned_one);
   return g_block_has_pin;
 }
 
@@ -1904,6 +1941,9 @@ static void park_nursery_from(void) {
   g_nursery = NULL;
   while (b) {
     Block *next = b->next;
+    if (g_saw_pinned_nursery) {
+      (void)block_keep_pinned(b);
+    }
     b->space = SPACE_FROM;
     b->next = g_from;
     g_from = b;
@@ -1927,7 +1967,7 @@ static void discard_nursery_from(void) {
   }
   while (b) {
     Block *next = b->next;
-    if (block_has_pinned(b)) {
+    if (block_keep_pinned(b)) {
       b->space = SPACE_FROM;
       b->next = g_from;
       g_from = b;
@@ -2148,6 +2188,19 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
             (unsigned long long)g_stats.collections, ch->flags);
     return 1;
   }
+  /* C29: a reachable reference to a nursery object the copy neither
+   * moved nor kept in place. Its block is discarded after this check,
+   * so the reference is about to dangle (a live holder the young copy
+   * did not trace, or a missing barrier). */
+  if (!to && (avant_header(start)->flags & AVANT_FLAG_PINNED) == 0) {
+    fprintf(stderr,
+            "avant gc verify: lost %s reference holder=%p off=%ld "
+            "names nursery object %p the young copy did not keep coll=%llu "
+            "child_flags=0x%x\n",
+            where, holder, off, start, (unsigned long long)g_stats.collections,
+            avant_header(start)->flags);
+    return 1;
+  }
   return 0;
 }
 
@@ -2265,6 +2318,14 @@ static void verify_obj_fields(AvantHeader *h, Block *b) {
   });
 }
 
+/* Pinned nursery objects stay in their block; their fields are checked
+ * like a to-space object's (C29). */
+static void verify_pinned_fields(AvantHeader *h, Block *b) {
+  if (h->flags & AVANT_FLAG_PINNED) {
+    verify_obj_fields(h, b);
+  }
+}
+
 static uint64_t g_verify_left_seen;
 
 static void verify_young_copy(void) {
@@ -2293,6 +2354,14 @@ static void verify_young_copy(void) {
   }
   for (b = g_mature; b; b = b->next) {
     foreach_block_object(b, verify_obj_fields);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, verify_obj_fields);
+  }
+  if (g_saw_pinned_nursery) {
+    for (b = g_nursery; b; b = b->next) {
+      foreach_block_object(b, verify_pinned_fields);
+    }
   }
   {
     Large *L;
