@@ -1,0 +1,195 @@
+import harness
+import backends
+
+// Stage 28 W6c: arrays, hashes, Buf, and Bytes on the new back end
+// (AVANT_BACKEND=llvm, D176; stages/stage28/mir.md W6c). For every
+// program of the heap subset: (a) it compiles under both back ends
+// (--debug), and under the new one a second time with the call forms of
+// allocation and the barrier (AVANT_LLVM_CALL_FORMS=1; the default is the
+// inline fast paths, mir.md 5.5, 5.6); every program's stdout, stderr,
+// and exit status equal the old back end's (D184); (b) both new-back-end
+// programs print the same under AVANT_GC_VERIFY=1, under
+// AVANT_YOUNG_MB=1 (a 1 MB nursery: many young collections), under
+// both, and under AVANT_NURSERY=0 (full collections only), and the
+// verifier reports nothing (stderr unchanged); for the fixtures with
+// goldens, (c) `avant dump` under AVANT_BACKEND=llvm prints exactly
+// tests/goldens/heap/<name>.mir (D171). (d) Array.get (an Int? result)
+// is refused with L0001 (unions, W7).
+
+fn golden_progs: Array(String) {
+  xs: Array(String) = []
+  names = ["arrays", "churn", "elems", "hashes", "refs"]
+  i = 0
+  while i < names.size {
+    xs.push("tests/fixtures/heap/${names[i]}.av")
+    i = i + 1
+  }
+  xs
+}
+
+fn other_progs: Array(String) {
+  xs: Array(String) = []
+  xs.push("tests/fixtures/heap/trap_index.av")
+  xs.push("examples/sieve.av")
+  xs.push("tests/fixtures/modules/main.av")
+  xs.push("tests/fixtures/part3/buf.av")
+  xs.push("tests/fixtures/part3/pop.av")
+  xs
+}
+
+fn golden_of(rel: String): String {
+  base = rel
+  i = 0
+  while i < rel.size {
+    if rel[i] == 47 {
+      base = str_slice(rel, i + 1, rel.size)
+    }
+    i = i + 1
+  }
+  "tests/goldens/heap/${str_slice(base, 0, base.size - 3)}.mir"
+}
+
+fn gc_envs: Array(String) {
+  ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
+}
+
+fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
+  gp = golden_progs()
+  progs: Array(String) = []
+  i = 0
+  while i < gp.size {
+    progs.push(gp[i])
+    i = i + 1
+  }
+  op = other_progs()
+  i = 0
+  while i < op.size {
+    progs.push(op[i])
+    i = i + 1
+  }
+
+  // Wave 1: compiles under both back ends, and the dumps.
+  jobs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    jobs.push(compile_job("", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
+    jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
+    jobs.push(compile_job("AVANT_BACKEND=llvm AVANT_LLVM_CALL_FORMS=1", compiler, "${root}/${progs[i]}", "${dir}/${k}.cf", "${dir}/${k}.cf.log"))
+    i = i + 1
+  }
+  i = 0
+  while i < gp.size {
+    k = key_of(gp[i])
+    a: Array(String) = []
+    a.push("dump")
+    a.push("${root}/${gp[i]}")
+    jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
+    i = i + 1
+  }
+  ref_src = "tests/fixtures/heap/refuse_get.av"
+  jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${ref_src}", "${dir}/refuse.new", "${dir}/refuse.new.log"))
+  run_waves(jobs)
+  rj = jobs[jobs.size - 1]
+  c.eq_int(rj.code, 1, "${ref_src}: refused under llvm")
+  c.expect(str_contains_heap(log_text(rj.log), "error[L0001]: not yet supported by the llvm back end: Array.get (its result is T?: unions, W7)"), "${ref_src}: the L0001 message")
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    c.eq_int(jobs[3 * i].code, 0, "${p}: compiles under myc")
+    c.eq_int(jobs[3 * i + 1].code, 0, "${p}: compiles under llvm")
+    c.eq_int(jobs[3 * i + 2].code, 0, "${p}: compiles under llvm with the call forms")
+    i = i + 1
+  }
+  base = 3 * progs.size
+  i = 0
+  while i < gp.size {
+    j = jobs[base + i]
+    c.eq_int(j.code, 0, "${gp[i]}: dump under llvm exits 0")
+    want = "(no golden)"
+    if t = file_read("${root}/${golden_of(gp[i])}") {
+      want = t
+    }
+    c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
+    i = i + 1
+  }
+
+  // Wave 2: every program from both back ends (the new one in both
+  // forms), then the new ones under each GC environment.
+  envs = gc_envs()
+  forms = ["new", "cf"]
+  per = 1 + forms.size * (1 + envs.size)
+  runs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    runs.push(run_job(dir, "${k}.old", "${k}.a"))
+    f = 0
+    while f < forms.size {
+      runs.push(run_job(dir, "${k}.${forms[f]}", "${k}.${forms[f]}.b"))
+      e = 0
+      while e < envs.size {
+        runs.push(run_job_env(dir, "${k}.${forms[f]}", "${k}.${forms[f]}.g${e}", envs[e]))
+        e = e + 1
+      }
+      f = f + 1
+    }
+    i = i + 1
+  }
+  run_waves(runs)
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    k = key_of(p)
+    want_out = log_text("${dir}/${k}.a.out")
+    want_err = log_text("${dir}/${k}.a.err")
+    want_code = runs[per * i].code
+    f = 0
+    while f < forms.size {
+      fm = forms[f]
+      at = per * i + 1 + f * (1 + envs.size)
+      c.eq_int(runs[at].code, want_code, "${p} (${fm}): the same exit status")
+      c.eq_str(log_text("${dir}/${k}.${fm}.b.out"), want_out, "${p} (${fm}): the same stdout")
+      c.eq_str(log_text("${dir}/${k}.${fm}.b.err"), want_err, "${p} (${fm}): the same stderr")
+      e = 0
+      while e < envs.size {
+        c.eq_int(runs[at + 1 + e].code, want_code, "${p} (${fm}) under ${envs[e]}: the same exit status")
+        c.eq_str(log_text("${dir}/${k}.${fm}.g${e}.out"), want_out, "${p} (${fm}) under ${envs[e]}: the same stdout")
+        c.eq_str(log_text("${dir}/${k}.${fm}.g${e}.err"), want_err, "${p} (${fm}) under ${envs[e]}: the same stderr (no verifier report)")
+        e = e + 1
+      }
+      f = f + 1
+    }
+    i = i + 1
+  }
+}
+
+fn str_contains_heap(s: String, sub: String): Bool {
+  i = 0
+  while i + sub.size <= s.size {
+    if str_eq(str_slice(s, i, i + sub.size), sub) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_heap.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_heap(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

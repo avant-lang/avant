@@ -1,0 +1,180 @@
+// Arrays of references and of reference-holding structs on the new back
+// end (Stage 28 W6c): String, class, nested-array, and struct elements;
+// literals (fresh fills), push (push_ptr, push_slot), pop (pop_ptr,
+// pop_slot), index stores (set_ptr; a struct element behind a barrier on
+// the buffer), element field stores, struct methods on elements (self is
+// an address inside the buffer), sorted copies, contains on references,
+// arrays as class and struct fields, for over an array of strings; the
+// string members that make arrays (split, fields, chars) and
+// bytes_to_str.
+
+class Node {
+  id: Int
+  label: String
+
+  fn initialize(id: Int) {
+    self.id = id
+    label = "node-${id}"
+  }
+}
+
+struct Rec {
+  n: Int
+  name: String
+  node: Node
+
+  fn rename(s: String) {
+    name = s
+    n = n + 1
+  }
+
+  fn text: String {
+    "${n}:${name}:${node.label}"
+  }
+}
+
+class Bag {
+  items: Array(String)
+  recs: Array(Rec)
+  rows: Array(Array(Int))
+
+  fn initialize {
+    items = ["a", "b"]
+    recs = []
+    rows = [[1, 2], [3]]
+  }
+
+  fn add(s: String) {
+    items.push(s)
+  }
+}
+
+struct Pair {
+  tag: String
+  xs: Array(Int)
+}
+
+fn join(xs: Array(String)): String {
+  out = ""
+  for x in xs {
+    out = out + x + ","
+  }
+  out
+}
+
+fn mk(i: Int): Rec {
+  Rec { n: i, name: "r${i}", node: Node.new(i) }
+}
+
+fn strings {
+  ss = ["pear", "apple", "fig"]
+  ss.push("kiwi")
+  puts(join(ss))
+  puts(join(ss.sorted))
+  ss.sort
+  puts(join(ss))
+  puts(ss.contains("fig"))
+  puts(ss.contains("plum"))
+  ss[1] = "banana"
+  puts(ss[1])
+  puts(ss.pop)
+  ss.reverse
+  puts(join(ss))
+  parts = "x=1;y=22;z=333".split(";")
+  puts(parts.size)
+  puts(join(parts))
+  ws = "  one two   three ".fields()
+  puts(join(ws))
+  cs = "abc".chars
+  puts(join(cs))
+  bs = "hi!".bytes.chars
+  puts(bs.size)
+  codes = [72, 105, 33]
+  puts(bytes_to_str(codes))
+}
+
+fn nodes {
+  ns: Array(Node) = []
+  i = 0
+  while i < 5 {
+    ns.push(Node.new(i * 3))
+    i = i + 1
+  }
+  ns[2] = Node.new(100)
+  puts(ns[2].label)
+  last = ns.pop
+  puts(last.id)
+  puts(ns.size)
+  first = ns[0]
+  puts(ns.contains(first))
+  puts(ns.contains(last))
+  ns[1].label = "relabelled"
+  puts(ns[1].label)
+  grid = [[1, 2, 3], [4, 5], []]
+  grid[2].push(6)
+  grid.push([7, 8, 9, 10])
+  t = 0
+  for row in grid {
+    j = 0
+    while j < row.size {
+      t = t + row[j]
+      j = j + 1
+    }
+  }
+  puts(t)
+  puts(grid[3][2])
+}
+
+fn recs {
+  rs = [mk(1), mk(2)]
+  rs.push(mk(3))
+  puts(rs[2].text)
+  rs[0] = mk(10)
+  puts(rs[0].text)
+  rs[1].name = "second"
+  rs[1].node = Node.new(77)
+  puts(rs[1].text)
+  rs[2].rename("third")
+  puts(rs[2].text())
+  rs[0].n += 5
+  puts(rs[0].n)
+  p = rs.pop
+  puts(p.text)
+  puts(rs.size)
+  r = rs[1]
+  r.name = "copy"
+  puts(rs[1].name)
+  puts(r.name)
+  big = Array(Rec).new(3)
+  puts(big[2].n)
+  big[2] = mk(9)
+  puts(big[2].node.label)
+}
+
+fn fields {
+  b = Bag.new
+  b.add("c")
+  b.items.push("d")
+  puts(join(b.items))
+  b.recs.push(mk(4))
+  b.recs[0].rename("bagged")
+  puts(b.recs[0].text)
+  b.rows[1].push(4)
+  puts(b.rows[1].size)
+  b.items = ["fresh", "list"]
+  puts(join(b.items))
+  p = Pair { tag: "p", xs: [1, 2, 3] }
+  p.xs.push(4)
+  puts(p.xs.sum)
+  ps = [p, Pair { tag: "q", xs: [] }]
+  ps[1].xs.push(9)
+  puts(ps[1].xs[0])
+  puts(ps[0].tag)
+}
+
+fn main {
+  strings()
+  nodes()
+  recs()
+  fields()
+}

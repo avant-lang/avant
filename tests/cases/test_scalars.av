@@ -92,7 +92,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
     i = i + 1
   }
-  jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/examples/sieve.av", "${dir}/sieve.llvm", "${dir}/sieve.llvm.log"))
+  jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/examples/errors.av", "${dir}/errors.llvm", "${dir}/errors.llvm.log"))
   jobs.push(compile_job("AVANT_BACKEND=bogus", compiler, "${root}/examples/hello.av", "${dir}/bogus", "${dir}/bogus.log"))
   d: Array(String) = []
   d.push("dump")
@@ -123,11 +123,11 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   }
   base = base + gp.size
   sv = jobs[base]
-  c.eq_int(sv.code, 1, "examples/sieve.av under llvm: exit 1")
+  c.eq_int(sv.code, 1, "examples/errors.av under llvm: exit 1")
   sl = log_text(sv.log)
-  c.expect(str_has(sl, "error[L0001]: not yet supported by the llvm back end: a local of type Array(Int)"), "examples/sieve.av: the not-yet-supported diagnostic")
-  c.expect(str_has(sl, "examples/sieve.av:2:3"), "examples/sieve.av: at the construct's location")
-  c.expect(!file_exists("${dir}/sieve.llvm"), "examples/sieve.av: no program written")
+  c.expect(str_has(sl, "error[L0001]: not yet supported by the llvm back end: a result of type Int?"), "examples/errors.av: the not-yet-supported diagnostic")
+  c.expect(str_has(sl, "examples/errors.av:1:1"), "examples/errors.av: at the construct's location")
+  c.expect(!file_exists("${dir}/errors.llvm"), "examples/errors.av: no program written")
   bg = jobs[base + 1]
   c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
   c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be myc or llvm, not bogus"), "AVANT_BACKEND=bogus: refused")
