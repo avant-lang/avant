@@ -72,6 +72,19 @@ FUNC :avant_barrier
     TYPE :ptr<void>
 ENDFUNC
 
+FUNC :avant_type_map_at
+  ARGS
+    TYPE :u32
+    TYPE :u32
+    TYPE :u32
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_barrier_at
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
 FUNC :avant_str_concat
   RETURN
     TYPE :ptr<u8>
@@ -6427,33 +6440,7 @@ FUNC :main
     TYPE :i32
   BODY
     CALL :avant_gc_enter
-    PUSH 1 :u64
-    PUSH 1022 :u32
-    CALL :avant_type_map
-    PUSH 1 :u64
-    PUSH 1021 :u32
-    CALL :avant_type_map
-    PUSH 7 :u64
-    PUSH 1023 :u32
-    CALL :avant_type_map
-    PUSH 1 :u64
-    PUSH 1 :u32
-    CALL :avant_type_map
-    PUSH 63 :u64
-    PUSH 2 :u32
-    CALL :avant_type_map
-    PUSH 0 :u64
-    PUSH 3 :u32
-    CALL :avant_type_map
-    PUSH 0 :u64
-    PUSH 4 :u32
-    CALL :avant_type_map
-    PUSH 2 :u64
-    PUSH 400 :u32
-    CALL :avant_type_map
-    PUSH 1 :u64
-    PUSH 401 :u32
-    CALL :avant_type_map
+    CALL :__avant_type_maps
     PARAM 1
     PARAM 0
     CALL :avant_io_init_argv
@@ -6488,7 +6475,7 @@ FUNC :main
       THEN
         LOCAL :__t6
         FIELD 2
-        PUSH 400 :u32
+        PUSH 5 :u32
         SIZEOF :Box_Server
         CALL :avant_alloc
         AS :ptr<Box_Server>
@@ -6500,9 +6487,15 @@ FUNC :main
         AS :ptr<void>
         CREATE :Server
         LOCAL :server :ptr<Box_Server>
+        AS :ptr<void>
+        CALL :avant_barrier
+        LOCAL :server :ptr<Box_Server>
         DEREF
         FIELD 0
         STORE
+        LOCAL :server :ptr<Box_Server>
+        AS :ptr<void>
+        CALL :avant_barrier
         LOCAL :server :ptr<Box_Server>
         DEREF
         FIELD 0
@@ -6510,7 +6503,7 @@ FUNC :main
         PUSH "/"
         LOCAL :__t7 :ptr<u8>
         STORE
-        PUSH 401 :u32
+        PUSH 6 :u32
         SIZEOF :__lam_0_env
         CALL :avant_alloc
         AS :ptr<__lam_0_env>
@@ -8323,7 +8316,7 @@ FUNC :HttpState__initialize
     AS :u64
     SIZEOF :Route
     BINARY :mul
-    PUSH 0 :u32
+    PUSH 7 :u32
     STACK :swap2
     CALL :avant_alloc
     AS :ptr<Route>
@@ -8384,7 +8377,7 @@ FUNC :HttpState__initialize
     AS :u64
     SIZEOF :WsRoute
     BINARY :mul
-    PUSH 0 :u32
+    PUSH 8 :u32
     STACK :swap2
     CALL :avant_alloc
     AS :ptr<WsRoute>
@@ -8445,7 +8438,7 @@ FUNC :HttpState__initialize
     AS :u64
     SIZEOF :WsOpenRoute
     BINARY :mul
-    PUSH 0 :u32
+    PUSH 9 :u32
     STACK :swap2
     CALL :avant_alloc
     AS :ptr<WsOpenRoute>
@@ -8506,7 +8499,7 @@ FUNC :HttpState__initialize
     AS :u64
     SIZEOF :WsCloseRoute
     BINARY :mul
-    PUSH 0 :u32
+    PUSH 10 :u32
     STACK :swap2
     CALL :avant_alloc
     AS :ptr<WsCloseRoute>
@@ -8725,7 +8718,7 @@ FUNC :HttpState__add
     FIELD 0
     LOCAL :__t5 :ptr<Array_Route>
     STORE
-    PUSH 0 :u32
+    PUSH 7 :u32
     SIZEOF :Route
     AS :u64
     LOCAL :__t5
@@ -8771,7 +8764,7 @@ FUNC :HttpState__add_ws
     FIELD 1
     LOCAL :__t4 :ptr<Array_WsRoute>
     STORE
-    PUSH 0 :u32
+    PUSH 8 :u32
     SIZEOF :WsRoute
     AS :u64
     LOCAL :__t4
@@ -8817,7 +8810,7 @@ FUNC :HttpState__add_ws_open
     FIELD 2
     LOCAL :__t4 :ptr<Array_WsOpenRoute>
     STORE
-    PUSH 0 :u32
+    PUSH 9 :u32
     SIZEOF :WsOpenRoute
     AS :u64
     LOCAL :__t4
@@ -8863,7 +8856,7 @@ FUNC :HttpState__add_ws_close
     FIELD 3
     LOCAL :__t4 :ptr<Array_WsCloseRoute>
     STORE
-    PUSH 0 :u32
+    PUSH 10 :u32
     SIZEOF :WsCloseRoute
     AS :u64
     LOCAL :__t4
@@ -10008,7 +10001,7 @@ FUNC :Http__get
     AS :u64
     SIZEOF :Header
     BINARY :mul
-    PUSH 0 :u32
+    PUSH 11 :u32
     STACK :swap2
     CALL :avant_alloc
     AS :ptr<Header>
@@ -10110,7 +10103,7 @@ FUNC :Http__post
     AS :u64
     SIZEOF :Header
     BINARY :mul
-    PUSH 0 :u32
+    PUSH 11 :u32
     STACK :swap2
     CALL :avant_alloc
     AS :ptr<Header>
@@ -10167,7 +10160,7 @@ FUNC :Http__post
     LOCAL :hs :ptr<Array_Header>
     LOCAL :__t7 :ptr<Array_Header>
     STORE
-    PUSH 0 :u32
+    PUSH 11 :u32
     SIZEOF :Header
     AS :u64
     LOCAL :__t7
@@ -11330,6 +11323,63 @@ FUNC :__cb_ws_dispatch
     PARAM 1
     PARAM 0
     CALL :ws_dispatch
+    RET
+ENDFUNC
+
+FUNC :__avant_type_maps
+  BODY
+    PUSH 1 :u64
+    PUSH 1022 :u32
+    CALL :avant_type_map
+    PUSH 1 :u64
+    PUSH 1021 :u32
+    CALL :avant_type_map
+    PUSH 7 :u64
+    PUSH 1023 :u32
+    CALL :avant_type_map
+    PUSH 1 :u64
+    PUSH 1 :u32
+    CALL :avant_type_map
+    PUSH 63 :u64
+    PUSH 2 :u32
+    CALL :avant_type_map
+    PUSH 0 :u64
+    PUSH 3 :u32
+    CALL :avant_type_map
+    PUSH 0 :u64
+    PUSH 4 :u32
+    CALL :avant_type_map
+    PUSH 2 :u64
+    PUSH 5 :u32
+    CALL :avant_type_map
+    PUSH 1 :u64
+    PUSH 6 :u32
+    CALL :avant_type_map
+    PUSH 7 :u64
+    PUSH 0 :u32
+    PUSH 4 :u32
+    PUSH 7 :u32
+    CALL :avant_type_map_at
+    PUSH 3 :u64
+    PUSH 0 :u32
+    PUSH 3 :u32
+    PUSH 8 :u32
+    CALL :avant_type_map_at
+    PUSH 3 :u64
+    PUSH 0 :u32
+    PUSH 3 :u32
+    PUSH 9 :u32
+    CALL :avant_type_map_at
+    PUSH 3 :u64
+    PUSH 0 :u32
+    PUSH 3 :u32
+    PUSH 10 :u32
+    CALL :avant_type_map_at
+    PUSH 3 :u64
+    PUSH 0 :u32
+    PUSH 2 :u32
+    PUSH 11 :u32
+    CALL :avant_type_map_at
     RET
 ENDFUNC
 

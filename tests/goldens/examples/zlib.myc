@@ -72,6 +72,19 @@ FUNC :avant_barrier
     TYPE :ptr<void>
 ENDFUNC
 
+FUNC :avant_type_map_at
+  ARGS
+    TYPE :u32
+    TYPE :u32
+    TYPE :u32
+    TYPE :u64
+ENDFUNC
+
+FUNC :avant_barrier_at
+  ARGS
+    TYPE :ptr<void>
+ENDFUNC
+
 FUNC :avant_str_concat
   RETURN
     TYPE :ptr<u8>
@@ -1141,6 +1154,20 @@ FUNC :main
     TYPE :i32
   BODY
     CALL :avant_gc_enter
+    CALL :__avant_type_maps
+    PARAM 1
+    PARAM 0
+    CALL :avant_io_init_argv
+    CALL :zlibVersion
+    PUSH "%s\n"
+    PRINTF 1
+    CALL :avant_gc_leave
+    PUSH 0
+    RET
+ENDFUNC
+
+FUNC :__avant_type_maps
+  BODY
     PUSH 1 :u64
     PUSH 1022 :u32
     CALL :avant_type_map
@@ -1150,14 +1177,6 @@ FUNC :main
     PUSH 7 :u64
     PUSH 1023 :u32
     CALL :avant_type_map
-    PARAM 1
-    PARAM 0
-    CALL :avant_io_init_argv
-    CALL :zlibVersion
-    PUSH "%s\n"
-    PRINTF 1
-    CALL :avant_gc_leave
-    PUSH 0
     RET
 ENDFUNC
 

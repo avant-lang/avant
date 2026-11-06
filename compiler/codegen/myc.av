@@ -46,7 +46,11 @@ pub class MycGen {
   fn_tys: Array(Ty)
   box_tys: Array(Ty)
   closure_names: Array(String)
-  closure_bits: Array(UInt64)
+  closure_words: Array(Int)
+  closure_word_at: Array(Int)
+  closure_word_n: Array(Int)
+  closure_strides: Array(Int)
+  class_count: Int = 0
   box_list: Array(String)
   box_ready: Hash(String, Int)
   cap_list: Array(String)
@@ -140,8 +144,14 @@ pub class MycGen {
     self.box_tys = btys
     cnames: Array(String) = []
     self.closure_names = cnames
-    cbits: Array(UInt64) = []
-    self.closure_bits = cbits
+    cwords: Array(Int) = []
+    self.closure_words = cwords
+    cwat: Array(Int) = []
+    self.closure_word_at = cwat
+    cwn: Array(Int) = []
+    self.closure_word_n = cwn
+    cstr: Array(Int) = []
+    self.closure_strides = cstr
     boxes: Array(String) = []
     self.box_list = boxes
     br = Hash(String, Int).new
@@ -505,6 +515,7 @@ pub class MycGen {
     } else {
       self.emit_wrapper_main
     }
+    self.emit_type_map_fn
     self.write_cov_map
     self.out.to_s
   }
@@ -1082,7 +1093,51 @@ pub class MycGen {
     self.line("CALL :avant_io_init_argv")
   }
 
+  // main registers every type map through one call. The function is
+  // emitted last (emit_type_map_fn), when every class, closure record,
+  // and element buffer id is known.
   pub fn emit_type_maps {
+    self.line("CALL :__avant_type_maps")
+  }
+
+  pub fn emit_one_type_map(id: Int, words: Array(Int), stride: Int) {
+    chunks = 1
+    i = 0
+    while i < words.size {
+      c = words[i] / 64 + 1
+      if c > chunks {
+        chunks = c
+      }
+      i = i + 1
+    }
+    if stride == 0 {
+      if chunks == 1 {
+        bits = word_chunk_bits(words, 0)
+        self.line("PUSH ${bits} :u64")
+        self.line("PUSH ${id} :u32")
+        self.line("CALL :avant_type_map")
+        return
+      }
+    }
+    c = 0
+    while c < chunks {
+      bits = word_chunk_bits(words, c)
+      if c == 0 || bits != 0u64 {
+        self.line("PUSH ${bits} :u64")
+        self.line("PUSH ${c * 64} :u32")
+        self.line("PUSH ${stride} :u32")
+        self.line("PUSH ${id} :u32")
+        self.line("CALL :avant_type_map_at")
+      }
+      c = c + 1
+    }
+  }
+
+  pub fn emit_type_map_fn {
+    self.line("FUNC :__avant_type_maps")
+    self.indent = self.indent + 1
+    self.line("BODY")
+    self.indent = self.indent + 1
     self.line("PUSH 1 :u64")
     self.line("PUSH 1022 :u32")
     self.line("CALL :avant_type_map")
@@ -1098,11 +1153,8 @@ pub class MycGen {
       if cdef.type_params.size > 0 {
       } else {
         if ty = self.resolver.get_named_for(cdef.mod_name, cdef.name) {
-          bits = pointer_word_bits(ty)
           if id = self.class_ids.get(self.class_id_key_of(cdef.mod_name, cdef.name)) {
-            self.line("PUSH ${bits} :u64")
-            self.line("PUSH ${id} :u32")
-            self.line("CALL :avant_type_map")
+            self.emit_one_type_map(id, pointer_words(ty), 0)
           }
         }
       }
@@ -1110,13 +1162,24 @@ pub class MycGen {
     }
     i = 0
     while i < self.closure_names.size {
-      bits = self.closure_bits[i]
-      id = 400 + i
-      self.line("PUSH ${bits} :u64")
-      self.line("PUSH ${id} :u32")
-      self.line("CALL :avant_type_map")
+      words: Array(Int) = []
+      j = 0
+      while j < self.closure_word_n[i] {
+        words.push(self.closure_words[self.closure_word_at[i] + j])
+        j = j + 1
+      }
+      self.emit_one_type_map(dyn_type_id(self.class_count + i), words, self.closure_strides[i])
       i = i + 1
     }
+    top = dyn_type_id(self.class_count + self.closure_names.size - 1)
+    if top > max_type_id() {
+      self.program.codegen_error = "this program needs type id ${top}; the runtime's limit is ${max_type_id()} (classes, closure records, and element buffer maps share one id space)"
+    }
+    self.line("RET")
+    self.indent = self.indent - 1
+    self.indent = self.indent - 1
+    self.line("ENDFUNC")
+    self.blank
   }
 
   pub fn emit_unpin_temp(t: String) {
@@ -1720,10 +1783,203 @@ pub class MycGen {
           }
         }
       }
+      if needs_heap_barrier(expr_ty(t)) {
+        if self.place_is_frame_local(t) {
+        } else {
+          self.emit_barriered_store(t)
+          self.root_after_store(t)
+          return
+        }
+      }
       self.emit_lvalue(t)
       self.line("STORE")
       self.root_after_store(t)
     }
+  }
+
+  // Stage 28 W1b: the write barrier for a reference-carrying value
+  // stored through a place that may lie in a heap object: a struct
+  // field reached through a class field or an array element, an array
+  // element of a by-value struct or union, an implicit field, a
+  // captured or boxed variable, a struct method's self. A plain local
+  // of this frame needs none.
+
+  pub fn place_is_frame_local(t: Expr): Bool {
+    if t.kind == ex_name() {
+      if self.place_name.size > 0 {
+        if str_eq(t.ident, self.place_name) {
+          return false
+        }
+      }
+      if t.implicit_field {
+        return false
+      }
+      if self.cap_index(t.ident) >= 0 {
+        return false
+      }
+      if self.name_is_boxed(t.ident) {
+        return false
+      }
+      if self.is_struct_self(t.ident) {
+        return false
+      }
+      return true
+    }
+    if t.kind == ex_field() {
+      if obj = t.object {
+        oty = expr_ty(obj)
+        if oty.is_struct {
+          return self.place_is_frame_local(obj)
+        }
+        if oty.is_union {
+          return self.place_is_frame_local(obj)
+        }
+        if oty.is_class {
+          return false
+        }
+        if oty.is_array {
+          return true
+        }
+        if oty.is_ptr {
+          return true
+        }
+      }
+      return false
+    }
+    if t.kind == ex_index() {
+      if arr = t.left {
+        if expr_ty(arr).is_array {
+          return false
+        }
+        return true
+      }
+    }
+    false
+  }
+
+  // A holder expression that is only loads: evaluating it again for the
+  // barrier has no effect.
+  pub fn holder_is_simple(e: Expr): Bool {
+    if e.kind == ex_name() {
+      return true
+    }
+    if e.kind == ex_field() {
+      if obj = e.object {
+        oty = expr_ty(obj)
+        if oty.is_class || oty.is_struct {
+          return self.holder_is_simple(obj)
+        }
+      }
+    }
+    false
+  }
+
+  // Emits avant_barrier(holder) for the heap object that holds place t
+  // and returns true, or emits nothing and returns false when the
+  // holder is not a simple expression (the caller then barriers the
+  // place's address).
+  pub fn emit_holder_barrier(t: Expr): Bool {
+    if t.kind == ex_name() {
+      if self.place_name.size > 0 {
+        if str_eq(t.ident, self.place_name) {
+          self.line("LOCAL :${self.place_holder}")
+          self.line("AS :ptr<void>")
+          self.line("CALL :avant_barrier")
+          return true
+        }
+      }
+      if t.implicit_field {
+        if st = self.self_ty {
+          if st.is_class {
+            m = ty_self_ptr_myc(st)
+            self.line("LOCAL :${self.self_name} :${m}")
+            self.line("AS :ptr<void>")
+            self.line("CALL :avant_barrier")
+            return true
+          }
+        }
+        return false
+      }
+      ci = self.cap_index(t.ident)
+      if ci >= 0 {
+        self.line("LOCAL :__env :ptr<${self.env_layout}>")
+        self.line("DEREF")
+        self.line("FIELD ${ci}")
+        self.line("AS :ptr<void>")
+        self.line("CALL :avant_barrier")
+        return true
+      }
+      if self.name_is_boxed(t.ident) {
+        box = box_layout_name(expr_ty(t))
+        self.line("LOCAL :${t.ident} :ptr<${box}>")
+        self.line("AS :ptr<void>")
+        self.line("CALL :avant_barrier")
+        return true
+      }
+      return false
+    }
+    if t.kind == ex_field() {
+      if obj = t.object {
+        oty = expr_ty(obj)
+        if oty.is_class {
+          if self.holder_is_simple(obj) {
+            self.emit_expr(obj)
+            self.line("AS :ptr<void>")
+            self.line("CALL :avant_barrier")
+            return true
+          }
+          return false
+        }
+        if oty.is_struct || oty.is_union {
+          return self.emit_holder_barrier(obj)
+        }
+      }
+      return false
+    }
+    if t.kind == ex_index() {
+      if arr = t.left {
+        aty = expr_ty(arr)
+        if aty.is_array {
+          if self.holder_is_simple(arr) {
+            self.emit_expr(arr)
+            self.line("DEREF")
+            self.line("FIELD 0")
+            self.line("AS :ptr<void>")
+            self.line("CALL :avant_barrier")
+            return true
+          }
+        }
+      }
+    }
+    false
+  }
+
+  // The value to store is on the stack.
+  pub fn emit_barriered_store(t: Expr) {
+    ty = expr_ty(t)
+    m = ty_myc(ty)
+    val = self.new_temp
+    self.line("LOCAL :${val} :${m}")
+    self.line("STORE")
+    self.ensure_root(val, ty)
+    if self.emit_holder_barrier(t) {
+      self.line("LOCAL :${val}")
+      self.emit_lvalue(t)
+      self.line("STORE")
+      return
+    }
+    at = self.new_temp
+    self.emit_lvalue(t)
+    self.line("ADDR")
+    self.line("LOCAL :${at} :ptr<${m}>")
+    self.line("STORE")
+    self.line("LOCAL :${at}")
+    self.line("AS :ptr<void>")
+    self.line("CALL :avant_barrier_at")
+    self.line("LOCAL :${val}")
+    self.line("LOCAL :${at}")
+    self.line("DEREF")
+    self.line("STORE")
   }
 
   pub fn emit_barrier_field_store(target: Expr, value: Expr) {
@@ -2513,7 +2769,7 @@ pub class MycGen {
     em = ty_myc(elem)
     self.line("SIZEOF :${em}")
     self.line("BINARY :mul")
-    tid = array_type_id(elem)
+    tid = self.array_type_id(elem)
     self.line("PUSH ${tid} :u32")
     self.line("STACK :swap2")
     self.line("CALL :avant_alloc")
