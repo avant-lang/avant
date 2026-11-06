@@ -284,7 +284,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   i = 1
   while i <= f.nparams {
-    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), f.locals[i].slot)
+    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
     i = i + 1
   }
   e.line("br label %bb0")
@@ -406,7 +406,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
   }
   if st.dest >= 0 {
     d = st.dest
-    e.store(e.f.locals[d].ty, result, e.local_name(d), e.f.locals[d].slot)
+    e.store(e.f.locals[d].ty, result, e.local_name(d), e.slot_vol(d))
   }
 }
 
@@ -553,7 +553,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
   } else if k == mtk_return() {
     if e.f.has_ret {
       ty = e.f.locals[0].ty
-      x = e.load(ty, e.local_name(0), e.f.locals[0].slot)
+      x = e.load(ty, e.local_name(0), e.slot_vol(0))
       e.line("ret ${e.llt(ty)} ${x}")
     } else {
       e.line("ret void")

@@ -4,9 +4,10 @@
 // operand's value. Rule E1 is structural here: an operand is loaded from
 // its local at the point of use, once per occurrence, and no LLVM value is
 // kept across MIR statements (only inside one statement's expansion).
-// Rule E2: a load or store of a slot local, or of a field of an aggregate
-// slot local (a place with no deref), is volatile; every other access is
-// plain. emit_gc.av holds the GC sequences, emit.av the statements,
+// Rule E2 (as amended by W9b, D207): in a shared module a load or store
+// of a slot local, or of a field of an aggregate slot local (a place with
+// no deref), is volatile; every other access, and every slot access of a
+// single-threaded module, is plain (slot_vol). emit_gc.av holds the GC sequences, emit.av the statements,
 // functions, and the module.
 //
 // D188 and D192: LlEmit holds 20 words; no array of structs or unions.
@@ -166,6 +167,16 @@ pub class LlEmit {
     ll_local("_${n}.${name}")
   }
 
+  // E2 as amended by W9b (D207): a slot is accessed volatile only in a
+  // shared module (one that spawns or uses .parallel, section 7). In a
+  // single-threaded program a collection happens only inside a collecting
+  // call; the slot's address escapes to the runtime at gc.roots, so LLVM
+  // must assume every such call reads and writes the slot, and the reload
+  // rule (5.3) rereads it after the call anyway.
+  pub fn slot_vol(local: Int): Bool {
+    self.f.locals[local].slot && self.m.shared
+  }
+
   pub fn vol(volatile: Bool): String {
     if volatile {
       return " volatile"
@@ -189,7 +200,7 @@ pub class LlEmit {
   pub fn place_ptr(p: MPlace): String {
     ptr = self.local_name(p.local)
     ty = self.f.locals[p.local].ty
-    volatile = self.f.locals[p.local].slot
+    volatile = self.slot_vol(p.local)
     k = 0
     while k < p.proj.size {
       pr = p.proj[k]
