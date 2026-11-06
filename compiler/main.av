@@ -24,6 +24,8 @@ import llvm.driver
 import llvm.emit_cases
 import llvm.glue
 import mir.selftest
+import mir.ir
+import mir.print
 import loader
 import location
 import parser
@@ -249,10 +251,38 @@ pub fn driver_dump(args: Array(String)) {
   }
   box = compile_av_paths(split.paths)
   if box.ok {
+    if m = box.mir {
+      // AVANT_BACKEND=llvm (D171): the final-stage MIR; a module the
+      // verifier rejects is printed, then its errors, exit 1.
+      print_ir(mir_print(m, true))
+      bad = llvm_verify(m)
+      if bad.size > 0 {
+        diag_puts(bad)
+        diag_exit(1)
+      }
+      return
+    }
     print_ir(box.text)
     return
   }
   diag_exit(1)
+}
+
+// The new back end's job for a link job (AVANT_BACKEND=llvm): the same
+// mode, extra objects, and -l flags.
+fn llvm_job_of(job: LinkJob): LlvmJob {
+  lj = LlvmJob.new(job.codegen)
+  i = 0
+  while i < job.objects.size {
+    lj.objects.push(job.objects[i])
+    i = i + 1
+  }
+  i = 0
+  while i < job.flags.size {
+    lj.flags.push(job.flags[i])
+    i = i + 1
+  }
+  lj
 }
 
 pub fn driver_run(args: Array(String)) {
@@ -281,6 +311,16 @@ pub fn driver_run(args: Array(String)) {
     // stdin before it compiles, so piped input never reached the program
     // (Wave D). The backend gets /dev/null (tool_run).
     out = tmp_path("run.bin")
+    if m = box.mir {
+      err = llvm_build(m, llvm_job_of(job), out)
+      if err.size > 0 {
+        diag_puts(err)
+        diag_exit(1)
+      }
+      dummy_chmod2 = fs_chmod_x(out)
+      rc2 = process_run(out, split.program)
+      diag_exit(rc2)
+    }
     code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
     if code != 0 {
       diag_puts("myc-llvm failed (${code})")
@@ -324,6 +364,17 @@ pub fn driver_compile(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
+    if m = box.mir {
+      // The old driver's myc-llvm prints this line; the new driver
+      // leaves it to its caller (D194).
+      err = llvm_build(m, llvm_job_of(job), out_path)
+      if err.size > 0 {
+        diag_puts(err)
+        diag_exit(1)
+      }
+      out_puts("compiled to ${out_path}")
+      return
+    }
     code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves, job.codegen, false)
     if code != 0 {
       diag_puts("myc-llvm failed (${code})")

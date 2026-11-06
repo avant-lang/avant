@@ -1,0 +1,64 @@
+// Int, Int64, UInt64 arithmetic on the new back end (Stage 28 W5b):
+// checked + - * / %, the wrapping &+ &- &*, bitwise operators, compares,
+// unary minus, !, ~, and compound assignment. Opaque values come from
+// opaque() so no mode can fold them.
+
+// n, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn main {
+  a = opaque(17)
+  b = opaque(-5)
+  puts(a + b)
+  puts(a - b)
+  puts(a * b)
+  puts(a / b)
+  puts(a % b)
+  puts(b / 2)
+  puts(b % 2)
+  puts(-a)
+  puts(2147483647 &+ opaque(1))
+  puts((-2147483647 - 1) &- opaque(1))
+  puts(65536 &* opaque(65536))
+  puts(a & 12)
+  puts(a | 12)
+  puts(a ^ 12)
+  puts(~a)
+  puts(a == 17)
+  puts(a != 17)
+  puts(b < a)
+  puts(b <= -5)
+  puts(b > a)
+  puts(a >= 18)
+  puts(!(a < b))
+  x = opaque(10)
+  x += 5
+  x -= 3
+  x *= 4
+  x /= 6
+  puts(x)
+  big = opaque(3).to_i64 * 1000000000000i64
+  puts(big)
+  puts(big / 7i64)
+  puts(big % 7i64)
+  puts(-big)
+  puts(big &* 10000000i64)
+  puts((-9223372036854775807i64 - 1i64) % -1i64)
+  u = opaque(7).to_u64
+  puts(u * 2000000000000000000u64)
+  puts(u - 2u64)
+  puts(u / 2u64)
+  puts(u % 4u64)
+  puts(0u64 &- u)
+  puts(-u)
+  puts(u > 6u64)
+  puts(big < 0i64)
+}

@@ -1,0 +1,243 @@
+import harness
+
+// Stage 28 W5b: the scalar subset on the new back end (AVANT_BACKEND=llvm,
+// D176; stages/stage28/mir.md W5). For every program of the subset:
+// (a) it compiles under both back ends (--debug), and the two programs'
+// stdout, stderr, and exit status are equal (the differential, D184);
+// for the fixtures with goldens, (b) `avant dump` under AVANT_BACKEND=llvm
+// prints exactly tests/goldens/<stem>.mir (D171); and (c) a construct
+// outside the subset stops the compile with the L0001 diagnostic at its
+// location, writing nothing; AVANT_BACKEND=myc is the default and any
+// other value is refused.
+
+fn log_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+// The programs, relative to the root; those with a golden first.
+fn golden_progs: Array(String) {
+  xs: Array(String) = []
+  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_u64"]
+  i = 0
+  while i < names.size {
+    xs.push("tests/fixtures/scalars/${names[i]}.av")
+    i = i + 1
+  }
+  xs.push("examples/hello.av")
+  xs.push("examples/fact.av")
+  xs.push("examples/switch.av")
+  xs
+}
+
+fn other_progs: Array(String) {
+  xs: Array(String) = []
+  xs.push("tests/fixtures/macros/hygiene.av")
+  xs.push("tests/fixtures/macros/quote_fn.av")
+  xs.push("tests/fixtures/macros/splice_name.av")
+  xs.push("tests/fixtures/overloading/defaults.av")
+  xs.push("tests/fixtures/part3/conv.av")
+  xs.push("tests/fixtures/part3/run.av")
+  xs
+}
+
+// tests/goldens/scalars/NAME.mir for a fixture, tests/goldens/examples/
+// NAME.mir for an example (beside its .myc).
+fn golden_of(rel: String): String {
+  base = rel
+  slash = -1
+  i = 0
+  while i < rel.size {
+    if rel[i] == 47 {
+      slash = i
+    }
+    i = i + 1
+  }
+  if slash >= 0 {
+    base = str_slice(rel, slash + 1, rel.size)
+  }
+  stem = str_slice(base, 0, base.size - 3)
+  if rel[0] == 101 {
+    return "tests/goldens/examples/${stem}.mir"
+  }
+  "tests/goldens/scalars/${stem}.mir"
+}
+
+fn key_of(rel: String): String {
+  buf = buf_new()
+  i = 0
+  while i < rel.size {
+    c = rel[i]
+    if c == 47 || c == 46 {
+      buf.push_byte(95)
+    } else {
+      buf.push_byte(c)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// /usr/bin/env [VAR=value] COMPILER ARGS...
+fn env_job(envs: String, compiler: String, args: Array(String), log: String): HJob {
+  a: Array(String) = []
+  if envs.size > 0 {
+    a.push(envs)
+  }
+  a.push(compiler)
+  i = 0
+  while i < args.size {
+    a.push(args[i])
+    i = i + 1
+  }
+  HJob.new("/usr/bin/env", a, log)
+}
+
+fn compile_job(envs: String, compiler: String, src: String, out: String, log: String): HJob {
+  a: Array(String) = []
+  a.push("compile")
+  a.push(src)
+  a.push(out)
+  a.push("--debug")
+  env_job(envs, compiler, a, log)
+}
+
+// Run BIN in DIR with stdout and stderr in their own files; the job's
+// code is the program's exit status.
+fn run_job(dir: String, bin: String, key: String): HJob {
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && exec ./${bin} > ${key}.out 2> ${key}.err < /dev/null")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+// Jobs in waves of at most 24, so a large list does not start every
+// compiler at once.
+fn run_waves(jobs: Array(HJob)) {
+  i = 0
+  while i < jobs.size {
+    wave: Array(HJob) = []
+    while i < jobs.size && wave.size < 24 {
+      wave.push(jobs[i])
+      i = i + 1
+    }
+    run_jobs(wave)
+  }
+}
+
+fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
+  gp = golden_progs()
+  progs: Array(String) = []
+  i = 0
+  while i < gp.size {
+    progs.push(gp[i])
+    i = i + 1
+  }
+  op = other_progs()
+  i = 0
+  while i < op.size {
+    progs.push(op[i])
+    i = i + 1
+  }
+
+  // Wave 1: compiles under both back ends, the dumps, the refusals.
+  jobs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    jobs.push(compile_job("", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
+    jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
+    i = i + 1
+  }
+  i = 0
+  while i < gp.size {
+    k = key_of(gp[i])
+    a: Array(String) = []
+    a.push("dump")
+    a.push("${root}/${gp[i]}")
+    jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
+    i = i + 1
+  }
+  jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/examples/sieve.av", "${dir}/sieve.llvm", "${dir}/sieve.llvm.log"))
+  jobs.push(compile_job("AVANT_BACKEND=bogus", compiler, "${root}/examples/hello.av", "${dir}/bogus", "${dir}/bogus.log"))
+  d: Array(String) = []
+  d.push("dump")
+  d.push("${root}/examples/hello.av")
+  jobs.push(env_job("AVANT_BACKEND=myc", compiler, d, "${dir}/hello.myc-env.dump"))
+  jobs.push(env_job("", compiler, d, "${dir}/hello.default.dump"))
+  run_waves(jobs)
+
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    c.eq_int(jobs[2 * i].code, 0, "${p}: compiles under myc")
+    c.eq_int(jobs[2 * i + 1].code, 0, "${p}: compiles under llvm")
+    c.expect(str_has(log_text(jobs[2 * i + 1].log), "compiled to "), "${p}: llvm prints the compiled-to line")
+    i = i + 1
+  }
+  base = 2 * progs.size
+  i = 0
+  while i < gp.size {
+    j = jobs[base + i]
+    c.eq_int(j.code, 0, "${gp[i]}: dump under llvm exits 0")
+    want = "(no golden)"
+    if t = file_read("${root}/${golden_of(gp[i])}") {
+      want = t
+    }
+    c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
+    i = i + 1
+  }
+  base = base + gp.size
+  sv = jobs[base]
+  c.eq_int(sv.code, 1, "examples/sieve.av under llvm: exit 1")
+  sl = log_text(sv.log)
+  c.expect(str_has(sl, "error[L0001]: not yet supported by the llvm back end: a local of type Array(Int)"), "examples/sieve.av: the not-yet-supported diagnostic")
+  c.expect(str_has(sl, "examples/sieve.av:2:3"), "examples/sieve.av: at the construct's location")
+  c.expect(!file_exists("${dir}/sieve.llvm"), "examples/sieve.av: no program written")
+  bg = jobs[base + 1]
+  c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
+  c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be myc or llvm, not bogus"), "AVANT_BACKEND=bogus: refused")
+  c.eq_int(jobs[base + 2].code, 0, "AVANT_BACKEND=myc dump: exit 0")
+  c.eq_str(log_text(jobs[base + 2].log), log_text(jobs[base + 3].log), "AVANT_BACKEND=myc is the default back end")
+
+  // Wave 2: every program from both back ends.
+  runs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    runs.push(run_job(dir, "${k}.old", "${k}.a"))
+    runs.push(run_job(dir, "${k}.new", "${k}.b"))
+    i = i + 1
+  }
+  run_waves(runs)
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    k = key_of(p)
+    c.eq_int(runs[2 * i + 1].code, runs[2 * i].code, "${p}: the same exit status")
+    c.eq_str(log_text("${dir}/${k}.b.out"), log_text("${dir}/${k}.a.out"), "${p}: the same stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), log_text("${dir}/${k}.a.err"), "${p}: the same stderr")
+    i = i + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_scalars.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_scalars(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

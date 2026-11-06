@@ -1,0 +1,29 @@
+module hello
+file 0 "hello.av"
+
+const str.0 = "Hello Avant"
+const str.1 = "%s\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @hello.av:1:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+
+bb0:
+  gc.enter   @1:1
+  gc.roots _2   @1:1
+  call __avant_type_maps() nocollect   @1:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @1:1
+  call printf(const str.1, const str.0) nocollect   @2:3
+  _0 = const i32 0   @1:1
+  gc.leave   @1:1
+  return   @1:1
+}

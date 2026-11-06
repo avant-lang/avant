@@ -92,6 +92,50 @@ fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
   false
 }
 
+// The MIR the new back end prints (Stage 28 W5b, D171): `avant dump`
+// under AVANT_BACKEND=llvm, into tests/goldens/<stem>.mir.
+fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Bool {
+  args: Array(String) = []
+  args.push("AVANT_BACKEND=llvm")
+  args.push(compiler)
+  args.push("dump")
+  args.push("${root}/${src_rel}")
+  dest = "${root}/tests/goldens/${stem}.mir"
+  code = process_run_out("/usr/bin/env", args, dest)
+  if code != 0 {
+    bless_fail("dump ${stem}.mir exited ${code}")
+    if err = file_read(dest) {
+      puts(err)
+    }
+    return false
+  }
+  true
+}
+
+// The scalar subset's .mir goldens (tests/cases/test_scalars.av).
+fn bless_mir_all(compiler: String, root: String): Bool {
+  mkdir_p("${root}/tests/goldens/scalars")
+  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_u64"]
+  i = 0
+  while i < names.size {
+    if bless_mir(compiler, root, "tests/fixtures/scalars/${names[i]}.av", "scalars/${names[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  ex = ["hello", "fact", "switch"]
+  i = 0
+  while i < ex.size {
+    if bless_mir(compiler, root, "examples/${ex[i]}.av", "examples/${ex[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
 // A program that imports has no --check golden (D142).
 fn bless_imports(compiler: String, root: String, src_rel: String, stem: String): Bool {
   src = "${root}/${src_rel}"
@@ -312,6 +356,10 @@ fn main {
         bless_fail("read examples/hello.myc")
         ok = false
       }
+    }
+    if ok {
+      if bless_mir_all(compiler, root) {
+      } else { ok = false }
     }
     if ok {
       puts("PASS  tests/bless_goldens.av")

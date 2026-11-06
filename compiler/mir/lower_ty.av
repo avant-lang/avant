@@ -1,0 +1,144 @@
+// The lowering's type and name helpers (Stage 28 W5b; stages/stage28/mir.md
+// 2.9, 8.2, W5.3): the Avant-to-MIR type map of the scalar subset, the
+// canonical type text mty used by mangled symbols, the module part of a
+// symbol, and the exact bit pattern of an f64 literal (the language has no
+// bit cast; amendment 7 after W4).
+
+import source
+import type
+import mir.types
+
+// The MIR type of t in this wave's subset (2.9), or -1: Int i32, Int64
+// i64, UInt64 u64, Bool bool, Float64 f64, Void void, String `ref str`
+// (a literal's constant; no allocation reaches the subset).
+pub fn mir_scalar_ty(t: Ty): Int {
+  if t.is_int {
+    return mt_i32()
+  }
+  if t.is_int64 {
+    return mt_i64()
+  }
+  if t.is_uint64 {
+    return mt_u64()
+  }
+  if t.is_bool {
+    return mt_bool()
+  }
+  if t.is_float {
+    return mt_f64()
+  }
+  if t.is_void {
+    return mt_void()
+  }
+  if t.is_string {
+    return mt_str()
+  }
+  return -1
+}
+
+// mty (8.2) for the types a W5 signature can hold; any other type is
+// refused before a symbol needs it, so its shown name is enough here.
+pub fn mir_mty(t: Ty): String {
+  if t.is_int {
+    return "Int"
+  }
+  if t.is_int64 {
+    return "Int64"
+  }
+  if t.is_uint64 {
+    return "UInt64"
+  }
+  if t.is_bool {
+    return "Bool"
+  }
+  if t.is_float {
+    return "Float64"
+  }
+  if t.is_string {
+    return "String"
+  }
+  if t.is_void {
+    return "Void"
+  }
+  t.show
+}
+
+fn mir_module_byte(c: Int): Bool {
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 48 && c <= 57 {
+    return true
+  }
+  c == 95 || c == 46
+}
+
+// The module part of a symbol (8.2): ModInfo's dotted name, with every
+// byte outside [A-Za-z0-9_.] replaced by `_` (a root file named
+// my-prog.av), so the symbol parses back (V20).
+pub fn mir_module_part(name: String): String {
+  if name.size == 0 {
+    return "main"
+  }
+  buf = buf_new()
+  i = 0
+  while i < name.size {
+    c = name[i]
+    if mir_module_byte(c) {
+      buf.push_byte(c)
+    } else {
+      buf.push_byte(95)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// The IEEE 754 bits of v, computed exactly: scaling by 2 is exact, so the
+// exponent comes from halving or doubling into [1, 2) (or stopping at the
+// subnormal exponent), and the 52 fraction bits from two exact 26-bit
+// halves.
+pub fn mir_f64_bits(v: Float64): Int64 {
+  if v != v {
+    return 9221120237041090560i64
+  }
+  sign = 0i64
+  x = v
+  if x < 0.0 {
+    sign = 1i64
+    x = 0.0 - x
+  } else if x == 0.0 {
+    if 1.0 / x < 0.0 {
+      sign = 1i64
+    }
+  }
+  top = sign << 63i64
+  if x == 0.0 {
+    return top
+  }
+  if x > 1.7976931348623157e308 {
+    return top | (2047i64 << 52i64)
+  }
+  e = 0
+  while x >= 2.0 {
+    x = x / 2.0
+    e = e + 1
+  }
+  while x < 1.0 && e > -1022 {
+    x = x * 2.0
+    e = e - 1
+  }
+  biased = 0
+  frac = x
+  if x >= 1.0 {
+    biased = e + 1023
+    frac = x - 1.0
+  }
+  scaled = frac * 67108864.0
+  hi = scaled.floor
+  lo = (scaled - hi) * 67108864.0
+  top | (biased.to_i64 << 52i64) | (hi.to_i.to_i64 << 26i64) | lo.to_i.to_i64
+}
