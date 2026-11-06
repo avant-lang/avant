@@ -105,8 +105,17 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
   ""
 }
 
-// Verify, emit, compile, and link the program out_path.
+// Verify, emit, compile, and link the program out_path. A missing
+// parent directory of out_path is created first, as the old driver's
+// myc-llvm did (Stage 28 W10: `compile x.av out/dir/x` works on both
+// back ends).
 pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
+  parent = llvm_out_parent(out_path)
+  if parent.size > 0 {
+    if fs_mkdir_p(parent) != 0 {
+      return "cannot create the output directory ${parent}"
+    }
+  }
   work = tmp_new_dir()
   obj = "${work}/${m.name}.o"
   err = llvm_object(m, job, obj)
@@ -119,6 +128,18 @@ pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   dummy = fs_unlink(obj)
   dummy2 = fs_remove_tree(work)
   err
+}
+
+// The directory part of an output path ("" when it has none, or is "/").
+pub fn llvm_out_parent(out_path: String): String {
+  i = out_path.size - 1
+  while i > 0 {
+    if out_path[i] == 47 {
+      return str_slice(out_path, 0, i)
+    }
+    i = i - 1
+  }
+  ""
 }
 
 // cc OBJ <runtime objects> <job objects> <flags> -o OUT.
