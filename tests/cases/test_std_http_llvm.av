@@ -8,17 +8,14 @@ import backends
 // is exclusive (avant.toml): it uses the ports test_std_http.av uses, so
 // the two never run at once; its two runs are sequential.
 //
-// The compile runs with AVANT_NURSERY=0 in the compiler's environment
-// (the program it writes does not depend on it): the compiler under
-// test crashed while compiling this file with the new back end in the
-// W8b fast loop (a pinned young array of the runtime, avant_argv's,
-// kept a buffer a young collection freed; W8b record, "Surprises"),
-// a runtime defect outside this wave (D163), so the compile avoids the
-// copying nursery until W13.
+// The compile runs under the copying nursery like any other: the W8b
+// workaround (AVANT_NURSERY=0 in the compiler's environment, for the
+// runtime defect C29, the pinned young argv array losing its buffer) is
+// gone since the runtime fix of Stage 28 W8c (tests/cases/test_gc_pinned.av).
 
 fn test_std_http_llvm(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
-  jobs.push(compile_job("AVANT_BACKEND=llvm AVANT_NURSERY=0", compiler, "${root}/tests/cases/test_std_http.av", "${dir}/http.new", "${dir}/http.new.log"))
+  jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/tests/cases/test_std_http.av", "${dir}/http.new", "${dir}/http.new.log"))
   run_waves(jobs)
   c.eq_int(jobs[0].code, 0, "test_std_http.av: compiles under llvm")
   envs = ["", "AVANT_YOUNG_MB=1"]
