@@ -1,17 +1,16 @@
-// The new back end's driver (Stage 28 W5a; stages/stage28/mir.md 11.4):
+// The back end's driver (Stage 28 W5a; stages/stage28/mir.md 11.4):
 // a final-stage MIR module to a linked program. It refuses a module the
 // verifier rejects (the rule's diagnostic), emits the .ll in memory
 // (emit.av), compiles it with the in-process LLVM in the job's codegen
 // mode (glue.av, D174) to an object in the compiler's private scratch
 // directory (pipeline.av tmp_new_dir, under TMPDIR; removed after the
-// link and with the process), and links it with cc the way the old
-// driver's myc-llvm links a program: the object, the runtime objects of
-// runtime_object_names, the job's extra objects (std, re2c, --cc, .o),
-// then linker_flags_s (-pthread -lm and the job's -l flags), -o OUT.
-// No myc-llvm process.
+// link and with the process), and links it with cc: the object, the
+// runtime objects of runtime_object_names, the job's extra objects (std,
+// re2c, --cc, .o), then linker_flags_s (-pthread -lm and the job's -l
+// flags), -o OUT. No back-end process.
 //
 // Every entry returns "" on success or the message for diag_puts; the
-// caller exits 1 on a message (W5b's `compile` under AVANT_BACKEND=llvm).
+// caller exits 1 on a message.
 
 import source
 import pipeline
@@ -106,9 +105,8 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
 }
 
 // Verify, emit, compile, and link the program out_path. A missing
-// parent directory of out_path is created first, as the old driver's
-// myc-llvm did (Stage 28 W10: `compile x.av out/dir/x` works on both
-// back ends).
+// parent directory of out_path is created first (Stage 28 W10, kept
+// from the old driver: `compile x.av out/dir/x` works).
 pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   parent = llvm_out_parent(out_path)
   if parent.size > 0 {

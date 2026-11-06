@@ -5,12 +5,12 @@
 // `avant_cov_init(map)` after `avant_io_init_argv` (3.6). The compiler
 // writes the slot map (`avant-cov 1`, then `KIND\tPATH\tLINE\tNAME` per
 // slot: S statement, B branch, F function, L line); the runtime counts by
-// slot. The points are the old back end's (myc.av cov_stmt, cov_func,
+// slot. The points are the old back end's (its cov_stmt, cov_func,
 // cov_branch, cov_touch_line and their call sites). The slots are
 // numbered as the old back end numbers them: every point is recorded
 // with the rank of the function it is lowered in (program functions in
 // program order, then the spawn and .parallel thunks, then the lambda
-// thunks, each in the pre-walk's order: myc.av emit), and cov_finish
+// thunks, each in the pre-walk's order: the old back end's emit), and cov_finish
 // renumbers the hits by that order once the program is lowered, so the
 // map and the counts read the same under both back ends.
 
@@ -44,7 +44,7 @@ pub fn (lw: MirLower) cov_point(kind: Int, path: String, line: Int, name: String
   dummy = lw.lw_b.call(-1, "avant_cov_hit", args)
 }
 
-// A counted point and the touch of its line (myc.av cov_register,
+// A counted point and the touch of its line (the old back end's cov_register,
 // emit_cov_hit, cov_touch_line).
 pub fn (lw: MirLower) cov_at(kind: Int, loc: Location, name: String) {
   if !lw.lw_cov.on || lw.failed || !lw.open_now {
@@ -63,7 +63,7 @@ pub fn (lw: MirLower) cov_branch(loc: Location) {
   lw.cov_at(2, loc, "")
 }
 
-// A function's entry, named `fn` or `Owner.fn` (myc.av cov_func).
+// A function's entry, named `fn` or `Owner.fn` (the old back end's cov_func).
 pub fn (lw: MirLower) cov_func(fnn: Function) {
   name = fnn.name
   if fnn.owner.size > 0 {
@@ -85,7 +85,7 @@ pub fn (lw: MirLower) cov_init {
 // After the lowering: the points ordered by their function's rank (the
 // points of one function are contiguous, in lowering order), numbered in
 // that order (a line's slot at its first touch), every hit's operand
-// rewritten to its slot, and the map written (myc.av write_cov_map).
+// rewritten to its slot, and the map written (the old back end's write_cov_map).
 pub fn (lw: MirLower) cov_finish {
   c = lw.lw_cov
   if !c.on || lw.failed {
