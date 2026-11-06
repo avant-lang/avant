@@ -1,0 +1,152 @@
+// The new back end's driver (Stage 28 W5a; stages/stage28/mir.md 11.4):
+// a final-stage MIR module to a linked program. It refuses a module the
+// verifier rejects (the rule's diagnostic), emits the .ll in memory
+// (emit.av), compiles it with the in-process LLVM in the job's codegen
+// mode (glue.av, D174) to an object in the compiler's private scratch
+// directory (pipeline.av tmp_new_dir, under TMPDIR; removed after the
+// link and with the process), and links it with cc the way the old
+// driver's myc-llvm links a program: the object, the runtime objects of
+// runtime_object_names, the job's extra objects (std, re2c, --cc, .o),
+// then linker_flags_s (-pthread -lm and the job's -l flags), -o OUT.
+// No myc-llvm process.
+//
+// Every entry returns "" on success or the message for diag_puts; the
+// caller exits 1 on a message (W5b's `compile` under AVANT_BACKEND=llvm).
+
+import source
+import pipeline
+import mir.ir
+import mir.verify_core
+import mir.verify
+import llvm.glue
+import llvm.emit
+
+pub class LlvmJob {
+  codegen: String = "debug"
+  objects: Array(String)
+  flags: Array(String)
+  keep_ll: String = ""
+  inline_fast: Bool = true
+  emit_us: Int64 = 0i64
+  compile_us: Int64 = 0i64
+  link_us: Int64 = 0i64
+
+  // codegen: "debug", "default" (compile's bare mode), or "release"
+  // (verb_codegen's names).
+  fn initialize(codegen: String) {
+    self.codegen = codegen
+    o: Array(String) = []
+    self.objects = o
+    fl: Array(String) = []
+    self.flags = fl
+    self.keep_ll = ""
+  }
+}
+
+// The verifier at stage final: "" or every error in the compiler's
+// diagnostic form (error[V<n>] ... --> file:line:col), one after another.
+pub fn llvm_verify(m: MModule): String {
+  errs = mir_verify_errors(m, mst_final())
+  if errs.size == 0 {
+    return ""
+  }
+  buf = buf_new()
+  i = 0
+  while i < errs.size {
+    if i > 0 {
+      buf.push_str("\n")
+    }
+    r = errs[i].render(m)
+    if r.size > 0 && r[r.size - 1] == 10 {
+      r = str_slice(r, 0, r.size - 1)
+    }
+    buf.push_str(r)
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// Verify, emit, and compile to obj_path. With job.keep_ll set, the
+// pre-optimization .ll is also written there (W5b's goldens, W9's fixed
+// point). An LLVM failure after the verifier passed is an emitter bug,
+// reported as an internal error.
+pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
+  bad = llvm_verify(m)
+  if bad.size > 0 {
+    return bad
+  }
+  t0 = now_us()
+  text = ll_emit_module(m, job.inline_fast)
+  t1 = now_us()
+  job.emit_us = llvm_us(t0, t1)
+  if job.keep_ll.size > 0 {
+    if file_write(job.keep_ll, text) != 0 {
+      return "cannot write ${job.keep_ll}"
+    }
+  }
+  err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
+  job.compile_us = llvm_us(t1, now_us())
+  if err.size > 0 {
+    return "internal error: ${err}"
+  }
+  ""
+}
+
+// Verify, emit, compile, and link the program out_path.
+pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
+  work = tmp_new_dir()
+  obj = "${work}/${m.name}.o"
+  err = llvm_object(m, job, obj)
+  if err.size > 0 {
+    return err
+  }
+  t0 = now_us()
+  err = llvm_link(obj, job, out_path)
+  job.link_us = llvm_us(t0, now_us())
+  dummy = fs_unlink(obj)
+  dummy2 = fs_remove_tree(work)
+  err
+}
+
+// cc OBJ <runtime objects> <job objects> <flags> -o OUT.
+pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
+  args: Array(String) = []
+  args.push(obj)
+  rt = runtime_objects(avant_root())
+  i = 0
+  while i < rt.size {
+    args.push(rt[i])
+    i = i + 1
+  }
+  i = 0
+  while i < job.objects.size {
+    args.push(job.objects[i])
+    i = i + 1
+  }
+  extra = job.flags
+  line = linker_flags_s(extra)
+  words = line.split(" ")
+  i = 0
+  while i < words.size {
+    if words[i].size > 0 {
+      args.push(words[i])
+    }
+    i = i + 1
+  }
+  args.push("-o")
+  args.push(out_path)
+  code = run_cc(args)
+  if code != 0 {
+    return "link failed: cc exited ${code}"
+  }
+  ""
+}
+
+// The microseconds between two now_us readings (an Int that wraps).
+pub fn llvm_us(a: Int, b: Int): Int64 {
+  d = b.to_i64 - a.to_i64
+  if d < 0i64 {
+    d = d + 4294967296i64
+  }
+  d
+}
