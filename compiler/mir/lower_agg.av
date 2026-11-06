@@ -42,19 +42,11 @@ pub fn (lw: MirLower) class_ty(cdef: ClassDef): Ty? {
 pub fn (lw: MirLower) note_classes {
   p = lw.lw_prog
   i = 0
-  while i < p.structs.size {
-    if p.structs[i].type_params.size > 0 {
-      lw.refuse(p.structs[i].loc, "generic struct ${p.structs[i].name} (W7)")
-      return
-    }
-    i = i + 1
-  }
-  i = 0
   while i < p.classes.size {
     cdef = p.classes[i]
     if cdef.type_params.size > 0 {
-      lw.refuse(cdef.loc, "generic class ${cdef.name} (W7)")
-      return
+      i = i + 1
+      continue
     }
     if t = lw.class_ty(cdef) {
       none: Array(Int) = []
@@ -70,6 +62,10 @@ pub fn (lw: MirLower) note_classes {
   i = 0
   while i < p.classes.size {
     cdef = p.classes[i]
+    if cdef.type_params.size > 0 {
+      i = i + 1
+      continue
+    }
     if t = lw.class_ty(cdef) {
       fields: Array(Int) = []
       names: Array(String) = []
@@ -207,40 +203,13 @@ pub fn (lw: MirLower) owner_ty(fnn: Function): Ty? {
   nil
 }
 
-// 8.2: `av.<module>/<Owner>.<name>`, the owner without its module when
-// it is the defining module's. Overloaded methods are W7.
-pub fn (lw: MirLower) method_symbol(fnn: Function): String {
-  if sig = lw.lw_syms.find_method_emit(fnn.emit_name) {
-    n = 0
-    i = 0
-    while i < lw.lw_syms.methods.size {
-      o = lw.lw_syms.methods[i]
-      if !o.node.generic && str_eq(o.owner, sig.owner) && str_eq(o.node.owner_mod, sig.node.owner_mod) && str_eq(o.name, sig.name) {
-        n = n + 1
-      }
-      i = i + 1
-    }
-    if n > 1 {
-      lw.refuse(fnn.loc, "an overloaded method ${fnn.name} (W7)")
-      return ""
-    }
-    if ot = lw.owner_ty(fnn) {
-      if !(ot.is_struct || ot.is_class) {
-        lw.refuse(fnn.loc, "a method on ${ot.show} (W7)")
-        return ""
-      }
-      return "av.${mir_module_part(fnn.mod_name)}/${lw.owner_text(ot, fnn.mod_name)}.${fnn.name}"
-    }
-  }
-  lw.refuse(fnn.loc, "method ${fnn.name} (no checked signature)")
-  ""
-}
-
 pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
-  if str_eq(mir_module_part(ot.mod_name), mir_module_part(mod_name)) {
-    return ot.name
+  m = mir_mty(ot)
+  pre = "${mir_module_part(ot.mod_name)}."
+  if (ot.is_struct || ot.is_class) && str_eq(mir_module_part(ot.mod_name), mir_module_part(mod_name)) && str_starts_mir(m, pre) {
+    return str_slice(m, pre.size, m.size)
   }
-  mir_mty(ot)
+  m
 }
 
 // The constructors `C.new` (myc.av emit_constructor), one per class,
@@ -249,31 +218,18 @@ pub fn (lw: MirLower) note_ctor_symbols {
   p = lw.lw_prog
   i = 0
   while i < p.classes.size {
-    if t = lw.class_ty(p.classes[i]) {
-      lw.lw_fn_syms[ty_owned_symbol(t, "new")] = "av.${mir_module_part(t.mod_name)}/${t.name}.new"
+    if p.classes[i].type_params.size == 0 {
+      if t = lw.class_ty(p.classes[i]) {
+        owner = lw.owner_text(t, t.mod_name)
+        lw.lw_fn_syms[ty_owned_symbol(t, "new")] = "av.${mir_module_part(t.mod_name)}/${owner}.new"
+        lw.lw_fn_syms[ty_owned_symbol(t, "bump")] = "av.${mir_module_part(t.mod_name)}/${owner}.bump"
+      }
     }
     i = i + 1
   }
 }
 
 // ---- methods
-
-// The receiver's MIR type: `ref %C` for a class, `addr %S` for a struct
-// (audit 2.4: the address of the receiver's storage).
-pub fn (lw: MirLower) method_receiver(fnn: Function): Int {
-  if ot = lw.owner_ty(fnn) {
-    t = lw.value_agg_ty(ot, fnn.loc)
-    if t < 0 {
-      return -1
-    }
-    if ot.is_struct {
-      return lw.lw_m.types.addr_of(t)
-    }
-    return t
-  }
-  lw.refuse(fnn.loc, "method ${fnn.name} (no owner)")
-  return -1
-}
 
 // _1 is the receiver, named as in the source (`self`, or the receiver
 // parameter of `fn (p: P) name`). A class receiver is an ordinary local;
@@ -283,7 +239,7 @@ pub fn (lw: MirLower) bind_receiver(fnn: Function, recv: Int) {
   lw.lw_b.name_param(1, name)
   lw.lw_self = 1
   lw.lw_self_name = name
-  lw.lw_self_ty = lw.owner_ty(fnn)
+  lw.lw_self_ty = lw.method_owner(fnn)
   if lw.lw_m.types.is_addr(recv) {
     lw.lw_self_struct = true
   } else {
@@ -426,23 +382,6 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
   dummy3 = b.assign(p, b.rv_use(val))
 }
 
-// A value for a place of type want (MIR type ty): `nil` into a union
-// that holds Nil is `union %U tag nil` (2.4, 4.3); any other value of a
-// union type, or a bare T into a T?, is W7.
-pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
-  b = lw.lw_b
-  if want.is_union {
-    l = b.types.layout_of(ty)
-    if v.kind == ex_nil() && l >= 0 && b.types.layouts[l].nil_tag >= 0 {
-      lw.at(v.loc)
-      return lw.tmp(ty, b.rv_union_nil(l, b.types.layouts[l].nil_tag))
-    }
-    lw.refuse(v.loc, "a value of type ${want.show} (unions, W7)")
-    return b.c_i32(0)
-  }
-  lw.lower_expr(v)
-}
-
 // `x.f = v`, an implicit field `f = v`, and the compound forms: the value
 // first, then the place (myc.av emit_assign, emit_barrier_field_store);
 // a compound assignment reads and writes one place, its holder evaluated
@@ -556,12 +495,12 @@ pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
 pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   ret = lw.ety(e)
-  ops = lw.lower_args(args)
+  ops = lw.lower_args_to(args, lw.callee_params(e.resolved, e))
   if lw.failed {
     return b.c_i32(0)
   }
   r = b.c_i32(0)
-  if rt.is_class {
+  if !rt.is_struct {
     r = lw.lower_expr(recv)
   } else {
     p = lw.place_of(recv)
@@ -592,7 +531,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
 pub fn (lw: MirLower) lower_named_call(e: Expr): MOperand? {
   if sym = lw.lw_fn_syms.get(e.resolved) {
     ret = lw.ety(e)
-    args = lw.lower_args(e.args)
+    args = lw.lower_args_to(e.args, lw.callee_params(e.resolved, e))
     if lw.failed {
       return lw.lw_b.c_i32(0)
     }
@@ -621,8 +560,13 @@ pub fn (lw: MirLower) lower_ctors {
   p = lw.lw_prog
   i = 0
   while i < p.classes.size && !lw.failed {
-    if t = lw.class_ty(p.classes[i]) {
-      lw.lower_ctor(p.classes[i], t)
+    if p.classes[i].type_params.size == 0 {
+      if t = lw.class_ty(p.classes[i]) {
+        lw.lower_ctor(p.classes[i], t)
+        if lw.lw_bumps.has_key(ty_owned_symbol(t, "bump")) && !lw.failed {
+          lw.lower_bump(p.classes[i], t)
+        }
+      }
     }
     i = i + 1
   }
@@ -644,6 +588,7 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   lw.lw_self_struct = false
   lw.lw_self_name = ""
   lw.lw_self_ty = nil
+  lw.lw_ret_ty = nil
   lw.lw_fn_loc = cdef.loc
   lw.lw_main = false
   cty = lw.value_agg_ty(t, cdef.loc)
@@ -686,6 +631,21 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   aargs.push(b.c_u64(b.types.layouts[layout].size.to_i64))
   aargs.push(b.c_u32(b.types.layouts[layout].type_id))
   dummy2 = b.call(o, "avant_alloc", aargs)
+  lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
+  if lw.failed {
+    return
+  }
+  dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
+  b.ret
+  b.end_fn
+}
+
+// The body of a constructor after its allocation into _o: each field
+// default in declaration order (a reference-carrying one behind
+// `barrier`, myc.av emit_field_defaults), then `C.initialize(_o,
+// params...)` when the class has one (the parameters are _1.._n).
+pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init_sym: String, nparams: Int) {
+  b = lw.lw_b
   j = 0
   while j < cdef.fields.size && !lw.failed {
     fd = cdef.fields[j]
@@ -706,15 +666,12 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
     args: Array(MOperand) = []
     args.push(b.copy_local(o))
     i = 0
-    while i < params.size {
+    while i < nparams {
       args.push(b.copy_local(i + 1))
       i = i + 1
     }
     dummy3 = b.call(-1, init_sym, args)
   }
-  dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
-  b.ret
-  b.end_fn
 }
 
 // The local of a `copy _k` with no projection, or -1.

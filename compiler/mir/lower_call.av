@@ -22,7 +22,7 @@ import mir.lower_expr
 // 16-372): each is refused by name. The string builtins are in
 // lower_str.av.
 pub fn mir_other_builtin(name: String): Bool {
-  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "file_read", "file_write", "argv", "process_run", "process_run_out", "env_get", "file_exists", "dir_list", "sha256", "crc32_bytes", "sha256_word0", "wide_op", "wide_hi", "checksum_f64", "nursery_reclaim"]
+  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "process_run", "process_run_out"]
   i = 0
   while i < names.size {
     if str_eq(names[i], name) {
@@ -93,6 +93,23 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   }
   if recv = e.receiver {
     if rt = recv.ty {
+      if str_eq(e.callee, "or") && rt.is_nilable && e.args.size == 1 {
+        if t = e.ty {
+          return lw.lower_coalesce(recv, e.args[0], t, e.loc)
+        }
+      }
+      // A user method on any type (Expr.resolved names a program method;
+      // the builtin members have none, W6a.1).
+      if !str_eq(e.callee, "new") && !str_eq(e.callee, "bump") && e.resolved.size > 0 {
+        if sym0 = lw.lw_fn_syms.get(e.resolved) {
+          if ms0 = lw.lw_syms.find_method_emit(e.resolved) {
+            return lw.lower_method_call(e, recv, rt, sym0, e.args)
+          }
+        }
+      }
+      if (mir_is_str_ty(rt) || rt.is_buf) && str_eq(e.callee, "get") {
+        return lw.lower_get(e, recv, rt, e.args)
+      }
       if rt.is_integer || rt.is_float {
         if e.args.size == 0 {
           return lw.member(recv, rt, e.callee, e)
@@ -116,14 +133,13 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
         }
       }
     }
-    if str_eq(e.callee, "new") {
+    if str_eq(e.callee, "new") || str_eq(e.callee, "bump") {
+      if str_eq(e.callee, "bump") {
+        lw.lw_bumps[e.resolved] = 1
+      }
       if got = lw.lower_named_call(e) {
         return got
       }
-    }
-    if str_eq(e.callee, "bump") {
-      lw.refuse(e.loc, ".bump (its result is T?: unions, W7)")
-      return zero
     }
     lw.refuse(e.loc, "the method call .${e.callee}")
     return zero
@@ -156,6 +172,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if got = lw.heap_builtin(e, c) {
     return got
   }
+  if got2 = lw.io_builtin(e, c) {
+    return got2
+  }
   if mir_other_builtin(c) {
     lw.refuse(e.loc, "the builtin ${c}")
     return zero
@@ -167,7 +186,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if sym = lw.lw_fn_syms.get(name) {
     if fs = lw.lw_syms.find_fn(name) {
       ret = lw.ty_at(fs.ret, e.loc, "a call result")
-      args = lw.lower_args(e.args)
+      args = lw.lower_args_to(e.args, fs.params)
       if lw.failed {
         return zero
       }
@@ -213,6 +232,12 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
 pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
   if obj = e.object {
     if ot = obj.ty {
+      if e.method_call && e.resolved.size > 0 && !(ot.is_class || ot.is_struct) {
+        if sym1 = lw.lw_fn_syms.get(e.resolved) {
+          none4: Array(Expr) = []
+          return lw.lower_method_call(e, obj, ot, sym1, none4)
+        }
+      }
       if ot.is_integer || ot.is_float {
         return lw.member(obj, ot, e.ident, e)
       }

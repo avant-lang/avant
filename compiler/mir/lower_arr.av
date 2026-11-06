@@ -60,8 +60,8 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
     if known >= 0 {
       return ts.ref_to(known)
     }
-    if e.is_union || e.is_nil || e.is_fn {
-      lw.refuse(loc, "an array of ${e.show} (W7)")
+    if e.is_nil || e.is_fn {
+      lw.refuse(loc, "an array of ${e.show} (W7b)")
       return -1
     }
     et = lw.field_mty(e, loc)
@@ -455,15 +455,17 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   b = lw.lw_b
   zero = b.c_i32(0)
   if bl = e.block {
-    lw.refuse(e.loc, "Array.${name} with a block (closures, W7)")
+    lw.refuse(e.loc, "Array.${name} with a block (closures, W7b)")
     return zero
   }
-  if str_eq(name, "get") || str_eq(name, "index_of") || str_eq(name, "min") || str_eq(name, "max") {
-    lw.refuse(e.loc, "Array.${name} (its result is T?: unions, W7)")
-    return zero
+  if str_eq(name, "get") {
+    return lw.lower_get(e, recv, rt, args)
+  }
+  if str_eq(name, "index_of") || str_eq(name, "min") || str_eq(name, "max") {
+    return lw.lower_arr_opt(e, recv, rt, name, args)
   }
   if str_eq(name, "each") || str_eq(name, "any") || str_eq(name, "all") {
-    lw.refuse(e.loc, "Array.${name} (closures, W7)")
+    lw.refuse(e.loc, "Array.${name} (closures, W7b)")
     return zero
   }
   if str_eq(name, "parallel") {

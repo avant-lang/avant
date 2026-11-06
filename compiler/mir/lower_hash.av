@@ -40,7 +40,7 @@ fn mir_hash_val_str(ht: Ty): Bool {
 
 // `avant_hash_<op>_i32k_i32` for Int keys, `_str` for String values,
 // `_i32` otherwise (builtins.av:16-28).
-fn mir_hash_op(ht: Ty, op: String): String {
+pub fn mir_hash_op(ht: Ty, op: String): String {
   if mir_hash_key_int(ht) {
     return "avant_hash_${op}_i32k_i32"
   }
@@ -77,7 +77,7 @@ pub fn (lw: MirLower) lower_hash_new(e: Expr): MOperand {
 pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, ht: Ty) {
   b = lw.lw_b
   if st.op != tk_eq() {
-    lw.refuse(st.loc, "compound assignment to a hash entry (its read is a union, W7)")
+    lw.refuse(st.loc, "compound assignment to a hash entry")
     return
   }
   if v = st.value {
@@ -117,15 +117,14 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
   b = lw.lw_b
   zero = b.c_i32(0)
   if bl = e.block {
-    lw.refuse(e.loc, "Hash.${name} with a block (closures, W7)")
+    lw.refuse(e.loc, "Hash.${name} with a block (closures, W7b)")
     return zero
   }
   if str_eq(name, "get") || str_eq(name, "get_slice") || str_eq(name, "get_concat") {
-    lw.refuse(e.loc, "Hash.${name} (its result is T?: unions, W7)")
-    return zero
+    return lw.lower_hash_read(e, recv, ht, name, args)
   }
   if str_eq(name, "each") {
-    lw.refuse(e.loc, "Hash.each (closures, W7)")
+    lw.refuse(e.loc, "Hash.each (closures, W7b)")
     return zero
   }
   ty = lw.ety(e)
@@ -203,14 +202,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
 pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
-  if e.resolved.size > 0 {
-    lw.refuse(e.loc, "the Buf method ${name} (methods on other types, W7)")
-    return zero
-  }
-  if str_eq(name, "get") {
-    lw.refuse(e.loc, "Buf.get (its result is Int?: unions, W7)")
-    return zero
-  }
+
   f = ""
   n = 0
   if str_eq(name, "size") {

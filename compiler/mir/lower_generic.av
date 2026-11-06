@@ -1,0 +1,352 @@
+// Symbols and receivers of functions and methods (Stage 28 W7a;
+// stages/stage28/mir.md 8.2, W7a): plain functions, overloads, generic
+// instances (monomorphic, D175: the checker clones each instance into the
+// program with its own emit name, checker/match.av instantiate_function
+// and instantiate_method; generic structs and classes arrive as their
+// instance definitions, resolve.av instantiate_template), methods on any
+// type including other modules' types, and operator methods. The
+// lowering never re-resolves a call: it lowers what the checker chose
+// (`Expr.resolved`, `Function.emit_name`). Named interfaces are bounds on
+// generics only: they are checked and erased by the checker, so nothing
+// of them reaches the MIR (2.9).
+//
+// A symbol is `av.<module>/<item>` (8.2): item = [owner "."] name, then
+// `[targs]` for a generic instance, or `(params)` when the name is
+// overloaded in its scope; the targs are recovered from the instance's
+// checked signature against its template's (the instance's emit name,
+// `sig_mangle(name, targs)`, confirms the match).
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_call
+import mir.lower_agg
+import mir.lower_union
+
+// Binds the type parameters of params that the TypeName pattern tn
+// names, against the checked type ty (structurally: a parameter, a
+// nilable parameter, Array, Hash, Ptr, JoinHandle, a generic struct or
+// class, and fn types; union patterns are skipped).
+pub fn mir_bind_tparams(tn: TypeName, ty: Ty, params: Array(String), tys: Array(Ty), bound: Array(Bool)) {
+  i = 0
+  while i < params.size {
+    if str_eq(tn.name, params[i]) && tn.args.size == 0 && !tn.fn_type {
+      t = ty
+      if tn.nilable && ty.is_union {
+        t = ty_without_nil(ty)
+      }
+      if !bound[i] {
+        tys[i] = t
+        bound[i] = true
+      }
+      return
+    }
+    i = i + 1
+  }
+  if tn.fn_type && ty.is_fn {
+    j = 0
+    while j < tn.args.size && j < ty.members.size {
+      mir_bind_tparams(tn.args[j], ty.members[j], params, tys, bound)
+      j = j + 1
+    }
+    if r = tn.ret {
+      if rt = ty.inner {
+        mir_bind_tparams(r, rt, params, tys, bound)
+      }
+    }
+    return
+  }
+  if tn.args.size == 0 || tn.members.size > 0 {
+    return
+  }
+  if ty.is_hash && tn.args.size == 2 {
+    if k = ty.key {
+      mir_bind_tparams(tn.args[0], k, params, tys, bound)
+    }
+    if v = ty.val {
+      mir_bind_tparams(tn.args[1], v, params, tys, bound)
+    }
+    return
+  }
+  if (ty.is_array || ty.is_ptr || ty.is_join) && tn.args.size == 1 {
+    if inner = ty.inner {
+      mir_bind_tparams(tn.args[0], inner, params, tys, bound)
+    }
+    return
+  }
+  j = 0
+  while j < tn.args.size && j < ty.ty_args.size {
+    mir_bind_tparams(tn.args[j], ty.ty_args[j], params, tys, bound)
+    j = j + 1
+  }
+}
+
+fn mir_str_ends(s: String, suffix: String): Bool {
+  if suffix.size > s.size {
+    return false
+  }
+  str_eq(str_slice(s, s.size - suffix.size, s.size), suffix)
+}
+
+// The `[targs]` part of fnn's symbol when it is a generic instance (a
+// generic template of the same scope matches its checked signature, and
+// its emit name is the instance name the checker gives those targs), else
+// "".
+pub fn (lw: MirLower) instance_suffix(fnn: Function): String {
+  if fnn.generic {
+    return ""
+  }
+  method = fn_is_method(fnn)
+  params: Array(Ty) = []
+  ret = ty_void()
+  if method {
+    if ms = lw.lw_syms.find_method_emit(fnn.emit_name) {
+      params = ms.params
+      ret = ms.ret
+    } else {
+      return ""
+    }
+  } else {
+    if fs = lw.lw_syms.find_fn(fnn.emit_name) {
+      params = fs.params
+      ret = fs.ret
+    } else {
+      return ""
+    }
+  }
+  i = 0
+  while i < lw.lw_all.size {
+    t = lw.lw_all[i]
+    tm = fn_is_method(t)
+    same = t.generic && str_eq(t.name, fnn.name) && str_eq(t.mod_name, fnn.mod_name) && ((tm && method) || (!tm && !method))
+    if same && method {
+      same = str_eq(t.owner, fnn.owner) && str_eq(t.owner_mod, fnn.owner_mod)
+    }
+    if same && t.params.size == params.size && t.type_params.size > 0 {
+      tys: Array(Ty) = []
+      bound: Array(Bool) = []
+      j = 0
+      while j < t.type_params.size {
+        tys.push(ty_void())
+        bound.push(false)
+        j = j + 1
+      }
+      j = 0
+      while j < t.params.size {
+        mir_bind_tparams(t.params[j].type, params[j], t.type_params, tys, bound)
+        j = j + 1
+      }
+      if rt = t.return_type {
+        mir_bind_tparams(rt, ret, t.type_params, tys, bound)
+      }
+      all = true
+      j = 0
+      while j < bound.size {
+        all = all && bound[j]
+        j = j + 1
+      }
+      if all {
+        ok = false
+        if method {
+          ok = mir_str_ends(fnn.emit_name, sig_mangle("", tys))
+        } else {
+          ok = str_eq(fnn.emit_name, sig_mangle(fnn.name, tys))
+        }
+        if ok {
+          buf = buf_new()
+          buf.push_str("[")
+          j = 0
+          while j < tys.size {
+            if j > 0 {
+              buf.push_str(",")
+            }
+            buf.push_str(mir_mty(tys[j]))
+            j = j + 1
+          }
+          buf.push_str("]")
+          return buf.to_s
+        }
+      }
+    }
+    i = i + 1
+  }
+  ""
+}
+
+fn mir_params_text(params: Array(Ty)): String {
+  buf = buf_new()
+  buf.push_str("(")
+  j = 0
+  while j < params.size {
+    if j > 0 {
+      buf.push_str(",")
+    }
+    buf.push_str(mir_mty(params[j]))
+    j = j + 1
+  }
+  buf.push_str(")")
+  buf.to_s
+}
+
+// 8.2 for a plain function: `av.<module>/<name>`, then `[targs]` for a
+// generic instance, or `(params)` when another plain function of the
+// module (not an instance) has the same name; `main` of the root module
+// keeps its C name (8.1).
+pub fn (lw: MirLower) symbol_of(fnn: Function): String {
+  if str_eq(fnn.name, "main") && str_eq(fnn.mod_name, lw.lw_prog.root_module) {
+    return "main"
+  }
+  base = "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
+  suffix = lw.instance_suffix(fnn)
+  if suffix.size > 0 {
+    return "${base}${suffix}"
+  }
+  n = 0
+  i = 0
+  while i < lw.lw_all.size {
+    o = lw.lw_all[i]
+    if !o.generic && !fn_is_method(o) && str_eq(o.name, fnn.name) && str_eq(o.mod_name, fnn.mod_name) {
+      if lw.instance_suffix(o).size == 0 {
+        n = n + 1
+      }
+    }
+    i = i + 1
+  }
+  if n <= 1 {
+    return base
+  }
+  if sig = lw.lw_syms.find_fn(fnn.emit_name) {
+    return "${base}${mir_params_text(sig.params)}"
+  }
+  base
+}
+
+// The owner type of a method: a struct or class of any module (decl.av
+// collect_methods: the owner's module, then the bare name), else the
+// resolved receiver type (`fn (s: String) shout`, a method on a type that
+// is not an aggregate).
+pub fn (lw: MirLower) method_owner(fnn: Function): Ty? {
+  if o = lw.owner_ty(fnn) {
+    return o
+  }
+  if r = fnn.receiver {
+    return lw.lw_syms.resolver.resolve(r.type)
+  }
+  nil
+}
+
+// 8.2 for a method: `av.<module>/<Owner>.<name>` (the owner without its
+// module when it is the defining module's, else its mty: a method on
+// another module's type), then `[targs]` for a generic method instance,
+// or `(params)` when the owner has several non-instance methods of the
+// name (overloads).
+pub fn (lw: MirLower) method_symbol(fnn: Function): String {
+  if sig = lw.lw_syms.find_method_emit(fnn.emit_name) {
+    if ot = lw.method_owner(fnn) {
+      base = "av.${mir_module_part(fnn.mod_name)}/${lw.owner_text(ot, fnn.mod_name)}.${fnn.name}"
+      suffix = lw.instance_suffix(fnn)
+      if suffix.size > 0 {
+        return "${base}${suffix}"
+      }
+      n = 0
+      i = 0
+      while i < lw.lw_syms.methods.size {
+        o = lw.lw_syms.methods[i]
+        if !o.node.generic && str_eq(o.owner, sig.owner) && str_eq(o.node.owner_mod, sig.node.owner_mod) && str_eq(o.name, sig.name) {
+          onode = o.node
+          if lw.instance_suffix(onode).size == 0 {
+            n = n + 1
+          }
+        }
+        i = i + 1
+      }
+      if n > 1 {
+        return "${base}${mir_params_text(sig.params)}"
+      }
+      return base
+    }
+  }
+  lw.refuse(fnn.loc, "method ${fnn.name} (no checked signature)")
+  ""
+}
+
+// The receiver's MIR type: `ref %C` for a class, `addr %S` for a struct
+// (audit 2.4: the address of the receiver's storage), the value itself
+// for any other type (myc.av emit_ptr_method_func).
+pub fn (lw: MirLower) method_receiver(fnn: Function): Int {
+  if ot = lw.method_owner(fnn) {
+    if ot.is_struct {
+      t = lw.value_agg_ty(ot, fnn.loc)
+      if t < 0 {
+        return -1
+      }
+      return lw.lw_m.types.addr_of(t)
+    }
+    return lw.ty_at(ot, fnn.loc, "a receiver")
+  }
+  lw.refuse(fnn.loc, "method ${fnn.name} (no owner)")
+  return -1
+}
+
+// The checked parameter types of the program function or method a call
+// resolved to (a constructor's are its initialize's), for converting the
+// arguments; empty when unknown.
+pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
+  if fs = lw.lw_syms.find_fn(resolved) {
+    return fs.params
+  }
+  if ms = lw.lw_syms.find_method_emit(resolved) {
+    return ms.params
+  }
+  if t = e.ty {
+    if t.is_class || t.is_union {
+      i = 0
+      while i < lw.lw_syms.methods.size {
+        o = lw.lw_syms.methods[i]
+        if str_eq(o.name, "initialize") && !o.node.generic {
+          onode2 = o.node
+          if ot = lw.owner_ty(onode2) {
+            want = t
+            if t.is_union {
+              want = ty_without_nil(t)
+            }
+            if ot.same_as(want) {
+              return o.params
+            }
+          }
+        }
+        i = i + 1
+      }
+    }
+  }
+  none: Array(Ty) = []
+  none
+}
+
+// An operator method `l op r` (myc.av emit_binary with Expr.resolved,
+// emit_method_invoke): the right operand (the argument) first, then the
+// left (the receiver), then the call of `Owner.op`.
+pub fn (lw: MirLower) lower_op_method(e: Expr): MOperand {
+  if l = e.left {
+    if r = e.right {
+      if lt = l.ty {
+        if sym = lw.lw_fn_syms.get(e.resolved) {
+          args: Array(Expr) = []
+          args.push(r)
+          return lw.lower_method_call(e, l, lt, sym, args)
+        }
+      }
+    }
+  }
+  lw.refuse(e.loc, "the operator method ${e.resolved}")
+  lw.lw_b.c_i32(0)
+}

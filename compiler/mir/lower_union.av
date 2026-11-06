@@ -1,0 +1,727 @@
+// The lowering of unions and `T?` (Stage 28 W7a; stages/stage28/mir.md
+// W7a): a union value is its layout by value (2.4: `i32 tag`, then one
+// payload per non-nil member in the checker's member order; the tag of
+// member k is k). Construction is the `union` rvalue (other payloads
+// zero); a value meets a union type only where the checker allows it
+// (`ty_assignable`) and is converted there (`coerce`): a member is
+// wrapped with its tag, `nil` with the nil tag, and a union of fewer
+// members is re-tagged member by member (`retag`, which also narrows:
+// the success side of `if x = ...`, `?`, and `??` when it is a union).
+// Reads test the tag and copy the payload. The builtins whose result is
+// `T?` are here too: `get` on String, Bytes, Array, Buf, and Hash, hash
+// index reads, `get_slice`, `get_concat`, `index_of`, `min`, `max`,
+// `env_get`, `file_read`, and the `bump` constructor.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_stmt
+import mir.lower_call
+import mir.lower_agg
+import mir.lower_arr
+import mir.lower_hash
+
+// The payload field of member index i of u (type.av payload_index: 1 +
+// the non-nil members before it), or -1 for nil.
+pub fn mir_payload_field(u: Ty, i: Int): Int {
+  if u.members[i].is_nil {
+    return -1
+  }
+  n = 1
+  j = 0
+  while j < i {
+    if !u.members[j].is_nil {
+      n = n + 1
+    }
+    j = j + 1
+  }
+  n
+}
+
+// ---- conversion
+
+// o (a value of type got) as a value of type want (myc.av emit_coerce,
+// emit_wrap_union): unchanged unless want is a union that got is not; a
+// member is wrapped with its tag; a union is re-tagged.
+pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOperand {
+  if !want.is_union || got.same_as(want) || lw.failed {
+    return o
+  }
+  b = lw.lw_b
+  wty = lw.ty_at(want, loc, "a value")
+  if lw.failed {
+    return o
+  }
+  if got.is_union {
+    return lw.retag(o, got, want, loc)
+  }
+  if !want.includes_member(got) {
+    lw.refuse(loc, "a value of type ${got.show} as ${want.show}")
+    return o
+  }
+  l = b.types.layout_of(wty)
+  lw.at(loc)
+  if got.is_nil {
+    return lw.tmp(wty, b.rv_union_nil(l, want.tag_of(got)))
+  }
+  lw.tmp(wty, b.rv_union(l, want.tag_of(got), o))
+}
+
+// v lowered and converted to want (the MIR type ty of a place).
+pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
+  if v.kind == ex_nil() && want.is_union && want.includes_nil {
+    // A field default of a generic instance arrives without its checked
+    // type (the old back end fails to compile it, D196).
+    lw.at(v.loc)
+    b = lw.lw_b
+    return lw.tmp(ty, b.rv_union_nil(b.types.layout_of(ty), want.tag_of(ty_nil())))
+  }
+  o = lw.lower_expr(v)
+  if t = v.ty {
+    return lw.coerce(o, t, want, v.loc)
+  }
+  o
+}
+
+// The arguments of a call, left to right, each converted to its
+// parameter's type (the old back end converts only the arguments of
+// type-level calls, calls.av:1384-1427; a `nil` or a bare T passed to a
+// `T?` parameter of a plain function or method does not compile there:
+// D196).
+pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty)): Array(MOperand) {
+  out: Array(MOperand) = []
+  i = 0
+  while i < args.size {
+    o = lw.lower_expr(args[i])
+    if i < params.size {
+      if t = args[i].ty {
+        o = lw.coerce(o, t, params[i], args[i].loc)
+      }
+    }
+    j = i + 1
+    while j < args.size {
+      o = lw.snap(o, args[j])
+      j = j + 1
+    }
+    out.push(o)
+    i = i + 1
+  }
+  out
+}
+
+// A union value of type from as type to: one arm per member of from
+// that to holds, writing to's tag for it and the same payload. A member
+// to does not hold (the failure side of a narrowing, already excluded by
+// the caller's test) leaves the zero.
+pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  fty = lw.ty_at(from, loc, "a value")
+  tty = lw.ty_at(to, loc, "a value")
+  if lw.failed {
+    return o
+  }
+  lw.at(loc)
+  src = lw.hold(o, fty)
+  tl = b.types.layout_of(tty)
+  d = b.temp(tty)
+  dummy = b.assign(b.pl(d), b.rv_zero)
+  tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+  values: Array(Int64) = []
+  targets: Array(Int) = []
+  arms: Array(Int) = []
+  members: Array(Int) = []
+  i = 0
+  while i < from.members.size {
+    if to.includes_member(from.members[i]) {
+      arm = b.block
+      values.push(i.to_i64)
+      targets.push(arm)
+      arms.push(arm)
+      members.push(i)
+    }
+    i = i + 1
+  }
+  join = b.block
+  b.switch_on(tag, values, targets, join)
+  i = 0
+  while i < arms.size {
+    b.at(arms[i])
+    m = from.members[members[i]]
+    k = to.tag_of(m)
+    if m.is_nil {
+      dummy2 = b.assign(b.pl(d), b.rv_union_nil(tl, k))
+    } else {
+      p = lw.tmp(lw.ty_at(m, loc, "a member"), b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, members[i])))))
+      dummy3 = b.assign(b.pl(d), b.rv_union(tl, k, p))
+    }
+    b.goto(join)
+    i = i + 1
+  }
+  b.at(join)
+  b.copy_local(d)
+}
+
+// The value of type success held by the union in src (of type uty):
+// the payload of that member (myc.av emit_unwrap), a re-tagged union
+// when success is a union of several members, nothing for Nil.
+pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  if success.is_nil {
+    return b.c_i32(0)
+  }
+  if success.is_union {
+    return lw.retag(b.copy_local(src), uty, success, loc)
+  }
+  st = lw.ty_at(success, loc, "a value")
+  lw.tmp(st, b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(uty, uty.tag_of(success))))))
+}
+
+// `tag == k` (or `!=`) of the union in src.
+pub fn (lw: MirLower) tag_is(src: Int, k: Int, eq: Bool): MOperand {
+  b = lw.lw_b
+  tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+  op = mop_eq()
+  if !eq {
+    op = mop_ne()
+  }
+  lw.tmp(mt_bool(), b.rv_cmp(op, tag, b.c_i32(k)))
+}
+
+// ---- `??`, `.or`, postfix `?`, `if x = ...`
+
+// `l ?? r` and `l.or(r)` (myc.av emit_coalesce): the left once; when it
+// holds nil, the right (evaluated only then) as the result type;
+// otherwise the left itself or its non-nil part.
+pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  if uty = l.ty {
+    rty = lw.ty_at(result, loc, "a value")
+    lty = lw.ety(l)
+    u = lw.lower_expr(l)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(loc)
+    src = lw.hold(u, lty)
+    d = b.temp(rty)
+    c = lw.tag_is(src, uty.tag_of(ty_nil()), true)
+    bnil = b.block
+    bval = b.block
+    join = b.block
+    b.branch(c, bnil, bval)
+    b.at(bnil)
+    v = lw.lower_coerced(r, rty, result)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(loc)
+    dummy = b.assign(b.pl(d), b.rv_use(v))
+    b.goto(join)
+    b.at(bval)
+    if result.same_as(uty) {
+      dummy2 = b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
+    } else {
+      dummy3 = b.assign(b.pl(d), b.rv_use(lw.unwrap(src, uty, ty_without_nil(uty), loc)))
+    }
+    b.goto(join)
+    b.at(join)
+    return b.copy_local(d)
+  }
+  lw.refuse(loc, "an untyped ??")
+  b.c_i32(0)
+}
+
+// The success and failure parts of u under postfix `?` in a function
+// returning ret (myc.av try_success_from, try_fail_from).
+pub fn mir_try_success(u: Ty, ret: Ty): Ty {
+  if !u.includes_nil {
+    i = 0
+    while i < u.members.size {
+      if !ret.includes_member(u.members[i]) {
+        return u.members[i]
+      }
+      i = i + 1
+    }
+  }
+  ty_without_nil(u)
+}
+
+pub fn mir_try_fail(u: Ty, ret: Ty): Ty {
+  if !u.includes_nil {
+    i = 0
+    while i < u.members.size {
+      if ret.includes_member(u.members[i]) {
+        return u.members[i]
+      }
+      i = i + 1
+    }
+  }
+  ty_nil()
+}
+
+// `e?` (myc.av emit_try, emit_failure_return): the union once; on the
+// failure tag the function returns the failure (the union itself when the
+// result type is the same, else the failure member as the result type);
+// otherwise the value is the success part.
+pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
+  b = lw.lw_b
+  if inner = e.inner {
+    if uty = inner.ty {
+      if ret = lw.lw_ret_ty {
+        ity = lw.ety(inner)
+        u = lw.lower_expr(inner)
+        if lw.failed {
+          return b.c_i32(0)
+        }
+        lw.at(e.loc)
+        src = lw.hold(u, ity)
+        success = mir_try_success(uty, ret)
+        fail = mir_try_fail(uty, ret)
+        c = lw.tag_is(src, uty.tag_of(fail), true)
+        bf = b.block
+        bok = b.block
+        b.branch(c, bf, bok)
+        b.at(bf)
+        if ret.same_as(uty) {
+          dummy = b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
+        } else {
+          fv = lw.coerce(lw.unwrap(src, uty, fail, e.loc), fail, ret, e.loc)
+          dummy2 = b.assign(b.pl(0), b.rv_use(fv))
+        }
+        b.ret
+        b.at(bok)
+        return lw.unwrap(src, uty, success, e.loc)
+      }
+    }
+  }
+  lw.refuse(e.loc, "postfix ? here")
+  b.c_i32(0)
+}
+
+// `if x = cond { } else { }` (myc.av emit_if_assign; type.av
+// if_assign_payload, if_assign_failure): the union once; when its tag is
+// not the failure's, x (a local of the success type) holds the success
+// part for the then-body.
+pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
+  b = lw.lw_b
+  if c = st.cond {
+    if uty = c.ty {
+      success = ty_without_nil(uty)
+      if p = if_assign_payload(uty) {
+        success = p
+      }
+      fail = if_assign_failure(uty)
+      cty = lw.ety(c)
+      sty = lw.ty_at(success, st.loc, "a binding")
+      u = lw.lower_expr(c)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      src = lw.hold(u, cty)
+      ok = lw.tag_is(src, uty.tag_of(fail), false)
+      bt = b.block
+      bf = b.block
+      join = bf
+      if st.else_body.size > 0 {
+        join = b.block
+      }
+      b.branch(ok, bt, bf)
+      b.at(bt)
+      v = lw.unwrap(src, uty, success, st.loc)
+      k = lw.var_get(st.bind, sty)
+      lw.at(st.loc)
+      dummy = b.assign(b.pl(k), b.rv_use(v))
+      lw.lower_stmts(st.then_body)
+      lw.goto_if_open(join, st.loc)
+      if st.else_body.size > 0 {
+        b.at(bf)
+        lw.lower_stmts(st.else_body)
+        lw.goto_if_open(join, st.loc)
+      }
+      b.at(join)
+      return
+    }
+  }
+  lw.refuse(st.loc, "this if binding")
+}
+
+// ---- results of type T?
+
+// The union `want` (a T?) holding v (of type vt) when found, else nil;
+// v was computed before the test (myc.av emit_hash_get_wrap and the
+// min/max, env_get, file_read forms).
+pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  wty = lw.ty_at(want, loc, "a value")
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  l = b.types.layout_of(wty)
+  d = b.temp(wty)
+  bt = b.block
+  bf = b.block
+  join = b.block
+  b.branch(found, bt, bf)
+  b.at(bt)
+  dummy = b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
+  b.goto(join)
+  b.at(bf)
+  dummy2 = b.assign(b.pl(d), b.rv_union_nil(l, want.tag_of(ty_nil())))
+  b.goto(join)
+  b.at(join)
+  b.copy_local(d)
+}
+
+// `found == 1` of an out-parameter local.
+pub fn (lw: MirLower) found_is(f: Int): MOperand {
+  b = lw.lw_b
+  lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(f), b.c_i32(1)))
+}
+
+// A fresh `found` local, 0, and its raw address for the runtime.
+pub fn (lw: MirLower) found_local: Int {
+  b = lw.lw_b
+  f = b.temp(mt_i32())
+  dummy = b.assign(b.pl(f), b.rv_use(b.c_i32(0)))
+  f
+}
+
+pub fn (lw: MirLower) found_ptr(f: Int): MOperand {
+  b = lw.lw_b
+  lw.tmp(b.types.ptr_to(mt_i32()), b.rv_addr_raw(b.pl(f)))
+}
+
+// The bounded reads `s.get(i)`, `b.get(i)`, `xs.get(i)`
+// (builtins.av:1402-1570): the receiver, then the index, then the size;
+// the result starts as nil and becomes the element when 0 <= i < size,
+// read only then.
+pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    wty = lw.ety(e)
+    aty = lw.ety(recv)
+    r = lw.lower_expr(recv)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    if args.size > 0 {
+      r = lw.snap(r, args[0])
+    }
+    lw.at(e.loc)
+    h = lw.hold(r, aty)
+    iv = b.c_i32(0)
+    if args.size > 0 {
+      iv = lw.lower_expr(args[0])
+    }
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    ix = lw.hold(iv, mt_i32())
+    n = b.c_i32(0)
+    if rt.is_array || rt.is_buf {
+      n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+    } else {
+      n = lw.call_to(mt_i32(), "avant_str_size", lw.one(b.copy_local(h)))
+    }
+    l = b.types.layout_of(wty)
+    d = b.temp(wty)
+    dummy = b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
+    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i32(0)))
+    c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
+    c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+    bt = b.block
+    join = b.block
+    b.branch(c, bt, join)
+    b.at(bt)
+    elt = ty_int()
+    v = b.c_i32(0)
+    if rt.is_array {
+      if inner = rt.inner {
+        elt = inner
+      }
+      et = lw.elem_of(aty)
+      if b.types.is_refkind(et) {
+        v = lw.call_to(et, "avant_array_get_ptr", lw.two(b.copy_local(h), b.copy_local(ix)))
+      } else {
+        dd = b.temp(b.types.ref_to(lw.elems_of(aty)))
+        dummy2 = b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+        v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(dd)), b.copy_local(ix)))))
+      }
+    } else if rt.is_buf {
+      dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
+      dummy3 = b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+      byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
+      v = lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
+    } else {
+      pu8 = b.ptr_to(mt_u8())
+      pv = lw.tmp(pu8, b.rv_cast(b.copy_local(h), pu8))
+      pk = mir_bare_copy(pv)
+      byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
+      v = lw.tmp(mt_i32(), b.rv_cast(byte2, mt_i32()))
+    }
+    dummy4 = b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
+    b.goto(join)
+    b.at(join)
+    return b.copy_local(d)
+  }
+  lw.refuse(e.loc, "an untyped get")
+  b.c_i32(0)
+}
+
+// `xs.index_of(v)` (builtins.av:1141-1190): the value, then the array;
+// the runtime's index, nil when negative. `xs.min`, `xs.max`
+// (builtins.av:1194-1240): the array, then the runtime's value with a
+// found flag.
+pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    aty = lw.ety(recv)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    et = lw.elem_of(aty)
+    want = lw.elem_ty_of(recv)
+    if str_eq(name, "index_of") && args.size == 1 {
+      f = lw.kind_fn("avant_array_index", et, true)
+      if f.size == 0 {
+        lw.refuse(e.loc, "Array.index_of on ${want.show}")
+        return b.c_i32(0)
+      }
+      v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
+      a = lw.lower_expr(recv)
+      if lw.failed {
+        return b.c_i32(0)
+      }
+      lw.at(e.loc)
+      if et == mt_bool() {
+        v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+      }
+      ix = lw.call_to(mt_i32(), f, lw.two(a, v))
+      k = lw.hold(ix, mt_i32())
+      c = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(k), b.c_i32(0)))
+      return lw.opt_of(t, c, b.copy_local(k), ty_int(), e.loc)
+    }
+    mf = lw.kind_fn("avant_array_${name}", et, false)
+    if args.size > 0 || mf.size == 0 || et == mt_bool() {
+      lw.refuse(e.loc, "Array.${name} on ${want.show}")
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    fl = lw.found_local
+    a2 = lw.lower_expr(recv)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    v2 = lw.call_to(et, mf, lw.two(a2, lw.found_ptr(fl)))
+    return lw.opt_of(t, lw.found_is(fl), v2, want, e.loc)
+  }
+  lw.refuse(e.loc, "an untyped Array.${name}")
+  b.c_i32(0)
+}
+
+// Hash reads (builtins.av:98-165, 451-460, 519-590): `h[k]` and
+// `h.get(k)` (the key, then the hash), `h.get_slice(s, a, b)` (b, a, s,
+// then the hash), `h.get_concat(a, b)` (b, a, then the hash); each runtime
+// read reports through a found flag.
+pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    vt = ty_int()
+    if v = ht.val {
+      vt = v
+    }
+    vty = lw.ty_at(vt, e.loc, "a hash value")
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    fl = lw.found_local
+    f = ""
+    if str_eq(name, "get") && args.size == 1 {
+      f = mir_hash_op(ht, "get")
+    } else if str_eq(name, "get_slice") && args.size == 3 {
+      f = "avant_hash_get_str_slice"
+    } else if str_eq(name, "get_concat") && args.size == 2 {
+      f = "avant_hash_get_concat"
+    }
+    if f.size == 0 {
+      lw.refuse(e.loc, "Hash.${name} here")
+      return b.c_i32(0)
+    }
+    ops = lw.args_then_recv(args, recv)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    ops.push(lw.found_ptr(fl))
+    v2 = lw.call_to(vty, f, ops)
+    return lw.opt_of(t, lw.found_is(fl), v2, vt, e.loc)
+  }
+  lw.refuse(e.loc, "an untyped hash read")
+  b.c_i32(0)
+}
+
+// `env_get(name)`, `file_read(path)` (calls.av emit_opt_cstr): the
+// argument, then the runtime's string with an ok flag, as String?.
+pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    lw.at(e.loc)
+    fl = lw.found_local
+    ops = lw.lower_args(e.args)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    ops.push(lw.found_ptr(fl))
+    v = lw.call_to(mt_str(), f, ops)
+    return lw.opt_of(t, lw.found_is(fl), v, ty_string(), e.loc)
+  }
+  lw.refuse(e.loc, "an untyped ${e.callee}")
+  b.c_i32(0)
+}
+
+// The builtins of the old back end that need no FFI and are neither
+// string nor heap builtins (calls.av:157-200, 252-272, 291-320, 349-352):
+// `argv`, `file_exists`, `file_write`, `dir_list`, the two T? readers,
+// `wide_op`, `wide_hi`, `checksum_f64`, `sha256`, `crc32_bytes`,
+// `sha256_word0`, `nursery_reclaim`; nil when c is not one of them.
+pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
+  b = lw.lw_b
+  if str_eq(c, "env_get") && e.args.size == 1 {
+    return lw.lower_opt_cstr(e, "avant_env_get")
+  }
+  if str_eq(c, "file_read") && e.args.size == 1 {
+    return lw.lower_opt_cstr(e, "avant_file_read")
+  }
+  if str_eq(c, "wide_op") && e.args.size == 5 {
+    // calls.av:291-309: the arguments last to first, then the call.
+    wops = lw.lower_args_rev(e.args)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    return lw.call_to(mt_i32(), "avant_wide_op", wops)
+  }
+  f = ""
+  if str_eq(c, "wide_hi") && e.args.size == 0 {
+    f = "avant_wide_hi"
+  } else if str_eq(c, "checksum_f64") && e.args.size == 1 {
+    f = "avant_checksum_f64"
+  } else if str_eq(c, "sha256") && e.args.size == 1 {
+    f = "avant_sha256"
+  } else if str_eq(c, "crc32_bytes") && e.args.size == 1 {
+    f = "avant_crc32_i32"
+  } else if str_eq(c, "sha256_word0") && e.args.size == 1 {
+    f = "avant_sha256_word0"
+  } else if str_eq(c, "nursery_reclaim") && e.args.size == 0 {
+    f = "avant_nursery_reclaim"
+  } else if str_eq(c, "argv") && e.args.size == 0 {
+    f = "avant_argv"
+  } else if str_eq(c, "file_exists") && e.args.size == 1 {
+    f = "avant_file_exists"
+  } else if str_eq(c, "file_write") && e.args.size == 2 {
+    f = "avant_file_write"
+  } else if str_eq(c, "dir_list") && e.args.size == 1 {
+    f = "avant_dir_list"
+  }
+  if f.size == 0 {
+    return nil
+  }
+  ty = lw.ety(e)
+  ops = lw.lower_args(e.args)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if str_eq(c, "file_exists") {
+    r = lw.call_to(mt_i32(), f, ops)
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+  }
+  lw.call_to(ty, f, ops)
+}
+
+// ---- `C.bump(args)` (myc.av emit_bump_constructor; trick #15)
+
+// `C.bump(args) -> C?`: avant_bump_alloc(size, id), nil when it fails;
+// otherwise the field defaults (behind their barriers), initialize, and
+// the object as C?. Emitted after C.new for every class whose bump is
+// called (analysis.av class_uses_bump); the leaf pass decides its frame.
+pub fn (lw: MirLower) lower_bump(cdef: ClassDef, t: Ty) {
+  b = lw.lw_b
+  sym = ""
+  if got = lw.lw_fn_syms.get(ty_owned_symbol(t, "bump")) {
+    sym = got
+  }
+  opt = ty_nilable(t)
+  lw.lw_vars = Hash(String, Int).new
+  lw.lw_fn_loc = cdef.loc
+  cty = lw.value_agg_ty(t, cdef.loc)
+  oty = lw.ty_at(opt, cdef.loc, "a result")
+  if lw.failed {
+    return
+  }
+  lw.lw_ret = oty
+  lw.lw_ret_ty = opt
+  layout = b.types.layout_of(cty)
+  ol = b.types.layout_of(oty)
+  params: Array(Int) = []
+  init_sym = ""
+  init: Function? = nil
+  if f = lw.initialize_of(cdef) {
+    init = f
+    if got2 = lw.lw_fn_syms.get(f.emit_name) {
+      init_sym = got2
+    }
+    if sig = lw.lw_syms.find_method_emit(f.emit_name) {
+      i = 0
+      while i < sig.params.size {
+        params.push(lw.ty_at(sig.params[i], f.loc, "a parameter"))
+        i = i + 1
+      }
+    }
+  }
+  if lw.failed {
+    return
+  }
+  dummy = b.begin_fn(sym, b.sig(params, oty, false), lw.mloc(cdef.loc), "bump")
+  if f2 = init {
+    i = 0
+    while i < f2.params.size {
+      b.name_param(i + 1, f2.params[i].name)
+      lw.lw_vars[lw.var_key(f2.params[i].name, params[i])] = i + 1
+      i = i + 1
+    }
+  }
+  lw.at(cdef.loc)
+  o = b.temp(cty)
+  dummy2 = b.call(o, "avant_bump_alloc", lw.two(b.c_u64(b.types.layouts[layout].size.to_i64), b.c_u32(b.types.layouts[layout].type_id)))
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(o), b.c_null(cty)))
+  bnil = b.block
+  bok = b.block
+  b.branch(c, bnil, bok)
+  b.at(bnil)
+  dummy3 = b.assign(b.pl(0), b.rv_union_nil(ol, opt.tag_of(ty_nil())))
+  b.ret
+  b.at(bok)
+  lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
+  if lw.failed {
+    return
+  }
+  lw.at(cdef.loc)
+  dummy4 = b.assign(b.pl(0), b.rv_union(ol, opt.tag_of(t), b.copy_local(o)))
+  b.ret
+  b.end_fn
+}

@@ -27,7 +27,7 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
     st = body[i]
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
       if e = st.expr {
-        v = lw.lower_expr(e)
+        v = lw.lower_ret_value(e)
         if lw.failed {
           return
         }
@@ -122,7 +122,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
       }
       if v = st.value {
         if st.op == tk_eq() {
-          val = lw.lower_expr(v)
+          val = lw.lower_coerced(v, ty, tt)
           if lw.failed {
             return
           }
@@ -169,9 +169,21 @@ pub fn compound_op_of(op: Int): Int {
   op
 }
 
+// A returned value, converted to the function's result type (myc.av
+// emit_stmt case 2 and the tail value: emit_coerce to return_type).
+pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
+  v = lw.lower_expr(e)
+  if rt = lw.lw_ret_ty {
+    if t = e.ty {
+      return lw.coerce(v, t, rt, e.loc)
+    }
+  }
+  v
+}
+
 pub fn (lw: MirLower) lower_return(st: Stmt) {
   if e = st.expr {
-    v = lw.lower_expr(e)
+    v = lw.lower_ret_value(e)
     if lw.failed {
       return
     }
@@ -193,7 +205,7 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
 
 pub fn (lw: MirLower) lower_if(st: Stmt) {
   if st.bind.size > 0 {
-    lw.refuse(st.loc, "if with a binding (unions, W7)")
+    lw.lower_if_bind(st)
     return
   }
   if c = st.cond {
@@ -336,13 +348,13 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     i = 0
     while i < e.cases.size {
       lw.lw_b.at(arms[i])
-      lw.lower_arm(e.cases[i].body, dest, e.cases[i].loc)
+      lw.lower_arm(e.cases[i].body, dest, e)
       lw.goto_if_open(join, e.cases[i].loc)
       i = i + 1
     }
     if e.has_else {
       lw.lw_b.at(other)
-      lw.lower_arm(e.else_body, dest, e.loc)
+      lw.lower_arm(e.else_body, dest, e)
       lw.goto_if_open(join, e.loc)
     }
     lw.lw_b.at(join)
@@ -353,7 +365,10 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   lw.lw_b.c_i32(0)
 }
 
-pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, loc: Location) {
+// An arm's statements; in a value switch its last expression, converted
+// to the switch's type (myc.av emit_switch_arm: emit_coerce), is the
+// result.
+pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
   if dest < 0 {
     lw.lower_stmts(body)
     return
@@ -367,6 +382,11 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, loc: Location) {
     if i == body.size - 1 && st.kind == st_expr() {
       if e = st.expr {
         v = lw.lower_expr(e)
+        if t = e.ty {
+          if want = sw.ty {
+            v = lw.coerce(v, t, want, e.loc)
+          }
+        }
         if lw.failed {
           return
         }

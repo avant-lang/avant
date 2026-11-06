@@ -61,6 +61,9 @@ pub class MirLower {
   lw_self_name: String = ""
   lw_self_ty: Ty? = nil
   lw_busy: Hash(String, Int)
+  lw_ret_ty: Ty? = nil
+  lw_all: Array(Function)
+  lw_bumps: Hash(String, Int)
 
   fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
     self.lw_m = mir_module(mir_module_part(program.root_module))
@@ -79,6 +82,8 @@ pub class MirLower {
     self.lw_fn_loc = program.loc
     self.lw_self_name = ""
     self.lw_busy = Hash(String, Int).new
+    self.lw_all = program_all_functions(program)
+    self.lw_bumps = Hash(String, Int).new
   }
 
   // ---- refusals
@@ -158,36 +163,33 @@ pub class MirLower {
 
   pub fn lower_program {
     p = self.lw_prog
-    if p.interfaces.size > 0 {
-      self.refuse(p.interfaces[0].loc, "interface ${p.interfaces[0].name}")
-      return
-    }
-    fns = program_all_functions(p)
-    i = 0
-    while i < fns.size {
-      fnn = fns[i]
-      if fnn.generic {
-        self.refuse(fnn.loc, "generic function ${fnn.name}")
-        return
-      }
-      i = i + 1
-    }
+    fns = self.lowered_functions
     // W6b: the layouts and type ids of every class (program order, one
     // allocator, D186) and the symbols of methods and constructors.
     self.note_classes
     if self.failed {
       return
     }
+    // Symbols are collision-free by construction (8.2); a collision
+    // would be a defect of the scheme, so it stops the lowering.
+    taken = Hash(String, Int).new
     i = 0
     while i < fns.size {
+      sym = ""
       if fn_is_method(fns[i]) {
-        self.lw_fn_syms[fns[i].emit_name] = self.method_symbol(fns[i])
+        sym = self.method_symbol(fns[i])
       } else {
-        self.lw_fn_syms[fns[i].emit_name] = self.symbol_of(fns[i], fns)
+        sym = self.symbol_of(fns[i])
       }
       if self.failed {
         return
       }
+      if taken.has_key(sym) {
+        self.refuse(fns[i].loc, "a second function with the symbol ${sym} (internal)")
+        return
+      }
+      taken[sym] = 1
+      self.lw_fn_syms[fns[i].emit_name] = sym
       i = i + 1
     }
     self.note_ctor_symbols
@@ -219,45 +221,36 @@ pub class MirLower {
     self.refuse(p.loc, "a program without fn main or fn run")
   }
 
-  // 8.2: `av.<module>/<name>`, with the parameter types when another
-  // plain function of the module has the same name; `main` of the root
-  // module keeps its C name (8.1).
-  pub fn symbol_of(fnn: Function, fns: Array(Function)): String {
-    if str_eq(fnn.name, "main") && str_eq(fnn.mod_name, self.lw_prog.root_module) {
-      return "main"
-    }
-    base = "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
-    n = 0
+  // The functions to lower, in program order (program_all_functions):
+  // every one but the generic templates and the methods of generic
+  // struct and class templates (the checker's instances stand for them,
+  // D175).
+  pub fn lowered_functions: Array(Function) {
+    out: Array(Function) = []
     i = 0
-    while i < fns.size {
-      if str_eq(fns[i].name, fnn.name) && str_eq(fns[i].mod_name, fnn.mod_name) {
-        n = n + 1
+    while i < self.lw_all.size {
+      f = self.lw_all[i]
+      if !f.generic && !(f.owner.size > 0 && self.lw_syms.resolver.has_template(f.owner)) {
+        out.push(f)
       }
       i = i + 1
     }
-    if n <= 1 {
-      return base
-    }
-    buf = buf_new()
-    buf.push_str(base)
-    buf.push_str("(")
-    if sig = self.lw_syms.find_fn(fnn.emit_name) {
-      j = 0
-      while j < sig.params.size {
-        if j > 0 {
-          buf.push_str(",")
-        }
-        buf.push_str(mir_mty(sig.params[j]))
-        j = j + 1
-      }
-    }
-    buf.push_str(")")
-    buf.to_s
+    out
   }
 
   // The MIR type of t, or -1 after refusing it at loc.
   pub fn ty_at(t: Ty, loc: Location, what: String): Int {
     m = mir_scalar_ty(t)
+    if m < 0 && t.is_nil {
+      m = mt_i32()
+    }
+    if m < 0 && t.is_union {
+      l = self.union_layout(t, loc)
+      if l < 0 {
+        return -1
+      }
+      m = self.lw_m.types.agg(l)
+    }
     if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf) {
       m = self.value_agg_ty(t, loc)
       if self.failed {
@@ -281,6 +274,7 @@ pub class MirLower {
     self.lw_self_struct = false
     self.lw_self_name = ""
     self.lw_self_ty = nil
+    self.lw_ret_ty = nil
   }
 
   // The checked signature of a function or a method (methods are in the
@@ -329,6 +323,7 @@ pub class MirLower {
         return
       }
       self.lw_ret = ret
+      self.lw_ret_ty = fs.ret
       sret = ret
       if self.lw_main {
         sret = mt_i32()
