@@ -1,0 +1,45 @@
+// A struct holding an array of itself by value (Stage 28 W9: the new back
+// end refused it as "holding itself by value"; the compiler's own
+// test_generics.av has one). The element buffer holds the struct by value
+// (its label and its own kids array are references), so the young
+// collector must trace both through the element stride map.
+struct Tree {
+  label: String
+  kids: Array(Tree)
+}
+
+fn grow(depth: Int, tag: Int): Tree {
+  t = Tree { label: "n${tag}", kids: [] }
+  if depth > 0 {
+    i = 0
+    while i < 3 {
+      t.kids.push(grow(depth - 1, tag * 3 + i))
+      i = i + 1
+    }
+  }
+  t
+}
+
+fn weight(t: Tree): Int {
+  total = t.label.size
+  i = 0
+  while i < t.kids.size {
+    total = total + weight(t.kids[i])
+    i = i + 1
+  }
+  total
+}
+
+fn main {
+  keep = grow(4, 1)
+  junk = 0
+  round = 0
+  while round < 1000 {
+    tmp = grow(5, round)
+    junk = junk + weight(tmp)
+    round = round + 1
+  }
+  puts(weight(keep))
+  puts(keep.kids[2].kids[1].label)
+  puts(junk)
+}

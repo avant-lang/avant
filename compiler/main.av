@@ -268,21 +268,25 @@ pub fn driver_dump(args: Array(String)) {
   diag_exit(1)
 }
 
+// Stage 28 W6c: the inline allocation and barrier fast paths (mir.md
+// 5.5, 5.6) are on in every mode. AVANT_LLVM_CALL_FORMS=1 (internal,
+// like AVANT_BACKEND, D176) emits their call forms instead, so the
+// suite can prove both forms (the program-level twin of __mir-build
+// --call-forms).
+fn llvm_inline_fast: Bool {
+  if v = env_get("AVANT_LLVM_CALL_FORMS") {
+    if str_eq(v, "1") {
+      return false
+    }
+  }
+  true
+}
+
 // The new back end's job for a link job (AVANT_BACKEND=llvm): the same
 // mode, extra objects, and -l flags.
 fn llvm_job_of(job: LinkJob): LlvmJob {
   lj = LlvmJob.new(job.codegen)
-  // Stage 28 W6c: the inline allocation and barrier fast paths (mir.md
-  // 5.5, 5.6) are on in every mode. AVANT_LLVM_CALL_FORMS=1 (internal,
-  // like AVANT_BACKEND, D176) emits their call forms instead, so the
-  // suite can prove both forms (the program-level twin of __mir-build
-  // --call-forms).
-  lj.inline_fast = true
-  if v = env_get("AVANT_LLVM_CALL_FORMS") {
-    if str_eq(v, "1") {
-      lj.inline_fast = false
-    }
-  }
+  lj.inline_fast = llvm_inline_fast()
   i = 0
   while i < job.objects.size {
     lj.objects.push(job.objects[i])
@@ -598,6 +602,38 @@ fn driver_mir_build(args: Array(String)) {
   diag_exit(1)
 }
 
+// Internal (Stage 28 W9), not in the usage text: writes the
+// pre-optimization .ll that `compile` under AVANT_BACKEND=llvm hands to
+// the in-process LLVM (the same lowering, verifier, emitter, and
+// fast-path setting; the text does not depend on the mode, mir.md 11).
+// The self-hosting fixed point compares it between two compilers (D171).
+//   avant __emit-ll SRC.av OUT.ll
+// Exit 0, or 1 with the message on stderr.
+fn driver_emit_ll(args: Array(String)) {
+  if args.size != 2 || !str_ends(args[0], ".av") {
+    diag_puts("usage: avant __emit-ll SRC.av OUT.ll")
+    diag_exit(1)
+  }
+  if !str_eq(backend_choice(), "llvm") {
+    diag_puts("__emit-ll needs AVANT_BACKEND=llvm")
+    diag_exit(1)
+  }
+  paths: Array(String) = []
+  paths.push(args[0])
+  box = compile_av_paths(paths)
+  if box.ok {
+    if m = box.mir {
+      err = llvm_emit_ll(m, llvm_inline_fast(), args[1])
+      if err.size > 0 {
+        diag_puts(err)
+        diag_exit(1)
+      }
+      return
+    }
+  }
+  diag_exit(1)
+}
+
 fn main {
   args = take_keep_tmp(argv_user())
   if args.size == 0 {
@@ -678,6 +714,10 @@ fn main {
   }
   if str_eq(command, "__mir-build") {
     driver_mir_build(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__emit-ll") {
+    driver_emit_ll(argv_drop_first(args))
     return
   }
   if str_eq(command, "__mir-selftest") {

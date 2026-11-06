@@ -92,6 +92,19 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   ""
 }
 
+// Verify and emit only: the pre-optimization .ll written to ll_path
+// (`avant __emit-ll`, the self-hosting fixed point, D171).
+pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
+  bad = llvm_verify(m)
+  if bad.size > 0 {
+    return bad
+  }
+  if file_write(ll_path, ll_emit_module(m, inline_fast)) != 0 {
+    return "cannot write ${ll_path}"
+  }
+  ""
+}
+
 // Verify, emit, compile, and link the program out_path.
 pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   work = tmp_new_dir()

@@ -64,7 +64,16 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
       lw.refuse(loc, "an array of ${e.show}")
       return -1
     }
-    et = lw.field_mty(e, loc)
+    ahead = false
+    et = -1
+    if e.is_struct && lw.struct_busy(name) {
+      // An array of a struct inside that struct (struct_layout): the
+      // element buffer is completed when the struct is.
+      et = lw.lw_m.types.agg(lw.struct_ahead(name))
+      ahead = true
+    } else {
+      et = lw.field_mty(e, loc)
+    }
     if lw.failed || et < 0 {
       return -1
     }
@@ -73,6 +82,10 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
     ef.push(et)
     en.push("")
     el = lw.lw_b.note_layout("elems(${name})", mlk_elems(), ef, en)
+    if ahead {
+      lw.lw_pend_struct.push(name)
+      lw.lw_pend_elems.push(el)
+    }
     return ts.ref_to(lw.lw_b.note_layout("Array(${name})", mlk_array(), mir_arr_header(ts, el), mir_arr_names()))
   }
   lw.refuse(loc, "a value of type ${t.show}")
