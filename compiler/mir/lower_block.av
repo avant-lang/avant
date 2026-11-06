@@ -1,0 +1,388 @@
+// The lowering of the builtins that take a block (Stage 28 W7b;
+// stages/stage28/mir.md W7b): `Array.each`, `any`, `all`, `sort { }`,
+// `sorted { }`, and `Hash.each` are inlined loops in the calling
+// function, as the old back end emits them (builtins.av:166-470,
+// 700-1000, 1632-1684): the receiver once into a local, an `i32`
+// counter, the size and the element buffer read again on every
+// iteration, the block's parameters bound as the function's own named
+// locals (or through their boxes when a lambda in the block captures
+// them), the body lowered in place. A `return` in the block returns from
+// the function; `break` leaves the inlined loop and `next` goes on with
+// the next element (the old back end's `next` jumped back to the test
+// without the increment, a loop that never ends: D196). A value block
+// (`any`, `all`, the comparators) yields the expression of its last
+// statement. Blocks given to user functions are lambdas (the checker
+// absorbs them as the last argument), lower_fn.av.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_stmt
+import mir.lower_call
+import mir.lower_agg
+import mir.lower_arr
+import mir.lower_hash
+import mir.lower_union
+import mir.lower_fn
+
+// The block forms, or nil for a call this file does not lower.
+pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
+  if bl = e.block {
+    if recv = e.receiver {
+      if rt = recv.ty {
+        c = e.callee
+        if rt.is_array && e.args.size == 0 {
+          if str_eq(c, "each") && bl.params.size == 1 {
+            return lw.arr_each(e, recv, bl)
+          }
+          if (str_eq(c, "any") || str_eq(c, "all")) && bl.params.size == 1 {
+            return lw.arr_pred(e, recv, bl, str_eq(c, "any"))
+          }
+          if (str_eq(c, "sort") || str_eq(c, "sorted")) && bl.params.size == 2 {
+            return lw.arr_sort_block(e, recv, bl, str_eq(c, "sorted"))
+          }
+        }
+        if rt.is_hash && str_eq(c, "each") && e.args.size == 0 && bl.params.size == 2 {
+          return lw.hash_each(e, recv, rt, bl)
+        }
+      }
+    }
+  }
+  nil
+}
+
+// The receiver, once, into its own local (a later assignment to the
+// receiver's variable does not change the loop, as in the old back end).
+pub fn (lw: MirLower) block_recv(recv: Expr, ty: Int): Int {
+  b = lw.lw_b
+  a = lw.lower_expr(recv)
+  if lw.failed {
+    return 0
+  }
+  lw.at(recv.loc)
+  h = b.temp(ty)
+  dummy = b.assign(b.pl(h), b.rv_use(a))
+  h
+}
+
+// `i < (*_h).size` for the array in _h, into a branch to body or exit.
+pub fn (lw: MirLower) block_test(h: Int, i: Int, body: Int, exit: Int) {
+  b = lw.lw_b
+  n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), n))
+  b.branch(c, body, exit)
+}
+
+// The element at index _i of the array in _h (emit_arr_load: the buffer
+// read again, no bounds check: i is below the size just read).
+pub fn (lw: MirLower) block_elem(h: Int, aty: Int, i: Int): MOperand {
+  b = lw.lw_b
+  d = b.temp(b.types.ref_to(lw.elems_of(aty)))
+  dummy = b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+  lw.tmp(lw.elem_of(aty), b.rv_use(b.copy(b.index(b.deref(b.pl(d)), b.copy_local(i)))))
+}
+
+// Stores v at index _i of the array in _h (emit_arr_store), behind the
+// buffer's barrier when the element is reference-carrying (D187; the old
+// back end stores without one, which loses the young value when a
+// comparator's collection promoted the buffer).
+pub fn (lw: MirLower) block_store(h: Int, aty: Int, i: Int, v: MOperand) {
+  b = lw.lw_b
+  d = b.temp(b.types.ref_to(lw.elems_of(aty)))
+  dummy = b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+  et = lw.elem_of(aty)
+  if b.types.ref_carrying(et) {
+    dummy2 = b.barrier(d)
+  }
+  dummy3 = b.assign(b.index(b.deref(b.pl(d)), b.copy_local(i)), b.rv_use(v))
+}
+
+// _i = _i + 1 (the old plain add), then back to head.
+pub fn (lw: MirLower) block_step(i: Int, head: Int) {
+  b = lw.lw_b
+  dummy = b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i32(1)))
+  b.goto(head)
+}
+
+// The block's body with `break` to exit and `next` to cont.
+pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
+  lw.lw_heads.push(cont)
+  lw.lw_exits.push(exit)
+  lw.lower_stmts(stmts)
+  dummy = lw.lw_heads.pop
+  dummy2 = lw.lw_exits.pop
+}
+
+// A value block (emit_pred_block, emit_cmp_block): every statement but
+// the last, then the last one's expression (a trailing `return e` yields
+// e there, as in the old back end).
+pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
+  b = lw.lw_b
+  if bl.body.size == 0 {
+    lw.refuse(bl.loc, "an empty value block")
+    return b.c_bool(false)
+  }
+  head: Array(Stmt) = []
+  i = 0
+  while i < bl.body.size - 1 {
+    head.push(bl.body[i])
+    i = i + 1
+  }
+  lw.block_body(head, cont, exit)
+  if lw.failed {
+    return b.c_bool(false)
+  }
+  if !lw.open_now {
+    // Every path left the block: the value is never used.
+    return b.c_bool(false)
+  }
+  last = bl.body[bl.body.size - 1]
+  if x = last.expr {
+    v = lw.lower_expr(x)
+    if lw.failed {
+      return b.c_bool(false)
+    }
+    lw.at(x.loc)
+    return lw.tmp(mt_bool(), b.rv_use(v))
+  }
+  lw.refuse(last.loc, "a block that does not end with a value")
+  b.c_bool(false)
+}
+
+// `xs.each { |x| ... }` (emit_array_each, builtins.av:1632-1684).
+pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  aty = lw.ety(recv)
+  if lw.failed {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  i = b.temp(mt_i32())
+  dummy = b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block
+  body = b.block
+  step = b.block
+  exit = b.block
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  v = lw.block_elem(h, aty, i)
+  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
+  lw.block_body(bl.body, step, exit)
+  lw.goto_if_open(step, e.loc)
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  zero
+}
+
+// `xs.any { |x| p }`, `xs.all { |x| p }` (emit_array_predicate,
+// builtins.av:789-862): the result starts false (any) or true (all); the
+// first element that decides it ends the loop.
+pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_bool(false)
+  aty = lw.ety(recv)
+  if lw.failed {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  res = b.temp(mt_bool())
+  dummy = b.assign(b.pl(res), b.rv_use(b.c_bool(!is_any)))
+  i = b.temp(mt_i32())
+  dummy2 = b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block
+  body = b.block
+  step = b.block
+  exit = b.block
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  v = lw.block_elem(h, aty, i)
+  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
+  p = lw.block_value(bl, step, exit)
+  if lw.failed {
+    return zero
+  }
+  if lw.open_now {
+    lw.at(e.loc)
+    hit = b.block
+    if !is_any {
+      p = lw.tmp(mt_bool(), b.rv_un(mop_not(), p))
+    }
+    b.branch(p, hit, step)
+    b.at(hit)
+    dummy3 = b.assign(b.pl(res), b.rv_use(b.c_bool(is_any)))
+    b.goto(exit)
+  }
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  b.copy_local(res)
+}
+
+// `xs.sort { |a, b| c }` and `xs.sorted { |a, b| c }` (emit_comparator_sort,
+// builtins.av:864-947; `sorted` first copies the array, :949-974): an
+// insertion sort that moves the element at i left while the comparator
+// of (it, the element before) is true. `break` and `next` in the
+// comparator end the inner loop, as its false does.
+pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  aty = lw.ety(recv)
+  if lw.failed {
+    return zero
+  }
+  arr = lw.block_recv(recv, aty)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  if do_copy {
+    c = b.temp(aty)
+    dummy = b.call(c, "avant_array_copy", lw.three(b.copy_local(arr), lw.elem_size(aty), lw.buf_tid(aty)))
+    arr = c
+  }
+  et = lw.elem_of(aty)
+  want = lw.elem_ty_of(recv)
+  n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(arr)), 1))))
+  nl = mir_bare_copy(n)
+  i = b.temp(mt_i32())
+  dummy2 = b.assign(b.pl(i), b.rv_use(b.c_i32(1)))
+  head = b.block
+  body = b.block
+  exit = b.block
+  b.goto(head)
+  b.at(head)
+  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(nl)))
+  b.branch(c1, body, exit)
+  b.at(body)
+  v = lw.block_elem(arr, aty, i)
+  vl = mir_bare_copy(v)
+  j = b.temp(mt_i32())
+  dummy3 = b.assign(b.pl(j), b.rv_use(b.copy_local(i)))
+  ihead = b.block
+  ibody = b.block
+  iexit = b.block
+  b.goto(ihead)
+  b.at(ihead)
+  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(j), b.c_i32(0)))
+  b.branch(c2, ibody, iexit)
+  b.at(ibody)
+  jm = lw.tmp(mt_i32(), b.rv_bin(mop_sub(), b.copy_local(j), b.c_i32(1)))
+  jml = mir_bare_copy(jm)
+  prev = lw.block_elem(arr, aty, jml)
+  pl = mir_bare_copy(prev)
+  lw.bind_name(bl.params[0], want, et, b.copy_local(vl), bl.loc, true)
+  lw.bind_name(bl.params[1], want, et, b.copy_local(pl), bl.loc, true)
+  cmp = lw.block_value(bl, iexit, iexit)
+  if lw.failed {
+    return zero
+  }
+  if lw.open_now {
+    lw.at(e.loc)
+    moved = b.block
+    b.branch(cmp, moved, iexit)
+    b.at(moved)
+    lw.block_store(arr, aty, j, b.copy_local(pl))
+    dummy4 = b.assign(b.pl(j), b.rv_use(b.copy_local(jml)))
+    b.goto(ihead)
+  }
+  b.at(iexit)
+  lw.at(e.loc)
+  lw.block_store(arr, aty, j, b.copy_local(vl))
+  lw.block_step(i, head)
+  b.at(exit)
+  if do_copy {
+    return b.copy_local(arr)
+  }
+  zero
+}
+
+// `h.each { |k, v| ... }` (emit_hash_method, builtins.av:346-441): the
+// hash once, its keys as an array, then for each key the value read back
+// through the hash (as `h[k]`: a `V?` whose payload is taken, the zero
+// when a body deleted the key), both bound, the body.
+pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  hty = lw.ety(recv)
+  kt = ty_int()
+  if k0 = ht.key {
+    kt = k0
+  }
+  vt = ty_int()
+  if v0 = ht.val {
+    vt = v0
+  }
+  kty = lw.ty_at(kt, e.loc, "a hash key")
+  vty = lw.ty_at(vt, e.loc, "a hash value")
+  aty = lw.ty_at(ty_array(kt), e.loc, "the keys")
+  if lw.failed {
+    return zero
+  }
+  h = lw.block_recv(recv, hty)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  kf = "avant_hash_keys_str"
+  if kt.is_int {
+    kf = "avant_hash_keys_i32"
+  }
+  keys = b.temp(aty)
+  dummy = b.call(keys, kf, lw.one(b.copy_local(h)))
+  i = b.temp(mt_i32())
+  dummy2 = b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block
+  body = b.block
+  step = b.block
+  exit = b.block
+  b.goto(head)
+  b.at(head)
+  lw.block_test(keys, i, body, exit)
+  b.at(body)
+  kv = lw.block_elem(keys, aty, i)
+  kl = mir_bare_copy(kv)
+  lw.bind_name(bl.params[0], kt, kty, b.copy_local(kl), bl.loc, true)
+  lw.at(e.loc)
+  fl = lw.found_local
+  ops: Array(MOperand) = []
+  ops.push(b.copy_local(h))
+  ops.push(b.copy_local(kl))
+  ops.push(lw.found_ptr(fl))
+  raw = lw.call_to(vty, mir_hash_op(ht, "get"), ops)
+  u = lw.opt_of(ty_nilable(vt), lw.found_is(fl), raw, vt, e.loc)
+  ul = mir_bare_copy(u)
+  val = lw.tmp(vty, b.rv_use(b.copy(b.field(b.pl(ul), 1))))
+  lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
+  lw.block_body(bl.body, step, exit)
+  lw.goto_if_open(step, e.loc)
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  zero
+}

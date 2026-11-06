@@ -114,6 +114,26 @@ pub fn mir_mty(t: Ty): String {
     buf.push_str(")")
     return buf.to_s
   }
+  // W7b: `fn(A,B):R` (8.2), a missing result is Void.
+  if t.is_fn {
+    buf2 = buf_new()
+    buf2.push_str("fn(")
+    fk = 0
+    while fk < t.members.size {
+      if fk > 0 {
+        buf2.push_str(",")
+      }
+      buf2.push_str(mir_mty(t.members[fk]))
+      fk = fk + 1
+    }
+    buf2.push_str("):")
+    if fr = t.inner {
+      buf2.push_str(mir_mty(fr))
+    } else {
+      buf2.push_str("Void")
+    }
+    return buf2.to_s
+  }
   if t.is_int {
     return "Int"
   }

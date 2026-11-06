@@ -41,6 +41,53 @@ pub class MirLowered {
   }
 }
 
+// A lambda waiting for its thunk (W7b): the lambda and its symbol.
+pub class MirLam {
+  expr: Expr
+  sym: String = ""
+
+  fn initialize(expr: Expr, sym: String) {
+    self.expr = expr
+    self.sym = sym
+  }
+}
+
+// The closure state of the function being lowered (W7b, lower_fn.av):
+// the captured names of a thunk (its environment's fields, in order) and
+// the environment local; the boxed names of the function or thunk, each
+// with its box local and whether the box was allocated yet (the old
+// back end's first need, in lowering order); the type of each name a
+// lambda captures, by enclosing symbol (`sym|name`, from the prewalk);
+// the lambdas waiting for their thunks; the lambda counter per enclosing
+// symbol (8.2: `#lamN` in source order).
+pub class MirClosures {
+  caps: Array(String)
+  base: String = ""
+  env: Int = -1
+  boxed: Array(String)
+  box_local: Hash(String, Int)
+  box_ready: Hash(String, Int)
+  cap_at: Hash(String, Int)
+  cap_tys: Array(Ty)
+  pending: Array(MirLam)
+  lam_n: Hash(String, Int)
+
+  fn initialize {
+    c: Array(String) = []
+    self.caps = c
+    bx: Array(String) = []
+    self.boxed = bx
+    self.box_local = Hash(String, Int).new
+    self.box_ready = Hash(String, Int).new
+    self.cap_at = Hash(String, Int).new
+    ct: Array(Ty) = []
+    self.cap_tys = ct
+    p: Array(MirLam) = []
+    self.pending = p
+    self.lam_n = Hash(String, Int).new
+  }
+}
+
 pub class MirLower {
   lw_m: MModule
   lw_b: MirBuilder
@@ -64,6 +111,7 @@ pub class MirLower {
   lw_ret_ty: Ty? = nil
   lw_all: Array(Function)
   lw_bumps: Hash(String, Int)
+  lw_cl: MirClosures
 
   fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
     self.lw_m = mir_module(mir_module_part(program.root_module))
@@ -84,6 +132,7 @@ pub class MirLower {
     self.lw_busy = Hash(String, Int).new
     self.lw_all = program_all_functions(program)
     self.lw_bumps = Hash(String, Int).new
+    self.lw_cl = MirClosures.new
   }
 
   // ---- refusals
@@ -193,6 +242,17 @@ pub class MirLower {
       i = i + 1
     }
     self.note_ctor_symbols
+    // W7b: lambda symbols, then the box and environment maps in the old
+    // back end's order (decl.av collect_arrays), before any element
+    // buffer's id.
+    i = 0
+    while i < fns.size && !self.failed {
+      self.prewalk_function(fns[i])
+      i = i + 1
+    }
+    if self.failed {
+      return
+    }
     has_main = false
     run_fn: Function? = nil
     i = 0
@@ -208,9 +268,12 @@ pub class MirLower {
     i = 0
     while i < fns.size && !self.failed {
       self.lower_function(fns[i])
+      self.lower_pending_lambdas
       i = i + 1
     }
     self.lower_ctors
+    self.lower_pending_lambdas
+    self.lower_trampolines(fns)
     if self.failed || has_main {
       return
     }
@@ -251,6 +314,13 @@ pub class MirLower {
       }
       m = self.lw_m.types.agg(l)
     }
+    if m < 0 && t.is_fn {
+      l2 = self.fn_layout(t, loc)
+      if l2 < 0 {
+        return -1
+      }
+      m = self.lw_m.types.agg(l2)
+    }
     if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf) {
       m = self.value_agg_ty(t, loc)
       if self.failed {
@@ -264,17 +334,32 @@ pub class MirLower {
   }
 
   pub fn begin_function(fnn: Function) {
+    self.begin_at(fnn.loc)
+  }
+
+  pub fn begin_at(loc: Location) {
     self.lw_vars = Hash(String, Int).new
     h: Array(Int) = []
     self.lw_heads = h
     x: Array(Int) = []
     self.lw_exits = x
-    self.lw_fn_loc = fnn.loc
+    self.lw_fn_loc = loc
     self.lw_self = 0
     self.lw_self_struct = false
     self.lw_self_name = ""
     self.lw_self_ty = nil
     self.lw_ret_ty = nil
+    self.reset_closures
+  }
+
+  // No captures, no boxes: the closure state of a new function (W7b).
+  pub fn reset_closures {
+    self.lw_cl.caps = mir_no_names()
+    self.lw_cl.env = -1
+    self.lw_cl.base = ""
+    self.lw_cl.boxed = mir_no_names()
+    self.lw_cl.box_local = Hash(String, Int).new
+    self.lw_cl.box_ready = Hash(String, Int).new
   }
 
   // The checked signature of a function or a method (methods are in the
@@ -329,23 +414,29 @@ pub class MirLower {
         sret = mt_i32()
       }
       dummy = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      self.lw_cl.base = self.lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external
         self.lw_b.name_param(1, "argc")
         self.lw_b.name_param(2, "argv")
         self.main_prologue(fnn.loc)
+        none: Array(Ty) = []
+        self.begin_boxes(fnn.box_names, mir_no_names(), none, 0)
       } else {
         base = 0
         if recv >= 0 {
           base = 1
           self.bind_receiver(fnn, recv)
         }
+        pn: Array(String) = []
         i = 0
         while i < fnn.params.size {
           self.lw_b.name_param(i + 1 + base, fnn.params[i].name)
           self.lw_vars[self.var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
+          pn.push(fnn.params[i].name)
           i = i + 1
         }
+        self.begin_boxes(fnn.box_names, pn, fs.params, base)
       }
       self.lower_body(fnn.body)
       self.finish_body(fnn)
@@ -371,10 +462,14 @@ pub class MirLower {
   // the checker requires a return (E4007) and the tail value was lowered
   // as one.
   pub fn finish_body(fnn: Function) {
+    self.finish_at(fnn.loc)
+  }
+
+  pub fn finish_at(loc: Location) {
     if self.failed || !self.open_now {
       return
     }
-    self.at(fnn.loc)
+    self.at(loc)
     if self.lw_ret == mt_void() {
       if self.lw_main {
         dummy = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
@@ -422,6 +517,11 @@ pub class MirLower {
     self.lw_b.ret
     self.lw_b.end_fn
   }
+}
+
+pub fn mir_no_names: Array(String) {
+  a: Array(String) = []
+  a
 }
 
 // The entry (pipeline.av under AVANT_BACKEND=llvm): the module after the

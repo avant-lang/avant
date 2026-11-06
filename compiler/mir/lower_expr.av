@@ -168,11 +168,10 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   if k == ex_try() {
     return lw.lower_try(e)
   }
-  what = "this expression"
   if k == ex_lambda() {
-    what = "a lambda (closures, W7b)"
+    return lw.lower_lambda(e)
   }
-  lw.refuse(e.loc, what)
+  lw.refuse(e.loc, "this expression")
   zero
 }
 
@@ -228,11 +227,13 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
 
 pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
   if e.fn_ref {
-    lw.refuse(e.loc, "a function value (W7b)")
-    return lw.lw_b.c_i32(0)
+    return lw.lower_fn_ref(e)
   }
   if e.implicit_field || lw.is_struct_self(e) {
     return lw.lower_place_read(e)
+  }
+  if lw.name_in_box(e.ident) {
+    return lw.box_read(e)
   }
   ty = lw.ety(e)
   if lw.failed {

@@ -1,0 +1,740 @@
+// The lowering of `fn` values, lambdas, and closures (Stage 28 W7b;
+// stages/stage28/mir.md W7b, audit 1.5): an `fn` value is the `fnval`
+// pair `{ ref env, code }` by value (2.7, 4.3), its layout named by mty
+// (`%fn(Int):Int`); a named function used as a value is its trampoline
+// `<sym>#fnval` with a null environment; a lambda is its thunk
+// `<enclosing>#lamN` (8.2) with a null environment when it captures
+// nothing, else a fresh environment record `%env(<thunk>)` holding one
+// box per capture in capture order. Captures are by reference (audit
+// 1.5.4, trick #21): a captured variable lives in a heap box `%box(T)`
+// allocated at its first need in the defining frame (the old back end's
+// box_ready, in lowering order), and is read and written through the box
+// everywhere, in the defining frame and in every thunk (through the
+// environment). Indirect calls are `call indirect` (always collecting).
+// Box and environment type ids are noted by a prewalk in the old back
+// end's order (decl.av collect_arrays), so the type maps equal its own.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_stmt
+import mir.lower_agg
+import mir.lower_union
+
+// ---- types
+
+// The fnval layout of an `fn` type (2.7): `{ ref env, code(ref, P...) ->
+// R }`, the parameters and the result as values (like a function's).
+pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
+  name = mir_mty(t)
+  known = lw.lw_m.types.layout_named(name)
+  if known >= 0 {
+    return known
+  }
+  ps: Array(Int) = []
+  ps.push(mt_ref())
+  i = 0
+  while i < t.members.size {
+    ps.push(lw.ty_at(t.members[i], loc, "an fn parameter"))
+    i = i + 1
+  }
+  ret = mt_void()
+  if r = t.inner {
+    ret = lw.ty_at(r, loc, "an fn result")
+  }
+  if lw.failed {
+    return -1
+  }
+  b = lw.lw_b
+  fields: Array(Int) = []
+  fields.push(mt_ref())
+  fields.push(b.code(b.sig(ps, ret, false)))
+  names: Array(String) = []
+  names.push("env")
+  names.push("code")
+  b.note_layout(name, mlk_fnval(), fields, names)
+}
+
+// The signature of an fn type's code word (its thunks and trampolines).
+pub fn (lw: MirLower) fn_code_sig(layout: Int): Int {
+  ts = lw.lw_m.types
+  ts.get(ts.layouts[layout].fields[1]).sig
+}
+
+// A box `%box(T)`: a record of one T (audit 1.5.4), with its own type id.
+pub fn (lw: MirLower) box_layout(t: Ty, loc: Location): Int {
+  name = "box(${mir_mty(t)})"
+  known = lw.lw_m.types.layout_named(name)
+  if known >= 0 {
+    return known
+  }
+  ft = lw.field_mty(t, loc)
+  if lw.failed {
+    return -1
+  }
+  fields: Array(Int) = []
+  fields.push(ft)
+  names: Array(String) = []
+  names.push("v")
+  lw.lw_b.note_layout(name, mlk_record(), fields, names)
+}
+
+// The environment of a lambda's thunk: `%env(<thunk>)`, one `ref
+// %box(T)` per capture in capture order (audit 1.5.4).
+pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
+  name = "env(${sym})"
+  known = lw.lw_m.types.layout_named(name)
+  if known >= 0 {
+    return known
+  }
+  fields: Array(Int) = []
+  names: Array(String) = []
+  i = 0
+  while i < e.cap_names.size {
+    bl = lw.box_layout(e.cap_tys[i], e.loc)
+    if lw.failed {
+      return -1
+    }
+    fields.push(lw.lw_m.types.ref_to(bl))
+    names.push(e.cap_names[i])
+    i = i + 1
+  }
+  lw.lw_b.note_layout(name, mlk_record(), fields, names)
+}
+
+// ---- the prewalk (decl.av collect_arrays, collect_stmts, collect_expr):
+// every lambda gets its symbol (in source order within its enclosing
+// function or thunk, 8.2), and the box maps of its captures and its
+// environment map get their type ids, in the old back end's walk order.
+
+pub fn (lw: MirLower) prewalk_function(fnn: Function) {
+  lw.prewalk_stmts(fnn.body, lw.lam_base(fnn))
+}
+
+// The symbol a function's lambdas are named after (8.2): its own, or
+// `av.<module>/main` for main (which keeps its C name, 8.1).
+pub fn (lw: MirLower) lam_base(fnn: Function): String {
+  sym = ""
+  if got = lw.lw_fn_syms.get(fnn.emit_name) {
+    sym = got
+  }
+  if str_starts_mir(sym, "av.") {
+    return sym
+  }
+  "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
+}
+
+pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
+  i = 0
+  while i < body.size && !lw.failed {
+    st = body[i]
+    k = st.kind
+    if k == st_if() {
+      lw.prewalk_opt(st.cond, encl)
+      lw.prewalk_stmts(st.then_body, encl)
+      lw.prewalk_stmts(st.else_body, encl)
+    } else if k == st_while() {
+      lw.prewalk_stmts(st.pre, encl)
+      lw.prewalk_opt(st.cond, encl)
+      lw.prewalk_stmts(st.body, encl)
+    } else if k == st_pin() {
+      lw.prewalk_opt(st.expr, encl)
+      lw.prewalk_stmts(st.body, encl)
+    } else if k == st_assign() {
+      lw.prewalk_opt(st.target, encl)
+      lw.prewalk_opt(st.value, encl)
+    } else if k == st_expr() || k == st_return() {
+      lw.prewalk_opt(st.expr, encl)
+    }
+    i = i + 1
+  }
+}
+
+pub fn (lw: MirLower) prewalk_opt(e: Expr?, encl: String) {
+  if x = e {
+    lw.prewalk_expr(x, encl)
+  }
+}
+
+pub fn (lw: MirLower) prewalk_list(es: Array(Expr), encl: String) {
+  i = 0
+  while i < es.size {
+    lw.prewalk_expr(es[i], encl)
+    i = i + 1
+  }
+}
+
+pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
+  if lw.failed {
+    return
+  }
+  k = e.kind
+  if k == ex_call() {
+    lw.prewalk_opt(e.inner, encl)
+    lw.prewalk_opt(e.receiver, encl)
+    lw.prewalk_list(e.args, encl)
+    if b = e.block {
+      lw.prewalk_stmts(b.body, encl)
+    }
+  } else if k == ex_unary() || k == ex_try() {
+    lw.prewalk_opt(e.inner, encl)
+  } else if k == ex_binary() || k == ex_index() {
+    lw.prewalk_opt(e.left, encl)
+    lw.prewalk_opt(e.right, encl)
+  } else if k == ex_field() {
+    lw.prewalk_opt(e.object, encl)
+  } else if k == ex_struct() {
+    lw.prewalk_list(e.field_exprs, encl)
+  } else if k == ex_array() {
+    lw.prewalk_list(e.elems, encl)
+  } else if k == ex_array_new() {
+    lw.prewalk_opt(e.size_expr, encl)
+  } else if k == ex_interp() {
+    i = 0
+    while i < e.parts.size {
+      lw.prewalk_opt(e.parts[i].expr, encl)
+      i = i + 1
+    }
+  } else if k == ex_lambda() {
+    lw.prewalk_lambda(e, encl)
+  } else if k == ex_switch() {
+    lw.prewalk_opt(e.cond, encl)
+    i = 0
+    while i < e.cases.size {
+      lw.prewalk_stmts(e.cases[i].body, encl)
+      i = i + 1
+    }
+    if e.has_else {
+      lw.prewalk_stmts(e.else_body, encl)
+    }
+  }
+}
+
+// The next lambda symbol inside encl.
+pub fn (lw: MirLower) lambda_symbol(encl: String): String {
+  n = 1
+  if got = lw.lw_cl.lam_n.get(encl) {
+    n = got + 1
+  }
+  lw.lw_cl.lam_n[encl] = n
+  "${encl}#lam${n}"
+}
+
+// collect_lambda (calls.av:1634-1651): the boxes of the captures, then
+// the environment, then the body.
+pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
+  sym = lw.lambda_symbol(encl)
+  e.resolved = sym
+  i = 0
+  while i < e.cap_names.size {
+    key = "${encl}|${e.cap_names[i]}"
+    if !lw.lw_cl.cap_at.has_key(key) {
+      lw.lw_cl.cap_at[key] = lw.lw_cl.cap_tys.size
+      lw.lw_cl.cap_tys.push(e.cap_tys[i])
+    }
+    bl = lw.box_layout(e.cap_tys[i], e.loc)
+    if lw.failed {
+      return
+    }
+    dummy = lw.lw_b.type_id(bl)
+    i = i + 1
+  }
+  if e.cap_names.size > 0 {
+    el = lw.env_layout(e, sym)
+    if lw.failed {
+      return
+    }
+    dummy2 = lw.lw_b.type_id(el)
+  }
+  if b = e.block {
+    lw.prewalk_stmts(b.body, sym)
+  }
+}
+
+// ---- names through boxes
+
+pub fn mir_name_index(names: Array(String), name: String): Int {
+  i = 0
+  while i < names.size {
+    if str_eq(names[i], name) {
+      return i
+    }
+    i = i + 1
+  }
+  -1
+}
+
+// Whether name is read and written through a box here: a capture of the
+// thunk being lowered, or a boxed variable of this frame.
+pub fn (lw: MirLower) name_in_box(name: String): Bool {
+  mir_name_index(lw.lw_cl.caps, name) >= 0 || mir_name_index(lw.lw_cl.boxed, name) >= 0
+}
+
+// The local holding name's box in this frame, created (not allocated)
+// on first mention.
+pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
+  if got = lw.lw_cl.box_local.get(name) {
+    return got
+  }
+  bl = lw.box_layout(t, loc)
+  if lw.failed {
+    return 0
+  }
+  k = lw.lw_b.local(lw.lw_m.types.ref_to(bl), name)
+  lw.lw_cl.box_local[name] = k
+  k
+}
+
+// ensure_box (calls.av:1740-1754): the box of a boxed variable of this
+// frame, allocated at its first need (the memory comes zeroed, which is
+// the old back end's explicit zero store).
+pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
+  k = lw.box_local_of(name, t, loc)
+  if lw.failed || lw.lw_cl.box_ready.has_key(name) {
+    return k
+  }
+  b = lw.lw_b
+  bl = b.types.layout_of(b.func.locals[k].ty)
+  lw.at(loc)
+  args: Array(MOperand) = []
+  args.push(b.c_u64(b.types.layouts[bl].size.to_i64))
+  args.push(b.c_u32(b.type_id(bl)))
+  dummy = b.call(k, "avant_alloc", args)
+  lw.lw_cl.box_ready[name] = 1
+  k
+}
+
+// The local holding the box of name: a capture's box is loaded from the
+// environment (emit_box_pointer, calls.av:1785-1796), a boxed variable
+// of this frame is its box local (allocated first when alloc).
+pub fn (lw: MirLower) box_holder(name: String, t: Ty, loc: Location, alloc: Bool): Int {
+  b = lw.lw_b
+  ci = mir_name_index(lw.lw_cl.caps, name)
+  if ci >= 0 {
+    ts = lw.lw_m.types
+    env = lw.lw_cl.env
+    lw.at(loc)
+    p = b.temp(ts.layouts[ts.layout_of(b.func.locals[env].ty)].fields[ci])
+    dummy = b.assign(b.pl(p), b.rv_use(b.copy(b.field(b.deref(b.pl(env)), ci))))
+    return p
+  }
+  if alloc {
+    return lw.ensure_box(name, t, loc)
+  }
+  lw.box_local_of(name, t, loc)
+}
+
+// The place of a boxed name: the box's cell.
+pub fn (lw: MirLower) box_place(name: String, t: Ty, loc: Location): MPlace {
+  b = lw.lw_b
+  h = lw.box_holder(name, t, loc, false)
+  b.field(b.deref(b.pl(h)), 0)
+}
+
+// Stores v into name's box (store_box_value, calls.av:1756-1768: the
+// barrier on the box first when T is reference-carrying, D187).
+pub fn (lw: MirLower) box_store(name: String, t: Ty, v: MOperand, loc: Location) {
+  b = lw.lw_b
+  h = lw.box_holder(name, t, loc, false)
+  ft = b.types.layouts[b.types.layout_of(b.func.locals[h].ty)].fields[0]
+  lw.at(loc)
+  lw.store_place(b.field(b.deref(b.pl(h)), 0), ft, v)
+}
+
+// Binds name to v (a block parameter, an if binding): through its box
+// when it is boxed here, else into its local. A block parameter is a new
+// variable on every iteration (fresh): its box is allocated at each
+// binding, so lambdas made in different iterations capture different
+// variables (the old back end fails to compile a captured block
+// parameter: D196).
+pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: Location, fresh: Bool) {
+  if lw.name_in_box(name) {
+    if mir_name_index(lw.lw_cl.caps, name) < 0 {
+      if fresh {
+        lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, name)
+      }
+      dummy = lw.ensure_box(name, t, loc)
+    }
+    lw.box_store(name, t, v, loc)
+    return
+  }
+  k = lw.var_get(name, ty)
+  lw.at(loc)
+  dummy2 = lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(v))
+}
+
+pub fn mir_without_key(h: Hash(String, Int), key: String): Hash(String, Int) {
+  if h.has_key(key) {
+    h.delete(key)
+  }
+  h
+}
+
+// The frame's boxed variables (myc.av begin_fn_frame; the receiver is
+// never boxed): each box local is zeroed at entry, so every path defines
+// it (V9); a boxed parameter is boxed at entry (emit_param_group,
+// calls.av:1698-1738). The type of a boxed name is its parameter's, else
+// the type a lambda of this frame captures it with (the prewalk).
+// Parameter k of pnames is local k + 1 + base.
+pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), ptys: Array(Ty), base: Int) {
+  b = lw.lw_b
+  sym = lw.lw_cl.base
+  bx: Array(String) = []
+  i = 0
+  while i < names.size {
+    n = names[i]
+    if !(lw.lw_self > 0 && str_eq(n, lw.lw_self_name)) {
+      bx.push(n)
+    }
+    i = i + 1
+  }
+  lw.lw_cl.boxed = bx
+  lw.at(lw.lw_fn_loc)
+  i = 0
+  while i < bx.size && !lw.failed {
+    n = bx[i]
+    pi = mir_name_index(pnames, n)
+    t: Ty? = nil
+    if pi >= 0 && pi < ptys.size {
+      t = ptys[pi]
+    } else if at = lw.lw_cl.cap_at.get("${sym}|${n}") {
+      t = lw.lw_cl.cap_tys[at]
+    }
+    if tt = t {
+      k = lw.box_local_of(n, tt, lw.lw_fn_loc)
+      dummy = b.assign(b.pl(k), b.rv_zero)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < pnames.size && !lw.failed {
+    n2 = pnames[i]
+    if mir_name_index(bx, n2) >= 0 && i < ptys.size {
+      dummy2 = lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
+      lw.box_store(n2, ptys[i], b.copy_local(i + 1 + base), lw.lw_fn_loc)
+    }
+    i = i + 1
+  }
+}
+
+// A read of a boxed name (emit_named_value: through the box; no first
+// need, as in the old back end).
+pub fn (lw: MirLower) box_read(e: Expr): MOperand {
+  ty = lw.ety(e)
+  if t = e.ty {
+    p = lw.box_place(e.ident, t, e.loc)
+    if lw.failed {
+      return lw.lw_b.c_i32(0)
+    }
+    lw.at(e.loc)
+    return lw.tmp(ty, lw.lw_b.rv_use(lw.lw_b.copy(p)))
+  }
+  lw.lw_b.c_i32(0)
+}
+
+// `x = v` and `x op= v` on a boxed name (myc.av emit_assign: the box is
+// ensured before the value is evaluated).
+pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
+  b = lw.lw_b
+  if mir_name_index(lw.lw_cl.caps, t.ident) < 0 {
+    dummy = lw.ensure_box(t.ident, tt, t.loc)
+  }
+  if v = st.value {
+    if st.op == tk_eq() {
+      val = lw.lower_coerced(v, ty, tt)
+      if lw.failed {
+        return
+      }
+      lw.box_store(t.ident, tt, val, st.loc)
+      return
+    }
+    cur = lw.box_read(t)
+    rhs = lw.lower_expr(v)
+    if lw.failed {
+      return
+    }
+    r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
+    lw.box_store(t.ident, tt, r, st.loc)
+  }
+}
+
+// ---- values
+
+// A named function as a value (emit_fn_ref, calls.av:1829-1832): its
+// trampoline with a null environment.
+pub fn (lw: MirLower) lower_fn_ref(e: Expr): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    if sym = lw.lw_fn_syms.get(e.resolved) {
+      l = lw.fn_layout(t, e.loc)
+      if lw.failed {
+        return b.c_i32(0)
+      }
+      lw.at(e.loc)
+      return lw.tmp(b.types.agg(l), b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn("${sym}#fnval")))
+    }
+  }
+  lw.refuse(e.loc, "the function value ${e.ident}")
+  b.c_i32(0)
+}
+
+// A lambda (emit_lambda, calls.av:1834-1858): without captures, its thunk
+// with a null environment; with captures, a fresh environment, then each
+// capture's box pointer (allocating a box at its first need), stored
+// behind the environment's barrier (D187; the old back end stores
+// without one), then the fnval. The thunk is lowered after the current
+// function.
+pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  t = ty_void()
+  if et = e.ty {
+    t = et
+  } else {
+    lw.refuse(e.loc, "an untyped lambda")
+    return zero
+  }
+  sym = e.resolved
+  if !str_starts_mir(sym, "av.") {
+    base = lw.lw_cl.base
+    if base.size == 0 {
+      base = b.func.symbol
+    }
+    sym = lw.lambda_symbol(base)
+    e.resolved = sym
+  }
+  l = lw.fn_layout(t, e.loc)
+  if lw.failed {
+    return zero
+  }
+  lam = MirLam.new(e, sym)
+  lw.lw_cl.pending.push(lam)
+  fty = b.types.agg(l)
+  if e.cap_names.size == 0 {
+    lw.at(e.loc)
+    return lw.tmp(fty, b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn(sym)))
+  }
+  el = lw.env_layout(e, sym)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  env = b.temp(b.types.ref_to(el))
+  args: Array(MOperand) = []
+  args.push(b.c_u64(b.types.layouts[el].size.to_i64))
+  args.push(b.c_u32(b.type_id(el)))
+  dummy = b.call(env, "avant_alloc", args)
+  i = 0
+  while i < e.cap_names.size && !lw.failed {
+    name = e.cap_names[i]
+    p = lw.capture_box(name, e.cap_tys[i], e.loc)
+    lw.at(e.loc)
+    dummy2 = b.barrier(env)
+    dummy3 = b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
+    i = i + 1
+  }
+  lw.tmp(fty, b.rv_fnval(l, b.copy_local(env), b.c_fn(sym)))
+}
+
+// The box a lambda captures name with: a capture's box from the
+// environment, or a boxed variable's box (allocated at its first need).
+// The checker boxes every captured name (lambda.av mark_box) and refuses
+// a capture of the method receiver (E4000), so nothing else reaches here.
+pub fn (lw: MirLower) capture_box(name: String, t: Ty, loc: Location): Int {
+  if lw.name_in_box(name) {
+    return lw.box_holder(name, t, loc, true)
+  }
+  lw.refuse(loc, "the capture of ${name}, which is not boxed (internal)")
+  0
+}
+
+// An indirect call (emit_indirect, calls.av:1860-1878): the fn value
+// first (a field, an element, or a name, which may be boxed), held in a
+// local, then the arguments converted to the parameter types, then the
+// call through the code word with the environment first.
+pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  rt = ty_void()
+  if t0 = e.ty {
+    rt = t0
+  }
+  f = zero
+  fty = -1
+  if inner = e.inner {
+    fty = lw.ety(inner)
+    f = lw.lower_expr(inner)
+  } else {
+    nt = ty_fn(e.cap_tys, rt)
+    fty = lw.ty_at(nt, e.loc, "an fn value")
+    if lw.failed {
+      return zero
+    }
+    ne = Expr.new(ex_name(), e.loc)
+    ne.ident = e.callee
+    ne.ty = nt
+    f = lw.lower_name(ne)
+  }
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  h = b.temp(fty)
+  dummy = b.assign(b.pl(h), b.rv_use(f))
+  args = lw.lower_args_to(e.args, e.cap_tys)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  ret = lw.ety(e)
+  if lw.failed {
+    return zero
+  }
+  if ret == mt_void() {
+    dummy2 = b.call_indirect(-1, b.copy_local(h), args)
+    return zero
+  }
+  r = b.temp(ret)
+  dummy3 = b.call_indirect(r, b.copy_local(h), args)
+  b.copy_local(r)
+}
+
+// ---- thunks and trampolines
+
+pub fn (lw: MirLower) lower_pending_lambdas {
+  while lw.lw_cl.pending.size > 0 && !lw.failed {
+    lam = lw.lw_cl.pending[0]
+    rest: Array(MirLam) = []
+    i = 1
+    while i < lw.lw_cl.pending.size {
+      rest.push(lw.lw_cl.pending[i])
+      i = i + 1
+    }
+    lw.lw_cl.pending = rest
+    lw.lower_thunk(lam)
+  }
+}
+
+// A lambda's thunk (emit_lambda_thunk, calls.av:1898-2000): its own
+// frame; parameter 1 is the environment (cast to its record when the
+// lambda captures), then the lambda's parameters; captures are read and
+// written through the environment's boxes; the lambda's own boxed
+// variables (captured by nested lambdas) are boxed in this frame.
+pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
+  e = lam.expr
+  b = lw.lw_b
+  lw.begin_at(e.loc)
+  if t = e.ty {
+    l = lw.fn_layout(t, e.loc)
+    if lw.failed {
+      return
+    }
+    sig = lw.fn_code_sig(l)
+    s = b.types.sigs[sig]
+    dummy = b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
+    lw.lw_cl.base = lam.sym
+    b.name_param(1, "env")
+    lw.lw_ret = s.ret
+    rt = ty_void()
+    if r = t.inner {
+      rt = r
+    }
+    lw.lw_ret_ty = rt
+    lw.lw_main = false
+    pnames: Array(String) = []
+    if bl = e.block {
+      i = 0
+      while i < bl.params.size && i + 1 < s.params.size {
+        b.name_param(i + 2, bl.params[i])
+        lw.lw_vars[lw.var_key(bl.params[i], s.params[i + 1])] = i + 2
+        pnames.push(bl.params[i])
+        i = i + 1
+      }
+    }
+    caps: Array(String) = []
+    i = 0
+    while i < e.cap_names.size {
+      caps.push(e.cap_names[i])
+      i = i + 1
+    }
+    lw.lw_cl.caps = caps
+    if caps.size > 0 {
+      el = lw.env_layout(e, lam.sym)
+      if lw.failed {
+        return
+      }
+      lw.at(e.loc)
+      env = b.local(b.types.ref_to(el), "env")
+      dummy2 = b.assign(b.pl(env), b.rv_cast(b.copy_local(1), b.types.ref_to(el)))
+      lw.lw_cl.env = env
+    }
+    if bl2 = e.block {
+      lw.begin_boxes(e.box_names, pnames, t.members, 1)
+      lw.lower_body(bl2.body)
+    }
+    lw.finish_at(e.loc)
+    b.end_fn
+    return
+  }
+  lw.refuse(e.loc, "an untyped lambda")
+}
+
+// The trampolines of the functions used as values (emit_fn_trampoline,
+// calls.av:2002-2041): `<sym>#fnval(env, args...)` drops the environment
+// and calls the function.
+pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
+  b = lw.lw_b
+  i = 0
+  while i < fns.size && !lw.failed {
+    f = fns[i]
+    if f.as_value && !f.generic && !fn_is_method(f) {
+      if sym = lw.lw_fn_syms.get(f.emit_name) {
+        if fs = lw.lw_syms.find_fn(f.emit_name) {
+          lw.begin_function(f)
+          ps: Array(Int) = []
+          ps.push(mt_ref())
+          j = 0
+          while j < fs.params.size {
+            ps.push(lw.ty_at(fs.params[j], f.loc, "a parameter"))
+            j = j + 1
+          }
+          ret = lw.ty_at(fs.ret, f.loc, "a result")
+          if lw.failed {
+            return
+          }
+          dummy = b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
+          b.name_param(1, "env")
+          lw.at(f.loc)
+          args: Array(MOperand) = []
+          j = 0
+          while j < fs.params.size {
+            if j < f.params.size {
+              b.name_param(j + 2, f.params[j].name)
+            }
+            args.push(b.copy_local(j + 2))
+            j = j + 1
+          }
+          if ret == mt_void() {
+            dummy2 = b.call(-1, sym, args)
+          } else {
+            r = b.temp(ret)
+            dummy3 = b.call(r, sym, args)
+            dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
+          }
+          b.ret
+          b.end_fn
+        }
+      }
+    }
+    i = i + 1
+  }
+}
