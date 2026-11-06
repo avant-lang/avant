@@ -154,16 +154,19 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
 }
 
 // A struct's layout (2.4), noted on first use; a struct being noted is
-// not complete, so meeting it again (by value inside itself) refuses.
+// not complete, so meeting it again by value inside itself refuses. An
+// array of it inside itself (`struct Node { xs: Array(Node) }`, a
+// reference) is finite: container_ty notes the struct's layout ahead
+// (struct_ahead) and its element buffer is completed here (Stage 28 W9).
 pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
+  if lw.struct_busy(name) {
+    lw.refuse(loc, "struct ${t.show} holding itself by value")
+    return -1
+  }
   l = lw.lw_m.types.layout_named(name)
   if l >= 0 {
     return l
-  }
-  if lw.lw_busy.has_key(name) {
-    lw.refuse(loc, "struct ${t.show} holding itself by value")
-    return -1
   }
   lw.lw_busy[name] = 1
   fields: Array(Int) = []
@@ -178,7 +181,45 @@ pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
     names.push(t.fields[j].name)
     j = j + 1
   }
-  lw.lw_b.note_layout(name, mlk_struct(), fields, names)
+  lw.lw_busy[name] = 0
+  ahead = lw.lw_m.types.layout_named(name)
+  if ahead < 0 {
+    return lw.lw_b.note_layout(name, mlk_struct(), fields, names)
+  }
+  // Noted ahead by an array of itself: fill it, then every element
+  // buffer of it noted while it was empty.
+  lw.lw_m.types.set_fields(ahead, fields, names)
+  k = 0
+  while k < lw.lw_pend_struct.size {
+    if str_eq(lw.lw_pend_struct[k], name) {
+      ef: Array(Int) = []
+      ef.push(lw.lw_m.types.agg(ahead))
+      en: Array(String) = []
+      en.push("")
+      lw.lw_m.types.set_fields(lw.lw_pend_elems[k], ef, en)
+    }
+    k = k + 1
+  }
+  ahead
+}
+
+pub fn (lw: MirLower) struct_busy(name: String): Bool {
+  if b = lw.lw_busy.get(name) {
+    return b == 1
+  }
+  false
+}
+
+// The layout of a struct that is being laid out, for an array of it
+// inside itself: noted empty (once) and filled by struct_layout.
+pub fn (lw: MirLower) struct_ahead(name: String): Int {
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  f: Array(Int) = []
+  n: Array(String) = []
+  lw.lw_b.note_layout(name, mlk_struct(), f, n)
 }
 
 // A union's layout (2.4): `i32 tag`, then one payload per non-nil member
