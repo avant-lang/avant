@@ -15,6 +15,10 @@
 #            AVANT_BACKEND=llvm, --debug
 #   d-llvm   D': bin/avant-c-llvm compiles compiler/main.av into
 #            bin/avant-d-llvm with AVANT_BACKEND=llvm, --debug
+#   c-release  the compiler a release ships (W10, D208): bin/avant-b
+#            compiles compiler/main.av into bin/avant-c-release with
+#            AVANT_BACKEND=llvm, --release (built once per release; the
+#            letters and the gate stay --debug)
 #   c        the old C (until W11): bin/avant-b compiles compiler/main.av
 #            into bin/avant-c with AVANT_BACKEND=myc, --debug
 #
@@ -40,7 +44,7 @@
 #                     to both builds, explicitly
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
 #                     LETTERS_TIME_DIR/time-build-<step>.txt (b, c,
-#                     c-llvm, d-llvm)
+#                     c-llvm, d-llvm, c-release)
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, a compiler build
 # 900 s) with stdin from /dev/null. Output goes to stdout and stderr. The
@@ -65,8 +69,8 @@ steps="$*"
 [ -n "$steps" ] || steps="runtime b c-llvm"
 for s in $steps; do
   case "$s" in
-    runtime|b|c|c-llvm|d-llvm) ;;
-    *) echo "letters: unknown step $s (runtime, b, c, c-llvm, d-llvm)" >&2; exit 2 ;;
+    runtime|b|c|c-llvm|d-llvm|c-release) ;;
+    *) echo "letters: unknown step $s (runtime, b, c-llvm, d-llvm, c-release, c)" >&2; exit 2 ;;
   esac
 done
 
@@ -76,7 +80,7 @@ need_llvm() {
   exit 1
 }
 
-# build LETTER COMPILER OUT BACKEND
+# build LETTER COMPILER OUT BACKEND [MODE]   (MODE default --debug)
 build() {
   need_llvm
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
@@ -84,7 +88,7 @@ build() {
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   # shellcheck disable=SC2086 # timer is words or empty
-  AVANT_BACKEND=$4 AVANT_MYC_LLVM=$M timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" --debug "$COMPILER_LINK" < /dev/null
+  AVANT_BACKEND=$4 AVANT_MYC_LLVM=$M timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "${5:---debug}" "$COMPILER_LINK" < /dev/null
 }
 
 for s in $steps; do
@@ -94,6 +98,7 @@ for s in $steps; do
     c) build c ./bin/avant-b bin/avant-c myc ;;
     c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm llvm ;;
     d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm llvm ;;
+    c-release) build c-release ./bin/avant-b bin/avant-c-release llvm --release ;;
   esac
   rc=$?
   [ $rc -eq 0 ] || exit $rc

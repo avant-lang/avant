@@ -7,8 +7,13 @@
 # installed release such as ~/.avant, in place) and, from a temporary project
 # directory with an empty environment (only HOME, PATH=/usr/bin:/bin, and
 # TMPDIR, all inside the work directory), compiles and runs programs that
-# use every std module, runs `avant test` on a small project, and runs
-# `avant bind` when the bundled helper's libraries are present. Nothing
+# use every std module, compiles and runs programs in each codegen mode
+# (--debug, bare, --release), runs `avant test` on a small project, and runs
+# `avant bind` when the bundled helper's libraries are present. It first
+# proves that no myc-llvm is reachable (Stage 28 W10: the release has no
+# old back end; the compiler's default is the in-process LLVM): none in
+# the install, none on the PATH the cases use, none named by the
+# environment (which is empty); and AVANT_BACKEND=myc fails cleanly. Nothing
 # outside the work directory is read from the checkout or written; the
 # work directory is removed at the end (SMOKE_KEEP=1 keeps it).
 #
@@ -104,6 +109,26 @@ fn main {
   puts("hello from avant")
 }
 EOF
+# No myc-llvm reachable: not in the install, not on the cases' PATH (nor
+# the install directory, which path-hello adds), and the environment is
+# empty (no AVANT_MYC_LLVM). The old back end then fails with its lookup
+# message, which shows the default path does not need it.
+mycs=$(find "$inst" -name 'myc-llvm*' 2>/dev/null)
+if [ -n "$mycs" ]; then
+  fail no-myc-llvm "the install has $mycs"
+elif run no-myc-llvm-path sh -c "PATH=/usr/bin:/bin:$inst; command -v myc-llvm"; then
+  fail no-myc-llvm "a myc-llvm is on PATH: $(cat "$work/logs/no-myc-llvm-path.log")"
+else
+  pass no-myc-llvm
+fi
+if run old-backend-absent env AVANT_BACKEND=myc "$avant" run hello.av; then
+  fail old-backend-absent "AVANT_BACKEND=myc ran without a myc-llvm"
+elif grep -q "myc-llvm" "$work/logs/old-backend-absent.log"; then
+  pass old-backend-absent
+else
+  fail old-backend-absent "no myc-llvm message"
+fi
+
 expect run-hello "hello from avant" "$avant" run hello.av
 
 # Started through PATH, as an install is used: argv[0] has no directory.
@@ -114,6 +139,85 @@ if run compile-hello "$avant" compile hello.av hello; then
 else
   fail compile-hello "exit status $?"
 fi
+
+# The three codegen modes (D174), each compiled and run: hello, a tree
+# of class objects (allocation and collection), and arrays, hashes,
+# strings, and a block.
+src trees.av <<'EOF'
+class Node {
+  item: Int
+  left: Node
+  right: Node
+
+  fn initialize(item: Int) {
+    self.item = item
+  }
+}
+
+fn make(item: Int, depth: Int): Node {
+  n = Node.new(item)
+  if depth > 0 {
+    n.left = make(item &* 2, depth - 1)
+    n.right = make(item &* 2 &+ 1, depth - 1)
+  }
+  n
+}
+
+fn check(n: Node, depth: Int): Int {
+  if depth == 0 {
+    return n.item
+  }
+  check(n.left, depth - 1) &+ check(n.right, depth - 1) &+ n.item
+}
+
+fn main {
+  sum = 0
+  for i in 0..64 {
+    sum = sum &+ check(make(i, 10), 10)
+  }
+  puts(sum)
+}
+EOF
+src collect.av <<'EOF'
+fn main {
+  xs: Array(Int) = [1, 2]
+  xs.push(3)
+  sum = 0
+  xs.each { |n| sum += n }
+  puts(sum)
+  puts(xs.size)
+
+  h = Hash(String, Int).new
+  h["a"] = 10
+  h["b"] = 20
+  if v = h.get("a") {
+    puts(v)
+  }
+  puts(h.size)
+  puts("hi " + "avant")
+}
+EOF
+for mode in debug bare release; do
+  flag="--$mode"
+  [ "$mode" = bare ] && flag=""
+  for prog in hello trees collect; do
+    case $prog in
+      hello) want="hello from avant" ;;
+      trees) want="-1431721952" ;;
+      collect) want="6
+3
+10
+2
+hi avant" ;;
+    esac
+    # shellcheck disable=SC2086 # flag is one word or empty
+    if run "compile-$prog-$mode" "$avant" compile $prog.av "out-$mode/$prog" $flag; then
+      expect "exec-$prog-$mode" "$want" "./out-$mode/$prog"
+    else
+      fail "compile-$prog-$mode" "exit status $?"
+    fi
+  done
+done
 
 src threads.av <<'EOF'
 fn main {
