@@ -23,6 +23,8 @@ import mir.lower_expr
 // lower_str.av.
 pub fn mir_other_builtin(name: String): Bool {
   names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast"]
+  // W8b: lower_task.av lowers these in their checked forms first; what
+  // reaches this list is a form the checker would not accept.
   i = 0
   while i < names.size {
     if str_eq(names[i], name) {
@@ -90,9 +92,13 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if e.lib_name.size > 0 {
     return lw.lower_lib_call(e)
   }
+  // W8b: spawn, join, .parallel, Mutex.with, the gate builtins.
+  if got_task = lw.lower_task_call(e) {
+    return got_task
+  }
   if bl = e.block {
     // W7b: the block forms of the Array and Hash builtins (lower_block.av);
-    // spawn, .parallel, and Mutex.with are W8's.
+    // spawn, .parallel, and Mutex.with are lower_task.av's (W8b).
     if got = lw.lower_block_call(e) {
       return got
     }
@@ -270,6 +276,9 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
         return lw.str_member(e, obj, ot, e.ident, none)
       }
       none3: Array(Expr) = []
+      if ot.is_join && str_eq(e.ident, "join") {
+        return lw.lower_join(e, obj)
+      }
       if ot.is_array {
         return lw.arr_member(e, obj, ot, e.ident, none3)
       }

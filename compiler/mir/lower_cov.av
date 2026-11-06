@@ -1,0 +1,196 @@
+// Coverage hooks on the new back end (Stage 28 W8b; stages/stage28/
+// mir.md W8b, audit 5): a build with AVANT_COVERAGE set counts every
+// statement, function entry, and branch arm, and the first touch of each
+// source line, through `avant_cov_hit(slot)` (class never); `main` calls
+// `avant_cov_init(map)` after `avant_io_init_argv` (3.6). The compiler
+// writes the slot map (`avant-cov 1`, then `KIND\tPATH\tLINE\tNAME` per
+// slot: S statement, B branch, F function, L line); the runtime counts by
+// slot. The points are the old back end's (myc.av cov_stmt, cov_func,
+// cov_branch, cov_touch_line and their call sites). The slots are
+// numbered as the old back end numbers them: every point is recorded
+// with the rank of the function it is lowered in (program functions in
+// program order, then the spawn and .parallel thunks, then the lambda
+// thunks, each in the pre-walk's order: myc.av emit), and cov_finish
+// renumbers the hits by that order once the program is lowered, so the
+// map and the counts read the same under both back ends.
+
+import location
+import source
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower
+
+// The ranks of the thunks (functions take their index, below 1000000;
+// the constructors 1000000 and count nothing).
+pub fn mir_cov_task_rank: Int { 2000000 }
+pub fn mir_cov_lambda_rank: Int { 3000000 }
+
+// Records a point (kind 1 S, 2 B, 3 F, 4 L) and emits its hit; the hit's
+// operand is the point's index until cov_finish renumbers it.
+pub fn (lw: MirLower) cov_point(kind: Int, path: String, line: Int, name: String) {
+  c = lw.lw_cov
+  ev = c.kinds.size
+  c.kinds.push(kind)
+  c.paths.push(path)
+  c.lines.push(line)
+  c.names.push(name)
+  c.ranks.push(c.rank)
+  args: Array(MOperand) = []
+  args.push(lw.lw_b.c_i32(ev))
+  dummy = lw.lw_b.call(-1, "avant_cov_hit", args)
+}
+
+// A counted point and the touch of its line (myc.av cov_register,
+// emit_cov_hit, cov_touch_line).
+pub fn (lw: MirLower) cov_at(kind: Int, loc: Location, name: String) {
+  if !lw.lw_cov.on || lw.failed || !lw.open_now {
+    return
+  }
+  lw.at(loc)
+  lw.cov_point(kind, loc.path, loc.line, name)
+  lw.cov_point(4, loc.path, loc.line, "")
+}
+
+pub fn (lw: MirLower) cov_stmt(st: Stmt) {
+  lw.cov_at(1, st.loc, "")
+}
+
+pub fn (lw: MirLower) cov_branch(loc: Location) {
+  lw.cov_at(2, loc, "")
+}
+
+// A function's entry, named `fn` or `Owner.fn` (myc.av cov_func).
+pub fn (lw: MirLower) cov_func(fnn: Function) {
+  name = fnn.name
+  if fnn.owner.size > 0 {
+    name = "${fnn.owner}.${fnn.name}"
+  }
+  lw.cov_at(3, fnn.loc, name)
+}
+
+// `avant_cov_init(map)` in main, after the runtime's argv (3.6).
+pub fn (lw: MirLower) cov_init {
+  if !lw.lw_cov.on {
+    return
+  }
+  args: Array(MOperand) = []
+  args.push(lw.lw_b.str_const(lw.lw_cov.map_path))
+  dummy = lw.lw_b.call(-1, "avant_cov_init", args)
+}
+
+// After the lowering: the points ordered by their function's rank (the
+// points of one function are contiguous, in lowering order), numbered in
+// that order (a line's slot at its first touch), every hit's operand
+// rewritten to its slot, and the map written (myc.av write_cov_map).
+pub fn (lw: MirLower) cov_finish {
+  c = lw.lw_cov
+  if !c.on || lw.failed {
+    return
+  }
+  // Runs of points with one rank, then the runs in rank order (a stable
+  // insertion sort: few runs, and equal ranks keep lowering order).
+  starts: Array(Int) = []
+  i = 0
+  while i < c.kinds.size {
+    if i == 0 || c.ranks[i] != c.ranks[i - 1] {
+      starts.push(i)
+    }
+    i = i + 1
+  }
+  order: Array(Int) = []
+  i = 0
+  while i < starts.size {
+    j = order.size
+    order.push(i)
+    while j > 0 && c.ranks[starts[order[j - 1]]] > c.ranks[starts[i]] {
+      order[j] = order[j - 1]
+      j = j - 1
+    }
+    order[j] = i
+    i = i + 1
+  }
+  slot_of: Array(Int) = []
+  i = 0
+  while i < c.kinds.size {
+    slot_of.push(0)
+    i = i + 1
+  }
+  buf = buf_new()
+  buf.push_str("avant-cov 1\n")
+  line_slot = Hash(String, Int).new
+  n = 0
+  r = 0
+  while r < order.size {
+    s0 = starts[order[r]]
+    s1 = c.kinds.size
+    if order[r] + 1 < starts.size {
+      s1 = starts[order[r] + 1]
+    }
+    k = s0
+    while k < s1 {
+      if c.kinds[k] == 4 {
+        key = "${c.paths[k]}:${c.lines[k]}"
+        if got = line_slot.get(key) {
+          slot_of[k] = got
+          k = k + 1
+          continue
+        }
+        line_slot[key] = n
+      }
+      slot_of[k] = n
+      mir_cov_line(buf, c.kinds[k], c.paths[k], c.lines[k], c.names[k])
+      n = n + 1
+      k = k + 1
+    }
+    r = r + 1
+  }
+  m = lw.lw_m
+  b = lw.lw_b
+  f = 0
+  while f < m.funcs.size {
+    fn_ = m.funcs[f]
+    bb = 0
+    while bb < fn_.blocks.size {
+      blk = fn_.blocks[bb]
+      q = 0
+      while q < blk.stmts.size {
+        st = blk.stmts[q]
+        if st.kind == msk_call() && str_eq(st.callee, "avant_cov_hit") && st.args.size == 1 {
+          ev = st.args[0].ival.to_i
+          if ev >= 0 && ev < slot_of.size {
+            st.args[0] = b.c_i32(slot_of[ev])
+          }
+        }
+        q = q + 1
+      }
+      bb = bb + 1
+    }
+    f = f + 1
+  }
+  dummy = file_write(c.map_path, buf.to_s)
+}
+
+pub fn mir_cov_line(buf: Buf, kind: Int, path: String, line: Int, name: String) {
+  tag = "S"
+  if kind == 2 {
+    tag = "B"
+  }
+  if kind == 3 {
+    tag = "F"
+  }
+  if kind == 4 {
+    tag = "L"
+  }
+  buf.push_str(tag)
+  buf.push_str("\t")
+  buf.push_str(path)
+  buf.push_str("\t")
+  buf.push_fmt_i(line)
+  buf.push_str("\t")
+  buf.push_str(name)
+  buf.push_str("\n")
+}

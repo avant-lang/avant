@@ -88,6 +88,11 @@ pub fn (lw: MirLower) note_classes {
 // The MIR type of a value of struct or class type t (a local, a
 // parameter, a result): `%S` or `ref %C`; -1 after refusing.
 pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
+  // W8b: a JoinHandle is the runtime's pinned task object (avant_task.c
+  // avant_spawn), a heap reference like a class (audit 1.1.5).
+  if t.is_join {
+    return mt_ref()
+  }
   if t.is_fn {
     l0 = lw.fn_layout(t, loc)
     if l0 < 0 {
@@ -309,6 +314,10 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
     }
   }
   if e.kind == ex_name() && !e.fn_ref {
+    mi = lw.mutex_index(e.ident)
+    if mi >= 0 {
+      return lw.mutex_place(mi)
+    }
     if e.implicit_field {
       if st = lw.lw_self_ty {
         k = lw.field_of(st, e.ident, e.loc)

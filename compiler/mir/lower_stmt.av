@@ -27,6 +27,7 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
     st = body[i]
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
       if e = st.expr {
+        lw.cov_stmt(st)
         v = lw.lower_ret_value(e)
         if lw.failed {
           return
@@ -54,6 +55,7 @@ pub fn (lw: MirLower) lower_stmts(body: Array(Stmt)) {
 }
 
 pub fn (lw: MirLower) lower_stmt(st: Stmt) {
+  lw.cov_stmt(st)
   k = st.kind
   if k == st_expr() {
     if e = st.expr {
@@ -100,7 +102,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
 
 pub fn (lw: MirLower) lower_assign(st: Stmt) {
   if t = st.target {
-    if t.kind == ex_field() || (t.kind == ex_name() && t.implicit_field) {
+    if t.kind == ex_field() || (t.kind == ex_name() && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
       lw.lower_field_assign(st, t)
       return
     }
@@ -223,16 +225,18 @@ pub fn (lw: MirLower) lower_if(st: Stmt) {
     bt = lw.lw_b.block
     bf = lw.lw_b.block
     join = bf
-    if st.else_body.size > 0 {
+    if st.else_body.size > 0 || lw.lw_cov.on {
       join = lw.lw_b.block
     }
     lw.at(st.loc)
     lw.lw_b.branch(cv, bt, bf)
     lw.lw_b.at(bt)
+    lw.cov_branch(st.loc)
     lw.lower_stmts(st.then_body)
     lw.goto_if_open(join, st.loc)
-    if st.else_body.size > 0 {
+    if st.else_body.size > 0 || lw.lw_cov.on {
       lw.lw_b.at(bf)
+      lw.cov_branch(st.loc)
       lw.lower_stmts(st.else_body)
       lw.goto_if_open(join, st.loc)
     }
@@ -272,6 +276,7 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_heads.push(head)
   lw.lw_exits.push(exit)
   lw.lw_b.at(body)
+  lw.cov_branch(st.loc)
   lw.lower_stmts(st.body)
   lw.goto_if_open(head, st.loc)
   dummy = lw.lw_heads.pop
@@ -319,6 +324,11 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     values: Array(Int64) = []
     targets: Array(Int) = []
     arms: Array(Int) = []
+    // Under coverage (W8b) every label enters through its own block,
+    // which counts the branch (the old back end emits the arm once per
+    // label, myc.av emit_switch: one branch slot per label).
+    entries: Array(Int) = []
+    entry_arm: Array(Int) = []
     i = 0
     while i < e.cases.size {
       arm = lw.lw_b.block
@@ -336,31 +346,49 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
         }
         if !seen {
           values.push(v)
-          targets.push(arm)
+          if lw.lw_cov.on {
+            en = lw.lw_b.block
+            entries.push(en)
+            entry_arm.push(i)
+            targets.push(en)
+          } else {
+            targets.push(arm)
+          }
         }
         j = j + 1
       }
       i = i + 1
     }
     other = -1
-    if e.has_else {
+    if e.has_else || lw.lw_cov.on {
       other = lw.lw_b.block
     }
     join = lw.lw_b.block
-    if !e.has_else {
+    if other < 0 {
       other = join
     }
     lw.at(e.loc)
     lw.lw_b.switch_on(cv, values, targets, other)
     i = 0
     while i < e.cases.size {
+      q2 = 0
+      while q2 < entries.size {
+        if entry_arm[q2] == i {
+          lw.lw_b.at(entries[q2])
+          lw.cov_branch(e.cases[i].loc)
+          lw.at(e.cases[i].loc)
+          lw.lw_b.goto(arms[i])
+        }
+        q2 = q2 + 1
+      }
       lw.lw_b.at(arms[i])
       lw.lower_arm(e.cases[i].body, dest, e)
       lw.goto_if_open(join, e.cases[i].loc)
       i = i + 1
     }
-    if e.has_else {
+    if e.has_else || lw.lw_cov.on {
       lw.lw_b.at(other)
+      lw.cov_branch(e.loc)
       lw.lower_arm(e.else_body, dest, e)
       lw.goto_if_open(join, e.loc)
     }

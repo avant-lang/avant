@@ -361,17 +361,19 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
       bt = b.block
       bf = b.block
       join = bf
-      if st.else_body.size > 0 {
+      if st.else_body.size > 0 || lw.lw_cov.on {
         join = b.block
       }
       b.branch(ok, bt, bf)
       b.at(bt)
+      lw.cov_branch(st.loc)
       v = lw.unwrap(src, uty, success, st.loc)
       lw.bind_name(st.bind, success, sty, v, st.loc, false)
       lw.lower_stmts(st.then_body)
       lw.goto_if_open(join, st.loc)
-      if st.else_body.size > 0 {
+      if st.else_body.size > 0 || lw.lw_cov.on {
         b.at(bf)
+        lw.cov_branch(st.loc)
         lw.lower_stmts(st.else_body)
         lw.goto_if_open(join, st.loc)
       }

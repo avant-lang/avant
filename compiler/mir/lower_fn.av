@@ -29,6 +29,7 @@ import mir.lower_expr
 import mir.lower_stmt
 import mir.lower_agg
 import mir.lower_union
+import mir.lower_cov
 
 // ---- types
 
@@ -180,7 +181,20 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
   k = e.kind
   if k == ex_call() {
     lw.prewalk_opt(e.inner, encl)
-    lw.prewalk_opt(e.receiver, encl)
+    // W8b: the spawn and .parallel records at the old points (decl.av
+    // collect_expr): a .parallel's after its receiver, a spawn's before
+    // its arguments; their blocks are walked in the enclosing function
+    // (the checker boxes their locals there).
+    if recv = e.receiver {
+      lw.prewalk_expr(recv, encl)
+      if rt = recv.ty {
+        if rt.is_array && str_eq(e.callee, "parallel") && mir_has_block(e) {
+          lw.prewalk_par(e, encl)
+        }
+      }
+    } else if str_eq(e.callee, "spawn") && mir_has_block(e) {
+      lw.prewalk_spawn(e, encl)
+    }
     lw.prewalk_list(e.args, encl)
     if b = e.block {
       lw.prewalk_stmts(b.body, encl)
@@ -219,6 +233,13 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
   }
 }
 
+pub fn mir_has_block(e: Expr): Bool {
+  if bl = e.block {
+    return true
+  }
+  false
+}
+
 // The next lambda symbol inside encl.
 pub fn (lw: MirLower) lambda_symbol(encl: String): String {
   n = 1
@@ -234,6 +255,7 @@ pub fn (lw: MirLower) lambda_symbol(encl: String): String {
 pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
   sym = lw.lambda_symbol(encl)
   e.resolved = sym
+  lw.lw_cov.lam_index[sym] = lw.lw_cov.lam_index.size
   i = 0
   while i < e.cap_names.size {
     key = "${encl}|${e.cap_names[i]}"
@@ -642,6 +664,10 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
     s = b.types.sigs[sig]
     dummy = b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
     lw.lw_cl.base = lam.sym
+    lw.lw_cov.rank = mir_cov_lambda_rank() + 999999
+    if li = lw.lw_cov.lam_index.get(lam.sym) {
+      lw.lw_cov.rank = mir_cov_lambda_rank() + li
+    }
     b.name_param(1, "env")
     lw.lw_ret = s.ret
     rt = ty_void()
