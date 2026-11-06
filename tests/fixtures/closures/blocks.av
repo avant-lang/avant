@@ -1,0 +1,169 @@
+// The builtins that take a block on the new back end (Stage 28 W7b,
+// mir.md W7b): `Array.each`, `any`, `all`, `sort { }`, `sorted { }`,
+// `Hash.each` (Int and String keys), inlined in the calling function as
+// the old back end inlines them; `break` in a block (inside a `while`,
+// which the checker requires; it leaves the block's loop), a bare `return` from
+// the function inside a block, nested blocks, the receiver evaluated
+// once (a reassignment inside the block does not change the loop),
+// elements that hold references (strings, classes, structs with a
+// string) sorted by a comparator, a block given to a user function (the
+// checker makes it a lambda), and lambdas made inside blocks capturing
+// the function's variables (a variable first assigned in the block gets
+// a box on every iteration; a captured block parameter is in fresh.av).
+// Block parameters are the function's named locals in the old back end,
+// so one name keeps one type here. Both back ends print the same.
+
+class Item {
+  name: String
+  rank: Int
+
+  fn initialize(name: String, rank: Int) {
+    self.name = name
+    self.rank = rank
+  }
+}
+
+struct Tag {
+  label: String
+  w: Int
+}
+
+fn say(s: String): Int {
+  puts(s)
+  1
+}
+
+fn first_over(xs: Array(Int), limit: Int) {
+  xs.each { |x|
+    if x > limit {
+      puts("first over ${limit}: ${x}")
+      return
+    }
+  }
+  puts("none over ${limit}")
+}
+
+fn each_twice(xs: Array(Int), f: fn(Int)) {
+  xs.each { |x| f(x) }
+  xs.each { |x| f(x * 2) }
+}
+
+fn count_if(xs: Array(Int), p: fn(Int): Bool): Int {
+  n = 0
+  xs.each { |x|
+    if p(x) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn main {
+  xs = [3, 1, 4, 1, 5, 9, 2, 6]
+  sum = 0
+  xs.each { |x| sum += x }
+  puts(sum)
+  prod = 1
+  rounds = 0
+  while rounds < 2 {
+    xs.each { |x|
+      if x == 9 {
+        break
+      }
+      prod = prod * x
+    }
+    rounds += 1
+  }
+  puts(prod)
+  first_over(xs, 4)
+  first_over(xs, 10)
+  puts(xs.any { |x| x > 8 })
+  puts(xs.any { |x| x > 9 })
+  puts(xs.all { |x| x > 0 })
+  puts(xs.all { |x| x > 1 })
+  calls = 0
+  hit = xs.any { |x|
+    calls += 1
+    x == 4
+  }
+  puts(hit)
+  puts(calls)
+  ys = xs.sorted { |a, b| a < b }
+  puts(ys[0] * 10000000 + ys[1] * 1000000 + ys[2] * 100000 + ys[3] * 10000 + ys[4] * 1000 + ys[5] * 100 + ys[6] * 10 + ys[7])
+  puts(xs[0])
+  xs.sort { |a, b| a > b }
+  puts(xs[0] * 10 + xs[7])
+  pairs = 0
+  ms = [1, 2, 3]
+  ms.each { |a|
+    ms.each { |b|
+      if a < b {
+        pairs += 1
+      }
+    }
+  }
+  puts(pairs)
+  grow = [1, 2, 3]
+  seen = 0
+  grow.each { |g|
+    seen += g
+    grow = [100, 200, 300, 400]
+  }
+  puts(seen)
+  puts(grow.size)
+  words = ["pear", "fig", "apple", "kiwi"]
+  words.sort { |w1, w2| w1.size < w2.size }
+  puts(words[0] + " " + words[3])
+  items: Array(Item) = []
+  items.push(Item.new("c", 3))
+  items.push(Item.new("a", 1))
+  items.push(Item.new("b", 2))
+  by_rank = items.sorted { |p, q| p.rank < q.rank }
+  puts(by_rank[0].name + by_rank[1].name + by_rank[2].name)
+  puts(items[0].name)
+  tags: Array(Tag) = []
+  tags.push(Tag { label: "z" + "z", w: 2 })
+  tags.push(Tag { label: "y" + "y", w: 1 })
+  tags.sort { |t1, t2| t1.w < t2.w }
+  puts(tags[0].label + tags[1].label)
+  h = Hash(String, Int).new
+  h["one"] = 1
+  h["two"] = 2
+  h["three"] = 3
+  total = 0
+  names = ""
+  h.each { |k, v|
+    total += v
+    names = names + k
+  }
+  puts(total)
+  puts(names)
+  hi = Hash(Int, Int).new
+  hi[10] = 100
+  hi[20] = 200
+  hsum = 0
+  hi.each { |ik, iv| hsum += ik + iv }
+  puts(hsum)
+  hs = Hash(String, String).new
+  hs["k"] = "v"
+  hs.each { |sk, sv| puts(sk + sv) }
+  each_twice([1, 2]) { |x| sum += x }
+  puts(sum)
+  puts(count_if(xs) { |x| x > 3 })
+  limit = 5
+  puts(count_if(xs) { |x| x > limit })
+  fs: Array(fn(): Int) = []
+  base = 7
+  xs.each { |x|
+    if x > 5 {
+      y = x
+      fs.push({ || base + y })
+    }
+  }
+  base = 1000
+  puts(fs.size)
+  puts((fs[0])())
+  order = [say("receiver")]
+  order.each { |o| sum += o }
+  puts(sum)
+}

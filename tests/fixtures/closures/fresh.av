@@ -1,0 +1,66 @@
+// The closure programs only the new back end runs correctly (Stage 28
+// W7b, D196; expected differences in tools/backend-diff.sh, checked by
+// tests/cases/test_closures.av against their known output):
+// - `continue` in a block of `each` or `any` (inside a `while`, which
+//   the checker requires) goes on with the next element; the old back
+//   end jumps back to the block loop's test without the increment, so
+//   the loop never ends;
+// - a block parameter captured by a lambda is a new variable on every
+//   iteration (its own box); the old back end fails to compile it
+//   (myc-llvm: `local variable x was created with another type`);
+// - a captured union (`Int?`) is boxed like any value; the old back end
+//   fails to compile it (`unknown transform from i32 to U_Int_Nil`).
+
+fn maybe(n: Int): Int? {
+  if n > 0 {
+    return n
+  }
+  nil
+}
+
+fn main {
+  xs = [1, 2, 3, 4]
+  s = 0
+  seen = 0
+  big = false
+  once = 0
+  while once < 1 {
+    xs.each { |x|
+      if x == 2 {
+        continue
+      }
+      s += x
+    }
+    big = xs.any { |x|
+      seen += 1
+      if x < 3 {
+        continue
+      }
+      x > 3
+    }
+    once += 1
+  }
+  puts(s)
+  puts(big)
+  puts(seen)
+  fs: Array(fn(): Int) = []
+  ws = [4, 5]
+  ws.each { |w| fs.push({ || w * 100 }) }
+  puts((fs[0])() + (fs[1])())
+  h = Hash(String, Int).new
+  h["a"] = 1
+  h["b"] = 2
+  gs: Array(fn(): String) = []
+  h.each { |k, v| gs.push({ || "${k}=${v}" }) }
+  puts((gs[0])() + " " + (gs[1])())
+  opt = maybe(3)
+  see_opt: fn(): Int = { ||
+    if v = opt {
+      return v
+    }
+    -1
+  }
+  puts(see_opt())
+  opt = maybe(0)
+  puts(see_opt())
+}

@@ -1,0 +1,201 @@
+// Lambdas and closures on the new back end (Stage 28 W7b, mir.md W7b):
+// lambdas without captures (a null environment), captures by reference
+// through heap boxes (a capture sees later assignments, an assignment
+// inside a lambda is seen outside, two lambdas share one variable),
+// nested lambdas capturing the same variable, a lambda variable captured
+// by itself (recursion), a box allocated on every iteration where the
+// variable is first assigned in a loop, boxed parameters, captures of
+// every kind of value (Int, Int64, UInt64, Float64, Bool, String, a
+// class, a struct, an array, an fn; a union capture is in fresh.av), an if binding captured,
+// lambdas built in methods. Both back ends print the same.
+
+class Node {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+struct Pt {
+  x: Int
+  y: Int
+}
+
+fn add(n: Int): fn(Int): Int {
+  { |x| x + n }
+}
+
+fn outer(n: Int): fn(): fn(): Int {
+  { ||
+    { || n }
+  }
+}
+
+fn boxed_param(p: Int): fn(): Int {
+  f = { || p * 2 }
+  p = p + 1
+  f
+}
+
+fn counter(start: Int): fn(): Int {
+  c = start
+  { ||
+    c = c + 1
+    c
+  }
+}
+
+fn maybe(n: Int): Int? {
+  if n > 0 {
+    return n
+  }
+  nil
+}
+
+struct Meth {
+  base: Int
+
+  fn off(x: Int): fn(Int): Int {
+    b = base
+    { |y| y + x + b }
+  }
+}
+
+class Acc {
+  total: Int = 0
+
+  fn initialize {
+  }
+
+  fn adder(k: Int): fn(Int): Int {
+    t = total
+    { |y| y * k + t }
+  }
+}
+
+fn main {
+  g: fn(Int): Int = { |n| n + 1 }
+  puts(g(4))
+  ann = { |a: Int, b: Int| a * 10 + b }
+  puts(ann(4, 2))
+  puts(add(1)(2))
+  n = 1
+  see: fn(): Int = { || n }
+  n = 7
+  puts(see())
+  m = 1
+  bump: fn(): Int = { ||
+    m = m + 1
+    m
+  }
+  puts(bump())
+  puts(m)
+  cell = 1
+  cell_read: fn(): Int = { || cell }
+  cell_bump: fn(): Int = { ||
+    cell = cell + 1
+    cell
+  }
+  puts(cell_bump())
+  puts(cell_read())
+  puts(outer(4)()())
+  nest_k = 1
+  nest_wrap: fn(): fn(): Int = { ||
+    nest_k = nest_k + 1
+    { || nest_k }
+  }
+  nest_inner = nest_wrap()
+  puts(nest_k)
+  nest_k = 9
+  puts(nest_inner())
+  deep: fn(): fn(): fn(): Int = { ||
+    c2 = 1
+    mid = { ||
+      { || c2 }
+    }
+    c2 = 6
+    mid
+  }
+  puts(deep()()())
+  k = 0
+  rec: fn(): Int = { ||
+    if k > 2 {
+      return k
+    }
+    k = k + 1
+    rec()
+  }
+  puts(rec())
+  fns: Array(fn(): Int) = []
+  i = 0
+  while i < 3 {
+    j = i * 10
+    fns.push({ || j })
+    i = i + 1
+  }
+  puts((fns[0])() + (fns[1])() + (fns[2])())
+  puts(boxed_param(3)())
+  c1 = counter(10)
+  c2b = counter(100)
+  puts(c1())
+  puts(c1())
+  puts(c2b())
+  wide: Int64 = 5
+  see_wide: fn(): Int64 = { || wide }
+  wide = 8
+  puts(see_wide())
+  u: UInt64 = 8
+  see_u: fn(): UInt64 = { || u }
+  u = 12
+  puts(see_u())
+  flt = 1.5
+  see_f: fn(): Float64 = { || flt }
+  flt = 2.5
+  puts(see_f())
+  flag = true
+  see_b: fn(): Bool = { || flag }
+  flag = false
+  if see_b() {
+    puts("still true")
+  } else {
+    puts("now false")
+  }
+  msg = "ke" + "pt"
+  read: fn(): String = { || msg }
+  msg = msg + "!"
+  puts(read())
+  node = Node.new(3)
+  see_node: fn(): Int = { || node.v }
+  node.v = 4
+  puts(see_node())
+  node = Node.new(5)
+  puts(see_node())
+  pt = Pt { x: 1, y: 2 }
+  see_pt: fn(): Int = { || pt.x * 10 + pt.y }
+  pt.x = 7
+  puts(see_pt())
+  xs = [1, 2, 3]
+  see_xs: fn(): Int = { || xs.size }
+  xs.push(4)
+  puts(see_xs())
+  held: fn(Int): Int = { |q| q + 1 }
+  call_held: fn(): Int = { || held(4) }
+  puts(call_held())
+  held = { |q| q + 10 }
+  puts(call_held())
+  if bound = maybe(6) {
+    see_bound: fn(): Int = { || bound * 2 }
+    puts(see_bound())
+  }
+  meth = Meth { base: 10 }
+  puts(meth.off(1)(2))
+  acc = Acc.new()
+  acc.total = 5
+  ad = acc.adder(3)
+  acc.total = 100
+  puts(ad(2))
+  nothing: fn() = { || }
+  nothing()
+  puts("done")
+}

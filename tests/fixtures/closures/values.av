@@ -1,0 +1,131 @@
+// fn values on the new back end (Stage 28 W7b, mir.md W7b): named
+// functions as values (their `#fnval` trampolines), fn values in locals,
+// parameters, results, class fields, struct fields (by value, inside a
+// class too), and array elements; indirect calls through a name, a field,
+// an element, and a call result; a generic function taking an fn; the
+// overload chosen by the expected fn type; a void fn value. Both back
+// ends print the same.
+
+fn inc(n: Int): Int {
+  n + 1
+}
+
+fn twice(n: Int): Int {
+  n * 2
+}
+
+fn pair(a: Int, b: Int): Int {
+  a * 10 + b
+}
+
+fn shout(s: String): String {
+  s + "!"
+}
+
+fn pick(n: Int): Int {
+  n + 100
+}
+
+fn pick(s: String): Int {
+  s.size
+}
+
+fn take_int(f: fn(Int): Int): Int {
+  f(10)
+}
+
+fn take_str(f: fn(String): Int): Int {
+  f("abcd")
+}
+
+fn apply(f: fn(Int): Int, n: Int): Int {
+  f(n)
+}
+
+fn compose_pick(first: Bool): fn(Int): Int {
+  if first {
+    return inc
+  }
+  twice
+}
+
+fn map(xs: Array(T), f: fn(T): U): Array(U) {
+  ys: Array(U) = []
+  xs.each { |x|
+    ys.push(f(x))
+  }
+  ys
+}
+
+fn say(s: String) {
+  puts(s)
+}
+
+fn run_void(f: fn(String), s: String) {
+  f(s)
+}
+
+class Holder {
+  op: fn(Int): Int
+  name: fn(String): String
+  inner: Ops
+
+  fn initialize {
+  }
+}
+
+struct Ops {
+  a: fn(Int): Int
+  b: fn(Int, Int): Int
+}
+
+fn main {
+  f: fn(Int): Int = inc
+  puts(f(2))
+  bare = twice
+  puts(bare(21))
+  p2: fn(Int, Int): Int = pair
+  puts(p2(4, 2))
+  puts(apply(inc, 41))
+  puts(apply(twice, 8))
+  puts(take_int(pick))
+  puts(take_str(pick))
+  puts(compose_pick(true)(5))
+  puts(compose_pick(false)(5))
+  h = Holder.new()
+  h.op = twice
+  h.name = shout
+  h.inner = Ops { a: inc, b: pair }
+  puts((h.op)(7))
+  puts((h.name)("hey"))
+  puts((h.inner.a)(1))
+  puts((h.inner.b)(3, 4))
+  h.op = inc
+  puts((h.op)(7))
+  ops = h.inner
+  ops.a = twice
+  puts((ops.a)(9))
+  puts((h.inner.a)(9))
+  fs: Array(fn(Int): Int) = []
+  fs.push(inc)
+  fs.push(twice)
+  fs.push(inc)
+  total = 0
+  i = 0
+  while i < fs.size {
+    total = total + (fs[i])(i + 1)
+    i = i + 1
+  }
+  puts(total)
+  fs[1] = inc
+  puts((fs[1])(1))
+  ys = map([1, 2, 3], twice)
+  puts(ys[0] + ys[1] + ys[2])
+  ss = map(["a", "bb"], shout)
+  puts(ss[1])
+  run_void(say, "void fn value")
+  table: Array(Ops) = []
+  table.push(Ops { a: inc, b: pair })
+  table.push(Ops { a: twice, b: pair })
+  puts((table[1].a)(50))
+}

@@ -115,7 +115,8 @@ fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Boo
 // The .mir goldens of the scalar subset (tests/cases/test_scalars.av) and
 // of the string subset (tests/cases/test_strings.av, Stage 28 W6a), and
 // of the object subset (tests/cases/test_objects.av, Stage 28 W6b), of
-// the types subset (tests/cases/test_types.av, Stage 28 W7a), and
+// the types subset (tests/cases/test_types.av, Stage 28 W7a), of the
+// closures subset (tests/cases/test_closures.av, Stage 28 W7b), and
 // of the heap subset (tests/cases/test_heap.av, Stage 28 W6c).
 fn bless_mir_all(compiler: String, root: String): Bool {
   mkdir_p("${root}/tests/goldens/scalars")
@@ -163,6 +164,16 @@ fn bless_mir_all(compiler: String, root: String): Bool {
   i = 0
   while i < tn.size {
     if bless_mir(compiler, root, "tests/fixtures/types/${tn[i]}.av", "types/${tn[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/closures")
+  cn = ["blocks", "churn", "fresh", "lambdas", "values"]
+  i = 0
+  while i < cn.size {
+    if bless_mir(compiler, root, "tests/fixtures/closures/${cn[i]}.av", "closures/${cn[i]}") {
     } else {
       return false
     }
