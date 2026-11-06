@@ -1,0 +1,402 @@
+// The lowering: AST + checker facts -> MIR (Stage 28 W5b; stages/stage28/
+// mir.md 5.9 step 1, W5.3). This file holds the lowering's state, the
+// program and function level, locations, and refusals; statements are in
+// lower_stmt.av, expressions in lower_expr.av, types and names in
+// lower_ty.av. The result is stage-lowered MIR (Avant calls `collects`,
+// no gc.*, kinds unset); mir_lower_program then runs the minimal frame
+// pass (frames.av) so the module is ready for verify(final) and emission.
+//
+// W5's subset is the scalars: every other construct stops the lowering
+// with `not yet supported by the llvm back end: <what>` at its location
+// (refuse), and the module is not used.
+//
+// Field names carry the `lw_` prefix: a field's name is in scope inside a
+// method, so a local of the same name would silently write the field.
+
+import location
+import diagnostic
+import source
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.frames
+
+pub class MirLowered {
+  module: MModule
+  err: String = ""
+
+  fn initialize(m: MModule, err: String) {
+    self.module = m
+    self.err = err
+  }
+}
+
+pub class MirLower {
+  lw_m: MModule
+  lw_b: MirBuilder
+  lw_prog: Program
+  lw_syms: SymbolTable
+  lw_root_dir: String = ""
+  lw_avant_root: String = ""
+  lw_err: String = ""
+  lw_fn_syms: Hash(String, String)
+  lw_vars: Hash(String, Int)
+  lw_heads: Array(Int)
+  lw_exits: Array(Int)
+  lw_ret: Int = 0
+  lw_main: Bool = false
+  lw_fn_loc: Location
+
+  fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
+    self.lw_m = mir_module(mir_module_part(program.root_module))
+    self.lw_b = MirBuilder.new(self.lw_m)
+    self.lw_prog = program
+    self.lw_syms = symbols
+    self.lw_root_dir = root_dir
+    self.lw_avant_root = avant_root
+    self.lw_err = ""
+    self.lw_fn_syms = Hash(String, String).new
+    self.lw_vars = Hash(String, Int).new
+    h: Array(Int) = []
+    self.lw_heads = h
+    x: Array(Int) = []
+    self.lw_exits = x
+    self.lw_fn_loc = program.loc
+  }
+
+  // ---- refusals
+
+  // The first refusal wins; later ones are not reported.
+  pub fn refuse(loc: Location, what: String) {
+    if self.lw_err.size > 0 {
+      return
+    }
+    r = CompileError.new(loc, "L0001", "not yet supported by the llvm back end: ${what}").render
+    if r.size > 0 && r[r.size - 1] == 10 {
+      r = str_slice(r, 0, r.size - 1)
+    }
+    self.lw_err = r
+  }
+
+  pub fn failed: Bool {
+    self.lw_err.size > 0
+  }
+
+  // ---- locations (9): the file table holds paths relative to the root
+  // source's directory, else to the Avant root, else as given.
+  pub fn rel_path(path: String): String {
+    if self.lw_root_dir.size > 0 && str_starts_mir(path, "${self.lw_root_dir}/") {
+      return str_slice(path, self.lw_root_dir.size + 1, path.size)
+    }
+    if self.lw_avant_root.size > 0 && str_starts_mir(path, "${self.lw_avant_root}/") {
+      return str_slice(path, self.lw_avant_root.size + 1, path.size)
+    }
+    path
+  }
+
+  pub fn at(loc: Location) {
+    dummy = self.lw_b.file(self.rel_path(loc.path))
+    self.lw_b.at_loc(loc.line, loc.column)
+  }
+
+  pub fn mloc(loc: Location): MLoc {
+    fid = self.lw_b.file(self.rel_path(loc.path))
+    mir_loc(fid, loc.line, loc.column)
+  }
+
+  // ---- the current block
+
+  pub fn open_now: Bool {
+    blk = self.lw_b.func.blocks[self.lw_b.cur_bb]
+    if t = blk.term {
+      return false
+    }
+    true
+  }
+
+  // ---- locals: one per (source name, MIR type), as the old back end's
+  // named locals (W5.2).
+  pub fn var_key(name: String, ty: Int): String {
+    "${name}|${ty}"
+  }
+
+  pub fn var_find(name: String, ty: Int): Int {
+    if got = self.lw_vars.get(self.var_key(name, ty)) {
+      return got
+    }
+    return -1
+  }
+
+  pub fn var_get(name: String, ty: Int): Int {
+    k = self.var_find(name, ty)
+    if k >= 0 {
+      return k
+    }
+    k = self.lw_b.local(ty, name)
+    self.lw_vars[self.var_key(name, ty)] = k
+    k
+  }
+
+  // ---- the program
+
+  pub fn lower_program {
+    p = self.lw_prog
+    if p.structs.size > 0 {
+      self.refuse(p.structs[0].loc, "struct ${p.structs[0].name}")
+      return
+    }
+    if p.classes.size > 0 {
+      self.refuse(p.classes[0].loc, "class ${p.classes[0].name}")
+      return
+    }
+    if p.interfaces.size > 0 {
+      self.refuse(p.interfaces[0].loc, "interface ${p.interfaces[0].name}")
+      return
+    }
+    fns = program_all_functions(p)
+    i = 0
+    while i < fns.size {
+      fnn = fns[i]
+      if fnn.generic {
+        self.refuse(fnn.loc, "generic function ${fnn.name}")
+        return
+      }
+      if fn_is_method(fnn) {
+        self.refuse(fnn.loc, "method ${fnn.name}")
+        return
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < fns.size {
+      self.lw_fn_syms[fns[i].emit_name] = self.symbol_of(fns[i], fns)
+      i = i + 1
+    }
+    has_main = false
+    run_fn: Function? = nil
+    i = 0
+    while i < fns.size {
+      if str_eq(fns[i].name, "main") && str_eq(fns[i].mod_name, p.root_module) {
+        has_main = true
+      }
+      if str_eq(fns[i].name, "run") && str_eq(fns[i].mod_name, p.root_module) {
+        run_fn = fns[i]
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < fns.size && !self.failed {
+      self.lower_function(fns[i])
+      i = i + 1
+    }
+    if self.failed || has_main {
+      return
+    }
+    if r = run_fn {
+      self.lower_run_wrapper(r)
+      return
+    }
+    self.refuse(p.loc, "a program without fn main or fn run")
+  }
+
+  // 8.2: `av.<module>/<name>`, with the parameter types when another
+  // plain function of the module has the same name; `main` of the root
+  // module keeps its C name (8.1).
+  pub fn symbol_of(fnn: Function, fns: Array(Function)): String {
+    if str_eq(fnn.name, "main") && str_eq(fnn.mod_name, self.lw_prog.root_module) {
+      return "main"
+    }
+    base = "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
+    n = 0
+    i = 0
+    while i < fns.size {
+      if str_eq(fns[i].name, fnn.name) && str_eq(fns[i].mod_name, fnn.mod_name) {
+        n = n + 1
+      }
+      i = i + 1
+    }
+    if n <= 1 {
+      return base
+    }
+    buf = buf_new()
+    buf.push_str(base)
+    buf.push_str("(")
+    if sig = self.lw_syms.find_fn(fnn.emit_name) {
+      j = 0
+      while j < sig.params.size {
+        if j > 0 {
+          buf.push_str(",")
+        }
+        buf.push_str(mir_mty(sig.params[j]))
+        j = j + 1
+      }
+    }
+    buf.push_str(")")
+    buf.to_s
+  }
+
+  // The MIR type of t, or -1 after refusing it at loc.
+  pub fn ty_at(t: Ty, loc: Location, what: String): Int {
+    m = mir_scalar_ty(t)
+    if m < 0 {
+      self.refuse(loc, "${what} of type ${t.show}")
+    }
+    m
+  }
+
+  pub fn begin_function(fnn: Function) {
+    self.lw_vars = Hash(String, Int).new
+    h: Array(Int) = []
+    self.lw_heads = h
+    x: Array(Int) = []
+    self.lw_exits = x
+    self.lw_fn_loc = fnn.loc
+  }
+
+  pub fn lower_function(fnn: Function) {
+    self.begin_function(fnn)
+    sym = ""
+    if got = self.lw_fn_syms.get(fnn.emit_name) {
+      sym = got
+    }
+    if fs = self.lw_syms.find_fn(fnn.emit_name) {
+      self.lw_main = str_eq(sym, "main")
+      params: Array(Int) = []
+      ret = self.ty_at(fs.ret, fnn.loc, "a result")
+      if self.lw_main {
+        params.push(mt_i32())
+        params.push(mt_ptr())
+        if ret != mt_void() && ret != mt_i32() {
+          self.refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
+        }
+      } else {
+        i = 0
+        while i < fs.params.size {
+          params.push(self.ty_at(fs.params[i], fnn.loc, "a parameter"))
+          i = i + 1
+        }
+      }
+      if self.failed {
+        return
+      }
+      self.lw_ret = ret
+      sret = ret
+      if self.lw_main {
+        sret = mt_i32()
+      }
+      dummy = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      if self.lw_main {
+        self.lw_b.set_external
+        self.lw_b.name_param(1, "argc")
+        self.lw_b.name_param(2, "argv")
+        self.main_prologue(fnn.loc)
+      } else {
+        i = 0
+        while i < fnn.params.size {
+          self.lw_b.name_param(i + 1, fnn.params[i].name)
+          self.lw_vars[self.var_key(fnn.params[i].name, params[i])] = i + 1
+          i = i + 1
+        }
+      }
+      self.lower_body(fnn.body)
+      self.finish_body(fnn)
+      self.lw_b.end_fn
+      return
+    }
+    self.refuse(fnn.loc, "function ${fnn.name} (no checked signature)")
+  }
+
+  // 3.6: the type maps, then argc and argv for the runtime.
+  pub fn main_prologue(loc: Location) {
+    self.at(loc)
+    none: Array(MOperand) = []
+    dummy = self.lw_b.call(-1, "__avant_type_maps", none)
+    args: Array(MOperand) = []
+    args.push(self.lw_b.copy_local(1))
+    args.push(self.lw_b.copy_local(2))
+    dummy2 = self.lw_b.call(-1, "avant_io_init_argv", args)
+  }
+
+  // The end of a body that falls through (W5.3): a void function returns
+  // (a void main returns 0); with a result the end is unreachable, since
+  // the checker requires a return (E4007) and the tail value was lowered
+  // as one.
+  pub fn finish_body(fnn: Function) {
+    if self.failed || !self.open_now {
+      return
+    }
+    self.at(fnn.loc)
+    if self.lw_ret == mt_void() {
+      if self.lw_main {
+        dummy = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+      }
+      self.lw_b.ret
+      return
+    }
+    self.lw_b.unreachable
+  }
+
+  // A program with `fn run` and no `fn main` (3.6): main calls run and
+  // returns its Int result, else 0.
+  pub fn lower_run_wrapper(r: Function) {
+    self.begin_function(r)
+    self.lw_main = true
+    params: Array(Int) = []
+    params.push(mt_i32())
+    params.push(mt_ptr())
+    dummy = self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
+    self.lw_b.set_external
+    self.lw_b.name_param(1, "argc")
+    self.lw_b.name_param(2, "argv")
+    self.main_prologue(r.loc)
+    sym = ""
+    if got = self.lw_fn_syms.get(r.emit_name) {
+      sym = got
+    }
+    rty = mt_void()
+    if fs = self.lw_syms.find_fn(r.emit_name) {
+      rty = mir_scalar_ty(fs.ret)
+    }
+    none: Array(MOperand) = []
+    if rty == mt_i32() {
+      t = self.lw_b.temp(mt_i32())
+      dummy2 = self.lw_b.call(t, sym, none)
+      dummy3 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
+    } else {
+      dest = -1
+      if rty != mt_void() && rty >= 0 {
+        dest = self.lw_b.temp(rty)
+      }
+      dummy4 = self.lw_b.call(dest, sym, none)
+      dummy5 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+    }
+    self.lw_b.ret
+    self.lw_b.end_fn
+  }
+}
+
+// The entry (pipeline.av under AVANT_BACKEND=llvm): the module after the
+// minimal frame pass, or the first refusal (err, ready for diag_puts).
+// root_path is the root source file; avant_root the Avant root (std).
+pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String): MirLowered {
+  dir = ""
+  i = root_path.size - 1
+  while i >= 0 {
+    if root_path[i] == 47 {
+      dir = str_slice(root_path, 0, i)
+      break
+    }
+    i = i - 1
+  }
+  lw = MirLower.new(program, symbols, dir, avant_root)
+  lw.lower_program
+  if lw.failed {
+    return MirLowered.new(lw.lw_m, lw.lw_err)
+  }
+  mir_frames_minimal(lw.lw_m)
+  MirLowered.new(lw.lw_m, "")
+}
