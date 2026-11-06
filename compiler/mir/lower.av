@@ -7,7 +7,9 @@
 // verifies it at stage lowered, then runs the leaf and root-slot passes
 // (gc.av, 5.9) so the module is ready for verify(final) and emission.
 //
-// The subset is the scalars (W5) and heap strings (W6a): every other
+// The subset is the scalars (W5), heap strings (W6a), and structs and
+// classes with their plain methods and constructors (W6b,
+// lower_agg.av): every other
 // construct stops the lowering with `not yet supported by the llvm back
 // end: <what>` at its location (refuse), and the module is not used.
 //
@@ -53,6 +55,11 @@ pub class MirLower {
   lw_ret: Int = 0
   lw_main: Bool = false
   lw_fn_loc: Location
+  lw_self: Int = 0
+  lw_self_struct: Bool = false
+  lw_self_name: String = ""
+  lw_self_ty: Ty? = nil
+  lw_busy: Hash(String, Int)
 
   fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
     self.lw_m = mir_module(mir_module_part(program.root_module))
@@ -69,6 +76,8 @@ pub class MirLower {
     x: Array(Int) = []
     self.lw_exits = x
     self.lw_fn_loc = program.loc
+    self.lw_self_name = ""
+    self.lw_busy = Hash(String, Int).new
   }
 
   // ---- refusals
@@ -148,14 +157,6 @@ pub class MirLower {
 
   pub fn lower_program {
     p = self.lw_prog
-    if p.structs.size > 0 {
-      self.refuse(p.structs[0].loc, "struct ${p.structs[0].name}")
-      return
-    }
-    if p.classes.size > 0 {
-      self.refuse(p.classes[0].loc, "class ${p.classes[0].name}")
-      return
-    }
     if p.interfaces.size > 0 {
       self.refuse(p.interfaces[0].loc, "interface ${p.interfaces[0].name}")
       return
@@ -168,17 +169,27 @@ pub class MirLower {
         self.refuse(fnn.loc, "generic function ${fnn.name}")
         return
       }
-      if fn_is_method(fnn) {
-        self.refuse(fnn.loc, "method ${fnn.name}")
+      i = i + 1
+    }
+    // W6b: the layouts and type ids of every class (program order, one
+    // allocator, D186) and the symbols of methods and constructors.
+    self.note_classes
+    if self.failed {
+      return
+    }
+    i = 0
+    while i < fns.size {
+      if fn_is_method(fns[i]) {
+        self.lw_fn_syms[fns[i].emit_name] = self.method_symbol(fns[i])
+      } else {
+        self.lw_fn_syms[fns[i].emit_name] = self.symbol_of(fns[i], fns)
+      }
+      if self.failed {
         return
       }
       i = i + 1
     }
-    i = 0
-    while i < fns.size {
-      self.lw_fn_syms[fns[i].emit_name] = self.symbol_of(fns[i], fns)
-      i = i + 1
-    }
+    self.note_ctor_symbols
     has_main = false
     run_fn: Function? = nil
     i = 0
@@ -196,6 +207,7 @@ pub class MirLower {
       self.lower_function(fns[i])
       i = i + 1
     }
+    self.lower_ctors
     if self.failed || has_main {
       return
     }
@@ -245,6 +257,12 @@ pub class MirLower {
   // The MIR type of t, or -1 after refusing it at loc.
   pub fn ty_at(t: Ty, loc: Location, what: String): Int {
     m = mir_scalar_ty(t)
+    if m < 0 && (t.is_struct || t.is_class) {
+      m = self.value_agg_ty(t, loc)
+      if self.failed {
+        return -1
+      }
+    }
     if m < 0 {
       self.refuse(loc, "${what} of type ${t.show}")
     }
@@ -258,6 +276,19 @@ pub class MirLower {
     x: Array(Int) = []
     self.lw_exits = x
     self.lw_fn_loc = fnn.loc
+    self.lw_self = 0
+    self.lw_self_struct = false
+    self.lw_self_name = ""
+    self.lw_self_ty = nil
+  }
+
+  // The checked signature of a function or a method (methods are in the
+  // symbol table's method list, without their receiver).
+  pub fn sig_of(fnn: Function): FuncSig? {
+    if fn_is_method(fnn) {
+      return self.lw_syms.find_method_emit(fnn.emit_name)
+    }
+    self.lw_syms.find_fn(fnn.emit_name)
   }
 
   pub fn lower_function(fnn: Function) {
@@ -266,7 +297,14 @@ pub class MirLower {
     if got = self.lw_fn_syms.get(fnn.emit_name) {
       sym = got
     }
-    if fs = self.lw_syms.find_fn(fnn.emit_name) {
+    recv = -1
+    if fn_is_method(fnn) && !fnn.type_method {
+      recv = self.method_receiver(fnn)
+      if self.failed {
+        return
+      }
+    }
+    if fs = self.sig_of(fnn) {
       self.lw_main = str_eq(sym, "main")
       params: Array(Int) = []
       ret = self.ty_at(fs.ret, fnn.loc, "a result")
@@ -277,6 +315,9 @@ pub class MirLower {
           self.refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
         }
       } else {
+        if recv >= 0 {
+          params.push(recv)
+        }
         i = 0
         while i < fs.params.size {
           params.push(self.ty_at(fs.params[i], fnn.loc, "a parameter"))
@@ -298,10 +339,15 @@ pub class MirLower {
         self.lw_b.name_param(2, "argv")
         self.main_prologue(fnn.loc)
       } else {
+        base = 0
+        if recv >= 0 {
+          base = 1
+          self.bind_receiver(fnn, recv)
+        }
         i = 0
         while i < fnn.params.size {
-          self.lw_b.name_param(i + 1, fnn.params[i].name)
-          self.lw_vars[self.var_key(fnn.params[i].name, params[i])] = i + 1
+          self.lw_b.name_param(i + 1 + base, fnn.params[i].name)
+          self.lw_vars[self.var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
           i = i + 1
         }
       }

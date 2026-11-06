@@ -56,9 +56,31 @@ pub fn mir_str_builtin_arity(c: String): Int {
   -1
 }
 
-// mty (8.2) for the types a W5 signature can hold; any other type is
-// refused before a symbol needs it, so its shown name is enough here.
+// mty (8.2): scalars by name; a struct or class as `module.Name` (W6b);
+// a union as its members in the checker's order joined by `|` in
+// parentheses; any other type is refused before a symbol or a layout
+// needs it, so its shown name is enough here.
 pub fn mir_mty(t: Ty): String {
+  if t.is_struct || t.is_class {
+    return "${mir_module_part(t.mod_name)}.${t.name}"
+  }
+  if t.is_nil {
+    return "Nil"
+  }
+  if t.is_union {
+    buf = buf_new()
+    buf.push_str("(")
+    i = 0
+    while i < t.members.size {
+      if i > 0 {
+        buf.push_str("|")
+      }
+      buf.push_str(mir_mty(t.members[i]))
+      i = i + 1
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
   if t.is_int {
     return "Int"
   }

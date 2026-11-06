@@ -298,6 +298,36 @@ pub class MTypes {
       return i
     }
     l = MLayout.new(name, kind)
+    if kind == mlk_array() {
+      l.type_id = 1022
+    } else if kind == mlk_buf() {
+      l.type_id = 1021
+    } else if kind == mlk_hash() {
+      l.type_id = 1023
+    }
+    id = self.layouts.size
+    self.layouts.push(l)
+    self.layout_index[name] = id
+    self.set_fields(id, fields, names)
+    id
+  }
+
+  // (Re)computes layout id's fields, offsets, size, alignment, and word
+  // sets (W6b): a class is noted empty first, so that a field of type
+  // `ref %C` can name it (recursive and mutually referring classes), and
+  // filled once every layout its fields hold by value exists.
+  pub fn set_fields(id: Int, fields: Array(Int), names: Array(String)) {
+    l = self.layouts[id]
+    f: Array(Int) = []
+    l.fields = f
+    n: Array(String) = []
+    l.names = n
+    o: Array(Int) = []
+    l.offsets = o
+    r: Array(Int) = []
+    l.ref_words = r
+    w: Array(Int) = []
+    l.root_words = w
     off = 0
     al = 1
     i = 0
@@ -320,17 +350,6 @@ pub class MTypes {
     }
     l.align = al
     l.size = mir_align_up(off, al)
-    if kind == mlk_array() {
-      l.type_id = 1022
-    } else if kind == mlk_buf() {
-      l.type_id = 1021
-    } else if kind == mlk_hash() {
-      l.type_id = 1023
-    }
-    id = self.layouts.size
-    self.layouts.push(l)
-    self.layout_index[name] = id
-    id
   }
 
   pub fn size_of(ty: Int): Int {

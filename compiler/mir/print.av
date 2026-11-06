@@ -321,11 +321,18 @@ pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
     out.push(tm.fixed_bits)
     return out
   }
+  // The chunk count is the old back end's (myc.av emit_one_type_map):
+  // one past the chunk of the highest reference word, at least one; not
+  // the layout's size (W6b: a record whose words past 63 are scalars is
+  // one avant_type_map call in both back ends).
   l = ts.layouts[tm.layout]
-  nwords = (l.size + 7) / 8
-  n = (nwords + 63) / 64
-  if n < 1 {
-    n = 1
+  n = 1
+  j = 0
+  while j < l.ref_words.size {
+    if l.ref_words[j] / 64 + 1 > n {
+      n = l.ref_words[j] / 64 + 1
+    }
+    j = j + 1
   }
   c = 0
   while c < n {
