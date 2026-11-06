@@ -1,0 +1,169 @@
+import harness
+
+// Stage 28 W2: the compiler's in-process LLVM (runtime/avant_llvm.c,
+// compiler/llvm/glue.av) through the internal hook
+// `avant __llvm-obj IN.ll OUT.o [--debug|--release]`. A hand-written .ll
+// that follows the frozen runtime ABI (tests/fixtures/llvm/hello.ll) is
+// compiled in each codegen mode (D174), linked with cc against the runtime
+// objects the way the driver links a program, and run under the GC
+// verifier with a 1 MB nursery; a malformed module and one that fails the
+// verifier must give a clean error (exit 1, message on stderr, no object).
+
+lib glue_test_rt {
+  fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
+}
+
+// pipeline.av runtime_object_names and linker_flags_s: the objects and
+// flags every program is linked with.
+fn runtime_objects(root: String): Array(String) {
+  names: Array(String) = []
+  names.push("avant_rt.o")
+  names.push("avant_str.o")
+  names.push("avant_buf.o")
+  names.push("avant_hash.o")
+  names.push("avant_array.o")
+  names.push("avant_task.o")
+  names.push("avant_wide.o")
+  names.push("avant_codec.o")
+  names.push("avant_io.o")
+  names.push("avant_cov.o")
+  objs: Array(String) = []
+  i = 0
+  while i < names.size {
+    objs.push("${root}/runtime/build/${names[i]}")
+    i = i + 1
+  }
+  objs
+}
+
+fn hook_args(ll: String, obj: String, mode: String): Array(String) {
+  a: Array(String) = []
+  a.push("__llvm-obj")
+  a.push(ll)
+  a.push(obj)
+  if mode.size > 0 {
+    a.push(mode)
+  }
+  a
+}
+
+fn link_args(root: String, obj: String, bin: String): Array(String) {
+  a: Array(String) = []
+  a.push("cc")
+  a.push(obj)
+  objs = runtime_objects(root)
+  i = 0
+  while i < objs.size {
+    a.push(objs[i])
+    i = i + 1
+  }
+  a.push("-pthread")
+  a.push("-lm")
+  a.push("-o")
+  a.push(bin)
+  a
+}
+
+fn run_args(bin: String): Array(String) {
+  a: Array(String) = []
+  a.push("AVANT_GC_VERIFY=1")
+  a.push("AVANT_YOUNG_MB=1")
+  a.push(bin)
+  a
+}
+
+fn mode_tag(mode: String): String {
+  if mode.size == 0 {
+    return "bare"
+  }
+  str_slice(mode, 2, mode.size)
+}
+
+fn log_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+fn test_hello_modes(c: Checks, compiler: String, root: String, dir: String) {
+  hello = "${root}/tests/fixtures/llvm/hello.ll"
+  modes: Array(String) = []
+  modes.push("--debug")
+  modes.push("")
+  modes.push("--release")
+
+  // Three waves of concurrent jobs: compile, link, run.
+  compiles: Array(HJob) = []
+  i = 0
+  while i < modes.size {
+    t = mode_tag(modes[i])
+    compiles.push(HJob.new(compiler, hook_args(hello, "${dir}/hello-${t}.o", modes[i]), "${dir}/hello-${t}.compile.log"))
+    i = i + 1
+  }
+  run_jobs(compiles)
+  links: Array(HJob) = []
+  i = 0
+  while i < modes.size {
+    t = mode_tag(modes[i])
+    links.push(HJob.new("/usr/bin/env", link_args(root, "${dir}/hello-${t}.o", "${dir}/hello-${t}"), "${dir}/hello-${t}.link.log"))
+    i = i + 1
+  }
+  run_jobs(links)
+  runs: Array(HJob) = []
+  i = 0
+  while i < modes.size {
+    t = mode_tag(modes[i])
+    runs.push(HJob.new("/usr/bin/env", run_args("${dir}/hello-${t}"), "${dir}/hello-${t}.run.log"))
+    i = i + 1
+  }
+  run_jobs(runs)
+
+  i = 0
+  while i < modes.size {
+    t = mode_tag(modes[i])
+    c.eq_int(compiles[i].code, 0, "__llvm-obj hello.ll ${t}")
+    c.eq_str(log_text(compiles[i].log), "", "__llvm-obj hello.ll ${t} is silent")
+    c.eq_int(links[i].code, 0, "cc links hello ${t} with the runtime")
+    c.eq_int(runs[i].code, 0, "hello ${t} exits 0 under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
+    c.eq_str(log_text(runs[i].log), "Hello Avant 42\n", "hello ${t} output, verifier silent")
+    i = i + 1
+  }
+}
+
+fn test_bad_module(c: Checks, compiler: String, root: String, dir: String, name: String, status: String, detail: String) {
+  ll = "${root}/tests/fixtures/llvm/${name}.ll"
+  obj = "${dir}/${name}.o"
+  out = "${dir}/${name}.out"
+  err = "${dir}/${name}.err"
+  code = glue_test_rt.avant_process_run_split(compiler, hook_args(ll, obj, "--debug"), out, err)
+  c.eq_int(code, 1, "${name}.ll: exit 1, not a crash")
+  c.eq_str(log_text(out), "", "${name}.ll: nothing on stdout")
+  e = log_text(err)
+  c.expect(str_has(e, "LLVM ${status} failed for ${ll}"), "${name}.ll: stderr names the ${status} failure")
+  c.expect(str_has(e, detail), "${name}.ll: stderr carries LLVM's message")
+  c.expect(!file_exists(obj), "${name}.ll: no object written")
+}
+
+fn test_llvm_glue(c: Checks) {
+  c.suite("tests/cases/test_llvm_glue.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    dir = scratch_dir()
+    test_hello_modes(c, compiler, root, dir)
+    test_bad_module(c, compiler, root, dir, "malformed", "parse", "expected instruction opcode")
+    test_bad_module(c, compiler, root, dir, "unverified", "verify", "Instruction does not dominate all uses")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_llvm_glue(c)
+  c.finish
+}

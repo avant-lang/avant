@@ -36,7 +36,8 @@ fn test_fixed_point(c: Checks) {
     // hello. Checks are recorded afterwards in the order they always had.
     // One self-host link. Nursery is forced on so the long compile is the
     // collector proof, and --debug is the daily backend. The log is also
-    // the compiler-sized DT_TEXTREL check.
+    // the compiler-sized DT_TEXTREL check. The compiler links the
+    // in-process LLVM object (D172), as tools/letters.sh passes it.
     cenv: Array(String) = []
     cenv.push("AVANT_NURSERY=1")
     cenv.push(compiler)
@@ -44,6 +45,7 @@ fn test_fixed_point(c: Checks) {
     cenv.push(main_av)
     cenv.push(bin_c)
     cenv.push("--debug")
+    cenv.push("${root}/runtime/build/avant_llvm.o")
     wave1: Array(HJob) = []
     wave1.push(HJob.new("/usr/bin/env", cenv, clog))
     wave1.push(HJob.new(compiler, dump_args(hello), hello_b))
