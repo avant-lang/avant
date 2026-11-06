@@ -1,0 +1,59 @@
+// String churn on the new back end (Stage 28 W6a): many short-lived heap
+// strings per iteration, some held across collecting calls (locals across
+// the next allocation, a parameter across a loop of allocations, a
+// rolling string kept for the whole run), checked by checksums. The
+// runtime's string helpers allocate under defer and never collect;
+// repeat_byte allocates outside it (runtime/avant_str.c:198-207), so its
+// calls are where the young collections happen. Run under
+// AVANT_GC_VERIFY=1 and AVANT_YOUNG_MB=1 it must print the same.
+
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b - a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn mk(i: Int): String {
+  "item-${i}-" + "${i &* 7}"
+}
+
+// s is held across k allocations.
+fn hold(s: String, k: Int): Int {
+  sum = 0
+  j = 0
+  while j < k {
+    t = "${j}:${s.size}" + repeat_byte(35, j % 5)
+    sum = sum &+ t.size
+    j = j + 1
+  }
+  sum &+ checksum_str(s)
+}
+
+fn main {
+  n = opaque(300000)
+  keep = "start"
+  total = 0
+  i = 0
+  while i < n {
+    a = mk(i)
+    pad = repeat_byte(46, i % 7)
+    b = "${a}|${i}|${i % 13 == 0}"
+    c = b + pad + a
+    total = total &+ checksum_str(c)
+    if c.size != b.size + pad.size + a.size {
+      puts("size mismatch at ${i}")
+    }
+    if i % 1000 == 0 {
+      keep = str_slice(keep + "/" + a, 0, 200)
+      total = total &+ hold(c, 50)
+    }
+    i = i + 1
+  }
+  puts(total)
+  puts(keep.size)
+  puts(keep)
+  puts(checksum_str(keep))
+}

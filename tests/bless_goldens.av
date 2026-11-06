@@ -112,13 +112,24 @@ fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Boo
   true
 }
 
-// The scalar subset's .mir goldens (tests/cases/test_scalars.av).
+// The .mir goldens of the scalar subset (tests/cases/test_scalars.av) and
+// of the string subset (tests/cases/test_strings.av, Stage 28 W6a).
 fn bless_mir_all(compiler: String, root: String): Bool {
   mkdir_p("${root}/tests/goldens/scalars")
   names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_u64"]
   i = 0
   while i < names.size {
     if bless_mir(compiler, root, "tests/fixtures/scalars/${names[i]}.av", "scalars/${names[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/strings")
+  sn = ["churn", "concat", "interp", "members", "trap_index"]
+  i = 0
+  while i < sn.size {
+    if bless_mir(compiler, root, "tests/fixtures/strings/${sn[i]}.av", "strings/${sn[i]}") {
     } else {
       return false
     }

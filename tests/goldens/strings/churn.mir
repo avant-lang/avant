@@ -1,0 +1,296 @@
+module churn
+file 0 "churn.av"
+
+const str.0 = "item-"
+const str.1 = "-"
+const str.2 = ":"
+const str.3 = "start"
+const str.4 = "|"
+const str.5 = "size mismatch at "
+const str.6 = "%s\0A"
+const str.7 = "/"
+const str.8 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_checksum_str(ref str) -> i32 never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_now_us() -> i32 never
+extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_from_bool(i32) -> ref str collects
+extern avant_str_from_int(i32) -> ref str collects
+extern avant_str_repeat_byte(i32, i32) -> ref str collects
+extern avant_str_size(ref str) -> i32 never
+extern avant_str_slice(ref str, i32, i32) -> ref str collects
+extern printf(ref str, ...) -> i32 never
+
+fn av.churn/opaque(_1: i32) -> i32 leaf @churn.av:10:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2: i32
+  let _3 (a): i32
+  let _4: i32
+  let _5 (b): i32
+  let _6: i32
+  let _7: bool
+  let _8: i32
+
+bb0:
+  _2 = call avant_now_us() nocollect   @11:7
+  _3 = copy _2   @11:5
+  _4 = call avant_now_us() nocollect   @12:7
+  _5 = copy _4   @12:5
+  _6 = sub.chk copy _5, copy _3   @13:8
+  _7 = gt copy _6, const i32 1000000000   @13:12
+  branch copy _7, bb1, bb2   @13:3
+
+bb1:
+  _8 = add copy _1, copy _5   @14:14
+  _0 = copy _8   @14:5
+  return   @14:5
+
+bb2:
+  _0 = copy _1   @16:3
+  return   @16:3
+}
+
+fn av.churn/mk(_1: i32) -> ref str frame @churn.av:19:1 {
+  let _0: ref str
+  let _1 (i): i32
+  let _2: ref str slot
+  let _3: ref str slot
+  let _4: ref str slot
+  let _5: i32
+  let _6: ref str slot
+  let _7: ref str
+
+bb0:
+  _2 = zero   @19:1
+  _3 = zero   @19:1
+  _4 = zero   @19:1
+  _6 = zero   @19:1
+  gc.enter   @19:1
+  gc.roots _2, _3, _4, _6   @19:1
+  _2 = call avant_str_from_int(copy _1) collects   @20:11
+  _3 = call avant_str_concat(const str.0, copy _2) collects   @20:3
+  _4 = call avant_str_concat(copy _3, const str.1) collects   @20:3
+  _5 = mul copy _1, const i32 7   @20:23
+  _6 = call avant_str_from_int(copy _5) collects   @20:23
+  _7 = call avant_str_concat(copy _4, copy _6) collects   @20:16
+  _0 = copy _7   @20:16
+  gc.leave   @20:16
+  return   @20:16
+}
+
+fn av.churn/hold(_1: ref str, _2: i32) -> i32 frame @churn.av:24:1 {
+  let _0: i32
+  let _1 (s): ref str slot
+  let _2 (k): i32
+  let _3 (sum): i32
+  let _4 (j): i32
+  let _5: bool
+  let _6: ref str slot
+  let _7: i32
+  let _8: ref str slot
+  let _9: ref str slot
+  let _10: ref str slot
+  let _11: i32
+  let _12: ref str slot
+  let _13: ref str
+  let _14 (t): ref str
+  let _15: i32
+  let _16: i32
+  let _17: i32
+  let _18: i32
+  let _19: i32
+
+bb0:
+  _6 = zero   @24:1
+  _8 = zero   @24:1
+  _9 = zero   @24:1
+  _10 = zero   @24:1
+  _12 = zero   @24:1
+  gc.enter   @24:1
+  gc.roots _1, _6, _8, _9, _10, _12   @24:1
+  _3 = const i32 0   @25:7
+  _4 = const i32 0   @26:5
+  goto bb1   @27:3
+
+bb1:
+  _5 = lt copy _4, copy _2   @27:11
+  branch copy _5, bb2, bb3   @27:3
+
+bb2:
+  _6 = call avant_str_from_int(copy _4) collects   @28:12
+  _7 = call avant_str_size(copy _1) nocollect   @28:18
+  _8 = call avant_str_from_int(copy _7) collects   @28:18
+  _9 = call avant_str_concat(copy _6, const str.2) collects   @28:9
+  _10 = call avant_str_concat(copy _9, copy _8) collects   @28:9
+  _11 = rem copy _4, const i32 5   @28:46
+  _12 = call avant_str_repeat_byte(const i32 35, copy _11) collects   @28:28
+  _13 = call avant_str_concat(copy _10, copy _12) collects   @28:26
+  _14 = copy _13   @28:7
+  _15 = call avant_str_size(copy _14) nocollect   @29:19
+  _16 = add copy _3, copy _15   @29:15
+  _3 = copy _16   @29:9
+  _17 = add copy _4, const i32 1   @30:11
+  _4 = copy _17   @30:7
+  goto bb1   @27:3
+
+bb3:
+  _18 = call avant_checksum_str(copy _1) nocollect   @32:10
+  _19 = add copy _3, copy _18   @32:7
+  _0 = copy _19   @32:7
+  gc.leave   @32:7
+  return   @32:7
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @churn.av:35:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: i32
+  let _4 (n): i32
+  let _5 (keep): ref str slot
+  let _6 (total): i32
+  let _7 (i): i32
+  let _8: bool
+  let _9: ref str
+  let _10 (a): ref str slot
+  let _11: i32
+  let _12: ref str
+  let _13 (pad): ref str slot
+  let _14: ref str slot
+  let _15: i32
+  let _16: bool
+  let _17: i32
+  let _18: ref str slot
+  let _19: ref str slot
+  let _20: ref str slot
+  let _21: ref str slot
+  let _22: ref str
+  let _23 (b): ref str slot
+  let _24: ref str slot
+  let _25: ref str
+  let _26 (c): ref str slot
+  let _27: i32
+  let _28: i32
+  let _29: i32
+  let _30: i32
+  let _31: i32
+  let _32: i32
+  let _33: i32
+  let _34: i32
+  let _35: bool
+  let _36: ref str
+  let _37: i32
+  let _38: bool
+  let _39: ref str slot
+  let _40: ref str slot
+  let _41: ref str
+  let _42: i32
+  let _43: i32
+  let _44: i32
+  let _45: i32
+  let _46: i32
+
+bb0:
+  _5 = zero   @35:1
+  _10 = zero   @35:1
+  _13 = zero   @35:1
+  _14 = zero   @35:1
+  _18 = zero   @35:1
+  _19 = zero   @35:1
+  _20 = zero   @35:1
+  _21 = zero   @35:1
+  _23 = zero   @35:1
+  _24 = zero   @35:1
+  _26 = zero   @35:1
+  _39 = zero   @35:1
+  _40 = zero   @35:1
+  gc.enter   @35:1
+  gc.roots _2, _5, _10, _13, _14, _18, _19, _20, _21, _23, _24, _26, _39, _40   @35:1
+  call __avant_type_maps() nocollect   @35:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @35:1
+  _3 = call av.churn/opaque(const i32 300000) nocollect   @36:7
+  _4 = copy _3   @36:5
+  _5 = const str.3   @37:8
+  _6 = const i32 0   @38:9
+  _7 = const i32 0   @39:5
+  goto bb1   @40:3
+
+bb1:
+  _8 = lt copy _7, copy _4   @40:11
+  branch copy _8, bb2, bb3   @40:3
+
+bb2:
+  _9 = call av.churn/mk(copy _7) collects   @41:9
+  _10 = copy _9   @41:7
+  _11 = rem copy _7, const i32 7   @42:29
+  _12 = call avant_str_repeat_byte(const i32 46, copy _11) collects   @42:11
+  _13 = copy _12   @42:9
+  _14 = call avant_str_from_int(copy _7) collects   @43:17
+  _15 = rem copy _7, const i32 13   @43:24
+  _16 = eq copy _15, const i32 0   @43:29
+  _17 = cast copy _16 to i32   @43:29
+  _18 = call avant_str_from_bool(copy _17) collects   @43:29
+  _19 = call avant_str_concat(copy _10, const str.4) collects   @43:9
+  _20 = call avant_str_concat(copy _19, copy _14) collects   @43:9
+  _21 = call avant_str_concat(copy _20, const str.4) collects   @43:9
+  _22 = call avant_str_concat(copy _21, copy _18) collects   @43:9
+  _23 = copy _22   @43:7
+  _24 = call avant_str_concat(copy _23, copy _13) collects   @44:11
+  _25 = call avant_str_concat(copy _24, copy _10) collects   @44:17
+  _26 = copy _25   @44:7
+  _27 = call avant_checksum_str(copy _26) nocollect   @45:22
+  _28 = add copy _6, copy _27   @45:19
+  _6 = copy _28   @45:11
+  _29 = call avant_str_size(copy _26) nocollect   @46:9
+  _30 = call avant_str_size(copy _23) nocollect   @46:19
+  _31 = call avant_str_size(copy _13) nocollect   @46:30
+  _32 = add.chk copy _30, copy _31   @46:25
+  _33 = call avant_str_size(copy _10) nocollect   @46:39
+  _34 = add.chk copy _32, copy _33   @46:36
+  _35 = ne copy _29, copy _34   @46:15
+  branch copy _35, bb4, bb5   @46:5
+
+bb3:
+  call printf(const str.8, copy _6) nocollect   @55:3
+  _45 = call avant_str_size(copy _5) nocollect   @56:12
+  call printf(const str.8, copy _45) nocollect   @56:3
+  call printf(const str.6, copy _5) nocollect   @57:3
+  _46 = call avant_checksum_str(copy _5) nocollect   @58:8
+  call printf(const str.8, copy _46) nocollect   @58:3
+  _0 = const i32 0   @35:1
+  gc.leave   @35:1
+  return   @35:1
+
+bb4:
+  _36 = call avant_str_cat_i32(const str.5, copy _7) collects   @47:12
+  call printf(const str.6, copy _36) nocollect   @47:7
+  goto bb5   @46:5
+
+bb5:
+  _37 = rem copy _7, const i32 1000   @49:10
+  _38 = eq copy _37, const i32 0   @49:17
+  branch copy _38, bb6, bb7   @49:5
+
+bb6:
+  _39 = call avant_str_concat(copy _5, const str.7) collects   @50:29
+  _40 = call avant_str_concat(copy _39, copy _10) collects   @50:35
+  _41 = call avant_str_slice(copy _40, const i32 0, const i32 200) collects   @50:14
+  _5 = copy _41   @50:12
+  _42 = call av.churn/hold(copy _26, const i32 50) collects   @51:24
+  _43 = add copy _6, copy _42   @51:21
+  _6 = copy _43   @51:13
+  goto bb7   @49:5
+
+bb7:
+  _44 = add copy _7, const i32 1   @53:11
+  _7 = copy _44   @53:7
+  goto bb1   @40:3
+}

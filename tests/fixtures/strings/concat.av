@@ -1,0 +1,66 @@
+// Concatenation and comparison on the new back end (Stage 28 W6a): `+`
+// (an empty side returns the other side itself), `==` and `!=` on String
+// and Bytes between literals and heap strings, chains, strings passed to
+// and returned from functions, and an operand snapshotted before a value
+// switch that reassigns it.
+
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b - a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn twice(s: String): String {
+  s + s
+}
+
+fn same(a: String, b: String): Bool {
+  a == b
+}
+
+fn join3(a: String, b: String, c: String): String {
+  a + "," + b + "," + c
+}
+
+fn main {
+  n = opaque(5)
+  a = "ab"
+  b = "cd"
+  c = a + b
+  puts(c)
+  puts(c + "" == c)
+  puts("" + c)
+  puts(twice(c))
+  puts(join3(a, b, "${n}"))
+  puts(c == "abcd")
+  puts(c != "abcd")
+  puts(c == a)
+  puts("abcd" == c)
+  puts(same("${n}", "5"))
+  puts(same(a, b))
+  puts(a + b == c)
+  puts(c.bytes == "abcd".bytes)
+  puts(c.bytes != "abce".bytes)
+  acc = ""
+  i = 0
+  while i < opaque(6) {
+    acc = acc + "${i}"
+    i = i + 1
+  }
+  puts(acc)
+  s = "x"
+  r = s + switch n {
+    case 5 {
+      s = "changed"
+      "!"
+    }
+    else {
+      "?"
+    }
+  }
+  puts(r)
+  puts(s)
+}
