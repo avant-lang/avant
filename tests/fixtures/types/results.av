@@ -1,0 +1,85 @@
+// The builtins whose result is T? on the new back end (Stage 28 W7a):
+// String.get, Bytes.get, Array.get, Buf.get (bounded reads), index_of,
+// min, max, hash reads (`h[k]`, get, get_slice, get_concat), env_get,
+// file_read, and the bump constructor C.bump (nil when the bump fails).
+
+class Pt {
+  x: Int
+  tag: String = "pt"
+
+  fn initialize(x: Int) {
+    self.x = x
+  }
+}
+
+fn main {
+  ys: Array(Int) = [4, 9, 2]
+  puts(ys.get(1) ?? -1)
+  puts(ys.get(5) ?? -1)
+  puts(ys.get(-1) ?? -1)
+  puts(ys.index_of(9) ?? -1)
+  puts(ys.index_of(8) ?? -1)
+  puts(ys.min ?? -1)
+  puts(ys.max ?? -1)
+  e0: Array(Int) = []
+  puts(e0.min ?? -1)
+  puts(e0.get(0) ?? -1)
+  fs: Array(Float64) = [2.5, 0.5]
+  puts(fs.min ?? 0.0)
+  puts(fs.index_of(0.5) ?? -1)
+  ss: Array(String) = ["b", "a", "c"]
+  puts(ss.get(0) ?? "none")
+  puts(ss.get(3) ?? "none")
+  puts(ss.min ?? "none")
+  puts(ss.max ?? "none")
+  puts(ss.index_of("c") ?? -1)
+  ps: Array(Pt) = [Pt.new(6)]
+  if p0 = ps.get(0) {
+    puts(p0.x)
+  }
+  puts("hey".get(0) ?? -1)
+  puts("hey".get(3) ?? -1)
+  puts("hey".bytes.get(2) ?? -1)
+  bf = buf_new()
+  bf.push_str("AB")
+  puts(bf.get(1) ?? -1)
+  puts(bf.get(2) ?? -1)
+  hs = Hash(String, Int).new
+  hs["a"] = 1
+  puts(hs["a"] ?? -1)
+  puts(hs["z"] ?? -1)
+  puts(hs.get("a") ?? -2)
+  hv = Hash(String, String).new
+  hv["k"] = "vv"
+  puts(hv["k"] ?? "none")
+  puts(hv["q"] ?? "none")
+  puts(hv.get_slice("xkx", 1, 2) ?? "none")
+  puts(hv.get_slice("xkx", 0, 2) ?? "none")
+  hi = Hash(Int, Int).new
+  hi[3] = 33
+  puts(hi[3] ?? 0)
+  puts(hi[4] ?? 0)
+  hc = Hash(String, Int).new
+  hc["ab"] = 5
+  puts(hc.get_concat("a", "b") ?? 0)
+  puts(hc.get_concat("b", "a") ?? 0)
+  puts(env_get("AVANT_W7A_SURELY_UNSET") ?? "unset")
+  if t = file_read("/nonexistent/avant-w7a") {
+    puts(t)
+  } else {
+    puts("no file")
+  }
+  // Whether a bump succeeds depends on the nursery (always nil under
+  // AVANT_NURSERY=0), so only what a success holds is printed.
+  bad = 0
+  i = 0
+  while i < 100 {
+    if pb = Pt.bump(i) {
+      if pb.x != i || pb.tag.size != 2 {
+        bad += 1
+      }
+    }
+    i += 1
+  }
+  puts(bad)
+}

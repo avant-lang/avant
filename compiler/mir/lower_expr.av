@@ -144,6 +144,11 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
           if at.is_array || at.is_buf {
             return lw.lower_seq_index(e)
           }
+          if at.is_hash {
+            ka: Array(Expr) = []
+            ka.push(ix)
+            return lw.lower_hash_read(e, arr, at, "get", ka)
+          }
         }
       }
     }
@@ -157,15 +162,15 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   if k == ex_hash_new() {
     return lw.lower_hash_new(e)
   }
+  if k == ex_nil() {
+    return lw.lw_b.c_i32(0)
+  }
+  if k == ex_try() {
+    return lw.lower_try(e)
+  }
   what = "this expression"
-  if k == ex_index() {
-    what = "a hash read (its result is V?: unions, W7)"
-  } else if k == ex_nil() {
-    what = "nil (unions, W7)"
-  } else if k == ex_try() {
-    what = "try (unions, W7)"
-  } else if k == ex_lambda() {
-    what = "a lambda (closures, W7)"
+  if k == ex_lambda() {
+    what = "a lambda (closures, W7b)"
   }
   lw.refuse(e.loc, what)
   zero
@@ -223,7 +228,7 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
 
 pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
   if e.fn_ref {
-    lw.refuse(e.loc, "a function value (W7)")
+    lw.refuse(e.loc, "a function value (W7b)")
     return lw.lw_b.c_i32(0)
   }
   if e.implicit_field || lw.is_struct_self(e) {
@@ -297,12 +302,16 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   if e.resolved.size > 0 {
-    lw.refuse(e.loc, "an operator method (W7)")
-    return zero
+    return lw.lower_op_method(e)
   }
   if e.op == tk_question_question() {
-    lw.refuse(e.loc, "?? (unions, W7)")
-    return zero
+    if l0 = e.left {
+      if r0 = e.right {
+        if t0 = e.ty {
+          return lw.lower_coalesce(l0, r0, t0, e.loc)
+        }
+      }
+    }
   }
   if e.op == tk_amp_amp() || e.op == tk_pipe_pipe() {
     return lw.lower_logical(e)
