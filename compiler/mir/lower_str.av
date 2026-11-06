@@ -230,6 +230,9 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
 // `s.strip()`), with recv the receiver and args the arguments.
 pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
+  if got = lw.str_heap_member(e, recv, rt, name, args) {
+    return got
+  }
   if rt.is_bytes && str_eq(name, "slice") && args.size == 2 {
     // builtins.av:1820-1844: stop, start, then the receiver.
     ops = lw.lower_args_rev(args)

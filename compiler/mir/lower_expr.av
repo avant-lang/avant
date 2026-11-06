@@ -141,19 +141,25 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
           if mir_is_str_ty(at) {
             return lw.lower_str_index(e, arr, ix)
           }
+          if at.is_array || at.is_buf {
+            return lw.lower_seq_index(e)
+          }
         }
       }
     }
   }
+  if k == ex_array() {
+    return lw.lower_array_lit(e)
+  }
+  if k == ex_array_new() {
+    return lw.lower_array_new(e)
+  }
+  if k == ex_hash_new() {
+    return lw.lower_hash_new(e)
+  }
   what = "this expression"
   if k == ex_index() {
-    what = "indexing (heap values, W6)"
-  } else if k == ex_struct() {
-    what = "a struct literal (W6)"
-  } else if k == ex_array() || k == ex_array_new() {
-    what = "an array (heap values, W6)"
-  } else if k == ex_hash_new() {
-    what = "a hash (heap values, W6)"
+    what = "a hash read (its result is V?: unions, W7)"
   } else if k == ex_nil() {
     what = "nil (unions, W7)"
   } else if k == ex_try() {

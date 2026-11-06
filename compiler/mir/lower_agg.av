@@ -92,6 +92,9 @@ pub fn (lw: MirLower) note_classes {
 // The MIR type of a value of struct or class type t (a local, a
 // parameter, a result): `%S` or `ref %C`; -1 after refusing.
 pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
+  if t.is_array || t.is_hash || t.is_buf {
+    return lw.container_ty(t, loc)
+  }
   if t.is_class {
     l = lw.lw_m.types.layout_named(mir_mty(t))
     if l < 0 {
@@ -322,6 +325,15 @@ pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
 // a temporary, whose place is returned.
 pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   b = lw.lw_b
+  if e.kind == ex_index() {
+    if arr = e.left {
+      if at = arr.ty {
+        if at.is_array || at.is_buf {
+          return lw.index_place(e)
+        }
+      }
+    }
+  }
   if e.kind == ex_name() && !e.fn_ref {
     if e.implicit_field {
       if st = lw.lw_self_ty {

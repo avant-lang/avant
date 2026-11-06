@@ -67,6 +67,22 @@ pub fn mir_mty(t: Ty): String {
   if t.is_nil {
     return "Nil"
   }
+  // W6c: the containers (8.2: `Array(T)`, `Hash(K,V)`, `Buf`).
+  if t.is_array {
+    if e = t.inner {
+      return "Array(${mir_mty(e)})"
+    }
+  }
+  if t.is_hash {
+    if k = t.key {
+      if v = t.val {
+        return "Hash(${mir_mty(k)},${mir_mty(v)})"
+      }
+    }
+  }
+  if t.is_buf {
+    return "Buf"
+  }
   if t.is_union {
     buf = buf_new()
     buf.push_str("(")

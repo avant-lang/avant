@@ -272,10 +272,17 @@ pub fn driver_dump(args: Array(String)) {
 // mode, extra objects, and -l flags.
 fn llvm_job_of(job: LinkJob): LlvmJob {
   lj = LlvmJob.new(job.codegen)
-  // Stage 28 W6b: programs use the call forms of allocation and the
-  // barrier (mir.md 5.5, 5.6); the inline fast paths are W6c's, which
-  // turns this back on with its proofs.
-  lj.inline_fast = false
+  // Stage 28 W6c: the inline allocation and barrier fast paths (mir.md
+  // 5.5, 5.6) are on in every mode. AVANT_LLVM_CALL_FORMS=1 (internal,
+  // like AVANT_BACKEND, D176) emits their call forms instead, so the
+  // suite can prove both forms (the program-level twin of __mir-build
+  // --call-forms).
+  lj.inline_fast = true
+  if v = env_get("AVANT_LLVM_CALL_FORMS") {
+    if str_eq(v, "1") {
+      lj.inline_fast = false
+    }
+  }
   i = 0
   while i < job.objects.size {
     lj.objects.push(job.objects[i])

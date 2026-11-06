@@ -23,7 +23,9 @@
 //    collect while they hold their arguments (with AVANT_NURSERY=0 the
 //    outermost avant_gc_defer_enter runs a full collection that relies on
 //    the caller having rooted them, runtime/avant_rt.c:3384-3407; the old
-//    back end spilled every such argument into a root, audit 4.3.2).
+//    back end spilled every such argument into a root, audit 4.3.2), or to
+//    a call of an external of class quiet (W6c: its outermost defer can
+//    collect under AVANT_NURSERY=0 the same way).
 //    Then the prologue of 5.1 (zero every non-parameter slot, gc.enter,
 //    gc.roots of every slot in local order) and a gc.leave before each
 //    return.
@@ -31,6 +33,7 @@
 import source
 import mir.types
 import mir.ir
+import mir.runtime
 import mir.flow
 
 fn mir_in_set(cand: Hash(String, Int), name: String): Bool {
@@ -154,6 +157,18 @@ fn mir_calls_external(m: MModule, st: MStmt): Bool {
   true
 }
 
+// Whether st calls an external of class quiet (a nocollect call in a
+// module that is not shared).
+fn mir_calls_quiet(m: MModule, st: MStmt): Bool {
+  if !mir_calls_external(m, st) {
+    return false
+  }
+  if e = m.ext(st.callee) {
+    return e.cls == mcc_quiet()
+  }
+  false
+}
+
 // The slot set of a frame function (rules a, b, c above), as one flag per
 // local.
 pub fn mir_slot_need(m: MModule, f: MFunc): Array(Bool) {
@@ -195,6 +210,20 @@ pub fn mir_slot_need(m: MModule, f: MFunc): Array(Bool) {
             }
             i = i + 1
           }
+        }
+      } else if st.kind == msk_call() && mir_calls_quiet(m, st) {
+        // (c) also for a quiet row (W6c): it collects nothing with the
+        // nursery on, but its outermost avant_gc_defer_enter runs a full
+        // collection under AVANT_NURSERY=0 (section 14, 8.8), and the
+        // old back end roots these arguments (builtins.av emit_hash_set).
+        i = 0
+        while i < st.args.size {
+          if p = st.args[i].place {
+            if p.proj.size == 0 {
+              need[p.local] = true
+            }
+          }
+          i = i + 1
         }
       }
       if st.kind == msk_assign() {
