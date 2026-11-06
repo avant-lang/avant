@@ -347,24 +347,48 @@ fn test_std_http(c: Checks) {
       }
       i = i + 1
     }
-    evwant: Array(String) = []
-    evwant.push("open")
-    evwant.push("close=1000:bye")
-    evwant.push("open")
-    evwant.push("close=1002:")
-    evwant.push("open")
-    evwant.push("close=1009:")
-    evwant.push("open")
-    evwant.push("close=1007:")
+    // Four connections, each one open and one close event. A client's
+    // reconnect can log its open before the server logs the previous
+    // connection's close, so the order across connections is not fixed:
+    // count the opens and require each close code exactly once.
+    evgot: Array(String) = []
     i = 0
-    while i < evwant.size {
+    while i < 8 {
       if line = events.recv {
-        c.eq_str(line, evwant[i], "ws event ${i}")
+        evgot.push(line)
       } else {
         c.expect(false, "ws event ${i} present")
       }
       i = i + 1
     }
+    opens = 0
+    i = 0
+    while i < evgot.size {
+      if evgot[i] == "open" {
+        opens = opens + 1
+      }
+      i = i + 1
+    }
+    c.eq_int(opens, 4, "ws event opens")
+    closes: Array(String) = []
+    closes.push("close=1000:bye")
+    closes.push("close=1002:")
+    closes.push("close=1009:")
+    closes.push("close=1007:")
+    k = 0
+    while k < closes.size {
+      seen = 0
+      i = 0
+      while i < evgot.size {
+        if evgot[i] == closes[k] {
+          seen = seen + 1
+        }
+        i = i + 1
+      }
+      c.eq_int(seen, 1, "ws event ${closes[k]} once")
+      k = k + 1
+    }
+    c.eq_int(evgot.size, opens + 4, "ws events are opens and the four closes")
   } else {
     c.expect(false, "listen for ws test")
   }
