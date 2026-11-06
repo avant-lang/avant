@@ -130,10 +130,10 @@ fn ll_declarations(e: LlEmit, out: Buf) {
       if ll_cabi_needed(e.ts, x.sig) {
         out.push_str(ll_cabi_declare(e.ts, name, x.sig))
       } else {
-        out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn))
+        out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn, e.m.rt.attrs_of(name)))
       }
     } else if r = e.m.rt.find(name) {
-      out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn))
+      out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn, r.attrs))
     }
     i = i + 1
   }
@@ -168,8 +168,9 @@ fn ll_insert_sorted(xs: Array(String), s: String) {
 }
 
 // `declare <ret> @name(<params>)`: `zeroext` on a C boolean (14, 8.5);
-// the traps are `noreturn nounwind cold` (11.1).
-fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool): String {
+// the traps are `noreturn nounwind cold` (11.1); a call-table row's
+// attributes follow (W9b: the pure readers, runtime.av mir_rt_attrs).
+fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String): String {
   s = ts.sigs[sig]
   buf = buf_new()
   buf.push_str("declare ${ll_c_type(ts, s.ret)} ${ll_sym(name)}(")
@@ -190,6 +191,9 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool): String {
   buf.push_str(")")
   if noreturn {
     buf.push_str(" noreturn nounwind cold")
+  }
+  if attrs.size > 0 {
+    buf.push_str(" ${attrs}")
   }
   buf.push_str("\n")
   buf.to_s
