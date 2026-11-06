@@ -53,6 +53,17 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
 // emit_wrap_union): unchanged unless want is a union that got is not; a
 // member is wrapped with its tag; a union is re-tagged.
 pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOperand {
+  if want.is_ptr && got.is_ptr && !lw.failed {
+    // W8a: Ptr(A) as Ptr(B) (the checker unifies pointees): a pointer
+    // cast when the MIR types differ (`ptr %L` and `ptr`).
+    pw = lw.ty_at(want, loc, "a pointer")
+    pg = lw.ty_at(got, loc, "a pointer")
+    if lw.failed || pw == pg {
+      return o
+    }
+    lw.at(loc)
+    return lw.tmp(pw, lw.lw_b.rv_cast(o, pw))
+  }
   if !want.is_union || got.same_as(want) || lw.failed {
     return o
   }
@@ -108,6 +119,16 @@ pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty)): Array
   out: Array(MOperand) = []
   i = 0
   while i < args.size {
+    if i < params.size {
+      a0 = args[i]
+      if t0 = a0.ty {
+      } else if !params[i].is_union && (a0.kind == ex_int() || a0.kind == ex_float() || a0.kind == ex_bool() || a0.kind == ex_string()) {
+        // W8a: a parameter default the checker spliced in untyped (`caseless:
+        // Bool = false`) takes its parameter's type, as a field default does
+        // (lower_coerced).
+        a0.ty = params[i]
+      }
+    }
     o = lw.lower_expr(args[i])
     if i < params.size {
       if t = args[i].ty {
@@ -304,6 +325,7 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
           fv = lw.coerce(lw.unwrap(src, uty, fail, e.loc), fail, ret, e.loc)
           dummy2 = b.assign(b.pl(0), b.rv_use(fv))
         }
+        lw.unpin_all
         b.ret
         b.at(bok)
         return lw.unwrap(src, uty, success, e.loc)

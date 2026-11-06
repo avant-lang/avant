@@ -1,0 +1,120 @@
+// The `pin x { ... }` statement (Stage 28 W8a, audit 4.6 (1)): the value
+// is pinned for the block and unpinned at its end, before a `return`
+// inside it, and on `break` and `next` out of the loop that holds the
+// pin (only the pins opened inside that loop); nested pins of one value
+// share the runtime's entry; a pinned value stays valid while
+// collections run around it. The runtime's pin count shows each step.
+// (A pinned `fn` value and a return inside a pin whose end is also
+// reached are in fresh.av: the old back end cannot compile the first and
+// leaks the pin on the second.)
+
+lib rt {
+  fun avant_pin_count: Int
+}
+
+class Box {
+  label: String
+  n: Int
+
+  fn initialize(label: String, n: Int) {
+    self.label = label
+    self.n = n
+  }
+}
+
+// Allocates n strings and keeps the last 500 alive (a rolling window),
+// so young collections copy live data while the program's pins and C
+// pointers are held.
+fn churn(n: Int): Int {
+  t = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "pin churn ${i}" + " padding padding"
+    keep.push(s)
+    if keep.size > 500 {
+      keep = []
+    }
+    t = t + s.size
+    i = i + 1
+  }
+  t + keep.size
+}
+
+fn early(s: String, base: Int): Int {
+  pin(s) {
+    if s.size > 3 {
+      return rt.avant_pin_count() - base
+    }
+    puts("short")
+  }
+  -1
+}
+
+fn main {
+  base = rt.avant_pin_count()
+  s = "hello" + "world"
+  pin(s) {
+    puts(rt.avant_pin_count() - base)
+    pin(s) {
+      puts(rt.avant_pin_count() - base)
+    }
+    puts(rt.avant_pin_count() - base)
+    puts(churn(30000))
+    puts(s)
+  }
+  puts(rt.avant_pin_count() - base)
+  puts(early("longer", base))
+  puts(rt.avant_pin_count() - base)
+
+  b = Box.new("boxed" + "!", 3)
+  total = 0
+  i = 0
+  while i < 6 {
+    pin(b) {
+      if i == 1 {
+        i = i + 1
+        continue
+      }
+      if i == 4 {
+        break
+      }
+      inner = "i${i}"
+      pin(inner) {
+        total = total + inner.size + b.n
+      }
+    }
+    i = i + 1
+  }
+  puts(total)
+  puts(rt.avant_pin_count() - base)
+
+  // A pin outside a loop survives break/next of an inner loop.
+  pin(b) {
+    j = 0
+    while j < 5 {
+      j = j + 1
+      if j == 2 {
+        continue
+      }
+      if j == 4 {
+        break
+      }
+    }
+    puts(rt.avant_pin_count() - base)
+  }
+  puts(rt.avant_pin_count() - base)
+
+  n = 0
+  k = 0
+  while k < 20000 {
+    t = "probe-${k}"
+    pin(t) {
+      n = n + t.size
+    }
+    k = k + 1
+  }
+  puts(n)
+  puts(rt.avant_pin_count() - base)
+  puts(b.label)
+}

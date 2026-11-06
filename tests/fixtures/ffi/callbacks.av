@@ -1,0 +1,102 @@
+// Callbacks from C (Stage 28 W8a, audit 2.10): named functions and
+// lambdas that capture nothing passed to C as `fn` parameters (each
+// through its `#cb` thunk, the target opening its own frame), with Int,
+// Bool, and Float64 parameters and results, a void callback, the same
+// target passed twice (one thunk), libc's qsort with Avant comparators
+// over C memory, and callbacks that allocate enough to collect while C
+// is on the stack. Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib cb {
+  struct CInt {
+    v: Int
+  }
+  fun ffi_apply(f: fn(Int): Int, x: Int): Int
+  fun ffi_apply2(f: fn(Int, Int): Int, a: Int, b: Int): Int
+  fun ffi_count_if(pred: fn(Int): Bool, n: Int): Int
+  fun ffi_fold(f: fn(Float64, Float64): Float64, seed: Float64, n: Int): Float64
+  fun ffi_repeat(f: fn(Int): Int, n: Int): Int
+  fun ffi_each(f: fn(Int), n: Int)
+  fun qsort(base: Ptr(CInt), nmemb: Int64, size: Int64, compar: fn(Ptr(CInt), Ptr(CInt)): Int)
+  fun malloc(n: Int64): Ptr(CInt)
+  fun free(p: Ptr(CInt))
+}
+
+class Log {
+  lines: Array(String)
+  total: Int
+
+  fn initialize {
+    l: Array(String) = []
+    self.lines = l
+    self.total = 0
+  }
+}
+
+fn double_it(x: Int): Int {
+  x * 2
+}
+
+fn is_even(x: Int): Bool {
+  x % 2 == 0
+}
+
+fn sub(a: Int, b: Int): Int {
+  a - b
+}
+
+fn avg(acc: Float64, x: Float64): Float64 {
+  (acc + x) / 2.0
+}
+
+// Allocates on every call: strings and a small object graph, so the
+// young generation fills while C's loop is on the stack.
+fn noisy(i: Int): Int {
+  s = "item-${i}-" + "with-some-padding-text"
+  a: Array(String) = []
+  a.push(s)
+  a.push(s + "!")
+  a[1].size - s.size + (s.size % 3)
+}
+
+fn shout(i: Int) {
+  if i % 250 == 0 {
+    puts("each ${i}")
+  }
+}
+
+fn by_v(a: Ptr(CInt), b: Ptr(CInt)): Int {
+  if a.v < b.v {
+    return -1
+  }
+  if a.v > b.v {
+    return 1
+  }
+  0
+}
+
+fn main {
+  puts(cb.ffi_apply(double_it, 21))
+  puts(cb.ffi_apply(double_it, -4))
+  puts(cb.ffi_apply({ |x: Int| x + 1000 }, 5))
+  puts(cb.ffi_apply2(sub, 10, 3))
+  puts(cb.ffi_apply2({ |a: Int, b: Int| a * b }, 6, 7))
+  puts(cb.ffi_count_if(is_even, 10))
+  puts(cb.ffi_count_if({ |x: Int| x > 6 }, 10))
+  puts(cb.ffi_fold(avg, 64.0, 4))
+  puts(cb.ffi_fold({ |acc: Float64, x: Float64| acc + x * 0.5 }, 1.0, 5))
+  cb.ffi_each(shout, 1000)
+  keep = Log.new
+  keep.lines.push("before")
+  puts(cb.ffi_repeat(noisy, 20000))
+  keep.lines.push("after")
+  puts(keep.lines[0])
+  puts(keep.lines[1])
+  puts(cb.ffi_repeat({ |i: Int| ("x" + "${i}").size }, 5000))
+  buf = cb.malloc(16i64)
+  buf.v = 9
+  cb.qsort(buf, 1i64, 4i64, by_v)
+  puts(buf.v)
+  cb.qsort(buf, 1i64, 4i64, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v })
+  puts(buf.v)
+  cb.free(buf)
+}

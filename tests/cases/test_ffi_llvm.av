@@ -1,0 +1,250 @@
+import harness
+import backends
+
+// Stage 28 W8a: Avant's C interface on the new back end
+// (AVANT_BACKEND=llvm, D176; stages/stage28/mir.md W8a): `lib`/`fun`
+// calls with every conversion, `Ptr(T)`, C layouts, callbacks from C,
+// pins, `--cc` and `--lib`, and the std modules that need no thread.
+// (a) Every program of the ffi subset compiles under both back ends
+// (--debug, with its suite flags) and the two programs' stdout, stderr,
+// and exit status are equal (D184); (b) the new back end's program
+// prints the same under AVANT_GC_VERIFY=1, under AVANT_YOUNG_MB=1, under
+// both, and under AVANT_NURSERY=0, and the verifier reports nothing;
+// (c) `avant dump` under AVANT_BACKEND=llvm prints exactly
+// tests/goldens/ffi/<name>.mir (D171); (d) the programs the old back end
+// gets wrong (byval.av: structs by value to C, C3; fresh.av: C20, C21;
+// expected differences, D196) print their known output on the new back
+// end, plain and under the four GC environments; (e) the std module test
+// programs (test_std_zlib, base64, json, regex) compiled by the new back
+// end pass.
+
+fn golden_names: Array(String) {
+  ["byval", "callbacks", "calls", "fresh", "layout", "pins"]
+}
+
+// The programs compared with the old back end.
+fn both_progs: Array(String) {
+  xs: Array(String) = []
+  names = ["calls", "callbacks", "layout", "pins", "http_local"]
+  i = 0
+  while i < names.size {
+    xs.push("tests/fixtures/ffi/${names[i]}.av")
+    i = i + 1
+  }
+  ex = ["add", "digest", "json", "layout", "sqrt", "zlib"]
+  i = 0
+  while i < ex.size {
+    xs.push("examples/${ex[i]}.av")
+    i = i + 1
+  }
+  xs
+}
+
+// The programs only the new back end runs correctly, with their output.
+fn new_progs: Array(String) {
+  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av"]
+}
+
+fn new_wants: Array(String) {
+  ["42\n7\n9\n4\n6\n1\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n"]
+}
+
+// The std module tests, compiled by the new back end and run.
+fn std_progs: Array(String) {
+  ["tests/cases/test_std_zlib.av", "tests/cases/test_std_base64.av", "tests/cases/test_std_json.av", "tests/cases/test_std_regex.av"]
+}
+
+fn gc_envs: Array(String) {
+  ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
+}
+
+// The suite's compile flags of a program (tools/backend-diff.sh flags_of).
+fn flags_of(rel: String, root: String): Array(String) {
+  fl: Array(String) = []
+  if str_has(rel, "tests/fixtures/ffi/") {
+    fl.push("--cc")
+    fl.push("${root}/tests/fixtures/ffi/ffi.c")
+  } else if str_has(rel, "examples/add.av") {
+    fl.push("--cc")
+    fl.push("${root}/examples/c/add.c")
+  } else if str_has(rel, "examples/layout.av") {
+    fl.push("--cc")
+    fl.push("${root}/examples/c/layout.c")
+  } else if str_has(rel, "examples/zlib.av") {
+    fl.push("--lib")
+    fl.push("z")
+  }
+  fl
+}
+
+fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
+  progs = both_progs()
+  np = new_progs()
+  sp = std_progs()
+  gn = golden_names()
+
+  // Wave 1: compiles (both back ends, or the new one only), and the dumps.
+  jobs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    fl = flags_of(progs[i], root)
+    jobs.push(compile_job_flags("", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log", fl))
+    jobs.push(compile_job_flags("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log", fl))
+    i = i + 1
+  }
+  i = 0
+  while i < np.size {
+    k = key_of(np[i])
+    jobs.push(compile_job_flags("AVANT_BACKEND=llvm", compiler, "${root}/${np[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log", flags_of(np[i], root)))
+    i = i + 1
+  }
+  i = 0
+  while i < sp.size {
+    k = key_of(sp[i])
+    jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${sp[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
+    i = i + 1
+  }
+  i = 0
+  while i < gn.size {
+    a: Array(String) = []
+    a.push("dump")
+    a.push("${root}/tests/fixtures/ffi/${gn[i]}.av")
+    jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
+    i = i + 1
+  }
+  run_waves(jobs)
+  i = 0
+  while i < progs.size {
+    c.eq_int(jobs[2 * i].code, 0, "${progs[i]}: compiles under myc")
+    c.eq_int(jobs[2 * i + 1].code, 0, "${progs[i]}: compiles under llvm")
+    i = i + 1
+  }
+  base = 2 * progs.size
+  i = 0
+  while i < np.size + sp.size {
+    p = ""
+    if i < np.size {
+      p = np[i]
+    } else {
+      p = sp[i - np.size]
+    }
+    c.eq_int(jobs[base + i].code, 0, "${p}: compiles under llvm")
+    i = i + 1
+  }
+  base = base + np.size + sp.size
+  i = 0
+  while i < gn.size {
+    j = jobs[base + i]
+    c.eq_int(j.code, 0, "${gn[i]}: dump under llvm exits 0")
+    want = "(no golden)"
+    if t = file_read("${root}/tests/goldens/ffi/${gn[i]}.mir") {
+      want = t
+    }
+    c.eq_str(log_text(j.log), want, "tests/fixtures/ffi/${gn[i]}.av: the MIR dump is tests/goldens/ffi/${gn[i]}.mir")
+    i = i + 1
+  }
+
+  // Wave 2: every program, then the new ones under each GC environment.
+  envs = gc_envs()
+  per = 2 + envs.size
+  runs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    runs.push(run_job(dir, "${k}.old", "${k}.a"))
+    runs.push(run_job(dir, "${k}.new", "${k}.b"))
+    e = 0
+    while e < envs.size {
+      runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
+      e = e + 1
+    }
+    i = i + 1
+  }
+  nbase = runs.size
+  i = 0
+  while i < np.size {
+    k = key_of(np[i])
+    runs.push(run_job(dir, "${k}.new", "${k}.b"))
+    e = 0
+    while e < envs.size {
+      runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
+      e = e + 1
+    }
+    i = i + 1
+  }
+  sbase = runs.size
+  i = 0
+  while i < sp.size {
+    k = key_of(sp[i])
+    // From the suite's own directory, not dir: the regex test's child
+    // compiles use AVANT_COMPILER, which may be relative.
+    sa: Array(String) = []
+    sa.push("-c")
+    sa.push("exec env AVANT_ROOT=${root} ${dir}/${k}.new > ${dir}/${k}.b.out 2> ${dir}/${k}.b.err < /dev/null")
+    runs.push(HJob.new("/bin/sh", sa, "${dir}/${k}.b.sh.log"))
+    i = i + 1
+  }
+  run_waves(runs)
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    k = key_of(p)
+    want_out = log_text("${dir}/${k}.a.out")
+    want_err = log_text("${dir}/${k}.a.err")
+    want_code = runs[per * i].code
+    c.eq_int(runs[per * i + 1].code, want_code, "${p}: the same exit status")
+    c.eq_str(log_text("${dir}/${k}.b.out"), want_out, "${p}: the same stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), want_err, "${p}: the same stderr")
+    e = 0
+    while e < envs.size {
+      c.eq_int(runs[per * i + 2 + e].code, want_code, "${p} under ${envs[e]}: the same exit status")
+      c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the same stdout")
+      c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the same stderr (no verifier report)")
+      e = e + 1
+    }
+    i = i + 1
+  }
+  wants = new_wants()
+  i = 0
+  while i < np.size {
+    p = np[i]
+    k = key_of(p)
+    at = nbase + (1 + envs.size) * i
+    c.eq_int(runs[at].code, 0, "${p} (new back end only): exit 0")
+    c.eq_str(log_text("${dir}/${k}.b.out"), wants[i], "${p} (new back end only): the known stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), "", "${p} (new back end only): no stderr")
+    e = 0
+    while e < envs.size {
+      c.eq_int(runs[at + 1 + e].code, 0, "${p} under ${envs[e]}: exit 0")
+      c.eq_str(log_text("${dir}/${k}.g${e}.out"), wants[i], "${p} under ${envs[e]}: the known stdout")
+      c.eq_str(log_text("${dir}/${k}.g${e}.err"), "", "${p} under ${envs[e]}: no stderr (no verifier report)")
+      e = e + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < sp.size {
+    c.eq_int(runs[sbase + i].code, 0, "${sp[i]} built by the llvm back end: passes")
+    i = i + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_ffi_llvm.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_ffi_llvm(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

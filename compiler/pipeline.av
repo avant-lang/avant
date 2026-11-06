@@ -27,6 +27,7 @@ import mir.lower_union
 import mir.lower_generic
 import mir.lower_fn
 import mir.lower_block
+import mir.lower_ffi
 
 pub class IrBox {
   text: String = ""
@@ -535,13 +536,12 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
     return IrBox.new("", false)
   }
   backend = backend_choice()
-  if !str_eq(backend, "myc") {
-    if !str_eq(backend, "llvm") {
-      diag_puts("AVANT_BACKEND must be myc or llvm, not ${backend}")
-      return IrBox.new("", false)
-    }
-    return compile_program_llvm(src, program, checker.symbol_table())
+  if !str_eq(backend, "myc") && !str_eq(backend, "llvm") {
+    diag_puts("AVANT_BACKEND must be myc or llvm, not ${backend}")
+    return IrBox.new("", false)
   }
+  // The literal regex patterns re2c can match (D150), for both back ends
+  // (the llvm one since W8a).
   plan = re2c_plan(program)
   if plan.count > 0 {
     obj = compile_re2c(plan.src)
@@ -550,6 +550,9 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
       program.re2c_groups = plan.groups
       program.re2c_obj = obj
     }
+  }
+  if str_eq(backend, "llvm") {
+    return compile_program_llvm(src, program, checker.symbol_table())
   }
   map = cov_map
   if map.size == 0 && coverage_wanted() {
@@ -596,6 +599,7 @@ pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable)
   }
   box = IrBox.new("", true)
   box.mir = low.module
+  box.re2c_obj = program.re2c_obj
   fill_std_link(program, box)
   box
 }

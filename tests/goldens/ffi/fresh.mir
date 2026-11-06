@@ -1,0 +1,264 @@
+module fresh
+file 0 "fresh.av"
+
+layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %box(Array(Int)) = record { 0 v: ref %Array(Int) }  size 8 align 8 id 1
+layout %env(av.fresh/main#lam1) = record { 0 xs: ref %box(Array(Int)) }  size 8 align 8 id 2
+layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
+layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i32) -> i32 }  size 16 align 8
+
+const str.0 = "short "
+const str.1 = "%s\0A"
+const str.2 = "fresh churn "
+const str.3 = " padding padding"
+const str.4 = "ab"
+const str.5 = "c"
+const str.6 = "%d\0A"
+const str.7 = "abcd"
+const str.8 = "e"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %box(Array(Int)) stride 0 bits [0x1]
+typemap 2 %env(av.fresh/main#lam1) stride 0 bits [0x1]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_push_i32(ref, i32) -> void collects
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_pin(ref) -> void never
+extern avant_pin_count() -> i32 collects
+extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_size(ref str) -> i32 never
+extern avant_unpin(ref) -> void never
+extern printf(ref str, ...) -> i32 never
+
+fn av.fresh/first_long(_1: ref str) -> i32 frame @fresh.av:15:1 {
+  let _0: i32
+  let _1 (s): ref str slot
+  let _2: ref str slot
+  let _3: i32
+  let _4: bool
+  let _5: ref str
+
+bb0:
+  _2 = zero   @15:1
+  gc.enter   @15:1
+  gc.roots _1, _2   @15:1
+  _2 = copy _1   @16:3
+  call avant_pin(copy _2) nocollect   @16:3
+  _3 = call avant_str_size(copy _1) nocollect   @17:9
+  _4 = gt copy _3, const i32 3   @17:15
+  branch copy _4, bb1, bb2   @17:5
+
+bb1:
+  _0 = const i32 1   @18:7
+  call avant_unpin(copy _2) nocollect   @18:7
+  gc.leave   @18:7
+  return   @18:7
+
+bb2:
+  _5 = call avant_str_concat(const str.0, copy _1) collects   @20:10
+  call printf(const str.1, copy _5) nocollect   @20:5
+  call avant_unpin(copy _2) nocollect   @16:3
+  _0 = const i32 0   @22:3
+  gc.leave   @22:3
+  return   @22:3
+}
+
+fn av.fresh/churn(_1: i32) -> i32 frame @fresh.av:28:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2 (t): i32
+  let _3: ref %elems(String) slot
+  let _4: ref %Array(String)
+  let _5 (keep): ref %Array(String) slot
+  let _6 (i): i32
+  let _7: bool
+  let _8: ref str slot
+  let _9: ref str
+  let _10 (s): ref str slot
+  let _11: i32
+  let _12: bool
+  let _13: ref %elems(String) slot
+  let _14: ref %Array(String)
+  let _15: i32
+  let _16: i32
+  let _17: i32
+  let _18: i32
+  let _19: i32
+
+bb0:
+  _3 = zero   @28:1
+  _5 = zero   @28:1
+  _8 = zero   @28:1
+  _10 = zero   @28:1
+  _13 = zero   @28:1
+  gc.enter   @28:1
+  gc.roots _3, _5, _8, _10, _13   @28:1
+  _2 = const i32 0   @29:5
+  _3 = call avant_alloc(const u64 0, const u32 65535) collects   @30:25
+  _4 = call avant_alloc(const u64 16, const u32 1022) collects   @30:25
+  barrier copy _4   @30:25
+  (*_4).0 = copy _3   @30:25
+  (*_4).1 = const i32 0   @30:25
+  (*_4).2 = const i32 0   @30:25
+  _5 = copy _4   @30:3
+  _6 = const i32 0   @31:5
+  goto bb1   @32:3
+
+bb1:
+  _7 = lt copy _6, copy _1   @32:11
+  branch copy _7, bb2, bb3   @32:3
+
+bb2:
+  _8 = call avant_str_cat_i32(const str.2, copy _6) collects   @33:9
+  _9 = call avant_str_concat(copy _8, const str.3) collects   @33:28
+  _10 = copy _9   @33:7
+  call avant_array_push_ptr(copy _5, copy _10, const u32 65535) collects   @34:9
+  _11 = copy (*_5).1   @35:12
+  _12 = gt copy _11, const i32 500   @35:18
+  branch copy _12, bb4, bb5   @35:5
+
+bb3:
+  _18 = copy (*_5).1   @41:11
+  _19 = add.chk copy _2, copy _18   @41:5
+  _0 = copy _19   @41:5
+  gc.leave   @41:5
+  return   @41:5
+
+bb4:
+  _13 = call avant_alloc(const u64 0, const u32 65535) collects   @36:14
+  _14 = call avant_alloc(const u64 16, const u32 1022) collects   @36:14
+  barrier copy _14   @36:14
+  (*_14).0 = copy _13   @36:14
+  (*_14).1 = const i32 0   @36:14
+  (*_14).2 = const i32 0   @36:14
+  _5 = copy _14   @36:12
+  goto bb5   @35:5
+
+bb5:
+  _15 = call avant_str_size(copy _10) nocollect   @38:14
+  _16 = add.chk copy _2, copy _15   @38:11
+  _2 = copy _16   @38:7
+  _17 = add copy _6, const i32 1   @39:11
+  _6 = copy _17   @39:7
+  goto bb1   @32:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:44:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3 (xs): ref %box(Array(Int)) slot
+  let _4: i32
+  let _5 (base): i32
+  let _6: ref str
+  let _7: i32
+  let _8: i32
+  let _9: i32
+  let _10: ref str
+  let _11: i32
+  let _12: i32
+  let _13: i32
+  let _14: ref %elems(Int) slot
+  let _15: ref %Array(Int)
+  let _16: ref %Array(Int) slot
+  let _17: ref %env(av.fresh/main#lam1)
+  let _18: %fn(Int):Int
+  let _19 (f): %fn(Int):Int slot
+  let _20: %fn(Int):Int
+  let _21: ref slot
+  let _22: i32
+  let _23: i32
+  let _24: i32
+  let _25: %fn(Int):Int
+  let _26: i32
+  let _27: i32
+  let _28: i32
+
+bb0:
+  _3 = zero   @44:1
+  _14 = zero   @44:1
+  _16 = zero   @44:1
+  _19 = zero   @44:1
+  _21 = zero   @44:1
+  gc.enter   @44:1
+  gc.roots _2, _3, _14, _16, _19, _21   @44:1
+  call __avant_type_maps() nocollect   @44:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @44:1
+  _3 = zero   @44:1
+  _4 = call avant_pin_count() collects   @45:12
+  _5 = copy _4   @45:8
+  _6 = call avant_str_concat(const str.4, const str.5) collects   @46:24
+  _7 = call av.fresh/first_long(copy _6) collects   @46:8
+  call printf(const str.6, copy _7) nocollect   @46:3
+  _8 = call avant_pin_count() collects   @47:10
+  _9 = sub.chk copy _8, copy _5   @47:29
+  call printf(const str.6, copy _9) nocollect   @47:3
+  _10 = call avant_str_concat(const str.7, const str.8) collects   @48:26
+  _11 = call av.fresh/first_long(copy _10) collects   @48:8
+  call printf(const str.6, copy _11) nocollect   @48:3
+  _12 = call avant_pin_count() collects   @49:10
+  _13 = sub.chk copy _12, copy _5   @49:29
+  call printf(const str.6, copy _13) nocollect   @49:3
+  _3 = call avant_alloc(const u64 8, const u32 1) collects   @51:3
+  _14 = call avant_alloc(const u64 0, const u32 0) collects   @51:20
+  _15 = call avant_alloc(const u64 16, const u32 1022) collects   @51:20
+  barrier copy _15   @51:20
+  (*_15).0 = copy _14   @51:20
+  (*_15).1 = const i32 0   @51:20
+  (*_15).2 = const i32 0   @51:20
+  barrier copy _3   @51:3
+  (*_3).0 = copy _15   @51:3
+  _16 = copy (*_3).0   @52:3
+  call avant_array_push_i32(copy _16, const i32 1) collects   @52:5
+  _17 = call avant_alloc(const u64 8, const u32 2) collects   @53:7
+  barrier copy _17   @53:7
+  (*_17).0 = copy _3   @53:7
+  _18 = fnval %fn(Int):Int (copy _17, const fn av.fresh/main#lam1)   @53:7
+  _19 = copy _18   @53:5
+  _20 = copy _19   @54:3
+  _21 = copy _20.0   @54:3
+  call avant_pin(copy _21) nocollect   @54:3
+  _22 = call avant_pin_count() collects   @55:12
+  _23 = sub.chk copy _22, copy _5   @55:31
+  call printf(const str.6, copy _23) nocollect   @55:5
+  _24 = call av.fresh/churn(const i32 20000) collects   @56:10
+  call printf(const str.6, copy _24) nocollect   @56:5
+  _25 = copy _19   @57:10
+  _26 = call indirect copy _25(const i32 41) collects   @57:10
+  call printf(const str.6, copy _26) nocollect   @57:5
+  call avant_unpin(copy _21) nocollect   @54:3
+  _27 = call avant_pin_count() collects   @59:10
+  _28 = sub.chk copy _27, copy _5   @59:29
+  call printf(const str.6, copy _28) nocollect   @59:3
+  _0 = const i32 0   @44:1
+  gc.leave   @44:1
+  return   @44:1
+}
+
+fn av.fresh/main#lam1(_1: ref, _2: i32) -> i32 leaf @fresh.av:53:7 {
+  let _0: i32
+  let _1 (env): ref
+  let _2 (x): i32
+  let _3 (env): ref %env(av.fresh/main#lam1)
+  let _4: ref %box(Array(Int))
+  let _5: ref %Array(Int)
+  let _6: i32
+  let _7: i32
+
+bb0:
+  _3 = cast copy _1 to ref %env(av.fresh/main#lam1)   @53:7
+  _4 = copy (*_3).0   @53:22
+  _5 = copy (*_4).0   @53:22
+  _6 = copy (*_5).1   @53:24
+  _7 = add.chk copy _2, copy _6   @53:20
+  _0 = copy _7   @53:20
+  return   @53:20
+}

@@ -22,7 +22,7 @@ import mir.lower_expr
 // 16-372): each is refused by name. The string builtins are in
 // lower_str.av.
 pub fn mir_other_builtin(name: String): Bool {
-  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "process_run", "process_run_out"]
+  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast"]
   i = 0
   while i < names.size {
     if str_eq(names[i], name) {
@@ -73,6 +73,11 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   if e.type_call {
+    if str_eq(e.resolved, "Regex__compile") && e.args.size >= 2 {
+      if got0 = lw.lower_re2c_compile(e) {
+        return got0
+      }
+    }
     if got = lw.lower_named_call(e) {
       return got
     }
@@ -83,8 +88,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return lw.lower_indirect(e)
   }
   if e.lib_name.size > 0 {
-    lw.refuse(e.loc, "a lib/fun call (FFI, W8)")
-    return zero
+    return lw.lower_lib_call(e)
   }
   if bl = e.block {
     // W7b: the block forms of the Array and Hash builtins (lower_block.av);
@@ -96,6 +100,11 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   if recv = e.receiver {
+    if recv.kind == ex_name() && str_eq(recv.ident, "String") && str_eq(e.callee, "from_utf8") && e.args.size == 1 {
+      // W8a: String.from_utf8(bytes) (builtins.av emit_from_utf8): the
+      // runtime's string with an ok flag, as String?.
+      return lw.lower_opt_cstr(e, "avant_str_from_utf8")
+    }
     if rt = recv.ty {
       if str_eq(e.callee, "or") && rt.is_nilable && e.args.size == 1 {
         if t = e.ty {
@@ -178,6 +187,17 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   }
   if got2 = lw.io_builtin(e, c) {
     return got2
+  }
+  if (str_eq(c, "process_run") && e.args.size == 2) || (str_eq(c, "process_run_out") && e.args.size == 3) {
+    // W8a (calls.av emit_process_run, emit_process_run_out): the path,
+    // the arguments array, the output path, left to right (the old back
+    // end evaluates them right to left).
+    ops = lw.lower_args(e.args)
+    if lw.failed {
+      return zero
+    }
+    lw.at(e.loc)
+    return lw.call_to(mt_i32(), "avant_${c}", ops)
   }
   if mir_other_builtin(c) {
     lw.refuse(e.loc, "the builtin ${c}")
@@ -268,6 +288,13 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
           lw.refuse(e.loc, "the method .${e.ident}")
           return lw.lw_b.c_i32(0)
         }
+        return lw.lower_place_read(e)
+      }
+    }
+  }
+  if obj2 = e.object {
+    if ot2 = obj2.ty {
+      if (ot2.is_ptr || ot2.is_clayout) && !e.method_call {
         return lw.lower_place_read(e)
       }
     }

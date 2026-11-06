@@ -1,0 +1,60 @@
+// What only the new back end gets right (Stage 28 W8a; D196 expected
+// differences, checked by tests/cases/test_ffi_llvm.av, skipped by the
+// differential):
+// 1. A `return` inside a pin block whose end is also reachable: the old
+//    back end forgets every open pin at the return (myc.av emit_ret), so
+//    the path that falls through the block never unpins (C20).
+// 2. A pinned `fn` value: the old back end fails to compile it (myc:
+//    `unknown transform from Fn_Int__Int to ptr<void>`); the new one pins
+//    the closure's environment (C21).
+
+lib rt {
+  fun avant_pin_count: Int
+}
+
+fn first_long(s: String): Int {
+  pin(s) {
+    if s.size > 3 {
+      return 1
+    }
+    puts("short ${s}")
+  }
+  0
+}
+
+// Allocates n strings and keeps the last 500 alive (a rolling window),
+// so young collections copy live data while the program's pins and C
+// pointers are held.
+fn churn(n: Int): Int {
+  t = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "fresh churn ${i}" + " padding padding"
+    keep.push(s)
+    if keep.size > 500 {
+      keep = []
+    }
+    t = t + s.size
+    i = i + 1
+  }
+  t + keep.size
+}
+
+fn main {
+  base = rt.avant_pin_count()
+  puts(first_long("ab" + "c"))
+  puts(rt.avant_pin_count() - base)
+  puts(first_long("abcd" + "e"))
+  puts(rt.avant_pin_count() - base)
+
+  xs: Array(Int) = []
+  xs.push(1)
+  f = { |x: Int| x + xs.size }
+  pin(f) {
+    puts(rt.avant_pin_count() - base)
+    puts(churn(20000))
+    puts(f(41))
+  }
+  puts(rt.avant_pin_count() - base)
+}

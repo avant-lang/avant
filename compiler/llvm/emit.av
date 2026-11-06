@@ -22,6 +22,7 @@ import mir.ir
 import mir.print
 import llvm.emit_core
 import llvm.emit_gc
+import llvm.emit_cabi
 
 pub fn ll_datalayout: String {
   "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
@@ -125,7 +126,11 @@ fn ll_declarations(e: LlEmit, out: Buf) {
   while i < names.size {
     name = names[i]
     if x = e.m.ext(name) {
-      out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn))
+      if ll_cabi_needed(e.ts, x.sig) {
+        out.push_str(ll_cabi_declare(e.ts, name, x.sig))
+      } else {
+        out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn))
+      }
     } else if r = e.m.rt.find(name) {
       out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn))
     }
@@ -172,7 +177,7 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool): String {
     if i > 0 {
       buf.push_str(", ")
     }
-    buf.push_str(ll_c_type(ts, s.params[i]))
+    buf.push_str(ll_c_param(ts, s.params[i]))
     i = i + 1
   }
   if s.varargs {
@@ -193,6 +198,14 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool): String {
 fn ll_c_type(ts: MTypes, ty: Int): String {
   if ty == mt_bool() {
     return "zeroext i1"
+  }
+  ll_type_text(ts, ty)
+}
+
+// A parameter type at the C boundary: the attribute follows the type.
+fn ll_c_param(ts: MTypes, ty: Int): String {
+  if ty == mt_bool() {
+    return "i1 zeroext"
   }
   ll_type_text(ts, ty)
 }
@@ -238,13 +251,24 @@ fn ll_function(e: LlEmit, f: MFunc) {
   if f.external {
     linkage = ""
   }
-  e.out.push_str("define ${linkage}${e.llt(s.ret)} ${ll_sym(f.symbol)}(")
+  // W8a: a C callback thunk (`#cb`, 8.2) has the C boundary's types
+  // (`zeroext` on Bool, section 14 8.5).
+  c_abi = str_ends(f.symbol, "#cb")
+  rtext = e.llt(s.ret)
+  if c_abi {
+    rtext = ll_c_type(e.ts, s.ret)
+  }
+  e.out.push_str("define ${linkage}${rtext} ${ll_sym(f.symbol)}(")
   i = 0
   while i < s.params.size {
     if i > 0 {
       e.out.push_str(", ")
     }
-    e.out.push_str("${e.llt(s.params[i])} %a${i + 1}")
+    ptext = e.llt(s.params[i])
+    if c_abi {
+      ptext = ll_c_param(e.ts, s.params[i])
+    }
+    e.out.push_str("${ptext} %a${i + 1}")
     i = i + 1
   }
   e.out.push_str(") #0 {\nalloca:\n")
@@ -361,6 +385,12 @@ fn ll_call(e: LlEmit, st: MStmt) {
     }
     s = e.ts.sigs[sig]
     ret = s.ret
+    if ll_cabi_needed(e.ts, sig) || ll_cabi_needed(e.ts, x.sig) {
+      // W8a, C3: an aggregate at the C boundary (emit_cabi.av); the
+      // destination is written there.
+      ll_cabi_call(e, st, x.name, sig)
+      return
+    }
     if x.alloc {
       result = ll_alloc(e, x.name, st.args)
     } else {

@@ -1,0 +1,118 @@
+// Avant structs passed to and returned from C by value (Stage 28 W8a,
+// C3, section 14 8.6): the new back end follows the SysV x86-64 C ABI
+// (compiler/llvm/emit_cabi.av): 8 and 16 bytes of INTEGER and SSE
+// eightbytes in registers (one `iN` or `double` per eightbyte), 12 bytes
+// with a partial eightbyte, 24 bytes in memory (`byval`, and `sret` for a
+// result), a String inside the struct (a reference passed while the
+// struct's local is rooted), two Bools packed in one eightbyte, and a
+// pair that no longer fits the registers left after five Ints (memory).
+// The old back end passes LLVM aggregates, which is not the C ABI: its
+// answers are wrong (an expected difference, D196; checked by
+// tests/cases/test_ffi_llvm.av, skipped by the differential).
+// Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+struct P2 {
+  a: Int
+  b: Int
+}
+
+struct V2 {
+  x: Float64
+  y: Float64
+}
+
+struct Mix {
+  a: Int
+  d: Float64
+}
+
+struct Tri {
+  a: Int
+  b: Int
+  c: Int
+}
+
+struct Big {
+  a: Int64
+  b: Int64
+  c: Int64
+}
+
+struct Named {
+  n: Int
+  s: String
+}
+
+struct Flags {
+  a: Bool
+  b: Bool
+  n: Int
+}
+
+struct Q2 {
+  x: Int64
+  y: Int64
+}
+
+lib bv {
+  fun ffi_p2_sum(p: P2): Int
+  fun ffi_p2_make(a: Int, b: Int): P2
+  fun ffi_v2_dot(a: V2, b: V2): Float64
+  fun ffi_v2_scale(v: V2, k: Float64): V2
+  fun ffi_mix(m: Mix): Float64
+  fun ffi_mix_make(a: Int, d: Float64): Mix
+  fun ffi_tri(t: Tri): Int
+  fun ffi_tri_make(a: Int): Tri
+  fun ffi_big_sum(b: Big): Int64
+  fun ffi_big_make(a: Int64): Big
+  fun ffi_named(n: Named): Int
+  fun ffi_flags(f: Flags): Int
+  fun ffi_spill(a: Int, b: Int, c: Int, d: Int, e: Int, q: Q2, f: Int): Int64
+}
+
+class Keep {
+  big: Big
+  name: Named
+
+  fn initialize(big: Big, name: Named) {
+    self.big = big
+    self.name = name
+  }
+}
+
+fn main {
+  puts(bv.ffi_p2_sum(P2 { a: 4, b: 2 }))
+  p = bv.ffi_p2_make(7, 9)
+  puts(p.a)
+  puts(p.b)
+  puts(bv.ffi_v2_dot(V2 { x: 1.5, y: 2.0 }, V2 { x: 4.0, y: -1.0 }))
+  v = bv.ffi_v2_scale(V2 { x: 3.0, y: 0.5 }, 2.0)
+  puts(v.x)
+  puts(v.y)
+  puts(bv.ffi_mix(Mix { a: 3, d: 0.25 }))
+  m = bv.ffi_mix_make(5, 1.5)
+  puts(m.a)
+  puts(m.d)
+  puts(bv.ffi_tri(Tri { a: 1, b: 2, c: 3 }))
+  t = bv.ffi_tri_make(4)
+  puts(t.a + t.b + t.c)
+  puts(bv.ffi_big_sum(Big { a: 1i64, b: 10i64, c: 100i64 }))
+  g = bv.ffi_big_make(5i64)
+  puts(g.a)
+  puts(g.b)
+  puts(g.c)
+  puts(bv.ffi_named(Named { n: 3, s: "four" + "teen" }))
+  puts(bv.ffi_flags(Flags { a: true, b: false, n: 5 }))
+  puts(bv.ffi_flags(Flags { a: false, b: true, n: 1 }))
+  puts(bv.ffi_spill(1, 2, 3, 4, 5, Q2 { x: 6i64, y: 7i64 }, 8))
+  k = Keep.new(bv.ffi_big_make(2i64), Named { n: 1, s: "kept" })
+  puts(bv.ffi_big_sum(k.big))
+  puts(bv.ffi_named(k.name))
+  i = 0
+  acc = 0
+  while i < 2000 {
+    acc = acc + bv.ffi_named(Named { n: i % 7, s: "s${i}" + "-x" })
+    i = i + 1
+  }
+  puts(acc)
+}

@@ -100,6 +100,20 @@ pub fn mir_mty(t: Ty): String {
   if t.is_buf {
     return "Buf"
   }
+  // W8a: `Ptr(T)` (8.2); a C layout or an opaque C type as `module.Name`
+  // when the resolver gave it a module, else its bare name.
+  if t.is_ptr {
+    if pe = t.inner {
+      return "Ptr(${mir_mty(pe)})"
+    }
+    return "Ptr(Void)"
+  }
+  if t.is_clayout || t.is_opaque {
+    if t.mod_name.size > 0 {
+      return "${mir_module_part(t.mod_name)}.${t.name}"
+    }
+    return t.name
+  }
   if t.is_union {
     buf = buf_new()
     buf.push_str("(")
