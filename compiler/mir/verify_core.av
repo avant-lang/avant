@@ -1,0 +1,837 @@
+// The MIR verifier's core (Stage 28 W4; stages/stage28/mir.md 6): the
+// error, the verifier state, structure (V1-V3), types (V4-V8, V10), the
+// barrier rule (V13), call marks (V18), the module (V20), allocations
+// (V21). verify_gc.av: V9, V11, V12, V14-V17, V19. verify.av: the driver.
+// A function that fails V1-V3 skips the dataflow rules (its CFG or its
+// locals cannot be trusted); a place or operand whose type cannot be
+// computed reports its own rule once and silences the rules that need it.
+
+import source
+import location
+import diagnostic
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.build
+import mir.print
+import mir.mangle
+import mir.flow
+
+// One verifier error: the rule, the function (or `module NAME`), the
+// block and statement index (index -1 is the terminator; block -1 is the
+// function or module itself), the MIR's location, and the message.
+pub class MVerr {
+  rule: Int = 0
+  func: String = ""
+  block: Int = -1
+  index: Int = -1
+  loc: MLoc
+  message: String = ""
+
+  fn initialize(rule: Int, func: String, block: Int, index: Int, loc: MLoc, message: String) {
+    self.rule = rule
+    self.func = func
+    self.block = block
+    self.index = index
+    self.loc = loc
+    self.message = message
+  }
+
+  pub fn where: String {
+    if self.block < 0 {
+      return self.func
+    }
+    at = "term"
+    if self.index >= 0 {
+      at = "${self.index}"
+    }
+    "${self.func}: bb${self.block}[${at}]"
+  }
+
+  // `V<n>: <function>: bb<k>[<i>]: <message>` (6).
+  pub fn show: String {
+    "V${self.rule}: ${self.where}: ${self.message}"
+  }
+
+  // The compiler's diagnostic form (diagnostic.av), at the MIR's location.
+  pub fn render(m: MModule): String {
+    at_loc = Location.new(mir_file_name(m, self.loc.file), self.loc.line, self.loc.col, 0)
+    CompileError.new(at_loc, "V${self.rule}", "${self.where}: ${self.message}").render
+  }
+}
+
+pub fn mir_rule_runs(rule: Int, stage: Int): Bool {
+  if stage == mst_final() {
+    return rule != 9
+  }
+  rule <= 10 || rule == 13 || rule == 14 || rule == 18 || rule == 20 || rule == 21
+}
+
+pub class MVerifier {
+  m: MModule
+  ts: MTypes
+  stage: Int = 0
+  errs: Array(MVerr)
+  func: MFunc
+  bad: Bool = false
+  via_ptr: Bool = false
+
+  fn initialize(m: MModule, stage: Int) {
+    self.m = m
+    self.ts = m.types
+    self.stage = stage
+    e: Array(MVerr) = []
+    self.errs = e
+    self.func = MFunc.new("", 0, mir_loc(0, 0, 0))
+  }
+
+  pub fn on(rule: Int): Bool {
+    mir_rule_runs(rule, self.stage)
+  }
+
+  pub fn err(rule: Int, b: Int, i: Int, loc: MLoc, msg: String) {
+    if self.on(rule) {
+      self.errs.push(MVerr.new(rule, self.func.symbol, b, i, loc, msg))
+    }
+  }
+
+  pub fn ferr(rule: Int, msg: String) {
+    self.err(rule, -1, -1, self.func.loc, msg)
+  }
+
+  pub fn merr(rule: Int, msg: String) {
+    if self.on(rule) {
+      self.errs.push(MVerr.new(rule, "module ${self.m.name}", -1, -1, mir_loc(0, 0, 0), msg))
+    }
+  }
+
+  pub fn tx(ty: Int): String {
+    self.ts.text(ty)
+  }
+
+  pub fn local_ty(l: Int): Int {
+    if self.func.valid_local(l) {
+      return self.func.locals[l].ty
+    }
+    return -1
+  }
+
+  // ---- places and operands (V4, V6, V20)
+
+  // The type of p, or -1 after a V4 report. self.via_ptr tells whether the
+  // last deref went through a ptr (then `addr` is a `ptr`, 4.3).
+  pub fn place_ty(p: MPlace, b: Int, i: Int, loc: MLoc): Int {
+    self.via_ptr = false
+    ty = self.local_ty(p.local)
+    if ty < 0 {
+      return -1
+    }
+    k = 0
+    while k < p.proj.size {
+      pr = p.proj[k]
+      mt = self.ts.get(ty)
+      if pr.kind == mpk_deref() {
+        if self.ts.is_refkind(ty) && mt.layout >= 0 {
+          ty = self.ts.agg(mt.layout)
+          self.via_ptr = false
+        } else if mt.kind == mk_ptr() && mt.pointee >= 0 && mt.pointee != mt_void() {
+          ty = mt.pointee
+          self.via_ptr = true
+        } else if mt.kind == mk_addr() && mt.pointee >= 0 {
+          ty = mt.pointee
+          self.via_ptr = false
+        } else {
+          self.err(4, b, i, loc, "cannot deref _${p.local} of type ${mt.text}")
+          return -1
+        }
+      } else if pr.kind == mpk_field() {
+        if mt.kind != mk_agg() || self.ts.layouts[mt.layout].kind == mlk_elems() {
+          self.err(4, b, i, loc, "field ${pr.field} of non-layout type ${mt.text}")
+          return -1
+        }
+        l = self.ts.layouts[mt.layout]
+        if pr.field < 0 || pr.field >= l.fields.size {
+          self.err(4, b, i, loc, "field ${pr.field} out of range for %${l.name}")
+          return -1
+        }
+        ty = l.fields[pr.field]
+      } else {
+        if o = pr.index {
+          it = self.op_ty(o, b, i, loc)
+          if it >= 0 && it != mt_i32() && it != mt_i64() {
+            self.err(4, b, i, loc, "index operand of type ${self.tx(it)}")
+            return -1
+          }
+        }
+        if mt.kind == mk_agg() && self.ts.layouts[mt.layout].kind == mlk_elems() {
+          ty = self.ts.layouts[mt.layout].fields[0]
+        } else if !(k > 0 && p.proj[k - 1].kind == mpk_deref() && self.via_ptr) {
+          self.err(4, b, i, loc, "index on ${mt.text}")
+          return -1
+        }
+      }
+      k = k + 1
+    }
+    ty
+  }
+
+  pub fn op_ty(o: MOperand, b: Int, i: Int, loc: MLoc): Int {
+    if p = o.place {
+      return self.place_ty(p, b, i, loc)
+    }
+    if o.kind == mok_str() {
+      if o.sid < 0 || o.sid >= self.m.strs.size {
+        self.err(20, b, i, loc, "const str.${o.sid} does not exist")
+        return -1
+      }
+      return mt_str()
+    }
+    if o.kind == mok_fn() {
+      if g = self.m.func(o.text) {
+        return self.ts.code(g.sig)
+      }
+      self.err(20, b, i, loc, "const fn ${o.text} names no function")
+      return -1
+    }
+    if o.kind == mok_null() {
+      if !self.ts.is_refkind(o.ty) && !self.ts.is_ptr(o.ty) {
+        self.err(6, b, i, loc, "null constant of type ${self.tx(o.ty)}")
+        return -1
+      }
+    } else if o.kind == mok_int() && !self.ts.is_int(o.ty) {
+      self.err(6, b, i, loc, "integer constant of type ${self.tx(o.ty)}")
+      return -1
+    }
+    o.ty
+  }
+
+  fn opt_ty(o: MOperand?, b: Int, i: Int, loc: MLoc): Int {
+    if x = o {
+      return self.op_ty(x, b, i, loc)
+    }
+    self.err(6, b, i, loc, "missing operand")
+    return -1
+  }
+
+  // ---- rvalues (V6); returns the rvalue's type or -1
+  pub fn rv_ty(r: MRvalue, pt: Int, b: Int, i: Int, loc: MLoc): Int {
+    k = r.kind
+    if k == mrk_use() {
+      return self.opt_ty(r.a, b, i, loc)
+    }
+    if k == mrk_zero() {
+      return pt
+    }
+    if k == mrk_unary() {
+      ta = self.opt_ty(r.a, b, i, loc)
+      if ta < 0 {
+        return -1
+      }
+      ok = false
+      if r.op == mop_neg() {
+        ok = self.ts.is_int(ta) || ta == mt_f64()
+      } else if r.op == mop_not() {
+        ok = self.ts.is_int(ta) || ta == mt_bool()
+      } else if r.op == mop_neg_chk() {
+        ok = self.ts.is_signed_int(ta)
+      }
+      return self.check6(ok, ta, b, i, loc, "${mop_name(r.op)} of ${self.tx(ta)}")
+    }
+    if k == mrk_binary() || k == mrk_checked() || k == mrk_cmp() {
+      ta = self.opt_ty(r.a, b, i, loc)
+      tb = self.opt_ty(r.b, b, i, loc)
+      if ta < 0 || tb < 0 {
+        return -1
+      }
+      what = "${mop_name(r.op)} of ${self.tx(ta)} and ${self.tx(tb)}"
+      if k == mrk_cmp() {
+        same = ta == tb || (self.ts.is_refkind(ta) && self.ts.is_refkind(tb)) || (self.ts.is_ptr(ta) && self.ts.is_ptr(tb))
+        kd = self.ts.kind(ta)
+        ok = same && r.op >= mop_eq() && r.op <= mop_ge() && kd != mk_void() && kd != mk_agg() && kd != mk_addr() && kd != mk_code()
+        return self.check6(ok, mt_bool(), b, i, loc, what)
+      }
+      ok = ta == tb && r.op >= mop_add() && r.op <= mop_shr()
+      if ok && k == mrk_checked() {
+        ok = self.ts.is_int(ta) && r.op <= mop_rem()
+      } else if ok && r.op <= mop_rem() {
+        ok = self.ts.is_int(ta) || ta == mt_f64()
+      } else if ok && r.op <= mop_xor() {
+        ok = self.ts.is_int(ta) || ta == mt_bool()
+      } else if ok {
+        ok = self.ts.is_int(ta)
+      }
+      return self.check6(ok, ta, b, i, loc, what)
+    }
+    if k == mrk_cast() {
+      ta = self.opt_ty(r.a, b, i, loc)
+      if ta < 0 {
+        return -1
+      }
+      return self.check6(self.cast_ok(ta, r.ty), r.ty, b, i, loc, "cast of ${self.tx(ta)} to ${self.tx(r.ty)}")
+    }
+    if k == mrk_addr() || k == mrk_addr_raw() {
+      if p = r.place {
+        t = self.place_ty(p, b, i, loc)
+        if t < 0 {
+          return -1
+        }
+        if self.via_ptr {
+          return self.ts.ptr_to(t)
+        }
+        if k == mrk_addr() {
+          return self.ts.addr_of(t)
+        }
+        if p.frame_local {
+          return self.ts.ptr_to(t)
+        }
+        self.err(6, b, i, loc, "addr.raw of a place inside a heap object")
+        return -1
+      }
+      return -1
+    }
+    self.agg_ty(r, b, i, loc)
+  }
+
+  fn check6(ok: Bool, ty: Int, b: Int, i: Int, loc: MLoc, what: String): Int {
+    if ok {
+      return ty
+    }
+    self.err(6, b, i, loc, "ill-typed ${what}")
+    return -1
+  }
+
+  pub fn cast_ok(src: Int, dst: Int): Bool {
+    ts = self.ts
+    if ts.is_int(src) && (ts.is_int(dst) || dst == mt_f64()) {
+      return true
+    }
+    if src == mt_f64() && ts.is_int(dst) {
+      return true
+    }
+    if src == mt_bool() && ts.is_int(dst) {
+      return true
+    }
+    if ts.is_refkind(src) && ts.is_refkind(dst) {
+      return src == mt_ref() || dst == mt_ref()
+    }
+    if ts.is_ptr(src) && ts.is_ptr(dst) {
+      return src == mt_ptr() || dst == mt_ptr()
+    }
+    ts.is_refkind(src) && ts.is_ptr(dst)
+  }
+
+  // struct, union, fnval rvalues (4.3).
+  fn agg_ty(r: MRvalue, b: Int, i: Int, loc: MLoc): Int {
+    lay = self.ts.layout_of(r.ty)
+    if self.ts.kind(r.ty) != mk_agg() || lay < 0 {
+      self.err(6, b, i, loc, "aggregate rvalue of type ${self.tx(r.ty)}")
+      return -1
+    }
+    l = self.ts.layouts[lay]
+    if r.kind == mrk_struct() {
+      ok = (l.kind == mlk_struct() || l.kind == mlk_clayout() || l.kind == mlk_record()) && r.ops.size == l.fields.size
+      k = 0
+      while ok && k < r.ops.size {
+        t = self.op_ty(r.ops[k], b, i, loc)
+        if t < 0 {
+          return -1
+        }
+        ok = t == l.fields[k]
+        k = k + 1
+      }
+      return self.check6(ok, r.ty, b, i, loc, "struct %${l.name}")
+    }
+    if r.kind == mrk_union() {
+      members = l.fields.size - 1
+      if l.nil_tag >= 0 {
+        members = members + 1
+      }
+      ok = l.kind == mlk_union() && r.op >= 0 && r.op < members
+      if ok && r.op == l.nil_tag {
+        if x = r.a {
+          ok = false
+        }
+      } else if ok {
+        pi = 1 + r.op
+        if l.nil_tag >= 0 && r.op > l.nil_tag {
+          pi = r.op
+        }
+        t = self.opt_ty(r.a, b, i, loc)
+        if t < 0 {
+          return -1
+        }
+        ok = t == l.fields[pi]
+      }
+      return self.check6(ok, r.ty, b, i, loc, "union %${l.name} tag ${r.op}")
+    }
+    te = self.opt_ty(r.a, b, i, loc)
+    tc = self.opt_ty(r.b, b, i, loc)
+    if te < 0 || tc < 0 {
+      return -1
+    }
+    ok = l.kind == mlk_fnval() && l.fields.size == 2 && self.ts.is_refkind(te) && tc == l.fields[1]
+    self.check6(ok, r.ty, b, i, loc, "fnval %${l.name}")
+  }
+
+  // ---- per function (the driver, verify.av, sets func first)
+  pub fn func_rules {
+    f = self.func
+    // V1, V2
+    b = 0
+    while b < f.blocks.size {
+      blk = f.blocks[b]
+      if t = blk.term {
+        j = 0
+        while j < t.targets.size {
+          tg = t.targets[j]
+          if tg < 0 || tg >= f.blocks.size {
+            self.err(2, b, -1, t.loc, "target bb${tg} does not exist")
+            self.bad = true
+          } else if tg == 0 {
+            self.err(2, b, -1, t.loc, "an edge enters bb0")
+            self.bad = true
+          }
+          j = j + 1
+        }
+      } else {
+        self.err(1, b, -1, f.loc, "bb${b} has no terminator")
+        self.bad = true
+      }
+      b = b + 1
+    }
+    self.locals_rule()
+    s = self.ts.sigs[f.sig]
+    if self.ts.is_addr(s.ret) {
+      self.ferr(10, "returns a derived address (${self.tx(s.ret)})")
+    }
+    b = 0
+    while b < f.blocks.size {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        self.stmt_rules(blk, b, j)
+        j = j + 1
+      }
+      if t = blk.term {
+        self.term_rule(t, b)
+      }
+      b = b + 1
+    }
+  }
+
+  // V3: _0 and the parameters match the signature; every named local exists.
+  fn locals_rule {
+    f = self.func
+    s = self.ts.sigs[f.sig]
+    if f.locals.size < 1 + s.params.size || f.nparams != s.params.size || f.locals[0].ty != s.ret {
+      self.ferr(3, "locals do not match the signature ${s.text}")
+      self.bad = true
+      return
+    }
+    k = 0
+    while k < s.params.size {
+      if f.locals[k + 1].ty != s.params[k] {
+        self.ferr(3, "_${k + 1} is ${self.tx(f.locals[k + 1].ty)}, the signature says ${self.tx(s.params[k])}")
+        self.bad = true
+      }
+      k = k + 1
+    }
+    b = 0
+    while b < f.blocks.size {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        st = blk.stmts[j]
+        used: Array(Int) = []
+        mir_stmt_reads(st, used)
+        if p = st.place {
+          used.push(p.local)
+        }
+        if r = st.rv {
+          if p = r.place {
+            used.push(p.local)
+          }
+        }
+        if st.dest >= 0 {
+          used.push(st.dest)
+        }
+        x = 0
+        while x < st.locals.size {
+          used.push(st.locals[x])
+          x = x + 1
+        }
+        self.check_used(used, b, j, st.loc)
+        j = j + 1
+      }
+      if t = blk.term {
+        used: Array(Int) = []
+        mir_term_reads(f, t, used)
+        self.check_used(used, b, -1, t.loc)
+      }
+      b = b + 1
+    }
+  }
+
+  fn check_used(used: Array(Int), b: Int, j: Int, loc: MLoc) {
+    x = 0
+    while x < used.size {
+      if !self.func.valid_local(used[x]) {
+        self.err(3, b, j, loc, "_${used[x]} is not a local")
+        self.bad = true
+      }
+      x = x + 1
+    }
+  }
+
+  fn stmt_rules(blk: MBlock, b: Int, j: Int) {
+    st = blk.stmts[j]
+    loc = st.loc
+    k = st.kind
+    if k == msk_assign() {
+      p = MPlace.new(0)
+      if x = st.place {
+        p = x
+      }
+      pt = self.place_ty(p, b, j, loc)
+      if r = st.rv {
+        rt = self.rv_ty(r, pt, b, j, loc)
+        if pt >= 0 && rt >= 0 {
+          if !self.ts.compat(rt, pt, false) {
+            self.err(5, b, j, loc, "${self.tx(rt)} is not assignable to ${self.tx(pt)}")
+          }
+          if self.ts.is_addr(pt) && p.proj.size > 0 {
+            self.err(10, b, j, loc, "a derived address stored through ${mir_place_text(self.ts, p)}")
+          }
+          if !st.fresh {
+            self.barrier_rule(blk, b, j, p, pt, r)
+          }
+        }
+      }
+    } else if k == msk_call() {
+      self.call_rule(st, b, j)
+    } else if k == msk_barrier() || k == msk_barrier_at() || k == msk_check_bounds() {
+      self.operand_stmt_rule(st, b, j)
+    }
+  }
+
+  // barrier (copy of a ref local), barrier_at (an addr local), and
+  // check.bounds (two i32) operands: typed like rvalue operands (V6).
+  fn operand_stmt_rule(st: MStmt, b: Int, j: Int) {
+    n = 2
+    if st.kind != msk_check_bounds() {
+      n = 1
+    }
+    if st.args.size != n {
+      self.err(6, b, j, st.loc, "wrong operand count")
+      return
+    }
+    t0 = self.op_ty(st.args[0], b, j, st.loc)
+    if t0 < 0 {
+      return
+    }
+    if st.kind == msk_check_bounds() {
+      t1 = self.op_ty(st.args[1], b, j, st.loc)
+      if t1 >= 0 && (t0 != mt_i32() || t1 != mt_i32()) {
+        self.err(6, b, j, st.loc, "check.bounds of ${self.tx(t0)} and ${self.tx(t1)}")
+      }
+      return
+    }
+    ok = mir_bare_local(st.args[0]) >= 0
+    if st.kind == msk_barrier() {
+      ok = ok && self.ts.is_refkind(t0)
+    } else {
+      ok = ok && self.ts.is_addr(t0)
+    }
+    if !ok {
+      self.err(6, b, j, st.loc, "barrier operand ${mir_operand_text(self.ts, st.args[0])} of type ${self.tx(t0)}")
+    }
+  }
+
+  // V13 (5.4): the four forms of the barrier before a reference store
+  // through a place that is not frame-local.
+  fn barrier_rule(blk: MBlock, b: Int, j: Int, p: MPlace, pt: Int, r: MRvalue) {
+    if p.frame_local || !self.ts.ref_carrying(pt) {
+      return
+    }
+    if p.last_deref != 0 {
+      self.err(13, b, j, blk.stmts[j].loc, "the holder of ${mir_place_text(self.ts, p)} is not a local")
+      return
+    }
+    h = p.local
+    ht = self.local_ty(h)
+    ok = false
+    if j > 0 {
+      prev = blk.stmts[j - 1]
+      pk = prev.kind
+      if self.ts.is_refkind(ht) {
+        ok = pk == msk_barrier() && prev.args.size == 1 && mir_bare_local(prev.args[0]) == h
+      } else if self.ts.is_addr(ht) {
+        ok = pk == msk_barrier_at() && prev.args.size == 1 && mir_bare_local(prev.args[0]) == h
+        if !ok && pk == msk_call() && prev.dest == h {
+          if e = self.m.ext(prev.callee) {
+            ok = e.slot_row
+          }
+        }
+      } else if self.ts.is_ptr(ht) && pk == msk_call() && str_eq(prev.callee, "avant_pin") && prev.args.size == 1 {
+        if a = r.a {
+          ok = r.kind == mrk_use() && str_eq(mir_operand_text(self.ts, a), mir_operand_text(self.ts, prev.args[0]))
+        }
+      }
+    }
+    if !ok {
+      self.err(13, b, j, blk.stmts[j].loc, "reference store through ${mir_place_text(self.ts, p)} without its barrier")
+    }
+  }
+
+  // V7, V18, V21.
+  fn call_rule(st: MStmt, b: Int, j: Int) {
+    loc = st.loc
+    sig = -1
+    env = 0
+    want = true
+    known = true
+    if ind = st.indirect {
+      t = self.op_ty(ind, b, j, loc)
+      if t < 0 {
+        return
+      }
+      lay = self.ts.layout_of(t)
+      if self.ts.kind(t) == mk_agg() && self.ts.layouts[lay].kind == mlk_fnval() && self.ts.layouts[lay].fields.size == 2 {
+        sig = self.ts.get(self.ts.layouts[lay].fields[1]).sig
+        env = 1
+      } else {
+        self.err(7, b, j, loc, "indirect call through ${self.tx(t)}")
+        return
+      }
+    } else if g = self.m.func(st.callee) {
+      sig = g.sig
+      want = g.kind != mfk_leaf()
+    } else if e = self.m.ext(st.callee) {
+      sig = e.sig
+      if st.sig >= 0 {
+        sig = st.sig
+      }
+      want = mir_class_collects(e.cls, self.m.shared)
+      self.alloc_rule(st, e, b, j)
+    } else {
+      self.err(7, b, j, loc, "unknown callee ${st.callee}")
+      return
+    }
+    if mir_flip(st.collects, want) {
+      self.err(18, b, j, loc, "the call to ${st.callee} must be marked ${mir_mark_name(want)}")
+    }
+    s = self.ts.sigs[sig]
+    fixed = s.params.size - env
+    if st.args.size < fixed || (!s.varargs && st.args.size != fixed) {
+      self.err(7, b, j, loc, "${st.args.size} arguments for ${s.text}")
+      return
+    }
+    k = 0
+    while k < st.args.size {
+      t = self.op_ty(st.args[k], b, j, loc)
+      if t >= 0 {
+        if k < fixed {
+          if !self.ts.compat(t, s.params[k + env], false) {
+            self.err(7, b, j, loc, "argument ${k + 1} is ${self.tx(t)}, the callee takes ${self.tx(s.params[k + env])}")
+          }
+        } else if !(t == mt_i32() || t == mt_i64() || t == mt_u64() || t == mt_f64() || self.ts.is_refkind(t) || self.ts.is_ptr(t)) {
+          self.err(7, b, j, loc, "variadic argument ${k + 1} of type ${self.tx(t)}")
+        }
+      }
+      k = k + 1
+    }
+    if st.dest >= 0 {
+      dt = self.local_ty(st.dest)
+      if s.ret == mt_void() {
+        self.err(7, b, j, loc, "a void call has a destination")
+      } else if dt >= 0 && !self.ts.compat(s.ret, dt, true) {
+        self.err(7, b, j, loc, "result ${self.tx(s.ret)} into _${st.dest} of type ${self.tx(dt)}")
+      }
+    }
+  }
+
+  // V21: a constant-size, constant-id allocation into `ref %L`.
+  fn alloc_rule(st: MStmt, e: MExtern, b: Int, j: Int) {
+    if !e.alloc || st.args.size != 2 || st.dest < 0 {
+      return
+    }
+    a0 = st.args[0]
+    a1 = st.args[1]
+    if a0.kind != mok_int() || a1.kind != mok_int() {
+      return
+    }
+    dt = self.local_ty(st.dest)
+    lay = self.ts.layout_of(dt)
+    if dt < 0 || self.ts.kind(dt) != mk_ref() || lay < 0 {
+      return
+    }
+    l = self.ts.layouts[lay]
+    if a0.ival != l.size.to_i64 || a1.ival != l.type_id.to_i64 {
+      self.err(21, b, j, st.loc, "allocation of size ${a0.ival}, type ${a1.ival} for %${l.name} (size ${l.size}, type ${l.type_id})")
+    }
+  }
+
+  // V8.
+  fn term_rule(t: MTerm, b: Int) {
+    if t.kind == mtk_branch() || t.kind == mtk_switch() {
+      ct = self.opt_ty(t.cond, b, -1, t.loc)
+      if ct < 0 {
+        return
+      }
+      if t.kind == mtk_branch() {
+        if ct != mt_bool() || t.targets.size != 2 {
+          self.err(8, b, -1, t.loc, "branch on ${self.tx(ct)}")
+        }
+        return
+      }
+      ok = self.ts.is_int(ct) && t.targets.size == t.values.size + 1
+      x = 0
+      while ok && x < t.values.size {
+        y = x + 1
+        while y < t.values.size {
+          if t.values[x] == t.values[y] {
+            ok = false
+          }
+          y = y + 1
+        }
+        x = x + 1
+      }
+      if !ok {
+        self.err(8, b, -1, t.loc, "switch on ${self.tx(ct)} with duplicate or mismatched cases")
+      }
+    }
+  }
+
+  // V10 and V20 at module level.
+  pub fn module_rules {
+    ts = self.ts
+    k = 0
+    while k < ts.layouts.size {
+      l = ts.layouts[k]
+      x = 0
+      while x < l.fields.size {
+        if ts.is_addr(l.fields[x]) {
+          self.merr(10, "field ${x} of %${l.name} is a derived address")
+        }
+        x = x + 1
+      }
+      self.layout_id_rule(k, l)
+      k = k + 1
+    }
+    k = 0
+    while k < self.m.externs.size {
+      e = self.m.externs[k]
+      s = ts.sigs[e.sig]
+      x = 0
+      while x < s.params.size {
+        if ts.is_addr(s.params[x]) {
+          self.merr(10, "extern ${e.name} takes a derived address")
+        }
+        x = x + 1
+      }
+      if ts.is_addr(s.ret) && !e.slot_row {
+        self.merr(10, "extern ${e.name} returns a derived address")
+      }
+      k = k + 1
+    }
+    seen = Hash(String, Int).new
+    k = 0
+    while k < self.m.funcs.size {
+      g = self.m.funcs[k]
+      if seen.has_key(g.symbol) {
+        self.merr(20, "symbol ${g.symbol} is defined twice")
+      }
+      seen[g.symbol] = k
+      if mir_flip(g.external, str_eq(g.symbol, "main")) {
+        self.merr(20, "${g.symbol}: only main has C linkage")
+      } else if !g.external && !mir_mangled_ok(g.symbol) {
+        self.merr(20, "${g.symbol} is not a mangled Avant symbol (8.2)")
+      }
+      k = k + 1
+    }
+    ids = Hash(String, Int).new
+    k = 0
+    while k < self.m.maps.size {
+      tm = self.m.maps[k]
+      key = "${tm.id}"
+      if ids.has_key(key) {
+        self.merr(20, "type id ${tm.id} is registered twice")
+      }
+      ids[key] = k
+      if tm.layout < 0 {
+        if tm.id < 1021 || tm.id > 1023 {
+          self.merr(20, "fixed map with id ${tm.id}")
+        }
+      } else if !mir_dyn_id(tm.id) {
+        self.merr(20, "dynamic map %${ts.layouts[tm.layout].name} has id ${tm.id}")
+      } else if ts.layouts[tm.layout].type_id != tm.id {
+        self.merr(20, "map ${tm.id} names %${ts.layouts[tm.layout].name}, whose id is ${ts.layouts[tm.layout].type_id}")
+      }
+      k = k + 1
+    }
+  }
+
+  // V20 on one layout's type id (3.3).
+  fn layout_id_rule(k: Int, l: MLayout) {
+    id = l.type_id
+    if id == 0 {
+      return
+    }
+    fixed = 0
+    if l.kind == mlk_array() {
+      fixed = 1022
+    } else if l.kind == mlk_buf() {
+      fixed = 1021
+    } else if l.kind == mlk_hash() {
+      fixed = 1023
+    }
+    if fixed > 0 || id == 1021 || id == 1022 || id == 1023 {
+      if id != fixed {
+        self.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id ${id}")
+      }
+      return
+    }
+    if id == 65535 {
+      if l.kind != mlk_elems() {
+        self.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id 65535")
+      }
+      return
+    }
+    if !(l.kind == mlk_class() || l.kind == mlk_record() || l.kind == mlk_elems()) || !mir_dyn_id(id) {
+      self.merr(20, "%${l.name} (${mlk_name(l.kind)}) carries type id ${id}")
+      return
+    }
+    owners = 0
+    x = 0
+    while x < self.m.maps.size {
+      if self.m.maps[x].id == id && self.m.maps[x].layout == k {
+        owners = owners + 1
+      }
+      x = x + 1
+    }
+    if owners != 1 {
+      self.merr(20, "%${l.name} carries type id ${id} without its registry entry")
+    }
+  }
+}
+
+pub fn mir_dyn_id(id: Int): Bool {
+  id >= 1 && id <= 65534 && (id < 1021 || id > 1023)
+}
+
+pub fn mir_mark_name(collects: Bool): String {
+  if collects {
+    return "collects"
+  }
+  "nocollect"
+}
+
+// The local of `copy _n` with no projection, or -1.
+pub fn mir_bare_local(o: MOperand): Int {
+  if p = o.place {
+    if p.proj.size == 0 {
+      return p.local
+    }
+  }
+  return -1
+}

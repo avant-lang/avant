@@ -1,0 +1,78 @@
+// The MIR verifier (Stage 28 W4; stages/stage28/mir.md 6): rules V1-V21.
+// mir_verify(module, stage) returns the errors as text, each
+// `V<n>: <function>: bb<k>[<i>]: <message>`; mir_verify_errors returns
+// them as MVerr values (rule, place, MIR location; MVerr.render prints the
+// compiler's diagnostic form). Stage lowered (mst_lowered) runs V1-V10,
+// V13, V14, V18, V20, V21; stage final (mst_final) every rule but V9.
+// The rules live in verify_core.av (structure, types, barrier, marks,
+// module, allocations) and verify_gc.av (dataflow and GC shape).
+
+import source
+import mir.types
+import mir.ir
+import mir.verify_core
+import mir.verify_gc
+
+pub fn mir_verify_errors(m: MModule, stage: Int): Array(MVerr) {
+  v = MVerifier.new(m, stage)
+  v.module_rules()
+  k = 0
+  while k < m.funcs.size {
+    v.func = m.funcs[k]
+    v.bad = false
+    v.func_rules()
+    mir_verify_gc(v)
+    k = k + 1
+  }
+  v.errs
+}
+
+pub fn mir_verify(m: MModule, stage: Int): Array(String) {
+  errs = mir_verify_errors(m, stage)
+  out: Array(String) = []
+  i = 0
+  while i < errs.size {
+    out.push(errs[i].show)
+    i = i + 1
+  }
+  out
+}
+
+// The rules a module breaks, ascending and unique ("V11", "V11,V13"), or
+// "ok".
+pub fn mir_verify_rules(m: MModule, stage: Int): String {
+  errs = mir_verify_errors(m, stage)
+  seen = mir_seen_rules(errs)
+  buf = buf_new()
+  r = 1
+  while r < seen.size {
+    if seen[r] {
+      if buf.size > 0 {
+        buf.push_str(",")
+      }
+      buf.push_str("V${r}")
+    }
+    r = r + 1
+  }
+  if buf.size == 0 {
+    return "ok"
+  }
+  buf.to_s
+}
+
+fn mir_seen_rules(errs: Array(MVerr)): Array(Bool) {
+  seen: Array(Bool) = []
+  r = 0
+  while r < 64 {
+    seen.push(false)
+    r = r + 1
+  }
+  i = 0
+  while i < errs.size {
+    if errs[i].rule > 0 && errs[i].rule < 64 {
+      seen[errs[i].rule] = true
+    }
+    i = i + 1
+  }
+  seen
+}

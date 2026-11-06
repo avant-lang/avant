@@ -1,0 +1,284 @@
+// Dataflow over a MIR function (Stage 28 W4): the locals a statement reads
+// and defines, successors and predecessors, backward liveness (V11, V12),
+// and forward must-definedness (V9). A read is a use of a local's value:
+// `copy P` reads P's local; a place written or addressed reads its local
+// only through a deref (the pointer is loaded); index operands are read.
+// A whole write (an assign to the bare local, a call's destination)
+// defines; a field write of a by-value local neither reads nor defines.
+// The callers run these only on functions that passed V1-V3.
+
+import mir.types
+import mir.ir
+
+pub fn mir_bools(n: Int, v: Bool): Array(Bool) {
+  xs: Array(Bool) = []
+  i = 0
+  while i < n {
+    xs.push(v)
+    i = i + 1
+  }
+  xs
+}
+
+// a != b on Bools (the language compares numbers only).
+pub fn mir_flip(a: Bool, b: Bool): Bool {
+  (a && !b) || (b && !a)
+}
+
+pub fn mir_bools_copy(a: Array(Bool)): Array(Bool) {
+  xs: Array(Bool) = []
+  i = 0
+  while i < a.size {
+    xs.push(a[i])
+    i = i + 1
+  }
+  xs
+}
+
+fn mir_place_reads(p: MPlace, as_value: Bool, out: Array(Int)) {
+  if as_value || p.last_deref >= 0 {
+    out.push(p.local)
+  }
+  i = 0
+  while i < p.proj.size {
+    if o = p.proj[i].index {
+      mir_operand_reads(o, out)
+    }
+    i = i + 1
+  }
+}
+
+pub fn mir_operand_reads(o: MOperand, out: Array(Int)) {
+  if p = o.place {
+    mir_place_reads(p, true, out)
+  }
+}
+
+fn mir_opt_reads(o: MOperand?, out: Array(Int)) {
+  if x = o {
+    mir_operand_reads(x, out)
+  }
+}
+
+pub fn mir_stmt_reads(st: MStmt, out: Array(Int)) {
+  if p = st.place {
+    mir_place_reads(p, false, out)
+  }
+  if r = st.rv {
+    mir_opt_reads(r.a, out)
+    mir_opt_reads(r.b, out)
+    if p = r.place {
+      mir_place_reads(p, false, out)
+    }
+    i = 0
+    while i < r.ops.size {
+      mir_operand_reads(r.ops[i], out)
+      i = i + 1
+    }
+  }
+  mir_opt_reads(st.indirect, out)
+  i = 0
+  while i < st.args.size {
+    mir_operand_reads(st.args[i], out)
+    i = i + 1
+  }
+}
+
+pub fn mir_term_reads(f: MFunc, t: MTerm, out: Array(Int)) {
+  mir_opt_reads(t.cond, out)
+  if t.kind == mtk_return() && f.has_ret {
+    out.push(0)
+  }
+}
+
+// The local a statement wholly defines, or -1.
+pub fn mir_stmt_def(st: MStmt): Int {
+  if st.kind == msk_call() {
+    return st.dest
+  }
+  if st.kind == msk_assign() {
+    if p = st.place {
+      if p.proj.size == 0 {
+        return p.local
+      }
+    }
+  }
+  return -1
+}
+
+pub fn mir_succ(blk: MBlock): Array(Int) {
+  if t = blk.term {
+    return t.targets
+  }
+  xs: Array(Int) = []
+  xs
+}
+
+// Live locals after the last statement of each block (live-out).
+pub fn mir_live_out(f: MFunc): Array(Array(Bool)) {
+  n = f.locals.size
+  nb = f.blocks.size
+  ins: Array(Array(Bool)) = []
+  outs: Array(Array(Bool)) = []
+  b = 0
+  while b < nb {
+    ins.push(mir_bools(n, false))
+    outs.push(mir_bools(n, false))
+    b = b + 1
+  }
+  changed = true
+  while changed {
+    changed = false
+    b = nb - 1
+    while b >= 0 {
+      blk = f.blocks[b]
+      live = mir_bools(n, false)
+      succ = mir_succ(blk)
+      i = 0
+      while i < succ.size {
+        s = ins[succ[i]]
+        k = 0
+        while k < n {
+          if s[k] {
+            live[k] = true
+          }
+          k = k + 1
+        }
+        i = i + 1
+      }
+      outs[b] = mir_bools_copy(live)
+      mir_live_through(f, blk, blk.stmts.size, live)
+      k = 0
+      while k < n {
+        if mir_flip(live[k], ins[b][k]) {
+          changed = true
+        }
+        k = k + 1
+      }
+      ins[b] = live
+      b = b - 1
+    }
+  }
+  outs
+}
+
+// Applies the backward transfer of blk's terminator (when upto is the
+// statement count) and of its statements upto-1 down to 0, in place.
+pub fn mir_live_through(f: MFunc, blk: MBlock, upto: Int, live: Array(Bool)) {
+  if upto == blk.stmts.size {
+    if t = blk.term {
+      reads: Array(Int) = []
+      mir_term_reads(f, t, reads)
+      mir_mark(live, reads)
+    }
+  }
+  i = upto - 1
+  while i >= 0 {
+    mir_live_step(blk.stmts[i], live)
+    i = i - 1
+  }
+}
+
+pub fn mir_live_step(st: MStmt, live: Array(Bool)) {
+  d = mir_stmt_def(st)
+  if d >= 0 {
+    live[d] = false
+  }
+  reads: Array(Int) = []
+  mir_stmt_reads(st, reads)
+  mir_mark(live, reads)
+}
+
+fn mir_mark(live: Array(Bool), xs: Array(Int)) {
+  i = 0
+  while i < xs.size {
+    live[xs[i]] = true
+    i = i + 1
+  }
+}
+
+pub fn mir_preds(f: MFunc): Array(Array(Int)) {
+  ps: Array(Array(Int)) = []
+  b = 0
+  while b < f.blocks.size {
+    e: Array(Int) = []
+    ps.push(e)
+    b = b + 1
+  }
+  b = 0
+  while b < f.blocks.size {
+    succ = mir_succ(f.blocks[b])
+    i = 0
+    while i < succ.size {
+      ps[succ[i]].push(b)
+      i = i + 1
+    }
+    b = b + 1
+  }
+  ps
+}
+
+// Locals defined on every path from bb0 to the head of each block
+// (parameters at entry). Unreachable blocks keep everything defined.
+pub fn mir_defined_in(f: MFunc): Array(Array(Bool)) {
+  n = f.locals.size
+  preds = mir_preds(f)
+  ins: Array(Array(Bool)) = []
+  outs: Array(Array(Bool)) = []
+  b = 0
+  while b < f.blocks.size {
+    ins.push(mir_bools(n, true))
+    outs.push(mir_bools(n, true))
+    b = b + 1
+  }
+  entry = mir_bools(n, false)
+  k = 1
+  while k <= f.nparams {
+    entry[k] = true
+    k = k + 1
+  }
+  ins[0] = entry
+  changed = true
+  while changed {
+    changed = false
+    b = 0
+    while b < f.blocks.size {
+      cur = mir_bools_copy(ins[b])
+      if b > 0 {
+        cur = mir_bools(n, true)
+        i = 0
+        while i < preds[b].size {
+          o = outs[preds[b][i]]
+          k = 0
+          while k < n {
+            if !o[k] {
+              cur[k] = false
+            }
+            k = k + 1
+          }
+          i = i + 1
+        }
+        ins[b] = mir_bools_copy(cur)
+      }
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        d = mir_stmt_def(blk.stmts[j])
+        if d >= 0 {
+          cur[d] = true
+        }
+        j = j + 1
+      }
+      k = 0
+      while k < n {
+        if mir_flip(cur[k], outs[b][k]) {
+          changed = true
+        }
+        k = k + 1
+      }
+      outs[b] = cur
+      b = b + 1
+    }
+  }
+  ins
+}
