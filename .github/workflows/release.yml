@@ -91,14 +91,20 @@ jobs:
       # from apt. libclang (with llvm-config, from llvm-20) is for the bind
       # helper that runtime/build.sh builds and the release ships; zlib1g-dev
       # is for examples/zlib.av, which binds the system zlib itself.
+      # llvm-20-dev (static LLVM archives) and libzstd-dev are for
+      # tools/build-llvm.sh, which runtime/build.sh runs: it merges LLVM 20
+      # with libstdc++, zlib, and zstd into runtime/build/avant_llvm.o, the
+      # in-process LLVM only the compiler links (D172, D173).
       - name: Install the C toolchain and libclang
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             llvm-20 \
+            llvm-20-dev \
             libclang-20-dev \
-            zlib1g-dev
+            zlib1g-dev \
+            libzstd-dev
 
       - name: Build runtime objects
         run: sh runtime/build.sh
@@ -129,7 +135,7 @@ jobs:
       - name: Seed → B
         run: |
           set -euo pipefail
-          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-b --debug
+          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o
           ./bin/avant-b run examples/hello.av
 
       - name: Native suite on B

@@ -1549,14 +1549,16 @@ The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compil
 .av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
 ```
 
-Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release:
+Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the compiler itself also needs LLVM 20's static archives (Debian/Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (`tools/build-llvm.sh`) and only the compiler links; the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release:
 
 ```
 sh runtime/build.sh
-/path/to/avant compile compiler/main.av bin/avant --debug
+/path/to/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o
 ./bin/avant run examples/hello.av
-./bin/avant compile compiler/main.av bin/avant --debug   # rebuild with itself
+./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
+
+`sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed in `bin/v0.34.0`), and C (`bin/avant-c`, built by B); `sh tools/letters.sh b` or `c` builds one.
 
 `AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Codegen splits by verb: `avant run` with no flag uses myc-llvm `--debug` (fast), and `avant compile` with no flag uses myc's default codegen, which measured 75.5% faster at runtime on the 49-task gate scope for kept artifacts. On either verb, `--debug` selects the fast codegen explicitly and `--release` (or `--final`) selects `--final`, the scored mode used in [Benchmarks](#benchmarks); an explicit flag always wins over the verb default, and no environment variable selects codegen. Safepoints stay on in every mode. `dump FILE.av` prints myc IR without linking.
 
@@ -1564,7 +1566,7 @@ Tests are the native suite, run on the compiler you just built (B) and, for a re
 
 ```
 AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
-./bin/avant-b compile compiler/main.av bin/avant-c --debug
+./bin/avant-b compile compiler/main.av bin/avant-c --debug runtime/build/avant_llvm.o
 AVANT_COMPILER=./bin/avant-c ./bin/avant-c test
 ```
 
