@@ -83,6 +83,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
       return
     }
     lw.at(st.loc)
+    lw.unpin_loop
     if k == st_break() {
       lw.lw_b.goto(lw.lw_exits[lw.lw_exits.size - 1])
     } else {
@@ -91,7 +92,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
     return
   }
   if k == st_pin() {
-    lw.refuse(st.loc, "pin")
+    lw.lower_pin(st)
     return
   }
   lw.refuse(st.loc, "this statement")
@@ -197,6 +198,7 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
     } else if lw.lw_main {
       dummy2 = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
     }
+    lw.unpin_all
     lw.lw_b.ret
     return
   }
@@ -204,6 +206,7 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
   if lw.lw_main {
     dummy3 = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
   }
+  lw.unpin_all
   lw.lw_b.ret
 }
 

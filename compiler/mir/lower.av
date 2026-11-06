@@ -88,6 +88,52 @@ pub class MirClosures {
   }
 }
 
+// A C callback thunk waiting to be lowered: its symbol, the Avant
+// function or lambda thunk it calls, the `fn` type, whether the target is
+// a lambda thunk (whose first parameter is the environment), and where.
+pub class MirCb {
+  sym: String = ""
+  target: String = ""
+  fty: Ty
+  lambda: Bool = false
+  loc: Location
+
+  fn initialize(sym: String, target: String, fty: Ty, lambda: Bool, loc: Location) {
+    self.sym = sym
+    self.target = target
+    self.fty = fty
+    self.lambda = lambda
+    self.loc = loc
+  }
+}
+
+// The FFI state: the callback thunks of the program (once each), and the
+// open pins of the function being lowered (the pinned local, and the
+// loop depth, lw_heads.size, where each was opened).
+pub class MirFfi {
+  cbs: Array(MirCb)
+  cb_seen: Hash(String, Int)
+  pins: Array(Int)
+  pin_depth: Array(Int)
+
+  fn initialize {
+    c: Array(MirCb) = []
+    self.cbs = c
+    self.cb_seen = Hash(String, Int).new
+    p: Array(Int) = []
+    self.pins = p
+    d: Array(Int) = []
+    self.pin_depth = d
+  }
+
+  pub fn reset_pins {
+    p: Array(Int) = []
+    self.pins = p
+    d: Array(Int) = []
+    self.pin_depth = d
+  }
+}
+
 pub class MirLower {
   lw_m: MModule
   lw_b: MirBuilder
@@ -112,6 +158,7 @@ pub class MirLower {
   lw_all: Array(Function)
   lw_bumps: Hash(String, Int)
   lw_cl: MirClosures
+  lw_ffi: MirFfi
 
   fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
     self.lw_m = mir_module(mir_module_part(program.root_module))
@@ -133,6 +180,7 @@ pub class MirLower {
     self.lw_all = program_all_functions(program)
     self.lw_bumps = Hash(String, Int).new
     self.lw_cl = MirClosures.new
+    self.lw_ffi = MirFfi.new
   }
 
   // ---- refusals
@@ -274,6 +322,8 @@ pub class MirLower {
     self.lower_ctors
     self.lower_pending_lambdas
     self.lower_trampolines(fns)
+    self.lower_cb_thunks
+    self.lower_pending_lambdas
     if self.failed || has_main {
       return
     }
@@ -321,7 +371,7 @@ pub class MirLower {
       }
       m = self.lw_m.types.agg(l2)
     }
-    if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf) {
+    if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf || t.is_ptr || t.is_clayout) {
       m = self.value_agg_ty(t, loc)
       if self.failed {
         return -1
@@ -350,6 +400,7 @@ pub class MirLower {
     self.lw_self_ty = nil
     self.lw_ret_ty = nil
     self.reset_closures
+    self.lw_ffi.reset_pins
   }
 
   // No captures, no boxes: the closure state of a new function (W7b).

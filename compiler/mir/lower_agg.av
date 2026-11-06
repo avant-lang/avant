@@ -98,6 +98,17 @@ pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
   if t.is_array || t.is_hash || t.is_buf {
     return lw.container_ty(t, loc)
   }
+  // W8a: Ptr(T) and a C layout held by value inside another (lower_ffi.av).
+  if t.is_ptr {
+    return lw.ptr_ty(t, loc)
+  }
+  if t.is_clayout {
+    l1 = lw.clayout_layout(t, loc)
+    if l1 < 0 {
+      return -1
+    }
+    return lw.lw_m.types.agg(l1)
+  }
   if t.is_class {
     l = lw.lw_m.types.layout_named(mir_mty(t))
     if l < 0 {
@@ -328,10 +339,13 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   if e.kind == ex_field() && !e.method_call {
     if obj = e.object {
       if ot = obj.ty {
-        if ot.is_struct {
+        if ot.is_struct || ot.is_clayout {
           p = lw.place_of(obj)
           k = lw.field_of(ot, e.ident, e.loc)
           return b.field(p, k)
+        }
+        if ot.is_ptr {
+          return lw.ptr_field_place(e, obj, ot)
         }
         if ot.is_class {
           o = lw.lower_expr(obj)
@@ -385,6 +399,10 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   if !p.frame_local && lw.lw_m.types.ref_carrying(ty) {
     h = p.local
+    if lw.lw_m.types.is_ptr(b.func.locals[h].ty) {
+      lw.pinned_store(p, ty, val)
+      return
+    }
     if lw.lw_m.types.is_addr(b.func.locals[h].ty) {
       dummy = b.barrier_at(h)
     } else {
