@@ -1,0 +1,223 @@
+// Union churn on the new back end (Stage 28 W7a). Long-lived holders,
+// reached only through another object's array field (a holder named by a
+// root slot is scanned by every young collection anyway, so it would hide
+// a missing barrier), become mature and then gain young children through
+// union stores of every form: a class field `Leaf?` (barrier on the
+// holder), a field `Int | Leaf` alternating between its scalar and its
+// reference member (the payload word is a heap reference word whatever
+// the tag), a struct field holding a union inside the holder, a
+// `String?` field, union elements of an array (`Leaf?` elements: a stride
+// map, D186; index stores behind a barrier on the buffer, pushes through
+// push_slot), and struct elements holding unions. Values alternate
+// between nil and non-nil each round; union locals and results stay live
+// across collections. Garbage between the stores makes collections run;
+// every child is checked each round. Under AVANT_GC_VERIFY=1 and
+// AVANT_YOUNG_MB=1 it must print the same.
+
+class Leaf {
+  v: Int
+  s: String
+
+  fn initialize(v: Int) {
+    self.v = v
+    s = "leaf-${v}"
+  }
+}
+
+struct Slot {
+  k: Int
+  leaf: Leaf?
+}
+
+class Holder {
+  id: Int
+  opt: Leaf?
+  mix: Int | Leaf
+  slot: Slot
+  name: String?
+  opts: Array(Leaf?)
+  slots: Array(Slot)
+
+  fn initialize(id: Int) {
+    self.id = id
+    opt = no_leaf()
+    mix = 0
+    slot = Slot { k: 0, leaf: no_leaf() }
+    name = no_name()
+    o: Array(Leaf?) = []
+    opts = o
+    s: Array(Slot) = []
+    slots = s
+  }
+}
+
+class Root {
+  holders: Array(Holder)
+
+  fn initialize {
+    holders = []
+  }
+}
+
+fn no_leaf: Leaf? {
+  nil
+}
+
+fn no_name: String? {
+  nil
+}
+
+// Allocates garbage (repeat_byte and Array.new allocate outside defer,
+// so they can collect) and returns a young string.
+fn junk(i: Int): String {
+  g = repeat_byte(65 + i % 26, 2000 + i % 3000)
+  xs = Array(Int).new(400)
+  xs[3] = g.size
+  "j${xs[3]}"
+}
+
+fn leaf_or_nil(v: Int, on: Bool): Leaf? {
+  if on {
+    l = Leaf.new(v)
+    dummy = junk(v)
+    return l
+  }
+  nil
+}
+
+fn bad_leaf(o: Leaf?, v: Int, on: Bool): Int {
+  if l = o {
+    if !on || l.v != v || !(l.s == "leaf-${v}") {
+      return 1
+    }
+    return 0
+  }
+  if on {
+    return 1
+  }
+  0
+}
+
+class Oops {
+  m: String
+
+  fn initialize(m: String) {
+    self.m = m
+  }
+}
+
+// The scalar member of m comes back through postfix `?` (Int is the
+// failure here: the result type holds it); the Leaf is checked.
+fn mix_check(m: Int | Leaf, v: Int): Int | Oops {
+  l = m?
+  if l.v != v || !(l.s == "leaf-${v}") {
+    return 1
+  }
+  0
+}
+
+fn bad_mix(m: Int | Leaf, v: Int, on: Bool): Int {
+  if x = mix_check(m, v) {
+    if on {
+      return x
+    }
+    if x != v {
+      return 1
+    }
+    return 0
+  }
+  1
+}
+
+fn round(root: Root, r: Int): Int {
+  bad = 0
+  on = r % 2 == 0
+  i = 0
+  while i < root.holders.size {
+    h = root.holders[i]
+    v = r * 100 + i
+    h.opt = leaf_or_nil(v, on)
+    dummy = junk(v)
+    if on {
+      h.mix = Leaf.new(v + 1)
+    } else {
+      h.mix = v + 1
+    }
+    dummy = junk(v + 1)
+    h.slot.leaf = leaf_or_nil(v + 2, !on)
+    h.slot.k = v + 2
+    if on {
+      h.name = "name-${v}"
+    } else {
+      h.name = no_name()
+    }
+    if h.opts.size < 8 {
+      h.opts.push(leaf_or_nil(v + 3, on))
+    } else {
+      h.opts[r % 8] = leaf_or_nil(v + 3, on)
+    }
+    if h.slots.size < 4 {
+      h.slots.push(Slot { k: v + 4, leaf: leaf_or_nil(v + 4, on) })
+    } else {
+      h.slots[r % 4] = Slot { k: v + 4, leaf: leaf_or_nil(v + 4, on) }
+    }
+    dummy = junk(v + 5)
+    bad += bad_leaf(h.opt, v, on)
+    bad += bad_mix(h.mix, v + 1, on)
+    bad += bad_leaf(h.slot.leaf, v + 2, !on)
+    if on {
+      if !((h.name ?? "") == "name-${v}") {
+        bad += 1
+      }
+    } else if (h.name ?? "nil") != "nil" {
+      bad += 1
+    }
+    k = h.opts.size - 1
+    if h.opts.size >= 8 {
+      k = r % 8
+    }
+    bad += bad_leaf(h.opts[k], v + 3, on)
+    k2 = h.slots.size - 1
+    if h.slots.size >= 4 {
+      k2 = r % 4
+    }
+    bad += bad_leaf(h.slots[k2].leaf, v + 4, on)
+    i += 1
+  }
+  bad
+}
+
+fn main {
+  root = Root.new
+  i = 0
+  while i < 6 {
+    root.holders.push(Holder.new(i))
+    i += 1
+  }
+  keep = leaf_or_nil(7, true)
+  bad = 0
+  r = 0
+  while r < 1000 {
+    bad += round(root, r)
+    if r % 50 == 0 {
+      bad += bad_leaf(keep, 7, true)
+    }
+    r += 1
+  }
+  bad += bad_leaf(keep, 7, true)
+  live = 0
+  i = 0
+  while i < root.holders.size {
+    h = root.holders[i]
+    j = 0
+    while j < h.opts.size {
+      if l = h.opts[j] {
+        live += 1
+      }
+      j += 1
+    }
+    i += 1
+  }
+  puts(bad)
+  puts(live)
+}
