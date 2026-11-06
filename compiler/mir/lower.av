@@ -7,9 +7,10 @@
 // verifies it at stage lowered, then runs the leaf and root-slot passes
 // (gc.av, 5.9) so the module is ready for verify(final) and emission.
 //
-// The subset is the scalars (W5), heap strings (W6a), and structs and
+// The subset is the scalars (W5), heap strings (W6a), structs and
 // classes with their plain methods and constructors (W6b,
-// lower_agg.av): every other
+// lower_agg.av), and arrays, hashes, Buf, and Bytes (W6c, lower_arr.av,
+// lower_hash.av): every other
 // construct stops the lowering with `not yet supported by the llvm back
 // end: <what>` at its location (refuse), and the module is not used.
 //
@@ -257,7 +258,7 @@ pub class MirLower {
   // The MIR type of t, or -1 after refusing it at loc.
   pub fn ty_at(t: Ty, loc: Location, what: String): Int {
     m = mir_scalar_ty(t)
-    if m < 0 && (t.is_struct || t.is_class) {
+    if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf) {
       m = self.value_agg_ty(t, loc)
       if self.failed {
         return -1

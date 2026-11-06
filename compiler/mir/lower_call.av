@@ -22,7 +22,7 @@ import mir.lower_expr
 // 16-372): each is refused by name. The string builtins are in
 // lower_str.av.
 pub fn mir_other_builtin(name: String): Bool {
-  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "file_read", "file_write", "argv", "process_run", "process_run_out", "env_get", "file_exists", "dir_list", "bytes_to_str", "sha256", "crc32_bytes", "sha256_word0", "hash_last_key", "wide_op", "wide_hi", "checksum_f64", "nursery_reclaim", "buf_new"]
+  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "file_read", "file_write", "argv", "process_run", "process_run_out", "env_get", "file_exists", "dir_list", "sha256", "crc32_bytes", "sha256_word0", "wide_op", "wide_hi", "checksum_f64", "nursery_reclaim"]
   i = 0
   while i < names.size {
     if str_eq(names[i], name) {
@@ -101,6 +101,15 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)
       }
+      if rt.is_array {
+        return lw.arr_member(e, recv, rt, e.callee, e.args)
+      }
+      if rt.is_hash {
+        return lw.hash_member(e, recv, rt, e.callee, e.args)
+      }
+      if rt.is_buf {
+        return lw.buf_member(e, recv, e.callee, e.args)
+      }
       if (rt.is_class || rt.is_struct) && !str_eq(e.callee, "new") && !str_eq(e.callee, "bump") {
         if sym = lw.lw_fn_syms.get(e.resolved) {
           return lw.lower_method_call(e, recv, rt, sym, e.args)
@@ -143,6 +152,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   }
   if mir_str_builtin_arity(c) == e.args.size {
     return lw.lower_str_builtin(e, c)
+  }
+  if got = lw.heap_builtin(e, c) {
+    return got
   }
   if mir_other_builtin(c) {
     lw.refuse(e.loc, "the builtin ${c}")
@@ -207,6 +219,16 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       if mir_is_str_ty(ot) {
         none: Array(Expr) = []
         return lw.str_member(e, obj, ot, e.ident, none)
+      }
+      none3: Array(Expr) = []
+      if ot.is_array {
+        return lw.arr_member(e, obj, ot, e.ident, none3)
+      }
+      if ot.is_hash {
+        return lw.hash_member(e, obj, ot, e.ident, none3)
+      }
+      if ot.is_buf {
+        return lw.buf_member(e, obj, e.ident, none3)
       }
       if ot.is_class || ot.is_struct {
         if e.method_call {

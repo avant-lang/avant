@@ -3,7 +3,7 @@
 # once per side and compares what they observably do (stdout, stderr, exit
 # status), program by program.
 #
-#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects] [PROGRAM...]
+#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects,heap] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
 # compile and to the run). Both default to bin/avant-c with the seed's
@@ -38,6 +38,10 @@
 #              W6b, mir.md W6b.7): every tests/fixtures/objects/*.av with
 #              `fn main` (refuse_union.av, the L0001 case, has none) and the
 #              examples and fixtures the lowering accepts (object_programs)
+#   heap       not in the default: the array, hash, and Buf programs (Stage
+#              28 W6c, mir.md W6c.7): every tests/fixtures/heap/*.av with
+#              `fn main` (refuse_get.av, the L0001 case, has none) and the
+#              examples and fixtures the lowering accepts (heap_programs)
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
 # file (run as a program; an example gets its suite flags) or a LangArena
 # task name such as Etc::Sieve. --set limits the sets; both may be combined.
@@ -174,6 +178,13 @@ object_programs() { # the objects set, one path per line
   echo tests/fixtures/macros/fields.av
   echo tests/fixtures/macros/method.av
 }
+heap_programs() { # the heap set, one path per line
+  for f in tests/fixtures/heap/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
+  echo examples/sieve.av
+  echo tests/fixtures/modules/main.av
+  echo tests/fixtures/part3/buf.av
+  echo tests/fixtures/part3/pop.av
+}
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
     examples/matmul.av) head -n 2 "$2" ;;
@@ -296,6 +307,9 @@ else
   fi
   if has_set objects; then
     for f in $(object_programs); do program "$f"; done
+  fi
+  if has_set heap; then
+    for f in $(heap_programs); do program "$f"; done
   fi
   has_set langarena && langarena ""
 fi

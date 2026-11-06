@@ -389,6 +389,19 @@ fn st_rejecting(out: Buf) {
   b.call(0, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(2)))
   b.ret
   st_case(out, "v21_wrong_type_id", lo, b.module)
+
+  // W6c: an element buffer takes any whole number of elements (12 bytes
+  // of i32 verify, see the heap goldens), but not a partial one.
+  b = st_base(false)
+  ef: Array(Int) = []
+  ef.push(mt_i32())
+  en: Array(String) = []
+  en.push("")
+  el = b.note_layout("elems(Int)", mlk_elems(), ef, en)
+  st_fn(b, "f", st_tys(-1, -1), b.ref_to(el), mfk_unset())
+  b.call(0, "avant_alloc", st_two(b.c_u64(6i64), b.c_u32(0)))
+  b.ret
+  st_case(out, "v21_partial_element", lo, b.module)
 }
 
 // The accepting cases that verify at both stages, by name (also what

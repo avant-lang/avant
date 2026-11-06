@@ -1,0 +1,202 @@
+// Array and hash churn on the new back end (Stage 28 W6c). Long-lived
+// holders, reached only through another object's array field (a holder
+// named by a root slot is scanned by every young collection anyway, so it
+// would hide a missing barrier), become mature and then gain young
+// children through every store form of the wave: push_ptr, set_ptr,
+// push_slot of a reference-holding struct, a struct element index store
+// and element field stores (a barrier on the element buffer), a struct
+// method storing through self inside the buffer (barrier_at), an array
+// literal whose fill collects (the fresh exemption and its closing
+// barrier), Array(T).new filled by set_ptr, and hash stores of young keys
+// and values. Garbage is allocated between the stores so collections
+// run; every child is checked each round. Under AVANT_GC_VERIFY=1 and
+// AVANT_YOUNG_MB=1 it must print the same.
+
+class Leaf {
+  v: Int
+  s: String
+
+  fn initialize(v: Int) {
+    self.v = v
+    s = "leaf-${v}"
+  }
+}
+
+struct Slot {
+  k: Int
+  leaf: Leaf
+  tag: String
+
+  fn put(l: Leaf, t: String) {
+    leaf = l
+    tag = t
+    k = l.v
+  }
+}
+
+class Holder {
+  id: Int
+  leaves: Array(Leaf)
+  slots: Array(Slot)
+  names: Array(String)
+  rows: Array(Array(Int))
+  h: Hash(String, String)
+  counts: Hash(String, Int)
+
+  fn initialize(id: Int) {
+    self.id = id
+    leaves = []
+    slots = []
+    names = []
+    rows = []
+    h = Hash(String, String).new
+    counts = Hash(String, Int).new
+  }
+}
+
+class Root {
+  holders: Array(Holder)
+
+  fn initialize {
+    holders = []
+  }
+}
+
+// Allocates garbage (repeat_byte allocates outside defer, so it can
+// collect) and returns a young string.
+fn junk(i: Int): String {
+  g = repeat_byte(65 + i % 26, 2000 + i % 3000)
+  xs = Array(Int).new(400)
+  xs[3] = g.size
+  "j${xs[3]}"
+}
+
+fn check_slot(s: Slot): Int {
+  bad = 0
+  if s.leaf.v != s.k {
+    bad = bad + 1
+  }
+  if !(s.leaf.s == "leaf-${s.k}") {
+    bad = bad + 1
+  }
+  if !(s.tag == "t${s.k}") {
+    bad = bad + 1
+  }
+  bad
+}
+
+fn check(h: Holder): Int {
+  bad = 0
+  i = 0
+  while i < h.leaves.size {
+    l = h.leaves[i]
+    if !(l.s == "leaf-${l.v}") {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < h.slots.size {
+    bad = bad + check_slot(h.slots[i])
+    i = i + 1
+  }
+  i = 0
+  while i < h.names.size {
+    if h.names[i].size < 2 {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < h.rows.size {
+    r = h.rows[i]
+    if r.size != 3 || r[0] + 1 != r[1] {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  ks = h.h.keys
+  i = 0
+  while i < ks.size {
+    v = h.h.get_or(ks[i], "?")
+    if !(v == "v-${ks[i]}") {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  bad
+}
+
+fn round(root: Root, r: Int): Int {
+  n = 0
+  i = 0
+  while i < root.holders.size {
+    h = root.holders[i]
+    k = r * 100 + i
+    root.holders[i].leaves.push(Leaf.new(k))
+    n = n + junk(k).size
+    if root.holders[i].leaves.size > 6 {
+      root.holders[i].leaves[r % 6] = Leaf.new(k + 1)
+    }
+    root.holders[i].slots.push(Slot { k: k, leaf: Leaf.new(k), tag: "t${k}" })
+    n = n + junk(k + 1).size
+    m = root.holders[i].slots.size
+    root.holders[i].slots[r % m] = Slot { k: k + 2, leaf: Leaf.new(k + 2), tag: "t${k + 2}" }
+    root.holders[i].slots[(r + 1) % m].leaf = Leaf.new(root.holders[i].slots[(r + 1) % m].k)
+    root.holders[i].slots[(r + 1) % m].tag = "t${root.holders[i].slots[(r + 1) % m].k}"
+    l = Leaf.new(k + 3)
+    root.holders[i].slots[(r + 2) % m].put(l, "t${k + 3}")
+    root.holders[i].names = [junk(k), "n${k}", junk(k + 5), "${k}x"]
+    fresh = Array(String).new(3)
+    fresh[0] = junk(k + 7)
+    fresh[1] = "f${k}"
+    fresh[2] = junk(k + 8)
+    root.holders[i].names.push(fresh[r % 3])
+    root.holders[i].rows.push([k, k + 1, k + 2])
+    root.holders[i].h["k${k}"] = "v-k${k}"
+    root.holders[i].counts["c${r % 5}"] = k
+    n = n + junk(k + 9).size
+    if h.slots.size > 12 {
+      dummy = h.slots.pop
+      h.leaves.clear
+    }
+    if h.rows.size > 8 {
+      h.rows = [[k, k + 1, k + 2]]
+    }
+    if h.h.size > 20 {
+      h.h.clear
+    }
+    i = i + 1
+  }
+  n
+}
+
+fn main {
+  root = Root.new
+  i = 0
+  while i < 6 {
+    root.holders.push(Holder.new(i))
+    i = i + 1
+  }
+  total = 0
+  bad = 0
+  r = 0
+  while r < 1200 {
+    total = total &+ round(root, r)
+    j = 0
+    while j < root.holders.size {
+      bad = bad + check(root.holders[j])
+      j = j + 1
+    }
+    r = r + 1
+  }
+  puts(total)
+  puts(bad)
+  s = 0
+  j = 0
+  while j < root.holders.size {
+    s = s + root.holders[j].slots.size + root.holders[j].names.size + root.holders[j].counts.size
+    j = j + 1
+  }
+  puts(s)
+}
