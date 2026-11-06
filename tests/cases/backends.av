@@ -1,0 +1,84 @@
+import harness
+
+// Helpers shared by the suite tests that compare the two back ends
+// (Stage 28: test_scalars.av W5b, test_strings.av W6a; D176, D184): job
+// builders for compiles under an environment, program runs with stdout
+// and stderr in their own files, and waves of at most 24 jobs.
+
+pub fn log_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+pub fn key_of(rel: String): String {
+  buf = buf_new()
+  i = 0
+  while i < rel.size {
+    c = rel[i]
+    if c == 47 || c == 46 {
+      buf.push_byte(95)
+    } else {
+      buf.push_byte(c)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// /usr/bin/env [VAR=value] COMPILER ARGS...
+pub fn env_job(envs: String, compiler: String, args: Array(String), log: String): HJob {
+  a: Array(String) = []
+  if envs.size > 0 {
+    a.push(envs)
+  }
+  a.push(compiler)
+  i = 0
+  while i < args.size {
+    a.push(args[i])
+    i = i + 1
+  }
+  HJob.new("/usr/bin/env", a, log)
+}
+
+pub fn compile_job(envs: String, compiler: String, src: String, out: String, log: String): HJob {
+  a: Array(String) = []
+  a.push("compile")
+  a.push(src)
+  a.push(out)
+  a.push("--debug")
+  env_job(envs, compiler, a, log)
+}
+
+// Run BIN in DIR with stdout and stderr in their own files; the job's
+// code is the program's exit status.
+pub fn run_job(dir: String, bin: String, key: String): HJob {
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && exec ./${bin} > ${key}.out 2> ${key}.err < /dev/null")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+// The same with environment words (`VAR=value ...`) for the program.
+pub fn run_job_env(dir: String, bin: String, key: String, envs: String): HJob {
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && exec env ${envs} ./${bin} > ${key}.out 2> ${key}.err < /dev/null")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+// Jobs in waves of at most 24, so a large list does not start every
+// compiler at once.
+pub fn run_waves(jobs: Array(HJob)) {
+  i = 0
+  while i < jobs.size {
+    wave: Array(HJob) = []
+    while i < jobs.size && wave.size < 24 {
+      wave.push(jobs[i])
+      i = i + 1
+    }
+    run_jobs(wave)
+  }
+}
+

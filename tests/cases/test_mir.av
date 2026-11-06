@@ -123,7 +123,30 @@ fn expectations: Want {
   w.add("ok_addr_in_slot", "final", "ok")
   w.add("ok_barrier_forms", "lowered", "ok")
   w.add("ok_quiet_single_thread", "lowered", "ok")
+  // The GC passes' results verify at final (W6a).
+  w.add("pass_live", "final", "ok")
+  w.add("pass_args", "final", "ok")
+  w.add("pass_addr", "final", "ok")
+  w.add("pass_leaves", "final", "ok")
+  w.add("pass_leaves_shared", "final", "ok")
   w
+}
+
+// What the leaf and root-slot passes decide (gc.av, Stage 28 W6a): one
+// `pass CASE SYMBOL KIND slots LIST` line per function of the case.
+fn pass_lines: Array(String) {
+  xs: Array(String) = []
+  xs.push("pass pass_live av.t/f frame slots _1")
+  xs.push("pass pass_args av.t/f frame slots _1")
+  xs.push("pass pass_args av.t/g frame slots")
+  xs.push("pass pass_addr av.t/f frame slots _2")
+  xs.push("pass pass_leaves av.t/a leaf slots")
+  xs.push("pass pass_leaves av.t/c leaf slots")
+  xs.push("pass pass_leaves av.t/d frame slots")
+  xs.push("pass pass_leaves_shared av.t/a frame slots")
+  xs.push("pass pass_leaves_shared av.t/c frame slots")
+  xs.push("pass pass_leaves_shared av.t/d frame slots")
+  xs
 }
 
 fn test_mir(c: Checks) {
@@ -153,6 +176,21 @@ fn test_mir(c: Checks) {
       i = i + 1
     }
     c.eq_int(count_cases(lines), w.names.size, "no case without an expectation")
+    pl = pass_lines()
+    npass = 0
+    i = 0
+    while i < lines.size {
+      if lines[i].size > 5 && str_eq(str_slice(lines[i], 0, 5), "pass ") {
+        npass = npass + 1
+      }
+      i = i + 1
+    }
+    c.eq_int(npass, pl.size, "one pass line per function of the pass cases")
+    i = 0
+    while i < pl.size {
+      c.expect(str_has(text, "${pl[i]}\n"), "the GC passes: ${pl[i]}")
+      i = i + 1
+    }
     // The same run under the GC verifier with a 1 MB nursery: the MIR's
     // data structures are traced correctly (D188, D192) and the answers
     // do not depend on collections.

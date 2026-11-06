@@ -1,4 +1,5 @@
 import harness
+import backends
 
 // Stage 28 W5b: the scalar subset on the new back end (AVANT_BACKEND=llvm,
 // D176; stages/stage28/mir.md W5). For every program of the subset:
@@ -9,13 +10,6 @@ import harness
 // outside the subset stops the compile with the L0001 diagnostic at its
 // location, writing nothing; AVANT_BACKEND=myc is the default and any
 // other value is refused.
-
-fn log_text(path: String): String {
-  if t = file_read(path) {
-    return t
-  }
-  "(no log)"
-}
 
 // The programs, relative to the root; those with a golden first.
 fn golden_progs: Array(String) {
@@ -63,68 +57,6 @@ fn golden_of(rel: String): String {
     return "tests/goldens/examples/${stem}.mir"
   }
   "tests/goldens/scalars/${stem}.mir"
-}
-
-fn key_of(rel: String): String {
-  buf = buf_new()
-  i = 0
-  while i < rel.size {
-    c = rel[i]
-    if c == 47 || c == 46 {
-      buf.push_byte(95)
-    } else {
-      buf.push_byte(c)
-    }
-    i = i + 1
-  }
-  buf.to_s
-}
-
-// /usr/bin/env [VAR=value] COMPILER ARGS...
-fn env_job(envs: String, compiler: String, args: Array(String), log: String): HJob {
-  a: Array(String) = []
-  if envs.size > 0 {
-    a.push(envs)
-  }
-  a.push(compiler)
-  i = 0
-  while i < args.size {
-    a.push(args[i])
-    i = i + 1
-  }
-  HJob.new("/usr/bin/env", a, log)
-}
-
-fn compile_job(envs: String, compiler: String, src: String, out: String, log: String): HJob {
-  a: Array(String) = []
-  a.push("compile")
-  a.push(src)
-  a.push(out)
-  a.push("--debug")
-  env_job(envs, compiler, a, log)
-}
-
-// Run BIN in DIR with stdout and stderr in their own files; the job's
-// code is the program's exit status.
-fn run_job(dir: String, bin: String, key: String): HJob {
-  a: Array(String) = []
-  a.push("-c")
-  a.push("cd ${dir} && exec ./${bin} > ${key}.out 2> ${key}.err < /dev/null")
-  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
-}
-
-// Jobs in waves of at most 24, so a large list does not start every
-// compiler at once.
-fn run_waves(jobs: Array(HJob)) {
-  i = 0
-  while i < jobs.size {
-    wave: Array(HJob) = []
-    while i < jobs.size && wave.size < 24 {
-      wave.push(jobs[i])
-      i = i + 1
-    }
-    run_jobs(wave)
-  }
 }
 
 fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {

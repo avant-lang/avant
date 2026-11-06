@@ -1,0 +1,44 @@
+// String interpolation on the new back end (Stage 28 W6a): every scalar
+// type, the one-text-one-Int form (avant_str_cat_i32), a single piece
+// (the value itself), empty texts, and the left fold of several pieces.
+
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b - a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn label(k: Int): String {
+  "k${k}"
+}
+
+fn main {
+  n = opaque(42)
+  m = opaque(-7)
+  big = opaque(2147483647)
+  low = 0 - big - 1
+  puts("n=${n}")
+  puts("m=${m}")
+  puts("${big} ${low}")
+  puts("${n}")
+  puts("")
+  puts("${""}")
+  w = 9000000000i64 * opaque(1).to_i64
+  u = 18446744073709551615u64
+  puts("i64 ${w} ${0i64 - w} u64 ${u}")
+  f = opaque(3).to_f / 4.0
+  puts("f ${f} ${f * 1000000.0} ${0.0 - f} ${f / 0.0}")
+  t = n > 40
+  puts("b ${t} ${!t}")
+  s = "mid"
+  puts("<${s}>")
+  puts("${s}")
+  puts("${s}${s}${s}")
+  puts("${label(n)}/${label(m)}/${s}")
+  x = "a${n}b${m}c${t}d${f}e"
+  puts(x)
+  puts(x.size)
+}

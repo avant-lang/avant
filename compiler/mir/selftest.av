@@ -17,6 +17,7 @@ import mir.print
 import mir.verify_core
 import mir.verify
 import mir.example
+import mir.gc
 
 fn st_none: Array(MOperand) {
   xs: Array(MOperand) = []
@@ -495,6 +496,104 @@ fn st_accepting(out: Buf) {
   st_case(out, "ok_quiet_single_thread", lo, b.module)
 }
 
+// ---- the GC passes (gc.av, W6a): stage-lowered functions in module t,
+// after mir_gc_passes; one line per function, `pass CASE SYMBOL KIND
+// slots LIST`, then the verifier's answer at final for the case.
+fn st_pass_report(out: Buf, name: String, m: MModule, first: Int) {
+  mir_gc_passes(m)
+  i = first
+  while i < m.funcs.size {
+    f = m.funcs[i]
+    kind = "frame"
+    if f.kind == mfk_leaf() {
+      kind = "leaf"
+    }
+    sl = buf_new()
+    k = 0
+    while k < f.locals.size {
+      if f.valid_local(k) && f.locals[k].slot {
+        sl.push_str(" _${k}")
+      }
+      k = k + 1
+    }
+    out.push_str("pass ${name} ${f.symbol} ${kind} slots${sl.to_s}\n")
+    i = i + 1
+  }
+  st_case(out, name, mst_final(), m)
+}
+
+fn st_passes(out: Buf) {
+  vd = mt_void()
+  un = mfk_unset()
+  // Liveness: _1 is live across churn and two more collecting calls, _2
+  // is dead after its definition, _3 is the destination of a collecting
+  // call and is read only before the next one.
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  l1 = b.local(mt_str(), "")
+  l2 = b.local(mt_str(), "")
+  l3 = b.local(mt_str(), "")
+  b.call(l1, "av.t/mk", st_none())
+  b.call(l2, "av.t/mk", st_none())
+  b.call(-1, "av.t/churn", st_none())
+  b.call(l3, "av.t/mk", st_none())
+  b.call(-1, "printf", st_two(b.str_const("%s\n"), b.copy_local(l3)))
+  b.call(-1, "av.t/use", st_one(b.copy_local(l1)))
+  b.ret
+  st_pass_report(out, "pass_live", b.module, first)
+
+  // Arguments: a bare local passed to a collecting external is a slot;
+  // one passed to an Avant callee and dead after it is not.
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(mt_str(), -1), mt_str(), un)
+  b.call(0, "avant_str_concat", st_two(b.copy_local(1), b.str_const("x")))
+  b.ret
+  st_fn(b, "g", st_tys(mt_str(), -1), vd, un)
+  b.call(-1, "av.t/use", st_one(b.copy_local(1)))
+  b.ret
+  st_pass_report(out, "pass_args", b.module, first)
+
+  // Address taken: the struct local whose address reaches a collecting
+  // callee is a slot; the address itself is dead after the call.
+  b = st_base(false)
+  first = b.module.funcs.size
+  rec = b.types.layout_named("main.Rec")
+  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
+  l2 = b.local(b.agg(rec), "")
+  l3 = b.local(b.addr_of(b.agg(rec)), "")
+  b.assign(b.pl(l2), b.rv_struct(rec, st_one(b.copy_local(1))))
+  b.assign(b.pl(l3), b.rv_addr(b.pl(l2)))
+  b.call(-1, "av.t/Rec.m", st_one(b.copy_local(l3)))
+  b.ret
+  st_pass_report(out, "pass_addr", b.module, first)
+
+  // Leaves: a holds a ref and calls only a never row; c calls the leaf a
+  // (re-marked nocollect) and is a leaf; d calls churn and is a frame.
+  // In a shared module a is a frame (V19), and so is c.
+  sh = 0
+  while sh < 2 {
+    b = st_base(sh == 1)
+    first = b.module.funcs.size
+    st_fn(b, "a", st_tys(mt_str(), -1), mt_i32(), un)
+    b.call(0, "avant_str_size", st_one(b.copy_local(1)))
+    b.ret
+    st_fn(b, "c", st_tys(-1, -1), mt_i32(), un)
+    b.call(0, "av.t/a", st_one(b.str_const("q")))
+    b.ret
+    st_fn(b, "d", st_tys(-1, -1), vd, un)
+    b.call(-1, "av.t/churn", st_none())
+    b.ret
+    name = "pass_leaves"
+    if sh == 1 {
+      name = "pass_leaves_shared"
+    }
+    st_pass_report(out, name, b.module, first)
+    sh = sh + 1
+  }
+}
+
 pub fn mir_selftest {
   m = mir_example()
   out = buf_new()
@@ -504,6 +603,7 @@ pub fn mir_selftest {
   st_both(out, "example", m)
   st_rejecting(out)
   st_accepting(out)
+  st_passes(out)
   // One verifier error in the compiler's diagnostic form.
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))

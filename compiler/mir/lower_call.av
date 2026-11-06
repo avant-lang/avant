@@ -18,10 +18,11 @@ import mir.lower_ty
 import mir.lower
 import mir.lower_expr
 
-// The old back end's builtins outside this wave (calls.av:16-372): each
-// is refused by name.
+// The old back end's builtins outside the supported subset (calls.av:
+// 16-372): each is refused by name. The string builtins are in
+// lower_str.av.
 pub fn mir_other_builtin(name: String): Bool {
-  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "file_read", "file_write", "argv", "process_run", "process_run_out", "env_get", "file_exists", "dir_list", "chr", "repeat_byte", "bytes_to_str", "fmt_float", "str_to_f_slice", "sha256", "crc32_bytes", "sha256_word0", "hash_last_key", "wide_op", "wide_hi", "checksum_f64", "checksum_str", "str_slice", "nursery_reclaim", "buf_new"]
+  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast", "file_read", "file_write", "argv", "process_run", "process_run_out", "env_get", "file_exists", "dir_list", "bytes_to_str", "sha256", "crc32_bytes", "sha256_word0", "hash_last_key", "wide_op", "wide_hi", "checksum_f64", "nursery_reclaim", "buf_new"]
   i = 0
   while i < names.size {
     if str_eq(names[i], name) {
@@ -94,6 +95,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           return lw.member(recv, rt, e.callee, e)
         }
       }
+      if mir_is_str_ty(rt) && e.resolved.size == 0 {
+        return lw.str_member(e, recv, rt, e.callee, e.args)
+      }
     }
     lw.refuse(e.loc, "the method call .${e.callee}")
     return zero
@@ -119,6 +123,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       return lw.call_f64("sqrt", a)
     }
     return lw.call_f64("avant_exp", a)
+  }
+  if mir_str_builtin_arity(c) == e.args.size {
+    return lw.lower_str_builtin(e, c)
   }
   if mir_other_builtin(c) {
     lw.refuse(e.loc, "the builtin ${c}")
@@ -179,6 +186,10 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
     if ot = obj.ty {
       if ot.is_integer || ot.is_float {
         return lw.member(obj, ot, e.ident, e)
+      }
+      if mir_is_str_ty(ot) {
+        none: Array(Expr) = []
+        return lw.str_member(e, obj, ot, e.ident, none)
       }
     }
   }
