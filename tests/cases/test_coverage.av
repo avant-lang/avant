@@ -28,6 +28,42 @@ fn test_coverage(c: Checks) {
     if ir_map = file_read(dump_log) {
       c.expect(str_has(ir_map, "/coverage.map"), "dump keeps its slot map in the scratch directory")
     }
+    // Into a missing directory (W10b): the slot map is written while the
+    // program is lowered, so its directory is created before it, on both
+    // back ends (the map beside the binary, and AVANT_COVERAGE_MAP).
+    backs = ["myc", "llvm"]
+    bi = 0
+    while bi < backs.size {
+      bk = backs[bi]
+      nd = "${scratch()}/coverage-${stamp}-newdir-${bk}"
+      nd_args: Array(String) = []
+      nd_args.push("AVANT_BACKEND=${bk}")
+      nd_args.push("AVANT_COVERAGE=1")
+      nd_args.push(compiler)
+      nd_args.push("compile")
+      nd_args.push(src)
+      nd_args.push("${nd}/a/b/cov.bin")
+      nd_code = process_run_out("/usr/bin/env", nd_args, "${nd}.log")
+      c.eq_int(nd_code, 0, "${bk}: compile with AVANT_COVERAGE into a missing directory")
+      c.expect(file_exists("${nd}/a/b/cov.bin"), "${bk}: the binary is in the created directory")
+      if nm = file_read("${nd}/a/b/cov.bin.covmap") {
+        c.expect(str_has(nm, "covered"), "${bk}: the slot map is written beside it")
+      } else {
+        c.expect(false, "${bk}: the slot map is written beside it")
+      }
+      ex_args: Array(String) = []
+      ex_args.push("AVANT_BACKEND=${bk}")
+      ex_args.push("AVANT_COVERAGE=1")
+      ex_args.push("AVANT_COVERAGE_MAP=${nd}/m/n/explicit.map")
+      ex_args.push(compiler)
+      ex_args.push("compile")
+      ex_args.push(src)
+      ex_args.push("${nd}/x/cov.bin")
+      ex_code = process_run_out("/usr/bin/env", ex_args, "${nd}-explicit.log")
+      c.eq_int(ex_code, 0, "${bk}: compile with AVANT_COVERAGE_MAP in a missing directory")
+      c.expect(file_exists("${nd}/m/n/explicit.map"), "${bk}: AVANT_COVERAGE_MAP is written in the created directory")
+      bi = bi + 1
+    }
     chmod_x(bin)
     // The fixture writes its own lcov. The compiler's report is a different file.
     // native runs the suite with AVANT_COVERAGE_REPORT=0. Force the table here.
