@@ -12,6 +12,57 @@ import typed_ir
 import codegen.types
 import re2c_pat
 
+// The coverage slot table of one program (D129) and the C callback
+// thunks (__cb_<name>) still to emit. They live in their own objects, not
+// in MycGen's payload: while the v0.34.0 seed builds B, its type maps lose
+// every reference word past payload word 63 (audit 8.4, fixed by W1b in
+// the tree only), so no compiler class may have a reference field there
+// (D188; test_fixed_point checks it). Relax after a re-seed (D178).
+pub class CovSlots {
+  n: Int = 0
+  map_path: String = ""
+  map_default: String = ""
+  kinds: Array(Int)
+  paths: Array(String)
+  lines: Array(Int)
+  names: Array(String)
+  line_slots: Hash(String, Int)
+
+  fn initialize {
+    self.n = 0
+    self.map_path = ""
+    self.map_default = ""
+    ck: Array(Int) = []
+    self.kinds = ck
+    cp: Array(String) = []
+    self.paths = cp
+    cl: Array(Int) = []
+    self.lines = cl
+    cn: Array(String) = []
+    self.names = cn
+    ls = Hash(String, Int).new
+    self.line_slots = ls
+  }
+}
+
+pub class CbThunks {
+  names: Array(String)
+  targets: Array(String)
+  tys: Array(Ty)
+  lambda: Array(Int)
+
+  fn initialize {
+    cbn: Array(String) = []
+    self.names = cbn
+    cbt: Array(String) = []
+    self.targets = cbt
+    cbty: Array(Ty) = []
+    self.tys = cbty
+    cbl: Array(Int) = []
+    self.lambda = cbl
+  }
+}
+
 pub class MycGen {
   program: Program
   resolver: TypeResolver
@@ -33,14 +84,7 @@ pub class MycGen {
   spawn_id: Int = 0
   pending: Array(Expr)
   cov: Bool = false
-  cov_n: Int = 0
-  cov_map_path: String = ""
-  cov_map_default: String = ""
-  cov_kinds: Array(Int)
-  cov_paths: Array(String)
-  cov_lines: Array(Int)
-  cov_names: Array(String)
-  cov_line_slots: Hash(String, Int)
+  cov_slots: CovSlots
   lam_id: Int = 0
   lambdas: Array(Expr)
   fn_tys: Array(Ty)
@@ -87,10 +131,7 @@ pub class MycGen {
   may_share: Bool = false
   pin_temps: Array(String)
   pin_loops: Array(Int)
-  cb_names: Array(String)
-  cb_targets: Array(String)
-  cb_tys: Array(Ty)
-  cb_lambda: Array(Int)
+  cb_thunks: CbThunks
 
   fn initialize(program: Program) {
     self.program = program
@@ -122,19 +163,7 @@ pub class MycGen {
     th: Array(Expr) = []
     self.pending = th
     self.cov = false
-    self.cov_n = 0
-    self.cov_map_path = ""
-    self.cov_map_default = ""
-    ck: Array(Int) = []
-    self.cov_kinds = ck
-    cp: Array(String) = []
-    self.cov_paths = cp
-    cl: Array(Int) = []
-    self.cov_lines = cl
-    cn: Array(String) = []
-    self.cov_names = cn
-    ls = Hash(String, Int).new
-    self.cov_line_slots = ls
+    self.cov_slots = CovSlots.new
     self.lam_id = 0
     lams: Array(Expr) = []
     self.lambdas = lams
@@ -201,14 +230,7 @@ pub class MycGen {
     self.pin_temps = pt
     pl: Array(Int) = []
     self.pin_loops = pl
-    cbn: Array(String) = []
-    self.cb_names = cbn
-    cbt: Array(String) = []
-    self.cb_targets = cbt
-    cbty: Array(Ty) = []
-    self.cb_tys = cbty
-    cbl: Array(Int) = []
-    self.cb_lambda = cbl
+    self.cb_thunks = CbThunks.new
   }
 
   pub fn cov_register(kind: Int, path: String, line: Int, name: String): Int {
@@ -216,12 +238,12 @@ pub class MycGen {
     } else {
       return 0
     }
-    slot = self.cov_n
-    self.cov_n = slot + 1
-    self.cov_kinds.push(kind)
-    self.cov_paths.push(path)
-    self.cov_lines.push(line)
-    self.cov_names.push(name)
+    slot = self.cov_slots.n
+    self.cov_slots.n = slot + 1
+    self.cov_slots.kinds.push(kind)
+    self.cov_slots.paths.push(path)
+    self.cov_slots.lines.push(line)
+    self.cov_slots.names.push(name)
     slot
   }
 
@@ -238,12 +260,12 @@ pub class MycGen {
       return
     }
     key = "${loc.path}:${loc.line}"
-    if slot = self.cov_line_slots.get(key) {
+    if slot = self.cov_slots.line_slots.get(key) {
       self.emit_cov_hit(slot)
       return
     }
     slot = self.cov_register(4, loc.path, loc.line, "")
-    self.cov_line_slots[key] = slot
+    self.cov_slots.line_slots[key] = slot
     self.emit_cov_hit(slot)
   }
 
@@ -285,7 +307,7 @@ pub class MycGen {
 
   pub fn emit_cov_init {
     if self.cov {
-      q = myc_quote(self.cov_map_path)
+      q = myc_quote(self.cov_slots.map_path)
       self.line("PUSH ${q}")
       self.line("CALL :avant_cov_init")
     }
@@ -299,8 +321,8 @@ pub class MycGen {
     buf = buf_new()
     buf.push_str("avant-cov 1\n")
     i = 0
-    while i < self.cov_n {
-      kind = self.cov_kinds[i]
+    while i < self.cov_slots.n {
+      kind = self.cov_slots.kinds[i]
       tag = "S"
       if kind == 2 {
         tag = "B"
@@ -313,15 +335,15 @@ pub class MycGen {
       }
       buf.push_str(tag)
       buf.push_str("\t")
-      buf.push_str(self.cov_paths[i])
+      buf.push_str(self.cov_slots.paths[i])
       buf.push_str("\t")
-      buf.push_fmt_i(self.cov_lines[i])
+      buf.push_fmt_i(self.cov_slots.lines[i])
       buf.push_str("\t")
-      buf.push_str(self.cov_names[i])
+      buf.push_str(self.cov_slots.names[i])
       buf.push_str("\n")
       i = i + 1
     }
-    dummy = file_write(self.cov_map_path, buf.to_s)
+    dummy = file_write(self.cov_slots.map_path, buf.to_s)
   }
 
   pub fn line(text: String) {
@@ -366,7 +388,7 @@ pub class MycGen {
   pub fn emit: String {
     self.cov = coverage_wanted()
     if self.cov {
-      self.cov_map_path = coverage_map_path(self.cov_map_default)
+      self.cov_slots.map_path = coverage_map_path(self.cov_slots.map_default)
     }
     if s = self.symbols {
       self.resolver = s.resolver
@@ -507,7 +529,7 @@ pub class MycGen {
       i = i + 1
     }
     i = 0
-    while i < self.cb_names.size {
+    while i < self.cb_thunks.names.size {
       self.emit_cb_thunk(i)
       i = i + 1
     }
@@ -3433,6 +3455,6 @@ pub fn emit_myc(program: Program, symbols: SymbolTable): String {
 pub fn emit_myc(program: Program, symbols: SymbolTable, cov_map: String): String {
   gen = MycGen.new(program)
   gen.symbols = symbols
-  gen.cov_map_default = cov_map
+  gen.cov_slots.map_default = cov_map
   gen.emit
 }

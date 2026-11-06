@@ -20,6 +20,7 @@ import dump_check
 import expand
 import format
 import lexer
+import llvm.glue
 import loader
 import location
 import parser
@@ -421,6 +422,39 @@ pub fn driver_fetch(args: Array(String)) {
   diag_exit(1)
 }
 
+// Internal (Stage 28 W2), not in the usage text: compiles a textual LLVM
+// IR file to an object with the in-process LLVM (compiler/llvm/glue.av).
+//   avant __llvm-obj IN.ll OUT.o [--debug|--release]
+// No flag is compile's bare mode. Exit 0, or 1 with the message on stderr.
+fn driver_llvm_obj(args: Array(String)) {
+  codegen = "default"
+  files: Array(String) = []
+  i = 0
+  while i < args.size {
+    a = args[i]
+    if str_eq(a, "--debug") {
+      codegen = "debug"
+    } else if str_eq(a, "--release") {
+      codegen = "release"
+    } else if str_starts(a, "-") {
+      diag_puts("__llvm-obj: unknown flag ${a}")
+      diag_exit(1)
+    } else {
+      files.push(a)
+    }
+    i = i + 1
+  }
+  if files.size != 2 {
+    diag_puts("usage: avant __llvm-obj IN.ll OUT.o [--debug|--release]")
+    diag_exit(1)
+  }
+  err = llvm_compile_file(files[0], codegen, files[1])
+  if err.size > 0 {
+    diag_puts(err)
+    diag_exit(1)
+  }
+}
+
 fn main {
   args = take_keep_tmp(argv_user())
   if args.size == 0 {
@@ -493,6 +527,10 @@ fn main {
   }
   if str_eq(command, "b") {
     driver_bind(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__llvm-obj") {
+    driver_llvm_obj(argv_drop_first(args))
     return
   }
   if str_ends(command, ".av") {

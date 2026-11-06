@@ -1241,21 +1241,21 @@ pub fn (codegen_self: MycGen) emit_cb_pointer(arg: Expr, fty: Ty) {
   name = "__cb_${arg.resolved}"
   seen = false
   i = 0
-  while i < codegen_self.cb_names.size {
-    if str_eq(codegen_self.cb_names[i], name) {
+  while i < codegen_self.cb_thunks.names.size {
+    if str_eq(codegen_self.cb_thunks.names[i], name) {
       seen = true
     }
     i = i + 1
   }
   if seen {
   } else {
-    codegen_self.cb_names.push(name)
-    codegen_self.cb_targets.push(arg.resolved)
-    codegen_self.cb_tys.push(fty)
+    codegen_self.cb_thunks.names.push(name)
+    codegen_self.cb_thunks.targets.push(arg.resolved)
+    codegen_self.cb_thunks.tys.push(fty)
     if arg.kind == ex_lambda() {
-      codegen_self.cb_lambda.push(1)
+      codegen_self.cb_thunks.lambda.push(1)
     } else {
-      codegen_self.cb_lambda.push(0)
+      codegen_self.cb_thunks.lambda.push(0)
     }
   }
   codegen_self.line("ADDR :${name}")
@@ -1326,10 +1326,10 @@ pub fn (codegen_self: MycGen) emit_lib_call(expr: Expr) {
 }
 
 pub fn (codegen_self: MycGen) emit_cb_thunk(idx: Int) {
-  name = codegen_self.cb_names[idx]
-  target = codegen_self.cb_targets[idx]
-  fty = codegen_self.cb_tys[idx]
-  is_lambda = codegen_self.cb_lambda[idx] == 1
+  name = codegen_self.cb_thunks.names[idx]
+  target = codegen_self.cb_thunks.targets[idx]
+  fty = codegen_self.cb_thunks.tys[idx]
+  is_lambda = codegen_self.cb_thunks.lambda[idx] == 1
   saved_ret = codegen_self.return_type
   saved_main = codegen_self.c_main
   codegen_self.c_main = false

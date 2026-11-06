@@ -25,6 +25,8 @@
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, compiler build and
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
+# The runtime, B, and C are built by tools/letters.sh (the one copy of the
+# letters' incantation, with those timeouts inside).
 # AVANT_MYC_LLVM is always passed explicitly (the seed's myc-llvm).
 #
 # Output files in GATE_OUT: build-{runtime,b,c}.log and time-build-{b,c}.txt;
@@ -63,11 +65,14 @@ snap() {
 
 echo "gate: root=$root seed=$seed out=$out reuse=${REUSE:-no} suite-env=${SUITE_ENV:-none}" | tee "$out/summary.txt"
 
-timeout -k 10 300 sh runtime/build.sh > "$out/build-runtime.log" 2>&1 < /dev/null || { fail "runtime build failed (rc=$?)"; finish; }
-AVANT_MYC_LLVM=$M timeout -k 10 900 /usr/bin/time -p -o "$out/time-build-b.txt" "$seed/avant" compile compiler/main.av bin/avant-b --debug > "$out/build-b.log" 2>&1 < /dev/null || { fail "B build failed (rc=$?)"; finish; }
+# The letters come from tools/letters.sh (its own timeouts: runtime 300 s,
+# each compiler build 900 s; stdin /dev/null; the seed's myc-llvm).
+letters() { LETTERS_SEED=$seed LETTERS_TIME_DIR=$out sh tools/letters.sh "$@" < /dev/null; }
+letters runtime > "$out/build-runtime.log" 2>&1 || { fail "runtime build failed (rc=$?)"; finish; }
+letters b > "$out/build-b.log" 2>&1 || { fail "B build failed (rc=$?)"; finish; }
 
 build_c() {
-  AVANT_MYC_LLVM=$M timeout -k 10 900 /usr/bin/time -p -o "$out/time-build-c.txt" ./bin/avant-b compile compiler/main.av bin/avant-c --debug > "$out/build-c.log" 2>&1 < /dev/null || { fail "C build failed (rc=$?)"; finish; }
+  letters c > "$out/build-c.log" 2>&1 || { fail "C build failed (rc=$?)"; finish; }
 }
 rm -f "$out/kept-c" "$out/reuse.txt"
 [ -z "$REUSE" ] && build_c

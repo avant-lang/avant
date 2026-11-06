@@ -121,3 +121,14 @@ else
   rm -f "$bind_out"
   echo "runtime/build.sh: skipped avant-bind: $llvm_config not found (avant bind needs llvm-config and libclang)" >&2
 fi
+
+# The compiler's in-process LLVM (D172): tools/build-llvm.sh writes
+# runtime/build/avant_llvm.o, which only the compiler links (tools/
+# letters.sh). It rebuilds only when LLVM or the glue changed, so a cached
+# run costs a few sha256 sums. Without llvm-config-20 it is skipped with a
+# notice, like avant-bind; building the compiler then stops and says why.
+if command -v "${LLVM_CONFIG:-llvm-config-20}" > /dev/null 2>&1; then
+  sh "$root/../tools/build-llvm.sh"
+else
+  echo "runtime/build.sh: skipped avant_llvm.o: ${LLVM_CONFIG:-llvm-config-20} not found (the compiler needs llvm-20-dev; see tools/build-llvm.sh)" >&2
+fi

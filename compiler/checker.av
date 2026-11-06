@@ -20,6 +20,91 @@ pub class Scope {
   }
 }
 
+// The flow facts the checker proves inside one function body (bounds,
+// non-nil, capacity, positivity; checker/facts.av), reset per function.
+// Their own object, not Checker's payload: while the v0.34.0 seed builds B,
+// its type maps lose every reference word past payload word 63 (audit
+// 8.4, fixed by W1b in the tree only), so no compiler class may have a
+// reference field there (D188; test_fixed_point checks it). Relax after a
+// re-seed (D178).
+pub class FlowFacts {
+  fact_var: Array(String)
+  fact_cont: Array(String)
+  fact_slack: Array(Int)
+  fact_live: Array(Int)
+  sv_var: Array(String)
+  sv_cont: Array(String)
+  bv_var: Array(String)
+  bv_cont: Array(String)
+  bv_delta: Array(Int)
+  cs_cont: Array(String)
+  cs_var: Array(String)
+  cs_delta: Array(Int)
+  nn_var: Array(String)
+  cap_var: Array(String)
+  cap_val: Array(Int64)
+  gcap_var: Array(String)
+  gcap_val: Array(Int64)
+  gcap_live: Array(Int)
+  gnn_var: Array(String)
+  gnn_live: Array(Int)
+  gpos_var: Array(String)
+  gpos_live: Array(Int)
+  gne_var: Array(String)
+  gne_live: Array(Int)
+
+  fn initialize {
+    fv: Array(String) = []
+    self.fact_var = fv
+    fc: Array(String) = []
+    self.fact_cont = fc
+    fs: Array(Int) = []
+    self.fact_slack = fs
+    fl: Array(Int) = []
+    self.fact_live = fl
+    svv: Array(String) = []
+    self.sv_var = svv
+    svc: Array(String) = []
+    self.sv_cont = svc
+    bvv: Array(String) = []
+    self.bv_var = bvv
+    bvc: Array(String) = []
+    self.bv_cont = bvc
+    bvd: Array(Int) = []
+    self.bv_delta = bvd
+    csc: Array(String) = []
+    self.cs_cont = csc
+    csvv: Array(String) = []
+    self.cs_var = csvv
+    csd: Array(Int) = []
+    self.cs_delta = csd
+    nnv: Array(String) = []
+    self.nn_var = nnv
+    cpv: Array(String) = []
+    self.cap_var = cpv
+    cpvl: Array(Int64) = []
+    self.cap_val = cpvl
+    gcv: Array(String) = []
+    self.gcap_var = gcv
+    gcvl: Array(Int64) = []
+    self.gcap_val = gcvl
+    gcl: Array(Int) = []
+    self.gcap_live = gcl
+    gnv: Array(String) = []
+    self.gnn_var = gnv
+    gnl: Array(Int) = []
+    self.gnn_live = gnl
+    gpv: Array(String) = []
+    self.gpos_var = gpv
+    gpl: Array(Int) = []
+    self.gpos_live = gpl
+    gev: Array(String) = []
+    self.gne_var = gev
+    gel: Array(Int) = []
+    self.gne_live = gel
+  }
+}
+
 pub class Checker {
   source: Source
   program: Program
@@ -63,30 +148,7 @@ pub class Checker {
   spawn_skip: Array(String)
   pending_handles: Array(String)
   pending_arrays: Array(String)
-  fact_var: Array(String)
-  fact_cont: Array(String)
-  fact_slack: Array(Int)
-  fact_live: Array(Int)
-  sv_var: Array(String)
-  sv_cont: Array(String)
-  bv_var: Array(String)
-  bv_cont: Array(String)
-  bv_delta: Array(Int)
-  cs_cont: Array(String)
-  cs_var: Array(String)
-  cs_delta: Array(Int)
-  nn_var: Array(String)
-  cap_var: Array(String)
-  cap_val: Array(Int64)
-  gcap_var: Array(String)
-  gcap_val: Array(Int64)
-  gcap_live: Array(Int)
-  gnn_var: Array(String)
-  gnn_live: Array(Int)
-  gpos_var: Array(String)
-  gpos_live: Array(Int)
-  gne_var: Array(String)
-  gne_live: Array(Int)
+  facts: FlowFacts
   adopted: Hash(String, Int)
   adopt_pending: Bool = false
   ready_adopt: Bool = false
@@ -170,54 +232,7 @@ pub class Checker {
     self.pending_handles = ph
     pa: Array(String) = []
     self.pending_arrays = pa
-    fv: Array(String) = []
-    self.fact_var = fv
-    fc: Array(String) = []
-    self.fact_cont = fc
-    fs: Array(Int) = []
-    self.fact_slack = fs
-    fl: Array(Int) = []
-    self.fact_live = fl
-    svv: Array(String) = []
-    self.sv_var = svv
-    svc: Array(String) = []
-    self.sv_cont = svc
-    bvv: Array(String) = []
-    self.bv_var = bvv
-    bvc: Array(String) = []
-    self.bv_cont = bvc
-    bvd: Array(Int) = []
-    self.bv_delta = bvd
-    csc: Array(String) = []
-    self.cs_cont = csc
-    csvv: Array(String) = []
-    self.cs_var = csvv
-    csd: Array(Int) = []
-    self.cs_delta = csd
-    nnv: Array(String) = []
-    self.nn_var = nnv
-    cpv: Array(String) = []
-    self.cap_var = cpv
-    cpvl: Array(Int64) = []
-    self.cap_val = cpvl
-    gcv: Array(String) = []
-    self.gcap_var = gcv
-    gcvl: Array(Int64) = []
-    self.gcap_val = gcvl
-    gcl: Array(Int) = []
-    self.gcap_live = gcl
-    gnv: Array(String) = []
-    self.gnn_var = gnv
-    gnl: Array(Int) = []
-    self.gnn_live = gnl
-    gpv: Array(String) = []
-    self.gpos_var = gpv
-    gpl: Array(Int) = []
-    self.gpos_live = gpl
-    gev: Array(String) = []
-    self.gne_var = gev
-    gel: Array(Int) = []
-    self.gne_live = gel
+    self.facts = FlowFacts.new
     ad = Hash(String, Int).new
     self.adopted = ad
     self.adopt_pending = false
@@ -428,54 +443,7 @@ pub class Checker {
     self.pending_handles = ph0
     pa0: Array(String) = []
     self.pending_arrays = pa0
-    fv0: Array(String) = []
-    self.fact_var = fv0
-    fc0: Array(String) = []
-    self.fact_cont = fc0
-    fs0: Array(Int) = []
-    self.fact_slack = fs0
-    fl0: Array(Int) = []
-    self.fact_live = fl0
-    svv0: Array(String) = []
-    self.sv_var = svv0
-    svc0: Array(String) = []
-    self.sv_cont = svc0
-    bvv0: Array(String) = []
-    self.bv_var = bvv0
-    bvc0: Array(String) = []
-    self.bv_cont = bvc0
-    bvd0: Array(Int) = []
-    self.bv_delta = bvd0
-    csc0: Array(String) = []
-    self.cs_cont = csc0
-    csvv0: Array(String) = []
-    self.cs_var = csvv0
-    csd0: Array(Int) = []
-    self.cs_delta = csd0
-    nnv0: Array(String) = []
-    self.nn_var = nnv0
-    cpv0: Array(String) = []
-    self.cap_var = cpv0
-    cpvl0: Array(Int64) = []
-    self.cap_val = cpvl0
-    gcv0: Array(String) = []
-    self.gcap_var = gcv0
-    gcvl0: Array(Int64) = []
-    self.gcap_val = gcvl0
-    gcl0: Array(Int) = []
-    self.gcap_live = gcl0
-    gnv0: Array(String) = []
-    self.gnn_var = gnv0
-    gnl0: Array(Int) = []
-    self.gnn_live = gnl0
-    gpv0: Array(String) = []
-    self.gpos_var = gpv0
-    gpl0: Array(Int) = []
-    self.gpos_live = gpl0
-    gev0: Array(String) = []
-    self.gne_var = gev0
-    gel0: Array(Int) = []
-    self.gne_live = gel0
+    self.facts = FlowFacts.new
     if ret.is_void {
     } else {
       if fnn.body.size == 0 {
@@ -659,7 +627,7 @@ pub class Checker {
         self.check_if_assign(stmt, expected, at_tail)
         return
       }
-      saved_facts = self.fact_var.size
+      saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
       }
@@ -670,17 +638,17 @@ pub class Checker {
           self.fail(cond.loc, "if condition must be Bool, got ${ct.show}")
         }
       }
-      saved_gcap = self.gcap_var.size
-      saved_gnn = self.gnn_var.size
-      saved_gpos = self.gpos_var.size
-      saved_gne = self.gne_var.size
+      saved_gcap = self.facts.gcap_var.size
+      saved_gnn = self.facts.gnn_var.size
+      saved_gpos = self.facts.gpos_var.size
+      saved_gne = self.facts.gne_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
         self.push_guard_facts(cond)
         fi = saved_facts
-        while fi < self.fact_var.size {
-          if self.body_shrinks(stmt.then_body, self.fact_cont[fi]) {
-            self.fact_live[fi] = 0
+        while fi < self.facts.fact_var.size {
+          if self.body_shrinks(stmt.then_body, self.facts.fact_cont[fi]) {
+            self.facts.fact_live[fi] = 0
           }
           fi = fi + 1
         }
@@ -778,7 +746,7 @@ pub class Checker {
           }
         }
       }
-      saved_facts = self.fact_var.size
+      saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.body)
       }
@@ -789,10 +757,10 @@ pub class Checker {
           self.fail(cond.loc, "while condition must be Bool, got ${ct.show}")
         }
       }
-      saved_gcap = self.gcap_var.size
-      saved_gnn = self.gnn_var.size
-      saved_gpos = self.gpos_var.size
-      saved_gne = self.gne_var.size
+      saved_gcap = self.facts.gcap_var.size
+      saved_gnn = self.facts.gnn_var.size
+      saved_gpos = self.facts.gpos_var.size
+      saved_gne = self.facts.gne_var.size
       if cond = stmt.cond {
         self.push_guard_facts(cond)
       }

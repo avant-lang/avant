@@ -1,0 +1,86 @@
+// The compiler's in-process LLVM (Stage 28, D162, D172): the binding of
+// runtime/avant_llvm.c, which tools/build-llvm.sh merges with LLVM 20 into
+// runtime/build/avant_llvm.o. Only the compiler links that object (the
+// letters pass it to `compile compiler/main.av`); a user program never
+// does. Internal; no prelude name (D132).
+
+import source
+
+lib avant_llvm {
+  fun avant_llvm_init: Int
+  fun avant_llvm_compile_file(ll_path: String, passes: String, level: Int, obj_path: String): Int
+  fun avant_llvm_compile_text(text: String, name: String, passes: String, level: Int, obj_path: String): Int
+  fun avant_llvm_error: String
+  fun avant_llvm_version: String
+}
+
+// The codegen modes (D174), one table: the new-pass-manager pipeline and
+// the codegen optimization level (0 None, which lets LLVM pick FastISel;
+// 2 Default; 3 Aggressive). The keys are the compiler's codegen names
+// (verb_codegen): "debug" (--debug), "default" (compile's bare mode),
+// "release" (--release).
+pub fn llvm_mode_passes(codegen: String): String {
+  if str_eq(codegen, "release") {
+    return "default<O3>"
+  }
+  if str_eq(codegen, "default") {
+    return "mem2reg,sccp,dce,simplifycfg"
+  }
+  "default<O0>"
+}
+
+pub fn llvm_mode_level(codegen: String): Int {
+  if str_eq(codegen, "release") {
+    return 3
+  }
+  if str_eq(codegen, "default") {
+    return 2
+  }
+  0
+}
+
+// The status codes of runtime/avant_llvm.c, named for a diagnostic.
+pub fn llvm_status_name(code: Int): String {
+  if code == 1 {
+    return "target"
+  }
+  if code == 2 {
+    return "parse"
+  }
+  if code == 3 {
+    return "verify"
+  }
+  if code == 4 {
+    return "passes"
+  }
+  if code == 5 {
+    return "emit"
+  }
+  "status ${code}"
+}
+
+fn llvm_result(code: Int, label: String): String {
+  if code == 0 {
+    return ""
+  }
+  "LLVM ${llvm_status_name(code)} failed for ${label}: ${avant_llvm.avant_llvm_error()}"
+}
+
+// Compiles the textual IR file ll_path to the object obj_path in the
+// codegen mode `codegen`: parse, verify, the mode's pipeline, emit. Returns
+// "" on success, else the message for a diagnostic.
+pub fn llvm_compile_file(ll_path: String, codegen: String, obj_path: String): String {
+  code = avant_llvm.avant_llvm_compile_file(ll_path, llvm_mode_passes(codegen), llvm_mode_level(codegen), obj_path)
+  llvm_result(code, ll_path)
+}
+
+// The same from IR text in memory; name labels it in messages.
+pub fn llvm_compile_text(text: String, name: String, codegen: String, obj_path: String): String {
+  code = avant_llvm.avant_llvm_compile_text(text, name, llvm_mode_passes(codegen), llvm_mode_level(codegen), obj_path)
+  llvm_result(code, name)
+}
+
+// The linked LLVM's version ("20.1.8").
+pub fn llvm_version: String {
+  avant_llvm.avant_llvm_version()
+}
