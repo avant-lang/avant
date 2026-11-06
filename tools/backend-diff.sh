@@ -3,7 +3,7 @@
 # once per side and compares what they observably do (stdout, stderr, exit
 # status), program by program.
 #
-#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings] [PROGRAM...]
+#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars,strings,objects] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
 # compile and to the run). Both default to bin/avant-c with the seed's
@@ -34,6 +34,10 @@
 #   strings    not in the default: the heap-string programs (Stage 28 W6a,
 #              mir.md W6a.7): every tests/fixtures/strings/*.av and the
 #              fixtures the string lowering accepts (string_programs below)
+#   objects    not in the default: the struct and class programs (Stage 28
+#              W6b, mir.md W6b.7): every tests/fixtures/objects/*.av with
+#              `fn main` (refuse_union.av, the L0001 case, has none) and the
+#              examples and fixtures the lowering accepts (object_programs)
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
 # file (run as a program; an example gets its suite flags) or a LangArena
 # task name such as Etc::Sieve. --set limits the sets; both may be combined.
@@ -160,6 +164,16 @@ string_programs() { # the strings set, one path per line
   echo tests/fixtures/part3/interp.av
   echo tests/fixtures/part3/slice.av
 }
+object_programs() { # the objects set, one path per line
+  for f in tests/fixtures/objects/*.av; do grep -q '^fn main' "$f" && echo "$f"; done
+  echo examples/binarytrees.av
+  echo examples/defaults.av
+  echo examples/methods.av
+  echo examples/trees.av
+  echo examples/vec2.av
+  echo tests/fixtures/macros/fields.av
+  echo tests/fixtures/macros/method.av
+}
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
     examples/matmul.av) head -n 2 "$2" ;;
@@ -279,6 +293,9 @@ else
   fi
   if has_set strings; then
     for f in $(string_programs); do program "$f"; done
+  fi
+  if has_set objects; then
+    for f in $(object_programs); do program "$f"; done
   fi
   has_set langarena && langarena ""
 fi

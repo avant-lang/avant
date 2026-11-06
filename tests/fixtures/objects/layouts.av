@@ -1,0 +1,167 @@
+// Layouts and type maps on the new back end (Stage 28 W6b): the values
+// read back after collections prove the maps trace what the layouts
+// hold. Union fields are laid out as tag then payloads at their own
+// alignment (W1b), `nil` defaults and `nil` stores build the nil member;
+// a class whose reference is past word 63 needs avant_type_map_at; Bool,
+// Int, Int64, Float64 fields mix alignments; an empty class; a struct
+// holding a class reference inside a class; ids in program order.
+// Run under AVANT_GC_VERIFY=1 and AVANT_YOUNG_MB=1 it must print the same.
+
+class Empty {
+}
+
+class Node {
+  v: Int
+  next: Node? = nil
+  label: String = "node"
+}
+
+class Mixed {
+  flag: Bool
+  u: Int | String
+  n: Int
+  big: Int64
+  on: Bool
+  f: Float64
+  s: String
+  opt: String? = nil
+}
+
+class Wide {
+  w0: Int64
+  w1: Int64
+  w2: Int64
+  w3: Int64
+  w4: Int64
+  w5: Int64
+  w6: Int64
+  w7: Int64
+  w8: Int64
+  w9: Int64
+  w10: Int64
+  w11: Int64
+  w12: Int64
+  w13: Int64
+  w14: Int64
+  w15: Int64
+  w16: Int64
+  w17: Int64
+  w18: Int64
+  w19: Int64
+  w20: Int64
+  w21: Int64
+  w22: Int64
+  w23: Int64
+  w24: Int64
+  w25: Int64
+  w26: Int64
+  w27: Int64
+  w28: Int64
+  w29: Int64
+  w30: Int64
+  w31: Int64
+  w32: Int64
+  w33: Int64
+  w34: Int64
+  w35: Int64
+  w36: Int64
+  w37: Int64
+  w38: Int64
+  w39: Int64
+  w40: Int64
+  w41: Int64
+  w42: Int64
+  w43: Int64
+  w44: Int64
+  w45: Int64
+  w46: Int64
+  w47: Int64
+  w48: Int64
+  w49: Int64
+  w50: Int64
+  w51: Int64
+  w52: Int64
+  w53: Int64
+  w54: Int64
+  w55: Int64
+  w56: Int64
+  w57: Int64
+  w58: Int64
+  w59: Int64
+  w60: Int64
+  w61: Int64
+  w62: Int64
+  w63: Int64
+  w64: Int64
+  w65: Int64
+  w66: Int64
+  w67: Int64
+  w68: Int64
+  w69: Int64
+  name: String
+}
+
+struct Ref {
+  tag: Int
+  node: Node
+  text: String
+}
+
+class Box {
+  first: Bool
+  r: Ref
+  last: String
+}
+
+fn junk(i: Int): Int {
+  // Allocates enough to run young collections between the stores and the
+  // reads below.
+  s = 0
+  k = 0
+  while k < 200 {
+    e = Empty.new
+    n = Node.new
+    n.v = k
+    n.label = "j${i}-${k}"
+    s = s &+ n.label.size
+    k = k + 1
+  }
+  s
+}
+
+fn main {
+  total = 0
+  i = 0
+  while i < 2000 {
+    m = Mixed.new
+    m.flag = i % 2 == 0
+    m.n = i
+    m.big = i.to_i64 * 1000000000i64
+    m.on = true
+    m.f = 1.5
+    m.s = "mixed-${i}"
+    m.opt = nil
+    w = Wide.new
+    w.w69 = 7i64
+    w.name = "wide-${i}"
+    b = Box.new
+    b.last = "last-${i}"
+    nd = Node.new
+    nd.v = i
+    nd.label = "inner-${i}"
+    b.r = Ref { tag: i, node: nd, text: "ref-${i}" }
+    total = total &+ junk(i)
+    if m.s.size != 6 + "${i}".size || w.name.size != 5 + "${i}".size {
+      puts("bad string at ${i}")
+    }
+    if b.r.node.label.size != 6 + "${i}".size || b.r.text.size != 4 + "${i}".size || b.last.size != 5 + "${i}".size {
+      puts("bad box at ${i}")
+    }
+    if b.r.node.v != i || b.r.tag != i || m.n != i || w.w69 != 7i64 {
+      puts("bad scalar at ${i}")
+    }
+    total = total &+ m.s.size &+ w.name.size &+ b.r.node.label.size
+    i = i + 1
+  }
+  puts(total)
+}
