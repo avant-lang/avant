@@ -229,7 +229,7 @@ pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
   if e.fn_ref {
     return lw.lower_fn_ref(e)
   }
-  if e.implicit_field || lw.is_struct_self(e) {
+  if e.implicit_field || lw.is_struct_self(e) || lw.mutex_index(e.ident) >= 0 {
     return lw.lower_place_read(e)
   }
   if lw.name_in_box(e.ident) {
@@ -367,10 +367,33 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
       dummy = b.assign(b.pl(d), b.rv_use(a))
       right = b.block
       join = b.block
+      // Under coverage (W8b) the short path has its own block, and each
+      // path counts its branch in the old order (myc.av emit_logical:
+      // THEN, then ELSE: && evaluates the right side in THEN, || in ELSE).
+      short = join
+      if lw.lw_cov.on {
+        short = b.block
+      }
       if e.op == tk_amp_amp() {
-        b.branch(b.copy_local(d), right, join)
+        b.branch(b.copy_local(d), right, short)
       } else {
-        b.branch(b.copy_local(d), join, right)
+        b.branch(b.copy_local(d), short, right)
+      }
+      if lw.lw_cov.on {
+        if e.op == tk_amp_amp() {
+          b.at(right)
+          lw.cov_branch(e.loc)
+          b.at(short)
+          lw.cov_branch(e.loc)
+        } else {
+          b.at(short)
+          lw.cov_branch(e.loc)
+          b.at(right)
+          lw.cov_branch(e.loc)
+        }
+        b.at(short)
+        lw.at(e.loc)
+        b.goto(join)
       }
       b.at(right)
       c = lw.lower_expr(r)

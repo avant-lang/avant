@@ -28,6 +28,8 @@ import mir.lower_generic
 import mir.lower_fn
 import mir.lower_block
 import mir.lower_ffi
+import mir.lower_task
+import mir.lower_cov
 
 pub class IrBox {
   text: String = ""
@@ -551,12 +553,19 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
       program.re2c_obj = obj
     }
   }
-  if str_eq(backend, "llvm") {
-    return compile_program_llvm(src, program, checker.symbol_table())
-  }
   map = cov_map
   if map.size == 0 && coverage_wanted() {
     map = tmp_path("coverage.map")
+  }
+  if str_eq(backend, "llvm") {
+    // AVANT_COVERAGE_MAP wins over the default (myc.av emit:
+    // coverage_map_path).
+    if coverage_wanted() {
+      map = coverage_map_path(map)
+    } else {
+      map = ""
+    }
+    return compile_program_llvm(src, program, checker.symbol_table(), map)
   }
   ir = emit_myc(program, checker.symbol_table(), map)
   if program.codegen_error.size > 0 {
@@ -587,12 +596,10 @@ pub fn backend_choice: String {
 // program lowered to final-stage MIR (mir/lower.av), carried in the box
 // for compile, run, and dump; a construct the lowering does not support
 // yet stops here with its diagnostic.
-pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable): IrBox {
-  if coverage_wanted() {
-    diag_puts("error[L0001]: not yet supported by the llvm back end: coverage (AVANT_COVERAGE, W8)")
-    return IrBox.new("", false)
-  }
-  low = mir_lower_program(program, symbols, src.path, avant_root())
+// cov_map: the coverage slot map's path when AVANT_COVERAGE is on (W8b),
+// else empty.
+pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable, cov_map: String): IrBox {
+  low = mir_lower_program(program, symbols, src.path, avant_root(), cov_map)
   if low.err.size > 0 {
     diag_puts(low.err)
     return IrBox.new("", false)

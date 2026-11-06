@@ -1,0 +1,203 @@
+import harness
+import backends
+
+// Stage 28 W8b: spawn, JoinHandle, the task pool, channels, `.parallel`,
+// `Mutex.with`, and coverage on the new back end (AVANT_BACKEND=llvm,
+// D176; stages/stage28/mir.md W8b). (a) Every program of the threads
+// subset compiles under both back ends (--debug) and the two programs'
+// stdout, stderr, and exit status are equal (D184); (b) the new back
+// end's program prints the same under AVANT_GC_VERIFY=1, under
+// AVANT_YOUNG_MB=1, under both, and under AVANT_NURSERY=0, and the
+// verifier reports nothing; (c) `avant dump` under AVANT_BACKEND=llvm
+// prints exactly tests/goldens/threads/<name>.mir (D171); (d) the
+// program the old back end cannot compile (fresh.av, expected
+// differences, D196) prints its known output on the new back end, plain
+// and under the four GC environments; (e) a coverage build
+// (AVANT_COVERAGE=1) of tests/fixtures/coverage/points.av writes the same
+// slot map and the same counts (lcov) under both back ends. The outputs
+// are deterministic: every task is joined, in order, before its result
+// is printed. (test_std_http.av built by the new back end runs in
+// test_std_http_llvm.av, which is exclusive: it uses the http test's
+// ports.)
+
+fn golden_names: Array(String) {
+  ["channels", "fresh", "mutex", "parallel", "spawn"]
+}
+
+// The programs compared with the old back end.
+fn both_progs: Array(String) {
+  ["tests/fixtures/threads/spawn.av", "tests/fixtures/threads/parallel.av", "tests/fixtures/threads/channels.av", "tests/fixtures/threads/mutex.av", "tests/fixtures/coverage/points.av", "examples/spawn.av"]
+}
+
+// The programs only the new back end compiles, with their output.
+fn new_progs: Array(String) {
+  ["tests/fixtures/threads/fresh.av"]
+}
+
+fn new_wants: Array(String) {
+  ["102 104 106 108\naa bbbb cccccc\n1\n9 tttt\n"]
+}
+
+fn gc_envs: Array(String) {
+  ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
+}
+
+fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
+  progs = both_progs()
+  np = new_progs()
+  gn = golden_names()
+  cov_src = "${root}/tests/fixtures/coverage/points.av"
+
+  // Wave 1: compiles (both back ends, or the new one only), the dumps,
+  // and the coverage builds (each with its own slot map).
+  jobs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    jobs.push(compile_job("", compiler, "${root}/${progs[i]}", "${dir}/${k}.old", "${dir}/${k}.old.log"))
+    jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
+    i = i + 1
+  }
+  i = 0
+  while i < np.size {
+    k = key_of(np[i])
+    jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${np[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
+    i = i + 1
+  }
+  i = 0
+  while i < gn.size {
+    a: Array(String) = []
+    a.push("dump")
+    a.push("${root}/tests/fixtures/threads/${gn[i]}.av")
+    jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
+    i = i + 1
+  }
+  jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-old.map", compiler, cov_src, "${dir}/cov.old", "${dir}/cov.old.log"))
+  jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
+  run_waves(jobs)
+  i = 0
+  while i < progs.size {
+    c.eq_int(jobs[2 * i].code, 0, "${progs[i]}: compiles under myc")
+    c.eq_int(jobs[2 * i + 1].code, 0, "${progs[i]}: compiles under llvm")
+    i = i + 1
+  }
+  base = 2 * progs.size
+  i = 0
+  while i < np.size {
+    c.eq_int(jobs[base + i].code, 0, "${np[i]}: compiles under llvm")
+    i = i + 1
+  }
+  base = base + np.size
+  i = 0
+  while i < gn.size {
+    j = jobs[base + i]
+    c.eq_int(j.code, 0, "${gn[i]}: dump under llvm exits 0")
+    want = "(no golden)"
+    if t = file_read("${root}/tests/goldens/threads/${gn[i]}.mir") {
+      want = t
+    }
+    c.eq_str(log_text(j.log), want, "tests/fixtures/threads/${gn[i]}.av: the MIR dump is tests/goldens/threads/${gn[i]}.mir")
+    i = i + 1
+  }
+  base = base + gn.size
+  c.eq_int(jobs[base].code, 0, "coverage/points.av: a coverage build under myc")
+  c.eq_int(jobs[base + 1].code, 0, "coverage/points.av: a coverage build under llvm")
+
+  // Wave 2: every program, then the new ones under each GC environment,
+  // then the coverage builds (each writes its own lcov).
+  envs = gc_envs()
+  per = 2 + envs.size
+  runs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    runs.push(run_job(dir, "${k}.old", "${k}.a"))
+    runs.push(run_job(dir, "${k}.new", "${k}.b"))
+    e = 0
+    while e < envs.size {
+      runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
+      e = e + 1
+    }
+    i = i + 1
+  }
+  nbase = runs.size
+  i = 0
+  while i < np.size {
+    k = key_of(np[i])
+    runs.push(run_job(dir, "${k}.new", "${k}.b"))
+    e = 0
+    while e < envs.size {
+      runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
+      e = e + 1
+    }
+    i = i + 1
+  }
+  cbase = runs.size
+  runs.push(run_job_env(dir, "cov.old", "cov.old.run", "AVANT_COVERAGE_LCOV=${dir}/cov-old.lcov AVANT_COVERAGE_REPORT=0"))
+  runs.push(run_job_env(dir, "cov.new", "cov.new.run", "AVANT_COVERAGE_LCOV=${dir}/cov-new.lcov AVANT_COVERAGE_REPORT=0"))
+  run_waves(runs)
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    k = key_of(p)
+    want_out = log_text("${dir}/${k}.a.out")
+    want_err = log_text("${dir}/${k}.a.err")
+    want_code = runs[per * i].code
+    c.eq_int(runs[per * i + 1].code, want_code, "${p}: the same exit status")
+    c.eq_str(log_text("${dir}/${k}.b.out"), want_out, "${p}: the same stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), want_err, "${p}: the same stderr")
+    e = 0
+    while e < envs.size {
+      c.eq_int(runs[per * i + 2 + e].code, want_code, "${p} under ${envs[e]}: the same exit status")
+      c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the same stdout")
+      c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the same stderr (no verifier report)")
+      e = e + 1
+    }
+    i = i + 1
+  }
+  wants = new_wants()
+  i = 0
+  while i < np.size {
+    p = np[i]
+    k = key_of(p)
+    at = nbase + (1 + envs.size) * i
+    c.eq_int(runs[at].code, 0, "${p} (new back end only): exit 0")
+    c.eq_str(log_text("${dir}/${k}.b.out"), wants[i], "${p} (new back end only): the known stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), "", "${p} (new back end only): no stderr")
+    e = 0
+    while e < envs.size {
+      c.eq_int(runs[at + 1 + e].code, 0, "${p} under ${envs[e]}: exit 0")
+      c.eq_str(log_text("${dir}/${k}.g${e}.out"), wants[i], "${p} under ${envs[e]}: the known stdout")
+      c.eq_str(log_text("${dir}/${k}.g${e}.err"), "", "${p} under ${envs[e]}: no stderr (no verifier report)")
+      e = e + 1
+    }
+    i = i + 1
+  }
+  c.eq_int(runs[cbase].code, 0, "coverage/points.av under myc: exit 0")
+  c.eq_int(runs[cbase + 1].code, 0, "coverage/points.av under llvm: exit 0")
+  old_map = log_text("${dir}/cov-old.map")
+  c.expect(str_has(old_map, "avant-cov 1\n"), "coverage/points.av: the old back end writes a slot map")
+  c.eq_str(log_text("${dir}/cov-new.map"), old_map, "coverage/points.av: the same slot map under both back ends")
+  old_lcov = log_text("${dir}/cov-old.lcov")
+  c.expect(str_has(old_lcov, "FNDA:"), "coverage/points.av: the old back end writes counts")
+  c.eq_str(log_text("${dir}/cov-new.lcov"), old_lcov, "coverage/points.av: the same counts (lcov) under both back ends")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_threads_llvm.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_threads_llvm(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

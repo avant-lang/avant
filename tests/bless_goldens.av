@@ -117,7 +117,8 @@ fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Boo
 // of the object subset (tests/cases/test_objects.av, Stage 28 W6b), of
 // the types subset (tests/cases/test_types.av, Stage 28 W7a), of the
 // closures subset (tests/cases/test_closures.av, Stage 28 W7b), of the
-// ffi subset (tests/cases/test_ffi_llvm.av, Stage 28 W8a), and
+// ffi subset (tests/cases/test_ffi_llvm.av, Stage 28 W8a), of the
+// threads subset (tests/cases/test_threads_llvm.av, Stage 28 W8b), and
 // of the heap subset (tests/cases/test_heap.av, Stage 28 W6c).
 fn bless_mir_all(compiler: String, root: String): Bool {
   mkdir_p("${root}/tests/goldens/scalars")
@@ -185,6 +186,16 @@ fn bless_mir_all(compiler: String, root: String): Bool {
   i = 0
   while i < fn2.size {
     if bless_mir(compiler, root, "tests/fixtures/ffi/${fn2[i]}.av", "ffi/${fn2[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/threads")
+  th = ["channels", "fresh", "mutex", "parallel", "spawn"]
+  i = 0
+  while i < th.size {
+    if bless_mir(compiler, root, "tests/fixtures/threads/${th[i]}.av", "threads/${th[i]}") {
     } else {
       return false
     }

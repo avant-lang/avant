@@ -1,0 +1,19 @@
+// The one program shape the new back end still refuses with L0001 that a
+// probe can reach without C (Stage 28 W8b): `break` (or `next`) inside a
+// lambda body, which the checker accepts when a `while` encloses the
+// lambda (mir.md W7b.9, defect 6, a front-end follow-up: the old back end
+// fails on it in myc). tests/cases/test_scalars.av checks the diagnostic
+// and its location. No `fn main`, so the differential leaves it out.
+// (Until W8b the probe was examples/spawn.av, which W8b lowers.)
+
+fn run: Int {
+  i = 0
+  while i < 3 {
+    f: fn(): Int = { ||
+      break
+      1
+    }
+    i = i + f()
+  }
+  i
+}
