@@ -1,0 +1,143 @@
+import harness
+
+// Stage 28 W1b (D185): every reference the program holds is traced.
+// Each fixture keeps references in a place the collector used to miss,
+// churns a one-Int class through the nursery, and counts the values that
+// no longer read back. Before W1b: an element buffer of a by-value struct
+// or union had type id 0 and was never scanned (audit-abi 8.1); a class
+// past 64 payload words lost its late pointer bits (8.4); class ids and
+// closure-record ids (400 + i) collided past 399 classes (8.3); a union
+// payload after a 4-byte member was mapped one word too far; and stores
+// through an implicit field, a struct field inside a class, an array
+// element of a struct, or a captured variable skipped the write barrier.
+// Every fixture prints only zeros, plain, at a 1 MB young space, and
+// under AVANT_GC_VERIFY (which reports a reference in a word its type map
+// does not trace), so an exact-output match is the assertion.
+
+fn tm_common: String {
+  "class Junk {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn churn(n: Int): Int {\n  s = 0\n  j = 0\n  while j < n {\n    k = Junk.new(j)\n    s = s &+ k.v\n    j = j + 1\n  }\n  s\n}\n\n"
+}
+
+fn tm_struct_string: String {
+  tm_common() + "struct Rec {\n  n: Int\n  name: String\n}\n\nfn count_wrong(xs: Array(Rec), tag: String): Int {\n  wrong = 0\n  i = 0\n  while i < xs.size {\n    if xs[i].name != \"\${tag}\${i}\" {\n      wrong = wrong + 1\n    }\n    if xs[i].n != i {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  wrong\n}\n\nfn main: Int {\n  xs: Array(Rec) = []\n  i = 0\n  while i < 2000 {\n    xs.push(Rec { n: i, name: \"a\${i}\" })\n    i = i + 1\n  }\n  churn(200000)\n  puts(count_wrong(xs, \"a\"))\n  i = 0\n  while i < 2000 {\n    xs[i] = Rec { n: i, name: \"b\${i}\" }\n    i = i + 1\n  }\n  churn(200000)\n  puts(count_wrong(xs, \"b\"))\n  i = 0\n  while i < 2000 {\n    xs[i].name = \"c\${i}\"\n    i = i + 1\n  }\n  churn(200000)\n  puts(count_wrong(xs, \"c\"))\n  0\n}\n"
+}
+
+fn tm_union_class: String {
+  tm_common() + "class Node {\n  v: Int\n  label: String\n  fn initialize(v: Int) {\n    self.v = v\n    self.label = \"n\${v}\"\n  }\n}\n\nstruct Slot {\n  k: Int\n  node: Node?\n}\n\nfn main: Int {\n  xs: Array(Node?) = []\n  ys: Array(Slot) = []\n  i = 0\n  while i < 2000 {\n    xs.push(Node.new(i))\n    nn: Node? = Node.new(i + 5000)\n    ys.push(Slot { k: i, node: nn })\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < 2000 {\n    if n = xs[i] {\n      if n.label != \"n\${i}\" {\n        wrong = wrong + 1\n      }\n    } else {\n      wrong = wrong + 1\n    }\n    if m = ys[i].node {\n      if m.label != \"n\${i + 5000}\" {\n        wrong = wrong + 1\n      }\n    } else {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+}
+
+fn tm_nested_array: String {
+  tm_common() + "struct Inner {\n  tag: String\n  xs: Array(Int)\n}\n\nstruct Outer {\n  id: Int\n  inner: Inner\n}\n\nfn main: Int {\n  os: Array(Outer) = []\n  i = 0\n  while i < 1000 {\n    xs: Array(Int) = []\n    j = 0\n    while j < 5 {\n      xs.push(i * 10 + j)\n      j = j + 1\n    }\n    os.push(Outer { id: i, inner: Inner { tag: \"t\${i}\", xs: xs } })\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < os.size {\n    o = os[i]\n    if o.inner.tag != \"t\${i}\" {\n      wrong = wrong + 1\n    }\n    j = 0\n    while j < 5 {\n      if o.inner.xs[j] != i * 10 + j {\n        wrong = wrong + 1\n      }\n      j = j + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+}
+
+fn tm_union_offset: String {
+  tm_common() + "class Holder {\n  u: Int | String\n  n: Int\n  fn initialize(i: Int) {\n    self.u = \"u\${i}\"\n    self.n = i\n  }\n}\n\nfn bad(u: Int | String, want: String): Int? {\n  s = u?\n  if s != want {\n    return 1\n  }\n  0\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < hs.size {\n    if b = bad(hs[i].u, \"u\${i}\") {\n      wrong = wrong + b\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+}
+
+fn tm_barriers: String {
+  tm_common() + "struct Rec {\n  n: Int\n  name: String\n}\n\nclass Holder {\n  name: String\n  r: Rec\n  fn initialize {\n    self.name = \"a\"\n    self.r = Rec { n: 0, name: \"a\" }\n  }\n  fn set(i: Int) {\n    name = \"name\${i}\"\n  }\n}\n\nclass Pair {\n  set: fn(Int): Int\n  get: fn(): String\n  fn initialize(set: fn(Int): Int, get: fn(): String) {\n    self.set = set\n    self.get = get\n  }\n}\n\nfn make_pair: Pair {\n  s = \"start\"\n  setter: fn(Int): Int = { |k|\n    s = \"cap\${k}\"\n    0\n  }\n  getter: fn(): String = { || s }\n  Pair.new(setter, getter)\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new)\n    i = i + 1\n  }\n  churn(400000)\n  i = 0\n  while i < 2000 {\n    h = hs[i]\n    h.set(i)\n    h.r.name = \"r\${i}\"\n    i = i + 1\n  }\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 2000 {\n    if hs[i].name != \"name\${i}\" {\n      wrong = wrong + 1\n    }\n    if hs[i].r.name != \"r\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  p = make_pair()\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 60 {\n    (p.set)(i)\n    churn(60000)\n    if (p.get)() != \"cap\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+}
+
+fn tm_wide_class: String {
+  b = buf_new(4096)
+  b.push_str(tm_common())
+  b.push_str("class Wide {\n")
+  k = 0
+  while k < 70 {
+    b.push_str("  f${k}: Int64\n")
+    k = k + 1
+  }
+  b.push_str("  name: String\n  fn initialize(i: Int) {\n    self.name = \"w\${i}\"\n  }\n}\n\nfn main: Int {\n  ws: Array(Wide) = []\n  i = 0\n  while i < 500 {\n    ws.push(Wide.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < ws.size {\n    if ws[i].name != \"w\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n")
+  b.to_s
+}
+
+// Junk is id 1 and C1 .. C398 are ids 2 .. 399, so Named is class id
+// 400, the id the first closure record (the Int box captured by f) used
+// to take as well; that record's empty map replaced Named's.
+fn tm_many_classes: String {
+  b = buf_new(16384)
+  b.push_str(tm_common())
+  k = 1
+  while k < 420 {
+    if k == 399 {
+      b.push_str("class Named {\n  name: String\n  fn initialize(i: Int) {\n    self.name = \"x\${i}\"\n  }\n}\n\n")
+    }
+    b.push_str("class C${k} {\n  v: Int\n}\n\n")
+    k = k + 1
+  }
+  b.push_str("fn main: Int {\n  n = 7\n  f: fn(): Int = { || n }\n  ns: Array(Named) = []\n  i = 0\n  while i < 2000 {\n    ns.push(Named.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < ns.size {\n    if ns[i].name != \"x\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong + f() * 0)\n  0\n}\n")
+  b.to_s
+}
+
+fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
+  args: Array(String) = []
+  args.push("${name}=${value}")
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
+fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
+  args: Array(String) = []
+  args.push("${n1}=${v1}")
+  args.push("${n2}=${v2}")
+  args.push(bin)
+  process_run_out("/usr/bin/env", args, log)
+}
+
+fn tm_case(c: Checks, compiler: String, stem: String, name: String, src: String, want: String) {
+  path = "${stem}-${name}.av"
+  bin = "${stem}-${name}.bin"
+  c.eq_int(file_write(path, src), 0, "${name}: write fixture")
+  code = compile_av(compiler, path, bin, "${stem}-${name}.clog")
+  c.eq_int(code, 0, "${name}: compile")
+  if code != 0 {
+    return
+  }
+  log1 = "${stem}-${name}.run1"
+  c.eq_int(run_av_bin(bin, log1), 0, "${name}: runs at default young size")
+  if out1 = file_read(log1) {
+    c.eq_str(out1, want, "${name}: values read back at default young size")
+  } else {
+    c.expect(false, "${name}: read default run")
+  }
+  log2 = "${stem}-${name}.run2"
+  c.eq_int(tm_run_env(bin, "AVANT_YOUNG_MB", "1", log2), 0, "${name}: runs at 1 MB young size")
+  if out2 = file_read(log2) {
+    c.eq_str(out2, want, "${name}: values read back at 1 MB young size")
+  } else {
+    c.expect(false, "${name}: read small-young run")
+  }
+  log3 = "${stem}-${name}.run3"
+  c.eq_int(tm_run_env2(bin, "AVANT_GC_VERIFY", "1", "AVANT_YOUNG_MB", "1", log3), 0, "${name}: verify run exits clean")
+  if out3 = file_read(log3) {
+    c.eq_str(out3, want, "${name}: the verifier reports nothing")
+  } else {
+    c.expect(false, "${name}: read verify run")
+  }
+}
+
+fn test_gc_typemaps(c: Checks) {
+  c.suite("tests/cases/test_gc_typemaps.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stem = "${scratch()}/gctm-${now_ms()}"
+    tm_case(c, compiler, stem, "struct-string", tm_struct_string(), "0\n0\n0\n")
+    tm_case(c, compiler, stem, "union-class", tm_union_class(), "0\n")
+    tm_case(c, compiler, stem, "nested-array", tm_nested_array(), "0\n")
+    tm_case(c, compiler, stem, "wide-class", tm_wide_class(), "0\n")
+    tm_case(c, compiler, stem, "union-offset", tm_union_offset(), "0\n")
+    tm_case(c, compiler, stem, "barriers", tm_barriers(), "0\n0\n")
+    tm_case(c, compiler, stem, "many-classes", tm_many_classes(), "0\n")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_gc_typemaps(c)
+  c.finish
+}

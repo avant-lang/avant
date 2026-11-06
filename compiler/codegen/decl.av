@@ -75,6 +75,8 @@ pub fn (codegen_self: MycGen) emit_runtime_decl {
   codegen_self.ext("avant_gc_reload", "ptr<void>", "ptr<void>")
   codegen_self.ext("avant_type_map", "u32,u64", "")
   codegen_self.ext("avant_barrier", "ptr<void>", "")
+  codegen_self.ext("avant_type_map_at", "u32,u32,u32,u64", "")
+  codegen_self.ext("avant_barrier_at", "ptr<void>", "")
   codegen_self.ext("avant_str_concat", "ptr<u8>,ptr<u8>", "ptr<u8>")
   codegen_self.ext("avant_str_cat_i32", "ptr<u8>,i32", "ptr<u8>")
   codegen_self.ext("avant_str_from_int", "i32", "ptr<u8>")
@@ -364,8 +366,15 @@ pub fn (codegen_self: MycGen) collect_methods {
   }
 }
 
+// One allocator of type ids (Stage 28 W1b, audit-abi 8.3): the k-th
+// dynamic id is 1 + k, skipping the runtime's fixed ids 1021 (Buf),
+// 1022 (array object), and 1023 (hash). Classes take k = 0 .. N-1 in
+// program order; the other type maps (closures, boxes, capture
+// records, element buffers) follow at k = N + i. 65535 is "scan every
+// word", so the largest usable id is max_type_id.
+
 pub fn (codegen_self: MycGen) assign_class_ids {
-  n = 1
+  n = 0
   i = 0
   while i < codegen_self.program.classes.size {
     cdef = codegen_self.program.classes[i]
@@ -375,11 +384,12 @@ pub fn (codegen_self: MycGen) assign_class_ids {
       if flag = codegen_self.resolver.collide.get(cdef.name) {
         key = "${mod_emit_prefix(cdef.mod_name)}__${cdef.name}"
       }
-      codegen_self.class_ids[key] = n
+      codegen_self.class_ids[key] = dyn_type_id(n)
       n = n + 1
     }
     i = i + 1
   }
+  codegen_self.class_count = n
 }
 
 pub fn (codegen_self: MycGen) find_method(owner: String, name: String): FuncSig? {

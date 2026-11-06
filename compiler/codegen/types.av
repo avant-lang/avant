@@ -296,14 +296,26 @@ pub fn pointer_root_ty(ty: Ty): Bool {
   heap_ptr_value(ty)
 }
 
-pub fn array_type_id(elem: Ty): Int {
+// An element buffer is scanned whole (65535) when its element is a
+// heap pointer or an fn value, and not at all (0) when the element
+// holds no reference. A by-value struct or union element that holds a
+// reference gets its own repeated type map (elem_map_words, Stage 28
+// W1b); MycGen.array_type_id assigns that id.
+
+pub fn elem_scans_whole(elem: Ty): Bool {
   if elem.is_fn {
-    return 65535
+    return true
   }
-  if heap_ptr_value(elem) {
-    return 65535
+  heap_ptr_value(elem)
+}
+
+pub fn elem_map_words(elem: Ty): Array(Int) {
+  words: Array(Int) = []
+  if elem_scans_whole(elem) {
+    return words
   }
-  0
+  add_ptr_words(elem, 0, words)
+  words
 }
 
 // A store into a mature object can keep a young pointer. Node? is a
@@ -440,6 +452,78 @@ pub fn align_up_i(n: Int, align: Int): Int {
   (n + align - 1) / align * align
 }
 
+// Reference words of a value laid out at byte offset `offset`: each
+// word index (offset / 8) that holds a reference is pushed to `words`.
+// A union's payloads follow its i32 tag in member order, each at its
+// own alignment, exactly as abi_size lays them out (an Int payload
+// before a String puts the String at offset 8, not 16).
+
+pub fn add_ptr_words(ty: Ty, offset: Int, words: Array(Int)) {
+  if ty.is_fn {
+    words.push(offset / 8)
+    return
+  }
+  if heap_ptr_value(ty) {
+    words.push(offset / 8)
+    return
+  }
+  if ty.is_union {
+    off = offset + 4
+    payloads = ty.payload_members
+    i = 0
+    while i < payloads.size {
+      m = payloads[i]
+      off = align_up_i(off, abi_align(m))
+      add_ptr_words(m, off, words)
+      off = off + abi_size(m)
+      i = i + 1
+    }
+    return
+  }
+  if ty.is_struct {
+    off = offset
+    i = 0
+    while i < ty.fields.size {
+      fty = ty.fields[i].ty
+      off = align_up_i(off, abi_align(fty))
+      add_ptr_words(fty, off, words)
+      off = off + abi_size(fty)
+      i = i + 1
+    }
+  }
+}
+
+pub fn pointer_words(ty: Ty): Array(Int) {
+  words: Array(Int) = []
+  offset = 0
+  i = 0
+  while i < ty.fields.size {
+    fty = ty.fields[i].ty
+    offset = align_up_i(offset, abi_align(fty))
+    add_ptr_words(fty, offset, words)
+    offset = offset + abi_size(fty)
+    i = i + 1
+  }
+  words
+}
+
+// The k-th id of the one type id allocator (decl.av, assign_class_ids):
+// 1 + k, skipping the runtime's fixed ids 1021, 1022, 1023.
+
+pub fn dyn_type_id(k: Int): Int {
+  id = 1 + k
+  if id >= 1021 {
+    id = id + 3
+  }
+  id
+}
+
+// The runtime's largest registrable id (MAX_TYPES - 1; 65535 is AVANT_TYPE_PTRS).
+
+pub fn max_type_id: Int {
+  65534
+}
+
 pub fn u64_pow2(word: Int): UInt64 {
   p = 1u64
   i = 0
@@ -450,55 +534,19 @@ pub fn u64_pow2(word: Int): UInt64 {
   p
 }
 
-pub fn word_bit(offset: Int, bits: UInt64): UInt64 {
-  word = offset / 8
-  bits | u64_pow2(word)
-}
+// Bits of words[c*64 .. c*64+63] as one 64-bit chunk.
 
-pub fn add_ptr_bits(ty: Ty, offset: Int, bits: UInt64): UInt64 {
-  if ty.is_fn {
-    return word_bit(offset, bits)
-  }
-  if heap_ptr_value(ty) {
-    return word_bit(offset, bits)
-  }
-  if ty.is_union {
-    off = align_up_i(offset + 4, 8)
-    payloads = ty.payload_members
-    i = 0
-    while i < payloads.size {
-      m = payloads[i]
-      off = align_up_i(off, abi_align(m))
-      bits = add_ptr_bits(m, off, bits)
-      off = off + abi_size(m)
-      i = i + 1
-    }
-    return bits
-  }
-  if ty.is_struct {
-    off = offset
-    i = 0
-    while i < ty.fields.size {
-      fty = ty.fields[i].ty
-      off = align_up_i(off, abi_align(fty))
-      bits = add_ptr_bits(fty, off, bits)
-      off = off + abi_size(fty)
-      i = i + 1
-    }
-    return bits
-  }
-  bits
-}
-
-pub fn pointer_word_bits(ty: Ty): UInt64 {
+pub fn word_chunk_bits(words: Array(Int), chunk: Int): UInt64 {
   bits = 0u64
-  offset = 0
+  lo = chunk * 64
   i = 0
-  while i < ty.fields.size {
-    fty = ty.fields[i].ty
-    offset = align_up_i(offset, abi_align(fty))
-    bits = add_ptr_bits(fty, offset, bits)
-    offset = offset + abi_size(fty)
+  while i < words.size {
+    w = words[i]
+    if w >= lo {
+      if w < lo + 64 {
+        bits = bits | u64_pow2(w - lo)
+      }
+    }
     i = i + 1
   }
   bits

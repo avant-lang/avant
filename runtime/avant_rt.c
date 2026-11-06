@@ -301,8 +301,83 @@ static void **g_work;
 static uint32_t g_work_n;
 static uint32_t g_work_cap;
 
-static uint64_t g_type_bits[MAX_TYPES];
+/* Type maps (Stage 28 W1b). An entry describes which payload words of
+ * an object of that type id hold references: bit i of the bitmap
+ * (chunk i / 64, bit i % 64) is payload word i. The bitmap has any
+ * length (nchunks 64-bit chunks). stride == 0 describes one record:
+ * words past the payload size are skipped. stride > 0 describes a
+ * buffer of repeated elements of stride words each (an Array element
+ * buffer of a by-value struct or union): the bitmap is one element's
+ * and applies to every whole element in the payload. Every walker goes
+ * through EACH_REF_SLOT, so they all read the same description. */
+typedef struct TypeMap {
+  uint64_t *words;
+  uint64_t first;
+  uint32_t nchunks;
+  uint32_t stride;
+  uint32_t nrefs;
+} TypeMap;
+
+static TypeMap g_types[MAX_TYPES];
 static uint8_t g_type_set[MAX_TYPES];
+
+/* Visit every reference slot of payload P as `void **SLOT`. BODY must
+ * not use break or continue. */
+#define EACH_REF_SLOT(P, SLOT, BODY)                                                \
+  do {                                                                              \
+    void **ers_p_ = (void **)(P);                                                   \
+    const AvantHeader *ers_h_ = avant_header(ers_p_);                               \
+    uint32_t ers_id_ = ers_h_->type_id;                                             \
+    size_t ers_nw_ = (size_t)ers_h_->size / sizeof(void *);                         \
+    if (ers_id_ == AVANT_TYPE_PTRS) {                                               \
+      size_t ers_i_;                                                                \
+      for (ers_i_ = 0; ers_i_ < ers_nw_; ers_i_++) {                                \
+        void **SLOT = ers_p_ + ers_i_;                                              \
+        BODY                                                                        \
+      }                                                                             \
+    } else if (ers_id_ != AVANT_TYPE_BYTES && ers_id_ < MAX_TYPES &&                \
+               g_type_set[ers_id_]) {                                               \
+      const TypeMap *ers_m_ = &g_types[ers_id_];                                    \
+      size_t ers_s_ = ers_m_->stride ? (size_t)ers_m_->stride : ers_nw_;            \
+      size_t ers_ne_ = ers_m_->stride ? ers_nw_ / ers_s_ : 1;                       \
+      size_t ers_e_;                                                                \
+      for (ers_e_ = 0; ers_e_ < ers_ne_; ers_e_++) {                                \
+        void **ers_b_ = ers_p_ + ers_e_ * ers_s_;                                   \
+        uint32_t ers_c_;                                                            \
+        for (ers_c_ = 0; ers_c_ < ers_m_->nchunks; ers_c_++) {                      \
+          uint64_t ers_w_ = ers_m_->words[ers_c_];                                  \
+          while (ers_w_) {                                                          \
+            size_t ers_i_ = (size_t)ers_c_ * 64 + (size_t)__builtin_ctzll(ers_w_);  \
+            ers_w_ &= ers_w_ - 1;                                                   \
+            if (ers_i_ < ers_s_) {                                                  \
+              void **SLOT = ers_b_ + ers_i_;                                        \
+              BODY                                                                  \
+            }                                                                       \
+          }                                                                         \
+        }                                                                           \
+      }                                                                             \
+    }                                                                               \
+  } while (0)
+
+/* Whether payload word W of an object with header H is a reference slot
+ * by its type map (the verifier's inverse question). */
+static int type_word_is_ref(const AvantHeader *h, size_t w) {
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_PTRS) {
+    return 1;
+  }
+  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !g_type_set[id]) {
+    return 0;
+  }
+  const TypeMap *m = &g_types[id];
+  if (m->stride) {
+    w %= m->stride;
+  }
+  if (w / 64 >= m->nchunks) {
+    return 0;
+  }
+  return (m->words[w / 64] >> (w % 64)) & 1u;
+}
 
 static FwdEnt *g_fwd;
 static size_t g_fwd_cap;
@@ -998,38 +1073,8 @@ static void mark_tls_slot(void **slot) {
   }
 }
 
-static void scan_word(void *p, size_t off) {
-  if (off + sizeof(void *) > avant_header(p)->size) {
-    return;
-  }
-  void *child = *(void **)((uint8_t *)p + off);
-  mark(child);
-}
-
 static void scan_payload(void *p) {
-  AvantHeader *h = avant_header(p);
-  uint32_t id = h->type_id;
-  if (id == AVANT_TYPE_BYTES) {
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      scan_word(p, i * sizeof(void *));
-    }
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    return;
-  }
-  uint64_t bits = g_type_bits[id];
-  size_t i;
-  for (i = 0; i < 64; i++) {
-    if (bits & (1ULL << i)) {
-      scan_word(p, i * sizeof(void *));
-    }
-  }
+  EACH_REF_SLOT(p, slot, { mark(*slot); });
 }
 
 static void mark_roots(void) {
@@ -1502,34 +1547,12 @@ static int names_young(void *p) {
 static void trace_mature(void *p, int from_mature);
 
 static void copy_payload_children(void *p) {
-  AvantHeader *h = avant_header(p);
-  uint32_t id = h->type_id;
+  if (avant_header(p)->type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
   int saved = g_from_heap_slot;
   g_from_heap_slot = 1;
-  if (id == AVANT_TYPE_BYTES) {
-    g_from_heap_slot = saved;
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-    }
-    g_from_heap_slot = saved;
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    g_from_heap_slot = saved;
-    return;
-  }
-  uint64_t bits = g_type_bits[id];
-  size_t i;
-  for (i = 0; i < 64; i++) {
-    if (bits & (1ULL << i)) {
-      copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-    }
-  }
+  EACH_REF_SLOT(p, slot, { copy_from_slot(slot); });
   g_from_heap_slot = saved;
 }
 
@@ -1755,7 +1778,11 @@ static uint64_t rem_field_count(void *p) {
   if (id >= MAX_TYPES || !g_type_set[id]) {
     return 0;
   }
-  return (uint64_t)__builtin_popcountll(g_type_bits[id]);
+  if (g_types[id].stride) {
+    return (uint64_t)g_types[id].nrefs *
+           (uint64_t)((size_t)h->size / sizeof(void *) / g_types[id].stride);
+  }
+  return (uint64_t)g_types[id].nrefs;
 }
 
 static void gen_young_copy(void) {
@@ -2173,68 +2200,69 @@ static void verify_mark_reachable(void) {
   avant_hash_walk_tls(verify_tls_slot);
   while (g_work_n) {
     void *p = g_work[--g_work_n];
-    AvantHeader *h = avant_header(p);
-    uint32_t id = h->type_id;
-    if (id == AVANT_TYPE_BYTES) {
+    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
+  }
+}
+
+/* A word the type map does not call a reference, in an object the
+ * verifier reached, that is exactly the start of an unpinned object in
+ * from-space (moved or about to be discarded): the program stored a
+ * reference where the collector does not look (a wrong or missing type
+ * map, audit-abi 8.1). Heap strings (STRMETA) hold text and are
+ * skipped; a scalar equal to such an address by chance is the only
+ * false positive. */
+static uint64_t g_verify_untraced;
+
+static void verify_untraced_words(AvantHeader *h) {
+  size_t n, i;
+  void **p;
+  if (h->flags & AVANT_FLAG_STRMETA) {
+    return;
+  }
+  if (h->type_id == AVANT_TYPE_PTRS) {
+    return;
+  }
+  p = (void **)payload_of(h);
+  n = (size_t)h->size / sizeof(void *);
+  for (i = 0; i < n; i++) {
+    void *w = p[i];
+    Block *cb = NULL;
+    void *to;
+    if (!w || ((uintptr_t)w & (ALIGN - 1)) != 0) {
       continue;
     }
-    if (id == AVANT_TYPE_PTRS) {
-      size_t n = (size_t)h->size / sizeof(void *);
-      size_t i;
-      for (i = 0; i < n; i++) {
-        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
-      }
+    if (!is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
       continue;
     }
-    if (id >= MAX_TYPES || !g_type_set[id]) {
+    if (avant_header(w)->flags & AVANT_FLAG_PINNED) {
       continue;
     }
-    uint64_t bits = g_type_bits[id];
-    size_t i;
-    for (i = 0; i < 64; i++) {
-      if (bits & (1ULL << i)) {
-        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
-      }
+    if (type_word_is_ref(h, i)) {
+      continue;
     }
+    to = fwd_get(w);
+    g_verify_untraced++;
+    fprintf(stderr,
+            "avant gc verify: untraced reference holder=%p type=%u size=%u "
+            "word=%lu names young object %p (%s %p) coll=%llu\n",
+            (void *)p, (unsigned)h->type_id, (unsigned)h->size, (unsigned long)i, w,
+            to && to != w ? "forwarded to" : "not copied, from-space", to,
+            (unsigned long long)g_stats.collections);
   }
 }
 
 static void verify_obj_fields(AvantHeader *h, Block *b) {
-  (void)b;
   if (!(h->flags & AVANT_FLAG_FORWARDED)) {
     return;
   }
   void *p = payload_of(h);
-  uint32_t id = h->type_id;
-  if (id == AVANT_TYPE_BYTES) {
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
-                     (long)(i * sizeof(void *)))) {
-        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
-                h->flags, b ? (int)b->space : -1);
-      }
+  verify_untraced_words(h);
+  EACH_REF_SLOT(p, slot, {
+    if (verify_ptr(*slot, "field", p, (long)((uint8_t *)slot - (uint8_t *)p))) {
+      fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p, h->flags,
+              b ? (int)b->space : -1);
     }
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    return;
-  }
-  uint64_t bits = g_type_bits[id];
-  size_t i;
-  for (i = 0; i < 64; i++) {
-    if (bits & (1ULL << i)) {
-      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
-                     (long)(i * sizeof(void *)))) {
-        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
-                h->flags, b ? (int)b->space : -1);
-      }
-    }
-  }
+  });
 }
 
 static uint64_t g_verify_left_seen;
@@ -2265,6 +2293,12 @@ static void verify_young_copy(void) {
   }
   for (b = g_mature; b; b = b->next) {
     foreach_block_object(b, verify_obj_fields);
+  }
+  {
+    Large *L;
+    for (L = g_large; L; L = L->next) {
+      verify_obj_fields(&L->header, NULL);
+    }
   }
 }
 
@@ -2303,31 +2337,7 @@ static void defrag_rewrite_tls(void **slot) {
 }
 
 static void defrag_scan_payload(void *p) {
-  AvantHeader *h = avant_header(p);
-  uint32_t id = h->type_id;
-  if (id == AVANT_TYPE_BYTES) {
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      defrag_rewrite_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-    }
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    return;
-  }
-  {
-    uint64_t bits = g_type_bits[id];
-    size_t i;
-    for (i = 0; i < 64; i++) {
-      if (bits & (1ULL << i)) {
-        defrag_rewrite_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-      }
-    }
-  }
+  EACH_REF_SLOT(p, slot, { defrag_rewrite_slot(slot); });
 }
 
 static void defrag_fix_one(AvantHeader *h, Block *b) {
@@ -3079,8 +3089,70 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   if (type_id >= MAX_TYPES) {
     die("type id too large");
   }
-  g_type_bits[type_id] = word_bits;
+  TypeMap *m = &g_types[type_id];
+  if (m->words && m->words != &m->first) {
+    free(m->words);
+  }
+  m->first = word_bits;
+  m->words = &m->first;
+  m->nchunks = 1;
+  m->stride = 0;
+  m->nrefs = (uint32_t)__builtin_popcountll(word_bits);
   g_type_set[type_id] = 1;
+}
+
+/* Stage 28 W1b. Registers bits for payload words word_base ..
+ * word_base + 63 of type_id (word_base a multiple of 64; later chunks
+ * extend the bitmap, so a map may be any length) with an element stride
+ * in words (0: one record; > 0: a buffer of repeated elements, every
+ * bit below stride). All calls for one id carry the same stride. */
+void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_base,
+                       uint64_t bits) {
+  init_gc();
+  if (type_id == AVANT_TYPE_PTRS || type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  if (type_id >= MAX_TYPES) {
+    die("type id too large");
+  }
+  if (word_base % 64 != 0) {
+    die("type map chunk is not 64-word aligned");
+  }
+  TypeMap *m = &g_types[type_id];
+  uint32_t chunk = word_base / 64;
+  if (!g_type_set[type_id]) {
+    m->first = 0;
+    m->words = &m->first;
+    m->nchunks = 1;
+    m->stride = stride_words;
+    m->nrefs = 0;
+    g_type_set[type_id] = 1;
+  } else if (m->stride != stride_words) {
+    die("type map stride changed");
+  }
+  if (chunk >= m->nchunks) {
+    uint64_t *nw = calloc((size_t)chunk + 1, sizeof(uint64_t));
+    if (!nw) {
+      die("out of memory");
+    }
+    memcpy(nw, m->words, (size_t)m->nchunks * sizeof(uint64_t));
+    if (m->words != &m->first) {
+      free(m->words);
+    }
+    m->words = nw;
+    m->nchunks = chunk + 1;
+  }
+  if (stride_words) {
+    uint32_t i;
+    for (i = 0; i < 64; i++) {
+      if (((bits >> i) & 1u) && word_base + i >= stride_words) {
+        die("type map bit past the element stride");
+      }
+    }
+  }
+  m->nrefs -= (uint32_t)__builtin_popcountll(m->words[chunk]);
+  m->words[chunk] = bits;
+  m->nrefs += (uint32_t)__builtin_popcountll(bits);
 }
 
 /* A call used to calloc a frame and free it on leave. Hot recursion
@@ -3209,6 +3281,28 @@ void avant_barrier(void *obj) {
     return;
   }
   rem_add(obj);
+}
+
+/* Stage 28 W1b. The barrier for a store through an address that may be
+ * inside a heap object (a struct method's self, a struct field reached
+ * through such a self): remembers the object containing addr, like
+ * avant_barrier(object). An address on this thread's stack, or outside
+ * the heap, is a no-op. Never collects. */
+void avant_barrier_at(void *addr) {
+  Block *b = NULL;
+  void *start;
+  if (!addr || g_collecting) {
+    return;
+  }
+  if (g_self_reg.stack_lo && (uint8_t *)addr >= (uint8_t *)g_self_reg.stack_lo &&
+      (uint8_t *)addr < (uint8_t *)g_self_reg.stack_hi) {
+    return;
+  }
+  start = object_payload(addr, &b, NULL);
+  if (!start) {
+    return;
+  }
+  avant_barrier(start);
 }
 
 void avant_pin(void *payload) {

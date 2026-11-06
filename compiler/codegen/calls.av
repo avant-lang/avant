@@ -1527,40 +1527,82 @@ pub fn (codegen_self: MycGen) re2c_call_groups(id: Int): Int {
   0
 }
 
+// Type maps beyond the classes (Stage 28 W1b): closure environments,
+// capture boxes, spawn and .parallel capture records, and the element
+// buffers of by-value struct or union elements that hold a reference.
+// Entry i has the dynamic id dyn_type_id(class_count + i); its
+// reference words are closure_words[closure_word_at[i] ..
+// + closure_word_n[i]], and closure_strides[i] is the element stride
+// in words (0 for a record).
+
+pub fn (codegen_self: MycGen) map_index(name: String): Int {
+  i = 0
+  while i < codegen_self.closure_names.size {
+    if str_eq(codegen_self.closure_names[i], name) {
+      return i
+    }
+    i = i + 1
+  }
+  -1
+}
+
+pub fn (codegen_self: MycGen) add_map(name: String, words: Array(Int), stride: Int) {
+  codegen_self.closure_names.push(name)
+  codegen_self.closure_word_at.push(codegen_self.closure_words.size)
+  codegen_self.closure_word_n.push(words.size)
+  codegen_self.closure_strides.push(stride)
+  i = 0
+  while i < words.size {
+    codegen_self.closure_words.push(words[i])
+    i = i + 1
+  }
+}
+
 pub fn (codegen_self: MycGen) note_words(name: String, tys: Array(Ty)) {
-  bits = 0u64
+  words: Array(Int) = []
   offset = 0
   i = 0
   while i < tys.size {
     fty = tys[i]
     offset = align_up_i(offset, abi_align(fty))
-    bits = add_ptr_bits(fty, offset, bits)
+    add_ptr_words(fty, offset, words)
     offset = offset + abi_size(fty)
     i = i + 1
   }
-  if bits == 0u64 {
+  if words.size == 0 {
     return
   }
-  j = 0
-  while j < codegen_self.closure_names.size {
-    if str_eq(codegen_self.closure_names[j], name) {
-      return
-    }
-    j = j + 1
+  if codegen_self.map_index(name) >= 0 {
+    return
   }
-  codegen_self.closure_names.push(name)
-  codegen_self.closure_bits.push(bits)
+  codegen_self.add_map(name, words, 0)
 }
 
 pub fn (codegen_self: MycGen) closure_type_id(name: String): Int {
-  i = 0
-  while i < codegen_self.closure_names.size {
-    if str_eq(codegen_self.closure_names[i], name) {
-      return 400 + i
-    }
-    i = i + 1
+  i = codegen_self.map_index(name)
+  if i >= 0 {
+    return dyn_type_id(codegen_self.class_count + i)
   }
   0
+}
+
+// The element buffer's type id for an Array(elem).
+
+pub fn (codegen_self: MycGen) array_type_id(elem: Ty): Int {
+  if elem_scans_whole(elem) {
+    return 65535
+  }
+  words = elem_map_words(elem)
+  if words.size == 0 {
+    return 0
+  }
+  name = "elem:${ty_myc(elem)}"
+  i = codegen_self.map_index(name)
+  if i < 0 {
+    codegen_self.add_map(name, words, abi_size(elem) / 8)
+    i = codegen_self.closure_names.size - 1
+  }
+  dyn_type_id(codegen_self.class_count + i)
 }
 
 pub fn (codegen_self: MycGen) note_box(ty: Ty) {
@@ -1574,20 +1616,19 @@ pub fn (codegen_self: MycGen) note_box(ty: Ty) {
     i = i + 1
   }
   codegen_self.box_tys.push(ty)
-  bits = add_ptr_bits(ty, 0, 0u64)
-  codegen_self.closure_names.push(layout)
-  codegen_self.closure_bits.push(bits)
+  words: Array(Int) = []
+  add_ptr_words(ty, 0, words)
+  codegen_self.add_map(layout, words, 0)
 }
 
 pub fn (codegen_self: MycGen) note_env(name: String, count: Int) {
-  bits = 0u64
+  words: Array(Int) = []
   i = 0
   while i < count {
-    bits = word_bit(i * 8, bits)
+    words.push(i)
     i = i + 1
   }
-  codegen_self.closure_names.push(name)
-  codegen_self.closure_bits.push(bits)
+  codegen_self.add_map(name, words, 0)
 }
 
 pub fn (codegen_self: MycGen) collect_lambda(expr: Expr) {
@@ -1714,6 +1755,12 @@ pub fn (codegen_self: MycGen) ensure_box(name: String, ty: Ty) {
 
 pub fn (codegen_self: MycGen) store_box_value(name: String, ty: Ty) {
   box = box_layout_name(ty)
+  // A box is a heap object that may be mature (Stage 28 W1b).
+  if needs_heap_barrier(ty) {
+    codegen_self.line("LOCAL :${name} :ptr<${box}>")
+    codegen_self.line("AS :ptr<void>")
+    codegen_self.line("CALL :avant_barrier")
+  }
   codegen_self.line("LOCAL :${name} :ptr<${box}>")
   codegen_self.line("DEREF")
   codegen_self.line("FIELD 0")
