@@ -131,6 +131,9 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   if k == ex_interp() {
     return lw.lower_interp(e)
   }
+  if k == ex_struct() {
+    return lw.lower_struct_lit(e)
+  }
   if k == ex_index() {
     if arr = e.left {
       if ix = e.right {
@@ -217,9 +220,8 @@ pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
     lw.refuse(e.loc, "a function value (W7)")
     return lw.lw_b.c_i32(0)
   }
-  if e.implicit_field {
-    lw.refuse(e.loc, "a field (W6)")
-    return lw.lw_b.c_i32(0)
+  if e.implicit_field || lw.is_struct_self(e) {
+    return lw.lower_place_read(e)
   }
   ty = lw.ety(e)
   if lw.failed {
@@ -307,6 +309,11 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
       }
       if lt == mt_str() {
         return lw.lower_str_binary(e, l, r)
+      }
+      cop0 = mir_cmp_op(e.op)
+      if lw.lw_b.types.kind(lt) == mk_agg() || (lw.lw_b.types.is_refkind(lt) && cop0 != mop_eq() && cop0 != mop_ne()) {
+        lw.refuse(e.loc, "this operator on ${lw.lw_b.types.text(lt)}")
+        return zero
       }
       a = lw.snap(lw.lower_expr(l), r)
       c = lw.lower_expr(r)

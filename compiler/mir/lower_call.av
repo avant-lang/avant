@@ -73,7 +73,10 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   if e.type_call {
-    lw.refuse(e.loc, "a constructor or type call (W6)")
+    if got = lw.lower_named_call(e) {
+      return got
+    }
+    lw.refuse(e.loc, "the type-level call ${e.callee}")
     return zero
   }
   if e.indirect {
@@ -98,6 +101,20 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)
       }
+      if (rt.is_class || rt.is_struct) && !str_eq(e.callee, "new") && !str_eq(e.callee, "bump") {
+        if sym = lw.lw_fn_syms.get(e.resolved) {
+          return lw.lower_method_call(e, recv, rt, sym, e.args)
+        }
+      }
+    }
+    if str_eq(e.callee, "new") {
+      if got = lw.lower_named_call(e) {
+        return got
+      }
+    }
+    if str_eq(e.callee, "bump") {
+      lw.refuse(e.loc, ".bump (its result is T?: unions, W7)")
+      return zero
     }
     lw.refuse(e.loc, "the method call .${e.callee}")
     return zero
@@ -190,6 +207,17 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       if mir_is_str_ty(ot) {
         none: Array(Expr) = []
         return lw.str_member(e, obj, ot, e.ident, none)
+      }
+      if ot.is_class || ot.is_struct {
+        if e.method_call {
+          if sym = lw.lw_fn_syms.get(e.resolved) {
+            none2: Array(Expr) = []
+            return lw.lower_method_call(e, obj, ot, sym, none2)
+          }
+          lw.refuse(e.loc, "the method .${e.ident}")
+          return lw.lw_b.c_i32(0)
+        }
+        return lw.lower_place_read(e)
       }
     }
   }

@@ -1,0 +1,130 @@
+// Classes on the new back end (Stage 28 W6b): constructors with field
+// defaults and initialize (with and without arguments, and none at all),
+// explicit and implicit field loads and stores, compound field stores,
+// methods in call and field form, a type-level function, references
+// passed, returned, compared, and shared, and the old evaluation orders
+// (a method's arguments before its receiver; a stored value before the
+// object it is stored into).
+
+struct Pair {
+  a: Int
+  b: String
+}
+
+class Counter {
+  n: Int = 10
+  name: String = "ctr"
+  hits: Int64 = 0i64
+  ok: Bool = true
+  ratio: Float64 = 0.5
+  p: Pair
+
+  fn initialize(start: Int) {
+    n = start
+    self.name = "c${start}"
+  }
+
+  fn incr: Int {
+    n += 1
+    hits = hits + 1i64
+    n
+  }
+
+  fn add(k: Int): Int {
+    self.n = self.n + k
+    n
+  }
+
+  fn label: String {
+    "${name}:${n}:${hits}:${ok}:${ratio}"
+  }
+
+  fn rename(s: String) {
+    name = s
+    p.b = s
+    self.p.a = self.p.a + 1
+  }
+
+  fn self.make(k: Int): Counter {
+    c = Counter.new(k)
+    c.ratio = 2.25
+    c
+  }
+}
+
+class Plain {
+  x: Int
+  s: String
+  other: Counter
+}
+
+class Defaults {
+  kind: Int = 3
+  text: String = "dflt"
+
+  fn initialize {
+  }
+}
+
+fn say(tag: String, v: Int): Int {
+  puts(tag)
+  v
+}
+
+fn pick(c: Counter, d: Counter, first: Bool): Counter {
+  if first {
+    return c
+  }
+  d
+}
+
+fn mk_counter(tag: String): Counter {
+  puts("mk ${tag}")
+  Counter.new(100)
+}
+
+fn main {
+  c = Counter.new(5)
+  puts(c.label)
+  puts(c.incr)
+  puts(c.incr())
+  puts(c.add(7))
+  puts(c.label)
+  c.rename("renamed")
+  puts(c.name)
+  puts(c.p.b)
+  puts(c.p.a)
+  c.n += 5
+  c.n -= 2
+  c.n *= 3
+  puts(c.n)
+
+  m = Counter.make(9)
+  puts(m.label)
+
+  q = Plain.new
+  puts(q.x)
+  puts(q.s.size)
+  q.x = 4
+  q.s = "plain"
+  q.other = m
+  q.other.n = 77
+  puts(m.n)
+  puts(q.other.label)
+
+  d = Defaults.new()
+  puts(d.kind)
+  puts(d.text)
+
+  puts(pick(c, m, true).n)
+  puts(pick(c, m, false).n)
+  alias = c
+  alias.n = 1
+  puts(c.n)
+
+  // A method's arguments are evaluated before its receiver.
+  r = mk_counter("recv").add(say("arg", 3))
+  puts(r)
+  // The stored value is evaluated before the object stored into.
+  mk_counter("holder").n = say("value", 8)
+}
