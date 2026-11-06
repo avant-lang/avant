@@ -1,0 +1,231 @@
+// The call table (Stage 28 W4; stages/stage28/mir.md 4.6, D182): for every
+// external symbol the compiler may call, its MIR signature and one class:
+// never (the old fixed --gc-leaf list of pipeline.av, the libc and GC hook
+// names, __avant_type_maps), quiet (the helpers that allocate only under
+// defer: the old quiet list of codegen/analysis.av), collects (everything
+// else, and every name not in the table). Flags: alloc, slot (returns the
+// untyped `addr` of an element inside the array's buffer), noreturn,
+// varargs. The classes are the old back end's (proof: old, section 14,
+// 8.9); a wave that first emits a never or quiet row proves it or moves it
+// to collects. This is the MIR's own copy; pipeline.av's list is the old
+// back end's and is not changed.
+//
+// Rows: the 47 never names of pipeline.av, the libc and GC hooks, the 19
+// quiet names, and the collects rows whose signature the core needs. A
+// collects row is only needed for its signature (an unknown name already
+// collects): W5-W8 add rows as their lowering first calls them.
+
+import source
+import mir.types
+
+pub fn mcc_never: Int { 1 }
+pub fn mcc_quiet: Int { 2 }
+pub fn mcc_collects: Int { 3 }
+
+pub fn mcc_name(c: Int): String {
+  if c == mcc_never() {
+    return "never"
+  }
+  if c == mcc_quiet() {
+    return "quiet"
+  }
+  "collects"
+}
+
+pub class MRtRow {
+  name: String = ""
+  params: String = ""
+  ret: String = ""
+  cls: Int = 0
+  alloc: Bool = false
+  slot: Bool = false
+  noreturn: Bool = false
+  varargs: Bool = false
+
+  fn initialize(name: String, params: String, ret: String, cls: Int) {
+    self.name = name
+    self.params = params
+    self.ret = ret
+    self.cls = cls
+  }
+}
+
+pub class MRtTable {
+  rows: Array(MRtRow)
+  index: Hash(String, Int)
+
+  fn initialize {
+    r: Array(MRtRow) = []
+    self.rows = r
+    self.index = Hash(String, Int).new
+    mir_rt_fill(self)
+  }
+
+  // flags: "", or space-separated alloc slot noreturn varargs.
+  pub fn row(name: String, params: String, ret: String, cls: Int, flags: String) {
+    r = MRtRow.new(name, params, ret, cls)
+    words = flags.split(" ")
+    i = 0
+    while i < words.size {
+      w = words[i]
+      if str_eq(w, "alloc") {
+        r.alloc = true
+      } else if str_eq(w, "slot") {
+        r.slot = true
+      } else if str_eq(w, "noreturn") {
+        r.noreturn = true
+      } else if str_eq(w, "varargs") {
+        r.varargs = true
+      }
+      i = i + 1
+    }
+    self.index[name] = self.rows.size
+    self.rows.push(r)
+  }
+
+  pub fn find(name: String): MRtRow? {
+    if i = self.index.get(name) {
+      return self.rows[i]
+    }
+    nil
+  }
+
+  // The class of a C name: the row's, or collects for a name not here.
+  pub fn class_of(name: String): Int {
+    if r = self.find(name) {
+      return r.cls
+    }
+    mcc_collects()
+  }
+
+  // The row's MIR signature, interned into ts; -1 when a type text does
+  // not parse (a table defect).
+  pub fn sig_of(r: MRtRow, ts: MTypes): Int {
+    ps: Array(Int) = []
+    if r.params.size > 0 {
+      parts = r.params.split(", ")
+      i = 0
+      while i < parts.size {
+        t = ts.parse_text(parts[i])
+        if t < 0 {
+          return -1
+        }
+        ps.push(t)
+        i = i + 1
+      }
+    }
+    rt = ts.parse_text(r.ret)
+    if rt < 0 {
+      return -1
+    }
+    ts.sig(ps, rt, r.varargs)
+  }
+}
+
+fn mir_rt_fill(t: MRtTable) {
+  n = mcc_never()
+  q = mcc_quiet()
+  c = mcc_collects()
+  // never: the old fixed --gc-leaf list (pipeline.av), in its order.
+  t.row("avant_type_map", "u32, u64", "void", n, "")
+  t.row("avant_type_map_at", "u32, u32, u32, u64", "void", n, "")
+  t.row("avant_barrier", "ref", "void", n, "")
+  t.row("avant_barrier_at", "ptr", "void", n, "")
+  t.row("avant_cov_hit", "i32", "void", n, "")
+  t.row("avant_cov_init", "ref str", "void", n, "")
+  t.row("avant_pin", "ref", "void", n, "")
+  t.row("avant_unpin", "ref", "void", n, "")
+  t.row("avant_is_heap", "ref", "i32", n, "")
+  t.row("avant_is_young", "ref", "i32", n, "")
+  t.row("avant_exp", "f64", "f64", n, "")
+  t.row("avant_bump_alloc", "u64, u32", "ref", n, "alloc")
+  t.row("avant_gc_quiet_enter", "", "void", n, "")
+  t.row("avant_gc_quiet_leave", "", "void", n, "")
+  t.row("avant_array_get_ptr", "ref, i32", "ref", n, "")
+  t.row("avant_array_set_ptr", "ref, i32, ref", "void", n, "")
+  t.row("avant_array_pop_ptr", "ref", "ref", n, "")
+  t.row("avant_array_clear", "ref", "void", n, "")
+  t.row("avant_array_fill_i32", "ref, i32", "void", n, "")
+  t.row("avant_array_fill_u8", "ref, i32", "void", n, "")
+  t.row("avant_str_size", "ref str", "i32", n, "")
+  t.row("avant_str_byte", "ref str, i32", "i32", n, "")
+  t.row("avant_str_eq", "ref str, ref str", "i32", n, "")
+  t.row("avant_str_to_f", "ref str", "f64", n, "")
+  t.row("avant_str_to_i", "ref str", "i32", n, "")
+  t.row("avant_str_to_f_slice", "ref str, i32, i32", "f64", n, "")
+  t.row("avant_checksum_str", "ref str", "i32", n, "")
+  t.row("avant_checksum_f64", "f64", "i32", n, "")
+  t.row("avant_buf_size", "ref", "i32", n, "")
+  t.row("avant_buf_starts", "ref, ref str", "i32", n, "")
+  t.row("avant_wide_op", "i32, i32, i32, i32, i32", "i32", n, "")
+  t.row("avant_wide_hi", "", "i32", n, "")
+  t.row("avant_now_ms", "", "i32", n, "")
+  t.row("avant_now_us", "", "i32", n, "")
+  t.row("avant_trap_bounds", "i32, i32", "void", n, "noreturn")
+  t.row("avant_trap_div_zero", "", "void", n, "noreturn")
+  t.row("avant_trap_overflow", "", "void", n, "noreturn")
+  t.row("avant_checked_add_i64", "i64, i64", "i64", n, "")
+  t.row("avant_checked_sub_i64", "i64, i64", "i64", n, "")
+  t.row("avant_checked_mul_i64", "i64, i64", "i64", n, "")
+  t.row("avant_checked_add_u64", "u64, u64", "u64", n, "")
+  t.row("avant_checked_sub_u64", "u64, u64", "u64", n, "")
+  t.row("avant_checked_mul_u64", "u64, u64", "u64", n, "")
+  t.row("avant_checked_div_i64", "i64, i64", "i64", n, "")
+  t.row("avant_checked_rem_i64", "i64, i64", "i64", n, "")
+  t.row("avant_checked_div_u64", "u64, u64", "u64", n, "")
+  t.row("avant_checked_rem_u64", "u64, u64", "u64", n, "")
+  // never: libc, the GC hooks (audit 3.1 list 3), the type-map function.
+  t.row("printf", "ref str", "i32", n, "varargs")
+  t.row("memset", "ptr, i32, u64", "ptr", n, "")
+  t.row("memcpy", "ptr, ptr, u64", "ptr", n, "")
+  t.row("memmove", "ptr, ptr, u64", "ptr", n, "")
+  t.row("malloc", "u64", "ptr", n, "")
+  t.row("calloc", "u64, u64", "ptr", n, "")
+  t.row("free", "ptr", "void", n, "")
+  t.row("avant_gc_enter", "", "void", n, "")
+  t.row("avant_gc_leave", "", "void", n, "")
+  t.row("avant_gc_root_begin", "u32", "ptr", n, "")
+  t.row("avant_gc_root", "ptr", "void", n, "")
+  t.row("avant_gc_reload", "ptr", "ptr", n, "")
+  t.row("__avant_type_maps", "", "void", n, "")
+  // quiet: the old quiet list (codegen/analysis.av), in its order.
+  t.row("avant_hash_get_i32", "ref, ref str, ptr", "i32", q, "")
+  t.row("avant_hash_get_str", "ref, ref str, ptr", "ref str", q, "")
+  t.row("avant_hash_get_i32k_i32", "ref, i32, ptr", "i32", q, "")
+  t.row("avant_hash_set_i32", "ref, ref str, i32", "void", q, "")
+  t.row("avant_hash_set_str", "ref, ref str, ref str", "void", q, "")
+  t.row("avant_hash_set_i32k_i32", "ref, i32, i32", "void", q, "")
+  t.row("avant_hash_clear", "ref", "void", q, "")
+  t.row("avant_hash_size", "ref", "i32", q, "")
+  t.row("avant_hash_del", "ref, ref str", "void", q, "")
+  t.row("avant_hash_del_i32k", "ref, i32", "void", q, "")
+  t.row("avant_hash_get_str_slice", "ref, ref str, i32, i32, ptr", "ref str", q, "")
+  t.row("avant_hash_inc_slice", "ref, ref str, i32, i32", "i32", q, "")
+  t.row("avant_buf_clear", "ref", "void", q, "")
+  t.row("avant_buf_push_byte", "ref, i32", "void", q, "")
+  t.row("avant_buf_push_str", "ref, ref str", "void", q, "")
+  t.row("avant_buf_push_slice", "ref, ref str, i32, i32", "void", q, "")
+  t.row("avant_buf_push_fmt_i", "ref, i32", "void", q, "")
+  t.row("avant_buf_push_fmt_f", "ref, f64, i32", "void", q, "")
+  t.row("avant_regex_find", "ptr, ref str, i32", "i64", q, "")
+  t.row("avant_regex_span_pair", "i32", "i64", q, "")
+  t.row("avant_regex_span_at", "ptr, ref str, i32, i32", "i64", q, "")
+  t.row("avant_regex_count", "ptr, ref str", "i32", q, "")
+  // collects: the allocation entry, the slot rows, and the rows the core
+  // example and the verifier tests call.
+  t.row("avant_alloc", "u64, u32", "ref", c, "alloc")
+  t.row("avant_array_push_slot", "ref, u64, u32", "addr", c, "slot")
+  t.row("avant_array_pop_slot", "ref, u64", "addr", c, "slot")
+  t.row("avant_array_push_ptr", "ref, ref, u32", "void", c, "")
+  t.row("avant_io_init_argv", "i32, ptr", "void", c, "")
+  t.row("avant_gc_collect", "", "void", c, "")
+  t.row("avant_str_from_int", "i32", "ref str", c, "")
+  t.row("avant_str_from_i64", "i64", "ref str", c, "")
+  t.row("avant_str_from_u64", "u64", "ref str", c, "")
+  t.row("avant_str_from_float", "f64", "ref str", c, "")
+  t.row("avant_str_concat", "ref str, ref str", "ref str", c, "")
+  t.row("avant_str_slice", "ref str, i32, i32", "ref str", c, "")
+  t.row("avant_buf_new", "i32", "ref", c, "")
+  t.row("avant_buf_to_str", "ref", "ref str", c, "")
+  t.row("avant_hash_new", "i32, i32", "ref", c, "")
+}

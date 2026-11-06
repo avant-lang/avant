@@ -1,0 +1,102 @@
+// Symbols of Avant-defined functions (Stage 28 W4; stages/stage28/mir.md
+// 8.2, D170): `av.<module>/<item>`. The first `/` ends the module; the
+// module is a dotted name of identifiers; the item is the rest (an owner,
+// name, generic arguments, overload parameters, `#` synthesized parts).
+// mty, the canonical rendering of a Ty, is the lowering's (W5).
+
+import source
+import mir.types
+
+pub fn mir_mangle(module: String, item: String): String {
+  "av.${module}/${item}"
+}
+
+fn mir_ident_byte(c: Int): Bool {
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 48 && c <= 57 {
+    return true
+  }
+  c == 95
+}
+
+// The index of the `/` that ends the module part, or -1.
+pub fn mir_mangled_slash(sym: String): Int {
+  if !str_starts_mir(sym, "av.") {
+    return -1
+  }
+  i = 3
+  while i < sym.size {
+    if sym[i] == 47 {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+// Whether sym follows 8.2: `av.`, a dotted module name, `/`, a non-empty
+// item with balanced brackets and no blank, quote, or control byte.
+pub fn mir_mangled_ok(sym: String): Bool {
+  slash = mir_mangled_slash(sym)
+  if slash < 0 || slash == 3 || slash + 1 >= sym.size {
+    return false
+  }
+  prev_dot = true
+  i = 3
+  while i < slash {
+    c = sym[i]
+    if c == 46 {
+      if prev_dot {
+        return false
+      }
+      prev_dot = true
+    } else if mir_ident_byte(c) {
+      prev_dot = false
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  if prev_dot {
+    return false
+  }
+  depth = 0
+  i = slash + 1
+  while i < sym.size {
+    c = sym[i]
+    if c <= 32 || c == 34 || c == 127 {
+      return false
+    }
+    if c == 40 || c == 91 {
+      depth = depth + 1
+    } else if c == 41 || c == 93 {
+      depth = depth - 1
+      if depth < 0 {
+        return false
+      }
+    }
+    i = i + 1
+  }
+  depth == 0
+}
+
+pub fn mir_mangled_module(sym: String): String {
+  slash = mir_mangled_slash(sym)
+  if slash < 0 {
+    return ""
+  }
+  str_slice(sym, 3, slash)
+}
+
+pub fn mir_mangled_item(sym: String): String {
+  slash = mir_mangled_slash(sym)
+  if slash < 0 {
+    return ""
+  }
+  str_slice(sym, slash + 1, sym.size)
+}

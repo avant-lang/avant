@@ -1,0 +1,377 @@
+// The MIR as data (Stage 28 W4; stages/stage28/mir.md sections 3, 4, 12).
+// Non-SSA: typed locals _0 .. _n, basic blocks of statements over places
+// and operands, one terminator per block. Kinds are Int constants (like
+// tyk_* in type.av); types are interned ids into MTypes (types.av).
+//
+// D188 and D192 (while the CI seed predates W1b): every class here holds
+// at most 16 words; arrays hold classes, scalars, or Strings only; the only
+// union-typed fields are `C?` with C a class; MLoc is the only struct and
+// holds three Ints.
+
+import mir.types
+import mir.runtime
+
+// Statement kinds (4.4).
+pub fn msk_assign: Int { 1 }
+pub fn msk_call: Int { 2 }
+pub fn msk_barrier: Int { 3 }
+pub fn msk_barrier_at: Int { 4 }
+pub fn msk_check_bounds: Int { 5 }
+pub fn msk_gc_enter: Int { 6 }
+pub fn msk_gc_roots: Int { 7 }
+pub fn msk_gc_leave: Int { 8 }
+
+// Terminator kinds (4.5).
+pub fn mtk_goto: Int { 1 }
+pub fn mtk_branch: Int { 2 }
+pub fn mtk_switch: Int { 3 }
+pub fn mtk_return: Int { 4 }
+pub fn mtk_unreachable: Int { 5 }
+
+// Rvalue kinds (4.3).
+pub fn mrk_use: Int { 1 }
+pub fn mrk_zero: Int { 2 }
+pub fn mrk_unary: Int { 3 }
+pub fn mrk_binary: Int { 4 }
+pub fn mrk_checked: Int { 5 }
+pub fn mrk_cmp: Int { 6 }
+pub fn mrk_cast: Int { 7 }
+pub fn mrk_addr: Int { 8 }
+pub fn mrk_addr_raw: Int { 9 }
+pub fn mrk_struct: Int { 10 }
+pub fn mrk_union: Int { 11 }
+pub fn mrk_fnval: Int { 12 }
+
+// Operators: binary 1-10, compare 11-16, unary 17-19.
+pub fn mop_add: Int { 1 }
+pub fn mop_sub: Int { 2 }
+pub fn mop_mul: Int { 3 }
+pub fn mop_div: Int { 4 }
+pub fn mop_rem: Int { 5 }
+pub fn mop_and: Int { 6 }
+pub fn mop_or: Int { 7 }
+pub fn mop_xor: Int { 8 }
+pub fn mop_shl: Int { 9 }
+pub fn mop_shr: Int { 10 }
+pub fn mop_eq: Int { 11 }
+pub fn mop_ne: Int { 12 }
+pub fn mop_lt: Int { 13 }
+pub fn mop_le: Int { 14 }
+pub fn mop_gt: Int { 15 }
+pub fn mop_ge: Int { 16 }
+pub fn mop_neg: Int { 17 }
+pub fn mop_not: Int { 18 }
+pub fn mop_neg_chk: Int { 19 }
+
+pub fn mop_name(op: Int): String {
+  names = ["?", "add", "sub", "mul", "div", "rem", "and", "or", "xor", "shl", "shr", "eq", "ne", "lt", "le", "gt", "ge", "neg", "not", "neg.chk"]
+  if op < 0 || op >= names.size {
+    return "?"
+  }
+  names[op]
+}
+
+// Operand kinds (4.2).
+pub fn mok_copy: Int { 1 }
+pub fn mok_int: Int { 2 }
+pub fn mok_f64: Int { 3 }
+pub fn mok_bool: Int { 4 }
+pub fn mok_null: Int { 5 }
+pub fn mok_str: Int { 6 }
+pub fn mok_fn: Int { 7 }
+
+// Projection kinds (4.1).
+pub fn mpk_deref: Int { 1 }
+pub fn mpk_field: Int { 2 }
+pub fn mpk_index: Int { 3 }
+
+// Function kinds (3.4).
+pub fn mfk_unset: Int { 0 }
+pub fn mfk_frame: Int { 1 }
+pub fn mfk_leaf: Int { 2 }
+
+// Verifier stages (6).
+pub fn mst_lowered: Int { 1 }
+pub fn mst_final: Int { 2 }
+
+// A source location (9): file indexes the module's file table.
+pub struct MLoc {
+  file: Int
+  line: Int
+  col: Int
+}
+
+pub class MProj {
+  kind: Int = 0
+  field: Int = 0
+  index: MOperand? = nil
+
+  fn initialize(kind: Int, field: Int) {
+    self.kind = kind
+    self.field = field
+  }
+}
+
+pub class MPlace {
+  local: Int = 0
+  proj: Array(MProj)
+
+  fn initialize(local: Int) {
+    self.local = local
+    p: Array(MProj) = []
+    self.proj = p
+  }
+
+  // The index of the last deref projection, or -1 (frame-local, 4.1).
+  pub fn last_deref: Int {
+    j = -1
+    i = 0
+    while i < self.proj.size {
+      if self.proj[i].kind == mpk_deref() {
+        j = i
+      }
+      i = i + 1
+    }
+    j
+  }
+
+  pub fn frame_local: Bool {
+    self.last_deref < 0
+  }
+}
+
+// An operand: `copy P` or a constant. Constants carry their type; an
+// integer's value is its two's complement bits in ival; an f64 keeps its
+// bit pattern in ival and its %g rendering in text (the language has no
+// bit cast, so the lowering supplies both); ok_fn keeps the symbol in text;
+// ok_str the constant's number in sid.
+pub class MOperand {
+  kind: Int = 0
+  ty: Int = 0
+  place: MPlace? = nil
+  ival: Int64 = 0i64
+  text: String = ""
+  sid: Int = 0
+
+  fn initialize(kind: Int, ty: Int) {
+    self.kind = kind
+    self.ty = ty
+    self.text = ""
+  }
+}
+
+pub class MRvalue {
+  kind: Int = 0
+  op: Int = 0
+  ty: Int = 0
+  a: MOperand? = nil
+  b: MOperand? = nil
+  place: MPlace? = nil
+  ops: Array(MOperand)
+
+  fn initialize(kind: Int) {
+    self.kind = kind
+    o: Array(MOperand) = []
+    self.ops = o
+  }
+}
+
+pub class MStmt {
+  kind: Int = 0
+  loc: MLoc
+  place: MPlace? = nil
+  rv: MRvalue? = nil
+  fresh: Bool = false
+  dest: Int = -1
+  callee: String = ""
+  indirect: MOperand? = nil
+  args: Array(MOperand)
+  collects: Bool = true
+  sig: Int = -1
+  locals: Array(Int)
+
+  fn initialize(kind: Int, loc: MLoc) {
+    self.kind = kind
+    self.loc = loc
+    self.callee = ""
+    a: Array(MOperand) = []
+    self.args = a
+    l: Array(Int) = []
+    self.locals = l
+  }
+}
+
+pub class MTerm {
+  kind: Int = 0
+  loc: MLoc
+  cond: MOperand? = nil
+  targets: Array(Int)
+  values: Array(Int64)
+
+  fn initialize(kind: Int, loc: MLoc) {
+    self.kind = kind
+    self.loc = loc
+    t: Array(Int) = []
+    self.targets = t
+    v: Array(Int64) = []
+    self.values = v
+  }
+}
+
+pub class MBlock {
+  id: Int = 0
+  stmts: Array(MStmt)
+  term: MTerm? = nil
+
+  fn initialize(id: Int) {
+    self.id = id
+    s: Array(MStmt) = []
+    self.stmts = s
+  }
+}
+
+pub class MLocal {
+  ty: Int = 0
+  name: String = ""
+  slot: Bool = false
+
+  fn initialize(ty: Int, name: String) {
+    self.ty = ty
+    self.name = name
+  }
+}
+
+pub class MFunc {
+  symbol: String = ""
+  external: Bool = false
+  sig: Int = 0
+  kind: Int = 0
+  nparams: Int = 0
+  locals: Array(MLocal)
+  blocks: Array(MBlock)
+  loc: MLoc
+  source_name: String = ""
+
+  fn initialize(symbol: String, sig: Int, loc: MLoc) {
+    self.symbol = symbol
+    self.sig = sig
+    self.loc = loc
+    self.source_name = ""
+    l: Array(MLocal) = []
+    self.locals = l
+    b: Array(MBlock) = []
+    self.blocks = b
+  }
+
+  pub fn has_ret: Bool {
+    self.locals.size > 0 && self.locals[0].ty != mt_void()
+  }
+
+  // A local number that names a real local (3.4: _0 of a void function is
+  // a placeholder, not a local).
+  pub fn valid_local(i: Int): Bool {
+    if i < 0 || i >= self.locals.size {
+      return false
+    }
+    if i == 0 {
+      return self.has_ret
+    }
+    true
+  }
+
+  pub fn is_param(i: Int): Bool {
+    i >= 1 && i <= self.nparams
+  }
+}
+
+// A declared external (3.5); cls is the call-table class (runtime.av).
+pub class MExtern {
+  name: String = ""
+  sig: Int = 0
+  cls: Int = 0
+  slot_row: Bool = false
+  alloc: Bool = false
+  noreturn: Bool = false
+
+  fn initialize(name: String, sig: Int, cls: Int) {
+    self.name = name
+    self.sig = sig
+    self.cls = cls
+  }
+}
+
+// A type-map registration (3.3). layout -1 is a fixed map (1022, 1021,
+// 1023): its name and its one chunk of bits are given.
+pub class MTypeMap {
+  id: Int = 0
+  layout: Int = -1
+  name: String = ""
+  fixed_bits: UInt64 = 0u64
+
+  fn initialize(id: Int, layout: Int) {
+    self.id = id
+    self.layout = layout
+    self.name = ""
+  }
+}
+
+pub class MModule {
+  name: String = ""
+  shared: Bool = false
+  files: Array(String)
+  types: MTypes
+  strs: Array(String)
+  str_index: Hash(String, Int)
+  maps: Array(MTypeMap)
+  next_dyn: Int = 0
+  externs: Array(MExtern)
+  extern_index: Hash(String, Int)
+  funcs: Array(MFunc)
+  func_index: Hash(String, Int)
+  error: String = ""
+  rt: MRtTable
+
+  fn initialize(name: String) {
+    self.name = name
+    f: Array(String) = []
+    self.files = f
+    self.types = MTypes.new()
+    s: Array(String) = []
+    self.strs = s
+    self.str_index = Hash(String, Int).new
+    m: Array(MTypeMap) = []
+    self.maps = m
+    e: Array(MExtern) = []
+    self.externs = e
+    self.extern_index = Hash(String, Int).new
+    fs: Array(MFunc) = []
+    self.funcs = fs
+    self.func_index = Hash(String, Int).new
+    self.error = ""
+    self.rt = MRtTable.new()
+    self.add_fixed_map(1022, "Array(*)", 1u64)
+    self.add_fixed_map(1021, "Buf", 1u64)
+    self.add_fixed_map(1023, "Hash", 7u64)
+  }
+
+  fn add_fixed_map(id: Int, name: String, bits: UInt64) {
+    tm = MTypeMap.new(id, -1)
+    tm.name = name
+    tm.fixed_bits = bits
+    self.maps.push(tm)
+  }
+
+  pub fn func(symbol: String): MFunc? {
+    if i = self.func_index.get(symbol) {
+      return self.funcs[i]
+    }
+    nil
+  }
+
+  pub fn ext(name: String): MExtern? {
+    if i = self.extern_index.get(name) {
+      return self.externs[i]
+    }
+    nil
+  }
+}

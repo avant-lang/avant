@@ -1,0 +1,109 @@
+module main
+file 0 "ex.av"
+
+layout %main.Box = class { 0 name: ref str }  size 8 align 8 id 1
+
+const str.0 = "small"
+const str.1 = "%s\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %main.Box stride 0 bits [0x1]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_str_from_int(i32) -> ref str collects
+extern printf(ref str, ...) -> i32 never
+
+fn av.main/Box.initialize(_1: ref %main.Box, _2: ref str) -> void leaf @ex.av:4:3 {
+  let _1 (self): ref %main.Box
+  let _2 (name): ref str
+
+bb0:
+  barrier copy _1   @5:5
+  (*_1).0 = copy _2   @5:5
+  return   @6:3
+}
+
+fn av.main/Box.new(_1: ref str) -> ref %main.Box frame @ex.av:1:1 {
+  let _0: ref %main.Box slot
+  let _1 (name): ref str slot
+
+bb0:
+  _0 = zero   @1:1
+  gc.enter   @1:1
+  gc.roots _0, _1   @1:1
+  _0 = call avant_alloc(const u64 8, const u32 1) collects   @1:1
+  call av.main/Box.initialize(copy _0, copy _1) nocollect   @1:1
+  gc.leave   @1:1
+  return   @1:1
+}
+
+fn av.main/tag(_1: i32) -> ref str frame @ex.av:9:1 {
+  let _0: ref str slot
+  let _1 (n): i32
+  let _2 (b): ref %main.Box slot
+  let _3: bool
+  let _4: ref str slot
+
+bb0:
+  _0 = zero   @9:1
+  _2 = zero   @9:1
+  _4 = zero   @9:1
+  gc.enter   @9:1
+  gc.roots _0, _2, _4   @9:1
+  _2 = call av.main/Box.new(const str.0) collects   @10:7
+  _3 = gt copy _1, const i32 9   @11:6
+  branch copy _3, bb1, bb2   @11:3
+
+bb1:
+  _4 = call avant_str_from_int(copy _1) collects   @12:14
+  barrier copy _2   @12:5
+  (*_2).0 = copy _4   @12:5
+  goto bb2   @12:5
+
+bb2:
+  _0 = copy (*_2).0   @14:3
+  gc.leave   @14:3
+  return   @14:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @ex.av:17:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3 (last): ref str slot
+  let _4 (i): i32
+  let _5: bool
+  let _6: ref str slot
+
+bb0:
+  _3 = zero   @17:1
+  _6 = zero   @17:1
+  gc.enter   @17:1
+  gc.roots _2, _3, _6   @17:1
+  call __avant_type_maps() nocollect   @17:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @17:1
+  _3 = call av.main/tag(const i32 0) collects   @18:10
+  _4 = const i32 0   @19:3
+  goto bb1   @20:3
+
+bb1:
+  _5 = lt copy _4, const i32 200000   @20:9
+  branch copy _5, bb2, bb3   @20:3
+
+bb2:
+  _3 = call av.main/tag(copy _4) collects   @21:12
+  _4 = add copy _4, const i32 1   @22:9
+  goto bb1   @22:5
+
+bb3:
+  call printf(const str.1, copy _3) nocollect   @24:3
+  _6 = call av.main/tag(const i32 3) collects   @25:8
+  call printf(const str.1, copy _6) nocollect   @25:3
+  _0 = const i32 0   @17:1
+  gc.leave   @17:1
+  return   @17:1
+}
