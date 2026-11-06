@@ -3,7 +3,7 @@
 # once per side and compares what they observably do (stdout, stderr, exit
 # status), program by program.
 #
-#   sh tools/backend-diff.sh [--set examples,fixtures,langarena] [PROGRAM...]
+#   sh tools/backend-diff.sh [--set examples,fixtures,langarena,scalars] [PROGRAM...]
 #
 # A side is a compiler plus an environment (VAR=value words, applied to the
 # compile and to the run). Both default to bin/avant-c with the seed's
@@ -25,6 +25,12 @@
 #              one harness pass per side; compared per task: the checksum,
 #              exit status, compile/timeout flags, the program's stdout and
 #              stderr (the harness's wall/RSS/compile-time lines are not compared)
+#   scalars    not in the default: the programs the new back end supports
+#              (Stage 28 W5b, mir.md W5.7): every tests/fixtures/scalars/*.av
+#              (fn run programs included), examples/hello.av, fact.av,
+#              switch.av, and the fixtures the scalar lowering accepts
+#              (scalar_programs below); run it with
+#              BDIFF_B_ENV="... AVANT_BACKEND=llvm"
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
 # file (run as a program; an example gets its suite flags) or a LangArena
 # task name such as Etc::Sieve. --set limits the sets; both may be combined.
@@ -130,6 +136,18 @@ flags_of() { # PATH -> the extra compile flags the suite uses
     examples/layout.av) echo "--cc $root/examples/c/layout.c" ;;
     examples/zlib.av) echo "--lib z" ;;
   esac
+}
+scalar_programs() { # the scalars set, one path per line
+  for f in tests/fixtures/scalars/*.av; do echo "$f"; done
+  echo examples/hello.av
+  echo examples/fact.av
+  echo examples/switch.av
+  echo tests/fixtures/macros/hygiene.av
+  echo tests/fixtures/macros/quote_fn.av
+  echo tests/fixtures/macros/splice_name.av
+  echo tests/fixtures/overloading/defaults.av
+  echo tests/fixtures/part3/conv.av
+  echo tests/fixtures/part3/run.av
 }
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
@@ -244,6 +262,9 @@ else
     for f in $(find tests/fixtures -name '*.av' | LC_ALL=C sort); do
       if [ -n "$(skip_reason "$f")" ] || grep -q '^fn main' "$f"; then program "$f"; fi
     done
+  fi
+  if has_set scalars; then
+    for f in $(scalar_programs); do program "$f"; done
   fi
   has_set langarena && langarena ""
 fi

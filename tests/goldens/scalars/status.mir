@@ -1,0 +1,42 @@
+module status
+file 0 "status.av"
+
+const str.0 = "exiting with 3"
+const str.1 = "%s\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_now_ms() -> i32 never
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @status.av:3:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: i32
+  let _4: bool
+
+bb0:
+  gc.enter   @3:1
+  gc.roots _2   @3:1
+  call __avant_type_maps() nocollect   @3:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @3:1
+  call printf(const str.1, const str.0) nocollect   @4:3
+  _3 = call avant_now_ms() nocollect   @5:6
+  _4 = lt copy _3, const i32 0   @5:15
+  branch copy _4, bb1, bb2   @5:3
+
+bb1:
+  _0 = const i32 9   @6:5
+  gc.leave   @6:5
+  return   @6:5
+
+bb2:
+  _0 = const i32 3   @8:3
+  gc.leave   @8:3
+  return   @8:3
+}

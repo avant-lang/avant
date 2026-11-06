@@ -1,0 +1,48 @@
+// Float64 on the new back end (Stage 28 W5b): arithmetic, printf %g,
+// compares with NaN (ordered except !=), negative zero, and abs, floor,
+// sqrt, exp.
+
+// x, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(x: Float64): Float64 {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return x + b.to_f
+  }
+  x
+}
+
+fn main {
+  a = opaque(2.5)
+  b = opaque(-0.75)
+  puts(a + b)
+  puts(a - b)
+  puts(a * b)
+  puts(a / b)
+  puts(-a)
+  puts(1.0e300 * opaque(1.0e10))
+  puts(-0.0)
+  z = opaque(0.0)
+  nan = z / z
+  puts(nan)
+  puts(opaque(1.0) / z)
+  puts(nan == nan)
+  puts(nan != nan)
+  puts(nan < 1.0)
+  puts(nan <= 1.0)
+  puts(nan > 1.0)
+  puts(nan >= 1.0)
+  puts(a > b)
+  puts(a == 2.5)
+  puts(b.abs)
+  puts(b.floor)
+  puts(a.floor)
+  puts(opaque(6.25).sqrt)
+  puts(sqrt(opaque(2.0)))
+  puts(opaque(-1.0).sqrt)
+  puts(exp(opaque(0.0)))
+  puts(0.1 + opaque(0.2))
+  puts(123456789.0 * opaque(1000.0))
+  puts(1.5e-7 * opaque(1.0))
+}
