@@ -1609,6 +1609,118 @@ fn lv_func(m: MModule, f: MFunc, keep: Array(Bool)) {
   }
 }
 
+// String sizes out of loops: `avant_str_size(_s)` of a string local the
+// loop never writes is the same every time (strings are immutable), so a
+// preheader computes it once and the loop copies the value. The call
+// cannot be left to LLVM: its length cache makes it write memory, so its
+// honest attributes (runtime.av mir_rt_attrs) do not let LLVM hoist it.
+// The call has no other effect, never traps (null has size 0), and does
+// not collect, so computing it where the loop might not run is harmless.
+// Loops are taken innermost first, so a size moves out of every loop the
+// string is invariant in.
+fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
+  addr = lv_addr_taken(f)
+  def_in = mir_bools(f.locals.size, false)
+  b = 0
+  while b < f.blocks.size {
+    if body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        d = mir_stmt_def(blk.stmts[j])
+        if d >= 0 {
+          def_in[d] = true
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  strs: Array(Int) = []
+  held: Array(Int) = []
+  pre = MBlock.new(f.blocks.size)
+  loc = f.loc
+  if t0 = f.blocks[hdr].term {
+    loc = t0.loc
+  }
+  n0 = f.blocks.size
+  b = 0
+  while b < n0 {
+    if body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        st = blk.stmts[j]
+        if st.kind == msk_call() && str_eq(st.callee, "avant_str_size") && st.args.size == 1 && st.dest >= 0 {
+          v = lv_local(st.args[0])
+          if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
+            k = 0
+            while k < strs.size && strs[k] != v {
+              k = k + 1
+            }
+            if k == strs.size {
+              strs.push(v)
+              h = lv_new_local(f, mt_i32())
+              held.push(h)
+              call = MStmt.new(msk_call(), loc)
+              call.dest = h
+              call.callee = "avant_str_size"
+              call.args.push(lv_copy_local(v))
+              call.collects = false
+              pre.stmts.push(call)
+            }
+            r = MRvalue.new(mrk_use())
+            r.a = lv_copy_local(held[k])
+            blk.stmts[j] = lv_assign(st.loc, st.dest, r)
+          }
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  if strs.size == 0 {
+    return false
+  }
+  preds = mir_preds(f)
+  f.blocks.push(pre)
+  pre.term = lv_goto(loc, hdr)
+  k = 0
+  while k < preds[hdr].size {
+    p = preds[hdr][k]
+    if !body[p] {
+      if t = f.blocks[p].term {
+        x = 0
+        while x < t.targets.size {
+          if t.targets[x] == hdr {
+            t.targets[x] = pre.id
+          }
+          x = x + 1
+        }
+      }
+    }
+    k = k + 1
+  }
+  true
+}
+
+fn lv_hoist_sizes(f: MFunc) {
+  rounds = 0
+  progress = true
+  while progress && rounds < 256 {
+    progress = false
+    lps = mir_lv_loops(f)
+    li = lps.headers.size - 1
+    while li >= 0 && !progress {
+      if lps.headers[li] != 0 && lv_hoist_one(f, lps.bodies[li], lps.headers[li]) {
+        progress = true
+      }
+      li = li - 1
+    }
+    rounds = rounds + 1
+  }
+}
+
 // The pass (5.9: after verify(lowered), before the leaf pass): every
 // function whose kind is unset.
 pub fn mir_loop_pass(m: MModule) {
@@ -1618,6 +1730,7 @@ pub fn mir_loop_pass(m: MModule) {
     f = m.funcs[i]
     if f.kind == mfk_unset() && f.blocks.size > 1 {
       lv_func(m, f, keep)
+      lv_hoist_sizes(f)
     }
     i = i + 1
   }
