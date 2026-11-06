@@ -11,7 +11,7 @@
 # `GATE FAIL: ...` line; exits 0 only on PASS (1 on any failure, 2 on usage).
 #
 # Environment:
-#   GATE_SEED       seed directory holding avant and myc-llvm (default bin/v0.34.0)
+#   GATE_SEED       seed directory holding avant and myc-llvm (default bin/seeds/s28-w2 when present, D189, else bin/v0.34.0)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -39,7 +39,10 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
 [ -f compiler/main.av ] && [ -f runtime/build.sh ] || { echo "gate: $root is not an avant checkout" >&2; exit 2; }
 
-seed=$(realpath -m "${GATE_SEED:-bin/v0.34.0}")
+# Default seed (D189): the local seed when present, else the released one.
+default_seed=bin/v0.34.0
+[ -x bin/seeds/s28-w2/avant ] && default_seed=bin/seeds/s28-w2
+seed=$(realpath -m "${GATE_SEED:-$default_seed}")
 M=$seed/myc-llvm
 [ -x "$seed/avant" ] && [ -x "$M" ] || { echo "gate: no avant and myc-llvm in $seed" >&2; exit 2; }
 out=$(realpath -m "${GATE_OUT:-results/gate-$(date +%Y%m%d-%H%M%S)}")

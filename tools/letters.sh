@@ -17,7 +17,7 @@
 #
 # Environment:
 #   LETTERS_SEED      seed directory with avant and myc-llvm (default
-#                     bin/v0.34.0); its myc-llvm is passed as AVANT_MYC_LLVM
+#                     bin/seeds/s28-w2 when present, D189, else bin/v0.34.0); its myc-llvm is passed as AVANT_MYC_LLVM
 #                     to both builds, explicitly
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
 #                     LETTERS_TIME_DIR/time-build-{b,c}.txt
@@ -34,7 +34,10 @@ cd "$root" || exit 2
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
-seed=$(realpath -m "${LETTERS_SEED:-bin/v0.34.0}")
+# Default seed (D189): the local seed when present, else the released one.
+default_seed=bin/v0.34.0
+[ -x bin/seeds/s28-w2/avant ] && default_seed=bin/seeds/s28-w2
+seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
 M=$seed/myc-llvm
 time_dir=${LETTERS_TIME_DIR:-}
 
