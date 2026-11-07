@@ -2361,6 +2361,40 @@ pub class Checker {
     op == tk_greater_greater()
   }
 
+  // A shift by a literal amount outside 0..width - 1 (a negated literal
+  // included) is a compile-time error (C1, W11b); any other amount is
+  // checked when the shift runs.
+  pub fn check_shift_amount(r: Expr, left: Ty, loc: Location) {
+    neg = false
+    lit = r
+    if r.kind == ex_unary() {
+      if r.op == tk_minus() {
+        if inner = r.inner {
+          if inner.kind == ex_int() {
+            neg = true
+            lit = inner
+          }
+        }
+      }
+    }
+    if lit.kind != ex_int() {
+      return
+    }
+    top = 31u64
+    if left.is_int64 || left.is_uint64 {
+      top = 63u64
+    }
+    if neg {
+      if lit.int_bits != 0u64 {
+        self.fail(loc, "shift amount -${lit.int_bits} out of range for ${left.show} (0..${top})")
+      }
+      return
+    }
+    if lit.int_bits > top {
+      self.fail(loc, "shift amount ${lit.int_bits} out of range for ${left.show} (0..${top})")
+    }
+  }
+
   pub fn int_binary(op: Int, ty: Ty): Ty {
     if op == tk_plus() {
       return ty
@@ -2580,6 +2614,9 @@ pub class Checker {
         }
         if self.bitwise_op(op) {
           if self.shift_op(op) {
+            if left.is_integer {
+              self.check_shift_amount(r, left, expr.loc)
+            }
             if left.is_uint64 {
               if right.is_int {
                 return left

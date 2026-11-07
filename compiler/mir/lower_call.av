@@ -324,7 +324,7 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
   lw.at(e.loc)
   if ot.is_float {
     if str_eq(name, "to_i") {
-      return lw.f64_to_i32(v)
+      return lw.f64_to_i32(v, e.loc)
     }
     if str_eq(name, "abs") {
       return lw.call_f64("fabs", v)
@@ -375,10 +375,10 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
   b.copy_local(d)
 }
 
-// Float64.to_i (W5.2): truncation inside (-2147483649, 2147483648), else
-// -2147483648 (NaN fails both compares): the old back end's observed
-// x86 `cvttsd2si`.
-pub fn (lw: MirLower) f64_to_i32(v: MOperand): MOperand {
+// Float64.to_i (W5.2; C2, W11b): truncation inside (-2147483649,
+// 2147483648); NaN (which fails both compares), the infinities and any
+// value outside trap with avant_trap_to_i(x), like integer overflow.
+pub fn (lw: MirLower) f64_to_i32(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   x = b.temp(mt_f64())
   dummy = b.assign(b.pl(x), b.rv_use(v))
@@ -386,18 +386,8 @@ pub fn (lw: MirLower) f64_to_i32(v: MOperand): MOperand {
   hi = b.c_f64(mir_f64_bits(2147483648.0), "2147483648.0")
   c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(x), lo))
   c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(x), hi))
-  c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
-  d = b.temp(mt_i32())
-  inside = b.block
-  outside = b.block
-  join = b.block
-  b.branch(c, inside, outside)
-  b.at(inside)
-  dummy2 = b.assign(b.pl(d), b.rv_cast(b.copy_local(x), mt_i32()))
-  b.goto(join)
-  b.at(outside)
-  dummy3 = b.assign(b.pl(d), b.rv_use(b.c_i32(-2147483647 - 1)))
-  b.goto(join)
-  b.at(join)
-  b.copy_local(d)
+  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  ok = lw.trap_open(inside, false)
+  lw.trap_close(ok, "avant_trap_to_i", lw.one(b.copy_local(x)), loc)
+  lw.tmp(mt_i32(), b.rv_cast(b.copy_local(x), mt_i32()))
 }
