@@ -667,7 +667,7 @@ static void *hash_array_str(char **items, int32_t n) {
     for (i = 0; i < n; i++) {
       buf[i] = items[i];
     }
-    /* A large pointer buffer is mature from birth (D187, W13b). */
+    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
     avant_barrier(buf);
   }
   a->buf = buf;

@@ -29,7 +29,7 @@ void gc_clear_noted(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.noted_n; i++) {
     avant_header(gc_heap.noted[i])->flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
+        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
   }
   gc_heap.noted_n = 0;
 }
@@ -41,11 +41,21 @@ static void remember_young_edge(void **slot, void *payload) {
   Block *pb = NULL;
   Block *ob = NULL;
   AvantHeader *ol = NULL;
+  AvantHeader *pl = NULL;
   void *owner;
-  if (!gc_is_heap_payload(payload, &pb, NULL) || !pb) {
+  void *target = gc_object_payload(payload, &pb, &pl);
+  /* The YOUNG flag decides for a large target, the block's space for a
+   * block object (Stage 28 W15a1, gc-design.md §5.3: an edge to a young
+   * large object is remembered like any young edge; before, only edges
+   * to block objects were, and LOS_KEEP promoted the large object). */
+  if (!target) {
     return;
   }
-  if (pb->space != SPACE_NURSERY && pb->space != SPACE_TO) {
+  if (pl) {
+    if ((avant_header(target)->flags & AVANT_FLAG_YOUNG) == 0) {
+      return;
+    }
+  } else if (!pb || (pb->space != SPACE_NURSERY && pb->space != SPACE_TO)) {
     return;
   }
   owner = gc_object_payload((void *)slot, &ob, &ol);
@@ -59,7 +69,21 @@ static void remember_young_edge(void **slot, void *payload) {
       (avant_header(owner)->flags & AVANT_FLAG_PINNED) == 0) {
     return;
   }
+  /* A young large owner is traced whenever it is reached; when it is
+   * promoted it is remembered then (promote_young_large). */
+  if (ol && (avant_header(owner)->flags & AVANT_FLAG_YOUNG)) {
+    return;
+  }
   gc_keep_add(owner);
+}
+
+/* The large-object bytes this young collection marks (gc_heap.
+ * young_large_live): the live sample of the los family, kept without a
+ * walk of every large object (O65). */
+static void note_large_live(AvantHeader *h) {
+  if (h->flags & AVANT_FLAG_LARGE) {
+    gc_heap.young_large_live += gc_large_bytes(h);
+  }
 }
 
 static int names_young(void *p) {
@@ -90,23 +114,14 @@ static void copy_payload_children(void *p) {
  * every remembered buffer keeps a dead array's nodes alive: the
  * calculator replaces that array each iteration, the buffer is a large
  * object, and the young collection was tenuring the whole history.
- * Scan a mature or large object when a root or a young object points
- * at it. From inside a mature object, scan a remembered child or a
- * young large child. A mature tree that is not remembered is not walked. */
-static void note_los_keep(AvantHeader *h, int from_mature) {
-  if ((h->flags & AVANT_FLAG_YOUNG) == 0) {
-    return;
-  }
-  if (from_mature || gc_heap.from_heap_slot) {
-    h->flags |= AVANT_FLAG_LOS_KEEP;
-  }
-}
-
+ * Scan a mature object (block or large) when a root or a young object
+ * points at it. From inside a mature object, scan a remembered child. A
+ * mature tree that is not remembered is not walked. Young large objects
+ * do not come here: gc_copy_from_slot traces them as young objects. */
 static void trace_mature(void *p, int from_mature) {
   AvantHeader *h = avant_header(p);
   int saved;
   if (h->flags & AVANT_FLAG_MARKED) {
-    note_los_keep(h, from_mature);
     return;
   }
   /* A mature parent's young child is usually in the nursery and is
@@ -117,7 +132,7 @@ static void trace_mature(void *p, int from_mature) {
     return;
   }
   h->flags |= AVANT_FLAG_MARKED;
-  note_los_keep(h, from_mature);
+  note_large_live(h);
   note_marked(p);
   saved = gc_heap.from_mature;
   gc_heap.from_mature = 1;
@@ -203,6 +218,27 @@ void gc_copy_from_slot(void **slot) {
     }
     return;
   }
+  /* A young large object (gc-design.md §5.3, Stage 28 W15a1) stays put
+   * and is a young object: marked, and its fields traced from the work
+   * list like a copied object's (R1'(b): one level of the non-young
+   * objects they name). An edge to it from a non-young owner is
+   * remembered. Whether it is freed, stays young or is promoted is
+   * gc_reclaim_young_large's, after the trace. */
+  if (ol && (ol->flags & AVANT_FLAG_YOUNG)) {
+    if ((ol->flags & AVANT_FLAG_MARKED) == 0) {
+      ol->flags |= AVANT_FLAG_MARKED;
+      note_marked(start);
+      note_large_live(ol);
+      if (ol->type_id != AVANT_TYPE_BYTES) {
+        gc_work_push(start);
+      }
+    }
+    remember_young_edge(slot, start);
+    if (gc_heap.rem_track) {
+      gc_heap.rem_track_dirty = 1;
+    }
+    return;
+  }
   /* Mature and large objects stay put. Follow one when this slot is a
    * root or a field of a young object. A field of a mature object is
    * followed only when that child is remembered. A live object in a
@@ -255,6 +291,7 @@ static uint64_t rem_field_count(void *p) {
 
 void gc_gen_young_copy(void) {
   gc_fwd_reset();
+  gc_heap.young_large_live = 0;
   gc_heap.saw_pinned_nursery = 0;
   gc_heap.from_mature = 0;
   gc_heap.work_n = 0;
@@ -296,6 +333,7 @@ void gc_gen_young_copy(void) {
          * the collection scans. */
         if (!(avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
           avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+          note_large_live(avant_header(obj));
           note_marked(obj);
         }
         gc_heap.ctr.rem.fields += rem_field_count(obj);
@@ -459,6 +497,9 @@ void gc_young_copy_out(int tenure) {
   gc_clear_alloc_cur(SPACE_NURSERY);
   discard_nursery_from();
   adopt_to_space();
+  /* The young large objects first: a promoted one with reference fields
+   * joins the kept list the commit adds to the remembered set. */
+  gc_reclaim_young_large();
   gc_rem_commit_kept();
   if (avant_nursery_held + gc_heap.to_bytes > gc_heap.ctr.yng.cpy_peak) {
     gc_heap.ctr.yng.cpy_peak = avant_nursery_held + gc_heap.to_bytes;
@@ -466,7 +507,6 @@ void gc_young_copy_out(int tenure) {
   {
     uint64_t to_bytes = gc_heap.to_bytes;
     gc_heap.to_bytes = 0;
-    gc_reclaim_young_large();
     gc_heap.force_tenure = 0;
     /* The one young budget: the survivors in to-space and the young
      * large objects that stay young. */

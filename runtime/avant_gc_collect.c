@@ -280,8 +280,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     }
   } else {
     Block *b;
-    LargeIter it;
-    AvantHeader *lh;
     avant_g_stats.full_collections++;
     /* Non-moving. Evacuating the nursery here needs a second copy of
      * every live object while the from-space blocks are still charged
@@ -333,15 +331,13 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
       gc_foreach_block_object(b, gc_sum_marked_one);
     }
-    avant_nursery_held = gc_heap.mark_sum;
+    /* The one young budget: the nursery's survivors and the young large
+     * objects, which stay young across a full collection (gc_sweep_large
+     * recounted them; before Stage 28 W15a1 a full collection promoted
+     * every large object). */
+    avant_nursery_held = gc_heap.mark_sum + gc_heap.young_large;
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
-    gc_heap.young_large = 0;
-    gc_heap.young_large_n = 0;
-    gc_large_iter_init(&it);
-    while ((lh = gc_large_next(&it))) {
-      lh->flags = (uint16_t)(lh->flags & (uint16_t)~AVANT_FLAG_YOUNG);
-    }
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
     /* Free memory beyond the retention target goes back to the OS. */
     gc_heap_return(gc_heap.live);

@@ -291,11 +291,9 @@ typedef struct BlockSet {
   } while (0)
 
 #define AVANT_FLAG_REM 16u
-/* Young large object reached from a heap slot. It must be promoted:
- * a mature object can hold it, and that edge is not in the remembered
- * set (a large payload has no block). A buffer reached only from the
- * stack stays young so the next collection can free it. */
-#define AVANT_FLAG_LOS_KEEP 128u
+/* (128, AVANT_FLAG_LOS_KEEP, the promotion at first survival of a young
+ * large object a heap field reached, is retired since Stage 28 W15a1:
+ * an edge to a young large object is remembered like any young edge.) */
 
 /* A forwarding entry of the young copy (avant_gc_heap.c). */
 typedef struct FwdEnt {
@@ -446,8 +444,8 @@ typedef struct GcPauseCounters {
 /* why: full collections by cause (GcWhy): mature space grew by the
  * trigger mostly through promotion (bytes the young collection moved or
  * promoted into mature space since the last full collection) or mostly
- * through mature allocation (allocation in mature space: large objects
- * born mature, worker threads, the nursery off); the heap limit
+ * through mature allocation (allocation in mature space: worker threads,
+ * the JSON pool, the nursery off); the heap limit
  * (AVANT_HEAP_MAX_MB, a refused block or page run, or a full collection
  * C32 left pending); or an explicit request (avant_gc_collect, the HTTP
  * boundary's avant_gc_heap_goal_collect). */
@@ -644,6 +642,9 @@ typedef struct GcHeap {
    * W15a1, gc-design.md §5.1). */
   uint64_t young_large;
   int young_large_n;
+  /* The large-object bytes the running young collection marked (the
+   * los family's live sample without a walk, O65). */
+  uint64_t young_large_live;
   /* The large-object chunks (CHUNK_LARGE), in the order they were made:
    * the first fit looks in each, in this order. */
   uint32_t *lchunks;

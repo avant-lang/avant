@@ -124,7 +124,10 @@
  *   born-mature large reference buffer (array_grow, str_array_build,
  *   hash_array_str, avant_array_copy, avant_argv: a young array header
  *   (b) or a root (a) names the buffer; audit N2b), which since W13b
- *   (D220) also barrier the buffer. AVANT_GC_VERIFY checks the generational invariant in this wording
+ *   (D220) also barrier the buffer (since Stage 28 W15a1 every large
+ *   object is born young, except a mature-allocating thread's, and an
+ *   edge to a young large object is remembered like any young edge).
+ *   AVANT_GC_VERIFY checks the generational invariant in this wording
  *   before every young collection: every young reference held by a
  *   non-young object's field is held by a remembered object or by an
  *   object R1' names this cycle ("missing barrier: ..." otherwise).

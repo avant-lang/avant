@@ -37,7 +37,7 @@ static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint3
   void *nbuf = avant_alloc(bytes, buf_type_id);
   if (a->buf && a->size > 0) {
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
-    /* A large pointer buffer is mature from birth; it may hold young elements (W13b). */
+    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1) and hold young elements (W13b). */
     if (buf_type_id != AVANT_TYPE_BYTES) {
       avant_barrier(nbuf);
     }
@@ -622,7 +622,7 @@ void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
     void *nbuf = avant_alloc((uint64_t)a->size * elem_size, buf_type_id);
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
     if (buf_type_id != AVANT_TYPE_BYTES) {
-      /* A large pointer buffer is mature from birth (D187, W13b). */
+      /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
       avant_barrier(nbuf);
     }
     r->buf = nbuf;
