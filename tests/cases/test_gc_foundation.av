@@ -41,12 +41,19 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(jobs[p].code, 0, "${names[p]}.av: compiles")
     e = 0
     while e < envs.size {
-      runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", envs[e]))
+      ev = envs[e]
+      // Under an outer AVANT_GC_STRESS full_default.av runs without it:
+      // 300,000 rounds over a remembered 50,000-element array, one young
+      // collection per helper call, take more than 900 s (W14b1).
+      if names[p] == "full_default" && gc_stress_outer() {
+        ev = "-u AVANT_GC_STRESS ${ev}"
+      }
+      runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", ev))
       e = e + 1
     }
     p = p + 1
   }
-  runs.push(run_job_env(dir, "full_default", "full_default.stats", "AVANT_GC_STATS=1"))
+  runs.push(run_job_env(dir, "full_default", "full_default.stats", "-u AVANT_GC_STRESS AVANT_GC_STATS=1"))
   run_waves(runs)
   p = 0
   while p < names.size {
