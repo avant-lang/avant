@@ -10,6 +10,7 @@
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
+ *   avant_gc_heap.c
  *   avant_gc_alloc.c
  *   avant_gc_los.c
  *   avant_gc_remset.c
@@ -197,6 +198,31 @@ typedef struct BlockSet {
  * stack stays young so the next collection can free it. */
 #define AVANT_FLAG_LOS_KEEP 128u
 
+/* avant_gc_heap.c */
+extern Block *g_bht[BLOCK_HASH];
+extern Block *g_mature;
+extern Block *g_nursery;
+extern Block *g_from;
+extern Block *g_to;
+extern void **g_work;
+extern uint32_t g_work_n;
+extern TypeMap g_types[MAX_TYPES];
+extern uint8_t g_type_set[MAX_TYPES];
+int gc_type_word_is_ref(const AvantHeader *h, size_t w);
+__attribute__((noreturn)) void gc_die(const char *msg);
+void *gc_xrealloc(void *p, size_t n);
+void work_push(void *p);
+void gc_fwd_reset(void);
+void fwd_put(void *from, void *to);
+void *fwd_get(void *from);
+int gc_block_live_lines(Block *b);
+size_t obj_total(const AvantHeader *h);
+int is_heap_payload(void *p, Block **ob, Large **ol);
+void *gc_object_payload(void *p, Block **ob, Large **ol);
+void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
+void gc_zero_line_marks(Block *list);
+void mark_object_lines(void *p);
+
 /* avant_gc_alloc.c */
 extern Block *g_cur;
 extern uint8_t *g_limit;
@@ -368,33 +394,10 @@ void rewrite_from_stackmaps(void);
 extern int g_inited;
 extern int g_collecting;
 extern int g_nursery_off;
-extern Block *g_bht[BLOCK_HASH];
-extern Block *g_mature;
-extern Block *g_nursery;
-extern Block *g_from;
-extern Block *g_to;
 extern uint64_t g_mature_since_full;
 extern int g_reserve_mode;
 extern uint64_t g_copy_reserve;
-extern void **g_work;
-extern uint32_t g_work_n;
-extern TypeMap g_types[MAX_TYPES];
-extern uint8_t g_type_set[MAX_TYPES];
 extern uint64_t g_live;
-int gc_type_word_is_ref(const AvantHeader *h, size_t w);
-__attribute__((noreturn)) void gc_die(const char *msg);
-void *gc_xrealloc(void *p, size_t n);
-void work_push(void *p);
-void gc_fwd_reset(void);
-void fwd_put(void *from, void *to);
-void *fwd_get(void *from);
-int gc_block_live_lines(Block *b);
-size_t obj_total(const AvantHeader *h);
-int is_heap_payload(void *p, Block **ob, Large **ol);
-void *gc_object_payload(void *p, Block **ob, Large **ol);
-void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
-void gc_zero_line_marks(Block *list);
-void mark_object_lines(void *p);
 void gc_collect(int full);
 void gc_maybe_collect(void);
 void gc_init_slow(void);
