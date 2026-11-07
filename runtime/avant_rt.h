@@ -18,10 +18,7 @@
  * copy unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis.
  * Remembered-set members are roots for the young generation.
  * AVANT_FLAG_PINNED is the C-escape seam: pinned objects are not moved
- * and are young-GC roots. Binaries the old myc back end built carry LLVM
- * stack maps, which the collector walks while the nursery is on
- * (AVANT_NURSERY_STACKMAP=0 disables); programs the current compiler
- * builds carry none. The full invariant list and knob table live in
+ * and are young-GC roots. The full invariant list and knob table live in
  * avant-ledgers/archive/stages/collector.md.
  */
 

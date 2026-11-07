@@ -865,7 +865,7 @@ fn main {
 
 Heap allocation goes through the collector in `runtime/avant_gc_*.c` (one file per concern; `runtime/avant_gc_internal.h` lists them). The collector is precise GenImmix: a copying nursery, then an Immix mature space. The nursery is the default.
 
-`AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_STACKMAP=0` skips the stack-map walk. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
+`AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
 
 A heap object stored into a C field is pinned for the process. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never clears a process pin. See [C interop](#c-interop).
 

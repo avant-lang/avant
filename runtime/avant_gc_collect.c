@@ -381,19 +381,14 @@ void gc_init_slow(void) {
     }
   }
   {
-    const char *v = getenv("AVANT_NURSERY_STACKMAP");
-    if (v && v[0] == '0' && v[1] == 0) {
-      g_stackmap_walk = 0;
-    } else if (v && v[0] == '1' && v[1] == 0) {
-      g_stackmap_walk = 1;
-    } else {
-      /* On with the copying nursery so leftover LLVM spills in myc
-       * frames can be rewritten after young copy. Set to 0 to disable. */
-      g_stackmap_walk = !g_nursery_off;
-    }
-  }
-  if (g_stackmap_walk) {
-    sm_init();
+    /* The conservative C-stack pass after a young copy (avant_gc_stack.c,
+     * W8c, W11): on with the copying nursery. It rewrites forwarded
+     * words left on the collecting thread's stack and counts any that
+     * still name from-space (sm_left). AVANT_GC_STACK_REWRITE=0 turns
+     * the rewrite off and keeps the count. Read once, here. */
+    const char *v = getenv("AVANT_GC_STACK_REWRITE");
+    g_c_stack_pass = !g_nursery_off;
+    g_c_stack_rewrite = g_c_stack_pass && !(v && v[0] == '0' && v[1] == 0);
   }
   {
     const char *v = getenv("AVANT_GC_REM_FRONTIER");

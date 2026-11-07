@@ -178,13 +178,13 @@ static uint64_t g_verify_left_seen;
 void gc_verify_young_copy(void) {
   ThreadReg *t;
   Block *b;
-  if (g_sm_leftover > g_verify_left_seen) {
+  if (g_c_stack_left > g_verify_left_seen) {
     fprintf(stderr,
             "avant gc verify: %llu stack words still name from-space "
             "after rewrite (cumulative %llu)\n",
-            (unsigned long long)(g_sm_leftover - g_verify_left_seen),
-            (unsigned long long)g_sm_leftover);
-    g_verify_left_seen = g_sm_leftover;
+            (unsigned long long)(g_c_stack_left - g_verify_left_seen),
+            (unsigned long long)g_c_stack_left);
+    g_verify_left_seen = g_c_stack_left;
   }
   for (t = g_threads; t; t = t->next) {
     Frame *f;

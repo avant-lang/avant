@@ -10,9 +10,9 @@
 #include <string.h>
 
 /* Conservative scans of the collecting thread's C stack (Stage 28 W12;
- * moved from avant_rt.c and avant_gc_stackmap.c). The collector's roots are
- * precise (root slots, pins, TLS slots, the remembered set); these scans
- * cover what runtime C frames and register saves may still hold:
+ * moved from avant_rt.c and the stackmap walker's file, which W12r
+ * removed). The collector's roots are precise (root slots, pins, TLS
+ * slots, the remembered set); these scans cover what runtime C frames and register saves may still hold:
  *   - copy_from_c_stack (AVANT_NURSERY_STACK=1 only, a diagnostic): words
  *     that name nursery objects are rewritten or pinned in place;
  *   - rewrite_c_stack after a young copy (W8c's and W11's rule): every
@@ -26,6 +26,15 @@
  * C frames are not scanned (D191, Part 2). */
 
 int g_stack_scan;
+
+/* The young copy's C-stack pass, set once by gc_init_slow: g_c_stack_pass
+ * (the copying nursery is on) runs count_c_stack_nursery, and
+ * g_c_stack_rewrite (the pass, unless AVANT_GC_STACK_REWRITE=0) runs
+ * rewrite_c_stack. g_c_stack_left is the cumulative count of stack words
+ * still naming from-space after the rewrite (the sm_left statistic). */
+int g_c_stack_pass;
+int g_c_stack_rewrite;
+uint64_t g_c_stack_left;
 
 /* C31: defragmentation moves mature objects and rewrites only the
  * precise references to them (root slots, pins, runtime TLS slots, the
@@ -134,7 +143,7 @@ void copy_from_c_stack(void) {
   }
 }
 
-void gc_rewrite_if_forwarded(void **slot) {
+static void gc_rewrite_if_forwarded(void **slot) {
   void *w = *slot;
   void *to = fwd_get(w);
   if (to && to != w) {
@@ -143,30 +152,20 @@ void gc_rewrite_if_forwarded(void **slot) {
 }
 
 /*
- * The frame walk above rewrites only frames with a stackmap site.
- * Copies of a forwarded pointer also survive outside those frames:
- * callee-saved register saves in C frames on the call chain into the
- * collector, and spills of struct-typed temps the statepoint did not
- * name. Rewrite every exact forwarded start left on this thread's
- * stack, with the same predicate count_c_stack_nursery verifies, so
- * no stack word still names from-space after a young copy. Interiors
- * are not touched (fwd_get keys on object starts), and a word that
- * was not forwarded keeps its bits. AVANT_GC_STACK_REWRITE=0 is the
- * kill switch.
+ * Copies of a forwarded pointer survive a young copy outside the
+ * precise roots: callee-saved register saves in C frames on the call
+ * chain into the collector, and runtime C locals. Rewrite every exact
+ * forwarded start left on this thread's stack, with the same predicate
+ * count_c_stack_nursery verifies, so no stack word still names
+ * from-space after a young copy. Interiors are not touched (fwd_get
+ * keys on object starts), and a word that was not forwarded keeps its
+ * bits. AVANT_GC_STACK_REWRITE=0 is the kill switch (g_c_stack_rewrite).
  */
 void rewrite_c_stack(void) {
-  static int enabled = -1;
   uint8_t *p;
   uint8_t *hi;
   uint8_t *lo;
-  if (!g_stackmap_walk) {
-    return;
-  }
-  if (enabled < 0) {
-    const char *v = getenv("AVANT_GC_STACK_REWRITE");
-    enabled = !(v && v[0] == '0' && v[1] == 0);
-  }
-  if (!enabled) {
+  if (!g_c_stack_rewrite) {
     return;
   }
   p = (uint8_t *)__builtin_frame_address(0);
@@ -195,7 +194,7 @@ void count_c_stack_nursery(void) {
   uint8_t *p;
   uint8_t *hi;
   uint8_t *lo;
-  if (!g_stackmap_walk) {
+  if (!g_c_stack_pass) {
     return;
   }
   p = (uint8_t *)__builtin_frame_address(0);
@@ -218,7 +217,7 @@ void count_c_stack_nursery(void) {
       void *to = fwd_get(w);
       /* Copied to to-space, but this stack word still names from-space. */
       if (to && to != w) {
-        g_sm_leftover++;
+        g_c_stack_left++;
       }
     }
   }

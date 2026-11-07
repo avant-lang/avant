@@ -356,7 +356,6 @@ void gc_gen_young_copy(void) {
   if (!g_probe) {
     copy_from_c_stack();
   }
-  copy_from_stackmaps();
   /*
    * D34: pinned objects are mark roots. Full collect already walks
    * g_pins; young copy must too. C globals (argv, interned bytes)
@@ -376,11 +375,10 @@ void gc_gen_young_copy(void) {
     return;
   }
   /*
-   * Mapped stackmap slots were roots above. Extra LLVM spills of the
-   * same pointer bits are not in gc-live; rewrite them now that every
-   * copied object is in the forwarding table.
+   * Every copied object is in the forwarding table now: rewrite the
+   * forwarded words runtime C frames and register saves left on this
+   * thread's stack, then count any that still name from-space.
    */
-  rewrite_from_stackmaps();
   rewrite_c_stack();
   count_c_stack_nursery();
 }
@@ -433,7 +431,7 @@ static int block_keep_pinned(Block *b) {
  * their address (D34); those blocks stay on g_from as SPACE_FROM.
  *
  * AVANT_NURSERY_DISCARD=0 parks every nursery block instead. That was
- * the Stage 17 safety net before stackmap leftover rewrite; it is not
+ * the Stage 17 safety net before the leftover stack rewrite; it is not
  * the product path.
  */
 static void park_nursery_from(void) {
