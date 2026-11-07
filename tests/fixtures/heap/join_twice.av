@@ -1,0 +1,138 @@
+// C38 (Stage 28 C38, D225): a JoinHandle joined twice or more returns
+// the same result every time (future semantics). Since W14b1's C28 fix
+// the join freed the task, so a second join read freed memory and freed
+// it again. Handles in an array, in a class field and in a local are
+// joined two or three times, with young and full collections and
+// allocation between the joins (under AVANT_YOUNG_MB=1 the handles move
+// between joins). No pin is left after the joins (C28's gain). Prints
+// the sums, the bad count and the pins left.
+
+lib gc_rt {
+  fun avant_pin_count: Int
+  fun avant_gc_collect()
+}
+
+class Holder {
+  h: JoinHandle(Int)
+
+  fn initialize(h: JoinHandle(Int)) {
+    self.h = h
+  }
+}
+
+fn work(n: Int): Int {
+  acc = 0
+  i = 0
+  while i < n {
+    acc = acc &+ i * 3
+    i = i + 1
+  }
+  acc + n
+}
+
+// Strings and arrays made and dropped, so young collections run.
+fn churn(rounds: Int): Int {
+  total = 0
+  r = 0
+  while r < rounds {
+    keep: Array(String) = []
+    i = 0
+    while i < 200 {
+      keep.push("churn-${r}-${i}")
+      i = i + 1
+    }
+    total = total + keep[r % 200].size
+    r = r + 1
+  }
+  total
+}
+
+fn main {
+  base = gc_rt.avant_pin_count()
+  bad = 0
+
+  // Handles in an array, each joined three times.
+  hs: Array(JoinHandle(Int)) = []
+  i = 0
+  while i < 16 {
+    n = 1000 + i * 7
+    hs.push(spawn { work(n) })
+    i = i + 1
+  }
+  first: Array(Int) = []
+  s1 = 0
+  i = 0
+  while i < hs.size {
+    v = hs[i].join
+    first.push(v)
+    s1 = s1 + v
+    i = i + 1
+  }
+  churn(300)
+  nursery_reclaim()
+  s2 = 0
+  i = 0
+  while i < hs.size {
+    v = hs[i].join
+    if v != first[i] {
+      bad = bad + 1
+    }
+    s2 = s2 + v
+    i = i + 1
+  }
+  gc_rt.avant_gc_collect()
+  s3 = 0
+  i = 0
+  while i < hs.size {
+    v = hs[i].join
+    if v != first[i] || v != work(1000 + i * 7) {
+      bad = bad + 1
+    }
+    s3 = s3 + v
+    i = i + 1
+  }
+  puts("array: ${s1} ${s2} ${s3}")
+
+  // A handle in a class field, joined twice with collections between.
+  tag = "field"
+  holder = Holder.new(spawn { work(500) + tag.size })
+  a = holder.h.join
+  churn(300)
+  nursery_reclaim()
+  gc_rt.avant_gc_collect()
+  b = holder.h.join
+  if a != b {
+    bad = bad + 1
+  }
+  puts("field: ${a} ${b}")
+
+  // A local handle joined twice, and a second join of a task that had
+  // long finished before its first join.
+  h = spawn { 42 }
+  churn(100)
+  x = h.join
+  y = h.join
+  z = h.join
+  if x != 42 || y != 42 || z != 42 {
+    bad = bad + 1
+  }
+  puts("local: ${x} ${y} ${z}")
+
+  // Many handles, each joined twice in a row.
+  t = 0
+  i = 0
+  while i < 200 {
+    s = "task-${i}"
+    k = spawn { s.size }
+    p = k.join
+    q = k.join
+    if p != q {
+      bad = bad + 1
+    }
+    t = t + p + q
+    i = i + 1
+  }
+  puts("loop: ${t}")
+  puts("bad: ${bad}")
+  puts("pins left: ${gc_rt.avant_pin_count() - base}")
+}
