@@ -54,9 +54,8 @@
  * stay put (those blocks remain `SPACE_FROM` so their address is stable,
  * D34) and are promoted in place: from then on they are mature objects,
  * traced and remembered like any other (C29, promote_pinned_one). After
- * young copy, unpinned from-space is discarded. Set
- * `AVANT_NURSERY_DISCARD=0` to park all nursery blocks instead (leftover
- * pointer diagnosis). Objects that escape to C should be pinned.
+ * young copy, unpinned from-space is discarded. Objects that escape to C
+ * should be pinned.
  *
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
  * allocation and collection take a world lock.
@@ -425,39 +424,34 @@ typedef struct GcCounters {
   uint64_t stack_left;
 } GcCounters;
 
-/* The settings, read from the environment once, by gc_init_slow
- * (avant_gc_collect.c). */
+/* The settings (Stage 28 W14b2, gc-design.md §1.7, O40): read from the
+ * environment once, by gc_init_slow (gc_settings_read,
+ * avant_gc_collect.c), and never changed after. The knobs, their values
+ * and the parsing rule are documented in one place, avant_gc.h. */
 typedef struct GcSettings {
+  /* AVANT_YOUNG_MB in bytes; 0: the adaptive young threshold. */
+  uint64_t young_fixed;
   /* AVANT_HEAP_MAX_MB in bytes; 0: no limit. */
   uint64_t heap_max;
-  /* 0 when AVANT_YOUNG_MB pinned the young threshold (tests). */
-  int young_adapt;
+  /* AVANT_HEAP_RESERVE_GB: the heap's address reservation, in GiB. */
+  uint64_t reserve_gb;
   /* AVANT_NURSERY=0: no young generation, full non-moving collections
    * only. */
   int nursery_off;
-  /* 0 (AVANT_NURSERY_DISCARD=0): park unpinned from-space after a young
-   * copy instead of releasing it (diagnostic). */
-  int discard_from;
   /* The young copy's C-stack pass (avant_gc_stack.c): c_stack_pass (the
    * copying nursery is on) runs count_c_stack_nursery, and
    * c_stack_rewrite (the pass, unless AVANT_GC_STACK_REWRITE=0) runs
    * rewrite_c_stack. */
   int c_stack_pass;
   int c_stack_rewrite;
-  /* Frontier clearing of the remembered set (Collector II Wave 2;
-   * avant_gc_remset.c); AVANT_GC_REM_FRONTIER=0 turns it off. */
-  int rem_frontier;
-  /* Mature evacuation (defragmentation, avant_gc_defrag.c);
-   * AVANT_GC_DEFRAG=0 turns it off, the histogram stays on. */
+  /* AVANT_GC_DEFRAG: mature evacuation in full collections
+   * (avant_gc_defrag.c); off, the histogram stays on. */
   int defrag;
-  /* The survival cap on the young threshold's growth and the copy
-   * reserve (Collector II Wave 4; avant_gc_collect.c);
-   * AVANT_GC_YOUNG_SIZING=0 and AVANT_GC_COPY_RESERVE=0 turn them off. */
-  int young_sizing;
-  int copy_reserve;
   /* AVANT_GC_VERIFY: the checkers of avant_gc_verify.c. */
   int verify;
-  /* AVANT_GC_STRESS=1 (Stage 28 W14b1, gc-design.md §4.2 item 1, the
+  /* AVANT_GC_STATS: the statistics line at exit (avant_gc_stats.c). */
+  int stats;
+  /* AVANT_GC_STRESS (Stage 28 W14b1, gc-design.md §4.2 item 1, the
    * minimal step): a young collection at every outermost
    * avant_gc_defer_enter and at every avant_alloc called from runtime C
    * (avant_alloc_c), in unshared programs with the nursery on. With the

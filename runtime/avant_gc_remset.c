@@ -15,8 +15,8 @@
  * after each young collection, and the barrier entry points avant_barrier
  * and avant_barrier_at. */
 
-/* Frontier clearing (Collector II Wave 2; gc_heap.set.rem_frontier,
- * AVANT_GC_REM_FRONTIER=0 turns it off). Dirty is tracked during the
+/* Frontier clearing (Collector II Wave 2; its switch,
+ * AVANT_GC_REM_FRONTIER, is retired since Stage 28 W14b2). Dirty is tracked during the
  * remembered scan itself, per set index (gc_heap.rem_dirty), so no
  * second field walk is needed. Hysteresis (evict after N clean scans)
  * and probation (a second list scanned every K young collections) were
@@ -64,7 +64,7 @@ void gc_keep_add(void *obj) {
  * re-adds it on the next young store. Caller holds gc_heap.rem_mu when the
  * set is shared. */
 static int rem_frontier_decide(void *obj, int dirty) {
-  if (gc_heap.set.rem_frontier == 0 || dirty) {
+  if (dirty) {
     return 1;
   }
   avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;

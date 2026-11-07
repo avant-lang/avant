@@ -10,8 +10,9 @@
 #include <string.h>
 
 /* The collection driver and its policy (Stage 28 W12, moved from
- * avant_rt.c): initialization from the environment (every AVANT_GC_* and
- * AVANT_NURSERY* knob), collect (young or full) and gc_maybe_collect (when),
+ * avant_rt.c): initialization from the environment (the settings,
+ * gc_settings_read; the knobs are listed in avant_gc.h), collect (young
+ * or full) and gc_maybe_collect (when),
  * the adaptive nursery sizing and the full-collection trigger, and the
  * public collection entry points. */
 
@@ -37,8 +38,8 @@ uint64_t avant_nursery_held;
  * reserve is the same survival-scaled amount, charged as already spent
  * by heap-limit decisions outside a collection so a copy always has
  * its room; inside a collection the reserve is being spent and is not
- * charged. Kill switches: AVANT_GC_YOUNG_SIZING=0 (the growth cap),
- * AVANT_GC_COPY_RESERVE=0. */
+ * charged. (Their kill switches, AVANT_GC_YOUNG_SIZING and
+ * AVANT_GC_COPY_RESERVE, are retired since Stage 28 W14b2.) */
 #define YOUNG_SURVIVAL_FACTOR 1.5
 #define YOUNG_SIZING_FLOOR (4ull * 1024ull * 1024ull)
 #define YOUNG_SIZING_SLACK (1ull * 1024ull * 1024ull)
@@ -48,17 +49,82 @@ uint64_t avant_nursery_held;
 #define YOUNG_BYTES_MAX (192ull * 1024ull * 1024ull)
 #define STICKY_MIN (8ull * 1024ull * 1024ull)
 
-static uint64_t env_u64(const char *name, uint64_t fallback) {
-  const char *s = getenv(name);
-  if (!s || !s[0]) {
+/* The settings' one parsing rule (Stage 28 W14b2, O40; the knobs are
+ * listed in avant_gc.h). A knob that is unset or empty takes its
+ * default. A boolean knob is on for exactly "1" and off for exactly "0";
+ * a number is decimal digits only, within the knob's range. Anything
+ * else is reported once on stderr at start-up, and the default applies. */
+static void env_warn(const char *name, const char *v, const char *want) {
+  fprintf(stderr, "avant runtime: warning: %s=%s is not %s; the default applies\n", name, v,
+          want);
+}
+
+static int env_bool(const char *name, int fallback) {
+  const char *v = getenv(name);
+  if (!v || !v[0]) {
     return fallback;
   }
-  char *end = NULL;
-  unsigned long long v = strtoull(s, &end, 10);
-  if (end == s) {
+  if (v[0] == '1' && v[1] == 0) {
+    return 1;
+  }
+  if (v[0] == '0' && v[1] == 0) {
+    return 0;
+  }
+  env_warn(name, v, "0 or 1");
+  return fallback;
+}
+
+static uint64_t env_u64(const char *name, uint64_t fallback, uint64_t lo, uint64_t hi) {
+  const char *v = getenv(name);
+  const char *p;
+  uint64_t n = 0;
+  if (!v || !v[0]) {
     return fallback;
   }
-  return (uint64_t)v;
+  for (p = v; *p; p++) {
+    if (*p < '0' || *p > '9' || n > (UINT64_MAX - 9) / 10) {
+      break;
+    }
+    n = n * 10 + (uint64_t)(*p - '0');
+  }
+  if (*p || n < lo || n > hi) {
+    char want[64];
+    snprintf(want, sizeof want, "a number from %llu to %llu", (unsigned long long)lo,
+             (unsigned long long)hi);
+    env_warn(name, v, want);
+    return fallback;
+  }
+  return n;
+}
+
+/* Knobs retired by Stage 28 W14b2 (gc-design.md §1.7): setting one is
+ * reported, and it has no effect. */
+static const char *const retired_knobs[] = {
+    "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_YOUNG_SIZING",
+    "AVANT_GC_COPY_RESERVE"};
+
+static void gc_settings_read(GcSettings *s) {
+  size_t i;
+  /* Sizes in MiB stay below 2^44 so the byte count fits (1 << 20 GiB). */
+  uint64_t mb_max = 1ull << 30;
+  s->young_fixed = env_u64("AVANT_YOUNG_MB", 0, 0, mb_max) * 1024ull * 1024ull;
+  s->heap_max = env_u64("AVANT_HEAP_MAX_MB", 0, 0, mb_max) * 1024ull * 1024ull;
+  s->reserve_gb = env_u64("AVANT_HEAP_RESERVE_GB", HEAP_RESERVE_GB_DEFAULT, HEAP_RESERVE_GB_MIN,
+                          1ull << 20);
+  s->nursery_off = !env_bool("AVANT_NURSERY", 1);
+  s->c_stack_pass = !s->nursery_off;
+  s->c_stack_rewrite = s->c_stack_pass && env_bool("AVANT_GC_STACK_REWRITE", 1);
+  s->defrag = env_bool("AVANT_GC_DEFRAG", 1);
+  s->verify = env_bool("AVANT_GC_VERIFY", 0);
+  s->stats = env_bool("AVANT_GC_STATS", 0);
+  s->stress = env_bool("AVANT_GC_STRESS", 0);
+  for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
+    const char *v = getenv(retired_knobs[i]);
+    if (v && v[0]) {
+      fprintf(stderr, "avant runtime: warning: %s is retired and has no effect\n",
+              retired_knobs[i]);
+    }
+  }
 }
 
 _Atomic uint32_t g_avant_str_gen;
@@ -72,7 +138,7 @@ static int young_pause(uint64_t used, uint64_t surv) {
   if (gc_heap.set.heap_max && gc_heap.heap_bytes + avant_young_bytes > gc_heap.set.heap_max) {
     return 0;
   }
-  if (gc_heap.set.heap_max && gc_heap.set.copy_reserve &&
+  if (gc_heap.set.heap_max &&
       gc_heap.heap_bytes + avant_young_bytes + gc_heap.copy_reserve > gc_heap.set.heap_max) {
     /* Pausing would leave the nursery in place with no copy room
      * under the limit; copy instead (Wave 4 reserve, Q-W4-2). */
@@ -90,20 +156,18 @@ static int young_pause(uint64_t used, uint64_t surv) {
   if (next > YOUNG_BYTES_MAX) {
     next = YOUNG_BYTES_MAX;
   }
-  if (gc_heap.set.young_sizing) {
-    /* Survival cap (Wave 4 step 2, Q-W4-6): growth may not outrun what
-     * the probe just saw survive by more than the factor and slack.
-     * The floor keeps a minimum working nursery when survival reads
-     * near zero; a cap at or below the current threshold simply means
-     * no growth this time, so the copy proceeds instead of pausing. */
-    uint64_t cap =
-        (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv) + YOUNG_SIZING_SLACK;
-    if (cap < YOUNG_SIZING_FLOOR) {
-      cap = YOUNG_SIZING_FLOOR;
-    }
-    if (next > cap) {
-      next = cap;
-    }
+  /* Survival cap (Wave 4 step 2, Q-W4-6): growth may not outrun what
+   * the probe just saw survive by more than the factor and slack.
+   * The floor keeps a minimum working nursery when survival reads
+   * near zero; a cap at or below the current threshold simply means
+   * no growth this time, so the copy proceeds instead of pausing. */
+  uint64_t cap =
+      (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv) + YOUNG_SIZING_SLACK;
+  if (cap < YOUNG_SIZING_FLOOR) {
+    cap = YOUNG_SIZING_FLOOR;
+  }
+  if (next > cap) {
+    next = cap;
   }
   if (next <= avant_young_bytes) {
     return 0;
@@ -149,7 +213,7 @@ void gc_collect(int full) {
   __builtin_unwind_init();
 #endif
   if (!full) {
-    if (!gc_heap.set.young_adapt) {
+    if (gc_heap.set.young_fixed) {
       avant_g_stats.young_collections++;
       gc_young_copy_out(1);
     } else if (gc_heap.stress_now) {
@@ -179,10 +243,7 @@ void gc_collect(int full) {
           int bucket = pct == 0 ? 0 : pct <= 10 ? 1 : pct <= 25 ? 2 : pct <= 50 ? 3 : pct <= 75 ? 4 : 5;
           gc_heap.ctr.srv.hist[bucket]++;
         }
-        if (gc_heap.set.copy_reserve) {
-          gc_heap.copy_reserve =
-              (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
-        }
+        gc_heap.copy_reserve = (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
         gc_rem_scrub();
         gc_reclaim_young_large();
         gc_clear_noted();
@@ -200,7 +261,7 @@ void gc_collect(int full) {
           tenure = 1;
         }
         gc_young_copy_out(tenure);
-        if (gc_heap.set.young_adapt && used >= STICKY_MIN && surv * 2 <= used &&
+        if (!gc_heap.set.young_fixed && used >= STICKY_MIN && surv * 2 <= used &&
             used > surv && (used - surv) >= STICKY_MIN) {
           uint64_t dead = used - surv;
           uint64_t next = dead + (64ull * 1024ull);
@@ -361,73 +422,16 @@ void gc_init_slow(void) {
     return;
   }
   gc_heap.inited = 1;
-  {
-    uint64_t ymb = env_u64("AVANT_YOUNG_MB", 0);
-    if (ymb) {
-      avant_young_bytes = ymb * 1024ull * 1024ull;
-      gc_heap.set.young_adapt = 0;
-    } else {
-      avant_young_bytes = YOUNG_BYTES_DEFAULT;
-      gc_heap.set.young_adapt = 1;
-    }
-  }
-  uint64_t mb = env_u64("AVANT_HEAP_MAX_MB", 0);
-  gc_heap.set.heap_max = mb ? mb * 1024ull * 1024ull : 0;
-  {
-    const char *v = getenv("AVANT_NURSERY");
-    /* Copying nursery is the product default. Set to 0 for Stage 7
-     * full-collect (non-moving) diagnosis. */
-    if (v && v[0] == '0' && v[1] == 0) {
-      gc_heap.set.nursery_off = 1;
-    } else {
-      gc_heap.set.nursery_off = 0;
-    }
-  }
-  {
-    const char *v = getenv("AVANT_NURSERY_DISCARD");
-    /* Product path discards unpinned from-space after young copy.
-     * Set to 0 to park (diagnostic). */
-    if (v && v[0] == '0' && v[1] == 0) {
-      gc_heap.set.discard_from = 0;
-    } else {
-      gc_heap.set.discard_from = 1;
-    }
-  }
-  {
-    /* The conservative C-stack pass after a young copy (avant_gc_stack.c,
-     * W8c, W11): on with the copying nursery. It rewrites forwarded
-     * words left on the collecting thread's stack and counts any that
-     * still name from-space (sm_left). AVANT_GC_STACK_REWRITE=0 turns
-     * the rewrite off and keeps the count. Read once, here. */
-    const char *v = getenv("AVANT_GC_STACK_REWRITE");
-    gc_heap.set.c_stack_pass = !gc_heap.set.nursery_off;
-    gc_heap.set.c_stack_rewrite = gc_heap.set.c_stack_pass && !(v && v[0] == '0' && v[1] == 0);
-  }
-  {
-    const char *v = getenv("AVANT_GC_REM_FRONTIER");
-    gc_heap.set.rem_frontier = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
-  }
-  {
-    const char *v = getenv("AVANT_GC_DEFRAG");
-    gc_heap.set.defrag = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
-  }
-  {
-    const char *v = getenv("AVANT_GC_YOUNG_SIZING");
-    gc_heap.set.young_sizing = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
-  }
-  {
-    const char *v = getenv("AVANT_GC_COPY_RESERVE");
-    gc_heap.set.copy_reserve = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
-  }
-  gc_heap.set.verify = getenv("AVANT_GC_VERIFY") != NULL;
-  {
-    const char *v = getenv("AVANT_GC_STRESS");
-    gc_heap.set.stress = v && v[0] == '1' && v[1] == 0;
+  gc_settings_read(&gc_heap.set);
+  if (gc_heap.set.young_fixed) {
+    avant_young_bytes = gc_heap.set.young_fixed;
+  } else {
+    avant_young_bytes = YOUNG_BYTES_DEFAULT;
   }
   /* The heap's address range (W14a1): reserved once, here, so a refusal
    * is met at start-up (halving down to 1 GiB) and not at a block. */
   gc_heap_reserve();
-  if (getenv("AVANT_GC_STATS")) {
+  if (gc_heap.set.stats) {
     atexit(gc_print_stats);
   }
 }

@@ -413,31 +413,11 @@ static int block_keep_pinned(Block *b) {
   return gc_heap.block_has_pin;
 }
 
-/*
- * After young copy, free unpinned nursery blocks. Pinned objects keep
+/* After young copy, free unpinned nursery blocks. Pinned objects keep
  * their address (D34); those blocks stay on gc_heap.from as SPACE_FROM.
- *
- * AVANT_NURSERY_DISCARD=0 parks every nursery block instead. That was
- * the Stage 17 safety net before the leftover stack rewrite; it is not
- * the product path.
- */
-static void park_nursery_from(void) {
-  Block *b = gc_heap.nursery;
-  gc_heap.nursery = NULL;
-  while (b) {
-    Block *next = b->next;
-    if (gc_heap.saw_pinned_nursery) {
-      (void)block_keep_pinned(b);
-    }
-    b->space = SPACE_FROM;
-    gc_heap.space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
-    gc_heap.space_bytes[SPACE_FROM] += BLOCK_SIZE;
-    b->next = gc_heap.from;
-    gc_heap.from = b;
-    b = next;
-  }
-}
-
+ * (AVANT_NURSERY_DISCARD=0, which parked every nursery block instead,
+ * the Stage 17 safety net before the leftover stack rewrite, is retired
+ * since Stage 28 W14b2.) */
 static void discard_nursery_from(void) {
   Block *b = gc_heap.nursery;
   gc_heap.nursery = NULL;
@@ -499,11 +479,7 @@ void gc_young_copy_out(int tenure) {
     gc_verify_young_copy();
   }
   gc_clear_alloc_cur(SPACE_NURSERY);
-  if (gc_heap.set.discard_from) {
-    discard_nursery_from();
-  } else {
-    park_nursery_from();
-  }
+  discard_nursery_from();
   adopt_to_space();
   gc_rem_commit_kept();
   if (avant_nursery_held + gc_heap.to_bytes > gc_heap.ctr.yng.cpy_peak) {

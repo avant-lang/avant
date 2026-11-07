@@ -124,7 +124,7 @@ static int heap_block_fits(void) {
     return 1;
   }
   spent = gc_heap.heap_bytes + BLOCK_SIZE;
-  if (!gc_heap.collecting && !gc_heap.reserve_retry && gc_heap.set.copy_reserve) {
+  if (!gc_heap.collecting && !gc_heap.reserve_retry) {
     spent += gc_heap.copy_reserve;
   }
   return spent <= gc_heap.set.heap_max;

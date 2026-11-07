@@ -55,6 +55,45 @@
  * collection rewrites.
  */
 
+/*
+ * The collector's settings (Stage 28 W14b2, gc-design.md section 1.7,
+ * O40): the environment variables below, read once when the collector
+ * starts (gc_init_slow, avant_gc_collect.c) into one settings struct.
+ * One rule for all of them: unset or empty is the default; a switch is
+ * on for exactly 1 and off for exactly 0; a number is decimal digits
+ * only, in its range; any other value is reported on stderr at start-up
+ * ("avant runtime: warning: ...") and the default applies.
+ *
+ *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
+ *                          generation's threshold in MiB, fixed; 0 is the
+ *                          adaptive threshold (16 MiB to start)
+ *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
+ *                          MiB ("heap limit" past it); 0 is no limit
+ *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's
+ *                          address reservation in GiB, halved on refusal
+ *                          down to 1 (W14a1)
+ *   AVANT_NURSERY          switch, default 1: the copying nursery; 0 is
+ *                          full, non-moving collections only
+ *   AVANT_GC_DEFRAG        switch, default 1: mature evacuation in full
+ *                          collections
+ *   AVANT_GC_STACK_REWRITE switch, default 1: the young copy's rewrite of
+ *                          the collecting thread's C stack (with the
+ *                          nursery; until gc-design.md section 4.3
+ *                          retires it)
+ *   AVANT_GC_VERIFY        switch, default 0: the collector's checkers
+ *                          (avant_gc_verify.c)
+ *   AVANT_GC_STATS         switch, default 0: one statistics line on
+ *                          stderr at exit
+ *   AVANT_GC_STRESS        switch, default 0: a young collection at every
+ *                          runtime C allocation and every outermost defer
+ *                          entry (testing; W14b1)
+ *
+ * Retired (W14b2; setting one is reported and has no effect):
+ * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
+ * AVANT_GC_COPY_RESERVE. Removed earlier: AVANT_NURSERY_STACK (W14a1),
+ * AVANT_NURSERY_STACKMAP (W12r).
+ */
+
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
 void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);

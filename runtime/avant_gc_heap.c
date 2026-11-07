@@ -28,10 +28,7 @@ __attribute__((constructor(101))) static void gc_heap_static_init(void) {
   pthread_mutex_init(&gc_heap.threads_mu, NULL);
   pthread_mutex_init(&gc_heap.rem_mu, NULL);
   gc_heap.full_trigger = FULL_BYTES;
-  gc_heap.set.rem_frontier = 1;
   gc_heap.set.defrag = 1;
-  gc_heap.set.young_sizing = 1;
-  gc_heap.set.copy_reserve = 1;
 }
 
 /* Whether payload word W of an object with header H is a reference slot
@@ -208,27 +205,18 @@ static int reserve_all(uint64_t bytes) {
   return 1;
 }
 
-/* The reservation is AVANT_HEAP_RESERVE_GB GiB (default 64); when the
- * system refuses it (ulimit -v, a container's address-space limit), the
- * size is halved until it succeeds, down to 1 GiB. It is the heap's
- * ceiling for the process's life (gc_block_take). Called once, by
- * gc_init_slow. */
+/* The reservation is AVANT_HEAP_RESERVE_GB GiB (gc_heap.set.reserve_gb,
+ * default 64); when the system refuses it (ulimit -v, a container's
+ * address-space limit), the size is halved until it succeeds, down to 1
+ * GiB. It is the heap's ceiling for the process's life (gc_block_take).
+ * Called once, by gc_init_slow. */
 void gc_heap_reserve(void) {
   uint64_t gb;
   if (gc_heap.base) {
     return;
   }
-  gb = HEAP_RESERVE_GB_DEFAULT;
-  {
-    const char *v = getenv("AVANT_HEAP_RESERVE_GB");
-    if (v && *v) {
-      char *end = NULL;
-      unsigned long long n = strtoull(v, &end, 10);
-      if (end && *end == 0 && n >= HEAP_RESERVE_GB_MIN && n <= (1ull << 20)) {
-        gb = (uint64_t)n;
-      }
-    }
-  }
+  /* 0 only if a block is taken before gc_init_slow read the settings. */
+  gb = gc_heap.set.reserve_gb ? gc_heap.set.reserve_gb : HEAP_RESERVE_GB_DEFAULT;
   for (;;) {
     if (reserve_all(gb << 30)) {
       return;

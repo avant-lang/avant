@@ -15,11 +15,10 @@
  * Collector is GenImmix (copying nursery, Immix mature) and the copying
  * nursery is the product default (AVANT_NURSERY=0 turns it off: every
  * collection is then a full one). From-space is discarded after a young
- * copy unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis.
- * Remembered-set members are roots for the young generation.
+ * copy. Remembered-set members are roots for the young generation.
  * AVANT_FLAG_PINNED is the C-escape seam: pinned objects are not moved
- * and are young-GC roots. The full invariant list and knob table live in
- * avant-ledgers/archive/stages/collector.md.
+ * and are young-GC roots. The collector's environment knobs are listed
+ * in runtime/avant_gc.h.
  */
 
 #define AVANT_TYPE_BYTES 0
