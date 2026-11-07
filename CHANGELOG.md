@@ -1,5 +1,9 @@
 # Avant Language changelog
 
+## 0.36.0 - 2026-11-07
+
+* To be added here.
+
 ## 0.35.0 - 2026-11-05
 
 ### Changed
