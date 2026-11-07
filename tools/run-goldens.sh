@@ -40,7 +40,10 @@
 # Goldens (tests/goldens/runs/; a program's key is its path without the
 # leading tests/ and without .av):
 #   KEY.out         stdout (examples/matmul.av: lines 1-2 only, since lines
-#                   3-4 are the milliseconds its two passes took)
+#                   3-4 are the milliseconds its two passes took;
+#                   examples/zlib.av: a version line reads `<zlib version>`,
+#                   since it prints the system zlib's version, 1.3.1 here
+#                   and 1.3 on the CI runner)
 #   KEY.err         stderr, present only when it is not empty
 #   status.txt      one line per program: its path and exit status, sorted
 #   langarena/SLUG.txt  the compared view of a LangArena task's raw result
@@ -171,6 +174,7 @@ thread_programs() { mains tests/fixtures/threads/*.av tests/fixtures/coverage/*.
 view() { # PATH FILE -> the compared view of a stdout file
   case "$1" in
     examples/matmul.av) head -n 2 "$2" ;;
+    examples/zlib.av) sed -E 's/^[0-9]+([.][0-9]+)+$/<zlib version>/' "$2" ;;
     *) cat "$2" ;;
   esac
 }
