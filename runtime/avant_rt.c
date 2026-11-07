@@ -492,29 +492,6 @@ void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
   }
 }
 
-static void clear_mark_one(AvantHeader *h, Block *b) {
-  (void)b;
-  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
-}
-
-static void clear_all_marks(void) {
-  Block *b;
-  for (b = g_mature; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  for (b = g_from; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  Large *L;
-  for (L = g_large; L; L = L->next) {
-    L->header.flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
-  }
-}
-
 static void zero_line_marks(Block *list) {
   Block *b;
   for (b = list; b; b = b->next) {
@@ -529,62 +506,6 @@ void mark_object_lines(void *p) {
   }
   AvantHeader *h = avant_header(p);
   mark_lines(b, (size_t)((uint8_t *)h - b->base), obj_total(h));
-}
-
-static void scan_payload(void *p);
-
-static void mark(void *p) {
-  Block *b = NULL;
-  Large *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
-  if (!start) {
-    return;
-  }
-  AvantHeader *h = avant_header(start);
-  if (h->flags & AVANT_FLAG_MARKED) {
-    return;
-  }
-  h->flags |= AVANT_FLAG_MARKED;
-  mark_object_lines(start);
-  g_live += obj_total(h);
-  work_push(start);
-}
-
-static void drain(void) {
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
-    scan_payload(p);
-  }
-}
-
-static void mark_tls_slot(void **slot) {
-  if (slot) {
-    mark(*slot);
-  }
-}
-
-static void scan_payload(void *p) {
-  EACH_REF_SLOT(p, slot, { mark(*slot); });
-}
-
-static void mark_roots(void) {
-  ThreadReg *t;
-  uint32_t i;
-  pthread_mutex_lock(&g_threads_mu);
-  for (t = g_threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        mark(*f->slots[i]);
-      }
-    }
-  }
-  pthread_mutex_unlock(&g_threads_mu);
-  for (PinEnt *p = g_pins; p; p = p->next) {
-    mark(p->payload);
-  }
-  avant_hash_walk_tls(mark_tls_slot);
-  drain();
 }
 
 static int find_hole(Block *b, size_t need) {
@@ -609,7 +530,7 @@ static int find_hole(Block *b, size_t need) {
   return 0;
 }
 
-static void reset_block_bump(Block *b) {
+void gc_reset_block_bump(Block *b) {
   b->search = 0;
   b->bump = b->base;
   b->limit = b->base;
@@ -1398,30 +1319,6 @@ static void discard_nursery_from(void) {
   }
 }
 
-static int keep_if_live(Block *b) {
-  if (gc_block_live_lines(b) == 0) {
-    return 0;
-  }
-  reset_block_bump(b);
-  return 1;
-}
-
-static void filter_blocks(Block **list, int (*keep)(Block *)) {
-  Block *b = *list;
-  Block *kept = NULL;
-  while (b) {
-    Block *next = b->next;
-    if (keep && keep(b)) {
-      b->next = kept;
-      kept = b;
-    } else {
-      gc_cache_or_free_block(b);
-    }
-    b = next;
-  }
-  *list = kept;
-}
-
 static void clear_mark_flag_one(AvantHeader *h, Block *b) {
   (void)b;
   h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
@@ -1445,15 +1342,6 @@ static void clear_mark_flags(void) {
   for (L = g_large; L; L = L->next) {
     L->header.flags &=
         (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
-  }
-}
-
-static uint64_t g_mark_sum;
-
-static void sum_marked_one(AvantHeader *h, Block *b) {
-  (void)b;
-  if (h->flags & AVANT_FLAG_MARKED) {
-    g_mark_sum += obj_total(h);
   }
 }
 
@@ -1653,11 +1541,11 @@ void gc_collect(int full) {
     gc_los_spare_drop();
     clear_alloc_cur(SPACE_NURSERY);
     clear_alloc_cur(SPACE_MATURE);
-    clear_all_marks();
+    gc_clear_all_marks();
     zero_line_marks(g_mature);
     zero_line_marks(g_nursery);
     zero_line_marks(g_from);
-    mark_roots();
+    gc_mark_roots();
     {
       Block *db;
       uint64_t live_lines_this = 0;
@@ -1682,15 +1570,15 @@ void gc_collect(int full) {
       gc_defrag_release();
     }
     gc_sweep_large();
-    filter_blocks(&g_mature, keep_if_live);
-    filter_blocks(&g_nursery, keep_if_live);
-    filter_blocks(&g_from, keep_if_live);
+    gc_filter_blocks(&g_mature, gc_keep_if_live);
+    gc_filter_blocks(&g_nursery, gc_keep_if_live);
+    gc_filter_blocks(&g_from, gc_keep_if_live);
     g_mark_sum = 0;
     for (b = g_nursery; b; b = b->next) {
-      gc_foreach_block_object(b, sum_marked_one);
+      gc_foreach_block_object(b, gc_sum_marked_one);
     }
     for (b = g_from; b; b = b->next) {
-      gc_foreach_block_object(b, sum_marked_one);
+      gc_foreach_block_object(b, gc_sum_marked_one);
     }
     g_nursery_held = g_mark_sum;
     g_mature_since_full = 0;
@@ -1739,7 +1627,7 @@ static void maybe_collect(void) {
    * AVANT_NURSERY=1 to enable young copy. AVANT_NURSERY=0 is explicit
    * Stage 7 behaviour.
    *
-   * C helpers also hold heap pointers that mark_roots does not see
+   * C helpers also hold heap pointers that gc_mark_roots does not see
    * (concat args, hash tables mid-grow). avant_gc_defer_* blocks
    * collection for that window.
    */

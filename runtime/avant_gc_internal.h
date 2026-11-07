@@ -12,6 +12,7 @@
  * collector's units:
  *   avant_gc_los.c
  *   avant_gc_remset.c
+ *   avant_gc_mark.c
  *   avant_gc_defrag.c
  *   avant_gc_stack.c
  *   avant_gc_verify.c
@@ -220,6 +221,14 @@ void gc_keep_add(void *obj);
 void gc_rem_scrub(void);
 void gc_rem_commit_kept(void);
 
+/* avant_gc_mark.c */
+extern uint64_t g_mark_sum;
+void gc_clear_all_marks(void);
+void gc_mark_roots(void);
+int gc_keep_if_live(Block *b);
+void gc_filter_blocks(Block **list, int (*keep)(Block *));
+void gc_sum_marked_one(AvantHeader *h, Block *b);
+
 /* avant_gc_defrag.c */
 extern int g_defrag_mode;
 extern BlockSet g_def_release;
@@ -351,6 +360,7 @@ int is_heap_payload(void *p, Block **ob, Large **ol);
 void *gc_object_payload(void *p, Block **ob, Large **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void mark_object_lines(void *p);
+void gc_reset_block_bump(Block *b);
 void gc_cache_or_free_block(Block *b);
 void gc_note_peak(void);
 Block *gc_new_block(uint8_t space);
