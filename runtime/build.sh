@@ -11,8 +11,15 @@ compile() {
   "$cc" -c $cflags -o "$2" "$1"
 }
 
+# The core units: the collector and the language traps. They fold into
+# one object, avant_rt.o, below.
+core_units="avant_rt avant_rt_traps avant_gc_stackmap"
+for name in $core_units; do
+  compile "$root/$name.c" "$root/build/$name.unit.o"
+done
+
 for name in \
-  avant_rt.c avant_rt_traps.c avant_gc_stackmap.c avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
+  avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
   avant_json.c avant_http.c avant_wide.c avant_codec.c avant_base64.c avant_io.c avant_cov.c
 do
   compile "$root/$name" "$root/build/${name%.c}.o"
@@ -69,15 +76,23 @@ ld -r -o "$root/build/avant_http_merged.o" "$root/build/avant_http.o" "$root/bui
 mv "$root/build/avant_http_merged.o" "$root/build/avant_http.o"
 rm -f "$root/build/picohttpparser.o"
 
-# avant_rt_traps.o folds into avant_rt.o: the seed's link table names
+# The core units fold into avant_rt.o: the seed's link table names
 # avant_rt.o only, so a new core object could not be linked by the old
-# seed. The source split is organizational; the link surface is not.
-ld -r -o "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o" "$root/build/avant_rt_traps.o" "$root/build/avant_gc_stackmap.o"
-mv "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o"
+# seed. The source split is organizational; the link surface is not:
+# after the merge only the symbols avant_rt.exports lists stay global
+# (Stage 28 W12), so a function or variable the units share with each
+# other never becomes part of the object's surface.
+set --
+for name in $core_units; do
+  set -- "$@" "$root/build/$name.unit.o"
+done
+ld -r -o "$root/build/avant_rt_merged.o" "$@"
+objcopy --keep-global-symbols="$root/avant_rt.exports" "$root/build/avant_rt_merged.o"
 # The merged parts are removed, as the zlib and PCRE2 parts are: nothing
 # links them on their own, and tools/package.sh ships every object left
 # here (W10b: they were 28 KB of dead weight in the release).
-rm -f "$root/build/avant_rt_traps.o" "$root/build/avant_gc_stackmap.o"
+rm -f "$@"
+mv "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o"
 
 # aklomp/base64 e4cc438. LangArena's C port calls this library.
 # x86_64 builds the SIMD codecs; other machines get the plain codec.
