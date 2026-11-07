@@ -152,6 +152,9 @@ void gc_collect(int full) {
   g_stats.collections++;
   if (g_verify) {
     gc_verify_no_stale_marks();
+    if (!full) {
+      gc_verify_remembered();
+    }
   }
   g_live = 0;
   g_work_n = 0;

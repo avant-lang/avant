@@ -410,6 +410,7 @@ void count_c_stack_nursery(void);
 extern int g_verify;
 void gc_verify_young_copy(void);
 void gc_verify_no_stale_marks(void);
+void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 
 /* avant_gc_collect.c */

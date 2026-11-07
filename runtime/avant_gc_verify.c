@@ -241,6 +241,145 @@ void gc_verify_young_copy(void) {
   verify_clear_traced();
 }
 
+/* The remembered-set check (Stage 28 W14b1, gc-design.md §4.2 item 2):
+ * before a young collection traces, every field of a non-young object
+ * that names a young object must belong to a remembered holder or to an
+ * object the three-way rule R1' (§1.3) names this cycle: a root (slot,
+ * pin, runtime TLS slot), a field of a young object, or a field of a
+ * remembered object. Those three are computed by a first pass over the
+ * roots, the young objects and the remembered set. Only holders the
+ * roots reach are checked: a dead object's fields are never read, and
+ * may name a nursery address a new young object reuses. Reported as
+ * "missing barrier: holder ... field ... names young ...": the next
+ * young collection would neither scan that field nor update it, so the
+ * young object is lost or the field dangles after the copy (C34's
+ * class, reported at the first collection after the bad store). The
+ * five runtime builders that fill a born-mature buffer named by a young
+ * array header (audit N2b) are not reported: R1'(b) names the buffer.
+ * Visited is FORWARDED (verify_trace), named is MARKED; both are clear
+ * when a collection starts (gc_verify_no_stale_marks) and cleared here. */
+static void **g_rnamed;
+static size_t g_rnamed_n;
+static size_t g_rnamed_cap;
+static uint64_t g_missing_barriers;
+
+static int verify_young_at(void *start, Block *b, AvantHeader *ol) {
+  if (ol) {
+    return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
+  }
+  return b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
+}
+
+static int verify_names_young(void *p, void **out) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  *out = start;
+  return start && verify_young_at(start, b, ol);
+}
+
+static void rem_named(void *p) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  AvantHeader *h;
+  if (!start || verify_young_at(start, b, ol)) {
+    return;
+  }
+  h = avant_header(start);
+  if (h->flags & AVANT_FLAG_MARKED) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_MARKED;
+  if (g_rnamed_n == g_rnamed_cap) {
+    g_rnamed_cap = g_rnamed_cap ? g_rnamed_cap * 2 : 1024;
+    g_rnamed = gc_xrealloc(g_rnamed, g_rnamed_cap * sizeof(void *));
+  }
+  g_rnamed[g_rnamed_n++] = start;
+}
+
+static void rem_root_slot(void **slot) {
+  verify_trace(*slot);
+  rem_named(*slot);
+}
+
+void gc_verify_remembered(void) {
+  ThreadReg *t;
+  size_t i;
+  uint64_t found = 0;
+  /* Roots: reachability and R1'(a). */
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      uint32_t k;
+      for (k = 0; k < f->n; k++) {
+        rem_root_slot(f->slots[k]);
+      }
+    }
+  }
+  for (PinEnt *p = g_pins; p; p = p->next) {
+    rem_root_slot(&p->payload);
+  }
+  avant_hash_walk_tls(rem_root_slot);
+  while (g_work_n) {
+    void *p = g_work[--g_work_n];
+    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
+  }
+  /* R1'(b): the fields of the young objects the roots reach. */
+  for (i = 0; i < g_vnoted_n; i++) {
+    void *v = g_vnoted[i];
+    void *st;
+    if (verify_names_young(v, &st)) {
+      EACH_REF_SLOT(v, slot, { rem_named(*slot); });
+    }
+  }
+  /* R1'(c): the fields of every remembered object. */
+  {
+    uint32_t ri;
+    for (ri = 0; ri < g_rem_n; ri++) {
+      void *obj = g_remset[ri];
+      if (is_heap_payload(obj, NULL, NULL)) {
+        EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
+      }
+    }
+  }
+  /* The check: a reached non-young holder that is neither remembered
+   * nor named must name no young object. */
+  for (i = 0; i < g_vnoted_n; i++) {
+    void *v = g_vnoted[i];
+    void *st;
+    AvantHeader *h = avant_header(v);
+    if (verify_names_young(v, &st) || (h->flags & (AVANT_FLAG_REM | AVANT_FLAG_MARKED))) {
+      continue;
+    }
+    EACH_REF_SLOT(v, slot, {
+      void *y;
+      if (verify_names_young(*slot, &y)) {
+        found++;
+        if (found <= 32) {
+          Block *hb = block_of(h);
+          fprintf(stderr,
+                  "avant gc verify: missing barrier: holder %p field %ld names young %p "
+                  "(holder flags=0x%x type=%u space=%d; young flags=0x%x) before coll=%llu\n",
+                  v, (long)((uint8_t *)slot - (uint8_t *)v), y, h->flags, (unsigned)h->type_id,
+                  hb ? (int)hb->space : -1, avant_header(y)->flags,
+                  (unsigned long long)g_stats.collections);
+        }
+      }
+    });
+  }
+  if (found > 32) {
+    fprintf(stderr, "avant gc verify: missing barrier: %llu fields in all before coll=%llu\n",
+            (unsigned long long)found, (unsigned long long)g_stats.collections);
+  }
+  g_missing_barriers += found;
+  for (i = 0; i < g_rnamed_n; i++) {
+    avant_header(g_rnamed[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
+  }
+  g_rnamed_n = 0;
+  verify_clear_traced();
+}
+
 /* C36's check (W14a2): when a collection starts, no object's header
  * carries MARKED or FORWARDED. A young collection's marks end with it
  * (the noted list) and a full collection marks in the side bitmap, so a
