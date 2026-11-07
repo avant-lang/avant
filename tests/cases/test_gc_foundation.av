@@ -1,0 +1,94 @@
+import harness
+import backends
+
+// Stage 28 W14a2: the heap foundation's behavior (gc-design.md §2).
+//
+// heap/fill_full_young.av (C36, D204): an array literal whose fill runs
+// a full and then a young collection after young strings were stored.
+// The full collection's MARKED bits used to survive into the young
+// collection, which then skipped the buffer a root slot names (R1'), so
+// the young strings were not copied (default environment: wrong
+// elements; AVANT_GC_VERIFY=1 reported lost field references). Since
+// W14a2 full collections mark in a side bitmap and every mark a young
+// collection sets is cleared when it ends.
+//
+// heap/full_default.av (O27): reaches the full-collection trigger in the
+// default environment (no suite program did before), with Json.parse on
+// tenured texts between full collections (C31's default-mode exposure).
+// A run with AVANT_GC_STATS=1 checks that full collections ran.
+//
+// Each program runs plain and under each GC environment below: the known
+// stdout, no stderr (no verifier report), exit 0.
+
+fn gc_envs: Array(String) {
+  ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0"]
+}
+
+fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
+  names = ["fill_full_young", "full_default"]
+  wants = ["block buffer bad: 0\nlarge buffer bad: 0\n", "json bad: 0\n"]
+  jobs: Array(HJob) = []
+  p = 0
+  while p < names.size {
+    jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/${names[p]}.av", "${dir}/${names[p]}", "${dir}/${names[p]}.log"))
+    p = p + 1
+  }
+  run_waves(jobs)
+  envs = gc_envs()
+  runs: Array(HJob) = []
+  p = 0
+  while p < names.size {
+    c.eq_int(jobs[p].code, 0, "${names[p]}.av: compiles")
+    e = 0
+    while e < envs.size {
+      runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", envs[e]))
+      e = e + 1
+    }
+    p = p + 1
+  }
+  runs.push(run_job_env(dir, "full_default", "full_default.stats", "AVANT_GC_STATS=1"))
+  run_waves(runs)
+  p = 0
+  while p < names.size {
+    e = 0
+    while e < envs.size {
+      what = "plain"
+      if envs[e].size > 0 {
+        what = "under ${envs[e]}"
+      }
+      k = "${names[p]}.g${e}"
+      c.eq_int(runs[p * envs.size + e].code, 0, "${names[p]}.av ${what}: exit 0")
+      c.eq_str(log_text("${dir}/${k}.out"), wants[p], "${names[p]}.av ${what}: the known stdout")
+      c.eq_str(log_text("${dir}/${k}.err"), "", "${names[p]}.av ${what}: no stderr (no verifier report)")
+      e = e + 1
+    }
+    p = p + 1
+  }
+  stats = log_text("${dir}/full_default.stats.err")
+  c.expect(str_has(stats, " full="), "full_default.av: AVANT_GC_STATS=1 prints the statistics")
+  outer = gc_env_outer("AVANT_GC_STATS")
+  if outer.size > 0 {
+    c.skip("full_default.av: full collections in the default environment", "outer ${outer}")
+  } else {
+    c.expect(!str_has(stats, " full=0 "), "full_default.av: full collections in the default environment")
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_foundation.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_gc_foundation(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

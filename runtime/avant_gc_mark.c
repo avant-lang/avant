@@ -15,43 +15,20 @@
  * defragmentation a full collection may run between the two is
  * avant_gc_defrag.c's. */
 
-static void clear_mark_one(AvantHeader *h, Block *b) {
-  (void)b;
-  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
-}
-
-void gc_clear_all_marks(void) {
-  Block *b;
-  for (b = g_mature; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  for (b = g_from; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  Large *L;
-  for (L = g_large; L; L = L->next) {
-    L->header.flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
-  }
-}
-
 static void scan_payload(void *p);
 
 static void mark(void *p) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
   }
   AvantHeader *h = avant_header(start);
-  if (h->flags & AVANT_FLAG_MARKED) {
+  if (full_marked(h)) {
     return;
   }
-  h->flags |= AVANT_FLAG_MARKED;
+  full_set_mark(h);
   mark_object_lines(start);
   g_live += obj_total(h);
   work_push(start);
@@ -94,9 +71,23 @@ void gc_mark_roots(void) {
   drain();
 }
 
+/* The sweep of one block after a full mark: a block with no live line
+ * is released; a kept block has the start bits of every line it frees
+ * cleared (32 granules a line: half a start word), so a hole's start
+ * bits are clear before reuse (gc-design.md §2.3) and a dead object
+ * whose header lies in a freed line is no longer a heap payload. A dead
+ * object whose header lies in a live line keeps its bit (start bits are
+ * not a liveness test). The inline allocation path still runs only in
+ * fresh blocks (holes are W15b's). */
 int gc_keep_if_live(Block *b) {
+  int i;
   if (gc_block_live_lines(b) == 0) {
     return 0;
+  }
+  for (i = 0; i < LINES_PER_BLOCK; i++) {
+    if (!b->line_mark[i]) {
+      b->start[i >> 1] &= ~(0xffffffffULL << (32 * (i & 1)));
+    }
   }
   gc_reset_block_bump(b);
   return 1;
@@ -122,7 +113,7 @@ uint64_t g_mark_sum;
 
 void gc_sum_marked_one(AvantHeader *h, Block *b) {
   (void)b;
-  if (h->flags & AVANT_FLAG_MARKED) {
+  if (full_marked(h)) {
     g_mark_sum += obj_total(h);
   }
 }

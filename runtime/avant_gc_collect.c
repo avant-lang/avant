@@ -140,6 +140,9 @@ void gc_collect(int full) {
   g_collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   g_stats.collections++;
+  if (g_verify) {
+    gc_verify_no_stale_marks();
+  }
   g_live = 0;
   g_work_n = 0;
   gc_fast_clear();
@@ -221,7 +224,8 @@ void gc_collect(int full) {
     }
   } else {
     Block *b;
-    Large *L;
+    LargeIter it;
+    AvantHeader *lh;
     g_stats.full_collections++;
     /* Non-moving. Evacuating the nursery here needs a second copy of
      * every live object while the from-space blocks are still charged
@@ -229,7 +233,9 @@ void gc_collect(int full) {
     gc_los_spare_drop();
     gc_clear_alloc_cur(SPACE_NURSERY);
     gc_clear_alloc_cur(SPACE_MATURE);
-    gc_clear_all_marks();
+    /* The marks: one memset per chunk of the side bitmap; no header is
+     * touched (no young mark outlives its collection, C36). */
+    gc_clear_side_marks();
     gc_zero_line_marks(g_mature);
     gc_zero_line_marks(g_nursery);
     gc_zero_line_marks(g_from);
@@ -273,11 +279,13 @@ void gc_collect(int full) {
     g_young_large = 0;
     g_young_large_n = 0;
     g_los_eager_hold = 0;
-    for (L = g_large; L; L = L->next) {
-      L->header.flags =
-          (uint16_t)(L->header.flags & (uint16_t)~AVANT_FLAG_YOUNG);
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      lh->flags = (uint16_t)(lh->flags & (uint16_t)~AVANT_FLAG_YOUNG);
     }
     g_last_full_at = g_stats.allocated_bytes;
+    /* Free memory beyond the retention target goes back to the OS. */
+    gc_heap_return(g_live);
   }
 
   if (full) {

@@ -86,7 +86,7 @@ static int def_cand_cmp(const void *a, const void *b) {
 static void defrag_rewrite_slot(void **slot) {
   void *w = *slot;
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(w, &b, &ol);
   void *to;
   if (!start) {
@@ -108,7 +108,7 @@ static void defrag_scan_payload(void *p) {
 
 static void defrag_fix_one(AvantHeader *h, Block *b) {
   (void)b;
-  if (h->flags & AVANT_FLAG_MARKED) {
+  if (full_marked(h)) {
     defrag_scan_payload(payload_of(h));
   }
 }
@@ -126,8 +126,8 @@ static void mature_unlink(Block *b) {
 }
 
 /* Copying defragmentation of the mature space, run inside a full
- * collection after marking (line marks and MARKED flags are the live
- * set) and before the sweep. Live objects in candidate blocks are
+ * collection after marking (line marks and the side mark bits are the
+ * live set) and before the sweep. Live objects in candidate blocks are
  * copied into fresh destination blocks, every root, heap field,
  * and remembered entry naming them is rewritten
  * through the forwarding table, and the emptied blocks are freed
@@ -175,7 +175,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           int bit = __builtin_ctzll(bits);
           size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
           AvantHeader *h = (AvantHeader *)(b->base + off);
-          if (h->flags & AVANT_FLAG_MARKED) {
+          if (full_marked(h)) {
             c->bytes += obj_total(h);
           }
           bits &= bits - 1;
@@ -236,7 +236,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           AvantHeader *h = (AvantHeader *)(cb->base + off);
           size_t total;
           AvantHeader *nh;
-          if (!(h->flags & AVANT_FLAG_MARKED)) {
+          if (!full_marked(h)) {
             bits &= bits - 1;
             continue;
           }
@@ -264,6 +264,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           nh = (AvantHeader *)bump;
           memcpy(nh, h, total);
           set_start(db, (size_t)(bump - db->base));
+          full_set_mark(nh);
           mark_lines(db, (size_t)(bump - db->base), total);
           fwd_put(payload_of(h), payload_of(nh));
           g_def_evac_bytes += total;
@@ -326,10 +327,12 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
   {
-    Large *L;
-    for (L = g_large; L; L = L->next) {
-      if (L->header.flags & AVANT_FLAG_MARKED) {
-        defrag_scan_payload(payload_of(&L->header));
+    LargeIter it;
+    AvantHeader *lh;
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      if (full_marked(lh)) {
+        defrag_scan_payload(payload_of(lh));
       }
     }
   }

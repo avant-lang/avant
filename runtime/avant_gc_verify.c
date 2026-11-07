@@ -19,7 +19,7 @@ int g_verify;
 
 static int verify_ptr(void *p, const char *where, void *holder, long off) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start || !b || b->space != SPACE_NURSERY) {
     return 0;
@@ -51,9 +51,16 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
   return 0;
 }
 
+/* The objects verify_trace flagged FORWARDED (its visited bit), cleared
+ * when gc_verify_young_copy ends, before the young copy discards
+ * from-space (W14a2: no whole-heap clearing walk follows any more). */
+static void **g_vnoted;
+static size_t g_vnoted_n;
+static size_t g_vnoted_cap;
+
 static void verify_trace(void *p) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
@@ -63,7 +70,20 @@ static void verify_trace(void *p) {
     return;
   }
   h->flags |= AVANT_FLAG_FORWARDED;
+  if (g_vnoted_n == g_vnoted_cap) {
+    g_vnoted_cap = g_vnoted_cap ? g_vnoted_cap * 2 : 1024;
+    g_vnoted = gc_xrealloc(g_vnoted, g_vnoted_cap * sizeof(void *));
+  }
+  g_vnoted[g_vnoted_n++] = start;
   work_push(start);
+}
+
+static void verify_clear_traced(void) {
+  size_t i;
+  for (i = 0; i < g_vnoted_n; i++) {
+    avant_header(g_vnoted[i])->flags &= (uint16_t)~AVANT_FLAG_FORWARDED;
+  }
+  g_vnoted_n = 0;
 }
 
 static void verify_tls_slot(void **slot) {
@@ -75,8 +95,8 @@ static void verify_tls_slot(void **slot) {
  * field. This is what keeps the checker sensitive to the F1 class
  * (a live holder the young copy itself never traced) while staying
  * silent about dead mature objects, whose fields legitimately name
- * copied objects. FORWARDED is free here: clear_mark_flags resets
- * it at the end of the collection. */
+ * copied objects. FORWARDED is free here (no collector pass uses it);
+ * verify_clear_traced resets it before gc_verify_young_copy returns. */
 static void verify_mark_reachable(void) {
   ThreadReg *t;
   for (t = g_threads; t; t = t->next) {
@@ -211,10 +231,52 @@ void gc_verify_young_copy(void) {
     }
   }
   {
-    Large *L;
-    for (L = g_large; L; L = L->next) {
-      verify_obj_fields(&L->header, NULL);
+    LargeIter it;
+    AvantHeader *lh;
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      verify_obj_fields(lh, NULL);
     }
+  }
+  verify_clear_traced();
+}
+
+/* C36's check (W14a2): when a collection starts, no object's header
+ * carries MARKED or FORWARDED. A young collection's marks end with it
+ * (the noted list) and a full collection marks in the side bitmap, so a
+ * header bit left over is a mark a later young collection would read as
+ * "already scanned this cycle" and skip (R1'). */
+static uint64_t g_stale_seen;
+
+static void verify_no_stale_one(AvantHeader *h, Block *b) {
+  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED)) {
+    if (g_stale_seen++ < 16) {
+      fprintf(stderr,
+              "avant gc verify: stale mark on %p flags=0x%x space=%d at the start of coll=%llu\n",
+              payload_of(h), h->flags, b ? (int)b->space : -1,
+              (unsigned long long)g_stats.collections);
+    }
+  }
+}
+
+void gc_verify_no_stale_marks(void) {
+  Block *b;
+  LargeIter it;
+  AvantHeader *lh;
+  Block *lists[4];
+  int k;
+  lists[0] = g_mature;
+  lists[1] = g_nursery;
+  lists[2] = g_from;
+  lists[3] = g_to;
+  for (k = 0; k < 4; k++) {
+    for (b = lists[k]; b; b = b->next) {
+      gc_foreach_block_object(b, verify_no_stale_one);
+    }
+  }
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    verify_no_stale_one(lh, NULL);
   }
 }
 
@@ -251,7 +313,7 @@ static void verify_defrag_word(void *w, const char *where, void *at) {
 
 static void verify_defrag_fields(AvantHeader *h, Block *b) {
   void *p;
-  if (!(h->flags & AVANT_FLAG_MARKED) || (b && gc_block_set_has(&g_def_release, b))) {
+  if (!full_marked(h) || (b && gc_block_set_has(&g_def_release, b))) {
     return;
   }
   p = payload_of(h);
@@ -268,7 +330,8 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   uint8_t *lo = g_self_reg.stack_lo;
   ThreadReg *t;
   Block *b;
-  Large *L;
+  LargeIter it;
+  AvantHeader *lh;
   uint32_t i;
   if (hi && p && p < hi && !(lo && p < lo)) {
     p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
@@ -296,7 +359,7 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
     void *obj = g_remset[i];
     Block *rb = obj ? block_of(avant_header(obj)) : NULL;
     if (rb && gc_block_set_has(&g_def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
-        (avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
+        full_marked(avant_header(obj))) {
       verify_defrag_word(obj, "remembered entry", (void *)&g_remset[i]);
     }
   }
@@ -310,7 +373,8 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   for (b = g_from; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
-  for (L = g_large; L; L = L->next) {
-    verify_defrag_fields(&L->header, NULL);
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    verify_defrag_fields(lh, NULL);
   }
 }

@@ -1,0 +1,61 @@
+import std.json
+
+// O27 (Stage 28 W14a2): a program that reaches the full-collection
+// trigger in the default environment. Before it, no suite program ran a
+// full collection by default (97 fixtures and examples swept, W11c), so
+// the default-mode exposure of C31 (avant_json_parse holding its text
+// across its pool's allocation) never showed in the suite.
+//
+// A table of 50,000 JSON texts is kept while its entries are replaced
+// one by one: a replaced text has survived young collections and was
+// promoted, and each Json.parse allocates its pool as a mature large
+// object, so mature space grows until the full-collection trigger fires
+// (by AVANT_GC_STATS=1 at W14a2: 12 full collections in the default
+// environment, defragmentation evacuating 23 blocks); every 20th round
+// parses a tenured text in the table and checks it. Every line prints 0.
+
+fn text(k: Int, r: Int): String {
+  "{\"k\": ${k}, \"name\": \"m${r}\", \"pad\": \"${r}-${r}-${r}-${r}\"}"
+}
+
+fn main {
+  n = 50000
+  keep: Array(String) = []
+  at: Array(Int) = []
+  i = 0
+  while i < n {
+    keep.push(text(i, 0))
+    at.push(0)
+    i = i + 1
+  }
+  bad = 0
+  r = 0
+  while r < 300000 {
+    j = r % n * 7919 % n
+    keep[j] = text(j, r)
+    at[j] = r
+    if r % 20 == 0 {
+      w = r % n * 31 % n
+      if doc = Json.parse(keep[w]) {
+        if k = doc.int("k") {
+          if k != w {
+            bad = bad + 1
+          }
+        } else {
+          bad = bad + 1
+        }
+      } else {
+        bad = bad + 1
+      }
+    }
+    r = r + 1
+  }
+  k = 0
+  while k < n {
+    if keep[k] != text(k, at[k]) {
+      bad = bad + 1
+    }
+    k = k + 1
+  }
+  puts("json bad: ${bad}")
+}

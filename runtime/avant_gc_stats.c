@@ -127,14 +127,16 @@ static uint64_t g_los_spare_bytes;
 
 void gc_print_stats(void) {
   {
-    Large *L;
+    LargeIter it;
+    AvantHeader *h;
     g_los_now = 0;
     g_los_now_bytes = 0;
-    for (L = g_large; L; L = L->next) {
+    gc_large_iter_init(&it);
+    while ((h = gc_large_next(&it))) {
       g_los_now++;
-      g_los_now_bytes += (uint64_t)gc_large_chunk(L);
+      g_los_now_bytes += (uint64_t)gc_large_bytes(h);
     }
-    g_los_spare_bytes = g_los_spare ? (uint64_t)gc_large_chunk(g_los_spare) : 0;
+    g_los_spare_bytes = g_los_spare ? (uint64_t)gc_large_bytes(g_los_spare) : 0;
   }
   fprintf(stderr,
           "avant gc: collections=%llu young=%llu full=%llu "

@@ -20,8 +20,19 @@ int g_saw_pinned_nursery;
 
 int g_discard_from;
 
-/* Objects flagged MARKED by the survival probe. Clearing them by walking
- * every nursery object retraced the dead tree. */
+/* The noted list (C36, gc-design.md §2.6): every object a young
+ * collection flags MARKED (its "traced this cycle" bit), probe or copy:
+ * nursery objects the probe reaches, mature, large and from-space
+ * objects it scans (trace_mature), remembered objects it scans, copies
+ * and pinned survivors. gc_clear_noted clears exactly those when the
+ * collection ends (after a probe, also when the probe decides to pause
+ * instead of copying), so no MARKED outlives the collection that set it
+ * and no later young collection reads a stale one as "already scanned".
+ * Full collections mark in the side bitmap and never touch MARKED.
+ * Before W14a2 only the probe's nursery marks were noted; the others
+ * were cleared by a walk of every object of every space after a copy
+ * (clear_mark_flags), and not at all after a probe-only pause, a
+ * remembered entry's frontier eviction, or a full collection. */
 static void **g_noted;
 static uint32_t g_noted_n;
 static uint32_t g_noted_cap;
@@ -45,7 +56,7 @@ void gc_clear_noted(void) {
   uint32_t i;
   for (i = 0; i < g_noted_n; i++) {
     avant_header(g_noted[i])->flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
   }
   g_noted_n = 0;
 }
@@ -67,7 +78,7 @@ static void probe_note(void *start) {
 static void remember_young_edge(void **slot, void *payload) {
   Block *pb = NULL;
   Block *ob = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *owner;
   if (!is_heap_payload(payload, &pb, NULL) || !pb) {
     return;
@@ -97,7 +108,7 @@ static int g_rem_track_dirty;
 
 static int names_young(void *p) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return 0;
@@ -151,9 +162,7 @@ static void trace_mature(void *p, int from_mature) {
   }
   h->flags |= AVANT_FLAG_MARKED;
   note_los_keep(h, from_mature);
-  if (g_probe) {
-    note_marked(p);
-  }
+  note_marked(p);
   saved = g_from_mature;
   g_from_mature = 1;
   /* Nested mature scans do not dirty the remembered parent: only its
@@ -185,6 +194,7 @@ void *copy_nursery(void *p) {
     g_saw_pinned_nursery = 1;
     if (!(h->flags & AVANT_FLAG_MARKED)) {
       h->flags |= AVANT_FLAG_MARKED;
+      note_marked(p);
       mark_object_lines(p);
       g_live += obj_total(h);
       work_push(p);
@@ -206,6 +216,7 @@ void *copy_nursery(void *p) {
     nh->flags |= (uint16_t)(AVANT_FLAG_SURVIVED | AVANT_FLAG_YOUNG);
   }
   void *np = payload_of(nh);
+  note_marked(np);
   fwd_put(p, np);
   g_stats.copied_bytes += total;
   g_live += total;
@@ -217,7 +228,7 @@ void *copy_nursery(void *p) {
 void copy_from_slot(void **slot) {
   void *p = *slot;
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
@@ -261,7 +272,7 @@ void copy_from_slot(void **slot) {
 static void relocate_root_location(void ***slot_loc) {
   void *addr = (void *)*slot_loc;
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(addr, &b, &ol);
   if (!start || !b || b->space != SPACE_NURSERY) {
     return;
@@ -337,8 +348,12 @@ void gc_gen_young_copy(void) {
       void *obj = g_remset[ri];
       if (is_heap_payload(obj, NULL, NULL)) {
         /* A remembered object is a root this cycle: mark it so the
-         * probe pass's gc_rem_scrub keeps it in the set. */
-        avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+         * probe pass's gc_rem_scrub keeps it in the set (noted, so the
+         * mark ends with the collection, C36). */
+        if (!(avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
+          avant_header(obj)->flags |= AVANT_FLAG_MARKED;
+          note_marked(obj);
+        }
         g_rem_fields += rem_field_count(obj);
         g_rem_track = 1;
         g_rem_track_dirty = 0;
@@ -440,6 +455,8 @@ static void park_nursery_from(void) {
       (void)block_keep_pinned(b);
     }
     b->space = SPACE_FROM;
+    g_space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
+    g_space_bytes[SPACE_FROM] += BLOCK_SIZE;
     b->next = g_from;
     g_from = b;
     b = next;
@@ -464,38 +481,14 @@ static void discard_nursery_from(void) {
     Block *next = b->next;
     if (block_keep_pinned(b)) {
       b->space = SPACE_FROM;
+      g_space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
+      g_space_bytes[SPACE_FROM] += BLOCK_SIZE;
       b->next = g_from;
       g_from = b;
     } else {
       gc_cache_or_free_block(b);
     }
     b = next;
-  }
-}
-
-static void clear_mark_flag_one(AvantHeader *h, Block *b) {
-  (void)b;
-  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
-}
-
-static void clear_mark_flags(void) {
-  Block *b;
-  Large *L;
-  for (b = g_mature; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (b = g_from; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (b = g_to; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (L = g_large; L; L = L->next) {
-    L->header.flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
   }
 }
 
@@ -506,6 +499,8 @@ static void adopt_to_space(void) {
   while (b) {
     Block *next = b->next;
     b->space = SPACE_NURSERY;
+    g_space_bytes[SPACE_TO] -= BLOCK_SIZE;
+    g_space_bytes[SPACE_NURSERY] += BLOCK_SIZE;
     b->next = g_nursery;
     g_nursery = b;
     b = next;
@@ -543,5 +538,8 @@ void gc_young_copy_out(int tenure) {
   g_to_bytes = 0;
   g_force_tenure = 0;
   gc_reclaim_young_large();
-  clear_mark_flags();
+  /* The end of the copy's marks: the noted list, not a walk of every
+   * object of every space (gc-design.md §2.6; the walk was 7% of the
+   * audit's mature.av profile). */
+  gc_clear_noted();
 }

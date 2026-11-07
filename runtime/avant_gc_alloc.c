@@ -51,6 +51,10 @@ uint64_t avant_since_gc;
 
 uint64_t g_heap_bytes;
 uint64_t g_heap_max;
+/* Block bytes per space (SPACE_*), kept as blocks enter a space, move
+ * between spaces and leave (W14a2), so gc_note_peak reads them instead
+ * of walking every list. */
+uint64_t g_space_bytes[4];
 
 /* Nursery allocations taken by generated code without a call. */
 uint64_t avant_inline_allocs;
@@ -108,8 +112,10 @@ void gc_cache_or_free_block(Block *b) {
   }
   /* Out of use: no lookup finds it, as when it left the block hash. A
    * cached block stays charged to g_heap_bytes; a released one goes back
-   * to the reservation's free list (still committed, W14a2 returns it). */
+   * to its chunk's free list (resident until a full collection's
+   * gc_heap_return). */
   b->in_use = 0;
+  g_space_bytes[b->space] -= BLOCK_SIZE;
   if (g_cache_n < CACHE_BLOCKS) {
     b->next = g_cache;
     g_cache = b;
@@ -120,32 +126,20 @@ void gc_cache_or_free_block(Block *b) {
   g_heap_bytes -= BLOCK_SIZE;
 }
 
-static uint64_t space_block_bytes(Block *b) {
-  uint64_t n = 0;
-  for (; b; b = b->next) {
-    n += BLOCK_SIZE;
-  }
-  return n;
-}
-
 /* Wave 4 step 1: when the heap high-water mark moves, snapshot what
- * the heap is made of, so a peak can be decomposed after the fact. */
+ * the heap is made of, so a peak can be decomposed after the fact.
+ * O(1) since W14a2: counters, not walks of the block lists. */
 void gc_note_peak(void) {
-  Large *L;
-  uint64_t large = 0;
   if (g_heap_bytes <= g_stats.peak_heap) {
     return;
   }
   g_stats.peak_heap = g_heap_bytes;
-  g_pk_nursery = space_block_bytes(g_nursery);
-  g_pk_mature = space_block_bytes(g_mature);
-  g_pk_from = space_block_bytes(g_from);
-  g_pk_to = space_block_bytes(g_to);
+  g_pk_nursery = g_space_bytes[SPACE_NURSERY];
+  g_pk_mature = g_space_bytes[SPACE_MATURE];
+  g_pk_from = g_space_bytes[SPACE_FROM];
+  g_pk_to = g_space_bytes[SPACE_TO];
   g_pk_cache = (uint64_t)g_cache_n * BLOCK_SIZE;
-  for (L = g_large; L; L = L->next) {
-    large += align_up(sizeof(Large) + L->header.size);
-  }
-  g_pk_large = large;
+  g_pk_large = g_large_bytes;
 }
 
 /* Wave 4 step 2: outside a collection the copy reserve counts as
@@ -193,6 +187,7 @@ Block *gc_new_block(uint8_t space) {
    * payload in init_object, so a fresh or recycled block costs no
    * whole-block clearing pass ahead of the mutator's own writes. */
   b->space = space;
+  g_space_bytes[space] += BLOCK_SIZE;
   b->search = 0;
   b->bump = b->base;
   b->limit = b->base + BLOCK_SIZE;
