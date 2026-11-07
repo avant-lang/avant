@@ -50,13 +50,56 @@
  *   - avant_gc_heap_goal_collect may run a full collection; it is called
  *     only where the caller's C frames hold no references (the HTTP
  *     dispatch).
- *
  *   - A runtime unit that keeps a heap reference in a thread-local
  *     variable registers that slot once per thread with
  *     avant_gc_add_root before it first holds one (avant_hash.c's last
  *     key); the collections on that thread read and rewrite it like a
  *     root slot (Stage 28 W14b2, gc-design.md section 1.4; it replaced a
  *     callback from the collector into avant_hash.c).
+ *
+ * The runtime-C contract (Stage 28 W14b2 states it here; gc-design.md
+ * section 4.2's RC1-RC4 and its handle scopes replace the first part in
+ * W16):
+ *
+ *   The stress mode's contract, the defer discipline (W14b1). A runtime
+ *   helper that holds a heap reference in C across a point where a
+ *   collection may run keeps it inside one defer region
+ *   (avant_gc_defer_enter ... avant_gc_defer_leave). Its outermost
+ *   region begins before it forms a derived pointer (an interior pointer
+ *   such as s + start, or a buffer's data pointer) or writes a stack
+ *   buffer it will copy into the heap, because the region's entry is a
+ *   collection point: with the nursery off it may run a full
+ *   collection, and under AVANT_GC_STRESS=1 a young collection that
+ *   moves what it reaches. An internal helper whose callers do either
+ *   before calling it enters quietly (avant_gc_quiet_defer_enter: the
+ *   same region, without the stress point), as do the call table's
+ *   quiet rows, whose callers may hold references outside their slots
+ *   across the call (V11/V12; until W15 makes those rows collecting
+ *   calls). Fresh objects the helper allocated and has not yet
+ *   published are held the same way, inside the region.
+ *
+ *   Barriers (D187). Every store of a reference into a heap object is
+ *   followed by avant_barrier on that object (or avant_barrier_at on the
+ *   stored-to address) before the next point where a collection may run
+ *   (C34's lesson: avant_hash_inc_slice and array_grow lost young keys
+ *   and elements without one).
+ *
+ *   The young collection's three-way rule, R1' (gc-design.md section
+ *   1.3, D219 (2)). A young collection scans one level of every
+ *   non-young object that is named (a) by a root (a frame slot, a pin, a
+ *   runtime root of avant_gc_add_root), (b) by a field of a young
+ *   object, or (c) by a field of a remembered object; deeper non-young
+ *   objects are followed only when they are remembered themselves. The
+ *   generated code's fresh-store exemption relies on it (a buffer
+ *   promoted in the middle of its fill is still found through its slot,
+ *   mir.md section 5.4), and so did the runtime builders that fill a
+ *   born-mature large reference buffer (array_grow, str_array_build,
+ *   hash_array_str, avant_array_copy, avant_argv: a young array header
+ *   (b) or a root (a) names the buffer; audit N2b), which since W13b
+ *   (D220) also barrier the buffer. AVANT_GC_VERIFY checks the generational invariant in this wording
+ *   before every young collection: every young reference held by a
+ *   non-young object's field is held by a remembered object or by an
+ *   object R1' names this cycle ("missing barrier: ..." otherwise).
  */
 
 /*
