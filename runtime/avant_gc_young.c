@@ -455,6 +455,8 @@ static void park_nursery_from(void) {
       (void)block_keep_pinned(b);
     }
     b->space = SPACE_FROM;
+    g_space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
+    g_space_bytes[SPACE_FROM] += BLOCK_SIZE;
     b->next = g_from;
     g_from = b;
     b = next;
@@ -479,6 +481,8 @@ static void discard_nursery_from(void) {
     Block *next = b->next;
     if (block_keep_pinned(b)) {
       b->space = SPACE_FROM;
+      g_space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
+      g_space_bytes[SPACE_FROM] += BLOCK_SIZE;
       b->next = g_from;
       g_from = b;
     } else {
@@ -495,6 +499,8 @@ static void adopt_to_space(void) {
   while (b) {
     Block *next = b->next;
     b->space = SPACE_NURSERY;
+    g_space_bytes[SPACE_TO] -= BLOCK_SIZE;
+    g_space_bytes[SPACE_NURSERY] += BLOCK_SIZE;
     b->next = g_nursery;
     g_nursery = b;
     b = next;

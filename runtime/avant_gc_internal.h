@@ -327,6 +327,7 @@ extern uint8_t g_alloc_fresh[4];
 extern __thread int g_alloc_mature;
 extern uint64_t g_heap_bytes;
 extern uint64_t g_heap_max;
+extern uint64_t g_space_bytes[4];
 void gc_reset_block_bump(Block *b);
 void gc_cache_or_free_block(Block *b);
 void gc_note_peak(void);
