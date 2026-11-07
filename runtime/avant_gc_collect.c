@@ -407,6 +407,9 @@ void gc_init_slow(void) {
     g_reserve_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
   }
   g_verify = getenv("AVANT_GC_VERIFY") != NULL;
+  /* The heap's address range (W14a1): reserved once, here, so a refusal
+   * is met at start-up (halving down to 1 GiB) and not at a block. */
+  gc_heap_reserve();
   if (getenv("AVANT_GC_STATS")) {
     atexit(gc_print_stats);
   }

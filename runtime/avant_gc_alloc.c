@@ -55,25 +55,6 @@ uint64_t g_heap_max;
 /* Nursery allocations taken by generated code without a call. */
 uint64_t avant_inline_allocs;
 
-static void block_register(Block *b) {
-  size_t k = block_hash(b->base);
-  b->hash_next = g_bht[k];
-  g_bht[k] = b;
-}
-
-static void block_unregister(Block *b) {
-  size_t k = block_hash(b->base);
-  Block **pp = &g_bht[k];
-  while (*pp) {
-    if (*pp == b) {
-      *pp = b->hash_next;
-      b->hash_next = NULL;
-      return;
-    }
-    pp = &(*pp)->hash_next;
-  }
-}
-
 static int find_hole(Block *b, size_t need) {
   int i = b->search;
   while (i < LINES_PER_BLOCK) {
@@ -125,17 +106,17 @@ void gc_cache_or_free_block(Block *b) {
   if (g_fast_block == b) {
     gc_fast_clear();
   }
-  block_unregister(b);
+  /* Out of use: no lookup finds it, as when it left the block hash. A
+   * cached block stays charged to g_heap_bytes; a released one goes back
+   * to the reservation's free list (still committed, W14a2 returns it). */
+  b->in_use = 0;
   if (g_cache_n < CACHE_BLOCKS) {
-    memset(b->line_mark, 0, sizeof(b->line_mark));
-    memset(b->start, 0, sizeof(b->start));
     b->next = g_cache;
     g_cache = b;
     g_cache_n++;
     return;
   }
-  free(b->base);
-  free(b);
+  gc_block_give(b);
   g_heap_bytes -= BLOCK_SIZE;
 }
 
@@ -197,23 +178,14 @@ Block *gc_new_block(uint8_t space) {
     b = g_cache;
     g_cache = b->next;
     g_cache_n--;
-    memset(b->line_mark, 0, sizeof(b->line_mark));
-    memset(b->start, 0, sizeof(b->start));
+    memset(b->line_mark, 0, LINES_PER_BLOCK);
+    memset(b->start, 0, START_WORDS * sizeof(uint64_t));
     b->next = NULL;
-    b->hash_next = NULL;
   } else {
     if (!heap_block_fits()) {
       return NULL;
     }
-    b = calloc(1, sizeof(Block));
-    if (!b) {
-      gc_die("out of memory");
-    }
-    void *mem = NULL;
-    if (posix_memalign(&mem, BLOCK_SIZE, BLOCK_SIZE) != 0) {
-      gc_die("out of memory");
-    }
-    b->base = mem;
+    b = gc_block_take();
     g_heap_bytes += BLOCK_SIZE;
     gc_note_peak();
   }
@@ -224,7 +196,7 @@ Block *gc_new_block(uint8_t space) {
   b->search = 0;
   b->bump = b->base;
   b->limit = b->base + BLOCK_SIZE;
-  block_register(b);
+  b->in_use = 1;
   if (space == SPACE_NURSERY) {
     b->next = g_nursery;
     g_nursery = b;
