@@ -182,6 +182,10 @@ void *gc_copy_nursery(void *p) {
     nh->flags |= (uint16_t)(AVANT_FLAG_SURVIVED | AVANT_FLAG_YOUNG);
   }
   void *np = payload_of(nh);
+  if (tenure) {
+    gc_heap.ctr.prom.copied += total;
+    gc_heap.promoted_since_full += total;
+  }
   note_marked(np);
   gc_fwd_put(p, np);
   avant_g_stats.copied_bytes += total;
@@ -390,6 +394,9 @@ static void promote_pinned_one(AvantHeader *h, Block *b) {
   (void)b;
   if (h->flags & AVANT_FLAG_PINNED) {
     gc_heap.block_has_pin = 1;
+    if (h->flags & AVANT_FLAG_YOUNG) {
+      gc_heap.ctr.prom.pinned += gc_obj_total(h);
+    }
     h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
   }
 }

@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* The collection driver and its policy (Stage 28 W12, moved from
  * avant_rt.c): initialization from the environment (the settings,
@@ -177,8 +178,75 @@ static int young_pause(uint64_t used, uint64_t surv) {
   return 1;
 }
 
-void gc_collect(GcKind kind, int allow_move) {
+static uint64_t now_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+/* A full collection's cause (ctr.why). The trigger counts as promotion
+ * when young collections promoted at least half of the mature growth
+ * since the last full collection, as mature allocation otherwise. */
+static void count_full_why(GcWhy why) {
+  GcWhyCounters *c = &gc_heap.ctr.why;
+  switch (why) {
+  case GC_WHY_TRIGGER:
+    if (gc_heap.promoted_since_full * 2 >= gc_heap.mature_since_full &&
+        gc_heap.promoted_since_full > 0) {
+      c->promotion++;
+    } else {
+      c->mature++;
+    }
+    break;
+  case GC_WHY_LIMIT:
+    c->limit++;
+    break;
+  case GC_WHY_HEAP_GOAL:
+    c->heap_goal++;
+    break;
+  default:
+    c->explicit_++;
+    break;
+  }
+}
+
+/* M6 (gc-design.md §3.4): after a full collection's mark, the free
+ * lines of every partly used block of LIST, and all its lines. */
+static void frag_scan(Block *list, uint64_t *free_lines, uint64_t *lines) {
+  Block *b;
+  for (b = list; b; b = b->next) {
+    int live = gc_block_live_lines(b);
+    *lines += LINES_PER_BLOCK;
+    if (live > 0 && live < LINES_PER_BLOCK) {
+      *free_lines += (uint64_t)(LINES_PER_BLOCK - live);
+    }
+  }
+}
+
+static void frag_note(void) {
+  GcFragCounters *c = &gc_heap.ctr.frag;
+  uint64_t free_lines = 0;
+  uint64_t lines = 0;
+  frag_scan(gc_heap.space[SPACE_MATURE].list, &free_lines, &lines);
+  frag_scan(gc_heap.space[SPACE_NURSERY].list, &free_lines, &lines);
+  frag_scan(gc_heap.space[SPACE_FROM].list, &free_lines, &lines);
+  c->fulls++;
+  c->free_lines += free_lines;
+  c->lines += lines;
+  if (lines) {
+    double f = (double)free_lines / (double)lines;
+    uint64_t ppm = (uint64_t)(f * 1e6);
+    c->num += f * (double)gc_heap.heap_bytes;
+    c->den += (double)gc_heap.heap_bytes;
+    if (ppm > c->max_ppm) {
+      c->max_ppm = ppm;
+    }
+  }
+}
+
+void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
+  uint64_t t0 = now_ns();
   int pause = 0;
   uint64_t used = 0;
   uint64_t surv = 0;
@@ -191,6 +259,9 @@ void gc_collect(GcKind kind, int allow_move) {
   gc_heap.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
+  if (full) {
+    count_full_why(why);
+  }
   if (gc_heap.set.verify) {
     gc_verify_no_stale_marks();
     if (!full) {
@@ -296,6 +367,7 @@ void gc_collect(GcKind kind, int allow_move) {
     gc_zero_line_marks(gc_heap.space[SPACE_NURSERY].list);
     gc_zero_line_marks(gc_heap.space[SPACE_FROM].list);
     gc_mark_roots();
+    frag_note();
     {
       Block *db;
       uint64_t live_lines_this = 0;
@@ -334,6 +406,7 @@ void gc_collect(GcKind kind, int allow_move) {
     }
     avant_nursery_held = gc_heap.mark_sum;
     gc_heap.mature_since_full = 0;
+    gc_heap.promoted_since_full = 0;
     gc_heap.young_large = 0;
     gc_heap.young_large_n = 0;
     gc_heap.los_eager_hold = 0;
@@ -367,6 +440,17 @@ void gc_collect(GcKind kind, int allow_move) {
   if (gc_heap.live > gc_heap.ctr.peak_live) {
     gc_heap.ctr.peak_live = gc_heap.live;
   }
+  {
+    uint64_t dt = now_ns() - t0;
+    if (full) {
+      gc_heap.ctr.pause.full_ns += dt;
+    } else {
+      gc_heap.ctr.pause.young_ns += dt;
+    }
+    if (dt > gc_heap.ctr.pause.max_ns) {
+      gc_heap.ctr.pause.max_ns = dt;
+    }
+  }
   gc_heap.collecting = 0;
 }
 
@@ -376,7 +460,7 @@ void gc_maybe_collect(void) {
   }
   if (gc_heap.limit_pending) {
     gc_heap.limit_pending = 0;
-    gc_collect(GC_FULL, 1);
+    gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
     return;
   }
   /*
@@ -392,7 +476,7 @@ void gc_maybe_collect(void) {
    */
   if (gc_heap.set.nursery_off) {
     if (avant_since_gc >= gc_heap.full_trigger) {
-      gc_collect(GC_FULL, 1);
+      gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
     }
     return;
   }
@@ -401,9 +485,9 @@ void gc_maybe_collect(void) {
    * objects, has grown by gc_heap.full_trigger. Counting every nursery byte here
    * marked a live tree that a young collection should have discarded. */
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
-    gc_collect(GC_FULL, 1);
+    gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
-    gc_collect(GC_YOUNG, 1);
+    gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
   }
 }
 
@@ -417,7 +501,7 @@ void gc_stress_point(void) {
     return;
   }
   gc_heap.stress_now = 1;
-  gc_collect(GC_YOUNG, 1);
+  gc_collect(GC_YOUNG, 1, GC_WHY_STRESS);
   gc_heap.stress_now = 0;
 }
 
@@ -459,7 +543,7 @@ void avant_gc_heap_goal_collect(void) {
            (gc_heap.live > (4ull * 1024ull * 1024ull)
                 ? gc_heap.live
                 : (4ull * 1024ull * 1024ull)))) {
-    gc_collect(GC_FULL, 0);
+    gc_collect(GC_FULL, 0, GC_WHY_HEAP_GOAL);
   }
   pthread_mutex_unlock(&gc_heap.world);
 }
@@ -468,7 +552,7 @@ void avant_nursery_reclaim(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
   if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
-    gc_collect(GC_YOUNG, 1);
+    gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
   }
   pthread_mutex_unlock(&gc_heap.world);
 }
@@ -476,6 +560,6 @@ void avant_nursery_reclaim(void) {
 void avant_gc_collect(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
-  gc_collect(GC_FULL, 1);
+  gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
   pthread_mutex_unlock(&gc_heap.world);
 }

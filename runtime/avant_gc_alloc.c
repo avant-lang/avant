@@ -299,7 +299,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
       /* The reserve charge is soft (see heap_block_fits): collect,
        * then retry charged only the true heap bytes, so a reserve
        * refusal can never become a spurious heap-limit death. */
-      gc_collect(GC_FULL, 1);
+      gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
       gc_heap.reserve_retry = 1;
       {
         AvantHeader *retry = place(total, space, 1);
@@ -445,7 +445,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     if (!gc_heap.set.nursery_off && !gc_thread.alloc_mature && !gc_heap.defer && gc_heap.young_large_n > 0 &&
         (gc_heap.young_large >= avant_young_bytes || (!gc_heap.los_eager_hold && gc_heap.young_large_n == 1))) {
       uint64_t mature_before = gc_heap.mature_since_full;
-      gc_collect(GC_YOUNG, 1);
+      gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
       if (gc_heap.young_large_n > 0 || gc_heap.mature_since_full > mature_before) {
         gc_heap.los_eager_hold = 1;
       } else {

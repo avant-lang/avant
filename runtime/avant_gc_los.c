@@ -334,6 +334,8 @@ static void promote_young_large(AvantHeader *h) {
   size_t bytes = gc_large_bytes(h);
   gc_heap.ctr.los.promoted++;
   gc_heap.ctr.los.promoted_bytes += (uint64_t)bytes;
+  gc_heap.ctr.prom.large += (uint64_t)bytes;
+  gc_heap.promoted_since_full += (uint64_t)bytes;
   h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_LOS_KEEP));
   if (gc_heap.young_large >= bytes) {
     gc_heap.young_large -= bytes;
@@ -415,7 +417,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
        * limit and the collection runs after the region. */
       gc_limit_collect_pending();
     } else {
-      gc_collect(GC_FULL, 1);
+      gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
       if (gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
         gc_die("heap limit");
       }

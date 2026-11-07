@@ -430,6 +430,59 @@ typedef struct GcLosCounters {
   uint64_t promoted_bytes;
 } GcLosCounters;
 
+/* pause, why, frag, prom (Stage 28 W15a1, gc-design.md §3.4 M5 and
+ * M6). pause: the wall time of every collection (CLOCK_MONOTONIC around
+ * gc_collect's body), young and full summed in nanoseconds, and the
+ * longest single pause. */
+typedef struct GcPauseCounters {
+  uint64_t young_ns;
+  uint64_t full_ns;
+  uint64_t max_ns;
+} GcPauseCounters;
+
+/* why: full collections by cause (GcWhy): mature space grew by the
+ * trigger mostly through promotion (bytes the young collection moved or
+ * promoted into mature space since the last full collection) or mostly
+ * through mature allocation (allocation in mature space: large objects
+ * born mature, worker threads, the nursery off); the heap limit
+ * (AVANT_HEAP_MAX_MB, a refused block or page run, or a full collection
+ * C32 left pending); or an explicit request (avant_gc_collect, the HTTP
+ * boundary's avant_gc_heap_goal_collect). */
+typedef struct GcWhyCounters {
+  uint64_t promotion;
+  uint64_t mature;
+  uint64_t limit;
+  uint64_t heap_goal;
+  uint64_t explicit_;
+} GcWhyCounters;
+
+/* frag: M6, at each full collection after the mark (before the sweep):
+ * the free lines of the partly used blocks (some line live, some free)
+ * of every space, and every block's lines. free_lines and lines are
+ * summed over the full collections; weighted is §3.4 rule 5's aggregate,
+ * the free-line fraction weighted by the heap bytes (gc_heap.heap_bytes)
+ * at each full collection, kept as the two sums (num in line-fraction
+ * times bytes, den in bytes) so the line prints num / den in parts per
+ * million; max_ppm is the largest single collection's fraction. */
+typedef struct GcFragCounters {
+  uint64_t fulls;
+  uint64_t free_lines;
+  uint64_t lines;
+  double num;
+  double den;
+  uint64_t max_ppm;
+} GcFragCounters;
+
+/* prom: bytes promoted into mature space by young collections: copied
+ * (a survivor tenured into a mature block), pinned (a pinned nursery
+ * object promoted in place, D205) and large (a young large object whose
+ * YOUNG is cleared). */
+typedef struct GcPromCounters {
+  uint64_t copied;
+  uint64_t pinned;
+  uint64_t large;
+} GcPromCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -438,6 +491,10 @@ typedef struct GcCounters {
   GcYngCounters yng;
   GcPkCounters pk;
   GcLosCounters los;
+  GcPauseCounters pause;
+  GcWhyCounters why;
+  GcFragCounters frag;
+  GcPromCounters prom;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
   /* The cumulative count of stack words still naming from-space after
@@ -669,6 +726,9 @@ typedef struct GcHeap {
    * reach because they stay off while this is set. */
   int limit_pending;
   uint64_t mature_since_full;
+  /* The part of mature_since_full that young collections promoted (for
+   * the full collection's cause, ctr.why). */
+  uint64_t promoted_since_full;
   /* The copy reserve (Wave 4 step 2): the room the next young copy needs,
    * charged as spent by heap-limit decisions outside a collection. */
   uint64_t copy_reserve;
@@ -828,7 +888,20 @@ void gc_verify_defrag(void);
  * evacuates sparse mature blocks (defragmentation). A caller whose C
  * frames may hold references the collector cannot rewrite passes 0. */
 typedef enum GcKind { GC_YOUNG, GC_FULL } GcKind;
-void gc_collect(GcKind kind, int allow_move);
+/* Why a collection runs (ctr.why counts the full ones): the young
+ * budget, the full-collection trigger (by promotion or by mature
+ * allocation, decided from promoted_since_full), the heap limit, the
+ * HTTP boundary (avant_gc_heap_goal_collect), an explicit request, or a
+ * stress point. */
+typedef enum GcWhy {
+  GC_WHY_BUDGET,
+  GC_WHY_TRIGGER,
+  GC_WHY_LIMIT,
+  GC_WHY_HEAP_GOAL,
+  GC_WHY_EXPLICIT,
+  GC_WHY_STRESS
+} GcWhy;
+void gc_collect(GcKind kind, int allow_move, GcWhy why);
 void gc_limit_collect_pending(void);
 void gc_maybe_collect(void);
 void gc_stress_point(void);
