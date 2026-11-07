@@ -125,7 +125,8 @@ typedef struct Block {
   uint8_t space;       /* 24 */
   uint8_t in_use;      /* 25 */
   uint16_t search;     /* 26: the hole search cursor, in lines */
-  uint32_t pad_;       /* 28 */
+  uint8_t clean;       /* 28: free and madvised: zero, not resident */
+  uint8_t pad_[3];     /* 29 */
   uint8_t *bump;       /* 32: ABI (the inline allocation path) */
   uint8_t *limit;      /* 40 */
   uint64_t *start;     /* 48: START_WORDS words in g_starts */
@@ -147,7 +148,10 @@ _Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
  *   CHUNK_HUGE       the first chunk of one object larger than a chunk
  *                    holds; head is the run's length in chunks
  *   CHUNK_HUGE_CONT  a later chunk of that run; head is the first's index
- * dirty (FREE): the data was used and may hold non-zero bytes. */
+ * dirty (FREE): the data was used and may hold non-zero bytes.
+ * decommitted (FREE): the data is PROT_NONE (gc_heap_return).
+ * free, nfree (SMALL): the chunk's free blocks (O53), so a chunk whose
+ * blocks are all free can be decommitted. */
 #define CHUNK_FREE 0
 #define CHUNK_SMALL 1
 #define CHUNK_LARGE 2
@@ -158,6 +162,10 @@ typedef struct GcChunk {
   uint8_t dirty;
   uint16_t used;
   uint32_t head;
+  struct Block *free;
+  uint16_t nfree;
+  uint8_t decommitted;
+  uint8_t pad_[5];
   uint64_t alloc[PAGE_WORDS];
   uint64_t dirty_pages[PAGE_WORDS];
 } GcChunk;
@@ -285,6 +293,8 @@ Block *gc_block_take(void);
 void gc_block_give(Block *b);
 uint64_t gc_chunk_take(uint64_t n);
 void gc_chunk_give(uint64_t c);
+void gc_return_pages(void *p, size_t len);
+void gc_heap_return(uint64_t live);
 extern Block *g_mature;
 extern Block *g_nursery;
 extern Block *g_from;
@@ -334,6 +344,7 @@ extern uint64_t g_young_large;
 extern int g_young_large_n;
 extern int g_los_eager_hold;
 size_t gc_large_bytes(const AvantHeader *h);
+void gc_large_chunk_gone(uint64_t c);
 AvantHeader *gc_large_next(LargeIter *it);
 void gc_los_spare_drop(void);
 void gc_release_large(AvantHeader *h);

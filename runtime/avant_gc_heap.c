@@ -36,9 +36,14 @@ uint64_t *g_marks;
 uint8_t *g_lines;
 uint32_t *g_pages;
 GcChunk *g_chunks;
-static Block *g_free_blocks;
 /* Chunks below the high-water mark that are CHUNK_FREE again. */
 static uint64_t g_free_chunks;
+/* Every small chunk below it has no free block (O53: blocks are taken
+ * from the lowest chunk that has one, so high chunks drain and free up
+ * whole). */
+static uint64_t g_small_hint;
+/* Bytes of free blocks that are resident (not madvised). */
+static uint64_t g_free_resident;
 
 Block *g_mature;
 Block *g_nursery;
@@ -329,10 +334,24 @@ uint64_t gc_chunk_take(uint64_t n) {
         uint64_t first = c + 1 - n;
         uint64_t k;
         g_free_chunks -= n;
-        /* A reused chunk's mark bits may be stale: a full collection
-         * clears only the chunks in use when it starts. */
         for (k = first; k <= c; k++) {
-          memset(&g_marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+          uint64_t b;
+          /* A decommitted chunk's data is read-write again (zero); its
+           * side slices were madvised (zero) and its records keep their
+           * addresses. A reused chunk's mark bits may be stale: a full
+           * collection clears only the chunks in use when it starts. */
+          if (g_chunks[k].decommitted) {
+            if (!commit(chunk_base(k), CHUNK_SIZE)) {
+              gc_die("out of memory (a heap chunk could not be committed)");
+            }
+            g_chunks[k].decommitted = 0;
+          } else {
+            memset(&g_marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+          }
+          for (b = k * BLOCKS_PER_CHUNK; b < (k + 1) * BLOCKS_PER_CHUNK; b++) {
+            g_blocks[b].in_use = 0;
+            g_blocks[b].clean = 0;
+          }
         }
         return first;
       }
@@ -345,7 +364,8 @@ uint64_t gc_chunk_take(uint64_t n) {
   return c;
 }
 
-/* Chunk C back to CHUNK_FREE (its data stays committed and dirty). */
+/* Chunk C back to CHUNK_FREE (its data stays committed; dirty unless
+ * the caller returned its pages). */
 void gc_chunk_give(uint64_t c) {
   uint8_t was = g_chunks[c].kind;
   memset(&g_chunks[c], 0, sizeof(GcChunk));
@@ -354,49 +374,212 @@ void gc_chunk_give(uint64_t c) {
   g_free_chunks++;
 }
 
-/* A chunk of small-object blocks: every block on the free list, lowest
- * address on top. */
-static void make_small_chunk(void) {
+/* Give the pages of [P, P + LEN) back to the OS (page-aligned): they stay
+ * mapped read-write and read as zero when touched again. */
+void gc_return_pages(void *p, size_t len) {
+  if (len) {
+    madvise(p, len, MADV_DONTNEED);
+  }
+}
+
+/* A chunk of small-object blocks: every block on its own free list,
+ * lowest address on top. */
+static uint64_t make_small_chunk(void) {
   uint64_t c = gc_chunk_take(1);
   uint64_t b0 = c * BLOCKS_PER_CHUNK;
+  GcChunk *ch = &g_chunks[c];
+  int dirty = ch->dirty;
   int i;
-  g_chunks[c].kind = CHUNK_SMALL;
-  g_chunks[c].used = 0;
+  ch->kind = CHUNK_SMALL;
+  ch->dirty = 0;
+  ch->used = 0;
+  ch->free = NULL;
+  ch->nfree = BLOCKS_PER_CHUNK;
   for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
     Block *b = &g_blocks[b0 + (uint64_t)i];
     b->in_use = 0;
-    b->next = g_free_blocks;
-    g_free_blocks = b;
+    b->clean = dirty ? 0 : 1;
+    b->next = ch->free;
+    ch->free = b;
   }
+  if (dirty) {
+    g_free_resident += CHUNK_SIZE;
+  }
+  if (c < g_small_hint) {
+    g_small_hint = c;
+  }
+  return c;
 }
 
 /* A free block, its start bits and line marks clear, not yet in use
- * (gc_new_block makes it so). Never fails: past the reservation it
- * dies. Memory is not charged here; g_heap_bytes is gc_new_block's. */
+ * (gc_new_block makes it so): from the lowest small chunk that has one.
+ * Never fails: past the reservation it dies. Memory is not charged
+ * here; g_heap_bytes is gc_new_block's. */
 Block *gc_block_take(void) {
   Block *b;
+  GcChunk *ch = NULL;
+  uint64_t hw;
+  uint64_t c;
   if (!g_heap_base) {
     gc_heap_reserve();
   }
-  if (!g_free_blocks) {
-    make_small_chunk();
+  hw = g_heap_committed >> CHUNK_SHIFT;
+  for (c = g_small_hint; c < hw; c++) {
+    if (g_chunks[c].kind == CHUNK_SMALL && g_chunks[c].nfree) {
+      ch = &g_chunks[c];
+      break;
+    }
   }
-  b = g_free_blocks;
-  g_free_blocks = b->next;
+  if (!ch) {
+    c = make_small_chunk();
+    ch = &g_chunks[c];
+  }
+  g_small_hint = c;
+  b = ch->free;
+  ch->free = b->next;
+  ch->nfree--;
+  ch->used++;
   b->next = NULL;
+  if (!b->clean) {
+    g_free_resident -= BLOCK_SIZE;
+  }
+  b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
   memset(b->start, 0, START_WORDS * sizeof(uint64_t));
-  chunk_of(b->base)->used++;
   return b;
 }
 
-/* Back to the free list (the block must already be out of use). Its
- * memory stays committed. */
+/* Back to its chunk's free list (the block must already be out of use).
+ * Its memory stays resident until gc_heap_return. */
 void gc_block_give(Block *b) {
+  uint64_t c = (uint64_t)(b->base - g_heap_base) >> CHUNK_SHIFT;
+  GcChunk *ch = &g_chunks[c];
   b->in_use = 0;
-  chunk_of(b->base)->used--;
-  b->next = g_free_blocks;
-  g_free_blocks = b;
+  b->clean = 0;
+  ch->used--;
+  b->next = ch->free;
+  ch->free = b;
+  ch->nfree++;
+  g_free_resident += BLOCK_SIZE;
+  if (c < g_small_hint) {
+    g_small_hint = c;
+  }
+}
+
+/* Decommit chunk C, wholly free: its data returned and made PROT_NONE
+ * (no commit charge), its side slices returned (they read as zero), and
+ * it is CHUNK_FREE. Its block records stay (they hold only addresses). */
+static void decommit_chunk(uint64_t c) {
+  uint64_t b0 = c * BLOCKS_PER_CHUNK;
+  uint8_t kind = g_chunks[c].kind;
+  if (kind == CHUNK_LARGE) {
+    gc_large_chunk_gone(c);
+  }
+  if (kind != CHUNK_FREE) {
+    gc_chunk_give(c);
+  }
+  gc_return_pages(chunk_base(c), CHUNK_SIZE);
+  mprotect(chunk_base(c), CHUNK_SIZE, PROT_NONE);
+  gc_return_pages(&g_starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
+  gc_return_pages(&g_marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
+  gc_return_pages(&g_lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK);
+  gc_return_pages(&g_pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t));
+  g_chunks[c].dirty = 0;
+  g_chunks[c].decommitted = 1;
+}
+
+/* The resident free bytes of chunk C: free blocks not madvised, or the
+ * dirty free pages of a large-object chunk. */
+static uint64_t chunk_resident_free(uint64_t c) {
+  GcChunk *ch = &g_chunks[c];
+  uint64_t n = 0;
+  if (ch->kind == CHUNK_SMALL) {
+    Block *b;
+    for (b = ch->free; b; b = b->next) {
+      if (!b->clean) {
+        n += BLOCK_SIZE;
+      }
+    }
+  } else if (ch->kind == CHUNK_LARGE) {
+    uint32_t w;
+    for (w = 0; w < PAGE_WORDS; w++) {
+      n += (uint64_t)__builtin_popcountll(ch->dirty_pages[w] & ~ch->alloc[w]) * PAGE_SIZE;
+    }
+  }
+  return n;
+}
+
+/* Returning memory after a full collection (gc-design.md §2.5, §5.5,
+ * O53). The retention target is the larger of 4 MiB and a quarter of the
+ * live bytes: free memory up to it stays resident for the next cycle
+ * (the hysteresis of Q12), the rest goes back, highest chunks first:
+ * a wholly free chunk is decommitted (a free chunk whose memory is
+ * already returned always is: it costs nothing to keep and its commit
+ * charge is released), then free blocks are madvised one by one, then
+ * the dirty free pages of large-object chunks. */
+void gc_heap_return(uint64_t live) {
+  uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
+  uint64_t hw = g_heap_committed >> CHUNK_SHIFT;
+  uint64_t total = 0;
+  uint64_t c;
+  if (!hw) {
+    return;
+  }
+  for (c = 0; c < hw; c++) {
+    total += chunk_resident_free(c);
+  }
+  for (c = hw; c-- > 0;) {
+    GcChunk *ch = &g_chunks[c];
+    int empty = (ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0;
+    if (ch->kind == CHUNK_FREE) {
+      if (!ch->decommitted) {
+        decommit_chunk(c);
+      }
+      continue;
+    }
+    if (empty) {
+      uint64_t r = chunk_resident_free(c);
+      if (r == 0 || total > keep) {
+        if (ch->kind == CHUNK_SMALL) {
+          g_free_resident -= r;
+        }
+        total -= r;
+        decommit_chunk(c);
+      }
+    }
+  }
+  for (c = hw; c-- > 0 && total > keep;) {
+    GcChunk *ch = &g_chunks[c];
+    if (ch->kind == CHUNK_SMALL) {
+      Block *b;
+      for (b = ch->free; b && total > keep; b = b->next) {
+        if (!b->clean) {
+          gc_return_pages(b->base, BLOCK_SIZE);
+          b->clean = 1;
+          g_free_resident -= BLOCK_SIZE;
+          total -= BLOCK_SIZE;
+        }
+      }
+    } else if (ch->kind == CHUNK_LARGE) {
+      uint32_t p = 0;
+      while (p < PAGES_PER_CHUNK && total > keep) {
+        uint32_t q = p;
+        /* One madvise per run of dirty free pages. */
+        while (q < PAGES_PER_CHUNK && total > keep &&
+               ((ch->dirty_pages[q >> 6] & ~ch->alloc[q >> 6]) >> (q & 63) & 1ULL)) {
+          ch->dirty_pages[q >> 6] &= ~(1ULL << (q & 63));
+          total -= PAGE_SIZE;
+          q++;
+        }
+        if (q > p) {
+          gc_return_pages(chunk_base(c) + ((size_t)p << PAGE_SHIFT), (size_t)(q - p) << PAGE_SHIFT);
+          p = q;
+        } else {
+          p++;
+        }
+      }
+    }
+  }
 }
 
 int gc_block_live_lines(Block *b) {

@@ -284,6 +284,8 @@ void gc_collect(int full) {
       lh->flags = (uint16_t)(lh->flags & (uint16_t)~AVANT_FLAG_YOUNG);
     }
     g_last_full_at = g_stats.allocated_bytes;
+    /* Free memory beyond the retention target goes back to the OS. */
+    gc_heap_return(g_live);
   }
 
   if (full) {

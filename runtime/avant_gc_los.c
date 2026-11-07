@@ -195,8 +195,26 @@ static AvantHeader *take_run(size_t payload) {
   }
 }
 
+/* A large-object chunk leaves g_lchunks (it is being decommitted). */
+void gc_large_chunk_gone(uint64_t c) {
+  uint32_t i;
+  for (i = 0; i < g_lchunks_n; i++) {
+    if (g_lchunks[i] == (uint32_t)c) {
+      memmove(&g_lchunks[i], &g_lchunks[i + 1], (g_lchunks_n - i - 1) * sizeof(uint32_t));
+      g_lchunks_n--;
+      return;
+    }
+  }
+}
+
+/* A freed run this long or longer goes back to the OS at once
+ * (gc-design.md §2.4); shorter ones stay resident for reuse until a
+ * full collection's gc_heap_return. */
+#define LARGE_RETURN_BYTES (64u * 1024u)
+
 /* Give back the run of the object (or spare) whose header is H: its
- * pages free in its chunk, or its huge run's chunks free. */
+ * pages free in its chunk, or its huge run's chunks free; a run of
+ * LARGE_RETURN_BYTES or more is returned to the OS. */
 static void give_run(AvantHeader *h) {
   uint64_t c = chunk_index(h);
   GcChunk *ch = &g_chunks[c];
@@ -210,13 +228,19 @@ static void give_run(AvantHeader *h) {
     for (k = 0; k < n; k++) {
       g_pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
+    if ((n << PAGE_SHIFT) >= LARGE_RETURN_BYTES) {
+      gc_return_pages(chunk_base(c) + ((size_t)p << PAGE_SHIFT), (size_t)(n << PAGE_SHIFT));
+      bits_set(ch->dirty_pages, p, (uint32_t)n, 0);
+    }
     return;
   }
   {
     uint64_t nch = ch->head;
     uint64_t k;
     for (k = 0; k < nch; k++) {
+      gc_return_pages(chunk_base(c + k), CHUNK_SIZE);
       gc_chunk_give(c + k);
+      g_chunks[c + k].dirty = 0;
     }
   }
 }
