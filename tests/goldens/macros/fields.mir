@@ -1,0 +1,61 @@
+module fields
+file 0 "fields.av"
+
+layout %fields.Point = struct { 0 x: i32, 1 y: i32 }  size 8 align 4
+
+const str.0 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @fields.av:16:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: %fields.Point
+  let _4 (p): %fields.Point
+  let _5: i32
+  let _6: i32
+
+bb0:
+  gc.enter   @16:1
+  gc.roots _2   @16:1
+  call __avant_type_maps() nocollect   @16:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @16:1
+  _3 = struct %fields.Point (const i32 3, const i32 4)   @17:7
+  _4 = copy _3   @17:5
+  _5 = call av.fields/x(copy _4) nocollect   @18:8
+  call printf(const str.0, copy _5) nocollect   @18:3
+  _6 = call av.fields/y(copy _4) nocollect   @19:8
+  call printf(const str.0, copy _6) nocollect   @19:3
+  _0 = const i32 0   @16:1
+  gc.leave   @16:1
+  return   @16:1
+}
+
+fn av.fields/x(_1: %fields.Point) -> i32 leaf @fields.av:9:7 {
+  let _0: i32
+  let _1 (__q0_p): %fields.Point
+  let _2: i32
+
+bb0:
+  _2 = copy _1.0   @10:10
+  _0 = copy _2   @10:10
+  return   @10:10
+}
+
+fn av.fields/y(_1: %fields.Point) -> i32 leaf @fields.av:9:7 {
+  let _0: i32
+  let _1 (__q1_p): %fields.Point
+  let _2: i32
+
+bb0:
+  _2 = copy _1.1   @10:10
+  _0 = copy _2   @10:10
+  return   @10:10
+}

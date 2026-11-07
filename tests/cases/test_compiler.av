@@ -67,7 +67,7 @@ fn test_compiler(c: Checks) {
     hello_bin = "${scratch()}/compiler-${stamp}-hello.bin"
     hello_out = "${scratch()}/compiler-${stamp}-hello.txt"
     hello_log = "${scratch()}/compiler-${stamp}-hello.log"
-    hello_dump = "${scratch()}/compiler-${stamp}-hello.myc"
+    hello_dump = "${scratch()}/compiler-${stamp}-hello.mir"
     hello_body = "fn main {\n  w = file_write(\"${hello_out}\", \"Hello Avant\")\n}\n"
     w = file_write(hello_src, hello_body)
     c.eq_int(w, 0, "write hello fixture")
@@ -86,8 +86,8 @@ fn test_compiler(c: Checks) {
     dump_code = dump_av(compiler, hello_src, hello_dump)
     c.eq_int(dump_code, 0, "dump hello fixture")
     if ir = file_read(hello_dump) {
-      c.expect(str_has(ir, "FUNC"), "dump has FUNC")
-      c.expect(str_has(ir, "Hello Avant"), "dump has string")
+      c.expect(str_has(ir, "\nfn main("), "dump has fn main")
+      c.expect(str_has(ir, " = \"Hello Avant\"\n"), "dump has string")
     } else {
       c.expect(false, "dump hello fixture")
     }

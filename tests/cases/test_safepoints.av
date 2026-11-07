@@ -64,25 +64,6 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "read discard stdout")
       }
 
-      mlog = "${scratch()}/safepoints-${stamp}-stackmap.log"
-      sm: Array(String) = []
-      sm.push("AVANT_NURSERY=1")
-      sm.push("AVANT_YOUNG_MB=1")
-      sm.push("AVANT_NURSERY_STACKMAP=1")
-      sm.push("AVANT_NURSERY_DISCARD=1")
-      sm.push("AVANT_HEAP_MAX_MB=3")
-      sm.push("AVANT_GC_STATS=1")
-      sm.push(bin)
-      mcode = process_run_out("/usr/bin/env", sm, mlog)
-      c.eq_int(mcode, 0, "churn with stackmap walk")
-      if mout = file_read(mlog) {
-        c.expect(str_has(mout, "251535360"), "churn checksum with stackmap")
-        c.expect(str_has(mout, "sm_hits="), "stackmap stats printed")
-        c.expect(!str_has(mout, "sm_hits=0 "), "stackmap return-address hits")
-      } else {
-        c.expect(false, "read stackmap stats")
-      }
-
       bsrc = "${scratch()}/safepoints-${stamp}-barrier.av"
       bbin = "${scratch()}/safepoints-${stamp}-barrier"
       blog = "${scratch()}/safepoints-${stamp}-barrier-cc.log"
@@ -109,21 +90,23 @@ fn test_safepoints(c: Checks) {
         c.expect(false, "barrier binary exists")
       }
 
-      bsrc2 = "${scratch()}/safepoints-${stamp}-bump.av"
+      bsrc2 = "${scratch()}/bump.av"
       bbin2 = "${scratch()}/safepoints-${stamp}-bump"
       blog2 = "${scratch()}/safepoints-${stamp}-bump-cc.log"
       brun2 = "${scratch()}/safepoints-${stamp}-bump-run.log"
-      bdump = "${scratch()}/safepoints-${stamp}-bump.myc"
+      bdump = "${scratch()}/safepoints-${stamp}-bump.mir"
       bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      shift = 1 << (depth - 1)\n      if l = make_tree(item - shift, depth - 1) {\n        if r = make_tree(item + shift, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  nursery_reclaim()\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
       bw2 = file_write(bsrc2, bbody2)
       c.eq_int(bw2, 0, "write bump tree")
+      // The MIR (D171; the old back end's IR until W11).
       dcode2 = dump_av(compiler, bsrc2, bdump)
       c.eq_int(dcode2, 0, "dump bump tree")
       if ir2 = file_read(bdump) {
-        c.expect(str_has(ir2, "FUNC :Node__bump"), "bump constructor is emitted")
-        c.expect(str_has(ir2, "CALL :avant_bump_alloc"), "bump uses the non-collecting allocator")
-        c.expect(!str_has(ir2, "CALL :avant_gc_quiet_enter"), "a quiet leaf does not take a quiet guard")
-        c.expect(str_has(ir2, "CALL :avant_nursery_reclaim"), "dead nursery is reclaimed between trees")
+        c.expect(str_has(ir2, "fn av.bump/Node.bump("), "bump constructor is emitted")
+        c.expect(str_has(ir2, "= call avant_bump_alloc(") && str_has(ir2, ") nocollect"), "bump uses the non-collecting allocator")
+        c.expect(str_has(ir2, "fn av.bump/make_tree(_1: i32, _2: i32) -> %(Nil|bump.Node) leaf"), "a quiet leaf: make_tree runs no collection")
+        c.expect(!str_has(ir2, "avant_gc_quiet_enter"), "a quiet leaf does not take a quiet guard")
+        c.expect(str_has(ir2, "call avant_nursery_reclaim()"), "dead nursery is reclaimed between trees")
       } else {
         c.expect(false, "read bump dump")
       }
@@ -162,10 +145,6 @@ fn main: Int {
   if list_only() {
     return 0
   }
-  // Every check here is about the old back end's safepoints: statepoint stackmaps (the stackmap walk statistics) and its bump-allocation IR, so the file pins AVANT_BACKEND=myc
-  // for the compilers it starts, whatever the suite runs under (Stage 28
-  // W9); it retires with the old back end (W11).
-  use_backend("myc")
   c = Checks.new()
   c.started = now_ms()
   test_safepoints(c)

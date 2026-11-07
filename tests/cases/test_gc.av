@@ -5,30 +5,30 @@ fn test_gc(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/gc-${stamp}-gc.av"
-    dump = "${scratch()}/gc-${stamp}-gc.myc"
+    dump = "${scratch()}/gc-${stamp}-gc.mir"
     body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  puts(a.left.item)\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write gc fixture")
     code = dump_av(compiler, src, dump)
     c.eq_int(code, 0, "dump gc fixture")
     if ir = file_read(dump) {
-      c.expect(str_has(ir, "STRUCT :U_Box_Nil"), "IR has Box? layout")
-      c.expect(str_has(ir, "PUSH 4 :u64"), "T? field type map")
-      c.expect(str_has(ir, "FUNC :avant_alloc"), "IR has avant_alloc")
-      c.expect(str_has(ir, "CALL :avant_alloc"), "IR calls avant_alloc")
-      c.expect(str_has(ir, "FUNC :avant_gc_enter"), "IR has avant_gc_enter")
-      c.expect(str_has(ir, "FUNC :avant_gc_root"), "IR has avant_gc_root")
-      c.expect(str_has(ir, "FUNC :avant_type_map"), "IR has avant_type_map")
-      c.expect(str_has(ir, "FUNC :avant_barrier"), "IR has avant_barrier")
-      c.expect(str_has(ir, "CALL :avant_barrier"), "IR calls avant_barrier")
-      c.expect(!str_has(ir, "MALLOC"), "IR has no MALLOC")
+      // The MIR (D171; the old back end's IR until W11).
+      c.expect(str_has(ir, ".Box|Nil) = union"), "IR has Box? layout")
+      c.expect(str_has(ir, ".Box stride 0 bits [0x4]"), "T? field type map")
+      c.expect(str_has(ir, "extern avant_alloc("), "IR has avant_alloc")
+      c.expect(str_has(ir, "= call avant_alloc("), "IR calls avant_alloc")
+      c.expect(str_has(ir, "-> i32 frame extern"), "main has a root frame")
+      c.expect(str_has(ir, " slot\n"), "IR keeps references in root slots")
+      c.expect(str_has(ir, ".Node stride 0 bits [0x6]"), "IR has the class type maps")
+      c.expect(str_has(ir, "  barrier copy "), "IR has the barrier")
+      c.expect(!str_has(ir, "malloc"), "IR has no malloc")
     } else {
       c.expect(false, "dump gc fixture")
     }
 
-    golden = "${avant_test_root()}/tests/goldens/hello.myc"
+    golden = "${avant_test_root()}/tests/goldens/examples/hello.mir"
     hello = "${avant_test_root()}/examples/hello.av"
-    hello_dump = "${scratch()}/gc-${stamp}-hello-golden.myc"
+    hello_dump = "${scratch()}/gc-${stamp}-hello-golden.mir"
     if file_exists(golden) {
       gcode = dump_av(compiler, hello, hello_dump)
       c.eq_int(gcode, 0, "dump hello golden")

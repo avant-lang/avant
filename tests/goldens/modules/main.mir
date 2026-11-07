@@ -1,0 +1,47 @@
+module main
+file 0 "vec.av"
+file 1 "main.av"
+
+layout %vec.Vec2 = struct { 0 x: i32, 1 y: i32 }  size 8 align 4
+
+const str.0 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn av.vec/origin() -> %vec.Vec2 leaf @vec.av:6:5 {
+  let _0: %vec.Vec2
+  let _1: %vec.Vec2
+
+bb0:
+  _1 = struct %vec.Vec2 (const i32 0, const i32 0)   @7:3
+  _0 = copy _1   @7:3
+  return   @7:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @main.av:3:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: %vec.Vec2
+  let _4 (v): %vec.Vec2
+  let _5: i32
+
+bb0:
+  gc.enter   @3:1
+  gc.roots _2   @3:1
+  call __avant_type_maps() nocollect   @3:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @3:1
+  _3 = call av.vec/origin() nocollect   @4:7
+  _4 = copy _3   @4:5
+  _5 = copy _4.0   @5:9
+  call printf(const str.0, copy _5) nocollect   @5:3
+  _0 = const i32 0   @3:1
+  gc.leave   @3:1
+  return   @3:1
+}

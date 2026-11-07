@@ -10,10 +10,11 @@
 # use every std module, compiles and runs programs in each codegen mode
 # (--debug, bare, --release), runs `avant test` on a small project, and runs
 # `avant bind` when the bundled helper's libraries are present. It first
-# proves that no myc-llvm is reachable (Stage 28 W10: the release has no
-# old back end; the compiler's default is the in-process LLVM): none in
-# the install, none on the PATH the cases use, none named by the
-# environment (which is empty); and AVANT_BACKEND=myc fails cleanly. Nothing
+# proves that the release carries no myc-llvm (Stage 28 W10; the
+# compiler's one back end is the in-process LLVM since W11): none in the
+# install, none on the PATH the cases use, none named by the environment
+# (which is empty); and AVANT_BACKEND=myc is refused, naming the variable.
+# Nothing
 # outside the work directory is read from the checkout or written; the
 # work directory is removed at the end (SMOKE_KEEP=1 keeps it).
 #
@@ -111,8 +112,8 @@ fn main {
 EOF
 # No myc-llvm reachable: not in the install, not on the cases' PATH (nor
 # the install directory, which path-hello adds), and the environment is
-# empty (no AVANT_MYC_LLVM). The old back end then fails with its lookup
-# message, which shows the default path does not need it.
+# empty (no AVANT_MYC_LLVM). The old back end's name is refused (it
+# retired at Stage 28 W11): the compiler has no other back end.
 mycs=$(find "$inst" -name 'myc-llvm*' 2>/dev/null)
 if [ -n "$mycs" ]; then
   fail no-myc-llvm "the install has $mycs"
@@ -122,11 +123,11 @@ else
   pass no-myc-llvm
 fi
 if run old-backend-absent env AVANT_BACKEND=myc "$avant" run hello.av; then
-  fail old-backend-absent "AVANT_BACKEND=myc ran without a myc-llvm"
-elif grep -q "myc-llvm" "$work/logs/old-backend-absent.log"; then
+  fail old-backend-absent "AVANT_BACKEND=myc was accepted"
+elif grep -q "AVANT_BACKEND must be unset, empty, or llvm" "$work/logs/old-backend-absent.log"; then
   pass old-backend-absent
 else
-  fail old-backend-absent "no myc-llvm message"
+  fail old-backend-absent "no AVANT_BACKEND message"
 fi
 
 expect run-hello "hello from avant" "$avant" run hello.av

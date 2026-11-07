@@ -160,7 +160,7 @@ pub fn (lw: MirLower) three(o: MOperand, p: MOperand, q: MOperand): Array(MOpera
 
 // ---- literals and Array(T).new
 
-// The header of a new array whose buffer is _d (myc.av:2808-2842,
+// The header of a new array whose buffer is _d (the old back end,
 // emit_array_header_at): allocated after the buffer, its data word
 // stored behind the header's barrier (the old back end barriers the
 // header after its three stores), size and cap set.
@@ -176,7 +176,7 @@ pub fn (lw: MirLower) array_header(aty: Int, d: Int, n: MOperand): MOperand {
   b.copy_local(a)
 }
 
-// `[e0, e1, ...]` (myc.av:2844-2878): the buffer first (n elements,
+// `[e0, e1, ...]` (the old back end): the buffer first (n elements,
 // the element-buffer id), each element in order stored into it, then the
 // header. A reference-carrying element is a `fresh` store (V14): the
 // buffer is held in a slot while it fills (it is live across the
@@ -230,7 +230,7 @@ pub fn (lw: MirLower) elem_ty_of(e: Expr): Ty {
   ty_int()
 }
 
-// `Array(T).new(n)` (myc.av:2880-2916): n, then a zeroed buffer of n
+// `Array(T).new(n)` (the old back end): n, then a zeroed buffer of n
 // elements (size n * size(E), unchecked as in the old back end), then the
 // header with size = cap = n.
 pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
@@ -333,7 +333,7 @@ pub fn (lw: MirLower) lower_seq_index(e: Expr): MOperand {
   lw.tmp(ty, b.rv_use(b.copy(p)))
 }
 
-// `c[i] = v` and `c[i] op= v` (myc.av:1708-1827): a hash store
+// `c[i] = v` and `c[i] op= v` (the old back end): a hash store
 // (lower_hash.av); a reference element through `avant_array_set_ptr` (the
 // value, the array, then the index; the runtime barriers, audit 4.4.2);
 // any other element (the value, then the place: the index, the array) as
@@ -461,8 +461,8 @@ pub fn (lw: MirLower) kind_fn(base: String, et: Int, has_ptr: Bool): String {
   ""
 }
 
-// The members of Array without a block (builtins.av:1025-1631,
-// myc.av:2438-2477): in the call form `xs.m(args)` and the field form
+// The members of Array without a block (the old back end,
+// the old back end): in the call form `xs.m(args)` and the field form
 // `xs.m`. Evaluation orders are the old back end's (W6c.2).
 pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b

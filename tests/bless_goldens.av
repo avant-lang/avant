@@ -38,12 +38,12 @@ fn mkdir_p(path: String) {
   dummy = process_run("/bin/mkdir", args)
 }
 
-// The old back end's IR (the .myc goldens): AVANT_BACKEND=myc named, since
-// the new back end is the default (Stage 28 W10; W10b found the blessing
-// had followed the default).
+// The back end's IR, the MIR `avant dump` prints (D171; the goldens
+// of the old back end retired with it, Stage 28 W11).
 fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
-  args.push("AVANT_BACKEND=myc")
+  args.push("-u")
+  args.push("AVANT_BACKEND")
   args.push(compiler)
   args.push("dump")
   args.push(src)
@@ -81,7 +81,7 @@ fn bless_layer(compiler: String, flag: String, src: String, dest: String, tag: S
   false
 }
 
-fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
+fn bless_dump(compiler: String, src: String, dest: String, tag: String): Bool {
   code = dump_av(compiler, src, dest)
   if code != 0 {
     bless_fail("dump ${tag} exited ${code}")
@@ -97,11 +97,12 @@ fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
   false
 }
 
-// The MIR the new back end prints (Stage 28 W5b, D171): `avant dump`
-// under AVANT_BACKEND=llvm, into tests/goldens/<stem>.mir.
+// The MIR (Stage 28 W5b, D171): `avant dump` into
+// tests/goldens/<stem>.mir.
 fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Bool {
   args: Array(String) = []
-  args.push("AVANT_BACKEND=llvm")
+  args.push("-u")
+  args.push("AVANT_BACKEND")
   args.push(compiler)
   args.push("dump")
   args.push("${root}/${src_rel}")
@@ -206,19 +207,12 @@ fn bless_mir_all(compiler: String, root: String): Bool {
     }
     i = i + 1
   }
-  ex = ["hello", "fact", "switch"]
-  i = 0
-  while i < ex.size {
-    if bless_mir(compiler, root, "examples/${ex[i]}.av", "examples/${ex[i]}") {
-    } else {
-      return false
-    }
-    i = i + 1
-  }
   true
 }
 
-// A program that imports has no --check golden (D142).
+// A program that imports std has no --check golden (D142) and no MIR
+// golden: its MIR names the std files by the absolute path the compiler
+// found them at (Stage 28 W11).
 fn bless_imports(compiler: String, root: String, src_rel: String, stem: String): Bool {
   src = "${root}/${src_rel}"
   base = "${root}/tests/goldens/${stem}"
@@ -226,11 +220,7 @@ fn bless_imports(compiler: String, root: String, src_rel: String, stem: String):
   } else {
     return false
   }
-  if bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast") {
-  } else {
-    return false
-  }
-  bless_myc(compiler, src, "${base}.myc", "${stem}.myc")
+  bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast")
 }
 
 fn bless_all(compiler: String, root: String, src_rel: String, stem: String): Bool {
@@ -248,7 +238,7 @@ fn bless_all(compiler: String, root: String, src_rel: String, stem: String): Boo
   } else {
     return false
   }
-  bless_myc(compiler, src, "${base}.myc", "${stem}.myc")
+  bless_dump(compiler, src, "${base}.mir", "${stem}.mir")
 }
 
 fn main {
@@ -425,18 +415,8 @@ fn main {
         } else { ok = false }
       }
       if ok {
-        if bless_myc(compiler, modules_src, "${modules_golden}.myc", "modules/main.myc") {
+        if bless_dump(compiler, modules_src, "${modules_golden}.mir", "modules/main.mir") {
         } else { ok = false }
-      }
-    }
-    if ok {
-      hello_src = "${root}/tests/goldens/examples/hello.myc"
-      hello_dst = "${root}/tests/goldens/hello.myc"
-      if ir = file_read(hello_src) {
-        dummy = file_write(hello_dst, ir)
-      } else {
-        bless_fail("read examples/hello.myc")
-        ok = false
       }
     }
     if ok {

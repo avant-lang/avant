@@ -1,0 +1,41 @@
+module quote_fn
+file 0 "quote_fn.av"
+
+const str.0 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @quote_fn.av:7:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: i32
+
+bb0:
+  gc.enter   @7:1
+  gc.roots _2   @7:1
+  call __avant_type_maps() nocollect   @7:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @7:1
+  _3 = call av.quote_fn/doubled(const i32 21) nocollect   @8:8
+  call printf(const str.0, copy _3) nocollect   @8:3
+  _0 = const i32 0   @7:1
+  gc.leave   @7:1
+  return   @7:1
+}
+
+fn av.quote_fn/doubled(_1: i32) -> i32 leaf @quote_fn.av:2:3 {
+  let _0: i32
+  let _1 (__q0_n): i32
+  let _2: i32
+
+bb0:
+  _2 = add.chk copy _1, copy _1   @3:7
+  _0 = copy _2   @3:7
+  return   @3:7
+}

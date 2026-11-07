@@ -7,7 +7,7 @@ fn test_coverage(c: Checks) {
     src = "${scratch()}/coverage-${stamp}-cov.av"
     bin = "${scratch()}/coverage-${stamp}-cov.bin"
     log = "${scratch()}/coverage-${stamp}-cov.log"
-    dump_log = "${scratch()}/coverage-${stamp}-cov.myc"
+    dump_log = "${scratch()}/coverage-${stamp}-cov.mir"
     body = "fn covered(n: Int): Int {\n  r = 0\n  if n > 0 {\n    r = 1\n  } else {\n    r = 2\n  }\n  r\n}\nfn unused(n: Int): Int {\n  n + 1\n}\nfn main {\n  x = covered(1)\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write coverage fixture")
@@ -29,9 +29,10 @@ fn test_coverage(c: Checks) {
       c.expect(str_has(ir_map, "/coverage.map"), "dump keeps its slot map in the scratch directory")
     }
     // Into a missing directory (W10b): the slot map is written while the
-    // program is lowered, so its directory is created before it, on both
-    // back ends (the map beside the binary, and AVANT_COVERAGE_MAP).
-    backs = ["myc", "llvm"]
+    // program is lowered, so its directory is created before it (the map
+    // beside the binary, and AVANT_COVERAGE_MAP; on both back ends until
+    // the old one retired at W11).
+    backs = ["llvm"]
     bi = 0
     while bi < backs.size {
       bk = backs[bi]
@@ -149,9 +150,6 @@ fn test_coverage(c: Checks) {
     env_args.push("AVANT_ROOT=${avant_test_root()}")
     env_args.push("AVANT_COVERAGE_LCOV=0")
     env_args.push("AVANT_COVERAGE_REPORT=0")
-    if myc = env_get("AVANT_MYC_LLVM") {
-      env_args.push("AVANT_MYC_LLVM=${myc}")
-    }
     env_args.push(compiler)
     env_args.push("test")
     env_args.push("--junit")
@@ -208,9 +206,6 @@ fn test_coverage(c: Checks) {
     miss_log = "${scratch()}/coverage-${stamp}-stdmiss.log"
     miss_env: Array(String) = []
     miss_env.push("AVANT_ROOT=${miss_root}")
-    if myc = env_get("AVANT_MYC_LLVM") {
-      miss_env.push("AVANT_MYC_LLVM=${myc}")
-    }
     miss_env.push(abs_compiler)
     miss_env.push("compile")
     miss_env.push(miss_src)
@@ -228,9 +223,6 @@ fn test_coverage(c: Checks) {
     walk_rc = "${scratch()}/coverage-${stamp}-stdwalk.rc"
     walk_sh = "${scratch()}/coverage-${stamp}-stdwalk.sh"
     walk_body = "#!/bin/sh\ncd /tmp\nunset AVANT_ROOT\n"
-    if myc = env_get("AVANT_MYC_LLVM") {
-      walk_body = "${walk_body}export AVANT_MYC_LLVM='${myc}'\n"
-    }
     walk_body = "${walk_body}${abs_compiler} compile ${miss_src} ${scratch()}/coverage-${stamp}-stdwalk.bin --debug > ${walk_log} 2>&1\necho $? > ${walk_rc}\n"
     walk_w = file_write(walk_sh, walk_body)
     c.eq_int(walk_w, 0, "write std walk script")
@@ -272,9 +264,6 @@ fn test_coverage(c: Checks) {
     proj_rc = "${scratch()}/coverage-${stamp}-proj.rc"
     proj_sh = "${scratch()}/coverage-${stamp}-proj.sh"
     proj_body = "#!/bin/sh\ncd ${proj}\nexport AVANT_ROOT='${repo}'\n"
-    if myc = env_get("AVANT_MYC_LLVM") {
-      proj_body = "${proj_body}export AVANT_MYC_LLVM='${myc}'\n"
-    }
     proj_body = "${proj_body}${abs_compiler} test --coverage --jobs 2 > ${proj_log} 2>&1\necho $? > ${proj_rc}\n"
     proj_sw = file_write(proj_sh, proj_body)
     c.eq_int(proj_sw, 0, "write coverage project script")

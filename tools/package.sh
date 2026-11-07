@@ -8,9 +8,8 @@
 # COMPILER is the avant binary to ship (Stage 28 W10: C', the compiler B
 # builds on the new back end, built --release by the release job), RE2C
 # the static re2c to bundle (D151, tools/build-re2c.sh). There is no
-# myc-llvm in the release: the compiler's default back end is the
-# in-process LLVM linked into it (D172), and the old back end
-# (AVANT_BACKEND=myc) is a development path until it retires (W11). The
+# myc-llvm in the release: the compiler's one back end is the in-process
+# LLVM linked into it (D172; the old back end retired at W11). The
 # bind helper and the runtime objects come from runtime/build/ (run `sh
 # runtime/build.sh` first), except avant_llvm.o, which only the
 # compiler's own link uses (D190); runtime/avant_rt.h ships too, for the
@@ -81,9 +80,8 @@ fi
 # (an object records no symbol versions; its references bind where the
 # user links). The program uses every runtime object: the core and each
 # std module. It is compiled by the packaged compiler outside the checkout,
-# with an empty environment (no AVANT_BACKEND, AVANT_MYC_LLVM, or
-# AVANT_ROOT; PATH=/usr/bin:/bin), so this is also a first self-test of
-# the archive on the default back end with no myc-llvm reachable.
+# with an empty environment (no AVANT_BACKEND or AVANT_ROOT;
+# PATH=/usr/bin:/bin), so this is also a first self-test of the archive.
 floor_dir=$(mktemp -d "${TMPDIR:-/tmp}/avant-floor-XXXXXX")
 trap 'rm -rf "$floor_dir"' EXIT
 cat > "$floor_dir/all.av" <<'EOF_AV'

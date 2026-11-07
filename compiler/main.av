@@ -8,12 +8,6 @@ import checker.match
 import checker.register
 import checker.spawn
 import checker.visibility
-import codegen.analysis
-import codegen.builtins
-import codegen.calls
-import codegen.decl
-import codegen.loops
-import codegen.myc
 import diagnostic
 import dump_ast
 import dump_check
@@ -69,7 +63,6 @@ pub fn show_usage {
   puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
   puts("With no flag, run uses --debug (fast) and compile uses the default optimization (kept artifacts).")
   puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
-  puts("AVANT_BACKEND=myc selects the old myc-llvm back end until it retires.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
@@ -254,8 +247,8 @@ pub fn driver_dump(args: Array(String)) {
   box = compile_av_paths(split.paths)
   if box.ok {
     if m = box.mir {
-      // AVANT_BACKEND=llvm (D171): the final-stage MIR; a module the
-      // verifier rejects is printed, then its errors, exit 1.
+      // The final-stage MIR (D171); a module the verifier rejects is
+      // printed, then its errors, exit 1.
       print_ir(mir_print(m, true))
       bad = llvm_verify(m)
       if bad.size > 0 {
@@ -264,8 +257,6 @@ pub fn driver_dump(args: Array(String)) {
       }
       return
     }
-    print_ir(box.text)
-    return
   }
   diag_exit(1)
 }
@@ -284,8 +275,8 @@ fn llvm_inline_fast: Bool {
   true
 }
 
-// The new back end's job for a link job (AVANT_BACKEND=llvm): the same
-// mode, extra objects, and -l flags.
+// The back end's job for a link job: the same mode, extra objects, and
+// -l flags.
 fn llvm_job_of(job: LinkJob): LlvmJob {
   lj = LlvmJob.new(job.codegen)
   lj.inline_fast = llvm_inline_fast()
@@ -323,10 +314,8 @@ pub fn driver_run(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
-    // Compile, then run the program here with the user's stdin. myc-llvm's
-    // own run mode is not used: the backend reads all of a non-terminal
-    // stdin before it compiles, so piped input never reached the program
-    // (Wave D). The backend gets /dev/null (tool_run).
+    // Compile, then run the program here with the user's stdin (Wave D:
+    // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
     if m = box.mir {
       err = llvm_build(m, llvm_job_of(job), out)
@@ -338,14 +327,6 @@ pub fn driver_run(args: Array(String)) {
       rc2 = process_run(out, split.program)
       diag_exit(rc2)
     }
-    code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
-    if code != 0 {
-      diag_puts("myc-llvm failed (${code})")
-      diag_exit(1)
-    }
-    dummy_chmod = fs_chmod_x(out)
-    rc = process_run(out, split.program)
-    diag_exit(rc)
   }
   diag_exit(1)
 }
@@ -382,8 +363,7 @@ pub fn driver_compile(args: Array(String)) {
     }
     attach_std_link(box, job)
     if m = box.mir {
-      // The old driver's myc-llvm prints this line; the new driver
-      // leaves it to its caller (D194).
+      // The driver leaves this line to its caller (D194).
       err = llvm_build(m, llvm_job_of(job), out_path)
       if err.size > 0 {
         diag_puts(err)
@@ -392,12 +372,6 @@ pub fn driver_compile(args: Array(String)) {
       out_puts("compiled to ${out_path}")
       return
     }
-    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves, job.codegen, false)
-    if code != 0 {
-      diag_puts("myc-llvm failed (${code})")
-      diag_exit(1)
-    }
-    return
   }
   diag_exit(1)
 }
@@ -605,7 +579,7 @@ fn driver_mir_build(args: Array(String)) {
 }
 
 // Internal (Stage 28 W9), not in the usage text: writes the
-// pre-optimization .ll that `compile` under AVANT_BACKEND=llvm hands to
+// pre-optimization .ll that `compile` hands to
 // the in-process LLVM (the same lowering, verifier, emitter, and
 // fast-path setting; the text does not depend on the mode, mir.md 11).
 // The self-hosting fixed point compares it between two compilers (D171).
@@ -614,10 +588,6 @@ fn driver_mir_build(args: Array(String)) {
 fn driver_emit_ll(args: Array(String)) {
   if args.size != 2 || !str_ends(args[0], ".av") {
     diag_puts("usage: avant __emit-ll SRC.av OUT.ll")
-    diag_exit(1)
-  }
-  if !str_eq(backend_choice(), "llvm") {
-    diag_puts("__emit-ll needs the llvm back end (AVANT_BACKEND unset or llvm)")
     diag_exit(1)
   }
   paths: Array(String) = []

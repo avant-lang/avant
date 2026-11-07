@@ -9,45 +9,32 @@ import backends
 // runtime's pinned young argv array lost its buffer (the compiler
 // crashed compiling test_std_http.av under the new back end, W8b), and
 // a `pin` block's value lost its fields. tests/fixtures/heap/pinned.av
-// is compiled by both back ends (--debug) and each program runs plain,
+// is compiled (--debug; until W11 by both back ends) and runs plain,
 // under AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1, both, and AVANT_NURSERY=0:
-// the same known stdout, no stderr (no verifier report), exit 0.
-//
-// The old back end's run under AVANT_NURSERY=0 also sets
-// AVANT_GC_DEFRAG=0: there the full collection's mature defragmentation
-// moves objects, and the old back end's code keeps a reference outside
-// its root slots across a collecting call (a pre-existing old back end
-// defect independent of C29, recorded in the W8c record; the new back
-// end keeps every such reference in a slot, D165, and runs without it).
+// the known stdout, no stderr (no verifier report), exit 0. (The old back
+// end needed AVANT_GC_DEFRAG=0 under AVANT_NURSERY=0, C30; it retired at
+// W11. The back end keeps every reference live across a collecting call
+// in a slot, D165, and runs without it.)
 
 fn gc_envs: Array(String) {
   ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
 }
 
-fn env_for(be: String, env: String): String {
-  if str_eq(be, "old") && str_eq(env, "AVANT_NURSERY=0") {
-    return "AVANT_NURSERY=0 AVANT_GC_DEFRAG=0"
-  }
-  env
-}
-
 fn test_gc_pinned(c: Checks, compiler: String, root: String, dir: String) {
   src = "${root}/tests/fixtures/heap/pinned.av"
   want = "argv bad: 0\npin bad: 0\nkept bad: 0\n"
-  bes = ["old", "new"]
+  bes = ["new"]
   jobs: Array(HJob) = []
-  jobs.push(compile_job("AVANT_BACKEND=myc", compiler, src, "${dir}/pinned.old", "${dir}/pinned.old.log"))
   jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, src, "${dir}/pinned.new", "${dir}/pinned.new.log"))
   run_waves(jobs)
-  c.eq_int(jobs[0].code, 0, "pinned.av: compiles under myc")
-  c.eq_int(jobs[1].code, 0, "pinned.av: compiles under llvm")
+  c.eq_int(jobs[0].code, 0, "pinned.av: compiles under llvm")
   envs = gc_envs()
   runs: Array(HJob) = []
   b = 0
   while b < bes.size {
     e = 0
     while e < envs.size {
-      runs.push(run_job_env(dir, "pinned.${bes[b]}", "pinned.${bes[b]}.g${e}", env_for(bes[b], envs[e])))
+      runs.push(run_job_env(dir, "pinned.${bes[b]}", "pinned.${bes[b]}.g${e}", envs[e]))
       e = e + 1
     }
     b = b + 1
@@ -59,7 +46,7 @@ fn test_gc_pinned(c: Checks, compiler: String, root: String, dir: String) {
     while e < envs.size {
       what = "plain"
       if envs[e].size > 0 {
-        what = "under ${env_for(bes[b], envs[e])}"
+        what = "under ${envs[e]}"
       }
       k = "pinned.${bes[b]}.g${e}"
       c.eq_int(runs[b * envs.size + e].code, 0, "pinned.av (${bes[b]} back end) ${what}: exit 0")

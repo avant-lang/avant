@@ -1,0 +1,33 @@
+module hygiene
+file 0 "hygiene.av"
+
+const str.0 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @hygiene.av:1:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3 (tmp): i32
+  let _4 (__q0_tmp): i32
+
+bb0:
+  gc.enter   @1:1
+  gc.roots _2   @1:1
+  call __avant_type_maps() nocollect   @1:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @1:1
+  _3 = const i32 1   @2:7
+  _4 = const i32 2   @4:9
+  call printf(const str.0, copy _4) nocollect   @5:5
+  call printf(const str.0, copy _3) nocollect   @7:3
+  _0 = const i32 0   @1:1
+  gc.leave   @1:1
+  return   @1:1
+}

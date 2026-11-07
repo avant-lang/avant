@@ -286,8 +286,8 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
   b.pl(0)
 }
 
-// A reference-carrying value stored into a C-layout field (myc.av
-// emit_assign, c_layout_heap_store): the value in a local, pinned, then
+// A reference-carrying value stored into a C-layout field (the old
+// back end's emit_assign, c_layout_heap_store): the value in a local, pinned, then
 // stored; never unpinned (audit 4.6 (4); V13 third form). C memory is
 // not traced, so no barrier.
 pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
@@ -301,7 +301,7 @@ pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
 
 // ---- pins
 
-// `pin x { body }` (myc.av emit_pin_stmt): x into a local, pinned; the
+// `pin x { body }` (the old back end's emit_pin_stmt): x into a local, pinned; the
 // body; unpinned at the end of the block when it falls through. A `fn`
 // value pins its environment (the heap part of the value).
 pub fn (lw: MirLower) lower_pin(st: Stmt) {
@@ -348,7 +348,7 @@ pub fn (lw: MirLower) unpin(h: Int) {
 }
 
 // Before `break` or `next`: the pins opened inside the innermost loop,
-// innermost first (myc.av emit_unpin_loop).
+// innermost first (the old back end's emit_unpin_loop).
 pub fn (lw: MirLower) unpin_loop {
   i = lw.lw_ffi.pins.size - 1
   while i >= 0 && lw.lw_ffi.pin_depth[i] == lw.lw_heads.size {
@@ -357,7 +357,7 @@ pub fn (lw: MirLower) unpin_loop {
   }
 }
 
-// Before a return: every open pin, innermost first (myc.av emit_ret's
+// Before a return: every open pin, innermost first (the old back end's emit_ret's
 // emit_unpin_all; the old back end also forgets them there, so a pin
 // block whose end is reachable after a return inside it is never
 // unpinned on that path: corrected, C20).

@@ -276,7 +276,7 @@ pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
   m
 }
 
-// The constructors `C.new` (myc.av emit_constructor), one per class,
+// The constructors `C.new` (the old back end's emit_constructor), one per class,
 // named by the checker's resolved name (`ty_owned_symbol(ty, "new")`).
 pub fn (lw: MirLower) note_ctor_symbols {
   p = lw.lw_prog
@@ -463,7 +463,7 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
 }
 
 // `x.f = v`, an implicit field `f = v`, and the compound forms: the value
-// first, then the place (myc.av emit_assign, emit_barrier_field_store);
+// first, then the place (the old back end's emit_assign, emit_barrier_field_store);
 // a compound assignment reads and writes one place, its holder evaluated
 // once.
 pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
@@ -511,7 +511,7 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
 
 // ---- struct literals
 
-// `S { f: v, ... }` (myc.av emit_struct_literal): the values in written
+// `S { f: v, ... }` (the old back end's emit_struct_literal): the values in written
 // order (each kept as evaluated, snapshotted before a later switch), then
 // `struct %S (...)` in declaration order.
 pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
@@ -652,10 +652,10 @@ pub fn (lw: MirLower) lower_ctors {
   }
 }
 
-// `C.new(args)` (myc.av emit_constructor): avant_alloc(size, id) (the
+// `C.new(args)` (the old back end's emit_constructor): avant_alloc(size, id) (the
 // call form, 4.4; the inline path is W6c's), each field default in
 // declaration order (a reference-carrying one behind `barrier`, as the
-// old constructor does, myc.av emit_field_defaults), then
+// old constructor does, the old back end's emit_field_defaults), then
 // `C.initialize(self, args)`, and the object.
 pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   b = lw.lw_b
@@ -723,7 +723,7 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
 
 // The body of a constructor after its allocation into _o: each field
 // default in declaration order (a reference-carrying one behind
-// `barrier`, myc.av emit_field_defaults), then `C.initialize(_o,
+// `barrier`, the old back end's emit_field_defaults), then `C.initialize(_o,
 // params...)` when the class has one (the parameters are _1.._n).
 pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init_sym: String, nparams: Int) {
   b = lw.lw_b

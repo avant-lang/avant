@@ -14,31 +14,17 @@ fn dump_args(src: String): Array(String) {
   a
 }
 
-// The back end this run's compilers use (Stage 28 W9, D171): under the
-// new back end (the default since W10: AVANT_BACKEND unset, empty, or
-// llvm) the next compiler is built by it (C' from B, D' from C'), the
-// hello golden is its MIR (examples/hello.mir), and the compiler's fixed
-// point is the pre-optimization .ll of compiler/main.av (`avant
-// __emit-ll`); under AVANT_BACKEND=myc the old back end's .myc dumps.
-fn fp_llvm: Bool {
-  if v = env_get("AVANT_BACKEND") {
-    return v.size == 0 || str_eq(v, "llvm")
-  }
-  true
-}
-
-// The job that writes the compiler's fixed-point text to out: the .myc
-// dump on stdout (out is the log), or __emit-ll writing out (its log
-// beside it).
+// The compiler's fixed point (Stage 28 W9, D171): the next compiler is
+// built by this one (C' from B, D' from C'), the hello golden is its MIR
+// (examples/hello.mir), and the fixed point is the pre-optimization .ll
+// of compiler/main.av (`avant __emit-ll`) from both, by digest. (The old
+// back end's IR dumps were the fixed point until it retired at W11.)
 fn fp_main_job(compiler: String, main_av: String, out: String): HJob {
-  if fp_llvm() {
-    a: Array(String) = []
-    a.push("__emit-ll")
-    a.push(main_av)
-    a.push(out)
-    return HJob.new(compiler, a, "${out}.log")
-  }
-  HJob.new(compiler, dump_args(main_av), out)
+  a: Array(String) = []
+  a.push("__emit-ll")
+  a.push(main_av)
+  a.push(out)
+  HJob.new(compiler, a, "${out}.log")
 }
 
 fn test_fixed_point(c: Checks) {
@@ -47,14 +33,9 @@ fn test_fixed_point(c: Checks) {
     root = avant_test_root()
     stamp = now_ms()
     hello = "${root}/examples/hello.av"
-    golden = "${root}/tests/goldens/hello.myc"
-    ext = "myc"
-    what = "myc"
-    if fp_llvm() {
-      golden = "${root}/tests/goldens/examples/hello.mir"
-      ext = "ll"
-      what = ".ll"
-    }
+    golden = "${root}/tests/goldens/examples/hello.mir"
+    ext = "ll"
+    what = ".ll"
     main_av = "${root}/compiler/main.av"
     hello_b = "${scratch()}/fixed_point-${stamp}-hello-b.dump"
     hello_c = "${scratch()}/fixed_point-${stamp}-hello-c.dump"

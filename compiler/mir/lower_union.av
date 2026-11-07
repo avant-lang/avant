@@ -49,7 +49,7 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
 
 // ---- conversion
 
-// o (a value of type got) as a value of type want (myc.av emit_coerce,
+// o (a value of type got) as a value of type want (the old back end's emit_coerce,
 // emit_wrap_union): unchanged unless want is a union that got is not; a
 // member is wrapped with its tag; a union is re-tagged.
 pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOperand {
@@ -194,7 +194,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
 }
 
 // The value of type success held by the union in src (of type uty):
-// the payload of that member (myc.av emit_unwrap), a re-tagged union
+// the payload of that member (the old back end's emit_unwrap), a re-tagged union
 // when success is a union of several members, nothing for Nil.
 pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOperand {
   b = lw.lw_b
@@ -221,7 +221,7 @@ pub fn (lw: MirLower) tag_is(src: Int, k: Int, eq: Bool): MOperand {
 
 // ---- `??`, `.or`, postfix `?`, `if x = ...`
 
-// `l ?? r` and `l.or(r)` (myc.av emit_coalesce): the left once; when it
+// `l ?? r` and `l.or(r)` (the old back end's emit_coalesce): the left once; when it
 // holds nil, the right (evaluated only then) as the result type;
 // otherwise the left itself or its non-nil part.
 pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location): MOperand {
@@ -264,7 +264,7 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
 }
 
 // The success and failure parts of u under postfix `?` in a function
-// returning ret (myc.av try_success_from, try_fail_from).
+// returning ret (the old back end's try_success_from, try_fail_from).
 pub fn mir_try_success(u: Ty, ret: Ty): Ty {
   if !u.includes_nil {
     i = 0
@@ -291,7 +291,7 @@ pub fn mir_try_fail(u: Ty, ret: Ty): Ty {
   ty_nil()
 }
 
-// `e?` (myc.av emit_try, emit_failure_return): the union once; on the
+// `e?` (the old back end's emit_try, emit_failure_return): the union once; on the
 // failure tag the function returns the failure (the union itself when the
 // result type is the same, else the failure member as the result type);
 // otherwise the value is the success part.
@@ -331,7 +331,7 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
   b.c_i32(0)
 }
 
-// `if x = cond { } else { }` (myc.av emit_if_assign; type.av
+// `if x = cond { } else { }` (the old back end's emit_if_assign; type.av
 // if_assign_payload, if_assign_failure): the union once; when its tag is
 // not the failure's, x (a local of the success type) holds the success
 // part for the then-body.
@@ -382,7 +382,7 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
 // ---- results of type T?
 
 // The union `want` (a T?) holding v (of type vt) when found, else nil;
-// v was computed before the test (myc.av emit_hash_get_wrap and the
+// v was computed before the test (the old back end's emit_hash_get_wrap and the
 // min/max, env_get, file_read forms).
 pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc: Location): MOperand {
   b = lw.lw_b
@@ -555,7 +555,7 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
   b.c_i32(0)
 }
 
-// Hash reads (builtins.av:98-165, 451-460, 519-590): `h[k]` and
+// Hash reads (as the old back end did): `h[k]` and
 // `h.get(k)` (the key, then the hash), `h.get_slice(s, a, b)` (b, a, s,
 // then the hash), `h.get_concat(a, b)` (b, a, then the hash); each runtime
 // read reports through a found flag.
@@ -677,7 +677,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   lw.call_to(ty, f, ops)
 }
 
-// ---- `C.bump(args)` (myc.av emit_bump_constructor; trick #15)
+// ---- `C.bump(args)` (the old back end's emit_bump_constructor; trick #15)
 
 // `C.bump(args) -> C?`: avant_bump_alloc(size, id), nil when it fails;
 // otherwise the field defaults (behind their barriers), initialize, and
