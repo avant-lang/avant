@@ -30,6 +30,18 @@ int g_nursery_off;
 int g_stress;
 static int g_stress_now;
 
+/* C32 (Stage 28 W14b1, gc-design.md §5.4): an allocation inside a no-GC
+ * (defer) region that went past AVANT_HEAP_MAX_MB. The full collection
+ * it needed runs at the first collection point after the region: the
+ * next gc_maybe_collect, which the allocation fast paths (C and inline)
+ * reach because they stay off while this is set. */
+int g_limit_pending;
+
+void gc_limit_collect_pending(void) {
+  g_limit_pending = 1;
+  gc_fast_clear();
+}
+
 uint64_t avant_young_bytes;
 
 /* 0 when AVANT_YOUNG_MB pinned the threshold (tests). */
@@ -332,6 +344,11 @@ void gc_collect(int full) {
 
 void gc_maybe_collect(void) {
   if (g_collecting || g_gc_defer) {
+    return;
+  }
+  if (g_limit_pending) {
+    g_limit_pending = 0;
+    gc_collect(1);
     return;
   }
   /*

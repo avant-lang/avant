@@ -431,11 +431,15 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     gc_los_spare_drop();
   }
   if (g_heap_max && !g_los_spare && g_heap_bytes + bytes > g_heap_max) {
-    if (!g_gc_defer) {
+    if (g_gc_defer) {
+      /* C32: inside a no-GC region the allocation proceeds past the
+       * limit and the collection runs after the region. */
+      gc_limit_collect_pending();
+    } else {
       gc_collect(1);
-    }
-    if (g_heap_max && g_heap_bytes + bytes > g_heap_max) {
-      gc_die("heap limit");
+      if (g_heap_bytes + bytes > g_heap_max) {
+        gc_die("heap limit");
+      }
     }
   }
   g_los_allocs++;

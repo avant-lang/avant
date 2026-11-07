@@ -250,7 +250,7 @@ void avant_unpin(void *payload) {
   pthread_mutex_unlock(&g_world);
 }
 
-static void defer_enter(int stress_point) {
+static void defer_enter(int collecting_row) {
   gc_init();
   gc_fast_clear();
   pthread_mutex_lock(&g_world);
@@ -269,13 +269,18 @@ static void defer_enter(int stress_point) {
    * slots and leave the C args dangling. Full collect stays non-moving
    * (AVANT_NURSERY=0), so it is still safe at this boundary.
    */
-  if (g_gc_defer == 0 && g_nursery_off) {
+  if (g_gc_defer == 0 && (g_nursery_off || (g_limit_pending && collecting_row))) {
+    /* With the nursery on, only a collection C32 left pending runs
+     * here, and not at a quiet row's entry: a full collection moves no
+     * young object and keeps every block this thread's stack names
+     * (C31), and the caller of a collecting row has rooted what it
+     * holds. */
     gc_maybe_collect();
   }
   /* AVANT_GC_STRESS=1: a young collection at every outermost entry
    * (W14b1). It moves, so it proves that no helper holds a reference
    * the collector cannot see or rewrite when its region begins. */
-  if (g_gc_defer == 0 && g_stress && stress_point) {
+  if (g_gc_defer == 0 && g_stress && collecting_row) {
     gc_stress_point();
   }
   g_gc_defer += 1;
