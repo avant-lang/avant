@@ -1,0 +1,126 @@
+// Hashes, Buf, and Bytes on the new back end (Stage 28 W6c): Hash(String,
+// Int), Hash(String, String), Hash(Int, Int) stores, has_key, get_or, inc
+// (with and without a step), delete, inc_slice, keys, values, size,
+// clear; Buf construction, every push form, starts_with, to_s, to_bytes,
+// index reads and stores (plain and compound), size, clear; Bytes.to_buf;
+// hash_last_key. A function that only touches a hash through quiet rows
+// is a leaf (a quiet leaf, mir.md 5.7).
+
+fn say(s: String, v: Int): Int {
+  puts(s)
+  v
+}
+
+fn hk(s: String, h: Hash(String, Int)): Hash(String, Int) {
+  puts(s)
+  h
+}
+
+// A quiet leaf: hash set and size are quiet rows.
+fn put(h: Hash(String, Int), k: String, v: Int): Int {
+  h[k] = v
+  h.size
+}
+
+fn join(xs: Array(String)): String {
+  out = ""
+  for x in xs {
+    out = out + x + ","
+  }
+  out
+}
+
+fn ints(xs: Array(Int)): Int {
+  t = 0
+  for x in xs {
+    t = t * 7 + x
+  }
+  t
+}
+
+fn bytes_to_str_len(b: Bytes): Int {
+  b.size
+}
+
+fn hashes {
+  h = Hash(String, Int).new
+  h["one"] = 1
+  h["two"] = 2
+  puts(put(h, "three", 3))
+  hk("recv", h)["four"] = say("val", 4)
+  puts(h.size)
+  puts(h.has_key("two"))
+  puts(h.has_key("nine"))
+  puts(hk("recv2", h).get_or("five", say("dflt", 55)))
+  puts(h.get_or("one", 0))
+  puts(h.inc("one"))
+  puts(hk("recv3", h).inc("one", say("by", 10)))
+  h.delete("two")
+  puts(h.has_key("two"))
+  puts(h.inc_slice("xxonexx", 2, 5))
+  puts(join(h.keys.sorted))
+  puts(ints(h.values.sorted))
+  h.clear
+  puts(h.size)
+
+  s = Hash(String, String).new
+  s["a"] = "alpha"
+  s["b"] = "beta"
+  puts(s.get_or("a", "?"))
+  puts(s.get_or("z", "?"))
+  puts(join(s.values.sorted))
+  s.delete("a")
+  puts(s.size)
+
+  m = Hash(Int, Int).new
+  i = 0
+  while i < 100 {
+    m[i * 7] = i
+    i = i + 1
+  }
+  puts(m.size)
+  puts(m.get_or(70, -1))
+  puts(m.inc(70, 5))
+  puts(m.has_key(71))
+  m.delete(70)
+  puts(m.get_or(70, -1))
+  puts(m.keys.size)
+  puts(m.values.sum)
+  m.clear()
+  puts(m.size)
+}
+
+fn bufs {
+  b = buf_new()
+  b.push_str("head:")
+  b.push_byte(65)
+  b.push_slice("abcdef", 2, 4)
+  b.push_fmt_i(-42)
+  b.push_fmt_f(3.14159, 2)
+  b.push_bytes("|".bytes)
+  puts(b.to_s)
+  puts(b.size)
+  puts(b.starts_with("head"))
+  puts(b.starts_with("tail"))
+  puts(b[5])
+  b[5] = 97
+  b[6] += 1
+  puts(bytes_to_str_len(b.to_bytes))
+  c = buf_new(4)
+  i = 0
+  while i < 300 {
+    c.push_byte(48 + i % 10)
+    i = i + 1
+  }
+  puts(c.size)
+  c.clear
+  puts(c.size)
+  d = "bytes!".bytes.to_buf
+  d.push_str("+")
+  puts(d.to_s)
+}
+
+fn main {
+  hashes()
+  bufs()
+}

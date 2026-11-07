@@ -1,0 +1,393 @@
+// The lowering of calls and scalar members (Stage 28 W5b;
+// stages/stage28/mir.md W5.2, W5.3): direct calls of the program's plain
+// functions, the builtins `puts`, `puts_u`, `now_ms`, `now_us`, `sqrt`,
+// `exp`, and the conversions and members of Int, Int64, UInt64 (`to_f
+// to_i to_i64 to_u64 abs`) and Float64 (`to_i abs floor sqrt exp`), in
+// their field (`x.to_f`) and call (`x.to_f()`) forms.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+
+// The old back end's builtins outside the supported subset (calls.av:
+// 16-372): each is refused by name. The string builtins are in
+// lower_str.av.
+pub fn mir_other_builtin(name: String): Bool {
+  names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast"]
+  // W8b: lower_task.av lowers these in their checked forms first; what
+  // reaches this list is a form the checker would not accept.
+  i = 0
+  while i < names.size {
+    if str_eq(names[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+// Arguments left to right, each snapshotted when a later one contains a
+// switch (W5.3).
+pub fn (lw: MirLower) lower_args(args: Array(Expr)): Array(MOperand) {
+  out: Array(MOperand) = []
+  i = 0
+  while i < args.size {
+    o = lw.lower_expr(args[i])
+    j = i + 1
+    while j < args.size {
+      o = lw.snap(o, args[j])
+      j = j + 1
+    }
+    out.push(o)
+    i = i + 1
+  }
+  out
+}
+
+// A call into a fresh temporary of type ty (none when ty is void).
+pub fn (lw: MirLower) call_to(ty: Int, callee: String, args: Array(MOperand)): MOperand {
+  b = lw.lw_b
+  if ty == mt_void() {
+    dummy = b.call(-1, callee, args)
+    return b.c_i32(0)
+  }
+  t = b.temp(ty)
+  dummy2 = b.call(t, callee, args)
+  b.copy_local(t)
+}
+
+pub fn (lw: MirLower) call_f64(callee: String, a: MOperand): MOperand {
+  args: Array(MOperand) = []
+  args.push(a)
+  lw.call_to(mt_f64(), callee, args)
+}
+
+pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  if e.type_call {
+    if str_eq(e.resolved, "Regex__compile") && e.args.size >= 2 {
+      if got0 = lw.lower_re2c_compile(e) {
+        return got0
+      }
+    }
+    if got = lw.lower_named_call(e) {
+      return got
+    }
+    lw.refuse(e.loc, "the type-level call ${e.callee}")
+    return zero
+  }
+  if e.indirect {
+    return lw.lower_indirect(e)
+  }
+  if e.lib_name.size > 0 {
+    return lw.lower_lib_call(e)
+  }
+  // W8b: spawn, join, .parallel, Mutex.with, the gate builtins.
+  if got_task = lw.lower_task_call(e) {
+    return got_task
+  }
+  if bl = e.block {
+    // W7b: the block forms of the Array and Hash builtins (lower_block.av);
+    // spawn, .parallel, and Mutex.with are lower_task.av's (W8b).
+    if got = lw.lower_block_call(e) {
+      return got
+    }
+    lw.refuse(e.loc, "a call with a block (${e.callee})")
+    return zero
+  }
+  if recv = e.receiver {
+    if recv.kind == ex_name() && str_eq(recv.ident, "String") && str_eq(e.callee, "from_utf8") && e.args.size == 1 {
+      // W8a: String.from_utf8(bytes) (builtins.av emit_from_utf8): the
+      // runtime's string with an ok flag, as String?.
+      return lw.lower_opt_cstr(e, "avant_str_from_utf8")
+    }
+    if rt = recv.ty {
+      if str_eq(e.callee, "or") && rt.is_nilable && e.args.size == 1 {
+        if t = e.ty {
+          return lw.lower_coalesce(recv, e.args[0], t, e.loc)
+        }
+      }
+      // A user method on any type (Expr.resolved names a program method;
+      // the builtin members have none, W6a.1).
+      if !ast_is_ctor_call(e) && e.resolved.size > 0 {
+        if sym0 = lw.lw_fn_syms.get(e.resolved) {
+          if ms0 = lw.lw_syms.find_method_emit(e.resolved) {
+            return lw.lower_method_call(e, recv, rt, sym0, e.args)
+          }
+        }
+      }
+      if (mir_is_str_ty(rt) || rt.is_buf) && str_eq(e.callee, "get") {
+        return lw.lower_get(e, recv, rt, e.args)
+      }
+      if rt.is_integer || rt.is_float {
+        if e.args.size == 0 {
+          return lw.member(recv, rt, e.callee, e)
+        }
+      }
+      if mir_is_str_ty(rt) && e.resolved.size == 0 {
+        return lw.str_member(e, recv, rt, e.callee, e.args)
+      }
+      if rt.is_array {
+        return lw.arr_member(e, recv, rt, e.callee, e.args)
+      }
+      if rt.is_hash {
+        return lw.hash_member(e, recv, rt, e.callee, e.args)
+      }
+      if rt.is_buf {
+        return lw.buf_member(e, recv, e.callee, e.args)
+      }
+      if (rt.is_class || rt.is_struct) && !ast_is_ctor_call(e) {
+        if sym = lw.lw_fn_syms.get(e.resolved) {
+          return lw.lower_method_call(e, recv, rt, sym, e.args)
+        }
+      }
+    }
+    if ast_is_ctor_call(e) {
+      if str_eq(e.callee, "bump") {
+        lw.lw_bumps[e.resolved] = 1
+      }
+      if got = lw.lower_named_call(e) {
+        return got
+      }
+    }
+    lw.refuse(e.loc, "the method call .${e.callee}")
+    return zero
+  }
+  c = e.callee
+  if str_eq(c, "puts") || str_eq(c, "puts_u") {
+    if e.args.size == 1 {
+      return lw.lower_puts(e.args[0], str_eq(c, "puts_u"), e.loc)
+    }
+  }
+  if str_eq(c, "now_ms") || str_eq(c, "now_us") {
+    lw.at(e.loc)
+    none: Array(MOperand) = []
+    return lw.call_to(mt_i32(), "avant_${c}", none)
+  }
+  if (str_eq(c, "sqrt") || str_eq(c, "exp")) && e.args.size == 1 {
+    a = lw.lower_expr(e.args[0])
+    if lw.failed {
+      return zero
+    }
+    lw.at(e.loc)
+    if str_eq(c, "sqrt") {
+      return lw.call_f64("sqrt", a)
+    }
+    return lw.call_f64("avant_exp", a)
+  }
+  if mir_str_builtin_arity(c) == e.args.size {
+    return lw.lower_str_builtin(e, c)
+  }
+  if got = lw.heap_builtin(e, c) {
+    return got
+  }
+  if got2 = lw.io_builtin(e, c) {
+    return got2
+  }
+  if (str_eq(c, "process_run") && e.args.size == 2) || (str_eq(c, "process_run_out") && e.args.size == 3) {
+    // W8a (calls.av emit_process_run, emit_process_run_out): the path,
+    // the arguments array, the output path, left to right (the old back
+    // end evaluates them right to left).
+    ops = lw.lower_args(e.args)
+    if lw.failed {
+      return zero
+    }
+    lw.at(e.loc)
+    return lw.call_to(mt_i32(), "avant_${c}", ops)
+  }
+  if mir_other_builtin(c) {
+    lw.refuse(e.loc, "the builtin ${c}")
+    return zero
+  }
+  name = e.resolved
+  if name.size == 0 {
+    name = c
+  }
+  if sym = lw.lw_fn_syms.get(name) {
+    if fs = lw.lw_syms.find_fn(name) {
+      ret = lw.ty_at(fs.ret, e.loc, "a call result")
+      args = lw.lower_args_to(e.args, fs.params)
+      if lw.failed {
+        return zero
+      }
+      lw.at(e.loc)
+      return lw.call_to(ret, sym, args)
+    }
+  }
+  lw.refuse(e.loc, "the call ${c}")
+  zero
+}
+
+// puts (calls.av:2043-2075): printf with the old formats; a Bool is
+// widened to i32. puts_u prints "%u\n".
+pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOperand {
+  b = lw.lw_b
+  ty = lw.ety(arg)
+  v = lw.lower_expr(arg)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(loc)
+  fmt = "%d\n"
+  if unsigned {
+    fmt = "%u\n"
+  } else if ty == mt_i64() {
+    fmt = "%lld\n"
+  } else if ty == mt_u64() {
+    fmt = "%llu\n"
+  } else if ty == mt_str() {
+    fmt = "%s\n"
+  } else if ty == mt_f64() {
+    fmt = "%g\n"
+  } else if ty == mt_bool() {
+    v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+  }
+  args: Array(MOperand) = []
+  args.push(b.str_const(fmt))
+  args.push(v)
+  dummy = b.call(-1, "printf", args)
+  b.c_i32(0)
+}
+
+pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
+  if obj = e.object {
+    if ot = obj.ty {
+      if e.method_call && e.resolved.size > 0 && !(ot.is_class || ot.is_struct) {
+        if sym1 = lw.lw_fn_syms.get(e.resolved) {
+          none4: Array(Expr) = []
+          return lw.lower_method_call(e, obj, ot, sym1, none4)
+        }
+      }
+      if ot.is_integer || ot.is_float {
+        return lw.member(obj, ot, e.ident, e)
+      }
+      if mir_is_str_ty(ot) {
+        none: Array(Expr) = []
+        return lw.str_member(e, obj, ot, e.ident, none)
+      }
+      none3: Array(Expr) = []
+      if ot.is_join && str_eq(e.ident, "join") {
+        return lw.lower_join(e, obj)
+      }
+      if ot.is_array {
+        return lw.arr_member(e, obj, ot, e.ident, none3)
+      }
+      if ot.is_hash {
+        return lw.hash_member(e, obj, ot, e.ident, none3)
+      }
+      if ot.is_buf {
+        return lw.buf_member(e, obj, e.ident, none3)
+      }
+      if ot.is_class || ot.is_struct {
+        if e.method_call {
+          if sym = lw.lw_fn_syms.get(e.resolved) {
+            none2: Array(Expr) = []
+            return lw.lower_method_call(e, obj, ot, sym, none2)
+          }
+          lw.refuse(e.loc, "the method .${e.ident}")
+          return lw.lw_b.c_i32(0)
+        }
+        return lw.lower_place_read(e)
+      }
+    }
+  }
+  if obj2 = e.object {
+    if ot2 = obj2.ty {
+      if (ot2.is_ptr || ot2.is_clayout) && !e.method_call {
+        return lw.lower_place_read(e)
+      }
+    }
+  }
+  lw.refuse(e.loc, "the field .${e.ident} (W6)")
+  lw.lw_b.c_i32(0)
+}
+
+// A scalar member (builtins.av:1687-1760) of the value of obj.
+pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand {
+  b = lw.lw_b
+  from = lw.ety(obj)
+  ty = lw.ety(e)
+  v = lw.lower_expr(obj)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if ot.is_float {
+    if str_eq(name, "to_i") {
+      return lw.f64_to_i32(v, e.loc)
+    }
+    if str_eq(name, "abs") {
+      return lw.call_f64("fabs", v)
+    }
+    if str_eq(name, "floor") {
+      return lw.call_f64("floor", v)
+    }
+    if str_eq(name, "sqrt") {
+      return lw.call_f64("sqrt", v)
+    }
+    if str_eq(name, "exp") {
+      return lw.call_f64("avant_exp", v)
+    }
+  } else {
+    if str_eq(name, "to_f") || str_eq(name, "to_i") || str_eq(name, "to_i64") || str_eq(name, "to_u64") {
+      if ty == from {
+        return v
+      }
+      return lw.tmp(ty, b.rv_cast(v, ty))
+    }
+    if str_eq(name, "abs") {
+      return lw.int_abs(from, v)
+    }
+  }
+  lw.refuse(e.loc, "the member .${name} of ${ot.show}")
+  b.c_i32(0)
+}
+
+// abs on an integer: signed and wrapping, on the bits for UInt64 (W5.2).
+pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
+  b = lw.lw_b
+  d = b.temp(ty)
+  dummy = b.assign(b.pl(d), b.rv_use(v))
+  sty = ty
+  s = b.copy_local(d)
+  if ty == mt_u64() {
+    sty = mt_i64()
+    s = lw.tmp(sty, b.rv_cast(b.copy_local(d), sty))
+  }
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), s, lw.int_const(sty, 0i64)))
+  neg = b.block
+  join = b.block
+  b.branch(c, neg, join)
+  b.at(neg)
+  dummy2 = b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
+  b.goto(join)
+  b.at(join)
+  b.copy_local(d)
+}
+
+// Float64.to_i (W5.2; C2, W11b): truncation inside (-2147483649,
+// 2147483648); NaN (which fails both compares), the infinities and any
+// value outside trap with avant_trap_to_i(x), like integer overflow.
+pub fn (lw: MirLower) f64_to_i32(v: MOperand, loc: Location): MOperand {
+  b = lw.lw_b
+  x = b.temp(mt_f64())
+  dummy = b.assign(b.pl(x), b.rv_use(v))
+  lo = b.c_f64(mir_f64_bits(-2147483649.0), "-2147483649.0")
+  hi = b.c_f64(mir_f64_bits(2147483648.0), "2147483648.0")
+  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(x), lo))
+  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(x), hi))
+  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  ok = lw.trap_open(inside, false)
+  lw.trap_close(ok, "avant_trap_to_i", lw.one(b.copy_local(x)), loc)
+  lw.tmp(mt_i32(), b.rv_cast(b.copy_local(x), mt_i32()))
+}

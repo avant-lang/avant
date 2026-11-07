@@ -1,0 +1,49 @@
+// Shifts (Stage 28 W5b; C1, W11b): every amount inside 0..width - 1, the
+// edges included, for Int, Int64 and UInt64; >> is arithmetic on Int and
+// Int64, logical on UInt64. An amount outside the range traps; each such
+// case is its own program (trap_shl, trap_shr_neg, trap_shl_i64,
+// trap_shr_u64). Amounts are run-time values (opaque), so no mode folds
+// them; constant amounts are in the last lines.
+
+// n, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn main {
+  k = opaque(0)
+  puts(1 << (0 + k))
+  puts(1 << (3 + k))
+  puts(1 << (30 + k))
+  puts(1 << (31 + k))
+  puts(3 << (31 + k))
+  puts(-8 >> (0 + k))
+  puts(-8 >> (2 + k))
+  puts(-8 >> (31 + k))
+  puts(2147483647 >> (31 + k))
+  puts(1000000 >> (k + 4))
+  k64 = k.to_i64
+  puts(1i64 << (0i64 + k64))
+  puts(1i64 << (40i64 + k64))
+  puts(1i64 << (63i64 + k64))
+  puts(-8i64 >> (1i64 + k64))
+  puts(-8i64 >> (63i64 + k64))
+  ku = k.to_u64
+  puts(16u64 >> (0u64 + ku))
+  puts(16u64 >> (2u64 + ku))
+  puts(18446744073709551615u64 >> (60u64 + ku))
+  puts(18446744073709551615u64 >> (63u64 + ku))
+  puts(1u64 << (63u64 + ku))
+  x = opaque(5)
+  puts(x << 31)
+  puts(x >> 0)
+  puts(-x >> 31)
+  puts(x.to_i64 << 63i64)
+  puts(x.to_u64 >> 63u64)
+}

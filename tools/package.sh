@@ -3,22 +3,26 @@
 # release workflow and local proofs, so the shipped layout can be tested
 # before a tag.
 #
-#   sh tools/package.sh OUT_DIR COMPILER MYC_LLVM RE2C [VERSIONS_FILE]
+#   sh tools/package.sh OUT_DIR COMPILER RE2C [VERSIONS_FILE]
 #
-# COMPILER is the avant binary to ship (the release job's B), MYC_LLVM the
-# backend to bundle beside it, RE2C the static re2c to bundle (D151,
-# tools/build-re2c.sh). The bind helper and the runtime objects come
-# from runtime/build/ (run `sh runtime/build.sh` first); runtime/avant_rt.h
-# ships too, for the scanners re2c generates. The compiler finds this
-# runtime beside its executable (D149). VERSIONS_FILE, when
-# given, becomes versions.txt; otherwise a short local one is written.
+# COMPILER is the avant binary to ship (Stage 28 W10: C', the compiler B
+# builds on the new back end, built --release by the release job), RE2C
+# the static re2c to bundle (D151, tools/build-re2c.sh). There is no
+# myc-llvm in the release: the compiler's one back end is the in-process
+# LLVM linked into it (D172; the old back end retired at W11). The
+# bind helper and the runtime objects come from runtime/build/ (run `sh
+# runtime/build.sh` first), except avant_llvm.o, which only the
+# compiler's own link uses (D190); runtime/avant_rt.h ships too, for the
+# scanners re2c generates. The compiler finds this runtime beside its
+# executable (D149). VERSIONS_FILE, when given, becomes versions.txt;
+# otherwise a short local one is written.
 #
 # Writes OUT_DIR/avant-linux-x86_64/, OUT_DIR/avant-linux-x86_64.tar.gz,
 # and OUT_DIR/avant-linux-x86_64.tar.gz.sha256 (checkable from OUT_DIR).
 set -eu
 
-if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
-  echo "usage: sh tools/package.sh OUT_DIR COMPILER MYC_LLVM RE2C [VERSIONS_FILE]" >&2
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+  echo "usage: sh tools/package.sh OUT_DIR COMPILER RE2C [VERSIONS_FILE]" >&2
   exit 2
 fi
 # Absolute paths: the glibc-floor step below runs the packaged compiler
@@ -26,9 +30,8 @@ fi
 # `dist`) would not resolve there.
 out=$(realpath -m "$1")
 compiler=$(realpath -m "$2")
-myc=$(realpath -m "$3")
-re2c=$(realpath -m "$4")
-versions=${5:-}
+re2c=$(realpath -m "$3")
+versions=${4:-}
 [ -z "$versions" ] || versions=$(realpath -m "$versions")
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 name=avant-linux-x86_64
@@ -40,7 +43,6 @@ fail() {
 }
 
 [ -x "$compiler" ] || fail "compiler is not an executable file: $compiler"
-[ -x "$myc" ] || fail "myc-llvm is not an executable file: $myc"
 [ -x "$re2c" ] || fail "re2c is not an executable file: $re2c (build it with sh tools/build-re2c.sh)"
 [ -f "$root/runtime/build/avant_rt.o" ] || fail "runtime/build/avant_rt.o is missing (run sh runtime/build.sh)"
 [ -x "$root/runtime/build/avant-bind" ] || fail "runtime/build/avant-bind is missing (run sh runtime/build.sh with llvm-config and libclang)"
@@ -51,13 +53,15 @@ rm -rf "$dir" "$out/$name.tar.gz" "$out/$name.tar.gz.sha256"
 mkdir -p "$dir/lib/std" "$dir/runtime/build"
 
 install -m 755 "$compiler" "$dir/avant"
-install -m 755 "$myc" "$dir/myc-llvm"
 install -m 755 "$re2c" "$dir/re2c"
 install -m 755 "$root/runtime/build/avant-bind" "$dir/avant-bind"
 for f in "$root"/lib/std/*.av; do
   install -m 644 "$f" "$dir/lib/std/"
 done
 for f in "$root"/runtime/build/*.o; do
+  case "$f" in
+    */avant_llvm.o) continue ;;  # the compiler's own link only (D190)
+  esac
   install -m 644 "$f" "$dir/runtime/build/"
 done
 install -m 644 "$root/runtime/avant_rt.h" "$dir/runtime/avant_rt.h"
@@ -76,7 +80,8 @@ fi
 # (an object records no symbol versions; its references bind where the
 # user links). The program uses every runtime object: the core and each
 # std module. It is compiled by the packaged compiler outside the checkout,
-# so this is also a first self-test of the archive.
+# with an empty environment (no AVANT_BACKEND or AVANT_ROOT;
+# PATH=/usr/bin:/bin), so this is also a first self-test of the archive.
 floor_dir=$(mktemp -d "${TMPDIR:-/tmp}/avant-floor-XXXXXX")
 trap 'rm -rf "$floor_dir"' EXIT
 cat > "$floor_dir/all.av" <<'EOF_AV'
@@ -115,7 +120,7 @@ EOF_AV
   cat "$floor_dir/compile.log" >&2
   fail "the packaged compiler could not compile the glibc-floor program"
 }
-floor=$(for f in "$dir/avant" "$dir/myc-llvm" "$dir/avant-bind" "$floor_dir/all"; do
+floor=$(for f in "$dir/avant" "$dir/avant-bind" "$floor_dir/all"; do
   objdump -T "$f" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' || true
 done | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
 [ -n "$floor" ] || fail "could not measure the glibc floor"

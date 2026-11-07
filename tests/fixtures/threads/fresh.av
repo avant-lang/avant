@@ -1,0 +1,65 @@
+// Expected differences of the threads constructs (D196, Stage 28 W8b):
+// programs the old back end fails to compile, checked against their
+// known output by tests/cases/test_threads_llvm.av and skipped by
+// tools/backend-diff.sh.
+//
+// 1. A lambda in a `.parallel` block that captures the block parameter:
+//    the old back end fails in myc ("local variable x was created with
+//    another type"); the new one boxes the parameter in the thunk.
+// 2. A reference stored into a field of a class held in a Mutex cell
+//    (`h.log = ...` in `m.with { |h| }`): the old back end fails in myc
+//    ("no field 1 in void": its barrier holder loses the class type);
+//    the new one stores it behind the holder's barrier.
+
+class Held {
+  n: Int
+  log: String
+
+  fn initialize(n: Int) {
+    self.n = n
+    self.log = ""
+  }
+}
+
+class Mutex(T) {
+  cell: T
+  gate: UInt64
+
+  fn initialize(value: T) {
+    self.cell = value
+    self.gate = avant_gate_new()
+  }
+}
+
+fn main {
+  xs = [1, 2, 3, 4]
+  base = 100
+  lam = xs.parallel { |x|
+    f: fn(Int): Int = { |y| y * x + base }
+    f(2)
+  }
+  puts("${lam[0]} ${lam[1]} ${lam[2]} ${lam[3]}")
+  words = ["a", "bb", "ccc"]
+  twice = words.parallel { |w|
+    g: fn(): String = { || "${w}${w}" }
+    g()
+  }
+  puts("${twice[0]} ${twice[1]} ${twice[2]}")
+  held = Mutex(Held).new(Held.new(5))
+  hs: Array(JoinHandle(Int)) = []
+  i = 0
+  while i < 4 {
+    hs.push(spawn {
+      held.with { |h|
+        h.n = h.n + 1
+        h.log = "${h.log}t"
+        h.n
+      }
+    })
+    i = i + 1
+  }
+  sum = 0
+  hs.each { |h| sum = sum + h.join }
+  puts(sum > 0)
+  puts(held.with { |h| "${h.n} ${h.log}" })
+}

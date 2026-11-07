@@ -1,0 +1,114 @@
+module defaults
+file 0 "defaults.av"
+
+layout %defaults.CalcNode = class { 0 kind: i32, 1 name: ref str, 2 extra: i32 }  size 24 align 8 id 1
+layout %defaults.Named = class { 0 kind: i32, 1 name: ref str }  size 16 align 8 id 2
+
+const str.0 = "%d\0A"
+const str.1 = ""
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %defaults.CalcNode stride 0 bits [0x2]
+typemap 2 %defaults.Named stride 0 bits [0x2]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_str_size(ref str) -> i32 never
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @defaults.av:19:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: ref %defaults.CalcNode
+  let _4 (n): ref %defaults.CalcNode
+  let _5: i32
+  let _6: ref str
+  let _7: i32
+  let _8: i32
+  let _9: ref %defaults.Named
+  let _10 (m): ref %defaults.Named
+  let _11: i32
+  let _12: ref str
+  let _13: i32
+
+bb0:
+  gc.enter   @19:1
+  gc.roots _2   @19:1
+  call __avant_type_maps() nocollect   @19:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @19:1
+  _3 = call av.defaults/CalcNode.new() collects   @20:15
+  _4 = copy _3   @20:5
+  _5 = copy (*_4).0   @21:9
+  call printf(const str.0, copy _5) nocollect   @21:3
+  _6 = copy (*_4).1   @22:9
+  _7 = call avant_str_size(copy _6) nocollect   @22:14
+  call printf(const str.0, copy _7) nocollect   @22:3
+  _8 = copy (*_4).2   @23:9
+  call printf(const str.0, copy _8) nocollect   @23:3
+  _9 = call av.defaults/Named.new(const i32 5) collects   @24:12
+  _10 = copy _9   @24:5
+  _11 = copy (*_10).0   @25:9
+  call printf(const str.0, copy _11) nocollect   @25:3
+  _12 = copy (*_10).1   @26:9
+  _13 = call avant_str_size(copy _12) nocollect   @26:14
+  call printf(const str.0, copy _13) nocollect   @26:3
+  _0 = const i32 0   @19:1
+  gc.leave   @19:1
+  return   @19:1
+}
+
+fn av.defaults/CalcNode.initialize(_1: ref %defaults.CalcNode) -> void leaf @defaults.av:6:3 {
+  let _1 (self): ref %defaults.CalcNode
+
+bb0:
+  return   @6:3
+}
+
+fn av.defaults/Named.initialize(_1: ref %defaults.Named, _2: i32) -> void leaf @defaults.av:14:3 {
+  let _1 (self): ref %defaults.Named
+  let _2 (kind): i32
+
+bb0:
+  (*_1).0 = copy _2   @15:15
+  return   @14:3
+}
+
+fn av.defaults/CalcNode.new() -> ref %defaults.CalcNode frame @defaults.av:1:1 {
+  let _0: ref %defaults.CalcNode
+  let _1: ref %defaults.CalcNode
+
+bb0:
+  gc.enter   @1:1
+  gc.roots   @1:1
+  _1 = call avant_alloc(const u64 24, const u32 1) collects   @1:1
+  (*_1).0 = const i32 0   @2:3
+  barrier copy _1   @3:3
+  (*_1).1 = const str.1   @3:3
+  (*_1).2 = const i32 1   @4:3
+  call av.defaults/CalcNode.initialize(copy _1) nocollect   @1:1
+  _0 = copy _1   @1:1
+  gc.leave   @1:1
+  return   @1:1
+}
+
+fn av.defaults/Named.new(_1: i32) -> ref %defaults.Named frame @defaults.av:10:1 {
+  let _0: ref %defaults.Named
+  let _1 (kind): i32
+  let _2: ref %defaults.Named
+
+bb0:
+  gc.enter   @10:1
+  gc.roots   @10:1
+  _2 = call avant_alloc(const u64 16, const u32 2) collects   @10:1
+  (*_2).0 = const i32 0   @11:3
+  barrier copy _2   @12:3
+  (*_2).1 = const str.1   @12:3
+  call av.defaults/Named.initialize(copy _2, copy _1) nocollect   @10:1
+  _0 = copy _2   @10:1
+  gc.leave   @10:1
+  return   @10:1
+}

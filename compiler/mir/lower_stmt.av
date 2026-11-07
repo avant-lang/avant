@@ -1,0 +1,436 @@
+// The lowering of statements and control flow (Stage 28 W5b;
+// stages/stage28/mir.md W5.3): bodies with their tail value, `=` and the
+// compound assignments to locals, `return`, `if`, `while` (with the
+// `pre` statements `for` arrives with), `break`, `next`, and `switch` as
+// a statement or a value. Statements after a terminator in the same list
+// are dead and are not lowered.
+
+import location
+import source
+import token
+import type
+import ast
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+
+// A function body: the last statement of a function with a result is
+// its value when it is an expression (the old emit_stmt's at_tail).
+pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
+  i = 0
+  while i < body.size {
+    if lw.failed || !lw.open_now {
+      return
+    }
+    st = body[i]
+    if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
+      if e = st.expr {
+        lw.cov_stmt(st)
+        v = lw.lower_ret_value(e)
+        if lw.failed {
+          return
+        }
+        lw.at(st.loc)
+        dummy = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
+        lw.lw_b.ret
+        return
+      }
+    }
+    lw.lower_stmt(st)
+    i = i + 1
+  }
+}
+
+pub fn (lw: MirLower) lower_stmts(body: Array(Stmt)) {
+  i = 0
+  while i < body.size {
+    if lw.failed || !lw.open_now {
+      return
+    }
+    lw.lower_stmt(body[i])
+    i = i + 1
+  }
+}
+
+pub fn (lw: MirLower) lower_stmt(st: Stmt) {
+  lw.cov_stmt(st)
+  k = st.kind
+  if k == st_expr() {
+    if e = st.expr {
+      dummy = lw.lower_expr(e)
+    }
+    return
+  }
+  if k == st_assign() {
+    lw.lower_assign(st)
+    return
+  }
+  if k == st_return() {
+    lw.lower_return(st)
+    return
+  }
+  if k == st_if() {
+    lw.lower_if(st)
+    return
+  }
+  if k == st_while() {
+    lw.lower_while(st)
+    return
+  }
+  if k == st_break() || k == st_continue() {
+    if lw.lw_exits.size == 0 {
+      lw.refuse(st.loc, "break or next outside a loop")
+      return
+    }
+    lw.at(st.loc)
+    lw.unpin_loop
+    if k == st_break() {
+      lw.lw_b.goto(lw.lw_exits[lw.lw_exits.size - 1])
+    } else {
+      lw.lw_b.goto(lw.lw_heads[lw.lw_heads.size - 1])
+    }
+    return
+  }
+  if k == st_pin() {
+    lw.lower_pin(st)
+    return
+  }
+  lw.refuse(st.loc, "this statement")
+}
+
+pub fn (lw: MirLower) lower_assign(st: Stmt) {
+  if t = st.target {
+    if t.kind == ex_field() || (t.kind == ex_name() && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
+      lw.lower_field_assign(st, t)
+      return
+    }
+    if t.kind == ex_index() {
+      lw.lower_index_assign(st, t)
+      return
+    }
+    if t.kind != ex_name() {
+      lw.refuse(t.loc, "assignment to this place")
+      return
+    }
+    if t.fn_ref {
+      lw.refuse(t.loc, "assignment to a function name")
+      return
+    }
+    if tt = t.ty {
+      ty = lw.ty_at(tt, t.loc, "a local")
+      if lw.failed {
+        return
+      }
+      if lw.name_in_box(t.ident) {
+        lw.box_assign(st, t, tt, ty)
+        return
+      }
+      if v = st.value {
+        if st.op == tk_eq() {
+          val = lw.lower_coerced(v, ty, tt)
+          if lw.failed {
+            return
+          }
+          k = lw.var_get(t.ident, ty)
+          lw.at(st.loc)
+          dummy = lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(val))
+          return
+        }
+        // x op= v: the old value, then v, then the checked op (W5.2).
+        k2 = lw.var_find(t.ident, ty)
+        if k2 < 0 {
+          lw.refuse(t.loc, "compound assignment to an unknown local")
+          return
+        }
+        cur = lw.snap(lw.lw_b.copy_local(k2), v)
+        rhs = lw.lower_expr(v)
+        if lw.failed {
+          return
+        }
+        r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
+        lw.at(st.loc)
+        dummy2 = lw.lw_b.assign(lw.lw_b.pl(k2), lw.lw_b.rv_use(r))
+      }
+      return
+    }
+    lw.refuse(t.loc, "an untyped assignment")
+  }
+}
+
+// `+= -= *= /=` to their binary operator token (the old compound_to_binop).
+pub fn compound_op_of(op: Int): Int {
+  if op == tk_plus_eq() {
+    return tk_plus()
+  }
+  if op == tk_minus_eq() {
+    return tk_minus()
+  }
+  if op == tk_star_eq() {
+    return tk_star()
+  }
+  if op == tk_slash_eq() {
+    return tk_slash()
+  }
+  op
+}
+
+// A returned value, converted to the function's result type (the old
+// back end's emit_stmt case 2 and the tail value: emit_coerce to return_type).
+pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
+  v = lw.lower_expr(e)
+  if rt = lw.lw_ret_ty {
+    if t = e.ty {
+      return lw.coerce(v, t, rt, e.loc)
+    }
+  }
+  v
+}
+
+pub fn (lw: MirLower) lower_return(st: Stmt) {
+  if e = st.expr {
+    v = lw.lower_ret_value(e)
+    if lw.failed {
+      return
+    }
+    lw.at(st.loc)
+    if lw.lw_ret != mt_void() {
+      dummy = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
+    } else if lw.lw_main {
+      dummy2 = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
+    }
+    lw.unpin_all
+    lw.lw_b.ret
+    return
+  }
+  lw.at(st.loc)
+  if lw.lw_main {
+    dummy3 = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
+  }
+  lw.unpin_all
+  lw.lw_b.ret
+}
+
+pub fn (lw: MirLower) lower_if(st: Stmt) {
+  if st.bind.size > 0 {
+    lw.lower_if_bind(st)
+    return
+  }
+  if c = st.cond {
+    cv = lw.lower_expr(c)
+    if lw.failed {
+      return
+    }
+    bt = lw.lw_b.block
+    bf = lw.lw_b.block
+    join = bf
+    if st.else_body.size > 0 || lw.lw_cov.on {
+      join = lw.lw_b.block
+    }
+    lw.at(st.loc)
+    lw.lw_b.branch(cv, bt, bf)
+    lw.lw_b.at(bt)
+    lw.cov_branch(st.loc)
+    lw.lower_stmts(st.then_body)
+    lw.goto_if_open(join, st.loc)
+    if st.else_body.size > 0 || lw.lw_cov.on {
+      lw.lw_b.at(bf)
+      lw.cov_branch(st.loc)
+      lw.lower_stmts(st.else_body)
+      lw.goto_if_open(join, st.loc)
+    }
+    lw.lw_b.at(join)
+  }
+}
+
+pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
+  if lw.failed || !lw.open_now {
+    return
+  }
+  lw.at(loc)
+  lw.lw_b.goto(bb)
+}
+
+pub fn (lw: MirLower) lower_while(st: Stmt) {
+  lw.lower_stmts(st.pre)
+  if lw.failed || !lw.open_now {
+    return
+  }
+  head = lw.lw_b.block
+  lw.at(st.loc)
+  lw.lw_b.goto(head)
+  lw.lw_b.at(head)
+  body = lw.lw_b.block
+  exit = lw.lw_b.block
+  if c = st.cond {
+    cv = lw.lower_expr(c)
+    if lw.failed {
+      return
+    }
+    lw.at(st.loc)
+    lw.lw_b.branch(cv, body, exit)
+  } else {
+    lw.lw_b.goto(body)
+  }
+  lw.lw_heads.push(head)
+  lw.lw_exits.push(exit)
+  lw.lw_b.at(body)
+  lw.cov_branch(st.loc)
+  lw.lower_stmts(st.body)
+  lw.goto_if_open(head, st.loc)
+  dummy = lw.lw_heads.pop
+  dummy2 = lw.lw_exits.pop
+  lw.lw_b.at(exit)
+}
+
+// `switch` (W5.3): the value (a Bool as i32), one MIR switch, each arm a
+// block; a value switch writes each arm's last expression into its
+// result temporary, zeroed first (an arm without a value, or no match
+// without else, leaves the zero).
+pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
+  rty = mt_void()
+  if t = e.ty {
+    rty = lw.ty_at(t, e.loc, "a switch value")
+  }
+  if lw.failed {
+    return lw.lw_b.c_i32(0)
+  }
+  if c = e.cond {
+    cv = lw.lower_expr(c)
+    if lw.failed {
+      return lw.lw_b.c_i32(0)
+    }
+    cty = mt_i32()
+    if ct = c.ty {
+      cty = mir_scalar_ty(ct)
+    }
+    lw.at(e.loc)
+    if cty == mt_bool() {
+      tb = lw.lw_b.temp(mt_i32())
+      dummy = lw.lw_b.assign(lw.lw_b.pl(tb), lw.lw_b.rv_cast(cv, mt_i32()))
+      cv = lw.lw_b.copy_local(tb)
+      cty = mt_i32()
+    }
+    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() {
+      lw.refuse(c.loc, "switch on this type")
+      return lw.lw_b.c_i32(0)
+    }
+    dest = -1
+    if rty != mt_void() {
+      dest = lw.lw_b.temp(rty)
+      dummy2 = lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero)
+    }
+    values: Array(Int64) = []
+    targets: Array(Int) = []
+    arms: Array(Int) = []
+    // Under coverage (W8b) every label enters through its own block,
+    // which counts the branch (the old back end emits the arm once per
+    // label, the old back end's emit_switch: one branch slot per label).
+    entries: Array(Int) = []
+    entry_arm: Array(Int) = []
+    i = 0
+    while i < e.cases.size {
+      arm = lw.lw_b.block
+      arms.push(arm)
+      j = 0
+      while j < e.cases[i].labels.size {
+        v = e.cases[i].labels[j]
+        seen = false
+        q = 0
+        while q < values.size {
+          if values[q] == v {
+            seen = true
+          }
+          q = q + 1
+        }
+        if !seen {
+          values.push(v)
+          if lw.lw_cov.on {
+            en = lw.lw_b.block
+            entries.push(en)
+            entry_arm.push(i)
+            targets.push(en)
+          } else {
+            targets.push(arm)
+          }
+        }
+        j = j + 1
+      }
+      i = i + 1
+    }
+    other = -1
+    if e.has_else || lw.lw_cov.on {
+      other = lw.lw_b.block
+    }
+    join = lw.lw_b.block
+    if other < 0 {
+      other = join
+    }
+    lw.at(e.loc)
+    lw.lw_b.switch_on(cv, values, targets, other)
+    i = 0
+    while i < e.cases.size {
+      q2 = 0
+      while q2 < entries.size {
+        if entry_arm[q2] == i {
+          lw.lw_b.at(entries[q2])
+          lw.cov_branch(e.cases[i].loc)
+          lw.at(e.cases[i].loc)
+          lw.lw_b.goto(arms[i])
+        }
+        q2 = q2 + 1
+      }
+      lw.lw_b.at(arms[i])
+      lw.lower_arm(e.cases[i].body, dest, e)
+      lw.goto_if_open(join, e.cases[i].loc)
+      i = i + 1
+    }
+    if e.has_else || lw.lw_cov.on {
+      lw.lw_b.at(other)
+      lw.cov_branch(e.loc)
+      lw.lower_arm(e.else_body, dest, e)
+      lw.goto_if_open(join, e.loc)
+    }
+    lw.lw_b.at(join)
+    if dest >= 0 {
+      return lw.lw_b.copy_local(dest)
+    }
+  }
+  lw.lw_b.c_i32(0)
+}
+
+// An arm's statements; in a value switch its last expression, converted
+// to the switch's type (the old back end's emit_switch_arm: emit_coerce), is the
+// result.
+pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
+  if dest < 0 {
+    lw.lower_stmts(body)
+    return
+  }
+  i = 0
+  while i < body.size {
+    if lw.failed || !lw.open_now {
+      return
+    }
+    st = body[i]
+    if i == body.size - 1 && st.kind == st_expr() {
+      if e = st.expr {
+        v = lw.lower_expr(e)
+        if t = e.ty {
+          if want = sw.ty {
+            v = lw.coerce(v, t, want, e.loc)
+          }
+        }
+        if lw.failed {
+          return
+        }
+        lw.at(st.loc)
+        dummy2 = lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_use(v))
+        return
+      }
+    }
+    lw.lower_stmt(st)
+    i = i + 1
+  }
+}

@@ -22,7 +22,9 @@
  *
  * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
  * stay put (those blocks remain `SPACE_FROM` so their address is stable,
- * D34). After young copy, unpinned from-space is discarded. Set
+ * D34) and are promoted in place: from then on they are mature objects,
+ * traced and remembered like any other (C29, promote_pinned_one). After
+ * young copy, unpinned from-space is discarded. Set
  * `AVANT_NURSERY_DISCARD=0` to park all nursery blocks instead (leftover
  * pointer diagnosis). Objects that escape to C should be pinned.
  *
@@ -89,6 +91,15 @@ static uint8_t g_alloc_fresh[4];
 
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
+/* The address range [g_large_lo, g_large_hi) covers every large chunk
+ * ever put on g_large (los_alloc). It only grows: a chunk that
+ * is freed leaves it as wide as it was. So an address outside it is
+ * inside no object on g_large, and object_payload skips its walk of the
+ * list, which for such an address could only miss. That walk ran for
+ * every young-copy slot naming a static object in the binary (a string
+ * literal), and dominated compiling the compiler (Stage 28 W11d). */
+static uint8_t *g_large_lo = (uint8_t *)UINTPTR_MAX;
+static uint8_t *g_large_hi;
 /* One dead scalar large buffer, kept for the next same-sized alloc. */
 static Large *g_los_spare;
 /* Bytes in young scalar large objects. They do not move. A young
@@ -189,7 +200,8 @@ static uint64_t g_def_wasted;
 static uint64_t g_def_hist[6];
 /* Evacuation (step 2): AVANT_GC_DEFRAG=0 disables it, histogram stays
  * on. Candidates are mature blocks at or below 64 of 128 live lines
- * with no pinned object; per full collection the live lines evacuated
+ * with no pinned object and no word of the collecting thread's stack
+ * naming them (C31, note_c_stack_blocks); per full collection the live lines evacuated
  * stay at or below 25% of that mark's mature live lines, worst first. */
 static int g_defrag_mode = 1;
 static uint64_t g_def_evac_blocks;
@@ -301,8 +313,83 @@ static void **g_work;
 static uint32_t g_work_n;
 static uint32_t g_work_cap;
 
-static uint64_t g_type_bits[MAX_TYPES];
+/* Type maps (Stage 28 W1b). An entry describes which payload words of
+ * an object of that type id hold references: bit i of the bitmap
+ * (chunk i / 64, bit i % 64) is payload word i. The bitmap has any
+ * length (nchunks 64-bit chunks). stride == 0 describes one record:
+ * words past the payload size are skipped. stride > 0 describes a
+ * buffer of repeated elements of stride words each (an Array element
+ * buffer of a by-value struct or union): the bitmap is one element's
+ * and applies to every whole element in the payload. Every walker goes
+ * through EACH_REF_SLOT, so they all read the same description. */
+typedef struct TypeMap {
+  uint64_t *words;
+  uint64_t first;
+  uint32_t nchunks;
+  uint32_t stride;
+  uint32_t nrefs;
+} TypeMap;
+
+static TypeMap g_types[MAX_TYPES];
 static uint8_t g_type_set[MAX_TYPES];
+
+/* Visit every reference slot of payload P as `void **SLOT`. BODY must
+ * not use break or continue. */
+#define EACH_REF_SLOT(P, SLOT, BODY)                                                \
+  do {                                                                              \
+    void **ers_p_ = (void **)(P);                                                   \
+    const AvantHeader *ers_h_ = avant_header(ers_p_);                               \
+    uint32_t ers_id_ = ers_h_->type_id;                                             \
+    size_t ers_nw_ = (size_t)ers_h_->size / sizeof(void *);                         \
+    if (ers_id_ == AVANT_TYPE_PTRS) {                                               \
+      size_t ers_i_;                                                                \
+      for (ers_i_ = 0; ers_i_ < ers_nw_; ers_i_++) {                                \
+        void **SLOT = ers_p_ + ers_i_;                                              \
+        BODY                                                                        \
+      }                                                                             \
+    } else if (ers_id_ != AVANT_TYPE_BYTES && ers_id_ < MAX_TYPES &&                \
+               g_type_set[ers_id_]) {                                               \
+      const TypeMap *ers_m_ = &g_types[ers_id_];                                    \
+      size_t ers_s_ = ers_m_->stride ? (size_t)ers_m_->stride : ers_nw_;            \
+      size_t ers_ne_ = ers_m_->stride ? ers_nw_ / ers_s_ : 1;                       \
+      size_t ers_e_;                                                                \
+      for (ers_e_ = 0; ers_e_ < ers_ne_; ers_e_++) {                                \
+        void **ers_b_ = ers_p_ + ers_e_ * ers_s_;                                   \
+        uint32_t ers_c_;                                                            \
+        for (ers_c_ = 0; ers_c_ < ers_m_->nchunks; ers_c_++) {                      \
+          uint64_t ers_w_ = ers_m_->words[ers_c_];                                  \
+          while (ers_w_) {                                                          \
+            size_t ers_i_ = (size_t)ers_c_ * 64 + (size_t)__builtin_ctzll(ers_w_);  \
+            ers_w_ &= ers_w_ - 1;                                                   \
+            if (ers_i_ < ers_s_) {                                                  \
+              void **SLOT = ers_b_ + ers_i_;                                        \
+              BODY                                                                  \
+            }                                                                       \
+          }                                                                         \
+        }                                                                           \
+      }                                                                             \
+    }                                                                               \
+  } while (0)
+
+/* Whether payload word W of an object with header H is a reference slot
+ * by its type map (the verifier's inverse question). */
+static int type_word_is_ref(const AvantHeader *h, size_t w) {
+  uint32_t id = h->type_id;
+  if (id == AVANT_TYPE_PTRS) {
+    return 1;
+  }
+  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !g_type_set[id]) {
+    return 0;
+  }
+  const TypeMap *m = &g_types[id];
+  if (m->stride) {
+    w %= m->stride;
+  }
+  if (w / 64 >= m->nchunks) {
+    return 0;
+  }
+  return (m->words[w / 64] >> (w % 64)) & 1u;
+}
 
 static FwdEnt *g_fwd;
 static size_t g_fwd_cap;
@@ -861,6 +948,9 @@ static void *object_payload(void *p, Block **ob, Large **ol) {
   }
   Large *L;
   uint8_t *addr = (uint8_t *)p;
+  if (addr < g_large_lo || addr >= g_large_hi) {
+    return NULL; /* in no large chunk: the walk below would miss */
+  }
   for (L = g_large; L; L = L->next) {
     uint8_t *hs = (uint8_t *)&L->header;
     size_t total = obj_total(&L->header);
@@ -998,38 +1088,8 @@ static void mark_tls_slot(void **slot) {
   }
 }
 
-static void scan_word(void *p, size_t off) {
-  if (off + sizeof(void *) > avant_header(p)->size) {
-    return;
-  }
-  void *child = *(void **)((uint8_t *)p + off);
-  mark(child);
-}
-
 static void scan_payload(void *p) {
-  AvantHeader *h = avant_header(p);
-  uint32_t id = h->type_id;
-  if (id == AVANT_TYPE_BYTES) {
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      scan_word(p, i * sizeof(void *));
-    }
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    return;
-  }
-  uint64_t bits = g_type_bits[id];
-  size_t i;
-  for (i = 0; i < 64; i++) {
-    if (bits & (1ULL << i)) {
-      scan_word(p, i * sizeof(void *));
-    }
-  }
+  EACH_REF_SLOT(p, slot, { mark(*slot); });
 }
 
 static void mark_roots(void) {
@@ -1474,7 +1534,11 @@ static void remember_young_edge(void **slot, void *payload) {
   if (!owner) {
     return;
   }
-  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO)) {
+  /* A pinned nursery owner is not copied: it stays in its block and is
+   * promoted in place when this collection ends (promote_pinned_one),
+   * so its young edge needs the remembered set like a mature owner's. */
+  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO) &&
+      (avant_header(owner)->flags & AVANT_FLAG_PINNED) == 0) {
     return;
   }
   keep_add(owner);
@@ -1502,34 +1566,12 @@ static int names_young(void *p) {
 static void trace_mature(void *p, int from_mature);
 
 static void copy_payload_children(void *p) {
-  AvantHeader *h = avant_header(p);
-  uint32_t id = h->type_id;
+  if (avant_header(p)->type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
   int saved = g_from_heap_slot;
   g_from_heap_slot = 1;
-  if (id == AVANT_TYPE_BYTES) {
-    g_from_heap_slot = saved;
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-    }
-    g_from_heap_slot = saved;
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    g_from_heap_slot = saved;
-    return;
-  }
-  uint64_t bits = g_type_bits[id];
-  size_t i;
-  for (i = 0; i < 64; i++) {
-    if (bits & (1ULL << i)) {
-      copy_from_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-    }
-  }
+  EACH_REF_SLOT(p, slot, { copy_from_slot(slot); });
   g_from_heap_slot = saved;
 }
 
@@ -1660,8 +1702,11 @@ void copy_from_slot(void **slot) {
   }
   /* Mature and large objects stay put. Follow one when this slot is a
    * root or a field of a young object. A field of a mature object is
-   * followed only when that child is remembered. */
-  if (ol || (b && b->space == SPACE_MATURE)) {
+   * followed only when that child is remembered. A live object in a
+   * from-space block is a pinned survivor promoted in place
+   * (promote_pinned_one): it is mature, and its young children are
+   * reached the same way (C29). */
+  if (ol || (b && (b->space == SPACE_MATURE || b->space == SPACE_FROM))) {
     trace_mature(start, g_from_mature);
   }
   if (g_rem_track && names_young(*slot)) {
@@ -1755,7 +1800,11 @@ static uint64_t rem_field_count(void *p) {
   if (id >= MAX_TYPES || !g_type_set[id]) {
     return 0;
   }
-  return (uint64_t)__builtin_popcountll(g_type_bits[id]);
+  if (g_types[id].stride) {
+    return (uint64_t)g_types[id].nrefs *
+           (uint64_t)((size_t)h->size / sizeof(void *) / g_types[id].stride);
+  }
+  return (uint64_t)g_types[id].nrefs;
 }
 
 static void gen_young_copy(void) {
@@ -1851,6 +1900,28 @@ static void gen_young_copy(void) {
 
 static int g_block_has_pin;
 
+/*
+ * C29 (Stage 28 W8c). A pinned nursery object survives a young copy in
+ * place, and its block stays as SPACE_FROM. It is promoted in place
+ * here: YOUNG and SURVIVED are cleared, so from now on it is a mature
+ * object that happens to live in a from-space block. That restores
+ * the generational invariant for it: the barrier (inline and
+ * avant_barrier) remembers it when a young child is stored into it,
+ * copy_from_slot follows it like a mature object (a root, a young
+ * parent, or a remembered parent reaches it), and remember_young_edge
+ * keeps it remembered while its fields name young objects. Before,
+ * it kept YOUNG (so no barrier) while no later young collection
+ * looked inside it (copy_nursery skips non-nursery blocks), and its
+ * young children were discarded with their blocks.
+ */
+static void promote_pinned_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_PINNED) {
+    g_block_has_pin = 1;
+    h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+  }
+}
+
 static void note_pinned_in_block(AvantHeader *h, Block *b) {
   (void)b;
   if (h->flags & AVANT_FLAG_PINNED) {
@@ -1861,6 +1932,12 @@ static void note_pinned_in_block(AvantHeader *h, Block *b) {
 static int block_has_pinned(Block *b) {
   g_block_has_pin = 0;
   foreach_block_object(b, note_pinned_in_block);
+  return g_block_has_pin;
+}
+
+static int block_keep_pinned(Block *b) {
+  g_block_has_pin = 0;
+  foreach_block_object(b, promote_pinned_one);
   return g_block_has_pin;
 }
 
@@ -1877,6 +1954,9 @@ static void park_nursery_from(void) {
   g_nursery = NULL;
   while (b) {
     Block *next = b->next;
+    if (g_saw_pinned_nursery) {
+      (void)block_keep_pinned(b);
+    }
     b->space = SPACE_FROM;
     b->next = g_from;
     g_from = b;
@@ -1900,7 +1980,7 @@ static void discard_nursery_from(void) {
   }
   while (b) {
     Block *next = b->next;
-    if (block_has_pinned(b)) {
+    if (block_keep_pinned(b)) {
       b->space = SPACE_FROM;
       b->next = g_from;
       g_from = b;
@@ -2121,6 +2201,19 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
             (unsigned long long)g_stats.collections, ch->flags);
     return 1;
   }
+  /* C29: a reachable reference to a nursery object the copy neither
+   * moved nor kept in place. Its block is discarded after this check,
+   * so the reference is about to dangle (a live holder the young copy
+   * did not trace, or a missing barrier). */
+  if (!to && (avant_header(start)->flags & AVANT_FLAG_PINNED) == 0) {
+    fprintf(stderr,
+            "avant gc verify: lost %s reference holder=%p off=%ld "
+            "names nursery object %p the young copy did not keep coll=%llu "
+            "child_flags=0x%x\n",
+            where, holder, off, start, (unsigned long long)g_stats.collections,
+            avant_header(start)->flags);
+    return 1;
+  }
   return 0;
 }
 
@@ -2173,67 +2266,76 @@ static void verify_mark_reachable(void) {
   avant_hash_walk_tls(verify_tls_slot);
   while (g_work_n) {
     void *p = g_work[--g_work_n];
-    AvantHeader *h = avant_header(p);
-    uint32_t id = h->type_id;
-    if (id == AVANT_TYPE_BYTES) {
+    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
+  }
+}
+
+/* A word the type map does not call a reference, in an object the
+ * verifier reached, that is exactly the start of an unpinned object in
+ * from-space (moved or about to be discarded): the program stored a
+ * reference where the collector does not look (a wrong or missing type
+ * map, audit-abi 8.1). Heap strings (STRMETA) hold text and are
+ * skipped; a scalar equal to such an address by chance is the only
+ * false positive. */
+static uint64_t g_verify_untraced;
+
+static void verify_untraced_words(AvantHeader *h) {
+  size_t n, i;
+  void **p;
+  if (h->flags & AVANT_FLAG_STRMETA) {
+    return;
+  }
+  if (h->type_id == AVANT_TYPE_PTRS) {
+    return;
+  }
+  p = (void **)payload_of(h);
+  n = (size_t)h->size / sizeof(void *);
+  for (i = 0; i < n; i++) {
+    void *w = p[i];
+    Block *cb = NULL;
+    void *to;
+    if (!w || ((uintptr_t)w & (ALIGN - 1)) != 0) {
       continue;
     }
-    if (id == AVANT_TYPE_PTRS) {
-      size_t n = (size_t)h->size / sizeof(void *);
-      size_t i;
-      for (i = 0; i < n; i++) {
-        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
-      }
+    if (!is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
       continue;
     }
-    if (id >= MAX_TYPES || !g_type_set[id]) {
+    if (avant_header(w)->flags & AVANT_FLAG_PINNED) {
       continue;
     }
-    uint64_t bits = g_type_bits[id];
-    size_t i;
-    for (i = 0; i < 64; i++) {
-      if (bits & (1ULL << i)) {
-        verify_trace(*(void **)((uint8_t *)p + i * sizeof(void *)));
-      }
+    if (type_word_is_ref(h, i)) {
+      continue;
     }
+    to = fwd_get(w);
+    g_verify_untraced++;
+    fprintf(stderr,
+            "avant gc verify: untraced reference holder=%p type=%u size=%u "
+            "word=%lu names young object %p (%s %p) coll=%llu\n",
+            (void *)p, (unsigned)h->type_id, (unsigned)h->size, (unsigned long)i, w,
+            to && to != w ? "forwarded to" : "not copied, from-space", to,
+            (unsigned long long)g_stats.collections);
   }
 }
 
 static void verify_obj_fields(AvantHeader *h, Block *b) {
-  (void)b;
   if (!(h->flags & AVANT_FLAG_FORWARDED)) {
     return;
   }
   void *p = payload_of(h);
-  uint32_t id = h->type_id;
-  if (id == AVANT_TYPE_BYTES) {
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
-                     (long)(i * sizeof(void *)))) {
-        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
-                h->flags, b ? (int)b->space : -1);
-      }
+  verify_untraced_words(h);
+  EACH_REF_SLOT(p, slot, {
+    if (verify_ptr(*slot, "field", p, (long)((uint8_t *)slot - (uint8_t *)p))) {
+      fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p, h->flags,
+              b ? (int)b->space : -1);
     }
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    return;
-  }
-  uint64_t bits = g_type_bits[id];
-  size_t i;
-  for (i = 0; i < 64; i++) {
-    if (bits & (1ULL << i)) {
-      if (verify_ptr(*(void **)((uint8_t *)p + i * sizeof(void *)), "field", p,
-                     (long)(i * sizeof(void *)))) {
-        fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p,
-                h->flags, b ? (int)b->space : -1);
-      }
-    }
+  });
+}
+
+/* Pinned nursery objects stay in their block; their fields are checked
+ * like a to-space object's (C29). */
+static void verify_pinned_fields(AvantHeader *h, Block *b) {
+  if (h->flags & AVANT_FLAG_PINNED) {
+    verify_obj_fields(h, b);
   }
 }
 
@@ -2266,6 +2368,20 @@ static void verify_young_copy(void) {
   for (b = g_mature; b; b = b->next) {
     foreach_block_object(b, verify_obj_fields);
   }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, verify_obj_fields);
+  }
+  if (g_saw_pinned_nursery) {
+    for (b = g_nursery; b; b = b->next) {
+      foreach_block_object(b, verify_pinned_fields);
+    }
+  }
+  {
+    Large *L;
+    for (L = g_large; L; L = L->next) {
+      verify_obj_fields(&L->header, NULL);
+    }
+  }
 }
 
 typedef struct DefCand {
@@ -2273,6 +2389,105 @@ typedef struct DefCand {
   int live;
   uint64_t bytes;
 } DefCand;
+
+/* A sorted set of blocks, for the two block lists of a defragmenting
+ * full collection: the mature blocks the collecting thread's C stack
+ * names (C31), and the evacuated blocks about to be freed. */
+typedef struct BlockSet {
+  Block **v;
+  size_t n;
+  size_t cap;
+} BlockSet;
+
+static int block_ptr_cmp(const void *a, const void *b) {
+  const Block *x = *(Block *const *)a;
+  const Block *y = *(Block *const *)b;
+  return (x > y) - (x < y);
+}
+
+static void block_set_add(BlockSet *s, Block *b) {
+  if (s->n && s->v[s->n - 1] == b) {
+    return;
+  }
+  if (s->n == s->cap) {
+    s->cap = s->cap ? s->cap * 2 : 64;
+    s->v = (Block **)xrealloc(s->v, s->cap * sizeof(Block *));
+  }
+  s->v[s->n++] = b;
+}
+
+static void block_set_seal(BlockSet *s) {
+  size_t i, j = 0;
+  if (s->n < 2) {
+    return;
+  }
+  qsort(s->v, s->n, sizeof(Block *), block_ptr_cmp);
+  for (i = 0; i < s->n; i++) {
+    if (j == 0 || s->v[j - 1] != s->v[i]) {
+      s->v[j++] = s->v[i];
+    }
+  }
+  s->n = j;
+}
+
+static int block_set_has(const BlockSet *s, const Block *b) {
+  size_t lo = 0, hi = s->n;
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    if (s->v[mid] < b) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo < s->n && s->v[lo] == b;
+}
+
+/* C31: defragmentation moves mature objects and rewrites only the
+ * precise references to them (root slots, pins, runtime TLS slots, the
+ * remembered set, heap fields). A runtime C frame on the collecting
+ * thread can hold a reference across a full collection that the
+ * collector cannot rewrite: with AVANT_NURSERY=0 the outermost
+ * avant_gc_defer_enter collects while the helper holds its arguments
+ * (avant_str_concat's operands: the caller rooted them, so they are
+ * marked, but the helper's own copies are C values), and a helper that
+ * calls avant_alloc outside defer holds its arguments across the full
+ * collection maybe_collect may run. Such an object must not move. So a
+ * defragmenting collection first notes every mature block that a word
+ * of the collecting thread's stack names (exact start, interior, or a
+ * scalar that happens to look like one; a false positive only skips a
+ * candidate), from this function's frame to the stack top, and those
+ * blocks are not candidates. collect() first saves its callers'
+ * callee-saved registers into its own frame, so a reference a caller
+ * keeps in one is on the scanned stack. Other threads' C frames are
+ * D191's (Part 2). */
+static BlockSet g_cstack_blocks;
+static BlockSet g_def_release;
+
+__attribute__((noinline)) static void note_c_stack_blocks(void) {
+  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
+  uint8_t *hi = g_self_reg.stack_hi;
+  uint8_t *lo = g_self_reg.stack_lo;
+  g_cstack_blocks.n = 0;
+  if (!hi || !p || p >= hi || (lo && p < lo)) {
+    return;
+  }
+  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+  for (; p + sizeof(void *) <= hi; p += ALIGN) {
+    uint8_t *w = *(uint8_t **)p;
+    /* The word's block, and its header's: a payload pointer just past
+     * an object that ends a block lies in the next one. */
+    Block *b = block_of(w);
+    Block *hb = w ? block_of(w - sizeof(AvantHeader)) : NULL;
+    if (b && b->space == SPACE_MATURE) {
+      block_set_add(&g_cstack_blocks, b);
+    }
+    if (hb && hb != b && hb->space == SPACE_MATURE) {
+      block_set_add(&g_cstack_blocks, hb);
+    }
+  }
+  block_set_seal(&g_cstack_blocks);
+}
 
 static int def_cand_cmp(const void *a, const void *b) {
   const DefCand *x = (const DefCand *)a;
@@ -2303,31 +2518,7 @@ static void defrag_rewrite_tls(void **slot) {
 }
 
 static void defrag_scan_payload(void *p) {
-  AvantHeader *h = avant_header(p);
-  uint32_t id = h->type_id;
-  if (id == AVANT_TYPE_BYTES) {
-    return;
-  }
-  if (id == AVANT_TYPE_PTRS) {
-    size_t n = (size_t)h->size / sizeof(void *);
-    size_t i;
-    for (i = 0; i < n; i++) {
-      defrag_rewrite_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-    }
-    return;
-  }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
-    return;
-  }
-  {
-    uint64_t bits = g_type_bits[id];
-    size_t i;
-    for (i = 0; i < 64; i++) {
-      if (bits & (1ULL << i)) {
-        defrag_rewrite_slot((void **)((uint8_t *)p + i * sizeof(void *)));
-      }
-    }
-  }
+  EACH_REF_SLOT(p, slot, { defrag_rewrite_slot(slot); });
 }
 
 static void defrag_fix_one(AvantHeader *h, Block *b) {
@@ -2358,8 +2549,11 @@ static void mature_unlink(Block *b) {
  * whole. Destination blocks are allocated before anything moves; if
  * one cannot be allocated under the heap limit, nothing moves and the
  * ordinary non-moving collection completes (g_def_skipped counts it),
- * so defragmentation can never make a collection fail. */
-static void defrag_evacuate(uint64_t live_lines_this) {
+ * so defragmentation can never make a collection fail. The evacuated
+ * blocks are freed by defrag_release. Not inlined: its locals name
+ * objects in the evacuated blocks, and they must not sit in collect's
+ * frame, which verify_defrag scans as part of the C stack. */
+__attribute__((noinline)) static void defrag_evacuate(uint64_t live_lines_this) {
   DefCand *cand = NULL;
   size_t ncand = 0;
   size_t ccap = 0;
@@ -2377,7 +2571,7 @@ static void defrag_evacuate(uint64_t live_lines_this) {
   for (b = g_mature; b; b = b->next) {
     int live = block_live_lines(b);
     DefCand *c;
-    if (live <= 0 || live > 64 || block_has_pinned(b)) {
+    if (live <= 0 || live > 64 || block_has_pinned(b) || block_set_has(&g_cstack_blocks, b)) {
       continue;
     }
     if (ncand == ccap) {
@@ -2555,13 +2749,112 @@ static void defrag_evacuate(uint64_t live_lines_this) {
     }
   }
   rewrite_from_stackmaps();
+  /* The evacuated blocks are freed by defrag_release, after collect()
+   * has let the verifier look at them from its own frame. */
+  g_def_release.n = 0;
   for (i = 0; i < ncand; i++) {
-    mature_unlink(cand[i].b);
-    cache_or_free_block(cand[i].b);
-    g_def_freed_blocks++;
+    block_set_add(&g_def_release, cand[i].b);
   }
+  block_set_seal(&g_def_release);
   free(dest);
   free(cand);
+}
+
+static void defrag_release(void) {
+  size_t i;
+  for (i = 0; i < g_def_release.n; i++) {
+    mature_unlink(g_def_release.v[i]);
+    cache_or_free_block(g_def_release.v[i]);
+    g_def_freed_blocks++;
+  }
+  g_def_release.n = 0;
+}
+
+/* AVANT_GC_VERIFY after defragmentation (C31): no reference the
+ * program or the runtime can still use names a block about to be
+ * freed: root slots, pins, the remembered set, the fields of marked
+ * objects, and the words of the collecting thread's stack from this
+ * function's frame up (the C frames of the runtime helper that
+ * collected and of the generated code that called it). */
+static void verify_defrag_word(void *w, const char *where, void *at) {
+  Block *b = block_of(w);
+  Block *hb = w ? block_of((uint8_t *)w - sizeof(AvantHeader)) : NULL;
+  void *start;
+  if (!(b && block_set_has(&g_def_release, b)) && !(hb && block_set_has(&g_def_release, hb))) {
+    return;
+  }
+  start = object_payload(w, NULL, NULL);
+  fprintf(stderr,
+          "avant gc verify: %s %p names %p in a mature block defragmentation "
+          "is freeing (object %p moved to %p) coll=%llu\n",
+          where, at, w, start, start ? fwd_get(start) : NULL,
+          (unsigned long long)g_stats.collections);
+}
+
+static void verify_defrag_fields(AvantHeader *h, Block *b) {
+  void *p;
+  if (!(h->flags & AVANT_FLAG_MARKED) || (b && block_set_has(&g_def_release, b))) {
+    return;
+  }
+  p = payload_of(h);
+  EACH_REF_SLOT(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
+}
+
+static void verify_defrag_tls(void **slot) {
+  verify_defrag_word(*slot, "runtime TLS slot", (void *)slot);
+}
+
+__attribute__((noinline)) static void verify_defrag(void) {
+  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
+  uint8_t *hi = g_self_reg.stack_hi;
+  uint8_t *lo = g_self_reg.stack_lo;
+  ThreadReg *t;
+  Block *b;
+  Large *L;
+  uint32_t i;
+  if (hi && p && p < hi && !(lo && p < lo)) {
+    p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+    for (; p + sizeof(void *) <= hi; p += ALIGN) {
+      verify_defrag_word(*(void **)p, "C stack word at", (void *)p);
+    }
+  }
+  pthread_mutex_lock(&g_threads_mu);
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      for (i = 0; i < f->n; i++) {
+        verify_defrag_word(*f->slots[i], "root slot", (void *)f->slots[i]);
+      }
+    }
+  }
+  pthread_mutex_unlock(&g_threads_mu);
+  for (PinEnt *pe = g_pins; pe; pe = pe->next) {
+    verify_defrag_word(pe->payload, "pin", (void *)pe);
+  }
+  /* A remembered entry may name a dead object (full collections do not
+   * scrub the set, and the young copy skips an entry whose block is
+   * gone); only a live one that moved must have been rewritten. */
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    Block *rb = block_of(obj);
+    if (rb && block_set_has(&g_def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
+        (avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
+      verify_defrag_word(obj, "remembered entry", (void *)&g_remset[i]);
+    }
+  }
+  avant_hash_walk_tls(verify_defrag_tls);
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, verify_defrag_fields);
+  }
+  for (b = g_nursery; b; b = b->next) {
+    foreach_block_object(b, verify_defrag_fields);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, verify_defrag_fields);
+  }
+  for (L = g_large; L; L = L->next) {
+    verify_defrag_fields(&L->header, NULL);
+  }
 }
 
 static void young_copy_out(int tenure) {
@@ -2608,13 +2901,19 @@ static void collect(int full) {
   g_bump = NULL;
   g_limit = NULL;
 
-  if (!full) {
+  /* Spill the callers' callee-saved GPRs into collect's frame so the
+   * C-stack walks see a reference a caller keeps in one: the young
+   * copy's rewrite (rewrite_c_stack) and the full collection's
+   * defragmentation exclusion (note_c_stack_blocks, C31). Without
+   * this, a heap pointer can sit in rbx across avant_alloc and miss
+   * the shadow stack. Before the branch, so shrink-wrapping cannot move
+   * the saves into the young path only. */
 #if defined(__x86_64__)
-    /* Spill myc callee-saved GPRs into collect's frame so the C-stack
-     * walk can rewrite or pin them. Without this, a heap pointer can
-     * sit in rbx across avant_alloc and miss the shadow stack. */
-    __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
+  __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
+#else
+  __builtin_unwind_init();
 #endif
+  if (!full) {
     if (!g_young_adapt) {
       g_stats.young_collections++;
       young_copy_out(1);
@@ -2703,7 +3002,14 @@ static void collect(int full) {
           g_def_wasted += (uint64_t)(LINES_PER_BLOCK - live) * LINE_SIZE;
         }
       }
+      if (g_defrag_mode) {
+        note_c_stack_blocks();
+      }
       defrag_evacuate(live_lines_this);
+      if (g_verify && g_def_release.n) {
+        verify_defrag();
+      }
+      defrag_release();
     }
     sweep_large();
     filter_blocks(&g_mature, keep_if_live);
@@ -2844,6 +3150,14 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   }
   L->next = g_large;
   g_large = L;
+  /* The chunk holds the header and payload (chunk is at least
+   * sizeof(Large) + payload, aligned; a reused spare has this size). */
+  if ((uint8_t *)L < g_large_lo) {
+    g_large_lo = (uint8_t *)L;
+  }
+  if ((uint8_t *)L + chunk > g_large_hi) {
+    g_large_hi = (uint8_t *)L + chunk;
+  }
   large_hash_add(L);
   note_peak();
   return payload_of(&L->header);
@@ -3079,8 +3393,70 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   if (type_id >= MAX_TYPES) {
     die("type id too large");
   }
-  g_type_bits[type_id] = word_bits;
+  TypeMap *m = &g_types[type_id];
+  if (m->words && m->words != &m->first) {
+    free(m->words);
+  }
+  m->first = word_bits;
+  m->words = &m->first;
+  m->nchunks = 1;
+  m->stride = 0;
+  m->nrefs = (uint32_t)__builtin_popcountll(word_bits);
   g_type_set[type_id] = 1;
+}
+
+/* Stage 28 W1b. Registers bits for payload words word_base ..
+ * word_base + 63 of type_id (word_base a multiple of 64; later chunks
+ * extend the bitmap, so a map may be any length) with an element stride
+ * in words (0: one record; > 0: a buffer of repeated elements, every
+ * bit below stride). All calls for one id carry the same stride. */
+void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_base,
+                       uint64_t bits) {
+  init_gc();
+  if (type_id == AVANT_TYPE_PTRS || type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  if (type_id >= MAX_TYPES) {
+    die("type id too large");
+  }
+  if (word_base % 64 != 0) {
+    die("type map chunk is not 64-word aligned");
+  }
+  TypeMap *m = &g_types[type_id];
+  uint32_t chunk = word_base / 64;
+  if (!g_type_set[type_id]) {
+    m->first = 0;
+    m->words = &m->first;
+    m->nchunks = 1;
+    m->stride = stride_words;
+    m->nrefs = 0;
+    g_type_set[type_id] = 1;
+  } else if (m->stride != stride_words) {
+    die("type map stride changed");
+  }
+  if (chunk >= m->nchunks) {
+    uint64_t *nw = calloc((size_t)chunk + 1, sizeof(uint64_t));
+    if (!nw) {
+      die("out of memory");
+    }
+    memcpy(nw, m->words, (size_t)m->nchunks * sizeof(uint64_t));
+    if (m->words != &m->first) {
+      free(m->words);
+    }
+    m->words = nw;
+    m->nchunks = chunk + 1;
+  }
+  if (stride_words) {
+    uint32_t i;
+    for (i = 0; i < 64; i++) {
+      if (((bits >> i) & 1u) && word_base + i >= stride_words) {
+        die("type map bit past the element stride");
+      }
+    }
+  }
+  m->nrefs -= (uint32_t)__builtin_popcountll(m->words[chunk]);
+  m->words[chunk] = bits;
+  m->nrefs += (uint32_t)__builtin_popcountll(bits);
 }
 
 /* A call used to calloc a frame and free it on leave. Hot recursion
@@ -3209,6 +3585,28 @@ void avant_barrier(void *obj) {
     return;
   }
   rem_add(obj);
+}
+
+/* Stage 28 W1b. The barrier for a store through an address that may be
+ * inside a heap object (a struct method's self, a struct field reached
+ * through such a self): remembers the object containing addr, like
+ * avant_barrier(object). An address on this thread's stack, or outside
+ * the heap, is a no-op. Never collects. */
+void avant_barrier_at(void *addr) {
+  Block *b = NULL;
+  void *start;
+  if (!addr || g_collecting) {
+    return;
+  }
+  if (g_self_reg.stack_lo && (uint8_t *)addr >= (uint8_t *)g_self_reg.stack_lo &&
+      (uint8_t *)addr < (uint8_t *)g_self_reg.stack_hi) {
+    return;
+  }
+  start = object_payload(addr, &b, NULL);
+  if (!start) {
+    return;
+  }
+  avant_barrier(start);
 }
 
 void avant_pin(void *payload) {

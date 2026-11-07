@@ -1,0 +1,412 @@
+module arrays
+file 0 "arrays.av"
+
+layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+
+const str.0 = "%s\0A"
+const str.1 = ""
+const str.2 = " "
+const str.3 = "%d\0A"
+const str.4 = "push-arg"
+const str.5 = "val"
+const str.6 = "ix"
+const str.7 = "recv"
+const str.8 = "ix2"
+const str.9 = "recv2"
+const str.10 = "recv3"
+const str.11 = "n"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_contains_i32(ref, i32) -> i32 collects
+extern avant_array_copy(ref, u64, u32) -> ref collects
+extern avant_array_fill_i32(ref, i32) -> void never
+extern avant_array_pop_slot(ref, u64) -> addr collects
+extern avant_array_push_i32(ref, i32) -> void collects
+extern avant_array_reserve(ref, i32, u64, u32) -> void collects
+extern avant_array_reverse(ref, u64) -> void collects
+extern avant_array_sort_i32(ref) -> void collects
+extern avant_array_sum_i32(ref) -> i32 collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_from_int(i32) -> ref str collects
+extern printf(ref str, ...) -> i32 never
+
+fn av.arrays/say(_1: ref str, _2: i32) -> i32 leaf @arrays.av:9:1 {
+  let _0: i32
+  let _1 (s): ref str
+  let _2 (v): i32
+
+bb0:
+  call printf(const str.0, copy _1) nocollect   @10:3
+  _0 = copy _2   @11:3
+  return   @11:3
+}
+
+fn av.arrays/pick(_1: ref str, _2: ref %Array(Int)) -> ref %Array(Int) leaf @arrays.av:14:1 {
+  let _0: ref %Array(Int)
+  let _1 (s): ref str
+  let _2 (xs): ref %Array(Int)
+
+bb0:
+  call printf(const str.0, copy _1) nocollect   @15:3
+  _0 = copy _2   @16:3
+  return   @16:3
+}
+
+fn av.arrays/total(_1: ref %Array(Int)) -> i32 leaf @arrays.av:19:1 {
+  let _0: i32
+  let _1 (xs): ref %Array(Int)
+  let _2 (t): i32
+  let _3 (__for0_xs): ref %Array(Int)
+  let _4 (__for0_i): i32
+  let _5: i32
+  let _6: bool
+  let _7: ref %elems(Int)
+  let _8: i32
+  let _9 (x): i32
+  let _10: i32
+  let _11: i32
+
+bb0:
+  _2 = const i32 0   @20:5
+  _3 = copy _1   @21:3
+  _4 = const i32 0   @21:3
+  goto bb1   @21:3
+
+bb1:
+  _5 = copy (*_3).1   @21:3
+  _6 = lt copy _4, copy _5   @21:3
+  branch copy _6, bb2, bb3   @21:3
+
+bb2:
+  _7 = copy (*_3).0   @21:3
+  _8 = copy (*_7)[copy _4]   @21:3
+  _9 = copy _8   @21:3
+  _10 = add.chk copy _2, copy _9   @22:11
+  _2 = copy _10   @22:7
+  _11 = add copy _4, const i32 1   @21:3
+  _4 = copy _11   @21:3
+  goto bb1   @21:3
+
+bb3:
+  _0 = copy _2   @24:3
+  return   @24:3
+}
+
+fn av.arrays/show(_1: ref %Array(Int)) -> ref str frame @arrays.av:27:1 {
+  let _0: ref str
+  let _1 (xs): ref %Array(Int) slot
+  let _2 (out): ref str slot
+  let _3 (i): i32
+  let _4: i32
+  let _5: bool
+  let _6: ref %elems(Int)
+  let _7: i32
+  let _8: ref str slot
+  let _9: ref str slot
+  let _10: ref str
+  let _11: i32
+
+bb0:
+  _2 = zero   @27:1
+  _8 = zero   @27:1
+  _9 = zero   @27:1
+  gc.enter   @27:1
+  gc.roots _1, _2, _8, _9   @27:1
+  _2 = const str.1   @28:7
+  _3 = const i32 0   @29:5
+  goto bb1   @30:3
+
+bb1:
+  _4 = copy (*_1).1   @30:15
+  _5 = lt copy _3, copy _4   @30:11
+  branch copy _5, bb2, bb3   @30:3
+
+bb2:
+  _6 = copy (*_1).0   @31:22
+  _7 = copy (*_6)[copy _3]   @31:22
+  _8 = call avant_str_from_int(copy _7) collects   @31:22
+  _9 = call avant_str_concat(copy _8, const str.2) collects   @31:17
+  _10 = call avant_str_concat(copy _2, copy _9) collects   @31:15
+  _2 = copy _10   @31:9
+  _11 = add copy _3, const i32 1   @32:11
+  _3 = copy _11   @32:7
+  goto bb1   @30:3
+
+bb3:
+  _0 = copy _2   @34:3
+  gc.leave   @34:3
+  return   @34:3
+}
+
+fn av.arrays/make(_1: i32) -> ref %Array(Int) frame @arrays.av:37:1 {
+  let _0: ref %Array(Int)
+  let _1 (n): i32
+  let _2: i32
+  let _3: u64
+  let _4: u64
+  let _5: ref %elems(Int) slot
+  let _6: ref %Array(Int)
+  let _7 (xs): ref %Array(Int)
+  let _8 (i): i32
+  let _9 (__for1_end): i32
+  let _10: bool
+  let _11: i32
+  let _12: ref %elems(Int)
+  let _13: i32
+
+bb0:
+  _5 = zero   @37:1
+  gc.enter   @37:1
+  gc.roots _5   @37:1
+  _2 = copy _1   @38:8
+  _3 = cast copy _2 to u64   @38:8
+  _4 = mul copy _3, const u64 4   @38:8
+  _5 = call avant_alloc(copy _4, const u32 0) collects   @38:8
+  _6 = call avant_alloc(const u64 16, const u32 1022) collects   @38:8
+  barrier copy _6   @38:8
+  (*_6).0 = copy _5   @38:8
+  (*_6).1 = copy _2   @38:8
+  (*_6).2 = copy _2   @38:8
+  _7 = copy _6   @38:6
+  _8 = const i32 0   @39:3
+  _9 = copy _1   @39:3
+  goto bb1   @39:3
+
+bb1:
+  _10 = lt copy _8, copy _9   @39:3
+  branch copy _10, bb2, bb3   @39:3
+
+bb2:
+  _11 = mul.chk copy _8, copy _8   @40:15
+  _12 = copy (*_7).0   @40:7
+  (*_12)[copy _8] = copy _11   @40:11
+  _13 = add copy _8, const i32 1   @39:3
+  _8 = copy _13   @39:3
+  goto bb1   @39:3
+
+bb3:
+  _0 = copy _7   @42:3
+  gc.leave   @42:3
+  return   @42:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @arrays.av:47:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: ref %elems(Int) slot
+  let _4: ref %Array(Int)
+  let _5 (xs): ref %Array(Int) slot
+  let _6: ref str
+  let _7: i32
+  let _8: i32
+  let _9: i32
+  let _10: ref str
+  let _11: i32
+  let _12: i32
+  let _13: addr i32
+  let _14: i32
+  let _15: i32
+  let _16: i32
+  let _17: addr i32
+  let _18: i32
+  let _19: ref str
+  let _20: ref %Array(Int) slot
+  let _21 (ys): ref %Array(Int) slot
+  let _22: ref str
+  let _23: ref str
+  let _24: i32
+  let _25: bool
+  let _26: i32
+  let _27: i32
+  let _28: bool
+  let _29: i32
+  let _30: i32
+  let _31: i32
+  let _32: ref %elems(Int)
+  let _33: i32
+  let _34: i32
+  let _35: i32
+  let _36: ref %elems(Int)
+  let _37: i32
+  let _38: i32
+  let _39: i32
+  let _40: ref %elems(Int)
+  let _41: i32
+  let _42: i32
+  let _43: ref str
+  let _44: i32
+  let _45: i32
+  let _46: ref %Array(Int)
+  let _47: i32
+  let _48: ref %elems(Int)
+  let _49: i32
+  let _50: ref %Array(Int)
+  let _51: i32
+  let _52: ref %elems(Int)
+  let _53: i32
+  let _54: ref %Array(Int) slot
+  let _55: i32
+  let _56: i32
+  let _57: ref %Array(Int)
+  let _58 (zs): ref %Array(Int) slot
+  let _59: ref str
+  let _60: ref str
+  let _61: i32
+  let _62: i32
+  let _63: ref %elems(Int) slot
+  let _64: ref %Array(Int)
+  let _65 (e): ref %Array(Int) slot
+  let _66: i32
+  let _67: i32
+  let _68: ref %elems(Int)
+  let _69: i32
+
+bb0:
+  _3 = zero   @47:1
+  _5 = zero   @47:1
+  _20 = zero   @47:1
+  _21 = zero   @47:1
+  _54 = zero   @47:1
+  _58 = zero   @47:1
+  _63 = zero   @47:1
+  _65 = zero   @47:1
+  gc.enter   @47:1
+  gc.roots _2, _3, _5, _20, _21, _54, _58, _63, _65   @47:1
+  call __avant_type_maps() nocollect   @47:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @47:1
+  _3 = call avant_alloc(const u64 20, const u32 0) collects   @48:8
+  (*_3)[const i32 0] = const i32 5   @48:9
+  (*_3)[const i32 1] = const i32 3   @48:12
+  (*_3)[const i32 2] = const i32 9   @48:15
+  (*_3)[const i32 3] = const i32 1   @48:18
+  (*_3)[const i32 4] = const i32 7   @48:21
+  _4 = call avant_alloc(const u64 16, const u32 1022) collects   @48:8
+  barrier copy _4   @48:8
+  (*_4).0 = copy _3   @48:8
+  (*_4).1 = const i32 5   @48:8
+  (*_4).2 = const i32 5   @48:8
+  _5 = copy _4   @48:6
+  _6 = call av.arrays/show(copy _5) collects   @49:8
+  call printf(const str.0, copy _6) nocollect   @49:3
+  _7 = copy (*_5).1   @50:10
+  call printf(const str.3, copy _7) nocollect   @50:3
+  _8 = call av.arrays/total(copy _5) nocollect   @51:8
+  call printf(const str.3, copy _8) nocollect   @51:3
+  call avant_array_push_i32(copy _5, const i32 4) collects   @52:5
+  _9 = call av.arrays/say(const str.4, const i32 8) nocollect   @53:11
+  call avant_array_push_i32(copy _5, copy _9) collects   @53:5
+  _10 = call av.arrays/show(copy _5) collects   @54:8
+  call printf(const str.0, copy _10) nocollect   @54:3
+  _11 = copy (*_5).1   @55:10
+  _12 = sub copy _11, const i32 1   @55:10
+  check.bounds copy _12, copy _11   @55:10
+  _13 = call avant_array_pop_slot(copy _5, const u64 4) collects   @55:10
+  _14 = copy (*_13)   @55:10
+  call printf(const str.3, copy _14) nocollect   @55:3
+  _15 = copy (*_5).1   @56:10
+  _16 = sub copy _15, const i32 1   @56:10
+  check.bounds copy _16, copy _15   @56:10
+  _17 = call avant_array_pop_slot(copy _5, const u64 4) collects   @56:10
+  _18 = copy (*_17)   @56:10
+  call printf(const str.3, copy _18) nocollect   @56:3
+  call avant_array_sort_i32(copy _5) collects   @57:5
+  _19 = call av.arrays/show(copy _5) collects   @58:8
+  call printf(const str.0, copy _19) nocollect   @58:3
+  _20 = call avant_array_copy(copy _5, const u64 4, const u32 0) collects   @59:10
+  call avant_array_sort_i32(copy _20) collects   @59:10
+  _21 = copy _20   @59:6
+  call avant_array_reverse(copy _21, const u64 4) collects   @60:5
+  _22 = call av.arrays/show(copy _21) collects   @61:8
+  call printf(const str.0, copy _22) nocollect   @61:3
+  _23 = call av.arrays/show(copy _5) collects   @62:8
+  call printf(const str.0, copy _23) nocollect   @62:3
+  _24 = call avant_array_contains_i32(copy _5, const i32 9) collects   @63:10
+  _25 = eq copy _24, const i32 1   @63:10
+  _26 = cast copy _25 to i32   @63:3
+  call printf(const str.3, copy _26) nocollect   @63:3
+  _27 = call avant_array_contains_i32(copy _5, const i32 10) collects   @64:10
+  _28 = eq copy _27, const i32 1   @64:10
+  _29 = cast copy _28 to i32   @64:3
+  call printf(const str.3, copy _29) nocollect   @64:3
+  _30 = call avant_array_sum_i32(copy _5) collects   @65:10
+  call printf(const str.3, copy _30) nocollect   @65:3
+  _31 = copy (*_5).1   @66:5
+  check.bounds const i32 0, copy _31   @66:5
+  _32 = copy (*_5).0   @66:5
+  _33 = copy (*_32)[const i32 0]   @66:9
+  _34 = add.chk copy _33, const i32 100   @66:9
+  (*_32)[const i32 0] = copy _34   @66:9
+  _35 = copy (*_5).1   @67:5
+  check.bounds const i32 1, copy _35   @67:5
+  _36 = copy (*_5).0   @67:5
+  _37 = copy (*_36)[const i32 1]   @67:9
+  _38 = sub.chk copy _37, const i32 1   @67:9
+  (*_36)[const i32 1] = copy _38   @67:9
+  _39 = copy (*_5).1   @68:5
+  check.bounds const i32 2, copy _39   @68:5
+  _40 = copy (*_5).0   @68:5
+  _41 = copy (*_40)[const i32 2]   @68:9
+  _42 = mul.chk copy _41, const i32 3   @68:9
+  (*_40)[const i32 2] = copy _42   @68:9
+  _43 = call av.arrays/show(copy _5) collects   @69:8
+  call printf(const str.0, copy _43) nocollect   @69:3
+  _44 = call av.arrays/say(const str.5, const i32 42) nocollect   @70:36
+  _45 = call av.arrays/say(const str.6, const i32 3) nocollect   @70:20
+  _46 = call av.arrays/pick(const str.7, copy _5) nocollect   @70:3
+  _47 = copy (*_46).1   @70:19
+  check.bounds copy _45, copy _47   @70:19
+  _48 = copy (*_46).0   @70:19
+  (*_48)[copy _45] = copy _44   @70:34
+  _49 = call av.arrays/say(const str.8, const i32 3) nocollect   @71:26
+  _50 = call av.arrays/pick(const str.9, copy _5) nocollect   @71:8
+  _51 = copy (*_50).1   @71:25
+  check.bounds copy _49, copy _51   @71:25
+  _52 = copy (*_50).0   @71:25
+  _53 = copy (*_52)[copy _49]   @71:25
+  call printf(const str.3, copy _53) nocollect   @71:3
+  _54 = call av.arrays/pick(const str.10, copy _5) nocollect   @72:3
+  _55 = call av.arrays/say(const str.11, const i32 64) nocollect   @72:29
+  call avant_array_reserve(copy _54, copy _55, const u64 4, const u32 0) collects   @72:20
+  _56 = copy (*_5).1   @73:10
+  call printf(const str.3, copy _56) nocollect   @73:3
+  _57 = call av.arrays/make(const i32 6) collects   @74:8
+  _58 = copy _57   @74:6
+  _59 = call av.arrays/show(copy _58) collects   @75:8
+  call printf(const str.0, copy _59) nocollect   @75:3
+  call avant_array_fill_i32(copy _58, const i32 7) nocollect   @76:5
+  _60 = call av.arrays/show(copy _58) collects   @77:8
+  call printf(const str.0, copy _60) nocollect   @77:3
+  (*_58).1 = const i32 0   @78:5
+  _61 = copy (*_58).1   @79:10
+  call printf(const str.3, copy _61) nocollect   @79:3
+  call avant_array_push_i32(copy _58, const i32 1) collects   @80:5
+  (*_58).1 = const i32 0   @81:5
+  _62 = copy (*_58).1   @82:10
+  call printf(const str.3, copy _62) nocollect   @82:3
+  _63 = call avant_alloc(const u64 0, const u32 0) collects   @83:19
+  _64 = call avant_alloc(const u64 16, const u32 1022) collects   @83:19
+  barrier copy _64   @83:19
+  (*_64).0 = copy _63   @83:19
+  (*_64).1 = const i32 0   @83:19
+  (*_64).2 = const i32 0   @83:19
+  _65 = copy _64   @83:3
+  _66 = copy (*_65).1   @84:9
+  call printf(const str.3, copy _66) nocollect   @84:3
+  call avant_array_push_i32(copy _65, const i32 3) collects   @85:4
+  _67 = copy (*_65).1   @86:9
+  check.bounds const i32 0, copy _67   @86:9
+  _68 = copy (*_65).0   @86:9
+  _69 = copy (*_68)[const i32 0]   @86:9
+  call printf(const str.3, copy _69) nocollect   @86:3
+  _0 = const i32 0   @47:1
+  gc.leave   @47:1
+  return   @47:1
+}

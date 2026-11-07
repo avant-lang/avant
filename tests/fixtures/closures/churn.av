@@ -1,0 +1,154 @@
+// GC churn for closures on the new back end (Stage 28 W7b, mir.md W7b):
+// every round makes young strings, boxes, environments, and fn values and
+// stores them where only a barrier keeps them alive across the next
+// young collection: fn values in class fields of a mature holder reached
+// only through another object (`root.holder.f`, `root.slots[i].g`), fn
+// elements of a mature array stored by index, a young string stored into
+// a mature box (a variable captured before the loop, and one whose box
+// outlived its frame and is reached only through closures), nested lambdas
+// capturing the same variable, and a struct holding fn values inside a
+// class, and a mature array of strings re-sorted by a comparator that
+// allocates (a collection inside the sort, so the element stores need
+// the buffer's barrier). Each round then allocates enough to collect,
+// and reads every value back into a checksum. Both back ends print the same, under every
+// GC environment.
+
+class Junk {
+  s: String
+  n: Int
+
+  fn initialize(s: String, n: Int) {
+    self.s = s
+    self.n = n
+  }
+}
+
+class Slot {
+  f: fn(): String
+  g: fn(Int): Int
+
+  fn initialize {
+  }
+}
+
+struct Pair {
+  a: fn(): Int
+  b: fn(): String
+}
+
+class Cell {
+  set: fn(Int)
+  get: fn(): String
+
+  fn initialize {
+  }
+}
+
+// A variable that outlives its frame: its box is reached only through
+// the environments of the two closures stored in a Cell (so only the
+// box's barrier keeps a young string stored into a mature box).
+fn make_cell: Cell {
+  v = "init"
+  c = Cell.new()
+  c.set = { |n| v = "v${n}" }
+  c.get = { || v }
+  c
+}
+
+class Root {
+  holder: Slot
+  slots: Array(Slot)
+  fs: Array(fn(): Int)
+  pair: Pair
+  words: Array(String)
+  cell: Cell
+
+  fn initialize {
+    self.holder = Slot.new()
+    self.slots = []
+    self.fs = []
+    self.words = []
+    self.cell = make_cell()
+  }
+}
+
+fn junk(n: Int, tag: Int): Int {
+  keep = 0
+  i = 0
+  while i < n {
+    j = Junk.new("j${tag}-${i}", i)
+    keep = keep + j.s.size
+    i = i + 1
+  }
+  keep
+}
+
+fn main {
+  root = Root.new()
+  i = 0
+  while i < 8 {
+    sl = Slot.new()
+    sl.f = { || "init" }
+    sl.g = { |k| k }
+    root.slots.push(sl)
+    root.fs.push({ || 0 })
+    root.words.push("w${i}")
+    i = i + 1
+  }
+  root.holder.f = { || "start" }
+  root.holder.g = { |k| k }
+  acc = "acc"
+  get_acc: fn(): String = { || acc }
+  nested: fn(): fn(): String = { || { || acc + "+" } }
+  dummy = junk(20000, 0)
+  sum = 0
+  r = 0
+  while r < 300 {
+    s = "r${r}"
+    cnt = r
+    root.holder.f = { || s + "!" }
+    root.slots[r % 8].g = { |k| k + cnt }
+    root.fs[r % 8] = { || cnt * 2 }
+    root.pair = Pair { a: { || cnt + 1 }, b: { || s + s } }
+    acc = "a${r}"
+    shared = r
+    bump: fn(): Int = { ||
+      shared = shared + 1
+      shared
+    }
+    peek: fn(): fn(): Int = { || { || shared } }
+    inner = peek()
+    (root.cell.set)(r)
+    sum = sum + junk(5000, r)
+    if (root.cell.get)() != "v${r}" {
+      puts("cell lost its value in round ${r}")
+    }
+    dummy2 = bump()
+    sum = sum + (root.holder.f)().size
+    sum = sum + (root.slots[r % 8].g)(1)
+    sum = sum + (root.fs[r % 8])()
+    sum = sum + (root.pair.a)() + (root.pair.b)().size
+    sum = sum + get_acc().size + nested()().size
+    sum = sum + inner()
+    root.words[r % 8] = "v${r * 7 % 13}"
+    root.words.sort { |p, q|
+      dummy3 = junk(40, r)
+      p + "" != q && (p + "z").size < (q + "z").size
+    }
+    sum = sum + root.words[0].size + root.words[7].size
+    r = r + 1
+  }
+  puts(sum)
+  puts((root.holder.f)())
+  puts(get_acc())
+  puts(nested()())
+  t = 0
+  i = 0
+  while i < 8 {
+    t = t + (root.slots[i].g)(0) + (root.fs[i])()
+    i = i + 1
+  }
+  puts(t)
+  puts((root.pair.b)())
+  puts(root.words[0] + root.words[7])
+}

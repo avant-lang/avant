@@ -1,0 +1,263 @@
+// The lowering's type and name helpers (Stage 28 W5b; stages/stage28/mir.md
+// 2.9, 8.2, W5.3): the Avant-to-MIR type map of the scalar subset, the
+// canonical type text mty used by mangled symbols, the module part of a
+// symbol, and the exact bit pattern of an f64 literal (the language has no
+// bit cast; amendment 7 after W4).
+
+import source
+import type
+import mir.types
+
+// The MIR type of t in the supported subset (2.9), or -1: Int i32, Int64
+// i64, UInt64 u64, Bool bool, Float64 f64, Void void, String and Bytes
+// `ref str` (a literal's constant or a heap string, W6a).
+pub fn mir_scalar_ty(t: Ty): Int {
+  if t.is_int {
+    return mt_i32()
+  }
+  if t.is_int64 {
+    return mt_i64()
+  }
+  if t.is_uint64 {
+    return mt_u64()
+  }
+  if t.is_bool {
+    return mt_bool()
+  }
+  if t.is_float {
+    return mt_f64()
+  }
+  if t.is_void {
+    return mt_void()
+  }
+  if t.is_string || t.is_bytes {
+    return mt_str()
+  }
+  return -1
+}
+
+// Whether a String or Bytes value (both are `ref str`).
+pub fn mir_is_str_ty(t: Ty): Bool {
+  t.is_string || t.is_bytes
+}
+
+// The arity of a string builtin (lower_str.av; calls.av:205-249,
+// 320-346), or -1 when c is not one.
+pub fn mir_str_builtin_arity(c: String): Int {
+  if str_eq(c, "chr") || str_eq(c, "checksum_str") {
+    return 1
+  }
+  if str_eq(c, "repeat_byte") || str_eq(c, "fmt_float") {
+    return 2
+  }
+  if str_eq(c, "str_slice") || str_eq(c, "str_to_f_slice") {
+    return 3
+  }
+  -1
+}
+
+// mty (8.2): scalars by name; a struct or class as `module.Name` (W6b);
+// a union as its members in the checker's order joined by `|` in
+// parentheses; any other type is refused before a symbol or a layout
+// needs it, so its shown name is enough here.
+pub fn mir_mty(t: Ty): String {
+  if t.is_struct || t.is_class {
+    // A generic instance (W7a): its template's name and the type
+    // arguments, `main.Pair(Int,String)` (resolve.av instantiate_template:
+    // origin and ty_args).
+    if t.origin.size > 0 && t.ty_args.size > 0 {
+      buf0 = buf_new()
+      buf0.push_str("${mir_module_part(t.mod_name)}.${t.origin}(")
+      j = 0
+      while j < t.ty_args.size {
+        if j > 0 {
+          buf0.push_str(",")
+        }
+        buf0.push_str(mir_mty(t.ty_args[j]))
+        j = j + 1
+      }
+      buf0.push_str(")")
+      return buf0.to_s
+    }
+    return "${mir_module_part(t.mod_name)}.${t.name}"
+  }
+  if t.is_nil {
+    return "Nil"
+  }
+  // W6c: the containers (8.2: `Array(T)`, `Hash(K,V)`, `Buf`).
+  if t.is_array {
+    if e = t.inner {
+      return "Array(${mir_mty(e)})"
+    }
+  }
+  if t.is_hash {
+    if k = t.key {
+      if v = t.val {
+        return "Hash(${mir_mty(k)},${mir_mty(v)})"
+      }
+    }
+  }
+  if t.is_buf {
+    return "Buf"
+  }
+  // W8b: `JoinHandle(T)` (8.2).
+  if t.is_join {
+    if je = t.inner {
+      return "JoinHandle(${mir_mty(je)})"
+    }
+    return "JoinHandle"
+  }
+  // W8a: `Ptr(T)` (8.2); a C layout or an opaque C type as `module.Name`
+  // when the resolver gave it a module, else its bare name.
+  if t.is_ptr {
+    if pe = t.inner {
+      return "Ptr(${mir_mty(pe)})"
+    }
+    return "Ptr(Void)"
+  }
+  if t.is_clayout || t.is_opaque {
+    if t.mod_name.size > 0 {
+      return "${mir_module_part(t.mod_name)}.${t.name}"
+    }
+    return t.name
+  }
+  if t.is_union {
+    buf = buf_new()
+    buf.push_str("(")
+    i = 0
+    while i < t.members.size {
+      if i > 0 {
+        buf.push_str("|")
+      }
+      buf.push_str(mir_mty(t.members[i]))
+      i = i + 1
+    }
+    buf.push_str(")")
+    return buf.to_s
+  }
+  // W7b: `fn(A,B):R` (8.2), a missing result is Void.
+  if t.is_fn {
+    buf2 = buf_new()
+    buf2.push_str("fn(")
+    fk = 0
+    while fk < t.members.size {
+      if fk > 0 {
+        buf2.push_str(",")
+      }
+      buf2.push_str(mir_mty(t.members[fk]))
+      fk = fk + 1
+    }
+    buf2.push_str("):")
+    if fr = t.inner {
+      buf2.push_str(mir_mty(fr))
+    } else {
+      buf2.push_str("Void")
+    }
+    return buf2.to_s
+  }
+  if t.is_int {
+    return "Int"
+  }
+  if t.is_int64 {
+    return "Int64"
+  }
+  if t.is_uint64 {
+    return "UInt64"
+  }
+  if t.is_bool {
+    return "Bool"
+  }
+  if t.is_float {
+    return "Float64"
+  }
+  if t.is_string {
+    return "String"
+  }
+  if t.is_bytes {
+    return "Bytes"
+  }
+  if t.is_void {
+    return "Void"
+  }
+  t.show
+}
+
+fn mir_module_byte(c: Int): Bool {
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 48 && c <= 57 {
+    return true
+  }
+  c == 95 || c == 46
+}
+
+// The module part of a symbol (8.2): ModInfo's dotted name, with every
+// byte outside [A-Za-z0-9_.] replaced by `_` (a root file named
+// my-prog.av), so the symbol parses back (V20).
+pub fn mir_module_part(name: String): String {
+  if name.size == 0 {
+    return "main"
+  }
+  buf = buf_new()
+  i = 0
+  while i < name.size {
+    c = name[i]
+    if mir_module_byte(c) {
+      buf.push_byte(c)
+    } else {
+      buf.push_byte(95)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// The IEEE 754 bits of v, computed exactly: scaling by 2 is exact, so the
+// exponent comes from halving or doubling into [1, 2) (or stopping at the
+// subnormal exponent), and the 52 fraction bits from two exact 26-bit
+// halves.
+pub fn mir_f64_bits(v: Float64): Int64 {
+  if v != v {
+    return 9221120237041090560i64
+  }
+  sign = 0i64
+  x = v
+  if x < 0.0 {
+    sign = 1i64
+    x = 0.0 - x
+  } else if x == 0.0 {
+    if 1.0 / x < 0.0 {
+      sign = 1i64
+    }
+  }
+  top = sign << 63i64
+  if x == 0.0 {
+    return top
+  }
+  if x > 1.7976931348623157e308 {
+    return top | (2047i64 << 52i64)
+  }
+  e = 0
+  while x >= 2.0 {
+    x = x / 2.0
+    e = e + 1
+  }
+  while x < 1.0 && e > -1022 {
+    x = x * 2.0
+    e = e - 1
+  }
+  biased = 0
+  frac = x
+  if x >= 1.0 {
+    biased = e + 1023
+    frac = x - 1.0
+  }
+  scaled = frac * 67108864.0
+  hi = scaled.floor
+  lo = (scaled - hi) * 67108864.0
+  top | (biased.to_i64 << 52i64) | (hi.to_i.to_i64 << 26i64) | lo.to_i.to_i64
+}

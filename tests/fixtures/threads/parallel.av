@@ -1,0 +1,90 @@
+// `.parallel` on the new back end (Stage 28 W8b, mir.md W8b): scalar
+// elements and results (raw buffer reads and stores in the thunk),
+// reference elements and results (avant_array_get_ptr and
+// avant_array_set_ptr), struct elements and results holding a string
+// (raw by-value reads, stores behind the result buffer's barrier),
+// captured scalars, strings, arrays, and structs, a lambda in the block
+// capturing a capture (boxed in the thunk), an empty
+// array, results used after more allocation, and many rounds so the
+// contexts and results churn. Printed after each call returns, so the
+// output is deterministic.
+
+struct Item {
+  n: Int
+  label: String
+}
+
+fn checksum(xs: Array(Int)): Int {
+  acc = 0
+  i = 0
+  while i < xs.size {
+    acc = acc &* 31 &+ xs[i]
+    i = i + 1
+  }
+  acc
+}
+
+fn join_all(xs: Array(String)): String {
+  out = ""
+  i = 0
+  while i < xs.size {
+    out = out + xs[i]
+    if i + 1 < xs.size {
+      out = out + ","
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn main {
+  xs = [1, 2, 3, 4, 5, 6, 7, 8]
+  sq = xs.parallel { |x| x * x }
+  puts(checksum(sq))
+  base = 1000
+  shifted = xs.parallel { |x| x + base }
+  puts(checksum(shifted))
+  words = ["a", "bb", "ccc", "dddd"]
+  lens = words.parallel { |w| w.size }
+  puts(checksum(lens))
+  suffix = "!"
+  loud = words.parallel { |w| "${w}${suffix}" }
+  puts(join_all(loud))
+  tags = xs.parallel { |x| "n${x}" }
+  puts(join_all(tags))
+  items: Array(Item) = []
+  i = 0
+  while i < 6 {
+    items.push(Item { n: i, label: "item${i}" })
+    i = i + 1
+  }
+  pre = Item { n: 100, label: "pre" }
+  moved = items.parallel { |it| Item { n: it.n + pre.n, label: "${pre.label}-${it.label}" } }
+  i = 0
+  while i < moved.size {
+    puts("${moved[i].n} ${moved[i].label}")
+    i = i + 1
+  }
+  table = [10, 20, 30]
+  picked = xs.parallel { |x| table[x % 3] + x }
+  puts(checksum(picked))
+  lam = xs.parallel { |x|
+    f: fn(Int): Int = { |y| y * 3 + base }
+    f(x)
+  }
+  puts(checksum(lam))
+  empty = Array(String).new(0)
+  none = empty.parallel { |s| s.size }
+  puts(none.size)
+  total = 0
+  round = 0
+  while round < 200 {
+    strs = xs.parallel { |x| "r${round}-${x}" }
+    sizes = strs.parallel { |s| s.size }
+    total = total &+ checksum(sizes) &+ strs[round % 8].size
+    round = round + 1
+  }
+  puts(total)
+  puts(join_all(loud))
+  puts(moved[5].label)
+}

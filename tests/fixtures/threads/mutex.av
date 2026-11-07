@@ -1,0 +1,114 @@
+// Mutex.with on the new back end (Stage 28 W8b, mir.md W8b): the block
+// parameter names the mutex's cell (reads, assignments behind the
+// barrier, compound updates, scalar field stores through a class cell,
+// field stores of a string through a struct cell), the gate is locked around the block, and the block's value is
+// the call's. Tasks increment shared counters and append to a shared
+// string under the lock; the main thread prints after the joins. (A
+// string stored into a field of a class cell does not compile on the old
+// back end: threads/fresh.av.)
+
+class Held {
+  n: Int
+  log: String
+
+  fn initialize(n: Int) {
+    self.n = n
+    self.log = ""
+  }
+}
+
+struct Cell {
+  n: Int
+  name: String
+}
+
+class Mutex(T) {
+  cell: T
+  gate: UInt64
+
+  fn initialize(value: T) {
+    self.cell = value
+    self.gate = avant_gate_new()
+  }
+}
+
+fn bump(m: Mutex(Int), times: Int): Int {
+  i = 0
+  while i < times {
+    m.with { |x|
+      x = x + 1
+      0
+    }
+    i = i + 1
+  }
+  times
+}
+
+fn main {
+  count = Mutex(Int).new(0)
+  hs: Array(JoinHandle(Int)) = []
+  i = 0
+  while i < 8 {
+    hs.push(spawn { bump(count, 1000) })
+    i = i + 1
+  }
+  ran = 0
+  hs.each { |h| ran = ran + h.join }
+  puts(ran)
+  puts(count.with { |x| x })
+  held = Mutex(Held).new(Held.new(5))
+  hh = spawn {
+    held.with { |h|
+      h.n = h.n + 10
+      h.n
+    }
+  }
+  puts(hh.join)
+  after = held.with { |h|
+    h.n = h.n * 2
+    h.n
+  }
+  puts(after)
+  cell = Mutex(Cell).new(Cell { n: 1, name: "c" })
+  hc = spawn {
+    j = 0
+    while j < 100 {
+      cell.with { |c|
+        c.n = c.n + 2
+        c.name = "c${c.n}"
+        0
+      }
+      j = j + 1
+    }
+    1
+  }
+  puts(hc.join)
+  puts(cell.with { |c| c.name })
+  text = Mutex(String).new("")
+  ts: Array(JoinHandle(Int)) = []
+  i = 0
+  while i < 4 {
+    ts.push(spawn {
+      k = 0
+      while k < 50 {
+        text.with { |s|
+          s = s + "x"
+          s.size
+        }
+        k = k + 1
+      }
+      50
+    })
+    i = i + 1
+  }
+  sum = 0
+  ts.each { |t| sum = sum + t.join }
+  puts(sum)
+  puts(text.with { |s| s.size })
+  plain = Mutex(Int).new(3)
+  plain.with { |x|
+    x += 4
+    x
+  }
+  puts(plain.with { |x| x * 2 })
+}

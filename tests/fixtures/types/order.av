@@ -1,0 +1,50 @@
+// The union member-order probe (Stage 28 W7a, D192, mir.md section 14),
+// fixed in W7b (D200, C15): two modules each define `Node`, and both show
+// as `Node`. Members are sorted by shown name, and equal shown names by the
+// defining module (`ty_member_before`, compiler/type.av), so
+// `order_a.Node | order_b.Node` and `order_b.Node | order_a.Node` build
+// one member list (a = 0, b = 1) and are the same type. Before the fix the
+// stable sort kept the written order, the two orders were different types
+// with swapped tags, and the old back end failed to compile `via_ba`.
+
+import order_a
+import order_b
+
+fn ab(n: Int): order_a.Node | order_b.Node {
+  if n > 0 {
+    return order_a.mk_a(n)
+  }
+  order_b.mk_b("bee")
+}
+
+fn ba(n: Int): order_b.Node | order_a.Node {
+  ab(n)
+}
+
+fn via_ab(n: Int): String | order_b.Node {
+  x = ab(n)?
+  "a=${x.v}"
+}
+
+fn via_ba(n: Int): String | order_b.Node {
+  x = ba(n)?
+  "a=${x.v}"
+}
+
+fn main {
+  if r = via_ab(5) {
+    puts(r)
+  } else {
+    puts("ab: the failure side")
+  }
+  if r2 = via_ba(5) {
+    puts(r2)
+  } else {
+    puts("ba: the failure side")
+  }
+  if r3 = via_ba(-1) {
+    puts(r3)
+  } else {
+    puts("ba(-1): the failure side")
+  }
+}

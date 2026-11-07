@@ -1,42 +1,67 @@
 import harness
 
-fn tc_fake_dir(stamp: Int, tag: String): String {
-  dir = "${scratch()}/toolchain-wavei-${stamp}-${tag}"
-  mkdir_p(dir)
-  args_log = "${dir}/args.log"
-  // In c mode the last argument is the executable to write; avant run
-  // runs it, so the fake writes one that exits 0.
-  script = "#!/bin/sh\necho \"$@\" >> ${args_log}\nif [ \"$1\" = \"dump\" ]; then\n  echo gc.statepoint\nfi\nif [ \"$1\" = \"c\" ]; then\n  for a in \"$@\"; do last=$a; done\n  printf '#!/bin/sh\\nexit 0\\n' > \"$last\"\n  chmod +x \"$last\"\nfi\nexit 0\n"
-  dummy_sh = file_write("${dir}/myc-llvm", script)
-  chmod_x("${dir}/myc-llvm")
-  dir
+// The codegen mode each verb selects (Wave I; Stage 28 W11 moved this off
+// the old back end's argument log): `run` compiles --debug, a bare
+// `compile` uses the default mode, `--release` and its alias `--final`
+// the full optimization. The builds are deterministic, so the mode shows
+// in the bytes: run's binary (kept with --keep-tmp) is compile --debug's,
+// --final's is --release's, and debug, default, and release are three
+// different programs. The fixture's helper is inlined only by --release.
+
+fn tc_compile(compiler: String, src: String, bin: String, mode: String, log: String): Int {
+  args: Array(String) = []
+  args.push("compile")
+  args.push(src)
+  args.push(bin)
+  if mode.size > 0 {
+    args.push(mode)
+  }
+  process_run_out(compiler, args, log)
 }
 
-// Runs the compiler with only the fake backend in dir on PATH. The suite's
-// AVANT_MYC_LLVM is unset: it comes first in the lookup (D150) and would
-// otherwise pick the real backend.
-fn tc_invoke(compiler: String, dir: String, args: Array(String), extra_env: String, log: String): Int {
-  env_args: Array(String) = []
-  env_args.push("-u")
-  env_args.push("AVANT_MYC_LLVM")
-  env_args.push("PATH=${dir}:/usr/bin:/bin")
-  if extra_env.size > 0 {
-    env_args.push(extra_env)
+fn tc_bytes(path: String): String {
+  if t = file_read(path) {
+    return t
   }
-  env_args.push(compiler)
+  "(missing ${path})"
+}
+
+// cmp -s: the two files are byte-identical (binaries, so not through
+// String).
+fn tc_same(a: String, b: String): Bool {
+  args: Array(String) = []
+  args.push("-s")
+  args.push(a)
+  args.push(b)
+  process_run("/usr/bin/cmp", args) == 0
+}
+
+// grep -qF: the binary contains the text (a symbol name).
+fn tc_has(path: String, text: String): Bool {
+  args: Array(String) = []
+  args.push("-qF")
+  args.push(text)
+  args.push(path)
+  process_run("/usr/bin/grep", args) == 0
+}
+
+// The directory `--keep-tmp` names on stderr, or "".
+fn tc_kept_dir(log: String): String {
+  text = tc_bytes(log)
+  marker = "kept temporary directory "
+  lines = text.split("\n")
   i = 0
-  while i < args.size {
-    env_args.push(args[i])
+  while i < lines.size {
+    ln = lines[i]
+    j = 0
+    while j + marker.size <= ln.size {
+      if str_eq(str_slice(ln, j, j + marker.size), marker) {
+        return str_slice(ln, j + marker.size, ln.size)
+      }
+      j = j + 1
+    }
     i = i + 1
   }
-  process_run_out("/usr/bin/env", env_args, log)
-}
-
-fn tc_args(c: Checks, dir: String, label: String): String {
-  if text = file_read("${dir}/args.log") {
-    return text
-  }
-  c.expect(false, label)
   ""
 }
 
@@ -44,197 +69,78 @@ fn test_toolchain(c: Checks) {
   c.suite("tests/cases/test_toolchain.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    src = "${scratch()}/toolchain-wavei-${stamp}-hello.av"
-    dummy_src = file_write(src, "fn main {\n  puts(\"hi\")\n}\n")
+    base = "${scratch()}/toolchain-wavei-${stamp}"
+    src = "${base}-hello.av"
+    dummy_src = file_write(src, "fn helper_twice(n: Int): Int {\n  n * 2 + 1\n}\n\nfn main {\n  puts(helper_twice(20))\n}\n")
 
-    run_dir = tc_fake_dir(stamp, "run")
+    code1 = tc_compile(compiler, src, "${base}-debug.bin", "--debug", "${base}-debug.log")
+    code2 = tc_compile(compiler, src, "${base}-bare.bin", "", "${base}-bare.log")
+    code3 = tc_compile(compiler, src, "${base}-release.bin", "--release", "${base}-release.log")
+    code4 = tc_compile(compiler, src, "${base}-final.bin", "--final", "${base}-final.log")
+    c.eq_int(code1, 0, "compile --debug exits zero")
+    c.eq_int(code2, 0, "bare compile exits zero")
+    c.eq_int(code3, 0, "compile --release exits zero")
+    c.eq_int(code4, 0, "compile --final exits zero")
+    debug = "${base}-debug.bin"
+    bare = "${base}-bare.bin"
+    release = "${base}-release.bin"
+    c.expect(!tc_same(bare, debug), "bare compile does not use --debug codegen")
+    c.expect(!tc_same(bare, release), "bare compile does not use --release codegen")
+    c.expect(!tc_same(debug, release), "--debug and --release are different codegen")
+    c.expect(tc_same("${base}-final.bin", release), "compile --final is --release")
+    c.expect(tc_has(debug, "helper_twice"), "--debug keeps the helper")
+    c.expect(tc_has(bare, "helper_twice"), "the default mode does not inline the helper")
+    c.expect(!tc_has(release, "helper_twice"), "--release inlines the helper")
+
+    // --keep-tmp names the directory on stderr, when the compiler's
+    // TMPDIR is not another avant's scratch directory (a fresh one here,
+    // removed below).
+    run_log = "${base}-run.log"
+    run_tmp = "${base}-runtmp"
+    mkdir_p(run_tmp)
     run_args: Array(String) = []
-    run_args.push("run")
-    run_args.push(src)
-    code = tc_invoke(compiler, run_dir, run_args, "", "${scratch()}/toolchain-wavei-${stamp}-run.log")
-    c.expect(code == 0, "bare run with fake backend exits zero")
-    got = tc_args(c, run_dir, "bare run records backend args")
-    c.expect(str_has(got, "--debug"), "bare run uses --debug codegen")
-    c.expect(!str_has(got, "--final"), "bare run does not use --final codegen")
+    run_args.push("-c")
+    run_args.push("TMPDIR='${run_tmp}' exec '${compiler}' run --keep-tmp '${src}' > '${run_log}' 2>&1 < /dev/null")
+    run_code = process_run("/bin/sh", run_args)
+    c.eq_int(run_code, 0, "bare run exits zero")
+    c.expect(str_has(tc_bytes(run_log), "41\n"), "bare run prints the program's output")
+    kept = tc_kept_dir(run_log)
+    c.expect(kept.size > 0, "run --keep-tmp names its directory")
+    c.expect(tc_same("${kept}/run.bin", debug), "bare run uses --debug codegen")
+    rm_rf(run_tmp)
 
-    cmp_dir = tc_fake_dir(stamp, "compile")
-    cmp_args: Array(String) = []
-    cmp_args.push("compile")
-    cmp_args.push(src)
-    cmp_args.push("${scratch()}/toolchain-wavei-${stamp}-hi.bin")
-    code2 = tc_invoke(compiler, cmp_dir, cmp_args, "", "${scratch()}/toolchain-wavei-${stamp}-compile.log")
-    c.expect(code2 == 0, "bare compile with fake backend exits zero")
-    got2 = tc_args(c, cmp_dir, "bare compile records backend args")
-    c.expect(!str_has(got2, "--debug"), "bare compile does not use --debug codegen")
-    c.expect(!str_has(got2, "--final"), "bare compile does not use --final codegen")
-
-    rel_dir = tc_fake_dir(stamp, "release")
-    rel_args: Array(String) = []
-    rel_args.push("compile")
-    rel_args.push(src)
-    rel_args.push("${scratch()}/toolchain-wavei-${stamp}-hi-rel.bin")
-    rel_args.push("--release")
-    code3 = tc_invoke(compiler, rel_dir, rel_args, "", "${scratch()}/toolchain-wavei-${stamp}-release.log")
-    c.expect(code3 == 0, "compile --release with fake backend exits zero")
-    got3 = tc_args(c, rel_dir, "compile --release records backend args")
-    c.expect(str_has(got3, "--final"), "compile --release uses --final codegen")
-
-    fin_dir = tc_fake_dir(stamp, "final")
-    fin_args: Array(String) = []
-    fin_args.push("compile")
-    fin_args.push(src)
-    fin_args.push("${scratch()}/toolchain-wavei-${stamp}-hi-fin.bin")
-    fin_args.push("--final")
-    code4 = tc_invoke(compiler, fin_dir, fin_args, "", "${scratch()}/toolchain-wavei-${stamp}-final.log")
-    c.expect(code4 == 0, "compile --final with fake backend exits zero")
-    got4 = tc_args(c, fin_dir, "compile --final records backend args")
-    c.expect(str_has(got4, "--final"), "compile --final alias uses --final codegen")
-
-    dbg_dir = tc_fake_dir(stamp, "debug")
-    dbg_args: Array(String) = []
-    dbg_args.push("compile")
-    dbg_args.push(src)
-    dbg_args.push("${scratch()}/toolchain-wavei-${stamp}-hi-dbg.bin")
-    dbg_args.push("--debug")
-    code5 = tc_invoke(compiler, dbg_dir, dbg_args, "", "${scratch()}/toolchain-wavei-${stamp}-debug.log")
-    c.expect(code5 == 0, "compile --debug with fake backend exits zero")
-    got5 = tc_args(c, dbg_dir, "compile --debug records backend args")
-    c.expect(str_has(got5, "--debug"), "compile --debug uses --debug codegen")
-
-    env_dir = tc_fake_dir(stamp, "envfinal")
-    env_args2: Array(String) = []
-    env_args2.push("compile")
-    env_args2.push(src)
-    env_args2.push("${scratch()}/toolchain-wavei-${stamp}-hi-env.bin")
-    code6 = tc_invoke(compiler, env_dir, env_args2, "AVANT_MYC_FINAL=1", "${scratch()}/toolchain-wavei-${stamp}-env.log")
-    c.expect(code6 == 0, "bare compile with legacy env exits zero")
-    got6 = tc_args(c, env_dir, "bare compile with legacy env records backend args")
-    c.expect(!str_has(got6, "--final"), "AVANT_MYC_FINAL no longer selects codegen")
-    c.expect(!str_has(got6, "--debug"), "bare compile keeps default codegen under legacy env")
-
-    env2_dir = tc_fake_dir(stamp, "envdebug")
-    env2_args: Array(String) = []
-    env2_args.push("run")
-    env2_args.push(src)
-    code7 = tc_invoke(compiler, env2_dir, env2_args, "AVANT_MYC_DEBUG=0", "${scratch()}/toolchain-wavei-${stamp}-env2.log")
-    c.expect(code7 == 0, "bare run with legacy env exits zero")
-    got7 = tc_args(c, env2_dir, "bare run with legacy env records backend args")
-    c.expect(str_has(got7, "--debug"), "AVANT_MYC_DEBUG no longer selects codegen")
-
-    // The safepoint probe runs once per run (D139): a backend with an
-    // unknown key is probed, a matching AVANT_MYC_PROBED skips the probe,
-    // and a changed backend is probed again under the old key.
-    pr_dir = tc_fake_dir(stamp, "probe")
-    pr_args: Array(String) = []
-    pr_args.push("compile")
-    pr_args.push(src)
-    pr_args.push("${scratch()}/toolchain-wavei-${stamp}-probe.bin")
-    pr_code = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=", "${scratch()}/toolchain-wavei-${stamp}-probe1.log")
-    pr1 = tc_args(c, pr_dir, "probe fixture records backend args")
-    c.expect(pr_code == 0 && str_has(pr1, "dump --gc-root"), "a backend with no probe key is probed")
-    key = myc_probe_key("${pr_dir}/myc-llvm")
-    rm_f("${pr_dir}/args.log")
-    pr_code2 = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=${key}", "${scratch()}/toolchain-wavei-${stamp}-probe2.log")
-    pr2 = tc_args(c, pr_dir, "probe fixture records backend args again")
-    c.expect(pr_code2 == 0 && !str_has(pr2, "dump --gc-root") && str_has(pr2, "--gc-root"), "a matching probe key skips the probe")
-    rm_f("${pr_dir}/args.log")
-    old = ""
-    if t = file_read("${pr_dir}/myc-llvm") {
-      old = t
-    }
-    dummy_new = file_write("${pr_dir}/myc-llvm", "${old}# changed\n")
-    pr_code3 = tc_invoke(compiler, pr_dir, pr_args, "AVANT_MYC_PROBED=${key}", "${scratch()}/toolchain-wavei-${stamp}-probe3.log")
-    pr3 = tc_args(c, pr_dir, "probe fixture records backend args a third time")
-    c.expect(pr_code3 == 0 && str_has(pr3, "dump --gc-root"), "a changed backend is probed again")
-
-    // The lookup order (D150): AVANT_MYC_LLVM, then the backend beside the
-    // compiler's own executable, then PATH.
-    ord_args: Array(String) = []
-    ord_args.push("compile")
-    ord_args.push(src)
-    ord_args.push("${scratch()}/toolchain-wavei-${stamp}-order.bin")
-    on_path = tc_fake_dir(stamp, "order-path")
-    explicit = tc_fake_dir(stamp, "order-explicit")
-    ord_env: Array(String) = []
-    ord_env.push("PATH=${on_path}:/usr/bin:/bin")
-    ord_env.push("AVANT_MYC_LLVM=${explicit}/myc-llvm")
-    ord_env.push("AVANT_MYC_PROBED=")
-    ord_env.push(compiler)
-    i = 0
-    while i < ord_args.size {
-      ord_env.push(ord_args[i])
-      i = i + 1
-    }
-    ord_code = process_run_out("/usr/bin/env", ord_env, "${scratch()}/toolchain-wavei-${stamp}-order1.log")
-    c.expect(ord_code == 0 && file_exists("${explicit}/args.log"), "AVANT_MYC_LLVM is used")
-    c.expect(!file_exists("${on_path}/args.log"), "AVANT_MYC_LLVM beats a myc-llvm on PATH")
-
-    beside = tc_fake_dir(stamp, "order-beside")
-    copy_code = copy_file(compiler, "${beside}/avant")
-    chmod_x("${beside}/avant")
-    c.eq_int(copy_code, 0, "copy the compiler beside a fake backend")
-    rm_f("${on_path}/args.log")
-    bs_code = tc_invoke("${beside}/avant", on_path, ord_args, "AVANT_MYC_PROBED=", "${scratch()}/toolchain-wavei-${stamp}-order2.log")
-    c.expect(bs_code == 0 && file_exists("${beside}/args.log"), "the backend beside the compiler is used")
-    c.expect(!file_exists("${on_path}/args.log"), "the backend beside the compiler beats one on PATH")
-    rm_f("${beside}/avant")
-
-    rm_f("${on_path}/args.log")
-    miss_env: Array(String) = []
-    miss_env.push("PATH=${on_path}:/usr/bin:/bin")
-    miss_env.push("AVANT_MYC_LLVM=${scratch()}/toolchain-wavei-${stamp}-missing/myc-llvm")
-    miss_env.push(compiler)
-    i = 0
-    while i < ord_args.size {
-      miss_env.push(ord_args[i])
-      i = i + 1
-    }
-    miss_log = "${scratch()}/toolchain-wavei-${stamp}-order3.log"
-    miss_code = process_run_out("/usr/bin/env", miss_env, miss_log)
-    c.expect(miss_code != 0, "a missing AVANT_MYC_LLVM fails")
-    c.expect(!file_exists("${on_path}/args.log"), "a missing AVANT_MYC_LLVM does not fall back to PATH")
-    // A tool the compiler runs gets /dev/null as stdin (Wave D): myc-llvm
-    // reads all of a non-terminal stdin first, so piped input reached the
-    // backend instead of the program, and an open pipe hung the compile.
-    // These go through sh because they are about stdin plumbing.
-    if real_myc = env_get("AVANT_MYC_LLVM") {
-      cat_src = "${scratch()}/toolchain-wavei-${stamp}-stdin.av"
-      dummy_cat = file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
-      pipe_out = "${scratch()}/toolchain-wavei-${stamp}-pipe.out"
-      pipe_sh = "${scratch()}/toolchain-wavei-${stamp}-pipe.sh"
-      dummy_ps = file_write(pipe_sh, "printf 'piped input' | AVANT_MYC_LLVM='${real_myc}' '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
-      sh_args: Array(String) = []
-      sh_args.push(pipe_sh)
-      pipe_code = process_run("/bin/sh", sh_args)
-      c.eq_int(pipe_code, 0, "avant run with piped stdin exits zero")
-      if pt = file_read(pipe_out) {
-        c.expect(str_has(pt, "piped input"), "piped stdin reaches the program avant run starts")
-      } else {
-        c.expect(false, "read the piped run output")
-      }
-
-      open_sh = "${scratch()}/toolchain-wavei-${stamp}-open.sh"
-      open_bin = "${scratch()}/toolchain-wavei-${stamp}-open.bin"
-      // The pipe's writer stays open until the compile is done (a flag
-      // file), capped at 10 s so a regression cannot hang the suite: a
-      // compile that waits for its stdin takes the whole cap.
-      open_flag = "${scratch()}/toolchain-wavei-${stamp}-open.done"
-      dummy_os = file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { AVANT_MYC_LLVM='${real_myc}' AVANT_MYC_PROBED= '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
-      open_args: Array(String) = []
-      open_args.push(open_sh)
-      started = now_ms()
-      dummy_open = process_run("/bin/sh", open_args)
-      c.expect(file_exists(open_bin), "a compile with an open pipe as stdin finishes")
-      c.expect(now_ms() - started < 8000, "a compile does not wait for its stdin to close")
+    // A tool the compiler runs gets /dev/null as stdin (Wave D): piped
+    // input reaches the program `avant run` starts, not a tool, and an
+    // open pipe as stdin does not hold a compile. These go through sh
+    // because they are about stdin plumbing.
+    cat_src = "${base}-stdin.av"
+    dummy_cat = file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
+    pipe_out = "${base}-pipe.out"
+    pipe_sh = "${base}-pipe.sh"
+    dummy_ps = file_write(pipe_sh, "printf 'piped input' | '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
+    sh_args: Array(String) = []
+    sh_args.push(pipe_sh)
+    pipe_code = process_run("/bin/sh", sh_args)
+    c.eq_int(pipe_code, 0, "avant run with piped stdin exits zero")
+    if pt = file_read(pipe_out) {
+      c.expect(str_has(pt, "piped input"), "piped stdin reaches the program avant run starts")
     } else {
-      c.expect(false, "AVANT_MYC_LLVM for the stdin checks")
+      c.expect(false, "read the piped run output")
     }
 
-    if miss_txt = file_read(miss_log) {
-      c.expect(str_has(miss_txt, "AVANT_MYC_LLVM points at a missing file"), "a missing AVANT_MYC_LLVM is named")
-    } else {
-      c.expect(false, "read the missing-backend log")
-    }
+    open_sh = "${base}-open.sh"
+    open_bin = "${base}-open.bin"
+    // The pipe's writer stays open until the compile is done (a flag
+    // file), capped at 10 s so a regression cannot hang the suite: a
+    // compile that waits for its stdin takes the whole cap.
+    open_flag = "${base}-open.done"
+    dummy_os = file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
+    open_args: Array(String) = []
+    open_args.push(open_sh)
+    started = now_ms()
+    dummy_open = process_run("/bin/sh", open_args)
+    c.expect(file_exists(open_bin), "a compile with an open pipe as stdin finishes")
+    c.expect(now_ms() - started < 8000, "a compile does not wait for its stdin to close")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

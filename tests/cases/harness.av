@@ -80,7 +80,6 @@ lib harness_rt {
   fun avant_fs_chmod_x(path: String): Int
   fun avant_fs_mkdir_p(path: String): Int
   fun avant_fs_cwd: String
-  fun avant_file_identity(path: String): String
   fun avant_fs_copy(src: String, dst: String): Int
   fun avant_job_start(path: String, args: Array(String), out: String): Int
   fun avant_job_wait: Int
@@ -401,11 +400,6 @@ pub fn rm_rf(path: String) {
   dummy = harness_rt.avant_fs_remove_tree(path)
 }
 
-// The safepoint probe cache key the compiler uses for a backend (D139).
-pub fn myc_probe_key(path: String): String {
-  "${harness_rt.avant_file_identity(path)}:${path}"
-}
-
 pub fn copy_file(src: String, dst: String): Int {
   harness_rt.avant_fs_copy(src, dst)
 }
@@ -419,8 +413,8 @@ pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int 
   args.push("compile")
   args.push(src)
   args.push(bin)
-  // Test programs are compiled fast, as before Wave I made bare
-  // compile select myc default. toolchain.av covers the verb default.
+  // Test programs are compiled fast (--debug); a bare compile uses the
+  // default mode. test_toolchain.av covers the verb defaults.
   args.push("--debug")
   process_run_out(compiler, args, log)
 }
@@ -452,10 +446,23 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   process_run_out(compiler, args, log)
 }
 
+// `dump`: the MIR text (D171), which the callers inspect (the old back
+// end's IR until Stage 28 W11).
 pub fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
   args.push(src)
+  process_run_out(compiler, args, log)
+}
+
+// `__emit-ll SRC OUT` (internal, Stage 28 W9): the pre-optimization .ll
+// the back end hands to LLVM, which carries no source location; its
+// messages go to log.
+pub fn emit_ll(compiler: String, src: String, out: String, log: String): Int {
+  args: Array(String) = []
+  args.push("__emit-ll")
+  args.push(src)
+  args.push(out)
   process_run_out(compiler, args, log)
 }
 
@@ -512,6 +519,7 @@ pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): 
   process_run_out("/usr/bin/env", args, log)
 }
 
+// The MIR with coverage on (as dump_av).
 pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("AVANT_COVERAGE=1")

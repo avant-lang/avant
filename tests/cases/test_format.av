@@ -245,9 +245,11 @@ fn test_format(c: Checks) {
     dump_body = "fn main{\nputs( \"ok\" )\n}\n"
     wdump = file_write(dump_src, dump_body)
     c.eq_int(wdump, 0, "write dump fixture")
-    before = "${scratch()}/format-${stamp}-before.myc"
-    after = "${scratch()}/format-${stamp}-after.myc"
-    before_code = dump_av(compiler, dump_src, before)
+    // The emitted .ll (no source locations, unlike the MIR dump; the old
+    // back end's IR until Stage 28 W11): formatting changes no code.
+    before = "${scratch()}/format-${stamp}-before.ll"
+    after = "${scratch()}/format-${stamp}-after.ll"
+    before_code = emit_ll(compiler, dump_src, before, "${before}.log")
     c.eq_int(before_code, 0, "dump before format")
     dump_flags: Array(String) = []
     dump_flags.push("--write")
@@ -259,11 +261,11 @@ fn test_format(c: Checks) {
     } else {
       c.expect(false, "read dump fixture")
     }
-    after_code = dump_av(compiler, dump_src, after)
+    after_code = emit_ll(compiler, dump_src, after, "${after}.log")
     c.eq_int(after_code, 0, "dump after format")
     if ir0 = file_read(before) {
       if ir1 = file_read(after) {
-        c.eq_str(ir0, ir1, "myc dump is unchanged")
+        c.eq_str(ir0, ir1, "the emitted .ll is unchanged")
       } else {
         c.expect(false, "read dump after")
       }

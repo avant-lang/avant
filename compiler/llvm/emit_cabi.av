@@ -1,0 +1,363 @@
+// The SysV x86-64 C ABI for values passed by value to and from C (Stage
+// 28 W8a; stages/stage28/mir.md W8a, C3, section 14 8.6): Avant passes
+// structs, unions, and fn values between its own functions as LLVM
+// first-class aggregates (audit 2.3), which is not the C ABI. At a call
+// of a C external whose signature holds an aggregate, the emitter
+// classifies each aggregate as the SysV psABI does (3.2.3) for the
+// layouts the language produces (C-rule offsets, alignment at most 8, no
+// long double, no vectors): larger than 16 bytes, or not fitting the
+// registers left, is MEMORY (`byval`, or `sret` for a result); otherwise
+// each eightbyte is SSE when every scalar in it is an f64, else INTEGER,
+// passed as one `double` or `iN` (N the eightbyte's bytes within the
+// value) argument each, which is clang's coercion. A zero-size value is
+// not passed. Calls without an aggregate are emitted as before.
+//
+// The operand of an aggregate argument and the destination of an
+// aggregate result are locals (lower_ffi.av), so the parts are loaded
+// from and stored into their allocas, never past the value's size.
+
+import source
+import mir.types
+import mir.ir
+import llvm.emit_core
+
+// The passing of one value: 0 direct (a scalar), 1 coerced into parts,
+// 2 in memory (byval / sret), 3 ignored (zero size).
+pub fn cabi_direct: Int { 0 }
+pub fn cabi_parts: Int { 1 }
+pub fn cabi_memory: Int { 2 }
+pub fn cabi_none: Int { 3 }
+
+pub class CAbiVal {
+  kind: Int = 0
+  ty: Int = 0
+  parts: Array(String)
+  offs: Array(Int)
+
+  fn initialize(kind: Int, ty: Int) {
+    self.kind = kind
+    self.ty = ty
+    p: Array(String) = []
+    self.parts = p
+    o: Array(Int) = []
+    self.offs = o
+  }
+}
+
+pub class CAbiSig {
+  args: Array(CAbiVal)
+  ret: CAbiVal
+
+  fn initialize(ret: CAbiVal) {
+    a: Array(CAbiVal) = []
+    self.args = a
+    self.ret = ret
+  }
+}
+
+// Whether a C signature holds an aggregate (a parameter or the result).
+pub fn ll_cabi_needed(ts: MTypes, sig: Int): Bool {
+  s = ts.sigs[sig]
+  if ts.kind(s.ret) == mk_agg() {
+    return true
+  }
+  i = 0
+  while i < s.params.size {
+    if ts.kind(s.params[i]) == mk_agg() {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+// The scalar leaves of a value of type ty at byte offset base: each
+// leaf's offset, and whether it is an f64.
+fn ll_cabi_leaves(ts: MTypes, ty: Int, base: Int, offs: Array(Int), fps: Array(Bool)) {
+  if ts.kind(ty) == mk_agg() {
+    l = ts.layouts[ts.get(ty).layout]
+    i = 0
+    while i < l.fields.size {
+      ll_cabi_leaves(ts, l.fields[i], base + l.offsets[i], offs, fps)
+      i = i + 1
+    }
+    return
+  }
+  if ts.size_of(ty) > 0 {
+    offs.push(base)
+    fps.push(ts.kind(ty) == mk_f64())
+  }
+}
+
+// An aggregate's eightbytes (a value of at most 16 bytes): `double` for
+// an SSE eightbyte, else `iN`; sets the counts of each class needed.
+fn ll_cabi_split(ts: MTypes, ty: Int, v: CAbiVal) {
+  size = ts.size_of(ty)
+  offs: Array(Int) = []
+  fps: Array(Bool) = []
+  ll_cabi_leaves(ts, ty, 0, offs, fps)
+  n = (size + 7) / 8
+  i = 0
+  while i < n {
+    sse = false
+    any = false
+    j = 0
+    while j < offs.size {
+      if offs[j] >= 8 * i && offs[j] < 8 * i + 8 {
+        if !any {
+          sse = true
+          any = true
+        }
+        sse = sse && fps[j]
+      }
+      j = j + 1
+    }
+    if sse {
+      v.parts.push("double")
+    } else {
+      bytes = size - 8 * i
+      if bytes > 8 {
+        bytes = 8
+      }
+      v.parts.push("i${bytes * 8}")
+    }
+    v.offs.push(8 * i)
+    i = i + 1
+  }
+}
+
+fn ll_cabi_count(v: CAbiVal, sse: Bool): Int {
+  n = 0
+  i = 0
+  while i < v.parts.size {
+    d = str_eq(v.parts[i], "double")
+    if (d && sse) || (!d && !sse) {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  n
+}
+
+// The plan of a C signature: the result first (an sret pointer takes an
+// integer register), then each parameter in order against the six
+// integer and eight SSE argument registers.
+pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
+  s = ts.sigs[sig]
+  ints = 6
+  sses = 8
+  rv = CAbiVal.new(cabi_direct(), s.ret)
+  if ts.kind(s.ret) == mk_agg() {
+    size = ts.size_of(s.ret)
+    if size == 0 {
+      rv.kind = cabi_none()
+    } else if size > 16 {
+      rv.kind = cabi_memory()
+      ints = ints - 1
+    } else {
+      rv.kind = cabi_parts()
+      ll_cabi_split(ts, s.ret, rv)
+    }
+  }
+  plan = CAbiSig.new(rv)
+  i = 0
+  while i < s.params.size {
+    t = s.params[i]
+    v = CAbiVal.new(cabi_direct(), t)
+    if ts.kind(t) == mk_agg() {
+      size = ts.size_of(t)
+      if size == 0 {
+        v.kind = cabi_none()
+      } else if size > 16 {
+        v.kind = cabi_memory()
+      } else {
+        ll_cabi_split(ts, t, v)
+        ni = ll_cabi_count(v, false)
+        ns = ll_cabi_count(v, true)
+        if ni <= ints && ns <= sses {
+          v.kind = cabi_parts()
+          ints = ints - ni
+          sses = sses - ns
+        } else {
+          v.kind = cabi_memory()
+          p: Array(String) = []
+          v.parts = p
+          o: Array(Int) = []
+          v.offs = o
+        }
+      }
+    } else if ts.kind(t) == mk_f64() {
+      if sses > 0 {
+        sses = sses - 1
+      }
+    } else if ints > 0 {
+      ints = ints - 1
+    }
+    plan.args.push(v)
+    i = i + 1
+  }
+  plan
+}
+
+// The LLVM result type of a plan: void for sret, the part or a literal
+// struct of the parts for a coerced aggregate.
+fn ll_cabi_ret_text(ts: MTypes, plan: CAbiSig): String {
+  rv = plan.ret
+  if rv.kind == cabi_memory() || rv.kind == cabi_none() {
+    return "void"
+  }
+  if rv.kind == cabi_parts() {
+    if rv.parts.size == 1 {
+      return rv.parts[0]
+    }
+    return "{ ${rv.parts[0]}, ${rv.parts[1]} }"
+  }
+  if rv.ty == mt_bool() {
+    return "zeroext i1"
+  }
+  ll_type_text(ts, rv.ty)
+}
+
+// The LLVM parameter types of a plan, in order.
+fn ll_cabi_param_texts(ts: MTypes, plan: CAbiSig): Array(String) {
+  out: Array(String) = []
+  if plan.ret.kind == cabi_memory() {
+    out.push("ptr sret(${ll_type_text(ts, plan.ret.ty)}) align ${ts.align_of(plan.ret.ty)}")
+  }
+  i = 0
+  while i < plan.args.size {
+    v = plan.args[i]
+    if v.kind == cabi_parts() {
+      j = 0
+      while j < v.parts.size {
+        out.push(v.parts[j])
+        j = j + 1
+      }
+    } else if v.kind == cabi_memory() {
+      out.push("ptr byval(${ll_type_text(ts, v.ty)}) align 8")
+    } else if v.kind == cabi_direct() {
+      if v.ty == mt_bool() {
+        out.push("i1 zeroext")
+      } else {
+        out.push(ll_type_text(ts, v.ty))
+      }
+    }
+    i = i + 1
+  }
+  out
+}
+
+fn ll_cabi_join(xs: Array(String)): String {
+  buf = buf_new()
+  i = 0
+  while i < xs.size {
+    if i > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str(xs[i])
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// `declare` of a C external whose signature holds an aggregate.
+pub fn ll_cabi_declare(ts: MTypes, name: String, sig: Int): String {
+  plan = ll_cabi_plan(ts, sig)
+  "declare ${ll_cabi_ret_text(ts, plan)} ${ll_sym(name)}(${ll_cabi_join(ll_cabi_param_texts(ts, plan))})\n"
+}
+
+// The address of the local an aggregate operand names (the lowering
+// passes aggregates to C as bare locals; any place works).
+fn ll_cabi_addr(e: LlEmit, o: MOperand): String {
+  if p = o.place {
+    return e.place_ptr(p)
+  }
+  e.pa_vol = false
+  "null"
+}
+
+// A call of C external `name` with signature sig (holding an aggregate):
+// arguments by the plan, the call with its function type spelled out,
+// and the destination local written (parts stored at their offsets, or
+// written by the callee through sret).
+pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
+  ts = e.ts
+  plan = ll_cabi_plan(ts, sig)
+  args: Array(String) = []
+  if plan.ret.kind == cabi_memory() {
+    args.push("ptr sret(${e.llt(plan.ret.ty)}) align ${e.align(plan.ret.ty)} ${e.local_name(st.dest)}")
+  }
+  i = 0
+  while i < plan.args.size && i < st.args.size {
+    v = plan.args[i]
+    if v.kind == cabi_direct() {
+      x = e.value(st.args[i])
+      if v.ty == mt_bool() {
+        args.push("i1 zeroext ${x}")
+      } else {
+        args.push("${e.llt(v.ty)} ${x}")
+      }
+    } else if v.kind == cabi_memory() {
+      a = ll_cabi_addr(e, st.args[i])
+      args.push("ptr byval(${e.llt(v.ty)}) align 8 ${a}")
+    } else if v.kind == cabi_parts() {
+      a2 = ll_cabi_addr(e, st.args[i])
+      vol = e.pa_vol
+      j = 0
+      while j < v.parts.size {
+        g = e.tmp
+        e.line("${g} = getelementptr inbounds i8, ptr ${a2}, i64 ${v.offs[j]}")
+        x2 = e.tmp
+        e.line("${x2} = load${e.vol(vol)} ${v.parts[j]}, ptr ${g}, align ${e.align(v.ty)}")
+        args.push("${v.parts[j]} ${x2}")
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+  ptexts = ll_cabi_param_texts(ts, plan)
+  // The function type of the call names types only (attributes are on
+  // the arguments).
+  ptypes: Array(String) = []
+  i = 0
+  while i < ptexts.size {
+    t = ptexts[i]
+    if str_starts_mir(t, "ptr ") {
+      t = "ptr"
+    } else if str_eq(t, "i1 zeroext") {
+      t = "i1"
+    }
+    ptypes.push(t)
+    i = i + 1
+  }
+  rtext = ll_cabi_ret_text(ts, plan)
+  call = "call ${rtext} (${ll_cabi_join(ptypes)}) ${ll_sym(name)}(${ll_cabi_join(args)})"
+  rv = plan.ret
+  if rv.kind == cabi_memory() || rv.kind == cabi_none() || str_eq(rtext, "void") {
+    e.line(call)
+    return
+  }
+  r = e.tmp
+  e.line("${r} = ${call}")
+  if st.dest < 0 {
+    return
+  }
+  d = st.dest
+  slot = e.slot_vol(d)
+  if rv.kind == cabi_direct() {
+    e.store(rv.ty, r, e.local_name(d), slot)
+    return
+  }
+  j = 0
+  while j < rv.parts.size {
+    x = r
+    if rv.parts.size > 1 {
+      x = e.tmp
+      e.line("${x} = extractvalue ${rtext} ${r}, ${j}")
+    }
+    g = e.tmp
+    e.line("${g} = getelementptr inbounds i8, ptr ${e.local_name(d)}, i64 ${rv.offs[j]}")
+    e.line("store${e.vol(slot)} ${rv.parts[j]} ${x}, ptr ${g}, align ${e.align(rv.ty)}")
+    j = j + 1
+  }
+}

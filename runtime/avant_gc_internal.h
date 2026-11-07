@@ -23,7 +23,7 @@
 #define SCALAR_LOS_MIN 6144
 #define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
 #define FULL_BYTES (32u * 1024u * 1024u)
-#define MAX_TYPES 1024
+#define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 
 #define SPACE_MATURE 0

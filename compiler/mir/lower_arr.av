@@ -1,0 +1,619 @@
+// The lowering of arrays (Stage 28 W6c; stages/stage28/mir.md W6c): the
+// container types (`ref %Array(E)` over an element buffer `%elems(E)`,
+// `ref %Hash`, `ref %Buf`, 2.2), array literals and `Array(T).new(n)` (the
+// buffer filled by `fresh` stores and closed by one barrier, V14; then the
+// header behind its barrier), indexing with the bounds check, index and
+// element-field stores (D187: `avant_array_set_ptr` for reference
+// elements, a barrier on the element buffer for reference-carrying
+// structs), and the array members without blocks. Element-buffer type ids
+// are taken where the old back end takes them (`array_type_id`: an
+// allocation, push, reserve, or copy), so they equal its ids (D186).
+// Hashes, Buf, and the string members that make arrays are in
+// lower_hash.av.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_stmt
+import mir.lower_call
+import mir.lower_agg
+
+// ---- types
+
+// The MIR type of an Array, Hash, or Buf value (2.2, 2.9): `ref
+// %Array(E)` (fields: the element buffer, size, cap), `ref %Hash`, `ref
+// %Buf` (its bytes are `%elems(u8)`); -1 after refusing.
+pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
+  ts = lw.lw_m.types
+  if t.is_hash {
+    fields: Array(Int) = []
+    names = ["keys", "vals", "state", "size", "cap", "key_kind", "val_kind"]
+    fields.push(mt_ref())
+    fields.push(mt_ref())
+    fields.push(mt_ref())
+    fields.push(mt_i32())
+    fields.push(mt_i32())
+    fields.push(mt_i32())
+    fields.push(mt_i32())
+    return ts.ref_to(lw.lw_b.note_layout("Hash", mlk_hash(), fields, names))
+  }
+  if t.is_buf {
+    bf: Array(Int) = []
+    bn: Array(String) = []
+    bf.push(mt_u8())
+    bn.push("")
+    bytes = lw.lw_b.note_layout("elems(u8)", mlk_elems(), bf, bn)
+    return ts.ref_to(lw.lw_b.note_layout("Buf", mlk_buf(), mir_arr_header(ts, bytes), mir_arr_names()))
+  }
+  if e = t.inner {
+    name = mir_mty(e)
+    known = ts.layout_named("Array(${name})")
+    if known >= 0 {
+      return ts.ref_to(known)
+    }
+    if e.is_nil {
+      lw.refuse(loc, "an array of ${e.show}")
+      return -1
+    }
+    ahead = false
+    et = -1
+    if e.is_struct && lw.struct_busy(name) {
+      // An array of a struct inside that struct (struct_layout): the
+      // element buffer is completed when the struct is.
+      et = lw.lw_m.types.agg(lw.struct_ahead(name))
+      ahead = true
+    } else {
+      et = lw.field_mty(e, loc)
+    }
+    if lw.failed || et < 0 {
+      return -1
+    }
+    ef: Array(Int) = []
+    en: Array(String) = []
+    ef.push(et)
+    en.push("")
+    el = lw.lw_b.note_layout("elems(${name})", mlk_elems(), ef, en)
+    if ahead {
+      lw.lw_pend_struct.push(name)
+      lw.lw_pend_elems.push(el)
+    }
+    return ts.ref_to(lw.lw_b.note_layout("Array(${name})", mlk_array(), mir_arr_header(ts, el), mir_arr_names()))
+  }
+  lw.refuse(loc, "a value of type ${t.show}")
+  return -1
+}
+
+// `{ ref %elems(E) data, i32 size, i32 cap }` (audit 1.6.2, 1.6.4).
+pub fn mir_arr_header(ts: MTypes, elems: Int): Array(Int) {
+  f: Array(Int) = []
+  f.push(ts.ref_to(elems))
+  f.push(mt_i32())
+  f.push(mt_i32())
+  f
+}
+
+pub fn mir_arr_names: Array(String) {
+  ["data", "size", "cap"]
+}
+
+// The element-buffer layout of an array (or Buf) type, and its element.
+pub fn (lw: MirLower) elems_of(aty: Int): Int {
+  ts = lw.lw_m.types
+  l = ts.layout_of(aty)
+  ts.layout_of(ts.layouts[l].fields[0])
+}
+
+pub fn (lw: MirLower) elem_of(aty: Int): Int {
+  lw.lw_m.types.layouts[lw.elems_of(aty)].fields[0]
+}
+
+// The buffer's type id (3.3, D186): 65535, 0, or the next dynamic id on
+// first use; called where the old array_type_id is.
+pub fn (lw: MirLower) buf_tid(aty: Int): MOperand {
+  lw.lw_b.c_u32(lw.lw_b.type_id(lw.elems_of(aty)))
+}
+
+pub fn (lw: MirLower) elem_size(aty: Int): MOperand {
+  ts = lw.lw_m.types
+  n = ts.size_of(lw.elem_of(aty))
+  lw.lw_b.c_u64(n.to_i64)
+}
+
+// A local holding o's value: its own local when o is a bare copy, else a
+// temporary assigned here (a place's deref needs a local, 4.1).
+pub fn (lw: MirLower) hold(o: MOperand, ty: Int): Int {
+  k = mir_bare_copy(o)
+  if k >= 0 {
+    return k
+  }
+  t = lw.lw_b.temp(ty)
+  dummy = lw.lw_b.assign(lw.lw_b.pl(t), lw.lw_b.rv_use(o))
+  t
+}
+
+pub fn (lw: MirLower) one(o: MOperand): Array(MOperand) {
+  a: Array(MOperand) = []
+  a.push(o)
+  a
+}
+
+pub fn (lw: MirLower) two(o: MOperand, p: MOperand): Array(MOperand) {
+  a = lw.one(o)
+  a.push(p)
+  a
+}
+
+pub fn (lw: MirLower) three(o: MOperand, p: MOperand, q: MOperand): Array(MOperand) {
+  a = lw.two(o, p)
+  a.push(q)
+  a
+}
+
+// ---- literals and Array(T).new
+
+// The header of a new array whose buffer is _d (the old back end,
+// emit_array_header_at): allocated after the buffer, its data word
+// stored behind the header's barrier (the old back end barriers the
+// header after its three stores), size and cap set.
+pub fn (lw: MirLower) array_header(aty: Int, d: Int, n: MOperand): MOperand {
+  b = lw.lw_b
+  l = b.types.layout_of(aty)
+  a = b.temp(aty)
+  dummy = b.call(a, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(1022)))
+  dummy2 = b.barrier(a)
+  dummy3 = b.assign(b.field(b.deref(b.pl(a)), 0), b.rv_use(b.copy_local(d)))
+  dummy4 = b.assign(b.field(b.deref(b.pl(a)), 1), b.rv_use(lw.dup(n)))
+  dummy5 = b.assign(b.field(b.deref(b.pl(a)), 2), b.rv_use(n))
+  b.copy_local(a)
+}
+
+// `[e0, e1, ...]` (the old back end): the buffer first (n elements,
+// the element-buffer id), each element in order stored into it, then the
+// header. A reference-carrying element is a `fresh` store (V14): the
+// buffer is held in a slot while it fills (it is live across the
+// header's allocation), and one closing `barrier` remembers it if a
+// collection promoted it mid-fill (5.4; the old back end has no such
+// barrier, W6c.2).
+pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
+  b = lw.lw_b
+  aty = lw.ety(e)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  et = lw.elem_of(aty)
+  want = lw.elem_ty_of(e)
+  n = e.elems.size
+  lw.at(e.loc)
+  d = b.temp(b.types.ref_to(lw.elems_of(aty)))
+  size = b.types.size_of(et) * n
+  dummy = b.call(d, "avant_alloc", lw.two(b.c_u64(size.to_i64), lw.buf_tid(aty)))
+  rc = b.types.ref_carrying(et)
+  i = 0
+  while i < n {
+    v = lw.lower_coerced(e.elems[i], et, want)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.elems[i].loc)
+    p = b.index(b.deref(b.pl(d)), b.c_i32(i))
+    if rc {
+      dummy2 = b.assign_fresh(p, b.rv_use(v))
+    } else {
+      dummy3 = b.assign(p, b.rv_use(v))
+    }
+    i = i + 1
+  }
+  lw.at(e.loc)
+  if rc && n > 0 {
+    dummy4 = b.barrier(d)
+  }
+  lw.array_header(aty, d, b.c_i32(n))
+}
+
+// The element type (Ty) of an array-typed expression.
+pub fn (lw: MirLower) elem_ty_of(e: Expr): Ty {
+  if t = e.ty {
+    if inner = t.inner {
+      return inner
+    }
+    return t
+  }
+  ty_int()
+}
+
+// `Array(T).new(n)` (the old back end): n, then a zeroed buffer of n
+// elements (size n * size(E), unchecked as in the old back end), then the
+// header with size = cap = n.
+pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
+  b = lw.lw_b
+  aty = lw.ety(e)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  nv = b.c_i32(0)
+  if se = e.size_expr {
+    nv = lw.lower_expr(se)
+  }
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  k = b.temp(mt_i32())
+  dummy = b.assign(b.pl(k), b.rv_use(nv))
+  n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
+  bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
+  d = b.temp(b.types.ref_to(lw.elems_of(aty)))
+  dummy2 = b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
+  lw.array_header(aty, d, b.copy_local(k))
+}
+
+// ---- indexing
+
+// Whether e indexes an Array or a Buf (a hash index read is a union, W7).
+pub fn mir_is_seq_index(e: Expr): Bool {
+  if e.kind != ex_index() {
+    return false
+  }
+  if l = e.left {
+    if t = l.ty {
+      return t.is_array || t.is_buf
+    }
+  }
+  false
+}
+
+// The bounds check of i against the size of the array or Buf in _h
+// (loops.av:4432-4448), unless the checker proved the index.
+pub fn (lw: MirLower) seq_bounds(h: Int, i: MOperand, proven: Bool) {
+  if proven {
+    return
+  }
+  b = lw.lw_b
+  n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+  dummy = b.check_bounds(lw.dup(i), n)
+}
+
+// The element place of an Array or Buf held in _h at index i: the bounds
+// check, then the buffer loaded into a local (the place's holder, V13).
+pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MPlace {
+  b = lw.lw_b
+  lw.seq_bounds(h, i, proven)
+  d = b.temp(b.types.ref_to(lw.elems_of(aty)))
+  dummy = b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+  b.index(b.deref(b.pl(d)), i)
+}
+
+// `xs[i]` and `b[i]` as a place (loops.av:4584-4739, emit_index_lvalue):
+// the index first, then the container.
+pub fn (lw: MirLower) index_place(e: Expr): MPlace {
+  b = lw.lw_b
+  if arr = e.left {
+    if ix = e.right {
+      aty = lw.ety(arr)
+      i = lw.snap(lw.lower_expr(ix), arr)
+      a = lw.lower_expr(arr)
+      if lw.failed {
+        return b.pl(0)
+      }
+      lw.at(e.loc)
+      h = lw.hold(a, aty)
+      return lw.seq_place(h, aty, i, e.proven)
+    }
+  }
+  lw.refuse(e.loc, "this index")
+  b.pl(0)
+}
+
+// A read of `xs[i]`, or of `b[i]` (a byte, zero-extended to Int).
+pub fn (lw: MirLower) lower_seq_index(e: Expr): MOperand {
+  b = lw.lw_b
+  ty = lw.ety(e)
+  p = lw.index_place(e)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if l = e.left {
+    if lt = l.ty {
+      if lt.is_buf {
+        byte = lw.tmp(mt_u8(), b.rv_use(b.copy(p)))
+        return lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
+      }
+    }
+  }
+  lw.tmp(ty, b.rv_use(b.copy(p)))
+}
+
+// `c[i] = v` and `c[i] op= v` (the old back end): a hash store
+// (lower_hash.av); a reference element through `avant_array_set_ptr` (the
+// value, the array, then the index; the runtime barriers, audit 4.4.2);
+// any other element (the value, then the place: the index, the array) as
+// a store into the buffer, behind `barrier` on the buffer when it is
+// reference-carrying (D187); a Buf byte truncated to u8. A compound store
+// reads and writes one place, its index and array evaluated once (the
+// old back end evaluates them twice, W6c.2).
+pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
+  b = lw.lw_b
+  if arr = t.left {
+    if ix = t.right {
+      if ct = arr.ty {
+        if ct.is_hash {
+          lw.lower_hash_store(st, t, arr, ix, ct)
+          return
+        }
+        if !(ct.is_array || ct.is_buf) {
+          lw.refuse(t.loc, "assignment to this index")
+          return
+        }
+        aty = lw.ety(arr)
+        if lw.failed {
+          return
+        }
+        et = mt_u8()
+        want = ty_int()
+        if ct.is_array {
+          et = lw.elem_of(aty)
+          want = lw.elem_ty_of(arr)
+        }
+        if v = st.value {
+          if st.op == tk_eq() {
+            if ct.is_array && b.types.is_refkind(et) {
+              val = lw.snap(lw.lower_expr(v), arr)
+              val = lw.snap(val, ix)
+              a = lw.snap(lw.lower_expr(arr), ix)
+              i = lw.lower_expr(ix)
+              if lw.failed {
+                return
+              }
+              lw.at(st.loc)
+              h = lw.hold(a, aty)
+              lw.seq_bounds(h, i, t.proven)
+              dummy = b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(h), lw.dup(i), val))
+              return
+            }
+            val2 = lw.lower_coerced(v, et, want)
+            if lw.failed {
+              return
+            }
+            if ct.is_buf {
+              lw.at(st.loc)
+              val2 = lw.tmp(mt_u8(), b.rv_cast(val2, mt_u8()))
+            }
+            val2 = lw.snap(val2, t)
+            p = lw.index_place(t)
+            if lw.failed {
+              return
+            }
+            lw.at(st.loc)
+            lw.store_place(p, et, val2)
+            return
+          }
+          if !(want.is_integer || want.is_float) {
+            lw.refuse(st.loc, "compound assignment to an element of type ${want.show}")
+            return
+          }
+          p2 = lw.index_place(t)
+          if lw.failed {
+            return
+          }
+          lw.at(st.loc)
+          vty = et
+          cur = lw.tmp(et, b.rv_use(b.copy(lw.clone_place(p2))))
+          if ct.is_buf {
+            vty = mt_i32()
+            cur = lw.tmp(mt_i32(), b.rv_cast(cur, mt_i32()))
+          }
+          rhs = lw.lower_expr(v)
+          if lw.failed {
+            return
+          }
+          r = lw.arith(compound_op_of(st.op), vty, cur, rhs, st.proven, st.loc)
+          lw.at(st.loc)
+          if ct.is_buf {
+            r = lw.tmp(mt_u8(), b.rv_cast(r, mt_u8()))
+          }
+          lw.store_place(p2, et, r)
+          return
+        }
+      }
+    }
+  }
+  lw.refuse(t.loc, "assignment to this index")
+}
+
+// ---- members
+
+// The runtime function of an element kind: `<base>_i32`, `_i64`, `_u64`,
+// `_f64`, `_bool`, `_str` (String, Bytes), `_ptr` (other references);
+// "" when the kind has none.
+pub fn (lw: MirLower) kind_fn(base: String, et: Int, has_ptr: Bool): String {
+  ts = lw.lw_m.types
+  if et == mt_i32() {
+    return "${base}_i32"
+  }
+  if et == mt_i64() {
+    return "${base}_i64"
+  }
+  if et == mt_u64() {
+    return "${base}_u64"
+  }
+  if et == mt_f64() {
+    return "${base}_f64"
+  }
+  if et == mt_bool() {
+    return "${base}_bool"
+  }
+  if et == mt_str() {
+    return "${base}_str"
+  }
+  if has_ptr && ts.is_refkind(et) {
+    return "${base}_ptr"
+  }
+  ""
+}
+
+// The members of Array without a block (the old back end,
+// the old back end): in the call form `xs.m(args)` and the field form
+// `xs.m`. Evaluation orders are the old back end's (W6c.2).
+pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  if bl = e.block {
+    lw.refuse(e.loc, "Array.${name} with a block (closures, W7b)")
+    return zero
+  }
+  if str_eq(name, "get") {
+    return lw.lower_get(e, recv, rt, args)
+  }
+  if str_eq(name, "index_of") || str_eq(name, "min") || str_eq(name, "max") {
+    return lw.lower_arr_opt(e, recv, rt, name, args)
+  }
+  if str_eq(name, "each") || str_eq(name, "any") || str_eq(name, "all") {
+    lw.refuse(e.loc, "Array.${name} (closures, W7b)")
+    return zero
+  }
+  if str_eq(name, "parallel") {
+    lw.refuse(e.loc, "Array.parallel without a block")
+    return zero
+  }
+  aty = lw.ety(recv)
+  if lw.failed {
+    return zero
+  }
+  et = lw.elem_of(aty)
+  want = lw.elem_ty_of(recv)
+  // The value first, then the receiver: push, contains, fill.
+  if (str_eq(name, "push") || str_eq(name, "contains") || str_eq(name, "fill")) && args.size == 1 {
+    v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed {
+      return zero
+    }
+    lw.at(e.loc)
+    h = lw.hold(a, aty)
+    if str_eq(name, "push") {
+      lw.arr_push(h, aty, et, v)
+      return zero
+    }
+    if et == mt_bool() {
+      v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+    }
+    if str_eq(name, "fill") {
+      f = "avant_array_fill_i32"
+      if et == mt_bool() {
+        f = "avant_array_fill_u8"
+      }
+      dummy = b.call(-1, f, lw.two(b.copy_local(h), v))
+      return zero
+    }
+    cf = lw.kind_fn("avant_array_contains", et, true)
+    if cf.size == 0 {
+      lw.refuse(e.loc, "Array.contains on ${want.show}")
+      return zero
+    }
+    r = lw.call_to(mt_i32(), cf, lw.two(b.copy_local(h), v))
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+  }
+  if args.size > 0 && !str_eq(name, "reserve") {
+    lw.refuse(e.loc, "Array.${name} with arguments")
+    return zero
+  }
+  a2 = lw.lower_expr(recv)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  h2 = lw.hold(a2, aty)
+  if str_eq(name, "size") {
+    return lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+  }
+  if str_eq(name, "reserve") && args.size == 1 {
+    // The receiver, then the count (builtins.av:1309-1330).
+    n = lw.lower_expr(args[0])
+    if lw.failed {
+      return zero
+    }
+    lw.at(e.loc)
+    four = lw.two(b.copy_local(h2), n)
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    dummy2 = b.call(-1, "avant_array_reserve", four)
+    return zero
+  }
+  if str_eq(name, "pop") {
+    // C9 (W10b): pop reads the element at size - 1, so an empty array
+    // traps as indexing it there does ("index -1 out of bounds (size 0)")
+    // instead of reading through the runtime's null (non-references) or
+    // yielding a null reference.
+    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+    last = lw.tmp(mt_i32(), b.rv_bin(mop_sub(), lw.dup(n), b.c_i32(1)))
+    dummy0 = b.check_bounds(last, n)
+    if b.types.is_refkind(et) {
+      return lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
+    }
+    s = b.temp(b.types.addr_of(et))
+    dummy3 = b.call(s, "avant_array_pop_slot", lw.two(b.copy_local(h2), lw.elem_size(aty)))
+    return lw.tmp(et, b.rv_use(b.copy(b.deref(b.pl(s)))))
+  }
+  if str_eq(name, "clear") {
+    dummy4 = b.assign(b.field(b.deref(b.pl(h2)), 1), b.rv_use(b.c_i32(0)))
+    return zero
+  }
+  if str_eq(name, "reverse") {
+    dummy5 = b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
+    return zero
+  }
+  if str_eq(name, "sort") || str_eq(name, "sorted") {
+    sf = lw.kind_fn("avant_array_sort", et, false)
+    if sf.size == 0 {
+      lw.refuse(e.loc, "Array.${name} on ${want.show}")
+      return zero
+    }
+    if str_eq(name, "sort") {
+      dummy6 = b.call(-1, sf, lw.one(b.copy_local(h2)))
+      return zero
+    }
+    c = b.temp(aty)
+    dummy7 = b.call(c, "avant_array_copy", lw.three(b.copy_local(h2), lw.elem_size(aty), lw.buf_tid(aty)))
+    dummy8 = b.call(-1, sf, lw.one(b.copy_local(c)))
+    return b.copy_local(c)
+  }
+  if str_eq(name, "sum") {
+    sm = lw.kind_fn("avant_array_sum", et, false)
+    if sm.size == 0 || et == mt_bool() {
+      lw.refuse(e.loc, "Array.sum on ${want.show}")
+      return zero
+    }
+    return lw.call_to(et, sm, lw.one(b.copy_local(h2)))
+  }
+  lw.refuse(e.loc, "the member .${name} of ${rt.show}")
+  zero
+}
+
+// push (builtins.av:1581-1630): an Int through avant_array_push_i32, a
+// reference through avant_array_push_ptr (both barrier inside), any other
+// element through avant_array_push_slot and a store through the slot it
+// returns (V13 form 4: the runtime barriered the array and its buffer).
+pub fn (lw: MirLower) arr_push(h: Int, aty: Int, et: Int, v: MOperand) {
+  b = lw.lw_b
+  if et == mt_i32() {
+    dummy = b.call(-1, "avant_array_push_i32", lw.two(b.copy_local(h), v))
+    return
+  }
+  if b.types.is_refkind(et) {
+    dummy2 = b.call(-1, "avant_array_push_ptr", lw.three(b.copy_local(h), v, lw.buf_tid(aty)))
+    return
+  }
+  s = b.temp(b.types.addr_of(et))
+  dummy3 = b.call(s, "avant_array_push_slot", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
+  dummy4 = b.assign(b.deref(b.pl(s)), b.rv_use(v))
+}

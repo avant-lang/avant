@@ -1,0 +1,766 @@
+// The lowering of structs and classes (Stage 28 W6b; stages/stage28/
+// mir.md W6b): layouts and type ids (the old back end's, D186), the
+// synthesized constructors `C.new`, field places, loads and stores with
+// the barrier rule (D187), struct literals, plain methods with `self`,
+// and calls on them. A class value is a `ref %C`; a struct value is an
+// aggregate `%S` held inline; a struct method receives the address of
+// its receiver's storage (`addr %S`, 2.5, audit 2.4), so its `self` and
+// its implicit fields are reached through that address and stores
+// through it take `barrier_at`. A field of union type is a layout fact
+// (2.4: tag, then the payloads, each at its own alignment, W1b); a union
+// value is W7, except `nil` stored into a field that can hold it (a
+// field default, a struct literal, an assignment), which is the core
+// `union %U tag k` rvalue.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import resolve
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_stmt
+import mir.lower_call
+
+// ---- types and layouts
+
+// The class definition's resolved type, or nil.
+pub fn (lw: MirLower) class_ty(cdef: ClassDef): Ty? {
+  lw.lw_syms.resolver.get_named_for(cdef.mod_name, cdef.name)
+}
+
+// Classes first, in program order (decl.av assign_class_ids): each is
+// noted empty and takes the next dynamic id, so ids equal the old back
+// end's and a field `ref %C` can name any class; then each is filled.
+// Generic templates are W7.
+pub fn (lw: MirLower) note_classes {
+  p = lw.lw_prog
+  i = 0
+  while i < p.classes.size {
+    cdef = p.classes[i]
+    if cdef.type_params.size > 0 {
+      i = i + 1
+      continue
+    }
+    if t = lw.class_ty(cdef) {
+      none: Array(Int) = []
+      names: Array(String) = []
+      l = lw.lw_b.note_layout(mir_mty(t), mlk_class(), none, names)
+      dummy = lw.lw_b.type_id(l)
+    } else {
+      lw.refuse(cdef.loc, "class ${cdef.name} (no resolved type)")
+      return
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < p.classes.size {
+    cdef = p.classes[i]
+    if cdef.type_params.size > 0 {
+      i = i + 1
+      continue
+    }
+    if t = lw.class_ty(cdef) {
+      fields: Array(Int) = []
+      names: Array(String) = []
+      j = 0
+      while j < t.fields.size {
+        ft = lw.field_mty(t.fields[j].ty, cdef.loc)
+        if lw.failed {
+          return
+        }
+        fields.push(ft)
+        names.push(t.fields[j].name)
+        j = j + 1
+      }
+      lw.lw_m.types.set_fields(lw.lw_m.types.layout_named(mir_mty(t)), fields, names)
+    }
+    i = i + 1
+  }
+}
+
+// The MIR type of a value of struct or class type t (a local, a
+// parameter, a result): `%S` or `ref %C`; -1 after refusing.
+pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
+  // W8b: a JoinHandle is the runtime's pinned task object (avant_task.c
+  // avant_spawn), a heap reference like a class (audit 1.1.5).
+  if t.is_join {
+    return mt_ref()
+  }
+  if t.is_fn {
+    l0 = lw.fn_layout(t, loc)
+    if l0 < 0 {
+      return -1
+    }
+    return lw.lw_m.types.agg(l0)
+  }
+  if t.is_array || t.is_hash || t.is_buf {
+    return lw.container_ty(t, loc)
+  }
+  // W8a: Ptr(T) and a C layout held by value inside another (lower_ffi.av).
+  if t.is_ptr {
+    return lw.ptr_ty(t, loc)
+  }
+  if t.is_clayout {
+    l1 = lw.clayout_layout(t, loc)
+    if l1 < 0 {
+      return -1
+    }
+    return lw.lw_m.types.agg(l1)
+  }
+  if t.is_class {
+    l = lw.lw_m.types.layout_named(mir_mty(t))
+    if l < 0 {
+      lw.refuse(loc, "class ${t.show} (not in the program's classes)")
+      return -1
+    }
+    return lw.lw_m.types.ref_to(l)
+  }
+  if t.is_struct {
+    l = lw.struct_layout(t, loc)
+    if l < 0 {
+      return -1
+    }
+    return lw.lw_m.types.agg(l)
+  }
+  return -1
+}
+
+// The MIR type of a field of type t: what a value of it is, or, for a
+// union, its layout (2.4); -1 after refusing.
+pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
+  if t.is_union {
+    l = lw.union_layout(t, loc)
+    if l < 0 {
+      return -1
+    }
+    return lw.lw_m.types.agg(l)
+  }
+  m = mir_scalar_ty(t)
+  if m >= 0 && m != mt_void() {
+    return m
+  }
+  m = lw.value_agg_ty(t, loc)
+  if m < 0 && !lw.failed {
+    lw.refuse(loc, "a field of type ${t.show}")
+  }
+  m
+}
+
+// A struct's layout (2.4), noted on first use; a struct being noted is
+// not complete, so meeting it again by value inside itself refuses. An
+// array of it inside itself (`struct Node { xs: Array(Node) }`, a
+// reference) is finite: container_ty notes the struct's layout ahead
+// (struct_ahead) and its element buffer is completed here (Stage 28 W9).
+pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
+  name = mir_mty(t)
+  if lw.struct_busy(name) {
+    lw.refuse(loc, "struct ${t.show} holding itself by value")
+    return -1
+  }
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  lw.lw_busy[name] = 1
+  fields: Array(Int) = []
+  names: Array(String) = []
+  j = 0
+  while j < t.fields.size {
+    ft = lw.field_mty(t.fields[j].ty, loc)
+    if lw.failed {
+      return -1
+    }
+    fields.push(ft)
+    names.push(t.fields[j].name)
+    j = j + 1
+  }
+  lw.lw_busy[name] = 0
+  ahead = lw.lw_m.types.layout_named(name)
+  if ahead < 0 {
+    return lw.lw_b.note_layout(name, mlk_struct(), fields, names)
+  }
+  // Noted ahead by an array of itself: fill it, then every element
+  // buffer of it noted while it was empty.
+  lw.lw_m.types.set_fields(ahead, fields, names)
+  k = 0
+  while k < lw.lw_pend_struct.size {
+    if str_eq(lw.lw_pend_struct[k], name) {
+      ef: Array(Int) = []
+      ef.push(lw.lw_m.types.agg(ahead))
+      en: Array(String) = []
+      en.push("")
+      lw.lw_m.types.set_fields(lw.lw_pend_elems[k], ef, en)
+    }
+    k = k + 1
+  }
+  ahead
+}
+
+pub fn (lw: MirLower) struct_busy(name: String): Bool {
+  if b = lw.lw_busy.get(name) {
+    return b == 1
+  }
+  false
+}
+
+// The layout of a struct that is being laid out, for an array of it
+// inside itself: noted empty (once) and filled by struct_layout.
+pub fn (lw: MirLower) struct_ahead(name: String): Int {
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  f: Array(Int) = []
+  n: Array(String) = []
+  lw.lw_b.note_layout(name, mlk_struct(), f, n)
+}
+
+// A union's layout (2.4): `i32 tag`, then one payload per non-nil member
+// in the checker's member order; the tag of member k is k.
+pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
+  name = mir_mty(t)
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  payloads: Array(Int) = []
+  nil_tag = -1
+  i = 0
+  while i < t.members.size {
+    m = t.members[i]
+    if m.is_nil {
+      nil_tag = i
+    } else {
+      pt = lw.field_mty(m, loc)
+      if lw.failed {
+        return -1
+      }
+      payloads.push(pt)
+    }
+    i = i + 1
+  }
+  lw.lw_b.note_union(name, payloads, nil_tag)
+}
+
+// ---- symbols
+
+// The owner type of a method (decl.av collect_methods: the owner's
+// module, then the bare name).
+pub fn (lw: MirLower) owner_ty(fnn: Function): Ty? {
+  if sig = lw.lw_syms.find_method_emit(fnn.emit_name) {
+    if sig.node.owner_mod.size > 0 {
+      if o = lw.lw_syms.resolver.get_named_for(sig.node.owner_mod, sig.owner) {
+        return o
+      }
+    }
+    if o2 = lw.lw_syms.resolver.get_named(sig.owner) {
+      return o2
+    }
+  }
+  nil
+}
+
+pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
+  m = mir_mty(ot)
+  pre = "${mir_module_part(ot.mod_name)}."
+  if (ot.is_struct || ot.is_class) && str_eq(mir_module_part(ot.mod_name), mir_module_part(mod_name)) && str_starts_mir(m, pre) {
+    return str_slice(m, pre.size, m.size)
+  }
+  m
+}
+
+// The constructors `C.new` (the old back end's emit_constructor), one per class,
+// named by the checker's resolved name (`ty_owned_symbol(ty, "new")`).
+pub fn (lw: MirLower) note_ctor_symbols {
+  p = lw.lw_prog
+  i = 0
+  while i < p.classes.size {
+    if p.classes[i].type_params.size == 0 {
+      if t = lw.class_ty(p.classes[i]) {
+        owner = lw.owner_text(t, t.mod_name)
+        lw.lw_fn_syms[ty_owned_symbol(t, "new")] = "av.${mir_module_part(t.mod_name)}/${owner}.new"
+        lw.lw_fn_syms[ty_owned_symbol(t, "bump")] = "av.${mir_module_part(t.mod_name)}/${owner}.bump"
+      }
+    }
+    i = i + 1
+  }
+}
+
+// ---- methods
+
+// _1 is the receiver, named as in the source (`self`, or the receiver
+// parameter of `fn (p: P) name`). A class receiver is an ordinary local;
+// a struct receiver is reached through its address (lower_name, place_of).
+pub fn (lw: MirLower) bind_receiver(fnn: Function, recv: Int) {
+  name = fn_self_name(fnn)
+  lw.lw_b.name_param(1, name)
+  lw.lw_self = 1
+  lw.lw_self_name = name
+  lw.lw_self_ty = lw.method_owner(fnn)
+  if lw.lw_m.types.is_addr(recv) {
+    lw.lw_self_struct = true
+  } else {
+    lw.lw_vars[lw.var_key(name, recv)] = 1
+  }
+}
+
+// Whether e names a struct method's receiver as a whole.
+pub fn (lw: MirLower) is_struct_self(e: Expr): Bool {
+  lw.lw_self_struct && e.kind == ex_name() && !e.implicit_field && str_eq(e.ident, lw.lw_self_name)
+}
+
+// ---- places
+
+pub fn (lw: MirLower) clone_place(p: MPlace): MPlace {
+  q = MPlace.new(p.local)
+  i = 0
+  while i < p.proj.size {
+    q.proj.push(p.proj[i])
+    i = i + 1
+  }
+  q
+}
+
+// The field index of name in the type of a struct or class.
+pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
+  k = t.field_index(name)
+  if k < 0 {
+    lw.refuse(loc, "the field ${name} of ${t.show}")
+  }
+  k
+}
+
+// The place an lvalue-like expression names (4.1): a local; an implicit
+// field or a struct receiver through _1; a field of a struct place; a
+// field of a class object, whose holder is a local (the object is loaded
+// into a temporary unless it is already a local), so the deref is the
+// place's first projection (V13). Any other expression is evaluated into
+// a temporary, whose place is returned.
+pub fn (lw: MirLower) place_of(e: Expr): MPlace {
+  b = lw.lw_b
+  if e.kind == ex_index() {
+    if arr = e.left {
+      if at = arr.ty {
+        if at.is_array || at.is_buf {
+          return lw.index_place(e)
+        }
+      }
+    }
+  }
+  if e.kind == ex_name() && !e.fn_ref {
+    mi = lw.mutex_index(e.ident)
+    if mi >= 0 {
+      return lw.mutex_place(mi)
+    }
+    if e.implicit_field {
+      if st = lw.lw_self_ty {
+        k = lw.field_of(st, e.ident, e.loc)
+        return b.field(b.deref(b.pl(lw.lw_self)), k)
+      }
+      lw.refuse(e.loc, "a field outside a method")
+      return b.pl(0)
+    }
+    if lw.name_in_box(e.ident) {
+      if t0 = e.ty {
+        return lw.box_place(e.ident, t0, e.loc)
+      }
+    }
+    if lw.is_struct_self(e) {
+      return b.deref(b.pl(lw.lw_self))
+    }
+    ty = lw.ety(e)
+    if lw.failed {
+      return b.pl(0)
+    }
+    k = lw.var_find(e.ident, ty)
+    if k < 0 {
+      lw.refuse(e.loc, "the name ${e.ident} here")
+      return b.pl(0)
+    }
+    return b.pl(k)
+  }
+  if e.kind == ex_field() && !e.method_call {
+    if obj = e.object {
+      if ot = obj.ty {
+        if ot.is_struct || ot.is_clayout {
+          p = lw.place_of(obj)
+          k = lw.field_of(ot, e.ident, e.loc)
+          return b.field(p, k)
+        }
+        if ot.is_ptr {
+          return lw.ptr_field_place(e, obj, ot)
+        }
+        if ot.is_class {
+          o = lw.lower_expr(obj)
+          if lw.failed {
+            return b.pl(0)
+          }
+          h = mir_bare_copy(o)
+          if h < 0 {
+            lw.at(e.loc)
+            h = b.temp(lw.ety(obj))
+            dummy = b.assign(b.pl(h), b.rv_use(o))
+          }
+          k = lw.field_of(ot, e.ident, e.loc)
+          return b.field(b.deref(b.pl(h)), k)
+        }
+      }
+    }
+  }
+  ty = lw.ety(e)
+  v = lw.lower_expr(e)
+  if lw.failed {
+    return b.pl(0)
+  }
+  lw.at(e.loc)
+  t = b.temp(ty)
+  dummy2 = b.assign(b.pl(t), b.rv_use(v))
+  b.pl(t)
+}
+
+// A field or implicit-field read, or a struct receiver as a value: the
+// place's value in a fresh temporary (operands never keep a projection
+// past their statement).
+pub fn (lw: MirLower) lower_place_read(e: Expr): MOperand {
+  ty = lw.ety(e)
+  if lw.failed {
+    return lw.lw_b.c_i32(0)
+  }
+  p = lw.place_of(e)
+  if lw.failed {
+    return lw.lw_b.c_i32(0)
+  }
+  lw.at(e.loc)
+  lw.tmp(ty, lw.lw_b.rv_use(lw.lw_b.copy(p)))
+}
+
+// Stores val into p (D187, 5.4): a reference-carrying value stored
+// through a place that is not frame-local is preceded by the barrier on
+// its holder: `barrier` for a `ref` holder (a class object), `barrier_at`
+// for an `addr` holder (a struct receiver).
+pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
+  b = lw.lw_b
+  if !p.frame_local && lw.lw_m.types.ref_carrying(ty) {
+    h = p.local
+    if lw.lw_m.types.is_ptr(b.func.locals[h].ty) {
+      lw.pinned_store(p, ty, val)
+      return
+    }
+    if lw.lw_m.types.is_addr(b.func.locals[h].ty) {
+      dummy = b.barrier_at(h)
+    } else {
+      dummy2 = b.barrier(h)
+    }
+  }
+  dummy3 = b.assign(p, b.rv_use(val))
+}
+
+// `x.f = v`, an implicit field `f = v`, and the compound forms: the value
+// first, then the place (the old back end's emit_assign, emit_barrier_field_store);
+// a compound assignment reads and writes one place, its holder evaluated
+// once.
+pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
+  if tt = t.ty {
+    ty = lw.field_mty(tt, t.loc)
+    if lw.failed {
+      return
+    }
+    if v = st.value {
+      if st.op == tk_eq() {
+        val = lw.lower_coerced(v, ty, tt)
+        if lw.failed {
+          return
+        }
+        p = lw.place_of(t)
+        if lw.failed {
+          return
+        }
+        lw.at(st.loc)
+        lw.store_place(p, ty, val)
+        return
+      }
+      if !(tt.is_integer || tt.is_float) {
+        lw.refuse(st.loc, "compound assignment to a field of type ${tt.show}")
+        return
+      }
+      p2 = lw.place_of(t)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      cur = lw.tmp(ty, lw.lw_b.rv_use(lw.lw_b.copy(lw.clone_place(p2))))
+      rhs = lw.lower_expr(v)
+      if lw.failed {
+        return
+      }
+      r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
+      lw.at(st.loc)
+      lw.store_place(p2, ty, r)
+    }
+    return
+  }
+  lw.refuse(t.loc, "an untyped assignment")
+}
+
+// ---- struct literals
+
+// `S { f: v, ... }` (the old back end's emit_struct_literal): the values in written
+// order (each kept as evaluated, snapshotted before a later switch), then
+// `struct %S (...)` in declaration order.
+pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    sty = lw.ety(e)
+    if lw.failed || !t.is_struct {
+      lw.refuse(e.loc, "this struct literal")
+      return b.c_i32(0)
+    }
+    l = b.types.layout_of(sty)
+    n = t.fields.size
+    slots: Array(MOperand) = []
+    have: Array(Bool) = []
+    i = 0
+    while i < n {
+      slots.push(b.c_i32(0))
+      have.push(false)
+      i = i + 1
+    }
+    i = 0
+    while i < e.field_names.size {
+      k = lw.field_of(t, e.field_names[i], e.loc)
+      if lw.failed {
+        return b.c_i32(0)
+      }
+      o = lw.lower_coerced(e.field_exprs[i], b.types.layouts[l].fields[k], t.fields[k].ty)
+      j = i + 1
+      while j < e.field_exprs.size {
+        o = lw.snap(o, e.field_exprs[j])
+        j = j + 1
+      }
+      if lw.failed {
+        return b.c_i32(0)
+      }
+      slots[k] = o
+      have[k] = true
+      i = i + 1
+    }
+    i = 0
+    while i < n {
+      if !have[i] {
+        lw.refuse(e.loc, "a struct literal without field ${t.fields[i].name}")
+        return b.c_i32(0)
+      }
+      i = i + 1
+    }
+    lw.at(e.loc)
+    return lw.tmp(sty, b.rv_struct(l, slots))
+  }
+  lw.refuse(e.loc, "an untyped struct literal")
+  b.c_i32(0)
+}
+
+// ---- calls
+
+// `recv.m(args)` and the field form `recv.m` on a struct or class
+// (calls.av emit_method_invoke): the arguments left to right, then the
+// receiver: a class object's reference, or a struct's address (its place,
+// or a temporary holding the value).
+pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  ret = lw.ety(e)
+  ops = lw.lower_args_to(args, lw.callee_params(e.resolved, e))
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  r = b.c_i32(0)
+  if !rt.is_struct {
+    r = lw.lower_expr(recv)
+  } else {
+    p = lw.place_of(recv)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    a = b.temp(b.types.addr_of(lw.ety(recv)))
+    dummy = b.assign(b.pl(a), b.rv_addr(p))
+    r = b.copy_local(a)
+  }
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  all: Array(MOperand) = []
+  all.push(r)
+  i = 0
+  while i < ops.size {
+    all.push(ops[i])
+    i = i + 1
+  }
+  lw.at(e.loc)
+  lw.call_to(ret, sym, all)
+}
+
+// A call of a program function by its resolved name (a constructor
+// `C.new`, a type-level function `C.f`), or nil when it is not one.
+pub fn (lw: MirLower) lower_named_call(e: Expr): MOperand? {
+  if sym = lw.lw_fn_syms.get(e.resolved) {
+    ret = lw.ety(e)
+    args = lw.lower_args_to(e.args, lw.callee_params(e.resolved, e))
+    if lw.failed {
+      return lw.lw_b.c_i32(0)
+    }
+    lw.at(e.loc)
+    return lw.call_to(ret, sym, args)
+  }
+  nil
+}
+
+// ---- constructors
+
+// The class's `initialize`, if it has one (decl.av find_initialize).
+pub fn (lw: MirLower) initialize_of(cdef: ClassDef): Function? {
+  i = 0
+  while i < cdef.methods.size {
+    m = cdef.methods[i]
+    if str_eq(m.name, "initialize") && !m.type_method {
+      return m
+    }
+    i = i + 1
+  }
+  nil
+}
+
+pub fn (lw: MirLower) lower_ctors {
+  p = lw.lw_prog
+  i = 0
+  while i < p.classes.size && !lw.failed {
+    if p.classes[i].type_params.size == 0 {
+      if t = lw.class_ty(p.classes[i]) {
+        lw.lower_ctor(p.classes[i], t)
+        if lw.lw_bumps.has_key(ty_owned_symbol(t, "bump")) && !lw.failed {
+          lw.lower_bump(p.classes[i], t)
+        }
+      }
+    }
+    i = i + 1
+  }
+}
+
+// `C.new(args)` (the old back end's emit_constructor): avant_alloc(size, id) (the
+// call form, 4.4; the inline path is W6c's), each field default in
+// declaration order (a reference-carrying one behind `barrier`, as the
+// old constructor does, the old back end's emit_field_defaults), then
+// `C.initialize(self, args)`, and the object.
+pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
+  b = lw.lw_b
+  sym = ""
+  if got = lw.lw_fn_syms.get(ty_owned_symbol(t, "new")) {
+    sym = got
+  }
+  lw.lw_vars = Hash(String, Int).new
+  lw.reset_closures
+  lw.lw_self = 0
+  lw.lw_self_struct = false
+  lw.lw_self_name = ""
+  lw.lw_self_ty = nil
+  lw.lw_ret_ty = nil
+  lw.lw_fn_loc = cdef.loc
+  lw.lw_main = false
+  cty = lw.value_agg_ty(t, cdef.loc)
+  if lw.failed {
+    return
+  }
+  lw.lw_ret = cty
+  layout = b.types.layout_of(cty)
+  params: Array(Int) = []
+  init_sym = ""
+  init: Function? = nil
+  if f = lw.initialize_of(cdef) {
+    init = f
+    if got2 = lw.lw_fn_syms.get(f.emit_name) {
+      init_sym = got2
+    }
+    if sig = lw.lw_syms.find_method_emit(f.emit_name) {
+      i = 0
+      while i < sig.params.size {
+        params.push(lw.ty_at(sig.params[i], f.loc, "a parameter"))
+        i = i + 1
+      }
+    }
+  }
+  if lw.failed {
+    return
+  }
+  dummy = b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
+  if f2 = init {
+    i = 0
+    while i < f2.params.size {
+      b.name_param(i + 1, f2.params[i].name)
+      lw.lw_vars[lw.var_key(f2.params[i].name, params[i])] = i + 1
+      i = i + 1
+    }
+  }
+  lw.at(cdef.loc)
+  o = b.temp(cty)
+  aargs: Array(MOperand) = []
+  aargs.push(b.c_u64(b.types.layouts[layout].size.to_i64))
+  aargs.push(b.c_u32(b.types.layouts[layout].type_id))
+  dummy2 = b.call(o, "avant_alloc", aargs)
+  lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
+  if lw.failed {
+    return
+  }
+  dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
+  b.ret
+  b.end_fn
+}
+
+// The body of a constructor after its allocation into _o: each field
+// default in declaration order (a reference-carrying one behind
+// `barrier`, the old back end's emit_field_defaults), then `C.initialize(_o,
+// params...)` when the class has one (the parameters are _1.._n).
+pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init_sym: String, nparams: Int) {
+  b = lw.lw_b
+  j = 0
+  while j < cdef.fields.size && !lw.failed {
+    fd = cdef.fields[j]
+    if dv = fd.default {
+      k = t.field_index(fd.name)
+      fty = b.types.layouts[layout].fields[k]
+      v = lw.lower_coerced(dv, fty, t.fields[k].ty)
+      if lw.failed {
+        return
+      }
+      lw.at(fd.loc)
+      lw.store_place(b.field(b.deref(b.pl(o)), k), fty, v)
+    }
+    j = j + 1
+  }
+  lw.at(cdef.loc)
+  if init_sym.size > 0 {
+    args: Array(MOperand) = []
+    args.push(b.copy_local(o))
+    i = 0
+    while i < nparams {
+      args.push(b.copy_local(i + 1))
+      i = i + 1
+    }
+    dummy3 = b.call(-1, init_sym, args)
+  }
+}
+
+// The local of a `copy _k` with no projection, or -1.
+pub fn mir_bare_copy(o: MOperand): Int {
+  if p = o.place {
+    if p.proj.size == 0 {
+      return p.local
+    }
+  }
+  return -1
+}

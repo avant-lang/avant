@@ -1,19 +1,27 @@
 # AVANT_SEED_VERSION below is the published compiler. Its avant-linux-x86_64.tar.gz contains
-# `avant`. This job asks that compiler to compile today's compiler/main.av
-# and pass the suite, without coverage. It is the pull-request correctness
-# gate. `native` compiles an instrumented B from the same pin and runs the
+# `avant` and its bundled `myc-llvm` backend. This job asks that compiler
+# to compile today's compiler/main.av into B (through that myc-llvm, the
+# only back end the seed has), B to compile it into C' (the tree has one
+# back end since Stage 28 W11: in-process LLVM, no myc-llvm), and C' to
+# pass the suite, without coverage (the suite's
+# test_fixed_point builds D' with C' and compares their .ll). It is the
+# pull-request correctness gate. `native` compiles an instrumented B from the same pin and runs the
 # suite on pushes to any branch, so Codecov can compare them.
 # The suite is `avant test` with the default job count. Wave N kept that
 # default: on a 4-CPU pin, `--jobs 1` was 188s and `--jobs 2` was 177s,
 # against 168s for four jobs. The suite mains return before the checks
 # when the runner is only listing parallel names. The old
 # AVANT_TEST_JOBS=4 measurement compiled the stitched suite four times.
-# Until the file_read fix after v0.33.0, that default was 1 on GitHub
+# Until the file_read fix after v0.34.0, that default was 1 on GitHub
 # runners: sysfs there reports 4096 bytes for /sys/devices/system/cpu/online,
 # file_read trusted the size and failed, and the suite ran serially (the
 # PR 48 seed log shows exclusive files interleaved in walk order).
-# AVANT_MYC_LLVM is the safepoints release (SAFEPOINTS_VERSION below), checked by
-# sha256. This job does not install Crystal and does not compile myc-llvm.
+# The seed's bundled myc-llvm (pinned by the seed's sha256; no separate
+# safepoints download) is used only to build B: tools/letters.sh passes it
+# to the seed as AVANT_MYC_LLVM in step b when the seed directory holds
+# one. It goes away at the re-seed (D178), when the pinned seed is a
+# myc-free release. Nothing after B uses myc-llvm. This job does not
+# install Crystal and does not compile myc-llvm.
 #
 # Runtime objects come from runtime/build.sh. `re2c` (the pinned static
 # build a release ships, tools/build-re2c.sh, in bin/re2c) compiles a string
@@ -22,10 +30,8 @@
 name: seed
 
 env:
-  AVANT_SEED_VERSION: v0.33.0
-  AVANT_SEED_SHA256: 4b2710e51ccbb13a0e3678aecc7f645b0c76326fabe09e3a14013900e8f2cc21
-  SAFEPOINTS_VERSION: v0.6.0
-  MYC_LLVM_SHA256: f6776ede1f2154cab0af6d9eeaec064c180df6c86867a8d57d48745d116b4437
+  AVANT_SEED_VERSION: v0.34.0
+  AVANT_SEED_SHA256: 9ab2e12f539d5eaa051232dbf0d95b5d4cd89769aeb68fa9adcae8954e42cfff
 
 "on":
   push:
@@ -47,25 +53,29 @@ jobs:
     env:
       LLVM_CONFIG: llvm-config-20
       AVANT_ROOT: ${{ github.workspace }}
-      AVANT_MYC_LLVM: /tmp/myc-llvm-linux-x86_64/myc-llvm
     steps:
       - uses: actions/checkout@v7
 
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      # The backend (safepoints v0.6.0) has LLVM linked in and needs nothing
-      # from apt. libclang (with llvm-config, from llvm-20) is for the bind
+      # libclang (with llvm-config, from llvm-20) is for the bind
       # helper that runtime/build.sh builds and the release ships; zlib1g-dev
       # is for examples/zlib.av, which binds the system zlib itself.
+      # llvm-20-dev (static LLVM archives) and libzstd-dev are for
+      # tools/build-llvm.sh, which runtime/build.sh runs: it merges LLVM 20
+      # with libstdc++, zlib, and zstd into runtime/build/avant_llvm.o, the
+      # in-process LLVM only the compiler links (D172, D173).
       - name: Install the C toolchain and libclang
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             llvm-20 \
+            llvm-20-dev \
             libclang-20-dev \
-            zlib1g-dev
+            zlib1g-dev \
+            libzstd-dev
 
       - name: Build runtime objects
         run: sh runtime/build.sh
@@ -83,35 +93,33 @@ jobs:
           echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
+          # The v0.34.0 seed builds B through its bundled myc-llvm
+          # (tools/letters.sh step b); this check goes at the re-seed (D178).
+          test -x /tmp/avant-linux-x86_64/myc-llvm
 
-      - name: Download safepoints ${{ env.SAFEPOINTS_VERSION }} myc-llvm
+      # tools/letters.sh holds the letters' one incantation (D190): b is
+      # the seed's build of compiler/main.av (bin/avant-b, through the
+      # seed's myc-llvm until the re-seed), c-llvm is B's build
+      # (bin/avant-c-llvm, C').
+      - name: Seed → B → C'
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/myc-llvm-linux-x86_64.tar.gz \
-            "https://github.com/avant-lang/safepoints/releases/download/${SAFEPOINTS_VERSION}/myc-llvm-linux-x86_64.tar.gz"
-          echo "${MYC_LLVM_SHA256}  /tmp/myc-llvm-linux-x86_64.tar.gz" | sha256sum -c -
-          tar -C /tmp -xzf /tmp/myc-llvm-linux-x86_64.tar.gz
-          test -x /tmp/myc-llvm-linux-x86_64/myc-llvm
+          LETTERS_SEED=/tmp/avant-linux-x86_64 sh tools/letters.sh b c-llvm
+          ./bin/avant-c-llvm run examples/hello.av
 
-      - name: Seed compiles compiler A
-        run: |
-          set -euo pipefail
-          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-from-seed --debug
-          ./bin/avant-from-seed run examples/hello.av
-
-      - name: Native suite on the seed-built compiler
+      - name: Native suite on C'
         env:
-          AVANT_COMPILER: ./bin/avant-from-seed
+          AVANT_COMPILER: ./bin/avant-c-llvm
         run: |
           set -euo pipefail
-          ./bin/avant-from-seed test
+          ./bin/avant-c-llvm test
 
-      # The release layout, installed by install.sh into a clean container
-      # (only gcc and libc6-dev; no LLVM, PCRE2, zlib headers, or re2c) and
-      # smoke-tested outside any checkout (D147). Needs the static backend
-      # (safepoints v0.6.0 or later): a dynamic myc-llvm fails here.
+      # The release layout (no myc-llvm since Stage 28 W10), installed by
+      # install.sh into a clean container (only gcc and libc6-dev; no LLVM,
+      # PCRE2, zlib headers, re2c, or myc-llvm) and smoke-tested outside
+      # any checkout (D147). C' links LLVM statically (D190).
       - name: Install the release layout in a clean container
         run: |
           set -euo pipefail
-          sh tools/package.sh /tmp/dist bin/avant-from-seed /tmp/myc-llvm-linux-x86_64/myc-llvm bin/re2c
+          sh tools/package.sh /tmp/dist bin/avant-c-llvm bin/re2c
           sh tools/container-test.sh ubuntu:24.04 /tmp/dist

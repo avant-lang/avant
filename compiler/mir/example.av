@@ -1,0 +1,180 @@
+// The complete example of stages/stage28/mir.md 10.2, built with the
+// builder in its final form (after the leaf and frame passes, which W6
+// writes; here by hand). tests/fixtures/mir/example.mir is its text.
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.build
+
+fn mir_ex_args(a: MOperand, b: MOperand): Array(MOperand) {
+  xs: Array(MOperand) = []
+  xs.push(a)
+  xs.push(b)
+  xs
+}
+
+fn mir_ex_arg(a: MOperand): Array(MOperand) {
+  xs: Array(MOperand) = []
+  xs.push(a)
+  xs
+}
+
+fn mir_ex_none: Array(MOperand) {
+  xs: Array(MOperand) = []
+  xs
+}
+
+fn mir_ex_locals(a: Int, b: Int, c: Int): Array(Int) {
+  xs: Array(Int) = []
+  xs.push(a)
+  xs.push(b)
+  if c >= 0 {
+    xs.push(c)
+  }
+  xs
+}
+
+pub fn mir_example: MModule {
+  m = mir_module("main")
+  b = MirBuilder.new(m)
+  b.file("ex.av")
+  fields: Array(Int) = []
+  fields.push(mt_str())
+  names: Array(String) = []
+  names.push("name")
+  box = b.note_layout("main.Box", mlk_class(), fields, names)
+  dummy_id = b.type_id(box)
+  box_ref = b.ref_to(box)
+  s0 = b.str_const("small")
+  s1 = b.str_const("%s\n")
+
+  // Box.initialize: a leaf.
+  ps: Array(Int) = []
+  ps.push(box_ref)
+  ps.push(mt_str())
+  b.begin_fn("av.main/Box.initialize", b.sig(ps, mt_void(), false), b.here(4, 3), "initialize")
+  b.set_kind(mfk_leaf())
+  b.name_param(1, "self")
+  b.name_param(2, "name")
+  b.at_loc(5, 5)
+  b.barrier(1)
+  b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
+  b.at_loc(6, 3)
+  b.ret
+  b.end_fn
+
+  // Box.new: allocates and initializes.
+  ps2: Array(Int) = []
+  ps2.push(mt_str())
+  b.begin_fn("av.main/Box.new", b.sig(ps2, box_ref, false), b.here(1, 1), "new")
+  b.set_kind(mfk_frame())
+  b.name_param(1, "name")
+  b.set_slot(0)
+  b.set_slot(1)
+  b.assign(b.pl(0), b.rv_zero)
+  b.gc_enter
+  b.gc_roots(mir_ex_locals(0, 1, -1))
+  b.call(0, "avant_alloc", mir_ex_args(b.c_u64(8i64), b.c_u32(1)))
+  b.call(-1, "av.main/Box.initialize", mir_ex_args(b.copy_local(0), b.copy_local(1)))
+  b.gc_leave
+  b.ret
+  b.end_fn
+
+  // tag(n: Int): String.
+  ps3: Array(Int) = []
+  ps3.push(mt_i32())
+  b.begin_fn("av.main/tag", b.sig(ps3, mt_str(), false), b.here(9, 1), "tag")
+  b.set_kind(mfk_frame())
+  b.name_param(1, "n")
+  lb = b.local(box_ref, "b")
+  t3 = b.temp(mt_bool())
+  t4 = b.temp(mt_str())
+  b.set_slot(0)
+  b.set_slot(lb)
+  b.set_slot(t4)
+  bb1 = b.block
+  bb2 = b.block
+  b.assign(b.pl(0), b.rv_zero)
+  b.assign(b.pl(lb), b.rv_zero)
+  b.assign(b.pl(t4), b.rv_zero)
+  b.gc_enter
+  b.gc_roots(mir_ex_locals(0, lb, t4))
+  b.at_loc(10, 7)
+  b.call(lb, "av.main/Box.new", mir_ex_arg(s0))
+  b.at_loc(11, 6)
+  b.assign(b.pl(t3), b.rv_cmp(mop_gt(), b.copy_local(1), b.c_i32(9)))
+  b.at_loc(11, 3)
+  b.branch(b.copy_local(t3), bb1, bb2)
+  b.at(bb1)
+  b.at_loc(12, 14)
+  b.call(t4, "avant_str_from_int", mir_ex_arg(b.copy_local(1)))
+  b.at_loc(12, 5)
+  b.barrier(lb)
+  b.assign(b.field(b.deref(b.pl(lb)), 0), b.rv_use(b.copy_local(t4)))
+  b.goto(bb2)
+  b.at(bb2)
+  b.at_loc(14, 3)
+  b.assign(b.pl(0), b.rv_use(b.copy(b.field(b.deref(b.pl(lb)), 0))))
+  b.gc_leave
+  b.ret
+  b.end_fn
+
+  // main.
+  ps4: Array(Int) = []
+  ps4.push(mt_i32())
+  ps4.push(mt_ptr())
+  b.begin_fn("main", b.sig(ps4, mt_i32(), false), b.here(17, 1), "main")
+  b.set_kind(mfk_frame())
+  b.set_external
+  b.name_param(1, "argc")
+  b.name_param(2, "argv")
+  last = b.local(mt_str(), "last")
+  li = b.local(mt_i32(), "i")
+  t5 = b.temp(mt_bool())
+  t6 = b.temp(mt_str())
+  b.set_slot(2)
+  b.set_slot(last)
+  b.set_slot(t6)
+  m1 = b.block
+  m2 = b.block
+  m3 = b.block
+  b.assign(b.pl(last), b.rv_zero)
+  b.assign(b.pl(t6), b.rv_zero)
+  b.gc_enter
+  b.gc_roots(mir_ex_locals(2, last, t6))
+  b.call(-1, "__avant_type_maps", mir_ex_none())
+  b.call(-1, "avant_io_init_argv", mir_ex_args(b.copy_local(1), b.copy_local(2)))
+  b.at_loc(18, 10)
+  b.call(last, "av.main/tag", mir_ex_arg(b.c_i32(0)))
+  b.at_loc(19, 3)
+  b.assign(b.pl(li), b.rv_use(b.c_i32(0)))
+  b.at_loc(20, 3)
+  b.goto(m1)
+  b.at(m1)
+  b.at_loc(20, 9)
+  b.assign(b.pl(t5), b.rv_cmp(mop_lt(), b.copy_local(li), b.c_i32(200000)))
+  b.at_loc(20, 3)
+  b.branch(b.copy_local(t5), m2, m3)
+  b.at(m2)
+  b.at_loc(21, 12)
+  b.call(last, "av.main/tag", mir_ex_arg(b.copy_local(li)))
+  b.at_loc(22, 9)
+  b.assign(b.pl(li), b.rv_bin(mop_add(), b.copy_local(li), b.c_i32(1)))
+  b.at_loc(22, 5)
+  b.goto(m1)
+  b.at(m3)
+  b.at_loc(24, 3)
+  b.call(-1, "printf", mir_ex_args(s1, b.copy_local(last)))
+  b.at_loc(25, 8)
+  b.call(t6, "av.main/tag", mir_ex_arg(b.c_i32(3)))
+  b.at_loc(25, 3)
+  b.call(-1, "printf", mir_ex_args(b.str_const("%s\n"), b.copy_local(t6)))
+  b.at_loc(17, 1)
+  b.assign(b.pl(0), b.rv_use(b.c_i32(0)))
+  b.gc_leave
+  b.ret
+  b.end_fn
+  m
+}

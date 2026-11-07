@@ -1,0 +1,161 @@
+// Generic functions, structs, and classes as the checker instantiates
+// them, and named interfaces as bounds, on the new back end (Stage 28
+// W7a): every instance is its own monomorphic function or layout
+// (`av.generics/id[Int]`, `%generics.Pair(Int,String)`,
+// `av.generics/Stack(Int).push`), generic methods of a plain struct
+// (`Box.wrap[Int]`), instances holding unions and nested instances,
+// literal field defaults of a generic class (they reach the lowering
+// without their checked type and take the field's).
+
+interface Show {
+  fn show: String
+}
+
+interface Sized {
+  fn size: Int
+}
+
+struct Pair(A, B) {
+  a: A
+  b: B
+
+  fn swap: Pair(B, A) {
+    Pair(B, A) { a: b, b: a }
+  }
+}
+
+class Stack(T) {
+  items: Array(T)
+  last: T?
+  label: String = "stack"
+  depth: Int = 0
+
+  fn initialize {
+    xs: Array(T) = []
+    self.items = xs
+    self.last = xs.get(0)
+  }
+
+  fn push(v: T) {
+    items.push(v)
+    last = v
+    depth += 1
+  }
+
+  fn top: T? {
+    if items.size == 0 {
+      return nil
+    }
+    items[items.size - 1]
+  }
+
+  fn size: Int {
+    items.size
+  }
+}
+
+struct Box {
+  n: Int
+
+  fn wrap(v: T): T {
+    v
+  }
+}
+
+struct Pt: Show + Sized {
+  x: Int
+  y: Int
+
+  fn show: String {
+    "(${x}, ${y})"
+  }
+
+  fn size: Int {
+    2
+  }
+}
+
+class Name: Show {
+  s: String
+
+  fn initialize(s: String) {
+    self.s = s
+  }
+
+  fn show: String {
+    "name ${s}"
+  }
+}
+
+fn id(x: T): T {
+  x
+}
+
+fn twice(v: T: Show): String {
+  "${v.show} ${v.show}"
+}
+
+fn both(v: T: Show + Sized): String {
+  "${v.show}/${v.size}"
+}
+
+fn first(xs: Array(T)): T? {
+  if xs.size == 0 {
+    return nil
+  }
+  xs[0]
+}
+
+fn pair_of(a: A, b: B): Pair(A, B) {
+  Pair(A, B) { a: a, b: b }
+}
+
+fn count(s: Stack(T)): Int {
+  s.size
+}
+
+fn main {
+  puts(id(3))
+  puts(id("s"))
+  puts(id(2.5))
+  p = Pair(Int, String) { a: 1, b: "one" }
+  q = p.swap
+  puts(q.a)
+  puts(q.b)
+  r = pair_of("k", 9)
+  puts(r.a)
+  puts(r.b)
+  s = Stack(Int).new
+  s.push(4)
+  s.push(5)
+  if t = s.top {
+    puts(t)
+  }
+  puts(s.last ?? -1)
+  puts(count(s))
+  puts("${s.label} ${s.depth}")
+  ss = Stack(String).new
+  if t2 = ss.top {
+    puts(t2)
+  } else {
+    puts("empty")
+  }
+  ss.push("x")
+  puts(ss.top ?? "none")
+  sp = Stack(Pair(Int, String)).new
+  sp.push(p)
+  if tp = sp.top {
+    puts(tp.b)
+  }
+  puts(count(sp))
+  b = Box { n: 0 }
+  puts(b.wrap(11))
+  puts(b.wrap("w"))
+  puts(twice(Pt { x: 1, y: 2 }))
+  puts(twice(Name.new("n")))
+  puts(both(Pt { x: 3, y: 4 }))
+  ys: Array(Int) = [7, 8]
+  puts(first(ys) ?? -1)
+  zs: Array(String) = []
+  puts(first(zs) ?? "nothing")
+}

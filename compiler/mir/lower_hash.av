@@ -1,0 +1,308 @@
+// The lowering of hashes, Buf, and the heap members of strings (Stage 28
+// W6c; stages/stage28/mir.md W6c): every operation is one runtime call
+// (as in the old back end, removed in W11),
+// with the old back end's evaluation orders (W6c.2). A hash maps String or
+// Int keys to Int or String values (the checker allows String->Int,
+// String->String, Int->Int); its key and value kinds pick the runtime row.
+// Reads that return a union (`h[k]`, `get`, `get_slice`, `get_concat`,
+// `Buf.get`) and the block forms (`each`) are W7.
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_call
+import mir.lower_agg
+import mir.lower_str
+import mir.lower_arr
+
+fn mir_hash_key_int(ht: Ty): Bool {
+  if k = ht.key {
+    return k.is_int
+  }
+  false
+}
+
+fn mir_hash_val_str(ht: Ty): Bool {
+  if v = ht.val {
+    return v.is_string
+  }
+  false
+}
+
+// `avant_hash_<op>_i32k_i32` for Int keys, `_str` for String values,
+// `_i32` otherwise (builtins.av:16-28).
+pub fn mir_hash_op(ht: Ty, op: String): String {
+  if mir_hash_key_int(ht) {
+    return "avant_hash_${op}_i32k_i32"
+  }
+  if mir_hash_val_str(ht) {
+    return "avant_hash_${op}_str"
+  }
+  "avant_hash_${op}_i32"
+}
+
+// `Hash(K, V).new` (builtins.av:47-64): avant_hash_new(key_kind,
+// val_kind), 1 for String, 0 for Int.
+pub fn (lw: MirLower) lower_hash_new(e: Expr): MOperand {
+  b = lw.lw_b
+  ty = lw.ety(e)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  kk = 1
+  vk = 0
+  if t = e.ty {
+    if mir_hash_key_int(t) {
+      kk = 0
+    }
+    if mir_hash_val_str(t) {
+      vk = 1
+    }
+  }
+  lw.at(e.loc)
+  lw.call_to(ty, "avant_hash_new", lw.two(b.c_i32(kk), b.c_i32(vk)))
+}
+
+// `h[k] = v` (builtins.av:66-97): the value, the key, the hash, then the
+// set row (quiet: it allocates only under defer).
+pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, ht: Ty) {
+  b = lw.lw_b
+  if st.op != tk_eq() {
+    lw.refuse(st.loc, "compound assignment to a hash entry")
+    return
+  }
+  if v = st.value {
+    val = lw.snap(lw.snap(lw.lower_expr(v), ix), arr)
+    key = lw.snap(lw.lower_expr(ix), arr)
+    h = lw.lower_expr(arr)
+    if lw.failed {
+      return
+    }
+    lw.at(st.loc)
+    dummy = b.call(-1, mir_hash_op(ht, "set"), lw.three(h, key, val))
+  }
+}
+
+// Arguments last to first (the old hash and Buf methods evaluate them so),
+// then the receiver; each snapshotted before a later switch.
+pub fn (lw: MirLower) args_then_recv(args: Array(Expr), recv: Expr): Array(MOperand) {
+  ops = lw.lower_args_rev(args)
+  i = 0
+  while i < ops.size {
+    ops[i] = lw.snap(ops[i], recv)
+    i = i + 1
+  }
+  r = lw.lower_expr(recv)
+  out: Array(MOperand) = []
+  out.push(r)
+  i = 0
+  while i < ops.size {
+    out.push(ops[i])
+    i = i + 1
+  }
+  out
+}
+
+// The members of Hash (the old back end).
+pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  if bl = e.block {
+    lw.refuse(e.loc, "Hash.${name} with a block (closures, W7b)")
+    return zero
+  }
+  if str_eq(name, "get") || str_eq(name, "get_slice") || str_eq(name, "get_concat") {
+    return lw.lower_hash_read(e, recv, ht, name, args)
+  }
+  if str_eq(name, "each") {
+    lw.refuse(e.loc, "Hash.each (closures, W7b)")
+    return zero
+  }
+  ty = lw.ety(e)
+  if lw.failed {
+    return zero
+  }
+  ki = mir_hash_key_int(ht)
+  f = ""
+  n = 0
+  if str_eq(name, "size") {
+    f = "avant_hash_size"
+  } else if str_eq(name, "clear") {
+    f = "avant_hash_clear"
+  } else if str_eq(name, "keys") {
+    f = "avant_hash_keys_str"
+    if ki {
+      f = "avant_hash_keys_i32"
+    }
+  } else if str_eq(name, "values") {
+    f = "avant_hash_vals_i32"
+    if mir_hash_val_str(ht) {
+      f = "avant_hash_vals_str"
+    }
+  } else if str_eq(name, "has_key") {
+    f = "avant_hash_has_str"
+    if ki {
+      f = "avant_hash_has_i32k"
+    }
+    n = 1
+  } else if str_eq(name, "get_or") {
+    f = "avant_hash_get_or_i32"
+    if ki {
+      f = "avant_hash_get_or_i32k_i32"
+    } else if mir_hash_val_str(ht) {
+      f = "avant_hash_get_or_str"
+    }
+    n = 2
+  } else if str_eq(name, "inc") {
+    f = "avant_hash_inc_str"
+    if ki {
+      f = "avant_hash_inc_i32k"
+    }
+    n = -1
+  } else if str_eq(name, "delete") {
+    f = "avant_hash_del"
+    if ki {
+      f = "avant_hash_del_i32k"
+    }
+    n = 1
+  } else if str_eq(name, "inc_slice") {
+    f = "avant_hash_inc_slice"
+    n = 3
+  }
+  if f.size == 0 || (n >= 0 && args.size != n) || (n < 0 && (args.size < 1 || args.size > 2)) {
+    lw.refuse(e.loc, "the member .${name} of ${ht.show}")
+    return zero
+  }
+  ops = lw.args_then_recv(args, recv)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  if str_eq(name, "inc") && args.size == 1 {
+    ops.push(b.c_i32(1))
+  }
+  if str_eq(name, "has_key") {
+    r = lw.call_to(mt_i32(), f, ops)
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+  }
+  lw.call_to(ty, f, ops)
+}
+
+// The members of Buf (the old back end): one
+// runtime call each; `starts_with` compares its result with 1.
+pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+
+  f = ""
+  n = 0
+  if str_eq(name, "size") {
+    f = "avant_buf_size"
+  } else if str_eq(name, "to_s") || str_eq(name, "to_bytes") {
+    f = "avant_buf_to_str"
+  } else if str_eq(name, "clear") {
+    f = "avant_buf_clear"
+  } else if str_eq(name, "push_byte") {
+    f = "avant_buf_push_byte"
+    n = 1
+  } else if str_eq(name, "push_str") || str_eq(name, "push_bytes") {
+    f = "avant_buf_push_str"
+    n = 1
+  } else if str_eq(name, "push_slice") {
+    f = "avant_buf_push_slice"
+    n = 3
+  } else if str_eq(name, "push_fmt_f") {
+    f = "avant_buf_push_fmt_f"
+    n = 2
+  } else if str_eq(name, "push_fmt_i") {
+    f = "avant_buf_push_fmt_i"
+    n = 1
+  } else if str_eq(name, "starts_with") {
+    f = "avant_buf_starts"
+    n = 1
+  }
+  if f.size == 0 || args.size != n {
+    lw.refuse(e.loc, "the member .${name} of Buf")
+    return zero
+  }
+  ty = lw.ety(e)
+  ops = lw.args_then_recv(args, recv)
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  if str_eq(name, "starts_with") {
+    r = lw.call_to(mt_i32(), f, ops)
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+  }
+  lw.call_to(ty, f, ops)
+}
+
+// The members of String and Bytes that make an Array or a Buf
+// (the old back end): `split(sep)` (the separator,
+// then the string), `fields`, `chars`, `Bytes.to_buf`; nil when name is
+// not one of them.
+pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand? {
+  f = ""
+  n = 0
+  if rt.is_string && str_eq(name, "split") {
+    f = "avant_str_split"
+    n = 1
+  } else if rt.is_string && str_eq(name, "fields") {
+    f = "avant_str_fields"
+  } else if str_eq(name, "chars") {
+    f = "avant_str_chars"
+    if rt.is_bytes {
+      f = "avant_bytes_chars"
+    }
+  } else if rt.is_bytes && str_eq(name, "to_buf") {
+    f = "avant_bytes_to_buf"
+  }
+  if f.size == 0 || args.size != n || e.resolved.size > 0 {
+    return nil
+  }
+  ty = lw.ety(e)
+  ops = lw.args_then_recv(args, recv)
+  if lw.failed {
+    return lw.lw_b.c_i32(0)
+  }
+  lw.at(e.loc)
+  lw.call_to(ty, f, ops)
+}
+
+// The builtins over heap values (calls.av:222-227, 270-276, 350-360):
+// `buf_new(cap = 0)`, `bytes_to_str(xs)`, `hash_last_key()`; nil when c
+// is not one of them.
+pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
+  b = lw.lw_b
+  f = ""
+  if str_eq(c, "buf_new") && e.args.size <= 1 {
+    f = "avant_buf_new"
+  } else if str_eq(c, "bytes_to_str") && e.args.size == 1 {
+    f = "avant_str_from_i32_bytes"
+  } else if str_eq(c, "hash_last_key") && e.args.size == 0 {
+    f = "avant_hash_last_key"
+  }
+  if f.size == 0 {
+    return nil
+  }
+  ty = lw.ety(e)
+  ops = lw.lower_args(e.args)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if str_eq(c, "buf_new") && ops.size == 0 {
+    ops.push(b.c_i32(0))
+  }
+  lw.call_to(ty, f, ops)
+}

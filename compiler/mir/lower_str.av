@@ -1,0 +1,320 @@
+// The lowering of heap strings (Stage 28 W6a; stages/stage28/mir.md W6a):
+// interpolation, `+`, `==` and `!=` on String and Bytes, indexing, the
+// members `size to_i to_f bytes strip strip_left strip_right` and Bytes
+// `size slice`, and the builtins `chr repeat_byte str_slice fmt_float
+// checksum_str str_to_f_slice`. A String or Bytes value is a `ref str`
+// (2.9): a literal is a `const str.N` (not a heap object, 3.2), every
+// other value comes from a runtime call. Each call's mark comes from the
+// call table (runtime.av; the proofs are in W6a.6). The evaluation order
+// of each construct is the old back end's (W6a.2): left to right, except
+// the builtins and `Bytes.slice`, which evaluate their arguments last to
+// first (`slice` then its receiver).
+
+import location
+import source
+import token
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+
+// Arguments last to first (the old builtins push them so), each
+// snapshotted when an argument evaluated after it contains a switch.
+pub fn (lw: MirLower) lower_args_rev(args: Array(Expr)): Array(MOperand) {
+  tmp: Array(MOperand) = []
+  i = args.size - 1
+  while i >= 0 {
+    o = lw.lower_expr(args[i])
+    j = i - 1
+    while j >= 0 {
+      o = lw.snap(o, args[j])
+      j = j - 1
+    }
+    tmp.push(o)
+    i = i - 1
+  }
+  out: Array(MOperand) = []
+  i = tmp.size - 1
+  while i >= 0 {
+    out.push(tmp[i])
+    i = i - 1
+  }
+  out
+}
+
+pub fn (lw: MirLower) str_call(callee: String, args: Array(MOperand)): MOperand {
+  lw.call_to(mt_str(), callee, args)
+}
+
+pub fn (lw: MirLower) str_call1(callee: String, a: MOperand): MOperand {
+  args: Array(MOperand) = []
+  args.push(a)
+  lw.str_call(callee, args)
+}
+
+pub fn (lw: MirLower) i32_call1(callee: String, a: MOperand): MOperand {
+  args: Array(MOperand) = []
+  args.push(a)
+  lw.call_to(mt_i32(), callee, args)
+}
+
+// A scalar's text (the old back end): String as is; Int, Int64, UInt64,
+// Float64 (`%g`), and Bool (widened to i32) through avant_str_from_*.
+pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
+  b = lw.lw_b
+  if t.is_string {
+    return v
+  }
+  if t.is_int {
+    return lw.str_call1("avant_str_from_int", v)
+  }
+  if t.is_int64 {
+    return lw.str_call1("avant_str_from_i64", v)
+  }
+  if t.is_uint64 {
+    return lw.str_call1("avant_str_from_u64", v)
+  }
+  if t.is_float {
+    return lw.str_call1("avant_str_from_float", v)
+  }
+  if t.is_bool {
+    w = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+    return lw.str_call1("avant_str_from_bool", w)
+  }
+  lw.refuse(lw.lw_fn_loc, "interpolation of ${t.show}")
+  v
+}
+
+pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
+  i = from
+  while i < e.parts.size {
+    if x = e.parts[i].expr {
+      if mir_has_switch(x) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
+}
+
+// "text${x}..." (the old back end): exactly a text and an Int is one
+// avant_str_cat_i32(text, n); otherwise each non-empty piece becomes a
+// string, left to right, and the pieces are folded with avant_str_concat
+// from the left; no piece is "", one piece is itself.
+pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
+  b = lw.lw_b
+  if e.parts.size == 2 {
+    if text = e.parts[0].text {
+      if inner = e.parts[1].expr {
+        if it = inner.ty {
+          if it.is_int {
+            n = lw.lower_expr(inner)
+            if lw.failed {
+              return b.c_i32(0)
+            }
+            lw.at(e.loc)
+            args: Array(MOperand) = []
+            args.push(b.str_const(text))
+            args.push(n)
+            return lw.str_call("avant_str_cat_i32", args)
+          }
+        }
+      }
+    }
+  }
+  pieces: Array(MOperand) = []
+  i = 0
+  while i < e.parts.size {
+    part = e.parts[i]
+    if text = part.text {
+      if text.size > 0 {
+        pieces.push(b.str_const(text))
+      }
+    }
+    if inner = part.expr {
+      if it = inner.ty {
+        v = lw.lower_expr(inner)
+        if lw.failed {
+          return b.c_i32(0)
+        }
+        lw.at(inner.loc)
+        s = lw.to_str(v, it)
+        if mir_part_has_switch(e, i + 1) {
+          if p = s.place {
+            s = lw.tmp(mt_str(), b.rv_use(s))
+          }
+        }
+        pieces.push(s)
+      } else {
+        lw.refuse(inner.loc, "an untyped interpolation")
+        return b.c_i32(0)
+      }
+    }
+    i = i + 1
+  }
+  if pieces.size == 0 {
+    return b.str_const("")
+  }
+  lw.at(e.loc)
+  acc = pieces[0]
+  i = 1
+  while i < pieces.size {
+    args: Array(MOperand) = []
+    args.push(acc)
+    args.push(pieces[i])
+    acc = lw.str_call("avant_str_concat", args)
+    i = i + 1
+  }
+  acc
+}
+
+// String `+`, `==`, `!=`; Bytes `==`, `!=` (the old back end): the left
+// first, then the right; == is avant_str_eq(a, b) == 1, != is == 0.
+pub fn (lw: MirLower) lower_str_binary(e: Expr, l: Expr, r: Expr): MOperand {
+  b = lw.lw_b
+  a = lw.snap(lw.lower_expr(l), r)
+  c = lw.lower_expr(r)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  args: Array(MOperand) = []
+  args.push(a)
+  args.push(c)
+  if e.op == tk_plus() {
+    return lw.str_call("avant_str_concat", args)
+  }
+  if e.op == tk_eq_eq() || e.op == tk_not_eq() {
+    q = lw.call_to(mt_i32(), "avant_str_eq", args)
+    want = 1
+    if e.op == tk_not_eq() {
+      want = 0
+    }
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), q, b.c_i32(want)))
+  }
+  lw.refuse(e.loc, "this operator on String")
+  b.c_i32(0)
+}
+
+// s[i] on String or Bytes (loops.av:4631-4656): the index first, then the
+// string; unless the checker proved it in range, avant_str_size and the
+// bounds check (avant_trap_bounds(i, n)); then the byte, zero-extended.
+// The byte is read through a `ptr u8` view of the string (a `ref` to
+// `ptr` cast, 4.3) used at once.
+pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
+  b = lw.lw_b
+  i = lw.snap(lw.lower_expr(ix), arr)
+  s = lw.lower_expr(arr)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if !e.proven {
+    n = lw.i32_call1("avant_str_size", lw.dup(s))
+    dummy = b.check_bounds(lw.dup(i), n)
+  }
+  pu8 = b.ptr_to(mt_u8())
+  pv = b.temp(pu8)
+  dummy2 = b.assign(b.pl(pv), b.rv_cast(s, pu8))
+  byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pv)), i))))
+  lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
+}
+
+// The members of String and Bytes in both forms (`s.size`, `s.to_i`,
+// `s.strip()`), with recv the receiver and args the arguments.
+pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  if got = lw.str_heap_member(e, recv, rt, name, args) {
+    return got
+  }
+  if rt.is_bytes && str_eq(name, "slice") && args.size == 2 {
+    // builtins.av:1820-1844: stop, start, then the receiver.
+    ops = lw.lower_args_rev(args)
+    s = lw.lower_expr(recv)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    if mir_has_switch(recv) {
+      ops[0] = lw.tmp(mt_i32(), b.rv_use(ops[0]))
+      ops[1] = lw.tmp(mt_i32(), b.rv_use(ops[1]))
+    }
+    cargs: Array(MOperand) = []
+    cargs.push(s)
+    cargs.push(ops[0])
+    cargs.push(ops[1])
+    return lw.str_call("avant_str_slice", cargs)
+  }
+  if args.size > 0 {
+    lw.refuse(e.loc, "the member .${name} of ${rt.show}")
+    return b.c_i32(0)
+  }
+  known = str_eq(name, "size") || str_eq(name, "bytes")
+  if rt.is_string {
+    known = known || str_eq(name, "to_i") || str_eq(name, "to_f") || str_eq(name, "strip") || str_eq(name, "strip_left") || str_eq(name, "strip_right")
+  }
+  if !known {
+    lw.refuse(e.loc, "the member .${name} of ${rt.show}")
+    return b.c_i32(0)
+  }
+  s = lw.lower_expr(recv)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if str_eq(name, "size") {
+    return lw.i32_call1("avant_str_size", s)
+  }
+  if str_eq(name, "bytes") {
+    return s
+  }
+  if str_eq(name, "to_i") {
+    return lw.i32_call1("avant_str_to_i", s)
+  }
+  if str_eq(name, "to_f") {
+    return lw.call_f64("avant_str_to_f", s)
+  }
+  mode = 0
+  if str_eq(name, "strip_left") {
+    mode = 1
+  } else if str_eq(name, "strip_right") {
+    mode = 2
+  }
+  sargs: Array(MOperand) = []
+  sargs.push(s)
+  sargs.push(b.c_i32(mode))
+  lw.str_call("avant_str_strip", sargs)
+}
+
+// The string builtins (calls.av:205-249, 320-346), arguments last to
+// first (mir_str_builtin_arity in lower_ty.av names them).
+pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
+  b = lw.lw_b
+  ops = lw.lower_args_rev(e.args)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if str_eq(c, "chr") {
+    return lw.str_call("avant_str_from_byte", ops)
+  }
+  if str_eq(c, "checksum_str") {
+    return lw.call_to(mt_i32(), "avant_checksum_str", ops)
+  }
+  if str_eq(c, "repeat_byte") {
+    return lw.str_call("avant_str_repeat_byte", ops)
+  }
+  if str_eq(c, "fmt_float") {
+    return lw.str_call("avant_str_fmt_float", ops)
+  }
+  if str_eq(c, "str_slice") {
+    return lw.str_call("avant_str_slice", ops)
+  }
+  lw.call_to(mt_f64(), "avant_str_to_f_slice", ops)
+}

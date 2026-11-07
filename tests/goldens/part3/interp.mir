@@ -1,0 +1,36 @@
+module interp
+file 0 "interp.av"
+
+const str.0 = "Avant"
+const str.1 = "hello "
+const str.2 = "%s\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern printf(ref str, ...) -> i32 never
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @interp.av:1:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3 (name): ref str slot
+  let _4: ref str
+
+bb0:
+  _3 = zero   @1:1
+  gc.enter   @1:1
+  gc.roots _2, _3   @1:1
+  call __avant_type_maps() nocollect   @1:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @1:1
+  _3 = const str.0   @2:8
+  _4 = call avant_str_concat(const str.1, copy _3) collects   @3:8
+  call printf(const str.2, copy _4) nocollect   @3:3
+  _0 = const i32 0   @1:1
+  gc.leave   @1:1
+  return   @1:1
+}

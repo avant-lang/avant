@@ -1,0 +1,32 @@
+// `break` inside a `Mutex.with` block inside a `while` (Stage 28 W10b):
+// the checker rejects it, as it rejects `return` there, since the lock is
+// released only at the block's end (until W10b both back ends accepted it
+// and the program hung on the next `with`). tests/cases/test_frontend.av
+// checks the diagnostic and its location on both back ends. No `fn main`,
+// so the differential leaves it out.
+
+class Mutex(T) {
+  cell: T
+  gate: UInt64
+
+  fn initialize(value: T) {
+    self.cell = value
+    self.gate = avant_gate_new()
+  }
+}
+
+fn run: Int {
+  m = Mutex(Int).new(0)
+  i = 0
+  while i < 3 {
+    m.with { |x|
+      x = x + 1
+      if i == 1 {
+        break
+      }
+      0
+    }
+    i = i + 1
+  }
+  m.with { |x| x }
+}

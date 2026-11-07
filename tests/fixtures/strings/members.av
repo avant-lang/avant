@@ -1,0 +1,70 @@
+// String and Bytes members and the string builtins on the new back end
+// (Stage 28 W6a): size, indexing, bytes, Bytes size, indexing and slice,
+// strip, strip_left, strip_right, to_i, to_f, chr, repeat_byte,
+// str_slice, fmt_float, checksum_str, str_to_f_slice; the builtins
+// evaluate their arguments last to first (the old order).
+
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b - a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn say(tag: String, v: Int): Int {
+  puts(tag)
+  v
+}
+
+fn count_byte(s: String, c: Int): Int {
+  k = 0
+  i = 0
+  while i < s.size {
+    if s[i] == c {
+      k = k + 1
+    }
+    i = i + 1
+  }
+  k
+}
+
+fn main {
+  s = "hello, world"
+  puts(s.size)
+  puts(s[0])
+  puts(s[opaque(11)])
+  puts(count_byte(s, 108))
+  puts(count_byte("${s}${s}", 111))
+  puts("".size)
+  bs = s.bytes
+  puts(bs.size)
+  puts(bs[4])
+  sub = bs.slice(opaque(7), 12)
+  puts(sub == "world".bytes)
+  puts(bs.slice(say("start", 3), say("stop", 5)).size)
+  puts("[${"  pad me  ".strip()}]")
+  puts("[${"  pad me  ".strip_left()}]")
+  puts("[${"  pad me  ".strip_right()}]")
+  puts("[${"tight".strip()}]")
+  puts("[${"   ".strip()}]")
+  puts("123".to_i + opaque(1))
+  puts("-45xyz".to_i)
+  puts("abc".to_i)
+  puts("2.5".to_f * 2.0)
+  puts("1e3".to_f)
+  puts(chr(65 + opaque(1)))
+  puts(chr(opaque(122)) + chr(48))
+  puts(repeat_byte(say("byte", 61), say("count", 4)))
+  puts(repeat_byte(45, 0).size)
+  puts(str_slice("hello world", say("from", 6), say("to", 11)))
+  puts(str_slice("hello", -3, 99))
+  puts(str_slice("hello", 3, 1).size)
+  puts(fmt_float(3.14159, opaque(2)))
+  puts(fmt_float(2.0, 0))
+  puts(checksum_str("hello"))
+  puts(checksum_str(""))
+  puts(str_to_f_slice("xx1.25yy", 2, 6))
+  puts(str_to_f_slice("12", 5, 9))
+}

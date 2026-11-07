@@ -1,0 +1,170 @@
+module switches
+file 0 "switches.av"
+
+const str.0 = "zero"
+const str.1 = "small"
+const str.2 = "big"
+const str.3 = "%s\0A"
+const str.4 = "four"
+const str.5 = "five, stop"
+const str.6 = "%d\0A"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn av.switches/name(_1: i32) -> ref str leaf @switches.av:5:1 {
+  let _0: ref str
+  let _1 (n): i32
+  let _2: ref str
+
+bb0:
+  _2 = zero   @6:3
+  switch copy _1 [0: bb1, 1: bb2, 2: bb2, 3: bb2] else bb3   @6:3
+
+bb1:
+  _2 = const str.0   @8:7
+  goto bb4   @7:5
+
+bb2:
+  _2 = const str.1   @11:7
+  goto bb4   @10:5
+
+bb3:
+  _2 = const str.2   @14:7
+  goto bb4   @6:3
+
+bb4:
+  _0 = copy _2   @6:3
+  return   @6:3
+}
+
+fn av.switches/wide(_1: i32) -> i32 leaf @switches.av:19:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2: i32
+
+bb0:
+  _2 = zero   @20:3
+  switch copy _1 [2000000000: bb1, -1: bb2] else bb3   @20:3
+
+bb1:
+  _2 = const i32 1   @22:7
+  goto bb4   @21:5
+
+bb2:
+  _2 = const i32 2   @25:7
+  goto bb4   @24:5
+
+bb3:
+  _2 = const i32 3   @28:7
+  goto bb4   @20:3
+
+bb4:
+  _0 = copy _2   @20:3
+  return   @20:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @switches.av:33:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3 (i): i32
+  let _4: bool
+  let _5: ref str
+  let _6: i32
+  let _7: i32
+  let _8: i32
+  let _9: i32
+  let _10: bool
+  let _11 (b): bool
+  let _12: i32
+  let _13: i32
+  let _14 (v): i32
+  let _15 (x): i32
+  let _16: i32
+  let _17: i32
+  let _18: i32
+  let _19 (y): i32
+
+bb0:
+  gc.enter   @33:1
+  gc.roots _2   @33:1
+  call __avant_type_maps() nocollect   @33:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @33:1
+  _3 = const i32 0   @34:5
+  goto bb1   @35:3
+
+bb1:
+  _4 = lt copy _3, const i32 6   @35:11
+  branch copy _4, bb2, bb3   @35:3
+
+bb2:
+  _5 = call av.switches/name(copy _3) nocollect   @36:10
+  call printf(const str.3, copy _5) nocollect   @36:5
+  switch copy _3 [4: bb4, 5: bb5] else bb6   @37:5
+
+bb3:
+  _7 = call av.switches/wide(const i32 2000000000) nocollect   @48:8
+  call printf(const str.6, copy _7) nocollect   @48:3
+  _8 = call av.switches/wide(const i32 -1) nocollect   @49:8
+  call printf(const str.6, copy _8) nocollect   @49:3
+  _9 = call av.switches/wide(const i32 7) nocollect   @50:8
+  call printf(const str.6, copy _9) nocollect   @50:3
+  _10 = gt copy _3, const i32 3   @51:9
+  _11 = copy _10   @51:5
+  _12 = cast copy _11 to i32   @52:7
+  _13 = zero   @52:7
+  switch copy _12 [1: bb7] else bb8   @52:7
+
+bb4:
+  call printf(const str.3, const str.4) nocollect   @39:9
+  goto bb6   @38:7
+
+bb5:
+  call printf(const str.3, const str.5) nocollect   @42:9
+  goto bb3   @43:9
+
+bb6:
+  _6 = add copy _3, const i32 1   @46:11
+  _3 = copy _6   @46:7
+  goto bb1   @35:3
+
+bb7:
+  _13 = const i32 10   @54:7
+  goto bb9   @53:5
+
+bb8:
+  _13 = const i32 20   @57:7
+  goto bb9   @52:7
+
+bb9:
+  _14 = copy _13   @52:5
+  call printf(const str.6, copy _14) nocollect   @60:3
+  _15 = const i32 1   @61:5
+  _16 = copy _15   @61:5
+  _17 = zero   @62:11
+  switch copy _3 [5: bb10] else bb11   @62:11
+
+bb10:
+  _15 = const i32 100   @64:9
+  _17 = const i32 1   @65:7
+  goto bb12   @63:5
+
+bb11:
+  _17 = const i32 2   @68:7
+  goto bb12   @62:11
+
+bb12:
+  _18 = add.chk copy _16, copy _17   @62:9
+  _19 = copy _18   @62:5
+  call printf(const str.6, copy _19) nocollect   @71:3
+  call printf(const str.6, copy _15) nocollect   @72:3
+  _0 = const i32 0   @33:1
+  gc.leave   @33:1
+  return   @33:1
+}

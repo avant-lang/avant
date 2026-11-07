@@ -1,0 +1,1301 @@
+module channels shared
+file 0 "channels.av"
+
+layout %channels.Channel(Int) = class { 0 slots: ref %Array(Int), 1 cap: i32, 2 count: i32, 3 head: i32, 4 closed: i32, 5 has: i32, 6 gate: u64, 7 cell: i32 }  size 48 align 8 id 1
+layout %channels.Channel(String) = class { 0 slots: ref %Array(String), 1 cap: i32, 2 count: i32, 3 head: i32, 4 closed: i32, 5 has: i32, 6 gate: u64, 7 cell: ref str }  size 48 align 8 id 2
+layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
+layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %spawn_cap(av.channels/main#spawn1) = record { 0 nums: ref %channels.Channel(Int) }  size 8 align 8 id 3
+layout %spawn_cap(av.channels/main#spawn2) = record { 0 nums: ref %channels.Channel(Int) }  size 8 align 8 id 4
+layout %spawn_cap(av.channels/main#spawn3) = record { 0 texts: ref %channels.Channel(String), 1 prefix: ref str }  size 16 align 8 id 5
+layout %spawn_cap(av.channels/main#spawn4) = record { 0 replies: ref %channels.Channel(String), 1 id: i32 }  size 16 align 8 id 6
+layout %(Int|Nil) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %(Nil|String) = union { 0 tag: i32, 1 m0: ref str }  size 16 align 8
+layout %elems(JoinHandle(Int)) = elems { 0: ref }  size 8 align 8 id 65535
+layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+
+const str.0 = "%d\0A"
+const str.1 = "msg"
+const str.2 = ""
+const str.3 = "%s\0A"
+const str.4 = "-"
+const str.5 = "worker"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %channels.Channel(Int) stride 0 bits [0x1]
+typemap 2 %channels.Channel(String) stride 0 bits [0x21]
+typemap 3 %spawn_cap(av.channels/main#spawn1) stride 0 bits [0x1]
+typemap 4 %spawn_cap(av.channels/main#spawn2) stride 0 bits [0x1]
+typemap 5 %spawn_cap(av.channels/main#spawn3) stride 0 bits [0x3]
+typemap 6 %spawn_cap(av.channels/main#spawn4) stride 0 bits [0x1]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_copy(ref, u64, u32) -> ref collects
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_array_set_ptr(ref, i32, ref) -> void never
+extern avant_gate_broadcast(u64) -> void collects
+extern avant_gate_lock(u64) -> void collects
+extern avant_gate_new() -> u64 collects
+extern avant_gate_unlock(u64) -> void collects
+extern avant_gate_wait(u64) -> void collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_join(ref) -> i32 collects
+extern avant_pin(ref) -> void never
+extern avant_spawn(ptr, ref) -> ref collects
+extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_from_int(i32) -> ref str collects
+extern avant_str_size(ref str) -> i32 never
+extern printf(ref str, ...) -> i32 never
+
+fn av.channels/produce(_1: ref %channels.Channel(Int), _2: i32, _3: i32) -> i32 frame @channels.av:96:1 {
+  let _0: i32
+  let _1 (out): ref %channels.Channel(Int) slot
+  let _2 (from): i32
+  let _3 (n): i32
+  let _4 (i): i32
+  let _5: bool
+  let _6: i32
+  let _7: i32
+
+bb0:
+  gc.enter   @96:1
+  gc.roots _1   @96:1
+  _4 = const i32 0   @97:5
+  goto bb1   @98:3
+
+bb1:
+  _5 = lt copy _4, copy _3   @98:11
+  branch copy _5, bb2, bb3   @98:3
+
+bb2:
+  _6 = add.chk copy _2, copy _4   @99:19
+  call av.channels/Channel(Int).send(copy _1, copy _6) collects   @99:8
+  _7 = add copy _4, const i32 1   @100:11
+  _4 = copy _7   @100:7
+  goto bb1   @98:3
+
+bb3:
+  _0 = copy _3   @102:3
+  gc.leave   @102:3
+  return   @102:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @channels.av:105:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: ref %channels.Channel(Int)
+  let _4 (nums): ref %channels.Channel(Int) slot
+  let _5: ref %spawn_cap(av.channels/main#spawn1) slot
+  let _6: ref
+  let _7 (p1): ref slot
+  let _8: ref %spawn_cap(av.channels/main#spawn2) slot
+  let _9: ref
+  let _10 (p2): ref slot
+  let _11 (total): i32
+  let _12 (got): i32
+  let _13: bool
+  let _14: %(Int|Nil)
+  let _15: i32
+  let _16: bool
+  let _17: i32
+  let _18 (v): i32
+  let _19: i32
+  let _20: i32
+  let _21: i32
+  let _22: i32
+  let _23: ref %channels.Channel(String)
+  let _24 (texts): ref %channels.Channel(String) slot
+  let _25 (prefix): ref str slot
+  let _26: ref %spawn_cap(av.channels/main#spawn3) slot
+  let _27: ref
+  let _28 (st): ref slot
+  let _29 (lens): i32
+  let _30 (count): i32
+  let _31 (last): ref str slot
+  let _32 (done): bool
+  let _33: bool
+  let _34: %(Nil|String)
+  let _35: i32
+  let _36: bool
+  let _37: ref str
+  let _38 (s): ref str
+  let _39: i32
+  let _40: i32
+  let _41: i32
+  let _42: i32
+  let _43: ref %channels.Channel(String)
+  let _44 (replies): ref %channels.Channel(String) slot
+  let _45: ref %elems(JoinHandle(Int)) slot
+  let _46: ref %Array(JoinHandle(Int))
+  let _47 (workers): ref %Array(JoinHandle(Int)) slot
+  let _48 (i): i32
+  let _49: bool
+  let _50 (id): i32
+  let _51: ref %spawn_cap(av.channels/main#spawn4) slot
+  let _52: ref slot
+  let _53: i32
+  let _54: ref %elems(String) slot
+  let _55: ref %Array(String)
+  let _56 (names): ref %Array(String) slot
+  let _57: i32
+  let _58: bool
+  let _59: %(Nil|String)
+  let _60: i32
+  let _61: bool
+  let _62: ref str
+  let _63 (r): ref str slot
+  let _64 (sum): i32
+  let _65: ref %Array(JoinHandle(Int)) slot
+  let _66: i32
+  let _67: i32
+  let _68: bool
+  let _69: ref %elems(JoinHandle(Int))
+  let _70: ref
+  let _71 (w): ref slot
+  let _72: i32
+  let _73: i32
+  let _74: ref %Array(String) slot
+  let _75: ref %Array(String)
+  let _76: i32
+  let _77: i32
+  let _78: bool
+  let _79: ref %elems(String)
+  let _80: ref str
+  let _81: i32
+  let _82: bool
+  let _83: i32
+  let _84: ref %elems(String)
+  let _85: ref str
+  let _86 (a): ref str
+  let _87 (b): ref str
+  let _88: i32
+  let _89: i32
+  let _90: bool
+  let _91: bool
+  let _92: i32
+  let _93: i32
+  let _94: bool
+  let _95: bool
+  let _96: i32
+  let _97: ptr u8
+  let _98: u8
+  let _99: i32
+  let _100: i32
+  let _101: ptr u8
+  let _102: u8
+  let _103: i32
+  let _104: bool
+  let _105: bool
+  let _106: ref %elems(String)
+  let _107: ref %elems(String)
+  let _108 (sorted): ref %Array(String)
+  let _109: i32
+  let _110: ref %elems(String)
+  let _111: ref str
+  let _112: i32
+  let _113: ref %elems(String)
+  let _114: ref str
+
+bb0:
+  _4 = zero   @105:1
+  _5 = zero   @105:1
+  _7 = zero   @105:1
+  _8 = zero   @105:1
+  _10 = zero   @105:1
+  _24 = zero   @105:1
+  _25 = zero   @105:1
+  _26 = zero   @105:1
+  _28 = zero   @105:1
+  _31 = zero   @105:1
+  _44 = zero   @105:1
+  _45 = zero   @105:1
+  _47 = zero   @105:1
+  _51 = zero   @105:1
+  _52 = zero   @105:1
+  _54 = zero   @105:1
+  _56 = zero   @105:1
+  _63 = zero   @105:1
+  _65 = zero   @105:1
+  _71 = zero   @105:1
+  _74 = zero   @105:1
+  gc.enter   @105:1
+  gc.roots _2, _4, _5, _7, _8, _10, _24, _25, _26, _28, _31, _44, _45, _47, _51, _52, _54, _56, _63, _65, _71, _74   @105:1
+  call __avant_type_maps() nocollect   @105:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @105:1
+  _3 = call av.channels/Channel(Int).new(const i32 8) collects   @106:22
+  _4 = copy _3   @106:8
+  _5 = call avant_alloc(const u64 8, const u32 3) collects   @107:8
+  call avant_pin(copy _5) nocollect   @107:8
+  barrier copy _5   @107:8
+  (*_5).0 = copy _4   @107:8
+  _6 = call avant_spawn(const fn av.channels/main#spawn1, copy _5) collects   @107:8
+  _7 = copy _6   @107:6
+  _8 = call avant_alloc(const u64 8, const u32 4) collects   @108:8
+  call avant_pin(copy _8) nocollect   @108:8
+  barrier copy _8   @108:8
+  (*_8).0 = copy _4   @108:8
+  _9 = call avant_spawn(const fn av.channels/main#spawn2, copy _8) collects   @108:8
+  _10 = copy _9   @108:6
+  _11 = const i32 0   @109:9
+  _12 = const i32 0   @110:7
+  goto bb1   @111:3
+
+bb1:
+  _13 = lt copy _12, const i32 1000   @111:13
+  branch copy _13, bb2, bb3   @111:3
+
+bb2:
+  _14 = call av.channels/Channel(Int).recv(copy _4) collects   @112:16
+  _15 = copy _14.0   @112:5
+  _16 = ne copy _15, const i32 1   @112:5
+  branch copy _16, bb4, bb5   @112:5
+
+bb3:
+  _21 = call avant_join(copy _7) collects   @117:10
+  call printf(const str.0, copy _21) nocollect   @117:3
+  _22 = call avant_join(copy _10) collects   @118:10
+  call printf(const str.0, copy _22) nocollect   @118:3
+  call printf(const str.0, copy _11) nocollect   @119:3
+  _23 = call av.channels/Channel(String).new(const i32 0) collects   @120:26
+  _24 = copy _23   @120:9
+  _25 = const str.1   @121:10
+  _26 = call avant_alloc(const u64 16, const u32 5) collects   @122:8
+  call avant_pin(copy _26) nocollect   @122:8
+  barrier copy _26   @122:8
+  (*_26).0 = copy _24   @122:8
+  barrier copy _26   @122:8
+  (*_26).1 = copy _25   @122:8
+  _27 = call avant_spawn(const fn av.channels/main#spawn3, copy _26) collects   @122:8
+  _28 = copy _27   @122:6
+  _29 = const i32 0   @131:8
+  _30 = const i32 0   @132:9
+  _31 = const str.2   @133:8
+  _32 = const bool false   @134:8
+  goto bb6   @135:3
+
+bb4:
+  _17 = copy _14.1   @112:5
+  _18 = copy _17   @112:5
+  _19 = add.chk copy _11, copy _18   @113:21
+  _11 = copy _19   @113:13
+  _20 = add copy _12, const i32 1   @114:17
+  _12 = copy _20   @114:11
+  goto bb5   @112:5
+
+bb5:
+  goto bb1   @111:3
+
+bb6:
+  _33 = not copy _32   @135:9
+  branch copy _33, bb7, bb8   @135:3
+
+bb7:
+  _34 = call av.channels/Channel(String).recv(copy _24) collects   @136:17
+  _35 = copy _34.0   @136:5
+  _36 = ne copy _35, const i32 0   @136:5
+  branch copy _36, bb9, bb10   @136:5
+
+bb8:
+  _42 = call avant_join(copy _28) collects   @144:10
+  call printf(const str.0, copy _42) nocollect   @144:3
+  call printf(const str.0, copy _30) nocollect   @145:3
+  call printf(const str.0, copy _29) nocollect   @146:3
+  call printf(const str.3, copy _31) nocollect   @147:3
+  _43 = call av.channels/Channel(String).new(const i32 4) collects   @148:28
+  _44 = copy _43   @148:11
+  _45 = call avant_alloc(const u64 0, const u32 65535) collects   @149:37
+  _46 = call avant_alloc(const u64 16, const u32 1022) collects   @149:37
+  barrier copy _46   @149:37
+  (*_46).0 = copy _45   @149:37
+  (*_46).1 = const i32 0   @149:37
+  (*_46).2 = const i32 0   @149:37
+  _47 = copy _46   @149:3
+  _48 = const i32 0   @150:5
+  goto bb12   @151:3
+
+bb9:
+  _37 = copy _34.1   @136:5
+  _38 = copy _37   @136:5
+  _39 = call avant_str_size(copy _38) nocollect   @137:22
+  _40 = add.chk copy _29, copy _39   @137:19
+  _29 = copy _40   @137:12
+  _41 = add.chk copy _30, const i32 1   @138:21
+  _30 = copy _41   @138:13
+  _31 = copy _38   @139:12
+  goto bb11   @136:5
+
+bb10:
+  _32 = const bool true   @141:12
+  goto bb11   @136:5
+
+bb11:
+  goto bb6   @135:3
+
+bb12:
+  _49 = lt copy _48, const i32 4   @151:11
+  branch copy _49, bb13, bb14   @151:3
+
+bb13:
+  _50 = copy _48   @152:8
+  _51 = call avant_alloc(const u64 16, const u32 6) collects   @153:18
+  call avant_pin(copy _51) nocollect   @153:18
+  barrier copy _51   @153:18
+  (*_51).0 = copy _44   @153:18
+  (*_51).1 = copy _50   @153:18
+  _52 = call avant_spawn(const fn av.channels/main#spawn4, copy _51) collects   @153:18
+  call avant_array_push_ptr(copy _47, copy _52, const u32 65535) collects   @153:12
+  _53 = add copy _48, const i32 1   @157:11
+  _48 = copy _53   @157:7
+  goto bb12   @151:3
+
+bb14:
+  _54 = call avant_alloc(const u64 0, const u32 65535) collects   @159:26
+  _55 = call avant_alloc(const u64 16, const u32 1022) collects   @159:26
+  barrier copy _55   @159:26
+  (*_55).0 = copy _54   @159:26
+  (*_55).1 = const i32 0   @159:26
+  (*_55).2 = const i32 0   @159:26
+  _56 = copy _55   @159:3
+  goto bb15   @160:3
+
+bb15:
+  _57 = copy (*_56).1   @160:14
+  _58 = lt copy _57, const i32 4   @160:20
+  branch copy _58, bb16, bb17   @160:3
+
+bb16:
+  _59 = call av.channels/Channel(String).recv(copy _44) collects   @161:19
+  _60 = copy _59.0   @161:5
+  _61 = ne copy _60, const i32 0   @161:5
+  branch copy _61, bb18, bb19   @161:5
+
+bb17:
+  _64 = const i32 0   @165:7
+  _65 = copy _47   @166:3
+  _66 = const i32 0   @166:16
+  goto bb20   @166:16
+
+bb18:
+  _62 = copy _59.1   @161:5
+  _63 = copy _62   @161:5
+  call avant_array_push_ptr(copy _56, copy _63, const u32 65535) collects   @162:12
+  goto bb19   @161:5
+
+bb19:
+  goto bb15   @160:3
+
+bb20:
+  _67 = copy (*_65).1   @166:16
+  _68 = lt copy _66, copy _67   @166:16
+  branch copy _68, bb21, bb23   @166:16
+
+bb21:
+  _69 = copy (*_65).0   @166:16
+  _70 = copy (*_69)[copy _66]   @166:16
+  _71 = copy _70   @166:16
+  _72 = call avant_join(copy _71) collects   @166:35
+  _73 = add.chk copy _64, copy _72   @166:32
+  _64 = copy _73   @166:26
+  goto bb22   @166:16
+
+bb22:
+  _66 = add copy _66, const i32 1   @166:16
+  goto bb20   @166:16
+
+bb23:
+  call printf(const str.0, copy _64) nocollect   @167:3
+  _74 = copy _56   @168:12
+  _75 = call avant_array_copy(copy _74, const u64 8, const u32 65535) collects   @168:25
+  _76 = copy (*_75).1   @168:25
+  _77 = const i32 1   @168:25
+  goto bb24   @168:25
+
+bb24:
+  _78 = lt copy _77, copy _76   @168:25
+  branch copy _78, bb25, bb26   @168:25
+
+bb25:
+  _79 = copy (*_75).0   @168:25
+  _80 = copy (*_79)[copy _77]   @168:25
+  _81 = copy _77   @168:25
+  goto bb27   @168:25
+
+bb26:
+  _108 = copy _75   @168:10
+  _109 = copy (*_108).1   @169:14
+  check.bounds const i32 0, copy _109   @169:14
+  _110 = copy (*_108).0   @169:14
+  _111 = copy (*_110)[const i32 0]   @169:14
+  call printf(const str.3, copy _111) nocollect   @169:3
+  _112 = copy (*_108).1   @170:14
+  check.bounds const i32 3, copy _112   @170:14
+  _113 = copy (*_108).0   @170:14
+  _114 = copy (*_113)[const i32 3]   @170:14
+  call printf(const str.3, copy _114) nocollect   @170:3
+  _0 = const i32 0   @105:1
+  gc.leave   @105:1
+  return   @105:1
+
+bb27:
+  _82 = gt copy _81, const i32 0   @168:25
+  branch copy _82, bb28, bb29   @168:25
+
+bb28:
+  _83 = sub copy _81, const i32 1   @168:25
+  _84 = copy (*_75).0   @168:25
+  _85 = copy (*_84)[copy _83]   @168:25
+  _86 = copy _80   @168:25
+  _87 = copy _85   @168:25
+  _88 = call avant_str_size(copy _86) nocollect   @168:35
+  _89 = call avant_str_size(copy _87) nocollect   @168:44
+  _90 = lt copy _88, copy _89   @168:41
+  _91 = copy _90   @168:50
+  branch copy _91, bb31, bb30   @168:50
+
+bb29:
+  _107 = copy (*_75).0   @168:25
+  barrier copy _107   @168:25
+  (*_107)[copy _81] = copy _80   @168:25
+  _77 = add copy _77, const i32 1   @168:25
+  goto bb24   @168:25
+
+bb30:
+  _92 = call avant_str_size(copy _86) nocollect   @168:55
+  _93 = call avant_str_size(copy _87) nocollect   @168:65
+  _94 = eq copy _92, copy _93   @168:61
+  _95 = copy _94   @168:71
+  branch copy _95, bb32, bb33   @168:71
+
+bb31:
+  _105 = copy _91   @168:50
+  branch copy _105, bb34, bb29   @168:25
+
+bb32:
+  _96 = call avant_str_size(copy _86) nocollect   @168:75
+  check.bounds const i32 6, copy _96   @168:75
+  _97 = cast copy _86 to ptr u8   @168:75
+  _98 = copy (*_97)[const i32 6]   @168:75
+  _99 = cast copy _98 to i32   @168:75
+  _100 = call avant_str_size(copy _87) nocollect   @168:82
+  check.bounds const i32 6, copy _100   @168:82
+  _101 = cast copy _87 to ptr u8   @168:82
+  _102 = copy (*_101)[const i32 6]   @168:82
+  _103 = cast copy _102 to i32   @168:82
+  _104 = lt copy _99, copy _103   @168:79
+  _95 = copy _104   @168:71
+  goto bb33   @168:71
+
+bb33:
+  _91 = copy _95   @168:50
+  goto bb31   @168:50
+
+bb34:
+  _106 = copy (*_75).0   @168:25
+  barrier copy _106   @168:25
+  (*_106)[copy _81] = copy _85   @168:25
+  _81 = copy _83   @168:25
+  goto bb27   @168:25
+}
+
+fn av.channels/Channel(Int).initialize(_1: ref %channels.Channel(Int), _2: i32) -> void frame @channels.av:19:3 {
+  let _1 (self): ref %channels.Channel(Int) slot
+  let _2 (n): i32
+  let _3: u64
+  let _4: i32
+  let _5: u64
+  let _6: u64
+  let _7: ref %elems(Int) slot
+  let _8: ref %Array(Int)
+
+bb0:
+  _7 = zero   @19:3
+  gc.enter   @19:3
+  gc.roots _1, _7   @19:3
+  (*_1).1 = copy _2   @20:14
+  (*_1).2 = const i32 0   @21:16
+  (*_1).3 = const i32 0   @22:15
+  (*_1).4 = const i32 0   @23:17
+  (*_1).5 = const i32 0   @24:14
+  _3 = call avant_gate_new() collects   @25:17
+  (*_1).6 = copy _3   @25:15
+  _4 = copy _2   @26:18
+  _5 = cast copy _4 to u64   @26:18
+  _6 = mul copy _5, const u64 4   @26:18
+  _7 = call avant_alloc(copy _6, const u32 0) collects   @26:18
+  _8 = call avant_alloc(const u64 16, const u32 1022) collects   @26:18
+  barrier copy _8   @26:18
+  (*_8).0 = copy _7   @26:18
+  (*_8).1 = copy _4   @26:18
+  (*_8).2 = copy _4   @26:18
+  barrier copy _1   @26:16
+  (*_1).0 = copy _8   @26:16
+  gc.leave   @19:3
+  return   @19:3
+}
+
+fn av.channels/Channel(Int).send(_1: ref %channels.Channel(Int), _2: i32) -> void frame @channels.av:29:3 {
+  let _1 (self): ref %channels.Channel(Int) slot
+  let _2 (value): i32
+  let _3: u64
+  let _4: i32
+  let _5: bool
+  let _6: i32
+  let _7: bool
+  let _8: u64
+  let _9: u64
+  let _10: i32
+  let _11: bool
+  let _12: i32
+  let _13: bool
+  let _14: u64
+  let _15: i32
+  let _16: i32
+  let _17: bool
+  let _18: u64
+  let _19: i32
+  let _20: i32
+  let _21: i32
+  let _22: i32
+  let _23: i32
+  let _24: ref %Array(Int)
+  let _25: i32
+  let _26: ref %elems(Int)
+  let _27: i32
+  let _28: i32
+  let _29: u64
+  let _30: u64
+
+bb0:
+  gc.enter   @29:3
+  gc.roots _1   @29:3
+  _3 = copy (*_1).6   @30:21
+  call avant_gate_lock(copy _3) collects   @30:5
+  _4 = copy (*_1).1   @31:8
+  _5 = eq copy _4, const i32 0   @31:12
+  branch copy _5, bb1, bb2   @31:5
+
+bb1:
+  goto bb4   @32:7
+
+bb2:
+  goto bb12   @45:7
+
+bb3:
+  _30 = copy (*_1).6   @52:23
+  call avant_gate_unlock(copy _30) collects   @52:5
+  gc.leave   @29:3
+  return   @29:3
+
+bb4:
+  _6 = copy (*_1).5   @32:13
+  _7 = eq copy _6, const i32 1   @32:17
+  branch copy _7, bb5, bb6   @32:7
+
+bb5:
+  _8 = copy (*_1).6   @33:25
+  call avant_gate_wait(copy _8) collects   @33:9
+  goto bb4   @32:7
+
+bb6:
+  (*_1).7 = copy _2   @35:17
+  (*_1).5 = const i32 1   @36:16
+  _9 = copy (*_1).6   @37:28
+  call avant_gate_broadcast(copy _9) collects   @37:7
+  goto bb7   @38:7
+
+bb7:
+  _10 = copy (*_1).5   @38:13
+  _11 = eq copy _10, const i32 1   @38:17
+  branch copy _11, bb8, bb9   @38:7
+
+bb8:
+  _12 = copy (*_1).4   @39:12
+  _13 = eq copy _12, const i32 1   @39:19
+  branch copy _13, bb10, bb11   @39:9
+
+bb9:
+  goto bb3   @31:5
+
+bb10:
+  goto bb9   @40:11
+
+bb11:
+  _14 = copy (*_1).6   @42:25
+  call avant_gate_wait(copy _14) collects   @42:9
+  goto bb7   @38:7
+
+bb12:
+  _15 = copy (*_1).2   @45:13
+  _16 = copy (*_1).1   @45:22
+  _17 = eq copy _15, copy _16   @45:19
+  branch copy _17, bb13, bb14   @45:7
+
+bb13:
+  _18 = copy (*_1).6   @46:25
+  call avant_gate_wait(copy _18) collects   @46:9
+  goto bb12   @45:7
+
+bb14:
+  _19 = copy (*_1).3   @48:14
+  _20 = copy (*_1).2   @48:21
+  _21 = add.chk copy _19, copy _20   @48:19
+  _22 = copy (*_1).1   @48:30
+  _23 = rem.chk copy _21, copy _22   @48:28
+  _24 = copy (*_1).0   @48:7
+  _25 = copy (*_24).1   @48:12
+  check.bounds copy _23, copy _25   @48:12
+  _26 = copy (*_24).0   @48:12
+  (*_26)[copy _23] = copy _2   @48:35
+  _27 = copy (*_1).2   @49:20
+  _28 = add.chk copy _27, const i32 1   @49:26
+  (*_1).2 = copy _28   @49:18
+  _29 = copy (*_1).6   @50:28
+  call avant_gate_broadcast(copy _29) collects   @50:7
+  goto bb3   @31:5
+}
+
+fn av.channels/Channel(Int).recv(_1: ref %channels.Channel(Int)) -> %(Int|Nil) frame @channels.av:55:3 {
+  let _0: %(Int|Nil)
+  let _1 (self): ref %channels.Channel(Int) slot
+  let _2: u64
+  let _3: %(Int|Nil)
+  let _4 (got): %(Int|Nil)
+  let _5: i32
+  let _6: bool
+  let _7: i32
+  let _8: bool
+  let _9: i32
+  let _10: bool
+  let _11: u64
+  let _12: i32
+  let _13: bool
+  let _14: i32
+  let _15: %(Int|Nil)
+  let _16: u64
+  let _17: i32
+  let _18: bool
+  let _19: i32
+  let _20: bool
+  let _21: u64
+  let _22: i32
+  let _23: bool
+  let _24: i32
+  let _25: ref %Array(Int)
+  let _26: i32
+  let _27: ref %elems(Int)
+  let _28: i32
+  let _29: %(Int|Nil)
+  let _30: i32
+  let _31: i32
+  let _32: i32
+  let _33: i32
+  let _34: i32
+  let _35: i32
+  let _36: u64
+  let _37: u64
+
+bb0:
+  gc.enter   @55:3
+  gc.roots _1   @55:3
+  _2 = copy (*_1).6   @56:21
+  call avant_gate_lock(copy _2) collects   @56:5
+  _3 = union %(Int|Nil) tag 1   @57:15
+  _4 = copy _3   @57:5
+  _5 = copy (*_1).1   @58:8
+  _6 = eq copy _5, const i32 0   @58:12
+  branch copy _6, bb1, bb2   @58:5
+
+bb1:
+  goto bb4   @59:7
+
+bb2:
+  goto bb11   @71:7
+
+bb3:
+  _37 = copy (*_1).6   @84:23
+  call avant_gate_unlock(copy _37) collects   @84:5
+  _0 = copy _4   @85:5
+  gc.leave   @85:5
+  return   @85:5
+
+bb4:
+  _7 = copy (*_1).5   @59:13
+  _8 = eq copy _7, const i32 0   @59:17
+  branch copy _8, bb5, bb6   @59:7
+
+bb5:
+  _9 = copy (*_1).4   @60:12
+  _10 = eq copy _9, const i32 1   @60:19
+  branch copy _10, bb7, bb8   @60:9
+
+bb6:
+  _12 = copy (*_1).5   @65:10
+  _13 = eq copy _12, const i32 1   @65:14
+  branch copy _13, bb9, bb10   @65:7
+
+bb7:
+  goto bb6   @61:11
+
+bb8:
+  _11 = copy (*_1).6   @63:25
+  call avant_gate_wait(copy _11) collects   @63:9
+  goto bb4   @59:7
+
+bb9:
+  _14 = copy (*_1).7   @66:15
+  _15 = union %(Int|Nil) tag 0 (copy _14)   @66:15
+  _4 = copy _15   @66:13
+  (*_1).5 = const i32 0   @67:18
+  _16 = copy (*_1).6   @68:30
+  call avant_gate_broadcast(copy _16) collects   @68:9
+  goto bb10   @65:7
+
+bb10:
+  goto bb3   @58:5
+
+bb11:
+  _17 = copy (*_1).2   @71:13
+  _18 = eq copy _17, const i32 0   @71:19
+  branch copy _18, bb12, bb13   @71:7
+
+bb12:
+  _19 = copy (*_1).4   @72:12
+  _20 = eq copy _19, const i32 1   @72:19
+  branch copy _20, bb14, bb15   @72:9
+
+bb13:
+  _22 = copy (*_1).2   @77:10
+  _23 = gt copy _22, const i32 0   @77:16
+  branch copy _23, bb16, bb17   @77:7
+
+bb14:
+  goto bb13   @73:11
+
+bb15:
+  _21 = copy (*_1).6   @75:25
+  call avant_gate_wait(copy _21) collects   @75:9
+  goto bb11   @71:7
+
+bb16:
+  _24 = copy (*_1).3   @78:21
+  _25 = copy (*_1).0   @78:15
+  _26 = copy (*_25).1   @78:20
+  check.bounds copy _24, copy _26   @78:20
+  _27 = copy (*_25).0   @78:20
+  _28 = copy (*_27)[copy _24]   @78:20
+  _29 = union %(Int|Nil) tag 0 (copy _28)   @78:20
+  _4 = copy _29   @78:13
+  _30 = copy (*_1).3   @79:22
+  _31 = add.chk copy _30, const i32 1   @79:27
+  _32 = copy (*_1).1   @79:34
+  _33 = rem.chk copy _31, copy _32   @79:32
+  (*_1).3 = copy _33   @79:19
+  _34 = copy (*_1).2   @80:22
+  _35 = sub.chk copy _34, const i32 1   @80:28
+  (*_1).2 = copy _35   @80:20
+  _36 = copy (*_1).6   @81:30
+  call avant_gate_broadcast(copy _36) collects   @81:9
+  goto bb17   @77:7
+
+bb17:
+  goto bb3   @58:5
+}
+
+fn av.channels/Channel(Int).close(_1: ref %channels.Channel(Int)) -> void frame @channels.av:88:3 {
+  let _1 (self): ref %channels.Channel(Int) slot
+  let _2: u64
+  let _3: u64
+  let _4: u64
+
+bb0:
+  gc.enter   @88:3
+  gc.roots _1   @88:3
+  _2 = copy (*_1).6   @89:21
+  call avant_gate_lock(copy _2) collects   @89:5
+  (*_1).4 = const i32 1   @90:17
+  _3 = copy (*_1).6   @91:26
+  call avant_gate_broadcast(copy _3) collects   @91:5
+  _4 = copy (*_1).6   @92:23
+  call avant_gate_unlock(copy _4) collects   @92:5
+  gc.leave   @88:3
+  return   @88:3
+}
+
+fn av.channels/Channel(String).initialize(_1: ref %channels.Channel(String), _2: i32) -> void frame @channels.av:19:3 {
+  let _1 (self): ref %channels.Channel(String) slot
+  let _2 (n): i32
+  let _3: u64
+  let _4: i32
+  let _5: u64
+  let _6: u64
+  let _7: ref %elems(String) slot
+  let _8: ref %Array(String)
+
+bb0:
+  _7 = zero   @19:3
+  gc.enter   @19:3
+  gc.roots _1, _7   @19:3
+  (*_1).1 = copy _2   @20:14
+  (*_1).2 = const i32 0   @21:16
+  (*_1).3 = const i32 0   @22:15
+  (*_1).4 = const i32 0   @23:17
+  (*_1).5 = const i32 0   @24:14
+  _3 = call avant_gate_new() collects   @25:17
+  (*_1).6 = copy _3   @25:15
+  _4 = copy _2   @26:18
+  _5 = cast copy _4 to u64   @26:18
+  _6 = mul copy _5, const u64 8   @26:18
+  _7 = call avant_alloc(copy _6, const u32 65535) collects   @26:18
+  _8 = call avant_alloc(const u64 16, const u32 1022) collects   @26:18
+  barrier copy _8   @26:18
+  (*_8).0 = copy _7   @26:18
+  (*_8).1 = copy _4   @26:18
+  (*_8).2 = copy _4   @26:18
+  barrier copy _1   @26:16
+  (*_1).0 = copy _8   @26:16
+  gc.leave   @19:3
+  return   @19:3
+}
+
+fn av.channels/Channel(String).send(_1: ref %channels.Channel(String), _2: ref str) -> void frame @channels.av:29:3 {
+  let _1 (self): ref %channels.Channel(String) slot
+  let _2 (value): ref str slot
+  let _3: u64
+  let _4: i32
+  let _5: bool
+  let _6: i32
+  let _7: bool
+  let _8: u64
+  let _9: u64
+  let _10: i32
+  let _11: bool
+  let _12: i32
+  let _13: bool
+  let _14: u64
+  let _15: i32
+  let _16: i32
+  let _17: bool
+  let _18: u64
+  let _19: ref %Array(String)
+  let _20: i32
+  let _21: i32
+  let _22: i32
+  let _23: i32
+  let _24: i32
+  let _25: i32
+  let _26: i32
+  let _27: i32
+  let _28: u64
+  let _29: u64
+
+bb0:
+  gc.enter   @29:3
+  gc.roots _1, _2   @29:3
+  _3 = copy (*_1).6   @30:21
+  call avant_gate_lock(copy _3) collects   @30:5
+  _4 = copy (*_1).1   @31:8
+  _5 = eq copy _4, const i32 0   @31:12
+  branch copy _5, bb1, bb2   @31:5
+
+bb1:
+  goto bb4   @32:7
+
+bb2:
+  goto bb12   @45:7
+
+bb3:
+  _29 = copy (*_1).6   @52:23
+  call avant_gate_unlock(copy _29) collects   @52:5
+  gc.leave   @29:3
+  return   @29:3
+
+bb4:
+  _6 = copy (*_1).5   @32:13
+  _7 = eq copy _6, const i32 1   @32:17
+  branch copy _7, bb5, bb6   @32:7
+
+bb5:
+  _8 = copy (*_1).6   @33:25
+  call avant_gate_wait(copy _8) collects   @33:9
+  goto bb4   @32:7
+
+bb6:
+  barrier copy _1   @35:17
+  (*_1).7 = copy _2   @35:17
+  (*_1).5 = const i32 1   @36:16
+  _9 = copy (*_1).6   @37:28
+  call avant_gate_broadcast(copy _9) collects   @37:7
+  goto bb7   @38:7
+
+bb7:
+  _10 = copy (*_1).5   @38:13
+  _11 = eq copy _10, const i32 1   @38:17
+  branch copy _11, bb8, bb9   @38:7
+
+bb8:
+  _12 = copy (*_1).4   @39:12
+  _13 = eq copy _12, const i32 1   @39:19
+  branch copy _13, bb10, bb11   @39:9
+
+bb9:
+  goto bb3   @31:5
+
+bb10:
+  goto bb9   @40:11
+
+bb11:
+  _14 = copy (*_1).6   @42:25
+  call avant_gate_wait(copy _14) collects   @42:9
+  goto bb7   @38:7
+
+bb12:
+  _15 = copy (*_1).2   @45:13
+  _16 = copy (*_1).1   @45:22
+  _17 = eq copy _15, copy _16   @45:19
+  branch copy _17, bb13, bb14   @45:7
+
+bb13:
+  _18 = copy (*_1).6   @46:25
+  call avant_gate_wait(copy _18) collects   @46:9
+  goto bb12   @45:7
+
+bb14:
+  _19 = copy (*_1).0   @48:7
+  _20 = copy (*_1).3   @48:14
+  _21 = copy (*_1).2   @48:21
+  _22 = add.chk copy _20, copy _21   @48:19
+  _23 = copy (*_1).1   @48:30
+  _24 = rem.chk copy _22, copy _23   @48:28
+  _25 = copy (*_19).1   @48:35
+  check.bounds copy _24, copy _25   @48:35
+  call avant_array_set_ptr(copy _19, copy _24, copy _2) nocollect   @48:35
+  _26 = copy (*_1).2   @49:20
+  _27 = add.chk copy _26, const i32 1   @49:26
+  (*_1).2 = copy _27   @49:18
+  _28 = copy (*_1).6   @50:28
+  call avant_gate_broadcast(copy _28) collects   @50:7
+  goto bb3   @31:5
+}
+
+fn av.channels/Channel(String).recv(_1: ref %channels.Channel(String)) -> %(Nil|String) frame @channels.av:55:3 {
+  let _0: %(Nil|String)
+  let _1 (self): ref %channels.Channel(String) slot
+  let _2: u64
+  let _3: %(Nil|String)
+  let _4 (got): %(Nil|String) slot
+  let _5: i32
+  let _6: bool
+  let _7: i32
+  let _8: bool
+  let _9: i32
+  let _10: bool
+  let _11: u64
+  let _12: i32
+  let _13: bool
+  let _14: ref str
+  let _15: %(Nil|String)
+  let _16: u64
+  let _17: i32
+  let _18: bool
+  let _19: i32
+  let _20: bool
+  let _21: u64
+  let _22: i32
+  let _23: bool
+  let _24: i32
+  let _25: ref %Array(String)
+  let _26: i32
+  let _27: ref %elems(String)
+  let _28: ref str
+  let _29: %(Nil|String)
+  let _30: i32
+  let _31: i32
+  let _32: i32
+  let _33: i32
+  let _34: i32
+  let _35: i32
+  let _36: u64
+  let _37: u64
+
+bb0:
+  _4 = zero   @55:3
+  gc.enter   @55:3
+  gc.roots _1, _4   @55:3
+  _2 = copy (*_1).6   @56:21
+  call avant_gate_lock(copy _2) collects   @56:5
+  _3 = union %(Nil|String) tag 0   @57:15
+  _4 = copy _3   @57:5
+  _5 = copy (*_1).1   @58:8
+  _6 = eq copy _5, const i32 0   @58:12
+  branch copy _6, bb1, bb2   @58:5
+
+bb1:
+  goto bb4   @59:7
+
+bb2:
+  goto bb11   @71:7
+
+bb3:
+  _37 = copy (*_1).6   @84:23
+  call avant_gate_unlock(copy _37) collects   @84:5
+  _0 = copy _4   @85:5
+  gc.leave   @85:5
+  return   @85:5
+
+bb4:
+  _7 = copy (*_1).5   @59:13
+  _8 = eq copy _7, const i32 0   @59:17
+  branch copy _8, bb5, bb6   @59:7
+
+bb5:
+  _9 = copy (*_1).4   @60:12
+  _10 = eq copy _9, const i32 1   @60:19
+  branch copy _10, bb7, bb8   @60:9
+
+bb6:
+  _12 = copy (*_1).5   @65:10
+  _13 = eq copy _12, const i32 1   @65:14
+  branch copy _13, bb9, bb10   @65:7
+
+bb7:
+  goto bb6   @61:11
+
+bb8:
+  _11 = copy (*_1).6   @63:25
+  call avant_gate_wait(copy _11) collects   @63:9
+  goto bb4   @59:7
+
+bb9:
+  _14 = copy (*_1).7   @66:15
+  _15 = union %(Nil|String) tag 1 (copy _14)   @66:15
+  _4 = copy _15   @66:13
+  (*_1).5 = const i32 0   @67:18
+  _16 = copy (*_1).6   @68:30
+  call avant_gate_broadcast(copy _16) collects   @68:9
+  goto bb10   @65:7
+
+bb10:
+  goto bb3   @58:5
+
+bb11:
+  _17 = copy (*_1).2   @71:13
+  _18 = eq copy _17, const i32 0   @71:19
+  branch copy _18, bb12, bb13   @71:7
+
+bb12:
+  _19 = copy (*_1).4   @72:12
+  _20 = eq copy _19, const i32 1   @72:19
+  branch copy _20, bb14, bb15   @72:9
+
+bb13:
+  _22 = copy (*_1).2   @77:10
+  _23 = gt copy _22, const i32 0   @77:16
+  branch copy _23, bb16, bb17   @77:7
+
+bb14:
+  goto bb13   @73:11
+
+bb15:
+  _21 = copy (*_1).6   @75:25
+  call avant_gate_wait(copy _21) collects   @75:9
+  goto bb11   @71:7
+
+bb16:
+  _24 = copy (*_1).3   @78:21
+  _25 = copy (*_1).0   @78:15
+  _26 = copy (*_25).1   @78:20
+  check.bounds copy _24, copy _26   @78:20
+  _27 = copy (*_25).0   @78:20
+  _28 = copy (*_27)[copy _24]   @78:20
+  _29 = union %(Nil|String) tag 1 (copy _28)   @78:20
+  _4 = copy _29   @78:13
+  _30 = copy (*_1).3   @79:22
+  _31 = add.chk copy _30, const i32 1   @79:27
+  _32 = copy (*_1).1   @79:34
+  _33 = rem.chk copy _31, copy _32   @79:32
+  (*_1).3 = copy _33   @79:19
+  _34 = copy (*_1).2   @80:22
+  _35 = sub.chk copy _34, const i32 1   @80:28
+  (*_1).2 = copy _35   @80:20
+  _36 = copy (*_1).6   @81:30
+  call avant_gate_broadcast(copy _36) collects   @81:9
+  goto bb17   @77:7
+
+bb17:
+  goto bb3   @58:5
+}
+
+fn av.channels/Channel(String).close(_1: ref %channels.Channel(String)) -> void frame @channels.av:88:3 {
+  let _1 (self): ref %channels.Channel(String) slot
+  let _2: u64
+  let _3: u64
+  let _4: u64
+
+bb0:
+  gc.enter   @88:3
+  gc.roots _1   @88:3
+  _2 = copy (*_1).6   @89:21
+  call avant_gate_lock(copy _2) collects   @89:5
+  (*_1).4 = const i32 1   @90:17
+  _3 = copy (*_1).6   @91:26
+  call avant_gate_broadcast(copy _3) collects   @91:5
+  _4 = copy (*_1).6   @92:23
+  call avant_gate_unlock(copy _4) collects   @92:5
+  gc.leave   @88:3
+  return   @88:3
+}
+
+fn av.channels/Channel(Int).new(_1: i32) -> ref %channels.Channel(Int) frame @channels.av:9:1 {
+  let _0: ref %channels.Channel(Int)
+  let _1 (n): i32
+  let _2: ref %channels.Channel(Int) slot
+
+bb0:
+  _2 = zero   @9:1
+  gc.enter   @9:1
+  gc.roots _2   @9:1
+  _2 = call avant_alloc(const u64 48, const u32 1) collects   @9:1
+  call av.channels/Channel(Int).initialize(copy _2, copy _1) collects   @9:1
+  _0 = copy _2   @9:1
+  gc.leave   @9:1
+  return   @9:1
+}
+
+fn av.channels/Channel(String).new(_1: i32) -> ref %channels.Channel(String) frame @channels.av:9:1 {
+  let _0: ref %channels.Channel(String)
+  let _1 (n): i32
+  let _2: ref %channels.Channel(String) slot
+
+bb0:
+  _2 = zero   @9:1
+  gc.enter   @9:1
+  gc.roots _2   @9:1
+  _2 = call avant_alloc(const u64 48, const u32 2) collects   @9:1
+  call av.channels/Channel(String).initialize(copy _2, copy _1) collects   @9:1
+  _0 = copy _2   @9:1
+  gc.leave   @9:1
+  return   @9:1
+}
+
+fn av.channels/main#spawn1(_1: ref) -> i32 frame @channels.av:107:8 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.channels/main#spawn1)
+  let _3: ref %channels.Channel(Int)
+  let _4 (nums): ref %channels.Channel(Int)
+  let _5: i32
+
+bb0:
+  gc.enter   @107:8
+  gc.roots   @107:8
+  _2 = cast copy _1 to ref %spawn_cap(av.channels/main#spawn1)   @107:8
+  _3 = copy (*_2).0   @107:8
+  _4 = copy _3   @107:8
+  _5 = call av.channels/produce(copy _4, const i32 0, const i32 500) collects   @107:16
+  _0 = copy _5   @107:8
+  gc.leave   @107:8
+  return   @107:8
+}
+
+fn av.channels/main#spawn2(_1: ref) -> i32 frame @channels.av:108:8 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.channels/main#spawn2)
+  let _3: ref %channels.Channel(Int)
+  let _4 (nums): ref %channels.Channel(Int)
+  let _5: i32
+
+bb0:
+  gc.enter   @108:8
+  gc.roots   @108:8
+  _2 = cast copy _1 to ref %spawn_cap(av.channels/main#spawn2)   @108:8
+  _3 = copy (*_2).0   @108:8
+  _4 = copy _3   @108:8
+  _5 = call av.channels/produce(copy _4, const i32 1000, const i32 500) collects   @108:16
+  _0 = copy _5   @108:8
+  gc.leave   @108:8
+  return   @108:8
+}
+
+fn av.channels/main#spawn3(_1: ref) -> i32 frame @channels.av:122:8 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.channels/main#spawn3)
+  let _3: ref %channels.Channel(String)
+  let _4 (texts): ref %channels.Channel(String) slot
+  let _5: ref str
+  let _6 (prefix): ref str slot
+  let _7 (i): i32
+  let _8: bool
+  let _9: ref str slot
+  let _10: ref str slot
+  let _11: ref str
+  let _12: i32
+
+bb0:
+  _4 = zero   @122:8
+  _6 = zero   @122:8
+  _9 = zero   @122:8
+  _10 = zero   @122:8
+  gc.enter   @122:8
+  gc.roots _4, _6, _9, _10   @122:8
+  _2 = cast copy _1 to ref %spawn_cap(av.channels/main#spawn3)   @122:8
+  _3 = copy (*_2).0   @122:8
+  _4 = copy _3   @122:8
+  _5 = copy (*_2).1   @122:8
+  _6 = copy _5   @122:8
+  _7 = const i32 0   @123:7
+  goto bb1   @124:5
+
+bb1:
+  _8 = lt copy _7, const i32 50   @124:13
+  branch copy _8, bb2, bb3   @124:5
+
+bb2:
+  _9 = call avant_str_from_int(copy _7) collects   @125:31
+  _10 = call avant_str_concat(copy _6, const str.4) collects   @125:18
+  _11 = call avant_str_concat(copy _10, copy _9) collects   @125:18
+  call av.channels/Channel(String).send(copy _4, copy _11) collects   @125:12
+  _12 = add.chk copy _7, const i32 1   @126:13
+  _7 = copy _12   @126:9
+  goto bb1   @124:5
+
+bb3:
+  call av.channels/Channel(String).close(copy _4) collects   @128:10
+  _0 = const i32 50   @122:8
+  gc.leave   @122:8
+  return   @122:8
+}
+
+fn av.channels/main#spawn4(_1: ref) -> i32 frame @channels.av:153:18 {
+  let _0: i32
+  let _1 (cap): ref
+  let _2 (cap): ref %spawn_cap(av.channels/main#spawn4)
+  let _3: ref %channels.Channel(String)
+  let _4 (replies): ref %channels.Channel(String) slot
+  let _5: i32
+  let _6 (id): i32
+  let _7: ref str
+
+bb0:
+  _4 = zero   @153:18
+  gc.enter   @153:18
+  gc.roots _4   @153:18
+  _2 = cast copy _1 to ref %spawn_cap(av.channels/main#spawn4)   @153:18
+  _3 = copy (*_2).0   @153:18
+  _4 = copy _3   @153:18
+  _5 = copy (*_2).1   @153:18
+  _6 = copy _5   @153:18
+  _7 = call avant_str_cat_i32(const str.5, copy _6) collects   @154:20
+  call av.channels/Channel(String).send(copy _4, copy _7) collects   @154:14
+  _0 = copy _6   @153:18
+  gc.leave   @153:18
+  return   @153:18
+}

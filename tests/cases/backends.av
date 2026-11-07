@@ -1,0 +1,228 @@
+import harness
+
+// Helpers shared by the suite tests of the back end's subsets (Stage 28:
+// test_scalars.av W5b, test_strings.av W6a, ...; until W11 they compared
+// the two back ends, D176, D184; since then each program with its run
+// golden): job builders for compiles under an environment, program runs
+// with stdout and stderr in their own files, waves of at most 24 jobs,
+// and the run goldens.
+
+pub fn log_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+pub fn key_of(rel: String): String {
+  buf = buf_new()
+  i = 0
+  while i < rel.size {
+    c = rel[i]
+    if c == 47 || c == 46 {
+      buf.push_byte(95)
+    } else {
+      buf.push_byte(c)
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// /usr/bin/env [VAR=value ...] COMPILER ARGS... (envs: space-separated
+// VAR=value words).
+pub fn env_job(envs: String, compiler: String, args: Array(String), log: String): HJob {
+  a: Array(String) = []
+  if envs.size > 0 {
+    ws = envs.split(" ")
+    j = 0
+    while j < ws.size {
+      if ws[j].size > 0 {
+        a.push(ws[j])
+      }
+      j = j + 1
+    }
+  }
+  a.push(compiler)
+  i = 0
+  while i < args.size {
+    a.push(args[i])
+    i = i + 1
+  }
+  HJob.new("/usr/bin/env", a, log)
+}
+
+pub fn compile_job(envs: String, compiler: String, src: String, out: String, log: String): HJob {
+  a: Array(String) = []
+  a.push("compile")
+  a.push(src)
+  a.push(out)
+  a.push("--debug")
+  env_job(envs, compiler, a, log)
+}
+
+// The same with extra compile flags (Stage 28 W8a: `--cc FILE.c`,
+// `--lib NAME`), after the mode.
+pub fn compile_job_flags(envs: String, compiler: String, src: String, out: String, log: String, flags: Array(String)): HJob {
+  a: Array(String) = []
+  a.push("compile")
+  a.push(src)
+  a.push(out)
+  a.push("--debug")
+  i = 0
+  while i < flags.size {
+    a.push(flags[i])
+    i = i + 1
+  }
+  env_job(envs, compiler, a, log)
+}
+
+// Run BIN in DIR with stdout and stderr in their own files; the job's
+// code is the program's exit status.
+pub fn run_job(dir: String, bin: String, key: String): HJob {
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && exec ./${bin} > ${key}.out 2> ${key}.err < /dev/null")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+// The same with environment words (`VAR=value ...`) for the program.
+pub fn run_job_env(dir: String, bin: String, key: String, envs: String): HJob {
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && exec env ${envs} ./${bin} > ${key}.out 2> ${key}.err < /dev/null")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+// Jobs in waves of at most 24, so a large list does not start every
+// compiler at once.
+pub fn run_waves(jobs: Array(HJob)) {
+  i = 0
+  while i < jobs.size {
+    wave: Array(HJob) = []
+    while i < jobs.size && wave.size < 24 {
+      wave.push(jobs[i])
+      i = i + 1
+    }
+    run_jobs(wave)
+  }
+}
+
+
+// The run goldens (Stage 28 W11, tests/goldens/runs/, tools/run-goldens.sh):
+// a program's stdout, stderr, and exit status, frozen from the old back
+// end before it retired (the oracle these tests used to run as a second
+// implementation). A program's key is its path without the leading
+// tests/ and without .av.
+pub fn golden_key(rel: String): String {
+  k = rel
+  if k.size > 6 && str_eq(str_slice(k, 0, 6), "tests/") {
+    k = str_slice(k, 6, k.size)
+  }
+  if k.size > 3 && str_eq(str_slice(k, k.size - 3, k.size), ".av") {
+    k = str_slice(k, 0, k.size - 3)
+  }
+  k
+}
+
+pub fn golden_out(root: String, rel: String): String {
+  if t = file_read("${root}/tests/goldens/runs/${golden_key(rel)}.out") {
+    return t
+  }
+  "(no golden for ${rel})"
+}
+
+// The compared view of a program's stdout (tools/run-goldens.sh view):
+// examples/zlib.av prints the system zlib's version (1.3.1 here, 1.3 on
+// the CI runner), so a line of digits and dots reads `<zlib version>`.
+// Other programs compare their whole stdout.
+pub fn golden_view(rel: String, out: String): String {
+  if str_eq(rel, "examples/zlib.av") {
+    lines = out.split("\n")
+    res = ""
+    i = 0
+    while i < lines.size {
+      if i > 0 {
+        res = res + "\n"
+      }
+      if is_version(lines[i]) {
+        res = res + "<zlib version>"
+      } else {
+        res = res + lines[i]
+      }
+      i = i + 1
+    }
+    return res
+  }
+  out
+}
+
+// True for `D(.D)+` where each D is one or more decimal digits.
+fn is_version(s: String): Bool {
+  if s.size == 0 {
+    return false
+  }
+  dots = 0
+  digits = 0
+  i = 0
+  while i < s.size {
+    ch = str_slice(s, i, i + 1)
+    if str_eq(ch, ".") {
+      if digits == 0 {
+        return false
+      }
+      dots = dots + 1
+      digits = 0
+    } else if str_has("0123456789", ch) {
+      digits = digits + 1
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  dots > 0 && digits > 0
+}
+
+// The golden stderr: KEY.err, absent when it is empty.
+pub fn golden_err(root: String, rel: String): String {
+  path = "${root}/tests/goldens/runs/${golden_key(rel)}.err"
+  if file_exists(path) {
+    if t = file_read(path) {
+      return t
+    }
+  }
+  ""
+}
+
+// The golden exit status (status.txt: `PATH STATUS` lines), -1 when the
+// program has none.
+pub fn golden_status(root: String, rel: String): Int {
+  if t = file_read("${root}/tests/goldens/runs/status.txt") {
+    lines = t.split("\n")
+    i = 0
+    while i < lines.size {
+      ws = lines[i].split(" ")
+      if ws.size == 2 && str_eq(ws[0], rel) {
+        return ws[1].to_i
+      }
+      i = i + 1
+    }
+  }
+  -1
+}
+
+// Every occurrence of from in s replaced by to (from not empty).
+pub fn str_replace_all(s: String, from: String, to: String): String {
+  buf = buf_new()
+  i = 0
+  while i < s.size {
+    if i + from.size <= s.size && str_eq(str_slice(s, i, i + from.size), from) {
+      buf.push_str(to)
+      i = i + from.size
+    } else {
+      buf.push_byte(s[i])
+      i = i + 1
+    }
+  }
+  buf.to_s
+}

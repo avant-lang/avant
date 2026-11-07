@@ -4,14 +4,14 @@ fn test_oracle(c: Checks) {
   c.suite("tests/cases/test_oracle.av")
   root = avant_test_root()
   c.expect(file_exists("${root}/compiler/main.av"), "identity compiler/main.av")
-  c.expect(file_exists("${root}/tests/goldens/hello.myc"), "dump golden hello.myc")
+  c.expect(file_exists("${root}/tests/goldens/examples/hello.mir"), "dump golden hello.mir")
 
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
     hello = "${root}/examples/hello.av"
-    golden = "${root}/tests/goldens/hello.myc"
+    golden = "${root}/tests/goldens/examples/hello.mir"
     hlog = "${scratch()}/oracle-${stamp}-hello.log"
-    dump_path = "${scratch()}/oracle-${stamp}-hello.myc"
+    dump_path = "${scratch()}/oracle-${stamp}-hello.mir"
 
     hcode = run_av_cmd(compiler, hello, hlog)
     c.eq_int(hcode, 0, "identity runs hello")
@@ -27,7 +27,7 @@ fn test_oracle(c: Checks) {
       if want = file_read(golden) {
         c.eq_str(got, want, "identity dump matches golden")
       } else {
-        c.expect(false, "read golden hello.myc")
+        c.expect(false, "read golden hello.mir")
       }
     } else {
       c.expect(false, "read identity hello dump")

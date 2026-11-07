@@ -1,0 +1,149 @@
+// Object churn on the new back end (Stage 28 W6b): objects allocated in
+// a loop, some held across collecting calls; long-lived holders that
+// become mature and then gain young children through every barrier form
+// (an explicit class field, an implicit field in a class method, a struct
+// field inside a class field, a struct method's self through barrier_at,
+// nil into a union field), and a struct method that allocates (collects)
+// while its self is an address inside a heap object. Every child is
+// checked after more collections. Run under AVANT_GC_VERIFY=1 and
+// AVANT_YOUNG_MB=1 it must print the same.
+
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b - a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+class Leaf {
+  v: Int
+  s: String
+
+  fn initialize(v: Int) {
+    self.v = v
+    s = "leaf-${v}"
+  }
+}
+
+struct Slot {
+  k: Int
+  leaf: Leaf
+  name: String
+
+  // Stores through self (barrier_at).
+  fn put(l: Leaf, n: String) {
+    leaf = l
+    self.name = n
+    k = l.v
+  }
+
+  // Allocates while self points into a heap object: self is a slot and
+  // is relocated with the object.
+  fn refill(rounds: Int): Int {
+    sum = 0
+    r = 0
+    while r < rounds {
+      t = Leaf.new(r)
+      sum = sum &+ t.s.size
+      leaf = t
+      name = "refill-${r}"
+      r = r + 1
+    }
+    sum &+ k
+  }
+}
+
+class Holder {
+  id: Int
+  direct: Leaf
+  slot: Slot
+  opt: Leaf? = nil
+  note: String = "none"
+
+  fn initialize(id: Int) {
+    self.id = id
+    direct = Leaf.new(id)
+  }
+
+  // Implicit field store.
+  fn adopt(l: Leaf) {
+    direct = l
+    note = "adopted-${l.v}"
+  }
+}
+
+fn churn(n: Int): Int {
+  s = 0
+  i = 0
+  while i < n {
+    t = Leaf.new(i)
+    u = Leaf.new(i &+ 1)
+    s = s &+ t.v &+ u.s.size
+    i = i + 1
+  }
+  s
+}
+
+fn check(h: Holder, want: Int): Int {
+  bad = 0
+  if h.direct.v != want || h.direct.s.size != 5 + "${want}".size {
+    bad = bad + 1
+  }
+  if h.slot.leaf.v != want || h.slot.leaf.s.size != 5 + "${want}".size {
+    bad = bad + 1
+  }
+  if h.slot.name.size != 5 + "${want}".size || h.slot.k != want {
+    bad = bad + 1
+  }
+  if h.note.size != 8 + "${want}".size {
+    bad = bad + 1
+  }
+  bad
+}
+
+// The holders are reached only through root's fields: a mature object
+// named directly by a root slot is scanned by every young collection
+// anyway (runtime/avant_rt.c, the young copy's slot scan), so only a
+// holder reached through another object depends on its barrier.
+class Root {
+  h0: Holder
+  h1: Holder
+  h2: Holder
+}
+
+fn main {
+  n = opaque(300)
+  root = Root.new
+  root.h0 = Holder.new(1)
+  root.h1 = Holder.new(2)
+  root.h2 = Holder.new(3)
+  total = churn(n * 100)
+  bad = 0
+  round = 0
+  while round < 200 {
+    // The holders are mature by now; each store gives them young children.
+    root.h0.direct = Leaf.new(round)
+    root.h0.slot.leaf = Leaf.new(round)
+    root.h0.slot.name = "name-${round}"
+    root.h0.slot.k = round
+    root.h0.note = "adopted-${round}"
+    root.h0.opt = nil
+    root.h1.adopt(Leaf.new(round))
+    root.h1.slot.put(Leaf.new(round), "slot-${round}")
+    sl = Slot { k: round, leaf: Leaf.new(round), name: "copy-${round}" }
+    root.h2.slot = sl
+    root.h2.adopt(Leaf.new(round))
+    total = total &+ churn(n * 20)
+    bad = bad + check(root.h0, round) + check(root.h1, round) + check(root.h2, round)
+    total = total &+ root.h1.slot.refill(5)
+    if root.h1.slot.leaf.v != 4 || root.h1.slot.name.size != 8 {
+      bad = bad + 1
+    }
+    round = round + 1
+  }
+  puts(total)
+  puts(bad)
+  puts(root.h1.slot.name)
+}

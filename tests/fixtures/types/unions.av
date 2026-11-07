@@ -1,0 +1,160 @@
+// Unions and T? on the new back end (Stage 28 W7a): construction (a
+// member wrapped with its tag, nil with the nil tag), unions as results,
+// parameters, locals, class and struct fields, array elements; `??` and
+// `.or` (the right side evaluated only on nil), postfix `?` with a nil
+// and with a class failure, `if x = ...` on T? and on T | Error. Member
+// order is the checker's (sorted by shown name): Leaf? is (Leaf|Nil),
+// Int? is (Int|Nil), String? is (Nil|String), V? is (Nil|V).
+
+class Leaf {
+  n: Int
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+}
+
+class Oops {
+  m: String
+
+  fn initialize(m: String) {
+    self.m = m
+  }
+}
+
+struct V {
+  x: Int
+  y: Int
+}
+
+struct Cell {
+  k: Int
+  v: V?
+}
+
+class Holder {
+  a: Leaf? = nil
+  b: Int | String = 0
+  c: Bool? = nil
+  cell: Cell
+
+  fn initialize {
+    cell = Cell { k: 0, v: none_v() }
+  }
+}
+
+fn none_v: V? {
+  nil
+}
+
+fn pick(n: Int): V? {
+  if n > 0 {
+    return V { x: n, y: n + 1 }
+  }
+  nil
+}
+
+fn name(n: Int): String? {
+  if n == 1 {
+    return "one"
+  }
+  nil
+}
+
+fn div(a: Int, b: Int): Int | Oops {
+  if b == 0 {
+    return Oops.new("zero")
+  }
+  a / b
+}
+
+fn twice(a: Int, b: Int): String | Oops {
+  q = div(a, b)?
+  "${q * 2}"
+}
+
+fn plus1(s: String?): Int? {
+  t = s?
+  t.size + 1
+}
+
+fn say(s: String): String {
+  puts("eval ${s}")
+  s
+}
+
+fn pass(o: Leaf?): Leaf? {
+  o
+}
+
+fn sum(xs: Array(Leaf?)): Int {
+  t = 0
+  for e in xs {
+    if f = e {
+      t += f.n
+    }
+  }
+  t
+}
+
+fn main {
+  h = Holder.new
+  if l = h.a {
+    puts(l.n)
+  } else {
+    puts("no leaf")
+  }
+  h.a = Leaf.new(3)
+  if l2 = pass(h.a) {
+    puts(l2.n)
+  }
+  h.b = "str"
+  h.b = 9
+  h.c = true
+  if c = h.c {
+    puts(c)
+  }
+  h.cell.v = pick(4)
+  if cv = h.cell.v {
+    puts(cv.x * cv.y)
+  }
+  if v = pick(2) {
+    puts(v.x + v.y)
+  }
+  w = pick(0) ?? V { x: 1, y: 1 }
+  puts(w.x)
+  puts(name(1) ?? say("a"))
+  puts(name(2) ?? say("b"))
+  puts(name(3).or("orr"))
+  puts(name(1).or(say("c")))
+  if r = twice(9, 3) {
+    puts(r)
+  }
+  if r2 = twice(9, 0) {
+    puts(r2)
+  } else {
+    puts("fail")
+  }
+  puts(plus1(name(1)) ?? -1)
+  puts(plus1(name(5)) ?? -1)
+  o: Int? = nil
+  puts(o ?? 11)
+  o = 4
+  if q = o {
+    puts(q)
+  }
+  xs: Array(Leaf?) = [Leaf.new(1), nil, Leaf.new(3)]
+  xs.push(nil)
+  xs.push(Leaf.new(5))
+  puts(sum(xs))
+  xs[1] = Leaf.new(10)
+  if g = xs[1] {
+    puts(g.n)
+  }
+  vs: Array(V?) = [pick(1), pick(0)]
+  vs.push(pick(7))
+  if p = vs.pop {
+    puts(p.y)
+  }
+  puts(vs.size)
+}

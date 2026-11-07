@@ -20,6 +20,91 @@ pub class Scope {
   }
 }
 
+// The flow facts the checker proves inside one function body (bounds,
+// non-nil, capacity, positivity; checker/facts.av), reset per function.
+// Their own object, not Checker's payload: while the v0.34.0 seed builds B,
+// its type maps lose every reference word past payload word 63 (audit
+// 8.4, fixed by W1b in the tree only), so no compiler class may have a
+// reference field there (D188; test_fixed_point checks it). Relax after a
+// re-seed (D178).
+pub class FlowFacts {
+  fact_var: Array(String)
+  fact_cont: Array(String)
+  fact_slack: Array(Int)
+  fact_live: Array(Int)
+  sv_var: Array(String)
+  sv_cont: Array(String)
+  bv_var: Array(String)
+  bv_cont: Array(String)
+  bv_delta: Array(Int)
+  cs_cont: Array(String)
+  cs_var: Array(String)
+  cs_delta: Array(Int)
+  nn_var: Array(String)
+  cap_var: Array(String)
+  cap_val: Array(Int64)
+  gcap_var: Array(String)
+  gcap_val: Array(Int64)
+  gcap_live: Array(Int)
+  gnn_var: Array(String)
+  gnn_live: Array(Int)
+  gpos_var: Array(String)
+  gpos_live: Array(Int)
+  gne_var: Array(String)
+  gne_live: Array(Int)
+
+  fn initialize {
+    fv: Array(String) = []
+    self.fact_var = fv
+    fc: Array(String) = []
+    self.fact_cont = fc
+    fs: Array(Int) = []
+    self.fact_slack = fs
+    fl: Array(Int) = []
+    self.fact_live = fl
+    svv: Array(String) = []
+    self.sv_var = svv
+    svc: Array(String) = []
+    self.sv_cont = svc
+    bvv: Array(String) = []
+    self.bv_var = bvv
+    bvc: Array(String) = []
+    self.bv_cont = bvc
+    bvd: Array(Int) = []
+    self.bv_delta = bvd
+    csc: Array(String) = []
+    self.cs_cont = csc
+    csvv: Array(String) = []
+    self.cs_var = csvv
+    csd: Array(Int) = []
+    self.cs_delta = csd
+    nnv: Array(String) = []
+    self.nn_var = nnv
+    cpv: Array(String) = []
+    self.cap_var = cpv
+    cpvl: Array(Int64) = []
+    self.cap_val = cpvl
+    gcv: Array(String) = []
+    self.gcap_var = gcv
+    gcvl: Array(Int64) = []
+    self.gcap_val = gcvl
+    gcl: Array(Int) = []
+    self.gcap_live = gcl
+    gnv: Array(String) = []
+    self.gnn_var = gnv
+    gnl: Array(Int) = []
+    self.gnn_live = gnl
+    gpv: Array(String) = []
+    self.gpos_var = gpv
+    gpl: Array(Int) = []
+    self.gpos_live = gpl
+    gev: Array(String) = []
+    self.gne_var = gev
+    gel: Array(Int) = []
+    self.gne_live = gel
+  }
+}
+
 pub class Checker {
   source: Source
   program: Program
@@ -63,30 +148,7 @@ pub class Checker {
   spawn_skip: Array(String)
   pending_handles: Array(String)
   pending_arrays: Array(String)
-  fact_var: Array(String)
-  fact_cont: Array(String)
-  fact_slack: Array(Int)
-  fact_live: Array(Int)
-  sv_var: Array(String)
-  sv_cont: Array(String)
-  bv_var: Array(String)
-  bv_cont: Array(String)
-  bv_delta: Array(Int)
-  cs_cont: Array(String)
-  cs_var: Array(String)
-  cs_delta: Array(Int)
-  nn_var: Array(String)
-  cap_var: Array(String)
-  cap_val: Array(Int64)
-  gcap_var: Array(String)
-  gcap_val: Array(Int64)
-  gcap_live: Array(Int)
-  gnn_var: Array(String)
-  gnn_live: Array(Int)
-  gpos_var: Array(String)
-  gpos_live: Array(Int)
-  gne_var: Array(String)
-  gne_live: Array(Int)
+  facts: FlowFacts
   adopted: Hash(String, Int)
   adopt_pending: Bool = false
   ready_adopt: Bool = false
@@ -170,54 +232,7 @@ pub class Checker {
     self.pending_handles = ph
     pa: Array(String) = []
     self.pending_arrays = pa
-    fv: Array(String) = []
-    self.fact_var = fv
-    fc: Array(String) = []
-    self.fact_cont = fc
-    fs: Array(Int) = []
-    self.fact_slack = fs
-    fl: Array(Int) = []
-    self.fact_live = fl
-    svv: Array(String) = []
-    self.sv_var = svv
-    svc: Array(String) = []
-    self.sv_cont = svc
-    bvv: Array(String) = []
-    self.bv_var = bvv
-    bvc: Array(String) = []
-    self.bv_cont = bvc
-    bvd: Array(Int) = []
-    self.bv_delta = bvd
-    csc: Array(String) = []
-    self.cs_cont = csc
-    csvv: Array(String) = []
-    self.cs_var = csvv
-    csd: Array(Int) = []
-    self.cs_delta = csd
-    nnv: Array(String) = []
-    self.nn_var = nnv
-    cpv: Array(String) = []
-    self.cap_var = cpv
-    cpvl: Array(Int64) = []
-    self.cap_val = cpvl
-    gcv: Array(String) = []
-    self.gcap_var = gcv
-    gcvl: Array(Int64) = []
-    self.gcap_val = gcvl
-    gcl: Array(Int) = []
-    self.gcap_live = gcl
-    gnv: Array(String) = []
-    self.gnn_var = gnv
-    gnl: Array(Int) = []
-    self.gnn_live = gnl
-    gpv: Array(String) = []
-    self.gpos_var = gpv
-    gpl: Array(Int) = []
-    self.gpos_live = gpl
-    gev: Array(String) = []
-    self.gne_var = gev
-    gel: Array(Int) = []
-    self.gne_live = gel
+    self.facts = FlowFacts.new
     ad = Hash(String, Int).new
     self.adopted = ad
     self.adopt_pending = false
@@ -428,54 +443,7 @@ pub class Checker {
     self.pending_handles = ph0
     pa0: Array(String) = []
     self.pending_arrays = pa0
-    fv0: Array(String) = []
-    self.fact_var = fv0
-    fc0: Array(String) = []
-    self.fact_cont = fc0
-    fs0: Array(Int) = []
-    self.fact_slack = fs0
-    fl0: Array(Int) = []
-    self.fact_live = fl0
-    svv0: Array(String) = []
-    self.sv_var = svv0
-    svc0: Array(String) = []
-    self.sv_cont = svc0
-    bvv0: Array(String) = []
-    self.bv_var = bvv0
-    bvc0: Array(String) = []
-    self.bv_cont = bvc0
-    bvd0: Array(Int) = []
-    self.bv_delta = bvd0
-    csc0: Array(String) = []
-    self.cs_cont = csc0
-    csvv0: Array(String) = []
-    self.cs_var = csvv0
-    csd0: Array(Int) = []
-    self.cs_delta = csd0
-    nnv0: Array(String) = []
-    self.nn_var = nnv0
-    cpv0: Array(String) = []
-    self.cap_var = cpv0
-    cpvl0: Array(Int64) = []
-    self.cap_val = cpvl0
-    gcv0: Array(String) = []
-    self.gcap_var = gcv0
-    gcvl0: Array(Int64) = []
-    self.gcap_val = gcvl0
-    gcl0: Array(Int) = []
-    self.gcap_live = gcl0
-    gnv0: Array(String) = []
-    self.gnn_var = gnv0
-    gnl0: Array(Int) = []
-    self.gnn_live = gnl0
-    gpv0: Array(String) = []
-    self.gpos_var = gpv0
-    gpl0: Array(Int) = []
-    self.gpos_live = gpl0
-    gev0: Array(String) = []
-    self.gne_var = gev0
-    gel0: Array(Int) = []
-    self.gne_live = gel0
+    self.facts = FlowFacts.new
     if ret.is_void {
     } else {
       if fnn.body.size == 0 {
@@ -659,7 +627,7 @@ pub class Checker {
         self.check_if_assign(stmt, expected, at_tail)
         return
       }
-      saved_facts = self.fact_var.size
+      saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
       }
@@ -670,17 +638,17 @@ pub class Checker {
           self.fail(cond.loc, "if condition must be Bool, got ${ct.show}")
         }
       }
-      saved_gcap = self.gcap_var.size
-      saved_gnn = self.gnn_var.size
-      saved_gpos = self.gpos_var.size
-      saved_gne = self.gne_var.size
+      saved_gcap = self.facts.gcap_var.size
+      saved_gnn = self.facts.gnn_var.size
+      saved_gpos = self.facts.gpos_var.size
+      saved_gne = self.facts.gne_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
         self.push_guard_facts(cond)
         fi = saved_facts
-        while fi < self.fact_var.size {
-          if self.body_shrinks(stmt.then_body, self.fact_cont[fi]) {
-            self.fact_live[fi] = 0
+        while fi < self.facts.fact_var.size {
+          if self.body_shrinks(stmt.then_body, self.facts.fact_cont[fi]) {
+            self.facts.fact_live[fi] = 0
           }
           fi = fi + 1
         }
@@ -778,7 +746,7 @@ pub class Checker {
           }
         }
       }
-      saved_facts = self.fact_var.size
+      saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.body)
       }
@@ -789,10 +757,10 @@ pub class Checker {
           self.fail(cond.loc, "while condition must be Bool, got ${ct.show}")
         }
       }
-      saved_gcap = self.gcap_var.size
-      saved_gnn = self.gnn_var.size
-      saved_gpos = self.gpos_var.size
-      saved_gne = self.gne_var.size
+      saved_gcap = self.facts.gcap_var.size
+      saved_gnn = self.facts.gnn_var.size
+      saved_gpos = self.facts.gpos_var.size
+      saved_gne = self.facts.gne_var.size
       if cond = stmt.cond {
         self.push_guard_facts(cond)
       }
@@ -816,7 +784,11 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        self.fail(stmt.loc, "break is only valid inside while")
+        if self.place_depth > 0 {
+          self.fail(stmt.loc, "break inside Mutex.with")
+        } else {
+          self.fail(stmt.loc, "break is only valid inside a loop")
+        }
       }
       if at_tail {
         if expected.is_void {
@@ -828,7 +800,11 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        self.fail(stmt.loc, "continue is only valid inside while")
+        if self.place_depth > 0 {
+          self.fail(stmt.loc, "continue inside Mutex.with")
+        } else {
+          self.fail(stmt.loc, "continue is only valid inside a loop")
+        }
       }
       if at_tail {
         if expected.is_void {
@@ -1367,9 +1343,20 @@ pub class Checker {
 
   pub fn check_field(expr: Expr): Ty {
     if obj = expr.object {
+      if ty = self.type_call_target(obj, expr.ident) {
+        // A type-level function in field form (`Money.zero`, declared
+        // `fn self.zero: Money`), as a method without parameters is called
+        // `a.twice`: the expression becomes that call.
+        expr.kind = ex_call()
+        expr.callee = expr.ident
+        expr.receiver = obj
+        expr.object = nil
+        return self.check_type_call(expr, ty)
+      }
       if obj.kind == ex_name() {
         if obj.type_args.size > 0 {
           if self.is_generic_template(obj.ident) {
+            self.take_type_app(obj)
           } else {
             call = self.type_app_as_call(obj)
             expr.object = call
@@ -2374,6 +2361,40 @@ pub class Checker {
     op == tk_greater_greater()
   }
 
+  // A shift by a literal amount outside 0..width - 1 (a negated literal
+  // included) is a compile-time error (C1, W11b); any other amount is
+  // checked when the shift runs.
+  pub fn check_shift_amount(r: Expr, left: Ty, loc: Location) {
+    neg = false
+    lit = r
+    if r.kind == ex_unary() {
+      if r.op == tk_minus() {
+        if inner = r.inner {
+          if inner.kind == ex_int() {
+            neg = true
+            lit = inner
+          }
+        }
+      }
+    }
+    if lit.kind != ex_int() {
+      return
+    }
+    top = 31u64
+    if left.is_int64 || left.is_uint64 {
+      top = 63u64
+    }
+    if neg {
+      if lit.int_bits != 0u64 {
+        self.fail(loc, "shift amount -${lit.int_bits} out of range for ${left.show} (0..${top})")
+      }
+      return
+    }
+    if lit.int_bits > top {
+      self.fail(loc, "shift amount ${lit.int_bits} out of range for ${left.show} (0..${top})")
+    }
+  }
+
   pub fn int_binary(op: Int, ty: Ty): Ty {
     if op == tk_plus() {
       return ty
@@ -2593,6 +2614,9 @@ pub class Checker {
         }
         if self.bitwise_op(op) {
           if self.shift_op(op) {
+            if left.is_integer {
+              self.check_shift_amount(r, left, expr.loc)
+            }
             if left.is_uint64 {
               if right.is_int {
                 return left
@@ -3279,13 +3303,37 @@ pub class Checker {
     call
   }
 
+  // The call reading of `name(args).member` (the parser could not tell it
+  // from a type application `Name(T).member`, parse_maybe_type_app). The
+  // qualifier is the receiver path as written (the parser takes one only
+  // from a chain of names), rebuilt as that chain: `self.ts.get(ty)` is a
+  // method call on `self.ts`, `m.f(x)` a call in module `m`
+  // (flatten_module_receiver). The arguments are the parser's expression
+  // reading when it had one (`o.node`, `x?`), else rebuilt from the types.
   pub fn type_app_as_call(recv: Expr): Expr {
     call = Expr.new(ex_call(), recv.loc)
     call.callee = recv.ident
     if recv.mod_name.size > 0 {
-      mod = Expr.new(ex_name(), recv.loc)
-      mod.ident = recv.mod_name
-      call.receiver = mod
+      segs = recv.mod_name.split(".")
+      path = Expr.new(ex_name(), recv.loc)
+      path.ident = segs[0]
+      i = 1
+      while i < segs.size {
+        fa = Expr.new(ex_field(), recv.loc)
+        fa.object = path
+        fa.ident = segs[i]
+        path = fa
+        i = i + 1
+      }
+      call.receiver = path
+    }
+    if recv.args.size == recv.type_args.size {
+      i = 0
+      while i < recv.args.size {
+        call.args.push(recv.args[i])
+        i = i + 1
+      }
+      return call
     }
     i = 0
     while i < recv.type_args.size {
@@ -3293,6 +3341,17 @@ pub class Checker {
       i = i + 1
     }
     call
+  }
+
+  // The type reading of `Name(T).member`: the parser's call reading of the
+  // arguments (type_app_as_call) is dropped so no later walk meets it.
+  pub fn take_type_app(recv: Expr) {
+    if recv.kind == ex_name() {
+      if recv.type_args.size > 0 {
+        none: Array(Expr) = []
+        recv.args = none
+      }
+    }
   }
 
   pub fn rewrite_type_app_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
@@ -3388,6 +3447,33 @@ pub class Checker {
     recv
   }
 
+  // Whether a receiver is a value rather than a type: anything but a chain
+  // of names, or a chain whose first name is a local, `self`, or a field
+  // of self. A type is written `Name` or `mod.Name` (a module qualifier is
+  // never a value).
+  pub fn names_value(recv: Expr): Bool {
+    segs: Array(String) = []
+    if self.ident_chain(recv, segs) {
+    } else {
+      return true
+    }
+    if recv.kind == ex_name() {
+      if recv.type_args.size > 0 {
+        return false
+      }
+    }
+    if str_eq(segs[0], "self") {
+      return true
+    }
+    if found = self.lookup(segs[0]) {
+      return true
+    }
+    if f = self.implicit_field(segs[0]) {
+      return true
+    }
+    false
+  }
+
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_module_receiver(recv)
     if str_eq(expr.callee, "new") {
@@ -3397,6 +3483,7 @@ pub class Checker {
     if recv.kind == ex_name() {
       if recv.type_args.size > 0 {
         if self.is_generic_template(recv.ident) {
+          self.take_type_app(recv)
           if str_eq(expr.callee, "new") {
           } else {
             self.fail(recv.loc, "${recv.ident} is a type")
@@ -3436,7 +3523,12 @@ pub class Checker {
     if str_eq(expr.callee, "new") {
       return self.check_constructor(expr, recv, has_want, want)
     }
-    if str_eq(expr.callee, "bump") {
+    if str_eq(expr.callee, "bump") && self.names_value(recv) {
+      // `v.bump(...)` on a value is an ordinary method call; only a type
+      // (`Node.bump(...)`, `m.Node.bump(...)`) takes the bump constructor.
+      // The back ends tell the two apart by this flag (ast_is_ctor_call).
+      expr.method_call = true
+    } else if str_eq(expr.callee, "bump") {
       ty = self.check_constructor(expr, recv, has_want, want)
       if self.has_err {
         return ty
@@ -3644,7 +3736,10 @@ pub class Checker {
         return ty_join(self.t_int())
       }
       self.in_task = self.in_task + 1
+      saved_loops = self.loop_depth
+      self.loop_depth = 0
       result = self.check_block_value(b)
+      self.loop_depth = saved_loops
       self.in_task = self.in_task - 1
       if result.is_int {
       } else {
@@ -3792,7 +3887,12 @@ pub class Checker {
       self.bind(b.params[0], t)
       self.place_name = b.params[0]
       self.place_depth = self.place_depth + 1
+      // As `return`, a `break` or `continue` cannot leave the block: the
+      // lock is released at its end only (W10b: both back ends hung).
+      saved_loops = self.loop_depth
+      self.loop_depth = 0
       result = self.check_block_value(b)
+      self.loop_depth = saved_loops
       self.place_name = saved_name
       self.place_depth = saved_depth
       self.pop_scope

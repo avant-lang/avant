@@ -1,0 +1,135 @@
+// Structs by value on the new back end (Stage 28 W6b): literals (written
+// in another order than declared, evaluated in written order), copies
+// with value semantics, struct parameters and results, nested structs,
+// methods with `self` as the receiver's address (on a local, a
+// parameter, a field of a struct, a field of a class, a temporary),
+// methods that call methods, `self` used as a value, implicit fields,
+// and struct fields holding strings and class references.
+
+struct Vec {
+  x: Int
+  y: Int
+
+  fn sum: Int {
+    x + y
+  }
+
+  fn scale(k: Int) {
+    x = x * k
+    self.y = self.y * k
+  }
+
+  fn twice: Vec {
+    v = self
+    v.scale(2)
+    v
+  }
+
+  fn norm1: Int {
+    self.sum + self.twice().sum
+  }
+}
+
+struct Named {
+  id: Int
+  name: String
+  pos: Vec
+  big: Int64
+  on: Bool
+}
+
+fn (n: Named) show: String {
+  "${n.id}/${n.name}/${n.pos.x},${n.pos.y}/${n.big}/${n.on}"
+}
+
+fn (n: Named) rename(s: String) {
+  n.name = s
+  n.pos.scale(10)
+}
+
+class Holder {
+  tag: String = "h"
+  v: Vec
+  named: Named
+
+  fn grow {
+    v.scale(3)
+    named.rename("in-holder")
+  }
+}
+
+struct Link {
+  key: Int
+  obj: Holder
+}
+
+fn say(tag: String, v: Int): Int {
+  puts(tag)
+  v
+}
+
+fn make_vec(a: Int, b: Int): Vec {
+  Vec { y: b, x: a }
+}
+
+fn swap(v: Vec): Vec {
+  Vec { x: v.y, y: v.x }
+}
+
+fn bump_copy(v: Vec): Int {
+  v.scale(100)
+  v.sum
+}
+
+fn main {
+  a = make_vec(1, 2)
+  puts(a.sum)
+  b = a
+  b.x = 50
+  puts(a.x)
+  puts(b.x)
+  puts(swap(a).x)
+  puts(bump_copy(a))
+  puts(a.sum)
+  a.scale(4)
+  puts(a.x)
+  puts(a.y)
+  puts(a.twice().x)
+  puts(a.x)
+  puts(a.norm1)
+  puts(make_vec(3, 4).twice().sum)
+
+  // Written order y, x: the values print y first.
+  w = Vec { y: say("y", 6), x: say("x", 5) }
+  puts(w.sum)
+
+  n = Named { name: "first", id: 7, pos: Vec { x: 1, y: 1 }, big: 9000000000i64, on: true }
+  puts(n.show)
+  n.rename("second")
+  puts(n.show)
+  m = n
+  m.pos.y = 99
+  puts(n.pos.y)
+  puts(m.pos.y)
+
+  h = Holder.new
+  h.v = a
+  h.named = n
+  h.grow
+  puts(h.v.x)
+  puts(h.named.show)
+  h.v.scale(2)
+  h.named.pos.x = 123
+  puts(h.v.sum)
+  puts(h.named.show)
+  h.named.name = "direct"
+  puts(h.named.name)
+
+  l = Link { key: 3, obj: h }
+  l.obj.tag = "via-link"
+  puts(h.tag)
+  l2 = l
+  l2.key = 4
+  puts(l.key)
+  puts(l2.obj.tag)
+}

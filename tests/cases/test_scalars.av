@@ -1,0 +1,186 @@
+import harness
+import backends
+
+// Stage 28 W5b: the scalar subset on the new back end (AVANT_BACKEND=llvm,
+// D176; stages/stage28/mir.md W5). For every program of the subset:
+// (a) it compiles (--debug), and its stdout, stderr, and exit status are
+// its run golden (tests/goldens/runs, frozen from the old back end at
+// W11; until then the differential, D184); for the fixtures with
+// goldens, (b) `avant dump` prints exactly tests/goldens/<stem>.mir
+// (D171); (c) AVANT_BACKEND unset, empty, or llvm is the one back end
+// and any other value is refused, naming the variable (myc since W11);
+// (d) `compile` creates a missing parent directory of its output (the
+// old driver did; W10 gave the new driver the same). (The
+// L0001 probe of this file, `break` in a lambda inside a `while`, left
+// with W10b: the checker rejects it, tests/cases/test_frontend.av.)
+
+// The programs, relative to the root; those with a golden first.
+fn golden_progs: Array(String) {
+  xs: Array(String) = []
+  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_shl", "trap_shl_i64", "trap_shr_neg", "trap_shr_u64", "trap_to_i_high", "trap_to_i_inf", "trap_to_i_low", "trap_to_i_nan", "trap_to_i_neg_inf", "trap_u64"]
+  i = 0
+  while i < names.size {
+    xs.push("tests/fixtures/scalars/${names[i]}.av")
+    i = i + 1
+  }
+  xs.push("examples/hello.av")
+  xs.push("examples/fact.av")
+  xs.push("examples/switch.av")
+  xs
+}
+
+fn other_progs: Array(String) {
+  xs: Array(String) = []
+  xs.push("tests/fixtures/macros/hygiene.av")
+  xs.push("tests/fixtures/macros/quote_fn.av")
+  xs.push("tests/fixtures/macros/splice_name.av")
+  xs.push("tests/fixtures/overloading/defaults.av")
+  xs.push("tests/fixtures/part3/conv.av")
+  xs.push("tests/fixtures/part3/run.av")
+  xs
+}
+
+// tests/goldens/scalars/NAME.mir for a fixture, tests/goldens/examples/
+// NAME.mir for an example.
+fn golden_of(rel: String): String {
+  base = rel
+  slash = -1
+  i = 0
+  while i < rel.size {
+    if rel[i] == 47 {
+      slash = i
+    }
+    i = i + 1
+  }
+  if slash >= 0 {
+    base = str_slice(rel, slash + 1, rel.size)
+  }
+  stem = str_slice(base, 0, base.size - 3)
+  if rel[0] == 101 {
+    return "tests/goldens/examples/${stem}.mir"
+  }
+  "tests/goldens/scalars/${stem}.mir"
+}
+
+fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
+  gp = golden_progs()
+  progs: Array(String) = []
+  i = 0
+  while i < gp.size {
+    progs.push(gp[i])
+    i = i + 1
+  }
+  op = other_progs()
+  i = 0
+  while i < op.size {
+    progs.push(op[i])
+    i = i + 1
+  }
+
+  // Wave 1: the compiles, the dumps, the refusals.
+  jobs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
+    i = i + 1
+  }
+  i = 0
+  while i < gp.size {
+    k = key_of(gp[i])
+    a: Array(String) = []
+    a.push("dump")
+    a.push("${root}/${gp[i]}")
+    jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
+    i = i + 1
+  }
+  jobs.push(compile_job("AVANT_BACKEND=bogus", compiler, "${root}/examples/hello.av", "${dir}/bogus", "${dir}/bogus.log"))
+  d: Array(String) = []
+  d.push("dump")
+  d.push("${root}/examples/hello.av")
+  jobs.push(env_job("AVANT_BACKEND=llvm", compiler, d, "${dir}/hello.llvm-env.dump"))
+  // The default is AVANT_BACKEND unset (not the suite's own setting).
+  jobs.push(env_job("-u AVANT_BACKEND", compiler, d, "${dir}/hello.default.dump"))
+  jobs.push(env_job("AVANT_BACKEND=", compiler, d, "${dir}/hello.empty-env.dump"))
+  // The old back end's name is refused like any other (W11).
+  jobs.push(env_job("AVANT_BACKEND=myc", compiler, d, "${dir}/hello.myc-env.dump"))
+  // A missing parent directory of the output is created (W10).
+  jobs.push(compile_job("-u AVANT_BACKEND", compiler, "${root}/examples/hello.av", "${dir}/outdir-llvm/a/b/hello", "${dir}/outdir-llvm.log"))
+  run_waves(jobs)
+
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    c.eq_int(jobs[i].code, 0, "${p}: compiles under llvm")
+    c.expect(str_has(log_text(jobs[i].log), "compiled to "), "${p}: llvm prints the compiled-to line")
+    i = i + 1
+  }
+  base = progs.size
+  i = 0
+  while i < gp.size {
+    j = jobs[base + i]
+    c.eq_int(j.code, 0, "${gp[i]}: dump under llvm exits 0")
+    want = "(no golden)"
+    if t = file_read("${root}/${golden_of(gp[i])}") {
+      want = t
+    }
+    c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
+    i = i + 1
+  }
+  base = base + gp.size
+  bg = jobs[base]
+  c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
+  c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be unset, empty, or llvm (the only back end), not bogus"), "AVANT_BACKEND=bogus: refused, naming the variable")
+  c.eq_int(jobs[base + 1].code, 0, "AVANT_BACKEND=llvm dump: exit 0")
+  c.eq_int(jobs[base + 2].code, 0, "default dump: exit 0")
+  c.eq_str(log_text(jobs[base + 1].log), log_text(jobs[base + 2].log), "the llvm back end is the default back end")
+  c.expect(str_has(log_text(jobs[base + 2].log), "fn main"), "the default dump is MIR")
+  c.eq_int(jobs[base + 3].code, 0, "AVANT_BACKEND= (empty) dump: exit 0")
+  c.eq_str(log_text(jobs[base + 3].log), log_text(jobs[base + 2].log), "AVANT_BACKEND= (empty) is the default back end")
+  c.eq_int(jobs[base + 4].code, 1, "AVANT_BACKEND=myc: exit 1 (the old back end retired)")
+  c.expect(str_has(log_text(jobs[base + 4].log), "AVANT_BACKEND must be unset, empty, or llvm (the only back end), not myc"), "AVANT_BACKEND=myc: refused, naming the variable")
+  c.eq_int(jobs[base + 5].code, 0, "default (llvm): compile into a missing directory exits 0")
+  c.expect(file_exists("${dir}/outdir-llvm/a/b/hello"), "default (llvm): the missing output directory is created")
+
+  // Wave 2: every program, then the one in the created directory.
+  runs: Array(HJob) = []
+  i = 0
+  while i < progs.size {
+    k = key_of(progs[i])
+    runs.push(run_job(dir, "${k}.new", "${k}.b"))
+    i = i + 1
+  }
+  runs.push(run_job(dir, "outdir-llvm/a/b/hello", "outdir-llvm"))
+  run_waves(runs)
+  od = progs.size
+  c.eq_int(runs[od].code, 0, "default (llvm): the program in the created directory runs")
+  c.eq_str(log_text("${dir}/outdir-llvm.out"), golden_out(root, "examples/hello.av"), "the program in the created directory prints the hello golden")
+  i = 0
+  while i < progs.size {
+    p = progs[i]
+    k = key_of(p)
+    c.eq_int(runs[i].code, golden_status(root, p), "${p}: the golden exit status")
+    c.eq_str(log_text("${dir}/${k}.b.out"), golden_out(root, p), "${p}: the golden stdout")
+    c.eq_str(log_text("${dir}/${k}.b.err"), golden_err(root, p), "${p}: the golden stderr")
+    i = i + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_scalars.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_scalars(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

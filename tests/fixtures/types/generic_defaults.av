@@ -1,0 +1,41 @@
+// Field defaults of generic class instances (Stage 28 W10b, C14): the
+// checker types each instance's cloned literal and nil defaults by their
+// fields, also for the instances it makes while checking the bodies (the
+// first pass ran before they existed). Until W10b they reached the back
+// ends untyped: the old one failed on the nil default (myc-llvm failed)
+// and the new one typed them itself.
+
+class Stack(T) {
+  items: Array(T)
+  last: T? = nil
+  label: String = "stack"
+  depth: Int = 0
+  ratio: Float64 = 0.5
+  open: Bool = true
+
+  fn initialize {
+    xs: Array(T) = []
+    items = xs
+  }
+
+  fn push(v: T) {
+    items.push(v)
+    last = v
+    depth += 1
+  }
+}
+
+fn main {
+  st = Stack(Int).new
+  if t0 = st.last {
+    puts(t0)
+  } else {
+    puts("no last")
+  }
+  st.push(5)
+  puts(st.last ?? -1)
+  puts("${st.label} ${st.depth} ${st.ratio} ${st.open}")
+  ss = Stack(String).new
+  puts(ss.last ?? "none")
+  puts("${ss.label} ${ss.depth}")
+}

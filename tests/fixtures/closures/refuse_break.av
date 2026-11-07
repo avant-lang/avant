@@ -1,0 +1,20 @@
+// `break` inside a lambda body inside a `while` (Stage 28 W10b): a
+// lambda body is a function of its own, so the loop around it is not one
+// its `break` can leave; the checker rejects it ("break is only valid
+// inside a loop") on both back ends. Until W10b the checker accepted it
+// (its loop depth was not reset for lambda bodies): the old back end
+// failed in myc and the new one refused it with L0001 (mir.md W7b.9,
+// defect 6). tests/cases/test_frontend.av checks the diagnostic and its
+// location. No `fn main`, so the differential leaves it out.
+
+fn run: Int {
+  i = 0
+  while i < 3 {
+    f: fn(): Int = { ||
+      break
+      1
+    }
+    i = i + f()
+  }
+  i
+}

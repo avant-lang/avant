@@ -1,0 +1,425 @@
+// The lowering of Avant's C interface (Stage 28 W8a; stages/stage28/
+// mir.md W8a, audit 1.7, 2.10, 4.6): `Ptr(T)` values (`ptr %L` for a C
+// layout pointee, else the untyped `ptr`), C layouts (`clayout`, laid out
+// by the C rule, reached only through `ptr %L`), calls of `lib`/`fun`
+// bindings (an external with its C name, 8.1; arguments converted as the
+// checker allows; every reference-carrying argument passed as a bare
+// local, so the root-slot pass roots it for the call, gc.av (c)), C
+// callbacks (`<target>#cb`, a thunk with the plain C signature of the
+// `fn` type that calls the target, which opens its own frame), the `pin`
+// statement (unpinned at the end of its block, before every return, and
+// on `break`/`next` out of the pinning loop), and the pin of a heap value
+// stored into a C-layout field (never unpinned; V13 third form).
+
+import location
+import source
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.runtime
+import mir.lower_ty
+import mir.lower
+import mir.lower_expr
+import mir.lower_agg
+import mir.lower_union
+import re2c_pat
+
+// ---- types
+
+// Ptr(T) (2.3, audit 1.7.1): `ptr %L` when T is a C layout (its fields
+// are reached through it), else the untyped `ptr` (opaque, Void, and
+// every other pointee: the language reads nothing through them).
+pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
+  if inner = t.inner {
+    if inner.is_clayout {
+      l = lw.clayout_layout(inner, loc)
+      if l < 0 {
+        return -1
+      }
+      return lw.lw_m.types.ptr_to(lw.lw_m.types.agg(l))
+    }
+  }
+  mt_ptr()
+}
+
+// A C layout (2.6, audit 1.7.2): the C fields in declaration order by the
+// C rule, as the old back end's plain STRUCT; noted on first use, never
+// given a type id (it never lives on the GC heap).
+pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
+  name = mir_mty(t)
+  l = lw.lw_m.types.layout_named(name)
+  if l >= 0 {
+    return l
+  }
+  if lw.lw_busy.has_key(name) {
+    lw.refuse(loc, "C layout ${t.show} holding itself by value")
+    return -1
+  }
+  lw.lw_busy[name] = 1
+  fields: Array(Int) = []
+  names: Array(String) = []
+  j = 0
+  while j < t.fields.size {
+    ft = lw.field_mty(t.fields[j].ty, loc)
+    if lw.failed {
+      return -1
+    }
+    fields.push(ft)
+    names.push(t.fields[j].name)
+    j = j + 1
+  }
+  lw.lw_b.note_layout(name, mlk_clayout(), fields, names)
+}
+
+// ---- calls into C
+
+// A `lib`/`fun` call (calls.av emit_lib_call, decl.av emit_lib_fun): the
+// binding's checked signature as the external's (an `fn` parameter is a
+// `ptr`, the address of a `#cb` thunk); the first binding of a C name
+// declares it, a call through another binding carries its own signature
+// (3.5). The class is the call table's for the C name, else `collects`;
+// a function that takes a callback always collects (audit 2.10).
+pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  if cs = lw.lw_syms.find_cfun(e.lib_name, e.callee) {
+    ps: Array(Int) = []
+    has_cb = false
+    i = 0
+    while i < cs.params.size {
+      if cs.params[i].is_fn {
+        ps.push(mt_ptr())
+        has_cb = true
+      } else {
+        ps.push(lw.ty_at(cs.params[i], e.loc, "a C parameter"))
+      }
+      i = i + 1
+    }
+    ret = lw.ty_at(cs.ret, e.loc, "a C result")
+    if lw.failed {
+      return zero
+    }
+    args: Array(MOperand) = []
+    i = 0
+    while i < e.args.size && i < ps.size {
+      a = e.args[i]
+      o = zero
+      if cs.params[i].is_fn {
+        o = lw.cb_pointer(a, cs.params[i])
+      } else {
+        o = lw.lower_expr(a)
+        if t = a.ty {
+          o = lw.coerce(o, t, cs.params[i], a.loc)
+        }
+        if lw.failed {
+          return zero
+        }
+        // A reference the C function holds, or an aggregate the emitter
+        // passes by the C ABI (C3), is a bare local of the call.
+        k = b.types.kind(ps[i])
+        if (b.types.traced(ps[i]) || k == mk_agg()) && mir_bare_copy(o) < 0 {
+          lw.at(a.loc)
+          o = lw.tmp(ps[i], b.rv_use(o))
+        }
+      }
+      j = i + 1
+      while j < e.args.size {
+        o = lw.snap(o, e.args[j])
+        j = j + 1
+      }
+      args.push(o)
+      i = i + 1
+    }
+    if lw.failed {
+      return zero
+    }
+    lw.at(e.loc)
+    sig = b.sig(ps, ret, false)
+    x = b.extern_c(e.callee, sig)
+    if has_cb {
+      b.module.externs[x].cls = mcc_collects()
+    }
+    dest = -1
+    if ret != mt_void() {
+      dest = b.temp(ret)
+    }
+    st = b.call(dest, e.callee, args)
+    if b.module.externs[x].sig != sig {
+      st.sig = sig
+    }
+    if dest < 0 {
+      return zero
+    }
+    return b.copy_local(dest)
+  }
+  lw.refuse(e.loc, "the C function ${e.lib_name}.${e.callee} (no checked signature)")
+  zero
+}
+
+// The address of the `#cb` thunk for a callback argument (calls.av
+// emit_cb_pointer): a function name (`<sym>#cb`) or a lambda that
+// captures nothing (`<thunk>#cb`; the checker refuses a capture and any
+// other expression). The lambda's own thunk is lowered as any lambda's.
+pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
+  b = lw.lw_b
+  target = ""
+  lam = false
+  if arg.kind == ex_lambda() {
+    t = fty
+    if at = arg.ty {
+      t = at
+    }
+    target = arg.resolved
+    if !str_starts_mir(target, "av.") {
+      base = lw.lw_cl.base
+      if base.size == 0 {
+        base = b.func.symbol
+      }
+      target = lw.lambda_symbol(base)
+      arg.resolved = target
+    }
+    l = lw.fn_layout(t, arg.loc)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.lw_cl.pending.push(MirLam.new(arg, target))
+    lam = true
+  } else if got = lw.lw_fn_syms.get(arg.resolved) {
+    target = got
+  } else {
+    lw.refuse(arg.loc, "this C callback")
+    return b.c_i32(0)
+  }
+  sym = "${target}#cb"
+  if !lw.lw_ffi.cb_seen.has_key(sym) {
+    lw.lw_ffi.cb_seen[sym] = 1
+    lw.lw_ffi.cbs.push(MirCb.new(sym, target, fty, lam, arg.loc))
+  }
+  b.c_fn(sym)
+}
+
+// The callback thunks (calls.av emit_cb_thunk, audit 2.10): the plain C
+// signature of the `fn` type (the emitter gives `#cb` functions the C
+// boundary's `zeroext` on Bool, 14 8.5), a call of the target with the
+// parameters (after a null environment for a lambda thunk), its result
+// returned. The leaf and frame passes decide its kind like any function's.
+// A struct, union, or fn value by value in a callback's C signature is
+// refused (the C ABI lowering, C3, is done for calls into C only).
+pub fn (lw: MirLower) lower_cb_thunks {
+  b = lw.lw_b
+  i = 0
+  while i < lw.lw_ffi.cbs.size && !lw.failed {
+    cb = lw.lw_ffi.cbs[i]
+    lw.begin_at(cb.loc)
+    ps: Array(Int) = []
+    j = 0
+    while j < cb.fty.members.size {
+      ps.push(lw.ty_at(cb.fty.members[j], cb.loc, "a C callback parameter"))
+      j = j + 1
+    }
+    ret = mt_void()
+    if r = cb.fty.inner {
+      ret = lw.ty_at(r, cb.loc, "a C callback result")
+    }
+    if lw.failed {
+      return
+    }
+    j = 0
+    while j <= ps.size {
+      t = ret
+      if j < ps.size {
+        t = ps[j]
+      }
+      if b.types.kind(t) == mk_agg() {
+        lw.refuse(cb.loc, "a C callback with a value of type ${b.types.text(t)} (C3)")
+        return
+      }
+      j = j + 1
+    }
+    dummy = b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    lw.lw_ret = ret
+    lw.at(cb.loc)
+    args: Array(MOperand) = []
+    if cb.lambda {
+      args.push(b.c_null(mt_ref()))
+    }
+    j = 0
+    while j < ps.size {
+      args.push(b.copy_local(j + 1))
+      j = j + 1
+    }
+    if ret == mt_void() {
+      dummy2 = b.call(-1, cb.target, args)
+    } else {
+      d = b.temp(ret)
+      dummy3 = b.call(d, cb.target, args)
+      dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
+    }
+    b.ret
+    b.end_fn
+    i = i + 1
+  }
+}
+
+// ---- C-layout fields
+
+// The place of `p.f` with p a `Ptr(L)`, L a C layout: p in a local (the
+// holder), then `(*_h).k` (V13 wants the deref first).
+pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
+  b = lw.lw_b
+  if inner = ot.inner {
+    if inner.is_clayout {
+      o = lw.lower_expr(obj)
+      if lw.failed {
+        return b.pl(0)
+      }
+      lw.at(e.loc)
+      h = lw.hold(o, lw.ety(obj))
+      k = lw.field_of(inner, e.ident, e.loc)
+      return b.field(b.deref(b.pl(h)), k)
+    }
+  }
+  lw.refuse(e.loc, "the field .${e.ident} of ${ot.show}")
+  b.pl(0)
+}
+
+// A reference-carrying value stored into a C-layout field (the old
+// back end's emit_assign, c_layout_heap_store): the value in a local, pinned, then
+// stored; never unpinned (audit 4.6 (4); V13 third form). C memory is
+// not traced, so no barrier.
+pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
+  b = lw.lw_b
+  v = lw.hold(val, ty)
+  args: Array(MOperand) = []
+  args.push(b.copy_local(v))
+  dummy = b.call(-1, "avant_pin", args)
+  dummy2 = b.assign(p, b.rv_use(b.copy_local(v)))
+}
+
+// ---- pins
+
+// `pin x { body }` (the old back end's emit_pin_stmt): x into a local, pinned; the
+// body; unpinned at the end of the block when it falls through. A `fn`
+// value pins its environment (the heap part of the value).
+pub fn (lw: MirLower) lower_pin(st: Stmt) {
+  b = lw.lw_b
+  if e = st.expr {
+    if et = e.ty {
+      ty = lw.ety(e)
+      v = lw.lower_expr(e)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      h = b.temp(ty)
+      dummy = b.assign(b.pl(h), b.rv_use(v))
+      if et.is_fn {
+        h2 = b.temp(mt_ref())
+        dummy2 = b.assign(b.pl(h2), b.rv_use(b.copy(b.field(b.pl(h), 0))))
+        h = h2
+      }
+      args: Array(MOperand) = []
+      args.push(b.copy_local(h))
+      dummy3 = b.call(-1, "avant_pin", args)
+      lw.lw_ffi.pins.push(h)
+      lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
+      lw.lower_stmts(st.body)
+      dummy4 = lw.lw_ffi.pins.pop
+      dummy5 = lw.lw_ffi.pin_depth.pop
+      if !lw.failed && lw.open_now {
+        lw.at(st.loc)
+        lw.unpin(h)
+      }
+      return
+    }
+    lw.refuse(st.loc, "an untyped pin")
+    return
+  }
+  lw.lower_stmts(st.body)
+}
+
+pub fn (lw: MirLower) unpin(h: Int) {
+  args: Array(MOperand) = []
+  args.push(lw.lw_b.copy_local(h))
+  dummy = lw.lw_b.call(-1, "avant_unpin", args)
+}
+
+// Before `break` or `next`: the pins opened inside the innermost loop,
+// innermost first (the old back end's emit_unpin_loop).
+pub fn (lw: MirLower) unpin_loop {
+  i = lw.lw_ffi.pins.size - 1
+  while i >= 0 && lw.lw_ffi.pin_depth[i] == lw.lw_heads.size {
+    lw.unpin(lw.lw_ffi.pins[i])
+    i = i - 1
+  }
+}
+
+// Before a return: every open pin, innermost first (the old back end's emit_ret's
+// emit_unpin_all; the old back end also forgets them there, so a pin
+// block whose end is reachable after a return inside it is never
+// unpinned on that path: corrected, C20).
+pub fn (lw: MirLower) unpin_all {
+  i = lw.lw_ffi.pins.size - 1
+  while i >= 0 {
+    lw.unpin(lw.lw_ffi.pins[i])
+    i = i - 1
+  }
+}
+
+// ---- literal regex patterns (D150)
+
+// `Regex.compile("<literal>", <literal flags>)` whose pattern re2c
+// compiled at build time (pipeline.av re2c_plan; calls.av emit_call,
+// re2c_call_id): `regex_from_re2c(id, groups, pattern, caseless)` in
+// std.regex, as the old back end; nil when the call is not one.
+pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
+  pat = e.args[0]
+  flags = e.args[1]
+  if pat.kind != ex_string() {
+    return nil
+  }
+  fv = -1
+  if flags.kind == ex_int() {
+    fv = flags.int_bits.to_i
+  } else if flags.kind == ex_bool() {
+    fv = 0
+    if flags.bool_val {
+      fv = 1
+    }
+    if t = flags.ty {
+    } else {
+      flags.ty = ty_bool()
+    }
+  }
+  if fv < 0 {
+    return nil
+  }
+  rid = 0
+  if id = lw.lw_prog.re2c_ids.get(re2c_key(pat.value_str, fv)) {
+    rid = id
+  }
+  if rid <= 0 {
+    return nil
+  }
+  groups = 0
+  if rid <= lw.lw_prog.re2c_groups.size {
+    groups = lw.lw_prog.re2c_groups[rid - 1]
+  }
+  if sym = lw.lw_fn_syms.get("regex_from_re2c") {
+    b = lw.lw_b
+    args: Array(MOperand) = []
+    args.push(b.c_i32(rid))
+    args.push(b.c_i32(groups))
+    args.push(lw.lower_expr(pat))
+    args.push(lw.lower_expr(flags))
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    return lw.call_to(lw.ety(e), sym, args)
+  }
+  nil
+}

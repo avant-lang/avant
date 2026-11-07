@@ -8,18 +8,18 @@ import checker.match
 import checker.register
 import checker.spawn
 import checker.visibility
-import codegen.analysis
-import codegen.builtins
-import codegen.calls
-import codegen.decl
-import codegen.loops
-import codegen.myc
 import diagnostic
 import dump_ast
 import dump_check
 import expand
 import format
 import lexer
+import llvm.driver
+import llvm.emit_cases
+import llvm.glue
+import mir.selftest
+import mir.ir
+import mir.print
 import loader
 import location
 import parser
@@ -60,8 +60,9 @@ pub fn show_usage {
   puts("  avant-av fetch [DIR] [--update]")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
-  puts("With no flag, run uses --debug (fast) and compile uses myc default (kept artifacts).")
-  puts("--release (or --final) is --final, the scored mode. --debug is the fast mode.")
+  puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
+  puts("With no flag, run uses --debug (fast) and compile uses the default optimization (kept artifacts).")
+  puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
@@ -245,10 +246,51 @@ pub fn driver_dump(args: Array(String)) {
   }
   box = compile_av_paths(split.paths)
   if box.ok {
-    print_ir(box.text)
-    return
+    if m = box.mir {
+      // The final-stage MIR (D171); a module the verifier rejects is
+      // printed, then its errors, exit 1.
+      print_ir(mir_print(m, true))
+      bad = llvm_verify(m)
+      if bad.size > 0 {
+        diag_puts(bad)
+        diag_exit(1)
+      }
+      return
+    }
   }
   diag_exit(1)
+}
+
+// Stage 28 W6c: the inline allocation and barrier fast paths (mir.md
+// 5.5, 5.6) are on in every mode. AVANT_LLVM_CALL_FORMS=1 (internal,
+// like AVANT_BACKEND, D176) emits their call forms instead, so the
+// suite can prove both forms (the program-level twin of __mir-build
+// --call-forms).
+fn llvm_inline_fast: Bool {
+  if v = env_get("AVANT_LLVM_CALL_FORMS") {
+    if str_eq(v, "1") {
+      return false
+    }
+  }
+  true
+}
+
+// The back end's job for a link job: the same mode, extra objects, and
+// -l flags.
+fn llvm_job_of(job: LinkJob): LlvmJob {
+  lj = LlvmJob.new(job.codegen)
+  lj.inline_fast = llvm_inline_fast()
+  i = 0
+  while i < job.objects.size {
+    lj.objects.push(job.objects[i])
+    i = i + 1
+  }
+  i = 0
+  while i < job.flags.size {
+    lj.flags.push(job.flags[i])
+    i = i + 1
+  }
+  lj
 }
 
 pub fn driver_run(args: Array(String)) {
@@ -272,19 +314,19 @@ pub fn driver_run(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
-    // Compile, then run the program here with the user's stdin. myc-llvm's
-    // own run mode is not used: the backend reads all of a non-terminal
-    // stdin before it compiles, so piped input never reached the program
-    // (Wave D). The backend gets /dev/null (tool_run).
+    // Compile, then run the program here with the user's stdin (Wave D:
+    // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
-    code = invoke_myc(box.text, "c", job.objects, job.flags, out, box.quiet_leaves, job.codegen, true)
-    if code != 0 {
-      diag_puts("myc-llvm failed (${code})")
-      diag_exit(1)
+    if m = box.mir {
+      err = llvm_build(m, llvm_job_of(job), out)
+      if err.size > 0 {
+        diag_puts(err)
+        diag_exit(1)
+      }
+      dummy_chmod2 = fs_chmod_x(out)
+      rc2 = process_run(out, split.program)
+      diag_exit(rc2)
     }
-    dummy_chmod = fs_chmod_x(out)
-    rc = process_run(out, split.program)
-    diag_exit(rc)
   }
   diag_exit(1)
 }
@@ -320,12 +362,16 @@ pub fn driver_compile(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
-    code = invoke_myc(box.text, "c", job.objects, job.flags, out_path, box.quiet_leaves, job.codegen, false)
-    if code != 0 {
-      diag_puts("myc-llvm failed (${code})")
-      diag_exit(1)
+    if m = box.mir {
+      // The driver leaves this line to its caller (D194).
+      err = llvm_build(m, llvm_job_of(job), out_path)
+      if err.size > 0 {
+        diag_puts(err)
+        diag_exit(1)
+      }
+      out_puts("compiled to ${out_path}")
+      return
     }
-    return
   }
   diag_exit(1)
 }
@@ -421,6 +467,145 @@ pub fn driver_fetch(args: Array(String)) {
   diag_exit(1)
 }
 
+// Internal (Stage 28 W2), not in the usage text: compiles a textual LLVM
+// IR file to an object with the in-process LLVM (compiler/llvm/glue.av).
+//   avant __llvm-obj IN.ll OUT.o [--debug|--release]
+// No flag is compile's bare mode. Exit 0, or 1 with the message on stderr.
+fn driver_llvm_obj(args: Array(String)) {
+  codegen = "default"
+  files: Array(String) = []
+  i = 0
+  while i < args.size {
+    a = args[i]
+    if str_eq(a, "--debug") {
+      codegen = "debug"
+    } else if str_eq(a, "--release") {
+      codegen = "release"
+    } else if str_starts(a, "-") {
+      diag_puts("__llvm-obj: unknown flag ${a}")
+      diag_exit(1)
+    } else {
+      files.push(a)
+    }
+    i = i + 1
+  }
+  if files.size != 2 {
+    diag_puts("usage: avant __llvm-obj IN.ll OUT.o [--debug|--release]")
+    diag_exit(1)
+  }
+  err = llvm_compile_file(files[0], codegen, files[1])
+  if err.size > 0 {
+    diag_puts(err)
+    diag_exit(1)
+  }
+}
+
+// Internal (Stage 28 W5a), not in the usage text: builds one of the
+// builder-made MIR modules by name (llvm/emit_cases.av), verifies it at
+// stage final, emits the .ll, compiles it with the in-process LLVM, and
+// links it like a program (llvm/driver.av).
+//   avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
+//                    [--object] [--call-forms] [--time]
+//   avant __mir-build --list
+// No flag is compile's bare mode. --object stops at the object (OUT); a
+// module without `main` needs it. --call-forms emits allocation and the
+// barrier as calls. --time prints the phases' microseconds on stderr.
+// Exit 0, or 1 with the message on stderr.
+fn driver_mir_build(args: Array(String)) {
+  job = LlvmJob.new("default")
+  files: Array(String) = []
+  object = false
+  timed = false
+  i = 0
+  while i < args.size {
+    a = args[i]
+    if str_eq(a, "--list") {
+      names = mir_build_names()
+      k = 0
+      while k < names.size {
+        out_puts(names[k])
+        k = k + 1
+      }
+      return
+    } else if str_eq(a, "--debug") {
+      job.codegen = "debug"
+    } else if str_eq(a, "--release") {
+      job.codegen = "release"
+    } else if str_eq(a, "--emit-ll") && i + 1 < args.size {
+      job.keep_ll = args[i + 1]
+      i = i + 1
+    } else if str_eq(a, "--object") {
+      object = true
+    } else if str_eq(a, "--call-forms") {
+      job.inline_fast = false
+    } else if str_eq(a, "--time") {
+      timed = true
+    } else if str_starts(a, "-") {
+      diag_puts("__mir-build: unknown flag ${a}")
+      diag_exit(1)
+    } else {
+      files.push(a)
+    }
+    i = i + 1
+  }
+  if files.size != 2 {
+    diag_puts("usage: avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE] [--object] [--call-forms] [--time]")
+    diag_exit(1)
+  }
+  if m = mir_build_module(files[0]) {
+    err = ""
+    has_main = false
+    if g = m.func("main") {
+      has_main = true
+    }
+    if object {
+      err = llvm_object(m, job, files[1])
+    } else if !has_main {
+      err = "__mir-build: ${files[0]} has no main (use --object)"
+    } else {
+      err = llvm_build(m, job, files[1])
+    }
+    if timed {
+      diag_puts("emit_us=${job.emit_us} compile_us=${job.compile_us} link_us=${job.link_us}")
+    }
+    if err.size > 0 {
+      diag_puts(err)
+      diag_exit(1)
+    }
+    return
+  }
+  diag_puts("__mir-build: no module named ${files[0]} (see --list)")
+  diag_exit(1)
+}
+
+// Internal (Stage 28 W9), not in the usage text: writes the
+// pre-optimization .ll that `compile` hands to
+// the in-process LLVM (the same lowering, verifier, emitter, and
+// fast-path setting; the text does not depend on the mode, mir.md 11).
+// The self-hosting fixed point compares it between two compilers (D171).
+//   avant __emit-ll SRC.av OUT.ll
+// Exit 0, or 1 with the message on stderr.
+fn driver_emit_ll(args: Array(String)) {
+  if args.size != 2 || !str_ends(args[0], ".av") {
+    diag_puts("usage: avant __emit-ll SRC.av OUT.ll")
+    diag_exit(1)
+  }
+  paths: Array(String) = []
+  paths.push(args[0])
+  box = compile_av_paths(paths)
+  if box.ok {
+    if m = box.mir {
+      err = llvm_emit_ll(m, llvm_inline_fast(), args[1])
+      if err.size > 0 {
+        diag_puts(err)
+        diag_exit(1)
+      }
+      return
+    }
+  }
+  diag_exit(1)
+}
+
 fn main {
   args = take_keep_tmp(argv_user())
   if args.size == 0 {
@@ -493,6 +678,22 @@ fn main {
   }
   if str_eq(command, "b") {
     driver_bind(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__llvm-obj") {
+    driver_llvm_obj(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__mir-build") {
+    driver_mir_build(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__emit-ll") {
+    driver_emit_ll(argv_drop_first(args))
+    return
+  }
+  if str_eq(command, "__mir-selftest") {
+    mir_selftest()
     return
   }
   if str_ends(command, ".av") {

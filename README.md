@@ -24,11 +24,11 @@ curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.
 
 The script downloads the release archive, checks its SHA-256, installs it into `~/.avant`, adds that directory to `PATH` in your shell's configuration, and compiles and runs a hello program to prove the install works. Options: a version (`bash install.sh v0.34.0`, or `AVANT_VERSION`), `--no-modify-path` to print the `PATH` line instead of editing your configuration, and `AVANT_INSTALL` to choose another directory. Running it again updates the install in place.
 
-The one prerequisite is a C compiler with the C library's development files, which Avant uses to link programs (and which C interop needs anyway): `sudo apt install gcc libc6-dev` on Debian and Ubuntu, `sudo dnf install gcc glibc-devel` on Fedora. If it is missing, the installer says so and prints that line. Nothing else is needed: the archive carries `avant`, its `myc-llvm` backend with LLVM linked in, `re2c`, the standard library, and the runtime with PCRE2 and zlib inside. `avant bind` (C header to `lib` block) also needs libclang 20 (`sudo apt install libclang1-20`).
+The one prerequisite is a C compiler with the C library's development files, which Avant uses to link programs (and which C interop needs anyway): `sudo apt install gcc libc6-dev` on Debian and Ubuntu, `sudo dnf install gcc glibc-devel` on Fedora. If it is missing, the installer says so and prints that line. Nothing else is needed: the archive carries `avant` with LLVM linked in (no separate backend program), `re2c`, the standard library, and the runtime with PCRE2 and zlib inside. `avant bind` (C header to `lib` block) also needs libclang 20 (`sudo apt install libclang1-20`).
 
-To install by hand instead, download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds its backend, `re2c`, the standard library, and the runtime beside itself.
+To install by hand instead, download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library, and the runtime beside itself.
 
-No environment variable needs to be set. The compiler finds its `myc-llvm` backend in this order: `AVANT_MYC_LLVM` (an explicit override; if it names a missing file, that is an error, not a reason to try another backend), then the `myc-llvm` beside the `avant` binary (the one the release ships), then `myc-llvm` on `PATH`. The first binary found must accept the safepoints GC flags; a stock `myc-llvm` is refused with an error naming the path, never silently used.
+No environment variable needs to be set. The compiler turns a program into machine code with the LLVM 20 it carries inside, and links it with `cc`.
 
 Run your first program:
 
@@ -40,7 +40,7 @@ avant compile hello.av hi   # or build a binary named hi
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, or `SIGTERM`; only `kill -9` or a crash leaves it behind. The tools the compiler runs (`myc-llvm`, `cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
+`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, or `SIGTERM`; only `kill -9` or a crash leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
 
 That is enough to write and run Avant today. Building the Avant compiler itself is covered at the end, under [Advanced: building the compiler](#advanced-building-the-compiler).
 
@@ -72,7 +72,7 @@ That is enough to write and run Avant today. Building the Avant compiler itself 
 
 Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function is its value. A type is written `name: Type`.
 
-The entry point is `fn main`, or `fn run` (the compiler synthesizes a myc `main`). Neither needs `pub`.
+The entry point is `fn main`, or `fn run` (the compiler synthesizes the C `main`). Neither needs `pub`.
 
 ```avant
 fn main {
@@ -847,7 +847,7 @@ On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value 
 
 Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
-Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
+Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The rule is that an operation gives the mathematically correct value when one exists and traps when none does: `MIN % -1` is `0` for every signed type (only `MIN / -1` overflows); a shift `<<` or `>>` by an amount outside `0..31` for `Int` (`0..63` for `Int64` and `UInt64`), negative amounts included, traps (`avant runtime: shift amount 32 out of range for Int (0..31)`), and a literal amount outside the range is a compile error; `Float64.to_i` of NaN, an infinity, or a value outside the `Int` range traps (`avant runtime: to_i of Float64 3000000000 out of range for Int`), and inside it truncates toward zero. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
 
 `sort` orders `Int`, `Int64`, `UInt64`, `Float64` (NaN last), `String` and `Bytes` (byte order), and `Bool` elements in place, or any element type with a comparator block `sort { |a, b| ... }` returning `Bool`; `sorted` returns a new array and leaves the original alone. `reverse`, `contains(x)`, `index_of(x): Int?`, `min` / `max: T?`, and `sum` cover the other common scans. Hashes add `keys`, `values`, `has_key(k)`, `get_or(k, default)`, `inc(k, by = 1)`, and `each { |k, v| ... }`; `keys` and `values` are in unspecified order.
 
@@ -1543,29 +1543,33 @@ Beginners welcome, advanced programmers unblocked, memory managed, errors as val
 
 Everything below is for compiler developers, not for writing Avant programs.
 
-The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compiles itself. It emits [myc](https://github.com/kostya/myc) IR and runs `myc-llvm` from the safepoints shard (which still uses Crystal; that Crystal is not in this repository).
+The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compiles itself. It lowers the checked program to its own mid-level IR (MIR, `compiler/mir/`), emits LLVM IR from it (`compiler/llvm/`), and compiles that with the LLVM 20 linked into the compiler (`runtime/avant_llvm.c`); `cc` links the object with the runtime.
 
 ```
-.av  →  parser and checker (compiler/*.av)  →  myc IR  →  myc-llvm  →  binary
+.av  →  parser and checker (compiler/*.av)  →  MIR  →  LLVM IR  →  in-process LLVM  →  object  →  cc  →  binary
 ```
 
-Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release:
+This is the compiler's only back end. The earlier one, which emitted [myc](https://github.com/kostya/myc) IR for an external `myc-llvm` process, was retired once every program it ran had been frozen as a golden (`tests/goldens/runs/`, checked by `sh tools/run-goldens.sh`).
+
+Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the compiler itself also needs LLVM 20's static archives (Debian/Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (`tools/build-llvm.sh`) and only the compiler links; the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release (a release up to v0.34.0 compiles only through the `myc-llvm` bundled beside it; set `AVANT_MYC_LLVM` to that file for this one step, or let `tools/letters.sh` do it; the compiler it builds needs no `myc-llvm`):
 
 ```
 sh runtime/build.sh
-/path/to/avant compile compiler/main.av bin/avant --debug
+/path/to/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o
 ./bin/avant run examples/hello.av
-./bin/avant compile compiler/main.av bin/avant --debug   # rebuild with itself
+./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Codegen splits by verb: `avant run` with no flag uses myc-llvm `--debug` (fast), and `avant compile` with no flag uses myc's default codegen, which measured 75.5% faster at runtime on the 49-task gate scope for kept artifacts. On either verb, `--debug` selects the fast codegen explicitly and `--release` (or `--final`) selects `--final`, the scored mode used in [Benchmarks](#benchmarks); an explicit flag always wins over the verb default, and no environment variable selects codegen. Safepoints stay on in every mode. `dump FILE.av` prints myc IR without linking.
+`sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed), and C′ (`bin/avant-c-llvm`, built by B); `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′), or `c-release` (the `--release` build a release ships) builds one. `sh tools/gate.sh` is the full gate (B, C′, the suite on both, D′, and the fixed point: C′ and D′ emit the same LLVM IR for the compiler and are byte-identical). `sh tools/run-goldens.sh` compiles and runs every example, runnable fixture, and LangArena task in `test` mode and compares each one's stdout, stderr, and exit status with its golden (`GOLDEN_MODE=--release` or empty for the other modes).
 
-Tests are the native suite, run on the compiler you just built (B) and, for a release, on the next one (C):
+`AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Codegen splits by verb: `avant run` with no flag uses `--debug` (fast: LLVM at `-O0` with its fast instruction selector), and `avant compile` with no flag uses the default optimization (a short pass list, for kept artifacts). On either verb, `--debug` selects the fast codegen explicitly and `--release` (or `--final`) selects full optimization (`-O3`), the scored mode used in [Benchmarks](#benchmarks); an explicit flag always wins over the verb default, and no environment variable selects codegen. The garbage collector's roots are kept precisely in every mode. `dump FILE.av` prints the program's MIR without linking.
+
+Tests are the native suite, run on the compiler you just built (B) and on the next one (C′):
 
 ```
 AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
-./bin/avant-b compile compiler/main.av bin/avant-c --debug
-AVANT_COMPILER=./bin/avant-c ./bin/avant-c test
+./bin/avant-b compile compiler/main.av bin/avant-c-llvm --debug runtime/build/avant_llvm.o
+AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 ```
 
 Each file in `tests/cases/` named `test_*.av` is one program. A helper shared by two of them lives in `tests/cases/harness.av` and is imported. Run one file with `avant test tests/cases/test_ffi.av`. `--shard 2/4` runs one slice. A shard that would include a file listed in `[test] exclusive` needs `--skip-exclusive`, and those files run in a command that does not pass `--shard`. `test_fixed_point.av`, which compiles the compiler, is listed in `[test] first` so it starts before the rest; it no longer runs alone. The exclusive files are the ones that probe the collector, rewrite `PATH`, use git, or write a coverage report of their own. `--jobs` defaults to the number of online processors. `--junit PATH` writes one case per check, with durations, for files whose checks record them (the compiler suite and `std.testing` both do), and one case per file otherwise. Each file's output is printed as soon as that file finishes, in completion order; the summary line still totals the whole run. The compiler's own report is the hit file of an instrumented compiler build, and `coverage/lcov.info` for that build is written once after the processes that update it have finished. `avant test --coverage` is a separate report, of the tests. Goldens live in `tests/goldens/`.

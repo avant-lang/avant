@@ -1,0 +1,20 @@
+// C1 (W11b): a UInt64 amount past 63 traps, printed unsigned: `avant
+// runtime: shift amount 18446744073709551615 out of range for UInt64
+// (0..63)`, exit 1.
+// n, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn main {
+  k = opaque(0).to_u64
+  puts(16u64 >> (2u64 + k))
+  puts(16u64 >> (18446744073709551615u64 - k))
+  puts("not reached")
+}

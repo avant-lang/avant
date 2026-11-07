@@ -1,0 +1,88 @@
+module switch
+file 0 "switch.av"
+
+const str.0 = "eof"
+const str.1 = "ident-or-int"
+const str.2 = "other"
+const str.3 = "%s\0A"
+const str.4 = "zero"
+const str.5 = "nonzero"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern printf(ref str, ...) -> i32 never
+
+fn av.switch/name_of(_1: i32) -> ref str leaf @switch.av:1:1 {
+  let _0: ref str
+  let _1 (kind): i32
+  let _2: ref str
+
+bb0:
+  _2 = zero   @2:3
+  switch copy _1 [0: bb1, 1: bb2, 2: bb2] else bb3   @2:3
+
+bb1:
+  _2 = const str.0   @4:7
+  goto bb4   @3:5
+
+bb2:
+  _2 = const str.1   @7:7
+  goto bb4   @6:5
+
+bb3:
+  _2 = const str.2   @10:7
+  goto bb4   @2:3
+
+bb4:
+  _0 = copy _2   @2:3
+  return   @2:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @switch.av:15:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: ref str
+  let _4: ref str
+  let _5: ref str
+  let _6: ref str
+  let _7 (n): i32
+  let _8: ref str
+  let _9 (label): ref str
+
+bb0:
+  gc.enter   @15:1
+  gc.roots _2   @15:1
+  call __avant_type_maps() nocollect   @15:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @15:1
+  _3 = call av.switch/name_of(const i32 0) nocollect   @16:8
+  call printf(const str.3, copy _3) nocollect   @16:3
+  _4 = call av.switch/name_of(const i32 1) nocollect   @17:8
+  call printf(const str.3, copy _4) nocollect   @17:3
+  _5 = call av.switch/name_of(const i32 2) nocollect   @18:8
+  call printf(const str.3, copy _5) nocollect   @18:3
+  _6 = call av.switch/name_of(const i32 9) nocollect   @19:8
+  call printf(const str.3, copy _6) nocollect   @19:3
+  _7 = const i32 1   @20:5
+  _8 = zero   @21:11
+  switch copy _7 [0: bb1] else bb2   @21:11
+
+bb1:
+  _8 = const str.4   @23:7
+  goto bb3   @22:5
+
+bb2:
+  _8 = const str.5   @26:7
+  goto bb3   @21:11
+
+bb3:
+  _9 = copy _8   @21:9
+  call printf(const str.3, copy _9) nocollect   @29:3
+  _0 = const i32 0   @15:1
+  gc.leave   @15:1
+  return   @15:1
+}

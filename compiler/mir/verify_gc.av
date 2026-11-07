@@ -1,0 +1,455 @@
+// The verifier's GC and dataflow rules (Stage 28 W4; stages/stage28/mir.md
+// 5, 6): V9 (no read before a write, lowered), V11 and V12 (traced locals
+// live across a collecting call are slots, final), V14 (the fresh
+// exemption: reaching definitions and the closing barrier), V15-V17 (leaf
+// and frame shape, final), V19 (shared modules, final).
+
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.flow
+import mir.verify_core
+
+pub fn mir_verify_gc(v: MVerifier) {
+  mir_v15(v)
+  mir_v16(v)
+  mir_v17(v)
+  mir_v19(v)
+  if v.bad {
+    return
+  }
+  if v.on(9) {
+    mir_v9(v)
+  }
+  if v.on(11) {
+    mir_v11_v12(v)
+  }
+  mir_v14(v)
+}
+
+fn mir_is_indirect(st: MStmt): Bool {
+  if x = st.indirect {
+    return true
+  }
+  false
+}
+
+fn mir_is_gc_stmt(st: MStmt): Bool {
+  st.kind == msk_gc_enter() || st.kind == msk_gc_roots() || st.kind == msk_gc_leave()
+}
+
+fn mir_v15(v: MVerifier) {
+  f = v.func
+  if f.kind != mfk_leaf() {
+    return
+  }
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      if st.kind == msk_call() && (st.collects || mir_is_indirect(st)) {
+        v.err(15, b, j, st.loc, "a leaf makes a collecting or indirect call")
+      } else if mir_is_gc_stmt(st) {
+        v.err(15, b, j, st.loc, "a leaf has a frame statement")
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  k = 0
+  while k < f.locals.size {
+    if f.locals[k].slot {
+      v.ferr(15, "a leaf has the slot _${k}")
+    }
+    k = k + 1
+  }
+}
+
+fn mir_v16(v: MVerifier) {
+  f = v.func
+  if f.kind == mfk_unset() {
+    v.ferr(16, "the function has no kind (the frame pass has not run)")
+    return
+  }
+  if f.kind != mfk_frame() {
+    return
+  }
+  slots: Array(Int) = []
+  k = 0
+  while k < f.locals.size {
+    if f.valid_local(k) && f.locals[k].slot {
+      slots.push(k)
+      if !v.ts.traced(f.locals[k].ty) {
+        v.ferr(16, "the slot _${k} has no root words")
+      }
+    }
+    k = k + 1
+  }
+  bb0 = f.blocks[0]
+  idx = 0
+  ok = true
+  k = 0
+  while ok && k < slots.size {
+    if !f.is_param(slots[k]) {
+      ok = idx < bb0.stmts.size && mir_is_zero_of(bb0.stmts[idx], slots[k])
+      idx = idx + 1
+    }
+    k = k + 1
+  }
+  ok = ok && idx < bb0.stmts.size && bb0.stmts[idx].kind == msk_gc_enter()
+  ok = ok && idx + 1 < bb0.stmts.size && bb0.stmts[idx + 1].kind == msk_gc_roots() && mir_same_ints(bb0.stmts[idx + 1].locals, slots)
+  if !ok {
+    v.ferr(16, "bb0 does not begin with the zeroed non-parameter slots, gc.enter, and gc.roots of every slot in local order")
+    return
+  }
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      if (st.kind == msk_gc_enter() || st.kind == msk_gc_roots()) && !(b == 0 && (j == idx || j == idx + 1)) {
+        v.err(16, b, j, st.loc, "gc.enter or gc.roots outside the prologue")
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+}
+
+fn mir_is_zero_of(st: MStmt, l: Int): Bool {
+  if st.kind != msk_assign() {
+    return false
+  }
+  if p = st.place {
+    if r = st.rv {
+      return p.proj.size == 0 && p.local == l && r.kind == mrk_zero()
+    }
+  }
+  false
+}
+
+fn mir_same_ints(a: Array(Int), b: Array(Int)): Bool {
+  if a.size != b.size {
+    return false
+  }
+  i = 0
+  while i < a.size {
+    if a[i] != b[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+fn mir_v17(v: MVerifier) {
+  f = v.func
+  if f.kind != mfk_frame() {
+    return
+  }
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    is_ret = false
+    if t = blk.term {
+      is_ret = t.kind == mtk_return()
+      n = blk.stmts.size
+      if is_ret && (n == 0 || blk.stmts[n - 1].kind != msk_gc_leave()) {
+        v.err(17, b, -1, t.loc, "a return of a frame function without gc.leave before it")
+      }
+    }
+    j = 0
+    while j < blk.stmts.size {
+      if blk.stmts[j].kind == msk_gc_leave() && !(is_ret && j == blk.stmts.size - 1) {
+        v.err(17, b, j, blk.stmts[j].loc, "gc.leave not immediately before a return")
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+}
+
+fn mir_v19(v: MVerifier) {
+  f = v.func
+  if !v.m.shared || f.kind != mfk_leaf() {
+    return
+  }
+  k = 0
+  while k < f.locals.size {
+    if f.valid_local(k) && v.ts.traced(f.locals[k].ty) {
+      v.ferr(19, "a leaf of a shared module holds root words in _${k} (${v.tx(f.locals[k].ty)})")
+    }
+    k = k + 1
+  }
+}
+
+fn mir_v9(v: MVerifier) {
+  f = v.func
+  ins = mir_defined_in(f)
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    cur = mir_bools_copy(ins[b])
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      reads: Array(Int) = []
+      mir_stmt_reads(st, reads)
+      mir_v9_check(v, cur, reads, b, j, st.loc)
+      d = mir_stmt_def(st)
+      if d >= 0 {
+        cur[d] = true
+      }
+      j = j + 1
+    }
+    if t = blk.term {
+      reads: Array(Int) = []
+      mir_term_reads(f, t, reads)
+      mir_v9_check(v, cur, reads, b, -1, t.loc)
+    }
+    b = b + 1
+  }
+}
+
+fn mir_v9_check(v: MVerifier, cur: Array(Bool), reads: Array(Int), b: Int, j: Int, loc: MLoc) {
+  i = 0
+  while i < reads.size {
+    r = reads[i]
+    if !cur[r] {
+      v.err(9, b, j, loc, "_${r} is read before it is written on some path")
+      cur[r] = true
+    }
+    i = i + 1
+  }
+}
+
+fn mir_v11_v12(v: MVerifier) {
+  f = v.func
+  ts = v.ts
+  outs = mir_live_out(f)
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    live = mir_bools_copy(outs[b])
+    if t = blk.term {
+      reads: Array(Int) = []
+      mir_term_reads(f, t, reads)
+      i = 0
+      while i < reads.size {
+        live[reads[i]] = true
+        i = i + 1
+      }
+    }
+    j = blk.stmts.size - 1
+    while j >= 0 {
+      st = blk.stmts[j]
+      if st.kind == msk_call() && st.collects {
+        k = 0
+        while k < f.locals.size {
+          if live[k] && k != st.dest && f.valid_local(k) && !f.locals[k].slot && ts.traced(f.locals[k].ty) {
+            rule = 11
+            if ts.is_addr(f.locals[k].ty) {
+              rule = 12
+            }
+            callee = st.callee
+            if mir_is_indirect(st) {
+              callee = "an indirect callee"
+            }
+            v.err(rule, b, j, st.loc, "_${k} (${v.tx(f.locals[k].ty)}) is live across the collecting call to ${callee} and is not a slot")
+          }
+          k = k + 1
+        }
+      }
+      if f.kind == mfk_frame() && st.kind == msk_assign() {
+        if r = st.rv {
+          if p = r.place {
+            l = p.local
+            if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
+              v.err(11, b, j, st.loc, "the address of _${l} (${v.tx(f.locals[l].ty)}) is taken and _${l} is not a slot")
+            }
+          }
+        }
+      }
+      mir_live_step(st, live)
+      j = j - 1
+    }
+    b = b + 1
+  }
+}
+
+// V14: rd[l] is 0 (no definition reaches), 1 (only alloc results), or 2
+// (another definition reaches); pend[l] says a fresh store through l
+// awaits its closing barrier.
+fn mir_v14(v: MVerifier) {
+  f = v.func
+  any = false
+  b = 0
+  while b < f.blocks.size {
+    j = 0
+    while j < f.blocks[b].stmts.size {
+      if f.blocks[b].stmts[j].fresh {
+        any = true
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  if !any {
+    return
+  }
+  n = f.locals.size
+  preds = mir_preds(f)
+  rd_out: Array(Array(Int)) = []
+  pd_out: Array(Array(Bool)) = []
+  b = 0
+  while b < f.blocks.size {
+    rd_out.push(mir_ints(n, 0))
+    pd_out.push(mir_bools(n, false))
+    b = b + 1
+  }
+  changed = true
+  while changed {
+    changed = false
+    b = 0
+    while b < f.blocks.size {
+      rd = mir_v14_rd_in(f, b, preds, rd_out)
+      pd = mir_v14_pd_in(f, b, preds, pd_out)
+      mir_v14_block(v, b, rd, pd, false)
+      k = 0
+      while k < n {
+        if rd[k] != rd_out[b][k] || mir_flip(pd[k], pd_out[b][k]) {
+          changed = true
+        }
+        k = k + 1
+      }
+      rd_out[b] = rd
+      pd_out[b] = pd
+      b = b + 1
+    }
+  }
+  b = 0
+  while b < f.blocks.size {
+    mir_v14_block(v, b, mir_v14_rd_in(f, b, preds, rd_out), mir_v14_pd_in(f, b, preds, pd_out), true)
+    b = b + 1
+  }
+}
+
+fn mir_ints(n: Int, x: Int): Array(Int) {
+  xs: Array(Int) = []
+  i = 0
+  while i < n {
+    xs.push(x)
+    i = i + 1
+  }
+  xs
+}
+
+fn mir_v14_rd_in(f: MFunc, b: Int, preds: Array(Array(Int)), outs: Array(Array(Int))): Array(Int) {
+  n = f.locals.size
+  rd = mir_ints(n, 0)
+  if b == 0 {
+    k = 1
+    while k <= f.nparams {
+      rd[k] = 2
+      k = k + 1
+    }
+    return rd
+  }
+  i = 0
+  while i < preds[b].size {
+    o = outs[preds[b][i]]
+    k = 0
+    while k < n {
+      if o[k] > rd[k] {
+        rd[k] = o[k]
+      }
+      k = k + 1
+    }
+    i = i + 1
+  }
+  rd
+}
+
+fn mir_v14_pd_in(f: MFunc, b: Int, preds: Array(Array(Int)), outs: Array(Array(Bool))): Array(Bool) {
+  n = f.locals.size
+  pd = mir_bools(n, false)
+  i = 0
+  while i < preds[b].size {
+    o = outs[preds[b][i]]
+    k = 0
+    while k < n {
+      if o[k] {
+        pd[k] = true
+      }
+      k = k + 1
+    }
+    i = i + 1
+  }
+  pd
+}
+
+// The forward transfer of one block, in place; report adds the errors.
+fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(Bool), report: Bool) {
+  f = v.func
+  blk = f.blocks[b]
+  j = 0
+  while j < blk.stmts.size {
+    st = blk.stmts[j]
+    if st.kind == msk_barrier() && st.args.size == 1 {
+      h = mir_bare_local(st.args[0])
+      if h >= 0 {
+        pd[h] = false
+      }
+    }
+    d = mir_stmt_def(st)
+    if d >= 0 {
+      if pd[d] && report {
+        v.err(14, b, j, st.loc, "_${d} is redefined before the closing barrier of its fresh fill")
+      }
+      pd[d] = false
+      rd[d] = 2
+      if st.kind == msk_call() {
+        if e = v.m.ext(st.callee) {
+          if e.alloc {
+            rd[d] = 1
+          }
+        }
+      }
+    }
+    if st.fresh {
+      if p = st.place {
+        if p.last_deref != 0 {
+          if report {
+            v.err(14, b, j, st.loc, "the holder of a fresh store is not a local")
+          }
+        } else {
+          h = p.local
+          if report && rd[h] == 2 {
+            v.err(14, b, j, st.loc, "fresh store through _${h}, which is not only the result of an allocation in this function")
+          }
+          if report && v.stage == mst_final() && !f.locals[h].slot {
+            v.err(14, b, j, st.loc, "fresh store through _${h}, which is not a slot")
+          }
+          pd[h] = true
+        }
+      }
+    }
+    j = j + 1
+  }
+  if report {
+    if t = blk.term {
+      if t.kind == mtk_return() {
+        k = 0
+        while k < pd.size {
+          if pd[k] {
+            v.err(14, b, -1, t.loc, "return before the closing barrier of the fresh fill through _${k}")
+          }
+          k = k + 1
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,28 @@
 # Avant Language changelog
 
+## 0.35.0 - 2026-11-05
+
+### Changed
+
+* A new back end: the compiler lowers the checked program to its own mid-level IR (MIR), emits LLVM IR from it, and compiles that with the LLVM 20 linked into `avant`; `cc` links the object with the runtime as before. There is no `myc-llvm` process any more and no backend to look up: the release archive no longer carries `myc-llvm` (24.7 MB instead of 40.2 MB, 67 MB unpacked instead of 152 MB), and `AVANT_MYC_LLVM` is no longer read. On the LangArena suite (one run each), `--release` programs ran 18% faster than on the old back end with the same memory, and compiling them took under half the time. The garbage collector's roots are kept precisely in every mode.
+* `avant dump FILE.av` prints the program's MIR (it printed myc IR).
+* Programs the old back end rejected or got wrong now compile and run: a struct passed to or returned from C by value follows the C calling convention; `T` or `nil` passed where `T?` is expected (struct literal fields, plain function and method parameters), a union into a wider union, and postfix `?` on a union success type convert as the checker allows; `continue` in an `each` or `any` block goes on with the next element (it looped forever); a block parameter or a `T?` captured by a lambda, a pinned `fn` value, and a lambda capturing a `.parallel` block parameter compile; a `return` inside a `pin` block no longer leaks the pin; a compound field store evaluates its holder once (`next().n += 1` called `next` twice); `process_run` evaluates its arguments left to right; the `.parallel` context is no longer leaked per call; coverage counts the statements of multi-label `switch` arms and versioned loops once.
+* `pop` on an empty array stops the program with the index error, as `xs[xs.size - 1]` does, for every element type. Before, an array of numbers crashed (segmentation fault) and an array of references returned a null reference that printed `(null)`.
+* `break` and `continue` cannot leave a `Mutex.with` block: it is a compile error, like `return`. Before, such a `break` hung the program.
+* Arithmetic gives the mathematically correct value when one exists and traps when none does (three behavior changes):
+  * A shift by an amount outside `0..width - 1`, negative amounts included, traps: `1 << n` with `n = 32` stops with `avant runtime: shift amount 32 out of range for Int (0..31)`, exit 1 (it gave 1: the amount was masked to its low 5 bits, 6 for `Int64` and `UInt64`). A literal amount outside the range, such as `x << 32`, is a compile error.
+  * `Float64.to_i` of NaN, an infinity, or a value outside the `Int` range traps like integer overflow: `x.to_i` with `x = 3.0e9` stops with `avant runtime: to_i of Float64 3000000000 out of range for Int`, exit 1 (it gave -2147483648, indistinguishable from a real `Int` minimum).
+  * `MIN % -1` is 0 for `Int`, as it already was for `Int64`: `(-2147483647 - 1) % -1` is 0 (it trapped with integer overflow). `MIN / -1` still traps.
+
+### Fixed
+
+* `name(args).member` compiles when every argument also reads as a type (`self.ts.get(ty).bits`, `f(job.flags).split(" ")`, `Money.of(o.node).c`), and a type-level function without parameters can be called in field form (`Money.zero.c`).
+* A method named `bump` called on a value is that method, not the bump constructor.
+* A lambda, `spawn`, or `.parallel` body is no longer inside the loops around it: `break` or `continue` there is a compile error at the statement. The body of a block builtin (`each`, `map`, ...) is a loop that `break` and `continue` can leave.
+* Field defaults of generic class instances (`nil`, literals) are typed by their fields, so a `nil` default in a generic class compiles.
+* With `AVANT_COVERAGE=1`, `compile` creates a missing directory of the coverage slot map before writing it.
+* A pinned young object's fields are traced in every young collection, not only the first, so a young value stored into it later is no longer freed under it.
+
 ## 0.34.0 - 2026-11-05
 
 ### Added

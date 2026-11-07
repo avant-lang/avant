@@ -1,0 +1,115 @@
+// Conversions to unions the old back end does not compile (Stage 28
+// W7a, D196; the corrections list, C5 and C11): the new back end converts
+// a value wherever the checker allows it (ty_assignable). Not in the
+// differential: tools/backend-diff.sh lists it as an expected difference.
+//   - a bare T and nil into a T? field of a struct literal (C5; the old
+//     emit_struct_literal does not convert, myc-llvm rejects the store);
+//   - a bare T and nil passed to a T? parameter of a plain function or a
+//     method (the old back end converts only type-level calls' arguments);
+//   - a union into a union of more members (`Int?` into
+//     `Int | Oops | Nil`): the old emit_coerce wraps members only;
+//   - postfix `?` whose success part is itself a union (the old
+//     emit_unwrap reads payload index -1).
+// It also keeps a `nil` field default in a generic class, which the old
+// back end compiles since W10b (C14: the checker types the instance's
+// default; types/generic_defaults.av proves it on both).
+
+class Node {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+class Oops {
+  m: String
+
+  fn initialize(m: String) {
+    self.m = m
+  }
+}
+
+struct Slot {
+  k: Int
+  node: Node?
+}
+
+class Box(T) {
+  last: T? = nil
+
+  fn initialize {
+  }
+
+  fn put(v: T) {
+    last = v
+  }
+}
+
+class Taker {
+  fn initialize {
+  }
+
+  fn take(o: Int?): Int {
+    o ?? -1
+  }
+}
+
+fn opt(o: Int?): Int {
+  o ?? -1
+}
+
+fn name(s: String?): String {
+  s ?? "none"
+}
+
+fn widen(o: Int?): Int | Oops | Nil {
+  o
+}
+
+fn kind(n: Int): Int | Oops | Nil {
+  if n == 0 {
+    return nil
+  }
+  if n > 0 {
+    return n
+  }
+  Oops.new("neg")
+}
+
+fn desc(u: Int | Oops | Nil): String? {
+  x = u?
+  if i = x {
+    return "int ${i}"
+  }
+  "oops"
+}
+
+fn main {
+  s = Slot { k: 1, node: Node.new(2) }
+  if n = s.node {
+    puts(n.v)
+  }
+  t = Slot { k: 2, node: nil }
+  if n2 = t.node {
+    puts(n2.v)
+  } else {
+    puts("nil node")
+  }
+  puts(opt(5))
+  puts(opt(nil))
+  puts(name("s"))
+  puts(name(nil))
+  tk = Taker.new
+  puts(tk.take(7))
+  puts(tk.take(nil))
+  puts(desc(widen(4)) ?? "nil")
+  puts(desc(widen(nil)) ?? "nil")
+  puts(desc(kind(3)) ?? "nil")
+  puts(desc(kind(0)) ?? "nil")
+  puts(desc(kind(-1)) ?? "nil")
+  b = Box(Int).new
+  puts(b.last ?? 0)
+  b.put(9)
+  puts(b.last ?? 0)
+}

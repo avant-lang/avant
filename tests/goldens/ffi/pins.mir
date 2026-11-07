@@ -1,0 +1,407 @@
+module pins
+file 0 "pins.av"
+
+layout %pins.Box = class { 0 label: ref str, 1 n: i32 }  size 16 align 8 id 1
+layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
+layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+
+const str.0 = "pin churn "
+const str.1 = " padding padding"
+const str.2 = "short"
+const str.3 = "%s\0A"
+const str.4 = "hello"
+const str.5 = "world"
+const str.6 = "%d\0A"
+const str.7 = "longer"
+const str.8 = "boxed"
+const str.9 = "!"
+const str.10 = "i"
+const str.11 = "probe-"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %pins.Box stride 0 bits [0x1]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_pin(ref) -> void never
+extern avant_pin_count() -> i32 collects
+extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_size(ref str) -> i32 never
+extern avant_unpin(ref) -> void never
+extern printf(ref str, ...) -> i32 never
+
+fn av.pins/churn(_1: i32) -> i32 frame @pins.av:28:1 {
+  let _0: i32
+  let _1 (n): i32
+  let _2 (t): i32
+  let _3: ref %elems(String) slot
+  let _4: ref %Array(String)
+  let _5 (keep): ref %Array(String) slot
+  let _6 (i): i32
+  let _7: bool
+  let _8: ref str slot
+  let _9: ref str
+  let _10 (s): ref str slot
+  let _11: i32
+  let _12: bool
+  let _13: ref %elems(String) slot
+  let _14: ref %Array(String)
+  let _15: i32
+  let _16: i32
+  let _17: i32
+  let _18: i32
+  let _19: i32
+
+bb0:
+  _3 = zero   @28:1
+  _5 = zero   @28:1
+  _8 = zero   @28:1
+  _10 = zero   @28:1
+  _13 = zero   @28:1
+  gc.enter   @28:1
+  gc.roots _3, _5, _8, _10, _13   @28:1
+  _2 = const i32 0   @29:5
+  _3 = call avant_alloc(const u64 0, const u32 65535) collects   @30:25
+  _4 = call avant_alloc(const u64 16, const u32 1022) collects   @30:25
+  barrier copy _4   @30:25
+  (*_4).0 = copy _3   @30:25
+  (*_4).1 = const i32 0   @30:25
+  (*_4).2 = const i32 0   @30:25
+  _5 = copy _4   @30:3
+  _6 = const i32 0   @31:5
+  goto bb1   @32:3
+
+bb1:
+  _7 = lt copy _6, copy _1   @32:11
+  branch copy _7, bb2, bb3   @32:3
+
+bb2:
+  _8 = call avant_str_cat_i32(const str.0, copy _6) collects   @33:9
+  _9 = call avant_str_concat(copy _8, const str.1) collects   @33:26
+  _10 = copy _9   @33:7
+  call avant_array_push_ptr(copy _5, copy _10, const u32 65535) collects   @34:9
+  _11 = copy (*_5).1   @35:12
+  _12 = gt copy _11, const i32 500   @35:18
+  branch copy _12, bb4, bb5   @35:5
+
+bb3:
+  _18 = copy (*_5).1   @41:11
+  _19 = add.chk copy _2, copy _18   @41:5
+  _0 = copy _19   @41:5
+  gc.leave   @41:5
+  return   @41:5
+
+bb4:
+  _13 = call avant_alloc(const u64 0, const u32 65535) collects   @36:14
+  _14 = call avant_alloc(const u64 16, const u32 1022) collects   @36:14
+  barrier copy _14   @36:14
+  (*_14).0 = copy _13   @36:14
+  (*_14).1 = const i32 0   @36:14
+  (*_14).2 = const i32 0   @36:14
+  _5 = copy _14   @36:12
+  goto bb5   @35:5
+
+bb5:
+  _15 = call avant_str_size(copy _10) nocollect   @38:14
+  _16 = add.chk copy _2, copy _15   @38:11
+  _2 = copy _16   @38:7
+  _17 = add copy _6, const i32 1   @39:11
+  _6 = copy _17   @39:7
+  goto bb1   @32:3
+}
+
+fn av.pins/early(_1: ref str, _2: i32) -> i32 frame @pins.av:44:1 {
+  let _0: i32
+  let _1 (s): ref str
+  let _2 (base): i32
+  let _3: ref str slot
+  let _4: i32
+  let _5: bool
+  let _6: i32
+  let _7: i32
+
+bb0:
+  _3 = zero   @44:1
+  gc.enter   @44:1
+  gc.roots _3   @44:1
+  _3 = copy _1   @45:3
+  call avant_pin(copy _3) nocollect   @45:3
+  _4 = call avant_str_size(copy _1) nocollect   @46:9
+  _5 = gt copy _4, const i32 3   @46:15
+  branch copy _5, bb1, bb2   @46:5
+
+bb1:
+  _6 = call avant_pin_count() collects   @47:16
+  _7 = sub.chk copy _6, copy _2   @47:35
+  _0 = copy _7   @47:7
+  call avant_unpin(copy _3) nocollect   @47:7
+  gc.leave   @47:7
+  return   @47:7
+
+bb2:
+  call printf(const str.3, const str.2) nocollect   @49:5
+  call avant_unpin(copy _3) nocollect   @45:3
+  _0 = const i32 -1   @51:3
+  gc.leave   @51:3
+  return   @51:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @pins.av:54:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: i32
+  let _4 (base): i32
+  let _5: ref str
+  let _6 (s): ref str slot
+  let _7: ref str slot
+  let _8: i32
+  let _9: i32
+  let _10: ref str slot
+  let _11: i32
+  let _12: i32
+  let _13: i32
+  let _14: i32
+  let _15: i32
+  let _16: i32
+  let _17: i32
+  let _18: i32
+  let _19: i32
+  let _20: i32
+  let _21: ref str
+  let _22: ref %pins.Box
+  let _23 (b): ref %pins.Box slot
+  let _24 (total): i32
+  let _25 (i): i32
+  let _26: bool
+  let _27: ref %pins.Box slot
+  let _28: bool
+  let _29: i32
+  let _30: bool
+  let _31: ref str
+  let _32 (inner): ref str
+  let _33: ref str
+  let _34: i32
+  let _35: i32
+  let _36: i32
+  let _37: i32
+  let _38: i32
+  let _39: i32
+  let _40: i32
+  let _41: ref %pins.Box slot
+  let _42 (j): i32
+  let _43: bool
+  let _44: i32
+  let _45: bool
+  let _46: bool
+  let _47: i32
+  let _48: i32
+  let _49: i32
+  let _50: i32
+  let _51 (n): i32
+  let _52 (k): i32
+  let _53: bool
+  let _54: ref str
+  let _55 (t): ref str
+  let _56: ref str
+  let _57: i32
+  let _58: i32
+  let _59: i32
+  let _60: i32
+  let _61: i32
+  let _62: ref str
+
+bb0:
+  _6 = zero   @54:1
+  _7 = zero   @54:1
+  _10 = zero   @54:1
+  _23 = zero   @54:1
+  _27 = zero   @54:1
+  _41 = zero   @54:1
+  gc.enter   @54:1
+  gc.roots _2, _6, _7, _10, _23, _27, _41   @54:1
+  call __avant_type_maps() nocollect   @54:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @54:1
+  _3 = call avant_pin_count() collects   @55:12
+  _4 = copy _3   @55:8
+  _5 = call avant_str_concat(const str.4, const str.5) collects   @56:15
+  _6 = copy _5   @56:5
+  _7 = copy _6   @57:3
+  call avant_pin(copy _7) nocollect   @57:3
+  _8 = call avant_pin_count() collects   @58:12
+  _9 = sub.chk copy _8, copy _4   @58:31
+  call printf(const str.6, copy _9) nocollect   @58:5
+  _10 = copy _6   @59:5
+  call avant_pin(copy _10) nocollect   @59:5
+  _11 = call avant_pin_count() collects   @60:14
+  _12 = sub.chk copy _11, copy _4   @60:33
+  call printf(const str.6, copy _12) nocollect   @60:7
+  call avant_unpin(copy _10) nocollect   @59:5
+  _13 = call avant_pin_count() collects   @62:12
+  _14 = sub.chk copy _13, copy _4   @62:31
+  call printf(const str.6, copy _14) nocollect   @62:5
+  _15 = call av.pins/churn(const i32 30000) collects   @63:10
+  call printf(const str.6, copy _15) nocollect   @63:5
+  call printf(const str.3, copy _6) nocollect   @64:5
+  call avant_unpin(copy _7) nocollect   @57:3
+  _16 = call avant_pin_count() collects   @66:10
+  _17 = sub.chk copy _16, copy _4   @66:29
+  call printf(const str.6, copy _17) nocollect   @66:3
+  _18 = call av.pins/early(const str.7, copy _4) collects   @67:8
+  call printf(const str.6, copy _18) nocollect   @67:3
+  _19 = call avant_pin_count() collects   @68:10
+  _20 = sub.chk copy _19, copy _4   @68:29
+  call printf(const str.6, copy _20) nocollect   @68:3
+  _21 = call avant_str_concat(const str.8, const str.9) collects   @70:23
+  _22 = call av.pins/Box.new(copy _21, const i32 3) collects   @70:10
+  _23 = copy _22   @70:5
+  _24 = const i32 0   @71:9
+  _25 = const i32 0   @72:5
+  goto bb1   @73:3
+
+bb1:
+  _26 = lt copy _25, const i32 6   @73:11
+  branch copy _26, bb2, bb3   @73:3
+
+bb2:
+  _27 = copy _23   @74:5
+  call avant_pin(copy _27) nocollect   @74:5
+  _28 = eq copy _25, const i32 1   @75:12
+  branch copy _28, bb4, bb5   @75:7
+
+bb3:
+  call printf(const str.6, copy _24) nocollect   @89:3
+  _39 = call avant_pin_count() collects   @90:10
+  _40 = sub.chk copy _39, copy _4   @90:29
+  call printf(const str.6, copy _40) nocollect   @90:3
+  _41 = copy _23   @93:3
+  call avant_pin(copy _41) nocollect   @93:3
+  _42 = const i32 0   @94:7
+  goto bb8   @95:5
+
+bb4:
+  _29 = add copy _25, const i32 1   @76:15
+  _25 = copy _29   @76:11
+  call avant_unpin(copy _27) nocollect   @77:9
+  goto bb1   @77:9
+
+bb5:
+  _30 = eq copy _25, const i32 4   @79:12
+  branch copy _30, bb6, bb7   @79:7
+
+bb6:
+  call avant_unpin(copy _27) nocollect   @80:9
+  goto bb3   @80:9
+
+bb7:
+  _31 = call avant_str_cat_i32(const str.10, copy _25) collects   @82:15
+  _32 = copy _31   @82:13
+  _33 = copy _32   @83:7
+  call avant_pin(copy _33) nocollect   @83:7
+  _34 = call avant_str_size(copy _32) nocollect   @84:30
+  _35 = add.chk copy _24, copy _34   @84:23
+  _36 = copy (*_23).1   @84:39
+  _37 = add.chk copy _35, copy _36   @84:36
+  _24 = copy _37   @84:15
+  call avant_unpin(copy _33) nocollect   @83:7
+  call avant_unpin(copy _27) nocollect   @74:5
+  _38 = add.chk copy _25, const i32 1   @87:11
+  _25 = copy _38   @87:7
+  goto bb1   @73:3
+
+bb8:
+  _43 = lt copy _42, const i32 5   @95:13
+  branch copy _43, bb9, bb10   @95:5
+
+bb9:
+  _44 = add copy _42, const i32 1   @96:13
+  _42 = copy _44   @96:9
+  _45 = eq copy _42, const i32 2   @97:12
+  branch copy _45, bb11, bb12   @97:7
+
+bb10:
+  _47 = call avant_pin_count() collects   @104:12
+  _48 = sub.chk copy _47, copy _4   @104:31
+  call printf(const str.6, copy _48) nocollect   @104:5
+  call avant_unpin(copy _41) nocollect   @93:3
+  _49 = call avant_pin_count() collects   @106:10
+  _50 = sub.chk copy _49, copy _4   @106:29
+  call printf(const str.6, copy _50) nocollect   @106:3
+  _51 = const i32 0   @108:5
+  _52 = const i32 0   @109:5
+  goto bb15   @110:3
+
+bb11:
+  goto bb8   @98:9
+
+bb12:
+  _46 = eq copy _42, const i32 4   @100:12
+  branch copy _46, bb13, bb14   @100:7
+
+bb13:
+  goto bb10   @101:9
+
+bb14:
+  goto bb8   @95:5
+
+bb15:
+  _53 = lt copy _52, const i32 20000   @110:11
+  branch copy _53, bb16, bb17   @110:3
+
+bb16:
+  _54 = call avant_str_cat_i32(const str.11, copy _52) collects   @111:9
+  _55 = copy _54   @111:7
+  _56 = copy _55   @112:5
+  call avant_pin(copy _56) nocollect   @112:5
+  _57 = call avant_str_size(copy _55) nocollect   @113:16
+  _58 = add.chk copy _51, copy _57   @113:13
+  _51 = copy _58   @113:9
+  call avant_unpin(copy _56) nocollect   @112:5
+  _59 = add copy _52, const i32 1   @115:11
+  _52 = copy _59   @115:7
+  goto bb15   @110:3
+
+bb17:
+  call printf(const str.6, copy _51) nocollect   @117:3
+  _60 = call avant_pin_count() collects   @118:10
+  _61 = sub.chk copy _60, copy _4   @118:29
+  call printf(const str.6, copy _61) nocollect   @118:3
+  _62 = copy (*_23).0   @119:9
+  call printf(const str.3, copy _62) nocollect   @119:3
+  _0 = const i32 0   @54:1
+  gc.leave   @54:1
+  return   @54:1
+}
+
+fn av.pins/Box.initialize(_1: ref %pins.Box, _2: ref str, _3: i32) -> void leaf @pins.av:19:3 {
+  let _1 (self): ref %pins.Box
+  let _2 (label): ref str
+  let _3 (n): i32
+
+bb0:
+  barrier copy _1   @20:16
+  (*_1).0 = copy _2   @20:16
+  (*_1).1 = copy _3   @21:12
+  return   @19:3
+}
+
+fn av.pins/Box.new(_1: ref str, _2: i32) -> ref %pins.Box frame @pins.av:15:1 {
+  let _0: ref %pins.Box
+  let _1 (label): ref str slot
+  let _2 (n): i32
+  let _3: ref %pins.Box
+
+bb0:
+  gc.enter   @15:1
+  gc.roots _1   @15:1
+  _3 = call avant_alloc(const u64 16, const u32 1) collects   @15:1
+  call av.pins/Box.initialize(copy _3, copy _1, copy _2) nocollect   @15:1
+  _0 = copy _3   @15:1
+  gc.leave   @15:1
+  return   @15:1
+}

@@ -292,6 +292,10 @@ pub class Function {
   box_names: Array(String)
   as_value: Bool = false
   bounds: Array(TypeBound)
+  // A generic function's or method's instance: the type arguments the
+  // checker substituted (checker/match.av instantiate_function and
+  // instantiate_method), in type-parameter order; empty otherwise.
+  inst_args: Array(Ty)
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -307,6 +311,8 @@ pub class Function {
     self.box_names = bx
     bd: Array(TypeBound) = []
     self.bounds = bd
+    ia: Array(Ty) = []
+    self.inst_args = ia
     self.generic = false
     self.ol_index = 0
     self.vis = false
@@ -528,7 +534,6 @@ pub class Program {
   re2c_ids: Hash(String, Int)
   re2c_groups: Array(Int)
   re2c_obj: String = ""
-  quiet_leaves: String = ""
 
   fn initialize(loc: Location) {
     self.loc = loc
@@ -560,7 +565,6 @@ pub class Program {
     rg: Array(Int) = []
     self.re2c_groups = rg
     self.re2c_obj = ""
-    self.quiet_leaves = ""
   }
 }
 
@@ -857,6 +861,22 @@ pub fn clone_block(b: Block): Block {
   out
 }
 
+// A checked call on a receiver that constructs (`T.new(...)`, the bump
+// constructor `T.bump(...)`), rather than calling a method. A method named
+// `bump` called on a value is a method (the checker sets method_call).
+pub fn ast_is_ctor_call(e: Expr): Bool {
+  if str_eq(e.callee, "new") {
+    return true
+  }
+  if str_eq(e.callee, "bump") {
+    if e.method_call {
+      return false
+    }
+    return true
+  }
+  false
+}
+
 pub fn clone_expr(e: Expr): Expr {
   out = Expr.new(e.kind, e.loc)
   out.ident = e.ident
@@ -1040,6 +1060,11 @@ pub fn clone_function(fnn: Function): Function {
   while i < fnn.bounds.size {
     b = fnn.bounds[i]
     out.bounds.push(TypeBound.new(b.param, clone_type_name(b.iface)))
+    i = i + 1
+  }
+  i = 0
+  while i < fnn.inst_args.size {
+    out.inst_args.push(fnn.inst_args[i])
     i = i + 1
   }
   out.generic = fnn.generic

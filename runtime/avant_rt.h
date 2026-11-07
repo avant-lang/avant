@@ -117,7 +117,14 @@ extern uint64_t avant_young_bytes;
 extern uint64_t avant_since_gc;
 extern uint64_t avant_inline_allocs;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
+/* Stage 28 W1b: one 64-word chunk (word_base a multiple of 64) of a
+ * type map of any length, with an element stride in words (0: one
+ * record; > 0: a buffer of repeated elements). See avant_rt.c TypeMap. */
+void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_base,
+                       uint64_t bits);
 void avant_barrier(void *obj);
+/* Barrier for a store through an address that may lie inside a heap object. */
+void avant_barrier_at(void *addr);
 
 typedef struct AvantGcStats {
   uint64_t collections;
@@ -298,6 +305,8 @@ void avant_bwt_inverse(void *bwt, void *next, void *out, int32_t start);
 void avant_trap_bounds(int32_t index, int32_t size);
 void avant_trap_div_zero(void);
 void avant_trap_overflow(void);
+void avant_trap_shift(int64_t amount, int32_t kind);
+void avant_trap_to_i(double x);
 int64_t avant_checked_add_i64(int64_t a, int64_t b);
 int64_t avant_checked_sub_i64(int64_t a, int64_t b);
 int64_t avant_checked_mul_i64(int64_t a, int64_t b);

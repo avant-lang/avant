@@ -6,7 +6,7 @@
 # DIST_DIR holds avant-linux-x86_64.tar.gz and its .sha256 (tools/package.sh
 # output). The container gets only what a user needs (a C compiler and the
 # C library's development files, plus curl and tar for the installer) and
-# no LLVM, PCRE2, zlib development files, or re2c. It runs install.sh
+# no LLVM, PCRE2, zlib development files, re2c, or myc-llvm. It runs install.sh
 # against a file:// release, then tools/smoke.sh on the installed ~/.avant.
 #
 # EXPECT selects a negative case instead:
@@ -56,7 +56,7 @@ elif command -v apk > /dev/null; then
   apk add -q bash curl tar
 fi
 echo "container: $(. /etc/os-release && echo "$PRETTY_NAME"), $(getconf GNU_LIBC_VERSION 2>/dev/null || echo 'no glibc')"
-for tool in llvm-config-20 llvm-config re2c pcre2-config; do
+for tool in llvm-config-20 llvm-config re2c pcre2-config myc-llvm; do
   if command -v $tool > /dev/null; then
     echo "container: $tool is present, the image is not clean" >&2
     exit 1

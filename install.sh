@@ -259,7 +259,7 @@ else
 	t="$tmp/self-test"
 	mkdir -p "$t"
 	printf 'fn main {\n  puts("hello from avant")\n}\n' >"$t/hello.av"
-	if out=$(cd "$t" && env -u AVANT_ROOT -u AVANT_MYC_LLVM -u AVANT_RE2C TMPDIR="$t" "$exe" run hello.av </dev/null 2>&1) &&
+	if out=$(cd "$t" && env -u AVANT_ROOT -u AVANT_RE2C -u AVANT_BACKEND TMPDIR="$t" "$exe" run hello.av </dev/null 2>&1) &&
 		[[ $out = "hello from avant" ]]; then
 		self_test_ok=1
 		info "Self-test: compiled and ran a hello program"

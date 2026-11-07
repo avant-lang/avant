@@ -1,0 +1,18 @@
+// std.http without the network and without threads (Stage 28 W8a): the
+// whole module lowers on the new back end (its `lib` block, the C
+// callbacks the server hands to uSockets, `Ptr(Void)` fields), and the
+// parts that need no socket run: responses built in code, and an empty
+// header set read through the C helpers. The server, the client, and WebSockets need a
+// second thread or process (test_std_http.av, W8b).
+
+import std.http
+
+fn main {
+  r = Response.text("hello", 201).header("X-One", "1").header("Content-Length", "9")
+  puts(r.status)
+  puts(r.head)
+  puts(r.body.size)
+  puts(r.headers.count)
+  b = Response.bytes("raw".bytes)
+  puts(b.status)
+}

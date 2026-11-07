@@ -1,0 +1,721 @@
+// The lowering: AST + checker facts -> MIR (Stage 28 W5b; stages/stage28/
+// mir.md 5.9 step 1, W5.3). This file holds the lowering's state, the
+// program and function level, locations, and refusals; statements are in
+// lower_stmt.av, expressions in lower_expr.av, types and names in
+// lower_ty.av; heap strings in lower_str.av. The result is stage-lowered
+// MIR (Avant calls `collects`, no gc.*, kinds unset); mir_lower_program
+// verifies it at stage lowered, then runs the leaf and root-slot passes
+// (gc.av, 5.9) so the module is ready for verify(final) and emission.
+//
+// The subset is the scalars (W5), heap strings (W6a), structs and
+// classes with their plain methods and constructors (W6b,
+// lower_agg.av), and arrays, hashes, Buf, and Bytes (W6c, lower_arr.av,
+// lower_hash.av): every other
+// construct stops the lowering with `not yet supported by the llvm back
+// end: <what>` at its location (refuse), and the module is not used.
+//
+// Field names carry the `lw_` prefix: a field's name is in scope inside a
+// method, so a local of the same name would silently write the field.
+
+import location
+import diagnostic
+import source
+import type
+import ast
+import typed_ir
+import mir.types
+import mir.ir
+import mir.build
+import mir.lower_ty
+import mir.verify_core
+import mir.verify
+import mir.gc
+import mir.loops
+
+pub class MirLowered {
+  module: MModule
+  err: String = ""
+
+  fn initialize(m: MModule, err: String) {
+    self.module = m
+    self.err = err
+  }
+}
+
+// A lambda waiting for its thunk (W7b): the lambda and its symbol.
+pub class MirLam {
+  expr: Expr
+  sym: String = ""
+
+  fn initialize(expr: Expr, sym: String) {
+    self.expr = expr
+    self.sym = sym
+  }
+}
+
+// The closure state of the function being lowered (W7b, lower_fn.av):
+// the captured names of a thunk (its environment's fields, in order) and
+// the environment local; the boxed names of the function or thunk, each
+// with its box local and whether the box was allocated yet (the old
+// back end's first need, in lowering order); the type of each name a
+// lambda captures, by enclosing symbol (`sym|name`, from the prewalk);
+// the lambdas waiting for their thunks; the lambda counter per enclosing
+// symbol (8.2: `#lamN` in source order).
+pub class MirClosures {
+  caps: Array(String)
+  base: String = ""
+  env: Int = -1
+  boxed: Array(String)
+  box_local: Hash(String, Int)
+  box_ready: Hash(String, Int)
+  cap_at: Hash(String, Int)
+  cap_tys: Array(Ty)
+  pending: Array(MirLam)
+  lam_n: Hash(String, Int)
+
+  fn initialize {
+    c: Array(String) = []
+    self.caps = c
+    bx: Array(String) = []
+    self.boxed = bx
+    self.box_local = Hash(String, Int).new
+    self.box_ready = Hash(String, Int).new
+    self.cap_at = Hash(String, Int).new
+    ct: Array(Ty) = []
+    self.cap_tys = ct
+    p: Array(MirLam) = []
+    self.pending = p
+    self.lam_n = Hash(String, Int).new
+  }
+}
+
+// A C callback thunk waiting to be lowered: its symbol, the Avant
+// function or lambda thunk it calls, the `fn` type, whether the target is
+// a lambda thunk (whose first parameter is the environment), and where.
+pub class MirCb {
+  sym: String = ""
+  target: String = ""
+  fty: Ty
+  lambda: Bool = false
+  loc: Location
+
+  fn initialize(sym: String, target: String, fty: Ty, lambda: Bool, loc: Location) {
+    self.sym = sym
+    self.target = target
+    self.fty = fty
+    self.lambda = lambda
+    self.loc = loc
+  }
+}
+
+// The FFI state: the callback thunks of the program (once each), and the
+// open pins of the function being lowered (the pinned local, and the
+// loop depth, lw_heads.size, where each was opened).
+pub class MirFfi {
+  cbs: Array(MirCb)
+  cb_seen: Hash(String, Int)
+  pins: Array(Int)
+  pin_depth: Array(Int)
+
+  fn initialize {
+    c: Array(MirCb) = []
+    self.cbs = c
+    self.cb_seen = Hash(String, Int).new
+    p: Array(Int) = []
+    self.pins = p
+    d: Array(Int) = []
+    self.pin_depth = d
+  }
+
+  pub fn reset_pins {
+    p: Array(Int) = []
+    self.pins = p
+    d: Array(Int) = []
+    self.pin_depth = d
+  }
+}
+
+// A spawn or `.parallel` thunk waiting to be lowered (W8b, lower_task.av):
+// the call, its symbol (`<enclosing>#spawnN`, `#parN`, 8.2), and its
+// place in the pre-walk (the old back end's pending order).
+pub class MirTask {
+  expr: Expr
+  sym: String = ""
+  par: Bool = false
+  index: Int = 0
+
+  fn initialize(expr: Expr, sym: String, par: Bool, index: Int) {
+    self.expr = expr
+    self.sym = sym
+    self.par = par
+    self.index = index
+  }
+}
+
+// The thread state (W8b): the thunks to lower (in pre-walk order, each
+// queued when its call is lowered), the pre-walk counters, and the open
+// `Mutex.with` places (the block parameter's name, the local holding the
+// mutex, the cell's field index), innermost last.
+pub class MirTasks {
+  pending: Array(MirTask)
+  done: Int = 0
+  count: Int = 0
+  n: Hash(String, Int)
+  index: Hash(String, Int)
+  pnames: Array(String)
+  pholders: Array(Int)
+  pfields: Array(Int)
+
+  fn initialize {
+    p: Array(MirTask) = []
+    self.pending = p
+    self.n = Hash(String, Int).new
+    self.index = Hash(String, Int).new
+    pn: Array(String) = []
+    self.pnames = pn
+    ph: Array(Int) = []
+    self.pholders = ph
+    pf: Array(Int) = []
+    self.pfields = pf
+  }
+}
+
+// The coverage state (W8b, lower_cov.av; audit 5): whether the build
+// counts, the slot map's path, and every counted point in lowering order
+// (kind 1 statement, 2 branch, 3 function, 4 line touch; its path, line,
+// name, and the rank of the function it is in, which orders the slots as
+// the old back end numbers them).
+pub class MirCov {
+  on: Bool = false
+  map_path: String = ""
+  rank: Int = 0
+  kinds: Array(Int)
+  paths: Array(String)
+  lines: Array(Int)
+  names: Array(String)
+  ranks: Array(Int)
+  lam_index: Hash(String, Int)
+
+  fn initialize {
+    k: Array(Int) = []
+    self.kinds = k
+    p: Array(String) = []
+    self.paths = p
+    l: Array(Int) = []
+    self.lines = l
+    nm: Array(String) = []
+    self.names = nm
+    r: Array(Int) = []
+    self.ranks = r
+    self.lam_index = Hash(String, Int).new
+  }
+}
+
+pub class MirLower {
+  lw_m: MModule
+  lw_b: MirBuilder
+  lw_prog: Program
+  lw_syms: SymbolTable
+  lw_root_dir: String = ""
+  lw_avant_root: String = ""
+  lw_err: String = ""
+  lw_fn_syms: Hash(String, String)
+  lw_vars: Hash(String, Int)
+  lw_heads: Array(Int)
+  lw_exits: Array(Int)
+  lw_ret: Int = 0
+  lw_main: Bool = false
+  lw_fn_loc: Location
+  lw_self: Int = 0
+  lw_self_struct: Bool = false
+  lw_self_name: String = ""
+  lw_self_ty: Ty? = nil
+  lw_busy: Hash(String, Int)
+  lw_pend_struct: Array(String)
+  lw_pend_elems: Array(Int)
+  lw_ret_ty: Ty? = nil
+  lw_all: Array(Function)
+  lw_bumps: Hash(String, Int)
+  lw_cl: MirClosures
+  lw_ffi: MirFfi
+  lw_task: MirTasks
+  lw_cov: MirCov
+
+  fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
+    self.lw_m = mir_module(mir_module_part(program.root_module))
+    self.lw_b = MirBuilder.new(self.lw_m)
+    self.lw_prog = program
+    self.lw_syms = symbols
+    self.lw_root_dir = root_dir
+    self.lw_avant_root = avant_root
+    self.lw_err = ""
+    self.lw_fn_syms = Hash(String, String).new
+    self.lw_vars = Hash(String, Int).new
+    h: Array(Int) = []
+    self.lw_heads = h
+    x: Array(Int) = []
+    self.lw_exits = x
+    self.lw_fn_loc = program.loc
+    self.lw_self_name = ""
+    self.lw_busy = Hash(String, Int).new
+    ps: Array(String) = []
+    self.lw_pend_struct = ps
+    pe: Array(Int) = []
+    self.lw_pend_elems = pe
+    self.lw_all = program_all_functions(program)
+    self.lw_bumps = Hash(String, Int).new
+    self.lw_cl = MirClosures.new
+    self.lw_ffi = MirFfi.new
+    self.lw_task = MirTasks.new
+    self.lw_cov = MirCov.new
+  }
+
+  // ---- refusals
+
+  // The first refusal wins; later ones are not reported.
+  pub fn refuse(loc: Location, what: String) {
+    if self.lw_err.size > 0 {
+      return
+    }
+    r = CompileError.new(loc, "L0001", "not yet supported by the llvm back end: ${what}").render
+    if r.size > 0 && r[r.size - 1] == 10 {
+      r = str_slice(r, 0, r.size - 1)
+    }
+    self.lw_err = r
+  }
+
+  pub fn failed: Bool {
+    self.lw_err.size > 0
+  }
+
+  // ---- locations (9): the file table holds paths relative to the root
+  // source's directory, else to the Avant root, else as given.
+  pub fn rel_path(path: String): String {
+    if self.lw_root_dir.size > 0 && str_starts_mir(path, "${self.lw_root_dir}/") {
+      return str_slice(path, self.lw_root_dir.size + 1, path.size)
+    }
+    if self.lw_avant_root.size > 0 && str_starts_mir(path, "${self.lw_avant_root}/") {
+      return str_slice(path, self.lw_avant_root.size + 1, path.size)
+    }
+    path
+  }
+
+  pub fn at(loc: Location) {
+    dummy = self.lw_b.file(self.rel_path(loc.path))
+    self.lw_b.at_loc(loc.line, loc.column)
+  }
+
+  pub fn mloc(loc: Location): MLoc {
+    fid = self.lw_b.file(self.rel_path(loc.path))
+    mir_loc(fid, loc.line, loc.column)
+  }
+
+  // ---- the current block
+
+  pub fn open_now: Bool {
+    blk = self.lw_b.func.blocks[self.lw_b.cur_bb]
+    if t = blk.term {
+      return false
+    }
+    true
+  }
+
+  // ---- locals: one per (source name, MIR type), as the old back end's
+  // named locals (W5.2).
+  pub fn var_key(name: String, ty: Int): String {
+    "${name}|${ty}"
+  }
+
+  pub fn var_find(name: String, ty: Int): Int {
+    if got = self.lw_vars.get(self.var_key(name, ty)) {
+      return got
+    }
+    return -1
+  }
+
+  pub fn var_get(name: String, ty: Int): Int {
+    k = self.var_find(name, ty)
+    if k >= 0 {
+      return k
+    }
+    k = self.lw_b.local(ty, name)
+    self.lw_vars[self.var_key(name, ty)] = k
+    k
+  }
+
+  // ---- the program
+
+  pub fn lower_program {
+    p = self.lw_prog
+    fns = self.lowered_functions
+    // W6b: the layouts and type ids of every class (program order, one
+    // allocator, D186) and the symbols of methods and constructors.
+    self.note_classes
+    if self.failed {
+      return
+    }
+    // Symbols are collision-free by construction (8.2); a collision
+    // would be a defect of the scheme, so it stops the lowering.
+    taken = Hash(String, Int).new
+    i = 0
+    while i < fns.size {
+      sym = ""
+      if fn_is_method(fns[i]) {
+        sym = self.method_symbol(fns[i])
+      } else {
+        sym = self.symbol_of(fns[i])
+      }
+      if self.failed {
+        return
+      }
+      if taken.has_key(sym) {
+        self.refuse(fns[i].loc, "a second function with the symbol ${sym} (internal)")
+        return
+      }
+      taken[sym] = 1
+      self.lw_fn_syms[fns[i].emit_name] = sym
+      i = i + 1
+    }
+    self.note_ctor_symbols
+    // W7b: lambda symbols, then the box and environment maps in the old
+    // back end's order (decl.av collect_arrays), before any element
+    // buffer's id.
+    i = 0
+    while i < fns.size && !self.failed {
+      self.prewalk_function(fns[i])
+      i = i + 1
+    }
+    if self.failed {
+      return
+    }
+    has_main = false
+    run_fn: Function? = nil
+    i = 0
+    while i < fns.size {
+      if str_eq(fns[i].name, "main") && str_eq(fns[i].mod_name, p.root_module) {
+        has_main = true
+      }
+      if str_eq(fns[i].name, "run") && str_eq(fns[i].mod_name, p.root_module) {
+        run_fn = fns[i]
+      }
+      i = i + 1
+    }
+    i = 0
+    while i < fns.size && !self.failed {
+      self.lw_cov.rank = i
+      self.lower_function(fns[i])
+      self.lower_pending_lambdas
+      i = i + 1
+    }
+    self.lw_cov.rank = 1000000
+    self.lower_ctors
+    self.lower_pending_lambdas
+    // W8b: the spawn and .parallel thunks after the constructors (the old
+    // back end's order), with the lambdas they make.
+    self.lower_pending_tasks
+    self.lower_trampolines(fns)
+    self.lower_cb_thunks
+    self.lower_pending_lambdas
+    if self.failed {
+      return
+    }
+    if !has_main {
+      if r = run_fn {
+        self.lower_run_wrapper(r)
+      } else {
+        self.refuse(p.loc, "a program without fn main or fn run")
+        return
+      }
+    }
+    self.cov_finish
+  }
+
+  // The functions to lower, in program order (program_all_functions):
+  // every one but the generic templates and the methods of generic
+  // struct and class templates (the checker's instances stand for them,
+  // D175).
+  pub fn lowered_functions: Array(Function) {
+    out: Array(Function) = []
+    i = 0
+    while i < self.lw_all.size {
+      f = self.lw_all[i]
+      if !f.generic && !(f.owner.size > 0 && self.lw_syms.resolver.has_template(f.owner)) {
+        out.push(f)
+      }
+      i = i + 1
+    }
+    out
+  }
+
+  // The MIR type of t, or -1 after refusing it at loc.
+  pub fn ty_at(t: Ty, loc: Location, what: String): Int {
+    m = mir_scalar_ty(t)
+    if m < 0 && t.is_nil {
+      m = mt_i32()
+    }
+    if m < 0 && t.is_union {
+      l = self.union_layout(t, loc)
+      if l < 0 {
+        return -1
+      }
+      m = self.lw_m.types.agg(l)
+    }
+    if m < 0 && t.is_fn {
+      l2 = self.fn_layout(t, loc)
+      if l2 < 0 {
+        return -1
+      }
+      m = self.lw_m.types.agg(l2)
+    }
+    if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf || t.is_ptr || t.is_clayout || t.is_join) {
+      m = self.value_agg_ty(t, loc)
+      if self.failed {
+        return -1
+      }
+    }
+    if m < 0 {
+      self.refuse(loc, "${what} of type ${t.show}")
+    }
+    m
+  }
+
+  pub fn begin_function(fnn: Function) {
+    self.begin_at(fnn.loc)
+  }
+
+  pub fn begin_at(loc: Location) {
+    self.lw_vars = Hash(String, Int).new
+    h: Array(Int) = []
+    self.lw_heads = h
+    x: Array(Int) = []
+    self.lw_exits = x
+    self.lw_fn_loc = loc
+    self.lw_self = 0
+    self.lw_self_struct = false
+    self.lw_self_name = ""
+    self.lw_self_ty = nil
+    self.lw_ret_ty = nil
+    self.reset_closures
+    self.lw_ffi.reset_pins
+  }
+
+  // No captures, no boxes: the closure state of a new function (W7b).
+  pub fn reset_closures {
+    self.lw_cl.caps = mir_no_names()
+    self.lw_cl.env = -1
+    self.lw_cl.base = ""
+    self.lw_cl.boxed = mir_no_names()
+    self.lw_cl.box_local = Hash(String, Int).new
+    self.lw_cl.box_ready = Hash(String, Int).new
+  }
+
+  // The checked signature of a function or a method (methods are in the
+  // symbol table's method list, without their receiver).
+  pub fn sig_of(fnn: Function): FuncSig? {
+    if fn_is_method(fnn) {
+      return self.lw_syms.find_method_emit(fnn.emit_name)
+    }
+    self.lw_syms.find_fn(fnn.emit_name)
+  }
+
+  pub fn lower_function(fnn: Function) {
+    self.begin_function(fnn)
+    sym = ""
+    if got = self.lw_fn_syms.get(fnn.emit_name) {
+      sym = got
+    }
+    recv = -1
+    if fn_is_method(fnn) && !fnn.type_method {
+      recv = self.method_receiver(fnn)
+      if self.failed {
+        return
+      }
+    }
+    if fs = self.sig_of(fnn) {
+      self.lw_main = str_eq(sym, "main")
+      params: Array(Int) = []
+      ret = self.ty_at(fs.ret, fnn.loc, "a result")
+      if self.lw_main {
+        params.push(mt_i32())
+        params.push(mt_ptr())
+        if ret != mt_void() && ret != mt_i32() {
+          self.refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
+        }
+      } else {
+        if recv >= 0 {
+          params.push(recv)
+        }
+        i = 0
+        while i < fs.params.size {
+          params.push(self.ty_at(fs.params[i], fnn.loc, "a parameter"))
+          i = i + 1
+        }
+      }
+      if self.failed {
+        return
+      }
+      self.lw_ret = ret
+      self.lw_ret_ty = fs.ret
+      sret = ret
+      if self.lw_main {
+        sret = mt_i32()
+      }
+      dummy = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      self.lw_cl.base = self.lam_base(fnn)
+      if self.lw_main {
+        self.lw_b.set_external
+        self.lw_b.name_param(1, "argc")
+        self.lw_b.name_param(2, "argv")
+        self.main_prologue(fnn.loc)
+        none: Array(Ty) = []
+        self.begin_boxes(fnn.box_names, mir_no_names(), none, 0)
+      } else {
+        base = 0
+        if recv >= 0 {
+          base = 1
+          self.bind_receiver(fnn, recv)
+        }
+        pn: Array(String) = []
+        i = 0
+        while i < fnn.params.size {
+          self.lw_b.name_param(i + 1 + base, fnn.params[i].name)
+          self.lw_vars[self.var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
+          pn.push(fnn.params[i].name)
+          i = i + 1
+        }
+        self.begin_boxes(fnn.box_names, pn, fs.params, base)
+      }
+      self.cov_func(fnn)
+      self.lower_body(fnn.body)
+      self.finish_body(fnn)
+      self.lw_b.end_fn
+      return
+    }
+    self.refuse(fnn.loc, "function ${fnn.name} (no checked signature)")
+  }
+
+  // 3.6: the type maps, then argc and argv for the runtime.
+  pub fn main_prologue(loc: Location) {
+    self.at(loc)
+    none: Array(MOperand) = []
+    dummy = self.lw_b.call(-1, "__avant_type_maps", none)
+    args: Array(MOperand) = []
+    args.push(self.lw_b.copy_local(1))
+    args.push(self.lw_b.copy_local(2))
+    dummy2 = self.lw_b.call(-1, "avant_io_init_argv", args)
+    self.cov_init
+  }
+
+  // The end of a body that falls through (W5.3): a void function returns
+  // (a void main returns 0); with a result the end is unreachable, since
+  // the checker requires a return (E4007) and the tail value was lowered
+  // as one.
+  pub fn finish_body(fnn: Function) {
+    self.finish_at(fnn.loc)
+  }
+
+  pub fn finish_at(loc: Location) {
+    if self.failed || !self.open_now {
+      return
+    }
+    self.at(loc)
+    if self.lw_ret == mt_void() {
+      if self.lw_main {
+        dummy = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+      }
+      self.lw_b.ret
+      return
+    }
+    self.lw_b.unreachable
+  }
+
+  // A program with `fn run` and no `fn main` (3.6): main calls run and
+  // returns its Int result, else 0.
+  pub fn lower_run_wrapper(r: Function) {
+    self.begin_function(r)
+    self.lw_main = true
+    params: Array(Int) = []
+    params.push(mt_i32())
+    params.push(mt_ptr())
+    dummy = self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
+    self.lw_b.set_external
+    self.lw_b.name_param(1, "argc")
+    self.lw_b.name_param(2, "argv")
+    self.main_prologue(r.loc)
+    sym = ""
+    if got = self.lw_fn_syms.get(r.emit_name) {
+      sym = got
+    }
+    rty = mt_void()
+    if fs = self.lw_syms.find_fn(r.emit_name) {
+      rty = mir_scalar_ty(fs.ret)
+    }
+    none: Array(MOperand) = []
+    if rty == mt_i32() {
+      t = self.lw_b.temp(mt_i32())
+      dummy2 = self.lw_b.call(t, sym, none)
+      dummy3 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
+    } else {
+      dest = -1
+      if rty != mt_void() && rty >= 0 {
+        dest = self.lw_b.temp(rty)
+      }
+      dummy4 = self.lw_b.call(dest, sym, none)
+      dummy5 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+    }
+    self.lw_b.ret
+    self.lw_b.end_fn
+  }
+}
+
+pub fn mir_no_names: Array(String) {
+  a: Array(String) = []
+  a
+}
+
+// The entry (pipeline.av under AVANT_BACKEND=llvm): the module after the
+// GC passes, or the first refusal (err, ready for diag_puts). A module the
+// verifier rejects at stage lowered is a lowering bug: its errors are the
+// message, prefixed so they read as internal.
+// root_path is the root source file; avant_root the Avant root (std).
+pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String): MirLowered {
+  mir_lower_program(program, symbols, root_path, avant_root, "")
+}
+
+// cov_map: the coverage slot map's path when the build counts
+// (AVANT_COVERAGE, audit 5), else empty.
+pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String, cov_map: String): MirLowered {
+  dir = ""
+  i = root_path.size - 1
+  while i >= 0 {
+    if root_path[i] == 47 {
+      dir = str_slice(root_path, 0, i)
+      break
+    }
+    i = i - 1
+  }
+  lw = MirLower.new(program, symbols, dir, avant_root)
+  if cov_map.size > 0 {
+    lw.lw_cov.on = true
+    lw.lw_cov.map_path = cov_map
+  }
+  lw.lower_program
+  if lw.failed {
+    return MirLowered.new(lw.lw_m, lw.lw_err)
+  }
+  errs = mir_verify_errors(lw.lw_m, mst_lowered())
+  if errs.size > 0 {
+    buf = buf_new()
+    buf.push_str("internal error: the llvm back end's lowering broke the MIR verifier at stage lowered:")
+    j = 0
+    while j < errs.size {
+      buf.push_str("\n")
+      buf.push_str(errs[j].show)
+      j = j + 1
+    }
+    return MirLowered.new(lw.lw_m, buf.to_s)
+  }
+  mir_loop_pass(lw.lw_m)
+  mir_gc_passes(lw.lw_m)
+  MirLowered.new(lw.lw_m, "")
+}

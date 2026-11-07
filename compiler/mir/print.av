@@ -1,0 +1,542 @@
+// The MIR printer (Stage 28 W4; stages/stage28/mir.md 10.1): the text
+// `avant dump` will print and `.mir` goldens compare (D171). Deterministic:
+// only the MIR's own numbers, in module order (3.1), locals and blocks by
+// number. with_locs false omits every location (verifier messages, tests).
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+
+pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
+  digits = "0123456789abcdef"
+  if upper {
+    digits = "0123456789ABCDEF"
+  }
+  out: Array(String) = []
+  x = v
+  while x != 0u64 || out.size < width || out.size == 0 {
+    d = (x & 15u64).to_i
+    out.push(str_slice(digits, d, d + 1))
+    x = x >> 4u64
+  }
+  buf = buf_new()
+  i = out.size - 1
+  while i >= 0 {
+    buf.push_str(out[i])
+    i = i - 1
+  }
+  buf.to_s
+}
+
+pub fn mir_str_lt(a: String, b: String): Bool {
+  n = a.size
+  if b.size < n {
+    n = b.size
+  }
+  i = 0
+  while i < n {
+    if a[i] != b[i] {
+      return a[i] < b[i]
+    }
+    i = i + 1
+  }
+  a.size < b.size
+}
+
+pub fn mir_escape(s: String): String {
+  buf = buf_new()
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c < 32 || c > 126 || c == 34 || c == 92 {
+      buf.push_str("\\")
+      buf.push_str(mir_hex(c.to_u64, true, 2))
+    } else {
+      buf.push_str(str_slice(s, i, i + 1))
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+pub fn mir_int_text(ty: Int, v: Int64): String {
+  if ty == mt_u64() {
+    return "${v.to_u64}"
+  }
+  "${v}"
+}
+
+pub fn mir_place_text(ts: MTypes, p: MPlace): String {
+  s = "_${p.local}"
+  i = 0
+  while i < p.proj.size {
+    pr = p.proj[i]
+    if pr.kind == mpk_deref() {
+      s = "(*${s})"
+    } else if pr.kind == mpk_field() {
+      s = "${s}.${pr.field}"
+    } else if o = pr.index {
+      s = "${s}[${mir_operand_text(ts, o)}]"
+    }
+    i = i + 1
+  }
+  s
+}
+
+pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
+  if p = o.place {
+    return "copy ${mir_place_text(ts, p)}"
+  }
+  if o.kind == mok_str() {
+    return "const str.${o.sid}"
+  }
+  if o.kind == mok_fn() {
+    return "const fn ${o.text}"
+  }
+  if o.kind == mok_bool() {
+    if o.ival != 0i64 {
+      return "const bool true"
+    }
+    return "const bool false"
+  }
+  if o.kind == mok_f64() {
+    s = "const f64 0x${mir_hex(o.ival.to_u64, true, 16)}"
+    if o.text.size > 0 {
+      s = "${s} /* ${o.text} */"
+    }
+    return s
+  }
+  tn = ts.text(o.ty)
+  if o.kind == mok_null() {
+    return "const ${tn} null"
+  }
+  "const ${tn} ${mir_int_text(o.ty, o.ival)}"
+}
+
+fn mir_ops_text(ts: MTypes, ops: Array(MOperand)): String {
+  buf = buf_new()
+  i = 0
+  while i < ops.size {
+    if i > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str(mir_operand_text(ts, ops[i]))
+    i = i + 1
+  }
+  buf.to_s
+}
+
+fn mir_opt_text(ts: MTypes, o: MOperand?): String {
+  if x = o {
+    return mir_operand_text(ts, x)
+  }
+  "?"
+}
+
+pub fn mir_rvalue_text(m: MModule, r: MRvalue): String {
+  ts = m.types
+  k = r.kind
+  if k == mrk_use() {
+    return mir_opt_text(ts, r.a)
+  }
+  if k == mrk_zero() {
+    return "zero"
+  }
+  if k == mrk_unary() {
+    return "${mop_name(r.op)} ${mir_opt_text(ts, r.a)}"
+  }
+  if k == mrk_binary() || k == mrk_cmp() {
+    return "${mop_name(r.op)} ${mir_opt_text(ts, r.a)}, ${mir_opt_text(ts, r.b)}"
+  }
+  if k == mrk_checked() {
+    return "${mop_name(r.op)}.chk ${mir_opt_text(ts, r.a)}, ${mir_opt_text(ts, r.b)}"
+  }
+  if k == mrk_cast() {
+    return "cast ${mir_opt_text(ts, r.a)} to ${m.types.text(r.ty)}"
+  }
+  if k == mrk_addr() || k == mrk_addr_raw() {
+    word = "addr"
+    if k == mrk_addr_raw() {
+      word = "addr.raw"
+    }
+    if p = r.place {
+      return "${word} ${mir_place_text(ts, p)}"
+    }
+    return word
+  }
+  if k == mrk_struct() {
+    return "struct ${m.types.text(r.ty)} (${mir_ops_text(ts, r.ops)})"
+  }
+  if k == mrk_union() {
+    s = "union ${m.types.text(r.ty)} tag ${r.op}"
+    if a = r.a {
+      s = "${s} (${mir_operand_text(ts, a)})"
+    }
+    return s
+  }
+  if k == mrk_fnval() {
+    return "fnval ${m.types.text(r.ty)} (${mir_opt_text(ts, r.a)}, ${mir_opt_text(ts, r.b)})"
+  }
+  "?"
+}
+
+pub fn mir_stmt_text(m: MModule, st: MStmt): String {
+  ts = m.types
+  k = st.kind
+  if k == msk_assign() {
+    s = "?"
+    if p = st.place {
+      s = mir_place_text(ts, p)
+    }
+    if r = st.rv {
+      s = "${s} = ${mir_rvalue_text(m, r)}"
+    }
+    if st.fresh {
+      s = "${s} fresh"
+    }
+    return s
+  }
+  if k == msk_call() {
+    s = ""
+    if st.dest >= 0 {
+      s = "_${st.dest} = "
+    }
+    callee = st.callee
+    if ind = st.indirect {
+      callee = "indirect ${mir_operand_text(ts, ind)}"
+    }
+    mark = "nocollect"
+    if st.collects {
+      mark = "collects"
+    }
+    return "${s}call ${callee}(${mir_ops_text(ts, st.args)}) ${mark}"
+  }
+  if k == msk_barrier() {
+    return "barrier ${mir_ops_text(ts, st.args)}"
+  }
+  if k == msk_barrier_at() {
+    return "barrier_at ${mir_ops_text(ts, st.args)}"
+  }
+  if k == msk_check_bounds() {
+    return "check.bounds ${mir_ops_text(ts, st.args)}"
+  }
+  if k == msk_gc_enter() {
+    return "gc.enter"
+  }
+  if k == msk_gc_leave() {
+    return "gc.leave"
+  }
+  if k == msk_gc_roots() {
+    buf = buf_new()
+    buf.push_str("gc.roots")
+    i = 0
+    while i < st.locals.size {
+      if i == 0 {
+        buf.push_str(" ")
+      } else {
+        buf.push_str(", ")
+      }
+      buf.push_str("_${st.locals[i]}")
+      i = i + 1
+    }
+    return buf.to_s
+  }
+  "?"
+}
+
+pub fn mir_term_text(ts: MTypes, t: MTerm): String {
+  k = t.kind
+  cold = ""
+  if t.cold > 0 {
+    cold = " cold"
+  }
+  if k == mtk_goto() {
+    return "goto bb${t.targets[0]}${cold}"
+  }
+  if k == mtk_branch() {
+    return "branch ${mir_opt_text(ts, t.cond)}, bb${t.targets[0]}, bb${t.targets[1]}${cold}"
+  }
+  if k == mtk_switch() {
+    buf = buf_new()
+    buf.push_str("switch ${mir_opt_text(ts, t.cond)} [")
+    ty = mt_i32()
+    if c = t.cond {
+      ty = c.ty
+    }
+    i = 0
+    while i < t.values.size {
+      if i > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str("${mir_int_text(ty, t.values[i])}: bb${t.targets[i]}")
+      i = i + 1
+    }
+    buf.push_str("] else bb${t.targets[t.targets.size - 1]}")
+    return buf.to_s
+  }
+  if k == mtk_return() {
+    return "return"
+  }
+  "unreachable"
+}
+
+fn mir_loc_text(m: MModule, f: MFunc, loc: MLoc): String {
+  if loc.file == f.loc.file {
+    return "@${loc.line}:${loc.col}"
+  }
+  "@${mir_file_name(m, loc.file)}:${loc.line}:${loc.col}"
+}
+
+pub fn mir_file_name(m: MModule, file: Int): String {
+  if file >= 0 && file < m.files.size {
+    return m.files[file]
+  }
+  "?"
+}
+
+pub fn mir_layout_text(ts: MTypes, l: MLayout): String {
+  buf = buf_new()
+  buf.push_str("layout %${l.name} = ${mlk_name(l.kind)} {")
+  i = 0
+  while i < l.fields.size {
+    if i > 0 {
+      buf.push_str(",")
+    }
+    buf.push_str(" ${i}")
+    if l.names[i].size > 0 {
+      buf.push_str(" ${l.names[i]}")
+    }
+    buf.push_str(": ${ts.text(l.fields[i])}")
+    i = i + 1
+  }
+  buf.push_str(" }  size ${l.size} align ${l.align}")
+  if l.type_id != 0 {
+    buf.push_str(" id ${l.type_id}")
+  }
+  buf.to_s
+}
+
+// The bitmap chunks of a registered map (3.3): over one record's words
+// (stride 0), or one element's (an element buffer, stride size / 8).
+pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
+  out: Array(UInt64) = []
+  if tm.layout < 0 {
+    out.push(tm.fixed_bits)
+    return out
+  }
+  // The chunk count is the old back end's (its emit_one_type_map):
+  // one past the chunk of the highest reference word, at least one; not
+  // the layout's size (W6b: a record whose words past 63 are scalars is
+  // one avant_type_map call in both back ends).
+  l = ts.layouts[tm.layout]
+  n = 1
+  j = 0
+  while j < l.ref_words.size {
+    if l.ref_words[j] / 64 + 1 > n {
+      n = l.ref_words[j] / 64 + 1
+    }
+    j = j + 1
+  }
+  c = 0
+  while c < n {
+    out.push(0u64)
+    c = c + 1
+  }
+  i = 0
+  while i < l.ref_words.size {
+    w = l.ref_words[i]
+    out[w / 64] = out[w / 64] | (1u64 << (w % 64).to_u64)
+    i = i + 1
+  }
+  out
+}
+
+pub fn mir_map_stride(ts: MTypes, tm: MTypeMap): Int {
+  if tm.layout < 0 {
+    return 0
+  }
+  l = ts.layouts[tm.layout]
+  if l.kind == mlk_elems() {
+    return l.size / 8
+  }
+  0
+}
+
+pub fn mir_extern_text(m: MModule, e: MExtern): String {
+  s = m.types.sigs[e.sig]
+  buf = buf_new()
+  buf.push_str("extern ${e.name}${s.text} ${mcc_name(e.cls)}")
+  if e.alloc {
+    buf.push_str(" alloc")
+  }
+  if e.noreturn {
+    buf.push_str(" noreturn")
+  }
+  buf.to_s
+}
+
+pub fn mir_sorted_externs(m: MModule): Array(MExtern) {
+  out: Array(MExtern) = []
+  i = 0
+  while i < m.externs.size {
+    e = m.externs[i]
+    j = out.size
+    out.push(e)
+    while j > 0 && mir_str_lt(e.name, out[j - 1].name) {
+      out[j] = out[j - 1]
+      j = j - 1
+    }
+    out[j] = e
+    i = i + 1
+  }
+  out
+}
+
+pub fn mir_func_header(m: MModule, f: MFunc, with_locs: Bool): String {
+  ts = m.types
+  s = ts.sigs[f.sig]
+  buf = buf_new()
+  buf.push_str("fn ${f.symbol}(")
+  i = 0
+  while i < s.params.size {
+    if i > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str("_${i + 1}: ${ts.text(s.params[i])}")
+    i = i + 1
+  }
+  buf.push_str(") -> ${ts.text(s.ret)}")
+  if f.kind == mfk_frame() {
+    buf.push_str(" frame")
+  } else if f.kind == mfk_leaf() {
+    buf.push_str(" leaf")
+  }
+  if f.external {
+    buf.push_str(" extern")
+  }
+  if with_locs {
+    buf.push_str(" @${mir_file_name(m, f.loc.file)}:${f.loc.line}:${f.loc.col}")
+  }
+  buf.push_str(" {")
+  buf.to_s
+}
+
+pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
+  ts = m.types
+  buf.push_str(mir_func_header(m, f, with_locs))
+  buf.push_str("\n")
+  any = false
+  i = 0
+  while i < f.locals.size {
+    if f.valid_local(i) {
+      l = f.locals[i]
+      buf.push_str("  let _${i}")
+      if l.name.size > 0 {
+        buf.push_str(" (${l.name})")
+      }
+      buf.push_str(": ${ts.text(l.ty)}")
+      if l.slot {
+        buf.push_str(" slot")
+      }
+      buf.push_str("\n")
+      any = true
+    }
+    i = i + 1
+  }
+  b = 0
+  while b < f.blocks.size {
+    if any || b > 0 {
+      buf.push_str("\n")
+    }
+    blk = f.blocks[b]
+    buf.push_str("bb${b}:\n")
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      buf.push_str("  ${mir_stmt_text(m, st)}")
+      if with_locs {
+        buf.push_str("   ${mir_loc_text(m, f, st.loc)}")
+      }
+      buf.push_str("\n")
+      j = j + 1
+    }
+    if t = blk.term {
+      buf.push_str("  ${mir_term_text(m.types, t)}")
+      if with_locs {
+        buf.push_str("   ${mir_loc_text(m, f, t.loc)}")
+      }
+      buf.push_str("\n")
+    }
+    b = b + 1
+  }
+  buf.push_str("}\n")
+}
+
+pub fn mir_print(m: MModule, with_locs: Bool): String {
+  ts = m.types
+  buf = buf_new()
+  buf.push_str("module ${m.name}")
+  if m.shared {
+    buf.push_str(" shared")
+  }
+  buf.push_str("\n")
+  i = 0
+  while i < m.files.size {
+    buf.push_str("file ${i} \"${mir_escape(m.files[i])}\"\n")
+    i = i + 1
+  }
+  if ts.layouts.size > 0 {
+    buf.push_str("\n")
+    i = 0
+    while i < ts.layouts.size {
+      buf.push_str("${mir_layout_text(ts, ts.layouts[i])}\n")
+      i = i + 1
+    }
+  }
+  if m.strs.size > 0 {
+    buf.push_str("\n")
+    i = 0
+    while i < m.strs.size {
+      buf.push_str("const str.${i} = \"${mir_escape(m.strs[i])}\"\n")
+      i = i + 1
+    }
+  }
+  buf.push_str("\n")
+  i = 0
+  while i < m.maps.size {
+    tm = m.maps[i]
+    name = tm.name
+    if tm.layout >= 0 {
+      name = ts.layouts[tm.layout].name
+    }
+    chunks = mir_map_chunks(ts, tm)
+    buf.push_str("typemap ${tm.id} %${name} stride ${mir_map_stride(ts, tm)} bits [")
+    c = 0
+    while c < chunks.size {
+      if c > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str("0x${mir_hex(chunks[c], false, 1)}")
+      c = c + 1
+    }
+    buf.push_str("]\n")
+    i = i + 1
+  }
+  ext = mir_sorted_externs(m)
+  if ext.size > 0 {
+    buf.push_str("\n")
+    i = 0
+    while i < ext.size {
+      buf.push_str("${mir_extern_text(m, ext[i])}\n")
+      i = i + 1
+    }
+  }
+  i = 0
+  while i < m.funcs.size {
+    buf.push_str("\n")
+    mir_print_func(m, m.funcs[i], with_locs, buf)
+    i = i + 1
+  }
+  buf.to_s
+}

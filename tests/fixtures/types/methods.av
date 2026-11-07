@@ -1,0 +1,185 @@
+// Methods on other types, overloads, and operator methods on the new
+// back end (Stage 28 W7a): receiver methods on String, Bytes, and Buf
+// (the receiver by value, after the arguments), in call and field form;
+// overloaded functions and methods (`(params)` in the symbol); operator
+// methods `+ - * / % == != < <= > >= &+ &- &*` on a struct (the right
+// operand is evaluated before the left, as the old back end does);
+// type-level functions; union parameters of methods given a union.
+
+fn (s: String) shout: String {
+  s + "!"
+}
+
+fn (s: String) pad(n: Int, c: String): String {
+  t = s
+  while t.size < n {
+    t = t + c
+  }
+  t
+}
+
+fn (b: Bytes) second: Int {
+  b[1]
+}
+
+fn (b: Buf) twice: Int {
+  b.size * 2
+}
+
+struct Money {
+  c: Int
+
+  fn +(o: Money): Money {
+    Money { c: c + o.c }
+  }
+
+  fn -(o: Money): Money {
+    Money { c: c - o.c }
+  }
+
+  fn *(k: Int): Money {
+    Money { c: c * k }
+  }
+
+  fn /(k: Int): Money {
+    Money { c: c / k }
+  }
+
+  fn %(k: Int): Money {
+    Money { c: c % k }
+  }
+
+  fn &+(o: Money): Money {
+    Money { c: c &+ o.c }
+  }
+
+  fn &-(o: Money): Money {
+    Money { c: c &- o.c }
+  }
+
+  fn &*(o: Money): Money {
+    Money { c: c &* o.c }
+  }
+
+  fn ==(o: Money): Bool {
+    c == o.c
+  }
+
+  fn !=(o: Money): Bool {
+    c != o.c
+  }
+
+  fn <(o: Money): Bool {
+    c < o.c
+  }
+
+  fn <=(o: Money): Bool {
+    c <= o.c
+  }
+
+  fn >(o: Money): Bool {
+    c > o.c
+  }
+
+  fn >=(o: Money): Bool {
+    c >= o.c
+  }
+
+  fn self.zero: Money {
+    Money { c: 0 }
+  }
+}
+
+class Acc {
+  n: Int
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+
+  fn add(k: Int) {
+    n = n + k
+  }
+
+  fn add(s: String) {
+    n = n + s.size
+  }
+
+  fn add(a: Int, b: Int) {
+    n = n + a * b
+  }
+
+  fn +(k: Int): Acc {
+    Acc.new(n + k)
+  }
+
+  fn keep(o: Int?): Int {
+    o ?? n
+  }
+}
+
+fn show(x: Int) {
+  puts("int ${x}")
+}
+
+fn show(x: String) {
+  puts("str ${x}")
+}
+
+fn show(x: Int, y: Int) {
+  puts("two ${x} ${y}")
+}
+
+fn say(s: String, n: Int): Int {
+  puts(s)
+  n
+}
+
+fn some(n: Int): Int? {
+  if n > 0 {
+    return n
+  }
+  nil
+}
+
+fn main {
+  puts("hi".shout)
+  puts("a".shout())
+  puts("x".pad(4, "-"))
+  puts("xyz".bytes.second)
+  bb = buf_new()
+  bb.push_str("abc")
+  puts(bb.twice)
+  puts(bb.twice())
+  a = Money { c: 5 }
+  b = Money { c: 7 }
+  puts((a + b).c)
+  puts((b - a).c)
+  puts((a * 3).c)
+  puts((b / 2).c)
+  puts((b % 4).c)
+  puts((a &+ b).c)
+  puts((a &- b).c)
+  puts((a &* b).c)
+  puts(a == b)
+  puts(a != b)
+  puts(a < b)
+  puts(a <= b)
+  puts(a > b)
+  puts(a >= b)
+  z = Money.zero()
+  puts(z.c)
+  acc = Acc.new(1)
+  acc.add(2)
+  acc.add("xyz")
+  acc.add(2, 5)
+  puts(acc.n)
+  puts((acc + 4).n)
+  puts(acc.keep(some(3)))
+  puts(acc.keep(some(0)))
+  show(1)
+  show("s")
+  show(2, 3)
+  m = Money { c: say("left", 1) } + Money { c: say("right", 2) }
+  puts(m.c)
+}

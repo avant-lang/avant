@@ -38,11 +38,16 @@ fn mkdir_p(path: String) {
   dummy = process_run("/bin/mkdir", args)
 }
 
+// The back end's IR, the MIR `avant dump` prints (D171; the goldens
+// of the old back end retired with it, Stage 28 W11).
 fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
+  args.push("-u")
+  args.push("AVANT_BACKEND")
+  args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out("/usr/bin/env", args, log)
 }
 
 // A hidden front-end dump of the compiler under test (D137): flag is
@@ -76,7 +81,7 @@ fn bless_layer(compiler: String, flag: String, src: String, dest: String, tag: S
   false
 }
 
-fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
+fn bless_dump(compiler: String, src: String, dest: String, tag: String): Bool {
   code = dump_av(compiler, src, dest)
   if code != 0 {
     bless_fail("dump ${tag} exited ${code}")
@@ -92,7 +97,122 @@ fn bless_myc(compiler: String, src: String, dest: String, tag: String): Bool {
   false
 }
 
-// A program that imports has no --check golden (D142).
+// The MIR (Stage 28 W5b, D171): `avant dump` into
+// tests/goldens/<stem>.mir.
+fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Bool {
+  args: Array(String) = []
+  args.push("-u")
+  args.push("AVANT_BACKEND")
+  args.push(compiler)
+  args.push("dump")
+  args.push("${root}/${src_rel}")
+  dest = "${root}/tests/goldens/${stem}.mir"
+  code = process_run_out("/usr/bin/env", args, dest)
+  if code != 0 {
+    bless_fail("dump ${stem}.mir exited ${code}")
+    if err = file_read(dest) {
+      puts(err)
+    }
+    return false
+  }
+  true
+}
+
+// The .mir goldens of the scalar subset (tests/cases/test_scalars.av) and
+// of the string subset (tests/cases/test_strings.av, Stage 28 W6a), and
+// of the object subset (tests/cases/test_objects.av, Stage 28 W6b), of
+// the types subset (tests/cases/test_types.av, Stage 28 W7a), of the
+// closures subset (tests/cases/test_closures.av, Stage 28 W7b), of the
+// ffi subset (tests/cases/test_ffi_llvm.av, Stage 28 W8a), of the
+// threads subset (tests/cases/test_threads_llvm.av, Stage 28 W8b), and
+// of the heap subset (tests/cases/test_heap.av, Stage 28 W6c).
+fn bless_mir_all(compiler: String, root: String): Bool {
+  mkdir_p("${root}/tests/goldens/scalars")
+  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_shl", "trap_shl_i64", "trap_shr_neg", "trap_shr_u64", "trap_to_i_high", "trap_to_i_inf", "trap_to_i_low", "trap_to_i_nan", "trap_to_i_neg_inf", "trap_u64"]
+  i = 0
+  while i < names.size {
+    if bless_mir(compiler, root, "tests/fixtures/scalars/${names[i]}.av", "scalars/${names[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/strings")
+  sn = ["churn", "concat", "interp", "members", "trap_index"]
+  i = 0
+  while i < sn.size {
+    if bless_mir(compiler, root, "tests/fixtures/strings/${sn[i]}.av", "strings/${sn[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/objects")
+  on = ["churn", "classes", "layouts", "structs"]
+  i = 0
+  while i < on.size {
+    if bless_mir(compiler, root, "tests/fixtures/objects/${on[i]}.av", "objects/${on[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/heap")
+  hn = ["arrays", "churn", "elems", "hashes", "loops", "refs"]
+  i = 0
+  while i < hn.size {
+    if bless_mir(compiler, root, "tests/fixtures/heap/${hn[i]}.av", "heap/${hn[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/types")
+  tn = ["churn", "coerce", "generics", "methods", "results", "unions"]
+  i = 0
+  while i < tn.size {
+    if bless_mir(compiler, root, "tests/fixtures/types/${tn[i]}.av", "types/${tn[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/closures")
+  cn = ["blocks", "churn", "fresh", "lambdas", "values"]
+  i = 0
+  while i < cn.size {
+    if bless_mir(compiler, root, "tests/fixtures/closures/${cn[i]}.av", "closures/${cn[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/ffi")
+  fn2 = ["byval", "callbacks", "calls", "fresh", "layout", "pins"]
+  i = 0
+  while i < fn2.size {
+    if bless_mir(compiler, root, "tests/fixtures/ffi/${fn2[i]}.av", "ffi/${fn2[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  mkdir_p("${root}/tests/goldens/threads")
+  th = ["channels", "fresh", "mutex", "parallel", "spawn"]
+  i = 0
+  while i < th.size {
+    if bless_mir(compiler, root, "tests/fixtures/threads/${th[i]}.av", "threads/${th[i]}") {
+    } else {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+// A program that imports std has no --check golden (D142) and no MIR
+// golden: its MIR names the std files by the absolute path the compiler
+// found them at (Stage 28 W11).
 fn bless_imports(compiler: String, root: String, src_rel: String, stem: String): Bool {
   src = "${root}/${src_rel}"
   base = "${root}/tests/goldens/${stem}"
@@ -100,11 +220,7 @@ fn bless_imports(compiler: String, root: String, src_rel: String, stem: String):
   } else {
     return false
   }
-  if bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast") {
-  } else {
-    return false
-  }
-  bless_myc(compiler, src, "${base}.myc", "${stem}.myc")
+  bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast")
 }
 
 fn bless_all(compiler: String, root: String, src_rel: String, stem: String): Bool {
@@ -122,7 +238,7 @@ fn bless_all(compiler: String, root: String, src_rel: String, stem: String): Boo
   } else {
     return false
   }
-  bless_myc(compiler, src, "${base}.myc", "${stem}.myc")
+  bless_dump(compiler, src, "${base}.mir", "${stem}.mir")
 }
 
 fn main {
@@ -299,19 +415,13 @@ fn main {
         } else { ok = false }
       }
       if ok {
-        if bless_myc(compiler, modules_src, "${modules_golden}.myc", "modules/main.myc") {
+        if bless_dump(compiler, modules_src, "${modules_golden}.mir", "modules/main.mir") {
         } else { ok = false }
       }
     }
     if ok {
-      hello_src = "${root}/tests/goldens/examples/hello.myc"
-      hello_dst = "${root}/tests/goldens/hello.myc"
-      if ir = file_read(hello_src) {
-        dummy = file_write(hello_dst, ir)
-      } else {
-        bless_fail("read examples/hello.myc")
-        ok = false
-      }
+      if bless_mir_all(compiler, root) {
+      } else { ok = false }
     }
     if ok {
       puts("PASS  tests/bless_goldens.av")

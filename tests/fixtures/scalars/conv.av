@@ -1,0 +1,55 @@
+// Conversions on the new back end (Stage 28 W5b): to_f, to_i, to_i64,
+// to_u64, abs on the integer types, and Float64.to_i inside the Int
+// range, its edges included (truncation toward zero). NaN, the
+// infinities and values outside the range trap (C2, W11b); each such case
+// is its own program (trap_to_i_nan, trap_to_i_inf, trap_to_i_neg_inf,
+// trap_to_i_high, trap_to_i_low).
+
+// n, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn ti(x: Float64): Int {
+  x.to_i
+}
+
+fn main {
+  one = opaque(1).to_f
+  puts(ti(2.5 * one))
+  puts(ti(-2.7 * one))
+  puts(ti(2147483647.0 * one))
+  puts(ti(2147483647.9 * one))
+  puts(ti(-2147483648.0 * one))
+  puts(ti(-2147483648.9 * one))
+  puts(ti(0.9 * one))
+  puts(ti(-0.9 * one))
+  puts(ti(-0.0 * one))
+  puts((7.9 * one).to_i)
+  m = opaque(-5)
+  puts(m.to_f)
+  puts(m.to_i)
+  puts(m.to_i64)
+  puts(m.to_u64)
+  puts(m.abs)
+  puts((-2147483647 - opaque(1)).abs)
+  q = m.to_i64 * 1000000000i64
+  puts(q.to_u64)
+  puts(q.to_i)
+  puts(q.to_f)
+  puts(q.abs)
+  puts(q.to_i64)
+  big = 18446744073709551615u64 - opaque(0).to_u64
+  puts(big.to_f)
+  puts(big.to_i64)
+  puts(big.to_i)
+  puts(big.abs)
+  puts(big.to_u64)
+  puts(opaque(3).to_i64.to_u64.to_f)
+}

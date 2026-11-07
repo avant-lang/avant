@@ -1,0 +1,141 @@
+// Calls into C with every conversion the language has (Stage 28 W8a,
+// stages/stage28/mir.md W8a): Int, Int64, UInt64, Float64, and Bool in
+// and out (Bool with `zeroext`, section 14 8.5), String and Bytes in, a
+// C string out, opaque `Ptr(Void)` values round-tripped, `Ptr(Void)`
+// fields in a class and in a struct (never traced, 2.3), an array of
+// them and a `Ptr(Void)?`, and arguments
+// that are heap values passed while the heap churns. Built with
+// `--cc tests/fixtures/ffi/ffi.c`; both back ends print the same.
+
+lib ffi {
+  fun ffi_add_i32(a: Int, b: Int): Int
+  fun ffi_mul_i64(a: Int64, b: Int64): Int64
+  fun ffi_shl_u64(a: UInt64, n: Int): UInt64
+  fun ffi_scale(x: Float64, k: Float64): Float64
+  fun ffi_is_pos(x: Int): Bool
+  fun ffi_bool_to_int(b: Bool): Int
+  fun ffi_not(b: Bool): Bool
+  fun ffi_mixed(a: Int, b: Float64, c: Bool, d: Int64): Int
+  fun ffi_strlen(s: String): Int
+  fun ffi_static_str: String
+  fun ffi_bytes_sum(b: Bytes, n: Int): Int
+  fun ffi_str_at(s: String, i: Int): Int
+  fun ffi_cell_new(v: Int): Ptr(Void)
+  fun ffi_cell_get(p: Ptr(Void)): Int
+  fun ffi_cell_free(p: Ptr(Void))
+}
+
+class Holder {
+  name: String
+  cell: Ptr(Void)
+  n: Int
+
+  fn initialize(name: String, cell: Ptr(Void), n: Int) {
+    self.name = name
+    self.cell = cell
+    self.n = n
+  }
+}
+
+struct Pair {
+  tag: String
+  cell: Ptr(Void)
+}
+
+fn pick(p: Ptr(Void)?): Int {
+  if q = p {
+    return ffi.ffi_cell_get(q)
+  }
+  -1
+}
+
+// Allocates n strings and keeps the last 500 alive (a rolling window),
+// so young collections copy live data while the program's pins and C
+// pointers are held.
+fn churn(n: Int): Int {
+  total = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "junk-${i}-" + "padding-padding"
+    keep.push(s)
+    if keep.size > 500 {
+      keep = []
+    }
+    total = total + s.size
+    i = i + 1
+  }
+  total + keep.size
+}
+
+fn main {
+  puts(ffi.ffi_add_i32(40, 2))
+  puts(ffi.ffi_add_i32(-7, 3))
+  puts(ffi.ffi_mul_i64(3000000000i64, 3i64))
+  puts(ffi.ffi_shl_u64(1u64, 63))
+  puts(ffi.ffi_scale(2.5, 4.0))
+  puts(ffi.ffi_is_pos(5))
+  puts(ffi.ffi_is_pos(-5))
+  puts(ffi.ffi_bool_to_int(true))
+  puts(ffi.ffi_bool_to_int(false))
+  puts(ffi.ffi_not(false))
+  b = ffi.ffi_not(true)
+  if b {
+    puts("not true is true")
+  } else {
+    puts("not true is false")
+  }
+  puts(ffi.ffi_mixed(1, 2.75, true, 1000i64))
+
+  word = "hello" + " " + "world"
+  puts(ffi.ffi_strlen(word))
+  puts(ffi.ffi_strlen("literal"))
+  puts(ffi.ffi_static_str())
+  cs = ffi.ffi_static_str()
+  puts(cs)
+  data = "ABC".bytes
+  puts(ffi.ffi_bytes_sum(data, data.size))
+  puts(ffi.ffi_str_at(word, 6))
+
+  // Heap arguments built right before the call, many times over, while
+  // the young generation fills (each argument is rooted for the call).
+  sum = 0
+  i = 0
+  while i < 3000 {
+    sum = sum + ffi.ffi_strlen("n=${i}" + "-tail")
+    i = i + 1
+  }
+  puts(sum)
+
+  p = ffi.ffi_cell_new(77)
+  puts(ffi.ffi_cell_get(p))
+  h = Holder.new("first", p, 3)
+  q = ffi.ffi_cell_new(88)
+  pr = Pair { tag: "pair" + "!", cell: q }
+  puts(churn(20000))
+  puts(ffi.ffi_cell_get(h.cell))
+  puts(h.name)
+  puts(ffi.ffi_cell_get(pr.cell))
+  puts(pr.tag)
+  h.cell = q
+  puts(ffi.ffi_cell_get(h.cell))
+  holders: Array(Holder) = []
+  k = 0
+  while k < 50 {
+    holders.push(Holder.new("h${k}", p, k))
+    k = k + 1
+  }
+  puts(churn(20000))
+  puts(ffi.ffi_cell_get(holders[49].cell) + holders[49].n)
+  puts(holders[7].name)
+  cells: Array(Ptr(Void)) = []
+  cells.push(p)
+  cells.push(q)
+  puts(ffi.ffi_cell_get(cells[1]))
+  some: Ptr(Void)? = cells[0]
+  puts(pick(some))
+  none: Ptr(Void)? = nil
+  puts(pick(none))
+  ffi.ffi_cell_free(p)
+  ffi.ffi_cell_free(q)
+}

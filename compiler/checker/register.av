@@ -407,6 +407,11 @@ pub fn (checker_self: Checker) check: Program {
     checker_self.check_function(checker_self.pending[i])
     i = i + 1
   }
+  // C14: generic class instances made while checking the bodies get their
+  // cloned field defaults typed by their fields too (the first pass ran
+  // before they existed), so no back end sees an untyped default.
+  checker_self.clear_poison
+  checker_self.check_field_defaults
   checker_self.program
 }
 
@@ -1087,6 +1092,12 @@ pub fn (checker_self: Checker) check_field_defaults {
       while j < defn.fields.size {
         field = defn.fields[j]
         if default = field.default {
+          if t = default.ty {
+            // Typed by an earlier pass (C14: this runs again after the
+            // bodies, for the instances of generic classes made there).
+            j = j + 1
+            continue
+          }
           if checker_self.trivial_default(default) {
           } else {
             checker_self.fail(default.loc, "field default must be a literal or nil")

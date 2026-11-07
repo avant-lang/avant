@@ -1,0 +1,24 @@
+// C2 (W11b): Float64.to_i of 2147483648.0 (Int.MAX + 1) traps: `avant
+// runtime: to_i of Float64 2147483648 out of range for Int`, exit 1.
+
+// n, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return n &+ b
+  }
+  n
+}
+
+fn ti(x: Float64): Int {
+  x.to_i
+}
+
+fn main {
+  one = opaque(1).to_f
+  puts(ti(2147483647.9 * one))
+  puts(ti(2147483648.0 * one))
+  puts("not reached")
+}

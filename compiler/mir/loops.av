@@ -1,0 +1,1737 @@
+// Loop versioning (Stage 28 W9b; stages/stage28/mir.md W9b, D207 pass 1;
+// the old back end's loop trick, D182, now a MIR pass).
+//
+// For a loop whose header tests `_i < X` or `_i <= X` (an induction
+// variable _i that the loop only increases by positive constants, and a
+// bound X that does not change in the loop), every `check.bounds` whose
+// index is known in range from facts that hold at loop entry is proven
+// once before the loop: a guard tests those facts and enters a copy of
+// the loop without those checks; when the guard fails the original loop
+// (every check in place) runs, so a failing index traps at the same
+// iteration with the same message. Only checks are removed, with the size
+// read that feeds them when nothing else reads it; every other statement
+// (element loads through a freshly loaded data pointer, barriers, calls)
+// is copied unchanged, so the GC contract is not touched: the pass runs
+// before the leaf and root-slot passes, which see the copy like any code.
+//
+// An index is known in range when, at the check, it is (all in i64):
+// - the induction variable plus a constant c, the variable unchanged
+//   since the header test passed: from entry_i + c >= 0 (the variable
+//   only grows) and X - 1 + c < size (X + c for `<=`);
+// - a local the loop never writes, plus a constant: v + c in [0, size);
+// - a constant k in [0, size);
+// - a byte (a u8 widened to i32: [0, 255]), a Bool widened ([0, 1]), or
+//   `x & m` with m >= 0 ([0, m]): hi < size.
+// The size is the field read `(*_h).1` of an Array or Buf held by a local
+// the loop never writes, or `avant_str_size(_s)` of a string local the
+// loop never writes (strings are immutable). An Array's or Buf's size
+// must also not change during the loop: no statement in the loop stores a
+// size field, and every call in the loop is to a runtime helper that
+// keeps every size (mir_lv_keeps_sizes) or to an Avant function that
+// does so transitively (an indirect call, an unknown C function, or a
+// helper that pushes, pops, clears, or reserves disqualifies Array and
+// Buf holders in that loop; strings stay eligible). In a shared module
+// Array and Buf holders are not versioned at all (another thread is
+// outside the analysis); strings are.
+//
+// A loop is versioned when at least one such check sits in the loop at
+// its own depth (not only inside an inner loop); loops are visited
+// outermost first and each copy's inner loops are visited again, as the
+// old back end emitted them. The guard reads every holder after testing
+// it for null, so it never faults where the loop would not.
+
+import source
+import mir.types
+import mir.ir
+import mir.runtime
+import mir.flow
+
+// ---- small helpers
+
+// The local of a bare `copy _k` operand, or -1.
+fn lv_local(o: MOperand): Int {
+  if o.kind != mok_copy() {
+    return -1
+  }
+  if p = o.place {
+    if p.proj.size == 0 {
+      return p.local
+    }
+  }
+  -1
+}
+
+fn lv_opt_local(o: MOperand?): Int {
+  if x = o {
+    return lv_local(x)
+  }
+  -1
+}
+
+// A small integer constant (|v| <= 1000000), or false.
+fn lv_small_const(o: MOperand?, out: Array(Int)): Bool {
+  if x = o {
+    if x.kind == mok_int() {
+      if x.ival <= 1000000i64 && x.ival >= -1000000i64 {
+        out[0] = x.ival.to_i
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn lv_copy_local(local: Int): MOperand {
+  o = MOperand.new(mok_copy(), -1)
+  o.place = MPlace.new(local)
+  o
+}
+
+fn lv_c_i64(v: Int): MOperand {
+  o = MOperand.new(mok_int(), mt_i64())
+  o.ival = v.to_i64
+  o
+}
+
+fn lv_assign(loc: MLoc, dest: Int, rv: MRvalue): MStmt {
+  st = MStmt.new(msk_assign(), loc)
+  st.place = MPlace.new(dest)
+  st.rv = rv
+  st
+}
+
+fn lv_rv2(kind: Int, op: Int, a: MOperand, b: MOperand): MRvalue {
+  r = MRvalue.new(kind)
+  r.op = op
+  r.a = a
+  r.b = b
+  r
+}
+
+fn lv_cast(a: MOperand, ty: Int): MRvalue {
+  r = MRvalue.new(mrk_cast())
+  r.a = a
+  r.ty = ty
+  r
+}
+
+// A statement copy: a new statement object over the same places,
+// operands, and rvalues (no pass after this one changes those).
+fn lv_stmt_copy(st: MStmt): MStmt {
+  c = MStmt.new(st.kind, st.loc)
+  c.place = st.place
+  c.rv = st.rv
+  c.fresh = st.fresh
+  c.dest = st.dest
+  c.callee = st.callee
+  c.indirect = st.indirect
+  i = 0
+  while i < st.args.size {
+    c.args.push(st.args[i])
+    i = i + 1
+  }
+  c.collects = st.collects
+  c.sig = st.sig
+  i = 0
+  while i < st.locals.size {
+    c.locals.push(st.locals[i])
+    i = i + 1
+  }
+  c
+}
+
+// ---- which calls keep every Array and Buf size
+
+// The runtime helpers (and libc) that never change the size of an
+// existing Array or Buf: they read, allocate new objects, or write
+// elements. Every name not matched here is assumed to resize.
+pub fn mir_lv_keeps_sizes(name: String): Bool {
+  pre = ["avant_str_", "avant_checksum_", "avant_trap_", "avant_gc_", "avant_barrier", "avant_type_map", "avant_cov_", "avant_checked_", "avant_wide_", "avant_now_", "avant_is_", "avant_hash_", "avant_bytes_", "avant_array_contains_", "avant_array_sum_", "avant_array_index_", "avant_array_min_", "avant_array_max_", "avant_array_sort_", "avant_array_fill_"]
+  i = 0
+  while i < pre.size {
+    if str_starts_mir(name, pre[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  exact = ["avant_alloc", "avant_bump_alloc", "avant_pin", "avant_unpin", "avant_exp", "avant_array_get_ptr", "avant_array_set_ptr", "avant_array_copy", "avant_array_reverse", "avant_buf_size", "avant_buf_starts", "avant_buf_to_str", "avant_buf_new", "printf", "fabs", "floor", "sqrt", "__avant_type_maps"]
+  i = 0
+  while i < exact.size {
+    if str_eq(name, exact[i]) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+// Whether local h holds, at statement j of blk, the result of an
+// allocation earlier in the same block.
+fn lv_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
+  k = j - 1
+  while k >= 0 {
+    st = blk.stmts[k]
+    if mir_stmt_def(st) == h {
+      return st.kind == msk_call() && (str_eq(st.callee, "avant_alloc") || str_eq(st.callee, "avant_bump_alloc"))
+    }
+    k = k - 1
+  }
+  false
+}
+
+// Whether a place writes the size field of an Array or Buf: field 1 of an
+// array or buf layout reached through a deref.
+fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
+  ty = f.locals[p.local].ty
+  k = 0
+  while k < p.proj.size {
+    pr = p.proj[k]
+    mt = ts.get(ty)
+    if pr.kind == mpk_deref() {
+      if ts.is_refkind(ty) && mt.layout >= 0 {
+        ty = ts.agg(mt.layout)
+      } else {
+        ty = mt.pointee
+      }
+      if ty < 0 {
+        return true
+      }
+    } else if pr.kind == mpk_field() {
+      if mt.layout < 0 {
+        return true
+      }
+      lay = ts.layouts[mt.layout]
+      if (lay.kind == mlk_array() || lay.kind == mlk_buf()) && pr.field == 1 {
+        return true
+      }
+      if pr.field >= lay.fields.size {
+        return true
+      }
+      ty = lay.fields[pr.field]
+    } else {
+      if mt.kind == mk_agg() && mt.layout >= 0 && ts.layouts[mt.layout].kind == mlk_elems() {
+        ty = ts.layouts[mt.layout].fields[0]
+      }
+    }
+    k = k + 1
+  }
+  false
+}
+
+// Whether statement j of blk keeps every size; keep[] is the
+// per-function summary (by index into m.funcs) as known so far. A size
+// store into an object allocated earlier in the same block (an array
+// header being filled, W6c.3) changes no object that existed before.
+fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Bool {
+  st = blk.stmts[j]
+  if st.kind == msk_assign() {
+    if p = st.place {
+      if p.last_deref >= 0 {
+        if !lv_place_writes_size(m.types, f, p) {
+          return true
+        }
+        return p.last_deref == 0 && lv_fresh_here(blk, j, p.local)
+      }
+    }
+    return true
+  }
+  if st.kind != msk_call() {
+    return true
+  }
+  if fo = st.indirect {
+    return false
+  }
+  if i = m.func_index.get(st.callee) {
+    return keep[i]
+  }
+  if str_starts_mir(st.callee, "av.") {
+    return false
+  }
+  mir_lv_keeps_sizes(st.callee)
+}
+
+// The summary: keep[i] when m.funcs[i] (and everything it calls) never
+// changes the size of an existing Array or Buf (greatest fixpoint).
+pub fn mir_lv_summary(m: MModule): Array(Bool) {
+  keep = mir_bools(m.funcs.size, true)
+  changed = true
+  while changed {
+    changed = false
+    i = 0
+    while i < m.funcs.size {
+      if keep[i] {
+        f = m.funcs[i]
+        b = 0
+        while b < f.blocks.size && keep[i] {
+          blk = f.blocks[b]
+          j = 0
+          while j < blk.stmts.size {
+            if !lv_stmt_keeps(m, f, blk, j, keep) {
+              keep[i] = false
+              changed = true
+              break
+            }
+            j = j + 1
+          }
+          b = b + 1
+        }
+      }
+      i = i + 1
+    }
+  }
+  keep
+}
+
+// ---- dominators and natural loops
+
+// Reverse postorder from bb0 (unreachable blocks are left out).
+fn lv_rpo(f: MFunc): Array(Int) {
+  n = f.blocks.size
+  seen = mir_bools(n, false)
+  post: Array(Int) = []
+  stack: Array(Int) = []
+  next: Array(Int) = []
+  stack.push(0)
+  next.push(0)
+  seen[0] = true
+  while stack.size > 0 {
+    top = stack.size - 1
+    b = stack[top]
+    succ = mir_succ(f.blocks[b])
+    if next[top] < succ.size {
+      s = succ[next[top]]
+      next[top] = next[top] + 1
+      if !seen[s] {
+        seen[s] = true
+        stack.push(s)
+        next.push(0)
+      }
+    } else {
+      post.push(b)
+      dummy = stack.pop
+      dummy2 = next.pop
+    }
+  }
+  rpo: Array(Int) = []
+  i = post.size - 1
+  while i >= 0 {
+    rpo.push(post[i])
+    i = i - 1
+  }
+  rpo
+}
+
+// The loop forest of a function: headers and bodies (one flag per block),
+// outermost first (headers in reverse postorder).
+pub class LvLoops {
+  headers: Array(Int)
+  bodies: Array(Array(Bool))
+  depth: Array(Int)
+
+  fn initialize {
+    h: Array(Int) = []
+    self.headers = h
+    b: Array(Array(Bool)) = []
+    self.bodies = b
+    d: Array(Int) = []
+    self.depth = d
+  }
+}
+
+fn lv_intersect(idom: Array(Int), num: Array(Int), a0: Int, b0: Int): Int {
+  a = a0
+  b = b0
+  while a != b {
+    while num[a] > num[b] {
+      a = idom[a]
+    }
+    while num[b] > num[a] {
+      b = idom[b]
+    }
+  }
+  a
+}
+
+fn lv_dominates(idom: Array(Int), h: Int, b0: Int): Bool {
+  b = b0
+  while true {
+    if b == h {
+      return true
+    }
+    if b == 0 || idom[b] < 0 {
+      return false
+    }
+    b = idom[b]
+  }
+  false
+}
+
+pub fn mir_lv_loops(f: MFunc): LvLoops {
+  n = f.blocks.size
+  rpo = lv_rpo(f)
+  num: Array(Int) = []
+  idom: Array(Int) = []
+  i = 0
+  while i < n {
+    num.push(-1)
+    idom.push(-1)
+    i = i + 1
+  }
+  i = 0
+  while i < rpo.size {
+    num[rpo[i]] = i
+    i = i + 1
+  }
+  preds = mir_preds(f)
+  idom[0] = 0
+  changed = true
+  while changed {
+    changed = false
+    i = 1
+    while i < rpo.size {
+      b = rpo[i]
+      nd = -1
+      k = 0
+      while k < preds[b].size {
+        p = preds[b][k]
+        if num[p] >= 0 && idom[p] >= 0 {
+          if nd < 0 {
+            nd = p
+          } else {
+            nd = lv_intersect(idom, num, p, nd)
+          }
+        }
+        k = k + 1
+      }
+      if nd != idom[b] {
+        idom[b] = nd
+        changed = true
+      }
+      i = i + 1
+    }
+  }
+  lp = LvLoops.new
+  i = 0
+  while i < rpo.size {
+    h = rpo[i]
+    body = mir_bools(n, false)
+    found = false
+    k = 0
+    while k < preds[h].size {
+      p = preds[h][k]
+      if num[p] >= 0 && lv_dominates(idom, h, p) {
+        found = true
+        body[h] = true
+        work: Array(Int) = []
+        if !body[p] {
+          body[p] = true
+          work.push(p)
+        }
+        while work.size > 0 {
+          x = work.pop
+          j = 0
+          while j < preds[x].size {
+            y = preds[x][j]
+            if num[y] >= 0 && !body[y] {
+              body[y] = true
+              work.push(y)
+            }
+            j = j + 1
+          }
+        }
+      }
+      k = k + 1
+    }
+    if found {
+      lp.headers.push(h)
+      lp.bodies.push(body)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < n {
+    lp.depth.push(0)
+    i = i + 1
+  }
+  k = 0
+  while k < lp.bodies.size {
+    i = 0
+    while i < n {
+      if lp.bodies[k][i] {
+        lp.depth[i] = lp.depth[i] + 1
+      }
+      i = i + 1
+    }
+    k = k + 1
+  }
+  lp
+}
+
+// ---- one loop's analysis
+
+// The abstract index of a check: kind 1 the induction variable plus off,
+// 2 the invariant local base plus off, 3 the constant off, 4 a value in
+// [0, off]; 0 unknown.
+pub class LvVal {
+  kind: Int = 0
+  base: Int = -1
+  off: Int = 0
+
+  fn initialize {
+  }
+}
+
+pub class LvLoop {
+  f: MFunc
+  body: Array(Bool)
+  header: Int = 0
+  ind: Int = -1
+  le: Bool = false
+  bkind: Int = 0
+  bval: Int = 0
+  bholder: Int = -1
+  bhk: Int = 0
+  boff: Int = 0
+  step: Int = 1
+  sizes_ok: Bool = false
+  def_in: Array(Bool)
+  addr_taken: Array(Bool)
+  fresh: Array(Array(Bool))
+  removed: Array(Array(Bool))
+  any_own: Bool = false
+
+  fn initialize(f: MFunc, body: Array(Bool), header: Int) {
+    self.f = f
+    self.body = body
+    self.header = header
+    a: Array(Bool) = []
+    self.def_in = a
+    b: Array(Bool) = []
+    self.addr_taken = b
+    c: Array(Array(Bool)) = []
+    self.fresh = c
+    d: Array(Array(Bool)) = []
+    self.removed = d
+  }
+
+  pub fn invariant(v: Int): Bool {
+    v >= 0 && v < self.def_in.size && !self.def_in[v] && !self.addr_taken[v]
+  }
+}
+
+// Locals whose address is taken anywhere in f (an addr or addr.raw of a
+// frame-local place based on them).
+fn lv_addr_taken(f: MFunc): Array(Bool) {
+  out = mir_bools(f.locals.size, false)
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      if r = blk.stmts[j].rv {
+        if p = r.place {
+          if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local {
+            out[p.local] = true
+          }
+        }
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  out
+}
+
+// The positive constant by which st (at index j of blk) increases _v,
+// or 0: `_v = add[.chk] copy _v, const c`, or `_v = copy _t` with `_t`
+// set so earlier in the block and neither changed in between.
+fn lv_increment(blk: MBlock, j: Int, v: Int): Int {
+  st = blk.stmts[j]
+  if st.kind != msk_assign() {
+    return 0
+  }
+  if r = st.rv {
+    if r.kind == mrk_use() {
+      t = lv_opt_local(r.a)
+      if t < 0 || t == v {
+        return 0
+      }
+      k = j - 1
+      while k >= 0 {
+        d = mir_stmt_def(blk.stmts[k])
+        if d == v {
+          return 0
+        }
+        if d == t {
+          return lv_add_const(blk.stmts[k], v)
+        }
+        k = k - 1
+      }
+      return 0
+    }
+  }
+  lv_add_const(st, v)
+}
+
+// c when st is `_ = add[.chk] copy _v, const c` with c >= 1, else 0.
+fn lv_add_const(st: MStmt, v: Int): Int {
+  if st.kind != msk_assign() {
+    return 0
+  }
+  if r = st.rv {
+    c: Array(Int) = [0]
+    if (r.kind == mrk_binary() || r.kind == mrk_checked()) && r.op == mop_add() {
+      if lv_opt_local(r.a) == v && lv_small_const(r.b, c) {
+        if c[0] >= 1 {
+          return c[0]
+        }
+      }
+    }
+  }
+  0
+}
+
+// The size source of a check's size operand at (b, j): sets h (the holder
+// local) and hk (1 Array or Buf field, 2 string) and dpos (the defining
+// statement's index), or leaves h = -1.
+pub class LvSize {
+  h: Int = -1
+  hk: Int = 0
+  dpos: Int = -1
+
+  fn initialize {
+  }
+}
+
+fn lv_holder_kind(lp: LvLoop, ts: MTypes, h: Int, via_field: Bool): Int {
+  if !lp.invariant(h) {
+    return 0
+  }
+  ty = lp.f.locals[h].ty
+  if via_field {
+    if !lp.sizes_ok {
+      return 0
+    }
+    mt = ts.get(ty)
+    if ts.kind(ty) != mk_ref() || mt.layout < 0 {
+      return 0
+    }
+    k = ts.layouts[mt.layout].kind
+    if k == mlk_array() || k == mlk_buf() {
+      return 1
+    }
+    return 0
+  }
+  if ts.kind(ty) == mk_str() {
+    return 2
+  }
+  0
+}
+
+// The size statement st defines (`copy (*_h).1` or `avant_str_size(_s)`).
+fn lv_size_stmt(lp: LvLoop, ts: MTypes, st: MStmt, out: LvSize) {
+  if st.kind == msk_assign() {
+    if r = st.rv {
+      if r.kind == mrk_use() {
+        if a = r.a {
+          if a.kind == mok_copy() {
+            if p = a.place {
+              if p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 1 {
+                hk = lv_holder_kind(lp, ts, p.local, true)
+                if hk > 0 {
+                  out.h = p.local
+                  out.hk = hk
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return
+  }
+  if st.kind == msk_call() && str_eq(st.callee, "avant_str_size") && st.args.size == 1 {
+    s = lv_local(st.args[0])
+    if s >= 0 && lv_holder_kind(lp, ts, s, false) == 2 {
+      out.h = s
+      out.hk = 2
+    }
+  }
+}
+
+fn lv_size_at(lp: LvLoop, ts: MTypes, blk: MBlock, j: Int, o: MOperand, out: LvSize) {
+  v = lv_local(o)
+  if v < 0 {
+    return
+  }
+  k = j - 1
+  while k >= 0 {
+    if mir_stmt_def(blk.stmts[k]) == v {
+      lv_size_stmt(lp, ts, blk.stmts[k], out)
+      if out.h >= 0 {
+        out.dpos = k
+      }
+      return
+    }
+    k = k - 1
+  }
+}
+
+// The abstract value of operand o read just before statement j of block
+// b (depth bounds the chase through the block's own definitions).
+fn lv_val_at(lp: LvLoop, ts: MTypes, b: Int, j: Int, o: MOperand, depth: Int, out: LvVal) {
+  out.kind = 0
+  c: Array(Int) = [0]
+  if o.kind == mok_int() {
+    if lv_small_const(o, c) {
+      out.kind = 3
+      out.off = c[0]
+    }
+    return
+  }
+  v = lv_local(o)
+  if v < 0 || depth > 6 {
+    return
+  }
+  if v == lp.ind && lp.fresh[b][j] {
+    out.kind = 1
+    out.base = v
+    out.off = 0
+    return
+  }
+  if lp.invariant(v) {
+    out.kind = 2
+    out.base = v
+    out.off = 0
+    return
+  }
+  blk = lp.f.blocks[b]
+  k = j - 1
+  while k >= 0 {
+    if mir_stmt_def(blk.stmts[k]) == v {
+      lv_val_def(lp, ts, b, k, depth, out)
+      return
+    }
+    k = k - 1
+  }
+}
+
+fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
+  st = lp.f.blocks[b].stmts[k]
+  if st.kind != msk_assign() {
+    return
+  }
+  if r = st.rv {
+    c: Array(Int) = [0]
+    if r.kind == mrk_use() {
+      if a = r.a {
+        lv_val_at(lp, ts, b, k, a, depth + 1, out)
+      }
+      return
+    }
+    if (r.kind == mrk_binary() || r.kind == mrk_checked()) && (r.op == mop_add() || r.op == mop_sub()) {
+      if a = r.a {
+        if lv_small_const(r.b, c) {
+          lv_val_at(lp, ts, b, k, a, depth + 1, out)
+          if out.kind >= 1 && out.kind <= 3 {
+            if r.op == mop_add() {
+              out.off = out.off + c[0]
+            } else {
+              out.off = out.off - c[0]
+            }
+            if out.off > 1000000 || out.off < -1000000 {
+              out.kind = 0
+            }
+          } else {
+            out.kind = 0
+          }
+          return
+        }
+      }
+      if r.op == mop_add() && lv_small_const(r.a, c) {
+        if bo = r.b {
+          lv_val_at(lp, ts, b, k, bo, depth + 1, out)
+          if out.kind >= 1 && out.kind <= 3 {
+            out.off = out.off + c[0]
+            if out.off > 1000000 || out.off < -1000000 {
+              out.kind = 0
+            }
+          } else {
+            out.kind = 0
+          }
+        }
+      }
+      return
+    }
+    if r.kind == mrk_binary() && r.op == mop_and() {
+      if lv_small_const(r.b, c) || lv_small_const(r.a, c) {
+        if c[0] >= 0 {
+          out.kind = 4
+          out.off = c[0]
+        }
+      }
+      return
+    }
+    if r.kind == mrk_cast() && r.ty == mt_i32() {
+      y = lv_opt_local(r.a)
+      if y >= 0 {
+        yt = lp.f.locals[y].ty
+        if yt == mt_u8() {
+          out.kind = 4
+          out.off = 255
+        } else if yt == mt_bool() {
+          out.kind = 4
+          out.off = 1
+        }
+      }
+    }
+  }
+}
+
+// ---- the guard's terms
+
+pub class LvTerms {
+  hs: Array(Int)
+  hks: Array(Int)
+  up_h: Array(Int)
+  up_bk: Array(Int)
+  up_bv: Array(Int)
+  up_off: Array(Int)
+  lo_bk: Array(Int)
+  lo_bv: Array(Int)
+  lo_off: Array(Int)
+
+  fn initialize {
+    a: Array(Int) = []
+    self.hs = a
+    b: Array(Int) = []
+    self.hks = b
+    c: Array(Int) = []
+    self.up_h = c
+    d: Array(Int) = []
+    self.up_bk = d
+    e: Array(Int) = []
+    self.up_bv = e
+    g: Array(Int) = []
+    self.up_off = g
+    h: Array(Int) = []
+    self.lo_bk = h
+    i: Array(Int) = []
+    self.lo_bv = i
+    j: Array(Int) = []
+    self.lo_off = j
+  }
+
+  pub fn holder(h: Int, hk: Int): Int {
+    i = 0
+    while i < self.hs.size {
+      if self.hs[i] == h {
+        return i
+      }
+      i = i + 1
+    }
+    self.hs.push(h)
+    self.hks.push(hk)
+    self.hs.size - 1
+  }
+
+  // Upper term: base (bk 1 the bound, 2 local bv, 3 constant 0) + off < size(holder q).
+  pub fn upper(q: Int, bk: Int, bv: Int, off: Int) {
+    i = 0
+    while i < self.up_h.size {
+      if self.up_h[i] == q && self.up_bk[i] == bk && self.up_bv[i] == bv {
+        if off > self.up_off[i] {
+          self.up_off[i] = off
+        }
+        return
+      }
+      i = i + 1
+    }
+    self.up_h.push(q)
+    self.up_bk.push(bk)
+    self.up_bv.push(bv)
+    self.up_off.push(off)
+  }
+
+  // Lower term: base (bk 1 the induction variable at entry, 2 local bv) + off >= 0.
+  pub fn lower(bk: Int, bv: Int, off: Int) {
+    i = 0
+    while i < self.lo_bk.size {
+      if self.lo_bk[i] == bk && self.lo_bv[i] == bv {
+        if off < self.lo_off[i] {
+          self.lo_off[i] = off
+        }
+        return
+      }
+      i = i + 1
+    }
+    self.lo_bk.push(bk)
+    self.lo_bv.push(bv)
+    self.lo_off.push(off)
+  }
+
+  pub fn uses_bound: Bool {
+    i = 0
+    while i < self.up_bk.size {
+      if self.up_bk[i] == 1 {
+        return true
+      }
+      i = i + 1
+    }
+    false
+  }
+}
+
+// ---- one attempt
+
+// The header's test: sets ind, le, and the bound; false when the shape
+// does not fit.
+fn lv_header(m: MModule, lp: LvLoop, lps: LvLoops): Bool {
+  f = lp.f
+  hb = f.blocks[lp.header]
+  t = MTerm.new(mtk_goto(), f.loc)
+  if tt = hb.term {
+    t = tt
+  } else {
+    return false
+  }
+  if t.kind != mtk_branch() || t.targets.size != 2 || hb.stmts.size == 0 {
+    return false
+  }
+  if !lp.body[t.targets[0]] || t.targets[0] == t.targets[1] || t.targets[0] == lp.header {
+    return false
+  }
+  cl = lv_opt_local(t.cond)
+  cmp = hb.stmts[hb.stmts.size - 1]
+  if cl < 0 || mir_stmt_def(cmp) != cl || cmp.kind != msk_assign() {
+    return false
+  }
+  r = MRvalue.new(mrk_zero())
+  if rr = cmp.rv {
+    r = rr
+  } else {
+    return false
+  }
+  if r.kind != mrk_cmp() || (r.op != mop_lt() && r.op != mop_le()) {
+    return false
+  }
+  i = lv_opt_local(r.a)
+  if i < 0 || f.locals[i].ty != mt_i32() || lp.addr_taken[i] {
+    return false
+  }
+  lp.ind = i
+  lp.le = r.op == mop_le()
+  // Every write of the variable in the loop is an increment; when all
+  // add the same constant s, every value is entry + m * s.
+  lp.step = 0
+  b = 0
+  while b < f.blocks.size {
+    if lp.body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        if mir_stmt_def(blk.stmts[j]) == i {
+          c0 = lv_increment(blk, j, i)
+          if c0 == 0 {
+            return false
+          }
+          if lp.step == 0 {
+            lp.step = c0
+          } else if lp.step != c0 {
+            lp.step = 1
+          }
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  if lp.step == 0 {
+    lp.step = 1
+  }
+  // The bound.
+  lp.boff = 0
+  if rb = r.b {
+    return lv_bound(lp, m.types, hb, hb.stmts.size - 1, rb, 0)
+  }
+  false
+}
+
+// The bound operand o read just before statement pos of the header:
+// a constant (bkind 1, bval), a local the loop never writes (2, bval the
+// local), or the size of an invariant holder read in the header (3,
+// bholder, bhk), each plus constants added or subtracted in the header
+// (boff). The header computes it afresh on every iteration from values
+// the loop does not change, so the guard's value is the bound's value at
+// every test.
+fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: Int): Bool {
+  f = lp.f
+  c: Array(Int) = [0]
+  if o.kind == mok_int() {
+    if lv_small_const(o, c) {
+      lp.bkind = 1
+      lp.bval = c[0]
+      return true
+    }
+    return false
+  }
+  n = lv_local(o)
+  if n < 0 || n == lp.ind || f.locals[n].ty != mt_i32() || depth > 6 {
+    return false
+  }
+  if lp.invariant(n) {
+    lp.bkind = 2
+    lp.bval = n
+    return true
+  }
+  k = pos - 1
+  while k >= 0 {
+    if mir_stmt_def(hb.stmts[k]) == n {
+      st = hb.stmts[k]
+      sz = LvSize.new
+      lv_size_stmt(lp, ts, st, sz)
+      if sz.h >= 0 {
+        lp.bkind = 3
+        lp.bholder = sz.h
+        lp.bhk = sz.hk
+        return true
+      }
+      if st.kind != msk_assign() {
+        return false
+      }
+      if rv = st.rv {
+        if rv.kind == mrk_use() {
+          if a = rv.a {
+            return lv_bound(lp, ts, hb, k, a, depth + 1)
+          }
+        }
+        if (rv.kind == mrk_binary() || rv.kind == mrk_checked()) && (rv.op == mop_add() || rv.op == mop_sub()) && lv_small_const(rv.b, c) {
+          if a = rv.a {
+            if rv.op == mop_add() {
+              lp.boff = lp.boff + c[0]
+            } else {
+              lp.boff = lp.boff - c[0]
+            }
+            if lp.boff > 1000000 || lp.boff < -1000000 {
+              return false
+            }
+            return lv_bound(lp, ts, hb, k, a, depth + 1)
+          }
+        }
+      }
+      return false
+    }
+    k = k - 1
+  }
+  false
+}
+
+// Freshness of the induction variable: fresh[b][j] when, just before
+// statement j of block b, the variable is unchanged since the header's
+// test passed on this iteration.
+fn lv_freshness(lp: LvLoop) {
+  f = lp.f
+  n = f.blocks.size
+  preds = mir_preds(f)
+  ins = mir_bools(n, true)
+  hdr_true = f.blocks[lp.header].term
+  t_true = -1
+  if ht = hdr_true {
+    t_true = ht.targets[0]
+  }
+  changed = true
+  while changed {
+    changed = false
+    b = 0
+    while b < n {
+      if lp.body[b] && b != lp.header {
+        v = true
+        k = 0
+        while k < preds[b].size {
+          p = preds[b][k]
+          if p == lp.header {
+            if b != t_true {
+              v = false
+            }
+          } else if !lp.body[p] {
+            v = false
+          } else if !ins[p] || lv_block_defs(f.blocks[p], lp.ind) {
+            v = false
+          }
+          k = k + 1
+        }
+        if mir_flip(v, ins[b]) {
+          ins[b] = v
+          changed = true
+        }
+      }
+      b = b + 1
+    }
+  }
+  b = 0
+  while b < n {
+    row: Array(Bool) = []
+    if lp.body[b] {
+      cur = ins[b] && b != lp.header
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        row.push(cur)
+        if mir_stmt_def(blk.stmts[j]) == lp.ind {
+          cur = false
+        }
+        j = j + 1
+      }
+      row.push(cur)
+    }
+    lp.fresh.push(row)
+    b = b + 1
+  }
+}
+
+fn lv_block_defs(blk: MBlock, v: Int): Bool {
+  j = 0
+  while j < blk.stmts.size {
+    if mir_stmt_def(blk.stmts[j]) == v {
+      return true
+    }
+    j = j + 1
+  }
+  false
+}
+
+// Whether every statement of the loop keeps every Array and Buf size.
+fn lv_loop_keeps(m: MModule, lp: LvLoop, keep: Array(Bool)): Bool {
+  f = lp.f
+  b = 0
+  while b < f.blocks.size {
+    if lp.body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        if !lv_stmt_keeps(m, f, blk, j, keep) {
+          return false
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  true
+}
+
+// The locals that only checks read: every read is the size operand of a
+// check.bounds whose block defines the local earlier, so no value of
+// theirs crosses a block boundary or feeds anything but a check.
+fn lv_check_only(f: MFunc): Array(Bool) {
+  ok = mir_bools(f.locals.size, true)
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    defs: Array(Int) = []
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      reads: Array(Int) = []
+      if st.kind == msk_check_bounds() && st.args.size == 2 {
+        mir_operand_reads(st.args[0], reads)
+        sz = lv_local(st.args[1])
+        if sz >= 0 {
+          if !lv_listed(defs, sz) {
+            ok[sz] = false
+          }
+        } else {
+          mir_operand_reads(st.args[1], reads)
+        }
+      } else {
+        mir_stmt_reads(st, reads)
+      }
+      i = 0
+      while i < reads.size {
+        ok[reads[i]] = false
+        i = i + 1
+      }
+      d = mir_stmt_def(st)
+      if d >= 0 {
+        defs.push(d)
+      }
+      j = j + 1
+    }
+    if t = blk.term {
+      reads: Array(Int) = []
+      mir_term_reads(f, t, reads)
+      i = 0
+      while i < reads.size {
+        ok[reads[i]] = false
+        i = i + 1
+      }
+    }
+    b = b + 1
+  }
+  ok
+}
+
+fn lv_listed(xs: Array(Int), v: Int): Bool {
+  i = 0
+  while i < xs.size {
+    if xs[i] == v {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+// Classifies every check of the loop; marks the removable ones (and the
+// size reads only they read) in lp.removed and adds their guard terms.
+fn lv_checks(m: MModule, lp: LvLoop, lps: LvLoops, terms: LvTerms) {
+  f = lp.f
+  ts = m.types
+  only = lv_check_only(f)
+  hdepth = lps.depth[lp.header]
+  b = 0
+  while b < f.blocks.size {
+    row: Array(Bool) = []
+    if lp.body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        row.push(false)
+        j = j + 1
+      }
+      j = 0
+      while j < blk.stmts.size {
+        st = blk.stmts[j]
+        if st.kind == msk_check_bounds() && st.args.size == 2 {
+          sz = LvSize.new
+          lv_size_at(lp, ts, blk, j, st.args[1], sz)
+          iv = LvVal.new
+          if sz.h >= 0 {
+            lv_val_at(lp, ts, b, j, st.args[0], 0, iv)
+          }
+          ok = iv.kind > 0
+          if iv.kind == 3 && iv.off < 0 {
+            ok = false
+          }
+          if ok {
+            q = terms.holder(sz.h, sz.hk)
+            if iv.kind == 1 {
+              terms.upper(q, 1, -1, iv.off)
+              terms.lower(1, -1, iv.off)
+            } else if iv.kind == 2 {
+              terms.upper(q, 2, iv.base, iv.off)
+              terms.lower(2, iv.base, iv.off)
+            } else {
+              terms.upper(q, 3, -1, iv.off)
+            }
+            row[j] = true
+            if lps.depth[b] == hdepth {
+              lp.any_own = true
+            }
+          }
+        }
+        j = j + 1
+      }
+      lv_drop_sizes(lp, ts, blk, row, only)
+    }
+    lp.removed.push(row)
+    b = b + 1
+  }
+}
+
+// In the copy, a size read that only removed checks read goes too (an
+// unused avant_str_size call would otherwise stay: LLVM cannot drop it).
+fn lv_drop_sizes(lp: LvLoop, ts: MTypes, blk: MBlock, row: Array(Bool), only: Array(Bool)) {
+  k = 0
+  while k < blk.stmts.size {
+    v = mir_stmt_def(blk.stmts[k])
+    if v >= 0 && only[v] {
+      sz = LvSize.new
+      lv_size_stmt(lp, ts, blk.stmts[k], sz)
+      if sz.h >= 0 {
+        all = true
+        j = k + 1
+        while j < blk.stmts.size {
+          st = blk.stmts[j]
+          if st.kind == msk_check_bounds() && st.args.size == 2 && lv_local(st.args[1]) == v && !row[j] {
+            all = false
+          }
+          if mir_stmt_def(st) == v {
+            break
+          }
+          j = j + 1
+        }
+        if all {
+          row[k] = true
+        }
+      }
+    }
+    k = k + 1
+  }
+}
+
+// ---- the transformation
+
+fn lv_new_block(f: MFunc): MBlock {
+  blk = MBlock.new(f.blocks.size)
+  f.blocks.push(blk)
+  blk
+}
+
+fn lv_new_local(f: MFunc, ty: Int): Int {
+  f.locals.push(MLocal.new(ty, ""))
+  f.locals.size - 1
+}
+
+fn lv_goto(loc: MLoc, target: Int): MTerm {
+  t = MTerm.new(mtk_goto(), loc)
+  t.targets.push(target)
+  t
+}
+
+// Ends blk with `branch copy _g, next, fail` and returns next.
+fn lv_test(f: MFunc, loc: MLoc, blk: MBlock, g: Int, fail: Int): MBlock {
+  nx = lv_new_block(f)
+  t = MTerm.new(mtk_branch(), loc)
+  t.cond = lv_copy_local(g)
+  t.targets.push(nx.id)
+  t.targets.push(fail)
+  blk.term = t
+  nx
+}
+
+// The i64 size of holder h (kind hk) after testing it for null; returns
+// the block to continue in (sizes[0] receives the i64 local).
+fn lv_holder_size(f: MFunc, loc: MLoc, blk0: MBlock, h: Int, hk: Int, fail: Int, out: Array(Int)): MBlock {
+  blk = blk0
+  g = lv_new_local(f, mt_bool())
+  blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ne(), lv_copy_local(h), MOperand.new(mok_null(), f.locals[h].ty))))
+  blk = lv_test(f, loc, blk, g, fail)
+  s32 = lv_new_local(f, mt_i32())
+  if hk == 1 {
+    p = MPlace.new(h)
+    p.proj.push(MProj.new(mpk_deref(), 0))
+    p.proj.push(MProj.new(mpk_field(), 1))
+    o = MOperand.new(mok_copy(), -1)
+    o.place = p
+    r = MRvalue.new(mrk_use())
+    r.a = o
+    blk.stmts.push(lv_assign(loc, s32, r))
+  } else {
+    call = MStmt.new(msk_call(), loc)
+    call.dest = s32
+    call.callee = "avant_str_size"
+    call.args.push(lv_copy_local(h))
+    call.collects = false
+    blk.stmts.push(call)
+  }
+  s64 = lv_new_local(f, mt_i64())
+  blk.stmts.push(lv_assign(loc, s64, lv_cast(lv_copy_local(s32), mt_i64())))
+  out[0] = s64
+  blk
+}
+
+fn lv_widen(f: MFunc, loc: MLoc, blk: MBlock, v: Int): Int {
+  w = lv_new_local(f, mt_i64())
+  blk.stmts.push(lv_assign(loc, w, lv_cast(lv_copy_local(v), mt_i64())))
+  w
+}
+
+// Builds the guard and the check-free copy, and sends the loop's entry
+// edges to the guard. Returns the copy's header.
+fn lv_version(lp: LvLoop, terms: LvTerms): Int {
+  f = lp.f
+  n0 = f.blocks.size
+  hdr = lp.header
+  hb = f.blocks[hdr]
+  loc = hb.stmts[hb.stmts.size - 1].loc
+  preds = mir_preds(f)
+  // The copy's block numbers come after the guard's, so map them last.
+  g0 = lv_new_block(f)
+  blk = g0
+  sizes: Array(Int) = []
+  i = 0
+  while i < terms.hs.size {
+    out: Array(Int) = [0]
+    blk = lv_holder_size(f, loc, blk, terms.hs[i], terms.hks[i], hdr, out)
+    sizes.push(out[0])
+    i = i + 1
+  }
+  xp = -1
+  if terms.uses_bound {
+    x64 = -1
+    if lp.bkind == 1 {
+      x64 = lv_new_local(f, mt_i64())
+      ru = MRvalue.new(mrk_use())
+      ru.a = lv_c_i64(lp.bval)
+      blk.stmts.push(lv_assign(loc, x64, ru))
+    } else if lp.bkind == 2 {
+      x64 = lv_widen(f, loc, blk, lp.bval)
+    } else {
+      out: Array(Int) = [0]
+      blk = lv_holder_size(f, loc, blk, lp.bholder, lp.bhk, hdr, out)
+      x64 = out[0]
+    }
+    if lp.boff != 0 {
+      xo = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, xo, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(x64), lv_c_i64(lp.boff))))
+      x64 = xo
+    }
+    xp = x64
+    if !lp.le {
+      xp = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, xp, lv_rv2(mrk_binary(), mop_sub(), lv_copy_local(x64), lv_c_i64(1))))
+    }
+    if lp.step > 1 {
+      // The largest value the variable reaches below the bound:
+      // entry + ((X' - entry) / s) * s (when X' < entry the body does not
+      // run, and the guard's answer does not matter).
+      e64 = lv_widen(f, loc, blk, lp.ind)
+      d = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, d, lv_rv2(mrk_binary(), mop_sub(), lv_copy_local(xp), lv_copy_local(e64))))
+      q = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, q, lv_rv2(mrk_binary(), mop_div(), lv_copy_local(d), lv_c_i64(lp.step))))
+      qs = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, qs, lv_rv2(mrk_binary(), mop_mul(), lv_copy_local(q), lv_c_i64(lp.step))))
+      xl = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, xl, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(e64), lv_copy_local(qs))))
+      xp = xl
+    }
+  }
+  i = 0
+  while i < terms.lo_bk.size {
+    base = -1
+    if terms.lo_bk[i] == 1 {
+      base = lv_widen(f, loc, blk, lp.ind)
+    } else {
+      base = lv_widen(f, loc, blk, terms.lo_bv[i])
+    }
+    s = lv_new_local(f, mt_i64())
+    blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.lo_off[i]))))
+    g = lv_new_local(f, mt_bool())
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(s), lv_c_i64(0))))
+    blk = lv_test(f, loc, blk, g, hdr)
+    i = i + 1
+  }
+  i = 0
+  while i < terms.up_h.size {
+    a = lv_c_i64(terms.up_off[i])
+    if terms.up_bk[i] != 3 {
+      base = xp
+      if terms.up_bk[i] == 2 {
+        base = lv_widen(f, loc, blk, terms.up_bv[i])
+      }
+      s = lv_new_local(f, mt_i64())
+      blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.up_off[i]))))
+      a = lv_copy_local(s)
+    }
+    g = lv_new_local(f, mt_bool())
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_lt(), a, lv_copy_local(sizes[terms.up_h[i]]))))
+    blk = lv_test(f, loc, blk, g, hdr)
+    i = i + 1
+  }
+  last = blk
+  // The copy.
+  map: Array(Int) = []
+  b = 0
+  while b < n0 {
+    map.push(-1)
+    b = b + 1
+  }
+  b = 0
+  while b < n0 {
+    if lp.body[b] {
+      nb = lv_new_block(f)
+      map[b] = nb.id
+    }
+    b = b + 1
+  }
+  b = 0
+  while b < n0 {
+    if lp.body[b] {
+      src = f.blocks[b]
+      dst = f.blocks[map[b]]
+      j = 0
+      while j < src.stmts.size {
+        if !lp.removed[b][j] {
+          dst.stmts.push(lv_stmt_copy(src.stmts[j]))
+        }
+        j = j + 1
+      }
+      if t = src.term {
+        c = MTerm.new(t.kind, t.loc)
+        c.cond = t.cond
+        k = 0
+        while k < t.targets.size {
+          x = t.targets[k]
+          if x < n0 && lp.body[x] {
+            x = map[x]
+          }
+          c.targets.push(x)
+          k = k + 1
+        }
+        k = 0
+        while k < t.values.size {
+          c.values.push(t.values[k])
+          k = k + 1
+        }
+        dst.term = c
+      }
+    }
+    b = b + 1
+  }
+  last.term = lv_goto(loc, map[hdr])
+  // The original is the cold path now: its back edges are marked so the
+  // emitter keeps LLVM from unrolling or peeling it (W9b; unrolled cold
+  // copies cost size and, merging with the fast copy, steered the SLP
+  // vectorizer away from the fast loop's natural vector width).
+  b = 0
+  while b < n0 {
+    if lp.body[b] {
+      if t = f.blocks[b].term {
+        if t.kind == mtk_goto() || t.kind == mtk_branch() {
+          k = 0
+          while k < t.targets.size {
+            if t.targets[k] == hdr {
+              t.cold = hdr + 1
+            }
+            k = k + 1
+          }
+        }
+      }
+    }
+    b = b + 1
+  }
+  // The entry edges (from outside the loop) now enter the guard.
+  k = 0
+  while k < preds[hdr].size {
+    p = preds[hdr][k]
+    if !lp.body[p] {
+      if t = f.blocks[p].term {
+        x = 0
+        while x < t.targets.size {
+          if t.targets[x] == hdr {
+            t.targets[x] = g0.id
+          }
+          x = x + 1
+        }
+      }
+    }
+    k = k + 1
+  }
+  map[hdr]
+}
+
+fn lv_count_stmts(f: MFunc): Int {
+  n = 0
+  b = 0
+  while b < f.blocks.size {
+    n = n + f.blocks[b].stmts.size + 1
+    b = b + 1
+  }
+  n
+}
+
+// Tries to version the loop with header lps.headers[li]; returns the
+// copy's header, or -1.
+fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool)): Int {
+  body = lps.bodies[li]
+  hdr = lps.headers[li]
+  if hdr == 0 {
+    return -1
+  }
+  lp = LvLoop.new(f, body, hdr)
+  lp.addr_taken = lv_addr_taken(f)
+  lp.def_in = mir_bools(f.locals.size, false)
+  size = 0
+  b = 0
+  while b < f.blocks.size {
+    if body[b] {
+      blk = f.blocks[b]
+      size = size + blk.stmts.size
+      j = 0
+      while j < blk.stmts.size {
+        d = mir_stmt_def(blk.stmts[j])
+        if d >= 0 {
+          lp.def_in[d] = true
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  if size > 4000 {
+    return -1
+  }
+  lp.sizes_ok = !m.shared && lv_loop_keeps(m, lp, keep)
+  if !lv_header(m, lp, lps) {
+    return -1
+  }
+  lv_freshness(lp)
+  terms = LvTerms.new
+  lv_checks(m, lp, lps, terms)
+  if !lp.any_own {
+    return -1
+  }
+  lv_version(lp, terms)
+}
+
+fn lv_func(m: MModule, f: MFunc, keep: Array(Bool)) {
+  done: Array(Bool) = []
+  budget = lv_count_stmts(f) * 4 + 4000
+  rounds = 0
+  progress = true
+  while progress && rounds < 256 {
+    progress = false
+    lps = mir_lv_loops(f)
+    while done.size < f.blocks.size {
+      done.push(false)
+    }
+    li = 0
+    while li < lps.headers.size && !progress {
+      h = lps.headers[li]
+      if !done[h] {
+        done[h] = true
+        if lv_count_stmts(f) < budget {
+          copy = lv_try(m, f, lps, li, keep)
+          if copy >= 0 {
+            while done.size < f.blocks.size {
+              done.push(false)
+            }
+            done[copy] = true
+            progress = true
+          }
+        }
+      }
+      li = li + 1
+    }
+    rounds = rounds + 1
+  }
+}
+
+// String sizes out of loops: `avant_str_size(_s)` of a string local the
+// loop never writes is the same every time (strings are immutable), so a
+// preheader computes it once and the loop copies the value. The call
+// cannot be left to LLVM: its length cache makes it write memory, so its
+// honest attributes (runtime.av mir_rt_attrs) do not let LLVM hoist it.
+// The call has no other effect, never traps (null has size 0), and does
+// not collect, so computing it where the loop might not run is harmless.
+// Loops are taken innermost first, so a size moves out of every loop the
+// string is invariant in.
+fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
+  addr = lv_addr_taken(f)
+  def_in = mir_bools(f.locals.size, false)
+  b = 0
+  while b < f.blocks.size {
+    if body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        d = mir_stmt_def(blk.stmts[j])
+        if d >= 0 {
+          def_in[d] = true
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  strs: Array(Int) = []
+  held: Array(Int) = []
+  pre = MBlock.new(f.blocks.size)
+  loc = f.loc
+  if t0 = f.blocks[hdr].term {
+    loc = t0.loc
+  }
+  n0 = f.blocks.size
+  b = 0
+  while b < n0 {
+    if body[b] {
+      blk = f.blocks[b]
+      j = 0
+      while j < blk.stmts.size {
+        st = blk.stmts[j]
+        if st.kind == msk_call() && str_eq(st.callee, "avant_str_size") && st.args.size == 1 && st.dest >= 0 {
+          v = lv_local(st.args[0])
+          if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
+            k = 0
+            while k < strs.size && strs[k] != v {
+              k = k + 1
+            }
+            if k == strs.size {
+              strs.push(v)
+              h = lv_new_local(f, mt_i32())
+              held.push(h)
+              call = MStmt.new(msk_call(), loc)
+              call.dest = h
+              call.callee = "avant_str_size"
+              call.args.push(lv_copy_local(v))
+              call.collects = false
+              pre.stmts.push(call)
+            }
+            r = MRvalue.new(mrk_use())
+            r.a = lv_copy_local(held[k])
+            blk.stmts[j] = lv_assign(st.loc, st.dest, r)
+          }
+        }
+        j = j + 1
+      }
+    }
+    b = b + 1
+  }
+  if strs.size == 0 {
+    return false
+  }
+  preds = mir_preds(f)
+  f.blocks.push(pre)
+  pre.term = lv_goto(loc, hdr)
+  k = 0
+  while k < preds[hdr].size {
+    p = preds[hdr][k]
+    if !body[p] {
+      if t = f.blocks[p].term {
+        x = 0
+        while x < t.targets.size {
+          if t.targets[x] == hdr {
+            t.targets[x] = pre.id
+          }
+          x = x + 1
+        }
+      }
+    }
+    k = k + 1
+  }
+  true
+}
+
+fn lv_hoist_sizes(f: MFunc) {
+  rounds = 0
+  progress = true
+  while progress && rounds < 256 {
+    progress = false
+    lps = mir_lv_loops(f)
+    li = lps.headers.size - 1
+    while li >= 0 && !progress {
+      if lps.headers[li] != 0 && lv_hoist_one(f, lps.bodies[li], lps.headers[li]) {
+        progress = true
+      }
+      li = li - 1
+    }
+    rounds = rounds + 1
+  }
+}
+
+// The pass (5.9: after verify(lowered), before the leaf pass): every
+// function whose kind is unset.
+pub fn mir_loop_pass(m: MModule) {
+  keep = mir_lv_summary(m)
+  i = 0
+  while i < m.funcs.size {
+    f = m.funcs[i]
+    if f.kind == mfk_unset() && f.blocks.size > 1 {
+      lv_func(m, f, keep)
+      lv_hoist_sizes(f)
+    }
+    i = i + 1
+  }
+}

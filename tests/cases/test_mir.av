@@ -1,0 +1,226 @@
+import harness
+
+// Stage 28 W4: the MIR core (compiler/mir/) through the internal hook
+// `avant __mir-selftest`, which builds MIR modules with the builder and
+// prints them and the verifier's answers. Checked here: the complete
+// example of stages/stage28/mir.md 10.2, built with the builder, prints
+// byte-identically to tests/fixtures/mir/example.mir (the spec's text) and
+// verifies clean at both stages; every verifier rule V1-V21 rejects its
+// case, and only its own rule does; the accepting cases near each boundary
+// verify clean; a verifier error renders in the compiler's diagnostic form.
+
+// The block between the line `start` and the next `== end` line.
+fn section(log: String, start: String): String {
+  lines = log.split("\n")
+  buf = buf_new()
+  inside = false
+  i = 0
+  while i < lines.size {
+    if inside {
+      if str_eq(lines[i], "== end") {
+        return buf.to_s
+      }
+      buf.push_str("${lines[i]}\n")
+    } else if str_eq(lines[i], start) {
+      inside = true
+    }
+    i = i + 1
+  }
+  "(no section ${start})"
+}
+
+// The rules of the `case NAME STAGE RULES` line, or "(missing)".
+fn case_rules(lines: Array(String), name: String, stage: String): String {
+  head = "case ${name} ${stage} "
+  i = 0
+  while i < lines.size {
+    l = lines[i]
+    if l.size > head.size && str_eq(str_slice(l, 0, head.size), head) {
+      return str_slice(l, head.size, l.size)
+    }
+    i = i + 1
+  }
+  "(missing)"
+}
+
+fn count_cases(lines: Array(String)): Int {
+  n = 0
+  i = 0
+  while i < lines.size {
+    if lines[i].size > 5 && str_eq(str_slice(lines[i], 0, 5), "case ") {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  n
+}
+
+class Want {
+  names: Array(String)
+  stages: Array(String)
+  rules: Array(String)
+
+  fn initialize {
+    a: Array(String) = []
+    self.names = a
+    b: Array(String) = []
+    self.stages = b
+    c: Array(String) = []
+    self.rules = c
+  }
+
+  fn add(name: String, stage: String, rules: String) {
+    self.names.push(name)
+    self.stages.push(stage)
+    self.rules.push(rules)
+  }
+}
+
+// One rejecting case per rule (6), the second cases the spec names for
+// V11 and V14, and a few more; then the accepting ones.
+fn expectations: Want {
+  w = Want.new()
+  w.add("example", "lowered", "ok")
+  w.add("example", "final", "ok")
+  w.add("v1_unterminated", "lowered", "V1")
+  w.add("v2_edge_to_bb0", "lowered", "V2")
+  w.add("v2_missing_target", "lowered", "V2")
+  w.add("v3_void_ret_place", "lowered", "V3")
+  w.add("v4_deref_int", "lowered", "V4")
+  w.add("v5_ref_into_union", "lowered", "V5")
+  w.add("v6_add_i32_i64", "lowered", "V6")
+  w.add("v7_arity", "lowered", "V7")
+  w.add("v8_branch_on_i32", "lowered", "V8")
+  w.add("v9_read_before_write", "lowered", "V9")
+  w.add("v9_one_path", "lowered", "V9")
+  w.add("v10_returns_addr", "lowered", "V10")
+  w.add("v11_live_ref", "final", "V11")
+  w.add("v11_loop", "final", "V11")
+  w.add("v11_address_taken", "final", "V11")
+  w.add("v12_live_addr", "final", "V12")
+  w.add("v13_no_barrier", "lowered", "V13")
+  w.add("v13_barrier_on_other", "lowered", "V13")
+  w.add("v14_holder_not_alloc", "lowered", "V14")
+  w.add("v14_no_closing_barrier", "lowered", "V14")
+  w.add("v14_redefined_before_barrier", "lowered", "V14")
+  w.add("v15_leaf_collects", "final", "V15")
+  w.add("v16_slot_not_zeroed", "final", "V16")
+  w.add("v17_no_leave", "final", "V17")
+  w.add("v18_collects_marked_nocollect", "lowered", "V18")
+  w.add("v18_quiet_in_shared", "lowered", "V18")
+  w.add("v19_shared_ref_leaf", "final", "V19")
+  w.add("v20_class_fixed_id", "lowered", "V20")
+  w.add("v20_unmangled", "lowered", "V20")
+  w.add("v21_wrong_type_id", "lowered", "V21")
+  w.add("v21_partial_element", "lowered", "V21")
+  w.add("ok_base", "lowered", "ok")
+  w.add("ok_base", "final", "ok")
+  w.add("ok_defined_on_all_paths", "lowered", "ok")
+  w.add("ok_ref_across_nocollect", "lowered", "ok")
+  w.add("ok_ref_across_nocollect", "final", "ok")
+  w.add("ok_fresh_fill_closed", "lowered", "ok")
+  w.add("ok_fresh_fill_closed", "final", "ok")
+  w.add("ok_addr_in_slot", "lowered", "ok")
+  w.add("ok_addr_in_slot", "final", "ok")
+  w.add("ok_barrier_forms", "lowered", "ok")
+  w.add("ok_quiet_single_thread", "lowered", "ok")
+  // The GC passes' results verify at final (W6a).
+  w.add("pass_live", "final", "ok")
+  w.add("pass_args", "final", "ok")
+  w.add("pass_addr", "final", "ok")
+  w.add("pass_leaves", "final", "ok")
+  w.add("pass_leaves_shared", "final", "ok")
+  w
+}
+
+// What the leaf and root-slot passes decide (gc.av, Stage 28 W6a): one
+// `pass CASE SYMBOL KIND slots LIST` line per function of the case.
+fn pass_lines: Array(String) {
+  xs: Array(String) = []
+  xs.push("pass pass_live av.t/f frame slots _1")
+  xs.push("pass pass_args av.t/f frame slots _1")
+  xs.push("pass pass_args av.t/g frame slots")
+  xs.push("pass pass_addr av.t/f frame slots _2")
+  xs.push("pass pass_leaves av.t/a leaf slots")
+  xs.push("pass pass_leaves av.t/c leaf slots")
+  xs.push("pass pass_leaves av.t/d frame slots")
+  xs.push("pass pass_leaves_shared av.t/a frame slots")
+  xs.push("pass pass_leaves_shared av.t/c frame slots")
+  xs.push("pass pass_leaves_shared av.t/d frame slots")
+  xs
+}
+
+fn test_mir(c: Checks) {
+  c.suite("tests/cases/test_mir.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    dir = scratch_dir()
+    log = "${dir}/selftest.log"
+    args: Array(String) = []
+    args.push("__mir-selftest")
+    code = process_run_out(compiler, args, log)
+    c.eq_int(code, 0, "__mir-selftest exits 0")
+    text = "(no log)"
+    if t = file_read(log) {
+      text = t
+    }
+    want = "(no fixture)"
+    if t = file_read("${root}/tests/fixtures/mir/example.mir") {
+      want = t
+    }
+    c.eq_str(section(text, "== example print"), want, "the 10.2 example prints as mir.md gives it")
+    lines = text.split("\n")
+    w = expectations()
+    i = 0
+    while i < w.names.size {
+      c.eq_str(case_rules(lines, w.names[i], w.stages[i]), w.rules[i], "${w.names[i]} at stage ${w.stages[i]}: ${w.rules[i]}")
+      i = i + 1
+    }
+    c.eq_int(count_cases(lines), w.names.size, "no case without an expectation")
+    pl = pass_lines()
+    npass = 0
+    i = 0
+    while i < lines.size {
+      if lines[i].size > 5 && str_eq(str_slice(lines[i], 0, 5), "pass ") {
+        npass = npass + 1
+      }
+      i = i + 1
+    }
+    c.eq_int(npass, pl.size, "one pass line per function of the pass cases")
+    i = 0
+    while i < pl.size {
+      c.expect(str_has(text, "${pl[i]}\n"), "the GC passes: ${pl[i]}")
+      i = i + 1
+    }
+    // The same run under the GC verifier with a 1 MB nursery: the MIR's
+    // data structures are traced correctly (D188, D192) and the answers
+    // do not depend on collections.
+    log2 = "${dir}/selftest-gc.log"
+    args2: Array(String) = []
+    args2.push("AVANT_GC_VERIFY=1")
+    args2.push("AVANT_YOUNG_MB=1")
+    args2.push(compiler)
+    args2.push("__mir-selftest")
+    c.eq_int(process_run_out("/usr/bin/env", args2, log2), 0, "__mir-selftest exits 0 under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
+    text2 = "(no log)"
+    if t = file_read(log2) {
+      text2 = t
+    }
+    c.eq_str(text2, text, "the same output, verifier silent, under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
+    r = section(text, "== render")
+    c.expect(str_has(r, "error[V13]: av.t/f: bb0[0]: reference store through (*_1).0 without its barrier"), "a verifier error names its rule, function, block, and statement")
+    c.expect(str_has(r, "--> t.av:3:5"), "a verifier error carries the MIR's source location")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_mir(c)
+  c.finish
+}

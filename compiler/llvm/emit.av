@@ -1,0 +1,835 @@
+// The LLVM emitter (Stage 28 W5a; stages/stage28/mir.md 11): a verified,
+// final-stage MIR module to the textual .ll the in-process LLVM compiles
+// (compiler/llvm/glue.av). The text is deterministic (D171: only the
+// MIR's own numbers and names, in module order) and the same in every
+// codegen mode (D192; the mode selects only the glue's pipeline).
+//
+// Module order (3.1, 10.3): header, layouts, string constants, the
+// allocation globals (when an inline allocation was emitted), the
+// declarations (externals and the runtime entry points the emitter calls,
+// sorted by name, then the intrinsics), the functions in module order,
+// __avant_type_maps, the attribute group. Every defined function carries
+// #0 (11.1); Avant functions are internal and mangled (D170), `main` is
+// external.
+//
+// The core (state, places, operands) is emit_core.av; the GC sequences
+// are emit_gc.av.
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.print
+import llvm.emit_core
+import llvm.emit_gc
+import llvm.emit_cabi
+
+pub fn ll_datalayout: String {
+  "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+}
+
+pub fn ll_triple: String {
+  "x86_64-pc-linux-gnu"
+}
+
+// The .ll text of a module that verified at stage final. inline_fast
+// false emits the call forms of allocation and the barrier (5.5, 5.6).
+pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
+  e = LlEmit.new(m)
+  e.inline_fast = inline_fast
+  i = 0
+  while i < m.funcs.size {
+    ll_function(e, m.funcs[i])
+    i = i + 1
+  }
+  body = e.out.to_s
+  e.out = buf_new()
+  ll_type_maps(e)
+  maps = e.out.to_s
+
+  out = buf_new()
+  out.push_str("source_filename = \"${m.name}\"\n")
+  out.push_str("target datalayout = \"${ll_datalayout()}\"\n")
+  out.push_str("target triple = \"${ll_triple()}\"\n")
+  out.push_str("\n")
+  ll_layouts(e, out)
+  if m.strs.size > 0 {
+    i = 0
+    while i < m.strs.size {
+      s = m.strs[i]
+      out.push_str("@str.${i} = private constant [${s.size + 1} x i8] c\"${mir_escape(s)}\\00\", align 1\n")
+      i = i + 1
+    }
+    out.push_str("\n")
+  }
+  if e.used_alloc_globals {
+    out.push_str(ll_alloc_globals())
+    out.push_str("\n")
+  }
+  ll_declarations(e, out)
+  out.push_str("\n")
+  out.push_str(body)
+  out.push_str(maps)
+  out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" }\n")
+  ll_loop_md(e, out)
+  out.to_s
+}
+
+// The layouts as named LLVM struct types, in creation order. An element
+// buffer `%elems(E)` has no LLVM type of its own: it is only indexed, by
+// the element type (E5).
+fn ll_layouts(e: LlEmit, out: Buf) {
+  n = 0
+  i = 0
+  while i < e.ts.layouts.size {
+    l = e.ts.layouts[i]
+    if l.kind != mlk_elems() {
+      out.push_str("${ll_type_name(l.name)} = type {")
+      j = 0
+      while j < l.fields.size {
+        if j > 0 {
+          out.push_str(",")
+        }
+        out.push_str(" ${e.llt(l.fields[j])}")
+        j = j + 1
+      }
+      if l.fields.size > 0 {
+        out.push_str(" ")
+      }
+      out.push_str("}\n")
+      n = n + 1
+    }
+    i = i + 1
+  }
+  if n > 0 {
+    out.push_str("\n")
+  }
+}
+
+// ---- declarations (3.5, 11.1)
+
+fn ll_declarations(e: LlEmit, out: Buf) {
+  names: Array(String) = []
+  i = 0
+  while i < e.m.externs.size {
+    if !str_eq(e.m.externs[i].name, "__avant_type_maps") {
+      ll_insert_sorted(names, e.m.externs[i].name)
+    }
+    i = i + 1
+  }
+  i = 0
+  while i < e.rt_names.size {
+    ll_insert_sorted(names, e.rt_names[i])
+    i = i + 1
+  }
+  scratch = MTypes.new()
+  i = 0
+  while i < names.size {
+    name = names[i]
+    if x = e.m.ext(name) {
+      if ll_cabi_needed(e.ts, x.sig) {
+        out.push_str(ll_cabi_declare(e.ts, name, x.sig))
+      } else {
+        out.push_str(ll_declare(e.ts, name, x.sig, x.noreturn, e.m.rt.attrs_of(name)))
+      }
+    } else if r = e.m.rt.find(name) {
+      out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn, r.attrs))
+    }
+    i = i + 1
+  }
+  intr: Array(String) = []
+  i = 0
+  while i < e.intrinsics.size {
+    ll_insert_sorted(intr, e.intrinsics[i])
+    i = i + 1
+  }
+  i = 0
+  while i < intr.size {
+    out.push_str("${intr[i]}\n")
+    i = i + 1
+  }
+}
+
+fn ll_insert_sorted(xs: Array(String), s: String) {
+  i = 0
+  while i < xs.size {
+    if str_eq(xs[i], s) {
+      return
+    }
+    i = i + 1
+  }
+  xs.push(s)
+  j = xs.size - 1
+  while j > 0 && mir_str_lt(s, xs[j - 1]) {
+    xs[j] = xs[j - 1]
+    j = j - 1
+  }
+  xs[j] = s
+}
+
+// `declare <ret> @name(<params>)`: `zeroext` on a C boolean (14, 8.5);
+// the traps are `noreturn nounwind cold` (11.1); a call-table row's
+// attributes follow (W9b: the pure readers, runtime.av mir_rt_attrs).
+fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String): String {
+  s = ts.sigs[sig]
+  buf = buf_new()
+  buf.push_str("declare ${ll_c_type(ts, s.ret)} ${ll_sym(name)}(")
+  i = 0
+  while i < s.params.size {
+    if i > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str(ll_c_param(ts, s.params[i]))
+    i = i + 1
+  }
+  if s.varargs {
+    if s.params.size > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str("...")
+  }
+  buf.push_str(")")
+  if noreturn {
+    buf.push_str(" noreturn nounwind cold")
+  }
+  if attrs.size > 0 {
+    buf.push_str(" ${attrs}")
+  }
+  buf.push_str("\n")
+  buf.to_s
+}
+
+// A parameter or result type at the C boundary.
+fn ll_c_type(ts: MTypes, ty: Int): String {
+  if ty == mt_bool() {
+    return "zeroext i1"
+  }
+  ll_type_text(ts, ty)
+}
+
+// A parameter type at the C boundary: the attribute follows the type.
+fn ll_c_param(ts: MTypes, ty: Int): String {
+  if ty == mt_bool() {
+    return "i1 zeroext"
+  }
+  ll_type_text(ts, ty)
+}
+
+// ---- __avant_type_maps (3.3, D186)
+
+fn ll_type_maps(e: LlEmit) {
+  e.out.push_str("define internal void @__avant_type_maps() #0 {\nentry:\n")
+  i = 0
+  while i < e.m.maps.size {
+    tm = e.m.maps[i]
+    chunks = mir_map_chunks(e.ts, tm)
+    stride = mir_map_stride(e.ts, tm)
+    if stride == 0 && chunks.size == 1 {
+      e.need("avant_type_map")
+      e.line("call void @avant_type_map(i32 ${tm.id}, i64 ${chunks[0].to_i64})")
+    } else {
+      e.need("avant_type_map_at")
+      c = 0
+      while c < chunks.size {
+        if c == 0 || chunks[c] != 0u64 {
+          e.line("call void @avant_type_map_at(i32 ${tm.id}, i32 ${stride}, i32 ${64 * c}, i64 ${chunks[c].to_i64})")
+        }
+        c = c + 1
+      }
+    }
+    i = i + 1
+  }
+  e.line("ret void")
+  e.out.push_str("}\n\n")
+}
+
+// ---- functions (3.4, E3)
+
+fn ll_function(e: LlEmit, f: MFunc) {
+  e.f = f
+  e.v.func = f
+  e.tn = 0
+  e.trap_ovf = false
+  e.trap_div0 = false
+  s = e.ts.sigs[f.sig]
+  linkage = "internal "
+  if f.external {
+    linkage = ""
+  }
+  // W8a: a C callback thunk (`#cb`, 8.2) has the C boundary's types
+  // (`zeroext` on Bool, section 14 8.5).
+  c_abi = str_ends(f.symbol, "#cb")
+  rtext = e.llt(s.ret)
+  if c_abi {
+    rtext = ll_c_type(e.ts, s.ret)
+  }
+  e.out.push_str("define ${linkage}${rtext} ${ll_sym(f.symbol)}(")
+  i = 0
+  while i < s.params.size {
+    if i > 0 {
+      e.out.push_str(", ")
+    }
+    ptext = e.llt(s.params[i])
+    if c_abi {
+      ptext = ll_c_param(e.ts, s.params[i])
+    }
+    e.out.push_str("${ptext} %a${i + 1}")
+    i = i + 1
+  }
+  e.out.push_str(") #0 {\nalloca:\n")
+  e.label = "alloca"
+  i = 0
+  while i < f.locals.size {
+    if f.valid_local(i) {
+      ty = f.locals[i].ty
+      e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
+    }
+    i = i + 1
+  }
+  i = 1
+  while i <= f.nparams {
+    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
+    i = i + 1
+  }
+  e.line("br label %bb0")
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    e.bk = b
+    e.block("bb${b}")
+    j = 0
+    while j < blk.stmts.size {
+      e.si = j
+      ll_stmt(e, blk.stmts[j])
+      j = j + 1
+    }
+    e.si = blk.stmts.size
+    if t = blk.term {
+      ll_term(e, t)
+    }
+    b = b + 1
+  }
+  if e.trap_ovf {
+    e.block("trap.ovf")
+    e.need("avant_trap_overflow")
+    e.line("call void @avant_trap_overflow()")
+    e.line("unreachable")
+  }
+  if e.trap_div0 {
+    e.block("trap.div0")
+    e.need("avant_trap_div_zero")
+    e.line("call void @avant_trap_div_zero()")
+    e.line("unreachable")
+  }
+  e.out.push_str("}\n\n")
+}
+
+// ---- statements (4.4, 11.3)
+
+fn ll_stmt(e: LlEmit, st: MStmt) {
+  k = st.kind
+  if k == msk_assign() {
+    if p = st.place {
+      if rv = st.rv {
+        pt = e.place_type(p)
+        val = ll_rvalue(e, rv, pt)
+        ptr = e.place_ptr(p)
+        e.store(pt, val, ptr, e.pa_vol)
+      }
+    }
+  } else if k == msk_call() {
+    ll_call(e, st)
+  } else if k == msk_barrier() {
+    ll_barrier(e, st.args[0])
+  } else if k == msk_barrier_at() {
+    ll_barrier_at(e, st.args[0])
+  } else if k == msk_check_bounds() {
+    ll_bounds(e, st)
+  } else if k == msk_gc_enter() {
+    ll_gc_call(e, "avant_gc_enter")
+  } else if k == msk_gc_leave() {
+    ll_gc_call(e, "avant_gc_leave")
+  } else if k == msk_gc_roots() {
+    ll_gc_roots(e, st.locals)
+  }
+}
+
+// check.bounds i, n: unsigned i >= n traps with avant_trap_bounds(i, n).
+fn ll_bounds(e: LlEmit, st: MStmt) {
+  i = e.value(st.args[0])
+  n = e.value(st.args[1])
+  c = e.tmp
+  e.line("${c} = icmp uge i32 ${i}, ${n}")
+  oob = e.part("oob")
+  ok = e.part("ok")
+  e.line("br i1 ${c}, label %${oob}, label %${ok}")
+  e.block(oob)
+  e.need("avant_trap_bounds")
+  e.line("call void @avant_trap_bounds(i32 ${i}, i32 ${n})")
+  e.line("unreachable")
+  e.block(ok)
+}
+
+// A call (4.4): arguments left to right, the call, then the destination
+// (a local) stored at once (5.3). Allocation rows may expand inline (5.5).
+fn ll_call(e: LlEmit, st: MStmt) {
+  result = ""
+  ret = mt_void()
+  if fo = st.indirect {
+    result = ll_call_indirect(e, st, fo)
+    ret = e.ov_ty
+  } else if g = e.m.func(st.callee) {
+    s = e.ts.sigs[g.sig]
+    ret = s.ret
+    args = ll_args(e, st.args, s.params, false)
+    result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
+  } else if x = e.m.ext(st.callee) {
+    sig = x.sig
+    if st.sig >= 0 {
+      sig = st.sig
+    }
+    s = e.ts.sigs[sig]
+    ret = s.ret
+    if ll_cabi_needed(e.ts, sig) || ll_cabi_needed(e.ts, x.sig) {
+      // W8a, C3: an aggregate at the C boundary (emit_cabi.av); the
+      // destination is written there.
+      ll_cabi_call(e, st, x.name, sig)
+      return
+    }
+    if x.alloc {
+      result = ll_alloc(e, x.name, st.args)
+    } else {
+      args = ll_args(e, st.args, s.params, true)
+      callee = ll_sym(x.name)
+      rt = ll_c_type(e.ts, ret)
+      if s.varargs || sig != x.sig {
+        rt = "${rt} ${ll_fn_type(e, s)}"
+      }
+      result = ll_emit_call(e, ret == mt_void(), rt, callee, args)
+    }
+  }
+  if st.dest >= 0 {
+    d = st.dest
+    e.store(e.f.locals[d].ty, result, e.local_name(d), e.slot_vol(d))
+  }
+}
+
+fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: String): String {
+  if is_void {
+    e.line("call ${ret} ${callee}(${args})")
+    return ""
+  }
+  t = e.tmp
+  e.line("${t} = call ${ret} ${callee}(${args})")
+  t
+}
+
+// `(<params>[, ...])`: the function type a call through another
+// binding's signature, or a variadic call, spells out (3.5).
+fn ll_fn_type(e: LlEmit, s: MSig): String {
+  buf = buf_new()
+  buf.push_str("(")
+  i = 0
+  while i < s.params.size {
+    if i > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str(e.llt(s.params[i]))
+    i = i + 1
+  }
+  if s.varargs {
+    if s.params.size > 0 {
+      buf.push_str(", ")
+    }
+    buf.push_str("...")
+  }
+  buf.push_str(")")
+  buf.to_s
+}
+
+// The argument list: each operand loaded here, in order; a fixed
+// parameter takes its declared type (zeroext for a C boolean), a variadic
+// argument its own type.
+fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool): String {
+  buf = buf_new()
+  i = 0
+  while i < ops.size {
+    x = e.value(ops[i])
+    ty = e.ov_ty
+    if i < params.size {
+      ty = params[i]
+    }
+    if i > 0 {
+      buf.push_str(", ")
+    }
+    if c_boundary && ty == mt_bool() {
+      buf.push_str("i1 zeroext ${x}")
+    } else {
+      buf.push_str("${e.llt(ty)} ${x}")
+    }
+    i = i + 1
+  }
+  buf.to_s
+}
+
+// call indirect copy P (4.4): the fnval's environment (word 0) is the
+// first argument of its code (word 1). Sets ov_ty to the result type.
+fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
+  fv = e.value(fo)
+  fty = e.ov_ty
+  l = e.ts.layouts[e.ts.layout_of(fty)]
+  s = e.ts.sigs[e.ts.get(l.fields[1]).sig]
+  env = e.tmp
+  e.line("${env} = extractvalue ${e.llt(fty)} ${fv}, 0")
+  code = e.tmp
+  e.line("${code} = extractvalue ${e.llt(fty)} ${fv}, 1")
+  rest: Array(Int) = []
+  i = 1
+  while i < s.params.size {
+    rest.push(s.params[i])
+    i = i + 1
+  }
+  args = ll_args(e, st.args, rest, false)
+  if args.size > 0 {
+    args = "ptr ${env}, ${args}"
+  } else {
+    args = "ptr ${env}"
+  }
+  r = ll_emit_call(e, s.ret == mt_void(), e.llt(s.ret), code, args)
+  e.ov_ty = s.ret
+  r
+}
+
+// ---- terminators (4.5)
+
+// The loop metadata of a cold back edge (W9b: the checked copy that loop
+// versioning keeps): one distinct node per loop header of the function,
+// numbered in emission order; node !0 is the shared unroll-disable hint.
+fn ll_cold_md(e: LlEmit, t: MTerm): String {
+  if t.cold <= 0 {
+    return ""
+  }
+  key = "${e.f.symbol}|${t.cold}"
+  if got = e.loop_md.get(key) {
+    return ", !llvm.loop !${got}"
+  }
+  e.loop_md_n = e.loop_md_n + 1
+  e.loop_md[key] = e.loop_md_n
+  ", !llvm.loop !${e.loop_md_n}"
+}
+
+fn ll_loop_md(e: LlEmit, out: Buf) {
+  if e.loop_md_n == 0 {
+    return
+  }
+  out.push_str("\n!0 = !{!\"llvm.loop.unroll.disable\"}\n")
+  i = 1
+  while i <= e.loop_md_n {
+    out.push_str("!${i} = distinct !{!${i}, !0}\n")
+    i = i + 1
+  }
+}
+
+fn ll_term(e: LlEmit, t: MTerm) {
+  k = t.kind
+  if k == mtk_goto() {
+    e.line("br label %bb${t.targets[0]}${ll_cold_md(e, t)}")
+  } else if k == mtk_branch() {
+    c = "false"
+    if o = t.cond {
+      c = e.value(o)
+    }
+    e.line("br i1 ${c}, label %bb${t.targets[0]}, label %bb${t.targets[1]}${ll_cold_md(e, t)}")
+  } else if k == mtk_switch() {
+    if o = t.cond {
+      c = e.value(o)
+      ty = e.ov_ty
+      buf = buf_new()
+      buf.push_str("switch ${e.llt(ty)} ${c}, label %bb${t.targets[t.targets.size - 1]} [")
+      i = 0
+      while i < t.values.size {
+        buf.push_str(" ${e.llt(ty)} ${e.int_text(ty, t.values[i])}, label %bb${t.targets[i]}")
+        i = i + 1
+      }
+      buf.push_str(" ]")
+      e.line(buf.to_s)
+    }
+  } else if k == mtk_return() {
+    if e.f.has_ret {
+      ty = e.f.locals[0].ty
+      x = e.load(ty, e.local_name(0), e.slot_vol(0))
+      e.line("ret ${e.llt(ty)} ${x}")
+    } else {
+      e.line("ret void")
+    }
+  } else {
+    e.line("unreachable")
+  }
+}
+
+// ---- rvalues (4.3, 11.3): the value to store into a place of type pt.
+
+fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
+  k = r.kind
+  if k == mrk_use() {
+    if a = r.a {
+      return e.value(a)
+    }
+  }
+  if k == mrk_zero() {
+    return e.zero_text(pt)
+  }
+  if k == mrk_unary() {
+    return ll_unary(e, r)
+  }
+  if k == mrk_binary() || k == mrk_checked() || k == mrk_cmp() {
+    if a = r.a {
+      if b = r.b {
+        x = e.value(a)
+        ty = e.ov_ty
+        y = e.value(b)
+        if k == mrk_cmp() {
+          return ll_cmp(e, r.op, ty, x, y)
+        }
+        if k == mrk_checked() {
+          return ll_checked(e, r.op, ty, x, y)
+        }
+        return ll_binary(e, r.op, ty, x, y)
+      }
+    }
+  }
+  if k == mrk_cast() {
+    if a = r.a {
+      return ll_cast(e, e.value(a), e.ov_ty, r.ty)
+    }
+  }
+  if k == mrk_addr() || k == mrk_addr_raw() {
+    if p = r.place {
+      return e.place_ptr(p)
+    }
+  }
+  if k == mrk_struct() {
+    vals: Array(String) = []
+    tys: Array(Int) = []
+    i = 0
+    while i < r.ops.size {
+      vals.push(e.value(r.ops[i]))
+      tys.push(e.ov_ty)
+      i = i + 1
+    }
+    agg = "zeroinitializer"
+    i = 0
+    while i < vals.size {
+      agg = ll_insert(e, r.ty, agg, tys[i], vals[i], i)
+      i = i + 1
+    }
+    return agg
+  }
+  if k == mrk_union() {
+    l = e.ts.layouts[e.ts.layout_of(r.ty)]
+    agg = ll_insert(e, r.ty, "zeroinitializer", mt_i32(), "${r.op}", 0)
+    if a = r.a {
+      x = e.value(a)
+      pi = 1 + r.op
+      if l.nil_tag >= 0 && r.op > l.nil_tag {
+        pi = r.op
+      }
+      agg = ll_insert(e, r.ty, agg, l.fields[pi], x, pi)
+    }
+    return agg
+  }
+  if k == mrk_fnval() {
+    if a = r.a {
+      if b = r.b {
+        env = e.value(a)
+        code = e.value(b)
+        agg = ll_insert(e, r.ty, "zeroinitializer", mt_ref(), env, 0)
+        return ll_insert(e, r.ty, agg, mt_ptr(), code, 1)
+      }
+    }
+  }
+  "undef"
+}
+
+// E4: aggregates are built by insertvalue chains from zeroinitializer.
+fn ll_insert(e: LlEmit, aty: Int, agg: String, fty: Int, x: String, idx: Int): String {
+  t = e.tmp
+  e.line("${t} = insertvalue ${e.llt(aty)} ${agg}, ${e.llt(fty)} ${x}, ${idx}")
+  t
+}
+
+fn ll_unary(e: LlEmit, r: MRvalue): String {
+  if a = r.a {
+    x = e.value(a)
+    ty = e.ov_ty
+    if r.op == mop_neg_chk() {
+      return ll_overflow(e, "ssub", ty, "0", x)
+    }
+    t = e.tmp
+    if r.op == mop_neg() && ty == mt_f64() {
+      e.line("${t} = fneg double ${x}")
+    } else if r.op == mop_neg() {
+      e.line("${t} = sub ${e.llt(ty)} 0, ${x}")
+    } else if ty == mt_bool() {
+      e.line("${t} = xor i1 ${x}, true")
+    } else {
+      e.line("${t} = xor ${e.llt(ty)} ${x}, -1")
+    }
+    return t
+  }
+  "undef"
+}
+
+fn ll_binary(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
+  lt = e.llt(ty)
+  signed = e.ts.is_signed_int(ty)
+  f = ty == mt_f64()
+  name = "add"
+  if op == mop_add() {
+    name = ll_pick(f, "fadd", "add")
+  } else if op == mop_sub() {
+    name = ll_pick(f, "fsub", "sub")
+  } else if op == mop_mul() {
+    name = ll_pick(f, "fmul", "mul")
+  } else if op == mop_div() {
+    name = ll_pick(f, "fdiv", ll_pick(signed, "sdiv", "udiv"))
+  } else if op == mop_rem() {
+    name = ll_pick(f, "frem", ll_pick(signed, "srem", "urem"))
+  } else if op == mop_and() {
+    name = "and"
+  } else if op == mop_or() {
+    name = "or"
+  } else if op == mop_xor() {
+    name = "xor"
+  } else if op == mop_shl() {
+    name = "shl"
+  } else if op == mop_shr() {
+    name = ll_pick(signed, "ashr", "lshr")
+  }
+  t = e.tmp
+  e.line("${t} = ${name} ${lt} ${x}, ${y}")
+  t
+}
+
+fn ll_pick(c: Bool, a: String, b: String): String {
+  if c {
+    return a
+  }
+  b
+}
+
+fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
+  t = e.tmp
+  if ty == mt_f64() {
+    names = ["oeq", "une", "olt", "ole", "ogt", "oge"]
+    e.line("${t} = fcmp ${names[op - mop_eq()]} double ${x}, ${y}")
+    return t
+  }
+  signed = e.ts.is_signed_int(ty)
+  names = ["eq", "ne", "ult", "ule", "ugt", "uge"]
+  if signed {
+    names = ["eq", "ne", "slt", "sle", "sgt", "sge"]
+  }
+  e.line("${t} = icmp ${names[op - mop_eq()]} ${e.llt(ty)} ${x}, ${y}")
+  t
+}
+
+// add.chk sub.chk mul.chk (11.3): the with.overflow intrinsic and a
+// branch to the function's overflow trap.
+fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
+  lt = e.llt(ty)
+  pair = "{ ${lt}, i1 }"
+  e.need_intrinsic("declare ${pair} @llvm.${name}.with.overflow.${lt}(${lt}, ${lt})")
+  r = e.tmp
+  e.line("${r} = call ${pair} @llvm.${name}.with.overflow.${lt}(${lt} ${x}, ${lt} ${y})")
+  v = e.tmp
+  e.line("${v} = extractvalue ${pair} ${r}, 0")
+  o = e.tmp
+  e.line("${o} = extractvalue ${pair} ${r}, 1")
+  ok = e.part("ok")
+  e.trap_ovf = true
+  e.line("br i1 ${o}, label %trap.ovf, label %${ok}")
+  e.block(ok)
+  v
+}
+
+fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
+  signed = e.ts.is_signed_int(ty)
+  s = ll_pick(signed, "s", "u")
+  if op == mop_add() {
+    return ll_overflow(e, "${s}add", ty, x, y)
+  }
+  if op == mop_sub() {
+    return ll_overflow(e, "${s}sub", ty, x, y)
+  }
+  if op == mop_mul() {
+    return ll_overflow(e, "${s}mul", ty, x, y)
+  }
+  // div.chk, rem.chk: divisor 0 traps; signed (MIN, -1) traps for div
+  // and gives 0 for rem (a safe divisor of 1).
+  lt = e.llt(ty)
+  z = e.tmp
+  e.line("${z} = icmp eq ${lt} ${y}, 0")
+  nz = e.part("nz")
+  e.trap_div0 = true
+  e.line("br i1 ${z}, label %trap.div0, label %${nz}")
+  e.block(nz)
+  d = y
+  if signed {
+    min = "-2147483648"
+    mt = e.ts.get(ty)
+    width = mt.bits
+    if width == 64 {
+      min = "-9223372036854775808"
+    } else if width == 8 {
+      min = "-128"
+    }
+    m1 = e.tmp
+    e.line("${m1} = icmp eq ${lt} ${x}, ${min}")
+    m2 = e.tmp
+    e.line("${m2} = icmp eq ${lt} ${y}, -1")
+    mm = e.tmp
+    e.line("${mm} = and i1 ${m1}, ${m2}")
+    if op == mop_div() {
+      ok = e.part("ok")
+      e.trap_ovf = true
+      e.line("br i1 ${mm}, label %trap.ovf, label %${ok}")
+      e.block(ok)
+    } else {
+      d = e.tmp
+      e.line("${d} = select i1 ${mm}, ${lt} 1, ${lt} ${y}")
+    }
+  }
+  name = ll_pick(op == mop_div(), ll_pick(signed, "sdiv", "udiv"), ll_pick(signed, "srem", "urem"))
+  t = e.tmp
+  e.line("${t} = ${name} ${lt} ${x}, ${d}")
+  t
+}
+
+// cast (4.3, 11.3): integer width and signedness by the source type,
+// int <-> f64, bool -> int; reference and pointer casts emit nothing.
+fn ll_cast(e: LlEmit, x: String, src: Int, dst: Int): String {
+  ts = e.ts
+  name = ""
+  if src == mt_bool() && ts.is_int(dst) {
+    name = "zext"
+  } else if ts.is_int(src) && ts.is_int(dst) {
+    sb = ts.get(src).bits
+    db = ts.get(dst).bits
+    if db > sb {
+      name = ll_pick(ts.is_signed_int(src), "sext", "zext")
+    } else if db < sb {
+      name = "trunc"
+    }
+  } else if ts.is_int(src) && dst == mt_f64() {
+    name = ll_pick(ts.is_signed_int(src), "sitofp", "uitofp")
+  } else if src == mt_f64() && ts.is_int(dst) {
+    name = ll_pick(ts.is_signed_int(dst), "fptosi", "fptoui")
+  }
+  if name.size == 0 {
+    return x
+  }
+  t = e.tmp
+  e.line("${t} = ${name} ${e.llt(src)} ${x} to ${e.llt(dst)}")
+  t
+}

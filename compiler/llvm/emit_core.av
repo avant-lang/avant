@@ -1,0 +1,361 @@
+// The LLVM emitter's core (Stage 28 W5a; stages/stage28/mir.md 11): the
+// emitter state, LLVM type and constant texts, symbols, and the two
+// primitives every statement is built from: a place's address and an
+// operand's value. Rule E1 is structural here: an operand is loaded from
+// its local at the point of use, once per occurrence, and no LLVM value is
+// kept across MIR statements (only inside one statement's expansion).
+// Rule E2 (as amended by W9b, D207): in a shared module a load or store
+// of a slot local, or of a field of an aggregate slot local (a place with
+// no deref), is volatile; every other access, and every slot access of a
+// single-threaded module, is plain (slot_vol). emit_gc.av holds the GC sequences, emit.av the statements,
+// functions, and the module.
+//
+// D188 and D192: LlEmit holds 20 words; no array of structs or unions.
+
+import source
+import mir.types
+import mir.runtime
+import mir.ir
+import mir.print
+import mir.verify_core
+
+pub class LlEmit {
+  m: MModule
+  ts: MTypes
+  v: MVerifier
+  f: MFunc
+  out: Buf
+  tn: Int = 0
+  label: String = ""
+  bk: Int = 0
+  si: Int = 0
+  inline_fast: Bool = true
+  used_alloc_globals: Bool = false
+  trap_ovf: Bool = false
+  trap_div0: Bool = false
+  rt_names: Array(String)
+  rt_seen: Hash(String, Int)
+  intrinsics: Array(String)
+  intr_seen: Hash(String, Int)
+  pa_ty: Int = 0
+  pa_vol: Bool = false
+  loop_md: Hash(String, Int)
+  loop_md_n: Int = 0
+  ov_ty: Int = 0
+
+  fn initialize(m: MModule) {
+    self.m = m
+    self.ts = m.types
+    self.v = MVerifier.new(m, mst_final())
+    self.f = MFunc.new("", 0, mir_loc0())
+    self.out = buf_new()
+    self.label = ""
+    r: Array(String) = []
+    self.rt_names = r
+    self.rt_seen = Hash(String, Int).new
+    i: Array(String) = []
+    self.intrinsics = i
+    self.intr_seen = Hash(String, Int).new
+    self.loop_md = Hash(String, Int).new
+  }
+
+  // ---- output
+
+  // One instruction line, indented two spaces.
+  pub fn line(s: String) {
+    self.out.push_str("  ")
+    self.out.push_str(s)
+    self.out.push_str("\n")
+  }
+
+  // A new LLVM block: a blank line, then `name:`.
+  pub fn block(name: String) {
+    self.out.push_str("\n")
+    self.out.push_str(name)
+    self.out.push_str(":\n")
+    self.label = name
+  }
+
+  // A fresh temporary, %t<n> per function (E3).
+  pub fn tmp: String {
+    n = self.tn
+    self.tn = self.tn + 1
+    "%t${n}"
+  }
+
+  // The label of a block the current statement expands into (E3):
+  // bb<k>.s<i>.<part>, i the statement's index in its MIR block.
+  pub fn part(name: String): String {
+    "bb${self.bk}.s${self.si}.${name}"
+  }
+
+  // A runtime entry point the emitter itself calls (declared once).
+  pub fn need(name: String) {
+    if got = self.rt_seen.get(name) {
+      return
+    }
+    self.rt_seen[name] = self.rt_names.size
+    self.rt_names.push(name)
+  }
+
+  // An intrinsic, with its full declaration text.
+  pub fn need_intrinsic(decl: String) {
+    if got = self.intr_seen.get(decl) {
+      return
+    }
+    self.intr_seen[decl] = self.intrinsics.size
+    self.intrinsics.push(decl)
+  }
+
+  // ---- types and constants
+
+  // The LLVM type of a MIR type (2.1-2.7).
+  pub fn llt(ty: Int): String {
+    ll_type_text(self.ts, ty)
+  }
+
+  pub fn align(ty: Int): Int {
+    self.ts.align_of(ty)
+  }
+
+  // The zero of a type (4.3 zero).
+  pub fn zero_text(ty: Int): String {
+    k = self.ts.kind(ty)
+    if k == mk_bool() {
+      return "false"
+    }
+    if k == mk_int() {
+      return "0"
+    }
+    if k == mk_f64() {
+      return "0.0"
+    }
+    if k == mk_agg() {
+      return "zeroinitializer"
+    }
+    "null"
+  }
+
+  // An integer constant of type ty as LLVM reads it: two's complement
+  // signed decimal of the type's width (4.2).
+  pub fn int_text(ty: Int, x: Int64): String {
+    mt = self.ts.get(ty)
+    width = mt.bits
+    if self.ts.kind(ty) == mk_bool() {
+      if x != 0i64 {
+        return "true"
+      }
+      return "false"
+    }
+    if width == 32 && x >= 2147483648i64 {
+      return "${x - 4294967296i64}"
+    }
+    if width == 8 && x >= 128i64 {
+      return "${x - 256i64}"
+    }
+    "${x}"
+  }
+
+  // ---- locals and places
+
+  // The alloca of local n: %_<n> or %_<n>.<source name> (E3).
+  pub fn local_name(n: Int): String {
+    name = self.f.locals[n].name
+    if name.size == 0 {
+      return "%_${n}"
+    }
+    ll_local("_${n}.${name}")
+  }
+
+  // E2 as amended by W9b (D207): a slot is accessed volatile only in a
+  // shared module (one that spawns or uses .parallel, section 7). In a
+  // single-threaded program a collection happens only inside a collecting
+  // call; the slot's address escapes to the runtime at gc.roots, so LLVM
+  // must assume every such call reads and writes the slot, and the reload
+  // rule (5.3) rereads it after the call anyway.
+  pub fn slot_vol(local: Int): Bool {
+    self.f.locals[local].slot && self.m.shared
+  }
+
+  pub fn vol(volatile: Bool): String {
+    if volatile {
+      return " volatile"
+    }
+    ""
+  }
+
+  pub fn load(ty: Int, ptr: String, volatile: Bool): String {
+    t = self.tmp
+    self.line("${t} = load${self.vol(volatile)} ${self.llt(ty)}, ptr ${ptr}, align ${self.align(ty)}")
+    t
+  }
+
+  pub fn store(ty: Int, val: String, ptr: String, volatile: Bool) {
+    self.line("store${self.vol(volatile)} ${self.llt(ty)} ${val}, ptr ${ptr}, align ${self.align(ty)}")
+  }
+
+  // The address of a place (E5), emitting the loads and GEPs it needs.
+  // Sets pa_ty (the place's type) and pa_vol (E2: no deref and the local
+  // is a slot). An index operand is evaluated where its projection is.
+  pub fn place_ptr(p: MPlace): String {
+    ptr = self.local_name(p.local)
+    ty = self.f.locals[p.local].ty
+    volatile = self.slot_vol(p.local)
+    k = 0
+    while k < p.proj.size {
+      pr = p.proj[k]
+      mt = self.ts.get(ty)
+      if pr.kind == mpk_deref() {
+        ptr = self.load(mt_ptr(), ptr, volatile)
+        volatile = false
+        if self.ts.is_refkind(ty) && mt.layout >= 0 {
+          ty = self.ts.agg(mt.layout)
+        } else {
+          ty = mt.pointee
+        }
+      } else if pr.kind == mpk_field() {
+        t = self.tmp
+        self.line("${t} = getelementptr inbounds ${self.llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
+        ptr = t
+        ty = self.ts.layouts[mt.layout].fields[pr.field]
+      } else {
+        et = ty
+        if mt.kind == mk_agg() && self.ts.layouts[mt.layout].kind == mlk_elems() {
+          et = self.ts.layouts[mt.layout].fields[0]
+        }
+        idx = "0"
+        if o = pr.index {
+          idx = self.index64(o)
+        }
+        t = self.tmp
+        self.line("${t} = getelementptr inbounds ${self.llt(et)}, ptr ${ptr}, i64 ${idx}")
+        ptr = t
+        ty = et
+      }
+      k = k + 1
+    }
+    self.pa_ty = ty
+    self.pa_vol = volatile
+    ptr
+  }
+
+  // An index operand as i64 (sign-extended from i32).
+  fn index64(o: MOperand): String {
+    if o.kind == mok_int() {
+      return "${o.ival}"
+    }
+    x = self.value(o)
+    if self.ov_ty == mt_i64() {
+      return x
+    }
+    t = self.tmp
+    self.line("${t} = sext i32 ${x} to i64")
+    t
+  }
+
+  // The type of a place without emitting anything.
+  pub fn place_type(p: MPlace): Int {
+    self.v.place_ty(p, self.bk, self.si, mir_loc0())
+  }
+
+  // ---- operands
+
+  // The value of an operand; sets ov_ty to its type. `copy P` loads P
+  // here (E1); constants are immediate.
+  pub fn value(o: MOperand): String {
+    if p = o.place {
+      ptr = self.place_ptr(p)
+      ty = self.pa_ty
+      x = self.load(ty, ptr, self.pa_vol)
+      self.ov_ty = ty
+      return x
+    }
+    self.ov_ty = self.v.op_ty(o, self.bk, self.si, mir_loc0())
+    k = o.kind
+    if k == mok_int() || k == mok_bool() {
+      return self.int_text(o.ty, o.ival)
+    }
+    if k == mok_f64() {
+      return "0x${mir_hex(o.ival.to_u64, true, 16)}"
+    }
+    if k == mok_null() {
+      return "null"
+    }
+    if k == mok_str() {
+      return "@str.${o.sid}"
+    }
+    ll_sym(o.text)
+  }
+
+  // `<type> <value>` of an operand, as an argument.
+  pub fn typed(o: MOperand): String {
+    x = self.value(o)
+    "${self.llt(self.ov_ty)} ${x}"
+  }
+}
+
+pub fn ll_type_text(ts: MTypes, ty: Int): String {
+  k = ts.kind(ty)
+  if k == mk_void() {
+    return "void"
+  }
+  if k == mk_bool() {
+    return "i1"
+  }
+  if k == mk_int() {
+    return "i${ts.get(ty).bits}"
+  }
+  if k == mk_f64() {
+    return "double"
+  }
+  if k == mk_agg() {
+    return ll_type_name(ts.layouts[ts.get(ty).layout].name)
+  }
+  "ptr"
+}
+
+pub fn mir_loc0: MLoc {
+  MLoc { file: 0, line: 0, col: 0 }
+}
+
+// LLVM's unquoted identifier characters: [-a-zA-Z$._0-9], not a leading
+// digit.
+pub fn ll_plain(s: String): Bool {
+  if s.size == 0 {
+    return false
+  }
+  i = 0
+  while i < s.size {
+    c = s[i]
+    ok = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 45 || c == 36 || c == 46 || c == 95
+    if !ok && c >= 48 && c <= 57 {
+      ok = i > 0
+    }
+    if !ok {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
+// A global symbol (8.3): mangled names are always quoted; C names bare
+// when LLVM allows it.
+pub fn ll_sym(name: String): String {
+  if str_starts_mir(name, "av.") || !ll_plain(name) {
+    return "@\"${name}\""
+  }
+  "@${name}"
+}
+
+pub fn ll_local(name: String): String {
+  if ll_plain(name) {
+    return "%${name}"
+  }
+  "%\"${name}\""
+}
+
+// A layout's LLVM struct type: always quoted (2.8).
+pub fn ll_type_name(name: String): String {
+  "%\"${name}\""
+}
