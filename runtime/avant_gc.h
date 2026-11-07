@@ -12,11 +12,12 @@
  * the files and is private to them). A runtime unit outside the
  * collector (strings, arrays, hashes, Buf, JSON, HTTP, I/O, tasks,
  * codecs) includes this header and calls only what it declares. Every
- * function here is also declared, identically, by the shipped
- * avant_rt.h, which generated code uses; the declarations are repeated
- * so this file states the collector's surface on its own, and a
- * mismatch with avant_rt.h is a compile error. g_avant_shared is the one
- * name here avant_rt.h does not ship.
+ * function here but the two runtime-internal entries at the end is also
+ * declared, identically, by the shipped avant_rt.h, which generated
+ * code uses; the declarations are repeated so this file states the
+ * collector's surface on its own, and a mismatch with avant_rt.h is a
+ * compile error. g_avant_shared, avant_gc_quiet_defer_enter and
+ * avant_alloc_c are the names here avant_rt.h does not ship.
  *
  * What the collector does at these calls, as the callers rely on it
  * today (a description of the current behavior, not a new contract; W13
@@ -49,10 +50,95 @@
  *   - avant_gc_heap_goal_collect may run a full collection; it is called
  *     only where the caller's C frames hold no references (the HTTP
  *     dispatch).
+ *   - A runtime unit that keeps a heap reference in a thread-local
+ *     variable registers that slot once per thread with
+ *     avant_gc_add_root before it first holds one (avant_hash.c's last
+ *     key); the collections on that thread read and rewrite it like a
+ *     root slot (Stage 28 W14b2, gc-design.md section 1.4; it replaced a
+ *     callback from the collector into avant_hash.c).
  *
- * What the collector calls back: avant_hash_walk_tls (avant_hash.c), so
- * the runtime's thread-local reference slots are roots that a moving
- * collection rewrites.
+ * The runtime-C contract (Stage 28 W14b2 states it here; gc-design.md
+ * section 4.2's RC1-RC4 and its handle scopes replace the first part in
+ * W16):
+ *
+ *   The stress mode's contract, the defer discipline (W14b1). A runtime
+ *   helper that holds a heap reference in C across a point where a
+ *   collection may run keeps it inside one defer region
+ *   (avant_gc_defer_enter ... avant_gc_defer_leave). Its outermost
+ *   region begins before it forms a derived pointer (an interior pointer
+ *   such as s + start, or a buffer's data pointer) or writes a stack
+ *   buffer it will copy into the heap, because the region's entry is a
+ *   collection point: with the nursery off it may run a full
+ *   collection, and under AVANT_GC_STRESS=1 a young collection that
+ *   moves what it reaches. An internal helper whose callers do either
+ *   before calling it enters quietly (avant_gc_quiet_defer_enter: the
+ *   same region, without the stress point), as do the call table's
+ *   quiet rows, whose callers may hold references outside their slots
+ *   across the call (V11/V12; until W15 makes those rows collecting
+ *   calls). Fresh objects the helper allocated and has not yet
+ *   published are held the same way, inside the region.
+ *
+ *   Barriers (D187). Every store of a reference into a heap object is
+ *   followed by avant_barrier on that object (or avant_barrier_at on the
+ *   stored-to address) before the next point where a collection may run
+ *   (C34's lesson: avant_hash_inc_slice and array_grow lost young keys
+ *   and elements without one).
+ *
+ *   The young collection's three-way rule, R1' (gc-design.md section
+ *   1.3, D219 (2)). A young collection scans one level of every
+ *   non-young object that is named (a) by a root (a frame slot, a pin, a
+ *   runtime root of avant_gc_add_root), (b) by a field of a young
+ *   object, or (c) by a field of a remembered object; deeper non-young
+ *   objects are followed only when they are remembered themselves. The
+ *   generated code's fresh-store exemption relies on it (a buffer
+ *   promoted in the middle of its fill is still found through its slot,
+ *   mir.md section 5.4), and so did the runtime builders that fill a
+ *   born-mature large reference buffer (array_grow, str_array_build,
+ *   hash_array_str, avant_array_copy, avant_argv: a young array header
+ *   (b) or a root (a) names the buffer; audit N2b), which since W13b
+ *   (D220) also barrier the buffer. AVANT_GC_VERIFY checks the generational invariant in this wording
+ *   before every young collection: every young reference held by a
+ *   non-young object's field is held by a remembered object or by an
+ *   object R1' names this cycle ("missing barrier: ..." otherwise).
+ */
+
+/*
+ * The collector's settings (Stage 28 W14b2, gc-design.md section 1.7,
+ * O40): the environment variables below, read once when the collector
+ * starts (gc_init_slow, avant_gc_collect.c) into one settings struct.
+ * One rule for all of them: unset or empty is the default; a switch is
+ * on for exactly 1 and off for exactly 0; a number is decimal digits
+ * only, in its range; any other value is reported on stderr at start-up
+ * ("avant runtime: warning: ...") and the default applies.
+ *
+ *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
+ *                          generation's threshold in MiB, fixed; 0 is the
+ *                          adaptive threshold (16 MiB to start)
+ *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
+ *                          MiB ("heap limit" past it); 0 is no limit
+ *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's
+ *                          address reservation in GiB, halved on refusal
+ *                          down to 1 (W14a1)
+ *   AVANT_NURSERY          switch, default 1: the copying nursery; 0 is
+ *                          full, non-moving collections only
+ *   AVANT_GC_DEFRAG        switch, default 1: mature evacuation in full
+ *                          collections
+ *   AVANT_GC_STACK_REWRITE switch, default 1: the young copy's rewrite of
+ *                          the collecting thread's C stack (with the
+ *                          nursery; until gc-design.md section 4.3
+ *                          retires it)
+ *   AVANT_GC_VERIFY        switch, default 0: the collector's checkers
+ *                          (avant_gc_verify.c)
+ *   AVANT_GC_STATS         switch, default 0: one statistics line on
+ *                          stderr at exit
+ *   AVANT_GC_STRESS        switch, default 0: a young collection at every
+ *                          runtime C allocation and every outermost defer
+ *                          entry (testing; W14b1)
+ *
+ * Retired (W14b2; setting one is reported and has no effect):
+ * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
+ * AVANT_GC_COPY_RESERVE. Removed earlier: AVANT_NURSERY_STACK (W14a1),
+ * AVANT_NURSERY_STACKMAP (W12r).
  */
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
@@ -60,7 +146,12 @@ void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
-void avant_gc_quiet_defer_enter(void);
+/* Runtime-internal (Stage 28 W14b2, O37): avant_gc_quiet_defer_enter
+ * and avant_alloc_c below are entries of avant_rt.o that only the
+ * runtime's other objects call. avant_rt.h does not declare them, and
+ * their visibility is hidden: no linked image exports them (the second
+ * section of avant_rt.exports). */
+__attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
@@ -71,6 +162,7 @@ void avant_gc_unregister_thread(void);
 void avant_gc_enter(void);
 void avant_gc_leave(void);
 void avant_gc_heap_goal_collect(void);
+void avant_gc_add_root(void **slot);
 /* avant_str_generation() (avant_rt.h) reads g_avant_str_gen, which every
  * collection bumps. */
 extern _Atomic uint32_t g_avant_str_gen;
@@ -82,7 +174,7 @@ extern atomic_int g_avant_shared;
  * programs). Every runtime unit that includes this header calls it under
  * the name avant_alloc; generated code and user C (avant_rt.h) keep
  * calling avant_alloc itself. */
-void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
+__attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
 #define avant_alloc(nbytes, type_id) avant_alloc_c((nbytes), (type_id))
 
 #endif

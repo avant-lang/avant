@@ -15,12 +15,12 @@
  * stack names are not candidates (C31, avant_gc_stack.c). Also the sorted
  * block sets the full collection uses for both lists. */
 
-/* Evacuation (step 2): AVANT_GC_DEFRAG=0 disables it, histogram stays
- * on. Candidates are mature blocks at or below 64 of 128 live lines
- * with no pinned object and no word of the collecting thread's stack
- * naming them (C31, gc_note_c_stack_blocks); per full collection the live lines evacuated
- * stay at or below 25% of that mark's mature live lines, worst first. */
-int g_defrag_mode = 1;
+/* Evacuation (step 2; gc_heap.set.defrag, AVANT_GC_DEFRAG=0 turns it
+ * off, the histogram stays on). Candidates are mature blocks at or below
+ * 64 of 128 live lines with no pinned object and no word of the
+ * collecting thread's stack naming them (C31, gc_note_c_stack_blocks);
+ * per full collection the live lines evacuated stay at or below 25% of
+ * that mark's mature live lines, worst first. */
 
 typedef struct DefCand {
   Block *b;
@@ -72,8 +72,6 @@ int gc_block_set_has(const BlockSet *s, const Block *b) {
   return lo < s->n && s->v[lo] == b;
 }
 
-BlockSet g_def_release;
-
 static int def_cand_cmp(const void *a, const void *b) {
   const DefCand *x = (const DefCand *)a;
   const DefCand *y = (const DefCand *)b;
@@ -92,7 +90,7 @@ static void defrag_rewrite_slot(void **slot) {
   if (!start) {
     return;
   }
-  to = fwd_get(start);
+  to = gc_fwd_get(start);
   if (to && to != start) {
     *slot = (void *)((uint8_t *)to + ((uint8_t *)w - (uint8_t *)start));
   }
@@ -114,7 +112,7 @@ static void defrag_fix_one(AvantHeader *h, Block *b) {
 }
 
 static void mature_unlink(Block *b) {
-  Block **pp = &g_mature;
+  Block **pp = &gc_heap.mature;
   while (*pp) {
     if (*pp == b) {
       *pp = b->next;
@@ -133,7 +131,7 @@ static void mature_unlink(Block *b) {
  * through the forwarding table, and the emptied blocks are freed
  * whole. Destination blocks are allocated before anything moves; if
  * one cannot be allocated under the heap limit, nothing moves and the
- * ordinary non-moving collection completes (g_def_skipped counts it),
+ * ordinary non-moving collection completes (gc_heap.ctr.def.skipped counts it),
  * so defragmentation can never make a collection fail. The evacuated
  * blocks are freed by gc_defrag_release. Not inlined: its locals name
  * objects in the evacuated blocks, and they must not sit in collect's
@@ -150,13 +148,13 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   Block **dest = NULL;
   size_t ndest = 0;
   size_t dest_cap_blocks;
-  if (!g_defrag_mode || live_lines_this == 0) {
+  if (live_lines_this == 0) {
     return;
   }
-  for (b = g_mature; b; b = b->next) {
+  for (b = gc_heap.mature; b; b = b->next) {
     int live = gc_block_live_lines(b);
     DefCand *c;
-    if (live <= 0 || live > 64 || gc_block_has_pinned(b) || gc_block_set_has(&g_cstack_blocks, b)) {
+    if (live <= 0 || live > 64 || gc_block_has_pinned(b) || gc_block_set_has(&gc_heap.cstack_blocks, b)) {
       continue;
     }
     if (ncand == ccap) {
@@ -176,7 +174,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
           AvantHeader *h = (AvantHeader *)(b->base + off);
           if (full_marked(h)) {
-            c->bytes += obj_total(h);
+            c->bytes += gc_obj_total(h);
           }
           bits &= bits - 1;
         }
@@ -212,7 +210,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
       }
       free(dest);
       free(cand);
-      g_def_skipped++;
+      gc_heap.ctr.def.skipped++;
       return;
     }
     dest[ndest++] = nb;
@@ -240,7 +238,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
             bits &= bits - 1;
             continue;
           }
-          total = obj_total(h);
+          total = gc_obj_total(h);
           if (bump + total > db->base + BLOCK_SIZE) {
             di++;
             if (di >= ndest) {
@@ -266,8 +264,8 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           set_start(db, (size_t)(bump - db->base));
           full_set_mark(nh);
           mark_lines(db, (size_t)(bump - db->base), total);
-          fwd_put(payload_of(h), payload_of(nh));
-          g_def_evac_bytes += total;
+          gc_fwd_put(payload_of(h), payload_of(nh));
+          gc_heap.ctr.def.evac_bytes += total;
           bump += total;
           db->bump = bump;
           bits &= bits - 1;
@@ -275,19 +273,19 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
       }
       if (!stopped) {
         evac_done = ci + 1;
-        g_def_evac_blocks++;
+        gc_heap.ctr.def.evac_blocks++;
       }
     }
     ncand = evac_done;
     if (stopped) {
-      g_def_skipped++;
+      gc_heap.ctr.def.skipped++;
     }
   }
   {
     ThreadReg *t;
     uint32_t fi;
-    pthread_mutex_lock(&g_threads_mu);
-    for (t = g_threads; t; t = t->next) {
+    pthread_mutex_lock(&gc_heap.threads_mu);
+    for (t = gc_heap.threads; t; t = t->next) {
       Frame *f;
       for (f = t->head ? *t->head : NULL; f; f = f->prev) {
         for (fi = 0; fi < f->n; fi++) {
@@ -295,35 +293,35 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
         }
       }
     }
-    pthread_mutex_unlock(&g_threads_mu);
+    pthread_mutex_unlock(&gc_heap.threads_mu);
   }
   {
     PinEnt *p;
-    for (p = g_pins; p; p = p->next) {
+    for (p = gc_heap.pins; p; p = p->next) {
       defrag_rewrite_slot(&p->payload);
     }
   }
-  avant_hash_walk_tls(defrag_rewrite_tls);
+  gc_each_runtime_root(defrag_rewrite_tls);
   {
     uint32_t ri;
     int locked = rem_locked();
     if (locked) {
-      pthread_mutex_lock(&g_rem_mu);
+      pthread_mutex_lock(&gc_heap.rem_mu);
     }
-    for (ri = 0; ri < g_rem_n; ri++) {
-      defrag_rewrite_slot((void **)&g_remset[ri]);
+    for (ri = 0; ri < gc_heap.rem_n; ri++) {
+      defrag_rewrite_slot((void **)&gc_heap.remset[ri]);
     }
     if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
+      pthread_mutex_unlock(&gc_heap.rem_mu);
     }
   }
-  for (b = g_mature; b; b = b->next) {
+  for (b = gc_heap.mature; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
-  for (b = g_nursery; b; b = b->next) {
+  for (b = gc_heap.nursery; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
-  for (b = g_from; b; b = b->next) {
+  for (b = gc_heap.from; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
   {
@@ -338,21 +336,21 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   }
   /* The evacuated blocks are freed by gc_defrag_release, after gc_collect()
    * has let the verifier look at them from its own frame. */
-  g_def_release.n = 0;
+  gc_heap.def_release.n = 0;
   for (i = 0; i < ncand; i++) {
-    gc_block_set_add(&g_def_release, cand[i].b);
+    gc_block_set_add(&gc_heap.def_release, cand[i].b);
   }
-  gc_block_set_seal(&g_def_release);
+  gc_block_set_seal(&gc_heap.def_release);
   free(dest);
   free(cand);
 }
 
 void gc_defrag_release(void) {
   size_t i;
-  for (i = 0; i < g_def_release.n; i++) {
-    mature_unlink(g_def_release.v[i]);
-    gc_cache_or_free_block(g_def_release.v[i]);
-    g_def_freed_blocks++;
+  for (i = 0; i < gc_heap.def_release.n; i++) {
+    mature_unlink(gc_heap.def_release.v[i]);
+    gc_cache_or_free_block(gc_heap.def_release.v[i]);
+    gc_heap.ctr.def.freed_blocks++;
   }
-  g_def_release.n = 0;
+  gc_heap.def_release.n = 0;
 }

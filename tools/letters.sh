@@ -39,9 +39,11 @@
 # a user program never does.
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.35.0, the
-#                     first release built on the in-process LLVM, D178);
-#                     relative to the checkout. Seeds older than v0.35.0
+#   LETTERS_SEED      seed directory with avant (default bin/v0.36.0, the
+#                     release built from aeb620e; v0.35.0, the first
+#                     release built on the in-process LLVM, D178, still
+#                     builds the same B); relative to the checkout.
+#                     Seeds older than v0.35.0
 #                     (v0.34.0, bin/seeds/s28-w2) are not supported: their B
 #                     carries LLVM stack maps the runtime no longer walks.
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
@@ -60,9 +62,10 @@ cd "$root" || exit 2
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
-# The default seed (D178, D189; Stage 28 W12r): the v0.35.0 release. This
-# is the one place it is computed; tools/gate.sh asks --print-seed (O31).
-default_seed=bin/v0.35.0
+# The default seed (D178, D189; Stage 28 W12r, then W14b2): the v0.36.0
+# release. This is the one place it is computed; tools/gate.sh asks
+# --print-seed (O31).
+default_seed=bin/v0.36.0
 seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
 time_dir=${LETTERS_TIME_DIR:-}
 

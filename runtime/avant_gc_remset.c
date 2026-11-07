@@ -15,72 +15,60 @@
  * after each young collection, and the barrier entry points avant_barrier
  * and avant_barrier_at. */
 
-void **g_remset;
-uint32_t g_rem_n;
-static uint32_t g_rem_cap;
-/* Workers call avant_barrier without the world lock (a fresh array
- * header). The remembered-set realloc is shared. */
-pthread_mutex_t g_rem_mu = PTHREAD_MUTEX_INITIALIZER;
-/* Mature objects that still point at a young survivor after this collection. */
-static void **g_keep;
-uint32_t g_keep_n;
-static uint32_t g_keep_cap;
-
-/* Frontier clearing (Collector II Wave 2): AVANT_GC_REM_FRONTIER=0
- * disables it. Dirty is tracked during the remembered scan itself, per
- * set index, so no second field walk is needed. Hysteresis (evict after
- * N clean scans) and probation (a second list scanned every K young
- * collections) were measured against immediate clearing on
- * bench/graph_frontier.av and lost (0.20s vs 0.19s at AVANT_YOUNG_MB=1,
- * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
-int g_rem_mode = 1;
-uint8_t *g_rem_dirty;
+/* Frontier clearing (Collector II Wave 2; its switch,
+ * AVANT_GC_REM_FRONTIER, is retired since Stage 28 W14b2). Dirty is tracked during the
+ * remembered scan itself, per set index (gc_heap.rem_dirty), so no
+ * second field walk is needed. Hysteresis (evict after N clean scans)
+ * and probation (a second list scanned every K young collections) were
+ * measured against immediate clearing on bench/graph_frontier.av and lost
+ * (0.20s vs 0.19s at AVANT_YOUNG_MB=1, 0.16s vs 0.15s adaptive), so only
+ * immediate clearing is kept. */
 
 static void rem_add(void *obj) {
   AvantHeader *h = avant_header(obj);
   int locked = rem_locked();
   if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
+    pthread_mutex_lock(&gc_heap.rem_mu);
   }
   if (h->flags & AVANT_FLAG_REM) {
     if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
+      pthread_mutex_unlock(&gc_heap.rem_mu);
     }
     return;
   }
   h->flags |= AVANT_FLAG_REM;
-  if (g_rem_n == g_rem_cap) {
-    g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
-    g_remset = gc_xrealloc(g_remset, g_rem_cap * sizeof(void *));
-    g_rem_dirty = gc_xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
+  if (gc_heap.rem_n == gc_heap.rem_cap) {
+    gc_heap.rem_cap = gc_heap.rem_cap ? gc_heap.rem_cap * 2 : 64;
+    gc_heap.remset = gc_xrealloc(gc_heap.remset, gc_heap.rem_cap * sizeof(void *));
+    gc_heap.rem_dirty = gc_xrealloc(gc_heap.rem_dirty, gc_heap.rem_cap * sizeof(uint8_t));
   }
-  g_rem_dirty[g_rem_n] = 0;
-  g_remset[g_rem_n++] = obj;
-  g_rem_adds++;
+  gc_heap.rem_dirty[gc_heap.rem_n] = 0;
+  gc_heap.remset[gc_heap.rem_n++] = obj;
+  gc_heap.ctr.rem.adds++;
   if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
+    pthread_mutex_unlock(&gc_heap.rem_mu);
   }
 }
 
 void gc_keep_add(void *obj) {
-  if (g_keep_n == g_keep_cap) {
-    g_keep_cap = g_keep_cap ? g_keep_cap * 2 : 64;
-    g_keep = gc_xrealloc(g_keep, g_keep_cap * sizeof(void *));
+  if (gc_heap.keep_n == gc_heap.keep_cap) {
+    gc_heap.keep_cap = gc_heap.keep_cap ? gc_heap.keep_cap * 2 : 64;
+    gc_heap.keep = gc_xrealloc(gc_heap.keep, gc_heap.keep_cap * sizeof(void *));
   }
-  g_keep[g_keep_n++] = obj;
+  gc_heap.keep[gc_heap.keep_n++] = obj;
 }
 
 /* Frontier decision for one live, marked hot entry whose scan result
  * is dirty (a direct field names a young object). Returns 1 to keep the
  * entry. On 0 the caller drops it with REM already clear; the barrier
- * re-adds it on the next young store. Caller holds g_rem_mu when the
+ * re-adds it on the next young store. Caller holds gc_heap.rem_mu when the
  * set is shared. */
 static int rem_frontier_decide(void *obj, int dirty) {
-  if (g_rem_mode == 0 || dirty) {
+  if (dirty) {
     return 1;
   }
   avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
-  g_rem_cleared++;
+  gc_heap.ctr.rem.cleared++;
   return 0;
 }
 
@@ -89,30 +77,30 @@ void gc_rem_scrub(void) {
   uint32_t w = 0;
   int locked = rem_locked();
   if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
+    pthread_mutex_lock(&gc_heap.rem_mu);
   }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    void *obj = gc_heap.remset[i];
     AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
+    if (!gc_is_heap_payload(obj, NULL, NULL)) {
       continue;
     }
     h = avant_header(obj);
     if (h->flags & AVANT_FLAG_MARKED) {
-      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
+      int dirty = gc_heap.rem_dirty ? gc_heap.rem_dirty[i] : 1;
       if (!rem_frontier_decide(obj, dirty)) {
         continue;
       }
-      g_remset[w] = obj;
-      if (g_rem_dirty) {
-        g_rem_dirty[w] = (uint8_t)dirty;
+      gc_heap.remset[w] = obj;
+      if (gc_heap.rem_dirty) {
+        gc_heap.rem_dirty[w] = (uint8_t)dirty;
       }
       w++;
     } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
       AvantHeader *lh = NULL;
       /* A dead expression buffer is a large object: release its pages
        * now. */
-      (void)is_heap_payload(obj, NULL, &lh);
+      (void)gc_is_heap_payload(obj, NULL, &lh);
       if (lh) {
         gc_release_large(lh);
       } else {
@@ -122,49 +110,49 @@ void gc_rem_scrub(void) {
       h->flags &= (uint16_t)~AVANT_FLAG_REM;
     }
   }
-  g_rem_n = w;
+  gc_heap.rem_n = w;
   if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
+    pthread_mutex_unlock(&gc_heap.rem_mu);
   }
 }
 
 void gc_rem_commit_kept(void) {
-  uint32_t n = g_keep_n;
-  void **kept = g_keep;
+  uint32_t n = gc_heap.keep_n;
+  void **kept = gc_heap.keep;
   uint32_t i;
   uint32_t w = 0;
   int locked = rem_locked();
-  g_keep = NULL;
-  g_keep_n = 0;
-  g_keep_cap = 0;
+  gc_heap.keep = NULL;
+  gc_heap.keep_n = 0;
+  gc_heap.keep_cap = 0;
   /* A remembered object with a nursery child stays remembered: the
    * scan just proved that edge. A live member with no nursery child
    * leaves the hot set under the frontier policy (the barrier re-adds
    * it on the next young store); only members whose memory is gone
    * leave unconditionally, as before. */
   if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
+    pthread_mutex_lock(&gc_heap.rem_mu);
   }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
-      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    void *obj = gc_heap.remset[i];
+    if (gc_is_heap_payload(obj, NULL, NULL)) {
+      int dirty = gc_heap.rem_dirty ? gc_heap.rem_dirty[i] : 1;
       if (!rem_frontier_decide(obj, dirty)) {
         continue;
       }
-      g_remset[w] = obj;
-      if (g_rem_dirty) {
-        g_rem_dirty[w] = (uint8_t)dirty;
+      gc_heap.remset[w] = obj;
+      if (gc_heap.rem_dirty) {
+        gc_heap.rem_dirty[w] = (uint8_t)dirty;
       }
       w++;
     }
   }
-  g_rem_n = w;
+  gc_heap.rem_n = w;
   if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
+    pthread_mutex_unlock(&gc_heap.rem_mu);
   }
   for (i = 0; i < n; i++) {
-    if (is_heap_payload(kept[i], NULL, NULL)) {
+    if (gc_is_heap_payload(kept[i], NULL, NULL)) {
       rem_add(kept[i]);
     }
   }
@@ -214,35 +202,35 @@ void gc_rem_full_scrub(void) {
   uint32_t w = 0;
   int locked = rem_locked();
   if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
+    pthread_mutex_lock(&gc_heap.rem_mu);
   }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    void *obj = gc_heap.remset[i];
     AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
+    if (!gc_is_heap_payload(obj, NULL, NULL)) {
       continue;
     }
     h = avant_header(obj);
     if ((h->flags & AVANT_FLAG_REM) == 0 || (h->flags & AVANT_FLAG_MARKED)) {
       continue;
     }
-    if (!full_marked(h) || g_nursery_off || !rem_names_young(obj)) {
+    if (!full_marked(h) || gc_heap.set.nursery_off || !rem_names_young(obj)) {
       h->flags &= (uint16_t)~AVANT_FLAG_REM;
       continue;
     }
     h->flags |= AVANT_FLAG_MARKED;
-    g_remset[w] = obj;
-    if (g_rem_dirty) {
-      g_rem_dirty[w] = 1;
+    gc_heap.remset[w] = obj;
+    if (gc_heap.rem_dirty) {
+      gc_heap.rem_dirty[w] = 1;
     }
     w++;
   }
-  g_rem_n = w;
-  for (i = 0; i < g_rem_n; i++) {
-    avant_header(g_remset[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
+  gc_heap.rem_n = w;
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    avant_header(gc_heap.remset[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
   }
   if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
+    pthread_mutex_unlock(&gc_heap.rem_mu);
   }
 }
 
@@ -252,7 +240,7 @@ void avant_barrier(void *obj) {
   /* O9: with the nursery off no young collection runs, so nothing is
    * remembered (the set grew without bound: churn.av kept 1.6 M
    * entries). */
-  if (!obj || g_collecting || g_nursery_off) {
+  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
     return;
   }
   /* The compiler passes the object being stored into. A nursery object
@@ -267,7 +255,7 @@ void avant_barrier(void *obj) {
       }
     }
   }
-  if (!is_heap_payload(obj, &b, NULL)) {
+  if (!gc_is_heap_payload(obj, &b, NULL)) {
     return;
   }
   if (b && (b->space == SPACE_NURSERY || b->space == SPACE_TO)) {
@@ -284,11 +272,11 @@ void avant_barrier(void *obj) {
 void avant_barrier_at(void *addr) {
   Block *b = NULL;
   void *start;
-  if (!addr || g_collecting) {
+  if (!addr || gc_heap.collecting) {
     return;
   }
-  if (g_self_reg.stack_lo && (uint8_t *)addr >= (uint8_t *)g_self_reg.stack_lo &&
-      (uint8_t *)addr < (uint8_t *)g_self_reg.stack_hi) {
+  if (gc_thread.reg.stack_lo && (uint8_t *)addr >= (uint8_t *)gc_thread.reg.stack_lo &&
+      (uint8_t *)addr < (uint8_t *)gc_thread.reg.stack_hi) {
     return;
   }
   start = gc_object_payload(addr, &b, NULL);

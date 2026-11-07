@@ -26,6 +26,11 @@ import backends
 // heap/churn.av under AVANT_NURSERY=0 with AVANT_GC_STATS=1 (O9, C33):
 // nothing is remembered without a nursery (rem_adds=0, rem_now=0; it
 // ended with 142,894 entries before).
+//
+// The settings' one rule (W14b2, O40; runtime/avant_gc.h): a switch
+// that is neither 0 nor 1, a number that is not one, and a retired knob
+// are each reported once on stderr at start-up, and the program runs
+// as with the default (heap/task_pins.av's known stdout).
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice"]
@@ -87,6 +92,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     k = k + 1
   }
   runs.push(run_job_env(dir, "churn", "churn.o9", "AVANT_NURSERY=0 AVANT_GC_STATS=1"))
+  senvs = ["AVANT_GC_VERIFY=yes", "AVANT_YOUNG_MB=1x", "AVANT_GC_COPY_RESERVE=0"]
+  serrs = ["avant runtime: warning: AVANT_GC_VERIFY=yes is not 0 or 1; the default applies\n", "avant runtime: warning: AVANT_YOUNG_MB=1x is not a number from 0 to 1073741824; the default applies\n", "avant runtime: warning: AVANT_GC_COPY_RESERVE is retired and has no effect\n"]
+  e = 0
+  while e < senvs.size {
+    runs.push(run_job_env(dir, "task_pins", "task_pins.s${e}", senvs[e]))
+    e = e + 1
+  }
   run_waves(runs)
   k = 0
   while k < progs.size {
@@ -106,6 +118,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     c.skip("churn.av under AVANT_NURSERY=0: nothing remembered", "outer ${outer}")
   } else {
     c.expect(str_has(stats, " rem_adds=0 ") && str_has(stats, " rem_now=0 "), "churn.av under AVANT_NURSERY=0: nothing remembered (rem_adds=0, rem_now=0)")
+  }
+  e = 0
+  while e < senvs.size {
+    c.eq_int(runs[progs.size + 1 + e].code, 0, "task_pins.av under ${senvs[e]}: exit 0")
+    c.eq_str(log_text("${dir}/task_pins.s${e}.out"), "sum: 1490\npins left: 0\n", "task_pins.av under ${senvs[e]}: the known stdout")
+    c.eq_str(log_text("${dir}/task_pins.s${e}.err"), serrs[e], "task_pins.av under ${senvs[e]}: one start-up warning")
+    e = e + 1
   }
 }
 

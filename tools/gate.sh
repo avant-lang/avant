@@ -17,7 +17,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.35.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.36.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -32,7 +32,16 @@
 #                   AVANT_NURSERY=0): one extra suite pass on C' under it,
 #                   after the two default passes, with its own logs
 #                   (L = c-llvm-gc) and the same litter checks; red fails
-#                   the gate (Stage 28 W12, O26). Checks that assert the
+#                   the gate (Stage 28 W12, O26). A list of environments
+#                   separated by `;` (e.g. 'AVANT_GC_VERIFY=1;
+#                   AVANT_YOUNG_MB=1;AVANT_NURSERY=0;AVANT_GC_STRESS=1')
+#                   builds the letters and runs the two default passes
+#                   once, then one pass on C' per environment, in order,
+#                   each with its own logs (L = c-llvm-gc-SLUG, SLUG the
+#                   environment in lower case with every other character
+#                   than a-z and 0-9 made `_`) and its own summary line
+#                   (Stage 28 W14b2, O68); empty entries are ignored, and
+#                   a list of one environment is the single form. Checks that assert the
 #                   default environment's GC numbers skip themselves
 #                   under it, and checks whose program needs the nursery
 #                   state AVANT_NURSERY=1 (tests/cases/harness.av,
@@ -48,8 +57,9 @@
 # of the letters' incantation, with those timeouts inside). The suites run
 # with no AVANT_BACKEND.
 #
-# Output files in GATE_OUT (L is b and c-llvm, and c-llvm-gc under
-# GATE_GC_ENV): build-runtime.log,
+# Output files in GATE_OUT (L is b and c-llvm, and c-llvm-gc, or one
+# c-llvm-gc-SLUG per environment of a list, under GATE_GC_ENV):
+# build-runtime.log,
 # build-L.log and time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
 # {before,after}-L.{tmp,repo} snapshots and the new-/gone- differences;
 # build-d-llvm.log, time-build-d-llvm.txt, emit-{c,d}-llvm.log,
@@ -153,11 +163,34 @@ for L in b $C; do
   [ "$L" = b ] && [ -n "$REUSE" ] && keep="AVANT_FIXED_POINT_KEEP=$out/kept-c"
   suite_pass "$L" "$L" "$keep $SUITE_ENV"
 done
-# One extra pass on C' under one GC environment (O26), when asked.
+# One extra pass on C' per GC environment (O26), when asked: GATE_GC_ENV
+# is one environment or a `;`-separated list of them (O68). GC_LIST is
+# the list's non-empty entries, one per line; with one entry the pass is
+# logged as c-llvm-gc, as before the list form, else as c-llvm-gc-SLUG.
 SUITES="b $C"
-if [ -n "$GC_ENV" ]; then
-  suite_pass "$C-gc" "$C" "$GC_ENV"
-  SUITES="$SUITES $C-gc"
+GC_LIST=$(printf '%s\n' "$GC_ENV" | tr ';' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d')
+GC_N=$(printf '%s' "$GC_LIST" | grep -c .)
+gc_label() {
+  if [ "$GC_N" -eq 1 ]; then
+    echo "$C-gc"
+  else
+    echo "$C-gc-$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '_')"
+  fi
+}
+gc_env_of() {
+  printf '%s\n' "$GC_LIST" | while IFS= read -r e; do
+    [ "$(gc_label "$e")" = "$1" ] && { printf '%s\n' "$e"; break; }
+  done
+}
+if [ "$GC_N" -gt 0 ]; then
+  # One label per environment; two entries with the same label would
+  # share logs, so they are refused.
+  labels=$(printf '%s\n' "$GC_LIST" | while IFS= read -r e; do gc_label "$e"; done)
+  [ "$(printf '%s\n' "$labels" | sort | uniq -d)" = "" ] || { fail "GATE_GC_ENV names one environment twice"; finish; }
+  for L in $labels; do
+    suite_pass "$L" "$C" "$(gc_env_of "$L")"
+    SUITES="$SUITES $L"
+  done
 fi
 
 # D' by C' (never C' by itself), then the .ll fixed point (D171) and
@@ -202,7 +235,7 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
     checks=$(grep -o 'tests="[0-9]*"' "$out/junit-$L.xml" 2>/dev/null | head -1)
     jf=$(grep -o 'failures="[0-9]*"' "$out/junit-$L.xml" 2>/dev/null | head -1)
     tag=$L
-    [ "$L" = "$C-gc" ] && tag="$L ($GC_ENV)"
+    case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
     echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo")"
   done
   cat "$out/fixed-point.txt"

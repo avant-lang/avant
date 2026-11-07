@@ -16,34 +16,13 @@
  * large-object chunk (CHUNK_LARGE); an object larger than a chunk holds
  * takes a run of whole contiguous chunks (CHUNK_HUGE, then
  * CHUNK_HUGE_CONT). Its header is 8 bytes into the run's first page (the
- * payload is 16-aligned) and has its start bit; the page table (g_pages)
+ * payload is 16-aligned) and has its start bit; the page table (gc_heap.pages)
  * names every page's run, so an interior address is one table read
  * (avant_gc_heap.c). Large objects never move. No list, hash or address
  * range: every walk goes over the chunks (gc_large_next), and the bytes
- * the large objects hold are a counter (g_large_bytes). Young large
+ * the large objects hold are a counter (gc_heap.large_bytes). Young large
  * objects, the spare buffer, their reclaim at young collections and
  * their sweep at full ones keep their policy (LOS_KEEP and the rest). */
-
-/* One dead scalar large buffer, kept for the next same-sized alloc: its
- * pages stay allocated, its start bit is clear (no lookup finds it). */
-AvantHeader *g_los_spare;
-/* The page-run bytes of every large object (the spare excluded): the
- * peak decomposition's pk_large and the stats line's los_now_bytes. */
-uint64_t g_large_bytes;
-/* Bytes in young scalar large objects. They do not move. A young
- * collection frees the ones the mark does not reach. */
-uint64_t g_young_large;
-int g_young_large_n;
-/* Set when a young large object survived a collection. Further
- * same-sized allocs are live rows, not a replaced buffer, so they
- * must not collect on every malloc. */
-int g_los_eager_hold;
-
-/* The large-object chunks (CHUNK_LARGE), in the order they were made:
- * the first fit looks in each, in this order. */
-static uint32_t *g_lchunks;
-static uint32_t g_lchunks_n;
-static uint32_t g_lchunks_cap;
 
 static uint64_t run_pages(size_t payload) {
   return ((uint64_t)payload + 16 + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -55,7 +34,7 @@ size_t gc_large_bytes(const AvantHeader *h) {
 }
 
 static uint64_t chunk_index(const void *p) {
-  return (uint64_t)((uintptr_t)p - (uintptr_t)g_heap_base) >> CHUNK_SHIFT;
+  return (uint64_t)((uintptr_t)p - (uintptr_t)gc_heap.base) >> CHUNK_SHIFT;
 }
 
 static void bits_set(uint64_t *a, uint32_t from, uint32_t n, int on) {
@@ -119,20 +98,20 @@ static int first_fit(const uint64_t *a, uint32_t n) {
  * and page table clear; a reused chunk's pages are all dirty. */
 static uint64_t make_large_chunk(void) {
   uint64_t c = gc_chunk_take(1);
-  GcChunk *ch = &g_chunks[c];
+  GcChunk *ch = &gc_heap.chunks[c];
   int dirty = ch->dirty;
-  memset(&g_starts[c * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
-  memset(&g_pages[c * PAGES_PER_CHUNK], 0, PAGES_PER_CHUNK * sizeof(uint32_t));
+  memset(&gc_heap.starts[c * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+  memset(&gc_heap.pages[c * PAGES_PER_CHUNK], 0, PAGES_PER_CHUNK * sizeof(uint32_t));
   memset(ch, 0, sizeof(GcChunk));
   ch->kind = CHUNK_LARGE;
   if (dirty) {
     memset(ch->dirty_pages, 0xff, sizeof(ch->dirty_pages));
   }
-  if (g_lchunks_n == g_lchunks_cap) {
-    g_lchunks_cap = g_lchunks_cap ? g_lchunks_cap * 2 : 16;
-    g_lchunks = gc_xrealloc(g_lchunks, g_lchunks_cap * sizeof(uint32_t));
+  if (gc_heap.lchunks_n == gc_heap.lchunks_cap) {
+    gc_heap.lchunks_cap = gc_heap.lchunks_cap ? gc_heap.lchunks_cap * 2 : 16;
+    gc_heap.lchunks = gc_xrealloc(gc_heap.lchunks, gc_heap.lchunks_cap * sizeof(uint32_t));
   }
-  g_lchunks[g_lchunks_n++] = (uint32_t)c;
+  gc_heap.lchunks[gc_heap.lchunks_n++] = (uint32_t)c;
   return c;
 }
 
@@ -147,12 +126,12 @@ static AvantHeader *take_run(size_t payload) {
     GcChunk *ch;
     uint8_t *run;
     uint32_t k;
-    for (i = 0; i < g_lchunks_n; i++) {
-      ch = &g_chunks[g_lchunks[i]];
+    for (i = 0; i < gc_heap.lchunks_n; i++) {
+      ch = &gc_heap.chunks[gc_heap.lchunks[i]];
       if (PAGES_PER_CHUNK - ch->used >= n) {
         p = first_fit(ch->alloc, (uint32_t)n);
         if (p >= 0) {
-          c = g_lchunks[i];
+          c = gc_heap.lchunks[i];
           break;
         }
       }
@@ -161,13 +140,13 @@ static AvantHeader *take_run(size_t payload) {
       c = make_large_chunk();
       p = 0;
     }
-    ch = &g_chunks[c];
+    ch = &gc_heap.chunks[c];
     run = chunk_base(c) + ((size_t)p << PAGE_SHIFT);
     bits_set(ch->alloc, (uint32_t)p, (uint32_t)n, 1);
     ch->used = (uint16_t)(ch->used + n);
     for (k = 0; k < n; k++) {
       uint32_t pg = (uint32_t)p + k;
-      g_pages[c * PAGES_PER_CHUNK + pg] = (uint32_t)p + 1;
+      gc_heap.pages[c * PAGES_PER_CHUNK + pg] = (uint32_t)p + 1;
       if ((ch->dirty_pages[pg >> 6] >> (pg & 63)) & 1ULL) {
         memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
       }
@@ -180,9 +159,9 @@ static AvantHeader *take_run(size_t payload) {
     uint64_t c = gc_chunk_take(nch);
     uint64_t k;
     for (k = 0; k < nch; k++) {
-      GcChunk *ch = &g_chunks[c + k];
+      GcChunk *ch = &gc_heap.chunks[c + k];
       int dirty = ch->dirty;
-      memset(&g_starts[(c + k) * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+      memset(&gc_heap.starts[(c + k) * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
       memset(ch, 0, sizeof(GcChunk));
       ch->kind = k ? CHUNK_HUGE_CONT : CHUNK_HUGE;
       ch->head = k ? (uint32_t)c : (uint32_t)nch;
@@ -195,13 +174,13 @@ static AvantHeader *take_run(size_t payload) {
   }
 }
 
-/* A large-object chunk leaves g_lchunks (it is being decommitted). */
+/* A large-object chunk leaves gc_heap.lchunks (it is being decommitted). */
 void gc_large_chunk_gone(uint64_t c) {
   uint32_t i;
-  for (i = 0; i < g_lchunks_n; i++) {
-    if (g_lchunks[i] == (uint32_t)c) {
-      memmove(&g_lchunks[i], &g_lchunks[i + 1], (g_lchunks_n - i - 1) * sizeof(uint32_t));
-      g_lchunks_n--;
+  for (i = 0; i < gc_heap.lchunks_n; i++) {
+    if (gc_heap.lchunks[i] == (uint32_t)c) {
+      memmove(&gc_heap.lchunks[i], &gc_heap.lchunks[i + 1], (gc_heap.lchunks_n - i - 1) * sizeof(uint32_t));
+      gc_heap.lchunks_n--;
       return;
     }
   }
@@ -216,7 +195,7 @@ void gc_large_chunk_gone(uint64_t c) {
  * hysteresis, Q12). */
 static void give_run(AvantHeader *h) {
   uint64_t c = chunk_index(h);
-  GcChunk *ch = &g_chunks[c];
+  GcChunk *ch = &gc_heap.chunks[c];
   uint64_t n = run_pages((size_t)h->size);
   start_bit_set(h, 0);
   if (ch->kind == CHUNK_LARGE) {
@@ -225,9 +204,9 @@ static void give_run(AvantHeader *h) {
     bits_set(ch->alloc, p, (uint32_t)n, 0);
     ch->used = (uint16_t)(ch->used - n);
     for (k = 0; k < n; k++) {
-      g_pages[c * PAGES_PER_CHUNK + p + k] = 0;
+      gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
-    ch->idle = (uint32_t)g_stats.full_collections;
+    ch->idle = (uint32_t)avant_g_stats.full_collections;
     return;
   }
   {
@@ -243,9 +222,9 @@ static void give_run(AvantHeader *h) {
  * position moves past it before it is returned, so the caller may free
  * it. */
 AvantHeader *gc_large_next(LargeIter *it) {
-  uint64_t hw = g_heap_committed >> CHUNK_SHIFT;
+  uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   while (it->c < hw) {
-    GcChunk *ch = &g_chunks[it->c];
+    GcChunk *ch = &gc_heap.chunks[it->c];
     if (ch->kind == CHUNK_HUGE) {
       AvantHeader *h = (AvantHeader *)(chunk_base(it->c) + 8);
       it->c += ch->head;
@@ -287,32 +266,32 @@ AvantHeader *gc_large_next(LargeIter *it) {
 
 void gc_los_spare_drop(void) {
   size_t bytes;
-  if (!g_los_spare) {
+  if (!gc_heap.los_spare) {
     return;
   }
-  bytes = gc_large_bytes(g_los_spare);
-  give_run(g_los_spare);
-  g_los_spare = NULL;
-  g_heap_bytes -= bytes;
-  g_los_spare_dropped++;
+  bytes = gc_large_bytes(gc_heap.los_spare);
+  give_run(gc_heap.los_spare);
+  gc_heap.los_spare = NULL;
+  gc_heap.heap_bytes -= bytes;
+  gc_heap.ctr.los.spare_dropped++;
 }
 
 /* keep_bytes leaves the allocation charged, for the spare slot. */
 static void account_large_gone(AvantHeader *h, int keep_bytes) {
   size_t bytes = gc_large_bytes(h);
-  g_large_bytes -= bytes;
+  gc_heap.large_bytes -= bytes;
   if (h->flags & AVANT_FLAG_YOUNG) {
-    if (g_young_large >= bytes) {
-      g_young_large -= bytes;
+    if (gc_heap.young_large >= bytes) {
+      gc_heap.young_large -= bytes;
     }
-    if (g_young_large_n > 0) {
-      g_young_large_n--;
+    if (gc_heap.young_large_n > 0) {
+      gc_heap.young_large_n--;
     }
-  } else if (g_mature_since_full >= bytes) {
-    g_mature_since_full -= bytes;
+  } else if (gc_heap.mature_since_full >= bytes) {
+    gc_heap.mature_since_full -= bytes;
   }
   if (!keep_bytes) {
-    g_heap_bytes -= bytes;
+    gc_heap.heap_bytes -= bytes;
   }
 }
 
@@ -320,15 +299,15 @@ void gc_release_large(AvantHeader *h) {
   int cache = (h->flags & AVANT_FLAG_YOUNG) &&
               h->type_id == AVANT_TYPE_BYTES &&
               (h->flags & AVANT_FLAG_PINNED) == 0 &&
-              g_los_spare == NULL;
+              gc_heap.los_spare == NULL;
   account_large_gone(h, cache);
   if (cache) {
     start_bit_set(h, 0);
-    g_los_spare = h;
-    g_los_spare_cached++;
+    gc_heap.los_spare = h;
+    gc_heap.ctr.los.spare_cached++;
   } else {
     give_run(h);
-    g_los_freed++;
+    gc_heap.ctr.los.freed++;
   }
 }
 
@@ -344,25 +323,25 @@ static void los_note_live(int full) {
       live += (uint64_t)gc_large_bytes(h);
     }
   }
-  g_los_live_samples++;
-  g_los_live_sum += live;
-  if (live > g_los_live_peak) {
-    g_los_live_peak = live;
+  gc_heap.ctr.los.live_samples++;
+  gc_heap.ctr.los.live_sum += live;
+  if (live > gc_heap.ctr.los.live_peak) {
+    gc_heap.ctr.los.live_peak = live;
   }
 }
 
 static void promote_young_large(AvantHeader *h) {
   size_t bytes = gc_large_bytes(h);
-  g_los_promoted++;
-  g_los_promoted_bytes += (uint64_t)bytes;
+  gc_heap.ctr.los.promoted++;
+  gc_heap.ctr.los.promoted_bytes += (uint64_t)bytes;
   h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_LOS_KEEP));
-  if (g_young_large >= bytes) {
-    g_young_large -= bytes;
+  if (gc_heap.young_large >= bytes) {
+    gc_heap.young_large -= bytes;
   }
-  if (g_young_large_n > 0) {
-    g_young_large_n--;
+  if (gc_heap.young_large_n > 0) {
+    gc_heap.young_large_n--;
   }
-  g_mature_since_full += bytes;
+  gc_heap.mature_since_full += bytes;
 }
 
 /* Unmarked young large objects are unreachable and are freed. A marked
@@ -389,7 +368,7 @@ void gc_reclaim_young_large(void) {
     }
     stay_bytes += gc_large_bytes(h);
   }
-  promote_stay = stay_bytes >= g_young_bytes;
+  promote_stay = stay_bytes >= avant_young_bytes;
   gc_large_iter_init(&it);
   while ((h = gc_large_next(&it))) {
     if (h->flags & AVANT_FLAG_YOUNG) {
@@ -416,73 +395,73 @@ void gc_sweep_large(void) {
     if (!full_marked(h)) {
       size_t bytes = gc_large_bytes(h);
       give_run(h);
-      g_large_bytes -= bytes;
-      g_heap_bytes -= bytes;
-      g_los_freed++;
+      gc_heap.large_bytes -= bytes;
+      gc_heap.heap_bytes -= bytes;
+      gc_heap.ctr.los.freed++;
     }
   }
 }
 
 void *gc_los_alloc(size_t payload, uint32_t type_id) {
   size_t bytes = (size_t)(run_pages(payload) << PAGE_SHIFT);
-  int young = !g_nursery_off && !g_alloc_mature && type_id == AVANT_TYPE_BYTES;
+  int young = !gc_heap.set.nursery_off && !gc_thread.alloc_mature && type_id == AVANT_TYPE_BYTES;
   AvantHeader *h;
-  if (g_los_spare && g_los_spare->size != (uint32_t)payload) {
+  if (gc_heap.los_spare && gc_heap.los_spare->size != (uint32_t)payload) {
     gc_los_spare_drop();
   }
-  if (g_heap_max && !g_los_spare && g_heap_bytes + bytes > g_heap_max) {
-    if (g_gc_defer) {
+  if (gc_heap.set.heap_max && !gc_heap.los_spare && gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
+    if (gc_heap.defer) {
       /* C32: inside a no-GC region the allocation proceeds past the
        * limit and the collection runs after the region. */
       gc_limit_collect_pending();
     } else {
-      gc_collect(1);
-      if (g_heap_bytes + bytes > g_heap_max) {
+      gc_collect(GC_FULL, 1);
+      if (gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
         gc_die("heap limit");
       }
     }
   }
-  g_los_allocs++;
-  g_los_alloc_bytes += (uint64_t)bytes;
+  gc_heap.ctr.los.allocs++;
+  gc_heap.ctr.los.alloc_bytes += (uint64_t)bytes;
   {
     int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
-    g_los_hist[bucket]++;
+    gc_heap.ctr.los.hist[bucket]++;
     if (type_id == AVANT_TYPE_BYTES && align_up(sizeof(AvantHeader) + payload) <= LOS_LIMIT) {
-      g_los_scalar_allocs++;
-      g_los_scalar_bytes += (uint64_t)bytes;
+      gc_heap.ctr.los.scalar_allocs++;
+      gc_heap.ctr.los.scalar_bytes += (uint64_t)bytes;
     } else {
-      g_los_big_allocs++;
-      g_los_big_bytes += (uint64_t)bytes;
+      gc_heap.ctr.los.big_allocs++;
+      gc_heap.ctr.los.big_bytes += (uint64_t)bytes;
     }
     if (young) {
-      g_los_young_allocs++;
-      g_los_young_bytes += (uint64_t)bytes;
+      gc_heap.ctr.los.young_allocs++;
+      gc_heap.ctr.los.young_bytes += (uint64_t)bytes;
     } else {
-      g_los_mature_allocs++;
-      g_los_mature_bytes += (uint64_t)bytes;
+      gc_heap.ctr.los.mature_allocs++;
+      gc_heap.ctr.los.mature_bytes += (uint64_t)bytes;
     }
   }
-  if (g_los_spare && g_los_spare->size == (uint32_t)payload) {
-    h = g_los_spare;
-    g_los_spare = NULL;
+  if (gc_heap.los_spare && gc_heap.los_spare->size == (uint32_t)payload) {
+    h = gc_heap.los_spare;
+    gc_heap.los_spare = NULL;
     memset(payload_of(h), 0, payload);
-    g_los_spare_hits++;
+    gc_heap.ctr.los.spare_hits++;
   } else {
     h = take_run(payload);
-    g_heap_bytes += bytes;
-    g_los_callocs++;
+    gc_heap.heap_bytes += bytes;
+    gc_heap.ctr.los.callocs++;
   }
   h->size = (uint32_t)payload;
   h->type_id = (uint16_t)type_id;
   h->flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_LARGE);
   start_bit_set(h, 1);
-  g_large_bytes += bytes;
+  gc_heap.large_bytes += bytes;
   if (young) {
     h->flags |= AVANT_FLAG_YOUNG;
-    g_young_large += bytes;
-    g_young_large_n++;
+    gc_heap.young_large += bytes;
+    gc_heap.young_large_n++;
   } else {
-    g_mature_since_full += bytes;
+    gc_heap.mature_since_full += bytes;
   }
   gc_note_peak();
   return payload_of(h);
