@@ -15,8 +15,6 @@
  * defragmenting full collection (no reference to a block being freed).
  * Diagnostics only: they print and never change the heap. */
 
-int g_verify;
-
 static int verify_ptr(void *p, const char *where, void *holder, long off) {
   Block *b = NULL;
   AvantHeader *ol = NULL;
@@ -32,7 +30,7 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
             "points at from-space %p (forwarded to %p) coll=%llu "
             "child_flags=0x%x\n",
             where, holder, off, start, to,
-            (unsigned long long)g_stats.collections, ch->flags);
+            (unsigned long long)avant_g_stats.collections, ch->flags);
     return 1;
   }
   /* C29: a reachable reference to a nursery object the copy neither
@@ -44,19 +42,12 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
             "avant gc verify: lost %s reference holder=%p off=%ld "
             "names nursery object %p the young copy did not keep coll=%llu "
             "child_flags=0x%x\n",
-            where, holder, off, start, (unsigned long long)g_stats.collections,
+            where, holder, off, start, (unsigned long long)avant_g_stats.collections,
             avant_header(start)->flags);
     return 1;
   }
   return 0;
 }
-
-/* The objects verify_trace flagged FORWARDED (its visited bit), cleared
- * when gc_verify_young_copy ends, before the young copy discards
- * from-space (W14a2: no whole-heap clearing walk follows any more). */
-static void **g_vnoted;
-static size_t g_vnoted_n;
-static size_t g_vnoted_cap;
 
 static void verify_trace(void *p) {
   Block *b = NULL;
@@ -70,20 +61,20 @@ static void verify_trace(void *p) {
     return;
   }
   h->flags |= AVANT_FLAG_FORWARDED;
-  if (g_vnoted_n == g_vnoted_cap) {
-    g_vnoted_cap = g_vnoted_cap ? g_vnoted_cap * 2 : 1024;
-    g_vnoted = gc_xrealloc(g_vnoted, g_vnoted_cap * sizeof(void *));
+  if (gc_heap.vnoted_n == gc_heap.vnoted_cap) {
+    gc_heap.vnoted_cap = gc_heap.vnoted_cap ? gc_heap.vnoted_cap * 2 : 1024;
+    gc_heap.vnoted = gc_xrealloc(gc_heap.vnoted, gc_heap.vnoted_cap * sizeof(void *));
   }
-  g_vnoted[g_vnoted_n++] = start;
+  gc_heap.vnoted[gc_heap.vnoted_n++] = start;
   work_push(start);
 }
 
 static void verify_clear_traced(void) {
   size_t i;
-  for (i = 0; i < g_vnoted_n; i++) {
-    avant_header(g_vnoted[i])->flags &= (uint16_t)~AVANT_FLAG_FORWARDED;
+  for (i = 0; i < gc_heap.vnoted_n; i++) {
+    avant_header(gc_heap.vnoted[i])->flags &= (uint16_t)~AVANT_FLAG_FORWARDED;
   }
-  g_vnoted_n = 0;
+  gc_heap.vnoted_n = 0;
 }
 
 static void verify_tls_slot(void **slot) {
@@ -99,7 +90,7 @@ static void verify_tls_slot(void **slot) {
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
 static void verify_mark_reachable(void) {
   ThreadReg *t;
-  for (t = g_threads; t; t = t->next) {
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       uint32_t i;
@@ -108,30 +99,21 @@ static void verify_mark_reachable(void) {
       }
     }
   }
-  for (PinEnt *p = g_pins; p; p = p->next) {
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     verify_trace(p->payload);
   }
   {
     uint32_t ri;
-    for (ri = 0; ri < g_rem_n; ri++) {
-      verify_trace(g_remset[ri]);
+    for (ri = 0; ri < gc_heap.rem_n; ri++) {
+      verify_trace(gc_heap.remset[ri]);
     }
   }
   avant_hash_walk_tls(verify_tls_slot);
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
+  while (gc_heap.work_n) {
+    void *p = gc_heap.work[--gc_heap.work_n];
     EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
   }
 }
-
-/* A word the type map does not call a reference, in an object the
- * verifier reached, that is exactly the start of an unpinned object in
- * from-space (moved or about to be discarded): the program stored a
- * reference where the collector does not look (a wrong or missing type
- * map, audit-abi 8.1). Heap strings (STRMETA) hold text and are
- * skipped; a scalar equal to such an address by chance is the only
- * false positive. */
-static uint64_t g_verify_untraced;
 
 static void verify_untraced_words(AvantHeader *h) {
   size_t n, i;
@@ -161,13 +143,13 @@ static void verify_untraced_words(AvantHeader *h) {
       continue;
     }
     to = fwd_get(w);
-    g_verify_untraced++;
+    gc_heap.verify_untraced++;
     fprintf(stderr,
             "avant gc verify: untraced reference holder=%p type=%u size=%u "
             "word=%lu names young object %p (%s %p) coll=%llu\n",
             (void *)p, (unsigned)h->type_id, (unsigned)h->size, (unsigned long)i, w,
             to && to != w ? "forwarded to" : "not copied, from-space", to,
-            (unsigned long long)g_stats.collections);
+            (unsigned long long)avant_g_stats.collections);
   }
 }
 
@@ -193,20 +175,18 @@ static void verify_pinned_fields(AvantHeader *h, Block *b) {
   }
 }
 
-static uint64_t g_verify_left_seen;
-
 void gc_verify_young_copy(void) {
   ThreadReg *t;
   Block *b;
-  if (g_c_stack_left > g_verify_left_seen) {
+  if (gc_heap.ctr.stack_left > gc_heap.verify_left_seen) {
     fprintf(stderr,
             "avant gc verify: %llu stack words still name from-space "
             "after rewrite (cumulative %llu)\n",
-            (unsigned long long)(g_c_stack_left - g_verify_left_seen),
-            (unsigned long long)g_c_stack_left);
-    g_verify_left_seen = g_c_stack_left;
+            (unsigned long long)(gc_heap.ctr.stack_left - gc_heap.verify_left_seen),
+            (unsigned long long)gc_heap.ctr.stack_left);
+    gc_heap.verify_left_seen = gc_heap.ctr.stack_left;
   }
-  for (t = g_threads; t; t = t->next) {
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       uint32_t i;
@@ -216,17 +196,17 @@ void gc_verify_young_copy(void) {
     }
   }
   verify_mark_reachable();
-  for (b = g_to; b; b = b->next) {
+  for (b = gc_heap.to; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
-  for (b = g_mature; b; b = b->next) {
+  for (b = gc_heap.mature; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
-  for (b = g_from; b; b = b->next) {
+  for (b = gc_heap.from; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
-  if (g_saw_pinned_nursery) {
-    for (b = g_nursery; b; b = b->next) {
+  if (gc_heap.saw_pinned_nursery) {
+    for (b = gc_heap.nursery; b; b = b->next) {
       gc_foreach_block_object(b, verify_pinned_fields);
     }
   }
@@ -257,11 +237,9 @@ void gc_verify_young_copy(void) {
  * five runtime builders that fill a born-mature buffer named by a young
  * array header (audit N2b) are not reported: R1'(b) names the buffer.
  * Visited is FORWARDED (verify_trace), named is MARKED; both are clear
- * when a collection starts (gc_verify_no_stale_marks) and cleared here. */
-static void **g_rnamed;
-static size_t g_rnamed_n;
-static size_t g_rnamed_cap;
-static uint64_t g_missing_barriers;
+ * when a collection starts (gc_verify_no_stale_marks) and cleared here.
+ * The named objects are gc_heap.rnamed; the reports are counted in
+ * gc_heap.missing_barriers. */
 
 static int verify_young_at(void *start, Block *b, AvantHeader *ol) {
   if (ol) {
@@ -291,11 +269,11 @@ static void rem_named(void *p) {
     return;
   }
   h->flags |= AVANT_FLAG_MARKED;
-  if (g_rnamed_n == g_rnamed_cap) {
-    g_rnamed_cap = g_rnamed_cap ? g_rnamed_cap * 2 : 1024;
-    g_rnamed = gc_xrealloc(g_rnamed, g_rnamed_cap * sizeof(void *));
+  if (gc_heap.rnamed_n == gc_heap.rnamed_cap) {
+    gc_heap.rnamed_cap = gc_heap.rnamed_cap ? gc_heap.rnamed_cap * 2 : 1024;
+    gc_heap.rnamed = gc_xrealloc(gc_heap.rnamed, gc_heap.rnamed_cap * sizeof(void *));
   }
-  g_rnamed[g_rnamed_n++] = start;
+  gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
 static void rem_root_slot(void **slot) {
@@ -308,7 +286,7 @@ void gc_verify_remembered(void) {
   size_t i;
   uint64_t found = 0;
   /* Roots: reachability and R1'(a). */
-  for (t = g_threads; t; t = t->next) {
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       uint32_t k;
@@ -317,17 +295,17 @@ void gc_verify_remembered(void) {
       }
     }
   }
-  for (PinEnt *p = g_pins; p; p = p->next) {
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     rem_root_slot(&p->payload);
   }
   avant_hash_walk_tls(rem_root_slot);
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
+  while (gc_heap.work_n) {
+    void *p = gc_heap.work[--gc_heap.work_n];
     EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
   }
   /* R1'(b): the fields of the young objects the roots reach. */
-  for (i = 0; i < g_vnoted_n; i++) {
-    void *v = g_vnoted[i];
+  for (i = 0; i < gc_heap.vnoted_n; i++) {
+    void *v = gc_heap.vnoted[i];
     void *st;
     if (verify_names_young(v, &st)) {
       EACH_REF_SLOT(v, slot, { rem_named(*slot); });
@@ -336,8 +314,8 @@ void gc_verify_remembered(void) {
   /* R1'(c): the fields of every remembered object. */
   {
     uint32_t ri;
-    for (ri = 0; ri < g_rem_n; ri++) {
-      void *obj = g_remset[ri];
+    for (ri = 0; ri < gc_heap.rem_n; ri++) {
+      void *obj = gc_heap.remset[ri];
       if (is_heap_payload(obj, NULL, NULL)) {
         EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
       }
@@ -345,8 +323,8 @@ void gc_verify_remembered(void) {
   }
   /* The check: a reached non-young holder that is neither remembered
    * nor named must name no young object. */
-  for (i = 0; i < g_vnoted_n; i++) {
-    void *v = g_vnoted[i];
+  for (i = 0; i < gc_heap.vnoted_n; i++) {
+    void *v = gc_heap.vnoted[i];
     void *st;
     AvantHeader *h = avant_header(v);
     if (verify_names_young(v, &st) || (h->flags & (AVANT_FLAG_REM | AVANT_FLAG_MARKED))) {
@@ -363,20 +341,20 @@ void gc_verify_remembered(void) {
                   "(holder flags=0x%x type=%u space=%d; young flags=0x%x) before coll=%llu\n",
                   v, (long)((uint8_t *)slot - (uint8_t *)v), y, h->flags, (unsigned)h->type_id,
                   hb ? (int)hb->space : -1, avant_header(y)->flags,
-                  (unsigned long long)g_stats.collections);
+                  (unsigned long long)avant_g_stats.collections);
         }
       }
     });
   }
   if (found > 32) {
     fprintf(stderr, "avant gc verify: missing barrier: %llu fields in all before coll=%llu\n",
-            (unsigned long long)found, (unsigned long long)g_stats.collections);
+            (unsigned long long)found, (unsigned long long)avant_g_stats.collections);
   }
-  g_missing_barriers += found;
-  for (i = 0; i < g_rnamed_n; i++) {
-    avant_header(g_rnamed[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
+  gc_heap.missing_barriers += found;
+  for (i = 0; i < gc_heap.rnamed_n; i++) {
+    avant_header(gc_heap.rnamed[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
   }
-  g_rnamed_n = 0;
+  gc_heap.rnamed_n = 0;
   verify_clear_traced();
 }
 
@@ -384,16 +362,16 @@ void gc_verify_remembered(void) {
  * carries MARKED or FORWARDED. A young collection's marks end with it
  * (the noted list) and a full collection marks in the side bitmap, so a
  * header bit left over is a mark a later young collection would read as
- * "already scanned this cycle" and skip (R1'). */
-static uint64_t g_stale_seen;
+ * "already scanned this cycle" and skip (R1'). Reports are counted in
+ * gc_heap.stale_seen. */
 
 static void verify_no_stale_one(AvantHeader *h, Block *b) {
   if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED)) {
-    if (g_stale_seen++ < 16) {
+    if (gc_heap.stale_seen++ < 16) {
       fprintf(stderr,
               "avant gc verify: stale mark on %p flags=0x%x space=%d at the start of coll=%llu\n",
               payload_of(h), h->flags, b ? (int)b->space : -1,
-              (unsigned long long)g_stats.collections);
+              (unsigned long long)avant_g_stats.collections);
     }
   }
 }
@@ -404,10 +382,10 @@ void gc_verify_no_stale_marks(void) {
   AvantHeader *lh;
   Block *lists[4];
   int k;
-  lists[0] = g_mature;
-  lists[1] = g_nursery;
-  lists[2] = g_from;
-  lists[3] = g_to;
+  lists[0] = gc_heap.mature;
+  lists[1] = gc_heap.nursery;
+  lists[2] = gc_heap.from;
+  lists[3] = gc_heap.to;
   for (k = 0; k < 4; k++) {
     for (b = lists[k]; b; b = b->next) {
       gc_foreach_block_object(b, verify_no_stale_one);
@@ -436,23 +414,23 @@ static void verify_defrag_word(void *w, const char *where, void *at) {
    * word that names no object keeps the two-block test. */
   if (start) {
     Block *ob = block_of(avant_header(start));
-    if (!(ob && gc_block_set_has(&g_def_release, ob))) {
+    if (!(ob && gc_block_set_has(&gc_heap.def_release, ob))) {
       return;
     }
-  } else if (!(b && gc_block_set_has(&g_def_release, b)) &&
-             !(hb && gc_block_set_has(&g_def_release, hb))) {
+  } else if (!(b && gc_block_set_has(&gc_heap.def_release, b)) &&
+             !(hb && gc_block_set_has(&gc_heap.def_release, hb))) {
     return;
   }
   fprintf(stderr,
           "avant gc verify: %s %p names %p in a mature block defragmentation "
           "is freeing (object %p moved to %p) coll=%llu\n",
           where, at, w, start, start ? fwd_get(start) : NULL,
-          (unsigned long long)g_stats.collections);
+          (unsigned long long)avant_g_stats.collections);
 }
 
 static void verify_defrag_fields(AvantHeader *h, Block *b) {
   void *p;
-  if (!full_marked(h) || (b && gc_block_set_has(&g_def_release, b))) {
+  if (!full_marked(h) || (b && gc_block_set_has(&gc_heap.def_release, b))) {
     return;
   }
   p = payload_of(h);
@@ -465,8 +443,8 @@ static void verify_defrag_tls(void **slot) {
 
 __attribute__((noinline)) void gc_verify_defrag(void) {
   uint8_t *p = (uint8_t *)__builtin_frame_address(0);
-  uint8_t *hi = g_self_reg.stack_hi;
-  uint8_t *lo = g_self_reg.stack_lo;
+  uint8_t *hi = gc_thread.reg.stack_hi;
+  uint8_t *lo = gc_thread.reg.stack_lo;
   ThreadReg *t;
   Block *b;
   LargeIter it;
@@ -478,8 +456,8 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
       verify_defrag_word(*(void **)p, "C stack word at", (void *)p);
     }
   }
-  pthread_mutex_lock(&g_threads_mu);
-  for (t = g_threads; t; t = t->next) {
+  pthread_mutex_lock(&gc_heap.threads_mu);
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
@@ -487,29 +465,29 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
       }
     }
   }
-  pthread_mutex_unlock(&g_threads_mu);
-  for (PinEnt *pe = g_pins; pe; pe = pe->next) {
+  pthread_mutex_unlock(&gc_heap.threads_mu);
+  for (PinEnt *pe = gc_heap.pins; pe; pe = pe->next) {
     verify_defrag_word(pe->payload, "pin", (void *)pe);
   }
   /* A remembered entry may name a dead object (full collections do not
    * scrub the set, and the young copy skips an entry whose block is
    * gone); only a live one that moved must have been rewritten. */
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    void *obj = gc_heap.remset[i];
     Block *rb = obj ? block_of(avant_header(obj)) : NULL;
-    if (rb && gc_block_set_has(&g_def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
+    if (rb && gc_block_set_has(&gc_heap.def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
         full_marked(avant_header(obj))) {
-      verify_defrag_word(obj, "remembered entry", (void *)&g_remset[i]);
+      verify_defrag_word(obj, "remembered entry", (void *)&gc_heap.remset[i]);
     }
   }
   avant_hash_walk_tls(verify_defrag_tls);
-  for (b = g_mature; b; b = b->next) {
+  for (b = gc_heap.mature; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
-  for (b = g_nursery; b; b = b->next) {
+  for (b = gc_heap.nursery; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
-  for (b = g_from; b; b = b->next) {
+  for (b = gc_heap.from; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
   gc_large_iter_init(&it);

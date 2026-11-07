@@ -16,49 +16,21 @@
  * parking of from-space, and gc_young_copy_out, the whole young pass. When to
  * run it and how large the nursery is are avant_gc_collect.c's. */
 
-int g_saw_pinned_nursery;
-
-int g_discard_from;
-
-/* The noted list (C36, gc-design.md §2.6): every object a young
- * collection flags MARKED (its "traced this cycle" bit), probe or copy:
- * nursery objects the probe reaches, mature, large and from-space
- * objects it scans (trace_mature), remembered objects it scans, copies
- * and pinned survivors. gc_clear_noted clears exactly those when the
- * collection ends (after a probe, also when the probe decides to pause
- * instead of copying), so no MARKED outlives the collection that set it
- * and no later young collection reads a stale one as "already scanned".
- * Full collections mark in the side bitmap and never touch MARKED.
- * Before W14a2 only the probe's nursery marks were noted; the others
- * were cleared by a walk of every object of every space after a copy
- * (clear_mark_flags), and not at all after a probe-only pause, a
- * remembered entry's frontier eviction, or a full collection. */
-static void **g_noted;
-static uint32_t g_noted_n;
-static uint32_t g_noted_cap;
-
-uint64_t g_to_bytes;
-
-int g_probe;
-static int g_force_tenure;
-static int g_from_mature;
-uint64_t g_probe_nursery_bytes;
-
 static void note_marked(void *payload) {
-  if (g_noted_n == g_noted_cap) {
-    g_noted_cap = g_noted_cap ? g_noted_cap * 2 : 256;
-    g_noted = gc_xrealloc(g_noted, g_noted_cap * sizeof(void *));
+  if (gc_heap.noted_n == gc_heap.noted_cap) {
+    gc_heap.noted_cap = gc_heap.noted_cap ? gc_heap.noted_cap * 2 : 256;
+    gc_heap.noted = gc_xrealloc(gc_heap.noted, gc_heap.noted_cap * sizeof(void *));
   }
-  g_noted[g_noted_n++] = payload;
+  gc_heap.noted[gc_heap.noted_n++] = payload;
 }
 
 void gc_clear_noted(void) {
   uint32_t i;
-  for (i = 0; i < g_noted_n; i++) {
-    avant_header(g_noted[i])->flags &=
+  for (i = 0; i < gc_heap.noted_n; i++) {
+    avant_header(gc_heap.noted[i])->flags &=
         (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
   }
-  g_noted_n = 0;
+  gc_heap.noted_n = 0;
 }
 
 static void probe_note(void *start) {
@@ -68,7 +40,7 @@ static void probe_note(void *start) {
   }
   h->flags |= AVANT_FLAG_MARKED;
   note_marked(start);
-  g_probe_nursery_bytes += obj_total(h);
+  gc_heap.probe_nursery_bytes += obj_total(h);
   work_push(start);
 }
 
@@ -100,12 +72,6 @@ static void remember_young_edge(void **slot, void *payload) {
   gc_keep_add(owner);
 }
 
-static int g_from_heap_slot;
-/* Set while a remembered object is being scanned: copy_from_slot then
- * records whether any direct field names a young object afterwards. */
-static int g_rem_track;
-static int g_rem_track_dirty;
-
 static int names_young(void *p) {
   Block *b = NULL;
   AvantHeader *ol = NULL;
@@ -124,10 +90,10 @@ static void copy_payload_children(void *p) {
   if (avant_header(p)->type_id == AVANT_TYPE_BYTES) {
     return;
   }
-  int saved = g_from_heap_slot;
-  g_from_heap_slot = 1;
+  int saved = gc_heap.from_heap_slot;
+  gc_heap.from_heap_slot = 1;
   EACH_REF_SLOT(p, slot, { copy_from_slot(slot); });
-  g_from_heap_slot = saved;
+  gc_heap.from_heap_slot = saved;
 }
 
 /* A remembered object is an old-to-young edge, not a root. Scanning
@@ -141,7 +107,7 @@ static void note_los_keep(AvantHeader *h, int from_mature) {
   if ((h->flags & AVANT_FLAG_YOUNG) == 0) {
     return;
   }
-  if (from_mature || g_from_heap_slot) {
+  if (from_mature || gc_heap.from_heap_slot) {
     h->flags |= AVANT_FLAG_LOS_KEEP;
   }
 }
@@ -163,23 +129,23 @@ static void trace_mature(void *p, int from_mature) {
   h->flags |= AVANT_FLAG_MARKED;
   note_los_keep(h, from_mature);
   note_marked(p);
-  saved = g_from_mature;
-  g_from_mature = 1;
+  saved = gc_heap.from_mature;
+  gc_heap.from_mature = 1;
   /* Nested mature scans do not dirty the remembered parent: only its
    * direct fields count, and the outer copy_from_slot judges that slot
    * itself once this returns. */
   {
-    int track_saved = g_rem_track;
-    g_rem_track = 0;
+    int track_saved = gc_heap.rem_track;
+    gc_heap.rem_track = 0;
     copy_payload_children(p);
-    g_rem_track = track_saved;
+    gc_heap.rem_track = track_saved;
   }
-  g_from_mature = saved;
+  gc_heap.from_mature = saved;
 }
 
 void *copy_nursery(void *p) {
   Block *b = NULL;
-  if (g_probe) {
+  if (gc_heap.probe) {
     gc_die("probe copied");
   }
   if (!is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
@@ -191,12 +157,12 @@ void *copy_nursery(void *p) {
   }
   AvantHeader *h = avant_header(p);
   if (h->flags & AVANT_FLAG_PINNED) {
-    g_saw_pinned_nursery = 1;
+    gc_heap.saw_pinned_nursery = 1;
     if (!(h->flags & AVANT_FLAG_MARKED)) {
       h->flags |= AVANT_FLAG_MARKED;
       note_marked(p);
       mark_object_lines(p);
-      g_live += obj_total(h);
+      gc_heap.live += obj_total(h);
       work_push(p);
     }
     return p;
@@ -206,7 +172,7 @@ void *copy_nursery(void *p) {
    * already decided this graph is long-lived. A first survivor stays
    * in the nursery (SPACE_TO) so a tree that dies next cycle is not
    * promoted. */
-  int tenure = g_force_tenure || (h->flags & AVANT_FLAG_SURVIVED);
+  int tenure = gc_heap.force_tenure || (h->flags & AVANT_FLAG_SURVIVED);
   AvantHeader *nh = tenure ? (AvantHeader *)gc_mature_alloc(total) : gc_to_alloc(total);
   memcpy(nh, h, total);
   nh->flags = (uint16_t)(h->flags &
@@ -218,8 +184,8 @@ void *copy_nursery(void *p) {
   void *np = payload_of(nh);
   note_marked(np);
   fwd_put(p, np);
-  g_stats.copied_bytes += total;
-  g_live += total;
+  avant_g_stats.copied_bytes += total;
+  gc_heap.live += total;
   mark_object_lines(np);
   work_push(np);
   return np;
@@ -233,15 +199,15 @@ void copy_from_slot(void **slot) {
   if (!start) {
     return;
   }
-  if (start != p && !g_probe) {
-    g_interior_slots++;
+  if (start != p && !gc_heap.probe) {
+    gc_heap.ctr.root.interiors++;
   }
   if (b && b->space == SPACE_NURSERY) {
-    if (g_probe) {
+    if (gc_heap.probe) {
       /* A nursery child is a young edge by definition; the probe must
        * record it, or the frontier would evict this parent as clean. */
-      if (g_rem_track) {
-        g_rem_track_dirty = 1;
+      if (gc_heap.rem_track) {
+        gc_heap.rem_track_dirty = 1;
       }
       probe_note(start);
       return;
@@ -250,8 +216,8 @@ void copy_from_slot(void **slot) {
     void *np = copy_nursery(start);
     *slot = (uint8_t *)np + delta;
     remember_young_edge(slot, np);
-    if (g_rem_track && names_young(*slot)) {
-      g_rem_track_dirty = 1;
+    if (gc_heap.rem_track && names_young(*slot)) {
+      gc_heap.rem_track_dirty = 1;
     }
     return;
   }
@@ -262,10 +228,10 @@ void copy_from_slot(void **slot) {
    * (promote_pinned_one): it is mature, and its young children are
    * reached the same way (C29). */
   if (ol || (b && (b->space == SPACE_MATURE || b->space == SPACE_FROM))) {
-    trace_mature(start, g_from_mature);
+    trace_mature(start, gc_heap.from_mature);
   }
-  if (g_rem_track && names_young(*slot)) {
-    g_rem_track_dirty = 1;
+  if (gc_heap.rem_track && names_young(*slot)) {
+    gc_heap.rem_track_dirty = 1;
   }
 }
 
@@ -278,7 +244,7 @@ static void relocate_root_location(void ***slot_loc) {
     return;
   }
   if (start != addr) {
-    g_interior_slots++;
+    gc_heap.ctr.root.interiors++;
   }
   ptrdiff_t delta = (uint8_t *)addr - (uint8_t *)start;
   void *np = copy_nursery(start);
@@ -295,38 +261,38 @@ static uint64_t rem_field_count(void *p) {
   if (id == AVANT_TYPE_PTRS) {
     return (uint64_t)((size_t)h->size / sizeof(void *));
   }
-  if (id >= MAX_TYPES || !g_type_set[id]) {
+  if (id >= MAX_TYPES || !gc_heap.type_set[id]) {
     return 0;
   }
-  if (g_types[id].stride) {
-    return (uint64_t)g_types[id].nrefs *
-           (uint64_t)((size_t)h->size / sizeof(void *) / g_types[id].stride);
+  if (gc_heap.types[id].stride) {
+    return (uint64_t)gc_heap.types[id].nrefs *
+           (uint64_t)((size_t)h->size / sizeof(void *) / gc_heap.types[id].stride);
   }
-  return (uint64_t)g_types[id].nrefs;
+  return (uint64_t)gc_heap.types[id].nrefs;
 }
 
 void gc_gen_young_copy(void) {
-  if (!g_probe) {
+  if (!gc_heap.probe) {
     gc_fwd_reset();
   }
-  g_saw_pinned_nursery = 0;
-  g_from_mature = 0;
-  g_work_n = 0;
+  gc_heap.saw_pinned_nursery = 0;
+  gc_heap.from_mature = 0;
+  gc_heap.work_n = 0;
   ThreadReg *t;
   uint32_t i;
-  pthread_mutex_lock(&g_threads_mu);
-  for (t = g_threads; t; t = t->next) {
+  pthread_mutex_lock(&gc_heap.threads_mu);
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
-        if (!g_probe) {
+        if (!gc_heap.probe) {
           relocate_root_location(&f->slots[i]);
         }
         copy_from_slot(f->slots[i]);
       }
     }
   }
-  pthread_mutex_unlock(&g_threads_mu);
+  pthread_mutex_unlock(&gc_heap.threads_mu);
   /* Remembered mature objects are roots for the young generation.
    * Their nursery children must be copied and their fields updated
    * even when no root or young object reaches them this cycle: a
@@ -337,15 +303,15 @@ void gc_gen_young_copy(void) {
     uint32_t ri;
     int locked = rem_locked();
     if (locked) {
-      pthread_mutex_lock(&g_rem_mu);
+      pthread_mutex_lock(&gc_heap.rem_mu);
     }
-    g_rem_scans++;
-    g_rem_entries += g_rem_n;
-    if (g_rem_n > g_rem_peak) {
-      g_rem_peak = g_rem_n;
+    gc_heap.ctr.rem.scans++;
+    gc_heap.ctr.rem.entries += gc_heap.rem_n;
+    if (gc_heap.rem_n > gc_heap.ctr.rem.peak) {
+      gc_heap.ctr.rem.peak = gc_heap.rem_n;
     }
-    for (ri = 0; ri < g_rem_n; ri++) {
-      void *obj = g_remset[ri];
+    for (ri = 0; ri < gc_heap.rem_n; ri++) {
+      void *obj = gc_heap.remset[ri];
       if (is_heap_payload(obj, NULL, NULL)) {
         /* A remembered object is a root this cycle: mark it so the
          * probe pass's gc_rem_scrub keeps it in the set (noted, so the
@@ -354,36 +320,36 @@ void gc_gen_young_copy(void) {
           avant_header(obj)->flags |= AVANT_FLAG_MARKED;
           note_marked(obj);
         }
-        g_rem_fields += rem_field_count(obj);
-        g_rem_track = 1;
-        g_rem_track_dirty = 0;
+        gc_heap.ctr.rem.fields += rem_field_count(obj);
+        gc_heap.rem_track = 1;
+        gc_heap.rem_track_dirty = 0;
         copy_payload_children(obj);
-        g_rem_track = 0;
-        if (g_rem_dirty) {
-          g_rem_dirty[ri] = (uint8_t)g_rem_track_dirty;
+        gc_heap.rem_track = 0;
+        if (gc_heap.rem_dirty) {
+          gc_heap.rem_dirty[ri] = (uint8_t)gc_heap.rem_track_dirty;
         }
       }
     }
     if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
+      pthread_mutex_unlock(&gc_heap.rem_mu);
     }
   }
   /*
    * D34: pinned objects are mark roots. Full collect already walks
-   * g_pins; young copy must too. C globals (argv, interned bytes)
+   * gc_heap.pins; young copy must too. C globals (argv, interned bytes)
    * hold those pointers and would otherwise see a freed nursery.
    */
-  for (PinEnt *p = g_pins; p; p = p->next) {
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     copy_from_slot(&p->payload);
   }
   avant_hash_walk_tls(copy_from_slot);
   /* Remembered objects are reached from the roots above. The set is
    * not itself a root list: a dead buffer would keep its nodes alive. */
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
+  while (gc_heap.work_n) {
+    void *p = gc_heap.work[--gc_heap.work_n];
     copy_payload_children(p);
   }
-  if (g_probe) {
+  if (gc_heap.probe) {
     return;
   }
   /*
@@ -400,13 +366,11 @@ void gc_gen_young_copy(void) {
    * reference generated code holds across avant_alloc is in a slot,
    * which the copy updates (D165).
    */
-  if (g_c_entry) {
+  if (gc_thread.c_entry) {
     rewrite_c_stack();
     count_c_stack_nursery();
   }
 }
-
-static int g_block_has_pin;
 
 /*
  * C29 (Stage 28 W8c). A pinned nursery object survives a young copy in
@@ -425,7 +389,7 @@ static int g_block_has_pin;
 static void promote_pinned_one(AvantHeader *h, Block *b) {
   (void)b;
   if (h->flags & AVANT_FLAG_PINNED) {
-    g_block_has_pin = 1;
+    gc_heap.block_has_pin = 1;
     h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
   }
 }
@@ -433,54 +397,54 @@ static void promote_pinned_one(AvantHeader *h, Block *b) {
 static void note_pinned_in_block(AvantHeader *h, Block *b) {
   (void)b;
   if (h->flags & AVANT_FLAG_PINNED) {
-    g_block_has_pin = 1;
+    gc_heap.block_has_pin = 1;
   }
 }
 
 int gc_block_has_pinned(Block *b) {
-  g_block_has_pin = 0;
+  gc_heap.block_has_pin = 0;
   gc_foreach_block_object(b, note_pinned_in_block);
-  return g_block_has_pin;
+  return gc_heap.block_has_pin;
 }
 
 static int block_keep_pinned(Block *b) {
-  g_block_has_pin = 0;
+  gc_heap.block_has_pin = 0;
   gc_foreach_block_object(b, promote_pinned_one);
-  return g_block_has_pin;
+  return gc_heap.block_has_pin;
 }
 
 /*
  * After young copy, free unpinned nursery blocks. Pinned objects keep
- * their address (D34); those blocks stay on g_from as SPACE_FROM.
+ * their address (D34); those blocks stay on gc_heap.from as SPACE_FROM.
  *
  * AVANT_NURSERY_DISCARD=0 parks every nursery block instead. That was
  * the Stage 17 safety net before the leftover stack rewrite; it is not
  * the product path.
  */
 static void park_nursery_from(void) {
-  Block *b = g_nursery;
-  g_nursery = NULL;
+  Block *b = gc_heap.nursery;
+  gc_heap.nursery = NULL;
   while (b) {
     Block *next = b->next;
-    if (g_saw_pinned_nursery) {
+    if (gc_heap.saw_pinned_nursery) {
       (void)block_keep_pinned(b);
     }
     b->space = SPACE_FROM;
-    g_space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
-    g_space_bytes[SPACE_FROM] += BLOCK_SIZE;
-    b->next = g_from;
-    g_from = b;
+    gc_heap.space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
+    gc_heap.space_bytes[SPACE_FROM] += BLOCK_SIZE;
+    b->next = gc_heap.from;
+    gc_heap.from = b;
     b = next;
   }
 }
 
 static void discard_nursery_from(void) {
-  Block *b = g_nursery;
-  g_nursery = NULL;
+  Block *b = gc_heap.nursery;
+  gc_heap.nursery = NULL;
   /* Pins are roots, so a young copy already saw every pinned nursery
    * object. Walking every dead object to recheck the flag was most of
    * a calculator collection: the tree is garbage and nothing is pinned. */
-  if (!g_saw_pinned_nursery) {
+  if (!gc_heap.saw_pinned_nursery) {
     while (b) {
       Block *next = b->next;
       gc_cache_or_free_block(b);
@@ -492,10 +456,10 @@ static void discard_nursery_from(void) {
     Block *next = b->next;
     if (block_keep_pinned(b)) {
       b->space = SPACE_FROM;
-      g_space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
-      g_space_bytes[SPACE_FROM] += BLOCK_SIZE;
-      b->next = g_from;
-      g_from = b;
+      gc_heap.space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
+      gc_heap.space_bytes[SPACE_FROM] += BLOCK_SIZE;
+      b->next = gc_heap.from;
+      gc_heap.from = b;
     } else {
       gc_cache_or_free_block(b);
     }
@@ -504,50 +468,50 @@ static void discard_nursery_from(void) {
 }
 
 static void adopt_to_space(void) {
-  Block *head = g_to;
-  Block *b = g_to;
-  g_to = NULL;
+  Block *head = gc_heap.to;
+  Block *b = gc_heap.to;
+  gc_heap.to = NULL;
   while (b) {
     Block *next = b->next;
     b->space = SPACE_NURSERY;
-    g_space_bytes[SPACE_TO] -= BLOCK_SIZE;
-    g_space_bytes[SPACE_NURSERY] += BLOCK_SIZE;
-    b->next = g_nursery;
-    g_nursery = b;
+    gc_heap.space_bytes[SPACE_TO] -= BLOCK_SIZE;
+    gc_heap.space_bytes[SPACE_NURSERY] += BLOCK_SIZE;
+    b->next = gc_heap.nursery;
+    gc_heap.nursery = b;
     b = next;
   }
   gc_clear_alloc_cur(SPACE_TO);
   gc_clear_alloc_cur(SPACE_NURSERY);
   if (head && head->bump < head->base + BLOCK_SIZE) {
-    g_alloc_cur[SPACE_NURSERY] = head;
-    g_alloc_fresh[SPACE_NURSERY] = 1;
+    gc_heap.alloc_cur[SPACE_NURSERY] = head;
+    gc_heap.alloc_fresh[SPACE_NURSERY] = 1;
     gc_use_block(head);
   }
 }
 
 void gc_young_copy_out(int tenure) {
-  g_force_tenure = tenure;
-  g_to_bytes = 0;
-  g_keep_n = 0;
-  gc_zero_line_marks(g_nursery);
+  gc_heap.force_tenure = tenure;
+  gc_heap.to_bytes = 0;
+  gc_heap.keep_n = 0;
+  gc_zero_line_marks(gc_heap.nursery);
   gc_gen_young_copy();
-  if (g_verify) {
+  if (gc_heap.set.verify) {
     gc_verify_young_copy();
   }
   gc_clear_alloc_cur(SPACE_NURSERY);
-  if (g_discard_from) {
+  if (gc_heap.set.discard_from) {
     discard_nursery_from();
   } else {
     park_nursery_from();
   }
   adopt_to_space();
   gc_rem_commit_kept();
-  if (g_nursery_held + g_to_bytes > g_cpy_peak) {
-    g_cpy_peak = g_nursery_held + g_to_bytes;
+  if (avant_nursery_held + gc_heap.to_bytes > gc_heap.ctr.yng.cpy_peak) {
+    gc_heap.ctr.yng.cpy_peak = avant_nursery_held + gc_heap.to_bytes;
   }
-  g_nursery_held = g_to_bytes;
-  g_to_bytes = 0;
-  g_force_tenure = 0;
+  avant_nursery_held = gc_heap.to_bytes;
+  gc_heap.to_bytes = 0;
+  gc_heap.force_tenure = 0;
   gc_reclaim_young_large();
   /* The end of the copy's marks: the noted list, not a walk of every
    * object of every space (gc-design.md §2.6; the walk was 7% of the

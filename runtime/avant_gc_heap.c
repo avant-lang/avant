@@ -17,45 +17,22 @@
  * table, the mark work list, and the type maps every tracer reads
  * through EACH_REF_SLOT. Also the collector's two error helpers. */
 
-typedef struct FwdEnt {
-  void *from;
-  void *to;
-} FwdEnt;
+/* The collector's state (avant_gc_internal.h). Zero-initialized, so the
+ * type tables stay in .bss; the fields whose start value is not zero are
+ * set by gc_heap_static_init before main runs (and before any other
+ * constructor of the runtime could allocate or lock). */
+GcHeap gc_heap;
 
-/* The reservation (gc-design.md §2.1, avant_gc_internal.h). g_heap_base
- * is 4 MiB aligned; g_heap_reserved bytes from it are reserved, the
- * first g_heap_committed of them committed (whole chunks, in order). The
- * side tables are reserved for the whole range and committed by the
- * slice of each chunk. */
-uint8_t *g_heap_base;
-uint64_t g_heap_committed;
-uint64_t g_heap_reserved;
-Block *g_blocks;
-uint64_t *g_starts;
-uint64_t *g_marks;
-uint8_t *g_lines;
-uint32_t *g_pages;
-GcChunk *g_chunks;
-/* Chunks below the high-water mark that are CHUNK_FREE again. */
-static uint64_t g_free_chunks;
-/* Every small chunk below it has no free block (O53: blocks are taken
- * from the lowest chunk that has one, so high chunks drain and free up
- * whole). */
-static uint64_t g_small_hint;
-/* Bytes of free blocks that are resident (not madvised). */
-static uint64_t g_free_resident;
-
-Block *g_mature;
-Block *g_nursery;
-Block *g_from;
-Block *g_to;
-
-void **g_work;
-uint32_t g_work_n;
-static uint32_t g_work_cap;
-
-TypeMap g_types[MAX_TYPES];
-uint8_t g_type_set[MAX_TYPES];
+__attribute__((constructor(101))) static void gc_heap_static_init(void) {
+  pthread_mutex_init(&gc_heap.world, NULL);
+  pthread_mutex_init(&gc_heap.threads_mu, NULL);
+  pthread_mutex_init(&gc_heap.rem_mu, NULL);
+  gc_heap.full_trigger = FULL_BYTES;
+  gc_heap.set.rem_frontier = 1;
+  gc_heap.set.defrag = 1;
+  gc_heap.set.young_sizing = 1;
+  gc_heap.set.copy_reserve = 1;
+}
 
 /* Whether payload word W of an object with header H is a reference slot
  * by its type map (the verifier's inverse question). */
@@ -64,10 +41,10 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   if (id == AVANT_TYPE_PTRS) {
     return 1;
   }
-  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !g_type_set[id]) {
+  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !gc_heap.type_set[id]) {
     return 0;
   }
-  const TypeMap *m = &g_types[id];
+  const TypeMap *m = &gc_heap.types[id];
   if (m->stride) {
     w %= m->stride;
   }
@@ -76,10 +53,6 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   }
   return (m->words[w / 64] >> (w % 64)) & 1u;
 }
-
-static FwdEnt *g_fwd;
-static size_t g_fwd_cap;
-static size_t g_fwd_used;
 
 void gc_die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
@@ -95,32 +68,32 @@ void *gc_xrealloc(void *p, size_t n) {
 }
 
 void work_push(void *p) {
-  if (g_work_n == g_work_cap) {
-    g_work_cap = g_work_cap ? g_work_cap * 2 : 256;
-    g_work = gc_xrealloc(g_work, g_work_cap * sizeof(void *));
+  if (gc_heap.work_n == gc_heap.work_cap) {
+    gc_heap.work_cap = gc_heap.work_cap ? gc_heap.work_cap * 2 : 256;
+    gc_heap.work = gc_xrealloc(gc_heap.work, gc_heap.work_cap * sizeof(void *));
   }
-  g_work[g_work_n++] = p;
+  gc_heap.work[gc_heap.work_n++] = p;
 }
 
 void gc_fwd_reset(void) {
-  if (!g_fwd_cap) {
-    g_fwd_cap = 1024;
-    g_fwd = calloc(g_fwd_cap, sizeof(FwdEnt));
-    if (!g_fwd) {
+  if (!gc_heap.fwd_cap) {
+    gc_heap.fwd_cap = 1024;
+    gc_heap.fwd = calloc(gc_heap.fwd_cap, sizeof(FwdEnt));
+    if (!gc_heap.fwd) {
       gc_die("out of memory");
     }
   } else {
-    memset(g_fwd, 0, g_fwd_cap * sizeof(FwdEnt));
+    memset(gc_heap.fwd, 0, gc_heap.fwd_cap * sizeof(FwdEnt));
   }
-  g_fwd_used = 0;
+  gc_heap.fwd_used = 0;
 }
 
 static void fwd_grow(void) {
-  size_t old_cap = g_fwd_cap;
-  FwdEnt *old = g_fwd;
-  g_fwd_cap *= 2;
-  g_fwd = calloc(g_fwd_cap, sizeof(FwdEnt));
-  if (!g_fwd) {
+  size_t old_cap = gc_heap.fwd_cap;
+  FwdEnt *old = gc_heap.fwd;
+  gc_heap.fwd_cap *= 2;
+  gc_heap.fwd = calloc(gc_heap.fwd_cap, sizeof(FwdEnt));
+  if (!gc_heap.fwd) {
     gc_die("out of memory");
   }
   size_t i;
@@ -128,43 +101,43 @@ static void fwd_grow(void) {
     if (!old[i].from) {
       continue;
     }
-    size_t j = hash_ptr(old[i].from) & (g_fwd_cap - 1);
-    while (g_fwd[j].from) {
-      j = (j + 1) & (g_fwd_cap - 1);
+    size_t j = hash_ptr(old[i].from) & (gc_heap.fwd_cap - 1);
+    while (gc_heap.fwd[j].from) {
+      j = (j + 1) & (gc_heap.fwd_cap - 1);
     }
-    g_fwd[j] = old[i];
+    gc_heap.fwd[j] = old[i];
   }
   free(old);
 }
 
 void fwd_put(void *from, void *to) {
-  if (g_fwd_used * 10 > g_fwd_cap * 7) {
+  if (gc_heap.fwd_used * 10 > gc_heap.fwd_cap * 7) {
     fwd_grow();
   }
-  size_t j = hash_ptr(from) & (g_fwd_cap - 1);
-  while (g_fwd[j].from && g_fwd[j].from != from) {
-    j = (j + 1) & (g_fwd_cap - 1);
+  size_t j = hash_ptr(from) & (gc_heap.fwd_cap - 1);
+  while (gc_heap.fwd[j].from && gc_heap.fwd[j].from != from) {
+    j = (j + 1) & (gc_heap.fwd_cap - 1);
   }
-  if (!g_fwd[j].from) {
-    g_fwd_used++;
+  if (!gc_heap.fwd[j].from) {
+    gc_heap.fwd_used++;
   }
-  g_fwd[j].from = from;
-  g_fwd[j].to = to;
+  gc_heap.fwd[j].from = from;
+  gc_heap.fwd[j].to = to;
 }
 
 void *fwd_get(void *from) {
-  if (!g_fwd_cap || !from) {
+  if (!gc_heap.fwd_cap || !from) {
     return NULL;
   }
-  size_t j = hash_ptr(from) & (g_fwd_cap - 1);
+  size_t j = hash_ptr(from) & (gc_heap.fwd_cap - 1);
   for (;;) {
-    if (!g_fwd[j].from) {
+    if (!gc_heap.fwd[j].from) {
       return NULL;
     }
-    if (g_fwd[j].from == from) {
-      return g_fwd[j].to;
+    if (gc_heap.fwd[j].from == from) {
+      return gc_heap.fwd[j].to;
     }
-    j = (j + 1) & (g_fwd_cap - 1);
+    j = (j + 1) & (gc_heap.fwd_cap - 1);
   }
 }
 
@@ -222,16 +195,16 @@ static int reserve_all(uint64_t bytes) {
     if (CHUNK_SIZE - head) {
       munmap(base + bytes, (size_t)(CHUNK_SIZE - head));
     }
-    g_heap_base = base;
+    gc_heap.base = base;
   }
-  g_blocks = rec;
-  g_starts = st;
-  g_marks = mk;
-  g_lines = ln;
-  g_pages = pg;
-  g_chunks = ch;
-  g_heap_reserved = bytes;
-  g_heap_committed = 0;
+  gc_heap.blocks = rec;
+  gc_heap.starts = st;
+  gc_heap.marks = mk;
+  gc_heap.lines = ln;
+  gc_heap.pages = pg;
+  gc_heap.chunks = ch;
+  gc_heap.reserved = bytes;
+  gc_heap.committed = 0;
   return 1;
 }
 
@@ -242,7 +215,7 @@ static int reserve_all(uint64_t bytes) {
  * gc_init_slow. */
 void gc_heap_reserve(void) {
   uint64_t gb;
-  if (g_heap_base) {
+  if (gc_heap.base) {
     return;
   }
   gb = HEAP_RESERVE_GB_DEFAULT;
@@ -278,36 +251,36 @@ static int commit(void *p, uint64_t len) {
  * learn their addresses (fixed for the process's life); the chunk is
  * CHUNK_FREE, clean, for the caller to give a kind. */
 static uint64_t commit_new_chunk(void) {
-  uint64_t c = g_heap_committed >> CHUNK_SHIFT;
+  uint64_t c = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t b0 = c * BLOCKS_PER_CHUNK;
   uint64_t i;
-  if (g_heap_committed + CHUNK_SIZE > g_heap_reserved) {
+  if (gc_heap.committed + CHUNK_SIZE > gc_heap.reserved) {
     gc_die("heap reservation exhausted (AVANT_HEAP_RESERVE_GB raises it)");
   }
   {
-    uintptr_t e0 = (uintptr_t)&g_chunks[c] & ~(uintptr_t)4095;
-    uintptr_t e1 = ((uintptr_t)&g_chunks[c + 1] + 4095) & ~(uintptr_t)4095;
+    uintptr_t e0 = (uintptr_t)&gc_heap.chunks[c] & ~(uintptr_t)4095;
+    uintptr_t e1 = ((uintptr_t)&gc_heap.chunks[c + 1] + 4095) & ~(uintptr_t)4095;
     if (!commit((void *)e0, (uint64_t)(e1 - e0)) ||
-        !commit(g_heap_base + g_heap_committed, CHUNK_SIZE) ||
-        !commit(&g_blocks[b0], BLOCKS_PER_CHUNK * sizeof(Block)) ||
-        !commit(&g_starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
-        !commit(&g_marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
-        !commit(&g_lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK) ||
-        !commit(&g_pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t))) {
+        !commit(gc_heap.base + gc_heap.committed, CHUNK_SIZE) ||
+        !commit(&gc_heap.blocks[b0], BLOCKS_PER_CHUNK * sizeof(Block)) ||
+        !commit(&gc_heap.starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
+        !commit(&gc_heap.marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
+        !commit(&gc_heap.lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK) ||
+        !commit(&gc_heap.pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t))) {
       gc_die("out of memory (a heap chunk could not be committed)");
     }
   }
   for (i = 0; i < BLOCKS_PER_CHUNK; i++) {
     uint64_t k = b0 + i;
-    Block *b = &g_blocks[k];
-    b->base = g_heap_base + (k << BLOCK_SHIFT);
-    b->line_mark = &g_lines[k * LINES_PER_BLOCK];
-    b->start = &g_starts[k * START_WORDS];
+    Block *b = &gc_heap.blocks[k];
+    b->base = gc_heap.base + (k << BLOCK_SHIFT);
+    b->line_mark = &gc_heap.lines[k * LINES_PER_BLOCK];
+    b->start = &gc_heap.starts[k * START_WORDS];
     b->in_use = 0;
   }
-  memset(&g_chunks[c], 0, sizeof(GcChunk));
-  g_chunks[c].kind = CHUNK_FREE;
-  g_heap_committed += CHUNK_SIZE;
+  memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
+  gc_heap.chunks[c].kind = CHUNK_FREE;
+  gc_heap.committed += CHUNK_SIZE;
   return c;
 }
 
@@ -320,37 +293,37 @@ uint64_t gc_chunk_take(uint64_t n) {
   uint64_t hw;
   uint64_t c;
   uint64_t run = 0;
-  if (!g_heap_base) {
+  if (!gc_heap.base) {
     gc_heap_reserve();
   }
-  hw = g_heap_committed >> CHUNK_SHIFT;
-  if (g_free_chunks >= n) {
+  hw = gc_heap.committed >> CHUNK_SHIFT;
+  if (gc_heap.free_chunks >= n) {
     for (c = 0; c < hw; c++) {
-      if (g_chunks[c].kind != CHUNK_FREE) {
+      if (gc_heap.chunks[c].kind != CHUNK_FREE) {
         run = 0;
         continue;
       }
       if (++run == n) {
         uint64_t first = c + 1 - n;
         uint64_t k;
-        g_free_chunks -= n;
+        gc_heap.free_chunks -= n;
         for (k = first; k <= c; k++) {
           uint64_t b;
           /* A decommitted chunk's data is read-write again (zero); its
            * side slices were madvised (zero) and its records keep their
            * addresses. A reused chunk's mark bits may be stale: a full
            * collection clears only the chunks in use when it starts. */
-          if (g_chunks[k].decommitted) {
+          if (gc_heap.chunks[k].decommitted) {
             if (!commit(chunk_base(k), CHUNK_SIZE)) {
               gc_die("out of memory (a heap chunk could not be committed)");
             }
-            g_chunks[k].decommitted = 0;
+            gc_heap.chunks[k].decommitted = 0;
           } else {
-            memset(&g_marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+            memset(&gc_heap.marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
           }
           for (b = k * BLOCKS_PER_CHUNK; b < (k + 1) * BLOCKS_PER_CHUNK; b++) {
-            g_blocks[b].in_use = 0;
-            g_blocks[b].clean = 0;
+            gc_heap.blocks[b].in_use = 0;
+            gc_heap.blocks[b].clean = 0;
           }
         }
         return first;
@@ -367,12 +340,12 @@ uint64_t gc_chunk_take(uint64_t n) {
 /* Chunk C back to CHUNK_FREE (its data stays committed; dirty unless
  * the caller returned its pages). */
 void gc_chunk_give(uint64_t c) {
-  uint8_t was = g_chunks[c].kind;
-  memset(&g_chunks[c], 0, sizeof(GcChunk));
-  g_chunks[c].kind = CHUNK_FREE;
-  g_chunks[c].dirty = was != CHUNK_FREE;
-  g_chunks[c].idle = (uint32_t)g_stats.full_collections;
-  g_free_chunks++;
+  uint8_t was = gc_heap.chunks[c].kind;
+  memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
+  gc_heap.chunks[c].kind = CHUNK_FREE;
+  gc_heap.chunks[c].dirty = was != CHUNK_FREE;
+  gc_heap.chunks[c].idle = (uint32_t)avant_g_stats.full_collections;
+  gc_heap.free_chunks++;
 }
 
 /* Give the pages of [P, P + LEN) back to the OS (page-aligned): they stay
@@ -388,7 +361,7 @@ void gc_return_pages(void *p, size_t len) {
 static uint64_t make_small_chunk(void) {
   uint64_t c = gc_chunk_take(1);
   uint64_t b0 = c * BLOCKS_PER_CHUNK;
-  GcChunk *ch = &g_chunks[c];
+  GcChunk *ch = &gc_heap.chunks[c];
   int dirty = ch->dirty;
   int i;
   ch->kind = CHUNK_SMALL;
@@ -397,17 +370,17 @@ static uint64_t make_small_chunk(void) {
   ch->free = NULL;
   ch->nfree = BLOCKS_PER_CHUNK;
   for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
-    Block *b = &g_blocks[b0 + (uint64_t)i];
+    Block *b = &gc_heap.blocks[b0 + (uint64_t)i];
     b->in_use = 0;
     b->clean = dirty ? 0 : 1;
     b->next = ch->free;
     ch->free = b;
   }
   if (dirty) {
-    g_free_resident += CHUNK_SIZE;
+    gc_heap.free_resident += CHUNK_SIZE;
   }
-  if (c < g_small_hint) {
-    g_small_hint = c;
+  if (c < gc_heap.small_hint) {
+    gc_heap.small_hint = c;
   }
   return c;
 }
@@ -415,34 +388,34 @@ static uint64_t make_small_chunk(void) {
 /* A free block, its start bits and line marks clear, not yet in use
  * (gc_new_block makes it so): from the lowest small chunk that has one.
  * Never fails: past the reservation it dies. Memory is not charged
- * here; g_heap_bytes is gc_new_block's. */
+ * here; gc_heap.heap_bytes is gc_new_block's. */
 Block *gc_block_take(void) {
   Block *b;
   GcChunk *ch = NULL;
   uint64_t hw;
   uint64_t c;
-  if (!g_heap_base) {
+  if (!gc_heap.base) {
     gc_heap_reserve();
   }
-  hw = g_heap_committed >> CHUNK_SHIFT;
-  for (c = g_small_hint; c < hw; c++) {
-    if (g_chunks[c].kind == CHUNK_SMALL && g_chunks[c].nfree) {
-      ch = &g_chunks[c];
+  hw = gc_heap.committed >> CHUNK_SHIFT;
+  for (c = gc_heap.small_hint; c < hw; c++) {
+    if (gc_heap.chunks[c].kind == CHUNK_SMALL && gc_heap.chunks[c].nfree) {
+      ch = &gc_heap.chunks[c];
       break;
     }
   }
   if (!ch) {
     c = make_small_chunk();
-    ch = &g_chunks[c];
+    ch = &gc_heap.chunks[c];
   }
-  g_small_hint = c;
+  gc_heap.small_hint = c;
   b = ch->free;
   ch->free = b->next;
   ch->nfree--;
   ch->used++;
   b->next = NULL;
   if (!b->clean) {
-    g_free_resident -= BLOCK_SIZE;
+    gc_heap.free_resident -= BLOCK_SIZE;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -453,21 +426,21 @@ Block *gc_block_take(void) {
 /* Back to its chunk's free list (the block must already be out of use).
  * Its memory stays resident until gc_heap_return. */
 void gc_block_give(Block *b) {
-  uint64_t c = (uint64_t)(b->base - g_heap_base) >> CHUNK_SHIFT;
-  GcChunk *ch = &g_chunks[c];
+  uint64_t c = (uint64_t)(b->base - gc_heap.base) >> CHUNK_SHIFT;
+  GcChunk *ch = &gc_heap.chunks[c];
   b->in_use = 0;
   b->clean = 0;
-  b->idle = g_stats.full_collections;
+  b->idle = avant_g_stats.full_collections;
   ch->used--;
   if (ch->used == 0) {
-    ch->idle = (uint32_t)g_stats.full_collections;
+    ch->idle = (uint32_t)avant_g_stats.full_collections;
   }
   b->next = ch->free;
   ch->free = b;
   ch->nfree++;
-  g_free_resident += BLOCK_SIZE;
-  if (c < g_small_hint) {
-    g_small_hint = c;
+  gc_heap.free_resident += BLOCK_SIZE;
+  if (c < gc_heap.small_hint) {
+    gc_heap.small_hint = c;
   }
 }
 
@@ -476,7 +449,7 @@ void gc_block_give(Block *b) {
  * it is CHUNK_FREE. Its block records stay (they hold only addresses). */
 static void decommit_chunk(uint64_t c) {
   uint64_t b0 = c * BLOCKS_PER_CHUNK;
-  uint8_t kind = g_chunks[c].kind;
+  uint8_t kind = gc_heap.chunks[c].kind;
   if (kind == CHUNK_LARGE) {
     gc_large_chunk_gone(c);
   }
@@ -485,19 +458,19 @@ static void decommit_chunk(uint64_t c) {
   }
   gc_return_pages(chunk_base(c), CHUNK_SIZE);
   mprotect(chunk_base(c), CHUNK_SIZE, PROT_NONE);
-  gc_return_pages(&g_starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
-  gc_return_pages(&g_marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
-  gc_return_pages(&g_lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK);
-  gc_return_pages(&g_pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t));
-  g_chunks[c].dirty = 0;
-  g_chunks[c].decommitted = 1;
+  gc_return_pages(&gc_heap.starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
+  gc_return_pages(&gc_heap.marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
+  gc_return_pages(&gc_heap.lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK);
+  gc_return_pages(&gc_heap.pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t));
+  gc_heap.chunks[c].dirty = 0;
+  gc_heap.chunks[c].decommitted = 1;
 }
 
 /* The resident free bytes of chunk C: free blocks not madvised, the
  * dirty free pages of a large-object chunk, or a free chunk's whole data
  * while it is dirty. */
 static uint64_t chunk_resident_free(uint64_t c) {
-  GcChunk *ch = &g_chunks[c];
+  GcChunk *ch = &gc_heap.chunks[c];
   uint64_t n = 0;
   if (ch->kind == CHUNK_SMALL) {
     Block *b;
@@ -532,8 +505,8 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * dirty free pages of large-object chunks. */
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
-  uint64_t hw = g_heap_committed >> CHUNK_SHIFT;
-  uint64_t now = g_stats.full_collections;
+  uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
+  uint64_t now = avant_g_stats.full_collections;
   uint64_t total = 0;
   uint64_t c;
   if (!hw) {
@@ -543,7 +516,7 @@ void gc_heap_return(uint64_t live) {
     total += chunk_resident_free(c);
   }
   for (c = hw; c-- > 0;) {
-    GcChunk *ch = &g_chunks[c];
+    GcChunk *ch = &gc_heap.chunks[c];
     int empty = ((ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0) ||
                 (ch->kind == CHUNK_FREE && !ch->decommitted);
     uint64_t r;
@@ -553,21 +526,21 @@ void gc_heap_return(uint64_t live) {
     r = chunk_resident_free(c);
     if (r == 0 || total > keep) {
       if (ch->kind == CHUNK_SMALL) {
-        g_free_resident -= r;
+        gc_heap.free_resident -= r;
       }
       total -= r;
       decommit_chunk(c);
     }
   }
   for (c = hw; c-- > 0 && total > keep;) {
-    GcChunk *ch = &g_chunks[c];
+    GcChunk *ch = &gc_heap.chunks[c];
     if (ch->kind == CHUNK_SMALL) {
       Block *b;
       for (b = ch->free; b && total > keep; b = b->next) {
         if (!b->clean && b->idle < now) {
           gc_return_pages(b->base, BLOCK_SIZE);
           b->clean = 1;
-          g_free_resident -= BLOCK_SIZE;
+          gc_heap.free_resident -= BLOCK_SIZE;
           total -= BLOCK_SIZE;
         }
       }
@@ -627,12 +600,12 @@ int is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
     return 0;
   }
   g = off >> 3;
-  if (!((g_starts[g >> 6] >> (g & 63)) & 1ULL)) {
+  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL)) {
     return 0;
   }
-  kind = g_chunks[off >> CHUNK_SHIFT].kind;
+  kind = gc_heap.chunks[off >> CHUNK_SHIFT].kind;
   if (kind == CHUNK_SMALL) {
-    Block *b = &g_blocks[off >> BLOCK_SHIFT];
+    Block *b = &gc_heap.blocks[off >> BLOCK_SHIFT];
     if (!b->in_use) {
       return 0;
     }
@@ -662,10 +635,10 @@ int is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
  * its head chunk. The header is 8 bytes into the run's first page. */
 static AvantHeader *large_holding(uintptr_t off) {
   uint64_t c = off >> CHUNK_SHIFT;
-  const GcChunk *ch = &g_chunks[c];
+  const GcChunk *ch = &gc_heap.chunks[c];
   uint8_t *hs;
   if (ch->kind == CHUNK_LARGE) {
-    uint32_t v = g_pages[off >> PAGE_SHIFT];
+    uint32_t v = gc_heap.pages[off >> PAGE_SHIFT];
     if (!v) {
       return NULL;
     }
@@ -700,8 +673,8 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
   if (!p || !heap_offset(p, &off)) {
     return NULL;
   }
-  if (g_chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
-    Block *b = &g_blocks[off >> BLOCK_SHIFT];
+  if (gc_heap.chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
+    Block *b = &gc_heap.blocks[off >> BLOCK_SHIFT];
     uint8_t *addr = (uint8_t *)p;
     size_t g;
     size_t w;
@@ -798,10 +771,10 @@ void gc_zero_line_marks(Block *list) {
  * walk over every object's header (gc-design.md §2.2). */
 void gc_clear_side_marks(void) {
   uint64_t c;
-  uint64_t n = g_heap_committed >> CHUNK_SHIFT;
+  uint64_t n = gc_heap.committed >> CHUNK_SHIFT;
   for (c = 0; c < n; c++) {
-    if (g_chunks[c].kind != CHUNK_FREE) {
-      memset(&g_marks[c * BLOCKS_PER_CHUNK * START_WORDS], 0, BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t));
+    if (gc_heap.chunks[c].kind != CHUNK_FREE) {
+      memset(&gc_heap.marks[c * BLOCKS_PER_CHUNK * START_WORDS], 0, BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t));
     }
   }
 }
@@ -823,7 +796,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   if (type_id >= MAX_TYPES) {
     gc_die("type id too large");
   }
-  TypeMap *m = &g_types[type_id];
+  TypeMap *m = &gc_heap.types[type_id];
   if (m->words && m->words != &m->first) {
     free(m->words);
   }
@@ -832,7 +805,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   m->nchunks = 1;
   m->stride = 0;
   m->nrefs = (uint32_t)__builtin_popcountll(word_bits);
-  g_type_set[type_id] = 1;
+  gc_heap.type_set[type_id] = 1;
 }
 
 /* Stage 28 W1b. Registers bits for payload words word_base ..
@@ -852,15 +825,15 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
   if (word_base % 64 != 0) {
     gc_die("type map chunk is not 64-word aligned");
   }
-  TypeMap *m = &g_types[type_id];
+  TypeMap *m = &gc_heap.types[type_id];
   uint32_t chunk = word_base / 64;
-  if (!g_type_set[type_id]) {
+  if (!gc_heap.type_set[type_id]) {
     m->first = 0;
     m->words = &m->first;
     m->nchunks = 1;
     m->stride = stride_words;
     m->nrefs = 0;
-    g_type_set[type_id] = 1;
+    gc_heap.type_set[type_id] = 1;
   } else if (m->stride != stride_words) {
     gc_die("type map stride changed");
   }

@@ -30,13 +30,13 @@ static void mark(void *p) {
   }
   full_set_mark(h);
   mark_object_lines(start);
-  g_live += obj_total(h);
+  gc_heap.live += obj_total(h);
   work_push(start);
 }
 
 static void drain(void) {
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
+  while (gc_heap.work_n) {
+    void *p = gc_heap.work[--gc_heap.work_n];
     scan_payload(p);
   }
 }
@@ -54,8 +54,8 @@ static void scan_payload(void *p) {
 void gc_mark_roots(void) {
   ThreadReg *t;
   uint32_t i;
-  pthread_mutex_lock(&g_threads_mu);
-  for (t = g_threads; t; t = t->next) {
+  pthread_mutex_lock(&gc_heap.threads_mu);
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
@@ -63,8 +63,8 @@ void gc_mark_roots(void) {
       }
     }
   }
-  pthread_mutex_unlock(&g_threads_mu);
-  for (PinEnt *p = g_pins; p; p = p->next) {
+  pthread_mutex_unlock(&gc_heap.threads_mu);
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     mark(p->payload);
   }
   avant_hash_walk_tls(mark_tls_slot);
@@ -109,11 +109,9 @@ void gc_filter_blocks(Block **list, int (*keep)(Block *)) {
   *list = kept;
 }
 
-uint64_t g_mark_sum;
-
 void gc_sum_marked_one(AvantHeader *h, Block *b) {
   (void)b;
   if (full_marked(h)) {
-    g_mark_sum += obj_total(h);
+    gc_heap.mark_sum += obj_total(h);
   }
 }
