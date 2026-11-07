@@ -10,6 +10,7 @@
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
+ *   avant_gc_stack.c
  *   avant_gc_verify.c
  *   avant_gc_stats.c
  *   avant_gc_stackmap.c
@@ -189,6 +190,15 @@ typedef struct BlockSet {
  * stack stays young so the next collection can free it. */
 #define AVANT_FLAG_LOS_KEEP 128u
 
+/* avant_gc_stack.c */
+extern int g_stack_scan;
+extern BlockSet g_cstack_blocks;
+void gc_note_c_stack_blocks(void);
+void copy_from_c_stack(void);
+void gc_rewrite_if_forwarded(void **slot);
+void rewrite_c_stack(void);
+void count_c_stack_nursery(void);
+
 /* avant_gc_verify.c */
 extern int g_verify;
 void gc_verify_young_copy(void);
@@ -259,12 +269,9 @@ extern uint64_t g_sm_walks;
 extern uint64_t g_sm_hits;
 extern uint64_t g_sm_leftover;
 extern uint32_t g_sm_nsites;
-void copy_from_c_stack(void);
 void sm_init(void);
 void copy_from_stackmaps(void);
 void rewrite_from_stackmaps(void);
-void rewrite_c_stack(void);
-void count_c_stack_nursery(void);
 
 /* avant_rt.c */
 extern int g_inited;
@@ -281,7 +288,6 @@ extern __thread ThreadReg g_self_reg;
 extern ThreadReg *g_threads;
 extern atomic_int g_avant_shared;
 extern pthread_mutex_t g_threads_mu;
-extern int g_stack_scan;
 extern PinEnt *g_pins;
 extern void **g_remset;
 extern uint32_t g_rem_n;
@@ -305,6 +311,8 @@ void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void mark_object_lines(void *p);
 void *copy_nursery(void *p);
 void copy_from_slot(void **slot);
+void gc_block_set_add(BlockSet *s, Block *b);
+void gc_block_set_seal(BlockSet *s);
 int gc_block_set_has(const BlockSet *s, const Block *b);
 void gc_init_slow(void);
 
