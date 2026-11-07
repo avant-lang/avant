@@ -140,8 +140,9 @@
  * ("avant runtime: warning: ...") and the default applies.
  *
  *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
- *                          generation's threshold in MiB, fixed; 0 is the
- *                          adaptive threshold (16 MiB to start)
+ *                          generation's budget in MiB, fixed; 0 is the
+ *                          adaptive budget (8 MiB to start, within 4 to
+ *                          64 MiB; gc-design.md section 5.2)
  *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
  *                          MiB ("heap limit" past it); 0 is no limit
  *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's

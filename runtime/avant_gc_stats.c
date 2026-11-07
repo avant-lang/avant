@@ -170,7 +170,12 @@ static void print_prom(StatsLine *l) {
 
 static void print_sp(StatsLine *l) {
   const GcSpCounters *c = &gc_heap.ctr.sp;
-  line_add(l, "sp_calls=%llu sp_collections=%llu\n", u(c->calls), u(c->collections));
+  line_add(l, "sp_calls=%llu sp_collections=%llu ", u(c->calls), u(c->collections));
+}
+
+static void print_size(StatsLine *l) {
+  const GcSizeCounters *c = &gc_heap.ctr.size;
+  line_add(l, "young_grows=%llu young_shrinks=%llu\n", u(c->grows), u(c->shrinks));
 }
 
 void gc_print_stats(void) {
@@ -188,6 +193,7 @@ void gc_print_stats(void) {
   print_frag(&l);
   print_prom(&l);
   print_sp(&l);
+  print_size(&l);
   fwrite(l.buf, 1, l.n, stderr);
 }
 

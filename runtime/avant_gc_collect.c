@@ -32,29 +32,23 @@ uint64_t avant_young_bytes;
 
 uint64_t avant_nursery_held;
 
-/* Survival-capped growth and copy reserve (Collector II Wave 4, step 2,
- * as amended by Q-W4-6): sticky growth of the young threshold is capped
- * at YOUNG_SURVIVAL_FACTOR times the probe's measured survival, plus
- * slack, because the uncapped growth to 42 MiB on trees was the peak
- * heap driver while a typical probe survives only a few MiB. The
- * dead-based shrink after low-survival copies stays as it was: sizing
- * the nursery from survival alone was measured at factors 2, 1.5, and
- * 1.25 and lost at every one (wall up 26-36% on trees, copied bytes
- * doubled, the peak itself worse at the two smaller factors), because
- * a smaller nursery tenures partly-built trees into mature space. The
- * reserve is the same survival-scaled amount, charged as already spent
- * by heap-limit decisions outside a collection so a copy always has
- * its room; inside a collection the reserve is being spent and is not
- * charged. (Their kill switches, AVANT_GC_YOUNG_SIZING and
- * AVANT_GC_COPY_RESERVE, are retired since Stage 28 W14b2.) */
-#define YOUNG_SURVIVAL_FACTOR 1.5
-#define YOUNG_SIZING_FLOOR (4ull * 1024ull * 1024ull)
-#define YOUNG_SIZING_SLACK (1ull * 1024ull * 1024ull)
-
-/* A depth-20 object tree is about 96 MiB. The nursery grows to hold one
- * burst and collects when that burst has died. 192 MiB is the cap. */
-#define YOUNG_BYTES_MAX (192ull * 1024ull * 1024ull)
-#define STICKY_MIN (8ull * 1024ull * 1024ull)
+/* Young sizing (Stage 28 W15a1, gc-design.md §5.2; O28 done in W14b1).
+ * The young budget starts at YOUNG_BYTES_DEFAULT (8 MiB; Q3 chooses the
+ * default later) and adapts within [YOUNG_BYTES_MIN, YOUNG_BYTES_CAP]
+ * after every young collection the policy runs (young_size): it doubles
+ * when more than half of the young bytes survived and the pause per
+ * surviving byte rose against the previous young collection, and halves
+ * back toward the default when less than a tenth survived.
+ * AVANT_YOUNG_MB fixes it (tests). Retired with this rule: the survival
+ * probe (a second trace of the live young graph before each copy), the
+ * sticky pause that raised the budget instead of copying, the dead-based
+ * resize and the 192 MiB cap. The copy reserve is the last young
+ * collection's survival times RESERVE_FACTOR, charged as already spent
+ * by heap-limit decisions outside a collection so a copy has its room;
+ * inside a collection the reserve is being spent and is not charged. */
+#define YOUNG_BYTES_MIN (4ull * 1024ull * 1024ull)
+#define YOUNG_BYTES_CAP (64ull * 1024ull * 1024ull)
+#define RESERVE_FACTOR 1.5
 
 /* The settings' one parsing rule (Stage 28 W14b2, O40; the knobs are
  * listed in avant_gc.h). A knob that is unset or empty takes its
@@ -136,52 +130,27 @@ static void gc_settings_read(GcSettings *s) {
 
 _Atomic uint32_t g_avant_str_gen;
 
-/* Return 1 if the nursery should be left in place and the threshold raised.
- * A live object tree larger than the nursery used to be promoted and then
- * retraced. Waiting until that tree is dead costs a mark and no copy. */
-static int young_pause(uint64_t used, uint64_t surv) {
-  uint64_t dead;
-  uint64_t next;
-  if (gc_heap.set.heap_max && gc_heap.heap_bytes + avant_young_bytes > gc_heap.set.heap_max) {
-    return 0;
+/* §5.2's rule, after a young collection that saw USED young bytes and
+ * SURV surviving ones in PAUSE_NS. */
+static void young_size(uint64_t used, uint64_t surv, uint64_t pause_ns) {
+  double per_byte;
+  if (used == 0) {
+    return;
   }
-  if (gc_heap.set.heap_max &&
-      gc_heap.heap_bytes + avant_young_bytes + gc_heap.copy_reserve > gc_heap.set.heap_max) {
-    /* Pausing would leave the nursery in place with no copy room
-     * under the limit; copy instead (Wave 4 reserve, Q-W4-2). */
-    return 0;
-  }
-  dead = used > surv ? used - surv : 0;
-  if (dead >= STICKY_MIN && dead >= surv) {
-    next = used + (dead - surv) + (64ull * 1024ull);
-  } else {
-    next = avant_young_bytes * 2;
-    if (next < used * 2) {
-      next = used * 2;
+  per_byte = surv ? (double)pause_ns / (double)surv : 0.0;
+  if (surv * 2 > used) {
+    if (gc_heap.young_per_byte > 0.0 && per_byte > gc_heap.young_per_byte &&
+        avant_young_bytes < YOUNG_BYTES_CAP) {
+      avant_young_bytes = avant_young_bytes * 2 > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP
+                                                                 : avant_young_bytes * 2;
+      gc_heap.ctr.size.grows++;
     }
+  } else if (surv * 10 < used && avant_young_bytes > YOUNG_BYTES_DEFAULT) {
+    avant_young_bytes = avant_young_bytes / 2 < YOUNG_BYTES_DEFAULT ? YOUNG_BYTES_DEFAULT
+                                                                   : avant_young_bytes / 2;
+    gc_heap.ctr.size.shrinks++;
   }
-  if (next > YOUNG_BYTES_MAX) {
-    next = YOUNG_BYTES_MAX;
-  }
-  /* Survival cap (Wave 4 step 2, Q-W4-6): growth may not outrun what
-   * the probe just saw survive by more than the factor and slack.
-   * The floor keeps a minimum working nursery when survival reads
-   * near zero; a cap at or below the current threshold simply means
-   * no growth this time, so the copy proceeds instead of pausing. */
-  uint64_t cap =
-      (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv) + YOUNG_SIZING_SLACK;
-  if (cap < YOUNG_SIZING_FLOOR) {
-    cap = YOUNG_SIZING_FLOOR;
-  }
-  if (next > cap) {
-    next = cap;
-  }
-  if (next <= avant_young_bytes) {
-    return 0;
-  }
-  avant_young_bytes = next;
-  gc_heap.ctr.yng.sticky++;
-  return 1;
+  gc_heap.young_per_byte = per_byte;
 }
 
 static uint64_t now_ns(void) {
@@ -253,9 +222,6 @@ static void frag_note(void) {
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   uint64_t t0 = now_ns();
-  int pause = 0;
-  uint64_t used = 0;
-  uint64_t surv = 0;
   if (gc_heap.collecting) {
     gc_die("GC reentered");
   }
@@ -294,66 +260,23 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   __builtin_unwind_init();
 #endif
   if (!full) {
-    if (gc_heap.set.young_fixed) {
-      avant_g_stats.young_collections++;
-      gc_young_copy_out(1);
-    } else if (gc_heap.stress_now) {
-      /* A stress point copies: no survival probe, no pause, no sizing
-       * decision, so every stress point moves what it reaches. */
-      avant_g_stats.young_collections++;
-      gc_young_copy_out(0);
-    } else {
-      used = avant_nursery_held;
-      if (used >= STICKY_MIN) {
-        gc_heap.probe = 1;
-        gc_heap.probe_nursery_bytes = 0;
-        gc_gen_young_copy();
-        gc_heap.probe = 0;
-        surv = gc_heap.probe_nursery_bytes;
-        gc_heap.ctr.srv.probes++;
-        gc_heap.ctr.srv.used += used;
-        gc_heap.ctr.srv.surv += surv;
-        if (gc_heap.ctr.srv.probes == 1 || surv < gc_heap.ctr.srv.min) {
-          gc_heap.ctr.srv.min = surv;
-        }
-        if (surv > gc_heap.ctr.srv.max) {
-          gc_heap.ctr.srv.max = surv;
-        }
-        {
-          uint64_t pct = used ? (surv * 100) / used : 0;
-          int bucket = pct == 0 ? 0 : pct <= 10 ? 1 : pct <= 25 ? 2 : pct <= 50 ? 3 : pct <= 75 ? 4 : 5;
-          gc_heap.ctr.srv.hist[bucket]++;
-        }
-        gc_heap.copy_reserve = (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
-        gc_rem_scrub();
-        gc_reclaim_young_large();
-        gc_clear_noted();
-        gc_heap.work_n = 0;
-        if (surv * 2 > used) {
-          pause = young_pause(used, surv);
-        }
-      }
-      if (!pause) {
-        int tenure = 0;
-        avant_g_stats.young_collections++;
-        if (used >= STICKY_MIN && surv * 2 > used) {
-          /* Cap reached, or the heap cannot grow. The graph is live.
-           * Tenure it so the next cycle does not trace it again. */
-          tenure = 1;
-        }
-        gc_young_copy_out(tenure);
-        if (!gc_heap.set.young_fixed && used >= STICKY_MIN && surv * 2 <= used &&
-            used > surv && (used - surv) >= STICKY_MIN) {
-          uint64_t dead = used - surv;
-          uint64_t next = dead + (64ull * 1024ull);
-          if (next > YOUNG_BYTES_MAX) {
-            next = YOUNG_BYTES_MAX;
-          }
-          if (next >= STICKY_MIN) {
-            avant_young_bytes = next;
-          }
-        }
-      }
+    /* One young collection: no probe, no pause. Survival is what the
+     * copy moved plus the young large objects it reached; a stress
+     * point (always copying) and a fixed budget make no sizing decision,
+     * and a fixed budget tenures every survivor as before. */
+    uint64_t used = avant_nursery_held;
+    uint64_t copied0 = avant_g_stats.copied_bytes;
+    uint64_t large0 = gc_heap.ctr.prom.large;
+    uint64_t pinned0 = gc_heap.ctr.prom.pinned;
+    uint64_t y0 = now_ns();
+    uint64_t surv;
+    avant_g_stats.young_collections++;
+    gc_young_copy_out(gc_heap.set.young_fixed ? 1 : 0);
+    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.large - large0) +
+           (gc_heap.ctr.prom.pinned - pinned0) + gc_heap.young_large;
+    gc_heap.copy_reserve = (uint64_t)(RESERVE_FACTOR * (double)surv);
+    if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
+      young_size(used, surv, now_ns() - y0);
     }
   } else {
     Block *b;
@@ -459,6 +382,21 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   gc_heap.collecting = 0;
 }
 
+/* Under AVANT_HEAP_MAX_MB, whether a young copy surely fits: the bytes it
+ * may copy (every nursery byte, at worst; young large objects do not
+ * move) on top of the heap stay under the limit. The survival probe and
+ * the sticky pause made this decision before (they are retired, Stage 28
+ * W15a1); a copy that does not fit runs as a full collection instead,
+ * which moves no young object and needs no room. */
+static int young_copy_fits(void) {
+  uint64_t copy;
+  if (!gc_heap.set.heap_max) {
+    return 1;
+  }
+  copy = avant_nursery_held > gc_heap.young_large ? avant_nursery_held - gc_heap.young_large : 0;
+  return gc_heap.heap_bytes + copy <= gc_heap.set.heap_max;
+}
+
 void gc_maybe_collect(void) {
   if (gc_heap.collecting || gc_heap.defer) {
     return;
@@ -493,7 +431,11 @@ void gc_maybe_collect(void) {
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
-    gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
+    if (young_copy_fits()) {
+      gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
+    } else {
+      gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
+    }
   }
 }
 
@@ -503,7 +445,7 @@ void gc_maybe_collect(void) {
  * only with a young generation to collect. */
 void gc_stress_point(void) {
   if (!gc_heap.set.stress || gc_heap.collecting || gc_heap.defer || gc_heap.set.nursery_off ||
-      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || !young_copy_fits()) {
     return;
   }
   gc_heap.stress_now = 1;
@@ -610,7 +552,7 @@ void avant_nursery_reclaim(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
   if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
-    gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
+    gc_collect(young_copy_fits() ? GC_YOUNG : GC_FULL, 1, GC_WHY_EXPLICIT);
   }
   pthread_mutex_unlock(&gc_heap.world);
 }

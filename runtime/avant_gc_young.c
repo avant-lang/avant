@@ -11,10 +11,11 @@
 
 /* The young collection (Stage 28 W12, moved from avant_rt.c): the
  * copying nursery's evacuation (gc_copy_from_slot, gc_copy_nursery, the mature
- * and remembered tracing it needs), the survival probe that shares its
- * walk, pinned nursery objects promoted in place (C29), the release or
- * parking of from-space, and gc_young_copy_out, the whole young pass. When to
- * run it and how large the nursery is are avant_gc_collect.c's. */
+ * and remembered tracing it needs), pinned nursery objects promoted in
+ * place (C29), the release of from-space, and gc_young_copy_out, the whole
+ * young pass. When to run it and how large the nursery is are
+ * avant_gc_collect.c's (the survival probe that shared this walk is
+ * retired since Stage 28 W15a1). */
 
 static void note_marked(void *payload) {
   if (gc_heap.noted_n == gc_heap.noted_cap) {
@@ -31,17 +32,6 @@ void gc_clear_noted(void) {
         (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
   }
   gc_heap.noted_n = 0;
-}
-
-static void probe_note(void *start) {
-  AvantHeader *h = avant_header(start);
-  if (h->flags & AVANT_FLAG_MARKED) {
-    return;
-  }
-  h->flags |= AVANT_FLAG_MARKED;
-  note_marked(start);
-  gc_heap.probe_nursery_bytes += gc_obj_total(h);
-  gc_work_push(start);
 }
 
 /* The slot now names a young object. If that slot lives in a mature
@@ -145,9 +135,6 @@ static void trace_mature(void *p, int from_mature) {
 
 void *gc_copy_nursery(void *p) {
   Block *b = NULL;
-  if (gc_heap.probe) {
-    gc_die("probe copied");
-  }
   if (!gc_is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
     return p;
   }
@@ -203,19 +190,10 @@ void gc_copy_from_slot(void **slot) {
   if (!start) {
     return;
   }
-  if (start != p && !gc_heap.probe) {
+  if (start != p) {
     gc_heap.ctr.root.interiors++;
   }
   if (b && b->space == SPACE_NURSERY) {
-    if (gc_heap.probe) {
-      /* A nursery child is a young edge by definition; the probe must
-       * record it, or the frontier would evict this parent as clean. */
-      if (gc_heap.rem_track) {
-        gc_heap.rem_track_dirty = 1;
-      }
-      probe_note(start);
-      return;
-    }
     ptrdiff_t delta = (uint8_t *)p - (uint8_t *)start;
     void *np = gc_copy_nursery(start);
     *slot = (uint8_t *)np + delta;
@@ -276,9 +254,7 @@ static uint64_t rem_field_count(void *p) {
 }
 
 void gc_gen_young_copy(void) {
-  if (!gc_heap.probe) {
-    gc_fwd_reset();
-  }
+  gc_fwd_reset();
   gc_heap.saw_pinned_nursery = 0;
   gc_heap.from_mature = 0;
   gc_heap.work_n = 0;
@@ -289,9 +265,7 @@ void gc_gen_young_copy(void) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
-        if (!gc_heap.probe) {
-          relocate_root_location(&f->slots[i]);
-        }
+        relocate_root_location(&f->slots[i]);
         gc_copy_from_slot(f->slots[i]);
       }
     }
@@ -317,9 +291,9 @@ void gc_gen_young_copy(void) {
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
       void *obj = gc_heap.remset[ri];
       if (gc_is_heap_payload(obj, NULL, NULL)) {
-        /* A remembered object is a root this cycle: mark it so the
-         * probe pass's gc_rem_scrub keeps it in the set (noted, so the
-         * mark ends with the collection, C36). */
+        /* A remembered object is a root this cycle: marked (and noted,
+         * so the mark ends with the collection, C36) like every object
+         * the collection scans. */
         if (!(avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
           avant_header(obj)->flags |= AVANT_FLAG_MARKED;
           note_marked(obj);
@@ -352,9 +326,6 @@ void gc_gen_young_copy(void) {
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
     copy_payload_children(p);
-  }
-  if (gc_heap.probe) {
-    return;
   }
   /*
    * Every copied object is in the forwarding table now: rewrite the

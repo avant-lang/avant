@@ -17,7 +17,7 @@
  *                       path's state, avant_alloc and avant_bump_alloc
  *   avant_gc_los.c      the large-object space
  *   avant_gc_remset.c   the remembered set and the store barriers
- *   avant_gc_young.c    the young collection (copying nursery, probe,
+ *   avant_gc_young.c    the young collection (copying nursery,
  *                       pinned objects promoted in place)
  *   avant_gc_mark.c     the full collection's mark and block sweep
  *   avant_gc_defrag.c   mature defragmentation, block sets
@@ -80,7 +80,7 @@
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
-#define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
+#define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
 #define FULL_BYTES (32u * 1024u * 1024u)
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
@@ -359,7 +359,9 @@ typedef struct GcDefCounters {
  * the nursery bytes in use and the surviving bytes at each probe,
  * min/max are the extreme surviving-byte readings, and hist buckets the
  * surv/used ratio in percent (0, 1-10, 10-25, 25-50, 50-75, 75-100) so
- * phase oscillation is visible. */
+ * phase oscillation is visible. The probe is retired since Stage 28
+ * W15a1 (gc-design.md §5.2): the family stays in the statistics line,
+ * always 0. */
 typedef struct GcSrvCounters {
   uint64_t probes;
   uint64_t used;
@@ -371,8 +373,9 @@ typedef struct GcSrvCounters {
 
 /* yng: min/max bound the adaptive young threshold over the run.
  * cpy_peak is the largest from-space plus to-space object bytes held
- * during one young copy. sticky counts the threshold's sticky growths
- * (young_pause). */
+ * during one young copy. sticky counted the threshold's sticky growths
+ * (young_pause, retired since Stage 28 W15a1: always 0; ctr.size counts
+ * the adaptations). */
 typedef struct GcYngCounters {
   uint64_t min;
   uint64_t max;
@@ -493,6 +496,13 @@ typedef struct GcSpCounters {
   uint64_t collections;
 } GcSpCounters;
 
+/* size: the young budget's adaptations (gc-design.md §5.2, young_size in
+ * avant_gc_collect.c): doublings and halvings. */
+typedef struct GcSizeCounters {
+  uint64_t grows;
+  uint64_t shrinks;
+} GcSizeCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -506,6 +516,7 @@ typedef struct GcCounters {
   GcFragCounters frag;
   GcPromCounters prom;
   GcSpCounters sp;
+  GcSizeCounters size;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
   /* The cumulative count of stack words still naming from-space after
@@ -673,10 +684,8 @@ typedef struct GcHeap {
   uint32_t noted_n;
   uint32_t noted_cap;
   uint64_t to_bytes;
-  int probe;
   int force_tenure;
   int from_mature;
-  uint64_t probe_nursery_bytes;
   int from_heap_slot;
   /* Set while a remembered object is being scanned: gc_copy_from_slot then
    * records whether any direct field names a young object afterwards. */
@@ -741,6 +750,9 @@ typedef struct GcHeap {
   /* The copy reserve (Wave 4 step 2): the room the next young copy needs,
    * charged as spent by heap-limit decisions outside a collection. */
   uint64_t copy_reserve;
+  /* The last young collection's pause per surviving byte (ns), for
+   * young_size (gc-design.md §5.2). */
+  double young_per_byte;
   /* Mature growth that triggers the next full collection. Starts at
    * FULL_BYTES and adapts after every full collection to twice the
    * live set plus slack, so a program with a small live set and heavy
@@ -854,7 +866,6 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 
 /* avant_gc_remset.c */
 void gc_keep_add(void *obj);
-void gc_rem_scrub(void);
 void gc_rem_commit_kept(void);
 void gc_rem_full_scrub(void);
 
