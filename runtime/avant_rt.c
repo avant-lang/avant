@@ -20,7 +20,7 @@ typedef struct FwdEnt {
 } FwdEnt;
 
 int g_inited;
-static int g_collecting;
+int g_collecting;
 int g_saw_pinned_nursery;
 int g_nursery_off;
 static int g_discard_from;
@@ -78,16 +78,6 @@ int g_gc_defer;
 
 PinEnt *g_pins;
 
-void **g_remset;
-uint32_t g_rem_n;
-static uint32_t g_rem_cap;
-/* Workers call avant_barrier without the world lock (a fresh array
- * header). The remembered-set realloc is shared. */
-pthread_mutex_t g_rem_mu = PTHREAD_MUTEX_INITIALIZER;
-/* Mature objects that still point at a young survivor after this collection. */
-static void **g_keep;
-static uint32_t g_keep_n;
-static uint32_t g_keep_cap;
 /* Objects flagged MARKED by the survival probe. Clearing them by walking
  * every nursery object retraced the dead tree. */
 static void **g_noted;
@@ -100,16 +90,6 @@ static int g_young_adapt;
 uint64_t avant_nursery_held;
 
 uint64_t g_mature_since_full;
-
-/* Frontier clearing (Collector II Wave 2): AVANT_GC_REM_FRONTIER=0
- * disables it. Dirty is tracked during the remembered scan itself, per
- * set index, so no second field walk is needed. Hysteresis (evict after
- * N clean scans) and probation (a second list scanned every K young
- * collections) were measured against immediate clearing on
- * bench/graph_frontier.av and lost (0.20s vs 0.19s at AVANT_YOUNG_MB=1,
- * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
-static int g_rem_mode = 1;
-static uint8_t *g_rem_dirty;
 
 /* Survival-capped growth and copy reserve (Collector II Wave 4, step 2,
  * as amended by Q-W4-6): sticky growth of the young threshold is capped
@@ -264,50 +244,6 @@ void work_push(void *p) {
     g_work = gc_xrealloc(g_work, g_work_cap * sizeof(void *));
   }
   g_work[g_work_n++] = p;
-}
-
-static void rem_add(void *obj) {
-  AvantHeader *h = avant_header(obj);
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  if (h->flags & AVANT_FLAG_REM) {
-    if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
-    }
-    return;
-  }
-  h->flags |= AVANT_FLAG_REM;
-  if (g_rem_n == g_rem_cap) {
-    g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
-    g_remset = gc_xrealloc(g_remset, g_rem_cap * sizeof(void *));
-    g_rem_dirty = gc_xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
-  }
-  g_rem_dirty[g_rem_n] = 0;
-  g_remset[g_rem_n++] = obj;
-  g_rem_adds++;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
-}
-
-static void rem_forget(void) {
-  uint32_t i;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
-      avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
-    }
-  }
-  g_rem_n = 0;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
 }
 
 void gc_fwd_reset(void) {
@@ -1017,14 +953,6 @@ static AvantHeader *to_alloc(size_t total) {
   return h;
 }
 
-static void keep_add(void *obj) {
-  if (g_keep_n == g_keep_cap) {
-    g_keep_cap = g_keep_cap ? g_keep_cap * 2 : 64;
-    g_keep = gc_xrealloc(g_keep, g_keep_cap * sizeof(void *));
-  }
-  g_keep[g_keep_n++] = obj;
-}
-
 static void note_marked(void *payload) {
   if (g_noted_n == g_noted_cap) {
     g_noted_cap = g_noted_cap ? g_noted_cap * 2 : 256;
@@ -1078,7 +1006,7 @@ static void remember_young_edge(void **slot, void *payload) {
       (avant_header(owner)->flags & AVANT_FLAG_PINNED) == 0) {
     return;
   }
-  keep_add(owner);
+  gc_keep_add(owner);
 }
 
 static int g_from_heap_slot;
@@ -1266,63 +1194,6 @@ static void relocate_root_location(void ***slot_loc) {
   *slot_loc = (void **)((uint8_t *)np + delta);
 }
 
-/* Frontier decision for one live, marked hot entry whose scan result
- * is dirty (a direct field names a young object). Returns 1 to keep the
- * entry. On 0 the caller drops it with REM already clear; the barrier
- * re-adds it on the next young store. Caller holds g_rem_mu when the
- * set is shared. */
-static int rem_frontier_decide(void *obj, int dirty) {
-  if (g_rem_mode == 0 || dirty) {
-    return 1;
-  }
-  avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
-  g_rem_cleared++;
-  return 0;
-}
-
-static void rem_scrub(void) {
-  uint32_t i;
-  uint32_t w = 0;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
-      continue;
-    }
-    h = avant_header(obj);
-    if (h->flags & AVANT_FLAG_MARKED) {
-      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
-      if (!rem_frontier_decide(obj, dirty)) {
-        continue;
-      }
-      g_remset[w] = obj;
-      if (g_rem_dirty) {
-        g_rem_dirty[w] = (uint8_t)dirty;
-      }
-      w++;
-    } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-      Large *L = large_of(obj);
-      /* A dead expression buffer is a large object. Leaving it on the
-       * large list makes every missed pointer walk that list. */
-      if (L) {
-        gc_free_large(L);
-      } else {
-        h->flags &= (uint16_t)~AVANT_FLAG_REM;
-      }
-    } else {
-      h->flags &= (uint16_t)~AVANT_FLAG_REM;
-    }
-  }
-  g_rem_n = w;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
-}
-
 /* Field slots copy_payload_children would visit for one object. */
 static uint64_t rem_field_count(void *p) {
   AvantHeader *h = avant_header(p);
@@ -1386,7 +1257,7 @@ static void gen_young_copy(void) {
       void *obj = g_remset[ri];
       if (is_heap_payload(obj, NULL, NULL)) {
         /* A remembered object is a root this cycle: mark it so the
-         * probe pass's rem_scrub keeps it in the set. */
+         * probe pass's gc_rem_scrub keeps it in the set. */
         avant_header(obj)->flags |= AVANT_FLAG_MARKED;
         g_rem_fields += rem_field_count(obj);
         g_rem_track = 1;
@@ -1606,49 +1477,6 @@ static void adopt_to_space(void) {
   }
 }
 
-static void rem_commit_kept(void) {
-  uint32_t n = g_keep_n;
-  void **kept = g_keep;
-  uint32_t i;
-  uint32_t w = 0;
-  int locked = rem_locked();
-  g_keep = NULL;
-  g_keep_n = 0;
-  g_keep_cap = 0;
-  /* A remembered object with a nursery child stays remembered: the
-   * scan just proved that edge. A live member with no nursery child
-   * leaves the hot set under the frontier policy (the barrier re-adds
-   * it on the next young store); only members whose memory is gone
-   * leave unconditionally, as before. */
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
-      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
-      if (!rem_frontier_decide(obj, dirty)) {
-        continue;
-      }
-      g_remset[w] = obj;
-      if (g_rem_dirty) {
-        g_rem_dirty[w] = (uint8_t)dirty;
-      }
-      w++;
-    }
-  }
-  g_rem_n = w;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
-  for (i = 0; i < n; i++) {
-    if (is_heap_payload(kept[i], NULL, NULL)) {
-      rem_add(kept[i]);
-    }
-  }
-  free(kept);
-}
-
 /* Return 1 if the nursery should be left in place and the threshold raised.
  * A live object tree larger than the nursery used to be promoted and then
  * retraced. Waiting until that tree is dead costs a mark and no copy. */
@@ -1715,7 +1543,7 @@ static void young_copy_out(int tenure) {
     park_nursery_from();
   }
   adopt_to_space();
-  rem_commit_kept();
+  gc_rem_commit_kept();
   if (g_nursery_held + g_to_bytes > g_cpy_peak) {
     g_cpy_peak = g_nursery_held + g_to_bytes;
   }
@@ -1785,7 +1613,7 @@ void gc_collect(int full) {
           g_copy_reserve =
               (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
         }
-        rem_scrub();
+        gc_rem_scrub();
         gc_reclaim_young_large();
         clear_noted();
         g_work_n = 0;
@@ -2209,55 +2037,6 @@ void *avant_gc_reload(void *slot) {
   void *p = *(void *volatile *)slot;
   *(void *volatile *)slot = p;
   return p;
-}
-
-void avant_barrier(void *obj) {
-  Block *b = NULL;
-  AvantHeader *h;
-  if (!obj || g_collecting) {
-    return;
-  }
-  /* The compiler passes the object being stored into. A nursery object
-   * is scanned from the roots, so the hot path is the flag in the header
-   * and not a block-table lookup. */
-  if (((uintptr_t)obj & (ALIGN - 1)) == 0) {
-    h = avant_header(obj);
-    if (h->flags & AVANT_FLAG_HEAP) {
-      /* Already scanned from the roots, or already in the remembered set. */
-      if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_REM)) {
-        return;
-      }
-    }
-  }
-  if (!is_heap_payload(obj, &b, NULL)) {
-    return;
-  }
-  if (b && (b->space == SPACE_NURSERY || b->space == SPACE_TO)) {
-    return;
-  }
-  rem_add(obj);
-}
-
-/* Stage 28 W1b. The barrier for a store through an address that may be
- * inside a heap object (a struct method's self, a struct field reached
- * through such a self): remembers the object containing addr, like
- * avant_barrier(object). An address on this thread's stack, or outside
- * the heap, is a no-op. Never collects. */
-void avant_barrier_at(void *addr) {
-  Block *b = NULL;
-  void *start;
-  if (!addr || g_collecting) {
-    return;
-  }
-  if (g_self_reg.stack_lo && (uint8_t *)addr >= (uint8_t *)g_self_reg.stack_lo &&
-      (uint8_t *)addr < (uint8_t *)g_self_reg.stack_hi) {
-    return;
-  }
-  start = gc_object_payload(addr, &b, NULL);
-  if (!start) {
-    return;
-  }
-  avant_barrier(start);
 }
 
 void avant_pin(void *payload) {

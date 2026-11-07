@@ -11,6 +11,7 @@
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
  *   avant_gc_los.c
+ *   avant_gc_remset.c
  *   avant_gc_defrag.c
  *   avant_gc_stack.c
  *   avant_gc_verify.c
@@ -208,6 +209,17 @@ void gc_reclaim_young_large(void);
 void gc_sweep_large(void);
 void *gc_los_alloc(size_t payload, uint32_t type_id);
 
+/* avant_gc_remset.c */
+extern void **g_remset;
+extern uint32_t g_rem_n;
+extern pthread_mutex_t g_rem_mu;
+extern uint32_t g_keep_n;
+extern int g_rem_mode;
+extern uint8_t *g_rem_dirty;
+void gc_keep_add(void *obj);
+void gc_rem_scrub(void);
+void gc_rem_commit_kept(void);
+
 /* avant_gc_defrag.c */
 extern int g_defrag_mode;
 extern BlockSet g_def_release;
@@ -302,6 +314,7 @@ void rewrite_from_stackmaps(void);
 
 /* avant_rt.c */
 extern int g_inited;
+extern int g_collecting;
 extern int g_saw_pinned_nursery;
 extern int g_nursery_off;
 extern Block *g_bht[BLOCK_HASH];
@@ -316,9 +329,6 @@ extern atomic_int g_avant_shared;
 extern pthread_mutex_t g_threads_mu;
 extern int g_gc_defer;
 extern PinEnt *g_pins;
-extern void **g_remset;
-extern uint32_t g_rem_n;
-extern pthread_mutex_t g_rem_mu;
 extern uint64_t g_mature_since_full;
 extern uint64_t g_copy_reserve;
 extern void **g_work;
