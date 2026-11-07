@@ -414,13 +414,13 @@ static int block_keep_pinned(Block *b) {
 }
 
 /* After young copy, free unpinned nursery blocks. Pinned objects keep
- * their address (D34); those blocks stay on gc_heap.from as SPACE_FROM.
+ * their address (D34); those blocks stay on gc_heap.space[SPACE_FROM].list as SPACE_FROM.
  * (AVANT_NURSERY_DISCARD=0, which parked every nursery block instead,
  * the Stage 17 safety net before the leftover stack rewrite, is retired
  * since Stage 28 W14b2.) */
 static void discard_nursery_from(void) {
-  Block *b = gc_heap.nursery;
-  gc_heap.nursery = NULL;
+  Block *b = gc_heap.space[SPACE_NURSERY].list;
+  gc_heap.space[SPACE_NURSERY].list = NULL;
   /* Pins are roots, so a young copy already saw every pinned nursery
    * object. Walking every dead object to recheck the flag was most of
    * a calculator collection: the tree is garbage and nothing is pinned. */
@@ -436,10 +436,10 @@ static void discard_nursery_from(void) {
     Block *next = b->next;
     if (block_keep_pinned(b)) {
       b->space = SPACE_FROM;
-      gc_heap.space_bytes[SPACE_NURSERY] -= BLOCK_SIZE;
-      gc_heap.space_bytes[SPACE_FROM] += BLOCK_SIZE;
-      b->next = gc_heap.from;
-      gc_heap.from = b;
+      gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;
+      gc_heap.space[SPACE_FROM].bytes += BLOCK_SIZE;
+      b->next = gc_heap.space[SPACE_FROM].list;
+      gc_heap.space[SPACE_FROM].list = b;
     } else {
       gc_cache_or_free_block(b);
     }
@@ -448,23 +448,23 @@ static void discard_nursery_from(void) {
 }
 
 static void adopt_to_space(void) {
-  Block *head = gc_heap.to;
-  Block *b = gc_heap.to;
-  gc_heap.to = NULL;
+  Block *head = gc_heap.space[SPACE_TO].list;
+  Block *b = gc_heap.space[SPACE_TO].list;
+  gc_heap.space[SPACE_TO].list = NULL;
   while (b) {
     Block *next = b->next;
     b->space = SPACE_NURSERY;
-    gc_heap.space_bytes[SPACE_TO] -= BLOCK_SIZE;
-    gc_heap.space_bytes[SPACE_NURSERY] += BLOCK_SIZE;
-    b->next = gc_heap.nursery;
-    gc_heap.nursery = b;
+    gc_heap.space[SPACE_TO].bytes -= BLOCK_SIZE;
+    gc_heap.space[SPACE_NURSERY].bytes += BLOCK_SIZE;
+    b->next = gc_heap.space[SPACE_NURSERY].list;
+    gc_heap.space[SPACE_NURSERY].list = b;
     b = next;
   }
   gc_clear_alloc_cur(SPACE_TO);
   gc_clear_alloc_cur(SPACE_NURSERY);
   if (head && head->bump < head->base + BLOCK_SIZE) {
-    gc_heap.alloc_cur[SPACE_NURSERY] = head;
-    gc_heap.alloc_fresh[SPACE_NURSERY] = 1;
+    gc_heap.space[SPACE_NURSERY].cur = head;
+    gc_heap.space[SPACE_NURSERY].fresh = 1;
     gc_use_block(head);
   }
 }
@@ -473,7 +473,7 @@ void gc_young_copy_out(int tenure) {
   gc_heap.force_tenure = tenure;
   gc_heap.to_bytes = 0;
   gc_heap.keep_n = 0;
-  gc_zero_line_marks(gc_heap.nursery);
+  gc_zero_line_marks(gc_heap.space[SPACE_NURSERY].list);
   gc_gen_young_copy();
   if (gc_heap.set.verify) {
     gc_verify_young_copy();

@@ -179,6 +179,26 @@ typedef struct GcChunk {
   uint64_t dirty_pages[PAGE_WORDS];
 } GcChunk;
 
+/* One space's state (gc-design.md §1.1, Stage 28 W15a1, O69), indexed
+ * by SPACE_* in gc_heap.space:
+ *   list   the space's blocks (avant_gc_heap.c owns the lists)
+ *   cur    the space's bump cursor (avant_gc_alloc.c). A full block used
+ *          to send the next allocation back through every older block
+ *          (take_from_list + find_hole); workers allocate in mature
+ *          space, and that walk dominated Matmul::T16.
+ *   fresh  the cursor is a new block: when it fills, allocate another
+ *          instead of rescanning full blocks. A full collection clears
+ *          the cursor so the next allocation reuses holes.
+ *   bytes  the block bytes of the space, kept as blocks enter a space,
+ *          move between spaces and leave (W14a2), so gc_note_peak reads
+ *          them instead of walking every list. */
+typedef struct GcSpace {
+  struct Block *list;
+  struct Block *cur;
+  uint8_t fresh;
+  uint64_t bytes;
+} GcSpace;
+
 /* A walk over every large object (gc_large_next, avant_gc_los.c), in
  * address order. The walk may free the object it just returned. */
 typedef struct LargeIter {
@@ -493,11 +513,9 @@ typedef struct GcHeap {
   uint64_t small_hint;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
-  /* The spaces' block lists (SPACE_*). */
-  Block *mature;
-  Block *nursery;
-  Block *from;
-  Block *to;
+  /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
+   * bit and bytes (GcSpace). */
+  GcSpace space[4];
   /* The mark work list. */
   void **work;
   uint32_t work_n;
@@ -520,20 +538,8 @@ typedef struct GcHeap {
   Block *cur;
   uint8_t *limit;
   Block *fast_block;
-  /* Per-space bump cursor. A full block used to send the next allocation
-   * back through every older block (take_from_list + find_hole). Workers
-   * allocate in mature space, and that walk dominated Matmul::T16.
-   * alloc_fresh means the cursor is a new block: when it fills, allocate
-   * another instead of rescanning full blocks. A full collection clears
-   * the cursor so the next allocation reuses holes. */
-  Block *alloc_cur[4];
-  uint8_t alloc_fresh[4];
   /* Block bytes in use or cached, against set.heap_max. */
   uint64_t heap_bytes;
-  /* Block bytes per space (SPACE_*), kept as blocks enter a space, move
-   * between spaces and leave (W14a2), so gc_note_peak reads them instead
-   * of walking every list. */
-  uint64_t space_bytes[4];
   /* Wave 4 step 2: outside a collection the copy reserve counts as
    * spent, so fresh block growth stops early enough that the next copy
    * has its destination room under the heap limit. The charge is soft:

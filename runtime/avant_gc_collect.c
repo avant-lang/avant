@@ -292,14 +292,14 @@ void gc_collect(GcKind kind, int allow_move) {
     /* The marks: one memset per chunk of the side bitmap; no header is
      * touched (no young mark outlives its collection, C36). */
     gc_clear_side_marks();
-    gc_zero_line_marks(gc_heap.mature);
-    gc_zero_line_marks(gc_heap.nursery);
-    gc_zero_line_marks(gc_heap.from);
+    gc_zero_line_marks(gc_heap.space[SPACE_MATURE].list);
+    gc_zero_line_marks(gc_heap.space[SPACE_NURSERY].list);
+    gc_zero_line_marks(gc_heap.space[SPACE_FROM].list);
     gc_mark_roots();
     {
       Block *db;
       uint64_t live_lines_this = 0;
-      for (db = gc_heap.mature; db; db = db->next) {
+      for (db = gc_heap.space[SPACE_MATURE].list; db; db = db->next) {
         int live = gc_block_live_lines(db);
         int bucket = live == 0 ? 0 : live <= 32 ? 1 : live <= 64 ? 2 : live <= 96 ? 3 : live < LINES_PER_BLOCK ? 4 : 5;
         gc_heap.ctr.def.blocks++;
@@ -322,14 +322,14 @@ void gc_collect(GcKind kind, int allow_move) {
     /* Dead and clean remembered entries leave the set (C33, O9). */
     gc_rem_full_scrub();
     gc_sweep_large();
-    gc_filter_blocks(&gc_heap.mature, gc_keep_if_live);
-    gc_filter_blocks(&gc_heap.nursery, gc_keep_if_live);
-    gc_filter_blocks(&gc_heap.from, gc_keep_if_live);
+    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_keep_if_live);
+    gc_filter_blocks(&gc_heap.space[SPACE_NURSERY].list, gc_keep_if_live);
+    gc_filter_blocks(&gc_heap.space[SPACE_FROM].list, gc_keep_if_live);
     gc_heap.mark_sum = 0;
     /* O28: the young bytes that survived, nursery blocks only. A
      * from-space block's live objects are pinned survivors promoted in
      * place (D205): mature, not young. */
-    for (b = gc_heap.nursery; b; b = b->next) {
+    for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
       gc_foreach_block_object(b, gc_sum_marked_one);
     }
     avant_nursery_held = gc_heap.mark_sum;
