@@ -18,6 +18,7 @@
  *   avant_gc_stack.c
  *   avant_gc_verify.c
  *   avant_gc_stats.c
+ *   avant_gc_roots.c
  *   avant_gc_stackmap.c
  *   avant_rt.c
  * They fold into one avant_rt.o (runtime/build.sh), which keeps global
@@ -325,6 +326,15 @@ extern uint64_t g_los_promoted_bytes;
 extern uint64_t g_sticky_grows;
 void gc_print_stats(void);
 
+/* avant_gc_roots.c */
+extern __thread ThreadReg g_self_reg;
+extern ThreadReg *g_threads;
+extern atomic_int g_avant_shared;
+extern pthread_mutex_t g_world;
+extern pthread_mutex_t g_threads_mu;
+extern int g_gc_defer;
+extern PinEnt *g_pins;
+
 /* avant_gc_stackmap.c */
 extern int g_stackmap_walk;
 extern uint64_t g_sm_walks;
@@ -347,12 +357,6 @@ extern Block *g_to;
 extern Block *g_alloc_cur[4];
 extern uint8_t g_alloc_fresh[4];
 extern __thread int g_alloc_mature;
-extern __thread ThreadReg g_self_reg;
-extern ThreadReg *g_threads;
-extern atomic_int g_avant_shared;
-extern pthread_mutex_t g_threads_mu;
-extern int g_gc_defer;
-extern PinEnt *g_pins;
 extern uint64_t g_mature_since_full;
 extern uint64_t g_copy_reserve;
 extern void **g_work;
@@ -381,10 +385,12 @@ void gc_cache_or_free_block(Block *b);
 void gc_note_peak(void);
 Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
+void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
 void *gc_mature_alloc(size_t total);
 AvantHeader *gc_to_alloc(size_t total);
 void gc_collect(int full);
+void gc_maybe_collect(void);
 void gc_init_slow(void);
 
 /* Small helpers every unit inlines (static inline: one copy per unit,

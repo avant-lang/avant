@@ -13,7 +13,7 @@ compile() {
 
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below.
-core_units="avant_rt avant_rt_traps avant_gc_los avant_gc_remset avant_gc_young avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_stats avant_gc_stackmap"
+core_units="avant_rt avant_rt_traps avant_gc_los avant_gc_remset avant_gc_young avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_stats avant_gc_roots avant_gc_stackmap"
 for name in $core_units; do
   compile "$root/$name.c" "$root/build/$name.unit.o"
 done

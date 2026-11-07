@@ -36,7 +36,7 @@ int g_stack_scan;
  * (avant_str_concat's operands: the caller rooted them, so they are
  * marked, but the helper's own copies are C values), and a helper that
  * calls avant_alloc outside defer holds its arguments across the full
- * collection maybe_collect may run. Such an object must not move. So a
+ * collection gc_maybe_collect may run. Such an object must not move. So a
  * defragmenting collection first notes every mature block that a word
  * of the collecting thread's stack names (exact start, interior, or a
  * scalar that happens to look like one; a false positive only skips a

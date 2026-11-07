@@ -48,7 +48,6 @@ __thread uint64_t *avant_gc_starts;
 __thread void *avant_gc_block;
 __thread uint32_t avant_gc_fast_ok;
 static Block *g_fast_block;
-static void gc_fast_clear(void);
 
 /* Per-space bump cursor. A full block used to send the next allocation
  * back through every older block (take_from_list + find_hole). Workers
@@ -59,23 +58,7 @@ static void gc_fast_clear(void);
 Block *g_alloc_cur[4];
 uint8_t g_alloc_fresh[4];
 
-static __thread Frame *g_frame;
-static __thread int g_gc_quiet;
-static __thread Frame *g_frame_free;
 __thread int g_alloc_mature;
-
-__thread ThreadReg g_self_reg;
-ThreadReg *g_threads;
-/* Becomes 1 when a second thread registers, and stays 1. A single
- * mutator collects only at its own allocating call, so an interior
- * pointer used before the next call does not need a root. Another
- * thread can collect at any instruction. */
-atomic_int g_avant_shared;
-static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
-int g_gc_defer;
-
-PinEnt *g_pins;
 
 uint64_t avant_young_bytes;
 
@@ -163,47 +146,6 @@ uint64_t avant_inline_allocs;
 void gc_die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
-}
-
-void avant_gc_register_thread(void) {
-  if (g_self_reg.head) {
-    return;
-  }
-  g_self_reg.head = &g_frame;
-  {
-    pthread_attr_t attr;
-    void *addr = NULL;
-    size_t sz = 0;
-    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
-      if (pthread_attr_getstack(&attr, &addr, &sz) == 0 && addr && sz) {
-        g_self_reg.stack_lo = addr;
-        g_self_reg.stack_hi = (uint8_t *)addr + sz;
-      }
-      pthread_attr_destroy(&attr);
-    }
-  }
-  pthread_mutex_lock(&g_threads_mu);
-  g_self_reg.next = g_threads;
-  g_threads = &g_self_reg;
-  if (g_self_reg.next) {
-    atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
-  }
-  pthread_mutex_unlock(&g_threads_mu);
-}
-
-void avant_gc_unregister_thread(void) {
-  pthread_mutex_lock(&g_threads_mu);
-  ThreadReg **pp = &g_threads;
-  while (*pp) {
-    if (*pp == &g_self_reg) {
-      *pp = g_self_reg.next;
-      break;
-    }
-    pp = &(*pp)->next;
-  }
-  g_self_reg.head = NULL;
-  g_self_reg.next = NULL;
-  pthread_mutex_unlock(&g_threads_mu);
 }
 
 static uint64_t env_u64(const char *name, uint64_t fallback) {
@@ -710,7 +652,7 @@ static void *bump_take(size_t need) {
   return h;
 }
 
-static void gc_fast_clear(void) {
+void gc_fast_clear(void) {
   avant_gc_fast_ok = 0;
   avant_gc_limit = NULL;
   g_fast_block = NULL;
@@ -1085,7 +1027,7 @@ void gc_collect(int full) {
   g_collecting = 0;
 }
 
-static void maybe_collect(void) {
+void gc_maybe_collect(void) {
   if (g_collecting || g_gc_defer) {
     return;
   }
@@ -1295,220 +1237,9 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
   m->nrefs += (uint32_t)__builtin_popcountll(bits);
 }
 
-/* A call used to calloc a frame and free it on leave. Hot recursion
- * (Brainfuck) and numeric methods spent the call on that pair. Frames
- * are kept on a thread-local freelist; the slot array is reused too. */
-void avant_gc_enter(void) {
-  g_enter_calls++;
-  gc_init();
-  avant_gc_register_thread();
-  Frame *f = g_frame_free;
-  if (f) {
-    g_frame_free = f->prev;
-    f->n = 0;
-  } else {
-    f = calloc(1, sizeof(Frame));
-    if (!f) {
-      gc_die("out of memory");
-    }
-  }
-  f->prev = g_frame;
-  g_frame = f;
-}
-
-void avant_gc_leave(void) {
-  Frame *f = g_frame;
-  if (!f) {
-    gc_die("gc leave without enter");
-  }
-  g_frame = f->prev;
-  f->n = 0;
-  f->prev = g_frame_free;
-  g_frame_free = f;
-}
-
-void avant_gc_quiet_enter(void) {
-  g_gc_quiet++;
-}
-
-void avant_gc_quiet_leave(void) {
-  if (g_gc_quiet > 0) {
-    g_gc_quiet--;
-  }
-}
-
-void avant_gc_root(void *slot) {
-  g_root_calls++;
-  if (g_gc_quiet) {
-    return;
-  }
-  if (!g_frame) {
-    gc_die("gc root without enter");
-  }
-  Frame *f = g_frame;
-  uint32_t i;
-  /*
-   * Codegen emits CALL :avant_gc_root at the first use site of a temp.
-   * When that site is inside a loop (Array.push/pop), the same stack
-   * slot was appended every iteration and the frame list grew without
-   * bound (prod Words RSS). Same address is already a root.
-   */
-  for (i = 0; i < f->n; i++) {
-    if (f->slots[i] == (void **)slot) {
-      return;
-    }
-  }
-  if (f->n == f->cap) {
-    f->cap = f->cap ? f->cap * 2 : 8;
-    f->slots = gc_xrealloc(f->slots, f->cap * sizeof(void **));
-  }
-  f->slots[f->n++] = (void **)slot;
-}
-
-void *avant_gc_root_begin(uint32_t count) {
-  g_root_calls += count;
-  if (!g_frame) {
-    gc_die("gc root begin without enter");
-  }
-  Frame *f = g_frame;
-  if (count > f->cap) {
-    uint32_t cap = f->cap ? f->cap : 8;
-    while (cap < count) {
-      cap *= 2;
-    }
-    f->slots = gc_xrealloc(f->slots, cap * sizeof(void **));
-    f->cap = cap;
-  }
-  f->n = g_gc_quiet ? 0 : count;
-  return f->slots;
-}
-
-__attribute__((noinline))
-void *avant_gc_reload(void *slot) {
-  g_reload_calls++;
-  /*
-   * Stage 17: myc-llvm stores this return into the rooted alloca after
-   * a collecting CALL. The load is opaque to LLVM isel, so a pre-call
-   * copy in an unrooted spill cannot replace it.
-   */
-  void *p = *(void *volatile *)slot;
-  *(void *volatile *)slot = p;
-  return p;
-}
-
-void avant_pin(void *payload) {
-  if (!payload) {
-    return;
-  }
-  pthread_mutex_lock(&g_world);
-  if (!is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&g_world);
-    return;
-  }
-  AvantHeader *h = avant_header(payload);
-  if (h->flags & AVANT_FLAG_PINNED) {
-    for (PinEnt *p = g_pins; p; p = p->next) {
-      if (p->payload == payload) {
-        p->count += 1;
-        pthread_mutex_unlock(&g_world);
-        return;
-      }
-    }
-  }
-  PinEnt *e = (PinEnt *)malloc(sizeof(PinEnt));
-  if (!e) {
-    pthread_mutex_unlock(&g_world);
-    gc_die("out of memory");
-  }
-  h->flags |= AVANT_FLAG_PINNED;
-  e->payload = payload;
-  e->count = 1;
-  e->next = g_pins;
-  g_pins = e;
-  pthread_mutex_unlock(&g_world);
-}
-
-int avant_pin_count(void) {
-  int n = 0;
-  pthread_mutex_lock(&g_world);
-  for (PinEnt *p = g_pins; p; p = p->next) {
-    n += 1;
-  }
-  pthread_mutex_unlock(&g_world);
-  return n;
-}
-
-void avant_unpin(void *payload) {
-  PinEnt **pp;
-  if (!payload) {
-    return;
-  }
-  pthread_mutex_lock(&g_world);
-  if (!is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&g_world);
-    return;
-  }
-  AvantHeader *h = avant_header(payload);
-  if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-    pthread_mutex_unlock(&g_world);
-    return;
-  }
-  pp = &g_pins;
-  while (*pp) {
-    if ((*pp)->payload == payload) {
-      (*pp)->count -= 1;
-      if ((*pp)->count > 0) {
-        pthread_mutex_unlock(&g_world);
-        return;
-      }
-      PinEnt *dead = *pp;
-      *pp = dead->next;
-      free(dead);
-      break;
-    }
-    pp = &(*pp)->next;
-  }
-  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
-  pthread_mutex_unlock(&g_world);
-}
-
-void avant_gc_defer_enter(void) {
-  gc_init();
-  gc_fast_clear();
-  pthread_mutex_lock(&g_world);
-  /*
-   * Helpers wrap avant_alloc in defer so C-held pointers are not swept.
-   * If every allocation in a loop is inside that window, maybe_collect
-   * in avant_alloc never fires (prod Base64 RSS 3.7 GB). Collect *before*
-   * taking defer, while the caller has already stored the previous result
-   * in a rooted local. Nested enter (hash grow, buf push inside json_gen)
-   * must not collect: the outer helper still holds unmarked pointers.
-   * Do not collect on leave — a helper that returns a heap pointer has
-   * not yet STOREd it.
-   *
-   * Young copy must not run here: myc spilled heap args into roots and
-   * then copied them into C registers. A moving collect would update the
-   * slots and leave the C args dangling. Full collect stays non-moving
-   * (AVANT_NURSERY=0), so it is still safe at this boundary.
-   */
-  if (g_gc_defer == 0 && g_nursery_off) {
-    maybe_collect();
-  }
-  g_gc_defer += 1;
-  pthread_mutex_unlock(&g_world);
-}
-
-void avant_gc_defer_leave(void) {
-  pthread_mutex_lock(&g_world);
-  if (g_gc_defer > 0) {
-    g_gc_defer -= 1;
-  }
-  pthread_mutex_unlock(&g_world);
-}
-
 /* Q128 heap-goal collection for workloads whose allocations all pass
  * through C helpers under defer (the HTTP request path), which never
- * reach maybe_collect undeferred. Callers must be at a boundary where
+ * reach gc_maybe_collect undeferred. Callers must be at a boundary where
  * their C frames hold no heap pointers yet (the HTTP dispatch calls
  * this before materializing the request), so the full, non-moving
  * collection strands nothing; defragmentation stays off for the same
@@ -1538,15 +1269,6 @@ void avant_alloc_in_mature(int32_t on) {
     gc_fast_clear();
   }
   g_alloc_mature = on ? 1 : 0;
-}
-
-void avant_world_lock(void) {
-  gc_init();
-  pthread_mutex_lock(&g_world);
-}
-
-void avant_world_unlock(void) {
-  pthread_mutex_unlock(&g_world);
 }
 
 static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
@@ -1585,7 +1307,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   }
 
   pthread_mutex_lock(&g_world);
-  maybe_collect();
+  gc_maybe_collect();
 
   if (large) {
     /* One replaced scalar buffer is reclaimed into the spare slot.
