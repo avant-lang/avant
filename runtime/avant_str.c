@@ -595,6 +595,8 @@ static void *str_array_build(char **items, int32_t n) {
     for (i = 0; i < n; i++) {
       buf[i] = items[i];
     }
+    /* A large pointer buffer is mature from birth (D187, W13b). */
+    avant_barrier(buf);
   }
   a->buf = buf;
   a->size = n;
@@ -604,7 +606,7 @@ static void *str_array_build(char **items, int32_t n) {
 }
 
 /* Keeps empty fields. Empty separator traps. */
-void *avant_str_split(const char *s, const char *sep) {
+static void *str_split_held(const char *s, const char *sep) {
   size_t n;
   size_t m;
   size_t i;
@@ -653,8 +655,19 @@ void *avant_str_split(const char *s, const char *sep) {
   }
 }
 
+/* The fresh strings live only in a malloc'ed items[] until the array is
+ * built, so the whole build is one defer region: an outermost enter may
+ * run a full collection under AVANT_NURSERY=0, which does not see items[]
+ * (C35). */
+void *avant_str_split(const char *s, const char *sep) {
+  avant_gc_defer_enter();
+  void *r = str_split_held(s, sep);
+  avant_gc_defer_leave();
+  return r;
+}
+
 /* Splits on runs of ASCII whitespace and drops empty fields. */
-void *avant_str_fields(const char *s) {
+static void *str_fields_held(const char *s) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
@@ -703,6 +716,14 @@ void *avant_str_fields(const char *s) {
     free(items);
     return r;
   }
+}
+
+/* One defer region around the whole build, as avant_str_split (C35). */
+void *avant_str_fields(const char *s) {
+  avant_gc_defer_enter();
+  void *r = str_fields_held(s);
+  avant_gc_defer_leave();
+  return r;
 }
 
 static int utf8_valid(const unsigned char *s, size_t n) {
@@ -831,7 +852,7 @@ static size_t utf8_char_len(const unsigned char *s, size_t n, size_t i, int *val
   return (size_t)extra + 1;
 }
 
-static void *chars_build(const char *s, int strict) {
+static void *chars_build_held(const char *s, int strict) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
@@ -875,6 +896,14 @@ static void *chars_build(const char *s, int strict) {
     free(items);
     return r;
   }
+}
+
+/* One defer region around the whole build, as avant_str_split (C35). */
+static void *chars_build(const char *s, int strict) {
+  avant_gc_defer_enter();
+  void *r = chars_build_held(s, strict);
+  avant_gc_defer_leave();
+  return r;
 }
 
 void *avant_str_chars(const char *s) {

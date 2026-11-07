@@ -546,6 +546,8 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   key[n] = 0;
   avant_str_tag(key);
   store_key(h, i, (int64_t)(uintptr_t)key);
+  /* The key is young; a mature key buffer is not walked from the roots (C34). */
+  avant_barrier(h->keys);
   store_val_i32(h, i, 1);
   hashes_of(h)[i] = hv;
   if (!slot_full(h->state[i])) {
@@ -649,6 +651,8 @@ static void *hash_array_str(char **items, int32_t n) {
     for (i = 0; i < n; i++) {
       buf[i] = items[i];
     }
+    /* A large pointer buffer is mature from birth (D187, W13b). */
+    avant_barrier(buf);
   }
   a->buf = buf;
   a->size = n;
