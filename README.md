@@ -863,9 +863,9 @@ fn main {
 
 ## Memory
 
-Heap allocation goes through `runtime/avant_rt.c`. The collector is precise GenImmix: a copying nursery, then an Immix mature space. The nursery is the default.
+Heap allocation goes through the collector in `runtime/avant_gc_*.c` (one file per concern; `runtime/avant_gc_internal.h` lists them). The collector is precise GenImmix: a copying nursery, then an Immix mature space. The nursery is the default.
 
-`AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_STACKMAP=0` skips the stack-map walk. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
+`AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
 
 A heap object stored into a C field is pinned for the process. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never clears a process pin. See [C interop](#c-interop).
 
@@ -1551,7 +1551,7 @@ The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compil
 
 This is the compiler's only back end. The earlier one, which emitted [myc](https://github.com/kostya/myc) IR for an external `myc-llvm` process, was retired once every program it ran had been frozen as a golden (`tests/goldens/runs/`, checked by `sh tools/run-goldens.sh`).
 
-Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the compiler itself also needs LLVM 20's static archives (Debian/Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (`tools/build-llvm.sh`) and only the compiler links; the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release (a release up to v0.34.0 compiles only through the `myc-llvm` bundled beside it; set `AVANT_MYC_LLVM` to that file for this one step, or let `tools/letters.sh` do it; the compiler it builds needs no `myc-llvm`):
+Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the compiler itself also needs LLVM 20's static archives (Debian/Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (`tools/build-llvm.sh`) and only the compiler links; the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release, v0.35.0 or later (`tools/letters.sh` uses `bin/v0.35.0` unless `LETTERS_SEED` names another; older releases compiled through a `myc-llvm` process, and the compiler they build carries LLVM stack maps the runtime no longer walks, so they cannot be seeds):
 
 ```
 sh runtime/build.sh

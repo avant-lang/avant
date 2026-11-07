@@ -1,4 +1,5 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -13,8 +14,6 @@
  * not allocate can skip the world lock. The locked path stays once
  * another thread exists.
  */
-extern atomic_int g_avant_shared;
-
 static int mutator_private(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
 }
@@ -38,6 +37,10 @@ static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint3
   void *nbuf = avant_alloc(bytes, buf_type_id);
   if (a->buf && a->size > 0) {
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
+    /* A large pointer buffer is mature from birth; it may hold young elements (W13b). */
+    if (buf_type_id != AVANT_TYPE_BYTES) {
+      avant_barrier(nbuf);
+    }
   }
   avant_barrier(a);
   a->buf = nbuf;
@@ -609,6 +612,10 @@ void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   if (a && a->buf && a->size > 0) {
     void *nbuf = avant_alloc((uint64_t)a->size * elem_size, buf_type_id);
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
+    if (buf_type_id != AVANT_TYPE_BYTES) {
+      /* A large pointer buffer is mature from birth (D187, W13b). */
+      avant_barrier(nbuf);
+    }
     r->buf = nbuf;
     r->size = a->size;
     r->cap = a->size;

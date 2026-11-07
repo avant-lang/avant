@@ -1,4 +1,5 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <limits.h>
 #include <pthread.h>
@@ -123,7 +124,8 @@ static void run_job(Job *job) {
     t->result = t->fn(t->arg);
     pthread_mutex_lock(&pool_mu);
     t->done = 1;
-    pthread_cond_signal(&t->done_cv);
+    /* Every waiting join wakes (C38: a handle may be joined twice). */
+    pthread_cond_broadcast(&t->done_cv);
     pthread_mutex_unlock(&pool_mu);
   } else {
     avant_par_fn fn = (avant_par_fn)job->fn;
@@ -164,21 +166,49 @@ static void *worker_main(void *p) {
   return NULL;
 }
 
+/* The task is C memory (C28, Stage 28 W14b1): it holds no reference the
+ * collector must trace except arg, the capture record, which the
+ * generated code pinned before writing its fields and which stays pinned
+ * until the join (R1, a rooted record instead of a pin, is W16b's). The
+ * join frees it. Before W14b1 the task was a heap object pinned here and
+ * never unpinned: every spawn left a pin entry and a pinned object for
+ * the life of the process.
+ *
+ * The JoinHandle (C38, D225) is a small heap object with no references
+ * (AVANT_TYPE_BYTES: the task pointer and the result), which the
+ * generated code holds as a traced reference (compiler/mir/lower_agg.av,
+ * value_agg_ty) and the collector reclaims like any object. The first
+ * join waits, frees the task, stores the result and clears the task
+ * pointer; every later join returns the stored result at once (future
+ * semantics). Before C38 the handle was the task itself, so a second
+ * join read freed memory and freed it again. */
+typedef struct {
+  AvantTask *task;
+  int32_t result;
+  int32_t pad;
+} AvantJoinHandle;
+
 void *avant_spawn(void *fn, void *arg) {
+  AvantJoinHandle *hd;
   AvantTask *t;
   Job *job;
-  avant_gc_defer_enter();
-  t = (AvantTask *)avant_alloc(sizeof(AvantTask), AVANT_TYPE_BYTES);
+  /* First, while this frame holds no reference but arg (pinned): the
+   * allocation may collect. Nothing below collects. */
+  hd = (AvantJoinHandle *)avant_alloc(sizeof(AvantJoinHandle), AVANT_TYPE_BYTES);
+  t = (AvantTask *)calloc(1, sizeof(AvantTask));
+  if (!t) {
+    die_task("out of memory");
+  }
   t->fn = (avant_task_fn)fn;
   t->arg = arg;
   t->result = 0;
   t->done = 0;
   if (pthread_cond_init(&t->done_cv, NULL) != 0) {
-    avant_gc_defer_leave();
+    free(t);
     return NULL;
   }
-  avant_pin(t);
-  avant_gc_defer_leave();
+  hd->task = t;
+  hd->result = 0;
   job = (Job *)calloc(1, sizeof(Job));
   if (!job) {
     die_task("out of memory");
@@ -189,28 +219,46 @@ void *avant_spawn(void *fn, void *arg) {
   pthread_mutex_lock(&pool_mu);
   enqueue(job);
   pthread_mutex_unlock(&pool_mu);
-  return t;
+  return hd;
 }
 
 int32_t avant_join(void *handle) {
-  AvantTask *t = (AvantTask *)handle;
+  AvantJoinHandle *hd = (AvantJoinHandle *)handle;
+  AvantTask *t;
   int32_t result;
-  if (!t) {
+  if (!hd) {
     return 0;
   }
   if (on_worker) {
     die_task("join from a pool worker");
   }
+  /* Other threads may collect while this one waits (D191), and a
+   * collection may move the handle; the pin keeps it at this address
+   * until the join is done, and is gone after it (no pin is left by a
+   * joined spawn, C28). */
+  avant_pin(hd);
   pthread_mutex_lock(&pool_mu);
-  while (!t->done) {
-    pthread_cond_wait(&t->done_cv, &pool_mu);
+  /* hd->task is read again after each wait: a join that finishes first
+   * clears it, and the task is then gone. */
+  while (hd->task && !hd->task->done) {
+    pthread_cond_wait(&hd->task->done_cv, &pool_mu);
   }
-  result = t->result;
+  t = hd->task;
+  if (t) {
+    hd->result = t->result;
+    hd->task = NULL;
+  }
+  result = hd->result;
   pthread_mutex_unlock(&pool_mu);
-  /* The spawn capture is pinned so the worker can read it. After join
-   * it is the only pin keeping a shared matrix alive. */
-  avant_unpin(t->arg);
-  t->arg = NULL;
+  if (t) {
+    /* The spawn capture is pinned so the worker can read it. After join
+     * it is the only pin keeping a shared matrix alive. The worker last
+     * touched the task under pool_mu (run_job), so it can go now. */
+    avant_unpin(t->arg);
+    pthread_cond_destroy(&t->done_cv);
+    free(t);
+  }
+  avant_unpin(hd);
   return result;
 }
 

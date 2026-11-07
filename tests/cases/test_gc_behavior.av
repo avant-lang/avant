@@ -49,6 +49,12 @@ fn run_with_env(bin: String, name: String, value: String, log: String): Int {
 
 fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
   args: Array(String) = []
+  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
+  // out (a whole-heap check at a collection per helper call; W14b1).
+  if gc_stress_outer() && (n1 == "AVANT_GC_VERIFY" || n2 == "AVANT_GC_VERIFY") {
+    args.push("-u")
+    args.push("AVANT_GC_STRESS")
+  }
   args.push("${n1}=${v1}")
   args.push("${n2}=${v2}")
   args.push(bin)
@@ -187,8 +193,11 @@ fn test_gc_behavior(c: Checks) {
     code5 = compile_av(compiler, src5, bin5, "${scratch()}/gcb-${stamp}-alloc.clog")
     c.eq_int(code5, 0, "compile alloc fixture")
     want5 = "1679073713\n"
+    // The fixture's bump arena trees need the nursery (Node.bump gives
+    // nil without it), so its runs state AVANT_NURSERY=1: an outer GC
+    // environment (O26) cannot turn the nursery off under them.
     log10 = "${scratch()}/gcb-${stamp}.run10"
-    rc10 = run_av_bin(bin5, log10)
+    rc10 = run_with_env(bin5, "AVANT_NURSERY", "1", log10)
     c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
     if out10 = file_read(log10) {
       c.eq_str(out10, want5, "alloc checksums at default young size")
@@ -196,7 +205,7 @@ fn test_gc_behavior(c: Checks) {
       c.expect(false, "read alloc run")
     }
     log11 = "${scratch()}/gcb-${stamp}.run11"
-    rc11 = run_with_env(bin5, "AVANT_YOUNG_MB", "1", log11)
+    rc11 = run_with_env2(bin5, "AVANT_NURSERY", "1", "AVANT_YOUNG_MB", "1", log11)
     c.eq_int(rc11, 0, "alloc and barrier paths survive at 1 MB young size")
     if out11 = file_read(log11) {
       c.eq_str(out11, want5, "alloc checksums at 1 MB young size")

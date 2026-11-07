@@ -1,0 +1,24 @@
+// C28 (Stage 28 W14b1): every spawn pinned its task object (the join
+// handle) and avant_join never unpinned it, so each spawn leaked a pin
+// entry and a pinned heap object for the life of the process. The task
+// is now malloc'ed and freed at join; the capture record is still
+// pinned while the task runs and unpinned by the join (R1, W16b). After
+// 200 spawns and joins no pin is left. Prints the sum and 0.
+
+lib gc_rt {
+  fun avant_pin_count: Int
+}
+
+fn main {
+  base = gc_rt.avant_pin_count()
+  t = 0
+  i = 0
+  while i < 200 {
+    s = "task-${i}"
+    h = spawn { s.size }
+    t = t + h.join
+    i = i + 1
+  }
+  puts("sum: ${t}")
+  puts("pins left: ${gc_rt.avant_pin_count() - base}")
+}

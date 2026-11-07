@@ -10,17 +10,15 @@
  *
  * Heap objects are [AvantHeader][payload], 8-aligned. The pointer Avant
  * sees is the payload; the header sits immediately before it so field
- * indices in myc IR stay the language layout.
+ * indices in generated code stay the language layout.
  *
  * Collector is GenImmix (copying nursery, Immix mature) and the copying
- * nursery is the product default (AVANT_NURSERY=0 restores the Stage 7
- * full, non-moving collect). From-space is discarded after a young copy
- * unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis. LLVM stack
- * maps are walked while the nursery is on (AVANT_NURSERY_STACKMAP=0
- * disables) so leftover myc spills can be rewritten. Remembered-set
- * members are roots for the young generation. AVANT_FLAG_PINNED is the
- * C-escape seam: pinned objects are not moved and are young-GC roots.
- * The full invariant list and knob table live in
+ * nursery is the product default (AVANT_NURSERY=0 turns it off: every
+ * collection is then a full one). From-space is discarded after a young
+ * copy unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis.
+ * Remembered-set members are roots for the young generation.
+ * AVANT_FLAG_PINNED is the C-escape seam: pinned objects are not moved
+ * and are young-GC roots. The full invariant list and knob table live in
  * avant-ledgers/archive/stages/collector.md.
  */
 
@@ -80,16 +78,20 @@ void avant_alloc_in_mature(int32_t on);
 
 void avant_gc_enter(void);
 void avant_gc_leave(void);
-/* A quiet leaf does not collect. myc still roots pointer results; those
- * calls must not attach to the caller's frame. */
+/* Quiet regions: between avant_gc_quiet_enter and avant_gc_quiet_leave
+ * this thread registers no root slots (avant_gc_root_begin counts none,
+ * avant_gc_root returns), for calls known not to collect. The compiler
+ * does not emit them; they stay as part of the runtime ABI. */
 void avant_gc_quiet_enter(void);
 void avant_gc_quiet_leave(void);
 void avant_gc_root(void *slot);
 /* Batched root registration (Collector II Wave 0): generated code calls
  * this once at frame entry with the frame's root count, stores each
  * slot address into the returned array at its fixed index, and the
- * collector scans the first count entries. The per-slot avant_gc_root
- * above stays for binaries compiled before the batch existed. */
+ * collector scans the first count entries. avant_gc_root (one slot per
+ * call) and avant_gc_reload (a slot read after a collecting call) are
+ * the old myc back end's ABI: the current compiler emits neither, and
+ * they stay while the runtime's exported symbols are frozen. */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 
@@ -107,9 +109,10 @@ extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
 extern __thread uint8_t *avant_gc_base;
 extern __thread uint64_t *avant_gc_starts;
-/* Current nursery Block; generated code also stores the new cursor
- * into its bump field (offset 32 in struct Block, avant_gc_internal.h)
- * so the C cursor and the block never disagree. */
+/* The current nursery block's record in the collector's side table;
+ * generated code also stores the new cursor into its bump field at
+ * offset 32 (the record's layout is the runtime's, not shipped), so the
+ * C cursor and the block never disagree. */
 extern __thread void *avant_gc_block;
 extern __thread uint32_t avant_gc_fast_ok;
 extern uint64_t avant_nursery_held;
@@ -119,7 +122,8 @@ extern uint64_t avant_inline_allocs;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 /* Stage 28 W1b: one 64-word chunk (word_base a multiple of 64) of a
  * type map of any length, with an element stride in words (0: one
- * record; > 0: a buffer of repeated elements). See avant_rt.c TypeMap. */
+ * record; > 0: a buffer of repeated elements), the collector's TypeMap
+ * (a runtime-private layout, not shipped). */
 void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_base,
                        uint64_t bits);
 void avant_barrier(void *obj);

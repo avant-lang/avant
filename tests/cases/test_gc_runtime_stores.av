@@ -1,0 +1,90 @@
+import harness
+import backends
+
+// Stage 28 W13b (C34, C35, D204): the runtime's own C stores follow the
+// collector's contract. Three fixtures, each wrong before its fix:
+//
+// heap/inc_slice_mature.av (C34): avant_hash_inc_slice stored a fresh
+// young key into a mature key buffer without a barrier, so a tenured
+// hash lost the keys inserted after its keys tenured (default
+// environment: no new key found; AVANT_GC_VERIFY=1 reported lost field
+// references).
+//
+// heap/array_reserve_mature.av: Array.reserve grew into a large pointer
+// buffer (mature from birth) without a barrier on it, so a tenured
+// array's young elements were lost at the next young collection.
+//
+// heap/split_held.av (C35): split, fields and chars kept their fresh
+// strings only in a malloc'ed array across separate outermost defer
+// entries, so under AVANT_NURSERY=0 a full collection swept them.
+//
+// The same wave barriers the large pointer buffer of every runtime
+// builder that fills a fresh array (split/fields/chars, Hash keys and
+// values, argv, dir_list, Array copy); without it split_held.av under
+// AVANT_GC_VERIFY=1 reported unkept references in about half the runs.
+// Each program runs plain and under each GC environment below: the known
+// stdout, no stderr (no verifier report), exit 0.
+
+fn gc_envs: Array(String) {
+  ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0"]
+}
+
+fn test_gc_runtime_stores(c: Checks, compiler: String, root: String, dir: String) {
+  names = ["inc_slice_mature", "array_reserve_mature", "split_held"]
+  wants = ["0\n0\n0\n", "0\n0\n", "split bad: 0\nfields bad: 0\nchars bad: 0\njunk: 4072350\n"]
+  jobs: Array(HJob) = []
+  p = 0
+  while p < names.size {
+    jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/${names[p]}.av", "${dir}/${names[p]}", "${dir}/${names[p]}.log"))
+    p = p + 1
+  }
+  run_waves(jobs)
+  envs = gc_envs()
+  runs: Array(HJob) = []
+  p = 0
+  while p < names.size {
+    c.eq_int(jobs[p].code, 0, "${names[p]}.av: compiles")
+    e = 0
+    while e < envs.size {
+      runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", envs[e]))
+      e = e + 1
+    }
+    p = p + 1
+  }
+  run_waves(runs)
+  p = 0
+  while p < names.size {
+    e = 0
+    while e < envs.size {
+      what = "plain"
+      if envs[e].size > 0 {
+        what = "under ${envs[e]}"
+      }
+      k = "${names[p]}.g${e}"
+      c.eq_int(runs[p * envs.size + e].code, 0, "${names[p]}.av ${what}: exit 0")
+      c.eq_str(log_text("${dir}/${k}.out"), wants[p], "${names[p]}.av ${what}: the known stdout")
+      c.eq_str(log_text("${dir}/${k}.err"), "", "${names[p]}.av ${what}: no stderr (no verifier report)")
+      e = e + 1
+    }
+    p = p + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_runtime_stores.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_gc_runtime_stores(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

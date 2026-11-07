@@ -66,6 +66,12 @@ fn link_args(root: String, obj: String, bin: String): Array(String) {
 
 fn run_args(bin: String): Array(String) {
   a: Array(String) = []
+  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
+  // out (a whole-heap check at a collection per helper call; W14b1).
+  if gc_stress_outer() {
+    a.push("-u")
+    a.push("AVANT_GC_STRESS")
+  }
   a.push("AVANT_GC_VERIFY=1")
   a.push("AVANT_YOUNG_MB=1")
   a.push(bin)

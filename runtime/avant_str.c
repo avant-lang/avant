@@ -1,12 +1,11 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <math.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-extern atomic_int g_avant_shared;
 
 typedef struct {
   void *buf;
@@ -130,8 +129,14 @@ char *avant_str_empty(void) {
   return empty_str();
 }
 
+/* Callers pass a C buffer on their own stack (the avant_str_from_*
+ * formatters) or a pointer derived from a heap string inside their own
+ * region: no stress point at this entry (W14b1), since a collection here
+ * would rewrite a stack buffer whose bytes happen to equal an object's
+ * address (C37's mechanism) or leave a derived pointer naming
+ * from-space. */
 static char *dup_bytes(const char *s, size_t n) {
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n) {
     memcpy(p, s, n);
@@ -225,7 +230,12 @@ static void clamp_range(size_t n, int32_t start, int32_t stop, size_t *out_i, si
   *out_len = (size_t)(end - i);
 }
 
+/* The region begins before s + i is formed: dup_bytes's own outermost
+ * defer entry is a collection point under AVANT_GC_STRESS=1, and a young
+ * collection there would leave the derived pointer naming from-space
+ * (W14b1; RC2 of gc-design.md §4.2). */
 char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
+  char *r;
   if (!s) {
     s = "";
   }
@@ -235,7 +245,10 @@ char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
   if (len == 0) {
     return empty_str();
   }
-  return dup_bytes(s + i, len);
+  avant_gc_defer_enter();
+  r = dup_bytes(s + i, len);
+  avant_gc_defer_leave();
+  return r;
 }
 
 char *avant_str_from_int(int32_t n) {
@@ -306,6 +319,12 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   char digs[16];
   int nd = 0;
   uint32_t u;
+  /* The region begins before digs is written: under AVANT_GC_STRESS=1
+   * its entry collects, and the C-stack rewrite would take a digit word
+   * (a digit over stale stack bytes) that equals an object's address
+   * for a reference (C37's mechanism; the compiler's MIR dumps printed
+   * "P" for "0", W14b1). */
+  avant_gc_defer_enter();
   if (n < 0) {
     u = (uint32_t)(-(n + 1)) + 1u;
   } else {
@@ -325,7 +344,6 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   size_t np = avant_str_n(prefix);
   size_t neg = n < 0 ? 1u : 0u;
   size_t total = np + neg + (size_t)nd;
-  avant_gc_defer_enter();
   char *p = (char *)avant_alloc((uint64_t)total + 1, AVANT_TYPE_BYTES);
   if (np) {
     memcpy(p, prefix, np);
@@ -583,7 +601,14 @@ char *avant_str_strip(const char *s, int32_t mode) {
   if (len <= i) {
     return empty_str();
   }
-  return dup_bytes(s + i, len - i);
+  {
+    /* As in avant_str_slice: the region begins before s + i is formed. */
+    char *r;
+    avant_gc_defer_enter();
+    r = dup_bytes(s + i, len - i);
+    avant_gc_defer_leave();
+    return r;
+  }
 }
 
 static void *str_array_build(char **items, int32_t n) {
@@ -596,6 +621,8 @@ static void *str_array_build(char **items, int32_t n) {
     for (i = 0; i < n; i++) {
       buf[i] = items[i];
     }
+    /* A large pointer buffer is mature from birth (D187, W13b). */
+    avant_barrier(buf);
   }
   a->buf = buf;
   a->size = n;
@@ -605,7 +632,7 @@ static void *str_array_build(char **items, int32_t n) {
 }
 
 /* Keeps empty fields. Empty separator traps. */
-void *avant_str_split(const char *s, const char *sep) {
+static void *str_split_held(const char *s, const char *sep) {
   size_t n;
   size_t m;
   size_t i;
@@ -654,8 +681,19 @@ void *avant_str_split(const char *s, const char *sep) {
   }
 }
 
+/* The fresh strings live only in a malloc'ed items[] until the array is
+ * built, so the whole build is one defer region: an outermost enter may
+ * run a full collection under AVANT_NURSERY=0, which does not see items[]
+ * (C35). */
+void *avant_str_split(const char *s, const char *sep) {
+  avant_gc_defer_enter();
+  void *r = str_split_held(s, sep);
+  avant_gc_defer_leave();
+  return r;
+}
+
 /* Splits on runs of ASCII whitespace and drops empty fields. */
-void *avant_str_fields(const char *s) {
+static void *str_fields_held(const char *s) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
@@ -704,6 +742,14 @@ void *avant_str_fields(const char *s) {
     free(items);
     return r;
   }
+}
+
+/* One defer region around the whole build, as avant_str_split (C35). */
+void *avant_str_fields(const char *s) {
+  avant_gc_defer_enter();
+  void *r = str_fields_held(s);
+  avant_gc_defer_leave();
+  return r;
 }
 
 static int utf8_valid(const unsigned char *s, size_t n) {
@@ -832,7 +878,7 @@ static size_t utf8_char_len(const unsigned char *s, size_t n, size_t i, int *val
   return (size_t)extra + 1;
 }
 
-static void *chars_build(const char *s, int strict) {
+static void *chars_build_held(const char *s, int strict) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
@@ -876,6 +922,14 @@ static void *chars_build(const char *s, int strict) {
     free(items);
     return r;
   }
+}
+
+/* One defer region around the whole build, as avant_str_split (C35). */
+static void *chars_build(const char *s, int strict) {
+  avant_gc_defer_enter();
+  void *r = chars_build_held(s, strict);
+  avant_gc_defer_leave();
+  return r;
 }
 
 void *avant_str_chars(const char *s) {
