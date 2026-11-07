@@ -186,11 +186,11 @@ static int reserve_all(uint64_t bytes) {
   uint64_t ln_len = nblocks * LINES_PER_BLOCK;
   uint64_t ch_len = (nchunks * sizeof(GcChunk) + 4095) & ~(uint64_t)4095;
   uint8_t *raw = reserve(bytes + CHUNK_SIZE);
-  void *rec = reserve(rec_len);
-  void *st = reserve(st_len);
-  void *ln = reserve(ln_len);
-  void *ch = reserve(ch_len);
-  if (!raw || !rec || !st || !ln || !ch) {
+  void *rec = raw ? reserve(rec_len) : NULL;
+  void *st = rec ? reserve(st_len) : NULL;
+  void *ln = st ? reserve(ln_len) : NULL;
+  void *ch = ln ? reserve(ch_len) : NULL;
+  if (!ch) {
     unreserve(raw, bytes + CHUNK_SIZE);
     unreserve(rec, rec_len);
     unreserve(st, st_len);
