@@ -32,6 +32,7 @@ uint64_t g_heap_committed;
 uint64_t g_heap_reserved;
 Block *g_blocks;
 uint64_t *g_starts;
+uint64_t *g_marks;
 uint8_t *g_lines;
 GcChunk *g_chunks;
 static Block *g_free_blocks;
@@ -175,9 +176,9 @@ static void unreserve(void *p, uint64_t len) {
 
 /* One attempt at a reservation of BYTES (a multiple of CHUNK_SIZE):
  * the data range, 4 MiB aligned (over-reserved by one chunk, the excess
- * returned), and the three side tables and the chunk map at their
- * ratios (records 1/512, start bits 1/64, line marks 1/256, the map 8
- * bytes per chunk). All or nothing. */
+ * returned), and the four side tables and the chunk map at their
+ * ratios (records 1/512, start bits 1/64, mark bits 1/64, line marks
+ * 1/256, the map 8 bytes per chunk). All or nothing. */
 static int reserve_all(uint64_t bytes) {
   uint64_t nblocks = bytes >> BLOCK_SHIFT;
   uint64_t nchunks = bytes >> CHUNK_SHIFT;
@@ -188,12 +189,14 @@ static int reserve_all(uint64_t bytes) {
   uint8_t *raw = reserve(bytes + CHUNK_SIZE);
   void *rec = raw ? reserve(rec_len) : NULL;
   void *st = rec ? reserve(st_len) : NULL;
-  void *ln = st ? reserve(ln_len) : NULL;
+  void *mk = st ? reserve(st_len) : NULL;
+  void *ln = mk ? reserve(ln_len) : NULL;
   void *ch = ln ? reserve(ch_len) : NULL;
   if (!ch) {
     unreserve(raw, bytes + CHUNK_SIZE);
     unreserve(rec, rec_len);
     unreserve(st, st_len);
+    unreserve(mk, st_len);
     unreserve(ln, ln_len);
     unreserve(ch, ch_len);
     return 0;
@@ -211,6 +214,7 @@ static int reserve_all(uint64_t bytes) {
   }
   g_blocks = rec;
   g_starts = st;
+  g_marks = mk;
   g_lines = ln;
   g_chunks = ch;
   g_heap_reserved = bytes;
@@ -272,6 +276,7 @@ static void commit_chunk(void) {
         !commit(g_heap_base + g_heap_committed, CHUNK_SIZE) ||
         !commit(&g_blocks[b0], BLOCKS_PER_CHUNK * sizeof(Block)) ||
         !commit(&g_starts[b0 * START_WORDS], BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t)) ||
+        !commit(&g_marks[b0 * START_WORDS], BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t)) ||
         !commit(&g_lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK)) {
       gc_die("out of memory (a heap chunk could not be committed)");
     }
@@ -503,6 +508,19 @@ void gc_zero_line_marks(Block *list) {
   Block *b;
   for (b = list; b; b = b->next) {
     memset(b->line_mark, 0, LINES_PER_BLOCK);
+  }
+}
+
+/* The start of a full collection: every committed chunk's slice of the
+ * mark bitmap cleared with one memset (64 KiB per chunk), instead of a
+ * walk over every object's header (gc-design.md §2.2). */
+void gc_clear_side_marks(void) {
+  uint64_t c;
+  uint64_t n = g_heap_committed >> CHUNK_SHIFT;
+  for (c = 0; c < n; c++) {
+    if (g_chunks[c].kind != CHUNK_FREE) {
+      memset(&g_marks[c * BLOCKS_PER_CHUNK * START_WORDS], 0, BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t));
+    }
   }
 }
 

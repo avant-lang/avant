@@ -121,11 +121,13 @@ void gc_release_large(Large *L) {
   }
 }
 
-static void los_note_live(void) {
+/* FULL: the full collection's marks (full_marked), else the young
+ * collection's (the header's MARKED). */
+static void los_note_live(int full) {
   Large *L;
   uint64_t live = 0;
   for (L = g_large; L; L = L->next) {
-    if (L->header.flags & AVANT_FLAG_MARKED) {
+    if (full ? full_marked(&L->header) : (L->header.flags & AVANT_FLAG_MARKED) != 0) {
       live += (uint64_t)gc_large_chunk(L);
     }
   }
@@ -159,7 +161,7 @@ static void promote_young_large(Large *L) {
 void gc_reclaim_young_large(void) {
   Large *L;
   size_t stay_bytes = 0;
-  los_note_live();
+  los_note_live(0);
   for (L = g_large; L; L = L->next) {
     if ((L->header.flags & AVANT_FLAG_YOUNG) == 0) {
       continue;
@@ -194,10 +196,10 @@ void gc_reclaim_young_large(void) {
 
 void gc_sweep_large(void) {
   Large **pp = &g_large;
-  los_note_live();
+  los_note_live(1);
   while (*pp) {
     Large *L = *pp;
-    if (L->header.flags & AVANT_FLAG_MARKED) {
+    if (full_marked(&L->header)) {
       pp = &L->next;
     } else {
       size_t chunk = align_up(sizeof(Large) + (size_t)L->header.size);

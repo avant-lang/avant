@@ -48,10 +48,10 @@ static void mark(void *p) {
     return;
   }
   AvantHeader *h = avant_header(start);
-  if (h->flags & AVANT_FLAG_MARKED) {
+  if (full_marked(h)) {
     return;
   }
-  h->flags |= AVANT_FLAG_MARKED;
+  full_set_mark(h);
   mark_object_lines(start);
   g_live += obj_total(h);
   work_push(start);
@@ -122,7 +122,7 @@ uint64_t g_mark_sum;
 
 void gc_sum_marked_one(AvantHeader *h, Block *b) {
   (void)b;
-  if (h->flags & AVANT_FLAG_MARKED) {
+  if (full_marked(h)) {
     g_mark_sum += obj_total(h);
   }
 }

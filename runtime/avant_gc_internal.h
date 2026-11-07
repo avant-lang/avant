@@ -256,6 +256,7 @@ extern uint64_t g_heap_committed;
 extern uint64_t g_heap_reserved;
 extern Block *g_blocks;
 extern uint64_t *g_starts;
+extern uint64_t *g_marks;
 extern uint8_t *g_lines;
 extern GcChunk *g_chunks;
 void gc_heap_reserve(void);
@@ -282,6 +283,7 @@ int is_heap_payload(void *p, Block **ob, Large **ol);
 void *gc_object_payload(void *p, Block **ob, Large **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void gc_zero_line_marks(Block *list);
+void gc_clear_side_marks(void);
 void mark_object_lines(void *p);
 
 /* avant_gc_alloc.c */
@@ -371,6 +373,7 @@ void count_c_stack_nursery(void);
 /* avant_gc_verify.c */
 extern int g_verify;
 void gc_verify_young_copy(void);
+void gc_verify_no_stale_marks(void);
 void gc_verify_defrag(void);
 
 /* avant_gc_collect.c */
@@ -525,6 +528,34 @@ static inline void mark_lines(Block *b, size_t off, size_t total) {
   size_t i;
   for (i = start; i <= end && i < LINES_PER_BLOCK; i++) {
     b->line_mark[i] = 1;
+  }
+}
+
+/* The full collection's mark (Stage 28 W14a2, gc-design.md §2.2, C36):
+ * one bit per 8-byte granule in the side table g_marks, at the granule
+ * of the object's header (the same index as its start bit), cleared per
+ * chunk by gc_clear_side_marks when a full collection starts. The
+ * header's MARKED bit is the young collection's alone ("traced this
+ * cycle"), and every MARKED a young collection sets is cleared when it
+ * ends (the noted list, avant_gc_young.c). An object outside the
+ * reservation (a large object while they are still malloc'ed) keeps its
+ * full mark in the header, cleared when the full collection ends. */
+static inline int full_marked(const AvantHeader *h) {
+  uintptr_t off;
+  if (heap_offset(h, &off)) {
+    uint64_t g = off >> 3;
+    return (int)((g_marks[g >> 6] >> (g & 63)) & 1ULL);
+  }
+  return (h->flags & AVANT_FLAG_MARKED) != 0;
+}
+
+static inline void full_set_mark(AvantHeader *h) {
+  uintptr_t off;
+  if (heap_offset(h, &off)) {
+    uint64_t g = off >> 3;
+    g_marks[g >> 6] |= 1ULL << (g & 63);
+  } else {
+    h->flags |= AVANT_FLAG_MARKED;
   }
 }
 
