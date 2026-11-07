@@ -108,7 +108,7 @@ static void verify_mark_reachable(void) {
       verify_trace(gc_heap.remset[ri]);
     }
   }
-  avant_hash_walk_tls(verify_tls_slot);
+  gc_each_runtime_root(verify_tls_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
     EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
@@ -298,7 +298,7 @@ void gc_verify_remembered(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     rem_root_slot(&p->payload);
   }
-  avant_hash_walk_tls(rem_root_slot);
+  gc_each_runtime_root(rem_root_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
     EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
@@ -480,7 +480,7 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
       verify_defrag_word(obj, "remembered entry", (void *)&gc_heap.remset[i]);
     }
   }
-  avant_hash_walk_tls(verify_defrag_tls);
+  gc_each_runtime_root(verify_defrag_tls);
   for (b = gc_heap.mature; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }

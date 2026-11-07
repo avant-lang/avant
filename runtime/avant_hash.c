@@ -17,6 +17,19 @@ typedef struct {
 } AvantHash;
 
 static __thread const char *g_last_key;
+static __thread int g_last_key_rooted;
+
+/* g_last_key names a heap key (or a static string), so it is a root of
+ * this thread's collections (avant_gc_add_root, Stage 28 W14b2),
+ * registered the first time a helper that sets it runs. Every write of
+ * g_last_key comes after this reset in the same helper. */
+static void last_key_reset(void) {
+  if (!g_last_key_rooted) {
+    g_last_key_rooted = 1;
+    avant_gc_add_root((void **)&g_last_key);
+  }
+  g_last_key = "";
+}
 
 /* state bytes, then one uint32 hash per slot. cap is 0 or a power of two. */
 static uint64_t state_bytes(int32_t cap) {
@@ -520,7 +533,7 @@ void avant_hash_del_i32k(void *hp, int32_t key) {
 
 int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t stop) {
   AvantHash *h = (AvantHash *)hp;
-  g_last_key = "";
+  last_key_reset();
   if (!h || h->key_kind != AVANT_HASH_KEY_STR || h->val_kind != AVANT_HASH_VAL_I32) {
     return 0;
   }
@@ -561,12 +574,6 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
 
 const char *avant_hash_last_key(void) {
   return g_last_key ? g_last_key : "";
-}
-
-void avant_hash_walk_tls(void (*fn)(void **slot)) {
-  if (fn) {
-    fn((void **)&g_last_key);
-  }
 }
 
 const char *avant_hash_get_str_slice(void *hp, const char *s, int32_t start, int32_t stop, int32_t *found) {
@@ -859,7 +866,7 @@ int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *f
   int32_t mask;
   int32_t i;
   int32_t n;
-  g_last_key = "";
+  last_key_reset();
   if (found) {
     *found = 0;
   }

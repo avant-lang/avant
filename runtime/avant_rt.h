@@ -93,6 +93,12 @@ void avant_gc_root(void *slot);
  * they stay while the runtime's exported symbols are frozen. */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
+/* A C variable that lives as long as its thread (a __thread variable)
+ * and holds a heap reference is registered once, by that thread, before
+ * it first holds one: from then on the collections on that thread mark
+ * what it names and rewrite it when the object moves (Stage 28 W14b2).
+ * At most 8 per thread. */
+void avant_gc_add_root(void **slot);
 
 /* Inline nursery fast path (Collector II Wave 1). Generated code may
  * allocate without a call only while avant_gc_fast_ok is set: it bumps
@@ -234,7 +240,6 @@ void avant_hash_del(void *h, const char *key);
 void avant_hash_del_i32k(void *h, int32_t key);
 int32_t avant_hash_inc_slice(void *h, const char *s, int32_t start, int32_t stop);
 const char *avant_hash_last_key(void);
-void avant_hash_walk_tls(void (*fn)(void **slot));
 const char *avant_hash_get_str_slice(void *h, const char *s, int32_t start, int32_t stop, int32_t *found);
 int32_t avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
 int32_t avant_hash_has_str(void *h, const char *key);

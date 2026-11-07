@@ -50,9 +50,12 @@
  *     only where the caller's C frames hold no references (the HTTP
  *     dispatch).
  *
- * What the collector calls back: avant_hash_walk_tls (avant_hash.c), so
- * the runtime's thread-local reference slots are roots that a moving
- * collection rewrites.
+ *   - A runtime unit that keeps a heap reference in a thread-local
+ *     variable registers that slot once per thread with
+ *     avant_gc_add_root before it first holds one (avant_hash.c's last
+ *     key); the collections on that thread read and rewrite it like a
+ *     root slot (Stage 28 W14b2, gc-design.md section 1.4; it replaced a
+ *     callback from the collector into avant_hash.c).
  */
 
 /*
@@ -110,6 +113,7 @@ void avant_gc_unregister_thread(void);
 void avant_gc_enter(void);
 void avant_gc_leave(void);
 void avant_gc_heap_goal_collect(void);
+void avant_gc_add_root(void **slot);
 /* avant_str_generation() (avant_rt.h) reads g_avant_str_gen, which every
  * collection bumps. */
 extern _Atomic uint32_t g_avant_str_gen;

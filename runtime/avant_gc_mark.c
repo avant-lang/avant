@@ -67,7 +67,7 @@ void gc_mark_roots(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     mark(p->payload);
   }
-  avant_hash_walk_tls(mark_tls_slot);
+  gc_each_runtime_root(mark_tls_slot);
   drain();
 }
 

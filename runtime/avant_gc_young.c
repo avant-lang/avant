@@ -342,7 +342,7 @@ void gc_gen_young_copy(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     copy_from_slot(&p->payload);
   }
-  avant_hash_walk_tls(copy_from_slot);
+  gc_each_runtime_root(copy_from_slot);
   /* Remembered objects are reached from the roots above. The set is
    * not itself a root list: a dead buffer would keep its nodes alive. */
   while (gc_heap.work_n) {

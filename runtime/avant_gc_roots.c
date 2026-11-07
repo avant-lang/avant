@@ -97,6 +97,29 @@ void avant_gc_leave(void) {
   gc_thread.frame_free = f;
 }
 
+/* A runtime unit registers a thread-local slot that holds a heap
+ * reference (or NULL) once per thread, before the slot first holds one;
+ * from then on every collection on this thread treats it as a root: it
+ * marks what the slot names and rewrites the slot when the object moves.
+ * The slot must live as long as the thread (a __thread variable). No
+ * lock: only this thread registers its slots, and only a collection
+ * running on this thread reads them. */
+void avant_gc_add_root(void **slot) {
+  uint32_t i;
+  if (!slot) {
+    return;
+  }
+  for (i = 0; i < gc_thread.nroots; i++) {
+    if (gc_thread.roots[i] == slot) {
+      return;
+    }
+  }
+  if (gc_thread.nroots == GC_THREAD_ROOTS) {
+    gc_die("too many runtime roots on one thread");
+  }
+  gc_thread.roots[gc_thread.nroots++] = slot;
+}
+
 void avant_gc_quiet_enter(void) {
   gc_thread.quiet++;
 }

@@ -84,6 +84,7 @@
 #define FULL_BYTES (32u * 1024u * 1024u)
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
+#define GC_THREAD_ROOTS 8
 
 /* SCALAR_LOS_MIN: numeric (type-0) buffers at or above this size are
  * young large objects. They do not move, so a parallel loop can keep
@@ -710,9 +711,26 @@ typedef struct GcThread {
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
   ThreadReg reg;
+  /* Runtime-held references (gc-design.md §1.4): thread-local slots of
+   * the runtime's other units that hold a heap reference, registered by
+   * avant_gc_add_root (once each, by the thread that owns them). A
+   * collection reads and rewrites them like root slots. */
+  void **roots[GC_THREAD_ROOTS];
+  uint32_t nroots;
 } GcThread;
 
 extern __thread GcThread gc_thread;
+
+/* Every runtime-held reference slot of the collecting thread (Stage 28
+ * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls).
+ * Only the collecting thread's own slots are visited, as before; other
+ * threads' are part of D191's window until W17 stops them. */
+static inline void gc_each_runtime_root(void (*fn)(void **slot)) {
+  uint32_t i;
+  for (i = 0; i < gc_thread.nroots; i++) {
+    fn(gc_thread.roots[i]);
+  }
+}
 
 /* avant_gc_heap.c */
 void gc_heap_reserve(void);
