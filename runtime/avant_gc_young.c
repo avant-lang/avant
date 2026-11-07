@@ -78,7 +78,7 @@ static void probe_note(void *start) {
 static void remember_young_edge(void **slot, void *payload) {
   Block *pb = NULL;
   Block *ob = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *owner;
   if (!is_heap_payload(payload, &pb, NULL) || !pb) {
     return;
@@ -108,7 +108,7 @@ static int g_rem_track_dirty;
 
 static int names_young(void *p) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return 0;
@@ -228,7 +228,7 @@ void *copy_nursery(void *p) {
 void copy_from_slot(void **slot) {
   void *p = *slot;
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
@@ -272,7 +272,7 @@ void copy_from_slot(void **slot) {
 static void relocate_root_location(void ***slot_loc) {
   void *addr = (void *)*slot_loc;
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(addr, &b, &ol);
   if (!start || !b || b->space != SPACE_NURSERY) {
     return;

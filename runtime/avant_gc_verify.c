@@ -19,7 +19,7 @@ int g_verify;
 
 static int verify_ptr(void *p, const char *where, void *holder, long off) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start || !b || b->space != SPACE_NURSERY) {
     return 0;
@@ -60,7 +60,7 @@ static size_t g_vnoted_cap;
 
 static void verify_trace(void *p) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
@@ -231,9 +231,11 @@ void gc_verify_young_copy(void) {
     }
   }
   {
-    Large *L;
-    for (L = g_large; L; L = L->next) {
-      verify_obj_fields(&L->header, NULL);
+    LargeIter it;
+    AvantHeader *lh;
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      verify_obj_fields(lh, NULL);
     }
   }
   verify_clear_traced();
@@ -259,7 +261,8 @@ static void verify_no_stale_one(AvantHeader *h, Block *b) {
 
 void gc_verify_no_stale_marks(void) {
   Block *b;
-  Large *L;
+  LargeIter it;
+  AvantHeader *lh;
   Block *lists[4];
   int k;
   lists[0] = g_mature;
@@ -271,8 +274,9 @@ void gc_verify_no_stale_marks(void) {
       gc_foreach_block_object(b, verify_no_stale_one);
     }
   }
-  for (L = g_large; L; L = L->next) {
-    verify_no_stale_one(&L->header, NULL);
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    verify_no_stale_one(lh, NULL);
   }
 }
 
@@ -326,7 +330,8 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   uint8_t *lo = g_self_reg.stack_lo;
   ThreadReg *t;
   Block *b;
-  Large *L;
+  LargeIter it;
+  AvantHeader *lh;
   uint32_t i;
   if (hi && p && p < hi && !(lo && p < lo)) {
     p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
@@ -368,7 +373,8 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   for (b = g_from; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
-  for (L = g_large; L; L = L->next) {
-    verify_defrag_fields(&L->header, NULL);
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    verify_defrag_fields(lh, NULL);
   }
 }

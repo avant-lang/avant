@@ -34,8 +34,11 @@ Block *g_blocks;
 uint64_t *g_starts;
 uint64_t *g_marks;
 uint8_t *g_lines;
+uint32_t *g_pages;
 GcChunk *g_chunks;
 static Block *g_free_blocks;
+/* Chunks below the high-water mark that are CHUNK_FREE again. */
+static uint64_t g_free_chunks;
 
 Block *g_mature;
 Block *g_nursery;
@@ -176,28 +179,32 @@ static void unreserve(void *p, uint64_t len) {
 
 /* One attempt at a reservation of BYTES (a multiple of CHUNK_SIZE):
  * the data range, 4 MiB aligned (over-reserved by one chunk, the excess
- * returned), and the four side tables and the chunk map at their
+ * returned), and the five side tables and the chunk map at their
  * ratios (records 1/512, start bits 1/64, mark bits 1/64, line marks
- * 1/256, the map 8 bytes per chunk). All or nothing. */
+ * 1/256, the large-object page table 1/1024, the map one GcChunk per
+ * chunk). All or nothing. */
 static int reserve_all(uint64_t bytes) {
   uint64_t nblocks = bytes >> BLOCK_SHIFT;
   uint64_t nchunks = bytes >> CHUNK_SHIFT;
   uint64_t rec_len = nblocks * sizeof(Block);
   uint64_t st_len = nblocks * START_WORDS * sizeof(uint64_t);
   uint64_t ln_len = nblocks * LINES_PER_BLOCK;
+  uint64_t pg_len = (bytes >> PAGE_SHIFT) * sizeof(uint32_t);
   uint64_t ch_len = (nchunks * sizeof(GcChunk) + 4095) & ~(uint64_t)4095;
   uint8_t *raw = reserve(bytes + CHUNK_SIZE);
   void *rec = raw ? reserve(rec_len) : NULL;
   void *st = rec ? reserve(st_len) : NULL;
   void *mk = st ? reserve(st_len) : NULL;
   void *ln = mk ? reserve(ln_len) : NULL;
-  void *ch = ln ? reserve(ch_len) : NULL;
+  void *pg = ln ? reserve(pg_len) : NULL;
+  void *ch = pg ? reserve(ch_len) : NULL;
   if (!ch) {
     unreserve(raw, bytes + CHUNK_SIZE);
     unreserve(rec, rec_len);
     unreserve(st, st_len);
     unreserve(mk, st_len);
     unreserve(ln, ln_len);
+    unreserve(pg, pg_len);
     unreserve(ch, ch_len);
     return 0;
   }
@@ -216,6 +223,7 @@ static int reserve_all(uint64_t bytes) {
   g_starts = st;
   g_marks = mk;
   g_lines = ln;
+  g_pages = pg;
   g_chunks = ch;
   g_heap_reserved = bytes;
   g_heap_committed = 0;
@@ -258,42 +266,108 @@ static int commit(void *p, uint64_t len) {
   return mprotect(p, (size_t)len, PROT_READ | PROT_WRITE) == 0;
 }
 
-/* Commit the next chunk: its data, its slices of the block records,
- * start bits and line marks, and the chunk map's page holding its entry.
- * Fresh anonymous memory reads as zero, so its start bits and line marks
- * are clear. Its blocks go on the free list, lowest address on top. */
-static void commit_chunk(void) {
+/* Commit the next chunk past the high-water mark: its data, its slices
+ * of the block records, start bits, mark bits, line marks and page
+ * table, and the chunk map's pages holding its entry. Fresh anonymous
+ * memory reads as zero, so every side slice is clear. Its block records
+ * learn their addresses (fixed for the process's life); the chunk is
+ * CHUNK_FREE, clean, for the caller to give a kind. */
+static uint64_t commit_new_chunk(void) {
   uint64_t c = g_heap_committed >> CHUNK_SHIFT;
   uint64_t b0 = c * BLOCKS_PER_CHUNK;
-  int i;
+  uint64_t i;
   if (g_heap_committed + CHUNK_SIZE > g_heap_reserved) {
     gc_die("heap reservation exhausted (AVANT_HEAP_RESERVE_GB raises it)");
   }
   {
-    uintptr_t e = (uintptr_t)&g_chunks[c];
-    uintptr_t pg = e & ~(uintptr_t)4095;
-    if (!commit((void *)pg, 4096) ||
+    uintptr_t e0 = (uintptr_t)&g_chunks[c] & ~(uintptr_t)4095;
+    uintptr_t e1 = ((uintptr_t)&g_chunks[c + 1] + 4095) & ~(uintptr_t)4095;
+    if (!commit((void *)e0, (uint64_t)(e1 - e0)) ||
         !commit(g_heap_base + g_heap_committed, CHUNK_SIZE) ||
         !commit(&g_blocks[b0], BLOCKS_PER_CHUNK * sizeof(Block)) ||
-        !commit(&g_starts[b0 * START_WORDS], BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t)) ||
-        !commit(&g_marks[b0 * START_WORDS], BLOCKS_PER_CHUNK * START_WORDS * sizeof(uint64_t)) ||
-        !commit(&g_lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK)) {
+        !commit(&g_starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
+        !commit(&g_marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
+        !commit(&g_lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK) ||
+        !commit(&g_pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t))) {
       gc_die("out of memory (a heap chunk could not be committed)");
     }
   }
-  g_chunks[c].kind = CHUNK_SMALL;
-  g_chunks[c].used = 0;
-  for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
-    uint64_t k = b0 + (uint64_t)i;
+  for (i = 0; i < BLOCKS_PER_CHUNK; i++) {
+    uint64_t k = b0 + i;
     Block *b = &g_blocks[k];
     b->base = g_heap_base + (k << BLOCK_SHIFT);
     b->line_mark = &g_lines[k * LINES_PER_BLOCK];
     b->start = &g_starts[k * START_WORDS];
     b->in_use = 0;
+  }
+  memset(&g_chunks[c], 0, sizeof(GcChunk));
+  g_chunks[c].kind = CHUNK_FREE;
+  g_heap_committed += CHUNK_SIZE;
+  return c;
+}
+
+/* N contiguous chunks for the caller to give a kind (CHUNK_SMALL, a
+ * large-object chunk, or a huge object's run): the first run of N free
+ * chunks below the high-water mark, else N new chunks past it. Their
+ * GcChunk entries keep only `dirty`. Never fails: past the reservation
+ * it dies. */
+uint64_t gc_chunk_take(uint64_t n) {
+  uint64_t hw;
+  uint64_t c;
+  uint64_t run = 0;
+  if (!g_heap_base) {
+    gc_heap_reserve();
+  }
+  hw = g_heap_committed >> CHUNK_SHIFT;
+  if (g_free_chunks >= n) {
+    for (c = 0; c < hw; c++) {
+      if (g_chunks[c].kind != CHUNK_FREE) {
+        run = 0;
+        continue;
+      }
+      if (++run == n) {
+        uint64_t first = c + 1 - n;
+        uint64_t k;
+        g_free_chunks -= n;
+        /* A reused chunk's mark bits may be stale: a full collection
+         * clears only the chunks in use when it starts. */
+        for (k = first; k <= c; k++) {
+          memset(&g_marks[k * CHUNK_START_WORDS], 0, CHUNK_START_WORDS * sizeof(uint64_t));
+        }
+        return first;
+      }
+    }
+  }
+  c = commit_new_chunk();
+  for (run = 1; run < n; run++) {
+    commit_new_chunk();
+  }
+  return c;
+}
+
+/* Chunk C back to CHUNK_FREE (its data stays committed and dirty). */
+void gc_chunk_give(uint64_t c) {
+  uint8_t was = g_chunks[c].kind;
+  memset(&g_chunks[c], 0, sizeof(GcChunk));
+  g_chunks[c].kind = CHUNK_FREE;
+  g_chunks[c].dirty = was != CHUNK_FREE;
+  g_free_chunks++;
+}
+
+/* A chunk of small-object blocks: every block on the free list, lowest
+ * address on top. */
+static void make_small_chunk(void) {
+  uint64_t c = gc_chunk_take(1);
+  uint64_t b0 = c * BLOCKS_PER_CHUNK;
+  int i;
+  g_chunks[c].kind = CHUNK_SMALL;
+  g_chunks[c].used = 0;
+  for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
+    Block *b = &g_blocks[b0 + (uint64_t)i];
+    b->in_use = 0;
     b->next = g_free_blocks;
     g_free_blocks = b;
   }
-  g_heap_committed += CHUNK_SIZE;
 }
 
 /* A free block, its start bits and line marks clear, not yet in use
@@ -305,7 +379,7 @@ Block *gc_block_take(void) {
     gc_heap_reserve();
   }
   if (!g_free_blocks) {
-    commit_chunk();
+    make_small_chunk();
   }
   b = g_free_blocks;
   g_free_blocks = b->next;
@@ -317,7 +391,7 @@ Block *gc_block_take(void) {
 }
 
 /* Back to the free list (the block must already be out of use). Its
- * memory stays committed: returning it to the OS is W14a2's (§2.5). */
+ * memory stays committed. */
 void gc_block_give(Block *b) {
   b->in_use = 0;
   chunk_of(b->base)->used--;
@@ -340,34 +414,32 @@ size_t obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
 }
 
-/* The static image: the executable's own mapped range, from its ELF
- * header to the end of its data (both defined by the linker; weak, so a
- * link that lacks them only loses the shortcut). String literals and
- * other static objects lie there, and nothing the collector allocates
- * does (O29). */
-extern const char __ehdr_start[] __attribute__((weak));
-extern const char _end[] __attribute__((weak));
-
-static inline int in_static_image(const void *p) {
-  return __ehdr_start && _end && (const char *)p >= __ehdr_start && (const char *)p < _end;
-}
-
 /* H1 (gc-audit.md §2): p is a heap payload iff it is 8-aligned and its
- * header is the start of an object in a block in use, or p is a listed
- * large object's payload. The order of the tests is the order of their
- * cost: one compare for the committed heap (blocks hold every non-large
- * object), one for the static image, then the large-object hash. Large
- * objects are malloc'ed (W14a1 keeps the large list), never inside the
- * reservation, so an address there needs no large lookup. */
-int is_heap_payload(void *p, Block **ob, Large **ol) {
+ * header is the start of a live object: in the committed range (one
+ * compare; static objects such as string literals fail it at once, O29),
+ * its granule's start bit set, and its chunk a small-object chunk whose
+ * block is in use, or a large-object chunk (a large object's header has
+ * its start bit too, gc-design.md §2.3; it is set exactly while the
+ * object lives). OL receives a large object's header, OB a block
+ * object's block. */
+int is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
   uintptr_t off;
+  uint64_t g;
+  uint8_t kind;
   if (!p || (uintptr_t)p % ALIGN) {
     return 0;
   }
-  if (heap_offset((uint8_t *)p - sizeof(AvantHeader), &off)) {
+  if (!heap_offset((uint8_t *)p - sizeof(AvantHeader), &off)) {
+    return 0;
+  }
+  g = off >> 3;
+  if (!((g_starts[g >> 6] >> (g & 63)) & 1ULL)) {
+    return 0;
+  }
+  kind = g_chunks[off >> CHUNK_SHIFT].kind;
+  if (kind == CHUNK_SMALL) {
     Block *b = &g_blocks[off >> BLOCK_SHIFT];
-    uint64_t g = off >> 3;
-    if (!b->in_use || !((g_starts[g >> 6] >> (g & 63)) & 1ULL)) {
+    if (!b->in_use) {
       return 0;
     }
     if (ob) {
@@ -378,20 +450,43 @@ int is_heap_payload(void *p, Block **ob, Large **ol) {
     }
     return 1;
   }
-  if (in_static_image(p)) {
-    return 0;
-  }
-  Large *L = large_of(p);
-  if (L) {
+  if (kind == CHUNK_LARGE || kind == CHUNK_HUGE) {
     if (ob) {
       *ob = NULL;
     }
     if (ol) {
-      *ol = L;
+      *ol = avant_header(p);
     }
     return 1;
   }
   return 0;
+}
+
+/* The large object whose page run holds byte offset OFF of the heap, or
+ * NULL: in a large-object chunk the page table names the run's first
+ * page (one read, gc-design.md §2.4); in a huge run the object starts
+ * its head chunk. The header is 8 bytes into the run's first page. */
+static AvantHeader *large_holding(uintptr_t off) {
+  uint64_t c = off >> CHUNK_SHIFT;
+  const GcChunk *ch = &g_chunks[c];
+  uint8_t *hs;
+  if (ch->kind == CHUNK_LARGE) {
+    uint32_t v = g_pages[off >> PAGE_SHIFT];
+    if (!v) {
+      return NULL;
+    }
+    hs = chunk_base(c) + ((size_t)(v - 1) << PAGE_SHIFT) + 8;
+  } else if (ch->kind == CHUNK_HUGE) {
+    hs = chunk_base(c) + 8;
+  } else if (ch->kind == CHUNK_HUGE_CONT) {
+    hs = chunk_base(ch->head) + 8;
+  } else {
+    return NULL;
+  }
+  if (!start_bit_at(hs)) {
+    return NULL;
+  }
+  return (AvantHeader *)hs;
 }
 
 /*
@@ -400,17 +495,18 @@ int is_heap_payload(void *p, Block **ob, Large **ol) {
  * the young copy must still move the object and keep the same offset
  * into it. In a block: the nearest start bit at or before p, a 64-bit
  * word of the start bitmap at a time, bounded by the block (an object
- * never spans two blocks, H4), and p must lie inside that object.
+ * never spans two blocks, H4), and p must lie inside that object. In a
+ * large-object chunk or a huge run: large_holding.
  */
-void *gc_object_payload(void *p, Block **ob, Large **ol) {
+void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
   uintptr_t off;
   if (is_heap_payload(p, ob, ol)) {
     return p;
   }
-  if (!p) {
+  if (!p || !heap_offset(p, &off)) {
     return NULL;
   }
-  if (heap_offset(p, &off)) {
+  if (g_chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
     Block *b = &g_blocks[off >> BLOCK_SHIFT];
     uint8_t *addr = (uint8_t *)p;
     size_t g;
@@ -444,25 +540,17 @@ void *gc_object_payload(void *p, Block **ob, Large **ol) {
     }
     return NULL;
   }
-  if (in_static_image(p)) {
-    return NULL;
-  }
-  Large *L;
-  uint8_t *addr = (uint8_t *)p;
-  if (addr < g_large_lo || addr >= g_large_hi) {
-    return NULL; /* in no large chunk: the walk below would miss */
-  }
-  for (L = g_large; L; L = L->next) {
-    uint8_t *hs = (uint8_t *)&L->header;
-    size_t total = obj_total(&L->header);
-    if (addr >= hs && addr < hs + total) {
+  {
+    AvantHeader *h = large_holding(off);
+    uint8_t *addr = (uint8_t *)p;
+    if (h && addr >= (uint8_t *)h && addr < (uint8_t *)h + obj_total(h)) {
       if (ob) {
         *ob = NULL;
       }
       if (ol) {
-        *ol = L;
+        *ol = h;
       }
-      return payload_of(&L->header);
+      return payload_of(h);
     }
   }
   return NULL;

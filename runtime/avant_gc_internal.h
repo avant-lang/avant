@@ -67,9 +67,13 @@
 #define CHUNK_SIZE (1u << CHUNK_SHIFT)
 #define BLOCKS_PER_CHUNK (CHUNK_SIZE / BLOCK_SIZE)
 #define START_WORDS 64
+#define PAGE_SHIFT 12
+#define PAGE_SIZE (1u << PAGE_SHIFT)
+#define PAGES_PER_CHUNK (CHUNK_SIZE / PAGE_SIZE)
+#define PAGE_WORDS (PAGES_PER_CHUNK / 64)
+#define CHUNK_START_WORDS (BLOCKS_PER_CHUNK * START_WORDS)
 #define HEAP_RESERVE_GB_DEFAULT 64
 #define HEAP_RESERVE_GB_MIN 1
-#define LARGE_HASH 4096
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
 #define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
@@ -131,23 +135,39 @@ typedef struct Block {
 _Static_assert(offsetof(Block, bump) == 32, "Block.bump is ABI at offset 32");
 _Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
 
-/* One chunk's entry in the chunk map. kind: CHUNK_FREE (not committed)
- * or CHUNK_SMALL (blocks of small objects; large objects are still
- * malloc'ed in W14a1, avant_gc_los.c). used: its blocks in use. */
+/* One chunk's entry in the chunk map (gc-design.md §2.2, §2.4). kind:
+ *   CHUNK_FREE       in no use (never committed past the high-water
+ *                    mark; below it, given back: its data may be dirty)
+ *   CHUNK_SMALL      128 blocks of small objects; used counts the blocks
+ *                    taken (in a space or in the two-block cache)
+ *   CHUNK_LARGE      large objects on exact runs of 4 KiB pages: alloc
+ *                    is the free-page bitmap's complement (a set bit is
+ *                    an allocated page), used counts allocated pages,
+ *                    dirty_pages the pages that may hold non-zero bytes
+ *   CHUNK_HUGE       the first chunk of one object larger than a chunk
+ *                    holds; head is the run's length in chunks
+ *   CHUNK_HUGE_CONT  a later chunk of that run; head is the first's index
+ * dirty (FREE): the data was used and may hold non-zero bytes. */
 #define CHUNK_FREE 0
 #define CHUNK_SMALL 1
+#define CHUNK_LARGE 2
+#define CHUNK_HUGE 3
+#define CHUNK_HUGE_CONT 4
 typedef struct GcChunk {
   uint8_t kind;
-  uint8_t pad_;
+  uint8_t dirty;
   uint16_t used;
-  uint32_t pad2_;
+  uint32_t head;
+  uint64_t alloc[PAGE_WORDS];
+  uint64_t dirty_pages[PAGE_WORDS];
 } GcChunk;
 
-typedef struct Large {
-  struct Large *next;
-  struct Large *hash_next;
-  AvantHeader header;
-} Large;
+/* A walk over every large object (gc_large_next, avant_gc_los.c), in
+ * address order. The walk may free the object it just returned. */
+typedef struct LargeIter {
+  uint64_t c;
+  uint32_t p;
+} LargeIter;
 
 typedef struct Frame {
   struct Frame *prev;
@@ -258,10 +278,13 @@ extern Block *g_blocks;
 extern uint64_t *g_starts;
 extern uint64_t *g_marks;
 extern uint8_t *g_lines;
+extern uint32_t *g_pages;
 extern GcChunk *g_chunks;
 void gc_heap_reserve(void);
 Block *gc_block_take(void);
 void gc_block_give(Block *b);
+uint64_t gc_chunk_take(uint64_t n);
+void gc_chunk_give(uint64_t c);
 extern Block *g_mature;
 extern Block *g_nursery;
 extern Block *g_from;
@@ -279,8 +302,8 @@ void fwd_put(void *from, void *to);
 void *fwd_get(void *from);
 int gc_block_live_lines(Block *b);
 size_t obj_total(const AvantHeader *h);
-int is_heap_payload(void *p, Block **ob, Large **ol);
-void *gc_object_payload(void *p, Block **ob, Large **ol);
+int is_heap_payload(void *p, Block **ob, AvantHeader **ol);
+void *gc_object_payload(void *p, Block **ob, AvantHeader **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void gc_zero_line_marks(Block *list);
 void gc_clear_side_marks(void);
@@ -305,17 +328,15 @@ void *gc_mature_alloc(size_t total);
 AvantHeader *gc_to_alloc(size_t total);
 
 /* avant_gc_los.c */
-extern Large *g_large;
-extern Large *g_large_ht[LARGE_HASH];
-extern uint8_t *g_large_lo;
-extern uint8_t *g_large_hi;
-extern Large *g_los_spare;
+extern AvantHeader *g_los_spare;
+extern uint64_t g_large_bytes;
 extern uint64_t g_young_large;
 extern int g_young_large_n;
 extern int g_los_eager_hold;
-size_t gc_large_chunk(const Large *L);
+size_t gc_large_bytes(const AvantHeader *h);
+AvantHeader *gc_large_next(LargeIter *it);
 void gc_los_spare_drop(void);
-void gc_release_large(Large *L);
+void gc_release_large(AvantHeader *h);
 void gc_reclaim_young_large(void);
 void gc_sweep_large(void);
 void *gc_los_alloc(size_t payload, uint32_t type_id);
@@ -533,50 +554,52 @@ static inline void mark_lines(Block *b, size_t off, size_t total) {
 /* The full collection's mark (Stage 28 W14a2, gc-design.md §2.2, C36):
  * one bit per 8-byte granule in the side table g_marks, at the granule
  * of the object's header (the same index as its start bit), cleared per
- * chunk by gc_clear_side_marks when a full collection starts. The
- * header's MARKED bit is the young collection's alone ("traced this
- * cycle"), and every MARKED a young collection sets is cleared when it
- * ends (the noted list, avant_gc_young.c). An object outside the
- * reservation (a large object while they are still malloc'ed) keeps its
- * full mark in the header, cleared when the full collection ends. */
+ * chunk by gc_clear_side_marks when a full collection starts. Every
+ * object, large ones included, lies in the reservation. The header's
+ * MARKED bit is the young collection's alone ("traced this cycle"), and
+ * every MARKED a young collection sets is cleared when it ends (the
+ * noted list, avant_gc_young.c). */
 static inline int full_marked(const AvantHeader *h) {
-  uintptr_t off;
-  if (heap_offset(h, &off)) {
-    uint64_t g = off >> 3;
-    return (int)((g_marks[g >> 6] >> (g & 63)) & 1ULL);
-  }
-  return (h->flags & AVANT_FLAG_MARKED) != 0;
+  uint64_t g = (uint64_t)((uintptr_t)h - (uintptr_t)g_heap_base) >> 3;
+  return (int)((g_marks[g >> 6] >> (g & 63)) & 1ULL);
 }
 
 static inline void full_set_mark(AvantHeader *h) {
-  uintptr_t off;
-  if (heap_offset(h, &off)) {
-    uint64_t g = off >> 3;
-    g_marks[g >> 6] |= 1ULL << (g & 63);
+  uint64_t g = (uint64_t)((uintptr_t)h - (uintptr_t)g_heap_base) >> 3;
+  g_marks[g >> 6] |= 1ULL << (g & 63);
+}
+
+/* Start bits by address, for any chunk (large objects' headers have one
+ * too, gc-design.md §2.3). */
+static inline uint64_t granule_of(const void *p) {
+  return (uint64_t)((uintptr_t)p - (uintptr_t)g_heap_base) >> 3;
+}
+
+static inline int start_bit_at(const void *p) {
+  uint64_t g = granule_of(p);
+  return (int)((g_starts[g >> 6] >> (g & 63)) & 1ULL);
+}
+
+static inline void start_bit_set(const void *p, int on) {
+  uint64_t g = granule_of(p);
+  if (on) {
+    g_starts[g >> 6] |= 1ULL << (g & 63);
   } else {
-    h->flags |= AVANT_FLAG_MARKED;
+    g_starts[g >> 6] &= ~(1ULL << (g & 63));
   }
+}
+
+static inline uint8_t *chunk_base(uint64_t c) {
+  return g_heap_base + (c << CHUNK_SHIFT);
 }
 
 static inline void *payload_of(AvantHeader *h) {
   return (void *)(h + 1);
 }
 
-static inline size_t large_key(void *payload) {
-  return hash_ptr(payload) & (size_t)(LARGE_HASH - 1);
-}
-
-static inline Large *large_of(void *payload) {
-  Large *L;
-  if (!payload) {
-    return NULL;
-  }
-  for (L = g_large_ht[large_key(payload)]; L; L = L->hash_next) {
-    if (payload == payload_of(&L->header)) {
-      return L;
-    }
-  }
-  return NULL;
+static inline void gc_large_iter_init(LargeIter *it) {
+  it->c = 0;
+  it->p = 0;
 }
 
 /* The collector initializes on first use. The check is inline so the

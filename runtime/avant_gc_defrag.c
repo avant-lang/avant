@@ -86,7 +86,7 @@ static int def_cand_cmp(const void *a, const void *b) {
 static void defrag_rewrite_slot(void **slot) {
   void *w = *slot;
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(w, &b, &ol);
   void *to;
   if (!start) {
@@ -327,10 +327,12 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
   {
-    Large *L;
-    for (L = g_large; L; L = L->next) {
-      if (full_marked(&L->header)) {
-        defrag_scan_payload(payload_of(&L->header));
+    LargeIter it;
+    AvantHeader *lh;
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      if (full_marked(lh)) {
+        defrag_scan_payload(payload_of(lh));
       }
     }
   }

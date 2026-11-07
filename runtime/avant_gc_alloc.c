@@ -131,8 +131,6 @@ static uint64_t space_block_bytes(Block *b) {
 /* Wave 4 step 1: when the heap high-water mark moves, snapshot what
  * the heap is made of, so a peak can be decomposed after the fact. */
 void gc_note_peak(void) {
-  Large *L;
-  uint64_t large = 0;
   if (g_heap_bytes <= g_stats.peak_heap) {
     return;
   }
@@ -142,10 +140,7 @@ void gc_note_peak(void) {
   g_pk_from = space_block_bytes(g_from);
   g_pk_to = space_block_bytes(g_to);
   g_pk_cache = (uint64_t)g_cache_n * BLOCK_SIZE;
-  for (L = g_large; L; L = L->next) {
-    large += align_up(sizeof(Large) + L->header.size);
-  }
-  g_pk_large = large;
+  g_pk_large = g_large_bytes;
 }
 
 /* Wave 4 step 2: outside a collection the copy reserve counts as

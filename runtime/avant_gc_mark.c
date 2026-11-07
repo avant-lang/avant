@@ -19,7 +19,7 @@ static void scan_payload(void *p);
 
 static void mark(void *p) {
   Block *b = NULL;
-  Large *ol = NULL;
+  AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;

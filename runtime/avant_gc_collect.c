@@ -224,7 +224,8 @@ void gc_collect(int full) {
     }
   } else {
     Block *b;
-    Large *L;
+    LargeIter it;
+    AvantHeader *lh;
     g_stats.full_collections++;
     /* Non-moving. Evacuating the nursery here needs a second copy of
      * every live object while the from-space blocks are still charged
@@ -278,12 +279,9 @@ void gc_collect(int full) {
     g_young_large = 0;
     g_young_large_n = 0;
     g_los_eager_hold = 0;
-    /* A large object (malloc'ed, outside the reservation) carries its
-     * full mark in the header: cleared here, so no young collection
-     * reads it as its own (C36). */
-    for (L = g_large; L; L = L->next) {
-      L->header.flags =
-          (uint16_t)(L->header.flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_MARKED));
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      lh->flags = (uint16_t)(lh->flags & (uint16_t)~AVANT_FLAG_YOUNG);
     }
     g_last_full_at = g_stats.allocated_bytes;
   }

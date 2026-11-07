@@ -109,11 +109,12 @@ void gc_rem_scrub(void) {
       }
       w++;
     } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-      Large *L = large_of(obj);
-      /* A dead expression buffer is a large object. Leaving it on the
-       * large list makes every missed pointer walk that list. */
-      if (L) {
-        gc_release_large(L);
+      AvantHeader *lh = NULL;
+      /* A dead expression buffer is a large object: release its pages
+       * now. */
+      (void)is_heap_payload(obj, NULL, &lh);
+      if (lh) {
+        gc_release_large(lh);
       } else {
         h->flags &= (uint16_t)~AVANT_FLAG_REM;
       }
