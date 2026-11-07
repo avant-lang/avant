@@ -129,7 +129,7 @@ static void mature_unlink(Block *b) {
  * collection after marking (line marks and MARKED flags are the live
  * set) and before the sweep. Live objects in candidate blocks are
  * copied into fresh destination blocks, every root, heap field,
- * remembered entry, and stackmap spill naming them is rewritten
+ * and remembered entry naming them is rewritten
  * through the forwarding table, and the emptied blocks are freed
  * whole. Destination blocks are allocated before anything moves; if
  * one cannot be allocated under the heap limit, nothing moves and the
@@ -333,7 +333,6 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
       }
     }
   }
-  rewrite_from_stackmaps();
   /* The evacuated blocks are freed by gc_defrag_release, after gc_collect()
    * has let the verifier look at them from its own frame. */
   g_def_release.n = 0;

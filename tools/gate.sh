@@ -16,10 +16,8 @@
 # PASS (1 on any failure, 2 on usage).
 #
 # Environment:
-#   GATE_SEED       seed directory holding avant (default bin/seeds/s28-w2
-#                   when present, D189, else bin/v0.34.0); a seed from before
-#                   W10 also holds the myc-llvm it compiles through
-#                   (tools/letters.sh passes it to step b only)
+#   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
+#                   bin/v0.35.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -64,10 +62,8 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
 [ -f compiler/main.av ] && [ -f runtime/build.sh ] || { echo "gate: $root is not an avant checkout" >&2; exit 2; }
 
-# Default seed (D189): the local seed when present, else the released one.
-default_seed=bin/v0.34.0
-[ -x bin/seeds/s28-w2/avant ] && default_seed=bin/seeds/s28-w2
-seed=$(realpath -m "${GATE_SEED:-$default_seed}")
+# The seed: GATE_SEED, else tools/letters.sh's default (computed only there, O31).
+seed=$(LETTERS_SEED=${GATE_SEED:-} sh tools/letters.sh --print-seed) || exit 2
 [ -x "$seed/avant" ] || { echo "gate: no avant in $seed" >&2; exit 2; }
 out=$(realpath -m "${GATE_OUT:-results/gate-$(date +%Y%m%d-%H%M%S)}")
 mkdir -p "$out" || exit 2

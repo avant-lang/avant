@@ -3,14 +3,11 @@
 # D208), the suite runs on it, then a draft GitHub Release is opened with
 # the linux-x86_64 compiler.
 #
-# The seed is the avant-linux-x86_64.tar.gz asset of AVANT_SEED_VERSION. It
-# contains `avant` and its bundled `myc-llvm` (pinned by the seed's sha256;
-# no separate safepoints download), used only to build B: tools/letters.sh
-# passes it to the seed as AVANT_MYC_LLVM in step b when the seed directory
-# holds one; it goes away at the re-seed (D178). The new asset has no
-# myc-llvm: the compiler's one back end is the in-process LLVM linked into
-# it (D172; the old back end retired at Stage 28 W11). This job does not
-# install Crystal and does not compile myc-llvm.
+# The seed is the avant-linux-x86_64.tar.gz asset of AVANT_SEED_VERSION
+# (pinned by its sha256). Like the asset this job builds, it holds `avant`
+# with its one back end, the in-process LLVM linked into it (D172; the old
+# back end retired at Stage 28 W11, and v0.35.0 is the first seed without
+# it, D178). This job does not install Crystal.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
 # The release bundles a static re2c built from the pinned upstream release.
@@ -39,8 +36,8 @@
 name: release-binary
 
 env:
-  AVANT_SEED_VERSION: v0.34.0
-  AVANT_SEED_SHA256: 9ab2e12f539d5eaa051232dbf0d95b5d4cd89769aeb68fa9adcae8954e42cfff
+  AVANT_SEED_VERSION: v0.35.0
+  AVANT_SEED_SHA256: 1bafb9deec91115dbd57041abb5925d31ba270b03245993586bfb3a82e63a1ec
 
 "on":
   push:
@@ -124,13 +121,10 @@ jobs:
           echo "${AVANT_SEED_SHA256}  /tmp/avant-seed.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
-          # The v0.34.0 seed builds B through its bundled myc-llvm
-          # (tools/letters.sh step b); this check goes at the re-seed (D178).
-          test -x /tmp/avant-linux-x86_64/myc-llvm
 
       # tools/letters.sh holds the letters' one incantation (D190): b is
-      # the seed's build of compiler/main.av (bin/avant-b, through the
-      # seed's myc-llvm until the re-seed), c-release is B's build with
+      # the seed's build of compiler/main.av (bin/avant-b), c-release is
+      # B's build with
       # --release (bin/avant-c-release), the compiler this release ships.
       - name: Seed → B → the shipped compiler
         run: |

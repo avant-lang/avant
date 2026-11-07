@@ -155,10 +155,14 @@ void gc_print_stats(void) {
           (unsigned long long)g_peak_live,
           (unsigned long long)g_stats.peak_heap,
           (unsigned long long)g_interior_slots,
-          (unsigned long long)g_sm_walks,
-          (unsigned long long)g_sm_hits,
-          g_sm_nsites,
-          (unsigned long long)g_sm_leftover,
+          /* sm_walks, sm_hits, sm_sites: the stackmap walker's counters,
+           * always 0 since it was removed (Stage 28 W12r); the fields stay
+           * so the report's format does not change. sm_left is the C-stack
+           * pass's count (g_c_stack_left). */
+          0ull,
+          0ull,
+          0u,
+          (unsigned long long)g_c_stack_left,
           (unsigned long long)g_sticky_grows,
           (unsigned long long)(g_young_bytes / (1024ull * 1024ull)),
           (unsigned long long)g_nursery_held,

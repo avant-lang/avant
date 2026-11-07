@@ -27,8 +27,6 @@
  *   avant_gc_stats.c    AvantGcStats, the counters, AVANT_GC_STATS
  *   avant_gc_roots.c    threads, frames and root slots, quiet leaves,
  *                       pins, defer regions, the world lock
- *   avant_gc_stackmap.c the LLVM stackmap walker (removed after the
- *                       re-seed, O12)
  * They fold into one avant_rt.o (runtime/build.sh), which keeps global
  * only the symbols avant_rt.exports lists, so nothing declared here
  * becomes part of the object's surface unless it already was. Other
@@ -309,10 +307,12 @@ void gc_defrag_release(void);
 
 /* avant_gc_stack.c */
 extern int g_stack_scan;
+extern int g_c_stack_pass;
+extern int g_c_stack_rewrite;
+extern uint64_t g_c_stack_left;
 extern BlockSet g_cstack_blocks;
 void gc_note_c_stack_blocks(void);
 void copy_from_c_stack(void);
-void gc_rewrite_if_forwarded(void **slot);
 void rewrite_c_stack(void);
 void count_c_stack_nursery(void);
 
@@ -400,16 +400,6 @@ extern pthread_mutex_t g_world;
 extern pthread_mutex_t g_threads_mu;
 extern int g_gc_defer;
 extern PinEnt *g_pins;
-
-/* avant_gc_stackmap.c */
-extern int g_stackmap_walk;
-extern uint64_t g_sm_walks;
-extern uint64_t g_sm_hits;
-extern uint64_t g_sm_leftover;
-extern uint32_t g_sm_nsites;
-void sm_init(void);
-void copy_from_stackmaps(void);
-void rewrite_from_stackmaps(void);
 
 /* Small helpers every unit inlines (static inline: one copy per unit,
  * no symbol), moved from avant_rt.c unchanged. */
