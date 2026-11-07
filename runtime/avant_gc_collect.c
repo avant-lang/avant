@@ -293,6 +293,8 @@ void gc_collect(int full) {
       }
       gc_defrag_release();
     }
+    /* Dead and clean remembered entries leave the set (C33, O9). */
+    gc_rem_full_scrub();
     gc_sweep_large();
     gc_filter_blocks(&g_mature, gc_keep_if_live);
     gc_filter_blocks(&g_nursery, gc_keep_if_live);

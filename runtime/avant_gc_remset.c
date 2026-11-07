@@ -171,10 +171,88 @@ void gc_rem_commit_kept(void) {
   free(kept);
 }
 
+/* Does a field of OBJ name a young object (a nursery or to-space block
+ * object, or a large object with YOUNG)? */
+static int rem_names_young(void *obj) {
+  int found = 0;
+  if (avant_header(obj)->type_id == AVANT_TYPE_BYTES) {
+    return 0;
+  }
+  EACH_REF_SLOT(obj, slot, {
+    if (!found) {
+      Block *b = NULL;
+      AvantHeader *ol = NULL;
+      void *start = gc_object_payload(*slot, &b, &ol);
+      if (start) {
+        if (ol) {
+          found = (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
+        } else {
+          found = b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
+        }
+      }
+    }
+  });
+  return found;
+}
+
+/* C33 and O9 (Stage 28 W14b1, gc-design.md §7): the remembered set after
+ * a full collection's mark (and its defragmentation, which rewrote the
+ * entries it moved), before the sweep, O(set). An entry whose holder is
+ * unmarked is dead and dropped: before, it stayed, and a later young
+ * collection scanned the dead object's stale fields as roots, or, once
+ * its address held a new object, scanned that unrelated object (start
+ * bits cannot tell, gc-design.md §2.3). An entry whose header lacks REM
+ * is such an address (a new object the barrier never remembered) or a
+ * duplicate left by one, and is dropped too. A live holder that names
+ * no young object leaves the set with REM cleared (the barrier re-adds
+ * it at its next store); with the nursery off (AVANT_NURSERY=0) no young
+ * collection reads the set, so every entry leaves it, and avant_barrier
+ * remembers nothing. Kept entries are made unique with the header's
+ * MARKED, which no full collection uses (C36), cleared before return. */
+void gc_rem_full_scrub(void) {
+  uint32_t i;
+  uint32_t w = 0;
+  int locked = rem_locked();
+  if (locked) {
+    pthread_mutex_lock(&g_rem_mu);
+  }
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    AvantHeader *h;
+    if (!is_heap_payload(obj, NULL, NULL)) {
+      continue;
+    }
+    h = avant_header(obj);
+    if ((h->flags & AVANT_FLAG_REM) == 0 || (h->flags & AVANT_FLAG_MARKED)) {
+      continue;
+    }
+    if (!full_marked(h) || g_nursery_off || !rem_names_young(obj)) {
+      h->flags &= (uint16_t)~AVANT_FLAG_REM;
+      continue;
+    }
+    h->flags |= AVANT_FLAG_MARKED;
+    g_remset[w] = obj;
+    if (g_rem_dirty) {
+      g_rem_dirty[w] = 1;
+    }
+    w++;
+  }
+  g_rem_n = w;
+  for (i = 0; i < g_rem_n; i++) {
+    avant_header(g_remset[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
+  }
+  if (locked) {
+    pthread_mutex_unlock(&g_rem_mu);
+  }
+}
+
 void avant_barrier(void *obj) {
   Block *b = NULL;
   AvantHeader *h;
-  if (!obj || g_collecting) {
+  /* O9: with the nursery off no young collection runs, so nothing is
+   * remembered (the set grew without bound: churn.av kept 1.6 M
+   * entries). */
+  if (!obj || g_collecting || g_nursery_off) {
     return;
   }
   /* The compiler passes the object being stored into. A nursery object

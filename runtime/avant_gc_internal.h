@@ -367,6 +367,7 @@ extern uint8_t *g_rem_dirty;
 void gc_keep_add(void *obj);
 void gc_rem_scrub(void);
 void gc_rem_commit_kept(void);
+void gc_rem_full_scrub(void);
 
 /* avant_gc_young.c */
 extern int g_saw_pinned_nursery;
