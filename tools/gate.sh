@@ -29,6 +29,9 @@
 #                   whether the two are byte-identical (a difference fails).
 #   GATE_SUITE_ENV  extra VAR=value words passed to both suites only (e.g.
 #                   a GC environment).
+#   GATE_EMIT_BOUND seconds (default 20): the summary reports the C' (c-llvm)
+#                   __emit-ll time of compiler/main.av within or OVER it;
+#                   report only, never a failure (W11d).
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, compiler build and
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
@@ -39,7 +42,8 @@
 # Output files in GATE_OUT (L is b and c-llvm): build-runtime.log,
 # build-L.log and time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
 # {before,after}-L.{tmp,repo} snapshots and the new-/gone- differences;
-# build-d-llvm.log, time-build-d-llvm.txt, emit-{c,d}-llvm.log;
+# build-d-llvm.log, time-build-d-llvm.txt, emit-{c,d}-llvm.log,
+# time-emit-{c,d}-llvm.txt;
 # fixed-point.txt; identity.txt (C' against D'); reuse.txt when
 # GATE_REUSE_C is set; summary.txt (everything printed at the end).
 set -u
@@ -58,6 +62,9 @@ mkdir -p "$out" || exit 2
 REUSE=${GATE_REUSE_C:-}
 case "$REUSE" in ''|1|proof) ;; *) echo "gate: GATE_REUSE_C must be unset, 1, or proof" >&2; exit 2 ;; esac
 SUITE_ENV=${GATE_SUITE_ENV:-}
+# The bound the emit-ll report line compares the C' __emit-ll time of
+# compiler/main.av with (seconds; report only, W11d: 10.6 s measured).
+EMIT_BOUND=${GATE_EMIT_BOUND:-20}
 case "${GATE_BACKEND:-llvm}" in
   llvm) ;;
   *) echo "gate: GATE_BACKEND=${GATE_BACKEND} is gone (Stage 28 W11: one back end, one gate)" >&2; exit 2 ;;
@@ -135,7 +142,7 @@ done
 # the executables' identity.
 letters d-llvm > "$out/build-d-llvm.log" 2>&1 || { fail "d-llvm build failed (rc=$?)"; finish; }
 for L in c-llvm d-llvm; do
-  env -u AVANT_BACKEND timeout -k 10 900 ./bin/avant-$L __emit-ll compiler/main.av "$out/main-$L.ll" > "$out/emit-$L.log" 2>&1 < /dev/null || fail "__emit-ll on $L failed (rc=$?)"
+  env -u AVANT_BACKEND timeout -k 10 900 /usr/bin/time -p -o "$out/time-emit-$L.txt" ./bin/avant-$L __emit-ll compiler/main.av "$out/main-$L.ll" > "$out/emit-$L.log" 2>&1 < /dev/null || fail "__emit-ll on $L failed (rc=$?)"
 done
 if cmp -s "$out/main-c-llvm.ll" "$out/main-d-llvm.ll"; then
   echo "fixed point (.ll): identical" > "$out/fixed-point.txt"
@@ -162,6 +169,13 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
   echo "build B: $(ptimes "$out/time-build-b.txt")"
   [ -f "$out/time-build-$C.txt" ] && echo "build $C: $(ptimes "$out/time-build-$C.txt")"
   [ -f "$out/time-build-d-llvm.txt" ] && echo "build d-llvm: $(ptimes "$out/time-build-d-llvm.txt")"
+  # Report only, never a failure (W11d): the compile time of the
+  # compiler's own source, against a stated bound.
+  if [ -f "$out/time-emit-c-llvm.txt" ]; then
+    er=$(awk '$1 == "real" { print $2 }' "$out/time-emit-c-llvm.txt")
+    eo=$(awk -v r="$er" -v b="$EMIT_BOUND" 'BEGIN { print (r + 0 <= b + 0) ? "within" : "OVER" }')
+    echo "emit-ll c-llvm: real ${er} s, ${eo} the report bound of ${EMIT_BOUND} s (report only)"
+  fi
   for L in b $C; do
     checks=$(grep -o 'tests="[0-9]*"' "$out/junit-$L.xml" 2>/dev/null | head -1)
     jf=$(grep -o 'failures="[0-9]*"' "$out/junit-$L.xml" 2>/dev/null | head -1)
