@@ -9,28 +9,37 @@
 #include <stdint.h>
 
 /* The collector's internal header (Stage 28 W12). Private to the
- * collector's units:
- *   avant_gc_heap.c
- *   avant_gc_alloc.c
- *   avant_gc_los.c
- *   avant_gc_remset.c
- *   avant_gc_young.c
- *   avant_gc_mark.c
- *   avant_gc_defrag.c
- *   avant_gc_stack.c
- *   avant_gc_verify.c
- *   avant_gc_collect.c
- *   avant_gc_stats.c
- *   avant_gc_roots.c
- *   avant_gc_stackmap.c
+ * collector's units, one per concern:
+ *   avant_gc_heap.c     the spaces' block lists and the block table,
+ *                       object lookup, forwarding, the work list, type
+ *                       maps, gc_die and gc_xrealloc
+ *   avant_gc_alloc.c    block supply, bump cursors, the inline fast
+ *                       path's state, avant_alloc and avant_bump_alloc
+ *   avant_gc_los.c      the large-object space
+ *   avant_gc_remset.c   the remembered set and the store barriers
+ *   avant_gc_young.c    the young collection (copying nursery, probe,
+ *                       pinned objects promoted in place)
+ *   avant_gc_mark.c     the full collection's mark and block sweep
+ *   avant_gc_defrag.c   mature defragmentation, block sets
+ *   avant_gc_stack.c    the conservative scans of the C stack
+ *   avant_gc_verify.c   AVANT_GC_VERIFY's checkers
+ *   avant_gc_collect.c  the driver, its policy and the environment knobs
+ *   avant_gc_stats.c    AvantGcStats, the counters, AVANT_GC_STATS
+ *   avant_gc_roots.c    threads, frames and root slots, quiet leaves,
+ *                       pins, defer regions, the world lock
+ *   avant_gc_stackmap.c the LLVM stackmap walker (removed after the
+ *                       re-seed, O12)
  * They fold into one avant_rt.o (runtime/build.sh), which keeps global
  * only the symbols avant_rt.exports lists, so nothing declared here
  * becomes part of the object's surface unless it already was. Other
  * runtime units and user programs see avant_rt.h (the shipped ABI) and
  * avant_gc.h (what the rest of the runtime may call); never this file.
  * Functions a unit shares with another carry the gc_ prefix; variables
- * keep their g_ names. Each block of declarations below names the unit
- * that defines it. */
+ * keep their g_ names. A few shared functions and variables without the
+ * prefix (work_push, fwd_get, copy_from_slot, g_live, ...) were global
+ * before W12 and are part of avant_rt.o's surface, so they keep their
+ * names while that surface is frozen. Each block of declarations below
+ * names the unit that defines it. */
 
 /*
  * Precise Immix-family collector.
