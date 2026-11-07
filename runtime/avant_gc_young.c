@@ -488,32 +488,6 @@ static void discard_nursery_from(void) {
   }
 }
 
-static void clear_mark_flag_one(AvantHeader *h, Block *b) {
-  (void)b;
-  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
-}
-
-static void clear_mark_flags(void) {
-  Block *b;
-  Large *L;
-  for (b = g_mature; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (b = g_from; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (b = g_to; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_flag_one);
-  }
-  for (L = g_large; L; L = L->next) {
-    L->header.flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
-  }
-}
-
 static void adopt_to_space(void) {
   Block *head = g_to;
   Block *b = g_to;
@@ -558,6 +532,8 @@ void gc_young_copy_out(int tenure) {
   g_to_bytes = 0;
   g_force_tenure = 0;
   gc_reclaim_young_large();
+  /* The end of the copy's marks: the noted list, not a walk of every
+   * object of every space (gc-design.md §2.6; the walk was 7% of the
+   * audit's mature.av profile). */
   gc_clear_noted();
-  clear_mark_flags();
 }

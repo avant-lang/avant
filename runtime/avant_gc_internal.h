@@ -346,7 +346,6 @@ void gc_young_copy_out(int tenure);
 
 /* avant_gc_mark.c */
 extern uint64_t g_mark_sum;
-void gc_clear_all_marks(void);
 void gc_mark_roots(void);
 int gc_keep_if_live(Block *b);
 void gc_filter_blocks(Block **list, int (*keep)(Block *));

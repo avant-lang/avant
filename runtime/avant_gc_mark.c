@@ -15,29 +15,6 @@
  * defragmentation a full collection may run between the two is
  * avant_gc_defrag.c's. */
 
-static void clear_mark_one(AvantHeader *h, Block *b) {
-  (void)b;
-  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
-}
-
-void gc_clear_all_marks(void) {
-  Block *b;
-  for (b = g_mature; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  for (b = g_from; b; b = b->next) {
-    gc_foreach_block_object(b, clear_mark_one);
-  }
-  Large *L;
-  for (L = g_large; L; L = L->next) {
-    L->header.flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
-  }
-}
-
 static void scan_payload(void *p);
 
 static void mark(void *p) {

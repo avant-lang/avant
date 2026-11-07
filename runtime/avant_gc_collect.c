@@ -232,8 +232,9 @@ void gc_collect(int full) {
     gc_los_spare_drop();
     gc_clear_alloc_cur(SPACE_NURSERY);
     gc_clear_alloc_cur(SPACE_MATURE);
+    /* The marks: one memset per chunk of the side bitmap; no header is
+     * touched (no young mark outlives its collection, C36). */
     gc_clear_side_marks();
-    gc_clear_all_marks();
     gc_zero_line_marks(g_mature);
     gc_zero_line_marks(g_nursery);
     gc_zero_line_marks(g_from);
