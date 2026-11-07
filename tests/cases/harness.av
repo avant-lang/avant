@@ -163,6 +163,39 @@ pub fn list_only: Bool {
   false
 }
 
+// The collector's environment variables (runtime/avant_gc_collect.c,
+// avant_gc_stack.c), for the suite run under one GC environment (Stage 28
+// W12, O26: tools/gate.sh's GATE_GC_ENV runs one extra suite pass with it).
+pub fn gc_env_names: Array(String) {
+  ["AVANT_YOUNG_MB", "AVANT_HEAP_MAX_MB", "AVANT_NURSERY", "AVANT_NURSERY_STACK", "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_DEFRAG", "AVANT_GC_YOUNG_SIZING", "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE", "AVANT_GC_VERIFY", "AVANT_GC_STATS"]
+}
+
+// The names of the collector's environment variables set (non-empty) in
+// this test's own environment and not among `stated` (the
+// space-separated names a check sets itself for the program it runs),
+// space-separated; "" when none. A check that asserts the default
+// environment's GC numbers skips itself when this is not empty; a check
+// whose program's output depends on the collector states the
+// environment it needs instead (for example AVANT_NURSERY=1 for `bump`).
+pub fn gc_env_outer(stated: String): String {
+  names = gc_env_names()
+  own = " ${stated} "
+  out = ""
+  i = 0
+  while i < names.size {
+    if v = env_get(names[i]) {
+      if v.size > 0 && !str_has(own, " ${names[i]} ") {
+        if out.size > 0 {
+          out = "${out} "
+        }
+        out = "${out}${names[i]}"
+      }
+    }
+    i = i + 1
+  }
+  out
+}
+
 pub class Checks {
   passed: Int = 0
   failed: Int = 0
@@ -328,6 +361,13 @@ pub class Checks {
       self.lines.push("  ● ${self.suite_name} › ${msg}")
       self.lines.push("")
     }
+  }
+
+  // A check not run, and why (it is neither passed nor failed, and the
+  // JUnit report does not list it). Only an outer GC environment skips a
+  // check (gc_env_outer); the default suite skips none.
+  pub fn skip(msg: String, why: String) {
+    self.lines.push("    ○ ${msg} (skipped: ${why})")
   }
 
   pub fn eq_int(got: Int, want: Int, msg: String) {

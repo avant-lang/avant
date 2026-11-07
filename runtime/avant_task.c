@@ -1,4 +1,5 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <limits.h>
 #include <pthread.h>

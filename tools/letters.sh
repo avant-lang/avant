@@ -4,13 +4,18 @@
 # under test: B always comes from the seed, C' from B, D' from C'.
 #
 #   sh tools/letters.sh [STEP...]     (any directory; default: runtime b c-llvm)
+#   sh tools/letters.sh --print-seed  prints the seed directory the steps use
+#                                     (LETTERS_SEED or the default; the one
+#                                     place the default is computed, O31)
 #
 # STEP is one of:
 #   runtime  sh runtime/build.sh (it also builds runtime/build/avant_llvm.o
 #            through tools/build-llvm.sh, cached)
-#   b        the seed compiles compiler/main.av into bin/avant-b, --debug,
-#            on the seed's own default back end (a v0.34.0-style seed
-#            compiles through the myc-llvm beside it, see LETTERS_SEED)
+#   b        the seed compiles compiler/main.av into bin/avant-b, --debug;
+#            a B that carries .llvm_stackmaps (built by a seed older than
+#            v0.35.0, whose back end emitted statepoints) is refused: the
+#            runtime has no stackmap walker since Stage 28 W12r (the
+#            refused bin/avant-b is removed)
 #   c-llvm   C' (Stage 28 W9, W10): bin/avant-b compiles compiler/main.av
 #            into bin/avant-c-llvm, --debug
 #   d-llvm   D': bin/avant-c-llvm compiles compiler/main.av into
@@ -34,12 +39,11 @@
 # a user program never does.
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/seeds/s28-w2
-#                     when present, D189, else bin/v0.34.0). A seed from
-#                     before Stage 28 W10 (v0.34.0, s28-w2) compiles only
-#                     through myc-llvm: when the directory holds one, it is
-#                     passed as AVANT_MYC_LLVM to step b, and only there. A
-#                     myc-free seed (a release from W11 on) needs none.
+#   LETTERS_SEED      seed directory with avant (default bin/v0.35.0, the
+#                     first release built on the in-process LLVM, D178);
+#                     relative to the checkout. Seeds older than v0.35.0
+#                     (v0.34.0, bin/seeds/s28-w2) are not supported: their B
+#                     carries LLVM stack maps the runtime no longer walks.
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
 #                     LETTERS_TIME_DIR/time-build-<step>.txt (b, c-llvm,
 #                     d-llvm, c-release)
@@ -56,14 +60,17 @@ cd "$root" || exit 2
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
-# Default seed (D189): the local seed when present, else the released one.
-default_seed=bin/v0.34.0
-[ -x bin/seeds/s28-w2/avant ] && default_seed=bin/seeds/s28-w2
+# The default seed (D178, D189; Stage 28 W12r): the v0.35.0 release. This
+# is the one place it is computed; tools/gate.sh asks --print-seed (O31).
+default_seed=bin/v0.35.0
 seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
-# The seed's myc-llvm (D178: until the re-seed), for step b only.
-seed_env=""
-[ -x "$seed/myc-llvm" ] && seed_env="AVANT_MYC_LLVM=$seed/myc-llvm"
 time_dir=${LETTERS_TIME_DIR:-}
+
+if [ "${1:-}" = --print-seed ]; then
+  [ $# -eq 1 ] || { echo "letters: --print-seed takes no steps" >&2; exit 2; }
+  echo "$seed"
+  exit 0
+fi
 
 steps="$*"
 [ -n "$steps" ] || steps="runtime b c-llvm"
@@ -80,20 +87,29 @@ need_llvm() {
   exit 1
 }
 
-# build LETTER COMPILER OUT MODE [ENV]   (ENV: VAR=value words or empty)
+# build LETTER COMPILER OUT MODE
 build() {
   need_llvm
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
-  # shellcheck disable=SC2086 # ENV and timer are words or empty
-  env -u AVANT_BACKEND -u AVANT_MYC_LLVM ${5:-} timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" "$COMPILER_LINK" < /dev/null
+  # shellcheck disable=SC2086 # timer is words or empty
+  env -u AVANT_BACKEND timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" "$COMPILER_LINK" < /dev/null
+}
+
+# B must carry no LLVM stack maps (the runtime walks none since W12r).
+check_no_stackmaps() {
+  if readelf -S "$1" 2>/dev/null | grep -q '\.llvm_stackmaps'; then
+    echo "letters: $1 carries .llvm_stackmaps: the seed $seed is older than v0.35.0, and the runtime no longer walks stack maps (removed $1)" >&2
+    rm -f "$1"
+    return 1
+  fi
 }
 
 for s in $steps; do
   case "$s" in
     runtime) timeout -k 10 300 sh runtime/build.sh < /dev/null ;;
-    b) build b "$seed/avant" bin/avant-b --debug "$seed_env" ;;
+    b) build b "$seed/avant" bin/avant-b --debug && check_no_stackmaps bin/avant-b ;;
     c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug ;;
     d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug ;;
     c-release) build c-release ./bin/avant-b bin/avant-c-release --release ;;

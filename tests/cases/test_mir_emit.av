@@ -99,8 +99,21 @@ fn finals: Array(String) {
   xs
 }
 
+// The GC numbers below are the ones of the environment the runs state
+// (AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1 AVANT_GC_STATS=1) over the default
+// one; under an outer GC environment that sets anything else (the suite
+// run under GATE_GC_ENV, O26) they are skipped.
+fn gc_numbers_outer: String {
+  gc_env_outer("AVANT_GC_VERIFY AVANT_YOUNG_MB AVANT_GC_STATS")
+}
+
 fn gc_stats_10_3(c: Checks, text: String, what: String) {
   c.expect(!str_has(text, "avant gc verify"), "${what}: the GC verifier is silent")
+  outer = gc_numbers_outer()
+  if outer.size > 0 {
+    c.skip("${what}: collections, copied, roots and enters", "outer ${outer}")
+    return
+  }
   c.expect(str_has(text, "collections=6 young=6 "), "${what}: collections=6 young=6")
   c.expect(str_has(text, " copied=96 "), "${what}: copied=96")
   c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
@@ -200,7 +213,11 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(runs[k + 1].code, 0, "example ${t} under the GC verifier: exit 0")
     c.expect(str_has(gl, "199999\nsmall\n"), "example ${t} under the GC verifier: output")
     gc_stats_10_3(c, gl, "example ${t}")
-    c.expect(str_has(gl, " inline_allocs=10 "), "example ${t}: inline_allocs=10")
+    if gc_numbers_outer().size == 0 {
+      c.expect(str_has(gl, " inline_allocs=10 "), "example ${t}: inline_allocs=10")
+    } else {
+      c.skip("example ${t}: inline_allocs=10", "outer ${gc_numbers_outer()}")
+    }
     // constructs and traps
     c.eq_int(runs[k + 2].code, 0, "constructs ${t}: exit 0")
     c.eq_str(log_text(runs[k + 2].log), constructs_out(), "constructs ${t}: output, GC verifier silent")
@@ -221,7 +238,11 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(last.code, 0, "example with the call forms: exit 0")
   c.expect(str_has(cl, "199999\nsmall\n"), "example with the call forms: output")
   gc_stats_10_3(c, cl, "example with the call forms")
-  c.expect(str_has(cl, " inline_allocs=0 "), "example with the call forms: no inline allocation")
+  if gc_numbers_outer().size == 0 {
+    c.expect(str_has(cl, " inline_allocs=0 "), "example with the call forms: no inline allocation")
+  } else {
+    c.skip("example with the call forms: no inline allocation", "outer ${gc_numbers_outer()}")
+  }
 }
 
 fn test_main(c: Checks) {

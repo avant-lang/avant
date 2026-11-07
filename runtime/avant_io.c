@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <dirent.h>
 #include <errno.h>

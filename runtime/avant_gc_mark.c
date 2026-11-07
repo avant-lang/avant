@@ -1,0 +1,128 @@
+#define _GNU_SOURCE
+#define _DEFAULT_SOURCE
+
+#include "avant_gc_internal.h"
+
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* The full collection's marking and sweeping (Stage 28 W12, moved from
+ * avant_rt.c): non-moving mark from the roots with line marks, and the
+ * block sweep that frees or recycles blocks by their live lines. The
+ * defragmentation a full collection may run between the two is
+ * avant_gc_defrag.c's. */
+
+static void clear_mark_one(AvantHeader *h, Block *b) {
+  (void)b;
+  h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+}
+
+void gc_clear_all_marks(void) {
+  Block *b;
+  for (b = g_mature; b; b = b->next) {
+    gc_foreach_block_object(b, clear_mark_one);
+  }
+  for (b = g_nursery; b; b = b->next) {
+    gc_foreach_block_object(b, clear_mark_one);
+  }
+  for (b = g_from; b; b = b->next) {
+    gc_foreach_block_object(b, clear_mark_one);
+  }
+  Large *L;
+  for (L = g_large; L; L = L->next) {
+    L->header.flags &=
+        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_LOS_KEEP);
+  }
+}
+
+static void scan_payload(void *p);
+
+static void mark(void *p) {
+  Block *b = NULL;
+  Large *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  if (!start) {
+    return;
+  }
+  AvantHeader *h = avant_header(start);
+  if (h->flags & AVANT_FLAG_MARKED) {
+    return;
+  }
+  h->flags |= AVANT_FLAG_MARKED;
+  mark_object_lines(start);
+  g_live += obj_total(h);
+  work_push(start);
+}
+
+static void drain(void) {
+  while (g_work_n) {
+    void *p = g_work[--g_work_n];
+    scan_payload(p);
+  }
+}
+
+static void mark_tls_slot(void **slot) {
+  if (slot) {
+    mark(*slot);
+  }
+}
+
+static void scan_payload(void *p) {
+  EACH_REF_SLOT(p, slot, { mark(*slot); });
+}
+
+void gc_mark_roots(void) {
+  ThreadReg *t;
+  uint32_t i;
+  pthread_mutex_lock(&g_threads_mu);
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      for (i = 0; i < f->n; i++) {
+        mark(*f->slots[i]);
+      }
+    }
+  }
+  pthread_mutex_unlock(&g_threads_mu);
+  for (PinEnt *p = g_pins; p; p = p->next) {
+    mark(p->payload);
+  }
+  avant_hash_walk_tls(mark_tls_slot);
+  drain();
+}
+
+int gc_keep_if_live(Block *b) {
+  if (gc_block_live_lines(b) == 0) {
+    return 0;
+  }
+  gc_reset_block_bump(b);
+  return 1;
+}
+
+void gc_filter_blocks(Block **list, int (*keep)(Block *)) {
+  Block *b = *list;
+  Block *kept = NULL;
+  while (b) {
+    Block *next = b->next;
+    if (keep && keep(b)) {
+      b->next = kept;
+      kept = b;
+    } else {
+      gc_cache_or_free_block(b);
+    }
+    b = next;
+  }
+  *list = kept;
+}
+
+uint64_t g_mark_sum;
+
+void gc_sum_marked_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_MARKED) {
+    g_mark_sum += obj_total(h);
+  }
+}
