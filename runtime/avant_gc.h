@@ -12,11 +12,12 @@
  * the files and is private to them). A runtime unit outside the
  * collector (strings, arrays, hashes, Buf, JSON, HTTP, I/O, tasks,
  * codecs) includes this header and calls only what it declares. Every
- * function here is also declared, identically, by the shipped
- * avant_rt.h, which generated code uses; the declarations are repeated
- * so this file states the collector's surface on its own, and a
- * mismatch with avant_rt.h is a compile error. g_avant_shared is the one
- * name here avant_rt.h does not ship.
+ * function here but the two runtime-internal entries at the end is also
+ * declared, identically, by the shipped avant_rt.h, which generated
+ * code uses; the declarations are repeated so this file states the
+ * collector's surface on its own, and a mismatch with avant_rt.h is a
+ * compile error. g_avant_shared, avant_gc_quiet_defer_enter and
+ * avant_alloc_c are the names here avant_rt.h does not ship.
  *
  * What the collector does at these calls, as the callers rely on it
  * today (a description of the current behavior, not a new contract; W13
@@ -102,7 +103,12 @@ void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
-void avant_gc_quiet_defer_enter(void);
+/* Runtime-internal (Stage 28 W14b2, O37): avant_gc_quiet_defer_enter
+ * and avant_alloc_c below are entries of avant_rt.o that only the
+ * runtime's other objects call. avant_rt.h does not declare them, and
+ * their visibility is hidden: no linked image exports them (the second
+ * section of avant_rt.exports). */
+__attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
@@ -125,7 +131,7 @@ extern atomic_int g_avant_shared;
  * programs). Every runtime unit that includes this header calls it under
  * the name avant_alloc; generated code and user C (avant_rt.h) keep
  * calling avant_alloc itself. */
-void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
+__attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
 #define avant_alloc(nbytes, type_id) avant_alloc_c((nbytes), (type_id))
 
 #endif

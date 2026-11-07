@@ -90,7 +90,7 @@ static void defrag_rewrite_slot(void **slot) {
   if (!start) {
     return;
   }
-  to = fwd_get(start);
+  to = gc_fwd_get(start);
   if (to && to != start) {
     *slot = (void *)((uint8_t *)to + ((uint8_t *)w - (uint8_t *)start));
   }
@@ -174,7 +174,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
           AvantHeader *h = (AvantHeader *)(b->base + off);
           if (full_marked(h)) {
-            c->bytes += obj_total(h);
+            c->bytes += gc_obj_total(h);
           }
           bits &= bits - 1;
         }
@@ -238,7 +238,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
             bits &= bits - 1;
             continue;
           }
-          total = obj_total(h);
+          total = gc_obj_total(h);
           if (bump + total > db->base + BLOCK_SIZE) {
             di++;
             if (di >= ndest) {
@@ -264,7 +264,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           set_start(db, (size_t)(bump - db->base));
           full_set_mark(nh);
           mark_lines(db, (size_t)(bump - db->base), total);
-          fwd_put(payload_of(h), payload_of(nh));
+          gc_fwd_put(payload_of(h), payload_of(nh));
           gc_heap.ctr.def.evac_bytes += total;
           bump += total;
           db->bump = bump;

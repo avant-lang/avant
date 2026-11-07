@@ -194,7 +194,7 @@ void avant_pin(void *payload) {
     return;
   }
   pthread_mutex_lock(&gc_heap.world);
-  if (!is_heap_payload(payload, NULL, NULL)) {
+  if (!gc_is_heap_payload(payload, NULL, NULL)) {
     pthread_mutex_unlock(&gc_heap.world);
     return;
   }
@@ -237,7 +237,7 @@ void avant_unpin(void *payload) {
     return;
   }
   pthread_mutex_lock(&gc_heap.world);
-  if (!is_heap_payload(payload, NULL, NULL)) {
+  if (!gc_is_heap_payload(payload, NULL, NULL)) {
     pthread_mutex_unlock(&gc_heap.world);
     return;
   }
@@ -317,7 +317,7 @@ void avant_gc_defer_enter(void) {
  * is avant_gc_defer_enter, including the full collection of the
  * nursery-off mode. W15 makes these rows collecting calls (gc-design.md
  * §5.1); then this entry goes. */
-void avant_gc_quiet_defer_enter(void) {
+__attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void) {
   defer_enter(0);
 }
 

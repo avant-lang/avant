@@ -1,20 +1,22 @@
-# The global symbols of runtime/build/avant_rt.o (Stage 28 W12).
+# The global symbols of runtime/build/avant_rt.o (Stage 28 W12; the
+# surface reduced to its ABI in W14b2, gc-design.md section 1.8, O37).
 #
 # runtime/build.sh folds the core units (the collector's avant_gc_*.c
 # and avant_rt_traps.c) into avant_rt.o and then keeps global only the
 # symbols listed here (objcopy --keep-global-symbols): every other
 # symbol the units share with each other is made local, so an internal
 # function or variable can cross a unit boundary without becoming part
-# of the object's surface. This list is the object's surface: the entry
-# points and data generated code and the other runtime objects use,
-# plus the internal names that were already global before W12 (the
-# stackmap split of the collector stage left them global; localizing
-# them changes the surface, so it is a later step, see the W12 record).
-# A new global entry point is added here on purpose, never by accident.
-# One symbol per line, sorted; `nm -g --defined-only` of the object
-# must print exactly this set.
+# of the object's surface. A new global symbol is added here on purpose,
+# never by accident. `nm -g --defined-only` of the object prints exactly
+# the names of both sections below, and runtime/build.sh checks it.
+#
+# The ABI: what generated code calls or reads (compiler/mir/runtime.av's
+# call table, compiler/llvm/emit*.av) and what avant_rt.h declares for
+# user C and the runtime's other objects. Default visibility. One symbol
+# per line, sorted. avant_gc_root, avant_gc_reload, avant_gc_quiet_enter
+# and avant_gc_quiet_leave are never emitted by the compiler and stay as
+# deprecated entries (gc-design.md section 1.4, Q10).
 avant_alloc
-avant_alloc_c
 avant_alloc_in_mature
 avant_barrier
 avant_barrier_at
@@ -42,7 +44,6 @@ avant_gc_fast_ok
 avant_gc_heap_goal_collect
 avant_gc_leave
 avant_gc_limit
-avant_gc_quiet_defer_enter
 avant_gc_quiet_enter
 avant_gc_quiet_leave
 avant_gc_register_thread
@@ -71,15 +72,15 @@ avant_unpin
 avant_world_lock
 avant_world_unlock
 avant_young_bytes
-copy_from_slot
-copy_nursery
-count_c_stack_nursery
-fwd_get
-fwd_put
 g_avant_shared
 g_avant_str_gen
-is_heap_payload
-mark_object_lines
-obj_total
-rewrite_c_stack
-work_push
+#
+# Runtime-internal: entries only the runtime's other objects (avant_str.o,
+# avant_hash.o, ...) call. Global so those objects link against them,
+# hidden visibility (no linked image exports them), declared by avant_gc.h
+# only, never by avant_rt.h. runtime/build.sh checks the visibility of
+# both sections. One symbol per line, sorted; this marker line starts the
+# section:
+# runtime-internal
+avant_alloc_c
+avant_gc_quiet_defer_enter

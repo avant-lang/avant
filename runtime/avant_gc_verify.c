@@ -22,7 +22,7 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
   if (!start || !b || b->space != SPACE_NURSERY) {
     return 0;
   }
-  void *to = fwd_get(start);
+  void *to = gc_fwd_get(start);
   if (to && to != start) {
     AvantHeader *ch = avant_header(start);
     fprintf(stderr,
@@ -66,7 +66,7 @@ static void verify_trace(void *p) {
     gc_heap.vnoted = gc_xrealloc(gc_heap.vnoted, gc_heap.vnoted_cap * sizeof(void *));
   }
   gc_heap.vnoted[gc_heap.vnoted_n++] = start;
-  work_push(start);
+  gc_work_push(start);
 }
 
 static void verify_clear_traced(void) {
@@ -133,7 +133,7 @@ static void verify_untraced_words(AvantHeader *h) {
     if (!w || ((uintptr_t)w & (ALIGN - 1)) != 0) {
       continue;
     }
-    if (!is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
+    if (!gc_is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
       continue;
     }
     if (avant_header(w)->flags & AVANT_FLAG_PINNED) {
@@ -142,7 +142,7 @@ static void verify_untraced_words(AvantHeader *h) {
     if (gc_type_word_is_ref(h, i)) {
       continue;
     }
-    to = fwd_get(w);
+    to = gc_fwd_get(w);
     gc_heap.verify_untraced++;
     fprintf(stderr,
             "avant gc verify: untraced reference holder=%p type=%u size=%u "
@@ -316,7 +316,7 @@ void gc_verify_remembered(void) {
     uint32_t ri;
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
       void *obj = gc_heap.remset[ri];
-      if (is_heap_payload(obj, NULL, NULL)) {
+      if (gc_is_heap_payload(obj, NULL, NULL)) {
         EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
       }
     }
@@ -424,7 +424,7 @@ static void verify_defrag_word(void *w, const char *where, void *at) {
   fprintf(stderr,
           "avant gc verify: %s %p names %p in a mature block defragmentation "
           "is freeing (object %p moved to %p) coll=%llu\n",
-          where, at, w, start, start ? fwd_get(start) : NULL,
+          where, at, w, start, start ? gc_fwd_get(start) : NULL,
           (unsigned long long)avant_g_stats.collections);
 }
 
@@ -475,7 +475,7 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     Block *rb = obj ? block_of(avant_header(obj)) : NULL;
-    if (rb && gc_block_set_has(&gc_heap.def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
+    if (rb && gc_block_set_has(&gc_heap.def_release, rb) && gc_is_heap_payload(obj, NULL, NULL) &&
         full_marked(avant_header(obj))) {
       verify_defrag_word(obj, "remembered entry", (void *)&gc_heap.remset[i]);
     }

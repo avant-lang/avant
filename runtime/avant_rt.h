@@ -90,7 +90,8 @@ void avant_gc_root(void *slot);
  * collector scans the first count entries. avant_gc_root (one slot per
  * call) and avant_gc_reload (a slot read after a collecting call) are
  * the old myc back end's ABI: the current compiler emits neither, and
- * they stay while the runtime's exported symbols are frozen. */
+ * they stay as deprecated entries until a release note retires them
+ * (gc-design.md section 1.4, Q10). */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 /* A C variable that lives as long as its thread (a __thread variable)

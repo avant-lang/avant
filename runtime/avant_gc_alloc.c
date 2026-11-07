@@ -490,7 +490,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
  * stress run collects at every runtime C allocation and not at the
  * generated code's, which roots everything across avant_alloc by
  * construction (D165). */
-void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
+__attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
   void *p;
   gc_init();
   /* Runtime C holds its references in its own frame, so a young

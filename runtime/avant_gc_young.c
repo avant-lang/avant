@@ -10,7 +10,7 @@
 #include <string.h>
 
 /* The young collection (Stage 28 W12, moved from avant_rt.c): the
- * copying nursery's evacuation (copy_from_slot, copy_nursery, the mature
+ * copying nursery's evacuation (gc_copy_from_slot, gc_copy_nursery, the mature
  * and remembered tracing it needs), the survival probe that shares its
  * walk, pinned nursery objects promoted in place (C29), the release or
  * parking of from-space, and gc_young_copy_out, the whole young pass. When to
@@ -40,8 +40,8 @@ static void probe_note(void *start) {
   }
   h->flags |= AVANT_FLAG_MARKED;
   note_marked(start);
-  gc_heap.probe_nursery_bytes += obj_total(h);
-  work_push(start);
+  gc_heap.probe_nursery_bytes += gc_obj_total(h);
+  gc_work_push(start);
 }
 
 /* The slot now names a young object. If that slot lives in a mature
@@ -52,7 +52,7 @@ static void remember_young_edge(void **slot, void *payload) {
   Block *ob = NULL;
   AvantHeader *ol = NULL;
   void *owner;
-  if (!is_heap_payload(payload, &pb, NULL) || !pb) {
+  if (!gc_is_heap_payload(payload, &pb, NULL) || !pb) {
     return;
   }
   if (pb->space != SPACE_NURSERY && pb->space != SPACE_TO) {
@@ -92,7 +92,7 @@ static void copy_payload_children(void *p) {
   }
   int saved = gc_heap.from_heap_slot;
   gc_heap.from_heap_slot = 1;
-  EACH_REF_SLOT(p, slot, { copy_from_slot(slot); });
+  EACH_REF_SLOT(p, slot, { gc_copy_from_slot(slot); });
   gc_heap.from_heap_slot = saved;
 }
 
@@ -132,7 +132,7 @@ static void trace_mature(void *p, int from_mature) {
   saved = gc_heap.from_mature;
   gc_heap.from_mature = 1;
   /* Nested mature scans do not dirty the remembered parent: only its
-   * direct fields count, and the outer copy_from_slot judges that slot
+   * direct fields count, and the outer gc_copy_from_slot judges that slot
    * itself once this returns. */
   {
     int track_saved = gc_heap.rem_track;
@@ -143,15 +143,15 @@ static void trace_mature(void *p, int from_mature) {
   gc_heap.from_mature = saved;
 }
 
-void *copy_nursery(void *p) {
+void *gc_copy_nursery(void *p) {
   Block *b = NULL;
   if (gc_heap.probe) {
     gc_die("probe copied");
   }
-  if (!is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
+  if (!gc_is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
     return p;
   }
-  void *to = fwd_get(p);
+  void *to = gc_fwd_get(p);
   if (to) {
     return to;
   }
@@ -161,13 +161,13 @@ void *copy_nursery(void *p) {
     if (!(h->flags & AVANT_FLAG_MARKED)) {
       h->flags |= AVANT_FLAG_MARKED;
       note_marked(p);
-      mark_object_lines(p);
-      gc_heap.live += obj_total(h);
-      work_push(p);
+      gc_mark_object_lines(p);
+      gc_heap.live += gc_obj_total(h);
+      gc_work_push(p);
     }
     return p;
   }
-  size_t total = obj_total(h);
+  size_t total = gc_obj_total(h);
   /* Tenure only after a previous collection, or when the caller has
    * already decided this graph is long-lived. A first survivor stays
    * in the nursery (SPACE_TO) so a tree that dies next cycle is not
@@ -183,15 +183,15 @@ void *copy_nursery(void *p) {
   }
   void *np = payload_of(nh);
   note_marked(np);
-  fwd_put(p, np);
+  gc_fwd_put(p, np);
   avant_g_stats.copied_bytes += total;
   gc_heap.live += total;
-  mark_object_lines(np);
-  work_push(np);
+  gc_mark_object_lines(np);
+  gc_work_push(np);
   return np;
 }
 
-void copy_from_slot(void **slot) {
+void gc_copy_from_slot(void **slot) {
   void *p = *slot;
   Block *b = NULL;
   AvantHeader *ol = NULL;
@@ -213,7 +213,7 @@ void copy_from_slot(void **slot) {
       return;
     }
     ptrdiff_t delta = (uint8_t *)p - (uint8_t *)start;
-    void *np = copy_nursery(start);
+    void *np = gc_copy_nursery(start);
     *slot = (uint8_t *)np + delta;
     remember_young_edge(slot, np);
     if (gc_heap.rem_track && names_young(*slot)) {
@@ -247,7 +247,7 @@ static void relocate_root_location(void ***slot_loc) {
     gc_heap.ctr.root.interiors++;
   }
   ptrdiff_t delta = (uint8_t *)addr - (uint8_t *)start;
-  void *np = copy_nursery(start);
+  void *np = gc_copy_nursery(start);
   *slot_loc = (void **)((uint8_t *)np + delta);
 }
 
@@ -288,7 +288,7 @@ void gc_gen_young_copy(void) {
         if (!gc_heap.probe) {
           relocate_root_location(&f->slots[i]);
         }
-        copy_from_slot(f->slots[i]);
+        gc_copy_from_slot(f->slots[i]);
       }
     }
   }
@@ -312,7 +312,7 @@ void gc_gen_young_copy(void) {
     }
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
       void *obj = gc_heap.remset[ri];
-      if (is_heap_payload(obj, NULL, NULL)) {
+      if (gc_is_heap_payload(obj, NULL, NULL)) {
         /* A remembered object is a root this cycle: mark it so the
          * probe pass's gc_rem_scrub keeps it in the set (noted, so the
          * mark ends with the collection, C36). */
@@ -340,9 +340,9 @@ void gc_gen_young_copy(void) {
    * hold those pointers and would otherwise see a freed nursery.
    */
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
-    copy_from_slot(&p->payload);
+    gc_copy_from_slot(&p->payload);
   }
-  gc_each_runtime_root(copy_from_slot);
+  gc_each_runtime_root(gc_copy_from_slot);
   /* Remembered objects are reached from the roots above. The set is
    * not itself a root list: a dead buffer would keep its nodes alive. */
   while (gc_heap.work_n) {
@@ -367,8 +367,8 @@ void gc_gen_young_copy(void) {
    * which the copy updates (D165).
    */
   if (gc_thread.c_entry) {
-    rewrite_c_stack();
-    count_c_stack_nursery();
+    gc_rewrite_c_stack();
+    gc_count_c_stack_nursery();
   }
 }
 
@@ -379,11 +379,11 @@ void gc_gen_young_copy(void) {
  * object that happens to live in a from-space block. That restores
  * the generational invariant for it: the barrier (inline and
  * avant_barrier) remembers it when a young child is stored into it,
- * copy_from_slot follows it like a mature object (a root, a young
+ * gc_copy_from_slot follows it like a mature object (a root, a young
  * parent, or a remembered parent reaches it), and remember_young_edge
  * keeps it remembered while its fields name young objects. Before,
  * it kept YOUNG (so no barrier) while no later young collection
- * looked inside it (copy_nursery skips non-nursery blocks), and its
+ * looked inside it (gc_copy_nursery skips non-nursery blocks), and its
  * young children were discarded with their blocks.
  */
 static void promote_pinned_one(AvantHeader *h, Block *b) {

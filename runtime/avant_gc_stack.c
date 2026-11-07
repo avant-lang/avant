@@ -13,9 +13,9 @@
  * moved from avant_rt.c and the stackmap walker's file, which W12r
  * removed). The collector's roots are precise (root slots, pins, TLS
  * slots, the remembered set); these scans cover what runtime C frames and register saves may still hold:
- *   - rewrite_c_stack after a young copy (W8c's and W11's rule): every
+ *   - gc_rewrite_c_stack after a young copy (W8c's and W11's rule): every
  *     exact forwarded start left on the stack is rewritten to the copy;
- *   - count_c_stack_nursery: counts words still naming from-space (the
+ *   - gc_count_c_stack_nursery: counts words still naming from-space (the
  *     sm_left statistic, checked by AVANT_GC_VERIFY);
  *   - gc_note_c_stack_blocks before a defragmenting full collection (W11c,
  *     C31, D213): mature blocks a stack word names are not moved.
@@ -68,7 +68,7 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
 
 static void gc_rewrite_if_forwarded(void **slot) {
   void *w = *slot;
-  void *to = fwd_get(w);
+  void *to = gc_fwd_get(w);
   if (to && to != w) {
     *slot = to;
   }
@@ -79,12 +79,12 @@ static void gc_rewrite_if_forwarded(void **slot) {
  * precise roots: callee-saved register saves in C frames on the call
  * chain into the collector, and runtime C locals. Rewrite every exact
  * forwarded start left on this thread's stack, with the same predicate
- * count_c_stack_nursery verifies, so no stack word still names
- * from-space after a young copy. Interiors are not touched (fwd_get
+ * gc_count_c_stack_nursery verifies, so no stack word still names
+ * from-space after a young copy. Interiors are not touched (gc_fwd_get
  * keys on object starts), and a word that was not forwarded keeps its
  * bits. AVANT_GC_STACK_REWRITE=0 is the kill switch (gc_heap.set.c_stack_rewrite).
  */
-void rewrite_c_stack(void) {
+void gc_rewrite_c_stack(void) {
   uint8_t *p;
   uint8_t *hi;
   uint8_t *lo;
@@ -104,7 +104,7 @@ void rewrite_c_stack(void) {
   for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
     void *w = *(void **)p;
     Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
+    if (!gc_is_heap_payload(w, &b, NULL)) {
       continue;
     }
     if (b && b->space == SPACE_NURSERY) {
@@ -113,7 +113,7 @@ void rewrite_c_stack(void) {
   }
 }
 
-void count_c_stack_nursery(void) {
+void gc_count_c_stack_nursery(void) {
   uint8_t *p;
   uint8_t *hi;
   uint8_t *lo;
@@ -133,11 +133,11 @@ void count_c_stack_nursery(void) {
   for (; p + sizeof(void *) <= hi; p += ALIGN) {
     void *w = *(void **)p;
     Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
+    if (!gc_is_heap_payload(w, &b, NULL)) {
       continue;
     }
     if (b && b->space == SPACE_NURSERY) {
-      void *to = fwd_get(w);
+      void *to = gc_fwd_get(w);
       /* Copied to to-space, but this stack word still names from-space. */
       if (to && to != w) {
         gc_heap.ctr.stack_left++;

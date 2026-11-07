@@ -29,9 +29,9 @@ static void mark(void *p) {
     return;
   }
   full_set_mark(h);
-  mark_object_lines(start);
-  gc_heap.live += obj_total(h);
-  work_push(start);
+  gc_mark_object_lines(start);
+  gc_heap.live += gc_obj_total(h);
+  gc_work_push(start);
 }
 
 static void drain(void) {
@@ -112,6 +112,6 @@ void gc_filter_blocks(Block **list, int (*keep)(Block *)) {
 void gc_sum_marked_one(AvantHeader *h, Block *b) {
   (void)b;
   if (full_marked(h)) {
-    gc_heap.mark_sum += obj_total(h);
+    gc_heap.mark_sum += gc_obj_total(h);
   }
 }

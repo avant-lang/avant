@@ -206,7 +206,7 @@ void gc_collect(GcKind kind, int allow_move) {
 
   /* Spill the callers' callee-saved GPRs into collect's frame so the
    * C-stack walks see a reference a caller keeps in one: the young
-   * copy's rewrite (rewrite_c_stack) and the full collection's
+   * copy's rewrite (gc_rewrite_c_stack) and the full collection's
    * defragmentation exclusion (gc_note_c_stack_blocks, C31). Without
    * this, a heap pointer can sit in rbx across avant_alloc and miss
    * the shadow stack. Before the branch, so shrink-wrapping cannot move

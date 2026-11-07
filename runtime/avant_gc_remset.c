@@ -82,7 +82,7 @@ void gc_rem_scrub(void) {
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
+    if (!gc_is_heap_payload(obj, NULL, NULL)) {
       continue;
     }
     h = avant_header(obj);
@@ -100,7 +100,7 @@ void gc_rem_scrub(void) {
       AvantHeader *lh = NULL;
       /* A dead expression buffer is a large object: release its pages
        * now. */
-      (void)is_heap_payload(obj, NULL, &lh);
+      (void)gc_is_heap_payload(obj, NULL, &lh);
       if (lh) {
         gc_release_large(lh);
       } else {
@@ -135,7 +135,7 @@ void gc_rem_commit_kept(void) {
   }
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
+    if (gc_is_heap_payload(obj, NULL, NULL)) {
       int dirty = gc_heap.rem_dirty ? gc_heap.rem_dirty[i] : 1;
       if (!rem_frontier_decide(obj, dirty)) {
         continue;
@@ -152,7 +152,7 @@ void gc_rem_commit_kept(void) {
     pthread_mutex_unlock(&gc_heap.rem_mu);
   }
   for (i = 0; i < n; i++) {
-    if (is_heap_payload(kept[i], NULL, NULL)) {
+    if (gc_is_heap_payload(kept[i], NULL, NULL)) {
       rem_add(kept[i]);
     }
   }
@@ -207,7 +207,7 @@ void gc_rem_full_scrub(void) {
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
+    if (!gc_is_heap_payload(obj, NULL, NULL)) {
       continue;
     }
     h = avant_header(obj);
@@ -255,7 +255,7 @@ void avant_barrier(void *obj) {
       }
     }
   }
-  if (!is_heap_payload(obj, &b, NULL)) {
+  if (!gc_is_heap_payload(obj, &b, NULL)) {
     return;
   }
   if (b && (b->space == SPACE_NURSERY || b->space == SPACE_TO)) {

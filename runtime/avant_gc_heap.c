@@ -64,7 +64,7 @@ void *gc_xrealloc(void *p, size_t n) {
   return q;
 }
 
-void work_push(void *p) {
+void gc_work_push(void *p) {
   if (gc_heap.work_n == gc_heap.work_cap) {
     gc_heap.work_cap = gc_heap.work_cap ? gc_heap.work_cap * 2 : 256;
     gc_heap.work = gc_xrealloc(gc_heap.work, gc_heap.work_cap * sizeof(void *));
@@ -107,7 +107,7 @@ static void fwd_grow(void) {
   free(old);
 }
 
-void fwd_put(void *from, void *to) {
+void gc_fwd_put(void *from, void *to) {
   if (gc_heap.fwd_used * 10 > gc_heap.fwd_cap * 7) {
     fwd_grow();
   }
@@ -122,7 +122,7 @@ void fwd_put(void *from, void *to) {
   gc_heap.fwd[j].to = to;
 }
 
-void *fwd_get(void *from) {
+void *gc_fwd_get(void *from) {
   if (!gc_heap.fwd_cap || !from) {
     return NULL;
   }
@@ -565,7 +565,7 @@ int gc_block_live_lines(Block *b) {
   return n;
 }
 
-size_t obj_total(const AvantHeader *h) {
+size_t gc_obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
 }
 
@@ -577,7 +577,7 @@ size_t obj_total(const AvantHeader *h) {
  * its start bit too, gc-design.md §2.3; it is set exactly while the
  * object lives). OL receives a large object's header, OB a block
  * object's block. */
-int is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
+int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
   uintptr_t off;
   uint64_t g;
   uint8_t kind;
@@ -655,7 +655,7 @@ static AvantHeader *large_holding(uintptr_t off) {
  */
 void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
   uintptr_t off;
-  if (is_heap_payload(p, ob, ol)) {
+  if (gc_is_heap_payload(p, ob, ol)) {
     return p;
   }
   if (!p || !heap_offset(p, &off)) {
@@ -683,7 +683,7 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
       size_t cand = (w * 64 + (size_t)(63 - __builtin_clzll(bits))) * 8;
       AvantHeader *h = (AvantHeader *)(b->base + cand);
       uint8_t *hs = (uint8_t *)h;
-      if (addr >= hs && addr < hs + obj_total(h)) {
+      if (addr >= hs && addr < hs + gc_obj_total(h)) {
         if (ob) {
           *ob = b;
         }
@@ -698,7 +698,7 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
   {
     AvantHeader *h = large_holding(off);
     uint8_t *addr = (uint8_t *)p;
-    if (h && addr >= (uint8_t *)h && addr < (uint8_t *)h + obj_total(h)) {
+    if (h && addr >= (uint8_t *)h && addr < (uint8_t *)h + gc_obj_total(h)) {
       if (ob) {
         *ob = NULL;
       }
@@ -712,7 +712,7 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
 }
 
 int avant_is_heap(void *payload) {
-  return is_heap_payload(payload, NULL, NULL);
+  return gc_is_heap_payload(payload, NULL, NULL);
 }
 
 /* 1 when a young collection can move this buffer. Mature and large
@@ -767,13 +767,13 @@ void gc_clear_side_marks(void) {
   }
 }
 
-void mark_object_lines(void *p) {
+void gc_mark_object_lines(void *p) {
   Block *b = NULL;
-  if (!is_heap_payload(p, &b, NULL) || !b) {
+  if (!gc_is_heap_payload(p, &b, NULL) || !b) {
     return;
   }
   AvantHeader *h = avant_header(p);
-  mark_lines(b, (size_t)((uint8_t *)h - b->base), obj_total(h));
+  mark_lines(b, (size_t)((uint8_t *)h - b->base), gc_obj_total(h));
 }
 
 void avant_type_map(uint32_t type_id, uint64_t word_bits) {

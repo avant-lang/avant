@@ -29,7 +29,7 @@
  *                       pins, defer regions, the world lock
  * They fold into one avant_rt.o (runtime/build.sh), which keeps global
  * only the symbols avant_rt.exports lists, so nothing declared here
- * becomes part of the object's surface unless it already was. Other
+ * becomes part of the object's surface. Other
  * runtime units and user programs see avant_rt.h (the shipped ABI) and
  * avant_gc.h (what the rest of the runtime may call); never this file.
  * The collector's state is one GcHeap, gc_heap, and one GcThread per
@@ -38,10 +38,10 @@
  * ones generated code or the rest of the runtime name (avant_rt.h, the
  * inline allocation path's thread-locals and counters, mir.md §5.5;
  * g_avant_shared, avant_gc.h). Functions a unit shares with another
- * carry the gc_ prefix. A few shared functions without the prefix
- * (work_push, fwd_get, copy_from_slot, ...) were global before W12 and
- * are part of avant_rt.o's surface, so they keep their names while that
- * surface is frozen. Each block of declarations below names the unit
+ * carry the gc_ prefix (since W14b2 without exception: the ten that were
+ * global before W12 and kept their names while avant_rt.o's surface was
+ * frozen, work_push, fwd_get and the rest, are gc_ names and local to
+ * the object now, O37). Each block of declarations below names the unit
  * that defines it. */
 
 /*
@@ -440,9 +440,9 @@ typedef struct GcSettings {
    * only. */
   int nursery_off;
   /* The young copy's C-stack pass (avant_gc_stack.c): c_stack_pass (the
-   * copying nursery is on) runs count_c_stack_nursery, and
+   * copying nursery is on) runs gc_count_c_stack_nursery, and
    * c_stack_rewrite (the pass, unless AVANT_GC_STACK_REWRITE=0) runs
-   * rewrite_c_stack. */
+   * gc_rewrite_c_stack. */
   int c_stack_pass;
   int c_stack_rewrite;
   /* AVANT_GC_DEFRAG: mature evacuation in full collections
@@ -606,7 +606,7 @@ typedef struct GcHeap {
   int from_mature;
   uint64_t probe_nursery_bytes;
   int from_heap_slot;
-  /* Set while a remembered object is being scanned: copy_from_slot then
+  /* Set while a remembered object is being scanned: gc_copy_from_slot then
    * records whether any direct field names a young object afterwards. */
   int rem_track;
   int rem_track_dirty;
@@ -743,18 +743,18 @@ void gc_heap_return(uint64_t live);
 int gc_type_word_is_ref(const AvantHeader *h, size_t w);
 __attribute__((noreturn)) void gc_die(const char *msg);
 void *gc_xrealloc(void *p, size_t n);
-void work_push(void *p);
+void gc_work_push(void *p);
 void gc_fwd_reset(void);
-void fwd_put(void *from, void *to);
-void *fwd_get(void *from);
+void gc_fwd_put(void *from, void *to);
+void *gc_fwd_get(void *from);
 int gc_block_live_lines(Block *b);
-size_t obj_total(const AvantHeader *h);
-int is_heap_payload(void *p, Block **ob, AvantHeader **ol);
+size_t gc_obj_total(const AvantHeader *h);
+int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol);
 void *gc_object_payload(void *p, Block **ob, AvantHeader **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void gc_zero_line_marks(Block *list);
 void gc_clear_side_marks(void);
-void mark_object_lines(void *p);
+void gc_mark_object_lines(void *p);
 
 /* avant_gc_alloc.c */
 void gc_reset_block_bump(Block *b);
@@ -785,8 +785,8 @@ void gc_rem_full_scrub(void);
 
 /* avant_gc_young.c */
 void gc_clear_noted(void);
-void *copy_nursery(void *p);
-void copy_from_slot(void **slot);
+void *gc_copy_nursery(void *p);
+void gc_copy_from_slot(void **slot);
 void gc_gen_young_copy(void);
 int gc_block_has_pinned(Block *b);
 void gc_young_copy_out(int tenure);
@@ -806,8 +806,8 @@ void gc_defrag_release(void);
 
 /* avant_gc_stack.c */
 void gc_note_c_stack_blocks(void);
-void rewrite_c_stack(void);
-void count_c_stack_nursery(void);
+void gc_rewrite_c_stack(void);
+void gc_count_c_stack_nursery(void);
 
 /* avant_gc_verify.c */
 void gc_verify_young_copy(void);

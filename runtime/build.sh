@@ -88,6 +88,21 @@ for name in $core_units; do
 done
 ld -r -o "$root/build/avant_rt_merged.o" "$@"
 objcopy --keep-global-symbols="$root/avant_rt.exports" "$root/build/avant_rt_merged.o"
+# The surface check (Stage 28 W14b2): the object's global symbols are
+# exactly the exports file's names, the ABI section with default
+# visibility and the runtime-internal section hidden.
+want_abi=$(sed -n '/^# runtime-internal$/q; /^[^#]/p' "$root/avant_rt.exports" | LC_ALL=C sort)
+want_int=$(sed -n '/^# runtime-internal$/,$p' "$root/avant_rt.exports" | sed -n '/^[^#]/p' | LC_ALL=C sort)
+have=$(nm -g --defined-only "$root/build/avant_rt_merged.o" | awk '{print $3}' | LC_ALL=C sort)
+if [ "$have" != "$(printf '%s\n%s\n' "$want_abi" "$want_int" | sed '/^$/d' | LC_ALL=C sort)" ]; then
+  echo "runtime/build.sh: avant_rt.o's global symbols differ from avant_rt.exports" >&2
+  exit 1
+fi
+hidden=$(readelf -sW "$root/build/avant_rt_merged.o" | awk '$5 == "GLOBAL" && $7 != "UND" && $6 == "HIDDEN" {print $8}' | LC_ALL=C sort)
+if [ "$hidden" != "$want_int" ]; then
+  echo "runtime/build.sh: avant_rt.o's hidden globals differ from avant_rt.exports' runtime-internal section" >&2
+  exit 1
+fi
 # The merged parts are removed, as the zlib and PCRE2 parts are: nothing
 # links them on their own, and tools/package.sh ships every object left
 # here (W10b: they were 28 KB of dead weight in the release).
