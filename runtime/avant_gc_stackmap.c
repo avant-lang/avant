@@ -15,6 +15,8 @@
  * copy. Moved out of avant_rt.c in the collector stage, Wave 2, and
  * folded into avant_rt.o by build.sh; internals stay static here. */
 
+int g_stackmap_walk;
+
 /*
  * LLVM spill slots hold heap pointers that avant_gc_root never sees.
  * After precise copy, from-space object-starts on the live C stack are

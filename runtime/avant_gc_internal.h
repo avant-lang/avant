@@ -3,14 +3,41 @@
 
 #include "avant_rt.h"
 
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
-/* Private surface shared by the collector translation units
- * (avant_rt.c, avant_gc_stackmap.c). Not a public header: user
- * programs and other runtime units see avant_rt.h only. The units
- * are folded into one avant_rt.o by runtime/build.sh, so the seed's
- * link table does not change when a unit is split out. */
+/* The collector's internal header (Stage 28 W12). Private to the
+ * collector's units:
+ *   avant_gc_stackmap.c
+ *   avant_rt.c
+ * They fold into one avant_rt.o (runtime/build.sh), which keeps global
+ * only the symbols avant_rt.exports lists, so nothing declared here
+ * becomes part of the object's surface unless it already was. Other
+ * runtime units and user programs see avant_rt.h (the shipped ABI) and
+ * avant_gc.h (what the rest of the runtime may call); never this file.
+ * Functions a unit shares with another carry the gc_ prefix; variables
+ * keep their g_ names. Each block of declarations below names the unit
+ * that defines it. */
+
+/*
+ * Precise Immix-family collector.
+ *
+ * Geometry: 32 KiB blocks, 256-byte lines. Object-start bits identify
+ * headers. Tracing is precise (type maps + a shadow stack of local slots).
+ *
+ * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
+ * stay put (those blocks remain `SPACE_FROM` so their address is stable,
+ * D34) and are promoted in place: from then on they are mature objects,
+ * traced and remembered like any other (C29, promote_pinned_one). After
+ * young copy, unpinned from-space is discarded. Set
+ * `AVANT_NURSERY_DISCARD=0` to park all nursery blocks instead (leftover
+ * pointer diagnosis). Objects that escape to C should be pinned.
+ *
+ * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
+ * allocation and collection take a world lock.
+ */
 
 #define ALIGN 8
 #define LINE_SIZE 256
@@ -25,6 +52,16 @@
 #define FULL_BYTES (32u * 1024u * 1024u)
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
+
+/* Numeric buffers at or above this size are young large objects.
+ * They do not move, so a parallel loop can keep the address in a
+ * register, and a young collection still frees them when unmarked.
+ * 900 doubles is 7200 bytes: under LOS_LIMIT, but large enough that
+ * copying the row is the slow path. */
+
+/* Survivors of a low-survival young collection are copied here, then the
+ * block is retagged as nursery. Mature space is for objects that have
+ * already survived a collection. */
 
 #define SPACE_MATURE 0
 #define SPACE_NURSERY 1
@@ -63,30 +100,216 @@ typedef struct ThreadReg {
   void *stack_hi;
 } ThreadReg;
 
-extern __thread ThreadReg g_self_reg;
-extern int g_saw_pinned_nursery;
-extern int g_stack_scan;
+typedef struct PinEnt {
+  struct PinEnt *next;
+  void *payload;
+  int count;
+} PinEnt;
+
+/* Type maps (Stage 28 W1b). An entry describes which payload words of
+ * an object of that type id hold references: bit i of the bitmap
+ * (chunk i / 64, bit i % 64) is payload word i. The bitmap has any
+ * length (nchunks 64-bit chunks). stride == 0 describes one record:
+ * words past the payload size are skipped. stride > 0 describes a
+ * buffer of repeated elements of stride words each (an Array element
+ * buffer of a by-value struct or union): the bitmap is one element's
+ * and applies to every whole element in the payload. Every walker goes
+ * through EACH_REF_SLOT, so they all read the same description. */
+typedef struct TypeMap {
+  uint64_t *words;
+  uint64_t first;
+  uint32_t nchunks;
+  uint32_t stride;
+  uint32_t nrefs;
+} TypeMap;
+
+/* A sorted set of blocks, for the two block lists of a defragmenting
+ * full collection: the mature blocks the collecting thread's C stack
+ * names (C31), and the evacuated blocks about to be freed. */
+typedef struct BlockSet {
+  Block **v;
+  size_t n;
+  size_t cap;
+} BlockSet;
+
+#define g_bump avant_gc_bump
+
+#define g_young_bytes avant_young_bytes
+
+#define g_nursery_held avant_nursery_held
+
+/* Visit every reference slot of payload P as `void **SLOT`. BODY must
+ * not use break or continue. */
+#define EACH_REF_SLOT(P, SLOT, BODY)                                                \
+  do {                                                                              \
+    void **ers_p_ = (void **)(P);                                                   \
+    const AvantHeader *ers_h_ = avant_header(ers_p_);                               \
+    uint32_t ers_id_ = ers_h_->type_id;                                             \
+    size_t ers_nw_ = (size_t)ers_h_->size / sizeof(void *);                         \
+    if (ers_id_ == AVANT_TYPE_PTRS) {                                               \
+      size_t ers_i_;                                                                \
+      for (ers_i_ = 0; ers_i_ < ers_nw_; ers_i_++) {                                \
+        void **SLOT = ers_p_ + ers_i_;                                              \
+        BODY                                                                        \
+      }                                                                             \
+    } else if (ers_id_ != AVANT_TYPE_BYTES && ers_id_ < MAX_TYPES &&                \
+               g_type_set[ers_id_]) {                                               \
+      const TypeMap *ers_m_ = &g_types[ers_id_];                                    \
+      size_t ers_s_ = ers_m_->stride ? (size_t)ers_m_->stride : ers_nw_;            \
+      size_t ers_ne_ = ers_m_->stride ? ers_nw_ / ers_s_ : 1;                       \
+      size_t ers_e_;                                                                \
+      for (ers_e_ = 0; ers_e_ < ers_ne_; ers_e_++) {                                \
+        void **ers_b_ = ers_p_ + ers_e_ * ers_s_;                                   \
+        uint32_t ers_c_;                                                            \
+        for (ers_c_ = 0; ers_c_ < ers_m_->nchunks; ers_c_++) {                      \
+          uint64_t ers_w_ = ers_m_->words[ers_c_];                                  \
+          while (ers_w_) {                                                          \
+            size_t ers_i_ = (size_t)ers_c_ * 64 + (size_t)__builtin_ctzll(ers_w_);  \
+            ers_w_ &= ers_w_ - 1;                                                   \
+            if (ers_i_ < ers_s_) {                                                  \
+              void **SLOT = ers_b_ + ers_i_;                                        \
+              BODY                                                                  \
+            }                                                                       \
+          }                                                                         \
+        }                                                                           \
+      }                                                                             \
+    }                                                                               \
+  } while (0)
+
+#define g_since_gc avant_since_gc
+
+#define g_stats avant_g_stats
+
+#define AVANT_FLAG_REM 16u
+/* Young large object reached from a heap slot. It must be promoted:
+ * a mature object can hold it, and that edge is not in the remembered
+ * set (a large payload has no block). A buffer reached only from the
+ * stack stays young so the next collection can free it. */
+#define AVANT_FLAG_LOS_KEEP 128u
+
+/* avant_gc_stackmap.c */
 extern int g_stackmap_walk;
-extern uint64_t g_live;
 extern uint64_t g_sm_walks;
 extern uint64_t g_sm_hits;
 extern uint64_t g_sm_leftover;
 extern uint32_t g_sm_nsites;
-
-void work_push(void *p);
-size_t obj_total(const AvantHeader *h);
-int is_heap_payload(void *p, Block **ob, Large **ol);
-void *fwd_get(void *from);
-void fwd_put(void *from, void *to);
-void *copy_nursery(void *p);
-void mark_object_lines(void *p);
-void copy_from_slot(void **slot);
-
-void sm_init(void);
 void copy_from_c_stack(void);
+void sm_init(void);
 void copy_from_stackmaps(void);
 void rewrite_from_stackmaps(void);
 void rewrite_c_stack(void);
 void count_c_stack_nursery(void);
+
+/* avant_rt.c */
+extern int g_inited;
+extern int g_saw_pinned_nursery;
+extern Block *g_bht[BLOCK_HASH];
+extern Large *g_large_ht[LARGE_HASH];
+extern __thread ThreadReg g_self_reg;
+extern atomic_int g_avant_shared;
+extern int g_stack_scan;
+extern TypeMap g_types[MAX_TYPES];
+extern uint8_t g_type_set[MAX_TYPES];
+extern uint64_t g_live;
+void work_push(void *p);
+void fwd_put(void *from, void *to);
+void *fwd_get(void *from);
+size_t obj_total(const AvantHeader *h);
+int is_heap_payload(void *p, Block **ob, Large **ol);
+void mark_object_lines(void *p);
+void *copy_nursery(void *p);
+void copy_from_slot(void **slot);
+void gc_init_slow(void);
+
+/* Small helpers every unit inlines (static inline: one copy per unit,
+ * no symbol), moved from avant_rt.c unchanged. */
+
+static inline size_t align_up(size_t n) {
+  return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
+}
+
+static inline int rem_locked(void) {
+  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
+}
+
+static inline size_t hash_ptr(void *p) {
+  uintptr_t x = (uintptr_t)p;
+  x ^= x >> 16;
+  x *= (uintptr_t)0x9e3779b97f4a7c15ULL;
+  return (size_t)x;
+}
+
+static inline size_t block_hash(const void *p) {
+  return ((uintptr_t)p / BLOCK_SIZE) % BLOCK_HASH;
+}
+
+static inline Block *block_of(const void *p) {
+  size_t k = block_hash(p);
+  Block *b;
+  for (b = g_bht[k]; b; b = b->hash_next) {
+    if (p >= (void *)b->base && p < (void *)(b->base + BLOCK_SIZE)) {
+      return b;
+    }
+  }
+  return NULL;
+}
+
+static inline void set_start(Block *b, size_t off) {
+  size_t bit = off / 8;
+  b->start[bit / 64] |= 1ULL << (bit % 64);
+}
+
+static inline void clear_starts(Block *b, size_t off, size_t n) {
+  size_t i;
+  for (i = 0; i < n; i += 8) {
+    size_t bit = (off + i) / 8;
+    b->start[bit / 64] &= ~(1ULL << (bit % 64));
+  }
+}
+
+static inline int has_start(Block *b, size_t off) {
+  size_t bit = off / 8;
+  return (int)((b->start[bit / 64] >> (bit % 64)) & 1ULL);
+}
+
+static inline void mark_lines(Block *b, size_t off, size_t total) {
+  size_t start = off / LINE_SIZE;
+  size_t end = (off + total - 1) / LINE_SIZE;
+  size_t i;
+  for (i = start; i <= end && i < LINES_PER_BLOCK; i++) {
+    b->line_mark[i] = 1;
+  }
+}
+
+static inline void *payload_of(AvantHeader *h) {
+  return (void *)(h + 1);
+}
+
+static inline size_t large_key(void *payload) {
+  return hash_ptr(payload) & (size_t)(LARGE_HASH - 1);
+}
+
+static inline Large *large_of(void *payload) {
+  Large *L;
+  if (!payload) {
+    return NULL;
+  }
+  for (L = g_large_ht[large_key(payload)]; L; L = L->hash_next) {
+    if (payload == payload_of(&L->header)) {
+      return L;
+    }
+  }
+  return NULL;
+}
+
+/* The collector initializes on first use. The check is inline so the
+ * hot entry points (avant_gc_enter, avant_alloc) keep the one-load test
+ * they had when the whole collector was one unit; gc_init_slow reads the
+ * environment once (avant_gc_collect.c). */
+static inline void gc_init(void) {
+  if (!g_inited) {
+    gc_init_slow();
+  }
+}
 
 #endif

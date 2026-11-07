@@ -14,47 +14,18 @@
 #include <string.h>
 #include <unistd.h>
 
-/*
- * Precise Immix-family collector.
- *
- * Geometry: 32 KiB blocks, 256-byte lines. Object-start bits identify
- * headers. Tracing is precise (type maps + a shadow stack of local slots).
- *
- * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
- * stay put (those blocks remain `SPACE_FROM` so their address is stable,
- * D34) and are promoted in place: from then on they are mature objects,
- * traced and remembered like any other (C29, promote_pinned_one). After
- * young copy, unpinned from-space is discarded. Set
- * `AVANT_NURSERY_DISCARD=0` to park all nursery blocks instead (leftover
- * pointer diagnosis). Objects that escape to C should be pinned.
- *
- * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
- * allocation and collection take a world lock.
- */
-
-/* Numeric buffers at or above this size are young large objects.
- * They do not move, so a parallel loop can keep the address in a
- * register, and a young collection still frees them when unmarked.
- * 900 doubles is 7200 bytes: under LOS_LIMIT, but large enough that
- * copying the row is the slow path. */
-
-/* Survivors of a low-survival young collection are copied here, then the
- * block is retagged as nursery. Mature space is for objects that have
- * already survived a collection. */
-
 typedef struct FwdEnt {
   void *from;
   void *to;
 } FwdEnt;
 
-static int g_inited;
+int g_inited;
 static int g_collecting;
 int g_saw_pinned_nursery;
 static int g_nursery_off;
 static int g_discard_from;
-int g_stackmap_walk;
 
-static Block *g_bht[BLOCK_HASH];
+Block *g_bht[BLOCK_HASH];
 static Block *g_mature;
 static Block *g_nursery;
 static Block *g_from;
@@ -79,7 +50,7 @@ __thread void *avant_gc_block;
 __thread uint32_t avant_gc_fast_ok;
 static Block *g_fast_block;
 static void gc_fast_clear(void);
-#define g_bump avant_gc_bump
+
 /* Per-space bump cursor. A full block used to send the next allocation
  * back through every older block (take_from_list + find_hole). Workers
  * allocate in mature space, and that walk dominated Matmul::T16.
@@ -90,7 +61,7 @@ static Block *g_alloc_cur[4];
 static uint8_t g_alloc_fresh[4];
 
 static Large *g_large;
-static Large *g_large_ht[LARGE_HASH];
+Large *g_large_ht[LARGE_HASH];
 /* The address range [g_large_lo, g_large_hi) covers every large chunk
  * ever put on g_large (los_alloc). It only grows: a chunk that
  * is freed leaves it as wide as it was. So an address outside it is
@@ -128,12 +99,6 @@ static int g_gc_defer;
 int g_stack_scan;
 static uint64_t g_interior_slots;
 
-typedef struct PinEnt {
-  struct PinEnt *next;
-  void *payload;
-  int count;
-} PinEnt;
-
 static PinEnt *g_pins;
 
 static void **g_remset;
@@ -152,11 +117,11 @@ static void **g_noted;
 static uint32_t g_noted_n;
 static uint32_t g_noted_cap;
 uint64_t avant_young_bytes;
-#define g_young_bytes avant_young_bytes
+
 /* 0 when AVANT_YOUNG_MB pinned the threshold (tests). */
 static int g_young_adapt;
 uint64_t avant_nursery_held;
-#define g_nursery_held avant_nursery_held
+
 static uint64_t g_mature_since_full;
 static uint64_t g_peak_live;
 /* Root bookkeeping call counts (Collector II Wave 0): every call to
@@ -313,63 +278,8 @@ static void **g_work;
 static uint32_t g_work_n;
 static uint32_t g_work_cap;
 
-/* Type maps (Stage 28 W1b). An entry describes which payload words of
- * an object of that type id hold references: bit i of the bitmap
- * (chunk i / 64, bit i % 64) is payload word i. The bitmap has any
- * length (nchunks 64-bit chunks). stride == 0 describes one record:
- * words past the payload size are skipped. stride > 0 describes a
- * buffer of repeated elements of stride words each (an Array element
- * buffer of a by-value struct or union): the bitmap is one element's
- * and applies to every whole element in the payload. Every walker goes
- * through EACH_REF_SLOT, so they all read the same description. */
-typedef struct TypeMap {
-  uint64_t *words;
-  uint64_t first;
-  uint32_t nchunks;
-  uint32_t stride;
-  uint32_t nrefs;
-} TypeMap;
-
-static TypeMap g_types[MAX_TYPES];
-static uint8_t g_type_set[MAX_TYPES];
-
-/* Visit every reference slot of payload P as `void **SLOT`. BODY must
- * not use break or continue. */
-#define EACH_REF_SLOT(P, SLOT, BODY)                                                \
-  do {                                                                              \
-    void **ers_p_ = (void **)(P);                                                   \
-    const AvantHeader *ers_h_ = avant_header(ers_p_);                               \
-    uint32_t ers_id_ = ers_h_->type_id;                                             \
-    size_t ers_nw_ = (size_t)ers_h_->size / sizeof(void *);                         \
-    if (ers_id_ == AVANT_TYPE_PTRS) {                                               \
-      size_t ers_i_;                                                                \
-      for (ers_i_ = 0; ers_i_ < ers_nw_; ers_i_++) {                                \
-        void **SLOT = ers_p_ + ers_i_;                                              \
-        BODY                                                                        \
-      }                                                                             \
-    } else if (ers_id_ != AVANT_TYPE_BYTES && ers_id_ < MAX_TYPES &&                \
-               g_type_set[ers_id_]) {                                               \
-      const TypeMap *ers_m_ = &g_types[ers_id_];                                    \
-      size_t ers_s_ = ers_m_->stride ? (size_t)ers_m_->stride : ers_nw_;            \
-      size_t ers_ne_ = ers_m_->stride ? ers_nw_ / ers_s_ : 1;                       \
-      size_t ers_e_;                                                                \
-      for (ers_e_ = 0; ers_e_ < ers_ne_; ers_e_++) {                                \
-        void **ers_b_ = ers_p_ + ers_e_ * ers_s_;                                   \
-        uint32_t ers_c_;                                                            \
-        for (ers_c_ = 0; ers_c_ < ers_m_->nchunks; ers_c_++) {                      \
-          uint64_t ers_w_ = ers_m_->words[ers_c_];                                  \
-          while (ers_w_) {                                                          \
-            size_t ers_i_ = (size_t)ers_c_ * 64 + (size_t)__builtin_ctzll(ers_w_);  \
-            ers_w_ &= ers_w_ - 1;                                                   \
-            if (ers_i_ < ers_s_) {                                                  \
-              void **SLOT = ers_b_ + ers_i_;                                        \
-              BODY                                                                  \
-            }                                                                       \
-          }                                                                         \
-        }                                                                           \
-      }                                                                             \
-    }                                                                               \
-  } while (0)
+TypeMap g_types[MAX_TYPES];
+uint8_t g_type_set[MAX_TYPES];
 
 /* Whether payload word W of an object with header H is a reference slot
  * by its type map (the verifier's inverse question). */
@@ -396,20 +306,16 @@ static size_t g_fwd_cap;
 static size_t g_fwd_used;
 
 uint64_t avant_since_gc;
-#define g_since_gc avant_since_gc
+
 static uint64_t g_heap_bytes;
 static uint64_t g_heap_max;
 uint64_t g_live;
 static uint64_t g_last_full_at;
 
 AvantGcStats avant_g_stats;
-#define g_stats avant_g_stats
+
 /* Nursery allocations taken by generated code without a call. */
 uint64_t avant_inline_allocs;
-
-static size_t align_up(size_t n) {
-  return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
-}
 
 static void die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
@@ -486,17 +392,6 @@ void work_push(void *p) {
   g_work[g_work_n++] = p;
 }
 
-#define AVANT_FLAG_REM 16u
-/* Young large object reached from a heap slot. It must be promoted:
- * a mature object can hold it, and that edge is not in the remembered
- * set (a large payload has no block). A buffer reached only from the
- * stack stays young so the next collection can free it. */
-#define AVANT_FLAG_LOS_KEEP 128u
-
-static int rem_locked(void) {
-  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
-}
-
 static void rem_add(void *obj) {
   AvantHeader *h = avant_header(obj);
   int locked = rem_locked();
@@ -523,8 +418,6 @@ static void rem_add(void *obj) {
   }
 }
 
-int is_heap_payload(void *p, Block **ob, Large **ol);
-
 static void rem_forget(void) {
   uint32_t i;
   int locked = rem_locked();
@@ -541,13 +434,6 @@ static void rem_forget(void) {
   if (locked) {
     pthread_mutex_unlock(&g_rem_mu);
   }
-}
-
-static size_t hash_ptr(void *p) {
-  uintptr_t x = (uintptr_t)p;
-  x ^= x >> 16;
-  x *= (uintptr_t)0x9e3779b97f4a7c15ULL;
-  return (size_t)x;
 }
 
 static void fwd_reset(void) {
@@ -616,10 +502,6 @@ void *fwd_get(void *from) {
   }
 }
 
-static size_t block_hash(const void *p) {
-  return ((uintptr_t)p / BLOCK_SIZE) % BLOCK_HASH;
-}
-
 static void block_register(Block *b) {
   size_t k = block_hash(b->base);
   b->hash_next = g_bht[k];
@@ -639,44 +521,6 @@ static void block_unregister(Block *b) {
   }
 }
 
-static Block *block_of(const void *p) {
-  size_t k = block_hash(p);
-  Block *b;
-  for (b = g_bht[k]; b; b = b->hash_next) {
-    if (p >= (void *)b->base && p < (void *)(b->base + BLOCK_SIZE)) {
-      return b;
-    }
-  }
-  return NULL;
-}
-
-static void set_start(Block *b, size_t off) {
-  size_t bit = off / 8;
-  b->start[bit / 64] |= 1ULL << (bit % 64);
-}
-
-static void clear_starts(Block *b, size_t off, size_t n) {
-  size_t i;
-  for (i = 0; i < n; i += 8) {
-    size_t bit = (off + i) / 8;
-    b->start[bit / 64] &= ~(1ULL << (bit % 64));
-  }
-}
-
-static int has_start(Block *b, size_t off) {
-  size_t bit = off / 8;
-  return (int)((b->start[bit / 64] >> (bit % 64)) & 1ULL);
-}
-
-static void mark_lines(Block *b, size_t off, size_t total) {
-  size_t start = off / LINE_SIZE;
-  size_t end = (off + total - 1) / LINE_SIZE;
-  size_t i;
-  for (i = start; i <= end && i < LINES_PER_BLOCK; i++) {
-    b->line_mark[i] = 1;
-  }
-}
-
 static int block_live_lines(Block *b) {
   int n = 0;
   int i;
@@ -690,14 +534,6 @@ static int block_live_lines(Block *b) {
 
 size_t obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
-}
-
-static void *payload_of(AvantHeader *h) {
-  return (void *)(h + 1);
-}
-
-static size_t large_key(void *payload) {
-  return hash_ptr(payload) & (size_t)(LARGE_HASH - 1);
 }
 
 static void large_hash_add(Large *L) {
@@ -856,19 +692,6 @@ static void reclaim_young_large(void) {
     }
     L = next;
   }
-}
-
-static Large *large_of(void *payload) {
-  Large *L;
-  if (!payload) {
-    return NULL;
-  }
-  for (L = g_large_ht[large_key(payload)]; L; L = L->hash_next) {
-    if (payload == payload_of(&L->header)) {
-      return L;
-    }
-  }
-  return NULL;
 }
 
 int is_heap_payload(void *p, Block **ob, Large **ol) {
@@ -1544,7 +1367,6 @@ static void remember_young_edge(void **slot, void *payload) {
   keep_add(owner);
 }
 
-void copy_from_slot(void **slot);
 static int g_from_heap_slot;
 /* Set while a remembered object is being scanned: copy_from_slot then
  * records whether any direct field names a young object afterwards. */
@@ -2389,15 +2211,6 @@ typedef struct DefCand {
   int live;
   uint64_t bytes;
 } DefCand;
-
-/* A sorted set of blocks, for the two block lists of a defragmenting
- * full collection: the mature blocks the collecting thread's C stack
- * names (C31), and the evacuated blocks about to be freed. */
-typedef struct BlockSet {
-  Block **v;
-  size_t n;
-  size_t cap;
-} BlockSet;
 
 static int block_ptr_cmp(const void *a, const void *b) {
   const Block *x = *(Block *const *)a;
@@ -3304,7 +3117,7 @@ static void print_stats(void) {
           (unsigned long long)g_los_spare_bytes);
 }
 
-static void init_gc(void) {
+void gc_init_slow(void) {
   if (g_inited) {
     return;
   }
@@ -3386,7 +3199,7 @@ static void init_gc(void) {
 }
 
 void avant_type_map(uint32_t type_id, uint64_t word_bits) {
-  init_gc();
+  gc_init();
   if (type_id == AVANT_TYPE_PTRS) {
     return;
   }
@@ -3412,7 +3225,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
  * bit below stride). All calls for one id carry the same stride. */
 void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_base,
                        uint64_t bits) {
-  init_gc();
+  gc_init();
   if (type_id == AVANT_TYPE_PTRS || type_id == AVANT_TYPE_BYTES) {
     return;
   }
@@ -3464,7 +3277,7 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
  * are kept on a thread-local freelist; the slot array is reused too. */
 void avant_gc_enter(void) {
   g_enter_calls++;
-  init_gc();
+  gc_init();
   avant_gc_register_thread();
   Frame *f = g_frame_free;
   if (f) {
@@ -3686,7 +3499,7 @@ void avant_unpin(void *payload) {
 }
 
 void avant_gc_defer_enter(void) {
-  init_gc();
+  gc_init();
   gc_fast_clear();
   pthread_mutex_lock(&g_world);
   /*
@@ -3730,7 +3543,7 @@ void avant_gc_defer_leave(void) {
  * bytes it saw and 4 MB — plus the mature-growth trigger, so the
  * boundary costs one marking per budget of allocation. */
 void avant_gc_heap_goal_collect(void) {
-  init_gc();
+  gc_init();
   pthread_mutex_lock(&g_world);
   if (!g_nursery_off && !g_collecting && !g_gc_defer &&
       (g_mature_since_full >= g_full_trigger ||
@@ -3754,7 +3567,7 @@ void avant_alloc_in_mature(int32_t on) {
 }
 
 void avant_world_lock(void) {
-  init_gc();
+  gc_init();
   pthread_mutex_lock(&g_world);
 }
 
@@ -3770,7 +3583,7 @@ static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
 }
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
-  init_gc();
+  gc_init();
   gc_fast_refresh();
   if (nbytes > UINT32_MAX) {
     die("object too large");
@@ -3849,7 +3662,7 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
   if (nbytes > UINT32_MAX || type_id > UINT16_MAX) {
     return NULL;
   }
-  init_gc();
+  gc_init();
   gc_fast_refresh();
   payload = (size_t)nbytes;
   total = align_up(sizeof(AvantHeader) + payload);
@@ -3863,7 +3676,7 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
 }
 
 void avant_nursery_reclaim(void) {
-  init_gc();
+  gc_init();
   pthread_mutex_lock(&g_world);
   if (!g_nursery_off && !g_collecting && g_nursery_held > 0) {
     collect(0);
@@ -3872,7 +3685,7 @@ void avant_nursery_reclaim(void) {
 }
 
 void avant_gc_collect(void) {
-  init_gc();
+  gc_init();
   pthread_mutex_lock(&g_world);
   collect(1);
   pthread_mutex_unlock(&g_world);
