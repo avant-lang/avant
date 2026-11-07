@@ -420,8 +420,10 @@ extern uint64_t g_mature_since_full;
 extern int g_reserve_mode;
 extern uint64_t g_copy_reserve;
 extern uint64_t g_live;
+extern int g_stress;
 void gc_collect(int full);
 void gc_maybe_collect(void);
+void gc_stress_point(void);
 void gc_init_slow(void);
 
 /* avant_gc_stats.c */

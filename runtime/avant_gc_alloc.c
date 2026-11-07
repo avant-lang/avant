@@ -506,6 +506,22 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   return obj;
 }
 
+/* avant_alloc as runtime C calls it (avant_gc.h maps avant_alloc to this
+ * name in every runtime unit outside the collector; Stage 28 W14b1). The
+ * same allocation, plus AVANT_GC_STRESS's stress point first, so a
+ * stress run collects at every runtime C allocation and not at the
+ * generated code's, which roots everything across avant_alloc by
+ * construction (D165). */
+void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
+  gc_init();
+  if (g_stress) {
+    pthread_mutex_lock(&g_world);
+    gc_stress_point();
+    pthread_mutex_unlock(&g_world);
+  }
+  return avant_alloc(nbytes, type_id);
+}
+
 void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
   size_t payload;
   size_t total;

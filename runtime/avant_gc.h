@@ -60,6 +60,7 @@ void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
+void avant_gc_quiet_defer_enter(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
@@ -74,5 +75,14 @@ void avant_gc_heap_goal_collect(void);
  * collection bumps. */
 extern _Atomic uint32_t g_avant_str_gen;
 extern atomic_int g_avant_shared;
+
+/* Runtime C allocates through avant_alloc_c (Stage 28 W14b1): the same
+ * allocation as avant_alloc, plus the stress point of AVANT_GC_STRESS=1
+ * (a young collection before it, outside defer regions, in unshared
+ * programs). Every runtime unit that includes this header calls it under
+ * the name avant_alloc; generated code and user C (avant_rt.h) keep
+ * calling avant_alloc itself. */
+void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
+#define avant_alloc(nbytes, type_id) avant_alloc_c((nbytes), (type_id))
 
 #endif
