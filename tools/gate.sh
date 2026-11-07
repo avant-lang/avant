@@ -34,7 +34,7 @@
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
 # The runtime, B, C', and D' are built by tools/letters.sh (the one copy
 # of the letters' incantation, with those timeouts inside). The suites run
-# with no AVANT_BACKEND and no AVANT_MYC_LLVM.
+# with no AVANT_BACKEND.
 #
 # Output files in GATE_OUT (L is b and c-llvm): build-runtime.log,
 # build-L.log and time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
@@ -117,7 +117,7 @@ for L in b $C; do
   rm -f "$out/junit-$L.xml" "$out/time-$L.txt"
   snap "$out/before-$L"
   # shellcheck disable=SC2086 # SUITE_ENV and keep are VAR=value words
-  env -u AVANT_BACKEND -u AVANT_MYC_LLVM $keep $SUITE_ENV timeout -k 10 900 /usr/bin/time -p -o "$out/time-$L.txt" ./bin/avant-$L test --junit "$out/junit-$L.xml" > "$out/suite-$L.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND $keep $SUITE_ENV timeout -k 10 900 /usr/bin/time -p -o "$out/time-$L.txt" ./bin/avant-$L test --junit "$out/junit-$L.xml" > "$out/suite-$L.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$L.log"
   [ $rc -eq 0 ] || fail "suite on $L failed (rc=$rc)"

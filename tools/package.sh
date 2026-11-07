@@ -80,9 +80,8 @@ fi
 # (an object records no symbol versions; its references bind where the
 # user links). The program uses every runtime object: the core and each
 # std module. It is compiled by the packaged compiler outside the checkout,
-# with an empty environment (no AVANT_BACKEND, AVANT_MYC_LLVM, or
-# AVANT_ROOT; PATH=/usr/bin:/bin), so this is also a first self-test of
-# the archive on the default back end with no myc-llvm reachable.
+# with an empty environment (no AVANT_BACKEND or AVANT_ROOT;
+# PATH=/usr/bin:/bin), so this is also a first self-test of the archive.
 floor_dir=$(mktemp -d "${TMPDIR:-/tmp}/avant-floor-XXXXXX")
 trap 'rm -rf "$floor_dir"' EXIT
 cat > "$floor_dir/all.av" <<'EOF_AV'
