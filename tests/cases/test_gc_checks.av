@@ -10,6 +10,12 @@ import backends
 // heap/task_pins.av (C28): every spawn used to leave its task object
 // pinned; after 200 spawns and joins no pin is left.
 //
+// heap/join_twice.av (C38, D225): a JoinHandle joined two and three
+// times returns the same result every time, with young and full
+// collections between the joins, in five environments (default,
+// AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1, AVANT_NURSERY=0,
+// AVANT_GC_STRESS=1); since C28 a second join freed the task again.
+//
 // heap/inc_slice_mature.av (C34) and heap/array_reserve_mature.av (the
 // array_grow barrier, W13b) under AVANT_GC_STRESS=1 (W14b1's minimal
 // stress mode: a young collection at every outermost defer entry and at
@@ -22,7 +28,7 @@ import backends
 // ended with 142,894 entries before).
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn"]
+  names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice"]
   jobs: Array(HJob) = []
   p = 0
   while p < names.size {
@@ -57,6 +63,15 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   keys.push("task_pins.g0")
   envs.push("")
   wants.push("sum: 1490\npins left: 0\n")
+  jenvs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  e = 0
+  while e < jenvs.size {
+    progs.push("join_twice")
+    keys.push("join_twice.g${e}")
+    envs.push(jenvs[e])
+    wants.push("array: 26602720 26602720 26602720\nfield: 374755 374755\nlocal: 42 42 42\nloop: 2980\nbad: 0\npins left: 0\n")
+    e = e + 1
+  }
   progs.push("inc_slice_mature")
   keys.push("inc_slice_mature.stress")
   envs.push("-u AVANT_GC_VERIFY AVANT_GC_STRESS=1")
