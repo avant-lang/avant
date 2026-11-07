@@ -12,6 +12,7 @@
  * collector's units:
  *   avant_gc_los.c
  *   avant_gc_remset.c
+ *   avant_gc_young.c
  *   avant_gc_mark.c
  *   avant_gc_defrag.c
  *   avant_gc_stack.c
@@ -221,6 +222,19 @@ void gc_keep_add(void *obj);
 void gc_rem_scrub(void);
 void gc_rem_commit_kept(void);
 
+/* avant_gc_young.c */
+extern int g_saw_pinned_nursery;
+extern int g_discard_from;
+extern uint64_t g_to_bytes;
+extern int g_probe;
+extern uint64_t g_probe_nursery_bytes;
+void gc_clear_noted(void);
+void *copy_nursery(void *p);
+void copy_from_slot(void **slot);
+void gc_gen_young_copy(void);
+int gc_block_has_pinned(Block *b);
+void gc_young_copy_out(int tenure);
+
 /* avant_gc_mark.c */
 extern uint64_t g_mark_sum;
 void gc_clear_all_marks(void);
@@ -324,13 +338,14 @@ void rewrite_from_stackmaps(void);
 /* avant_rt.c */
 extern int g_inited;
 extern int g_collecting;
-extern int g_saw_pinned_nursery;
 extern int g_nursery_off;
 extern Block *g_bht[BLOCK_HASH];
 extern Block *g_mature;
 extern Block *g_nursery;
 extern Block *g_from;
 extern Block *g_to;
+extern Block *g_alloc_cur[4];
+extern uint8_t g_alloc_fresh[4];
 extern __thread int g_alloc_mature;
 extern __thread ThreadReg g_self_reg;
 extern ThreadReg *g_threads;
@@ -359,14 +374,16 @@ size_t obj_total(const AvantHeader *h);
 int is_heap_payload(void *p, Block **ob, Large **ol);
 void *gc_object_payload(void *p, Block **ob, Large **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
+void gc_zero_line_marks(Block *list);
 void mark_object_lines(void *p);
 void gc_reset_block_bump(Block *b);
 void gc_cache_or_free_block(Block *b);
 void gc_note_peak(void);
 Block *gc_new_block(uint8_t space);
-void *copy_nursery(void *p);
-void copy_from_slot(void **slot);
-int gc_block_has_pinned(Block *b);
+void gc_use_block(Block *b);
+void gc_clear_alloc_cur(uint8_t space);
+void *gc_mature_alloc(size_t total);
+AvantHeader *gc_to_alloc(size_t total);
 void gc_collect(int full);
 void gc_init_slow(void);
 

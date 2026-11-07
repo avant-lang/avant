@@ -25,7 +25,7 @@ uint64_t g_root_calls;
 uint64_t g_reload_calls;
 uint64_t g_enter_calls;
 /* Remembered-set observability (Collector II Wave 2): scans counts every
- * remembered-set scan in gen_young_copy (probe and real passes alike),
+ * remembered-set scan in gc_gen_young_copy (probe and real passes alike),
  * entries/fields sum the set size and field slots visited at each scan,
  * peak is the largest frontier seen at a scan start, adds counts
  * successful rem_add inserts, cleared counts frontier evictions.
