@@ -1,0 +1,85 @@
+// C34 (Stage 28 W13b, D204): avant_hash_inc_slice stored a fresh young
+// key into the hash's key buffer without a barrier, unlike every other
+// insertion path. A key buffer of 1,024 or more slots is a large object,
+// mature from birth; once its keys have tenured, the remembered set drops
+// it, and the next young collection does not follow it: the new keys'
+// nursery blocks are discarded while the hash still names them.
+//
+// Here a Hash(String, Int) gets 1,400 keys by inc_slice, churn tenures
+// them, then 100 new keys go in by inc_slice without crossing a growth,
+// churn runs young collections, and each new key is counted again. Every
+// v word was inserted once, so the second count returns 2 for each, the
+// size grows by exactly 100, and all three lines print 0. Before the fix
+// the default environment printed -100 and 43 (no new key found), and
+// AVANT_GC_VERIFY=1 reported a lost field reference in the key buffer.
+// The probe is gc-audit.md's appendix (W13).
+
+class Junk {
+  a: String
+  b: Int
+}
+
+fn churn(n: Int): Int {
+  t = 0
+  i = 0
+  while i < n {
+    j = Junk.new
+    j.a = "x" + "y"
+    j.b = i
+    t = t + j.b % 3
+    i = i + 1
+  }
+  t
+}
+
+fn words(prefix: String, nw: Int): String {
+  b = buf_new()
+  i = 0
+  while i < nw {
+    b.push_str(prefix)
+    b.push_fmt_i(i)
+    b.push_str(" ")
+    i = i + 1
+  }
+  b.to_s
+}
+
+fn fill(h: Hash(String, Int), text: String): Int {
+  n = text.size
+  s = 0
+  k = 0
+  got = 0
+  while k < n {
+    if text[k] == 32 {
+      got = got + h.inc_slice(text, s, k)
+      s = k + 1
+    }
+    k = k + 1
+  }
+  got
+}
+
+fn main {
+  nw = 100
+  a = words("a", 1400)
+  v = words("v", nw)
+  h = Hash(String, Int).new
+  fill(h, a)
+  t = 0
+  r = 0
+  while r < 4 {
+    t = t + churn(800000) % 7
+    r = r + 1
+  }
+  fill(h, v)
+  r = 0
+  while r < 4 {
+    t = t + churn(800000) % 7
+    r = r + 1
+  }
+  // each v word was inserted once: inc_slice now returns 2 for it
+  got = fill(h, v)
+  puts(got - 2 * nw)
+  puts(h.size - 1400 - nw)
+  puts(t % 2)
+}

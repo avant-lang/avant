@@ -1,0 +1,113 @@
+// C35 (Stage 28 W13b, D204): avant_str_split, avant_str_fields and
+// chars_build (String.chars, Bytes.chars) kept their fresh strings only
+// in a malloc'ed items[] array while each string was made by dup_bytes,
+// whose own avant_gc_defer_enter was an outermost one. Under
+// AVANT_NURSERY=0 an outermost enter may run a full collection, which
+// does not see items[], so it swept the strings made before it and the
+// array came back naming freed lines that later allocations reused. Each
+// part here splits a 3,000-part text many times, with a varying amount
+// of other allocation between, so full collections land inside the
+// helpers, and checks every part. Before the fix AVANT_NURSERY=0 printed
+// thousands of bad parts (split alone: 18,956 in the W13b probe); the
+// default environment never collects inside the helpers. Every line
+// prints 0.
+
+fn text_of(sep: String): String {
+  b = buf_new()
+  i = 0
+  while i < 3000 {
+    if i > 0 {
+      b.push_str(sep)
+    }
+    b.push_str("word-number-")
+    b.push_fmt_i(i)
+    i = i + 1
+  }
+  b.to_s
+}
+
+fn letters(n: Int): String {
+  b = buf_new()
+  i = 0
+  while i < n {
+    b.push_byte(97 + i % 26)
+    i = i + 1
+  }
+  b.to_s
+}
+
+fn junk(r: Int): Int {
+  keep: Array(String) = []
+  k = 0
+  while k < 500 + r * 37 % 2900 {
+    keep.push("zzzzzzzzzzzzzzzzzzzz-${k}")
+    k = k + 1
+  }
+  keep.size
+}
+
+fn check(parts: Array(String)): Int {
+  bad = 0
+  if parts.size != 3000 {
+    return 3000
+  }
+  k = 0
+  while k < 3000 {
+    if parts[k] != "word-number-${k}" {
+      bad = bad + 1
+    }
+    k = k + 1
+  }
+  bad
+}
+
+fn chars_bad(cs: Array(String), text: String): Int {
+  bad = 0
+  if cs.size != text.size {
+    return text.size
+  }
+  k = 0
+  while k < cs.size {
+    if cs[k].size != 1 || cs[k][0] != text[k] {
+      bad = bad + 1
+    }
+    k = k + 1
+  }
+  bad
+}
+
+fn main {
+  text = text_of(" ")
+  spaced = text_of("  \t ")
+  short = letters(3000)
+  rounds = 700
+  split_bad = 0
+  fields_bad = 0
+  chars = 0
+  n = 0
+  r = 0
+  while r < rounds {
+    parts = text.split(" ")
+    n = n + junk(r)
+    split_bad = split_bad + check(parts)
+    r = r + 1
+  }
+  r = 0
+  while r < rounds {
+    fs = spaced.fields()
+    n = n + junk(r)
+    fields_bad = fields_bad + check(fs)
+    r = r + 1
+  }
+  r = 0
+  while r < rounds {
+    cs = short.chars
+    n = n + junk(r)
+    chars = chars + chars_bad(cs, short)
+    r = r + 1
+  }
+  puts("split bad: ${split_bad}")
+  puts("fields bad: ${fields_bad}")
+  puts("chars bad: ${chars}")
+  puts("junk: ${n}")
+}

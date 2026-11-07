@@ -1,0 +1,67 @@
+// Stage 28 W13b sweep (D204): Array.reserve grew the buffer without a
+// barrier on the new buffer. array_grow copies the old elements into a
+// fresh buffer; one of 1,024 or more pointer slots is a large object,
+// mature from birth, and nothing remembered it: avant_array_push_slot
+// barriers the new buffer after its grow, avant_array_reserve did not. A
+// tenured array whose newest elements are still young then held them only
+// through a mature, unremembered buffer, and the next young collection
+// (which scans a remembered array's fields but follows a mature child
+// only when that child is remembered) discarded them while the array
+// still named them. Here 100 strings tenure, 500 young ones are pushed,
+// reserve(3000) moves all 600 into a large buffer, and churn runs young
+// collections before every new string is checked. Before the fix the
+// default environment printed 500 (every new string wrong) and
+// AVANT_GC_VERIFY=1 reported lost field references; both lines print 0.
+
+class Junk {
+  a: String
+  b: Int
+}
+
+fn churn(n: Int): Int {
+  t = 0
+  i = 0
+  while i < n {
+    j = Junk.new
+    j.a = "x" + "y"
+    j.b = i
+    t = t + j.b % 3
+    i = i + 1
+  }
+  t
+}
+
+fn main {
+  a: Array(String) = []
+  i = 0
+  while i < 100 {
+    a.push("old-${i}")
+    i = i + 1
+  }
+  t = 0
+  r = 0
+  while r < 4 {
+    t = t + churn(800000) % 7
+    r = r + 1
+  }
+  while i < 600 {
+    a.push("new-${i}")
+    i = i + 1
+  }
+  a.reserve(3000)
+  r = 0
+  while r < 4 {
+    t = t + churn(800000) % 7
+    r = r + 1
+  }
+  bad = 0
+  i = 100
+  while i < 600 {
+    if a[i] != "new-${i}" {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  puts(bad)
+  puts(t % 2)
+}
