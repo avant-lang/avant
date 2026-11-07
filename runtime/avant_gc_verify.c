@@ -227,11 +227,21 @@ void gc_verify_young_copy(void) {
 static void verify_defrag_word(void *w, const char *where, void *at) {
   Block *b = block_of(w);
   Block *hb = w ? block_of((uint8_t *)w - sizeof(AvantHeader)) : NULL;
-  void *start;
-  if (!(b && gc_block_set_has(&g_def_release, b)) && !(hb && gc_block_set_has(&g_def_release, hb))) {
+  void *start = gc_object_payload(w, NULL, NULL);
+  /* A word that names an object is judged by the object's block, the
+   * block of its header: the payload of an empty object that ends a
+   * block is the next block's first byte, and since W14a1 that next
+   * block is a real neighbour in the reservation, not a stranger. A
+   * word that names no object keeps the two-block test. */
+  if (start) {
+    Block *ob = block_of(avant_header(start));
+    if (!(ob && gc_block_set_has(&g_def_release, ob))) {
+      return;
+    }
+  } else if (!(b && gc_block_set_has(&g_def_release, b)) &&
+             !(hb && gc_block_set_has(&g_def_release, hb))) {
     return;
   }
-  start = gc_object_payload(w, NULL, NULL);
   fprintf(stderr,
           "avant gc verify: %s %p names %p in a mature block defragmentation "
           "is freeing (object %p moved to %p) coll=%llu\n",
@@ -284,7 +294,7 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
    * gone); only a live one that moved must have been rewritten. */
   for (i = 0; i < g_rem_n; i++) {
     void *obj = g_remset[i];
-    Block *rb = block_of(obj);
+    Block *rb = obj ? block_of(avant_header(obj)) : NULL;
     if (rb && gc_block_set_has(&g_def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
         (avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
       verify_defrag_word(obj, "remembered entry", (void *)&g_remset[i]);
