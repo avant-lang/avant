@@ -19,9 +19,9 @@
  *     exact forwarded start left on the stack is rewritten to the copy;
  *   - count_c_stack_nursery: counts words still naming from-space (the
  *     sm_left statistic, checked by AVANT_GC_VERIFY);
- *   - note_c_stack_blocks before a defragmenting full collection (W11c,
+ *   - gc_note_c_stack_blocks before a defragmenting full collection (W11c,
  *     C31, D213): mature blocks a stack word names are not moved.
- * collect() spills its callers' callee-saved registers first, so a
+ * gc_collect() spills its callers' callee-saved registers first, so a
  * reference a caller keeps in one is on the scanned stack. Other threads'
  * C frames are not scanned (D191, Part 2). */
 
@@ -41,7 +41,7 @@ int g_stack_scan;
  * of the collecting thread's stack names (exact start, interior, or a
  * scalar that happens to look like one; a false positive only skips a
  * candidate), from this function's frame to the stack top, and those
- * blocks are not candidates. collect() first saves its callers'
+ * blocks are not candidates. gc_collect() first saves its callers'
  * callee-saved registers into its own frame, so a reference a caller
  * keeps in one is on the scanned stack. Other threads' C frames are
  * D191's (Part 2). */

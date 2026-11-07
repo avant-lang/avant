@@ -334,7 +334,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
     }
   }
   rewrite_from_stackmaps();
-  /* The evacuated blocks are freed by gc_defrag_release, after collect()
+  /* The evacuated blocks are freed by gc_defrag_release, after gc_collect()
    * has let the verifier look at them from its own frame. */
   g_def_release.n = 0;
   for (i = 0; i < ncand; i++) {

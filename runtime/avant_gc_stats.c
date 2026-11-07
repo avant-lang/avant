@@ -81,7 +81,7 @@ uint64_t g_pk_to;
 uint64_t g_pk_large;
 uint64_t g_pk_cache;
 /* Large-object observability (Collector II Wave 5, step 1): allocs and
- * alloc_bytes count every los_alloc by chunk bytes (the heap charge for
+ * alloc_bytes count every gc_los_alloc by chunk bytes (the heap charge for
  * a large object); callocs counts fresh calloc calls, spare_hits counts
  * exact-size spare reuses, spare_cached counts dead young Bytes buffers
  * kept into the single spare slot, spare_dropped counts spares freed
@@ -91,7 +91,7 @@ uint64_t g_pk_cache;
  * birth space. hist buckets payload bytes: under 16 KiB, 16-64 KiB,
  * 64-256 KiB, 256 KiB-1 MiB, 1-4 MiB, at least 4 MiB. live samples the
  * marked large bytes at the liveness decision of each collection
- * (reclaim_young_large for young, sweep_large for full): sum over
+ * (gc_reclaim_young_large for young, gc_sweep_large for full): sum over
  * samples, peak the largest single sample. promoted counts young large
  * objects tenured by promote_young_large. Reported by AVANT_GC_STATS.
  * Internal only, like the rem/def/srv counters. */

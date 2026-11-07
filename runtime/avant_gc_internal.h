@@ -10,6 +10,7 @@
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
+ *   avant_gc_los.c
  *   avant_gc_defrag.c
  *   avant_gc_stack.c
  *   avant_gc_verify.c
@@ -191,6 +192,22 @@ typedef struct BlockSet {
  * stack stays young so the next collection can free it. */
 #define AVANT_FLAG_LOS_KEEP 128u
 
+/* avant_gc_los.c */
+extern Large *g_large;
+extern Large *g_large_ht[LARGE_HASH];
+extern uint8_t *g_large_lo;
+extern uint8_t *g_large_hi;
+extern Large *g_los_spare;
+extern uint64_t g_young_large;
+extern int g_young_large_n;
+extern int g_los_eager_hold;
+size_t gc_large_chunk(const Large *L);
+void gc_los_spare_drop(void);
+void gc_free_large(Large *L);
+void gc_reclaim_young_large(void);
+void gc_sweep_large(void);
+void *gc_los_alloc(size_t payload, uint32_t type_id);
+
 /* avant_gc_defrag.c */
 extern int g_defrag_mode;
 extern BlockSet g_def_release;
@@ -286,18 +303,18 @@ void rewrite_from_stackmaps(void);
 /* avant_rt.c */
 extern int g_inited;
 extern int g_saw_pinned_nursery;
+extern int g_nursery_off;
 extern Block *g_bht[BLOCK_HASH];
 extern Block *g_mature;
 extern Block *g_nursery;
 extern Block *g_from;
 extern Block *g_to;
-extern Large *g_large;
-extern Large *g_large_ht[LARGE_HASH];
-extern Large *g_los_spare;
+extern __thread int g_alloc_mature;
 extern __thread ThreadReg g_self_reg;
 extern ThreadReg *g_threads;
 extern atomic_int g_avant_shared;
 extern pthread_mutex_t g_threads_mu;
+extern int g_gc_defer;
 extern PinEnt *g_pins;
 extern void **g_remset;
 extern uint32_t g_rem_n;
@@ -308,8 +325,11 @@ extern void **g_work;
 extern uint32_t g_work_n;
 extern TypeMap g_types[MAX_TYPES];
 extern uint8_t g_type_set[MAX_TYPES];
+extern uint64_t g_heap_bytes;
+extern uint64_t g_heap_max;
 extern uint64_t g_live;
 int gc_type_word_is_ref(const AvantHeader *h, size_t w);
+__attribute__((noreturn)) void gc_die(const char *msg);
 void *gc_xrealloc(void *p, size_t n);
 void work_push(void *p);
 void gc_fwd_reset(void);
@@ -317,16 +337,17 @@ void fwd_put(void *from, void *to);
 void *fwd_get(void *from);
 int gc_block_live_lines(Block *b);
 size_t obj_total(const AvantHeader *h);
-size_t gc_large_chunk(const Large *L);
 int is_heap_payload(void *p, Block **ob, Large **ol);
 void *gc_object_payload(void *p, Block **ob, Large **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void mark_object_lines(void *p);
 void gc_cache_or_free_block(Block *b);
+void gc_note_peak(void);
 Block *gc_new_block(uint8_t space);
 void *copy_nursery(void *p);
 void copy_from_slot(void **slot);
 int gc_block_has_pinned(Block *b);
+void gc_collect(int full);
 void gc_init_slow(void);
 
 /* Small helpers every unit inlines (static inline: one copy per unit,

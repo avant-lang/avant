@@ -22,7 +22,7 @@ typedef struct FwdEnt {
 int g_inited;
 static int g_collecting;
 int g_saw_pinned_nursery;
-static int g_nursery_off;
+int g_nursery_off;
 static int g_discard_from;
 
 Block *g_bht[BLOCK_HASH];
@@ -60,31 +60,10 @@ static void gc_fast_clear(void);
 static Block *g_alloc_cur[4];
 static uint8_t g_alloc_fresh[4];
 
-Large *g_large;
-Large *g_large_ht[LARGE_HASH];
-/* The address range [g_large_lo, g_large_hi) covers every large chunk
- * ever put on g_large (los_alloc). It only grows: a chunk that
- * is freed leaves it as wide as it was. So an address outside it is
- * inside no object on g_large, and gc_object_payload skips its walk of the
- * list, which for such an address could only miss. That walk ran for
- * every young-copy slot naming a static object in the binary (a string
- * literal), and dominated compiling the compiler (Stage 28 W11d). */
-static uint8_t *g_large_lo = (uint8_t *)UINTPTR_MAX;
-static uint8_t *g_large_hi;
-/* One dead scalar large buffer, kept for the next same-sized alloc. */
-Large *g_los_spare;
-/* Bytes in young scalar large objects. They do not move. A young
- * collection frees the ones the mark does not reach. */
-static uint64_t g_young_large;
-static int g_young_large_n;
-/* Set when a young large object survived a collection. Further
- * same-sized allocs are live rows, not a replaced buffer, so they
- * must not collect on every malloc. */
-static int g_los_eager_hold;
 static __thread Frame *g_frame;
 static __thread int g_gc_quiet;
 static __thread Frame *g_frame_free;
-static __thread int g_alloc_mature;
+__thread int g_alloc_mature;
 
 __thread ThreadReg g_self_reg;
 ThreadReg *g_threads;
@@ -95,7 +74,7 @@ ThreadReg *g_threads;
 atomic_int g_avant_shared;
 static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
-static int g_gc_defer;
+int g_gc_defer;
 
 PinEnt *g_pins;
 
@@ -204,15 +183,15 @@ static size_t g_fwd_used;
 
 uint64_t avant_since_gc;
 
-static uint64_t g_heap_bytes;
-static uint64_t g_heap_max;
+uint64_t g_heap_bytes;
+uint64_t g_heap_max;
 uint64_t g_live;
 static uint64_t g_last_full_at;
 
 /* Nursery allocations taken by generated code without a call. */
 uint64_t avant_inline_allocs;
 
-static void die(const char *msg) {
+void gc_die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
 }
@@ -274,7 +253,7 @@ static uint64_t env_u64(const char *name, uint64_t fallback) {
 void *gc_xrealloc(void *p, size_t n) {
   void *q = realloc(p, n);
   if (!q) {
-    die("out of memory");
+    gc_die("out of memory");
   }
   return q;
 }
@@ -336,7 +315,7 @@ void gc_fwd_reset(void) {
     g_fwd_cap = 1024;
     g_fwd = calloc(g_fwd_cap, sizeof(FwdEnt));
     if (!g_fwd) {
-      die("out of memory");
+      gc_die("out of memory");
     }
   } else {
     memset(g_fwd, 0, g_fwd_cap * sizeof(FwdEnt));
@@ -350,7 +329,7 @@ static void fwd_grow(void) {
   g_fwd_cap *= 2;
   g_fwd = calloc(g_fwd_cap, sizeof(FwdEnt));
   if (!g_fwd) {
-    die("out of memory");
+    gc_die("out of memory");
   }
   size_t i;
   for (i = 0; i < old_cap; i++) {
@@ -429,164 +408,6 @@ int gc_block_live_lines(Block *b) {
 
 size_t obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
-}
-
-static void large_hash_add(Large *L) {
-  size_t k = large_key(payload_of(&L->header));
-  L->hash_next = g_large_ht[k];
-  g_large_ht[k] = L;
-}
-
-static void large_hash_del(Large *L) {
-  size_t k = large_key(payload_of(&L->header));
-  Large **pp = &g_large_ht[k];
-  while (*pp) {
-    if (*pp == L) {
-      *pp = L->hash_next;
-      L->hash_next = NULL;
-      return;
-    }
-    pp = &(*pp)->hash_next;
-  }
-}
-
-size_t gc_large_chunk(const Large *L) {
-  return align_up(sizeof(Large) + (size_t)L->header.size);
-}
-
-static void los_spare_drop(void) {
-  size_t chunk;
-  if (!g_los_spare) {
-    return;
-  }
-  chunk = gc_large_chunk(g_los_spare);
-  free(g_los_spare);
-  g_los_spare = NULL;
-  g_heap_bytes -= chunk;
-  g_los_spare_dropped++;
-}
-
-static void unlink_large(Large *L) {
-  Large **pp = &g_large;
-  large_hash_del(L);
-  while (*pp) {
-    if (*pp == L) {
-      *pp = L->next;
-      break;
-    }
-    pp = &(*pp)->next;
-  }
-  L->next = NULL;
-}
-
-/* keep_bytes leaves the allocation charged, for the spare slot. */
-static void account_large_gone(Large *L, int keep_bytes) {
-  size_t chunk = gc_large_chunk(L);
-  if (L->header.flags & AVANT_FLAG_YOUNG) {
-    if (g_young_large >= chunk) {
-      g_young_large -= chunk;
-    }
-    if (g_young_large_n > 0) {
-      g_young_large_n--;
-    }
-  } else if (g_mature_since_full >= chunk) {
-    g_mature_since_full -= chunk;
-  }
-  if (!keep_bytes) {
-    g_heap_bytes -= chunk;
-  }
-}
-
-static void release_large(Large *L) {
-  int cache = (L->header.flags & AVANT_FLAG_YOUNG) &&
-              L->header.type_id == AVANT_TYPE_BYTES &&
-              (L->header.flags & AVANT_FLAG_PINNED) == 0 &&
-              g_los_spare == NULL;
-  unlink_large(L);
-  account_large_gone(L, cache);
-  if (cache) {
-    L->hash_next = NULL;
-    g_los_spare = L;
-    g_los_spare_cached++;
-  } else {
-    free(L);
-    g_los_freed++;
-  }
-}
-
-static void free_large(Large *L) {
-  release_large(L);
-}
-
-static void los_note_live(void) {
-  Large *L;
-  uint64_t live = 0;
-  for (L = g_large; L; L = L->next) {
-    if (L->header.flags & AVANT_FLAG_MARKED) {
-      live += (uint64_t)gc_large_chunk(L);
-    }
-  }
-  g_los_live_samples++;
-  g_los_live_sum += live;
-  if (live > g_los_live_peak) {
-    g_los_live_peak = live;
-  }
-}
-
-static void promote_young_large(Large *L) {
-  size_t chunk = gc_large_chunk(L);
-  g_los_promoted++;
-  g_los_promoted_bytes += (uint64_t)chunk;
-  L->header.flags = (uint16_t)(L->header.flags &
-                                (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_LOS_KEEP));
-  if (g_young_large >= chunk) {
-    g_young_large -= chunk;
-  }
-  if (g_young_large_n > 0) {
-    g_young_large_n--;
-  }
-  g_mature_since_full += chunk;
-}
-
-/* Unmarked young large objects are unreachable and are freed. A marked
- * one is promoted when a heap object points at it, or when the stack
- * is holding a working set at least as big as the young limit. A
- * stack-only buffer stays young, so the next collection can free it
- * once that local is gone. */
-static void reclaim_young_large(void) {
-  Large *L;
-  size_t stay_bytes = 0;
-  los_note_live();
-  for (L = g_large; L; L = L->next) {
-    if ((L->header.flags & AVANT_FLAG_YOUNG) == 0) {
-      continue;
-    }
-    if ((L->header.flags & AVANT_FLAG_MARKED) == 0) {
-      continue;
-    }
-    if (L->header.flags & (AVANT_FLAG_PINNED | AVANT_FLAG_LOS_KEEP)) {
-      continue;
-    }
-    stay_bytes += gc_large_chunk(L);
-  }
-  int promote_stay = stay_bytes >= g_young_bytes;
-  L = g_large;
-  while (L) {
-    Large *next = L->next;
-    if (L->header.flags & AVANT_FLAG_YOUNG) {
-      int marked = (L->header.flags & AVANT_FLAG_MARKED) != 0;
-      int pinned = (L->header.flags & AVANT_FLAG_PINNED) != 0;
-      int keep = (L->header.flags & AVANT_FLAG_LOS_KEEP) != 0;
-      if (!marked && !pinned) {
-        release_large(L);
-      } else if (pinned || keep || promote_stay) {
-        promote_young_large(L);
-      } else {
-        L->header.flags = (uint16_t)(L->header.flags & (uint16_t)~AVANT_FLAG_LOS_KEEP);
-      }
-    }
-    L = next;
-  }
 }
 
 int is_heap_payload(void *p, Block **ob, Large **ol) {
@@ -907,7 +728,7 @@ static uint64_t space_block_bytes(Block *b) {
 
 /* Wave 4 step 1: when the heap high-water mark moves, snapshot what
  * the heap is made of, so a peak can be decomposed after the fact. */
-static void note_peak(void) {
+void gc_note_peak(void) {
   Large *L;
   uint64_t large = 0;
   if (g_heap_bytes <= g_stats.peak_heap) {
@@ -965,15 +786,15 @@ Block *gc_new_block(uint8_t space) {
     }
     b = calloc(1, sizeof(Block));
     if (!b) {
-      die("out of memory");
+      gc_die("out of memory");
     }
     void *mem = NULL;
     if (posix_memalign(&mem, BLOCK_SIZE, BLOCK_SIZE) != 0) {
-      die("out of memory");
+      gc_die("out of memory");
     }
     b->base = mem;
     g_heap_bytes += BLOCK_SIZE;
-    note_peak();
+    gc_note_peak();
   }
   /* Block memory is not pre-zeroed. Every allocation zeroes its own
    * payload in init_object, so a fresh or recycled block costs no
@@ -1096,8 +917,6 @@ static void clear_alloc_cur(uint8_t space) {
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc);
 
-static void collect(int full);
-
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   Block *cur = g_alloc_cur[space];
   if (cur && try_bump(cur, total)) {
@@ -1127,7 +946,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
       /* The reserve charge is soft (see heap_block_fits): collect,
        * then retry charged only the true heap bytes, so a reserve
        * refusal can never become a spurious heap-limit death. */
-      collect(1);
+      gc_collect(1);
       g_reserve_retry = 1;
       {
         AvantHeader *retry = place(total, space, 1);
@@ -1135,13 +954,13 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
         return retry;
       }
     }
-    die("heap limit");
+    gc_die("heap limit");
   }
   g_alloc_cur[space] = b;
   g_alloc_fresh[space] = 1;
   use_block(b);
   if (!bump_fits(total)) {
-    die("object larger than block");
+    gc_die("object larger than block");
   }
   return bump_take(total);
 }
@@ -1344,7 +1163,7 @@ static void trace_mature(void *p, int from_mature) {
 void *copy_nursery(void *p) {
   Block *b = NULL;
   if (g_probe) {
-    die("probe copied");
+    gc_die("probe copied");
   }
   if (!is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
     return p;
@@ -1490,7 +1309,7 @@ static void rem_scrub(void) {
       /* A dead expression buffer is a large object. Leaving it on the
        * large list makes every missed pointer walk that list. */
       if (L) {
-        free_large(L);
+        gc_free_large(L);
       } else {
         h->flags &= (uint16_t)~AVANT_FLAG_REM;
       }
@@ -1732,24 +1551,6 @@ static void filter_blocks(Block **list, int (*keep)(Block *)) {
   *list = kept;
 }
 
-static void sweep_large(void) {
-  Large **pp = &g_large;
-  los_note_live();
-  while (*pp) {
-    Large *L = *pp;
-    if (L->header.flags & AVANT_FLAG_MARKED) {
-      pp = &L->next;
-    } else {
-      size_t chunk = align_up(sizeof(Large) + (size_t)L->header.size);
-      large_hash_del(L);
-      *pp = L->next;
-      free(L);
-      g_heap_bytes -= chunk;
-      g_los_freed++;
-    }
-  }
-}
-
 static void clear_mark_flag_one(AvantHeader *h, Block *b) {
   (void)b;
   h->flags &= (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
@@ -1921,16 +1722,16 @@ static void young_copy_out(int tenure) {
   g_nursery_held = g_to_bytes;
   g_to_bytes = 0;
   g_force_tenure = 0;
-  reclaim_young_large();
+  gc_reclaim_young_large();
   clear_mark_flags();
 }
 
-static void collect(int full) {
+void gc_collect(int full) {
   int pause = 0;
   uint64_t used = 0;
   uint64_t surv = 0;
   if (g_collecting) {
-    die("GC reentered");
+    gc_die("GC reentered");
   }
   g_collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
@@ -1985,7 +1786,7 @@ static void collect(int full) {
               (uint64_t)(YOUNG_SURVIVAL_FACTOR * (double)surv);
         }
         rem_scrub();
-        reclaim_young_large();
+        gc_reclaim_young_large();
         clear_noted();
         g_work_n = 0;
         if (surv * 2 > used) {
@@ -2021,7 +1822,7 @@ static void collect(int full) {
     /* Non-moving. Evacuating the nursery here needs a second copy of
      * every live object while the from-space blocks are still charged
      * against the heap limit. */
-    los_spare_drop();
+    gc_los_spare_drop();
     clear_alloc_cur(SPACE_NURSERY);
     clear_alloc_cur(SPACE_MATURE);
     clear_all_marks();
@@ -2052,7 +1853,7 @@ static void collect(int full) {
       }
       gc_defrag_release();
     }
-    sweep_large();
+    gc_sweep_large();
     filter_blocks(&g_mature, keep_if_live);
     filter_blocks(&g_nursery, keep_if_live);
     filter_blocks(&g_from, keep_if_live);
@@ -2116,7 +1917,7 @@ static void maybe_collect(void) {
    */
   if (g_nursery_off) {
     if (g_since_gc >= g_full_trigger) {
-      collect(1);
+      gc_collect(1);
     }
     return;
   }
@@ -2125,83 +1926,10 @@ static void maybe_collect(void) {
    * objects, has grown by g_full_trigger. Counting every nursery byte here
    * marked a live tree that a young collection should have discarded. */
   if (g_mature_since_full >= g_full_trigger) {
-    collect(1);
+    gc_collect(1);
   } else if (g_nursery_held >= g_young_bytes) {
-    collect(0);
+    gc_collect(0);
   }
-}
-
-static void *los_alloc(size_t payload, uint32_t type_id) {
-  size_t chunk = align_up(sizeof(Large) + payload);
-  int young = !g_nursery_off && !g_alloc_mature && type_id == AVANT_TYPE_BYTES;
-  Large *L;
-  if (g_los_spare && g_los_spare->header.size != (uint32_t)payload) {
-    los_spare_drop();
-  }
-  if (g_heap_max && !g_los_spare && g_heap_bytes + chunk > g_heap_max) {
-    if (!g_gc_defer) {
-      collect(1);
-    }
-    if (g_heap_max && g_heap_bytes + chunk > g_heap_max) {
-      die("heap limit");
-    }
-  }
-  g_los_allocs++;
-  g_los_alloc_bytes += (uint64_t)chunk;
-  {
-    int bucket = payload < 16384 ? 0 : payload < 65536 ? 1 : payload < 262144 ? 2 : payload < 1048576 ? 3 : payload < 4194304 ? 4 : 5;
-    g_los_hist[bucket]++;
-    if (type_id == AVANT_TYPE_BYTES && align_up(sizeof(AvantHeader) + payload) <= LOS_LIMIT) {
-      g_los_scalar_allocs++;
-      g_los_scalar_bytes += (uint64_t)chunk;
-    } else {
-      g_los_big_allocs++;
-      g_los_big_bytes += (uint64_t)chunk;
-    }
-    if (young) {
-      g_los_young_allocs++;
-      g_los_young_bytes += (uint64_t)chunk;
-    } else {
-      g_los_mature_allocs++;
-      g_los_mature_bytes += (uint64_t)chunk;
-    }
-  }
-  if (g_los_spare && g_los_spare->header.size == (uint32_t)payload) {
-    L = g_los_spare;
-    g_los_spare = NULL;
-    memset(payload_of(&L->header), 0, payload);
-    g_los_spare_hits++;
-  } else {
-    L = calloc(1, chunk);
-    if (!L) {
-      die("out of memory");
-    }
-    g_heap_bytes += chunk;
-    g_los_callocs++;
-  }
-  L->header.size = (uint32_t)payload;
-  L->header.type_id = (uint16_t)type_id;
-  L->header.flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_LARGE);
-  if (young) {
-    L->header.flags |= AVANT_FLAG_YOUNG;
-    g_young_large += chunk;
-    g_young_large_n++;
-  } else {
-    g_mature_since_full += chunk;
-  }
-  L->next = g_large;
-  g_large = L;
-  /* The chunk holds the header and payload (chunk is at least
-   * sizeof(Large) + payload, aligned; a reused spare has this size). */
-  if ((uint8_t *)L < g_large_lo) {
-    g_large_lo = (uint8_t *)L;
-  }
-  if ((uint8_t *)L + chunk > g_large_hi) {
-    g_large_hi = (uint8_t *)L + chunk;
-  }
-  large_hash_add(L);
-  note_peak();
-  return payload_of(&L->header);
 }
 
 /* Block memory is never pre-zeroed, so every allocation zeroes its
@@ -2224,7 +1952,7 @@ static void account_alloc(size_t total, int nursery) {
   } else {
     g_mature_since_full += total;
   }
-  note_peak();
+  gc_note_peak();
 }
 
 void gc_init_slow(void) {
@@ -2314,7 +2042,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
     return;
   }
   if (type_id >= MAX_TYPES) {
-    die("type id too large");
+    gc_die("type id too large");
   }
   TypeMap *m = &g_types[type_id];
   if (m->words && m->words != &m->first) {
@@ -2340,10 +2068,10 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
     return;
   }
   if (type_id >= MAX_TYPES) {
-    die("type id too large");
+    gc_die("type id too large");
   }
   if (word_base % 64 != 0) {
-    die("type map chunk is not 64-word aligned");
+    gc_die("type map chunk is not 64-word aligned");
   }
   TypeMap *m = &g_types[type_id];
   uint32_t chunk = word_base / 64;
@@ -2355,12 +2083,12 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
     m->nrefs = 0;
     g_type_set[type_id] = 1;
   } else if (m->stride != stride_words) {
-    die("type map stride changed");
+    gc_die("type map stride changed");
   }
   if (chunk >= m->nchunks) {
     uint64_t *nw = calloc((size_t)chunk + 1, sizeof(uint64_t));
     if (!nw) {
-      die("out of memory");
+      gc_die("out of memory");
     }
     memcpy(nw, m->words, (size_t)m->nchunks * sizeof(uint64_t));
     if (m->words != &m->first) {
@@ -2373,7 +2101,7 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
     uint32_t i;
     for (i = 0; i < 64; i++) {
       if (((bits >> i) & 1u) && word_base + i >= stride_words) {
-        die("type map bit past the element stride");
+        gc_die("type map bit past the element stride");
       }
     }
   }
@@ -2396,7 +2124,7 @@ void avant_gc_enter(void) {
   } else {
     f = calloc(1, sizeof(Frame));
     if (!f) {
-      die("out of memory");
+      gc_die("out of memory");
     }
   }
   f->prev = g_frame;
@@ -2406,7 +2134,7 @@ void avant_gc_enter(void) {
 void avant_gc_leave(void) {
   Frame *f = g_frame;
   if (!f) {
-    die("gc leave without enter");
+    gc_die("gc leave without enter");
   }
   g_frame = f->prev;
   f->n = 0;
@@ -2430,7 +2158,7 @@ void avant_gc_root(void *slot) {
     return;
   }
   if (!g_frame) {
-    die("gc root without enter");
+    gc_die("gc root without enter");
   }
   Frame *f = g_frame;
   uint32_t i;
@@ -2455,7 +2183,7 @@ void avant_gc_root(void *slot) {
 void *avant_gc_root_begin(uint32_t count) {
   g_root_calls += count;
   if (!g_frame) {
-    die("gc root begin without enter");
+    gc_die("gc root begin without enter");
   }
   Frame *f = g_frame;
   if (count > f->cap) {
@@ -2554,7 +2282,7 @@ void avant_pin(void *payload) {
   PinEnt *e = (PinEnt *)malloc(sizeof(PinEnt));
   if (!e) {
     pthread_mutex_unlock(&g_world);
-    die("out of memory");
+    gc_die("out of memory");
   }
   h->flags |= AVANT_FLAG_PINNED;
   e->payload = payload;
@@ -2663,7 +2391,7 @@ void avant_gc_heap_goal_collect(void) {
                 : (4ull * 1024ull * 1024ull)))) {
     int defrag_saved = g_defrag_mode;
     g_defrag_mode = 0;
-    collect(1);
+    gc_collect(1);
     g_defrag_mode = defrag_saved;
   }
   pthread_mutex_unlock(&g_world);
@@ -2696,10 +2424,10 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   gc_init();
   gc_fast_refresh();
   if (nbytes > UINT32_MAX) {
-    die("object too large");
+    gc_die("object too large");
   }
   if (type_id > UINT16_MAX) {
-    die("type id too large");
+    gc_die("type id too large");
   }
 
   size_t payload = (size_t)nbytes;
@@ -2730,14 +2458,14 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     if (!g_nursery_off && !g_alloc_mature && !g_gc_defer && g_young_large_n > 0 &&
         (g_young_large >= g_young_bytes || (!g_los_eager_hold && g_young_large_n == 1))) {
       uint64_t mature_before = g_mature_since_full;
-      collect(0);
+      gc_collect(0);
       if (g_young_large_n > 0 || g_mature_since_full > mature_before) {
         g_los_eager_hold = 1;
       } else {
         g_los_eager_hold = 0;
       }
     }
-    void *obj = los_alloc(payload, type_id);
+    void *obj = gc_los_alloc(payload, type_id);
     g_stats.allocated_bytes += total;
     g_since_gc += total;
     pthread_mutex_unlock(&g_world);
@@ -2783,7 +2511,7 @@ void avant_nursery_reclaim(void) {
   gc_init();
   pthread_mutex_lock(&g_world);
   if (!g_nursery_off && !g_collecting && g_nursery_held > 0) {
-    collect(0);
+    gc_collect(0);
   }
   pthread_mutex_unlock(&g_world);
 }
@@ -2791,6 +2519,6 @@ void avant_nursery_reclaim(void) {
 void avant_gc_collect(void) {
   gc_init();
   pthread_mutex_lock(&g_world);
-  collect(1);
+  gc_collect(1);
   pthread_mutex_unlock(&g_world);
 }
