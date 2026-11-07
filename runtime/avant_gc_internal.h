@@ -130,7 +130,7 @@ typedef struct Block {
   uint8_t *bump;       /* 32: ABI (the inline allocation path) */
   uint8_t *limit;      /* 40 */
   uint64_t *start;     /* 48: START_WORDS words in g_starts */
-  uint64_t spare_;     /* 56 */
+  uint64_t idle;       /* 56: free: the full-collection count when freed */
 } Block;
 
 _Static_assert(offsetof(Block, bump) == 32, "Block.bump is ABI at offset 32");
@@ -151,7 +151,10 @@ _Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
  * dirty (FREE): the data was used and may hold non-zero bytes.
  * decommitted (FREE): the data is PROT_NONE (gc_heap_return).
  * free, nfree (SMALL): the chunk's free blocks (O53), so a chunk whose
- * blocks are all free can be decommitted. */
+ * blocks are all free can be decommitted.
+ * idle: the full-collection count when the chunk last became free or
+ * empty, or (LARGE) last freed a page; gc_heap_return returns only
+ * memory idle since before the collection running it (Q12). */
 #define CHUNK_FREE 0
 #define CHUNK_SMALL 1
 #define CHUNK_LARGE 2
@@ -165,7 +168,8 @@ typedef struct GcChunk {
   struct Block *free;
   uint16_t nfree;
   uint8_t decommitted;
-  uint8_t pad_[5];
+  uint8_t pad_;
+  uint32_t idle;
   uint64_t alloc[PAGE_WORDS];
   uint64_t dirty_pages[PAGE_WORDS];
 } GcChunk;

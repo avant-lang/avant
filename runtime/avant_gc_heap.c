@@ -371,6 +371,7 @@ void gc_chunk_give(uint64_t c) {
   memset(&g_chunks[c], 0, sizeof(GcChunk));
   g_chunks[c].kind = CHUNK_FREE;
   g_chunks[c].dirty = was != CHUNK_FREE;
+  g_chunks[c].idle = (uint32_t)g_stats.full_collections;
   g_free_chunks++;
 }
 
@@ -456,7 +457,11 @@ void gc_block_give(Block *b) {
   GcChunk *ch = &g_chunks[c];
   b->in_use = 0;
   b->clean = 0;
+  b->idle = g_stats.full_collections;
   ch->used--;
+  if (ch->used == 0) {
+    ch->idle = (uint32_t)g_stats.full_collections;
+  }
   b->next = ch->free;
   ch->free = b;
   ch->nfree++;
@@ -488,8 +493,9 @@ static void decommit_chunk(uint64_t c) {
   g_chunks[c].decommitted = 1;
 }
 
-/* The resident free bytes of chunk C: free blocks not madvised, or the
- * dirty free pages of a large-object chunk. */
+/* The resident free bytes of chunk C: free blocks not madvised, the
+ * dirty free pages of a large-object chunk, or a free chunk's whole data
+ * while it is dirty. */
 static uint64_t chunk_resident_free(uint64_t c) {
   GcChunk *ch = &g_chunks[c];
   uint64_t n = 0;
@@ -505,21 +511,29 @@ static uint64_t chunk_resident_free(uint64_t c) {
     for (w = 0; w < PAGE_WORDS; w++) {
       n += (uint64_t)__builtin_popcountll(ch->dirty_pages[w] & ~ch->alloc[w]) * PAGE_SIZE;
     }
+  } else if (ch->kind == CHUNK_FREE && !ch->decommitted && ch->dirty) {
+    n = CHUNK_SIZE;
   }
   return n;
 }
 
 /* Returning memory after a full collection (gc-design.md §2.5, §5.5,
- * O53). The retention target is the larger of 4 MiB and a quarter of the
- * live bytes: free memory up to it stays resident for the next cycle
- * (the hysteresis of Q12), the rest goes back, highest chunks first:
- * a wholly free chunk is decommitted (a free chunk whose memory is
- * already returned always is: it costs nothing to keep and its commit
- * charge is released), then free blocks are madvised one by one, then
- * the dirty free pages of large-object chunks. */
+ * O53, Q12). Two rules keep a cycle from returning what the next one
+ * takes back. Only idle memory goes back: memory freed before this full
+ * collection began and not reused since (a block's, a chunk's idle
+ * stamp below the current count of full collections), so a buffer freed
+ * and reallocated every cycle (a parse pool, a sort's scratch) stays
+ * resident. And free memory up to the retention target, the larger of
+ * 4 MiB and a quarter of the live bytes, stays resident. The rest goes
+ * back, highest chunks first: a wholly free or empty chunk is
+ * decommitted (madvised, made PROT_NONE, its side slices madvised; one
+ * whose memory is already returned always is: keeping it costs only
+ * commit charge), then free blocks are madvised one by one, then the
+ * dirty free pages of large-object chunks. */
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
   uint64_t hw = g_heap_committed >> CHUNK_SHIFT;
+  uint64_t now = g_stats.full_collections;
   uint64_t total = 0;
   uint64_t c;
   if (!hw) {
@@ -530,22 +544,19 @@ void gc_heap_return(uint64_t live) {
   }
   for (c = hw; c-- > 0;) {
     GcChunk *ch = &g_chunks[c];
-    int empty = (ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0;
-    if (ch->kind == CHUNK_FREE) {
-      if (!ch->decommitted) {
-        decommit_chunk(c);
-      }
+    int empty = ((ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0) ||
+                (ch->kind == CHUNK_FREE && !ch->decommitted);
+    uint64_t r;
+    if (!empty || ch->idle >= now) {
       continue;
     }
-    if (empty) {
-      uint64_t r = chunk_resident_free(c);
-      if (r == 0 || total > keep) {
-        if (ch->kind == CHUNK_SMALL) {
-          g_free_resident -= r;
-        }
-        total -= r;
-        decommit_chunk(c);
+    r = chunk_resident_free(c);
+    if (r == 0 || total > keep) {
+      if (ch->kind == CHUNK_SMALL) {
+        g_free_resident -= r;
       }
+      total -= r;
+      decommit_chunk(c);
     }
   }
   for (c = hw; c-- > 0 && total > keep;) {
@@ -553,14 +564,14 @@ void gc_heap_return(uint64_t live) {
     if (ch->kind == CHUNK_SMALL) {
       Block *b;
       for (b = ch->free; b && total > keep; b = b->next) {
-        if (!b->clean) {
+        if (!b->clean && b->idle < now) {
           gc_return_pages(b->base, BLOCK_SIZE);
           b->clean = 1;
           g_free_resident -= BLOCK_SIZE;
           total -= BLOCK_SIZE;
         }
       }
-    } else if (ch->kind == CHUNK_LARGE) {
+    } else if (ch->kind == CHUNK_LARGE && ch->idle < now) {
       uint32_t p = 0;
       while (p < PAGES_PER_CHUNK && total > keep) {
         uint32_t q = p;

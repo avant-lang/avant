@@ -207,14 +207,13 @@ void gc_large_chunk_gone(uint64_t c) {
   }
 }
 
-/* A freed run this long or longer goes back to the OS at once
- * (gc-design.md §2.4); shorter ones stay resident for reuse until a
- * full collection's gc_heap_return. */
-#define LARGE_RETURN_BYTES (64u * 1024u)
-
 /* Give back the run of the object (or spare) whose header is H: its
- * pages free in its chunk, or its huge run's chunks free; a run of
- * LARGE_RETURN_BYTES or more is returned to the OS. */
+ * pages free in its chunk, or its huge run's chunks free. The memory
+ * stays resident for reuse; a full collection's gc_heap_return gives
+ * back what stays idle (gc-design.md §2.4 asked for an immediate madvise
+ * of runs of 64 KiB or more: measured, it made every reuse fault its
+ * pages in again, Json::ParseDom +53%, so returning waits for the
+ * hysteresis, Q12). */
 static void give_run(AvantHeader *h) {
   uint64_t c = chunk_index(h);
   GcChunk *ch = &g_chunks[c];
@@ -228,19 +227,14 @@ static void give_run(AvantHeader *h) {
     for (k = 0; k < n; k++) {
       g_pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
-    if ((n << PAGE_SHIFT) >= LARGE_RETURN_BYTES) {
-      gc_return_pages(chunk_base(c) + ((size_t)p << PAGE_SHIFT), (size_t)(n << PAGE_SHIFT));
-      bits_set(ch->dirty_pages, p, (uint32_t)n, 0);
-    }
+    ch->idle = (uint32_t)g_stats.full_collections;
     return;
   }
   {
     uint64_t nch = ch->head;
     uint64_t k;
     for (k = 0; k < nch; k++) {
-      gc_return_pages(chunk_base(c + k), CHUNK_SIZE);
       gc_chunk_give(c + k);
-      g_chunks[c + k].dirty = 0;
     }
   }
 }
