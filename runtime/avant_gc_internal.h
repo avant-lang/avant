@@ -10,6 +10,7 @@
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
+ *   avant_gc_defrag.c
  *   avant_gc_stack.c
  *   avant_gc_verify.c
  *   avant_gc_stats.c
@@ -190,6 +191,15 @@ typedef struct BlockSet {
  * stack stays young so the next collection can free it. */
 #define AVANT_FLAG_LOS_KEEP 128u
 
+/* avant_gc_defrag.c */
+extern int g_defrag_mode;
+extern BlockSet g_def_release;
+void gc_block_set_add(BlockSet *s, Block *b);
+void gc_block_set_seal(BlockSet *s);
+int gc_block_set_has(const BlockSet *s, const Block *b);
+void gc_defrag_evacuate(uint64_t live_lines_this);
+void gc_defrag_release(void);
+
 /* avant_gc_stack.c */
 extern int g_stack_scan;
 extern BlockSet g_cstack_blocks;
@@ -291,6 +301,7 @@ extern pthread_mutex_t g_threads_mu;
 extern PinEnt *g_pins;
 extern void **g_remset;
 extern uint32_t g_rem_n;
+extern pthread_mutex_t g_rem_mu;
 extern uint64_t g_mature_since_full;
 extern uint64_t g_copy_reserve;
 extern void **g_work;
@@ -298,22 +309,24 @@ extern uint32_t g_work_n;
 extern TypeMap g_types[MAX_TYPES];
 extern uint8_t g_type_set[MAX_TYPES];
 extern uint64_t g_live;
-extern BlockSet g_def_release;
 int gc_type_word_is_ref(const AvantHeader *h, size_t w);
+void *gc_xrealloc(void *p, size_t n);
 void work_push(void *p);
+void gc_fwd_reset(void);
 void fwd_put(void *from, void *to);
 void *fwd_get(void *from);
+int gc_block_live_lines(Block *b);
 size_t obj_total(const AvantHeader *h);
 size_t gc_large_chunk(const Large *L);
 int is_heap_payload(void *p, Block **ob, Large **ol);
 void *gc_object_payload(void *p, Block **ob, Large **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void mark_object_lines(void *p);
+void gc_cache_or_free_block(Block *b);
+Block *gc_new_block(uint8_t space);
 void *copy_nursery(void *p);
 void copy_from_slot(void **slot);
-void gc_block_set_add(BlockSet *s, Block *b);
-void gc_block_set_seal(BlockSet *s);
-int gc_block_set_has(const BlockSet *s, const Block *b);
+int gc_block_has_pinned(Block *b);
 void gc_init_slow(void);
 
 /* Small helpers every unit inlines (static inline: one copy per unit,

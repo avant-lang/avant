@@ -104,7 +104,7 @@ uint32_t g_rem_n;
 static uint32_t g_rem_cap;
 /* Workers call avant_barrier without the world lock (a fresh array
  * header). The remembered-set realloc is shared. */
-static pthread_mutex_t g_rem_mu = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_rem_mu = PTHREAD_MUTEX_INITIALIZER;
 /* Mature objects that still point at a young survivor after this collection. */
 static void **g_keep;
 static uint32_t g_keep_n;
@@ -131,13 +131,6 @@ uint64_t g_mature_since_full;
  * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
 static int g_rem_mode = 1;
 static uint8_t *g_rem_dirty;
-
-/* Evacuation (step 2): AVANT_GC_DEFRAG=0 disables it, histogram stays
- * on. Candidates are mature blocks at or below 64 of 128 live lines
- * with no pinned object and no word of the collecting thread's stack
- * naming them (C31, gc_note_c_stack_blocks); per full collection the live lines evacuated
- * stay at or below 25% of that mark's mature live lines, worst first. */
-static int g_defrag_mode = 1;
 
 /* Survival-capped growth and copy reserve (Collector II Wave 4, step 2,
  * as amended by Q-W4-6): sticky growth of the young threshold is capped
@@ -278,7 +271,7 @@ static uint64_t env_u64(const char *name, uint64_t fallback) {
   return (uint64_t)v;
 }
 
-static void *xrealloc(void *p, size_t n) {
+void *gc_xrealloc(void *p, size_t n) {
   void *q = realloc(p, n);
   if (!q) {
     die("out of memory");
@@ -289,7 +282,7 @@ static void *xrealloc(void *p, size_t n) {
 void work_push(void *p) {
   if (g_work_n == g_work_cap) {
     g_work_cap = g_work_cap ? g_work_cap * 2 : 256;
-    g_work = xrealloc(g_work, g_work_cap * sizeof(void *));
+    g_work = gc_xrealloc(g_work, g_work_cap * sizeof(void *));
   }
   g_work[g_work_n++] = p;
 }
@@ -309,8 +302,8 @@ static void rem_add(void *obj) {
   h->flags |= AVANT_FLAG_REM;
   if (g_rem_n == g_rem_cap) {
     g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
-    g_remset = xrealloc(g_remset, g_rem_cap * sizeof(void *));
-    g_rem_dirty = xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
+    g_remset = gc_xrealloc(g_remset, g_rem_cap * sizeof(void *));
+    g_rem_dirty = gc_xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
   }
   g_rem_dirty[g_rem_n] = 0;
   g_remset[g_rem_n++] = obj;
@@ -338,7 +331,7 @@ static void rem_forget(void) {
   }
 }
 
-static void fwd_reset(void) {
+void gc_fwd_reset(void) {
   if (!g_fwd_cap) {
     g_fwd_cap = 1024;
     g_fwd = calloc(g_fwd_cap, sizeof(FwdEnt));
@@ -423,7 +416,7 @@ static void block_unregister(Block *b) {
   }
 }
 
-static int block_live_lines(Block *b) {
+int gc_block_live_lines(Block *b) {
   int n = 0;
   int i;
   for (i = 0; i < LINES_PER_BLOCK; i++) {
@@ -872,7 +865,7 @@ static void reset_block_bump(Block *b) {
 
 static void clear_alloc_cur(uint8_t space);
 
-static void cache_or_free_block(Block *b) {
+void gc_cache_or_free_block(Block *b) {
   if (g_alloc_cur[SPACE_NURSERY] == b) {
     clear_alloc_cur(SPACE_NURSERY);
   }
@@ -953,7 +946,7 @@ static int heap_block_fits(void) {
   return spent <= g_heap_max;
 }
 
-static Block *new_block(uint8_t space) {
+Block *gc_new_block(uint8_t space) {
   if (!heap_block_fits() && g_cache == NULL) {
     return NULL;
   }
@@ -1128,7 +1121,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
       }
     }
   }
-  Block *b = new_block(space);
+  Block *b = gc_new_block(space);
   if (!b) {
     if (!tried_gc && !g_collecting) {
       /* The reserve charge is soft (see heap_block_fits): collect,
@@ -1179,7 +1172,7 @@ static AvantHeader *place_bump(size_t total) {
       }
     }
   }
-  b = new_block(space);
+  b = gc_new_block(space);
   if (!b) {
     return NULL;
   }
@@ -1208,7 +1201,7 @@ static AvantHeader *to_alloc(size_t total) {
 static void keep_add(void *obj) {
   if (g_keep_n == g_keep_cap) {
     g_keep_cap = g_keep_cap ? g_keep_cap * 2 : 64;
-    g_keep = xrealloc(g_keep, g_keep_cap * sizeof(void *));
+    g_keep = gc_xrealloc(g_keep, g_keep_cap * sizeof(void *));
   }
   g_keep[g_keep_n++] = obj;
 }
@@ -1216,7 +1209,7 @@ static void keep_add(void *obj) {
 static void note_marked(void *payload) {
   if (g_noted_n == g_noted_cap) {
     g_noted_cap = g_noted_cap ? g_noted_cap * 2 : 256;
-    g_noted = xrealloc(g_noted, g_noted_cap * sizeof(void *));
+    g_noted = gc_xrealloc(g_noted, g_noted_cap * sizeof(void *));
   }
   g_noted[g_noted_n++] = payload;
 }
@@ -1533,7 +1526,7 @@ static uint64_t rem_field_count(void *p) {
 
 static void gen_young_copy(void) {
   if (!g_probe) {
-    fwd_reset();
+    gc_fwd_reset();
   }
   g_saw_pinned_nursery = 0;
   g_from_mature = 0;
@@ -1653,7 +1646,7 @@ static void note_pinned_in_block(AvantHeader *h, Block *b) {
   }
 }
 
-static int block_has_pinned(Block *b) {
+int gc_block_has_pinned(Block *b) {
   g_block_has_pin = 0;
   gc_foreach_block_object(b, note_pinned_in_block);
   return g_block_has_pin;
@@ -1697,7 +1690,7 @@ static void discard_nursery_from(void) {
   if (!g_saw_pinned_nursery) {
     while (b) {
       Block *next = b->next;
-      cache_or_free_block(b);
+      gc_cache_or_free_block(b);
       b = next;
     }
     return;
@@ -1709,14 +1702,14 @@ static void discard_nursery_from(void) {
       b->next = g_from;
       g_from = b;
     } else {
-      cache_or_free_block(b);
+      gc_cache_or_free_block(b);
     }
     b = next;
   }
 }
 
 static int keep_if_live(Block *b) {
-  if (block_live_lines(b) == 0) {
+  if (gc_block_live_lines(b) == 0) {
     return 0;
   }
   reset_block_bump(b);
@@ -1732,7 +1725,7 @@ static void filter_blocks(Block **list, int (*keep)(Block *)) {
       b->next = kept;
       kept = b;
     } else {
-      cache_or_free_block(b);
+      gc_cache_or_free_block(b);
     }
     b = next;
   }
@@ -1905,339 +1898,6 @@ static int young_pause(uint64_t used, uint64_t surv) {
   return 1;
 }
 
-typedef struct DefCand {
-  Block *b;
-  int live;
-  uint64_t bytes;
-} DefCand;
-
-static int block_ptr_cmp(const void *a, const void *b) {
-  const Block *x = *(Block *const *)a;
-  const Block *y = *(Block *const *)b;
-  return (x > y) - (x < y);
-}
-
-void gc_block_set_add(BlockSet *s, Block *b) {
-  if (s->n && s->v[s->n - 1] == b) {
-    return;
-  }
-  if (s->n == s->cap) {
-    s->cap = s->cap ? s->cap * 2 : 64;
-    s->v = (Block **)xrealloc(s->v, s->cap * sizeof(Block *));
-  }
-  s->v[s->n++] = b;
-}
-
-void gc_block_set_seal(BlockSet *s) {
-  size_t i, j = 0;
-  if (s->n < 2) {
-    return;
-  }
-  qsort(s->v, s->n, sizeof(Block *), block_ptr_cmp);
-  for (i = 0; i < s->n; i++) {
-    if (j == 0 || s->v[j - 1] != s->v[i]) {
-      s->v[j++] = s->v[i];
-    }
-  }
-  s->n = j;
-}
-
-int gc_block_set_has(const BlockSet *s, const Block *b) {
-  size_t lo = 0, hi = s->n;
-  while (lo < hi) {
-    size_t mid = lo + (hi - lo) / 2;
-    if (s->v[mid] < b) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo < s->n && s->v[lo] == b;
-}
-
-BlockSet g_def_release;
-
-static int def_cand_cmp(const void *a, const void *b) {
-  const DefCand *x = (const DefCand *)a;
-  const DefCand *y = (const DefCand *)b;
-  if (x->live != y->live) {
-    return x->live - y->live;
-  }
-  return (x->b > y->b) - (x->b < y->b);
-}
-
-static void defrag_rewrite_slot(void **slot) {
-  void *w = *slot;
-  Block *b = NULL;
-  Large *ol = NULL;
-  void *start = gc_object_payload(w, &b, &ol);
-  void *to;
-  if (!start) {
-    return;
-  }
-  to = fwd_get(start);
-  if (to && to != start) {
-    *slot = (void *)((uint8_t *)to + ((uint8_t *)w - (uint8_t *)start));
-  }
-}
-
-static void defrag_rewrite_tls(void **slot) {
-  defrag_rewrite_slot(slot);
-}
-
-static void defrag_scan_payload(void *p) {
-  EACH_REF_SLOT(p, slot, { defrag_rewrite_slot(slot); });
-}
-
-static void defrag_fix_one(AvantHeader *h, Block *b) {
-  (void)b;
-  if (h->flags & AVANT_FLAG_MARKED) {
-    defrag_scan_payload(payload_of(h));
-  }
-}
-
-static void mature_unlink(Block *b) {
-  Block **pp = &g_mature;
-  while (*pp) {
-    if (*pp == b) {
-      *pp = b->next;
-      b->next = NULL;
-      return;
-    }
-    pp = &(*pp)->next;
-  }
-}
-
-/* Copying defragmentation of the mature space, run inside a full
- * collection after marking (line marks and MARKED flags are the live
- * set) and before the sweep. Live objects in candidate blocks are
- * copied into fresh destination blocks, every root, heap field,
- * remembered entry, and stackmap spill naming them is rewritten
- * through the forwarding table, and the emptied blocks are freed
- * whole. Destination blocks are allocated before anything moves; if
- * one cannot be allocated under the heap limit, nothing moves and the
- * ordinary non-moving collection completes (g_def_skipped counts it),
- * so defragmentation can never make a collection fail. The evacuated
- * blocks are freed by defrag_release. Not inlined: its locals name
- * objects in the evacuated blocks, and they must not sit in collect's
- * frame, which gc_verify_defrag scans as part of the C stack. */
-__attribute__((noinline)) static void defrag_evacuate(uint64_t live_lines_this) {
-  DefCand *cand = NULL;
-  size_t ncand = 0;
-  size_t ccap = 0;
-  size_t i;
-  Block *b;
-  uint64_t budget;
-  uint64_t evac_lines = 0;
-  uint64_t evac_bytes = 0;
-  Block **dest = NULL;
-  size_t ndest = 0;
-  size_t dest_cap_blocks;
-  if (!g_defrag_mode || live_lines_this == 0) {
-    return;
-  }
-  for (b = g_mature; b; b = b->next) {
-    int live = block_live_lines(b);
-    DefCand *c;
-    if (live <= 0 || live > 64 || block_has_pinned(b) || gc_block_set_has(&g_cstack_blocks, b)) {
-      continue;
-    }
-    if (ncand == ccap) {
-      ccap = ccap ? ccap * 2 : 32;
-      cand = (DefCand *)xrealloc(cand, ccap * sizeof(DefCand));
-    }
-    c = &cand[ncand++];
-    c->b = b;
-    c->live = live;
-    c->bytes = 0;
-    {
-      int w;
-      for (w = 0; w < START_WORDS; w++) {
-        uint64_t bits = b->start[w];
-        while (bits) {
-          int bit = __builtin_ctzll(bits);
-          size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
-          AvantHeader *h = (AvantHeader *)(b->base + off);
-          if (h->flags & AVANT_FLAG_MARKED) {
-            c->bytes += obj_total(h);
-          }
-          bits &= bits - 1;
-        }
-      }
-    }
-  }
-  if (ncand == 0) {
-    free(cand);
-    return;
-  }
-  qsort(cand, ncand, sizeof(DefCand), def_cand_cmp);
-  budget = live_lines_this / 4;
-  i = 0;
-  while (i < ncand && evac_lines + (uint64_t)cand[i].live <= budget) {
-    evac_lines += (uint64_t)cand[i].live;
-    evac_bytes += cand[i].bytes;
-    i++;
-  }
-  ncand = i;
-  if (ncand == 0) {
-    free(cand);
-    return;
-  }
-  dest_cap_blocks = (size_t)(evac_bytes / BLOCK_SIZE) + 2;
-  dest = (Block **)xrealloc(NULL, dest_cap_blocks * sizeof(Block *));
-  for (i = 0; i < dest_cap_blocks; i++) {
-    Block *nb = new_block(SPACE_MATURE);
-    if (!nb) {
-      size_t j;
-      for (j = 0; j < ndest; j++) {
-        mature_unlink(dest[j]);
-        cache_or_free_block(dest[j]);
-      }
-      free(dest);
-      free(cand);
-      g_def_skipped++;
-      return;
-    }
-    dest[ndest++] = nb;
-  }
-  fwd_reset();
-  {
-    Block *db = dest[0];
-    size_t di = 0;
-    uint8_t *bump = db->base;
-    size_t ci;
-    size_t evac_done = 0;
-    int stopped = 0;
-    for (ci = 0; ci < ncand && !stopped; ci++) {
-      Block *cb = cand[ci].b;
-      int w;
-      for (w = 0; w < START_WORDS && !stopped; w++) {
-        uint64_t bits = cb->start[w];
-        while (bits) {
-          int bit = __builtin_ctzll(bits);
-          size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
-          AvantHeader *h = (AvantHeader *)(cb->base + off);
-          size_t total;
-          AvantHeader *nh;
-          if (!(h->flags & AVANT_FLAG_MARKED)) {
-            bits &= bits - 1;
-            continue;
-          }
-          total = obj_total(h);
-          if (bump + total > db->base + BLOCK_SIZE) {
-            di++;
-            if (di >= ndest) {
-              Block *nb = new_block(SPACE_MATURE);
-              if (!nb) {
-                /* Heap limit mid-evacuation: stop here. Objects
-                 * already copied are forwarded and fixed up below;
-                 * this block keeps the rest and is not freed. */
-                stopped = 1;
-                break;
-              }
-              if (ndest == dest_cap_blocks) {
-                dest_cap_blocks = dest_cap_blocks * 2 + 4;
-                dest = (Block **)xrealloc(dest, dest_cap_blocks * sizeof(Block *));
-              }
-              dest[ndest++] = nb;
-            }
-            db = dest[di];
-            bump = db->base;
-          }
-          nh = (AvantHeader *)bump;
-          memcpy(nh, h, total);
-          set_start(db, (size_t)(bump - db->base));
-          mark_lines(db, (size_t)(bump - db->base), total);
-          fwd_put(payload_of(h), payload_of(nh));
-          g_def_evac_bytes += total;
-          bump += total;
-          db->bump = bump;
-          bits &= bits - 1;
-        }
-      }
-      if (!stopped) {
-        evac_done = ci + 1;
-        g_def_evac_blocks++;
-      }
-    }
-    ncand = evac_done;
-    if (stopped) {
-      g_def_skipped++;
-    }
-  }
-  {
-    ThreadReg *t;
-    uint32_t fi;
-    pthread_mutex_lock(&g_threads_mu);
-    for (t = g_threads; t; t = t->next) {
-      Frame *f;
-      for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-        for (fi = 0; fi < f->n; fi++) {
-          defrag_rewrite_slot(f->slots[fi]);
-        }
-      }
-    }
-    pthread_mutex_unlock(&g_threads_mu);
-  }
-  {
-    PinEnt *p;
-    for (p = g_pins; p; p = p->next) {
-      defrag_rewrite_slot(&p->payload);
-    }
-  }
-  avant_hash_walk_tls(defrag_rewrite_tls);
-  {
-    uint32_t ri;
-    int locked = rem_locked();
-    if (locked) {
-      pthread_mutex_lock(&g_rem_mu);
-    }
-    for (ri = 0; ri < g_rem_n; ri++) {
-      defrag_rewrite_slot((void **)&g_remset[ri]);
-    }
-    if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
-    }
-  }
-  for (b = g_mature; b; b = b->next) {
-    gc_foreach_block_object(b, defrag_fix_one);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    gc_foreach_block_object(b, defrag_fix_one);
-  }
-  for (b = g_from; b; b = b->next) {
-    gc_foreach_block_object(b, defrag_fix_one);
-  }
-  {
-    Large *L;
-    for (L = g_large; L; L = L->next) {
-      if (L->header.flags & AVANT_FLAG_MARKED) {
-        defrag_scan_payload(payload_of(&L->header));
-      }
-    }
-  }
-  rewrite_from_stackmaps();
-  /* The evacuated blocks are freed by defrag_release, after collect()
-   * has let the verifier look at them from its own frame. */
-  g_def_release.n = 0;
-  for (i = 0; i < ncand; i++) {
-    gc_block_set_add(&g_def_release, cand[i].b);
-  }
-  gc_block_set_seal(&g_def_release);
-  free(dest);
-  free(cand);
-}
-
-static void defrag_release(void) {
-  size_t i;
-  for (i = 0; i < g_def_release.n; i++) {
-    mature_unlink(g_def_release.v[i]);
-    cache_or_free_block(g_def_release.v[i]);
-    g_def_freed_blocks++;
-  }
-  g_def_release.n = 0;
-}
-
 static void young_copy_out(int tenure) {
   g_force_tenure = tenure;
   g_to_bytes = 0;
@@ -2373,7 +2033,7 @@ static void collect(int full) {
       Block *db;
       uint64_t live_lines_this = 0;
       for (db = g_mature; db; db = db->next) {
-        int live = block_live_lines(db);
+        int live = gc_block_live_lines(db);
         int bucket = live == 0 ? 0 : live <= 32 ? 1 : live <= 64 ? 2 : live <= 96 ? 3 : live < LINES_PER_BLOCK ? 4 : 5;
         g_def_blocks++;
         g_def_live_lines += (uint64_t)live;
@@ -2386,11 +2046,11 @@ static void collect(int full) {
       if (g_defrag_mode) {
         gc_note_c_stack_blocks();
       }
-      defrag_evacuate(live_lines_this);
+      gc_defrag_evacuate(live_lines_this);
       if (g_verify && g_def_release.n) {
         gc_verify_defrag();
       }
-      defrag_release();
+      gc_defrag_release();
     }
     sweep_large();
     filter_blocks(&g_mature, keep_if_live);
@@ -2787,7 +2447,7 @@ void avant_gc_root(void *slot) {
   }
   if (f->n == f->cap) {
     f->cap = f->cap ? f->cap * 2 : 8;
-    f->slots = xrealloc(f->slots, f->cap * sizeof(void **));
+    f->slots = gc_xrealloc(f->slots, f->cap * sizeof(void **));
   }
   f->slots[f->n++] = (void **)slot;
 }
@@ -2803,7 +2463,7 @@ void *avant_gc_root_begin(uint32_t count) {
     while (cap < count) {
       cap *= 2;
     }
-    f->slots = xrealloc(f->slots, cap * sizeof(void **));
+    f->slots = gc_xrealloc(f->slots, cap * sizeof(void **));
     f->cap = cap;
   }
   f->n = g_gc_quiet ? 0 : count;
