@@ -39,6 +39,17 @@ void avant_trap_shift(int64_t amount, int32_t kind) {
   exit(1);
 }
 
+/* Float64.to_i of NaN, an infinity, or a value outside the Int range
+ * (Stage 28 W11b, C2). NaN prints as nan whatever its sign bit. */
+void avant_trap_to_i(double x) {
+  if (x != x) {
+    fprintf(stderr, "avant runtime: to_i of Float64 nan out of range for Int\n");
+  } else {
+    fprintf(stderr, "avant runtime: to_i of Float64 %.17g out of range for Int\n", x);
+  }
+  exit(1);
+}
+
 int64_t avant_checked_add_i64(int64_t a, int64_t b) {
   int64_t r;
   if (__builtin_add_overflow(a, b, &r)) {
