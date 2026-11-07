@@ -177,12 +177,16 @@ static int young_pause(uint64_t used, uint64_t surv) {
   return 1;
 }
 
-void gc_collect(int full) {
+void gc_collect(GcKind kind, int allow_move) {
+  int full = kind == GC_FULL;
   int pause = 0;
   uint64_t used = 0;
   uint64_t surv = 0;
   if (gc_heap.collecting) {
     gc_die("GC reentered");
+  }
+  if (!full && !allow_move) {
+    gc_die("a young collection always moves");
   }
   gc_heap.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
@@ -306,10 +310,10 @@ void gc_collect(int full) {
           gc_heap.ctr.def.wasted += (uint64_t)(LINES_PER_BLOCK - live) * LINE_SIZE;
         }
       }
-      if (gc_heap.set.defrag) {
+      if (allow_move && gc_heap.set.defrag) {
         gc_note_c_stack_blocks();
+        gc_defrag_evacuate(live_lines_this);
       }
-      gc_defrag_evacuate(live_lines_this);
       if (gc_heap.set.verify && gc_heap.def_release.n) {
         gc_verify_defrag();
       }
@@ -372,7 +376,7 @@ void gc_maybe_collect(void) {
   }
   if (gc_heap.limit_pending) {
     gc_heap.limit_pending = 0;
-    gc_collect(1);
+    gc_collect(GC_FULL, 1);
     return;
   }
   /*
@@ -388,7 +392,7 @@ void gc_maybe_collect(void) {
    */
   if (gc_heap.set.nursery_off) {
     if (avant_since_gc >= gc_heap.full_trigger) {
-      gc_collect(1);
+      gc_collect(GC_FULL, 1);
     }
     return;
   }
@@ -397,9 +401,9 @@ void gc_maybe_collect(void) {
    * objects, has grown by gc_heap.full_trigger. Counting every nursery byte here
    * marked a live tree that a young collection should have discarded. */
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
-    gc_collect(1);
+    gc_collect(GC_FULL, 1);
   } else if (avant_nursery_held >= avant_young_bytes) {
-    gc_collect(0);
+    gc_collect(GC_YOUNG, 1);
   }
 }
 
@@ -413,7 +417,7 @@ void gc_stress_point(void) {
     return;
   }
   gc_heap.stress_now = 1;
-  gc_collect(0);
+  gc_collect(GC_YOUNG, 1);
   gc_heap.stress_now = 0;
 }
 
@@ -440,9 +444,9 @@ void gc_init_slow(void) {
  * through C helpers under defer (the HTTP request path), which never
  * reach gc_maybe_collect undeferred. Callers must be at a boundary where
  * their C frames hold no heap pointers yet (the HTTP dispatch calls
- * this before materializing the request), so the full, non-moving
- * collection strands nothing; defragmentation stays off for the same
- * reason (it moves mature objects). The trigger is an allocation
+ * this before materializing the request), so the full collection
+ * strands nothing; it runs with allow_move 0, so no mature object moves
+ * (no defragmentation) for the same reason. The trigger is an allocation
  * budget since the last full collection — the larger of the live
  * bytes it saw and 4 MB — plus the mature-growth trigger, so the
  * boundary costs one marking per budget of allocation. */
@@ -455,10 +459,7 @@ void avant_gc_heap_goal_collect(void) {
            (gc_heap.live > (4ull * 1024ull * 1024ull)
                 ? gc_heap.live
                 : (4ull * 1024ull * 1024ull)))) {
-    int defrag_saved = gc_heap.set.defrag;
-    gc_heap.set.defrag = 0;
-    gc_collect(1);
-    gc_heap.set.defrag = defrag_saved;
+    gc_collect(GC_FULL, 0);
   }
   pthread_mutex_unlock(&gc_heap.world);
 }
@@ -467,7 +468,7 @@ void avant_nursery_reclaim(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
   if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
-    gc_collect(0);
+    gc_collect(GC_YOUNG, 1);
   }
   pthread_mutex_unlock(&gc_heap.world);
 }
@@ -475,6 +476,6 @@ void avant_nursery_reclaim(void) {
 void avant_gc_collect(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
-  gc_collect(1);
+  gc_collect(GC_FULL, 1);
   pthread_mutex_unlock(&gc_heap.world);
 }

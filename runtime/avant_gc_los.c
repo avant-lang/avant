@@ -415,7 +415,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
        * limit and the collection runs after the region. */
       gc_limit_collect_pending();
     } else {
-      gc_collect(1);
+      gc_collect(GC_FULL, 1);
       if (gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
         gc_die("heap limit");
       }

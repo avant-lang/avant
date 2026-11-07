@@ -148,7 +148,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   Block **dest = NULL;
   size_t ndest = 0;
   size_t dest_cap_blocks;
-  if (!gc_heap.set.defrag || live_lines_this == 0) {
+  if (live_lines_this == 0) {
     return;
   }
   for (b = gc_heap.mature; b; b = b->next) {

@@ -798,7 +798,13 @@ void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 
 /* avant_gc_collect.c */
-void gc_collect(int full);
+/* A collection (O42): GC_YOUNG copies the nursery's live objects (it
+ * always moves them, so allow_move must be 1); GC_FULL marks and sweeps
+ * the whole heap and, when allow_move is 1 and AVANT_GC_DEFRAG is on,
+ * evacuates sparse mature blocks (defragmentation). A caller whose C
+ * frames may hold references the collector cannot rewrite passes 0. */
+typedef enum GcKind { GC_YOUNG, GC_FULL } GcKind;
+void gc_collect(GcKind kind, int allow_move);
 void gc_limit_collect_pending(void);
 void gc_maybe_collect(void);
 void gc_stress_point(void);
