@@ -13,9 +13,10 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_now_us() -> i32 never
+extern avant_trap_to_i(f64) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.conv/opaque(_1: i32) -> i32 leaf @conv.av:8:1 {
+fn av.conv/opaque(_1: i32) -> i32 leaf @conv.av:10:1 {
   let _0: i32
   let _1 (n): i32
   let _2: i32
@@ -27,25 +28,25 @@ fn av.conv/opaque(_1: i32) -> i32 leaf @conv.av:8:1 {
   let _8: i32
 
 bb0:
-  _2 = call avant_now_us() nocollect   @9:7
-  _3 = copy _2   @9:5
-  _4 = call avant_now_us() nocollect   @10:7
-  _5 = copy _4   @10:5
-  _6 = sub copy _5, copy _3   @11:8
-  _7 = gt copy _6, const i32 1000000000   @11:13
-  branch copy _7, bb1, bb2   @11:3
+  _2 = call avant_now_us() nocollect   @11:7
+  _3 = copy _2   @11:5
+  _4 = call avant_now_us() nocollect   @12:7
+  _5 = copy _4   @12:5
+  _6 = sub copy _5, copy _3   @13:8
+  _7 = gt copy _6, const i32 1000000000   @13:13
+  branch copy _7, bb1, bb2   @13:3
 
 bb1:
-  _8 = add copy _1, copy _5   @12:14
-  _0 = copy _8   @12:5
-  return   @12:5
+  _8 = add copy _1, copy _5   @14:14
+  _0 = copy _8   @14:5
+  return   @14:5
 
 bb2:
-  _0 = copy _1   @14:3
-  return   @14:3
+  _0 = copy _1   @16:3
+  return   @16:3
 }
 
-fn av.conv/ti(_1: f64) -> i32 leaf @conv.av:17:1 {
+fn av.conv/ti(_1: f64) -> i32 leaf @conv.av:19:1 {
   let _0: i32
   let _1 (x): f64
   let _2: f64
@@ -55,26 +56,23 @@ fn av.conv/ti(_1: f64) -> i32 leaf @conv.av:17:1 {
   let _6: i32
 
 bb0:
-  _2 = copy _1   @18:4
-  _3 = gt copy _2, const f64 0xC1E0000000200000 /* -2147483649.0 */   @18:4
-  _4 = lt copy _2, const f64 0x41E0000000000000 /* 2147483648.0 */   @18:4
-  _5 = and copy _3, copy _4   @18:4
-  branch copy _5, bb1, bb2   @18:4
+  _2 = copy _1   @20:4
+  _3 = gt copy _2, const f64 0xC1E0000000200000 /* -2147483649.0 */   @20:4
+  _4 = lt copy _2, const f64 0x41E0000000000000 /* 2147483648.0 */   @20:4
+  _5 = and copy _3, copy _4   @20:4
+  branch copy _5, bb2, bb1   @20:4
 
 bb1:
-  _6 = cast copy _2 to i32   @18:4
-  goto bb3   @18:4
+  call avant_trap_to_i(copy _2) nocollect   @20:4
+  unreachable   @20:4
 
 bb2:
-  _6 = const i32 -2147483648   @18:4
-  goto bb3   @18:4
-
-bb3:
-  _0 = copy _6   @18:4
-  return   @18:4
+  _6 = cast copy _2 to i32   @20:4
+  _0 = copy _6   @20:4
+  return   @20:4
 }
 
-fn main(_1: i32, _2: ptr) -> i32 frame extern @conv.av:21:1 {
+fn main(_1: i32, _2: ptr) -> i32 frame extern @conv.av:23:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
@@ -100,202 +98,173 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @conv.av:21:1 {
   let _22: f64
   let _23: i32
   let _24: f64
-  let _25: i32
-  let _26: f64
-  let _27 (z): f64
-  let _28: f64
+  let _25: f64
+  let _26: bool
+  let _27: bool
+  let _28: bool
   let _29: i32
-  let _30: f64
-  let _31: i32
+  let _30: i32
+  let _31 (m): i32
   let _32: f64
-  let _33: f64
-  let _34: i32
-  let _35: f64
-  let _36: f64
-  let _37: bool
-  let _38: bool
-  let _39: bool
-  let _40: i32
-  let _41: i32
-  let _42 (m): i32
-  let _43: f64
-  let _44: i64
-  let _45: u64
-  let _46: i32
-  let _47: bool
-  let _48: i32
+  let _33: i64
+  let _34: u64
+  let _35: i32
+  let _36: bool
+  let _37: i32
+  let _38: i32
+  let _39: i32
+  let _40: bool
+  let _41: i64
+  let _42: i64
+  let _43 (q): i64
+  let _44: u64
+  let _45: i32
+  let _46: f64
+  let _47: i64
+  let _48: bool
   let _49: i32
-  let _50: i32
-  let _51: bool
-  let _52: i64
-  let _53: i64
-  let _54 (q): i64
-  let _55: u64
-  let _56: i32
-  let _57: f64
-  let _58: i64
-  let _59: bool
-  let _60: i32
+  let _50: u64
+  let _51: u64
+  let _52 (big): u64
+  let _53: f64
+  let _54: i64
+  let _55: i32
+  let _56: u64
+  let _57: i64
+  let _58: bool
+  let _59: i32
+  let _60: i64
   let _61: u64
-  let _62: u64
-  let _63 (big): u64
-  let _64: f64
-  let _65: i64
-  let _66: i32
-  let _67: u64
-  let _68: i64
-  let _69: bool
-  let _70: i32
-  let _71: i64
-  let _72: u64
-  let _73: f64
+  let _62: f64
 
 bb0:
-  gc.enter   @21:1
-  gc.roots _2   @21:1
-  call __avant_type_maps() nocollect   @21:1
-  call avant_io_init_argv(copy _1, copy _2) collects   @21:1
-  _3 = call av.conv/opaque(const i32 1) nocollect   @22:9
-  _4 = cast copy _3 to f64   @22:18
-  _5 = copy _4   @22:7
-  _6 = mul const f64 0x4004000000000000 /* 2.5 */, copy _5   @23:15
-  _7 = call av.conv/ti(copy _6) nocollect   @23:8
-  call printf(const str.0, copy _7) nocollect   @23:3
-  _8 = mul const f64 0xC00599999999999A /* -2.7 */, copy _5   @24:16
-  _9 = call av.conv/ti(copy _8) nocollect   @24:8
-  call printf(const str.0, copy _9) nocollect   @24:3
-  _10 = mul const f64 0x41DFFFFFFFC00000 /* 2147483647.0 */, copy _5   @25:24
-  _11 = call av.conv/ti(copy _10) nocollect   @25:8
-  call printf(const str.0, copy _11) nocollect   @25:3
-  _12 = mul const f64 0x41DFFFFFFFF9999A /* 2147483647.9 */, copy _5   @26:24
-  _13 = call av.conv/ti(copy _12) nocollect   @26:8
-  call printf(const str.0, copy _13) nocollect   @26:3
-  _14 = mul const f64 0x41E0000000000000 /* 2147483648.0 */, copy _5   @27:24
-  _15 = call av.conv/ti(copy _14) nocollect   @27:8
-  call printf(const str.0, copy _15) nocollect   @27:3
-  _16 = mul const f64 0xC1E0000000000000 /* -2147483648.0 */, copy _5   @28:25
-  _17 = call av.conv/ti(copy _16) nocollect   @28:8
-  call printf(const str.0, copy _17) nocollect   @28:3
-  _18 = mul const f64 0xC1E00000001CCCCD /* -2147483648.9 */, copy _5   @29:25
-  _19 = call av.conv/ti(copy _18) nocollect   @29:8
-  call printf(const str.0, copy _19) nocollect   @29:3
-  _20 = mul const f64 0xC1E0000000200000 /* -2147483649.0 */, copy _5   @30:25
-  _21 = call av.conv/ti(copy _20) nocollect   @30:8
-  call printf(const str.0, copy _21) nocollect   @30:3
-  _22 = mul const f64 0x7E37E43C8800759C /* 1.0e300 */, copy _5   @31:19
-  _23 = call av.conv/ti(copy _22) nocollect   @31:8
-  call printf(const str.0, copy _23) nocollect   @31:3
-  _24 = mul const f64 0xFE37E43C8800759C /* -1.0e300 */, copy _5   @32:20
-  _25 = call av.conv/ti(copy _24) nocollect   @32:8
-  call printf(const str.0, copy _25) nocollect   @32:3
-  _26 = sub copy _5, const f64 0x3FF0000000000000 /* 1.0 */   @33:11
-  _27 = copy _26   @33:5
-  _28 = div copy _27, copy _27   @34:13
-  _29 = call av.conv/ti(copy _28) nocollect   @34:8
-  call printf(const str.0, copy _29) nocollect   @34:3
-  _30 = div copy _5, copy _27   @35:15
-  _31 = call av.conv/ti(copy _30) nocollect   @35:8
-  call printf(const str.0, copy _31) nocollect   @35:3
-  _32 = neg copy _5   @36:11
-  _33 = div copy _32, copy _27   @36:16
-  _34 = call av.conv/ti(copy _33) nocollect   @36:8
-  call printf(const str.0, copy _34) nocollect   @36:3
-  _35 = mul const f64 0x401F99999999999A /* 7.9 */, copy _5   @37:13
-  _36 = copy _35   @37:19
-  _37 = gt copy _36, const f64 0xC1E0000000200000 /* -2147483649.0 */   @37:19
-  _38 = lt copy _36, const f64 0x41E0000000000000 /* 2147483648.0 */   @37:19
-  _39 = and copy _37, copy _38   @37:19
-  branch copy _39, bb1, bb2   @37:19
+  gc.enter   @23:1
+  gc.roots _2   @23:1
+  call __avant_type_maps() nocollect   @23:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @23:1
+  _3 = call av.conv/opaque(const i32 1) nocollect   @24:9
+  _4 = cast copy _3 to f64   @24:18
+  _5 = copy _4   @24:7
+  _6 = mul const f64 0x4004000000000000 /* 2.5 */, copy _5   @25:15
+  _7 = call av.conv/ti(copy _6) nocollect   @25:8
+  call printf(const str.0, copy _7) nocollect   @25:3
+  _8 = mul const f64 0xC00599999999999A /* -2.7 */, copy _5   @26:16
+  _9 = call av.conv/ti(copy _8) nocollect   @26:8
+  call printf(const str.0, copy _9) nocollect   @26:3
+  _10 = mul const f64 0x41DFFFFFFFC00000 /* 2147483647.0 */, copy _5   @27:24
+  _11 = call av.conv/ti(copy _10) nocollect   @27:8
+  call printf(const str.0, copy _11) nocollect   @27:3
+  _12 = mul const f64 0x41DFFFFFFFF9999A /* 2147483647.9 */, copy _5   @28:24
+  _13 = call av.conv/ti(copy _12) nocollect   @28:8
+  call printf(const str.0, copy _13) nocollect   @28:3
+  _14 = mul const f64 0xC1E0000000000000 /* -2147483648.0 */, copy _5   @29:25
+  _15 = call av.conv/ti(copy _14) nocollect   @29:8
+  call printf(const str.0, copy _15) nocollect   @29:3
+  _16 = mul const f64 0xC1E00000001CCCCD /* -2147483648.9 */, copy _5   @30:25
+  _17 = call av.conv/ti(copy _16) nocollect   @30:8
+  call printf(const str.0, copy _17) nocollect   @30:3
+  _18 = mul const f64 0x3FECCCCCCCCCCCCD /* 0.9 */, copy _5   @31:15
+  _19 = call av.conv/ti(copy _18) nocollect   @31:8
+  call printf(const str.0, copy _19) nocollect   @31:3
+  _20 = mul const f64 0xBFECCCCCCCCCCCCD /* -0.9 */, copy _5   @32:16
+  _21 = call av.conv/ti(copy _20) nocollect   @32:8
+  call printf(const str.0, copy _21) nocollect   @32:3
+  _22 = mul const f64 0x8000000000000000 /* -0.0 */, copy _5   @33:16
+  _23 = call av.conv/ti(copy _22) nocollect   @33:8
+  call printf(const str.0, copy _23) nocollect   @33:3
+  _24 = mul const f64 0x401F99999999999A /* 7.9 */, copy _5   @34:13
+  _25 = copy _24   @34:19
+  _26 = gt copy _25, const f64 0xC1E0000000200000 /* -2147483649.0 */   @34:19
+  _27 = lt copy _25, const f64 0x41E0000000000000 /* 2147483648.0 */   @34:19
+  _28 = and copy _26, copy _27   @34:19
+  branch copy _28, bb2, bb1   @34:19
 
 bb1:
-  _40 = cast copy _36 to i32   @37:19
-  goto bb3   @37:19
+  call avant_trap_to_i(copy _25) nocollect   @34:19
+  unreachable   @34:19
 
 bb2:
-  _40 = const i32 -2147483648   @37:19
-  goto bb3   @37:19
+  _29 = cast copy _25 to i32   @34:19
+  call printf(const str.0, copy _29) nocollect   @34:3
+  _30 = call av.conv/opaque(const i32 -5) nocollect   @35:7
+  _31 = copy _30   @35:5
+  _32 = cast copy _31 to f64   @36:9
+  call printf(const str.1, copy _32) nocollect   @36:3
+  call printf(const str.0, copy _31) nocollect   @37:3
+  _33 = cast copy _31 to i64   @38:9
+  call printf(const str.2, copy _33) nocollect   @38:3
+  _34 = cast copy _31 to u64   @39:9
+  call printf(const str.3, copy _34) nocollect   @39:3
+  _35 = copy _31   @40:9
+  _36 = lt copy _35, const i32 0   @40:9
+  branch copy _36, bb3, bb4   @40:9
 
 bb3:
-  call printf(const str.0, copy _40) nocollect   @37:3
-  _41 = call av.conv/opaque(const i32 -5) nocollect   @38:7
-  _42 = copy _41   @38:5
-  _43 = cast copy _42 to f64   @39:9
-  call printf(const str.1, copy _43) nocollect   @39:3
-  call printf(const str.0, copy _42) nocollect   @40:3
-  _44 = cast copy _42 to i64   @41:9
-  call printf(const str.2, copy _44) nocollect   @41:3
-  _45 = cast copy _42 to u64   @42:9
-  call printf(const str.3, copy _45) nocollect   @42:3
-  _46 = copy _42   @43:9
-  _47 = lt copy _46, const i32 0   @43:9
-  branch copy _47, bb4, bb5   @43:9
+  _35 = neg copy _35   @40:9
+  goto bb4   @40:9
 
 bb4:
-  _46 = neg copy _46   @43:9
-  goto bb5   @43:9
+  call printf(const str.0, copy _35) nocollect   @40:3
+  _37 = call av.conv/opaque(const i32 1) nocollect   @41:23
+  _38 = sub.chk const i32 -2147483647, copy _37   @41:21
+  _39 = copy _38   @41:33
+  _40 = lt copy _39, const i32 0   @41:33
+  branch copy _40, bb5, bb6   @41:33
 
 bb5:
-  call printf(const str.0, copy _46) nocollect   @43:3
-  _48 = call av.conv/opaque(const i32 1) nocollect   @44:23
-  _49 = sub.chk const i32 -2147483647, copy _48   @44:21
-  _50 = copy _49   @44:33
-  _51 = lt copy _50, const i32 0   @44:33
-  branch copy _51, bb6, bb7   @44:33
+  _39 = neg copy _39   @41:33
+  goto bb6   @41:33
 
 bb6:
-  _50 = neg copy _50   @44:33
-  goto bb7   @44:33
+  call printf(const str.0, copy _39) nocollect   @41:3
+  _41 = cast copy _31 to i64   @42:8
+  _42 = mul.chk copy _41, const i64 1000000000   @42:16
+  _43 = copy _42   @42:5
+  _44 = cast copy _43 to u64   @43:9
+  call printf(const str.3, copy _44) nocollect   @43:3
+  _45 = cast copy _43 to i32   @44:9
+  call printf(const str.0, copy _45) nocollect   @44:3
+  _46 = cast copy _43 to f64   @45:9
+  call printf(const str.1, copy _46) nocollect   @45:3
+  _47 = copy _43   @46:9
+  _48 = lt copy _47, const i64 0   @46:9
+  branch copy _48, bb7, bb8   @46:9
 
 bb7:
-  call printf(const str.0, copy _50) nocollect   @44:3
-  _52 = cast copy _42 to i64   @45:8
-  _53 = mul.chk copy _52, const i64 1000000000   @45:16
-  _54 = copy _53   @45:5
-  _55 = cast copy _54 to u64   @46:9
-  call printf(const str.3, copy _55) nocollect   @46:3
-  _56 = cast copy _54 to i32   @47:9
-  call printf(const str.0, copy _56) nocollect   @47:3
-  _57 = cast copy _54 to f64   @48:9
-  call printf(const str.1, copy _57) nocollect   @48:3
-  _58 = copy _54   @49:9
-  _59 = lt copy _58, const i64 0   @49:9
-  branch copy _59, bb8, bb9   @49:9
+  _47 = neg copy _47   @46:9
+  goto bb8   @46:9
 
 bb8:
-  _58 = neg copy _58   @49:9
-  goto bb9   @49:9
+  call printf(const str.2, copy _47) nocollect   @46:3
+  call printf(const str.2, copy _43) nocollect   @47:3
+  _49 = call av.conv/opaque(const i32 0) nocollect   @48:35
+  _50 = cast copy _49 to u64   @48:44
+  _51 = sub.chk const u64 18446744073709551615, copy _50   @48:33
+  _52 = copy _51   @48:7
+  _53 = cast copy _52 to f64   @49:11
+  call printf(const str.1, copy _53) nocollect   @49:3
+  _54 = cast copy _52 to i64   @50:11
+  call printf(const str.2, copy _54) nocollect   @50:3
+  _55 = cast copy _52 to i32   @51:11
+  call printf(const str.0, copy _55) nocollect   @51:3
+  _56 = copy _52   @52:11
+  _57 = cast copy _56 to i64   @52:11
+  _58 = lt copy _57, const i64 0   @52:11
+  branch copy _58, bb9, bb10   @52:11
 
 bb9:
-  call printf(const str.2, copy _58) nocollect   @49:3
-  call printf(const str.2, copy _54) nocollect   @50:3
-  _60 = call av.conv/opaque(const i32 0) nocollect   @51:35
-  _61 = cast copy _60 to u64   @51:44
-  _62 = sub.chk const u64 18446744073709551615, copy _61   @51:33
-  _63 = copy _62   @51:7
-  _64 = cast copy _63 to f64   @52:11
-  call printf(const str.1, copy _64) nocollect   @52:3
-  _65 = cast copy _63 to i64   @53:11
-  call printf(const str.2, copy _65) nocollect   @53:3
-  _66 = cast copy _63 to i32   @54:11
-  call printf(const str.0, copy _66) nocollect   @54:3
-  _67 = copy _63   @55:11
-  _68 = cast copy _67 to i64   @55:11
-  _69 = lt copy _68, const i64 0   @55:11
-  branch copy _69, bb10, bb11   @55:11
+  _56 = neg copy _56   @52:11
+  goto bb10   @52:11
 
 bb10:
-  _67 = neg copy _67   @55:11
-  goto bb11   @55:11
-
-bb11:
-  call printf(const str.3, copy _67) nocollect   @55:3
-  call printf(const str.3, copy _63) nocollect   @56:3
-  _70 = call av.conv/opaque(const i32 3) nocollect   @57:8
-  _71 = cast copy _70 to i64   @57:17
-  _72 = cast copy _71 to u64   @57:24
-  _73 = cast copy _72 to f64   @57:31
-  call printf(const str.1, copy _73) nocollect   @57:3
-  _0 = const i32 0   @21:1
-  gc.leave   @21:1
-  return   @21:1
+  call printf(const str.3, copy _56) nocollect   @52:3
+  call printf(const str.3, copy _52) nocollect   @53:3
+  _59 = call av.conv/opaque(const i32 3) nocollect   @54:8
+  _60 = cast copy _59 to i64   @54:17
+  _61 = cast copy _60 to u64   @54:24
+  _62 = cast copy _61 to f64   @54:31
+  call printf(const str.1, copy _62) nocollect   @54:3
+  _0 = const i32 0   @23:1
+  gc.leave   @23:1
+  return   @23:1
 }

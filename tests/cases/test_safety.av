@@ -18,6 +18,23 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body:
   }
 }
 
+// A program the checker rejects: the compile exits non-zero, writes no
+// binary, and its diagnostic names needle.
+fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
+  src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
+  bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
+  clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
+  dummy = file_write(src, body)
+  code = compile_av(compiler, src, bin, clog)
+  c.expect(code != 0, "${tag} is a compile error")
+  c.expect(!file_exists(bin), "${tag} writes no binary")
+  if err = file_read(clog) {
+    c.expect(str_has(err, needle), tag)
+  } else {
+    c.expect(false, tag)
+  }
+}
+
 fn test_safety(c: Checks) {
   c.suite("tests/cases/test_safety.av")
 
@@ -79,6 +96,14 @@ fn test_safety(c: Checks) {
   low = 0 - 2147483647 - 1
   c.eq_int(low &- 1, 2147483647, "wrap sub")
   c.eq_int(65536 &* 65536, 0, "wrap mul")
+  // C4 (W11b): MIN % -1 is 0 for Int and Int64; C1: shifts inside the range.
+  minus_one = 0 - 1
+  c.eq_int(low % minus_one, 0, "Int MIN % -1 is 0")
+  low64 = 0i64 - 9223372036854775807i64 - 1i64
+  c.expect(low64 % minus_one.to_i64 == 0i64, "Int64 MIN % -1 is 0")
+  sh = 31
+  c.eq_int(1 << sh, low, "Int << 31")
+  c.eq_int(low >> sh, minus_one, "Int >> 31")
 
   shared = [1, 2, 3]
   h = spawn {
@@ -129,6 +154,18 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "overflow-i64", "fn main {\n  x = 9223372036854775807i64\n  y = 1i64\n  puts(x + y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "overflow-u64", "fn main {\n  x = 18446744073709551615u64\n  y = 1u64\n  puts(x + y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "div-overflow", "fn main {\n  x = 0 - 2147483647 - 1\n  y = 0 - 1\n  puts(x / y)\n}\n", "integer overflow")
+    // C1, C2 (W11b): a shift amount outside 0..width - 1 traps, as does
+    // Float64.to_i without an Int result; a literal amount outside the
+    // range is a compile error.
+    expect_trap_waveb(c, compiler, stamp, "shift-wide", "fn main {\n  n = 32\n  puts(1 << n)\n}\n", "avant runtime: shift amount 32 out of range for Int (0..31)")
+    expect_trap_waveb(c, compiler, stamp, "shift-neg", "fn main {\n  n = 0 - 1\n  puts(8 >> n)\n}\n", "avant runtime: shift amount -1 out of range for Int (0..31)")
+    expect_trap_waveb(c, compiler, stamp, "shift-i64", "fn main {\n  n = 64i64\n  puts(1i64 << n)\n}\n", "avant runtime: shift amount 64 out of range for Int64 (0..63)")
+    expect_trap_waveb(c, compiler, stamp, "shift-u64", "fn main {\n  n = 100u64\n  puts(1u64 >> n)\n}\n", "avant runtime: shift amount 100 out of range for UInt64 (0..63)")
+    expect_trap_waveb(c, compiler, stamp, "to-i-nan", "fn main {\n  z = 0.0\n  puts((z / z).to_i)\n}\n", "avant runtime: to_i of Float64 nan out of range for Int")
+    expect_trap_waveb(c, compiler, stamp, "to-i-big", "fn main {\n  x = 3.0e9\n  puts(x.to_i)\n}\n", "avant runtime: to_i of Float64 3000000000 out of range for Int")
+    expect_compile_error(c, compiler, stamp, "shift-const-wide", "fn main {\n  x = 1\n  puts(x << 32)\n}\n", "shift amount 32 out of range for Int (0..31)")
+    expect_compile_error(c, compiler, stamp, "shift-const-neg", "fn main {\n  x = 1\n  puts(x >> -1)\n}\n", "shift amount -1 out of range for Int (0..31)")
+    expect_compile_error(c, compiler, stamp, "shift-const-u64", "fn main {\n  x = 1u64\n  puts(x << 64u64)\n}\n", "shift amount 64 out of range for UInt64 (0..63)")
 
     bad_src = "${scratch()}/safety-waveb-${stamp}-unknown.av"
     bad_bin = "${scratch()}/safety-waveb-${stamp}-unknown.bin"
