@@ -1,12 +1,11 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <math.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-extern atomic_int g_avant_shared;
 
 typedef struct {
   void *buf;
