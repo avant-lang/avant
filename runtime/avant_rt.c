@@ -91,6 +91,15 @@ static uint8_t g_alloc_fresh[4];
 
 static Large *g_large;
 static Large *g_large_ht[LARGE_HASH];
+/* The address range [g_large_lo, g_large_hi) covers every large chunk
+ * ever put on g_large (los_alloc). It only grows: a chunk that
+ * is freed leaves it as wide as it was. So an address outside it is
+ * inside no object on g_large, and object_payload skips its walk of the
+ * list, which for such an address could only miss. That walk ran for
+ * every young-copy slot naming a static object in the binary (a string
+ * literal), and dominated compiling the compiler (Stage 28 W11d). */
+static uint8_t *g_large_lo = (uint8_t *)UINTPTR_MAX;
+static uint8_t *g_large_hi;
 /* One dead scalar large buffer, kept for the next same-sized alloc. */
 static Large *g_los_spare;
 /* Bytes in young scalar large objects. They do not move. A young
@@ -939,6 +948,9 @@ static void *object_payload(void *p, Block **ob, Large **ol) {
   }
   Large *L;
   uint8_t *addr = (uint8_t *)p;
+  if (addr < g_large_lo || addr >= g_large_hi) {
+    return NULL; /* in no large chunk: the walk below would miss */
+  }
   for (L = g_large; L; L = L->next) {
     uint8_t *hs = (uint8_t *)&L->header;
     size_t total = obj_total(&L->header);
@@ -3138,6 +3150,14 @@ static void *los_alloc(size_t payload, uint32_t type_id) {
   }
   L->next = g_large;
   g_large = L;
+  /* The chunk holds the header and payload (chunk is at least
+   * sizeof(Large) + payload, aligned; a reused spare has this size). */
+  if ((uint8_t *)L < g_large_lo) {
+    g_large_lo = (uint8_t *)L;
+  }
+  if ((uint8_t *)L + chunk > g_large_hi) {
+    g_large_hi = (uint8_t *)L + chunk;
+  }
   large_hash_add(L);
   note_peak();
   return payload_of(&L->header);
