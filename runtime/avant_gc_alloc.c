@@ -151,9 +151,11 @@ void gc_note_peak(void) {
  * only the true heap bytes. Cached blocks are already owned and are
  * never refused by this test. */
 static int g_reserve_retry;
+/* Set while a no-GC region takes a block past the heap limit (C32). */
+static int g_over_limit;
 static int heap_block_fits(void) {
   uint64_t spent;
-  if (!g_heap_max) {
+  if (!g_heap_max || g_over_limit) {
     return 1;
   }
   spent = g_heap_bytes + BLOCK_SIZE;
@@ -270,7 +272,7 @@ static void gc_fast_refresh(void) {
   Block *cur = g_alloc_cur[SPACE_NURSERY];
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !g_gc_defer && !g_collecting && !g_nursery_off && !g_alloc_mature &&
-      g_mature_since_full < FULL_BYTES && cur && g_cur == cur &&
+      !g_limit_pending && g_mature_since_full < FULL_BYTES && cur && g_cur == cur &&
       g_alloc_fresh[SPACE_NURSERY] && g_bump) {
     uint64_t rem = g_young_bytes > g_nursery_held ? g_young_bytes - g_nursery_held : 0;
     uint8_t *cap = g_bump + rem;
@@ -329,6 +331,17 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     }
   }
   Block *b = gc_new_block(space);
+  if (!b && g_gc_defer && !g_collecting) {
+    /* C32 (gc-design.md §5.4): never collect inside a no-GC (defer)
+     * region, where a runtime helper holds fresh objects the collector
+     * cannot see (avant_str_split's items[]). The allocation proceeds
+     * past the limit and the full collection runs at the first
+     * collection point after the region (gc_maybe_collect). */
+    g_over_limit = 1;
+    b = gc_new_block(space);
+    g_over_limit = 0;
+    gc_limit_collect_pending();
+  }
   if (!b) {
     if (!tried_gc && !g_collecting) {
       /* The reserve charge is soft (see heap_block_fits): collect,
@@ -460,7 +473,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * already spilled. This is the same contract as avant_bump_alloc.
    * Medium numeric buffers take the large path so their address stays. */
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !g_gc_defer &&
-      !g_collecting && !g_nursery_off && !g_alloc_mature && !large &&
+      !g_collecting && !g_nursery_off && !g_alloc_mature && !large && !g_limit_pending &&
       g_mature_since_full < FULL_BYTES && g_nursery_held + total < g_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
@@ -504,6 +517,28 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   void *obj = payload_of(h);
   pthread_mutex_unlock(&g_world);
   return obj;
+}
+
+/* avant_alloc as runtime C calls it (avant_gc.h maps avant_alloc to this
+ * name in every runtime unit outside the collector; Stage 28 W14b1). The
+ * same allocation, plus AVANT_GC_STRESS's stress point first, so a
+ * stress run collects at every runtime C allocation and not at the
+ * generated code's, which roots everything across avant_alloc by
+ * construction (D165). */
+void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
+  void *p;
+  gc_init();
+  /* Runtime C holds its references in its own frame, so a young
+   * collection entered here rewrites the C stack (C37). */
+  g_c_entry++;
+  if (g_stress) {
+    pthread_mutex_lock(&g_world);
+    gc_stress_point();
+    pthread_mutex_unlock(&g_world);
+  }
+  p = avant_alloc(nbytes, type_id);
+  g_c_entry--;
+  return p;
 }
 
 void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {

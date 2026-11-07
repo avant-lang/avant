@@ -46,8 +46,12 @@ void *avant_buf_new(int32_t cap) {
   return b;
 }
 
+/* Reached from the quiet avant_buf_push_* rows (and from
+ * avant_bytes_to_buf through avant_buf_append), with p possibly derived
+ * from a string (push_slice): no stress point at its entry (W14b1,
+ * avant_gc_quiet_defer_enter). */
 static void buf_append_slow(AvantBuf *b, const void *p, int32_t n) {
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   buf_reserve(b, n);
   if (p && n > 0 && b->data) {
     memcpy(b->data + b->size, p, (size_t)n);

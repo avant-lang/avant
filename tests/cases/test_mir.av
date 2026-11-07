@@ -197,6 +197,12 @@ fn test_mir(c: Checks) {
     // do not depend on collections.
     log2 = "${dir}/selftest-gc.log"
     args2: Array(String) = []
+    // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
+    // out (a whole-heap check at a collection per helper call; W14b1).
+    if gc_stress_outer() {
+      args2.push("-u")
+      args2.push("AVANT_GC_STRESS")
+    }
     args2.push("AVANT_GC_VERIFY=1")
     args2.push("AVANT_YOUNG_MB=1")
     args2.push(compiler)

@@ -378,7 +378,7 @@ void avant_hash_clear(void *hp) {
 }
 
 void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
   if (h) {
     ensure_cap(h);
@@ -388,7 +388,7 @@ void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
 }
 
 void avant_hash_set_str(void *hp, const char *key, const char *val) {
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
   if (h) {
     ensure_cap(h);
@@ -398,7 +398,7 @@ void avant_hash_set_str(void *hp, const char *key, const char *val) {
 }
 
 void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val) {
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
   if (h) {
     ensure_cap(h);
@@ -529,7 +529,7 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   clamp_slice(s, start, stop, &p, &n);
   uint32_t hv = hash_bytes(p, n);
   int32_t i = 0;
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   if (lookup_bytes(h, p, n, hv, &i)) {
     int32_t c = ((int32_t *)h->vals)[i] + 1;
     ((int32_t *)h->vals)[i] = c;

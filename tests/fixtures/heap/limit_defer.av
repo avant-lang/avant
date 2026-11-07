@@ -1,0 +1,70 @@
+// C32 (Stage 28 W14b1): under AVANT_HEAP_MAX_MB, an allocation that
+// found no room under the limit ran a full collection even inside a
+// defer region (place's heap-limit retry), where a runtime helper holds
+// fresh objects the collector cannot see, and a large allocation there
+// died with "heap limit". avant_str_split keeps its parts in a malloc'ed
+// items[] inside one defer region (C35's fix), so a full collection there
+// swept the parts made before it and later parts reused their lines. A
+// live set close to the limit is built once; then every round splits a
+// 20,000-part text, so the limit is reached inside the split. Before the
+// fix: 9,482 bad parts at AVANT_HEAP_MAX_MB=24, 5,460 at 28, a heap-limit
+// death at 32 (in the default environment and under AVANT_NURSERY=0).
+// Now the allocation proceeds past the limit and the full collection
+// runs after the region. Every line prints 0.
+
+fn text_of(n: Int): String {
+  b = buf_new()
+  i = 0
+  while i < n {
+    if i > 0 {
+      b.push_str(" ")
+    }
+    b.push_str("part-")
+    b.push_fmt_i(i)
+    i = i + 1
+  }
+  b.to_s
+}
+
+fn check(parts: Array(String), n: Int): Int {
+  if parts.size != n {
+    return n
+  }
+  bad = 0
+  k = 0
+  while k < n {
+    if parts[k] != "part-${k}" {
+      bad = bad + 1
+    }
+    k = k + 1
+  }
+  bad
+}
+
+fn main {
+  keep: Array(String) = []
+  i = 0
+  while i < 400000 {
+    keep.push("live-${i}")
+    i = i + 1
+  }
+  n = 20000
+  text = text_of(n)
+  bad = 0
+  r = 0
+  while r < 60 {
+    parts = text.split(" ")
+    bad = bad + check(parts, n)
+    r = r + 1
+  }
+  live_bad = 0
+  i = 0
+  while i < keep.size {
+    if keep[i] != "live-${i}" {
+      live_bad = live_bad + 1
+    }
+    i = i + 1
+  }
+  puts("split bad: ${bad}")
+  puts("live bad: ${live_bad}")
+}

@@ -20,6 +20,33 @@ int g_collecting;
 
 int g_nursery_off;
 
+/* AVANT_GC_STRESS=1 (Stage 28 W14b1, gc-design.md §4.2 item 1, the
+ * minimal step): a young collection at every outermost
+ * avant_gc_defer_enter and at every avant_alloc called from runtime C
+ * (avant_alloc_c), in unshared programs with the nursery on. With the
+ * copying nursery a young collection moves every reached young object,
+ * so a helper that holds a young reference the collector does not know
+ * across one of these points reads a moved or freed object at once. */
+int g_stress;
+static int g_stress_now;
+
+/* Nonzero while runtime C has entered the collector (avant_alloc_c, a
+ * stress point at a defer entry): only then does a young collection run
+ * the conservative C-stack rewrite (avant_gc_young.c, C37). */
+__thread int g_c_entry;
+
+/* C32 (Stage 28 W14b1, gc-design.md §5.4): an allocation inside a no-GC
+ * (defer) region that went past AVANT_HEAP_MAX_MB. The full collection
+ * it needed runs at the first collection point after the region: the
+ * next gc_maybe_collect, which the allocation fast paths (C and inline)
+ * reach because they stay off while this is set. */
+int g_limit_pending;
+
+void gc_limit_collect_pending(void) {
+  g_limit_pending = 1;
+  gc_fast_clear();
+}
+
 uint64_t avant_young_bytes;
 
 /* 0 when AVANT_YOUNG_MB pinned the threshold (tests). */
@@ -142,6 +169,9 @@ void gc_collect(int full) {
   g_stats.collections++;
   if (g_verify) {
     gc_verify_no_stale_marks();
+    if (!full) {
+      gc_verify_remembered();
+    }
   }
   g_live = 0;
   g_work_n = 0;
@@ -166,6 +196,11 @@ void gc_collect(int full) {
     if (!g_young_adapt) {
       g_stats.young_collections++;
       gc_young_copy_out(1);
+    } else if (g_stress_now) {
+      /* A stress point copies: no survival probe, no pause, no sizing
+       * decision, so every stress point moves what it reaches. */
+      g_stats.young_collections++;
+      gc_young_copy_out(0);
     } else {
       used = g_nursery_held;
       if (used >= STICKY_MIN) {
@@ -263,15 +298,17 @@ void gc_collect(int full) {
       }
       gc_defrag_release();
     }
+    /* Dead and clean remembered entries leave the set (C33, O9). */
+    gc_rem_full_scrub();
     gc_sweep_large();
     gc_filter_blocks(&g_mature, gc_keep_if_live);
     gc_filter_blocks(&g_nursery, gc_keep_if_live);
     gc_filter_blocks(&g_from, gc_keep_if_live);
     g_mark_sum = 0;
+    /* O28: the young bytes that survived, nursery blocks only. A
+     * from-space block's live objects are pinned survivors promoted in
+     * place (D205): mature, not young. */
     for (b = g_nursery; b; b = b->next) {
-      gc_foreach_block_object(b, gc_sum_marked_one);
-    }
-    for (b = g_from; b; b = b->next) {
       gc_foreach_block_object(b, gc_sum_marked_one);
     }
     g_nursery_held = g_mark_sum;
@@ -316,6 +353,11 @@ void gc_maybe_collect(void) {
   if (g_collecting || g_gc_defer) {
     return;
   }
+  if (g_limit_pending) {
+    g_limit_pending = 0;
+    gc_collect(1);
+    return;
+  }
   /*
    * Stage 17: myc-llvm spills live pointer SSA into avant_gc_root
    * slots around CALL, so young copy can rewrite them. Full collection
@@ -342,6 +384,20 @@ void gc_maybe_collect(void) {
   } else if (g_nursery_held >= g_young_bytes) {
     gc_collect(0);
   }
+}
+
+/* A stress point (AVANT_GC_STRESS=1). The caller holds g_world. Only
+ * where a collection may run: not inside a defer region, not during a
+ * collection, not in a shared program (no thread is stopped, D191), and
+ * only with a young generation to collect. */
+void gc_stress_point(void) {
+  if (!g_stress || g_collecting || g_gc_defer || g_nursery_off ||
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+    return;
+  }
+  g_stress_now = 1;
+  gc_collect(0);
+  g_stress_now = 0;
 }
 
 void gc_init_slow(void) {
@@ -408,6 +464,10 @@ void gc_init_slow(void) {
     g_reserve_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
   }
   g_verify = getenv("AVANT_GC_VERIFY") != NULL;
+  {
+    const char *v = getenv("AVANT_GC_STRESS");
+    g_stress = v && v[0] == '1' && v[1] == 0;
+  }
   /* The heap's address range (W14a1): reserved once, here, so a refusal
    * is met at start-up (halving down to 1 GiB) and not at a block. */
   gc_heap_reserve();

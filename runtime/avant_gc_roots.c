@@ -250,7 +250,7 @@ void avant_unpin(void *payload) {
   pthread_mutex_unlock(&g_world);
 }
 
-void avant_gc_defer_enter(void) {
+static void defer_enter(int collecting_row) {
   gc_init();
   gc_fast_clear();
   pthread_mutex_lock(&g_world);
@@ -269,11 +269,41 @@ void avant_gc_defer_enter(void) {
    * slots and leave the C args dangling. Full collect stays non-moving
    * (AVANT_NURSERY=0), so it is still safe at this boundary.
    */
-  if (g_gc_defer == 0 && g_nursery_off) {
+  if (g_gc_defer == 0 && (g_nursery_off || (g_limit_pending && collecting_row))) {
+    /* With the nursery on, only a collection C32 left pending runs
+     * here, and not at a quiet row's entry: a full collection moves no
+     * young object and keeps every block this thread's stack names
+     * (C31), and the caller of a collecting row has rooted what it
+     * holds. */
     gc_maybe_collect();
+  }
+  /* AVANT_GC_STRESS=1: a young collection at every outermost entry
+   * (W14b1). It moves, so it proves that no helper holds a reference
+   * the collector cannot see or rewrite when its region begins. */
+  if (g_gc_defer == 0 && g_stress && collecting_row) {
+    g_c_entry++;
+    gc_stress_point();
+    g_c_entry--;
   }
   g_gc_defer += 1;
   pthread_mutex_unlock(&g_world);
+}
+
+void avant_gc_defer_enter(void) {
+  defer_enter(1);
+}
+
+/* The outermost defer region of a helper the call table calls *quiet*
+ * (compiler/mir/runtime.av: the hash setters, avant_hash_inc_slice and
+ * the avant_buf_push_* rows). Its caller may hold a reference outside
+ * its slots across the call (V11/V12 ask for slots only across
+ * collecting calls), so no moving collection may run at its entry, and
+ * AVANT_GC_STRESS=1 has no stress point here (Stage 28 W14b1). The rest
+ * is avant_gc_defer_enter, including the full collection of the
+ * nursery-off mode. W15 makes these rows collecting calls (gc-design.md
+ * §5.1); then this entry goes. */
+void avant_gc_quiet_defer_enter(void) {
+  defer_enter(0);
 }
 
 void avant_gc_defer_leave(void) {

@@ -167,7 +167,21 @@ pub fn list_only: Bool {
 // avant_gc_stack.c), for the suite run under one GC environment (Stage 28
 // W12, O26: tools/gate.sh's GATE_GC_ENV runs one extra suite pass with it).
 pub fn gc_env_names: Array(String) {
-  ["AVANT_YOUNG_MB", "AVANT_HEAP_MAX_MB", "AVANT_HEAP_RESERVE_GB", "AVANT_NURSERY", "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_DEFRAG", "AVANT_GC_YOUNG_SIZING", "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE", "AVANT_GC_VERIFY", "AVANT_GC_STATS"]
+  ["AVANT_YOUNG_MB", "AVANT_HEAP_MAX_MB", "AVANT_HEAP_RESERVE_GB", "AVANT_NURSERY", "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_DEFRAG", "AVANT_GC_YOUNG_SIZING", "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE", "AVANT_GC_VERIFY", "AVANT_GC_STATS", "AVANT_GC_STRESS"]
+}
+
+// AVANT_GC_STRESS is set (non-empty) in this test's own environment (the
+// gate's GATE_GC_ENV=AVANT_GC_STRESS=1 pass, Stage 28 W14b1): a young
+// collection runs at every runtime helper's entry and at every runtime C
+// allocation, so a compiler-sized job (the compiler compiling or dumping
+// itself) or a verifier pass at every collection does not fit the
+// suite's time. Checks that run those skip themselves under it; the gate
+// builds and checks the compiler outside the GC environment.
+pub fn gc_stress_outer: Bool {
+  if v = env_get("AVANT_GC_STRESS") {
+    return v.size > 0
+  }
+  false
 }
 
 // The names of the collector's environment variables set (non-empty) in

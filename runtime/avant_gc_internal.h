@@ -367,6 +367,7 @@ extern uint8_t *g_rem_dirty;
 void gc_keep_add(void *obj);
 void gc_rem_scrub(void);
 void gc_rem_commit_kept(void);
+void gc_rem_full_scrub(void);
 
 /* avant_gc_young.c */
 extern int g_saw_pinned_nursery;
@@ -410,6 +411,7 @@ void count_c_stack_nursery(void);
 extern int g_verify;
 void gc_verify_young_copy(void);
 void gc_verify_no_stale_marks(void);
+void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 
 /* avant_gc_collect.c */
@@ -420,8 +422,13 @@ extern uint64_t g_mature_since_full;
 extern int g_reserve_mode;
 extern uint64_t g_copy_reserve;
 extern uint64_t g_live;
+extern int g_stress;
+extern __thread int g_c_entry;
+extern int g_limit_pending;
 void gc_collect(int full);
+void gc_limit_collect_pending(void);
 void gc_maybe_collect(void);
+void gc_stress_point(void);
 void gc_init_slow(void);
 
 /* avant_gc_stats.c */
