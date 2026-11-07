@@ -58,11 +58,17 @@
  */
 
 #define ALIGN 8
-#define LINE_SIZE 256
+#define LINE_SHIFT 8
+#define BLOCK_SHIFT 15
+#define CHUNK_SHIFT 22
+#define LINE_SIZE (1u << LINE_SHIFT)
 #define LINES_PER_BLOCK 128
 #define BLOCK_SIZE (LINE_SIZE * LINES_PER_BLOCK)
+#define CHUNK_SIZE (1u << CHUNK_SHIFT)
+#define BLOCKS_PER_CHUNK (CHUNK_SIZE / BLOCK_SIZE)
 #define START_WORDS 64
-#define BLOCK_HASH 4096
+#define HEAP_RESERVE_GB_DEFAULT 64
+#define HEAP_RESERVE_GB_MIN 1
 #define LARGE_HASH 4096
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
@@ -71,32 +77,71 @@
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 
-/* Numeric buffers at or above this size are young large objects.
- * They do not move, so a parallel loop can keep the address in a
- * register, and a young collection still frees them when unmarked.
- * 900 doubles is 7200 bytes: under LOS_LIMIT, but large enough that
- * copying the row is the slow path. */
+/* SCALAR_LOS_MIN: numeric (type-0) buffers at or above this size are
+ * young large objects. They do not move, so a parallel loop can keep
+ * the address in a register, and a young collection still frees them
+ * when unmarked. 900 doubles is 7200 bytes: under LOS_LIMIT, but large
+ * enough that copying the row is the slow path. */
 
-/* Survivors of a low-survival young collection are copied here, then the
- * block is retagged as nursery. Mature space is for objects that have
- * already survived a collection. */
+/* The spaces a block belongs to. SPACE_TO: survivors of a young
+ * collection are copied here, then the block is retagged as nursery.
+ * Mature space is for objects that have already survived. */
 
 #define SPACE_MATURE 0
 #define SPACE_NURSERY 1
 #define SPACE_FROM 2
 #define SPACE_TO 3
 
+/* The heap (Stage 28 W14a1, gc-design.md §2.1-2.3). One reserved
+ * address range (gc_heap_reserve, avant_gc_heap.c) of 4 MiB chunks,
+ * each 128 blocks of 32 KiB, each 128 lines of 256 bytes. Every
+ * per-block and per-line datum lives in a contiguous side table indexed
+ * by the block's number (offset from g_heap_base >> BLOCK_SHIFT): the
+ * block records (g_blocks, one Block of 64 bytes each), the line marks
+ * (g_lines, one byte per line) and the object-start bits (g_starts, one
+ * bit per 8-byte granule, 512 bytes per block). The chunk map
+ * (g_chunks) has one GcChunk per chunk. Everything is reserved
+ * PROT_NONE and committed chunk by chunk, data and the side tables'
+ * slices together, so [g_heap_base, g_heap_base + g_heap_committed) is
+ * exactly the committed chunks and one compare says whether an address
+ * can be in a block. No block descriptor is allocated, no block hash
+ * exists, and a lookup is address arithmetic.
+ *
+ * A block record is ABI by one field: the inline allocation path in
+ * generated code stores its new cursor at offset 32 of the record
+ * avant_gc_block points to (mir.md §5.5), so bump stays at offset 32.
+ * line_mark and start point at the block's slices of g_lines and
+ * g_starts (set when its chunk is committed; never changed), so code
+ * indexes them as before. in_use is 1 while the block belongs to a
+ * space; a free or cached block is not a heap block for any lookup. */
 typedef struct Block {
-  struct Block *hash_next;
-  struct Block *next;
-  uint8_t *base;
-  uint8_t space;
-  uint16_t search;
-  uint8_t *bump;
-  uint8_t *limit;
-  uint8_t line_mark[LINES_PER_BLOCK];
-  uint64_t start[START_WORDS];
+  struct Block *next;  /* 0: the space's list, or the free list */
+  uint8_t *base;       /* 8: the block's first byte (fixed) */
+  uint8_t *line_mark;  /* 16: LINES_PER_BLOCK bytes in g_lines */
+  uint8_t space;       /* 24 */
+  uint8_t in_use;      /* 25 */
+  uint16_t search;     /* 26: the hole search cursor, in lines */
+  uint32_t pad_;       /* 28 */
+  uint8_t *bump;       /* 32: ABI (the inline allocation path) */
+  uint8_t *limit;      /* 40 */
+  uint64_t *start;     /* 48: START_WORDS words in g_starts */
+  uint64_t spare_;     /* 56 */
 } Block;
+
+_Static_assert(offsetof(Block, bump) == 32, "Block.bump is ABI at offset 32");
+_Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
+
+/* One chunk's entry in the chunk map. kind: CHUNK_FREE (not committed)
+ * or CHUNK_SMALL (blocks of small objects; large objects are still
+ * malloc'ed in W14a1, avant_gc_los.c). used: its blocks in use. */
+#define CHUNK_FREE 0
+#define CHUNK_SMALL 1
+typedef struct GcChunk {
+  uint8_t kind;
+  uint8_t pad_;
+  uint16_t used;
+  uint32_t pad2_;
+} GcChunk;
 
 typedef struct Large {
   struct Large *next;
@@ -206,7 +251,16 @@ typedef struct BlockSet {
 #define AVANT_FLAG_LOS_KEEP 128u
 
 /* avant_gc_heap.c */
-extern Block *g_bht[BLOCK_HASH];
+extern uint8_t *g_heap_base;
+extern uint64_t g_heap_committed;
+extern uint64_t g_heap_reserved;
+extern Block *g_blocks;
+extern uint64_t *g_starts;
+extern uint8_t *g_lines;
+extern GcChunk *g_chunks;
+void gc_heap_reserve(void);
+Block *gc_block_take(void);
+void gc_block_give(Block *b);
 extern Block *g_mature;
 extern Block *g_nursery;
 extern Block *g_from;
@@ -259,7 +313,7 @@ extern int g_young_large_n;
 extern int g_los_eager_hold;
 size_t gc_large_chunk(const Large *L);
 void gc_los_spare_drop(void);
-void gc_free_large(Large *L);
+void gc_release_large(Large *L);
 void gc_reclaim_young_large(void);
 void gc_sweep_large(void);
 void *gc_los_alloc(size_t payload, uint32_t type_id);
@@ -306,13 +360,11 @@ void gc_defrag_evacuate(uint64_t live_lines_this);
 void gc_defrag_release(void);
 
 /* avant_gc_stack.c */
-extern int g_stack_scan;
 extern int g_c_stack_pass;
 extern int g_c_stack_rewrite;
 extern uint64_t g_c_stack_left;
 extern BlockSet g_cstack_blocks;
 void gc_note_c_stack_blocks(void);
-void copy_from_c_stack(void);
 void rewrite_c_stack(void);
 void count_c_stack_nursery(void);
 
@@ -419,19 +471,34 @@ static inline size_t hash_ptr(void *p) {
   return (size_t)x;
 }
 
-static inline size_t block_hash(const void *p) {
-  return ((uintptr_t)p / BLOCK_SIZE) % BLOCK_HASH;
+/* O(1) lookups (gc-design.md §2.3). An address is in the committed
+ * heap iff its offset from g_heap_base is below g_heap_committed (an
+ * address below the base wraps to a large offset); its chunk, block and
+ * line are that offset shifted. block_of answers only for a block in
+ * use, as the block hash it replaced did. */
+static inline int heap_offset(const void *p, uintptr_t *off) {
+  *off = (uintptr_t)p - (uintptr_t)g_heap_base;
+  return *off < g_heap_committed;
+}
+
+static inline GcChunk *chunk_of(const void *p) {
+  uintptr_t off;
+  return heap_offset(p, &off) ? &g_chunks[off >> CHUNK_SHIFT] : NULL;
 }
 
 static inline Block *block_of(const void *p) {
-  size_t k = block_hash(p);
+  uintptr_t off;
   Block *b;
-  for (b = g_bht[k]; b; b = b->hash_next) {
-    if (p >= (void *)b->base && p < (void *)(b->base + BLOCK_SIZE)) {
-      return b;
-    }
+  if (!heap_offset(p, &off)) {
+    return NULL;
   }
-  return NULL;
+  b = &g_blocks[off >> BLOCK_SHIFT];
+  return b->in_use ? b : NULL;
+}
+
+static inline uint8_t *line_mark_of(const void *p) {
+  uintptr_t off;
+  return heap_offset(p, &off) ? &g_lines[off >> LINE_SHIFT] : NULL;
 }
 
 static inline void set_start(Block *b, size_t off) {

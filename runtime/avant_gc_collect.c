@@ -364,13 +364,6 @@ void gc_init_slow(void) {
     }
   }
   {
-    const char *v = getenv("AVANT_NURSERY_STACK");
-    /* Off unless set to 1. Conservative rewrite of LLVM spill slots
-     * smashes packed i32s; pin-only misses spills. Precise roots are
-     * the shadow stack after myc-llvm store-before-gc_root. */
-    g_stack_scan = v && v[0] == '1' && v[1] == 0;
-  }
-  {
     const char *v = getenv("AVANT_NURSERY_DISCARD");
     /* Product path discards unpinned from-space after young copy.
      * Set to 0 to park (diagnostic). */
@@ -407,6 +400,9 @@ void gc_init_slow(void) {
     g_reserve_mode = (v && v[0] == '0' && v[1] == 0) ? 0 : 1;
   }
   g_verify = getenv("AVANT_GC_VERIFY") != NULL;
+  /* The heap's address range (W14a1): reserved once, here, so a refusal
+   * is met at start-up (halving down to 1 GiB) and not at a block. */
+  gc_heap_reserve();
   if (getenv("AVANT_GC_STATS")) {
     atexit(gc_print_stats);
   }

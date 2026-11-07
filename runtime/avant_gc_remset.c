@@ -62,24 +62,6 @@ static void rem_add(void *obj) {
   }
 }
 
-static void rem_forget(void) {
-  uint32_t i;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
-      avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
-    }
-  }
-  g_rem_n = 0;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
-}
-
 void gc_keep_add(void *obj) {
   if (g_keep_n == g_keep_cap) {
     g_keep_cap = g_keep_cap ? g_keep_cap * 2 : 64;
@@ -131,7 +113,7 @@ void gc_rem_scrub(void) {
       /* A dead expression buffer is a large object. Leaving it on the
        * large list makes every missed pointer walk that list. */
       if (L) {
-        gc_free_large(L);
+        gc_release_large(L);
       } else {
         h->flags &= (uint16_t)~AVANT_FLAG_REM;
       }

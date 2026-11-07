@@ -353,9 +353,6 @@ void gc_gen_young_copy(void) {
       pthread_mutex_unlock(&g_rem_mu);
     }
   }
-  if (!g_probe) {
-    copy_from_c_stack();
-  }
   /*
    * D34: pinned objects are mark roots. Full collect already walks
    * g_pins; young copy must too. C globals (argv, interned bytes)
