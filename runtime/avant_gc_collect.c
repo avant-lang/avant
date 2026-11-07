@@ -300,10 +300,10 @@ void gc_collect(int full) {
     gc_filter_blocks(&g_nursery, gc_keep_if_live);
     gc_filter_blocks(&g_from, gc_keep_if_live);
     g_mark_sum = 0;
+    /* O28: the young bytes that survived, nursery blocks only. A
+     * from-space block's live objects are pinned survivors promoted in
+     * place (D205): mature, not young. */
     for (b = g_nursery; b; b = b->next) {
-      gc_foreach_block_object(b, gc_sum_marked_one);
-    }
-    for (b = g_from; b; b = b->next) {
       gc_foreach_block_object(b, gc_sum_marked_one);
     }
     g_nursery_held = g_mark_sum;
