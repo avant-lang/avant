@@ -10,6 +10,7 @@
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
+ *   avant_gc_stats.c
  *   avant_gc_stackmap.c
  *   avant_rt.c
  * They fold into one avant_rt.o (runtime/build.sh), which keeps global
@@ -187,6 +188,65 @@ typedef struct BlockSet {
  * stack stays young so the next collection can free it. */
 #define AVANT_FLAG_LOS_KEEP 128u
 
+/* avant_gc_stats.c */
+extern uint64_t g_interior_slots;
+extern uint64_t g_peak_live;
+extern uint64_t g_root_calls;
+extern uint64_t g_reload_calls;
+extern uint64_t g_enter_calls;
+extern uint64_t g_rem_scans;
+extern uint64_t g_rem_entries;
+extern uint64_t g_rem_fields;
+extern uint64_t g_rem_peak;
+extern uint64_t g_rem_adds;
+extern uint64_t g_rem_cleared;
+extern uint64_t g_def_blocks;
+extern uint64_t g_def_live_lines;
+extern uint64_t g_def_wasted;
+extern uint64_t g_def_hist[6];
+extern uint64_t g_def_evac_blocks;
+extern uint64_t g_def_evac_bytes;
+extern uint64_t g_def_freed_blocks;
+extern uint64_t g_def_skipped;
+extern uint64_t g_srv_probes;
+extern uint64_t g_srv_used;
+extern uint64_t g_srv_surv;
+extern uint64_t g_srv_min;
+extern uint64_t g_srv_max;
+extern uint64_t g_srv_hist[6];
+extern uint64_t g_yng_min;
+extern uint64_t g_yng_max;
+extern uint64_t g_cpy_peak;
+extern uint64_t g_pk_nursery;
+extern uint64_t g_pk_mature;
+extern uint64_t g_pk_from;
+extern uint64_t g_pk_to;
+extern uint64_t g_pk_large;
+extern uint64_t g_pk_cache;
+extern uint64_t g_los_allocs;
+extern uint64_t g_los_alloc_bytes;
+extern uint64_t g_los_callocs;
+extern uint64_t g_los_spare_hits;
+extern uint64_t g_los_spare_cached;
+extern uint64_t g_los_spare_dropped;
+extern uint64_t g_los_freed;
+extern uint64_t g_los_scalar_allocs;
+extern uint64_t g_los_scalar_bytes;
+extern uint64_t g_los_big_allocs;
+extern uint64_t g_los_big_bytes;
+extern uint64_t g_los_young_allocs;
+extern uint64_t g_los_young_bytes;
+extern uint64_t g_los_mature_allocs;
+extern uint64_t g_los_mature_bytes;
+extern uint64_t g_los_hist[6];
+extern uint64_t g_los_live_sum;
+extern uint64_t g_los_live_peak;
+extern uint64_t g_los_live_samples;
+extern uint64_t g_los_promoted;
+extern uint64_t g_los_promoted_bytes;
+extern uint64_t g_sticky_grows;
+void gc_print_stats(void);
+
 /* avant_gc_stackmap.c */
 extern int g_stackmap_walk;
 extern uint64_t g_sm_walks;
@@ -204,10 +264,15 @@ void count_c_stack_nursery(void);
 extern int g_inited;
 extern int g_saw_pinned_nursery;
 extern Block *g_bht[BLOCK_HASH];
+extern Large *g_large;
 extern Large *g_large_ht[LARGE_HASH];
+extern Large *g_los_spare;
 extern __thread ThreadReg g_self_reg;
 extern atomic_int g_avant_shared;
 extern int g_stack_scan;
+extern uint32_t g_rem_n;
+extern uint64_t g_mature_since_full;
+extern uint64_t g_copy_reserve;
 extern TypeMap g_types[MAX_TYPES];
 extern uint8_t g_type_set[MAX_TYPES];
 extern uint64_t g_live;
@@ -215,6 +280,7 @@ void work_push(void *p);
 void fwd_put(void *from, void *to);
 void *fwd_get(void *from);
 size_t obj_total(const AvantHeader *h);
+size_t gc_large_chunk(const Large *L);
 int is_heap_payload(void *p, Block **ob, Large **ol);
 void mark_object_lines(void *p);
 void *copy_nursery(void *p);

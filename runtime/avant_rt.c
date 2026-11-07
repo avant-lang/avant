@@ -60,7 +60,7 @@ static void gc_fast_clear(void);
 static Block *g_alloc_cur[4];
 static uint8_t g_alloc_fresh[4];
 
-static Large *g_large;
+Large *g_large;
 Large *g_large_ht[LARGE_HASH];
 /* The address range [g_large_lo, g_large_hi) covers every large chunk
  * ever put on g_large (los_alloc). It only grows: a chunk that
@@ -72,7 +72,7 @@ Large *g_large_ht[LARGE_HASH];
 static uint8_t *g_large_lo = (uint8_t *)UINTPTR_MAX;
 static uint8_t *g_large_hi;
 /* One dead scalar large buffer, kept for the next same-sized alloc. */
-static Large *g_los_spare;
+Large *g_los_spare;
 /* Bytes in young scalar large objects. They do not move. A young
  * collection frees the ones the mark does not reach. */
 static uint64_t g_young_large;
@@ -97,12 +97,11 @@ static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_gc_defer;
 int g_stack_scan;
-static uint64_t g_interior_slots;
 
 static PinEnt *g_pins;
 
 static void **g_remset;
-static uint32_t g_rem_n;
+uint32_t g_rem_n;
 static uint32_t g_rem_cap;
 /* Workers call avant_barrier without the world lock (a fresh array
  * header). The remembered-set realloc is shared. */
@@ -122,27 +121,8 @@ uint64_t avant_young_bytes;
 static int g_young_adapt;
 uint64_t avant_nursery_held;
 
-static uint64_t g_mature_since_full;
-static uint64_t g_peak_live;
-/* Root bookkeeping call counts (Collector II Wave 0): every call to
- * avant_gc_root, avant_gc_reload, and avant_gc_enter, so a profile can
- * split call volume from per-call cost. Reported by AVANT_GC_STATS. */
-static uint64_t g_root_calls;
-static uint64_t g_reload_calls;
-static uint64_t g_enter_calls;
-/* Remembered-set observability (Collector II Wave 2): scans counts every
- * remembered-set scan in gen_young_copy (probe and real passes alike),
- * entries/fields sum the set size and field slots visited at each scan,
- * peak is the largest frontier seen at a scan start, adds counts
- * successful rem_add inserts, cleared counts frontier evictions.
- * Reported by AVANT_GC_STATS. Internal only: not part of AvantGcStats,
- * whose field order is an ABI for generated code. */
-static uint64_t g_rem_scans;
-static uint64_t g_rem_entries;
-static uint64_t g_rem_fields;
-static uint64_t g_rem_peak;
-static uint64_t g_rem_adds;
-static uint64_t g_rem_cleared;
+uint64_t g_mature_since_full;
+
 /* Frontier clearing (Collector II Wave 2): AVANT_GC_REM_FRONTIER=0
  * disables it. Dirty is tracked during the remembered scan itself, per
  * set index, so no second field walk is needed. Hysteresis (evict after
@@ -152,89 +132,14 @@ static uint64_t g_rem_cleared;
  * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
 static int g_rem_mode = 1;
 static uint8_t *g_rem_dirty;
-/* Mature defragmentation observability (Collector II Wave 3, step 1):
- * per-block live-line histogram built from the line marks a full
- * collection already makes. Buckets by live lines in a 128-line block:
- * 0, 1-32, 33-64, 65-96, 97-127, 128. Wasted bytes count only partly
- * live blocks ((128 - live) * LINE_SIZE); empty blocks are freed whole
- * by the existing sweep and are not fragmentation waste. Counters are
- * cumulative over full collections and runtime-internal. */
-static uint64_t g_def_blocks;
-static uint64_t g_def_live_lines;
-static uint64_t g_def_wasted;
-static uint64_t g_def_hist[6];
+
 /* Evacuation (step 2): AVANT_GC_DEFRAG=0 disables it, histogram stays
  * on. Candidates are mature blocks at or below 64 of 128 live lines
  * with no pinned object and no word of the collecting thread's stack
  * naming them (C31, note_c_stack_blocks); per full collection the live lines evacuated
  * stay at or below 25% of that mark's mature live lines, worst first. */
 static int g_defrag_mode = 1;
-static uint64_t g_def_evac_blocks;
-static uint64_t g_def_evac_bytes;
-static uint64_t g_def_freed_blocks;
-static uint64_t g_def_skipped;
-/* Survival and peak-heap observability (Collector II Wave 4, step 1):
- * probes counts adaptive survival probes, used/surv sum the nursery
- * bytes in use and the surviving bytes at each probe, min/max are the
- * extreme surviving-byte readings, and hist buckets the surv/used
- * ratio in percent (0, 1-10, 10-25, 25-50, 50-75, 75-100) so phase
- * oscillation is visible. yng_min/yng_max bound the adaptive young
- * threshold over the run. cpy_peak is the largest from-space plus
- * to-space object bytes held during one young copy. The pk_* fields
- * snapshot the heap composition (block bytes per space, large-object
- * bytes, cached block bytes) at the moment peak_heap was last set.
- * Reported by AVANT_GC_STATS. Internal only, like the rem/def counters. */
-static uint64_t g_srv_probes;
-static uint64_t g_srv_used;
-static uint64_t g_srv_surv;
-static uint64_t g_srv_min;
-static uint64_t g_srv_max;
-static uint64_t g_srv_hist[6];
-static uint64_t g_yng_min;
-static uint64_t g_yng_max;
-static uint64_t g_cpy_peak;
-static uint64_t g_pk_nursery;
-static uint64_t g_pk_mature;
-static uint64_t g_pk_from;
-static uint64_t g_pk_to;
-static uint64_t g_pk_large;
-static uint64_t g_pk_cache;
-/* Large-object observability (Collector II Wave 5, step 1): allocs and
- * alloc_bytes count every los_alloc by chunk bytes (the heap charge for
- * a large object); callocs counts fresh calloc calls, spare_hits counts
- * exact-size spare reuses, spare_cached counts dead young Bytes buffers
- * kept into the single spare slot, spare_dropped counts spares freed
- * unused, and freed counts large objects returned to free. scalar counts
- * Bytes allocations that are large only through SCALAR_LOS_MIN, big
- * counts allocations large through LOS_LIMIT. young/mature split the
- * birth space. hist buckets payload bytes: under 16 KiB, 16-64 KiB,
- * 64-256 KiB, 256 KiB-1 MiB, 1-4 MiB, at least 4 MiB. live samples the
- * marked large bytes at the liveness decision of each collection
- * (reclaim_young_large for young, sweep_large for full): sum over
- * samples, peak the largest single sample. promoted counts young large
- * objects tenured by promote_young_large. Reported by AVANT_GC_STATS.
- * Internal only, like the rem/def/srv counters. */
-static uint64_t g_los_allocs;
-static uint64_t g_los_alloc_bytes;
-static uint64_t g_los_callocs;
-static uint64_t g_los_spare_hits;
-static uint64_t g_los_spare_cached;
-static uint64_t g_los_spare_dropped;
-static uint64_t g_los_freed;
-static uint64_t g_los_scalar_allocs;
-static uint64_t g_los_scalar_bytes;
-static uint64_t g_los_big_allocs;
-static uint64_t g_los_big_bytes;
-static uint64_t g_los_young_allocs;
-static uint64_t g_los_young_bytes;
-static uint64_t g_los_mature_allocs;
-static uint64_t g_los_mature_bytes;
-static uint64_t g_los_hist[6];
-static uint64_t g_los_live_sum;
-static uint64_t g_los_live_peak;
-static uint64_t g_los_live_samples;
-static uint64_t g_los_promoted;
-static uint64_t g_los_promoted_bytes;
+
 /* Survival-capped growth and copy reserve (Collector II Wave 4, step 2,
  * as amended by Q-W4-6): sticky growth of the young threshold is capped
  * at YOUNG_SURVIVAL_FACTOR times the probe's measured survival, plus
@@ -252,7 +157,7 @@ static uint64_t g_los_promoted_bytes;
  * AVANT_GC_COPY_RESERVE=0. */
 static int g_sizing_mode = 1;
 static int g_reserve_mode = 1;
-static uint64_t g_copy_reserve;
+uint64_t g_copy_reserve;
 #define YOUNG_SURVIVAL_FACTOR 1.5
 #define YOUNG_SIZING_FLOOR (4ull * 1024ull * 1024ull)
 #define YOUNG_SIZING_SLACK (1ull * 1024ull * 1024ull)
@@ -264,7 +169,7 @@ static uint64_t g_copy_reserve;
  * large keeps today's spacing. */
 static uint64_t g_full_trigger = FULL_BYTES;
 static uint64_t g_to_bytes;
-static uint64_t g_sticky_grows;
+
 static int g_probe;
 static int g_force_tenure;
 static int g_from_mature;
@@ -311,8 +216,6 @@ static uint64_t g_heap_bytes;
 static uint64_t g_heap_max;
 uint64_t g_live;
 static uint64_t g_last_full_at;
-
-AvantGcStats avant_g_stats;
 
 /* Nursery allocations taken by generated code without a call. */
 uint64_t avant_inline_allocs;
@@ -555,7 +458,7 @@ static void large_hash_del(Large *L) {
   }
 }
 
-static size_t large_chunk(const Large *L) {
+size_t gc_large_chunk(const Large *L) {
   return align_up(sizeof(Large) + (size_t)L->header.size);
 }
 
@@ -564,7 +467,7 @@ static void los_spare_drop(void) {
   if (!g_los_spare) {
     return;
   }
-  chunk = large_chunk(g_los_spare);
+  chunk = gc_large_chunk(g_los_spare);
   free(g_los_spare);
   g_los_spare = NULL;
   g_heap_bytes -= chunk;
@@ -586,7 +489,7 @@ static void unlink_large(Large *L) {
 
 /* keep_bytes leaves the allocation charged, for the spare slot. */
 static void account_large_gone(Large *L, int keep_bytes) {
-  size_t chunk = large_chunk(L);
+  size_t chunk = gc_large_chunk(L);
   if (L->header.flags & AVANT_FLAG_YOUNG) {
     if (g_young_large >= chunk) {
       g_young_large -= chunk;
@@ -628,7 +531,7 @@ static void los_note_live(void) {
   uint64_t live = 0;
   for (L = g_large; L; L = L->next) {
     if (L->header.flags & AVANT_FLAG_MARKED) {
-      live += (uint64_t)large_chunk(L);
+      live += (uint64_t)gc_large_chunk(L);
     }
   }
   g_los_live_samples++;
@@ -639,7 +542,7 @@ static void los_note_live(void) {
 }
 
 static void promote_young_large(Large *L) {
-  size_t chunk = large_chunk(L);
+  size_t chunk = gc_large_chunk(L);
   g_los_promoted++;
   g_los_promoted_bytes += (uint64_t)chunk;
   L->header.flags = (uint16_t)(L->header.flags &
@@ -672,7 +575,7 @@ static void reclaim_young_large(void) {
     if (L->header.flags & (AVANT_FLAG_PINNED | AVANT_FLAG_LOS_KEEP)) {
       continue;
     }
-    stay_bytes += large_chunk(L);
+    stay_bytes += gc_large_chunk(L);
   }
   int promote_stay = stay_bytes >= g_young_bytes;
   L = g_large;
@@ -2999,124 +2902,6 @@ static void account_alloc(size_t total, int nursery) {
   note_peak();
 }
 
-static uint64_t g_los_now;
-static uint64_t g_los_now_bytes;
-static uint64_t g_los_spare_bytes;
-
-static void print_stats(void) {
-  {
-    Large *L;
-    g_los_now = 0;
-    g_los_now_bytes = 0;
-    for (L = g_large; L; L = L->next) {
-      g_los_now++;
-      g_los_now_bytes += (uint64_t)large_chunk(L);
-    }
-    g_los_spare_bytes = g_los_spare ? (uint64_t)large_chunk(g_los_spare) : 0;
-  }
-  fprintf(stderr,
-          "avant gc: collections=%llu young=%llu full=%llu "
-          "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
-          "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu "
-          "rem_scans=%llu rem_entries=%llu rem_fields=%llu rem_peak=%llu rem_now=%llu rem_adds=%llu rem_cleared=%llu "
-          "def_blocks=%llu def_live_lines=%llu def_wasted=%llu def_hist=%llu,%llu,%llu,%llu,%llu,%llu "
-          "def_evac_blocks=%llu def_evac_bytes=%llu def_freed_blocks=%llu def_skipped=%llu "
-          "srv_probes=%llu srv_used=%llu srv_surv=%llu srv_min=%llu srv_max=%llu srv_hist=%llu,%llu,%llu,%llu,%llu,%llu "
-          "yng_min=%llu yng_max=%llu cpy_peak=%llu pk_nursery=%llu pk_mature=%llu pk_from=%llu pk_to=%llu pk_large=%llu pk_cache=%llu srv_reserve=%llu "
-          "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu\n",
-          (unsigned long long)g_stats.collections,
-          (unsigned long long)g_stats.young_collections,
-          (unsigned long long)g_stats.full_collections,
-          (unsigned long long)g_stats.allocated_bytes,
-          (unsigned long long)g_stats.copied_bytes,
-          (unsigned long long)g_stats.live_bytes,
-          (unsigned long long)g_peak_live,
-          (unsigned long long)g_stats.peak_heap,
-          (unsigned long long)g_interior_slots,
-          (unsigned long long)g_sm_walks,
-          (unsigned long long)g_sm_hits,
-          g_sm_nsites,
-          (unsigned long long)g_sm_leftover,
-          (unsigned long long)g_sticky_grows,
-          (unsigned long long)(g_young_bytes / (1024ull * 1024ull)),
-          (unsigned long long)g_nursery_held,
-          (unsigned long long)g_mature_since_full,
-          (unsigned long long)g_root_calls,
-          (unsigned long long)g_reload_calls,
-          (unsigned long long)g_enter_calls,
-          (unsigned long long)avant_inline_allocs,
-          (unsigned long long)g_rem_scans,
-          (unsigned long long)g_rem_entries,
-          (unsigned long long)g_rem_fields,
-          (unsigned long long)g_rem_peak,
-          (unsigned long long)g_rem_n,
-          (unsigned long long)g_rem_adds,
-          (unsigned long long)g_rem_cleared,
-          (unsigned long long)g_def_blocks,
-          (unsigned long long)g_def_live_lines,
-          (unsigned long long)g_def_wasted,
-          (unsigned long long)g_def_hist[0],
-          (unsigned long long)g_def_hist[1],
-          (unsigned long long)g_def_hist[2],
-          (unsigned long long)g_def_hist[3],
-          (unsigned long long)g_def_hist[4],
-          (unsigned long long)g_def_hist[5],
-          (unsigned long long)g_def_evac_blocks,
-          (unsigned long long)g_def_evac_bytes,
-          (unsigned long long)g_def_freed_blocks,
-          (unsigned long long)g_def_skipped,
-          (unsigned long long)g_srv_probes,
-          (unsigned long long)g_srv_used,
-          (unsigned long long)g_srv_surv,
-          (unsigned long long)g_srv_min,
-          (unsigned long long)g_srv_max,
-          (unsigned long long)g_srv_hist[0],
-          (unsigned long long)g_srv_hist[1],
-          (unsigned long long)g_srv_hist[2],
-          (unsigned long long)g_srv_hist[3],
-          (unsigned long long)g_srv_hist[4],
-          (unsigned long long)g_srv_hist[5],
-          (unsigned long long)g_yng_min,
-          (unsigned long long)g_yng_max,
-          (unsigned long long)g_cpy_peak,
-          (unsigned long long)g_pk_nursery,
-          (unsigned long long)g_pk_mature,
-          (unsigned long long)g_pk_from,
-          (unsigned long long)g_pk_to,
-          (unsigned long long)g_pk_large,
-          (unsigned long long)g_pk_cache,
-          (unsigned long long)g_copy_reserve,
-          (unsigned long long)g_los_allocs,
-          (unsigned long long)g_los_alloc_bytes,
-          (unsigned long long)g_los_callocs,
-          (unsigned long long)g_los_spare_hits,
-          (unsigned long long)g_los_spare_cached,
-          (unsigned long long)g_los_spare_dropped,
-          (unsigned long long)g_los_freed,
-          (unsigned long long)g_los_scalar_allocs,
-          (unsigned long long)g_los_scalar_bytes,
-          (unsigned long long)g_los_big_allocs,
-          (unsigned long long)g_los_big_bytes,
-          (unsigned long long)g_los_young_allocs,
-          (unsigned long long)g_los_young_bytes,
-          (unsigned long long)g_los_mature_allocs,
-          (unsigned long long)g_los_mature_bytes,
-          (unsigned long long)g_los_hist[0],
-          (unsigned long long)g_los_hist[1],
-          (unsigned long long)g_los_hist[2],
-          (unsigned long long)g_los_hist[3],
-          (unsigned long long)g_los_hist[4],
-          (unsigned long long)g_los_hist[5],
-          (unsigned long long)g_los_live_peak,
-          (unsigned long long)g_los_live_sum,
-          (unsigned long long)g_los_live_samples,
-          (unsigned long long)g_los_promoted,
-          (unsigned long long)g_los_promoted_bytes,
-          (unsigned long long)g_los_now,
-          (unsigned long long)g_los_now_bytes,
-          (unsigned long long)g_los_spare_bytes);
-}
-
 void gc_init_slow(void) {
   if (g_inited) {
     return;
@@ -3194,7 +2979,7 @@ void gc_init_slow(void) {
   }
   g_verify = getenv("AVANT_GC_VERIFY") != NULL;
   if (getenv("AVANT_GC_STATS")) {
-    atexit(print_stats);
+    atexit(gc_print_stats);
   }
 }
 
@@ -3644,12 +3429,6 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   void *obj = payload_of(h);
   pthread_mutex_unlock(&g_world);
   return obj;
-}
-
-void avant_gc_stats(AvantGcStats *out) {
-  if (out) {
-    *out = g_stats;
-  }
 }
 
 void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
