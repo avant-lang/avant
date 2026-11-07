@@ -1,0 +1,114 @@
+import harness
+import backends
+
+// Stage 28 W14b1: the collector's checks and the small defects.
+//
+// heap/limit_defer.av (C32): a split near AVANT_HEAP_MAX_MB used to run
+// a full collection inside its defer region and lose parts (or die at a
+// large allocation there); it runs under the limit in four environments.
+//
+// heap/task_pins.av (C28): every spawn used to leave its task object
+// pinned; after 200 spawns and joins no pin is left.
+//
+// heap/inc_slice_mature.av (C34) and heap/array_reserve_mature.av (the
+// array_grow barrier, W13b) under AVANT_GC_STRESS=1 (W14b1's minimal
+// stress mode: a young collection at every outermost defer entry and at
+// every runtime C allocation): the known stdout, no stderr. The C35
+// fixture (split_held.av) is too slow for the default suite under
+// stress (178 s); the gate's AVANT_GC_STRESS=1 pass runs it.
+//
+// heap/churn.av under AVANT_NURSERY=0 with AVANT_GC_STATS=1 (O9, C33):
+// nothing is remembered without a nursery (rem_adds=0, rem_now=0; it
+// ended with 142,894 entries before).
+
+fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
+  names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn"]
+  jobs: Array(HJob) = []
+  p = 0
+  while p < names.size {
+    jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/${names[p]}.av", "${dir}/${names[p]}", "${dir}/${names[p]}.log"))
+    p = p + 1
+  }
+  run_waves(jobs)
+  p = 0
+  while p < names.size {
+    c.eq_int(jobs[p].code, 0, "${names[p]}.av: compiles")
+    p = p + 1
+  }
+  // [program, key, environment, stdout]
+  progs: Array(String) = []
+  keys: Array(String) = []
+  envs: Array(String) = []
+  wants: Array(String) = []
+  // The heap-limit runs leave out an outer AVANT_GC_STRESS (400,000
+  // pushes into a remembered array, one young collection each), and the
+  // stress runs an outer AVANT_GC_VERIFY (a whole-heap check at each of
+  // millions of collections).
+  lenvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_GC_VERIFY=1", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_NURSERY=0", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32 AVANT_NURSERY=0"]
+  e = 0
+  while e < lenvs.size {
+    progs.push("limit_defer")
+    keys.push("limit_defer.g${e}")
+    envs.push(lenvs[e])
+    wants.push("split bad: 0\nlive bad: 0\n")
+    e = e + 1
+  }
+  progs.push("task_pins")
+  keys.push("task_pins.g0")
+  envs.push("")
+  wants.push("sum: 1490\npins left: 0\n")
+  progs.push("inc_slice_mature")
+  keys.push("inc_slice_mature.stress")
+  envs.push("-u AVANT_GC_VERIFY AVANT_GC_STRESS=1")
+  wants.push("0\n0\n0\n")
+  progs.push("array_reserve_mature")
+  keys.push("array_reserve_mature.stress")
+  envs.push("-u AVANT_GC_VERIFY AVANT_GC_STRESS=1")
+  wants.push("0\n0\n")
+  runs: Array(HJob) = []
+  k = 0
+  while k < progs.size {
+    runs.push(run_job_env(dir, progs[k], keys[k], envs[k]))
+    k = k + 1
+  }
+  runs.push(run_job_env(dir, "churn", "churn.o9", "AVANT_NURSERY=0 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  k = 0
+  while k < progs.size {
+    what = "plain"
+    if envs[k].size > 0 {
+      what = "under ${envs[k]}"
+    }
+    c.eq_int(runs[k].code, 0, "${progs[k]}.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/${keys[k]}.out"), wants[k], "${progs[k]}.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/${keys[k]}.err"), "", "${progs[k]}.av ${what}: no stderr (no verifier report)")
+    k = k + 1
+  }
+  stats = log_text("${dir}/churn.o9.err")
+  c.eq_int(runs[progs.size].code, 0, "churn.av under AVANT_NURSERY=0: exit 0")
+  outer = gc_env_outer("AVANT_NURSERY AVANT_GC_STATS")
+  if outer.size > 0 {
+    c.skip("churn.av under AVANT_NURSERY=0: nothing remembered", "outer ${outer}")
+  } else {
+    c.expect(str_has(stats, " rem_adds=0 ") && str_has(stats, " rem_now=0 "), "churn.av under AVANT_NURSERY=0: nothing remembered (rem_adds=0, rem_now=0)")
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_checks.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_gc_checks(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
