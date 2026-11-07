@@ -1,18 +1,19 @@
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
 
-#include "avant_rt.h"
 #include "avant_gc_internal.h"
 
-#include <elf.h>
-#include <fcntl.h>
-#include <link.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+/* The collection driver and its policy (Stage 28 W12, moved from
+ * avant_rt.c): initialization from the environment (every AVANT_GC_* and
+ * AVANT_NURSERY* knob), collect (young or full) and gc_maybe_collect (when),
+ * the adaptive nursery sizing and the full-collection trigger, and the
+ * public collection entry points. */
 
 int g_inited;
 int g_collecting;

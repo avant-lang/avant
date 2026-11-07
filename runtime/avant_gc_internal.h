@@ -19,10 +19,10 @@
  *   avant_gc_defrag.c
  *   avant_gc_stack.c
  *   avant_gc_verify.c
+ *   avant_gc_collect.c
  *   avant_gc_stats.c
  *   avant_gc_roots.c
  *   avant_gc_stackmap.c
- *   avant_rt.c
  * They fold into one avant_rt.o (runtime/build.sh), which keeps global
  * only the symbols avant_rt.exports lists, so nothing declared here
  * becomes part of the object's surface unless it already was. Other
@@ -312,6 +312,18 @@ extern int g_verify;
 void gc_verify_young_copy(void);
 void gc_verify_defrag(void);
 
+/* avant_gc_collect.c */
+extern int g_inited;
+extern int g_collecting;
+extern int g_nursery_off;
+extern uint64_t g_mature_since_full;
+extern int g_reserve_mode;
+extern uint64_t g_copy_reserve;
+extern uint64_t g_live;
+void gc_collect(int full);
+void gc_maybe_collect(void);
+void gc_init_slow(void);
+
 /* avant_gc_stats.c */
 extern uint64_t g_interior_slots;
 extern uint64_t g_peak_live;
@@ -389,18 +401,6 @@ extern uint32_t g_sm_nsites;
 void sm_init(void);
 void copy_from_stackmaps(void);
 void rewrite_from_stackmaps(void);
-
-/* avant_rt.c */
-extern int g_inited;
-extern int g_collecting;
-extern int g_nursery_off;
-extern uint64_t g_mature_since_full;
-extern int g_reserve_mode;
-extern uint64_t g_copy_reserve;
-extern uint64_t g_live;
-void gc_collect(int full);
-void gc_maybe_collect(void);
-void gc_init_slow(void);
 
 /* Small helpers every unit inlines (static inline: one copy per unit,
  * no symbol), moved from avant_rt.c unchanged. */
