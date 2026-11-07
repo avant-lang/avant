@@ -71,9 +71,23 @@ void gc_mark_roots(void) {
   drain();
 }
 
+/* The sweep of one block after a full mark: a block with no live line
+ * is released; a kept block has the start bits of every line it frees
+ * cleared (32 granules a line: half a start word), so a hole's start
+ * bits are clear before reuse (gc-design.md §2.3) and a dead object
+ * whose header lies in a freed line is no longer a heap payload. A dead
+ * object whose header lies in a live line keeps its bit (start bits are
+ * not a liveness test). The inline allocation path still runs only in
+ * fresh blocks (holes are W15b's). */
 int gc_keep_if_live(Block *b) {
+  int i;
   if (gc_block_live_lines(b) == 0) {
     return 0;
+  }
+  for (i = 0; i < LINES_PER_BLOCK; i++) {
+    if (!b->line_mark[i]) {
+      b->start[i >> 1] &= ~(0xffffffffULL << (32 * (i & 1)));
+    }
   }
   gc_reset_block_bump(b);
   return 1;
