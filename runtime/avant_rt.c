@@ -191,7 +191,8 @@ static uint64_t g_def_wasted;
 static uint64_t g_def_hist[6];
 /* Evacuation (step 2): AVANT_GC_DEFRAG=0 disables it, histogram stays
  * on. Candidates are mature blocks at or below 64 of 128 live lines
- * with no pinned object; per full collection the live lines evacuated
+ * with no pinned object and no word of the collecting thread's stack
+ * naming them (C31, note_c_stack_blocks); per full collection the live lines evacuated
  * stay at or below 25% of that mark's mature live lines, worst first. */
 static int g_defrag_mode = 1;
 static uint64_t g_def_evac_blocks;
@@ -2377,6 +2378,105 @@ typedef struct DefCand {
   uint64_t bytes;
 } DefCand;
 
+/* A sorted set of blocks, for the two block lists of a defragmenting
+ * full collection: the mature blocks the collecting thread's C stack
+ * names (C31), and the evacuated blocks about to be freed. */
+typedef struct BlockSet {
+  Block **v;
+  size_t n;
+  size_t cap;
+} BlockSet;
+
+static int block_ptr_cmp(const void *a, const void *b) {
+  const Block *x = *(Block *const *)a;
+  const Block *y = *(Block *const *)b;
+  return (x > y) - (x < y);
+}
+
+static void block_set_add(BlockSet *s, Block *b) {
+  if (s->n && s->v[s->n - 1] == b) {
+    return;
+  }
+  if (s->n == s->cap) {
+    s->cap = s->cap ? s->cap * 2 : 64;
+    s->v = (Block **)xrealloc(s->v, s->cap * sizeof(Block *));
+  }
+  s->v[s->n++] = b;
+}
+
+static void block_set_seal(BlockSet *s) {
+  size_t i, j = 0;
+  if (s->n < 2) {
+    return;
+  }
+  qsort(s->v, s->n, sizeof(Block *), block_ptr_cmp);
+  for (i = 0; i < s->n; i++) {
+    if (j == 0 || s->v[j - 1] != s->v[i]) {
+      s->v[j++] = s->v[i];
+    }
+  }
+  s->n = j;
+}
+
+static int block_set_has(const BlockSet *s, const Block *b) {
+  size_t lo = 0, hi = s->n;
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    if (s->v[mid] < b) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo < s->n && s->v[lo] == b;
+}
+
+/* C31: defragmentation moves mature objects and rewrites only the
+ * precise references to them (root slots, pins, runtime TLS slots, the
+ * remembered set, heap fields). A runtime C frame on the collecting
+ * thread can hold a reference across a full collection that the
+ * collector cannot rewrite: with AVANT_NURSERY=0 the outermost
+ * avant_gc_defer_enter collects while the helper holds its arguments
+ * (avant_str_concat's operands: the caller rooted them, so they are
+ * marked, but the helper's own copies are C values), and a helper that
+ * calls avant_alloc outside defer holds its arguments across the full
+ * collection maybe_collect may run. Such an object must not move. So a
+ * defragmenting collection first notes every mature block that a word
+ * of the collecting thread's stack names (exact start, interior, or a
+ * scalar that happens to look like one; a false positive only skips a
+ * candidate), from this function's frame to the stack top, and those
+ * blocks are not candidates. collect() first saves its callers'
+ * callee-saved registers into its own frame, so a reference a caller
+ * keeps in one is on the scanned stack. Other threads' C frames are
+ * D191's (Part 2). */
+static BlockSet g_cstack_blocks;
+static BlockSet g_def_release;
+
+__attribute__((noinline)) static void note_c_stack_blocks(void) {
+  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
+  uint8_t *hi = g_self_reg.stack_hi;
+  uint8_t *lo = g_self_reg.stack_lo;
+  g_cstack_blocks.n = 0;
+  if (!hi || !p || p >= hi || (lo && p < lo)) {
+    return;
+  }
+  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+  for (; p + sizeof(void *) <= hi; p += ALIGN) {
+    uint8_t *w = *(uint8_t **)p;
+    /* The word's block, and its header's: a payload pointer just past
+     * an object that ends a block lies in the next one. */
+    Block *b = block_of(w);
+    Block *hb = w ? block_of(w - sizeof(AvantHeader)) : NULL;
+    if (b && b->space == SPACE_MATURE) {
+      block_set_add(&g_cstack_blocks, b);
+    }
+    if (hb && hb != b && hb->space == SPACE_MATURE) {
+      block_set_add(&g_cstack_blocks, hb);
+    }
+  }
+  block_set_seal(&g_cstack_blocks);
+}
+
 static int def_cand_cmp(const void *a, const void *b) {
   const DefCand *x = (const DefCand *)a;
   const DefCand *y = (const DefCand *)b;
@@ -2437,8 +2537,11 @@ static void mature_unlink(Block *b) {
  * whole. Destination blocks are allocated before anything moves; if
  * one cannot be allocated under the heap limit, nothing moves and the
  * ordinary non-moving collection completes (g_def_skipped counts it),
- * so defragmentation can never make a collection fail. */
-static void defrag_evacuate(uint64_t live_lines_this) {
+ * so defragmentation can never make a collection fail. The evacuated
+ * blocks are freed by defrag_release. Not inlined: its locals name
+ * objects in the evacuated blocks, and they must not sit in collect's
+ * frame, which verify_defrag scans as part of the C stack. */
+__attribute__((noinline)) static void defrag_evacuate(uint64_t live_lines_this) {
   DefCand *cand = NULL;
   size_t ncand = 0;
   size_t ccap = 0;
@@ -2456,7 +2559,7 @@ static void defrag_evacuate(uint64_t live_lines_this) {
   for (b = g_mature; b; b = b->next) {
     int live = block_live_lines(b);
     DefCand *c;
-    if (live <= 0 || live > 64 || block_has_pinned(b)) {
+    if (live <= 0 || live > 64 || block_has_pinned(b) || block_set_has(&g_cstack_blocks, b)) {
       continue;
     }
     if (ncand == ccap) {
@@ -2634,13 +2737,112 @@ static void defrag_evacuate(uint64_t live_lines_this) {
     }
   }
   rewrite_from_stackmaps();
+  /* The evacuated blocks are freed by defrag_release, after collect()
+   * has let the verifier look at them from its own frame. */
+  g_def_release.n = 0;
   for (i = 0; i < ncand; i++) {
-    mature_unlink(cand[i].b);
-    cache_or_free_block(cand[i].b);
-    g_def_freed_blocks++;
+    block_set_add(&g_def_release, cand[i].b);
   }
+  block_set_seal(&g_def_release);
   free(dest);
   free(cand);
+}
+
+static void defrag_release(void) {
+  size_t i;
+  for (i = 0; i < g_def_release.n; i++) {
+    mature_unlink(g_def_release.v[i]);
+    cache_or_free_block(g_def_release.v[i]);
+    g_def_freed_blocks++;
+  }
+  g_def_release.n = 0;
+}
+
+/* AVANT_GC_VERIFY after defragmentation (C31): no reference the
+ * program or the runtime can still use names a block about to be
+ * freed: root slots, pins, the remembered set, the fields of marked
+ * objects, and the words of the collecting thread's stack from this
+ * function's frame up (the C frames of the runtime helper that
+ * collected and of the generated code that called it). */
+static void verify_defrag_word(void *w, const char *where, void *at) {
+  Block *b = block_of(w);
+  Block *hb = w ? block_of((uint8_t *)w - sizeof(AvantHeader)) : NULL;
+  void *start;
+  if (!(b && block_set_has(&g_def_release, b)) && !(hb && block_set_has(&g_def_release, hb))) {
+    return;
+  }
+  start = object_payload(w, NULL, NULL);
+  fprintf(stderr,
+          "avant gc verify: %s %p names %p in a mature block defragmentation "
+          "is freeing (object %p moved to %p) coll=%llu\n",
+          where, at, w, start, start ? fwd_get(start) : NULL,
+          (unsigned long long)g_stats.collections);
+}
+
+static void verify_defrag_fields(AvantHeader *h, Block *b) {
+  void *p;
+  if (!(h->flags & AVANT_FLAG_MARKED) || (b && block_set_has(&g_def_release, b))) {
+    return;
+  }
+  p = payload_of(h);
+  EACH_REF_SLOT(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
+}
+
+static void verify_defrag_tls(void **slot) {
+  verify_defrag_word(*slot, "runtime TLS slot", (void *)slot);
+}
+
+__attribute__((noinline)) static void verify_defrag(void) {
+  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
+  uint8_t *hi = g_self_reg.stack_hi;
+  uint8_t *lo = g_self_reg.stack_lo;
+  ThreadReg *t;
+  Block *b;
+  Large *L;
+  uint32_t i;
+  if (hi && p && p < hi && !(lo && p < lo)) {
+    p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+    for (; p + sizeof(void *) <= hi; p += ALIGN) {
+      verify_defrag_word(*(void **)p, "C stack word at", (void *)p);
+    }
+  }
+  pthread_mutex_lock(&g_threads_mu);
+  for (t = g_threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      for (i = 0; i < f->n; i++) {
+        verify_defrag_word(*f->slots[i], "root slot", (void *)f->slots[i]);
+      }
+    }
+  }
+  pthread_mutex_unlock(&g_threads_mu);
+  for (PinEnt *pe = g_pins; pe; pe = pe->next) {
+    verify_defrag_word(pe->payload, "pin", (void *)pe);
+  }
+  /* A remembered entry may name a dead object (full collections do not
+   * scrub the set, and the young copy skips an entry whose block is
+   * gone); only a live one that moved must have been rewritten. */
+  for (i = 0; i < g_rem_n; i++) {
+    void *obj = g_remset[i];
+    Block *rb = block_of(obj);
+    if (rb && block_set_has(&g_def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
+        (avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
+      verify_defrag_word(obj, "remembered entry", (void *)&g_remset[i]);
+    }
+  }
+  avant_hash_walk_tls(verify_defrag_tls);
+  for (b = g_mature; b; b = b->next) {
+    foreach_block_object(b, verify_defrag_fields);
+  }
+  for (b = g_nursery; b; b = b->next) {
+    foreach_block_object(b, verify_defrag_fields);
+  }
+  for (b = g_from; b; b = b->next) {
+    foreach_block_object(b, verify_defrag_fields);
+  }
+  for (L = g_large; L; L = L->next) {
+    verify_defrag_fields(&L->header, NULL);
+  }
 }
 
 static void young_copy_out(int tenure) {
@@ -2687,13 +2889,19 @@ static void collect(int full) {
   g_bump = NULL;
   g_limit = NULL;
 
-  if (!full) {
+  /* Spill the callers' callee-saved GPRs into collect's frame so the
+   * C-stack walks see a reference a caller keeps in one: the young
+   * copy's rewrite (rewrite_c_stack) and the full collection's
+   * defragmentation exclusion (note_c_stack_blocks, C31). Without
+   * this, a heap pointer can sit in rbx across avant_alloc and miss
+   * the shadow stack. Before the branch, so shrink-wrapping cannot move
+   * the saves into the young path only. */
 #if defined(__x86_64__)
-    /* Spill myc callee-saved GPRs into collect's frame so the C-stack
-     * walk can rewrite or pin them. Without this, a heap pointer can
-     * sit in rbx across avant_alloc and miss the shadow stack. */
-    __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
+  __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
+#else
+  __builtin_unwind_init();
 #endif
+  if (!full) {
     if (!g_young_adapt) {
       g_stats.young_collections++;
       young_copy_out(1);
@@ -2782,7 +2990,14 @@ static void collect(int full) {
           g_def_wasted += (uint64_t)(LINES_PER_BLOCK - live) * LINE_SIZE;
         }
       }
+      if (g_defrag_mode) {
+        note_c_stack_blocks();
+      }
       defrag_evacuate(live_lines_this);
+      if (g_verify && g_def_release.n) {
+        verify_defrag();
+      }
+      defrag_release();
     }
     sweep_large();
     filter_blocks(&g_mature, keep_if_live);
