@@ -364,13 +364,6 @@ void gc_init_slow(void) {
     }
   }
   {
-    const char *v = getenv("AVANT_NURSERY_STACK");
-    /* Off unless set to 1. Conservative rewrite of LLVM spill slots
-     * smashes packed i32s; pin-only misses spills. Precise roots are
-     * the shadow stack after myc-llvm store-before-gc_root. */
-    g_stack_scan = v && v[0] == '1' && v[1] == 0;
-  }
-  {
     const char *v = getenv("AVANT_NURSERY_DISCARD");
     /* Product path discards unpinned from-space after young copy.
      * Set to 0 to park (diagnostic). */

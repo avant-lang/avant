@@ -109,9 +109,10 @@ extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
 extern __thread uint8_t *avant_gc_base;
 extern __thread uint64_t *avant_gc_starts;
-/* Current nursery Block; generated code also stores the new cursor
- * into its bump field (offset 32 in struct Block, avant_gc_internal.h)
- * so the C cursor and the block never disagree. */
+/* The current nursery block's record in the collector's side table;
+ * generated code also stores the new cursor into its bump field at
+ * offset 32 (the record's layout is the runtime's, not shipped), so the
+ * C cursor and the block never disagree. */
 extern __thread void *avant_gc_block;
 extern __thread uint32_t avant_gc_fast_ok;
 extern uint64_t avant_nursery_held;
@@ -121,8 +122,8 @@ extern uint64_t avant_inline_allocs;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 /* Stage 28 W1b: one 64-word chunk (word_base a multiple of 64) of a
  * type map of any length, with an element stride in words (0: one
- * record; > 0: a buffer of repeated elements). See TypeMap in
- * avant_gc_internal.h. */
+ * record; > 0: a buffer of repeated elements), the collector's TypeMap
+ * (a runtime-private layout, not shipped). */
 void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_base,
                        uint64_t bits);
 void avant_barrier(void *obj);

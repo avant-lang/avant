@@ -13,8 +13,6 @@
  * moved from avant_rt.c and the stackmap walker's file, which W12r
  * removed). The collector's roots are precise (root slots, pins, TLS
  * slots, the remembered set); these scans cover what runtime C frames and register saves may still hold:
- *   - copy_from_c_stack (AVANT_NURSERY_STACK=1 only, a diagnostic): words
- *     that name nursery objects are rewritten or pinned in place;
  *   - rewrite_c_stack after a young copy (W8c's and W11's rule): every
  *     exact forwarded start left on the stack is rewritten to the copy;
  *   - count_c_stack_nursery: counts words still naming from-space (the
@@ -24,8 +22,6 @@
  * gc_collect() spills its callers' callee-saved registers first, so a
  * reference a caller keeps in one is on the scanned stack. Other threads'
  * C frames are not scanned (D191, Part 2). */
-
-int g_stack_scan;
 
 /* The young copy's C-stack pass, set once by gc_init_slow: g_c_stack_pass
  * (the copying nursery is on) runs count_c_stack_nursery, and
@@ -79,68 +75,6 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
     }
   }
   gc_block_set_seal(&g_cstack_blocks);
-}
-
-/*
- * LLVM spill slots hold heap pointers that avant_gc_root never sees.
- * After precise copy, from-space object-starts on the live C stack are
- * rewritten to to-space when the object was already forwarded. Words
- * that only appear here are pinned in place (D34-shaped) so we do not
- * treat a packed i32 pair as a root that gets copied. Do not walk
- * interiors: that smashed compile-compiler.
- */
-static void pin_nursery_in_place(void *p) {
-  if (fwd_get(p)) {
-    return;
-  }
-  AvantHeader *h = avant_header(p);
-  if (h->flags & AVANT_FLAG_PINNED) {
-    copy_nursery(p);
-    return;
-  }
-  fwd_put(p, p);
-  g_saw_pinned_nursery = 1;
-  if (!(h->flags & AVANT_FLAG_MARKED)) {
-    h->flags |= AVANT_FLAG_MARKED;
-    mark_object_lines(p);
-    g_live += obj_total(h);
-    work_push(p);
-  }
-}
-
-void copy_from_c_stack(void) {
-  uint8_t *sp;
-  uint8_t *hi;
-  uint8_t *p;
-  uint8_t *lo;
-  if (!g_stack_scan) {
-    return;
-  }
-  sp = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!hi || !sp || sp >= (uint8_t *)hi) {
-    return;
-  }
-  if (lo && sp < (uint8_t *)lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)sp & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      void *to = fwd_get(w);
-      if (to) {
-        *(void **)p = to;
-      } else {
-        pin_nursery_in_place(w);
-      }
-    }
-  }
 }
 
 static void gc_rewrite_if_forwarded(void **slot) {

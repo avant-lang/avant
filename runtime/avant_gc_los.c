@@ -104,7 +104,7 @@ static void account_large_gone(Large *L, int keep_bytes) {
   }
 }
 
-static void release_large(Large *L) {
+void gc_release_large(Large *L) {
   int cache = (L->header.flags & AVANT_FLAG_YOUNG) &&
               L->header.type_id == AVANT_TYPE_BYTES &&
               (L->header.flags & AVANT_FLAG_PINNED) == 0 &&
@@ -119,10 +119,6 @@ static void release_large(Large *L) {
     free(L);
     g_los_freed++;
   }
-}
-
-void gc_free_large(Large *L) {
-  release_large(L);
 }
 
 static void los_note_live(void) {
@@ -185,7 +181,7 @@ void gc_reclaim_young_large(void) {
       int pinned = (L->header.flags & AVANT_FLAG_PINNED) != 0;
       int keep = (L->header.flags & AVANT_FLAG_LOS_KEEP) != 0;
       if (!marked && !pinned) {
-        release_large(L);
+        gc_release_large(L);
       } else if (pinned || keep || promote_stay) {
         promote_young_large(L);
       } else {

@@ -77,15 +77,15 @@
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 
-/* Numeric buffers at or above this size are young large objects.
- * They do not move, so a parallel loop can keep the address in a
- * register, and a young collection still frees them when unmarked.
- * 900 doubles is 7200 bytes: under LOS_LIMIT, but large enough that
- * copying the row is the slow path. */
+/* SCALAR_LOS_MIN: numeric (type-0) buffers at or above this size are
+ * young large objects. They do not move, so a parallel loop can keep
+ * the address in a register, and a young collection still frees them
+ * when unmarked. 900 doubles is 7200 bytes: under LOS_LIMIT, but large
+ * enough that copying the row is the slow path. */
 
-/* Survivors of a low-survival young collection are copied here, then the
- * block is retagged as nursery. Mature space is for objects that have
- * already survived a collection. */
+/* The spaces a block belongs to. SPACE_TO: survivors of a young
+ * collection are copied here, then the block is retagged as nursery.
+ * Mature space is for objects that have already survived. */
 
 #define SPACE_MATURE 0
 #define SPACE_NURSERY 1
@@ -313,7 +313,7 @@ extern int g_young_large_n;
 extern int g_los_eager_hold;
 size_t gc_large_chunk(const Large *L);
 void gc_los_spare_drop(void);
-void gc_free_large(Large *L);
+void gc_release_large(Large *L);
 void gc_reclaim_young_large(void);
 void gc_sweep_large(void);
 void *gc_los_alloc(size_t payload, uint32_t type_id);
@@ -360,13 +360,11 @@ void gc_defrag_evacuate(uint64_t live_lines_this);
 void gc_defrag_release(void);
 
 /* avant_gc_stack.c */
-extern int g_stack_scan;
 extern int g_c_stack_pass;
 extern int g_c_stack_rewrite;
 extern uint64_t g_c_stack_left;
 extern BlockSet g_cstack_blocks;
 void gc_note_c_stack_blocks(void);
-void copy_from_c_stack(void);
 void rewrite_c_stack(void);
 void count_c_stack_nursery(void);
 
