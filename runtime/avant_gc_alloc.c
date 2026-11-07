@@ -112,7 +112,8 @@ void gc_cache_or_free_block(Block *b) {
   }
   /* Out of use: no lookup finds it, as when it left the block hash. A
    * cached block stays charged to g_heap_bytes; a released one goes back
-   * to the reservation's free list (still committed, W14a2 returns it). */
+   * to its chunk's free list (resident until a full collection's
+   * gc_heap_return). */
   b->in_use = 0;
   g_space_bytes[b->space] -= BLOCK_SIZE;
   if (g_cache_n < CACHE_BLOCKS) {
