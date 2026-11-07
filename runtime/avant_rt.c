@@ -26,10 +26,10 @@ static int g_nursery_off;
 static int g_discard_from;
 
 Block *g_bht[BLOCK_HASH];
-static Block *g_mature;
-static Block *g_nursery;
-static Block *g_from;
-static Block *g_to;
+Block *g_mature;
+Block *g_nursery;
+Block *g_from;
+Block *g_to;
 static Block *g_cache;
 static int g_cache_n;
 
@@ -65,7 +65,7 @@ Large *g_large_ht[LARGE_HASH];
 /* The address range [g_large_lo, g_large_hi) covers every large chunk
  * ever put on g_large (los_alloc). It only grows: a chunk that
  * is freed leaves it as wide as it was. So an address outside it is
- * inside no object on g_large, and object_payload skips its walk of the
+ * inside no object on g_large, and gc_object_payload skips its walk of the
  * list, which for such an address could only miss. That walk ran for
  * every young-copy slot naming a static object in the binary (a string
  * literal), and dominated compiling the compiler (Stage 28 W11d). */
@@ -87,20 +87,20 @@ static __thread Frame *g_frame_free;
 static __thread int g_alloc_mature;
 
 __thread ThreadReg g_self_reg;
-static ThreadReg *g_threads;
+ThreadReg *g_threads;
 /* Becomes 1 when a second thread registers, and stays 1. A single
  * mutator collects only at its own allocating call, so an interior
  * pointer used before the next call does not need a root. Another
  * thread can collect at any instruction. */
 atomic_int g_avant_shared;
 static pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_gc_defer;
 int g_stack_scan;
 
-static PinEnt *g_pins;
+PinEnt *g_pins;
 
-static void **g_remset;
+void **g_remset;
 uint32_t g_rem_n;
 static uint32_t g_rem_cap;
 /* Workers call avant_barrier without the world lock (a fresh array
@@ -179,8 +179,8 @@ static uint64_t g_probe_nursery_bytes;
 #define YOUNG_BYTES_MAX (192ull * 1024ull * 1024ull)
 #define STICKY_MIN (8ull * 1024ull * 1024ull)
 
-static void **g_work;
-static uint32_t g_work_n;
+void **g_work;
+uint32_t g_work_n;
 static uint32_t g_work_cap;
 
 TypeMap g_types[MAX_TYPES];
@@ -188,7 +188,7 @@ uint8_t g_type_set[MAX_TYPES];
 
 /* Whether payload word W of an object with header H is a reference slot
  * by its type map (the verifier's inverse question). */
-static int type_word_is_ref(const AvantHeader *h, size_t w) {
+int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   uint32_t id = h->type_id;
   if (id == AVANT_TYPE_PTRS) {
     return 1;
@@ -634,7 +634,7 @@ int is_heap_payload(void *p, Block **ob, Large **ol) {
  * myc FIELD/ADDR can root an interior slot; young copy must still
  * move the object and keep the same offset into it.
  */
-static void *object_payload(void *p, Block **ob, Large **ol) {
+void *gc_object_payload(void *p, Block **ob, Large **ol) {
   if (is_heap_payload(p, ob, ol)) {
     return p;
   }
@@ -730,7 +730,7 @@ static int is_old(void *p) {
   return !in_nursery(p);
 }
 
-static void foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
+void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
   int w;
   for (w = 0; w < START_WORDS; w++) {
     uint64_t bits = b->start[w];
@@ -751,13 +751,13 @@ static void clear_mark_one(AvantHeader *h, Block *b) {
 static void clear_all_marks(void) {
   Block *b;
   for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, clear_mark_one);
+    gc_foreach_block_object(b, clear_mark_one);
   }
   for (b = g_nursery; b; b = b->next) {
-    foreach_block_object(b, clear_mark_one);
+    gc_foreach_block_object(b, clear_mark_one);
   }
   for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, clear_mark_one);
+    gc_foreach_block_object(b, clear_mark_one);
   }
   Large *L;
   for (L = g_large; L; L = L->next) {
@@ -787,7 +787,7 @@ static void scan_payload(void *p);
 static void mark(void *p) {
   Block *b = NULL;
   Large *ol = NULL;
-  void *start = object_payload(p, &b, &ol);
+  void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
   }
@@ -1256,7 +1256,7 @@ static void remember_young_edge(void **slot, void *payload) {
   if (pb->space != SPACE_NURSERY && pb->space != SPACE_TO) {
     return;
   }
-  owner = object_payload((void *)slot, &ob, &ol);
+  owner = gc_object_payload((void *)slot, &ob, &ol);
   if (!owner) {
     return;
   }
@@ -1279,7 +1279,7 @@ static int g_rem_track_dirty;
 static int names_young(void *p) {
   Block *b = NULL;
   Large *ol = NULL;
-  void *start = object_payload(p, &b, &ol);
+  void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return 0;
   }
@@ -1399,7 +1399,7 @@ void copy_from_slot(void **slot) {
   void *p = *slot;
   Block *b = NULL;
   Large *ol = NULL;
-  void *start = object_payload(p, &b, &ol);
+  void *start = gc_object_payload(p, &b, &ol);
   if (!start) {
     return;
   }
@@ -1443,7 +1443,7 @@ static void relocate_root_location(void ***slot_loc) {
   void *addr = (void *)*slot_loc;
   Block *b = NULL;
   Large *ol = NULL;
-  void *start = object_payload(addr, &b, &ol);
+  void *start = gc_object_payload(addr, &b, &ol);
   if (!start || !b || b->space != SPACE_NURSERY) {
     return;
   }
@@ -1656,13 +1656,13 @@ static void note_pinned_in_block(AvantHeader *h, Block *b) {
 
 static int block_has_pinned(Block *b) {
   g_block_has_pin = 0;
-  foreach_block_object(b, note_pinned_in_block);
+  gc_foreach_block_object(b, note_pinned_in_block);
   return g_block_has_pin;
 }
 
 static int block_keep_pinned(Block *b) {
   g_block_has_pin = 0;
-  foreach_block_object(b, promote_pinned_one);
+  gc_foreach_block_object(b, promote_pinned_one);
   return g_block_has_pin;
 }
 
@@ -1767,16 +1767,16 @@ static void clear_mark_flags(void) {
   Block *b;
   Large *L;
   for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, clear_mark_flag_one);
+    gc_foreach_block_object(b, clear_mark_flag_one);
   }
   for (b = g_nursery; b; b = b->next) {
-    foreach_block_object(b, clear_mark_flag_one);
+    gc_foreach_block_object(b, clear_mark_flag_one);
   }
   for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, clear_mark_flag_one);
+    gc_foreach_block_object(b, clear_mark_flag_one);
   }
   for (b = g_to; b; b = b->next) {
-    foreach_block_object(b, clear_mark_flag_one);
+    gc_foreach_block_object(b, clear_mark_flag_one);
   }
   for (L = g_large; L; L = L->next) {
     L->header.flags &=
@@ -1906,209 +1906,6 @@ static int young_pause(uint64_t used, uint64_t surv) {
   return 1;
 }
 
-static int g_verify;
-
-static int verify_ptr(void *p, const char *where, void *holder, long off) {
-  Block *b = NULL;
-  Large *ol = NULL;
-  void *start = object_payload(p, &b, &ol);
-  if (!start || !b || b->space != SPACE_NURSERY) {
-    return 0;
-  }
-  void *to = fwd_get(start);
-  if (to && to != start) {
-    AvantHeader *ch = avant_header(start);
-    fprintf(stderr,
-            "avant gc verify: stale %s reference holder=%p off=%ld "
-            "points at from-space %p (forwarded to %p) coll=%llu "
-            "child_flags=0x%x\n",
-            where, holder, off, start, to,
-            (unsigned long long)g_stats.collections, ch->flags);
-    return 1;
-  }
-  /* C29: a reachable reference to a nursery object the copy neither
-   * moved nor kept in place. Its block is discarded after this check,
-   * so the reference is about to dangle (a live holder the young copy
-   * did not trace, or a missing barrier). */
-  if (!to && (avant_header(start)->flags & AVANT_FLAG_PINNED) == 0) {
-    fprintf(stderr,
-            "avant gc verify: lost %s reference holder=%p off=%ld "
-            "names nursery object %p the young copy did not keep coll=%llu "
-            "child_flags=0x%x\n",
-            where, holder, off, start, (unsigned long long)g_stats.collections,
-            avant_header(start)->flags);
-    return 1;
-  }
-  return 0;
-}
-
-static void verify_trace(void *p) {
-  Block *b = NULL;
-  Large *ol = NULL;
-  void *start = object_payload(p, &b, &ol);
-  if (!start) {
-    return;
-  }
-  AvantHeader *h = avant_header(start);
-  if (h->flags & AVANT_FLAG_FORWARDED) {
-    return;
-  }
-  h->flags |= AVANT_FLAG_FORWARDED;
-  work_push(start);
-}
-
-static void verify_tls_slot(void **slot) {
-  verify_trace(*slot);
-}
-
-/* Independent reachability, ignoring the collector's own tracing
- * gates: a holder counts as live when a root reaches it through any
- * field. This is what keeps the checker sensitive to the F1 class
- * (a live holder the young copy itself never traced) while staying
- * silent about dead mature objects, whose fields legitimately name
- * copied objects. FORWARDED is free here: clear_mark_flags resets
- * it at the end of the collection. */
-static void verify_mark_reachable(void) {
-  ThreadReg *t;
-  for (t = g_threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t i;
-      for (i = 0; i < f->n; i++) {
-        verify_trace(*f->slots[i]);
-      }
-    }
-  }
-  for (PinEnt *p = g_pins; p; p = p->next) {
-    verify_trace(p->payload);
-  }
-  {
-    uint32_t ri;
-    for (ri = 0; ri < g_rem_n; ri++) {
-      verify_trace(g_remset[ri]);
-    }
-  }
-  avant_hash_walk_tls(verify_tls_slot);
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
-    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
-  }
-}
-
-/* A word the type map does not call a reference, in an object the
- * verifier reached, that is exactly the start of an unpinned object in
- * from-space (moved or about to be discarded): the program stored a
- * reference where the collector does not look (a wrong or missing type
- * map, audit-abi 8.1). Heap strings (STRMETA) hold text and are
- * skipped; a scalar equal to such an address by chance is the only
- * false positive. */
-static uint64_t g_verify_untraced;
-
-static void verify_untraced_words(AvantHeader *h) {
-  size_t n, i;
-  void **p;
-  if (h->flags & AVANT_FLAG_STRMETA) {
-    return;
-  }
-  if (h->type_id == AVANT_TYPE_PTRS) {
-    return;
-  }
-  p = (void **)payload_of(h);
-  n = (size_t)h->size / sizeof(void *);
-  for (i = 0; i < n; i++) {
-    void *w = p[i];
-    Block *cb = NULL;
-    void *to;
-    if (!w || ((uintptr_t)w & (ALIGN - 1)) != 0) {
-      continue;
-    }
-    if (!is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
-      continue;
-    }
-    if (avant_header(w)->flags & AVANT_FLAG_PINNED) {
-      continue;
-    }
-    if (type_word_is_ref(h, i)) {
-      continue;
-    }
-    to = fwd_get(w);
-    g_verify_untraced++;
-    fprintf(stderr,
-            "avant gc verify: untraced reference holder=%p type=%u size=%u "
-            "word=%lu names young object %p (%s %p) coll=%llu\n",
-            (void *)p, (unsigned)h->type_id, (unsigned)h->size, (unsigned long)i, w,
-            to && to != w ? "forwarded to" : "not copied, from-space", to,
-            (unsigned long long)g_stats.collections);
-  }
-}
-
-static void verify_obj_fields(AvantHeader *h, Block *b) {
-  if (!(h->flags & AVANT_FLAG_FORWARDED)) {
-    return;
-  }
-  void *p = payload_of(h);
-  verify_untraced_words(h);
-  EACH_REF_SLOT(p, slot, {
-    if (verify_ptr(*slot, "field", p, (long)((uint8_t *)slot - (uint8_t *)p))) {
-      fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p, h->flags,
-              b ? (int)b->space : -1);
-    }
-  });
-}
-
-/* Pinned nursery objects stay in their block; their fields are checked
- * like a to-space object's (C29). */
-static void verify_pinned_fields(AvantHeader *h, Block *b) {
-  if (h->flags & AVANT_FLAG_PINNED) {
-    verify_obj_fields(h, b);
-  }
-}
-
-static uint64_t g_verify_left_seen;
-
-static void verify_young_copy(void) {
-  ThreadReg *t;
-  Block *b;
-  if (g_sm_leftover > g_verify_left_seen) {
-    fprintf(stderr,
-            "avant gc verify: %llu stack words still name from-space "
-            "after rewrite (cumulative %llu)\n",
-            (unsigned long long)(g_sm_leftover - g_verify_left_seen),
-            (unsigned long long)g_sm_leftover);
-    g_verify_left_seen = g_sm_leftover;
-  }
-  for (t = g_threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t i;
-      for (i = 0; i < f->n; i++) {
-        verify_ptr(*f->slots[i], "root", (void *)f->slots[i], (long)i);
-      }
-    }
-  }
-  verify_mark_reachable();
-  for (b = g_to; b; b = b->next) {
-    foreach_block_object(b, verify_obj_fields);
-  }
-  for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, verify_obj_fields);
-  }
-  for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, verify_obj_fields);
-  }
-  if (g_saw_pinned_nursery) {
-    for (b = g_nursery; b; b = b->next) {
-      foreach_block_object(b, verify_pinned_fields);
-    }
-  }
-  {
-    Large *L;
-    for (L = g_large; L; L = L->next) {
-      verify_obj_fields(&L->header, NULL);
-    }
-  }
-}
-
 typedef struct DefCand {
   Block *b;
   int live;
@@ -2146,7 +1943,7 @@ static void block_set_seal(BlockSet *s) {
   s->n = j;
 }
 
-static int block_set_has(const BlockSet *s, const Block *b) {
+int gc_block_set_has(const BlockSet *s, const Block *b) {
   size_t lo = 0, hi = s->n;
   while (lo < hi) {
     size_t mid = lo + (hi - lo) / 2;
@@ -2178,7 +1975,7 @@ static int block_set_has(const BlockSet *s, const Block *b) {
  * keeps in one is on the scanned stack. Other threads' C frames are
  * D191's (Part 2). */
 static BlockSet g_cstack_blocks;
-static BlockSet g_def_release;
+BlockSet g_def_release;
 
 __attribute__((noinline)) static void note_c_stack_blocks(void) {
   uint8_t *p = (uint8_t *)__builtin_frame_address(0);
@@ -2218,7 +2015,7 @@ static void defrag_rewrite_slot(void **slot) {
   void *w = *slot;
   Block *b = NULL;
   Large *ol = NULL;
-  void *start = object_payload(w, &b, &ol);
+  void *start = gc_object_payload(w, &b, &ol);
   void *to;
   if (!start) {
     return;
@@ -2268,7 +2065,7 @@ static void mature_unlink(Block *b) {
  * so defragmentation can never make a collection fail. The evacuated
  * blocks are freed by defrag_release. Not inlined: its locals name
  * objects in the evacuated blocks, and they must not sit in collect's
- * frame, which verify_defrag scans as part of the C stack. */
+ * frame, which gc_verify_defrag scans as part of the C stack. */
 __attribute__((noinline)) static void defrag_evacuate(uint64_t live_lines_this) {
   DefCand *cand = NULL;
   size_t ncand = 0;
@@ -2287,7 +2084,7 @@ __attribute__((noinline)) static void defrag_evacuate(uint64_t live_lines_this) 
   for (b = g_mature; b; b = b->next) {
     int live = block_live_lines(b);
     DefCand *c;
-    if (live <= 0 || live > 64 || block_has_pinned(b) || block_set_has(&g_cstack_blocks, b)) {
+    if (live <= 0 || live > 64 || block_has_pinned(b) || gc_block_set_has(&g_cstack_blocks, b)) {
       continue;
     }
     if (ncand == ccap) {
@@ -2448,13 +2245,13 @@ __attribute__((noinline)) static void defrag_evacuate(uint64_t live_lines_this) 
     }
   }
   for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, defrag_fix_one);
+    gc_foreach_block_object(b, defrag_fix_one);
   }
   for (b = g_nursery; b; b = b->next) {
-    foreach_block_object(b, defrag_fix_one);
+    gc_foreach_block_object(b, defrag_fix_one);
   }
   for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, defrag_fix_one);
+    gc_foreach_block_object(b, defrag_fix_one);
   }
   {
     Large *L;
@@ -2486,93 +2283,6 @@ static void defrag_release(void) {
   g_def_release.n = 0;
 }
 
-/* AVANT_GC_VERIFY after defragmentation (C31): no reference the
- * program or the runtime can still use names a block about to be
- * freed: root slots, pins, the remembered set, the fields of marked
- * objects, and the words of the collecting thread's stack from this
- * function's frame up (the C frames of the runtime helper that
- * collected and of the generated code that called it). */
-static void verify_defrag_word(void *w, const char *where, void *at) {
-  Block *b = block_of(w);
-  Block *hb = w ? block_of((uint8_t *)w - sizeof(AvantHeader)) : NULL;
-  void *start;
-  if (!(b && block_set_has(&g_def_release, b)) && !(hb && block_set_has(&g_def_release, hb))) {
-    return;
-  }
-  start = object_payload(w, NULL, NULL);
-  fprintf(stderr,
-          "avant gc verify: %s %p names %p in a mature block defragmentation "
-          "is freeing (object %p moved to %p) coll=%llu\n",
-          where, at, w, start, start ? fwd_get(start) : NULL,
-          (unsigned long long)g_stats.collections);
-}
-
-static void verify_defrag_fields(AvantHeader *h, Block *b) {
-  void *p;
-  if (!(h->flags & AVANT_FLAG_MARKED) || (b && block_set_has(&g_def_release, b))) {
-    return;
-  }
-  p = payload_of(h);
-  EACH_REF_SLOT(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
-}
-
-static void verify_defrag_tls(void **slot) {
-  verify_defrag_word(*slot, "runtime TLS slot", (void *)slot);
-}
-
-__attribute__((noinline)) static void verify_defrag(void) {
-  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
-  uint8_t *hi = g_self_reg.stack_hi;
-  uint8_t *lo = g_self_reg.stack_lo;
-  ThreadReg *t;
-  Block *b;
-  Large *L;
-  uint32_t i;
-  if (hi && p && p < hi && !(lo && p < lo)) {
-    p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-    for (; p + sizeof(void *) <= hi; p += ALIGN) {
-      verify_defrag_word(*(void **)p, "C stack word at", (void *)p);
-    }
-  }
-  pthread_mutex_lock(&g_threads_mu);
-  for (t = g_threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        verify_defrag_word(*f->slots[i], "root slot", (void *)f->slots[i]);
-      }
-    }
-  }
-  pthread_mutex_unlock(&g_threads_mu);
-  for (PinEnt *pe = g_pins; pe; pe = pe->next) {
-    verify_defrag_word(pe->payload, "pin", (void *)pe);
-  }
-  /* A remembered entry may name a dead object (full collections do not
-   * scrub the set, and the young copy skips an entry whose block is
-   * gone); only a live one that moved must have been rewritten. */
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    Block *rb = block_of(obj);
-    if (rb && block_set_has(&g_def_release, rb) && is_heap_payload(obj, NULL, NULL) &&
-        (avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
-      verify_defrag_word(obj, "remembered entry", (void *)&g_remset[i]);
-    }
-  }
-  avant_hash_walk_tls(verify_defrag_tls);
-  for (b = g_mature; b; b = b->next) {
-    foreach_block_object(b, verify_defrag_fields);
-  }
-  for (b = g_nursery; b; b = b->next) {
-    foreach_block_object(b, verify_defrag_fields);
-  }
-  for (b = g_from; b; b = b->next) {
-    foreach_block_object(b, verify_defrag_fields);
-  }
-  for (L = g_large; L; L = L->next) {
-    verify_defrag_fields(&L->header, NULL);
-  }
-}
-
 static void young_copy_out(int tenure) {
   g_force_tenure = tenure;
   g_to_bytes = 0;
@@ -2580,7 +2290,7 @@ static void young_copy_out(int tenure) {
   zero_line_marks(g_nursery);
   gen_young_copy();
   if (g_verify) {
-    verify_young_copy();
+    gc_verify_young_copy();
   }
   clear_alloc_cur(SPACE_NURSERY);
   if (g_discard_from) {
@@ -2723,7 +2433,7 @@ static void collect(int full) {
       }
       defrag_evacuate(live_lines_this);
       if (g_verify && g_def_release.n) {
-        verify_defrag();
+        gc_verify_defrag();
       }
       defrag_release();
     }
@@ -2733,10 +2443,10 @@ static void collect(int full) {
     filter_blocks(&g_from, keep_if_live);
     g_mark_sum = 0;
     for (b = g_nursery; b; b = b->next) {
-      foreach_block_object(b, sum_marked_one);
+      gc_foreach_block_object(b, sum_marked_one);
     }
     for (b = g_from; b; b = b->next) {
-      foreach_block_object(b, sum_marked_one);
+      gc_foreach_block_object(b, sum_marked_one);
     }
     g_nursery_held = g_mark_sum;
     g_mature_since_full = 0;
@@ -3200,7 +2910,7 @@ void avant_barrier_at(void *addr) {
       (uint8_t *)addr < (uint8_t *)g_self_reg.stack_hi) {
     return;
   }
-  start = object_payload(addr, &b, NULL);
+  start = gc_object_payload(addr, &b, NULL);
   if (!start) {
     return;
   }

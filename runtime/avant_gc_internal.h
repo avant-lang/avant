@@ -10,6 +10,7 @@
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units:
+ *   avant_gc_verify.c
  *   avant_gc_stats.c
  *   avant_gc_stackmap.c
  *   avant_rt.c
@@ -188,6 +189,11 @@ typedef struct BlockSet {
  * stack stays young so the next collection can free it. */
 #define AVANT_FLAG_LOS_KEEP 128u
 
+/* avant_gc_verify.c */
+extern int g_verify;
+void gc_verify_young_copy(void);
+void gc_verify_defrag(void);
+
 /* avant_gc_stats.c */
 extern uint64_t g_interior_slots;
 extern uint64_t g_peak_live;
@@ -264,27 +270,42 @@ void count_c_stack_nursery(void);
 extern int g_inited;
 extern int g_saw_pinned_nursery;
 extern Block *g_bht[BLOCK_HASH];
+extern Block *g_mature;
+extern Block *g_nursery;
+extern Block *g_from;
+extern Block *g_to;
 extern Large *g_large;
 extern Large *g_large_ht[LARGE_HASH];
 extern Large *g_los_spare;
 extern __thread ThreadReg g_self_reg;
+extern ThreadReg *g_threads;
 extern atomic_int g_avant_shared;
+extern pthread_mutex_t g_threads_mu;
 extern int g_stack_scan;
+extern PinEnt *g_pins;
+extern void **g_remset;
 extern uint32_t g_rem_n;
 extern uint64_t g_mature_since_full;
 extern uint64_t g_copy_reserve;
+extern void **g_work;
+extern uint32_t g_work_n;
 extern TypeMap g_types[MAX_TYPES];
 extern uint8_t g_type_set[MAX_TYPES];
 extern uint64_t g_live;
+extern BlockSet g_def_release;
+int gc_type_word_is_ref(const AvantHeader *h, size_t w);
 void work_push(void *p);
 void fwd_put(void *from, void *to);
 void *fwd_get(void *from);
 size_t obj_total(const AvantHeader *h);
 size_t gc_large_chunk(const Large *L);
 int is_heap_payload(void *p, Block **ob, Large **ol);
+void *gc_object_payload(void *p, Block **ob, Large **ol);
+void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void mark_object_lines(void *p);
 void *copy_nursery(void *p);
 void copy_from_slot(void **slot);
+int gc_block_set_has(const BlockSet *s, const Block *b);
 void gc_init_slow(void);
 
 /* Small helpers every unit inlines (static inline: one copy per unit,
