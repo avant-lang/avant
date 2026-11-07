@@ -1,0 +1,88 @@
+import std.json
+
+// C31 (Stage 28 W11c): a full collection's defragmentation moved a mature
+// object that a runtime C helper still held in its own frame, then freed
+// its block, so the helper read freed memory. Two shapes:
+//
+// concat: under AVANT_NURSERY=0 the outermost avant_gc_defer_enter (here
+// in avant_str_concat) runs a full collection while the helper holds its
+// operands; the caller rooted them (so they are live and their slots are
+// rewritten), but the helper's own copies are C values. This is how
+// tests/fixtures/closures/churn.av crashed (exit 139, ~12% of runs).
+//
+// json: in every mode, avant_json_parse holds its text across the
+// avant_alloc of its pool, which may run a full collection; the text is a
+// tenured string in a block that later becomes sparse.
+//
+// Each part checks its results; the defect shows as wrong results only
+// when the freed block's memory was reused or scribbled (MALLOC_PERTURB_),
+// and as a report of AVANT_GC_VERIFY=1 (C stack word ... in a mature
+// block defragmentation is freeing) at every such collection.
+
+fn concat_part: Int {
+  keep: Array(String) = []
+  i = 0
+  while i < 20000 {
+    keep.push("keep-${i}")
+    i = i + 1
+  }
+  bad = 0
+  i = 0
+  while i < 1000000 {
+    a = "k${i % 1000}"
+    s = a + "-"
+    if s != "k${i % 1000}-" {
+      bad = bad + 1
+    }
+    i = i + 1
+  }
+  if keep[19999] != "keep-19999" {
+    bad = bad + 1
+  }
+  bad
+}
+
+fn json_part: Int {
+  n = 20000
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    keep.push("{\"k\": ${i}, \"name\": \"n${i}\"}")
+    i = i + 1
+  }
+  bad = 0
+  r = 0
+  while r < 100000 {
+    j = r % n * 7919 % n
+    keep[j] = "{\"k\": ${j}, \"name\": \"m${r}\", \"pad\": \"${r}${r}${r}${r}\"}"
+    x = 0
+    while x < 4 {
+      g = "garbage-${r}-${x}-${x}${x}${x}${x}${x}${x}${x}${x}"
+      if g.size < 10 {
+        bad = bad + 1
+      }
+      x = x + 1
+    }
+    if r % 2 == 0 {
+      w = r % n * 31 % n
+      if doc = Json.parse(keep[w]) {
+        if k = doc.int("k") {
+          if k != w {
+            bad = bad + 1
+          }
+        } else {
+          bad = bad + 1
+        }
+      } else {
+        bad = bad + 1
+      }
+    }
+    r = r + 1
+  }
+  bad
+}
+
+fn main {
+  puts("concat bad: ${concat_part()}")
+  puts("json bad: ${json_part()}")
+}

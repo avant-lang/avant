@@ -1,0 +1,74 @@
+import harness
+import backends
+
+// Stage 28 W11c (C31, D204): a full collection's defragmentation does not
+// move a mature object that a word of the collecting thread's stack names.
+// Before the fix it moved such an object, rewrote only the precise
+// references to it, and freed its block while a runtime C helper still
+// held it in its own frame: avant_str_concat's operands at the full
+// collection the outermost avant_gc_defer_enter runs under
+// AVANT_NURSERY=0 (closures/churn.av segfaulted in about 12% of runs), and
+// avant_json_parse's text across the allocation of its pool, in every
+// mode. tests/fixtures/heap/defrag_held.av makes both happen at many full
+// collections; the stale reads usually hit still-intact freed memory, so
+// the output alone rarely shows the defect, but AVANT_GC_VERIFY=1 reports
+// every stack word, root, or field that still names a block being freed,
+// at every such collection. So one run per environment is the regression
+// test: with the old candidate rule the verified runs under
+// AVANT_NURSERY=0 and AVANT_YOUNG_MB=1 report in 10 of 10 runs (W11c
+// record). The program runs plain, under AVANT_GC_VERIFY=1, both
+// verified environments, and AVANT_NURSERY=0: the known stdout, no
+// stderr (no verifier report), exit 0. test_closures runs churn.av under
+// AVANT_GC_VERIFY=1 AVANT_NURSERY=0 for the same reason.
+
+fn gc_envs: Array(String) {
+  ["", "AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0"]
+}
+
+fn test_gc_defrag(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/heap/defrag_held.av"
+  want = "concat bad: 0\njson bad: 0\n"
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, src, "${dir}/defrag_held", "${dir}/defrag_held.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "defrag_held.av: compiles")
+  envs = gc_envs()
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "defrag_held", "defrag_held.g${e}", envs[e]))
+    e = e + 1
+  }
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    k = "defrag_held.g${e}"
+    c.eq_int(runs[e].code, 0, "defrag_held.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/${k}.out"), want, "defrag_held.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/${k}.err"), "", "defrag_held.av ${what}: no stderr (no verifier report)")
+    e = e + 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_defrag.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_gc_defrag(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
