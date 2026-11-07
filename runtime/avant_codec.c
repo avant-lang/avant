@@ -1,4 +1,5 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <stdint.h>
 #include <stdlib.h>

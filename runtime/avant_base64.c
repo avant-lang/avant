@@ -1,4 +1,5 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #define BASE64_STATIC_DEFINE
 #include "libbase64.h"

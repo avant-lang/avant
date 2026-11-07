@@ -1,4 +1,5 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -13,8 +14,6 @@
  * not allocate can skip the world lock. The locked path stays once
  * another thread exists.
  */
-extern atomic_int g_avant_shared;
-
 static int mutator_private(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
 }

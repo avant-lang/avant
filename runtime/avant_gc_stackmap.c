@@ -10,72 +10,18 @@
 #include <string.h>
 #include <unistd.h>
 
-/* LLVM stackmap walking: mapped spill slots are precise roots, and
- * leftover forwarded words in myc frames are rewritten after a young
- * copy. Moved out of avant_rt.c in the collector stage, Wave 2, and
- * folded into avant_rt.o by build.sh; internals stay static here. */
+/* The LLVM stackmap walker (TO BE REMOVED after the re-seed; Stage 28 W12,
+ * D212, O12). Mapped spill slots in frames of code that carries
+ * .llvm_stackmaps are precise roots of a young copy, and leftover
+ * forwarded words in those frames are rewritten after it. Only binaries
+ * the myc back end built carry the section: today that is B, the
+ * compiler the myc seed builds. The new back end emits no statepoints, so
+ * once the seed is a myc-free release nothing carries the section, every
+ * walk finds no site, and this file, g_stackmap_walk's role as the gate of
+ * the conservative rewrite in avant_gc_stack.c, and the sm_* statistics
+ * go (O12). Internals stay static here. */
 
-/*
- * LLVM spill slots hold heap pointers that avant_gc_root never sees.
- * After precise copy, from-space object-starts on the live C stack are
- * rewritten to to-space when the object was already forwarded. Words
- * that only appear here are pinned in place (D34-shaped) so we do not
- * treat a packed i32 pair as a root that gets copied. Do not walk
- * interiors: that smashed compile-compiler.
- */
-static void pin_nursery_in_place(void *p) {
-  if (fwd_get(p)) {
-    return;
-  }
-  AvantHeader *h = avant_header(p);
-  if (h->flags & AVANT_FLAG_PINNED) {
-    copy_nursery(p);
-    return;
-  }
-  fwd_put(p, p);
-  g_saw_pinned_nursery = 1;
-  if (!(h->flags & AVANT_FLAG_MARKED)) {
-    h->flags |= AVANT_FLAG_MARKED;
-    mark_object_lines(p);
-    g_live += obj_total(h);
-    work_push(p);
-  }
-}
-
-void copy_from_c_stack(void) {
-  uint8_t *sp;
-  uint8_t *hi;
-  uint8_t *p;
-  uint8_t *lo;
-  if (!g_stack_scan) {
-    return;
-  }
-  sp = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!hi || !sp || sp >= (uint8_t *)hi) {
-    return;
-  }
-  if (lo && sp < (uint8_t *)lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)sp & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      void *to = fwd_get(w);
-      if (to) {
-        *(void **)p = to;
-      } else {
-        pin_nursery_in_place(w);
-      }
-    }
-  }
-}
+int g_stackmap_walk;
 
 extern char __LLVM_StackMaps[] __attribute__((weak));
 
@@ -367,14 +313,6 @@ static int sm_lookup_apply(void *ret, void *caller_rbp, void *callee_rbp) {
   return 1;
 }
 
-static void rewrite_if_forwarded(void **slot) {
-  void *w = *slot;
-  void *to = fwd_get(w);
-  if (to && to != w) {
-    *slot = to;
-  }
-}
-
 /*
  * After the work queue drains, every copied object is in the forwarding
  * table. Stackmap apply ran earlier as a *root* walk (copy_from_slot).
@@ -398,7 +336,7 @@ static void sm_rewrite_frame(void *rsp, uint32_t fsize) {
   }
   p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
   for (; p + sizeof(void *) <= end; p += ALIGN) {
-    rewrite_if_forwarded((void **)p);
+    gc_rewrite_if_forwarded((void **)p);
   }
 }
 
@@ -470,88 +408,6 @@ void copy_from_stackmaps(void) {
 
 void rewrite_from_stackmaps(void) {
   walk_c_frames(0);
-}
-
-/*
- * The frame walk above rewrites only frames with a stackmap site.
- * Copies of a forwarded pointer also survive outside those frames:
- * callee-saved register saves in C frames on the call chain into the
- * collector, and spills of struct-typed temps the statepoint did not
- * name. Rewrite every exact forwarded start left on this thread's
- * stack, with the same predicate count_c_stack_nursery verifies, so
- * no stack word still names from-space after a young copy. Interiors
- * are not touched (fwd_get keys on object starts), and a word that
- * was not forwarded keeps its bits. AVANT_GC_STACK_REWRITE=0 is the
- * kill switch.
- */
-void rewrite_c_stack(void) {
-  static int enabled = -1;
-  uint8_t *p;
-  uint8_t *hi;
-  uint8_t *lo;
-  if (!g_stackmap_walk) {
-    return;
-  }
-  if (enabled < 0) {
-    const char *v = getenv("AVANT_GC_STACK_REWRITE");
-    enabled = !(v && v[0] == '0' && v[1] == 0);
-  }
-  if (!enabled) {
-    return;
-  }
-  p = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!hi || !p) {
-    return;
-  }
-  if (lo && p < (uint8_t *)lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      rewrite_if_forwarded((void **)p);
-    }
-  }
-}
-
-void count_c_stack_nursery(void) {
-  uint8_t *p;
-  uint8_t *hi;
-  uint8_t *lo;
-  if (!g_stackmap_walk) {
-    return;
-  }
-  p = (uint8_t *)__builtin_frame_address(0);
-  lo = g_self_reg.stack_lo;
-  hi = g_self_reg.stack_hi;
-  if (!hi || !p) {
-    return;
-  }
-  if (lo && p < lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      void *to = fwd_get(w);
-      /* Copied to to-space, but this stack word still names from-space. */
-      if (to && to != w) {
-        g_sm_leftover++;
-      }
-    }
-  }
 }
 
 uint64_t g_sm_walks;

@@ -30,6 +30,14 @@ fn ok_wants: Array(String) {
   out
 }
 
+// The environment each program needs whatever the outer one is (O26):
+// bump_method.av allocates with `bump`, which gives nil without the
+// nursery.
+fn ok_envs: Array(String) {
+  out: Array(String) = ["", "AVANT_NURSERY=1", "", ""]
+  out
+}
+
 fn bad_progs: Array(String) {
   out: Array(String) = ["tests/fixtures/closures/refuse_break.av", "tests/fixtures/closures/with_break.av"]
   out
@@ -113,6 +121,7 @@ fn test_frontend(c: Checks, compiler: String, root: String, dir: String) {
   }
 
   envs = run_envs()
+  own = ok_envs()
   runs: Array(HJob) = []
   i = 0
   while i < ok.size {
@@ -121,10 +130,14 @@ fn test_frontend(c: Checks, compiler: String, root: String, dir: String) {
     while b < bs.size {
       e = 0
       while e < envs.size {
-        if envs[e].size == 0 {
+        words = envs[e]
+        if own[i].size > 0 {
+          words = "${own[i]} ${words}"
+        }
+        if words.size == 0 {
           runs.push(run_job(dir, out_of(k, bs[b]), "${out_of(k, bs[b])}.r${e}"))
         } else {
-          runs.push(run_job_env(dir, out_of(k, bs[b]), "${out_of(k, bs[b])}.r${e}", envs[e]))
+          runs.push(run_job_env(dir, out_of(k, bs[b]), "${out_of(k, bs[b])}.r${e}", words))
         }
         e = e + 1
       }

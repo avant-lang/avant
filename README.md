@@ -863,7 +863,7 @@ fn main {
 
 ## Memory
 
-Heap allocation goes through `runtime/avant_rt.c`. The collector is precise GenImmix: a copying nursery, then an Immix mature space. The nursery is the default.
+Heap allocation goes through the collector in `runtime/avant_gc_*.c` (one file per concern; `runtime/avant_gc_internal.h` lists them). The collector is precise GenImmix: a copying nursery, then an Immix mature space. The nursery is the default.
 
 `AVANT_NURSERY=0` restores a full, non-moving collection. `AVANT_NURSERY_STACKMAP=0` skips the stack-map walk. `AVANT_NURSERY_DISCARD=0` keeps dead nursery space for diagnosis instead of discarding it.
 
