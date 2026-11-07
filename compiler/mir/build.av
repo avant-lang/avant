@@ -418,8 +418,8 @@ pub class MirBuilder {
   }
 
   // The mark of a call to callee (4.6): an Avant function collects unless
-  // it is a leaf; an external by its class (quiet collects only in a
-  // shared module). A table row is declared on first use.
+  // it is a leaf; an external by its class. A table row is declared on
+  // first use.
   pub fn mark(callee: String): Bool {
     if f = self.module.func(callee) {
       return f.kind != mfk_leaf()
@@ -428,10 +428,10 @@ pub class MirBuilder {
       return true
     }
     if e = self.module.ext(callee) {
-      return mir_class_collects(e.cls, self.module.shared)
+      return mir_class_collects(e.cls)
     }
     dummy = self.extern_rt(callee)
-    mir_class_collects(self.module.rt.class_of(callee), self.module.shared)
+    mir_class_collects(self.module.rt.class_of(callee))
   }
 
   pub fn call(dest: Int, callee: String, args: Array(MOperand)): MStmt {
@@ -512,12 +512,6 @@ pub class MirBuilder {
 }
 
 // Whether a call to an external of class cls is marked collects (4.6).
-pub fn mir_class_collects(cls: Int, shared: Bool): Bool {
-  if cls == mcc_never() {
-    return false
-  }
-  if cls == mcc_quiet() {
-    return shared
-  }
-  true
+pub fn mir_class_collects(cls: Int): Bool {
+  cls != mcc_never()
 }
