@@ -281,7 +281,9 @@ static void defer_enter(int collecting_row) {
    * (W14b1). It moves, so it proves that no helper holds a reference
    * the collector cannot see or rewrite when its region begins. */
   if (g_gc_defer == 0 && g_stress && collecting_row) {
+    g_c_entry++;
     gc_stress_point();
+    g_c_entry--;
   }
   g_gc_defer += 1;
   pthread_mutex_unlock(&g_world);

@@ -423,6 +423,7 @@ extern int g_reserve_mode;
 extern uint64_t g_copy_reserve;
 extern uint64_t g_live;
 extern int g_stress;
+extern __thread int g_c_entry;
 extern int g_limit_pending;
 void gc_collect(int full);
 void gc_limit_collect_pending(void);

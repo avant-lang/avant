@@ -389,10 +389,21 @@ void gc_gen_young_copy(void) {
   /*
    * Every copied object is in the forwarding table now: rewrite the
    * forwarded words runtime C frames and register saves left on this
-   * thread's stack, then count any that still name from-space.
+   * thread's stack, then count any that still name from-space. Only
+   * when runtime C entered this collection (C37, Stage 28 W14b1): the
+   * rewrite takes every stack word equal to a moved object's start for
+   * a reference, so it also rewrote integers and character buffers that
+   * happened to equal one (a generated-code i32 slot whose upper half
+   * kept a stale pointer's bits; split_held.av's junk sum was wrong
+   * whenever the heap base was 4 GiB-aligned, about one run in 1,500).
+   * A collection entered from generated code needs no rewrite: every
+   * reference generated code holds across avant_alloc is in a slot,
+   * which the copy updates (D165).
    */
-  rewrite_c_stack();
-  count_c_stack_nursery();
+  if (g_c_entry) {
+    rewrite_c_stack();
+    count_c_stack_nursery();
+  }
 }
 
 static int g_block_has_pin;

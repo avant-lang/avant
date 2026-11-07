@@ -526,13 +526,19 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
  * generated code's, which roots everything across avant_alloc by
  * construction (D165). */
 void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
+  void *p;
   gc_init();
+  /* Runtime C holds its references in its own frame, so a young
+   * collection entered here rewrites the C stack (C37). */
+  g_c_entry++;
   if (g_stress) {
     pthread_mutex_lock(&g_world);
     gc_stress_point();
     pthread_mutex_unlock(&g_world);
   }
-  return avant_alloc(nbytes, type_id);
+  p = avant_alloc(nbytes, type_id);
+  g_c_entry--;
+  return p;
 }
 
 void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {

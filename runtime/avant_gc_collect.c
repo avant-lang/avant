@@ -30,6 +30,11 @@ int g_nursery_off;
 int g_stress;
 static int g_stress_now;
 
+/* Nonzero while runtime C has entered the collector (avant_alloc_c, a
+ * stress point at a defer entry): only then does a young collection run
+ * the conservative C-stack rewrite (avant_gc_young.c, C37). */
+__thread int g_c_entry;
+
 /* C32 (Stage 28 W14b1, gc-design.md §5.4): an allocation inside a no-GC
  * (defer) region that went past AVANT_HEAP_MAX_MB. The full collection
  * it needed runs at the first collection point after the region: the
