@@ -2,7 +2,25 @@
 
 ## 0.36.0 - 2026-11-07
 
-* To be added here.
+### Changed/Fixed/Added
+
+* Wrong-result fixes in the collector:
+  - a hash table could lose keys (C34);
+  - Array.reserve could lose elements;
+  - split, fields and chars could return bad parts without the nursery (C35);
+  - stale marks after a full collection (C36);
+  - the C-stack rewrite could change a value that only looked like a pointer (C37);
+  - collections could run inside protected regions near the heap limit (C32).
+* Memory:
+  - a new chunked heap, about 2 MB less on average across LangArena (Etc::Words: 253 → 202 MB);
+  - large objects now live in the heap;
+  - idle memory is returned to the OS;
+  - the compiler uses 17% less memory while compiling itself.
+* JoinHandle.join may be called any number of times: every call after the first returns the same result at once.
+* Settings:
+  - new AVANT_HEAP_RESERVE_GB, the size of the heap's address reservation, 64 GiB by default;
+  - new AVANT_GC_STRESS=1, a testing mode;
+  - the AVANT_NURSERY_STACK diagnostic is removed.
 
 ## 0.35.0 - 2026-11-05
 
