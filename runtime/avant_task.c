@@ -165,21 +165,29 @@ static void *worker_main(void *p) {
   return NULL;
 }
 
+/* The task (the JoinHandle) is C memory (C28, Stage 28 W14b1): it holds
+ * no reference the collector must trace except arg, the capture record,
+ * which the generated code pinned before writing its fields and which
+ * stays pinned until the join (R1, a rooted record instead of a pin, is
+ * W16b's). The task is freed by the join, so a handle is joined once.
+ * Before, the task was a heap object pinned here and never unpinned:
+ * every spawn left a pin entry and a pinned object for the life of the
+ * process. */
 void *avant_spawn(void *fn, void *arg) {
   AvantTask *t;
   Job *job;
-  avant_gc_defer_enter();
-  t = (AvantTask *)avant_alloc(sizeof(AvantTask), AVANT_TYPE_BYTES);
+  t = (AvantTask *)calloc(1, sizeof(AvantTask));
+  if (!t) {
+    die_task("out of memory");
+  }
   t->fn = (avant_task_fn)fn;
   t->arg = arg;
   t->result = 0;
   t->done = 0;
   if (pthread_cond_init(&t->done_cv, NULL) != 0) {
-    avant_gc_defer_leave();
+    free(t);
     return NULL;
   }
-  avant_pin(t);
-  avant_gc_defer_leave();
   job = (Job *)calloc(1, sizeof(Job));
   if (!job) {
     die_task("out of memory");
@@ -209,9 +217,11 @@ int32_t avant_join(void *handle) {
   result = t->result;
   pthread_mutex_unlock(&pool_mu);
   /* The spawn capture is pinned so the worker can read it. After join
-   * it is the only pin keeping a shared matrix alive. */
+   * it is the only pin keeping a shared matrix alive. The worker last
+   * touched the task under pool_mu (run_job), so it can go now. */
   avant_unpin(t->arg);
-  t->arg = NULL;
+  pthread_cond_destroy(&t->done_cv);
+  free(t);
   return result;
 }
 
