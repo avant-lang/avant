@@ -1549,9 +1549,9 @@ The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compil
 .av  →  parser and checker (compiler/*.av)  →  MIR  →  LLVM IR  →  in-process LLVM  →  object  →  cc  →  binary
 ```
 
-The old back end, which emits [myc](https://github.com/kostya/myc) IR and runs `myc-llvm` from the safepoints shard, is still selectable for comparison with `AVANT_BACKEND=myc` until it retires; it finds `myc-llvm` through `AVANT_MYC_LLVM`, then beside the `avant` binary, then on `PATH` (the first one found must accept the safepoints GC flags). The release does not carry it.
+This is the compiler's only back end. The earlier one, which emitted [myc](https://github.com/kostya/myc) IR for an external `myc-llvm` process, was retired once every program it ran had been frozen as a golden (`tests/goldens/runs/`, checked by `sh tools/run-goldens.sh`).
 
-Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the compiler itself also needs LLVM 20's static archives (Debian/Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (`tools/build-llvm.sh`) and only the compiler links; the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release (a release that predates the new back end builds it on its old one, which needs its bundled `myc-llvm`; the compiler it builds then uses the new back end):
+Building from a checkout needs a C compiler, the C library development files, and binutils (`ld`, `objcopy`); the compiler itself also needs LLVM 20's static archives (Debian/Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (`tools/build-llvm.sh`) and only the compiler links; the `bind` helper also needs `llvm-config` and libclang 20, and regex literals need `re2c` (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`). Build the next compiler with a published release (a release up to v0.34.0 compiles only through the `myc-llvm` bundled beside it; set `AVANT_MYC_LLVM` to that file for this one step, or let `tools/letters.sh` do it; the compiler it builds needs no `myc-llvm`):
 
 ```
 sh runtime/build.sh
@@ -1560,11 +1560,11 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed), and C′ (`bin/avant-c-llvm`, built by B on the new back end); `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′), or `c-release` (the `--release` build a release ships) builds one. `sh tools/gate.sh` is the full gate (B, C′, the suite on both, D′, and the fixed point: C′ and D′ emit the same LLVM IR for the compiler and are byte-identical).
+`sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed), and C′ (`bin/avant-c-llvm`, built by B); `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′), or `c-release` (the `--release` build a release ships) builds one. `sh tools/gate.sh` is the full gate (B, C′, the suite on both, D′, and the fixed point: C′ and D′ emit the same LLVM IR for the compiler and are byte-identical). `sh tools/run-goldens.sh` compiles and runs every example, runnable fixture, and LangArena task in `test` mode and compares each one's stdout, stderr, and exit status with its golden (`GOLDEN_MODE=--release` or empty for the other modes).
 
 `AVANT_ROOT` overrides where the compiler looks for `runtime/build`. Codegen splits by verb: `avant run` with no flag uses `--debug` (fast: LLVM at `-O0` with its fast instruction selector), and `avant compile` with no flag uses the default optimization (a short pass list, for kept artifacts). On either verb, `--debug` selects the fast codegen explicitly and `--release` (or `--final`) selects full optimization (`-O3`), the scored mode used in [Benchmarks](#benchmarks); an explicit flag always wins over the verb default, and no environment variable selects codegen. The garbage collector's roots are kept precisely in every mode. `dump FILE.av` prints the program's MIR without linking.
 
-Tests are the native suite, run on the compiler you just built (B) and on the next one (C′); the tests of the old back end need its `myc-llvm` (`AVANT_MYC_LLVM`) until it retires:
+Tests are the native suite, run on the compiler you just built (B) and on the next one (C′):
 
 ```
 AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
