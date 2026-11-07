@@ -125,6 +125,8 @@ void *avant_argv(void) {
       const char *s = g_argv && g_argv[i] ? g_argv[i] : "";
       buf[i] = dup_bytes(s, strlen(s));
     }
+    /* A large pointer buffer is mature from birth (D187, W13b). */
+    avant_barrier(buf);
   }
   a->buf = buf;
   a->size = n;
@@ -699,6 +701,8 @@ void *avant_dir_list(const char *path) {
       buf[i] = dup_bytes(names[i], strlen(names[i]));
       free(names[i]);
     }
+    /* A large pointer buffer is mature from birth (D187, W13b). */
+    avant_barrier(buf);
   }
   free(names);
   a->buf = buf;
