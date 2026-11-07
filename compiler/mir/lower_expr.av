@@ -436,7 +436,8 @@ pub fn (lw: MirLower) int_const(ty: Int, v: Int64): MOperand {
 }
 
 // + - * / % &+ &- &* & | ^ on one type (W5.3): checked unless Float64 or
-// proven; Int % tests (MIN, -1) first, since the old back end traps there.
+// proven. % of (MIN, -1) is 0 for every signed type (C4, W11b): rem.chk
+// gives it; / of (MIN, -1) keeps its overflow trap.
 pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: Bool, loc: Location): MOperand {
   b = lw.lw_b
   f = ty == mt_f64()
@@ -471,13 +472,6 @@ pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: 
   if op == tk_percent() {
     if plain {
       return lw.tmp(ty, b.rv_bin(mop_rem(), a, c))
-    }
-    if ty == mt_i32() {
-      m1 = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), lw.dup(a), b.c_i32(-2147483647 - 1)))
-      m2 = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), lw.dup(c), b.c_i32(-1)))
-      mm = lw.tmp(mt_bool(), b.rv_bin(mop_and(), m1, m2))
-      lw.trap_if(mm, "avant_trap_overflow")
-      lw.at(loc)
     }
     return lw.tmp(ty, b.rv_chk(mop_rem(), a, c))
   }
