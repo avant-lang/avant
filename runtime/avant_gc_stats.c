@@ -164,8 +164,13 @@ static void print_frag(StatsLine *l) {
 
 static void print_prom(StatsLine *l) {
   const GcPromCounters *c = &gc_heap.ctr.prom;
-  line_add(l, "prom_bytes=%llu prom_copied=%llu prom_pinned=%llu prom_large=%llu\n",
+  line_add(l, "prom_bytes=%llu prom_copied=%llu prom_pinned=%llu prom_large=%llu ",
            u(c->copied + c->pinned + c->large), u(c->copied), u(c->pinned), u(c->large));
+}
+
+static void print_sp(StatsLine *l) {
+  const GcSpCounters *c = &gc_heap.ctr.sp;
+  line_add(l, "sp_calls=%llu sp_collections=%llu\n", u(c->calls), u(c->collections));
 }
 
 void gc_print_stats(void) {
@@ -182,6 +187,7 @@ void gc_print_stats(void) {
   print_why(&l);
   print_frag(&l);
   print_prom(&l);
+  print_sp(&l);
   fwrite(l.buf, 1, l.n, stderr);
 }
 

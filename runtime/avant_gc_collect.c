@@ -17,9 +17,15 @@
  * the adaptive nursery sizing and the full-collection trigger, and the
  * public collection entry points. */
 
+/* Nonzero while every named safepoint must take its slow path: under
+ * AVANT_GC_STRESS=1 (set once by gc_init_slow), or while a heap-limit
+ * collection is pending (C32). */
+__attribute__((visibility("hidden"))) uint32_t avant_gc_safepoint_force;
+
 void gc_limit_collect_pending(void) {
   gc_heap.limit_pending = 1;
   gc_fast_clear();
+  avant_gc_safepoint_force = 1;
 }
 
 uint64_t avant_young_bytes;
@@ -409,7 +415,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.promoted_since_full = 0;
     gc_heap.young_large = 0;
     gc_heap.young_large_n = 0;
-    gc_heap.los_eager_hold = 0;
     gc_large_iter_init(&it);
     while ((lh = gc_large_next(&it))) {
       lh->flags = (uint16_t)(lh->flags & (uint16_t)~AVANT_FLAG_YOUNG);
@@ -460,6 +465,7 @@ void gc_maybe_collect(void) {
   }
   if (gc_heap.limit_pending) {
     gc_heap.limit_pending = 0;
+    avant_gc_safepoint_force = gc_heap.set.stress ? 1u : 0u;
     gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
     return;
   }
@@ -505,12 +511,64 @@ void gc_stress_point(void) {
   gc_heap.stress_now = 0;
 }
 
+/* A named safepoint's slow path (avant_gc.h; Stage 28 W15a1, gc-design.md
+ * §5.1). ROOTS holds the helper's heap reference arguments; they are the
+ * slots of a frame pushed for the collection, so a young collection
+ * relocates them (interior addresses included) and a defragmenting full
+ * one rewrites them, and the caller's macro reads them back. No C-stack
+ * rewrite runs (gc_thread.c_entry stays as it is: generated code called
+ * the helper and roots its own references, D165). A collection runs only
+ * in an unshared program, outside every defer region, collection and
+ * quiet leaf, on a registered thread: under AVANT_GC_STRESS=1 a young
+ * collection that always copies, then whatever the policy asks for
+ * (gc_maybe_collect: the young budget, the full trigger, a pending
+ * heap-limit collection). */
+#define GC_SAFEPOINT_MAX 3
+__attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots, uint32_t n) {
+  void **slots[GC_SAFEPOINT_MAX];
+  Frame f;
+  uint32_t i;
+  gc_init();
+  if (n > GC_SAFEPOINT_MAX) {
+    gc_die("too many safepoint roots");
+  }
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_heap.defer ||
+      gc_heap.collecting || gc_thread.quiet || !gc_thread.reg.head) {
+    return;
+  }
+  for (i = 0; i < n; i++) {
+    slots[i] = &roots[i];
+  }
+  f.prev = gc_thread.frame;
+  f.slots = slots;
+  f.n = n;
+  f.cap = n;
+  gc_thread.frame = &f;
+  pthread_mutex_lock(&gc_heap.world);
+  gc_heap.ctr.sp.calls++;
+  if (gc_heap.set.stress) {
+    gc_stress_point();
+  }
+  {
+    uint64_t before = avant_g_stats.collections;
+    gc_maybe_collect();
+    if (avant_g_stats.collections != before) {
+      gc_heap.ctr.sp.collections++;
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+  gc_thread.frame = f.prev;
+}
+
 void gc_init_slow(void) {
   if (gc_heap.inited) {
     return;
   }
   gc_heap.inited = 1;
   gc_settings_read(&gc_heap.set);
+  if (gc_heap.set.stress) {
+    avant_gc_safepoint_force = 1;
+  }
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;
   } else {

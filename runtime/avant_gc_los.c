@@ -287,6 +287,7 @@ static void account_large_gone(AvantHeader *h, int keep_bytes) {
     if (gc_heap.young_large_n > 0) {
       gc_heap.young_large_n--;
     }
+    avant_nursery_held = avant_nursery_held >= bytes ? avant_nursery_held - bytes : 0;
   } else if (gc_heap.mature_since_full >= bytes) {
     gc_heap.mature_since_full -= bytes;
   }
@@ -343,6 +344,7 @@ static void promote_young_large(AvantHeader *h) {
   if (gc_heap.young_large_n > 0) {
     gc_heap.young_large_n--;
   }
+  avant_nursery_held = avant_nursery_held >= bytes ? avant_nursery_held - bytes : 0;
   gc_heap.mature_since_full += bytes;
 }
 
@@ -462,6 +464,8 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     h->flags |= AVANT_FLAG_YOUNG;
     gc_heap.young_large += bytes;
     gc_heap.young_large_n++;
+    /* The one young budget (gc-design.md §5.1). */
+    avant_nursery_held += bytes;
   } else {
     gc_heap.mature_since_full += bytes;
   }

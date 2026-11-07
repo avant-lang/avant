@@ -390,7 +390,13 @@ void avant_hash_clear(void *hp) {
   h->size = 0;
 }
 
+/* The setters and avant_hash_inc_slice are named safepoints (avant_gc.h,
+ * Stage 28 W15a1): the safepoint is the first statement and names every
+ * heap argument read after it; the region that follows enters quietly
+ * (the safepoint was its collection point), so grow's region is nested
+ * and collects nothing. */
 void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
+  gc_safepoint_entry(hp, key);
   avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
   if (h) {
@@ -401,6 +407,7 @@ void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
 }
 
 void avant_hash_set_str(void *hp, const char *key, const char *val) {
+  gc_safepoint_entry(hp, key, val);
   avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
   if (h) {
@@ -411,6 +418,7 @@ void avant_hash_set_str(void *hp, const char *key, const char *val) {
 }
 
 void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val) {
+  gc_safepoint_entry(hp);
   avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
   if (h) {
@@ -532,6 +540,7 @@ void avant_hash_del_i32k(void *hp, int32_t key) {
 }
 
 int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t stop) {
+  gc_safepoint_entry(hp, s);
   AvantHash *h = (AvantHash *)hp;
   last_key_reset();
   if (!h || h->key_kind != AVANT_HASH_KEY_STR || h->val_kind != AVANT_HASH_VAL_I32) {

@@ -308,15 +308,18 @@ void avant_gc_defer_enter(void) {
   defer_enter(1);
 }
 
-/* The outermost defer region of a helper the call table calls *quiet*
- * (compiler/mir/runtime.av: the hash setters, avant_hash_inc_slice and
- * the avant_buf_push_* rows). Its caller may hold a reference outside
- * its slots across the call (V11/V12 ask for slots only across
- * collecting calls), so no moving collection may run at its entry, and
- * AVANT_GC_STRESS=1 has no stress point here (Stage 28 W14b1). The rest
- * is avant_gc_defer_enter, including the full collection of the
- * nursery-off mode. W15 makes these rows collecting calls (gc-design.md
- * §5.1); then this entry goes. */
+/* A defer region's entry without the stress point (Stage 28 W14b1): the
+ * rest is avant_gc_defer_enter, including the full collection of the
+ * nursery-off mode. Two kinds of helper enter this way (avant_gc.h): a
+ * named safepoint's region, which begins right after the safepoint (the
+ * hash setters, avant_hash_inc_slice, buf_append_slow and the array
+ * push and reserve entries, Stage 28 W15a1: the safepoint already was
+ * the collection point, and a second, unrooted one would see the
+ * helper's parameters only through the conservative C-stack rewrite),
+ * and dup_bytes, whose callers pass their own stack buffers or pointers
+ * derived inside their region. Until W14b1 the call table's *quiet* rows
+ * entered here; W15a1 made them collecting calls or never-collecting
+ * ones. It goes with defer regions themselves (W16, RC4). */
 __attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void) {
   defer_enter(0);
 }

@@ -483,6 +483,16 @@ typedef struct GcPromCounters {
   uint64_t large;
 } GcPromCounters;
 
+/* sp: the named safepoints (Stage 28 W15a1, gc-design.md §5.1): calls
+ * counts the slow paths that could collect (the budget spent, stress or
+ * a pending heap-limit collection, in an unshared program outside every
+ * region), collections the ones that ran a collection the policy asked
+ * for (a stress point's own young collection is not counted). */
+typedef struct GcSpCounters {
+  uint64_t calls;
+  uint64_t collections;
+} GcSpCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -495,6 +505,7 @@ typedef struct GcCounters {
   GcWhyCounters why;
   GcFragCounters frag;
   GcPromCounters prom;
+  GcSpCounters sp;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
   /* The cumulative count of stack words still naming from-space after
@@ -616,14 +627,12 @@ typedef struct GcHeap {
   /* The page-run bytes of every large object (the spare excluded): the
    * peak decomposition's pk_large and the stats line's los_now_bytes. */
   uint64_t large_bytes;
-  /* Bytes and count of young scalar large objects. They do not move. A
-   * young collection frees the ones the mark does not reach. */
+  /* Bytes and count of young large objects. They do not move. A young
+   * collection frees the ones the mark does not reach. Their bytes are
+   * also counted in avant_nursery_held, the one young budget (Stage 28
+   * W15a1, gc-design.md §5.1). */
   uint64_t young_large;
   int young_large_n;
-  /* Set when a young large object survived a collection. Further
-   * same-sized allocs are live rows, not a replaced buffer, so they
-   * must not collect on every malloc. */
-  int los_eager_hold;
   /* The large-object chunks (CHUNK_LARGE), in the order they were made:
    * the first fit looks in each, in this order. */
   uint32_t *lchunks;

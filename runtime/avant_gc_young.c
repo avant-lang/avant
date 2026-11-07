@@ -492,10 +492,15 @@ void gc_young_copy_out(int tenure) {
   if (avant_nursery_held + gc_heap.to_bytes > gc_heap.ctr.yng.cpy_peak) {
     gc_heap.ctr.yng.cpy_peak = avant_nursery_held + gc_heap.to_bytes;
   }
-  avant_nursery_held = gc_heap.to_bytes;
-  gc_heap.to_bytes = 0;
-  gc_heap.force_tenure = 0;
-  gc_reclaim_young_large();
+  {
+    uint64_t to_bytes = gc_heap.to_bytes;
+    gc_heap.to_bytes = 0;
+    gc_reclaim_young_large();
+    gc_heap.force_tenure = 0;
+    /* The one young budget: the survivors in to-space and the young
+     * large objects that stay young. */
+    avant_nursery_held = to_bytes + gc_heap.young_large;
+  }
   /* The end of the copy's marks: the noted list, not a walk of every
    * object of every space (gc-design.md §2.6; the walk was 7% of the
    * audit's mature.av profile). */

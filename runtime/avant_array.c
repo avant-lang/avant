@@ -47,7 +47,12 @@ static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint3
   a->cap = ncap;
 }
 
+/* The push and reserve entries are named safepoints (avant_gc.h, Stage
+ * 28 W15a1): the safepoint is the first statement and names the array
+ * (and push_ptr's element); the grow region after it enters quietly (the
+ * safepoint was its collection point). */
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
+  gc_safepoint_entry(arr);
   AvantArray *a = (AvantArray *)arr;
   void *slot = NULL;
   if (!a) {
@@ -62,7 +67,7 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
     }
     return slot;
   }
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   if (a->size >= a->cap) {
     array_grow(a, a->size + 1, elem_size, buf_type_id);
   }
@@ -77,6 +82,7 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
 }
 
 void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
+  gc_safepoint_entry(arr, elem);
   void *slot;
   AvantArray *a = (AvantArray *)arr;
   if (!a) {
@@ -95,9 +101,10 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   /*
    * Store under defer so myc IR never holds an interior buffer
    * pointer across a collecting CALL. Grow may nest defer.
-   * push_slot already barriers the array and the buffer.
+   * push_slot already barriers the array and the buffer. The region
+   * makes push_slot's own safepoint collect nothing (elem is held in C).
    */
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   slot = avant_array_push_slot(arr, sizeof(void *), buf_type_id);
   if (slot) {
     memcpy(slot, &elem, sizeof(void *));
@@ -168,6 +175,7 @@ void *avant_array_pop_ptr(void *arr) {
 }
 
 void avant_array_push_i32(void *arr, int32_t v) {
+  gc_safepoint_entry(arr);
   AvantArray *a = (AvantArray *)arr;
   if (!a) {
     return;
@@ -177,7 +185,7 @@ void avant_array_push_i32(void *arr, int32_t v) {
     a->size += 1;
     return;
   }
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   if (a->size >= a->cap) {
     array_grow(a, a->size + 1, sizeof(int32_t), AVANT_TYPE_BYTES);
   }
@@ -194,11 +202,12 @@ void avant_array_clear(void *arr) {
 }
 
 void avant_array_reserve(void *arr, int32_t n, uint64_t elem_size, uint32_t buf_type_id) {
+  gc_safepoint_entry(arr);
   AvantArray *a = (AvantArray *)arr;
   if (!a || n <= a->cap) {
     return;
   }
-  avant_gc_defer_enter();
+  avant_gc_quiet_defer_enter();
   array_grow(a, n, elem_size, buf_type_id);
   avant_gc_defer_leave();
 }

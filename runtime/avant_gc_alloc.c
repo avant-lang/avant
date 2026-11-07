@@ -439,19 +439,11 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   gc_maybe_collect();
 
   if (large) {
-    /* One replaced scalar buffer is reclaimed into the spare slot.
-     * A survived buffer sets the hold so a run of live rows does not
-     * collect on every allocation. The byte threshold still runs. */
-    if (!gc_heap.set.nursery_off && !gc_thread.alloc_mature && !gc_heap.defer && gc_heap.young_large_n > 0 &&
-        (gc_heap.young_large >= avant_young_bytes || (!gc_heap.los_eager_hold && gc_heap.young_large_n == 1))) {
-      uint64_t mature_before = gc_heap.mature_since_full;
-      gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
-      if (gc_heap.young_large_n > 0 || gc_heap.mature_since_full > mature_before) {
-        gc_heap.los_eager_hold = 1;
-      } else {
-        gc_heap.los_eager_hold = 0;
-      }
-    }
+    /* One young budget (gc-design.md §5.1, Stage 28 W15a1): young large
+     * bytes count in avant_nursery_held, so gc_maybe_collect above
+     * already ran the young collection they are due (the eager
+     * collection for one replaced buffer and the separate large budget
+     * are retired). */
     void *obj = gc_los_alloc(payload, type_id);
     avant_g_stats.allocated_bytes += total;
     avant_since_gc += total;
