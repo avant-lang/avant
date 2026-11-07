@@ -22,6 +22,23 @@ void avant_trap_overflow(void) {
   exit(1);
 }
 
+/* A shift amount outside 0..width - 1 (Stage 28 W11b, C1). kind: 0 Int,
+ * 1 Int64, 2 UInt64, + 8 when the amount is a UInt64 (printed unsigned). */
+void avant_trap_shift(int64_t amount, int32_t kind) {
+  static const char *names[] = {"Int", "Int64", "UInt64"};
+  int t = kind & 3;
+  if (t > 2) {
+    t = 0;
+  }
+  int top = t == 0 ? 31 : 63;
+  if (kind & 8) {
+    fprintf(stderr, "avant runtime: shift amount %llu out of range for %s (0..%d)\n", (unsigned long long)amount, names[t], top);
+  } else {
+    fprintf(stderr, "avant runtime: shift amount %lld out of range for %s (0..%d)\n", (long long)amount, names[t], top);
+  }
+  exit(1);
+}
+
 int64_t avant_checked_add_i64(int64_t a, int64_t b) {
   int64_t r;
   if (__builtin_add_overflow(a, b, &r)) {
