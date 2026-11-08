@@ -261,20 +261,22 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   __builtin_unwind_init();
 #endif
   if (!full) {
-    /* One young collection: no probe, no pause. Survival is what the
-     * copy moved plus the young large objects it reached; a stress
-     * point (always copying) and a fixed budget make no sizing decision,
-     * and a fixed budget tenures every survivor as before. */
+    /* One young collection: no probe, no pause. Survival, for sizing
+     * and for the copy reserve, is what the copy moved and the pinned
+     * objects it kept in place: the work a survivor costs. Young large
+     * objects it reached are not counted: they neither move nor cost a
+     * copy (counted, the reached grids of Etc::GameOfLife doubled the
+     * budget to 32 MiB for no pause saved). A stress point (always
+     * copying) and a fixed budget make no sizing decision, and a fixed
+     * budget tenures every survivor as before. */
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
-    uint64_t large0 = gc_heap.ctr.prom.large;
     uint64_t pinned0 = gc_heap.ctr.prom.pinned;
     uint64_t y0 = now_ns();
     uint64_t surv;
     avant_g_stats.young_collections++;
     gc_young_copy_out(gc_heap.set.young_fixed ? 1 : 0);
-    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.large - large0) +
-           (gc_heap.ctr.prom.pinned - pinned0) + gc_heap.young_large;
+    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.pinned - pinned0);
     gc_heap.copy_reserve = (uint64_t)(RESERVE_FACTOR * (double)surv);
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
       young_size(used, surv, now_ns() - y0);

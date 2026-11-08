@@ -165,6 +165,24 @@ Block *gc_new_block(uint8_t space) {
   return b;
 }
 
+/* The inline fast path's limit: the current block's limit, capped where
+ * the young budget runs out, so a collecting allocation reaches
+ * avant_alloc (which collects) when the budget is spent. Once it is spent
+ * the cap is the block's end (Stage 28 W15a1): a leaf, whose fallback
+ * avant_bump_alloc never collects, then allocates inline to the end of
+ * every block instead of calling C for every object past the budget
+ * (Binarytrees::Obj builds an 8 MiB tree in a leaf: +59% time at the 8 MiB
+ * budget with the old cap), and a collecting allocation overshoots the
+ * budget by at most the rest of one block before avant_alloc collects. */
+static uint8_t *inline_cap(void) {
+  uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
+  uint8_t *cap = avant_gc_bump + rem;
+  if (gc_heap.limit && (rem == 0 || cap > gc_heap.limit)) {
+    return gc_heap.limit;
+  }
+  return cap;
+}
+
 void gc_use_block(Block *b) {
   gc_heap.cur = b;
   avant_gc_bump = b->bump;
@@ -177,13 +195,11 @@ void gc_use_block(Block *b) {
      * its start bits need the clearing only bump_take does. */
     if (!gc_heap.collecting && b == gc_heap.space[SPACE_NURSERY].cur &&
         gc_heap.space[SPACE_NURSERY].fresh) {
-      uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
-      uint8_t *cap = avant_gc_bump + rem;
       gc_heap.fast_block = b;
       avant_gc_base = b->base;
       avant_gc_starts = b->start;
       avant_gc_block = b;
-      avant_gc_limit = gc_heap.limit && cap > gc_heap.limit ? gc_heap.limit : cap;
+      avant_gc_limit = inline_cap();
     } else {
       gc_fast_clear();
     }
@@ -207,9 +223,7 @@ static void *bump_take(size_t need) {
   avant_gc_bump += need;
   b->bump = avant_gc_bump;
   if (b == gc_heap.fast_block) {
-    uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
-    uint8_t *cap = avant_gc_bump + rem;
-    avant_gc_limit = gc_heap.limit && cap > gc_heap.limit ? gc_heap.limit : cap;
+    avant_gc_limit = inline_cap();
   }
   return h;
 }
@@ -232,13 +246,11 @@ static void gc_fast_refresh(void) {
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
       gc_heap.space[SPACE_NURSERY].fresh && avant_gc_bump) {
-    uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
-    uint8_t *cap = avant_gc_bump + rem;
     gc_heap.fast_block = cur;
     avant_gc_base = cur->base;
     avant_gc_starts = cur->start;
     avant_gc_block = cur;
-    avant_gc_limit = gc_heap.limit && cap > gc_heap.limit ? gc_heap.limit : cap;
+    avant_gc_limit = inline_cap();
     avant_gc_fast_ok = 1;
   } else {
     gc_fast_clear();
