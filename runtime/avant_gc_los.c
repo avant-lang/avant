@@ -372,9 +372,12 @@ void gc_reclaim_young_large(void) {
     }
     if ((h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_PINNED)) == 0) {
       gc_release_large(h);
-    } else if ((h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
+    } else if (/* A stress point (a collection at every helper call) makes no age
+                * decision by bytes: the clock hardly moves between them. */
+               (h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
                ((h->flags & AVANT_FLAG_SURVIVED) &&
-                gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)LARGE_AGE_BYTES)) {
+                (gc_heap.stress_now ||
+                 gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)LARGE_AGE_BYTES))) {
       promote_young_large(h);
     } else {
       h->flags |= AVANT_FLAG_SURVIVED;
