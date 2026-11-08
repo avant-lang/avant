@@ -979,13 +979,13 @@ void gc_rem_full_scrub(void);
  * point is gc_young_collect (avant_gc_collect.c), the young branch of
  * gc_collect: it runs the candidate's young collection, which reports
  * its survival (copied and kept-in-place bytes) through the counters
- * gc_collect reads. runtime/build.sh builds S with AVANT_GC_CANDIDATE=S
- * in its environment (-DGC_CANDIDATE=GC_CANDIDATE_S; Stage 28 W15b), E
- * otherwise. */
+ * gc_collect reads. runtime/build.sh builds S by default and E with
+ * AVANT_GC_CANDIDATE=E in its environment (-DGC_CANDIDATE=...; Stage 28
+ * W15b: S is the default by gc-design.md §3.4's rules). */
 #define GC_CANDIDATE_E 1
 #define GC_CANDIDATE_S 2
 #ifndef GC_CANDIDATE
-#define GC_CANDIDATE GC_CANDIDATE_E
+#define GC_CANDIDATE GC_CANDIDATE_S
 #endif
 #if GC_CANDIDATE != GC_CANDIDATE_E && GC_CANDIDATE != GC_CANDIDATE_S
 #error "GC_CANDIDATE: GC_CANDIDATE_E or GC_CANDIDATE_S"
