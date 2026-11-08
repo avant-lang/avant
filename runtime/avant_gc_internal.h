@@ -81,6 +81,17 @@
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
 #define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
+/* Q4 (gc-design.md §8, Stage 28 W15a2): the young collections a small
+ * survivor lives through before it is promoted. 2 is one aging step: a
+ * first survivor is copied to to-space (SURVIVED, still young) and
+ * promoted when it survives again; 1 copies every survivor to mature
+ * space at its first young collection (no to-space). A fixed
+ * AVANT_YOUNG_MB tenures at the first collection either way, and young
+ * large objects keep their own rule (gc_reclaim_young_large: promoted
+ * at their second survival). */
+#ifndef YOUNG_AGE
+#define YOUNG_AGE 2
+#endif
 /* The full-collection trigger (gc-design.md §5.4, Stage 28 W15a1): mature
  * growth since the last full collection reaching
  * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */

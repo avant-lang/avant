@@ -190,11 +190,11 @@ void *gc_copy_nursery(void *p) {
     return p;
   }
   size_t total = gc_obj_total(h);
-  /* Tenure only after a previous collection, or when the caller has
-   * already decided this graph is long-lived. A first survivor stays
-   * in the nursery (SPACE_TO) so a tree that dies next cycle is not
-   * promoted. */
-  int tenure = gc_heap.force_tenure || (h->flags & AVANT_FLAG_SURVIVED);
+  /* Tenure after YOUNG_AGE - 1 earlier young collections (Q4), or when
+   * the caller has already decided this graph is long-lived. With one
+   * aging step a first survivor stays in the nursery (SPACE_TO) so a
+   * tree that dies next cycle is not promoted. */
+  int tenure = gc_heap.force_tenure || YOUNG_AGE <= 1 || (h->flags & AVANT_FLAG_SURVIVED);
   AvantHeader *nh = tenure ? (AvantHeader *)gc_mature_alloc(total) : gc_to_alloc(total);
   memcpy(nh, h, total);
   nh->flags = (uint16_t)(h->flags &
