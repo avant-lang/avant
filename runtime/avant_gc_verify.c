@@ -169,7 +169,11 @@ void gc_verify_sticky(void) {
         why = "young large object not marked";
       }
     } else if (h->flags & AVANT_FLAG_YOUNG) {
-      why = "young object not promoted";
+      /* S+'s aged survivors (YOUNG_AGE 2) stay young in survivor
+       * blocks, with SURVIVED. */
+      if (!((h->flags & AVANT_FLAG_SURVIVED) && b->kept == SPLUS_SURV)) {
+        why = "young object not promoted";
+      }
     } else if (b->young_hi) {
       size_t off = (size_t)((uint8_t *)h - b->base);
       size_t l;
@@ -341,7 +345,7 @@ void gc_verify_remembered(void) {
  * gc_heap.stale_seen. */
 
 static void verify_no_stale_one(AvantHeader *h, Block *b) {
-  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_VSEEN)) {
+  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_VSEEN | AVANT_FLAG_PROMOTED_NOW)) {
     if (gc_heap.stale_seen++ < 16) {
       fprintf(stderr,
               "avant gc verify: stale mark on %p flags=0x%x space=%d at the start of coll=%llu\n",

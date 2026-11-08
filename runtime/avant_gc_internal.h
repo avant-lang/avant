@@ -82,23 +82,35 @@
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
 #define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
-/* S_LARGE_AGE (candidate S, Stage 28 W15c item 1, O88): the young
- * collections a young large object lives through under S before it is
- * promoted. 2 keeps a reached one young at its first survival (SURVIVED)
- * and promotes it at its second, as E does, with the remembered set kept
- * for its holders (gc_rem_keep_young_holders); 1 promotes it at its first
- * survival (W15b's rule). A fixed AVANT_YOUNG_MB promotes at once either
- * way. 1 by measurement (W15c record, diag/age, three runs each): 2 left
- * every M2 peak heap unchanged and raised Sort::Quick's RSS from 20 to
- * 23 MB, the worst M2 memory multiplier (resident free page runs: the
- * buffers it keeps one more cycle move the next ones to fresh pages), for
- * 3% fewer large bytes promoted there; it helped one row outside M2
- * (Template::Regex 42 -> 37 MB, +4% time). The array header that owns a
- * buffer is promoted in place at the buffer's first survival, and its
- * remembered entry keeps the buffer alive through its second, so the age
- * does not give S what it gives E (O88 stays open). */
+/* S_LARGE_AGE (Stage 28 W15c item 1, O88; W15d item 1): the young
+ * collections a young large object lives through before it is promoted.
+ * 2 keeps a reached one young at its first survival (SURVIVED) and
+ * promotes it at its second, with the remembered set kept for its holders
+ * (gc_rem_keep_young_holders); 1 promotes it at its first survival (W15b's
+ * rule). A fixed AVANT_YOUNG_MB promotes at once either way. W15c measured
+ * 2 without small-object aging: the array header that owns a buffer was
+ * promoted in place at the buffer's first survival and, remembered, kept
+ * the buffer alive through its second (Sort::Quick 20 -> 23 MB), so 1 was
+ * kept. With YOUNG_AGE 2 and holder aging (splus_age_holders) the header
+ * stays young and dies with its buffer: 2 by measurement (W15d record,
+ * var/A1L1, A2L1, A2L2h: Sort::Quick / Merge / Self 19 / 20 / 21 ->
+ * 11 / 13 / 14 MB RSS, Template::Regex / Parse 43 / 42 -> 37 / 36 MB). */
 #ifndef S_LARGE_AGE
-#define S_LARGE_AGE 1
+#define S_LARGE_AGE 2
+#endif
+/* YOUNG_AGE (Stage 28 W15d item 1, O91, D232: E's aging, Q4, inside S+'s
+ * copy path): the young collections a small object S+ copies lives
+ * through before it is promoted. 2 is one aging step: a survivor S+
+ * copies out of an evacuated block at its first survival goes into a
+ * survivor block (SPLUS_SURV during the collection), still young
+ * (YOUNG | SURVIVED), and is promoted at its next survival (copied to
+ * mature space, or in place); so the header that owns a short-lived
+ * buffer dies young with it. 1 promotes every survivor at its first
+ * survival (W15c's S+). A survivor S+ keeps in place (a kept block, a
+ * block with mature lines, a shared program) is promoted at once either
+ * way (S's rule), and a fixed AVANT_YOUNG_MB tenures at once. */
+#ifndef YOUNG_AGE
+#define YOUNG_AGE 2
 #endif
 /* The full-collection trigger (gc-design.md §5.4, Stage 28 W15a1): mature
  * growth since the last full collection reaching
@@ -330,6 +342,12 @@ typedef struct BlockSet {
  * when it became the forwarding mark of the header (gc_set_forward). */
 #define AVANT_FLAG_VSEEN 256u
 
+/* A young collection's "promoted by this collection" bit (Stage 28 W15d,
+ * S+): set by promote_in_place, cleared with MARKED by gc_clear_noted,
+ * internal to the runtime like REM (128 was LOS_KEEP's, retired in
+ * W15a1). S+'s holder aging reads it (splus_age_holders). */
+#define AVANT_FLAG_PROMOTED_NOW 128u
+
 /* The collector's counters, per family (Stage 28 W14b2, gc-design.md
  * §1.7, O41). AvantGcStats (avant_rt.h, ABI: avant_g_stats) keeps its
  * seven; every other counter is a field of one family here, written
@@ -545,7 +563,11 @@ typedef struct GcSizeCounters {
  * young blocks evacuated, kept_blocks the young blocks kept in place
  * because a young object in them was named imprecisely, copy_blocks the
  * fresh blocks the copies went to (the bytes copied are prom.copied and
- * AvantGcStats.copied_bytes). */
+ * AvantGcStats.copied_bytes); aged the bytes copied into survivor blocks
+ * still young (YOUNG_AGE 2, Stage 28 W15d; in copied_bytes, not in
+ * prom.copied), surv_blocks the survivor blocks they went to,
+ * aged_holders the holders of young large objects aged out of blocks S+
+ * does not evacuate (splus_age_holders). */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
@@ -556,6 +578,9 @@ typedef struct GcStickyCounters {
   uint64_t evac_blocks;
   uint64_t kept_blocks;
   uint64_t copy_blocks;
+  uint64_t aged;
+  uint64_t surv_blocks;
+  uint64_t aged_holders;
 } GcStickyCounters;
 
 typedef struct GcCounters {
@@ -765,10 +790,20 @@ typedef struct GcHeap {
   Block *overflow;
   int cur_whole;
   /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
-   * the block copies go to; prom.copied when it began. */
+   * the block copies go to; copied_bytes when it began. splus_age: the
+   * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
+   * not a fixed AVANT_YOUNG_MB); splus_sdst the survivor block they go
+   * to, surv_blocks the survivor blocks this collection took (young
+   * blocks from its end on), aged_now the bytes it aged. */
   int splus_on;
   Block *splus_dst;
   uint64_t splus_copied0;
+  int splus_age;
+  Block *splus_sdst;
+  Block **surv_blocks;
+  uint32_t surv_blocks_n;
+  uint32_t surv_blocks_cap;
+  uint64_t aged_now;
 
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
@@ -971,13 +1006,16 @@ void gc_rem_keep_young_holders(void);
 #endif
 /* Block.kept under S+ during a young collection: the block holds a young
  * object named imprecisely (it stays in place), it is evacuated, or it
- * held no mature line when the collection began (a candidate), or its
+ * it held no mature line when the collection began (a candidate), or its
  * evacuation stopped at the heap limit (SPLUS_PART; YOUNG_EMPTY, 4, is
- * the young sweep's, avant_gc_sticky.c). */
+ * the young sweep's, avant_gc_sticky.c), or it is a survivor block. */
 #define SPLUS_KEPT 1
 #define SPLUS_EVAC 2
 #define SPLUS_PURE 3
 #define SPLUS_PART 5
+/* A survivor block this collection copies aged survivors into (YOUNG_AGE
+ * 2, Stage 28 W15d). */
+#define SPLUS_SURV 6
 
 /* avant_gc_sticky.c: the young generation (S+; candidate S with
  * GC_STICKY_COPY 0) and the noted list, and the young allocator's block

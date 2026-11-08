@@ -195,15 +195,18 @@ static void print_keep(StatsLine *l) {
  * swept, holes taken by the young allocator, lines the young sweeps
  * freed, medium objects placed in the overflow block, empty young blocks
  * given back to their chunks, and S+'s evacuated, kept-in-place and copy
- * blocks (Stage 28 W15c). */
+ * blocks (Stage 28 W15c), the bytes it aged and their survivor blocks
+ * (W15d). */
 static void print_sticky(StatsLine *l) {
   const GcStickyCounters *c = &gc_heap.ctr.sticky;
   line_add(l,
            "prom_inplace=%llu young_blocks=%llu young_holes=%llu young_freed_lines=%llu "
            "young_overflow=%llu young_returned=%llu young_evac_blocks=%llu "
-           "young_kept_blocks=%llu young_copy_blocks=%llu\n",
+           "young_kept_blocks=%llu young_copy_blocks=%llu young_aged=%llu young_surv_blocks=%llu "
+           "young_aged_holders=%llu\n",
            u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
-           u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks));
+           u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks), u(c->aged),
+           u(c->surv_blocks), u(c->aged_holders));
 }
 
 void gc_print_stats(void) {
