@@ -35,9 +35,8 @@
  * frame slot, C stack word or register is changed, and a young object a
  * C local names stays where it is. Liveness still needs every reference
  * to be found: generated code keeps its references in slots across
- * collecting calls (D165), and runtime C holds only its caller-rooted
- * arguments at the points a collection may run (outside defer regions;
- * gc-design.md §4.2 RC1 makes the rule general in W16). */
+ * collecting calls (D165), and runtime C keeps what it holds across a
+ * collecting call in handle scopes (RC1, avant_gc.h; Stage 28 W16a). */
 /* The noted list: every header MARKED a young collection sets, cleared
  * when it ends (C36, gc-design.md §2.6). */
 void gc_note_marked(void *payload) {
@@ -610,6 +609,20 @@ static void splus_evacuate(void) {
     Block *b = gc_heap.young_blocks[i];
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
+    } else if (gc_heap.set.stress) {
+      /* The full stress mode (AVANT_GC_STRESS=1, Stage 28 W16a): every
+       * young block nothing names imprecisely is evacuated, pure or
+       * mixed, dense or sparse, past the O92 cap, so every young object
+       * S+ can move is moved at every young collection; a function that
+       * kept a reference outside a handle (RC1, RC2) then holds an old
+       * copy, which the sweep fills with poison. */
+      if (b->idle > 0) {
+        b->kept = SPLUS_EVAC;
+        gc_heap.ctr.sticky.evac_blocks++;
+        any = 1;
+      } else {
+        b->kept = 0;
+      }
     } else if (b->kept == SPLUS_PURE_AGED &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
       /* O97 (Stage 28 W15e): a survivor block whose aged survivors are
@@ -639,6 +652,12 @@ static void splus_evacuate(void) {
     if (!b || b->kept != SPLUS_EVAC) {
       continue;
     }
+    /* A mixed block (the stress mode) also holds mature objects the trace
+     * marked (remembered ones, ones R1' scans): only what this collection
+     * promoted, young when it began, may move. */
+    if (!(avant_header(p)->flags & AVANT_FLAG_PROMOTED_NOW)) {
+      continue;
+    }
     /* A first survivor ages (YOUNG_AGE 2): SURVIVED marks one that
      * survived a collection before (an aged copy). */
     if (!splus_copy(avant_header(p),
@@ -648,7 +667,17 @@ static void splus_evacuate(void) {
   }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
-    if (b->kept == SPLUS_EVAC) {
+    if (b->kept == SPLUS_EVAC && gc_heap.set.stress && gc_heap.stress_mixed[i]) {
+      /* A mixed block (stress): its mature lines stay live, the lines
+       * this collection's promotions marked are free again. */
+      uint64_t lines = (uint64_t)gc_block_live_lines(b);
+      memcpy(b->line_mark, gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, LINES_PER_BLOCK);
+      lines = (lines - (uint64_t)gc_block_live_lines(b)) * LINE_SIZE;
+      gc_heap.ctr.sticky.inplace -= b->idle;
+      gc_heap.live -= b->idle;
+      gc_heap.promoted_since_full -= lines;
+      gc_heap.mature_since_full -= lines;
+    } else if (b->kept == SPLUS_EVAC) {
       uint64_t lines = (uint64_t)gc_block_live_lines(b) * LINE_SIZE;
       memset(b->line_mark, 0, LINES_PER_BLOCK);
       gc_heap.ctr.sticky.inplace -= b->idle;
@@ -695,6 +724,17 @@ static void splus_finish(void) {
       }
     }
   }
+  /* The full stress mode (Stage 28 W16a) collects before every runtime C
+   * allocation and copies a few objects each time: the copy block stays
+   * the copy block across young collections until it is full (or a full
+   * collection drops it, gc_sticky_full_begin), or every collection left a
+   * fresh block holding one copied object, the rest of it holes young
+   * allocation then took and the next collection evacuated (a block per
+   * collection: limit_defer.av grew to 1 GB). Nothing else allocates in
+   * it meanwhile: it is on no allocation list. */
+  if (gc_heap.set.stress && d && d->bump < d->base + BLOCK_SIZE) {
+    return;
+  }
   if (d && d->bump < d->base + BLOCK_SIZE) {
     gc_reset_block_bump(d);
     gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, d);
@@ -729,9 +769,23 @@ void gc_sticky_collect(int tenure) {
   gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
+    if (gc_heap.set.stress && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
+      gc_heap.stress_lines_cap = gc_heap.young_blocks_n * 2;
+      gc_heap.stress_lines = gc_xrealloc(gc_heap.stress_lines, (size_t)gc_heap.stress_lines_cap * LINES_PER_BLOCK);
+      gc_heap.stress_mixed = gc_xrealloc(gc_heap.stress_mixed, (size_t)gc_heap.stress_lines_cap);
+    }
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *yb = gc_heap.young_blocks[i];
-      yb->kept = gc_block_live_lines(yb) != 0 ? 0 : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
+      int mature_lines = gc_block_live_lines(yb) != 0;
+      if (gc_heap.set.stress) {
+        /* The full stress mode (Stage 28 W16a): a block with mature
+         * lines is evacuated too (splus_evacuate), its marks restored
+         * from this copy afterwards. */
+        memcpy(gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, yb->line_mark, LINES_PER_BLOCK);
+        gc_heap.stress_mixed[i] = (uint8_t)mature_lines;
+      }
+      yb->kept = mature_lines ? (gc_heap.set.stress ? SPLUS_MIXED : 0)
+                              : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
     /* A collection runtime C entered: the young objects words of this
@@ -785,6 +839,15 @@ void gc_sticky_collect(int tenure) {
       int live;
       b = gc_heap.young_blocks[i];
       live = sweep_lines(b, b->young_lo, b->young_hi);
+      if (gc_heap.set.stress) {
+        /* Freed young lines are poisoned (Stage 28 W16a). */
+        int l;
+        for (l = b->young_lo; l < b->young_hi && l < LINES_PER_BLOCK; l++) {
+          if (!line_live(b, l)) {
+            gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
+          }
+        }
+      }
       b->young_lo = 0;
       b->young_hi = 0;
       b->kept = 0;
@@ -861,6 +924,14 @@ void gc_sticky_collect(int tenure) {
  * the young budget is empty. */
 void gc_sticky_full_begin(void) {
   uint32_t i;
+#if GC_STICKY_COPY
+  /* A copy block the stress mode kept (splus_finish) becomes an ordinary
+   * mature block: its free rest is free lines for the full sweep. */
+  if (gc_heap.splus_dst) {
+    gc_reset_block_bump(gc_heap.splus_dst);
+    gc_heap.splus_dst = NULL;
+  }
+#endif
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;

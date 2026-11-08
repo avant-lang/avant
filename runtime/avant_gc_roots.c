@@ -24,11 +24,16 @@ atomic_int g_avant_shared;
 /* The calling thread's collector state (avant_gc_internal.h). */
 __thread GcThread gc_thread;
 
+/* The calling thread's innermost frame (avant_gc.h): generated code's
+ * frames and runtime C's handle scopes on one chain (Stage 28 W16a; it
+ * was GcThread.frame). */
+__thread __attribute__((visibility("hidden"))) Frame *avant_gc_top;
+
 void avant_gc_register_thread(void) {
   if (gc_thread.reg.head) {
     return;
   }
-  gc_thread.reg.head = &gc_thread.frame;
+  gc_thread.reg.head = &avant_gc_top;
   {
     pthread_attr_t attr;
     void *addr = NULL;
@@ -82,16 +87,22 @@ void avant_gc_enter(void) {
       gc_die("out of memory");
     }
   }
-  f->prev = gc_thread.frame;
-  gc_thread.frame = f;
+  f->prev = avant_gc_top;
+  f->scope = 0;
+  avant_gc_top = f;
 }
 
 void avant_gc_leave(void) {
-  Frame *f = gc_thread.frame;
+  Frame *f = avant_gc_top;
   if (!f) {
     gc_die("gc leave without enter");
   }
-  gc_thread.frame = f->prev;
+  if (f->scope) {
+    /* A runtime C scope (RC1) is innermost: it was not closed, or a
+     * generated frame was left from inside one. */
+    gc_die("gc leave inside a runtime C scope");
+  }
+  avant_gc_top = f->prev;
   f->n = 0;
   f->prev = gc_thread.frame_free;
   gc_thread.frame_free = f;
@@ -135,10 +146,10 @@ void avant_gc_root(void *slot) {
   if (gc_thread.quiet) {
     return;
   }
-  if (!gc_thread.frame) {
+  if (!avant_gc_top) {
     gc_die("gc root without enter");
   }
-  Frame *f = gc_thread.frame;
+  Frame *f = avant_gc_top;
   uint32_t i;
   /*
    * Codegen emits CALL :avant_gc_root at the first use site of a temp.
@@ -160,10 +171,10 @@ void avant_gc_root(void *slot) {
 
 void *avant_gc_root_begin(uint32_t count) {
   gc_heap.ctr.root.roots += count;
-  if (!gc_thread.frame) {
+  if (!avant_gc_top) {
     gc_die("gc root begin without enter");
   }
-  Frame *f = gc_thread.frame;
+  Frame *f = avant_gc_top;
   if (count > f->cap) {
     uint32_t cap = f->cap ? f->cap : 8;
     while (cap < count) {
@@ -265,41 +276,17 @@ void avant_unpin(void *payload) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-static void defer_enter(int collecting_row, void *site) {
+/* RC4's no-GC region (avant_gc.h; Stage 28 W16a). The region's depth is
+ * gc_heap.defer, the one counter defer regions used, so every rule that
+ * keeps a collection out of a defer region keeps it out of this one
+ * (gc_maybe_collect, the stress point, C32's limit in place and the
+ * large-object space); its entry is not a collection point. The
+ * outermost entry notes its caller for "heap limit in a no-GC region"
+ * and "collection inside a no-GC region". */
+static void nogc_begin(void *site) {
   gc_init();
   gc_fast_clear();
   pthread_mutex_lock(&gc_heap.world);
-  /*
-   * Helpers wrap avant_alloc in defer so C-held pointers are not swept.
-   * If every allocation in a loop is inside that window, gc_maybe_collect
-   * in avant_alloc never fires (prod Base64 RSS 3.7 GB). Collect *before*
-   * taking defer, while the caller has already stored the previous result
-   * in a rooted local. Nested enter (hash grow, buf push inside json_gen)
-   * must not collect: the outer helper still holds unmarked pointers.
-   * Do not collect on leave — a helper that returns a heap pointer has
-   * not yet STOREd it.
-   *
-   * Young copy must not run here: myc spilled heap args into roots and
-   * then copied them into C registers. A moving collect would update the
-   * slots and leave the C args dangling. Full collect stays non-moving
-   * (AVANT_NURSERY=0), so it is still safe at this boundary.
-   */
-  if (gc_heap.defer == 0 && (gc_heap.set.nursery_off || (gc_heap.limit_pending && collecting_row))) {
-    /* With the nursery on, only a collection C32 left pending runs
-     * here, and not at a quiet row's entry: a full collection moves no
-     * young object and keeps every block this thread's stack names
-     * (C31), and the caller of a collecting row has rooted what it
-     * holds. */
-    gc_maybe_collect();
-  }
-  /* AVANT_GC_STRESS=1: a young collection at every outermost entry
-   * (W14b1). It moves, so it proves that no helper holds a reference
-   * the collector cannot see or rewrite when its region begins. */
-  if (gc_heap.defer == 0 && gc_heap.set.stress && collecting_row) {
-    gc_thread.c_entry++;
-    gc_stress_point();
-    gc_thread.c_entry--;
-  }
   if (gc_heap.defer == 0) {
     gc_heap.region_bytes = 0;
     gc_heap.region_site = site;
@@ -308,27 +295,28 @@ static void defer_enter(int collecting_row, void *site) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-void avant_gc_defer_enter(void) {
-  defer_enter(1, __builtin_return_address(0));
+__attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void) {
+  nogc_begin(__builtin_return_address(0));
 }
 
-/* A defer region's entry without the stress point (Stage 28 W14b1): the
- * rest is avant_gc_defer_enter, including the full collection of the
- * nursery-off mode. Two kinds of helper enter this way (avant_gc.h): a
- * named safepoint's region, which begins right after the safepoint (the
- * hash setters, avant_hash_inc_slice, buf_append_slow and the array
- * push and reserve entries, Stage 28 W15a1: the safepoint already was
- * the collection point, and a second, unrooted one would see the
- * helper's parameters only through the conservative C-stack rewrite),
- * and dup_bytes, whose callers pass their own stack buffers or pointers
- * derived inside their region. Until W14b1 the call table's *quiet* rows
- * entered here; W15a1 made them collecting calls or never-collecting
- * ones. It goes with defer regions themselves (W16, RC4). */
-__attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void) {
-  defer_enter(0, __builtin_return_address(0));
+/* The ABI names user --cc C may call (avant_rt.h): the same region
+ * (Stage 28 W16a; before, the outermost entry was a collection point
+ * with the nursery off and under AVANT_GC_STRESS=1, and runtime helpers
+ * bracketed their allocations with it). */
+void avant_gc_defer_enter(void) {
+  nogc_begin(__builtin_return_address(0));
 }
 
 void avant_gc_defer_leave(void) {
+  avant_gc_nogc_end();
+}
+
+/* The region's end. A collection the policy asked for inside is still
+ * due (the budget stays spent, a pending explicit or heap-limit request
+ * stays set), so the first collection point after the region runs it;
+ * the end itself collects nothing, so the function may still hold what
+ * it built inside. */
+__attribute__((visibility("hidden"))) void avant_gc_nogc_end(void) {
   pthread_mutex_lock(&gc_heap.world);
   if (gc_heap.defer > 0) {
     gc_heap.defer -= 1;

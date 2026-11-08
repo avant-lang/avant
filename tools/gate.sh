@@ -107,6 +107,14 @@ snap() {
 
 echo "gate: root=$root seed=$seed out=$out reuse=${REUSE:-no} suite-env=${SUITE_ENV:-none} gc-env=${GC_ENV:-none}" | tee "$out/summary.txt"
 
+# The runtime-C rooting lint (Stage 28 W16a, gc-design.md section 4.2
+# check 3; runtime/avant_gc.h's RC1-RC4).
+if sh tools/gc-lint.sh > "$out/gc-lint.txt" 2>&1 < /dev/null; then
+  echo "gate: $(tail -1 "$out/gc-lint.txt")" | tee -a "$out/summary.txt"
+else
+  fail "gc-lint: $(tail -1 "$out/gc-lint.txt") (gc-lint.txt)"
+fi
+
 # The letters come from tools/letters.sh (its own timeouts: runtime 300 s,
 # each compiler build 900 s; stdin /dev/null).
 letters() { LETTERS_SEED=$seed LETTERS_TIME_DIR=$out sh tools/letters.sh "$@" < /dev/null; }

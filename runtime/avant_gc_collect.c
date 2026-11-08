@@ -18,15 +18,9 @@
  * the adaptive nursery sizing and the full-collection trigger, and the
  * public collection entry points. */
 
-/* Nonzero while every named safepoint must take its slow path: under
- * AVANT_GC_STRESS=1 (set once by gc_init_slow), or while a heap-limit
- * collection is pending (C32). */
-__attribute__((visibility("hidden"))) uint32_t avant_gc_safepoint_force;
-
 void gc_limit_collect_pending(void) {
   gc_heap.limit_pending = 1;
   gc_fast_clear();
-  avant_gc_safepoint_force = 1;
 }
 
 uint64_t avant_young_bytes;
@@ -273,11 +267,19 @@ static void limit_progress_check(void) {
   }
 }
 
+static int region_refuses(void);
+
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   uint64_t t0 = now_ns();
   if (gc_heap.collecting) {
     gc_die("GC reentered");
+  }
+  /* RC4: only the heap limit's last resort (place, avant_gc_alloc.c, when
+   * even an over-limit block cannot be had) reaches here inside a no-GC
+   * region; under AVANT_GC_VERIFY=1 that dies naming the region. */
+  if (gc_heap.defer && gc_heap.set.verify) {
+    (void)region_refuses();
   }
   if (!full && !allow_move) {
     gc_die("a young collection always moves");
@@ -428,23 +430,21 @@ void gc_maybe_collect(void) {
   if (gc_heap.collecting || gc_heap.defer) {
     return;
   }
+  if (gc_heap.explicit_pending) {
+    /* avant_gc_collect asked inside a no-GC region (RC4). */
+    gc_heap.explicit_pending = 0;
+    gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+    return;
+  }
   if (gc_heap.limit_pending) {
     gc_heap.limit_pending = 0;
-    avant_gc_safepoint_force = gc_heap.set.stress ? 1u : 0u;
     gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
     return;
   }
-  /*
-   * Stage 17: myc-llvm spills live pointer SSA into avant_gc_root
-   * slots around CALL, so young copy can rewrite them. Full collection
-   * remains non-moving. Default is still full collect only; set
-   * AVANT_NURSERY=1 to enable young copy. AVANT_NURSERY=0 is explicit
-   * Stage 7 behaviour.
-   *
-   * C helpers also hold heap pointers that gc_mark_roots does not see
-   * (concat args, hash tables mid-grow). avant_gc_defer_* blocks
-   * collection for that window.
-   */
+  /* Only a no-GC region (RC4, avant_gc.h) or a running collection holds
+   * a request off (above); since Stage 28 W16a runtime helpers root what
+   * they hold (RC1) and allocate outside regions, so their allocations
+   * are collection points like generated code's (O20, O46). */
   if (gc_heap.set.nursery_off) {
     if (avant_since_gc >= gc_heap.full_trigger) {
       gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
@@ -488,71 +488,12 @@ void gc_stress_point(void) {
   }
 }
 
-/* A named safepoint's slow path (avant_gc.h; Stage 28 W15a1, gc-design.md
- * §5.1). ROOTS holds the helper's heap reference arguments; they are the
- * slots of a frame pushed for the collection, so a young collection
- * relocates them (interior addresses included) and a defragmenting full
- * one rewrites them, and the caller's macro reads them back. It is a
- * collection runtime C entered (gc_thread.c_entry, Stage 28 W15a2): any
- * other young object a word of this thread's C stack names is kept in
- * place (gc_pin_c_stack), never rewritten. A collection runs only
- * in an unshared program, outside every defer region, collection and
- * quiet leaf, on a registered thread: under AVANT_GC_STRESS=1 a young
- * collection that always copies, then whatever the policy asks for
- * (gc_maybe_collect: the young budget, the full trigger, a pending
- * heap-limit collection). */
-#define GC_SAFEPOINT_MAX 3
-__attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots, uint32_t n) {
-  void **slots[GC_SAFEPOINT_MAX];
-  Frame f;
-  uint32_t i;
-  gc_init();
-  if (n > GC_SAFEPOINT_MAX) {
-    gc_die("too many safepoint roots");
-  }
-  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_heap.defer ||
-      gc_heap.collecting || gc_thread.quiet || !gc_thread.reg.head) {
-    return;
-  }
-  for (i = 0; i < n; i++) {
-    slots[i] = &roots[i];
-  }
-  f.prev = gc_thread.frame;
-  f.slots = slots;
-  f.n = n;
-  f.cap = n;
-  gc_thread.frame = &f;
-  /* A collection runtime C entered (Stage 28 W15a2): the young objects
-   * words of this thread's C stack name are kept in place
-   * (gc_pin_c_stack); the helper's arguments are this frame's slots and
-   * are relocated precisely. */
-  gc_thread.c_entry++;
-  pthread_mutex_lock(&gc_heap.world);
-  gc_heap.ctr.sp.calls++;
-  if (gc_heap.set.stress) {
-    gc_stress_point();
-  }
-  {
-    uint64_t before = avant_g_stats.collections;
-    gc_maybe_collect();
-    if (avant_g_stats.collections != before) {
-      gc_heap.ctr.sp.collections++;
-    }
-  }
-  pthread_mutex_unlock(&gc_heap.world);
-  gc_thread.c_entry--;
-  gc_thread.frame = f.prev;
-}
-
 void gc_init_slow(void) {
   if (gc_heap.inited) {
     return;
   }
   gc_heap.inited = 1;
   gc_settings_read(&gc_heap.set);
-  if (gc_heap.set.stress) {
-    avant_gc_safepoint_force = 1;
-  }
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;
   } else {
@@ -583,35 +524,58 @@ void avant_gc_heap_goal_collect(void) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* The function a no-GC region was entered from, for a message WHAT: its
+ * symbol when the image exports one, else the call site's offset in its
+ * image (addr2line resolves it). */
+static __attribute__((noreturn)) void region_die(const char *what) {
+  char msg[512];
+  Dl_info info;
+  memset(&info, 0, sizeof info);
+  if (gc_heap.region_site && dladdr(gc_heap.region_site, &info) && info.dli_sname) {
+    snprintf(msg, sizeof msg, "%s (%s)", what, info.dli_sname);
+  } else if (gc_heap.region_site && info.dli_fname && info.dli_fbase) {
+    const char *base = strrchr(info.dli_fname, '/');
+    snprintf(msg, sizeof msg, "%s (%s+0x%lx)", what, base ? base + 1 : info.dli_fname,
+             (unsigned long)((uintptr_t)gc_heap.region_site - (uintptr_t)info.dli_fbase));
+  } else {
+    snprintf(msg, sizeof msg, "%s (called from %p)", what, gc_heap.region_site);
+  }
+  gc_die(msg);
+}
+
 /* gc-design.md §5.4: an allocation inside a no-GC region proceeds past
  * AVANT_HEAP_MAX_MB (C32: the full collection runs after the region),
  * unless the region alone has allocated more than the limit: no
  * collection after it could bring the heap back under the limit. */
 void gc_region_limit_check(uint64_t bytes) {
   if (gc_heap.set.heap_max && gc_heap.region_bytes + bytes > gc_heap.set.heap_max) {
-    /* The helper is named by its symbol when the image exports one, else
-     * by the call site's offset in its image (addr2line resolves it). */
-    char msg[512];
-    Dl_info info;
-    memset(&info, 0, sizeof info);
-    if (gc_heap.region_site && dladdr(gc_heap.region_site, &info) && info.dli_sname) {
-      snprintf(msg, sizeof msg, "heap limit in a no-GC region (%s)", info.dli_sname);
-    } else if (gc_heap.region_site && info.dli_fname && info.dli_fbase) {
-      const char *base = strrchr(info.dli_fname, '/');
-      snprintf(msg, sizeof msg, "heap limit in a no-GC region (%s+0x%lx)",
-               base ? base + 1 : info.dli_fname,
-               (unsigned long)((uintptr_t)gc_heap.region_site - (uintptr_t)info.dli_fbase));
-    } else {
-      snprintf(msg, sizeof msg, "heap limit in a no-GC region (called from %p)",
-               gc_heap.region_site);
-    }
-    gc_die(msg);
+    region_die("heap limit in a no-GC region");
   }
+}
+
+/* RC4 (avant_gc.h, Stage 28 W16a): a collection attempted inside a no-GC
+ * region. Under AVANT_GC_VERIFY=1 it dies naming the region's function;
+ * otherwise an explicit request is deferred to the first collection
+ * point after the region (returns 1: the caller does not collect). */
+static int region_refuses(void) {
+  if (!gc_heap.defer) {
+    return 0;
+  }
+  if (gc_heap.set.verify) {
+    region_die("collection inside a no-GC region");
+  }
+  return 1;
 }
 
 void avant_nursery_reclaim(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
+  /* A young collection asked for inside a no-GC region is dropped (the
+   * budget still triggers one after it). */
+  if (region_refuses()) {
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
   if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
     gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
   }
@@ -621,6 +585,12 @@ void avant_nursery_reclaim(void) {
 void avant_gc_collect(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
+  if (region_refuses()) {
+    gc_heap.explicit_pending = 1;
+    gc_fast_clear();
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
   gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
   pthread_mutex_unlock(&gc_heap.world);
 }

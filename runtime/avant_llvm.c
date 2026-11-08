@@ -222,16 +222,15 @@ int32_t avant_llvm_compile_text(const char *text, const char *name, const char *
   return compile_buffer(buf, passes, level, obj_path);
 }
 
+/* gc-lint: holds nothing (S is C memory: LLVM's messages, a C buffer). */
 static char *avant_string(const char *s) {
   size_t n = s ? strlen(s) : 0;
-  avant_gc_defer_enter();
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n) {
     memcpy(p, s, n);
   }
   p[n] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
 }
 

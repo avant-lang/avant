@@ -154,7 +154,8 @@ char *avant_sha256(const char *s) {
   block[57] = (uint8_t)(bit_len >> 48);
   block[56] = (uint8_t)(bit_len >> 56);
   sha256_transform(state, block);
-  avant_gc_defer_enter();
+  /* gc-lint: holds nothing (the digest is in C locals; the text is not
+   * read after the allocation). */
   out = (char *)avant_alloc(65, AVANT_TYPE_BYTES);
   for (i = 0; i < 8; i++) {
     uint32_t v = state[i];
@@ -169,7 +170,6 @@ char *avant_sha256(const char *s) {
   }
   out[64] = 0;
   avant_str_tag(out);
-  avant_gc_defer_leave();
   return out;
 }
 

@@ -384,6 +384,8 @@ void gc_defrag_release(void) {
   size_t i;
   for (i = 0; i < gc_heap.def_release.n; i++) {
     mature_unlink(gc_heap.def_release.v[i]);
+    /* AVANT_GC_STRESS=1: an evacuated block is poisoned (Stage 28 W16a). */
+    gc_poison(gc_heap.def_release.v[i]->base, BLOCK_SIZE);
     gc_cache_or_free_block(gc_heap.def_release.v[i]);
     gc_heap.ctr.def.freed_blocks++;
   }

@@ -239,7 +239,7 @@ static void gc_fast_refresh(void) {
   int cur_ok = S_INLINE_HOLES || gc_heap.cur_whole;
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
-      !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
+      !gc_heap.limit_pending && !gc_heap.explicit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
       cur_ok && avant_gc_bump) {
     gc_heap.fast_block = cur;
     avant_gc_base = cur->base;
@@ -575,7 +575,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * already spilled. This is the same contract as avant_bump_alloc.
    * Medium numeric buffers take the large path so their address stays. */
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.defer &&
-      !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending &&
+      !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending && !gc_heap.explicit_pending &&
       gc_heap.mature_since_full < gc_heap.full_trigger && avant_nursery_held + total < avant_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
@@ -587,7 +587,6 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
 
   pthread_mutex_lock(&gc_heap.world);
   gc_maybe_collect();
-
   if (large) {
     /* One young budget (gc-design.md §5.1, Stage 28 W15a1): young large
      * bytes count in avant_nursery_held, so gc_maybe_collect above
@@ -614,6 +613,31 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   void *obj = payload_of(h);
   pthread_mutex_unlock(&gc_heap.world);
   return obj;
+}
+
+/* A runtime helper about to allocate a young large object of BYTES that
+ * replaces one it allocated before, which is usually dead by now (Stage 28
+ * W16a: avant_json_parse's pool, the previous document dropped), asks for
+ * the due young collection first when BYTES alone fills the young budget
+ * and anything young was allocated since the last collection: run then,
+ * it frees the previous object before the new one exists instead of
+ * holding both until the next collection (Json::ParseMapping 60 -> 35 MB
+ * with the pool born young). A collecting call (the caller roots what it
+ * holds). As a rule of avant_alloc for every such allocation it cost
+ * Template::Regex 4 -> 11 young collections, +10% time and +18% memory:
+ * there the large allocations are buffer growths whose old buffer is
+ * still live, so the early collection freed nothing and aged the buffers
+ * into mature space. */
+__attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes) {
+  size_t total = align_up(sizeof(AvantHeader) + (size_t)bytes);
+  gc_init();
+  pthread_mutex_lock(&gc_heap.world);
+  if (!gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
+      avant_nursery_held > gc_heap.young_carried && total >= avant_young_bytes) {
+    gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
+  }
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
 /* avant_alloc as runtime C calls it (avant_gc.h maps avant_alloc to this

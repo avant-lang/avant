@@ -2,11 +2,18 @@
 #define AVANT_GC_INTERNAL_H
 
 #include "avant_rt.h"
+/* The collector implements what avant_gc.h declares for the rest of the
+ * runtime (the frame type of RC1's scopes, the no-GC regions); its own
+ * avant_alloc is the allocation itself, not avant_gc.h's mapping of the
+ * name to avant_alloc_c. */
+#include "avant_gc.h"
+#undef avant_alloc
 
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units, one per concern:
@@ -271,12 +278,10 @@ typedef struct LargeIter {
   uint32_t p;
 } LargeIter;
 
-typedef struct Frame {
-  struct Frame *prev;
-  void ***slots;
-  uint32_t n;
-  uint32_t cap;
-} Frame;
+/* A frame on a thread's chain (avant_gc_top): generated code's frames
+ * (avant_gc_enter) and runtime C's handle scopes (AVANT_GC_SCOPE, RC1)
+ * alike; the type is avant_gc.h's AvantGcFrame. */
+typedef AvantGcFrame Frame;
 
 typedef struct ThreadReg {
   struct ThreadReg *next;
@@ -556,7 +561,9 @@ typedef struct GcPromCounters {
  * counts the slow paths that could collect (the budget spent, stress or
  * a pending heap-limit collection, in an unshared program outside every
  * region), collections the ones that ran a collection the policy asked
- * for (a stress point's own young collection is not counted). */
+ * for (a stress point's own young collection is not counted). The
+ * safepoints went in Stage 28 W16a (RC1: helpers collect at their own
+ * allocations); the fields stay on the statistics line and print 0. */
 typedef struct GcSpCounters {
   uint64_t calls;
   uint64_t collections;
@@ -914,6 +921,15 @@ typedef struct GcHeap {
    * in a no-GC region", gc-design.md §5.4). */
   uint64_t region_bytes;
   void *region_site;
+  /* avant_gc_collect was called inside a no-GC region (RC4, Stage 28
+   * W16a): the first collection point after it runs the full collection. */
+  uint8_t explicit_pending;
+  /* AVANT_GC_STRESS=1 (Stage 28 W16a): the line marks every young block
+   * had when the young collection began (LINES_PER_BLOCK bytes per entry
+   * of young_blocks), for the mixed blocks the stress mode evacuates. */
+  uint8_t *stress_lines;
+  uint8_t *stress_mixed;
+  uint32_t stress_lines_cap;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -938,8 +954,9 @@ extern GcHeap gc_heap;
 /* A mutator thread's collector state (Stage 28 W14b2, gc-design.md
  * §1.1): gc_thread, thread-local, defined in avant_gc_roots.c. */
 typedef struct GcThread {
-  /* The innermost registered frame, and the thread's free frames. */
-  Frame *frame;
+  /* The thread's free frames (its innermost frame is avant_gc_top,
+   * avant_gc.h, since Stage 28 W16a: runtime C's scopes push onto it
+   * inline). */
   Frame *frame_free;
   /* avant_gc_quiet_enter's depth: root registration is skipped inside. */
   int quiet;
@@ -1073,6 +1090,10 @@ void gc_rem_keep_young_holders(void);
  * test. */
 #define SPLUS_WAS_SURV 7
 #define SPLUS_PURE_AGED 8
+/* AVANT_GC_STRESS=1 (Stage 28 W16a): a young block that held mature
+ * lines when the collection began; its young survivors are evacuated all
+ * the same and its line marks restored from gc_heap.stress_lines. */
+#define SPLUS_MIXED 9
 #ifndef SPLUS_AGED_SPARSE_LINES
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
@@ -1102,6 +1123,13 @@ void gc_defrag_release(void);
 /* avant_gc_stack.c */
 void gc_note_c_stack_blocks(void);
 void gc_pin_c_stack(void);
+/* AVANT_GC_STRESS=1: freed memory is filled with GC_POISON (Stage 28 W16a). */
+#define GC_POISON 0xdb
+static inline void gc_poison(void *p, size_t n) {
+  if (gc_heap.set.stress) {
+    memset(p, GC_POISON, n);
+  }
+}
 
 /* avant_gc_verify.c */
 void gc_verify_no_stale_marks(void);

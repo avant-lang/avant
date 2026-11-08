@@ -274,17 +274,26 @@ static uint64_t val_bytes(const AvantHash *h, int32_t cap) {
   return (uint64_t)cap * (uint64_t)elem;
 }
 
+/* RC1 (avant_gc.h): each allocation may collect, so the hash and the new
+ * buffers not yet published are handles, and the old buffers are read
+ * from the hash after the last allocation (RC2). */
 static void grow(AvantHash *h) {
-  avant_gc_defer_enter();
+  int32_t ncap = h->cap ? h->cap * 2 : 8;
+  void *nkeys = NULL;
+  uint8_t *nstate = NULL;
+  void *nvals = NULL;
+  AVANT_GC_SCOPE(3);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &nkeys);
+  AVANT_GC_ROOT(2, &nstate);
+  nkeys = avant_alloc(key_bytes(h, ncap), key_type_id(h));
+  nstate = (uint8_t *)avant_alloc(state_bytes(ncap), AVANT_TYPE_BYTES);
+  nvals = avant_alloc(val_bytes(h, ncap), val_type_id(h));
+
   int32_t ocap = h->cap;
   void *okeys = h->keys;
   void *ovals = h->vals;
   uint8_t *ostate = h->state;
-  int32_t ncap = ocap ? ocap * 2 : 8;
-  void *nkeys = avant_alloc(key_bytes(h, ncap), key_type_id(h));
-  uint8_t *nstate = (uint8_t *)avant_alloc(state_bytes(ncap), AVANT_TYPE_BYTES);
-  void *nvals = avant_alloc(val_bytes(h, ncap), val_type_id(h));
-
   AvantHash dst = *h;
   dst.keys = nkeys;
   dst.vals = nvals;
@@ -313,9 +322,9 @@ static void grow(AvantHash *h) {
   h->state = nstate;
   h->cap = ncap;
   h->size = dst.size;
-  avant_gc_defer_leave();
 }
 
+/* gc-lint: holds nothing (grow is its last statement and roots the hash itself). */
 static void ensure_cap(AvantHash *h) {
   if (h->size * 4 >= h->cap * 3) {
     grow(h);
@@ -356,6 +365,7 @@ static void trim_slice(const char **p, size_t *n) {
   *n = len;
 }
 
+/* gc-lint: holds nothing (its inputs are integers). */
 void *avant_hash_new(int32_t key_kind, int32_t val_kind) {
   AvantHash *h = (AvantHash *)avant_alloc(sizeof(AvantHash), AVANT_TYPE_HASH);
   h->key_kind = key_kind;
@@ -390,42 +400,40 @@ void avant_hash_clear(void *hp) {
   h->size = 0;
 }
 
-/* The setters and avant_hash_inc_slice are named safepoints (avant_gc.h,
- * Stage 28 W15a1): the safepoint is the first statement and names every
- * heap argument read after it; the region that follows enters quietly
- * (the safepoint was its collection point), so grow's region is nested
- * and collects nothing. */
+/* The setters (RC1, avant_gc.h; Stage 28 W16a: they were W15a1's named
+ * safepoints): grow may collect, so the hash and the key and value
+ * arguments are handles across it. */
 void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
-  gc_safepoint_entry(hp, key);
-  avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &key);
   if (h) {
     ensure_cap(h);
     insert_raw(h, (int64_t)(uintptr_t)key, val, NULL);
   }
-  avant_gc_defer_leave();
 }
 
 void avant_hash_set_str(void *hp, const char *key, const char *val) {
-  gc_safepoint_entry(hp, key, val);
-  avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
+  AVANT_GC_SCOPE(3);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &key);
+  AVANT_GC_ROOT(2, &val);
   if (h) {
     ensure_cap(h);
     insert_raw(h, (int64_t)(uintptr_t)key, 0, val);
   }
-  avant_gc_defer_leave();
 }
 
 void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val) {
-  gc_safepoint_entry(hp);
-  avant_gc_quiet_defer_enter();
   AvantHash *h = (AvantHash *)hp;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
   if (h) {
     ensure_cap(h);
     insert_raw(h, (int64_t)key, val, NULL);
   }
-  avant_gc_defer_leave();
 }
 
 int32_t avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
@@ -539,29 +547,39 @@ void avant_hash_del_i32k(void *hp, int32_t key) {
   erase_at(h, i);
 }
 
+/* RC1/RC2 (avant_gc.h; Stage 28 W16a, it was a named safepoint): grow
+ * and the key's allocation may collect, so the hash and the text are
+ * handles and the slice's pointer is formed again from the text after
+ * each (its offset is an integer). */
 int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t stop) {
-  gc_safepoint_entry(hp, s);
   AvantHash *h = (AvantHash *)hp;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &s);
   last_key_reset();
   if (!h || h->key_kind != AVANT_HASH_KEY_STR || h->val_kind != AVANT_HASH_VAL_I32) {
     return 0;
   }
   const char *p = NULL;
   size_t n = 0;
+  if (!s) {
+    s = "";
+  }
   clamp_slice(s, start, stop, &p, &n);
+  size_t off = (size_t)(p - s);
   uint32_t hv = hash_bytes(p, n);
   int32_t i = 0;
-  avant_gc_quiet_defer_enter();
   if (lookup_bytes(h, p, n, hv, &i)) {
     int32_t c = ((int32_t *)h->vals)[i] + 1;
     ((int32_t *)h->vals)[i] = c;
     g_last_key = (const char *)(uintptr_t)load_key(h, i);
-    avant_gc_defer_leave();
     return c;
   }
   ensure_cap(h);
+  p = s + off;
   lookup_bytes(h, p, n, hv, &i);
   char *key = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  p = s + off;
   if (n) {
     memcpy(key, p, n);
   }
@@ -577,7 +595,6 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
     h->size += 1;
   }
   g_last_key = key;
-  avant_gc_defer_leave();
   return 1;
 }
 
@@ -657,41 +674,43 @@ typedef struct {
   int32_t cap;
 } AvantArrayBox;
 
-static void *hash_array_str(char **items, int32_t n) {
-  avant_gc_defer_enter();
-  AvantArrayBox *a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
-  char **buf = NULL;
-  int32_t i;
+/* The keys or the values of H as a new Array (RC1, avant_gc.h; Stage 28
+ * W16a): the array and its buffer are allocated first, with the hash
+ * and the array as handles, and filled from the hash after the last
+ * allocation. Before W16a the elements were copied into a malloc'ed
+ * items[] first, and a collection at the array's allocation could move
+ * them under it (RC2). STR: the elements are strings (a pointer buffer,
+ * barriered, RC3); else Int32s. */
+static void *hash_collect(AvantHash *h, int keys, int str) {
+  AvantArrayBox *a = NULL;
+  int32_t n = h ? h->size : 0;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
   if (n > 0) {
-    buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
-    for (i = 0; i < n; i++) {
-      buf[i] = items[i];
+    void *buf = avant_alloc((uint64_t)n * (str ? sizeof(char *) : sizeof(int32_t)),
+                            str ? AVANT_TYPE_PTRS : AVANT_TYPE_BYTES);
+    int32_t i;
+    int32_t k = 0;
+    for (i = 0; i < h->cap && k < n; i++) {
+      if (!slot_full(h->state[i])) {
+        continue;
+      }
+      if (str) {
+        ((char **)buf)[k++] = keys ? (char *)(uintptr_t)load_key(h, i) : ((char **)h->vals)[i];
+      } else {
+        ((int32_t *)buf)[k++] = keys ? (int32_t)load_key(h, i) : ((int32_t *)h->vals)[i];
+      }
     }
-    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
-    avant_barrier(buf);
-  }
-  a->buf = buf;
-  a->size = n;
-  a->cap = n;
-  avant_gc_defer_leave();
-  return a;
-}
-
-static void *hash_array_i32(int32_t *items, int32_t n) {
-  avant_gc_defer_enter();
-  AvantArrayBox *a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
-  int32_t *buf = NULL;
-  int32_t i;
-  if (n > 0) {
-    buf = (int32_t *)avant_alloc((uint64_t)n * sizeof(int32_t), AVANT_TYPE_BYTES);
-    for (i = 0; i < n; i++) {
-      buf[i] = items[i];
+    if (str) {
+      avant_barrier(buf);
     }
+    avant_barrier(a);
+    a->buf = buf;
+    a->size = k;
+    a->cap = n;
   }
-  a->buf = buf;
-  a->size = n;
-  a->cap = n;
-  avant_gc_defer_leave();
   return a;
 }
 
@@ -719,11 +738,13 @@ int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
   if (!h) {
     return 0;
   }
-  avant_gc_defer_enter();
+  /* RC1: grow may collect; the hash and the key are handles. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &key);
   if (lookup_str(h, key, &i)) {
     int32_t c = ((int32_t *)h->vals)[i] + by;
     ((int32_t *)h->vals)[i] = c;
-    avant_gc_defer_leave();
     return c;
   }
   ensure_cap(h);
@@ -740,7 +761,6 @@ int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
     h->state[i] = occ_mark(key, avant_str_n(key));
     h->size += 1;
   }
-  avant_gc_defer_leave();
   return by;
 }
 
@@ -750,11 +770,12 @@ int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
   if (!h) {
     return 0;
   }
-  avant_gc_defer_enter();
+  /* RC1: grow may collect; the hash is a handle. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
   if (lookup(h, (int64_t)key, hash_i32(key), &i)) {
     int32_t c = ((int32_t *)h->vals)[i] + by;
     ((int32_t *)h->vals)[i] = c;
-    avant_gc_defer_leave();
     return c;
   }
   ensure_cap(h);
@@ -765,7 +786,6 @@ int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
     h->state[i] = 1;
     h->size += 1;
   }
-  avant_gc_defer_leave();
   return by;
 }
 
@@ -788,83 +808,19 @@ int32_t avant_hash_get_or_i32k_i32(void *hp, int32_t key, int32_t fallback) {
 }
 
 void *avant_hash_keys_str(void *hp) {
-  AvantHash *h = (AvantHash *)hp;
-  char **items = NULL;
-  int32_t n = 0;
-  int32_t i;
-  void *r;
-  if (!h || h->size <= 0) {
-    return hash_array_str(NULL, 0);
-  }
-  items = (char **)malloc((size_t)h->size * sizeof(char *));
-  for (i = 0; i < h->cap; i++) {
-    if (slot_full(h->state[i])) {
-      items[n++] = (char *)(uintptr_t)load_key(h, i);
-    }
-  }
-  r = hash_array_str(items, n);
-  free(items);
-  return r;
+  return hash_collect((AvantHash *)hp, 1, 1);
 }
 
 void *avant_hash_keys_i32(void *hp) {
-  AvantHash *h = (AvantHash *)hp;
-  int32_t *items = NULL;
-  int32_t n = 0;
-  int32_t i;
-  void *r;
-  if (!h || h->size <= 0) {
-    return hash_array_i32(NULL, 0);
-  }
-  items = (int32_t *)malloc((size_t)h->size * sizeof(int32_t));
-  for (i = 0; i < h->cap; i++) {
-    if (slot_full(h->state[i])) {
-      items[n++] = (int32_t)load_key(h, i);
-    }
-  }
-  r = hash_array_i32(items, n);
-  free(items);
-  return r;
+  return hash_collect((AvantHash *)hp, 1, 0);
 }
 
 void *avant_hash_vals_str(void *hp) {
-  AvantHash *h = (AvantHash *)hp;
-  char **items = NULL;
-  int32_t n = 0;
-  int32_t i;
-  void *r;
-  if (!h || h->size <= 0) {
-    return hash_array_str(NULL, 0);
-  }
-  items = (char **)malloc((size_t)h->size * sizeof(char *));
-  for (i = 0; i < h->cap; i++) {
-    if (slot_full(h->state[i])) {
-      items[n++] = ((char **)h->vals)[i];
-    }
-  }
-  r = hash_array_str(items, n);
-  free(items);
-  return r;
+  return hash_collect((AvantHash *)hp, 0, 1);
 }
 
 void *avant_hash_vals_i32(void *hp) {
-  AvantHash *h = (AvantHash *)hp;
-  int32_t *items = NULL;
-  int32_t n = 0;
-  int32_t i;
-  void *r;
-  if (!h || h->size <= 0) {
-    return hash_array_i32(NULL, 0);
-  }
-  items = (int32_t *)malloc((size_t)h->size * sizeof(int32_t));
-  for (i = 0; i < h->cap; i++) {
-    if (slot_full(h->state[i])) {
-      items[n++] = ((int32_t *)h->vals)[i];
-    }
-  }
-  r = hash_array_i32(items, n);
-  free(items);
-  return r;
+  return hash_collect((AvantHash *)hp, 0, 0);
 }
 
 int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *found) {

@@ -16,10 +16,9 @@
  * declared, identically, by the shipped avant_rt.h, which generated
  * code uses; the declarations are repeated so this file states the
  * collector's surface on its own, and a mismatch with avant_rt.h is a
- * compile error. g_avant_shared, avant_gc_quiet_defer_enter,
- * avant_alloc_c and the safepoint (avant_gc_safepoint_slow,
- * avant_gc_safepoint_force, gc_safepoint_entry) are the names here
- * avant_rt.h does not ship.
+ * compile error. g_avant_shared, avant_alloc_c, the no-GC region (avant_gc_nogc_begin/end) and the
+ * handle scopes (AvantGcFrame, avant_gc_top, AVANT_GC_SCOPE) are the
+ * names here avant_rt.h does not ship.
  *
  * What the collector does at these calls, as the callers rely on it
  * today (a description of the current behavior, not a new contract; W13
@@ -34,9 +33,9 @@
  *     evacuate sparse mature blocks, except blocks a word of the
  *     collecting thread's stack names (C31). Other threads' C frames are
  *     not scanned (D191).
- *   - avant_gc_defer_enter/leave bracket a region in which no collection
- *     runs (regions nest). With the nursery off (AVANT_NURSERY=0) the
- *     outermost enter may run a full collection first.
+ *   - avant_gc_defer_enter/leave (avant_gc_nogc_begin/end) bracket a
+ *     region in which no collection runs (regions nest); the entry
+ *     collects nothing (RC4 below; Stage 28 W16a).
  *   - A store of a reference into a heap object is preceded by
  *     avant_barrier on that object (D187).
  *   - avant_pin/avant_unpin keep an object at its address while C holds
@@ -62,58 +61,134 @@
  *     root slot (Stage 28 W14b2, gc-design.md section 1.4; it replaced a
  *     callback from the collector into avant_hash.c).
  *
- * The runtime-C contract (Stage 28 W14b2 states it here; gc-design.md
- * section 4.2's RC1-RC4 and its handle scopes replace the first part in
- * W16):
+ * The runtime-C contract, RC1-RC4 (Stage 28 W16a, gc-design.md section
+ * 4.2; it replaces W14b1's defer discipline and W15a1's named
+ * safepoints). A runtime C function is a mutator like generated code:
+ * any call that may collect (an allocation, a helper that allocates, a
+ * callback into Avant) may run a young collection that moves the young
+ * objects it can (S+'s copy) and frees the unreached ones, or a full
+ * collection that may evacuate mature blocks. The caller of a runtime
+ * entry has rooted its own references (compiler/mir/gc.av); what the
+ * function holds in C across such a call is its own business:
  *
- *   The stress mode's contract, the defer discipline (W14b1). A runtime
- *   helper that holds a heap reference in C across a point where a
- *   collection may run keeps it inside one defer region
- *   (avant_gc_defer_enter ... avant_gc_defer_leave). Its outermost
- *   region begins before it forms a derived pointer (an interior pointer
- *   such as s + start, or a buffer's data pointer) or writes a stack
- *   buffer it will copy into the heap, because the region's entry is a
- *   collection point: with the nursery off it may run a full
- *   collection, and under AVANT_GC_STRESS=1 a young collection that
- *   moves what it reaches. An internal helper whose callers do either
- *   before calling it enters quietly (avant_gc_quiet_defer_enter: the
- *   same region, without the stress point), as does a helper whose entry
- *   is a safepoint (below): its region begins right after the safepoint,
- *   which already was its collection point. Fresh objects the helper
- *   allocated and has not yet published are held the same way, inside
- *   the region.
+ *   RC1. Handles. A heap reference held across a call that may collect
+ *   is kept in a C local registered in a handle scope, and read from
+ *   that local after the call:
+ *       AVANT_GC_SCOPE(2);        a frame of 2 slots on avant_gc_top
+ *       AVANT_GC_ROOT(0, &a);     slot 0 names the local a
+ *       AVANT_GC_ROOT(1, &b);
+ *       p = avant_alloc(...);     may collect, may move a and b
+ *       memcpy(p, a, na);         a, b re-read from their locals
+ *       AVANT_GC_UNSCOPE();       optional: the scope also ends with
+ *                                 the C block that declared it
+ *   The scope is a frame of the thread's chain (generated code's frames,
+ *   the same slots, so the collector gains no root kind): a young
+ *   collection relocates each slot (an interior address keeps its
+ *   offset; a value that is no heap address is left alone), a
+ *   defragmenting full collection rewrites it, and the C-stack pin scan
+ *   skips it. Slots are registered in order (0, 1, ...), before the
+ *   first call that may collect; at most one scope per C block (open a
+ *   nested block for a second). It is thread-local, takes no lock and
+ *   allocates nothing. In a shared program (g_avant_shared) the scope
+ *   also holds a no-GC region (RC4) until the scope ends: no thread is
+ *   stopped for a collection until W17's handshake (D191), and a scope
+ *   so keeps the protection today's defer regions gave.
  *
- *   The named safepoints (Stage 28 W15a1, gc-design.md section 5.1, the
- *   interim until W16's handle scopes): a few helpers the call table
- *   calls *collects* begin with gc_safepoint_entry(a, ...), naming every
- *   heap reference argument the helper reads after it (one to three):
- *   the hash setters avant_hash_set_i32, _set_str, _set_i32k_i32,
- *   avant_hash_inc_slice, buf_append_slow (behind the avant_buf_push_*
- *   rows), and the array entries avant_array_push_slot, _push_ptr,
- *   _push_i32 and avant_array_reserve. When the young budget is spent
- *   (or under AVANT_GC_STRESS=1 always, or with a heap-limit collection
- *   pending) and only in an unshared program, outside every defer
- *   region and collection, the safepoint runs the collection the policy
- *   asks for (gc_maybe_collect; a young one under stress) with the named
- *   arguments as root slots of a frame of its own, so a moved argument is
- *   read back from that slot into the helper's parameter: the helper's
- *   C locals hold no stale reference after it, and the collection does
- *   not rewrite the C stack (it needs no conservative rewrite). The
- *   caller rooted its references across the call like any collecting
- *   call (compiler/mir/gc.av). The safepoint is the helper's first
- *   statement: before it forms a derived pointer or copies an argument
- *   into another local.
+ *   RC2. No raw derived pointer across a collecting call. An interior
+ *   pointer (s + start) or a buffer's data pointer (h->keys, a->buf,
+ *   b->data) is recomputed from its handle after every call that may
+ *   collect; a function that needs one across such a call roots the
+ *   derived pointer itself (a slot may hold an interior address). Fresh
+ *   objects the function allocated and has not published yet are
+ *   handles too (hash grow's new buffers; split's array being filled).
+ *
+ *   RC3. Barriers (D187). Every store of a reference into a heap object
+ *   is followed by avant_barrier on that object (or avant_barrier_at on
+ *   the stored-to address) before the next call that may collect (C34:
+ *   avant_hash_inc_slice and array_grow lost young keys and elements
+ *   without one).
+ *
+ *   RC4. No-GC regions, only where C cannot root. Where references live
+ *   inside a C library's own data structures while it calls back or
+ *   allocates, or while another thread may collect in a shared program
+ *   before W17 (the HTTP/WS sends; see the checklist), the
+ *   function brackets the region with avant_gc_nogc_begin/end (regions
+ *   nest; one process-wide depth, under the world lock). Allocation
+ *   inside is allowed and counted against the young budget and the heap
+ *   limit (C32: past the limit the full collection runs after the
+ *   region, unless the region alone exceeds it); the policy's
+ *   collection request is not lost: the budget stays spent, so the
+ *   first collection point after the region runs it. A collection
+ *   requested explicitly inside (avant_gc_collect) is deferred to that
+ *   point too, and under AVANT_GC_VERIFY=1 any collection attempted
+ *   inside dies naming the region's function ("collection inside a
+ *   no-GC region (...)"). avant_gc_defer_enter/leave, the ABI names
+ *   user --cc C may call, are the same region; generated code never
+ *   emits either (mir.md section 5.8).
+ *
+ *   A function that allocates but holds no reference across the
+ *   allocation (its inputs are C memory, or it reads nothing after it)
+ *   needs no scope; tools/gc-lint.sh asks such a function for a comment
+ *   "gc-lint: holds nothing" naming why.
+ *
+ *   How it is checked (gc-design.md section 4.2): AVANT_GC_STRESS=1 runs
+ *   a young collection before every runtime C allocation that moves
+ *   every young object S+ can move and fills freed memory with 0xdb
+ *   (the stress mode, avant_gc_collect.c), so a function that breaks
+ *   RC1 or RC2 reads poison or an old copy at once; AVANT_GC_VERIFY=1's
+ *   remembered-set check catches RC3; tools/gc-lint.sh fails the gate
+ *   when an allocating call stands in a function with neither a scope,
+ *   a region nor the comment.
+ *
+ *   The checklist (gc-audit.md section 13's table, moved here; Stage 28
+ *   W16a converted every row; "C" converted to RC1-RC3, "N" nothing
+ *   held, "R4" a no-GC region kept, with its reason):
+ *     row (unit)                                   verdict
+ *     avant_str_concat, _cat_i32, _from_i32_bytes  C (operands, array)
+ *     dup_bytes_at, slice, strip (avant_str.c)     C (text + offset, RC2)
+ *     avant_str_split, _fields, chars_build (C35)  C (array filled in
+ *                                                  place, str_array_new)
+ *     avant_str_repeat_byte, avant_hash_new        N (integer inputs)
+ *     array push_slot/_ptr/_i32, reserve,
+ *       array_grow (W16a item 2)                   C (scope on growth)
+ *     avant_array_copy                             C
+ *     buf_append_slow, buf_grow (item 2)           C
+ *     avant_buf_new, _to_str, _ensure,
+ *       avant_bytes_to_buf                         C
+ *     hash grow, setters, inc_slice (item 2)       C
+ *     inc_str, inc_i32k                            C
+ *     keys/vals (hash_collect; was items[])        C (array first, RC2)
+ *     avant_json_parse (audit 12 shape 2)          C (yyjson allocates
+ *                                                  from its own pool)
+ *     avant_json_f64s, copy_str                    C
+ *     base64 encode/decode, zlib                   C
+ *     sha256 (avant_codec.c)                       N (digest in C)
+ *     avant_argv, avant_dir_list                   C (array filled in
+ *                                                  place)
+ *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
+ *     avant_spawn (avant_task.c; C28)              N (the record is
+ *                                                  pinned; R1 is W16b's)
+ *     HTTP make_string/_bytes, packed headers      C
+ *     HTTP/WS send and close (7 regions)           R4: payloads held in
+ *                                                  C while other loop
+ *                                                  threads run (D191,
+ *                                                  until W17); nothing
+ *                                                  inside allocates
+ *     HTTP server state in srv (C memory) across
+ *       dispatch                                   pinned for the serve
+ *                                                  (W16a: with one loop
+ *                                                  the program may stay
+ *                                                  unshared and S+
+ *                                                  could move it)
+ *     g_last_key (avant_hash.c), g_json_pool
+ *       (avant_json.c, W16a)                       runtime roots
+ *                                                  (avant_gc_add_root)
  *
  *   One young budget (gc-design.md section 5.1): avant_nursery_held
  *   counts every young byte, the nursery's and the young large
  *   objects', helper allocations included; a collection is due when it
  *   reaches avant_young_bytes.
  *
- *   Barriers (D187). Every store of a reference into a heap object is
- *   followed by avant_barrier on that object (or avant_barrier_at on the
- *   stored-to address) before the next point where a collection may run
- *   (C34's lesson: avant_hash_inc_slice and array_grow lost young keys
- *   and elements without one).
  *
  *   The young collection's three-way rule, R1' (gc-design.md section
  *   1.3, D219 (2)). A young collection scans one level of every
@@ -168,9 +243,15 @@
  *                          (avant_gc_verify.c)
  *   AVANT_GC_STATS         switch, default 0: one statistics line on
  *                          stderr at exit
- *   AVANT_GC_STRESS        switch, default 0: a young collection at every
- *                          runtime C allocation and every outermost defer
- *                          entry (testing; W14b1)
+ *   AVANT_GC_STRESS        switch, default 0: the full stress mode
+ *                          (testing; W14b1, full since Stage 28 W16a):
+ *                          a young collection before every runtime C
+ *                          allocation (unshared programs, outside no-GC
+ *                          regions); every young collection evacuates
+ *                          every young block nothing names imprecisely
+ *                          (mixed blocks too), and freed memory (free
+ *                          young lines, evacuated blocks, freed large
+ *                          runs) is filled with 0xdb
  *
  * Retired (W14b2; setting one is reported and has no effect):
  * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
@@ -183,12 +264,12 @@ void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
-/* Runtime-internal (Stage 28 W14b2, O37): avant_gc_quiet_defer_enter
- * and avant_alloc_c below are entries of avant_rt.o that only the
- * runtime's other objects call. avant_rt.h does not declare them, and
- * their visibility is hidden: no linked image exports them (the second
- * section of avant_rt.exports). */
-__attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void);
+/* Runtime-internal (Stage 28 W14b2, O37): avant_alloc_c below is an
+ * entry of avant_rt.o that only the runtime's other objects call, as are
+ * avant_gc_nogc_begin/end and avant_gc_top (below). avant_rt.h does not
+ * declare them, and their visibility is hidden: no linked image exports
+ * them (the second section of avant_rt.exports). avant_gc_quiet_defer_enter
+ * went in Stage 28 W16a with the regions it opened. */
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
@@ -205,6 +286,75 @@ void avant_gc_add_root(void **slot);
 extern _Atomic uint32_t g_avant_str_gen;
 extern atomic_int g_avant_shared;
 
+/* RC4's no-GC regions (the contract above; Stage 28 W16a). Hidden: only
+ * the runtime's other objects call them; user --cc C has the ABI names
+ * avant_gc_defer_enter/leave, which open and close the same region. */
+__attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void);
+__attribute__((visibility("hidden"))) void avant_gc_nogc_end(void);
+/* A helper about to replace a young large object it allocated before
+ * (avant_json_parse's pool) runs the due young collection first when the
+ * new one alone fills the young budget (avant_gc_alloc.c; Stage 28 W16a).
+ * It may collect. Hidden. */
+__attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes);
+
+/* RC1's handle scopes (the contract above; Stage 28 W16a). A frame of the
+ * thread's chain, the type every frame has (avant_gc_internal.h calls it
+ * Frame): generated code's frames come from avant_gc_enter's free list,
+ * a scope's lives in the C function's own stack frame. scope is 0 for a
+ * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope, plus
+ * AVANT_GC_SCOPE_NOGC when it holds a no-GC region (a shared program).
+ * avant_gc_top is the thread's innermost frame (hidden: no linked image
+ * exports it; user C opens frames with avant_gc_enter and
+ * avant_gc_root_begin, the ABI generated code uses). */
+typedef struct AvantGcFrame {
+  struct AvantGcFrame *prev;
+  void ***slots;
+  uint32_t n;
+  uint32_t cap;
+  uint32_t scope;
+} AvantGcFrame;
+#define AVANT_GC_SCOPE_OPEN 1u
+#define AVANT_GC_SCOPE_NOGC 2u
+extern __thread __attribute__((visibility("hidden"))) AvantGcFrame *avant_gc_top;
+
+static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t cap) {
+  f->prev = avant_gc_top;
+  f->slots = slots;
+  f->n = 0;
+  f->cap = cap;
+  f->scope = AVANT_GC_SCOPE_OPEN;
+  if (__builtin_expect(atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0, 0)) {
+    avant_gc_nogc_begin();
+    f->scope |= AVANT_GC_SCOPE_NOGC;
+  }
+  avant_gc_top = f;
+}
+
+static inline void avant_gc_scope_close_(AvantGcFrame *f) {
+  if (f->scope) {
+    avant_gc_top = f->prev;
+    if (f->scope & AVANT_GC_SCOPE_NOGC) {
+      avant_gc_nogc_end();
+    }
+    f->scope = 0;
+  }
+}
+
+/* AVANT_GC_SCOPE(n) declares the scope gc_scope_ with n slots and opens
+ * it; the scope closes when the declaring C block ends (cleanup) or at
+ * AVANT_GC_UNSCOPE(), whichever comes first. AVANT_GC_ROOT(i, &x)
+ * registers the local x as slot i (in order: 0, 1, ...). */
+#define AVANT_GC_SCOPE(N)                                                           \
+  void **gc_scope_slots_[(N)];                                                      \
+  AvantGcFrame gc_scope_ __attribute__((cleanup(avant_gc_scope_close_)));           \
+  avant_gc_scope_open_(&gc_scope_, gc_scope_slots_, (N))
+#define AVANT_GC_ROOT(I, P)                                                         \
+  do {                                                                              \
+    gc_scope_slots_[(I)] = (void **)(P);                                            \
+    gc_scope_.n = (uint32_t)(I) + 1u;                                               \
+  } while (0)
+#define AVANT_GC_UNSCOPE() avant_gc_scope_close_(&gc_scope_)
+
 /* Runtime C allocates through avant_alloc_c (Stage 28 W14b1): the same
  * allocation as avant_alloc, plus the stress point of AVANT_GC_STRESS=1
  * (a young collection before it, outside defer regions, in unshared
@@ -213,46 +363,5 @@ extern atomic_int g_avant_shared;
  * calling avant_alloc itself. */
 __attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
 #define avant_alloc(nbytes, type_id) avant_alloc_c((nbytes), (type_id))
-
-/* The named safepoints (the contract above; Stage 28 W15a1). The test is
- * inline: the young budget spent, or avant_gc_safepoint_force (set under
- * AVANT_GC_STRESS=1, and while a heap-limit collection is pending). The
- * slow path takes the arguments by value in an array it roots, and
- * gc_safepoint_entry writes them back, so the helper's parameters name
- * the objects where the collection left them. */
-extern __attribute__((visibility("hidden"))) uint32_t avant_gc_safepoint_force;
-__attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots, uint32_t n);
-#define GC_SAFEPOINT_DUE_()                                                         \
-  __builtin_expect(avant_nursery_held >= avant_young_bytes || avant_gc_safepoint_force != 0, 0)
-#define GC_SAFEPOINT_1_(a)                                                          \
-  do {                                                                              \
-    if (GC_SAFEPOINT_DUE_()) {                                                      \
-      void *gc_sp_r_[1] = {(void *)(a)};                                            \
-      avant_gc_safepoint_slow(gc_sp_r_, 1);                                         \
-      (a) = gc_sp_r_[0];                                                            \
-    }                                                                               \
-  } while (0)
-#define GC_SAFEPOINT_2_(a, b)                                                       \
-  do {                                                                              \
-    if (GC_SAFEPOINT_DUE_()) {                                                      \
-      void *gc_sp_r_[2] = {(void *)(a), (void *)(b)};                               \
-      avant_gc_safepoint_slow(gc_sp_r_, 2);                                         \
-      (a) = gc_sp_r_[0];                                                            \
-      (b) = gc_sp_r_[1];                                                            \
-    }                                                                               \
-  } while (0)
-#define GC_SAFEPOINT_3_(a, b, c)                                                    \
-  do {                                                                              \
-    if (GC_SAFEPOINT_DUE_()) {                                                      \
-      void *gc_sp_r_[3] = {(void *)(a), (void *)(b), (void *)(c)};                  \
-      avant_gc_safepoint_slow(gc_sp_r_, 3);                                         \
-      (a) = gc_sp_r_[0];                                                            \
-      (b) = gc_sp_r_[1];                                                            \
-      (c) = gc_sp_r_[2];                                                            \
-    }                                                                               \
-  } while (0)
-#define GC_SAFEPOINT_PICK_(_1, _2, _3, NAME, ...) NAME
-#define gc_safepoint_entry(...)                                                     \
-  GC_SAFEPOINT_PICK_(__VA_ARGS__, GC_SAFEPOINT_3_, GC_SAFEPOINT_2_, GC_SAFEPOINT_1_, _)(__VA_ARGS__)
 
 #endif

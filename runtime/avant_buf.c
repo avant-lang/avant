@@ -19,6 +19,10 @@ static void buf_grow(AvantBuf *b, int32_t need) {
     }
     ncap *= 2;
   }
+  /* RC1: the allocation may collect; b is a handle, b->data is read
+   * after it (RC2). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &b);
   uint8_t *ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
   if (b->data && b->size > 0) {
     memcpy(ndata, b->data, (size_t)b->size);
@@ -28,6 +32,7 @@ static void buf_grow(AvantBuf *b, int32_t need) {
   b->cap = ncap;
 }
 
+/* gc-lint: holds nothing (the growth is its last statement; buf_grow roots the Buf). */
 static void buf_reserve(AvantBuf *b, int32_t extra) {
   int64_t need = (int64_t)b->size + (int64_t)extra;
   if (need > b->cap) {
@@ -36,34 +41,37 @@ static void buf_reserve(AvantBuf *b, int32_t extra) {
 }
 
 void *avant_buf_new(int32_t cap) {
-  avant_gc_defer_enter();
   AvantBuf *b = (AvantBuf *)avant_alloc(sizeof(AvantBuf), AVANT_TYPE_BUF);
   if (cap > 0) {
-    b->data = (uint8_t *)avant_alloc((uint64_t)cap, AVANT_TYPE_BYTES);
+    /* RC1: the fresh Buf is a handle across its data's allocation. */
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &b);
+    uint8_t *data = (uint8_t *)avant_alloc((uint64_t)cap, AVANT_TYPE_BYTES);
+    avant_barrier(b);
+    b->data = data;
     b->cap = cap;
   }
-  avant_gc_defer_leave();
   return b;
 }
 
-/* A named safepoint (avant_gc.h, Stage 28 W15a1), reached from the
- * avant_buf_push_* rows and avant_buf_append. p may be derived from a
- * string (push_slice: s + i, an interior address, which the safepoint's
- * root slot relocates like any interior slot) or name a caller's stack
- * buffer (push_byte, push_fmt_*: not a heap address, left alone). Its
- * callers read neither b nor p after the call. The region after the
- * safepoint enters quietly (the safepoint was its collection point). */
+/* The slow path of the avant_buf_push_* rows and avant_buf_append (RC1,
+ * avant_gc.h; Stage 28 W16a, it was a named safepoint). p may be derived
+ * from a string (push_slice: s + i, an interior address, which its slot
+ * relocates with its offset) or name a caller's stack buffer (push_byte,
+ * push_fmt_*: no heap address, left alone); both b and p are handles
+ * across the growth's allocation. */
 static void buf_append_slow(AvantBuf *b, const void *p, int32_t n) {
-  gc_safepoint_entry(b, p);
-  avant_gc_quiet_defer_enter();
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &b);
+  AVANT_GC_ROOT(1, &p);
   buf_reserve(b, n);
   if (p && n > 0 && b->data) {
     memcpy(b->data + b->size, p, (size_t)n);
     b->size += n;
   }
-  avant_gc_defer_leave();
 }
 
+/* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
 void avant_buf_append(void *buf, const void *p, int32_t n) {
   AvantBuf *b = (AvantBuf *)buf;
   if (!b || n <= 0) {
@@ -77,6 +85,7 @@ void avant_buf_append(void *buf, const void *p, int32_t n) {
   buf_append_slow(b, p, n);
 }
 
+/* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
 void avant_buf_push_byte(void *buf, int32_t c) {
   AvantBuf *b = (AvantBuf *)buf;
   uint8_t byte = (uint8_t)(c & 255);
@@ -91,6 +100,7 @@ void avant_buf_push_byte(void *buf, int32_t c) {
   buf_append_slow(b, &byte, 1);
 }
 
+/* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
 void avant_buf_push_str(void *buf, const char *s) {
   AvantBuf *b = (AvantBuf *)buf;
   size_t n;
@@ -109,6 +119,7 @@ void avant_buf_push_str(void *buf, const char *s) {
   buf_append_slow(b, s, (int32_t)n);
 }
 
+/* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
 void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop) {
   AvantBuf *b = (AvantBuf *)buf;
   size_t n;
@@ -145,6 +156,7 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
   buf_append_slow(b, s + i, len);
 }
 
+/* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
   char tmp[64];
   int k;
@@ -161,6 +173,7 @@ void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
   avant_buf_append(buf, tmp, k);
 }
 
+/* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_i(void *buf, int32_t n) {
   char tmp[32];
   int k = snprintf(tmp, sizeof(tmp), "%d", n);
@@ -171,35 +184,34 @@ void avant_buf_push_fmt_i(void *buf, int32_t n) {
 }
 
 char *avant_buf_to_str(void *buf) {
-  avant_gc_defer_enter();
   AvantBuf *b = (AvantBuf *)buf;
   int32_t n = 0;
-  const uint8_t *src = NULL;
+  /* RC1/RC2: the Buf is a handle; its data is read after the allocation. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &b);
   if (b && b->data && b->size > 0) {
     n = b->size;
-    src = b->data;
   }
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n) {
-    memcpy(p, src, (size_t)n);
+    memcpy(p, b->data, (size_t)n);
   }
   p[n] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
 }
 
-/* One region around the whole build: buf and s are C locals read after
- * avant_buf_new and after avant_buf_append, whose buf_append_slow is a
- * safepoint (a region makes it collect nothing, Stage 28 W15a1). */
+/* RC1: the text and the new Buf are handles across the allocations. */
 void *avant_bytes_to_buf(const char *s) {
-  avant_gc_defer_enter();
   size_t n = avant_str_n(s);
-  void *buf = avant_buf_new(n > 0 ? (int32_t)n : 16);
+  void *buf = NULL;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
+  buf = avant_buf_new(n > 0 ? (int32_t)n : 16);
   if (n > 0) {
     avant_buf_append(buf, s, (int32_t)n);
   }
-  avant_gc_defer_leave();
   return buf;
 }
 
@@ -215,18 +227,18 @@ void avant_buf_clear(void *buf) {
   }
 }
 
+/* gc-lint: holds nothing (the growth is its only statement). */
 void avant_bytes_ensure(void *buf, int32_t n) {
   avant_buf_ensure(buf, n);
 }
 
+/* gc-lint: holds nothing (the growth is its last statement; buf_grow roots the Buf). */
 void avant_buf_ensure(void *buf, int32_t n) {
   AvantBuf *b = (AvantBuf *)buf;
   if (!b || n <= b->cap) {
     return;
   }
-  avant_gc_defer_enter();
   buf_grow(b, n);
-  avant_gc_defer_leave();
 }
 
 void avant_buf_set_size(void *buf, int32_t n) {
@@ -250,7 +262,11 @@ void avant_buf_set_ident(void *buf, int32_t n) {
     return;
   }
   if (b->cap < n) {
+    /* RC1: the growth may collect; the Buf is read again after it. */
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &buf);
     avant_buf_ensure(buf, n);
+    b = (AvantBuf *)buf;
   }
   if (!b->data || b->cap < n) {
     return;
@@ -292,6 +308,14 @@ void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *len
   if (!dst || !src || !ln || !ex) {
     return;
   }
+  /* RC1/RC2: the growth may collect; the Buf and the four arrays are
+   * handles, and their data pointers are formed again after it. */
+  AVANT_GC_SCOPE(5);
+  AVANT_GC_ROOT(0, &buf);
+  AVANT_GC_ROOT(1, &dst_offs);
+  AVANT_GC_ROOT(2, &src_offs);
+  AVANT_GC_ROOT(3, &lens);
+  AVANT_GC_ROOT(4, &extras);
   for (i = 0; i < n; i++) {
     int32_t len = ln[i];
     int32_t d = dst[i];
@@ -304,6 +328,11 @@ void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *len
     need = d + len + 1;
     if (need > b->cap) {
       avant_buf_ensure(buf, need);
+      b = (AvantBuf *)buf;
+      dst = buf_i32s(dst_offs, n);
+      src = buf_i32s(src_offs, n);
+      ln = buf_i32s(lens, n);
+      ex = buf_i32s(extras, n);
     }
     p = b->data;
     if (!p || need > b->cap) {
@@ -333,6 +362,13 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
   if (!doff || !soff || !ln) {
     return;
   }
+  /* RC1/RC2, as in avant_buf_fill_appends. */
+  AVANT_GC_SCOPE(5);
+  AVANT_GC_ROOT(0, &dst_buf);
+  AVANT_GC_ROOT(1, &src_buf);
+  AVANT_GC_ROOT(2, &dst_offs);
+  AVANT_GC_ROOT(3, &src_offs);
+  AVANT_GC_ROOT(4, &lens);
   for (i = 0; i < n; i++) {
     int32_t len = ln[i];
     int32_t d = doff[i];
@@ -347,6 +383,11 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
     need = d + len;
     if (need > dst->cap) {
       avant_buf_ensure(dst_buf, need);
+      dst = (AvantBuf *)dst_buf;
+      src = (AvantBuf *)src_buf;
+      doff = buf_i32s(dst_offs, n);
+      soff = buf_i32s(src_offs, n);
+      ln = buf_i32s(lens, n);
     }
     if (!dst->data || !src->data || need > dst->cap || s + len > src->cap) {
       return;

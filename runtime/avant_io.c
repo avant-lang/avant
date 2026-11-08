@@ -27,16 +27,33 @@ static char **g_argv;
 static int g_argv_set;
 static void *g_argv_arr;
 
+/* gc-lint: holds nothing (every caller passes C memory: argv, file and
+ * environment text, directory names, paths). */
 static char *dup_bytes(const char *s, size_t n) {
-  avant_gc_defer_enter();
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n) {
     memcpy(p, s, n);
   }
   p[n] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
+}
+
+/* An array of N strings filled in place (RC1; Stage 28 W16a): the array
+ * is a handle of the caller's scope, its buffer is published before the
+ * first string is allocated, and each string is stored with a barrier
+ * (RC3) before the next allocation. */
+/* gc-lint: holds nothing (the array is read through the caller's handle *AP after the allocation). */
+static void io_array_buf(AvantArray **ap, int32_t n) {
+  char **buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
+  avant_barrier(*ap);
+  (*ap)->buf = buf;
+  (*ap)->cap = n;
+}
+
+static void io_array_put(AvantArray *a, char *p) {
+  ((char **)a->buf)[a->size++] = p;
+  avant_barrier(a->buf);
 }
 
 static char *cstr_dup(const char *s) {
@@ -115,25 +132,21 @@ void *avant_argv(void) {
     n = 0;
   }
 
-  avant_gc_defer_enter();
-  AvantArray *a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
-  char **buf = NULL;
+  AvantArray *a = NULL;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &a);
+  a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
   if (n > 0) {
-    buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
     int32_t i;
+    io_array_buf(&a, n);
     for (i = 0; i < n; i++) {
       const char *s = g_argv && g_argv[i] ? g_argv[i] : "";
-      buf[i] = dup_bytes(s, strlen(s));
+      char *p = dup_bytes(s, strlen(s));
+      io_array_put(a, p);
     }
-    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
-    avant_barrier(buf);
   }
-  a->buf = buf;
-  a->size = n;
-  a->cap = n;
   avant_pin(a);
   g_argv_arr = a;
-  avant_gc_defer_leave();
   return a;
 }
 
@@ -142,6 +155,7 @@ void *avant_argv(void) {
  * to end of file. Trusting the size made /proc read empty and made the
  * test runner's processor count fall back to 1 on kernels whose sysfs
  * reports 4096 (Wave T close). stdio only (Q160). */
+/* gc-lint: holds nothing (the text read is C memory; the path is not read after dup_bytes). */
 char *avant_file_read(const char *path, int32_t *ok) {
   if (ok) {
     *ok = 0;
@@ -600,6 +614,7 @@ void avant_env_set(const char *name, const char *value) {
 }
 
 /* pwd -P: the physical working directory, or "." when it cannot be read. */
+/* gc-lint: holds nothing (C memory only). */
 char *avant_fs_cwd(void) {
   char *cwd = getcwd(NULL, 0);
   char *out;
@@ -611,6 +626,7 @@ char *avant_fs_cwd(void) {
   return out;
 }
 
+/* gc-lint: holds nothing (C memory only; the name is not read after dup_bytes). */
 char *avant_env_get(const char *name, int32_t *ok) {
   if (ok) {
     *ok = 0;
@@ -644,19 +660,18 @@ static int cmp_names(const void *a, const void *b) {
 }
 
 void *avant_dir_list(const char *path) {
-  avant_gc_defer_enter();
-  AvantArray *a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
-  a->buf = NULL;
-  a->size = 0;
-  a->cap = 0;
+  AvantArray *a = NULL;
+  /* RC1: the path and the array are handles across the allocations. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &path);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
   if (!path) {
-    avant_gc_defer_leave();
     return a;
   }
 
   DIR *d = opendir(path);
   if (!d) {
-    avant_gc_defer_leave();
     return a;
   }
 
@@ -693,22 +708,16 @@ void *avant_dir_list(const char *path) {
     qsort(names, (size_t)n, sizeof(char *), cmp_names);
   }
 
-  char **buf = NULL;
   if (n > 0) {
-    buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
     int32_t i;
+    io_array_buf(&a, n);
     for (i = 0; i < n; i++) {
-      buf[i] = dup_bytes(names[i], strlen(names[i]));
+      char *p = dup_bytes(names[i], strlen(names[i]));
+      io_array_put(a, p);
       free(names[i]);
     }
-    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
-    avant_barrier(buf);
   }
   free(names);
-  a->buf = buf;
-  a->size = n;
-  a->cap = n;
-  avant_gc_defer_leave();
   return a;
 }
 
