@@ -872,9 +872,9 @@ typedef struct GcHeap {
   /* The part of mature_since_full that young collections promoted (for
    * the full collection's cause, ctr.why). */
   uint64_t promoted_since_full;
-  /* The last young collection's pause per surviving byte (ns), for
-   * young_size (gc-design.md §5.2). */
-  double young_per_byte;
+  /* The last young collection's survival exceeded half its young bytes
+   * (young_size, gc-design.md §5.2; Stage 28 W15e). */
+  uint8_t young_high_prev;
   /* Mature growth that triggers the next full collection (gc-design.md
    * §5.4, Stage 28 W15a1): FULL_TRIGGER_MIN before the first one, then
    * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).

@@ -35,19 +35,33 @@ uint64_t avant_nursery_held;
 
 /* Young sizing (Stage 28 W15a1, gc-design.md §5.2; O28 done in W14b1).
  * The young budget starts at YOUNG_BYTES_DEFAULT (4 MiB since Stage 28
- * W15d, Q3; 8 MiB before) and adapts within [YOUNG_BYTES_MIN, YOUNG_BYTES_CAP]
- * after every young collection the policy runs (young_size): it doubles
- * when more than half of the young bytes survived and the pause per
- * surviving byte rose against the previous young collection, and halves
- * back toward the default when less than a tenth survived.
+ * W15d, Q3; 8 MiB before) and adapts within [floor, YOUNG_BYTES_CAP]
+ * after every young collection the policy runs (young_size, below: the
+ * floor follows the heap since Stage 28 W15e).
  * AVANT_YOUNG_MB fixes it (tests). Retired with this rule: the survival
  * probe (a second trace of the live young graph before each copy), the
  * sticky pause that raised the budget instead of copying, the dead-based
  * resize and the 192 MiB cap. (E's copy reserve, the last young
  * collection's survival times 1.5 charged as spent by heap-limit
  * decisions, went with E in Stage 28 W15d: S+'s copy needs no room.) */
-#define YOUNG_BYTES_MIN (4ull * 1024ull * 1024ull)
-#define YOUNG_BYTES_CAP (64ull * 1024ull * 1024ull)
+/* The cap (Stage 28 W15e): 32 MiB, was 64. S+ evacuates up to one budget
+ * of survivors per collection (O92), so a budget of B can hold about 2 B
+ * above the live data at a collection; at 64 MiB the compiler's
+ * __emit-ll peak_heap rose to 311 MB once the budget grew without delay
+ * (242 MB at 32 MiB; W15e record, vsuite/c2h16, c2h16c32). */
+#ifndef YOUNG_BYTES_CAP
+#define YOUNG_BYTES_CAP (32ull * 1024ull * 1024ull)
+#endif
+/* The floor's divisor (Stage 28 W15e): the budget never shrinks below
+ * the heap in use / YOUNG_HEAP_DIV (nor below YOUNG_BYTES_DEFAULT), so a
+ * program with a large heap is not collected every 4 MiB when a young
+ * collection's fixed cost grows with the heap (the verifier's trace of
+ * the whole heap at every young collection under AVANT_GC_VERIFY=1: the
+ * compiler's dump of itself in test_fixed_point.av, 21 s at 4 MiB, 15 s
+ * at 12; W15e record, vsuite/). It costs at most 1/12 of the heap. */
+#ifndef YOUNG_HEAP_DIV
+#define YOUNG_HEAP_DIV 12
+#endif
 
 /* The settings' one parsing rule (Stage 28 W14b2, O40; the knobs are
  * listed in avant_gc.h). A knob that is unset or empty takes its
@@ -129,26 +143,44 @@ static void gc_settings_read(GcSettings *s) {
 _Atomic uint32_t g_avant_str_gen;
 
 /* §5.2's rule, after a young collection that saw USED young bytes and
- * SURV surviving ones in PAUSE_NS. */
-static void young_size(uint64_t used, uint64_t surv, uint64_t pause_ns) {
-  double per_byte;
+ * SURV surviving ones (Stage 28 W15e, O96). The budget doubles, up to
+ * YOUNG_BYTES_CAP, at the second consecutive young collection where more
+ * than half the young bytes survived, and halves back toward its floor
+ * when less than a tenth survived. The floor is the larger of
+ * YOUNG_BYTES_DEFAULT and the heap in use (mature blocks and large
+ * objects) / YOUNG_HEAP_DIV; the budget is raised to it at once.
+ * Before W15e the doubling waited for a high-survival collection whose
+ * pause per surviving byte rose against the previous one: a wall-clock
+ * reading, so the budget's path, and with it every collection count,
+ * changed from run to run. Growing at the first high-survival collection
+ * (O96 as filed) was measured and rejected: it does not help the suite
+ * (44.6 s against 42.3) and raises the compiler's peak_heap (245 ->
+ * 318 MB; W15e record, vsuite/g50s2). */
+static void young_size(uint64_t used, uint64_t surv) {
+  uint64_t floor = YOUNG_BYTES_DEFAULT;
+  uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / YOUNG_HEAP_DIV;
+  int high;
   if (used == 0) {
     return;
   }
-  per_byte = surv ? (double)pause_ns / (double)surv : 0.0;
-  if (surv * 2 > used) {
-    if (gc_heap.young_per_byte > 0.0 && per_byte > gc_heap.young_per_byte &&
-        avant_young_bytes < YOUNG_BYTES_CAP) {
+  if (h > floor) {
+    floor = h > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP : h;
+  }
+  high = surv * 2 > used;
+  if (high) {
+    if (gc_heap.young_high_prev && avant_young_bytes < YOUNG_BYTES_CAP) {
       avant_young_bytes = avant_young_bytes * 2 > YOUNG_BYTES_CAP ? YOUNG_BYTES_CAP
                                                                  : avant_young_bytes * 2;
       gc_heap.ctr.size.grows++;
     }
-  } else if (surv * 10 < used && avant_young_bytes > YOUNG_BYTES_DEFAULT) {
-    avant_young_bytes = avant_young_bytes / 2 < YOUNG_BYTES_DEFAULT ? YOUNG_BYTES_DEFAULT
-                                                                   : avant_young_bytes / 2;
+  } else if (surv * 10 < used && avant_young_bytes > floor) {
+    avant_young_bytes = avant_young_bytes / 2 < floor ? floor : avant_young_bytes / 2;
     gc_heap.ctr.size.shrinks++;
   }
-  gc_heap.young_per_byte = per_byte;
+  if (avant_young_bytes < floor) {
+    avant_young_bytes = floor;
+  }
+  gc_heap.young_high_prev = (uint8_t)high;
 }
 
 static uint64_t now_ns(void) {
@@ -293,13 +325,12 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
     uint64_t inplace0 = gc_heap.ctr.sticky.inplace;
-    uint64_t y0 = now_ns();
     uint64_t surv;
     avant_g_stats.young_collections++;
     gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0);
     surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0);
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
-      young_size(used, surv, now_ns() - y0);
+      young_size(used, surv);
     }
   } else {
     avant_g_stats.full_collections++;
