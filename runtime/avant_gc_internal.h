@@ -517,6 +517,19 @@ typedef struct GcSizeCounters {
   uint64_t shrinks;
 } GcSizeCounters;
 
+/* keep (Stage 28 W15a2, gc-design.md §3.2, §5.1): the nursery objects
+ * young collections kept in place. cons_objects and cons_bytes count the
+ * ones kept only because a word of the collecting thread's C stack named
+ * them (the conservative pin of a collection runtime C entered,
+ * gc_pin_c_stack); blocks counts the nursery blocks retained as
+ * from-space for any kept object (pinned or conservative), each charged
+ * as mature growth until a full collection releases it. */
+typedef struct GcKeepCounters {
+  uint64_t cons_objects;
+  uint64_t cons_bytes;
+  uint64_t blocks;
+} GcKeepCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -531,6 +544,7 @@ typedef struct GcCounters {
   GcPromCounters prom;
   GcSpCounters sp;
   GcSizeCounters size;
+  GcKeepCounters keep;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
   /* The cumulative count of stack words still naming from-space after
@@ -722,6 +736,10 @@ typedef struct GcHeap {
    * thread's stack names, which a defragmenting full collection does not
    * evacuate (C31, gc_note_c_stack_blocks). */
   BlockSet cstack_blocks;
+  /* gc_pin_c_stack's bitmap of the registered slots among the stack
+   * words it scans (one bit per word). */
+  uint64_t *pin_slots;
+  size_t pin_slots_cap;
 
   /* avant_gc_verify.c. vnoted: the objects verify_trace flagged
    * FORWARDED (its visited bit), cleared when gc_verify_young_copy ends,
@@ -814,8 +832,10 @@ typedef struct GcThread {
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */
   int alloc_mature;
   /* Nonzero while runtime C has entered the collector (avant_alloc_c, a
-   * stress point at a defer entry): only then does a young collection run
-   * the conservative C-stack rewrite (avant_gc_young.c, C37). */
+   * stress point at a defer entry, a named safepoint's slow path): only
+   * then does a young collection pin the young objects words of this
+   * thread's C stack name (gc_pin_c_stack, Stage 28 W15a2) and run the
+   * conservative C-stack rewrite (avant_gc_young.c, C37). */
   int c_entry;
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
@@ -917,6 +937,7 @@ void gc_rem_full_scrub(void);
 
 /* avant_gc_young.c: candidate E, the evacuating young generation. */
 void gc_clear_noted(void);
+void gc_keep_conservative(void *p);
 void *gc_copy_nursery(void *p);
 void gc_copy_from_slot(void **slot);
 void gc_gen_young_copy(void);
@@ -938,6 +959,7 @@ void gc_defrag_release(void);
 
 /* avant_gc_stack.c */
 void gc_note_c_stack_blocks(void);
+void gc_pin_c_stack(void);
 void gc_rewrite_c_stack(void);
 void gc_count_c_stack_nursery(void);
 

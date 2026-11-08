@@ -40,6 +40,23 @@ void gc_clear_noted(void) {
  * promotes it in place (discard_nursery_from) without walking any
  * nursery block object by object: the moved objects in those blocks
  * hold forwards in their headers, not sizes. */
+static void keep_in_place(void *p);
+
+/* A nursery object a word of the collecting thread's C stack names, at a
+ * collection runtime C entered (gc_pin_c_stack): kept in place and
+ * promoted in place like a pinned one (D205's mechanism), so the word,
+ * whatever it is, stays valid and is never changed (mostly-copying: a
+ * word that is not a reference only keeps an object alive). */
+void gc_keep_conservative(void *p) {
+  AvantHeader *h = avant_header(p);
+  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED)) {
+    return;
+  }
+  gc_heap.ctr.keep.cons_objects++;
+  gc_heap.ctr.keep.cons_bytes += gc_obj_total(h);
+  keep_in_place(p);
+}
+
 static void keep_in_place(void *p) {
   AvantHeader *h = avant_header(p);
   Block *b = block_of(h);
@@ -49,7 +66,13 @@ static void keep_in_place(void *p) {
   gc_heap.live += gc_obj_total(h);
   gc_work_push(p);
   gc_heap.saw_pinned_nursery = 1;
-  b->kept = 1;
+  /* kept: 1 a pinned object is kept (the block becomes from-space, D205),
+   * 2 only conservatively kept ones (the block joins mature space). */
+  if (h->flags & AVANT_FLAG_PINNED) {
+    b->kept = 1;
+  } else if (!b->kept) {
+    b->kept = 2;
+  }
   if (gc_heap.kept_n == gc_heap.kept_cap) {
     gc_heap.kept_cap = gc_heap.kept_cap ? gc_heap.kept_cap * 2 : 64;
     gc_heap.kept = gc_xrealloc(gc_heap.kept, gc_heap.kept_cap * sizeof(void *));
@@ -85,11 +108,13 @@ static void remember_young_edge(void **slot, void *payload) {
   if (!owner) {
     return;
   }
-  /* A pinned nursery owner is not copied: it stays in its block and is
-   * promoted in place when this collection ends (promote_kept_one),
-   * so its young edge needs the remembered set like a mature owner's. */
-  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO) &&
-      (avant_header(owner)->flags & AVANT_FLAG_PINNED) == 0) {
+  /* A nursery owner kept in place (pinned, or named by a C stack word:
+   * MARKED, keep_in_place) is not copied: it stays in its block and is
+   * promoted in place when this collection ends (promote_kept_one), so
+   * its young edge needs the remembered set like a mature owner's. */
+  if (ob && (ob->space == SPACE_TO ||
+             (ob->space == SPACE_NURSERY &&
+              (avant_header(owner)->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_MARKED)) == 0))) {
     return;
   }
   /* A young large owner is traced whenever it is reached; when it is
@@ -314,6 +339,14 @@ void gc_gen_young_copy(void) {
   gc_heap.saw_pinned_nursery = 0;
   gc_heap.from_mature = 0;
   gc_heap.work_n = 0;
+  /* Runtime C entered this collection (avant_alloc_c, a stress point at a
+   * defer entry, a named safepoint): first keep in place every nursery
+   * object a word of this thread's C stack names, before any root can
+   * copy it (Stage 28 W15a2, gc-design.md §3.2, §4.3's first half). The
+   * helper's C locals then stay valid without being rewritten. */
+  if (gc_thread.c_entry) {
+    gc_pin_c_stack();
+  }
   ThreadReg *t;
   uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
@@ -385,9 +418,13 @@ void gc_gen_young_copy(void) {
     copy_payload_children(p);
   }
   /*
-   * Every copied object is in the forwarding table now: rewrite the
-   * forwarded words runtime C frames and register saves left on this
-   * thread's stack, then count any that still name from-space. Only
+   * Every copied object is forwarded now: rewrite the forwarded words
+   * runtime C frames and register saves left on this thread's stack, then
+   * count any that still name from-space. Since Stage 28 W15a2 every
+   * nursery object a stack word names was kept in place first
+   * (gc_pin_c_stack), so no such word exists and the rewrite finds
+   * nothing; it stays, with its switch and the sm_* fields, until
+   * gc-design.md §4.3's proof retires it (W16/W17). Only
    * when runtime C entered this collection (C37, Stage 28 W14b1): the
    * rewrite takes every stack word equal to a moved object's start for
    * a reference, so it also rewrote integers and character buffers that
@@ -456,8 +493,33 @@ static void discard_nursery_from(void) {
   gc_heap.space[SPACE_NURSERY].list = NULL;
   while (b) {
     Block *next = b->next;
-    if (b->kept) {
+    if (b->kept == 2) {
+      /* Only conservatively kept objects (gc_keep_conservative): the
+       * block joins mature space, promoted in place with them. Its other
+       * lines are moved or dead objects, so it is a mature block with
+       * holes: mature allocation reuses them after the next full
+       * collection, and defragmentation may evacuate the block once no
+       * stack word names it (C31). Kept as from-space, a block per named
+       * object stayed until a full collection and was never compacted
+       * (one young string per 32 KiB block under AVANT_GC_STRESS=1). */
       b->kept = 0;
+      gc_heap.ctr.keep.blocks++;
+      gc_heap.mature_since_full += BLOCK_SIZE;
+      gc_heap.promoted_since_full += BLOCK_SIZE;
+      memset(b->start, 0, START_WORDS * sizeof(uint64_t));
+      b->space = SPACE_MATURE;
+      gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;
+      gc_heap.space[SPACE_MATURE].bytes += BLOCK_SIZE;
+      b->next = gc_heap.space[SPACE_MATURE].list;
+      gc_heap.space[SPACE_MATURE].list = b;
+      gc_reset_block_bump(b);
+    } else if (b->kept) {
+      b->kept = 0;
+      /* A retained block is mature growth until a full collection
+       * releases it (gc-design.md §5.4: in-place promotions count). */
+      gc_heap.ctr.keep.blocks++;
+      gc_heap.mature_since_full += BLOCK_SIZE;
+      gc_heap.promoted_since_full += BLOCK_SIZE;
       memset(b->start, 0, START_WORDS * sizeof(uint64_t));
       b->space = SPACE_FROM;
       gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;

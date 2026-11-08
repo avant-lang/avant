@@ -66,6 +66,65 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
   gc_block_set_seal(&gc_heap.cstack_blocks);
 }
 
+/* Mostly-copying at the collections runtime C enters (Stage 28 W15a2,
+ * gc-design.md §3.2, §4.3's first half; C37's class removed there): every
+ * 8-aligned word of the collecting thread's stack, from this function's
+ * frame to the stack top, that names a nursery object (its exact start or
+ * an interior address, resolved through the start bitmap) keeps that
+ * object in place for this collection and promotes it in place
+ * (gc_keep_conservative). No word is changed, so an integer that happens
+ * to equal an object's address only keeps the object alive (C37 was the
+ * rewrite replacing such an integer). Words that are registered root
+ * slots of this thread's frames are skipped: those are precise, and the
+ * young copy relocates them. Called before any root is traced.
+ * gc_collect() first saves its callers' callee-saved registers into its
+ * own frame, so a reference a runtime C caller keeps in one is on the
+ * scanned stack. Other threads' C frames are not scanned (D191, W17). */
+__attribute__((noinline)) void gc_pin_c_stack(void) {
+  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
+  uint8_t *hi = gc_thread.reg.stack_hi;
+  uint8_t *lo = gc_thread.reg.stack_lo;
+  size_t nwords;
+  size_t nmap;
+  size_t k;
+  Frame *f;
+  if (!hi || !p || p >= hi || (lo && p < lo)) {
+    return;
+  }
+  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
+  nwords = (size_t)(hi - p) / ALIGN;
+  nmap = (nwords + 63) / 64;
+  if (nmap > gc_heap.pin_slots_cap) {
+    gc_heap.pin_slots = gc_xrealloc(gc_heap.pin_slots, nmap * sizeof(uint64_t));
+    gc_heap.pin_slots_cap = nmap;
+  }
+  memset(gc_heap.pin_slots, 0, nmap * sizeof(uint64_t));
+  for (f = gc_thread.reg.head ? *gc_thread.reg.head : NULL; f; f = f->prev) {
+    uint32_t i;
+    for (i = 0; i < f->n; i++) {
+      uint8_t *a = (uint8_t *)f->slots[i];
+      if (a >= p && a < hi && ((uintptr_t)a & (ALIGN - 1)) == 0) {
+        size_t w = (size_t)(a - p) / ALIGN;
+        gc_heap.pin_slots[w / 64] |= 1ULL << (w % 64);
+      }
+    }
+  }
+  for (k = 0; k < nwords; k++) {
+    void *w;
+    Block *b = NULL;
+    AvantHeader *ol = NULL;
+    void *start;
+    if ((gc_heap.pin_slots[k / 64] >> (k % 64)) & 1ULL) {
+      continue;
+    }
+    w = ((void **)p)[k];
+    start = gc_object_payload(w, &b, &ol);
+    if (start && b && b->space == SPACE_NURSERY) {
+      gc_keep_conservative(start);
+    }
+  }
+}
+
 static void gc_rewrite_if_forwarded(void **slot) {
   void *to = gc_forwarded(*slot);
   if (to) {

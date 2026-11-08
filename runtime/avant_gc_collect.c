@@ -459,15 +459,26 @@ void gc_stress_point(void) {
   gc_heap.stress_now = 1;
   gc_collect(GC_YOUNG, 1, GC_WHY_STRESS);
   gc_heap.stress_now = 0;
+  /* The blocks a stress collection retains for the objects the C stack
+   * names (gc_pin_c_stack) are mature growth; a stress point at a defer
+   * entry is often the only collection point a helper-bound loop reaches
+   * (its allocations run inside the region, where gc_maybe_collect
+   * returns), so the full collection they trigger runs here. A full
+   * collection moves no young object and keeps every mature block this
+   * thread's stack names (C31). (Stage 28 W15a2.) */
+  if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
+    gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
+  }
 }
 
 /* A named safepoint's slow path (avant_gc.h; Stage 28 W15a1, gc-design.md
  * §5.1). ROOTS holds the helper's heap reference arguments; they are the
  * slots of a frame pushed for the collection, so a young collection
  * relocates them (interior addresses included) and a defragmenting full
- * one rewrites them, and the caller's macro reads them back. No C-stack
- * rewrite runs (gc_thread.c_entry stays as it is: generated code called
- * the helper and roots its own references, D165). A collection runs only
+ * one rewrites them, and the caller's macro reads them back. It is a
+ * collection runtime C entered (gc_thread.c_entry, Stage 28 W15a2): any
+ * other young object a word of this thread's C stack names is kept in
+ * place (gc_pin_c_stack), never rewritten. A collection runs only
  * in an unshared program, outside every defer region, collection and
  * quiet leaf, on a registered thread: under AVANT_GC_STRESS=1 a young
  * collection that always copies, then whatever the policy asks for
@@ -494,6 +505,11 @@ __attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots,
   f.n = n;
   f.cap = n;
   gc_thread.frame = &f;
+  /* A collection runtime C entered (Stage 28 W15a2): the young objects
+   * words of this thread's C stack name are kept in place
+   * (gc_pin_c_stack); the helper's arguments are this frame's slots and
+   * are relocated precisely. */
+  gc_thread.c_entry++;
   pthread_mutex_lock(&gc_heap.world);
   gc_heap.ctr.sp.calls++;
   if (gc_heap.set.stress) {
@@ -507,6 +523,7 @@ __attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots,
     }
   }
   pthread_mutex_unlock(&gc_heap.world);
+  gc_thread.c_entry--;
   gc_thread.frame = f.prev;
 }
 
