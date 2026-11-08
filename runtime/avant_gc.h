@@ -291,6 +291,11 @@ extern atomic_int g_avant_shared;
  * avant_gc_defer_enter/leave, which open and close the same region. */
 __attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void);
 __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void);
+/* A helper about to replace a young large object it allocated before
+ * (avant_json_parse's pool) runs the due young collection first when the
+ * new one alone fills the young budget (avant_gc_alloc.c; Stage 28 W16a).
+ * It may collect. Hidden. */
+__attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes);
 
 /* RC1's handle scopes (the contract above; Stage 28 W16a). A frame of the
  * thread's chain, the type every frame has (avant_gc_internal.h calls it

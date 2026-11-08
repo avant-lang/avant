@@ -72,6 +72,9 @@ void *avant_json_parse(const char *s) {
      * (RC1) the full trigger fired inside avant_json_f64s while the new
      * document was still live (Json::ParseMapping 34 -> 90 MB). The
      * bracket also turned a mature-allocating thread's setting off. */
+    /* The previous document's pool is usually dead by now: let the due
+     * young collection free it before this one exists. */
+    avant_gc_young_before((uint64_t)pool_n);
     pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
     if (!yyjson_alc_pool_init(&alc, pool, pool_n)) {
       set_status(2);
