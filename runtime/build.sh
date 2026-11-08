@@ -12,15 +12,18 @@ compile() {
 }
 
 # The young generation's candidate (Stage 28 W15b, gc-design.md §3.4):
-# unset or AVANT_GC_CANDIDATE=S builds candidate S (in-place young
-# collection; the default by §3.4's rules, W15b's record), E builds
-# candidate E (the evacuating nursery). A build-time choice of the
-# collector units only (GC_CANDIDATE, avant_gc_internal.h); no export,
-# header or generated code depends on it.
-case "${AVANT_GC_CANDIDATE:-S}" in
-  E) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_E" ;;
-  S) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S" ;;
-  *) echo "runtime/build.sh: AVANT_GC_CANDIDATE must be E or S" >&2; exit 1 ;;
+# unset or AVANT_GC_CANDIDATE=S+ builds candidate S with the opportunistic
+# young copy (GC_STICKY_COPY, the default since Stage 28 W15c by D230's
+# condition, that wave's record), S builds candidate S without it (the
+# in-place young collection alone), E builds candidate E (the evacuating
+# nursery). A build-time choice of the collector units only
+# (GC_CANDIDATE, GC_STICKY_COPY, avant_gc_internal.h); no export, header
+# or generated code depends on it.
+case "${AVANT_GC_CANDIDATE:-S+}" in
+  E) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_E -DGC_STICKY_COPY=0" ;;
+  S) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S -DGC_STICKY_COPY=0" ;;
+  S+) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S -DGC_STICKY_COPY=1" ;;
+  *) echo "runtime/build.sh: AVANT_GC_CANDIDATE must be E, S or S+" >&2; exit 1 ;;
 esac
 
 # The core units: the collector and the language traps. They fold into

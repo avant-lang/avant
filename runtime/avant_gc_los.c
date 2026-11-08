@@ -206,7 +206,7 @@ static void give_run(AvantHeader *h) {
     for (k = 0; k < n; k++) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
-    ch->idle = (uint32_t)avant_g_stats.full_collections;
+    ch->idle = (uint32_t)gc_heap.return_clock;
     return;
   }
   {

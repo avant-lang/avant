@@ -228,8 +228,7 @@ static void gc_young_collect(int tenure) {
 #if GC_CANDIDATE == GC_CANDIDATE_E
   gc_young_copy_out(tenure);
 #else
-  (void)tenure;
-  gc_sticky_collect();
+  gc_sticky_collect(tenure);
 #endif
 }
 
@@ -333,6 +332,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   } else {
     Block *b;
     avant_g_stats.full_collections++;
+    gc_heap.return_clock++;
     /* Non-moving. Evacuating the nursery here needs a second copy of
      * every live object while the from-space blocks are still charged
      * against the heap limit. */

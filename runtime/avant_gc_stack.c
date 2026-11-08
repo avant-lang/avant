@@ -66,9 +66,10 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
   gc_block_set_seal(&gc_heap.cstack_blocks);
 }
 
-/* Candidate E only from here (Stage 28 W15b): S's young collections
- * move nothing, so they neither pin nor rewrite C stack words. */
-#if GC_CANDIDATE == GC_CANDIDATE_E
+/* Candidate E, and S's variant S+ for the pin scan, from here (Stage 28
+ * W15b, W15c): S's young collections move nothing, so they neither pin
+ * nor rewrite C stack words; S+ copies and pins, never rewrites. */
+#if GC_CANDIDATE == GC_CANDIDATE_E || GC_STICKY_COPY
 
 /* Mostly-copying at the collections runtime C enters (Stage 28 W15a2,
  * gc-design.md §3.2, §4.3's first half; C37's class removed there): every
@@ -123,11 +124,22 @@ __attribute__((noinline)) void gc_pin_c_stack(void) {
     }
     w = ((void **)p)[k];
     start = gc_object_payload(w, &b, &ol);
+#if GC_CANDIDATE == GC_CANDIDATE_E
     if (start && b && b->space == SPACE_NURSERY) {
       gc_keep_conservative(start);
     }
+#else
+    /* S+: the young block object stays in place, and so does every
+     * survivor of its block (the block is not evacuated). */
+    if (start && b && (avant_header(start)->flags & AVANT_FLAG_YOUNG)) {
+      b->kept = SPLUS_KEPT;
+    }
+#endif
   }
 }
+
+#endif /* GC_CANDIDATE == GC_CANDIDATE_E || GC_STICKY_COPY */
+#if GC_CANDIDATE == GC_CANDIDATE_E
 
 static void gc_rewrite_if_forwarded(void **slot) {
   void *to = gc_forwarded(*slot);

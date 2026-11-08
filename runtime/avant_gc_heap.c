@@ -272,7 +272,7 @@ void gc_chunk_give(uint64_t c) {
   memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
   gc_heap.chunks[c].kind = CHUNK_FREE;
   gc_heap.chunks[c].dirty = was != CHUNK_FREE;
-  gc_heap.chunks[c].idle = (uint32_t)avant_g_stats.full_collections;
+  gc_heap.chunks[c].idle = (uint32_t)gc_heap.return_clock;
   gc_heap.free_chunks++;
 }
 
@@ -358,10 +358,10 @@ void gc_block_give(Block *b) {
   GcChunk *ch = &gc_heap.chunks[c];
   b->in_use = 0;
   b->clean = 0;
-  b->idle = avant_g_stats.full_collections;
+  b->idle = gc_heap.return_clock;
   ch->used--;
   if (ch->used == 0) {
-    ch->idle = (uint32_t)avant_g_stats.full_collections;
+    ch->idle = (uint32_t)gc_heap.return_clock;
   }
   b->next = ch->free;
   ch->free = b;
@@ -434,7 +434,7 @@ static uint64_t chunk_resident_free(uint64_t c) {
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
-  uint64_t now = avant_g_stats.full_collections;
+  uint64_t now = gc_heap.return_clock;
   uint64_t total = 0;
   uint64_t c;
   if (!hw) {
@@ -661,9 +661,10 @@ int avant_is_heap(void *payload) {
  * candidate E a young block object moves (mature and large objects stay
  * put, so a parallel numeric loop can keep the address); under candidate
  * S no young collection moves anything, so it is 0 for every object
- * (Stage 28 W15b). */
+ * (Stage 28 W15b); under S+ (GC_STICKY_COPY) a young block object may be
+ * copied, so it is 1 for one that is not pinned (Stage 28 W15c). */
 int32_t avant_is_young(void *payload) {
-#if GC_CANDIDATE == GC_CANDIDATE_S
+#if GC_CANDIDATE == GC_CANDIDATE_S && !GC_STICKY_COPY
   (void)payload;
   return 0;
 #else
@@ -676,6 +677,11 @@ int32_t avant_is_young(void *payload) {
   if (h->flags & AVANT_FLAG_LARGE) {
     return 0;
   }
+#if GC_STICKY_COPY
+  if (h->flags & AVANT_FLAG_PINNED) {
+    return 0;
+  }
+#endif
   if ((h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) ==
       (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) {
     return 1;

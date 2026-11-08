@@ -92,6 +92,24 @@
 #ifndef YOUNG_AGE
 #define YOUNG_AGE 2
 #endif
+/* S_LARGE_AGE (candidate S, Stage 28 W15c item 1, O88): the young
+ * collections a young large object lives through under S before it is
+ * promoted. 2 keeps a reached one young at its first survival (SURVIVED)
+ * and promotes it at its second, as E does, with the remembered set kept
+ * for its holders (gc_rem_keep_young_holders); 1 promotes it at its first
+ * survival (W15b's rule). A fixed AVANT_YOUNG_MB promotes at once either
+ * way. 1 by measurement (W15c record, diag/age, three runs each): 2 left
+ * every M2 peak heap unchanged and raised Sort::Quick's RSS from 20 to
+ * 23 MB, the worst M2 memory multiplier (resident free page runs: the
+ * buffers it keeps one more cycle move the next ones to fresh pages), for
+ * 3% fewer large bytes promoted there; it helped one row outside M2
+ * (Template::Regex 42 -> 37 MB, +4% time). The array header that owns a
+ * buffer is promoted in place at the buffer's first survival, and its
+ * remembered entry keeps the buffer alive through its second, so the age
+ * does not give S what it gives E (O88 stays open). */
+#ifndef S_LARGE_AGE
+#define S_LARGE_AGE 1
+#endif
 /* The full-collection trigger (gc-design.md §5.4, Stage 28 W15a1): mature
  * growth since the last full collection reaching
  * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */
@@ -539,13 +557,22 @@ typedef struct GcKeepCounters {
  * hole), freed_lines the lines of the young blocks' used ranges the
  * young sweeps found without a survivor, overflow the medium objects
  * placed in the overflow block because the current hole could not hold
- * them. All 0 under E. */
+ * them, returned the empty young blocks the young sweeps gave back to
+ * their chunks (Stage 28 W15c); under S+ (GC_STICKY_COPY) evac_blocks the
+ * young blocks evacuated, kept_blocks the young blocks kept in place
+ * because a young object in them was named imprecisely, copy_blocks the
+ * fresh blocks the copies went to (the bytes copied are prom.copied and
+ * AvantGcStats.copied_bytes). All 0 under E. */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
   uint64_t holes;
   uint64_t freed_lines;
   uint64_t overflow;
+  uint64_t returned;
+  uint64_t evac_blocks;
+  uint64_t kept_blocks;
+  uint64_t copy_blocks;
 } GcStickyCounters;
 
 typedef struct GcCounters {
@@ -646,6 +673,13 @@ typedef struct GcHeap {
   uint64_t small_hint;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
+  /* The clock of gc_heap_return's hysteresis (Q12): a free block or
+   * chunk is stamped with it when freed (idle) and returned only by a
+   * later tick. It ticks at every full collection, and under candidate
+   * S also at every young collection that gives empty young blocks back
+   * (Stage 28 W15c, O89), so a program that never runs a full collection
+   * can return memory; under E it equals the full-collection count. */
+  uint64_t return_clock;
   /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
    * bit and bytes (GcSpace). */
   GcSpace space[4];
@@ -754,25 +788,29 @@ typedef struct GcHeap {
   /* avant_gc_sticky.c and the young allocator (candidate S, Stage 28
    * W15b; empty under E). young_blocks: the young blocks, every block
    * young allocation took a hole in since the last collection (each has
-   * young_hi set). free_blocks and part_blocks: blocks of the mature list
-   * young allocation may take next, wholly free ones and ones with free
-   * lines among live ones (the young sweep and a full collection's sweep
-   * leave them; an entry may have been used up by mature allocation
-   * since, or be the mature cursor's block, and is then skipped).
+   * young_hi set). part_blocks: blocks of the mature list young
+   * allocation may take next, ones with free lines among live ones (the
+   * young sweep and a full collection's sweep leave them; an entry may
+   * have been used up by mature allocation since, or be the mature
+   * cursor's block, and is then skipped). Wholly free blocks go back to
+   * their chunks (Stage 28 W15c; before, a free_blocks list kept them in
+   * mature space until a full collection).
    * overflow: the young block medium objects go to when the current
    * hole cannot hold them (Immix's overflow allocation). cur_whole: the
    * young cursor's hole is a whole block (S_INLINE_HOLES). */
   Block **young_blocks;
   uint32_t young_blocks_n;
   uint32_t young_blocks_cap;
-  Block **free_blocks;
-  uint32_t free_blocks_n;
-  uint32_t free_blocks_cap;
   Block **part_blocks;
   uint32_t part_blocks_n;
   uint32_t part_blocks_cap;
   Block *overflow;
   int cur_whole;
+  /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
+   * the block copies go to; prom.copied when it began. */
+  int splus_on;
+  Block *splus_dst;
+  uint64_t splus_copied0;
 
   /* avant_gc_mark.c. */
   uint64_t mark_sum;
@@ -962,6 +1000,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 void gc_keep_add(void *obj);
 void gc_rem_commit_kept(void);
 void gc_rem_full_scrub(void);
+void gc_rem_keep_young_holders(void);
 
 /* The young generation's candidate (Stage 28 W15a2, gc-design.md §3.4:
  * "S and E behind one internal switch"). A build-time constant, not a
@@ -979,9 +1018,11 @@ void gc_rem_full_scrub(void);
  * point is gc_young_collect (avant_gc_collect.c), the young branch of
  * gc_collect: it runs the candidate's young collection, which reports
  * its survival (copied and kept-in-place bytes) through the counters
- * gc_collect reads. runtime/build.sh builds S by default and E with
+ * gc_collect reads. runtime/build.sh builds S+ (S with GC_STICKY_COPY,
+ * below) by default, S with AVANT_GC_CANDIDATE=S and E with
  * AVANT_GC_CANDIDATE=E in its environment (-DGC_CANDIDATE=...; Stage 28
- * W15b: S is the default by gc-design.md §3.4's rules). */
+ * W15b: S chosen by gc-design.md §3.4's rules; W15c: S+ by D230's
+ * condition). */
 #define GC_CANDIDATE_E 1
 #define GC_CANDIDATE_S 2
 #ifndef GC_CANDIDATE
@@ -990,6 +1031,46 @@ void gc_rem_full_scrub(void);
 #if GC_CANDIDATE != GC_CANDIDATE_E && GC_CANDIDATE != GC_CANDIDATE_S
 #error "GC_CANDIDATE: GC_CANDIDATE_E or GC_CANDIDATE_S"
 #endif
+
+/* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): beside
+ * GC_CANDIDATE, 1 builds candidate S's variant S+, the opportunistic
+ * young copy (avant_gc_sticky.c: survivors of young blocks are copied out
+ * when every reference to them is precise); 0 builds plain S. S+ is the
+ * default (D230's condition, the W15c record); E needs 0.
+ * Like GC_CANDIDATE a build-time constant, not ABI (runtime/build.sh's
+ * AVANT_GC_CANDIDATE=S+). SPLUS_SPARSE_LINES: a young block that held no
+ * mature line is evacuated when its survivors' bytes fill at most this
+ * many of its 128 lines. Measured at 32, 64, 96, 112 and 128 (Stage 28
+ * W15c record, thr-v1 to thr-v3): 128, every such block, is the one
+ * setting that recovers Etc::GameOfLife's locality (its long-lived cells
+ * fill their blocks densely, so a sparse-only copy moves almost nothing:
+ * 1.56 s at 96, 1.43 s at 128, E 1.42 s) and gives the compiler its
+ * smallest heap (__emit-ll 277 MB at 128, 290 MB at 96, S 378 MB); its
+ * cost is a copy of a dense live set that a later collection would not
+ * have moved (Calculator::Interpreter 27 -> 44 MB, as under E). A block
+ * that holds mature lines is never evacuated: it cannot be freed. */
+#ifndef GC_STICKY_COPY
+#if GC_CANDIDATE == GC_CANDIDATE_S
+#define GC_STICKY_COPY 1
+#else
+#define GC_STICKY_COPY 0
+#endif
+#endif
+#if GC_STICKY_COPY && GC_CANDIDATE != GC_CANDIDATE_S
+#error "GC_STICKY_COPY needs GC_CANDIDATE_S"
+#endif
+#ifndef SPLUS_SPARSE_LINES
+#define SPLUS_SPARSE_LINES 128
+#endif
+/* Block.kept under S+ during a young collection: the block holds a young
+ * object named imprecisely (it stays in place), it is evacuated, or it
+ * held no mature line when the collection began (a candidate), or its
+ * evacuation stopped at the heap limit (SPLUS_PART; YOUNG_EMPTY, 4, is
+ * the young sweep's, avant_gc_sticky.c). */
+#define SPLUS_KEPT 1
+#define SPLUS_EVAC 2
+#define SPLUS_PURE 3
+#define SPLUS_PART 5
 
 /* avant_gc_young.c: the noted list (both candidates) and pinned-object
  * lookup for defragmentation; then candidate E, the evacuating young
@@ -1006,7 +1087,7 @@ void gc_young_copy_out(int tenure);
 /* avant_gc_sticky.c: candidate S, the in-place young generation
  * (compiled only under S; Stage 28 W15b), and the young allocator's
  * block lists in avant_gc_alloc.c. */
-void gc_sticky_collect(void);
+void gc_sticky_collect(int tenure);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);
 void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);
