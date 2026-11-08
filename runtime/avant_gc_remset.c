@@ -136,6 +136,27 @@ static int rem_names_young(void *obj) {
   return found;
 }
 
+/* Candidate S (Stage 28 W15c, O88): after an S young collection emptied
+ * the remembered set, the holders on the keep list (the trace's holders
+ * of a young large object, and the young large objects promoted at this
+ * collection, promote_young_large) are remembered when they are not young
+ * and a field still names a young object: a young large object survives
+ * its first young collection young. The keep list is emptied. */
+void gc_rem_keep_young_holders(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.keep_n; i++) {
+    void *obj = gc_heap.keep[i];
+    if (!gc_is_heap_payload(obj, NULL, NULL) || (avant_header(obj)->flags & AVANT_FLAG_YOUNG) ||
+        (avant_header(obj)->flags & AVANT_FLAG_REM)) {
+      continue;
+    }
+    if (rem_names_young(obj)) {
+      rem_add(obj);
+    }
+  }
+  gc_heap.keep_n = 0;
+}
+
 /* C33 and O9 (Stage 28 W14b1, gc-design.md §7): the remembered set after
  * a full collection's mark (and its defragmentation, which rewrote the
  * entries it moved), before the sweep, O(set). An entry whose holder is

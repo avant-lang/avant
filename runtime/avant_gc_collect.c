@@ -228,8 +228,7 @@ static void gc_young_collect(int tenure) {
 #if GC_CANDIDATE == GC_CANDIDATE_E
   gc_young_copy_out(tenure);
 #else
-  (void)tenure;
-  gc_sticky_collect();
+  gc_sticky_collect(tenure);
 #endif
 }
 

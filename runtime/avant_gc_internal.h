@@ -962,6 +962,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 void gc_keep_add(void *obj);
 void gc_rem_commit_kept(void);
 void gc_rem_full_scrub(void);
+void gc_rem_keep_young_holders(void);
 
 /* The young generation's candidate (Stage 28 W15a2, gc-design.md §3.4:
  * "S and E behind one internal switch"). A build-time constant, not a
@@ -1006,7 +1007,7 @@ void gc_young_copy_out(int tenure);
 /* avant_gc_sticky.c: candidate S, the in-place young generation
  * (compiled only under S; Stage 28 W15b), and the young allocator's
  * block lists in avant_gc_alloc.c. */
-void gc_sticky_collect(void);
+void gc_sticky_collect(int tenure);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);
 void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);

@@ -66,19 +66,21 @@ static void scan_fields(void *p, int from_mature);
  * reaches is flagged MARKED ("traced this cycle") and noted, so the flag
  * ends with the collection (gc_clear_noted). A young object is promoted
  * at once and its fields are traced from the work list; a young large
- * object is marked and promoted after the trace
- * (gc_reclaim_young_large). */
-static void trace_ref(void *p, int from_mature) {
+ * object is marked and decided after the trace (gc_reclaim_young_large:
+ * at its first survival it stays young, Stage 28 W15c). Returns 1 when P
+ * names a young large object, whose holder may then have to stay
+ * remembered (scan_fields). */
+static int trace_ref(void *p, int from_mature) {
   Block *b = NULL;
   AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
   AvantHeader *h;
   if (!start) {
-    return;
+    return 0;
   }
   h = avant_header(start);
   if (h->flags & AVANT_FLAG_MARKED) {
-    return;
+    return ol && (h->flags & AVANT_FLAG_YOUNG);
   }
   if (h->flags & AVANT_FLAG_YOUNG) {
     h->flags |= AVANT_FLAG_MARKED;
@@ -91,10 +93,10 @@ static void trace_ref(void *p, int from_mature) {
     if (h->type_id != AVANT_TYPE_BYTES) {
       gc_work_push(start);
     }
-    return;
+    return ol != NULL;
   }
   if (from_mature && (h->flags & AVANT_FLAG_REM) == 0) {
-    return;
+    return 0;
   }
   h->flags |= AVANT_FLAG_MARKED;
   gc_note_marked(start);
@@ -102,17 +104,30 @@ static void trace_ref(void *p, int from_mature) {
     gc_heap.young_large_live += gc_large_bytes(ol);
   }
   scan_fields(start, 1);
+  return 0;
 }
 
+/* The fields of P. A holder with a field naming a young large object
+ * joins the keep list (gc_keep_add) unless it is itself a young large
+ * object (young, so traced whenever it is reached): after the trace,
+ * every such holder that is not young and still names a young object is
+ * remembered (rem_rebuild), because the young large object may stay
+ * young across this collection (Stage 28 W15c, O88). */
 static void scan_fields(void *p, int from_mature) {
-  if (avant_header(p)->type_id == AVANT_TYPE_BYTES) {
+  AvantHeader *ph = avant_header(p);
+  int names_young_large = 0;
+  if (ph->type_id == AVANT_TYPE_BYTES) {
     return;
   }
-  EACH_REF_SLOT(p, slot, { trace_ref(*slot, from_mature); });
+  EACH_REF_SLOT(p, slot, { names_young_large |= trace_ref(*slot, from_mature); });
+  if (names_young_large &&
+      (ph->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) != (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) {
+    gc_keep_add(p);
+  }
 }
 
 static void trace_root_slot(void **slot) {
-  trace_ref(*slot, 0);
+  (void)trace_ref(*slot, 0);
 }
 
 /* Field slots scan_fields visits for one object (the rem_fields
@@ -201,10 +216,13 @@ static void trace_all(void) {
 }
 
 /* Every remembered entry leaves the set, REM cleared (gc-design.md
- * §3.1.1 point 1): after an S young collection no object is young, so no
- * entry can name one. Run before any line is freed, while every entry's
- * header is intact (no allocation happens during the collection, and
- * the set holds only objects remembered since the last collection). */
+ * §3.1.1 point 1): after an S young collection no block object is young.
+ * Run before any line is freed, while every entry's header is intact (no
+ * allocation happens during the collection, and the set holds only
+ * objects remembered since the last collection). rem_rebuild then
+ * remembers again the holders that name a young large object staying
+ * young (§3.1.1 point 1 as amended by Stage 28 W15c: the one case where
+ * an object is still young after an S young collection). */
 static void rem_empty(void) {
   uint32_t i;
   int locked = rem_locked();
@@ -222,6 +240,16 @@ static void rem_empty(void) {
   if (locked) {
     pthread_mutex_unlock(&gc_heap.rem_mu);
   }
+}
+
+/* The holders the trace found naming a young large object (the keep
+ * list, scan_fields): each one that is not young and still names a young
+ * object after gc_reclaim_young_large is remembered, so the next young
+ * collection traces the young large object through it. A holder this
+ * collection reached only through a root (R1'(a)) is remembered too: the
+ * root may be gone by the next collection. */
+static void rem_rebuild(void) {
+  gc_rem_keep_young_holders();
 }
 
 /* The young lines LO..HI of block B after the trace: a line no survivor
@@ -324,7 +352,7 @@ static int sweep_lines(Block *b, int lo, int hi) {
 /* A young collection under S (gc_young_collect's S arm): the trace, the
  * young large objects, the remembered set emptied, then the sweep of the
  * young blocks. */
-void gc_sticky_collect(void) {
+void gc_sticky_collect(int tenure) {
   Block *b;
   gc_heap.young_large_live = 0;
   gc_heap.keep_n = 0;
@@ -333,15 +361,18 @@ void gc_sticky_collect(void) {
   if (gc_heap.set.verify) {
     gc_verify_sticky();
   }
-  /* The young large objects: the marked ones are promoted at once (S has
-   * no aging step: force_tenure), the others freed. The entries
-   * promote_young_large adds for the remembered set are dropped: nothing
-   * is young after this collection. */
-  gc_heap.force_tenure = 1;
+  /* The young large objects (Stage 28 W15c, O88/O76/O85): an unreached
+   * one is freed; a reached one stays young at its first survival
+   * (SURVIVED) and is promoted at its second, as under E (YOUNG_AGE's
+   * step for large objects), so a buffer that dies soon dies young; a
+   * fixed AVANT_YOUNG_MB tenures at once (TENURE), as under E. Before,
+   * S promoted every reached young large object at once and it died
+   * mature (the Sort rows +45-52% memory against E). */
+  gc_heap.force_tenure = tenure;
   gc_reclaim_young_large();
   gc_heap.force_tenure = 0;
-  gc_heap.keep_n = 0;
   rem_empty();
+  rem_rebuild();
   /* The young blocks (the young-blocks list, gc_heap.young_blocks): only
    * the line range young allocation used in each is swept. A block left
    * wholly free goes to free_blocks, one with free lines to part_blocks:
