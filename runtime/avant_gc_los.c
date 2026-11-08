@@ -349,7 +349,9 @@ static void promote_young_large(AvantHeader *h) {
  * young large objects die young). Every large object is born young. An
  * unreached young large object is freed at once (or kept as the spare);
  * a reached one stays young at its first survival (SURVIVED marks it)
- * and is promoted at its second, or at once when the collection tenures
+ * and is promoted at a later one once LARGE_AGE_BYTES of young
+ * allocation passed since its birth (Stage 28 W15e, O98: the stamp in
+ * the run's padding, gc_heap.young_clock), or at once when the collection tenures
  * every survivor (a fixed AVANT_YOUNG_MB) or the object is pinned.
  * Before, LOS_KEEP promoted every young large object a heap field
  * reached at its first survival, and a stack-held working set as large
@@ -370,7 +372,9 @@ void gc_reclaim_young_large(void) {
     }
     if ((h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_PINNED)) == 0) {
       gc_release_large(h);
-    } else if ((h->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_SURVIVED)) || gc_heap.force_tenure) {
+    } else if ((h->flags & AVANT_FLAG_PINNED) || gc_heap.force_tenure ||
+               ((h->flags & AVANT_FLAG_SURVIVED) &&
+                gc_heap.young_clock - ((uint64_t *)h)[-1] >= (uint64_t)LARGE_AGE_BYTES)) {
       promote_young_large(h);
     } else {
       h->flags |= AVANT_FLAG_SURVIVED;
@@ -467,6 +471,11 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   gc_heap.large_bytes += bytes;
   if (young) {
     h->flags |= AVANT_FLAG_YOUNG;
+    /* Its birth on the young-allocation clock (O98), in the run's
+     * padding before the header. */
+    ((uint64_t *)h)[-1] = gc_heap.young_clock + (avant_nursery_held > gc_heap.young_carried
+                                                     ? avant_nursery_held - gc_heap.young_carried
+                                                     : 0);
     gc_heap.young_large += bytes;
     gc_heap.young_large_n++;
     /* The one young budget (gc-design.md §5.1). */

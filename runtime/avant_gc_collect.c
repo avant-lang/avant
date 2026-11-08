@@ -294,6 +294,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_verify_remembered();
     }
   }
+  gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
+                              ? avant_nursery_held - gc_heap.young_carried
+                              : 0;
   gc_heap.live = 0;
   gc_heap.work_n = 0;
   gc_fast_clear();
@@ -402,6 +405,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.ctr.yng.max = avant_young_bytes;
   }
   avant_since_gc = 0;
+  gc_heap.young_carried = avant_nursery_held;
   avant_g_stats.live_bytes = gc_heap.live;
   if (gc_heap.live > gc_heap.ctr.peak_live) {
     gc_heap.ctr.peak_live = gc_heap.live;

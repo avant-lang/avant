@@ -105,6 +105,22 @@
 #ifndef S_LARGE_AGE
 #define S_LARGE_AGE 2
 #endif
+/* LARGE_AGE_BYTES (Stage 28 W15e, O98): with S_LARGE_AGE 2, a reached
+ * young large object is promoted at its second survival only once at
+ * least this many young bytes were allocated since its birth (the young
+ * clock, gc_heap.young_clock); until then it stays young. Its age no
+ * longer depends on the budget: at 4 MiB the second survival came after
+ * 4-8 MiB of allocation, at the old 8 MiB after 8-16, and
+ * Template::Regex / Parse promoted 17.4 MB of buffers instead of 7.0
+ * (42 / 41 MB RSS against 37 / 36). A young large object that survived
+ * is not counted in the young budget after the collection (counted, the
+ * survivors filled a 4 MiB budget, the clock barely moved between
+ * collections, and Template ran 18,395 young collections). Measured
+ * (W15e record, var/): 8 MiB gives Template 36 / 36 MB, Sort::Quick
+ * 13 -> 11 MB, 16 MiB the same within 1 MB; 0 is W15d's rule. */
+#ifndef LARGE_AGE_BYTES
+#define LARGE_AGE_BYTES (8ull * 1024ull * 1024ull)
+#endif
 /* YOUNG_AGE (Stage 28 W15d item 1, O91, D232: E's aging, Q4, inside S+'s
  * copy path): the young collections a small object S+ copies lives
  * through before it is promoted. 2 is one aging step: a survivor S+
@@ -738,6 +754,15 @@ typedef struct GcHeap {
    * W15a1, gc-design.md §5.1). */
   uint64_t young_large;
   int young_large_n;
+  /* The young-allocation clock (Stage 28 W15e, O98): young bytes
+   * allocated before the last collection (young_clock), and the young
+   * bytes that collection left counted (young_carried, aged survivors and
+   * young large objects that stay young), so the clock now is young_clock
+   * + avant_nursery_held - young_carried (gc_young_clock_now). A young
+   * large object's birth time is stamped in the 8 bytes before its header
+   * (the run's padding, avant_gc_los.c). */
+  uint64_t young_clock;
+  uint64_t young_carried;
   /* The large-object bytes the running young collection marked (the
    * los family's live sample without a walk, O65). */
   uint64_t young_large_live;

@@ -841,9 +841,15 @@ void gc_sticky_collect(int tenure) {
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }
   gc_clear_noted();
-  /* The one young budget: the young large objects and the aged survivors
-   * that stay young (as E counted its to-space). */
+  /* The one young budget: the aged survivors that stay young (as E
+   * counted its to-space); the young large objects that stay young only
+   * under W15d's age rule (LARGE_AGE_BYTES 0): an age in allocated bytes
+   * needs the budget to measure new allocation (O98). */
+#if LARGE_AGE_BYTES
+  avant_nursery_held = gc_heap.aged_now;
+#else
   avant_nursery_held = gc_heap.young_large + gc_heap.aged_now;
+#endif
 }
 
 /* A full collection under S promotes every object it marks (the full
