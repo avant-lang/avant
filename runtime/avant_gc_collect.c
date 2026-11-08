@@ -220,6 +220,41 @@ static void frag_note(void) {
   }
 }
 
+/* The young collection of the candidate GC_CANDIDATE selects (the one
+ * internal switch, avant_gc_internal.h; gc-design.md §3.4). TENURE: every
+ * survivor is promoted at this collection (a fixed AVANT_YOUNG_MB). */
+static void gc_young_collect(int tenure) {
+#if GC_CANDIDATE == GC_CANDIDATE_E
+  gc_young_copy_out(tenure);
+#endif
+}
+
+/* C39 (Stage 28 W15a2): under AVANT_HEAP_MAX_MB a live set the heap
+ * cannot hold with its copy room made every allocation run a heap-limit
+ * full collection (limit_defer.av at 8 to 16 MB: a young collection does
+ * not fit, young_copy_fits, and a full collection moves no young object,
+ * so the young bytes stay and the next allocation asks again; 24 bytes
+ * allocated per full collection), so the program neither died nor
+ * finished. The rule: a full collection the heap limit caused after less
+ * than one block (BLOCK_SIZE) was allocated since the previous one is a
+ * strike, and two strikes running end the program with "heap limit",
+ * the death a refused allocation gives: the collector is running a full
+ * collection per block, which is what the limit means. A heap-limit full
+ * collection after at least one block of allocation clears the count, so
+ * a program near its limit that still makes progress (limit_defer.av at
+ * 20 MB: about 98 KB per full collection, done in 3.4 s) goes on. */
+static void limit_progress_check(void) {
+  uint64_t since = avant_g_stats.allocated_bytes - gc_heap.limit_full_at;
+  gc_heap.limit_full_at = avant_g_stats.allocated_bytes;
+  if (since >= BLOCK_SIZE) {
+    gc_heap.limit_strikes = 0;
+    return;
+  }
+  if (++gc_heap.limit_strikes >= 2) {
+    gc_die("heap limit");
+  }
+}
+
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   uint64_t t0 = now_ns();
@@ -275,7 +310,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t y0 = now_ns();
     uint64_t surv;
     avant_g_stats.young_collections++;
-    gc_young_copy_out(gc_heap.set.young_fixed ? 1 : 0);
+    gc_young_collect(gc_heap.set.young_fixed ? 1 : 0);
     surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.pinned - pinned0);
     gc_heap.copy_reserve = (uint64_t)(RESERVE_FACTOR * (double)surv);
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
@@ -344,6 +379,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
     /* Free memory beyond the retention target goes back to the OS. */
     gc_heap_return(gc_heap.live);
+    if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
+      limit_progress_check();
+    }
   }
 
   if (full) {
@@ -450,15 +488,26 @@ void gc_stress_point(void) {
   gc_heap.stress_now = 1;
   gc_collect(GC_YOUNG, 1, GC_WHY_STRESS);
   gc_heap.stress_now = 0;
+  /* The blocks a stress collection retains for the objects the C stack
+   * names (gc_pin_c_stack) are mature growth; a stress point at a defer
+   * entry is often the only collection point a helper-bound loop reaches
+   * (its allocations run inside the region, where gc_maybe_collect
+   * returns), so the full collection they trigger runs here. A full
+   * collection moves no young object and keeps every mature block this
+   * thread's stack names (C31). (Stage 28 W15a2.) */
+  if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
+    gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
+  }
 }
 
 /* A named safepoint's slow path (avant_gc.h; Stage 28 W15a1, gc-design.md
  * §5.1). ROOTS holds the helper's heap reference arguments; they are the
  * slots of a frame pushed for the collection, so a young collection
  * relocates them (interior addresses included) and a defragmenting full
- * one rewrites them, and the caller's macro reads them back. No C-stack
- * rewrite runs (gc_thread.c_entry stays as it is: generated code called
- * the helper and roots its own references, D165). A collection runs only
+ * one rewrites them, and the caller's macro reads them back. It is a
+ * collection runtime C entered (gc_thread.c_entry, Stage 28 W15a2): any
+ * other young object a word of this thread's C stack names is kept in
+ * place (gc_pin_c_stack), never rewritten. A collection runs only
  * in an unshared program, outside every defer region, collection and
  * quiet leaf, on a registered thread: under AVANT_GC_STRESS=1 a young
  * collection that always copies, then whatever the policy asks for
@@ -485,6 +534,11 @@ __attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots,
   f.n = n;
   f.cap = n;
   gc_thread.frame = &f;
+  /* A collection runtime C entered (Stage 28 W15a2): the young objects
+   * words of this thread's C stack name are kept in place
+   * (gc_pin_c_stack); the helper's arguments are this frame's slots and
+   * are relocated precisely. */
+  gc_thread.c_entry++;
   pthread_mutex_lock(&gc_heap.world);
   gc_heap.ctr.sp.calls++;
   if (gc_heap.set.stress) {
@@ -498,6 +552,7 @@ __attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots,
     }
   }
   pthread_mutex_unlock(&gc_heap.world);
+  gc_thread.c_entry--;
   gc_thread.frame = f.prev;
 }
 

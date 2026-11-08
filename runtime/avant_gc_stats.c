@@ -175,7 +175,13 @@ static void print_sp(StatsLine *l) {
 
 static void print_size(StatsLine *l) {
   const GcSizeCounters *c = &gc_heap.ctr.size;
-  line_add(l, "young_grows=%llu young_shrinks=%llu\n", u(c->grows), u(c->shrinks));
+  line_add(l, "young_grows=%llu young_shrinks=%llu ", u(c->grows), u(c->shrinks));
+}
+
+static void print_keep(StatsLine *l) {
+  const GcKeepCounters *c = &gc_heap.ctr.keep;
+  line_add(l, "keep_cons_objects=%llu keep_cons_bytes=%llu keep_blocks=%llu\n",
+           u(c->cons_objects), u(c->cons_bytes), u(c->blocks));
 }
 
 void gc_print_stats(void) {
@@ -194,6 +200,7 @@ void gc_print_stats(void) {
   print_prom(&l);
   print_sp(&l);
   print_size(&l);
+  print_keep(&l);
   fwrite(l.buf, 1, l.n, stderr);
 }
 

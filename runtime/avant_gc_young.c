@@ -28,10 +28,56 @@ static void note_marked(void *payload) {
 void gc_clear_noted(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.noted_n; i++) {
-    avant_header(gc_heap.noted[i])->flags &=
-        (uint16_t)~(AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED);
+    avant_header(gc_heap.noted[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
   }
   gc_heap.noted_n = 0;
+}
+
+/* The nursery objects this young collection keeps in place (Stage 28
+ * W15a2): pinned ones (D205). Each is marked (MARKED on a nursery object
+ * means "kept"), traced from the work list, its block flagged kept, and
+ * it is listed here, so the end of the collection keeps its block and
+ * promotes it in place (discard_nursery_from) without walking any
+ * nursery block object by object: the moved objects in those blocks
+ * hold forwards in their headers, not sizes. */
+static void keep_in_place(void *p);
+
+/* A nursery object a word of the collecting thread's C stack names, at a
+ * collection runtime C entered (gc_pin_c_stack): kept in place and
+ * promoted in place like a pinned one (D205's mechanism), so the word,
+ * whatever it is, stays valid and is never changed (mostly-copying: a
+ * word that is not a reference only keeps an object alive). */
+void gc_keep_conservative(void *p) {
+  AvantHeader *h = avant_header(p);
+  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED)) {
+    return;
+  }
+  gc_heap.ctr.keep.cons_objects++;
+  gc_heap.ctr.keep.cons_bytes += gc_obj_total(h);
+  keep_in_place(p);
+}
+
+static void keep_in_place(void *p) {
+  AvantHeader *h = avant_header(p);
+  Block *b = block_of(h);
+  h->flags |= AVANT_FLAG_MARKED;
+  note_marked(p);
+  gc_mark_object_lines(p);
+  gc_heap.live += gc_obj_total(h);
+  gc_work_push(p);
+  gc_heap.saw_pinned_nursery = 1;
+  /* kept: 1 a pinned object is kept (the block becomes from-space, D205),
+   * 2 only conservatively kept ones (the block joins mature space). */
+  if (h->flags & AVANT_FLAG_PINNED) {
+    b->kept = 1;
+  } else if (!b->kept) {
+    b->kept = 2;
+  }
+  if (gc_heap.kept_n == gc_heap.kept_cap) {
+    gc_heap.kept_cap = gc_heap.kept_cap ? gc_heap.kept_cap * 2 : 64;
+    gc_heap.kept = gc_xrealloc(gc_heap.kept, gc_heap.kept_cap * sizeof(void *));
+  }
+  gc_heap.kept[gc_heap.kept_n++] = p;
 }
 
 /* The slot now names a young object. If that slot lives in a mature
@@ -62,11 +108,13 @@ static void remember_young_edge(void **slot, void *payload) {
   if (!owner) {
     return;
   }
-  /* A pinned nursery owner is not copied: it stays in its block and is
-   * promoted in place when this collection ends (promote_pinned_one),
-   * so its young edge needs the remembered set like a mature owner's. */
-  if (ob && (ob->space == SPACE_NURSERY || ob->space == SPACE_TO) &&
-      (avant_header(owner)->flags & AVANT_FLAG_PINNED) == 0) {
+  /* A nursery owner kept in place (pinned, or named by a C stack word:
+   * MARKED, keep_in_place) is not copied: it stays in its block and is
+   * promoted in place when this collection ends (promote_kept_one), so
+   * its young edge needs the remembered set like a mature owner's. */
+  if (ob && (ob->space == SPACE_TO ||
+             (ob->space == SPACE_NURSERY &&
+              (avant_header(owner)->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_MARKED)) == 0))) {
     return;
   }
   /* A young large owner is traced whenever it is reached; when it is
@@ -153,28 +201,25 @@ void *gc_copy_nursery(void *p) {
   if (!gc_is_heap_payload(p, &b, NULL) || !b || b->space != SPACE_NURSERY) {
     return p;
   }
-  void *to = gc_fwd_get(p);
-  if (to) {
-    return to;
-  }
   AvantHeader *h = avant_header(p);
+  /* Moved already: the forward is in the header (gc-design.md §3.2). */
+  if (h->flags & AVANT_FLAG_FORWARDED) {
+    return gc_forward_of(h);
+  }
+  /* Kept in place already (keep_in_place). */
+  if (h->flags & AVANT_FLAG_MARKED) {
+    return p;
+  }
   if (h->flags & AVANT_FLAG_PINNED) {
-    gc_heap.saw_pinned_nursery = 1;
-    if (!(h->flags & AVANT_FLAG_MARKED)) {
-      h->flags |= AVANT_FLAG_MARKED;
-      note_marked(p);
-      gc_mark_object_lines(p);
-      gc_heap.live += gc_obj_total(h);
-      gc_work_push(p);
-    }
+    keep_in_place(p);
     return p;
   }
   size_t total = gc_obj_total(h);
-  /* Tenure only after a previous collection, or when the caller has
-   * already decided this graph is long-lived. A first survivor stays
-   * in the nursery (SPACE_TO) so a tree that dies next cycle is not
-   * promoted. */
-  int tenure = gc_heap.force_tenure || (h->flags & AVANT_FLAG_SURVIVED);
+  /* Tenure after YOUNG_AGE - 1 earlier young collections (Q4), or when
+   * the caller has already decided this graph is long-lived. With one
+   * aging step a first survivor stays in the nursery (SPACE_TO) so a
+   * tree that dies next cycle is not promoted. */
+  int tenure = gc_heap.force_tenure || YOUNG_AGE <= 1 || (h->flags & AVANT_FLAG_SURVIVED);
   AvantHeader *nh = tenure ? (AvantHeader *)gc_mature_alloc(total) : gc_to_alloc(total);
   memcpy(nh, h, total);
   nh->flags = (uint16_t)(h->flags &
@@ -189,7 +234,7 @@ void *gc_copy_nursery(void *p) {
     gc_heap.promoted_since_full += total;
   }
   note_marked(np);
-  gc_fwd_put(p, np);
+  gc_set_forward(h, np);
   avant_g_stats.copied_bytes += total;
   gc_heap.live += total;
   gc_mark_object_lines(np);
@@ -243,7 +288,7 @@ void gc_copy_from_slot(void **slot) {
    * root or a field of a young object. A field of a mature object is
    * followed only when that child is remembered. A live object in a
    * from-space block is a pinned survivor promoted in place
-   * (promote_pinned_one): it is mature, and its young children are
+   * (promote_kept_one): it is mature, and its young children are
    * reached the same way (C29). */
   if (ol || (b && (b->space == SPACE_MATURE || b->space == SPACE_FROM))) {
     trace_mature(start, gc_heap.from_mature);
@@ -290,11 +335,18 @@ static uint64_t rem_field_count(void *p) {
 }
 
 void gc_gen_young_copy(void) {
-  gc_fwd_reset();
   gc_heap.young_large_live = 0;
   gc_heap.saw_pinned_nursery = 0;
   gc_heap.from_mature = 0;
   gc_heap.work_n = 0;
+  /* Runtime C entered this collection (avant_alloc_c, a stress point at a
+   * defer entry, a named safepoint): first keep in place every nursery
+   * object a word of this thread's C stack names, before any root can
+   * copy it (Stage 28 W15a2, gc-design.md §3.2, §4.3's first half). The
+   * helper's C locals then stay valid without being rewritten. */
+  if (gc_thread.c_entry) {
+    gc_pin_c_stack();
+  }
   ThreadReg *t;
   uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
@@ -366,9 +418,13 @@ void gc_gen_young_copy(void) {
     copy_payload_children(p);
   }
   /*
-   * Every copied object is in the forwarding table now: rewrite the
-   * forwarded words runtime C frames and register saves left on this
-   * thread's stack, then count any that still name from-space. Only
+   * Every copied object is forwarded now: rewrite the forwarded words
+   * runtime C frames and register saves left on this thread's stack, then
+   * count any that still name from-space. Since Stage 28 W15a2 every
+   * nursery object a stack word names was kept in place first
+   * (gc_pin_c_stack), so no such word exists and the rewrite finds
+   * nothing; it stays, with its switch and the sm_* fields, until
+   * gc-design.md §4.3's proof retires it (W16/W17). Only
    * when runtime C entered this collection (C37, Stage 28 W14b1): the
    * rewrite takes every stack word equal to a moved object's start for
    * a reference, so it also rewrote integers and character buffers that
@@ -399,15 +455,12 @@ void gc_gen_young_copy(void) {
  * looked inside it (gc_copy_nursery skips non-nursery blocks), and its
  * young children were discarded with their blocks.
  */
-static void promote_pinned_one(AvantHeader *h, Block *b) {
-  (void)b;
-  if (h->flags & AVANT_FLAG_PINNED) {
-    gc_heap.block_has_pin = 1;
-    if (h->flags & AVANT_FLAG_YOUNG) {
-      gc_heap.ctr.prom.pinned += gc_obj_total(h);
-    }
-    h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+static void promote_kept_one(void *p) {
+  AvantHeader *h = avant_header(p);
+  if (h->flags & AVANT_FLAG_YOUNG) {
+    gc_heap.ctr.prom.pinned += gc_obj_total(h);
   }
+  h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
 }
 
 static void note_pinned_in_block(AvantHeader *h, Block *b) {
@@ -423,34 +476,51 @@ int gc_block_has_pinned(Block *b) {
   return gc_heap.block_has_pin;
 }
 
-static int block_keep_pinned(Block *b) {
-  gc_heap.block_has_pin = 0;
-  gc_foreach_block_object(b, promote_pinned_one);
-  return gc_heap.block_has_pin;
-}
-
-/* After young copy, free unpinned nursery blocks. Pinned objects keep
- * their address (D34); those blocks stay on gc_heap.space[SPACE_FROM].list as SPACE_FROM.
- * (AVANT_NURSERY_DISCARD=0, which parked every nursery block instead,
- * the Stage 17 safety net before the leftover stack rewrite, is retired
- * since Stage 28 W14b2.) */
+/* After young copy, free the nursery blocks. A block holding an object
+ * kept in place (keep_in_place: pinned, D34) stays as SPACE_FROM, and
+ * only its kept objects keep their start bits (Stage 28 W15a2): the
+ * other objects in it are moved (their headers hold forwards) or dead,
+ * and no lookup or walk may take one for an object again (before, their
+ * start bits stayed and a dead object stayed visible to
+ * gc_is_heap_payload until a full collection, H2). Nothing walks a
+ * nursery block object by object here: the kept list names the
+ * survivors. (AVANT_NURSERY_DISCARD=0, which parked every nursery block
+ * instead, the Stage 17 safety net before the leftover stack rewrite, is
+ * retired since Stage 28 W14b2.) */
 static void discard_nursery_from(void) {
   Block *b = gc_heap.space[SPACE_NURSERY].list;
+  uint32_t i;
   gc_heap.space[SPACE_NURSERY].list = NULL;
-  /* Pins are roots, so a young copy already saw every pinned nursery
-   * object. Walking every dead object to recheck the flag was most of
-   * a calculator collection: the tree is garbage and nothing is pinned. */
-  if (!gc_heap.saw_pinned_nursery) {
-    while (b) {
-      Block *next = b->next;
-      gc_cache_or_free_block(b);
-      b = next;
-    }
-    return;
-  }
   while (b) {
     Block *next = b->next;
-    if (block_keep_pinned(b)) {
+    if (b->kept == 2) {
+      /* Only conservatively kept objects (gc_keep_conservative): the
+       * block joins mature space, promoted in place with them. Its other
+       * lines are moved or dead objects, so it is a mature block with
+       * holes: mature allocation reuses them after the next full
+       * collection, and defragmentation may evacuate the block once no
+       * stack word names it (C31). Kept as from-space, a block per named
+       * object stayed until a full collection and was never compacted
+       * (one young string per 32 KiB block under AVANT_GC_STRESS=1). */
+      b->kept = 0;
+      gc_heap.ctr.keep.blocks++;
+      gc_heap.mature_since_full += BLOCK_SIZE;
+      gc_heap.promoted_since_full += BLOCK_SIZE;
+      memset(b->start, 0, START_WORDS * sizeof(uint64_t));
+      b->space = SPACE_MATURE;
+      gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;
+      gc_heap.space[SPACE_MATURE].bytes += BLOCK_SIZE;
+      b->next = gc_heap.space[SPACE_MATURE].list;
+      gc_heap.space[SPACE_MATURE].list = b;
+      gc_reset_block_bump(b);
+    } else if (b->kept) {
+      b->kept = 0;
+      /* A retained block is mature growth until a full collection
+       * releases it (gc-design.md §5.4: in-place promotions count). */
+      gc_heap.ctr.keep.blocks++;
+      gc_heap.mature_since_full += BLOCK_SIZE;
+      gc_heap.promoted_since_full += BLOCK_SIZE;
+      memset(b->start, 0, START_WORDS * sizeof(uint64_t));
       b->space = SPACE_FROM;
       gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;
       gc_heap.space[SPACE_FROM].bytes += BLOCK_SIZE;
@@ -461,6 +531,13 @@ static void discard_nursery_from(void) {
     }
     b = next;
   }
+  for (i = 0; i < gc_heap.kept_n; i++) {
+    void *p = gc_heap.kept[i];
+    Block *kb = block_of(avant_header(p));
+    set_start(kb, (size_t)((uint8_t *)avant_header(p) - kb->base));
+    promote_kept_one(p);
+  }
+  gc_heap.kept_n = 0;
 }
 
 static void adopt_to_space(void) {

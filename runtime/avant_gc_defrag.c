@@ -90,8 +90,8 @@ static void defrag_rewrite_slot(void **slot) {
   if (!start) {
     return;
   }
-  to = gc_fwd_get(start);
-  if (to && to != start) {
+  to = gc_forwarded(start);
+  if (to) {
     *slot = (void *)((uint8_t *)to + ((uint8_t *)w - (uint8_t *)start));
   }
 }
@@ -106,7 +106,8 @@ static void defrag_scan_payload(void *p) {
 
 static void defrag_fix_one(AvantHeader *h, Block *b) {
   (void)b;
-  if (full_marked(h)) {
+  /* A moved object's fields are fixed in its copy (marked too). */
+  if (full_marked(h) && !(h->flags & AVANT_FLAG_FORWARDED)) {
     defrag_scan_payload(payload_of(h));
   }
 }
@@ -128,7 +129,8 @@ static void mature_unlink(Block *b) {
  * live set) and before the sweep. Live objects in candidate blocks are
  * copied into fresh destination blocks, every root, heap field,
  * and remembered entry naming them is rewritten
- * through the forwarding table, and the emptied blocks are freed
+ * through the forward in the moved object's header (gc_set_forward,
+ * Stage 28 W15a2; before, a side table), and the emptied blocks are freed
  * whole. Destination blocks are allocated before anything moves; if
  * one cannot be allocated under the heap limit, nothing moves and the
  * ordinary non-moving collection completes (gc_heap.ctr.def.skipped counts it),
@@ -148,6 +150,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   Block **dest = NULL;
   size_t ndest = 0;
   size_t dest_cap_blocks;
+  Block *stopped_block = NULL;
   if (live_lines_this == 0) {
     return;
   }
@@ -215,7 +218,6 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
     }
     dest[ndest++] = nb;
   }
-  gc_fwd_reset();
   {
     Block *db = dest[0];
     size_t di = 0;
@@ -248,6 +250,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
                  * already copied are forwarded and fixed up below;
                  * this block keeps the rest and is not freed. */
                 stopped = 1;
+                stopped_block = cb;
                 break;
               }
               if (ndest == dest_cap_blocks) {
@@ -264,7 +267,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
           set_start(db, (size_t)(bump - db->base));
           full_set_mark(nh);
           mark_lines(db, (size_t)(bump - db->base), total);
-          gc_fwd_put(payload_of(h), payload_of(nh));
+          gc_set_forward(h, payload_of(nh));
           gc_heap.ctr.def.evac_bytes += total;
           bump += total;
           db->bump = bump;
@@ -331,6 +334,24 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
     while ((lh = gc_large_next(&it))) {
       if (full_marked(lh)) {
         defrag_scan_payload(payload_of(lh));
+      }
+    }
+  }
+  /* A block whose evacuation stopped stays: its moved objects hold
+   * forwards in their headers, so their start bits go (every reference
+   * to them is rewritten above), and no lookup or walk takes one for an
+   * object again. */
+  if (stopped_block) {
+    int w;
+    for (w = 0; w < START_WORDS; w++) {
+      uint64_t bits = stopped_block->start[w];
+      while (bits) {
+        int bit = __builtin_ctzll(bits);
+        AvantHeader *h = (AvantHeader *)(stopped_block->base + ((size_t)w * 64 + (size_t)bit) * 8);
+        if (h->flags & AVANT_FLAG_FORWARDED) {
+          stopped_block->start[w] &= ~(1ULL << bit);
+        }
+        bits &= bits - 1;
       }
     }
   }
