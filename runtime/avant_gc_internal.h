@@ -1167,11 +1167,16 @@ static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol
 #endif
 }
 
-/* S_INLINE_HOLES (candidate S, Q11): 1, the inline allocation path runs
- * in holes of recycled blocks as in whole free blocks; 0, only in whole
- * blocks (holes are allocated through the C path). */
+/* S_INLINE_HOLES (candidate S, Q11; Stage 28 W15b item 3): 1 (the
+ * default), the inline allocation path runs in holes of recycled blocks
+ * as in whole free blocks: the slow path sets avant_gc_bump, avant_gc_limit
+ * and avant_gc_block to the hole (the generated code stores its cursor
+ * in Block.bump and needs nothing else), and the hole's start bits are
+ * clear (gc-design.md §2.3: the sweeps clear the lines they free). 0
+ * publishes the inline path only in whole blocks; holes are then filled
+ * through the C path (kept for Q11's measurement). */
 #ifndef S_INLINE_HOLES
-#define S_INLINE_HOLES 0
+#define S_INLINE_HOLES 1
 #endif
 
 /* The full collection's mark (Stage 28 W14a2, gc-design.md §2.2, C36):
