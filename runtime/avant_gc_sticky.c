@@ -650,14 +650,13 @@ void gc_sticky_collect(int tenure) {
     splus_finish();
   }
 #endif
-  /* The young large objects (Stage 28 W15c, O88/O76/O85): an unreached
-   * one is freed; a reached one stays young at its first survival
-   * (SURVIVED) and is promoted at its second, as under E (YOUNG_AGE's
-   * step for large objects), so a buffer that dies soon dies young; a
-   * fixed AVANT_YOUNG_MB tenures at once (TENURE), as under E. Before,
-   * S promoted every reached young large object at once and it died
-   * mature (the Sort rows +45-52% memory against E). */
-  gc_heap.force_tenure = tenure;
+  /* The young large objects: an unreached one is freed; a reached one is
+   * promoted (S_LARGE_AGE 1, the default by measurement) or, with
+   * S_LARGE_AGE 2, stays young at its first survival (SURVIVED) and is
+   * promoted at its second, as under E (Stage 28 W15c, O88/O76/O85), its
+   * holders remembered by rem_rebuild; a fixed AVANT_YOUNG_MB tenures at
+   * once (TENURE), as under E. */
+  gc_heap.force_tenure = tenure || S_LARGE_AGE <= 1;
   gc_reclaim_young_large();
   gc_heap.force_tenure = 0;
   rem_empty();

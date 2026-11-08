@@ -92,6 +92,24 @@
 #ifndef YOUNG_AGE
 #define YOUNG_AGE 2
 #endif
+/* S_LARGE_AGE (candidate S, Stage 28 W15c item 1, O88): the young
+ * collections a young large object lives through under S before it is
+ * promoted. 2 keeps a reached one young at its first survival (SURVIVED)
+ * and promotes it at its second, as E does, with the remembered set kept
+ * for its holders (gc_rem_keep_young_holders); 1 promotes it at its first
+ * survival (W15b's rule). A fixed AVANT_YOUNG_MB promotes at once either
+ * way. 1 by measurement (W15c record, diag/age, three runs each): 2 left
+ * every M2 peak heap unchanged and raised Sort::Quick's RSS from 20 to
+ * 23 MB, the worst M2 memory multiplier (resident free page runs: the
+ * buffers it keeps one more cycle move the next ones to fresh pages), for
+ * 3% fewer large bytes promoted there; it helped one row outside M2
+ * (Template::Regex 42 -> 37 MB, +4% time). The array header that owns a
+ * buffer is promoted in place at the buffer's first survival, and its
+ * remembered entry keeps the buffer alive through its second, so the age
+ * does not give S what it gives E (O88 stays open). */
+#ifndef S_LARGE_AGE
+#define S_LARGE_AGE 1
+#endif
 /* The full-collection trigger (gc-design.md §5.4, Stage 28 W15a1): mature
  * growth since the last full collection reaching
  * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */
