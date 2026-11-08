@@ -13,12 +13,14 @@
  * moved from avant_rt.c and the stackmap walker's file, which W12r
  * removed). The collector's roots are precise (root slots, pins, TLS
  * slots, the remembered set); these scans cover what runtime C frames and register saves may still hold:
- *   - gc_rewrite_c_stack after a young copy (W8c's and W11's rule): every
- *     exact forwarded start left on the stack is rewritten to the copy;
- *   - gc_count_c_stack_nursery: counts words still naming from-space (the
- *     sm_left statistic, checked by AVANT_GC_VERIFY);
+ *   - gc_pin_c_stack at a young collection runtime C entered (W15a2,
+ *     W15c): the young blocks a stack word names are not evacuated (S+);
  *   - gc_note_c_stack_blocks before a defragmenting full collection (W11c,
  *     C31, D213): mature blocks a stack word names are not moved.
+ * E's young-copy scans (gc_rewrite_c_stack, which rewrote every exact
+ * forwarded start left on the stack, W8c, W11, C37; and
+ * gc_count_c_stack_nursery, the sm_left statistic) went with E in Stage 28
+ * W15d: no collection rewrites a C stack word.
  * gc_collect() spills its callers' callee-saved registers first, so a
  * reference a caller keeps in one is on the scanned stack. Other threads'
  * C frames are not scanned (D191, Part 2). */
@@ -66,20 +68,20 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
   gc_block_set_seal(&gc_heap.cstack_blocks);
 }
 
-/* Candidate E, and S's variant S+ for the pin scan, from here (Stage 28
- * W15b, W15c): S's young collections move nothing, so they neither pin
- * nor rewrite C stack words; S+ copies and pins, never rewrites. */
-#if GC_CANDIDATE == GC_CANDIDATE_E || GC_STICKY_COPY
+/* S+'s pin scan (candidate S, GC_STICKY_COPY 0, moves nothing, so it
+ * neither pins nor rewrites C stack words). */
+#if GC_STICKY_COPY
 
 /* Mostly-copying at the collections runtime C enters (Stage 28 W15a2,
- * gc-design.md §3.2, §4.3's first half; C37's class removed there): every
- * 8-aligned word of the collecting thread's stack, from this function's
- * frame to the stack top, that names a nursery object (its exact start or
- * an interior address, resolved through the start bitmap) keeps that
- * object in place for this collection and promotes it in place
- * (gc_keep_conservative). No word is changed, so an integer that happens
- * to equal an object's address only keeps the object alive (C37 was the
- * rewrite replacing such an integer). Words that are registered root
+ * gc-design.md §3.2, §4.3's first half; C37's class removed there; S+
+ * since W15c): every 8-aligned word of the collecting thread's stack,
+ * from this function's frame to the stack top, that names a young block
+ * object (its exact start or an interior address, resolved through the
+ * start bitmap) keeps that object's block in place for this collection
+ * (SPLUS_KEPT: not evacuated; its survivors are promoted in place). No
+ * word is changed, so an integer that happens to equal an object's
+ * address only keeps the object alive (C37 was the rewrite replacing such
+ * an integer). Words that are registered root
  * slots of this thread's frames are skipped: those are precise, and the
  * young copy relocates them. Called before any root is traced.
  * gc_collect() first saves its callers' callee-saved registers into its
@@ -124,99 +126,12 @@ __attribute__((noinline)) void gc_pin_c_stack(void) {
     }
     w = ((void **)p)[k];
     start = gc_object_payload(w, &b, &ol);
-#if GC_CANDIDATE == GC_CANDIDATE_E
-    if (start && b && b->space == SPACE_NURSERY) {
-      gc_keep_conservative(start);
-    }
-#else
-    /* S+: the young block object stays in place, and so does every
-     * survivor of its block (the block is not evacuated). */
+    /* The young block object stays in place, and so does every survivor
+     * of its block (the block is not evacuated). */
     if (start && b && (avant_header(start)->flags & AVANT_FLAG_YOUNG)) {
       b->kept = SPLUS_KEPT;
     }
-#endif
   }
 }
 
-#endif /* GC_CANDIDATE == GC_CANDIDATE_E || GC_STICKY_COPY */
-#if GC_CANDIDATE == GC_CANDIDATE_E
-
-static void gc_rewrite_if_forwarded(void **slot) {
-  void *to = gc_forwarded(*slot);
-  if (to) {
-    *slot = to;
-  }
-}
-
-/*
- * Copies of a forwarded pointer survive a young copy outside the
- * precise roots: callee-saved register saves in C frames on the call
- * chain into the collector, and runtime C locals. Rewrite every exact
- * forwarded start left on this thread's stack, with the same predicate
- * gc_count_c_stack_nursery verifies, so no stack word still names
- * from-space after a young copy. Interiors are not touched (only an
- * exact start's header holds the forward, gc_forwarded), and a word that was not forwarded keeps its
- * bits. AVANT_GC_STACK_REWRITE=0 is the kill switch (gc_heap.set.c_stack_rewrite).
- */
-void gc_rewrite_c_stack(void) {
-  uint8_t *p;
-  uint8_t *hi;
-  uint8_t *lo;
-  if (!gc_heap.set.c_stack_rewrite) {
-    return;
-  }
-  p = (uint8_t *)__builtin_frame_address(0);
-  lo = gc_thread.reg.stack_lo;
-  hi = gc_thread.reg.stack_hi;
-  if (!hi || !p) {
-    return;
-  }
-  if (lo && p < (uint8_t *)lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= (uint8_t *)hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!gc_is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      gc_rewrite_if_forwarded((void **)p);
-    }
-  }
-}
-
-void gc_count_c_stack_nursery(void) {
-  uint8_t *p;
-  uint8_t *hi;
-  uint8_t *lo;
-  if (!gc_heap.set.c_stack_pass) {
-    return;
-  }
-  p = (uint8_t *)__builtin_frame_address(0);
-  lo = gc_thread.reg.stack_lo;
-  hi = gc_thread.reg.stack_hi;
-  if (!hi || !p) {
-    return;
-  }
-  if (lo && p < lo) {
-    return;
-  }
-  p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-  for (; p + sizeof(void *) <= hi; p += ALIGN) {
-    void *w = *(void **)p;
-    Block *b = NULL;
-    if (!gc_is_heap_payload(w, &b, NULL)) {
-      continue;
-    }
-    if (b && b->space == SPACE_NURSERY) {
-      /* Copied to to-space, but this stack word still names from-space. */
-      if (gc_forwarded(w)) {
-        gc_heap.ctr.stack_left++;
-      }
-    }
-  }
-}
-
-#endif /* GC_CANDIDATE == GC_CANDIDATE_E */
+#endif /* GC_STICKY_COPY */

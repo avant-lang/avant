@@ -34,8 +34,8 @@ uint64_t avant_young_bytes;
 uint64_t avant_nursery_held;
 
 /* Young sizing (Stage 28 W15a1, gc-design.md §5.2; O28 done in W14b1).
- * The young budget starts at YOUNG_BYTES_DEFAULT (8 MiB; Q3 chooses the
- * default later) and adapts within [YOUNG_BYTES_MIN, YOUNG_BYTES_CAP]
+ * The young budget starts at YOUNG_BYTES_DEFAULT (4 MiB since Stage 28
+ * W15d, Q3; 8 MiB before) and adapts within [YOUNG_BYTES_MIN, YOUNG_BYTES_CAP]
  * after every young collection the policy runs (young_size): it doubles
  * when more than half of the young bytes survived and the pause per
  * surviving byte rose against the previous young collection, and halves
@@ -43,13 +43,11 @@ uint64_t avant_nursery_held;
  * AVANT_YOUNG_MB fixes it (tests). Retired with this rule: the survival
  * probe (a second trace of the live young graph before each copy), the
  * sticky pause that raised the budget instead of copying, the dead-based
- * resize and the 192 MiB cap. The copy reserve is the last young
- * collection's survival times RESERVE_FACTOR, charged as already spent
- * by heap-limit decisions outside a collection so a copy has its room;
- * inside a collection the reserve is being spent and is not charged. */
+ * resize and the 192 MiB cap. (E's copy reserve, the last young
+ * collection's survival times 1.5 charged as spent by heap-limit
+ * decisions, went with E in Stage 28 W15d: S+'s copy needs no room.) */
 #define YOUNG_BYTES_MIN (4ull * 1024ull * 1024ull)
 #define YOUNG_BYTES_CAP (64ull * 1024ull * 1024ull)
-#define RESERVE_FACTOR 1.5
 
 /* The settings' one parsing rule (Stage 28 W14b2, O40; the knobs are
  * listed in avant_gc.h). A knob that is unset or empty takes its
@@ -114,8 +112,7 @@ static void gc_settings_read(GcSettings *s) {
   s->reserve_gb = env_u64("AVANT_HEAP_RESERVE_GB", HEAP_RESERVE_GB_DEFAULT, HEAP_RESERVE_GB_MIN,
                           1ull << 20);
   s->nursery_off = !env_bool("AVANT_NURSERY", 1);
-  s->c_stack_pass = !s->nursery_off;
-  s->c_stack_rewrite = s->c_stack_pass && env_bool("AVANT_GC_STACK_REWRITE", 1);
+  s->c_stack_rewrite = !s->nursery_off && env_bool("AVANT_GC_STACK_REWRITE", 1);
   s->defrag = env_bool("AVANT_GC_DEFRAG", 1);
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
@@ -204,8 +201,6 @@ static void frag_note(void) {
   uint64_t free_lines = 0;
   uint64_t lines = 0;
   frag_scan(gc_heap.space[SPACE_MATURE].list, &free_lines, &lines);
-  frag_scan(gc_heap.space[SPACE_NURSERY].list, &free_lines, &lines);
-  frag_scan(gc_heap.space[SPACE_FROM].list, &free_lines, &lines);
   c->fulls++;
   c->free_lines += free_lines;
   c->lines += lines;
@@ -220,25 +215,13 @@ static void frag_note(void) {
   }
 }
 
-/* The young collection of the candidate GC_CANDIDATE selects (the one
- * internal switch, avant_gc_internal.h; gc-design.md §3.4). TENURE: every
- * survivor is promoted at this collection (a fixed AVANT_YOUNG_MB); S
- * promotes every survivor at every young collection anyway. */
-static void gc_young_collect(int tenure) {
-#if GC_CANDIDATE == GC_CANDIDATE_E
-  gc_young_copy_out(tenure);
-#else
-  gc_sticky_collect(tenure);
-#endif
-}
-
 /* C39 (Stage 28 W15a2): under AVANT_HEAP_MAX_MB a live set the heap
  * cannot hold with its copy room made every allocation run a heap-limit
- * full collection (limit_defer.av at 8 to 16 MB: a young collection does
- * not fit, young_copy_fits, and a full collection moves no young object,
- * so the young bytes stay and the next allocation asks again; 24 bytes
- * allocated per full collection), so the program neither died nor
- * finished. The rule: a full collection the heap limit caused after less
+ * full collection (limit_defer.av at 8 to 16 MB under E: a young
+ * collection did not fit its copy room, and a full collection moves no
+ * young object, so the young bytes stayed and the next allocation asked
+ * again; 24 bytes allocated per full collection), so the program neither
+ * died nor finished. The rule: a full collection the heap limit caused after less
  * than one block (BLOCK_SIZE) was allocated since the previous one is a
  * strike, and two strikes running end the program with "heap limit",
  * the death a refused allocation gives: the collector is running a full
@@ -288,7 +271,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
 
   /* Spill the callers' callee-saved GPRs into collect's frame so the
    * C-stack walks see a reference a caller keeps in one: the young
-   * copy's rewrite (gc_rewrite_c_stack) and the full collection's
+   * collection's pin scan (gc_pin_c_stack) and the full collection's
    * defragmentation exclusion (gc_note_c_stack_blocks, C31). Without
    * this, a heap pointer can sit in rbx across avant_alloc and miss
    * the shadow stack. Before the branch, so shrink-wrapping cannot move
@@ -299,49 +282,34 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   __builtin_unwind_init();
 #endif
   if (!full) {
-    /* One young collection: no probe, no pause. Survival, for sizing
-     * and for the copy reserve, is what the copy moved and the pinned
-     * objects it kept in place: the work a survivor costs. Young large
-     * objects it reached are not counted: they neither move nor cost a
-     * copy (counted, the reached grids of Etc::GameOfLife doubled the
-     * budget to 32 MiB for no pause saved). A stress point (always
-     * copying) and a fixed budget make no sizing decision, and a fixed
-     * budget tenures every survivor as before. */
+    /* One young collection: no probe, no pause. Survival, for sizing,
+     * is what the collection copied and what it promoted in place
+     * (sticky.inplace): the work a survivor costs. Young large objects
+     * it reached are not counted: they neither move nor cost a copy
+     * (counted, the reached grids of Etc::GameOfLife doubled the budget
+     * to 32 MiB for no pause saved). A stress point and a fixed budget
+     * make no sizing decision, and a fixed budget tenures every survivor
+     * as before. */
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
-    uint64_t pinned0 = gc_heap.ctr.prom.pinned;
-#if GC_CANDIDATE == GC_CANDIDATE_S
     uint64_t inplace0 = gc_heap.ctr.sticky.inplace;
-#endif
     uint64_t y0 = now_ns();
     uint64_t surv;
     avant_g_stats.young_collections++;
-    gc_young_collect(gc_heap.set.young_fixed ? 1 : 0);
-    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.pinned - pinned0);
-#if GC_CANDIDATE == GC_CANDIDATE_S
-    /* Under S survival is what the collection promoted in place
-     * (sticky.inplace; copied_bytes and prom.pinned stay 0), and the copy
-     * reserve stays 0: S needs no copy room. */
-    surv += gc_heap.ctr.sticky.inplace - inplace0;
-#else
-    gc_heap.copy_reserve = (uint64_t)(RESERVE_FACTOR * (double)surv);
-#endif
+    gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0);
+    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0);
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
       young_size(used, surv, now_ns() - y0);
     }
   } else {
-    Block *b;
     avant_g_stats.full_collections++;
     gc_heap.return_clock++;
-    /* Non-moving. Evacuating the nursery here needs a second copy of
-     * every live object while the from-space blocks are still charged
-     * against the heap limit. */
+    /* Non-moving for young objects: they are promoted where they lie
+     * (defragmentation may move mature blocks, below). */
     gc_los_spare_drop();
     gc_clear_alloc_cur(SPACE_NURSERY);
     gc_clear_alloc_cur(SPACE_MATURE);
-#if GC_CANDIDATE == GC_CANDIDATE_S
     gc_sticky_full_begin();
-#endif
     /* The marks: one memset per chunk of the side bitmap; no header is
      * touched (no young mark outlives its collection, C36). */
     gc_clear_side_marks();
@@ -376,23 +344,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_rem_full_scrub();
     gc_sweep_large();
     gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_keep_if_live);
-    gc_filter_blocks(&gc_heap.space[SPACE_NURSERY].list, gc_keep_if_live);
-    gc_filter_blocks(&gc_heap.space[SPACE_FROM].list, gc_keep_if_live);
-    gc_heap.mark_sum = 0;
-    /* O28: the young bytes that survived, nursery blocks only. A
-     * from-space block's live objects are pinned survivors promoted in
-     * place (D205): mature, not young. */
-    for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
-      gc_foreach_block_object(b, gc_sum_marked_one);
-    }
-    /* The one young budget: the nursery's survivors and the young large
-     * objects, which stay young across a full collection (gc_sweep_large
-     * recounted them; before Stage 28 W15a1 a full collection promoted
-     * every large object). */
-    avant_nursery_held = gc_heap.mark_sum + gc_heap.young_large;
-#if GC_CANDIDATE == GC_CANDIDATE_S
+    /* A full collection promotes every object it marks (the mark clears
+     * YOUNG), so no object is young after it: gc_sticky_full_end empties
+     * the young budget (avant_nursery_held). (Before Stage 28 W15d E's
+     * nursery survivors were summed here, O28.) */
     gc_sticky_full_end();
-#endif
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
@@ -433,31 +389,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   gc_heap.collecting = 0;
 }
 
-/* Under AVANT_HEAP_MAX_MB, whether a young copy is expected to fit: the
- * copy reserve (the last young collection's survival times 1.5; before
- * the first one, every nursery byte) on top of the heap stays under the
- * limit. The survival probe and the sticky pause made this decision
- * before (they are retired, Stage 28 W15a1); a copy not expected to fit
- * runs as a full collection instead, which moves no young object and
- * needs no room. A copy that outgrows the estimate proceeds past the
- * limit and leaves a full collection pending (place). */
-static int young_copy_fits(void) {
-  uint64_t copy;
-#if GC_CANDIDATE == GC_CANDIDATE_S
-  /* S moves nothing: a young collection needs no room (its copy reserve
-   * stays 0, gc_collect). */
-  return 1;
-#endif
-  if (!gc_heap.set.heap_max) {
-    return 1;
-  }
-  copy = avant_nursery_held > gc_heap.young_large ? avant_nursery_held - gc_heap.young_large : 0;
-  if (avant_g_stats.young_collections > 0 && gc_heap.copy_reserve < copy) {
-    copy = gc_heap.copy_reserve;
-  }
-  return gc_heap.heap_bytes + copy <= gc_heap.set.heap_max;
-}
-
 void gc_maybe_collect(void) {
   if (gc_heap.collecting || gc_heap.defer) {
     return;
@@ -492,11 +423,10 @@ void gc_maybe_collect(void) {
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
-    if (young_copy_fits()) {
-      gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
-    } else {
-      gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
-    }
+    /* (Under E a young copy not expected to fit under AVANT_HEAP_MAX_MB,
+     * young_copy_fits, ran as a full collection; S+'s copy needs no room:
+     * it stops at the limit and promotes the rest in place.) */
+    gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
   }
 }
 
@@ -506,19 +436,18 @@ void gc_maybe_collect(void) {
  * only with a young generation to collect. */
 void gc_stress_point(void) {
   if (!gc_heap.set.stress || gc_heap.collecting || gc_heap.defer || gc_heap.set.nursery_off ||
-      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || !young_copy_fits()) {
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
     return;
   }
   gc_heap.stress_now = 1;
   gc_collect(GC_YOUNG, 1, GC_WHY_STRESS);
   gc_heap.stress_now = 0;
-  /* The blocks a stress collection retains for the objects the C stack
-   * names (gc_pin_c_stack) are mature growth; a stress point at a defer
-   * entry is often the only collection point a helper-bound loop reaches
-   * (its allocations run inside the region, where gc_maybe_collect
-   * returns), so the full collection they trigger runs here. A full
-   * collection moves no young object and keeps every mature block this
-   * thread's stack names (C31). (Stage 28 W15a2.) */
+  /* The survivors a stress collection promotes are mature growth; a
+   * stress point at a defer entry is often the only collection point a
+   * helper-bound loop reaches (its allocations run inside the region,
+   * where gc_maybe_collect returns), so the full collection they trigger
+   * runs here. A full collection moves no young object and keeps every
+   * mature block this thread's stack names (C31). (Stage 28 W15a2.) */
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   }
@@ -649,7 +578,7 @@ void avant_nursery_reclaim(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
   if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
-    gc_collect(young_copy_fits() ? GC_YOUNG : GC_FULL, 1, GC_WHY_EXPLICIT);
+    gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
   }
   pthread_mutex_unlock(&gc_heap.world);
 }

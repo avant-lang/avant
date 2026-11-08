@@ -75,9 +75,6 @@ void gc_cache_or_free_block(Block *b) {
   if (gc_heap.space[SPACE_MATURE].cur == b) {
     gc_clear_alloc_cur(SPACE_MATURE);
   }
-  if (gc_heap.space[SPACE_TO].cur == b) {
-    gc_clear_alloc_cur(SPACE_TO);
-  }
   if (gc_heap.cur == b) {
     gc_heap.cur = NULL;
     avant_gc_bump = NULL;
@@ -112,22 +109,15 @@ void gc_note_peak(void) {
   avant_g_stats.peak_heap = gc_heap.heap_bytes;
   gc_heap.ctr.pk.nursery = gc_heap.space[SPACE_NURSERY].bytes;
   gc_heap.ctr.pk.mature = gc_heap.space[SPACE_MATURE].bytes;
-  gc_heap.ctr.pk.from = gc_heap.space[SPACE_FROM].bytes;
-  gc_heap.ctr.pk.to = gc_heap.space[SPACE_TO].bytes;
   gc_heap.ctr.pk.cache = (uint64_t)gc_heap.cache_n * BLOCK_SIZE;
   gc_heap.ctr.pk.large = gc_heap.large_bytes;
 }
 
 static int heap_block_fits(void) {
-  uint64_t spent;
   if (!gc_heap.set.heap_max || gc_heap.over_limit) {
     return 1;
   }
-  spent = gc_heap.heap_bytes + BLOCK_SIZE;
-  if (!gc_heap.collecting && !gc_heap.reserve_retry) {
-    spent += gc_heap.copy_reserve;
-  }
-  return spent <= gc_heap.set.heap_max;
+  return gc_heap.heap_bytes + BLOCK_SIZE <= gc_heap.set.heap_max;
 }
 
 Block *gc_new_block(uint8_t space) {
@@ -159,7 +149,6 @@ Block *gc_new_block(uint8_t space) {
   b->bump = b->base;
   b->limit = b->base + BLOCK_SIZE;
   b->in_use = 1;
-  /* Blocks are made for the nursery, to-space and mature space only. */
   b->next = gc_heap.space[space].list;
   gc_heap.space[space].list = b;
   return b;
@@ -187,11 +176,12 @@ void gc_use_block(Block *b) {
   gc_heap.cur = b;
   avant_gc_bump = b->bump;
   gc_heap.limit = b->limit;
-#if GC_CANDIDATE == GC_CANDIDATE_S
-  /* S: the young cursor's block is a mature-space block (a fresh one or
-   * a recycled one with holes); the inline path follows it into its holes
+  /* The young cursor's block is a mature-space block (a fresh one or a
+   * recycled one with holes); the inline path follows it into its holes
    * (their start bits are clear, gc-design.md §2.3) unless S_INLINE_HOLES
-   * is 0 and the hole is not a whole block. Any other block clears it. */
+   * is 0 and the hole is not a whole block. Any other block clears it,
+   * so generated code never writes start bits through another block's
+   * base. */
   if (b == gc_heap.space[SPACE_NURSERY].cur && !gc_heap.collecting &&
       (S_INLINE_HOLES || gc_heap.cur_whole)) {
     gc_heap.fast_block = b;
@@ -202,25 +192,6 @@ void gc_use_block(Block *b) {
   } else {
     gc_fast_clear();
   }
-  return;
-#endif
-  if (b->space == SPACE_NURSERY) {
-    /* Keep the inline fast path's mirror on the block the cursor is
-     * actually in. A slow allocation that switches blocks would
-     * otherwise leave generated code writing start bits through the
-     * previous block's base. A recycled block clears the fast path:
-     * its start bits need the clearing only bump_take does. */
-    if (!gc_heap.collecting && b == gc_heap.space[SPACE_NURSERY].cur &&
-        gc_heap.space[SPACE_NURSERY].fresh) {
-      gc_heap.fast_block = b;
-      avant_gc_base = b->base;
-      avant_gc_starts = b->start;
-      avant_gc_block = b;
-      avant_gc_limit = inline_cap();
-    } else {
-      gc_fast_clear();
-    }
-  }
 }
 
 static int bump_fits(size_t need) {
@@ -230,8 +201,7 @@ static int bump_fits(size_t need) {
 static void *bump_take(size_t need) {
   Block *b = gc_heap.cur;
   size_t off = (size_t)(avant_gc_bump - b->base);
-#if GC_CANDIDATE == GC_CANDIDATE_S
-  /* S: a young block's holes have clear start bits (the sweeps clear the
+  /* A young block's holes have clear start bits (the sweeps clear the
    * lines they free), as the inline path requires. Any other allocation
    * is mature and marks its lines live now: young allocation may recycle
    * this block's holes before the next full collection, and finds them by
@@ -242,13 +212,6 @@ static void *bump_take(size_t need) {
     }
     mark_lines(b, off, need);
   }
-#else
-  /* A fresh block is zeroed and only bumps forward. Clearing start bits
-   * is for a hole in a recycled block. */
-  if (!gc_heap.space[b->space].fresh) {
-    clear_starts(b, off, need);
-  }
-#endif
   set_start(b, off);
   void *h = avant_gc_bump;
   avant_gc_bump += need;
@@ -266,18 +229,14 @@ void gc_fast_clear(void) {
 }
 
 /* Publish the inline fast path when every C fast-path condition holds
- * and the current nursery block is fresh (a recycled block needs the
- * start-bit clearing only bump_take does). Anything else clears it, so
+ * and the young cursor may take it (S_INLINE_HOLES, or a whole block).
+ * Anything else clears it, so
  * generated code only ever checks fast_ok, the shared flag, and the
  * cursor against the limit. Called at slow allocation entries; state
  * transitions clear eagerly below. */
 static void gc_fast_refresh(void) {
   Block *cur = gc_heap.space[SPACE_NURSERY].cur;
-#if GC_CANDIDATE == GC_CANDIDATE_S
   int cur_ok = S_INLINE_HOLES || gc_heap.cur_whole;
-#else
-  int cur_ok = gc_heap.space[SPACE_NURSERY].fresh;
-#endif
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
@@ -311,8 +270,7 @@ void gc_clear_alloc_cur(uint8_t space) {
   gc_heap.space[space].fresh = 0;
 }
 
-#if GC_CANDIDATE == GC_CANDIDATE_S
-/* Candidate S's young allocator (Stage 28 W15b, gc-design.md §3.1).
+/* The young allocator (candidate S's, Stage 28 W15b, gc-design.md §3.1).
  * There is no nursery space: young objects are allocated, YOUNG flagged,
  * into free lines of mature-space blocks, and the space's cursor
  * gc_heap.space[SPACE_NURSERY] is only the young cursor (its block a
@@ -460,14 +418,12 @@ static AvantHeader *young_place(size_t total) {
   }
   return NULL;
 }
-#endif
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc);
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   Block *cur = gc_heap.space[space].cur;
   uint8_t bspace = space;
-#if GC_CANDIDATE == GC_CANDIDATE_S
   if (space == SPACE_NURSERY) {
     AvantHeader *yh = young_place(total);
     if (yh) {
@@ -476,9 +432,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     /* A new block, a young one (mature space). */
     bspace = SPACE_MATURE;
     cur = NULL;
-  } else
-#endif
-  if (cur && try_bump(cur, total)) {
+  } else if (cur && try_bump(cur, total)) {
     return bump_take(total);
   }
   /* A fresh block has no holes behind it. Scanning the list again
@@ -487,11 +441,9 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   if (bspace == space && !gc_heap.space[space].fresh) {
     Block *b = cur ? cur->next : gc_heap.space[space].list;
     for (; b; b = b->next) {
-#if GC_CANDIDATE == GC_CANDIDATE_S
       if (b->young_hi) {
         continue;
       }
-#endif
       if (try_bump(b, total)) {
         gc_heap.space[space].cur = b;
         return bump_take(total);
@@ -513,9 +465,10 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     gc_limit_collect_pending();
   }
   if (!b && gc_heap.collecting && !gc_heap.over_limit) {
-    /* A young copy's destination past the limit (Stage 28 W15a1): its
-     * room was estimated (young_copy_fits); the copy proceeds and the
-     * full collection runs at the next collection point. */
+    /* An allocation inside a collection past the limit: the collection
+     * proceeds and the full collection runs at the next collection point.
+     * (S+'s copy does not come here: it stops at the limit, gc_new_block
+     * in splus_copy.) */
     gc_heap.over_limit = 1;
     b = gc_new_block(bspace);
     gc_heap.over_limit = 0;
@@ -523,25 +476,15 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   }
   if (!b) {
     if (!tried_gc && !gc_heap.collecting) {
-      /* The reserve charge is soft (see heap_block_fits): collect,
-       * then retry charged only the true heap bytes, so a reserve
-       * refusal can never become a spurious heap-limit death. */
+      /* A full collection at the limit, then one retry. */
       gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
-      gc_heap.reserve_retry = 1;
-      {
-        AvantHeader *retry = place(total, space, 1);
-        gc_heap.reserve_retry = 0;
-        return retry;
-      }
+      return place(total, space, 1);
     }
     gc_die("heap limit");
   }
-#if GC_CANDIDATE == GC_CANDIDATE_S
   if (space == SPACE_NURSERY) {
     young_take(b);
-  } else
-#endif
-  {
+  } else {
     gc_heap.space[space].cur = b;
     gc_heap.space[space].fresh = 1;
     gc_use_block(b);
@@ -554,19 +497,14 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
 
 /* Like place into the nursery, but never collects. */
 static AvantHeader *place_bump(size_t total) {
-  uint8_t space = SPACE_NURSERY;
-  Block *cur;
   Block *b;
+  AvantHeader *yh;
   if (gc_heap.set.nursery_off || gc_thread.alloc_mature || total > LOS_LIMIT) {
     return NULL;
   }
-#if GC_CANDIDATE == GC_CANDIDATE_S
-  (void)cur;
-  {
-    AvantHeader *yh = young_place(total);
-    if (yh) {
-      return yh;
-    }
+  yh = young_place(total);
+  if (yh) {
+    return yh;
   }
   b = gc_new_block(SPACE_MATURE);
   if (!b) {
@@ -577,49 +515,6 @@ static AvantHeader *place_bump(size_t total) {
     return NULL;
   }
   return (AvantHeader *)bump_take(total);
-#endif
-  cur = gc_heap.space[space].cur;
-  /* Steady state: the global cursor already mirrors the nursery block.
-   * Take from it directly instead of re-syncing through try_bump. */
-  if (cur && gc_heap.cur == cur && avant_gc_bump && avant_gc_bump + total <= gc_heap.limit) {
-    return (AvantHeader *)bump_take(total);
-  }
-  if (cur && try_bump(cur, total)) {
-    return (AvantHeader *)bump_take(total);
-  }
-  if (!gc_heap.space[space].fresh) {
-    b = cur ? cur->next : gc_heap.space[SPACE_NURSERY].list;
-    for (; b; b = b->next) {
-      if (try_bump(b, total)) {
-        gc_heap.space[space].cur = b;
-        return (AvantHeader *)bump_take(total);
-      }
-    }
-  }
-  b = gc_new_block(space);
-  if (!b) {
-    return NULL;
-  }
-  gc_heap.space[space].cur = b;
-  gc_heap.space[space].fresh = 1;
-  gc_use_block(b);
-  if (!bump_fits(total)) {
-    return NULL;
-  }
-  return (AvantHeader *)bump_take(total);
-}
-
-void *gc_mature_alloc(size_t total) {
-  /* Young copy promotes into mature space while gc_heap.collecting is set.
-   * tried_gc stays 1 so a failed block does not re-enter collect. */
-  gc_heap.mature_since_full += total;
-  return place(total, SPACE_MATURE, 1);
-}
-
-AvantHeader *gc_to_alloc(size_t total) {
-  AvantHeader *h = place(total, SPACE_TO, 1);
-  gc_heap.to_bytes += total;
-  return h;
 }
 
 /* Block memory is never pre-zeroed, so every allocation zeroes its

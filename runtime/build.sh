@@ -11,24 +11,18 @@ compile() {
   "$cc" -c $cflags -o "$2" "$1"
 }
 
-# The young generation's candidate (Stage 28 W15b, gc-design.md §3.4):
-# unset or AVANT_GC_CANDIDATE=S+ builds candidate S with the opportunistic
-# young copy (GC_STICKY_COPY, the default since Stage 28 W15c by D230's
-# condition, that wave's record), S builds candidate S without it (the
-# in-place young collection alone), E builds candidate E (the evacuating
-# nursery). A build-time choice of the collector units only
-# (GC_CANDIDATE, GC_STICKY_COPY, avant_gc_internal.h); no export, header
-# or generated code depends on it.
-case "${AVANT_GC_CANDIDATE:-S+}" in
-  E) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_E -DGC_STICKY_COPY=0" ;;
-  S) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S -DGC_STICKY_COPY=0" ;;
-  S+) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S -DGC_STICKY_COPY=1" ;;
-  *) echo "runtime/build.sh: AVANT_GC_CANDIDATE must be E, S or S+" >&2; exit 1 ;;
-esac
+# The young generation is S+ (Stage 28 W15c, D233; avant_gc_sticky.c).
+# Candidate E, the evacuating nursery, and the AVANT_GC_CANDIDATE knob
+# that chose between the candidates were deleted in Stage 28 W15d (D232):
+# E's mechanisms that S+ uses stay in S+. Candidate S (S+ with its copy
+# off) is the internal constant GC_STICKY_COPY 0 (avant_gc_internal.h),
+# built only for a measurement (a copy of runtime/ with the constant
+# changed).
+gc_cflags=
 
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below.
-core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_young avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
+core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
 for name in $core_units; do
   "$cc" -c $cflags $gc_cflags -o "$root/build/$name.unit.o" "$root/$name.c"
 done

@@ -9,9 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Candidate S, the in-place young generation (Stage 28 W15b,
- * gc-design.md §3.1, StickyImmix): compiled only when GC_CANDIDATE
- * selects it. A young collection moves nothing. It traces from the roots
+/* The young generation: S+ (Stage 28 W15c, D233), candidate S with the
+ * opportunistic young copy. Candidate E, the evacuating nursery, was
+ * deleted as a separate young generation in Stage 28 W15d (D232); the
+ * mechanisms of E this file uses stay: header forwarding (gc_set_forward,
+ * avant_gc_internal.h), the copy (splus_copy), the C-stack pin scan
+ * (gc_pin_c_stack, avant_gc_stack.c) and the noted list (below, moved
+ * from avant_gc_young.c, which held E's young copy).
+ *
+ * Candidate S, the in-place young generation (Stage 28 W15b,
+ * gc-design.md §3.1, StickyImmix), is this file with GC_STICKY_COPY 0
+ * (an internal constant, avant_gc_internal.h). A young collection under
+ * S moves nothing. It traces from the roots
  * (frame slots, pins, runtime-held slots) and the remembered set, and
  * promotes each young object it reaches where it lies: YOUNG cleared,
  * its lines marked live at the current line epoch. A young object it
@@ -29,7 +38,33 @@
  * collecting calls (D165), and runtime C holds only its caller-rooted
  * arguments at the points a collection may run (outside defer regions;
  * gc-design.md §4.2 RC1 makes the rule general in W16). */
-#if GC_CANDIDATE == GC_CANDIDATE_S
+/* The noted list: every header MARKED a young collection sets, cleared
+ * when it ends (C36, gc-design.md §2.6). */
+void gc_note_marked(void *payload) {
+  if (gc_heap.noted_n == gc_heap.noted_cap) {
+    gc_heap.noted_cap = gc_heap.noted_cap ? gc_heap.noted_cap * 2 : 256;
+    gc_heap.noted = gc_xrealloc(gc_heap.noted, gc_heap.noted_cap * sizeof(void *));
+  }
+  gc_heap.noted[gc_heap.noted_n++] = payload;
+}
+
+/* Also the end of SURVIVED on every object this collection promoted:
+ * promote_in_place leaves it so that S+'s copy can tell a first survivor
+ * from an aged one (Stage 28 W15d); an object still young keeps it (an
+ * aged copy is not on the list; a young large object at its first
+ * survival is). */
+void gc_clear_noted(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.noted_n; i++) {
+    AvantHeader *h = avant_header(gc_heap.noted[i]);
+    uint16_t f = (uint16_t)(h->flags & ~(AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW));
+    if (!(f & AVANT_FLAG_YOUNG)) {
+      f = (uint16_t)(f & ~AVANT_FLAG_SURVIVED);
+    }
+    h->flags = f;
+  }
+  gc_heap.noted_n = 0;
+}
 
 /* Promote one young block object in place: it is mature from now on. Its
  * lines are marked live at the current epoch. Its bytes are the survival
@@ -45,7 +80,9 @@ static void promote_in_place(AvantHeader *h, Block *b) {
   size_t l;
   size_t end = (off + total - 1) / LINE_SIZE;
   uint64_t grown = 0;
-  h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+  /* SURVIVED (an aged object's) ends with the collection
+   * (gc_clear_noted): S+'s copy reads it to decide where the copy goes. */
+  h->flags = (uint16_t)((h->flags & ~AVANT_FLAG_YOUNG) | AVANT_FLAG_PROMOTED_NOW);
   for (l = off / LINE_SIZE; l <= end && l < LINES_PER_BLOCK; l++) {
     if (!line_live(b, (int)l)) {
       b->line_mark[l] = gc_heap.line_epoch;
@@ -61,24 +98,6 @@ static void promote_in_place(AvantHeader *h, Block *b) {
 static void scan_fields(void *p, int from_mature);
 
 #if GC_STICKY_COPY
-/* The live lines of B, eight line marks at a time against the epoch. */
-static int live_lines(const Block *b) {
-  uint64_t epoch8 = 0x0101010101010101ULL * (uint64_t)gc_heap.line_epoch;
-  int n = 0;
-  int k;
-  for (k = 0; k < LINES_PER_BLOCK / 8; k++) {
-    uint64_t m;
-    uint64_t x;
-    uint64_t t;
-    memcpy(&m, b->line_mark + 8 * k, sizeof m);
-    x = m ^ epoch8;
-    t = (x & 0x7f7f7f7f7f7f7f7fULL) + 0x7f7f7f7f7f7f7f7fULL;
-    t = ~(t | x | 0x7f7f7f7f7f7f7f7fULL);
-    n += (int)(((t >> 7) * 0x0101010101010101ULL) >> 56);
-  }
-  return n;
-}
-
 /* Variant S+ (Stage 28 W15c, gc-design.md §3.1, §3.3): the opportunistic
  * young copy. A young collection traces and promotes in place as S does,
  * and sums each young block's survivor bytes. After the trace a young
@@ -227,6 +246,18 @@ static void trace_all(void) {
         if (ls && (avant_header(ls)->flags & AVANT_FLAG_YOUNG)) {
           trace_ref(NULL, ls, 0);
         }
+#if GC_STICKY_COPY
+        /* A slot location inside an object an earlier slot already
+         * reached (promoted, so no longer YOUNG): its block must stay in
+         * place all the same, since splus_fix rewrites what a slot holds,
+         * never where the frame keeps it (Stage 28 W15d: before, such an
+         * object moved and the frame's location named its old copy). A
+         * candidate block holds only objects young when the collection
+         * began. */
+        else if (ls && gc_heap.splus_on && lb && !ll && lb->young_hi && lb->kept != SPLUS_KEPT) {
+          lb->kept = SPLUS_KEPT;
+        }
+#endif
         trace_ref(f->slots[i], *f->slots[i], 0);
       }
     }
@@ -316,92 +347,13 @@ static void rem_rebuild(void) {
  * has clear start bits for the inline allocation path. A dead object
  * whose header lies in a live line keeps its start bit: nothing infers
  * liveness from start bits. */
-/* Word-wise (Stage 28 W15c, O87): the block's 128 line marks are read 8
- * at a time and compared with the epoch replicated into every byte; one
- * pass frees the young range's dead lines (their start bits cleared, two
- * lines per start word), counts the block's live lines and finds its
- * first hole, which the byte-wise sweep, gc_block_live_lines and
- * gc_reset_block_bump's find_hole did in three passes. Returns the live
- * line count and leaves the block's bump and limit on its first hole (as
- * gc_reset_block_bump does: search 0; a full block's cursor at its end). */
-#define LINE_WORDS (LINES_PER_BLOCK / 8)
-static inline uint64_t live_bytes_mask(uint64_t marks, uint64_t epoch8) {
-  /* The high bit of every byte of MARKS equal to the epoch (exact: no
-   * borrow crosses a byte). */
-  uint64_t x = marks ^ epoch8;
-  uint64_t t = (x & 0x7f7f7f7f7f7f7f7fULL) + 0x7f7f7f7f7f7f7f7fULL;
-  return ~(t | x | 0x7f7f7f7f7f7f7f7fULL);
-}
-
+/* The line sweep itself is gc_sweep_block_lines (avant_gc_heap.c, word
+ * by word since Stage 28 W15c, O87; shared with the full sweep since
+ * W15d, O94); here it is counted in the sticky family. */
 static int sweep_lines(Block *b, int lo, int hi) {
-  uint64_t epoch8 = 0x0101010101010101ULL * (uint64_t)gc_heap.line_epoch;
-  uint64_t live_bits[LINE_WORDS];
-  uint64_t range_lo = (uint64_t)lo;
-  uint64_t range_hi = (uint64_t)hi;
-  int live = 0;
-  int k;
-  int first_free = -1;
-  int hole_end = LINES_PER_BLOCK;
-  for (k = 0; k < LINE_WORDS; k++) {
-    uint64_t m;
-    memcpy(&m, b->line_mark + 8 * k, sizeof m);
-    live_bits[k] = live_bytes_mask(m, epoch8);
-    /* The count of set high bits (no popcount instruction is assumed:
-     * without -mpopcnt __builtin_popcountll is a library call). */
-    live += (int)(((live_bits[k] >> 7) * 0x0101010101010101ULL) >> 56);
-  }
-  for (k = 0; k < LINE_WORDS; k++) {
-    uint64_t freeb = ~live_bits[k] & 0x8080808080808080ULL;
-    int base = 8 * k;
-    if (first_free < 0 && freeb) {
-      first_free = base + (__builtin_ctzll(freeb) >> 3);
-    }
-    /* The young range's free lines in this group: clear their start bits
-     * (lines 2j and 2j + 1 share start word j: the low and high half). */
-    if (freeb == 0x8080808080808080ULL && (uint64_t)base >= range_lo && (uint64_t)base + 8 <= range_hi) {
-      /* The whole group is free and young: four start words. */
-      b->start[base >> 1] = 0;
-      b->start[(base >> 1) + 1] = 0;
-      b->start[(base >> 1) + 2] = 0;
-      b->start[(base >> 1) + 3] = 0;
-      gc_heap.ctr.sticky.freed_lines += 8;
-    } else if ((uint64_t)base + 8 > range_lo && (uint64_t)base < range_hi && freeb) {
-      int j;
-      for (j = 0; j < 4; j++) {
-        uint64_t pair = (freeb >> (16 * j)) & 0x8080ULL;
-        int l0 = base + 2 * j;
-        uint64_t clear = 0;
-        if ((pair & 0x80ULL) && (uint64_t)l0 >= range_lo && (uint64_t)l0 < range_hi) {
-          clear |= 0xffffffffULL;
-          gc_heap.ctr.sticky.freed_lines++;
-        }
-        if ((pair & 0x8000ULL) && (uint64_t)(l0 + 1) >= range_lo && (uint64_t)(l0 + 1) < range_hi) {
-          clear |= 0xffffffff00000000ULL;
-          gc_heap.ctr.sticky.freed_lines++;
-        }
-        b->start[l0 >> 1] &= ~clear;
-      }
-    }
-  }
-  if (first_free >= 0) {
-    /* The hole ends at the first live line after it. */
-    int l = first_free + 1;
-    while (l < LINES_PER_BLOCK) {
-      int kk = l >> 3;
-      uint64_t lb = live_bits[kk] >> (8 * (l & 7));
-      if (lb) {
-        hole_end = l + (__builtin_ctzll(lb) >> 3);
-        break;
-      }
-      l = (kk + 1) * 8;
-    }
-    b->bump = b->base + (size_t)first_free * LINE_SIZE;
-    b->limit = b->base + (size_t)hole_end * LINE_SIZE;
-  } else {
-    b->bump = b->base + BLOCK_SIZE;
-    b->limit = b->base + BLOCK_SIZE;
-  }
-  b->search = first_free >= 0 ? 0 : LINES_PER_BLOCK;
+  uint64_t freed = 0;
+  int live = gc_sweep_block_lines(b, lo, hi, &freed);
+  gc_heap.ctr.sticky.freed_lines += freed;
   gc_heap.ctr.sticky.blocks++;
   return live;
 }
@@ -413,37 +365,83 @@ static int sweep_lines(Block *b, int lo, int hi) {
 /* The new address of P when it lies in an object S+ moved (its exact
  * start or an interior address, resolved through the old copy's start
  * bit and forward), else P. Only addresses in an evacuated block (P's
- * block or, for a payload that starts a block, its header's) can. */
-static void *splus_new_addr(void *p) {
+ * block or, for a payload that starts a block, its header's) can. *AGED
+ * is set when the copy is an aged one (still young, YOUNG_AGE 2). */
+/* Block BI had objects moved out (the map covers the heap as committed
+ * when the fix-up began; blocks past it are new, never evacuated). */
+static inline int evac_at(uint64_t bi) {
+  return bi < gc_heap.evac_map_n && gc_heap.evac_map[bi];
+}
+
+static void *splus_new_addr(void *p, int *aged) {
   uint8_t *a = (uint8_t *)p;
-  Block *b1 = block_of(a);
-  Block *b2 = a ? block_of(a - sizeof(AvantHeader)) : NULL;
+  uintptr_t off = (uintptr_t)a - (uintptr_t)gc_heap.base;
+  uint64_t bi;
   Block *ob = NULL;
   AvantHeader *ol = NULL;
   void *start;
   void *to;
-  if (!((b1 && (b1->kept == SPLUS_EVAC || b1->kept == SPLUS_PART)) ||
-        (b2 && (b2->kept == SPLUS_EVAC || b2->kept == SPLUS_PART)))) {
+  /* The evacuated-block map (O93): P's block, or, for a payload that
+   * starts a block, its header's (the block before). */
+  if (off >= gc_heap.committed) {
     return p;
+  }
+  bi = (uint64_t)off >> BLOCK_SHIFT;
+  if (!evac_at(bi) && !((off & (BLOCK_SIZE - 1)) == 0 && bi > 0 && evac_at(bi - 1))) {
+    return p;
+  }
+  /* An exact start (nearly every reference): its header's start bit,
+   * without the interior lookup. */
+  if ((off & (ALIGN - 1)) == 0 && off >= sizeof(AvantHeader) && start_bit_at(a - sizeof(AvantHeader))) {
+    const AvantHeader *h = (const AvantHeader *)(a - sizeof(AvantHeader));
+    if (!(h->flags & AVANT_FLAG_FORWARDED)) {
+      return p;
+    }
+    to = gc_forward_of(h);
+    if (avant_header(to)->flags & AVANT_FLAG_YOUNG) {
+      *aged = 1;
+    }
+    return to;
   }
   start = gc_object_payload(p, &ob, &ol);
   if (!start) {
     return p;
   }
   to = gc_forwarded(start);
-  return to ? (void *)((uint8_t *)to + (a - (uint8_t *)start)) : p;
+  if (!to) {
+    return p;
+  }
+  if (avant_header(to)->flags & AVANT_FLAG_YOUNG) {
+    *aged = 1;
+  }
+  return (void *)((uint8_t *)to + (a - (uint8_t *)start));
 }
 
 /* Copy the young block object H into the copy block, promoted: its
  * header keeps its flags without YOUNG, SURVIVED and MARKED, its start bit
  * is set and its lines are marked live; the old header holds the forward.
- * 0 when no copy block can be had (the heap limit): H stays in place. */
-static int splus_copy(AvantHeader *h) {
+ * AGED (YOUNG_AGE 2, a first survivor): into the survivor block instead,
+ * still young (YOUNG | SURVIVED), its start bit set and its lines left
+ * unmarked like any young object's; it is not mature growth. 0 when no
+ * block can be had (the heap limit): H stays in place. */
+static int splus_copy(AvantHeader *h, int aged) {
   size_t total = gc_obj_total(h);
-  Block *d = gc_heap.splus_dst;
+  Block *d = aged ? gc_heap.splus_sdst : gc_heap.splus_dst;
   uint8_t *to;
   AvantHeader *nh;
-  if (!d || d->bump + total > d->base + BLOCK_SIZE) {
+  if (aged && (!d || d->bump + total > d->base + BLOCK_SIZE)) {
+    gc_heap.splus_sdst = NULL;
+    d = gc_new_block(SPACE_MATURE);
+    if (!d) {
+      return 0;
+    }
+    d->bump = d->base;
+    d->limit = d->base + BLOCK_SIZE;
+    d->kept = SPLUS_SURV;
+    gc_sticky_push(&gc_heap.surv_blocks, &gc_heap.surv_blocks_n, &gc_heap.surv_blocks_cap, d);
+    gc_heap.splus_sdst = d;
+    gc_heap.ctr.sticky.surv_blocks++;
+  } else if (!d || d->bump + total > d->base + BLOCK_SIZE) {
     if (d && d->bump < d->base + BLOCK_SIZE) {
       gc_reset_block_bump(d);
       gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, d);
@@ -462,29 +460,55 @@ static int splus_copy(AvantHeader *h) {
   d->bump = to + total;
   memcpy(to, h, total);
   nh = (AvantHeader *)to;
-  nh->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_MARKED);
   set_start(d, (size_t)(to - d->base));
-  mark_lines(d, (size_t)(to - d->base), total);
+  if (aged) {
+    nh->flags = (uint16_t)((nh->flags & ~(AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW)) | AVANT_FLAG_YOUNG |
+                           AVANT_FLAG_SURVIVED);
+    gc_heap.ctr.sticky.aged += total;
+    gc_heap.aged_now += total;
+  } else {
+    nh->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW);
+    mark_lines(d, (size_t)(to - d->base), total);
+    gc_heap.ctr.prom.copied += total;
+    gc_heap.promoted_since_full += total;
+    gc_heap.mature_since_full += total;
+  }
   gc_set_forward(h, payload_of(nh));
   avant_g_stats.copied_bytes += total;
-  gc_heap.ctr.prom.copied += total;
-  gc_heap.promoted_since_full += total;
-  gc_heap.mature_since_full += total;
   gc_heap.live += total;
   return 1;
 }
 
 static void splus_fix_slot(void **slot) {
-  *slot = splus_new_addr(*slot);
+  int aged = 0;
+  *slot = splus_new_addr(*slot, &aged);
 }
 
 /* Every reference the trace followed, rewritten to the copies: the frame
  * slots of every registered thread, the runtime-held slots, the fields of
  * every object the trace scanned (the noted list; a moved object's fields
- * are its copy's), and the keep list's holders. */
+ * are its copy's), and the keep list's holders. A scanned object that is
+ * not young and now names an aged copy (YOUNG_AGE 2) joins the keep list,
+ * so the remembered set holds it after the collection
+ * (gc_rem_keep_young_holders): by the generational invariant these are
+ * the only holders of the aged copies. */
 static void splus_fix(void) {
   ThreadReg *t;
   uint32_t i;
+  {
+    uint64_t need = gc_heap.committed >> BLOCK_SHIFT;
+    if (need > gc_heap.evac_map_n) {
+      gc_heap.evac_map = gc_xrealloc(gc_heap.evac_map, (size_t)need);
+      memset(gc_heap.evac_map + gc_heap.evac_map_n, 0, (size_t)(need - gc_heap.evac_map_n));
+      gc_heap.evac_map_n = need;
+    }
+    for (i = 0; i < gc_heap.young_blocks_n; i++) {
+      Block *b = gc_heap.young_blocks[i];
+      if (b->kept == SPLUS_EVAC || b->kept == SPLUS_PART) {
+        gc_heap.evac_map[(uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT] = 1;
+      }
+    }
+  }
   for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
@@ -503,10 +527,17 @@ static void splus_fix(void) {
     if (avant_header(p)->type_id == AVANT_TYPE_BYTES) {
       continue;
     }
-    EACH_REF_SLOT(p, slot, { *slot = splus_new_addr(*slot); });
+    {
+      int aged = 0;
+      EACH_REF_SLOT(p, slot, { *slot = splus_new_addr(*slot, &aged); });
+      if (aged && !(avant_header(p)->flags & AVANT_FLAG_YOUNG)) {
+        gc_keep_add(p);
+      }
+    }
   }
   for (i = 0; i < gc_heap.keep_n; i++) {
-    gc_heap.keep[i] = splus_new_addr(gc_heap.keep[i]);
+    int aged = 0;
+    gc_heap.keep[i] = splus_new_addr(gc_heap.keep[i], &aged);
   }
 }
 
@@ -523,21 +554,75 @@ static void splus_fix(void) {
  * copies the heap limit refused (SPLUS_PART) keeps its lines live and its
  * remaining survivors in place. Then every reference to a moved object is
  * rewritten (splus_fix). Before the verifier and the sweep. */
+/* Holder aging (Stage 28 W15d, with YOUNG_AGE 2 and S_LARGE_AGE 2): a
+ * small first survivor that names a young large object (scan_fields put
+ * it on the keep list) and lies in a young block S+ does not evacuate
+ * (one with mature lines: young allocation took a hole of a recycled
+ * block) would be promoted in place and, remembered, keep its buffer
+ * alive into the buffer's second survival (the W15c finding, O88): it is
+ * copied into a survivor block like an evacuated block's survivor, so it
+ * dies young with its buffer. Its old copy stays in its line, which this
+ * collection's promotion made live, until a full collection; the block
+ * becomes SPLUS_PART (its lines stay, its forwarded start bits go,
+ * splus_finish). Only a block not kept in place (SPLUS_KEPT: a young
+ * object in it is named imprecisely) gives one up. */
+static int splus_age_holders(void) {
+  uint32_t i;
+  int moved = 0;
+  for (i = 0; i < gc_heap.keep_n; i++) {
+    void *p = gc_heap.keep[i];
+    AvantHeader *h = avant_header(p);
+    Block *b = block_of(h);
+    size_t total;
+    if (!b || !b->young_hi || (b->kept != 0 && b->kept != SPLUS_PART) ||
+        (h->flags & (AVANT_FLAG_FORWARDED | AVANT_FLAG_SURVIVED | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) ||
+        !(h->flags & AVANT_FLAG_PROMOTED_NOW)) {
+      continue;
+    }
+    total = gc_obj_total(h);
+    if (!splus_copy(h, 1)) {
+      break;
+    }
+    b->kept = SPLUS_PART;
+    gc_heap.ctr.sticky.inplace -= total;
+    gc_heap.live -= total;
+    gc_heap.ctr.sticky.aged_holders++;
+    moved = 1;
+  }
+  return moved;
+}
+
 static void splus_evacuate(void) {
   uint32_t i;
   int any = 0;
+  /* O92 (Stage 28 W15d item 2): the blocks evacuated hold at most one
+   * young budget of survivors (avant_young_bytes); the candidates past it
+   * keep their survivors in place, promoted (S's rule). A collection whose
+   * survivors outgrow the budget ran late, after a burst allocated where
+   * no collection could run (a leaf, a no-GC region, a large live set
+   * built at once: Calculator::Interpreter's 16.7 MB tree at a budget of
+   * 8 MiB), and copying all of it doubled the peak (S 26.4 MB, S+ 42.8);
+   * a collection on time copies everything as before (Etc::GameOfLife,
+   * the compiler: unchanged). The copy's room is then bounded by what the
+   * budget already allows, as E's copy reserve bounded its copy. */
+  uint64_t sel = 0;
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
     } else if (b->kept == SPLUS_PURE && b->idle > 0 &&
-               (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES) {
+               (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES &&
+               sel + b->idle <= avant_young_bytes) {
+      sel += b->idle;
       b->kept = SPLUS_EVAC;
       gc_heap.ctr.sticky.evac_blocks++;
       any = 1;
     }
   }
   if (!any) {
+    if (gc_heap.splus_age && S_LARGE_AGE >= 2 && gc_heap.keep_n && splus_age_holders()) {
+      splus_fix();
+    }
     return;
   }
   for (i = 0; i < gc_heap.noted_n; i++) {
@@ -546,7 +631,10 @@ static void splus_evacuate(void) {
     if (!b || b->kept != SPLUS_EVAC) {
       continue;
     }
-    if (!splus_copy(avant_header(p))) {
+    /* A first survivor ages (YOUNG_AGE 2): SURVIVED marks one that
+     * survived a collection before (an aged copy). */
+    if (!splus_copy(avant_header(p),
+                    gc_heap.splus_age && !(avant_header(p)->flags & AVANT_FLAG_SURVIVED))) {
       b->kept = SPLUS_PART;
     }
   }
@@ -561,7 +649,10 @@ static void splus_evacuate(void) {
       gc_heap.mature_since_full -= lines;
     }
   }
-  if (gc_heap.ctr.prom.copied != gc_heap.splus_copied0) {
+  if (gc_heap.splus_age && S_LARGE_AGE >= 2 && gc_heap.keep_n) {
+    (void)splus_age_holders();
+  }
+  if (avant_g_stats.copied_bytes != gc_heap.splus_copied0) {
     splus_fix();
   }
 }
@@ -573,7 +664,7 @@ static void splus_evacuate(void) {
 static void splus_finish(void) {
   uint32_t i;
   Block *d = gc_heap.splus_dst;
-  if (gc_heap.ctr.prom.copied != gc_heap.splus_copied0) {
+  if (avant_g_stats.copied_bytes != gc_heap.splus_copied0) {
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *b = gc_heap.young_blocks[i];
       int w;
@@ -591,6 +682,9 @@ static void splus_finish(void) {
           }
         }
       }
+      if ((uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT < gc_heap.evac_map_n) {
+        gc_heap.evac_map[(uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT] = 0;
+      }
     }
   }
   if (d && d->bump < d->base + BLOCK_SIZE) {
@@ -601,7 +695,7 @@ static void splus_finish(void) {
 }
 #endif
 
-/* Block.kept under S (E's field, unused by S otherwise): the young sweep
+/* Block.kept in a young collection: the young sweep
  * left the block empty, and it leaves mature space (keep_unless_empty);
  * under S+ also SPLUS_KEPT and SPLUS_EVAC during a young collection. */
 #define YOUNG_EMPTY 4
@@ -621,12 +715,14 @@ void gc_sticky_collect(int tenure) {
   gc_heap.work_n = 0;
 #if GC_STICKY_COPY
   gc_heap.splus_on = atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
-  gc_heap.splus_copied0 = gc_heap.ctr.prom.copied;
+  gc_heap.splus_copied0 = avant_g_stats.copied_bytes;
+  gc_heap.splus_age = YOUNG_AGE >= 2 && !tenure;
+  gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *yb = gc_heap.young_blocks[i];
-      yb->kept = live_lines(yb) == 0 ? SPLUS_PURE : 0;
+      yb->kept = gc_block_live_lines(yb) == 0 ? SPLUS_PURE : 0;
       yb->idle = 0;
     }
     /* A collection runtime C entered: the young objects words of this
@@ -651,11 +747,11 @@ void gc_sticky_collect(int tenure) {
   }
 #endif
   /* The young large objects: an unreached one is freed; a reached one is
-   * promoted (S_LARGE_AGE 1, the default by measurement) or, with
-   * S_LARGE_AGE 2, stays young at its first survival (SURVIVED) and is
-   * promoted at its second, as under E (Stage 28 W15c, O88/O76/O85), its
-   * holders remembered by rem_rebuild; a fixed AVANT_YOUNG_MB tenures at
-   * once (TENURE), as under E. */
+   * stays young at its first survival (SURVIVED, S_LARGE_AGE 2, the
+   * default by measurement since Stage 28 W15d) and is promoted at its
+   * second (O88, O76, O85), its holders that are not young remembered by
+   * rem_rebuild; with S_LARGE_AGE 1, or a fixed AVANT_YOUNG_MB (TENURE),
+   * it is promoted at once. */
   gc_heap.force_tenure = tenure || S_LARGE_AGE <= 1;
   gc_reclaim_young_large();
   gc_heap.force_tenure = 0;
@@ -684,6 +780,27 @@ void gc_sticky_collect(int tenure) {
     }
     gc_heap.young_blocks_n = 0;
   }
+#if GC_STICKY_COPY
+  /* The survivor blocks (YOUNG_AGE 2) are young blocks until the next
+   * collection: their used lines are its young range, and neither young
+   * nor mature allocation takes a block with one (young_hi set). */
+  {
+    uint32_t i;
+    for (i = 0; i < gc_heap.surv_blocks_n; i++) {
+      b = gc_heap.surv_blocks[i];
+      b->kept = 0;
+      b->idle = 0;
+      b->young_lo = 0;
+      b->young_hi = (uint8_t)((b->bump - b->base + LINE_SIZE - 1) / LINE_SIZE);
+      b->bump = b->base + BLOCK_SIZE;
+      b->limit = b->base + BLOCK_SIZE;
+      b->search = LINES_PER_BLOCK;
+      gc_sticky_push(&gc_heap.young_blocks, &gc_heap.young_blocks_n, &gc_heap.young_blocks_cap, b);
+    }
+    gc_heap.surv_blocks_n = 0;
+    gc_heap.splus_sdst = NULL;
+  }
+#endif
   gc_clear_alloc_cur(SPACE_NURSERY);
   gc_heap.overflow = NULL;
   gc_heap.cur_whole = 0;
@@ -704,7 +821,9 @@ void gc_sticky_collect(int tenure) {
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }
   gc_clear_noted();
-  avant_nursery_held = gc_heap.young_large;
+  /* The one young budget: the young large objects and the aged survivors
+   * that stay young (as E counted its to-space). */
+  avant_nursery_held = gc_heap.young_large + gc_heap.aged_now;
 }
 
 /* A full collection under S promotes every object it marks (the full
@@ -735,5 +854,3 @@ void gc_sticky_full_end(void) {
   }
   avant_nursery_held = 0;
 }
-
-#endif /* GC_CANDIDATE == GC_CANDIDATE_S */

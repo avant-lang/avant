@@ -22,6 +22,26 @@
  * per full collection the live lines evacuated stay at or below 25% of
  * that mark's mature live lines, worst first. */
 
+/* Whether block B holds a pinned object: a candidate holding one is not
+ * evacuated (D34). Moved here with E's deletion (Stage 28 W15d) from
+ * avant_gc_young.c, its only user being this file; a walk of B's start
+ * bits. */
+static int block_has_pinned(const Block *b) {
+  int w;
+  for (w = 0; w < START_WORDS; w++) {
+    uint64_t bits = b->start[w];
+    while (bits) {
+      int bit = __builtin_ctzll(bits);
+      const AvantHeader *h = (const AvantHeader *)(b->base + ((size_t)w * 64 + (size_t)bit) * 8);
+      bits &= bits - 1;
+      if (h->flags & AVANT_FLAG_PINNED) {
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 typedef struct DefCand {
   Block *b;
   int live;
@@ -157,7 +177,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
     int live = gc_block_live_lines(b);
     DefCand *c;
-    if (live <= 0 || live > 64 || gc_block_has_pinned(b) || gc_block_set_has(&gc_heap.cstack_blocks, b)) {
+    if (live <= 0 || live > 64 || block_has_pinned(b) || gc_block_set_has(&gc_heap.cstack_blocks, b)) {
       continue;
     }
     if (ncand == ccap) {
@@ -319,12 +339,6 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
     }
   }
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    gc_foreach_block_object(b, defrag_fix_one);
-  }
-  for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
-    gc_foreach_block_object(b, defrag_fix_one);
-  }
-  for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
   {

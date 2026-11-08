@@ -24,10 +24,13 @@
  * What the collector does at these calls, as the callers rely on it
  * today (a description of the current behavior, not a new contract; W13
  * audits it):
- *   - avant_alloc may collect. A young collection moves nursery objects
- *     and rewrites root slots, pins, runtime TLS slots and, by default,
- *     every word of the collecting thread's stack that names a moved
- *     object's start exactly (avant_gc_stack.c). A full collection may
+ *   - avant_alloc may collect. A young collection (S+, Stage 28 W15c)
+ *     promotes young objects in place and copies the survivors of the
+ *     young blocks it evacuates, rewriting root slots, runtime TLS slots
+ *     and the fields of the objects it scanned; it never rewrites a word
+ *     of the C stack: at a collection runtime C entered, a young block a
+ *     word of the collecting thread's stack names is not evacuated
+ *     (avant_gc_stack.c), and pinned objects never move. A full collection may
  *     evacuate sparse mature blocks, except blocks a word of the
  *     collecting thread's stack names (C31). Other threads' C frames are
  *     not scanned (D191).
@@ -144,21 +147,23 @@
  *
  *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
  *                          generation's budget in MiB, fixed; 0 is the
- *                          adaptive budget (8 MiB to start, within 4 to
+ *                          adaptive budget (4 MiB to start, within 4 to
  *                          64 MiB; gc-design.md section 5.2)
  *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
  *                          MiB ("heap limit" past it); 0 is no limit
  *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's
  *                          address reservation in GiB, halved on refusal
  *                          down to 1 (W14a1)
- *   AVANT_NURSERY          switch, default 1: the copying nursery; 0 is
- *                          full, non-moving collections only
+ *   AVANT_NURSERY          switch, default 1: the young generation; 0
+ *                          is full, non-moving collections only
  *   AVANT_GC_DEFRAG        switch, default 1: mature evacuation in full
  *                          collections
- *   AVANT_GC_STACK_REWRITE switch, default 1: the young copy's rewrite of
- *                          the collecting thread's C stack (with the
- *                          nursery; until gc-design.md section 4.3
- *                          retires it)
+ *   AVANT_GC_STACK_REWRITE switch, default 1: read and validated, no
+ *                          effect since Stage 28 W15d (the rewrite of
+ *                          the collecting thread's C stack ran only in
+ *                          candidate E's young copy, deleted with E);
+ *                          gc-design.md section 4.3 retires the knob
+ *                          in W16
  *   AVANT_GC_VERIFY        switch, default 0: the collector's checkers
  *                          (avant_gc_verify.c)
  *   AVANT_GC_STATS         switch, default 0: one statistics line on

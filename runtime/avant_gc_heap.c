@@ -494,16 +494,104 @@ void gc_heap_return(uint64_t live) {
   }
 }
 
+/* The live lines of B, eight line marks at a time against the epoch
+ * (Stage 28 W15d, O94: the young sweep's word-wise reading, W15c's O87;
+ * before, a byte loop over the 128 marks). */
 int gc_block_live_lines(Block *b) {
+  uint64_t epoch8 = line_epoch8();
   int n = 0;
-  int i;
-  for (i = 0; i < LINES_PER_BLOCK; i++) {
-    if (line_live(b, i)) {
-      n++;
-    }
+  int k;
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t m;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    n += live_byte_count(live_bytes_mask(m, epoch8));
   }
   return n;
 }
+
+/* The line sweep of block B over the lines LO..HI (Stage 28 W15c, O87;
+ * moved here from avant_gc_sticky.c in W15d, O94, so the full sweep,
+ * gc_keep_if_live, shares it with the young sweep): a line no survivor
+ * marked at the current epoch is free, and its start bits are cleared.
+ * Word-wise: the block's 128 line marks are read 8
+ * at a time and compared with the epoch replicated into every byte; one
+ * pass frees the young range's dead lines (their start bits cleared, two
+ * lines per start word), counts the block's live lines and finds its
+ * first hole, which the byte-wise sweep, gc_block_live_lines and
+ * gc_reset_block_bump's find_hole did in three passes. Returns the live
+ * line count and leaves the block's bump and limit on its first hole (as
+ * gc_reset_block_bump does: search 0; a full block's cursor at its end).
+ * *FREED counts the freed lines of the range. */
+int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
+  uint64_t epoch8 = line_epoch8();
+  uint64_t live_bits[LINE_WORDS];
+  uint64_t range_lo = (uint64_t)lo;
+  uint64_t range_hi = (uint64_t)hi;
+  int live = 0;
+  int k;
+  int first_free = -1;
+  int hole_end = LINES_PER_BLOCK;
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t m;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    live_bits[k] = live_bytes_mask(m, epoch8);
+    live += live_byte_count(live_bits[k]);
+  }
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t freeb = ~live_bits[k] & 0x8080808080808080ULL;
+    int base = 8 * k;
+    if (first_free < 0 && freeb) {
+      first_free = base + (__builtin_ctzll(freeb) >> 3);
+    }
+    /* The young range's free lines in this group: clear their start bits
+     * (lines 2j and 2j + 1 share start word j: the low and high half). */
+    if (freeb == 0x8080808080808080ULL && (uint64_t)base >= range_lo && (uint64_t)base + 8 <= range_hi) {
+      /* The whole group is free and young: four start words. */
+      b->start[base >> 1] = 0;
+      b->start[(base >> 1) + 1] = 0;
+      b->start[(base >> 1) + 2] = 0;
+      b->start[(base >> 1) + 3] = 0;
+      *freed += 8;
+    } else if ((uint64_t)base + 8 > range_lo && (uint64_t)base < range_hi && freeb) {
+      int j;
+      for (j = 0; j < 4; j++) {
+        uint64_t pair = (freeb >> (16 * j)) & 0x8080ULL;
+        int l0 = base + 2 * j;
+        uint64_t clear = 0;
+        if ((pair & 0x80ULL) && (uint64_t)l0 >= range_lo && (uint64_t)l0 < range_hi) {
+          clear |= 0xffffffffULL;
+          (*freed)++;
+        }
+        if ((pair & 0x8000ULL) && (uint64_t)(l0 + 1) >= range_lo && (uint64_t)(l0 + 1) < range_hi) {
+          clear |= 0xffffffff00000000ULL;
+          (*freed)++;
+        }
+        b->start[l0 >> 1] &= ~clear;
+      }
+    }
+  }
+  if (first_free >= 0) {
+    /* The hole ends at the first live line after it. */
+    int l = first_free + 1;
+    while (l < LINES_PER_BLOCK) {
+      int kk = l >> 3;
+      uint64_t lb = live_bits[kk] >> (8 * (l & 7));
+      if (lb) {
+        hole_end = l + (__builtin_ctzll(lb) >> 3);
+        break;
+      }
+      l = (kk + 1) * 8;
+    }
+    b->bump = b->base + (size_t)first_free * LINE_SIZE;
+    b->limit = b->base + (size_t)hole_end * LINE_SIZE;
+  } else {
+    b->bump = b->base + BLOCK_SIZE;
+    b->limit = b->base + BLOCK_SIZE;
+  }
+  b->search = first_free >= 0 ? 0 : LINES_PER_BLOCK;
+  return live;
+}
+
 
 size_t gc_obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
@@ -657,14 +745,15 @@ int avant_is_heap(void *payload) {
 
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
  * collection can move this object, 0 when no collection before the next
- * full one moves it; .parallel keeps a raw address only on 0. Under
- * candidate E a young block object moves (mature and large objects stay
- * put, so a parallel numeric loop can keep the address); under candidate
- * S no young collection moves anything, so it is 0 for every object
- * (Stage 28 W15b); under S+ (GC_STICKY_COPY) a young block object may be
- * copied, so it is 1 for one that is not pinned (Stage 28 W15c). */
+ * full one moves it; .parallel keeps a raw address only on 0. Under S+
+ * (GC_STICKY_COPY, Stage 28 W15c) a young block object may be copied, so
+ * it is 1 for one that is not pinned; mature and large objects stay put,
+ * so a parallel numeric loop can keep their address. Under candidate S
+ * (GC_STICKY_COPY 0) no young collection moves anything, so it is 0 for
+ * every object (Stage 28 W15b). (Under E, deleted in W15d, it was 1 for
+ * every young block object.) */
 int32_t avant_is_young(void *payload) {
-#if GC_CANDIDATE == GC_CANDIDATE_S && !GC_STICKY_COPY
+#if !GC_STICKY_COPY
   (void)payload;
   return 0;
 #else
@@ -674,14 +763,9 @@ int32_t avant_is_young(void *payload) {
   }
   h = avant_header(payload);
   /* A large object never moves, even when it is still in the young set. */
-  if (h->flags & AVANT_FLAG_LARGE) {
+  if (h->flags & (AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) {
     return 0;
   }
-#if GC_STICKY_COPY
-  if (h->flags & AVANT_FLAG_PINNED) {
-    return 0;
-  }
-#endif
   if ((h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) ==
       (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) {
     return 1;
