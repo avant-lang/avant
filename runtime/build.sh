@@ -14,13 +14,15 @@ compile() {
 # The young generation's candidate (Stage 28 W15b, gc-design.md §3.4):
 # unset or AVANT_GC_CANDIDATE=S builds candidate S (in-place young
 # collection; the default by §3.4's rules, W15b's record), E builds
-# candidate E (the evacuating nursery). A build-time choice of the
-# collector units only (GC_CANDIDATE, avant_gc_internal.h); no export,
-# header or generated code depends on it.
+# candidate E (the evacuating nursery), S+ candidate S with the
+# opportunistic young copy (GC_STICKY_COPY, Stage 28 W15c). A
+# build-time choice of the collector units only (GC_CANDIDATE,
+# avant_gc_internal.h); no export, header or generated code depends on it.
 case "${AVANT_GC_CANDIDATE:-S}" in
   E) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_E" ;;
   S) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S" ;;
-  *) echo "runtime/build.sh: AVANT_GC_CANDIDATE must be E or S" >&2; exit 1 ;;
+  S+) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S -DGC_STICKY_COPY=1" ;;
+  *) echo "runtime/build.sh: AVANT_GC_CANDIDATE must be E, S or S+" >&2; exit 1 ;;
 esac
 
 # The core units: the collector and the language traps. They fold into

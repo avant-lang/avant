@@ -540,7 +540,11 @@ typedef struct GcKeepCounters {
  * young sweeps found without a survivor, overflow the medium objects
  * placed in the overflow block because the current hole could not hold
  * them, returned the empty young blocks the young sweeps gave back to
- * their chunks (Stage 28 W15c). All 0 under E. */
+ * their chunks (Stage 28 W15c); under S+ (GC_STICKY_COPY) evac_blocks the
+ * young blocks evacuated, kept_blocks the young blocks kept in place
+ * because a young object in them was named imprecisely, copy_blocks the
+ * fresh blocks the copies went to (the bytes copied are prom.copied and
+ * AvantGcStats.copied_bytes). All 0 under E. */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
@@ -548,6 +552,9 @@ typedef struct GcStickyCounters {
   uint64_t freed_lines;
   uint64_t overflow;
   uint64_t returned;
+  uint64_t evac_blocks;
+  uint64_t kept_blocks;
+  uint64_t copy_blocks;
 } GcStickyCounters;
 
 typedef struct GcCounters {
@@ -781,6 +788,11 @@ typedef struct GcHeap {
   uint32_t part_blocks_cap;
   Block *overflow;
   int cur_whole;
+  /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
+   * the block copies go to; prom.copied when it began. */
+  int splus_on;
+  Block *splus_dst;
+  uint64_t splus_copied0;
 
   /* avant_gc_mark.c. */
   uint64_t mark_sum;
@@ -999,6 +1011,31 @@ void gc_rem_keep_young_holders(void);
 #if GC_CANDIDATE != GC_CANDIDATE_E && GC_CANDIDATE != GC_CANDIDATE_S
 #error "GC_CANDIDATE: GC_CANDIDATE_E or GC_CANDIDATE_S"
 #endif
+
+/* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): beside
+ * GC_CANDIDATE, 1 builds candidate S's variant S+, the opportunistic
+ * young copy (avant_gc_sticky.c: survivors of sparse young blocks are
+ * copied out when every reference to them is precise); 0 builds plain S.
+ * Like GC_CANDIDATE a build-time constant, not ABI (runtime/build.sh's
+ * AVANT_GC_CANDIDATE=S+). SPLUS_SPARSE_LINES: a young block is evacuated
+ * when its live lines after the trace (mature ones and its survivors'
+ * bytes in lines) are at most this many of its 128: a quarter, so every
+ * byte copied frees at least three bytes of block for reuse, and a
+ * block that is mostly live (where copying would only move a dense
+ * group) stays. */
+#ifndef GC_STICKY_COPY
+#define GC_STICKY_COPY 0
+#endif
+#if GC_STICKY_COPY && GC_CANDIDATE != GC_CANDIDATE_S
+#error "GC_STICKY_COPY needs GC_CANDIDATE_S"
+#endif
+#ifndef SPLUS_SPARSE_LINES
+#define SPLUS_SPARSE_LINES 32
+#endif
+/* Block.kept under S+ during a young collection: the block holds a young
+ * object named imprecisely (it stays in place), or it is evacuated. */
+#define SPLUS_KEPT 1
+#define SPLUS_EVAC 2
 
 /* avant_gc_young.c: the noted list (both candidates) and pinned-object
  * lookup for defragmentation; then candidate E, the evacuating young

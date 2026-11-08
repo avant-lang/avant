@@ -661,9 +661,10 @@ int avant_is_heap(void *payload) {
  * candidate E a young block object moves (mature and large objects stay
  * put, so a parallel numeric loop can keep the address); under candidate
  * S no young collection moves anything, so it is 0 for every object
- * (Stage 28 W15b). */
+ * (Stage 28 W15b); under S+ (GC_STICKY_COPY) a young block object may be
+ * copied, so it is 1 for one that is not pinned (Stage 28 W15c). */
 int32_t avant_is_young(void *payload) {
-#if GC_CANDIDATE == GC_CANDIDATE_S
+#if GC_CANDIDATE == GC_CANDIDATE_S && !GC_STICKY_COPY
   (void)payload;
   return 0;
 #else
@@ -676,6 +677,11 @@ int32_t avant_is_young(void *payload) {
   if (h->flags & AVANT_FLAG_LARGE) {
     return 0;
   }
+#if GC_STICKY_COPY
+  if (h->flags & AVANT_FLAG_PINNED) {
+    return 0;
+  }
+#endif
   if ((h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) ==
       (AVANT_FLAG_YOUNG | AVANT_FLAG_HEAP)) {
     return 1;

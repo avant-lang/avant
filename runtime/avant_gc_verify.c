@@ -241,10 +241,57 @@ void gc_verify_young_copy(void) {
  * object must be marked (gc_reclaim_young_large then promotes it, else it
  * is freed). Each report names the object; the count is
  * gc_heap.verify_untraced (unused by S otherwise). */
+#if GC_STICKY_COPY
+/* S+: a reference the collection did not rewrite names a moved object's
+ * old copy (its header holds the forward). */
+static uint64_t verify_stale(void *p, const char *where, void *holder) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  if (!start || !(avant_header(start)->flags & AVANT_FLAG_FORWARDED)) {
+    return 0;
+  }
+  fprintf(stderr, "avant gc verify: stale %s reference holder=%p names moved object %p (now %p) coll=%llu\n",
+          where, holder, start, gc_forward_of(avant_header(start)),
+          (unsigned long long)avant_g_stats.collections);
+  return 1;
+}
+
+static void verify_stale_tls(void **slot) {
+  gc_heap.verify_untraced += verify_stale(*slot, "runtime root", (void *)slot);
+}
+#endif
+
 void gc_verify_sticky(void) {
   size_t i;
   uint64_t bad = 0;
   verify_mark_reachable();
+#if GC_STICKY_COPY
+  /* After S+'s copy and fix-up (before the old copies lose their start
+   * bits): no root slot, runtime-held slot or field of a reachable object
+   * may still name a moved object; verify_mark_reachable followed the
+   * forwards, so the reachable objects are the copies. */
+  {
+    ThreadReg *t;
+    for (t = gc_heap.threads; t; t = t->next) {
+      Frame *f;
+      for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+        uint32_t k;
+        for (k = 0; k < f->n; k++) {
+          bad += verify_stale(*f->slots[k], "root", (void *)f->slots[k]);
+        }
+      }
+    }
+    gc_each_runtime_root(verify_stale_tls);
+    for (i = 0; i < gc_heap.vnoted_n; i++) {
+      void *v = gc_heap.vnoted[i];
+      if (avant_header(v)->type_id == AVANT_TYPE_BYTES) {
+        continue;
+      }
+      EACH_REF_SLOT(v, slot, { bad += verify_stale(*slot, "field", v); });
+    }
+  }
+#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     void *v = gc_heap.vnoted[i];
     AvantHeader *h = avant_header(v);
