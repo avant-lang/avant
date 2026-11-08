@@ -222,10 +222,14 @@ static void frag_note(void) {
 
 /* The young collection of the candidate GC_CANDIDATE selects (the one
  * internal switch, avant_gc_internal.h; gc-design.md §3.4). TENURE: every
- * survivor is promoted at this collection (a fixed AVANT_YOUNG_MB). */
+ * survivor is promoted at this collection (a fixed AVANT_YOUNG_MB); S
+ * promotes every survivor at every young collection anyway. */
 static void gc_young_collect(int tenure) {
 #if GC_CANDIDATE == GC_CANDIDATE_E
   gc_young_copy_out(tenure);
+#else
+  (void)tenure;
+  gc_sticky_collect();
 #endif
 }
 
@@ -307,12 +311,22 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
     uint64_t pinned0 = gc_heap.ctr.prom.pinned;
+#if GC_CANDIDATE == GC_CANDIDATE_S
+    uint64_t inplace0 = gc_heap.ctr.sticky.inplace;
+#endif
     uint64_t y0 = now_ns();
     uint64_t surv;
     avant_g_stats.young_collections++;
     gc_young_collect(gc_heap.set.young_fixed ? 1 : 0);
     surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.pinned - pinned0);
+#if GC_CANDIDATE == GC_CANDIDATE_S
+    /* Under S survival is what the collection promoted in place
+     * (sticky.inplace; copied_bytes and prom.pinned stay 0), and the copy
+     * reserve stays 0: S needs no copy room. */
+    surv += gc_heap.ctr.sticky.inplace - inplace0;
+#else
     gc_heap.copy_reserve = (uint64_t)(RESERVE_FACTOR * (double)surv);
+#endif
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
       young_size(used, surv, now_ns() - y0);
     }
@@ -325,12 +339,14 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_los_spare_drop();
     gc_clear_alloc_cur(SPACE_NURSERY);
     gc_clear_alloc_cur(SPACE_MATURE);
+#if GC_CANDIDATE == GC_CANDIDATE_S
+    gc_sticky_full_begin();
+#endif
     /* The marks: one memset per chunk of the side bitmap; no header is
      * touched (no young mark outlives its collection, C36). */
     gc_clear_side_marks();
-    gc_zero_line_marks(gc_heap.space[SPACE_MATURE].list);
-    gc_zero_line_marks(gc_heap.space[SPACE_NURSERY].list);
-    gc_zero_line_marks(gc_heap.space[SPACE_FROM].list);
+    /* The line marks: the epoch advances (no walk zeroing them). */
+    gc_line_epoch_advance();
     gc_mark_roots();
     frag_note();
     {
@@ -374,6 +390,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
      * recounted them; before Stage 28 W15a1 a full collection promoted
      * every large object). */
     avant_nursery_held = gc_heap.mark_sum + gc_heap.young_large;
+#if GC_CANDIDATE == GC_CANDIDATE_S
+    gc_sticky_full_end();
+#endif
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
@@ -424,6 +443,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
  * limit and leaves a full collection pending (place). */
 static int young_copy_fits(void) {
   uint64_t copy;
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  /* S moves nothing: a young collection needs no room (its copy reserve
+   * stays 0, gc_collect). */
+  return 1;
+#endif
   if (!gc_heap.set.heap_max) {
     return 1;
   }

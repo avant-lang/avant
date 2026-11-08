@@ -11,11 +11,22 @@ compile() {
   "$cc" -c $cflags -o "$2" "$1"
 }
 
+# The young generation's candidate (Stage 28 W15b, gc-design.md §3.4):
+# AVANT_GC_CANDIDATE=S builds candidate S (in-place young collection),
+# E or unset builds candidate E (the evacuating nursery). A build-time
+# choice of the collector units only (GC_CANDIDATE, avant_gc_internal.h);
+# no export, header or generated code depends on it.
+case "${AVANT_GC_CANDIDATE:-E}" in
+  E) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_E" ;;
+  S) gc_cflags="-DGC_CANDIDATE=GC_CANDIDATE_S" ;;
+  *) echo "runtime/build.sh: AVANT_GC_CANDIDATE must be E or S" >&2; exit 1 ;;
+esac
+
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below.
-core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_young avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
+core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_young avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
 for name in $core_units; do
-  compile "$root/$name.c" "$root/build/$name.unit.o"
+  "$cc" -c $cflags $gc_cflags -o "$root/build/$name.unit.o" "$root/$name.c"
 done
 
 for name in \

@@ -15,6 +15,7 @@
  * defragmenting full collection (no reference to a block being freed).
  * Diagnostics only: they print and never change the heap. */
 
+#if GC_CANDIDATE == GC_CANDIDATE_E
 static int verify_ptr(void *p, const char *where, void *holder, long off) {
   Block *b = NULL;
   AvantHeader *ol = NULL;
@@ -48,6 +49,7 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
   }
   return 0;
 }
+#endif
 
 static void verify_trace(void *p) {
   Block *b = NULL;
@@ -121,6 +123,7 @@ static void verify_mark_reachable(void) {
   }
 }
 
+#if GC_CANDIDATE == GC_CANDIDATE_E
 static void verify_untraced_words(AvantHeader *h) {
   size_t n, i;
   void **p;
@@ -174,7 +177,6 @@ static void verify_obj_fields(AvantHeader *h, Block *b) {
   });
 }
 
-
 void gc_verify_young_copy(void) {
   ThreadReg *t;
   Block *b;
@@ -226,6 +228,65 @@ void gc_verify_young_copy(void) {
   }
   verify_clear_traced();
 }
+#endif
+
+#if GC_CANDIDATE == GC_CANDIDATE_S
+/* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
+ * (Stage 28 W15b, gc-design.md §3.1): independent reachability from the
+ * roots and the remembered set (verify_mark_reachable, which ignores the
+ * collector's own tracing rules), then for every object it reaches:
+ * a block object must no longer be young (the collection promoted it in
+ * place) and, in a young block, every line it covers must be marked live
+ * at the current epoch, or the sweep is about to free it; a young large
+ * object must be marked (gc_reclaim_young_large then promotes it, else it
+ * is freed). Each report names the object; the count is
+ * gc_heap.verify_untraced (unused by S otherwise). */
+void gc_verify_sticky(void) {
+  size_t i;
+  uint64_t bad = 0;
+  verify_mark_reachable();
+  for (i = 0; i < gc_heap.vnoted_n; i++) {
+    void *v = gc_heap.vnoted[i];
+    AvantHeader *h = avant_header(v);
+    Block *b = NULL;
+    AvantHeader *ol = NULL;
+    const char *why = NULL;
+    if (!gc_is_heap_payload(v, &b, &ol)) {
+      continue;
+    }
+    if (ol) {
+      if ((h->flags & AVANT_FLAG_YOUNG) && !(h->flags & AVANT_FLAG_MARKED)) {
+        why = "young large object not marked";
+      }
+    } else if (h->flags & AVANT_FLAG_YOUNG) {
+      why = "young object not promoted";
+    } else if (b->young_hi || b->space == SPACE_NURSERY) {
+      size_t off = (size_t)((uint8_t *)h - b->base);
+      size_t l;
+      size_t end = (off + gc_obj_total(h) - 1) / LINE_SIZE;
+      for (l = off / LINE_SIZE; l <= end && l < LINES_PER_BLOCK; l++) {
+        if (!line_live(b, (int)l)) {
+          why = "line of a reachable object not live";
+          break;
+        }
+      }
+    }
+    if (why) {
+      if (bad++ < 32) {
+        fprintf(stderr, "avant gc verify: %s: %p flags=0x%x type=%u size=%u coll=%llu\n", why, v,
+                h->flags, (unsigned)h->type_id, (unsigned)h->size,
+                (unsigned long long)avant_g_stats.collections);
+      }
+    }
+  }
+  if (bad > 32) {
+    fprintf(stderr, "avant gc verify: %llu reachable objects in all at coll=%llu\n",
+            (unsigned long long)bad, (unsigned long long)avant_g_stats.collections);
+  }
+  gc_heap.verify_untraced += bad;
+  verify_clear_traced();
+}
+#endif
 
 /* The remembered-set check (Stage 28 W14b1, gc-design.md §4.2 item 2):
  * before a young collection traces, every field of a non-young object
@@ -248,10 +309,7 @@ void gc_verify_young_copy(void) {
  * gc_heap.missing_barriers. */
 
 static int verify_young_at(void *start, Block *b, AvantHeader *ol) {
-  if (ol) {
-    return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
-  }
-  return b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
+  return gc_young_at(start, b, ol);
 }
 
 static int verify_names_young(void *p, void **out) {

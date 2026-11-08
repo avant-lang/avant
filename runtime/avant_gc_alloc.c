@@ -38,12 +38,12 @@ uint64_t avant_inline_allocs;
 static int find_hole(Block *b, size_t need) {
   int i = b->search;
   while (i < LINES_PER_BLOCK) {
-    if (b->line_mark[i]) {
+    if (line_live(b, i)) {
       i++;
       continue;
     }
     int j = i;
-    while (j < LINES_PER_BLOCK && !b->line_mark[j]) {
+    while (j < LINES_PER_BLOCK && !line_live(b, j)) {
       j++;
     }
     size_t hole = (size_t)(j - i) * LINE_SIZE;

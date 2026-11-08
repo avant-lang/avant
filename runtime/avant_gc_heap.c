@@ -154,6 +154,7 @@ void gc_heap_reserve(void) {
   if (gc_heap.base) {
     return;
   }
+  gc_heap.line_epoch = 1;
   /* 0 only if a block is taken before gc_init_slow read the settings. */
   gb = gc_heap.set.reserve_gb ? gc_heap.set.reserve_gb : HEAP_RESERVE_GB_DEFAULT;
   for (;;) {
@@ -497,7 +498,7 @@ int gc_block_live_lines(Block *b) {
   int n = 0;
   int i;
   for (i = 0; i < LINES_PER_BLOCK; i++) {
-    if (b->line_mark[i]) {
+    if (line_live(b, i)) {
       n++;
     }
   }
@@ -654,9 +655,18 @@ int avant_is_heap(void *payload) {
   return gc_is_heap_payload(payload, NULL, NULL);
 }
 
-/* 1 when a young collection can move this buffer. Mature and large
- * objects stay put, so a parallel numeric loop can keep the address. */
+/* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
+ * collection can move this object, 0 when no collection before the next
+ * full one moves it; .parallel keeps a raw address only on 0. Under
+ * candidate E a young block object moves (mature and large objects stay
+ * put, so a parallel numeric loop can keep the address); under candidate
+ * S no young collection moves anything, so it is 0 for every object
+ * (Stage 28 W15b). */
 int32_t avant_is_young(void *payload) {
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  (void)payload;
+  return 0;
+#else
   AvantHeader *h;
   if (!payload || ((uintptr_t)payload & (ALIGN - 1)) != 0) {
     return 0;
@@ -671,6 +681,7 @@ int32_t avant_is_young(void *payload) {
     return 1;
   }
   return 0;
+#endif
 }
 
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
@@ -691,6 +702,31 @@ void gc_zero_line_marks(Block *list) {
   for (b = list; b; b = b->next) {
     memset(b->line_mark, 0, LINES_PER_BLOCK);
   }
+}
+
+/* The start of a full collection's line marking (gc-design.md §2.2,
+ * Stage 28 W15b): the epoch advances, so every line mark of every block
+ * is stale at once (no walk of the block lists zeroing them, as before).
+ * Epochs run 1..255; past 255 every committed small chunk's line marks
+ * are zeroed (one memset of 16 KiB per chunk) and the epoch restarts at
+ * 1. Nothing survives a full collection by an old mark: the full mark
+ * remarks every live object's lines, and a block entering use has its
+ * marks zeroed (gc_block_take, gc_new_block's cache path). */
+void gc_line_epoch_advance(void) {
+  uint64_t c;
+  uint64_t n;
+  if (gc_heap.line_epoch < 255) {
+    gc_heap.line_epoch++;
+    return;
+  }
+  n = gc_heap.committed >> CHUNK_SHIFT;
+  for (c = 0; c < n; c++) {
+    if (gc_heap.chunks[c].kind == CHUNK_SMALL) {
+      memset(&gc_heap.lines[c * BLOCKS_PER_CHUNK * LINES_PER_BLOCK], 0,
+             BLOCKS_PER_CHUNK * LINES_PER_BLOCK);
+    }
+  }
+  gc_heap.line_epoch = 1;
 }
 
 /* The start of a full collection: every committed chunk's slice of the

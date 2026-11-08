@@ -146,9 +146,11 @@ typedef struct Block {
   uint8_t in_use;      /* 25 */
   uint16_t search;     /* 26: the hole search cursor, in lines */
   uint8_t clean;       /* 28: free and madvised: zero, not resident */
-  uint8_t kept;        /* 29: a nursery block holding an object the
+  uint8_t kept;        /* 29: E: a nursery block holding an object the
                         * running young collection keeps in place */
-  uint8_t pad_[2];     /* 30 */
+  uint8_t young_lo;    /* 30: S: the lines young allocation used in this */
+  uint8_t young_hi;    /* 31: block since the last collection, [lo, hi);
+                        * hi 0: the block is not a young block (S) */
   uint8_t *bump;       /* 32: ABI (the inline allocation path) */
   uint8_t *limit;      /* 40 */
   uint64_t *start;     /* 48: START_WORDS words in gc_heap.starts */
@@ -530,6 +532,22 @@ typedef struct GcKeepCounters {
   uint64_t blocks;
 } GcKeepCounters;
 
+/* sticky (Stage 28 W15b, candidate S, gc-design.md §3.1): inplace is the
+ * bytes S's young collections promoted in place (block objects; young
+ * large objects count in prom.large as for E); blocks the young blocks
+ * swept, holes the holes the young allocator took (a fresh block is one
+ * hole), freed_lines the lines of the young blocks' used ranges the
+ * young sweeps found without a survivor, overflow the medium objects
+ * placed in the overflow block because the current hole could not hold
+ * them. All 0 under E. */
+typedef struct GcStickyCounters {
+  uint64_t inplace;
+  uint64_t blocks;
+  uint64_t holes;
+  uint64_t freed_lines;
+  uint64_t overflow;
+} GcStickyCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -545,6 +563,7 @@ typedef struct GcCounters {
   GcSpCounters sp;
   GcSizeCounters size;
   GcKeepCounters keep;
+  GcStickyCounters sticky;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
   /* The cumulative count of stack words still naming from-space after
@@ -610,6 +629,13 @@ typedef struct GcHeap {
   uint64_t *starts;
   uint64_t *marks;
   uint8_t *lines;
+  /* The line marks' epoch (gc-design.md §2.2, Stage 28 W15b): a line is
+   * live when its mark equals it (line_live). A full collection advances
+   * it instead of zeroing every block's marks (gc_line_epoch_advance);
+   * young collections mark with it and never advance it, so marks
+   * persist across them. 0 is never an epoch: a block entering use has
+   * its marks zeroed. */
+  uint8_t line_epoch;
   uint32_t *pages;
   GcChunk *chunks;
   /* Chunks below the high-water mark that are CHUNK_FREE again. */
@@ -724,6 +750,29 @@ typedef struct GcHeap {
   int rem_track;
   int rem_track_dirty;
   int block_has_pin;
+
+  /* avant_gc_sticky.c and the young allocator (candidate S, Stage 28
+   * W15b; empty under E). young_blocks: the young blocks, every block
+   * young allocation took a hole in since the last collection (each has
+   * young_hi set). free_blocks and part_blocks: blocks of the mature list
+   * young allocation may take next, wholly free ones and ones with free
+   * lines among live ones (the young sweep and a full collection's sweep
+   * leave them; an entry may have been used up by mature allocation
+   * since, or be the mature cursor's block, and is then skipped).
+   * overflow: the young block medium objects go to when the current
+   * hole cannot hold them (Immix's overflow allocation). cur_whole: the
+   * young cursor's hole is a whole block (S_INLINE_HOLES). */
+  Block **young_blocks;
+  uint32_t young_blocks_n;
+  uint32_t young_blocks_cap;
+  Block **free_blocks;
+  uint32_t free_blocks_n;
+  uint32_t free_blocks_cap;
+  Block **part_blocks;
+  uint32_t part_blocks_n;
+  uint32_t part_blocks_cap;
+  Block *overflow;
+  int cur_whole;
 
   /* avant_gc_mark.c. */
   uint64_t mark_sum;
@@ -886,6 +935,7 @@ void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void gc_zero_line_marks(Block *list);
 void gc_clear_side_marks(void);
 void gc_mark_object_lines(void *p);
+void gc_line_epoch_advance(void);
 
 /* avant_gc_alloc.c */
 void gc_reset_block_bump(Block *b);
@@ -929,18 +979,22 @@ void gc_rem_full_scrub(void);
  * point is gc_young_collect (avant_gc_collect.c), the young branch of
  * gc_collect: it runs the candidate's young collection, which reports
  * its survival (copied and kept-in-place bytes) through the counters
- * gc_collect reads. Build another candidate with -DGC_CANDIDATE=GC_CANDIDATE_S
- * (W15b adds it; until then only E exists). */
+ * gc_collect reads. runtime/build.sh builds S with AVANT_GC_CANDIDATE=S
+ * in its environment (-DGC_CANDIDATE=GC_CANDIDATE_S; Stage 28 W15b), E
+ * otherwise. */
 #define GC_CANDIDATE_E 1
 #define GC_CANDIDATE_S 2
 #ifndef GC_CANDIDATE
 #define GC_CANDIDATE GC_CANDIDATE_E
 #endif
-#if GC_CANDIDATE != GC_CANDIDATE_E
-#error "GC_CANDIDATE: only candidate E (GC_CANDIDATE_E) is built so far"
+#if GC_CANDIDATE != GC_CANDIDATE_E && GC_CANDIDATE != GC_CANDIDATE_S
+#error "GC_CANDIDATE: GC_CANDIDATE_E or GC_CANDIDATE_S"
 #endif
 
-/* avant_gc_young.c: candidate E, the evacuating young generation. */
+/* avant_gc_young.c: the noted list (both candidates) and pinned-object
+ * lookup for defragmentation; then candidate E, the evacuating young
+ * generation (compiled only under E). */
+void gc_note_marked(void *payload);
 void gc_clear_noted(void);
 void gc_keep_conservative(void *p);
 void *gc_copy_nursery(void *p);
@@ -948,6 +1002,14 @@ void gc_copy_from_slot(void **slot);
 void gc_gen_young_copy(void);
 int gc_block_has_pinned(Block *b);
 void gc_young_copy_out(int tenure);
+
+/* avant_gc_sticky.c: candidate S, the in-place young generation
+ * (compiled only under S; Stage 28 W15b), and the young allocator's
+ * block lists in avant_gc_alloc.c. */
+void gc_sticky_collect(void);
+void gc_sticky_full_begin(void);
+void gc_sticky_full_end(void);
+void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);
 
 /* avant_gc_mark.c */
 void gc_mark_roots(void);
@@ -973,6 +1035,7 @@ void gc_verify_young_copy(void);
 void gc_verify_no_stale_marks(void);
 void gc_verify_remembered(void);
 void gc_verify_defrag(void);
+void gc_verify_sticky(void);
 
 /* avant_gc_collect.c */
 /* A collection (O42): GC_YOUNG copies the nursery's live objects (it
@@ -1073,14 +1136,43 @@ static inline int has_start(Block *b, size_t off) {
   return (int)((b->start[bit / 64] >> (bit % 64)) & 1ULL);
 }
 
+static inline int line_live(const Block *b, int i) {
+  return b->line_mark[i] == gc_heap.line_epoch;
+}
+
 static inline void mark_lines(Block *b, size_t off, size_t total) {
   size_t start = off / LINE_SIZE;
   size_t end = (off + total - 1) / LINE_SIZE;
   size_t i;
   for (i = start; i <= end && i < LINES_PER_BLOCK; i++) {
-    b->line_mark[i] = 1;
+    b->line_mark[i] = gc_heap.line_epoch;
   }
 }
+
+/* Is the object at START (its block B, or its large header OL, as
+ * gc_object_payload gives them) young? Under E the space of its block
+ * says so (nursery and to-space blocks hold only young objects); under
+ * S a young object lies in any block, among mature ones, and only its
+ * YOUNG flag says so. A large object is young by its flag under both. */
+static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol) {
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  (void)b;
+  (void)ol;
+  return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
+#else
+  if (ol) {
+    return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
+  }
+  return b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
+#endif
+}
+
+/* S_INLINE_HOLES (candidate S, Q11): 1, the inline allocation path runs
+ * in holes of recycled blocks as in whole free blocks; 0, only in whole
+ * blocks (holes are allocated through the C path). */
+#ifndef S_INLINE_HOLES
+#define S_INLINE_HOLES 1
+#endif
 
 /* The full collection's mark (Stage 28 W14a2, gc-design.md §2.2, C36):
  * one bit per 8-byte granule in the side table gc_heap.marks, at the granule

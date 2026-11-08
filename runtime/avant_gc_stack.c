@@ -66,6 +66,10 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
   gc_block_set_seal(&gc_heap.cstack_blocks);
 }
 
+/* Candidate E only from here (Stage 28 W15b): S's young collections
+ * move nothing, so they neither pin nor rewrite C stack words. */
+#if GC_CANDIDATE == GC_CANDIDATE_E
+
 /* Mostly-copying at the collections runtime C enters (Stage 28 W15a2,
  * gc-design.md §3.2, §4.3's first half; C37's class removed there): every
  * 8-aligned word of the collecting thread's stack, from this function's
@@ -202,3 +206,5 @@ void gc_count_c_stack_nursery(void) {
     }
   }
 }
+
+#endif /* GC_CANDIDATE == GC_CANDIDATE_E */

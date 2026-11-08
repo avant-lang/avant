@@ -165,7 +165,8 @@ static void print_frag(StatsLine *l) {
 static void print_prom(StatsLine *l) {
   const GcPromCounters *c = &gc_heap.ctr.prom;
   line_add(l, "prom_bytes=%llu prom_copied=%llu prom_pinned=%llu prom_large=%llu ",
-           u(c->copied + c->pinned + c->large), u(c->copied), u(c->pinned), u(c->large));
+           u(c->copied + c->pinned + c->large + gc_heap.ctr.sticky.inplace), u(c->copied),
+           u(c->pinned), u(c->large));
 }
 
 static void print_sp(StatsLine *l) {
@@ -180,8 +181,20 @@ static void print_size(StatsLine *l) {
 
 static void print_keep(StatsLine *l) {
   const GcKeepCounters *c = &gc_heap.ctr.keep;
-  line_add(l, "keep_cons_objects=%llu keep_cons_bytes=%llu keep_blocks=%llu\n",
+  line_add(l, "keep_cons_objects=%llu keep_cons_bytes=%llu keep_blocks=%llu ",
            u(c->cons_objects), u(c->cons_bytes), u(c->blocks));
+}
+
+/* The sticky family (Stage 28 W15b, candidate S; all 0 under E), last in
+ * the line: bytes promoted in place by young collections, young blocks
+ * swept, holes taken by the young allocator, lines the young sweeps
+ * freed, medium objects placed in the overflow block. */
+static void print_sticky(StatsLine *l) {
+  const GcStickyCounters *c = &gc_heap.ctr.sticky;
+  line_add(l,
+           "prom_inplace=%llu young_blocks=%llu young_holes=%llu young_freed_lines=%llu "
+           "young_overflow=%llu\n",
+           u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow));
 }
 
 void gc_print_stats(void) {
@@ -201,6 +214,7 @@ void gc_print_stats(void) {
   print_sp(&l);
   print_size(&l);
   print_keep(&l);
+  print_sticky(&l);
   fwrite(l.buf, 1, l.n, stderr);
 }
 
