@@ -53,7 +53,7 @@
  * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
  * stay put (those blocks remain `SPACE_FROM` so their address is stable,
  * D34) and are promoted in place: from then on they are mature objects,
- * traced and remembered like any other (C29, promote_pinned_one). After
+ * traced and remembered like any other (C29, promote_kept_one). After
  * young copy, unpinned from-space is discarded. Objects that escape to C
  * should be pinned.
  *
@@ -135,7 +135,9 @@ typedef struct Block {
   uint8_t in_use;      /* 25 */
   uint16_t search;     /* 26: the hole search cursor, in lines */
   uint8_t clean;       /* 28: free and madvised: zero, not resident */
-  uint8_t pad_[3];     /* 29 */
+  uint8_t kept;        /* 29: a nursery block holding an object the
+                        * running young collection keeps in place */
+  uint8_t pad_[2];     /* 30 */
   uint8_t *bump;       /* 32: ABI (the inline allocation path) */
   uint8_t *limit;      /* 40 */
   uint64_t *start;     /* 48: START_WORDS words in gc_heap.starts */
@@ -299,11 +301,10 @@ typedef struct BlockSet {
  * large object a heap field reached, is retired since Stage 28 W15a1:
  * an edge to a young large object is remembered like any young edge.) */
 
-/* A forwarding entry of the young copy (avant_gc_heap.c). */
-typedef struct FwdEnt {
-  void *from;
-  void *to;
-} FwdEnt;
+/* The verifier's visited bit (avant_gc_verify.c), internal to the
+ * runtime like REM. FORWARDED was the verifier's until Stage 28 W15a2,
+ * when it became the forwarding mark of the header (gc_set_forward). */
+#define AVANT_FLAG_VSEEN 256u
 
 /* The collector's counters, per family (Stage 28 W14b2, gc-design.md
  * §1.7, O41). AvantGcStats (avant_rt.h, ABI: avant_g_stats) keeps its
@@ -604,10 +605,6 @@ typedef struct GcHeap {
   /* The type maps (avant_type_map), by type id. */
   TypeMap types[MAX_TYPES];
   uint8_t type_set[MAX_TYPES];
-  /* The young copy's forwarding table (open addressing). */
-  FwdEnt *fwd;
-  size_t fwd_cap;
-  size_t fwd_used;
 
   /* avant_gc_alloc.c. Freed blocks kept for reuse (at most
    * CACHE_BLOCKS), still charged to heap_bytes. */
@@ -688,6 +685,11 @@ typedef struct GcHeap {
   void **noted;
   uint32_t noted_n;
   uint32_t noted_cap;
+  /* The nursery objects the running young collection keeps in place
+   * (keep_in_place, avant_gc_young.c; Stage 28 W15a2). */
+  void **kept;
+  uint32_t kept_n;
+  uint32_t kept_cap;
   uint64_t to_bytes;
   int force_tenure;
   int from_mature;
@@ -840,9 +842,6 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w);
 __attribute__((noreturn)) void gc_die(const char *msg);
 void *gc_xrealloc(void *p, size_t n);
 void gc_work_push(void *p);
-void gc_fwd_reset(void);
-void gc_fwd_put(void *from, void *to);
-void *gc_fwd_get(void *from);
 int gc_block_live_lines(Block *b);
 size_t gc_obj_total(const AvantHeader *h);
 int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol);
@@ -1089,6 +1088,47 @@ static inline uint8_t *chunk_base(uint64_t c) {
 
 static inline void *payload_of(AvantHeader *h) {
   return (void *)(h + 1);
+}
+
+/* Forwarding in the header (Stage 28 W15a2, gc-design.md §3.2): a moved
+ * object's old header keeps its flags word (FORWARDED set) and holds
+ * the new payload address in the 48 bits of size and type id, which the
+ * old copy no longer needs (heap addresses are below 2^48,
+ * gc_heap_reserve). Nothing reads an old copy's size or type after the
+ * move: an exact start resolves to its forward (gc_forward_of), an
+ * interior address is bounded through it (gc_obj_total_any), the
+ * verifier reads the moved copy, and no walk visits a moved object
+ * (from-space blocks are released whole; the blocks a young collection
+ * keeps for pinned survivors keep only those survivors' start bits; a
+ * defragmentation stopped mid-block clears the moved objects' bits).
+ * It replaces the side forwarding table (fwd_put/fwd_get, an open
+ * addressing hash cleared whole at every collection). The flags stay
+ * readable, so the barrier's inline test and avant_is_young are
+ * unchanged; the generated code never reads a moved object. */
+static inline void gc_set_forward(AvantHeader *h, void *to) {
+  uint64_t a = (uint64_t)(uintptr_t)to;
+  h->size = (uint32_t)a;
+  h->type_id = (uint16_t)(a >> 32);
+  h->flags = (uint16_t)(h->flags | AVANT_FLAG_FORWARDED);
+}
+
+static inline void *gc_forward_of(const AvantHeader *h) {
+  return (void *)(uintptr_t)((uint64_t)h->size | ((uint64_t)h->type_id << 32));
+}
+
+/* The forward of payload P when P is a moved object's start, else NULL. */
+static inline void *gc_forwarded(void *p) {
+  const AvantHeader *h = avant_header(p);
+  return (h->flags & AVANT_FLAG_FORWARDED) ? gc_forward_of(h) : NULL;
+}
+
+/* An object's size with its header, read through the forward for a
+ * moved object (whose own size field holds the address). */
+static inline size_t gc_obj_total_any(const AvantHeader *h) {
+  if (h->flags & AVANT_FLAG_FORWARDED) {
+    return align_up(sizeof(AvantHeader) + (size_t)avant_header(gc_forward_of(h))->size);
+  }
+  return align_up(sizeof(AvantHeader) + (size_t)h->size);
 }
 
 static inline void gc_large_iter_init(LargeIter *it) {

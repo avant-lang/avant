@@ -72,72 +72,6 @@ void gc_work_push(void *p) {
   gc_heap.work[gc_heap.work_n++] = p;
 }
 
-void gc_fwd_reset(void) {
-  if (!gc_heap.fwd_cap) {
-    gc_heap.fwd_cap = 1024;
-    gc_heap.fwd = calloc(gc_heap.fwd_cap, sizeof(FwdEnt));
-    if (!gc_heap.fwd) {
-      gc_die("out of memory");
-    }
-  } else {
-    memset(gc_heap.fwd, 0, gc_heap.fwd_cap * sizeof(FwdEnt));
-  }
-  gc_heap.fwd_used = 0;
-}
-
-static void fwd_grow(void) {
-  size_t old_cap = gc_heap.fwd_cap;
-  FwdEnt *old = gc_heap.fwd;
-  gc_heap.fwd_cap *= 2;
-  gc_heap.fwd = calloc(gc_heap.fwd_cap, sizeof(FwdEnt));
-  if (!gc_heap.fwd) {
-    gc_die("out of memory");
-  }
-  size_t i;
-  for (i = 0; i < old_cap; i++) {
-    if (!old[i].from) {
-      continue;
-    }
-    size_t j = hash_ptr(old[i].from) & (gc_heap.fwd_cap - 1);
-    while (gc_heap.fwd[j].from) {
-      j = (j + 1) & (gc_heap.fwd_cap - 1);
-    }
-    gc_heap.fwd[j] = old[i];
-  }
-  free(old);
-}
-
-void gc_fwd_put(void *from, void *to) {
-  if (gc_heap.fwd_used * 10 > gc_heap.fwd_cap * 7) {
-    fwd_grow();
-  }
-  size_t j = hash_ptr(from) & (gc_heap.fwd_cap - 1);
-  while (gc_heap.fwd[j].from && gc_heap.fwd[j].from != from) {
-    j = (j + 1) & (gc_heap.fwd_cap - 1);
-  }
-  if (!gc_heap.fwd[j].from) {
-    gc_heap.fwd_used++;
-  }
-  gc_heap.fwd[j].from = from;
-  gc_heap.fwd[j].to = to;
-}
-
-void *gc_fwd_get(void *from) {
-  if (!gc_heap.fwd_cap || !from) {
-    return NULL;
-  }
-  size_t j = hash_ptr(from) & (gc_heap.fwd_cap - 1);
-  for (;;) {
-    if (!gc_heap.fwd[j].from) {
-      return NULL;
-    }
-    if (gc_heap.fwd[j].from == from) {
-      return gc_heap.fwd[j].to;
-    }
-    j = (j + 1) & (gc_heap.fwd_cap - 1);
-  }
-}
-
 /* Reserve LEN bytes of address space, PROT_NONE and MAP_NORESERVE: no
  * memory and (under vm.overcommit_memory=2) no commit charge until a
  * part is made read-write. */
@@ -193,6 +127,11 @@ static int reserve_all(uint64_t bytes) {
       munmap(base + bytes, (size_t)(CHUNK_SIZE - head));
     }
     gc_heap.base = base;
+  }
+  /* Forwarding in the header holds an address in 48 bits
+   * (gc_set_forward): the whole range must lie below 2^48. */
+  if ((uint64_t)(uintptr_t)gc_heap.base + bytes > (1ull << 48)) {
+    gc_die("the heap's address range is not below 2^48");
   }
   gc_heap.blocks = rec;
   gc_heap.starts = st;
@@ -683,7 +622,7 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
       size_t cand = (w * 64 + (size_t)(63 - __builtin_clzll(bits))) * 8;
       AvantHeader *h = (AvantHeader *)(b->base + cand);
       uint8_t *hs = (uint8_t *)h;
-      if (addr >= hs && addr < hs + gc_obj_total(h)) {
+      if (addr >= hs && addr < hs + gc_obj_total_any(h)) {
         if (ob) {
           *ob = b;
         }

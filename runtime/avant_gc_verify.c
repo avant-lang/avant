@@ -22,8 +22,8 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
   if (!start || !b || b->space != SPACE_NURSERY) {
     return 0;
   }
-  void *to = gc_fwd_get(start);
-  if (to && to != start) {
+  void *to = gc_forwarded(start);
+  if (to) {
     AvantHeader *ch = avant_header(start);
     fprintf(stderr,
             "avant gc verify: stale %s reference holder=%p off=%ld "
@@ -37,7 +37,7 @@ static int verify_ptr(void *p, const char *where, void *holder, long off) {
    * moved nor kept in place. Its block is discarded after this check,
    * so the reference is about to dangle (a live holder the young copy
    * did not trace, or a missing barrier). */
-  if (!to && (avant_header(start)->flags & AVANT_FLAG_PINNED) == 0) {
+  if (!to && (avant_header(start)->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_MARKED)) == 0) {
     fprintf(stderr,
             "avant gc verify: lost %s reference holder=%p off=%ld "
             "names nursery object %p the young copy did not keep coll=%llu "
@@ -57,10 +57,16 @@ static void verify_trace(void *p) {
     return;
   }
   AvantHeader *h = avant_header(start);
+  /* A moved object is reached through its copy: its own header holds the
+   * forward, not a size or a type (gc-design.md §3.2). */
   if (h->flags & AVANT_FLAG_FORWARDED) {
+    start = gc_forward_of(h);
+    h = avant_header(start);
+  }
+  if (h->flags & AVANT_FLAG_VSEEN) {
     return;
   }
-  h->flags |= AVANT_FLAG_FORWARDED;
+  h->flags |= AVANT_FLAG_VSEEN;
   if (gc_heap.vnoted_n == gc_heap.vnoted_cap) {
     gc_heap.vnoted_cap = gc_heap.vnoted_cap ? gc_heap.vnoted_cap * 2 : 1024;
     gc_heap.vnoted = gc_xrealloc(gc_heap.vnoted, gc_heap.vnoted_cap * sizeof(void *));
@@ -72,7 +78,7 @@ static void verify_trace(void *p) {
 static void verify_clear_traced(void) {
   size_t i;
   for (i = 0; i < gc_heap.vnoted_n; i++) {
-    avant_header(gc_heap.vnoted[i])->flags &= (uint16_t)~AVANT_FLAG_FORWARDED;
+    avant_header(gc_heap.vnoted[i])->flags &= (uint16_t)~AVANT_FLAG_VSEEN;
   }
   gc_heap.vnoted_n = 0;
 }
@@ -86,7 +92,7 @@ static void verify_tls_slot(void **slot) {
  * field. This is what keeps the checker sensitive to the F1 class
  * (a live holder the young copy itself never traced) while staying
  * silent about dead mature objects, whose fields legitimately name
- * copied objects. FORWARDED is free here (no collector pass uses it);
+ * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
 static void verify_mark_reachable(void) {
   ThreadReg *t;
@@ -136,25 +142,26 @@ static void verify_untraced_words(AvantHeader *h) {
     if (!gc_is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
       continue;
     }
-    if (avant_header(w)->flags & AVANT_FLAG_PINNED) {
+    /* Kept in place (pinned, or MARKED: kept this cycle). */
+    if (avant_header(w)->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_MARKED)) {
       continue;
     }
     if (gc_type_word_is_ref(h, i)) {
       continue;
     }
-    to = gc_fwd_get(w);
+    to = gc_forwarded(w);
     gc_heap.verify_untraced++;
     fprintf(stderr,
             "avant gc verify: untraced reference holder=%p type=%u size=%u "
             "word=%lu names young object %p (%s %p) coll=%llu\n",
             (void *)p, (unsigned)h->type_id, (unsigned)h->size, (unsigned long)i, w,
-            to && to != w ? "forwarded to" : "not copied, from-space", to,
+            to ? "forwarded to" : "not copied, from-space", to,
             (unsigned long long)avant_g_stats.collections);
   }
 }
 
 static void verify_obj_fields(AvantHeader *h, Block *b) {
-  if (!(h->flags & AVANT_FLAG_FORWARDED)) {
+  if (!(h->flags & AVANT_FLAG_VSEEN)) {
     return;
   }
   void *p = payload_of(h);
@@ -167,13 +174,6 @@ static void verify_obj_fields(AvantHeader *h, Block *b) {
   });
 }
 
-/* Pinned nursery objects stay in their block; their fields are checked
- * like a to-space object's (C29). */
-static void verify_pinned_fields(AvantHeader *h, Block *b) {
-  if (h->flags & AVANT_FLAG_PINNED) {
-    verify_obj_fields(h, b);
-  }
-}
 
 void gc_verify_young_copy(void) {
   ThreadReg *t;
@@ -205,9 +205,15 @@ void gc_verify_young_copy(void) {
   for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
-  if (gc_heap.saw_pinned_nursery) {
-    for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
-      gc_foreach_block_object(b, verify_pinned_fields);
+  /* Nursery objects kept in place (pinned) stay in their block; their
+   * fields are checked like a to-space object's (C29). The kept list
+   * names them: no nursery block is walked object by object after the
+   * copy, since a moved object's header holds its forward. */
+  {
+    uint32_t k;
+    for (k = 0; k < gc_heap.kept_n; k++) {
+      void *kp = gc_heap.kept[k];
+      verify_obj_fields(avant_header(kp), block_of(avant_header(kp)));
     }
   }
   {
@@ -236,7 +242,7 @@ void gc_verify_young_copy(void) {
  * class, reported at the first collection after the bad store). The
  * five runtime builders that fill a born-mature buffer named by a young
  * array header (audit N2b) are not reported: R1'(b) names the buffer.
- * Visited is FORWARDED (verify_trace), named is MARKED; both are clear
+ * Visited is VSEEN (verify_trace), named is MARKED; both are clear
  * when a collection starts (gc_verify_no_stale_marks) and cleared here.
  * The named objects are gc_heap.rnamed; the reports are counted in
  * gc_heap.missing_barriers. */
@@ -358,15 +364,17 @@ void gc_verify_remembered(void) {
   verify_clear_traced();
 }
 
-/* C36's check (W14a2): when a collection starts, no object's header
- * carries MARKED or FORWARDED. A young collection's marks end with it
+/* C36's check (W14a2): when a collection starts, no live object's
+ * header carries MARKED, FORWARDED or VSEEN (no walk reaches a moved
+ * object: their blocks are released, or keep only their survivors' start
+ * bits). A young collection's marks end with it
  * (the noted list) and a full collection marks in the side bitmap, so a
  * header bit left over is a mark a later young collection would read as
  * "already scanned this cycle" and skip (R1'). Reports are counted in
  * gc_heap.stale_seen. */
 
 static void verify_no_stale_one(AvantHeader *h, Block *b) {
-  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED)) {
+  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_VSEEN)) {
     if (gc_heap.stale_seen++ < 16) {
       fprintf(stderr,
               "avant gc verify: stale mark on %p flags=0x%x space=%d at the start of coll=%llu\n",
@@ -424,13 +432,16 @@ static void verify_defrag_word(void *w, const char *where, void *at) {
   fprintf(stderr,
           "avant gc verify: %s %p names %p in a mature block defragmentation "
           "is freeing (object %p moved to %p) coll=%llu\n",
-          where, at, w, start, start ? gc_fwd_get(start) : NULL,
+          where, at, w, start, start ? gc_forwarded(start) : NULL,
           (unsigned long long)avant_g_stats.collections);
 }
 
 static void verify_defrag_fields(AvantHeader *h, Block *b) {
   void *p;
-  if (!full_marked(h) || (b && gc_block_set_has(&gc_heap.def_release, b))) {
+  /* A moved object (forwarded: its fields are read in its copy) and the
+   * blocks being freed are not holders. */
+  if (!full_marked(h) || (h->flags & AVANT_FLAG_FORWARDED) ||
+      (b && gc_block_set_has(&gc_heap.def_release, b))) {
     return;
   }
   p = payload_of(h);

@@ -67,9 +67,8 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
 }
 
 static void gc_rewrite_if_forwarded(void **slot) {
-  void *w = *slot;
-  void *to = gc_fwd_get(w);
-  if (to && to != w) {
+  void *to = gc_forwarded(*slot);
+  if (to) {
     *slot = to;
   }
 }
@@ -80,8 +79,8 @@ static void gc_rewrite_if_forwarded(void **slot) {
  * chain into the collector, and runtime C locals. Rewrite every exact
  * forwarded start left on this thread's stack, with the same predicate
  * gc_count_c_stack_nursery verifies, so no stack word still names
- * from-space after a young copy. Interiors are not touched (gc_fwd_get
- * keys on object starts), and a word that was not forwarded keeps its
+ * from-space after a young copy. Interiors are not touched (only an
+ * exact start's header holds the forward, gc_forwarded), and a word that was not forwarded keeps its
  * bits. AVANT_GC_STACK_REWRITE=0 is the kill switch (gc_heap.set.c_stack_rewrite).
  */
 void gc_rewrite_c_stack(void) {
@@ -137,9 +136,8 @@ void gc_count_c_stack_nursery(void) {
       continue;
     }
     if (b && b->space == SPACE_NURSERY) {
-      void *to = gc_fwd_get(w);
       /* Copied to to-space, but this stack word still names from-space. */
-      if (to && to != w) {
+      if (gc_forwarded(w)) {
         gc_heap.ctr.stack_left++;
       }
     }
