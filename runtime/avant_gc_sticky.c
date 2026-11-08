@@ -252,6 +252,18 @@ static void trace_all(void) {
         if (ls && (avant_header(ls)->flags & AVANT_FLAG_YOUNG)) {
           trace_ref(NULL, ls, 0);
         }
+#if GC_STICKY_COPY
+        /* A slot location inside an object an earlier slot already
+         * reached (promoted, so no longer YOUNG): its block must stay in
+         * place all the same, since splus_fix rewrites what a slot holds,
+         * never where the frame keeps it (Stage 28 W15d: before, such an
+         * object moved and the frame's location named its old copy). A
+         * candidate block holds only objects young when the collection
+         * began. */
+        else if (ls && gc_heap.splus_on && lb && !ll && lb->kept == SPLUS_PURE) {
+          lb->kept = SPLUS_KEPT;
+        }
+#endif
         trace_ref(f->slots[i], *f->slots[i], 0);
       }
     }

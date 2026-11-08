@@ -140,6 +140,8 @@ void gc_verify_sticky(void) {
         uint32_t k;
         for (k = 0; k < f->n; k++) {
           bad += verify_stale(*f->slots[k], "root", (void *)f->slots[k]);
+          /* A slot location inside a moved object (Stage 28 W15d). */
+          bad += verify_stale((void *)f->slots[k], "root location", (void *)f);
         }
       }
     }
