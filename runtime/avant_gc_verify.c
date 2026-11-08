@@ -10,46 +10,15 @@
 #include <string.h>
 
 /* AVANT_GC_VERIFY (Stage 28 W12, moved from avant_rt.c): independent
- * checks after a young copy (no reachable reference to from-space, no
- * untraced reference word, no lost nursery object) and after a
+ * checks after a young collection's trace and copy (gc_verify_sticky: no
+ * reachable young object left unpromoted, no reachable line about to be
+ * freed, no reference to a moved object's old copy), before every young
+ * collection (gc_verify_remembered: the generational invariant), at
+ * every collection's start (gc_verify_no_stale_marks) and after a
  * defragmenting full collection (no reference to a block being freed).
- * Diagnostics only: they print and never change the heap. */
-
-#if GC_CANDIDATE == GC_CANDIDATE_E
-static int verify_ptr(void *p, const char *where, void *holder, long off) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
-  if (!start || !b || b->space != SPACE_NURSERY) {
-    return 0;
-  }
-  void *to = gc_forwarded(start);
-  if (to) {
-    AvantHeader *ch = avant_header(start);
-    fprintf(stderr,
-            "avant gc verify: stale %s reference holder=%p off=%ld "
-            "points at from-space %p (forwarded to %p) coll=%llu "
-            "child_flags=0x%x\n",
-            where, holder, off, start, to,
-            (unsigned long long)avant_g_stats.collections, ch->flags);
-    return 1;
-  }
-  /* C29: a reachable reference to a nursery object the copy neither
-   * moved nor kept in place. Its block is discarded after this check,
-   * so the reference is about to dangle (a live holder the young copy
-   * did not trace, or a missing barrier). */
-  if (!to && (avant_header(start)->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_MARKED)) == 0) {
-    fprintf(stderr,
-            "avant gc verify: lost %s reference holder=%p off=%ld "
-            "names nursery object %p the young copy did not keep coll=%llu "
-            "child_flags=0x%x\n",
-            where, holder, off, start, (unsigned long long)avant_g_stats.collections,
-            avant_header(start)->flags);
-    return 1;
-  }
-  return 0;
-}
-#endif
+ * Diagnostics only: they print and never change the heap. (E's checks
+ * after its young copy, gc_verify_young_copy with its stale, lost and
+ * untraced reports, went with E in Stage 28 W15d.) */
 
 static void verify_trace(void *p) {
   Block *b = NULL;
@@ -123,114 +92,6 @@ static void verify_mark_reachable(void) {
   }
 }
 
-#if GC_CANDIDATE == GC_CANDIDATE_E
-static void verify_untraced_words(AvantHeader *h) {
-  size_t n, i;
-  void **p;
-  if (h->flags & AVANT_FLAG_STRMETA) {
-    return;
-  }
-  if (h->type_id == AVANT_TYPE_PTRS) {
-    return;
-  }
-  p = (void **)payload_of(h);
-  n = (size_t)h->size / sizeof(void *);
-  for (i = 0; i < n; i++) {
-    void *w = p[i];
-    Block *cb = NULL;
-    void *to;
-    if (!w || ((uintptr_t)w & (ALIGN - 1)) != 0) {
-      continue;
-    }
-    if (!gc_is_heap_payload(w, &cb, NULL) || !cb || cb->space != SPACE_NURSERY) {
-      continue;
-    }
-    /* Kept in place (pinned, or MARKED: kept this cycle). */
-    if (avant_header(w)->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_MARKED)) {
-      continue;
-    }
-    if (gc_type_word_is_ref(h, i)) {
-      continue;
-    }
-    to = gc_forwarded(w);
-    gc_heap.verify_untraced++;
-    fprintf(stderr,
-            "avant gc verify: untraced reference holder=%p type=%u size=%u "
-            "word=%lu names young object %p (%s %p) coll=%llu\n",
-            (void *)p, (unsigned)h->type_id, (unsigned)h->size, (unsigned long)i, w,
-            to ? "forwarded to" : "not copied, from-space", to,
-            (unsigned long long)avant_g_stats.collections);
-  }
-}
-
-static void verify_obj_fields(AvantHeader *h, Block *b) {
-  if (!(h->flags & AVANT_FLAG_VSEEN)) {
-    return;
-  }
-  void *p = payload_of(h);
-  verify_untraced_words(h);
-  EACH_REF_SLOT(p, slot, {
-    if (verify_ptr(*slot, "field", p, (long)((uint8_t *)slot - (uint8_t *)p))) {
-      fprintf(stderr, "avant gc verify: holder %p flags=0x%x space=%d\n", p, h->flags,
-              b ? (int)b->space : -1);
-    }
-  });
-}
-
-void gc_verify_young_copy(void) {
-  ThreadReg *t;
-  Block *b;
-  if (gc_heap.ctr.stack_left > gc_heap.verify_left_seen) {
-    fprintf(stderr,
-            "avant gc verify: %llu stack words still name from-space "
-            "after rewrite (cumulative %llu)\n",
-            (unsigned long long)(gc_heap.ctr.stack_left - gc_heap.verify_left_seen),
-            (unsigned long long)gc_heap.ctr.stack_left);
-    gc_heap.verify_left_seen = gc_heap.ctr.stack_left;
-  }
-  for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t i;
-      for (i = 0; i < f->n; i++) {
-        verify_ptr(*f->slots[i], "root", (void *)f->slots[i], (long)i);
-      }
-    }
-  }
-  verify_mark_reachable();
-  for (b = gc_heap.space[SPACE_TO].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_obj_fields);
-  }
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_obj_fields);
-  }
-  for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_obj_fields);
-  }
-  /* Nursery objects kept in place (pinned) stay in their block; their
-   * fields are checked like a to-space object's (C29). The kept list
-   * names them: no nursery block is walked object by object after the
-   * copy, since a moved object's header holds its forward. */
-  {
-    uint32_t k;
-    for (k = 0; k < gc_heap.kept_n; k++) {
-      void *kp = gc_heap.kept[k];
-      verify_obj_fields(avant_header(kp), block_of(avant_header(kp)));
-    }
-  }
-  {
-    LargeIter it;
-    AvantHeader *lh;
-    gc_large_iter_init(&it);
-    while ((lh = gc_large_next(&it))) {
-      verify_obj_fields(lh, NULL);
-    }
-  }
-  verify_clear_traced();
-}
-#endif
-
-#if GC_CANDIDATE == GC_CANDIDATE_S
 /* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
  * (Stage 28 W15b, gc-design.md §3.1): independent reachability from the
  * roots and the remembered set (verify_mark_reachable, which ignores the
@@ -240,7 +101,7 @@ void gc_verify_young_copy(void) {
  * at the current epoch, or the sweep is about to free it; a young large
  * object must be marked (gc_reclaim_young_large then promotes it, else it
  * is freed). Each report names the object; the count is
- * gc_heap.verify_untraced (unused by S otherwise). */
+ * gc_heap.verify_untraced. */
 #if GC_STICKY_COPY
 /* S+: a reference the collection did not rewrite names a moved object's
  * old copy (its header holds the forward). */
@@ -307,7 +168,7 @@ void gc_verify_sticky(void) {
       }
     } else if (h->flags & AVANT_FLAG_YOUNG) {
       why = "young object not promoted";
-    } else if (b->young_hi || b->space == SPACE_NURSERY) {
+    } else if (b->young_hi) {
       size_t off = (size_t)((uint8_t *)h - b->base);
       size_t l;
       size_t end = (off + gc_obj_total(h) - 1) / LINE_SIZE;
@@ -333,7 +194,6 @@ void gc_verify_sticky(void) {
   gc_heap.verify_untraced += bad;
   verify_clear_traced();
 }
-#endif
 
 /* The remembered-set check (Stage 28 W14b1, gc-design.md §4.2 item 2):
  * before a young collection traces, every field of a non-young object
@@ -493,16 +353,8 @@ void gc_verify_no_stale_marks(void) {
   Block *b;
   LargeIter it;
   AvantHeader *lh;
-  Block *lists[4];
-  int k;
-  lists[0] = gc_heap.space[SPACE_MATURE].list;
-  lists[1] = gc_heap.space[SPACE_NURSERY].list;
-  lists[2] = gc_heap.space[SPACE_FROM].list;
-  lists[3] = gc_heap.space[SPACE_TO].list;
-  for (k = 0; k < 4; k++) {
-    for (b = lists[k]; b; b = b->next) {
-      gc_foreach_block_object(b, verify_no_stale_one);
-    }
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+    gc_foreach_block_object(b, verify_no_stale_one);
   }
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
@@ -598,12 +450,6 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   }
   gc_each_runtime_root(verify_defrag_tls);
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_defrag_fields);
-  }
-  for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_defrag_fields);
-  }
-  for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
   gc_large_iter_init(&it);

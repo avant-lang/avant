@@ -9,9 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Candidate S, the in-place young generation (Stage 28 W15b,
- * gc-design.md §3.1, StickyImmix): compiled only when GC_CANDIDATE
- * selects it. A young collection moves nothing. It traces from the roots
+/* The young generation: S+ (Stage 28 W15c, D233), candidate S with the
+ * opportunistic young copy. Candidate E, the evacuating nursery, was
+ * deleted as a separate young generation in Stage 28 W15d (D232); the
+ * mechanisms of E this file uses stay: header forwarding (gc_set_forward,
+ * avant_gc_internal.h), the copy (splus_copy), the C-stack pin scan
+ * (gc_pin_c_stack, avant_gc_stack.c) and the noted list (below, moved
+ * from avant_gc_young.c, which held E's young copy).
+ *
+ * Candidate S, the in-place young generation (Stage 28 W15b,
+ * gc-design.md §3.1, StickyImmix), is this file with GC_STICKY_COPY 0
+ * (an internal constant, avant_gc_internal.h). A young collection under
+ * S moves nothing. It traces from the roots
  * (frame slots, pins, runtime-held slots) and the remembered set, and
  * promotes each young object it reaches where it lies: YOUNG cleared,
  * its lines marked live at the current line epoch. A young object it
@@ -29,7 +38,23 @@
  * collecting calls (D165), and runtime C holds only its caller-rooted
  * arguments at the points a collection may run (outside defer regions;
  * gc-design.md §4.2 RC1 makes the rule general in W16). */
-#if GC_CANDIDATE == GC_CANDIDATE_S
+/* The noted list: every header MARKED a young collection sets, cleared
+ * when it ends (C36, gc-design.md §2.6). */
+void gc_note_marked(void *payload) {
+  if (gc_heap.noted_n == gc_heap.noted_cap) {
+    gc_heap.noted_cap = gc_heap.noted_cap ? gc_heap.noted_cap * 2 : 256;
+    gc_heap.noted = gc_xrealloc(gc_heap.noted, gc_heap.noted_cap * sizeof(void *));
+  }
+  gc_heap.noted[gc_heap.noted_n++] = payload;
+}
+
+void gc_clear_noted(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.noted_n; i++) {
+    avant_header(gc_heap.noted[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
+  }
+  gc_heap.noted_n = 0;
+}
 
 /* Promote one young block object in place: it is mature from now on. Its
  * lines are marked live at the current epoch. Its bytes are the survival
@@ -601,7 +626,7 @@ static void splus_finish(void) {
 }
 #endif
 
-/* Block.kept under S (E's field, unused by S otherwise): the young sweep
+/* Block.kept in a young collection: the young sweep
  * left the block empty, and it leaves mature space (keep_unless_empty);
  * under S+ also SPLUS_KEPT and SPLUS_EVAC during a young collection. */
 #define YOUNG_EMPTY 4
@@ -735,5 +760,3 @@ void gc_sticky_full_end(void) {
   }
   avant_nursery_held = 0;
 }
-
-#endif /* GC_CANDIDATE == GC_CANDIDATE_S */

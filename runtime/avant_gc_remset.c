@@ -10,19 +10,13 @@
 #include <string.h>
 
 /* The remembered set and the store barriers (Stage 28 W12, moved from
- * avant_rt.c): mature (and pinned in-place) objects that may name young
- * ones, the frontier policy that drops clean entries, the set's upkeep
- * after each young collection, and the barrier entry points avant_barrier
- * and avant_barrier_at. */
-
-/* Frontier clearing (Collector II Wave 2; its switch,
- * AVANT_GC_REM_FRONTIER, is retired since Stage 28 W14b2). Dirty is tracked during the
- * remembered scan itself, per set index (gc_heap.rem_dirty), so no
- * second field walk is needed. Hysteresis (evict after N clean scans)
- * and probation (a second list scanned every K young collections) were
- * measured against immediate clearing on bench/graph_frontier.av and lost
- * (0.20s vs 0.19s at AVANT_YOUNG_MB=1, 0.16s vs 0.15s adaptive), so only
- * immediate clearing is kept. */
+ * avant_rt.c): mature objects that may name young ones, the set's upkeep
+ * after young and full collections, and the barrier entry points
+ * avant_barrier and avant_barrier_at. (E's frontier policy, which kept a
+ * remembered entry across young collections while its last scan found a
+ * young field, Collector II Wave 2, went with E in Stage 28 W15d: S+
+ * empties the set at every young collection and remembers again only the
+ * holders of objects that stay young, gc_rem_keep_young_holders.) */
 
 static void rem_add(void *obj) {
   AvantHeader *h = avant_header(obj);
@@ -40,9 +34,7 @@ static void rem_add(void *obj) {
   if (gc_heap.rem_n == gc_heap.rem_cap) {
     gc_heap.rem_cap = gc_heap.rem_cap ? gc_heap.rem_cap * 2 : 64;
     gc_heap.remset = gc_xrealloc(gc_heap.remset, gc_heap.rem_cap * sizeof(void *));
-    gc_heap.rem_dirty = gc_xrealloc(gc_heap.rem_dirty, gc_heap.rem_cap * sizeof(uint8_t));
   }
-  gc_heap.rem_dirty[gc_heap.rem_n] = 0;
   gc_heap.remset[gc_heap.rem_n++] = obj;
   gc_heap.ctr.rem.adds++;
   if (locked) {
@@ -58,66 +50,8 @@ void gc_keep_add(void *obj) {
   gc_heap.keep[gc_heap.keep_n++] = obj;
 }
 
-/* Frontier decision for one live, marked hot entry whose scan result
- * is dirty (a direct field names a young object). Returns 1 to keep the
- * entry. On 0 the caller drops it with REM already clear; the barrier
- * re-adds it on the next young store. Caller holds gc_heap.rem_mu when the
- * set is shared. */
-static int rem_frontier_decide(void *obj, int dirty) {
-  if (dirty) {
-    return 1;
-  }
-  avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
-  gc_heap.ctr.rem.cleared++;
-  return 0;
-}
-
-void gc_rem_commit_kept(void) {
-  uint32_t n = gc_heap.keep_n;
-  void **kept = gc_heap.keep;
-  uint32_t i;
-  uint32_t w = 0;
-  int locked = rem_locked();
-  gc_heap.keep = NULL;
-  gc_heap.keep_n = 0;
-  gc_heap.keep_cap = 0;
-  /* A remembered object with a nursery child stays remembered: the
-   * scan just proved that edge. A live member with no nursery child
-   * leaves the hot set under the frontier policy (the barrier re-adds
-   * it on the next young store); only members whose memory is gone
-   * leave unconditionally, as before. */
-  if (locked) {
-    pthread_mutex_lock(&gc_heap.rem_mu);
-  }
-  for (i = 0; i < gc_heap.rem_n; i++) {
-    void *obj = gc_heap.remset[i];
-    if (gc_is_heap_payload(obj, NULL, NULL)) {
-      int dirty = gc_heap.rem_dirty ? gc_heap.rem_dirty[i] : 1;
-      if (!rem_frontier_decide(obj, dirty)) {
-        continue;
-      }
-      gc_heap.remset[w] = obj;
-      if (gc_heap.rem_dirty) {
-        gc_heap.rem_dirty[w] = (uint8_t)dirty;
-      }
-      w++;
-    }
-  }
-  gc_heap.rem_n = w;
-  if (locked) {
-    pthread_mutex_unlock(&gc_heap.rem_mu);
-  }
-  for (i = 0; i < n; i++) {
-    if (gc_is_heap_payload(kept[i], NULL, NULL)) {
-      rem_add(kept[i]);
-    }
-  }
-  free(kept);
-}
-
-/* Does a field of OBJ name a young object (gc_young_at: under E a
- * nursery or to-space block object, or a large object with YOUNG; under S
- * any object with YOUNG)? */
+/* Does a field of OBJ name a young object (gc_young_at: one with
+ * YOUNG)? */
 static int rem_names_young(void *obj) {
   int found = 0;
   if (avant_header(obj)->type_id == AVANT_TYPE_BYTES) {
@@ -194,9 +128,6 @@ void gc_rem_full_scrub(void) {
     }
     h->flags |= AVANT_FLAG_MARKED;
     gc_heap.remset[w] = obj;
-    if (gc_heap.rem_dirty) {
-      gc_heap.rem_dirty[w] = 1;
-    }
     w++;
   }
   gc_heap.rem_n = w;
@@ -209,7 +140,6 @@ void gc_rem_full_scrub(void) {
 }
 
 void avant_barrier(void *obj) {
-  Block *b = NULL;
   AvantHeader *h;
   /* O9: with the nursery off no young collection runs, so nothing is
    * remembered (the set grew without bound: churn.av kept 1.6 M
@@ -229,10 +159,7 @@ void avant_barrier(void *obj) {
       }
     }
   }
-  if (!gc_is_heap_payload(obj, &b, NULL)) {
-    return;
-  }
-  if (b && (b->space == SPACE_NURSERY || b->space == SPACE_TO)) {
+  if (!gc_is_heap_payload(obj, NULL, NULL)) {
     return;
   }
   rem_add(obj);

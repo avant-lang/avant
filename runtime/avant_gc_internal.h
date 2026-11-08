@@ -17,8 +17,9 @@
  *                       path's state, avant_alloc and avant_bump_alloc
  *   avant_gc_los.c      the large-object space
  *   avant_gc_remset.c   the remembered set and the store barriers
- *   avant_gc_young.c    the young collection (copying nursery,
- *                       pinned objects promoted in place)
+ *   avant_gc_sticky.c   the young collection (S+: promotion in place
+ *                       and the opportunistic young copy) and the
+ *                       noted list
  *   avant_gc_mark.c     the full collection's mark and block sweep
  *   avant_gc_defrag.c   mature defragmentation, block sets
  *   avant_gc_stack.c    the conservative scans of the C stack
@@ -50,12 +51,12 @@
  * Geometry: 32 KiB blocks, 256-byte lines. Object-start bits identify
  * headers. Tracing is precise (type maps + a shadow stack of local slots).
  *
- * GenImmix: bump nursery (copying) + Immix mature. Pinned nursery objects
- * stay put (those blocks remain `SPACE_FROM` so their address is stable,
- * D34) and are promoted in place: from then on they are mature objects,
- * traced and remembered like any other (C29, promote_kept_one). After
- * young copy, unpinned from-space is discarded. Objects that escape to C
- * should be pinned.
+ * Sticky Immix with an opportunistic young copy (S+, Stage 28 W15c,
+ * D233): young objects are allocated into free lines of mature blocks
+ * and promoted in place by young collections, except that the survivors
+ * of a young block that held no mature line are copied out in trace
+ * order when every reference to them is precise (avant_gc_sticky.c).
+ * Pinned objects never move. Objects that escape to C should be pinned.
  *
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
  * allocation and collection take a world lock.
@@ -81,17 +82,6 @@
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
 #define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
-/* Q4 (gc-design.md §8, Stage 28 W15a2): the young collections a small
- * survivor lives through before it is promoted. 2 is one aging step: a
- * first survivor is copied to to-space (SURVIVED, still young) and
- * promoted when it survives again; 1 copies every survivor to mature
- * space at its first young collection (no to-space). A fixed
- * AVANT_YOUNG_MB tenures at the first collection either way, and young
- * large objects keep their own rule (gc_reclaim_young_large: promoted
- * at their second survival). */
-#ifndef YOUNG_AGE
-#define YOUNG_AGE 2
-#endif
 /* S_LARGE_AGE (candidate S, Stage 28 W15c item 1, O88): the young
  * collections a young large object lives through under S before it is
  * promoted. 2 keeps a reached one young at its first survival (SURVIVED)
@@ -125,14 +115,15 @@
  * when unmarked. 900 doubles is 7200 bytes: under LOS_LIMIT, but large
  * enough that copying the row is the slow path. */
 
-/* The spaces a block belongs to. SPACE_TO: survivors of a young
- * collection are copied here, then the block is retagged as nursery.
- * Mature space is for objects that have already survived. */
+/* The spaces (gc_heap.space). Every block belongs to mature space; young
+ * objects lie in free lines of mature blocks (the YOUNG flag says which).
+ * SPACE_NURSERY is the young allocator's cursor only (its list stays
+ * empty). E's from-space and to-space (SPACE_FROM, SPACE_TO) went with E
+ * in Stage 28 W15d. */
 
 #define SPACE_MATURE 0
 #define SPACE_NURSERY 1
-#define SPACE_FROM 2
-#define SPACE_TO 3
+#define SPACE_COUNT 2
 
 /* The heap (Stage 28 W14a1, gc-design.md §2.1-2.3). One reserved
  * address range (gc_heap_reserve, avant_gc_heap.c) of 4 MiB chunks,
@@ -164,15 +155,17 @@ typedef struct Block {
   uint8_t in_use;      /* 25 */
   uint16_t search;     /* 26: the hole search cursor, in lines */
   uint8_t clean;       /* 28: free and madvised: zero, not resident */
-  uint8_t kept;        /* 29: E: a nursery block holding an object the
-                        * running young collection keeps in place */
+  uint8_t kept;        /* 29: a young block's state in a young
+                        * collection (SPLUS_*, YOUNG_EMPTY) */
   uint8_t young_lo;    /* 30: S: the lines young allocation used in this */
   uint8_t young_hi;    /* 31: block since the last collection, [lo, hi);
                         * hi 0: the block is not a young block (S) */
   uint8_t *bump;       /* 32: ABI (the inline allocation path) */
   uint8_t *limit;      /* 40 */
   uint64_t *start;     /* 48: START_WORDS words in gc_heap.starts */
-  uint64_t idle;       /* 56: free: the full-collection count when freed */
+  uint64_t idle;       /* 56: free: the return clock when freed; a young
+                        * block in a young collection: its survivor
+                        * bytes (S+) */
 } Block;
 
 _Static_assert(offsetof(Block, bump) == 32, "Block.bump is ABI at offset 32");
@@ -217,7 +210,7 @@ typedef struct GcChunk {
 } GcChunk;
 
 /* One space's state (gc-design.md §1.1, Stage 28 W15a1, O69), indexed
- * by SPACE_* in gc_heap.space:
+ * by SPACE_* in gc_heap.space (SPACE_COUNT of them):
  *   list   the space's blocks (avant_gc_heap.c owns the lists)
  *   cur    the space's bump cursor (avant_gc_alloc.c). A full block used
  *          to send the next allocation back through every older block
@@ -406,25 +399,23 @@ typedef struct GcSrvCounters {
 } GcSrvCounters;
 
 /* yng: min/max bound the adaptive young threshold over the run.
- * cpy_peak is the largest from-space plus to-space object bytes held
- * during one young copy. sticky counted the threshold's sticky growths
- * (young_pause, retired since Stage 28 W15a1: always 0; ctr.size counts
- * the adaptations). */
+ * sticky counted the threshold's sticky growths (young_pause, retired
+ * since Stage 28 W15a1: always 0; ctr.size counts the adaptations).
+ * (cpy_peak, E's from-space plus to-space bytes during one young copy,
+ * went with E in Stage 28 W15d; the statistics line prints 0.) */
 typedef struct GcYngCounters {
   uint64_t min;
   uint64_t max;
-  uint64_t cpy_peak;
   uint64_t sticky;
 } GcYngCounters;
 
 /* pk: the heap composition (block bytes per space, large-object bytes,
  * cached block bytes) at the moment peak_heap was last set
- * (gc_note_peak). */
+ * (gc_note_peak). (pk_from and pk_to, E's spaces, print 0 since Stage 28
+ * W15d.) */
 typedef struct GcPkCounters {
   uint64_t nursery;
   uint64_t mature;
-  uint64_t from;
-  uint64_t to;
   uint64_t large;
   uint64_t cache;
 } GcPkCounters;
@@ -511,12 +502,12 @@ typedef struct GcFragCounters {
 } GcFragCounters;
 
 /* prom: bytes promoted into mature space by young collections: copied
- * (a survivor tenured into a mature block), pinned (a pinned nursery
- * object promoted in place, D205) and large (a young large object whose
- * YOUNG is cleared). */
+ * (a survivor copied into a mature block, S+) and large (a young large
+ * object whose YOUNG is cleared); in place, sticky.inplace. (pinned, E's
+ * pinned nursery objects promoted in place, D205, prints 0 since Stage 28
+ * W15d: S+ promotes them in place like any survivor of a kept block.) */
 typedef struct GcPromCounters {
   uint64_t copied;
-  uint64_t pinned;
   uint64_t large;
 } GcPromCounters;
 
@@ -537,18 +528,10 @@ typedef struct GcSizeCounters {
   uint64_t shrinks;
 } GcSizeCounters;
 
-/* keep (Stage 28 W15a2, gc-design.md §3.2, §5.1): the nursery objects
- * young collections kept in place. cons_objects and cons_bytes count the
- * ones kept only because a word of the collecting thread's C stack named
- * them (the conservative pin of a collection runtime C entered,
- * gc_pin_c_stack); blocks counts the nursery blocks retained as
- * from-space for any kept object (pinned or conservative), each charged
- * as mature growth until a full collection releases it. */
-typedef struct GcKeepCounters {
-  uint64_t cons_objects;
-  uint64_t cons_bytes;
-  uint64_t blocks;
-} GcKeepCounters;
+/* (keep, E's kept-in-place nursery objects and blocks, Stage 28 W15a2,
+ * went with E in Stage 28 W15d: the statistics line prints its three
+ * fields as 0. S+ counts the blocks it keeps in place in
+ * sticky.kept_blocks.) */
 
 /* sticky (Stage 28 W15b, candidate S, gc-design.md §3.1): inplace is the
  * bytes S's young collections promoted in place (block objects; young
@@ -562,7 +545,7 @@ typedef struct GcKeepCounters {
  * young blocks evacuated, kept_blocks the young blocks kept in place
  * because a young object in them was named imprecisely, copy_blocks the
  * fresh blocks the copies went to (the bytes copied are prom.copied and
- * AvantGcStats.copied_bytes). All 0 under E. */
+ * AvantGcStats.copied_bytes). */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
@@ -589,13 +572,9 @@ typedef struct GcCounters {
   GcPromCounters prom;
   GcSpCounters sp;
   GcSizeCounters size;
-  GcKeepCounters keep;
   GcStickyCounters sticky;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
-  /* The cumulative count of stack words still naming from-space after
-   * the young copy's C-stack rewrite (sm_left, avant_gc_stack.c). */
-  uint64_t stack_left;
 } GcCounters;
 
 /* The settings (Stage 28 W14b2, gc-design.md §1.7, O40): read from the
@@ -612,11 +591,13 @@ typedef struct GcSettings {
   /* AVANT_NURSERY=0: no young generation, full non-moving collections
    * only. */
   int nursery_off;
-  /* The young copy's C-stack pass (avant_gc_stack.c): c_stack_pass (the
-   * copying nursery is on) runs gc_count_c_stack_nursery, and
-   * c_stack_rewrite (the pass, unless AVANT_GC_STACK_REWRITE=0) runs
-   * gc_rewrite_c_stack. */
-  int c_stack_pass;
+  /* AVANT_GC_STACK_REWRITE (with the nursery on, unless 0). The rewrite
+   * of the collecting thread's C stack it switched ran only in E's young
+   * copy and went with E (Stage 28 W15d): S+ never rewrites a C stack
+   * word (gc_pin_c_stack keeps the blocks they name in place), so no
+   * collection reads this. The knob stays, read and validated, until
+   * gc-design.md §4.3's retirement (W16) retires it with C31's
+   * exclusion. */
   int c_stack_rewrite;
   /* AVANT_GC_DEFRAG: mature evacuation in full collections
    * (avant_gc_defrag.c); off, the histogram stays on. */
@@ -628,10 +609,11 @@ typedef struct GcSettings {
   /* AVANT_GC_STRESS (Stage 28 W14b1, gc-design.md §4.2 item 1, the
    * minimal step): a young collection at every outermost
    * avant_gc_defer_enter and at every avant_alloc called from runtime C
-   * (avant_alloc_c), in unshared programs with the nursery on. With the
-   * copying nursery a young collection moves every reached young object,
-   * so a helper that holds a young reference the collector does not know
-   * across one of these points reads a moved or freed object at once. */
+   * (avant_alloc_c), in unshared programs with the nursery on. A young
+   * collection frees every unreached young object and S+ moves the
+   * survivors of the blocks it evacuates, so a helper that holds a young
+   * reference the collector does not know across one of these points
+   * reads a moved or freed object at once. */
   int stress;
 } GcSettings;
 
@@ -682,7 +664,7 @@ typedef struct GcHeap {
   uint64_t return_clock;
   /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
    * bit and bytes (GcSpace). */
-  GcSpace space[4];
+  GcSpace space[SPACE_COUNT];
   /* The mark work list. */
   void **work;
   uint32_t work_n;
@@ -701,17 +683,10 @@ typedef struct GcHeap {
   Block *cur;
   uint8_t *limit;
   Block *fast_block;
-  /* Block bytes in use or cached, against set.heap_max. */
+  /* Block bytes in use or cached, against set.heap_max. (E's copy
+   * reserve, charged against it outside a collection, went with E in
+   * Stage 28 W15d: S+'s copy is optional and stops at the limit.) */
   uint64_t heap_bytes;
-  /* Wave 4 step 2: outside a collection the copy reserve counts as
-   * spent, so fresh block growth stops early enough that the next copy
-   * has its destination room under the heap limit. The charge is soft:
-   * it makes allocation collect earlier, never fail, so the retry after
-   * a collection (reserve_retry) and any allocation inside a collection
-   * (where the reserve is what is being spent) are charged only the true
-   * heap bytes. Cached blocks are already owned and are never refused by
-   * this test. */
-  int reserve_retry;
   /* Set while a no-GC region takes a block past the heap limit (C32). */
   int over_limit;
 
@@ -737,56 +712,39 @@ typedef struct GcHeap {
   uint32_t lchunks_n;
   uint32_t lchunks_cap;
 
-  /* avant_gc_remset.c. The remembered set (object remembering) and,
-   * per entry, whether its last scan found a young field (rem_dirty). */
+  /* avant_gc_remset.c. The remembered set (object remembering). (E's
+   * per-entry rem_dirty and its frontier policy went with E in Stage 28
+   * W15d: S+ empties the set at every young collection.) */
   void **remset;
   uint32_t rem_n;
   uint32_t rem_cap;
-  uint8_t *rem_dirty;
   /* Workers call avant_barrier without the world lock (a fresh array
    * header). The remembered-set realloc is shared. */
   pthread_mutex_t rem_mu;
-  /* Mature objects that still point at a young survivor after this
-   * collection. */
+  /* The keep list: the holders a young collection found naming a young
+   * object that stays young across it (gc_rem_keep_young_holders). */
   void **keep;
   uint32_t keep_n;
   uint32_t keep_cap;
 
-  /* avant_gc_young.c. */
-  int saw_pinned_nursery;
-  /* The noted list (C36, gc-design.md §2.6): every object a young
-   * collection flags MARKED (its "traced this cycle" bit), probe or copy:
-   * nursery objects the probe reaches, mature, large and from-space
-   * objects it scans (trace_mature), remembered objects it scans, copies
-   * and pinned survivors. gc_clear_noted clears exactly those when the
-   * collection ends (after a probe, also when the probe decides to pause
-   * instead of copying), so no MARKED outlives the collection that set it
-   * and no later young collection reads a stale one as "already scanned".
-   * Full collections mark in the side bitmap and never touch MARKED.
-   * Before W14a2 only the probe's nursery marks were noted; the others
-   * were cleared by a walk of every object of every space after a copy
-   * (clear_mark_flags), and not at all after a probe-only pause, a
-   * remembered entry's frontier eviction, or a full collection. */
+  /* avant_gc_sticky.c. The noted list (C36, gc-design.md §2.6): every
+   * object a young collection flags MARKED (its "traced this cycle" bit):
+   * the young objects it reaches, the mature and large objects it scans
+   * (R1'), the remembered objects. gc_clear_noted clears exactly those
+   * when the collection ends, so no MARKED outlives the collection that
+   * set it and no later young collection reads a stale one as "already
+   * scanned". Full collections mark in the side bitmap and never touch
+   * MARKED. Before W14a2 the marks were cleared by a walk of every object
+   * of every space (clear_mark_flags). */
   void **noted;
   uint32_t noted_n;
   uint32_t noted_cap;
-  /* The nursery objects the running young collection keeps in place
-   * (keep_in_place, avant_gc_young.c; Stage 28 W15a2). */
-  void **kept;
-  uint32_t kept_n;
-  uint32_t kept_cap;
-  uint64_t to_bytes;
+  /* A young collection tenures every reached young large object (a fixed
+   * AVANT_YOUNG_MB, or S_LARGE_AGE 1; gc_reclaim_young_large). */
   int force_tenure;
-  int from_mature;
-  int from_heap_slot;
-  /* Set while a remembered object is being scanned: gc_copy_from_slot then
-   * records whether any direct field names a young object afterwards. */
-  int rem_track;
-  int rem_track_dirty;
-  int block_has_pin;
 
   /* avant_gc_sticky.c and the young allocator (candidate S, Stage 28
-   * W15b; empty under E). young_blocks: the young blocks, every block
+   * W15b). young_blocks: the young blocks, every block
    * young allocation took a hole in since the last collection (each has
    * young_hi set). part_blocks: blocks of the mature list young
    * allocation may take next, ones with free lines among live ones (the
@@ -812,9 +770,6 @@ typedef struct GcHeap {
   Block *splus_dst;
   uint64_t splus_copied0;
 
-  /* avant_gc_mark.c. */
-  uint64_t mark_sum;
-
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
   BlockSet def_release;
@@ -828,22 +783,15 @@ typedef struct GcHeap {
   uint64_t *pin_slots;
   size_t pin_slots_cap;
 
-  /* avant_gc_verify.c. vnoted: the objects verify_trace flagged
-   * FORWARDED (its visited bit), cleared when gc_verify_young_copy ends,
-   * before the young copy discards from-space (W14a2: no whole-heap
-   * clearing walk follows any more). */
+  /* avant_gc_verify.c. vnoted: the objects verify_trace flagged VSEEN
+   * (its visited bit), cleared when each check ends (W14a2: no
+   * whole-heap clearing walk follows any more). */
   void **vnoted;
   size_t vnoted_n;
   size_t vnoted_cap;
-  /* A word the type map does not call a reference, in an object the
-   * verifier reached, that is exactly the start of an unpinned object in
-   * from-space (moved or about to be discarded): the program stored a
-   * reference where the collector does not look (a wrong or missing type
-   * map, audit-abi 8.1). Heap strings (STRMETA) hold text and are
-   * skipped; a scalar equal to such an address by chance is the only
-   * false positive. */
+  /* The reports of gc_verify_sticky (S+'s checks after a young
+   * collection's trace and copy). */
   uint64_t verify_untraced;
-  uint64_t verify_left_seen;
   /* The remembered-set check (gc_verify_remembered): the objects R1'
    * names this cycle (MARKED) and the missing barriers reported. */
   void **rnamed;
@@ -857,8 +805,8 @@ typedef struct GcHeap {
   /* avant_gc_collect.c. */
   int inited;
   int collecting;
-  /* Set while a stress point's young collection runs (it always
-   * copies). */
+  /* Set while a stress point's young collection runs (it makes no
+   * sizing decision). */
   int stress_now;
   /* C32 (Stage 28 W14b1, gc-design.md §5.4): an allocation inside a no-GC
    * (defer) region that went past AVANT_HEAP_MAX_MB. The full collection
@@ -875,9 +823,6 @@ typedef struct GcHeap {
   /* The part of mature_since_full that young collections promoted (for
    * the full collection's cause, ctr.why). */
   uint64_t promoted_since_full;
-  /* The copy reserve (Wave 4 step 2): the room the next young copy needs,
-   * charged as spent by heap-limit decisions outside a collection. */
-  uint64_t copy_reserve;
   /* The last young collection's pause per surviving byte (ns), for
    * young_size (gc-design.md §5.2). */
   double young_per_byte;
@@ -926,8 +871,8 @@ typedef struct GcThread {
   /* Nonzero while runtime C has entered the collector (avant_alloc_c, a
    * stress point at a defer entry, a named safepoint's slow path): only
    * then does a young collection pin the young objects words of this
-   * thread's C stack name (gc_pin_c_stack, Stage 28 W15a2) and run the
-   * conservative C-stack rewrite (avant_gc_young.c, C37). */
+   * thread's C stack name (gc_pin_c_stack, Stage 28 W15a2: S+ keeps
+   * their blocks in place; C37's rewrite, E's, went with E in W15d). */
   int c_entry;
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
@@ -983,8 +928,6 @@ Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
 void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
-void *gc_mature_alloc(size_t total);
-AvantHeader *gc_to_alloc(size_t total);
 
 /* avant_gc_los.c */
 size_t gc_large_bytes(const AvantHeader *h);
@@ -998,47 +941,18 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 
 /* avant_gc_remset.c */
 void gc_keep_add(void *obj);
-void gc_rem_commit_kept(void);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
 
-/* The young generation's candidate (Stage 28 W15a2, gc-design.md §3.4:
- * "S and E behind one internal switch"). A build-time constant, not a
- * knob: the two candidates differ in the young collection and, for S,
- * in where the allocation slow path bumps (holes of young blocks), so a
- * run-time choice would put a branch on paths every program takes and
- * keep the other candidate's code in every binary; with a constant the
- * chosen candidate costs nothing and the other is not compiled. Neither
- * value is ABI: no symbol, header field or export depends on it, and the
- * generated code is the same for both (the compiler links whichever
- * runtime/build/avant_rt.o was built, so both are measured on one
- * compiler build, §3.4 rule 0). Everything else is shared by both:
- * the policy (gc_maybe_collect, young_size, the triggers), the budget,
- * the statistics and the verifier's hooks (gc_collect). The selection
- * point is gc_young_collect (avant_gc_collect.c), the young branch of
- * gc_collect: it runs the candidate's young collection, which reports
- * its survival (copied and kept-in-place bytes) through the counters
- * gc_collect reads. runtime/build.sh builds S+ (S with GC_STICKY_COPY,
- * below) by default, S with AVANT_GC_CANDIDATE=S and E with
- * AVANT_GC_CANDIDATE=E in its environment (-DGC_CANDIDATE=...; Stage 28
- * W15b: S chosen by gc-design.md §3.4's rules; W15c: S+ by D230's
- * condition). */
-#define GC_CANDIDATE_E 1
-#define GC_CANDIDATE_S 2
-#ifndef GC_CANDIDATE
-#define GC_CANDIDATE GC_CANDIDATE_S
-#endif
-#if GC_CANDIDATE != GC_CANDIDATE_E && GC_CANDIDATE != GC_CANDIDATE_S
-#error "GC_CANDIDATE: GC_CANDIDATE_E or GC_CANDIDATE_S"
-#endif
-
-/* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): beside
- * GC_CANDIDATE, 1 builds candidate S's variant S+, the opportunistic
+/* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): 1 builds
+ * S+, the young generation (D233): candidate S with the opportunistic
  * young copy (avant_gc_sticky.c: survivors of young blocks are copied out
- * when every reference to them is precise); 0 builds plain S. S+ is the
- * default (D230's condition, the W15c record); E needs 0.
- * Like GC_CANDIDATE a build-time constant, not ABI (runtime/build.sh's
- * AVANT_GC_CANDIDATE=S+). SPLUS_SPARSE_LINES: a young block that held no
+ * when every reference to them is precise); 0 builds plain S, candidate
+ * S alone (the in-place young collection), kept as an internal constant
+ * because it costs one compile-time condition per S+ site (Stage 28
+ * W15d: E, the other candidate, and runtime/build.sh's
+ * AVANT_GC_CANDIDATE knob are deleted, D232). A build-time constant, not
+ * ABI. SPLUS_SPARSE_LINES: a young block that held no
  * mature line is evacuated when its survivors' bytes fill at most this
  * many of its 128 lines. Measured at 32, 64, 96, 112 and 128 (Stage 28
  * W15c record, thr-v1 to thr-v3): 128, every such block, is the one
@@ -1050,14 +964,7 @@ void gc_rem_keep_young_holders(void);
  * have moved (Calculator::Interpreter 27 -> 44 MB, as under E). A block
  * that holds mature lines is never evacuated: it cannot be freed. */
 #ifndef GC_STICKY_COPY
-#if GC_CANDIDATE == GC_CANDIDATE_S
 #define GC_STICKY_COPY 1
-#else
-#define GC_STICKY_COPY 0
-#endif
-#endif
-#if GC_STICKY_COPY && GC_CANDIDATE != GC_CANDIDATE_S
-#error "GC_STICKY_COPY needs GC_CANDIDATE_S"
 #endif
 #ifndef SPLUS_SPARSE_LINES
 #define SPLUS_SPARSE_LINES 128
@@ -1072,21 +979,11 @@ void gc_rem_keep_young_holders(void);
 #define SPLUS_PURE 3
 #define SPLUS_PART 5
 
-/* avant_gc_young.c: the noted list (both candidates) and pinned-object
- * lookup for defragmentation; then candidate E, the evacuating young
- * generation (compiled only under E). */
+/* avant_gc_sticky.c: the young generation (S+; candidate S with
+ * GC_STICKY_COPY 0) and the noted list, and the young allocator's block
+ * lists in avant_gc_alloc.c. */
 void gc_note_marked(void *payload);
 void gc_clear_noted(void);
-void gc_keep_conservative(void *p);
-void *gc_copy_nursery(void *p);
-void gc_copy_from_slot(void **slot);
-void gc_gen_young_copy(void);
-int gc_block_has_pinned(Block *b);
-void gc_young_copy_out(int tenure);
-
-/* avant_gc_sticky.c: candidate S, the in-place young generation
- * (compiled only under S; Stage 28 W15b), and the young allocator's
- * block lists in avant_gc_alloc.c. */
 void gc_sticky_collect(int tenure);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);
@@ -1096,7 +993,6 @@ void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);
 void gc_mark_roots(void);
 int gc_keep_if_live(Block *b);
 void gc_filter_blocks(Block **list, int (*keep)(Block *));
-void gc_sum_marked_one(AvantHeader *h, Block *b);
 
 /* avant_gc_defrag.c */
 void gc_block_set_add(BlockSet *s, Block *b);
@@ -1108,19 +1004,16 @@ void gc_defrag_release(void);
 /* avant_gc_stack.c */
 void gc_note_c_stack_blocks(void);
 void gc_pin_c_stack(void);
-void gc_rewrite_c_stack(void);
-void gc_count_c_stack_nursery(void);
 
 /* avant_gc_verify.c */
-void gc_verify_young_copy(void);
 void gc_verify_no_stale_marks(void);
 void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 void gc_verify_sticky(void);
 
 /* avant_gc_collect.c */
-/* A collection (O42): GC_YOUNG copies the nursery's live objects (it
- * always moves them, so allow_move must be 1); GC_FULL marks and sweeps
+/* A collection (O42): GC_YOUNG collects the young generation (S+ may
+ * move young objects, so allow_move must be 1); GC_FULL marks and sweeps
  * the whole heap and, when allow_move is 1 and AVANT_GC_DEFRAG is on,
  * evacuates sparse mature blocks (defragmentation). A caller whose C
  * frames may hold references the collector cannot rewrite passes 0. */
@@ -1231,24 +1124,16 @@ static inline void mark_lines(Block *b, size_t off, size_t total) {
 }
 
 /* Is the object at START (its block B, or its large header OL, as
- * gc_object_payload gives them) young? Under E the space of its block
- * says so (nursery and to-space blocks hold only young objects); under
- * S a young object lies in any block, among mature ones, and only its
- * YOUNG flag says so. A large object is young by its flag under both. */
+ * gc_object_payload gives them) young? A young object lies in any block,
+ * among mature ones, and only its YOUNG flag says so (since Stage 28
+ * W15b; under E, deleted in W15d, a block's space said so). */
 static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol) {
-#if GC_CANDIDATE == GC_CANDIDATE_S
   (void)b;
   (void)ol;
   return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
-#else
-  if (ol) {
-    return (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
-  }
-  return b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
-#endif
 }
 
-/* S_INLINE_HOLES (candidate S, Q11; Stage 28 W15b item 3): 1 (the
+/* S_INLINE_HOLES (Q11; Stage 28 W15b item 3): 1 (the
  * default), the inline allocation path runs in holes of recycled blocks
  * as in whole free blocks: the slow path sets avant_gc_bump, avant_gc_limit
  * and avant_gc_block to the hole (the generated code stores its cursor
@@ -1267,7 +1152,7 @@ static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol
  * object, large ones included, lies in the reservation. The header's
  * MARKED bit is the young collection's alone ("traced this cycle"), and
  * every MARKED a young collection sets is cleared when it ends (the
- * noted list, avant_gc_young.c). */
+ * noted list, avant_gc_sticky.c). */
 static inline int full_marked(const AvantHeader *h) {
   uint64_t g = (uint64_t)((uintptr_t)h - (uintptr_t)gc_heap.base) >> 3;
   return (int)((gc_heap.marks[g >> 6] >> (g & 63)) & 1ULL);

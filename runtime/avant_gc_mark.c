@@ -29,12 +29,10 @@ static void mark(void *p) {
     return;
   }
   full_set_mark(h);
-#if GC_CANDIDATE == GC_CANDIDATE_S
-  /* Candidate S (Stage 28 W15b): a full collection promotes every object
-   * it reaches, so no object is young after it (its remembered set and
-   * young budget are empty, gc_sticky_full_end). */
+  /* A full collection promotes every object it reaches (Stage 28 W15b),
+   * so no object is young after it (its remembered set and young budget
+   * are empty, gc_sticky_full_end). */
   h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
-#endif
   gc_mark_object_lines(start);
   gc_heap.live += gc_obj_total(h);
   gc_work_push(start);
@@ -115,9 +113,3 @@ void gc_filter_blocks(Block **list, int (*keep)(Block *)) {
   *list = kept;
 }
 
-void gc_sum_marked_one(AvantHeader *h, Block *b) {
-  (void)b;
-  if (full_marked(h)) {
-    gc_heap.mark_sum += gc_obj_total(h);
-  }
-}
