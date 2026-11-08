@@ -19,6 +19,10 @@ static void buf_grow(AvantBuf *b, int32_t need) {
     }
     ncap *= 2;
   }
+  /* RC1: the allocation may collect; b is a handle, b->data is read
+   * after it (RC2). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &b);
   uint8_t *ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
   if (b->data && b->size > 0) {
     memcpy(ndata, b->data, (size_t)b->size);
@@ -46,22 +50,21 @@ void *avant_buf_new(int32_t cap) {
   return b;
 }
 
-/* A named safepoint (avant_gc.h, Stage 28 W15a1), reached from the
- * avant_buf_push_* rows and avant_buf_append. p may be derived from a
- * string (push_slice: s + i, an interior address, which the safepoint's
- * root slot relocates like any interior slot) or name a caller's stack
- * buffer (push_byte, push_fmt_*: not a heap address, left alone). Its
- * callers read neither b nor p after the call. The region after the
- * safepoint enters quietly (the safepoint was its collection point). */
+/* The slow path of the avant_buf_push_* rows and avant_buf_append (RC1,
+ * avant_gc.h; Stage 28 W16a, it was a named safepoint). p may be derived
+ * from a string (push_slice: s + i, an interior address, which its slot
+ * relocates with its offset) or name a caller's stack buffer (push_byte,
+ * push_fmt_*: no heap address, left alone); both b and p are handles
+ * across the growth's allocation. */
 static void buf_append_slow(AvantBuf *b, const void *p, int32_t n) {
-  gc_safepoint_entry(b, p);
-  avant_gc_quiet_defer_enter();
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &b);
+  AVANT_GC_ROOT(1, &p);
   buf_reserve(b, n);
   if (p && n > 0 && b->data) {
     memcpy(b->data + b->size, p, (size_t)n);
     b->size += n;
   }
-  avant_gc_defer_leave();
 }
 
 void avant_buf_append(void *buf, const void *p, int32_t n) {

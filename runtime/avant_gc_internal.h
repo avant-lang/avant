@@ -560,7 +560,9 @@ typedef struct GcPromCounters {
  * counts the slow paths that could collect (the budget spent, stress or
  * a pending heap-limit collection, in an unshared program outside every
  * region), collections the ones that ran a collection the policy asked
- * for (a stress point's own young collection is not counted). */
+ * for (a stress point's own young collection is not counted). The
+ * safepoints went in Stage 28 W16a (RC1: helpers collect at their own
+ * allocations); the fields stay on the statistics line and print 0. */
 typedef struct GcSpCounters {
   uint64_t calls;
   uint64_t collections;

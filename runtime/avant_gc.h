@@ -17,9 +17,9 @@
  * code uses; the declarations are repeated so this file states the
  * collector's surface on its own, and a mismatch with avant_rt.h is a
  * compile error. g_avant_shared, avant_gc_quiet_defer_enter,
- * avant_alloc_c and the safepoint (avant_gc_safepoint_slow,
- * avant_gc_safepoint_force, gc_safepoint_entry) are the names here
- * avant_rt.h does not ship.
+ * avant_alloc_c, the no-GC region (avant_gc_nogc_begin/end) and the
+ * handle scopes (AvantGcFrame, avant_gc_top, AVANT_GC_SCOPE) are the
+ * names here avant_rt.h does not ship.
  *
  * What the collector does at these calls, as the callers rely on it
  * today (a description of the current behavior, not a new contract; W13
@@ -163,27 +163,6 @@
  *     avant_llvm.c dup_bytes                       open
  *     g_last_key (avant_hash.c)                    a runtime root
  *                                                  (avant_gc_add_root)
- *
- *   The named safepoints (Stage 28 W15a1, gc-design.md section 5.1, the
- *   interim RC1 replaces; W16a item 2 removes them): a few helpers the call table
- *   calls *collects* begin with gc_safepoint_entry(a, ...), naming every
- *   heap reference argument the helper reads after it (one to three):
- *   the hash setters avant_hash_set_i32, _set_str, _set_i32k_i32,
- *   avant_hash_inc_slice, buf_append_slow (behind the avant_buf_push_*
- *   rows), and the array entries avant_array_push_slot, _push_ptr,
- *   _push_i32 and avant_array_reserve. When the young budget is spent
- *   (or under AVANT_GC_STRESS=1 always, or with a heap-limit collection
- *   pending) and only in an unshared program, outside every defer
- *   region and collection, the safepoint runs the collection the policy
- *   asks for (gc_maybe_collect; a young one under stress) with the named
- *   arguments as root slots of a frame of its own, so a moved argument is
- *   read back from that slot into the helper's parameter: the helper's
- *   C locals hold no stale reference after it, and the collection does
- *   not rewrite the C stack (it needs no conservative rewrite). The
- *   caller rooted its references across the call like any collecting
- *   call (compiler/mir/gc.av). The safepoint is the helper's first
- *   statement: before it forms a derived pointer or copies an argument
- *   into another local.
  *
  *   One young budget (gc-design.md section 5.1): avant_nursery_held
  *   counts every young byte, the nursery's and the young large
@@ -353,46 +332,5 @@ static inline void avant_gc_scope_close_(AvantGcFrame *f) {
  * calling avant_alloc itself. */
 __attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
 #define avant_alloc(nbytes, type_id) avant_alloc_c((nbytes), (type_id))
-
-/* The named safepoints (the contract above; Stage 28 W15a1). The test is
- * inline: the young budget spent, or avant_gc_safepoint_force (set under
- * AVANT_GC_STRESS=1, and while a heap-limit collection is pending). The
- * slow path takes the arguments by value in an array it roots, and
- * gc_safepoint_entry writes them back, so the helper's parameters name
- * the objects where the collection left them. */
-extern __attribute__((visibility("hidden"))) uint32_t avant_gc_safepoint_force;
-__attribute__((visibility("hidden"))) void avant_gc_safepoint_slow(void **roots, uint32_t n);
-#define GC_SAFEPOINT_DUE_()                                                         \
-  __builtin_expect(avant_nursery_held >= avant_young_bytes || avant_gc_safepoint_force != 0, 0)
-#define GC_SAFEPOINT_1_(a)                                                          \
-  do {                                                                              \
-    if (GC_SAFEPOINT_DUE_()) {                                                      \
-      void *gc_sp_r_[1] = {(void *)(a)};                                            \
-      avant_gc_safepoint_slow(gc_sp_r_, 1);                                         \
-      (a) = gc_sp_r_[0];                                                            \
-    }                                                                               \
-  } while (0)
-#define GC_SAFEPOINT_2_(a, b)                                                       \
-  do {                                                                              \
-    if (GC_SAFEPOINT_DUE_()) {                                                      \
-      void *gc_sp_r_[2] = {(void *)(a), (void *)(b)};                               \
-      avant_gc_safepoint_slow(gc_sp_r_, 2);                                         \
-      (a) = gc_sp_r_[0];                                                            \
-      (b) = gc_sp_r_[1];                                                            \
-    }                                                                               \
-  } while (0)
-#define GC_SAFEPOINT_3_(a, b, c)                                                    \
-  do {                                                                              \
-    if (GC_SAFEPOINT_DUE_()) {                                                      \
-      void *gc_sp_r_[3] = {(void *)(a), (void *)(b), (void *)(c)};                  \
-      avant_gc_safepoint_slow(gc_sp_r_, 3);                                         \
-      (a) = gc_sp_r_[0];                                                            \
-      (b) = gc_sp_r_[1];                                                            \
-      (c) = gc_sp_r_[2];                                                            \
-    }                                                                               \
-  } while (0)
-#define GC_SAFEPOINT_PICK_(_1, _2, _3, NAME, ...) NAME
-#define gc_safepoint_entry(...)                                                     \
-  GC_SAFEPOINT_PICK_(__VA_ARGS__, GC_SAFEPOINT_3_, GC_SAFEPOINT_2_, GC_SAFEPOINT_1_, _)(__VA_ARGS__)
 
 #endif
