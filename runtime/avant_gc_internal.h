@@ -81,7 +81,9 @@
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
+#ifndef YOUNG_BYTES_DEFAULT
 #define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
+#endif
 /* S_LARGE_AGE (Stage 28 W15c item 1, O88; W15d item 1): the young
  * collections a young large object lives through before it is promoted.
  * 2 keeps a reached one young at its first survival (SURVIVED) and
