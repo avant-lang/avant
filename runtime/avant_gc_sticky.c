@@ -464,17 +464,41 @@ static int sweep_lines(Block *b, int lo, int hi) {
  * bit and forward), else P. Only addresses in an evacuated block (P's
  * block or, for a payload that starts a block, its header's) can. *AGED
  * is set when the copy is an aged one (still young, YOUNG_AGE 2). */
+/* Block BI had objects moved out (the map covers the heap as committed
+ * when the fix-up began; blocks past it are new, never evacuated). */
+static inline int evac_at(uint64_t bi) {
+  return bi < gc_heap.evac_map_n && gc_heap.evac_map[bi];
+}
+
 static void *splus_new_addr(void *p, int *aged) {
   uint8_t *a = (uint8_t *)p;
-  Block *b1 = block_of(a);
-  Block *b2 = a ? block_of(a - sizeof(AvantHeader)) : NULL;
+  uintptr_t off = (uintptr_t)a - (uintptr_t)gc_heap.base;
+  uint64_t bi;
   Block *ob = NULL;
   AvantHeader *ol = NULL;
   void *start;
   void *to;
-  if (!((b1 && (b1->kept == SPLUS_EVAC || b1->kept == SPLUS_PART)) ||
-        (b2 && (b2->kept == SPLUS_EVAC || b2->kept == SPLUS_PART)))) {
+  /* The evacuated-block map (O93): P's block, or, for a payload that
+   * starts a block, its header's (the block before). */
+  if (off >= gc_heap.committed) {
     return p;
+  }
+  bi = (uint64_t)off >> BLOCK_SHIFT;
+  if (!evac_at(bi) && !((off & (BLOCK_SIZE - 1)) == 0 && bi > 0 && evac_at(bi - 1))) {
+    return p;
+  }
+  /* An exact start (nearly every reference): its header's start bit,
+   * without the interior lookup. */
+  if ((off & (ALIGN - 1)) == 0 && off >= sizeof(AvantHeader) && start_bit_at(a - sizeof(AvantHeader))) {
+    const AvantHeader *h = (const AvantHeader *)(a - sizeof(AvantHeader));
+    if (!(h->flags & AVANT_FLAG_FORWARDED)) {
+      return p;
+    }
+    to = gc_forward_of(h);
+    if (avant_header(to)->flags & AVANT_FLAG_YOUNG) {
+      *aged = 1;
+    }
+    return to;
   }
   start = gc_object_payload(p, &ob, &ol);
   if (!start) {
@@ -568,6 +592,20 @@ static void splus_fix_slot(void **slot) {
 static void splus_fix(void) {
   ThreadReg *t;
   uint32_t i;
+  {
+    uint64_t need = gc_heap.committed >> BLOCK_SHIFT;
+    if (need > gc_heap.evac_map_n) {
+      gc_heap.evac_map = gc_xrealloc(gc_heap.evac_map, (size_t)need);
+      memset(gc_heap.evac_map + gc_heap.evac_map_n, 0, (size_t)(need - gc_heap.evac_map_n));
+      gc_heap.evac_map_n = need;
+    }
+    for (i = 0; i < gc_heap.young_blocks_n; i++) {
+      Block *b = gc_heap.young_blocks[i];
+      if (b->kept == SPLUS_EVAC || b->kept == SPLUS_PART) {
+        gc_heap.evac_map[(uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT] = 1;
+      }
+    }
+  }
   for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
@@ -740,6 +778,9 @@ static void splus_finish(void) {
             b->start[w] &= ~(1ULL << bit);
           }
         }
+      }
+      if ((uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT < gc_heap.evac_map_n) {
+        gc_heap.evac_map[(uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT] = 0;
       }
     }
   }

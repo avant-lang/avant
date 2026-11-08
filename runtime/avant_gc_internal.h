@@ -804,6 +804,13 @@ typedef struct GcHeap {
   uint32_t surv_blocks_n;
   uint32_t surv_blocks_cap;
   uint64_t aged_now;
+  /* One byte per block of the committed heap, 1 for a block the running
+   * young collection moved objects out of (SPLUS_EVAC, SPLUS_PART):
+   * splus_fix's test of every field it rereads, instead of two block
+   * records (Stage 28 W15d, O93). Set before the fix-up, cleared by
+   * splus_finish. */
+  uint8_t *evac_map;
+  uint64_t evac_map_n;
 
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
