@@ -32,7 +32,35 @@
 #
 # TSV columns: task status wall_s rss_kb inprog_s exit  (status ok|err|fail)
 # Each tsv starts with "# key: value" lines (label, governor, date).
+#
+# Every input is checked before anything is written (O71, Stage 28 W15a2):
+# a RUN_JS that does not exist or lists no task, a BIN_DIR or DIR that is
+# not a directory, a REF_DIR without a reference tsv, an AVANT that is
+# neither a tsv nor a results directory holding lr-avant.tsv or
+# runtime.tsv, or a PUBLISHED.js that does not exist stops the script
+# with "lr-table.sh: ..." on stderr and status 1, and a table whose Avant
+# input has no task row is refused the same way. Before, a relative path
+# that did not resolve (../LangArena from a scratch worktree) wrote an
+# empty table and exited 0.
 set -u
+
+die() {
+  echo "lr-table.sh: $*" >&2
+  exit 1
+}
+
+need_runjs() { # RUN_JS
+  [ -f "$1" ] || die "RUN_JS $1: no such file"
+  [ -n "$(tasks "$1" | head -n 1)" ] || die "RUN_JS $1: lists no task"
+}
+
+need_dir() { # WHAT DIR
+  [ -d "$2" ] || die "$1 $2: not a directory"
+}
+
+rows() { # TSV -> the number of task rows
+  awk -F'\t' '!/^#/ && $1 != "task" && NF >= 2 { n++ } END { print n + 0 }' "$1"
+}
 
 tasks() { # RUN_JS -> "name<TAB>checksum" lines
   awk -F'"' '/"name":/ { n = $4 } /"checksum":/ { c = $3; gsub(/[^0-9]/, "", c); print n "\t" c }' "$1"
@@ -49,7 +77,9 @@ header() { # LABEL
 cmd=${1:-}; [ $# -gt 0 ] && shift
 case "$cmd" in
 ref)
+  [ $# -ge 5 ] || die "ref needs LABEL DIR OUT.tsv RUN_JS CMD..."
   label=$1 dir=$2 out=$3 runjs=$4; shift 4
+  need_dir DIR "$dir"; need_runjs "$runjs"
   raw="$out.raw"; mkdir -p "$raw"
   header "$label" >"$out"
   tasks "$runjs" | while IFS="$(printf '\t')" read -r name sum; do
@@ -67,7 +97,9 @@ ref)
     echo "$label $name $st $w s $rss KB" >&2
   done ;;
 avant)
+  [ $# -eq 3 ] || die "avant needs BIN_DIR RUN_JS OUT.tsv"
   bindir=$1 runjs=$2 out=$3
+  need_dir BIN_DIR "$bindir"; need_runjs "$runjs"
   raw="$out.raw"; mkdir -p "$raw"
   header "Avant" >"$out"
   tasks "$runjs" | while IFS="$(printf '\t')" read -r name sum; do
@@ -86,7 +118,16 @@ avant)
     echo "Avant $name $st $w s $rss KB" >&2
   done ;;
 table)
+  [ $# -ge 2 ] && [ $# -le 3 ] || die "table needs REF_DIR AVANT [PUBLISHED.js]"
   refdir=$1 av=$2 pub=${3:-}
+  need_dir REF_DIR "$refdir"
+  ls "$refdir"/*.tsv >/dev/null 2>&1 || die "REF_DIR $refdir: no reference tsv"
+  if [ -d "$av" ]; then
+    [ -f "$av/lr-avant.tsv" ] || [ -f "$av/runtime.tsv" ] || die "AVANT $av: neither lr-avant.tsv nor runtime.tsv"
+  else
+    [ -f "$av" ] || die "AVANT $av: no such file or directory"
+  fi
+  [ -z "$pub" ] || [ -f "$pub" ] || die "PUBLISHED.js $pub: no such file"
   avsrc=harness
   wd=$(mktemp -d); trap 'rm -rf "$wd"' EXIT
   if [ -d "$av" ]; then
@@ -101,6 +142,7 @@ table)
   else
     avsrc=lr
   fi
+  [ "$(rows "$av")" -gt 0 ] || die "AVANT $av: no task row"
   pubtsv=/dev/null
   notes=/dev/null; [ -f "$refdir/notes.txt" ] && notes=$refdir/notes.txt
   if [ -n "$pub" ]; then
