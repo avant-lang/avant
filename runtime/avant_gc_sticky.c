@@ -231,15 +231,94 @@ static void rem_empty(void) {
  * has clear start bits for the inline allocation path. A dead object
  * whose header lies in a live line keeps its start bit: nothing infers
  * liveness from start bits. */
-static void sweep_lines(Block *b, int lo, int hi) {
-  int i;
-  for (i = lo; i < hi; i++) {
-    if (!line_live(b, i)) {
-      b->start[i >> 1] &= ~(0xffffffffULL << (32 * (i & 1)));
-      gc_heap.ctr.sticky.freed_lines++;
+/* Word-wise (Stage 28 W15c, O87): the block's 128 line marks are read 8
+ * at a time and compared with the epoch replicated into every byte; one
+ * pass frees the young range's dead lines (their start bits cleared, two
+ * lines per start word), counts the block's live lines and finds its
+ * first hole, which the byte-wise sweep, gc_block_live_lines and
+ * gc_reset_block_bump's find_hole did in three passes. Returns the live
+ * line count and leaves the block's bump and limit on its first hole (as
+ * gc_reset_block_bump does: search 0; a full block's cursor at its end). */
+#define LINE_WORDS (LINES_PER_BLOCK / 8)
+static inline uint64_t live_bytes_mask(uint64_t marks, uint64_t epoch8) {
+  /* The high bit of every byte of MARKS equal to the epoch (exact: no
+   * borrow crosses a byte). */
+  uint64_t x = marks ^ epoch8;
+  uint64_t t = (x & 0x7f7f7f7f7f7f7f7fULL) + 0x7f7f7f7f7f7f7f7fULL;
+  return ~(t | x | 0x7f7f7f7f7f7f7f7fULL);
+}
+
+static int sweep_lines(Block *b, int lo, int hi) {
+  uint64_t epoch8 = 0x0101010101010101ULL * (uint64_t)gc_heap.line_epoch;
+  uint64_t live_bits[LINE_WORDS];
+  uint64_t range_lo = (uint64_t)lo;
+  uint64_t range_hi = (uint64_t)hi;
+  int live = 0;
+  int k;
+  int first_free = -1;
+  int hole_end = LINES_PER_BLOCK;
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t m;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    live_bits[k] = live_bytes_mask(m, epoch8);
+    /* The count of set high bits (no popcount instruction is assumed:
+     * without -mpopcnt __builtin_popcountll is a library call). */
+    live += (int)(((live_bits[k] >> 7) * 0x0101010101010101ULL) >> 56);
+  }
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t freeb = ~live_bits[k] & 0x8080808080808080ULL;
+    int base = 8 * k;
+    if (first_free < 0 && freeb) {
+      first_free = base + (__builtin_ctzll(freeb) >> 3);
+    }
+    /* The young range's free lines in this group: clear their start bits
+     * (lines 2j and 2j + 1 share start word j: the low and high half). */
+    if (freeb == 0x8080808080808080ULL && (uint64_t)base >= range_lo && (uint64_t)base + 8 <= range_hi) {
+      /* The whole group is free and young: four start words. */
+      b->start[base >> 1] = 0;
+      b->start[(base >> 1) + 1] = 0;
+      b->start[(base >> 1) + 2] = 0;
+      b->start[(base >> 1) + 3] = 0;
+      gc_heap.ctr.sticky.freed_lines += 8;
+    } else if ((uint64_t)base + 8 > range_lo && (uint64_t)base < range_hi && freeb) {
+      int j;
+      for (j = 0; j < 4; j++) {
+        uint64_t pair = (freeb >> (16 * j)) & 0x8080ULL;
+        int l0 = base + 2 * j;
+        uint64_t clear = 0;
+        if ((pair & 0x80ULL) && (uint64_t)l0 >= range_lo && (uint64_t)l0 < range_hi) {
+          clear |= 0xffffffffULL;
+          gc_heap.ctr.sticky.freed_lines++;
+        }
+        if ((pair & 0x8000ULL) && (uint64_t)(l0 + 1) >= range_lo && (uint64_t)(l0 + 1) < range_hi) {
+          clear |= 0xffffffff00000000ULL;
+          gc_heap.ctr.sticky.freed_lines++;
+        }
+        b->start[l0 >> 1] &= ~clear;
+      }
     }
   }
+  if (first_free >= 0) {
+    /* The hole ends at the first live line after it. */
+    int l = first_free + 1;
+    while (l < LINES_PER_BLOCK) {
+      int kk = l >> 3;
+      uint64_t lb = live_bits[kk] >> (8 * (l & 7));
+      if (lb) {
+        hole_end = l + (__builtin_ctzll(lb) >> 3);
+        break;
+      }
+      l = (kk + 1) * 8;
+    }
+    b->bump = b->base + (size_t)first_free * LINE_SIZE;
+    b->limit = b->base + (size_t)hole_end * LINE_SIZE;
+  } else {
+    b->bump = b->base + BLOCK_SIZE;
+    b->limit = b->base + BLOCK_SIZE;
+  }
+  b->search = first_free >= 0 ? 0 : LINES_PER_BLOCK;
   gc_heap.ctr.sticky.blocks++;
+  return live;
 }
 
 /* A young collection under S (gc_young_collect's S arm): the trace, the
@@ -273,11 +352,9 @@ void gc_sticky_collect(void) {
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       int live;
       b = gc_heap.young_blocks[i];
-      sweep_lines(b, b->young_lo, b->young_hi);
+      live = sweep_lines(b, b->young_lo, b->young_hi);
       b->young_lo = 0;
       b->young_hi = 0;
-      live = gc_block_live_lines(b);
-      gc_reset_block_bump(b);
       if (live == 0) {
         gc_sticky_push(&gc_heap.free_blocks, &gc_heap.free_blocks_n, &gc_heap.free_blocks_cap, b);
       } else if (live < LINES_PER_BLOCK) {
