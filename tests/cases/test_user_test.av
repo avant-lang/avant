@@ -248,7 +248,17 @@ fn test_user_test(c: Checks) {
     ms = ut_read_ms("${clock}/mid.start")
     me = ut_read_ms("${clock}/mid.end")
     c.expect(ls >= 0 && le > ls && rs >= 0 && re > rs, "serial intervals were recorded")
-    c.expect(ls < re && rs < le, "non-exclusive files overlap")
+    // Under an outer AVANT_GC_STRESS the runner's compiles of the two files
+    // (the compiler collecting at every runtime helper call) can outlast
+    // the first file's three one-second naps, so whether their runs
+    // overlap measures the stressed compiler, not the scheduler (Stage 28
+    // W15a2: twice in four stress passes once C-stack pinning made the
+    // stressed compiler slower). The parallel and exclusive checks hold.
+    if gc_stress_outer() {
+      c.skip("non-exclusive files overlap", "outer AVANT_GC_STRESS: the stressed compiler's compile time decides the overlap")
+    } else {
+      c.expect(ls < re && rs < le, "non-exclusive files overlap")
+    }
     c.expect(pas >= 0 && pae > pas && pbs >= 0 && pbe > pbs, "parallel intervals were recorded")
     c.expect(pas < pbe && pbs < pae, "parallel tests in one file overlap")
     c.expect(ms >= 0 && me > ms, "exclusive interval was recorded")
