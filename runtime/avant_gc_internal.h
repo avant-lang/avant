@@ -878,7 +878,34 @@ void gc_keep_add(void *obj);
 void gc_rem_commit_kept(void);
 void gc_rem_full_scrub(void);
 
-/* avant_gc_young.c */
+/* The young generation's candidate (Stage 28 W15a2, gc-design.md §3.4:
+ * "S and E behind one internal switch"). A build-time constant, not a
+ * knob: the two candidates differ in the young collection and, for S,
+ * in where the allocation slow path bumps (holes of young blocks), so a
+ * run-time choice would put a branch on paths every program takes and
+ * keep the other candidate's code in every binary; with a constant the
+ * chosen candidate costs nothing and the other is not compiled. Neither
+ * value is ABI: no symbol, header field or export depends on it, and the
+ * generated code is the same for both (the compiler links whichever
+ * runtime/build/avant_rt.o was built, so both are measured on one
+ * compiler build, §3.4 rule 0). Everything else is shared by both:
+ * the policy (gc_maybe_collect, young_size, the triggers), the budget,
+ * the statistics and the verifier's hooks (gc_collect). The selection
+ * point is gc_young_collect (avant_gc_collect.c), the young branch of
+ * gc_collect: it runs the candidate's young collection, which reports
+ * its survival (copied and kept-in-place bytes) through the counters
+ * gc_collect reads. Build another candidate with -DGC_CANDIDATE=GC_CANDIDATE_S
+ * (W15b adds it; until then only E exists). */
+#define GC_CANDIDATE_E 1
+#define GC_CANDIDATE_S 2
+#ifndef GC_CANDIDATE
+#define GC_CANDIDATE GC_CANDIDATE_E
+#endif
+#if GC_CANDIDATE != GC_CANDIDATE_E
+#error "GC_CANDIDATE: only candidate E (GC_CANDIDATE_E) is built so far"
+#endif
+
+/* avant_gc_young.c: candidate E, the evacuating young generation. */
 void gc_clear_noted(void);
 void *gc_copy_nursery(void *p);
 void gc_copy_from_slot(void **slot);

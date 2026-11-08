@@ -220,6 +220,15 @@ static void frag_note(void) {
   }
 }
 
+/* The young collection of the candidate GC_CANDIDATE selects (the one
+ * internal switch, avant_gc_internal.h; gc-design.md §3.4). TENURE: every
+ * survivor is promoted at this collection (a fixed AVANT_YOUNG_MB). */
+static void gc_young_collect(int tenure) {
+#if GC_CANDIDATE == GC_CANDIDATE_E
+  gc_young_copy_out(tenure);
+#endif
+}
+
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   uint64_t t0 = now_ns();
@@ -275,7 +284,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t y0 = now_ns();
     uint64_t surv;
     avant_g_stats.young_collections++;
-    gc_young_copy_out(gc_heap.set.young_fixed ? 1 : 0);
+    gc_young_collect(gc_heap.set.young_fixed ? 1 : 0);
     surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.prom.pinned - pinned0);
     gc_heap.copy_reserve = (uint64_t)(RESERVE_FACTOR * (double)surv);
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
