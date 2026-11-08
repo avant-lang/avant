@@ -47,6 +47,12 @@ fn junk(r: Int): Int {
   keep.size
 }
 
+// junk(r)'s result without its allocation (the stress mode's rounds past
+// the heavy ones, below).
+fn junk_count(r: Int): Int {
+  500 + r * 37 % 2900
+}
+
 fn check(parts: Array(String)): Int {
   bad = 0
   if parts.size != 3000 {
@@ -87,9 +93,11 @@ fn main {
   // their parts, RC1, so the stress point is no longer only at a
   // region's entry): one round of the three helpers is about 9,000 collections, each scanning
   // the remembered array being filled, so 700 rounds took hours. Three
-  // rounds of the helpers under stress still collect inside every helper
-  // at every part; the other allocation (junk) runs every round, so the
-  // output is the same in every environment.
+  // rounds under stress still collect inside every helper at every part;
+  // the rounds past them add junk's count without allocating it (the full
+  // mode copies every young survivor at each collection, so the junk
+  // arrays alone made the run quadratic), so the output is the same in
+  // every environment.
   heavy = rounds
   if st = env_get("AVANT_GC_STRESS") {
     if st == "1" {
@@ -102,28 +110,34 @@ fn main {
   n = 0
   r = 0
   while r < rounds {
-    n = n + junk(r)
     if r < heavy {
+      n = n + junk(r)
       parts = text.split(" ")
       split_bad = split_bad + check(parts)
+    } else {
+      n = n + junk_count(r)
     }
     r = r + 1
   }
   r = 0
   while r < rounds {
-    n = n + junk(r)
     if r < heavy {
+      n = n + junk(r)
       fs = spaced.fields()
       fields_bad = fields_bad + check(fs)
+    } else {
+      n = n + junk_count(r)
     }
     r = r + 1
   }
   r = 0
   while r < rounds {
-    n = n + junk(r)
     if r < heavy {
+      n = n + junk(r)
       cs = short.chars
       chars = chars + chars_bad(cs, short)
+    } else {
+      n = n + junk_count(r)
     }
     r = r + 1
   }

@@ -297,6 +297,10 @@ static void account_large_gone(AvantHeader *h, int keep_bytes) {
 }
 
 void gc_release_large(AvantHeader *h) {
+  /* AVANT_GC_STRESS=1: the payload of a freed run is poisoned (Stage 28
+   * W16a); a reused run is zeroed again (take_run's dirty pages, the
+   * spare's memset). */
+  gc_poison(payload_of(h), (size_t)h->size);
   int cache = (h->flags & AVANT_FLAG_YOUNG) &&
               h->type_id == AVANT_TYPE_BYTES &&
               (h->flags & AVANT_FLAG_PINNED) == 0 &&
@@ -398,6 +402,7 @@ void gc_sweep_large(void) {
   while ((h = gc_large_next(&it))) {
     size_t bytes = gc_large_bytes(h);
     if (!full_marked(h)) {
+      gc_poison(payload_of(h), (size_t)h->size);
       give_run(h);
       gc_heap.large_bytes -= bytes;
       gc_heap.heap_bytes -= bytes;

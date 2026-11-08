@@ -609,6 +609,20 @@ static void splus_evacuate(void) {
     Block *b = gc_heap.young_blocks[i];
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
+    } else if (gc_heap.set.stress) {
+      /* The full stress mode (AVANT_GC_STRESS=1, Stage 28 W16a): every
+       * young block nothing names imprecisely is evacuated, pure or
+       * mixed, dense or sparse, past the O92 cap, so every young object
+       * S+ can move is moved at every young collection; a function that
+       * kept a reference outside a handle (RC1, RC2) then holds an old
+       * copy, which the sweep fills with poison. */
+      if (b->idle > 0) {
+        b->kept = SPLUS_EVAC;
+        gc_heap.ctr.sticky.evac_blocks++;
+        any = 1;
+      } else {
+        b->kept = 0;
+      }
     } else if (b->kept == SPLUS_PURE_AGED &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
       /* O97 (Stage 28 W15e): a survivor block whose aged survivors are
@@ -638,6 +652,12 @@ static void splus_evacuate(void) {
     if (!b || b->kept != SPLUS_EVAC) {
       continue;
     }
+    /* A mixed block (the stress mode) also holds mature objects the trace
+     * marked (remembered ones, ones R1' scans): only what this collection
+     * promoted, young when it began, may move. */
+    if (!(avant_header(p)->flags & AVANT_FLAG_PROMOTED_NOW)) {
+      continue;
+    }
     /* A first survivor ages (YOUNG_AGE 2): SURVIVED marks one that
      * survived a collection before (an aged copy). */
     if (!splus_copy(avant_header(p),
@@ -647,7 +667,17 @@ static void splus_evacuate(void) {
   }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
-    if (b->kept == SPLUS_EVAC) {
+    if (b->kept == SPLUS_EVAC && gc_heap.set.stress && gc_heap.stress_mixed[i]) {
+      /* A mixed block (stress): its mature lines stay live, the lines
+       * this collection's promotions marked are free again. */
+      uint64_t lines = (uint64_t)gc_block_live_lines(b);
+      memcpy(b->line_mark, gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, LINES_PER_BLOCK);
+      lines = (lines - (uint64_t)gc_block_live_lines(b)) * LINE_SIZE;
+      gc_heap.ctr.sticky.inplace -= b->idle;
+      gc_heap.live -= b->idle;
+      gc_heap.promoted_since_full -= lines;
+      gc_heap.mature_since_full -= lines;
+    } else if (b->kept == SPLUS_EVAC) {
       uint64_t lines = (uint64_t)gc_block_live_lines(b) * LINE_SIZE;
       memset(b->line_mark, 0, LINES_PER_BLOCK);
       gc_heap.ctr.sticky.inplace -= b->idle;
@@ -728,9 +758,23 @@ void gc_sticky_collect(int tenure) {
   gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
+    if (gc_heap.set.stress && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
+      gc_heap.stress_lines_cap = gc_heap.young_blocks_n * 2;
+      gc_heap.stress_lines = gc_xrealloc(gc_heap.stress_lines, (size_t)gc_heap.stress_lines_cap * LINES_PER_BLOCK);
+      gc_heap.stress_mixed = gc_xrealloc(gc_heap.stress_mixed, (size_t)gc_heap.stress_lines_cap);
+    }
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *yb = gc_heap.young_blocks[i];
-      yb->kept = gc_block_live_lines(yb) != 0 ? 0 : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
+      int mature_lines = gc_block_live_lines(yb) != 0;
+      if (gc_heap.set.stress) {
+        /* The full stress mode (Stage 28 W16a): a block with mature
+         * lines is evacuated too (splus_evacuate), its marks restored
+         * from this copy afterwards. */
+        memcpy(gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, yb->line_mark, LINES_PER_BLOCK);
+        gc_heap.stress_mixed[i] = (uint8_t)mature_lines;
+      }
+      yb->kept = mature_lines ? (gc_heap.set.stress ? SPLUS_MIXED : 0)
+                              : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
     /* A collection runtime C entered: the young objects words of this
@@ -784,6 +828,15 @@ void gc_sticky_collect(int tenure) {
       int live;
       b = gc_heap.young_blocks[i];
       live = sweep_lines(b, b->young_lo, b->young_hi);
+      if (gc_heap.set.stress) {
+        /* Freed young lines are poisoned (Stage 28 W16a). */
+        int l;
+        for (l = b->young_lo; l < b->young_hi && l < LINES_PER_BLOCK; l++) {
+          if (!line_live(b, l)) {
+            gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
+          }
+        }
+      }
       b->young_lo = 0;
       b->young_hi = 0;
       b->kept = 0;

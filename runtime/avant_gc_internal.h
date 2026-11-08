@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* The collector's internal header (Stage 28 W12). Private to the
  * collector's units, one per concern:
@@ -923,6 +924,12 @@ typedef struct GcHeap {
   /* avant_gc_collect was called inside a no-GC region (RC4, Stage 28
    * W16a): the first collection point after it runs the full collection. */
   uint8_t explicit_pending;
+  /* AVANT_GC_STRESS=1 (Stage 28 W16a): the line marks every young block
+   * had when the young collection began (LINES_PER_BLOCK bytes per entry
+   * of young_blocks), for the mixed blocks the stress mode evacuates. */
+  uint8_t *stress_lines;
+  uint8_t *stress_mixed;
+  uint32_t stress_lines_cap;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -1083,6 +1090,10 @@ void gc_rem_keep_young_holders(void);
  * test. */
 #define SPLUS_WAS_SURV 7
 #define SPLUS_PURE_AGED 8
+/* AVANT_GC_STRESS=1 (Stage 28 W16a): a young block that held mature
+ * lines when the collection began; its young survivors are evacuated all
+ * the same and its line marks restored from gc_heap.stress_lines. */
+#define SPLUS_MIXED 9
 #ifndef SPLUS_AGED_SPARSE_LINES
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
@@ -1112,6 +1123,13 @@ void gc_defrag_release(void);
 /* avant_gc_stack.c */
 void gc_note_c_stack_blocks(void);
 void gc_pin_c_stack(void);
+/* AVANT_GC_STRESS=1: freed memory is filled with GC_POISON (Stage 28 W16a). */
+#define GC_POISON 0xdb
+static inline void gc_poison(void *p, size_t n) {
+  if (gc_heap.set.stress) {
+    memset(p, GC_POISON, n);
+  }
+}
 
 /* avant_gc_verify.c */
 void gc_verify_no_stale_marks(void);

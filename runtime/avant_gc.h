@@ -243,8 +243,15 @@
  *                          (avant_gc_verify.c)
  *   AVANT_GC_STATS         switch, default 0: one statistics line on
  *                          stderr at exit
- *   AVANT_GC_STRESS        switch, default 0: a young collection at every
- *                          runtime C allocation (testing; W14b1)
+ *   AVANT_GC_STRESS        switch, default 0: the full stress mode
+ *                          (testing; W14b1, full since Stage 28 W16a):
+ *                          a young collection before every runtime C
+ *                          allocation (unshared programs, outside no-GC
+ *                          regions); every young collection evacuates
+ *                          every young block nothing names imprecisely
+ *                          (mixed blocks too), and freed memory (free
+ *                          young lines, evacuated blocks, freed large
+ *                          runs) is filled with 0xdb
  *
  * Retired (W14b2; setting one is reported and has no effect):
  * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
