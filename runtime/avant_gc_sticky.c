@@ -610,13 +610,21 @@ static void splus_evacuate(void) {
     Block *b = gc_heap.young_blocks[i];
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
-    } else if (b->kept == SPLUS_PURE && b->idle > 0 &&
+    } else if (b->kept == SPLUS_PURE_AGED &&
+               (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
+      /* O97 (Stage 28 W15e): a survivor block whose aged survivors are
+       * dense keeps them in place, promoted (no second copy). */
+      b->kept = 0;
+      gc_heap.ctr.sticky.aged_inplace_blocks++;
+    } else if ((b->kept == SPLUS_PURE || b->kept == SPLUS_PURE_AGED) && b->idle > 0 &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES &&
                sel + b->idle <= avant_young_bytes) {
       sel += b->idle;
       b->kept = SPLUS_EVAC;
       gc_heap.ctr.sticky.evac_blocks++;
       any = 1;
+    } else if (b->kept == SPLUS_PURE_AGED) {
+      b->kept = SPLUS_PURE;
     }
   }
   if (!any) {
@@ -722,7 +730,7 @@ void gc_sticky_collect(int tenure) {
     uint32_t i;
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *yb = gc_heap.young_blocks[i];
-      yb->kept = gc_block_live_lines(yb) == 0 ? SPLUS_PURE : 0;
+      yb->kept = gc_block_live_lines(yb) != 0 ? 0 : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
     /* A collection runtime C entered: the young objects words of this
@@ -788,7 +796,7 @@ void gc_sticky_collect(int tenure) {
     uint32_t i;
     for (i = 0; i < gc_heap.surv_blocks_n; i++) {
       b = gc_heap.surv_blocks[i];
-      b->kept = 0;
+      b->kept = SPLUS_WAS_SURV;
       b->idle = 0;
       b->young_lo = 0;
       b->young_hi = (uint8_t)((b->bump - b->base + LINE_SIZE - 1) / LINE_SIZE);
@@ -838,6 +846,7 @@ void gc_sticky_full_begin(void) {
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;
+    gc_heap.young_blocks[i]->kept = 0;
   }
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;

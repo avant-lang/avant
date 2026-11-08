@@ -574,7 +574,9 @@ typedef struct GcSizeCounters {
  * still young (YOUNG_AGE 2, Stage 28 W15d; in copied_bytes, not in
  * prom.copied), surv_blocks the survivor blocks they went to,
  * aged_holders the holders of young large objects aged out of blocks S+
- * does not evacuate (splus_age_holders). */
+ * does not evacuate (splus_age_holders); aged_inplace_blocks the survivor
+ * blocks whose dense aged survivors were promoted in place at their next
+ * collection (O97, Stage 28 W15e). */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
@@ -588,6 +590,7 @@ typedef struct GcStickyCounters {
   uint64_t aged;
   uint64_t surv_blocks;
   uint64_t aged_holders;
+  uint64_t aged_inplace_blocks;
 } GcStickyCounters;
 
 typedef struct GcCounters {
@@ -1031,6 +1034,23 @@ void gc_rem_keep_young_holders(void);
 /* A survivor block this collection copies aged survivors into (YOUNG_AGE
  * 2, Stage 28 W15d). */
 #define SPLUS_SURV 6
+/* O97 (Stage 28 W15e): a survivor block between collections
+ * (SPLUS_WAS_SURV, set when it becomes a young block) and in the next
+ * young collection while it is a candidate (SPLUS_PURE_AGED); it is
+ * evacuated only when its survivors fill at most SPLUS_AGED_SPARSE_LINES
+ * of its 128 lines, otherwise they are promoted in place: an aged object
+ * that survives again is copied once, not twice. Measured at 128 (every
+ * survivor block evacuated, W15d's rule), 96, 64, 32 and 0 (W15e record,
+ * var/o97-*): the compiler's __emit-ll copies 308 -> 168 MB at 96 and
+ * below, its young pause 787 -> 716-719 ms at 64 and 32, peak_heap 228 MB
+ * at every setting; Etc::GameOfLife copies 31.6 -> 19.1 MB; Sort and
+ * Words unchanged (they hardly age). 64, half the block, is the sparse
+ * test. */
+#define SPLUS_WAS_SURV 7
+#define SPLUS_PURE_AGED 8
+#ifndef SPLUS_AGED_SPARSE_LINES
+#define SPLUS_AGED_SPARSE_LINES 64
+#endif
 
 /* avant_gc_sticky.c: the young generation (S+; candidate S with
  * GC_STICKY_COPY 0) and the noted list, and the young allocator's block

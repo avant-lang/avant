@@ -203,10 +203,10 @@ static void print_sticky(StatsLine *l) {
            "prom_inplace=%llu young_blocks=%llu young_holes=%llu young_freed_lines=%llu "
            "young_overflow=%llu young_returned=%llu young_evac_blocks=%llu "
            "young_kept_blocks=%llu young_copy_blocks=%llu young_aged=%llu young_surv_blocks=%llu "
-           "young_aged_holders=%llu\n",
+           "young_aged_holders=%llu young_aged_inplace_blocks=%llu\n",
            u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
            u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks), u(c->aged),
-           u(c->surv_blocks), u(c->aged_holders));
+           u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
 }
 
 void gc_print_stats(void) {
