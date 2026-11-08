@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <dlfcn.h>
 
 /* The collection driver and its policy (Stage 28 W12, moved from
  * avant_rt.c): initialization from the environment (the settings,
@@ -344,14 +345,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
 
   if (full) {
-    uint64_t next = gc_heap.live * 2 + (4ull * 1024ull * 1024ull);
-    if (next < (4ull * 1024ull * 1024ull)) {
-      next = 4ull * 1024ull * 1024ull;
-    }
-    if (next > FULL_BYTES) {
-      next = FULL_BYTES;
-    }
-    gc_heap.full_trigger = next;
+    /* gc-design.md §5.4: max(4 MiB, (F - 1) * live), F = 2, uncapped. */
+    uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * gc_heap.live;
+    gc_heap.full_trigger = next < FULL_TRIGGER_MIN ? FULL_TRIGGER_MIN : next;
   }
   if (gc_heap.ctr.yng.min == 0 || avant_young_bytes < gc_heap.ctr.yng.min) {
     gc_heap.ctr.yng.min = avant_young_bytes;
@@ -378,18 +374,23 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   gc_heap.collecting = 0;
 }
 
-/* Under AVANT_HEAP_MAX_MB, whether a young copy surely fits: the bytes it
- * may copy (every nursery byte, at worst; young large objects do not
- * move) on top of the heap stay under the limit. The survival probe and
- * the sticky pause made this decision before (they are retired, Stage 28
- * W15a1); a copy that does not fit runs as a full collection instead,
- * which moves no young object and needs no room. */
+/* Under AVANT_HEAP_MAX_MB, whether a young copy is expected to fit: the
+ * copy reserve (the last young collection's survival times 1.5; before
+ * the first one, every nursery byte) on top of the heap stays under the
+ * limit. The survival probe and the sticky pause made this decision
+ * before (they are retired, Stage 28 W15a1); a copy not expected to fit
+ * runs as a full collection instead, which moves no young object and
+ * needs no room. A copy that outgrows the estimate proceeds past the
+ * limit and leaves a full collection pending (place). */
 static int young_copy_fits(void) {
   uint64_t copy;
   if (!gc_heap.set.heap_max) {
     return 1;
   }
   copy = avant_nursery_held > gc_heap.young_large ? avant_nursery_held - gc_heap.young_large : 0;
+  if (avant_g_stats.young_collections > 0 && gc_heap.copy_reserve < copy) {
+    copy = gc_heap.copy_reserve;
+  }
   return gc_heap.heap_bytes + copy <= gc_heap.set.heap_max;
 }
 
@@ -520,28 +521,47 @@ void gc_init_slow(void) {
   }
 }
 
-/* Q128 heap-goal collection for workloads whose allocations all pass
- * through C helpers under defer (the HTTP request path), which never
- * reach gc_maybe_collect undeferred. Callers must be at a boundary where
- * their C frames hold no heap pointers yet (the HTTP dispatch calls
- * this before materializing the request), so the full collection
- * strands nothing; it runs with allow_move 0, so no mature object moves
- * (no defragmentation) for the same reason. The trigger is an allocation
- * budget since the last full collection — the larger of the live
- * bytes it saw and 4 MB — plus the mature-growth trigger, so the
- * boundary costs one marking per budget of allocation. */
+/* Q128's heap-goal collection at the HTTP boundary (the request path's
+ * allocations all pass through C helpers under defer). Since Stage 28
+ * W15a1 (gc-design.md §5.4) it is an ordinary collection request: the
+ * policy runs what is due (gc_maybe_collect: the young budget, which
+ * counts the helpers' allocations, the full trigger, a pending
+ * heap-limit collection), as at any allocation's slow path. Before, it
+ * ran a non-moving full collection per allocation budget of its own
+ * (the larger of the live bytes and 4 MB). Callers are at a boundary
+ * where their C frames hold no heap pointers yet (the HTTP dispatch,
+ * before it materializes the request). */
 void avant_gc_heap_goal_collect(void) {
   gc_init();
   pthread_mutex_lock(&gc_heap.world);
-  if (!gc_heap.set.nursery_off && !gc_heap.collecting && !gc_heap.defer &&
-      (gc_heap.mature_since_full >= gc_heap.full_trigger ||
-       avant_g_stats.allocated_bytes - gc_heap.last_full_at >=
-           (gc_heap.live > (4ull * 1024ull * 1024ull)
-                ? gc_heap.live
-                : (4ull * 1024ull * 1024ull)))) {
-    gc_collect(GC_FULL, 0, GC_WHY_HEAP_GOAL);
-  }
+  gc_maybe_collect();
   pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* gc-design.md §5.4: an allocation inside a no-GC region proceeds past
+ * AVANT_HEAP_MAX_MB (C32: the full collection runs after the region),
+ * unless the region alone has allocated more than the limit: no
+ * collection after it could bring the heap back under the limit. */
+void gc_region_limit_check(uint64_t bytes) {
+  if (gc_heap.set.heap_max && gc_heap.region_bytes + bytes > gc_heap.set.heap_max) {
+    /* The helper is named by its symbol when the image exports one, else
+     * by the call site's offset in its image (addr2line resolves it). */
+    char msg[512];
+    Dl_info info;
+    memset(&info, 0, sizeof info);
+    if (gc_heap.region_site && dladdr(gc_heap.region_site, &info) && info.dli_sname) {
+      snprintf(msg, sizeof msg, "heap limit in a no-GC region (%s)", info.dli_sname);
+    } else if (gc_heap.region_site && info.dli_fname && info.dli_fbase) {
+      const char *base = strrchr(info.dli_fname, '/');
+      snprintf(msg, sizeof msg, "heap limit in a no-GC region (%s+0x%lx)",
+               base ? base + 1 : info.dli_fname,
+               (unsigned long)((uintptr_t)gc_heap.region_site - (uintptr_t)info.dli_fbase));
+    } else {
+      snprintf(msg, sizeof msg, "heap limit in a no-GC region (called from %p)",
+               gc_heap.region_site);
+    }
+    gc_die(msg);
+  }
 }
 
 void avant_nursery_reclaim(void) {

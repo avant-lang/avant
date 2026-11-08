@@ -230,7 +230,7 @@ static void gc_fast_refresh(void) {
   Block *cur = gc_heap.space[SPACE_NURSERY].cur;
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
-      !gc_heap.limit_pending && gc_heap.mature_since_full < FULL_BYTES && cur && gc_heap.cur == cur &&
+      !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
       gc_heap.space[SPACE_NURSERY].fresh && avant_gc_bump) {
     uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
     uint8_t *cap = avant_gc_bump + rem;
@@ -288,7 +288,18 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
      * region, where a runtime helper holds fresh objects the collector
      * cannot see (avant_str_split's items[]). The allocation proceeds
      * past the limit and the full collection runs at the first
-     * collection point after the region (gc_maybe_collect). */
+     * collection point after the region (gc_maybe_collect), unless the
+     * region alone is over the limit (§5.4). */
+    gc_region_limit_check(total);
+    gc_heap.over_limit = 1;
+    b = gc_new_block(space);
+    gc_heap.over_limit = 0;
+    gc_limit_collect_pending();
+  }
+  if (!b && gc_heap.collecting && !gc_heap.over_limit) {
+    /* A young copy's destination past the limit (Stage 28 W15a1): its
+     * room was estimated (young_copy_fits); the copy proceeds and the
+     * full collection runs at the next collection point. */
     gc_heap.over_limit = 1;
     b = gc_new_block(space);
     gc_heap.over_limit = 0;
@@ -384,6 +395,9 @@ static void init_object(AvantHeader *h, size_t payload, uint32_t type_id, int yo
 
 static void account_alloc(size_t total, int nursery) {
   avant_g_stats.allocated_bytes += total;
+  if (gc_heap.defer) {
+    gc_heap.region_bytes += total;
+  }
   avant_since_gc += total;
   if (nursery) {
     avant_nursery_held += total;
@@ -426,7 +440,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * Medium numeric buffers take the large path so their address stays. */
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.defer &&
       !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending &&
-      gc_heap.mature_since_full < FULL_BYTES && avant_nursery_held + total < avant_young_bytes) {
+      gc_heap.mature_since_full < gc_heap.full_trigger && avant_nursery_held + total < avant_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
       init_object(fast, payload, type_id, 1, 0);
@@ -446,6 +460,9 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
      * are retired). */
     void *obj = gc_los_alloc(payload, type_id);
     avant_g_stats.allocated_bytes += total;
+    if (gc_heap.defer) {
+      gc_heap.region_bytes += total;
+    }
     avant_since_gc += total;
     pthread_mutex_unlock(&gc_heap.world);
     return obj;

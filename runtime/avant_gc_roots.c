@@ -265,7 +265,7 @@ void avant_unpin(void *payload) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-static void defer_enter(int collecting_row) {
+static void defer_enter(int collecting_row, void *site) {
   gc_init();
   gc_fast_clear();
   pthread_mutex_lock(&gc_heap.world);
@@ -300,12 +300,16 @@ static void defer_enter(int collecting_row) {
     gc_stress_point();
     gc_thread.c_entry--;
   }
+  if (gc_heap.defer == 0) {
+    gc_heap.region_bytes = 0;
+    gc_heap.region_site = site;
+  }
   gc_heap.defer += 1;
   pthread_mutex_unlock(&gc_heap.world);
 }
 
 void avant_gc_defer_enter(void) {
-  defer_enter(1);
+  defer_enter(1, __builtin_return_address(0));
 }
 
 /* A defer region's entry without the stress point (Stage 28 W14b1): the
@@ -321,7 +325,7 @@ void avant_gc_defer_enter(void) {
  * entered here; W15a1 made them collecting calls or never-collecting
  * ones. It goes with defer regions themselves (W16, RC4). */
 __attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void) {
-  defer_enter(0);
+  defer_enter(0, __builtin_return_address(0));
 }
 
 void avant_gc_defer_leave(void) {

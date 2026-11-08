@@ -81,7 +81,11 @@
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
 #define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
-#define FULL_BYTES (32u * 1024u * 1024u)
+/* The full-collection trigger (gc-design.md §5.4, Stage 28 W15a1): mature
+ * growth since the last full collection reaching
+ * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */
+#define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
+#define HEAP_FACTOR 2
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 #define GC_THREAD_ROOTS 8
@@ -754,13 +758,17 @@ typedef struct GcHeap {
   /* The last young collection's pause per surviving byte (ns), for
    * young_size (gc-design.md §5.2). */
   double young_per_byte;
-  /* Mature growth that triggers the next full collection. Starts at
-   * FULL_BYTES and adapts after every full collection to twice the
-   * live set plus slack, so a program with a small live set and heavy
-   * mature churn (a parsed document per iteration) does not grow the
-   * heap to 32 MB before reclaiming, while a program whose live set is
-   * large keeps today's spacing. */
+  /* Mature growth that triggers the next full collection (gc-design.md
+   * §5.4, Stage 28 W15a1): FULL_TRIGGER_MIN before the first one, then
+   * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).
+   * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
+   * a program with a large live set collect too often for its size. */
   uint64_t full_trigger;
+  /* The bytes allocated inside the running outermost no-GC (defer)
+   * region, and the address its helper entered it from (for "heap limit
+   * in a no-GC region", gc-design.md §5.4). */
+  uint64_t region_bytes;
+  void *region_site;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -924,6 +932,7 @@ typedef enum GcWhy {
 } GcWhy;
 void gc_collect(GcKind kind, int allow_move, GcWhy why);
 void gc_limit_collect_pending(void);
+void gc_region_limit_check(uint64_t bytes);
 void gc_maybe_collect(void);
 void gc_stress_point(void);
 void gc_init_slow(void);

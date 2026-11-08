@@ -419,7 +419,9 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   if (gc_heap.set.heap_max && !gc_heap.los_spare && gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
     if (gc_heap.defer) {
       /* C32: inside a no-GC region the allocation proceeds past the
-       * limit and the collection runs after the region. */
+       * limit and the collection runs after the region, unless the
+       * region alone is over the limit (gc-design.md §5.4). */
+      gc_region_limit_check(bytes);
       gc_limit_collect_pending();
     } else {
       gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
