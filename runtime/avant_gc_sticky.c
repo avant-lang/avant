@@ -724,6 +724,17 @@ static void splus_finish(void) {
       }
     }
   }
+  /* The full stress mode (Stage 28 W16a) collects before every runtime C
+   * allocation and copies a few objects each time: the copy block stays
+   * the copy block across young collections until it is full (or a full
+   * collection drops it, gc_sticky_full_begin), or every collection left a
+   * fresh block holding one copied object, the rest of it holes young
+   * allocation then took and the next collection evacuated (a block per
+   * collection: limit_defer.av grew to 1 GB). Nothing else allocates in
+   * it meanwhile: it is on no allocation list. */
+  if (gc_heap.set.stress && d && d->bump < d->base + BLOCK_SIZE) {
+    return;
+  }
   if (d && d->bump < d->base + BLOCK_SIZE) {
     gc_reset_block_bump(d);
     gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, d);
@@ -913,6 +924,14 @@ void gc_sticky_collect(int tenure) {
  * the young budget is empty. */
 void gc_sticky_full_begin(void) {
   uint32_t i;
+#if GC_STICKY_COPY
+  /* A copy block the stress mode kept (splus_finish) becomes an ordinary
+   * mature block: its free rest is free lines for the full sweep. */
+  if (gc_heap.splus_dst) {
+    gc_reset_block_bump(gc_heap.splus_dst);
+    gc_heap.splus_dst = NULL;
+  }
+#endif
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;
