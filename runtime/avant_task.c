@@ -192,8 +192,10 @@ void *avant_spawn(void *fn, void *arg) {
   AvantJoinHandle *hd;
   AvantTask *t;
   Job *job;
-  /* First, while this frame holds no reference but arg (pinned): the
-   * allocation may collect. Nothing below collects. */
+  /* gc-lint: holds nothing (arg, the capture record, is pinned until the
+   * join, so it neither moves nor dies; C28, R1 is W16b's). First, while
+   * this frame holds no other reference: the allocation may collect.
+   * Nothing below collects. */
   hd = (AvantJoinHandle *)avant_alloc(sizeof(AvantJoinHandle), AVANT_TYPE_BYTES);
   t = (AvantTask *)calloc(1, sizeof(AvantTask));
   if (!t) {

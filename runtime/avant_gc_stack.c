@@ -29,12 +29,12 @@
  * precise references to them (root slots, pins, runtime TLS slots, the
  * remembered set, heap fields). A runtime C frame on the collecting
  * thread can hold a reference across a full collection that the
- * collector cannot rewrite: with AVANT_NURSERY=0 the outermost
- * avant_gc_defer_enter collects while the helper holds its arguments
- * (avant_str_concat's operands: the caller rooted them, so they are
- * marked, but the helper's own copies are C values), and a helper that
- * calls avant_alloc outside defer holds its arguments across the full
- * collection gc_maybe_collect may run. Such an object must not move. So
+ * collector cannot rewrite: before Stage 28 W16a a helper held its
+ * arguments in C across its allocations (avant_str_concat's operands:
+ * the caller rooted them, so they were marked, but the helper's own
+ * copies were C values). Since W16a runtime C keeps them in handle scopes
+ * (RC1, avant_gc.h), which defragmentation rewrites; this exclusion stays
+ * as the safety net until gc-design.md section 4.3's proof (W16b). So
  * a defragmenting collection first notes every mature block that a word
  * of the collecting thread's stack names (exact start, interior, or a
  * scalar that happens to look like one; a false positive only skips a

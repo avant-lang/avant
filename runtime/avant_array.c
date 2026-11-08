@@ -205,6 +205,7 @@ void avant_array_clear(void *arr) {
   }
 }
 
+/* gc-lint: holds nothing (the growth is its last statement; array_grow roots the array). */
 void avant_array_reserve(void *arr, int32_t n, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
   if (!a || n <= a->cap) {
@@ -614,10 +615,14 @@ void avant_array_reverse(void *arr, uint64_t elem_size) {
   }
 }
 
+/* RC1: the source and the copy are handles across the two allocations;
+ * the source's buffer is read after the last one (RC2). */
 void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
-  AvantArray *r;
-  avant_gc_defer_enter();
+  AvantArray *r = NULL;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &r);
   r = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
   if (a && a->buf && a->size > 0) {
     void *nbuf = avant_alloc((uint64_t)a->size * elem_size, buf_type_id);
@@ -626,11 +631,11 @@ void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
       /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
       avant_barrier(nbuf);
     }
+    avant_barrier(r);
     r->buf = nbuf;
     r->size = a->size;
     r->cap = a->size;
   }
-  avant_gc_defer_leave();
   return r;
 }
 

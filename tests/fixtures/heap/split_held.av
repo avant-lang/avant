@@ -9,7 +9,8 @@
 // of other allocation between, so full collections land inside the
 // helpers, and checks every part. Before the fix AVANT_NURSERY=0 printed
 // thousands of bad parts (split alone: 18,956 in the W13b probe); the
-// default environment never collects inside the helpers. Every line
+// default environment never collected inside the helpers before Stage
+// 28 W16a (since W16a they collect at their own allocations). Every line
 // prints 0.
 
 fn text_of(sep: String): String {
@@ -81,29 +82,49 @@ fn main {
   spaced = text_of("  \t ")
   short = letters(3000)
   rounds = 700
+  // Under AVANT_GC_STRESS=1 every part's allocation runs a young
+  // collection that moves what it can (Stage 28 W16a: the helpers root
+  // their parts, RC1, so the stress point is no longer only at a
+  // region's entry): one round of the three helpers is about 9,000 collections, each scanning
+  // the remembered array being filled, so 700 rounds took hours. Three
+  // rounds of the helpers under stress still collect inside every helper
+  // at every part; the other allocation (junk) runs every round, so the
+  // output is the same in every environment.
+  heavy = rounds
+  if st = env_get("AVANT_GC_STRESS") {
+    if st == "1" {
+      heavy = 3
+    }
+  }
   split_bad = 0
   fields_bad = 0
   chars = 0
   n = 0
   r = 0
   while r < rounds {
-    parts = text.split(" ")
     n = n + junk(r)
-    split_bad = split_bad + check(parts)
+    if r < heavy {
+      parts = text.split(" ")
+      split_bad = split_bad + check(parts)
+    }
     r = r + 1
   }
   r = 0
   while r < rounds {
-    fs = spaced.fields()
     n = n + junk(r)
-    fields_bad = fields_bad + check(fs)
+    if r < heavy {
+      fs = spaced.fields()
+      fields_bad = fields_bad + check(fs)
+    }
     r = r + 1
   }
   r = 0
   while r < rounds {
-    cs = short.chars
     n = n + junk(r)
-    chars = chars + chars_bad(cs, short)
+    if r < heavy {
+      cs = short.chars
+      chars = chars + chars_bad(cs, short)
+    }
     r = r + 1
   }
   puts("split bad: ${split_bad}")

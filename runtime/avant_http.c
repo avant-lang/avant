@@ -39,28 +39,31 @@ static void set_status(int32_t code) {
 #define HTTP_MAX_HEADERS 64
 #define HTTP_MAX_HEADER_BLOCK 16384
 
+/* RC1: P (a C buffer, or an address inside a heap Bytes such as the
+ * packed headers, which its slot relocates with its offset) is a handle
+ * across the allocation. */
 static char *make_string(const char *p, size_t n) {
   char *out;
-  avant_gc_defer_enter();
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &p);
   out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n > 0) {
     memcpy(out, p, n);
   }
   out[n] = 0;
   avant_str_tag(out);
-  avant_gc_defer_leave();
   return out;
 }
 
 static char *make_bytes(const char *p, size_t n) {
   char *out;
-  avant_gc_defer_enter();
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &p);
   out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n > 0) {
     memcpy(out, p, n);
   }
   out[n] = 0;
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -74,21 +77,26 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
   char *out;
   uint32_t *words;
   size_t i;
-  avant_gc_defer_enter();
+  /* RC1/RC2: RAW (a heap string or a C buffer) is a handle across the
+   * allocation; the header offsets are taken against its address before
+   * the allocation (RAW0, never dereferenced), which the parsed headers
+   * name. */
+  const char *raw0 = raw;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &raw);
   out = (char *)avant_alloc((uint64_t)total + 1, AVANT_TYPE_BYTES);
   words = (uint32_t *)out;
   words[0] = (uint32_t)count;
   for (i = 0; i < count; i++) {
-    words[1 + i * 4 + 0] = (uint32_t)(headers[i].name - raw);
+    words[1 + i * 4 + 0] = (uint32_t)(headers[i].name - raw0);
     words[1 + i * 4 + 1] = (uint32_t)headers[i].name_len;
-    words[1 + i * 4 + 2] = (uint32_t)(headers[i].value - raw);
+    words[1 + i * 4 + 2] = (uint32_t)(headers[i].value - raw0);
     words[1 + i * 4 + 3] = (uint32_t)headers[i].value_len;
   }
   if (raw_len > 0) {
     memcpy(out + 4 + count * 16, raw, raw_len);
   }
   out[total] = 0;
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -492,14 +500,14 @@ void avant_http_req_respond(void *reqp, int32_t status, const char *head,
    * C registers here; a collection triggered on another loop thread
    * must not move them while the response is written. The dispatch
    * side enters the same defer before materializing the pointers. */
-  avant_gc_defer_enter();
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   if (!req->keep_alive) {
     conn_header = "close";
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
   write_response(req->sock, status, head, body, conn_header);
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -954,21 +962,24 @@ static int32_t ws_send_common(void *srvp, int32_t id, int32_t is_text,
   AvantWsConn *ws;
   size_t len;
   int ok;
-  /* The data pointer names an Avant heap object held only in a C
-   * register on entry; hold collections off while it is copied or
-   * written, as avant_http_req_respond does. */
-  avant_gc_defer_enter();
+  /* RC4 (avant_gc.h): the data pointer names an Avant heap object held
+   * only in a C register while the HTTP loop threads run (a shared
+   * program, D191): hold every thread's collections off while it is
+   * copied or written, as avant_http_req_respond does. Nothing here
+   * allocates. The send and close entries below keep the same region for
+   * the same reason, until W17's handshake stops the other threads. */
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   len = avant_str_n(data);
   pthread_mutex_lock(&g_ws_mu);
   ws = srv ? ws_find(srv, id) : ws_find_global(id);
   if (!ws || ws->dead || ws->close_sent) {
     pthread_mutex_unlock(&g_ws_mu);
-    avant_gc_defer_leave();
+    avant_gc_nogc_end();
     return 0;
   }
   ok = ws_send_frame(ws, is_text ? 1 : 2, data, len);
   pthread_mutex_unlock(&g_ws_mu);
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
   return ok;
 }
 
@@ -999,7 +1010,7 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
   size_t reason_len;
   size_t payload_len;
   int ok;
-  avant_gc_defer_enter();
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   reason_len = avant_str_n(reason);
   if (reason_len > 123) { reason_len = 123; }
   payload[0] = (unsigned char)(code >> 8);
@@ -1010,7 +1021,7 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
   ws = srv ? ws_find(srv, id) : ws_find_global(id);
   if (!ws || ws->dead || ws->close_sent) {
     pthread_mutex_unlock(&g_ws_mu);
-    avant_gc_defer_leave();
+    avant_gc_nogc_end();
     return 0;
   }
   ws->close_sent = 1;
@@ -1020,7 +1031,7 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
     ws_flush(ws);
   }
   pthread_mutex_unlock(&g_ws_mu);
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
   return ok;
 }
 
@@ -1052,10 +1063,10 @@ static int32_t ws_send_direct(void *handle, int32_t is_text,
     return ws_send_common(NULL, ws->id, is_text, data);
   }
   if (ws->dead || ws->close_sent) { return 0; }
-  avant_gc_defer_enter();
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   len = avant_str_n(data);
   ok = ws_send_frame(ws, is_text ? 1 : 2, data, len);
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
   return ok;
 }
 
@@ -1082,7 +1093,7 @@ int32_t avant_ws_close_direct(void *handle, int32_t code,
     return avant_ws_close_conn(NULL, ws->id, code, reason);
   }
   if (ws->dead || ws->close_sent) { return 0; }
-  avant_gc_defer_enter();
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   reason_len = avant_str_n(reason);
   if (reason_len > 123) { reason_len = 123; }
   payload[0] = (unsigned char)(code >> 8);
@@ -1092,7 +1103,7 @@ int32_t avant_ws_close_direct(void *handle, int32_t code,
   ws->shutdown_after_flush = 1;
   ok = ws_send_frame(ws, 8, (const char *)payload, 2 + reason_len);
   ws_flush(ws);
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
   return ok;
 }
 
@@ -2001,6 +2012,10 @@ int32_t avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
     set_status(1);
     return 1;
   }
+  /* srv (C memory) holds the state across every dispatch, which
+   * collects; with one loop the program can stay unshared, where a young
+   * collection may move it (S+). Pinned for the serve (Stage 28 W16a). */
+  avant_pin(state);
   srv->state = state;
   srv->dispatch = (AvantHttpDispatch)cb;
   srv->ws_dispatch = (AvantHttpDispatch)ws_cb;
@@ -2024,6 +2039,7 @@ int32_t avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   }
   srv->running = 0;
   srv_teardown(srv);
+  avant_unpin(state);
   return 0;
 }
 
@@ -2577,6 +2593,7 @@ int32_t avant_ws_client_close_code(void *handle) {
 
 /* One queued message as Bytes; status 1 when the connection is closed
  * with nothing queued, 2 on timeout. timeout_ms < 0 waits forever. */
+/* gc-lint: holds nothing (the message is C memory; nothing heap is read after make_bytes). */
 char *avant_ws_client_recv(void *handle, int32_t timeout_ms) {
   WsClient *c = (WsClient *)handle;
   WsClientMsg *m;
@@ -2633,9 +2650,9 @@ int32_t avant_ws_client_send_text(void *handle, const char *data) {
   WsClient *c = (WsClient *)handle;
   int ok;
   if (!c || !ws_client_alive(handle)) { return 0; }
-  avant_gc_defer_enter();
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   ok = ws_client_send_frame(c, 1, data, avant_str_n(data));
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
   return ok;
 }
 
@@ -2643,9 +2660,9 @@ int32_t avant_ws_client_send_bytes(void *handle, const char *data) {
   WsClient *c = (WsClient *)handle;
   int ok;
   if (!c || !ws_client_alive(handle)) { return 0; }
-  avant_gc_defer_enter();
+  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   ok = ws_client_send_frame(c, 2, data, avant_str_n(data));
-  avant_gc_defer_leave();
+  avant_gc_nogc_end();
   return ok;
 }
 
@@ -2774,6 +2791,7 @@ static void fetch_wakeup(struct us_loop_t *loop) {
   (void)loop;
 }
 
+/* gc-lint: holds nothing (the fetched body is C memory; nothing heap is read after make_bytes). */
 char *avant_http_fetch(const char *host, int32_t port, const char *request,
                        int32_t timeout_ms) {
   struct us_loop_t *loop;
@@ -2887,6 +2905,7 @@ char *avant_http_resp_headers(const char *raw) {
   return build_packed_headers(headers, num_headers, raw, (size_t)pret);
 }
 
+/* gc-lint: holds nothing (make_bytes roots its source (an interior address of the response or a malloc copy); nothing heap is read after it). */
 char *avant_http_resp_body(const char *raw) {
   size_t n = avant_str_n(raw);
   int status = 0;

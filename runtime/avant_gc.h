@@ -16,8 +16,7 @@
  * declared, identically, by the shipped avant_rt.h, which generated
  * code uses; the declarations are repeated so this file states the
  * collector's surface on its own, and a mismatch with avant_rt.h is a
- * compile error. g_avant_shared, avant_gc_quiet_defer_enter,
- * avant_alloc_c, the no-GC region (avant_gc_nogc_begin/end) and the
+ * compile error. g_avant_shared, avant_alloc_c, the no-GC region (avant_gc_nogc_begin/end) and the
  * handle scopes (AvantGcFrame, avant_gc_top, AVANT_GC_SCOPE) are the
  * names here avant_rt.h does not ship.
  *
@@ -34,9 +33,9 @@
  *     evacuate sparse mature blocks, except blocks a word of the
  *     collecting thread's stack names (C31). Other threads' C frames are
  *     not scanned (D191).
- *   - avant_gc_defer_enter/leave bracket a region in which no collection
- *     runs (regions nest). With the nursery off (AVANT_NURSERY=0) the
- *     outermost enter may run a full collection first.
+ *   - avant_gc_defer_enter/leave (avant_gc_nogc_begin/end) bracket a
+ *     region in which no collection runs (regions nest); the entry
+ *     collects nothing (RC4 below; Stage 28 W16a).
  *   - A store of a reference into a heap object is preceded by
  *     avant_barrier on that object (D187).
  *   - avant_pin/avant_unpin keep an object at its address while C holds
@@ -111,7 +110,8 @@
  *
  *   RC4. No-GC regions, only where C cannot root. Where references live
  *   inside a C library's own data structures while it calls back or
- *   allocates (none in the runtime today; see the checklist), the
+ *   allocates, or while another thread may collect in a shared program
+ *   before W17 (the HTTP/WS sends; see the checklist), the
  *   function brackets the region with avant_gc_nogc_begin/end (regions
  *   nest; one process-wide depth, under the world lock). Allocation
  *   inside is allowed and counted against the young budget and the heap
@@ -144,24 +144,44 @@
  *   W16a converted every row; "C" converted to RC1-RC3, "N" nothing
  *   held, "R4" a no-GC region kept, with its reason):
  *     row (unit)                                   verdict
- *     avant_str_concat, _cat_i32, _from_i32_bytes,
- *       dup_bytes, slice, strip (avant_str.c)      open
- *     avant_str_split, _fields, chars_build,
- *       str_array_build (avant_str.c; C35)         open
- *     avant_str_repeat_byte, avant_hash_new        open
- *     array push_slot/_ptr/_i32, reserve, copy,
- *       array_grow (avant_array.c)                 open
- *     avant_buf_new, buf_append_slow, _to_str,
- *       _ensure, avant_bytes_to_buf (avant_buf.c)  open
- *     hash grow, setters, inc_slice, inc_str,
- *       inc_i32k, keys/vals, hash_array_*          open
- *     avant_json_parse, _f64s, copy_str            open
- *     base64, sha256/codec, zlib                   open
- *     avant_argv, avant_dir_list, io dup_bytes     open
- *     avant_spawn (avant_task.c; C28)              open
- *     HTTP/WS strings, send, close (avant_http.c)  open
- *     avant_llvm.c dup_bytes                       open
- *     g_last_key (avant_hash.c)                    a runtime root
+ *     avant_str_concat, _cat_i32, _from_i32_bytes  C (operands, array)
+ *     dup_bytes_at, slice, strip (avant_str.c)     C (text + offset, RC2)
+ *     avant_str_split, _fields, chars_build (C35)  C (array filled in
+ *                                                  place, str_array_new)
+ *     avant_str_repeat_byte, avant_hash_new        N (integer inputs)
+ *     array push_slot/_ptr/_i32, reserve,
+ *       array_grow (W16a item 2)                   C (scope on growth)
+ *     avant_array_copy                             C
+ *     buf_append_slow, buf_grow (item 2)           C
+ *     avant_buf_new, _to_str, _ensure,
+ *       avant_bytes_to_buf                         C
+ *     hash grow, setters, inc_slice (item 2)       C
+ *     inc_str, inc_i32k                            C
+ *     keys/vals (hash_collect; was items[])        C (array first, RC2)
+ *     avant_json_parse (audit 12 shape 2)          C (yyjson allocates
+ *                                                  from its own pool)
+ *     avant_json_f64s, copy_str                    C
+ *     base64 encode/decode, zlib                   C
+ *     sha256 (avant_codec.c)                       N (digest in C)
+ *     avant_argv, avant_dir_list                   C (array filled in
+ *                                                  place)
+ *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
+ *     avant_spawn (avant_task.c; C28)              N (the record is
+ *                                                  pinned; R1 is W16b's)
+ *     HTTP make_string/_bytes, packed headers      C
+ *     HTTP/WS send and close (7 regions)           R4: payloads held in
+ *                                                  C while other loop
+ *                                                  threads run (D191,
+ *                                                  until W17); nothing
+ *                                                  inside allocates
+ *     HTTP server state in srv (C memory) across
+ *       dispatch                                   pinned for the serve
+ *                                                  (W16a: with one loop
+ *                                                  the program may stay
+ *                                                  unshared and S+
+ *                                                  could move it)
+ *     g_last_key (avant_hash.c), g_json_pool
+ *       (avant_json.c, W16a)                       runtime roots
  *                                                  (avant_gc_add_root)
  *
  *   One young budget (gc-design.md section 5.1): avant_nursery_held
@@ -224,8 +244,7 @@
  *   AVANT_GC_STATS         switch, default 0: one statistics line on
  *                          stderr at exit
  *   AVANT_GC_STRESS        switch, default 0: a young collection at every
- *                          runtime C allocation and every outermost defer
- *                          entry (testing; W14b1)
+ *                          runtime C allocation (testing; W14b1)
  *
  * Retired (W14b2; setting one is reported and has no effect):
  * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
@@ -238,12 +257,12 @@ void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
-/* Runtime-internal (Stage 28 W14b2, O37): avant_gc_quiet_defer_enter
- * and avant_alloc_c below are entries of avant_rt.o that only the
- * runtime's other objects call. avant_rt.h does not declare them, and
- * their visibility is hidden: no linked image exports them (the second
- * section of avant_rt.exports). */
-__attribute__((visibility("hidden"))) void avant_gc_quiet_defer_enter(void);
+/* Runtime-internal (Stage 28 W14b2, O37): avant_alloc_c below is an
+ * entry of avant_rt.o that only the runtime's other objects call, as are
+ * avant_gc_nogc_begin/end and avant_gc_top (below). avant_rt.h does not
+ * declare them, and their visibility is hidden: no linked image exports
+ * them (the second section of avant_rt.exports). avant_gc_quiet_defer_enter
+ * went in Stage 28 W16a with the regions it opened. */
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);

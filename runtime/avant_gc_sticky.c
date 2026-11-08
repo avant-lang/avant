@@ -35,9 +35,8 @@
  * frame slot, C stack word or register is changed, and a young object a
  * C local names stays where it is. Liveness still needs every reference
  * to be found: generated code keeps its references in slots across
- * collecting calls (D165), and runtime C holds only its caller-rooted
- * arguments at the points a collection may run (outside defer regions;
- * gc-design.md §4.2 RC1 makes the rule general in W16). */
+ * collecting calls (D165), and runtime C keeps what it holds across a
+ * collecting call in handle scopes (RC1, avant_gc.h; Stage 28 W16a). */
 /* The noted list: every header MARKED a young collection sets, cleared
  * when it ends (C36, gc-design.md §2.6). */
 void gc_note_marked(void *payload) {

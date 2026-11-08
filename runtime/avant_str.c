@@ -129,24 +129,27 @@ char *avant_str_empty(void) {
   return empty_str();
 }
 
-/* Callers pass a C buffer on their own stack (the avant_str_from_*
- * formatters) or a pointer derived from a heap string inside their own
- * region: no stress point at this entry (W14b1), since a collection here
- * would rewrite a stack buffer whose bytes happen to equal an object's
- * address (C37's mechanism) or leave a derived pointer naming
- * from-space. */
-static char *dup_bytes(const char *s, size_t n) {
-  avant_gc_quiet_defer_enter();
+/* A copy of the N bytes at S + OFF (RC1/RC2, avant_gc.h; Stage 28
+ * W16a): S is a handle across the allocation (a heap string, or a C
+ * buffer, which its slot leaves alone) and the source is formed from it
+ * after the allocation. */
+static char *dup_bytes_at(const char *s, size_t off, size_t n) {
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (n) {
-    memcpy(p, s, n);
+    memcpy(p, s + off, n);
   }
   p[n] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
 }
 
+static char *dup_bytes(const char *s, size_t n) {
+  return dup_bytes_at(s, 0, n);
+}
+
+/* gc-lint: holds nothing (its input is a C literal; the result is pinned before any other call). */
 static char *empty_str(void) {
   if (!g_empty) {
     g_empty = dup_bytes("", 0);
@@ -170,36 +173,40 @@ char *avant_str_concat(const char *a, const char *b) {
   if (nb == 0) {
     return (char *)a;
   }
-  avant_gc_defer_enter();
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &b);
   char *p = (char *)avant_alloc((uint64_t)na + (uint64_t)nb + 1, AVANT_TYPE_BYTES);
   memcpy(p, a, na);
   memcpy(p + na, b, nb);
   p[na + nb] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
 }
 
 char *avant_str_from_i32_bytes(void *arr) {
-  avant_gc_defer_enter();
   AvantArray *a = (AvantArray *)arr;
   int32_t n = 0;
   const int32_t *src = NULL;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &a);
   if (a && a->buf && a->size > 0) {
     n = a->size;
-    src = (const int32_t *)a->buf;
   }
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  if (n) {
+    src = (const int32_t *)a->buf;
+  }
   int32_t i;
   for (i = 0; i < n; i++) {
     p[i] = (char)(unsigned char)(src[i] & 255);
   }
   p[n] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
 }
 
+/* gc-lint: holds nothing (its inputs are integers). */
 char *avant_str_repeat_byte(int32_t b, int32_t n) {
   if (n < 0) {
     n = 0;
@@ -230,10 +237,9 @@ static void clamp_range(size_t n, int32_t start, int32_t stop, size_t *out_i, si
   *out_len = (size_t)(end - i);
 }
 
-/* The region begins before s + i is formed: dup_bytes's own outermost
- * defer entry is a collection point under AVANT_GC_STRESS=1, and a young
- * collection there would leave the derived pointer naming from-space
- * (W14b1; RC2 of gc-design.md §4.2). */
+/* RC2: the source is passed as the string and an offset (dup_bytes_at),
+ * never as s + i formed before the allocation. */
+/* gc-lint: holds nothing (dup_bytes_at roots the string itself; nothing is read after it). */
 char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
   char *r;
   if (!s) {
@@ -245,9 +251,7 @@ char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
   if (len == 0) {
     return empty_str();
   }
-  avant_gc_defer_enter();
-  r = dup_bytes(s + i, len);
-  avant_gc_defer_leave();
+  r = dup_bytes_at(s, i, len);
   return r;
 }
 
@@ -291,6 +295,7 @@ char *avant_str_from_bool(int32_t n) {
   return dup_bytes(n ? "true" : "false", n ? 4 : 5);
 }
 
+/* gc-lint: holds nothing (its input is a C byte; the result is pinned before any other call). */
 char *avant_str_from_byte(int32_t b) {
   unsigned idx = (unsigned)(b & 255);
   if (g_byte_str[idx]) {
@@ -319,12 +324,10 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   char digs[16];
   int nd = 0;
   uint32_t u;
-  /* The region begins before digs is written: under AVANT_GC_STRESS=1
-   * its entry collects, and the C-stack rewrite would take a digit word
-   * (a digit over stale stack bytes) that equals an object's address
-   * for a reference (C37's mechanism; the compiler's MIR dumps printed
-   * "P" for "0", W14b1). */
-  avant_gc_defer_enter();
+  /* RC1: the prefix is a handle across the allocation (digs is C
+   * memory). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &prefix);
   if (n < 0) {
     u = (uint32_t)(-(n + 1)) + 1u;
   } else {
@@ -358,7 +361,6 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   }
   p[k] = 0;
   avant_str_tag(p);
-  avant_gc_defer_leave();
   return p;
 }
 
@@ -602,44 +604,44 @@ char *avant_str_strip(const char *s, int32_t mode) {
     return empty_str();
   }
   {
-    /* As in avant_str_slice: the region begins before s + i is formed. */
-    char *r;
-    avant_gc_defer_enter();
-    r = dup_bytes(s + i, len - i);
-    avant_gc_defer_leave();
-    return r;
+    /* As in avant_str_slice: the string and an offset (RC2). */
+    return dup_bytes_at(s, i, len - i);
   }
 }
 
-static void *str_array_build(char **items, int32_t n) {
-  avant_gc_defer_enter();
+/* An array of strings built in place (RC1, avant_gc.h; Stage 28 W16a):
+ * str_array_new allocates the array and a buffer of N slots, size 0; the
+ * builder keeps the array in a handle and str_array_put stores each fresh
+ * string into it with a barrier (RC3) before the next allocation. Before
+ * W16a the strings waited in a malloc'ed items[] the collector could not
+ * see, under one defer region (C35). */
+static void *str_array_new(int32_t n) {
   AvantArray *a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
-  char **buf = NULL;
-  int32_t i;
   if (n > 0) {
-    buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
-    for (i = 0; i < n; i++) {
-      buf[i] = items[i];
-    }
-    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
-    avant_barrier(buf);
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &a);
+    char **buf = (char **)avant_alloc((uint64_t)n * sizeof(char *), AVANT_TYPE_PTRS);
+    avant_barrier(a);
+    a->buf = buf;
+    a->cap = n;
   }
-  a->buf = buf;
-  a->size = n;
-  a->cap = n;
-  avant_gc_defer_leave();
   return a;
 }
 
-/* Keeps empty fields. Empty separator traps. */
-static void *str_split_held(const char *s, const char *sep) {
+static void str_array_put(AvantArray *a, char *p) {
+  ((char **)a->buf)[a->size++] = p;
+  avant_barrier(a->buf);
+}
+
+/* Keeps empty fields. Empty separator traps. RC1: the text, the
+ * separator and the array are handles across each piece's allocation. */
+void *avant_str_split(const char *s, const char *sep) {
   size_t n;
   size_t m;
   size_t i;
   size_t start;
   int32_t count = 1;
-  int32_t idx = 0;
-  char **items;
+  AvantArray *a = NULL;
   if (!s) {
     s = "";
   }
@@ -658,47 +660,36 @@ static void *str_split_held(const char *s, const char *sep) {
       i += m - 1;
     }
   }
-  items = (char **)malloc((size_t)count * sizeof(char *));
-  if (!items) {
-    return str_array_build(NULL, 0);
-  }
+  AVANT_GC_SCOPE(3);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &sep);
+  AVANT_GC_ROOT(2, &a);
+  a = (AvantArray *)str_array_new(count);
   start = 0;
   i = 0;
   while (i + m <= n) {
     if (memcmp(s + i, sep, m) == 0) {
-      items[idx++] = dup_bytes(s + start, i - start);
+      char *p = dup_bytes_at(s, start, i - start);
+      str_array_put(a, p);
       i += m;
       start = i;
     } else {
       i++;
     }
   }
-  items[idx++] = dup_bytes(s + start, n - start);
   {
-    void *r = str_array_build(items, idx);
-    free(items);
-    return r;
+    char *p = dup_bytes_at(s, start, n - start);
+    str_array_put(a, p);
   }
-}
-
-/* The fresh strings live only in a malloc'ed items[] until the array is
- * built, so the whole build is one defer region: an outermost enter may
- * run a full collection under AVANT_NURSERY=0, which does not see items[]
- * (C35). */
-void *avant_str_split(const char *s, const char *sep) {
-  avant_gc_defer_enter();
-  void *r = str_split_held(s, sep);
-  avant_gc_defer_leave();
-  return r;
+  return a;
 }
 
 /* Splits on runs of ASCII whitespace and drops empty fields. */
-static void *str_fields_held(const char *s) {
+void *avant_str_fields(const char *s) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
-  int32_t idx = 0;
-  char **items;
+  AvantArray *a = NULL;
   if (!s) {
     s = "";
   }
@@ -715,15 +706,13 @@ static void *str_fields_held(const char *s) {
       i++;
     }
   }
-  if (count == 0) {
-    return str_array_build(NULL, 0);
-  }
-  items = (char **)malloc((size_t)count * sizeof(char *));
-  if (!items) {
-    return str_array_build(NULL, 0);
-  }
+  /* RC1: the text and the array are handles (as avant_str_split). */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)str_array_new(count);
   i = 0;
-  while (i < n && idx < count) {
+  while (i < n && a->size < count) {
     size_t st;
     while (i < n && is_ascii_space((unsigned char)s[i])) {
       i++;
@@ -735,21 +724,10 @@ static void *str_fields_held(const char *s) {
     while (i < n && !is_ascii_space((unsigned char)s[i])) {
       i++;
     }
-    items[idx++] = dup_bytes(s + st, i - st);
+    char *p = dup_bytes_at(s, st, i - st);
+    str_array_put(a, p);
   }
-  {
-    void *r = str_array_build(items, idx);
-    free(items);
-    return r;
-  }
-}
-
-/* One defer region around the whole build, as avant_str_split (C35). */
-void *avant_str_fields(const char *s) {
-  avant_gc_defer_enter();
-  void *r = str_fields_held(s);
-  avant_gc_defer_leave();
-  return r;
+  return a;
 }
 
 static int utf8_valid(const unsigned char *s, size_t n) {
@@ -878,12 +856,11 @@ static size_t utf8_char_len(const unsigned char *s, size_t n, size_t i, int *val
   return (size_t)extra + 1;
 }
 
-static void *chars_build_held(const char *s, int strict) {
+static void *chars_build(const char *s, int strict) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
-  int32_t idx = 0;
-  char **items;
+  AvantArray *a = NULL;
   if (!s) {
     s = "";
   }
@@ -899,37 +876,20 @@ static void *chars_build_held(const char *s, int strict) {
     count++;
     i += len;
   }
-  if (count == 0) {
-    return str_array_build(NULL, 0);
-  }
-  items = (char **)malloc((size_t)count * sizeof(char *));
-  if (!items) {
-    return str_array_build(NULL, 0);
-  }
+  /* RC1: the text and the array are handles (as avant_str_split). */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)str_array_new(count);
   i = 0;
-  while (i < n && idx < count) {
+  while (i < n && a->size < count) {
     int valid = 0;
     size_t len = utf8_char_len((const unsigned char *)s, n, i, &valid);
-    if (valid) {
-      items[idx++] = dup_bytes(s + i, len);
-    } else {
-      items[idx++] = dup_bytes("\xef\xbf\xbd", 3);
-    }
+    char *p = valid ? dup_bytes_at(s, i, len) : dup_bytes("\xef\xbf\xbd", 3);
+    str_array_put(a, p);
     i += len;
   }
-  {
-    void *r = str_array_build(items, idx);
-    free(items);
-    return r;
-  }
-}
-
-/* One defer region around the whole build, as avant_str_split (C35). */
-static void *chars_build(const char *s, int strict) {
-  avant_gc_defer_enter();
-  void *r = chars_build_held(s, strict);
-  avant_gc_defer_leave();
-  return r;
+  return a;
 }
 
 void *avant_str_chars(const char *s) {

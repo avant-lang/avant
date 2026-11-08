@@ -65,12 +65,15 @@ char *avant_base64_encode(const char *s) {
   char *out;
   size_t wrote = 0;
   set_status(0);
-  avant_gc_defer_enter();
+  /* RC1/RC2: the text is a handle; its bytes are read after the
+   * allocation. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
   out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
+  p = (const unsigned char *)(s ? s : "");
   base64_encode((const char *)p, n, out, &wrote, 0);
   out[out_n] = 0;
   avant_str_tag(out);
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -81,16 +84,17 @@ char *avant_base64_decode(const char *s) {
   char *out;
   size_t wrote = 0;
   set_status(0);
-  avant_gc_defer_enter();
+  /* RC1/RC2, as in avant_base64_encode. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
   out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
+  p = (const unsigned char *)(s ? s : "");
   if (!decode_write(out, out_n, p, n, &wrote)) {
     set_status(1);
-    avant_gc_defer_leave();
     return avant_str_empty();
   }
   out[wrote] = 0;
   avant_str_tag(out);
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -113,7 +117,13 @@ int32_t avant_base64_encode_into(const char *s, void *buf) {
     return 2;
   }
   need = at + (int32_t)out_n;
+  /* RC1/RC2: the growth may collect; the text and the Buf are handles,
+   * and the text's bytes are formed again after it. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
   avant_buf_ensure(buf, need);
+  p = (const unsigned char *)(s ? s : "");
   dst = (char *)avant_buf_bytes(buf);
   if (!dst && out_n > 0) {
     set_status(2);
@@ -148,7 +158,13 @@ int32_t avant_base64_decode_into(const char *s, void *buf) {
     return 2;
   }
   need = at + (int32_t)out_n;
+  /* RC1/RC2: the growth may collect; the text and the Buf are handles,
+   * and the text's bytes are formed again after it. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
   avant_buf_ensure(buf, need);
+  p = (const unsigned char *)(s ? s : "");
   dst = (char *)avant_buf_bytes(buf);
   if (!decode_write(dst ? dst + at : NULL, out_n, p, n, &wrote)) {
     set_status(1);

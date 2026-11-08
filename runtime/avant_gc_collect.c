@@ -441,17 +441,10 @@ void gc_maybe_collect(void) {
     gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
     return;
   }
-  /*
-   * Stage 17: myc-llvm spills live pointer SSA into avant_gc_root
-   * slots around CALL, so young copy can rewrite them. Full collection
-   * remains non-moving. Default is still full collect only; set
-   * AVANT_NURSERY=1 to enable young copy. AVANT_NURSERY=0 is explicit
-   * Stage 7 behaviour.
-   *
-   * C helpers also hold heap pointers that gc_mark_roots does not see
-   * (concat args, hash tables mid-grow). avant_gc_defer_* blocks
-   * collection for that window.
-   */
+  /* Only a no-GC region (RC4, avant_gc.h) or a running collection holds
+   * a request off (above); since Stage 28 W16a runtime helpers root what
+   * they hold (RC1) and allocate outside regions, so their allocations
+   * are collection points like generated code's (O20, O46). */
   if (gc_heap.set.nursery_off) {
     if (avant_since_gc >= gc_heap.full_trigger) {
       gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
