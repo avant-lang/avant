@@ -81,8 +81,13 @@
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
+/* The default young budget (gc-design.md §5.2, Q3): 4 MiB, chosen in
+ * Stage 28 W15d among 4, 8 and 16 MiB on the final collector (LangArena
+ * prod at each: M1 total 42.29 / 42.53 / 42.67 s, average RSS 28.27 /
+ * 28.21 / 29.02 MB, worst M2 memory multiplier 2.57 / 3.62 / 3.74; the
+ * record states the rule). Settable at build time for a measurement. */
 #ifndef YOUNG_BYTES_DEFAULT
-#define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
+#define YOUNG_BYTES_DEFAULT (4ull * 1024ull * 1024ull)
 #endif
 /* S_LARGE_AGE (Stage 28 W15c item 1, O88; W15d item 1): the young
  * collections a young large object lives through before it is promoted.

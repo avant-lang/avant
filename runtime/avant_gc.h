@@ -147,7 +147,7 @@
  *
  *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
  *                          generation's budget in MiB, fixed; 0 is the
- *                          adaptive budget (8 MiB to start, within 4 to
+ *                          adaptive budget (4 MiB to start, within 4 to
  *                          64 MiB; gc-design.md section 5.2)
  *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
  *                          MiB ("heap limit" past it); 0 is no limit

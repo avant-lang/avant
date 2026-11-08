@@ -34,8 +34,8 @@ uint64_t avant_young_bytes;
 uint64_t avant_nursery_held;
 
 /* Young sizing (Stage 28 W15a1, gc-design.md §5.2; O28 done in W14b1).
- * The young budget starts at YOUNG_BYTES_DEFAULT (8 MiB; Q3 chooses the
- * default later) and adapts within [YOUNG_BYTES_MIN, YOUNG_BYTES_CAP]
+ * The young budget starts at YOUNG_BYTES_DEFAULT (4 MiB since Stage 28
+ * W15d, Q3; 8 MiB before) and adapts within [YOUNG_BYTES_MIN, YOUNG_BYTES_CAP]
  * after every young collection the policy runs (young_size): it doubles
  * when more than half of the young bytes survived and the pause per
  * surviving byte rose against the previous young collection, and halves
