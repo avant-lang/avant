@@ -953,6 +953,7 @@ __attribute__((noreturn)) void gc_die(const char *msg);
 void *gc_xrealloc(void *p, size_t n);
 void gc_work_push(void *p);
 int gc_block_live_lines(Block *b);
+int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed);
 size_t gc_obj_total(const AvantHeader *h);
 int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol);
 void *gc_object_payload(void *p, Block **ob, AvantHeader **ol);
@@ -1157,6 +1158,26 @@ static inline int has_start(Block *b, size_t off) {
 
 static inline int line_live(const Block *b, int i) {
   return b->line_mark[i] == gc_heap.line_epoch;
+}
+
+/* Line marks read a word (eight lines) at a time (Stage 28 W15c, O87;
+ * shared since W15d, O94): the epoch replicated into every byte, the high
+ * bit of every byte of MARKS equal to it (exact: no borrow crosses a
+ * byte), and the count of those bits (no popcount instruction is assumed:
+ * without -mpopcnt __builtin_popcountll is a library call). */
+#define LINE_WORDS (LINES_PER_BLOCK / 8)
+static inline uint64_t line_epoch8(void) {
+  return 0x0101010101010101ULL * (uint64_t)gc_heap.line_epoch;
+}
+
+static inline uint64_t live_bytes_mask(uint64_t marks, uint64_t epoch8) {
+  uint64_t x = marks ^ epoch8;
+  uint64_t t = (x & 0x7f7f7f7f7f7f7f7fULL) + 0x7f7f7f7f7f7f7f7fULL;
+  return ~(t | x | 0x7f7f7f7f7f7f7f7fULL);
+}
+
+static inline int live_byte_count(uint64_t mask) {
+  return (int)(((mask >> 7) * 0x0101010101010101ULL) >> 56);
 }
 
 static inline void mark_lines(Block *b, size_t off, size_t total) {

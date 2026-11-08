@@ -84,16 +84,14 @@ void gc_mark_roots(void) {
  * not a liveness test). The inline allocation path still runs only in
  * fresh blocks (holes are W15b's). */
 int gc_keep_if_live(Block *b) {
-  int i;
+  uint64_t freed = 0;
   if (gc_block_live_lines(b) == 0) {
     return 0;
   }
-  for (i = 0; i < LINES_PER_BLOCK; i++) {
-    if (!line_live(b, i)) {
-      b->start[i >> 1] &= ~(0xffffffffULL << (32 * (i & 1)));
-    }
-  }
-  gc_reset_block_bump(b);
+  /* Word-wise (Stage 28 W15d, O94): the young sweep's pass over the whole
+   * block clears the free lines' start bits and leaves the cursor on the
+   * first hole, as the byte loop and gc_reset_block_bump did. */
+  (void)gc_sweep_block_lines(b, 0, LINES_PER_BLOCK, &freed);
   return 1;
 }
 
