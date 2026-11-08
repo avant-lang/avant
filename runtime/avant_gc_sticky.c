@@ -352,8 +352,20 @@ static int sweep_lines(Block *b, int lo, int hi) {
 /* A young collection under S (gc_young_collect's S arm): the trace, the
  * young large objects, the remembered set emptied, then the sweep of the
  * young blocks. */
+/* Block.kept under S (E's field, unused by S otherwise): the young sweep
+ * left the block empty, and it leaves mature space (keep_unless_empty). */
+#define YOUNG_EMPTY 4
+static int keep_unless_empty(Block *b) {
+  if (b->kept == YOUNG_EMPTY) {
+    b->kept = 0;
+    return 0;
+  }
+  return 1;
+}
+
 void gc_sticky_collect(int tenure) {
   Block *b;
+  uint32_t empty = 0;
   gc_heap.young_large_live = 0;
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
@@ -375,9 +387,8 @@ void gc_sticky_collect(int tenure) {
   rem_rebuild();
   /* The young blocks (the young-blocks list, gc_heap.young_blocks): only
    * the line range young allocation used in each is swept. A block left
-   * wholly free goes to free_blocks, one with free lines to part_blocks:
-   * the young allocator's next holes. Every block stays in mature space
-   * (an empty one until a full collection releases it). */
+   * wholly free leaves mature space below (O89); one with free lines goes
+   * to part_blocks, the young allocator's next holes. */
   {
     uint32_t i;
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
@@ -387,7 +398,8 @@ void gc_sticky_collect(int tenure) {
       b->young_lo = 0;
       b->young_hi = 0;
       if (live == 0) {
-        gc_sticky_push(&gc_heap.free_blocks, &gc_heap.free_blocks_n, &gc_heap.free_blocks_cap, b);
+        b->kept = YOUNG_EMPTY;
+        empty++;
       } else if (live < LINES_PER_BLOCK) {
         gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
       }
@@ -397,6 +409,22 @@ void gc_sticky_collect(int tenure) {
   gc_clear_alloc_cur(SPACE_NURSERY);
   gc_heap.overflow = NULL;
   gc_heap.cur_whole = 0;
+  /* The empty young blocks go back to their chunks' free lists (O89):
+   * before, they stayed in mature space until a full collection, so a
+   * program that never runs one never returned them. The mature list is
+   * filtered only when this sweep left a block empty; the return then
+   * runs on the hysteresis clock (gc_heap.return_clock), keeping
+   * max(4 MiB, a quarter of the heap in use) of free memory resident. */
+  if (empty) {
+    /* The clock ticks first: the blocks freed now carry the new stamp, so
+     * only memory that stayed free since an earlier tick goes back (a
+     * block freed and reused every cycle stays resident: Binarytrees::Obj
+     * refaulted its 90 MB every cycle with the tick after the frees). */
+    gc_heap.return_clock++;
+    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, keep_unless_empty);
+    gc_heap.ctr.sticky.returned += empty;
+    gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
+  }
   gc_clear_noted();
   avant_nursery_held = gc_heap.young_large;
 }
@@ -415,7 +443,6 @@ void gc_sticky_full_begin(void) {
     gc_heap.young_blocks[i]->young_hi = 0;
   }
   gc_heap.young_blocks_n = 0;
-  gc_heap.free_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
   gc_heap.overflow = NULL;
   gc_heap.cur_whole = 0;

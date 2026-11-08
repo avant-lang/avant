@@ -539,13 +539,15 @@ typedef struct GcKeepCounters {
  * hole), freed_lines the lines of the young blocks' used ranges the
  * young sweeps found without a survivor, overflow the medium objects
  * placed in the overflow block because the current hole could not hold
- * them. All 0 under E. */
+ * them, returned the empty young blocks the young sweeps gave back to
+ * their chunks (Stage 28 W15c). All 0 under E. */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
   uint64_t holes;
   uint64_t freed_lines;
   uint64_t overflow;
+  uint64_t returned;
 } GcStickyCounters;
 
 typedef struct GcCounters {
@@ -646,6 +648,13 @@ typedef struct GcHeap {
   uint64_t small_hint;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
+  /* The clock of gc_heap_return's hysteresis (Q12): a free block or
+   * chunk is stamped with it when freed (idle) and returned only by a
+   * later tick. It ticks at every full collection, and under candidate
+   * S also at every young collection that gives empty young blocks back
+   * (Stage 28 W15c, O89), so a program that never runs a full collection
+   * can return memory; under E it equals the full-collection count. */
+  uint64_t return_clock;
   /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
    * bit and bytes (GcSpace). */
   GcSpace space[4];
@@ -754,20 +763,19 @@ typedef struct GcHeap {
   /* avant_gc_sticky.c and the young allocator (candidate S, Stage 28
    * W15b; empty under E). young_blocks: the young blocks, every block
    * young allocation took a hole in since the last collection (each has
-   * young_hi set). free_blocks and part_blocks: blocks of the mature list
-   * young allocation may take next, wholly free ones and ones with free
-   * lines among live ones (the young sweep and a full collection's sweep
-   * leave them; an entry may have been used up by mature allocation
-   * since, or be the mature cursor's block, and is then skipped).
+   * young_hi set). part_blocks: blocks of the mature list young
+   * allocation may take next, ones with free lines among live ones (the
+   * young sweep and a full collection's sweep leave them; an entry may
+   * have been used up by mature allocation since, or be the mature
+   * cursor's block, and is then skipped). Wholly free blocks go back to
+   * their chunks (Stage 28 W15c; before, a free_blocks list kept them in
+   * mature space until a full collection).
    * overflow: the young block medium objects go to when the current
    * hole cannot hold them (Immix's overflow allocation). cur_whole: the
    * young cursor's hole is a whole block (S_INLINE_HOLES). */
   Block **young_blocks;
   uint32_t young_blocks_n;
   uint32_t young_blocks_cap;
-  Block **free_blocks;
-  uint32_t free_blocks_n;
-  uint32_t free_blocks_cap;
   Block **part_blocks;
   uint32_t part_blocks_n;
   uint32_t part_blocks_cap;

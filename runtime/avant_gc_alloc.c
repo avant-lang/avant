@@ -321,11 +321,10 @@ void gc_clear_alloc_cur(uint8_t space) {
  * block's young line range [young_lo, young_hi), and the young sweep
  * visits only those lines (avant_gc_sticky.c). Mature allocation never
  * takes a young block, and young allocation never takes the mature
- * cursor's block, so a hole has one owner. The order (§3.1: fresh blocks
- * first, then holes of recycled blocks): the current block's next hole;
- * a wholly free block (free_blocks: blocks the sweeps left empty); a
- * hole of a block with free lines among live ones (part_blocks); a new
- * block from the chunks. A medium object (over a line) that the current
+ * cursor's block, so a hole has one owner. The order: the current
+ * block's next hole; a hole of a block with free lines among live ones
+ * (part_blocks); a new block from the chunks (where the sweeps return
+ * the blocks they leave empty, Stage 28 W15c). A medium object (over a line) that the current
  * hole cannot hold goes to the overflow block (a hole of a free or
  * recycled block of its own), so it does not skip the current block's
  * small holes (Immix's overflow allocation). */
@@ -407,10 +406,7 @@ static int young_hole(size_t total) {
       return 1;
     }
   }
-  b = young_from(gc_heap.free_blocks, &gc_heap.free_blocks_n, total);
-  if (!b) {
-    b = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
-  }
+  b = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
   if (b) {
     young_take(b);
     return 1;
@@ -425,10 +421,7 @@ static AvantHeader *young_overflow(size_t total) {
   Block *o = gc_heap.overflow;
   uint8_t *h;
   if (!o || o->bump + total > o->limit) {
-    o = young_from(gc_heap.free_blocks, &gc_heap.free_blocks_n, total);
-    if (!o) {
-      o = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
-    }
+    o = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
     if (!o) {
       o = gc_new_block(SPACE_MATURE);
       if (!o) {

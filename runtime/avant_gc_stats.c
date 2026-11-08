@@ -188,13 +188,15 @@ static void print_keep(StatsLine *l) {
 /* The sticky family (Stage 28 W15b, candidate S; all 0 under E), last in
  * the line: bytes promoted in place by young collections, young blocks
  * swept, holes taken by the young allocator, lines the young sweeps
- * freed, medium objects placed in the overflow block. */
+ * freed, medium objects placed in the overflow block, empty young blocks
+ * given back to their chunks (Stage 28 W15c). */
 static void print_sticky(StatsLine *l) {
   const GcStickyCounters *c = &gc_heap.ctr.sticky;
   line_add(l,
            "prom_inplace=%llu young_blocks=%llu young_holes=%llu young_freed_lines=%llu "
-           "young_overflow=%llu\n",
-           u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow));
+           "young_overflow=%llu young_returned=%llu\n",
+           u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
+           u(c->returned));
 }
 
 void gc_print_stats(void) {
