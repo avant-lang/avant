@@ -32,16 +32,29 @@
 #if GC_CANDIDATE == GC_CANDIDATE_S
 
 /* Promote one young block object in place: it is mature from now on. Its
- * lines are marked live at the current epoch, and its bytes are mature
- * growth for the full-collection trigger (gc-design.md §5.4: in-place
- * promotions count) and the survival young_size reads (sticky.inplace). */
+ * lines are marked live at the current epoch. Its bytes are the survival
+ * young_size reads (sticky.inplace); the mature growth it causes for the
+ * full-collection trigger (gc-design.md §5.4: in-place promotions count)
+ * is the lines it newly makes live, whole: what the heap loses to it until
+ * a full collection, since nothing compacts it (a survivor alone in a line
+ * costs the line; counted by its bytes, a heap of scattered survivors grew
+ * without a full collection: heap/churn.av 9 MB under E, 53 MB). */
 static void promote_in_place(AvantHeader *h, Block *b) {
   size_t total = gc_obj_total(h);
+  size_t off = (size_t)((uint8_t *)h - b->base);
+  size_t l;
+  size_t end = (off + total - 1) / LINE_SIZE;
+  uint64_t grown = 0;
   h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
-  mark_lines(b, (size_t)((uint8_t *)h - b->base), total);
+  for (l = off / LINE_SIZE; l <= end && l < LINES_PER_BLOCK; l++) {
+    if (!line_live(b, (int)l)) {
+      b->line_mark[l] = gc_heap.line_epoch;
+      grown += LINE_SIZE;
+    }
+  }
   gc_heap.ctr.sticky.inplace += total;
-  gc_heap.promoted_since_full += total;
-  gc_heap.mature_since_full += total;
+  gc_heap.promoted_since_full += grown;
+  gc_heap.mature_since_full += grown;
   gc_heap.live += total;
 }
 
@@ -229,7 +242,9 @@ static void sweep_lines(Block *b, int lo, int hi) {
   gc_heap.ctr.sticky.blocks++;
 }
 
-/* A young collection under S (gc_young_collect's S arm). */
+/* A young collection under S (gc_young_collect's S arm): the trace, the
+ * young large objects, the remembered set emptied, then the sweep of the
+ * young blocks. */
 void gc_sticky_collect(void) {
   Block *b;
   gc_heap.young_large_live = 0;
@@ -248,48 +263,62 @@ void gc_sticky_collect(void) {
   gc_heap.force_tenure = 0;
   gc_heap.keep_n = 0;
   rem_empty();
-  /* The nursery blocks: swept by line; a block with a live line joins
-   * mature space with its holes, an empty one is freed. */
-  b = gc_heap.space[SPACE_NURSERY].list;
-  gc_heap.space[SPACE_NURSERY].list = NULL;
-  gc_clear_alloc_cur(SPACE_NURSERY);
-  while (b) {
-    Block *next = b->next;
-    sweep_lines(b, 0, LINES_PER_BLOCK);
-    if (gc_block_live_lines(b) == 0) {
-      gc_cache_or_free_block(b);
-    } else {
-      b->space = SPACE_MATURE;
-      gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;
-      gc_heap.space[SPACE_MATURE].bytes += BLOCK_SIZE;
-      b->next = gc_heap.space[SPACE_MATURE].list;
-      gc_heap.space[SPACE_MATURE].list = b;
+  /* The young blocks (the young-blocks list, gc_heap.young_blocks): only
+   * the line range young allocation used in each is swept. A block left
+   * wholly free goes to free_blocks, one with free lines to part_blocks:
+   * the young allocator's next holes. Every block stays in mature space
+   * (an empty one until a full collection releases it). */
+  {
+    uint32_t i;
+    for (i = 0; i < gc_heap.young_blocks_n; i++) {
+      int live;
+      b = gc_heap.young_blocks[i];
+      sweep_lines(b, b->young_lo, b->young_hi);
+      b->young_lo = 0;
+      b->young_hi = 0;
+      live = gc_block_live_lines(b);
       gc_reset_block_bump(b);
+      if (live == 0) {
+        gc_sticky_push(&gc_heap.free_blocks, &gc_heap.free_blocks_n, &gc_heap.free_blocks_cap, b);
+      } else if (live < LINES_PER_BLOCK) {
+        gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+      }
     }
-    b = next;
+    gc_heap.young_blocks_n = 0;
   }
+  gc_clear_alloc_cur(SPACE_NURSERY);
+  gc_heap.overflow = NULL;
+  gc_heap.cur_whole = 0;
   gc_clear_noted();
   avant_nursery_held = gc_heap.young_large;
 }
 
 /* A full collection under S promotes every object it marks (the full
- * mark clears YOUNG): after it no object is young. After its sweep the
- * surviving nursery blocks join mature space and the young budget is
- * empty. */
+ * mark clears YOUNG): after it no object is young. Before its mark the
+ * young blocks become ordinary mature blocks (the full mark and sweep
+ * see every line, and defragmentation may evacuate them) and the young
+ * allocator's lists are dropped; after its sweep, which released every
+ * empty block, part_blocks is rebuilt from the blocks with free lines and
+ * the young budget is empty. */
 void gc_sticky_full_begin(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.young_blocks_n; i++) {
+    gc_heap.young_blocks[i]->young_lo = 0;
+    gc_heap.young_blocks[i]->young_hi = 0;
+  }
+  gc_heap.young_blocks_n = 0;
+  gc_heap.free_blocks_n = 0;
+  gc_heap.part_blocks_n = 0;
+  gc_heap.overflow = NULL;
+  gc_heap.cur_whole = 0;
 }
 
 void gc_sticky_full_end(void) {
-  Block *b = gc_heap.space[SPACE_NURSERY].list;
-  gc_heap.space[SPACE_NURSERY].list = NULL;
-  while (b) {
-    Block *next = b->next;
-    b->space = SPACE_MATURE;
-    gc_heap.space[SPACE_NURSERY].bytes -= BLOCK_SIZE;
-    gc_heap.space[SPACE_MATURE].bytes += BLOCK_SIZE;
-    b->next = gc_heap.space[SPACE_MATURE].list;
-    gc_heap.space[SPACE_MATURE].list = b;
-    b = next;
+  Block *b;
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+    if (gc_block_live_lines(b) < LINES_PER_BLOCK) {
+      gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+    }
   }
   avant_nursery_held = 0;
 }

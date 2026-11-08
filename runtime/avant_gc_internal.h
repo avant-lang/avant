@@ -1171,7 +1171,7 @@ static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol
  * in holes of recycled blocks as in whole free blocks; 0, only in whole
  * blocks (holes are allocated through the C path). */
 #ifndef S_INLINE_HOLES
-#define S_INLINE_HOLES 1
+#define S_INLINE_HOLES 0
 #endif
 
 /* The full collection's mark (Stage 28 W14a2, gc-design.md §2.2, C36):

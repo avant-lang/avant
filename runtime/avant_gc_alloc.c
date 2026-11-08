@@ -187,6 +187,23 @@ void gc_use_block(Block *b) {
   gc_heap.cur = b;
   avant_gc_bump = b->bump;
   gc_heap.limit = b->limit;
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  /* S: the young cursor's block is a mature-space block (a fresh one or
+   * a recycled one with holes); the inline path follows it into its holes
+   * (their start bits are clear, gc-design.md §2.3) unless S_INLINE_HOLES
+   * is 0 and the hole is not a whole block. Any other block clears it. */
+  if (b == gc_heap.space[SPACE_NURSERY].cur && !gc_heap.collecting &&
+      (S_INLINE_HOLES || gc_heap.cur_whole)) {
+    gc_heap.fast_block = b;
+    avant_gc_base = b->base;
+    avant_gc_starts = b->start;
+    avant_gc_block = b;
+    avant_gc_limit = inline_cap();
+  } else {
+    gc_fast_clear();
+  }
+  return;
+#endif
   if (b->space == SPACE_NURSERY) {
     /* Keep the inline fast path's mirror on the block the cursor is
      * actually in. A slow allocation that switches blocks would
@@ -213,11 +230,25 @@ static int bump_fits(size_t need) {
 static void *bump_take(size_t need) {
   Block *b = gc_heap.cur;
   size_t off = (size_t)(avant_gc_bump - b->base);
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  /* S: a young block's holes have clear start bits (the sweeps clear the
+   * lines they free), as the inline path requires. Any other allocation
+   * is mature and marks its lines live now: young allocation may recycle
+   * this block's holes before the next full collection, and finds them by
+   * the line marks. */
+  if (!b->young_hi) {
+    if (!gc_heap.space[b->space].fresh) {
+      clear_starts(b, off, need);
+    }
+    mark_lines(b, off, need);
+  }
+#else
   /* A fresh block is zeroed and only bumps forward. Clearing start bits
    * is for a hole in a recycled block. */
   if (!gc_heap.space[b->space].fresh) {
     clear_starts(b, off, need);
   }
+#endif
   set_start(b, off);
   void *h = avant_gc_bump;
   avant_gc_bump += need;
@@ -242,10 +273,15 @@ void gc_fast_clear(void) {
  * transitions clear eagerly below. */
 static void gc_fast_refresh(void) {
   Block *cur = gc_heap.space[SPACE_NURSERY].cur;
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  int cur_ok = S_INLINE_HOLES || gc_heap.cur_whole;
+#else
+  int cur_ok = gc_heap.space[SPACE_NURSERY].fresh;
+#endif
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
-      gc_heap.space[SPACE_NURSERY].fresh && avant_gc_bump) {
+      cur_ok && avant_gc_bump) {
     gc_heap.fast_block = cur;
     avant_gc_base = cur->base;
     avant_gc_starts = cur->start;
@@ -275,26 +311,201 @@ void gc_clear_alloc_cur(uint8_t space) {
   gc_heap.space[space].fresh = 0;
 }
 
+#if GC_CANDIDATE == GC_CANDIDATE_S
+/* Candidate S's young allocator (Stage 28 W15b, gc-design.md §3.1).
+ * There is no nursery space: young objects are allocated, YOUNG flagged,
+ * into free lines of mature-space blocks, and the space's cursor
+ * gc_heap.space[SPACE_NURSERY] is only the young cursor (its block a
+ * mature-space block). The block it bumps in is a young block (young_hi
+ * set) until the next collection: every hole handed out widens the
+ * block's young line range [young_lo, young_hi), and the young sweep
+ * visits only those lines (avant_gc_sticky.c). Mature allocation never
+ * takes a young block, and young allocation never takes the mature
+ * cursor's block, so a hole has one owner. The order (§3.1: fresh blocks
+ * first, then holes of recycled blocks): the current block's next hole;
+ * a wholly free block (free_blocks: blocks the sweeps left empty); a
+ * hole of a block with free lines among live ones (part_blocks); a new
+ * block from the chunks. A medium object (over a line) that the current
+ * hole cannot hold goes to the overflow block (a hole of a free or
+ * recycled block of its own), so it does not skip the current block's
+ * small holes (Immix's overflow allocation). */
+void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b) {
+  if (*n == *cap) {
+    *cap = *cap ? *cap * 2 : 64;
+    *v = gc_xrealloc(*v, *cap * sizeof(Block *));
+  }
+  (*v)[(*n)++] = b;
+}
+
+static void young_note_hole(Block *b) {
+  uint8_t lo = (uint8_t)((b->bump - b->base) >> LINE_SHIFT);
+  uint8_t hi = (uint8_t)((b->limit - b->base) >> LINE_SHIFT);
+  if (!b->young_hi) {
+    gc_sticky_push(&gc_heap.young_blocks, &gc_heap.young_blocks_n, &gc_heap.young_blocks_cap, b);
+    b->young_lo = lo;
+    b->young_hi = hi;
+  } else {
+    if (lo < b->young_lo) {
+      b->young_lo = lo;
+    }
+    if (hi > b->young_hi) {
+      b->young_hi = hi;
+    }
+  }
+  gc_heap.ctr.sticky.holes++;
+}
+
+static int young_usable(Block *b) {
+  return b->in_use && b->space == SPACE_MATURE && !b->young_hi &&
+         b != gc_heap.space[SPACE_MATURE].cur && b != gc_heap.overflow;
+}
+
+static void young_take(Block *b) {
+  young_note_hole(b);
+  gc_heap.space[SPACE_NURSERY].cur = b;
+  gc_heap.space[SPACE_NURSERY].fresh = 1;
+  gc_heap.cur_whole = b->bump == b->base && b->limit == b->base + BLOCK_SIZE;
+  gc_use_block(b);
+}
+
+/* A block of list V (N entries) with a hole of at least TOTAL bytes,
+ * its bump and limit set to the hole, taken out of the list; or NULL.
+ * A small object takes the last usable entry (any free line holds it).
+ * A medium one looks at the last YOUNG_FIT_LOOK entries and leaves the
+ * ones it does not fit in the list, so their small holes stay for small
+ * objects. Unusable entries (gc_heap's comment) are dropped. */
+#define YOUNG_FIT_LOOK 16
+static Block *young_from(Block **v, uint32_t *n, size_t total) {
+  uint32_t i = *n;
+  uint32_t looked = 0;
+  while (i > 0 && looked < YOUNG_FIT_LOOK) {
+    Block *b = v[--i];
+    if (!young_usable(b)) {
+      v[i] = v[--*n];
+      continue;
+    }
+    b->search = 0;
+    if (find_hole(b, total)) {
+      v[i] = v[--*n];
+      return b;
+    }
+    looked++;
+  }
+  return NULL;
+}
+
+/* The young cursor moves to a hole of at least TOTAL bytes without
+ * growing the heap, or 0. */
+static int young_hole(size_t total) {
+  Block *b = gc_heap.space[SPACE_NURSERY].cur;
+  if (b) {
+    b->search = (uint16_t)((b->limit - b->base) / LINE_SIZE);
+    if (find_hole(b, total)) {
+      young_note_hole(b);
+      gc_heap.cur_whole = 0;
+      gc_use_block(b);
+      return 1;
+    }
+  }
+  b = young_from(gc_heap.free_blocks, &gc_heap.free_blocks_n, total);
+  if (!b) {
+    b = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
+  }
+  if (b) {
+    young_take(b);
+    return 1;
+  }
+  return 0;
+}
+
+/* A medium object in the overflow block, or NULL (no free block and
+ * none can be made under the heap limit: the caller goes on as for a
+ * small one). */
+static AvantHeader *young_overflow(size_t total) {
+  Block *o = gc_heap.overflow;
+  uint8_t *h;
+  if (!o || o->bump + total > o->limit) {
+    o = young_from(gc_heap.free_blocks, &gc_heap.free_blocks_n, total);
+    if (!o) {
+      o = young_from(gc_heap.part_blocks, &gc_heap.part_blocks_n, total);
+    }
+    if (!o) {
+      o = gc_new_block(SPACE_MATURE);
+      if (!o) {
+        return NULL;
+      }
+    }
+    young_note_hole(o);
+    gc_heap.overflow = o;
+  }
+  h = o->bump;
+  set_start(o, (size_t)(h - o->base));
+  o->bump = h + total;
+  gc_heap.ctr.sticky.overflow++;
+  return (AvantHeader *)h;
+}
+
+/* Young allocation of TOTAL bytes without a new block, or NULL. */
+static AvantHeader *young_place(size_t total) {
+  Block *cur = gc_heap.space[SPACE_NURSERY].cur;
+  if (cur) {
+    if (gc_heap.cur != cur) {
+      gc_use_block(cur);
+    }
+    if (bump_fits(total)) {
+      return (AvantHeader *)bump_take(total);
+    }
+    if (total > LINE_SIZE) {
+      AvantHeader *h = young_overflow(total);
+      if (h) {
+        return h;
+      }
+    }
+  }
+  if (young_hole(total)) {
+    return (AvantHeader *)bump_take(total);
+  }
+  return NULL;
+}
+#endif
+
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc);
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   Block *cur = gc_heap.space[space].cur;
+  uint8_t bspace = space;
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  if (space == SPACE_NURSERY) {
+    AvantHeader *yh = young_place(total);
+    if (yh) {
+      return yh;
+    }
+    /* A new block, a young one (mature space). */
+    bspace = SPACE_MATURE;
+    cur = NULL;
+  } else
+#endif
   if (cur && try_bump(cur, total)) {
     return bump_take(total);
   }
   /* A fresh block has no holes behind it. Scanning the list again
    * walks every full block. Recycle only after a collection cleared
    * the fresh bit, and then only forward from the cursor. */
-  if (!gc_heap.space[space].fresh) {
+  if (bspace == space && !gc_heap.space[space].fresh) {
     Block *b = cur ? cur->next : gc_heap.space[space].list;
     for (; b; b = b->next) {
+#if GC_CANDIDATE == GC_CANDIDATE_S
+      if (b->young_hi) {
+        continue;
+      }
+#endif
       if (try_bump(b, total)) {
         gc_heap.space[space].cur = b;
         return bump_take(total);
       }
     }
   }
-  Block *b = gc_new_block(space);
+  Block *b = gc_new_block(bspace);
   if (!b && gc_heap.defer && !gc_heap.collecting) {
     /* C32 (gc-design.md §5.4): never collect inside a no-GC (defer)
      * region, where a runtime helper holds fresh objects the collector
@@ -304,7 +515,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
      * region alone is over the limit (§5.4). */
     gc_region_limit_check(total);
     gc_heap.over_limit = 1;
-    b = gc_new_block(space);
+    b = gc_new_block(bspace);
     gc_heap.over_limit = 0;
     gc_limit_collect_pending();
   }
@@ -313,7 +524,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
      * room was estimated (young_copy_fits); the copy proceeds and the
      * full collection runs at the next collection point. */
     gc_heap.over_limit = 1;
-    b = gc_new_block(space);
+    b = gc_new_block(bspace);
     gc_heap.over_limit = 0;
     gc_limit_collect_pending();
   }
@@ -332,9 +543,16 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     }
     gc_die("heap limit");
   }
-  gc_heap.space[space].cur = b;
-  gc_heap.space[space].fresh = 1;
-  gc_use_block(b);
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  if (space == SPACE_NURSERY) {
+    young_take(b);
+  } else
+#endif
+  {
+    gc_heap.space[space].cur = b;
+    gc_heap.space[space].fresh = 1;
+    gc_use_block(b);
+  }
   if (!bump_fits(total)) {
     gc_die("object larger than block");
   }
@@ -349,6 +567,24 @@ static AvantHeader *place_bump(size_t total) {
   if (gc_heap.set.nursery_off || gc_thread.alloc_mature || total > LOS_LIMIT) {
     return NULL;
   }
+#if GC_CANDIDATE == GC_CANDIDATE_S
+  (void)cur;
+  {
+    AvantHeader *yh = young_place(total);
+    if (yh) {
+      return yh;
+    }
+  }
+  b = gc_new_block(SPACE_MATURE);
+  if (!b) {
+    return NULL;
+  }
+  young_take(b);
+  if (!bump_fits(total)) {
+    return NULL;
+  }
+  return (AvantHeader *)bump_take(total);
+#endif
   cur = gc_heap.space[space].cur;
   /* Steady state: the global cursor already mirrors the nursery block.
    * Take from it directly instead of re-syncing through try_bump. */
