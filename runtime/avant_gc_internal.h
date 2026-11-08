@@ -1018,9 +1018,11 @@ void gc_rem_keep_young_holders(void);
  * point is gc_young_collect (avant_gc_collect.c), the young branch of
  * gc_collect: it runs the candidate's young collection, which reports
  * its survival (copied and kept-in-place bytes) through the counters
- * gc_collect reads. runtime/build.sh builds S by default and E with
+ * gc_collect reads. runtime/build.sh builds S+ (S with GC_STICKY_COPY,
+ * below) by default, S with AVANT_GC_CANDIDATE=S and E with
  * AVANT_GC_CANDIDATE=E in its environment (-DGC_CANDIDATE=...; Stage 28
- * W15b: S is the default by gc-design.md §3.4's rules). */
+ * W15b: S chosen by gc-design.md §3.4's rules; W15c: S+ by D230's
+ * condition). */
 #define GC_CANDIDATE_E 1
 #define GC_CANDIDATE_S 2
 #ifndef GC_CANDIDATE
@@ -1032,8 +1034,9 @@ void gc_rem_keep_young_holders(void);
 
 /* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): beside
  * GC_CANDIDATE, 1 builds candidate S's variant S+, the opportunistic
- * young copy (avant_gc_sticky.c: survivors of sparse young blocks are
- * copied out when every reference to them is precise); 0 builds plain S.
+ * young copy (avant_gc_sticky.c: survivors of young blocks are copied out
+ * when every reference to them is precise); 0 builds plain S. S+ is the
+ * default (D230's condition, the W15c record); E needs 0.
  * Like GC_CANDIDATE a build-time constant, not ABI (runtime/build.sh's
  * AVANT_GC_CANDIDATE=S+). SPLUS_SPARSE_LINES: a young block that held no
  * mature line is evacuated when its survivors' bytes fill at most this
@@ -1047,7 +1050,11 @@ void gc_rem_keep_young_holders(void);
  * have moved (Calculator::Interpreter 27 -> 44 MB, as under E). A block
  * that holds mature lines is never evacuated: it cannot be freed. */
 #ifndef GC_STICKY_COPY
+#if GC_CANDIDATE == GC_CANDIDATE_S
+#define GC_STICKY_COPY 1
+#else
 #define GC_STICKY_COPY 0
+#endif
 #endif
 #if GC_STICKY_COPY && GC_CANDIDATE != GC_CANDIDATE_S
 #error "GC_STICKY_COPY needs GC_CANDIDATE_S"
