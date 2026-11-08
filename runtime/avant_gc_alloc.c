@@ -587,6 +587,20 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
 
   pthread_mutex_lock(&gc_heap.world);
   gc_maybe_collect();
+  /* A young large object that alone fills the young budget collects first
+   * when anything young was allocated since the last collection (Stage 28
+   * W16a): that collection is due at the next allocation anyway, and run
+   * now it frees the previous such object before this one exists (a
+   * dropped Json document's pool, Binarytrees::Arena's arena) instead of
+   * holding both until it. Measured: Json::ParseMapping 90 -> 35 MB,
+   * Binarytrees::Arena 53 -> 27 MB, the Sort rows unchanged; with every
+   * large allocation that overruns the budget (not only one that fills
+   * it) Sort::Quick ran 8 full collections and grew 12 -> 19 MB. */
+  if (large && !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
+      avant_nursery_held > gc_heap.young_carried && total >= avant_young_bytes) {
+    gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
+  }
 
   if (large) {
     /* One young budget (gc-design.md §5.1, Stage 28 W15a1): young large

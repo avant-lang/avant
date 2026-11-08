@@ -7,8 +7,9 @@
 #include <string.h>
 
 /* std.json backing (yyjson). A parsed document lives in one pool buffer
- * allocated in mature collector space (yyjson_alc_pool_init): the Avant
- * Json value roots that buffer, interior yyjson pointers never move,
+ * allocated in collector space (yyjson_alc_pool_init), a large object,
+ * which never moves: the Avant Json value roots that buffer, interior
+ * yyjson pointers stay valid,
  * and the collector reclaims the whole document when the last Json is
  * dropped. Accessors report a missing key or a wrong kind through the
  * thread-local status, in the zlib/base64 shape. */
@@ -62,9 +63,16 @@ void *avant_json_parse(const char *s) {
     yyjson_read_err err;
     yyjson_doc *doc;
     char *pool;
-    avant_alloc_in_mature(1);
+    /* The pool (at least 8 KiB of Bytes) is a large object, which never
+     * moves, so yyjson's interior pointers into it stay valid; it is born
+     * young like every large object and dies young when its Json is
+     * dropped (Stage 28 W16a). Before, it was allocated mature
+     * (avant_alloc_in_mature), so a dropped document waited for a full
+     * collection, and with collections at the helpers' own allocations
+     * (RC1) the full trigger fired inside avant_json_f64s while the new
+     * document was still live (Json::ParseMapping 34 -> 90 MB). The
+     * bracket also turned a mature-allocating thread's setting off. */
     pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
-    avant_alloc_in_mature(0);
     if (!yyjson_alc_pool_init(&alc, pool, pool_n)) {
       set_status(2);
       return NULL;
