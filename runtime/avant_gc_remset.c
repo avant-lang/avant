@@ -72,50 +72,6 @@ static int rem_frontier_decide(void *obj, int dirty) {
   return 0;
 }
 
-void gc_rem_scrub(void) {
-  uint32_t i;
-  uint32_t w = 0;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&gc_heap.rem_mu);
-  }
-  for (i = 0; i < gc_heap.rem_n; i++) {
-    void *obj = gc_heap.remset[i];
-    AvantHeader *h;
-    if (!gc_is_heap_payload(obj, NULL, NULL)) {
-      continue;
-    }
-    h = avant_header(obj);
-    if (h->flags & AVANT_FLAG_MARKED) {
-      int dirty = gc_heap.rem_dirty ? gc_heap.rem_dirty[i] : 1;
-      if (!rem_frontier_decide(obj, dirty)) {
-        continue;
-      }
-      gc_heap.remset[w] = obj;
-      if (gc_heap.rem_dirty) {
-        gc_heap.rem_dirty[w] = (uint8_t)dirty;
-      }
-      w++;
-    } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-      AvantHeader *lh = NULL;
-      /* A dead expression buffer is a large object: release its pages
-       * now. */
-      (void)gc_is_heap_payload(obj, NULL, &lh);
-      if (lh) {
-        gc_release_large(lh);
-      } else {
-        h->flags &= (uint16_t)~AVANT_FLAG_REM;
-      }
-    } else {
-      h->flags &= (uint16_t)~AVANT_FLAG_REM;
-    }
-  }
-  gc_heap.rem_n = w;
-  if (locked) {
-    pthread_mutex_unlock(&gc_heap.rem_mu);
-  }
-}
-
 void gc_rem_commit_kept(void) {
   uint32_t n = gc_heap.keep_n;
   void **kept = gc_heap.keep;

@@ -31,9 +31,14 @@ import backends
 // that is neither 0 nor 1, a number that is not one, and a retired knob
 // are each reported once on stderr at start-up, and the program runs
 // as with the default (heap/task_pins.av's known stdout).
+//
+// heap/limit_region.av (gc-design.md §5.4, Stage 28 W15a1): a split
+// whose region alone allocates more than AVANT_HEAP_MAX_MB=4 dies with
+// "heap limit in a no-GC region (...)"; without a limit it prints its
+// part count.
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice"]
+  names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
   jobs: Array(HJob) = []
   p = 0
   while p < names.size {
@@ -64,6 +69,10 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     wants.push("split bad: 0\nlive bad: 0\n")
     e = e + 1
   }
+  progs.push("limit_region")
+  keys.push("limit_region.g0")
+  envs.push("")
+  wants.push("parts: 300001\n")
   progs.push("task_pins")
   keys.push("task_pins.g0")
   envs.push("")
@@ -99,6 +108,9 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     runs.push(run_job_env(dir, "task_pins", "task_pins.s${e}", senvs[e]))
     e = e + 1
   }
+  // heap/limit_region.av (gc-design.md §5.4, Stage 28 W15a1): a split
+  // that alone allocates more than the limit dies naming the region.
+  runs.push(run_job_env(dir, "limit_region", "limit_region.l", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=4"))
   run_waves(runs)
   k = 0
   while k < progs.size {
@@ -126,6 +138,9 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/task_pins.s${e}.err"), serrs[e], "task_pins.av under ${senvs[e]}: one start-up warning")
     e = e + 1
   }
+  lr = runs[progs.size + 1 + senvs.size]
+  c.expect(lr.code != 0, "limit_region.av under AVANT_HEAP_MAX_MB=4: fails")
+  c.expect(str_has(log_text("${dir}/limit_region.l.err"), "avant runtime: heap limit in a no-GC region ("), "limit_region.av under AVANT_HEAP_MAX_MB=4: heap limit in a no-GC region")
 }
 
 fn test_main(c: Checks) {

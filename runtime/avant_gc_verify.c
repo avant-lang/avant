@@ -196,17 +196,17 @@ void gc_verify_young_copy(void) {
     }
   }
   verify_mark_reachable();
-  for (b = gc_heap.to; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_TO].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
-  for (b = gc_heap.mature; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
-  for (b = gc_heap.from; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_obj_fields);
   }
   if (gc_heap.saw_pinned_nursery) {
-    for (b = gc_heap.nursery; b; b = b->next) {
+    for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
       gc_foreach_block_object(b, verify_pinned_fields);
     }
   }
@@ -382,10 +382,10 @@ void gc_verify_no_stale_marks(void) {
   AvantHeader *lh;
   Block *lists[4];
   int k;
-  lists[0] = gc_heap.mature;
-  lists[1] = gc_heap.nursery;
-  lists[2] = gc_heap.from;
-  lists[3] = gc_heap.to;
+  lists[0] = gc_heap.space[SPACE_MATURE].list;
+  lists[1] = gc_heap.space[SPACE_NURSERY].list;
+  lists[2] = gc_heap.space[SPACE_FROM].list;
+  lists[3] = gc_heap.space[SPACE_TO].list;
   for (k = 0; k < 4; k++) {
     for (b = lists[k]; b; b = b->next) {
       gc_foreach_block_object(b, verify_no_stale_one);
@@ -481,13 +481,13 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
     }
   }
   gc_each_runtime_root(verify_defrag_tls);
-  for (b = gc_heap.mature; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
-  for (b = gc_heap.nursery; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
-  for (b = gc_heap.from; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
     gc_foreach_block_object(b, verify_defrag_fields);
   }
   gc_large_iter_init(&it);

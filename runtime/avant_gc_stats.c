@@ -126,7 +126,7 @@ static void print_los(StatsLine *l) {
     now_bytes += (uint64_t)gc_large_bytes(h);
   }
   line_add(l,
-           "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu\n",
+           "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu ",
            u(c->allocs), u(c->alloc_bytes), u(c->callocs), u(c->spare_hits), u(c->spare_cached),
            u(c->spare_dropped), u(c->freed), u(c->scalar_allocs), u(c->scalar_bytes),
            u(c->big_allocs), u(c->big_bytes), u(c->young_allocs), u(c->young_bytes),
@@ -134,6 +134,48 @@ static void print_los(StatsLine *l) {
            u(c->hist[3]), u(c->hist[4]), u(c->hist[5]), u(c->live_peak), u(c->live_sum),
            u(c->live_samples), u(c->promoted), u(c->promoted_bytes), u(now), u(now_bytes),
            u(spare_bytes));
+}
+
+/* The W15a1 families (gc-design.md §3.4 M5, M6), appended after the los
+ * family: pause times in ns, full collections by cause, M6's
+ * fragmentation (frag_ppm is §3.4 rule 5's aggregate, the free-line
+ * fraction weighted by heap bytes over the full collections), and bytes
+ * promoted by young collections. */
+static void print_pause(StatsLine *l) {
+  const GcPauseCounters *c = &gc_heap.ctr.pause;
+  line_add(l, "pause_young_ns=%llu pause_full_ns=%llu pause_max_ns=%llu ", u(c->young_ns),
+           u(c->full_ns), u(c->max_ns));
+}
+
+static void print_why(StatsLine *l) {
+  const GcWhyCounters *c = &gc_heap.ctr.why;
+  line_add(l,
+           "full_promotion=%llu full_mature=%llu full_limit=%llu full_heap_goal=%llu "
+           "full_explicit=%llu ",
+           u(c->promotion), u(c->mature), u(c->limit), u(c->heap_goal), u(c->explicit_));
+}
+
+static void print_frag(StatsLine *l) {
+  const GcFragCounters *c = &gc_heap.ctr.frag;
+  uint64_t ppm = c->den > 0 ? (uint64_t)(c->num / c->den * 1e6) : 0;
+  line_add(l, "frag_fulls=%llu frag_free_lines=%llu frag_lines=%llu frag_ppm=%llu frag_max_ppm=%llu ",
+           u(c->fulls), u(c->free_lines), u(c->lines), u(ppm), u(c->max_ppm));
+}
+
+static void print_prom(StatsLine *l) {
+  const GcPromCounters *c = &gc_heap.ctr.prom;
+  line_add(l, "prom_bytes=%llu prom_copied=%llu prom_pinned=%llu prom_large=%llu ",
+           u(c->copied + c->pinned + c->large), u(c->copied), u(c->pinned), u(c->large));
+}
+
+static void print_sp(StatsLine *l) {
+  const GcSpCounters *c = &gc_heap.ctr.sp;
+  line_add(l, "sp_calls=%llu sp_collections=%llu ", u(c->calls), u(c->collections));
+}
+
+static void print_size(StatsLine *l) {
+  const GcSizeCounters *c = &gc_heap.ctr.size;
+  line_add(l, "young_grows=%llu young_shrinks=%llu\n", u(c->grows), u(c->shrinks));
 }
 
 void gc_print_stats(void) {
@@ -146,6 +188,12 @@ void gc_print_stats(void) {
   print_yng(&l);
   print_pk(&l);
   print_los(&l);
+  print_pause(&l);
+  print_why(&l);
+  print_frag(&l);
+  print_prom(&l);
+  print_sp(&l);
+  print_size(&l);
   fwrite(l.buf, 1, l.n, stderr);
 }
 

@@ -112,7 +112,7 @@ static void defrag_fix_one(AvantHeader *h, Block *b) {
 }
 
 static void mature_unlink(Block *b) {
-  Block **pp = &gc_heap.mature;
+  Block **pp = &gc_heap.space[SPACE_MATURE].list;
   while (*pp) {
     if (*pp == b) {
       *pp = b->next;
@@ -151,7 +151,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   if (live_lines_this == 0) {
     return;
   }
-  for (b = gc_heap.mature; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
     int live = gc_block_live_lines(b);
     DefCand *c;
     if (live <= 0 || live > 64 || gc_block_has_pinned(b) || gc_block_set_has(&gc_heap.cstack_blocks, b)) {
@@ -315,13 +315,13 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
       pthread_mutex_unlock(&gc_heap.rem_mu);
     }
   }
-  for (b = gc_heap.mature; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
-  for (b = gc_heap.nursery; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_NURSERY].list; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
-  for (b = gc_heap.from; b; b = b->next) {
+  for (b = gc_heap.space[SPACE_FROM].list; b; b = b->next) {
     gc_foreach_block_object(b, defrag_fix_one);
   }
   {

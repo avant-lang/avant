@@ -27,7 +27,7 @@ __attribute__((constructor(101))) static void gc_heap_static_init(void) {
   pthread_mutex_init(&gc_heap.world, NULL);
   pthread_mutex_init(&gc_heap.threads_mu, NULL);
   pthread_mutex_init(&gc_heap.rem_mu, NULL);
-  gc_heap.full_trigger = FULL_BYTES;
+  gc_heap.full_trigger = FULL_TRIGGER_MIN;
   gc_heap.set.defrag = 1;
 }
 

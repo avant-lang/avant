@@ -3,8 +3,9 @@
 // (with and without a step), delete, inc_slice, keys, values, size,
 // clear; Buf construction, every push form, starts_with, to_s, to_bytes,
 // index reads and stores (plain and compound), size, clear; Bytes.to_buf;
-// hash_last_key. A function that only touches a hash through quiet rows
-// is a leaf (a quiet leaf, mir.md 5.7).
+// hash_last_key. A function that touches a hash through a setter is a
+// frame since Stage 28 W15a1 (the setters collect; before, they were quiet
+// rows and such a function a quiet leaf, mir.md 5.7).
 
 fn say(s: String, v: Int): Int {
   puts(s)
@@ -16,7 +17,7 @@ fn hk(s: String, h: Hash(String, Int)): Hash(String, Int) {
   h
 }
 
-// A quiet leaf: hash set and size are quiet rows.
+// A frame: the hash set collects (a named safepoint); size never does.
 fn put(h: Hash(String, Int), k: String, v: Int): Int {
   h[k] = v
   h.size

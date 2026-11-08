@@ -17,7 +17,7 @@
  *                       path's state, avant_alloc and avant_bump_alloc
  *   avant_gc_los.c      the large-object space
  *   avant_gc_remset.c   the remembered set and the store barriers
- *   avant_gc_young.c    the young collection (copying nursery, probe,
+ *   avant_gc_young.c    the young collection (copying nursery,
  *                       pinned objects promoted in place)
  *   avant_gc_mark.c     the full collection's mark and block sweep
  *   avant_gc_defrag.c   mature defragmentation, block sets
@@ -80,8 +80,12 @@
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
 #define SCALAR_LOS_MIN 6144
-#define YOUNG_BYTES_DEFAULT (16u * 1024u * 1024u)
-#define FULL_BYTES (32u * 1024u * 1024u)
+#define YOUNG_BYTES_DEFAULT (8ull * 1024ull * 1024ull)
+/* The full-collection trigger (gc-design.md §5.4, Stage 28 W15a1): mature
+ * growth since the last full collection reaching
+ * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */
+#define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
+#define HEAP_FACTOR 2
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
 #define GC_THREAD_ROOTS 8
@@ -179,6 +183,26 @@ typedef struct GcChunk {
   uint64_t dirty_pages[PAGE_WORDS];
 } GcChunk;
 
+/* One space's state (gc-design.md §1.1, Stage 28 W15a1, O69), indexed
+ * by SPACE_* in gc_heap.space:
+ *   list   the space's blocks (avant_gc_heap.c owns the lists)
+ *   cur    the space's bump cursor (avant_gc_alloc.c). A full block used
+ *          to send the next allocation back through every older block
+ *          (take_from_list + find_hole); workers allocate in mature
+ *          space, and that walk dominated Matmul::T16.
+ *   fresh  the cursor is a new block: when it fills, allocate another
+ *          instead of rescanning full blocks. A full collection clears
+ *          the cursor so the next allocation reuses holes.
+ *   bytes  the block bytes of the space, kept as blocks enter a space,
+ *          move between spaces and leave (W14a2), so gc_note_peak reads
+ *          them instead of walking every list. */
+typedef struct GcSpace {
+  struct Block *list;
+  struct Block *cur;
+  uint8_t fresh;
+  uint64_t bytes;
+} GcSpace;
+
 /* A walk over every large object (gc_large_next, avant_gc_los.c), in
  * address order. The walk may free the object it just returned. */
 typedef struct LargeIter {
@@ -271,11 +295,9 @@ typedef struct BlockSet {
   } while (0)
 
 #define AVANT_FLAG_REM 16u
-/* Young large object reached from a heap slot. It must be promoted:
- * a mature object can hold it, and that edge is not in the remembered
- * set (a large payload has no block). A buffer reached only from the
- * stack stays young so the next collection can free it. */
-#define AVANT_FLAG_LOS_KEEP 128u
+/* (128, AVANT_FLAG_LOS_KEEP, the promotion at first survival of a young
+ * large object a heap field reached, is retired since Stage 28 W15a1:
+ * an edge to a young large object is remembered like any young edge.) */
 
 /* A forwarding entry of the young copy (avant_gc_heap.c). */
 typedef struct FwdEnt {
@@ -339,7 +361,9 @@ typedef struct GcDefCounters {
  * the nursery bytes in use and the surviving bytes at each probe,
  * min/max are the extreme surviving-byte readings, and hist buckets the
  * surv/used ratio in percent (0, 1-10, 10-25, 25-50, 50-75, 75-100) so
- * phase oscillation is visible. */
+ * phase oscillation is visible. The probe is retired since Stage 28
+ * W15a1 (gc-design.md §5.2): the family stays in the statistics line,
+ * always 0. */
 typedef struct GcSrvCounters {
   uint64_t probes;
   uint64_t used;
@@ -351,8 +375,9 @@ typedef struct GcSrvCounters {
 
 /* yng: min/max bound the adaptive young threshold over the run.
  * cpy_peak is the largest from-space plus to-space object bytes held
- * during one young copy. sticky counts the threshold's sticky growths
- * (young_pause). */
+ * during one young copy. sticky counted the threshold's sticky growths
+ * (young_pause, retired since Stage 28 W15a1: always 0; ctr.size counts
+ * the adaptations). */
 typedef struct GcYngCounters {
   uint64_t min;
   uint64_t max;
@@ -410,6 +435,76 @@ typedef struct GcLosCounters {
   uint64_t promoted_bytes;
 } GcLosCounters;
 
+/* pause, why, frag, prom (Stage 28 W15a1, gc-design.md §3.4 M5 and
+ * M6). pause: the wall time of every collection (CLOCK_MONOTONIC around
+ * gc_collect's body), young and full summed in nanoseconds, and the
+ * longest single pause. */
+typedef struct GcPauseCounters {
+  uint64_t young_ns;
+  uint64_t full_ns;
+  uint64_t max_ns;
+} GcPauseCounters;
+
+/* why: full collections by cause (GcWhy): mature space grew by the
+ * trigger mostly through promotion (bytes the young collection moved or
+ * promoted into mature space since the last full collection) or mostly
+ * through mature allocation (allocation in mature space: worker threads,
+ * the JSON pool, the nursery off); the heap limit
+ * (AVANT_HEAP_MAX_MB, a refused block or page run, or a full collection
+ * C32 left pending); or an explicit request (avant_gc_collect, the HTTP
+ * boundary's avant_gc_heap_goal_collect). */
+typedef struct GcWhyCounters {
+  uint64_t promotion;
+  uint64_t mature;
+  uint64_t limit;
+  uint64_t heap_goal;
+  uint64_t explicit_;
+} GcWhyCounters;
+
+/* frag: M6, at each full collection after the mark (before the sweep):
+ * the free lines of the partly used blocks (some line live, some free)
+ * of every space, and every block's lines. free_lines and lines are
+ * summed over the full collections; weighted is §3.4 rule 5's aggregate,
+ * the free-line fraction weighted by the heap bytes (gc_heap.heap_bytes)
+ * at each full collection, kept as the two sums (num in line-fraction
+ * times bytes, den in bytes) so the line prints num / den in parts per
+ * million; max_ppm is the largest single collection's fraction. */
+typedef struct GcFragCounters {
+  uint64_t fulls;
+  uint64_t free_lines;
+  uint64_t lines;
+  double num;
+  double den;
+  uint64_t max_ppm;
+} GcFragCounters;
+
+/* prom: bytes promoted into mature space by young collections: copied
+ * (a survivor tenured into a mature block), pinned (a pinned nursery
+ * object promoted in place, D205) and large (a young large object whose
+ * YOUNG is cleared). */
+typedef struct GcPromCounters {
+  uint64_t copied;
+  uint64_t pinned;
+  uint64_t large;
+} GcPromCounters;
+
+/* sp: the named safepoints (Stage 28 W15a1, gc-design.md §5.1): calls
+ * counts the slow paths that could collect (the budget spent, stress or
+ * a pending heap-limit collection, in an unshared program outside every
+ * region), collections the ones that ran a collection the policy asked
+ * for (a stress point's own young collection is not counted). */
+typedef struct GcSpCounters {
+  uint64_t calls;
+  uint64_t collections;
+} GcSpCounters;
+
+/* size: the young budget's adaptations (gc-design.md §5.2, young_size in
+ * avant_gc_collect.c): doublings and halvings. */
+typedef struct GcSizeCounters {
+  uint64_t grows;
+  uint64_t shrinks;
+} GcSizeCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -418,6 +513,12 @@ typedef struct GcCounters {
   GcYngCounters yng;
   GcPkCounters pk;
   GcLosCounters los;
+  GcPauseCounters pause;
+  GcWhyCounters why;
+  GcFragCounters frag;
+  GcPromCounters prom;
+  GcSpCounters sp;
+  GcSizeCounters size;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
   /* The cumulative count of stack words still naming from-space after
@@ -493,11 +594,9 @@ typedef struct GcHeap {
   uint64_t small_hint;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
-  /* The spaces' block lists (SPACE_*). */
-  Block *mature;
-  Block *nursery;
-  Block *from;
-  Block *to;
+  /* The spaces (SPACE_*): each one's block list, bump cursor, fresh
+   * bit and bytes (GcSpace). */
+  GcSpace space[4];
   /* The mark work list. */
   void **work;
   uint32_t work_n;
@@ -520,20 +619,8 @@ typedef struct GcHeap {
   Block *cur;
   uint8_t *limit;
   Block *fast_block;
-  /* Per-space bump cursor. A full block used to send the next allocation
-   * back through every older block (take_from_list + find_hole). Workers
-   * allocate in mature space, and that walk dominated Matmul::T16.
-   * alloc_fresh means the cursor is a new block: when it fills, allocate
-   * another instead of rescanning full blocks. A full collection clears
-   * the cursor so the next allocation reuses holes. */
-  Block *alloc_cur[4];
-  uint8_t alloc_fresh[4];
   /* Block bytes in use or cached, against set.heap_max. */
   uint64_t heap_bytes;
-  /* Block bytes per space (SPACE_*), kept as blocks enter a space, move
-   * between spaces and leave (W14a2), so gc_note_peak reads them instead
-   * of walking every list. */
-  uint64_t space_bytes[4];
   /* Wave 4 step 2: outside a collection the copy reserve counts as
    * spent, so fresh block growth stops early enough that the next copy
    * has its destination room under the heap limit. The charge is soft:
@@ -553,14 +640,15 @@ typedef struct GcHeap {
   /* The page-run bytes of every large object (the spare excluded): the
    * peak decomposition's pk_large and the stats line's los_now_bytes. */
   uint64_t large_bytes;
-  /* Bytes and count of young scalar large objects. They do not move. A
-   * young collection frees the ones the mark does not reach. */
+  /* Bytes and count of young large objects. They do not move. A young
+   * collection frees the ones the mark does not reach. Their bytes are
+   * also counted in avant_nursery_held, the one young budget (Stage 28
+   * W15a1, gc-design.md §5.1). */
   uint64_t young_large;
   int young_large_n;
-  /* Set when a young large object survived a collection. Further
-   * same-sized allocs are live rows, not a replaced buffer, so they
-   * must not collect on every malloc. */
-  int los_eager_hold;
+  /* The large-object bytes the running young collection marked (the
+   * los family's live sample without a walk, O65). */
+  uint64_t young_large_live;
   /* The large-object chunks (CHUNK_LARGE), in the order they were made:
    * the first fit looks in each, in this order. */
   uint32_t *lchunks;
@@ -601,10 +689,8 @@ typedef struct GcHeap {
   uint32_t noted_n;
   uint32_t noted_cap;
   uint64_t to_bytes;
-  int probe;
   int force_tenure;
   int from_mature;
-  uint64_t probe_nursery_bytes;
   int from_heap_slot;
   /* Set while a remembered object is being scanned: gc_copy_from_slot then
    * records whether any direct field names a young object afterwards. */
@@ -663,16 +749,26 @@ typedef struct GcHeap {
    * reach because they stay off while this is set. */
   int limit_pending;
   uint64_t mature_since_full;
+  /* The part of mature_since_full that young collections promoted (for
+   * the full collection's cause, ctr.why). */
+  uint64_t promoted_since_full;
   /* The copy reserve (Wave 4 step 2): the room the next young copy needs,
    * charged as spent by heap-limit decisions outside a collection. */
   uint64_t copy_reserve;
-  /* Mature growth that triggers the next full collection. Starts at
-   * FULL_BYTES and adapts after every full collection to twice the
-   * live set plus slack, so a program with a small live set and heavy
-   * mature churn (a parsed document per iteration) does not grow the
-   * heap to 32 MB before reclaiming, while a program whose live set is
-   * large keeps today's spacing. */
+  /* The last young collection's pause per surviving byte (ns), for
+   * young_size (gc-design.md §5.2). */
+  double young_per_byte;
+  /* Mature growth that triggers the next full collection (gc-design.md
+   * §5.4, Stage 28 W15a1): FULL_TRIGGER_MIN before the first one, then
+   * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).
+   * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
+   * a program with a large live set collect too often for its size. */
   uint64_t full_trigger;
+  /* The bytes allocated inside the running outermost no-GC (defer)
+   * region, and the address its helper entered it from (for "heap limit
+   * in a no-GC region", gc-design.md §5.4). */
+  uint64_t region_bytes;
+  void *region_site;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -779,7 +875,6 @@ void *gc_los_alloc(size_t payload, uint32_t type_id);
 
 /* avant_gc_remset.c */
 void gc_keep_add(void *obj);
-void gc_rem_scrub(void);
 void gc_rem_commit_kept(void);
 void gc_rem_full_scrub(void);
 
@@ -822,8 +917,22 @@ void gc_verify_defrag(void);
  * evacuates sparse mature blocks (defragmentation). A caller whose C
  * frames may hold references the collector cannot rewrite passes 0. */
 typedef enum GcKind { GC_YOUNG, GC_FULL } GcKind;
-void gc_collect(GcKind kind, int allow_move);
+/* Why a collection runs (ctr.why counts the full ones): the young
+ * budget, the full-collection trigger (by promotion or by mature
+ * allocation, decided from promoted_since_full), the heap limit, the
+ * HTTP boundary (avant_gc_heap_goal_collect), an explicit request, or a
+ * stress point. */
+typedef enum GcWhy {
+  GC_WHY_BUDGET,
+  GC_WHY_TRIGGER,
+  GC_WHY_LIMIT,
+  GC_WHY_HEAP_GOAL,
+  GC_WHY_EXPLICIT,
+  GC_WHY_STRESS
+} GcWhy;
+void gc_collect(GcKind kind, int allow_move, GcWhy why);
 void gc_limit_collect_pending(void);
+void gc_region_limit_check(uint64_t bytes);
 void gc_maybe_collect(void);
 void gc_stress_point(void);
 void gc_init_slow(void);

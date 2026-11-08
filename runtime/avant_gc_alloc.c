@@ -69,13 +69,13 @@ void gc_reset_block_bump(Block *b) {
 }
 
 void gc_cache_or_free_block(Block *b) {
-  if (gc_heap.alloc_cur[SPACE_NURSERY] == b) {
+  if (gc_heap.space[SPACE_NURSERY].cur == b) {
     gc_clear_alloc_cur(SPACE_NURSERY);
   }
-  if (gc_heap.alloc_cur[SPACE_MATURE] == b) {
+  if (gc_heap.space[SPACE_MATURE].cur == b) {
     gc_clear_alloc_cur(SPACE_MATURE);
   }
-  if (gc_heap.alloc_cur[SPACE_TO] == b) {
+  if (gc_heap.space[SPACE_TO].cur == b) {
     gc_clear_alloc_cur(SPACE_TO);
   }
   if (gc_heap.cur == b) {
@@ -91,7 +91,7 @@ void gc_cache_or_free_block(Block *b) {
    * to its chunk's free list (resident until a full collection's
    * gc_heap_return). */
   b->in_use = 0;
-  gc_heap.space_bytes[b->space] -= BLOCK_SIZE;
+  gc_heap.space[b->space].bytes -= BLOCK_SIZE;
   if (gc_heap.cache_n < CACHE_BLOCKS) {
     b->next = gc_heap.cache;
     gc_heap.cache = b;
@@ -110,10 +110,10 @@ void gc_note_peak(void) {
     return;
   }
   avant_g_stats.peak_heap = gc_heap.heap_bytes;
-  gc_heap.ctr.pk.nursery = gc_heap.space_bytes[SPACE_NURSERY];
-  gc_heap.ctr.pk.mature = gc_heap.space_bytes[SPACE_MATURE];
-  gc_heap.ctr.pk.from = gc_heap.space_bytes[SPACE_FROM];
-  gc_heap.ctr.pk.to = gc_heap.space_bytes[SPACE_TO];
+  gc_heap.ctr.pk.nursery = gc_heap.space[SPACE_NURSERY].bytes;
+  gc_heap.ctr.pk.mature = gc_heap.space[SPACE_MATURE].bytes;
+  gc_heap.ctr.pk.from = gc_heap.space[SPACE_FROM].bytes;
+  gc_heap.ctr.pk.to = gc_heap.space[SPACE_TO].bytes;
   gc_heap.ctr.pk.cache = (uint64_t)gc_heap.cache_n * BLOCK_SIZE;
   gc_heap.ctr.pk.large = gc_heap.large_bytes;
 }
@@ -154,22 +154,33 @@ Block *gc_new_block(uint8_t space) {
    * payload in init_object, so a fresh or recycled block costs no
    * whole-block clearing pass ahead of the mutator's own writes. */
   b->space = space;
-  gc_heap.space_bytes[space] += BLOCK_SIZE;
+  gc_heap.space[space].bytes += BLOCK_SIZE;
   b->search = 0;
   b->bump = b->base;
   b->limit = b->base + BLOCK_SIZE;
   b->in_use = 1;
-  if (space == SPACE_NURSERY) {
-    b->next = gc_heap.nursery;
-    gc_heap.nursery = b;
-  } else if (space == SPACE_TO) {
-    b->next = gc_heap.to;
-    gc_heap.to = b;
-  } else {
-    b->next = gc_heap.mature;
-    gc_heap.mature = b;
-  }
+  /* Blocks are made for the nursery, to-space and mature space only. */
+  b->next = gc_heap.space[space].list;
+  gc_heap.space[space].list = b;
   return b;
+}
+
+/* The inline fast path's limit: the current block's limit, capped where
+ * the young budget runs out, so a collecting allocation reaches
+ * avant_alloc (which collects) when the budget is spent. Once it is spent
+ * the cap is the block's end (Stage 28 W15a1): a leaf, whose fallback
+ * avant_bump_alloc never collects, then allocates inline to the end of
+ * every block instead of calling C for every object past the budget
+ * (Binarytrees::Obj builds an 8 MiB tree in a leaf: +59% time at the 8 MiB
+ * budget with the old cap), and a collecting allocation overshoots the
+ * budget by at most the rest of one block before avant_alloc collects. */
+static uint8_t *inline_cap(void) {
+  uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
+  uint8_t *cap = avant_gc_bump + rem;
+  if (gc_heap.limit && (rem == 0 || cap > gc_heap.limit)) {
+    return gc_heap.limit;
+  }
+  return cap;
 }
 
 void gc_use_block(Block *b) {
@@ -182,15 +193,13 @@ void gc_use_block(Block *b) {
      * otherwise leave generated code writing start bits through the
      * previous block's base. A recycled block clears the fast path:
      * its start bits need the clearing only bump_take does. */
-    if (!gc_heap.collecting && b == gc_heap.alloc_cur[SPACE_NURSERY] &&
-        gc_heap.alloc_fresh[SPACE_NURSERY]) {
-      uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
-      uint8_t *cap = avant_gc_bump + rem;
+    if (!gc_heap.collecting && b == gc_heap.space[SPACE_NURSERY].cur &&
+        gc_heap.space[SPACE_NURSERY].fresh) {
       gc_heap.fast_block = b;
       avant_gc_base = b->base;
       avant_gc_starts = b->start;
       avant_gc_block = b;
-      avant_gc_limit = gc_heap.limit && cap > gc_heap.limit ? gc_heap.limit : cap;
+      avant_gc_limit = inline_cap();
     } else {
       gc_fast_clear();
     }
@@ -206,7 +215,7 @@ static void *bump_take(size_t need) {
   size_t off = (size_t)(avant_gc_bump - b->base);
   /* A fresh block is zeroed and only bumps forward. Clearing start bits
    * is for a hole in a recycled block. */
-  if (!gc_heap.alloc_fresh[b->space]) {
+  if (!gc_heap.space[b->space].fresh) {
     clear_starts(b, off, need);
   }
   set_start(b, off);
@@ -214,9 +223,7 @@ static void *bump_take(size_t need) {
   avant_gc_bump += need;
   b->bump = avant_gc_bump;
   if (b == gc_heap.fast_block) {
-    uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
-    uint8_t *cap = avant_gc_bump + rem;
-    avant_gc_limit = gc_heap.limit && cap > gc_heap.limit ? gc_heap.limit : cap;
+    avant_gc_limit = inline_cap();
   }
   return h;
 }
@@ -234,18 +241,16 @@ void gc_fast_clear(void) {
  * cursor against the limit. Called at slow allocation entries; state
  * transitions clear eagerly below. */
 static void gc_fast_refresh(void) {
-  Block *cur = gc_heap.alloc_cur[SPACE_NURSERY];
+  Block *cur = gc_heap.space[SPACE_NURSERY].cur;
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
-      !gc_heap.limit_pending && gc_heap.mature_since_full < FULL_BYTES && cur && gc_heap.cur == cur &&
-      gc_heap.alloc_fresh[SPACE_NURSERY] && avant_gc_bump) {
-    uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
-    uint8_t *cap = avant_gc_bump + rem;
+      !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
+      gc_heap.space[SPACE_NURSERY].fresh && avant_gc_bump) {
     gc_heap.fast_block = cur;
     avant_gc_base = cur->base;
     avant_gc_starts = cur->start;
     avant_gc_block = cur;
-    avant_gc_limit = gc_heap.limit && cap > gc_heap.limit ? gc_heap.limit : cap;
+    avant_gc_limit = inline_cap();
     avant_gc_fast_ok = 1;
   } else {
     gc_fast_clear();
@@ -266,31 +271,25 @@ static int try_bump(Block *b, size_t total) {
 }
 
 void gc_clear_alloc_cur(uint8_t space) {
-  gc_heap.alloc_cur[space] = NULL;
-  gc_heap.alloc_fresh[space] = 0;
+  gc_heap.space[space].cur = NULL;
+  gc_heap.space[space].fresh = 0;
 }
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc);
 
 static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
-  Block *cur = gc_heap.alloc_cur[space];
+  Block *cur = gc_heap.space[space].cur;
   if (cur && try_bump(cur, total)) {
     return bump_take(total);
   }
   /* A fresh block has no holes behind it. Scanning the list again
    * walks every full block. Recycle only after a collection cleared
    * the fresh bit, and then only forward from the cursor. */
-  if (!gc_heap.alloc_fresh[space]) {
-    Block *list = gc_heap.mature;
-    if (space == SPACE_NURSERY) {
-      list = gc_heap.nursery;
-    } else if (space == SPACE_TO) {
-      list = gc_heap.to;
-    }
-    Block *b = cur ? cur->next : list;
+  if (!gc_heap.space[space].fresh) {
+    Block *b = cur ? cur->next : gc_heap.space[space].list;
     for (; b; b = b->next) {
       if (try_bump(b, total)) {
-        gc_heap.alloc_cur[space] = b;
+        gc_heap.space[space].cur = b;
         return bump_take(total);
       }
     }
@@ -301,7 +300,18 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
      * region, where a runtime helper holds fresh objects the collector
      * cannot see (avant_str_split's items[]). The allocation proceeds
      * past the limit and the full collection runs at the first
-     * collection point after the region (gc_maybe_collect). */
+     * collection point after the region (gc_maybe_collect), unless the
+     * region alone is over the limit (§5.4). */
+    gc_region_limit_check(total);
+    gc_heap.over_limit = 1;
+    b = gc_new_block(space);
+    gc_heap.over_limit = 0;
+    gc_limit_collect_pending();
+  }
+  if (!b && gc_heap.collecting && !gc_heap.over_limit) {
+    /* A young copy's destination past the limit (Stage 28 W15a1): its
+     * room was estimated (young_copy_fits); the copy proceeds and the
+     * full collection runs at the next collection point. */
     gc_heap.over_limit = 1;
     b = gc_new_block(space);
     gc_heap.over_limit = 0;
@@ -312,7 +322,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
       /* The reserve charge is soft (see heap_block_fits): collect,
        * then retry charged only the true heap bytes, so a reserve
        * refusal can never become a spurious heap-limit death. */
-      gc_collect(GC_FULL, 1);
+      gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
       gc_heap.reserve_retry = 1;
       {
         AvantHeader *retry = place(total, space, 1);
@@ -322,8 +332,8 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     }
     gc_die("heap limit");
   }
-  gc_heap.alloc_cur[space] = b;
-  gc_heap.alloc_fresh[space] = 1;
+  gc_heap.space[space].cur = b;
+  gc_heap.space[space].fresh = 1;
   gc_use_block(b);
   if (!bump_fits(total)) {
     gc_die("object larger than block");
@@ -339,7 +349,7 @@ static AvantHeader *place_bump(size_t total) {
   if (gc_heap.set.nursery_off || gc_thread.alloc_mature || total > LOS_LIMIT) {
     return NULL;
   }
-  cur = gc_heap.alloc_cur[space];
+  cur = gc_heap.space[space].cur;
   /* Steady state: the global cursor already mirrors the nursery block.
    * Take from it directly instead of re-syncing through try_bump. */
   if (cur && gc_heap.cur == cur && avant_gc_bump && avant_gc_bump + total <= gc_heap.limit) {
@@ -348,11 +358,11 @@ static AvantHeader *place_bump(size_t total) {
   if (cur && try_bump(cur, total)) {
     return (AvantHeader *)bump_take(total);
   }
-  if (!gc_heap.alloc_fresh[space]) {
-    b = cur ? cur->next : gc_heap.nursery;
+  if (!gc_heap.space[space].fresh) {
+    b = cur ? cur->next : gc_heap.space[SPACE_NURSERY].list;
     for (; b; b = b->next) {
       if (try_bump(b, total)) {
-        gc_heap.alloc_cur[space] = b;
+        gc_heap.space[space].cur = b;
         return (AvantHeader *)bump_take(total);
       }
     }
@@ -361,8 +371,8 @@ static AvantHeader *place_bump(size_t total) {
   if (!b) {
     return NULL;
   }
-  gc_heap.alloc_cur[space] = b;
-  gc_heap.alloc_fresh[space] = 1;
+  gc_heap.space[space].cur = b;
+  gc_heap.space[space].fresh = 1;
   gc_use_block(b);
   if (!bump_fits(total)) {
     return NULL;
@@ -397,6 +407,9 @@ static void init_object(AvantHeader *h, size_t payload, uint32_t type_id, int yo
 
 static void account_alloc(size_t total, int nursery) {
   avant_g_stats.allocated_bytes += total;
+  if (gc_heap.defer) {
+    gc_heap.region_bytes += total;
+  }
   avant_since_gc += total;
   if (nursery) {
     avant_nursery_held += total;
@@ -439,7 +452,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * Medium numeric buffers take the large path so their address stays. */
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.defer &&
       !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending &&
-      gc_heap.mature_since_full < FULL_BYTES && avant_nursery_held + total < avant_young_bytes) {
+      gc_heap.mature_since_full < gc_heap.full_trigger && avant_nursery_held + total < avant_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
       init_object(fast, payload, type_id, 1, 0);
@@ -452,21 +465,16 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   gc_maybe_collect();
 
   if (large) {
-    /* One replaced scalar buffer is reclaimed into the spare slot.
-     * A survived buffer sets the hold so a run of live rows does not
-     * collect on every allocation. The byte threshold still runs. */
-    if (!gc_heap.set.nursery_off && !gc_thread.alloc_mature && !gc_heap.defer && gc_heap.young_large_n > 0 &&
-        (gc_heap.young_large >= avant_young_bytes || (!gc_heap.los_eager_hold && gc_heap.young_large_n == 1))) {
-      uint64_t mature_before = gc_heap.mature_since_full;
-      gc_collect(GC_YOUNG, 1);
-      if (gc_heap.young_large_n > 0 || gc_heap.mature_since_full > mature_before) {
-        gc_heap.los_eager_hold = 1;
-      } else {
-        gc_heap.los_eager_hold = 0;
-      }
-    }
+    /* One young budget (gc-design.md §5.1, Stage 28 W15a1): young large
+     * bytes count in avant_nursery_held, so gc_maybe_collect above
+     * already ran the young collection they are due (the eager
+     * collection for one replaced buffer and the separate large budget
+     * are retired). */
     void *obj = gc_los_alloc(payload, type_id);
     avant_g_stats.allocated_bytes += total;
+    if (gc_heap.defer) {
+      gc_heap.region_bytes += total;
+    }
     avant_since_gc += total;
     pthread_mutex_unlock(&gc_heap.world);
     return obj;

@@ -20,9 +20,9 @@
  * names every page's run, so an interior address is one table read
  * (avant_gc_heap.c). Large objects never move. No list, hash or address
  * range: every walk goes over the chunks (gc_large_next), and the bytes
- * the large objects hold are a counter (gc_heap.large_bytes). Young large
- * objects, the spare buffer, their reclaim at young collections and
- * their sweep at full ones keep their policy (LOS_KEEP and the rest). */
+ * the large objects hold are a counter (gc_heap.large_bytes). Every large
+ * object is born young and dies young (Stage 28 W15a1, gc-design.md
+ * §5.3): gc_reclaim_young_large. */
 
 static uint64_t run_pages(size_t payload) {
   return ((uint64_t)payload + 16 + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -287,6 +287,7 @@ static void account_large_gone(AvantHeader *h, int keep_bytes) {
     if (gc_heap.young_large_n > 0) {
       gc_heap.young_large_n--;
     }
+    avant_nursery_held = avant_nursery_held >= bytes ? avant_nursery_held - bytes : 0;
   } else if (gc_heap.mature_since_full >= bytes) {
     gc_heap.mature_since_full -= bytes;
   }
@@ -311,18 +312,7 @@ void gc_release_large(AvantHeader *h) {
   }
 }
 
-/* FULL: the full collection's marks (full_marked), else the young
- * collection's (the header's MARKED). */
-static void los_note_live(int full) {
-  LargeIter it;
-  AvantHeader *h;
-  uint64_t live = 0;
-  gc_large_iter_init(&it);
-  while ((h = gc_large_next(&it))) {
-    if (full ? full_marked(h) : (h->flags & AVANT_FLAG_MARKED) != 0) {
-      live += (uint64_t)gc_large_bytes(h);
-    }
-  }
+static void note_live_sample(uint64_t live) {
   gc_heap.ctr.los.live_samples++;
   gc_heap.ctr.los.live_sum += live;
   if (live > gc_heap.ctr.los.live_peak) {
@@ -330,81 +320,98 @@ static void los_note_live(int full) {
   }
 }
 
+/* A young large object leaves the young generation (gc-design.md §5.3):
+ * YOUNG and its age bit SURVIVED are cleared and its bytes become mature
+ * growth. One with reference fields joins the kept list, so the
+ * remembered set holds it while its fields name young objects (the
+ * frontier drops it at the next young collection otherwise). */
 static void promote_young_large(AvantHeader *h) {
   size_t bytes = gc_large_bytes(h);
   gc_heap.ctr.los.promoted++;
   gc_heap.ctr.los.promoted_bytes += (uint64_t)bytes;
-  h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_LOS_KEEP));
+  gc_heap.ctr.prom.large += (uint64_t)bytes;
+  gc_heap.promoted_since_full += (uint64_t)bytes;
+  h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
   if (gc_heap.young_large >= bytes) {
     gc_heap.young_large -= bytes;
   }
   if (gc_heap.young_large_n > 0) {
     gc_heap.young_large_n--;
   }
+  avant_nursery_held = avant_nursery_held >= bytes ? avant_nursery_held - bytes : 0;
   gc_heap.mature_since_full += bytes;
+  if (h->type_id != AVANT_TYPE_BYTES) {
+    gc_keep_add(payload_of(h));
+  }
 }
 
-/* Unmarked young large objects are unreachable and are freed. A marked
- * one is promoted when a heap object points at it, or when the stack
- * is holding a working set at least as big as the young limit. A
- * stack-only buffer stays young, so the next collection can free it
- * once that local is gone. */
+/* After a young collection's trace (Stage 28 W15a1, gc-design.md §5.3:
+ * young large objects die young). Every large object is born young. An
+ * unreached young large object is freed at once (or kept as the spare);
+ * a reached one stays young at its first survival (SURVIVED marks it)
+ * and is promoted at its second, or at once when the collection tenures
+ * every survivor (a fixed AVANT_YOUNG_MB) or the object is pinned.
+ * Before, LOS_KEEP promoted every young large object a heap field
+ * reached at its first survival, and a stack-held working set as large
+ * as the young budget was promoted too. With no young large object the
+ * walk is skipped (O47, O65): the live sample is the bytes the trace
+ * marked (gc_heap.young_large_live). */
 void gc_reclaim_young_large(void) {
   LargeIter it;
   AvantHeader *h;
-  size_t stay_bytes = 0;
-  int promote_stay;
-  los_note_live(0);
+  note_live_sample(gc_heap.young_large_live);
+  if (gc_heap.young_large_n == 0) {
+    return;
+  }
   gc_large_iter_init(&it);
   while ((h = gc_large_next(&it))) {
     if ((h->flags & AVANT_FLAG_YOUNG) == 0) {
       continue;
     }
-    if ((h->flags & AVANT_FLAG_MARKED) == 0) {
-      continue;
-    }
-    if (h->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_LOS_KEEP)) {
-      continue;
-    }
-    stay_bytes += gc_large_bytes(h);
-  }
-  promote_stay = stay_bytes >= avant_young_bytes;
-  gc_large_iter_init(&it);
-  while ((h = gc_large_next(&it))) {
-    if (h->flags & AVANT_FLAG_YOUNG) {
-      int marked = (h->flags & AVANT_FLAG_MARKED) != 0;
-      int pinned = (h->flags & AVANT_FLAG_PINNED) != 0;
-      int keep = (h->flags & AVANT_FLAG_LOS_KEEP) != 0;
-      if (!marked && !pinned) {
-        gc_release_large(h);
-      } else if (pinned || keep || promote_stay) {
-        promote_young_large(h);
-      } else {
-        h->flags = (uint16_t)(h->flags & (uint16_t)~AVANT_FLAG_LOS_KEEP);
-      }
+    if ((h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_PINNED)) == 0) {
+      gc_release_large(h);
+    } else if ((h->flags & (AVANT_FLAG_PINNED | AVANT_FLAG_SURVIVED)) || gc_heap.force_tenure) {
+      promote_young_large(h);
+    } else {
+      h->flags |= AVANT_FLAG_SURVIVED;
     }
   }
 }
 
+/* A full collection's sweep of the large objects: unmarked ones are
+ * freed; survivors keep their generation (a young one stays young, with
+ * its age), so young_large and its count are recounted here. */
 void gc_sweep_large(void) {
   LargeIter it;
   AvantHeader *h;
-  los_note_live(1);
+  uint64_t live = 0;
+  gc_heap.young_large = 0;
+  gc_heap.young_large_n = 0;
   gc_large_iter_init(&it);
   while ((h = gc_large_next(&it))) {
+    size_t bytes = gc_large_bytes(h);
     if (!full_marked(h)) {
-      size_t bytes = gc_large_bytes(h);
       give_run(h);
       gc_heap.large_bytes -= bytes;
       gc_heap.heap_bytes -= bytes;
       gc_heap.ctr.los.freed++;
+      continue;
+    }
+    live += (uint64_t)bytes;
+    if (h->flags & AVANT_FLAG_YOUNG) {
+      gc_heap.young_large += (uint64_t)bytes;
+      gc_heap.young_large_n++;
     }
   }
+  note_live_sample(live);
 }
 
 void *gc_los_alloc(size_t payload, uint32_t type_id) {
   size_t bytes = (size_t)(run_pages(payload) << PAGE_SHIFT);
-  int young = !gc_heap.set.nursery_off && !gc_thread.alloc_mature && type_id == AVANT_TYPE_BYTES;
+  /* Every large object is born young (gc-design.md §5.3, Stage 28
+   * W15a1; before, only scalar ones were), except a mature-allocating
+   * thread's and with the nursery off. */
+  int young = !gc_heap.set.nursery_off && !gc_thread.alloc_mature;
   AvantHeader *h;
   if (gc_heap.los_spare && gc_heap.los_spare->size != (uint32_t)payload) {
     gc_los_spare_drop();
@@ -412,10 +419,12 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   if (gc_heap.set.heap_max && !gc_heap.los_spare && gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
     if (gc_heap.defer) {
       /* C32: inside a no-GC region the allocation proceeds past the
-       * limit and the collection runs after the region. */
+       * limit and the collection runs after the region, unless the
+       * region alone is over the limit (gc-design.md §5.4). */
+      gc_region_limit_check(bytes);
       gc_limit_collect_pending();
     } else {
-      gc_collect(GC_FULL, 1);
+      gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
       if (gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
         gc_die("heap limit");
       }
@@ -460,6 +469,8 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     h->flags |= AVANT_FLAG_YOUNG;
     gc_heap.young_large += bytes;
     gc_heap.young_large_n++;
+    /* The one young budget (gc-design.md §5.1). */
+    avant_nursery_held += bytes;
   } else {
     gc_heap.mature_since_full += bytes;
   }

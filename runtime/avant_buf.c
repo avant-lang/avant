@@ -46,11 +46,15 @@ void *avant_buf_new(int32_t cap) {
   return b;
 }
 
-/* Reached from the quiet avant_buf_push_* rows (and from
- * avant_bytes_to_buf through avant_buf_append), with p possibly derived
- * from a string (push_slice): no stress point at its entry (W14b1,
- * avant_gc_quiet_defer_enter). */
+/* A named safepoint (avant_gc.h, Stage 28 W15a1), reached from the
+ * avant_buf_push_* rows and avant_buf_append. p may be derived from a
+ * string (push_slice: s + i, an interior address, which the safepoint's
+ * root slot relocates like any interior slot) or name a caller's stack
+ * buffer (push_byte, push_fmt_*: not a heap address, left alone). Its
+ * callers read neither b nor p after the call. The region after the
+ * safepoint enters quietly (the safepoint was its collection point). */
 static void buf_append_slow(AvantBuf *b, const void *p, int32_t n) {
+  gc_safepoint_entry(b, p);
   avant_gc_quiet_defer_enter();
   buf_reserve(b, n);
   if (p && n > 0 && b->data) {
@@ -185,12 +189,17 @@ char *avant_buf_to_str(void *buf) {
   return p;
 }
 
+/* One region around the whole build: buf and s are C locals read after
+ * avant_buf_new and after avant_buf_append, whose buf_append_slow is a
+ * safepoint (a region makes it collect nothing, Stage 28 W15a1). */
 void *avant_bytes_to_buf(const char *s) {
+  avant_gc_defer_enter();
   size_t n = avant_str_n(s);
   void *buf = avant_buf_new(n > 0 ? (int32_t)n : 16);
   if (n > 0) {
     avant_buf_append(buf, s, (int32_t)n);
   }
+  avant_gc_defer_leave();
   return buf;
 }
 
