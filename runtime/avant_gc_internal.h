@@ -105,6 +105,22 @@
 #ifndef S_LARGE_AGE
 #define S_LARGE_AGE 2
 #endif
+/* LARGE_AGE_BYTES (Stage 28 W15e, O98): with S_LARGE_AGE 2, a reached
+ * young large object is promoted at its second survival only once at
+ * least this many young bytes were allocated since its birth (the young
+ * clock, gc_heap.young_clock); until then it stays young. Its age no
+ * longer depends on the budget: at 4 MiB the second survival came after
+ * 4-8 MiB of allocation, at the old 8 MiB after 8-16, and
+ * Template::Regex / Parse promoted 17.4 MB of buffers instead of 7.0
+ * (42 / 41 MB RSS against 37 / 36). A young large object that survived
+ * is not counted in the young budget after the collection (counted, the
+ * survivors filled a 4 MiB budget, the clock barely moved between
+ * collections, and Template ran 18,395 young collections). Measured
+ * (W15e record, var/): 8 MiB gives Template 36 / 36 MB, Sort::Quick
+ * 13 -> 11 MB, 16 MiB the same within 1 MB; 0 is W15d's rule. */
+#ifndef LARGE_AGE_BYTES
+#define LARGE_AGE_BYTES (8ull * 1024ull * 1024ull)
+#endif
 /* YOUNG_AGE (Stage 28 W15d item 1, O91, D232: E's aging, Q4, inside S+'s
  * copy path): the young collections a small object S+ copies lives
  * through before it is promoted. 2 is one aging step: a survivor S+
@@ -574,7 +590,9 @@ typedef struct GcSizeCounters {
  * still young (YOUNG_AGE 2, Stage 28 W15d; in copied_bytes, not in
  * prom.copied), surv_blocks the survivor blocks they went to,
  * aged_holders the holders of young large objects aged out of blocks S+
- * does not evacuate (splus_age_holders). */
+ * does not evacuate (splus_age_holders); aged_inplace_blocks the survivor
+ * blocks whose dense aged survivors were promoted in place at their next
+ * collection (O97, Stage 28 W15e). */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
@@ -588,6 +606,7 @@ typedef struct GcStickyCounters {
   uint64_t aged;
   uint64_t surv_blocks;
   uint64_t aged_holders;
+  uint64_t aged_inplace_blocks;
 } GcStickyCounters;
 
 typedef struct GcCounters {
@@ -735,6 +754,15 @@ typedef struct GcHeap {
    * W15a1, gc-design.md §5.1). */
   uint64_t young_large;
   int young_large_n;
+  /* The young-allocation clock (Stage 28 W15e, O98): young bytes
+   * allocated before the last collection (young_clock), and the young
+   * bytes that collection left counted (young_carried, aged survivors and
+   * young large objects that stay young), so the clock now is young_clock
+   * + avant_nursery_held - young_carried (gc_young_clock_now). A young
+   * large object's birth time is stamped in the 8 bytes before its header
+   * (the run's padding, avant_gc_los.c). */
+  uint64_t young_clock;
+  uint64_t young_carried;
   /* The large-object bytes the running young collection marked (the
    * los family's live sample without a walk, O65). */
   uint64_t young_large_live;
@@ -872,9 +900,9 @@ typedef struct GcHeap {
   /* The part of mature_since_full that young collections promoted (for
    * the full collection's cause, ctr.why). */
   uint64_t promoted_since_full;
-  /* The last young collection's pause per surviving byte (ns), for
-   * young_size (gc-design.md §5.2). */
-  double young_per_byte;
+  /* The last young collection's survival exceeded half its young bytes
+   * (young_size, gc-design.md §5.2; Stage 28 W15e). */
+  uint8_t young_high_prev;
   /* Mature growth that triggers the next full collection (gc-design.md
    * §5.4, Stage 28 W15a1): FULL_TRIGGER_MIN before the first one, then
    * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).
@@ -1031,6 +1059,23 @@ void gc_rem_keep_young_holders(void);
 /* A survivor block this collection copies aged survivors into (YOUNG_AGE
  * 2, Stage 28 W15d). */
 #define SPLUS_SURV 6
+/* O97 (Stage 28 W15e): a survivor block between collections
+ * (SPLUS_WAS_SURV, set when it becomes a young block) and in the next
+ * young collection while it is a candidate (SPLUS_PURE_AGED); it is
+ * evacuated only when its survivors fill at most SPLUS_AGED_SPARSE_LINES
+ * of its 128 lines, otherwise they are promoted in place: an aged object
+ * that survives again is copied once, not twice. Measured at 128 (every
+ * survivor block evacuated, W15d's rule), 96, 64, 32 and 0 (W15e record,
+ * var/o97-*): the compiler's __emit-ll copies 308 -> 168 MB at 96 and
+ * below, its young pause 787 -> 716-719 ms at 64 and 32, peak_heap 228 MB
+ * at every setting; Etc::GameOfLife copies 31.6 -> 19.1 MB; Sort and
+ * Words unchanged (they hardly age). 64, half the block, is the sparse
+ * test. */
+#define SPLUS_WAS_SURV 7
+#define SPLUS_PURE_AGED 8
+#ifndef SPLUS_AGED_SPARSE_LINES
+#define SPLUS_AGED_SPARSE_LINES 64
+#endif
 
 /* avant_gc_sticky.c: the young generation (S+; candidate S with
  * GC_STICKY_COPY 0) and the noted list, and the young allocator's block

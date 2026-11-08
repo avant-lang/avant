@@ -610,13 +610,21 @@ static void splus_evacuate(void) {
     Block *b = gc_heap.young_blocks[i];
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
-    } else if (b->kept == SPLUS_PURE && b->idle > 0 &&
+    } else if (b->kept == SPLUS_PURE_AGED &&
+               (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
+      /* O97 (Stage 28 W15e): a survivor block whose aged survivors are
+       * dense keeps them in place, promoted (no second copy). */
+      b->kept = 0;
+      gc_heap.ctr.sticky.aged_inplace_blocks++;
+    } else if ((b->kept == SPLUS_PURE || b->kept == SPLUS_PURE_AGED) && b->idle > 0 &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES &&
                sel + b->idle <= avant_young_bytes) {
       sel += b->idle;
       b->kept = SPLUS_EVAC;
       gc_heap.ctr.sticky.evac_blocks++;
       any = 1;
+    } else if (b->kept == SPLUS_PURE_AGED) {
+      b->kept = SPLUS_PURE;
     }
   }
   if (!any) {
@@ -710,6 +718,7 @@ static int keep_unless_empty(Block *b) {
 void gc_sticky_collect(int tenure) {
   Block *b;
   uint32_t empty = 0;
+  int ticked = 0;
   gc_heap.young_large_live = 0;
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
@@ -722,7 +731,7 @@ void gc_sticky_collect(int tenure) {
     uint32_t i;
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       Block *yb = gc_heap.young_blocks[i];
-      yb->kept = gc_block_live_lines(yb) == 0 ? SPLUS_PURE : 0;
+      yb->kept = gc_block_live_lines(yb) != 0 ? 0 : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
     /* A collection runtime C entered: the young objects words of this
@@ -753,6 +762,15 @@ void gc_sticky_collect(int tenure) {
    * rem_rebuild; with S_LARGE_AGE 1, or a fixed AVANT_YOUNG_MB (TENURE),
    * it is promoted at once. */
   gc_heap.force_tenure = tenure || S_LARGE_AGE <= 1;
+  /* The return clock ticks before the young large objects are freed
+   * (Stage 28 W15e): a run freed now must carry the new stamp, or the
+   * return below gives it back at once and its next use faults every
+   * page in again (Binarytrees::Arena's 25 MB arena freed young: 13 k ->
+   * 101 k page faults, +0.12 s; W15e record, item 2). */
+  if (gc_heap.young_large_n) {
+    gc_heap.return_clock++;
+    ticked = 1;
+  }
   gc_reclaim_young_large();
   gc_heap.force_tenure = 0;
   rem_empty();
@@ -788,7 +806,7 @@ void gc_sticky_collect(int tenure) {
     uint32_t i;
     for (i = 0; i < gc_heap.surv_blocks_n; i++) {
       b = gc_heap.surv_blocks[i];
-      b->kept = 0;
+      b->kept = SPLUS_WAS_SURV;
       b->idle = 0;
       b->young_lo = 0;
       b->young_hi = (uint8_t)((b->bump - b->base + LINE_SIZE - 1) / LINE_SIZE);
@@ -815,15 +833,23 @@ void gc_sticky_collect(int tenure) {
      * only memory that stayed free since an earlier tick goes back (a
      * block freed and reused every cycle stays resident: Binarytrees::Obj
      * refaulted its 90 MB every cycle with the tick after the frees). */
-    gc_heap.return_clock++;
+    if (!ticked) {
+      gc_heap.return_clock++;
+    }
     gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, keep_unless_empty);
     gc_heap.ctr.sticky.returned += empty;
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }
   gc_clear_noted();
-  /* The one young budget: the young large objects and the aged survivors
-   * that stay young (as E counted its to-space). */
+  /* The one young budget: the aged survivors that stay young (as E
+   * counted its to-space); the young large objects that stay young only
+   * under W15d's age rule (LARGE_AGE_BYTES 0): an age in allocated bytes
+   * needs the budget to measure new allocation (O98). */
+#if LARGE_AGE_BYTES
+  avant_nursery_held = gc_heap.aged_now;
+#else
   avant_nursery_held = gc_heap.young_large + gc_heap.aged_now;
+#endif
 }
 
 /* A full collection under S promotes every object it marks (the full
@@ -838,6 +864,7 @@ void gc_sticky_full_begin(void) {
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;
+    gc_heap.young_blocks[i]->kept = 0;
   }
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
