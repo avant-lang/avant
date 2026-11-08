@@ -1017,12 +1017,17 @@ void gc_rem_keep_young_holders(void);
  * young copy (avant_gc_sticky.c: survivors of sparse young blocks are
  * copied out when every reference to them is precise); 0 builds plain S.
  * Like GC_CANDIDATE a build-time constant, not ABI (runtime/build.sh's
- * AVANT_GC_CANDIDATE=S+). SPLUS_SPARSE_LINES: a young block is evacuated
- * when its live lines after the trace (mature ones and its survivors'
- * bytes in lines) are at most this many of its 128: a quarter, so every
- * byte copied frees at least three bytes of block for reuse, and a
- * block that is mostly live (where copying would only move a dense
- * group) stays. */
+ * AVANT_GC_CANDIDATE=S+). SPLUS_SPARSE_LINES: a young block that held no
+ * mature line is evacuated when its survivors' bytes fill at most this
+ * many of its 128 lines. Measured at 32, 64, 96, 112 and 128 (Stage 28
+ * W15c record, thr-v1 to thr-v3): 128, every such block, is the one
+ * setting that recovers Etc::GameOfLife's locality (its long-lived cells
+ * fill their blocks densely, so a sparse-only copy moves almost nothing:
+ * 1.56 s at 96, 1.43 s at 128, E 1.42 s) and gives the compiler its
+ * smallest heap (__emit-ll 277 MB at 128, 290 MB at 96, S 378 MB); its
+ * cost is a copy of a dense live set that a later collection would not
+ * have moved (Calculator::Interpreter 27 -> 44 MB, as under E). A block
+ * that holds mature lines is never evacuated: it cannot be freed. */
 #ifndef GC_STICKY_COPY
 #define GC_STICKY_COPY 0
 #endif
@@ -1030,12 +1035,17 @@ void gc_rem_keep_young_holders(void);
 #error "GC_STICKY_COPY needs GC_CANDIDATE_S"
 #endif
 #ifndef SPLUS_SPARSE_LINES
-#define SPLUS_SPARSE_LINES 32
+#define SPLUS_SPARSE_LINES 128
 #endif
 /* Block.kept under S+ during a young collection: the block holds a young
- * object named imprecisely (it stays in place), or it is evacuated. */
+ * object named imprecisely (it stays in place), it is evacuated, or it
+ * held no mature line when the collection began (a candidate), or its
+ * evacuation stopped at the heap limit (SPLUS_PART; YOUNG_EMPTY, 4, is
+ * the young sweep's, avant_gc_sticky.c). */
 #define SPLUS_KEPT 1
 #define SPLUS_EVAC 2
+#define SPLUS_PURE 3
+#define SPLUS_PART 5
 
 /* avant_gc_young.c: the noted list (both candidates) and pinned-object
  * lookup for defragmentation; then candidate E, the evacuating young
