@@ -2,6 +2,12 @@
 #define AVANT_GC_INTERNAL_H
 
 #include "avant_rt.h"
+/* The collector implements what avant_gc.h declares for the rest of the
+ * runtime (the frame type of RC1's scopes, the no-GC regions); its own
+ * avant_alloc is the allocation itself, not avant_gc.h's mapping of the
+ * name to avant_alloc_c. */
+#include "avant_gc.h"
+#undef avant_alloc
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -271,12 +277,10 @@ typedef struct LargeIter {
   uint32_t p;
 } LargeIter;
 
-typedef struct Frame {
-  struct Frame *prev;
-  void ***slots;
-  uint32_t n;
-  uint32_t cap;
-} Frame;
+/* A frame on a thread's chain (avant_gc_top): generated code's frames
+ * (avant_gc_enter) and runtime C's handle scopes (AVANT_GC_SCOPE, RC1)
+ * alike; the type is avant_gc.h's AvantGcFrame. */
+typedef AvantGcFrame Frame;
 
 typedef struct ThreadReg {
   struct ThreadReg *next;
@@ -914,6 +918,9 @@ typedef struct GcHeap {
    * in a no-GC region", gc-design.md §5.4). */
   uint64_t region_bytes;
   void *region_site;
+  /* avant_gc_collect was called inside a no-GC region (RC4, Stage 28
+   * W16a): the first collection point after it runs the full collection. */
+  uint8_t explicit_pending;
   /* The live bytes the last collection measured, and the allocation
    * count at the last full collection (avant_gc_heap_goal_collect). */
   uint64_t live;
@@ -938,8 +945,9 @@ extern GcHeap gc_heap;
 /* A mutator thread's collector state (Stage 28 W14b2, gc-design.md
  * §1.1): gc_thread, thread-local, defined in avant_gc_roots.c. */
 typedef struct GcThread {
-  /* The innermost registered frame, and the thread's free frames. */
-  Frame *frame;
+  /* The thread's free frames (its innermost frame is avant_gc_top,
+   * avant_gc.h, since Stage 28 W16a: runtime C's scopes push onto it
+   * inline). */
   Frame *frame_free;
   /* avant_gc_quiet_enter's depth: root registration is skipped inside. */
   int quiet;

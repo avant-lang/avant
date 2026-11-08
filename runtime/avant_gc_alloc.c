@@ -239,7 +239,7 @@ static void gc_fast_refresh(void) {
   int cur_ok = S_INLINE_HOLES || gc_heap.cur_whole;
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
-      !gc_heap.limit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
+      !gc_heap.limit_pending && !gc_heap.explicit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_heap.cur == cur &&
       cur_ok && avant_gc_bump) {
     gc_heap.fast_block = cur;
     avant_gc_base = cur->base;
@@ -575,7 +575,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * already spilled. This is the same contract as avant_bump_alloc.
    * Medium numeric buffers take the large path so their address stays. */
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.defer &&
-      !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending &&
+      !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending && !gc_heap.explicit_pending &&
       gc_heap.mature_since_full < gc_heap.full_trigger && avant_nursery_held + total < avant_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
