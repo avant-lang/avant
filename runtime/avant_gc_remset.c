@@ -115,8 +115,9 @@ void gc_rem_commit_kept(void) {
   free(kept);
 }
 
-/* Does a field of OBJ name a young object (a nursery or to-space block
- * object, or a large object with YOUNG)? */
+/* Does a field of OBJ name a young object (gc_young_at: under E a
+ * nursery or to-space block object, or a large object with YOUNG; under S
+ * any object with YOUNG)? */
 static int rem_names_young(void *obj) {
   int found = 0;
   if (avant_header(obj)->type_id == AVANT_TYPE_BYTES) {
@@ -128,11 +129,7 @@ static int rem_names_young(void *obj) {
       AvantHeader *ol = NULL;
       void *start = gc_object_payload(*slot, &b, &ol);
       if (start) {
-        if (ol) {
-          found = (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
-        } else {
-          found = b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
-        }
+        found = gc_young_at(start, b, ol);
       }
     }
   });

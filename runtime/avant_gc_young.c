@@ -17,7 +17,9 @@
  * avant_gc_collect.c's (the survival probe that shared this walk is
  * retired since Stage 28 W15a1). */
 
-static void note_marked(void *payload) {
+/* The noted list (both candidates): every header MARKED a young
+ * collection sets, cleared when it ends. */
+void gc_note_marked(void *payload) {
   if (gc_heap.noted_n == gc_heap.noted_cap) {
     gc_heap.noted_cap = gc_heap.noted_cap ? gc_heap.noted_cap * 2 : 256;
     gc_heap.noted = gc_xrealloc(gc_heap.noted, gc_heap.noted_cap * sizeof(void *));
@@ -32,6 +34,25 @@ void gc_clear_noted(void) {
   }
   gc_heap.noted_n = 0;
 }
+
+static void note_pinned_in_block(AvantHeader *h, Block *b) {
+  (void)b;
+  if (h->flags & AVANT_FLAG_PINNED) {
+    gc_heap.block_has_pin = 1;
+  }
+}
+
+/* Whether block B holds a pinned object (defragmentation's test, both
+ * candidates). */
+int gc_block_has_pinned(Block *b) {
+  gc_heap.block_has_pin = 0;
+  gc_foreach_block_object(b, note_pinned_in_block);
+  return gc_heap.block_has_pin;
+}
+
+/* Candidate E, the evacuating young generation (Stage 28 W15a2,
+ * gc-design.md §3.2): compiled only when GC_CANDIDATE selects it. */
+#if GC_CANDIDATE == GC_CANDIDATE_E
 
 /* The nursery objects this young collection keeps in place (Stage 28
  * W15a2): pinned ones (D205). Each is marked (MARKED on a nursery object
@@ -61,7 +82,7 @@ static void keep_in_place(void *p) {
   AvantHeader *h = avant_header(p);
   Block *b = block_of(h);
   h->flags |= AVANT_FLAG_MARKED;
-  note_marked(p);
+  gc_note_marked(p);
   gc_mark_object_lines(p);
   gc_heap.live += gc_obj_total(h);
   gc_work_push(p);
@@ -181,7 +202,7 @@ static void trace_mature(void *p, int from_mature) {
   }
   h->flags |= AVANT_FLAG_MARKED;
   note_large_live(h);
-  note_marked(p);
+  gc_note_marked(p);
   saved = gc_heap.from_mature;
   gc_heap.from_mature = 1;
   /* Nested mature scans do not dirty the remembered parent: only its
@@ -233,7 +254,7 @@ void *gc_copy_nursery(void *p) {
     gc_heap.ctr.prom.copied += total;
     gc_heap.promoted_since_full += total;
   }
-  note_marked(np);
+  gc_note_marked(np);
   gc_set_forward(h, np);
   avant_g_stats.copied_bytes += total;
   gc_heap.live += total;
@@ -272,7 +293,7 @@ void gc_copy_from_slot(void **slot) {
   if (ol && (ol->flags & AVANT_FLAG_YOUNG)) {
     if ((ol->flags & AVANT_FLAG_MARKED) == 0) {
       ol->flags |= AVANT_FLAG_MARKED;
-      note_marked(start);
+      gc_note_marked(start);
       note_large_live(ol);
       if (ol->type_id != AVANT_TYPE_BYTES) {
         gc_work_push(start);
@@ -386,7 +407,7 @@ void gc_gen_young_copy(void) {
         if (!(avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
           avant_header(obj)->flags |= AVANT_FLAG_MARKED;
           note_large_live(avant_header(obj));
-          note_marked(obj);
+          gc_note_marked(obj);
         }
         gc_heap.ctr.rem.fields += rem_field_count(obj);
         gc_heap.rem_track = 1;
@@ -461,19 +482,6 @@ static void promote_kept_one(void *p) {
     gc_heap.ctr.prom.pinned += gc_obj_total(h);
   }
   h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
-}
-
-static void note_pinned_in_block(AvantHeader *h, Block *b) {
-  (void)b;
-  if (h->flags & AVANT_FLAG_PINNED) {
-    gc_heap.block_has_pin = 1;
-  }
-}
-
-int gc_block_has_pinned(Block *b) {
-  gc_heap.block_has_pin = 0;
-  gc_foreach_block_object(b, note_pinned_in_block);
-  return gc_heap.block_has_pin;
 }
 
 /* After young copy, free the nursery blocks. A block holding an object
@@ -594,3 +602,5 @@ void gc_young_copy_out(int tenure) {
    * audit's mature.av profile). */
   gc_clear_noted();
 }
+
+#endif /* GC_CANDIDATE == GC_CANDIDATE_E */
