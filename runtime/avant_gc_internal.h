@@ -779,6 +779,11 @@ typedef struct GcHeap {
    * next gc_maybe_collect, which the allocation fast paths (C and inline)
    * reach because they stay off while this is set. */
   int limit_pending;
+  /* C39 (Stage 28 W15a2): consecutive heap-limit full collections after
+   * less than one block of allocation, and the allocation count at the
+   * last one (limit_progress_check, avant_gc_collect.c). */
+  int limit_strikes;
+  uint64_t limit_full_at;
   uint64_t mature_since_full;
   /* The part of mature_since_full that young collections promoted (for
    * the full collection's cause, ctr.why). */

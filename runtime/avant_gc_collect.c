@@ -229,6 +229,32 @@ static void gc_young_collect(int tenure) {
 #endif
 }
 
+/* C39 (Stage 28 W15a2): under AVANT_HEAP_MAX_MB a live set the heap
+ * cannot hold with its copy room made every allocation run a heap-limit
+ * full collection (limit_defer.av at 8 to 16 MB: a young collection does
+ * not fit, young_copy_fits, and a full collection moves no young object,
+ * so the young bytes stay and the next allocation asks again; 24 bytes
+ * allocated per full collection), so the program neither died nor
+ * finished. The rule: a full collection the heap limit caused after less
+ * than one block (BLOCK_SIZE) was allocated since the previous one is a
+ * strike, and two strikes running end the program with "heap limit",
+ * the death a refused allocation gives: the collector is running a full
+ * collection per block, which is what the limit means. A heap-limit full
+ * collection after at least one block of allocation clears the count, so
+ * a program near its limit that still makes progress (limit_defer.av at
+ * 20 MB: about 98 KB per full collection, done in 3.4 s) goes on. */
+static void limit_progress_check(void) {
+  uint64_t since = avant_g_stats.allocated_bytes - gc_heap.limit_full_at;
+  gc_heap.limit_full_at = avant_g_stats.allocated_bytes;
+  if (since >= BLOCK_SIZE) {
+    gc_heap.limit_strikes = 0;
+    return;
+  }
+  if (++gc_heap.limit_strikes >= 2) {
+    gc_die("heap limit");
+  }
+}
+
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   uint64_t t0 = now_ns();
@@ -353,6 +379,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
     /* Free memory beyond the retention target goes back to the OS. */
     gc_heap_return(gc_heap.live);
+    if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
+      limit_progress_check();
+    }
   }
 
   if (full) {

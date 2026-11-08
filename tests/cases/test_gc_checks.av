@@ -36,6 +36,13 @@ import backends
 // whose region alone allocates more than AVANT_HEAP_MAX_MB=4 dies with
 // "heap limit in a no-GC region (...)"; without a limit it prints its
 // part count.
+//
+// heap/limit_defer.av at AVANT_HEAP_MAX_MB=8 (C39, Stage 28 W15a2): its
+// live set and its copy room do not fit, and the program used to neither
+// die nor finish (a heap-limit full collection per allocation); now two
+// heap-limit full collections running, each after less than one block of
+// allocation, end it with "heap limit", in the default environment and
+// under AVANT_YOUNG_MB=1.
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
@@ -111,6 +118,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   // heap/limit_region.av (gc-design.md §5.4, Stage 28 W15a1): a split
   // that alone allocates more than the limit dies naming the region.
   runs.push(run_job_env(dir, "limit_region", "limit_region.l", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=4"))
+  // C39: near-limit thrash ends in "heap limit".
+  tenvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=8", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=8 AVANT_YOUNG_MB=1"]
+  e = 0
+  while e < tenvs.size {
+    runs.push(run_job_env(dir, "limit_defer", "limit_defer.t${e}", tenvs[e]))
+    e = e + 1
+  }
   run_waves(runs)
   k = 0
   while k < progs.size {
@@ -141,6 +155,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   lr = runs[progs.size + 1 + senvs.size]
   c.expect(lr.code != 0, "limit_region.av under AVANT_HEAP_MAX_MB=4: fails")
   c.expect(str_has(log_text("${dir}/limit_region.l.err"), "avant runtime: heap limit in a no-GC region ("), "limit_region.av under AVANT_HEAP_MAX_MB=4: heap limit in a no-GC region")
+  e = 0
+  while e < tenvs.size {
+    tr = runs[progs.size + 2 + senvs.size + e]
+    c.expect(tr.code != 0, "limit_defer.av under ${tenvs[e]}: fails")
+    c.eq_str(log_text("${dir}/limit_defer.t${e}.err"), "avant runtime: heap limit\n", "limit_defer.av under ${tenvs[e]}: heap limit")
+    e = e + 1
+  }
 }
 
 fn test_main(c: Checks) {
