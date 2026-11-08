@@ -654,12 +654,25 @@ static int splus_age_holders(void) {
 static void splus_evacuate(void) {
   uint32_t i;
   int any = 0;
+  /* O92 (Stage 28 W15d item 2): the blocks evacuated hold at most one
+   * young budget of survivors (avant_young_bytes); the candidates past it
+   * keep their survivors in place, promoted (S's rule). A collection whose
+   * survivors outgrow the budget ran late, after a burst allocated where
+   * no collection could run (a leaf, a no-GC region, a large live set
+   * built at once: Calculator::Interpreter's 16.7 MB tree at a budget of
+   * 8 MiB), and copying all of it doubled the peak (S 26.4 MB, S+ 42.8);
+   * a collection on time copies everything as before (Etc::GameOfLife,
+   * the compiler: unchanged). The copy's room is then bounded by what the
+   * budget already allows, as E's copy reserve bounded its copy. */
+  uint64_t sel = 0;
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
     } else if (b->kept == SPLUS_PURE && b->idle > 0 &&
-               (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES) {
+               (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES &&
+               sel + b->idle <= avant_young_bytes) {
+      sel += b->idle;
       b->kept = SPLUS_EVAC;
       gc_heap.ctr.sticky.evac_blocks++;
       any = 1;
