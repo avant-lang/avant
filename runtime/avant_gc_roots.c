@@ -33,10 +33,61 @@ __thread GcThread gc_thread;
  * was GcThread.frame). */
 __thread __attribute__((visibility("hidden"))) Frame *avant_gc_top;
 
+/* Thread exit unregisters (Stage 28 W17c, O126). A thread that exits
+ * still registered (a foreign C thread after its last callback, or any
+ * thread that never called avant_gc_unregister_thread) would leave its
+ * ThreadReg in gc_heap.threads while its GcThread, thread-local, is freed
+ * with the thread: every later collection would read it, and a later
+ * thread on the same reused stack would register the same node again (a
+ * cycle the handshake loops on forever). Every registration sets a
+ * pthread key whose destructor runs at the thread's exit, for threads
+ * Avant did not create too, while the thread's thread-local state is
+ * still valid (glibc runs the key destructors before it frees the
+ * thread). */
+static pthread_key_t g_exit_key;
+static pthread_once_t g_exit_once = PTHREAD_ONCE_INIT;
+
+static void thread_exit_hook(void *unused) {
+  Frame *f;
+  (void)unused;
+  if (gc_thread.reg.head) {
+    /* Back to running (gc_thread_exiting waits while a collection is in
+     * progress), then unregistered as avant_gc_unregister_thread does it:
+     * the young hole's charge settled, the remembered buffer merged, the
+     * thread out of the list. The thread's frames are gone with its
+     * stack: the chain is dropped first (the thread is running, so no
+     * collection reads it meanwhile). */
+    gc_thread_exiting();
+    avant_gc_top = NULL;
+    avant_gc_unregister_thread();
+  }
+  /* No collection reads an unregistered thread's state: its free frames
+   * and its remembered buffer go back to the C heap. */
+  while ((f = gc_thread.frame_free)) {
+    gc_thread.frame_free = f->prev;
+    free(f->slots);
+    free(f);
+  }
+  free(gc_thread.rembuf);
+  gc_thread.rembuf = NULL;
+  gc_thread.rembuf_n = 0;
+  gc_thread.rembuf_cap = 0;
+}
+
+static void exit_key_make(void) {
+  if (pthread_key_create(&g_exit_key, thread_exit_hook) != 0) {
+    gc_die("cannot create the thread-exit key");
+  }
+}
+
 static void register_thread(int implicit) {
   int foreign;
   if (gc_thread.reg.head) {
     return;
+  }
+  pthread_once(&g_exit_once, exit_key_make);
+  if (pthread_setspecific(g_exit_key, &gc_thread) != 0) {
+    gc_die("cannot set the thread-exit key");
   }
   gc_thread.reg.head = &avant_gc_top;
   {
