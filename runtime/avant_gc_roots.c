@@ -155,7 +155,7 @@ void avant_gc_enter(void) {
     }
   }
   f->prev = avant_gc_top;
-  f->scope = 0;
+  f->scope = AVANT_GC_FRAME_C;
   avant_gc_top = f;
 }
 
@@ -164,7 +164,7 @@ void avant_gc_leave(void) {
   if (!f) {
     gc_die("gc leave without enter");
   }
-  if (f->scope) {
+  if (f->scope & AVANT_GC_SCOPE_OPEN) {
     /* A runtime C scope (RC1) is innermost: it was not closed, or a
      * generated frame was left from inside one. */
     gc_die("gc leave inside a runtime C scope");
@@ -218,7 +218,7 @@ void avant_gc_frame_leave(Frame *f) {
     if (!avant_gc_top) {
       gc_die("gc leave without enter");
     }
-    if (avant_gc_top->scope) {
+    if (avant_gc_top->scope & AVANT_GC_SCOPE_OPEN) {
       gc_die("gc leave inside a runtime C scope");
     }
     gc_die("gc leave of a frame that is not innermost");
@@ -264,6 +264,22 @@ void avant_gc_quiet_leave(void) {
   }
 }
 
+/* O138 (Stage 28 W18M): avant_gc_root and avant_gc_root_begin act on the
+ * innermost frame, which must be one avant_gc_enter opened. Called by user
+ * C without its own avant_gc_enter, the innermost frame is a generated
+ * function's record or a runtime scope, whose slot array lives in a stack
+ * frame: growing it would realloc a stack address, and filling it would
+ * overwrite the caller's registered slots. */
+static void user_frame_check(Frame *f, const char *who) {
+  if (!(f->scope & AVANT_GC_FRAME_C)) {
+    char msg[256];
+    snprintf(msg, sizeof msg,
+             "%s without avant_gc_enter: the innermost frame is %s, not one this C code opened (call avant_gc_enter first, avant_gc_leave after)",
+             who, (f->scope & AVANT_GC_SCOPE_OPEN) ? "a runtime C scope" : "a generated function's frame record");
+    gc_die(msg);
+  }
+}
+
 void avant_gc_root(void *slot) {
   gc_heap.ctr.root.roots++;
   if (gc_thread.quiet) {
@@ -274,6 +290,7 @@ void avant_gc_root(void *slot) {
   }
   Frame *f = avant_gc_top;
   uint32_t i;
+  user_frame_check(f, "avant_gc_root");
   /*
    * Codegen emits CALL :avant_gc_root at the first use site of a temp.
    * When that site is inside a loop (Array.push/pop), the same stack
@@ -298,6 +315,7 @@ void *avant_gc_root_begin(uint32_t count) {
     gc_die("gc root begin without enter");
   }
   Frame *f = avant_gc_top;
+  user_frame_check(f, "avant_gc_root_begin");
   if (count > f->cap) {
     uint32_t cap = f->cap ? f->cap : 8;
     while (cap < count) {

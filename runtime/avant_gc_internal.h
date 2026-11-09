@@ -521,7 +521,11 @@ typedef struct GcPkCounters {
  * live samples the marked large bytes at the liveness decision of each
  * collection (gc_reclaim_young_large for young, gc_sweep_large for full):
  * sum over samples, peak the largest single sample. promoted counts young
- * large objects tenured by promote_young_large. */
+ * large objects tenured by promote_young_large. trims and trim_bytes count
+ * the large objects avant_gc_large_trim shrank in place and the run bytes
+ * that went back (Stage 28 W18M, O52); drops and drop_bytes the large
+ * buffers a growth freed at once through avant_gc_large_drop (O109), also
+ * counted in freed. */
 typedef struct GcLosCounters {
   uint64_t allocs;
   uint64_t alloc_bytes;
@@ -544,6 +548,10 @@ typedef struct GcLosCounters {
   uint64_t live_samples;
   uint64_t promoted;
   uint64_t promoted_bytes;
+  uint64_t trims;
+  uint64_t trim_bytes;
+  uint64_t drops;
+  uint64_t drop_bytes;
 } GcLosCounters;
 
 /* pause, why, frag, prom (Stage 28 W15a1, gc-design.md §3.4 M5 and
@@ -916,6 +924,17 @@ typedef struct GcHeap {
    * on use, and the freed blocks it holds PROT_NONE until the next
    * collection (linked by next). */
   uint64_t verify_lost;
+  /* The incremental verifier (Stage 28 W18M item 7, O119; avant_gc_verify.c,
+   * gc_verify_begin): sd_mode is 1 when soft-dirty tracking works (probed
+   * once at start-up, gc_verify_init), else 0 and every check is whole as
+   * before; v_whole and v_incr count the whole and the incremental
+   * verifications, v_pages_checked and v_pages_skipped the heap pages an
+   * incremental one read and the clean pages it proved untouched. */
+  int sd_mode;
+  uint64_t v_whole;
+  uint64_t v_incr;
+  uint64_t v_pages_checked;
+  uint64_t v_pages_skipped;
   Block *quarantine;
   uint32_t quarantine_n;
   /* The freed large runs it holds (header, protected range, state). */
@@ -1287,6 +1306,8 @@ void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 void gc_verify_sticky(void);
 void gc_verify_lost(void);
+void gc_verify_init(void);
+void gc_verify_begin(int full);
 int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
 void gc_quarantine_seal(void);
@@ -1319,6 +1340,7 @@ void gc_region_limit_check(uint64_t bytes);
 void gc_maybe_collect(void);
 void gc_stress_point(void);
 void gc_init_slow(void);
+void gc_verify_exit_run(void (*check)(void));
 
 /* avant_gc_stats.c */
 void gc_print_stats(void);

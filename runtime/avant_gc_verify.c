@@ -9,6 +9,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -23,12 +26,16 @@
  * after its young copy, gc_verify_young_copy with its stale, lost and
  * untraced reports, went with E in Stage 28 W15d.) */
 
-static void verify_trace(void *p) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+/* The trace of one reference P (Stage 28 W18M, O113: one object lookup
+ * per reference serves every check made on it; before, the lost, named,
+ * stale and missing-barrier checks each looked the same field up again).
+ * Returns the object P names (its start, before following a forward), or
+ * NULL when P names no object. */
+static void *verify_trace_r(void *p) {
+  void *found = gc_object_payload(p, NULL, NULL);
+  void *start = found;
   if (!start) {
-    return;
+    return NULL;
   }
   AvantHeader *h = avant_header(start);
   /* A moved object is reached through its copy: its own header holds the
@@ -38,7 +45,7 @@ static void verify_trace(void *p) {
     h = avant_header(start);
   }
   if (h->flags & AVANT_FLAG_VSEEN) {
-    return;
+    return found;
   }
   h->flags |= AVANT_FLAG_VSEEN;
   if (gc_heap.vnoted_n == gc_heap.vnoted_cap) {
@@ -47,6 +54,21 @@ static void verify_trace(void *p) {
   }
   gc_heap.vnoted[gc_heap.vnoted_n++] = start;
   gc_work_push(start);
+  return found;
+}
+
+static void verify_trace(void *p) {
+  (void)verify_trace_r(p);
+}
+
+/* The next object of the verifier's work stack; the one after it is
+ * prefetched (its header and first fields are read next). */
+static void *verify_pop(void) {
+  void *p = gc_heap.work[--gc_heap.work_n];
+  if (gc_heap.work_n) {
+    __builtin_prefetch(avant_header(gc_heap.work[gc_heap.work_n - 1]));
+  }
+  return p;
 }
 
 static void verify_clear_traced(void) {
@@ -68,7 +90,15 @@ static void verify_tls_slot(void **slot) {
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
-static void verify_mark_reachable(void) {
+#if GC_STICKY_COPY
+static uint64_t verify_stale_found(void *start, void *holder);
+#endif
+
+/* STALE (S+): count the fields of the reached objects that name a moved
+ * object's old copy, as the trace reads them (verify_stale_found). */
+static uint64_t verify_mark_reachable(int stale) {
+  uint64_t bad = 0;
+  (void)stale;
   ThreadReg *t;
   for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
@@ -91,9 +121,21 @@ static void verify_mark_reachable(void) {
   }
   gc_each_runtime_root(verify_tls_slot);
   while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
+    void *p = verify_pop();
+#if GC_STICKY_COPY
+    if (stale) {
+      EACH_REF_SLOT(p, slot, {
+        void *st = verify_trace_r(*slot);
+        if (st) {
+          bad += verify_stale_found(st, p);
+        }
+      });
+      continue;
+    }
+#endif
     EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
   }
+  return bad;
 }
 
 /* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
@@ -109,10 +151,7 @@ static void verify_mark_reachable(void) {
 #if GC_STICKY_COPY
 /* S+: a reference the collection did not rewrite names a moved object's
  * old copy (its header holds the forward). */
-static uint64_t verify_stale(void *p, const char *where, void *holder) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+static uint64_t verify_stale_start(void *start, const char *where, void *holder) {
   if (!start || !(avant_header(start)->flags & AVANT_FLAG_FORWARDED)) {
     return 0;
   }
@@ -120,6 +159,14 @@ static uint64_t verify_stale(void *p, const char *where, void *holder) {
           where, holder, start, gc_forward_of(avant_header(start)),
           (unsigned long long)avant_g_stats.collections);
   return 1;
+}
+
+static uint64_t verify_stale(void *p, const char *where, void *holder) {
+  return verify_stale_start(gc_object_payload(p, NULL, NULL), where, holder);
+}
+
+static uint64_t verify_stale_found(void *start, void *holder) {
+  return verify_stale_start(start, "field", holder);
 }
 
 static void verify_stale_tls(void **slot) {
@@ -130,7 +177,13 @@ static void verify_stale_tls(void **slot) {
 void gc_verify_sticky(void) {
   size_t i;
   uint64_t bad = 0;
-  verify_mark_reachable();
+#if GC_STICKY_COPY
+  /* The fields of every reached object are checked for stale
+   * references as the trace reads them (verify_mark_reachable). */
+  bad += verify_mark_reachable(1);
+#else
+  (void)verify_mark_reachable(0);
+#endif
 #if GC_STICKY_COPY
   /* After S+'s copy and fix-up (before the old copies lose their start
    * bits): no root slot, runtime-held slot or field of a reachable object
@@ -150,13 +203,6 @@ void gc_verify_sticky(void) {
       }
     }
     gc_each_runtime_root(verify_stale_tls);
-    for (i = 0; i < gc_heap.vnoted_n; i++) {
-      void *v = gc_heap.vnoted[i];
-      if (avant_header(v)->type_id == AVANT_TYPE_BYTES) {
-        continue;
-      }
-      EACH_REF_SLOT(v, slot, { bad += verify_stale(*slot, "field", v); });
-    }
   }
 #endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
@@ -249,9 +295,10 @@ void gc_verify_sticky(void) {
  *     correct program by construction.
  * Diagnostics only: both report, neither repairs. Counted in
  * gc_heap.verify_lost. */
-static uint64_t verify_lost(void *p, const char *where, void *holder) {
+/* FOUND is gc_object_payload(P) (verify_trace_r's result). */
+static uint64_t verify_lost_found(void *p, void *found, const char *where, void *holder) {
   uintptr_t off;
-  if (!p || !heap_offset(p, &off) || gc_object_payload(p, NULL, NULL)) {
+  if (!p || found || !heap_offset(p, &off)) {
     return 0;
   }
   if (gc_heap.verify_lost++ < 32) {
@@ -263,8 +310,8 @@ static uint64_t verify_lost(void *p, const char *where, void *holder) {
 }
 
 static void lost_root_slot(void **slot) {
-  verify_lost(*slot, "root", (void *)slot);
-  verify_trace(*slot);
+  void *st = verify_trace_r(*slot);
+  verify_lost_found(*slot, st, "root", (void *)slot);
 }
 
 /* Before a full collection (a young one runs the precise half inside
@@ -286,10 +333,10 @@ void gc_verify_lost(void) {
   EACH_TASK_ROOT(slot, lost_root_slot(slot));
   gc_each_runtime_root(lost_root_slot);
   while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
+    void *p = verify_pop();
     EACH_REF_SLOT(p, slot, {
-      verify_lost(*slot, "field of", p);
-      verify_trace(*slot);
+      void *st = verify_trace_r(*slot);
+      verify_lost_found(*slot, st, "field of", p);
     });
   }
   verify_clear_traced();
@@ -307,12 +354,10 @@ static int verify_names_young(void *p, void **out) {
   return start && verify_young_at(start, b, ol);
 }
 
-static void rem_named(void *p) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+/* START is the object a reference names (gc_object_payload's result). */
+static void rem_named_found(void *start) {
   AvantHeader *h;
-  if (!start || verify_young_at(start, b, ol)) {
+  if (!start || verify_young_at(start, NULL, NULL)) {
     return;
   }
   h = avant_header(start);
@@ -327,6 +372,25 @@ static void rem_named(void *p) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
+static void rem_named(void *p) {
+  rem_named_found(gc_object_payload(p, NULL, NULL));
+}
+
+/* The reached holders that are not young and name a young object in a
+ * field, gathered by gc_verify_remembered's trace: the only holders its
+ * missing-barrier check can report. */
+static void **g_yholders;
+static size_t g_yholders_n;
+static size_t g_yholders_cap;
+
+static void yholder_add(void *v) {
+  if (g_yholders_n == g_yholders_cap) {
+    g_yholders_cap = g_yholders_cap ? g_yholders_cap * 2 : 1024;
+    g_yholders = gc_xrealloc(g_yholders, g_yholders_cap * sizeof(void *));
+  }
+  g_yholders[g_yholders_n++] = v;
+}
+
 /* Is H a carded object the young collection scans by its marked cards
  * (in the set as REMC, without CARD_ALL)? */
 static int rem_by_cards(const AvantHeader *h) {
@@ -334,9 +398,9 @@ static int rem_by_cards(const AvantHeader *h) {
 }
 
 static void rem_root_slot(void **slot) {
-  verify_lost(*slot, "root", (void *)slot);
-  verify_trace(*slot);
-  rem_named(*slot);
+  void *st = verify_trace_r(*slot);
+  verify_lost_found(*slot, st, "root", (void *)slot);
+  rem_named_found(st);
 }
 
 void gc_verify_remembered(void) {
@@ -358,19 +422,27 @@ void gc_verify_remembered(void) {
   }
   EACH_TASK_ROOT(slot, rem_root_slot(slot));
   gc_each_runtime_root(rem_root_slot);
+  /* The trace from the roots; with the same lookup of each field, R1'(b)
+   * (a young object's fields name what they reach) and the holders the
+   * check below must look at (a non-young one naming a young object). */
+  g_yholders_n = 0;
   while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
+    void *p = verify_pop();
+    int py = (avant_header(p)->flags & AVANT_FLAG_YOUNG) != 0;
+    int ny = 0;
     EACH_REF_SLOT(p, slot, {
-      verify_lost(*slot, "field of", p);
-      verify_trace(*slot);
+      void *st = verify_trace_r(*slot);
+      verify_lost_found(*slot, st, "field of", p);
+      if (st) {
+        if (py) {
+          rem_named_found(st);
+        } else if (verify_young_at(st, NULL, NULL)) {
+          ny = 1;
+        }
+      }
     });
-  }
-  /* R1'(b): the fields of the young objects the roots reach. */
-  for (i = 0; i < gc_heap.vnoted_n; i++) {
-    void *v = gc_heap.vnoted[i];
-    void *st;
-    if (verify_names_young(v, &st)) {
-      EACH_REF_SLOT(v, slot, { rem_named(*slot); });
+    if (ny) {
+      yholder_add(p);
     }
   }
   /* R1'(c): the fields of every remembered object; of a carded one
@@ -396,8 +468,8 @@ void gc_verify_remembered(void) {
    * slots of its marked cards (the card invariant, Stage 28 W16t):
    * a young object named from a clear card is reported as a missing
    * barrier too, since the young collection would not scan that slot. */
-  for (i = 0; i < gc_heap.vnoted_n; i++) {
-    void *v = gc_heap.vnoted[i];
+  for (i = 0; i < g_yholders_n; i++) {
+    void *v = g_yholders[i];
     void *st;
     AvantHeader *h = avant_header(v);
     int by_cards;
@@ -467,6 +539,325 @@ void gc_verify_no_stale_marks(void) {
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_no_stale_one(lh, NULL);
+  }
+}
+
+/* The incremental verifier (Stage 28 W18M item 7, O119, the plan's W18V).
+ * The kernel's soft-dirty bits (Documentation/admin-guide/mm/soft-dirty.rst)
+ * say which pages of the process were written since they were last
+ * cleared: writing "4" to /proc/self/clear_refs clears them all, and bit
+ * 55 of a page's /proc/self/pagemap entry is set again by any write to
+ * the page after that, by any thread, by the collector, by runtime C or
+ * by the kernel on the program's behalf (a read(2) into a buffer). Only
+ * the kernel's record decides what is skipped: never the collector's own
+ * barriers, remembered set or cards, whose missing entry is what the
+ * verifier exists to catch.
+ *
+ * What it makes incremental is C36's check (gc_verify_no_stale_marks:
+ * no live header carries MARKED, FORWARDED, VSEEN, PROMOTED_NOW or
+ * CARD_SCAN when a collection starts), which walked every object of every
+ * mature block at every collection: 97% of closures_churn's time under
+ * AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1. A stale mark is a header bit, and
+ * a header bit changes only by a write to the header's page. So at a
+ * young collection's start the check reads only the headers on pages
+ * written since the last verification, which read every other header
+ * (directly or, by the same argument, through an earlier one), right
+ * before the bits were cleared (gc_verify_begin clears them as soon as
+ * the check ends, before anything else of the collection writes). A
+ * header on an untouched page holds what it held then. A block that was
+ * not in the mature list at the last verification is read whole (the
+ * stamp below), every large object's header is read, and a full
+ * collection, the first verification and the program's exit read the
+ * whole heap. The checks that depend on reachability (gc_verify_remembered,
+ * gc_verify_lost, gc_verify_sticky) stay whole at every collection: a
+ * clean page says its fields hold what they held, not that the objects
+ * they name were neither moved nor freed by the collection between, nor
+ * whether its objects are still reached.
+ *
+ * Where soft-dirty tracking is unavailable (a kernel without
+ * CONFIG_MEM_SOFT_DIRTY, an unreadable pagemap, a refused clear) the probe
+ * (once, at the SD_WARM-th verification; a shorter program is whole) says so, sd_mode stays 0 and every verification is whole, as
+ * before; a later refusal of either file turns it off for the rest of the
+ * run, as does a forked child (sd_pid). The statistics line says which
+ * mode ran (verify=). */
+#define SD_BIT (1ULL << 55)
+
+static int sd_pagemap = -1;
+static int sd_clear = -1;
+/* The process the two files were opened by: /proc/self is resolved at
+ * open, so a forked child (no exec) would read and clear its parent's
+ * bits, which would make the parent's next skip unsound. A child runs the
+ * whole verifier. */
+static pid_t sd_pid;
+/* A verification has run and cleared the bits since (incremental may
+ * follow). */
+static int sd_based;
+static uint64_t *sd_map;
+static size_t sd_map_cap;
+/* One bit per block of the committed heap: in the mature list at the last
+ * verification. */
+static uint64_t *sd_seen;
+static size_t sd_seen_words;
+
+static int sd_clear_all(void) {
+  return pwrite(sd_clear, "4", 1, 0) == 1;
+}
+
+/* The pagemap entries of N pages from ADDR into OUT; 1 when all read. */
+static int sd_read(const void *addr, size_t n, uint64_t *out) {
+  size_t want = n * sizeof(uint64_t);
+  off_t at = (off_t)((uintptr_t)addr / PAGE_SIZE * sizeof(uint64_t));
+  size_t got = 0;
+  while (got < want) {
+    ssize_t k = pread(sd_pagemap, (uint8_t *)out + got, want - got, at + (off_t)got);
+    if (k <= 0) {
+      return 0;
+    }
+    got += (size_t)k;
+  }
+  return 1;
+}
+
+static void sd_off(void) {
+  gc_heap.sd_mode = 0;
+  sd_based = 0;
+}
+
+/* The probe: a fresh page is written, the bits are cleared, the page must
+ * read clean, it is written again, and it must read dirty. */
+static int sd_probe(void) {
+  volatile uint8_t *pg;
+  uint64_t e = 0;
+  int ok = 0;
+  sd_pid = getpid();
+  sd_pagemap = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+  sd_clear = open("/proc/self/clear_refs", O_WRONLY | O_CLOEXEC);
+  if (sd_pagemap < 0 || sd_clear < 0) {
+    return 0;
+  }
+  pg = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (pg == MAP_FAILED) {
+    return 0;
+  }
+  pg[0] = 1;
+  if (sd_clear_all() && sd_read((const void *)pg, 1, &e) && !(e & SD_BIT)) {
+    pg[0] = 2;
+    ok = sd_read((const void *)pg, 1, &e) && (e & SD_BIT);
+  }
+  munmap((void *)pg, PAGE_SIZE);
+  return ok;
+}
+
+static void verify_at_exit_check(void) {
+  gc_verify_begin(1);
+  gc_verify_remembered();
+}
+
+static void verify_at_exit(void) {
+  gc_verify_exit_run(verify_at_exit_check);
+}
+
+/* The probe runs once, at the SD_WARM-th verification (below): a short
+ * program never opens the two files (the gate's VERIFY pass runs
+ * thousands of them). */
+static int sd_probed;
+
+static void sd_probe_once(void) {
+  sd_probed = 1;
+  gc_heap.sd_mode = sd_probe();
+  if (!gc_heap.sd_mode) {
+    if (sd_pagemap >= 0) {
+      close(sd_pagemap);
+    }
+    if (sd_clear >= 0) {
+      close(sd_clear);
+    }
+    sd_pagemap = sd_clear = -1;
+  }
+}
+
+void gc_verify_init(void) {
+  atexit(verify_at_exit);
+}
+
+static void sd_walk_page(Block *b, int page) {
+  int w;
+  for (w = page * (PAGE_SIZE / 512); w < (page + 1) * (int)(PAGE_SIZE / 512); w++) {
+    uint64_t bits = b->start[w];
+    while (bits) {
+      int bit = __builtin_ctzll(bits);
+      verify_no_stale_one((AvantHeader *)(b->base + ((size_t)w * 64 + (size_t)bit) * 8), b);
+      bits &= bits - 1;
+    }
+  }
+}
+
+/* C36's check over the pages written since the last verification; 0 when
+ * the pagemap could not be read (the caller then walks the whole heap). */
+static int verify_no_stale_marks_incr(void) {
+  size_t pages = gc_heap.committed / PAGE_SIZE;
+  size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
+  Block *b;
+  LargeIter it;
+  AvantHeader *lh;
+  if (pages > sd_map_cap) {
+    sd_map_cap = pages;
+    sd_map = gc_xrealloc(sd_map, sd_map_cap * sizeof(uint64_t));
+  }
+  if (!sd_read(gc_heap.base, pages, sd_map)) {
+    return 0;
+  }
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+    size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
+    size_t p0 = (size_t)(b->base - gc_heap.base) / PAGE_SIZE;
+    int p;
+    if (bi >= blocks || bi / 64 >= sd_seen_words || !((sd_seen[bi / 64] >> (bi % 64)) & 1)) {
+      gc_foreach_block_object(b, verify_no_stale_one);
+      gc_heap.v_pages_checked += BLOCK_SIZE / PAGE_SIZE;
+      continue;
+    }
+    for (p = 0; p < (int)(BLOCK_SIZE / PAGE_SIZE); p++) {
+      if (sd_map[p0 + (size_t)p] & SD_BIT) {
+        sd_walk_page(b, p);
+        gc_heap.v_pages_checked++;
+      } else {
+        gc_heap.v_pages_skipped++;
+      }
+    }
+  }
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    verify_no_stale_one(lh, NULL);
+  }
+  return 1;
+}
+
+/* The mature list as of this verification (the stamp the next one reads). */
+static void sd_stamp(void) {
+  size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
+  size_t words = (blocks + 63) / 64;
+  Block *b;
+  if (words > sd_seen_words) {
+    sd_seen = gc_xrealloc(sd_seen, words * sizeof(uint64_t));
+    sd_seen_words = words;
+  }
+  memset(sd_seen, 0, sd_seen_words * sizeof(uint64_t));
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+    size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
+    sd_seen[bi / 64] |= 1ULL << (bi % 64);
+  }
+}
+
+/* The choice between the two forms (Stage 28 W18M item 7, after the
+ * measurement that inc_slice_mature under VERIFY + STRESS ran 2.26 times
+ * slower incremental: 12.9 M minor faults in 30 s, 17.5 s of system time
+ * against 4.8). Clearing the bits write-protects every page again, so
+ * the first write to each page after a clear faults in the kernel; with a small
+ * heap written all over between collections (a stress collection at
+ * every helper call) that costs more than the walk it saves. So each
+ * form's cost per verification is measured as the program runs, an
+ * average over the last few: the whole walk's time, or the incremental
+ * check's time plus the process's system time since just before the
+ * clear (getrusage: the clear, the write faults it causes, the pagemap
+ * read), an upper bound since it also counts the program's own system
+ * calls. (A first version priced each minor fault at a constant 1.4 us;
+ * the gate's VERIFY pass then spent 4.5 s more system time.) The next verification takes the cheaper form;
+ * every SD_PROBE verifications the other form is measured once, so a
+ * change of the program's pattern is followed. The bits are cleared only
+ * when the next verification is to be incremental; otherwise no page is
+ * write-protected and the program runs as under the whole verifier.
+ * Which pages are skipped is still decided by the kernel's record alone;
+ * the costs only choose whether to ask it. The first SD_WARM verifications
+ * are whole (a short program never write-protects its pages). */
+#define SD_PROBE 64u
+#define SD_WARM 256u
+
+static uint64_t sd_cost_whole;
+static uint64_t sd_cost_incr;
+static uint64_t sd_stime_at_clear;
+static uint32_t sd_since_probe;
+
+static uint64_t sd_now(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+/* The process's system time in ns. */
+static uint64_t sd_stime(void) {
+  struct rusage ru;
+  if (getrusage(RUSAGE_SELF, &ru) != 0) {
+    return 0;
+  }
+  return (uint64_t)ru.ru_stime.tv_sec * 1000000000ull + (uint64_t)ru.ru_stime.tv_usec * 1000ull;
+}
+
+/* An average over about the last eight costs (0: none yet). */
+static void sd_note(uint64_t *avg, uint64_t cost) {
+  *avg = *avg ? *avg - *avg / 8 + cost / 8 : cost;
+}
+
+/* A collection's first verification step (gc_collect, under
+ * AVANT_GC_VERIFY, after the quarantine's release): C36's check, whole at
+ * a full collection (FULL), at the first verification, without soft-dirty
+ * tracking, and when the whole walk measured cheaper; else over the
+ * written pages. When the next verification is to be incremental, the
+ * bits are cleared at once, so every later write, the collection's own
+ * included, is seen by it. */
+void gc_verify_begin(int full) {
+  uint64_t t0;
+  uint64_t dt;
+  int incr = 0;
+  int next_incr;
+  if (!sd_probed && gc_heap.v_whole + gc_heap.v_incr + 1 >= SD_WARM) {
+    sd_probe_once();
+  }
+  if (gc_heap.sd_mode && getpid() != sd_pid) {
+    sd_off();
+  }
+  t0 = sd_now();
+  if (gc_heap.sd_mode && !full && sd_based && verify_no_stale_marks_incr()) {
+    gc_heap.v_incr++;
+    incr = 1;
+  } else {
+    gc_verify_no_stale_marks();
+    gc_heap.v_whole++;
+  }
+  dt = sd_now() - t0;
+  if (!gc_heap.sd_mode) {
+    return;
+  }
+  if (incr) {
+    uint64_t st = sd_stime();
+    sd_note(&sd_cost_incr, dt + (st > sd_stime_at_clear ? st - sd_stime_at_clear : 0));
+  } else if (!full) {
+    sd_note(&sd_cost_whole, dt);
+  }
+  /* The next form: the cheaper one measured, the other one every
+   * SD_PROBE verifications (and incremental while it has no cost yet). */
+  next_incr = !sd_cost_incr || (sd_cost_whole && sd_cost_incr <= sd_cost_whole);
+  if (++sd_since_probe >= SD_PROBE) {
+    sd_since_probe = 0;
+    next_incr = !next_incr;
+  }
+  /* A short program (the suite's thousands of small ones) never asks the
+   * kernel: its first SD_WARM verifications are whole, so it pays neither
+   * the probe, the clear nor the write faults after it. System time is
+   * sampled at the scheduler's tick, too coarse to price a short run's
+   * faults: the gate's VERIFY pass spent about 4 s more system time
+   * (1.5-2 s less user time) with SD_WARM at 16. */
+  if (gc_heap.v_whole + gc_heap.v_incr < SD_WARM) {
+    next_incr = 0;
+  }
+  sd_based = 0;
+  if (next_incr) {
+    sd_stamp();
+    sd_stime_at_clear = sd_stime();
+    if (!sd_clear_all()) {
+      sd_off();
+      return;
+    }
+    sd_based = 1;
   }
 }
 

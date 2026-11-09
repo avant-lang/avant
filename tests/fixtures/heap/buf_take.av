@@ -1,0 +1,187 @@
+// The Buf hand-off (Stage 28 W18M, O52; compiler/mir/take.av): `b.to_s`
+// becomes avant_buf_take_str where the Buf is dead after the call, and the
+// runtime makes a large storage the string itself. Every Buf here is
+// large (over 6 KiB). Taken (4 calls): built here and passed only to a
+// function that keeps no reference (t1, also through a recursive helper),
+// a fresh Buf per loop round (t5), a hand-off whose storage is exactly
+// full (t9, copied by the runtime: no room for the terminator), and the
+// second to_s of t2 (its last use). Not taken: the first to_s of t2 (the
+// Buf is appended to afterwards), t3 (a Holder keeps the Buf), t4 (a
+// parameter), t6 (one Buf cleared and refilled each round), t7 (the Buf
+// came from a call), t8 (a closure captured it). Each line prints a
+// result computed from the strings after collections ran, so a string
+// that shares storage with a Buf written later, or bytes lost in the
+// trim, change the output.
+
+class Holder {
+  b: Buf
+
+  fn initialize(b: Buf) {
+    self.b = b
+  }
+}
+
+class Junk {
+  a: String
+  n: Int
+}
+
+fn churn(n: Int): Int {
+  t = 0
+  i = 0
+  while i < n {
+    j = Junk.new
+    j.a = "x" + "y"
+    j.n = i
+    t = t + j.n % 3
+    i = i + 1
+  }
+  t
+}
+
+fn fill_rec(b: Buf, n: Int) {
+  if n <= 0 {
+    return
+  }
+  b.push_byte(97 + n % 26)
+  fill_rec(b, n - 1)
+}
+
+fn fill(b: Buf, n: Int) {
+  i = 0
+  while i < n {
+    if i % 1000 == 0 {
+      fill_rec(b, 3)
+      i = i + 3
+    } else {
+      b.push_byte(97 + i % 26)
+      i = i + 1
+    }
+  }
+}
+
+fn sum(s: String): Int {
+  t = 0
+  i = 0
+  while i < s.size {
+    t = (t * 31 + s[i]) % 1000003
+    i = i + 1
+  }
+  t
+}
+
+fn keep(b: Buf): Holder {
+  Holder.new(b)
+}
+
+fn t1: String {
+  b = buf_new()
+  fill(b, 10000)
+  b.to_s
+}
+
+fn t2: Int {
+  b = buf_new()
+  fill(b, 10000)
+  s = b.to_s
+  b.push_byte(33)
+  c = churn(20000)
+  s2 = b.to_s
+  s.size * 100 + s2.size + sum(s) + sum(s2) + c * 0
+}
+
+fn t3: Int {
+  b = buf_new()
+  fill(b, 10000)
+  h = keep(b)
+  s = b.to_s
+  h.b.push_byte(33)
+  h.b.clear
+  fill(h.b, 7000)
+  c = churn(20000)
+  s.size + sum(s) + h.b.size + c * 0
+}
+
+fn t4(b: Buf): String {
+  b.to_s
+}
+
+fn t5: Int {
+  total = 0
+  k = 0
+  while k < 3 {
+    b = buf_new()
+    fill(b, 9000 + k)
+    s = b.to_s
+    c = churn(20000)
+    total = total + s.size + sum(s) + c * 0
+    k = k + 1
+  }
+  total
+}
+
+fn t6: Int {
+  b = buf_new()
+  total = 0
+  k = 0
+  while k < 3 {
+    b.clear
+    fill(b, 9000 + k)
+    s = b.to_s
+    c = churn(20000)
+    total = total + s.size + sum(s) + c * 0
+    k = k + 1
+  }
+  total + b.size
+}
+
+fn mk: Buf {
+  b = buf_new()
+  fill(b, 10000)
+  b
+}
+
+fn t7: Int {
+  b = mk()
+  s = b.to_s
+  b.push_byte(33)
+  s.size + sum(s) + b.size
+}
+
+fn t8: Int {
+  b = buf_new()
+  fill(b, 10000)
+  bump: fn(): Int = { ||
+    b.push_byte(33)
+    b.size
+  }
+  s = b.to_s
+  n = bump()
+  s.size + sum(s) + n
+}
+
+fn t9: Int {
+  b = buf_new(8000)
+  fill(b, 8000)
+  s = b.to_s
+  c = churn(20000)
+  s.size + sum(s) + c * 0
+}
+
+fn main {
+  s1 = t1()
+  c = churn(20000)
+  puts_u(s1.size + sum(s1) + c * 0)
+  puts_u(t2())
+  puts_u(t3())
+  b = buf_new()
+  fill(b, 10000)
+  s4 = t4(b)
+  b.push_byte(33)
+  puts_u(s4.size + sum(s4) + b.size)
+  puts_u(t5())
+  puts_u(t6())
+  puts_u(t7())
+  puts_u(t8())
+  puts_u(t9())
+}

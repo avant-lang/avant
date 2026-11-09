@@ -7,7 +7,7 @@
 #include <string.h>
 
 /* std.json backing (yyjson). A parsed document lives in one pool buffer
- * allocated in collector space (yyjson_alc_pool_init), a large object,
+ * allocated in collector space (a bump allocator over it, below), a large object,
  * which never moves: the Avant Json value roots that buffer, interior
  * yyjson pointers stay valid,
  * and the collector reclaims the whole document when the last Json is
@@ -37,6 +37,57 @@ char *avant_json_take_pool(void) {
   return pool ? pool : avant_str_empty();
 }
 
+/* The document's allocator (Stage 28 W18M, O59/O60): a bump over the
+ * pool. yyjson allocates the text's copy and then the values, which it
+ * grows by realloc at the end, so a reallocation of the last block grows
+ * it in place and a free of the last block takes the bump back. After
+ * the parse the document is the pool's first `top` bytes and the rest
+ * goes back to the heap at once (avant_gc_large_trim): the pool is sized
+ * for the worst case (24 bytes per text byte, 96 on the retry), and its
+ * unused tail used to stay a live young object as long as the Json did,
+ * filling the young budget (Json::ParseMapping: 241 young collections). */
+typedef struct {
+  uint8_t *base;
+  size_t cap;
+  size_t top;
+  size_t last;
+} JsonBump;
+
+static void *bump_malloc(void *ctx, size_t size) {
+  JsonBump *b = (JsonBump *)ctx;
+  size_t at = (b->top + 15) & ~(size_t)15;
+  if (at > b->cap || size > b->cap - at) {
+    return NULL;
+  }
+  b->last = at;
+  b->top = at + size;
+  return b->base + at;
+}
+
+static void *bump_realloc(void *ctx, void *ptr, size_t old_size, size_t size) {
+  JsonBump *b = (JsonBump *)ctx;
+  void *p;
+  if ((uint8_t *)ptr == b->base + b->last) {
+    if (size > b->cap - b->last) {
+      return NULL;
+    }
+    b->top = b->last + size;
+    return ptr;
+  }
+  p = bump_malloc(ctx, size);
+  if (p) {
+    memcpy(p, ptr, old_size < size ? old_size : size);
+  }
+  return p;
+}
+
+static void bump_free(void *ctx, void *ptr) {
+  JsonBump *b = (JsonBump *)ctx;
+  if ((uint8_t *)ptr == b->base + b->last) {
+    b->top = b->last;
+  }
+}
+
 /* RC1: the text is a handle across the pool's allocation (before W16a
  * nothing protected it: a young copy relied on the C-stack rewrite, audit
  * 12 shape 2 of C31); yyjson reads it after the allocation and allocates
@@ -60,6 +111,7 @@ void *avant_json_parse(const char *s) {
   for (attempt = 0; attempt < 2; attempt++) {
     size_t pool_n = n * (attempt == 0 ? 24 : 96) + 8192;
     yyjson_alc alc;
+    JsonBump bump;
     yyjson_read_err err;
     yyjson_doc *doc;
     char *pool;
@@ -76,13 +128,20 @@ void *avant_json_parse(const char *s) {
      * young collection free it before this one exists. */
     avant_gc_young_before((uint64_t)pool_n);
     pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
-    if (!yyjson_alc_pool_init(&alc, pool, pool_n)) {
-      set_status(2);
-      return NULL;
-    }
+    bump.base = (uint8_t *)pool;
+    bump.cap = pool_n;
+    bump.top = 0;
+    bump.last = 0;
+    alc.malloc = bump_malloc;
+    alc.realloc = bump_realloc;
+    alc.free = bump_free;
+    alc.ctx = &bump;
     doc = yyjson_read_opts((char *)(s ? s : ""), n, 0, &alc, &err);
     if (doc) {
+      /* The pool is rooted (g_json_pool) before the trim, whose lock
+       * wait may let another thread collect; it is large and stays put. */
       g_json_pool = pool;
+      (void)avant_gc_large_trim(pool, (uint64_t)bump.top);
       return doc;
     }
     if (err.code != YYJSON_READ_ERROR_MEMORY_ALLOCATION) {

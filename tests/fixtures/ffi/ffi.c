@@ -247,3 +247,24 @@ int32_t rel_tag_null(const RelHolder *h) { return h->at.tag == NULL; }
 void rel_set_c_name(RelHolder *h) { h->name = rel_c_text; }
 int32_t rel_name_is_c(const RelHolder *h) { return h->name == rel_c_text; }
 int32_t rel_name_len(const RelHolder *h) { return h->name ? (int32_t)strlen(h->name) : -1; }
+
+/* O138 (Stage 28 W18M): user C that registers root slots opens its own
+ * frame first (rg_good); rg_bad registers one on whatever frame is
+ * innermost (its Avant caller's stack record), which the runtime refuses
+ * with a message instead of growing a stack array. */
+void avant_gc_enter(void);
+void avant_gc_leave(void);
+void *avant_gc_root_begin(uint32_t count);
+int32_t rg_good(const char *s) {
+  void ***slots;
+  avant_gc_enter();
+  slots = (void ***)avant_gc_root_begin(1);
+  slots[0] = (void **)&s;
+  avant_gc_leave();
+  return s != NULL;
+}
+int32_t rg_bad(const char *s) {
+  void ***slots = (void ***)avant_gc_root_begin(40);
+  slots[0] = (void **)&s;
+  return s != NULL;
+}

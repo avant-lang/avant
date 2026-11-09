@@ -1,0 +1,16 @@
+// O138 (Stage 28 W18M): avant_gc_root_begin called by user C without its
+// own avant_gc_enter stops with a clear message (rg_bad), where it used
+// to realloc the caller's stack slot array; with its own frame it works
+// (rg_good; rg_bad runs only after rg_good returned 1, so the message
+// proves both). Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib rg {
+  fun rg_good(s: String): Int
+  fun rg_bad(s: String): Int
+}
+
+fn main {
+  if rg.rg_good("x") == 1 {
+    puts("bad ${rg.rg_bad("y")}")
+  }
+}
