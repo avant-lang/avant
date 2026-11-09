@@ -383,6 +383,11 @@ typedef struct AvantGcFrame {
   uint32_t scope;
 } AvantGcFrame;
 #define AVANT_GC_SCOPE_OPEN 1u
+/* A frame avant_gc_enter opened (user C's, or a seed-built compiler's):
+ * the only kind avant_gc_root and avant_gc_root_begin register slots in
+ * (Stage 28 W18M, O138). Its slot array is the runtime's own; a
+ * generated frame's record and a scope's array live in a stack. */
+#define AVANT_GC_FRAME_C 2u
 extern __thread AvantGcFrame *avant_gc_top;
 void avant_gc_frame_enter(AvantGcFrame *frame);
 void avant_gc_frame_leave(AvantGcFrame *frame);
@@ -397,7 +402,7 @@ static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t
 }
 
 static inline void avant_gc_scope_close_(AvantGcFrame *f) {
-  if (f->scope) {
+  if (f->scope & AVANT_GC_SCOPE_OPEN) {
     avant_gc_top = f->prev;
     f->scope = 0;
   }
