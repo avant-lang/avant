@@ -442,7 +442,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     gc_los_spare_drop();
   }
   if (gc_heap.set.heap_max && !gc_heap.los_spare && gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
-    if (gc_heap.defer) {
+    if (gc_thread.nogc) {
       /* C32: inside a no-GC region the allocation proceeds past the
        * limit and the collection runs after the region, unless the
        * region alone is over the limit (gc-design.md §5.4). */

@@ -2007,13 +2007,13 @@ int32_t avant_http_port(void *srvp) {
 }
 
 /* Loop threads follow the pool's registration model: register with
- * the collector before the first dispatch, allocate in the
- * non-moving mature space while serving, unregister after the loop
- * has drained (no Avant frame is active then). */
+ * the collector before the first dispatch, allocate young in their own
+ * young blocks while serving (Stage 28 W17b; the mature space before),
+ * unregister after the loop has drained (no Avant frame is active
+ * then). */
 static void *loop_thread_main(void *arg) {
   HttpLoop *hl = (HttpLoop *)arg;
   avant_gc_register_thread();
-  avant_alloc_in_mature(1);
   /* The C callback trampoline batches its roots into the current
    * frame without entering (it forwards to the entering dispatch
    * function), so a loop thread needs a base frame for the whole

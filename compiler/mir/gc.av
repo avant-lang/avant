@@ -34,12 +34,17 @@
 //    block a back edge enters (an edge to a block whose number is not
 //    greater than its source's, so every cycle has one) begins with
 //    `call avant_gc_poll() collects`, a collecting call like any other,
-//    when every reference live on entry to that block is already a slot
-//    (a loop that keeps a reference only in a local does not poll, as a
-//    leaf's does not: the poll would make it a slot, volatile at every
-//    use, D207). The emitter tests the request flag and calls only when
-//    it is set. Leaves have no frame and do not poll (rule 5, V15); an
-//    unshared module is unchanged.
+//    when the loop it heads holds another loop's head (an outer loop,
+//    Stage 28 W17b), or when every reference live on entry to that block
+//    is already a slot (an innermost loop that keeps a reference only in
+//    a local does not poll, as a leaf's does not: the poll would make it
+//    a slot, reloaded after the poll at every iteration, which kept
+//    Matmul's inner loops from hoisting their rows: +6-11% with every
+//    loop polling and plain slots, W17b; 2.4x with W17a's volatile
+//    slots, D207, D259). So a collection waits at most for one run of
+//    such an innermost loop. The emitter tests the request flag and
+//    calls only when it is set. Leaves have no frame and do not poll
+//    (rule 5, V15); an unshared module is unchanged.
 
 import source
 import mir.types
@@ -274,17 +279,24 @@ fn mir_live_in_at(f: MFunc, outs: Array(Array(Bool)), h: Int): Array(Bool) {
 }
 
 // Rule 3 above: a poll at the head of every block a back edge enters,
-// unless a reference live on entry to it is not already a slot (W17a, by
-// measurement: a poll there would make it a slot, and a slot is read
-// volatile at every use in a shared module, D207, which cost Matmul::T4
-// 2.4x when its inner loops polled; such a loop does not poll, like a
-// leaf's, rule 5, until W17b's plain slot access).
+// unless it heads an innermost loop and a reference live on entry to it
+// is not already a slot (W17a, by measurement: a poll there would make it
+// a slot; W17b, by measurement: outer loops poll always, which costs
+// nothing measurable on Matmul with plain slots).
 fn mir_add_polls(m: MModule, f: MFunc) {
   n = f.blocks.size
   need0 = mir_slot_need(m, f)
   outs = mir_live_out(f)
   ts = m.types
   heads = mir_bools(n, false)
+  // last[h]: the last block of the loop h heads (its latest back edge's
+  // source), so the loop's blocks are h..last[h] in the lowering's order.
+  last: Array(Int) = []
+  b = 0
+  while b < n {
+    last.push(-1)
+    b = b + 1
+  }
   b = 0
   while b < n {
     succ = mir_succ(f.blocks[b])
@@ -293,14 +305,36 @@ fn mir_add_polls(m: MModule, f: MFunc) {
       h = succ[i]
       if h >= 0 && h <= b && h < n {
         heads[h] = true
+        if b > last[h] {
+          last[h] = b
+        }
       }
       i = i + 1
     }
     b = b + 1
   }
+  // An outer loop (one whose blocks hold another loop's head) always
+  // polls (Stage 28 W17b): its new slots cost nothing inside the inner
+  // loop (no call there, so LLVM keeps a plain slot's value in a
+  // register), and a collection then waits at most for one run of an
+  // innermost loop.
+  outer = mir_bools(n, false)
   h = 0
   while h < n {
     if heads[h] {
+      k = h + 1
+      while k <= last[h] && k < n {
+        if heads[k] {
+          outer[h] = true
+        }
+        k = k + 1
+      }
+    }
+    h = h + 1
+  }
+  h = 0
+  while h < n {
+    if heads[h] && !outer[h] {
       live = mir_live_in_at(f, outs, h)
       k = 0
       while k < f.locals.size {

@@ -65,7 +65,8 @@
  * Pinned objects never move. Objects that escape to C should be pinned.
  *
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
- * allocation and collection take a world lock.
+ * collection and the slow path of allocation take a world lock; each
+ * thread bumps in its own young hole without it (Stage 28 W17b).
  */
 
 #define ALIGN 8
@@ -763,12 +764,8 @@ typedef struct GcHeap {
    * CACHE_BLOCKS), still charged to heap_bytes. */
   Block *cache;
   int cache_n;
-  /* The C allocation cursor's block and limit; the cursor itself is the
-   * inline path's avant_gc_bump. fast_block is the block the inline
-   * fast path is published on (gc_fast_refresh). */
-  Block *cur;
-  uint8_t *limit;
-  Block *fast_block;
+  /* (The C allocation cursor, its limit and the inline path's block are
+   * per thread since Stage 28 W17b: GcThread.cur, .limit, .fast_block.) */
   /* Block bytes in use or cached, against set.heap_max. (E's copy
    * reserve, charged against it outside a collection, went with E in
    * Stage 28 W15d: S+'s copy is optional and stops at the limit.) */
@@ -813,9 +810,10 @@ typedef struct GcHeap {
   void **remset;
   uint32_t rem_n;
   uint32_t rem_cap;
-  /* Workers call avant_barrier without the world lock (a fresh array
-   * header). The remembered-set realloc is shared. */
-  pthread_mutex_t rem_mu;
+  /* (rem_mu, the lock barriers of a shared program took, went in Stage
+   * 28 W17b: each thread remembers into its own buffer, GcThread.rembuf,
+   * and only a collection, with every other thread stopped, or an
+   * unregistering thread under the world lock, writes the set.) */
   /* The keep list: the holders a young collection found naming a young
    * object that stays young across it (gc_rem_keep_young_holders). */
   void **keep;
@@ -848,9 +846,12 @@ typedef struct GcHeap {
    * cursor's block, and is then skipped). Wholly free blocks go back to
    * their chunks (Stage 28 W15c; before, a free_blocks list kept them in
    * mature space until a full collection).
-   * overflow: the young block medium objects go to when the current
-   * hole cannot hold them (Immix's overflow allocation). cur_whole: the
-   * young cursor's hole is a whole block (S_INLINE_HOLES). */
+   * Each thread's young cursor, its overflow block (the young block
+   * medium objects go to when the current hole cannot hold them, Immix's
+   * overflow allocation) and cur_whole (the young cursor's hole is a
+   * whole block, S_INLINE_HOLES) are the thread's own since Stage 28
+   * W17b (GcThread.ycur, .overflow, .cur_whole): a young block belongs to
+   * the one thread whose cursor took it until the next collection. */
   Block **young_blocks;
   uint32_t young_blocks_n;
   uint32_t young_blocks_cap;
@@ -863,8 +864,6 @@ typedef struct GcHeap {
   Block **verify_holes;
   uint32_t verify_holes_n;
   uint32_t verify_holes_cap;
-  Block *overflow;
-  int cur_whole;
   /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
    * the block copies go to; copied_bytes when it began. splus_age: the
    * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
@@ -927,9 +926,10 @@ typedef struct GcHeap {
   uint32_t held_runs_n;
   uint64_t held_runs_coll;
 
-  /* avant_gc_collect.c. */
+  /* avant_gc_collect.c. (collecting, the running collection's flag, is
+   * the collecting thread's own since Stage 28 W17b: GcThread.collecting;
+   * every other thread is stopped or native meanwhile.) */
   int inited;
-  int collecting;
   /* Set while a stress point's young collection runs (it makes no
    * sizing decision). */
   int stress_now;
@@ -957,11 +957,9 @@ typedef struct GcHeap {
    * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
    * a program with a large live set collect too often for its size. */
   uint64_t full_trigger;
-  /* The bytes allocated inside the running outermost no-GC (defer)
-   * region, and the address its helper entered it from (for "heap limit
-   * in a no-GC region", gc-design.md §5.4). */
-  uint64_t region_bytes;
-  void *region_site;
+  /* (The bytes allocated inside a thread's outermost no-GC region and
+   * its entry's address are the thread's own since Stage 28 W17b:
+   * GcThread.region_bytes, region_site.) */
   /* avant_gc_collect was called inside a no-GC region (RC4, Stage 28
    * W16a): the first collection point after it runs the full collection. */
   uint8_t explicit_pending;
@@ -993,7 +991,8 @@ typedef struct GcHeap {
   pthread_mutex_t hs_mu;
   pthread_cond_t hs_stopped_cv;
   pthread_cond_t hs_resume_cv;
-  int defer;
+  /* (defer, the process-wide no-GC depth, went in Stage 28 W17b: each
+   * thread's own, GcThread.nogc, is the region, O125.) */
   PinEnt *pins;
   /* The task roots (avant_gc_task_root_add, Stage 28 W16b): spawned
    * tasks' capture records, under the world lock. */
@@ -1040,6 +1039,59 @@ typedef struct GcThread {
   int collector;
   int foreign;
   int base_native;
+  /* The thread's allocation cursors (Stage 28 W17b, gc-design.md section
+   * 4.4 "What it enables"; they were gc_heap's, one per process, so only
+   * one thread could allocate young). cur and limit: the C cursor's block
+   * and its hole's limit (the cursor itself is the thread's
+   * avant_gc_bump); fast_block: the block the inline path is published
+   * on; ycur: the young cursor's block (a young block, owned by this
+   * thread until the next collection); overflow: its young overflow
+   * block; cur_whole: ycur's hole is a whole block. A collection clears
+   * every thread's (gc_alloc_stop_all, avant_gc_alloc.c).
+   *
+   * Hole accounting (a shared program, avant_gc_fast_ok == 2): the slow
+   * path charges the rest of the young hole it hands the thread,
+   * [tl_start, tl_end), to the one young budget (avant_nursery_held) and
+   * the thread then bumps in it without the world lock (the inline path
+   * and avant_alloc's fast path); the counters are made exact (the bytes
+   * used counted, the rest given back) at the thread's next slow
+   * allocation, at every collection, and when it unregisters
+   * (gc_tl_settle). tl_end NULL: nothing is charged. bump_p, limit_p and
+   * fast_ok_p are the addresses of the thread's avant_gc_bump,
+   * avant_gc_limit and avant_gc_fast_ok, so a collector on another thread
+   * can clear them while this one is stopped. */
+  Block *cur;
+  uint8_t *limit;
+  Block *fast_block;
+  Block *ycur;
+  Block *overflow;
+  int cur_whole;
+  uint8_t *tl_start;
+  uint8_t *tl_end;
+  uint8_t **bump_p;
+  uint8_t **limit_p;
+  uint32_t *fast_ok_p;
+  /* The thread's remembered-set buffer (Stage 28 W17b, MMTk's modbuf):
+   * in a shared program a barrier appends the object it remembers here,
+   * without a lock (the header's REM or REMC bit, set by an atomic or,
+   * says it is remembered once); every collection merges every thread's
+   * buffer into gc_heap.remset after the handshake (gc_rem_merge_all),
+   * and an unregistering thread merges its own. rem_adds counts its adds
+   * for ctr.rem.adds. */
+  void **rembuf;
+  uint32_t rembuf_n;
+  uint32_t rembuf_cap;
+  uint64_t rem_adds;
+  /* Per-thread collector state (Stage 28 W17b, item 3; they were
+   * gc_heap's): collecting, set while this thread runs a collection
+   * (barriers and allocation read it; no other thread runs meanwhile);
+   * the bytes allocated inside this thread's outermost no-GC region and
+   * the address its helper entered it from (for "heap limit in a no-GC
+   * region", gc-design.md section 5.4). The region's depth is nogc,
+   * above. */
+  int collecting;
+  uint64_t region_bytes;
+  void *region_site;
 } GcThread;
 
 extern __thread GcThread gc_thread;
@@ -1112,6 +1164,11 @@ Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
 void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
+void gc_alloc_stop_all(void);
+void gc_tl_settle(GcThread *t);
+void gc_alloc_thread_init(void);
+void gc_alloc_thread_leave(void);
+void gc_alloc_shared_now(void);
 
 /* avant_gc_los.c */
 size_t gc_large_bytes(const AvantHeader *h);
@@ -1128,6 +1185,10 @@ void gc_keep_add(void *obj);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
 void gc_cards_settle(void);
+void gc_rem_merge_all(void);
+void gc_rem_thread_leave(void);
+void gc_hdr_or(AvantHeader *h, uint16_t bits);
+void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
 /* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): 1 builds
  * S+, the young generation (D233): candidate S with the opportunistic
@@ -1294,6 +1355,10 @@ static inline size_t align_up(size_t n) {
   return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
 }
 
+/* The program is shared (a second thread registered): barriers remember
+ * into the thread's buffer and change header flags atomically, and
+ * allocation uses hole accounting (Stage 28 W17b; the name is from when
+ * a shared program's barriers took rem_mu). */
 static inline int rem_locked(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
 }

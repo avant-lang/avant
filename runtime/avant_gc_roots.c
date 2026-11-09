@@ -58,15 +58,12 @@ static void register_thread(int implicit) {
   if (!implicit) {
     atomic_store(&g_first_registered, 1);
   }
+  gc_alloc_thread_init();
   gc_thread_registered(foreign);
-  if (foreign) {
-    /* A foreign thread allocates in the mature space, as the pool's
-     * workers and the HTTP loop threads do: the young allocator's cursor
-     * is one per process (gc_heap.cur), with this thread's bump pointer
-     * in TLS, so a second thread allocating young corrupts it (found by
-     * W17a's rule 4 proof; per-thread allocation blocks are W17b's). */
-    avant_alloc_in_mature(1);
-  }
+  /* Every registered thread, a foreign one too, allocates young in its
+   * own young blocks (Stage 28 W17b; until then a foreign thread, the
+   * pool's workers and the HTTP loop threads allocated in the mature
+   * space: the young cursor was one per process, W17a's rule 4 proof). */
 }
 
 void avant_gc_register_thread(void) {
@@ -77,6 +74,7 @@ void avant_gc_unregister_thread(void) {
   if (!gc_thread.reg.head) {
     return;
   }
+  gc_alloc_thread_leave();
   gc_thread_unregistering();
 }
 
@@ -245,7 +243,7 @@ void avant_pin(void *payload) {
     pthread_mutex_unlock(&gc_heap.world);
     gc_die("out of memory");
   }
-  h->flags |= AVANT_FLAG_PINNED;
+  gc_hdr_or(h, AVANT_FLAG_PINNED);
   e->payload = payload;
   e->count = 1;
   e->next = gc_heap.pins;
@@ -293,7 +291,7 @@ void avant_unpin(void *payload) {
     }
     pp = &(*pp)->next;
   }
-  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
+  gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
   pthread_mutex_unlock(&gc_heap.world);
 }
 
@@ -338,15 +336,19 @@ void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
 static void nogc_begin(void *site) {
   gc_init();
   gc_fast_clear();
-  pthread_mutex_lock(&gc_heap.world);
-  if (gc_heap.defer == 0) {
-    gc_heap.region_bytes = 0;
-    gc_heap.region_site = site;
+  /* The thread's own depth (Stage 28 W17a; the only one since W17b,
+   * which retired the process-wide gc_heap.defer, O125): this thread
+   * never stops at a safepoint inside a region, nor turns native, nor
+   * collects; another thread's collection waits for it to leave the
+   * region and reach a safepoint. So no collection runs while the
+   * region is open, and one thread's region no longer holds off the
+   * other threads' collection policy. A region must therefore never
+   * wait for another thread (that thread may be stopped for a
+   * collection that waits for this one). */
+  if (gc_thread.nogc == 0) {
+    gc_thread.region_bytes = 0;
+    gc_thread.region_site = site;
   }
-  gc_heap.defer += 1;
-  pthread_mutex_unlock(&gc_heap.world);
-  /* The thread's own depth (Stage 28 W17a): it never stops at a
-   * safepoint inside a region, nor turns native. */
   gc_thread.nogc += 1;
 }
 
@@ -372,11 +374,6 @@ void avant_gc_defer_leave(void) {
  * the end itself collects nothing, so the function may still hold what
  * it built inside. */
 __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void) {
-  pthread_mutex_lock(&gc_heap.world);
-  if (gc_heap.defer > 0) {
-    gc_heap.defer -= 1;
-  }
-  pthread_mutex_unlock(&gc_heap.world);
   if (gc_thread.nogc > 0) {
     gc_thread.nogc -= 1;
   }

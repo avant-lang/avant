@@ -18,29 +18,95 @@
  * empties the set at every young collection and remembers again only the
  * holders of objects that stay young, gc_rem_keep_young_holders.) */
 
-/* OBJ joins the set with BIT (REM, or REMC for a carded object). */
+/* A mutator's change of header flag bits (Stage 28 W17b): in a shared
+ * program an atomic or (and), since threads remember, card and pin the
+ * same object without a common lock (a plain read-modify-write could
+ * drop another thread's bit); a plain one with one mutator, and in a
+ * collection (every other thread is stopped). */
+void gc_hdr_or(AvantHeader *h, uint16_t bits) {
+  if (rem_locked() && !gc_thread.collecting) {
+    __atomic_fetch_or(&h->flags, bits, __ATOMIC_RELAXED);
+  } else {
+    h->flags |= bits;
+  }
+}
+
+void gc_hdr_and(AvantHeader *h, uint16_t bits) {
+  if (rem_locked() && !gc_thread.collecting) {
+    __atomic_fetch_and(&h->flags, bits, __ATOMIC_RELAXED);
+  } else {
+    h->flags &= bits;
+  }
+}
+
+static void rem_push(void ***v, uint32_t *n, uint32_t *cap, void *obj) {
+  if (*n == *cap) {
+    *cap = *cap ? *cap * 2 : 64;
+    *v = gc_xrealloc(*v, *cap * sizeof(void *));
+  }
+  (*v)[(*n)++] = obj;
+}
+
+/* OBJ joins the set with BIT (REM, or REMC for a carded object). In a
+ * shared program, outside a collection (Stage 28 W17b, MMTk's modbuf):
+ * the thread sets the bit by an atomic or, and the one thread that set
+ * it appends OBJ to its own buffer, merged into the set at the next
+ * collection's pause (gc_rem_merge_all), so no barrier takes a lock and
+ * no object is in the set twice. (Until W17b every such add took
+ * rem_mu.) */
 static void rem_add_bit(void *obj, uint16_t bit) {
   AvantHeader *h = avant_header(obj);
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&gc_heap.rem_mu);
+  if (rem_locked() && !gc_thread.collecting) {
+    uint16_t old;
+    if (h->flags & bit) {
+      return;
+    }
+    old = __atomic_fetch_or(&h->flags, bit, __ATOMIC_RELAXED);
+    if (old & bit) {
+      return;
+    }
+    rem_push(&gc_thread.rembuf, &gc_thread.rembuf_n, &gc_thread.rembuf_cap, obj);
+    gc_thread.rem_adds++;
+    return;
   }
   if (h->flags & bit) {
-    if (locked) {
-      pthread_mutex_unlock(&gc_heap.rem_mu);
-    }
     return;
   }
   h->flags |= bit;
-  if (gc_heap.rem_n == gc_heap.rem_cap) {
-    gc_heap.rem_cap = gc_heap.rem_cap ? gc_heap.rem_cap * 2 : 64;
-    gc_heap.remset = gc_xrealloc(gc_heap.remset, gc_heap.rem_cap * sizeof(void *));
-  }
-  gc_heap.remset[gc_heap.rem_n++] = obj;
+  rem_push(&gc_heap.remset, &gc_heap.rem_n, &gc_heap.rem_cap, obj);
   gc_heap.ctr.rem.adds++;
-  if (locked) {
-    pthread_mutex_unlock(&gc_heap.rem_mu);
+}
+
+/* G's buffer joins the set (a collection, or G's own thread under the
+ * world lock as it unregisters). */
+static void rem_merge(GcThread *g) {
+  uint32_t i;
+  for (i = 0; i < g->rembuf_n; i++) {
+    rem_push(&gc_heap.remset, &gc_heap.rem_n, &gc_heap.rem_cap, g->rembuf[i]);
   }
+  g->rembuf_n = 0;
+  gc_heap.ctr.rem.adds += g->rem_adds;
+  g->rem_adds = 0;
+}
+
+/* At the start of every collection, after the handshake: every
+ * registered thread's buffer and the collector's own join the set, in
+ * the order of the thread list. Every other thread is stopped or native
+ * (a native thread runs no barrier). */
+void gc_rem_merge_all(void) {
+  ThreadReg *t;
+  for (t = gc_heap.threads; t; t = t->next) {
+    if (t->owner && t->owner != &gc_thread) {
+      rem_merge(t->owner);
+    }
+  }
+  rem_merge(&gc_thread);
+}
+
+/* An unregistering thread's buffer joins the set (under the world lock,
+ * which a collection holds while it reads the set). */
+void gc_rem_thread_leave(void) {
+  rem_merge(&gc_thread);
 }
 
 static void rem_add(void *obj) {
@@ -167,10 +233,6 @@ void gc_cards_settle(void) {
 void gc_rem_full_scrub(void) {
   uint32_t i;
   uint32_t w = 0;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&gc_heap.rem_mu);
-  }
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     AvantHeader *h;
@@ -199,9 +261,6 @@ void gc_rem_full_scrub(void) {
   for (i = 0; i < gc_heap.rem_n; i++) {
     avant_header(gc_heap.remset[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
   }
-  if (locked) {
-    pthread_mutex_unlock(&gc_heap.rem_mu);
-  }
 }
 
 void avant_barrier(void *obj) {
@@ -209,7 +268,7 @@ void avant_barrier(void *obj) {
   /* O9: with the nursery off no young collection runs, so nothing is
    * remembered (the set grew without bound: churn.av kept 1.6 M
    * entries). */
-  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
+  if (!obj || gc_thread.collecting || gc_heap.set.nursery_off) {
     return;
   }
   /* The compiler passes the object being stored into. A nursery object
@@ -225,7 +284,7 @@ void avant_barrier(void *obj) {
       /* A carded object named without its slot (Stage 28 W16t): every
        * card counts as marked until the next young collection. */
       if (gc_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
-        h->flags |= AVANT_FLAG_CARD_ALL;
+        gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
         rem_add_bit(obj, AVANT_FLAG_REMC);
         return;
       }
@@ -246,7 +305,7 @@ void avant_barrier(void *obj) {
  * runtime C calls it where it knows the slot. Never collects. */
 void avant_barrier_slot(void *obj, void *slot) {
   AvantHeader *h;
-  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
+  if (!obj || gc_thread.collecting || gc_heap.set.nursery_off) {
     return;
   }
   /* A large object's header is at a fixed place in its run, and the
@@ -259,7 +318,7 @@ void avant_barrier_slot(void *obj, void *slot) {
       if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
         gc_heap.cards[gc_card_index(slot)] = 1;
       } else {
-        h->flags |= AVANT_FLAG_CARD_ALL;
+        gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
       }
       if (!(h->flags & AVANT_FLAG_REMC)) {
         rem_add_bit(obj, AVANT_FLAG_REMC);
@@ -278,7 +337,7 @@ void avant_barrier_slot(void *obj, void *slot) {
 void avant_barrier_at(void *addr) {
   Block *b = NULL;
   void *start;
-  if (!addr || gc_heap.collecting) {
+  if (!addr || gc_thread.collecting) {
     return;
   }
   if (gc_thread.reg.stack_lo && (uint8_t *)addr >= (uint8_t *)gc_thread.reg.stack_lo &&

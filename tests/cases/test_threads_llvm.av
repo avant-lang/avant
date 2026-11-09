@@ -75,7 +75,8 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     i = i + 1
   }
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
-  // W9b (D207): slot accesses are volatile in a shared module only.
+  // Stage 28 W17b (D207 relaxed): no slot access is volatile, in a shared
+  // module either; its only volatile access is the poll's flag load.
   vol_srcs = ["tests/fixtures/threads/spawn.av", "tests/fixtures/heap/loops.av"]
   i = 0
   while i < vol_srcs.size {
@@ -122,7 +123,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   if t = file_read("${dir}/vol1.ll") {
     vol_single = t
   }
-  c.expect(str_has(vol_shared, "load volatile ptr"), "threads/spawn.av (shared): slot loads are volatile")
+  c.expect(!str_has(vol_shared, "load volatile ptr") && !str_has(vol_shared, "store volatile") && str_has(vol_shared, "load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile")
   c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access")
 
   // Wave 2: every program, then the new ones under each GC environment,

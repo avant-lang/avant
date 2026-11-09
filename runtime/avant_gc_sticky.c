@@ -294,10 +294,6 @@ static void trace_all(void) {
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   {
-    int locked = rem_locked();
-    if (locked) {
-      pthread_mutex_lock(&gc_heap.rem_mu);
-    }
     gc_heap.ctr.rem.scans++;
     gc_heap.ctr.rem.entries += gc_heap.rem_n;
     if (gc_heap.rem_n > gc_heap.ctr.rem.peak) {
@@ -332,9 +328,6 @@ static void trace_all(void) {
       gc_heap.ctr.rem.fields += field_count(obj);
       scan_fields(obj, 0);
     }
-    if (locked) {
-      pthread_mutex_unlock(&gc_heap.rem_mu);
-    }
   }
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     trace_ref(NULL, p->payload, 0);
@@ -357,10 +350,6 @@ static void trace_all(void) {
  * an object is still young after an S young collection). */
 static void rem_empty(void) {
   uint32_t i;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&gc_heap.rem_mu);
-  }
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     if (gc_is_heap_payload(obj, NULL, NULL)) {
@@ -369,9 +358,6 @@ static void rem_empty(void) {
   }
   gc_heap.ctr.rem.cleared += gc_heap.rem_n;
   gc_heap.rem_n = 0;
-  if (locked) {
-    pthread_mutex_unlock(&gc_heap.rem_mu);
-  }
 }
 
 /* The holders the trace found naming a young large object (the keep
@@ -945,9 +931,8 @@ void gc_sticky_collect(int tenure) {
     gc_heap.splus_sdst = NULL;
   }
 #endif
-  gc_clear_alloc_cur(SPACE_NURSERY);
-  gc_heap.overflow = NULL;
-  gc_heap.cur_whole = 0;
+  /* (Every thread's young cursor and overflow block were dropped when the
+   * collection began, gc_alloc_stop_all.) */
   /* The empty young blocks go back to their chunks' free lists (O89):
    * before, they stayed in mature space until a full collection, so a
    * program that never runs one never returned them. The mature list is
@@ -1003,8 +988,6 @@ void gc_sticky_full_begin(void) {
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
   gc_heap.verify_holes_n = 0;
-  gc_heap.overflow = NULL;
-  gc_heap.cur_whole = 0;
 }
 
 void gc_sticky_full_end(void) {

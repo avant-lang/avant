@@ -118,3 +118,47 @@ int ffi_flags(Flags f) { return (f.a ? 100 : 0) + (f.b ? 10 : 0) + f.n; }
 int64_t ffi_spill(int a, int b, int c, int d, int e, Q2 q, int f) {
   return a + b + c + d + e + q.x * 100 + q.y * 1000 + f * 10000;
 }
+
+/* tests/fixtures/ffi/foreign.av (Stage 28 W17b, O123): C threads, unknown
+ * to Avant, call an Avant callback that allocates; foreign_wait joins them
+ * natively (avant_gc_native_begin/end, the ABI for user C that blocks
+ * while Avant threads run). */
+#include <pthread.h>
+void avant_gc_native_begin(void);
+void avant_gc_native_end(void);
+
+typedef int32_t (*foreign_cb_t)(int32_t);
+static pthread_t foreign_th[8];
+static int32_t foreign_bad[8];
+static int32_t foreign_n, foreign_rounds;
+static foreign_cb_t foreign_cb;
+
+static void *foreign_run(void *arg) {
+  intptr_t k = (intptr_t)arg;
+  int32_t bad = 0;
+  for (int32_t i = 0; i < foreign_rounds; i++) {
+    bad += foreign_cb((int32_t)(k * 1000000 + i));
+  }
+  foreign_bad[k] = bad;
+  return NULL;
+}
+
+void foreign_start(foreign_cb_t f, int32_t n, int32_t rounds) {
+  foreign_cb = f;
+  foreign_n = n > 8 ? 8 : n;
+  foreign_rounds = rounds;
+  for (intptr_t k = 0; k < foreign_n; k++) {
+    pthread_create(&foreign_th[k], NULL, foreign_run, (void *)k);
+  }
+}
+
+int32_t foreign_wait(void) {
+  int32_t bad = 0;
+  avant_gc_native_begin();
+  for (int32_t k = 0; k < foreign_n; k++) {
+    pthread_join(foreign_th[k], NULL);
+    bad += foreign_bad[k];
+  }
+  avant_gc_native_end();
+  return bad;
+}
