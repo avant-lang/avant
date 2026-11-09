@@ -249,10 +249,13 @@ void avant_barrier_slot(void *obj, void *slot) {
   if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
     return;
   }
-  if (((uintptr_t)obj & (ALIGN - 1)) == 0) {
+  /* A large object's header is at a fixed place in its run, and the
+   * range compare keeps the card index inside the table (no start-bit
+   * lookup on this per-store path). */
+  if (((uintptr_t)obj & (ALIGN - 1)) == 0 &&
+      (uint64_t)((uintptr_t)obj - (uintptr_t)gc_heap.base) < gc_heap.committed) {
     h = avant_header(obj);
-    if ((h->flags & AVANT_FLAG_HEAP) && !(h->flags & AVANT_FLAG_YOUNG) && gc_carded(h) &&
-        gc_is_heap_payload(obj, NULL, NULL)) {
+    if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == AVANT_FLAG_HEAP && gc_carded(h)) {
       if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
         gc_heap.cards[gc_card_index(slot)] = 1;
       } else {
