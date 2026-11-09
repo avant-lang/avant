@@ -29,6 +29,14 @@
 //    Then the prologue of 5.1 (zero every non-parameter slot, gc.enter,
 //    gc.roots of every slot in local order) and a gc.leave before each
 //    return.
+// 3. Polls (Stage 28 W17a; gc-design.md 4.4, the safepoints of a shared
+//    program): in a shared module, before the slot set is computed, every
+//    block a back edge enters (an edge to a block whose number is not
+//    greater than its source's, so every cycle has one) begins with
+//    `call avant_gc_poll() collects`, a collecting call like any other
+//    (what is live across it is a slot). The emitter tests the request
+//    flag and calls only when it is set. Leaves have no frame and do not
+//    poll (rule 5, V15); an unshared module is unchanged.
 
 import source
 import mir.types
@@ -222,8 +230,71 @@ pub fn mir_slot_need(m: MModule, f: MFunc): Array(Bool) {
   need
 }
 
+// The poll's call-table row, declared in the module on first use.
+fn mir_declare_poll(m: MModule): Bool {
+  if e = m.ext("avant_gc_poll") {
+    return true
+  }
+  if r = m.rt.find("avant_gc_poll") {
+    sg = m.rt.sig_of(r, m.types)
+    if sg < 0 {
+      return false
+    }
+    x = MExtern.new("avant_gc_poll", sg, r.cls)
+    m.extern_index["avant_gc_poll"] = m.externs.size
+    m.externs.push(x)
+    return true
+  }
+  false
+}
+
+// Rule 3 above: a poll at the head of every block a back edge enters.
+fn mir_add_polls(m: MModule, f: MFunc) {
+  n = f.blocks.size
+  heads = mir_bools(n, false)
+  b = 0
+  while b < n {
+    succ = mir_succ(f.blocks[b])
+    i = 0
+    while i < succ.size {
+      h = succ[i]
+      if h >= 0 && h <= b && h < n {
+        heads[h] = true
+      }
+      i = i + 1
+    }
+    b = b + 1
+  }
+  h = 0
+  while h < n {
+    if heads[h] && mir_declare_poll(m) {
+      blk = f.blocks[h]
+      loc = f.loc
+      if blk.stmts.size > 0 {
+        loc = blk.stmts[0].loc
+      } else if t = blk.term {
+        loc = t.loc
+      }
+      st = MStmt.new(msk_call(), loc)
+      st.callee = "avant_gc_poll"
+      st.collects = true
+      xs: Array(MStmt) = [st]
+      i = 0
+      while i < blk.stmts.size {
+        xs.push(blk.stmts[i])
+        i = i + 1
+      }
+      blk.stmts = xs
+    }
+    h = h + 1
+  }
+}
+
 fn mir_add_frame(m: MModule, f: MFunc) {
   f.kind = mfk_frame()
+  if m.shared {
+    mir_add_polls(m, f)
+  }
   need = mir_slot_need(m, f)
   slots: Array(Int) = []
   k = 0
