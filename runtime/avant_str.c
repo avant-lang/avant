@@ -309,15 +309,10 @@ char *avant_str_from_byte(int32_t b) {
 }
 
 double avant_exp(double x) {
-  /* Does not allocate. The lock only matters once another thread can
-   * collect while the caller's pointers sit in registers. */
-  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
-    return exp(x);
-  }
-  avant_world_lock();
-  double r = exp(x);
-  avant_world_unlock();
-  return r;
+  /* Does not allocate and is no safepoint (Stage 28 W17a: the world lock
+   * a shared program took here, against another thread's collection
+   * while the caller's pointers sat in registers, D191, is gone). */
+  return exp(x);
 }
 
 char *avant_str_cat_i32(const char *prefix, int32_t n) {

@@ -3,7 +3,9 @@
 
 #include "avant_rt.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 
 /*
  * The collector's interface to the rest of the runtime (Stage 28 W12).
@@ -31,8 +33,9 @@
  *     Stage 28 W16b, gc-design.md section 4.3: runtime C roots what it
  *     holds, RC1 below), and pinned objects never move. A full collection
  *     may evacuate sparse mature blocks holding no pinned object; it
- *     rewrites every precise reference (D191: other threads are not
- *     stopped until W17).
+ *     rewrites every precise reference. Every other registered thread is
+ *     stopped at a safepoint or native meanwhile (Stage 28 W17a's
+ *     handshake, avant_gc_safepoint.c; it closed D191's window).
  *   - avant_gc_defer_enter/leave (avant_gc_nogc_begin/end) bracket a
  *     region in which no collection runs (regions nest); the entry
  *     collects nothing (RC4 below; Stage 28 W16a).
@@ -92,10 +95,11 @@
  *   defragmenting full collection rewrites it. Slots are registered in order (0, 1, ...), before the
  *   first call that may collect; at most one scope per C block (open a
  *   nested block for a second). It is thread-local, takes no lock and
- *   allocates nothing. In a shared program (g_avant_shared) the scope
- *   also holds a no-GC region (RC4) until the scope ends: no thread is
- *   stopped for a collection until W17's handshake (D191), and a scope
- *   so keeps the protection today's defer regions gave.
+ *   allocates nothing. The same in a shared program since Stage 28
+ *   W17a: other threads collect only while this one is stopped at a
+ *   safepoint or native (gc-design.md section 4.4), so a scope no longer
+ *   holds a no-GC region there (until W17a it did, D191, and took the
+ *   world lock twice; O111).
  *
  *   RC2. No raw derived pointer across a collecting call. An interior
  *   pointer (s + start) or a buffer's data pointer (h->keys, a->buf,
@@ -116,8 +120,8 @@
  *
  *   RC4. No-GC regions, only where C cannot root. Where references live
  *   inside a C library's own data structures while it calls back or
- *   allocates, or while another thread may collect in a shared program
- *   before W17 (the HTTP/WS sends; see the checklist), the
+ *   allocates (none in the runtime since Stage 28 W17a, whose handshake
+ *   retired the HTTP/WS sends' regions; see the checklist), the
  *   function brackets the region with avant_gc_nogc_begin/end (regions
  *   nest; one process-wide depth, under the world lock). Allocation
  *   inside is allowed and counted against the young budget and the heap
@@ -174,14 +178,19 @@
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
  *     avant_spawn (avant_task.c; C28, R1)          C (the record is a
  *                                                  task root, added
- *                                                  before the handle's
- *                                                  allocation; W16b)
+ *                                                  before the first
+ *                                                  collecting call, read
+ *                                                  from the root; W16b,
+ *                                                  W17a)
+ *     avant_join, fs_copy (W17a: a native wait)    C (scope)
  *     HTTP make_string/_bytes, packed headers      C
- *     HTTP/WS send and close (7 regions)           R4: payloads held in
- *                                                  C while other loop
- *                                                  threads run (D191,
- *                                                  until W17); nothing
- *                                                  inside allocates
+ *     HTTP/WS send, close, respond                 N (no safepoint
+ *                                                  inside: no thread
+ *                                                  collects meanwhile;
+ *                                                  their regions went
+ *                                                  in W17a)
+ *     HTTP client fetch                            the request pinned
+ *                                                  for its native loop
  *     HTTP server state in srv (C memory) across
  *       dispatch                                   pinned for the serve
  *                                                  (W16a: with one loop
@@ -285,6 +294,23 @@ void avant_gc_enter(void);
 void avant_gc_leave(void);
 void avant_gc_heap_goal_collect(void);
 void avant_gc_add_root(void **slot);
+extern atomic_int avant_gc_requested;
+void avant_gc_poll(void);
+void avant_gc_native_begin(void);
+void avant_gc_native_end(void);
+/* Runtime-internal (Stage 28 W17a): a blocking lock or condition wait at
+ * a collecting call (rule 2 of gc-design.md section 4.4): an uncontended
+ * lock is taken at once; a contended one, and every wait, is native, so
+ * a collection does not wait for this thread, and the thread returns to
+ * running only when no collection is in progress (the mutex is held
+ * again on return). A collection may run meanwhile: the caller holds
+ * every heap reference it needs after the call in a handle scope (RC1)
+ * and reads no heap object while waiting. A wait inside a no-GC region
+ * stays running. timedwait returns pthread_cond_timedwait's result. */
+__attribute__((visibility("hidden"))) void avant_gc_lock(pthread_mutex_t *m);
+__attribute__((visibility("hidden"))) void avant_gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
+__attribute__((visibility("hidden"))) int avant_gc_cond_timedwait(pthread_cond_t *cv, pthread_mutex_t *m,
+                                                                 const struct timespec *deadline);
 /* avant_str_generation() (avant_rt.h) reads g_avant_str_gen, which every
  * collection bumps. */
 extern _Atomic uint32_t g_avant_str_gen;
@@ -305,12 +331,13 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
  * is rooted by the task, from avant_spawn until the task's function has
  * returned, instead of pinned by the generated code until the join. A
  * root is a node in the task's own C memory (O(1) to add and drop, no
- * pin entry); every collection traces OBJ from it and none moves it
- * while it is rooted (it is held in place like a pinned object, because
- * the worker thread reads the record while other threads may collect:
- * D191, until W17's handshake). After the drop the record is an ordinary
- * object: a finished task's record dies with its last reference, joined
- * or not. Hidden; add and drop take the world lock and never collect. */
+ * pin entry); every collection traces OBJ from it and rewrites the root
+ * when the record moves (Stage 28 W17a; until then the record was held in
+ * place while rooted, because the worker read it while other threads
+ * collected, D191); the worker reads the record from the root. After the
+ * drop the record is an ordinary object: a finished task's record dies
+ * with its last reference, joined or not. Hidden; add and drop take the
+ * world lock and never collect. */
 typedef struct AvantGcTaskRoot {
   void *obj;
   struct AvantGcTaskRoot *prev;
@@ -323,8 +350,8 @@ __attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRo
  * thread's chain, the type every frame has (avant_gc_internal.h calls it
  * Frame): generated code's frames come from avant_gc_enter's free list,
  * a scope's lives in the C function's own stack frame. scope is 0 for a
- * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope, plus
- * AVANT_GC_SCOPE_NOGC when it holds a no-GC region (a shared program).
+ * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope (the
+ * NOGC bit, a scope's no-GC region in a shared program, went in W17a).
  * avant_gc_top is the thread's innermost frame (hidden: no linked image
  * exports it; user C opens frames with avant_gc_enter and
  * avant_gc_root_begin, the ABI generated code uses). */
@@ -336,7 +363,6 @@ typedef struct AvantGcFrame {
   uint32_t scope;
 } AvantGcFrame;
 #define AVANT_GC_SCOPE_OPEN 1u
-#define AVANT_GC_SCOPE_NOGC 2u
 extern __thread __attribute__((visibility("hidden"))) AvantGcFrame *avant_gc_top;
 
 static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t cap) {
@@ -345,19 +371,12 @@ static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t
   f->n = 0;
   f->cap = cap;
   f->scope = AVANT_GC_SCOPE_OPEN;
-  if (__builtin_expect(atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0, 0)) {
-    avant_gc_nogc_begin();
-    f->scope |= AVANT_GC_SCOPE_NOGC;
-  }
   avant_gc_top = f;
 }
 
 static inline void avant_gc_scope_close_(AvantGcFrame *f) {
   if (f->scope) {
     avant_gc_top = f->prev;
-    if (f->scope & AVANT_GC_SCOPE_NOGC) {
-      avant_gc_nogc_end();
-    }
     f->scope = 0;
   }
 }

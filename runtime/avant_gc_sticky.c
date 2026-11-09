@@ -116,9 +116,10 @@ static uint64_t scan_cards(void *p, int from_mature);
  * location inside it. (Until Stage 28 W16b also a word of the collecting
  * thread's C stack at a collection runtime C entered, W15a2's pin scan;
  * runtime C roots what it holds since W16a, RC1, and gc-design.md
- * section 4.3's proof retired the scan.) Nothing moves in a
- * shared program (no other thread is stopped, D191) or with the nursery
- * off (no young collection). Copying is optional: a block refused at the
+ * section 4.3's proof retired the scan.) Nothing moves with the nursery
+ * off (no young collection); in a shared program the copy runs as in an
+ * unshared one since Stage 28 W17a (the handshake stops the other
+ * threads; before, nothing moved there, D191). Copying is optional: a block refused at the
  * heap limit leaves the remaining survivors in place. */
 #endif
 
@@ -562,6 +563,8 @@ static void splus_fix(void) {
     }
   }
   gc_each_runtime_root(splus_fix_slot);
+  /* Task roots move with their records since Stage 28 W17a. */
+  EACH_TASK_ROOT(slot, splus_fix_slot(slot));
   for (i = 0; i < gc_heap.noted_n; i++) {
     void *p = gc_heap.noted[i];
     void *to = gc_forwarded(p);
@@ -815,7 +818,11 @@ void gc_sticky_collect(int tenure) {
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
 #if GC_STICKY_COPY
-  gc_heap.splus_on = atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
+  /* In shared programs too since Stage 28 W17a: every other thread is
+   * stopped at a safepoint (its references in root slots) or native (it
+   * touches no unpinned heap object), so the copy may move what any
+   * thread's roots name (until W17a nothing moved there, D191). */
+  gc_heap.splus_on = 1;
   gc_heap.splus_copied0 = avant_g_stats.copied_bytes;
   gc_heap.splus_age = YOUNG_AGE >= 2 && !tenure;
   gc_heap.aged_now = 0;

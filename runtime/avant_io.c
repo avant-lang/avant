@@ -180,9 +180,13 @@ char *avant_file_read(const char *path, int32_t *ok) {
     rewind(f);
   }
 
+  /* Native while the file is read into C memory (Stage 28 W17a, rule 2):
+   * path is not read again. */
+  avant_gc_native_begin();
   char *raw = (char *)malloc(cap + 1);
   if (!raw) {
     fclose(f);
+    avant_gc_native_end();
     return NULL;
   }
   size_t n = 0;
@@ -193,6 +197,7 @@ char *avant_file_read(const char *path, int32_t *ok) {
       if (!grown) {
         free(raw);
         fclose(f);
+        avant_gc_native_end();
         return NULL;
       }
       raw = grown;
@@ -204,6 +209,7 @@ char *avant_file_read(const char *path, int32_t *ok) {
       if (ferror(f)) {
         free(raw);
         fclose(f);
+        avant_gc_native_end();
         return NULL;
       }
       break;
@@ -211,6 +217,7 @@ char *avant_file_read(const char *path, int32_t *ok) {
   }
   raw[n] = 0;
   fclose(f);
+  avant_gc_native_end();
 
   char *heap = dup_bytes(raw, n);
   free(raw);
@@ -381,12 +388,16 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
   }
   free_argv(argv);
   g_wait_child = pid;
+  /* The process wait is native (Stage 28 W17a, rule 2). */
+  avant_gc_native_begin();
   while (waitpid(pid, &st, 0) < 0) {
     if (errno != EINTR) {
       g_wait_child = 0;
+      avant_gc_native_end();
       return 1;
     }
   }
+  avant_gc_native_end();
   g_wait_child = 0;
   return exit_code_of(st);
 }
@@ -432,7 +443,10 @@ int32_t avant_job_wait(void) {
     if (g_njobs == 0) {
       return -1;
     }
+    /* The process wait is native (Stage 28 W17a, rule 2). */
+    avant_gc_native_begin();
     pid = waitpid(-1, &st, 0);
+    avant_gc_native_end();
     if (pid < 0) {
       if (errno == EINTR) {
         continue;
@@ -569,6 +583,11 @@ int32_t avant_fs_copy(const char *src, const char *dst) {
     fclose(in);
     return 1;
   }
+  /* The copy is native (Stage 28 W17a, rule 2): C buffers only; dst is
+   * read again after it, from a handle (a collection may move it). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &dst);
+  avant_gc_native_begin();
   while ((n = fread(buf, 1, sizeof buf, in)) > 0) {
     if (fwrite(buf, 1, n, out) != n) {
       bad = 1;
@@ -582,6 +601,7 @@ int32_t avant_fs_copy(const char *src, const char *dst) {
   if (fclose(out) != 0) {
     bad = 1;
   }
+  avant_gc_native_end();
   if (bad || chmod(tmp, st.st_mode & 07777) != 0 || rename(tmp, dst) != 0) {
     unlink(tmp);
     return 1;

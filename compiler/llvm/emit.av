@@ -66,6 +66,9 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     out.push_str(ll_alloc_globals())
     out.push_str("\n")
   }
+  if e.used_poll_global {
+    out.push_str("@avant_gc_requested = external global i32\n\n")
+  }
   ll_declarations(e, out)
   out.push_str("\n")
   out.push_str(body)
@@ -384,6 +387,11 @@ fn ll_call(e: LlEmit, st: MStmt) {
     args = ll_args(e, st.args, s.params, false)
     result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
   } else if x = e.m.ext(st.callee) {
+    if str_eq(x.name, "avant_gc_poll") {
+      // Stage 28 W17a: the request flag's test, the call only when set.
+      ll_gc_poll(e)
+      return
+    }
     sig = x.sig
     if st.sig >= 0 {
       sig = st.sig

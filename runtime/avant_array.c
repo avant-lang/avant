@@ -8,15 +8,6 @@
 #include <emmintrin.h>
 #endif
 
-/*
- * g_avant_shared stays 0 until a second thread registers. The mutator
- * collects only inside avant_alloc, so a push, pop, or store that does
- * not allocate can skip the world lock. The locked path stays once
- * another thread exists.
- */
-static int mutator_private(void) {
-  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
-}
 
 typedef struct {
   void *buf;
@@ -96,7 +87,7 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   if (!a) {
     return;
   }
-  if (mutator_private() && a->buf && a->size < a->cap) {
+  if (a->buf && a->size < a->cap) {
     slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
     memcpy(slot, &elem, sizeof(void *));
     a->size += 1;
@@ -106,8 +97,9 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
     return;
   }
   {
-    /* In a shared program the scope is a no-GC region too (avant_gc.h),
-     * so no other thread collects between the slot and the store. */
+    /* No collecting call between the slot and the store (in a shared
+     * program too: other threads collect only at this one's safepoints,
+     * Stage 28 W17a). */
     AVANT_GC_SCOPE(2);
     AVANT_GC_ROOT(0, &a);
     AVANT_GC_ROOT(1, &elem);
@@ -118,64 +110,34 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   }
 }
 
+/* set, get and pop of a pointer element never collect and are no
+ * safepoint, so no thread collects while one runs (Stage 28 W17a's
+ * handshake). Until W17a a shared program took the world lock around
+ * each, so that another thread's collection could not move the buffer
+ * between the load and the store (D191). */
 void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
-  /*
-   * Another worker can be inside avant_alloc, which relocates nursery
-   * objects. This call used to be a gc-leaf, so the buffer pointer in
-   * a register was not a root. Hold the world lock across the store
-   * so a collection cannot move buf between the load and the write.
-   * A private mutator does not collect on this path.
-   */
-  if (mutator_private()) {
-    if (a && a->buf) {
-      ((void **)a->buf)[i] = elem;
-      avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
-    }
-    return;
-  }
-  avant_world_lock();
   if (a && a->buf) {
     ((void **)a->buf)[i] = elem;
     avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
   }
-  avant_world_unlock();
 }
 
 void *avant_array_get_ptr(void *arr, int32_t i) {
   AvantArray *a = (AvantArray *)arr;
-  void *elem = NULL;
-  if (mutator_private()) {
-    if (a && a->buf && i >= 0 && i < a->size) {
-      return ((void **)a->buf)[i];
-    }
-    return NULL;
-  }
-  avant_world_lock();
   if (a && a->buf && i >= 0 && i < a->size) {
-    elem = ((void **)a->buf)[i];
+    return ((void **)a->buf)[i];
   }
-  avant_world_unlock();
-  return elem;
+  return NULL;
 }
 
 void *avant_array_pop_ptr(void *arr) {
   AvantArray *a = (AvantArray *)arr;
-  void *elem = NULL;
-  if (mutator_private()) {
-    if (a && a->buf && a->size > 0) {
-      a->size -= 1;
-      return ((void **)a->buf)[a->size];
-    }
-    return NULL;
-  }
-  avant_world_lock();
   if (a && a->buf && a->size > 0) {
     a->size -= 1;
-    elem = ((void **)a->buf)[a->size];
+    return ((void **)a->buf)[a->size];
   }
-  avant_world_unlock();
-  return elem;
+  return NULL;
 }
 
 void avant_array_push_i32(void *arr, int32_t v) {

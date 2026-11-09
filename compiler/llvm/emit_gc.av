@@ -313,6 +313,30 @@ fn ll_bump_counter(e: LlEmit, ptr: String, by: String) {
   e.line("store i64 ${y}, ptr ${ptr}, align 8")
 }
 
+// The safepoint poll at a loop head of a shared module (Stage 28 W17a,
+// gc-design.md 4.4): a volatile load of the request flag (kept in every
+// iteration), and the call, out of line, only when a collection is
+// requested; the call is a collecting call of the MIR, so every
+// reference live across it is in a slot and reloaded after it.
+pub fn ll_gc_poll(e: LlEmit) {
+  e.used_poll_global = true
+  e.need("avant_gc_poll")
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  r = e.tmp
+  e.line("${r} = load volatile i32, ptr @avant_gc_requested, align 4")
+  c = e.tmp
+  e.line("${c} = icmp ne i32 ${r}, 0")
+  x = e.tmp
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
+  yes = e.part("poll")
+  cont = e.part("polled")
+  e.line("br i1 ${x}, label %${yes}, label %${cont}")
+  e.block(yes)
+  e.line("call void @avant_gc_poll()")
+  e.line("br label %${cont}")
+  e.block(cont)
+}
+
 // The runtime globals the allocation fast path reads (5.5), in the
 // order of 10.3.
 pub fn ll_alloc_globals: String {
