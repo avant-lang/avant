@@ -11,8 +11,8 @@
 // has its own frame and copies each capture into a local (or a fresh box
 // when a lambda in the block captures it). A `.parallel` allocates the
 // result array, a context record `%par_cap(<thunk>)` holding the input,
-// the output, and the captures (pinned), and calls `avant_parallel_for`;
-// its thunk `<enclosing>#parN(i32, ref)` reads element i (through
+// the output, and the captures, and calls `avant_parallel_for` (which roots
+// the context while it runs); its thunk `<enclosing>#parN(i32, ref)` reads element i (through
 // `avant_array_get_ptr` for a reference element, else from the buffer),
 // runs the block, and stores the result (`avant_array_set_ptr`, else
 // into the buffer behind its barrier). `Mutex.with` locks the mutex's
@@ -164,14 +164,6 @@ pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
   c
 }
 
-// The same, then `avant_pin` (a `.parallel` context: workers read it
-// while this thread may collect).
-pub fn (lw: MirLower) pinned_record(l: Int, tid: Int, loc: Location): Int {
-  c = lw.new_record(l, tid, loc)
-  dummy2 = lw.lw_b.call(-1, "avant_pin", lw.one(lw.lw_b.copy_local(c)))
-  c
-}
-
 // `spawn { ... }` (calls.av emit_spawn): the record (or null), then
 // `avant_spawn(thunk, record)`, whose result is the JoinHandle.
 pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
@@ -225,10 +217,10 @@ pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
 
 // `xs.parallel { |x| ... }` (calls.av emit_parallel): the receiver once,
 // its size n, the result array (a zeroed buffer of n elements and its
-// header, as Array(T).new(n)), the pinned context with the input, the
-// result, and the captures, then `avant_parallel_for(n, thunk, ctx)`.
-// The context is unpinned when every index has run (the old back end
-// never unpins it, a leak per call: W8b, D196).
+// header, as Array(T).new(n)), the context with the input, the result,
+// and the captures, then `avant_parallel_for(n, thunk, ctx)`, which roots
+// the context for the call's duration (Stage 28 W17b, O122; until then
+// the context was pinned here and unpinned after the call, W8b, D196).
 pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -264,7 +256,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   if lw.failed {
     return zero
   }
-  c = lw.pinned_record(l, b.type_id(l), e.loc)
+  c = lw.new_record(l, b.type_id(l), e.loc)
   ts = b.types
   lw.store_place(b.field(b.deref(b.pl(c)), 0), ts.layouts[l].fields[0], b.copy_local(a))
   lw.store_place(b.field(b.deref(b.pl(c)), 1), ts.layouts[l].fields[1], lw.dup(out))
@@ -274,7 +266,6 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   }
   lw.at(e.loc)
   dummy3 = b.call(-1, "avant_parallel_for", lw.three(lw.dup(n), b.c_fn(sym), b.copy_local(c)))
-  dummy4 = b.call(-1, "avant_unpin", lw.one(b.copy_local(c)))
   out
 }
 

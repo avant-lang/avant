@@ -30,9 +30,14 @@ typedef struct {
   AvantGcTaskRoot root;
 } AvantTask;
 
+/* A .parallel call's completion count and condition, and its context's
+ * task root (Stage 28 W17b, O122): the context is rooted, not pinned, for
+ * the call's duration; a collection moves it like any rooted object and
+ * rewrites the root, and each job reads the context from it. */
 typedef struct ParDone {
   int remaining;
   pthread_cond_t cv;
+  AvantGcTaskRoot root;
 } ParDone;
 
 typedef struct Job {
@@ -149,7 +154,7 @@ static void run_job(Job *job) {
   } else {
     avant_par_fn fn = (avant_par_fn)job->fn;
     ParDone *par = job->par;
-    fn(job->index, job->arg);
+    fn(job->index, par->root.obj);
     avant_gc_native_begin();
     pthread_mutex_lock(&pool_mu);
     par->remaining -= 1;
@@ -306,6 +311,10 @@ void avant_parallel_for(int32_t n, void *fn, void *ctx) {
   if (on_worker) {
     die_task("parallel from a pool worker");
   }
+  /* The context is rooted before the first call that may collect (RC1;
+   * ensure_pool's lock may wait natively), and read from the root after
+   * it (Stage 28 W17b, O122: the generated code no longer pins it). */
+  avant_gc_task_root_add(&done.root, ctx);
   if (pthread_cond_init(&done.cv, NULL) != 0) {
     die_task("parallel cond");
   }
@@ -320,7 +329,7 @@ void avant_parallel_for(int32_t n, void *fn, void *ctx) {
     job->kind = 2;
     job->index = i;
     job->fn = fn;
-    job->arg = ctx;
+    job->arg = NULL;
     job->par = &done;
     enqueue(job);
   }
@@ -329,6 +338,7 @@ void avant_parallel_for(int32_t n, void *fn, void *ctx) {
   }
   pthread_mutex_unlock(&pool_mu);
   pthread_cond_destroy(&done.cv);
+  avant_gc_task_root_drop(&done.root);
 }
 
 uint64_t avant_gate_new(void) {
