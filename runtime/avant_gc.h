@@ -33,8 +33,9 @@
  *     Stage 28 W16b, gc-design.md section 4.3: runtime C roots what it
  *     holds, RC1 below), and pinned objects never move. A full collection
  *     may evacuate sparse mature blocks holding no pinned object; it
- *     rewrites every precise reference (D191: other threads are not
- *     stopped until W17).
+ *     rewrites every precise reference. Every other registered thread is
+ *     stopped at a safepoint or native meanwhile (Stage 28 W17a's
+ *     handshake, avant_gc_safepoint.c; it closed D191's window).
  *   - avant_gc_defer_enter/leave (avant_gc_nogc_begin/end) bracket a
  *     region in which no collection runs (regions nest); the entry
  *     collects nothing (RC4 below; Stage 28 W16a).
@@ -119,8 +120,8 @@
  *
  *   RC4. No-GC regions, only where C cannot root. Where references live
  *   inside a C library's own data structures while it calls back or
- *   allocates, or while another thread may collect in a shared program
- *   before W17 (the HTTP/WS sends; see the checklist), the
+ *   allocates (none in the runtime since Stage 28 W17a, whose handshake
+ *   retired the HTTP/WS sends' regions; see the checklist), the
  *   function brackets the region with avant_gc_nogc_begin/end (regions
  *   nest; one process-wide depth, under the world lock). Allocation
  *   inside is allowed and counted against the young budget and the heap
@@ -177,14 +178,19 @@
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
  *     avant_spawn (avant_task.c; C28, R1)          C (the record is a
  *                                                  task root, added
- *                                                  before the handle's
- *                                                  allocation; W16b)
+ *                                                  before the first
+ *                                                  collecting call, read
+ *                                                  from the root; W16b,
+ *                                                  W17a)
+ *     avant_join, fs_copy (W17a: a native wait)    C (scope)
  *     HTTP make_string/_bytes, packed headers      C
- *     HTTP/WS send and close (7 regions)           R4: payloads held in
- *                                                  C while other loop
- *                                                  threads run (D191,
- *                                                  until W17); nothing
- *                                                  inside allocates
+ *     HTTP/WS send, close, respond                 N (no safepoint
+ *                                                  inside: no thread
+ *                                                  collects meanwhile;
+ *                                                  their regions went
+ *                                                  in W17a)
+ *     HTTP client fetch                            the request pinned
+ *                                                  for its native loop
  *     HTTP server state in srv (C memory) across
  *       dispatch                                   pinned for the serve
  *                                                  (W16a: with one loop
