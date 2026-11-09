@@ -16,17 +16,15 @@ import llvm.emit_core
 // the slot array, one pointer per root word of the gc.roots that follows
 // gc.enter (slots in the listed order, words in offset order). gc.enter
 // fills the record (slots, n = cap = the root words, scope 0, each
-// word's address) and links it: inline (prev = avant_gc_top,
-// avant_gc_top = %gcf) when the thread already has an innermost frame,
-// else through avant_gc_frame_enter, which also registers the thread
-// and initializes the heap. gc.leave unlinks it inline when %gcf is
+// word's address) and links it with the module's @__avant_frame_push:
+// inline (prev = avant_gc_top, avant_gc_top = %gcf) when the thread
+// already has an innermost frame, else through avant_gc_frame_enter,
+// which also registers the thread and initializes the heap. gc.leave
+// calls @__avant_frame_pop, which unlinks it inline when %gcf is
 // innermost and not the thread's outermost frame, else through
-// avant_gc_frame_leave. The call forms (inline_fast false) always call.
-// The two stores into avant_gc_top are volatile: LLVM would otherwise
-// merge an inlined callee's unlink with the next inlined frame's link
-// (dead-store elimination) and leave the callee's llvm.lifetime.end
-// before any store that unlinks it, which E3's rule (D244) forbids even
-// where no call can observe the chain in between.
+// avant_gc_frame_leave. Both helpers are internal and small, so the O3
+// inliner folds them into every frame (ll_gc_frame_helpers). The call
+// forms (inline_fast false) call the runtime entries directly.
 // gc.roots itself emits nothing: gc.enter has registered its slots, and
 // nothing comes between them (V16). Until W18 this was a call to
 // avant_gc_enter, a call to avant_gc_root_begin and one store per word,
@@ -143,25 +141,7 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
     return
   }
   e.used_frame_global = true
-  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
-  top = e.tmp
-  e.line("${top} = load ptr, ptr @avant_gc_top, align 8")
-  c = e.tmp
-  e.line("${c} = icmp ne ptr ${top}, null")
-  x = e.tmp
-  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 true)")
-  fast = e.part("link")
-  slow = e.part("enter")
-  cont = e.part("entered")
-  e.line("br i1 ${x}, label %${fast}, label %${slow}")
-  e.block(fast)
-  e.line("store ptr ${top}, ptr %gcf, align 8")
-  e.line("store volatile ptr %gcf, ptr @avant_gc_top, align 8")
-  e.line("br label %${cont}")
-  e.block(slow)
-  e.line("call void @avant_gc_frame_enter(ptr %gcf)")
-  e.line("br label %${cont}")
-  e.block(cont)
+  e.line("call void @__avant_frame_push(ptr %gcf)")
 }
 
 pub fn ll_gc_frame_leave(e: LlEmit) {
@@ -171,30 +151,46 @@ pub fn ll_gc_frame_leave(e: LlEmit) {
     return
   }
   e.used_frame_global = true
+  e.line("call void @__avant_frame_pop(ptr %gcf)")
+}
+
+// The module's two frame helpers, when a frame links inline: internal
+// functions the O3 inliner folds into every caller (in --debug they stay
+// calls, so the .ll and the debug object stay small). The link and the
+// unlink of a record; the stores into avant_gc_top are volatile so that
+// LLVM cannot merge an inlined callee's unlink into the next frame's link
+// (dead-store elimination), which would leave the callee's
+// llvm.lifetime.end before any store that unlinks it (E3, D244).
+pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
-  top = e.tmp
-  e.line("${top} = load ptr, ptr @avant_gc_top, align 8")
-  prev = e.tmp
-  e.line("${prev} = load ptr, ptr %gcf, align 8")
-  c1 = e.tmp
-  e.line("${c1} = icmp eq ptr ${top}, %gcf")
-  c2 = e.tmp
-  e.line("${c2} = icmp ne ptr ${prev}, null")
-  c = e.tmp
-  e.line("${c} = and i1 ${c1}, ${c2}")
-  x = e.tmp
-  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 true)")
-  fast = e.part("unlink")
-  slow = e.part("leave")
-  cont = e.part("left")
-  e.line("br i1 ${x}, label %${fast}, label %${slow}")
-  e.block(fast)
-  e.line("store volatile ptr ${prev}, ptr @avant_gc_top, align 8")
-  e.line("br label %${cont}")
-  e.block(slow)
-  e.line("call void @avant_gc_frame_leave(ptr %gcf)")
-  e.line("br label %${cont}")
-  e.block(cont)
+  e.out.push_str("define internal void @__avant_frame_push(ptr %f) #0 {\nentry:\n")
+  e.line("%t = load ptr, ptr @avant_gc_top, align 8")
+  e.line("%c = icmp ne ptr %t, null")
+  e.line("%x = call i1 @llvm.expect.i1(i1 %c, i1 true)")
+  e.line("br i1 %x, label %link, label %enter")
+  e.block("link")
+  e.line("store ptr %t, ptr %f, align 8")
+  e.line("store volatile ptr %f, ptr @avant_gc_top, align 8")
+  e.line("ret void")
+  e.block("enter")
+  e.line("call void @avant_gc_frame_enter(ptr %f)")
+  e.line("ret void")
+  e.out.push_str("}\n\n")
+  e.out.push_str("define internal void @__avant_frame_pop(ptr %f) #0 {\nentry:\n")
+  e.line("%t = load ptr, ptr @avant_gc_top, align 8")
+  e.line("%p = load ptr, ptr %f, align 8")
+  e.line("%c1 = icmp eq ptr %t, %f")
+  e.line("%c2 = icmp ne ptr %p, null")
+  e.line("%c = and i1 %c1, %c2")
+  e.line("%x = call i1 @llvm.expect.i1(i1 %c, i1 true)")
+  e.line("br i1 %x, label %unlink, label %leave")
+  e.block("unlink")
+  e.line("store volatile ptr %p, ptr @avant_gc_top, align 8")
+  e.line("ret void")
+  e.block("leave")
+  e.line("call void @avant_gc_frame_leave(ptr %f)")
+  e.line("ret void")
+  e.out.push_str("}\n\n")
 }
 
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
