@@ -689,6 +689,8 @@ typedef struct GcSettings {
    * gc-design.md §4.3's retirement (W16) retires it with C31's
    * exclusion. */
   int c_stack_rewrite;
+  /* AVANT_GC_STACK_PIN (W16b, scratch): 0 turns both C-stack scans off. */
+  int c_stack_pin;
   /* AVANT_GC_DEFRAG: mature evacuation in full collections
    * (avant_gc_defrag.c); off, the histogram stays on. */
   int defrag;

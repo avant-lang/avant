@@ -48,6 +48,10 @@ __attribute__((noinline)) void gc_note_c_stack_blocks(void) {
   uint8_t *hi = gc_thread.reg.stack_hi;
   uint8_t *lo = gc_thread.reg.stack_lo;
   gc_heap.cstack_blocks.n = 0;
+  if (!gc_heap.set.c_stack_pin) {
+    gc_block_set_seal(&gc_heap.cstack_blocks);
+    return;
+  }
   if (!hi || !p || p >= hi || (lo && p < lo)) {
     return;
   }
@@ -95,6 +99,9 @@ __attribute__((noinline)) void gc_pin_c_stack(void) {
   size_t nmap;
   size_t k;
   Frame *f;
+  if (!gc_heap.set.c_stack_pin) {
+    return;
+  }
   if (!hi || !p || p >= hi || (lo && p < lo)) {
     return;
   }

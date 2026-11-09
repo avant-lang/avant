@@ -121,6 +121,10 @@ static void gc_settings_read(GcSettings *s) {
                           1ull << 20);
   s->nursery_off = !env_bool("AVANT_NURSERY", 1);
   s->c_stack_rewrite = !s->nursery_off && env_bool("AVANT_GC_STACK_REWRITE", 1);
+  /* AVANT_GC_STACK_PIN=0 (Stage 28 W16b, scratch, for gc-design.md
+   * section 4.3's retirement proof): both conservative C-stack scans
+   * off (gc_pin_c_stack, gc_note_c_stack_blocks). */
+  s->c_stack_pin = env_bool("AVANT_GC_STACK_PIN", 1);
   s->defrag = env_bool("AVANT_GC_DEFRAG", 1);
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
