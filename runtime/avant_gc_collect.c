@@ -321,7 +321,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
   if (gc_heap.set.verify) {
     gc_quarantine_release();
-    gc_verify_no_stale_marks();
+    gc_verify_begin(full);
     if (!full) {
       gc_verify_remembered();
     } else {
@@ -528,6 +528,44 @@ void gc_init_slow(void) {
   if (gc_heap.set.stats) {
     atexit(gc_print_stats);
   }
+  /* After the statistics' handler, so it runs first (atexit is last in,
+   * first out) and the report counts the exit's verification. */
+  if (gc_heap.set.verify) {
+    gc_verify_init();
+  }
+}
+
+/* AVANT_GC_VERIFY at the program's exit (Stage 28 W18M item 7): the whole
+ * heap is verified once more, as at the start of a collection, after the
+ * same handshake (every other thread stopped at a safepoint or native).
+ * Not inside a collection or a no-GC region, where the heap is not in a
+ * state a collection could start from. */
+void gc_verify_exit_run(void (*check)(void)) {
+  int resume = 0;
+  if (gc_thread.collecting || gc_thread.nogc) {
+    return;
+  }
+  gc_lock(&gc_heap.world);
+  if (!gc_thread.collector) {
+    for (;;) {
+      int mine;
+      pthread_mutex_unlock(&gc_heap.world);
+      mine = gc_stop_world();
+      pthread_mutex_lock(&gc_heap.world);
+      if (mine) {
+        break;
+      }
+    }
+    resume = 1;
+  }
+  gc_thread.collecting = 1;
+  gc_rem_merge_all();
+  check();
+  gc_thread.collecting = 0;
+  if (resume) {
+    gc_resume_world();
+  }
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
 /* Q128's heap-goal collection at the HTTP boundary (the request path's

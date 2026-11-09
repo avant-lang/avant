@@ -188,10 +188,24 @@ static void print_sticky(StatsLine *l) {
            "prom_inplace=%llu young_blocks=%llu young_holes=%llu young_freed_lines=%llu "
            "young_overflow=%llu young_returned=%llu young_evac_blocks=%llu "
            "young_kept_blocks=%llu young_copy_blocks=%llu young_aged=%llu young_surv_blocks=%llu "
-           "young_aged_holders=%llu young_aged_inplace_blocks=%llu\n",
+           "young_aged_holders=%llu young_aged_inplace_blocks=%llu",
            u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
            u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks), u(c->aged),
            u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
+}
+
+/* The verifier's segment (Stage 28 W18M item 7), only under
+ * AVANT_GC_VERIFY, after the sticky family: which verifier ran
+ * (incremental: soft-dirty tracking works; whole: it does not, and every
+ * check is whole as before), the whole and incremental verifications, and
+ * the heap pages the incremental ones read and skipped as untouched. */
+static void print_verify(StatsLine *l) {
+  if (!gc_heap.set.verify) {
+    return;
+  }
+  line_add(l, " verify=%s verify_whole=%llu verify_incr=%llu verify_pages=%llu verify_pages_skipped=%llu",
+           gc_heap.sd_mode ? "incremental" : "whole", u(gc_heap.v_whole), u(gc_heap.v_incr),
+           u(gc_heap.v_pages_checked), u(gc_heap.v_pages_skipped));
 }
 
 void gc_print_stats(void) {
@@ -210,6 +224,8 @@ void gc_print_stats(void) {
   print_prom(&l);
   print_size(&l);
   print_sticky(&l);
+  print_verify(&l);
+  line_add(&l, "\n");
   fwrite(l.buf, 1, l.n, stderr);
 }
 

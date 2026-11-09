@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -536,6 +537,229 @@ void gc_verify_no_stale_marks(void) {
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_no_stale_one(lh, NULL);
+  }
+}
+
+/* The incremental verifier (Stage 28 W18M item 7, O119, the plan's W18V).
+ * The kernel's soft-dirty bits (Documentation/admin-guide/mm/soft-dirty.rst)
+ * say which pages of the process were written since they were last
+ * cleared: writing "4" to /proc/self/clear_refs clears them all, and bit
+ * 55 of a page's /proc/self/pagemap entry is set again by any write to
+ * the page after that, by any thread, by the collector, by runtime C or
+ * by the kernel on the program's behalf (a read(2) into a buffer). Only
+ * the kernel's record decides what is skipped: never the collector's own
+ * barriers, remembered set or cards, whose missing entry is what the
+ * verifier exists to catch.
+ *
+ * What it makes incremental is C36's check (gc_verify_no_stale_marks:
+ * no live header carries MARKED, FORWARDED, VSEEN, PROMOTED_NOW or
+ * CARD_SCAN when a collection starts), which walked every object of every
+ * mature block at every collection: 97% of closures_churn's time under
+ * AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1. A stale mark is a header bit, and
+ * a header bit changes only by a write to the header's page. So at a
+ * young collection's start the check reads only the headers on pages
+ * written since the last verification, which read every other header
+ * (directly or, by the same argument, through an earlier one), right
+ * before the bits were cleared (gc_verify_begin clears them as soon as
+ * the check ends, before anything else of the collection writes). A
+ * header on an untouched page holds what it held then. A block that was
+ * not in the mature list at the last verification is read whole (the
+ * stamp below), every large object's header is read, and a full
+ * collection, the first verification and the program's exit read the
+ * whole heap. The checks that depend on reachability (gc_verify_remembered,
+ * gc_verify_lost, gc_verify_sticky) stay whole at every collection: a
+ * clean page says its fields hold what they held, not that the objects
+ * they name were neither moved nor freed by the collection between, nor
+ * whether its objects are still reached.
+ *
+ * Where soft-dirty tracking is unavailable (a kernel without
+ * CONFIG_MEM_SOFT_DIRTY, an unreadable pagemap, a refused clear) the probe
+ * at start-up says so, sd_mode stays 0 and every verification is whole, as
+ * before; a later refusal of either file turns it off for the rest of the
+ * run, as does a forked child (sd_pid). The statistics line says which
+ * mode ran (verify=). */
+#define SD_BIT (1ULL << 55)
+
+static int sd_pagemap = -1;
+static int sd_clear = -1;
+/* The process the two files were opened by: /proc/self is resolved at
+ * open, so a forked child (no exec) would read and clear its parent's
+ * bits, which would make the parent's next skip unsound. A child runs the
+ * whole verifier. */
+static pid_t sd_pid;
+/* A verification has run and cleared the bits since (incremental may
+ * follow). */
+static int sd_based;
+static uint64_t *sd_map;
+static size_t sd_map_cap;
+/* One bit per block of the committed heap: in the mature list at the last
+ * verification. */
+static uint64_t *sd_seen;
+static size_t sd_seen_words;
+
+static int sd_clear_all(void) {
+  return pwrite(sd_clear, "4", 1, 0) == 1;
+}
+
+/* The pagemap entries of N pages from ADDR into OUT; 1 when all read. */
+static int sd_read(const void *addr, size_t n, uint64_t *out) {
+  size_t want = n * sizeof(uint64_t);
+  off_t at = (off_t)((uintptr_t)addr / PAGE_SIZE * sizeof(uint64_t));
+  size_t got = 0;
+  while (got < want) {
+    ssize_t k = pread(sd_pagemap, (uint8_t *)out + got, want - got, at + (off_t)got);
+    if (k <= 0) {
+      return 0;
+    }
+    got += (size_t)k;
+  }
+  return 1;
+}
+
+static void sd_off(void) {
+  gc_heap.sd_mode = 0;
+  sd_based = 0;
+}
+
+/* The probe: a fresh page is written, the bits are cleared, the page must
+ * read clean, it is written again, and it must read dirty. */
+static int sd_probe(void) {
+  volatile uint8_t *pg;
+  uint64_t e = 0;
+  int ok = 0;
+  sd_pid = getpid();
+  sd_pagemap = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+  sd_clear = open("/proc/self/clear_refs", O_WRONLY | O_CLOEXEC);
+  if (sd_pagemap < 0 || sd_clear < 0) {
+    return 0;
+  }
+  pg = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (pg == MAP_FAILED) {
+    return 0;
+  }
+  pg[0] = 1;
+  if (sd_clear_all() && sd_read((const void *)pg, 1, &e) && !(e & SD_BIT)) {
+    pg[0] = 2;
+    ok = sd_read((const void *)pg, 1, &e) && (e & SD_BIT);
+  }
+  munmap((void *)pg, PAGE_SIZE);
+  return ok;
+}
+
+static void verify_at_exit_check(void) {
+  gc_verify_begin(1);
+  gc_verify_remembered();
+}
+
+static void verify_at_exit(void) {
+  gc_verify_exit_run(verify_at_exit_check);
+}
+
+void gc_verify_init(void) {
+  gc_heap.sd_mode = sd_probe();
+  if (!gc_heap.sd_mode) {
+    if (sd_pagemap >= 0) {
+      close(sd_pagemap);
+    }
+    if (sd_clear >= 0) {
+      close(sd_clear);
+    }
+    sd_pagemap = sd_clear = -1;
+  }
+  atexit(verify_at_exit);
+}
+
+static void sd_walk_page(Block *b, int page) {
+  int w;
+  for (w = page * (PAGE_SIZE / 512); w < (page + 1) * (int)(PAGE_SIZE / 512); w++) {
+    uint64_t bits = b->start[w];
+    while (bits) {
+      int bit = __builtin_ctzll(bits);
+      verify_no_stale_one((AvantHeader *)(b->base + ((size_t)w * 64 + (size_t)bit) * 8), b);
+      bits &= bits - 1;
+    }
+  }
+}
+
+/* C36's check over the pages written since the last verification; 0 when
+ * the pagemap could not be read (the caller then walks the whole heap). */
+static int verify_no_stale_marks_incr(void) {
+  size_t pages = gc_heap.committed / PAGE_SIZE;
+  size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
+  Block *b;
+  LargeIter it;
+  AvantHeader *lh;
+  if (pages > sd_map_cap) {
+    sd_map_cap = pages;
+    sd_map = gc_xrealloc(sd_map, sd_map_cap * sizeof(uint64_t));
+  }
+  if (!sd_read(gc_heap.base, pages, sd_map)) {
+    return 0;
+  }
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+    size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
+    size_t p0 = (size_t)(b->base - gc_heap.base) / PAGE_SIZE;
+    int p;
+    if (bi >= blocks || bi / 64 >= sd_seen_words || !((sd_seen[bi / 64] >> (bi % 64)) & 1)) {
+      gc_foreach_block_object(b, verify_no_stale_one);
+      gc_heap.v_pages_checked += BLOCK_SIZE / PAGE_SIZE;
+      continue;
+    }
+    for (p = 0; p < (int)(BLOCK_SIZE / PAGE_SIZE); p++) {
+      if (sd_map[p0 + (size_t)p] & SD_BIT) {
+        sd_walk_page(b, p);
+        gc_heap.v_pages_checked++;
+      } else {
+        gc_heap.v_pages_skipped++;
+      }
+    }
+  }
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    verify_no_stale_one(lh, NULL);
+  }
+  return 1;
+}
+
+/* The mature list as of this verification (the stamp the next one reads). */
+static void sd_stamp(void) {
+  size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
+  size_t words = (blocks + 63) / 64;
+  Block *b;
+  if (words > sd_seen_words) {
+    sd_seen = gc_xrealloc(sd_seen, words * sizeof(uint64_t));
+    sd_seen_words = words;
+  }
+  memset(sd_seen, 0, sd_seen_words * sizeof(uint64_t));
+  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+    size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
+    sd_seen[bi / 64] |= 1ULL << (bi % 64);
+  }
+}
+
+/* A collection's first verification step (gc_collect, under
+ * AVANT_GC_VERIFY, after the quarantine's release): C36's check, whole at
+ * a full collection (FULL), at the first verification and without
+ * soft-dirty tracking, else over the written pages; then the bits are
+ * cleared at once, so every later write, the collection's own included,
+ * is seen by the next verification. */
+void gc_verify_begin(int full) {
+  if (gc_heap.sd_mode && getpid() != sd_pid) {
+    sd_off();
+  }
+  if (gc_heap.sd_mode && !full && sd_based && verify_no_stale_marks_incr()) {
+    gc_heap.v_incr++;
+  } else {
+    gc_verify_no_stale_marks();
+    gc_heap.v_whole++;
+  }
+  if (gc_heap.sd_mode) {
+    sd_stamp();
+    if (sd_clear_all()) {
+      sd_based = 1;
+    } else {
+      sd_off();
+    }
   }
 }
 
