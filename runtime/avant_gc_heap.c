@@ -26,7 +26,6 @@ GcHeap gc_heap;
 __attribute__((constructor(101))) static void gc_heap_static_init(void) {
   pthread_mutex_init(&gc_heap.world, NULL);
   pthread_mutex_init(&gc_heap.threads_mu, NULL);
-  pthread_mutex_init(&gc_heap.rem_mu, NULL);
   pthread_mutex_init(&gc_heap.hs_mu, NULL);
   pthread_cond_init(&gc_heap.hs_stopped_cv, NULL);
   pthread_cond_init(&gc_heap.hs_resume_cv, NULL);

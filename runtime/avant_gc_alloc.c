@@ -381,6 +381,7 @@ void gc_alloc_thread_init(void) {
  * (its young block stays a young block until the next collection). */
 void gc_alloc_thread_leave(void) {
   gc_lock(&gc_heap.world);
+  gc_rem_thread_leave();
   cursors_drop(&gc_thread);
   gc_fast_clear();
   avant_gc_bump = NULL;

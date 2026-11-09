@@ -810,9 +810,10 @@ typedef struct GcHeap {
   void **remset;
   uint32_t rem_n;
   uint32_t rem_cap;
-  /* Workers call avant_barrier without the world lock (a fresh array
-   * header). The remembered-set realloc is shared. */
-  pthread_mutex_t rem_mu;
+  /* (rem_mu, the lock barriers of a shared program took, went in Stage
+   * 28 W17b: each thread remembers into its own buffer, GcThread.rembuf,
+   * and only a collection, with every other thread stopped, or an
+   * unregistering thread under the world lock, writes the set.) */
   /* The keep list: the holders a young collection found naming a young
    * object that stays young across it (gc_rem_keep_young_holders). */
   void **keep;
@@ -1070,6 +1071,17 @@ typedef struct GcThread {
   uint8_t **bump_p;
   uint8_t **limit_p;
   uint32_t *fast_ok_p;
+  /* The thread's remembered-set buffer (Stage 28 W17b, MMTk's modbuf):
+   * in a shared program a barrier appends the object it remembers here,
+   * without a lock (the header's REM or REMC bit, set by an atomic or,
+   * says it is remembered once); every collection merges every thread's
+   * buffer into gc_heap.remset after the handshake (gc_rem_merge_all),
+   * and an unregistering thread merges its own. rem_adds counts its adds
+   * for ctr.rem.adds. */
+  void **rembuf;
+  uint32_t rembuf_n;
+  uint32_t rembuf_cap;
+  uint64_t rem_adds;
 } GcThread;
 
 extern __thread GcThread gc_thread;
@@ -1163,6 +1175,10 @@ void gc_keep_add(void *obj);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
 void gc_cards_settle(void);
+void gc_rem_merge_all(void);
+void gc_rem_thread_leave(void);
+void gc_hdr_or(AvantHeader *h, uint16_t bits);
+void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
 /* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): 1 builds
  * S+, the young generation (D233): candidate S with the opportunistic
@@ -1329,6 +1345,10 @@ static inline size_t align_up(size_t n) {
   return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
 }
 
+/* The program is shared (a second thread registered): barriers remember
+ * into the thread's buffer and change header flags atomically, and
+ * allocation uses hole accounting (Stage 28 W17b; the name is from when
+ * a shared program's barriers took rem_mu). */
 static inline int rem_locked(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
 }

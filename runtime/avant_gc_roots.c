@@ -243,7 +243,7 @@ void avant_pin(void *payload) {
     pthread_mutex_unlock(&gc_heap.world);
     gc_die("out of memory");
   }
-  h->flags |= AVANT_FLAG_PINNED;
+  gc_hdr_or(h, AVANT_FLAG_PINNED);
   e->payload = payload;
   e->count = 1;
   e->next = gc_heap.pins;
@@ -291,7 +291,7 @@ void avant_unpin(void *payload) {
     }
     pp = &(*pp)->next;
   }
-  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
+  gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
   pthread_mutex_unlock(&gc_heap.world);
 }
 

@@ -313,6 +313,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   gc_heap.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
+  /* Every thread's remembered-set buffer joins the set (Stage 28 W17b)
+   * before anything reads it. */
+  gc_rem_merge_all();
   if (full) {
     count_full_why(why);
   }

@@ -35,13 +35,14 @@
  *
  * The five no-deadlock rules (section 4.4) as kept here:
  *   1. The collector holds no runtime lock while it waits: gc_collect
- *      releases the world lock before gc_stop_world, never holds
- *      rem_mu, and hs_mu is released by the condition wait.
+ *      releases the world lock before gc_stop_world, and hs_mu is
+ *      released by the condition wait (barriers take no lock since
+ *      Stage 28 W17b: per-thread remembered buffers).
  *   2. A thread blocked in a runtime wait is native (gc_lock,
  *      gc_cond_wait, avant_gc_native_begin/end around the pool's, the
  *      join's, .parallel's, the gates' and the I/O waits). A brief lock
  *      whose holder never reaches a safepoint while it holds it (the
- *      world lock in never-collecting entries, rem_mu, the registry
+ *      world lock in never-collecting entries, the registry
  *      locks of avant_http.c and avant_re.c) stays a plain lock: a thread
  *      blocked on it waits only for a running thread that will release it
  *      without stopping, and making it native would let a collection move
