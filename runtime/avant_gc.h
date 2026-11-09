@@ -37,7 +37,11 @@
  *     region in which no collection runs (regions nest); the entry
  *     collects nothing (RC4 below; Stage 28 W16a).
  *   - A store of a reference into a heap object is preceded by
- *     avant_barrier on that object (D187).
+ *     avant_barrier on that object (D187), or by
+ *     avant_barrier_slot(object, slot) when the slot is known (Stage 28
+ *     W16t): a mature large pointer buffer (a carded object) is then
+ *     scanned at a young collection only in the 256-byte cards a store
+ *     marked; avant_barrier on such a buffer counts every card.
  *   - avant_pin/avant_unpin keep an object at its address while C holds
  *     it (counted). avant_alloc_in_mature(1) makes the calling thread
  *     allocate in the mature space, which a young collection never
@@ -104,9 +108,12 @@
  *
  *   RC3. Barriers (D187). Every store of a reference into a heap object
  *   is followed by avant_barrier on that object (or avant_barrier_at on
- *   the stored-to address) before the next call that may collect (C34:
- *   avant_hash_inc_slice and array_grow lost young keys and elements
- *   without one).
+ *   the stored-to address, or avant_barrier_slot with the slot) before
+ *   the next call that may collect (C34: avant_hash_inc_slice and
+ *   array_grow lost young keys and elements without one). A store into
+ *   an element buffer that knows its slot uses avant_barrier_slot (card
+ *   marking, Stage 28 W16t); a bulk copy or fill barriers the buffer
+ *   with avant_barrier, which counts every card.
  *
  *   RC4. No-GC regions, only where C cannot root. Where references live
  *   inside a C library's own data structures while it calls back or
@@ -262,6 +269,7 @@
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
 void avant_alloc_in_mature(int32_t on);
 void avant_barrier(void *obj);
+void avant_barrier_slot(void *obj, void *slot);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
 /* Runtime-internal (Stage 28 W14b2, O37): avant_alloc_c below is an

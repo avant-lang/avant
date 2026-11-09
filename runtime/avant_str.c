@@ -629,8 +629,9 @@ static void *str_array_new(int32_t n) {
 }
 
 static void str_array_put(AvantArray *a, char *p) {
-  ((char **)a->buf)[a->size++] = p;
-  avant_barrier(a->buf);
+  char **slot = &((char **)a->buf)[a->size++];
+  *slot = p;
+  avant_barrier_slot(a->buf, slot);
 }
 
 /* Keeps empty fields. Empty separator traps. RC1: the text, the

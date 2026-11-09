@@ -55,6 +55,12 @@ static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint3
  * were W15a1's named safepoints): the fast path neither allocates nor
  * collects; the growth path keeps the array (and push_ptr's element) in
  * handles across array_grow and forms the slot after it (RC2). */
+/* An element store barriers the buffer with its slot (avant_barrier_slot:
+ * a large pointer buffer marks the slot's card) and not the array object,
+ * whose size and capacity are not references (Stage 28 W16t: remembering
+ * the array object at every push made the young collection scan the
+ * buffer it names whole, R1'(c), and defeated the cards); array_grow
+ * barriers the array object when it stores a new buffer. */
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
   void *slot = NULL;
@@ -64,9 +70,8 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
   if (a->buf && a->size < a->cap) {
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
-    avant_barrier(a);
     if (a->buf) {
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, slot);
     }
     return slot;
   }
@@ -78,9 +83,8 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
     }
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
-    avant_barrier(a);
     if (a->buf) {
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, slot);
     }
   }
   return slot;
@@ -96,9 +100,8 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
     slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
     memcpy(slot, &elem, sizeof(void *));
     a->size += 1;
-    avant_barrier(a);
     if (a->buf) {
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, slot);
     }
     return;
   }
@@ -127,16 +130,14 @@ void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
   if (mutator_private()) {
     if (a && a->buf) {
       ((void **)a->buf)[i] = elem;
-      avant_barrier(a);
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
     }
     return;
   }
   avant_world_lock();
   if (a && a->buf) {
     ((void **)a->buf)[i] = elem;
-    avant_barrier(a);
-    avant_barrier(a->buf);
+    avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
   }
   avant_world_unlock();
 }

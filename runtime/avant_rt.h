@@ -135,6 +135,10 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
 void avant_barrier(void *obj);
 /* Barrier for a store through an address that may lie inside a heap object. */
 void avant_barrier_at(void *addr);
+/* The barrier with the slot stored into (Stage 28 W16t, card marking):
+ * a large pointer buffer marks the slot's card; any other object is
+ * avant_barrier(obj). Never collects. */
+void avant_barrier_slot(void *obj, void *slot);
 
 typedef struct AvantGcStats {
   uint64_t collections;
