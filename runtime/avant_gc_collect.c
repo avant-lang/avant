@@ -430,6 +430,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.ctr.pause.max_ns = dt;
     }
   }
+  if (gc_heap.quarantine) {
+    gc_quarantine_seal();
+  }
   gc_heap.collecting = 0;
 }
 

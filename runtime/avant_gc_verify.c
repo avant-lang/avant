@@ -577,6 +577,7 @@ void gc_verify_defrag(void) {
  * the precise half reports a reference that names one). */
 #define QUARANTINED 2
 #define QUARANTINE_OPENED 3
+#define QUARANTINE_HELD 4
 #define QUARANTINE_MAX 4096
 
 static struct sigaction quarantine_old;
@@ -654,7 +655,8 @@ static void quarantine_install(void) {
 }
 
 /* B leaves use (gc_cache_or_free_block, before its cache-or-give). 1:
- * it is quarantined, and gc_quarantine_release frees it later. */
+ * it is quarantined, and gc_quarantine_release frees it later (every
+ * caller frees blocks inside a collection). */
 int gc_quarantine_block(Block *b) {
   if (!gc_heap.set.verify || gc_heap.quarantine_n >= QUARANTINE_MAX) {
     return 0;
@@ -665,17 +667,27 @@ int gc_quarantine_block(Block *b) {
       return 0;
     }
   }
-  if (mprotect(b->base, BLOCK_SIZE, PROT_NONE) != 0) {
-    return 0;
-  }
   /* idle names the collection that freed the block while it is held
-   * (gc_block_give sets it again). */
+   * (gc_block_give sets it again). It is protected when the collection
+   * ends (gc_quarantine_seal): the collection itself still reads the
+   * headers of objects it moved out of it (gc_clear_noted). */
   b->idle = avant_g_stats.collections;
-  b->clean = QUARANTINED;
+  b->clean = QUARANTINE_HELD;
   b->next = gc_heap.quarantine;
   gc_heap.quarantine = b;
   gc_heap.quarantine_n++;
   return 1;
+}
+
+/* At the end of a collection: the blocks it freed become PROT_NONE (a
+ * refused mprotect leaves one held, unprotected, until the release). */
+void gc_quarantine_seal(void) {
+  Block *b;
+  for (b = gc_heap.quarantine; b; b = b->next) {
+    if (b->clean == QUARANTINE_HELD && mprotect(b->base, BLOCK_SIZE, PROT_NONE) == 0) {
+      b->clean = QUARANTINED;
+    }
+  }
 }
 
 /* At the start of a collection: every held block is opened and freed. */

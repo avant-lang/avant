@@ -1185,6 +1185,7 @@ void gc_verify_sticky(void);
 void gc_verify_lost(void);
 int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
+void gc_quarantine_seal(void);
 
 /* avant_gc_collect.c */
 /* A collection (O42): GC_YOUNG collects the young generation (S+ may
