@@ -425,7 +425,9 @@ typedef struct BlockSet {
 /* root: root bookkeeping call counts (Collector II Wave 0): every call to
  * avant_gc_root (and every slot of avant_gc_root_begin), avant_gc_reload,
  * and avant_gc_enter, so a profile can split call volume from per-call
- * cost. interiors counts the slots and root locations the young copy
+ * cost; avant_gc_frame_enter counts its frame and the frame's slots too
+ * (Stage 28 W18: the frames generated code links inline count nothing,
+ * so in the inline forms these are the outermost frames). interiors counts the slots and root locations the young copy
  * found naming an object's interior rather than its start. */
 typedef struct GcRootCounters {
   uint64_t interiors;

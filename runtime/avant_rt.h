@@ -113,6 +113,22 @@ void avant_gc_root(void *slot);
  * (gc-design.md section 1.4, Q10). */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
+/* Frames in the caller's stack (Stage 28 W18): generated code keeps
+ * each frame's record in its own stack frame, laid out as
+ * { prev: pointer, slots: pointer, n: u32, cap: u32, scope: u32 } (32
+ * bytes with padding; the slot array follows it), with slots, n = cap
+ * (the frame's root words), scope = 0 and the slot addresses stored by
+ * the caller. It links the record itself (prev = avant_gc_top,
+ * avant_gc_top = record) when avant_gc_top is not null, else calls
+ * avant_gc_frame_enter, which also registers the thread and initializes
+ * the heap; it unlinks it itself (avant_gc_top = prev) when the record is
+ * avant_gc_top and prev is not null, else calls avant_gc_frame_leave.
+ * User C keeps using avant_gc_enter, avant_gc_root_begin and
+ * avant_gc_leave. */
+struct AvantGcFrame;
+extern __thread struct AvantGcFrame *avant_gc_top;
+void avant_gc_frame_enter(struct AvantGcFrame *frame);
+void avant_gc_frame_leave(struct AvantGcFrame *frame);
 /* A C variable that lives as long as its thread (a __thread variable)
  * and holds a heap reference is registered once, by that thread, before
  * it first holds one: from then on the collections on that thread mark

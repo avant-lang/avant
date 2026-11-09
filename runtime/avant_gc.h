@@ -19,8 +19,9 @@
  * code uses; the declarations are repeated so this file states the
  * collector's surface on its own, and a mismatch with avant_rt.h is a
  * compile error. g_avant_shared, avant_alloc_c, the no-GC region (avant_gc_nogc_begin/end) and the
- * handle scopes (AvantGcFrame, avant_gc_top, AVANT_GC_SCOPE) are the
- * names here avant_rt.h does not ship.
+ * handle scopes (AvantGcFrame's fields, AVANT_GC_SCOPE) are the
+ * names here avant_rt.h does not ship (it declares avant_gc_top and the
+ * frame entries generated code uses, Stage 28 W18).
  *
  * What the collector does at these calls, as the callers rely on it
  * today (a description of the current behavior, not a new contract; W13
@@ -285,7 +286,7 @@ void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
 /* Runtime-internal (Stage 28 W14b2, O37): avant_alloc_c below is an
  * entry of avant_rt.o that only the runtime's other objects call, as are
- * avant_gc_nogc_begin/end and avant_gc_top (below). avant_rt.h does not
+ * avant_gc_nogc_begin/end (below). avant_rt.h does not
  * declare them, and their visibility is hidden: no linked image exports
  * them (the second section of avant_rt.exports). avant_gc_quiet_defer_enter
  * went in Stage 28 W16a with the regions it opened. */
@@ -354,13 +355,14 @@ __attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRo
 
 /* RC1's handle scopes (the contract above; Stage 28 W16a). A frame of the
  * thread's chain, the type every frame has (avant_gc_internal.h calls it
- * Frame): generated code's frames come from avant_gc_enter's free list,
- * a scope's lives in the C function's own stack frame. scope is 0 for a
+ * Frame): generated code's frames live in its own stack frames since
+ * Stage 28 W18 (avant_gc_frame_enter), user C's come from avant_gc_enter's
+ * free list, a scope's lives in the C function's own stack frame. scope is 0 for a
  * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope (the
  * NOGC bit, a scope's no-GC region in a shared program, went in W17a).
- * avant_gc_top is the thread's innermost frame (hidden: no linked image
- * exports it; user C opens frames with avant_gc_enter and
- * avant_gc_root_begin, the ABI generated code uses). */
+ * avant_gc_top is the thread's innermost frame (ABI since Stage 28 W18:
+ * generated code links its stack frame records itself, avant_rt.h; user
+ * C opens frames with avant_gc_enter and avant_gc_root_begin). */
 typedef struct AvantGcFrame {
   struct AvantGcFrame *prev;
   void ***slots;
@@ -369,7 +371,9 @@ typedef struct AvantGcFrame {
   uint32_t scope;
 } AvantGcFrame;
 #define AVANT_GC_SCOPE_OPEN 1u
-extern __thread __attribute__((visibility("hidden"))) AvantGcFrame *avant_gc_top;
+extern __thread AvantGcFrame *avant_gc_top;
+void avant_gc_frame_enter(AvantGcFrame *frame);
+void avant_gc_frame_leave(AvantGcFrame *frame);
 
 static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t cap) {
   f->prev = avant_gc_top;
