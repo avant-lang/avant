@@ -45,6 +45,9 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   body = e.out.to_s
   e.out = buf_new()
   ll_type_maps(e)
+  if e.used_frame_global {
+    ll_gc_frame_helpers(e)
+  }
   maps = e.out.to_s
 
   out = buf_new()
@@ -68,6 +71,11 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   }
   if e.used_poll_global {
     out.push_str("@avant_gc_requested = external global i32\n\n")
+  }
+  if e.used_frame_global {
+    // local-exec (Stage 28 W18): a program is an executable that links
+    // avant_rt.o, so the frame chain's head is one %fs-relative access.
+    out.push_str("@avant_gc_top = external thread_local(localexec) global ptr\n\n")
   }
   ll_declarations(e, out)
   out.push_str("\n")
@@ -289,6 +297,10 @@ fn ll_function(e: LlEmit, f: MFunc) {
     }
     i = i + 1
   }
+  e.frame_words = ll_gc_frame_words(e, f)
+  if e.frame_words >= 0 {
+    e.line("%gcf = alloca ${ll_gc_frame_type(e.frame_words)}, align 8")
+  }
   i = 1
   while i <= f.nparams {
     e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
@@ -349,11 +361,9 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
   } else if k == msk_check_bounds() {
     ll_bounds(e, st)
   } else if k == msk_gc_enter() {
-    ll_gc_call(e, "avant_gc_enter")
+    ll_gc_frame_enter(e)
   } else if k == msk_gc_leave() {
-    ll_gc_call(e, "avant_gc_leave")
-  } else if k == msk_gc_roots() {
-    ll_gc_roots(e, st.locals)
+    ll_gc_frame_leave(e)
   }
 }
 
