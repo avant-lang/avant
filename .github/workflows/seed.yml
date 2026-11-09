@@ -89,6 +89,17 @@ jobs:
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
+      # The seed hop (D252, tools/seed-hop.sh): v0.36.0 predates W15a1's
+      # call table, so its B of this tree is wrong once the C-stack pin scan
+      # is retired (W16b). It builds the hop commit's B and C' (a tree whose
+      # runtime still has the scan) and that C' becomes the seed. Remove this
+      # step when a release built after W15a1 is the pinned seed.
+      - name: Seed hop (v0.36.0 → a seed with the current call table)
+        run: |
+          set -euo pipefail
+          sh tools/seed-hop.sh /tmp/avant-linux-x86_64 /tmp/avant-hop
+          test -x /tmp/avant-hop/avant
+
       # tools/letters.sh holds the letters' one incantation (D190): b is
       # the seed's build of compiler/main.av (bin/avant-b), c-llvm is B's
       # build
@@ -96,7 +107,7 @@ jobs:
       - name: Seed → B → C'
         run: |
           set -euo pipefail
-          LETTERS_SEED=/tmp/avant-linux-x86_64 sh tools/letters.sh b c-llvm
+          LETTERS_SEED=/tmp/avant-hop sh tools/letters.sh b c-llvm
           ./bin/avant-c-llvm run examples/hello.av
 
       - name: Native suite on C'
