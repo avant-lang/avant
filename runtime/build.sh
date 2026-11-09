@@ -148,7 +148,13 @@ compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
 # runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;
 # the release ships it beside avant. Without llvm-config or libclang it is
 # skipped with a notice, and `avant bind` says how to build it.
-llvm_config=${LLVM_CONFIG:-llvm-config}
+# BIND_LLVM_CONFIG names the llvm-config whose libclang it links (default:
+# LLVM_CONFIG, else llvm-config), so the helper can stay on a distribution
+# libclang while the compiler's in-process LLVM comes from elsewhere (W18L:
+# the libclang of LLVM's official binaries finds no resource headers when
+# loaded by avant-bind, so `avant bind` of a header that includes
+# <stdbool.h> fails).
+llvm_config=${BIND_LLVM_CONFIG:-${LLVM_CONFIG:-llvm-config}}
 bind_src="$root/../tools/bind.c"
 bind_out="$root/build/avant-bind"
 if command -v "$llvm_config" > /dev/null 2>&1 && [ -f "$bind_src" ]; then

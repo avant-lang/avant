@@ -5,7 +5,9 @@
 # it into B unchanged:
 #
 #   runtime/avant_llvm.c (the glue over the LLVM C API)
-#   + the LLVM 20 static members it needs (llvm-config-20 --libfiles)
+#   + the LLVM static members it needs (llvm-config --libfiles: LLVM 20 by
+#     default, D173; LLVM 23 when LLVM_CONFIG names its llvm-config, the
+#     Stage 28 W18L probe)
 #   + libstdc++.a, libz.a, libzstd.a (so the compiler loads only glibc and
 #     libgcc_s, D146)
 #
@@ -19,7 +21,9 @@
 # Rebuilds only when the stamp beside the object (runtime/build/
 # avant_llvm.stamp: the LLVM version, and the sha256 of the glue, of
 # runtime/avant_rt.h, and of this script) differs; a cached run is a few
-# sha256 sums. LLVM_CONFIG names llvm-config (default llvm-config-20).
+# sha256 sums. LLVM_CONFIG names llvm-config (default llvm-config-20;
+# llvm-config-23 builds the same object against LLVM 23, a probe only: the
+# default stays 20 until a decision amends D173 and D190).
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}
@@ -35,8 +39,8 @@ command -v "$llvm_config" > /dev/null 2>&1 || {
 }
 version=$("$llvm_config" --version)
 case "$version" in
-  20.*) ;;
-  *) echo "tools/build-llvm.sh: LLVM 20 is required (D173); $llvm_config is $version" >&2; exit 1 ;;
+  20.* | 23.*) ;;
+  *) echo "tools/build-llvm.sh: LLVM 20 (the default, D173) or 23 (the W18L probe) is required; $llvm_config is $version" >&2; exit 1 ;;
 esac
 want="llvm $version
 glue $(sha256sum "$src" | cut -d' ' -f1)
