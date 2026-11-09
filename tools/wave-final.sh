@@ -16,7 +16,11 @@
 #   3. letters.txt: sha256 of B, C', D' and avant_rt.o; nm.txt: the global
 #      symbols of avant_rt.o against runtime/avant_rt.exports
 #   4. the run goldens with C' in --debug, bare and --release, and once
-#      under the full AVANT_GC_STRESS=1 (--debug): OUT/goldens-*, goldens.txt
+#      under the full AVANT_GC_STRESS=1 (--debug): OUT/goldens-*, goldens.txt;
+#      red unless the checkout is laid out for the harness: its directory is
+#      named avant, LangArena/ is its sibling and the untracked langarena/
+#      harness is copied in (create a worktree as SCRATCH/side/avant beside
+#      SCRATCH/side/LangArena), or the 50 LangArena goldens are skipped
 #   5. the GC-statistics set (the three churn fixtures in three modes, under
 #      the default environment, AVANT_NURSERY=0, AVANT_GC_VERIFY=1 and
 #      AVANT_YOUNG_MB=1, AVANT_GC_STATS=1: 36 .out and 36 .err files):
@@ -78,6 +82,14 @@ golden() { # NAME MODE ENV
   [ $rc -eq 0 ] || red_goldens=1
 }
 red_goldens=0
+# The goldens' LangArena set needs the harness layout (langarena/harness/measure.cr
+# finds avant/ and LangArena/ as siblings of its checkout): the checkout's
+# directory is named avant, LangArena/ sits beside it, and the untracked
+# langarena/ harness is copied in. Without it the runner skips 50 tasks.
+if [ "$(basename "$root")" != avant ] || [ ! -d "$root/../LangArena" ] || [ ! -f "$root/langarena/harness/measure.cr" ]; then
+  red_goldens=1
+  echo "layout: the checkout must be .../avant beside .../LangArena with langarena/ copied in (the LangArena goldens need it)" >> "$out/goldens.txt"
+fi
 golden debug --debug ""
 golden bare "" ""
 golden release --release ""
