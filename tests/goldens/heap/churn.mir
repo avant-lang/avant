@@ -46,13 +46,13 @@ extern avant_array_pop_slot(ref, u64) -> addr collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_array_set_ptr(ref, i32, ref) -> void never
-extern avant_hash_clear(ref) -> void quiet
+extern avant_hash_clear(ref) -> void never
 extern avant_hash_get_or_str(ref, ref str, ref str) -> ref str collects
 extern avant_hash_keys_str(ref) -> ref collects
 extern avant_hash_new(i32, i32) -> ref collects
-extern avant_hash_set_i32(ref, ref str, i32) -> void quiet
-extern avant_hash_set_str(ref, ref str, ref str) -> void quiet
-extern avant_hash_size(ref) -> i32 quiet
+extern avant_hash_set_i32(ref, ref str, i32) -> void collects
+extern avant_hash_set_str(ref, ref str, ref str) -> void collects
+extern avant_hash_size(ref) -> i32 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
@@ -681,10 +681,10 @@ fn av.churn/round(_1: ref %churn.Root, _2: i32) -> i32 frame @churn.av:130:1 {
   let _208: i32
   let _209: ref %Array(Int)
   let _210: ref %Array(Array(Int))
-  let _211: ref %Hash slot
+  let _211: ref %Hash
   let _212: i32
   let _213: bool
-  let _214: ref %Hash slot
+  let _214: ref %Hash
   let _215: i32
 
 bb0:
@@ -713,10 +713,8 @@ bb0:
   _195 = zero   @130:1
   _205 = zero   @130:1
   _206 = zero   @130:1
-  _211 = zero   @130:1
-  _214 = zero   @130:1
   gc.enter   @130:1
-  gc.roots _1, _12, _16, _21, _41, _43, _48, _63, _117, _130, _135, _145, _147, _159, _164, _165, _168, _173, _174, _175, _180, _182, _187, _195, _205, _206, _211, _214   @130:1
+  gc.roots _1, _12, _16, _21, _41, _43, _48, _63, _117, _130, _135, _145, _147, _159, _164, _165, _168, _173, _174, _175, _180, _182, _187, _195, _205, _206   @130:1
   _3 = const i32 0   @131:5
   _4 = const i32 0   @132:5
   goto bb1   @133:3
@@ -978,7 +976,7 @@ bb5:
   _178 = copy (*_176).0   @156:17
   _179 = copy (*_178)[copy _4]   @156:17
   _180 = copy (*_179).5   @156:20
-  call avant_hash_set_str(copy _180, copy _175, copy _174) nocollect   @156:32
+  call avant_hash_set_str(copy _180, copy _175, copy _174) collects   @156:32
   _181 = rem copy _2, const i32 5   @157:34
   _182 = call avant_str_cat_i32(const str.10, copy _181) collects   @157:28
   _183 = copy (*_1).0   @157:9
@@ -987,7 +985,7 @@ bb5:
   _185 = copy (*_183).0   @157:17
   _186 = copy (*_185)[copy _4]   @157:17
   _187 = copy (*_186).6   @157:20
-  call avant_hash_set_i32(copy _187, copy _182, copy _15) nocollect   @157:41
+  call avant_hash_set_i32(copy _187, copy _182, copy _15) collects   @157:41
   _188 = add.chk copy _15, const i32 9   @158:20
   _189 = call av.churn/junk(copy _188) collects   @158:13
   _190 = call avant_str_size(copy _189) nocollect   @158:24
@@ -1108,7 +1106,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @churn.av:174:1 {
   let _47: i32
   let _48: ref %elems(churn.Holder)
   let _49: ref %churn.Holder
-  let _50: ref %Hash slot
+  let _50: ref %Hash
   let _51: i32
   let _52: i32
   let _53: i32
@@ -1117,9 +1115,8 @@ bb0:
   _4 = zero   @174:1
   _7 = zero   @174:1
   _8 = zero   @174:1
-  _50 = zero   @174:1
   gc.enter   @174:1
-  gc.roots _2, _4, _7, _8, _50   @174:1
+  gc.roots _2, _4, _7, _8   @174:1
   call __avant_type_maps() nocollect   @174:1
   call avant_io_init_argv(copy _1, copy _2) collects   @174:1
   _3 = call av.churn/Root.new() collects   @175:14

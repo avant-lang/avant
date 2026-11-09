@@ -15,74 +15,71 @@
  * leaves, pins, defer regions (helpers that hold references in C), and the
  * world lock. */
 
-static __thread Frame *g_frame;
-static __thread int g_gc_quiet;
-static __thread Frame *g_frame_free;
-
-__thread ThreadReg g_self_reg;
-ThreadReg *g_threads;
 /* Becomes 1 when a second thread registers, and stays 1. A single
  * mutator collects only at its own allocating call, so an interior
  * pointer used before the next call does not need a root. Another
  * thread can collect at any instruction. */
 atomic_int g_avant_shared;
-pthread_mutex_t g_world = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t g_threads_mu = PTHREAD_MUTEX_INITIALIZER;
-int g_gc_defer;
 
-PinEnt *g_pins;
+/* The calling thread's collector state (avant_gc_internal.h). */
+__thread GcThread gc_thread;
+
+/* The calling thread's innermost frame (avant_gc.h): generated code's
+ * frames and runtime C's handle scopes on one chain (Stage 28 W16a; it
+ * was GcThread.frame). */
+__thread __attribute__((visibility("hidden"))) Frame *avant_gc_top;
 
 void avant_gc_register_thread(void) {
-  if (g_self_reg.head) {
+  if (gc_thread.reg.head) {
     return;
   }
-  g_self_reg.head = &g_frame;
+  gc_thread.reg.head = &avant_gc_top;
   {
     pthread_attr_t attr;
     void *addr = NULL;
     size_t sz = 0;
     if (pthread_getattr_np(pthread_self(), &attr) == 0) {
       if (pthread_attr_getstack(&attr, &addr, &sz) == 0 && addr && sz) {
-        g_self_reg.stack_lo = addr;
-        g_self_reg.stack_hi = (uint8_t *)addr + sz;
+        gc_thread.reg.stack_lo = addr;
+        gc_thread.reg.stack_hi = (uint8_t *)addr + sz;
       }
       pthread_attr_destroy(&attr);
     }
   }
-  pthread_mutex_lock(&g_threads_mu);
-  g_self_reg.next = g_threads;
-  g_threads = &g_self_reg;
-  if (g_self_reg.next) {
+  pthread_mutex_lock(&gc_heap.threads_mu);
+  gc_thread.reg.next = gc_heap.threads;
+  gc_heap.threads = &gc_thread.reg;
+  if (gc_thread.reg.next) {
     atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
   }
-  pthread_mutex_unlock(&g_threads_mu);
+  pthread_mutex_unlock(&gc_heap.threads_mu);
 }
 
 void avant_gc_unregister_thread(void) {
-  pthread_mutex_lock(&g_threads_mu);
-  ThreadReg **pp = &g_threads;
+  pthread_mutex_lock(&gc_heap.threads_mu);
+  ThreadReg **pp = &gc_heap.threads;
   while (*pp) {
-    if (*pp == &g_self_reg) {
-      *pp = g_self_reg.next;
+    if (*pp == &gc_thread.reg) {
+      *pp = gc_thread.reg.next;
       break;
     }
     pp = &(*pp)->next;
   }
-  g_self_reg.head = NULL;
-  g_self_reg.next = NULL;
-  pthread_mutex_unlock(&g_threads_mu);
+  gc_thread.reg.head = NULL;
+  gc_thread.reg.next = NULL;
+  pthread_mutex_unlock(&gc_heap.threads_mu);
 }
 
 /* A call used to calloc a frame and free it on leave. Hot recursion
  * (Brainfuck) and numeric methods spent the call on that pair. Frames
  * are kept on a thread-local freelist; the slot array is reused too. */
 void avant_gc_enter(void) {
-  g_enter_calls++;
+  gc_heap.ctr.root.enters++;
   gc_init();
   avant_gc_register_thread();
-  Frame *f = g_frame_free;
+  Frame *f = gc_thread.frame_free;
   if (f) {
-    g_frame_free = f->prev;
+    gc_thread.frame_free = f->prev;
     f->n = 0;
   } else {
     f = calloc(1, sizeof(Frame));
@@ -90,40 +87,69 @@ void avant_gc_enter(void) {
       gc_die("out of memory");
     }
   }
-  f->prev = g_frame;
-  g_frame = f;
+  f->prev = avant_gc_top;
+  f->scope = 0;
+  avant_gc_top = f;
 }
 
 void avant_gc_leave(void) {
-  Frame *f = g_frame;
+  Frame *f = avant_gc_top;
   if (!f) {
     gc_die("gc leave without enter");
   }
-  g_frame = f->prev;
+  if (f->scope) {
+    /* A runtime C scope (RC1) is innermost: it was not closed, or a
+     * generated frame was left from inside one. */
+    gc_die("gc leave inside a runtime C scope");
+  }
+  avant_gc_top = f->prev;
   f->n = 0;
-  f->prev = g_frame_free;
-  g_frame_free = f;
+  f->prev = gc_thread.frame_free;
+  gc_thread.frame_free = f;
+}
+
+/* A runtime unit registers a thread-local slot that holds a heap
+ * reference (or NULL) once per thread, before the slot first holds one;
+ * from then on every collection on this thread treats it as a root: it
+ * marks what the slot names and rewrites the slot when the object moves.
+ * The slot must live as long as the thread (a __thread variable). No
+ * lock: only this thread registers its slots, and only a collection
+ * running on this thread reads them. */
+void avant_gc_add_root(void **slot) {
+  uint32_t i;
+  if (!slot) {
+    return;
+  }
+  for (i = 0; i < gc_thread.nroots; i++) {
+    if (gc_thread.roots[i] == slot) {
+      return;
+    }
+  }
+  if (gc_thread.nroots == GC_THREAD_ROOTS) {
+    gc_die("too many runtime roots on one thread");
+  }
+  gc_thread.roots[gc_thread.nroots++] = slot;
 }
 
 void avant_gc_quiet_enter(void) {
-  g_gc_quiet++;
+  gc_thread.quiet++;
 }
 
 void avant_gc_quiet_leave(void) {
-  if (g_gc_quiet > 0) {
-    g_gc_quiet--;
+  if (gc_thread.quiet > 0) {
+    gc_thread.quiet--;
   }
 }
 
 void avant_gc_root(void *slot) {
-  g_root_calls++;
-  if (g_gc_quiet) {
+  gc_heap.ctr.root.roots++;
+  if (gc_thread.quiet) {
     return;
   }
-  if (!g_frame) {
+  if (!avant_gc_top) {
     gc_die("gc root without enter");
   }
-  Frame *f = g_frame;
+  Frame *f = avant_gc_top;
   uint32_t i;
   /*
    * Codegen emits CALL :avant_gc_root at the first use site of a temp.
@@ -144,11 +170,11 @@ void avant_gc_root(void *slot) {
 }
 
 void *avant_gc_root_begin(uint32_t count) {
-  g_root_calls += count;
-  if (!g_frame) {
+  gc_heap.ctr.root.roots += count;
+  if (!avant_gc_top) {
     gc_die("gc root begin without enter");
   }
-  Frame *f = g_frame;
+  Frame *f = avant_gc_top;
   if (count > f->cap) {
     uint32_t cap = f->cap ? f->cap : 8;
     while (cap < count) {
@@ -157,13 +183,13 @@ void *avant_gc_root_begin(uint32_t count) {
     f->slots = gc_xrealloc(f->slots, cap * sizeof(void **));
     f->cap = cap;
   }
-  f->n = g_gc_quiet ? 0 : count;
+  f->n = gc_thread.quiet ? 0 : count;
   return f->slots;
 }
 
 __attribute__((noinline))
 void *avant_gc_reload(void *slot) {
-  g_reload_calls++;
+  gc_heap.ctr.root.reloads++;
   /*
    * Stage 17: myc-llvm stores this return into the rooted alloca after
    * a collecting CALL. The load is opaque to LLVM isel, so a pre-call
@@ -178,41 +204,41 @@ void avant_pin(void *payload) {
   if (!payload) {
     return;
   }
-  pthread_mutex_lock(&g_world);
-  if (!is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&g_world);
+  pthread_mutex_lock(&gc_heap.world);
+  if (!gc_is_heap_payload(payload, NULL, NULL)) {
+    pthread_mutex_unlock(&gc_heap.world);
     return;
   }
   AvantHeader *h = avant_header(payload);
   if (h->flags & AVANT_FLAG_PINNED) {
-    for (PinEnt *p = g_pins; p; p = p->next) {
+    for (PinEnt *p = gc_heap.pins; p; p = p->next) {
       if (p->payload == payload) {
         p->count += 1;
-        pthread_mutex_unlock(&g_world);
+        pthread_mutex_unlock(&gc_heap.world);
         return;
       }
     }
   }
   PinEnt *e = (PinEnt *)malloc(sizeof(PinEnt));
   if (!e) {
-    pthread_mutex_unlock(&g_world);
+    pthread_mutex_unlock(&gc_heap.world);
     gc_die("out of memory");
   }
   h->flags |= AVANT_FLAG_PINNED;
   e->payload = payload;
   e->count = 1;
-  e->next = g_pins;
-  g_pins = e;
-  pthread_mutex_unlock(&g_world);
+  e->next = gc_heap.pins;
+  gc_heap.pins = e;
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
 int avant_pin_count(void) {
   int n = 0;
-  pthread_mutex_lock(&g_world);
-  for (PinEnt *p = g_pins; p; p = p->next) {
+  pthread_mutex_lock(&gc_heap.world);
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     n += 1;
   }
-  pthread_mutex_unlock(&g_world);
+  pthread_mutex_unlock(&gc_heap.world);
   return n;
 }
 
@@ -221,22 +247,22 @@ void avant_unpin(void *payload) {
   if (!payload) {
     return;
   }
-  pthread_mutex_lock(&g_world);
-  if (!is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&g_world);
+  pthread_mutex_lock(&gc_heap.world);
+  if (!gc_is_heap_payload(payload, NULL, NULL)) {
+    pthread_mutex_unlock(&gc_heap.world);
     return;
   }
   AvantHeader *h = avant_header(payload);
   if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-    pthread_mutex_unlock(&g_world);
+    pthread_mutex_unlock(&gc_heap.world);
     return;
   }
-  pp = &g_pins;
+  pp = &gc_heap.pins;
   while (*pp) {
     if ((*pp)->payload == payload) {
       (*pp)->count -= 1;
       if ((*pp)->count > 0) {
-        pthread_mutex_unlock(&g_world);
+        pthread_mutex_unlock(&gc_heap.world);
         return;
       }
       PinEnt *dead = *pp;
@@ -247,78 +273,112 @@ void avant_unpin(void *payload) {
     pp = &(*pp)->next;
   }
   h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
-  pthread_mutex_unlock(&g_world);
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
-static void defer_enter(int collecting_row) {
+/* Task roots (avant_gc.h; Stage 28 W16b, C28, R1). The object is PINNED
+ * while rooted so no collection moves it (the young copy keeps its block,
+ * defragmentation skips its block), but it is on no pin list: the root
+ * is traced from gc_heap.task_roots. A record that is also on the pin
+ * list (never today: only avant_spawn roots, and it pins nothing) keeps
+ * PINNED after the drop. */
+void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj) {
+  gc_init();
+  r->obj = obj;
+  r->prev = NULL;
+  pthread_mutex_lock(&gc_heap.world);
+  r->next = gc_heap.task_roots;
+  if (r->next) {
+    r->next->prev = r;
+  }
+  gc_heap.task_roots = r;
+  if (gc_is_heap_payload(obj, NULL, NULL)) {
+    avant_header(obj)->flags |= AVANT_FLAG_PINNED;
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
+  void *obj = r->obj;
+  pthread_mutex_lock(&gc_heap.world);
+  if (r->prev) {
+    r->prev->next = r->next;
+  } else {
+    gc_heap.task_roots = r->next;
+  }
+  if (r->next) {
+    r->next->prev = r->prev;
+  }
+  r->next = r->prev = NULL;
+  r->obj = NULL;
+  if (gc_is_heap_payload(obj, NULL, NULL)) {
+    int listed = 0;
+    for (PinEnt *p = gc_heap.pins; p; p = p->next) {
+      if (p->payload == obj) {
+        listed = 1;
+        break;
+      }
+    }
+    if (!listed) {
+      avant_header(obj)->flags = (uint16_t)(avant_header(obj)->flags & ~AVANT_FLAG_PINNED);
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* RC4's no-GC region (avant_gc.h; Stage 28 W16a). The region's depth is
+ * gc_heap.defer, the one counter defer regions used, so every rule that
+ * keeps a collection out of a defer region keeps it out of this one
+ * (gc_maybe_collect, the stress point, C32's limit in place and the
+ * large-object space); its entry is not a collection point. The
+ * outermost entry notes its caller for "heap limit in a no-GC region"
+ * and "collection inside a no-GC region". */
+static void nogc_begin(void *site) {
   gc_init();
   gc_fast_clear();
-  pthread_mutex_lock(&g_world);
-  /*
-   * Helpers wrap avant_alloc in defer so C-held pointers are not swept.
-   * If every allocation in a loop is inside that window, gc_maybe_collect
-   * in avant_alloc never fires (prod Base64 RSS 3.7 GB). Collect *before*
-   * taking defer, while the caller has already stored the previous result
-   * in a rooted local. Nested enter (hash grow, buf push inside json_gen)
-   * must not collect: the outer helper still holds unmarked pointers.
-   * Do not collect on leave — a helper that returns a heap pointer has
-   * not yet STOREd it.
-   *
-   * Young copy must not run here: myc spilled heap args into roots and
-   * then copied them into C registers. A moving collect would update the
-   * slots and leave the C args dangling. Full collect stays non-moving
-   * (AVANT_NURSERY=0), so it is still safe at this boundary.
-   */
-  if (g_gc_defer == 0 && (g_nursery_off || (g_limit_pending && collecting_row))) {
-    /* With the nursery on, only a collection C32 left pending runs
-     * here, and not at a quiet row's entry: a full collection moves no
-     * young object and keeps every block this thread's stack names
-     * (C31), and the caller of a collecting row has rooted what it
-     * holds. */
-    gc_maybe_collect();
+  pthread_mutex_lock(&gc_heap.world);
+  if (gc_heap.defer == 0) {
+    gc_heap.region_bytes = 0;
+    gc_heap.region_site = site;
   }
-  /* AVANT_GC_STRESS=1: a young collection at every outermost entry
-   * (W14b1). It moves, so it proves that no helper holds a reference
-   * the collector cannot see or rewrite when its region begins. */
-  if (g_gc_defer == 0 && g_stress && collecting_row) {
-    g_c_entry++;
-    gc_stress_point();
-    g_c_entry--;
-  }
-  g_gc_defer += 1;
-  pthread_mutex_unlock(&g_world);
+  gc_heap.defer += 1;
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
+__attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void) {
+  nogc_begin(__builtin_return_address(0));
+}
+
+/* The ABI names user --cc C may call (avant_rt.h): the same region
+ * (Stage 28 W16a; before, the outermost entry was a collection point
+ * with the nursery off and under AVANT_GC_STRESS=1, and runtime helpers
+ * bracketed their allocations with it). */
 void avant_gc_defer_enter(void) {
-  defer_enter(1);
-}
-
-/* The outermost defer region of a helper the call table calls *quiet*
- * (compiler/mir/runtime.av: the hash setters, avant_hash_inc_slice and
- * the avant_buf_push_* rows). Its caller may hold a reference outside
- * its slots across the call (V11/V12 ask for slots only across
- * collecting calls), so no moving collection may run at its entry, and
- * AVANT_GC_STRESS=1 has no stress point here (Stage 28 W14b1). The rest
- * is avant_gc_defer_enter, including the full collection of the
- * nursery-off mode. W15 makes these rows collecting calls (gc-design.md
- * §5.1); then this entry goes. */
-void avant_gc_quiet_defer_enter(void) {
-  defer_enter(0);
+  nogc_begin(__builtin_return_address(0));
 }
 
 void avant_gc_defer_leave(void) {
-  pthread_mutex_lock(&g_world);
-  if (g_gc_defer > 0) {
-    g_gc_defer -= 1;
+  avant_gc_nogc_end();
+}
+
+/* The region's end. A collection the policy asked for inside is still
+ * due (the budget stays spent, a pending explicit or heap-limit request
+ * stays set), so the first collection point after the region runs it;
+ * the end itself collects nothing, so the function may still hold what
+ * it built inside. */
+__attribute__((visibility("hidden"))) void avant_gc_nogc_end(void) {
+  pthread_mutex_lock(&gc_heap.world);
+  if (gc_heap.defer > 0) {
+    gc_heap.defer -= 1;
   }
-  pthread_mutex_unlock(&g_world);
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
 void avant_world_lock(void) {
   gc_init();
-  pthread_mutex_lock(&g_world);
+  pthread_mutex_lock(&gc_heap.world);
 }
 
 void avant_world_unlock(void) {
-  pthread_mutex_unlock(&g_world);
+  pthread_mutex_unlock(&gc_heap.world);
 }

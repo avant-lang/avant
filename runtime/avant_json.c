@@ -7,8 +7,9 @@
 #include <string.h>
 
 /* std.json backing (yyjson). A parsed document lives in one pool buffer
- * allocated in mature collector space (yyjson_alc_pool_init): the Avant
- * Json value roots that buffer, interior yyjson pointers never move,
+ * allocated in collector space (yyjson_alc_pool_init), a large object,
+ * which never moves: the Avant Json value roots that buffer, interior
+ * yyjson pointers stay valid,
  * and the collector reclaims the whole document when the last Json is
  * dropped. Accessors report a missing key or a wrong kind through the
  * thread-local status, in the zlib/base64 shape. */
@@ -16,6 +17,7 @@
 /* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
 static __thread int32_t g_json_status;
 static __thread char *g_json_pool;
+static __thread int g_json_pool_rooted;
 
 static void set_status(int32_t code) {
   g_json_status = code;
@@ -35,10 +37,25 @@ char *avant_json_take_pool(void) {
   return pool ? pool : avant_str_empty();
 }
 
+/* RC1: the text is a handle across the pool's allocation (before W16a
+ * nothing protected it: a young copy relied on the C-stack rewrite, audit
+ * 12 shape 2 of C31); yyjson reads it after the allocation and allocates
+ * only from its pool, never from the collector, so the parse itself
+ * needs no no-GC region. */
 void *avant_json_parse(const char *s) {
   size_t n = avant_str_n(s);
   int attempt;
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
   set_status(0);
+  /* The pool waits in g_json_pool until avant_json_take_pool hands it to
+   * the Json value: a runtime root of this thread meanwhile (Stage 28
+   * W16a; before, a full collection between the two calls could free
+   * it). */
+  if (!g_json_pool_rooted) {
+    g_json_pool_rooted = 1;
+    avant_gc_add_root((void **)&g_json_pool);
+  }
   g_json_pool = NULL;
   for (attempt = 0; attempt < 2; attempt++) {
     size_t pool_n = n * (attempt == 0 ? 24 : 96) + 8192;
@@ -46,9 +63,19 @@ void *avant_json_parse(const char *s) {
     yyjson_read_err err;
     yyjson_doc *doc;
     char *pool;
-    avant_alloc_in_mature(1);
+    /* The pool (at least 8 KiB of Bytes) is a large object, which never
+     * moves, so yyjson's interior pointers into it stay valid; it is born
+     * young like every large object and dies young when its Json is
+     * dropped (Stage 28 W16a). Before, it was allocated mature
+     * (avant_alloc_in_mature), so a dropped document waited for a full
+     * collection, and with collections at the helpers' own allocations
+     * (RC1) the full trigger fired inside avant_json_f64s while the new
+     * document was still live (Json::ParseMapping 34 -> 90 MB). The
+     * bracket also turned a mature-allocating thread's setting off. */
+    /* The previous document's pool is usually dead by now: let the due
+     * young collection free it before this one exists. */
+    avant_gc_young_before((uint64_t)pool_n);
     pool = (char *)avant_alloc((uint64_t)pool_n, AVANT_TYPE_BYTES);
-    avant_alloc_in_mature(0);
     if (!yyjson_alc_pool_init(&alc, pool, pool_n)) {
       set_status(2);
       return NULL;
@@ -163,11 +190,18 @@ void *avant_json_f64s(void *nodep, const char *key) {
     return NULL;
   }
   n = yyjson_arr_size(arr);
-  avant_gc_defer_enter();
+  /* RC1: the node (an interior address of its document's pool), the key
+   * and the fresh array are handles across the allocations. */
+  out = NULL;
+  AVANT_GC_SCOPE(3);
+  AVANT_GC_ROOT(0, &arr);
+  AVANT_GC_ROOT(1, &key);
+  AVANT_GC_ROOT(2, &out);
   out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
   if (n > 0) {
     buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
   }
+  avant_barrier(out);
   out->buf = buf;
   out->size = (int32_t)n;
   out->cap = (int32_t)n;
@@ -176,13 +210,11 @@ void *avant_json_f64s(void *nodep, const char *key) {
     yyjson_val *field = yyjson_is_obj(el) ? yyjson_obj_get(el, key) : NULL;
     if (!field || !yyjson_is_num(field)) {
       set_status(1);
-      avant_gc_defer_leave();
       return NULL;
     }
     buf[i] = yyjson_get_num(field);
     i++;
   }
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -200,16 +232,18 @@ int32_t avant_json_len(void *nodep) {
   return 0;
 }
 
+/* RC1: P (inside a document's pool, or yyjson's malloc'ed text, which a
+ * slot leaves alone) is a handle across the allocation. */
 static char *copy_str(const char *p, size_t n) {
   char *out;
-  avant_gc_defer_enter();
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &p);
   out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
   if (p && n > 0) {
     memcpy(out, p, n);
   }
   out[n] = 0;
   avant_str_tag(out);
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -309,6 +343,7 @@ char *avant_json_key_at(void *nodep, int32_t i) {
 }
 
 /* The node's own JSON text, copied into collector memory. */
+/* gc-lint: holds nothing (yyjson's text is malloc'ed C memory; the node is not read after copy_str). */
 char *avant_json_text(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
   size_t len = 0;

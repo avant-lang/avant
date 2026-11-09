@@ -10,169 +10,60 @@
 #include <string.h>
 
 /* The remembered set and the store barriers (Stage 28 W12, moved from
- * avant_rt.c): mature (and pinned in-place) objects that may name young
- * ones, the frontier policy that drops clean entries, the set's upkeep
- * after each young collection, and the barrier entry points avant_barrier
- * and avant_barrier_at. */
+ * avant_rt.c): mature objects that may name young ones, the set's upkeep
+ * after young and full collections, and the barrier entry points
+ * avant_barrier and avant_barrier_at. (E's frontier policy, which kept a
+ * remembered entry across young collections while its last scan found a
+ * young field, Collector II Wave 2, went with E in Stage 28 W15d: S+
+ * empties the set at every young collection and remembers again only the
+ * holders of objects that stay young, gc_rem_keep_young_holders.) */
 
-void **g_remset;
-uint32_t g_rem_n;
-static uint32_t g_rem_cap;
-/* Workers call avant_barrier without the world lock (a fresh array
- * header). The remembered-set realloc is shared. */
-pthread_mutex_t g_rem_mu = PTHREAD_MUTEX_INITIALIZER;
-/* Mature objects that still point at a young survivor after this collection. */
-static void **g_keep;
-uint32_t g_keep_n;
-static uint32_t g_keep_cap;
-
-/* Frontier clearing (Collector II Wave 2): AVANT_GC_REM_FRONTIER=0
- * disables it. Dirty is tracked during the remembered scan itself, per
- * set index, so no second field walk is needed. Hysteresis (evict after
- * N clean scans) and probation (a second list scanned every K young
- * collections) were measured against immediate clearing on
- * bench/graph_frontier.av and lost (0.20s vs 0.19s at AVANT_YOUNG_MB=1,
- * 0.16s vs 0.15s adaptive), so only immediate clearing is kept. */
-int g_rem_mode = 1;
-uint8_t *g_rem_dirty;
-
-static void rem_add(void *obj) {
+/* OBJ joins the set with BIT (REM, or REMC for a carded object). */
+static void rem_add_bit(void *obj, uint16_t bit) {
   AvantHeader *h = avant_header(obj);
   int locked = rem_locked();
   if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
+    pthread_mutex_lock(&gc_heap.rem_mu);
   }
-  if (h->flags & AVANT_FLAG_REM) {
+  if (h->flags & bit) {
     if (locked) {
-      pthread_mutex_unlock(&g_rem_mu);
+      pthread_mutex_unlock(&gc_heap.rem_mu);
     }
     return;
   }
-  h->flags |= AVANT_FLAG_REM;
-  if (g_rem_n == g_rem_cap) {
-    g_rem_cap = g_rem_cap ? g_rem_cap * 2 : 64;
-    g_remset = gc_xrealloc(g_remset, g_rem_cap * sizeof(void *));
-    g_rem_dirty = gc_xrealloc(g_rem_dirty, g_rem_cap * sizeof(uint8_t));
+  h->flags |= bit;
+  if (gc_heap.rem_n == gc_heap.rem_cap) {
+    gc_heap.rem_cap = gc_heap.rem_cap ? gc_heap.rem_cap * 2 : 64;
+    gc_heap.remset = gc_xrealloc(gc_heap.remset, gc_heap.rem_cap * sizeof(void *));
   }
-  g_rem_dirty[g_rem_n] = 0;
-  g_remset[g_rem_n++] = obj;
-  g_rem_adds++;
+  gc_heap.remset[gc_heap.rem_n++] = obj;
+  gc_heap.ctr.rem.adds++;
   if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
+    pthread_mutex_unlock(&gc_heap.rem_mu);
   }
+}
+
+static void rem_add(void *obj) {
+  rem_add_bit(obj, gc_carded(avant_header(obj)) ? AVANT_FLAG_REMC : AVANT_FLAG_REM);
 }
 
 void gc_keep_add(void *obj) {
-  if (g_keep_n == g_keep_cap) {
-    g_keep_cap = g_keep_cap ? g_keep_cap * 2 : 64;
-    g_keep = gc_xrealloc(g_keep, g_keep_cap * sizeof(void *));
+  if (gc_heap.keep_n == gc_heap.keep_cap) {
+    gc_heap.keep_cap = gc_heap.keep_cap ? gc_heap.keep_cap * 2 : 64;
+    gc_heap.keep = gc_xrealloc(gc_heap.keep, gc_heap.keep_cap * sizeof(void *));
   }
-  g_keep[g_keep_n++] = obj;
+  gc_heap.keep[gc_heap.keep_n++] = obj;
 }
 
-/* Frontier decision for one live, marked hot entry whose scan result
- * is dirty (a direct field names a young object). Returns 1 to keep the
- * entry. On 0 the caller drops it with REM already clear; the barrier
- * re-adds it on the next young store. Caller holds g_rem_mu when the
- * set is shared. */
-static int rem_frontier_decide(void *obj, int dirty) {
-  if (g_rem_mode == 0 || dirty) {
-    return 1;
-  }
-  avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
-  g_rem_cleared++;
-  return 0;
+/* Does a field of OBJ name a young object (gc_young_at: one with
+ * YOUNG)? */
+static int slot_names_young(void *p) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  return start && gc_young_at(start, b, ol);
 }
 
-void gc_rem_scrub(void) {
-  uint32_t i;
-  uint32_t w = 0;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
-      continue;
-    }
-    h = avant_header(obj);
-    if (h->flags & AVANT_FLAG_MARKED) {
-      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
-      if (!rem_frontier_decide(obj, dirty)) {
-        continue;
-      }
-      g_remset[w] = obj;
-      if (g_rem_dirty) {
-        g_rem_dirty[w] = (uint8_t)dirty;
-      }
-      w++;
-    } else if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-      AvantHeader *lh = NULL;
-      /* A dead expression buffer is a large object: release its pages
-       * now. */
-      (void)is_heap_payload(obj, NULL, &lh);
-      if (lh) {
-        gc_release_large(lh);
-      } else {
-        h->flags &= (uint16_t)~AVANT_FLAG_REM;
-      }
-    } else {
-      h->flags &= (uint16_t)~AVANT_FLAG_REM;
-    }
-  }
-  g_rem_n = w;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
-}
-
-void gc_rem_commit_kept(void) {
-  uint32_t n = g_keep_n;
-  void **kept = g_keep;
-  uint32_t i;
-  uint32_t w = 0;
-  int locked = rem_locked();
-  g_keep = NULL;
-  g_keep_n = 0;
-  g_keep_cap = 0;
-  /* A remembered object with a nursery child stays remembered: the
-   * scan just proved that edge. A live member with no nursery child
-   * leaves the hot set under the frontier policy (the barrier re-adds
-   * it on the next young store); only members whose memory is gone
-   * leave unconditionally, as before. */
-  if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
-  }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
-    if (is_heap_payload(obj, NULL, NULL)) {
-      int dirty = g_rem_dirty ? g_rem_dirty[i] : 1;
-      if (!rem_frontier_decide(obj, dirty)) {
-        continue;
-      }
-      g_remset[w] = obj;
-      if (g_rem_dirty) {
-        g_rem_dirty[w] = (uint8_t)dirty;
-      }
-      w++;
-    }
-  }
-  g_rem_n = w;
-  if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
-  }
-  for (i = 0; i < n; i++) {
-    if (is_heap_payload(kept[i], NULL, NULL)) {
-      rem_add(kept[i]);
-    }
-  }
-  free(kept);
-}
-
-/* Does a field of OBJ name a young object (a nursery or to-space block
- * object, or a large object with YOUNG)? */
 static int rem_names_young(void *obj) {
   int found = 0;
   if (avant_header(obj)->type_id == AVANT_TYPE_BYTES) {
@@ -184,15 +75,79 @@ static int rem_names_young(void *obj) {
       AvantHeader *ol = NULL;
       void *start = gc_object_payload(*slot, &b, &ol);
       if (start) {
-        if (ol) {
-          found = (avant_header(start)->flags & AVANT_FLAG_YOUNG) != 0;
-        } else {
-          found = b && (b->space == SPACE_NURSERY || b->space == SPACE_TO);
-        }
+        found = gc_young_at(start, b, ol);
       }
     }
   });
   return found;
+}
+
+/* Candidate S (Stage 28 W15c, O88): after an S young collection emptied
+ * the remembered set, the holders on the keep list (the trace's holders
+ * of a young large object, and the young large objects promoted at this
+ * collection, promote_young_large) are remembered when they are not young
+ * and a field still names a young object: a young large object survives
+ * its first young collection young. The keep list is emptied. */
+void gc_rem_keep_young_holders(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.keep_n; i++) {
+    void *obj = gc_heap.keep[i];
+    /* A carded holder is remembered by its cards (gc_cards_settle). */
+    if (!gc_is_heap_payload(obj, NULL, NULL) || (avant_header(obj)->flags & AVANT_FLAG_YOUNG) ||
+        (avant_header(obj)->flags & AVANT_FLAG_REM) || gc_carded(avant_header(obj))) {
+      continue;
+    }
+    if (rem_names_young(obj)) {
+      rem_add(obj);
+    }
+  }
+  gc_heap.keep_n = 0;
+}
+
+/* After a young collection (Stage 28 W16t): the cards of every carded
+ * object it reached (the noted list) are made exact, and the object is
+ * remembered (REMC) when a card is still marked. One scanned only by its
+ * marked cards (CARD_SCAN) has those cards rechecked: a card stays marked
+ * when one of its slots names an object still young (an aged copy, a
+ * young large object; gc_young_at), else it is cleared. One scanned
+ * whole (CARD_ALL, a root or a young object named it, or it was promoted
+ * now) has every card cleared and then each slot naming a young object
+ * marks its card. Run after the young large objects' fate and the set's
+ * emptying (rem_empty), before the noted list is cleared. A young object
+ * needs no card (it is traced whole while young). */
+void gc_cards_settle(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.noted_n; i++) {
+    void *p = gc_heap.noted[i];
+    AvantHeader *h = avant_header(p);
+    int any = 0;
+    if ((h->flags & (AVANT_FLAG_FORWARDED | AVANT_FLAG_YOUNG)) || !gc_carded(h)) {
+      continue;
+    }
+    if (h->flags & AVANT_FLAG_CARD_SCAN) {
+      EACH_CARD_SLOT(p, slot, {
+        if (slot == (void **)ecs_a_) {
+          gc_heap.cards[ecs_c_] = 0;
+        }
+        if (!gc_heap.cards[ecs_c_] && slot_names_young(*slot)) {
+          gc_heap.cards[ecs_c_] = 1;
+          any = 1;
+        }
+      });
+    } else {
+      gc_cards_clear(p);
+      EACH_REF_SLOT(p, slot, {
+        if (slot_names_young(*slot)) {
+          gc_heap.cards[gc_card_index(slot)] = 1;
+          any = 1;
+        }
+      });
+    }
+    h->flags &= (uint16_t)~AVANT_FLAG_CARD_ALL;
+    if (any) {
+      rem_add_bit(p, AVANT_FLAG_REMC);
+    }
+  }
 }
 
 /* C33 and O9 (Stage 28 W14b1, gc-design.md §7): the remembered set after
@@ -214,45 +169,47 @@ void gc_rem_full_scrub(void) {
   uint32_t w = 0;
   int locked = rem_locked();
   if (locked) {
-    pthread_mutex_lock(&g_rem_mu);
+    pthread_mutex_lock(&gc_heap.rem_mu);
   }
-  for (i = 0; i < g_rem_n; i++) {
-    void *obj = g_remset[i];
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    void *obj = gc_heap.remset[i];
     AvantHeader *h;
-    if (!is_heap_payload(obj, NULL, NULL)) {
+    if (!gc_is_heap_payload(obj, NULL, NULL)) {
       continue;
     }
     h = avant_header(obj);
-    if ((h->flags & AVANT_FLAG_REM) == 0 || (h->flags & AVANT_FLAG_MARKED)) {
+    if ((h->flags & (AVANT_FLAG_REM | AVANT_FLAG_REMC)) == 0 || (h->flags & AVANT_FLAG_MARKED)) {
       continue;
     }
-    if (!full_marked(h) || g_nursery_off || !rem_names_young(obj)) {
-      h->flags &= (uint16_t)~AVANT_FLAG_REM;
+    /* A carded entry (REMC) is kept whole: its cards say nothing about
+     * what defragmentation moved, so the next young collection scans it
+     * whole and marks its cards again (CARD_ALL; gc_cards_settle). */
+    if (!full_marked(h) || gc_heap.set.nursery_off || !rem_names_young(obj)) {
+      h->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
       continue;
+    }
+    if (h->flags & AVANT_FLAG_REMC) {
+      h->flags |= AVANT_FLAG_CARD_ALL;
     }
     h->flags |= AVANT_FLAG_MARKED;
-    g_remset[w] = obj;
-    if (g_rem_dirty) {
-      g_rem_dirty[w] = 1;
-    }
+    gc_heap.remset[w] = obj;
     w++;
   }
-  g_rem_n = w;
-  for (i = 0; i < g_rem_n; i++) {
-    avant_header(g_remset[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
+  gc_heap.rem_n = w;
+  for (i = 0; i < gc_heap.rem_n; i++) {
+    avant_header(gc_heap.remset[i])->flags &= (uint16_t)~AVANT_FLAG_MARKED;
   }
   if (locked) {
-    pthread_mutex_unlock(&g_rem_mu);
+    pthread_mutex_unlock(&gc_heap.rem_mu);
   }
 }
 
 void avant_barrier(void *obj) {
-  Block *b = NULL;
   AvantHeader *h;
   /* O9: with the nursery off no young collection runs, so nothing is
    * remembered (the set grew without bound: churn.av kept 1.6 M
    * entries). */
-  if (!obj || g_collecting || g_nursery_off) {
+  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
     return;
   }
   /* The compiler passes the object being stored into. A nursery object
@@ -265,15 +222,52 @@ void avant_barrier(void *obj) {
       if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_REM)) {
         return;
       }
+      /* A carded object named without its slot (Stage 28 W16t): every
+       * card counts as marked until the next young collection. */
+      if (gc_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
+        h->flags |= AVANT_FLAG_CARD_ALL;
+        rem_add_bit(obj, AVANT_FLAG_REMC);
+        return;
+      }
     }
   }
-  if (!is_heap_payload(obj, &b, NULL)) {
-    return;
-  }
-  if (b && (b->space == SPACE_NURSERY || b->space == SPACE_TO)) {
+  if (!gc_is_heap_payload(obj, NULL, NULL)) {
     return;
   }
   rem_add(obj);
+}
+
+/* The barrier with the slot (Stage 28 W16t, card marking, Q5, O64): a
+ * store of a reference into SLOT of OBJ. For a mature carded object (a
+ * large pointer buffer) the slot's card is marked and the object is in
+ * the set (REMC); a slot outside the object counts as every card. For
+ * any other object it is avant_barrier(OBJ). Generated code calls it
+ * for an element store whose holder the inline test did not skip;
+ * runtime C calls it where it knows the slot. Never collects. */
+void avant_barrier_slot(void *obj, void *slot) {
+  AvantHeader *h;
+  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
+    return;
+  }
+  /* A large object's header is at a fixed place in its run, and the
+   * range compare keeps the card index inside the table (no start-bit
+   * lookup on this per-store path). */
+  if (((uintptr_t)obj & (ALIGN - 1)) == 0 &&
+      (uint64_t)((uintptr_t)obj - (uintptr_t)gc_heap.base) < gc_heap.committed) {
+    h = avant_header(obj);
+    if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == AVANT_FLAG_HEAP && gc_carded(h)) {
+      if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
+        gc_heap.cards[gc_card_index(slot)] = 1;
+      } else {
+        h->flags |= AVANT_FLAG_CARD_ALL;
+      }
+      if (!(h->flags & AVANT_FLAG_REMC)) {
+        rem_add_bit(obj, AVANT_FLAG_REMC);
+      }
+      return;
+    }
+  }
+  avant_barrier(obj);
 }
 
 /* Stage 28 W1b. The barrier for a store through an address that may be
@@ -284,11 +278,11 @@ void avant_barrier(void *obj) {
 void avant_barrier_at(void *addr) {
   Block *b = NULL;
   void *start;
-  if (!addr || g_collecting) {
+  if (!addr || gc_heap.collecting) {
     return;
   }
-  if (g_self_reg.stack_lo && (uint8_t *)addr >= (uint8_t *)g_self_reg.stack_lo &&
-      (uint8_t *)addr < (uint8_t *)g_self_reg.stack_hi) {
+  if (gc_thread.reg.stack_lo && (uint8_t *)addr >= (uint8_t *)gc_thread.reg.stack_lo &&
+      (uint8_t *)addr < (uint8_t *)gc_thread.reg.stack_hi) {
     return;
   }
   start = gc_object_payload(addr, &b, NULL);

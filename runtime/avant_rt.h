@@ -15,11 +15,10 @@
  * Collector is GenImmix (copying nursery, Immix mature) and the copying
  * nursery is the product default (AVANT_NURSERY=0 turns it off: every
  * collection is then a full one). From-space is discarded after a young
- * copy unless AVANT_NURSERY_DISCARD=0 parks it for diagnosis.
- * Remembered-set members are roots for the young generation.
+ * copy. Remembered-set members are roots for the young generation.
  * AVANT_FLAG_PINNED is the C-escape seam: pinned objects are not moved
- * and are young-GC roots. The full invariant list and knob table live in
- * avant-ledgers/archive/stages/collector.md.
+ * and are young-GC roots. The collector's environment knobs are listed
+ * in runtime/avant_gc.h.
  */
 
 #define AVANT_TYPE_BYTES 0
@@ -91,9 +90,16 @@ void avant_gc_root(void *slot);
  * collector scans the first count entries. avant_gc_root (one slot per
  * call) and avant_gc_reload (a slot read after a collecting call) are
  * the old myc back end's ABI: the current compiler emits neither, and
- * they stay while the runtime's exported symbols are frozen. */
+ * they stay as deprecated entries until a release note retires them
+ * (gc-design.md section 1.4, Q10). */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
+/* A C variable that lives as long as its thread (a __thread variable)
+ * and holds a heap reference is registered once, by that thread, before
+ * it first holds one: from then on the collections on that thread mark
+ * what it names and rewrite it when the object moves (Stage 28 W14b2).
+ * At most 8 per thread. */
+void avant_gc_add_root(void **slot);
 
 /* Inline nursery fast path (Collector II Wave 1). Generated code may
  * allocate without a call only while avant_gc_fast_ok is set: it bumps
@@ -129,6 +135,10 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
 void avant_barrier(void *obj);
 /* Barrier for a store through an address that may lie inside a heap object. */
 void avant_barrier_at(void *addr);
+/* The barrier with the slot stored into (Stage 28 W16t, card marking):
+ * a large pointer buffer marks the slot's card; any other object is
+ * avant_barrier(obj). Never collects. */
+void avant_barrier_slot(void *obj, void *slot);
 
 typedef struct AvantGcStats {
   uint64_t collections;
@@ -235,7 +245,6 @@ void avant_hash_del(void *h, const char *key);
 void avant_hash_del_i32k(void *h, int32_t key);
 int32_t avant_hash_inc_slice(void *h, const char *s, int32_t start, int32_t stop);
 const char *avant_hash_last_key(void);
-void avant_hash_walk_tls(void (*fn)(void **slot));
 const char *avant_hash_get_str_slice(void *h, const char *s, int32_t start, int32_t stop, int32_t *found);
 int32_t avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
 int32_t avant_hash_has_str(void *h, const char *key);

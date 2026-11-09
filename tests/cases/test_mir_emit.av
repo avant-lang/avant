@@ -115,7 +115,14 @@ fn gc_stats_10_3(c: Checks, text: String, what: String) {
     return
   }
   c.expect(str_has(text, "collections=6 young=6 "), "${what}: collections=6 young=6")
-  c.expect(str_has(text, " copied=96 "), "${what}: copied=96")
+  // 272 bytes survive (Stage 28 W16a: the collections run at other
+  // points, since avant_str_from_int collects at its own allocation
+  // (RC1) and the loop's allocations stay inline; 96 before). Since W16b
+  // no C-stack scan keeps their blocks in place: 192 bytes are copied
+  // out of the six evacuated young blocks and 80 promoted in place (272
+  // in place before).
+  c.expect(str_has(text, " copied=192 "), "${what}: copied=192")
+  c.expect(str_has(text, " prom_inplace=80 "), "${what}: prom_inplace=80")
   c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
   c.expect(str_has(text, " enters=400005 "), "${what}: enters=400005")
 }
@@ -219,9 +226,12 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     c.expect(str_has(gl, "199999\nsmall\n"), "example ${t} under the GC verifier: output")
     gc_stats_10_3(c, gl, "example ${t}")
     if gc_numbers_outer().size == 0 {
-      c.expect(str_has(gl, " inline_allocs=10 "), "example ${t}: inline_allocs=10")
+      // Stage 28 W16a: avant_str_from_int no longer opens a defer region,
+      // whose entry cleared the inline path's state (gc_fast_clear) at
+      // every call, so the loop's allocations stay inline (10 before).
+      c.expect(str_has(gl, " inline_allocs=199994 "), "example ${t}: inline_allocs=199994")
     } else {
-      c.skip("example ${t}: inline_allocs=10", "outer ${gc_numbers_outer()}")
+      c.skip("example ${t}: inline_allocs=199994", "outer ${gc_numbers_outer()}")
     }
     // constructs and traps
     c.eq_int(runs[k + 2].code, 0, "constructs ${t}: exit 0")

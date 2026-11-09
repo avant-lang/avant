@@ -34,10 +34,14 @@ static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint3
     ncap *= 2;
   }
   uint64_t bytes = (uint64_t)ncap * elem_size;
+  /* RC1: the allocation may collect; a is a handle, a->buf is read after
+   * it (RC2). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &a);
   void *nbuf = avant_alloc(bytes, buf_type_id);
   if (a->buf && a->size > 0) {
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
-    /* A large pointer buffer is mature from birth; it may hold young elements (W13b). */
+    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1) and hold young elements (W13b). */
     if (buf_type_id != AVANT_TYPE_BYTES) {
       avant_barrier(nbuf);
     }
@@ -47,6 +51,16 @@ static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint3
   a->cap = ncap;
 }
 
+/* The push and reserve entries (RC1, avant_gc.h; Stage 28 W16a, they
+ * were W15a1's named safepoints): the fast path neither allocates nor
+ * collects; the growth path keeps the array (and push_ptr's element) in
+ * handles across array_grow and forms the slot after it (RC2). */
+/* An element store barriers the buffer with its slot (avant_barrier_slot:
+ * a large pointer buffer marks the slot's card) and not the array object,
+ * whose size and capacity are not references (Stage 28 W16t: remembering
+ * the array object at every push made the young collection scan the
+ * buffer it names whole, R1'(c), and defeated the cards); array_grow
+ * barriers the array object when it stores a new buffer. */
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
   void *slot = NULL;
@@ -56,22 +70,22 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
   if (a->buf && a->size < a->cap) {
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
-    avant_barrier(a);
     if (a->buf) {
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, slot);
     }
     return slot;
   }
-  avant_gc_defer_enter();
-  if (a->size >= a->cap) {
-    array_grow(a, a->size + 1, elem_size, buf_type_id);
-  }
-  slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
-  a->size += 1;
-  avant_gc_defer_leave();
-  avant_barrier(a);
-  if (a->buf) {
-    avant_barrier(a->buf);
+  {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &a);
+    if (a->size >= a->cap) {
+      array_grow(a, a->size + 1, elem_size, buf_type_id);
+    }
+    slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
+    a->size += 1;
+    if (a->buf) {
+      avant_barrier_slot(a->buf, slot);
+    }
   }
   return slot;
 }
@@ -86,23 +100,22 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
     slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
     memcpy(slot, &elem, sizeof(void *));
     a->size += 1;
-    avant_barrier(a);
     if (a->buf) {
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, slot);
     }
     return;
   }
-  /*
-   * Store under defer so myc IR never holds an interior buffer
-   * pointer across a collecting CALL. Grow may nest defer.
-   * push_slot already barriers the array and the buffer.
-   */
-  avant_gc_defer_enter();
-  slot = avant_array_push_slot(arr, sizeof(void *), buf_type_id);
-  if (slot) {
-    memcpy(slot, &elem, sizeof(void *));
+  {
+    /* In a shared program the scope is a no-GC region too (avant_gc.h),
+     * so no other thread collects between the slot and the store. */
+    AVANT_GC_SCOPE(2);
+    AVANT_GC_ROOT(0, &a);
+    AVANT_GC_ROOT(1, &elem);
+    slot = avant_array_push_slot(a, sizeof(void *), buf_type_id);
+    if (slot) {
+      memcpy(slot, &elem, sizeof(void *));
+    }
   }
-  avant_gc_defer_leave();
 }
 
 void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
@@ -117,16 +130,14 @@ void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
   if (mutator_private()) {
     if (a && a->buf) {
       ((void **)a->buf)[i] = elem;
-      avant_barrier(a);
-      avant_barrier(a->buf);
+      avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
     }
     return;
   }
   avant_world_lock();
   if (a && a->buf) {
     ((void **)a->buf)[i] = elem;
-    avant_barrier(a);
-    avant_barrier(a->buf);
+    avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
   }
   avant_world_unlock();
 }
@@ -177,13 +188,15 @@ void avant_array_push_i32(void *arr, int32_t v) {
     a->size += 1;
     return;
   }
-  avant_gc_defer_enter();
-  if (a->size >= a->cap) {
-    array_grow(a, a->size + 1, sizeof(int32_t), AVANT_TYPE_BYTES);
+  {
+    AVANT_GC_SCOPE(1);
+    AVANT_GC_ROOT(0, &a);
+    if (a->size >= a->cap) {
+      array_grow(a, a->size + 1, sizeof(int32_t), AVANT_TYPE_BYTES);
+    }
+    ((int32_t *)a->buf)[a->size] = v;
+    a->size += 1;
   }
-  ((int32_t *)a->buf)[a->size] = v;
-  a->size += 1;
-  avant_gc_defer_leave();
 }
 
 void avant_array_clear(void *arr) {
@@ -193,14 +206,13 @@ void avant_array_clear(void *arr) {
   }
 }
 
+/* gc-lint: holds nothing (the growth is its last statement; array_grow roots the array). */
 void avant_array_reserve(void *arr, int32_t n, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
   if (!a || n <= a->cap) {
     return;
   }
-  avant_gc_defer_enter();
   array_grow(a, n, elem_size, buf_type_id);
-  avant_gc_defer_leave();
 }
 
 void *avant_array_pop_slot(void *arr, uint64_t elem_size) {
@@ -604,23 +616,27 @@ void avant_array_reverse(void *arr, uint64_t elem_size) {
   }
 }
 
+/* RC1: the source and the copy are handles across the two allocations;
+ * the source's buffer is read after the last one (RC2). */
 void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
-  AvantArray *r;
-  avant_gc_defer_enter();
+  AvantArray *r = NULL;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &r);
   r = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
   if (a && a->buf && a->size > 0) {
     void *nbuf = avant_alloc((uint64_t)a->size * elem_size, buf_type_id);
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
     if (buf_type_id != AVANT_TYPE_BYTES) {
-      /* A large pointer buffer is mature from birth (D187, W13b). */
+      /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
       avant_barrier(nbuf);
     }
+    avant_barrier(r);
     r->buf = nbuf;
     r->size = a->size;
     r->cap = a->size;
   }
-  avant_gc_defer_leave();
   return r;
 }
 

@@ -1,16 +1,17 @@
 // The call table (Stage 28 W4; stages/stage28/mir.md 4.6, D182): for every
 // external symbol the compiler may call, its MIR signature and one class:
 // never (the old fixed --gc-leaf list of pipeline.av, the libc and GC hook
-// names, __avant_type_maps), quiet (the helpers that allocate only under
-// defer: the old back end's quiet list), collects (everything
-// else, and every name not in the table). Flags: alloc, slot (returns the
-// untyped `addr` of an element inside the array's buffer), noreturn,
-// varargs. The classes are the old back end's (proof: old, section 14,
-// 8.9); a wave that first emits a never or quiet row proves it or moves it
-// to collects. This is the MIR's own copy; pipeline.av's list is the old
-// back end's and is not changed.
+// names, __avant_type_maps), collects (everything else, and every name
+// not in the table). Flags: alloc, slot (returns the untyped `addr` of an
+// element inside the array's buffer), noreturn, varargs. The classes are
+// the old back end's (proof: old, section 14, 8.9), except the old quiet
+// class (helpers that allocated only under defer), which is gone since
+// Stage 28 W15a1 (gc-design.md section 5.1): its rows are never or
+// collects. A wave that first emits a never row proves it or moves it to
+// collects. This is the MIR's own copy; pipeline.av's list is the old back
+// end's and is not changed.
 //
-// Rows: the 47 never names of pipeline.av, the libc and GC hooks, the 19
+// Rows: the 47 never names of pipeline.av, the libc and GC hooks, the old
 // quiet names, and the collects rows whose signature the core needs. A
 // collects row is only needed for its signature (an unknown name already
 // collects): W5-W8 add rows as their lowering first calls them.
@@ -19,15 +20,11 @@ import source
 import mir.types
 
 pub fn mcc_never: Int { 1 }
-pub fn mcc_quiet: Int { 2 }
 pub fn mcc_collects: Int { 3 }
 
 pub fn mcc_name(c: Int): String {
   if c == mcc_never() {
     return "never"
-  }
-  if c == mcc_quiet() {
-    return "quiet"
   }
   "collects"
 }
@@ -141,13 +138,13 @@ pub class MRtTable {
 
 fn mir_rt_fill(t: MRtTable) {
   n = mcc_never()
-  q = mcc_quiet()
   c = mcc_collects()
   // never: the old fixed --gc-leaf list (pipeline.av), in its order.
   t.row("avant_type_map", "u32, u64", "void", n, "")
   t.row("avant_type_map_at", "u32, u32, u32, u64", "void", n, "")
   t.row("avant_barrier", "ref", "void", n, "")
   t.row("avant_barrier_at", "ptr", "void", n, "")
+  t.row("avant_barrier_slot", "ref, ptr", "void", n, "")
   t.row("avant_cov_hit", "i32", "void", n, "")
   t.row("avant_cov_init", "ref str", "void", n, "")
   t.row("avant_pin", "ref", "void", n, "")
@@ -212,29 +209,33 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_gc_root", "ptr", "void", n, "")
   t.row("avant_gc_reload", "ptr", "ptr", n, "")
   t.row("__avant_type_maps", "", "void", n, "")
-  // quiet: the old back end's quiet list, in its order.
-  t.row("avant_hash_get_i32", "ref, ref str, ptr", "i32", q, "")
-  t.row("avant_hash_get_str", "ref, ref str, ptr", "ref str", q, "")
-  t.row("avant_hash_get_i32k_i32", "ref, i32, ptr", "i32", q, "")
-  t.row("avant_hash_set_i32", "ref, ref str, i32", "void", q, "")
-  t.row("avant_hash_set_str", "ref, ref str, ref str", "void", q, "")
-  t.row("avant_hash_set_i32k_i32", "ref, i32, i32", "void", q, "")
-  t.row("avant_hash_clear", "ref", "void", q, "")
-  t.row("avant_hash_size", "ref", "i32", q, "")
-  t.row("avant_hash_del", "ref, ref str", "void", q, "")
-  t.row("avant_hash_del_i32k", "ref, i32", "void", q, "")
-  t.row("avant_hash_get_str_slice", "ref, ref str, i32, i32, ptr", "ref str", q, "")
-  t.row("avant_hash_inc_slice", "ref, ref str, i32, i32", "i32", q, "")
-  t.row("avant_buf_clear", "ref", "void", q, "")
-  t.row("avant_buf_push_byte", "ref, i32", "void", q, "")
-  t.row("avant_buf_push_str", "ref, ref str", "void", q, "")
-  t.row("avant_buf_push_slice", "ref, ref str, i32, i32", "void", q, "")
-  t.row("avant_buf_push_fmt_i", "ref, i32", "void", q, "")
-  t.row("avant_buf_push_fmt_f", "ref, f64, i32", "void", q, "")
-  t.row("avant_regex_find", "ptr, ref str, i32", "i64", q, "")
-  t.row("avant_regex_span_pair", "i32", "i64", q, "")
-  t.row("avant_regex_span_at", "ptr, ref str, i32, i32", "i64", q, "")
-  t.row("avant_regex_count", "ptr, ref str", "i32", q, "")
+  // The old back end's quiet list, in its order. Its class is gone
+  // (Stage 28 W15a1, gc-design.md section 5.1): the 13 rows that neither
+  // allocate nor enter a defer region are never; the 9 that allocate or
+  // reach a named safepoint (runtime/avant_gc.h) collect, so their
+  // callers root and reload across them like any collecting call.
+  t.row("avant_hash_get_i32", "ref, ref str, ptr", "i32", n, "")
+  t.row("avant_hash_get_str", "ref, ref str, ptr", "ref str", n, "")
+  t.row("avant_hash_get_i32k_i32", "ref, i32, ptr", "i32", n, "")
+  t.row("avant_hash_set_i32", "ref, ref str, i32", "void", c, "")
+  t.row("avant_hash_set_str", "ref, ref str, ref str", "void", c, "")
+  t.row("avant_hash_set_i32k_i32", "ref, i32, i32", "void", c, "")
+  t.row("avant_hash_clear", "ref", "void", n, "")
+  t.row("avant_hash_size", "ref", "i32", n, "")
+  t.row("avant_hash_del", "ref, ref str", "void", n, "")
+  t.row("avant_hash_del_i32k", "ref, i32", "void", n, "")
+  t.row("avant_hash_get_str_slice", "ref, ref str, i32, i32, ptr", "ref str", n, "")
+  t.row("avant_hash_inc_slice", "ref, ref str, i32, i32", "i32", c, "")
+  t.row("avant_buf_clear", "ref", "void", n, "")
+  t.row("avant_buf_push_byte", "ref, i32", "void", c, "")
+  t.row("avant_buf_push_str", "ref, ref str", "void", c, "")
+  t.row("avant_buf_push_slice", "ref, ref str, i32, i32", "void", c, "")
+  t.row("avant_buf_push_fmt_i", "ref, i32", "void", c, "")
+  t.row("avant_buf_push_fmt_f", "ref, f64, i32", "void", c, "")
+  t.row("avant_regex_find", "ptr, ref str, i32", "i64", n, "")
+  t.row("avant_regex_span_pair", "i32", "i64", n, "")
+  t.row("avant_regex_span_at", "ptr, ref str, i32, i32", "i64", n, "")
+  t.row("avant_regex_count", "ptr, ref str", "i32", n, "")
   // collects: the allocation entry, the slot rows, and the rows the core
   // example and the verifier tests call.
   t.row("avant_alloc", "u64, u32", "ref", c, "alloc")
@@ -354,7 +355,7 @@ fn mir_rt_fill(t: MRtTable) {
 // readers end in avant_str_n (runtime/avant_str.c:118-127), which reads
 // the string's header and bytes (its argument), the GC's block, large and
 // side tables through avant_is_heap (runtime/avant_gc_heap.c,
-// is_heap_payload: reads only when its out-parameters are NULL), and
+// gc_is_heap_payload: reads only when its out-parameters are NULL), and
 // g_avant_str_gen (an acquire load, avant_rt.h:70-72: not nosync); it
 // writes only its per-thread length cache (g_len_slots and g_len_victim,
 // static __thread in avant_str.c:77-89, memory no module code can name:

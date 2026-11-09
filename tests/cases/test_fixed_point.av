@@ -47,11 +47,12 @@ fn test_fixed_point(c: Checks) {
     main_c = "${scratch()}/fixed_point-${stamp}-main-c.${ext}"
     bin_c = "${scratch()}/fixed_point-${stamp}-c"
     clog = "${scratch()}/fixed_point-${stamp}-c.log"
-    vlog = "${scratch()}/fixed_point-${stamp}-verify.log"
     hlog = "${scratch()}/fixed_point-${stamp}-hello.log"
 
     // Two waves of concurrent work (D138). Wave 1, all with this
     // compiler: compile the next compiler, dump hello, dump the compiler.
+    // (The compiler's dump under AVANT_GC_VERIFY=1 was a fourth job of
+    // wave 1 until Stage 28 W16t: it is test_fixed_point_verify.av, O103.)
     // Wave 2, with the next compiler: dump hello, dump the compiler, run
     // hello. Checks are recorded afterwards in the order they always had.
     // One self-host link. Nursery is forced on so the long compile is the
@@ -70,32 +71,10 @@ fn test_fixed_point(c: Checks) {
     wave1.push(HJob.new("/usr/bin/env", cenv, clog))
     wave1.push(HJob.new(compiler, dump_args(hello), hello_b))
     wave1.push(fp_main_job(compiler, main_av, main_b))
-    // The compiler's own heap is fully traced (D188): dumping itself under
-    // the collector's verifier prints no untraced-reference report. The
-    // v0.34.0 seed's type maps drop every reference word past payload
-    // word 63 (audit 8.4, fixed by W1b in the tree only), so a seed-built
-    // B is safe only while no compiler class has a reference field there.
-    // This check can relax once the seed carries W1b (D178 re-seed).
-    // AVANT_YOUNG_MB=1 is left out: it makes this dump longer than the
-    // compile beside it.
-    venv: Array(String) = []
-    venv.push("AVANT_GC_VERIFY=1")
-    venv.push(compiler)
-    venv.push("dump")
-    venv.push(main_av)
-    wave1.push(HJob.new("/usr/bin/env", venv, vlog))
     run_jobs(wave1)
     ccode = wave1[0].code
     b_hello = wave1[1].code
     b_main = wave1[2].code
-    vcode = wave1[3].code
-
-    c.eq_int(vcode, 0, "dump compiler under AVANT_GC_VERIFY=1")
-    if vout = file_read(vlog) {
-      c.expect(!str_has(vout, "avant gc verify:"), "compiler heap fully traced (no verifier report)")
-    } else {
-      c.expect(false, "compiler heap fully traced (no verifier report)")
-    }
 
     c.eq_int(b_hello, 0, "dump hello")
     if got = file_read(hello_b) {

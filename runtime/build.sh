@@ -11,11 +11,20 @@ compile() {
   "$cc" -c $cflags -o "$2" "$1"
 }
 
+# The young generation is S+ (Stage 28 W15c, D233; avant_gc_sticky.c).
+# Candidate E, the evacuating nursery, and the AVANT_GC_CANDIDATE knob
+# that chose between the candidates were deleted in Stage 28 W15d (D232):
+# E's mechanisms that S+ uses stay in S+. Candidate S (S+ with its copy
+# off) is the internal constant GC_STICKY_COPY 0 (avant_gc_internal.h),
+# built only for a measurement (a copy of runtime/ with the constant
+# changed).
+gc_cflags=
+
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below.
-core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_young avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
+core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
 for name in $core_units; do
-  compile "$root/$name.c" "$root/build/$name.unit.o"
+  "$cc" -c $cflags $gc_cflags -o "$root/build/$name.unit.o" "$root/$name.c"
 done
 
 for name in \
@@ -88,6 +97,21 @@ for name in $core_units; do
 done
 ld -r -o "$root/build/avant_rt_merged.o" "$@"
 objcopy --keep-global-symbols="$root/avant_rt.exports" "$root/build/avant_rt_merged.o"
+# The surface check (Stage 28 W14b2): the object's global symbols are
+# exactly the exports file's names, the ABI section with default
+# visibility and the runtime-internal section hidden.
+want_abi=$(sed -n '/^# runtime-internal$/q; /^[^#]/p' "$root/avant_rt.exports" | LC_ALL=C sort)
+want_int=$(sed -n '/^# runtime-internal$/,$p' "$root/avant_rt.exports" | sed -n '/^[^#]/p' | LC_ALL=C sort)
+have=$(nm -g --defined-only "$root/build/avant_rt_merged.o" | awk '{print $3}' | LC_ALL=C sort)
+if [ "$have" != "$(printf '%s\n%s\n' "$want_abi" "$want_int" | sed '/^$/d' | LC_ALL=C sort)" ]; then
+  echo "runtime/build.sh: avant_rt.o's global symbols differ from avant_rt.exports" >&2
+  exit 1
+fi
+hidden=$(readelf -sW "$root/build/avant_rt_merged.o" | awk '$5 == "GLOBAL" && $7 != "UND" && $6 == "HIDDEN" {print $8}' | LC_ALL=C sort)
+if [ "$hidden" != "$want_int" ]; then
+  echo "runtime/build.sh: avant_rt.o's hidden globals differ from avant_rt.exports' runtime-internal section" >&2
+  exit 1
+fi
 # The merged parts are removed, as the zlib and PCRE2 parts are: nothing
 # links them on their own, and tools/package.sh ships every object left
 # here (W10b: they were 28 KB of dead weight in the release).

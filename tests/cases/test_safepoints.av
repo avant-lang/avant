@@ -45,7 +45,9 @@ fn test_safepoints(c: Checks) {
       if stats = file_read(slog) {
         c.expect(str_has(stats, "young="), "gc stats printed")
         c.expect(!str_has(stats, "young=0 full"), "copying nursery ran")
-        c.expect(!str_has(stats, "copied=0 live"), "nursery copied bytes")
+        // Candidate E copies survivors, candidate S promotes them in
+        // place (Stage 28 W15b): either way the young collections kept some.
+        c.expect(!str_has(stats, "copied=0 live") || !str_has(stats, "prom_inplace=0 "), "young survivors copied or promoted in place")
       } else {
         c.expect(false, "read gc stats")
       }
@@ -53,7 +55,6 @@ fn test_safepoints(c: Checks) {
       dlog = "${scratch()}/safepoints-${stamp}-discard.log"
       disc: Array(String) = []
       disc.push("AVANT_NURSERY=1")
-      disc.push("AVANT_NURSERY_DISCARD=1")
       disc.push("AVANT_HEAP_MAX_MB=3")
       disc.push(bin)
       dcode = process_run_out("/usr/bin/env", disc, dlog)

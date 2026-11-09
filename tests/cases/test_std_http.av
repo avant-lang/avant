@@ -393,23 +393,34 @@ fn test_std_http(c: Checks) {
     c.expect(false, "listen for ws test")
   }
 
-  sport = 18347
+  // The helper binds an ephemeral port and writes it to a file (Stage 28
+  // W16t; it was the fixed 18347, which two suites running at once, as
+  // the gate's overlapping GC passes do, would both bind).
   script2 = "${scratch()}/http-chunked-${stamp}.py"
-  py2 = "import socket, sys\nport = int(sys.argv[1])\nsrv = socket.socket()\nsrv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsrv.bind((\"127.0.0.1\", port))\nsrv.listen(1)\nconn, _ = srv.accept()\nconn.recv(4096)\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n5\\r\\nhello\\r\\n8\\r\\n chunked\\r\\n6\\r\\n world\\r\\n0\\r\\n\\r\\n\")\nconn.close()\nsrv.close()\n"
+  portf2 = "${scratch()}/http-chunked-${stamp}.port"
+  py2 = "import socket, sys, os\npath = sys.argv[1]\nsrv = socket.socket()\nsrv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsrv.bind((\"127.0.0.1\", 0))\nsrv.listen(1)\nwith open(path + \".tmp\", \"w\") as f:\n    f.write(str(srv.getsockname()[1]))\nos.rename(path + \".tmp\", path)\nconn, _ = srv.accept()\nconn.recv(4096)\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n5\\r\\nhello\\r\\n8\\r\\n chunked\\r\\n6\\r\\n world\\r\\n0\\r\\n\\r\\n\")\nconn.close()\nsrv.close()\n"
   dummy_py2 = file_write(script2, py2)
   log2 = "${scratch()}/http-chunked-${stamp}.log"
   handle2 = spawn {
     args2: Array(String) = []
     args2.push(script2)
-    args2.push("${sport}")
+    args2.push(portf2)
     dummy = process_run_out("/usr/bin/python3", args2, log2)
     0
   }
   got_body = ""
   deadline = now_ms() + 5000
+  sport = 0
   while got_body.size == 0 && now_ms() < deadline {
-    if resp = Http.get("http://127.0.0.1:${sport}/") {
-      got_body = body_text(resp)
+    if sport == 0 {
+      if pt = file_read(portf2) {
+        sport = pt.strip().to_i
+      }
+    }
+    if sport > 0 {
+      if resp = Http.get("http://127.0.0.1:${sport}/") {
+        got_body = body_text(resp)
+      }
     }
   }
   c.eq_str(got_body, "hello chunked world", "chunked response decoded")

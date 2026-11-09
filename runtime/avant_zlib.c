@@ -46,16 +46,16 @@ char *avant_zlib_compress(const char *s) {
   uLong dest_len = bound;
   char *out;
   set_status(0);
-  avant_gc_defer_enter();
+  /* RC1: the text is a handle across the allocation. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
   out = (char *)avant_alloc((uint64_t)bound + 5, AVANT_TYPE_BYTES);
   write_len((uint8_t *)out, n);
   if (compress((Bytef *)(out + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
     set_status(2);
-    avant_gc_defer_leave();
     return avant_str_empty();
   }
   tag_len(out, 4 + (size_t)dest_len);
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -72,22 +72,23 @@ char *avant_zlib_uncompress(const char *s) {
   }
   orig = read_len(p);
   dest_len = orig;
-  avant_gc_defer_enter();
+  /* RC1/RC2: the text is a handle; its bytes are formed after the
+   * allocation. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
   out = (char *)avant_alloc((uint64_t)orig + 1, AVANT_TYPE_BYTES);
+  p = (const uint8_t *)s;
   if (orig == 0) {
     out[0] = 0;
     avant_str_tag(out);
-    avant_gc_defer_leave();
     return out;
   }
   if (uncompress((Bytef *)out, &dest_len, p + 4, (uLong)(n - 4)) != Z_OK || dest_len != orig) {
     set_status(1);
-    avant_gc_defer_leave();
     return avant_str_empty();
   }
   out[orig] = 0;
   avant_str_tag(out);
-  avant_gc_defer_leave();
   return out;
 }
 
@@ -109,6 +110,11 @@ int32_t avant_zlib_compress_into(const char *s, void *buf) {
     set_status(2);
     return 2;
   }
+  /* RC1/RC2: the growth may collect; the text and the Buf are handles,
+   * and the text's bytes are formed again after it. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
   avant_buf_ensure(buf, need);
   data = avant_buf_bytes(buf);
   if (!data) {
@@ -148,7 +154,13 @@ int32_t avant_zlib_uncompress_into(const char *s, void *buf) {
   if (orig == 0) {
     return 0;
   }
+  /* RC1/RC2: the growth may collect; the text and the Buf are handles,
+   * and the text's bytes are formed again after it. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &buf);
   avant_buf_ensure(buf, need);
+  p = (const uint8_t *)s;
   data = avant_buf_bytes(buf);
   if (!data) {
     set_status(2);

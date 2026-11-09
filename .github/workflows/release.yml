@@ -6,7 +6,7 @@
 # The seed is the avant-linux-x86_64.tar.gz asset of AVANT_SEED_VERSION
 # (pinned by its sha256). Like the asset this job builds, it holds `avant`
 # with its one back end, the in-process LLVM linked into it (D172; the old
-# back end retired at Stage 28 W11, and v0.35.0 is the first seed without
+# back end retired at Stage 28 W11, and v0.36.0 is the first seed without
 # it, D178). This job does not install Crystal.
 # Runtime objects come from runtime/build.sh.
 # `re2c` compiles a string literal at `re_compile`; computed patterns use PCRE2.
@@ -36,8 +36,8 @@
 name: release-binary
 
 env:
-  AVANT_SEED_VERSION: v0.35.0
-  AVANT_SEED_SHA256: 1bafb9deec91115dbd57041abb5925d31ba270b03245993586bfb3a82e63a1ec
+  AVANT_SEED_VERSION: v0.36.0
+  AVANT_SEED_SHA256: b9484b2c163cdc34932f2a2148d723324e22712906d29425a3c4cef0b69a046d
 
 "on":
   push:
@@ -122,6 +122,17 @@ jobs:
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
+      # The seed hop (D252, tools/seed-hop.sh): v0.36.0 predates W15a1's
+      # call table, so its B of this tree is wrong once the C-stack pin scan
+      # is retired (W16b). It builds the hop commit's B and C' (a tree whose
+      # runtime still has the scan) and that C' becomes the seed. Remove this
+      # step when a release built after W15a1 is the pinned seed.
+      - name: Seed hop (v0.36.0 → a seed with the current call table)
+        run: |
+          set -euo pipefail
+          sh tools/seed-hop.sh /tmp/avant-linux-x86_64 /tmp/avant-hop
+          test -x /tmp/avant-hop/avant
+
       # tools/letters.sh holds the letters' one incantation (D190): b is
       # the seed's build of compiler/main.av (bin/avant-b), c-release is
       # B's build with
@@ -129,7 +140,7 @@ jobs:
       - name: Seed → B → the shipped compiler
         run: |
           set -euo pipefail
-          LETTERS_SEED=/tmp/avant-linux-x86_64 sh tools/letters.sh b c-release
+          LETTERS_SEED=/tmp/avant-hop sh tools/letters.sh b c-release
           ./bin/avant-c-release run examples/hello.av
 
       - name: Native suite on the shipped compiler
@@ -148,7 +159,7 @@ jobs:
             echo "avant: $(git rev-parse HEAD)"
             echo "llvm: $(llvm-config-20 --version)"
             echo "runner: ubuntu-24.04 linux-x86_64"
-            echo "built-by: B (the ${AVANT_SEED_VERSION} seed's build of this tree), on the in-process LLVM back end, --release"
+            echo "built-by: B (built from the ${AVANT_SEED_VERSION} seed through the seed hop of tools/seed-hop.sh), on the in-process LLVM back end, --release"
             echo "backend: in-process LLVM $(llvm-config-20 --version), linked into avant (runtime/avant_llvm.c, tools/build-llvm.sh); no myc-llvm"
             echo "seed: yes"
             echo "binary: avant"
@@ -165,7 +176,7 @@ jobs:
             echo
             echo "Install: \`curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash\` (or extract this archive and put its directory on PATH)."
             echo
-            echo "Built from the ${AVANT_SEED_VERSION} seed through B. The archive carries \`avant\` (LLVM linked in: no \`myc-llvm\` and no other backend process), \`re2c\`, the \`avant-bind\` helper, the standard library, and the runtime (PCRE2 and zlib inside)."
+            echo "Built from the ${AVANT_SEED_VERSION} seed through the seed hop (tools/seed-hop.sh: the C' of 72c6826) and B. The archive carries \`avant\` (LLVM linked in: no \`myc-llvm\` and no other backend process), \`re2c\`, the \`avant-bind\` helper, the standard library, and the runtime (PCRE2 and zlib inside)."
             echo "Compiling a program needs a C compiler and the C library development files (Debian/Ubuntu: gcc libc6-dev; Fedora: gcc glibc-devel), and glibc at or above the \`glibc-floor\` below. \`avant bind\` also needs libclang 20."
             echo "This asset can be the next compiler pin after it is published. It is not the oracle."
             echo

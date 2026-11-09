@@ -29,14 +29,18 @@ static void mark(void *p) {
     return;
   }
   full_set_mark(h);
-  mark_object_lines(start);
-  g_live += obj_total(h);
-  work_push(start);
+  /* A full collection promotes every object it reaches (Stage 28 W15b),
+   * so no object is young after it (its remembered set and young budget
+   * are empty, gc_sticky_full_end). */
+  h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+  gc_mark_object_lines(start);
+  gc_heap.live += gc_obj_total(h);
+  gc_work_push(start);
 }
 
 static void drain(void) {
-  while (g_work_n) {
-    void *p = g_work[--g_work_n];
+  while (gc_heap.work_n) {
+    void *p = gc_heap.work[--gc_heap.work_n];
     scan_payload(p);
   }
 }
@@ -54,8 +58,8 @@ static void scan_payload(void *p) {
 void gc_mark_roots(void) {
   ThreadReg *t;
   uint32_t i;
-  pthread_mutex_lock(&g_threads_mu);
-  for (t = g_threads; t; t = t->next) {
+  pthread_mutex_lock(&gc_heap.threads_mu);
+  for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
     for (f = t->head ? *t->head : NULL; f; f = f->prev) {
       for (i = 0; i < f->n; i++) {
@@ -63,11 +67,12 @@ void gc_mark_roots(void) {
       }
     }
   }
-  pthread_mutex_unlock(&g_threads_mu);
-  for (PinEnt *p = g_pins; p; p = p->next) {
+  pthread_mutex_unlock(&gc_heap.threads_mu);
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     mark(p->payload);
   }
-  avant_hash_walk_tls(mark_tls_slot);
+  EACH_TASK_ROOT(slot, mark(*slot));
+  gc_each_runtime_root(mark_tls_slot);
   drain();
 }
 
@@ -80,16 +85,14 @@ void gc_mark_roots(void) {
  * not a liveness test). The inline allocation path still runs only in
  * fresh blocks (holes are W15b's). */
 int gc_keep_if_live(Block *b) {
-  int i;
+  uint64_t freed = 0;
   if (gc_block_live_lines(b) == 0) {
     return 0;
   }
-  for (i = 0; i < LINES_PER_BLOCK; i++) {
-    if (!b->line_mark[i]) {
-      b->start[i >> 1] &= ~(0xffffffffULL << (32 * (i & 1)));
-    }
-  }
-  gc_reset_block_bump(b);
+  /* Word-wise (Stage 28 W15d, O94): the young sweep's pass over the whole
+   * block clears the free lines' start bits and leaves the cursor on the
+   * first hole, as the byte loop and gc_reset_block_bump did. */
+  (void)gc_sweep_block_lines(b, 0, LINES_PER_BLOCK, &freed);
   return 1;
 }
 
@@ -109,11 +112,3 @@ void gc_filter_blocks(Block **list, int (*keep)(Block *)) {
   *list = kept;
 }
 
-uint64_t g_mark_sum;
-
-void gc_sum_marked_one(AvantHeader *h, Block *b) {
-  (void)b;
-  if (full_marked(h)) {
-    g_mark_sum += obj_total(h);
-  }
-}

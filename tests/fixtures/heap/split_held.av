@@ -9,7 +9,8 @@
 // of other allocation between, so full collections land inside the
 // helpers, and checks every part. Before the fix AVANT_NURSERY=0 printed
 // thousands of bad parts (split alone: 18,956 in the W13b probe); the
-// default environment never collects inside the helpers. Every line
+// default environment never collected inside the helpers before Stage
+// 28 W16a (since W16a they collect at their own allocations). Every line
 // prints 0.
 
 fn text_of(sep: String): String {
@@ -81,6 +82,12 @@ fn main {
   spaced = text_of("  \t ")
   short = letters(3000)
   rounds = 700
+  // Every round runs in every environment. Under AVANT_GC_STRESS=1 every
+  // part's allocation runs a young collection; since card marking (Stage
+  // 28 W16t, O64) each one scans only the cards of the array being filled
+  // that its last stores marked, not the whole array, so the 700 rounds
+  // no longer need the cap the stress mode had (W16a: 3 rounds, with the
+  // junk moved before each helper).
   split_bad = 0
   fields_bad = 0
   chars = 0
