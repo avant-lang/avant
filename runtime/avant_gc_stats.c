@@ -143,6 +143,10 @@ static void print_pause(StatsLine *l) {
   const GcPauseCounters *c = &gc_heap.ctr.pause;
   line_add(l, "pause_young_ns=%llu pause_full_ns=%llu pause_max_ns=%llu ", u(c->young_ns),
            u(c->full_ns), u(c->max_ns));
+  /* The handshake (Stage 28 W17a): collections that waited for another
+   * thread, and the wait's total and longest time. */
+  line_add(l, "handshakes=%llu pause_hs_ns=%llu pause_hs_max_ns=%llu ", u(c->hs_n), u(c->hs_ns),
+           u(c->hs_max_ns));
 }
 
 static void print_why(StatsLine *l) {

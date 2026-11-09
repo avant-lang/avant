@@ -596,7 +596,11 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     }
   }
 
-  pthread_mutex_lock(&gc_heap.world);
+  /* A safepoint (Stage 28 W17a): a collecting call, so the caller's
+   * references are in root slots; another thread's collection runs while
+   * this one waits here or for the world lock (gc_lock: native). */
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   gc_maybe_collect();
   if (large) {
     /* One young budget (gc-design.md §5.1, Stage 28 W15a1): young large
@@ -642,7 +646,8 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
 __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes) {
   size_t total = align_up(sizeof(AvantHeader) + (size_t)bytes);
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   if (!gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       avant_nursery_held > gc_heap.young_carried && total >= avant_young_bytes) {
@@ -661,7 +666,8 @@ __attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint3
   void *p;
   gc_init();
   if (gc_heap.set.stress) {
-    pthread_mutex_lock(&gc_heap.world);
+    gc_safepoint();
+    gc_lock(&gc_heap.world);
     gc_stress_point();
     pthread_mutex_unlock(&gc_heap.world);
   }

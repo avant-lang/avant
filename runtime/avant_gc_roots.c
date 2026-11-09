@@ -21,6 +21,10 @@
  * thread can collect at any instruction. */
 atomic_int g_avant_shared;
 
+/* Whether a thread has registered yet: the first one is the main thread
+ * (Stage 28 W17a). */
+static atomic_int g_first_registered;
+
 /* The calling thread's collector state (avant_gc_internal.h). */
 __thread GcThread gc_thread;
 
@@ -29,7 +33,8 @@ __thread GcThread gc_thread;
  * was GcThread.frame). */
 __thread __attribute__((visibility("hidden"))) Frame *avant_gc_top;
 
-void avant_gc_register_thread(void) {
+static void register_thread(int implicit) {
+  int foreign;
   if (gc_thread.reg.head) {
     return;
   }
@@ -46,28 +51,25 @@ void avant_gc_register_thread(void) {
       pthread_attr_destroy(&attr);
     }
   }
-  pthread_mutex_lock(&gc_heap.threads_mu);
-  gc_thread.reg.next = gc_heap.threads;
-  gc_heap.threads = &gc_thread.reg;
-  if (gc_thread.reg.next) {
-    atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
+  /* A thread registered by its first avant_gc_enter is a foreign one
+   * (rule 4 of gc-design.md section 4.4: native between callbacks),
+   * except the program's first thread (the main thread's first frame). */
+  foreign = implicit && atomic_exchange(&g_first_registered, 1) != 0;
+  if (!implicit) {
+    atomic_store(&g_first_registered, 1);
   }
-  pthread_mutex_unlock(&gc_heap.threads_mu);
+  gc_thread_registered(foreign);
+}
+
+void avant_gc_register_thread(void) {
+  register_thread(0);
 }
 
 void avant_gc_unregister_thread(void) {
-  pthread_mutex_lock(&gc_heap.threads_mu);
-  ThreadReg **pp = &gc_heap.threads;
-  while (*pp) {
-    if (*pp == &gc_thread.reg) {
-      *pp = gc_thread.reg.next;
-      break;
-    }
-    pp = &(*pp)->next;
+  if (!gc_thread.reg.head) {
+    return;
   }
-  gc_thread.reg.head = NULL;
-  gc_thread.reg.next = NULL;
-  pthread_mutex_unlock(&gc_heap.threads_mu);
+  gc_thread_unregistering();
 }
 
 /* A call used to calloc a frame and free it on leave. Hot recursion
@@ -76,7 +78,13 @@ void avant_gc_unregister_thread(void) {
 void avant_gc_enter(void) {
   gc_heap.ctr.root.enters++;
   gc_init();
-  avant_gc_register_thread();
+  register_thread(1);
+  if (gc_thread.base_native && !avant_gc_top) {
+    /* Rule 4: a foreign thread's callback returns to running (a
+     * safepoint if a collection is in progress). */
+    gc_thread.base_native = 0;
+    avant_gc_native_end();
+  }
   Frame *f = gc_thread.frame_free;
   if (f) {
     gc_thread.frame_free = f->prev;
@@ -106,6 +114,11 @@ void avant_gc_leave(void) {
   f->n = 0;
   f->prev = gc_thread.frame_free;
   gc_thread.frame_free = f;
+  if (!avant_gc_top && gc_thread.foreign && !gc_thread.base_native) {
+    /* Rule 4: a foreign thread is native between callbacks. */
+    gc_thread.base_native = 1;
+    avant_gc_native_begin();
+  }
 }
 
 /* A runtime unit registers a thread-local slot that holds a heap
@@ -343,6 +356,9 @@ static void nogc_begin(void *site) {
   }
   gc_heap.defer += 1;
   pthread_mutex_unlock(&gc_heap.world);
+  /* The thread's own depth (Stage 28 W17a): it never stops at a
+   * safepoint inside a region, nor turns native. */
+  gc_thread.nogc += 1;
 }
 
 __attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void) {
@@ -372,6 +388,9 @@ __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void) {
     gc_heap.defer -= 1;
   }
   pthread_mutex_unlock(&gc_heap.world);
+  if (gc_thread.nogc > 0) {
+    gc_thread.nogc -= 1;
+  }
 }
 
 void avant_world_lock(void) {

@@ -271,7 +271,8 @@ static int region_refuses(void);
 
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
-  uint64_t t0 = now_ns();
+  int resume = 0;
+  uint64_t t0;
   if (gc_heap.collecting) {
     gc_die("GC reentered");
   }
@@ -284,6 +285,31 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   if (!full && !allow_move) {
     gc_die("a young collection always moves");
   }
+  /* The handshake (Stage 28 W17a, gc-design.md section 4.4): the world
+   * lock is released (rule 1) while this thread raises the request and
+   * waits for every other registered thread to stop at a safepoint or be
+   * native, then taken again. When another thread held the request, this
+   * one stopped until that collection was done; a collection the policy
+   * asked for (the budget, the trigger, a stress point) is then
+   * reconsidered, an explicit or heap-limit one runs. */
+  if (!gc_thread.collector) {
+    for (;;) {
+      int mine;
+      pthread_mutex_unlock(&gc_heap.world);
+      mine = gc_stop_world();
+      pthread_mutex_lock(&gc_heap.world);
+      if (mine) {
+        break;
+      }
+      if (why == GC_WHY_STRESS || (why == GC_WHY_BUDGET && avant_nursery_held < avant_young_bytes) ||
+          (why == GC_WHY_TRIGGER && !gc_heap.set.nursery_off && gc_heap.mature_since_full < gc_heap.full_trigger) ||
+          (why == GC_WHY_TRIGGER && gc_heap.set.nursery_off && avant_since_gc < gc_heap.full_trigger)) {
+        return;
+      }
+    }
+    resume = 1;
+  }
+  t0 = now_ns();
   gc_heap.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
@@ -417,6 +443,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_quarantine_seal();
   }
   gc_heap.collecting = 0;
+  if (resume) {
+    gc_resume_world();
+  }
 }
 
 void gc_maybe_collect(void) {
@@ -460,11 +489,11 @@ void gc_maybe_collect(void) {
 
 /* A stress point (AVANT_GC_STRESS=1). The caller holds gc_heap.world. Only
  * where a collection may run: not inside a defer region, not during a
- * collection, not in a shared program (no thread is stopped, D191), and
- * only with a young generation to collect. */
+ * collection, and only with a young generation to collect. Shared
+ * programs too since Stage 28 W17a (the handshake stops the other
+ * threads; before, D191 kept the stress mode to one thread). */
 void gc_stress_point(void) {
-  if (!gc_heap.set.stress || gc_heap.collecting || gc_heap.defer || gc_heap.set.nursery_off ||
-      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+  if (!gc_heap.set.stress || gc_heap.collecting || gc_heap.defer || gc_heap.set.nursery_off) {
     return;
   }
   gc_heap.stress_now = 1;
@@ -511,7 +540,8 @@ void gc_init_slow(void) {
  * before it materializes the request). */
 void avant_gc_heap_goal_collect(void) {
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   gc_maybe_collect();
   pthread_mutex_unlock(&gc_heap.world);
 }
@@ -561,7 +591,8 @@ static int region_refuses(void) {
 
 void avant_nursery_reclaim(void) {
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   /* A young collection asked for inside a no-GC region is dropped (the
    * budget still triggers one after it). */
   if (region_refuses()) {
@@ -576,7 +607,8 @@ void avant_nursery_reclaim(void) {
 
 void avant_gc_collect(void) {
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   if (region_refuses()) {
     gc_heap.explicit_pending = 1;
     gc_fast_clear();

@@ -297,11 +297,19 @@ typedef struct LargeIter {
  * alike; the type is avant_gc.h's AvantGcFrame. */
 typedef AvantGcFrame Frame;
 
+/* A registered thread's collector state as other threads see it (Stage
+ * 28 W17a, gc-design.md section 4.4). state is GC_RUNNING, GC_NATIVE or
+ * GC_SAFEPOINT (avant_gc_safepoint.c); owner is the thread's GcThread,
+ * whose runtime-held slots every collection visits. */
+enum { GC_RUNNING = 0, GC_NATIVE = 1, GC_SAFEPOINT = 2 };
+struct GcThread;
 typedef struct ThreadReg {
   struct ThreadReg *next;
   Frame **head;
   void *stack_lo;
   void *stack_hi;
+  atomic_int state;
+  struct GcThread *owner;
 } ThreadReg;
 
 typedef struct PinEnt {
@@ -543,6 +551,12 @@ typedef struct GcPauseCounters {
   uint64_t young_ns;
   uint64_t full_ns;
   uint64_t max_ns;
+  /* The handshake (Stage 28 W17a): collections that waited for at least
+   * one other registered thread, the time spent waiting for the others to
+   * reach a safepoint or native state (summed), and the longest wait. */
+  uint64_t hs_n;
+  uint64_t hs_ns;
+  uint64_t hs_max_ns;
 } GcPauseCounters;
 
 /* why: full collections by cause (GcWhy): mature space grew by the
@@ -969,6 +983,16 @@ typedef struct GcHeap {
   ThreadReg *threads;
   pthread_mutex_t world;
   pthread_mutex_t threads_mu;
+  /* avant_gc_safepoint.c. The handshake (Stage 28 W17a, gc-design.md
+   * section 4.4): its own lock, used only by the collector, the safepoint
+   * and native transitions and thread registration (rule 1: never held
+   * with a runtime lock a stopped thread could wait for); stopped_cv
+   * wakes the collector when a thread stops or turns native, resume_cv
+   * wakes the stopped threads when the collection is done. The request
+   * flag itself is avant_gc_requested (generated code polls it). */
+  pthread_mutex_t hs_mu;
+  pthread_cond_t hs_stopped_cv;
+  pthread_cond_t hs_resume_cv;
   int defer;
   PinEnt *pins;
   /* The task roots (avant_gc_task_root_add, Stage 28 W16b): spawned
@@ -1001,14 +1025,25 @@ typedef struct GcThread {
    * collection reads and rewrites them like root slots. */
   void **roots[GC_THREAD_ROOTS];
   uint32_t nroots;
+  /* The handshake (Stage 28 W17a, avant_gc_safepoint.c). native: the
+   * depth of avant_gc_native_begin/end; native_on: the outermost begin
+   * changed the state (it does not inside a no-GC region or on an
+   * unregistered thread); nogc: this thread's own no-GC region depth (a
+   * thread never stops inside one); collector: this thread holds the
+   * request (it is collecting); foreign: registered by its first
+   * avant_gc_enter and not the first thread (a C library's thread: native
+   * between callbacks, rule 4); base_native: such a thread left its
+   * outermost frame and is native until its next avant_gc_enter. */
+  int native;
+  int native_on;
+  int nogc;
+  int collector;
+  int foreign;
+  int base_native;
 } GcThread;
 
 extern __thread GcThread gc_thread;
 
-/* Every runtime-held reference slot of the collecting thread (Stage 28
- * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls).
- * Only the collecting thread's own slots are visited, as before; other
- * threads' are part of D191's window until W17 stops them. */
 /* Every task root's slot (all threads': the list is global, under the
  * world lock the collector holds). Its object is PINNED while rooted,
  * so no collection moves it; the slot is never rewritten. */
@@ -1021,10 +1056,25 @@ extern __thread GcThread gc_thread;
     }                                                                    \
   } while (0)
 
+/* Every runtime-held reference slot of every registered thread (Stage 28
+ * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls;
+ * every thread's since W17a, when the handshake stops the others: before,
+ * only the collecting thread's were visited, part of D191's window), and
+ * the collecting thread's own when it is not registered. */
 static inline void gc_each_runtime_root(void (*fn)(void **slot)) {
+  ThreadReg *t;
   uint32_t i;
-  for (i = 0; i < gc_thread.nroots; i++) {
-    fn(gc_thread.roots[i]);
+  for (t = gc_heap.threads; t; t = t->next) {
+    if (t->owner) {
+      for (i = 0; i < t->owner->nroots; i++) {
+        fn(t->owner->roots[i]);
+      }
+    }
+  }
+  if (!gc_thread.reg.head) {
+    for (i = 0; i < gc_thread.nroots; i++) {
+      fn(gc_thread.roots[i]);
+    }
   }
 }
 
@@ -1210,6 +1260,30 @@ void gc_print_stats(void);
 
 /* avant_gc_roots.c */
 extern atomic_int g_avant_shared;
+
+/* avant_gc_safepoint.c (Stage 28 W17a, gc-design.md section 4.4): the
+ * request flag generated code polls, the stop-the-world handshake, the
+ * thread states. gc_stop_world returns 1 when this thread holds the
+ * request and every other registered thread is at a safepoint or native,
+ * 0 when another thread was collecting and this one waited at a
+ * safepoint until it was done (the caller holds no runtime lock; rule
+ * 1). gc_resume_world clears the request. gc_safepoint_slow stops the
+ * calling thread while a request is raised (a no-op inside its own no-GC
+ * region or while it collects). gc_lock takes a lock at a collecting call
+ * (native while it waits, rule 2); gc_cond_wait waits natively. */
+extern atomic_int avant_gc_requested;
+int gc_stop_world(void);
+void gc_resume_world(void);
+void gc_safepoint_slow(void);
+void gc_thread_registered(int foreign);
+void gc_thread_unregistering(void);
+void gc_lock(pthread_mutex_t *m);
+void gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
+static inline void gc_safepoint(void) {
+  if (__builtin_expect(atomic_load_explicit(&avant_gc_requested, memory_order_acquire) != 0, 0)) {
+    gc_safepoint_slow();
+  }
+}
 
 /* Small helpers every unit inlines (static inline: one copy per unit,
  * no symbol), moved from avant_rt.c unchanged. */

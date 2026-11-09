@@ -3,7 +3,9 @@
 
 #include "avant_rt.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 
 /*
  * The collector's interface to the rest of the runtime (Stage 28 W12).
@@ -285,6 +287,23 @@ void avant_gc_enter(void);
 void avant_gc_leave(void);
 void avant_gc_heap_goal_collect(void);
 void avant_gc_add_root(void **slot);
+extern atomic_int avant_gc_requested;
+void avant_gc_poll(void);
+void avant_gc_native_begin(void);
+void avant_gc_native_end(void);
+/* Runtime-internal (Stage 28 W17a): a blocking lock or condition wait at
+ * a collecting call (rule 2 of gc-design.md section 4.4): an uncontended
+ * lock is taken at once; a contended one, and every wait, is native, so
+ * a collection does not wait for this thread, and the thread returns to
+ * running only when no collection is in progress (the mutex is held
+ * again on return). A collection may run meanwhile: the caller holds
+ * every heap reference it needs after the call in a handle scope (RC1)
+ * and reads no heap object while waiting. A wait inside a no-GC region
+ * stays running. timedwait returns pthread_cond_timedwait's result. */
+__attribute__((visibility("hidden"))) void avant_gc_lock(pthread_mutex_t *m);
+__attribute__((visibility("hidden"))) void avant_gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
+__attribute__((visibility("hidden"))) int avant_gc_cond_timedwait(pthread_cond_t *cv, pthread_mutex_t *m,
+                                                                 const struct timespec *deadline);
 /* avant_str_generation() (avant_rt.h) reads g_avant_str_gen, which every
  * collection bumps. */
 extern _Atomic uint32_t g_avant_str_gen;

@@ -155,6 +155,22 @@ void avant_gc_stats(AvantGcStats *out);
 void avant_gc_collect(void);
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
+/* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
+ * section 4.4). A collection stops every other registered thread at a
+ * safepoint (a collecting call, or avant_gc_poll) or finds it native.
+ * avant_gc_requested is nonzero while a collection is requested or
+ * running; generated code in a program that spawns or uses .parallel
+ * tests it at every loop back-edge of a frame function and calls
+ * avant_gc_poll when it is set (the thread stops there until the
+ * collection is done). Around a C call that may block or run long
+ * without touching the Avant heap, a thread is native:
+ * avant_gc_native_begin before it, avant_gc_native_end after (they nest;
+ * the end waits while a collection is in progress). Between them the
+ * thread must not read or write a heap object it has not pinned. */
+extern atomic_int avant_gc_requested;
+void avant_gc_poll(void);
+void avant_gc_native_begin(void);
+void avant_gc_native_end(void);
 
 size_t avant_str_n(const char *s);
 char *avant_str_empty(void);
