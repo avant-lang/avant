@@ -46,7 +46,10 @@
  *     scanned at a young collection only in the 256-byte cards a store
  *     marked; avant_barrier on such a buffer counts every card.
  *   - avant_pin/avant_unpin keep an object at its address while C holds
- *     it (counted). avant_alloc_in_mature(1) makes the calling thread
+ *     it (counted). avant_pin_field/avant_release_range are the pins of
+ *     C-layout field stores, recorded by the field's address until a
+ *     `release` (avant_rt.h; Stage 28 W16c, D266).
+ *     avant_alloc_in_mature(1) makes the calling thread
  *     allocate in the mature space, which a young collection never
  *     moves, until avant_alloc_in_mature(0) (no runtime unit uses it
  *     since Stage 28 W17b: the pool's workers, the HTTP loop threads and

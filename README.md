@@ -867,7 +867,7 @@ Heap allocation goes through the collector in `runtime/avant_gc_*.c` (one file p
 
 `AVANT_NURSERY=0` restores a full, non-moving collection. Every collector setting is an environment variable read once at start-up; `runtime/avant_gc.h` lists them. A switch is on for `1` and off for `0`, a size is a whole number, and any other value is reported on stderr and ignored.
 
-A heap object stored into a C field is pinned for the process. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never clears a process pin. See [C interop](#c-interop).
+A heap object stored into a C field is pinned until the program releases that field with `release(...)`, and for the rest of the process if it never does. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never takes a field's pin and a release never takes a block's. See [Strings in C memory](#strings-in-c-memory).
 
 ## C interop
 
@@ -906,7 +906,42 @@ fn (p: Ptr(Point)) sum: Int {
 }
 ```
 
-`Ptr(Int)` is rejected. `Ptr` of a layout, and `Ptr(Void)`, are the pointer types this is for. A `String` stored into a C field is pinned for the process, so the collector will not move it while C holds the pointer.
+`Ptr(Int)` is rejected. `Ptr` of a layout, and `Ptr(Void)`, are the pointer types this is for.
+
+### Strings in C memory
+
+A `String` stored into a C field (`h.name = s`) is pinned: the collector neither moves nor frees it, so C may read it, keep the pointer, or copy the struct. Overwriting the field keeps the old value pinned too, because C may still hold it. A C-layout store keeps its value alive until `release`.
+
+When C is done with what Avant stored, say so with `release`:
+
+```avant
+lib cfg {
+  struct Holder {
+    name: String
+    id: Int
+  }
+  fun holder_new: Ptr(Holder)
+  fun holder_keep(h: Ptr(Holder))
+  fun holder_forget
+  fun holder_free(h: Ptr(Holder))
+}
+
+fn main {
+  h = cfg.holder_new()
+  h.name = "first-${1}"
+  cfg.holder_keep(h)          // C keeps the pointer
+  h.name = "second-${2}"      // "first-1" stays pinned
+  cfg.holder_forget()         // C drops what it kept
+  release(h.name)             // both values unpinned; h.name is now null
+  cfg.holder_free(h)          // or release(h) before freeing it
+}
+```
+
+- `release(h.name)` gives back the pin of every value Avant stored into that field, the current one and every overwritten one. If the field still holds a value Avant stored there, it becomes null, so C never sees a pointer the collector may free or move.
+- `release(h.at)` does the same for every `String` field of a nested layout, and `release(h)` for every field of the struct `h` points to. Write `release(h)` before C frees the struct.
+- Releasing twice, or releasing a field Avant never stored, does nothing. A value C stored itself is left in place. A pin taken by `pin(x) { }`, or by a store of the same value into another field, stays.
+- `release` takes a C-layout field that holds a `String` (directly or in a nested layout) or a `Ptr` to such a layout. An Avant value, an `Int`, `Bool`, `Float64` or `Ptr` field, `Ptr(Void)`, and a layout with no `String` field are compile errors. It is a statement, not a value.
+- Forgetting a release costs memory, never correctness. Releasing too early is a dangling C pointer: a value C still uses after its release may be moved or freed by the next collection, and C then reads memory that is no longer that string. Neither the compiler nor `AVANT_GC_VERIFY=1` can see C's reads.
 
 A `fun` parameter may be an Avant `fn` type; that declares a C callback. Pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments (libc `qsort` with an Avant comparator is the proven shape). A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile.
 

@@ -682,6 +682,21 @@ pub class Checker {
       }
       return
     }
+    if k == st_release() {
+      if e = stmt.expr {
+        et = self.check_expr(e)
+        if !self.has_err {
+          self.check_release(e, et)
+        }
+      }
+      if at_tail {
+        if expected.is_void {
+        } else {
+          self.fail(stmt.loc, "missing return value")
+        }
+      }
+      return
+    }
     if k == st_pin() {
       if e = stmt.expr {
         et = self.check_expr(e)
@@ -1701,6 +1716,61 @@ pub class Checker {
       }
     }
     nil
+  }
+
+  // `release(place)` (Stage 28 W16c, D266): a field of a C layout that
+  // holds a reference (a `String`, or a nested layout with one), or a
+  // `Ptr` to a C layout with such a field (the whole struct).
+  pub fn check_release(e: Expr, et: Ty) {
+    in_c = false
+    name = ""
+    if e.kind == ex_field() && !e.method_call {
+      if obj = e.object {
+        if ot = obj.ty {
+          in_c = ot.is_ptr || ot.is_clayout
+        }
+      }
+      name = e.ident
+    }
+    if in_c {
+      if et.is_string {
+        return
+      }
+      if et.is_clayout {
+        if !clayout_holds_ref(et) {
+          self.fail(e.loc, "nothing to release: ${name} is ${et.show}, which has no String field")
+        }
+        return
+      }
+      hint = ""
+      if et.is_ptr {
+        if inner = et.inner {
+          if inner.is_clayout && clayout_holds_ref(inner) {
+            hint = " (to release the struct it points to, name the pointer first: p = x.${name}, then release(p))"
+          }
+        }
+      }
+      self.fail(e.loc, "nothing to release: ${name} is ${et.show}${hint}")
+      return
+    }
+    if et.is_ptr {
+      if inner = et.inner {
+        if inner.is_clayout {
+          if !clayout_holds_ref(inner) {
+            self.fail(e.loc, "nothing to release: ${inner.show} has no String field")
+          }
+          return
+        }
+      }
+      self.fail(e.loc, "release needs the fields of a C layout; Avant knows no fields of ${et.show}")
+      return
+    }
+    heap = et.is_string || et.is_bytes || et.is_buf || et.is_array || et.is_hash || et.is_class || et.is_fn || et.is_join
+    if heap {
+      self.fail(e.loc, "release takes the C field the value was stored in; for a scoped pin use pin(x) { }")
+      return
+    }
+    self.fail(e.loc, "release takes a C-layout field or a Ptr to a C layout, got ${et.show}")
   }
 
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
@@ -4011,4 +4081,23 @@ pub class Checker {
     self.pop_scope
     self.t_void()
   }
+}
+
+// Whether a C layout has a field that holds a reference (a `String`,
+// directly or in a nested layout): what `release` gives back (D266).
+pub fn clayout_holds_ref(t: Ty): Bool {
+  i = 0
+  while i < t.fields.size {
+    ft = t.fields[i].ty
+    if ft.is_string {
+      return true
+    }
+    if ft.is_clayout {
+      if clayout_holds_ref(ft) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
 }

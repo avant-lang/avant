@@ -9,7 +9,8 @@
 // `fn` type that calls the target, which opens its own frame), the `pin`
 // statement (unpinned at the end of its block, before every return, and
 // on `break`/`next` out of the pinning loop), and the pin of a heap value
-// stored into a C-layout field (never unpinned; V13 third form).
+// stored into a C-layout field (recorded by the field's address and
+// unpinned only by `release`, D266; V13 third form), and `release`.
 
 import location
 import source
@@ -287,16 +288,65 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
 }
 
 // A reference-carrying value stored into a C-layout field (the old
-// back end's emit_assign, c_layout_heap_store): the value in a local, pinned, then
-// stored; never unpinned (audit 4.6 (4); V13 third form). C memory is
-// not traced, so no barrier.
+// back end's emit_assign, c_layout_heap_store): the value in a local, the
+// field's address in a local (one GEP: `addr` of a place reached through
+// a `ptr` is a `ptr`), the value pinned and the pin recorded under that
+// address (`avant_pin_field`, Stage 28 W16c, D266), then stored. An
+// overwrite unpins nothing; `release` gives the recorded pins back
+// (lower_release). C memory is not traced, so no barrier (audit 4.6 (4);
+// V13 third form).
 pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   v = lw.hold(val, ty)
+  a = b.temp(mt_ptr())
+  dummy = b.assign(b.pl(a), b.rv_addr(p))
   args: Array(MOperand) = []
+  args.push(b.copy_local(a))
   args.push(b.copy_local(v))
-  dummy = b.call(-1, "avant_pin", args)
-  dummy2 = b.assign(p, b.rv_use(b.copy_local(v)))
+  dummy2 = b.call(-1, "avant_pin_field", args)
+  dummy3 = b.assign(p, b.rv_use(b.copy_local(v)))
+}
+
+// `release(place)` (Stage 28 W16c, D266): the pins Avant's stores into
+// a C-layout field took, given back. For a field (`release(h.name)`,
+// `release(h.at)`): its address (`addr` of a place through a `ptr` is a
+// `ptr`) and its size; for a `Ptr` to a C layout (`release(h)`): the
+// pointer and the layout's size. Then `avant_release_range(lo, n)`,
+// which never collects. No store, so no V13 form.
+pub fn (lw: MirLower) lower_release(st: Stmt) {
+  b = lw.lw_b
+  if e = st.expr {
+    ty = lw.ety(e)
+    if lw.failed {
+      return
+    }
+    lo = -1
+    n = 0
+    if lw.lw_m.types.is_ptr(ty) {
+      v = lw.lower_expr(e)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      lo = lw.hold(v, ty)
+      n = lw.lw_m.types.size_of(lw.lw_m.types.pointee(ty))
+    } else {
+      p = lw.place_of(e)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      lo = b.temp(mt_ptr())
+      dummy = b.assign(b.pl(lo), b.rv_addr(p))
+      n = lw.lw_m.types.size_of(ty)
+    }
+    args: Array(MOperand) = []
+    args.push(b.copy_local(lo))
+    args.push(b.c_u64(n.to_i64))
+    dummy2 = b.call(-1, "avant_release_range", args)
+    return
+  }
+  lw.refuse(st.loc, "a release without a place")
 }
 
 // ---- pins

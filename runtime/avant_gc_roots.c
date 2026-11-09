@@ -270,22 +270,18 @@ void *avant_gc_reload(void *slot) {
   return p;
 }
 
-void avant_pin(void *payload) {
-  if (!payload) {
-    return;
-  }
-  pthread_mutex_lock(&gc_heap.world);
+/* One more pin of payload, under the world lock (taken by the caller).
+ * Returns 0 when payload is not a heap payload (nothing is pinned). */
+static int pin_locked(void *payload) {
   if (!gc_is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&gc_heap.world);
-    return;
+    return 0;
   }
   AvantHeader *h = avant_header(payload);
   if (h->flags & AVANT_FLAG_PINNED) {
     for (PinEnt *p = gc_heap.pins; p; p = p->next) {
       if (p->payload == payload) {
         p->count += 1;
-        pthread_mutex_unlock(&gc_heap.world);
-        return;
+        return 1;
       }
     }
   }
@@ -299,6 +295,43 @@ void avant_pin(void *payload) {
   e->count = 1;
   e->next = gc_heap.pins;
   gc_heap.pins = e;
+  return 1;
+}
+
+/* One pin of payload given back, under the world lock (taken by the
+ * caller). A pointer that is not a pinned heap payload is ignored. */
+static void unpin_locked(void *payload) {
+  PinEnt **pp;
+  if (!gc_is_heap_payload(payload, NULL, NULL)) {
+    return;
+  }
+  AvantHeader *h = avant_header(payload);
+  if ((h->flags & AVANT_FLAG_PINNED) == 0) {
+    return;
+  }
+  pp = &gc_heap.pins;
+  while (*pp) {
+    if ((*pp)->payload == payload) {
+      (*pp)->count -= 1;
+      if ((*pp)->count > 0) {
+        return;
+      }
+      PinEnt *dead = *pp;
+      *pp = dead->next;
+      free(dead);
+      break;
+    }
+    pp = &(*pp)->next;
+  }
+  gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
+}
+
+void avant_pin(void *payload) {
+  if (!payload) {
+    return;
+  }
+  pthread_mutex_lock(&gc_heap.world);
+  (void)pin_locked(payload);
   pthread_mutex_unlock(&gc_heap.world);
 }
 
@@ -313,36 +346,176 @@ int avant_pin_count(void) {
 }
 
 void avant_unpin(void *payload) {
-  PinEnt **pp;
   if (!payload) {
     return;
   }
   pthread_mutex_lock(&gc_heap.world);
-  if (!gc_is_heap_payload(payload, NULL, NULL)) {
+  unpin_locked(payload);
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* Field pins (Stage 28 W16c, D266; avant_rt.h): the pins that stores of
+ * references into C-layout fields took, recorded by the field's address
+ * so that `release` can give them back. A hash of FieldRec by address,
+ * chained, under the world lock like the pins themselves. A record holds
+ * every value Avant stored at that address since its last release that
+ * took a pin (a value stored again right after itself shares an entry
+ * with a count), and the last value Avant stored there (pinned or not: a
+ * literal string is not a heap payload and takes no pin), which is how a
+ * release knows whether the field still holds Avant's value. */
+typedef struct FieldVal {
+  void *v;
+  uint32_t count;
+} FieldVal;
+
+typedef struct FieldRec {
+  struct FieldRec *next;
+  void **field;
+  void *last;
+  FieldVal *vals;
+  uint32_t n;
+  uint32_t cap;
+} FieldRec;
+
+static FieldRec **field_tab;
+static size_t field_tab_size; /* buckets, a power of two (0: none yet) */
+static size_t field_count;    /* records */
+
+static size_t field_hash(void **field) {
+  uint64_t x = (uint64_t)(uintptr_t)field >> 3;
+  x *= 0x9E3779B97F4A7C15ull;
+  return (size_t)(x >> 32) & (field_tab_size - 1);
+}
+
+static void *field_alloc(size_t n) {
+  void *p = calloc(1, n);
+  if (!p) {
     pthread_mutex_unlock(&gc_heap.world);
-    return;
+    gc_die("out of memory");
   }
-  AvantHeader *h = avant_header(payload);
-  if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-    pthread_mutex_unlock(&gc_heap.world);
-    return;
-  }
-  pp = &gc_heap.pins;
-  while (*pp) {
-    if ((*pp)->payload == payload) {
-      (*pp)->count -= 1;
-      if ((*pp)->count > 0) {
-        pthread_mutex_unlock(&gc_heap.world);
-        return;
-      }
-      PinEnt *dead = *pp;
-      *pp = dead->next;
-      free(dead);
-      break;
+  return p;
+}
+
+static void field_grow(void) {
+  size_t old = field_tab_size;
+  FieldRec **ot = field_tab;
+  field_tab_size = old ? old * 2 : 64;
+  field_tab = (FieldRec **)field_alloc(field_tab_size * sizeof(FieldRec *));
+  for (size_t i = 0; i < old; i++) {
+    FieldRec *r = ot[i];
+    while (r) {
+      FieldRec *nx = r->next;
+      size_t b = field_hash(r->field);
+      r->next = field_tab[b];
+      field_tab[b] = r;
+      r = nx;
     }
-    pp = &(*pp)->next;
   }
-  gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
+  free(ot);
+}
+
+void avant_pin_field(void *field, void *payload) {
+  void **f = (void **)field;
+  pthread_mutex_lock(&gc_heap.world);
+  int pinned = payload ? pin_locked(payload) : 0;
+  if (field_count >= field_tab_size) {
+    field_grow();
+  }
+  size_t b = field_hash(f);
+  FieldRec *r = field_tab[b];
+  while (r && r->field != f) {
+    r = r->next;
+  }
+  if (!r) {
+    r = (FieldRec *)field_alloc(sizeof(FieldRec));
+    r->field = f;
+    r->next = field_tab[b];
+    field_tab[b] = r;
+    field_count += 1;
+  }
+  r->last = payload;
+  if (pinned) {
+    if (r->n > 0 && r->vals[r->n - 1].v == payload) {
+      r->vals[r->n - 1].count += 1;
+    } else {
+      if (r->n == r->cap) {
+        uint32_t cap = r->cap ? r->cap * 2 : 4;
+        FieldVal *nv = (FieldVal *)realloc(r->vals, cap * sizeof(FieldVal));
+        if (!nv) {
+          pthread_mutex_unlock(&gc_heap.world);
+          gc_die("out of memory");
+        }
+        r->vals = nv;
+        r->cap = cap;
+      }
+      r->vals[r->n].v = payload;
+      r->vals[r->n].count = 1;
+      r->n += 1;
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* Gives back r's pins and nulls its field if the field still holds a
+ * value Avant stored there; frees r (already unlinked). */
+static void field_release(FieldRec *r) {
+  void *cur = *r->field;
+  int ours = cur != NULL && cur == r->last;
+  for (uint32_t i = 0; i < r->n; i++) {
+    if (r->vals[i].v == cur) {
+      ours = cur != NULL;
+    }
+    for (uint32_t k = 0; k < r->vals[i].count; k++) {
+      unpin_locked(r->vals[i].v);
+    }
+  }
+  if (ours) {
+    *r->field = NULL;
+  }
+  free(r->vals);
+  free(r);
+}
+
+void avant_release_range(void *lo, uint64_t n) {
+  uintptr_t a = (uintptr_t)lo;
+  uintptr_t end = a + (uintptr_t)n;
+  pthread_mutex_lock(&gc_heap.world);
+  if (field_count == 0 || n == 0) {
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
+  if (n / sizeof(void *) <= field_count) {
+    /* A field or a struct: look up each pointer-aligned address. */
+    uintptr_t p = (a + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
+    for (; p + sizeof(void *) <= end; p += sizeof(void *)) {
+      FieldRec **rp = &field_tab[field_hash((void **)p)];
+      while (*rp && (uintptr_t)(*rp)->field != p) {
+        rp = &(*rp)->next;
+      }
+      if (*rp) {
+        FieldRec *r = *rp;
+        *rp = r->next;
+        field_count -= 1;
+        field_release(r);
+      }
+    }
+  } else {
+    /* A range larger than the table: walk the table. */
+    for (size_t i = 0; i < field_tab_size; i++) {
+      FieldRec **rp = &field_tab[i];
+      while (*rp) {
+        FieldRec *r = *rp;
+        uintptr_t f = (uintptr_t)r->field;
+        if (f >= a && f < end) {
+          *rp = r->next;
+          field_count -= 1;
+          field_release(r);
+        } else {
+          rp = &r->next;
+        }
+      }
+    }
+  }
   pthread_mutex_unlock(&gc_heap.world);
 }
 

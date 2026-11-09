@@ -22,7 +22,7 @@ import backends
 // end pass.
 
 fn golden_names: Array(String) {
-  ["byval", "callbacks", "calls", "fresh", "layout", "pins"]
+  ["byval", "callbacks", "calls", "fresh", "layout", "pins", "release"]
 }
 
 // The programs with a run golden from the old back end.
@@ -49,12 +49,22 @@ fn both_progs: Array(String) {
 // foreign_exit.av (Stage 28 W17c, O126): waves of C threads that call an
 // allocating callback and exit without unregistering, while the main
 // thread collects (thread exit unregisters).
+// release.av (Stage 28 W16c, D266): the `release` statement on Q9's two
+// cases (C keeps a pointer, C copies the struct), on fields C stored
+// itself, on whole and nested structs, and in a bounded loop.
 fn new_progs: Array(String) {
-  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av", "tests/fixtures/ffi/foreign.av", "tests/fixtures/ffi/foreign_exit.av"]
+  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av", "tests/fixtures/ffi/foreign.av", "tests/fixtures/ffi/foreign_exit.av", "tests/fixtures/ffi/release.av"]
 }
 
 fn new_wants: Array(String) {
-  ["42\n7\n9\n4\n6\n1\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\ncallback bad: 0\n"]
+  ["42\n7\n9\n4\n6\n1\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\ncallback bad: 0\n", "q9 pins: 3\nchurn true\nC's kept pointer reads the original: 1\nthe struct C copied reads the original: 1\nthe field reads the last value: 1\nafter release, pins: 0\nthe released field reads null from C: 1\nreleased twice, pins: 0\nchurn after release true\nnever stored: pins 0, note null 1\nC's own value kept: 1\nAvant's value overwritten by C, pins: 1\nreleased: pins 0, C's value kept 1\nstruct pins: 3\nnested released: pins 2, tag null 1, n 5\nstruct released: pins 0, name null 1, note null 1, id 9\ninside pin(s): pins 1\nafter pin(s): pins 0\nstored twice, one released: pins 1, note still reads it 1\nboth released: pins 0\na literal released: pins 0, name null 1\nbounded rounds ok: 400, pins 0\n"]
+}
+
+// release.av's bounded loop (Stage 28 W16c, D266): 400 fresh 256 KiB
+// strings stored into a C field and released run under a 32 MB heap
+// (without the release the program keeps them all and dies there).
+fn release_envs: Array(String) {
+  ["AVANT_HEAP_MAX_MB=32", "AVANT_HEAP_MAX_MB=32 AVANT_GC_VERIFY=1"]
 }
 
 // The std module tests, compiled by the new back end and run.
@@ -178,6 +188,13 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     }
     i = i + 1
   }
+  rbase = runs.size
+  renvs = release_envs()
+  e = 0
+  while e < renvs.size {
+    runs.push(run_job_env(dir, "${key_of("tests/fixtures/ffi/release.av")}.new", "${key_of("tests/fixtures/ffi/release.av")}.h${e}", renvs[e]))
+    e = e + 1
+  }
   sbase = runs.size
   i = 0
   while i < sp.size {
@@ -227,6 +244,14 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
       e = e + 1
     }
     i = i + 1
+  }
+  rk = key_of("tests/fixtures/ffi/release.av")
+  e = 0
+  while e < renvs.size {
+    c.eq_int(runs[rbase + e].code, 0, "tests/fixtures/ffi/release.av under ${renvs[e]}: exit 0")
+    c.eq_str(log_text("${dir}/${rk}.h${e}.out"), wants[np.size - 1], "tests/fixtures/ffi/release.av under ${renvs[e]}: the known stdout")
+    c.eq_str(log_text("${dir}/${rk}.h${e}.err"), "", "tests/fixtures/ffi/release.av under ${renvs[e]}: no stderr")
+    e = e + 1
   }
   i = 0
   while i < sp.size {

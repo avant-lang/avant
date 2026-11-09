@@ -301,6 +301,20 @@ fn st_rejecting(out: Buf) {
   b.ret
   st_case(out, "v13_barrier_on_other", lo, b.module)
 
+  // V13 third form, recorded (Stage 28 W16c): avant_pin_field of another
+  // operand than the one stored.
+  b = st_base(false)
+  cell0 = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
+  st_fn(b, "f", st_tys(b.ptr_to(b.agg(cell0)), mt_str()), vd, mfk_unset())
+  la0 = b.local(mt_ptr(), "")
+  b.assign(b.pl(la0), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
+  lv0 = b.local(mt_str(), "")
+  b.assign(b.pl(lv0), b.rv_use(b.copy_local(2)))
+  b.call(-1, "avant_pin_field", st_two(b.copy_local(la0), b.copy_local(lv0)))
+  b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
+  b.ret
+  st_case(out, "v13_pin_field_on_other", lo, b.module)
+
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
   st_fn(b, "f", st_tys(box_ref, mt_str()), vd, mfk_unset())
@@ -473,7 +487,8 @@ fn st_accepting(out: Buf) {
   st_both(out, "ok_addr_in_slot", st_ok_module("ok_addr_in_slot"))
 
   // V13 forms 2, 3, 4: barrier_at on an addr holder, a pin before a store
-  // into C memory, a by-value push through a slot row's address.
+  // into C memory (avant_pin, or avant_pin_field with the field's address,
+  // Stage 28 W16c), a by-value push through a slot row's address.
   b = st_base(false)
   rec = b.types.layout_named("main.Rec")
   st_fn(b, "f", st_tys(b.addr_of(b.agg(rec)), mt_str()), vd, mfk_unset())
@@ -483,6 +498,12 @@ fn st_accepting(out: Buf) {
   cell = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
   st_fn(b, "g", st_tys(b.ptr_to(b.agg(cell)), mt_str()), vd, mfk_unset())
   b.call(-1, "avant_pin", st_one(b.copy_local(2)))
+  b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
+  b.ret
+  st_fn(b, "k", st_tys(b.ptr_to(b.agg(cell)), mt_str()), vd, mfk_unset())
+  la = b.local(mt_ptr(), "")
+  b.assign(b.pl(la), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
+  b.call(-1, "avant_pin_field", st_two(b.copy_local(la), b.copy_local(2)))
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret
   st_fn(b, "h", st_tys(mt_ref(), b.agg(rec)), vd, mfk_unset())
