@@ -576,7 +576,7 @@ void gc_verify_no_stale_marks(void) {
  *
  * Where soft-dirty tracking is unavailable (a kernel without
  * CONFIG_MEM_SOFT_DIRTY, an unreadable pagemap, a refused clear) the probe
- * at start-up says so, sd_mode stays 0 and every verification is whole, as
+ * (once, at the SD_WARM-th verification; a shorter program is whole) says so, sd_mode stays 0 and every verification is whole, as
  * before; a later refusal of either file turns it off for the rest of the
  * run, as does a forked child (sd_pid). The statistics line says which
  * mode ran (verify=). */
@@ -657,7 +657,13 @@ static void verify_at_exit(void) {
   gc_verify_exit_run(verify_at_exit_check);
 }
 
-void gc_verify_init(void) {
+/* The probe runs once, at the SD_WARM-th verification (below): a short
+ * program never opens the two files (the gate's VERIFY pass runs
+ * thousands of them). */
+static int sd_probed;
+
+static void sd_probe_once(void) {
+  sd_probed = 1;
   gc_heap.sd_mode = sd_probe();
   if (!gc_heap.sd_mode) {
     if (sd_pagemap >= 0) {
@@ -668,6 +674,9 @@ void gc_verify_init(void) {
     }
     sd_pagemap = sd_clear = -1;
   }
+}
+
+void gc_verify_init(void) {
   atexit(verify_at_exit);
 }
 
@@ -743,28 +752,29 @@ static void sd_stamp(void) {
  * measurement that inc_slice_mature under VERIFY + STRESS ran 2.26 times
  * slower incremental: 12.9 M minor faults in 30 s, 17.5 s of system time
  * against 4.8). Clearing the bits write-protects every page again, so
- * the first write to each page after a clear faults in the kernel (about
- * 1.4 us here, the fault and the pagemap read included); with a small
+ * the first write to each page after a clear faults in the kernel; with a small
  * heap written all over between collections (a stress collection at
  * every helper call) that costs more than the walk it saves. So each
  * form's cost per verification is measured as the program runs, an
  * average over the last few: the whole walk's time, or the incremental
- * check's time plus the clear before it plus the minor faults since that
- * clear (getrusage) at SD_FAULT_NS each, an upper bound since it counts
- * every first touch too. The next verification takes the cheaper form;
+ * check's time plus the process's system time since just before the
+ * clear (getrusage: the clear, the write faults it causes, the pagemap
+ * read), an upper bound since it also counts the program's own system
+ * calls. (A first version priced each minor fault at a constant 1.4 us;
+ * the gate's VERIFY pass then spent 4.5 s more system time.) The next verification takes the cheaper form;
  * every SD_PROBE verifications the other form is measured once, so a
  * change of the program's pattern is followed. The bits are cleared only
  * when the next verification is to be incremental; otherwise no page is
  * write-protected and the program runs as under the whole verifier.
  * Which pages are skipped is still decided by the kernel's record alone;
- * the costs only choose whether to ask it. */
-#define SD_FAULT_NS 1400u
+ * the costs only choose whether to ask it. The first SD_WARM verifications
+ * are whole (a short program never write-protects its pages). */
 #define SD_PROBE 64u
+#define SD_WARM 256u
 
 static uint64_t sd_cost_whole;
 static uint64_t sd_cost_incr;
-static uint64_t sd_clear_ns;
-static uint64_t sd_flt_at_clear;
+static uint64_t sd_stime_at_clear;
 static uint32_t sd_since_probe;
 
 static uint64_t sd_now(void) {
@@ -773,9 +783,13 @@ static uint64_t sd_now(void) {
   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-static uint64_t sd_minflt(void) {
+/* The process's system time in ns. */
+static uint64_t sd_stime(void) {
   struct rusage ru;
-  return getrusage(RUSAGE_SELF, &ru) == 0 ? (uint64_t)ru.ru_minflt : 0;
+  if (getrusage(RUSAGE_SELF, &ru) != 0) {
+    return 0;
+  }
+  return (uint64_t)ru.ru_stime.tv_sec * 1000000000ull + (uint64_t)ru.ru_stime.tv_usec * 1000ull;
 }
 
 /* An average over about the last eight costs (0: none yet). */
@@ -795,6 +809,9 @@ void gc_verify_begin(int full) {
   uint64_t dt;
   int incr = 0;
   int next_incr;
+  if (!sd_probed && gc_heap.v_whole + gc_heap.v_incr + 1 >= SD_WARM) {
+    sd_probe_once();
+  }
   if (gc_heap.sd_mode && getpid() != sd_pid) {
     sd_off();
   }
@@ -811,8 +828,8 @@ void gc_verify_begin(int full) {
     return;
   }
   if (incr) {
-    uint64_t flt = sd_minflt();
-    sd_note(&sd_cost_incr, dt + sd_clear_ns + (flt > sd_flt_at_clear ? flt - sd_flt_at_clear : 0) * SD_FAULT_NS);
+    uint64_t st = sd_stime();
+    sd_note(&sd_cost_incr, dt + (st > sd_stime_at_clear ? st - sd_stime_at_clear : 0));
   } else if (!full) {
     sd_note(&sd_cost_whole, dt);
   }
@@ -823,16 +840,23 @@ void gc_verify_begin(int full) {
     sd_since_probe = 0;
     next_incr = !next_incr;
   }
+  /* A short program (the suite's thousands of small ones) never asks the
+   * kernel: its first SD_WARM verifications are whole, so it pays neither
+   * the probe, the clear nor the write faults after it. System time is
+   * sampled at the scheduler's tick, too coarse to price a short run's
+   * faults: the gate's VERIFY pass spent about 4 s more system time
+   * (1.5-2 s less user time) with SD_WARM at 16. */
+  if (gc_heap.v_whole + gc_heap.v_incr < SD_WARM) {
+    next_incr = 0;
+  }
   sd_based = 0;
   if (next_incr) {
-    uint64_t c0 = sd_now();
     sd_stamp();
+    sd_stime_at_clear = sd_stime();
     if (!sd_clear_all()) {
       sd_off();
       return;
     }
-    sd_clear_ns = sd_now() - c0;
-    sd_flt_at_clear = sd_minflt();
     sd_based = 1;
   }
 }
