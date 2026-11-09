@@ -587,3 +587,58 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
   pthread_mutex_unlock(&gc_heap.world);
   return done;
 }
+
+/* Whether a root of this thread names an address inside [LO, HI): a
+ * slot of its frame chain (generated code's frames, user C's, runtime C's
+ * handle scopes) or a runtime root. */
+static int thread_roots_name(const uint8_t *lo, const uint8_t *hi) {
+  Frame *f;
+  uint32_t i;
+  for (f = avant_gc_top; f; f = f->prev) {
+    for (i = 0; i < f->n; i++) {
+      const uint8_t *v = f->slots[i] ? (const uint8_t *)*f->slots[i] : NULL;
+      if (v >= lo && v < hi) {
+        return 1;
+      }
+    }
+  }
+  for (i = 0; i < gc_thread.nroots; i++) {
+    const uint8_t *v = (const uint8_t *)*gc_thread.roots[i];
+    if (v >= lo && v < hi) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* A growth (Stage 28 W18M, O109) replaced the large buffer PAYLOAD and no
+ * longer names it: free it now instead of at the next collection, so a
+ * doubling buffer's earlier copies neither hold memory nor fill the young
+ * budget (whose collections age the live buffer into mature space, D239).
+ * It stays for the collector when anything else might still name it: a
+ * root of this thread (a generated-code slot holding its data pointer
+ * across the call, as `b[i] += f()` does, or a runtime C handle), a pin,
+ * another thread (a shared program), or when it is mature with reference
+ * fields (the remembered set and the cards may hold it), the spare, or a
+ * collection is running. Returns 1 when freed. Takes the world lock; not
+ * a collecting call. Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload) {
+  AvantHeader *h;
+  int done = 0;
+  if (!payload || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {
+    return 0;
+  }
+  gc_lock(&gc_heap.world);
+  h = (AvantHeader *)payload - 1;
+  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
+      ((h->flags & AVANT_FLAG_YOUNG) || h->type_id == AVANT_TYPE_BYTES) && h != gc_heap.los_spare &&
+      !thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size)) {
+    uint64_t bytes = (uint64_t)gc_large_bytes(h);
+    gc_release_large(h);
+    gc_heap.ctr.los.drops++;
+    gc_heap.ctr.los.drop_bytes += bytes;
+    done = 1;
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+  return done;
+}

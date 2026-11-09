@@ -322,6 +322,18 @@ static void grow(AvantHash *h) {
   h->state = nstate;
   h->cap = ncap;
   h->size = dst.size;
+  /* The hash no longer names its old buffers: large ones go back now
+   * unless a root still names them or they are mature with references
+   * (Stage 28 W18M, O109). */
+  if (okeys) {
+    (void)avant_gc_large_drop(okeys);
+  }
+  if (ovals) {
+    (void)avant_gc_large_drop(ovals);
+  }
+  if (ostate) {
+    (void)avant_gc_large_drop(ostate);
+  }
 }
 
 /* gc-lint: holds nothing (grow is its last statement and roots the hash itself). */

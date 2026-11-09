@@ -24,12 +24,18 @@ static void buf_grow(AvantBuf *b, int32_t need) {
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &b);
   uint8_t *ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
-  if (b->data && b->size > 0) {
-    memcpy(ndata, b->data, (size_t)b->size);
+  uint8_t *odata = b->data;
+  if (odata && b->size > 0) {
+    memcpy(ndata, odata, (size_t)b->size);
   }
   avant_barrier(b);
   b->data = ndata;
   b->cap = ncap;
+  /* The Buf no longer names its old storage: a large one goes back now
+   * unless a root still names it (Stage 28 W18M, O109). */
+  if (odata) {
+    (void)avant_gc_large_drop(odata);
+  }
 }
 
 /* gc-lint: holds nothing (the growth is its last statement; buf_grow roots the Buf). */

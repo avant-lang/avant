@@ -523,7 +523,9 @@ typedef struct GcPkCounters {
  * sum over samples, peak the largest single sample. promoted counts young
  * large objects tenured by promote_young_large. trims and trim_bytes count
  * the large objects avant_gc_large_trim shrank in place and the run bytes
- * that went back (Stage 28 W18M, O52). */
+ * that went back (Stage 28 W18M, O52); drops and drop_bytes the large
+ * buffers a growth freed at once through avant_gc_large_drop (O109), also
+ * counted in freed. */
 typedef struct GcLosCounters {
   uint64_t allocs;
   uint64_t alloc_bytes;
@@ -548,6 +550,8 @@ typedef struct GcLosCounters {
   uint64_t promoted_bytes;
   uint64_t trims;
   uint64_t trim_bytes;
+  uint64_t drops;
+  uint64_t drop_bytes;
 } GcLosCounters;
 
 /* pause, why, frag, prom (Stage 28 W15a1, gc-design.md §3.4 M5 and

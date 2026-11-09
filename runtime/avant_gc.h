@@ -340,6 +340,11 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
  * large Bytes object starts at (6 KiB). Not a collecting call.
  * Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size);
+/* A growth replaced the large buffer PAYLOAD and no longer names it: it is
+ * freed now unless a root of this thread names it, it is pinned, mature
+ * with reference fields, or the program is shared (avant_gc_los.c; Stage
+ * 28 W18M, O109). 1 when freed. Not a collecting call. Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload);
 
 /* Task roots (Stage 28 W16b; C28, R1): a spawned task's capture record
  * is rooted by the task, from avant_spawn until the task's function has

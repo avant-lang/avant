@@ -124,14 +124,14 @@ static void print_los(StatsLine *l) {
     now_bytes += (uint64_t)gc_large_bytes(h);
   }
   line_add(l,
-           "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu los_trims=%llu los_trim_bytes=%llu ",
+           "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu los_trims=%llu los_trim_bytes=%llu los_drops=%llu los_drop_bytes=%llu ",
            u(c->allocs), u(c->alloc_bytes), u(c->callocs), u(c->spare_hits), u(c->spare_cached),
            u(c->spare_dropped), u(c->freed), u(c->scalar_allocs), u(c->scalar_bytes),
            u(c->big_allocs), u(c->big_bytes), u(c->young_allocs), u(c->young_bytes),
            u(c->mature_allocs), u(c->mature_bytes), u(c->hist[0]), u(c->hist[1]), u(c->hist[2]),
            u(c->hist[3]), u(c->hist[4]), u(c->hist[5]), u(c->live_peak), u(c->live_sum),
            u(c->live_samples), u(c->promoted), u(c->promoted_bytes), u(now), u(now_bytes),
-           u(spare_bytes), u(c->trims), u(c->trim_bytes));
+           u(spare_bytes), u(c->trims), u(c->trim_bytes), u(c->drops), u(c->drop_bytes));
 }
 
 /* The W15a1 families (gc-design.md §3.4 M5, M6), appended after the los
