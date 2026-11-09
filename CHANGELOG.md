@@ -9,13 +9,9 @@
 * The runtime's C helpers keep their references precisely and may collect at their own allocations. The conservative C-stack scan is gone: every root the collector sees is now precise.
 * Settings:
   - a switch is `1` or `0`, a size is a whole number; anything else is reported at start-up and ignored (`AVANT_GC_VERIFY` and `AVANT_GC_STATS` need `1`);
-  - `AVANT_NURSERY_DISCARD`, `AVANT_GC_REM_FRONTIER`, `AVANT_GC_YOUNG_SIZING`, `AVANT_GC_COPY_RESERVE` and `AVANT_GC_STACK_REWRITE` are removed (reported if set);
   - `AVANT_GC_VERIFY=1` reports lost references and holds freed memory until the next collection (more memory under the verifier);
-  - `AVANT_GC_STRESS=1` collects before every runtime allocation, moves every young object it can and poisons freed memory;
-  - the `AVANT_GC_STATS` line drops fourteen fields that always printed 0.
-* C boundary (`--cc` code):
-  - `avant_rt.o` exports only its ABI, and `avant_hash_walk_tls` is gone;
-  - every runtime helper may now collect (hash setters, `inc_slice` and `Buf` pushes included), so C code must root the references it holds across them.
+  - `AVANT_GC_STRESS=1` collects before every runtime allocation, moves every young object it can and poisons freed memory.
+* C boundary (`--cc` code): every runtime helper may now collect (hash setters, `inc_slice` and `Buf` pushes included), so C code must root the references it holds across them.
 
 ### Fixed
 
@@ -25,6 +21,12 @@
 ### Added
 
 * `avant_gc_add_root` and `avant_barrier_slot` in `avant_rt.h`, for `--cc` code.
+
+### Removed
+
+* The settings `AVANT_NURSERY_DISCARD`, `AVANT_GC_REM_FRONTIER`, `AVANT_GC_YOUNG_SIZING`, `AVANT_GC_COPY_RESERVE` and `AVANT_GC_STACK_REWRITE` (reported at start-up if set, otherwise ignored).
+* Fourteen `AVANT_GC_STATS` fields that always printed 0: `sm_walks`, `sm_hits`, `sm_sites`, `sm_left`, `cpy_peak`, `pk_from`, `pk_to`, `srv_reserve`, `prom_pinned`, `sp_calls`, `sp_collections`, `keep_cons_objects`, `keep_cons_bytes`, `keep_blocks`.
+* `avant_hash_walk_tls`, and every `avant_rt.o` export outside the ABI in `avant_rt.h`.
 
 ## 0.36.0 - 2026-11-07
 
@@ -36,7 +38,6 @@
   - idle memory is returned to the OS;
   - the compiler uses 17% less memory while compiling itself.
 * JoinHandle.join may be called any number of times: every call after the first returns the same result at once.
-* The AVANT_NURSERY_STACK diagnostic is removed.
 
 ### Fixed
 
@@ -52,6 +53,10 @@
 
 * AVANT_HEAP_RESERVE_GB, the size of the heap's address reservation, 64 GiB by default.
 * AVANT_GC_STRESS=1, a testing mode.
+
+### Removed
+
+* The AVANT_NURSERY_STACK diagnostic.
 
 ## 0.35.0 - 2026-11-05
 
