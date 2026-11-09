@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
+#include <sys/resource.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -737,29 +739,101 @@ static void sd_stamp(void) {
   }
 }
 
+/* The choice between the two forms (Stage 28 W18M item 7, after the
+ * measurement that inc_slice_mature under VERIFY + STRESS ran 2.26 times
+ * slower incremental: 12.9 M minor faults in 30 s, 17.5 s of system time
+ * against 4.8). Clearing the bits write-protects every page again, so
+ * the first write to each page after a clear faults in the kernel (about
+ * 1.4 us here, the fault and the pagemap read included); with a small
+ * heap written all over between collections (a stress collection at
+ * every helper call) that costs more than the walk it saves. So each
+ * form's cost per verification is measured as the program runs, an
+ * average over the last few: the whole walk's time, or the incremental
+ * check's time plus the clear before it plus the minor faults since that
+ * clear (getrusage) at SD_FAULT_NS each, an upper bound since it counts
+ * every first touch too. The next verification takes the cheaper form;
+ * every SD_PROBE verifications the other form is measured once, so a
+ * change of the program's pattern is followed. The bits are cleared only
+ * when the next verification is to be incremental; otherwise no page is
+ * write-protected and the program runs as under the whole verifier.
+ * Which pages are skipped is still decided by the kernel's record alone;
+ * the costs only choose whether to ask it. */
+#define SD_FAULT_NS 1400u
+#define SD_PROBE 64u
+
+static uint64_t sd_cost_whole;
+static uint64_t sd_cost_incr;
+static uint64_t sd_clear_ns;
+static uint64_t sd_flt_at_clear;
+static uint32_t sd_since_probe;
+
+static uint64_t sd_now(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static uint64_t sd_minflt(void) {
+  struct rusage ru;
+  return getrusage(RUSAGE_SELF, &ru) == 0 ? (uint64_t)ru.ru_minflt : 0;
+}
+
+/* An average over about the last eight costs (0: none yet). */
+static void sd_note(uint64_t *avg, uint64_t cost) {
+  *avg = *avg ? *avg - *avg / 8 + cost / 8 : cost;
+}
+
 /* A collection's first verification step (gc_collect, under
  * AVANT_GC_VERIFY, after the quarantine's release): C36's check, whole at
- * a full collection (FULL), at the first verification and without
- * soft-dirty tracking, else over the written pages; then the bits are
- * cleared at once, so every later write, the collection's own included,
- * is seen by the next verification. */
+ * a full collection (FULL), at the first verification, without soft-dirty
+ * tracking, and when the whole walk measured cheaper; else over the
+ * written pages. When the next verification is to be incremental, the
+ * bits are cleared at once, so every later write, the collection's own
+ * included, is seen by it. */
 void gc_verify_begin(int full) {
+  uint64_t t0;
+  uint64_t dt;
+  int incr = 0;
+  int next_incr;
   if (gc_heap.sd_mode && getpid() != sd_pid) {
     sd_off();
   }
+  t0 = sd_now();
   if (gc_heap.sd_mode && !full && sd_based && verify_no_stale_marks_incr()) {
     gc_heap.v_incr++;
+    incr = 1;
   } else {
     gc_verify_no_stale_marks();
     gc_heap.v_whole++;
   }
-  if (gc_heap.sd_mode) {
+  dt = sd_now() - t0;
+  if (!gc_heap.sd_mode) {
+    return;
+  }
+  if (incr) {
+    uint64_t flt = sd_minflt();
+    sd_note(&sd_cost_incr, dt + sd_clear_ns + (flt > sd_flt_at_clear ? flt - sd_flt_at_clear : 0) * SD_FAULT_NS);
+  } else if (!full) {
+    sd_note(&sd_cost_whole, dt);
+  }
+  /* The next form: the cheaper one measured, the other one every
+   * SD_PROBE verifications (and incremental while it has no cost yet). */
+  next_incr = !sd_cost_incr || (sd_cost_whole && sd_cost_incr <= sd_cost_whole);
+  if (++sd_since_probe >= SD_PROBE) {
+    sd_since_probe = 0;
+    next_incr = !next_incr;
+  }
+  sd_based = 0;
+  if (next_incr) {
+    uint64_t c0 = sd_now();
     sd_stamp();
-    if (sd_clear_all()) {
-      sd_based = 1;
-    } else {
+    if (!sd_clear_all()) {
       sd_off();
+      return;
     }
+    sd_clear_ns = sd_now() - c0;
+    sd_flt_at_clear = sd_minflt();
+    sd_based = 1;
   }
 }
 
