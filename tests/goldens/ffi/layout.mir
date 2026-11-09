@@ -31,8 +31,8 @@ extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_pin(ref) -> void never
 extern avant_pin_count() -> i32 collects
+extern avant_pin_field(ptr, ref) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
@@ -234,41 +234,43 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @layout.av:85:1 {
   let _32 (base): i32
   let _33: ref str
   let _34 (name): ref str
-  let _35: i32
+  let _35: ptr
   let _36: i32
   let _37: i32
-  let _38: ref str
-  let _39: i32
-  let _40: ref str
-  let _41 (i): i32
-  let _42: bool
-  let _43: ref str slot
-  let _44: ref str
-  let _45: i32
-  let _46: i32
+  let _38: i32
+  let _39: ref str
+  let _40: i32
+  let _41: ref str
+  let _42 (i): i32
+  let _43: bool
+  let _44: ref str slot
+  let _45: ref str
+  let _46: ptr
   let _47: i32
   let _48: i32
-  let _49: ref str
-  let _50: ptr
-  let _51: ptr slot
-  let _52: i32
-  let _53: ref str
-  let _54: ref %layout.Owner
-  let _55 (o): ref %layout.Owner slot
-  let _56: i32
-  let _57: ptr %layout.Rec
+  let _49: i32
+  let _50: i32
+  let _51: ref str
+  let _52: ptr
+  let _53: ptr slot
+  let _54: i32
+  let _55: ref str
+  let _56: ref %layout.Owner
+  let _57 (o): ref %layout.Owner slot
   let _58: i32
   let _59: ptr %layout.Rec
   let _60: i32
-  let _61: ref str
+  let _61: ptr %layout.Rec
+  let _62: i32
+  let _63: ref str
 
 bb0:
   _10 = zero   @85:1
-  _43 = zero   @85:1
-  _51 = zero   @85:1
-  _55 = zero   @85:1
+  _44 = zero   @85:1
+  _53 = zero   @85:1
+  _57 = zero   @85:1
   gc.enter   @85:1
-  gc.roots _2, _10, _43, _51, _55   @85:1
+  gc.roots _2, _10, _44, _53, _57   @85:1
   call __avant_type_maps() nocollect   @85:1
   call avant_io_init_argv(copy _1, copy _2) collects   @85:1
   _3 = call ffi_rec_off_name() collects   @86:11
@@ -331,62 +333,64 @@ bb0:
   _32 = copy _31   @115:8
   _33 = call avant_str_concat(const str.8, const str.9) collects   @116:18
   _34 = copy _33   @116:8
-  call avant_pin(copy _34) nocollect   @117:10
+  _35 = addr (*_10).1   @117:10
+  call avant_pin_field(copy _35, copy _34) nocollect   @117:10
   (*_10).1 = copy _34   @117:10
-  _35 = call avant_pin_count() collects   @118:11
-  _36 = sub.chk copy _35, copy _32   @118:30
-  call printf(const str.4, copy _36) nocollect   @118:3
-  _37 = call av.layout/churn(const i32 30000) collects   @119:8
-  call printf(const str.4, copy _37) nocollect   @119:3
-  _38 = call ffi_rec_name(copy _10) collects   @120:11
-  call printf(const str.7, copy _38) nocollect   @120:3
-  _39 = call ffi_rec_name_len(copy _10) collects   @121:11
-  call printf(const str.4, copy _39) nocollect   @121:3
-  _40 = copy (*_10).1   @122:9
-  call printf(const str.7, copy _40) nocollect   @122:3
-  _41 = const i32 0   @123:5
+  _36 = call avant_pin_count() collects   @118:11
+  _37 = sub.chk copy _36, copy _32   @118:30
+  call printf(const str.4, copy _37) nocollect   @118:3
+  _38 = call av.layout/churn(const i32 30000) collects   @119:8
+  call printf(const str.4, copy _38) nocollect   @119:3
+  _39 = call ffi_rec_name(copy _10) collects   @120:11
+  call printf(const str.7, copy _39) nocollect   @120:3
+  _40 = call ffi_rec_name_len(copy _10) collects   @121:11
+  call printf(const str.4, copy _40) nocollect   @121:3
+  _41 = copy (*_10).1   @122:9
+  call printf(const str.7, copy _41) nocollect   @122:3
+  _42 = const i32 0   @123:5
   goto bb1   @124:3
 
 bb1:
-  _42 = lt copy _41, const i32 40   @124:11
-  branch copy _42, bb2, bb3   @124:3
+  _43 = lt copy _42, const i32 40   @124:11
+  branch copy _43, bb2, bb3   @124:3
 
 bb2:
-  _43 = call avant_str_cat_i32(const str.10, copy _41) collects   @125:14
-  _44 = call avant_str_concat(copy _43, const str.11) collects   @125:27
-  call avant_pin(copy _44) nocollect   @125:12
-  (*_10).1 = copy _44   @125:12
-  _45 = add copy _41, const i32 1   @126:11
-  _41 = copy _45   @126:7
+  _44 = call avant_str_cat_i32(const str.10, copy _42) collects   @125:14
+  _45 = call avant_str_concat(copy _44, const str.11) collects   @125:27
+  _46 = addr (*_10).1   @125:12
+  call avant_pin_field(copy _46, copy _45) nocollect   @125:12
+  (*_10).1 = copy _45   @125:12
+  _47 = add copy _42, const i32 1   @126:11
+  _42 = copy _47   @126:7
   goto bb1   @124:3
 
 bb3:
-  _46 = call avant_pin_count() collects   @128:11
-  _47 = sub.chk copy _46, copy _32   @128:30
-  call printf(const str.4, copy _47) nocollect   @128:3
-  _48 = call av.layout/churn(const i32 30000) collects   @129:8
-  call printf(const str.4, copy _48) nocollect   @129:3
-  _49 = call ffi_rec_name(copy _10) collects   @130:11
-  call printf(const str.7, copy _49) nocollect   @130:3
-  _50 = call ffi_cell_new(const i32 99) collects   @131:15
-  (*_10).5 = copy _50   @131:10
-  _51 = copy (*_10).5   @132:26
-  _52 = call ffi_cell_get(copy _51) collects   @132:11
-  call printf(const str.4, copy _52) nocollect   @132:3
-  _53 = call avant_str_concat(const str.12, const str.13) collects   @133:28
-  _54 = call av.layout/Owner.new(copy _10, copy _53) collects   @133:12
-  _55 = copy _54   @133:5
-  _56 = call av.layout/churn(const i32 10000) collects   @134:8
-  call printf(const str.4, copy _56) nocollect   @134:3
-  _57 = copy (*_55).0   @135:9
-  _58 = copy (*_57).0   @135:13
-  call printf(const str.4, copy _58) nocollect   @135:3
-  _59 = copy (*_55).0   @136:4
-  (*_59).0 = const i32 7   @136:12
-  _60 = call ffi_rec_id(copy _10) collects   @137:11
-  call printf(const str.4, copy _60) nocollect   @137:3
-  _61 = copy (*_55).1   @138:9
-  call printf(const str.7, copy _61) nocollect   @138:3
+  _48 = call avant_pin_count() collects   @128:11
+  _49 = sub.chk copy _48, copy _32   @128:30
+  call printf(const str.4, copy _49) nocollect   @128:3
+  _50 = call av.layout/churn(const i32 30000) collects   @129:8
+  call printf(const str.4, copy _50) nocollect   @129:3
+  _51 = call ffi_rec_name(copy _10) collects   @130:11
+  call printf(const str.7, copy _51) nocollect   @130:3
+  _52 = call ffi_cell_new(const i32 99) collects   @131:15
+  (*_10).5 = copy _52   @131:10
+  _53 = copy (*_10).5   @132:26
+  _54 = call ffi_cell_get(copy _53) collects   @132:11
+  call printf(const str.4, copy _54) nocollect   @132:3
+  _55 = call avant_str_concat(const str.12, const str.13) collects   @133:28
+  _56 = call av.layout/Owner.new(copy _10, copy _55) collects   @133:12
+  _57 = copy _56   @133:5
+  _58 = call av.layout/churn(const i32 10000) collects   @134:8
+  call printf(const str.4, copy _58) nocollect   @134:3
+  _59 = copy (*_57).0   @135:9
+  _60 = copy (*_59).0   @135:13
+  call printf(const str.4, copy _60) nocollect   @135:3
+  _61 = copy (*_57).0   @136:4
+  (*_61).0 = const i32 7   @136:12
+  _62 = call ffi_rec_id(copy _10) collects   @137:11
+  call printf(const str.4, copy _62) nocollect   @137:3
+  _63 = copy (*_57).1   @138:9
+  call printf(const str.7, copy _63) nocollect   @138:3
   call ffi_rec_free(copy _10) collects   @139:6
   _0 = const i32 0   @85:1
   gc.leave   @85:1

@@ -59,6 +59,25 @@ void avant_pin(void *payload);
 void avant_unpin(void *payload);
 /* Number of distinct pinned payloads (refcounted pins share one entry). */
 int avant_pin_count(void);
+/* C-layout field pins (Stage 28 W16c, D266). A store of a reference into
+ * a C-layout field (`h.name = s`) calls avant_pin_field(&h->name, s): s is
+ * pinned (counted, as avant_pin) and the pin is recorded under the field's
+ * address, beside every earlier value Avant stored there. Overwriting the
+ * field does not unpin the old value, so C may keep or copy any of them:
+ * a value stored into C memory stays alive and in place until the
+ * program releases the field. avant_release_range(lo, n), what the
+ * `release(h.name)` (n = the field's size) and `release(h)` (n = the
+ * struct's size) statements call, gives back every recorded pin of a
+ * field whose address is in [lo, lo + n) and drops the records; a field
+ * that still holds a value Avant stored there is set to NULL. A field
+ * never stored by Avant, or holding a value C stored itself, is left as
+ * it is, and releasing twice does nothing. Both take the world lock like
+ * avant_pin and never collect. After a release, C must not use the
+ * released values (they may move or be freed by the next collection);
+ * release a struct before C frees it, since a later store at the same
+ * address joins the old record. */
+void avant_pin_field(void *field, void *payload);
+void avant_release_range(void *lo, uint64_t n);
 int avant_is_heap(void *payload);
 /* Bumped by every collection. A length cache tagged with the generation
  * cannot outlive a move or a free, because both happen only inside a
