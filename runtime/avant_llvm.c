@@ -2,7 +2,8 @@
  * in, an object file out, through the stable LLVM C API only.
  *
  * Linked into the compiler only, never into a user program:
- * tools/build-llvm.sh compiles this file against llvm-config-20 and merges
+ * tools/build-llvm.sh compiles this file against llvm-config-20 (or, with
+ * LLVM_CONFIG=llvm-config-23, against LLVM 23: the W18L probe) and merges
  * it with the LLVM members it needs (and libstdc++, zlib, zstd) into one
  * relocatable object, runtime/build/avant_llvm.o, whose only global
  * definitions are the avant_llvm_* functions below. The compiler binds
@@ -33,6 +34,8 @@
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
 #include <llvm-c/Transforms/PassBuilder.h>
+
+#include <llvm/Config/llvm-config.h>
 
 #include "avant_rt.h"
 
@@ -185,8 +188,16 @@ static int32_t compile_buffer(LLVMMemoryBufferRef buf, const char *passes, int32
   LLVMModuleRef mod = NULL;
   char *msg = NULL;
   int32_t status;
+#if LLVM_VERSION_MAJOR >= 22
+  /* LLVMParseIRInContext is deprecated since LLVM 22; its successor does
+   * not take ownership of buf, so it is disposed here either way. */
+  LLVMBool failed = LLVMParseIRInContext2(ctx, buf, &mod, &msg);
+  LLVMDisposeMemoryBuffer(buf);
+#else
   /* Takes ownership of buf, on success and on failure. */
-  if (LLVMParseIRInContext(ctx, buf, &mod, &msg)) {
+  LLVMBool failed = LLVMParseIRInContext(ctx, buf, &mod, &msg);
+#endif
+  if (failed) {
     set_error("", msg);
     LLVMDisposeMessage(msg);
     LLVMContextDispose(ctx);
@@ -240,7 +251,7 @@ char *avant_llvm_error(void) {
   return avant_string(g_error ? g_error : "");
 }
 
-/* The linked LLVM's version, "20.1.8". */
+/* The linked LLVM's version, "20.1.8" (or "23.1.6" built against LLVM 23). */
 char *avant_llvm_version(void) {
   unsigned major = 0, minor = 0, patch = 0;
   char buf[48];
