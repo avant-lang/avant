@@ -573,6 +573,10 @@ void gc_verify_defrag(void) {
  * that was installed before. At most QUARANTINE_MAX blocks are held
  * (past it a freed block is reused at once, unprotected); a refused
  * mprotect (the mapping-count limit) also frees the block at once.
+ * Freed lines in blocks that keep live ones cannot be protected (a line
+ * is 256 bytes); instead the young sweep holds such blocks back from the
+ * young allocator until the next collection begins, so the precise half
+ * still finds a reference to a dead object's lines naming freed memory.
  * Freed large runs are not quarantined (their reuse is page-run based;
  * the precise half reports a reference that names one). */
 #define QUARANTINED 2
@@ -690,9 +694,18 @@ void gc_quarantine_seal(void) {
   }
 }
 
-/* At the start of a collection: every held block is opened and freed. */
+/* At the start of a collection: every held block is opened and freed,
+ * and the blocks with lines the last young sweep freed become the young
+ * allocator's holes (avant_gc_sticky.c holds them back under
+ * AVANT_GC_VERIFY). */
 void gc_quarantine_release(void) {
   Block *b = gc_heap.quarantine;
+  uint32_t i;
+  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+    gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap,
+                   gc_heap.verify_holes[i]);
+  }
+  gc_heap.verify_holes_n = 0;
   gc_heap.quarantine = NULL;
   gc_heap.quarantine_n = 0;
   while (b) {

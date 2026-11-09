@@ -867,6 +867,12 @@ typedef struct GcHeap {
   Block **part_blocks;
   uint32_t part_blocks_n;
   uint32_t part_blocks_cap;
+  /* AVANT_GC_VERIFY (Stage 28 W16b): the blocks the last young sweep
+   * left with free lines, held back from part_blocks until the next
+   * collection begins (the lost-reference check, avant_gc_verify.c). */
+  Block **verify_holes;
+  uint32_t verify_holes_n;
+  uint32_t verify_holes_cap;
   Block *overflow;
   int cur_whole;
   /* S+ (GC_STICKY_COPY): whether the running young collection may copy;

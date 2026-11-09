@@ -906,7 +906,16 @@ void gc_sticky_collect(int tenure) {
         b->kept = YOUNG_EMPTY;
         empty++;
       } else if (live < LINES_PER_BLOCK) {
-        gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+        /* AVANT_GC_VERIFY: the lines this sweep freed are not
+         * allocatable until the next collection begins
+         * (gc_quarantine_release), so a reference to an object that died
+         * here still names freed memory there, where the lost-reference
+         * check (avant_gc_verify.c) sees it. */
+        if (gc_heap.set.verify) {
+          gc_sticky_push(&gc_heap.verify_holes, &gc_heap.verify_holes_n, &gc_heap.verify_holes_cap, b);
+        } else {
+          gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+        }
       }
     }
     gc_heap.young_blocks_n = 0;
@@ -989,6 +998,7 @@ void gc_sticky_full_begin(void) {
   }
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
+  gc_heap.verify_holes_n = 0;
   gc_heap.overflow = NULL;
   gc_heap.cur_whole = 0;
 }
