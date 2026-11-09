@@ -1,0 +1,56 @@
+import harness
+
+// The compiler's own heap is fully traced (D188): dumping itself under
+// the collector's verifier prints no untraced-reference report. Split
+// from tests/cases/test_fixed_point.av (Stage 28 W16t, O103): the same
+// job and the same two checks, in a file of its own so the suite runner
+// overlaps this dump, the suite's longest single job, with the fixed
+// point's compile and dumps instead of waiting for it inside the fixed
+// point's first wave. Listed in `[test] first` after the fixed point.
+// The v0.34.0 seed's type maps drop every reference word past payload
+// word 63 (audit 8.4, fixed by W1b in the tree only), so a seed-built B
+// is safe only while no compiler class has a reference field there.
+// This check can relax once the seed carries W1b (D178 re-seed).
+// AVANT_YOUNG_MB=1 is not set here: it makes this dump longer than the
+// fixed point's compile.
+fn test_fixed_point_verify(c: Checks) {
+  c.suite("tests/cases/test_fixed_point_verify.av")
+  if gc_stress_outer() {
+    c.skip("the compiler's dump under AVANT_GC_VERIFY=1", "outer AVANT_GC_STRESS: a compiler-sized job under a collection at every helper call; the gate checks it outside it")
+    return
+  }
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    stamp = now_ms()
+    main_av = "${root}/compiler/main.av"
+    vlog = "${scratch()}/fixed_point_verify-${stamp}-verify.log"
+    venv: Array(String) = []
+    venv.push("AVANT_GC_VERIFY=1")
+    venv.push(compiler)
+    venv.push("dump")
+    venv.push(main_av)
+    jobs: Array(HJob) = []
+    jobs.push(HJob.new("/usr/bin/env", venv, vlog))
+    run_jobs(jobs)
+    vcode = jobs[0].code
+
+    c.eq_int(vcode, 0, "dump compiler under AVANT_GC_VERIFY=1")
+    if vout = file_read(vlog) {
+      c.expect(!str_has(vout, "avant gc verify:"), "compiler heap fully traced (no verifier report)")
+    } else {
+      c.expect(false, "compiler heap fully traced (no verifier report)")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_fixed_point_verify(c)
+  c.finish
+}
