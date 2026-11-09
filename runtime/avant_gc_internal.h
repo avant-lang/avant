@@ -1045,8 +1045,10 @@ typedef struct GcThread {
 extern __thread GcThread gc_thread;
 
 /* Every task root's slot (all threads': the list is global, under the
- * world lock the collector holds). Its object is PINNED while rooted,
- * so no collection moves it; the slot is never rewritten. */
+ * world lock the collector holds). Since Stage 28 W17a its object may
+ * move like any rooted object (S+'s copy and defragmentation rewrite the
+ * slot); until then it was PINNED while rooted, because the worker read
+ * it while other threads collected (D191). */
 #define EACH_TASK_ROOT(SLOT, BODY)                                       \
   do {                                                                   \
     AvantGcTaskRoot *etr_r_;                                             \

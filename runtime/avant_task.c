@@ -132,7 +132,9 @@ static void run_job(Job *job) {
   avant_gc_native_end();
   if (job->kind == 1) {
     AvantTask *t = job->task;
-    t->result = t->fn(t->arg);
+    /* The record is read from its root, which a collection rewrites when
+     * the record moves (Stage 28 W17a; t->arg is its address at spawn). */
+    t->result = t->fn(t->arg ? t->root.obj : NULL);
     avant_gc_native_begin();
     /* R1: the record is the task's until its function returns; from
      * here it lives only as long as something else names it. */

@@ -325,12 +325,13 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
  * is rooted by the task, from avant_spawn until the task's function has
  * returned, instead of pinned by the generated code until the join. A
  * root is a node in the task's own C memory (O(1) to add and drop, no
- * pin entry); every collection traces OBJ from it and none moves it
- * while it is rooted (it is held in place like a pinned object, because
- * the worker thread reads the record while other threads may collect:
- * D191, until W17's handshake). After the drop the record is an ordinary
- * object: a finished task's record dies with its last reference, joined
- * or not. Hidden; add and drop take the world lock and never collect. */
+ * pin entry); every collection traces OBJ from it and rewrites the root
+ * when the record moves (Stage 28 W17a; until then the record was held in
+ * place while rooted, because the worker read it while other threads
+ * collected, D191); the worker reads the record from the root. After the
+ * drop the record is an ordinary object: a finished task's record dies
+ * with its last reference, joined or not. Hidden; add and drop take the
+ * world lock and never collect. */
 typedef struct AvantGcTaskRoot {
   void *obj;
   struct AvantGcTaskRoot *prev;
