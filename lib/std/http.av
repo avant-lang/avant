@@ -10,8 +10,6 @@ lib httpc {
   fun avant_http_req_body(req: Ptr(Void)): Bytes
   fun avant_http_req_headers(req: Ptr(Void)): Bytes
   fun avant_http_req_respond(req: Ptr(Void), status: Int, head: String, body: Bytes)
-  fun avant_gc_defer_enter
-  fun avant_gc_defer_leave
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
@@ -469,13 +467,11 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
     body: req_body
   }
   resp = state.dispatch(req)
-  // The response head and body travel into C as raw heap pointers;
-  // hold collections off from materializing them until the write is
-  // done, so a collection on another loop thread cannot move them
-  // mid-write (the C respond entry defers again around the write).
-  httpc.avant_gc_defer_enter()
+  // The response head and body travel into C as raw heap pointers; the
+  // respond entry is no safepoint, so no thread collects while it writes
+  // (Stage 28 W17a: until the handshake a defer region here and a second
+  // one in the entry kept other loop threads' collections off, O111).
   httpc.avant_http_req_respond(raw, resp.status, resp.head_block, resp.body)
-  httpc.avant_gc_defer_leave()
 }
 
 // The C loop calls this named function once per WebSocket message and
