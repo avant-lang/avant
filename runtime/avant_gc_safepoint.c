@@ -157,6 +157,7 @@ void gc_resume_world(void) {
  * collection is requested (it waits for the end, under hs_mu, so the
  * collector's view of the list does not change under it). */
 void gc_thread_registered(int foreign) {
+  int became_shared = 0;
   gc_thread.reg.owner = &gc_thread;
   gc_thread.foreign = foreign;
   atomic_store(&gc_thread.reg.state, GC_RUNNING);
@@ -167,11 +168,23 @@ void gc_thread_registered(int foreign) {
   pthread_mutex_lock(&gc_heap.threads_mu);
   gc_thread.reg.next = gc_heap.threads;
   gc_heap.threads = &gc_thread.reg;
-  if (gc_thread.reg.next) {
+  if (gc_thread.reg.next && atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
     atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
+    became_shared = 1;
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   pthread_mutex_unlock(&gc_heap.hs_mu);
+  /* The thread that makes the program shared waits, by a handshake, until
+   * the one mutator before it has reached a safepoint: until then that
+   * mutator may be inside an allocation without the world lock (the
+   * inline path, avant_alloc's unlocked fast path), which read the shared
+   * flag before it was set; after its safepoint it takes the locked path.
+   * Without this a new thread's first allocation could race with it
+   * (found by W17a's rule 4 proof: "object too large" under
+   * AVANT_GC_VERIFY=1, a corrupted header). */
+  if (became_shared && gc_stop_world()) {
+    gc_resume_world();
+  }
 }
 
 /* Unregistration: the thread leaves the list under hs_mu (a collector
