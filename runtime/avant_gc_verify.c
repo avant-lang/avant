@@ -23,12 +23,16 @@
  * after its young copy, gc_verify_young_copy with its stale, lost and
  * untraced reports, went with E in Stage 28 W15d.) */
 
-static void verify_trace(void *p) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+/* The trace of one reference P (Stage 28 W18M, O113: one object lookup
+ * per reference serves every check made on it; before, the lost, named,
+ * stale and missing-barrier checks each looked the same field up again).
+ * Returns the object P names (its start, before following a forward), or
+ * NULL when P names no object. */
+static void *verify_trace_r(void *p) {
+  void *found = gc_object_payload(p, NULL, NULL);
+  void *start = found;
   if (!start) {
-    return;
+    return NULL;
   }
   AvantHeader *h = avant_header(start);
   /* A moved object is reached through its copy: its own header holds the
@@ -38,7 +42,7 @@ static void verify_trace(void *p) {
     h = avant_header(start);
   }
   if (h->flags & AVANT_FLAG_VSEEN) {
-    return;
+    return found;
   }
   h->flags |= AVANT_FLAG_VSEEN;
   if (gc_heap.vnoted_n == gc_heap.vnoted_cap) {
@@ -47,6 +51,21 @@ static void verify_trace(void *p) {
   }
   gc_heap.vnoted[gc_heap.vnoted_n++] = start;
   gc_work_push(start);
+  return found;
+}
+
+static void verify_trace(void *p) {
+  (void)verify_trace_r(p);
+}
+
+/* The next object of the verifier's work stack; the one after it is
+ * prefetched (its header and first fields are read next). */
+static void *verify_pop(void) {
+  void *p = gc_heap.work[--gc_heap.work_n];
+  if (gc_heap.work_n) {
+    __builtin_prefetch(avant_header(gc_heap.work[gc_heap.work_n - 1]));
+  }
+  return p;
 }
 
 static void verify_clear_traced(void) {
@@ -68,7 +87,15 @@ static void verify_tls_slot(void **slot) {
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
-static void verify_mark_reachable(void) {
+#if GC_STICKY_COPY
+static uint64_t verify_stale_found(void *start, void *holder);
+#endif
+
+/* STALE (S+): count the fields of the reached objects that name a moved
+ * object's old copy, as the trace reads them (verify_stale_found). */
+static uint64_t verify_mark_reachable(int stale) {
+  uint64_t bad = 0;
+  (void)stale;
   ThreadReg *t;
   for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
@@ -91,9 +118,21 @@ static void verify_mark_reachable(void) {
   }
   gc_each_runtime_root(verify_tls_slot);
   while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
+    void *p = verify_pop();
+#if GC_STICKY_COPY
+    if (stale) {
+      EACH_REF_SLOT(p, slot, {
+        void *st = verify_trace_r(*slot);
+        if (st) {
+          bad += verify_stale_found(st, p);
+        }
+      });
+      continue;
+    }
+#endif
     EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
   }
+  return bad;
 }
 
 /* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
@@ -109,10 +148,7 @@ static void verify_mark_reachable(void) {
 #if GC_STICKY_COPY
 /* S+: a reference the collection did not rewrite names a moved object's
  * old copy (its header holds the forward). */
-static uint64_t verify_stale(void *p, const char *where, void *holder) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+static uint64_t verify_stale_start(void *start, const char *where, void *holder) {
   if (!start || !(avant_header(start)->flags & AVANT_FLAG_FORWARDED)) {
     return 0;
   }
@@ -120,6 +156,14 @@ static uint64_t verify_stale(void *p, const char *where, void *holder) {
           where, holder, start, gc_forward_of(avant_header(start)),
           (unsigned long long)avant_g_stats.collections);
   return 1;
+}
+
+static uint64_t verify_stale(void *p, const char *where, void *holder) {
+  return verify_stale_start(gc_object_payload(p, NULL, NULL), where, holder);
+}
+
+static uint64_t verify_stale_found(void *start, void *holder) {
+  return verify_stale_start(start, "field", holder);
 }
 
 static void verify_stale_tls(void **slot) {
@@ -130,7 +174,13 @@ static void verify_stale_tls(void **slot) {
 void gc_verify_sticky(void) {
   size_t i;
   uint64_t bad = 0;
-  verify_mark_reachable();
+#if GC_STICKY_COPY
+  /* The fields of every reached object are checked for stale
+   * references as the trace reads them (verify_mark_reachable). */
+  bad += verify_mark_reachable(1);
+#else
+  (void)verify_mark_reachable(0);
+#endif
 #if GC_STICKY_COPY
   /* After S+'s copy and fix-up (before the old copies lose their start
    * bits): no root slot, runtime-held slot or field of a reachable object
@@ -150,13 +200,6 @@ void gc_verify_sticky(void) {
       }
     }
     gc_each_runtime_root(verify_stale_tls);
-    for (i = 0; i < gc_heap.vnoted_n; i++) {
-      void *v = gc_heap.vnoted[i];
-      if (avant_header(v)->type_id == AVANT_TYPE_BYTES) {
-        continue;
-      }
-      EACH_REF_SLOT(v, slot, { bad += verify_stale(*slot, "field", v); });
-    }
   }
 #endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
@@ -249,9 +292,10 @@ void gc_verify_sticky(void) {
  *     correct program by construction.
  * Diagnostics only: both report, neither repairs. Counted in
  * gc_heap.verify_lost. */
-static uint64_t verify_lost(void *p, const char *where, void *holder) {
+/* FOUND is gc_object_payload(P) (verify_trace_r's result). */
+static uint64_t verify_lost_found(void *p, void *found, const char *where, void *holder) {
   uintptr_t off;
-  if (!p || !heap_offset(p, &off) || gc_object_payload(p, NULL, NULL)) {
+  if (!p || found || !heap_offset(p, &off)) {
     return 0;
   }
   if (gc_heap.verify_lost++ < 32) {
@@ -263,8 +307,8 @@ static uint64_t verify_lost(void *p, const char *where, void *holder) {
 }
 
 static void lost_root_slot(void **slot) {
-  verify_lost(*slot, "root", (void *)slot);
-  verify_trace(*slot);
+  void *st = verify_trace_r(*slot);
+  verify_lost_found(*slot, st, "root", (void *)slot);
 }
 
 /* Before a full collection (a young one runs the precise half inside
@@ -286,10 +330,10 @@ void gc_verify_lost(void) {
   EACH_TASK_ROOT(slot, lost_root_slot(slot));
   gc_each_runtime_root(lost_root_slot);
   while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
+    void *p = verify_pop();
     EACH_REF_SLOT(p, slot, {
-      verify_lost(*slot, "field of", p);
-      verify_trace(*slot);
+      void *st = verify_trace_r(*slot);
+      verify_lost_found(*slot, st, "field of", p);
     });
   }
   verify_clear_traced();
@@ -307,12 +351,10 @@ static int verify_names_young(void *p, void **out) {
   return start && verify_young_at(start, b, ol);
 }
 
-static void rem_named(void *p) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+/* START is the object a reference names (gc_object_payload's result). */
+static void rem_named_found(void *start) {
   AvantHeader *h;
-  if (!start || verify_young_at(start, b, ol)) {
+  if (!start || verify_young_at(start, NULL, NULL)) {
     return;
   }
   h = avant_header(start);
@@ -327,6 +369,25 @@ static void rem_named(void *p) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
+static void rem_named(void *p) {
+  rem_named_found(gc_object_payload(p, NULL, NULL));
+}
+
+/* The reached holders that are not young and name a young object in a
+ * field, gathered by gc_verify_remembered's trace: the only holders its
+ * missing-barrier check can report. */
+static void **g_yholders;
+static size_t g_yholders_n;
+static size_t g_yholders_cap;
+
+static void yholder_add(void *v) {
+  if (g_yholders_n == g_yholders_cap) {
+    g_yholders_cap = g_yholders_cap ? g_yholders_cap * 2 : 1024;
+    g_yholders = gc_xrealloc(g_yholders, g_yholders_cap * sizeof(void *));
+  }
+  g_yholders[g_yholders_n++] = v;
+}
+
 /* Is H a carded object the young collection scans by its marked cards
  * (in the set as REMC, without CARD_ALL)? */
 static int rem_by_cards(const AvantHeader *h) {
@@ -334,9 +395,9 @@ static int rem_by_cards(const AvantHeader *h) {
 }
 
 static void rem_root_slot(void **slot) {
-  verify_lost(*slot, "root", (void *)slot);
-  verify_trace(*slot);
-  rem_named(*slot);
+  void *st = verify_trace_r(*slot);
+  verify_lost_found(*slot, st, "root", (void *)slot);
+  rem_named_found(st);
 }
 
 void gc_verify_remembered(void) {
@@ -358,19 +419,27 @@ void gc_verify_remembered(void) {
   }
   EACH_TASK_ROOT(slot, rem_root_slot(slot));
   gc_each_runtime_root(rem_root_slot);
+  /* The trace from the roots; with the same lookup of each field, R1'(b)
+   * (a young object's fields name what they reach) and the holders the
+   * check below must look at (a non-young one naming a young object). */
+  g_yholders_n = 0;
   while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
+    void *p = verify_pop();
+    int py = (avant_header(p)->flags & AVANT_FLAG_YOUNG) != 0;
+    int ny = 0;
     EACH_REF_SLOT(p, slot, {
-      verify_lost(*slot, "field of", p);
-      verify_trace(*slot);
+      void *st = verify_trace_r(*slot);
+      verify_lost_found(*slot, st, "field of", p);
+      if (st) {
+        if (py) {
+          rem_named_found(st);
+        } else if (verify_young_at(st, NULL, NULL)) {
+          ny = 1;
+        }
+      }
     });
-  }
-  /* R1'(b): the fields of the young objects the roots reach. */
-  for (i = 0; i < gc_heap.vnoted_n; i++) {
-    void *v = gc_heap.vnoted[i];
-    void *st;
-    if (verify_names_young(v, &st)) {
-      EACH_REF_SLOT(v, slot, { rem_named(*slot); });
+    if (ny) {
+      yholder_add(p);
     }
   }
   /* R1'(c): the fields of every remembered object; of a carded one
@@ -396,8 +465,8 @@ void gc_verify_remembered(void) {
    * slots of its marked cards (the card invariant, Stage 28 W16t):
    * a young object named from a clear card is reported as a missing
    * barrier too, since the young collection would not scan that slot. */
-  for (i = 0; i < gc_heap.vnoted_n; i++) {
-    void *v = gc_heap.vnoted[i];
+  for (i = 0; i < g_yholders_n; i++) {
+    void *v = g_yholders[i];
     void *st;
     AvantHeader *h = avant_header(v);
     int by_cards;
