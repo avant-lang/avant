@@ -201,6 +201,37 @@ char *avant_buf_to_str(void *buf) {
   return p;
 }
 
+/* The string of a Buf that nothing uses again (Stage 28 W18M, O52): the
+ * generated code calls this instead of avant_buf_to_str when the Buf was
+ * made in the calling function, left it only as an argument to functions
+ * that keep no reference to it, and is not used after the call
+ * (compiler/mir/take.av). A large storage with room for the terminator
+ * becomes the string: its bytes past the terminator go back to the heap
+ * (avant_gc_large_trim) and the Buf is left empty, so the string costs no
+ * copy and the storage's slack is not held twice. Anything else (a small
+ * storage, one with no room, a string under 6 KiB) is avant_buf_to_str's
+ * copy. */
+char *avant_buf_take_str(void *buf) {
+  AvantBuf *b = (AvantBuf *)buf;
+  /* RC1: the trim takes the world lock, whose wait lets another thread
+   * collect: the Buf is a handle (its storage is large and never moves). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &b);
+  if (b && b->data && b->size > 0 && b->size < b->cap) {
+    uint8_t *p = b->data;
+    int32_t n = b->size;
+    if (avant_gc_large_trim(p, (uint64_t)n + 1)) {
+      p[n] = 0;
+      avant_str_tag(p);
+      b->data = NULL;
+      b->size = 0;
+      b->cap = 0;
+      return (char *)p;
+    }
+  }
+  return avant_buf_to_str(b);
+}
+
 /* RC1: the text and the new Buf are handles across the allocations. */
 void *avant_bytes_to_buf(const char *s) {
   size_t n = avant_str_n(s);

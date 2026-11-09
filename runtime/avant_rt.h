@@ -251,6 +251,7 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
 void avant_buf_push_fmt_f(void *buf, double v, int32_t prec);
 void avant_buf_push_fmt_i(void *buf, int32_t n);
 char *avant_buf_to_str(void *buf);
+char *avant_buf_take_str(void *buf);
 int32_t avant_buf_size(void *buf);
 void avant_buf_clear(void *buf);
 void avant_buf_ensure(void *buf, int32_t n);

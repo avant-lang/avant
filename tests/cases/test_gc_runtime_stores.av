@@ -22,6 +22,11 @@ import backends
 // builder that fills a fresh array (split/fields/chars, Hash keys and
 // values, argv, dir_list, Array copy); without it split_held.av under
 // AVANT_GC_VERIFY=1 reported unkept references in about half the runs.
+// heap/buf_take.av (Stage 28 W18M, O52): the Buf hand-off. The dump has
+// avant_buf_take_str exactly where the Buf is dead after its to_s (4
+// calls) and avant_buf_to_str everywhere else (6), and the program prints
+// what the copies printed before the hand-off.
+//
 // Each program runs plain and under each GC environment below: the known
 // stdout, no stderr (no verifier report), exit 0.
 
@@ -30,8 +35,8 @@ fn gc_envs: Array(String) {
 }
 
 fn test_gc_runtime_stores(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["inc_slice_mature", "array_reserve_mature", "split_held"]
-  wants = ["0\n0\n0\n", "0\n0\n", "split bad: 0\nfields bad: 0\nchars bad: 0\njunk: 4072350\n"]
+  names = ["inc_slice_mature", "array_reserve_mature", "split_held", "buf_take"]
+  wants = ["0\n0\n0\n", "0\n0\n", "split bad: 0\nfields bad: 0\nchars bad: 0\njunk: 4072350\n", "722328\n1804464\n729328\n732329\n741266\n750269\n732329\n732329\n147440\n"]
   jobs: Array(HJob) = []
   p = 0
   while p < names.size {
@@ -52,6 +57,11 @@ fn test_gc_runtime_stores(c: Checks, compiler: String, root: String, dir: String
     p = p + 1
   }
   run_waves(runs)
+  dlog = "${dir}/buf_take.mir"
+  c.eq_int(dump_av(compiler, "${root}/tests/fixtures/heap/buf_take.av", dlog), 0, "buf_take.av: dump")
+  mir = log_text(dlog)
+  c.eq_int(mir.split("call avant_buf_take_str(").size - 1, 4, "buf_take.av: four hand-offs (t1, t2's last to_s, t5, t9)")
+  c.eq_int(mir.split("call avant_buf_to_str(").size - 1, 6, "buf_take.av: six copies (t2's first to_s, t3, t4, t6, t7, t8)")
   p = 0
   while p < names.size {
     e = 0

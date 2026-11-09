@@ -512,3 +512,78 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   gc_note_peak();
   return payload_of(h);
 }
+
+/* Shrink the large object H in place to NEW_SIZE payload bytes (no larger
+ * than its size): the pages past the new run go back to its chunk, a huge
+ * run's whole chunks past it are given back, and its charge falls by the
+ * run bytes it no longer holds. Under AVANT_GC_STRESS the bytes past
+ * NEW_SIZE are poisoned. */
+static void trim_run(AvantHeader *h, size_t new_size) {
+  uint64_t c = chunk_index(h);
+  GcChunk *ch = &gc_heap.chunks[c];
+  uint64_t n_old = run_pages((size_t)h->size);
+  uint64_t n_new = run_pages(new_size);
+  size_t gone = (size_t)((n_old - n_new) << PAGE_SHIFT);
+  gc_poison((uint8_t *)payload_of(h) + new_size, (size_t)h->size - new_size);
+  h->size = (uint32_t)new_size;
+  if (n_new == n_old) {
+    return;
+  }
+  if (ch->kind == CHUNK_LARGE) {
+    uint32_t p = (uint32_t)((((uintptr_t)h - 8) >> PAGE_SHIFT) & (PAGES_PER_CHUNK - 1)) + (uint32_t)n_new;
+    uint32_t n = (uint32_t)(n_old - n_new);
+    uint32_t k;
+    bits_set(ch->alloc, p, n, 0);
+    ch->used = (uint16_t)(ch->used - n);
+    for (k = 0; k < n; k++) {
+      gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
+    }
+    ch->idle = (uint32_t)gc_heap.return_clock;
+  } else {
+    uint64_t nch = ch->head;
+    uint64_t keep = (n_new + PAGES_PER_CHUNK - 1) / PAGES_PER_CHUNK;
+    uint64_t k;
+    for (k = keep; k < nch; k++) {
+      gc_chunk_give(c + k);
+    }
+    ch->head = (uint32_t)keep;
+  }
+  gc_heap.large_bytes -= gone;
+  gc_heap.heap_bytes -= gone;
+  if (h->flags & AVANT_FLAG_YOUNG) {
+    gc_heap.young_large = gc_heap.young_large >= gone ? gc_heap.young_large - gone : 0;
+    avant_nursery_held = avant_nursery_held >= gone ? avant_nursery_held - gone : 0;
+  } else if (gc_heap.mature_since_full >= gone) {
+    gc_heap.mature_since_full -= gone;
+  }
+  gc_heap.ctr.los.trims++;
+  gc_heap.ctr.los.trim_bytes += (uint64_t)gone;
+}
+
+/* A runtime helper that owns the large Bytes object PAYLOAD (no other
+ * reference to it is used again, and its bytes past NEW_SIZE are not
+ * read) keeps only its first NEW_SIZE bytes (Stage 28 W18M, O52: a dead
+ * Buf's storage becomes its string; O60: a parsed document's pool keeps
+ * what the parse used). Returns 1 when PAYLOAD was trimmed, 0 when it is
+ * not a large, unpinned Bytes object, or NEW_SIZE is larger than its size, or
+ * NEW_SIZE is under SCALAR_LOS_MIN (an object that small is allocated in
+ * a block, and a page run kept for it would waste most of a page;
+ * nothing changes then). Takes the world lock; not a collecting call
+ * (a large object never moves, so PAYLOAD stays valid if the lock wait
+ * lets another thread collect). Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size) {
+  AvantHeader *h;
+  int done = 0;
+  if (!payload || new_size < SCALAR_LOS_MIN) {
+    return 0;
+  }
+  gc_lock(&gc_heap.world);
+  h = (AvantHeader *)payload - 1;
+  if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
+      h->type_id == AVANT_TYPE_BYTES && new_size <= (uint64_t)h->size && h != gc_heap.los_spare) {
+    trim_run(h, (size_t)new_size);
+    done = 1;
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+  return done;
+}

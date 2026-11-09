@@ -521,7 +521,9 @@ typedef struct GcPkCounters {
  * live samples the marked large bytes at the liveness decision of each
  * collection (gc_reclaim_young_large for young, gc_sweep_large for full):
  * sum over samples, peak the largest single sample. promoted counts young
- * large objects tenured by promote_young_large. */
+ * large objects tenured by promote_young_large. trims and trim_bytes count
+ * the large objects avant_gc_large_trim shrank in place and the run bytes
+ * that went back (Stage 28 W18M, O52). */
 typedef struct GcLosCounters {
   uint64_t allocs;
   uint64_t alloc_bytes;
@@ -544,6 +546,8 @@ typedef struct GcLosCounters {
   uint64_t live_samples;
   uint64_t promoted;
   uint64_t promoted_bytes;
+  uint64_t trims;
+  uint64_t trim_bytes;
 } GcLosCounters;
 
 /* pause, why, frag, prom (Stage 28 W15a1, gc-design.md §3.4 M5 and

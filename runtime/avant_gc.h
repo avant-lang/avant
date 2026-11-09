@@ -333,6 +333,13 @@ __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void);
  * new one alone fills the young budget (avant_gc_alloc.c; Stage 28 W16a).
  * It may collect. Hidden. */
 __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes);
+/* A helper that owns a large Bytes object keeps only its first NEW_SIZE
+ * bytes; the run's pages past them go back now (avant_gc_los.c; Stage 28
+ * W18M, O52/O60). 1 when trimmed, 0 when PAYLOAD is not a large unpinned
+ * Bytes object, NEW_SIZE is larger than its size or under the size a
+ * large Bytes object starts at (6 KiB). Not a collecting call.
+ * Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size);
 
 /* Task roots (Stage 28 W16b; C28, R1): a spawned task's capture record
  * is rooted by the task, from avant_spawn until the task's function has
