@@ -935,6 +935,15 @@ typedef struct GcHeap {
   uint64_t verify_lost;
   Block *quarantine;
   uint32_t quarantine_n;
+  /* The freed large runs it holds (header, protected range, state). */
+  struct GcHeldRun {
+    AvantHeader *h;
+    uint8_t *lo;
+    uint8_t *hi;
+    int state;
+  } held_runs[256];
+  uint32_t held_runs_n;
+  uint64_t held_runs_coll;
 
   /* avant_gc_collect.c. */
   int inited;
@@ -1192,6 +1201,8 @@ void gc_verify_lost(void);
 int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
 void gc_quarantine_seal(void);
+int gc_quarantine_run(AvantHeader *h);
+void gc_large_give_held(AvantHeader *h);
 
 /* avant_gc_collect.c */
 /* A collection (O42): GC_YOUNG collects the young generation (S+ may

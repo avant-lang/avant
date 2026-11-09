@@ -296,6 +296,19 @@ static void account_large_gone(AvantHeader *h, int keep_bytes) {
   }
 }
 
+/* A dead object's run: held out of use under AVANT_GC_VERIFY (the
+ * lost-reference check, gc_quarantine_run), else given back. */
+static void free_run(AvantHeader *h) {
+  if (!gc_quarantine_run(h)) {
+    give_run(h);
+  }
+}
+
+/* gc_quarantine_release's: the held run of H goes back now. */
+void gc_large_give_held(AvantHeader *h) {
+  give_run(h);
+}
+
 void gc_release_large(AvantHeader *h) {
   /* AVANT_GC_STRESS=1: the payload of a freed run is poisoned (Stage 28
    * W16a); a reused run is zeroed again (take_run's dirty pages, the
@@ -304,14 +317,14 @@ void gc_release_large(AvantHeader *h) {
   int cache = (h->flags & AVANT_FLAG_YOUNG) &&
               h->type_id == AVANT_TYPE_BYTES &&
               (h->flags & AVANT_FLAG_PINNED) == 0 &&
-              gc_heap.los_spare == NULL;
+              gc_heap.los_spare == NULL && !gc_heap.set.verify;
   account_large_gone(h, cache);
   if (cache) {
     start_bit_set(h, 0);
     gc_heap.los_spare = h;
     gc_heap.ctr.los.spare_cached++;
   } else {
-    give_run(h);
+    free_run(h);
     gc_heap.ctr.los.freed++;
   }
 }
@@ -403,7 +416,7 @@ void gc_sweep_large(void) {
     size_t bytes = gc_large_bytes(h);
     if (!full_marked(h)) {
       gc_poison(payload_of(h), (size_t)h->size);
-      give_run(h);
+      free_run(h);
       gc_heap.large_bytes -= bytes;
       gc_heap.heap_bytes -= bytes;
       gc_heap.ctr.los.freed++;
