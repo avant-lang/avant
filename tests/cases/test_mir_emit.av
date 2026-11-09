@@ -107,7 +107,7 @@ fn gc_numbers_outer: String {
   gc_env_outer("AVANT_GC_VERIFY AVANT_YOUNG_MB AVANT_GC_STATS")
 }
 
-fn gc_stats_10_3(c: Checks, text: String, what: String) {
+fn gc_stats_10_3(c: Checks, text: String, what: String, calls: Bool) {
   c.expect(!str_has(text, "avant gc verify"), "${what}: the GC verifier is silent")
   outer = gc_numbers_outer()
   if outer.size > 0 {
@@ -123,8 +123,18 @@ fn gc_stats_10_3(c: Checks, text: String, what: String) {
   // in place before).
   c.expect(str_has(text, " copied=192 "), "${what}: copied=192")
   c.expect(str_has(text, " prom_inplace=80 "), "${what}: prom_inplace=80")
-  c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
-  c.expect(str_has(text, " enters=400005 "), "${what}: enters=400005")
+  // roots and enters count the frames that enter through a call
+  // (avant_gc_frame_enter, Stage 28 W18): every frame in the call forms;
+  // in the inline forms only the thread's outermost one (main's frame,
+  // its 3 root words), since every other frame links its stack record
+  // itself.
+  if calls {
+    c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
+    c.expect(str_has(text, " enters=400005 "), "${what}: enters=400005")
+  } else {
+    c.expect(str_has(text, " roots=3 "), "${what}: roots=3")
+    c.expect(str_has(text, " enters=1 "), "${what}: enters=1")
+  }
 }
 
 fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
@@ -224,7 +234,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     gl = log_text(runs[k + 1].log)
     c.eq_int(runs[k + 1].code, 0, "example ${t} under the GC verifier: exit 0")
     c.expect(str_has(gl, "199999\nsmall\n"), "example ${t} under the GC verifier: output")
-    gc_stats_10_3(c, gl, "example ${t}")
+    gc_stats_10_3(c, gl, "example ${t}", false)
     if gc_numbers_outer().size == 0 {
       // Stage 28 W16a: avant_str_from_int no longer opens a defer region,
       // whose entry cleared the inline path's state (gc_fast_clear) at
@@ -252,7 +262,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   cl = log_text(last.log)
   c.eq_int(last.code, 0, "example with the call forms: exit 0")
   c.expect(str_has(cl, "199999\nsmall\n"), "example with the call forms: output")
-  gc_stats_10_3(c, cl, "example with the call forms")
+  gc_stats_10_3(c, cl, "example with the call forms", true)
   if gc_numbers_outer().size == 0 {
     c.expect(str_has(cl, " inline_allocs=0 "), "example with the call forms: no inline allocation")
   } else {

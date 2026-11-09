@@ -45,6 +45,24 @@ fn gc_envs: Array(String) {
   ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
 }
 
+// The .ll without its frame chain's two stores (Stage 28 W18): linking
+// and unlinking a frame record are volatile stores into avant_gc_top,
+// the only volatile stores the emitter writes.
+fn without_frame_links(ll: String): String {
+  lines = ll.split("\n")
+  out = buf_new()
+  i = 0
+  while i < lines.size {
+    l = lines[i]
+    if !(str_has(l, "store volatile ptr ") && str_has(l, ", ptr @avant_gc_top, align 8")) {
+      out.push_str(l)
+      out.push_str("\n")
+    }
+    i = i + 1
+  }
+  out.to_s
+}
+
 fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   progs = both_progs()
   np = new_progs()
@@ -117,14 +135,14 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(jobs[base + 2].code, 0, "heap/loops.av: __emit-ll exits 0")
   vol_shared = "(no .ll)"
   if t = file_read("${dir}/vol0.ll") {
-    vol_shared = t
+    vol_shared = without_frame_links(t)
   }
   vol_single = "(no .ll) volatile"
   if t = file_read("${dir}/vol1.ll") {
-    vol_single = t
+    vol_single = without_frame_links(t)
   }
-  c.expect(!str_has(vol_shared, "load volatile ptr") && !str_has(vol_shared, "store volatile") && str_has(vol_shared, "load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile")
-  c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access")
+  c.expect(!str_has(vol_shared, "load volatile ptr") && !str_has(vol_shared, "store volatile") && str_has(vol_shared, "load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile (the frame links aside)")
+  c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access but the frame links")
 
   // Wave 2: every program, then the new ones under each GC environment,
   // then the coverage builds (each writes its own lcov).

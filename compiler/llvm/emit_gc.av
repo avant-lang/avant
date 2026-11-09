@@ -10,51 +10,191 @@ import mir.types
 import mir.ir
 import llvm.emit_core
 
-// gc.roots (5.2): avant_gc_root_begin(n) with n the root words of every
-// listed slot, then one store per word, slots in the listed order and
-// words in offset order; nothing else in between. Empty: nothing.
-pub fn ll_gc_roots(e: LlEmit, locals: Array(Int)) {
+// Frames (5.1, 5.2 as emitted since Stage 28 W18). A frame function
+// keeps its frame record in its own stack frame: %gcf, an AvantGcFrame
+// (runtime/avant_rt.h: prev, slots, n, cap, scope; 32 bytes) followed by
+// the slot array, one pointer per root word of the gc.roots that follows
+// gc.enter (slots in the listed order, words in offset order). gc.enter
+// fills the record (slots, n = cap = the root words, scope 0, each
+// word's address) and links it: inline (prev = avant_gc_top,
+// avant_gc_top = %gcf) when the thread already has an innermost frame,
+// else through avant_gc_frame_enter, which also registers the thread
+// and initializes the heap. gc.leave unlinks it inline when %gcf is
+// innermost and not the thread's outermost frame, else through
+// avant_gc_frame_leave. The call forms (inline_fast false) always call.
+// The two stores into avant_gc_top are volatile: LLVM would otherwise
+// merge an inlined callee's unlink with the next inlined frame's link
+// (dead-store elimination) and leave the callee's llvm.lifetime.end
+// before any store that unlinks it, which E3's rule (D244) forbids even
+// where no call can observe the chain in between.
+// gc.roots itself emits nothing: gc.enter has registered its slots, and
+// nothing comes between them (V16). Until W18 this was a call to
+// avant_gc_enter, a call to avant_gc_root_begin and one store per word,
+// and a call to avant_gc_leave (R5, O4).
+
+// The root words of bb0's gc.roots, or -1 when the function has no
+// gc.enter (a leaf, 5.7).
+pub fn ll_gc_frame_words(e: LlEmit, f: MFunc): Int {
+  if f.blocks.size == 0 {
+    return -1
+  }
+  stmts = f.blocks[0].stmts
+  found = false
   n = 0
   i = 0
-  while i < locals.size {
-    n = n + e.ts.root_count(e.f.locals[locals[i]].ty)
-    i = i + 1
-  }
-  if n == 0 {
-    return
-  }
-  e.need("avant_gc_root_begin")
-  e.line("%r = call ptr @avant_gc_root_begin(i32 ${n})")
-  w = 0
-  i = 0
-  while i < locals.size {
-    l = locals[i]
-    refs: Array(Int) = []
-    roots: Array(Int) = []
-    e.ts.words(e.f.locals[l].ty, 0, refs, roots)
-    j = 0
-    while j < roots.size {
-      at = e.local_name(l)
-      if roots[j] > 0 {
-        at = e.tmp
-        e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${roots[j] * 8}")
+  while i < stmts.size {
+    st = stmts[i]
+    if st.kind == msk_gc_enter() {
+      found = true
+    } else if st.kind == msk_gc_roots() {
+      j = 0
+      while j < st.locals.size {
+        n = n + e.ts.root_count(f.locals[st.locals[j]].ty)
+        j = j + 1
       }
-      slot = "%r"
-      if w > 0 {
-        slot = "%r.${w}"
-        e.line("${slot} = getelementptr inbounds ptr, ptr %r, i64 ${w}")
-      }
-      e.line("store ptr ${at}, ptr ${slot}, align 8")
-      w = w + 1
-      j = j + 1
     }
     i = i + 1
   }
+  if !found {
+    return -1
+  }
+  n
 }
 
-pub fn ll_gc_call(e: LlEmit, name: String) {
-  e.need(name)
-  e.line("call void @${name}()")
+pub fn ll_gc_frame_type(n: Int): String {
+  if n == 0 {
+    return "{ ptr, ptr, i32, i32, i32 }"
+  }
+  "{ ptr, ptr, i32, i32, i32, [${n} x ptr] }"
+}
+
+// The locals of the gc.roots right after the current gc.enter (V16).
+fn ll_gc_roots_after(e: LlEmit): Array(MStmt) {
+  out: Array(MStmt) = []
+  stmts = e.f.blocks[e.bk].stmts
+  if e.si + 1 < stmts.size {
+    st = stmts[e.si + 1]
+    if st.kind == msk_gc_roots() {
+      out.push(st)
+    }
+  }
+  out
+}
+
+pub fn ll_gc_frame_enter(e: LlEmit) {
+  roots = ll_gc_roots_after(e)
+  n = 0
+  i = 0
+  if roots.size > 0 {
+    locals = roots[0].locals
+    while i < locals.size {
+      n = n + e.ts.root_count(e.f.locals[locals[i]].ty)
+      i = i + 1
+    }
+  }
+  slots = "null"
+  if n > 0 {
+    slots = e.tmp
+    e.line("${slots} = getelementptr inbounds i8, ptr %gcf, i64 32")
+  }
+  fs = e.tmp
+  e.line("${fs} = getelementptr inbounds i8, ptr %gcf, i64 8")
+  e.line("store ptr ${slots}, ptr ${fs}, align 8")
+  fn_ = e.tmp
+  e.line("${fn_} = getelementptr inbounds i8, ptr %gcf, i64 16")
+  e.line("store i32 ${n}, ptr ${fn_}, align 8")
+  fc = e.tmp
+  e.line("${fc} = getelementptr inbounds i8, ptr %gcf, i64 20")
+  e.line("store i32 ${n}, ptr ${fc}, align 4")
+  fsc = e.tmp
+  e.line("${fsc} = getelementptr inbounds i8, ptr %gcf, i64 24")
+  e.line("store i32 0, ptr ${fsc}, align 8")
+  if n > 0 {
+    locals = roots[0].locals
+    w = 0
+    i = 0
+    while i < locals.size {
+      l = locals[i]
+      refs: Array(Int) = []
+      words: Array(Int) = []
+      e.ts.words(e.f.locals[l].ty, 0, refs, words)
+      j = 0
+      while j < words.size {
+        at = e.local_name(l)
+        if words[j] > 0 {
+          at = e.tmp
+          e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${words[j] * 8}")
+        }
+        sl = slots
+        if w > 0 {
+          sl = e.tmp
+          e.line("${sl} = getelementptr inbounds i8, ptr %gcf, i64 ${32 + w * 8}")
+        }
+        e.line("store ptr ${at}, ptr ${sl}, align 8")
+        w = w + 1
+        j = j + 1
+      }
+      i = i + 1
+    }
+  }
+  e.need("avant_gc_frame_enter")
+  if !e.inline_fast {
+    e.line("call void @avant_gc_frame_enter(ptr %gcf)")
+    return
+  }
+  e.used_frame_global = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  top = e.tmp
+  e.line("${top} = load ptr, ptr @avant_gc_top, align 8")
+  c = e.tmp
+  e.line("${c} = icmp ne ptr ${top}, null")
+  x = e.tmp
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 true)")
+  fast = e.part("link")
+  slow = e.part("enter")
+  cont = e.part("entered")
+  e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  e.block(fast)
+  e.line("store ptr ${top}, ptr %gcf, align 8")
+  e.line("store volatile ptr %gcf, ptr @avant_gc_top, align 8")
+  e.line("br label %${cont}")
+  e.block(slow)
+  e.line("call void @avant_gc_frame_enter(ptr %gcf)")
+  e.line("br label %${cont}")
+  e.block(cont)
+}
+
+pub fn ll_gc_frame_leave(e: LlEmit) {
+  e.need("avant_gc_frame_leave")
+  if !e.inline_fast {
+    e.line("call void @avant_gc_frame_leave(ptr %gcf)")
+    return
+  }
+  e.used_frame_global = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  top = e.tmp
+  e.line("${top} = load ptr, ptr @avant_gc_top, align 8")
+  prev = e.tmp
+  e.line("${prev} = load ptr, ptr %gcf, align 8")
+  c1 = e.tmp
+  e.line("${c1} = icmp eq ptr ${top}, %gcf")
+  c2 = e.tmp
+  e.line("${c2} = icmp ne ptr ${prev}, null")
+  c = e.tmp
+  e.line("${c} = and i1 ${c1}, ${c2}")
+  x = e.tmp
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 true)")
+  fast = e.part("unlink")
+  slow = e.part("leave")
+  cont = e.part("left")
+  e.line("br i1 ${x}, label %${fast}, label %${slow}")
+  e.block(fast)
+  e.line("store volatile ptr ${prev}, ptr @avant_gc_top, align 8")
+  e.line("br label %${cont}")
+  e.block(slow)
+  e.line("call void @avant_gc_frame_leave(ptr %gcf)")
+  e.line("br label %${cont}")
+  e.block(cont)
 }
 
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
