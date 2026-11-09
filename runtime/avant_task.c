@@ -100,10 +100,12 @@ static long pool_count(void) {
   return (long)avant_chosen_threads();
 }
 
+/* Called at a collecting entry (spawn, .parallel): pool_mu through
+ * avant_gc_lock (native while contended; Stage 28 W17a). */
 static void ensure_pool(void) {
   long n;
   long i;
-  pthread_mutex_lock(&pool_mu);
+  avant_gc_lock(&pool_mu);
   if (pool_started) {
     pthread_mutex_unlock(&pool_mu);
     return;
@@ -120,10 +122,18 @@ static void ensure_pool(void) {
   }
 }
 
+/* A worker is native between jobs (Stage 28 W17a, rule 2): it returns to
+ * running (a safepoint while a collection is in progress) before it reads
+ * the job's heap argument and calls into Avant, and is native again once
+ * the function has returned; the root drop and the pool lock that follow
+ * touch only C memory and the root list (under the world lock, which the
+ * collector holds while it collects). */
 static void run_job(Job *job) {
+  avant_gc_native_end();
   if (job->kind == 1) {
     AvantTask *t = job->task;
     t->result = t->fn(t->arg);
+    avant_gc_native_begin();
     /* R1: the record is the task's until its function returns; from
      * here it lives only as long as something else names it. */
     if (t->arg) {
@@ -138,6 +148,7 @@ static void run_job(Job *job) {
     avant_par_fn fn = (avant_par_fn)job->fn;
     ParDone *par = job->par;
     fn(job->index, job->arg);
+    avant_gc_native_begin();
     pthread_mutex_lock(&pool_mu);
     par->remaining -= 1;
     if (par->remaining == 0) {
@@ -156,8 +167,12 @@ static void *worker_main(void *p) {
    * collection on another thread must not relocate a buffer this
    * worker is storing into. */
   avant_alloc_in_mature(1);
+  /* Native while it waits for a job (rule 2): a collection never waits
+   * for an idle worker. */
+  avant_gc_native_begin();
   for (;;) {
     Job *job;
+    /* Plain lock and wait: the thread is native here. */
     pthread_mutex_lock(&pool_mu);
     while (!queue_head) {
       pthread_cond_wait(&queue_cv, &pool_mu);
@@ -202,8 +217,8 @@ void *avant_spawn(void *fn, void *arg) {
   AvantTask *t;
   Job *job;
   /* gc-lint: holds nothing (arg, the capture record, is a task root from
-   * before the handle's allocation, so it neither moves nor dies; C28,
-   * R1). Nothing before the allocation collects; nothing after it. */
+   * before the first call that may collect, read from the root after it;
+   * C28, R1). The handle's allocation is the last call. */
   t = (AvantTask *)calloc(1, sizeof(AvantTask));
   if (!t) {
     die_task("out of memory");
@@ -219,19 +234,24 @@ void *avant_spawn(void *fn, void *arg) {
   if (arg) {
     avant_gc_task_root_add(&t->root, arg);
   }
-  hd = (AvantJoinHandle *)avant_alloc(sizeof(AvantJoinHandle), AVANT_TYPE_BYTES);
-  hd->task = t;
-  hd->result = 0;
   job = (Job *)calloc(1, sizeof(Job));
   if (!job) {
     die_task("out of memory");
   }
   job->kind = 1;
   job->task = t;
+  /* The job is queued before the handle exists (Stage 28 W17a): the pool
+   * lock may wait natively (a collection may run there), and the handle
+   * is then allocated last, so this function holds no heap reference
+   * across any collecting call (the record is the task's root). The
+   * task is C memory; the join finds it through the handle. */
   ensure_pool();
-  pthread_mutex_lock(&pool_mu);
+  avant_gc_lock(&pool_mu);
   enqueue(job);
   pthread_mutex_unlock(&pool_mu);
+  hd = (AvantJoinHandle *)avant_alloc(sizeof(AvantJoinHandle), AVANT_TYPE_BYTES);
+  hd->task = t;
+  hd->result = 0;
   return hd;
 }
 
@@ -245,16 +265,18 @@ int32_t avant_join(void *handle) {
   if (on_worker) {
     die_task("join from a pool worker");
   }
-  /* Other threads may collect while this one waits (D191), and a
-   * collection may move the handle; the pin keeps it at this address
-   * until the join is done, and is gone after it (no pin is left by a
-   * joined spawn, C28). */
-  avant_pin(hd);
-  pthread_mutex_lock(&pool_mu);
+  /* The wait is native (Stage 28 W17a, rule 2): other threads collect
+   * meanwhile and may move the handle, which this function holds in a
+   * handle scope (RC1) and reads only while running (it was pinned until
+   * W17a, because other threads collected without stopping this one,
+   * D191). */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &hd);
+  avant_gc_lock(&pool_mu);
   /* hd->task is read again after each wait: a join that finishes first
    * clears it, and the task is then gone. */
   while (hd->task && !hd->task->done) {
-    pthread_cond_wait(&hd->task->done_cv, &pool_mu);
+    avant_gc_cond_wait(&hd->task->done_cv, &pool_mu);
   }
   t = hd->task;
   if (t) {
@@ -269,7 +291,6 @@ int32_t avant_join(void *handle) {
     pthread_cond_destroy(&t->done_cv);
     free(t);
   }
-  avant_unpin(hd);
   return result;
 }
 
@@ -287,7 +308,7 @@ void avant_parallel_for(int32_t n, void *fn, void *ctx) {
   }
   done.remaining = n;
   ensure_pool();
-  pthread_mutex_lock(&pool_mu);
+  avant_gc_lock(&pool_mu);
   for (i = 0; i < n; i++) {
     Job *job = (Job *)calloc(1, sizeof(Job));
     if (!job) {
@@ -301,7 +322,7 @@ void avant_parallel_for(int32_t n, void *fn, void *ctx) {
     enqueue(job);
   }
   while (done.remaining > 0) {
-    pthread_cond_wait(&done.cv, &pool_mu);
+    avant_gc_cond_wait(&done.cv, &pool_mu);
   }
   pthread_mutex_unlock(&pool_mu);
   pthread_cond_destroy(&done.cv);
@@ -321,9 +342,12 @@ uint64_t avant_gate_new(void) {
   return (uint64_t)(uintptr_t)g;
 }
 
+/* A gate's lock and wait are native while they wait (Stage 28 W17a, rule
+ * 2): the holder of a Mutex may stop at a safepoint inside its block, so
+ * a thread waiting for it must not be waited for. */
 void avant_gate_lock(uint64_t gate) {
   Gate *g = (Gate *)(uintptr_t)gate;
-  pthread_mutex_lock(&g->mu);
+  avant_gc_lock(&g->mu);
 }
 
 void avant_gate_unlock(uint64_t gate) {
@@ -333,7 +357,7 @@ void avant_gate_unlock(uint64_t gate) {
 
 void avant_gate_wait(uint64_t gate) {
   Gate *g = (Gate *)(uintptr_t)gate;
-  pthread_cond_wait(&g->cv, &g->mu);
+  avant_gc_cond_wait(&g->cv, &g->mu);
 }
 
 void avant_gate_signal(uint64_t gate) {

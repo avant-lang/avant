@@ -94,10 +94,11 @@
  *   defragmenting full collection rewrites it. Slots are registered in order (0, 1, ...), before the
  *   first call that may collect; at most one scope per C block (open a
  *   nested block for a second). It is thread-local, takes no lock and
- *   allocates nothing. In a shared program (g_avant_shared) the scope
- *   also holds a no-GC region (RC4) until the scope ends: no thread is
- *   stopped for a collection until W17's handshake (D191), and a scope
- *   so keeps the protection today's defer regions gave.
+ *   allocates nothing. The same in a shared program since Stage 28
+ *   W17a: other threads collect only while this one is stopped at a
+ *   safepoint or native (gc-design.md section 4.4), so a scope no longer
+ *   holds a no-GC region there (until W17a it did, D191, and took the
+ *   world lock twice; O111).
  *
  *   RC2. No raw derived pointer across a collecting call. An interior
  *   pointer (s + start) or a buffer's data pointer (h->keys, a->buf,
@@ -342,8 +343,8 @@ __attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRo
  * thread's chain, the type every frame has (avant_gc_internal.h calls it
  * Frame): generated code's frames come from avant_gc_enter's free list,
  * a scope's lives in the C function's own stack frame. scope is 0 for a
- * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope, plus
- * AVANT_GC_SCOPE_NOGC when it holds a no-GC region (a shared program).
+ * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope (the
+ * NOGC bit, a scope's no-GC region in a shared program, went in W17a).
  * avant_gc_top is the thread's innermost frame (hidden: no linked image
  * exports it; user C opens frames with avant_gc_enter and
  * avant_gc_root_begin, the ABI generated code uses). */
@@ -355,7 +356,6 @@ typedef struct AvantGcFrame {
   uint32_t scope;
 } AvantGcFrame;
 #define AVANT_GC_SCOPE_OPEN 1u
-#define AVANT_GC_SCOPE_NOGC 2u
 extern __thread __attribute__((visibility("hidden"))) AvantGcFrame *avant_gc_top;
 
 static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t cap) {
@@ -364,19 +364,12 @@ static inline void avant_gc_scope_open_(AvantGcFrame *f, void ***slots, uint32_t
   f->n = 0;
   f->cap = cap;
   f->scope = AVANT_GC_SCOPE_OPEN;
-  if (__builtin_expect(atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0, 0)) {
-    avant_gc_nogc_begin();
-    f->scope |= AVANT_GC_SCOPE_NOGC;
-  }
   avant_gc_top = f;
 }
 
 static inline void avant_gc_scope_close_(AvantGcFrame *f) {
   if (f->scope) {
     avant_gc_top = f->prev;
-    if (f->scope & AVANT_GC_SCOPE_NOGC) {
-      avant_gc_nogc_end();
-    }
     f->scope = 0;
   }
 }
