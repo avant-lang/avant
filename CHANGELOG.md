@@ -1,5 +1,24 @@
 # Avant Language changelog
 
+## 0.37.0 - 2026-11-09
+
+### Changed/Fixed/Added
+
+* A new young generation: young objects are collected in place, and only blocks worth copying are moved. Small and large survivors age before they are promoted, the young size adapts to the program (4 MiB by default, up to 32 MiB), and large arrays of references are tracked by card, so a young collection rescans only the parts that changed.
+* Memory and speed across LangArena: average RSS 32.8 → 27.7 MB, total time 42.3 → 41.8 s, the worst memory ratio against the reference languages 37× → 2.3× (Etc::Words: 202 → about 12 MB).
+* The runtime's C helpers keep their references precisely and may collect at their own allocations. The conservative C-stack scan is gone: every root the collector sees is now precise.
+* A `spawn` that is never joined no longer keeps its captured values alive for the rest of the program.
+* A program over its heap limit stops with "heap limit" instead of running without end.
+* Settings:
+  - a switch is `1` or `0`, a size is a whole number; anything else is reported at start-up and ignored (`AVANT_GC_VERIFY` and `AVANT_GC_STATS` need `1`);
+  - `AVANT_NURSERY_DISCARD`, `AVANT_GC_REM_FRONTIER`, `AVANT_GC_YOUNG_SIZING`, `AVANT_GC_COPY_RESERVE` and `AVANT_GC_STACK_REWRITE` are removed (reported if set);
+  - `AVANT_GC_VERIFY=1` reports lost references and holds freed memory until the next collection (more memory under the verifier);
+  - `AVANT_GC_STRESS=1` collects before every runtime allocation, moves every young object it can and poisons freed memory;
+  - the `AVANT_GC_STATS` line drops fourteen fields that always printed 0.
+* C boundary (`--cc` code):
+  - `avant_rt.o` exports only its ABI; `avant_gc_add_root` and `avant_barrier_slot` are new in `avant_rt.h`, and `avant_hash_walk_tls` is gone;
+  - every runtime helper may now collect (hash setters, `inc_slice` and `Buf` pushes included), so C code must root the references it holds across them.
+
 ## 0.36.0 - 2026-11-07
 
 ### Changed/Fixed/Added
