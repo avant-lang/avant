@@ -212,3 +212,38 @@ int32_t exit_join(void) {
   avant_gc_native_end();
   return bad;
 }
+
+/* release.av (Stage 28 W16c, D266): a C struct whose String fields Avant
+ * stores into and then releases; C keeps a pointer it read from a field
+ * (rel_keep) and copies the struct (rel_copy), as Q9's fixture did. */
+typedef struct RelPos {
+  const char *tag;
+  int32_t n;
+} RelPos;
+
+typedef struct RelHolder {
+  const char *name;
+  int32_t id;
+  void *link;
+  RelPos at;
+  const char *note;
+} RelHolder;
+
+static const char *rel_kept;
+static const char rel_c_text[] = "set-by-C";
+
+RelHolder *rel_new(void) { return (RelHolder *)calloc(1, sizeof(RelHolder)); }
+void rel_free(RelHolder *h) { free(h); }
+void rel_keep(RelHolder *h) { rel_kept = h->name; }
+int32_t rel_kept_is(const char *want) { return rel_kept && strcmp(rel_kept, want) == 0; }
+void rel_forget(void) { rel_kept = NULL; }
+void rel_copy(RelHolder *dst, const RelHolder *src) { *dst = *src; }
+void rel_clear(RelHolder *h) { memset(h, 0, sizeof(RelHolder)); }
+int32_t rel_name_is(const RelHolder *h, const char *want) { return h->name && strcmp(h->name, want) == 0; }
+int32_t rel_note_is(const RelHolder *h, const char *want) { return h->note && strcmp(h->note, want) == 0; }
+int32_t rel_name_null(const RelHolder *h) { return h->name == NULL; }
+int32_t rel_note_null(const RelHolder *h) { return h->note == NULL; }
+int32_t rel_tag_null(const RelHolder *h) { return h->at.tag == NULL; }
+void rel_set_c_name(RelHolder *h) { h->name = rel_c_text; }
+int32_t rel_name_is_c(const RelHolder *h) { return h->name == rel_c_text; }
+int32_t rel_name_len(const RelHolder *h) { return h->name ? (int32_t)strlen(h->name) : -1; }
