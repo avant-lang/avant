@@ -58,15 +58,12 @@ static void register_thread(int implicit) {
   if (!implicit) {
     atomic_store(&g_first_registered, 1);
   }
+  gc_alloc_thread_init();
   gc_thread_registered(foreign);
-  if (foreign) {
-    /* A foreign thread allocates in the mature space, as the pool's
-     * workers and the HTTP loop threads do: the young allocator's cursor
-     * is one per process (gc_heap.cur), with this thread's bump pointer
-     * in TLS, so a second thread allocating young corrupts it (found by
-     * W17a's rule 4 proof; per-thread allocation blocks are W17b's). */
-    avant_alloc_in_mature(1);
-  }
+  /* Every registered thread, a foreign one too, allocates young in its
+   * own young blocks (Stage 28 W17b; until then a foreign thread, the
+   * pool's workers and the HTTP loop threads allocated in the mature
+   * space: the young cursor was one per process, W17a's rule 4 proof). */
 }
 
 void avant_gc_register_thread(void) {
@@ -77,6 +74,7 @@ void avant_gc_unregister_thread(void) {
   if (!gc_thread.reg.head) {
     return;
   }
+  gc_alloc_thread_leave();
   gc_thread_unregistering();
 }
 

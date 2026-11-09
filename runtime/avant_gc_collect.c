@@ -330,10 +330,10 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
                               : 0;
   gc_heap.live = 0;
   gc_heap.work_n = 0;
-  gc_fast_clear();
-  gc_heap.cur = NULL;
-  avant_gc_bump = NULL;
-  gc_heap.limit = NULL;
+  /* Every thread's allocation cursors and inline state (Stage 28 W17b:
+   * per thread; the young cursor was cleared when the collection ended
+   * before, which no allocation in between could tell apart). */
+  gc_alloc_stop_all();
 
   if (!full) {
     /* One young collection: no probe, no pause. Survival, for sizing,
@@ -360,7 +360,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* Non-moving for young objects: they are promoted where they lie
      * (defragmentation may move mature blocks, below). */
     gc_los_spare_drop();
-    gc_clear_alloc_cur(SPACE_NURSERY);
     gc_clear_alloc_cur(SPACE_MATURE);
     gc_sticky_full_begin();
     /* The marks: one memset per chunk of the side bitmap; no header is

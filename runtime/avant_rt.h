@@ -105,12 +105,16 @@ void avant_gc_add_root(void **slot);
  * allocate without a call only while avant_gc_fast_ok is set: it bumps
  * avant_gc_bump by the aligned total, writes the header (HEAP|YOUNG),
  * zeroes the payload, sets the block start bit through
- * avant_gc_starts/avant_gc_base, and adds the total to
- * avant_g_stats.allocated_bytes, avant_since_gc, and
+ * avant_gc_starts/avant_gc_base, and, when avant_gc_fast_ok is 1, adds
+ * the total to avant_g_stats.allocated_bytes, avant_since_gc, and
  * avant_nursery_held. avant_gc_limit is the block limit capped by the
  * young threshold, and the runtime alone publishes or clears this
- * state. AvantGcStats field order is part of this ABI
- * (allocated_bytes at offset 24). */
+ * state. avant_gc_fast_ok is 1 while the program has one thread (the
+ * path counts; code of an unshared module also requires g_avant_shared
+ * to be 0) and 2 in a program with threads (Stage 28 W17b): the thread
+ * bumps in a hole of its own young block that the runtime has charged
+ * to the young budget, and the path counts nothing. AvantGcStats field
+ * order is part of this ABI (allocated_bytes at offset 24). */
 extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
 extern __thread uint8_t *avant_gc_base;

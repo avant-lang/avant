@@ -181,8 +181,12 @@ void gc_thread_registered(int foreign) {
    * flag before it was set; after its safepoint it takes the locked path.
    * Without this a new thread's first allocation could race with it
    * (found by W17a's rule 4 proof: "object too large" under
-   * AVANT_GC_VERIFY=1, a corrupted header). */
+   * AVANT_GC_VERIFY=1, a corrupted header). While it is stopped its
+   * single-mutator inline state (avant_gc_fast_ok 1, whose path counts
+   * without a lock) is cleared: from now on a thread bumps only in a hole
+   * the slow path charged to it (Stage 28 W17b). */
   if (became_shared && gc_stop_world()) {
+    gc_alloc_shared_now();
     gc_resume_world();
   }
 }

@@ -945,9 +945,8 @@ void gc_sticky_collect(int tenure) {
     gc_heap.splus_sdst = NULL;
   }
 #endif
-  gc_clear_alloc_cur(SPACE_NURSERY);
-  gc_heap.overflow = NULL;
-  gc_heap.cur_whole = 0;
+  /* (Every thread's young cursor and overflow block were dropped when the
+   * collection began, gc_alloc_stop_all.) */
   /* The empty young blocks go back to their chunks' free lists (O89):
    * before, they stayed in mature space until a full collection, so a
    * program that never runs one never returned them. The mature list is
@@ -1003,8 +1002,6 @@ void gc_sticky_full_begin(void) {
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
   gc_heap.verify_holes_n = 0;
-  gc_heap.overflow = NULL;
-  gc_heap.cur_whole = 0;
 }
 
 void gc_sticky_full_end(void) {

@@ -157,6 +157,16 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // fast path of 5.5, then the slow call, joined by a phi; returns the
 // pointer to store into _d. A constant size and type fold the size tests
 // (and choose the call form when the fast path can never be taken).
+//
+// A shared module (Stage 28 W17b, 5.5's condition 1 lifted): every thread
+// has its own young cursor, so the path runs on any thread. It tests
+// avant_gc_fast_ok for either state the runtime publishes instead of
+// g_avant_shared and the single mutator's state: 1 (the program has one
+// thread yet; the path counts every allocation, as in an unshared
+// module) or 2 (the thread bumps in a hole the runtime charged to it,
+// hole accounting: the path counts nothing, and must not, since other
+// threads update the counters under the world lock). An unshared module
+// is unchanged.
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -176,14 +186,22 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.used_alloc_globals = true
   e.need(callee)
   e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
-  sh = e.tmp
-  e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
-  c1 = e.tmp
-  e.line("${c1} = icmp eq i32 ${sh}, 0")
+  shared = e.m.shared
+  c1 = ""
+  if !shared {
+    sh = e.tmp
+    e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
+    c1 = e.tmp
+    e.line("${c1} = icmp eq i32 ${sh}, 0")
+  }
   ok = e.tmp
   e.line("${ok} = load i32, ptr @avant_gc_fast_ok, align 4")
   c2 = e.tmp
-  e.line("${c2} = icmp eq i32 ${ok}, 1")
+  if shared {
+    e.line("${c2} = icmp ne i32 ${ok}, 0")
+  } else {
+    e.line("${c2} = icmp eq i32 ${ok}, 1")
+  }
   bump = e.tmp
   e.line("${bump} = load ptr, ptr @avant_gc_bump, align 8")
   lim = e.tmp
@@ -204,8 +222,11 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.line("${li} = ptrtoint ptr ${lim} to i64")
   c4 = e.tmp
   e.line("${c4} = icmp ule i64 ${ei}, ${li}")
-  a12 = e.tmp
-  e.line("${a12} = and i1 ${c1}, ${c2}")
+  a12 = c2
+  if !shared {
+    a12 = e.tmp
+    e.line("${a12} = and i1 ${c1}, ${c2}")
+  }
   a34 = e.tmp
   e.line("${a34} = and i1 ${c3}, ${c4}")
   go = e.tmp
@@ -286,13 +307,27 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.line("${nw} = or i64 ${old}, ${mask}")
   e.line("store i64 ${nw}, ptr ${wp}, align 8")
   // The counters: allocated_bytes (avant_g_stats + 24), since_gc,
-  // nursery_held by total; inline_allocs by one.
+  // nursery_held by total; inline_allocs by one. In a shared module only
+  // in state 1 (the one thread counts); in state 2 the runtime does.
+  from = fast
+  if shared {
+    m1 = e.tmp
+    e.line("${m1} = icmp eq i32 ${ok}, 1")
+    cnt = e.part("count")
+    from = e.part("counted")
+    e.line("br i1 ${m1}, label %${cnt}, label %${from}")
+    e.block(cnt)
+  }
   sp = e.tmp
   e.line("${sp} = getelementptr inbounds i8, ptr @avant_g_stats, i64 24")
   ll_bump_counter(e, sp, total)
   ll_bump_counter(e, "@avant_since_gc", total)
   ll_bump_counter(e, "@avant_nursery_held", total)
   ll_bump_counter(e, "@avant_inline_allocs", "1")
+  if shared {
+    e.line("br label %${from}")
+    e.block(from)
+  }
   e.line("br label %${cont}")
 
   e.block(slow)
@@ -301,7 +336,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
 
   e.block(cont)
   r = e.tmp
-  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
+  e.line("${r} = phi ptr [ ${obj}, %${from} ], [ ${s}, %${slow} ]")
   r
 }
 

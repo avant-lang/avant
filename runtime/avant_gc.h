@@ -48,8 +48,9 @@
  *   - avant_pin/avant_unpin keep an object at its address while C holds
  *     it (counted). avant_alloc_in_mature(1) makes the calling thread
  *     allocate in the mature space, which a young collection never
- *     moves, until avant_alloc_in_mature(0) (task-pool workers, HTTP
- *     loop threads, the JSON parser's pool).
+ *     moves, until avant_alloc_in_mature(0) (no runtime unit uses it
+ *     since Stage 28 W17b: the pool's workers, the HTTP loop threads and
+ *     foreign threads allocate young in their own young blocks).
  *   - A thread that runs Avant code registers itself
  *     (avant_gc_register_thread) before its first allocation and
  *     unregisters when no Avant frame of it is active; a thread with no

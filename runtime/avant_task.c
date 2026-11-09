@@ -165,10 +165,11 @@ static void *worker_main(void *p) {
   (void)p;
   on_worker = 1;
   avant_gc_register_thread();
-  /* Worker allocations stay in the non-moving mature space. A young
-   * collection on another thread must not relocate a buffer this
-   * worker is storing into. */
-  avant_alloc_in_mature(1);
+  /* A worker allocates young in its own young blocks (Stage 28 W17b);
+   * until then it allocated in the non-moving mature space, because
+   * the young cursor was one per process and, before W17a's handshake,
+   * a young collection on another thread could move a buffer this
+   * worker was storing into. */
   /* Native while it waits for a job (rule 2): a collection never waits
    * for an idle worker. */
   avant_gc_native_begin();

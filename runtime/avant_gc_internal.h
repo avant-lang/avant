@@ -65,7 +65,8 @@
  * Pinned objects never move. Objects that escape to C should be pinned.
  *
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
- * allocation and collection take a world lock.
+ * collection and the slow path of allocation take a world lock; each
+ * thread bumps in its own young hole without it (Stage 28 W17b).
  */
 
 #define ALIGN 8
@@ -763,12 +764,8 @@ typedef struct GcHeap {
    * CACHE_BLOCKS), still charged to heap_bytes. */
   Block *cache;
   int cache_n;
-  /* The C allocation cursor's block and limit; the cursor itself is the
-   * inline path's avant_gc_bump. fast_block is the block the inline
-   * fast path is published on (gc_fast_refresh). */
-  Block *cur;
-  uint8_t *limit;
-  Block *fast_block;
+  /* (The C allocation cursor, its limit and the inline path's block are
+   * per thread since Stage 28 W17b: GcThread.cur, .limit, .fast_block.) */
   /* Block bytes in use or cached, against set.heap_max. (E's copy
    * reserve, charged against it outside a collection, went with E in
    * Stage 28 W15d: S+'s copy is optional and stops at the limit.) */
@@ -848,9 +845,12 @@ typedef struct GcHeap {
    * cursor's block, and is then skipped). Wholly free blocks go back to
    * their chunks (Stage 28 W15c; before, a free_blocks list kept them in
    * mature space until a full collection).
-   * overflow: the young block medium objects go to when the current
-   * hole cannot hold them (Immix's overflow allocation). cur_whole: the
-   * young cursor's hole is a whole block (S_INLINE_HOLES). */
+   * Each thread's young cursor, its overflow block (the young block
+   * medium objects go to when the current hole cannot hold them, Immix's
+   * overflow allocation) and cur_whole (the young cursor's hole is a
+   * whole block, S_INLINE_HOLES) are the thread's own since Stage 28
+   * W17b (GcThread.ycur, .overflow, .cur_whole): a young block belongs to
+   * the one thread whose cursor took it until the next collection. */
   Block **young_blocks;
   uint32_t young_blocks_n;
   uint32_t young_blocks_cap;
@@ -863,8 +863,6 @@ typedef struct GcHeap {
   Block **verify_holes;
   uint32_t verify_holes_n;
   uint32_t verify_holes_cap;
-  Block *overflow;
-  int cur_whole;
   /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
    * the block copies go to; copied_bytes when it began. splus_age: the
    * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
@@ -1040,6 +1038,38 @@ typedef struct GcThread {
   int collector;
   int foreign;
   int base_native;
+  /* The thread's allocation cursors (Stage 28 W17b, gc-design.md section
+   * 4.4 "What it enables"; they were gc_heap's, one per process, so only
+   * one thread could allocate young). cur and limit: the C cursor's block
+   * and its hole's limit (the cursor itself is the thread's
+   * avant_gc_bump); fast_block: the block the inline path is published
+   * on; ycur: the young cursor's block (a young block, owned by this
+   * thread until the next collection); overflow: its young overflow
+   * block; cur_whole: ycur's hole is a whole block. A collection clears
+   * every thread's (gc_alloc_stop_all, avant_gc_alloc.c).
+   *
+   * Hole accounting (a shared program, avant_gc_fast_ok == 2): the slow
+   * path charges the rest of the young hole it hands the thread,
+   * [tl_start, tl_end), to the one young budget (avant_nursery_held) and
+   * the thread then bumps in it without the world lock (the inline path
+   * and avant_alloc's fast path); the counters are made exact (the bytes
+   * used counted, the rest given back) at the thread's next slow
+   * allocation, at every collection, and when it unregisters
+   * (gc_tl_settle). tl_end NULL: nothing is charged. bump_p, limit_p and
+   * fast_ok_p are the addresses of the thread's avant_gc_bump,
+   * avant_gc_limit and avant_gc_fast_ok, so a collector on another thread
+   * can clear them while this one is stopped. */
+  Block *cur;
+  uint8_t *limit;
+  Block *fast_block;
+  Block *ycur;
+  Block *overflow;
+  int cur_whole;
+  uint8_t *tl_start;
+  uint8_t *tl_end;
+  uint8_t **bump_p;
+  uint8_t **limit_p;
+  uint32_t *fast_ok_p;
 } GcThread;
 
 extern __thread GcThread gc_thread;
@@ -1112,6 +1142,11 @@ Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
 void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
+void gc_alloc_stop_all(void);
+void gc_tl_settle(GcThread *t);
+void gc_alloc_thread_init(void);
+void gc_alloc_thread_leave(void);
+void gc_alloc_shared_now(void);
 
 /* avant_gc_los.c */
 size_t gc_large_bytes(const AvantHeader *h);
