@@ -55,7 +55,9 @@
  *     (avant_gc_register_thread) before its first allocation and
  *     unregisters when no Avant frame of it is active; a thread with no
  *     Avant caller opens a base frame with avant_gc_enter/avant_gc_leave
- *     (the HTTP loop threads).
+ *     (the HTTP loop threads). A thread that exits still registered (a
+ *     foreign C thread, registered by its first avant_gc_enter) is
+ *     unregistered by its exit (a pthread key destructor, Stage 28 W17c).
  *   - g_avant_shared is 0 until a second thread registers and 1 from
  *     then on: while it is 0, the one mutator may skip the world lock
  *     (avant_array.c, avant_str.c).

@@ -1,0 +1,54 @@
+// Foreign threads that exit (Stage 28 W17c, O126): waves of C threads that
+// Avant never started call the allocating callback `check` and then exit
+// without unregistering (tests/fixtures/ffi/ffi.c, exit_start/exit_join),
+// while the main thread allocates and collects; the main thread joins each
+// wave natively and allocates on. Every fourth wave's threads register
+// themselves first, so they are running, not native, between callbacks and
+// when they exit. Thread exit unregisters a thread, so no collection reads
+// an exited thread's state, and a thread may exit while a collection is in
+// progress. Before the fix an exited thread stayed in the collector's
+// list: the next thread on its reused stack registered the same node
+// again, a cycle the handshake looped on forever.
+lib fc {
+  fun exit_start(f: fn(Int): Int, n: Int, rounds: Int, explicit: Bool)
+  fun exit_join: Int
+}
+
+fn check(i: Int): Int {
+  s = "cb-${i}"
+  a: Array(String) = []
+  a.push(s)
+  a.push(s + "-tail")
+  if a[1].size != s.size + 5 {
+    return 1
+  }
+  0
+}
+
+fn main {
+  mine: Array(String) = []
+  j = 0
+  while j < 500 {
+    mine.push("main-init")
+    j = j + 1
+  }
+  bad = 0
+  cbad = 0
+  w = 0
+  while w < 40 {
+    fc.exit_start(check, 1 + w % 3, 200, w % 4 == 3)
+    r = 0
+    while r < 4000 {
+      at = r % 500
+      if mine[at].size < 6 {
+        bad = bad + 1
+      }
+      mine[at] = "main-${w}-${r}"
+      r = r + 1
+    }
+    cbad = cbad + fc.exit_join()
+    w = w + 1
+  }
+  puts("main bad: ${bad}")
+  puts("callback bad: ${cbad}")
+}

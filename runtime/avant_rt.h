@@ -157,6 +157,10 @@ typedef struct AvantGcStats {
 extern AvantGcStats avant_g_stats;
 void avant_gc_stats(AvantGcStats *out);
 void avant_gc_collect(void);
+/* A thread that runs Avant code is registered (explicitly, or by its first
+ * call into Avant); one that exits still registered is unregistered by its
+ * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
+ * unregistration of its own. It must exit outside its callbacks. */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
 /* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md

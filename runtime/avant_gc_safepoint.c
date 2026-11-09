@@ -215,6 +215,27 @@ void gc_thread_unregistering(void) {
   pthread_mutex_unlock(&gc_heap.hs_mu);
 }
 
+/* A registered thread that is exiting (the thread-exit hook,
+ * avant_gc_roots.c, Stage 28 W17c) leaves whatever state it exited in for
+ * running, so it can unregister as avant_gc_unregister_thread does: a
+ * no-GC region and native regions are closed (a foreign thread is native
+ * between callbacks, rule 4). Ending the native region waits while a
+ * collection is in progress, as every return to running does; that
+ * collection did not wait for this thread (it is native), so the wait
+ * ends when the collection does. A thread that exits running (it never
+ * returned to native) is waited for by a collection being requested, and
+ * the unregistration that follows removes it under hs_mu and wakes that
+ * collector: in neither case does the handshake wait for an exited
+ * thread. */
+void gc_thread_exiting(void) {
+  gc_thread.nogc = 0;
+  gc_thread.base_native = 0;
+  if (gc_thread.native > 0) {
+    gc_thread.native = 1;
+    avant_gc_native_end();
+  }
+}
+
 /* Native regions (rule 2). They nest; the outermost begin and end change
  * the state. Inside the thread's own no-GC region, or on an unregistered
  * thread, the state does not change (a region holds references in C that

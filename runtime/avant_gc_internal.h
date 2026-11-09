@@ -1340,6 +1340,7 @@ void gc_resume_world(void);
 void gc_safepoint_slow(void);
 void gc_thread_registered(int foreign);
 void gc_thread_unregistering(void);
+void gc_thread_exiting(void);
 void gc_lock(pthread_mutex_t *m);
 void gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
 static inline void gc_safepoint(void) {
