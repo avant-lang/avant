@@ -306,6 +306,48 @@ pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   dummy3 = b.assign(p, b.rv_use(b.copy_local(v)))
 }
 
+// `release(place)` (Stage 28 W16c, D266): the pins Avant's stores into
+// a C-layout field took, given back. For a field (`release(h.name)`,
+// `release(h.at)`): its address (`addr` of a place through a `ptr` is a
+// `ptr`) and its size; for a `Ptr` to a C layout (`release(h)`): the
+// pointer and the layout's size. Then `avant_release_range(lo, n)`,
+// which never collects. No store, so no V13 form.
+pub fn (lw: MirLower) lower_release(st: Stmt) {
+  b = lw.lw_b
+  if e = st.expr {
+    ty = lw.ety(e)
+    if lw.failed {
+      return
+    }
+    lo = -1
+    n = 0
+    if lw.lw_m.types.is_ptr(ty) {
+      v = lw.lower_expr(e)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      lo = lw.hold(v, ty)
+      n = lw.lw_m.types.size_of(lw.lw_m.types.pointee(ty))
+    } else {
+      p = lw.place_of(e)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      lo = b.temp(mt_ptr())
+      dummy = b.assign(b.pl(lo), b.rv_addr(p))
+      n = lw.lw_m.types.size_of(ty)
+    }
+    args: Array(MOperand) = []
+    args.push(b.copy_local(lo))
+    args.push(b.c_u64(n.to_i64))
+    dummy2 = b.call(-1, "avant_release_range", args)
+    return
+  }
+  lw.refuse(st.loc, "a release without a place")
+}
+
 // ---- pins
 
 // `pin x { body }` (the old back end's emit_pin_stmt): x into a local, pinned; the

@@ -1320,6 +1320,9 @@ pub class Parser {
     if k == tk_pin() {
       return self.parse_pin
     }
+    if k == tk_release() {
+      return self.parse_release
+    }
     if k == tk_for() {
       return self.parse_for
     }
@@ -1488,6 +1491,21 @@ pub class Parser {
     s = Stmt.new(st_pin(), loc)
     s.expr = value
     s.body = body
+    s
+  }
+
+  // `release(place)` (Stage 28 W16c, D266): a statement, the shape of
+  // `pin(x)` without a block.
+  pub fn parse_release: Stmt {
+    loc = self.expect(tk_release()).loc
+    self.skip_newlines
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    value = self.parse_expr
+    self.skip_newlines
+    dummy2 = self.expect(tk_r_paren())
+    s = Stmt.new(st_release(), loc)
+    s.expr = value
     s
   }
 
@@ -2015,6 +2033,10 @@ pub class Parser {
         e.block = self.parse_trailing_block
         return e
       }
+    }
+    if k == tk_release() {
+      self.fail(tok.loc, "release is a statement, not a value")
+      return self.dummy_expr(tok.loc)
     }
     self.fail(tok.loc, "expected expression, found ${k}")
     self.dummy_expr(tok.loc)

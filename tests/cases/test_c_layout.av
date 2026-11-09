@@ -1,5 +1,38 @@
 import harness
 
+// `release` (Stage 28 W16c, D266): the checker's refusals. Each program
+// declares a C layout with a String, an Int, a Ptr(Void) and a nested
+// layout without a String, and one with no String field at all.
+fn release_src(body: String): String {
+  "lib e {\n  struct In {\n    n: Int\n  }\n  struct H {\n    name: String\n    id: Int\n    link: Ptr(Void)\n    at: In\n  }\n  struct P {\n    x: Int\n    y: Float64\n  }\n  fun h_new: Ptr(H)\n  fun p_new: Ptr(P)\n  fun v_new: Ptr(Void)\n}\nfn main {\n${body}}\n"
+}
+
+fn release_refused(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
+  src = "${scratch()}/c_layout-${stamp}-release-${tag}.av"
+  bin = "${scratch()}/c_layout-${stamp}-release-${tag}.bin"
+  log = "${scratch()}/c_layout-${stamp}-release-${tag}.log"
+  dummy = file_write(src, release_src(body))
+  code = compile_av(compiler, src, bin, log)
+  c.expect(code != 0 && !file_exists(bin), "release ${tag}: does not compile")
+  if err = file_read(log) {
+    c.expect(str_has(err, needle), "release ${tag}: ${needle}")
+  } else {
+    c.expect(false, "release ${tag}: the log")
+  }
+}
+
+fn test_release_errors(c: Checks, compiler: String) {
+  stamp = now_ms()
+  release_refused(c, compiler, stamp, "avant-value", "  s = \"a\" + \"b\"\n  release(s)\n", "release takes the C field the value was stored in; for a scoped pin use pin(x) { }")
+  release_refused(c, compiler, stamp, "scalar-field", "  h = e.h_new()\n  release(h.id)\n", "nothing to release: id is Int")
+  release_refused(c, compiler, stamp, "ptr-field", "  h = e.h_new()\n  release(h.link)\n", "nothing to release: link is Ptr(Void)")
+  release_refused(c, compiler, stamp, "nested-no-string", "  h = e.h_new()\n  release(h.at)\n", "nothing to release: at is In, which has no String field")
+  release_refused(c, compiler, stamp, "ptr-void", "  v = e.v_new()\n  release(v)\n", "Avant knows no fields of Ptr(Void)")
+  release_refused(c, compiler, stamp, "no-string-struct", "  p = e.p_new()\n  release(p)\n", "nothing to release: P has no String field")
+  release_refused(c, compiler, stamp, "expression", "  h = e.h_new()\n  x = release(h.name)\n", "release is a statement, not a value")
+  release_refused(c, compiler, stamp, "int", "  release(42)\n", "release takes a C-layout field or a Ptr to a C layout, got Int")
+}
+
 fn test_c_layout(c: Checks) {
   c.suite("tests/cases/test_c_layout.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -31,6 +64,7 @@ fn test_c_layout(c: Checks) {
     } else {
       c.expect(false, "layout field walk stdout")
     }
+    test_release_errors(c, compiler)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
