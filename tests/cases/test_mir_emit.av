@@ -115,10 +115,14 @@ fn gc_stats_10_3(c: Checks, text: String, what: String) {
     return
   }
   c.expect(str_has(text, "collections=6 young=6 "), "${what}: collections=6 young=6")
-  // 272 bytes survive, promoted in place (Stage 28 W16a: the collections
-  // run at other points, since avant_str_from_int collects at its own
-  // allocation (RC1) and the loop's allocations stay inline; 96 before).
-  c.expect(str_has(text, " prom_inplace=272 "), "${what}: prom_inplace=272")
+  // 272 bytes survive (Stage 28 W16a: the collections run at other
+  // points, since avant_str_from_int collects at its own allocation
+  // (RC1) and the loop's allocations stay inline; 96 before). Since W16b
+  // no C-stack scan keeps their blocks in place: 192 bytes are copied
+  // out of the six evacuated young blocks and 80 promoted in place (272
+  // in place before).
+  c.expect(str_has(text, " copied=192 "), "${what}: copied=192")
+  c.expect(str_has(text, " prom_inplace=80 "), "${what}: prom_inplace=80")
   c.expect(str_has(text, " roots=1000013 "), "${what}: roots=1000013")
   c.expect(str_has(text, " enters=400005 "), "${what}: enters=400005")
 }

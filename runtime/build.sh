@@ -22,7 +22,7 @@ gc_cflags=
 
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below.
-core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_stack avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
+core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
 for name in $core_units; do
   "$cc" -c $cflags $gc_cflags -o "$root/build/$name.unit.o" "$root/$name.c"
 done

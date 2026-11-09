@@ -1,0 +1,39 @@
+// R1 (Stage 28 W16b, C28): a spawn's capture record is rooted by its
+// task until the task's function returns, not pinned until the join, so
+// the record of a task that is never joined dies once the task is done.
+// 400 spawns each capture a fresh 256 KiB string; every other handle is
+// joined, the rest never are. Before R1 the 200 records never joined
+// stayed pinned (50 MiB with their strings) and the program died at
+// AVANT_HEAP_MAX_MB=32; now at most the running tasks' records are live.
+// Joining a handle waits for every task queued before it (one queue), so
+// the tasks still running stay a handful. Prints "sum ok: true", the
+// joined count and "pins left: 0".
+
+lib gc_rt {
+  fun avant_pin_count: Int
+}
+
+fn main {
+  base = gc_rt.avant_pin_count()
+  big = "abcdefgh"
+  while big.size < 262144 {
+    big = big + big
+  }
+  t = 0
+  want = 0
+  joined = 0
+  i = 0
+  while i < 400 {
+    s = "${i}:" + big
+    h = spawn { s.size }
+    if i % 2 == 0 {
+      t = t + h.join
+      want = want + s.size
+      joined = joined + 1
+    }
+    i = i + 1
+  }
+  puts("sum ok: ${t == want}")
+  puts("joined: ${joined}")
+  puts("pins left: ${gc_rt.avant_pin_count() - base}")
+}

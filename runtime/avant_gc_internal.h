@@ -29,7 +29,6 @@
  *                       noted list
  *   avant_gc_mark.c     the full collection's mark and block sweep
  *   avant_gc_defrag.c   mature defragmentation, block sets
- *   avant_gc_stack.c    the conservative scans of the C stack
  *   avant_gc_verify.c   AVANT_GC_VERIFY's checkers
  *   avant_gc_collect.c  the driver, its policy and the environment knobs
  *   avant_gc_stats.c    AvantGcStats, the counters, AVANT_GC_STATS
@@ -328,9 +327,9 @@ typedef struct TypeMap {
   uint32_t nrefs;
 } TypeMap;
 
-/* A sorted set of blocks, for the two block lists of a defragmenting
- * full collection: the mature blocks the collecting thread's C stack
- * names (C31), and the evacuated blocks about to be freed. */
+/* A sorted set of blocks: a defragmenting full collection's evacuated
+ * blocks about to be freed. (Until Stage 28 W16b also the mature blocks
+ * the collecting thread's C stack named, C31's exclusion.) */
 typedef struct BlockSet {
   Block **v;
   size_t n;
@@ -581,25 +580,13 @@ typedef struct GcFragCounters {
 
 /* prom: bytes promoted into mature space by young collections: copied
  * (a survivor copied into a mature block, S+) and large (a young large
- * object whose YOUNG is cleared); in place, sticky.inplace. (pinned, E's
- * pinned nursery objects promoted in place, D205, prints 0 since Stage 28
- * W15d: S+ promotes them in place like any survivor of a kept block.) */
+ * object whose YOUNG is cleared); in place, sticky.inplace. (prom_pinned,
+ * E's pinned nursery objects, D205, printed 0 from W15d and left the line
+ * in W16b: S+ promotes them in place like any survivor of a kept block.) */
 typedef struct GcPromCounters {
   uint64_t copied;
   uint64_t large;
 } GcPromCounters;
-
-/* sp: the named safepoints (Stage 28 W15a1, gc-design.md §5.1): calls
- * counts the slow paths that could collect (the budget spent, stress or
- * a pending heap-limit collection, in an unshared program outside every
- * region), collections the ones that ran a collection the policy asked
- * for (a stress point's own young collection is not counted). The
- * safepoints went in Stage 28 W16a (RC1: helpers collect at their own
- * allocations); the fields stay on the statistics line and print 0. */
-typedef struct GcSpCounters {
-  uint64_t calls;
-  uint64_t collections;
-} GcSpCounters;
 
 /* size: the young budget's adaptations (gc-design.md §5.2, young_size in
  * avant_gc_collect.c): doublings and halvings. */
@@ -660,7 +647,6 @@ typedef struct GcCounters {
   GcWhyCounters why;
   GcFragCounters frag;
   GcPromCounters prom;
-  GcSpCounters sp;
   GcSizeCounters size;
   GcStickyCounters sticky;
   /* The largest live byte count a collection measured. */
@@ -681,14 +667,6 @@ typedef struct GcSettings {
   /* AVANT_NURSERY=0: no young generation, full non-moving collections
    * only. */
   int nursery_off;
-  /* AVANT_GC_STACK_REWRITE (with the nursery on, unless 0). The rewrite
-   * of the collecting thread's C stack it switched ran only in E's young
-   * copy and went with E (Stage 28 W15d): S+ never rewrites a C stack
-   * word (gc_pin_c_stack keeps the blocks they name in place), so no
-   * collection reads this. The knob stays, read and validated, until
-   * gc-design.md §4.3's retirement (W16) retires it with C31's
-   * exclusion. */
-  int c_stack_rewrite;
   /* AVANT_GC_DEFRAG: mature evacuation in full collections
    * (avant_gc_defrag.c); off, the histogram stays on. */
   int defrag;
@@ -865,6 +843,12 @@ typedef struct GcHeap {
   Block **part_blocks;
   uint32_t part_blocks_n;
   uint32_t part_blocks_cap;
+  /* AVANT_GC_VERIFY (Stage 28 W16b): the blocks the last young sweep
+   * left with free lines, held back from part_blocks until the next
+   * collection begins (the lost-reference check, avant_gc_verify.c). */
+  Block **verify_holes;
+  uint32_t verify_holes_n;
+  uint32_t verify_holes_cap;
   Block *overflow;
   int cur_whole;
   /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
@@ -894,14 +878,6 @@ typedef struct GcHeap {
    * collection frees once every reference is rewritten. */
   BlockSet def_release;
 
-  /* avant_gc_stack.c: the mature blocks a word of the collecting
-   * thread's stack names, which a defragmenting full collection does not
-   * evacuate (C31, gc_note_c_stack_blocks). */
-  BlockSet cstack_blocks;
-  /* gc_pin_c_stack's bitmap of the registered slots among the stack
-   * words it scans (one bit per word). */
-  uint64_t *pin_slots;
-  size_t pin_slots_cap;
 
   /* avant_gc_verify.c. vnoted: the objects verify_trace flagged VSEEN
    * (its visited bit), cleared when each check ends (W14a2: no
@@ -921,6 +897,21 @@ typedef struct GcHeap {
   /* C36's check (gc_verify_no_stale_marks): the stale header marks
    * reported. */
   uint64_t stale_seen;
+  /* The lost-reference check (Stage 28 W16b): its reports, precise and
+   * on use, and the freed blocks it holds PROT_NONE until the next
+   * collection (linked by next). */
+  uint64_t verify_lost;
+  Block *quarantine;
+  uint32_t quarantine_n;
+  /* The freed large runs it holds (header, protected range, state). */
+  struct GcHeldRun {
+    AvantHeader *h;
+    uint8_t *lo;
+    uint8_t *hi;
+    int state;
+  } held_runs[256];
+  uint32_t held_runs_n;
+  uint64_t held_runs_coll;
 
   /* avant_gc_collect.c. */
   int inited;
@@ -980,6 +971,9 @@ typedef struct GcHeap {
   pthread_mutex_t threads_mu;
   int defer;
   PinEnt *pins;
+  /* The task roots (avant_gc_task_root_add, Stage 28 W16b): spawned
+   * tasks' capture records, under the world lock. */
+  AvantGcTaskRoot *task_roots;
 
   /* avant_gc_stats.c. */
   GcCounters ctr;
@@ -998,12 +992,6 @@ typedef struct GcThread {
   int quiet;
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */
   int alloc_mature;
-  /* Nonzero while runtime C has entered the collector (avant_alloc_c, a
-   * stress point at a defer entry, a named safepoint's slow path): only
-   * then does a young collection pin the young objects words of this
-   * thread's C stack name (gc_pin_c_stack, Stage 28 W15a2: S+ keeps
-   * their blocks in place; C37's rewrite, E's, went with E in W15d). */
-  int c_entry;
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
   ThreadReg reg;
@@ -1021,6 +1009,18 @@ extern __thread GcThread gc_thread;
  * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls).
  * Only the collecting thread's own slots are visited, as before; other
  * threads' are part of D191's window until W17 stops them. */
+/* Every task root's slot (all threads': the list is global, under the
+ * world lock the collector holds). Its object is PINNED while rooted,
+ * so no collection moves it; the slot is never rewritten. */
+#define EACH_TASK_ROOT(SLOT, BODY)                                       \
+  do {                                                                   \
+    AvantGcTaskRoot *etr_r_;                                             \
+    for (etr_r_ = gc_heap.task_roots; etr_r_; etr_r_ = etr_r_->next) {   \
+      void **SLOT = &etr_r_->obj;                                        \
+      BODY;                                                              \
+    }                                                                    \
+  } while (0)
+
 static inline void gc_each_runtime_root(void (*fn)(void **slot)) {
   uint32_t i;
   for (i = 0; i < gc_thread.nroots; i++) {
@@ -1054,6 +1054,7 @@ void gc_line_epoch_advance(void);
 /* avant_gc_alloc.c */
 void gc_reset_block_bump(Block *b);
 void gc_cache_or_free_block(Block *b);
+void gc_free_block_now(Block *b);
 void gc_note_peak(void);
 Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
@@ -1157,9 +1158,6 @@ int gc_block_set_has(const BlockSet *s, const Block *b);
 void gc_defrag_evacuate(uint64_t live_lines_this);
 void gc_defrag_release(void);
 
-/* avant_gc_stack.c */
-void gc_note_c_stack_blocks(void);
-void gc_pin_c_stack(void);
 /* AVANT_GC_STRESS=1: freed memory is filled with GC_POISON (Stage 28 W16a). */
 #define GC_POISON 0xdb
 static inline void gc_poison(void *p, size_t n) {
@@ -1173,6 +1171,12 @@ void gc_verify_no_stale_marks(void);
 void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 void gc_verify_sticky(void);
+void gc_verify_lost(void);
+int gc_quarantine_block(Block *b);
+void gc_quarantine_release(void);
+void gc_quarantine_seal(void);
+int gc_quarantine_run(AvantHeader *h);
+void gc_large_give_held(AvantHeader *h);
 
 /* avant_gc_collect.c */
 /* A collection (O42): GC_YOUNG collects the young generation (S+ may

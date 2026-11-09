@@ -13,8 +13,7 @@
  * opportunistic young copy. Candidate E, the evacuating nursery, was
  * deleted as a separate young generation in Stage 28 W15d (D232); the
  * mechanisms of E this file uses stay: header forwarding (gc_set_forward,
- * avant_gc_internal.h), the copy (splus_copy), the C-stack pin scan
- * (gc_pin_c_stack, avant_gc_stack.c) and the noted list (below, moved
+ * avant_gc_internal.h), the copy (splus_copy) and the noted list (below, moved
  * from avant_gc_young.c, which held E's young copy).
  *
  * Candidate S, the in-place young generation (Stage 28 W15b,
@@ -113,9 +112,11 @@ static uint64_t scan_cards(void *p, int from_mature);
  * invariant no other field names a young object); and the block's lines
  * are freed by the young sweep. Other survivors are promoted in
  * place, as under S. A block stays in place when any of its young
- * objects is named imprecisely: a word of the collecting thread's C stack
- * at a collection runtime C entered (gc_pin_c_stack, W15a2's scan), a pin
- * or PINNED, or a registered slot location inside it. Nothing moves in a
+ * objects is named imprecisely: a pin or PINNED, or a registered slot
+ * location inside it. (Until Stage 28 W16b also a word of the collecting
+ * thread's C stack at a collection runtime C entered, W15a2's pin scan;
+ * runtime C roots what it holds since W16a, RC1, and gc-design.md
+ * section 4.3's proof retired the scan.) Nothing moves in a
  * shared program (no other thread is stopped, D191) or with the nursery
  * off (no young collection). Copying is optional: a block refused at the
  * heap limit leaves the remaining survivors in place. */
@@ -337,6 +338,7 @@ static void trace_all(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     trace_ref(NULL, p->payload, 0);
   }
+  EACH_TASK_ROOT(slot, trace_ref(NULL, *slot, 0));
   gc_each_runtime_root(trace_root_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
@@ -838,11 +840,6 @@ void gc_sticky_collect(int tenure) {
                               : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
-    /* A collection runtime C entered: the young objects words of this
-     * thread's C stack name keep their blocks in place (W15a2's scan). */
-    if (gc_thread.c_entry) {
-      gc_pin_c_stack();
-    }
   }
 #endif
   trace_all();
@@ -906,7 +903,16 @@ void gc_sticky_collect(int tenure) {
         b->kept = YOUNG_EMPTY;
         empty++;
       } else if (live < LINES_PER_BLOCK) {
-        gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+        /* AVANT_GC_VERIFY: the lines this sweep freed are not
+         * allocatable until the next collection begins
+         * (gc_quarantine_release), so a reference to an object that died
+         * here still names freed memory there, where the lost-reference
+         * check (avant_gc_verify.c) sees it. */
+        if (gc_heap.set.verify) {
+          gc_sticky_push(&gc_heap.verify_holes, &gc_heap.verify_holes_n, &gc_heap.verify_holes_cap, b);
+        } else {
+          gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+        }
       }
     }
     gc_heap.young_blocks_n = 0;
@@ -989,6 +995,7 @@ void gc_sticky_full_begin(void) {
   }
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
+  gc_heap.verify_holes_n = 0;
   gc_heap.overflow = NULL;
   gc_heap.cur_whole = 0;
 }

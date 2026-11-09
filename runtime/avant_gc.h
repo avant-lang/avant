@@ -26,13 +26,13 @@
  *   - avant_alloc may collect. A young collection (S+, Stage 28 W15c)
  *     promotes young objects in place and copies the survivors of the
  *     young blocks it evacuates, rewriting root slots, runtime TLS slots
- *     and the fields of the objects it scanned; it never rewrites a word
- *     of the C stack: at a collection runtime C entered, a young block a
- *     word of the collecting thread's stack names is not evacuated
- *     (avant_gc_stack.c), and pinned objects never move. A full collection may
- *     evacuate sparse mature blocks, except blocks a word of the
- *     collecting thread's stack names (C31). Other threads' C frames are
- *     not scanned (D191).
+ *     and the fields of the objects it scanned; it never reads or
+ *     rewrites a word of the C stack (the conservative scans retired in
+ *     Stage 28 W16b, gc-design.md section 4.3: runtime C roots what it
+ *     holds, RC1 below), and pinned objects never move. A full collection
+ *     may evacuate sparse mature blocks holding no pinned object; it
+ *     rewrites every precise reference (D191: other threads are not
+ *     stopped until W17).
  *   - avant_gc_defer_enter/leave (avant_gc_nogc_begin/end) bracket a
  *     region in which no collection runs (regions nest); the entry
  *     collects nothing (RC4 below; Stage 28 W16a).
@@ -89,8 +89,7 @@
  *   the same slots, so the collector gains no root kind): a young
  *   collection relocates each slot (an interior address keeps its
  *   offset; a value that is no heap address is left alone), a
- *   defragmenting full collection rewrites it, and the C-stack pin scan
- *   skips it. Slots are registered in order (0, 1, ...), before the
+ *   defragmenting full collection rewrites it. Slots are registered in order (0, 1, ...), before the
  *   first call that may collect; at most one scope per C block (open a
  *   nested block for a second). It is thread-local, takes no lock and
  *   allocates nothing. In a shared program (g_avant_shared) the scope
@@ -173,8 +172,10 @@
  *     avant_argv, avant_dir_list                   C (array filled in
  *                                                  place)
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
- *     avant_spawn (avant_task.c; C28)              N (the record is
- *                                                  pinned; R1 is W16b's)
+ *     avant_spawn (avant_task.c; C28, R1)          C (the record is a
+ *                                                  task root, added
+ *                                                  before the handle's
+ *                                                  allocation; W16b)
  *     HTTP make_string/_bytes, packed headers      C
  *     HTTP/WS send and close (7 regions)           R4: payloads held in
  *                                                  C while other loop
@@ -240,12 +241,6 @@
  *                          is full, non-moving collections only
  *   AVANT_GC_DEFRAG        switch, default 1: mature evacuation in full
  *                          collections
- *   AVANT_GC_STACK_REWRITE switch, default 1: read and validated, no
- *                          effect since Stage 28 W15d (the rewrite of
- *                          the collecting thread's C stack ran only in
- *                          candidate E's young copy, deleted with E);
- *                          gc-design.md section 4.3 retires the knob
- *                          in W16
  *   AVANT_GC_VERIFY        switch, default 0: the collector's checkers
  *                          (avant_gc_verify.c)
  *   AVANT_GC_STATS         switch, default 0: one statistics line on
@@ -262,7 +257,8 @@
  *
  * Retired (W14b2; setting one is reported and has no effect):
  * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
- * AVANT_GC_COPY_RESERVE. Removed earlier: AVANT_NURSERY_STACK (W14a1),
+ * AVANT_GC_COPY_RESERVE; and AVANT_GC_STACK_REWRITE (Stage 28 W16b, with
+ * the conservative C-stack scans; it had no effect since W15d). Removed earlier: AVANT_NURSERY_STACK (W14a1),
  * AVANT_NURSERY_STACKMAP (W12r).
  */
 
@@ -304,6 +300,24 @@ __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void);
  * new one alone fills the young budget (avant_gc_alloc.c; Stage 28 W16a).
  * It may collect. Hidden. */
 __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes);
+
+/* Task roots (Stage 28 W16b; C28, R1): a spawned task's capture record
+ * is rooted by the task, from avant_spawn until the task's function has
+ * returned, instead of pinned by the generated code until the join. A
+ * root is a node in the task's own C memory (O(1) to add and drop, no
+ * pin entry); every collection traces OBJ from it and none moves it
+ * while it is rooted (it is held in place like a pinned object, because
+ * the worker thread reads the record while other threads may collect:
+ * D191, until W17's handshake). After the drop the record is an ordinary
+ * object: a finished task's record dies with its last reference, joined
+ * or not. Hidden; add and drop take the world lock and never collect. */
+typedef struct AvantGcTaskRoot {
+  void *obj;
+  struct AvantGcTaskRoot *prev;
+  struct AvantGcTaskRoot *next;
+} AvantGcTaskRoot;
+__attribute__((visibility("hidden"))) void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj);
+__attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRoot *r);
 
 /* RC1's handle scopes (the contract above; Stage 28 W16a). A frame of the
  * thread's chain, the type every frame has (avant_gc_internal.h calls it

@@ -276,6 +276,56 @@ void avant_unpin(void *payload) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* Task roots (avant_gc.h; Stage 28 W16b, C28, R1). The object is PINNED
+ * while rooted so no collection moves it (the young copy keeps its block,
+ * defragmentation skips its block), but it is on no pin list: the root
+ * is traced from gc_heap.task_roots. A record that is also on the pin
+ * list (never today: only avant_spawn roots, and it pins nothing) keeps
+ * PINNED after the drop. */
+void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj) {
+  gc_init();
+  r->obj = obj;
+  r->prev = NULL;
+  pthread_mutex_lock(&gc_heap.world);
+  r->next = gc_heap.task_roots;
+  if (r->next) {
+    r->next->prev = r;
+  }
+  gc_heap.task_roots = r;
+  if (gc_is_heap_payload(obj, NULL, NULL)) {
+    avant_header(obj)->flags |= AVANT_FLAG_PINNED;
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
+  void *obj = r->obj;
+  pthread_mutex_lock(&gc_heap.world);
+  if (r->prev) {
+    r->prev->next = r->next;
+  } else {
+    gc_heap.task_roots = r->next;
+  }
+  if (r->next) {
+    r->next->prev = r->prev;
+  }
+  r->next = r->prev = NULL;
+  r->obj = NULL;
+  if (gc_is_heap_payload(obj, NULL, NULL)) {
+    int listed = 0;
+    for (PinEnt *p = gc_heap.pins; p; p = p->next) {
+      if (p->payload == obj) {
+        listed = 1;
+        break;
+      }
+    }
+    if (!listed) {
+      avant_header(obj)->flags = (uint16_t)(avant_header(obj)->flags & ~AVANT_FLAG_PINNED);
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
 /* RC4's no-GC region (avant_gc.h; Stage 28 W16a). The region's depth is
  * gc_heap.defer, the one counter defer regions used, so every rule that
  * keeps a collection out of a defer region keeps it out of this one

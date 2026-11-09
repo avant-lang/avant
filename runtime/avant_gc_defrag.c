@@ -11,14 +11,14 @@
 
 /* Mature defragmentation (Stage 28 W12, moved from avant_rt.c): during a
  * full collection, sparse mature blocks are evacuated into fresh ones and
- * every precise reference is rewritten; blocks the collecting thread's C
- * stack names are not candidates (C31, avant_gc_stack.c). Also the sorted
- * block sets the full collection uses for both lists. */
+ * every precise reference is rewritten. Also the sorted block set of the
+ * blocks it frees. */
 
 /* Evacuation (step 2; gc_heap.set.defrag, AVANT_GC_DEFRAG=0 turns it
  * off, the histogram stays on). Candidates are mature blocks at or below
- * 64 of 128 live lines with no pinned object and no word of the
- * collecting thread's stack naming them (C31, gc_note_c_stack_blocks);
+ * 64 of 128 live lines with no pinned object (until Stage 28 W16b also
+ * none a word of the collecting thread's stack named, C31's exclusion,
+ * D213: runtime C roots what it holds since W16a, RC1);
  * per full collection the live lines evacuated stay at or below 25% of
  * that mark's mature live lines, worst first. */
 
@@ -155,10 +155,8 @@ static void mature_unlink(Block *b) {
  * one cannot be allocated under the heap limit, nothing moves and the
  * ordinary non-moving collection completes (gc_heap.ctr.def.skipped counts it),
  * so defragmentation can never make a collection fail. The evacuated
- * blocks are freed by gc_defrag_release. Not inlined: its locals name
- * objects in the evacuated blocks, and they must not sit in collect's
- * frame, which gc_verify_defrag scans as part of the C stack. */
-__attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
+ * blocks are freed by gc_defrag_release. */
+void gc_defrag_evacuate(uint64_t live_lines_this) {
   DefCand *cand = NULL;
   size_t ncand = 0;
   size_t ccap = 0;
@@ -177,7 +175,7 @@ __attribute__((noinline)) void gc_defrag_evacuate(uint64_t live_lines_this) {
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
     int live = gc_block_live_lines(b);
     DefCand *c;
-    if (live <= 0 || live > 64 || block_has_pinned(b) || gc_block_set_has(&gc_heap.cstack_blocks, b)) {
+    if (live <= 0 || live > 64 || block_has_pinned(b)) {
       continue;
     }
     if (ncand == ccap) {

@@ -4,10 +4,13 @@
 #include "avant_gc_internal.h"
 
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 /* AVANT_GC_VERIFY (Stage 28 W12, moved from avant_rt.c): independent
  * checks after a young collection's trace and copy (gc_verify_sticky: no
@@ -79,6 +82,7 @@ static void verify_mark_reachable(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     verify_trace(p->payload);
   }
+  EACH_TASK_ROOT(slot, verify_trace(*slot));
   {
     uint32_t ri;
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
@@ -221,6 +225,76 @@ void gc_verify_sticky(void) {
  * The named objects are gc_heap.rnamed; the reports are counted in
  * gc_heap.missing_barriers. */
 
+/* The lost-reference check (Stage 28 W16b; R11, O107, gc-design.md
+ * section 4.3): a reference the program can still use that names heap
+ * memory where no object lives. It replaces the conservative C-stack
+ * cross-check (the words of the collecting thread's stack naming a block
+ * defragmentation frees), which could not tell a live reference from a
+ * dead copy and reported dead spills by the ten thousand once both
+ * C-stack scans were off. Two halves:
+ *   - precise (verify_lost): before every collection, every root slot,
+ *     pin, runtime root and field of an object the roots reach must name
+ *     a live object (its exact start or an interior address) or lie
+ *     outside the heap: a value in the committed heap that resolves to
+ *     no object names freed lines, a freed block, a freed large run or
+ *     a returned chunk ("lost reference: ... names freed heap memory");
+ *   - on use (gc_quarantine_*, below): the blocks a collection frees are
+ *     kept out of use and PROT_NONE until the next collection begins, so
+ *     a reference runtime C kept in a C local across a collecting call
+ *     (an unrooted operand that S+ moved, a fresh buffer the collection
+ *     freed) faults at its first read or write and is reported with the
+ *     address and the collection that freed the block; the block is then
+ *     opened again and the program goes on. A dead copy on the stack is
+ *     never read, so it is never reported: the check is silent on a
+ *     correct program by construction.
+ * Diagnostics only: both report, neither repairs. Counted in
+ * gc_heap.verify_lost. */
+static uint64_t verify_lost(void *p, const char *where, void *holder) {
+  uintptr_t off;
+  if (!p || !heap_offset(p, &off) || gc_object_payload(p, NULL, NULL)) {
+    return 0;
+  }
+  if (gc_heap.verify_lost++ < 32) {
+    fprintf(stderr,
+            "avant gc verify: lost reference: %s %p names freed heap memory %p before coll=%llu\n",
+            where, holder, p, (unsigned long long)avant_g_stats.collections);
+  }
+  return 1;
+}
+
+static void lost_root_slot(void **slot) {
+  verify_lost(*slot, "root", (void *)slot);
+  verify_trace(*slot);
+}
+
+/* Before a full collection (a young one runs the precise half inside
+ * gc_verify_remembered's pass over the same roots and fields). */
+void gc_verify_lost(void) {
+  ThreadReg *t;
+  for (t = gc_heap.threads; t; t = t->next) {
+    Frame *f;
+    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
+      uint32_t k;
+      for (k = 0; k < f->n; k++) {
+        lost_root_slot(f->slots[k]);
+      }
+    }
+  }
+  for (PinEnt *p = gc_heap.pins; p; p = p->next) {
+    lost_root_slot(&p->payload);
+  }
+  EACH_TASK_ROOT(slot, lost_root_slot(slot));
+  gc_each_runtime_root(lost_root_slot);
+  while (gc_heap.work_n) {
+    void *p = gc_heap.work[--gc_heap.work_n];
+    EACH_REF_SLOT(p, slot, {
+      verify_lost(*slot, "field of", p);
+      verify_trace(*slot);
+    });
+  }
+  verify_clear_traced();
+}
+
 static int verify_young_at(void *start, Block *b, AvantHeader *ol) {
   return gc_young_at(start, b, ol);
 }
@@ -260,6 +334,7 @@ static int rem_by_cards(const AvantHeader *h) {
 }
 
 static void rem_root_slot(void **slot) {
+  verify_lost(*slot, "root", (void *)slot);
   verify_trace(*slot);
   rem_named(*slot);
 }
@@ -281,10 +356,14 @@ void gc_verify_remembered(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     rem_root_slot(&p->payload);
   }
+  EACH_TASK_ROOT(slot, rem_root_slot(slot));
   gc_each_runtime_root(rem_root_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
-    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
+    EACH_REF_SLOT(p, slot, {
+      verify_lost(*slot, "field of", p);
+      verify_trace(*slot);
+    });
   }
   /* R1'(b): the fields of the young objects the roots reach. */
   for (i = 0; i < gc_heap.vnoted_n; i++) {
@@ -393,10 +472,12 @@ void gc_verify_no_stale_marks(void) {
 
 /* AVANT_GC_VERIFY after defragmentation (C31): no reference the
  * program or the runtime can still use names a block about to be
- * freed: root slots, pins, the remembered set, the fields of marked
- * objects, and the words of the collecting thread's stack from this
- * function's frame up (the C frames of the runtime helper that
- * collected and of the generated code that called it). */
+ * freed: root slots, pins, the remembered set and the fields of marked
+ * objects. (Until Stage 28 W16b it also read every word of the
+ * collecting thread's stack, a conservative cross-check that reported
+ * dead copies once C31's exclusion was off; a C local that is used
+ * after the collection is now caught when it is used: the freed blocks
+ * are quarantined, gc_quarantine_block.) */
 static void verify_defrag_word(void *w, const char *where, void *at) {
   Block *b = block_of(w);
   Block *hb = w ? block_of((uint8_t *)w - sizeof(AvantHeader)) : NULL;
@@ -438,21 +519,12 @@ static void verify_defrag_tls(void **slot) {
   verify_defrag_word(*slot, "runtime TLS slot", (void *)slot);
 }
 
-__attribute__((noinline)) void gc_verify_defrag(void) {
-  uint8_t *p = (uint8_t *)__builtin_frame_address(0);
-  uint8_t *hi = gc_thread.reg.stack_hi;
-  uint8_t *lo = gc_thread.reg.stack_lo;
+void gc_verify_defrag(void) {
   ThreadReg *t;
   Block *b;
   LargeIter it;
   AvantHeader *lh;
   uint32_t i;
-  if (hi && p && p < hi && !(lo && p < lo)) {
-    p = (uint8_t *)((uintptr_t)p & ~(uintptr_t)(ALIGN - 1));
-    for (; p + sizeof(void *) <= hi; p += ALIGN) {
-      verify_defrag_word(*(void **)p, "C stack word at", (void *)p);
-    }
-  }
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
     Frame *f;
@@ -466,6 +538,7 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   for (PinEnt *pe = gc_heap.pins; pe; pe = pe->next) {
     verify_defrag_word(pe->payload, "pin", (void *)pe);
   }
+  EACH_TASK_ROOT(slot, verify_defrag_word(*slot, "task root", (void *)slot));
   /* A remembered entry may name a dead object (full collections do not
    * scrub the set, and the young copy skips an entry whose block is
    * gone); only a live one that moved must have been rewritten. */
@@ -484,5 +557,228 @@ __attribute__((noinline)) void gc_verify_defrag(void) {
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_defrag_fields(lh, NULL);
+  }
+}
+
+/* The on-use half of the lost-reference check (Stage 28 W16b; see
+ * verify_lost above). Under AVANT_GC_VERIFY a block a collection frees
+ * (an evacuated young block, a young block the sweep left empty, a
+ * block defragmentation evacuated or a full sweep freed) is out of use
+ * as usual (in_use 0: no lookup finds it, no list holds it) but it is
+ * not reused: it is made PROT_NONE and kept on gc_heap.quarantine
+ * (Block.clean QUARANTINED) until the next collection begins
+ * (gc_quarantine_release), which opens it and frees it as the
+ * collection would have. Correct code never touches a freed block's
+ * memory; a C local that still names an object there faults, and the
+ * handler below reports the address and the collection that freed it,
+ * opens that block (QUARANTINE_OPENED) and returns, so the access is
+ * retried and the program continues (the old bytes are still there, or
+ * the stress mode's poison). A fault anywhere else goes to the action
+ * that was installed before. At most QUARANTINE_MAX blocks are held
+ * (past it a freed block is reused at once, unprotected); a refused
+ * mprotect (the mapping-count limit) also frees the block at once.
+ * Freed lines in blocks that keep live ones cannot be protected (a line
+ * is 256 bytes); instead the young sweep holds such blocks back from the
+ * young allocator until the next collection begins, so the precise half
+ * still finds a reference to a dead object's lines naming freed memory.
+ * Freed large runs are not quarantined (their reuse is page-run based;
+ * the precise half reports a reference that names one). */
+#define QUARANTINED 2
+#define QUARANTINE_OPENED 3
+#define QUARANTINE_HELD 4
+#define QUARANTINE_MAX 4096
+
+static struct sigaction quarantine_old;
+static int quarantine_installed;
+
+static void quarantine_write_hex(char *buf, size_t *n, uint64_t v) {
+  static const char dig[] = "0123456789abcdef";
+  char tmp[16];
+  int k = 0;
+  buf[(*n)++] = '0';
+  buf[(*n)++] = 'x';
+  do {
+    tmp[k++] = dig[v & 15];
+    v >>= 4;
+  } while (v && k < 16);
+  while (k) {
+    buf[(*n)++] = tmp[--k];
+  }
+}
+
+static void quarantine_write_dec(char *buf, size_t *n, uint64_t v) {
+  char tmp[24];
+  int k = 0;
+  do {
+    tmp[k++] = (char)('0' + v % 10);
+    v /= 10;
+  } while (v && k < 24);
+  while (k) {
+    buf[(*n)++] = tmp[--k];
+  }
+}
+
+static void quarantine_write_str(char *buf, size_t *n, const char *s) {
+  while (*s) {
+    buf[(*n)++] = *s++;
+  }
+}
+
+static void quarantine_report(void *addr, uint64_t coll, const char *what) {
+  if (gc_heap.verify_lost++ < 32) {
+    char buf[256];
+    size_t n = 0;
+    quarantine_write_str(buf, &n, "avant gc verify: lost reference: access to ");
+    quarantine_write_hex(buf, &n, (uint64_t)(uintptr_t)addr);
+    quarantine_write_str(buf, &n, what);
+    quarantine_write_dec(buf, &n, coll);
+    quarantine_write_str(buf, &n, " (a reference kept outside the roots across a collection)\n");
+    (void)!write(2, buf, n);
+  }
+}
+
+/* Only async-signal-safe calls: write, mprotect, sigaction. */
+static void quarantine_on_fault(int sig, siginfo_t *si, void *uc) {
+  uintptr_t off;
+  void *addr = si ? si->si_addr : NULL;
+  uint32_t i;
+  (void)uc;
+  for (i = 0; addr && i < gc_heap.held_runs_n; i++) {
+    struct GcHeldRun *r = &gc_heap.held_runs[i];
+    if (r->state == QUARANTINED && (uint8_t *)addr >= r->lo && (uint8_t *)addr < r->hi) {
+      quarantine_report(addr, gc_heap.held_runs_coll, " in a large run freed at coll=");
+      r->state = QUARANTINE_OPENED;
+      if (mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_READ | PROT_WRITE) == 0) {
+        return;
+      }
+    }
+  }
+  if (addr && heap_offset(addr, &off) && gc_heap.chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
+    Block *b = &gc_heap.blocks[off >> BLOCK_SHIFT];
+    if (b->clean == QUARANTINED) {
+      quarantine_report(addr, b->idle, " in a block freed at coll=");
+      b->clean = QUARANTINE_OPENED;
+      if (mprotect(b->base, BLOCK_SIZE, PROT_READ | PROT_WRITE) == 0) {
+        return;
+      }
+    }
+  }
+  sigaction(sig, &quarantine_old, NULL);
+}
+
+static void quarantine_install(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_sigaction = quarantine_on_fault;
+  sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGSEGV, &sa, &quarantine_old) == 0) {
+    quarantine_installed = 1;
+  }
+}
+
+/* B leaves use (gc_cache_or_free_block, before its cache-or-give). 1:
+ * it is quarantined, and gc_quarantine_release frees it later (every
+ * caller frees blocks inside a collection). */
+int gc_quarantine_block(Block *b) {
+  if (!gc_heap.set.verify || gc_heap.quarantine_n >= QUARANTINE_MAX) {
+    return 0;
+  }
+  if (!quarantine_installed) {
+    quarantine_install();
+    if (!quarantine_installed) {
+      return 0;
+    }
+  }
+  /* idle names the collection that freed the block while it is held
+   * (gc_block_give sets it again). It is protected when the collection
+   * ends (gc_quarantine_seal): the collection itself still reads the
+   * headers of objects it moved out of it (gc_clear_noted). */
+  b->idle = avant_g_stats.collections;
+  b->clean = QUARANTINE_HELD;
+  b->next = gc_heap.quarantine;
+  gc_heap.quarantine = b;
+  gc_heap.quarantine_n++;
+  return 1;
+}
+
+/* A dead large object's run (gc_release_large, gc_sweep_large): its
+ * start bit is cleared (no lookup finds it) and its pages stay allocated,
+ * protected at the collection's end from the run's second page on (the
+ * first page keeps the header, which the large space's iterator reads to
+ * step over the run), until the next collection begins. 1: held. */
+int gc_quarantine_run(AvantHeader *h) {
+  uint8_t *base;
+  struct GcHeldRun *r;
+  if (!gc_heap.set.verify || gc_heap.held_runs_n >= sizeof gc_heap.held_runs / sizeof gc_heap.held_runs[0]) {
+    return 0;
+  }
+  if (!quarantine_installed) {
+    quarantine_install();
+    if (!quarantine_installed) {
+      return 0;
+    }
+  }
+  base = (uint8_t *)h - 8;
+  start_bit_set(h, 0);
+  r = &gc_heap.held_runs[gc_heap.held_runs_n++];
+  r->h = h;
+  r->lo = base + PAGE_SIZE;
+  r->hi = base + gc_large_bytes(h);
+  r->state = QUARANTINE_HELD;
+  gc_heap.held_runs_coll = avant_g_stats.collections;
+  return 1;
+}
+
+/* At the end of a collection: the blocks and runs it freed become
+ * PROT_NONE (a refused mprotect leaves one held, unprotected, until the
+ * release). */
+void gc_quarantine_seal(void) {
+  Block *b;
+  uint32_t i;
+  for (i = 0; i < gc_heap.held_runs_n; i++) {
+    struct GcHeldRun *r = &gc_heap.held_runs[i];
+    if (r->state == QUARANTINE_HELD && r->hi > r->lo &&
+        mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
+      r->state = QUARANTINED;
+    }
+  }
+  for (b = gc_heap.quarantine; b; b = b->next) {
+    if (b->clean == QUARANTINE_HELD && mprotect(b->base, BLOCK_SIZE, PROT_NONE) == 0) {
+      b->clean = QUARANTINED;
+    }
+  }
+}
+
+/* At the start of a collection: every held block is opened and freed,
+ * and the blocks with lines the last young sweep freed become the young
+ * allocator's holes (avant_gc_sticky.c holds them back under
+ * AVANT_GC_VERIFY). */
+void gc_quarantine_release(void) {
+  Block *b = gc_heap.quarantine;
+  uint32_t i;
+  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+    gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap,
+                   gc_heap.verify_holes[i]);
+  }
+  gc_heap.verify_holes_n = 0;
+  for (i = 0; i < gc_heap.held_runs_n; i++) {
+    struct GcHeldRun *r = &gc_heap.held_runs[i];
+    if (r->state == QUARANTINED) {
+      mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_READ | PROT_WRITE);
+    }
+    gc_large_give_held(r->h);
+  }
+  gc_heap.held_runs_n = 0;
+  gc_heap.quarantine = NULL;
+  gc_heap.quarantine_n = 0;
+  while (b) {
+    Block *next = b->next;
+    if (b->clean == QUARANTINED) {
+      mprotect(b->base, BLOCK_SIZE, PROT_READ | PROT_WRITE);
+    }
+    b->clean = 0;
+    gc_free_block_now(b);
+    b = next;
   }
 }
