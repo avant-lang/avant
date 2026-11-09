@@ -50,22 +50,22 @@ static unsigned long long u(uint64_t v) {
 }
 
 /* The heap's own segment: AvantGcStats, the peaks, the root family, the
- * young threshold and the inline path's count. sm_walks, sm_hits,
- * sm_sites are the stackmap walker's counters, always 0 since it was
- * removed (Stage 28 W12r); the fields stay so the report's format does
- * not change. sm_left was E's C-stack pass's count (the words still
- * naming from-space after the rewrite), always 0 since E went (Stage 28
- * W15d). */
+ * young threshold and the inline path's count. (The fields that printed
+ * 0 since their mechanisms went left the line in Stage 28 W16b, O106,
+ * O110: sm_walks, sm_hits, sm_sites, the stackmap walker's, W12r;
+ * sm_left, E's C-stack pass; cpy_peak, pk_from, pk_to, srv_reserve and
+ * the keep family, E's spaces and kept objects, W15d; prom_pinned;
+ * sp_calls, sp_collections, the named safepoints, W16a.) */
 static void print_heap(StatsLine *l) {
   const GcCounters *c = &gc_heap.ctr;
   line_add(l,
            "avant gc: collections=%llu young=%llu full=%llu "
-           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu sm_walks=%llu sm_hits=%llu sm_sites=%u sm_left=%llu "
+           "alloc=%llu copied=%llu live=%llu peak_live=%llu peak_heap=%llu interiors=%llu "
            "sticky=%llu young_mb=%llu held=%llu mature_since=%llu roots=%llu reloads=%llu enters=%llu inline_allocs=%llu ",
            u(avant_g_stats.collections), u(avant_g_stats.young_collections),
            u(avant_g_stats.full_collections), u(avant_g_stats.allocated_bytes),
            u(avant_g_stats.copied_bytes), u(avant_g_stats.live_bytes), u(c->peak_live),
-           u(avant_g_stats.peak_heap), u(c->root.interiors), 0ull, 0ull, 0u, 0ull,
+           u(avant_g_stats.peak_heap), u(c->root.interiors),
            u(c->yng.sticky), u(avant_young_bytes / (1024ull * 1024ull)), u(avant_nursery_held),
            u(gc_heap.mature_since_full), u(c->root.roots), u(c->root.reloads), u(c->root.enters),
            u(avant_inline_allocs));
@@ -98,21 +98,15 @@ static void print_srv(StatsLine *l) {
            u(c->hist[1]), u(c->hist[2]), u(c->hist[3]), u(c->hist[4]), u(c->hist[5]));
 }
 
-/* cpy_peak (E's from-space plus to-space bytes during a young copy)
- * prints 0 since Stage 28 W15d, so the line's format does not change. */
 static void print_yng(StatsLine *l) {
   const GcYngCounters *c = &gc_heap.ctr.yng;
-  line_add(l, "yng_min=%llu yng_max=%llu cpy_peak=%llu ", u(c->min), u(c->max), 0ull);
+  line_add(l, "yng_min=%llu yng_max=%llu ", u(c->min), u(c->max));
 }
 
-/* srv_reserve, the young policy's copy reserve at exit, follows the
- * peak family in the line's fixed order. pk_from, pk_to (E's spaces) and
- * srv_reserve (E's copy reserve) print 0 since Stage 28 W15d. */
 static void print_pk(StatsLine *l) {
   const GcPkCounters *c = &gc_heap.ctr.pk;
-  line_add(l,
-           "pk_nursery=%llu pk_mature=%llu pk_from=%llu pk_to=%llu pk_large=%llu pk_cache=%llu srv_reserve=%llu ",
-           u(c->nursery), u(c->mature), 0ull, 0ull, u(c->large), u(c->cache), 0ull);
+  line_add(l, "pk_nursery=%llu pk_mature=%llu pk_large=%llu pk_cache=%llu ", u(c->nursery),
+           u(c->mature), u(c->large), u(c->cache));
 }
 
 /* los_now, los_now_bytes and los_spare_bytes describe the space at exit:
@@ -168,26 +162,13 @@ static void print_frag(StatsLine *l) {
 
 static void print_prom(StatsLine *l) {
   const GcPromCounters *c = &gc_heap.ctr.prom;
-  line_add(l, "prom_bytes=%llu prom_copied=%llu prom_pinned=%llu prom_large=%llu ",
-           u(c->copied + c->large + gc_heap.ctr.sticky.inplace), u(c->copied), 0ull,
-           u(c->large));
-}
-
-static void print_sp(StatsLine *l) {
-  const GcSpCounters *c = &gc_heap.ctr.sp;
-  line_add(l, "sp_calls=%llu sp_collections=%llu ", u(c->calls), u(c->collections));
+  line_add(l, "prom_bytes=%llu prom_copied=%llu prom_large=%llu ",
+           u(c->copied + c->large + gc_heap.ctr.sticky.inplace), u(c->copied), u(c->large));
 }
 
 static void print_size(StatsLine *l) {
   const GcSizeCounters *c = &gc_heap.ctr.size;
   line_add(l, "young_grows=%llu young_shrinks=%llu ", u(c->grows), u(c->shrinks));
-}
-
-/* The keep family (E's kept-in-place nursery objects, Stage 28 W15a2)
- * prints 0 since E went (Stage 28 W15d), so the line's format does not
- * change; S+'s blocks kept in place are young_kept_blocks. */
-static void print_keep(StatsLine *l) {
-  line_add(l, "keep_cons_objects=%llu keep_cons_bytes=%llu keep_blocks=%llu ", 0ull, 0ull, 0ull);
 }
 
 /* The sticky family (Stage 28 W15b, candidate S), last in
@@ -223,9 +204,7 @@ void gc_print_stats(void) {
   print_why(&l);
   print_frag(&l);
   print_prom(&l);
-  print_sp(&l);
   print_size(&l);
-  print_keep(&l);
   print_sticky(&l);
   fwrite(l.buf, 1, l.n, stderr);
 }

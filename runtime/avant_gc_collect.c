@@ -105,11 +105,12 @@ static uint64_t env_u64(const char *name, uint64_t fallback, uint64_t lo, uint64
   return n;
 }
 
-/* Knobs retired by Stage 28 W14b2 (gc-design.md §1.7): setting one is
- * reported, and it has no effect. */
+/* Knobs retired by Stage 28 W14b2 (gc-design.md §1.7), and
+ * AVANT_GC_STACK_REWRITE by W16b (§4.3): setting one is reported, and it
+ * has no effect. */
 static const char *const retired_knobs[] = {
     "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_YOUNG_SIZING",
-    "AVANT_GC_COPY_RESERVE"};
+    "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE"};
 
 static void gc_settings_read(GcSettings *s) {
   size_t i;
@@ -120,11 +121,6 @@ static void gc_settings_read(GcSettings *s) {
   s->reserve_gb = env_u64("AVANT_HEAP_RESERVE_GB", HEAP_RESERVE_GB_DEFAULT, HEAP_RESERVE_GB_MIN,
                           1ull << 20);
   s->nursery_off = !env_bool("AVANT_NURSERY", 1);
-  s->c_stack_rewrite = !s->nursery_off && env_bool("AVANT_GC_STACK_REWRITE", 1);
-  /* AVANT_GC_STACK_PIN=0 (Stage 28 W16b, scratch, for gc-design.md
-   * section 4.3's retirement proof): both conservative C-stack scans
-   * off (gc_pin_c_stack, gc_note_c_stack_blocks). */
-  s->c_stack_pin = env_bool("AVANT_GC_STACK_PIN", 1);
   s->defrag = env_bool("AVANT_GC_DEFRAG", 1);
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
@@ -313,18 +309,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   avant_gc_bump = NULL;
   gc_heap.limit = NULL;
 
-  /* Spill the callers' callee-saved GPRs into collect's frame so the
-   * C-stack walks see a reference a caller keeps in one: the young
-   * collection's pin scan (gc_pin_c_stack) and the full collection's
-   * defragmentation exclusion (gc_note_c_stack_blocks, C31). Without
-   * this, a heap pointer can sit in rbx across avant_alloc and miss
-   * the shadow stack. Before the branch, so shrink-wrapping cannot move
-   * the saves into the young path only. */
-#if defined(__x86_64__)
-  __asm__ volatile ("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
-#else
-  __builtin_unwind_init();
-#endif
   if (!full) {
     /* One young collection: no probe, no pause. Survival, for sizing,
      * is what the collection copied and what it promoted in place
@@ -375,7 +359,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
         }
       }
       if (allow_move && gc_heap.set.defrag) {
-        gc_note_c_stack_blocks();
         gc_defrag_evacuate(live_lines_this);
       }
       if (gc_heap.set.verify && gc_heap.def_release.n) {
@@ -491,8 +474,7 @@ void gc_stress_point(void) {
    * stress point at a defer entry is often the only collection point a
    * helper-bound loop reaches (its allocations run inside the region,
    * where gc_maybe_collect returns), so the full collection they trigger
-   * runs here. A full collection moves no young object and keeps every
-   * mature block this thread's stack names (C31). (Stage 28 W15a2.) */
+   * runs here. (Stage 28 W15a2.) */
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   }

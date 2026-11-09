@@ -660,17 +660,12 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
 __attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
   void *p;
   gc_init();
-  /* Runtime C holds its references in its own frame, so a young
-   * collection entered here keeps in place the young objects the C stack
-   * names (gc_pin_c_stack, Stage 28 W15a2; C37). */
-  gc_thread.c_entry++;
   if (gc_heap.set.stress) {
     pthread_mutex_lock(&gc_heap.world);
     gc_stress_point();
     pthread_mutex_unlock(&gc_heap.world);
   }
   p = avant_alloc(nbytes, type_id);
-  gc_thread.c_entry--;
   return p;
 }
 

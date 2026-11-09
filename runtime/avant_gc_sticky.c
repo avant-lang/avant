@@ -13,8 +13,7 @@
  * opportunistic young copy. Candidate E, the evacuating nursery, was
  * deleted as a separate young generation in Stage 28 W15d (D232); the
  * mechanisms of E this file uses stay: header forwarding (gc_set_forward,
- * avant_gc_internal.h), the copy (splus_copy), the C-stack pin scan
- * (gc_pin_c_stack, avant_gc_stack.c) and the noted list (below, moved
+ * avant_gc_internal.h), the copy (splus_copy) and the noted list (below, moved
  * from avant_gc_young.c, which held E's young copy).
  *
  * Candidate S, the in-place young generation (Stage 28 W15b,
@@ -113,9 +112,11 @@ static uint64_t scan_cards(void *p, int from_mature);
  * invariant no other field names a young object); and the block's lines
  * are freed by the young sweep. Other survivors are promoted in
  * place, as under S. A block stays in place when any of its young
- * objects is named imprecisely: a word of the collecting thread's C stack
- * at a collection runtime C entered (gc_pin_c_stack, W15a2's scan), a pin
- * or PINNED, or a registered slot location inside it. Nothing moves in a
+ * objects is named imprecisely: a pin or PINNED, or a registered slot
+ * location inside it. (Until Stage 28 W16b also a word of the collecting
+ * thread's C stack at a collection runtime C entered, W15a2's pin scan;
+ * runtime C roots what it holds since W16a, RC1, and gc-design.md
+ * section 4.3's proof retired the scan.) Nothing moves in a
  * shared program (no other thread is stopped, D191) or with the nursery
  * off (no young collection). Copying is optional: a block refused at the
  * heap limit leaves the remaining survivors in place. */
@@ -837,11 +838,6 @@ void gc_sticky_collect(int tenure) {
       yb->kept = mature_lines ? (gc_heap.set.stress ? SPLUS_MIXED : 0)
                               : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
-    }
-    /* A collection runtime C entered: the young objects words of this
-     * thread's C stack name keep their blocks in place (W15a2's scan). */
-    if (gc_thread.c_entry) {
-      gc_pin_c_stack();
     }
   }
 #endif

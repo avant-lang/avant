@@ -366,10 +366,11 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read literal small-young run")
     }
-    // Q123-A: no stack word may still name from-space after a young
-    // copy. The verifier prints those words on stderr, which the run
-    // log captures, so an exact-output match is the zero-report
-    // assertion. AVANT_GC_STACK_REWRITE=0 restores the reports.
+    // Q123-A: no reference may be lost by a young copy. The verifier
+    // prints any report on stderr (since Stage 28 W16b its
+    // lost-reference check: a root or field naming freed memory, or an
+    // access to a block a collection freed), which the run log captures,
+    // so an exact-output match is the zero-report assertion.
     log25 = "${scratch()}/gcb-${stamp}.run25"
     rc25 = run_with_env2(bin10, "AVANT_GC_VERIFY", "1", "AVANT_YOUNG_MB", "1", log25)
     c.eq_int(rc25, 0, "struct literal verify run exits clean")
