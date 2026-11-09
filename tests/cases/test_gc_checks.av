@@ -10,6 +10,12 @@ import backends
 // heap/task_pins.av (C28): every spawn used to leave its task object
 // pinned; after 200 spawns and joins no pin is left.
 //
+// heap/task_records.av (R1, Stage 28 W16b): a spawn's capture record is
+// the task's root until the task returns, not a pin until the join; 200
+// never-joined spawns of 256 KiB captures run under AVANT_HEAP_MAX_MB=32
+// (before R1 their pinned records exceeded it), plainly and under
+// AVANT_GC_VERIFY=1, and leave no pin.
+//
 // heap/join_twice.av (C38, D225): a JoinHandle joined two and three
 // times returns the same result every time, with young and full
 // collections between the joins, in five environments (default,
@@ -46,7 +52,7 @@ import backends
 // under AVANT_YOUNG_MB=1.
 
 fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
-  names = ["limit_defer", "task_pins", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
+  names = ["limit_defer", "task_pins", "task_records", "inc_slice_mature", "array_reserve_mature", "churn", "join_twice", "limit_region"]
   jobs: Array(HJob) = []
   p = 0
   while p < names.size {
@@ -85,6 +91,15 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   keys.push("task_pins.g0")
   envs.push("")
   wants.push("sum: 1490\npins left: 0\n")
+  renvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32 AVANT_GC_VERIFY=1"]
+  e = 0
+  while e < renvs.size {
+    progs.push("task_records")
+    keys.push("task_records.r${e}")
+    envs.push(renvs[e])
+    wants.push("sum ok: true\njoined: 200\npins left: 0\n")
+    e = e + 1
+  }
   jenvs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   e = 0
   while e < jenvs.size {

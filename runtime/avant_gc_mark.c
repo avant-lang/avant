@@ -71,6 +71,7 @@ void gc_mark_roots(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     mark(p->payload);
   }
+  EACH_TASK_ROOT(slot, mark(*slot));
   gc_each_runtime_root(mark_tls_slot);
   drain();
 }

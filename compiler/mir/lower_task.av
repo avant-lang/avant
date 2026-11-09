@@ -5,8 +5,9 @@
 // old back end's representations and runtime calls (calls.av:451-1116).
 //
 // A spawn copies its captures by value (D35) into a heap record
-// `%spawn_cap(<thunk>)`, pinned before its fields are written and
-// unpinned by `avant_join`; its thunk `<enclosing>#spawnN(ref) -> i32`
+// `%spawn_cap(<thunk>)`, which `avant_spawn` roots from the task until
+// the thunk returns (R1, Stage 28 W16b: no pin; before, it was pinned
+// here and unpinned by `avant_join`); its thunk `<enclosing>#spawnN(ref) -> i32`
 // has its own frame and copies each capture into a local (or a fresh box
 // when a lambda in the block captures it). A `.parallel` allocates the
 // result array, a context record `%par_cap(<thunk>)` holding the input,
@@ -154,14 +155,20 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
   }
 }
 
-// A new record of layout l in a fresh local: `avant_alloc(size, id)`,
-// then `avant_pin` (a worker reads it while this thread may collect).
-pub fn (lw: MirLower) pinned_record(l: Int, tid: Int, loc: Location): Int {
+// A new record of layout l in a fresh local: `avant_alloc(size, id)`.
+pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
   b = lw.lw_b
   lw.at(loc)
   c = b.temp(b.types.ref_to(l))
   dummy = b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(tid)))
-  dummy2 = b.call(-1, "avant_pin", lw.one(b.copy_local(c)))
+  c
+}
+
+// The same, then `avant_pin` (a `.parallel` context: workers read it
+// while this thread may collect).
+pub fn (lw: MirLower) pinned_record(l: Int, tid: Int, loc: Location): Int {
+  c = lw.new_record(l, tid, loc)
+  dummy2 = lw.lw_b.call(-1, "avant_pin", lw.one(lw.lw_b.copy_local(c)))
   c
 }
 
@@ -189,7 +196,7 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
     if b.types.layouts[l].ref_words.size > 0 {
       tid = b.type_id(l)
     }
-    c = lw.pinned_record(l, tid, e.loc)
+    c = lw.new_record(l, tid, e.loc)
     lw.store_captures(e, c, 0)
     if lw.failed {
       return b.c_i32(0)
@@ -202,8 +209,8 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   b.copy_local(h)
 }
 
-// `h.join` (calls.av emit_join): `avant_join(h)` waits, unpins the
-// record, and returns the thunk's Int.
+// `h.join` (calls.av emit_join): `avant_join(h)` waits, frees the task,
+// and returns the thunk's Int.
 pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
   b = lw.lw_b
   h = lw.lower_expr(recv)

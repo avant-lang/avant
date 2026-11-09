@@ -82,6 +82,7 @@ static void verify_mark_reachable(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     verify_trace(p->payload);
   }
+  EACH_TASK_ROOT(slot, verify_trace(*slot));
   {
     uint32_t ri;
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
@@ -282,6 +283,7 @@ void gc_verify_lost(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     lost_root_slot(&p->payload);
   }
+  EACH_TASK_ROOT(slot, lost_root_slot(slot));
   gc_each_runtime_root(lost_root_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
@@ -354,6 +356,7 @@ void gc_verify_remembered(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     rem_root_slot(&p->payload);
   }
+  EACH_TASK_ROOT(slot, rem_root_slot(slot));
   gc_each_runtime_root(rem_root_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
@@ -535,6 +538,7 @@ void gc_verify_defrag(void) {
   for (PinEnt *pe = gc_heap.pins; pe; pe = pe->next) {
     verify_defrag_word(pe->payload, "pin", (void *)pe);
   }
+  EACH_TASK_ROOT(slot, verify_defrag_word(*slot, "task root", (void *)slot));
   /* A remembered entry may name a dead object (full collections do not
    * scrub the set, and the young copy skips an entry whose block is
    * gone); only a live one that moved must have been rewritten. */

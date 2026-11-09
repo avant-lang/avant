@@ -971,6 +971,9 @@ typedef struct GcHeap {
   pthread_mutex_t threads_mu;
   int defer;
   PinEnt *pins;
+  /* The task roots (avant_gc_task_root_add, Stage 28 W16b): spawned
+   * tasks' capture records, under the world lock. */
+  AvantGcTaskRoot *task_roots;
 
   /* avant_gc_stats.c. */
   GcCounters ctr;
@@ -1006,6 +1009,18 @@ extern __thread GcThread gc_thread;
  * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls).
  * Only the collecting thread's own slots are visited, as before; other
  * threads' are part of D191's window until W17 stops them. */
+/* Every task root's slot (all threads': the list is global, under the
+ * world lock the collector holds). Its object is PINNED while rooted,
+ * so no collection moves it; the slot is never rewritten. */
+#define EACH_TASK_ROOT(SLOT, BODY)                                       \
+  do {                                                                   \
+    AvantGcTaskRoot *etr_r_;                                             \
+    for (etr_r_ = gc_heap.task_roots; etr_r_; etr_r_ = etr_r_->next) {   \
+      void **SLOT = &etr_r_->obj;                                        \
+      BODY;                                                              \
+    }                                                                    \
+  } while (0)
+
 static inline void gc_each_runtime_root(void (*fn)(void **slot)) {
   uint32_t i;
   for (i = 0; i < gc_thread.nroots; i++) {

@@ -172,8 +172,10 @@
  *     avant_argv, avant_dir_list                   C (array filled in
  *                                                  place)
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
- *     avant_spawn (avant_task.c; C28)              N (the record is
- *                                                  pinned; R1 is W16b's)
+ *     avant_spawn (avant_task.c; C28, R1)          C (the record is a
+ *                                                  task root, added
+ *                                                  before the handle's
+ *                                                  allocation; W16b)
  *     HTTP make_string/_bytes, packed headers      C
  *     HTTP/WS send and close (7 regions)           R4: payloads held in
  *                                                  C while other loop
@@ -298,6 +300,24 @@ __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void);
  * new one alone fills the young budget (avant_gc_alloc.c; Stage 28 W16a).
  * It may collect. Hidden. */
 __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes);
+
+/* Task roots (Stage 28 W16b; C28, R1): a spawned task's capture record
+ * is rooted by the task, from avant_spawn until the task's function has
+ * returned, instead of pinned by the generated code until the join. A
+ * root is a node in the task's own C memory (O(1) to add and drop, no
+ * pin entry); every collection traces OBJ from it and none moves it
+ * while it is rooted (it is held in place like a pinned object, because
+ * the worker thread reads the record while other threads may collect:
+ * D191, until W17's handshake). After the drop the record is an ordinary
+ * object: a finished task's record dies with its last reference, joined
+ * or not. Hidden; add and drop take the world lock and never collect. */
+typedef struct AvantGcTaskRoot {
+  void *obj;
+  struct AvantGcTaskRoot *prev;
+  struct AvantGcTaskRoot *next;
+} AvantGcTaskRoot;
+__attribute__((visibility("hidden"))) void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj);
+__attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRoot *r);
 
 /* RC1's handle scopes (the contract above; Stage 28 W16a). A frame of the
  * thread's chain, the type every frame has (avant_gc_internal.h calls it

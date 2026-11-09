@@ -26,6 +26,8 @@ typedef struct {
   int32_t result;
   int done;
   pthread_cond_t done_cv;
+  /* R1: roots arg (avant_gc_task_root_add) until fn has returned. */
+  AvantGcTaskRoot root;
 } AvantTask;
 
 typedef struct ParDone {
@@ -122,6 +124,11 @@ static void run_job(Job *job) {
   if (job->kind == 1) {
     AvantTask *t = job->task;
     t->result = t->fn(t->arg);
+    /* R1: the record is the task's until its function returns; from
+     * here it lives only as long as something else names it. */
+    if (t->arg) {
+      avant_gc_task_root_drop(&t->root);
+    }
     pthread_mutex_lock(&pool_mu);
     t->done = 1;
     /* Every waiting join wakes (C38: a handle may be joined twice). */
@@ -167,12 +174,14 @@ static void *worker_main(void *p) {
 }
 
 /* The task is C memory (C28, Stage 28 W14b1): it holds no reference the
- * collector must trace except arg, the capture record, which the
- * generated code pinned before writing its fields and which stays pinned
- * until the join (R1, a rooted record instead of a pin, is W16b's). The
- * join frees it. Before W14b1 the task was a heap object pinned here and
- * never unpinned: every spawn left a pin entry and a pinned object for
- * the life of the process.
+ * collector must trace except arg, the capture record, which the task
+ * roots (R1, Stage 28 W16b: avant_gc_task_root_add, a node in the task,
+ * held in place while rooted) from here until its function has returned
+ * (run_job drops the root). The record is no longer pinned: before W16b
+ * the generated code pinned it and the join unpinned it, so a spawn that
+ * was never joined kept its record (and whatever it captured) and a pin
+ * entry for the life of the process. The join frees the task. Before
+ * W14b1 the task itself was a heap object pinned here and never unpinned.
  *
  * The JoinHandle (C38, D225) is a small heap object with no references
  * (AVANT_TYPE_BYTES: the task pointer and the result), which the
@@ -192,11 +201,9 @@ void *avant_spawn(void *fn, void *arg) {
   AvantJoinHandle *hd;
   AvantTask *t;
   Job *job;
-  /* gc-lint: holds nothing (arg, the capture record, is pinned until the
-   * join, so it neither moves nor dies; C28, R1 is W16b's). First, while
-   * this frame holds no other reference: the allocation may collect.
-   * Nothing below collects. */
-  hd = (AvantJoinHandle *)avant_alloc(sizeof(AvantJoinHandle), AVANT_TYPE_BYTES);
+  /* gc-lint: holds nothing (arg, the capture record, is a task root from
+   * before the handle's allocation, so it neither moves nor dies; C28,
+   * R1). Nothing before the allocation collects; nothing after it. */
   t = (AvantTask *)calloc(1, sizeof(AvantTask));
   if (!t) {
     die_task("out of memory");
@@ -209,6 +216,10 @@ void *avant_spawn(void *fn, void *arg) {
     free(t);
     return NULL;
   }
+  if (arg) {
+    avant_gc_task_root_add(&t->root, arg);
+  }
+  hd = (AvantJoinHandle *)avant_alloc(sizeof(AvantJoinHandle), AVANT_TYPE_BYTES);
   hd->task = t;
   hd->result = 0;
   job = (Job *)calloc(1, sizeof(Job));
@@ -253,10 +264,8 @@ int32_t avant_join(void *handle) {
   result = hd->result;
   pthread_mutex_unlock(&pool_mu);
   if (t) {
-    /* The spawn capture is pinned so the worker can read it. After join
-     * it is the only pin keeping a shared matrix alive. The worker last
-     * touched the task under pool_mu (run_job), so it can go now. */
-    avant_unpin(t->arg);
+    /* The worker dropped the record's root before it last touched the
+     * task under pool_mu (run_job), so the task can go now. */
     pthread_cond_destroy(&t->done_cv);
     free(t);
   }

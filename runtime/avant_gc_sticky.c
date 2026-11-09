@@ -338,6 +338,7 @@ static void trace_all(void) {
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     trace_ref(NULL, p->payload, 0);
   }
+  EACH_TASK_ROOT(slot, trace_ref(NULL, *slot, 0));
   gc_each_runtime_root(trace_root_slot);
   while (gc_heap.work_n) {
     void *p = gc_heap.work[--gc_heap.work_n];
