@@ -253,6 +253,12 @@ static void rem_named(void *p) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
+/* Is H a carded object the young collection scans by its marked cards
+ * (in the set as REMC, without CARD_ALL)? */
+static int rem_by_cards(const AvantHeader *h) {
+  return gc_carded(h) && (h->flags & AVANT_FLAG_REMC) && !(h->flags & AVANT_FLAG_CARD_ALL);
+}
+
 static void rem_root_slot(void **slot) {
   verify_trace(*slot);
   rem_named(*slot);
@@ -288,28 +294,44 @@ void gc_verify_remembered(void) {
       EACH_REF_SLOT(v, slot, { rem_named(*slot); });
     }
   }
-  /* R1'(c): the fields of every remembered object. */
+  /* R1'(c): the fields of every remembered object; of a carded one
+   * (REMC, Stage 28 W16t), the slots of its marked cards, which are all
+   * the young collection scans of it, unless every card counts
+   * (CARD_ALL). */
   {
     uint32_t ri;
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
       void *obj = gc_heap.remset[ri];
       if (gc_is_heap_payload(obj, NULL, NULL)) {
-        EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
+        if (rem_by_cards(avant_header(obj))) {
+          EACH_CARD_SLOT(obj, slot, { rem_named(*slot); });
+        } else {
+          EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
+        }
       }
     }
   }
   /* The check: a reached non-young holder that is neither remembered
-   * nor named must name no young object. */
+   * nor named must name no young object. A carded one remembered by its
+   * cards (REMC without CARD_ALL) must name young objects only from
+   * slots of its marked cards (the card invariant, Stage 28 W16t):
+   * a young object named from a clear card is reported as a missing
+   * barrier too, since the young collection would not scan that slot. */
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     void *v = gc_heap.vnoted[i];
     void *st;
     AvantHeader *h = avant_header(v);
+    int by_cards;
     if (verify_names_young(v, &st) || (h->flags & (AVANT_FLAG_REM | AVANT_FLAG_MARKED))) {
+      continue;
+    }
+    by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
+    if (by_cards && !rem_by_cards(h)) {
       continue;
     }
     EACH_REF_SLOT(v, slot, {
       void *y;
-      if (verify_names_young(*slot, &y)) {
+      if ((!by_cards || !gc_heap.cards[gc_card_index(slot)]) && verify_names_young(*slot, &y)) {
         found++;
         if (found <= 32) {
           Block *hb = block_of(h);
@@ -345,7 +367,8 @@ void gc_verify_remembered(void) {
  * gc_heap.stale_seen. */
 
 static void verify_no_stale_one(AvantHeader *h, Block *b) {
-  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_VSEEN | AVANT_FLAG_PROMOTED_NOW)) {
+  if (h->flags & (AVANT_FLAG_MARKED | AVANT_FLAG_FORWARDED | AVANT_FLAG_VSEEN | AVANT_FLAG_PROMOTED_NOW |
+                  AVANT_FLAG_CARD_SCAN)) {
     if (gc_heap.stale_seen++ < 16) {
       fprintf(stderr,
               "avant gc verify: stale mark on %p flags=0x%x space=%d at the start of coll=%llu\n",

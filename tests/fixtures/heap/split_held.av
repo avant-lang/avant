@@ -47,12 +47,6 @@ fn junk(r: Int): Int {
   keep.size
 }
 
-// junk(r)'s result without its allocation (the stress mode's rounds past
-// the heavy ones, below).
-fn junk_count(r: Int): Int {
-  500 + r * 37 % 2900
-}
-
 fn check(parts: Array(String)): Int {
   bad = 0
   if parts.size != 3000 {
@@ -88,57 +82,35 @@ fn main {
   spaced = text_of("  \t ")
   short = letters(3000)
   rounds = 700
-  // Under AVANT_GC_STRESS=1 every part's allocation runs a young
-  // collection that moves what it can (Stage 28 W16a: the helpers root
-  // their parts, RC1, so the stress point is no longer only at a
-  // region's entry): one round of the three helpers is about 9,000 collections, each scanning
-  // the remembered array being filled, so 700 rounds took hours. Three
-  // rounds under stress still collect inside every helper at every part;
-  // the rounds past them add junk's count without allocating it (the full
-  // mode copies every young survivor at each collection, so the junk
-  // arrays alone made the run quadratic), so the output is the same in
-  // every environment.
-  heavy = rounds
-  if st = env_get("AVANT_GC_STRESS") {
-    if st == "1" {
-      heavy = 3
-    }
-  }
+  // Every round runs in every environment. Under AVANT_GC_STRESS=1 every
+  // part's allocation runs a young collection; since card marking (Stage
+  // 28 W16t, O64) each one scans only the cards of the array being filled
+  // that its last stores marked, not the whole array, so the 700 rounds
+  // no longer need the cap the stress mode had (W16a: 3 rounds, with the
+  // junk moved before each helper).
   split_bad = 0
   fields_bad = 0
   chars = 0
   n = 0
   r = 0
   while r < rounds {
-    if r < heavy {
-      n = n + junk(r)
-      parts = text.split(" ")
-      split_bad = split_bad + check(parts)
-    } else {
-      n = n + junk_count(r)
-    }
+    parts = text.split(" ")
+    n = n + junk(r)
+    split_bad = split_bad + check(parts)
     r = r + 1
   }
   r = 0
   while r < rounds {
-    if r < heavy {
-      n = n + junk(r)
-      fs = spaced.fields()
-      fields_bad = fields_bad + check(fs)
-    } else {
-      n = n + junk_count(r)
-    }
+    fs = spaced.fields()
+    n = n + junk(r)
+    fields_bad = fields_bad + check(fs)
     r = r + 1
   }
   r = 0
   while r < rounds {
-    if r < heavy {
-      n = n + junk(r)
-      cs = short.chars
-      chars = chars + chars_bad(cs, short)
-    } else {
-      n = n + junk_count(r)
-    }
+    cs = short.chars
+    n = n + junk(r)
+    chars = chars + chars_bad(cs, short)
     r = r + 1
   }
   puts("split bad: ${split_bad}")

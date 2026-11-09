@@ -56,7 +56,7 @@ void gc_clear_noted(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.noted_n; i++) {
     AvantHeader *h = avant_header(gc_heap.noted[i]);
-    uint16_t f = (uint16_t)(h->flags & ~(AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW));
+    uint16_t f = (uint16_t)(h->flags & ~(AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_CARD_SCAN));
     if (!(f & AVANT_FLAG_YOUNG)) {
       f = (uint16_t)(f & ~AVANT_FLAG_SURVIVED);
     }
@@ -95,6 +95,7 @@ static void promote_in_place(AvantHeader *h, Block *b) {
 }
 
 static void scan_fields(void *p, int from_mature);
+static uint64_t scan_cards(void *p, int from_mature);
 
 #if GC_STICKY_COPY
 /* Variant S+ (Stage 28 W15c, gc-design.md §3.1, §3.3): the opportunistic
@@ -151,6 +152,13 @@ static int trace_ref(void **slot, void *p, int from_mature) {
   (void)slot;
 #endif
   if (h->flags & AVANT_FLAG_MARKED) {
+    /* A carded object scanned so far only by its marked cards, now named
+     * by a root or a young object's field (R1'(a), (b)): scanned whole,
+     * as R1' says (Stage 28 W16t). */
+    if (!from_mature && (h->flags & AVANT_FLAG_CARD_SCAN)) {
+      h->flags &= (uint16_t)~AVANT_FLAG_CARD_SCAN;
+      scan_fields(start, 1);
+    }
     return ol && (h->flags & AVANT_FLAG_YOUNG);
   }
   if (h->flags & AVANT_FLAG_YOUNG) {
@@ -170,7 +178,7 @@ static int trace_ref(void **slot, void *p, int from_mature) {
     }
     return ol != NULL;
   }
-  if (from_mature && (h->flags & AVANT_FLAG_REM) == 0) {
+  if (from_mature && (h->flags & (AVANT_FLAG_REM | AVANT_FLAG_REMC)) == 0) {
     return 0;
   }
   h->flags |= AVANT_FLAG_MARKED;
@@ -178,8 +186,29 @@ static int trace_ref(void **slot, void *p, int from_mature) {
   if (ol) {
     gc_heap.young_large_live += gc_large_bytes(ol);
   }
-  scan_fields(start, 1);
+  /* Followed only because it is remembered: a carded object's marked
+   * cards are what the barrier recorded (Stage 28 W16t). */
+  if (from_mature && (h->flags & AVANT_FLAG_REMC) && !(h->flags & AVANT_FLAG_CARD_ALL)) {
+    h->flags |= AVANT_FLAG_CARD_SCAN;
+    (void)scan_cards(start, 1);
+  } else {
+    scan_fields(start, 1);
+  }
   return 0;
+}
+
+/* The slots of carded P's marked cards (Stage 28 W16t), traced as
+ * scan_fields traces fields; returns their count (rem_fields counts the
+ * remembered set's scans, as field_count does for whole objects). A
+ * young large object they name needs no keep entry: gc_cards_settle
+ * keeps the card. */
+static uint64_t scan_cards(void *p, int from_mature) {
+  uint64_t n = 0;
+  EACH_CARD_SLOT(p, slot, {
+    (void)trace_ref(slot, *slot, from_mature);
+    n++;
+  });
+  return n;
 }
 
 /* The fields of P. A holder with a field naming a young large object
@@ -278,11 +307,24 @@ static void trace_all(void) {
       if (!gc_is_heap_payload(obj, NULL, &ol)) {
         continue;
       }
-      if (!(avant_header(obj)->flags & AVANT_FLAG_MARKED)) {
-        avant_header(obj)->flags |= AVANT_FLAG_MARKED;
-        gc_note_marked(obj);
-        if (ol) {
-          gc_heap.young_large_live += gc_large_bytes(ol);
+      {
+        AvantHeader *oh = avant_header(obj);
+        int carded = (oh->flags & AVANT_FLAG_REMC) && !(oh->flags & AVANT_FLAG_CARD_ALL);
+        if (!(oh->flags & AVANT_FLAG_MARKED)) {
+          oh->flags |= AVANT_FLAG_MARKED;
+          gc_note_marked(obj);
+          if (ol) {
+            gc_heap.young_large_live += gc_large_bytes(ol);
+          }
+          if (carded) {
+            oh->flags |= AVANT_FLAG_CARD_SCAN;
+          }
+        }
+        /* A carded entry: the slots of its marked cards (R1'(c) for a
+         * carded object, Stage 28 W16t); every other entry: every field. */
+        if (carded) {
+          gc_heap.ctr.rem.fields += scan_cards(obj, 0);
+          continue;
         }
       }
       gc_heap.ctr.rem.fields += field_count(obj);
@@ -319,7 +361,7 @@ static void rem_empty(void) {
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     if (gc_is_heap_payload(obj, NULL, NULL)) {
-      avant_header(obj)->flags &= (uint16_t)~AVANT_FLAG_REM;
+      avant_header(obj)->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
     }
   }
   gc_heap.ctr.rem.cleared += gc_heap.rem_n;
@@ -337,6 +379,7 @@ static void rem_empty(void) {
  * root may be gone by the next collection. */
 static void rem_rebuild(void) {
   gc_rem_keep_young_holders();
+  gc_cards_settle();
 }
 
 /* The young lines LO..HI of block B after the trace: a line no survivor
@@ -524,6 +567,13 @@ static void splus_fix(void) {
       p = to;
     }
     if (avant_header(p)->type_id == AVANT_TYPE_BYTES) {
+      continue;
+    }
+    /* A carded object the trace scanned by its marked cards only: by the
+     * card invariant no other slot names a young (movable) object. */
+    if (avant_header(p)->flags & AVANT_FLAG_CARD_SCAN) {
+      int aged = 0;
+      EACH_CARD_SLOT(p, slot, { *slot = splus_new_addr(*slot, &aged); });
       continue;
     }
     {

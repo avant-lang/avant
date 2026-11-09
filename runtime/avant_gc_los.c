@@ -476,6 +476,11 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   h->type_id = (uint16_t)type_id;
   h->flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_LARGE);
   start_bit_set(h, 1);
+  /* A carded object starts with clear cards (a freed run's may be left
+   * marked; Stage 28 W16t). */
+  if (gc_carded(h) && payload) {
+    gc_cards_clear(payload_of(h));
+  }
   gc_heap.large_bytes += bytes;
   if (young) {
     h->flags |= AVANT_FLAG_YOUNG;

@@ -59,12 +59,21 @@ pub fn ll_gc_call(e: LlEmit, name: String) {
 
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
 // object already young or remembered, skips the call. The call form when
-// inline fast paths are off.
+// inline fast paths are off. When the store the barrier precedes (V13) is
+// an element of the holder's buffer (`(*_h)[i]`, `(*_h)[i].j`), the call
+// passes the slot (avant_barrier_slot, Stage 28 W16t: a large pointer
+// buffer marks the slot's card); the slot's address is formed only on
+// the call path.
 pub fn ll_barrier(e: LlEmit, o: MOperand) {
-  e.need("avant_barrier")
+  k = ll_barrier_store(e, o)
+  if k >= 0 {
+    e.need("avant_barrier_slot")
+  } else {
+    e.need("avant_barrier")
+  }
   h = e.value(o)
   if !e.inline_fast {
-    e.line("call void @avant_barrier(ptr ${h})")
+    ll_barrier_call(e, h, k)
     return
   }
   test = e.part("test")
@@ -90,9 +99,43 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   e.line("${skip} = and i1 ${ha}, ${hb}")
   e.line("br i1 ${skip}, label %${cont}, label %${call}")
   e.block(call)
-  e.line("call void @avant_barrier(ptr ${h})")
+  ll_barrier_call(e, h, k)
   e.line("br label %${cont}")
   e.block(cont)
+}
+
+// The index in the current block of the store the barrier on O precedes
+// when that store is an element of O's buffer, else -1.
+fn ll_barrier_store(e: LlEmit, o: MOperand): Int {
+  stmts = e.f.blocks[e.bk].stmts
+  k = e.si + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return -1
+  }
+  if hp = o.place {
+    if p = stmts[k].place {
+      if hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index() {
+        return k
+      }
+    }
+  }
+  -1
+}
+
+// The barrier call on holder H: with the slot of store K (formed at that
+// statement's position), or the holder alone when K < 0.
+fn ll_barrier_call(e: LlEmit, h: String, k: Int) {
+  if k < 0 {
+    e.line("call void @avant_barrier(ptr ${h})")
+    return
+  }
+  si = e.si
+  e.si = k
+  if p = e.f.blocks[e.bk].stmts[k].place {
+    slot = e.place_ptr(p)
+    e.line("call void @avant_barrier_slot(ptr ${h}, ptr ${slot})")
+  }
+  e.si = si
 }
 
 // barrier_at copy _a: the unknown-holder form, always a call.

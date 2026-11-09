@@ -88,10 +88,10 @@ static void unreserve(void *p, uint64_t len) {
 
 /* One attempt at a reservation of BYTES (a multiple of CHUNK_SIZE):
  * the data range, 4 MiB aligned (over-reserved by one chunk, the excess
- * returned), and the five side tables and the chunk map at their
+ * returned), and the six side tables and the chunk map at their
  * ratios (records 1/512, start bits 1/64, mark bits 1/64, line marks
- * 1/256, the large-object page table 1/1024, the map one GcChunk per
- * chunk). All or nothing. */
+ * 1/256, the large-object page table 1/1024, the card table 1/CARD_SIZE
+ * (Stage 28 W16t), the map one GcChunk per chunk). All or nothing. */
 static int reserve_all(uint64_t bytes) {
   uint64_t nblocks = bytes >> BLOCK_SHIFT;
   uint64_t nchunks = bytes >> CHUNK_SHIFT;
@@ -99,6 +99,7 @@ static int reserve_all(uint64_t bytes) {
   uint64_t st_len = nblocks * START_WORDS * sizeof(uint64_t);
   uint64_t ln_len = nblocks * LINES_PER_BLOCK;
   uint64_t pg_len = (bytes >> PAGE_SHIFT) * sizeof(uint32_t);
+  uint64_t cd_len = bytes >> CARD_SHIFT;
   uint64_t ch_len = (nchunks * sizeof(GcChunk) + 4095) & ~(uint64_t)4095;
   uint8_t *raw = reserve(bytes + CHUNK_SIZE);
   void *rec = raw ? reserve(rec_len) : NULL;
@@ -106,7 +107,8 @@ static int reserve_all(uint64_t bytes) {
   void *mk = st ? reserve(st_len) : NULL;
   void *ln = mk ? reserve(ln_len) : NULL;
   void *pg = ln ? reserve(pg_len) : NULL;
-  void *ch = pg ? reserve(ch_len) : NULL;
+  void *cd = pg ? reserve(cd_len) : NULL;
+  void *ch = cd ? reserve(ch_len) : NULL;
   if (!ch) {
     unreserve(raw, bytes + CHUNK_SIZE);
     unreserve(rec, rec_len);
@@ -114,6 +116,7 @@ static int reserve_all(uint64_t bytes) {
     unreserve(mk, st_len);
     unreserve(ln, ln_len);
     unreserve(pg, pg_len);
+    unreserve(cd, cd_len);
     unreserve(ch, ch_len);
     return 0;
   }
@@ -138,6 +141,7 @@ static int reserve_all(uint64_t bytes) {
   gc_heap.marks = mk;
   gc_heap.lines = ln;
   gc_heap.pages = pg;
+  gc_heap.cards = cd;
   gc_heap.chunks = ch;
   gc_heap.reserved = bytes;
   gc_heap.committed = 0;
@@ -194,7 +198,8 @@ static uint64_t commit_new_chunk(void) {
         !commit(&gc_heap.starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
         !commit(&gc_heap.marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t)) ||
         !commit(&gc_heap.lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK) ||
-        !commit(&gc_heap.pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t))) {
+        !commit(&gc_heap.pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t)) ||
+        !commit(&gc_heap.cards[(uint64_t)c << (CHUNK_SHIFT - CARD_SHIFT)], CHUNK_SIZE >> CARD_SHIFT)) {
       gc_die("out of memory (a heap chunk could not be committed)");
     }
   }
@@ -390,6 +395,7 @@ static void decommit_chunk(uint64_t c) {
   gc_return_pages(&gc_heap.marks[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
   gc_return_pages(&gc_heap.lines[b0 * LINES_PER_BLOCK], BLOCKS_PER_CHUNK * LINES_PER_BLOCK);
   gc_return_pages(&gc_heap.pages[c * PAGES_PER_CHUNK], PAGES_PER_CHUNK * sizeof(uint32_t));
+  gc_return_pages(&gc_heap.cards[(uint64_t)c << (CHUNK_SHIFT - CARD_SHIFT)], CHUNK_SIZE >> CARD_SHIFT);
   gc_heap.chunks[c].dirty = 0;
   gc_heap.chunks[c].decommitted = 1;
 }

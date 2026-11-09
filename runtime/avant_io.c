@@ -52,8 +52,9 @@ static void io_array_buf(AvantArray **ap, int32_t n) {
 }
 
 static void io_array_put(AvantArray *a, char *p) {
-  ((char **)a->buf)[a->size++] = p;
-  avant_barrier(a->buf);
+  char **slot = &((char **)a->buf)[a->size++];
+  *slot = p;
+  avant_barrier_slot(a->buf, slot);
 }
 
 static char *cstr_dup(const char *s) {

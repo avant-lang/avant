@@ -235,12 +235,12 @@ static void insert_raw(AvantHash *dst, int64_t key_bits, int32_t val_i32, const 
   /* A mature key or value buffer is not walked from the roots. The
    * slot just stored may point at a young string. */
   if (dst->key_kind == AVANT_HASH_KEY_STR && dst->keys) {
-    avant_barrier(dst->keys);
+    avant_barrier_slot(dst->keys, &((void **)dst->keys)[i]);
   }
   if (dst->val_kind == AVANT_HASH_VAL_STR) {
     store_val_str(dst, i, val_str);
     if (dst->vals) {
-      avant_barrier(dst->vals);
+      avant_barrier_slot(dst->vals, &((void **)dst->vals)[i]);
     }
   } else {
     store_val_i32(dst, i, val_i32);
@@ -587,7 +587,7 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   avant_str_tag(key);
   store_key(h, i, (int64_t)(uintptr_t)key);
   /* The key is young; a mature key buffer is not walked from the roots (C34). */
-  avant_barrier(h->keys);
+  avant_barrier_slot(h->keys, &((void **)h->keys)[i]);
   store_val_i32(h, i, 1);
   hashes_of(h)[i] = hv;
   if (!slot_full(h->state[i])) {
@@ -751,7 +751,7 @@ int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
   lookup_str(h, key, &i);
   store_key(h, i, (int64_t)(uintptr_t)key);
   if (h->keys) {
-    avant_barrier(h->keys);
+    avant_barrier_slot(h->keys, &((void **)h->keys)[i]);
   }
   store_val_i32(h, i, by);
   if (h->state && h->key_kind == AVANT_HASH_KEY_STR) {

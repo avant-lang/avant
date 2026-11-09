@@ -18,19 +18,20 @@
  * empties the set at every young collection and remembers again only the
  * holders of objects that stay young, gc_rem_keep_young_holders.) */
 
-static void rem_add(void *obj) {
+/* OBJ joins the set with BIT (REM, or REMC for a carded object). */
+static void rem_add_bit(void *obj, uint16_t bit) {
   AvantHeader *h = avant_header(obj);
   int locked = rem_locked();
   if (locked) {
     pthread_mutex_lock(&gc_heap.rem_mu);
   }
-  if (h->flags & AVANT_FLAG_REM) {
+  if (h->flags & bit) {
     if (locked) {
       pthread_mutex_unlock(&gc_heap.rem_mu);
     }
     return;
   }
-  h->flags |= AVANT_FLAG_REM;
+  h->flags |= bit;
   if (gc_heap.rem_n == gc_heap.rem_cap) {
     gc_heap.rem_cap = gc_heap.rem_cap ? gc_heap.rem_cap * 2 : 64;
     gc_heap.remset = gc_xrealloc(gc_heap.remset, gc_heap.rem_cap * sizeof(void *));
@@ -40,6 +41,10 @@ static void rem_add(void *obj) {
   if (locked) {
     pthread_mutex_unlock(&gc_heap.rem_mu);
   }
+}
+
+static void rem_add(void *obj) {
+  rem_add_bit(obj, gc_carded(avant_header(obj)) ? AVANT_FLAG_REMC : AVANT_FLAG_REM);
 }
 
 void gc_keep_add(void *obj) {
@@ -52,6 +57,13 @@ void gc_keep_add(void *obj) {
 
 /* Does a field of OBJ name a young object (gc_young_at: one with
  * YOUNG)? */
+static int slot_names_young(void *p) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  return start && gc_young_at(start, b, ol);
+}
+
 static int rem_names_young(void *obj) {
   int found = 0;
   if (avant_header(obj)->type_id == AVANT_TYPE_BYTES) {
@@ -80,8 +92,9 @@ void gc_rem_keep_young_holders(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.keep_n; i++) {
     void *obj = gc_heap.keep[i];
+    /* A carded holder is remembered by its cards (gc_cards_settle). */
     if (!gc_is_heap_payload(obj, NULL, NULL) || (avant_header(obj)->flags & AVANT_FLAG_YOUNG) ||
-        (avant_header(obj)->flags & AVANT_FLAG_REM)) {
+        (avant_header(obj)->flags & AVANT_FLAG_REM) || gc_carded(avant_header(obj))) {
       continue;
     }
     if (rem_names_young(obj)) {
@@ -89,6 +102,52 @@ void gc_rem_keep_young_holders(void) {
     }
   }
   gc_heap.keep_n = 0;
+}
+
+/* After a young collection (Stage 28 W16t): the cards of every carded
+ * object it reached (the noted list) are made exact, and the object is
+ * remembered (REMC) when a card is still marked. One scanned only by its
+ * marked cards (CARD_SCAN) has those cards rechecked: a card stays marked
+ * when one of its slots names an object still young (an aged copy, a
+ * young large object; gc_young_at), else it is cleared. One scanned
+ * whole (CARD_ALL, a root or a young object named it, or it was promoted
+ * now) has every card cleared and then each slot naming a young object
+ * marks its card. Run after the young large objects' fate and the set's
+ * emptying (rem_empty), before the noted list is cleared. A young object
+ * needs no card (it is traced whole while young). */
+void gc_cards_settle(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.noted_n; i++) {
+    void *p = gc_heap.noted[i];
+    AvantHeader *h = avant_header(p);
+    int any = 0;
+    if ((h->flags & (AVANT_FLAG_FORWARDED | AVANT_FLAG_YOUNG)) || !gc_carded(h)) {
+      continue;
+    }
+    if (h->flags & AVANT_FLAG_CARD_SCAN) {
+      EACH_CARD_SLOT(p, slot, {
+        if (slot == (void **)ecs_a_) {
+          gc_heap.cards[ecs_c_] = 0;
+        }
+        if (!gc_heap.cards[ecs_c_] && slot_names_young(*slot)) {
+          gc_heap.cards[ecs_c_] = 1;
+          any = 1;
+        }
+      });
+    } else {
+      gc_cards_clear(p);
+      EACH_REF_SLOT(p, slot, {
+        if (slot_names_young(*slot)) {
+          gc_heap.cards[gc_card_index(slot)] = 1;
+          any = 1;
+        }
+      });
+    }
+    h->flags &= (uint16_t)~AVANT_FLAG_CARD_ALL;
+    if (any) {
+      rem_add_bit(p, AVANT_FLAG_REMC);
+    }
+  }
 }
 
 /* C33 and O9 (Stage 28 W14b1, gc-design.md §7): the remembered set after
@@ -119,12 +178,18 @@ void gc_rem_full_scrub(void) {
       continue;
     }
     h = avant_header(obj);
-    if ((h->flags & AVANT_FLAG_REM) == 0 || (h->flags & AVANT_FLAG_MARKED)) {
+    if ((h->flags & (AVANT_FLAG_REM | AVANT_FLAG_REMC)) == 0 || (h->flags & AVANT_FLAG_MARKED)) {
       continue;
     }
+    /* A carded entry (REMC) is kept whole: its cards say nothing about
+     * what defragmentation moved, so the next young collection scans it
+     * whole and marks its cards again (CARD_ALL; gc_cards_settle). */
     if (!full_marked(h) || gc_heap.set.nursery_off || !rem_names_young(obj)) {
-      h->flags &= (uint16_t)~AVANT_FLAG_REM;
+      h->flags &= (uint16_t)~(AVANT_FLAG_REM | AVANT_FLAG_REMC);
       continue;
+    }
+    if (h->flags & AVANT_FLAG_REMC) {
+      h->flags |= AVANT_FLAG_CARD_ALL;
     }
     h->flags |= AVANT_FLAG_MARKED;
     gc_heap.remset[w] = obj;
@@ -157,12 +222,52 @@ void avant_barrier(void *obj) {
       if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_REM)) {
         return;
       }
+      /* A carded object named without its slot (Stage 28 W16t): every
+       * card counts as marked until the next young collection. */
+      if (gc_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
+        h->flags |= AVANT_FLAG_CARD_ALL;
+        rem_add_bit(obj, AVANT_FLAG_REMC);
+        return;
+      }
     }
   }
   if (!gc_is_heap_payload(obj, NULL, NULL)) {
     return;
   }
   rem_add(obj);
+}
+
+/* The barrier with the slot (Stage 28 W16t, card marking, Q5, O64): a
+ * store of a reference into SLOT of OBJ. For a mature carded object (a
+ * large pointer buffer) the slot's card is marked and the object is in
+ * the set (REMC); a slot outside the object counts as every card. For
+ * any other object it is avant_barrier(OBJ). Generated code calls it
+ * for an element store whose holder the inline test did not skip;
+ * runtime C calls it where it knows the slot. Never collects. */
+void avant_barrier_slot(void *obj, void *slot) {
+  AvantHeader *h;
+  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
+    return;
+  }
+  /* A large object's header is at a fixed place in its run, and the
+   * range compare keeps the card index inside the table (no start-bit
+   * lookup on this per-store path). */
+  if (((uintptr_t)obj & (ALIGN - 1)) == 0 &&
+      (uint64_t)((uintptr_t)obj - (uintptr_t)gc_heap.base) < gc_heap.committed) {
+    h = avant_header(obj);
+    if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == AVANT_FLAG_HEAP && gc_carded(h)) {
+      if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
+        gc_heap.cards[gc_card_index(slot)] = 1;
+      } else {
+        h->flags |= AVANT_FLAG_CARD_ALL;
+      }
+      if (!(h->flags & AVANT_FLAG_REMC)) {
+        rem_add_bit(obj, AVANT_FLAG_REMC);
+      }
+      return;
+    }
+  }
+  avant_barrier(obj);
 }
 
 /* Stage 28 W1b. The barrier for a store through an address that may be

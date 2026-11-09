@@ -47,6 +47,32 @@
 #                   state AVANT_NURSERY=1 (tests/cases/harness.av,
 #                   gc_env_outer). AVANT_GC_STATS is not a suite
 #                   environment: it writes to every program's stderr.
+#   GATE_GC_OVERLAP how many GC passes run at once (default 2; Stage 28
+#                   W16t). The timed passes (the builds, the B and C'
+#                   suites, D' and __emit-ll) always run alone; the GC
+#                   passes are proofs, not measurements, and with a list of
+#                   environments up to GATE_GC_OVERLAP of them run
+#                   concurrently, each with its own logs, counts and
+#                   verdict, reported in the list's order. 1 runs them one
+#                   after another, as before W16t. Measured at W16t on
+#                   D235's four passes (16 threads): 4 at once with
+#                   --jobs 4 378 s, with --jobs 8 396 s, 2 with --jobs 8
+#                   379 s, one at a time 562 s (the gate's wall); 2 keeps
+#                   each pass nearer its time alone.
+#   GATE_GC_JOBS    each concurrent GC pass's `avant test --jobs` (default
+#                   the online processors divided by GATE_GC_OVERLAP, at
+#                   least 1): the passes' processes together stay within
+#                   the machine (the suite runner's own parallelism counts).
+#                   Unused when the passes run one at a time (the runner's
+#                   default, as before).
+#                   A concurrent pass runs with its own TMPDIR root
+#                   (a fresh avant-gate-XXXXXX in TMPDIR, else /tmp,
+#                   named in GATE_OUT/tmpdir-L), which must be empty
+#                   afterwards (else it is kept and listed); /tmp
+#                   is snapshotted around the whole group, and an entry it
+#                   gains or loses is counted against every pass of the
+#                   group (new-L.tmp, gone-L.tmp), as is the repository's
+#                   snapshot around each pass.
 #   GATE_EMIT_BOUND seconds (default 20): the summary reports the C' (c-llvm)
 #                   __emit-ll time of compiler/main.av within or OVER it;
 #                   report only, never a failure (W11d).
@@ -190,15 +216,83 @@ gc_env_of() {
     [ "$(gc_label "$e")" = "$1" ] && { printf '%s\n' "$e"; break; }
   done
 }
+# gc_pass L ENV JOBS: one GC environment's suite on C' while other GC
+# passes run (Stage 28 W16t): its own TMPDIR root, which must be empty
+# afterwards (new-L.tmp lists what is left), the repository snapshot
+# around it, and its failures written to fails-L.txt for the parent.
+gc_pass() {
+  t=$(cat "$out/tmpdir-$1")
+  rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
+  : > "$out/fails-$1.txt"
+  find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/before-$1.repo"
+  # shellcheck disable=SC2086 # $2 holds VAR=value words
+  env -u AVANT_BACKEND TMPDIR="$t" $2 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  rc=$?
+  echo "rc=$rc" >> "$out/suite-$1.log"
+  [ $rc -eq 0 ] || echo "suite on $1 failed (rc=$rc)" >> "$out/fails-$1.txt"
+  find "$t" -mindepth 1 | LC_ALL=C sort > "$out/new-$1.tmp"
+  : > "$out/gone-$1.tmp"
+  find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/after-$1.repo"
+  LC_ALL=C comm -13 "$out/before-$1.repo" "$out/after-$1.repo" > "$out/new-$1.repo"
+  LC_ALL=C comm -23 "$out/before-$1.repo" "$out/after-$1.repo" > "$out/gone-$1.repo"
+}
 if [ "$GC_N" -gt 0 ]; then
   # One label per environment; two entries with the same label would
   # share logs, so they are refused.
   labels=$(printf '%s\n' "$GC_LIST" | while IFS= read -r e; do gc_label "$e"; done)
   [ "$(printf '%s\n' "$labels" | sort | uniq -d)" = "" ] || { fail "GATE_GC_ENV names one environment twice"; finish; }
-  for L in $labels; do
-    suite_pass "$L" "$C" "$(gc_env_of "$L")"
-    SUITES="$SUITES $L"
-  done
+  OVERLAP=${GATE_GC_OVERLAP:-2}
+  case "$OVERLAP" in ''|*[!0-9]*|0) fail "GATE_GC_OVERLAP must be a positive integer"; finish ;; esac
+  [ "$OVERLAP" -gt "$GC_N" ] && OVERLAP=$GC_N
+  if [ "$OVERLAP" -le 1 ]; then
+    for L in $labels; do
+      suite_pass "$L" "$C" "$(gc_env_of "$L")"
+      SUITES="$SUITES $L"
+    done
+  else
+    GJOBS=${GATE_GC_JOBS:-$(( $(getconf _NPROCESSORS_ONLN) / OVERLAP ))}
+    case "$GJOBS" in ''|*[!0-9]*) fail "GATE_GC_JOBS must be a positive integer"; finish ;; esac
+    [ "$GJOBS" -ge 1 ] || GJOBS=1
+    echo "gate: GC passes: $GC_N, $OVERLAP at once, --jobs $GJOBS each" > "$out/gc-overlap.txt"
+    # Each pass's TMPDIR root, outside the repository (a test names a
+    # file under the checkout by its relative path), made before /tmp's
+    # snapshot and removed after it.
+    for L in $labels; do
+      mktemp -d "${TMPDIR:-/tmp}/avant-gate-XXXXXX" > "$out/tmpdir-$L" || { fail "cannot make a TMPDIR root"; finish; }
+    done
+    snap "$out/before-gc"
+    # A pool of OVERLAP tokens in a FIFO: a pass takes one, gives it back.
+    mkfifo "$out/gc-pool" || { fail "cannot make the GC pass pool"; finish; }
+    exec 4<> "$out/gc-pool"
+    rm -f "$out/gc-pool"
+    i=0
+    while [ $i -lt "$OVERLAP" ]; do echo >&4; i=$((i + 1)); done
+    for L in $labels; do
+      read -r _ <&4
+      ( (gc_pass "$L" "$(gc_env_of "$L")" "$GJOBS"); echo >&4 ) < /dev/null &
+      SUITES="$SUITES $L"
+    done
+    wait
+    exec 4>&-
+    snap "$out/after-gc"
+    for L in $labels; do
+      rmdir "$(cat "$out/tmpdir-$L")" 2>/dev/null
+    done
+    LC_ALL=C comm -13 "$out/before-gc.tmp" "$out/after-gc.tmp" > "$out/new-gc.tmp"
+    LC_ALL=C comm -23 "$out/before-gc.tmp" "$out/after-gc.tmp" > "$out/gone-gc.tmp"
+    for L in $labels; do
+      cat "$out/new-gc.tmp" >> "$out/new-$L.tmp"
+      cat "$out/gone-gc.tmp" >> "$out/gone-$L.tmp"
+      if [ -f "$out/fails-$L.txt" ]; then
+        while IFS= read -r m; do fail "$m"; done < "$out/fails-$L.txt"
+      else
+        fail "suite on $L did not run"
+      fi
+      for k in new-$L.tmp gone-$L.tmp new-$L.repo gone-$L.repo; do
+        [ -s "$out/$k" ] && fail "litter: $k has $(wc -l < "$out/$k") entries"
+      done
+    done
+  fi
 fi
 
 # D' by C' (never C' by itself), then the .ll fixed point (D171) and
