@@ -184,7 +184,7 @@ void gc_use_block(Block *b) {
    * is 0 and the hole is not a whole block. Any other block clears it,
    * so generated code never writes start bits through another block's
    * base. */
-  if (b == gc_thread.ycur && !gc_heap.collecting &&
+  if (b == gc_thread.ycur && !gc_thread.collecting &&
       (S_INLINE_HOLES || gc_thread.cur_whole)) {
     gc_thread.fast_block = b;
     avant_gc_base = b->base;
@@ -240,7 +240,7 @@ static void gc_fast_refresh(void) {
   Block *cur = gc_thread.ycur;
   int cur_ok = S_INLINE_HOLES || gc_thread.cur_whole;
   if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
-      !gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
+      !gc_thread.nogc && !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       !gc_heap.limit_pending && !gc_heap.explicit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_thread.cur == cur &&
       cur_ok && avant_gc_bump) {
     gc_thread.fast_block = cur;
@@ -282,7 +282,7 @@ void gc_tl_settle(GcThread *t) {
  * previous charge was settled at the slow path's start. */
 static void tl_grant(void) {
   Block *y = gc_thread.ycur;
-  if (!gc_thread.reg.head || gc_heap.defer || gc_heap.collecting || gc_heap.set.nursery_off ||
+  if (!gc_thread.reg.head || gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off ||
       gc_thread.alloc_mature || gc_heap.limit_pending || gc_heap.explicit_pending ||
       gc_heap.mature_since_full >= gc_heap.full_trigger || avant_nursery_held >= avant_young_bytes ||
       !y || gc_thread.cur != y || !(S_INLINE_HOLES || gc_thread.cur_whole) || !avant_gc_bump ||
@@ -592,7 +592,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     }
   }
   Block *b = gc_new_block(bspace);
-  if (!b && gc_heap.defer && !gc_heap.collecting) {
+  if (!b && gc_thread.nogc && !gc_thread.collecting) {
     /* C32 (gc-design.md §5.4): never collect inside a no-GC (defer)
      * region, where a runtime helper holds fresh objects the collector
      * cannot see (avant_str_split's items[]). The allocation proceeds
@@ -605,7 +605,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     gc_heap.over_limit = 0;
     gc_limit_collect_pending();
   }
-  if (!b && gc_heap.collecting && !gc_heap.over_limit) {
+  if (!b && gc_thread.collecting && !gc_heap.over_limit) {
     /* An allocation inside a collection past the limit: the collection
      * proceeds and the full collection runs at the next collection point.
      * (S+'s copy does not come here: it stops at the limit, gc_new_block
@@ -616,7 +616,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     gc_limit_collect_pending();
   }
   if (!b) {
-    if (!tried_gc && !gc_heap.collecting) {
+    if (!tried_gc && !gc_thread.collecting) {
       /* A full collection at the limit, then one retry. */
       gc_collect(GC_FULL, 1, GC_WHY_LIMIT);
       return place(total, space, 1);
@@ -672,8 +672,8 @@ static void init_object(AvantHeader *h, size_t payload, uint32_t type_id, int yo
 
 static void account_alloc(size_t total, int nursery) {
   avant_g_stats.allocated_bytes += total;
-  if (gc_heap.defer) {
-    gc_heap.region_bytes += total;
+  if (gc_thread.nogc) {
+    gc_thread.region_bytes += total;
   }
   avant_since_gc += total;
   if (nursery) {
@@ -726,8 +726,8 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * Collection stays on the locked path, with the caller's roots
    * already spilled. This is the same contract as avant_bump_alloc.
    * Medium numeric buffers take the large path so their address stays. */
-  if (!shared && !gc_heap.defer &&
-      !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending && !gc_heap.explicit_pending &&
+  if (!shared && !gc_thread.nogc &&
+      !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending && !gc_heap.explicit_pending &&
       gc_heap.mature_since_full < gc_heap.full_trigger && avant_nursery_held + total < avant_young_bytes) {
     AvantHeader *fast = place_bump(total);
     if (fast) {
@@ -766,8 +766,8 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
      * are retired). */
     void *obj = gc_los_alloc(payload, type_id);
     avant_g_stats.allocated_bytes += total;
-    if (gc_heap.defer) {
-      gc_heap.region_bytes += total;
+    if (gc_thread.nogc) {
+      gc_thread.region_bytes += total;
     }
     avant_since_gc += total;
     if (shared) {
@@ -812,7 +812,7 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
   gc_init();
   gc_safepoint();
   gc_lock(&gc_heap.world);
-  if (!gc_heap.defer && !gc_heap.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
+  if (!gc_thread.nogc && !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       avant_nursery_held > gc_heap.young_carried && total >= avant_young_bytes) {
     gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);

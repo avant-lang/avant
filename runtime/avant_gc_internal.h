@@ -926,9 +926,10 @@ typedef struct GcHeap {
   uint32_t held_runs_n;
   uint64_t held_runs_coll;
 
-  /* avant_gc_collect.c. */
+  /* avant_gc_collect.c. (collecting, the running collection's flag, is
+   * the collecting thread's own since Stage 28 W17b: GcThread.collecting;
+   * every other thread is stopped or native meanwhile.) */
   int inited;
-  int collecting;
   /* Set while a stress point's young collection runs (it makes no
    * sizing decision). */
   int stress_now;
@@ -956,11 +957,9 @@ typedef struct GcHeap {
    * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
    * a program with a large live set collect too often for its size. */
   uint64_t full_trigger;
-  /* The bytes allocated inside the running outermost no-GC (defer)
-   * region, and the address its helper entered it from (for "heap limit
-   * in a no-GC region", gc-design.md §5.4). */
-  uint64_t region_bytes;
-  void *region_site;
+  /* (The bytes allocated inside a thread's outermost no-GC region and
+   * its entry's address are the thread's own since Stage 28 W17b:
+   * GcThread.region_bytes, region_site.) */
   /* avant_gc_collect was called inside a no-GC region (RC4, Stage 28
    * W16a): the first collection point after it runs the full collection. */
   uint8_t explicit_pending;
@@ -992,7 +991,8 @@ typedef struct GcHeap {
   pthread_mutex_t hs_mu;
   pthread_cond_t hs_stopped_cv;
   pthread_cond_t hs_resume_cv;
-  int defer;
+  /* (defer, the process-wide no-GC depth, went in Stage 28 W17b: each
+   * thread's own, GcThread.nogc, is the region, O125.) */
   PinEnt *pins;
   /* The task roots (avant_gc_task_root_add, Stage 28 W16b): spawned
    * tasks' capture records, under the world lock. */
@@ -1082,6 +1082,16 @@ typedef struct GcThread {
   uint32_t rembuf_n;
   uint32_t rembuf_cap;
   uint64_t rem_adds;
+  /* Per-thread collector state (Stage 28 W17b, item 3; they were
+   * gc_heap's): collecting, set while this thread runs a collection
+   * (barriers and allocation read it; no other thread runs meanwhile);
+   * the bytes allocated inside this thread's outermost no-GC region and
+   * the address its helper entered it from (for "heap limit in a no-GC
+   * region", gc-design.md section 5.4). The region's depth is nogc,
+   * above. */
+  int collecting;
+  uint64_t region_bytes;
+  void *region_site;
 } GcThread;
 
 extern __thread GcThread gc_thread;

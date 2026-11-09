@@ -24,7 +24,7 @@
  * drop another thread's bit); a plain one with one mutator, and in a
  * collection (every other thread is stopped). */
 void gc_hdr_or(AvantHeader *h, uint16_t bits) {
-  if (rem_locked() && !gc_heap.collecting) {
+  if (rem_locked() && !gc_thread.collecting) {
     __atomic_fetch_or(&h->flags, bits, __ATOMIC_RELAXED);
   } else {
     h->flags |= bits;
@@ -32,7 +32,7 @@ void gc_hdr_or(AvantHeader *h, uint16_t bits) {
 }
 
 void gc_hdr_and(AvantHeader *h, uint16_t bits) {
-  if (rem_locked() && !gc_heap.collecting) {
+  if (rem_locked() && !gc_thread.collecting) {
     __atomic_fetch_and(&h->flags, bits, __ATOMIC_RELAXED);
   } else {
     h->flags &= bits;
@@ -56,7 +56,7 @@ static void rem_push(void ***v, uint32_t *n, uint32_t *cap, void *obj) {
  * rem_mu.) */
 static void rem_add_bit(void *obj, uint16_t bit) {
   AvantHeader *h = avant_header(obj);
-  if (rem_locked() && !gc_heap.collecting) {
+  if (rem_locked() && !gc_thread.collecting) {
     uint16_t old;
     if (h->flags & bit) {
       return;
@@ -268,7 +268,7 @@ void avant_barrier(void *obj) {
   /* O9: with the nursery off no young collection runs, so nothing is
    * remembered (the set grew without bound: churn.av kept 1.6 M
    * entries). */
-  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
+  if (!obj || gc_thread.collecting || gc_heap.set.nursery_off) {
     return;
   }
   /* The compiler passes the object being stored into. A nursery object
@@ -305,7 +305,7 @@ void avant_barrier(void *obj) {
  * runtime C calls it where it knows the slot. Never collects. */
 void avant_barrier_slot(void *obj, void *slot) {
   AvantHeader *h;
-  if (!obj || gc_heap.collecting || gc_heap.set.nursery_off) {
+  if (!obj || gc_thread.collecting || gc_heap.set.nursery_off) {
     return;
   }
   /* A large object's header is at a fixed place in its run, and the
@@ -337,7 +337,7 @@ void avant_barrier_slot(void *obj, void *slot) {
 void avant_barrier_at(void *addr) {
   Block *b = NULL;
   void *start;
-  if (!addr || gc_heap.collecting) {
+  if (!addr || gc_thread.collecting) {
     return;
   }
   if (gc_thread.reg.stack_lo && (uint8_t *)addr >= (uint8_t *)gc_thread.reg.stack_lo &&

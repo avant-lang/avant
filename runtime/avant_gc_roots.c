@@ -336,15 +336,19 @@ void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
 static void nogc_begin(void *site) {
   gc_init();
   gc_fast_clear();
-  pthread_mutex_lock(&gc_heap.world);
-  if (gc_heap.defer == 0) {
-    gc_heap.region_bytes = 0;
-    gc_heap.region_site = site;
+  /* The thread's own depth (Stage 28 W17a; the only one since W17b,
+   * which retired the process-wide gc_heap.defer, O125): this thread
+   * never stops at a safepoint inside a region, nor turns native, nor
+   * collects; another thread's collection waits for it to leave the
+   * region and reach a safepoint. So no collection runs while the
+   * region is open, and one thread's region no longer holds off the
+   * other threads' collection policy. A region must therefore never
+   * wait for another thread (that thread may be stopped for a
+   * collection that waits for this one). */
+  if (gc_thread.nogc == 0) {
+    gc_thread.region_bytes = 0;
+    gc_thread.region_site = site;
   }
-  gc_heap.defer += 1;
-  pthread_mutex_unlock(&gc_heap.world);
-  /* The thread's own depth (Stage 28 W17a): it never stops at a
-   * safepoint inside a region, nor turns native. */
   gc_thread.nogc += 1;
 }
 
@@ -370,11 +374,6 @@ void avant_gc_defer_leave(void) {
  * the end itself collects nothing, so the function may still hold what
  * it built inside. */
 __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void) {
-  pthread_mutex_lock(&gc_heap.world);
-  if (gc_heap.defer > 0) {
-    gc_heap.defer -= 1;
-  }
-  pthread_mutex_unlock(&gc_heap.world);
   if (gc_thread.nogc > 0) {
     gc_thread.nogc -= 1;
   }

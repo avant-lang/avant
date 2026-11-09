@@ -273,13 +273,13 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   int resume = 0;
   uint64_t t0;
-  if (gc_heap.collecting) {
+  if (gc_thread.collecting) {
     gc_die("GC reentered");
   }
   /* RC4: only the heap limit's last resort (place, avant_gc_alloc.c, when
    * even an over-limit block cannot be had) reaches here inside a no-GC
    * region; under AVANT_GC_VERIFY=1 that dies naming the region. */
-  if (gc_heap.defer && gc_heap.set.verify) {
+  if (gc_thread.nogc && gc_heap.set.verify) {
     (void)region_refuses();
   }
   if (!full && !allow_move) {
@@ -310,7 +310,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     resume = 1;
   }
   t0 = now_ns();
-  gc_heap.collecting = 1;
+  gc_thread.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
   /* Every thread's remembered-set buffer joins the set (Stage 28 W17b)
@@ -444,14 +444,14 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   if (gc_heap.quarantine) {
     gc_quarantine_seal();
   }
-  gc_heap.collecting = 0;
+  gc_thread.collecting = 0;
   if (resume) {
     gc_resume_world();
   }
 }
 
 void gc_maybe_collect(void) {
-  if (gc_heap.collecting || gc_heap.defer) {
+  if (gc_thread.collecting || gc_thread.nogc) {
     return;
   }
   if (gc_heap.explicit_pending) {
@@ -495,7 +495,7 @@ void gc_maybe_collect(void) {
  * programs too since Stage 28 W17a (the handshake stops the other
  * threads; before, D191 kept the stress mode to one thread). */
 void gc_stress_point(void) {
-  if (!gc_heap.set.stress || gc_heap.collecting || gc_heap.defer || gc_heap.set.nursery_off) {
+  if (!gc_heap.set.stress || gc_thread.collecting || gc_thread.nogc || gc_heap.set.nursery_off) {
     return;
   }
   gc_heap.stress_now = 1;
@@ -555,14 +555,14 @@ static __attribute__((noreturn)) void region_die(const char *what) {
   char msg[512];
   Dl_info info;
   memset(&info, 0, sizeof info);
-  if (gc_heap.region_site && dladdr(gc_heap.region_site, &info) && info.dli_sname) {
+  if (gc_thread.region_site && dladdr(gc_thread.region_site, &info) && info.dli_sname) {
     snprintf(msg, sizeof msg, "%s (%s)", what, info.dli_sname);
-  } else if (gc_heap.region_site && info.dli_fname && info.dli_fbase) {
+  } else if (gc_thread.region_site && info.dli_fname && info.dli_fbase) {
     const char *base = strrchr(info.dli_fname, '/');
     snprintf(msg, sizeof msg, "%s (%s+0x%lx)", what, base ? base + 1 : info.dli_fname,
-             (unsigned long)((uintptr_t)gc_heap.region_site - (uintptr_t)info.dli_fbase));
+             (unsigned long)((uintptr_t)gc_thread.region_site - (uintptr_t)info.dli_fbase));
   } else {
-    snprintf(msg, sizeof msg, "%s (called from %p)", what, gc_heap.region_site);
+    snprintf(msg, sizeof msg, "%s (called from %p)", what, gc_thread.region_site);
   }
   gc_die(msg);
 }
@@ -572,7 +572,7 @@ static __attribute__((noreturn)) void region_die(const char *what) {
  * unless the region alone has allocated more than the limit: no
  * collection after it could bring the heap back under the limit. */
 void gc_region_limit_check(uint64_t bytes) {
-  if (gc_heap.set.heap_max && gc_heap.region_bytes + bytes > gc_heap.set.heap_max) {
+  if (gc_heap.set.heap_max && gc_thread.region_bytes + bytes > gc_heap.set.heap_max) {
     region_die("heap limit in a no-GC region");
   }
 }
@@ -582,7 +582,7 @@ void gc_region_limit_check(uint64_t bytes) {
  * otherwise an explicit request is deferred to the first collection
  * point after the region (returns 1: the caller does not collect). */
 static int region_refuses(void) {
-  if (!gc_heap.defer) {
+  if (!gc_thread.nogc) {
     return 0;
   }
   if (gc_heap.set.verify) {
@@ -601,7 +601,7 @@ void avant_nursery_reclaim(void) {
     pthread_mutex_unlock(&gc_heap.world);
     return;
   }
-  if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
+  if (!gc_heap.set.nursery_off && !gc_thread.collecting && avant_nursery_held > 0) {
     gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
   }
   pthread_mutex_unlock(&gc_heap.world);
