@@ -89,6 +89,17 @@ void gc_cache_or_free_block(Block *b) {
    * gc_heap_return). */
   b->in_use = 0;
   gc_heap.space[b->space].bytes -= BLOCK_SIZE;
+  /* AVANT_GC_VERIFY: held PROT_NONE until the next collection (the
+   * lost-reference check's on-use half, avant_gc_verify.c). */
+  if (gc_quarantine_block(b)) {
+    return;
+  }
+  gc_free_block_now(b);
+}
+
+/* The tail of gc_cache_or_free_block: B, out of use, is cached or given
+ * back to its chunk. */
+void gc_free_block_now(Block *b) {
   if (gc_heap.cache_n < CACHE_BLOCKS) {
     b->next = gc_heap.cache;
     gc_heap.cache = b;

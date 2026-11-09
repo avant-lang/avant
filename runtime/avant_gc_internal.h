@@ -921,6 +921,12 @@ typedef struct GcHeap {
   /* C36's check (gc_verify_no_stale_marks): the stale header marks
    * reported. */
   uint64_t stale_seen;
+  /* The lost-reference check (Stage 28 W16b): its reports, precise and
+   * on use, and the freed blocks it holds PROT_NONE until the next
+   * collection (linked by next). */
+  uint64_t verify_lost;
+  Block *quarantine;
+  uint32_t quarantine_n;
 
   /* avant_gc_collect.c. */
   int inited;
@@ -1054,6 +1060,7 @@ void gc_line_epoch_advance(void);
 /* avant_gc_alloc.c */
 void gc_reset_block_bump(Block *b);
 void gc_cache_or_free_block(Block *b);
+void gc_free_block_now(Block *b);
 void gc_note_peak(void);
 Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
@@ -1173,6 +1180,9 @@ void gc_verify_no_stale_marks(void);
 void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 void gc_verify_sticky(void);
+void gc_verify_lost(void);
+int gc_quarantine_block(Block *b);
+void gc_quarantine_release(void);
 
 /* avant_gc_collect.c */
 /* A collection (O42): GC_YOUNG collects the young generation (S+ may

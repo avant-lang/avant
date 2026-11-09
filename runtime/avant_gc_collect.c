@@ -291,9 +291,12 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     count_full_why(why);
   }
   if (gc_heap.set.verify) {
+    gc_quarantine_release();
     gc_verify_no_stale_marks();
     if (!full) {
       gc_verify_remembered();
+    } else {
+      gc_verify_lost();
     }
   }
   gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
