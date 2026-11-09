@@ -581,6 +581,9 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
   h = (AvantHeader *)payload - 1;
   if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
       h->type_id == AVANT_TYPE_BYTES && new_size <= (uint64_t)h->size && h != gc_heap.los_spare) {
+    if (!(h->flags & AVANT_FLAG_YOUNG)) {
+      gc_verify_rebase = 1;
+    }
     trim_run(h, (size_t)new_size);
     done = 1;
   }
@@ -634,6 +637,9 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload) {
       ((h->flags & AVANT_FLAG_YOUNG) || h->type_id == AVANT_TYPE_BYTES) && h != gc_heap.los_spare &&
       !thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size)) {
     uint64_t bytes = (uint64_t)gc_large_bytes(h);
+    if (!(h->flags & AVANT_FLAG_YOUNG)) {
+      gc_verify_rebase = 1;
+    }
     gc_release_large(h);
     gc_heap.ctr.los.drops++;
     gc_heap.ctr.los.drop_bytes += bytes;
