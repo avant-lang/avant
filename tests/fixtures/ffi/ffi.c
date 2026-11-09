@@ -162,3 +162,53 @@ int32_t foreign_wait(void) {
   avant_gc_native_end();
   return bad;
 }
+
+/* tests/fixtures/ffi/foreign_exit.av (Stage 28 W17c, O126): C threads
+ * that call an allocating Avant callback and then exit without telling
+ * Avant, one wave after another. exit_start starts a wave of N threads and
+ * returns (the main thread allocates and collects while they run and
+ * exit); exit_join joins them natively. With EXPLICIT the threads register
+ * themselves first (avant_gc_register_thread): they are then running, not
+ * native, between callbacks and when they exit. Thread exit must
+ * unregister them: a thread left in the collector's list after its exit is
+ * freed thread-local state, and a later thread on the same (reused) stack
+ * registers the same list node again. */
+void avant_gc_register_thread(void);
+static pthread_t exit_th[8];
+static int32_t exit_bad[8];
+static int32_t exit_n, exit_rounds, exit_explicit;
+static foreign_cb_t exit_cb;
+
+static void *exit_run(void *arg) {
+  intptr_t k = (intptr_t)arg;
+  int32_t bad = 0;
+  if (exit_explicit) {
+    avant_gc_register_thread();
+  }
+  for (int32_t i = 0; i < exit_rounds; i++) {
+    bad += exit_cb((int32_t)(k * 1000000 + i));
+  }
+  exit_bad[k] = bad;
+  return NULL;
+}
+
+void exit_start(foreign_cb_t f, int32_t n, int32_t rounds, bool explicit_reg) {
+  exit_cb = f;
+  exit_n = n > 8 ? 8 : n;
+  exit_rounds = rounds;
+  exit_explicit = explicit_reg;
+  for (intptr_t k = 0; k < exit_n; k++) {
+    pthread_create(&exit_th[k], NULL, exit_run, (void *)k);
+  }
+}
+
+int32_t exit_join(void) {
+  int32_t bad = 0;
+  avant_gc_native_begin();
+  for (int32_t k = 0; k < exit_n; k++) {
+    pthread_join(exit_th[k], NULL);
+    bad += exit_bad[k];
+  }
+  avant_gc_native_end();
+  return bad;
+}
