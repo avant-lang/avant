@@ -235,6 +235,50 @@ pub class MBlock {
   }
 }
 
+// k words of zero bits (the word bit sets of flow.av).
+pub fn mir_zero_words(k: Int): Array(UInt64) {
+  xs: Array(UInt64) = []
+  i = 0
+  while i < k {
+    xs.push(0u64)
+    i = i + 1
+  }
+  xs
+}
+
+// The liveness of a function's locals (flow.av, Stage 28 W18P): word bit
+// sets of nw words, block b's at b * nw of each array. gen (read before
+// any definition in the block, its terminator included) and kill
+// (defined in it) are each block's transfer, outs the live-out sets (the
+// least solution), succ and succ_at (block b's successors are
+// succ[succ_at[b]] .. succ[succ_at[b + 1] - 1]) the edges it was solved
+// for. The frame pass leaves it on the function (MFunc.live) for V11 and
+// V12, which use it only while the function's blocks still have those
+// transfers and those edges.
+pub class MLive {
+  n: Int = 0
+  nw: Int = 0
+  nb: Int = 0
+  gen: Array(UInt64)
+  kill: Array(UInt64)
+  outs: Array(UInt64)
+  succ: Array(Int)
+  succ_at: Array(Int)
+
+  fn initialize(n: Int, nb: Int) {
+    self.n = n
+    self.nw = (n + 63) / 64
+    self.nb = nb
+    self.gen = mir_zero_words(nb * self.nw)
+    self.kill = mir_zero_words(nb * self.nw)
+    self.outs = mir_zero_words(nb * self.nw)
+    s: Array(Int) = []
+    self.succ = s
+    a: Array(Int) = []
+    self.succ_at = a
+  }
+}
+
 pub class MLocal {
   ty: Int = 0
   name: String = ""
@@ -256,6 +300,8 @@ pub class MFunc {
   blocks: Array(MBlock)
   loc: MLoc
   source_name: String = ""
+  // The frame pass's liveness (MLive above), or nil.
+  live: MLive? = nil
 
   fn initialize(symbol: String, sig: Int, loc: MLoc) {
     self.symbol = symbol

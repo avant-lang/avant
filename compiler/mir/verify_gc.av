@@ -188,25 +188,29 @@ fn mir_v19(v: MVerifier) {
 
 fn mir_v9(v: MVerifier) {
   f = v.func
+  n = f.locals.size
+  nw = mir_nwords(n)
   ins = mir_defined_in(f)
+  cur = mir_zero_words(nw)
+  reads: Array(Int) = []
   b = 0
   while b < f.blocks.size {
     blk = f.blocks[b]
-    cur = mir_bools_copy(ins[b])
+    mir_words_load(cur, ins, b * nw, nw)
     j = 0
     while j < blk.stmts.size {
       st = blk.stmts[j]
-      reads: Array(Int) = []
+      reads.clear
       mir_stmt_reads(st, reads)
       mir_v9_check(v, cur, reads, b, j, st.loc)
       d = mir_stmt_def(st)
-      if d >= 0 {
-        cur[d] = true
+      if d >= 0 && d < n {
+        mir_bit_on(cur, 0, d)
       }
       j = j + 1
     }
     if t = blk.term {
-      reads: Array(Int) = []
+      reads.clear
       mir_term_reads(f, t, reads)
       mir_v9_check(v, cur, reads, b, -1, t.loc)
     }
@@ -214,69 +218,203 @@ fn mir_v9(v: MVerifier) {
   }
 }
 
-fn mir_v9_check(v: MVerifier, cur: Array(Bool), reads: Array(Int), b: Int, j: Int, loc: MLoc) {
+fn mir_v9_check(v: MVerifier, cur: Array(UInt64), reads: Array(Int), b: Int, j: Int, loc: MLoc) {
   i = 0
   while i < reads.size {
     r = reads[i]
-    if !cur[r] {
+    if !mir_bit(cur, 0, r) {
       v.err(9, b, j, loc, "_${r} is read before it is written on some path")
-      cur[r] = true
+      mir_bit_on(cur, 0, r)
     }
     i = i + 1
   }
 }
 
-fn mir_v11_v12(v: MVerifier) {
-  f = v.func
-  ts = v.ts
-  outs = mir_live_out(f)
+// Whether f makes a collecting call (V11's and V12's liveness matters only
+// there).
+fn mir_has_collecting_call(f: MFunc): Bool {
   b = 0
   while b < f.blocks.size {
     blk = f.blocks[b]
-    live = mir_bools_copy(outs[b])
-    if t = blk.term {
-      reads: Array(Int) = []
-      mir_term_reads(f, t, reads)
-      i = 0
-      while i < reads.size {
-        live[reads[i]] = true
-        i = i + 1
+    j = 0
+    while j < blk.stmts.size {
+      if blk.stmts[j].kind == msk_call() && blk.stmts[j].collects {
+        return true
       }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  false
+}
+
+// V11 and V12. The liveness is the frame pass's (MFunc.live) when it still
+// describes the function: the walk below recomputes each block's transfer
+// and successors as it goes and, at the first difference, its errors are
+// dropped and the walk runs again on liveness computed here. A function
+// without a collecting call needs no liveness (only V11's address-taken
+// clause can apply).
+fn mir_v11_v12(v: MVerifier) {
+  f = v.func
+  if !mir_has_collecting_call(f) {
+    mir_v11_addr_only(v)
+    return
+  }
+  start = v.errs.size
+  if lv = f.live {
+    if mir_v11_walk(v, lv, true) {
+      return
+    }
+    while v.errs.size > start {
+      dropped = v.errs.pop
+    }
+  }
+  dummy = mir_v11_walk(v, mir_live(f), false)
+}
+
+// V11's address-taken clause alone, in the walk's order (blocks up,
+// statements down).
+fn mir_v11_addr_only(v: MVerifier) {
+  f = v.func
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = blk.stmts.size - 1
+    while j >= 0 {
+      mir_v11_addr(v, b, j, blk.stmts[j])
+      j = j - 1
+    }
+    b = b + 1
+  }
+}
+
+fn mir_v11_addr(v: MVerifier, b: Int, j: Int, st: MStmt) {
+  f = v.func
+  ts = v.ts
+  if f.kind == mfk_frame() && st.kind == msk_assign() {
+    if r = st.rv {
+      if p = r.place {
+        l = p.local
+        if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
+          v.err(11, b, j, st.loc, "the address of _${l} (${v.tx(f.locals[l].ty)}) is taken and _${l} is not a slot")
+        }
+      }
+    }
+  }
+}
+
+// The walk of V11 and V12 over lv, backwards through each block from its
+// live-out. With check, it also recomputes each block's transfer and
+// successors and returns false at the first that differs from lv's.
+fn mir_v11_walk(v: MVerifier, lv: MLive, check: Bool): Bool {
+  f = v.func
+  ts = v.ts
+  n = f.locals.size
+  if check && (lv.n != n || lv.nb != f.blocks.size) {
+    return false
+  }
+  nw = lv.nw
+  // the locals V11 and V12 ask about: real, not slots, with root words
+  cand = mir_zero_words(nw)
+  k = 0
+  while k < n {
+    if f.valid_local(k) && !f.locals[k].slot && ts.traced(f.locals[k].ty) {
+      mir_bit_on(cand, 0, k)
+    }
+    k = k + 1
+  }
+  live = mir_zero_words(nw)
+  gen = mir_zero_words(nw)
+  kill = mir_zero_words(nw)
+  reads: Array(Int) = []
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    at = b * nw
+    mir_words_load(live, lv.outs, at, nw)
+    if check {
+      if !mir_live_same_succ(lv, b, blk) {
+        return false
+      }
+      w = 0
+      while w < nw {
+        gen[w] = 0u64
+        kill[w] = 0u64
+        w = w + 1
+      }
+    }
+    if t = blk.term {
+      reads.clear
+      mir_term_reads(f, t, reads)
+      mir_bits_mark(live, 0, n, reads)
+      mir_bits_mark(gen, 0, n, reads)
     }
     j = blk.stmts.size - 1
     while j >= 0 {
       st = blk.stmts[j]
       if st.kind == msk_call() && st.collects {
-        k = 0
-        while k < f.locals.size {
-          if live[k] && k != st.dest && f.valid_local(k) && !f.locals[k].slot && ts.traced(f.locals[k].ty) {
-            rule = 11
-            if ts.is_addr(f.locals[k].ty) {
-              rule = 12
-            }
-            callee = st.callee
-            if mir_is_indirect(st) {
-              callee = "an indirect callee"
-            }
-            v.err(rule, b, j, st.loc, "_${k} (${v.tx(f.locals[k].ty)}) is live across the collecting call to ${callee} and is not a slot")
+        d = st.dest
+        w = 0
+        while w < nw {
+          x = live[w] & cand[w]
+          if d >= 0 && d / 64 == w {
+            x = x & ~(1u64 << (d % 64).to_u64)
           }
-          k = k + 1
+          if x != 0u64 {
+            mir_v11_report(v, b, j, st, w, x)
+          }
+          w = w + 1
         }
       }
-      if f.kind == mfk_frame() && st.kind == msk_assign() {
-        if r = st.rv {
-          if p = r.place {
-            l = p.local
-            if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
-              v.err(11, b, j, st.loc, "the address of _${l} (${v.tx(f.locals[l].ty)}) is taken and _${l} is not a slot")
-            }
-          }
-        }
+      mir_v11_addr(v, b, j, st)
+      d = mir_stmt_def(st)
+      if d >= 0 && d < n {
+        mir_bit_off(live, 0, d)
+        mir_bit_off(gen, 0, d)
+        mir_bit_on(kill, 0, d)
       }
-      mir_live_step(st, live)
+      reads.clear
+      mir_stmt_reads(st, reads)
+      mir_bits_mark(live, 0, n, reads)
+      mir_bits_mark(gen, 0, n, reads)
       j = j - 1
     }
+    if check {
+      w = 0
+      while w < nw {
+        if gen[w] != lv.gen[at + w] || kill[w] != lv.kill[at + w] {
+          return false
+        }
+        w = w + 1
+      }
+    }
     b = b + 1
+  }
+  true
+}
+
+// The errors of one collecting call for the candidates x of word w, in
+// local order; the call's destination is exempt.
+fn mir_v11_report(v: MVerifier, b: Int, j: Int, st: MStmt, w: Int, x: UInt64) {
+  f = v.func
+  ts = v.ts
+  i = 0
+  while i < 64 {
+    if ((x >> i.to_u64) & 1u64) != 0u64 {
+      k = w * 64 + i
+      if k != st.dest {
+        rule = 11
+        if ts.is_addr(f.locals[k].ty) {
+          rule = 12
+        }
+        callee = st.callee
+        if mir_is_indirect(st) {
+          callee = "an indirect callee"
+        }
+        v.err(rule, b, j, st.loc, "_${k} (${v.tx(f.locals[k].ty)}) is live across the collecting call to ${callee} and is not a slot")
+      }
+    }
+    i = i + 1
   }
 }
 
@@ -300,39 +438,46 @@ fn mir_v14(v: MVerifier) {
   if !any {
     return
   }
+  // rd and pd of every block's exit, block b's at b * n (rd) and b * nw
+  // (pd, word bit sets); the entry of the block being visited in rd, pd.
   n = f.locals.size
+  nb = f.blocks.size
+  nw = mir_nwords(n)
   preds = mir_preds(f)
-  rd_out: Array(Array(Int)) = []
-  pd_out: Array(Array(Bool)) = []
-  b = 0
-  while b < f.blocks.size {
-    rd_out.push(mir_ints(n, 0))
-    pd_out.push(mir_bools(n, false))
-    b = b + 1
-  }
+  rd_out = mir_ints(nb * n, 0)
+  pd_out = mir_zero_words(nb * nw)
+  rd = mir_ints(n, 0)
+  pd = mir_zero_words(nw)
   changed = true
   while changed {
     changed = false
     b = 0
-    while b < f.blocks.size {
-      rd = mir_v14_rd_in(f, b, preds, rd_out)
-      pd = mir_v14_pd_in(f, b, preds, pd_out)
+    while b < nb {
+      mir_v14_in(f, b, preds, rd_out, pd_out, rd, pd)
       mir_v14_block(v, b, rd, pd, false)
       k = 0
       while k < n {
-        if rd[k] != rd_out[b][k] || mir_flip(pd[k], pd_out[b][k]) {
+        if rd[k] != rd_out[b * n + k] {
+          rd_out[b * n + k] = rd[k]
           changed = true
         }
         k = k + 1
       }
-      rd_out[b] = rd
-      pd_out[b] = pd
+      w = 0
+      while w < nw {
+        if pd[w] != pd_out[b * nw + w] {
+          pd_out[b * nw + w] = pd[w]
+          changed = true
+        }
+        w = w + 1
+      }
       b = b + 1
     }
   }
   b = 0
-  while b < f.blocks.size {
-    mir_v14_block(v, b, mir_v14_rd_in(f, b, preds, rd_out), mir_v14_pd_in(f, b, preds, pd_out), true)
+  while b < nb {
+    mir_v14_in(f, b, preds, rd_out, pd_out, rd, pd)
+    mir_v14_block(v, b, rd, pd, true)
     b = b + 1
   }
 }
@@ -347,52 +492,51 @@ fn mir_ints(n: Int, x: Int): Array(Int) {
   xs
 }
 
-fn mir_v14_rd_in(f: MFunc, b: Int, preds: Array(Array(Int)), outs: Array(Array(Int))): Array(Int) {
+// The entry of block b into rd and pd: rd the most of the predecessors'
+// exits (bb0: the parameters are defined, 2), pd their union.
+fn mir_v14_in(f: MFunc, b: Int, preds: Array(Array(Int)), rd_out: Array(Int), pd_out: Array(UInt64), rd: Array(Int), pd: Array(UInt64)) {
   n = f.locals.size
-  rd = mir_ints(n, 0)
+  nw = mir_nwords(n)
+  k = 0
+  while k < n {
+    rd[k] = 0
+    k = k + 1
+  }
+  w = 0
+  while w < nw {
+    pd[w] = 0u64
+    w = w + 1
+  }
+  i = 0
+  while i < preds[b].size {
+    p = preds[b][i]
+    if b > 0 {
+      k = 0
+      while k < n {
+        if rd_out[p * n + k] > rd[k] {
+          rd[k] = rd_out[p * n + k]
+        }
+        k = k + 1
+      }
+    }
+    w = 0
+    while w < nw {
+      pd[w] = pd[w] | pd_out[p * nw + w]
+      w = w + 1
+    }
+    i = i + 1
+  }
   if b == 0 {
     k = 1
     while k <= f.nparams {
       rd[k] = 2
       k = k + 1
     }
-    return rd
   }
-  i = 0
-  while i < preds[b].size {
-    o = outs[preds[b][i]]
-    k = 0
-    while k < n {
-      if o[k] > rd[k] {
-        rd[k] = o[k]
-      }
-      k = k + 1
-    }
-    i = i + 1
-  }
-  rd
-}
-
-fn mir_v14_pd_in(f: MFunc, b: Int, preds: Array(Array(Int)), outs: Array(Array(Bool))): Array(Bool) {
-  n = f.locals.size
-  pd = mir_bools(n, false)
-  i = 0
-  while i < preds[b].size {
-    o = outs[preds[b][i]]
-    k = 0
-    while k < n {
-      if o[k] {
-        pd[k] = true
-      }
-      k = k + 1
-    }
-    i = i + 1
-  }
-  pd
 }
 
 // The forward transfer of one block, in place; report adds the errors.
-fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(Bool), report: Bool) {
+fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(UInt64), report: Bool) {
   f = v.func
   blk = f.blocks[b]
   j = 0
@@ -401,15 +545,15 @@ fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(Bool), report: 
     if st.kind == msk_barrier() && st.args.size == 1 {
       h = mir_bare_local(st.args[0])
       if h >= 0 {
-        pd[h] = false
+        mir_bit_off(pd, 0, h)
       }
     }
     d = mir_stmt_def(st)
     if d >= 0 {
-      if pd[d] && report {
+      if mir_bit(pd, 0, d) && report {
         v.err(14, b, j, st.loc, "_${d} is redefined before the closing barrier of its fresh fill")
       }
-      pd[d] = false
+      mir_bit_off(pd, 0, d)
       rd[d] = 2
       if st.kind == msk_call() {
         if e = v.m.ext(st.callee) {
@@ -433,7 +577,7 @@ fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(Bool), report: 
           if report && v.stage == mst_final() && !f.locals[h].slot {
             v.err(14, b, j, st.loc, "fresh store through _${h}, which is not a slot")
           }
-          pd[h] = true
+          mir_bit_on(pd, 0, h)
         }
       }
     }
@@ -443,8 +587,8 @@ fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(Bool), report: 
     if t = blk.term {
       if t.kind == mtk_return() {
         k = 0
-        while k < pd.size {
-          if pd[k] {
+        while k < f.locals.size {
+          if mir_bit(pd, 0, k) {
             v.err(14, b, -1, t.loc, "return before the closing barrier of the fresh fill through _${k}")
           }
           k = k + 1

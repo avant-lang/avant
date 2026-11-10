@@ -76,6 +76,11 @@ pub class MVerifier {
   func: MFunc
   bad: Bool = false
   via_ptr: Bool = false
+  // Shared by every function and both stages' rules (Stage 28 W18P,
+  // O154): the place an assign without one is checked as (_0, never
+  // changed), and the list V3 checks a statement's locals in.
+  no_place: MPlace
+  used: Array(Int)
 
   fn initialize(m: MModule, stage: Int) {
     self.m = m
@@ -84,6 +89,9 @@ pub class MVerifier {
     e: Array(MVerr) = []
     self.errs = e
     self.func = MFunc.new("", 0, mir_loc(0, 0, 0))
+    self.no_place = MPlace.new(0)
+    u: Array(Int) = []
+    self.used = u
   }
 
   pub fn on(rule: Int): Bool {
@@ -447,7 +455,8 @@ pub class MVerifier {
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        used: Array(Int) = []
+        used = self.used
+        used.clear
         mir_stmt_reads(st, used)
         if p = st.place {
           used.push(p.local)
@@ -469,7 +478,8 @@ pub class MVerifier {
         j = j + 1
       }
       if t = blk.term {
-        used: Array(Int) = []
+        used = self.used
+        used.clear
         mir_term_reads(f, t, used)
         self.check_used(used, b, -1, t.loc)
       }
@@ -493,7 +503,7 @@ pub class MVerifier {
     loc = st.loc
     k = st.kind
     if k == msk_assign() {
-      p = MPlace.new(0)
+      p = self.no_place
       if x = st.place {
         p = x
       }
