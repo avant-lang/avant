@@ -60,7 +60,7 @@ if [ "$(sed -n '2,$p' "$out/head.txt" | wc -l)" -eq 0 ]; then step "head: $(head
 
 # 2. the gate
 t0=$(now)
-GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_VERIFY=1;AVANT_YOUNG_MB=1;AVANT_NURSERY=0;AVANT_GC_STRESS=1' \
+GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_STRESS=1;AVANT_YOUNG_MB=1;AVANT_GC_VERIFY=1;AVANT_NURSERY=0' \
   timeout -k 10 3600 sh tools/gate.sh < /dev/null > "$out/gate.out" 2>&1
 rc=$?; t1=$(now); echo "wall $(wall "$t0" "$t1") s" > "$out/gate-wall.txt"
 if [ $rc -eq 0 ] && grep -q '^GATE PASS' "$out/gate.out"; then step "gate: pass, $(cat "$out/gate-wall.txt")"; else step "gate: red (rc=$rc; $(tail -1 "$out/gate.out"))"; fi
