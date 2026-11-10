@@ -1020,6 +1020,15 @@ static void tmp_create(void) {
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
   tmp_catch(SIGHUP);
+  /* A crash removes the directory too (O35, Stage 29 W1b): the handler
+   * cleans up and re-raises the signal with its default action, so the
+   * process still dies by it (a core dump included). A crash with no
+   * stack left (a stack overflow) cannot run the handler. */
+  tmp_catch(SIGSEGV);
+  tmp_catch(SIGBUS);
+  tmp_catch(SIGFPE);
+  tmp_catch(SIGILL);
+  tmp_catch(SIGABRT);
   snprintf(marker, sizeof marker, "%s/.avant-scratch", g_tmp_dir);
   fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   if (fd >= 0) {
