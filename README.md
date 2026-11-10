@@ -1063,12 +1063,12 @@ quote {
 
 `name : Type` is accepted. The formatter prints `name: Type`: no space before the colon, one space after.
 
-Stdout is the default. `--write` replaces the file. `--check` prints `canonical` or `would change PATH` and does not write. A lex error prints the diagnostic and leaves the file alone.
+Each path is a `.av` file or a directory, walked for `.av` files the way `avant test` walks `tests/` (a name that starts with `.` and a directory named `deps` are skipped). With one file and no flag the canonical text goes to stdout. `--write` rewrites every file that changes. `--check` writes nothing, prints `would change PATH` for each file that would change (`canonical` when none would), and exits 1 if any would, so a CI job can fail on it. A lex error prints the diagnostic, leaves the file alone, and makes the status 1; the other files are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
 
 ```
 avant format FILE.av
-avant format FILE.av --check
-avant format FILE.av --write
+avant format . --check
+avant format src --write
 ```
 
 `compile`, `run`, and `dump` still drop comments. Formatting is a separate command so a format bug cannot change what a program means.

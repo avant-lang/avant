@@ -51,13 +51,13 @@ pub fn argv_drop_first(args: Array(String)): Array(String) {
 pub fn show_usage {
   puts("Avant compiler")
   puts("")
-  puts("  avant-av run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]")
-  puts("  avant-av test [TEST-OPTIONS] [PATH...]")
-  puts("  avant-av dump FILE.av")
-  puts("  avant-av compile FILE.av [OUT] [--debug|--release] [--cpu=LEVEL] [--lib NAME] [--cc FILE.c]")
-  puts("  avant-av format FILE.av [--write] [--check]")
-  puts("  avant-av bind [--lib NAME] HEADER.h")
-  puts("  avant-av fetch [DIR] [--update]")
+  puts("  avant run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]")
+  puts("  avant test [TEST-OPTIONS] [PATH...]")
+  puts("  avant dump FILE.av")
+  puts("  avant compile FILE.av [OUT] [--debug|--release] [--cpu=LEVEL] [--lib NAME] [--cc FILE.c]")
+  puts("  avant format PATH... [--check|--write]")
+  puts("  avant bind [--lib NAME] HEADER.h")
+  puts("  avant fetch [DIR] [--update]")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
   puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
@@ -65,6 +65,7 @@ pub fn show_usage {
   puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
   puts("--cpu=baseline|v2|v3|v4|native: the x86-64 level of the code. compile defaults to v2; run and test use this machine's highest level.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
+  puts("format: PATH is a .av file or a directory of them; --check exits 1 if a file would change.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
   puts("--keep-tmp keeps the private temporary directory of compile, run, test, fetch, or bind and prints its path.")
@@ -105,62 +106,143 @@ fn spawns_children(command: String): Bool {
   str_ends(command, ".av")
 }
 
-pub fn driver_format(args: Array(String)) {
-  split = take_av_files(args)
-  if split.paths.size == 0 {
-    diag_puts("format needs a .av file")
-    show_usage()
-    return
-  }
-  if split.paths.size > 1 {
-    diag_puts("format takes one root .av (use import)")
-    show_usage()
-    return
-  }
-  path = split.paths[0]
-  check = false
-  write = false
+// The .av files under dir (format's directory argument, D49 as amended in
+// Stage 29 W1b), walked like `avant test` walks tests/: a name that starts
+// with `.` and a directory named `deps` are skipped.
+fn format_walk(dir: String, into: Array(String)) {
+  names = dir_list(dir)
   i = 0
-  while i < split.rest.size {
-    flag = split.rest[i]
-    if str_eq(flag, "--check") {
-      check = true
-    } else if str_eq(flag, "--write") {
-      write = true
-    } else {
-      diag_puts("unknown format argument ${flag}")
-      show_usage()
-      return
+  while i < names.size {
+    name = names[i]
+    i = i + 1
+    if name.size == 0 || name[0] == 46 || str_eq(name, "deps") {
+      continue
+    }
+    path = "${dir}/${name}"
+    if str_ends(dir, "/") {
+      path = "${dir}${name}"
+    }
+    if str_ends(name, ".av") {
+      into.push(path)
+    } else if file_exists("${path}/.") {
+      format_walk(path, into)
+    }
+  }
+}
+
+fn format_sort(paths: Array(String)) {
+  i = 1
+  while i < paths.size {
+    j = i
+    while j > 0 && str_lt(paths[j], paths[j - 1]) {
+      tmp = paths[j]
+      paths[j] = paths[j - 1]
+      paths[j - 1] = tmp
+      j = j - 1
     }
     i = i + 1
   }
-  if text = file_read(path) {
-    got = format_source(path, text)
-    if got.ok {
+}
+
+fn format_usage_error(message: String) {
+  diag_puts(message)
+  show_usage()
+  diag_exit(1)
+}
+
+// avant format PATH... [--check | --write] (D49, amended in Stage 29 W1b):
+// each PATH is a .av file or a directory walked for .av files. With one
+// file and no flag the canonical text goes to stdout. --check prints
+// `would change PATH` for each file that is not canonical (`canonical`
+// when none is) and exits 1 if any would change; --write rewrites the
+// files that change. A file that cannot be read or formatted is reported
+// and the status is 1; the other files are still done. Usage errors exit 1.
+pub fn driver_format(args: Array(String)) {
+  check = false
+  write = false
+  inputs: Array(String) = []
+  i = 0
+  while i < args.size {
+    a = args[i]
+    i = i + 1
+    if str_eq(a, "--check") {
+      check = true
+    } else if str_eq(a, "--write") {
+      write = true
+    } else if str_starts(a, "-") {
+      format_usage_error("unknown format argument ${a}")
     } else {
-      diag_puts(got.err)
-      return
+      inputs.push(a)
     }
-    if check {
-      if str_eq(text, got.text) {
-        puts("canonical")
+  }
+  if inputs.size == 0 {
+    format_usage_error("format needs a .av file or a directory")
+  }
+  if check && write {
+    format_usage_error("format takes --check or --write, not both")
+  }
+  paths: Array(String) = []
+  dirs = false
+  i = 0
+  while i < inputs.size {
+    p = inputs[i]
+    i = i + 1
+    if str_ends(p, ".av") {
+      paths.push(p)
+    } else if file_exists("${p}/.") {
+      dirs = true
+      found: Array(String) = []
+      format_walk(p, found)
+      format_sort(found)
+      j = 0
+      while j < found.size {
+        paths.push(found[j])
+        j = j + 1
+      }
+    } else {
+      format_usage_error("format needs a .av file or a directory, not ${p}")
+    }
+  }
+  if !check && !write && (paths.size != 1 || dirs) {
+    format_usage_error("format prints one file; use --check or --write for several files or a directory")
+  }
+  failed = false
+  changed = 0
+  i = 0
+  while i < paths.size {
+    path = paths[i]
+    i = i + 1
+    if text = file_read(path) {
+      got = format_source(path, text)
+      if !got.ok {
+        diag_puts(got.err)
+        failed = true
+        continue
+      }
+      same = str_eq(text, got.text)
+      if check {
+        if !same {
+          puts("would change ${path}")
+          changed = changed + 1
+        }
+      } else if write {
+        if !same && file_write(path, got.text) != 0 {
+          diag_puts("cannot write ${path}")
+          failed = true
+        }
       } else {
-        puts("would change ${path}")
+        print_format(got.text)
       }
-      return
+    } else {
+      diag_puts("cannot read ${path}")
+      failed = true
     }
-    if write {
-      w = file_write(path, got.text)
-      if w != 0 {
-        diag_puts("cannot write ${path}")
-        return
-      }
-      return
-    }
-    print_format(got.text)
-  } else {
-    diag_puts("cannot read ${path}")
-    return
+  }
+  if check && changed == 0 && !failed {
+    puts("canonical")
+  }
+  if failed || changed > 0 {
+    diag_exit(1)
   }
 }
 
