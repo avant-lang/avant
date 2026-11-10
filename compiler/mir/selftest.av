@@ -895,6 +895,41 @@ fn st_wide(out: Buf) {
     i = i + 1
   }
   st_case(out, "slot_dropped_after_passes", fi, m)
+
+  // V3: a statement names a local that does not exist (the dataflow rules
+  // are skipped).
+  b = st_base(false)
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  b.call(-1, "av.t/use", st_one(b.copy_local(9)))
+  b.ret
+  st_case(out, "v3_missing_local", lo, b.module)
+
+  // V14 past the first word: the fresh fill through _70 is not closed
+  // before the return (lowered), and at final _70 is not a slot.
+  b = st_base(false)
+  box_ref = b.ref_to(st_box(b))
+  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
+  st_fill(b, 68, mt_i32())
+  l70 = b.local(box_ref, "")
+  b.call(l70, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
+  b.ret
+  st_case(out, "v14_wide", lo, b.module)
+
+  b = st_base(false)
+  box_ref = b.ref_to(st_box(b))
+  st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_frame())
+  b.set_slot(1)
+  st_fill(b, 68, mt_i32())
+  l70 = b.local(box_ref, "")
+  b.gc_enter
+  b.gc_roots(st_ints(1, -1))
+  b.call(l70, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
+  b.barrier(l70)
+  b.gc_leave
+  b.ret
+  st_case(out, "v14_wide_final", fi, b.module)
 }
 
 pub fn mir_selftest {

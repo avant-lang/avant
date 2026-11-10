@@ -141,6 +141,9 @@ fn expectations: Want {
   w.add("changed_after_passes", "final", "V11")
   w.add("stale_after_passes", "final", "V11")
   w.add("slot_dropped_after_passes", "final", "V11")
+  w.add("v3_missing_local", "lowered", "V3")
+  w.add("v14_wide", "lowered", "V14")
+  w.add("v14_wide_final", "final", "V14")
   w
 }
 
@@ -239,7 +242,10 @@ fn test_mir(c: Checks) {
     c.expect(str_has(text, "case v11_loop_wide final V11\n  V11: av.t/f: bb1[1]: _65 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb1[0]: _65 (ref str) is live across the collecting call to av.t/use and is not a slot\n"), "V11 around a back edge past the first word")
     c.expect(str_has(text, "case changed_after_passes final V11\n  V11: av.t/f: bb0[5]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes, each block's transfer unchanged")
     c.expect(str_has(text, "case stale_after_passes final V11\n  V11: av.t/f: bb1[0]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes: the verifier's own liveness")
-    c.expect(str_has(text, "case slot_dropped_after_passes final V11\n  V11: av.t/f: bb0[2]: _1 (ref str) is live across the collecting call to av.t/churn and is not a slot\n=="), "a slot dropped after the passes")
+    c.expect(str_has(text, "case slot_dropped_after_passes final V11\n  V11: av.t/f: bb0[2]: _1 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a slot dropped after the passes")
+    c.expect(str_has(text, "case v3_missing_local lowered V3\n  V3: av.t/f: bb0[0]: _9 is not a local\ncase "), "V3: a local that does not exist")
+    c.expect(str_has(text, "case v14_wide lowered V14\n  V14: av.t/f: bb0[term]: return before the closing barrier of the fresh fill through _70\ncase "), "V14 past the first word: the fill not closed")
+    c.expect(str_has(text, "case v14_wide_final final V14\n  V14: av.t/f: bb0[3]: fresh store through _70, which is not a slot\n=="), "V14 past the first word at final: the holder not a slot")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
