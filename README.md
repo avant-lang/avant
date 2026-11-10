@@ -283,6 +283,8 @@ fn main {
 
 The `if v = ...` form is [if-assign](#if-and-while). `v` exists only in the then-block.
 
+`h.each { |k, v| ... }` walks every key with its value; the order is unspecified. A key the block deletes before the walk reaches it is not visited.
+
 ### Function values
 
 A function value has type `fn(T): U`. The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`. Spellings:
