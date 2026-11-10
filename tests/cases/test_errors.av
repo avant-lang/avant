@@ -57,6 +57,13 @@ fn test_errors(c: Checks) {
     // returned (before: an Int result silently returned 0; a String or void
     // result broke the MIR verifier; a lambda, spawn or Mutex.with body was
     // checked against the enclosing function's result).
+    // Stage 29 W1a (A6): parser messages name the tokens (they printed the
+    // kinds' numbers: "expected 28, found 5").
+    expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")
+    expect_err(c, compiler, stamp, "tokens-in", "fn main {\n  for i, x in [1] {\n  }\n}\n", "expected `in`, found `,`")
+    expect_err(c, compiler, stamp, "tokens-paren", "fn main {\n  puts((0..10).step(2))\n}\n", "expected `)`, found `..`")
+    expect_err(c, compiler, stamp, "tokens-expr", "fn main {\n  x = 3\n  x %= 3\n}\n", "expected an expression, found `=`")
+    expect_err(c, compiler, stamp, "tokens-top", "42\n", "expected struct, class, lib, fn, interface, import, quote, or comptime, found an integer")
     // Stage 29 W1a (A5): a builtin's unknown name in field form reads as a
     // method that does not exist (the field form is a call).
     expect_err(c, compiler, stamp, "parens-unknown", "fn main {\n  s = \"x\"\n  puts(s.nosuch)\n}\n", "no method nosuch on String")

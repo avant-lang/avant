@@ -845,6 +845,8 @@ error[E4001]: unknown name nosuch1
 
 With several errors, the run ends with a summary line: `error: aborting due to N previous errors`.
 
+A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
+
 The first digit of the code names the phase that found the error: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion. Recovery is per statement: a bad statement does not hide errors in later statements, functions, or imported files.
 
 ## Strings and collections
