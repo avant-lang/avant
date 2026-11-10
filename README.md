@@ -245,6 +245,8 @@ fn label(v: Int | String): Int {
 }
 ```
 
+A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
+
 Failure is a union member. There is no unwind. See [Errors](#errors).
 
 ### Arrays
@@ -819,6 +821,8 @@ fn bump(id: Int): Int? {
 ```
 
 If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
+
+`?` compiles only where the failure can be returned: on a `T?` the function's result must include `nil`, and on another union the result must hold its failure members. Otherwise it is a compile error that names the result type (`postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
 
 `if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
 
