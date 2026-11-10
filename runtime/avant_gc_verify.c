@@ -1744,9 +1744,12 @@ void gc_verify_defrag(void) {
  * opens that block (QUARANTINE_OPENED) and returns, so the access is
  * retried and the program continues (the old bytes are still there, or
  * the stress mode's poison). A fault anywhere else goes to the action
- * that was installed before. At most QUARANTINE_MAX blocks are held
- * (past it a freed block is reused at once, unprotected); a refused
- * mprotect (the mapping-count limit) also frees the block at once.
+ * that was installed before. Every freed block is held (Stage 28 W18C,
+ * O120: until then at most 4,096 were, and past them a freed block was
+ * reused at once, unchecked); a refused mprotect (the mapping-count
+ * limit) leaves a block held but open, and is counted
+ * (verify_unprotected in the stats line), so a run never checks less
+ * silently.
  * Freed lines in blocks that keep live ones cannot be protected (a line
  * is 256 bytes); instead the young sweep holds such blocks back from the
  * young allocator until the next collection begins, so the precise half
@@ -1756,7 +1759,6 @@ void gc_verify_defrag(void) {
 #define QUARANTINED 2
 #define QUARANTINE_OPENED 3
 #define QUARANTINE_HELD 4
-#define QUARANTINE_MAX 4096
 
 static struct sigaction quarantine_old;
 static int quarantine_installed;
@@ -1861,7 +1863,7 @@ static void quarantine_install(void) {
  * it is quarantined, and gc_quarantine_release frees it later (every
  * caller frees blocks inside a collection). */
 int gc_quarantine_block(Block *b) {
-  if (!gc_heap.set.verify || gc_heap.quarantine_n >= QUARANTINE_MAX) {
+  if (!gc_heap.set.verify) {
     return 0;
   }
   if (!quarantine_installed) {
@@ -1879,6 +1881,9 @@ int gc_quarantine_block(Block *b) {
   b->next = gc_heap.quarantine;
   gc_heap.quarantine = b;
   gc_heap.quarantine_n++;
+  if (gc_heap.quarantine_n > gc_heap.v_held_blocks_max) {
+    gc_heap.v_held_blocks_max = gc_heap.quarantine_n;
+  }
   return 1;
 }
 
@@ -1891,8 +1896,18 @@ int gc_quarantine_block(Block *b) {
 int gc_quarantine_run(AvantHeader *h) {
   uint8_t *base;
   struct GcHeldRun *r;
-  if (!gc_heap.set.verify || gc_heap.held_runs_n >= sizeof gc_heap.held_runs / sizeof gc_heap.held_runs[0]) {
+  if (!gc_heap.set.verify) {
     return 0;
+  }
+  if (gc_heap.held_runs_n == gc_heap.held_runs_cap) {
+    uint32_t cap = gc_heap.held_runs_cap ? gc_heap.held_runs_cap * 2 : 256;
+    struct GcHeldRun *nr = realloc(gc_heap.held_runs, (size_t)cap * sizeof *nr);
+    if (!nr) {
+      gc_heap.v_unprotected++;
+      return 0;
+    }
+    gc_heap.held_runs = nr;
+    gc_heap.held_runs_cap = cap;
   }
   if (!quarantine_installed) {
     quarantine_install();
@@ -1909,6 +1924,9 @@ int gc_quarantine_run(AvantHeader *h) {
   r->state = QUARANTINE_HELD;
   r->drop = 0;
   r->coll = avant_g_stats.collections;
+  if (gc_heap.held_runs_n > gc_heap.v_held_runs_max) {
+    gc_heap.v_held_runs_max = gc_heap.held_runs_n;
+  }
   return 1;
 }
 
@@ -1925,8 +1943,12 @@ void gc_quarantine_drop_seal(AvantHeader *h, int drop) {
     struct GcHeldRun *r = &gc_heap.held_runs[--i];
     if (r->h == h) {
       r->drop = drop;
-      if (r->state == QUARANTINE_HELD && r->hi > r->lo && mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
-        r->state = QUARANTINED;
+      if (r->state == QUARANTINE_HELD && r->hi > r->lo) {
+        if (mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
+          r->state = QUARANTINED;
+        } else {
+          gc_heap.v_unprotected++;
+        }
       }
       return;
     }
@@ -1941,14 +1963,21 @@ void gc_quarantine_seal(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.held_runs_n; i++) {
     struct GcHeldRun *r = &gc_heap.held_runs[i];
-    if (r->state == QUARANTINE_HELD && r->hi > r->lo &&
-        mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
-      r->state = QUARANTINED;
+    if (r->state == QUARANTINE_HELD && r->hi > r->lo) {
+      if (mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
+        r->state = QUARANTINED;
+      } else {
+        gc_heap.v_unprotected++;
+      }
     }
   }
   for (b = gc_heap.quarantine; b; b = b->next) {
-    if (b->clean == QUARANTINE_HELD && mprotect(b->base, BLOCK_SIZE, PROT_NONE) == 0) {
-      b->clean = QUARANTINED;
+    if (b->clean == QUARANTINE_HELD) {
+      if (mprotect(b->base, BLOCK_SIZE, PROT_NONE) == 0) {
+        b->clean = QUARANTINED;
+      } else {
+        gc_heap.v_unprotected++;
+      }
     }
   }
 }

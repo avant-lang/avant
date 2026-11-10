@@ -960,8 +960,17 @@ typedef struct GcHeap {
     int state;
     int drop;
     uint64_t coll;
-  } held_runs[256];
+  } *held_runs;
   uint32_t held_runs_n;
+  uint32_t held_runs_cap;
+  /* No cap on what it holds (Stage 28 W18C, O120; until then 4,096 blocks
+   * and 256 runs, past which freed memory was reused unchecked): the most
+   * blocks and runs held at once, and the freed blocks and runs it could
+   * not protect (a refused mprotect, the mapping-count limit) or not hold
+   * (no memory for the record), which the stats line reports. */
+  uint32_t v_held_blocks_max;
+  uint32_t v_held_runs_max;
+  uint64_t v_unprotected;
 
   /* avant_gc_collect.c. (collecting, the running collection's flag, is
    * the collecting thread's own since Stage 28 W17b: GcThread.collecting;

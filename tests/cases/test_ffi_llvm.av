@@ -345,6 +345,28 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/stall.r1.err"), "", "stall.av under AVANT_GC_VERIFY=1 (the 10 s bound): no report")
   st_err = log_text("${dir}/stall.r2.err")
   c.expect(str_has(st_err, "avant gc verify: a collection has waited 0.5 s for thread ") && str_has(st_err, "to reach a safepoint; it is running, and its innermost Avant frame is a generated function's frame record") && str_has(st_err, "(the collection keeps waiting)"), "stall.av under a 0.5 s bound: the handshake's report")
+  // O120 (Stage 28 W18C): one collection frees 400 large Bufs C still
+  // points into; every run is held and protected, so C's reads through
+  // the last 100 pointers are reported (past the old cap of 256 runs they
+  // went unchecked), and the statistics line shows the 400 held runs.
+  hj: Array(HJob) = []
+  hj.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/held_caps.av", "${dir}/held_caps", "${dir}/held_caps.log", flags_of("tests/fixtures/ffi/held_caps.av", root)))
+  run_waves(hj)
+  c.eq_int(hj[0].code, 0, "held_caps.av: compiles")
+  hr: Array(HJob) = []
+  hr.push(run_job_env(dir, "held_caps", "held_caps.plain", ""))
+  hr.push(run_job_env(dir, "held_caps", "held_caps.verify", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=64 AVANT_GC_STATS=1"))
+  run_waves(hr)
+  e = 0
+  while e < 2 {
+    c.eq_int(hr[e].code, 0, "held_caps.av run ${e}: exit 0")
+    e = e + 1
+  }
+  c.eq_str(log_text("${dir}/held_caps.plain.out"), "kept 38800 read 100\n", "held_caps.av: the known stdout")
+  c.eq_str(log_text("${dir}/held_caps.verify.out"), "kept 38800 read 100\n", "held_caps.av under AVANT_GC_VERIFY=1: the known stdout")
+  hc_err = log_text("${dir}/held_caps.verify.err")
+  c.eq_int(hc_err.split(" in a large run freed at coll=").size - 1, 32, "held_caps.av under AVANT_GC_VERIFY=1: the reads past the old cap are reported (the first 32 printed)")
+  c.expect(str_has(hc_err, "verify_held_max=") && str_has(hc_err, "/400 verify_unprotected=0"), "held_caps.av under AVANT_GC_VERIFY=1: 400 runs held, none unprotected")
 }
 
 fn test_main(c: Checks) {

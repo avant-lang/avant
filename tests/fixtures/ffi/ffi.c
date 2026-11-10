@@ -331,3 +331,26 @@ int32_t st_block(int32_t ms) {
   return ms;
 }
 int32_t st_started_now(void) { return atomic_load(&st_started); }
+
+/* ---- O120 (Stage 28 W18C, held_caps.av): C keeps pointers into 400 large
+ * Bufs' storage, and one collection frees them all. hc_read reads through
+ * the pointers FROM to TO, only under AVANT_GC_VERIFY=1 (where every freed
+ * run is held PROT_NONE until the next collection, so each read faults and
+ * is reported; until W18C only the first 256 runs were held, and the rest
+ * were reused unchecked); it returns how many it went over. */
+static volatile uint8_t *hc_p[400];
+int32_t hc_keep(void *buf, int32_t i) {
+  hc_p[i] = avant_buf_bytes(buf);
+  return hc_p[i][0];
+}
+int32_t hc_read(int32_t from, int32_t to) {
+  const char *v = getenv("AVANT_GC_VERIFY");
+  int32_t n = 0;
+  for (int32_t i = from; i < to; i++) {
+    if (v && v[0] == '1') {
+      (void)hc_p[i][100];
+    }
+    n++;
+  }
+  return n;
+}
