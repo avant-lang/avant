@@ -1496,11 +1496,11 @@ There is no TLS yet: `https` and `wss` URLs are an `HttpError`, never a silent d
 
 #### Hello-world servers compared
 
-The most basic hello-world server: `GET /` answered with `hello` and the WebSocket equivalent.
+The most basic hello-world server: `GET /` answered with `hello` and the WebSocket equivalent. Every server is an optimized build (Avant `--release`); Avant's row is the median of three runs (2026-11-10).
 
 | Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Avant (`std.http`) | 505,693 | 7.2 MB | 249,464 | 6.9 MB |
+| Avant (`std.http`) | 507,795 | 7.2 MB | 247,803 | 6.9 MB |
 | C (h2o) | 484,026 | 8.4 MB | 251,006 | 8.5 MB |
 | Rust (std, thread per connection) | 507,603 | 3.4 MB | 252,175 | 2.6 MB |
 | Go (`net/http`) | 349,436 | 18 MB | 215,594 | 12 MB |
