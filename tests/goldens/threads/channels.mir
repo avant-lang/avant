@@ -11,7 +11,7 @@ layout %spawn_cap(av.channels/main#spawn1) = record { 0 nums: ref %channels.Chan
 layout %spawn_cap(av.channels/main#spawn2) = record { 0 nums: ref %channels.Channel(Int) }  size 8 align 8 id 4
 layout %spawn_cap(av.channels/main#spawn3) = record { 0 texts: ref %channels.Channel(String), 1 prefix: ref str }  size 16 align 8 id 5
 layout %spawn_cap(av.channels/main#spawn4) = record { 0 replies: ref %channels.Channel(String), 1 id: i32 }  size 16 align 8 id 6
-layout %(Int|Nil) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
 layout %(Nil|String) = union { 0 tag: i32, 1 m0: ref str }  size 16 align 8
 layout %elems(JoinHandle(Int)) = elems { 0: ref }  size 8 align 8 id 65535
 layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
@@ -102,7 +102,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @channels.av:105:1 {
   let _11 (total): i32
   let _12 (got): i32
   let _13: bool
-  let _14: %(Int|Nil)
+  let _14: %(Nil|Int)
   let _15: i32
   let _16: bool
   let _17: i32
@@ -256,7 +256,7 @@ bb1:
 bb2:
   _14 = call av.channels/Channel(Int).recv(copy _4) collects   @112:16
   _15 = copy _14.0   @112:5
-  _16 = ne copy _15, const i32 1   @112:5
+  _16 = ne copy _15, const i32 0   @112:5
   branch copy _16, bb4, bb5   @112:5
 
 bb3:
@@ -673,12 +673,12 @@ bb14:
   goto bb3   @31:5
 }
 
-fn av.channels/Channel(Int).recv(_1: ref %channels.Channel(Int)) -> %(Int|Nil) frame @channels.av:55:3 {
-  let _0: %(Int|Nil)
+fn av.channels/Channel(Int).recv(_1: ref %channels.Channel(Int)) -> %(Nil|Int) frame @channels.av:55:3 {
+  let _0: %(Nil|Int)
   let _1 (self): ref %channels.Channel(Int) slot
   let _2: u64
-  let _3: %(Int|Nil)
-  let _4 (got): %(Int|Nil)
+  let _3: %(Nil|Int)
+  let _4 (got): %(Nil|Int)
   let _5: i32
   let _6: bool
   let _7: i32
@@ -689,7 +689,7 @@ fn av.channels/Channel(Int).recv(_1: ref %channels.Channel(Int)) -> %(Int|Nil) f
   let _12: i32
   let _13: bool
   let _14: i32
-  let _15: %(Int|Nil)
+  let _15: %(Nil|Int)
   let _16: u64
   let _17: i32
   let _18: bool
@@ -703,7 +703,7 @@ fn av.channels/Channel(Int).recv(_1: ref %channels.Channel(Int)) -> %(Int|Nil) f
   let _26: i32
   let _27: ref %elems(Int)
   let _28: i32
-  let _29: %(Int|Nil)
+  let _29: %(Nil|Int)
   let _30: i32
   let _31: i32
   let _32: i32
@@ -718,7 +718,7 @@ bb0:
   gc.roots _1   @55:3
   _2 = copy (*_1).6   @56:21
   call avant_gate_lock(copy _2) collects   @56:5
-  _3 = union %(Int|Nil) tag 1   @57:15
+  _3 = union %(Nil|Int) tag 0   @57:15
   _4 = copy _3   @57:5
   _5 = copy (*_1).1   @58:8
   _6 = eq copy _5, const i32 0   @58:12
@@ -765,7 +765,7 @@ bb8:
 
 bb9:
   _14 = copy (*_1).7   @66:15
-  _15 = union %(Int|Nil) tag 0 (copy _14)   @66:15
+  _15 = union %(Nil|Int) tag 1 (copy _14)   @66:15
   _4 = copy _15   @66:13
   (*_1).5 = const i32 0   @67:18
   _16 = copy (*_1).6   @68:30
@@ -807,7 +807,7 @@ bb16:
   check.bounds copy _24, copy _26   @78:20
   _27 = copy (*_25).0   @78:20
   _28 = copy (*_27)[copy _24]   @78:20
-  _29 = union %(Int|Nil) tag 0 (copy _28)   @78:20
+  _29 = union %(Nil|Int) tag 1 (copy _28)   @78:20
   _4 = copy _29   @78:13
   _30 = copy (*_1).3   @79:22
   _31 = add.chk copy _30, const i32 1   @79:27

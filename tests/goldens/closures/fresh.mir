@@ -5,9 +5,9 @@ layout %box(Int) = record { 0 v: i32 }  size 4 align 4 id 1
 layout %env(av.fresh/main#lam1) = record { 0 w: ref %box(Int) }  size 8 align 8 id 2
 layout %box(String) = record { 0 v: ref str }  size 8 align 8 id 3
 layout %env(av.fresh/main#lam2) = record { 0 k: ref %box(String), 1 v: ref %box(Int) }  size 16 align 8 id 4
-layout %(Int|Nil) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
-layout %box((Int|Nil)) = record { 0 v: %(Int|Nil) }  size 8 align 4 id 5
-layout %env(av.fresh/main#lam3) = record { 0 opt: ref %box((Int|Nil)) }  size 8 align 8 id 6
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %box((Nil|Int)) = record { 0 v: %(Nil|Int) }  size 8 align 4 id 5
+layout %env(av.fresh/main#lam3) = record { 0 opt: ref %box((Nil|Int)) }  size 8 align 8 id 6
 layout %elems(Int) = elems { 0: i32 }  size 4 align 4
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %fn():Int = fnval { 0 env: ref, 1 code: code(ref) -> i32 }  size 16 align 8
@@ -34,7 +34,7 @@ typemap 1 %box(Int) stride 0 bits [0x0]
 typemap 2 %env(av.fresh/main#lam1) stride 0 bits [0x1]
 typemap 3 %box(String) stride 0 bits [0x1]
 typemap 4 %env(av.fresh/main#lam2) stride 0 bits [0x3]
-typemap 5 %box((Int|Nil)) stride 0 bits [0x0]
+typemap 5 %box((Nil|Int)) stride 0 bits [0x0]
 typemap 6 %env(av.fresh/main#lam3) stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
@@ -49,24 +49,24 @@ extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern printf(ref str, ...) -> i32 never
 
-fn av.fresh/maybe(_1: i32) -> %(Int|Nil) leaf @fresh.av:14:1 {
-  let _0: %(Int|Nil)
+fn av.fresh/maybe(_1: i32) -> %(Nil|Int) leaf @fresh.av:14:1 {
+  let _0: %(Nil|Int)
   let _1 (n): i32
   let _2: bool
-  let _3: %(Int|Nil)
-  let _4: %(Int|Nil)
+  let _3: %(Nil|Int)
+  let _4: %(Nil|Int)
 
 bb0:
   _2 = gt copy _1, const i32 0   @15:8
   branch copy _2, bb1, bb2   @15:3
 
 bb1:
-  _3 = union %(Int|Nil) tag 0 (copy _1)   @16:12
+  _3 = union %(Nil|Int) tag 1 (copy _1)   @16:12
   _0 = copy _3   @16:5
   return   @16:5
 
 bb2:
-  _4 = union %(Int|Nil) tag 1   @18:3
+  _4 = union %(Nil|Int) tag 0   @18:3
   _0 = copy _4   @18:3
   return   @18:3
 }
@@ -78,7 +78,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:21:1 {
   let _3 (w): ref %box(Int) slot
   let _4 (k): ref %box(String) slot
   let _5 (v): ref %box(Int) slot
-  let _6 (opt): ref %box((Int|Nil)) slot
+  let _6 (opt): ref %box((Nil|Int)) slot
   let _7: ref %elems(Int) slot
   let _8: ref %Array(Int)
   let _9 (xs): ref %Array(Int)
@@ -151,7 +151,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:21:1 {
   let _76: ptr i32
   let _77: i32
   let _78: bool
-  let _79: %(Int|Nil)
+  let _79: %(Nil|Int)
   let _80: i32
   let _81: ref %env(av.fresh/main#lam2)
   let _82: %fn():String slot
@@ -168,13 +168,13 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:21:1 {
   let _93: %fn():String
   let _94: ref str slot
   let _95: ref str
-  let _96: %(Int|Nil)
+  let _96: %(Nil|Int)
   let _97: ref %env(av.fresh/main#lam3)
   let _98: %fn():Int
   let _99 (see_opt): %fn():Int slot
   let _100: %fn():Int
   let _101: i32
-  let _102: %(Int|Nil)
+  let _102: %(Nil|Int)
   let _103: %fn():Int
   let _104: i32
 
@@ -436,11 +436,11 @@ bb24:
   return   @21:1
 
 bb25:
-  _79 = union %(Int|Nil) tag 0 (copy _77)   @54:10
+  _79 = union %(Nil|Int) tag 1 (copy _77)   @54:10
   goto bb27   @54:10
 
 bb26:
-  _79 = union %(Int|Nil) tag 1   @54:10
+  _79 = union %(Nil|Int) tag 0   @54:10
   goto bb27   @54:10
 
 bb27:
@@ -510,8 +510,8 @@ fn av.fresh/main#lam3(_1: ref) -> i32 leaf @fresh.av:57:24 {
   let _0: i32
   let _1 (env): ref
   let _2 (env): ref %env(av.fresh/main#lam3)
-  let _3: ref %box((Int|Nil))
-  let _4: %(Int|Nil)
+  let _3: ref %box((Nil|Int))
+  let _4: %(Nil|Int)
   let _5: i32
   let _6: bool
   let _7: i32
@@ -522,7 +522,7 @@ bb0:
   _3 = copy (*_2).0   @58:12
   _4 = copy (*_3).0   @58:12
   _5 = copy _4.0   @58:5
-  _6 = ne copy _5, const i32 1   @58:5
+  _6 = ne copy _5, const i32 0   @58:5
   branch copy _6, bb1, bb2   @58:5
 
 bb1:
