@@ -198,14 +198,19 @@ static void print_sticky(StatsLine *l) {
  * AVANT_GC_VERIFY, after the sticky family: which verifier ran
  * (incremental: soft-dirty tracking works; whole: it does not, and every
  * check is whole as before), the whole and incremental verifications, and
- * the heap pages the incremental ones read and skipped as untouched. */
+ * the heap pages the incremental ones read and skipped as untouched; the
+ * young collections whose reachability checks were incremental, and the
+ * incremental checks that found a candidate and ran whole (Stage 28
+ * W18V2). */
 static void print_verify(StatsLine *l) {
   if (!gc_heap.set.verify) {
     return;
   }
-  line_add(l, " verify=%s verify_whole=%llu verify_incr=%llu verify_pages=%llu verify_pages_skipped=%llu",
+  line_add(l, " verify=%s verify_whole=%llu verify_incr=%llu verify_pages=%llu verify_pages_skipped=%llu"
+              " verify_trace_incr=%llu verify_fallback=%llu",
            gc_heap.sd_mode ? "incremental" : "whole", u(gc_heap.v_whole), u(gc_heap.v_incr),
-           u(gc_heap.v_pages_checked), u(gc_heap.v_pages_skipped));
+           u(gc_heap.v_pages_checked), u(gc_heap.v_pages_skipped), u(gc_heap.v_tincr),
+           u(gc_heap.v_fallback));
 }
 
 void gc_print_stats(void) {

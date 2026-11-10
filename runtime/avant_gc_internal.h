@@ -935,6 +935,11 @@ typedef struct GcHeap {
   uint64_t v_incr;
   uint64_t v_pages_checked;
   uint64_t v_pages_skipped;
+  /* The incremental reachability checks (Stage 28 W18V2): the young
+   * collections whose M and T were both incremental, and the incremental
+   * checks that found a candidate and ran the whole check. */
+  uint64_t v_tincr;
+  uint64_t v_fallback;
   Block *quarantine;
   uint32_t quarantine_n;
   /* The freed large runs it holds (header, protected range, state). */
@@ -1308,6 +1313,10 @@ void gc_verify_sticky(void);
 void gc_verify_lost(void);
 void gc_verify_init(void);
 void gc_verify_begin(int full);
+/* Set by a free of a mature object outside a collection (a growth's freed
+ * buffer, a trim), under AVANT_GC_VERIFY: the incremental checks rebuild
+ * their record (avant_gc_verify.c). */
+extern int gc_verify_rebase;
 int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
 void gc_quarantine_seal(void);
