@@ -831,6 +831,16 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
       }
     }
     result_ret = ret
+    // A postfix `?` in the body returns from the lambda (Stage 29 W1a, A3).
+    saved_ret = checker_self.return_type
+    saved_try = checker_self.try_in
+    checker_self.return_type = ret
+    saved_body = checker_self.try_body
+    checker_self.try_in = ""
+    checker_self.try_body = "the lambda"
+    if ret.is_var {
+      checker_self.try_in = "a lambda whose result type is inferred"
+    }
     if ret.is_var {
       saved_infer = checker_self.lambda_infer
       saved_ty = checker_self.inferred_ret
@@ -843,6 +853,9 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     } else {
       checker_self.check_body(b.body, ret, true)
     }
+    checker_self.return_type = saved_ret
+    checker_self.try_in = saved_try
+    checker_self.try_body = saved_body
     checker_self.loop_depth = saved_loops
     checker_self.pop_lambda
     if result_ret.is_void {

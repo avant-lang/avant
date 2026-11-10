@@ -162,6 +162,11 @@ pub class Checker {
   ready_adopt: Bool = false
   in_adopt: Bool = false
   in_task: Int = 0
+  // Where a postfix `?` stands when it cannot return from the body around it
+  // ("a spawn block"); empty in a function or lambda body (Stage 29 W1a, A3).
+  try_in: String = ""
+  // What a postfix `?` returns from, for its messages.
+  try_body: String = "the function"
   place_name: String = ""
   place_depth: Int = 0
   witness_note: String = ""
@@ -1267,12 +1272,35 @@ pub class Checker {
     payload
   }
 
+  // `x?` (Stage 29 W1a, A3): the failure goes up only where the body's
+  // result can hold it. A nilable operand fails on `nil`, so the result must
+  // include `Nil`; a union without `Nil` fails on the members the result
+  // holds, and exactly one member is left as the success. Anything else is a
+  // compile error that names the result type and the ways out (before, a
+  // `nil` silently became `0` in an `Int` function, and a `String` or void
+  // result broke the MIR verifier).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
+    if self.place_depth > 0 {
+      self.fail(loc, "postfix ? inside Mutex.with cannot return; handle the failure with if-assign or ??")
+      return self.t_int()
+    }
+    if self.try_in.size > 0 {
+      self.fail(loc, "postfix ? inside ${self.try_in} cannot return the failure; handle it with if-assign or ??")
+      return self.t_int()
+    }
+    ret = self.return_type
     if got.is_union {
       if got.includes_nil {
-        return ty_without_nil(got)
+        if ret.is_union && ret.includes_nil {
+          return ty_without_nil(got)
+        }
+        if ret.is_void {
+          self.fail(loc, "postfix ? would return nil, but ${self.try_body} returns nothing; give it a result that includes nil, or handle the nil with if-assign or ??")
+        } else {
+          self.fail(loc, "postfix ? would return nil, but ${self.try_body} returns ${ret.show}; declare the result ${ty_nilable(ret).show}, or handle the nil with if-assign or ??")
+        }
+        return self.t_int()
       }
-      ret = self.return_type
       if ret.is_union {
         succ: Array(Ty) = []
         fails: Array(Ty) = []
@@ -1294,7 +1322,11 @@ pub class Checker {
         self.fail(loc, "cannot use postfix ? on ${got.show} in a function returning ${ret.show}")
         return self.t_int()
       }
-      self.fail(loc, "postfix ? needs the function to return a union that includes the failure")
+      if ret.is_void {
+        self.fail(loc, "postfix ? on ${got.show} would return the failure, but ${self.try_body} returns nothing; give it a union result that includes the failure, or handle it with if-assign or ??")
+      } else {
+        self.fail(loc, "postfix ? on ${got.show} would return the failure, but ${self.try_body} returns ${ret.show}; give it a union result that includes the failure, or handle it with if-assign or ??")
+      }
       return self.t_int()
     }
     self.fail(loc, "postfix ? expects a union, got ${got.show}")
@@ -3844,7 +3876,10 @@ pub class Checker {
       self.in_task = self.in_task + 1
       saved_loops = self.loop_depth
       self.loop_depth = 0
+      saved_try = self.try_in
+      self.try_in = "a spawn block"
       result = self.check_block_value(b)
+      self.try_in = saved_try
       self.loop_depth = saved_loops
       self.in_task = self.in_task - 1
       if result.is_int {
