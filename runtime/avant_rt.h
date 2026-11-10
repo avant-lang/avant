@@ -239,7 +239,6 @@ char *avant_str_fmt_float(double v, int32_t prec);
 double avant_str_to_f(const char *s);
 double avant_str_to_f_slice(const char *s, int32_t start, int32_t stop);
 int32_t avant_str_to_i(const char *s);
-double avant_exp(double x);
 int32_t avant_str_eq(const char *a, const char *b);
 int32_t avant_str_size(const char *s);
 int32_t avant_str_byte(const char *s, int32_t i);

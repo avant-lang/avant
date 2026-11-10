@@ -442,8 +442,10 @@ fn ll_call(e: LlEmit, st: MStmt) {
 }
 
 // The LLVM intrinsic of a libm external, or "" (Stage 28 W18S, O6):
-// Float64's abs, floor and sqrt (mir/runtime.av's libm rows), when the
-// external is `double (double)`, are llvm.fabs, llvm.floor and llvm.sqrt.
+// Float64's abs, floor, sqrt and exp (mir/runtime.av's libm rows), when
+// the external is `double (double)`, are llvm.fabs, llvm.floor, llvm.sqrt
+// and llvm.exp (W18F; llvm.exp is lowered to libm's exp, and folded only
+// for constants, with the host's libm).
 // They give the same bits as libm on every input (sqrt of a negative or a
 // NaN is a NaN either way; Avant never reads errno, the one difference).
 fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
@@ -459,6 +461,9 @@ fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
   }
   if str_eq(x.name, "floor") {
     return "llvm.floor.f64"
+  }
+  if str_eq(x.name, "exp") {
+    return "llvm.exp.f64"
   }
   ""
 }

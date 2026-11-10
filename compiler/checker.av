@@ -875,7 +875,11 @@ pub class Checker {
           if expected.is_void {
             if got.is_void {
             } else {
-              self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
+              if stmt.lead != 0 {
+                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
+              } else {
+                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
+              }
             }
           } else {
             if ty_assignable(got, expected) {
@@ -1336,6 +1340,10 @@ pub class Checker {
       return self.t_float()
     }
     if str_eq(expr.ident, "floor") {
+      expr.method_call = true
+      return self.t_float()
+    }
+    if str_eq(expr.ident, "exp") {
       expr.method_call = true
       return self.t_float()
     }
@@ -2647,6 +2655,18 @@ pub class Checker {
           }
           if op == tk_not_eq() {
             self.fail(expr.loc, "cannot compare fn values")
+            return self.t_bool()
+          }
+        }
+        if left.is_bool {
+          if right.is_bool {
+            if op == tk_eq_eq() {
+              return self.t_bool()
+            }
+            if op == tk_not_eq() {
+              return self.t_bool()
+            }
+            self.fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
             return self.t_bool()
           }
         }

@@ -312,13 +312,6 @@ char *avant_str_from_byte(int32_t b) {
   return p;
 }
 
-double avant_exp(double x) {
-  /* Does not allocate and is no safepoint (Stage 28 W17a: the world lock
-   * a shared program took here, against another thread's collection
-   * while the caller's pointers sat in registers, D191, is gone). */
-  return exp(x);
-}
-
 char *avant_str_cat_i32(const char *prefix, int32_t n) {
   char digs[16];
   int nd = 0;
