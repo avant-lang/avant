@@ -3670,6 +3670,17 @@ pub class Checker {
             return self.t_int()
           }
         } else {
+          if str_eq(expr.callee, "new") {
+            if f = self.find_fn(recv.ident) {
+            } else if v = self.lookup(recv.ident) {
+            } else {
+              // `Channel(Int).new` with no such generic type (Stage 29
+              // W1a): before, the call reading said "new is a type
+              // constructor".
+              self.fail(recv.loc, "unknown type ${recv.ident}")
+              return self.t_int()
+            }
+          }
           return self.rewrite_type_app_call(expr, recv, has_want, want)
         }
       }

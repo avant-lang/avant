@@ -1027,6 +1027,16 @@ pub fn clone_stmt(s: Stmt): Stmt {
     out.body.push(clone_stmt(s.body[i]))
     i = i + 1
   }
+  // A `for` loop's set-up statements and kind (Stage 29 W1a): a generic
+  // function's instance lost them, so `for x in xs` there named an
+  // undeclared `__for0_i`.
+  i = 0
+  while i < s.pre.size {
+    out.pre.push(clone_stmt(s.pre[i]))
+    i = i + 1
+  }
+  out.for_kind = s.for_kind
+  out.lead = s.lead
   if t = s.declared {
     out.declared = clone_type_name(t)
   }
