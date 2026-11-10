@@ -85,6 +85,24 @@ fn fact(n: Int): Int {
 }
 ```
 
+### Line breaks
+
+A line break ends a statement. A line whose first token is `[`, `-` or `+` always begins a new statement: it never continues the line before as an index or a binary operation. To continue an expression on the next line, end the line before with an operator or an open bracket. A line that starts with `.`, `?` or another infix operator (`*`, `&&`, `==`, ...) cannot begin a statement, so it continues the line before.
+
+```avant
+fn main {
+  total = 1 +
+    2
+  bb = "y"
+  [total, 3].each { |n| puts(n) }
+  size = bb
+    .size
+  puts(size)
+}
+```
+
+An expression left dangling by the rule is a compile error that says how to continue the line: `t = a` followed by a line `- b`, a line `[a, b]` whose value nobody uses, or a line starting with `+`.
+
 ### Comments
 
 `//` runs to the end of the line. There is no `/* */`.
@@ -210,7 +228,7 @@ fn id(x: T): T {
 
 ### Primitives
 
-`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
+`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i` (`x.exp` or `x.exp()`). Two `Bool`s compare with `==` and `!=`. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
 
 ### Nil and unions
 
@@ -1279,7 +1297,7 @@ Builtins are the prelude: names every program can use with no import. Runnable e
 | Time | `now_ms`, `now_us` |
 | Files | `file_read`, `file_write`, `file_exists`, `dir_list` |
 | Process and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
-| Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt` |
+| Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt`, `exp` |
 ### Files, process, and environment
 
 ```avant
