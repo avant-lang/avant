@@ -135,11 +135,21 @@ void avant_gc_register_thread(void) {
 }
 
 void avant_gc_unregister_thread(void) {
+  uint32_t i;
   if (!gc_thread.reg.head) {
     return;
   }
   gc_alloc_thread_leave();
   gc_thread_unregistering();
+  /* An unregistered thread holds no heap reference (O70, Stage 29 W1b):
+   * no collection reads its runtime-root slots now, so they are cleared,
+   * and a later registration of this thread (a C thread may unregister
+   * and call back again) starts with empty slots; before, they kept
+   * naming objects the other threads' collections had freed. The slots
+   * stay registered, and every runtime unit reads NULL as empty. */
+  for (i = 0; i < gc_thread.nroots; i++) {
+    *gc_thread.roots[i] = NULL;
+  }
 }
 
 /* A call used to calloc a frame and free it on leave. Hot recursion

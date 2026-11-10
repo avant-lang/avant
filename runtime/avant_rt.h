@@ -197,7 +197,9 @@ void avant_gc_collect(void);
  * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
  * unregistration of its own. A thread that exits inside a callback
  * (pthread_exit from C that Avant called) is unregistered and its frames
- * are freed too (Stage 28 W18C). */
+ * are freed too (Stage 28 W18C). A thread may unregister between
+ * callbacks and be registered again by its next one; unregistering drops
+ * every reference the runtime held for it (Stage 29 W1b, O70). */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
 /* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
