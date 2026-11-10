@@ -1,0 +1,489 @@
+// Get-or-insert fused into one hash call (Stage 28 W18S, O49; a named
+// generated-code change).
+//
+// The counting idiom reads a key and then stores it:
+//
+//   if c = h.get(k) { h[k] = c + 1 } else { h[k] = 1 }
+//
+// two runtime calls and two probes for one entry (Distance::NGram's
+// `bump`). This pass replaces the get, `_c = avant_hash_get_X(_h, _k,
+// _fp)` (or `get_or`'s `(_h, _k, _v)`), by
+//
+//   _p = avant_hash_upsert_X(_h, _k, init, _fp)    init 0, or get_or's _v
+//   _c = copy (*_p)
+//
+// and every set of the same key it reaches, `avant_hash_set_X(_h', _k',
+// _v)`, by `(*_p) = _v`. The runtime inserts the key holding `init` when it
+// is absent (a get read 0, or `get_or` its fallback, so `_c` is what it
+// was) and returns the value's address (runtime/avant_hash.c).
+//
+// It is done where the insertion cannot be seen, which is where every path
+// from the get reaches such a set first:
+// - the hash and the key are the same values: `_h'` and `_k'` are copies
+//   of `_h` and `_k` (or the same constant key) through whole-local
+//   copies on the path, and no local holding them is reassigned there
+//   or has its address taken in the function;
+// - every path from the get ends at such a set (where it stops) or at an
+//   `unreachable` (a trap: the program has ended); none returns, loops
+//   back, or calls anything but a noreturn trap: so nothing reads the
+//   hash before the set, and nothing collects or moves its values while
+//   `_p` is held (threads stop only at calls and loop polls; gc-design.md
+//   section 4.4); a store through a raw pointer also stops the pass;
+// - the region is entered only through the get: every block it reaches
+//   has all its predecessors in the region, so a fused set is never
+//   reached on a path that did not run the upsert.
+// Int values only (`_i32k_i32` and `_i32`): the stores need no barrier.
+// The upsert collects where the get did not (it may grow); the GC passes
+// that follow treat it as any collecting call.
+
+import source
+import mir.types
+import mir.ir
+import mir.runtime
+import mir.flow
+
+// The upsert for a get callee, or "".
+fn up_name(callee: String): String {
+  if str_eq(callee, "avant_hash_get_i32k_i32") || str_eq(callee, "avant_hash_get_or_i32k_i32") {
+    return "avant_hash_upsert_i32k"
+  }
+  if str_eq(callee, "avant_hash_get_i32") || str_eq(callee, "avant_hash_get_or_i32") {
+    return "avant_hash_upsert_i32"
+  }
+  ""
+}
+
+fn up_set_name(callee: String): String {
+  if str_starts_mir(callee, "avant_hash_get_or_i32k") || str_eq(callee, "avant_hash_get_i32k_i32") {
+    return "avant_hash_set_i32k_i32"
+  }
+  "avant_hash_set_i32"
+}
+
+fn up_is_or(callee: String): Bool {
+  str_starts_mir(callee, "avant_hash_get_or_")
+}
+
+fn up_direct(st: MStmt): Bool {
+  if fo = st.indirect {
+    return false
+  }
+  true
+}
+
+// The local of a bare `copy _k`, or -1.
+fn up_local(o: MOperand): Int {
+  if o.kind != mok_copy() {
+    return -1
+  }
+  if p = o.place {
+    if p.proj.size == 0 {
+      return p.local
+    }
+  }
+  -1
+}
+
+fn up_same_const(a: MOperand, b: MOperand): Bool {
+  if a.kind != b.kind {
+    return false
+  }
+  if pa = a.place {
+    return false
+  }
+  if pb = b.place {
+    return false
+  }
+  if a.kind == mok_int() {
+    return a.ty == b.ty && a.ival == b.ival
+  }
+  if a.kind == mok_str() {
+    return a.sid == b.sid
+  }
+  false
+}
+
+// The locals that hold the hash and the key on one path.
+class UpState {
+  h: Array(Bool)
+  k: Array(Bool)
+
+  fn initialize(h: Array(Bool), k: Array(Bool)) {
+    self.h = h
+    self.k = k
+  }
+
+  fn copy: UpState {
+    UpState.new(mir_bools_copy(self.h), mir_bools_copy(self.k))
+  }
+}
+
+// One candidate get: the walk of its region.
+class UpWalk {
+  f: MFunc
+  ts: MTypes
+  start: Int
+  set_name: String
+  key: MOperand
+  key_local: Int
+  addr_taken: Array(Bool)
+  // Blocks reached, blocks whose terminator a path passed, and the set
+  // sites found (block, statement).
+  seen: Array(Bool)
+  through: Array(Bool)
+  on_path: Array(Bool)
+  site_b: Array(Int)
+  site_j: Array(Int)
+  steps: Int = 0
+  ok: Bool = true
+
+  fn initialize(f: MFunc, ts: MTypes, start: Int, set_name: String, key: MOperand, addr_taken: Array(Bool)) {
+    self.f = f
+    self.ts = ts
+    self.start = start
+    self.set_name = set_name
+    self.key = key
+    self.key_local = up_local(key)
+    self.addr_taken = addr_taken
+    self.seen = mir_bools(f.blocks.size, false)
+    self.through = mir_bools(f.blocks.size, false)
+    self.on_path = mir_bools(f.blocks.size, false)
+    sb: Array(Int) = []
+    self.site_b = sb
+    sj: Array(Int) = []
+    self.site_j = sj
+  }
+
+  fn note_site(b: Int, j: Int) {
+    i = 0
+    while i < self.site_b.size {
+      if self.site_b[i] == b && self.site_j[i] == j {
+        return
+      }
+      i = i + 1
+    }
+    self.site_b.push(b)
+    self.site_j.push(j)
+  }
+
+  // Whether the key operand of a set names the get's key on this path.
+  fn same_key(o: MOperand, s: UpState): Bool {
+    if self.key_local >= 0 {
+      l = up_local(o)
+      return l >= 0 && s.k[l]
+    }
+    up_same_const(o, self.key)
+  }
+
+  // The path from statement j of block b on; false stops the pass.
+  fn walk(b: Int, j: Int, s: UpState): Bool {
+    blk = self.f.blocks[b]
+    i = j
+    while i < blk.stmts.size {
+      self.steps = self.steps + 1
+      if self.steps > 4000 {
+        return false
+      }
+      st = blk.stmts[i]
+      if st.kind == msk_call() {
+        if up_direct(st) && str_eq(st.callee, self.set_name) && st.args.size == 3 {
+          hl = up_local(st.args[0])
+          if hl >= 0 && s.h[hl] && self.same_key(st.args[1], s) {
+            self.note_site(b, i)
+            return true
+          }
+          return false
+        }
+        // A noreturn trap ends the program (its block ends in
+        // unreachable); any other call stops the pass.
+        return up_direct(st) && str_starts_mir(st.callee, "avant_trap_")
+      }
+      if st.kind == msk_assign() {
+        if p = st.place {
+          if p.last_deref >= 0 {
+            // A store into memory: never a local's value; not through a
+            // raw pointer (it could name anything C gave out), nor through
+            // more than one deref (a pointer read from memory).
+            if self.ts.kind(self.f.locals[p.local].ty) == mk_ptr() || up_derefs(p) > 1 {
+              return false
+            }
+          } else {
+            nh = false
+            nk = false
+            if p.proj.size == 0 && !self.addr_taken[p.local] {
+              if r = st.rv {
+                if r.kind == mrk_use() {
+                  if a = r.a {
+                    y = up_local(a)
+                    if y >= 0 {
+                      nh = s.h[y]
+                      nk = s.k[y]
+                    }
+                  }
+                }
+              }
+            }
+            s.h[p.local] = nh
+            s.k[p.local] = nk
+          }
+        }
+      } else if st.kind != msk_check_bounds() && st.kind != msk_barrier() && st.kind != msk_barrier_at() {
+        // A bounds check traps or goes on; a barrier neither collects nor
+        // touches the hash's values; anything else stops the pass.
+        return false
+      }
+      i = i + 1
+    }
+    t = blk.term
+    if tm = t {
+      if tm.kind == mtk_unreachable() {
+        return true
+      }
+      if tm.kind == mtk_return() {
+        return false
+      }
+      if tm.kind != mtk_goto() && tm.kind != mtk_branch() && tm.kind != mtk_switch() {
+        return false
+      }
+      self.through[b] = true
+      k = 0
+      while k < tm.targets.size {
+        nb = tm.targets[k]
+        if nb == self.start || self.on_path[nb] {
+          return false
+        }
+        self.seen[nb] = true
+        self.on_path[nb] = true
+        good = self.walk(nb, 0, s.copy)
+        self.on_path[nb] = false
+        if !good {
+          return false
+        }
+        k = k + 1
+      }
+      return true
+    }
+    false
+  }
+}
+
+fn up_derefs(p: MPlace): Int {
+  n = 0
+  i = 0
+  while i < p.proj.size {
+    if p.proj[i].kind == mpk_deref() {
+      n = n + 1
+    }
+    i = i + 1
+  }
+  n
+}
+
+// The locals whose address the function takes.
+fn up_addr_taken(f: MFunc): Array(Bool) {
+  out = mir_bools(f.locals.size, false)
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      if st.kind == msk_assign() {
+        if r = st.rv {
+          if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
+            if p = r.place {
+              if p.local >= 0 && p.local < out.size {
+                out[p.local] = true
+              }
+            }
+          }
+        }
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  out
+}
+
+fn up_declare(m: MModule, name: String) {
+  if got = m.extern_index.get(name) {
+    return
+  }
+  if r = m.rt.find(name) {
+    sg = m.rt.sig_of(r, m.types)
+    if sg >= 0 {
+      e = MExtern.new(name, sg, r.cls)
+      m.extern_index[name] = m.externs.size
+      m.externs.push(e)
+    }
+  }
+}
+
+// Fuses the get at statement j of block b when its region allows; true
+// when it did.
+fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken: Array(Bool)): Bool {
+  st = f.blocks[b].stmts[j]
+  name = up_name(st.callee)
+  if name.size == 0 || st.args.size != 3 || !up_direct(st) {
+    return false
+  }
+  hl = up_local(st.args[0])
+  if hl < 0 || taken[hl] {
+    return false
+  }
+  key = st.args[1]
+  kl = up_local(key)
+  if kl >= 0 && taken[kl] {
+    return false
+  }
+  if kl < 0 && key.kind != mok_int() && key.kind != mok_str() {
+    return false
+  }
+  if st.dest >= 0 && (st.dest == hl || st.dest == kl) {
+    return false
+  }
+  w = UpWalk.new(f, m.types, b, up_set_name(st.callee), key, taken)
+  hs = mir_bools(f.locals.size, false)
+  ks = mir_bools(f.locals.size, false)
+  hs[hl] = true
+  if kl >= 0 {
+    ks[kl] = true
+  }
+  s = UpState.new(hs, ks)
+  if st.dest >= 0 {
+    s.h[st.dest] = false
+    s.k[st.dest] = false
+  }
+  if !w.walk(b, j + 1, s) || w.site_b.size == 0 {
+    return false
+  }
+  // Single entry: every reached block's predecessors are the get's block
+  // or blocks a path went through.
+  x = 0
+  while x < f.blocks.size {
+    if w.seen[x] {
+      ps = preds[x]
+      y = 0
+      while y < ps.size {
+        q = ps[y]
+        if q != b && !w.through[q] {
+          return false
+        }
+        y = y + 1
+      }
+    }
+    x = x + 1
+  }
+  // The rewrite.
+  pty = m.types.ptr_to(mt_i32())
+  pl = f.locals.size
+  f.locals.push(MLocal.new(pty, ""))
+  init = MOperand.new(mok_int(), mt_i32())
+  fp = MOperand.new(mok_null(), mt_ptr())
+  if up_is_or(st.callee) {
+    init = st.args[2]
+  } else {
+    fp = st.args[2]
+  }
+  args: Array(MOperand) = []
+  args.push(st.args[0])
+  args.push(st.args[1])
+  args.push(init)
+  args.push(fp)
+  dest = st.dest
+  st.callee = name
+  st.args = args
+  st.dest = pl
+  st.collects = true
+  if dest >= 0 {
+    src = MPlace.new(pl)
+    src.proj.push(MProj.new(mpk_deref(), 0))
+    o = MOperand.new(mok_copy(), -1)
+    o.place = src
+    rv = MRvalue.new(mrk_use())
+    rv.a = o
+    ld = MStmt.new(msk_assign(), st.loc)
+    ld.place = MPlace.new(dest)
+    ld.rv = rv
+    // Inserted after the call; the sites are in other blocks or after it.
+    stmts = f.blocks[b].stmts
+    out: Array(MStmt) = []
+    k = 0
+    while k < stmts.size {
+      out.push(stmts[k])
+      if k == j {
+        out.push(ld)
+      }
+      k = k + 1
+    }
+    f.blocks[b].stmts = out
+    k = 0
+    while k < w.site_b.size {
+      if w.site_b[k] == b {
+        w.site_j[k] = w.site_j[k] + 1
+      }
+      k = k + 1
+    }
+  }
+  k = 0
+  while k < w.site_b.size {
+    sst = f.blocks[w.site_b[k]].stmts[w.site_j[k]]
+    dst = MPlace.new(pl)
+    dst.proj.push(MProj.new(mpk_deref(), 0))
+    rv2 = MRvalue.new(mrk_use())
+    rv2.a = sst.args[2]
+    nst = MStmt.new(msk_assign(), sst.loc)
+    nst.place = dst
+    nst.rv = rv2
+    f.blocks[w.site_b[k]].stmts[w.site_j[k]] = nst
+    k = k + 1
+  }
+  up_declare(m, name)
+  true
+}
+
+// The pass; returns how many gets it fused.
+pub fn mir_upsert_pass(m: MModule): Int {
+  n = 0
+  i = 0
+  while i < m.funcs.size {
+    f = m.funcs[i]
+    has = false
+    if f.blocks.size > 0 {
+      b = 0
+      while b < f.blocks.size && !has {
+        blk = f.blocks[b]
+        j = 0
+        while j < blk.stmts.size && !has {
+          st = blk.stmts[j]
+          has = st.kind == msk_call() && up_name(st.callee).size > 0
+          j = j + 1
+        }
+        b = b + 1
+      }
+    }
+    if has {
+      taken = up_addr_taken(f)
+      preds = mir_preds(f)
+      b = 0
+      while b < f.blocks.size {
+        j = 0
+        while j < f.blocks[b].stmts.size {
+          st = f.blocks[b].stmts[j]
+          if st.kind == msk_call() && up_name(st.callee).size > 0 {
+            if up_try(m, f, b, j, preds, taken) {
+              n = n + 1
+              // The new local is not address-taken.
+              taken.push(false)
+            }
+          }
+          j = j + 1
+        }
+        b = b + 1
+      }
+    }
+    i = i + 1
+  }
+  n
+}

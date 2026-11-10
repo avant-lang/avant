@@ -115,6 +115,56 @@ static LLVMCodeGenOptLevel codegen_level(int32_t level) {
   }
 }
 
+/* The CPU level of the code generated (Stage 28 W18S, O140): set by
+ * avant_llvm_set_cpu before a compile, read by finish_module. Only LLVM's
+ * target machine sees it (its optimization and code generation): the
+ * module text the emitter writes, which the fixed point compares, never
+ * does. 1 is x86-64 itself ("generic"), 2-4 the psABI levels x86-64-v2 to
+ * x86-64-v4, 5 the compiling machine's own CPU and features (native). */
+static int32_t g_cpu = 1;
+
+/* The highest x86-64 level this machine runs (1-4). */
+int32_t avant_llvm_host_level(void) {
+  __builtin_cpu_init();
+  if (__builtin_cpu_supports("x86-64-v4")) {
+    return 4;
+  }
+  if (__builtin_cpu_supports("x86-64-v3")) {
+    return 3;
+  }
+  if (__builtin_cpu_supports("x86-64-v2")) {
+    return 2;
+  }
+  return 1;
+}
+
+/* The level of the next compiles: 1-5 as above. 0 ok, 1 out of range. */
+int32_t avant_llvm_set_cpu(int32_t level) {
+  if (level < 1 || level > 5) {
+    return 1;
+  }
+  g_cpu = level;
+  return 0;
+}
+
+/* Every program records the level its code needs (a module that defines
+ * main): `__avant_cpu_level`, read at startup by the runtime
+ * (avant_rt_traps.c, avant_cpu_check), which stops with a message naming
+ * the flag to rebuild with on a CPU without it. A native build records the
+ * compiling machine's level with 0x100 set. */
+static void record_level(LLVMModuleRef mod) {
+  LLVMValueRef fmain = LLVMGetNamedFunction(mod, "main");
+  LLVMValueRef g;
+  int32_t level = g_cpu == 5 ? (avant_llvm_host_level() | 0x100) : g_cpu;
+  if (!fmain || LLVMIsDeclaration(fmain) || LLVMGetNamedGlobal(mod, "__avant_cpu_level")) {
+    return;
+  }
+  g = LLVMAddGlobal(mod, LLVMInt32TypeInContext(LLVMGetModuleContext(mod)), "__avant_cpu_level");
+  LLVMSetInitializer(g, LLVMConstInt(LLVMInt32TypeInContext(LLVMGetModuleContext(mod)), (unsigned long long)level, 0));
+  LLVMSetGlobalConstant(g, 1);
+  LLVMSetLinkage(g, LLVMExternalLinkage);
+}
+
 /* Verify, run the pipeline, emit. Consumes nothing; the caller disposes. */
 static int32_t finish_module(LLVMModuleRef mod, const char *passes, int32_t level, const char *obj_path) {
   char *msg = NULL;
@@ -145,10 +195,23 @@ static int32_t finish_module(LLVMModuleRef mod, const char *passes, int32_t leve
     LLVMDisposeMessage(triple);
     return AVANT_LLVM_TARGET;
   }
-  /* Generic x86-64 (the portable release baseline), position-independent
-   * code: the link is a default PIE, as the myc-llvm objects are today. */
-  tm = LLVMCreateTargetMachine(target, triple, "generic", "", codegen_level(level), LLVMRelocPIC, LLVMCodeModelDefault);
+  /* The CPU level (g_cpu: generic x86-64, x86-64-v2 to v4, or the host's
+   * CPU and features), position-independent code: the link is a default
+   * PIE, as the myc-llvm objects were. */
+  {
+    static const char *names[] = {"generic", "generic", "x86-64-v2", "x86-64-v3", "x86-64-v4"};
+    if (g_cpu == 5) {
+      char *host = LLVMGetHostCPUName();
+      char *features = LLVMGetHostCPUFeatures();
+      tm = LLVMCreateTargetMachine(target, triple, host, features, codegen_level(level), LLVMRelocPIC, LLVMCodeModelDefault);
+      LLVMDisposeMessage(host);
+      LLVMDisposeMessage(features);
+    } else {
+      tm = LLVMCreateTargetMachine(target, triple, names[g_cpu], "", codegen_level(level), LLVMRelocPIC, LLVMCodeModelDefault);
+    }
+  }
   LLVMDisposeMessage(triple);
+  record_level(mod);
   if (!tm) {
     set_error("", "cannot create a target machine");
     return AVANT_LLVM_TARGET;
@@ -257,5 +320,31 @@ char *avant_llvm_version(void) {
   char buf[48];
   LLVMGetVersion(&major, &minor, &patch);
   snprintf(buf, sizeof buf, "%u.%u.%u", major, minor, patch);
+  return avant_string(buf);
+}
+
+/* The text of a double constant in LLVM IR (Stage 28 W18S, O141): the
+ * shortest decimal `d.ddd…e±XX` that reads back as exactly the same bits
+ * (at most 17 significant digits always do), a form every LLVM from 20 on
+ * parses (LLVM 23 deprecates, and 24 removes, the `0x` + 16 hex digits form
+ * the emitter wrote before); a NaN or an infinity, which have no decimal,
+ * as `bitcast (i64 BITS to double)`. -0.0 keeps its sign ("-0.0e+00"). */
+char *avant_llvm_f64_text(int64_t bits) {
+  char buf[64];
+  double v;
+  int p;
+  memcpy(&v, &bits, sizeof v);
+  if (((uint64_t)bits >> 52 & 0x7ff) == 0x7ff) {
+    snprintf(buf, sizeof buf, "bitcast (i64 %lld to double)", (long long)bits);
+    return avant_string(buf);
+  }
+  for (p = 1; p <= 17; p++) {
+    double back;
+    snprintf(buf, sizeof buf, "%.*e", p, v);
+    back = strtod(buf, NULL);
+    if (memcmp(&back, &v, sizeof v) == 0) {
+      break;
+    }
+  }
   return avant_string(buf);
 }

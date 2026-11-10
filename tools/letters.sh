@@ -99,14 +99,18 @@ need_llvm() {
   exit 1
 }
 
-# build LETTER COMPILER OUT MODE
+# build LETTER COMPILER OUT MODE [FLAG]
+# FLAG is --cpu=baseline for every compiler the tree's own compilers build
+# (Stage 28 W18S, O140): the avant binary stays on plain x86-64 whatever a
+# program's artifact default is, so it runs wherever a developer works.
+# The seed (step b) predates --cpu and builds plain x86-64 itself.
 build() {
   need_llvm
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
-  # shellcheck disable=SC2086 # timer is words or empty
-  env -u AVANT_BACKEND timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" "$COMPILER_LINK" < /dev/null
+  # shellcheck disable=SC2086 # timer and the flag are words or empty
+  env -u AVANT_BACKEND timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
 }
 
 # B must carry no LLVM stack maps (the runtime walks none since W12r).
@@ -122,9 +126,9 @@ for s in $steps; do
   case "$s" in
     runtime) timeout -k 10 300 sh runtime/build.sh < /dev/null ;;
     b) build b "$seed/avant" bin/avant-b --debug && check_no_stackmaps bin/avant-b ;;
-    c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug ;;
-    d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug ;;
-    c-release) build c-release ./bin/avant-b bin/avant-c-release --release ;;
+    c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
+    d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
+    c-release) build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
   esac
   rc=$?
   [ $rc -eq 0 ] || exit $rc

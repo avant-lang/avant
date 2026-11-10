@@ -54,7 +54,7 @@ pub fn show_usage {
   puts("  avant-av run [RUN-OPTIONS] FILE.av [-- PROGRAM-ARGS...]")
   puts("  avant-av test [TEST-OPTIONS] [PATH...]")
   puts("  avant-av dump FILE.av")
-  puts("  avant-av compile FILE.av [OUT] [--debug|--release] [--lib NAME] [--cc FILE.c]")
+  puts("  avant-av compile FILE.av [OUT] [--debug|--release] [--cpu=LEVEL] [--lib NAME] [--cc FILE.c]")
   puts("  avant-av format FILE.av [--write] [--check]")
   puts("  avant-av bind [--lib NAME] HEADER.h")
   puts("  avant-av fetch [DIR] [--update]")
@@ -63,6 +63,7 @@ pub fn show_usage {
   puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
   puts("With no flag, run uses --debug (fast) and compile uses the default optimization (kept artifacts).")
   puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
+  puts("--cpu=baseline|v2|v3|v4|native: the x86-64 level of the code. compile defaults to v2; run and test use this machine's highest level.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
   puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
@@ -280,6 +281,7 @@ fn llvm_inline_fast: Bool {
 fn llvm_job_of(job: LinkJob): LlvmJob {
   lj = LlvmJob.new(job.codegen)
   lj.inline_fast = llvm_inline_fast()
+  lj.cpu = llvm_cpu_parse(job.cpu)
   i = 0
   while i < job.objects.size {
     lj.objects.push(job.objects[i])
@@ -306,6 +308,10 @@ pub fn driver_run(args: Array(String)) {
     diag_exit(1)
   }
   job.codegen = verb_codegen(job.codegen, "run")
+  // A local run takes the machine's highest x86-64 level (O140).
+  if job.cpu.size == 0 {
+    job.cpu = llvm_cpu_name(llvm_host_level())
+  }
   paths: Array(String) = []
   paths.push(split.file)
   box = compile_av_paths(paths)

@@ -1,5 +1,6 @@
 #include "avant_rt.h"
 #include "avant_gc.h"
+#include "avant_fmt.h"
 
 #include <math.h>
 #include <stdatomic.h>
@@ -284,7 +285,10 @@ char *avant_str_from_u64(uint64_t n) {
 
 char *avant_str_from_float(double n) {
   char buf[64];
-  int k = snprintf(buf, sizeof(buf), "%g", n);
+  int k = avant_fmt_g(buf, n);
+  if (k < 0) {
+    k = snprintf(buf, sizeof(buf), "%g", n);
+  }
   if (k < 0) {
     k = 0;
   }
@@ -507,14 +511,18 @@ int32_t avant_str_to_i(const char *s) {
 }
 
 char *avant_str_fmt_float(double v, int32_t prec) {
-  char buf[64];
+  /* 400: the longest %.16f (see avant_buf_push_fmt_f). */
+  char buf[400];
   if (prec < 0) {
     prec = 0;
   }
   if (prec > 16) {
     prec = 16;
   }
-  int k = snprintf(buf, sizeof(buf), "%.*f", prec, v);
+  int k = avant_fmt_fixed(buf, v, prec);
+  if (k < 0) {
+    k = snprintf(buf, sizeof(buf), "%.*f", prec, v);
+  }
   if (k < 0) {
     k = 0;
   }

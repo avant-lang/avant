@@ -1,5 +1,6 @@
 #include "avant_rt.h"
 #include "avant_gc.h"
+#include "avant_fmt.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -173,7 +174,10 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
-  char tmp[64];
+  /* 400: the longest %.16f (a sign, 309 digits, the point, 16); 64 let
+   * snprintf truncate a value of 1e47 or more and the append read past
+   * the buffer (W18S). */
+  char tmp[400];
   int k;
   if (prec < 0) {
     prec = 0;
@@ -181,7 +185,10 @@ void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
   if (prec > 16) {
     prec = 16;
   }
-  k = snprintf(tmp, sizeof(tmp), "%.*f", prec, v);
+  k = avant_fmt_fixed(tmp, v, prec);
+  if (k < 0) {
+    k = snprintf(tmp, sizeof(tmp), "%.*f", prec, v);
+  }
   if (k < 0) {
     return;
   }

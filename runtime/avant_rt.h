@@ -326,6 +326,8 @@ int32_t avant_hash_has_str(void *h, const char *key);
 int32_t avant_hash_has_i32k(void *h, int32_t key);
 int32_t avant_hash_inc_str(void *h, const char *key, int32_t by);
 int32_t avant_hash_inc_i32k(void *h, int32_t key, int32_t by);
+int32_t *avant_hash_upsert_i32k(void *h, int32_t key, int32_t init, int32_t *found);
+int32_t *avant_hash_upsert_i32(void *h, const char *key, int32_t init, int32_t *found);
 int32_t avant_hash_get_or_i32(void *h, const char *key, int32_t fallback);
 const char *avant_hash_get_or_str(void *h, const char *key, const char *fallback);
 int32_t avant_hash_get_or_i32k_i32(void *h, int32_t key, int32_t fallback);
