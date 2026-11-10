@@ -810,11 +810,17 @@ pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
   }
 }
 
-// Union member order (D200, C15): by shown name; equal shown names (same-named
-// types from different modules) are ordered by their module-qualified key, so
-// both written orders build one member list. Distinct shown names keep the
-// order and tags they always had.
+// Union member order (D200, C15): `Nil` first, so it always takes tag 0 and
+// a zeroed `T?` (a field nothing assigned, a fresh buffer) reads as nil
+// whatever T is called (Stage 29 W1a, A1; before, `Abc?` and `Int?` read as
+// present because their names sort before `Nil`). The other members by
+// shown name; equal shown names (same-named types from different modules)
+// are ordered by their module-qualified key, so both written orders build
+// one member list.
 pub fn ty_member_before(a: Ty, b: Ty): Bool {
+  if a.is_nil || b.is_nil {
+    return a.is_nil && !b.is_nil
+  }
   sa = a.show
   sb = b.show
   if str_lt(sa, sb) {

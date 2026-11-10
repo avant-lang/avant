@@ -2,10 +2,10 @@ module churn
 file 0 "churn.av"
 
 layout %churn.Leaf = class { 0 v: i32, 1 s: ref str }  size 16 align 8 id 1
-layout %churn.Holder = class { 0 id: i32, 1 direct: ref %churn.Leaf, 2 slot: %churn.Slot, 3 opt: %(churn.Leaf|Nil), 4 note: ref str }  size 64 align 8 id 2
+layout %churn.Holder = class { 0 id: i32, 1 direct: ref %churn.Leaf, 2 slot: %churn.Slot, 3 opt: %(Nil|churn.Leaf), 4 note: ref str }  size 64 align 8 id 2
 layout %churn.Root = class { 0 h0: ref %churn.Holder, 1 h1: ref %churn.Holder, 2 h2: ref %churn.Holder }  size 24 align 8 id 3
 layout %churn.Slot = struct { 0 k: i32, 1 leaf: ref %churn.Leaf, 2 name: ref str }  size 24 align 8
-layout %(churn.Leaf|Nil) = union { 0 tag: i32, 1 m0: ref %churn.Leaf }  size 16 align 8
+layout %(Nil|churn.Leaf) = union { 0 tag: i32, 1 m0: ref %churn.Leaf }  size 16 align 8
 
 const str.0 = "name-"
 const str.1 = "adopted-"
@@ -287,7 +287,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @churn.av:116:1 {
   let _22: ref %churn.Holder
   let _23: ref str
   let _24: ref %churn.Holder
-  let _25: %(churn.Leaf|Nil)
+  let _25: %(Nil|churn.Leaf)
   let _26: ref %churn.Holder
   let _27: ref %churn.Leaf
   let _28: ref %churn.Holder
@@ -383,7 +383,7 @@ bb2:
   _24 = copy (*_6).0   @131:9
   barrier copy _24   @131:18
   (*_24).4 = copy _23   @131:18
-  _25 = union %(churn.Leaf|Nil) tag 1   @132:19
+  _25 = union %(Nil|churn.Leaf) tag 0   @132:19
   _26 = copy (*_6).0   @132:9
   barrier copy _26   @132:17
   (*_26).3 = copy _25   @132:17
@@ -602,14 +602,14 @@ fn av.churn/Holder.new(_1: i32) -> ref %churn.Holder frame @churn.av:58:1 {
   let _0: ref %churn.Holder
   let _1 (id): i32
   let _2: ref %churn.Holder slot
-  let _3: %(churn.Leaf|Nil)
+  let _3: %(Nil|churn.Leaf)
 
 bb0:
   _2 = zero   @58:1
   gc.enter   @58:1
   gc.roots _2   @58:1
   _2 = call avant_alloc(const u64 64, const u32 2) collects   @58:1
-  _3 = union %(churn.Leaf|Nil) tag 1   @62:16
+  _3 = union %(Nil|churn.Leaf) tag 0   @62:16
   barrier copy _2   @62:3
   (*_2).3 = copy _3   @62:3
   barrier copy _2   @63:3

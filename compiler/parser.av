@@ -232,10 +232,10 @@ pub class Parser {
     tok = self.current
     if tok.kind != kind {
       if (tok.kind == tk_minus() || tok.kind == tk_plus() || tok.kind == tk_l_bracket()) && self.at_line_start {
-        self.fail(tok.loc, "expected ${kind}, found ${tok.kind}: a line starting with `+`, `-` or `[` never continues the line before; to continue it, end that line with the operator or an open bracket (`total = a +` then `b`)")
+        self.fail(tok.loc, "expected ${token_name(kind)}, found ${token_name(tok.kind)}: a line starting with `+`, `-` or `[` never continues the line before; to continue it, end that line with the operator or an open bracket (`total = a +` then `b`)")
         return tok
       }
-      self.fail(tok.loc, "expected ${kind}, found ${tok.kind}")
+      self.fail(tok.loc, "expected ${token_name(kind)}, found ${token_name(tok.kind)}")
       return tok
     }
     self.bump
@@ -252,7 +252,7 @@ pub class Parser {
       dummy = self.bump
       return Token.new(tk_ident(), tok.loc, spell)
     }
-    self.fail(tok.loc, "expected ${tk_ident()}, found ${tok.kind}")
+    self.fail(tok.loc, "expected a name, found ${token_name(tok.kind)}")
     tok
   }
 
@@ -516,7 +516,7 @@ pub class Parser {
         if vis {
           self.fail(self.current.loc, "pub prefixes struct, class, lib, fn, or interface")
         } else {
-          self.fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${k}")
+          self.fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
         }
       }
       if self.new_err_since(mark) {
@@ -1771,7 +1771,7 @@ pub class Parser {
         expr.has_else = true
         seen_else = true
       } else {
-        self.fail(self.current.loc, "expected case or else, found ${self.current.kind}")
+        self.fail(self.current.loc, "expected case or else, found ${token_name(self.current.kind)}")
         break
       }
       self.skip_newlines
@@ -2144,7 +2144,7 @@ pub class Parser {
       self.fail(tok.loc, "a line cannot start with `+`: a line starting with `+`, `-` or `[` begins a new statement; to continue the line before, end it with the operator (`total = a +` then `b`)")
       return Expr.new(ex_int(), tok.loc)
     }
-    self.fail(tok.loc, "expected expression, found ${k}")
+    self.fail(tok.loc, "expected an expression, found ${token_name(k)}")
     self.dummy_expr(tok.loc)
   }
 

@@ -151,6 +151,8 @@ fn main {
 
 `q` is a separate `Point`. Changing `q.x` does not change `p.x`.
 
+A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
+
 Inside a method, a field name is in scope. `self` is the receiver. An external method is a function with a receiver parameter:
 
 ```avant
@@ -245,6 +247,8 @@ fn label(v: Int | String): Int {
 }
 ```
 
+A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
+
 Failure is a union member. There is no unwind. See [Errors](#errors).
 
 ### Arrays
@@ -280,6 +284,8 @@ fn main {
 ```
 
 The `if v = ...` form is [if-assign](#if-and-while). `v` exists only in the then-block.
+
+`h.each { |k, v| ... }` walks every key with its value; the order is unspecified. A key the block deletes before the walk reaches it is not visited.
 
 ### Function values
 
@@ -820,6 +826,8 @@ fn bump(id: Int): Int? {
 
 If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
 
+`?` compiles only where the failure can be returned: on a `T?` the function's result must include `nil`, and on another union the result must hold its failure members. Otherwise it is a compile error that names the result type (`postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+
 `if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
 
 ### Compiled errors
@@ -836,6 +844,8 @@ error[E4001]: unknown name nosuch1
 ```
 
 With several errors, the run ends with a summary line: `error: aborting due to N previous errors`.
+
+A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
 
 The first digit of the code names the phase that found the error: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion. Recovery is per statement: a bad statement does not hide errors in later statements, functions, or imported files.
 
@@ -855,7 +865,7 @@ fn main {
 
 `size` is the byte length. Strings are not mutated in place. Concatenation allocates a new string.
 
-`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`.
+`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`. `Buf.new` (or `Buf.new(capacity)`) makes an empty buffer, the same as `buf_new()`.
 
 Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 

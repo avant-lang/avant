@@ -52,7 +52,40 @@ fn test_errors(c: Checks) {
     } else {
       c.expect(false, "o162 log")
     }
+    // O163 (Stage 29 W1a): the resolver and the checker see every error,
+    // kept or not (O162 fixed the parser the same way). 25 resolver errors:
+    // 20 shown, and the 5 past the cap counted (before, the checker pulled
+    // only the resolver's kept errors and the count said nothing).
+    expect_err_bounded(c, compiler, stamp, "o163-resolver-errors", "struct S0 {\n  x: Nosuch0\n}\nstruct S1 {\n  x: Nosuch1\n}\nstruct S2 {\n  x: Nosuch2\n}\nstruct S3 {\n  x: Nosuch3\n}\nstruct S4 {\n  x: Nosuch4\n}\nstruct S5 {\n  x: Nosuch5\n}\nstruct S6 {\n  x: Nosuch6\n}\nstruct S7 {\n  x: Nosuch7\n}\nstruct S8 {\n  x: Nosuch8\n}\nstruct S9 {\n  x: Nosuch9\n}\nstruct S10 {\n  x: Nosuch10\n}\nstruct S11 {\n  x: Nosuch11\n}\nstruct S12 {\n  x: Nosuch12\n}\nstruct S13 {\n  x: Nosuch13\n}\nstruct S14 {\n  x: Nosuch14\n}\nstruct S15 {\n  x: Nosuch15\n}\nstruct S16 {\n  x: Nosuch16\n}\nstruct S17 {\n  x: Nosuch17\n}\nstruct S18 {\n  x: Nosuch18\n}\nstruct S19 {\n  x: Nosuch19\n}\nstruct S20 {\n  x: Nosuch20\n}\nstruct S21 {\n  x: Nosuch21\n}\nstruct S22 {\n  x: Nosuch22\n}\nstruct S23 {\n  x: Nosuch23\n}\nstruct S24 {\n  x: Nosuch24\n}\nfn main {\n  puts(nosuch0)\n  puts(nosuch1)\n  puts(nosuch2)\n  puts(nosuch3)\n  puts(nosuch4)\n  puts(nosuch5)\n  puts(nosuch6)\n  puts(nosuch7)\n  puts(nosuch8)\n  puts(nosuch9)\n  puts(nosuch10)\n  puts(nosuch11)\n  puts(nosuch12)\n  puts(nosuch13)\n  puts(nosuch14)\n  puts(nosuch15)\n  puts(nosuch16)\n  puts(nosuch17)\n  puts(nosuch18)\n  puts(nosuch19)\n  puts(nosuch20)\n  puts(nosuch21)\n  puts(nosuch22)\n  puts(nosuch23)\n  puts(nosuch24)\n}\n", "aborting due to 20 previous errors")
+    if o163 = file_read("${scratch()}/errors-${stamp}-o163-resolver-errors.log") {
+      c.expect(str_has(o163, "and 5 more errors (limit 20)"), "o163 counts the resolver's errors past the limit")
+    } else {
+      c.expect(false, "o163 log")
+    }
     expect_err(c, compiler, stamp, "unknown-name", "fn main {\n  puts(x)\n}\n", "unknown name")
+    // Stage 29 W1a (A3): postfix ? is refused where the failure cannot be
+    // returned (before: an Int result silently returned 0; a String or void
+    // result broke the MIR verifier; a lambda, spawn or Mutex.with body was
+    // checked against the enclosing function's result).
+    // Stage 29 W1a (review 5, defect 4): a generic type that does not exist.
+    expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
+    // Stage 29 W1a (A6): parser messages name the tokens (they printed the
+    // kinds' numbers: "expected 28, found 5").
+    expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")
+    expect_err(c, compiler, stamp, "tokens-in", "fn main {\n  for i, x in [1] {\n  }\n}\n", "expected `in`, found `,`")
+    expect_err(c, compiler, stamp, "tokens-paren", "fn main {\n  puts((0..10).step(2))\n}\n", "expected `)`, found `..`")
+    expect_err(c, compiler, stamp, "tokens-expr", "fn main {\n  x = 3\n  x %= 3\n}\n", "expected an expression, found `=`")
+    expect_err(c, compiler, stamp, "tokens-top", "42\n", "expected struct, class, lib, fn, interface, import, quote, or comptime, found an integer")
+    // Stage 29 W1a (A5): a builtin's unknown name in field form reads as a
+    // method that does not exist (the field form is a call).
+    expect_err(c, compiler, stamp, "parens-unknown", "fn main {\n  s = \"x\"\n  puts(s.nosuch)\n}\n", "no method nosuch on String")
+    expect_err(c, compiler, stamp, "parens-args", "fn main {\n  s = \"x\"\n  puts(s.split)\n}\n", "split takes one String separator")
+    expect_err(c, compiler, stamp, "try-int", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn plain(s: String): Int {\n  n = opt(s)?\n  n + 1\n}\nfn main {\n  puts(plain(\"\"))\n}\n", "postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??")
+    expect_err(c, compiler, stamp, "try-string", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn s(x: String): String {\n  n = opt(x)?\n  \"y\"\n}\nfn main {\n  puts(s(\"\"))\n}\n", "but the function returns String; declare the result String?")
+    expect_err(c, compiler, stamp, "try-void", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn v(x: String) {\n  n = opt(x)?\n  puts(n)\n}\nfn main {\n  v(\"\")\n}\n", "postfix ? would return nil, but the function returns nothing")
+    expect_err(c, compiler, stamp, "try-union-int", "class E {\n  m: String = \"e\"\n}\nfn p(x: Int): Int | E {\n  if x > 0 {\n    return x\n  }\n  E.new\n}\nfn q(x: Int): Int {\n  n = p(x)?\n  n\n}\nfn main {\n  puts(q(1))\n}\n", "postfix ? on E | Int would return the failure, but the function returns Int")
+    expect_err(c, compiler, stamp, "try-lambda", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn main {\n  g: fn(String): Int = { |x| opt(x)? + 1 }\n  puts(g(\"a\"))\n}\n", "postfix ? would return nil, but the lambda returns Int")
+    expect_err(c, compiler, stamp, "try-spawn", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn w: Int? {\n  h = spawn { opt(\"a\")? }\n  puts(h.join)\n  nil\n}\nfn main {\n  w()\n}\n", "postfix ? inside a spawn block cannot return the failure")
     expect_err(c, compiler, stamp, "d280-minus-unused", "fn main {\n  a = 1\n  b = 2\n  t = a\n  - b\n  puts(t)\n}\n", "begins a new statement whose value nobody uses")
     expect_err(c, compiler, stamp, "d280-minus-tail", "fn f(a: Int, b: Int): Int {\n  a\n  - b\n}\nfn main {\n  puts(f(1, 2))\n}\n", "leaves the line before as a value nobody uses")
     expect_err(c, compiler, stamp, "d280-plus", "fn main {\n  a = 1\n  t = a\n    + 2\n  puts(t)\n}\n", "a line cannot start with `+`")

@@ -1081,7 +1081,10 @@ pub fn (checker_self: Checker) check_field_defaults {
       continue
     }
     checker_self.current_module = defn.mod_name
-    if ty = checker_self.resolver.get_named(defn.name) {
+    // By the class's own module (Stage 29 W1a): two modules may export
+    // the same class name (D76), and the bare name of a shared one finds
+    // no type, which left both classes' defaults untyped (L0001).
+    if ty = checker_self.resolver.get_named_for(defn.mod_name, defn.name) {
       j = 0
       while j < defn.fields.size {
         field = defn.fields[j]

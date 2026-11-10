@@ -322,8 +322,8 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
 
 // `h.each { |k, v| ... }` (emit_hash_method, builtins.av:346-441): the
 // hash once, its keys as an array, then for each key the value read back
-// through the hash (as `h[k]`: a `V?` whose payload is taken, the zero
-// when a body deleted the key), both bound, the body.
+// through the hash (a checked lookup: a key the body deleted is skipped),
+// both bound, the body.
 pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -373,9 +373,12 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   ops.push(b.copy_local(kl))
   ops.push(lw.found_ptr(fl))
   raw = lw.call_to(vty, mir_hash_op(ht, "get"), ops)
-  u = lw.opt_of(ty_nilable(vt), lw.found_is(fl), raw, vt, e.loc)
-  ul = mir_bare_copy(u)
-  val = lw.tmp(vty, b.rv_use(b.copy(b.field(b.pl(ul), 1))))
+  // A key the body deleted earlier in the walk is skipped (Stage 29 W1a,
+  // A4): before, it was visited with an invented value (the zero).
+  hit = b.block
+  b.branch(lw.found_is(fl), hit, step)
+  b.at(hit)
+  val = lw.tmp(vty, b.rv_use(raw))
   lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
   lw.block_body(bl.body, step, exit)
   lw.goto_if_open(step, e.loc)

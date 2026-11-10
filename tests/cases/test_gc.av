@@ -13,7 +13,8 @@ fn test_gc(c: Checks) {
     c.eq_int(code, 0, "dump gc fixture")
     if ir = file_read(dump) {
       // The MIR (D171; the old back end's IR until W11).
-      c.expect(str_has(ir, ".Box|Nil) = union"), "IR has Box? layout")
+      // Nil is the first member of every union, tag 0 (Stage 29 W1a, A1).
+      c.expect(str_has(ir, "layout %(Nil|") && str_has(ir, ".Box) = union"), "IR has Box? layout, Nil first")
       c.expect(str_has(ir, ".Box stride 0 bits [0x4]"), "T? field type map")
       c.expect(str_has(ir, "extern avant_alloc("), "IR has avant_alloc")
       c.expect(str_has(ir, "= call avant_alloc("), "IR calls avant_alloc")

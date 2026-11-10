@@ -1,0 +1,105 @@
+// Stage 29 W1a (A1): `Nil` takes tag 0 in every union, so an optional
+// field nothing assigned reads as nil whatever its type is called. Before,
+// union members sorted by name alone: `Abc?` and `Int?` (names before
+// `Nil`) read as present, a null `Abc` and a `0`; `Zed?` read as nil.
+
+class Abc {
+  v: Int = 1
+}
+
+class Zed {
+  v: Int = 2
+}
+
+struct Pair {
+  a: Abc?
+  n: Int?
+}
+
+class Wrap {
+  p: Pair
+}
+
+class Holder {
+  a: Abc?
+  z: Zed?
+  n: Int?
+  f: Float64?
+  b: Bool?
+  s: String?
+  xs: Array(Int)?
+}
+
+fn show(name: String, present: Bool) {
+  if present {
+    puts("${name}: present")
+  } else {
+    puts("${name}: nil")
+  }
+}
+
+fn main {
+  h = Holder.new
+  present = false
+  if a = h.a {
+    present = true
+    puts("wrong: a.v = ${a.v}")
+  }
+  show("Abc?", present)
+  present = false
+  if z = h.z {
+    present = true
+  }
+  show("Zed?", present)
+  present = false
+  if n = h.n {
+    present = true
+    puts("wrong: n = ${n}")
+  }
+  show("Int?", present)
+  present = false
+  if f = h.f {
+    present = true
+  }
+  show("Float64?", present)
+  present = false
+  if b = h.b {
+    present = true
+  }
+  show("Bool?", present)
+  present = false
+  if s = h.s {
+    present = true
+  }
+  show("String?", present)
+  present = false
+  if xs = h.xs {
+    present = true
+  }
+  show("Array(Int)?", present)
+  w = Wrap.new
+  present = false
+  if a = w.p.a {
+    present = true
+  }
+  show("Pair.a", present)
+  present = false
+  if n = w.p.n {
+    present = true
+  }
+  show("Pair.n", present)
+  h.a = Abc.new
+  h.n = 7
+  if a = h.a {
+    puts("set: a.v = ${a.v}")
+  }
+  if n = h.n {
+    puts("set: n = ${n}")
+  }
+  h.a = nil
+  present = false
+  if a = h.a {
+    present = true
+  }
+  show("Abc? after nil", present)
+}
