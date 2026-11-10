@@ -252,9 +252,20 @@ AvantHeader *gc_large_next(LargeIter *it) {
       }
       {
         AvantHeader *h = (AvantHeader *)(chunk_base(it->c) + ((size_t)p << PAGE_SHIFT) + 8);
-        it->p = p + (uint32_t)run_pages((size_t)h->size);
         if (start_bit_at(h)) {
+          it->p = p + (uint32_t)run_pages((size_t)h->size);
           return h;
+        }
+        /* A run without its start bit (the spare, or a run the verifier
+         * holds, whose header page may be PROT_NONE: Stage 28 W18C,
+         * O145): its length is the page table's, not its header's. */
+        {
+          uint64_t base = it->c * PAGES_PER_CHUNK;
+          uint32_t q = p + 1;
+          while (q < PAGES_PER_CHUNK && gc_heap.pages[base + q] == p + 1) {
+            q++;
+          }
+          it->p = q;
         }
       }
     }
@@ -614,6 +625,15 @@ static int thread_roots_name(const uint8_t *lo, const uint8_t *hi) {
   return 0;
 }
 
+int gc_rooted(void *payload) {
+  const AvantHeader *h;
+  if (!payload) {
+    return 0;
+  }
+  h = (const AvantHeader *)payload - 1;
+  return thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size);
+}
+
 /* A growth (Stage 28 W18M, O109) replaced the large buffer PAYLOAD and no
  * longer names it: free it now instead of at the next collection, so a
  * doubling buffer's earlier copies neither hold memory nor fill the young
@@ -623,9 +643,13 @@ static int thread_roots_name(const uint8_t *lo, const uint8_t *hi) {
  * across the call, as `b[i] += f()` does, or a runtime C handle), a pin,
  * another thread (a shared program), or when it is mature with reference
  * fields (the remembered set and the cards may hold it), the spare, or a
- * collection is running. Returns 1 when freed. Takes the world lock; not
- * a collecting call. Hidden. */
-__attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload) {
+ * collection is running. Returns 1 when freed. Under AVANT_GC_VERIFY=1
+ * the freed run is held and protected at once until the next collection
+ * begins (Stage 28 W18C, O145): a pointer into it faults and is reported
+ * as DROP says (1: a Buf's storage, a pointer from avant_buf_bytes; 2:
+ * another runtime buffer). Takes the world lock; not a collecting call.
+ * Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop) {
   AvantHeader *h;
   int done = 0;
   if (!payload || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {
@@ -641,6 +665,9 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload) {
       gc_verify_rebase = 1;
     }
     gc_release_large(h);
+    if (gc_heap.set.verify) {
+      gc_quarantine_drop_seal(h, drop);
+    }
     gc_heap.ctr.los.drops++;
     gc_heap.ctr.los.drop_bytes += bytes;
     done = 1;

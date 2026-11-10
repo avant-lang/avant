@@ -343,8 +343,23 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
 /* A growth replaced the large buffer PAYLOAD and no longer names it: it is
  * freed now unless a root of this thread names it, it is pinned, mature
  * with reference fields, or the program is shared (avant_gc_los.c; Stage
- * 28 W18M, O109). 1 when freed. Not a collecting call. Hidden. */
-__attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload);
+ * 28 W18M, O109). 1 when freed. Under AVANT_GC_VERIFY=1 the freed run
+ * stays PROT_NONE until the next collection begins, and an access is
+ * reported as DROP names it (1: a Buf's storage, whose C pointer came from
+ * avant_buf_bytes; 2: another runtime buffer; Stage 28 W18C, O145). Not a
+ * collecting call. Hidden. */
+__attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop);
+/* AVANT_GC_VERIFY=1's own pages for a Buf's storage (Stage 28 W18C,
+ * O145; avant_gc_alloc.c): NBYTES of scalar storage on its own page run
+ * (a large Bytes object at any size), so that a growth that replaces it
+ * can protect it whole, or NULL. Only under the verifier in a program
+ * that is not shared, and only for OLD (the Buf's storage now): with MOVE
+ * 0, when OLD is on its own pages (a growth keeps them); with MOVE 1, when
+ * OLD is in a block, not pinned, and no root of this thread names it
+ * (avant_buf_bytes moves it before C sees it). Never collects (no
+ * safepoint, no policy: the due collection waits for the next
+ * allocation); NULL too when the heap limit would need one. Hidden. */
+__attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uint64_t nbytes, int move);
 
 /* Task roots (Stage 28 W16b; C28, R1): a spawned task's capture record
  * is rooted by the task, from avant_spawn until the task's function has

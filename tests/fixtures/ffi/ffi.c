@@ -268,3 +268,30 @@ int32_t rg_bad(const char *s) {
   slots[0] = (void **)&s;
   return s != NULL;
 }
+
+/* ---- O145 (Stage 28 W18C, buf_stale.av): a pointer from avant_buf_bytes
+ * kept across a growth of its Buf names storage the growth replaced.
+ * bs_keep keeps the pointer; bs_read_kept reads through it only under
+ * AVANT_GC_VERIFY=1 (where the verifier promises to catch it: the old
+ * storage is PROT_NONE until the next collection, the read faults, is
+ * reported, and the handler opens the storage and lets the read go on);
+ * elsewhere the read would be undefined, so it is skipped. Either way it
+ * returns 1, so the program prints the same everywhere. */
+#include <stdio.h>
+uint8_t *avant_buf_bytes(void *buf);
+static volatile uint8_t *bs_kept;
+int32_t bs_keep(void *buf) {
+  bs_kept = avant_buf_bytes(buf);
+  return bs_kept ? bs_kept[0] : -1;
+}
+int32_t bs_fresh(void *buf) {
+  uint8_t *p = avant_buf_bytes(buf);
+  return p ? p[0] : -1;
+}
+int32_t bs_read_kept(void) {
+  const char *v = getenv("AVANT_GC_VERIFY");
+  if (bs_kept && v && v[0] == '1') {
+    (void)bs_kept[0];
+  }
+  return 1;
+}

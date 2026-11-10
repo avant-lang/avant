@@ -794,6 +794,35 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   return obj;
 }
 
+/* AVANT_GC_VERIFY=1's own pages for C-visible Buf storage (avant_gc.h;
+ * Stage 28 W18C, O145). Not in a shared program: another thread may hold
+ * the storage there, and a growth never drops it. */
+__attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uint64_t nbytes, int move) {
+  size_t total;
+  void *obj = NULL;
+  uint16_t fl;
+  if (!old || !gc_heap.set.verify || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 ||
+      nbytes > UINT32_MAX || gc_thread.collecting) {
+    return NULL;
+  }
+  fl = avant_header(old)->flags;
+  if (move ? (fl & (AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) != 0 || gc_rooted(old) : (fl & AVANT_FLAG_LARGE) == 0) {
+    return NULL;
+  }
+  total = align_up(sizeof(AvantHeader) + (size_t)nbytes);
+  pthread_mutex_lock(&gc_heap.world);
+  if (!gc_heap.set.heap_max || gc_heap.heap_bytes + total + PAGE_SIZE <= gc_heap.set.heap_max) {
+    obj = gc_los_alloc((size_t)nbytes, AVANT_TYPE_BYTES);
+    avant_g_stats.allocated_bytes += total;
+    if (gc_thread.nogc) {
+      gc_thread.region_bytes += total;
+    }
+    avant_since_gc += total;
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+  return obj;
+}
+
 /* A runtime helper about to allocate a young large object of BYTES that
  * replaces one it allocated before, which is usually dead by now (Stage 28
  * W16a: avant_json_parse's pool, the previous document dropped), asks for

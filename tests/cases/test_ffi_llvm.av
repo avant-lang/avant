@@ -269,6 +269,28 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(gr)
   c.expect(gr[0].code != 0, "root_guard.av: rg_bad stops the program")
   c.expect(str_has(log_text("${dir}/root_guard.r.err"), "avant_gc_root_begin without avant_gc_enter: the innermost frame is a generated function's frame record"), "root_guard.av: the guard's message (after rg_good, with its own frame, returned 1)")
+  // O145 (Stage 28 W18C): a C pointer from avant_buf_bytes kept across a
+  // growth of its Buf faults under AVANT_GC_VERIFY=1 and is reported, for a
+  // small Buf and a large one; plain, the program prints the same and
+  // nothing else.
+  bs: Array(HJob) = []
+  bs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/buf_stale.av", "${dir}/buf_stale", "${dir}/buf_stale.log", flags_of("tests/fixtures/ffi/buf_stale.av", root)))
+  run_waves(bs)
+  c.eq_int(bs[0].code, 0, "buf_stale.av: compiles")
+  bsr: Array(HJob) = []
+  bsr.push(run_job_env(dir, "buf_stale", "buf_stale.plain", ""))
+  bsr.push(run_job_env(dir, "buf_stale", "buf_stale.verify", "AVANT_GC_VERIFY=1"))
+  run_waves(bsr)
+  bs_want = "first 97 read 1 fresh 97 size 110\nfirst 97 read 1 fresh 97 size 39000\n"
+  c.eq_int(bsr[0].code, 0, "buf_stale.av: exit 0")
+  c.eq_str(log_text("${dir}/buf_stale.plain.out"), bs_want, "buf_stale.av: the known stdout")
+  c.eq_str(log_text("${dir}/buf_stale.plain.err"), "", "buf_stale.av: no stderr")
+  c.eq_int(bsr[1].code, 0, "buf_stale.av under AVANT_GC_VERIFY=1: exit 0")
+  c.eq_str(log_text("${dir}/buf_stale.verify.out"), bs_want, "buf_stale.av under AVANT_GC_VERIFY=1: the known stdout")
+  bs_err = log_text("${dir}/buf_stale.verify.err")
+  bs_msg = "in a Buf's storage that a growth replaced after coll="
+  c.eq_int(bs_err.split(bs_msg).size - 1, 2, "buf_stale.av under AVANT_GC_VERIFY=1: both stale reads reported (the small Buf and the large one)")
+  c.expect(str_has(bs_err, "a pointer from avant_buf_bytes kept across a growth of its Buf"), "buf_stale.av under AVANT_GC_VERIFY=1: the report names avant_buf_bytes")
 }
 
 fn test_main(c: Checks) {

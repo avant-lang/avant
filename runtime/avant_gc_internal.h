@@ -942,15 +942,19 @@ typedef struct GcHeap {
   uint64_t v_fallback;
   Block *quarantine;
   uint32_t quarantine_n;
-  /* The freed large runs it holds (header, protected range, state). */
+  /* The freed large runs it holds (header, protected range, state, the
+   * collection that freed it or the last one before a growth dropped it,
+   * and whether a growth dropped it: 1 a Buf's storage, 2 another
+   * runtime buffer; Stage 28 W18C, O145). */
   struct GcHeldRun {
     AvantHeader *h;
     uint8_t *lo;
     uint8_t *hi;
     int state;
+    int drop;
+    uint64_t coll;
   } held_runs[256];
   uint32_t held_runs_n;
-  uint64_t held_runs_coll;
 
   /* avant_gc_collect.c. (collecting, the running collection's flag, is
    * the collecting thread's own since Stage 28 W17b: GcThread.collecting;
@@ -1321,6 +1325,10 @@ int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
 void gc_quarantine_seal(void);
 int gc_quarantine_run(AvantHeader *h);
+void gc_quarantine_drop_seal(AvantHeader *h, int drop);
+/* Whether a root of this thread names an address inside PAYLOAD's object
+ * (avant_gc_los.c; Stage 28 W18C). */
+int gc_rooted(void *payload);
 void gc_large_give_held(AvantHeader *h);
 
 /* avant_gc_collect.c */

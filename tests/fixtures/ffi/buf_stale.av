@@ -1,0 +1,36 @@
+// O145 (Stage 28 W18C): C keeps the pointer avant_buf_bytes gave it while
+// the Buf grows. Under AVANT_GC_VERIFY=1 the storage the growth replaced
+// stays PROT_NONE until the next collection, so C's read through the kept
+// pointer faults and is reported ("a pointer from avant_buf_bytes kept
+// across a growth"); the program goes on and prints the same as without
+// the verifier. Two rounds: a small Buf (its storage moves to its own
+// pages when C first sees it, under the verifier only) and a large one.
+// Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib bs {
+  fun bs_keep(b: Buf): Int
+  fun bs_fresh(b: Buf): Int
+  fun bs_read_kept(): Int
+}
+
+fn fill(b: Buf, n: Int) {
+  i = 0
+  while i < n {
+    b.push_byte(97 + i % 26)
+    i = i + 1
+  }
+}
+
+fn round(start: Int, grow: Int): String {
+  b = buf_new()
+  fill(b, start)
+  first = bs.bs_keep(b)
+  fill(b, grow)
+  read = bs.bs_read_kept()
+  "first ${first} read ${read} fresh ${bs.bs_fresh(b)} size ${b.size}"
+}
+
+fn main {
+  puts(round(10, 100))
+  puts(round(9000, 30000))
+}
