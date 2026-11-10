@@ -50,6 +50,17 @@ void avant_trap_to_i(double x) {
   exit(1);
 }
 
+/* An Avant value passed to or stored as a C scalar type that cannot hold
+ * it (Stage 29 W1b, D64 as amended; D215: the correct value or a trap).
+ * kind is type.av's cs_*: 1 Int8, 2 Int16, 3 UInt8, 4 UInt16, 5 UInt32. */
+void avant_trap_c_range(int64_t value, int32_t kind) {
+  static const char *names[] = {"?", "Int8", "Int16", "UInt8", "UInt16", "UInt32"};
+  static const char *ranges[] = {"?", "-128..127", "-32768..32767", "0..255", "0..65535", "0..4294967295"};
+  int k = kind >= 1 && kind <= 5 ? kind : 0;
+  fprintf(stderr, "avant runtime: %lld out of range for the C type %s (%s)\n", (long long)value, names[k], ranges[k]);
+  exit(1);
+}
+
 int64_t avant_checked_add_i64(int64_t a, int64_t b) {
   int64_t r;
   if (__builtin_add_overflow(a, b, &r)) {

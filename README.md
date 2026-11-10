@@ -915,7 +915,15 @@ fn main {
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
-`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
+Every C scalar type has an exact name at the boundary: `Int8`, `Int16`, `UInt8`, `UInt16`, `UInt32` and `Float32`, beside `Int` (32-bit), `Int64`, `UInt64`, `Float64` and `Bool`. They are written only in a `fun` signature and a C layout's field. In Avant such a value is its everyday type: `Int8`, `Int16`, `UInt8` and `UInt16` are `Int`, `UInt32` is `Int64`, `Float32` is `Float64`. A value from C converts exactly. A value to C keeps its value or traps: `avant runtime: 256 out of range for the C type UInt8 (0..255)`; a `Float64` rounds to the nearest `Float32`. A C callback's parameters and result use the everyday types for now.
+
+```avant
+lib img {
+  fun img_scale(n: UInt32, gain: Float32): UInt8
+}
+```
+
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
 
 ### Layouts and Ptr
 

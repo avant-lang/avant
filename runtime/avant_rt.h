@@ -398,6 +398,7 @@ void avant_trap_div_zero(void);
 void avant_trap_overflow(void);
 void avant_trap_shift(int64_t amount, int32_t kind);
 void avant_trap_to_i(double x);
+void avant_trap_c_range(int64_t value, int32_t kind);
 int64_t avant_checked_add_i64(int64_t a, int64_t b);
 int64_t avant_checked_sub_i64(int64_t a, int64_t b);
 int64_t avant_checked_mul_i64(int64_t a, int64_t b);

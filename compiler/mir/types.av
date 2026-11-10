@@ -166,6 +166,23 @@ pub class MTypes {
     self.prim(mk_addr(), 64, false, "addr")
   }
 
+  // A C scalar's type (Stage 29 W1b): i8, i16, u16 and f32 are interned
+  // on first use (u8 and u32 are fixed ids); kind mk_int, or mk_f64 with
+  // 32 bits for f32.
+  pub fn scalar(kind: Int, bits: Int, signed: Bool, text: String): Int {
+    if i = self.index.get(text) {
+      return i
+    }
+    t = MType.new(kind, text)
+    t.bits = bits
+    t.signed = signed
+    self.add(t)
+  }
+
+  pub fn is_f32(ty: Int): Bool {
+    self.kind(ty) == mk_f64() && self.all[ty].bits == 32
+  }
+
   fn prim(kind: Int, bits: Int, signed: Bool, text: String) {
     t = MType.new(kind, text)
     t.bits = bits
@@ -360,7 +377,7 @@ pub class MTypes {
     if k == mk_bool() {
       return 1
     }
-    if k == mk_int() {
+    if k == mk_int() || k == mk_f64() {
       return self.all[ty].bits / 8
     }
     if k == mk_agg() {
