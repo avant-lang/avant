@@ -128,6 +128,16 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     if e = stmt.expr {
       checker_self.walk_spawn_expr(e, node, seen)
     }
+    return
+  }
+  if k == st_pin() || k == st_release() {
+    // O131 (Stage 29 W1a): a `pin` block's value and body, and `release`'s
+    // place, are walked like any statement's (before, a name used only
+    // there was not captured, and the back end stopped with L0001).
+    if e = stmt.expr {
+      checker_self.walk_spawn_expr(e, node, seen)
+    }
+    checker_self.walk_spawn_stmts(stmt.body, node, seen)
   }
 }
 

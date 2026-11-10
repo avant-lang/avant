@@ -795,6 +795,17 @@ pub class Expander {
         self.collect_introduced(s.body, into)
       } else if k == st_quote() {
         self.collect_introduced(s.body, into)
+      } else if k == st_pin() {
+        // O131 (Stage 29 W1a): the names a `pin` block assigns are the
+        // quote's too.
+        if pe = s.expr {
+          self.collect_introduced_expr(pe, into)
+        }
+        self.collect_introduced(s.body, into)
+      } else if k == st_release() {
+        if re = s.expr {
+          self.collect_introduced_expr(re, into)
+        }
       } else if k == st_expr() {
         if e = s.expr {
           self.collect_introduced_expr(e, into)
@@ -991,6 +1002,16 @@ pub class Expander {
       }
       return out
     }
+    if k == st_pin() {
+      // O131 (Stage 29 W1a): before, a `pin` block kept its names, so a
+      // quote's local inside it captured the paste site's.
+      out = Stmt.new(st_pin(), s.loc)
+      if e = s.expr {
+        out.expr = self.rename_expr(e, map)
+      }
+      out.body = self.rename_stmt_list(s.body, map)
+      return out
+    }
     s
   }
 
@@ -1178,6 +1199,11 @@ pub class Expander {
         n.for_kind = s.for_kind
         n.cond = s.cond
         n.pre = self.expand_stmt_list(s.pre)
+        n.body = self.expand_stmt_list(s.body)
+        out.push(n)
+      } else if k == st_pin() {
+        n = Stmt.new(st_pin(), s.loc)
+        n.expr = s.expr
         n.body = self.expand_stmt_list(s.body)
         out.push(n)
       } else if k == st_expr() {
