@@ -139,6 +139,7 @@ fn expectations: Want {
   w.add("pass_wide", "final", "ok")
   w.add("pass_loops_shared", "final", "ok")
   w.add("changed_after_passes", "final", "V11")
+  w.add("stale_after_passes", "final", "V11")
   w.add("slot_dropped_after_passes", "final", "V11")
   w
 }
@@ -236,7 +237,8 @@ fn test_mir(c: Checks) {
     c.expect(str_has(text, "case v11_wide final V11\n  V11: av.t/f: bb0[5]: _3 (ref str) is live across the collecting call to av.t/use and is not a slot\n  V11: av.t/f: bb0[4]: _3 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[4]: _70 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[3]: _3 (ref str) is live across the collecting call to av.t/mk and is not a slot\n"), "V11 in both words, in local order")
     c.expect(str_has(text, "  V12: av.t/f: bb0[3]: _69 (addr ref str) is live across the collecting call to av.t/churn and is not a slot\n"), "V12 past the first word")
     c.expect(str_has(text, "case v11_loop_wide final V11\n  V11: av.t/f: bb1[1]: _65 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb1[0]: _65 (ref str) is live across the collecting call to av.t/use and is not a slot\n"), "V11 around a back edge past the first word")
-    c.expect(str_has(text, "case changed_after_passes final V11\n  V11: av.t/f: bb0[5]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes: the verifier's own liveness")
+    c.expect(str_has(text, "case changed_after_passes final V11\n  V11: av.t/f: bb0[5]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes, each block's transfer unchanged")
+    c.expect(str_has(text, "case stale_after_passes final V11\n  V11: av.t/f: bb1[0]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes: the verifier's own liveness")
     c.expect(str_has(text, "case slot_dropped_after_passes final V11\n  V11: av.t/f: bb0[2]: _1 (ref str) is live across the collecting call to av.t/churn and is not a slot\n=="), "a slot dropped after the passes")
   } else {
     c.expect(false, "AVANT_COMPILER")

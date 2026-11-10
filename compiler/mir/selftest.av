@@ -822,7 +822,8 @@ fn st_wide(out: Buf) {
   st_mir(out, "pass_loops_shared", b.module)
 
   // Changed after the passes: a use of _2 after churn makes _2 live across
-  // it, and _2 is not a slot (the frame pass's liveness no longer
+  // it, and _2 is not a slot. The use is in the block that defines _2, so
+  // every block's transfer is unchanged (the frame pass's liveness still
   // describes the function).
   b = st_base(false)
   first = b.module.funcs.size
@@ -844,6 +845,33 @@ fn st_wide(out: Buf) {
   use2.collects = true
   st_insert(blk, ix + 1, use2)
   st_case(out, "changed_after_passes", fi, m)
+
+  // The same in a block that does not define _2: bb1's transfer now reads
+  // _2, so the frame pass's liveness no longer describes the function and
+  // the verifier computes its own.
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  l1 = b.local(mt_str(), "")
+  l2 = b.local(mt_str(), "")
+  bb1 = b.block
+  b.call(l1, "av.t/mk", st_none())
+  b.call(l2, "av.t/mk", st_none())
+  b.goto(bb1)
+  b.at(bb1)
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l1)))
+  b.ret
+  m = b.module
+  mir_gc_passes(m)
+  blk = m.funcs[first].blocks[1]
+  ix = st_find_call(blk, "av.t/churn")
+  use2 = MStmt.new(msk_call(), blk.stmts[ix].loc)
+  use2.callee = "av.t/use"
+  use2.args = st_one(b.copy_local(l2))
+  use2.collects = true
+  st_insert(blk, ix + 1, use2)
+  st_case(out, "stale_after_passes", fi, m)
 
   // Changed so that it breaks V11 while its blocks are unchanged: the
   // parameter _1, live across churn, loses its slot (and its root).
