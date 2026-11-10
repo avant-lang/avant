@@ -151,6 +151,8 @@ fn main {
 
 `q` is a separate `Point`. Changing `q.x` does not change `p.x`.
 
+A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
+
 Inside a method, a field name is in scope. `self` is the receiver. An external method is a function with a receiver parameter:
 
 ```avant
@@ -861,7 +863,7 @@ fn main {
 
 `size` is the byte length. Strings are not mutated in place. Concatenation allocates a new string.
 
-`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`.
+`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`. `Buf.new` (or `Buf.new(capacity)`) makes an empty buffer, the same as `buf_new()`.
 
 Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 

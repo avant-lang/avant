@@ -57,6 +57,10 @@ fn test_errors(c: Checks) {
     // returned (before: an Int result silently returned 0; a String or void
     // result broke the MIR verifier; a lambda, spawn or Mutex.with body was
     // checked against the enclosing function's result).
+    // Stage 29 W1a (A5): a builtin's unknown name in field form reads as a
+    // method that does not exist (the field form is a call).
+    expect_err(c, compiler, stamp, "parens-unknown", "fn main {\n  s = \"x\"\n  puts(s.nosuch)\n}\n", "no method nosuch on String")
+    expect_err(c, compiler, stamp, "parens-args", "fn main {\n  s = \"x\"\n  puts(s.split)\n}\n", "split takes one String separator")
     expect_err(c, compiler, stamp, "try-int", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn plain(s: String): Int {\n  n = opt(s)?\n  n + 1\n}\nfn main {\n  puts(plain(\"\"))\n}\n", "postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??")
     expect_err(c, compiler, stamp, "try-string", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn s(x: String): String {\n  n = opt(x)?\n  \"y\"\n}\nfn main {\n  puts(s(\"\"))\n}\n", "but the function returns String; declare the result String?")
     expect_err(c, compiler, stamp, "try-void", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn v(x: String) {\n  n = opt(x)?\n  puts(n)\n}\nfn main {\n  v(\"\")\n}\n", "postfix ? would return nil, but the function returns nothing")

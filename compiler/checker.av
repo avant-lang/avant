@@ -1383,8 +1383,7 @@ pub class Checker {
       expr.method_call = true
       return self.t_int()
     }
-    self.fail(expr.loc, "Float64 has no field ${expr.ident}")
-    self.t_float()
+    self.field_as_call(expr, self.t_float())
   }
 
   pub fn check_int_field(expr: Expr, object: Ty): Ty {
@@ -1408,8 +1407,50 @@ pub class Checker {
       expr.method_call = true
       return self.t_uint64()
     }
+    self.field_as_call(expr, object)
+  }
+
+  // One rule for empty parentheses (Stage 29 W1a, A5): a builtin method
+  // without arguments may be written without `()`. A field form the lists
+  // above do not name becomes the call `recv.name()` and is checked as one
+  // (its receiver is already checked), so `s.strip` is `s.strip()` and an
+  // unknown name reads "no method name on T".
+  pub fn field_as_call(expr: Expr, object: Ty): Ty {
+    if obj = expr.object {
+      expr.kind = ex_call()
+      expr.callee = expr.ident
+      expr.receiver = obj
+      expr.object = nil
+      return self.builtin_method(expr, object)
+    }
     self.fail(expr.loc, "${object.show} has no field ${expr.ident}")
-    object
+    self.t_int()
+  }
+
+  // The method checkers of the builtin receiver types.
+  pub fn builtin_method(expr: Expr, object: Ty): Ty {
+    if object.is_float {
+      return self.check_float_method(expr)
+    }
+    if object.is_integer {
+      return self.check_int_method(expr, object)
+    }
+    if object.is_string {
+      return self.check_string_method(expr)
+    }
+    if object.is_bytes {
+      return self.check_bytes_method(expr)
+    }
+    if object.is_array {
+      return self.check_array_method(expr, object)
+    }
+    if object.is_hash {
+      return self.check_hash_method(expr, object)
+    }
+    if object.is_buf {
+      return self.check_buf_method(expr)
+    }
+    self.check_join(expr, object)
   }
 
   pub fn check_field(expr: Expr): Ty {
@@ -1465,8 +1506,7 @@ pub class Checker {
         if got = self.builtin_ext_call(expr, object) {
           return got
         }
-        self.fail(expr.loc, "String has no field ${expr.ident} (did you mean size?)")
-        return self.t_int()
+        return self.field_as_call(expr, object)
       }
       if object.is_bytes {
         if str_eq(expr.ident, "size") {
@@ -1483,8 +1523,7 @@ pub class Checker {
         if got = self.builtin_ext_call(expr, object) {
           return got
         }
-        self.fail(expr.loc, "Bytes has no field ${expr.ident} (did you mean size?)")
-        return self.t_int()
+        return self.field_as_call(expr, object)
       }
       if object.is_array {
         if str_eq(expr.ident, "size") {
@@ -1565,8 +1604,7 @@ pub class Checker {
           }
           return self.t_int()
         }
-        self.fail(expr.loc, "${object.show} has no field ${expr.ident} (did you mean size?)")
-        return self.t_int()
+        return self.field_as_call(expr, object)
       }
       if object.is_hash {
         if str_eq(expr.ident, "size") {
@@ -1590,8 +1628,7 @@ pub class Checker {
           expr.method_call = true
           return self.t_void()
         }
-        self.fail(expr.loc, "${object.show} has no field ${expr.ident} (did you mean size?)")
-        return self.t_int()
+        return self.field_as_call(expr, object)
       }
       if object.is_buf {
         if str_eq(expr.ident, "size") {
@@ -1612,8 +1649,7 @@ pub class Checker {
         if got = self.builtin_ext_call(expr, object) {
           return got
         }
-        self.fail(expr.loc, "Buf has no field ${expr.ident}")
-        return self.t_int()
+        return self.field_as_call(expr, object)
       }
       if object.is_join {
         if str_eq(expr.ident, "join") {
@@ -1626,8 +1662,7 @@ pub class Checker {
           }
           return self.t_int()
         }
-        self.fail(expr.loc, "JoinHandle has no field ${expr.ident} (did you mean join?)")
-        return self.t_int()
+        return self.field_as_call(expr, object)
       }
       if object.is_agg {
         if field_ty = object.field_named(expr.ident) {
@@ -3193,6 +3228,13 @@ pub class Checker {
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_type_chain(recv)
+    if recv.kind == ex_name() && str_eq(recv.ident, "Buf") && recv.type_args.size == 0 && recv.mod_name.size == 0 {
+      // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
+      // (Stage 29 W1a, A5; before, "unknown type Buf").
+      expr.callee = "buf_new"
+      expr.receiver = nil
+      return self.check_call(expr, has_want, want)
+    }
     if recv.kind == ex_name() {
       if cdef = self.find_class_template(recv.ident, recv.mod_name) {
         if recv.type_args.size > 0 {
@@ -3726,29 +3768,19 @@ pub class Checker {
         return self.check_mutex_with(expr, object)
       }
     }
-    if object.is_float {
-      return self.check_float_method(expr)
+    if str_eq(expr.callee, "size") && expr.args.size == 0 {
+      if b = expr.block {
+      } else if object.is_string || object.is_bytes || object.is_array || object.is_hash || object.is_buf {
+        // `xs.size()` is `xs.size` (A5: one rule for empty parentheses).
+        expr.kind = ex_field()
+        expr.ident = "size"
+        expr.object = recv
+        expr.receiver = nil
+        return self.t_int()
+      }
     }
-    if object.is_integer {
-      return self.check_int_method(expr, object)
-    }
-    if object.is_string {
-      return self.check_string_method(expr)
-    }
-    if object.is_bytes {
-      return self.check_bytes_method(expr)
-    }
-    if object.is_array {
-      return self.check_array_method(expr, object)
-    }
-    if object.is_hash {
-      return self.check_hash_method(expr, object)
-    }
-    if object.is_buf {
-      return self.check_buf_method(expr)
-    }
-    if object.is_join {
-      return self.check_join(expr, object)
+    if object.is_float || object.is_integer || object.is_string || object.is_bytes || object.is_array || object.is_hash || object.is_buf || object.is_join {
+      return self.builtin_method(expr, object)
     }
     expected: Ty? = nil
     if has_want {
