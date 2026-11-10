@@ -259,3 +259,29 @@ char *avant_llvm_version(void) {
   snprintf(buf, sizeof buf, "%u.%u.%u", major, minor, patch);
   return avant_string(buf);
 }
+
+/* The text of a double constant in LLVM IR (Stage 28 W18S, O141): the
+ * shortest decimal `d.ddd…e±XX` that reads back as exactly the same bits
+ * (at most 17 significant digits always do), a form every LLVM from 20 on
+ * parses (LLVM 23 deprecates, and 24 removes, the `0x` + 16 hex digits form
+ * the emitter wrote before); a NaN or an infinity, which have no decimal,
+ * as `bitcast (i64 BITS to double)`. -0.0 keeps its sign ("-0.0e+00"). */
+char *avant_llvm_f64_text(int64_t bits) {
+  char buf[64];
+  double v;
+  int p;
+  memcpy(&v, &bits, sizeof v);
+  if (((uint64_t)bits >> 52 & 0x7ff) == 0x7ff) {
+    snprintf(buf, sizeof buf, "bitcast (i64 %lld to double)", (long long)bits);
+    return avant_string(buf);
+  }
+  for (p = 1; p <= 17; p++) {
+    double back;
+    snprintf(buf, sizeof buf, "%.*e", p, v);
+    back = strtod(buf, NULL);
+    if (memcmp(&back, &v, sizeof v) == 0) {
+      break;
+    }
+  }
+  return avant_string(buf);
+}
