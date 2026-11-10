@@ -875,7 +875,11 @@ pub class Checker {
           if expected.is_void {
             if got.is_void {
             } else {
-              self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
+              if stmt.lead != 0 {
+                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
+              } else {
+                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
+              }
             }
           } else {
             if ty_assignable(got, expected) {
