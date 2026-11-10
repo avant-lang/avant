@@ -1,5 +1,43 @@
 # Avant Language changelog
 
+## 0.38.0 - 2026-11-10
+
+### Changed
+
+* Programs with threads (`spawn`, `.parallel`, `Mutex`, `Channel`, the HTTP server) are safe when a collection runs while other threads use the heap: a collection now stops every other thread at a safe point first.
+* Programs with threads allocate much faster: every thread allocates young objects in its own blocks without a lock, and write barriers take no lock (a two-thread probe went from 7.2 s to 0.5 s). Threads started by C allocate in the young generation too.
+* Faster programs and less memory across LangArena: total time 41.8 → 41.6 s, average memory 27.7 → 26.4 MB. Json::Generate is 3.3 times faster (float formatting), Json::ParseMapping uses 57% less memory, and Distance::NGram is faster (one hash operation for a get followed by a set of the same key, and cheaper stack frames).
+* Floats are formatted exactly without `snprintf` for ordinary values, with byte-identical output.
+* `sqrt`, `fabs`, `floor` and `exp` compile to LLVM intrinsics.
+* The compiler is faster with identical output: about 40% less time to emit IR, about 22% less to build the compiler in `--debug`.
+* A line that starts with `[`, `-` or `+` always begins a new statement. To continue an expression on the next line, end the line before with an operator or an open bracket; a line starting with `.`, `?` or another infix operator still continues the line before. A dangling expression is a compile error that says how to continue a line.
+* `release` is a keyword: a variable or function named `release` must be renamed (a name after a dot is unaffected).
+* `AVANT_GC_VERIFY=1` is much faster: it re-checks at each young collection only what may have changed, with the same reports as a full check.
+* `AVANT_GC_STRESS=1` also stresses programs with threads.
+* C boundary (`--cc` code):
+  - every C call that may block while Avant threads run must be wrapped in `avant_gc_native_begin()`/`avant_gc_native_end()`;
+  - an `avant_gc_defer_enter` region no longer holds off other threads' collection policy, so a region must not wait for another thread;
+  - a pointer from `avant_buf_bytes` is valid only until that `Buf` next grows;
+  - a value Avant stored into a C struct field stays alive until `release`, and stays alive if C changed that field or reused the struct's memory.
+
+### Fixed
+
+* A C thread that calls into Avant and then exits no longer risks hanging the program, and may exit inside a callback without leaking memory.
+* A `spawn`'s captured values and a `.parallel` call's context are no longer kept alive or pinned after use.
+* A class may define an instance method `bump` and still use `T.bump(...)`.
+* `avant fmt` no longer joins `=`, an operator, a comma or a keyword to a following parenthesized expression (`j = (r % n)` stays as written).
+* User C that registers roots without its own `avant_gc_enter` stops with a clear message instead of corrupting memory.
+
+### Added
+
+* `release(h.name)` and `release(h)`: tell Avant that C no longer needs the strings a program stored into a C struct; they become ordinary garbage and the field reads null.
+* `==` and `!=` compare two `Bool` values.
+* `x.exp` for `Float64`, beside `x.exp()` and `exp(x)`.
+* `--cpu=baseline|v2|v3|v4|native`: compiled programs default to x86-64-v2, while `avant run` and tests use the machine's level; a program built for a level the CPU lacks stops at startup naming the flag to rebuild with. The `avant` compiler itself stays plain x86-64.
+* Runtime ABI for `--cc` code: `avant_gc_native_begin`, `avant_gc_native_end`, `avant_gc_frame_enter`, `avant_gc_frame_leave`, `avant_gc_top`.
+* `AVANT_GC_VERIFY=1` reports stale `avant_buf_bytes` pointers, C changes to a field Avant stored into, and a thread that blocks a collection for longer than `AVANT_GC_VERIFY_STALL_MS` (10,000 ms by default).
+* `AVANT_GC_STATS` prints the thread handshakes (`handshakes`, `pause_hs_ns`, `pause_hs_max_ns`), the large-object trims and drops, and under the verifier its mode and memory held.
+
 ## 0.37.0 - 2026-11-09
 
 ### Changed
