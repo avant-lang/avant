@@ -278,7 +278,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(bs)
   c.eq_int(bs[0].code, 0, "buf_stale.av: compiles")
   bsr: Array(HJob) = []
-  bsr.push(run_job_env(dir, "buf_stale", "buf_stale.plain", ""))
+  bsr.push(run_job_env(dir, "buf_stale", "buf_stale.plain", "-u AVANT_GC_VERIFY"))
   bsr.push(run_job_env(dir, "buf_stale", "buf_stale.verify", "AVANT_GC_VERIFY=1"))
   run_waves(bsr)
   bs_want = "first 97 read 1 fresh 97 size 110\nfirst 97 read 1 fresh 97 size 39000\n"
@@ -300,7 +300,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(rr)
   c.eq_int(rr[0].code, 0, "release_reuse.av: compiles")
   rrr: Array(HJob) = []
-  rr_envs = ["", "AVANT_GC_STRESS=1", "AVANT_GC_VERIFY=1"]
+  rr_envs = ["-u AVANT_GC_VERIFY", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1", "AVANT_GC_VERIFY=1"]
   e = 0
   while e < rr_envs.size {
     rrr.push(run_job_env(dir, "release_reuse", "release_reuse.r${e}", rr_envs[e]))
@@ -328,7 +328,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(sj)
   c.eq_int(sj[0].code, 0, "stall.av: compiles")
   sr: Array(HJob) = []
-  st_envs = ["", "AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_GC_VERIFY_STALL_MS=500"]
+  st_envs = ["-u AVANT_GC_VERIFY", "AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_GC_VERIFY_STALL_MS=500"]
   e = 0
   while e < st_envs.size {
     sr.push(run_job_env(dir, "stall", "stall.r${e}", st_envs[e]))
@@ -348,14 +348,17 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   // O120 (Stage 28 W18C): one collection frees 400 large Bufs C still
   // points into; every run is held and protected, so C's reads through
   // the last 100 pointers are reported (past the old cap of 256 runs they
-  // went unchecked), and the statistics line shows the 400 held runs.
+  // went unchecked), and the statistics line shows the 400 held runs. The
+  // nursery is on and large, so one collection frees them all (with the
+  // nursery off, earlier full collections free some, and a run goes back
+  // at the next collection: C's read would be undefined).
   hj: Array(HJob) = []
   hj.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/held_caps.av", "${dir}/held_caps", "${dir}/held_caps.log", flags_of("tests/fixtures/ffi/held_caps.av", root)))
   run_waves(hj)
   c.eq_int(hj[0].code, 0, "held_caps.av: compiles")
   hr: Array(HJob) = []
-  hr.push(run_job_env(dir, "held_caps", "held_caps.plain", ""))
-  hr.push(run_job_env(dir, "held_caps", "held_caps.verify", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=64 AVANT_GC_STATS=1"))
+  hr.push(run_job_env(dir, "held_caps", "held_caps.plain", "-u AVANT_GC_VERIFY"))
+  hr.push(run_job_env(dir, "held_caps", "held_caps.verify", "AVANT_NURSERY=1 AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=64 AVANT_GC_STATS=1"))
   run_waves(hr)
   e = 0
   while e < 2 {
@@ -375,7 +378,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(xj)
   c.eq_int(xj[0].code, 0, "exit_inside.av: compiles")
   xr: Array(HJob) = []
-  x_envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1"]
+  x_envs = ["-u AVANT_GC_VERIFY", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1"]
   e = 0
   while e < x_envs.size {
     xr.push(run_job_env(dir, "exit_inside", "exit_inside.r${e}", x_envs[e]))

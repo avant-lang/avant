@@ -176,7 +176,8 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(bj)
   c.eq_int(bj[0].code, 0, "bump_clash.av: compiles")
   br: Array(HJob) = []
-  br.push(run_job(dir, "bump_clash", "bump_clash.r"))
+  // The nursery on: a bump constructor is nil without it (AVANT_NURSERY=0).
+  br.push(run_job_env(dir, "bump_clash", "bump_clash.r", "AVANT_NURSERY=1"))
   run_waves(br)
   c.eq_int(br[0].code, 0, "bump_clash.av: exit 0")
   c.eq_str(log_text("${dir}/bump_clash.r.out"), "2\n10\n11\n3\n", "bump_clash.av: the method and the constructor each run")
