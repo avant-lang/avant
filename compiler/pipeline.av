@@ -166,6 +166,8 @@ pub class LinkJob {
   flags: Array(String)
   err: String = ""
   codegen: String = ""
+  // --cpu=baseline|v2|v3|v4|native (Stage 28 W18S, O140), "" when absent.
+  cpu: String = ""
 
   fn initialize {
     o: Array(String) = []
@@ -174,6 +176,7 @@ pub class LinkJob {
     self.flags = f
     self.err = ""
     self.codegen = ""
+    self.cpu = ""
   }
 }
 
@@ -745,6 +748,28 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       job.codegen = "release"
       i = i + 1
+    } else if str_eq(arg, "--cpu") || str_starts(arg, "--cpu=") {
+      v = ""
+      if str_eq(arg, "--cpu") {
+        if i + 1 >= args.size {
+          job.err = "--cpu needs a level (baseline, v2, v3, v4, native)"
+          return job
+        }
+        v = args[i + 1]
+        i = i + 2
+      } else {
+        v = str_slice(arg, 6, arg.size)
+        i = i + 1
+      }
+      if !(str_eq(v, "baseline") || str_eq(v, "v2") || str_eq(v, "v3") || str_eq(v, "v4") || str_eq(v, "native")) {
+        job.err = "unknown CPU level ${v} (--cpu=baseline, v2, v3, v4 or native)"
+        return job
+      }
+      if job.cpu.size > 0 && !str_eq(job.cpu, v) {
+        job.err = "choose one --cpu"
+        return job
+      }
+      job.cpu = v
     } else if str_eq(arg, "--lib") {
       if i + 1 >= args.size {
         job.err = "--lib needs a name"

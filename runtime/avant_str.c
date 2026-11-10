@@ -1,5 +1,6 @@
 #include "avant_rt.h"
 #include "avant_gc.h"
+#include "avant_fmt.h"
 
 #include <math.h>
 #include <stdatomic.h>
@@ -284,7 +285,10 @@ char *avant_str_from_u64(uint64_t n) {
 
 char *avant_str_from_float(double n) {
   char buf[64];
-  int k = snprintf(buf, sizeof(buf), "%g", n);
+  int k = avant_fmt_g(buf, n);
+  if (k < 0) {
+    k = snprintf(buf, sizeof(buf), "%g", n);
+  }
   if (k < 0) {
     k = 0;
   }
@@ -306,18 +310,6 @@ char *avant_str_from_byte(int32_t b) {
   avant_pin(p);
   g_byte_str[idx] = p;
   return p;
-}
-
-double avant_exp(double x) {
-  /* Does not allocate. The lock only matters once another thread can
-   * collect while the caller's pointers sit in registers. */
-  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) {
-    return exp(x);
-  }
-  avant_world_lock();
-  double r = exp(x);
-  avant_world_unlock();
-  return r;
 }
 
 char *avant_str_cat_i32(const char *prefix, int32_t n) {
@@ -512,14 +504,18 @@ int32_t avant_str_to_i(const char *s) {
 }
 
 char *avant_str_fmt_float(double v, int32_t prec) {
-  char buf[64];
+  /* 400: the longest %.16f (see avant_buf_push_fmt_f). */
+  char buf[400];
   if (prec < 0) {
     prec = 0;
   }
   if (prec > 16) {
     prec = 16;
   }
-  int k = snprintf(buf, sizeof(buf), "%.*f", prec, v);
+  int k = avant_fmt_fixed(buf, v, prec);
+  if (k < 0) {
+    k = snprintf(buf, sizeof(buf), "%.*f", prec, v);
+  }
   if (k < 0) {
     k = 0;
   }

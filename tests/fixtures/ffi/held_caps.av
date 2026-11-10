@@ -1,0 +1,33 @@
+// O120 (Stage 28 W18C): one collection frees 400 large Bufs whose storage C
+// still points to; C then reads through the last 100 pointers. Under
+// AVANT_GC_VERIFY=1 every freed run stays PROT_NONE until the next collection
+// (the verifier held at most 256 runs and 4,096 blocks until W18C, and reused
+// the rest unchecked: the last 100 reads went unreported), so the reads fault
+// and are reported; verify_held_max in the statistics line shows 400 runs.
+// Built with `--cc tests/fixtures/ffi/ffi.c`.
+lib hc {
+  fun hc_keep(b: Buf, i: Int): Int
+  fun hc_read(from: Int, to: Int): Int
+  fun avant_gc_collect
+}
+
+fn make(i: Int): Int {
+  b = buf_new()
+  j = 0
+  while j < 9000 {
+    b.push_byte(97 + j % 26)
+    j = j + 1
+  }
+  hc.hc_keep(b, i)
+}
+
+fn main {
+  i = 0
+  t = 0
+  while i < 400 {
+    t = t + make(i)
+    i = i + 1
+  }
+  hc.avant_gc_collect()
+  puts("kept ${t} read ${hc.hc_read(300, 400)}")
+}

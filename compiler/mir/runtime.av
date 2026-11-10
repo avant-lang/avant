@@ -149,9 +149,10 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_cov_init", "ref str", "void", n, "")
   t.row("avant_pin", "ref", "void", n, "")
   t.row("avant_unpin", "ref", "void", n, "")
+  t.row("avant_pin_field", "ptr, ref", "void", n, "")
+  t.row("avant_release_range", "ptr, u64", "void", n, "")
   t.row("avant_is_heap", "ref", "i32", n, "")
   t.row("avant_is_young", "ref", "i32", n, "")
-  t.row("avant_exp", "f64", "f64", n, "")
   t.row("avant_bump_alloc", "u64, u32", "ref", n, "alloc")
   t.row("avant_gc_quiet_enter", "", "void", n, "")
   t.row("avant_gc_quiet_leave", "", "void", n, "")
@@ -198,14 +199,18 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("malloc", "u64", "ptr", n, "")
   t.row("calloc", "u64, u64", "ptr", n, "")
   t.row("free", "ptr", "void", n, "")
-  // never: libm, for Float64 abs, floor, sqrt (W5b: libm allocates
-  // nothing; mir.md W5.6).
+  // never: libm, for Float64 abs, floor, sqrt, exp (W5b: libm allocates
+  // nothing; mir.md W5.6; exp since W18F, before it the runtime's
+  // avant_exp, a wrapper of the same call).
   t.row("fabs", "f64", "f64", n, "")
   t.row("floor", "f64", "f64", n, "")
   t.row("sqrt", "f64", "f64", n, "")
+  t.row("exp", "f64", "f64", n, "")
   t.row("avant_gc_enter", "", "void", n, "")
   t.row("avant_gc_leave", "", "void", n, "")
   t.row("avant_gc_root_begin", "u32", "ptr", n, "")
+  t.row("avant_gc_frame_enter", "ptr", "void", n, "")
+  t.row("avant_gc_frame_leave", "ptr", "void", n, "")
   t.row("avant_gc_root", "ptr", "void", n, "")
   t.row("avant_gc_reload", "ptr", "ptr", n, "")
   t.row("__avant_type_maps", "", "void", n, "")
@@ -239,6 +244,10 @@ fn mir_rt_fill(t: MRtTable) {
   // collects: the allocation entry, the slot rows, and the rows the core
   // example and the verifier tests call.
   t.row("avant_alloc", "u64, u32", "ref", c, "alloc")
+  // Stage 28 W17a: the safepoint poll (gc-design.md 4.4) the frame pass
+  // puts at the head of every loop of a frame function in a shared module;
+  // the emitter tests avant_gc_requested and calls it only when set.
+  t.row("avant_gc_poll", "", "void", c, "")
   t.row("avant_array_push_slot", "ref, u64, u32", "addr", c, "slot")
   t.row("avant_array_pop_slot", "ref, u64", "addr", c, "slot")
   t.row("avant_array_push_ptr", "ref, ref, u32", "void", c, "")
@@ -259,6 +268,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_strip", "ref str, i32", "ref str", c, "")
   t.row("avant_buf_new", "i32", "ref", c, "")
   t.row("avant_buf_to_str", "ref", "ref str", c, "")
+  // collects: the hand-off of a dead Buf (W18M, mir/take.av).
+  t.row("avant_buf_take_str", "ref", "ref str", c, "")
   t.row("avant_hash_new", "i32, i32", "ref", c, "")
   // collects: the array, hash, Buf, and string rows W6c first calls
   // (mir.md W6c.6; the old classification, audit 3.2).
@@ -290,6 +301,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_hash_get_or_i32k_i32", "ref, i32, i32", "i32", c, "")
   t.row("avant_hash_inc_str", "ref, ref str, i32", "i32", c, "")
   t.row("avant_hash_inc_i32k", "ref, i32, i32", "i32", c, "")
+  t.row("avant_hash_upsert_i32k", "ref, i32, i32, ptr", "ptr i32", c, "")
+  t.row("avant_hash_upsert_i32", "ref, ref str, i32, ptr", "ptr i32", c, "")
   t.row("avant_hash_keys_str", "ref", "ref", c, "")
   t.row("avant_hash_keys_i32", "ref", "ref", c, "")
   t.row("avant_hash_vals_str", "ref", "ref", c, "")

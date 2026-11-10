@@ -497,17 +497,16 @@ void avant_http_req_respond(void *reqp, int32_t status, const char *head,
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
   /* The head and body pointers name Avant heap objects held only in
-   * C registers here; a collection triggered on another loop thread
-   * must not move them while the response is written. The dispatch
-   * side enters the same defer before materializing the pointers. */
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
+   * C registers here; nothing below is a safepoint (no allocation, no
+   * native wait), so no collection runs on any thread while the response
+   * is written (Stage 28 W17a's handshake; until then a no-GC region kept
+   * another loop thread's collection off, D191, O111). */
   if (!req->keep_alive) {
     conn_header = "close";
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
   write_response(req->sock, status, head, body, conn_header);
-  avant_gc_nogc_end();
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -896,6 +895,35 @@ typedef struct AvantWsEvent {
   size_t reason_len;
 } AvantWsEvent;
 
+/* Rule 3 of gc-design.md section 4.4 (Stage 28 W17a): a thread runs the
+ * uSockets loop native (epoll_wait and the C callbacks touch no heap
+ * object), and each dispatch into Avant returns to running at its entry
+ * (a safepoint while a collection is in progress) and to native when it
+ * returns (enter_avant / leave_avant). g_loop_native is the depth of
+ * loop_run_native on this thread, so a dispatch reached while running
+ * (none today) makes no transition. */
+static __thread int g_loop_native;
+
+static void loop_run_native(struct us_loop_t *loop) {
+  g_loop_native++;
+  avant_gc_native_begin();
+  us_loop_run(loop);
+  avant_gc_native_end();
+  g_loop_native--;
+}
+
+static void enter_avant(void) {
+  if (g_loop_native) {
+    avant_gc_native_end();
+  }
+}
+
+static void leave_avant(void) {
+  if (g_loop_native) {
+    avant_gc_native_begin();
+  }
+}
+
 static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
                               const char *data, size_t len, int32_t code,
                               const char *reason, size_t reason_len) {
@@ -911,7 +939,9 @@ static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
   ev.code = code;
   ev.reason = reason;
   ev.reason_len = reason_len;
+  enter_avant();
   ws->srv->ws_dispatch(ws->srv->state, &ev);
+  leave_avant();
 }
 
 int32_t avant_ws_event_kind(void *evp) {
@@ -962,24 +992,21 @@ static int32_t ws_send_common(void *srvp, int32_t id, int32_t is_text,
   AvantWsConn *ws;
   size_t len;
   int ok;
-  /* RC4 (avant_gc.h): the data pointer names an Avant heap object held
-   * only in a C register while the HTTP loop threads run (a shared
-   * program, D191): hold every thread's collections off while it is
-   * copied or written, as avant_http_req_respond does. Nothing here
-   * allocates. The send and close entries below keep the same region for
-   * the same reason, until W17's handshake stops the other threads. */
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
+  /* The data pointer names an Avant heap object held only in a C
+   * register; nothing here is a safepoint (no allocation, no native wait:
+   * g_ws_mu is a brief plain lock whose holders never stop), so no
+   * collection runs on any thread meanwhile (Stage 28 W17a's handshake;
+   * until then this and the send and close entries below held a no-GC
+   * region, D191). */
   len = avant_str_n(data);
   pthread_mutex_lock(&g_ws_mu);
   ws = srv ? ws_find(srv, id) : ws_find_global(id);
   if (!ws || ws->dead || ws->close_sent) {
     pthread_mutex_unlock(&g_ws_mu);
-    avant_gc_nogc_end();
     return 0;
   }
   ok = ws_send_frame(ws, is_text ? 1 : 2, data, len);
   pthread_mutex_unlock(&g_ws_mu);
-  avant_gc_nogc_end();
   return ok;
 }
 
@@ -1010,7 +1037,6 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
   size_t reason_len;
   size_t payload_len;
   int ok;
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   reason_len = avant_str_n(reason);
   if (reason_len > 123) { reason_len = 123; }
   payload[0] = (unsigned char)(code >> 8);
@@ -1021,7 +1047,6 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
   ws = srv ? ws_find(srv, id) : ws_find_global(id);
   if (!ws || ws->dead || ws->close_sent) {
     pthread_mutex_unlock(&g_ws_mu);
-    avant_gc_nogc_end();
     return 0;
   }
   ws->close_sent = 1;
@@ -1031,7 +1056,6 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
     ws_flush(ws);
   }
   pthread_mutex_unlock(&g_ws_mu);
-  avant_gc_nogc_end();
   return ok;
 }
 
@@ -1063,10 +1087,8 @@ static int32_t ws_send_direct(void *handle, int32_t is_text,
     return ws_send_common(NULL, ws->id, is_text, data);
   }
   if (ws->dead || ws->close_sent) { return 0; }
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   len = avant_str_n(data);
   ok = ws_send_frame(ws, is_text ? 1 : 2, data, len);
-  avant_gc_nogc_end();
   return ok;
 }
 
@@ -1093,7 +1115,6 @@ int32_t avant_ws_close_direct(void *handle, int32_t code,
     return avant_ws_close_conn(NULL, ws->id, code, reason);
   }
   if (ws->dead || ws->close_sent) { return 0; }
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   reason_len = avant_str_n(reason);
   if (reason_len > 123) { reason_len = 123; }
   payload[0] = (unsigned char)(code >> 8);
@@ -1103,7 +1124,6 @@ int32_t avant_ws_close_direct(void *handle, int32_t code,
   ws->shutdown_after_flush = 1;
   ok = ws_send_frame(ws, 8, (const char *)payload, 2 + reason_len);
   ws_flush(ws);
-  avant_gc_nogc_end();
   return ok;
 }
 
@@ -1498,7 +1518,9 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     req.body_len = (size_t)(has_cl ? content_length : 0);
     req.keep_alive = keep_alive;
     req.minor_version = minor_version;
+    enter_avant();
     srv->dispatch(srv->state, &req);
+    leave_avant();
     if (req.upgraded) {
       /* The 101 is written and the connection is a WebSocket now. Any
        * bytes past the handshake are frames already in the buffer. */
@@ -1985,13 +2007,13 @@ int32_t avant_http_port(void *srvp) {
 }
 
 /* Loop threads follow the pool's registration model: register with
- * the collector before the first dispatch, allocate in the
- * non-moving mature space while serving, unregister after the loop
- * has drained (no Avant frame is active then). */
+ * the collector before the first dispatch, allocate young in their own
+ * young blocks while serving (Stage 28 W17b; the mature space before),
+ * unregister after the loop has drained (no Avant frame is active
+ * then). */
 static void *loop_thread_main(void *arg) {
   HttpLoop *hl = (HttpLoop *)arg;
   avant_gc_register_thread();
-  avant_alloc_in_mature(1);
   /* The C callback trampoline batches its roots into the current
    * frame without entering (it forwards to the entering dispatch
    * function), so a loop thread needs a base frame for the whole
@@ -1999,7 +2021,7 @@ static void *loop_thread_main(void *arg) {
    * Its slots name the pinned state and a C request pointer, never a
    * nursery object, so scanning it between dispatches is safe. */
   avant_gc_enter();
-  us_loop_run(hl->loop);
+  loop_run_native(hl->loop);
   avant_gc_leave();
   avant_gc_unregister_thread();
   return NULL;
@@ -2030,13 +2052,15 @@ int32_t avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
       srv->loops[i].spawned = 0;
     }
   }
-  us_loop_run(srv->loops[0].loop);
+  loop_run_native(srv->loops[0].loop);
+  avant_gc_native_begin();
   for (i = 1; i < srv->nloops; i++) {
     if (srv->loops[i].spawned) {
       pthread_join(srv->loops[i].thread, NULL);
       srv->loops[i].spawned = 0;
     }
   }
+  avant_gc_native_end();
   srv->running = 0;
   srv_teardown(srv);
   avant_unpin(state);
@@ -2507,9 +2531,11 @@ void *avant_ws_client_connect(const char *host, int32_t port,
     deadline.tv_sec++;
     deadline.tv_nsec -= 1000000000L;
   }
-  pthread_mutex_lock(&c->mu);
+  /* The handshake wait is native (Stage 28 W17a, rule 2); host, target
+   * and the key are not read after it. */
+  avant_gc_lock(&c->mu);
   while (!c->handshake_done && !c->failed && !c->closed) {
-    if (pthread_cond_timedwait(&c->cond, &c->mu, &deadline) != 0) {
+    if (avant_gc_cond_timedwait(&c->cond, &c->mu, &deadline) != 0) {
       break;
     }
   }
@@ -2521,7 +2547,9 @@ void *avant_ws_client_connect(const char *host, int32_t port,
       c->closed = 1;
       c->want_close = 1;
       us_wakeup_loop(c->loop);
+      avant_gc_native_begin();
       pthread_join(c->thread, NULL);
+      avant_gc_native_end();
       ws_client_free(c);
       set_status(failed ? 1 : 2);
       return NULL;
@@ -2603,10 +2631,12 @@ char *avant_ws_client_recv(void *handle, int32_t timeout_ms) {
     set_status(1);
     return avant_str_empty();
   }
-  pthread_mutex_lock(&c->mu);
+  /* The receive wait is native (Stage 28 W17a, rule 2): the message is
+   * C memory. */
+  avant_gc_lock(&c->mu);
   if (timeout_ms < 0) {
     while (!c->in_head && !c->closed) {
-      pthread_cond_wait(&c->cond, &c->mu);
+      avant_gc_cond_wait(&c->cond, &c->mu);
     }
   } else {
     struct timespec deadline;
@@ -2618,7 +2648,7 @@ char *avant_ws_client_recv(void *handle, int32_t timeout_ms) {
       deadline.tv_nsec -= 1000000000L;
     }
     while (!c->in_head && !c->closed) {
-      if (pthread_cond_timedwait(&c->cond, &c->mu, &deadline) != 0) {
+      if (avant_gc_cond_timedwait(&c->cond, &c->mu, &deadline) != 0) {
         break;
       }
     }
@@ -2650,9 +2680,7 @@ int32_t avant_ws_client_send_text(void *handle, const char *data) {
   WsClient *c = (WsClient *)handle;
   int ok;
   if (!c || !ws_client_alive(handle)) { return 0; }
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   ok = ws_client_send_frame(c, 1, data, avant_str_n(data));
-  avant_gc_nogc_end();
   return ok;
 }
 
@@ -2660,9 +2688,7 @@ int32_t avant_ws_client_send_bytes(void *handle, const char *data) {
   WsClient *c = (WsClient *)handle;
   int ok;
   if (!c || !ws_client_alive(handle)) { return 0; }
-  avant_gc_nogc_begin(); /* RC4: see ws_send_common */
   ok = ws_client_send_frame(c, 2, data, avant_str_n(data));
-  avant_gc_nogc_end();
   return ok;
 }
 
@@ -2703,7 +2729,9 @@ int32_t avant_ws_client_close(void *handle) {
   c->closed = 1;
   c->want_close = 1;
   us_wakeup_loop(c->loop);
+  avant_gc_native_begin();
   pthread_join(c->thread, NULL);
+  avant_gc_native_end();
   ws_client_free(c);
   return 1;
 }
@@ -2842,7 +2870,14 @@ char *avant_http_fetch(const char *host, int32_t port, const char *request,
   timeout_s = timeout_ms <= 0 ? 10 : (timeout_ms + 999) / 1000;
   us_socket_timeout(0, sock, (unsigned int)timeout_s);
   st->request = request;
+  /* The loop runs native (rule 3); its callbacks read the request, which
+   * is pinned for the loop (a collection on another thread may run
+   * meanwhile and must not move or free it). */
+  avant_pin((void *)request);
+  avant_gc_native_begin();
   us_loop_run(loop);
+  avant_gc_native_end();
+  avant_unpin((void *)request);
   us_socket_context_free(0, ctx);
   us_loop_free(loop);
   if (st->failed == 1) {

@@ -301,6 +301,20 @@ fn st_rejecting(out: Buf) {
   b.ret
   st_case(out, "v13_barrier_on_other", lo, b.module)
 
+  // V13 third form, recorded (Stage 28 W16c): avant_pin_field of another
+  // operand than the one stored.
+  b = st_base(false)
+  cell0 = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
+  st_fn(b, "f", st_tys(b.ptr_to(b.agg(cell0)), mt_str()), vd, mfk_unset())
+  la0 = b.local(mt_ptr(), "")
+  b.assign(b.pl(la0), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
+  lv0 = b.local(mt_str(), "")
+  b.assign(b.pl(lv0), b.rv_use(b.copy_local(2)))
+  b.call(-1, "avant_pin_field", st_two(b.copy_local(la0), b.copy_local(lv0)))
+  b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
+  b.ret
+  st_case(out, "v13_pin_field_on_other", lo, b.module)
+
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
   st_fn(b, "f", st_tys(box_ref, mt_str()), vd, mfk_unset())
@@ -473,7 +487,8 @@ fn st_accepting(out: Buf) {
   st_both(out, "ok_addr_in_slot", st_ok_module("ok_addr_in_slot"))
 
   // V13 forms 2, 3, 4: barrier_at on an addr holder, a pin before a store
-  // into C memory, a by-value push through a slot row's address.
+  // into C memory (avant_pin, or avant_pin_field with the field's address,
+  // Stage 28 W16c), a by-value push through a slot row's address.
   b = st_base(false)
   rec = b.types.layout_named("main.Rec")
   st_fn(b, "f", st_tys(b.addr_of(b.agg(rec)), mt_str()), vd, mfk_unset())
@@ -483,6 +498,12 @@ fn st_accepting(out: Buf) {
   cell = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
   st_fn(b, "g", st_tys(b.ptr_to(b.agg(cell)), mt_str()), vd, mfk_unset())
   b.call(-1, "avant_pin", st_one(b.copy_local(2)))
+  b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
+  b.ret
+  st_fn(b, "k", st_tys(b.ptr_to(b.agg(cell)), mt_str()), vd, mfk_unset())
+  la = b.local(mt_ptr(), "")
+  b.assign(b.pl(la), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
+  b.call(-1, "avant_pin_field", st_two(b.copy_local(la), b.copy_local(2)))
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret
   st_fn(b, "h", st_tys(mt_ref(), b.agg(rec)), vd, mfk_unset())
@@ -593,6 +614,324 @@ fn st_passes(out: Buf) {
   }
 }
 
+// ---- the dataflow rules over many locals and the frame pass's liveness
+// kept for the verifier (Stage 28 W18P): functions with more than 64
+// locals (V9, V11, V12 across a word boundary of the liveness sets), the
+// GC passes on such a function and on loops of a shared module (polls),
+// and a function changed after the passes (its liveness no longer
+// describes it: the verifier computes its own) or changed so that it
+// breaks V11 while its liveness still describes it.
+
+// n locals of type ty, numbered from the first free one.
+fn st_fill(b: MirBuilder, n: Int, ty: Int) {
+  i = 0
+  while i < n {
+    dummy = b.local(ty, "")
+    i = i + 1
+  }
+}
+
+// blk.stmts with st inserted before index at.
+fn st_insert(blk: MBlock, at: Int, st: MStmt) {
+  xs: Array(MStmt) = []
+  i = 0
+  while i < blk.stmts.size {
+    if i == at {
+      xs.push(st)
+    }
+    xs.push(blk.stmts[i])
+    i = i + 1
+  }
+  if at >= blk.stmts.size {
+    xs.push(st)
+  }
+  blk.stmts = xs
+}
+
+// The index of the first call to callee in blk, or -1.
+fn st_find_call(blk: MBlock, callee: String): Int {
+  i = 0
+  while i < blk.stmts.size {
+    if blk.stmts[i].kind == msk_call() && str_eq(blk.stmts[i].callee, callee) {
+      return i
+    }
+    i = i + 1
+  }
+  return -1
+}
+
+fn st_mir(out: Buf, name: String, m: MModule) {
+  out.push_str("== mir ${name}\n")
+  out.push_str(mir_print(m, false))
+  out.push_str("== end\n")
+}
+
+fn st_wide(out: Buf) {
+  lo = mst_lowered()
+  fi = mst_final()
+  vd = mt_void()
+  un = mfk_unset()
+
+  // V9 past the first word: _71 is written on one side of a diamond only;
+  // _2.._70 are written first.
+  b = st_base(false)
+  st_fn(b, "f", st_tys(mt_bool(), -1), mt_i32(), un)
+  st_fill(b, 70, mt_i32())
+  k = 2
+  while k <= 70 {
+    b.assign(b.pl(k), b.rv_use(b.c_i32(k)))
+    k = k + 1
+  }
+  bb1 = b.block
+  bb2 = b.block
+  bb3 = b.block
+  b.branch(b.copy_local(1), bb1, bb2)
+  b.at(bb1)
+  b.assign(b.pl(71), b.rv_use(b.c_i32(1)))
+  b.goto(bb3)
+  b.at(bb2)
+  b.goto(bb3)
+  b.at(bb3)
+  b.assign(b.pl(0), b.rv_bin(mop_add(), b.copy_local(71), b.copy_local(66)))
+  b.ret
+  st_case(out, "v9_wide", lo, b.module)
+
+  // V11 in both words: _3 and _70 are live across churn, neither a slot.
+  b = st_base(false)
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+  st_fill(b, 2, mt_i32())
+  l3 = b.local(mt_str(), "")
+  st_fill(b, 66, mt_i32())
+  l70 = b.local(mt_str(), "")
+  b.gc_enter
+  b.gc_roots(st_ints(-1, -1))
+  b.call(l3, "av.t/mk", st_none())
+  b.call(l70, "av.t/mk", st_none())
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l70)))
+  b.call(-1, "av.t/use", st_one(b.copy_local(l3)))
+  b.gc_leave
+  b.ret
+  st_case(out, "v11_wide", fi, b.module)
+
+  // V12 past the first word: the derived address _69 is live across churn.
+  b = st_base(false)
+  box_ref = b.ref_to(st_box(b))
+  st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
+  b.set_slot(1)
+  st_fill(b, 67, mt_i32())
+  l69 = b.local(b.addr_of(mt_str()), "")
+  b.gc_enter
+  b.gc_roots(st_ints(1, -1))
+  b.assign(b.pl(l69), b.rv_addr(b.field(b.deref(b.pl(1)), 0)))
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy(b.deref(b.pl(l69)))))
+  b.gc_leave
+  b.ret
+  st_case(out, "v12_wide", fi, b.module)
+
+  // V11 around a back edge, in the second word.
+  b = st_base(false)
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+  st_fill(b, 64, mt_i32())
+  l65 = b.local(mt_str(), "")
+  bb1 = b.block
+  b.gc_enter
+  b.gc_roots(st_ints(-1, -1))
+  b.call(l65, "av.t/mk", st_none())
+  b.goto(bb1)
+  b.at(bb1)
+  b.call(-1, "av.t/use", st_one(b.copy_local(l65)))
+  b.call(-1, "av.t/churn", st_none())
+  b.goto(bb1)
+  st_case(out, "v11_loop_wide", fi, b.module)
+
+  // The passes over many locals: _67 is live across churn (a slot), _68
+  // is dead after its definition, _1.._66 hold no references.
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  st_fill(b, 66, mt_i32())
+  l67 = b.local(mt_str(), "")
+  l68 = b.local(mt_str(), "")
+  b.call(l67, "av.t/mk", st_none())
+  b.call(l68, "av.t/mk", st_none())
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l67)))
+  b.ret
+  st_pass_report(out, "pass_wide", b.module, first)
+  st_mir(out, "pass_wide", b.module)
+
+  // Loops of a shared module (the polls, gc.av rule 3): in f the
+  // innermost loop calls churn with _1 live, so _1 is a slot and the
+  // loop head polls; in g the loop calls nothing that collects and _1,
+  // live on entry to it, is not a slot, so it does not poll; in h an
+  // outer loop around g's loop polls (and makes _1 a slot) while the
+  // inner one does not.
+  b = st_base(true)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(mt_bool(), -1), vd, un)
+  l2 = b.local(mt_str(), "")
+  bb1 = b.block
+  bb2 = b.block
+  bb3 = b.block
+  b.call(l2, "av.t/mk", st_none())
+  b.goto(bb1)
+  b.at(bb1)
+  b.branch(b.copy_local(1), bb2, bb3)
+  b.at(bb2)
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l2)))
+  b.goto(bb1)
+  b.at(bb3)
+  b.ret
+  st_fn(b, "g", st_tys(mt_bool(), -1), vd, un)
+  l2 = b.local(mt_str(), "")
+  bb1 = b.block
+  bb2 = b.block
+  bb3 = b.block
+  b.call(l2, "av.t/mk", st_none())
+  b.goto(bb1)
+  b.at(bb1)
+  b.branch(b.copy_local(1), bb2, bb3)
+  b.at(bb2)
+  b.call(-1, "avant_str_size", st_one(b.copy_local(l2)))
+  b.goto(bb1)
+  b.at(bb3)
+  b.call(-1, "av.t/use", st_one(b.copy_local(l2)))
+  b.ret
+  st_fn(b, "h", st_tys(mt_bool(), -1), vd, un)
+  l2 = b.local(mt_str(), "")
+  bb1 = b.block
+  bb2 = b.block
+  bb3 = b.block
+  bb4 = b.block
+  b.call(l2, "av.t/mk", st_none())
+  b.goto(bb1)
+  b.at(bb1)
+  b.branch(b.copy_local(1), bb2, bb4)
+  b.at(bb2)
+  b.branch(b.copy_local(1), bb3, bb1)
+  b.at(bb3)
+  b.call(-1, "avant_str_size", st_one(b.copy_local(l2)))
+  b.goto(bb2)
+  b.at(bb4)
+  b.call(-1, "av.t/use", st_one(b.copy_local(l2)))
+  b.ret
+  st_pass_report(out, "pass_loops_shared", b.module, first)
+  st_mir(out, "pass_loops_shared", b.module)
+
+  // Changed after the passes: a use of _2 after churn makes _2 live across
+  // it, and _2 is not a slot. The use is in the block that defines _2, so
+  // every block's transfer is unchanged (the frame pass's liveness still
+  // describes the function).
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  l1 = b.local(mt_str(), "")
+  l2 = b.local(mt_str(), "")
+  b.call(l1, "av.t/mk", st_none())
+  b.call(l2, "av.t/mk", st_none())
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l1)))
+  b.ret
+  m = b.module
+  mir_gc_passes(m)
+  blk = m.funcs[first].blocks[0]
+  ix = st_find_call(blk, "av.t/churn")
+  use2 = MStmt.new(msk_call(), blk.stmts[ix].loc)
+  use2.callee = "av.t/use"
+  use2.args = st_one(b.copy_local(l2))
+  use2.collects = true
+  st_insert(blk, ix + 1, use2)
+  st_case(out, "changed_after_passes", fi, m)
+
+  // The same in a block that does not define _2: bb1's transfer now reads
+  // _2, so the frame pass's liveness no longer describes the function and
+  // the verifier computes its own.
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  l1 = b.local(mt_str(), "")
+  l2 = b.local(mt_str(), "")
+  bb1 = b.block
+  b.call(l1, "av.t/mk", st_none())
+  b.call(l2, "av.t/mk", st_none())
+  b.goto(bb1)
+  b.at(bb1)
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l1)))
+  b.ret
+  m = b.module
+  mir_gc_passes(m)
+  blk = m.funcs[first].blocks[1]
+  ix = st_find_call(blk, "av.t/churn")
+  use2 = MStmt.new(msk_call(), blk.stmts[ix].loc)
+  use2.callee = "av.t/use"
+  use2.args = st_one(b.copy_local(l2))
+  use2.collects = true
+  st_insert(blk, ix + 1, use2)
+  st_case(out, "stale_after_passes", fi, m)
+
+  // Changed so that it breaks V11 while its blocks are unchanged: the
+  // parameter _1, live across churn, loses its slot (and its root).
+  b = st_base(false)
+  first = b.module.funcs.size
+  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(1)))
+  b.ret
+  m = b.module
+  mir_gc_passes(m)
+  f = m.funcs[first]
+  f.locals[1].slot = false
+  blk = f.blocks[0]
+  i = 0
+  while i < blk.stmts.size {
+    if blk.stmts[i].kind == msk_gc_roots() {
+      none: Array(Int) = []
+      blk.stmts[i].locals = none
+    }
+    i = i + 1
+  }
+  st_case(out, "slot_dropped_after_passes", fi, m)
+
+  // V3: a statement names a local that does not exist (the dataflow rules
+  // are skipped).
+  b = st_base(false)
+  st_fn(b, "f", st_tys(-1, -1), vd, un)
+  b.call(-1, "av.t/use", st_one(b.copy_local(9)))
+  b.ret
+  st_case(out, "v3_missing_local", lo, b.module)
+
+  // V14 past the first word: the fresh fill through _70 is not closed
+  // before the return (lowered), and at final _70 is not a slot.
+  b = st_base(false)
+  box_ref = b.ref_to(st_box(b))
+  st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
+  st_fill(b, 68, mt_i32())
+  l70 = b.local(box_ref, "")
+  b.call(l70, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
+  b.ret
+  st_case(out, "v14_wide", lo, b.module)
+
+  b = st_base(false)
+  box_ref = b.ref_to(st_box(b))
+  st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_frame())
+  b.set_slot(1)
+  st_fill(b, 68, mt_i32())
+  l70 = b.local(box_ref, "")
+  b.gc_enter
+  b.gc_roots(st_ints(1, -1))
+  b.call(l70, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
+  b.barrier(l70)
+  b.gc_leave
+  b.ret
+  st_case(out, "v14_wide_final", fi, b.module)
+}
+
 pub fn mir_selftest {
   m = mir_example()
   out = buf_new()
@@ -603,6 +942,7 @@ pub fn mir_selftest {
   st_rejecting(out)
   st_accepting(out)
   st_passes(out)
+  st_wide(out)
   // One verifier error in the compiler's diagnostic form.
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))

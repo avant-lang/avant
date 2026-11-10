@@ -113,6 +113,14 @@ pub class Checker {
   fn_index: Hash(String, Int)
   methods: Array(FuncSig)
   method_index: Hash(String, Int)
+  // Every index of functions (from 1) and of methods by name, ascending
+  // (Stage 28 W18P): the scans that look for a name visit only these.
+  // (a name's list is lists[k], k its entry in the Hash).
+  fns_named: Hash(String, Int)
+  methods_named: Hash(String, Int)
+  fn_lists: Array(Array(Int))
+  method_lists: Array(Array(Int))
+  none_named: Array(Int)
   cfuns: Array(CFunSig)
   cfun_index: Hash(String, Int)
   lib_names: Hash(String, Int)
@@ -180,6 +188,14 @@ pub class Checker {
     self.methods = ms
     mi = Hash(String, Int).new
     self.method_index = mi
+    self.fns_named = Hash(String, Int).new
+    self.methods_named = Hash(String, Int).new
+    fl: Array(Array(Int)) = []
+    self.fn_lists = fl
+    ml: Array(Array(Int)) = []
+    self.method_lists = ml
+    nn: Array(Int) = []
+    self.none_named = nn
     cf: Array(CFunSig) = []
     self.cfuns = cf
     cfi = Hash(String, Int).new
@@ -682,6 +698,21 @@ pub class Checker {
       }
       return
     }
+    if k == st_release() {
+      if e = stmt.expr {
+        et = self.check_expr(e)
+        if !self.has_err {
+          self.check_release(e, et)
+        }
+      }
+      if at_tail {
+        if expected.is_void {
+        } else {
+          self.fail(stmt.loc, "missing return value")
+        }
+      }
+      return
+    }
     if k == st_pin() {
       if e = stmt.expr {
         et = self.check_expr(e)
@@ -844,7 +875,11 @@ pub class Checker {
           if expected.is_void {
             if got.is_void {
             } else {
-              self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
+              if stmt.lead != 0 {
+                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
+              } else {
+                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
+              }
             }
           } else {
             if ty_assignable(got, expected) {
@@ -1308,6 +1343,10 @@ pub class Checker {
       expr.method_call = true
       return self.t_float()
     }
+    if str_eq(expr.ident, "exp") {
+      expr.method_call = true
+      return self.t_float()
+    }
     if str_eq(expr.ident, "to_i") {
       expr.method_call = true
       return self.t_int()
@@ -1701,6 +1740,61 @@ pub class Checker {
       }
     }
     nil
+  }
+
+  // `release(place)` (Stage 28 W16c, D266): a field of a C layout that
+  // holds a reference (a `String`, or a nested layout with one), or a
+  // `Ptr` to a C layout with such a field (the whole struct).
+  pub fn check_release(e: Expr, et: Ty) {
+    in_c = false
+    name = ""
+    if e.kind == ex_field() && !e.method_call {
+      if obj = e.object {
+        if ot = obj.ty {
+          in_c = ot.is_ptr || ot.is_clayout
+        }
+      }
+      name = e.ident
+    }
+    if in_c {
+      if et.is_string {
+        return
+      }
+      if et.is_clayout {
+        if !clayout_holds_ref(et) {
+          self.fail(e.loc, "nothing to release: ${name} is ${et.show}, which has no String field")
+        }
+        return
+      }
+      hint = ""
+      if et.is_ptr {
+        if inner = et.inner {
+          if inner.is_clayout && clayout_holds_ref(inner) {
+            hint = " (to release the struct it points to, name the pointer first: p = x.${name}, then release(p))"
+          }
+        }
+      }
+      self.fail(e.loc, "nothing to release: ${name} is ${et.show}${hint}")
+      return
+    }
+    if et.is_ptr {
+      if inner = et.inner {
+        if inner.is_clayout {
+          if !clayout_holds_ref(inner) {
+            self.fail(e.loc, "nothing to release: ${inner.show} has no String field")
+          }
+          return
+        }
+      }
+      self.fail(e.loc, "release needs the fields of a C layout; Avant knows no fields of ${et.show}")
+      return
+    }
+    heap = et.is_string || et.is_bytes || et.is_buf || et.is_array || et.is_hash || et.is_class || et.is_fn || et.is_join
+    if heap {
+      self.fail(e.loc, "release takes the C field the value was stored in; for a scoped pin use pin(x) { }")
+      return
+    }
+    self.fail(e.loc, "release takes a C-layout field or a Ptr to a C layout, got ${et.show}")
   }
 
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
@@ -2561,6 +2655,18 @@ pub class Checker {
           }
           if op == tk_not_eq() {
             self.fail(expr.loc, "cannot compare fn values")
+            return self.t_bool()
+          }
+        }
+        if left.is_bool {
+          if right.is_bool {
+            if op == tk_eq_eq() {
+              return self.t_bool()
+            }
+            if op == tk_not_eq() {
+              return self.t_bool()
+            }
+            self.fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
             return self.t_bool()
           }
         }
@@ -3534,7 +3640,7 @@ pub class Checker {
         return ty
       }
       if ty.is_class {
-        expr.resolved = ty_owned_symbol(ty, "bump")
+        expr.resolved = ty_bump_symbol(ty)
         return ty_nilable(ty)
       }
       return ty
@@ -4011,4 +4117,23 @@ pub class Checker {
     self.pop_scope
     self.t_void()
   }
+}
+
+// Whether a C layout has a field that holds a reference (a `String`,
+// directly or in a nested layout): what `release` gives back (D266).
+pub fn clayout_holds_ref(t: Ty): Bool {
+  i = 0
+  while i < t.fields.size {
+    ft = t.fields[i].ty
+    if ft.is_string {
+      return true
+    }
+    if ft.is_clayout {
+      if clayout_holds_ref(ft) {
+        return true
+      }
+    }
+    i = i + 1
+  }
+  false
 }

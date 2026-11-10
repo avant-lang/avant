@@ -116,9 +116,10 @@ static uint64_t scan_cards(void *p, int from_mature);
  * location inside it. (Until Stage 28 W16b also a word of the collecting
  * thread's C stack at a collection runtime C entered, W15a2's pin scan;
  * runtime C roots what it holds since W16a, RC1, and gc-design.md
- * section 4.3's proof retired the scan.) Nothing moves in a
- * shared program (no other thread is stopped, D191) or with the nursery
- * off (no young collection). Copying is optional: a block refused at the
+ * section 4.3's proof retired the scan.) Nothing moves with the nursery
+ * off (no young collection); in a shared program the copy runs as in an
+ * unshared one since Stage 28 W17a (the handshake stops the other
+ * threads; before, nothing moved there, D191). Copying is optional: a block refused at the
  * heap limit leaves the remaining survivors in place. */
 #endif
 
@@ -293,10 +294,6 @@ static void trace_all(void) {
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   {
-    int locked = rem_locked();
-    if (locked) {
-      pthread_mutex_lock(&gc_heap.rem_mu);
-    }
     gc_heap.ctr.rem.scans++;
     gc_heap.ctr.rem.entries += gc_heap.rem_n;
     if (gc_heap.rem_n > gc_heap.ctr.rem.peak) {
@@ -331,9 +328,6 @@ static void trace_all(void) {
       gc_heap.ctr.rem.fields += field_count(obj);
       scan_fields(obj, 0);
     }
-    if (locked) {
-      pthread_mutex_unlock(&gc_heap.rem_mu);
-    }
   }
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     trace_ref(NULL, p->payload, 0);
@@ -356,10 +350,6 @@ static void trace_all(void) {
  * an object is still young after an S young collection). */
 static void rem_empty(void) {
   uint32_t i;
-  int locked = rem_locked();
-  if (locked) {
-    pthread_mutex_lock(&gc_heap.rem_mu);
-  }
   for (i = 0; i < gc_heap.rem_n; i++) {
     void *obj = gc_heap.remset[i];
     if (gc_is_heap_payload(obj, NULL, NULL)) {
@@ -368,9 +358,6 @@ static void rem_empty(void) {
   }
   gc_heap.ctr.rem.cleared += gc_heap.rem_n;
   gc_heap.rem_n = 0;
-  if (locked) {
-    pthread_mutex_unlock(&gc_heap.rem_mu);
-  }
 }
 
 /* The holders the trace found naming a young large object (the keep
@@ -562,6 +549,8 @@ static void splus_fix(void) {
     }
   }
   gc_each_runtime_root(splus_fix_slot);
+  /* Task roots move with their records since Stage 28 W17a. */
+  EACH_TASK_ROOT(slot, splus_fix_slot(slot));
   for (i = 0; i < gc_heap.noted_n; i++) {
     void *p = gc_heap.noted[i];
     void *to = gc_forwarded(p);
@@ -815,7 +804,11 @@ void gc_sticky_collect(int tenure) {
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
 #if GC_STICKY_COPY
-  gc_heap.splus_on = atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0;
+  /* In shared programs too since Stage 28 W17a: every other thread is
+   * stopped at a safepoint (its references in root slots) or native (it
+   * touches no unpinned heap object), so the copy may move what any
+   * thread's roots name (until W17a nothing moved there, D191). */
+  gc_heap.splus_on = 1;
   gc_heap.splus_copied0 = avant_g_stats.copied_bytes;
   gc_heap.splus_age = YOUNG_AGE >= 2 && !tenure;
   gc_heap.aged_now = 0;
@@ -938,9 +931,8 @@ void gc_sticky_collect(int tenure) {
     gc_heap.splus_sdst = NULL;
   }
 #endif
-  gc_clear_alloc_cur(SPACE_NURSERY);
-  gc_heap.overflow = NULL;
-  gc_heap.cur_whole = 0;
+  /* (Every thread's young cursor and overflow block were dropped when the
+   * collection began, gc_alloc_stop_all.) */
   /* The empty young blocks go back to their chunks' free lists (O89):
    * before, they stayed in mature space until a full collection, so a
    * program that never runs one never returned them. The mature list is
@@ -996,8 +988,6 @@ void gc_sticky_full_begin(void) {
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
   gc_heap.verify_holes_n = 0;
-  gc_heap.overflow = NULL;
-  gc_heap.cur_whole = 0;
 }
 
 void gc_sticky_full_end(void) {

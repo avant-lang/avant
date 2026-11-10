@@ -100,6 +100,7 @@ fn expectations: Want {
   w.add("v12_live_addr", "final", "V12")
   w.add("v13_no_barrier", "lowered", "V13")
   w.add("v13_barrier_on_other", "lowered", "V13")
+  w.add("v13_pin_field_on_other", "lowered", "V13")
   w.add("v14_holder_not_alloc", "lowered", "V14")
   w.add("v14_no_closing_barrier", "lowered", "V14")
   w.add("v14_redefined_before_barrier", "lowered", "V14")
@@ -128,6 +129,21 @@ fn expectations: Want {
   w.add("pass_addr", "final", "ok")
   w.add("pass_leaves", "final", "ok")
   w.add("pass_leaves_shared", "final", "ok")
+  // Many locals (more than one word of a liveness set), the passes over
+  // them and over a shared module's loops, and functions changed after
+  // the passes (Stage 28 W18P).
+  w.add("v9_wide", "lowered", "V9")
+  w.add("v11_wide", "final", "V11")
+  w.add("v12_wide", "final", "V12")
+  w.add("v11_loop_wide", "final", "V11")
+  w.add("pass_wide", "final", "ok")
+  w.add("pass_loops_shared", "final", "ok")
+  w.add("changed_after_passes", "final", "V11")
+  w.add("stale_after_passes", "final", "V11")
+  w.add("slot_dropped_after_passes", "final", "V11")
+  w.add("v3_missing_local", "lowered", "V3")
+  w.add("v14_wide", "lowered", "V14")
+  w.add("v14_wide_final", "final", "V14")
   w
 }
 
@@ -145,6 +161,10 @@ fn pass_lines: Array(String) {
   xs.push("pass pass_leaves_shared av.t/a frame slots")
   xs.push("pass pass_leaves_shared av.t/c frame slots")
   xs.push("pass pass_leaves_shared av.t/d frame slots")
+  xs.push("pass pass_wide av.t/f frame slots _67")
+  xs.push("pass pass_loops_shared av.t/f frame slots _2")
+  xs.push("pass pass_loops_shared av.t/g frame slots")
+  xs.push("pass pass_loops_shared av.t/h frame slots _2")
   xs
 }
 
@@ -214,6 +234,18 @@ fn test_mir(c: Checks) {
     r = section(text, "== render")
     c.expect(str_has(r, "error[V13]: av.t/f: bb0[0]: reference store through (*_1).0 without its barrier"), "a verifier error names its rule, function, block, and statement")
     c.expect(str_has(r, "--> t.av:3:5"), "a verifier error carries the MIR's source location")
+    // Every error of the cases past one word, and of the functions changed
+    // after the passes (W18P), as text.
+    c.expect(str_has(text, "  V9: av.t/f: bb3[0]: _71 is read before it is written on some path\n"), "V9 past the first word")
+    c.expect(str_has(text, "case v11_wide final V11\n  V11: av.t/f: bb0[5]: _3 (ref str) is live across the collecting call to av.t/use and is not a slot\n  V11: av.t/f: bb0[4]: _3 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[4]: _70 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[3]: _3 (ref str) is live across the collecting call to av.t/mk and is not a slot\n"), "V11 in both words, in local order")
+    c.expect(str_has(text, "  V12: av.t/f: bb0[3]: _69 (addr ref str) is live across the collecting call to av.t/churn and is not a slot\n"), "V12 past the first word")
+    c.expect(str_has(text, "case v11_loop_wide final V11\n  V11: av.t/f: bb1[1]: _65 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb1[0]: _65 (ref str) is live across the collecting call to av.t/use and is not a slot\n"), "V11 around a back edge past the first word")
+    c.expect(str_has(text, "case changed_after_passes final V11\n  V11: av.t/f: bb0[5]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes, each block's transfer unchanged")
+    c.expect(str_has(text, "case stale_after_passes final V11\n  V11: av.t/f: bb1[0]: _2 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a function changed after the passes: the verifier's own liveness")
+    c.expect(str_has(text, "case slot_dropped_after_passes final V11\n  V11: av.t/f: bb0[2]: _1 (ref str) is live across the collecting call to av.t/churn and is not a slot\ncase "), "a slot dropped after the passes")
+    c.expect(str_has(text, "case v3_missing_local lowered V3\n  V3: av.t/f: bb0[0]: _9 is not a local\ncase "), "V3: a local that does not exist")
+    c.expect(str_has(text, "case v14_wide lowered V14\n  V14: av.t/f: bb0[term]: return before the closing barrier of the fresh fill through _70\ncase "), "V14 past the first word: the fill not closed")
+    c.expect(str_has(text, "case v14_wide_final final V14\n  V14: av.t/f: bb0[3]: fresh store through _70, which is not a slot\n=="), "V14 past the first word at final: the holder not a slot")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

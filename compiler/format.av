@@ -210,6 +210,9 @@ pub fn token_text(t: Token): String {
   if k == tk_pin() {
     return "pin"
   }
+  if k == tk_release() {
+    return "release"
+  }
   if k == tk_pipe() {
     return "|"
   }
@@ -504,6 +507,73 @@ pub fn fn_receiver_space(tokens: Array(Token), i: Int, prev: Int): Bool {
   false
 }
 
+pub fn prev_significant(tokens: Array(Token), i: Int): Int {
+  j = i - 1
+  while j >= 0 {
+    k = tokens[j].kind
+    if k == tk_newline() {
+    } else if k == tk_comment() {
+    } else if k == tk_file_line() {
+    } else {
+      return j
+    }
+    j = j - 1
+  }
+  0 - 1
+}
+
+// The token before the `(` at i is the name of an operator method:
+// `fn +(` or `fn (v: Vec2) +(`.
+pub fn names_operator_method(tokens: Array(Token), i: Int): Bool {
+  op = prev_significant(tokens, i)
+  if op < 0 {
+    return false
+  }
+  j = prev_significant(tokens, op)
+  if j < 0 {
+    return false
+  }
+  if tokens[j].kind == tk_fn() {
+    return true
+  }
+  if tokens[j].kind != tk_r_paren() {
+    return false
+  }
+  depth = 0
+  while j >= 0 {
+    k = tokens[j].kind
+    if k == tk_r_paren() {
+      depth = depth + 1
+    } else if k == tk_l_paren() {
+      depth = depth - 1
+      if depth == 0 {
+        before = prev_significant(tokens, j)
+        if before < 0 {
+          return false
+        }
+        return tokens[before].kind == tk_fn()
+      }
+    }
+    j = j - 1
+  }
+  false
+}
+
+// A `(` hugs what came before it only when that opens a call or a type
+// application (a value, `fn`, `pin`, `release`, or the operator name of
+// `fn +(`); after an operator, `=`, a compound assignment, `,` or a
+// keyword it is a grouping and keeps its space (Stage 28 W18F: `j =
+// (r % n)` had become `j =(r % n)`).
+pub fn paren_hugs(tokens: Array(Token), i: Int, prev: Int): Bool {
+  if value_end(prev) {
+    return true
+  }
+  if prev == tk_fn() || prev == tk_pin() || prev == tk_release() {
+    return true
+  }
+  names_operator_method(tokens, i)
+}
+
 pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight: Bool, lambda_state: Int, separate: Bool): Bool {
   if separate {
     return false
@@ -512,6 +582,10 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
     if fn_receiver_space(tokens, i, prev) {
       return false
     }
+    if after_tight {
+      return true
+    }
+    return paren_hugs(tokens, i, prev)
   }
   if after_tight {
     return true

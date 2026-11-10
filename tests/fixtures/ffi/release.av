@@ -1,0 +1,183 @@
+// `release` (Stage 28 W16c, D266; Q9): a store of a String into a
+// C-layout field pins it and records the pin under the field's address;
+// an overwrite unpins nothing, so a pointer C kept (rel_keep) and a struct
+// C copied (rel_copy) stay valid, as Q9's fixture showed. `release(h.name)`
+// gives back every pin Avant's stores into the field took (the current
+// value and the overwritten ones) and nulls the field if it still holds
+// Avant's value; `release(h)` does it for every field of the struct.
+// Releasing twice, or a field Avant never stored, does nothing; a value C
+// stored itself is left in place; a pin of a `pin(x) { }` block or of
+// another field is not taken. A loop that stores a fresh 256 KiB string
+// per round and releases it after C is done runs under
+// AVANT_HEAP_MAX_MB=32 (without the release it keeps every string: 100
+// MB). Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib rel {
+  struct Pos {
+    tag: String
+    n: Int
+  }
+  struct Holder {
+    name: String
+    id: Int
+    link: Ptr(Void)
+    at: Pos
+    note: String
+  }
+  fun rel_new: Ptr(Holder)
+  fun rel_free(h: Ptr(Holder))
+  fun rel_keep(h: Ptr(Holder))
+  fun rel_kept_is(want: String): Int
+  fun rel_forget
+  fun rel_copy(dst: Ptr(Holder), src: Ptr(Holder))
+  fun rel_clear(h: Ptr(Holder))
+  fun rel_name_is(h: Ptr(Holder), want: String): Int
+  fun rel_note_is(h: Ptr(Holder), want: String): Int
+  fun rel_name_null(h: Ptr(Holder)): Int
+  fun rel_note_null(h: Ptr(Holder)): Int
+  fun rel_tag_null(h: Ptr(Holder)): Int
+  fun rel_set_c_name(h: Ptr(Holder))
+  fun rel_name_is_c(h: Ptr(Holder)): Int
+  fun rel_name_len(h: Ptr(Holder)): Int
+  fun avant_pin_count: Int
+  fun avant_gc_collect
+}
+
+fn churn(n: Int): Int {
+  t = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "churn ${i} and more text to fill the young generation"
+    keep.push(s)
+    if keep.size > 300 {
+      keep = []
+    }
+    t = t + s.size
+    i = i + 1
+  }
+  t
+}
+
+// Q9's two cases: C keeps the first value's pointer, C copies the struct
+// holding the second; Avant overwrites the field each time. Then, with C
+// done (it forgets its pointer and clears its copy), the release.
+fn q9_cases(base: Int) {
+  a = rel.rel_new()
+  b = rel.rel_new()
+  k = 7
+  a.name = "retained-by-C-${k * 6}"
+  rel.rel_keep(a)
+  a.name = "copied-in-C-${k * 7}"
+  rel.rel_copy(b, a)
+  a.name = "overwritten-${k}"
+  puts("q9 pins: ${rel.avant_pin_count() - base}")
+  t = churn(100000)
+  rel.avant_gc_collect()
+  t = t + churn(100000)
+  rel.avant_gc_collect()
+  puts("churn ${t > 0}")
+  puts("C's kept pointer reads the original: ${rel.rel_kept_is("retained-by-C-42")}")
+  puts("the struct C copied reads the original: ${rel.rel_name_is(b, "copied-in-C-49")}")
+  puts("the field reads the last value: ${rel.rel_name_is(a, "overwritten-7")}")
+  rel.rel_forget()
+  rel.rel_clear(b)
+  release(a.name)
+  puts("after release, pins: ${rel.avant_pin_count() - base}")
+  puts("the released field reads null from C: ${rel.rel_name_null(a)}")
+  release(a.name)
+  puts("released twice, pins: ${rel.avant_pin_count() - base}")
+  t = churn(100000)
+  rel.avant_gc_collect()
+  puts("churn after release ${t > 0}")
+  rel.rel_free(a)
+  rel.rel_free(b)
+}
+
+// A field never stored, a value C stored itself, and C overwriting a value
+// Avant stored: the release never touches C's value, and gives back nothing
+// when C overwrote Avant's (C may still hold it; W18C, O134): one pin stays.
+fn c_values(base: Int) {
+  c = rel.rel_new()
+  release(c.note)
+  puts("never stored: pins ${rel.avant_pin_count() - base}, note null ${rel.rel_note_null(c)}")
+  rel.rel_set_c_name(c)
+  release(c.name)
+  release(c)
+  puts("C's own value kept: ${rel.rel_name_is_c(c)}")
+  k = 3
+  c.name = "avant-${k}"
+  rel.rel_set_c_name(c)
+  puts("Avant's value overwritten by C, pins: ${rel.avant_pin_count() - base}")
+  release(c.name)
+  puts("released: pins ${rel.avant_pin_count() - base}, C's value kept ${rel.rel_name_is_c(c)}")
+  rel.rel_free(c)
+}
+
+// The whole struct, a nested layout, and pins that are not the field's.
+fn struct_release(base: Int) {
+  e = rel.rel_new()
+  k = 5
+  e.name = "name-${k}"
+  e.at.tag = "tag-${k}"
+  e.at.n = k
+  e.note = "note-${k}"
+  e.id = 9
+  puts("struct pins: ${rel.avant_pin_count() - base}")
+  release(e.at)
+  puts("nested released: pins ${rel.avant_pin_count() - base}, tag null ${rel.rel_tag_null(e)}, n ${e.at.n}")
+  release(e)
+  puts("struct released: pins ${rel.avant_pin_count() - base}, name null ${rel.rel_name_null(e)}, note null ${rel.rel_note_null(e)}, id ${e.id}")
+  s = "shared-${k}"
+  pin(s) {
+    e.name = s
+    release(e.name)
+    puts("inside pin(s): pins ${rel.avant_pin_count() - base}")
+  }
+  puts("after pin(s): pins ${rel.avant_pin_count() - base}")
+  e.name = s
+  e.note = s
+  release(e.name)
+  puts("stored twice, one released: pins ${rel.avant_pin_count() - base}, note still reads it ${rel.rel_note_is(e, "shared-5")}")
+  release(e.note)
+  puts("both released: pins ${rel.avant_pin_count() - base}")
+  e.name = "literal"
+  release(e.name)
+  puts("a literal released: pins ${rel.avant_pin_count() - base}, name null ${rel.rel_name_null(e)}")
+  rel.rel_free(e)
+}
+
+// 400 rounds of a fresh 256 KiB string stored into the field, kept by C
+// for the round, then released: bounded memory, no pin left.
+fn bounded(base: Int) {
+  big = "abcdefgh"
+  while big.size < 262144 {
+    big = big + big
+  }
+  h = rel.rel_new()
+  ok = 0
+  i = 0
+  while i < 400 {
+    s = "${i}:" + big
+    h.name = s
+    rel.rel_keep(h)
+    if rel.rel_name_len(h) == s.size {
+      ok = ok + 1
+    }
+    rel.rel_forget()
+    release(h.name)
+    i = i + 1
+  }
+  puts("bounded rounds ok: ${ok}, pins ${rel.avant_pin_count() - base}")
+  rel.rel_free(h)
+}
+
+fn main {
+  base = rel.avant_pin_count()
+  q9_cases(base)
+  c_values(base)
+  // c_values leaves the pin of the value C overwrote (O134).
+  base = rel.avant_pin_count()
+  struct_release(base)
+  bounded(base)
+}

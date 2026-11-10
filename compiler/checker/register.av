@@ -652,6 +652,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   checker_self.alloc_ol(fnn)
   sig = FuncSig.new(fnn.name, fnn, params, ret)
   checker_self.functions.push(sig)
+  checker_self.note_fn_named
   if taken = checker_self.fn_index.get(fnn.name) {
   } else {
     checker_self.fn_index[fnn.name] = checker_self.functions.size - 1
@@ -859,6 +860,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   sig = FuncSig.new(fnn.name, fnn, params, ret)
   sig.owner = owner_key
   checker_self.methods.push(sig)
+  checker_self.note_method_named
   key = "${owner_key}__${fnn.name}"
   if taken = checker_self.method_index.get(key) {
   } else {
@@ -1120,4 +1122,47 @@ pub fn (checker_self: Checker) check_field_defaults {
   }
   checker_self.self_ty = saved
   checker_self.self_name = saved_name
+}
+
+// The name index of the function or method just pushed (Stage 28 W18P):
+// a signature's name never changes after its push, and the lists stay
+// ascending, so a scan over a name's list visits exactly the signatures
+// of that name a scan over the whole array would, in the same order.
+pub fn (checker_self: Checker) note_fn_named {
+  i = checker_self.functions.size - 1
+  name = checker_self.functions[i].name
+  if k = checker_self.fns_named.get(name) {
+    checker_self.fn_lists[k].push(i)
+  } else {
+    xs: Array(Int) = [i]
+    checker_self.fns_named[name] = checker_self.fn_lists.size
+    checker_self.fn_lists.push(xs)
+  }
+}
+
+pub fn (checker_self: Checker) note_method_named {
+  i = checker_self.methods.size - 1
+  name = checker_self.methods[i].name
+  if k = checker_self.methods_named.get(name) {
+    checker_self.method_lists[k].push(i)
+  } else {
+    xs: Array(Int) = [i]
+    checker_self.methods_named[name] = checker_self.method_lists.size
+    checker_self.method_lists.push(xs)
+  }
+}
+
+// The indices of the functions (from 1) or methods named name, ascending.
+pub fn (checker_self: Checker) fn_indices_named(name: String): Array(Int) {
+  if k = checker_self.fns_named.get(name) {
+    return checker_self.fn_lists[k]
+  }
+  checker_self.none_named
+}
+
+pub fn (checker_self: Checker) method_indices_named(name: String): Array(Int) {
+  if k = checker_self.methods_named.get(name) {
+    return checker_self.method_lists[k]
+  }
+  checker_self.none_named
 }

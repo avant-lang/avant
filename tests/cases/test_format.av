@@ -56,6 +56,18 @@ fn test_format(c: Checks) {
         c.expect(str_has(got, "for w in words {"), "for each spacing")
         c.expect(str_has(got, "pick = maybe ?? fallback"), "coalesce spacing")
         c.expect(str_has(got, "pin(s) {"), "pin spacing")
+        c.expect(str_has(got, "  release(h.name)\n"), "release spacing")
+        c.expect(str_has(got, "  j = (r % n) * 7919 % n\n"), "= keeps its space before a group")
+        c.expect(str_has(got, "  j += (r % n)\n"), "+= keeps its space before a group")
+        c.expect(str_has(got, "  j -= (r)\n"), "-= keeps its space before a group")
+        c.expect(str_has(got, "  j *= (r)\n"), "*= keeps its space before a group")
+        c.expect(str_has(got, "  k = a + (b * 2)\n"), "an operator keeps its space before a group")
+        c.expect(str_has(got, "  eq = a == (b)\n"), "== keeps its space before a group")
+        c.expect(str_has(got, "  and1 = ok && (a < b)\n"), "&& keeps its space before a group")
+        c.expect(str_has(got, "  pair = foo(a, (b))\n"), "a comma keeps its space before a group")
+        c.expect(str_has(got, "  pairs = [(a), (b)]\n"), "a group in an array literal")
+        c.expect(str_has(got, "  if (a > b) { j = (a) }\n"), "a keyword keeps its space before a group")
+        c.expect(str_has(got, "  neg = -(a)\n"), "prefix minus stays tight")
         c.expect(str_has(got, "raw = r\"C:\\tmp\\x\""), "raw string stays")
         c.expect(str_has(got, "xs[i] = f([])"), "index stays tight")
         c.expect(str_has(got, "} else {"), "same-line else gains spaces")
@@ -78,6 +90,19 @@ fn test_format(c: Checks) {
     } else {
       c.expect(false, "read check log")
     }
+
+    // D280: the formatter keeps every line break, so the token that starts
+    // each line, and with it where a statement begins, never changes.
+    d280_src = "${scratch()}/format-${stamp}-d280.av"
+    d280_log = "${scratch()}/format-${stamp}-d280.log"
+    dummy_d280 = file_write(d280_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
+    d280_code = run_format(compiler, "format", d280_src, d280_log, empty_flags)
+    c.eq_int(d280_code, 0, "format D280 lines exits 0")
+    c.eq_str(read_or_empty(d280_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n  1,\n  -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line (D280)")
+    nl_log = "${scratch()}/format-${stamp}-newlines.log"
+    nl_code = run_format(compiler, "format", "${root}/tests/fixtures/syntax/newlines.av", nl_log, check_flags)
+    c.eq_int(nl_code, 0, "newlines fixture format exits 0")
+    c.expect(str_has(read_or_empty(nl_log), "canonical"), "newlines fixture is canonical")
 
     canon_log = "${scratch()}/format-${stamp}-canon.log"
     canon_code = run_format(compiler, "f", want_path, canon_log, check_flags)

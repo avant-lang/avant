@@ -330,6 +330,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   checker_self.program.functions.push(inst)
   nsig = FuncSig.new(inst.name, inst, params, ret)
   checker_self.functions.push(nsig)
+  checker_self.note_fn_named
   checker_self.instances.push(inst)
   checker_self.pending.push(inst)
   nsig
@@ -402,6 +403,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   nsig = FuncSig.new(inst.name, inst, params, ret)
   nsig.owner = inst.owner
   checker_self.methods.push(nsig)
+  checker_self.note_method_named
   checker_self.instances.push(inst)
   checker_self.pending.push(inst)
   nsig
@@ -410,9 +412,10 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
 pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
-  i = 1
-  while i < checker_self.functions.size {
-    sig = checker_self.functions[i]
+  named = checker_self.fn_indices_named(name)
+  x = 0
+  while x < named.size {
+    sig = checker_self.functions[named[x]]
     if str_eq(sig.name, name) {
       is_inst = false
       j = 0
@@ -449,7 +452,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
         }
       }
     }
-    i = i + 1
+    x = x + 1
   }
   if cands.size == 0 {
     if saw_generic {
@@ -458,9 +461,9 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
     }
     only: FuncSig? = nil
     n = 0
-    i = 1
-    while i < checker_self.functions.size {
-      sig = checker_self.functions[i]
+    x = 0
+    while x < named.size {
+      sig = checker_self.functions[named[x]]
       if str_eq(sig.name, name) {
         if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
           if checker_self.sig_is_instance(sig) {
@@ -475,7 +478,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
           }
         }
       }
-      i = i + 1
+      x = x + 1
     }
     if n == 1 {
       if one = only {
@@ -507,11 +510,12 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
 pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String, owner_mod: String): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
-  i = 0
-  while i < checker_self.methods.size {
-    sig = checker_self.methods[i]
+  named = checker_self.method_indices_named(name)
+  x = 0
+  while x < named.size {
+    sig = checker_self.methods[named[x]]
     if sig.node.type_method {
-      i = i + 1
+      x = x + 1
       continue
     }
     if str_eq(sig.owner, owner) {
@@ -563,13 +567,13 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       }
       }
     }
-    i = i + 1
+    x = x + 1
   }
   if act = checker_self.resolver.get_named(owner) {
     if act.origin.size > 0 {
-      i = 0
-      while i < checker_self.methods.size {
-        sig = checker_self.methods[i]
+      x = 0
+      while x < named.size {
+        sig = checker_self.methods[named[x]]
         if str_eq(sig.owner, owner) {
         } else {
           if sig.node.generic {
@@ -598,7 +602,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
             }
           }
         }
-        i = i + 1
+        x = x + 1
       }
     }
   }
@@ -753,15 +757,16 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
     i = i + 1
   }
   visible = false
-  i = 1
-  while i < checker_self.functions.size {
-    sig = checker_self.functions[i]
+  named = checker_self.fn_indices_named(expr.callee)
+  x = 0
+  while x < named.size {
+    sig = checker_self.functions[named[x]]
     if str_eq(sig.name, expr.callee) {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         visible = true
       }
     }
-    i = i + 1
+    x = x + 1
   }
   if visible {
   } else {

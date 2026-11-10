@@ -234,6 +234,10 @@ pub class Parser {
   pub fn expect(kind: Int): Token {
     tok = self.current
     if tok.kind != kind {
+      if (tok.kind == tk_minus() || tok.kind == tk_plus() || tok.kind == tk_l_bracket()) && self.at_line_start {
+        self.fail(tok.loc, "expected ${kind}, found ${tok.kind}: a line starting with `+`, `-` or `[` never continues the line before; to continue it, end that line with the operator or an open bracket (`total = a +` then `b`)")
+        return tok
+      }
       self.fail(tok.loc, "expected ${kind}, found ${tok.kind}")
       return tok
     }
@@ -314,11 +318,18 @@ pub class Parser {
     }
   }
 
+  // D280 (Stage 28 W18F): a line whose first token is `[`, `-` or `+`
+  // begins a new statement; it never continues the previous line. Any
+  // other infix operator, `.` or `?` that starts a line cannot start a
+  // statement, so it still continues the line before.
   pub fn skip_newlines_if_continuing {
     if self.current.kind != tk_newline() {
       return
     }
     kind = self.look_ahead_non_nl.kind
+    if kind == tk_minus() || kind == tk_plus() {
+      return
+    }
     if self.infix_prec(kind) >= 0 {
       self.skip_newlines
     }
@@ -329,8 +340,101 @@ pub class Parser {
       return
     }
     kind = self.look_ahead_non_nl.kind
-    if kind == tk_dot() || kind == tk_l_bracket() || kind == tk_question() {
+    if kind == tk_dot() || kind == tk_question() {
       self.skip_newlines
+    }
+  }
+
+  // The current token is the first of its line.
+  pub fn at_line_start: Bool {
+    if self.index == 0 {
+      return true
+    }
+    self.tokens[self.index - 1].kind == tk_newline()
+  }
+
+  // One statement of a block, remembering a line-leading `-` or `[` for
+  // lead_check (D280).
+  pub fn parse_lead_stmt: Stmt {
+    lead = 0
+    k = self.current.kind
+    if k == tk_minus() || k == tk_l_bracket() {
+      if self.at_line_start {
+        lead = k
+      }
+    }
+    s = self.parse_stmt
+    s.lead = lead
+    s
+  }
+
+  // An expression statement whose value nobody can use: no call, no
+  // assignment; a field may be a method call in field form, so it is not
+  // inert.
+  pub fn inert_expr(e: Expr): Bool {
+    k = e.kind
+    if k == ex_int() || k == ex_float() || k == ex_string() || k == ex_bool() || k == ex_nil() || k == ex_name() {
+      return true
+    }
+    if k == ex_unary() {
+      if inner = e.inner {
+        return self.inert_expr(inner)
+      }
+      return true
+    }
+    if k == ex_binary() {
+      if l = e.left {
+        if r = e.right {
+          return self.inert_expr(l) && self.inert_expr(r)
+        }
+      }
+      return false
+    }
+    if k == ex_array() {
+      return true
+    }
+    false
+  }
+
+  pub fn lead_text(lead: Int): String {
+    if lead == tk_minus() {
+      return "-"
+    }
+    "["
+  }
+
+  // D280's dangling expressions: a statement that starts a line with `-`
+  // or `[` and whose value nobody uses (it is not the block's last
+  // statement), or that follows a value statement nobody uses (the old
+  // reading joined the two lines into one expression).
+  pub fn lead_check(stmts: Array(Stmt)) {
+    i = 0
+    while i < stmts.size {
+      s = stmts[i]
+      if s.lead != 0 {
+        t = self.lead_text(s.lead)
+        hint = "to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)"
+        if i > 0 {
+          p = stmts[i - 1]
+          if p.kind == st_expr() {
+            if pe = p.expr {
+              if self.inert_expr(pe) {
+                self.fail(s.loc, "this line starts with `${t}`, so it begins a new statement and leaves the line before as a value nobody uses; ${hint}")
+              }
+            }
+          }
+        }
+        if i < stmts.size - 1 {
+          if s.kind == st_expr() {
+            if se = s.expr {
+              if se.kind == ex_unary() || se.kind == ex_array() {
+                self.fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
+              }
+            }
+          }
+        }
+      }
+      i = i + 1
     }
   }
 
@@ -1288,7 +1392,7 @@ pub class Parser {
       }
       mark = self.err_count
       start_idx = self.index
-      stmts.push(self.parse_stmt)
+      stmts.push(self.parse_lead_stmt)
       if self.new_err_since(mark) {
         self.sync_stmt
         if self.index == start_idx {
@@ -1301,6 +1405,7 @@ pub class Parser {
       }
       self.skip_newlines
     }
+    self.lead_check(stmts)
     dummy2 = self.expect(tk_r_brace())
     stmts
   }
@@ -1319,6 +1424,9 @@ pub class Parser {
     }
     if k == tk_pin() {
       return self.parse_pin
+    }
+    if k == tk_release() {
+      return self.parse_release
     }
     if k == tk_for() {
       return self.parse_for
@@ -1488,6 +1596,21 @@ pub class Parser {
     s = Stmt.new(st_pin(), loc)
     s.expr = value
     s.body = body
+    s
+  }
+
+  // `release(place)` (Stage 28 W16c, D266): a statement, the shape of
+  // `pin(x)` without a block.
+  pub fn parse_release: Stmt {
+    loc = self.expect(tk_release()).loc
+    self.skip_newlines
+    dummy = self.expect(tk_l_paren())
+    self.skip_newlines
+    value = self.parse_expr
+    self.skip_newlines
+    dummy2 = self.expect(tk_r_paren())
+    s = Stmt.new(st_release(), loc)
+    s.expr = value
     s
   }
 
@@ -2016,6 +2139,14 @@ pub class Parser {
         return e
       }
     }
+    if k == tk_release() {
+      self.fail(tok.loc, "release is a statement, not a value")
+      return self.dummy_expr(tok.loc)
+    }
+    if k == tk_plus() && self.at_line_start {
+      self.fail(tok.loc, "a line cannot start with `+`: a line starting with `+`, `-` or `[` begins a new statement; to continue the line before, end it with the operator (`total = a +` then `b`)")
+      return Expr.new(ex_int(), tok.loc)
+    }
     self.fail(tok.loc, "expected expression, found ${k}")
     self.dummy_expr(tok.loc)
   }
@@ -2422,7 +2553,7 @@ pub class Parser {
       }
       mark = self.err_count
       start_idx = self.index
-      block.body.push(self.parse_stmt)
+      block.body.push(self.parse_lead_stmt)
       if self.new_err_since(mark) {
         self.sync_stmt
         if self.index == start_idx {
@@ -2435,6 +2566,7 @@ pub class Parser {
       }
       self.skip_newlines
     }
+    self.lead_check(block.body)
     dummy3 = self.expect(tk_r_brace())
     block
   }

@@ -65,7 +65,8 @@
  * Pinned objects never move. Objects that escape to C should be pinned.
  *
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
- * allocation and collection take a world lock.
+ * collection and the slow path of allocation take a world lock; each
+ * thread bumps in its own young hole without it (Stage 28 W17b).
  */
 
 #define ALIGN 8
@@ -297,11 +298,22 @@ typedef struct LargeIter {
  * alike; the type is avant_gc.h's AvantGcFrame. */
 typedef AvantGcFrame Frame;
 
+/* A registered thread's collector state as other threads see it (Stage
+ * 28 W17a, gc-design.md section 4.4). state is GC_RUNNING, GC_NATIVE or
+ * GC_SAFEPOINT (avant_gc_safepoint.c); owner is the thread's GcThread,
+ * whose runtime-held slots every collection visits. */
+enum { GC_RUNNING = 0, GC_NATIVE = 1, GC_SAFEPOINT = 2 };
+struct GcThread;
 typedef struct ThreadReg {
   struct ThreadReg *next;
   Frame **head;
   void *stack_lo;
   void *stack_hi;
+  atomic_int state;
+  struct GcThread *owner;
+  /* The kernel's thread id, for the verifier's stalled-handshake report
+   * (Stage 28 W18C, O125). */
+  int tid;
 } ThreadReg;
 
 typedef struct PinEnt {
@@ -416,7 +428,9 @@ typedef struct BlockSet {
 /* root: root bookkeeping call counts (Collector II Wave 0): every call to
  * avant_gc_root (and every slot of avant_gc_root_begin), avant_gc_reload,
  * and avant_gc_enter, so a profile can split call volume from per-call
- * cost. interiors counts the slots and root locations the young copy
+ * cost; avant_gc_frame_enter counts its frame and the frame's slots too
+ * (Stage 28 W18: the frames generated code links inline count nothing,
+ * so in the inline forms these are the outermost frames). interiors counts the slots and root locations the young copy
  * found naming an object's interior rather than its start. */
 typedef struct GcRootCounters {
   uint64_t interiors;
@@ -510,7 +524,11 @@ typedef struct GcPkCounters {
  * live samples the marked large bytes at the liveness decision of each
  * collection (gc_reclaim_young_large for young, gc_sweep_large for full):
  * sum over samples, peak the largest single sample. promoted counts young
- * large objects tenured by promote_young_large. */
+ * large objects tenured by promote_young_large. trims and trim_bytes count
+ * the large objects avant_gc_large_trim shrank in place and the run bytes
+ * that went back (Stage 28 W18M, O52); drops and drop_bytes the large
+ * buffers a growth freed at once through avant_gc_large_drop (O109), also
+ * counted in freed. */
 typedef struct GcLosCounters {
   uint64_t allocs;
   uint64_t alloc_bytes;
@@ -533,6 +551,10 @@ typedef struct GcLosCounters {
   uint64_t live_samples;
   uint64_t promoted;
   uint64_t promoted_bytes;
+  uint64_t trims;
+  uint64_t trim_bytes;
+  uint64_t drops;
+  uint64_t drop_bytes;
 } GcLosCounters;
 
 /* pause, why, frag, prom (Stage 28 W15a1, gc-design.md §3.4 M5 and
@@ -543,6 +565,12 @@ typedef struct GcPauseCounters {
   uint64_t young_ns;
   uint64_t full_ns;
   uint64_t max_ns;
+  /* The handshake (Stage 28 W17a): collections that waited for at least
+   * one other registered thread, the time spent waiting for the others to
+   * reach a safepoint or native state (summed), and the longest wait. */
+  uint64_t hs_n;
+  uint64_t hs_ns;
+  uint64_t hs_max_ns;
 } GcPauseCounters;
 
 /* why: full collections by cause (GcWhy): mature space grew by the
@@ -683,6 +711,10 @@ typedef struct GcSettings {
    * reference the collector does not know across one of these points
    * reads a moved or freed object at once. */
   int stress;
+  /* AVANT_GC_VERIFY_STALL_MS (Stage 28 W18C, O125): under the verifier, a
+   * handshake that has waited this long for a thread to reach a safepoint
+   * reports it and keeps waiting; 10000 by default, 0 never. */
+  uint64_t stall_ms;
 } GcSettings;
 
 /* The collector's state (Stage 28 W14b2, gc-design.md §1.1, O41): one
@@ -749,12 +781,8 @@ typedef struct GcHeap {
    * CACHE_BLOCKS), still charged to heap_bytes. */
   Block *cache;
   int cache_n;
-  /* The C allocation cursor's block and limit; the cursor itself is the
-   * inline path's avant_gc_bump. fast_block is the block the inline
-   * fast path is published on (gc_fast_refresh). */
-  Block *cur;
-  uint8_t *limit;
-  Block *fast_block;
+  /* (The C allocation cursor, its limit and the inline path's block are
+   * per thread since Stage 28 W17b: GcThread.cur, .limit, .fast_block.) */
   /* Block bytes in use or cached, against set.heap_max. (E's copy
    * reserve, charged against it outside a collection, went with E in
    * Stage 28 W15d: S+'s copy is optional and stops at the limit.) */
@@ -799,9 +827,10 @@ typedef struct GcHeap {
   void **remset;
   uint32_t rem_n;
   uint32_t rem_cap;
-  /* Workers call avant_barrier without the world lock (a fresh array
-   * header). The remembered-set realloc is shared. */
-  pthread_mutex_t rem_mu;
+  /* (rem_mu, the lock barriers of a shared program took, went in Stage
+   * 28 W17b: each thread remembers into its own buffer, GcThread.rembuf,
+   * and only a collection, with every other thread stopped, or an
+   * unregistering thread under the world lock, writes the set.) */
   /* The keep list: the holders a young collection found naming a young
    * object that stays young across it (gc_rem_keep_young_holders). */
   void **keep;
@@ -834,9 +863,12 @@ typedef struct GcHeap {
    * cursor's block, and is then skipped). Wholly free blocks go back to
    * their chunks (Stage 28 W15c; before, a free_blocks list kept them in
    * mature space until a full collection).
-   * overflow: the young block medium objects go to when the current
-   * hole cannot hold them (Immix's overflow allocation). cur_whole: the
-   * young cursor's hole is a whole block (S_INLINE_HOLES). */
+   * Each thread's young cursor, its overflow block (the young block
+   * medium objects go to when the current hole cannot hold them, Immix's
+   * overflow allocation) and cur_whole (the young cursor's hole is a
+   * whole block, S_INLINE_HOLES) are the thread's own since Stage 28
+   * W17b (GcThread.ycur, .overflow, .cur_whole): a young block belongs to
+   * the one thread whose cursor took it until the next collection. */
   Block **young_blocks;
   uint32_t young_blocks_n;
   uint32_t young_blocks_cap;
@@ -849,8 +881,6 @@ typedef struct GcHeap {
   Block **verify_holes;
   uint32_t verify_holes_n;
   uint32_t verify_holes_cap;
-  Block *overflow;
-  int cur_whole;
   /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
    * the block copies go to; copied_bytes when it began. splus_age: the
    * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
@@ -901,21 +931,51 @@ typedef struct GcHeap {
    * on use, and the freed blocks it holds PROT_NONE until the next
    * collection (linked by next). */
   uint64_t verify_lost;
+  /* The incremental verifier (Stage 28 W18M item 7, O119; avant_gc_verify.c,
+   * gc_verify_begin): sd_mode is 1 when soft-dirty tracking works (probed
+   * once at start-up, gc_verify_init), else 0 and every check is whole as
+   * before; v_whole and v_incr count the whole and the incremental
+   * verifications, v_pages_checked and v_pages_skipped the heap pages an
+   * incremental one read and the clean pages it proved untouched. */
+  int sd_mode;
+  uint64_t v_whole;
+  uint64_t v_incr;
+  uint64_t v_pages_checked;
+  uint64_t v_pages_skipped;
+  /* The incremental reachability checks (Stage 28 W18V2): the young
+   * collections whose M and T were both incremental, and the incremental
+   * checks that found a candidate and ran the whole check. */
+  uint64_t v_tincr;
+  uint64_t v_fallback;
   Block *quarantine;
   uint32_t quarantine_n;
-  /* The freed large runs it holds (header, protected range, state). */
+  /* The freed large runs it holds (header, protected range, state, the
+   * collection that freed it or the last one before a growth dropped it,
+   * and whether a growth dropped it: 1 a Buf's storage, 2 another
+   * runtime buffer; Stage 28 W18C, O145). */
   struct GcHeldRun {
     AvantHeader *h;
     uint8_t *lo;
     uint8_t *hi;
     int state;
-  } held_runs[256];
+    int drop;
+    uint64_t coll;
+  } *held_runs;
   uint32_t held_runs_n;
-  uint64_t held_runs_coll;
+  uint32_t held_runs_cap;
+  /* No cap on what it holds (Stage 28 W18C, O120; until then 4,096 blocks
+   * and 256 runs, past which freed memory was reused unchecked): the most
+   * blocks and runs held at once, and the freed blocks and runs it could
+   * not protect (a refused mprotect, the mapping-count limit) or not hold
+   * (no memory for the record), which the stats line reports. */
+  uint32_t v_held_blocks_max;
+  uint32_t v_held_runs_max;
+  uint64_t v_unprotected;
 
-  /* avant_gc_collect.c. */
+  /* avant_gc_collect.c. (collecting, the running collection's flag, is
+   * the collecting thread's own since Stage 28 W17b: GcThread.collecting;
+   * every other thread is stopped or native meanwhile.) */
   int inited;
-  int collecting;
   /* Set while a stress point's young collection runs (it makes no
    * sizing decision). */
   int stress_now;
@@ -943,11 +1003,9 @@ typedef struct GcHeap {
    * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
    * a program with a large live set collect too often for its size. */
   uint64_t full_trigger;
-  /* The bytes allocated inside the running outermost no-GC (defer)
-   * region, and the address its helper entered it from (for "heap limit
-   * in a no-GC region", gc-design.md §5.4). */
-  uint64_t region_bytes;
-  void *region_site;
+  /* (The bytes allocated inside a thread's outermost no-GC region and
+   * its entry's address are the thread's own since Stage 28 W17b:
+   * GcThread.region_bytes, region_site.) */
   /* avant_gc_collect was called inside a no-GC region (RC4, Stage 28
    * W16a): the first collection point after it runs the full collection. */
   uint8_t explicit_pending;
@@ -969,7 +1027,18 @@ typedef struct GcHeap {
   ThreadReg *threads;
   pthread_mutex_t world;
   pthread_mutex_t threads_mu;
-  int defer;
+  /* avant_gc_safepoint.c. The handshake (Stage 28 W17a, gc-design.md
+   * section 4.4): its own lock, used only by the collector, the safepoint
+   * and native transitions and thread registration (rule 1: never held
+   * with a runtime lock a stopped thread could wait for); stopped_cv
+   * wakes the collector when a thread stops or turns native, resume_cv
+   * wakes the stopped threads when the collection is done. The request
+   * flag itself is avant_gc_requested (generated code polls it). */
+  pthread_mutex_t hs_mu;
+  pthread_cond_t hs_stopped_cv;
+  pthread_cond_t hs_resume_cv;
+  /* (defer, the process-wide no-GC depth, went in Stage 28 W17b: each
+   * thread's own, GcThread.nogc, is the region, O125.) */
   PinEnt *pins;
   /* The task roots (avant_gc_task_root_add, Stage 28 W16b): spawned
    * tasks' capture records, under the world lock. */
@@ -988,6 +1057,12 @@ typedef struct GcThread {
    * avant_gc.h, since Stage 28 W16a: runtime C's scopes push onto it
    * inline). */
   Frame *frame_free;
+  /* Every frame avant_gc_enter allocated on this thread, free or on its
+   * chain (CFrame.all), so a thread that exits inside a callback frees the
+   * ones still on its chain too (Stage 28 W18C, O129): the chain itself is
+   * not walked at exit, since the exit unwound the stacks its generated
+   * records lived in. */
+  struct CFrame *frame_all;
   /* avant_gc_quiet_enter's depth: root registration is skipped inside. */
   int quiet;
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */
@@ -1001,17 +1076,83 @@ typedef struct GcThread {
    * collection reads and rewrites them like root slots. */
   void **roots[GC_THREAD_ROOTS];
   uint32_t nroots;
+  /* The handshake (Stage 28 W17a, avant_gc_safepoint.c). native: the
+   * depth of avant_gc_native_begin/end; native_on: the outermost begin
+   * changed the state (it does not inside a no-GC region or on an
+   * unregistered thread); nogc: this thread's own no-GC region depth (a
+   * thread never stops inside one); collector: this thread holds the
+   * request (it is collecting); foreign: registered by its first
+   * avant_gc_enter and not the first thread (a C library's thread: native
+   * between callbacks, rule 4); base_native: such a thread left its
+   * outermost frame and is native until its next avant_gc_enter. */
+  int native;
+  int native_on;
+  int nogc;
+  int collector;
+  int foreign;
+  int base_native;
+  /* The thread's allocation cursors (Stage 28 W17b, gc-design.md section
+   * 4.4 "What it enables"; they were gc_heap's, one per process, so only
+   * one thread could allocate young). cur and limit: the C cursor's block
+   * and its hole's limit (the cursor itself is the thread's
+   * avant_gc_bump); fast_block: the block the inline path is published
+   * on; ycur: the young cursor's block (a young block, owned by this
+   * thread until the next collection); overflow: its young overflow
+   * block; cur_whole: ycur's hole is a whole block. A collection clears
+   * every thread's (gc_alloc_stop_all, avant_gc_alloc.c).
+   *
+   * Hole accounting (a shared program, avant_gc_fast_ok == 2): the slow
+   * path charges the rest of the young hole it hands the thread,
+   * [tl_start, tl_end), to the one young budget (avant_nursery_held) and
+   * the thread then bumps in it without the world lock (the inline path
+   * and avant_alloc's fast path); the counters are made exact (the bytes
+   * used counted, the rest given back) at the thread's next slow
+   * allocation, at every collection, and when it unregisters
+   * (gc_tl_settle). tl_end NULL: nothing is charged. bump_p, limit_p and
+   * fast_ok_p are the addresses of the thread's avant_gc_bump,
+   * avant_gc_limit and avant_gc_fast_ok, so a collector on another thread
+   * can clear them while this one is stopped. */
+  Block *cur;
+  uint8_t *limit;
+  Block *fast_block;
+  Block *ycur;
+  Block *overflow;
+  int cur_whole;
+  uint8_t *tl_start;
+  uint8_t *tl_end;
+  uint8_t **bump_p;
+  uint8_t **limit_p;
+  uint32_t *fast_ok_p;
+  /* The thread's remembered-set buffer (Stage 28 W17b, MMTk's modbuf):
+   * in a shared program a barrier appends the object it remembers here,
+   * without a lock (the header's REM or REMC bit, set by an atomic or,
+   * says it is remembered once); every collection merges every thread's
+   * buffer into gc_heap.remset after the handshake (gc_rem_merge_all),
+   * and an unregistering thread merges its own. rem_adds counts its adds
+   * for ctr.rem.adds. */
+  void **rembuf;
+  uint32_t rembuf_n;
+  uint32_t rembuf_cap;
+  uint64_t rem_adds;
+  /* Per-thread collector state (Stage 28 W17b, item 3; they were
+   * gc_heap's): collecting, set while this thread runs a collection
+   * (barriers and allocation read it; no other thread runs meanwhile);
+   * the bytes allocated inside this thread's outermost no-GC region and
+   * the address its helper entered it from (for "heap limit in a no-GC
+   * region", gc-design.md section 5.4). The region's depth is nogc,
+   * above. */
+  int collecting;
+  uint64_t region_bytes;
+  void *region_site;
 } GcThread;
 
 extern __thread GcThread gc_thread;
 
-/* Every runtime-held reference slot of the collecting thread (Stage 28
- * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls).
- * Only the collecting thread's own slots are visited, as before; other
- * threads' are part of D191's window until W17 stops them. */
 /* Every task root's slot (all threads': the list is global, under the
- * world lock the collector holds). Its object is PINNED while rooted,
- * so no collection moves it; the slot is never rewritten. */
+ * world lock the collector holds). Since Stage 28 W17a its object may
+ * move like any rooted object (S+'s copy and defragmentation rewrite the
+ * slot); until then it was PINNED while rooted, because the worker read
+ * it while other threads collected (D191). */
 #define EACH_TASK_ROOT(SLOT, BODY)                                       \
   do {                                                                   \
     AvantGcTaskRoot *etr_r_;                                             \
@@ -1021,10 +1162,25 @@ extern __thread GcThread gc_thread;
     }                                                                    \
   } while (0)
 
+/* Every runtime-held reference slot of every registered thread (Stage 28
+ * W14b2: replaces the callback into avant_hash.c, avant_hash_walk_tls;
+ * every thread's since W17a, when the handshake stops the others: before,
+ * only the collecting thread's were visited, part of D191's window), and
+ * the collecting thread's own when it is not registered. */
 static inline void gc_each_runtime_root(void (*fn)(void **slot)) {
+  ThreadReg *t;
   uint32_t i;
-  for (i = 0; i < gc_thread.nroots; i++) {
-    fn(gc_thread.roots[i]);
+  for (t = gc_heap.threads; t; t = t->next) {
+    if (t->owner) {
+      for (i = 0; i < t->owner->nroots; i++) {
+        fn(t->owner->roots[i]);
+      }
+    }
+  }
+  if (!gc_thread.reg.head) {
+    for (i = 0; i < gc_thread.nroots; i++) {
+      fn(gc_thread.roots[i]);
+    }
   }
 }
 
@@ -1060,6 +1216,11 @@ Block *gc_new_block(uint8_t space);
 void gc_use_block(Block *b);
 void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
+void gc_alloc_stop_all(void);
+void gc_tl_settle(GcThread *t);
+void gc_alloc_thread_init(void);
+void gc_alloc_thread_leave(void);
+void gc_alloc_shared_now(void);
 
 /* avant_gc_los.c */
 size_t gc_large_bytes(const AvantHeader *h);
@@ -1076,6 +1237,10 @@ void gc_keep_add(void *obj);
 void gc_rem_full_scrub(void);
 void gc_rem_keep_young_holders(void);
 void gc_cards_settle(void);
+void gc_rem_merge_all(void);
+void gc_rem_thread_leave(void);
+void gc_hdr_or(AvantHeader *h, uint16_t bits);
+void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
 /* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): 1 builds
  * S+, the young generation (D233): candidate S with the opportunistic
@@ -1172,10 +1337,20 @@ void gc_verify_remembered(void);
 void gc_verify_defrag(void);
 void gc_verify_sticky(void);
 void gc_verify_lost(void);
+void gc_verify_init(void);
+void gc_verify_begin(int full);
+/* Set by a free of a mature object outside a collection (a growth's freed
+ * buffer, a trim), under AVANT_GC_VERIFY: the incremental checks rebuild
+ * their record (avant_gc_verify.c). */
+extern int gc_verify_rebase;
 int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
 void gc_quarantine_seal(void);
 int gc_quarantine_run(AvantHeader *h);
+void gc_quarantine_drop_seal(AvantHeader *h, int drop);
+/* Whether a root of this thread names an address inside PAYLOAD's object
+ * (avant_gc_los.c; Stage 28 W18C). */
+int gc_rooted(void *payload);
 void gc_large_give_held(AvantHeader *h);
 
 /* avant_gc_collect.c */
@@ -1204,12 +1379,38 @@ void gc_region_limit_check(uint64_t bytes);
 void gc_maybe_collect(void);
 void gc_stress_point(void);
 void gc_init_slow(void);
+void gc_verify_exit_run(void (*check)(void));
 
 /* avant_gc_stats.c */
 void gc_print_stats(void);
 
 /* avant_gc_roots.c */
 extern atomic_int g_avant_shared;
+
+/* avant_gc_safepoint.c (Stage 28 W17a, gc-design.md section 4.4): the
+ * request flag generated code polls, the stop-the-world handshake, the
+ * thread states. gc_stop_world returns 1 when this thread holds the
+ * request and every other registered thread is at a safepoint or native,
+ * 0 when another thread was collecting and this one waited at a
+ * safepoint until it was done (the caller holds no runtime lock; rule
+ * 1). gc_resume_world clears the request. gc_safepoint_slow stops the
+ * calling thread while a request is raised (a no-op inside its own no-GC
+ * region or while it collects). gc_lock takes a lock at a collecting call
+ * (native while it waits, rule 2); gc_cond_wait waits natively. */
+extern atomic_int avant_gc_requested;
+int gc_stop_world(void);
+void gc_resume_world(void);
+void gc_safepoint_slow(void);
+void gc_thread_registered(int foreign);
+void gc_thread_unregistering(void);
+void gc_thread_exiting(void);
+void gc_lock(pthread_mutex_t *m);
+void gc_cond_wait(pthread_cond_t *cv, pthread_mutex_t *m);
+static inline void gc_safepoint(void) {
+  if (__builtin_expect(atomic_load_explicit(&avant_gc_requested, memory_order_acquire) != 0, 0)) {
+    gc_safepoint_slow();
+  }
+}
 
 /* Small helpers every unit inlines (static inline: one copy per unit,
  * no symbol), moved from avant_rt.c unchanged. */
@@ -1218,6 +1419,10 @@ static inline size_t align_up(size_t n) {
   return (n + (ALIGN - 1)) & ~(size_t)(ALIGN - 1);
 }
 
+/* The program is shared (a second thread registered): barriers remember
+ * into the thread's buffer and change header flags atomically, and
+ * allocation uses hole accounting (Stage 28 W17b; the name is from when
+ * a shared program's barriers took rem_mu). */
 static inline int rem_locked(void) {
   return atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
 }

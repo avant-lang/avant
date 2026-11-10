@@ -83,14 +83,47 @@ fn test_toolchain(c: Checks) {
     c.eq_int(code4, 0, "compile --final exits zero")
     debug = "${base}-debug.bin"
     bare = "${base}-bare.bin"
-    release = "${base}-release.bin"
+    optimized = "${base}-release.bin"
     c.expect(!tc_same(bare, debug), "bare compile does not use --debug codegen")
-    c.expect(!tc_same(bare, release), "bare compile does not use --release codegen")
-    c.expect(!tc_same(debug, release), "--debug and --release are different codegen")
-    c.expect(tc_same("${base}-final.bin", release), "compile --final is --release")
+    c.expect(!tc_same(bare, optimized), "bare compile does not use --release codegen")
+    c.expect(!tc_same(debug, optimized), "--debug and --release are different codegen")
+    c.expect(tc_same("${base}-final.bin", optimized), "compile --final is --release")
     c.expect(tc_has(debug, "helper_twice"), "--debug keeps the helper")
     c.expect(tc_has(bare, "helper_twice"), "the default mode does not inline the helper")
-    c.expect(!tc_has(release, "helper_twice"), "--release inlines the helper")
+    c.expect(!tc_has(optimized, "helper_twice"), "--release inlines the helper")
+
+    // The CPU level (Stage 28 W18S, O140): an artifact defaults to v2
+    // (--cpu=v2's bytes); every level is a program that records it; one
+    // the machine lacks stops at startup with the flag to rebuild with;
+    // the host's level is the highest that runs, and `run` uses it.
+    lv = ["baseline", "v2", "v3", "v4"]
+    host = "baseline"
+    k = 0
+    while k < lv.size {
+      lbin = "${base}-cpu-${lv[k]}.bin"
+      cargs: Array(String) = []
+      cargs.push("compile")
+      cargs.push(src)
+      cargs.push(lbin)
+      cargs.push("--debug")
+      cargs.push("--cpu=${lv[k]}")
+      c.eq_int(process_run_out(compiler, cargs, "${base}-cpu-${lv[k]}.log"), 0, "compile --cpu=${lv[k]} exits zero")
+      c.expect(tc_has(lbin, "__avant_cpu_level"), "a --cpu=${lv[k]} program records its level")
+      rcode = run_av_bin(lbin, "${base}-cpu-${lv[k]}.run")
+      rout = tc_bytes("${base}-cpu-${lv[k]}.run")
+      if rcode == 0 {
+        c.expect(str_has(rout, "41\n"), "a --cpu=${lv[k]} program runs where the machine has it")
+        host = lv[k]
+      } else {
+        c.eq_int(rcode, 1, "a --cpu=${lv[k]} program stops on a machine without it")
+        c.expect(str_has(rout, "rebuild it with --cpu="), "the stop names the flag to rebuild with")
+      }
+      k = k + 1
+    }
+    c.expect(tc_same(debug, "${base}-cpu-v2.bin"), "an artifact's default level is v2")
+    bad_code = process_run_out(compiler, ["compile", src, "${base}-cpu-bad.bin", "--cpu=v9"], "${base}-cpu-bad.log")
+    c.eq_int(bad_code, 1, "an unknown --cpu is refused")
+    c.expect(str_has(tc_bytes("${base}-cpu-bad.log"), "unknown CPU level v9"), "the refusal names the level")
 
     // --keep-tmp names the directory on stderr, when the compiler's
     // TMPDIR is not another avant's scratch directory (a fresh one here,
@@ -106,7 +139,7 @@ fn test_toolchain(c: Checks) {
     c.expect(str_has(tc_bytes(run_log), "41\n"), "bare run prints the program's output")
     kept = tc_kept_dir(run_log)
     c.expect(kept.size > 0, "run --keep-tmp names its directory")
-    c.expect(tc_same("${kept}/run.bin", debug), "bare run uses --debug codegen")
+    c.expect(tc_same("${kept}/run.bin", "${base}-cpu-${host}.bin"), "bare run uses --debug codegen at the machine's level")
     rm_rf(run_tmp)
 
     // A tool the compiler runs gets /dev/null as stdin (Wave D): piped

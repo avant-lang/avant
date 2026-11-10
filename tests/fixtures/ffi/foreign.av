@@ -1,0 +1,45 @@
+// Foreign threads (Stage 28 W17a rule 4, W17b O123): four C threads that
+// Avant never started call the allocating callback `check` while the main
+// thread replaces strings, then the main thread waits for them natively
+// (tests/fixtures/ffi/ffi.c, foreign_start/foreign_wait). Each foreign
+// thread registers at its first callback, allocates young in its own young
+// blocks, and is native between callbacks. The record-only proof of W17a
+// (results/2026-11-09-s28-w17a/foreign) at reduced rounds; it found two
+// races there.
+lib fc {
+  fun foreign_start(f: fn(Int): Int, n: Int, rounds: Int)
+  fun foreign_wait: Int
+}
+
+fn check(i: Int): Int {
+  s = "cb-${i}"
+  a: Array(String) = []
+  a.push(s)
+  a.push(s + "-tail")
+  if a[1].size != s.size + 5 {
+    return 1
+  }
+  0
+}
+
+fn main {
+  fc.foreign_start(check, 4, 5000)
+  mine: Array(String) = []
+  j = 0
+  while j < 2000 {
+    mine.push("main-init")
+    j = j + 1
+  }
+  bad = 0
+  r = 0
+  while r < 100000 {
+    at = r % 2000
+    if mine[at].size < 6 {
+      bad = bad + 1
+    }
+    mine[at] = "main-${r}"
+    r = r + 1
+  }
+  puts("main bad: ${bad}")
+  puts("callback bad: ${fc.foreign_wait()}")
+}

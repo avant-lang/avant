@@ -1,0 +1,145 @@
+// Get-or-insert (Stage 28 W18S, O49): a get followed on every path by a
+// set of the same key is one runtime call (avant_hash_upsert_i32k or
+// avant_hash_upsert_i32, compiler/mir/upsert.av) and the sets are stores
+// through the value's address. The fused forms below (Int and String
+// keys, `get` and `get_or`, the key through a copy) count the same as the
+// plain forms beside them, which must stay calls: a set on one path only,
+// a call between the get and the set, a set of another key, a loop
+// between. The counts run through growths (8 to 4,096 slots), so an
+// upsert that grows (and may collect) is exercised; tests/goldens/heap/
+// upsert.mir shows which functions were fused.
+
+fn bump(h: Hash(Int, Int), g: Int): Int {
+  if c = h.get(g) {
+    n = c + 1
+    h[g] = n
+    return n
+  }
+  h[g] = 1
+  1
+}
+
+fn bump_s(h: Hash(String, Int), k: String): Int {
+  if c = h.get(k) {
+    h[k] = c + 1
+    return c + 1
+  }
+  h[k] = 1
+  1
+}
+
+fn bump_or(h: Hash(Int, Int), g: Int) {
+  h[g] = h.get_or(g, 0) + 1
+}
+
+fn bump_or_s(h: Hash(String, Int), k: String) {
+  h[k] = h.get_or(k, 10) + 1
+}
+
+// The key through a copy, the value computed on both paths.
+fn bump_copy(h: Hash(Int, Int), g: Int): Int {
+  k = g
+  v = 0
+  if c = h.get(k) {
+    v = c * 2 + 1
+  } else {
+    v = 7
+  }
+  h[k] = v
+  v
+}
+
+// Not fused: only the found path stores.
+fn only_found(h: Hash(Int, Int), g: Int): Int {
+  if c = h.get(g) {
+    h[g] = c + 1
+    return c + 1
+  }
+  0
+}
+
+fn noise(x: Int): Int {
+  x * 3
+}
+
+// Not fused: a call between the get and the set.
+fn call_between(h: Hash(Int, Int), g: Int): Int {
+  c = h.get_or(g, 0)
+  d = noise(c)
+  h[g] = c + 1
+  d
+}
+
+// Not fused: the set names another key.
+fn other_key(h: Hash(Int, Int), g: Int): Int {
+  c = h.get_or(g, 0)
+  h[g + 1] = c + 1
+  c
+}
+
+// Not fused: a loop between the get and the set.
+fn loop_between(h: Hash(Int, Int), g: Int): Int {
+  c = h.get_or(g, 0)
+  i = 0
+  while i < 3 {
+    c = c + 1
+    i = i + 1
+  }
+  h[g] = c
+  c
+}
+
+fn sum_vals(h: Hash(Int, Int)): Int {
+  t = 0
+  for v in h.values {
+    t = t + v
+  }
+  t
+}
+
+fn sum_vals_s(h: Hash(String, Int)): Int {
+  t = 0
+  for v in h.values {
+    t = t + v
+  }
+  t
+}
+
+fn main {
+  a = Hash(Int, Int).new
+  b = Hash(Int, Int).new
+  i = 0
+  last = 0
+  while i < 20000 {
+    g = (i * 7919) % 3001
+    last = bump(a, g)
+    bump_or(b, g)
+    i = i + 1
+  }
+  puts("int ${a.size} ${sum_vals(a)} ${b.size} ${sum_vals(b)} ${last} ${a.get_or(0, -1)} ${b.get_or(3000, -1)}")
+
+  s = Hash(String, Int).new
+  t = Hash(String, Int).new
+  i = 0
+  while i < 6000 {
+    k = "k${(i * 31) % 1777}"
+    dummy = bump_s(s, k)
+    bump_or_s(t, k)
+    i = i + 1
+  }
+  puts("str ${s.size} ${sum_vals_s(s)} ${t.size} ${sum_vals_s(t)} ${s.get_or("k0", -1)} ${t.get_or("k0", -1)}")
+
+  c = Hash(Int, Int).new
+  i = 0
+  acc = 0
+  while i < 5000 {
+    acc = acc + bump_copy(c, i % 977)
+    i = i + 1
+  }
+  puts("copy ${c.size} ${sum_vals(c)} ${acc}")
+
+  d = Hash(Int, Int).new
+  d[5] = 1
+  x = only_found(d, 5) + only_found(d, 6) + call_between(d, 7) + call_between(d, 7) + other_key(d, 9) + loop_between(d, 11) + loop_between(d, 11)
+  puts("plain ${d.size} ${sum_vals(d)} ${x} ${d.get_or(6, -1)} ${d.get_or(10, -1)} ${d.get_or(11, -1)}")
+}

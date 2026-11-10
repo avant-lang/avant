@@ -1,0 +1,37 @@
+// Float64.exp (Stage 28 W18F): the method, its field form and the free
+// function, on ordinary and edge values (0, negatives, overflow to
+// infinity, underflow to zero, NaN, infinities).
+
+// x, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(x: Float64): Float64 {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return x + b.to_f
+  }
+  x
+}
+
+fn main {
+  puts(opaque(0.0).exp)
+  puts(opaque(1.0).exp())
+  puts(exp(opaque(-1.0)))
+  puts(opaque(-0.0).exp)
+  puts(opaque(2.5).exp)
+  puts(opaque(-20.0).exp)
+  puts(opaque(709.0).exp)
+  puts(opaque(710.0).exp)
+  puts(opaque(-1000.0).exp)
+  z = opaque(0.0)
+  nan = z / z
+  e = nan.exp
+  puts(e)
+  puts(e == e)
+  inf = opaque(1.0) / z
+  puts(inf.exp)
+  puts((-inf).exp)
+  puts(1.0.exp)
+  puts(exp(0.5) == opaque(0.5).exp)
+  puts(opaque(1.0).exp.to_i)
+}

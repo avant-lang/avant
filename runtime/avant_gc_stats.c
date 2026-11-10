@@ -124,14 +124,14 @@ static void print_los(StatsLine *l) {
     now_bytes += (uint64_t)gc_large_bytes(h);
   }
   line_add(l,
-           "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu ",
+           "los_allocs=%llu los_bytes=%llu los_callocs=%llu los_hits=%llu los_cached=%llu los_dropped=%llu los_freed=%llu los_scalar=%llu los_scalar_bytes=%llu los_big=%llu los_big_bytes=%llu los_young=%llu los_young_bytes=%llu los_mature=%llu los_mature_bytes=%llu los_hist=%llu,%llu,%llu,%llu,%llu,%llu los_live_peak=%llu los_live_sum=%llu los_samples=%llu los_promoted=%llu los_promoted_bytes=%llu los_now=%llu los_now_bytes=%llu los_spare_bytes=%llu los_trims=%llu los_trim_bytes=%llu los_drops=%llu los_drop_bytes=%llu ",
            u(c->allocs), u(c->alloc_bytes), u(c->callocs), u(c->spare_hits), u(c->spare_cached),
            u(c->spare_dropped), u(c->freed), u(c->scalar_allocs), u(c->scalar_bytes),
            u(c->big_allocs), u(c->big_bytes), u(c->young_allocs), u(c->young_bytes),
            u(c->mature_allocs), u(c->mature_bytes), u(c->hist[0]), u(c->hist[1]), u(c->hist[2]),
            u(c->hist[3]), u(c->hist[4]), u(c->hist[5]), u(c->live_peak), u(c->live_sum),
            u(c->live_samples), u(c->promoted), u(c->promoted_bytes), u(now), u(now_bytes),
-           u(spare_bytes));
+           u(spare_bytes), u(c->trims), u(c->trim_bytes), u(c->drops), u(c->drop_bytes));
 }
 
 /* The W15a1 families (gc-design.md §3.4 M5, M6), appended after the los
@@ -143,6 +143,10 @@ static void print_pause(StatsLine *l) {
   const GcPauseCounters *c = &gc_heap.ctr.pause;
   line_add(l, "pause_young_ns=%llu pause_full_ns=%llu pause_max_ns=%llu ", u(c->young_ns),
            u(c->full_ns), u(c->max_ns));
+  /* The handshake (Stage 28 W17a): collections that waited for another
+   * thread, and the wait's total and longest time. */
+  line_add(l, "handshakes=%llu pause_hs_ns=%llu pause_hs_max_ns=%llu ", u(c->hs_n), u(c->hs_ns),
+           u(c->hs_max_ns));
 }
 
 static void print_why(StatsLine *l) {
@@ -184,10 +188,30 @@ static void print_sticky(StatsLine *l) {
            "prom_inplace=%llu young_blocks=%llu young_holes=%llu young_freed_lines=%llu "
            "young_overflow=%llu young_returned=%llu young_evac_blocks=%llu "
            "young_kept_blocks=%llu young_copy_blocks=%llu young_aged=%llu young_surv_blocks=%llu "
-           "young_aged_holders=%llu young_aged_inplace_blocks=%llu\n",
+           "young_aged_holders=%llu young_aged_inplace_blocks=%llu",
            u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
            u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks), u(c->aged),
            u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
+}
+
+/* The verifier's segment (Stage 28 W18M item 7), only under
+ * AVANT_GC_VERIFY, after the sticky family: which verifier ran
+ * (incremental: soft-dirty tracking works; whole: it does not, and every
+ * check is whole as before), the whole and incremental verifications, and
+ * the heap pages the incremental ones read and skipped as untouched; the
+ * young collections whose reachability checks were incremental, and the
+ * incremental checks that found a candidate and ran whole (Stage 28
+ * W18V2). */
+static void print_verify(StatsLine *l) {
+  if (!gc_heap.set.verify) {
+    return;
+  }
+  line_add(l, " verify=%s verify_whole=%llu verify_incr=%llu verify_pages=%llu verify_pages_skipped=%llu"
+              " verify_trace_incr=%llu verify_fallback=%llu verify_held_max=%llu/%llu verify_unprotected=%llu",
+           gc_heap.sd_mode ? "incremental" : "whole", u(gc_heap.v_whole), u(gc_heap.v_incr),
+           u(gc_heap.v_pages_checked), u(gc_heap.v_pages_skipped), u(gc_heap.v_tincr),
+           u(gc_heap.v_fallback), u(gc_heap.v_held_blocks_max), u(gc_heap.v_held_runs_max),
+           u(gc_heap.v_unprotected));
 }
 
 void gc_print_stats(void) {
@@ -206,6 +230,8 @@ void gc_print_stats(void) {
   print_prom(&l);
   print_size(&l);
   print_sticky(&l);
+  print_verify(&l);
+  line_add(&l, "\n");
   fwrite(l.buf, 1, l.n, stderr);
 }
 

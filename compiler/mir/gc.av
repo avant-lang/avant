@@ -29,6 +29,22 @@
 //    Then the prologue of 5.1 (zero every non-parameter slot, gc.enter,
 //    gc.roots of every slot in local order) and a gc.leave before each
 //    return.
+// 3. Polls (Stage 28 W17a; gc-design.md 4.4, the safepoints of a shared
+//    program): in a shared module, before the slot set is computed, every
+//    block a back edge enters (an edge to a block whose number is not
+//    greater than its source's, so every cycle has one) begins with
+//    `call avant_gc_poll() collects`, a collecting call like any other,
+//    when the loop it heads holds another loop's head (an outer loop,
+//    Stage 28 W17b), or when every reference live on entry to that block
+//    is already a slot (an innermost loop that keeps a reference only in
+//    a local does not poll, as a leaf's does not: the poll would make it
+//    a slot, reloaded after the poll at every iteration, which kept
+//    Matmul's inner loops from hoisting their rows: +6-11% with every
+//    loop polling and plain slots, W17b; 2.4x with W17a's volatile
+//    slots, D207, D259). So a collection waits at most for one run of
+//    such an innermost loop. The emitter tests the request flag and
+//    calls only when it is set. Leaves have no frame and do not poll
+//    (rule 5, V15); an unshared module is unchanged.
 
 import source
 import mir.types
@@ -158,42 +174,44 @@ fn mir_calls_external(m: MModule, st: MStmt): Bool {
 }
 
 // The slot set of a frame function (rules a, b, c above), as one flag per
-// local.
-pub fn mir_slot_need(m: MModule, f: MFunc): Array(Bool) {
+// local, from the function's liveness lv (flow.av).
+pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
   ts = m.types
   n = f.locals.size
-  need = mir_bools(n, false)
-  outs = mir_live_out(f)
+  nw = lv.nw
+  need = mir_zero_words(nw)
+  live = mir_zero_words(nw)
+  reads: Array(Int) = []
   b = 0
   while b < f.blocks.size {
     blk = f.blocks[b]
-    live = mir_bools_copy(outs[b])
+    mir_words_load(live, lv.outs, b * nw, nw)
     if t = blk.term {
-      reads: Array(Int) = []
+      reads.clear
       mir_term_reads(f, t, reads)
-      i = 0
-      while i < reads.size {
-        live[reads[i]] = true
-        i = i + 1
-      }
+      mir_bits_mark(live, 0, n, reads)
     }
     j = blk.stmts.size - 1
     while j >= 0 {
       st = blk.stmts[j]
       if st.kind == msk_call() && st.collects {
-        k = 0
-        while k < n {
-          if live[k] && k != st.dest {
-            need[k] = true
-          }
-          k = k + 1
+        // every live local but the call's destination
+        d = st.dest
+        keep_d = d >= 0 && d < n && mir_bit(need, 0, d)
+        w = 0
+        while w < nw {
+          need[w] = need[w] | live[w]
+          w = w + 1
+        }
+        if d >= 0 && d < n && !keep_d {
+          mir_bit_off(need, 0, d)
         }
         if mir_calls_external(m, st) {
           i = 0
           while i < st.args.size {
             if p = st.args[i].place {
-              if p.proj.size == 0 {
-                need[p.local] = true
+              if p.proj.size == 0 && p.local >= 0 && p.local < n {
+                mir_bit_on(need, 0, p.local)
               }
             }
             i = i + 1
@@ -203,28 +221,150 @@ pub fn mir_slot_need(m: MModule, f: MFunc): Array(Bool) {
       if st.kind == msk_assign() {
         if r = st.rv {
           if p = r.place {
-            if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local {
-              need[p.local] = true
+            if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && p.local >= 0 && p.local < n {
+              mir_bit_on(need, 0, p.local)
             }
           }
         }
       }
-      mir_live_step(st, live)
+      mir_live_step_bits(st, live, n, reads)
       j = j - 1
     }
     b = b + 1
   }
+  out = mir_bools(n, false)
   k = 0
   while k < n {
-    need[k] = need[k] && f.valid_local(k) && ts.traced(f.locals[k].ty)
+    out[k] = mir_bit(need, 0, k) && f.valid_local(k) && ts.traced(f.locals[k].ty)
     k = k + 1
   }
-  need
+  out
 }
 
+// The poll's call-table row, declared in the module on first use.
+fn mir_declare_poll(m: MModule): Bool {
+  if e = m.ext("avant_gc_poll") {
+    return true
+  }
+  if r = m.rt.find("avant_gc_poll") {
+    sg = m.rt.sig_of(r, m.types)
+    if sg < 0 {
+      return false
+    }
+    x = MExtern.new("avant_gc_poll", sg, r.cls)
+    m.extern_index["avant_gc_poll"] = m.externs.size
+    m.externs.push(x)
+    return true
+  }
+  false
+}
+
+// Rule 3 above: a poll at the head of every block a back edge enters,
+// unless it heads an innermost loop and a reference live on entry to it
+// is not already a slot (W17a, by measurement: a poll there would make it
+// a slot; W17b, by measurement: outer loops poll always, which costs
+// nothing measurable on Matmul with plain slots).
+fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
+  n = f.blocks.size
+  need0 = mir_slot_need(m, f, lv)
+  ts = m.types
+  heads = mir_bools(n, false)
+  // last[h]: the last block of the loop h heads (its latest back edge's
+  // source), so the loop's blocks are h..last[h] in the lowering's order.
+  last: Array(Int) = []
+  b = 0
+  while b < n {
+    last.push(-1)
+    b = b + 1
+  }
+  b = 0
+  while b < n {
+    succ = mir_succ(f.blocks[b])
+    i = 0
+    while i < succ.size {
+      h = succ[i]
+      if h >= 0 && h <= b && h < n {
+        heads[h] = true
+        if b > last[h] {
+          last[h] = b
+        }
+      }
+      i = i + 1
+    }
+    b = b + 1
+  }
+  // An outer loop (one whose blocks hold another loop's head) always
+  // polls (Stage 28 W17b): its new slots cost nothing inside the inner
+  // loop (no call there, so LLVM keeps a plain slot's value in a
+  // register), and a collection then waits at most for one run of an
+  // innermost loop.
+  outer = mir_bools(n, false)
+  h = 0
+  while h < n {
+    if heads[h] {
+      k = h + 1
+      while k <= last[h] && k < n {
+        if heads[k] {
+          outer[h] = true
+        }
+        k = k + 1
+      }
+    }
+    h = h + 1
+  }
+  h = 0
+  while h < n {
+    if heads[h] && !outer[h] {
+      live = mir_live_in_bits(lv, h)
+      k = 0
+      while k < f.locals.size {
+        if mir_bit(live, 0, k) && !need0[k] && f.valid_local(k) && ts.traced(f.locals[k].ty) {
+          heads[h] = false
+        }
+        k = k + 1
+      }
+    }
+    h = h + 1
+  }
+  h = 0
+  while h < n {
+    if heads[h] && mir_declare_poll(m) {
+      blk = f.blocks[h]
+      loc = f.loc
+      if blk.stmts.size > 0 {
+        loc = blk.stmts[0].loc
+      } else if t = blk.term {
+        loc = t.loc
+      }
+      st = MStmt.new(msk_call(), loc)
+      st.callee = "avant_gc_poll"
+      st.collects = true
+      xs: Array(MStmt) = [st]
+      i = 0
+      while i < blk.stmts.size {
+        xs.push(blk.stmts[i])
+        i = i + 1
+      }
+      blk.stmts = xs
+    }
+    h = h + 1
+  }
+}
+
+// The function's liveness is computed once (Stage 28 W18P, O153): the polls
+// read and define nothing, so they leave every block's transfer and
+// live-out as they were; so do gc.enter, gc.roots and gc.leave; the
+// prologue's zeroing changes bb0's transfer, which is computed again, and
+// bb0's live-in, which no live-out depends on since no edge enters bb0
+// (V2; with such an edge the liveness is not kept). The function keeps it
+// (f.live) for the verifier's V11 and V12.
 fn mir_add_frame(m: MModule, f: MFunc) {
   f.kind = mfk_frame()
-  need = mir_slot_need(m, f)
+  lv = mir_live(f)
+  if m.shared {
+    mir_add_polls(m, f, lv)
+  }
+  need = mir_slot_need(m, f, lv)
   slots: Array(Int) = []
   k = 0
   while k < f.locals.size {
@@ -265,6 +405,18 @@ fn mir_add_frame(m: MModule, f: MFunc) {
       }
     }
     b = b + 1
+  }
+  if f.blocks.size > 0 {
+    reads: Array(Int) = []
+    mir_live_block(f, lv, 0, reads)
+    f.live = lv
+    i = 0
+    while i < lv.succ.size {
+      if lv.succ[i] == 0 {
+        f.live = nil
+      }
+      i = i + 1
+    }
   }
 }
 

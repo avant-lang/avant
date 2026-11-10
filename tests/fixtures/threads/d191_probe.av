@@ -1,0 +1,100 @@
+// D191's probe (Stage 28 W8b, records/2026-11-06-s28-w8b/d191-probe.av)
+// with a fiftieth of the main thread's rounds and a twentieth of the
+// tasks', a suite fixture since Stage 28 W17a: eight tasks allocate and
+// read a shared array of strings built by the main thread while the main
+// thread keeps allocating young strings and objects and reading its own;
+// every value is checked. Before W17a's handshake the full probe failed
+// under AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1, AVANT_NURSERY=0 and
+// AVANT_GC_STRESS=1 (other threads collected without stopping this one);
+// now every environment prints 0 wrong reads.
+
+class Node {
+  v: Int
+  s: String
+
+  fn initialize(v: Int, s: String) {
+    self.v = v
+    self.s = s
+  }
+}
+
+fn work(shared: Array(String), id: Int, rounds: Int): Int {
+  bad = 0
+  keep: Array(String) = []
+  r = 0
+  while r < rounds {
+    i = 0
+    while i < shared.size {
+      s = shared[i]
+      if s.size != 5 + "${i}".size {
+        bad = bad + 1
+      }
+      i = i + 1
+    }
+    nd = Node.new(r, shared[r % shared.size])
+    if nd.s.size < 6 {
+      bad = bad + 1
+    }
+    t = "w${id}-${r}"
+    keep.push(t)
+    shared_probe = shared[r % shared.size]
+    if shared_probe.size < 6 {
+      bad = bad + 1
+    }
+    if keep.size > 100 {
+      if keep[0].size < 4 {
+        bad = bad + 1
+      }
+      keep.clear
+    }
+    r = r + 1
+  }
+  bad
+}
+
+fn main {
+  shared: Array(String) = []
+  i = 0
+  while i < 200 {
+    shared.push("item-${i}")
+    i = i + 1
+  }
+  hs: Array(JoinHandle(Int)) = []
+  k = 0
+  while k < 8 {
+    id = k
+    hs.push(spawn { work(shared, id, 1000) })
+    k = k + 1
+  }
+  mbad = 0
+  mine: Array(String) = []
+  j = 0
+  while j < 20000 {
+    mine.push("main-init")
+    j = j + 1
+  }
+  nodes: Array(Node) = []
+  j = 0
+  while j < 5000 {
+    nodes.push(Node.new(j, "node-init"))
+    j = j + 1
+  }
+  r = 0
+  while r < 60000 {
+    at = r % 20000
+    if mine[at].size < 6 {
+      mbad = mbad + 1
+    }
+    mine[at] = "main-${r}"
+    nodes[r % 5000] = Node.new(r, mine[at])
+    if nodes[(r + 1) % 5000].s.size < 6 {
+      mbad = mbad + 1
+    }
+    r = r + 1
+  }
+  wbad = 0
+  hs.each { |h| wbad = wbad + h.join }
+  puts("worker bad reads: ${wbad}")
+  puts("main bad reads: ${mbad}")
+  puts("shared[199]: ${shared[199]}")
+}

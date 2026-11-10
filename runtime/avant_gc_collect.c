@@ -125,6 +125,7 @@ static void gc_settings_read(GcSettings *s) {
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
   s->stress = env_bool("AVANT_GC_STRESS", 0);
+  s->stall_ms = env_u64("AVANT_GC_VERIFY_STALL_MS", 10000, 0, 1ull << 40);
   for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
     const char *v = getenv(retired_knobs[i]);
     if (v && v[0]) {
@@ -271,28 +272,57 @@ static int region_refuses(void);
 
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
-  uint64_t t0 = now_ns();
-  if (gc_heap.collecting) {
+  int resume = 0;
+  uint64_t t0;
+  if (gc_thread.collecting) {
     gc_die("GC reentered");
   }
   /* RC4: only the heap limit's last resort (place, avant_gc_alloc.c, when
    * even an over-limit block cannot be had) reaches here inside a no-GC
    * region; under AVANT_GC_VERIFY=1 that dies naming the region. */
-  if (gc_heap.defer && gc_heap.set.verify) {
+  if (gc_thread.nogc && gc_heap.set.verify) {
     (void)region_refuses();
   }
   if (!full && !allow_move) {
     gc_die("a young collection always moves");
   }
-  gc_heap.collecting = 1;
+  /* The handshake (Stage 28 W17a, gc-design.md section 4.4): the world
+   * lock is released (rule 1) while this thread raises the request and
+   * waits for every other registered thread to stop at a safepoint or be
+   * native, then taken again. When another thread held the request, this
+   * one stopped until that collection was done; a collection the policy
+   * asked for (the budget, the trigger, a stress point) is then
+   * reconsidered, an explicit or heap-limit one runs. */
+  if (!gc_thread.collector) {
+    for (;;) {
+      int mine;
+      pthread_mutex_unlock(&gc_heap.world);
+      mine = gc_stop_world();
+      pthread_mutex_lock(&gc_heap.world);
+      if (mine) {
+        break;
+      }
+      if (why == GC_WHY_STRESS || (why == GC_WHY_BUDGET && avant_nursery_held < avant_young_bytes) ||
+          (why == GC_WHY_TRIGGER && !gc_heap.set.nursery_off && gc_heap.mature_since_full < gc_heap.full_trigger) ||
+          (why == GC_WHY_TRIGGER && gc_heap.set.nursery_off && avant_since_gc < gc_heap.full_trigger)) {
+        return;
+      }
+    }
+    resume = 1;
+  }
+  t0 = now_ns();
+  gc_thread.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
+  /* Every thread's remembered-set buffer joins the set (Stage 28 W17b)
+   * before anything reads it. */
+  gc_rem_merge_all();
   if (full) {
     count_full_why(why);
   }
   if (gc_heap.set.verify) {
     gc_quarantine_release();
-    gc_verify_no_stale_marks();
+    gc_verify_begin(full);
     if (!full) {
       gc_verify_remembered();
     } else {
@@ -304,10 +334,10 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
                               : 0;
   gc_heap.live = 0;
   gc_heap.work_n = 0;
-  gc_fast_clear();
-  gc_heap.cur = NULL;
-  avant_gc_bump = NULL;
-  gc_heap.limit = NULL;
+  /* Every thread's allocation cursors and inline state (Stage 28 W17b:
+   * per thread; the young cursor was cleared when the collection ended
+   * before, which no allocation in between could tell apart). */
+  gc_alloc_stop_all();
 
   if (!full) {
     /* One young collection: no probe, no pause. Survival, for sizing,
@@ -334,7 +364,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* Non-moving for young objects: they are promoted where they lie
      * (defragmentation may move mature blocks, below). */
     gc_los_spare_drop();
-    gc_clear_alloc_cur(SPACE_NURSERY);
     gc_clear_alloc_cur(SPACE_MATURE);
     gc_sticky_full_begin();
     /* The marks: one memset per chunk of the side bitmap; no header is
@@ -416,11 +445,14 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   if (gc_heap.quarantine) {
     gc_quarantine_seal();
   }
-  gc_heap.collecting = 0;
+  gc_thread.collecting = 0;
+  if (resume) {
+    gc_resume_world();
+  }
 }
 
 void gc_maybe_collect(void) {
-  if (gc_heap.collecting || gc_heap.defer) {
+  if (gc_thread.collecting || gc_thread.nogc) {
     return;
   }
   if (gc_heap.explicit_pending) {
@@ -460,11 +492,11 @@ void gc_maybe_collect(void) {
 
 /* A stress point (AVANT_GC_STRESS=1). The caller holds gc_heap.world. Only
  * where a collection may run: not inside a defer region, not during a
- * collection, not in a shared program (no thread is stopped, D191), and
- * only with a young generation to collect. */
+ * collection, and only with a young generation to collect. Shared
+ * programs too since Stage 28 W17a (the handshake stops the other
+ * threads; before, D191 kept the stress mode to one thread). */
 void gc_stress_point(void) {
-  if (!gc_heap.set.stress || gc_heap.collecting || gc_heap.defer || gc_heap.set.nursery_off ||
-      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+  if (!gc_heap.set.stress || gc_thread.collecting || gc_thread.nogc || gc_heap.set.nursery_off) {
     return;
   }
   gc_heap.stress_now = 1;
@@ -497,6 +529,44 @@ void gc_init_slow(void) {
   if (gc_heap.set.stats) {
     atexit(gc_print_stats);
   }
+  /* After the statistics' handler, so it runs first (atexit is last in,
+   * first out) and the report counts the exit's verification. */
+  if (gc_heap.set.verify) {
+    gc_verify_init();
+  }
+}
+
+/* AVANT_GC_VERIFY at the program's exit (Stage 28 W18M item 7): the whole
+ * heap is verified once more, as at the start of a collection, after the
+ * same handshake (every other thread stopped at a safepoint or native).
+ * Not inside a collection or a no-GC region, where the heap is not in a
+ * state a collection could start from. */
+void gc_verify_exit_run(void (*check)(void)) {
+  int resume = 0;
+  if (gc_thread.collecting || gc_thread.nogc) {
+    return;
+  }
+  gc_lock(&gc_heap.world);
+  if (!gc_thread.collector) {
+    for (;;) {
+      int mine;
+      pthread_mutex_unlock(&gc_heap.world);
+      mine = gc_stop_world();
+      pthread_mutex_lock(&gc_heap.world);
+      if (mine) {
+        break;
+      }
+    }
+    resume = 1;
+  }
+  gc_thread.collecting = 1;
+  gc_rem_merge_all();
+  check();
+  gc_thread.collecting = 0;
+  if (resume) {
+    gc_resume_world();
+  }
+  pthread_mutex_unlock(&gc_heap.world);
 }
 
 /* Q128's heap-goal collection at the HTTP boundary (the request path's
@@ -511,7 +581,8 @@ void gc_init_slow(void) {
  * before it materializes the request). */
 void avant_gc_heap_goal_collect(void) {
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   gc_maybe_collect();
   pthread_mutex_unlock(&gc_heap.world);
 }
@@ -523,14 +594,14 @@ static __attribute__((noreturn)) void region_die(const char *what) {
   char msg[512];
   Dl_info info;
   memset(&info, 0, sizeof info);
-  if (gc_heap.region_site && dladdr(gc_heap.region_site, &info) && info.dli_sname) {
+  if (gc_thread.region_site && dladdr(gc_thread.region_site, &info) && info.dli_sname) {
     snprintf(msg, sizeof msg, "%s (%s)", what, info.dli_sname);
-  } else if (gc_heap.region_site && info.dli_fname && info.dli_fbase) {
+  } else if (gc_thread.region_site && info.dli_fname && info.dli_fbase) {
     const char *base = strrchr(info.dli_fname, '/');
     snprintf(msg, sizeof msg, "%s (%s+0x%lx)", what, base ? base + 1 : info.dli_fname,
-             (unsigned long)((uintptr_t)gc_heap.region_site - (uintptr_t)info.dli_fbase));
+             (unsigned long)((uintptr_t)gc_thread.region_site - (uintptr_t)info.dli_fbase));
   } else {
-    snprintf(msg, sizeof msg, "%s (called from %p)", what, gc_heap.region_site);
+    snprintf(msg, sizeof msg, "%s (called from %p)", what, gc_thread.region_site);
   }
   gc_die(msg);
 }
@@ -540,7 +611,7 @@ static __attribute__((noreturn)) void region_die(const char *what) {
  * unless the region alone has allocated more than the limit: no
  * collection after it could bring the heap back under the limit. */
 void gc_region_limit_check(uint64_t bytes) {
-  if (gc_heap.set.heap_max && gc_heap.region_bytes + bytes > gc_heap.set.heap_max) {
+  if (gc_heap.set.heap_max && gc_thread.region_bytes + bytes > gc_heap.set.heap_max) {
     region_die("heap limit in a no-GC region");
   }
 }
@@ -550,7 +621,7 @@ void gc_region_limit_check(uint64_t bytes) {
  * otherwise an explicit request is deferred to the first collection
  * point after the region (returns 1: the caller does not collect). */
 static int region_refuses(void) {
-  if (!gc_heap.defer) {
+  if (!gc_thread.nogc) {
     return 0;
   }
   if (gc_heap.set.verify) {
@@ -561,14 +632,15 @@ static int region_refuses(void) {
 
 void avant_nursery_reclaim(void) {
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   /* A young collection asked for inside a no-GC region is dropped (the
    * budget still triggers one after it). */
   if (region_refuses()) {
     pthread_mutex_unlock(&gc_heap.world);
     return;
   }
-  if (!gc_heap.set.nursery_off && !gc_heap.collecting && avant_nursery_held > 0) {
+  if (!gc_heap.set.nursery_off && !gc_thread.collecting && avant_nursery_held > 0) {
     gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
   }
   pthread_mutex_unlock(&gc_heap.world);
@@ -576,7 +648,8 @@ void avant_nursery_reclaim(void) {
 
 void avant_gc_collect(void) {
   gc_init();
-  pthread_mutex_lock(&gc_heap.world);
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
   if (region_refuses()) {
     gc_heap.explicit_pending = 1;
     gc_fast_clear();

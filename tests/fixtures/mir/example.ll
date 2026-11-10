@@ -19,15 +19,17 @@ target triple = "x86_64-pc-linux-gnu"
 @avant_nursery_held = external global i64
 @avant_inline_allocs = external global i64
 
+@avant_gc_top = external thread_local(localexec) global ptr
+
 declare ptr @avant_alloc(i64, i32)
 declare void @avant_barrier(ptr)
-declare void @avant_gc_enter()
-declare void @avant_gc_leave()
-declare ptr @avant_gc_root_begin(i32)
+declare void @avant_gc_frame_enter(ptr)
+declare void @avant_gc_frame_leave(ptr)
 declare void @avant_io_init_argv(i32, ptr)
 declare ptr @avant_str_from_int(i32)
 declare void @avant_type_map(i32, i64)
 declare i32 @printf(ptr, ...)
+declare i1 @llvm.expect.i1(i1, i1)
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 
 define internal void @"av.main/Box.initialize"(ptr %a1, ptr %a2) #0 {
@@ -69,82 +71,91 @@ define internal ptr @"av.main/Box.new"(ptr %a1) #0 {
 alloca:
   %_0 = alloca ptr, align 8
   %_1.name = alloca ptr, align 8
+  %gcf = alloca { ptr, ptr, i32, i32, i32, [2 x ptr] }, align 8
   store ptr %a1, ptr %_1.name, align 8
   br label %bb0
 
 bb0:
   store ptr null, ptr %_0, align 8
-  call void @avant_gc_enter()
-  %r = call ptr @avant_gc_root_begin(i32 2)
-  store ptr %_0, ptr %r, align 8
-  %r.1 = getelementptr inbounds ptr, ptr %r, i64 1
-  store ptr %_1.name, ptr %r.1, align 8
-  %t0 = load i32, ptr @g_avant_shared, align 4
-  %t1 = icmp eq i32 %t0, 0
-  %t2 = load i32, ptr @avant_gc_fast_ok, align 4
-  %t3 = icmp eq i32 %t2, 1
-  %t4 = load ptr, ptr @avant_gc_bump, align 8
-  %t5 = load ptr, ptr @avant_gc_limit, align 8
-  %t6 = ptrtoint ptr %t4 to i64
-  %t7 = icmp ne i64 %t6, 0
-  %t8 = add i64 %t6, 16
-  %t9 = ptrtoint ptr %t5 to i64
-  %t10 = icmp ule i64 %t8, %t9
-  %t11 = and i1 %t1, %t3
-  %t12 = and i1 %t7, %t10
-  %t13 = and i1 %t11, %t12
-  br i1 %t13, label %bb0.s3.fast, label %bb0.s3.slow
+  %t0 = getelementptr inbounds i8, ptr %gcf, i64 32
+  %t1 = getelementptr inbounds i8, ptr %gcf, i64 8
+  store ptr %t0, ptr %t1, align 8
+  %t2 = getelementptr inbounds i8, ptr %gcf, i64 16
+  store i32 2, ptr %t2, align 8
+  %t3 = getelementptr inbounds i8, ptr %gcf, i64 20
+  store i32 2, ptr %t3, align 4
+  %t4 = getelementptr inbounds i8, ptr %gcf, i64 24
+  store i32 0, ptr %t4, align 8
+  store ptr %_0, ptr %t0, align 8
+  %t5 = getelementptr inbounds i8, ptr %gcf, i64 40
+  store ptr %_1.name, ptr %t5, align 8
+  call void @__avant_frame_push(ptr %gcf)
+  %t6 = load i32, ptr @g_avant_shared, align 4
+  %t7 = icmp eq i32 %t6, 0
+  %t8 = load i32, ptr @avant_gc_fast_ok, align 4
+  %t9 = icmp eq i32 %t8, 1
+  %t10 = load ptr, ptr @avant_gc_bump, align 8
+  %t11 = load ptr, ptr @avant_gc_limit, align 8
+  %t12 = ptrtoint ptr %t10 to i64
+  %t13 = icmp ne i64 %t12, 0
+  %t14 = add i64 %t12, 16
+  %t15 = ptrtoint ptr %t11 to i64
+  %t16 = icmp ule i64 %t14, %t15
+  %t17 = and i1 %t7, %t9
+  %t18 = and i1 %t13, %t16
+  %t19 = and i1 %t17, %t18
+  br i1 %t19, label %bb0.s3.fast, label %bb0.s3.slow
 
 bb0.s3.fast:
-  %t14 = getelementptr inbounds i8, ptr %t4, i64 16
-  store ptr %t14, ptr @avant_gc_bump, align 8
-  %t15 = load ptr, ptr @avant_gc_block, align 8
-  %t16 = getelementptr inbounds i8, ptr %t15, i64 32
-  store ptr %t14, ptr %t16, align 8
-  store i64 -9214364833305067512, ptr %t4, align 8
-  %t17 = getelementptr inbounds i8, ptr %t4, i64 8
-  call void @llvm.memset.p0.i64(ptr %t17, i8 0, i64 8, i1 false)
-  %t18 = load ptr, ptr @avant_gc_base, align 8
-  %t19 = ptrtoint ptr %t4 to i64
-  %t20 = ptrtoint ptr %t18 to i64
-  %t21 = sub i64 %t19, %t20
-  %t22 = load ptr, ptr @avant_gc_starts, align 8
-  %t23 = lshr i64 %t21, 9
-  %t24 = lshr i64 %t21, 3
-  %t25 = and i64 %t24, 63
-  %t26 = shl i64 1, %t25
-  %t27 = getelementptr inbounds i64, ptr %t22, i64 %t23
-  %t28 = load i64, ptr %t27, align 8
-  %t29 = or i64 %t28, %t26
-  store i64 %t29, ptr %t27, align 8
-  %t30 = getelementptr inbounds i8, ptr @avant_g_stats, i64 24
-  %t31 = load i64, ptr %t30, align 8
-  %t32 = add i64 %t31, 16
-  store i64 %t32, ptr %t30, align 8
-  %t33 = load i64, ptr @avant_since_gc, align 8
-  %t34 = add i64 %t33, 16
-  store i64 %t34, ptr @avant_since_gc, align 8
-  %t35 = load i64, ptr @avant_nursery_held, align 8
-  %t36 = add i64 %t35, 16
-  store i64 %t36, ptr @avant_nursery_held, align 8
-  %t37 = load i64, ptr @avant_inline_allocs, align 8
-  %t38 = add i64 %t37, 1
-  store i64 %t38, ptr @avant_inline_allocs, align 8
+  %t20 = getelementptr inbounds i8, ptr %t10, i64 16
+  store ptr %t20, ptr @avant_gc_bump, align 8
+  %t21 = load ptr, ptr @avant_gc_block, align 8
+  %t22 = getelementptr inbounds i8, ptr %t21, i64 32
+  store ptr %t20, ptr %t22, align 8
+  store i64 -9214364833305067512, ptr %t10, align 8
+  %t23 = getelementptr inbounds i8, ptr %t10, i64 8
+  call void @llvm.memset.p0.i64(ptr %t23, i8 0, i64 8, i1 false)
+  %t24 = load ptr, ptr @avant_gc_base, align 8
+  %t25 = ptrtoint ptr %t10 to i64
+  %t26 = ptrtoint ptr %t24 to i64
+  %t27 = sub i64 %t25, %t26
+  %t28 = load ptr, ptr @avant_gc_starts, align 8
+  %t29 = lshr i64 %t27, 9
+  %t30 = lshr i64 %t27, 3
+  %t31 = and i64 %t30, 63
+  %t32 = shl i64 1, %t31
+  %t33 = getelementptr inbounds i64, ptr %t28, i64 %t29
+  %t34 = load i64, ptr %t33, align 8
+  %t35 = or i64 %t34, %t32
+  store i64 %t35, ptr %t33, align 8
+  %t36 = getelementptr inbounds i8, ptr @avant_g_stats, i64 24
+  %t37 = load i64, ptr %t36, align 8
+  %t38 = add i64 %t37, 16
+  store i64 %t38, ptr %t36, align 8
+  %t39 = load i64, ptr @avant_since_gc, align 8
+  %t40 = add i64 %t39, 16
+  store i64 %t40, ptr @avant_since_gc, align 8
+  %t41 = load i64, ptr @avant_nursery_held, align 8
+  %t42 = add i64 %t41, 16
+  store i64 %t42, ptr @avant_nursery_held, align 8
+  %t43 = load i64, ptr @avant_inline_allocs, align 8
+  %t44 = add i64 %t43, 1
+  store i64 %t44, ptr @avant_inline_allocs, align 8
   br label %bb0.s3.cont
 
 bb0.s3.slow:
-  %t39 = call ptr @avant_alloc(i64 8, i32 1)
+  %t45 = call ptr @avant_alloc(i64 8, i32 1)
   br label %bb0.s3.cont
 
 bb0.s3.cont:
-  %t40 = phi ptr [ %t17, %bb0.s3.fast ], [ %t39, %bb0.s3.slow ]
-  store ptr %t40, ptr %_0, align 8
-  %t41 = load ptr, ptr %_0, align 8
-  %t42 = load ptr, ptr %_1.name, align 8
-  call void @"av.main/Box.initialize"(ptr %t41, ptr %t42)
-  call void @avant_gc_leave()
-  %t43 = load ptr, ptr %_0, align 8
-  ret ptr %t43
+  %t46 = phi ptr [ %t23, %bb0.s3.fast ], [ %t45, %bb0.s3.slow ]
+  store ptr %t46, ptr %_0, align 8
+  %t47 = load ptr, ptr %_0, align 8
+  %t48 = load ptr, ptr %_1.name, align 8
+  call void @"av.main/Box.initialize"(ptr %t47, ptr %t48)
+  call void @__avant_frame_pop(ptr %gcf)
+  %t49 = load ptr, ptr %_0, align 8
+  ret ptr %t49
 }
 
 define internal ptr @"av.main/tag"(i32 %a1) #0 {
@@ -154,6 +165,7 @@ alloca:
   %_2.b = alloca ptr, align 8
   %_3 = alloca i1, align 1
   %_4 = alloca ptr, align 8
+  %gcf = alloca { ptr, ptr, i32, i32, i32, [3 x ptr] }, align 8
   store i32 %a1, ptr %_1.n, align 4
   br label %bb0
 
@@ -161,58 +173,66 @@ bb0:
   store ptr null, ptr %_0, align 8
   store ptr null, ptr %_2.b, align 8
   store ptr null, ptr %_4, align 8
-  call void @avant_gc_enter()
-  %r = call ptr @avant_gc_root_begin(i32 3)
-  store ptr %_0, ptr %r, align 8
-  %r.1 = getelementptr inbounds ptr, ptr %r, i64 1
-  store ptr %_2.b, ptr %r.1, align 8
-  %r.2 = getelementptr inbounds ptr, ptr %r, i64 2
-  store ptr %_4, ptr %r.2, align 8
-  %t0 = call ptr @"av.main/Box.new"(ptr @str.0)
-  store ptr %t0, ptr %_2.b, align 8
-  %t1 = load i32, ptr %_1.n, align 4
-  %t2 = icmp sgt i32 %t1, 9
-  store i1 %t2, ptr %_3, align 1
-  %t3 = load i1, ptr %_3, align 1
-  br i1 %t3, label %bb1, label %bb2
+  %t0 = getelementptr inbounds i8, ptr %gcf, i64 32
+  %t1 = getelementptr inbounds i8, ptr %gcf, i64 8
+  store ptr %t0, ptr %t1, align 8
+  %t2 = getelementptr inbounds i8, ptr %gcf, i64 16
+  store i32 3, ptr %t2, align 8
+  %t3 = getelementptr inbounds i8, ptr %gcf, i64 20
+  store i32 3, ptr %t3, align 4
+  %t4 = getelementptr inbounds i8, ptr %gcf, i64 24
+  store i32 0, ptr %t4, align 8
+  store ptr %_0, ptr %t0, align 8
+  %t5 = getelementptr inbounds i8, ptr %gcf, i64 40
+  store ptr %_2.b, ptr %t5, align 8
+  %t6 = getelementptr inbounds i8, ptr %gcf, i64 48
+  store ptr %_4, ptr %t6, align 8
+  call void @__avant_frame_push(ptr %gcf)
+  %t7 = call ptr @"av.main/Box.new"(ptr @str.0)
+  store ptr %t7, ptr %_2.b, align 8
+  %t8 = load i32, ptr %_1.n, align 4
+  %t9 = icmp sgt i32 %t8, 9
+  store i1 %t9, ptr %_3, align 1
+  %t10 = load i1, ptr %_3, align 1
+  br i1 %t10, label %bb1, label %bb2
 
 bb1:
-  %t4 = load i32, ptr %_1.n, align 4
-  %t5 = call ptr @avant_str_from_int(i32 %t4)
-  store ptr %t5, ptr %_4, align 8
-  %t6 = load ptr, ptr %_2.b, align 8
-  %t7 = icmp eq ptr %t6, null
-  br i1 %t7, label %bb1.s1.cont, label %bb1.s1.test
+  %t11 = load i32, ptr %_1.n, align 4
+  %t12 = call ptr @avant_str_from_int(i32 %t11)
+  store ptr %t12, ptr %_4, align 8
+  %t13 = load ptr, ptr %_2.b, align 8
+  %t14 = icmp eq ptr %t13, null
+  br i1 %t14, label %bb1.s1.cont, label %bb1.s1.test
 
 bb1.s1.test:
-  %t8 = getelementptr inbounds i8, ptr %t6, i64 -2
-  %t9 = load i16, ptr %t8, align 2
-  %t10 = and i16 %t9, -32768
-  %t11 = icmp ne i16 %t10, 0
-  %t12 = and i16 %t9, 48
-  %t13 = icmp ne i16 %t12, 0
-  %t14 = and i1 %t11, %t13
-  br i1 %t14, label %bb1.s1.cont, label %bb1.s1.call
+  %t15 = getelementptr inbounds i8, ptr %t13, i64 -2
+  %t16 = load i16, ptr %t15, align 2
+  %t17 = and i16 %t16, -32768
+  %t18 = icmp ne i16 %t17, 0
+  %t19 = and i16 %t16, 48
+  %t20 = icmp ne i16 %t19, 0
+  %t21 = and i1 %t18, %t20
+  br i1 %t21, label %bb1.s1.cont, label %bb1.s1.call
 
 bb1.s1.call:
-  call void @avant_barrier(ptr %t6)
+  call void @avant_barrier(ptr %t13)
   br label %bb1.s1.cont
 
 bb1.s1.cont:
-  %t15 = load ptr, ptr %_4, align 8
-  %t16 = load ptr, ptr %_2.b, align 8
-  %t17 = getelementptr inbounds %"main.Box", ptr %t16, i32 0, i32 0
-  store ptr %t15, ptr %t17, align 8
+  %t22 = load ptr, ptr %_4, align 8
+  %t23 = load ptr, ptr %_2.b, align 8
+  %t24 = getelementptr inbounds %"main.Box", ptr %t23, i32 0, i32 0
+  store ptr %t22, ptr %t24, align 8
   br label %bb2
 
 bb2:
-  %t18 = load ptr, ptr %_2.b, align 8
-  %t19 = getelementptr inbounds %"main.Box", ptr %t18, i32 0, i32 0
-  %t20 = load ptr, ptr %t19, align 8
-  store ptr %t20, ptr %_0, align 8
-  call void @avant_gc_leave()
-  %t21 = load ptr, ptr %_0, align 8
-  ret ptr %t21
+  %t25 = load ptr, ptr %_2.b, align 8
+  %t26 = getelementptr inbounds %"main.Box", ptr %t25, i32 0, i32 0
+  %t27 = load ptr, ptr %t26, align 8
+  store ptr %t27, ptr %_0, align 8
+  call void @__avant_frame_pop(ptr %gcf)
+  %t28 = load ptr, ptr %_0, align 8
+  ret ptr %t28
 }
 
 define i32 @main(i32 %a1, ptr %a2) #0 {
@@ -224,6 +244,7 @@ alloca:
   %_4.i = alloca i32, align 4
   %_5 = alloca i1, align 1
   %_6 = alloca ptr, align 8
+  %gcf = alloca { ptr, ptr, i32, i32, i32, [3 x ptr] }, align 8
   store i32 %a1, ptr %_1.argc, align 4
   store ptr %a2, ptr %_2.argv, align 8
   br label %bb0
@@ -231,49 +252,57 @@ alloca:
 bb0:
   store ptr null, ptr %_3.last, align 8
   store ptr null, ptr %_6, align 8
-  call void @avant_gc_enter()
-  %r = call ptr @avant_gc_root_begin(i32 3)
-  store ptr %_2.argv, ptr %r, align 8
-  %r.1 = getelementptr inbounds ptr, ptr %r, i64 1
-  store ptr %_3.last, ptr %r.1, align 8
-  %r.2 = getelementptr inbounds ptr, ptr %r, i64 2
-  store ptr %_6, ptr %r.2, align 8
+  %t0 = getelementptr inbounds i8, ptr %gcf, i64 32
+  %t1 = getelementptr inbounds i8, ptr %gcf, i64 8
+  store ptr %t0, ptr %t1, align 8
+  %t2 = getelementptr inbounds i8, ptr %gcf, i64 16
+  store i32 3, ptr %t2, align 8
+  %t3 = getelementptr inbounds i8, ptr %gcf, i64 20
+  store i32 3, ptr %t3, align 4
+  %t4 = getelementptr inbounds i8, ptr %gcf, i64 24
+  store i32 0, ptr %t4, align 8
+  store ptr %_2.argv, ptr %t0, align 8
+  %t5 = getelementptr inbounds i8, ptr %gcf, i64 40
+  store ptr %_3.last, ptr %t5, align 8
+  %t6 = getelementptr inbounds i8, ptr %gcf, i64 48
+  store ptr %_6, ptr %t6, align 8
+  call void @__avant_frame_push(ptr %gcf)
   call void @__avant_type_maps()
-  %t0 = load i32, ptr %_1.argc, align 4
-  %t1 = load ptr, ptr %_2.argv, align 8
-  call void @avant_io_init_argv(i32 %t0, ptr %t1)
-  %t2 = call ptr @"av.main/tag"(i32 0)
-  store ptr %t2, ptr %_3.last, align 8
+  %t7 = load i32, ptr %_1.argc, align 4
+  %t8 = load ptr, ptr %_2.argv, align 8
+  call void @avant_io_init_argv(i32 %t7, ptr %t8)
+  %t9 = call ptr @"av.main/tag"(i32 0)
+  store ptr %t9, ptr %_3.last, align 8
   store i32 0, ptr %_4.i, align 4
   br label %bb1
 
 bb1:
-  %t3 = load i32, ptr %_4.i, align 4
-  %t4 = icmp slt i32 %t3, 200000
-  store i1 %t4, ptr %_5, align 1
-  %t5 = load i1, ptr %_5, align 1
-  br i1 %t5, label %bb2, label %bb3
+  %t10 = load i32, ptr %_4.i, align 4
+  %t11 = icmp slt i32 %t10, 200000
+  store i1 %t11, ptr %_5, align 1
+  %t12 = load i1, ptr %_5, align 1
+  br i1 %t12, label %bb2, label %bb3
 
 bb2:
-  %t6 = load i32, ptr %_4.i, align 4
-  %t7 = call ptr @"av.main/tag"(i32 %t6)
-  store ptr %t7, ptr %_3.last, align 8
-  %t8 = load i32, ptr %_4.i, align 4
-  %t9 = add i32 %t8, 1
-  store i32 %t9, ptr %_4.i, align 4
+  %t13 = load i32, ptr %_4.i, align 4
+  %t14 = call ptr @"av.main/tag"(i32 %t13)
+  store ptr %t14, ptr %_3.last, align 8
+  %t15 = load i32, ptr %_4.i, align 4
+  %t16 = add i32 %t15, 1
+  store i32 %t16, ptr %_4.i, align 4
   br label %bb1
 
 bb3:
-  %t10 = load ptr, ptr %_3.last, align 8
-  %t11 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t10)
-  %t12 = call ptr @"av.main/tag"(i32 3)
-  store ptr %t12, ptr %_6, align 8
-  %t13 = load ptr, ptr %_6, align 8
-  %t14 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t13)
+  %t17 = load ptr, ptr %_3.last, align 8
+  %t18 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t17)
+  %t19 = call ptr @"av.main/tag"(i32 3)
+  store ptr %t19, ptr %_6, align 8
+  %t20 = load ptr, ptr %_6, align 8
+  %t21 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t20)
   store i32 0, ptr %_0, align 4
-  call void @avant_gc_leave()
-  %t15 = load i32, ptr %_0, align 4
-  ret i32 %t15
+  call void @__avant_frame_pop(ptr %gcf)
+  %t22 = load i32, ptr %_0, align 4
+  ret i32 %t22
 }
 
 define internal void @__avant_type_maps() #0 {
@@ -282,6 +311,42 @@ entry:
   call void @avant_type_map(i32 1021, i64 1)
   call void @avant_type_map(i32 1023, i64 7)
   call void @avant_type_map(i32 1, i64 1)
+  ret void
+}
+
+define internal void @__avant_frame_push(ptr %f) #0 {
+entry:
+  %t = load ptr, ptr @avant_gc_top, align 8
+  %c = icmp ne ptr %t, null
+  %x = call i1 @llvm.expect.i1(i1 %c, i1 true)
+  br i1 %x, label %link, label %enter
+
+link:
+  store ptr %t, ptr %f, align 8
+  store volatile ptr %f, ptr @avant_gc_top, align 8
+  ret void
+
+enter:
+  call void @avant_gc_frame_enter(ptr %f)
+  ret void
+}
+
+define internal void @__avant_frame_pop(ptr %f) #0 {
+entry:
+  %t = load ptr, ptr @avant_gc_top, align 8
+  %p = load ptr, ptr %f, align 8
+  %c1 = icmp eq ptr %t, %f
+  %c2 = icmp ne ptr %p, null
+  %c = and i1 %c1, %c2
+  %x = call i1 @llvm.expect.i1(i1 %c, i1 true)
+  br i1 %x, label %unlink, label %leave
+
+unlink:
+  store volatile ptr %p, ptr @avant_gc_top, align 8
+  ret void
+
+leave:
+  call void @avant_gc_frame_leave(ptr %f)
   ret void
 }
 

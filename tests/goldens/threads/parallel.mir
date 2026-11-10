@@ -62,14 +62,13 @@ extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_get_ptr(ref, i32) -> ref never
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_array_set_ptr(ref, i32, ref) -> void never
+extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_parallel_for(i32, ptr, ref) -> void collects
-extern avant_pin(ref) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
-extern avant_unpin(ref) -> void never
 extern printf(ref str, ...) -> i32 never
 
 fn av.parallel/checksum(_1: ref %Array(Int)) -> i32 frame @parallel.av:17:1 {
@@ -139,6 +138,7 @@ bb0:
   goto bb1   @30:3
 
 bb1:
+  call avant_gc_poll() collects   @30:15
   _4 = copy (*_1).1   @30:15
   _5 = lt copy _3, copy _4   @30:11
   branch copy _5, bb2, bb3   @30:3
@@ -433,13 +433,11 @@ bb0:
   (*_12).2 = copy _8   @42:20
   _13 = copy _12   @42:20
   _14 = call avant_alloc(const u64 16, const u32 1) collects   @42:20
-  call avant_pin(copy _14) nocollect   @42:20
   barrier copy _14   @42:20
   (*_14).0 = copy _7   @42:20
   barrier copy _14   @42:20
   (*_14).1 = copy _13   @42:20
   call avant_parallel_for(copy _8, const fn av.parallel/main#par1, copy _14) collects   @42:20
-  call avant_unpin(copy _14) nocollect   @42:20
   _15 = copy _13   @42:6
   _16 = call av.parallel/checksum(copy _15) collects   @43:8
   call printf(const str.2, copy _16) nocollect   @43:3
@@ -457,7 +455,6 @@ bb0:
   (*_22).2 = copy _18   @45:25
   _23 = copy _22   @45:25
   _24 = call avant_alloc(const u64 24, const u32 2) collects   @45:25
-  call avant_pin(copy _24) nocollect   @45:25
   barrier copy _24   @45:25
   (*_24).0 = copy _17   @45:25
   barrier copy _24   @45:25
@@ -465,7 +462,6 @@ bb0:
   _25 = copy (*_3).0   @45:25
   (*_24).2 = copy _25   @45:25
   call avant_parallel_for(copy _18, const fn av.parallel/main#par2, copy _24) collects   @45:25
-  call avant_unpin(copy _24) nocollect   @45:25
   _26 = copy _23   @45:11
   _27 = call av.parallel/checksum(copy _26) collects   @46:8
   call printf(const str.2, copy _27) nocollect   @46:3
@@ -493,13 +489,11 @@ bb0:
   (*_36).2 = copy _32   @48:25
   _37 = copy _36   @48:25
   _38 = call avant_alloc(const u64 16, const u32 3) collects   @48:25
-  call avant_pin(copy _38) nocollect   @48:25
   barrier copy _38   @48:25
   (*_38).0 = copy _31   @48:25
   barrier copy _38   @48:25
   (*_38).1 = copy _37   @48:25
   call avant_parallel_for(copy _32, const fn av.parallel/main#par3, copy _38) collects   @48:25
-  call avant_unpin(copy _38) nocollect   @48:25
   _39 = copy _37   @48:8
   _40 = call av.parallel/checksum(copy _39) collects   @49:8
   call printf(const str.2, copy _40) nocollect   @49:3
@@ -516,7 +510,6 @@ bb0:
   (*_47).2 = copy _43   @51:25
   _48 = copy _47   @51:25
   _49 = call avant_alloc(const u64 24, const u32 4) collects   @51:25
-  call avant_pin(copy _49) nocollect   @51:25
   barrier copy _49   @51:25
   (*_49).0 = copy _42   @51:25
   barrier copy _49   @51:25
@@ -524,7 +517,6 @@ bb0:
   barrier copy _49   @51:25
   (*_49).2 = copy _41   @51:25
   call avant_parallel_for(copy _43, const fn av.parallel/main#par4, copy _49) collects   @51:25
-  call avant_unpin(copy _49) nocollect   @51:25
   _50 = copy _48   @51:8
   _51 = call av.parallel/join_all(copy _50) collects   @52:8
   call printf(const str.8, copy _51) nocollect   @52:3
@@ -540,13 +532,11 @@ bb0:
   (*_57).2 = copy _53   @53:22
   _58 = copy _57   @53:22
   _59 = call avant_alloc(const u64 16, const u32 5) collects   @53:22
-  call avant_pin(copy _59) nocollect   @53:22
   barrier copy _59   @53:22
   (*_59).0 = copy _52   @53:22
   barrier copy _59   @53:22
   (*_59).1 = copy _58   @53:22
   call avant_parallel_for(copy _53, const fn av.parallel/main#par5, copy _59) collects   @53:22
-  call avant_unpin(copy _59) nocollect   @53:22
   _60 = copy _58   @53:8
   _61 = call av.parallel/join_all(copy _60) collects   @54:8
   call printf(const str.8, copy _61) nocollect   @54:3
@@ -561,6 +551,7 @@ bb0:
   goto bb1   @57:3
 
 bb1:
+  call avant_gc_poll() collects   @57:11
   _66 = lt copy _65, const i32 6   @57:11
   branch copy _66, bb2, bb3   @57:3
 
@@ -588,7 +579,6 @@ bb3:
   (*_78).2 = copy _74   @62:26
   _79 = copy _78   @62:26
   _80 = call avant_alloc(const u64 32, const u32 6) collects   @62:26
-  call avant_pin(copy _80) nocollect   @62:26
   barrier copy _80   @62:26
   (*_80).0 = copy _73   @62:26
   barrier copy _80   @62:26
@@ -596,12 +586,12 @@ bb3:
   barrier copy _80   @62:26
   (*_80).2 = copy _72   @62:26
   call avant_parallel_for(copy _74, const fn av.parallel/main#par6, copy _80) collects   @62:26
-  call avant_unpin(copy _80) nocollect   @62:26
   _81 = copy _79   @62:9
   _65 = const i32 0   @63:5
   goto bb4   @64:3
 
 bb4:
+  call avant_gc_poll() collects   @64:18
   _82 = copy (*_81).1   @64:18
   _83 = lt copy _65, copy _82   @64:11
   branch copy _83, bb5, bb6   @64:3
@@ -642,7 +632,6 @@ bb6:
   (*_100).2 = copy _96   @69:24
   _101 = copy _100   @69:24
   _102 = call avant_alloc(const u64 24, const u32 7) collects   @69:24
-  call avant_pin(copy _102) nocollect   @69:24
   barrier copy _102   @69:24
   (*_102).0 = copy _95   @69:24
   barrier copy _102   @69:24
@@ -650,7 +639,6 @@ bb6:
   barrier copy _102   @69:24
   (*_102).2 = copy _94   @69:24
   call avant_parallel_for(copy _96, const fn av.parallel/main#par7, copy _102) collects   @69:24
-  call avant_unpin(copy _102) nocollect   @69:24
   _103 = copy _101   @69:10
   _104 = call av.parallel/checksum(copy _103) collects   @70:8
   call printf(const str.2, copy _104) nocollect   @70:3
@@ -666,7 +654,6 @@ bb6:
   (*_110).2 = copy _106   @71:21
   _111 = copy _110   @71:21
   _112 = call avant_alloc(const u64 24, const u32 8) collects   @71:21
-  call avant_pin(copy _112) nocollect   @71:21
   barrier copy _112   @71:21
   (*_112).0 = copy _105   @71:21
   barrier copy _112   @71:21
@@ -674,7 +661,6 @@ bb6:
   _113 = copy (*_3).0   @71:21
   (*_112).2 = copy _113   @71:21
   call avant_parallel_for(copy _106, const fn av.parallel/main#par8, copy _112) collects   @71:21
-  call avant_unpin(copy _112) nocollect   @71:21
   _114 = copy _111   @71:7
   _115 = call av.parallel/checksum(copy _114) collects   @75:8
   call printf(const str.2, copy _115) nocollect   @75:3
@@ -700,13 +686,11 @@ bb6:
   (*_127).2 = copy _123   @77:25
   _128 = copy _127   @77:25
   _129 = call avant_alloc(const u64 16, const u32 11) collects   @77:25
-  call avant_pin(copy _129) nocollect   @77:25
   barrier copy _129   @77:25
   (*_129).0 = copy _122   @77:25
   barrier copy _129   @77:25
   (*_129).1 = copy _128   @77:25
   call avant_parallel_for(copy _123, const fn av.parallel/main#par9, copy _129) collects   @77:25
-  call avant_unpin(copy _129) nocollect   @77:25
   _130 = copy _128   @77:8
   _131 = copy (*_130).1   @78:12
   call printf(const str.2, copy _131) nocollect   @78:3
@@ -715,6 +699,7 @@ bb6:
   goto bb7   @81:3
 
 bb7:
+  call avant_gc_poll() collects   @81:15
   _134 = lt copy _133, const i32 200   @81:15
   branch copy _134, bb8, bb9   @81:3
 
@@ -731,14 +716,12 @@ bb8:
   (*_140).2 = copy _136   @82:24
   _141 = copy _140   @82:24
   _142 = call avant_alloc(const u64 24, const u32 12) collects   @82:24
-  call avant_pin(copy _142) nocollect   @82:24
   barrier copy _142   @82:24
   (*_142).0 = copy _135   @82:24
   barrier copy _142   @82:24
   (*_142).1 = copy _141   @82:24
   (*_142).2 = copy _133   @82:24
   call avant_parallel_for(copy _136, const fn av.parallel/main#par10, copy _142) collects   @82:24
-  call avant_unpin(copy _142) nocollect   @82:24
   _143 = copy _141   @82:10
   _144 = copy _143   @83:27
   _145 = copy (*_144).1   @83:27
@@ -752,13 +735,11 @@ bb8:
   (*_149).2 = copy _145   @83:27
   _150 = copy _149   @83:27
   _151 = call avant_alloc(const u64 16, const u32 13) collects   @83:27
-  call avant_pin(copy _151) nocollect   @83:27
   barrier copy _151   @83:27
   (*_151).0 = copy _144   @83:27
   barrier copy _151   @83:27
   (*_151).1 = copy _150   @83:27
   call avant_parallel_for(copy _145, const fn av.parallel/main#par11, copy _151) collects   @83:27
-  call avant_unpin(copy _151) nocollect   @83:27
   _152 = copy _150   @83:11
   _153 = call av.parallel/checksum(copy _152) collects   @84:22
   _154 = add copy _132, copy _153   @84:19

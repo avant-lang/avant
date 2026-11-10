@@ -12,8 +12,9 @@ import backends
 // verifier reports nothing; (c) `avant dump` under AVANT_BACKEND=llvm
 // prints exactly tests/goldens/threads/<name>.mir (D171); (d) the
 // program the old back end cannot compile (fresh.av, expected
-// differences, D196) prints its known output on the new back end, plain
-// and under the four GC environments; (e) a coverage build
+// differences, D196) and D191's probe (d191_probe.av, Stage 28 W17a)
+// print their known output on the new back end, plain and under the four
+// GC environments; (e) a coverage build
 // (AVANT_COVERAGE=1) of tests/fixtures/coverage/points.av writes the slot
 // map and the counts (lcov) the old back end wrote (goldens frozen at
 // W11). The outputs
@@ -33,15 +34,33 @@ fn both_progs: Array(String) {
 
 // The programs only the new back end compiles, with their output.
 fn new_progs: Array(String) {
-  ["tests/fixtures/threads/fresh.av"]
+  ["tests/fixtures/threads/fresh.av", "tests/fixtures/threads/d191_probe.av"]
 }
 
 fn new_wants: Array(String) {
-  ["102 104 106 108\naa bbbb cccccc\n1\n9 tttt\n"]
+  ["102 104 106 108\naa bbbb cccccc\n1\n9 tttt\n", "worker bad reads: 0\nmain bad reads: 0\nshared[199]: item-199\n"]
 }
 
 fn gc_envs: Array(String) {
   ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
+}
+
+// The .ll without its frame chain's two stores (Stage 28 W18): linking
+// and unlinking a frame record are volatile stores into avant_gc_top,
+// the only volatile stores the emitter writes.
+fn without_frame_links(ll: String): String {
+  lines = ll.split("\n")
+  out = buf_new()
+  i = 0
+  while i < lines.size {
+    l = lines[i]
+    if !(str_has(l, "store volatile ptr ") && str_has(l, ", ptr @avant_gc_top, align 8")) {
+      out.push_str(l)
+      out.push_str("\n")
+    }
+    i = i + 1
+  }
+  out.to_s
 }
 
 fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
@@ -74,7 +93,8 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     i = i + 1
   }
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
-  // W9b (D207): slot accesses are volatile in a shared module only.
+  // Stage 28 W17b (D207 relaxed): no slot access is volatile, in a shared
+  // module either; its only volatile access is the poll's flag load.
   vol_srcs = ["tests/fixtures/threads/spawn.av", "tests/fixtures/heap/loops.av"]
   i = 0
   while i < vol_srcs.size {
@@ -115,14 +135,14 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(jobs[base + 2].code, 0, "heap/loops.av: __emit-ll exits 0")
   vol_shared = "(no .ll)"
   if t = file_read("${dir}/vol0.ll") {
-    vol_shared = t
+    vol_shared = without_frame_links(t)
   }
   vol_single = "(no .ll) volatile"
   if t = file_read("${dir}/vol1.ll") {
-    vol_single = t
+    vol_single = without_frame_links(t)
   }
-  c.expect(str_has(vol_shared, "load volatile ptr"), "threads/spawn.av (shared): slot loads are volatile")
-  c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access")
+  c.expect(!str_has(vol_shared, "load volatile ptr") && !str_has(vol_shared, "store volatile") && str_has(vol_shared, "load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile (the frame links aside)")
+  c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access but the frame links")
 
   // Wave 2: every program, then the new ones under each GC environment,
   // then the coverage builds (each writes its own lcov).

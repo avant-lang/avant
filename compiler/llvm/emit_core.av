@@ -4,11 +4,12 @@
 // operand's value. Rule E1 is structural here: an operand is loaded from
 // its local at the point of use, once per occurrence, and no LLVM value is
 // kept across MIR statements (only inside one statement's expansion).
-// Rule E2 (as amended by W9b, D207): in a shared module a load or store
-// of a slot local, or of a field of an aggregate slot local (a place with
-// no deref), is volatile; every other access, and every slot access of a
-// single-threaded module, is plain (slot_vol). emit_gc.av holds the GC sequences, emit.av the statements,
-// functions, and the module.
+// Rule E2 (as amended by W9b, D207, and Stage 28 W17b): every load and
+// store of a slot is plain (slot_vol), in a shared module too; until W17b
+// a shared module's slot accesses were volatile, because another thread's
+// collection could read and rewrite them at any instruction (D191).
+// emit_gc.av holds the GC sequences, emit.av the statements, functions,
+// and the module.
 //
 // D188 and D192: LlEmit holds 20 words; no array of structs or unions.
 
@@ -18,6 +19,7 @@ import mir.runtime
 import mir.ir
 import mir.print
 import mir.verify_core
+import llvm.glue
 
 pub class LlEmit {
   m: MModule
@@ -31,6 +33,9 @@ pub class LlEmit {
   si: Int = 0
   inline_fast: Bool = true
   used_alloc_globals: Bool = false
+  used_poll_global: Bool = false
+  used_frame_global: Bool = false
+  frame_words: Int = -1
   trap_ovf: Bool = false
   trap_div0: Bool = false
   rt_names: Array(String)
@@ -167,14 +172,17 @@ pub class LlEmit {
     ll_local("_${n}.${name}")
   }
 
-  // E2 as amended by W9b (D207): a slot is accessed volatile only in a
-  // shared module (one that spawns or uses .parallel, section 7). In a
-  // single-threaded program a collection happens only inside a collecting
-  // call; the slot's address escapes to the runtime at gc.roots, so LLVM
-  // must assume every such call reads and writes the slot, and the reload
-  // rule (5.3) rereads it after the call anyway.
+  // E2 as amended by Stage 28 W17b: no slot access is volatile. A
+  // collection reads and rewrites a thread's slots only while that thread
+  // is stopped at a safepoint (a collecting call, the poll) or native
+  // (inside a call), in a shared module as in a single-threaded one
+  // (gc-design.md 4.4, the handshake of W17a); the slot's address escapes
+  // to the runtime at gc.roots, so LLVM must assume every such call reads
+  // and writes the slot, and the reload rule (5.3) rereads it after the
+  // call anyway. (W9b, D207: volatile only in a shared module, where
+  // another thread's collection could touch the slot at any instruction.)
   pub fn slot_vol(local: Int): Bool {
-    self.f.locals[local].slot && self.m.shared
+    false
   }
 
   pub fn vol(volatile: Bool): String {
@@ -276,7 +284,7 @@ pub class LlEmit {
       return self.int_text(o.ty, o.ival)
     }
     if k == mok_f64() {
-      return "0x${mir_hex(o.ival.to_u64, true, 16)}"
+      return llvm_f64_text(o.ival)
     }
     if k == mok_null() {
       return "null"

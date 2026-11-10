@@ -1,0 +1,92 @@
+// O134 (Stage 28 W18C): C frees a struct Avant stored into without a
+// `release`, and a new struct lands at the same address (rr_new reuses one
+// slot), so the new struct meets the old struct's field record. Whatever
+// C still holds from the old struct (rr_keep: the name it took) must stay
+// valid: a store that finds the field no longer holding Avant's last value
+// starts the record afresh and keeps the earlier values pinned, so the
+// `release` on the new struct gives back only what Avant stored into it;
+// a release that finds C's value in the field gives back nothing. Under
+// AVANT_GC_VERIFY=1 a store that finds its field changed is reported once
+// per field as a likely missing `release` (a release is silent). Under AVANT_GC_STRESS=1 freed memory is poisoned, so a wrong
+// unpin shows as a kept pointer that no longer reads the original.
+// Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib rr {
+  struct Pos {
+    tag: String
+    n: Int
+  }
+  struct Holder {
+    name: String
+    id: Int
+    link: Ptr(Void)
+    at: Pos
+    note: String
+  }
+  fun rr_new: Ptr(Holder)
+  fun rr_free(h: Ptr(Holder))
+  fun rr_keep(h: Ptr(Holder))
+  fun rr_kept_is(want: String): Int
+  fun rr_set_c_name(h: Ptr(Holder))
+  fun avant_pin_count: Int
+  fun avant_gc_collect
+}
+
+fn churn(n: Int): Int {
+  t = 0
+  keep: Array(String) = []
+  i = 0
+  while i < n {
+    s = "churn ${i} and more text to fill the young generation"
+    keep.push(s)
+    if keep.size > 300 {
+      keep = []
+    }
+    t = t + s.size
+    i = i + 1
+  }
+  t
+}
+
+fn settle: Int {
+  t = churn(100000)
+  rr.avant_gc_collect()
+  t = t + churn(100000)
+  rr.avant_gc_collect()
+  t
+}
+
+// The new struct is stored into, then released.
+fn stored_again(base: Int) {
+  k = 11
+  a = rr.rr_new()
+  a.name = "old-name-${k}"
+  rr.rr_keep(a)
+  rr.rr_free(a)
+  b = rr.rr_new()
+  b.name = "new-name-${k}"
+  release(b.name)
+  t = settle()
+  puts("stored again: pins ${rr.avant_pin_count() - base}, C's kept name reads the original ${rr.rr_kept_is("old-name-11")}, churn ${t > 0}")
+}
+
+// The new struct is released without a store of its own; C put its own
+// value in the field.
+fn released_only(base: Int) {
+  k = 12
+  a = rr.rr_new()
+  a.name = "old-name-${k}"
+  rr.rr_keep(a)
+  rr.rr_free(a)
+  b = rr.rr_new()
+  rr.rr_set_c_name(b)
+  release(b)
+  t = settle()
+  puts("released only: pins ${rr.avant_pin_count() - base}, C's kept name reads the original ${rr.rr_kept_is("old-name-12")}, churn ${t > 0}")
+}
+
+fn main {
+  base = rr.avant_pin_count()
+  stored_again(base)
+  released_only(base)
+}

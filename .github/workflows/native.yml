@@ -47,8 +47,8 @@
 name: native
 
 env:
-  AVANT_SEED_VERSION: v0.36.0
-  AVANT_SEED_SHA256: b9484b2c163cdc34932f2a2148d723324e22712906d29425a3c4cef0b69a046d
+  AVANT_SEED_VERSION: v0.37.0
+  AVANT_SEED_SHA256: 4107a66cf0e23e4cce51a24f07c5bf3534dc31c938d596325a8db85ce8b06f43
 
 "on":
   push:
@@ -111,24 +111,13 @@ jobs:
           tar -C /tmp -xzf /tmp/avant-seed.tar.gz
           test -x /tmp/avant-linux-x86_64/avant
 
-      # The seed hop (D252, tools/seed-hop.sh): v0.36.0 predates W15a1's
-      # call table, so its B of this tree is wrong once the C-stack pin scan
-      # is retired (W16b). It builds the hop commit's B and C' (a tree whose
-      # runtime still has the scan) and that C' becomes the seed. Remove this
-      # step when a release built after W15a1 is the pinned seed.
-      - name: Seed hop (v0.36.0 → a seed with the current call table)
-        run: |
-          set -euo pipefail
-          sh tools/seed-hop.sh /tmp/avant-linux-x86_64 /tmp/avant-hop
-          test -x /tmp/avant-hop/avant
-
       - name: Seed → B
         env:
           AVANT_COVERAGE: "1"
           AVANT_COVERAGE_MAP: ${{ github.workspace }}/coverage.map
         run: |
           set -euo pipefail
-          /tmp/avant-hop/avant compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o
+          /tmp/avant-linux-x86_64/avant compile compiler/main.av bin/avant-b --debug runtime/build/avant_llvm.o
 
       # Do not inherit AVANT_COVERAGE here. B would compile hello with
       # coverage and overwrite coverage.map, and the suite would then

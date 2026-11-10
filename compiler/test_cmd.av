@@ -3,6 +3,7 @@ import pipeline
 import pkg
 import source
 import cov_report
+import llvm.glue
 
 pub class FileRun {
   abs: String = ""
@@ -562,6 +563,8 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     args.push(f.abs)
     args.push(f.bin)
     args.push("--debug")
+    // The tests are local runs: the machine's highest level (O140).
+    args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
     sched.add(JobCmd.new(args, "${host.fresh()}.log", 0, i))
     i = i + 1
   }
@@ -691,7 +694,7 @@ fn find_from(text: String, needle: String, from: Int): Int {
     }
     i = i + 1
   }
-  -1
+  return -1
 }
 
 fn attr_sum(text: String, key: String): Int {

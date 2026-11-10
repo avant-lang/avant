@@ -10,51 +10,187 @@ import mir.types
 import mir.ir
 import llvm.emit_core
 
-// gc.roots (5.2): avant_gc_root_begin(n) with n the root words of every
-// listed slot, then one store per word, slots in the listed order and
-// words in offset order; nothing else in between. Empty: nothing.
-pub fn ll_gc_roots(e: LlEmit, locals: Array(Int)) {
+// Frames (5.1, 5.2 as emitted since Stage 28 W18). A frame function
+// keeps its frame record in its own stack frame: %gcf, an AvantGcFrame
+// (runtime/avant_rt.h: prev, slots, n, cap, scope; 32 bytes) followed by
+// the slot array, one pointer per root word of the gc.roots that follows
+// gc.enter (slots in the listed order, words in offset order). gc.enter
+// fills the record (slots, n = cap = the root words, scope 0, each
+// word's address) and links it with the module's @__avant_frame_push:
+// inline (prev = avant_gc_top, avant_gc_top = %gcf) when the thread
+// already has an innermost frame, else through avant_gc_frame_enter,
+// which also registers the thread and initializes the heap. gc.leave
+// calls @__avant_frame_pop, which unlinks it inline when %gcf is
+// innermost and not the thread's outermost frame, else through
+// avant_gc_frame_leave. Both helpers are internal and small, so the O3
+// inliner folds them into every frame (ll_gc_frame_helpers). The call
+// forms (inline_fast false) call the runtime entries directly.
+// gc.roots itself emits nothing: gc.enter has registered its slots, and
+// nothing comes between them (V16). Until W18 this was a call to
+// avant_gc_enter, a call to avant_gc_root_begin and one store per word,
+// and a call to avant_gc_leave (R5, O4).
+
+// The root words of bb0's gc.roots, or -1 when the function has no
+// gc.enter (a leaf, 5.7).
+pub fn ll_gc_frame_words(e: LlEmit, f: MFunc): Int {
+  if f.blocks.size == 0 {
+    return -1
+  }
+  stmts = f.blocks[0].stmts
+  found = false
   n = 0
   i = 0
-  while i < locals.size {
-    n = n + e.ts.root_count(e.f.locals[locals[i]].ty)
-    i = i + 1
-  }
-  if n == 0 {
-    return
-  }
-  e.need("avant_gc_root_begin")
-  e.line("%r = call ptr @avant_gc_root_begin(i32 ${n})")
-  w = 0
-  i = 0
-  while i < locals.size {
-    l = locals[i]
-    refs: Array(Int) = []
-    roots: Array(Int) = []
-    e.ts.words(e.f.locals[l].ty, 0, refs, roots)
-    j = 0
-    while j < roots.size {
-      at = e.local_name(l)
-      if roots[j] > 0 {
-        at = e.tmp
-        e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${roots[j] * 8}")
+  while i < stmts.size {
+    st = stmts[i]
+    if st.kind == msk_gc_enter() {
+      found = true
+    } else if st.kind == msk_gc_roots() {
+      j = 0
+      while j < st.locals.size {
+        n = n + e.ts.root_count(f.locals[st.locals[j]].ty)
+        j = j + 1
       }
-      slot = "%r"
-      if w > 0 {
-        slot = "%r.${w}"
-        e.line("${slot} = getelementptr inbounds ptr, ptr %r, i64 ${w}")
-      }
-      e.line("store ptr ${at}, ptr ${slot}, align 8")
-      w = w + 1
-      j = j + 1
     }
     i = i + 1
   }
+  if !found {
+    return -1
+  }
+  n
 }
 
-pub fn ll_gc_call(e: LlEmit, name: String) {
-  e.need(name)
-  e.line("call void @${name}()")
+pub fn ll_gc_frame_type(n: Int): String {
+  if n == 0 {
+    return "{ ptr, ptr, i32, i32, i32 }"
+  }
+  "{ ptr, ptr, i32, i32, i32, [${n} x ptr] }"
+}
+
+// The locals of the gc.roots right after the current gc.enter (V16).
+fn ll_gc_roots_after(e: LlEmit): Array(MStmt) {
+  out: Array(MStmt) = []
+  stmts = e.f.blocks[e.bk].stmts
+  if e.si + 1 < stmts.size {
+    st = stmts[e.si + 1]
+    if st.kind == msk_gc_roots() {
+      out.push(st)
+    }
+  }
+  out
+}
+
+pub fn ll_gc_frame_enter(e: LlEmit) {
+  roots = ll_gc_roots_after(e)
+  n = 0
+  i = 0
+  if roots.size > 0 {
+    locals = roots[0].locals
+    while i < locals.size {
+      n = n + e.ts.root_count(e.f.locals[locals[i]].ty)
+      i = i + 1
+    }
+  }
+  slots = "null"
+  if n > 0 {
+    slots = e.tmp
+    e.line("${slots} = getelementptr inbounds i8, ptr %gcf, i64 32")
+  }
+  fs = e.tmp
+  e.line("${fs} = getelementptr inbounds i8, ptr %gcf, i64 8")
+  e.line("store ptr ${slots}, ptr ${fs}, align 8")
+  fn_ = e.tmp
+  e.line("${fn_} = getelementptr inbounds i8, ptr %gcf, i64 16")
+  e.line("store i32 ${n}, ptr ${fn_}, align 8")
+  fc = e.tmp
+  e.line("${fc} = getelementptr inbounds i8, ptr %gcf, i64 20")
+  e.line("store i32 ${n}, ptr ${fc}, align 4")
+  fsc = e.tmp
+  e.line("${fsc} = getelementptr inbounds i8, ptr %gcf, i64 24")
+  e.line("store i32 0, ptr ${fsc}, align 8")
+  if n > 0 {
+    locals = roots[0].locals
+    w = 0
+    i = 0
+    while i < locals.size {
+      l = locals[i]
+      refs: Array(Int) = []
+      words: Array(Int) = []
+      e.ts.words(e.f.locals[l].ty, 0, refs, words)
+      j = 0
+      while j < words.size {
+        at = e.local_name(l)
+        if words[j] > 0 {
+          at = e.tmp
+          e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${words[j] * 8}")
+        }
+        sl = slots
+        if w > 0 {
+          sl = e.tmp
+          e.line("${sl} = getelementptr inbounds i8, ptr %gcf, i64 ${32 + w * 8}")
+        }
+        e.line("store ptr ${at}, ptr ${sl}, align 8")
+        w = w + 1
+        j = j + 1
+      }
+      i = i + 1
+    }
+  }
+  e.need("avant_gc_frame_enter")
+  if !e.inline_fast {
+    e.line("call void @avant_gc_frame_enter(ptr %gcf)")
+    return
+  }
+  e.used_frame_global = true
+  e.line("call void @__avant_frame_push(ptr %gcf)")
+}
+
+pub fn ll_gc_frame_leave(e: LlEmit) {
+  e.need("avant_gc_frame_leave")
+  if !e.inline_fast {
+    e.line("call void @avant_gc_frame_leave(ptr %gcf)")
+    return
+  }
+  e.used_frame_global = true
+  e.line("call void @__avant_frame_pop(ptr %gcf)")
+}
+
+// The module's two frame helpers, when a frame links inline: internal
+// functions the O3 inliner folds into every caller (in --debug they stay
+// calls, so the .ll and the debug object stay small). The link and the
+// unlink of a record; the stores into avant_gc_top are volatile so that
+// LLVM cannot merge an inlined callee's unlink into the next frame's link
+// (dead-store elimination), which would leave the callee's
+// llvm.lifetime.end before any store that unlinks it (E3, D244).
+pub fn ll_gc_frame_helpers(e: LlEmit) {
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  e.out.push_str("define internal void @__avant_frame_push(ptr %f) #0 {\nentry:\n")
+  e.line("%t = load ptr, ptr @avant_gc_top, align 8")
+  e.line("%c = icmp ne ptr %t, null")
+  e.line("%x = call i1 @llvm.expect.i1(i1 %c, i1 true)")
+  e.line("br i1 %x, label %link, label %enter")
+  e.block("link")
+  e.line("store ptr %t, ptr %f, align 8")
+  e.line("store volatile ptr %f, ptr @avant_gc_top, align 8")
+  e.line("ret void")
+  e.block("enter")
+  e.line("call void @avant_gc_frame_enter(ptr %f)")
+  e.line("ret void")
+  e.out.push_str("}\n\n")
+  e.out.push_str("define internal void @__avant_frame_pop(ptr %f) #0 {\nentry:\n")
+  e.line("%t = load ptr, ptr @avant_gc_top, align 8")
+  e.line("%p = load ptr, ptr %f, align 8")
+  e.line("%c1 = icmp eq ptr %t, %f")
+  e.line("%c2 = icmp ne ptr %p, null")
+  e.line("%c = and i1 %c1, %c2")
+  e.line("%x = call i1 @llvm.expect.i1(i1 %c, i1 true)")
+  e.line("br i1 %x, label %unlink, label %leave")
+  e.block("unlink")
+  e.line("store volatile ptr %p, ptr @avant_gc_top, align 8")
+  e.line("ret void")
+  e.block("leave")
+  e.line("call void @avant_gc_frame_leave(ptr %f)")
+  e.line("ret void")
+  e.out.push_str("}\n\n")
 }
 
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
@@ -119,7 +255,7 @@ fn ll_barrier_store(e: LlEmit, o: MOperand): Int {
       }
     }
   }
-  -1
+  return -1
 }
 
 // The barrier call on holder H: with the slot of store K (formed at that
@@ -157,6 +293,16 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // fast path of 5.5, then the slow call, joined by a phi; returns the
 // pointer to store into _d. A constant size and type fold the size tests
 // (and choose the call form when the fast path can never be taken).
+//
+// A shared module (Stage 28 W17b, 5.5's condition 1 lifted): every thread
+// has its own young cursor, so the path runs on any thread. It tests
+// avant_gc_fast_ok for either state the runtime publishes instead of
+// g_avant_shared and the single mutator's state: 1 (the program has one
+// thread yet; the path counts every allocation, as in an unshared
+// module) or 2 (the thread bumps in a hole the runtime charged to it,
+// hole accounting: the path counts nothing, and must not, since other
+// threads update the counters under the world lock). An unshared module
+// is unchanged.
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -176,14 +322,22 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.used_alloc_globals = true
   e.need(callee)
   e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
-  sh = e.tmp
-  e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
-  c1 = e.tmp
-  e.line("${c1} = icmp eq i32 ${sh}, 0")
+  shared = e.m.shared
+  c1 = ""
+  if !shared {
+    sh = e.tmp
+    e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
+    c1 = e.tmp
+    e.line("${c1} = icmp eq i32 ${sh}, 0")
+  }
   ok = e.tmp
   e.line("${ok} = load i32, ptr @avant_gc_fast_ok, align 4")
   c2 = e.tmp
-  e.line("${c2} = icmp eq i32 ${ok}, 1")
+  if shared {
+    e.line("${c2} = icmp ne i32 ${ok}, 0")
+  } else {
+    e.line("${c2} = icmp eq i32 ${ok}, 1")
+  }
   bump = e.tmp
   e.line("${bump} = load ptr, ptr @avant_gc_bump, align 8")
   lim = e.tmp
@@ -204,8 +358,11 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.line("${li} = ptrtoint ptr ${lim} to i64")
   c4 = e.tmp
   e.line("${c4} = icmp ule i64 ${ei}, ${li}")
-  a12 = e.tmp
-  e.line("${a12} = and i1 ${c1}, ${c2}")
+  a12 = c2
+  if !shared {
+    a12 = e.tmp
+    e.line("${a12} = and i1 ${c1}, ${c2}")
+  }
   a34 = e.tmp
   e.line("${a34} = and i1 ${c3}, ${c4}")
   go = e.tmp
@@ -286,13 +443,27 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.line("${nw} = or i64 ${old}, ${mask}")
   e.line("store i64 ${nw}, ptr ${wp}, align 8")
   // The counters: allocated_bytes (avant_g_stats + 24), since_gc,
-  // nursery_held by total; inline_allocs by one.
+  // nursery_held by total; inline_allocs by one. In a shared module only
+  // in state 1 (the one thread counts); in state 2 the runtime does.
+  from = fast
+  if shared {
+    m1 = e.tmp
+    e.line("${m1} = icmp eq i32 ${ok}, 1")
+    cnt = e.part("count")
+    from = e.part("counted")
+    e.line("br i1 ${m1}, label %${cnt}, label %${from}")
+    e.block(cnt)
+  }
   sp = e.tmp
   e.line("${sp} = getelementptr inbounds i8, ptr @avant_g_stats, i64 24")
   ll_bump_counter(e, sp, total)
   ll_bump_counter(e, "@avant_since_gc", total)
   ll_bump_counter(e, "@avant_nursery_held", total)
   ll_bump_counter(e, "@avant_inline_allocs", "1")
+  if shared {
+    e.line("br label %${from}")
+    e.block(from)
+  }
   e.line("br label %${cont}")
 
   e.block(slow)
@@ -301,7 +472,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
 
   e.block(cont)
   r = e.tmp
-  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
+  e.line("${r} = phi ptr [ ${obj}, %${from} ], [ ${s}, %${slow} ]")
   r
 }
 
@@ -311,6 +482,30 @@ fn ll_bump_counter(e: LlEmit, ptr: String, by: String) {
   y = e.tmp
   e.line("${y} = add i64 ${x}, ${by}")
   e.line("store i64 ${y}, ptr ${ptr}, align 8")
+}
+
+// The safepoint poll at a loop head of a shared module (Stage 28 W17a,
+// gc-design.md 4.4): a volatile load of the request flag (kept in every
+// iteration), and the call, out of line, only when a collection is
+// requested; the call is a collecting call of the MIR, so every
+// reference live across it is in a slot and reloaded after it.
+pub fn ll_gc_poll(e: LlEmit) {
+  e.used_poll_global = true
+  e.need("avant_gc_poll")
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  r = e.tmp
+  e.line("${r} = load volatile i32, ptr @avant_gc_requested, align 4")
+  c = e.tmp
+  e.line("${c} = icmp ne i32 ${r}, 0")
+  x = e.tmp
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
+  yes = e.part("poll")
+  cont = e.part("polled")
+  e.line("br i1 ${x}, label %${yes}, label %${cont}")
+  e.block(yes)
+  e.line("call void @avant_gc_poll()")
+  e.line("br label %${cont}")
+  e.block(cont)
 }
 
 // The runtime globals the allocation fast path reads (5.5), in the

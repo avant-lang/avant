@@ -5,7 +5,10 @@
 // only through a deref (the pointer is loaded); index operands are read.
 // A whole write (an assign to the bare local, a call's destination)
 // defines; a field write of a by-value local neither reads nor defines.
-// The callers run these only on functions that passed V1-V3.
+// The callers run these only on functions that passed V1-V3. Liveness
+// and definedness are word bit sets (Stage 28 W18P, O153; the end of this
+// file): mir_live solves each function's liveness once from each block's
+// transfer, and the frame pass keeps it for V11 and V12 (gc.av).
 
 import mir.types
 import mir.ir
@@ -114,69 +117,23 @@ pub fn mir_succ(blk: MBlock): Array(Int) {
   xs
 }
 
-// Live locals after the last statement of each block (live-out).
+// Live locals after the last statement of each block (live-out), one
+// flag per local (the take pass's form; mir_live below).
 pub fn mir_live_out(f: MFunc): Array(Array(Bool)) {
-  n = f.locals.size
-  nb = f.blocks.size
-  ins: Array(Array(Bool)) = []
+  lv = mir_live(f)
   outs: Array(Array(Bool)) = []
   b = 0
-  while b < nb {
-    ins.push(mir_bools(n, false))
-    outs.push(mir_bools(n, false))
+  while b < lv.nb {
+    xs = mir_bools(lv.n, false)
+    k = 0
+    while k < lv.n {
+      xs[k] = mir_bit(lv.outs, b * lv.nw, k)
+      k = k + 1
+    }
+    outs.push(xs)
     b = b + 1
   }
-  changed = true
-  while changed {
-    changed = false
-    b = nb - 1
-    while b >= 0 {
-      blk = f.blocks[b]
-      live = mir_bools(n, false)
-      succ = mir_succ(blk)
-      i = 0
-      while i < succ.size {
-        s = ins[succ[i]]
-        k = 0
-        while k < n {
-          if s[k] {
-            live[k] = true
-          }
-          k = k + 1
-        }
-        i = i + 1
-      }
-      outs[b] = mir_bools_copy(live)
-      mir_live_through(f, blk, blk.stmts.size, live)
-      k = 0
-      while k < n {
-        if mir_flip(live[k], ins[b][k]) {
-          changed = true
-        }
-        k = k + 1
-      }
-      ins[b] = live
-      b = b - 1
-    }
-  }
   outs
-}
-
-// Applies the backward transfer of blk's terminator (when upto is the
-// statement count) and of its statements upto-1 down to 0, in place.
-pub fn mir_live_through(f: MFunc, blk: MBlock, upto: Int, live: Array(Bool)) {
-  if upto == blk.stmts.size {
-    if t = blk.term {
-      reads: Array(Int) = []
-      mir_term_reads(f, t, reads)
-      mir_mark(live, reads)
-    }
-  }
-  i = upto - 1
-  while i >= 0 {
-    mir_live_step(blk.stmts[i], live)
-    i = i - 1
-  }
 }
 
 pub fn mir_live_step(st: MStmt, live: Array(Bool)) {
@@ -219,66 +176,272 @@ pub fn mir_preds(f: MFunc): Array(Array(Int)) {
 }
 
 // Locals defined on every path from bb0 to the head of each block
-// (parameters at entry). Unreachable blocks keep everything defined.
-pub fn mir_defined_in(f: MFunc): Array(Array(Bool)) {
+// (parameters at entry), as word bit sets (block b's at b * nw, nw =
+// mir_nwords(f.locals.size)). Unreachable blocks keep everything defined.
+// The greatest solution of in[b] = the intersection of out[p] over b's
+// predecessors (bb0: the parameters), out[b] = in[b] | the block's
+// definitions, iterated from full sets.
+pub fn mir_defined_in(f: MFunc): Array(UInt64) {
   n = f.locals.size
+  nw = mir_nwords(n)
+  nb = f.blocks.size
   preds = mir_preds(f)
-  ins: Array(Array(Bool)) = []
-  outs: Array(Array(Bool)) = []
-  b = 0
-  while b < f.blocks.size {
-    ins.push(mir_bools(n, true))
-    outs.push(mir_bools(n, true))
-    b = b + 1
-  }
-  entry = mir_bools(n, false)
-  k = 1
-  while k <= f.nparams {
-    entry[k] = true
+  full = mir_zero_words(nw)
+  k = 0
+  while k < n {
+    mir_bit_on(full, 0, k)
     k = k + 1
   }
-  ins[0] = entry
+  defs = mir_zero_words(nb * nw)
+  ins = mir_zero_words(nb * nw)
+  outs = mir_zero_words(nb * nw)
+  b = 0
+  while b < nb {
+    at = b * nw
+    w = 0
+    while w < nw {
+      ins[at + w] = full[w]
+      outs[at + w] = full[w]
+      w = w + 1
+    }
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      d = mir_stmt_def(blk.stmts[j])
+      if d >= 0 && d < n {
+        mir_bit_on(defs, at, d)
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  if nb > 0 {
+    w = 0
+    while w < nw {
+      ins[w] = 0u64
+      w = w + 1
+    }
+    k = 1
+    while k <= f.nparams && k < n {
+      mir_bit_on(ins, 0, k)
+      k = k + 1
+    }
+  }
+  cur = mir_zero_words(nw)
   changed = true
   while changed {
     changed = false
     b = 0
-    while b < f.blocks.size {
-      cur = mir_bools_copy(ins[b])
-      if b > 0 {
-        cur = mir_bools(n, true)
+    while b < nb {
+      at = b * nw
+      if b == 0 {
+        mir_words_load(cur, ins, 0, nw)
+      } else {
+        mir_words_load(cur, full, 0, nw)
         i = 0
         while i < preds[b].size {
-          o = outs[preds[b][i]]
-          k = 0
-          while k < n {
-            if !o[k] {
-              cur[k] = false
-            }
-            k = k + 1
+          po = preds[b][i] * nw
+          w = 0
+          while w < nw {
+            cur[w] = cur[w] & outs[po + w]
+            w = w + 1
           }
           i = i + 1
         }
-        ins[b] = mir_bools_copy(cur)
-      }
-      blk = f.blocks[b]
-      j = 0
-      while j < blk.stmts.size {
-        d = mir_stmt_def(blk.stmts[j])
-        if d >= 0 {
-          cur[d] = true
+        w = 0
+        while w < nw {
+          ins[at + w] = cur[w]
+          w = w + 1
         }
-        j = j + 1
       }
-      k = 0
-      while k < n {
-        if mir_flip(cur[k], outs[b][k]) {
+      w = 0
+      while w < nw {
+        y = cur[w] | defs[at + w]
+        if y != outs[at + w] {
+          outs[at + w] = y
           changed = true
         }
-        k = k + 1
+        w = w + 1
       }
-      outs[b] = cur
       b = b + 1
     }
   }
   ins
+}
+
+// ---- word bit sets (Stage 28 W18P, O153). A set over a function's n
+// locals is nw = (n + 63) / 64 words; local k is bit k % 64 of word k / 64.
+// The sets of a function's blocks lie in one array, block b's at b * nw.
+// Locals out of range are left out of every set (V3 reports them, and the
+// dataflow rules run only on functions that pass V3).
+
+pub fn mir_nwords(n: Int): Int {
+  (n + 63) / 64
+}
+
+pub fn mir_bit(xs: Array(UInt64), at: Int, k: Int): Bool {
+  ((xs[at + k / 64] >> (k % 64).to_u64) & 1u64) != 0u64
+}
+
+pub fn mir_bit_on(xs: Array(UInt64), at: Int, k: Int) {
+  w = at + k / 64
+  xs[w] = xs[w] | (1u64 << (k % 64).to_u64)
+}
+
+pub fn mir_bit_off(xs: Array(UInt64), at: Int, k: Int) {
+  w = at + k / 64
+  xs[w] = xs[w] & ~(1u64 << (k % 64).to_u64)
+}
+
+// Sets the bits of the in-range locals of ks in the set at at.
+pub fn mir_bits_mark(xs: Array(UInt64), at: Int, n: Int, ks: Array(Int)) {
+  i = 0
+  while i < ks.size {
+    k = ks[i]
+    if k >= 0 && k < n {
+      mir_bit_on(xs, at, k)
+    }
+    i = i + 1
+  }
+}
+
+// Copies the nw words at from of xs to the start of to.
+pub fn mir_words_load(to: Array(UInt64), xs: Array(UInt64), from: Int, nw: Int) {
+  w = 0
+  while w < nw {
+    to[w] = xs[from + w]
+    w = w + 1
+  }
+}
+
+// The backward transfer of one statement on the set live (at 0), in
+// place: its definition leaves, its reads enter. reads is scratch.
+pub fn mir_live_step_bits(st: MStmt, live: Array(UInt64), n: Int, reads: Array(Int)) {
+  d = mir_stmt_def(st)
+  if d >= 0 && d < n {
+    mir_bit_off(live, 0, d)
+  }
+  reads.clear
+  mir_stmt_reads(st, reads)
+  mir_bits_mark(live, 0, n, reads)
+}
+
+// Block b's transfer into lv: gen (read before any definition in the
+// block, the terminator's reads included) and kill (defined in it), from
+// the terminator back to the first statement. reads is scratch.
+pub fn mir_live_block(f: MFunc, lv: MLive, b: Int, reads: Array(Int)) {
+  n = lv.n
+  at = b * lv.nw
+  w = 0
+  while w < lv.nw {
+    lv.gen[at + w] = 0u64
+    lv.kill[at + w] = 0u64
+    w = w + 1
+  }
+  blk = f.blocks[b]
+  if t = blk.term {
+    reads.clear
+    mir_term_reads(f, t, reads)
+    mir_bits_mark(lv.gen, at, n, reads)
+  }
+  i = blk.stmts.size - 1
+  while i >= 0 {
+    st = blk.stmts[i]
+    d = mir_stmt_def(st)
+    if d >= 0 && d < n {
+      mir_bit_off(lv.gen, at, d)
+      mir_bit_on(lv.kill, at, d)
+    }
+    reads.clear
+    mir_stmt_reads(st, reads)
+    mir_bits_mark(lv.gen, at, n, reads)
+    i = i - 1
+  }
+}
+
+// Backward liveness over locals: each block's transfer once, then the
+// least solution of out[b] = the union of in[s] over b's successors,
+// in[b] = gen[b] | (out[b] & ~kill[b]), iterated from empty sets (the
+// same solution the per-statement iteration reached; the order of the
+// sweeps only changes how fast it gets there).
+pub fn mir_live(f: MFunc): MLive {
+  nb = f.blocks.size
+  lv = MLive.new(f.locals.size, nb)
+  nw = lv.nw
+  reads: Array(Int) = []
+  b = 0
+  while b < nb {
+    lv.succ_at.push(lv.succ.size)
+    if t = f.blocks[b].term {
+      i = 0
+      while i < t.targets.size {
+        lv.succ.push(t.targets[i])
+        i = i + 1
+      }
+    }
+    mir_live_block(f, lv, b, reads)
+    b = b + 1
+  }
+  lv.succ_at.push(lv.succ.size)
+  ins = mir_zero_words(nb * nw)
+  changed = true
+  while changed {
+    changed = false
+    b = nb - 1
+    while b >= 0 {
+      at = b * nw
+      lo = lv.succ_at[b]
+      hi = lv.succ_at[b + 1]
+      w = 0
+      while w < nw {
+        x = 0u64
+        i = lo
+        while i < hi {
+          x = x | ins[lv.succ[i] * nw + w]
+          i = i + 1
+        }
+        lv.outs[at + w] = x
+        y = lv.gen[at + w] | (x & ~lv.kill[at + w])
+        if y != ins[at + w] {
+          ins[at + w] = y
+          changed = true
+        }
+        w = w + 1
+      }
+      b = b - 1
+    }
+  }
+  lv
+}
+
+// Block b's live-in, gen | (out & ~kill), as a new set.
+pub fn mir_live_in_bits(lv: MLive, b: Int): Array(UInt64) {
+  at = b * lv.nw
+  xs = mir_zero_words(lv.nw)
+  w = 0
+  while w < lv.nw {
+    xs[w] = lv.gen[at + w] | (lv.outs[at + w] & ~lv.kill[at + w])
+    w = w + 1
+  }
+  xs
+}
+
+// Whether block b's successors are the ones lv was solved for.
+pub fn mir_live_same_succ(lv: MLive, b: Int, blk: MBlock): Bool {
+  lo = lv.succ_at[b]
+  hi = lv.succ_at[b + 1]
+  if t = blk.term {
+    if t.targets.size != hi - lo {
+      return false
+    }
+    i = 0
+    while i < t.targets.size {
+      if t.targets[i] != lv.succ[lo + i] {
+        return false
+      }
+      i = i + 1
+    }
+    return true
+  }
+  hi == lo
 }

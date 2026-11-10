@@ -118,3 +118,296 @@ int ffi_flags(Flags f) { return (f.a ? 100 : 0) + (f.b ? 10 : 0) + f.n; }
 int64_t ffi_spill(int a, int b, int c, int d, int e, Q2 q, int f) {
   return a + b + c + d + e + q.x * 100 + q.y * 1000 + f * 10000;
 }
+
+/* tests/fixtures/ffi/foreign.av (Stage 28 W17b, O123): C threads, unknown
+ * to Avant, call an Avant callback that allocates; foreign_wait joins them
+ * natively (avant_gc_native_begin/end, the ABI for user C that blocks
+ * while Avant threads run). */
+#include <pthread.h>
+void avant_gc_native_begin(void);
+void avant_gc_native_end(void);
+
+typedef int32_t (*foreign_cb_t)(int32_t);
+static pthread_t foreign_th[8];
+static int32_t foreign_bad[8];
+static int32_t foreign_n, foreign_rounds;
+static foreign_cb_t foreign_cb;
+
+static void *foreign_run(void *arg) {
+  intptr_t k = (intptr_t)arg;
+  int32_t bad = 0;
+  for (int32_t i = 0; i < foreign_rounds; i++) {
+    bad += foreign_cb((int32_t)(k * 1000000 + i));
+  }
+  foreign_bad[k] = bad;
+  return NULL;
+}
+
+void foreign_start(foreign_cb_t f, int32_t n, int32_t rounds) {
+  foreign_cb = f;
+  foreign_n = n > 8 ? 8 : n;
+  foreign_rounds = rounds;
+  for (intptr_t k = 0; k < foreign_n; k++) {
+    pthread_create(&foreign_th[k], NULL, foreign_run, (void *)k);
+  }
+}
+
+int32_t foreign_wait(void) {
+  int32_t bad = 0;
+  avant_gc_native_begin();
+  for (int32_t k = 0; k < foreign_n; k++) {
+    pthread_join(foreign_th[k], NULL);
+    bad += foreign_bad[k];
+  }
+  avant_gc_native_end();
+  return bad;
+}
+
+/* tests/fixtures/ffi/foreign_exit.av (Stage 28 W17c, O126): C threads
+ * that call an allocating Avant callback and then exit without telling
+ * Avant, one wave after another. exit_start starts a wave of N threads and
+ * returns (the main thread allocates and collects while they run and
+ * exit); exit_join joins them natively. With EXPLICIT the threads register
+ * themselves first (avant_gc_register_thread): they are then running, not
+ * native, between callbacks and when they exit. Thread exit must
+ * unregister them: a thread left in the collector's list after its exit is
+ * freed thread-local state, and a later thread on the same (reused) stack
+ * registers the same list node again. */
+void avant_gc_register_thread(void);
+static pthread_t exit_th[8];
+static int32_t exit_bad[8];
+static int32_t exit_n, exit_rounds, exit_explicit;
+static foreign_cb_t exit_cb;
+
+static void *exit_run(void *arg) {
+  intptr_t k = (intptr_t)arg;
+  int32_t bad = 0;
+  if (exit_explicit) {
+    avant_gc_register_thread();
+  }
+  for (int32_t i = 0; i < exit_rounds; i++) {
+    bad += exit_cb((int32_t)(k * 1000000 + i));
+  }
+  exit_bad[k] = bad;
+  return NULL;
+}
+
+void exit_start(foreign_cb_t f, int32_t n, int32_t rounds, bool explicit_reg) {
+  exit_cb = f;
+  exit_n = n > 8 ? 8 : n;
+  exit_rounds = rounds;
+  exit_explicit = explicit_reg;
+  for (intptr_t k = 0; k < exit_n; k++) {
+    pthread_create(&exit_th[k], NULL, exit_run, (void *)k);
+  }
+}
+
+int32_t exit_join(void) {
+  int32_t bad = 0;
+  avant_gc_native_begin();
+  for (int32_t k = 0; k < exit_n; k++) {
+    pthread_join(exit_th[k], NULL);
+    bad += exit_bad[k];
+  }
+  avant_gc_native_end();
+  return bad;
+}
+
+/* release.av (Stage 28 W16c, D266): a C struct whose String fields Avant
+ * stores into and then releases; C keeps a pointer it read from a field
+ * (rel_keep) and copies the struct (rel_copy), as Q9's fixture did. */
+typedef struct RelPos {
+  const char *tag;
+  int32_t n;
+} RelPos;
+
+typedef struct RelHolder {
+  const char *name;
+  int32_t id;
+  void *link;
+  RelPos at;
+  const char *note;
+} RelHolder;
+
+static const char *rel_kept;
+static const char rel_c_text[] = "set-by-C";
+
+RelHolder *rel_new(void) { return (RelHolder *)calloc(1, sizeof(RelHolder)); }
+void rel_free(RelHolder *h) { free(h); }
+void rel_keep(RelHolder *h) { rel_kept = h->name; }
+int32_t rel_kept_is(const char *want) { return rel_kept && strcmp(rel_kept, want) == 0; }
+void rel_forget(void) { rel_kept = NULL; }
+void rel_copy(RelHolder *dst, const RelHolder *src) { *dst = *src; }
+void rel_clear(RelHolder *h) { memset(h, 0, sizeof(RelHolder)); }
+int32_t rel_name_is(const RelHolder *h, const char *want) { return h->name && strcmp(h->name, want) == 0; }
+int32_t rel_note_is(const RelHolder *h, const char *want) { return h->note && strcmp(h->note, want) == 0; }
+int32_t rel_name_null(const RelHolder *h) { return h->name == NULL; }
+int32_t rel_note_null(const RelHolder *h) { return h->note == NULL; }
+int32_t rel_tag_null(const RelHolder *h) { return h->at.tag == NULL; }
+void rel_set_c_name(RelHolder *h) { h->name = rel_c_text; }
+int32_t rel_name_is_c(const RelHolder *h) { return h->name == rel_c_text; }
+int32_t rel_name_len(const RelHolder *h) { return h->name ? (int32_t)strlen(h->name) : -1; }
+
+/* O138 (Stage 28 W18M): user C that registers root slots opens its own
+ * frame first (rg_good); rg_bad registers one on whatever frame is
+ * innermost (its Avant caller's stack record), which the runtime refuses
+ * with a message instead of growing a stack array. */
+void avant_gc_enter(void);
+void avant_gc_leave(void);
+void *avant_gc_root_begin(uint32_t count);
+int32_t rg_good(const char *s) {
+  void ***slots;
+  avant_gc_enter();
+  slots = (void ***)avant_gc_root_begin(1);
+  slots[0] = (void **)&s;
+  avant_gc_leave();
+  return s != NULL;
+}
+int32_t rg_bad(const char *s) {
+  void ***slots = (void ***)avant_gc_root_begin(40);
+  slots[0] = (void **)&s;
+  return s != NULL;
+}
+
+/* ---- O145 (Stage 28 W18C, buf_stale.av): a pointer from avant_buf_bytes
+ * kept across a growth of its Buf names storage the growth replaced.
+ * bs_keep keeps the pointer; bs_read_kept reads through it only under
+ * AVANT_GC_VERIFY=1 (where the verifier promises to catch it: the old
+ * storage is PROT_NONE until the next collection, the read faults, is
+ * reported, and the handler opens the storage and lets the read go on);
+ * elsewhere the read would be undefined, so it is skipped. Either way it
+ * returns 1, so the program prints the same everywhere. */
+#include <stdio.h>
+uint8_t *avant_buf_bytes(void *buf);
+static volatile uint8_t *bs_kept;
+int32_t bs_keep(void *buf) {
+  bs_kept = avant_buf_bytes(buf);
+  return bs_kept ? bs_kept[0] : -1;
+}
+int32_t bs_fresh(void *buf) {
+  uint8_t *p = avant_buf_bytes(buf);
+  return p ? p[0] : -1;
+}
+int32_t bs_read_kept(void) {
+  const char *v = getenv("AVANT_GC_VERIFY");
+  if (bs_kept && v && v[0] == '1') {
+    (void)bs_kept[0];
+  }
+  return 1;
+}
+
+/* ---- O134 (Stage 28 W18C, release_reuse.av): C frees a struct Avant
+ * stored into without a `release`, and the next struct lands at the same
+ * address. A one-slot allocator makes the reuse certain: rr_new always
+ * returns the same zeroed memory; rr_free forgets it. rr_keep keeps the
+ * name C read, as C code that took ownership of it would. */
+static RelHolder rr_slot;
+RelHolder *rr_new(void) {
+  memset(&rr_slot, 0, sizeof rr_slot);
+  return &rr_slot;
+}
+void rr_free(RelHolder *h) { (void)h; }
+static const char *rr_kept;
+void rr_keep(RelHolder *h) { rr_kept = h->name; }
+int32_t rr_kept_is(const char *want) { return rr_kept && strcmp(rr_kept, want) == 0; }
+void rr_set_c_name(RelHolder *h) { h->name = rel_c_text; }
+
+/* ---- O125 (Stage 28 W18C, stall.av): user C that blocks without
+ * avant_gc_native_begin/end. st_block marks that it has started, then
+ * sleeps MS milliseconds in the running state, so a collection's
+ * handshake waits for it the whole time; under AVANT_GC_VERIFY=1 the
+ * handshake reports it after AVANT_GC_VERIFY_STALL_MS and keeps waiting. */
+#include <stdatomic.h>
+#include <time.h>
+int nanosleep(const struct timespec *req, struct timespec *rem);
+static atomic_int st_started;
+int32_t st_block(int32_t ms) {
+  struct timespec ts;
+  ts.tv_sec = ms / 1000;
+  ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+  atomic_store(&st_started, 1);
+  while (nanosleep(&ts, &ts) != 0) {
+  }
+  return ms;
+}
+int32_t st_started_now(void) { return atomic_load(&st_started); }
+
+/* ---- O120 (Stage 28 W18C, held_caps.av): C keeps pointers into 400 large
+ * Bufs' storage, and one collection frees them all. hc_read reads through
+ * the pointers FROM to TO, only under AVANT_GC_VERIFY=1 (where every freed
+ * run is held PROT_NONE until the next collection, so each read faults and
+ * is reported; until W18C only the first 256 runs were held, and the rest
+ * were reused unchecked); it returns how many it went over. */
+static volatile uint8_t *hc_p[400];
+int32_t hc_keep(void *buf, int32_t i) {
+  hc_p[i] = avant_buf_bytes(buf);
+  return hc_p[i][0];
+}
+int32_t hc_read(int32_t from, int32_t to) {
+  const char *v = getenv("AVANT_GC_VERIFY");
+  int32_t n = 0;
+  for (int32_t i = from; i < to; i++) {
+    if (v && v[0] == '1') {
+      (void)hc_p[i][100];
+    }
+    n++;
+  }
+  return n;
+}
+
+/* ---- O129 (Stage 28 W18C, exit_inside.av): C threads that exit inside an
+ * Avant callback. Each thread calls the callback, which calls
+ * ox_exit_here: it opens a frame of its own (avant_gc_enter) with a large
+ * root array (avant_gc_root_begin, 1 MiB of slots, each filled with a
+ * slot that holds NULL, so the pages are resident) and calls pthread_exit
+ * with the frame still on its chain. ox_run runs N such threads one after
+ * another and returns how much the resident set grew, in KiB: the frames
+ * leaked before the fix (64 MiB for 64 threads); the exit frees them. */
+#include <stdio.h>
+void avant_gc_enter(void);
+static foreign_cb_t ox_cb;
+#define OX_SLOTS 131072
+static long ox_rss_kb(void) {
+  long size = 0, res = 0;
+  FILE *f = fopen("/proc/self/statm", "r");
+  if (f) {
+    if (fscanf(f, "%ld %ld", &size, &res) != 2) {
+      res = 0;
+    }
+    fclose(f);
+  }
+  return res * 4;
+}
+int32_t ox_exit_here(int32_t k) {
+  static void *nothing = NULL;
+  void ***slots;
+  (void)k;
+  avant_gc_enter();
+  slots = (void ***)avant_gc_root_begin(OX_SLOTS);
+  for (int32_t i = 0; i < OX_SLOTS; i++) {
+    slots[i] = &nothing;
+  }
+  pthread_exit(NULL);
+  return 0;
+}
+static void *ox_thread(void *arg) {
+  (void)ox_cb((int32_t)(intptr_t)arg);
+  return NULL;
+}
+int32_t ox_run(foreign_cb_t f, int32_t n) {
+  long before;
+  ox_cb = f;
+  /* One thread first, so the C heap's arenas and the thread cache exist
+   * before the measurement starts. */
+  for (int32_t k = 0; k <= n; k++) {
+    pthread_t th;
+    if (k == 1) {
+      before = ox_rss_kb();
+    }
+    avant_gc_native_begin();
+    pthread_create(&th, NULL, ox_thread, (void *)(intptr_t)k);
+    pthread_join(th, NULL);
+    avant_gc_native_end();
+  }
+  return (int32_t)(ox_rss_kb() - before);
+}

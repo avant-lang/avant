@@ -59,6 +59,25 @@ void avant_pin(void *payload);
 void avant_unpin(void *payload);
 /* Number of distinct pinned payloads (refcounted pins share one entry). */
 int avant_pin_count(void);
+/* C-layout field pins (Stage 28 W16c, D266). A store of a reference into
+ * a C-layout field (`h.name = s`) calls avant_pin_field(&h->name, s): s is
+ * pinned (counted, as avant_pin) and the pin is recorded under the field's
+ * address, beside every earlier value Avant stored there. Overwriting the
+ * field does not unpin the old value, so C may keep or copy any of them:
+ * a value stored into C memory stays alive and in place until the
+ * program releases the field. avant_release_range(lo, n), what the
+ * `release(h.name)` (n = the field's size) and `release(h)` (n = the
+ * struct's size) statements call, gives back every recorded pin of a
+ * field whose address is in [lo, lo + n) and drops the records; a field
+ * that still holds a value Avant stored there is set to NULL. A field
+ * never stored by Avant, or holding a value C stored itself, is left as
+ * it is, and releasing twice does nothing. Both take the world lock like
+ * avant_pin and never collect. After a release, C must not use the
+ * released values (they may move or be freed by the next collection);
+ * release a struct before C frees it, since a later store at the same
+ * address joins the old record. */
+void avant_pin_field(void *field, void *payload);
+void avant_release_range(void *lo, uint64_t n);
 int avant_is_heap(void *payload);
 /* Bumped by every collection. A length cache tagged with the generation
  * cannot outlive a move or a free, because both happen only inside a
@@ -94,6 +113,22 @@ void avant_gc_root(void *slot);
  * (gc-design.md section 1.4, Q10). */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
+/* Frames in the caller's stack (Stage 28 W18): generated code keeps
+ * each frame's record in its own stack frame, laid out as
+ * { prev: pointer, slots: pointer, n: u32, cap: u32, scope: u32 } (32
+ * bytes with padding; the slot array follows it), with slots, n = cap
+ * (the frame's root words), scope = 0 and the slot addresses stored by
+ * the caller. It links the record itself (prev = avant_gc_top,
+ * avant_gc_top = record) when avant_gc_top is not null, else calls
+ * avant_gc_frame_enter, which also registers the thread and initializes
+ * the heap; it unlinks it itself (avant_gc_top = prev) when the record is
+ * avant_gc_top and prev is not null, else calls avant_gc_frame_leave.
+ * User C keeps using avant_gc_enter, avant_gc_root_begin and
+ * avant_gc_leave. */
+struct AvantGcFrame;
+extern __thread struct AvantGcFrame *avant_gc_top;
+void avant_gc_frame_enter(struct AvantGcFrame *frame);
+void avant_gc_frame_leave(struct AvantGcFrame *frame);
 /* A C variable that lives as long as its thread (a __thread variable)
  * and holds a heap reference is registered once, by that thread, before
  * it first holds one: from then on the collections on that thread mark
@@ -105,12 +140,16 @@ void avant_gc_add_root(void **slot);
  * allocate without a call only while avant_gc_fast_ok is set: it bumps
  * avant_gc_bump by the aligned total, writes the header (HEAP|YOUNG),
  * zeroes the payload, sets the block start bit through
- * avant_gc_starts/avant_gc_base, and adds the total to
- * avant_g_stats.allocated_bytes, avant_since_gc, and
+ * avant_gc_starts/avant_gc_base, and, when avant_gc_fast_ok is 1, adds
+ * the total to avant_g_stats.allocated_bytes, avant_since_gc, and
  * avant_nursery_held. avant_gc_limit is the block limit capped by the
  * young threshold, and the runtime alone publishes or clears this
- * state. AvantGcStats field order is part of this ABI
- * (allocated_bytes at offset 24). */
+ * state. avant_gc_fast_ok is 1 while the program has one thread (the
+ * path counts; code of an unshared module also requires g_avant_shared
+ * to be 0) and 2 in a program with threads (Stage 28 W17b): the thread
+ * bumps in a hole of its own young block that the runtime has charged
+ * to the young budget, and the path counts nothing. AvantGcStats field
+ * order is part of this ABI (allocated_bytes at offset 24). */
 extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
 extern __thread uint8_t *avant_gc_base;
@@ -153,8 +192,35 @@ typedef struct AvantGcStats {
 extern AvantGcStats avant_g_stats;
 void avant_gc_stats(AvantGcStats *out);
 void avant_gc_collect(void);
+/* A thread that runs Avant code is registered (explicitly, or by its first
+ * call into Avant); one that exits still registered is unregistered by its
+ * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
+ * unregistration of its own. A thread that exits inside a callback
+ * (pthread_exit from C that Avant called) is unregistered and its frames
+ * are freed too (Stage 28 W18C). */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
+/* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
+ * section 4.4). A collection stops every other registered thread at a
+ * safepoint (a collecting call, or avant_gc_poll) or finds it native.
+ * avant_gc_requested is nonzero while a collection is requested or
+ * running; generated code in a program that spawns or uses .parallel
+ * tests it at every loop back-edge of a frame function and calls
+ * avant_gc_poll when it is set (the thread stops there until the
+ * collection is done). Around a C call that may block or run long
+ * without touching the Avant heap, a thread is native:
+ * avant_gc_native_begin before it, avant_gc_native_end after (they nest;
+ * the end waits while a collection is in progress). Between them the
+ * thread must not read or write a heap object it has not pinned. A C call
+ * that blocks without them holds every thread's collection until it
+ * returns (and deadlocks if it waits for another Avant thread); under
+ * AVANT_GC_VERIFY=1 a collection that has waited AVANT_GC_VERIFY_STALL_MS
+ * (10000 by default) reports the thread and its innermost Avant frame,
+ * and keeps waiting (Stage 28 W18C). */
+extern atomic_int avant_gc_requested;
+void avant_gc_poll(void);
+void avant_gc_native_begin(void);
+void avant_gc_native_end(void);
 
 size_t avant_str_n(const char *s);
 char *avant_str_empty(void);
@@ -173,7 +239,6 @@ char *avant_str_fmt_float(double v, int32_t prec);
 double avant_str_to_f(const char *s);
 double avant_str_to_f_slice(const char *s, int32_t start, int32_t stop);
 int32_t avant_str_to_i(const char *s);
-double avant_exp(double x);
 int32_t avant_str_eq(const char *a, const char *b);
 int32_t avant_str_size(const char *s);
 int32_t avant_str_byte(const char *s, int32_t i);
@@ -192,6 +257,7 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
 void avant_buf_push_fmt_f(void *buf, double v, int32_t prec);
 void avant_buf_push_fmt_i(void *buf, int32_t n);
 char *avant_buf_to_str(void *buf);
+char *avant_buf_take_str(void *buf);
 int32_t avant_buf_size(void *buf);
 void avant_buf_clear(void *buf);
 void avant_buf_ensure(void *buf, int32_t n);
@@ -204,6 +270,14 @@ void avant_buf_set_ident(void *buf, int32_t n);
 void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras, int32_t n);
 /* Copy n slices from src into dst. Offsets are byte indexes. */
 void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs, void *lens, int32_t n);
+/* The Buf's storage, for C to read or write up to its capacity. The
+ * pointer is valid until the Buf next grows (an append past its capacity,
+ * avant_buf_ensure, any Avant code that may push to it): a growth moves
+ * the bytes and frees the old storage, so call avant_buf_bytes again after
+ * anything that may grow the Buf. Under AVANT_GC_VERIFY=1 the storage a
+ * growth replaced stays PROT_NONE until the next collection, so a use of
+ * a pointer kept across the growth faults and is reported (Stage 28
+ * W18C). */
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
 
@@ -251,6 +325,8 @@ int32_t avant_hash_has_str(void *h, const char *key);
 int32_t avant_hash_has_i32k(void *h, int32_t key);
 int32_t avant_hash_inc_str(void *h, const char *key, int32_t by);
 int32_t avant_hash_inc_i32k(void *h, int32_t key, int32_t by);
+int32_t *avant_hash_upsert_i32k(void *h, int32_t key, int32_t init, int32_t *found);
+int32_t *avant_hash_upsert_i32(void *h, const char *key, int32_t init, int32_t *found);
 int32_t avant_hash_get_or_i32(void *h, const char *key, int32_t fallback);
 const char *avant_hash_get_or_str(void *h, const char *key, const char *fallback);
 int32_t avant_hash_get_or_i32k_i32(void *h, int32_t key, int32_t fallback);

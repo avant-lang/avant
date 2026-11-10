@@ -323,17 +323,12 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
     }
   }
   gc_each_runtime_root(defrag_rewrite_tls);
+  /* Task roots: their records may move since Stage 28 W17a. */
+  EACH_TASK_ROOT(slot, defrag_rewrite_slot(slot));
   {
     uint32_t ri;
-    int locked = rem_locked();
-    if (locked) {
-      pthread_mutex_lock(&gc_heap.rem_mu);
-    }
     for (ri = 0; ri < gc_heap.rem_n; ri++) {
       defrag_rewrite_slot((void **)&gc_heap.remset[ri]);
-    }
-    if (locked) {
-      pthread_mutex_unlock(&gc_heap.rem_mu);
     }
   }
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {

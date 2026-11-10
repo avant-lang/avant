@@ -85,6 +85,24 @@ fn fact(n: Int): Int {
 }
 ```
 
+### Line breaks
+
+A line break ends a statement. A line whose first token is `[`, `-` or `+` always begins a new statement: it never continues the line before as an index or a binary operation. To continue an expression on the next line, end the line before with an operator or an open bracket. A line that starts with `.`, `?` or another infix operator (`*`, `&&`, `==`, ...) cannot begin a statement, so it continues the line before.
+
+```avant
+fn main {
+  total = 1 +
+    2
+  bb = "y"
+  [total, 3].each { |n| puts(n) }
+  size = bb
+    .size
+  puts(size)
+}
+```
+
+An expression left dangling by the rule is a compile error that says how to continue the line: `t = a` followed by a line `- b`, a line `[a, b]` whose value nobody uses, or a line starting with `+`.
+
 ### Comments
 
 `//` runs to the end of the line. There is no `/* */`.
@@ -210,7 +228,7 @@ fn id(x: T): T {
 
 ### Primitives
 
-`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
+`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i` (`x.exp` or `x.exp()`). Two `Bool`s compare with `==` and `!=`. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
 
 ### Nil and unions
 
@@ -867,7 +885,7 @@ Heap allocation goes through the collector in `runtime/avant_gc_*.c` (one file p
 
 `AVANT_NURSERY=0` restores a full, non-moving collection. Every collector setting is an environment variable read once at start-up; `runtime/avant_gc.h` lists them. A switch is on for `1` and off for `0`, a size is a whole number, and any other value is reported on stderr and ignored.
 
-A heap object stored into a C field is pinned for the process. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never clears a process pin. See [C interop](#c-interop).
+A heap object stored into a C field is pinned until the program releases that field with `release(...)`, and for the rest of the process if it never does. Pinned objects are not copied. Code that hands a heap value to C for a bounded time can pin it for exactly that span with `pin(value) { ... }`: the value stays put for the block and is unpinned on every way out, and pins are counted, so a scoped pin never takes a field's pin and a release never takes a block's. See [Strings in C memory](#strings-in-c-memory).
 
 ## C interop
 
@@ -906,7 +924,42 @@ fn (p: Ptr(Point)) sum: Int {
 }
 ```
 
-`Ptr(Int)` is rejected. `Ptr` of a layout, and `Ptr(Void)`, are the pointer types this is for. A `String` stored into a C field is pinned for the process, so the collector will not move it while C holds the pointer.
+`Ptr(Int)` is rejected. `Ptr` of a layout, and `Ptr(Void)`, are the pointer types this is for.
+
+### Strings in C memory
+
+A `String` stored into a C field (`h.name = s`) is pinned: the collector neither moves nor frees it, so C may read it, keep the pointer, or copy the struct. Overwriting the field keeps the old value pinned too, because C may still hold it. A C-layout store keeps its value alive until `release`.
+
+When C is done with what Avant stored, say so with `release`:
+
+```avant
+lib cfg {
+  struct Holder {
+    name: String
+    id: Int
+  }
+  fun holder_new: Ptr(Holder)
+  fun holder_keep(h: Ptr(Holder))
+  fun holder_forget
+  fun holder_free(h: Ptr(Holder))
+}
+
+fn main {
+  h = cfg.holder_new()
+  h.name = "first-${1}"
+  cfg.holder_keep(h)          // C keeps the pointer
+  h.name = "second-${2}"      // "first-1" stays pinned
+  cfg.holder_forget()         // C drops what it kept
+  release(h.name)             // both values unpinned; h.name is now null
+  cfg.holder_free(h)          // or release(h) before freeing it
+}
+```
+
+- `release(h.name)` gives back the pin of every value Avant stored into that field, the current one and every overwritten one. If the field still holds a value Avant stored there, it becomes null, so C never sees a pointer the collector may free or move.
+- `release(h.at)` does the same for every `String` field of a nested layout, and `release(h)` for every field of the struct `h` points to. Write `release(h)` before C frees the struct.
+- Releasing twice, or releasing a field Avant never stored, does nothing. A value C stored itself is left in place. A pin taken by `pin(x) { }`, or by a store of the same value into another field, stays.
+- `release` takes a C-layout field that holds a `String` (directly or in a nested layout) or a `Ptr` to such a layout. An Avant value, an `Int`, `Bool`, `Float64` or `Ptr` field, `Ptr(Void)`, and a layout with no `String` field are compile errors. It is a statement, not a value.
+- Forgetting a release costs memory, never correctness. Releasing too early is a dangling C pointer: a value C still uses after its release may be moved or freed by the next collection, and C then reads memory that is no longer that string. Neither the compiler nor `AVANT_GC_VERIFY=1` can see C's reads.
 
 A `fun` parameter may be an Avant `fn` type; that declares a C callback. Pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments (libc `qsort` with an Avant comparator is the proven shape). A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile.
 
@@ -1244,7 +1297,7 @@ Builtins are the prelude: names every program can use with no import. Runnable e
 | Time | `now_ms`, `now_us` |
 | Files | `file_read`, `file_write`, `file_exists`, `dir_list` |
 | Process and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
-| Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt` |
+| Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt`, `exp` |
 ### Files, process, and environment
 
 ```avant
@@ -1443,11 +1496,11 @@ There is no TLS yet: `https` and `wss` URLs are an `HttpError`, never a silent d
 
 #### Hello-world servers compared
 
-The most basic hello-world server: `GET /` answered with `hello` and the WebSocket equivalent.
+The most basic hello-world server: `GET /` answered with `hello` and the WebSocket equivalent. Every server is an optimized build (Avant `--release`); Avant's row is the median of three runs (2026-11-10).
 
 | Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Avant (`std.http`) | 471,127 | 8.9 MB | 249,735 | 7.8 MB |
+| Avant (`std.http`) | 507,795 | 7.2 MB | 247,803 | 6.9 MB |
 | C (h2o) | 484,026 | 8.4 MB | 251,006 | 8.5 MB |
 | Rust (std, thread per connection) | 507,603 | 3.4 MB | 252,175 | 2.6 MB |
 | Go (`net/http`) | 349,436 | 18 MB | 215,594 | 12 MB |
@@ -1469,71 +1522,74 @@ These are decided and currently do not compile.
 
 ## Benchmarks
 
-Seconds, lower is better. **Bold** is fastest. Measured on a Ryzen 7 5700G.
+Seconds, lower is better. **Bold** is best. Measured on an AMD Ryzen 7 5700G, one process per task, timed by its wall clock, with peak memory from `/usr/bin/time`, the same wrapper for every language.
 
-| Language | 49 tasks (s) | Memory |
-| --- | ---: | --- |
-| Avant | 50.876 | 33 MB |
-| C | **45.443** | 23 MB |
-| Rust | 46.587 | 29 MB |
-| Crystal | 75.241 | 67 MB |
-| Go | 96.233 | 67 MB |
+| Language | 49 tasks (s) | Average peak memory |
+| --- | ---: | ---: |
+| Avant | **39.023** | **19.0 MB** |
+| C | 58.583 | 23.4 MB |
+| Rust | 58.926 | 29.8 MB |
+| Crystal | 85.670 | 67.1 MB |
+| Go | 117.876 | 64.3 MB |
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `Etc::Sieve` | 1.710 | **1.092** | 1.146 | 1.939 | 1.568 |
-| `Binarytrees::Obj` | **1.037** | 2.224 | 2.331 | 1.069 | 1.564 |
-| `Binarytrees::Arena` | 0.643 | **0.233** | 0.262 | 0.604 | 0.265 |
-| `Matmul::Single` | **1.406** | 4.656 | 4.826 | 4.980 | 4.879 |
-| `Matmul::T4` | 1.755 | **1.190** | 1.225 | 2.995 | 1.299 |
-| `Matmul::T8` | 1.156 | **0.610** | 0.629 | 4.791 | 0.718 |
-| `Matmul::T16` | 1.160 | **0.430** | 0.432 | 4.875 | 0.634 |
-| `Sort::Quick` | 1.988 | **0.981** | 0.982 | 1.285 | 1.111 |
-| `Sort::Merge` | 2.634 | **1.188** | 1.288 | 1.927 | 1.362 |
-| `Sort::Self` | **0.139** | 1.776 | 0.290 | 0.888 | 1.131 |
-| `CLBG::Mandelbrot` | 0.977 | **0.814** | 0.845 | 0.821 | 0.838 |
-| `CLBG::Fannkuchredux` | 1.744 | 1.004 | **0.947** | 1.005 | 0.976 |
-| `CLBG::Spectralnorm` | 1.053 | **0.853** | 0.854 | 0.864 | 0.892 |
-| `CLBG::Nbody` | 1.290 | 1.044 | **0.994** | 1.077 | 1.205 |
-| `Brainfuck::Array` | 2.351 | **1.287** | 2.726 | 1.957 | 1.425 |
-| `Brainfuck::Recursion` | 2.629 | **1.427** | 1.593 | 1.696 | 1.702 |
-| `Etc::GameOfLife` | 2.260 | 1.307 | 1.237 | 2.369 | **0.812** |
-| `Etc::NeuralNet` | 1.372 | **0.957** | 0.963 | 1.049 | 1.841 |
-| `Etc::CacheSimulation` | **0.586** | 0.631 | 0.697 | 1.090 | 1.389 |
-| `Etc::Words` | 1.381 | 1.660 | **0.718** | 0.805 | 1.017 |
-| `Graph::BFS` | 1.222 | **1.024** | 1.411 | 2.465 | 2.061 |
-| `Graph::DFS` | 1.257 | **0.931** | 1.116 | 1.638 | 1.283 |
-| `Graph::AStar` | 1.018 | 0.572 | **0.564** | 1.585 | 3.107 |
-| `Hash::CRC32` | **0.136** | 1.119 | 0.260 | 0.811 | 3.492 |
-| `Hash::SHA256` | **0.610** | 0.887 | 1.021 | 1.001 | 1.014 |
-| `Distance::Jaro` | 1.165 | **0.756** | 0.760 | 1.069 | 0.773 |
-| `Distance::NGram` | 1.155 | 1.415 | **0.411** | 0.656 | 0.776 |
-| `Base64::Encode` | **0.106** | **0.106** | 0.251 | 1.224 | 2.010 |
-| `Base64::Decode` | 0.127 | **0.121** | 0.285 | 1.246 | 1.444 |
-| `Json::Generate` | 0.753 | **0.239** | 0.271 | 0.959 | 1.026 |
-| `Json::ParseDom` | 0.080 | **0.073** | 0.749 | 0.525 | 1.168 |
-| `Json::ParseMapping` | 0.195 | **0.183** | 0.334 | 1.314 | 2.316 |
-| `CSV::Parse` | 1.024 | 1.853 | **0.672** | 3.092 | 2.119 |
-| `Template::Regex` | **0.848** | 1.144 | 3.465 | 1.445 | 6.662 |
-| `Template::Parse` | 1.027 | 0.946 | 1.027 | 2.349 | **0.784** |
-| `Maze::Generator` | 0.703 | **0.409** | 0.713 | 1.443 | 0.921 |
-| `Maze::BFS` | 0.717 | **0.442** | 0.912 | 1.889 | 1.523 |
-| `Maze::AStar` | 1.358 | **0.729** | 1.081 | 2.482 | 3.165 |
-| `Etc::LogParser` | 0.478 | 0.398 | **0.270** | 1.002 | 23.826 |
-| `Calculator::Ast` | 0.571 | 0.695 | 0.524 | **0.440** | 0.472 |
-| `Calculator::Interpreter` | **0.440** | 0.840 | 0.730 | 0.921 | 0.767 |
-| `Compress::BWTEncode` | 0.436 | 0.399 | **0.299** | 1.196 | 1.962 |
-| `Compress::BWTDecode` | 0.689 | **0.360** | 0.391 | 0.594 | 0.607 |
-| `Compress::HuffEncode` | 0.684 | 0.600 | **0.559** | 0.971 | 0.758 |
-| `Compress::HuffDecode` | 0.764 | 0.676 | **0.471** | 0.834 | 1.121 |
-| `Compress::ArithEncode` | 1.935 | 0.863 | **0.805** | 0.948 | 0.840 |
-| `Compress::ArithDecode` | 1.698 | **0.720** | 1.119 | 0.786 | 0.753 |
-| `Compress::LZWEncode` | **0.154** | 1.106 | 0.590 | 1.207 | 1.224 |
-| `Compress::LZWDecode` | **0.255** | 0.473 | 0.541 | 1.063 | 1.631 |
+| `Binarytrees::Obj` | **0.623** | 2.736 | 2.865 | 1.325 | 1.881 |
+| `Binarytrees::Arena` | 0.520 | 0.355 | **0.341** | 0.759 | 0.362 |
+| `Brainfuck::Array` | 1.635 | 1.896 | 1.825 | 1.968 | **1.546** |
+| `Brainfuck::Recursion` | 1.906 | 1.570 | **1.522** | 1.745 | 1.709 |
+| `Matmul::Single` | **1.152** | 5.646 | 5.758 | 5.832 | 5.769 |
+| `Matmul::T4` | **0.949** | 1.485 | 1.551 | 3.380 | 1.558 |
+| `Matmul::T8` | **0.582** | 0.799 | 0.858 | 2.642 | 0.888 |
+| `Matmul::T16` | 0.596 | **0.482** | 0.729 | 2.339 | 0.781 |
+| `Base64::Encode` | 0.127 | **0.119** | 0.352 | 1.633 | 2.591 |
+| `Base64::Decode` | 0.154 | **0.147** | 0.398 | 1.520 | 1.886 |
+| `Json::Generate` | **0.283** | 0.661 | 0.337 | 1.173 | 1.256 |
+| `Json::ParseDom` | 0.099 | **0.098** | 1.694 | 0.540 | 1.609 |
+| `Json::ParseMapping` | 0.238 | **0.229** | 0.425 | 1.546 | 2.871 |
+| `CSV::Parse` | **0.758** | 2.247 | 0.881 | 3.418 | 3.000 |
+| `Etc::Sieve` | 1.423 | **0.920** | 0.979 | 2.360 | 1.896 |
+| `Etc::NeuralNet` | 1.301 | **1.073** | 1.165 | 1.260 | 2.219 |
+| `Etc::CacheSimulation` | **0.493** | 0.762 | 0.863 | 1.298 | 1.638 |
+| `Etc::GameOfLife` | 1.438 | 1.487 | 1.503 | 2.816 | **0.980** |
+| `Etc::Words` | 1.125 | 2.284 | 1.080 | **0.902** | 1.372 |
+| `Etc::LogParser` | 0.473 | 0.496 | **0.348** | 1.207 | 28.911 |
+| `Template::Regex` | **0.992** | 1.269 | 3.660 | 1.673 | 7.730 |
+| `Template::Parse` | **0.809** | 1.132 | 1.181 | 2.737 | 0.891 |
+| `Sort::Quick` | 1.434 | **1.186** | 1.193 | 1.550 | 1.305 |
+| `Sort::Merge` | 1.739 | **1.165** | 1.540 | 2.309 | 1.593 |
+| `Sort::Self` | **0.103** | 2.095 | 0.412 | 1.079 | 1.333 |
+| `Graph::BFS` | **1.141** | 1.372 | 1.787 | 3.057 | 2.615 |
+| `Graph::DFS` | **1.193** | 1.225 | 1.450 | 2.190 | 1.742 |
+| `Graph::AStar` | **0.821** | 2.212 | 2.340 | 1.950 | 3.867 |
+| `Hash::SHA256` | **0.613** | 1.155 | 1.218 | 1.214 | 1.243 |
+| `Hash::CRC32` | **0.137** | 0.986 | 0.986 | 0.987 | 4.197 |
+| `Calculator::Ast` | **0.441** | 1.041 | 0.600 | 0.494 | 0.580 |
+| `Calculator::Interpreter` | **0.242** | 1.248 | 0.901 | 1.088 | 0.871 |
+| `Maze::Generator` | **0.570** | 0.596 | 1.012 | 2.718 | 1.457 |
+| `Maze::BFS` | **0.531** | 0.670 | 1.272 | 3.683 | 2.168 |
+| `Maze::AStar` | **1.089** | 1.776 | 1.464 | 4.363 | 4.092 |
+| `CLBG::Fannkuchredux` | 1.361 | 1.298 | 1.371 | 1.229 | **1.162** |
+| `CLBG::Mandelbrot` | **0.973** | 0.981 | 1.025 | 0.998 | 1.013 |
+| `CLBG::Nbody` | 1.255 | 1.271 | **1.200** | 1.296 | 1.445 |
+| `CLBG::Spectralnorm` | **0.984** | 1.035 | 1.031 | 1.039 | 1.065 |
+| `Compress::BWTEncode` | 0.437 | 0.505 | **0.418** | 1.332 | 2.140 |
+| `Compress::BWTDecode` | **0.685** | 0.721 | 1.024 | 1.152 | 1.938 |
+| `Compress::HuffEncode` | **0.537** | 0.795 | 0.717 | 1.104 | 0.908 |
+| `Compress::HuffDecode` | 0.575 | **0.445** | 0.556 | 0.907 | 1.265 |
+| `Compress::ArithEncode` | 1.187 | 1.036 | **0.977** | 1.139 | 1.015 |
+| `Compress::ArithDecode` | 0.984 | **0.895** | 1.359 | 0.960 | 0.910 |
+| `Compress::LZWEncode` | **0.156** | 1.413 | 0.707 | 1.052 | 1.244 |
+| `Compress::LZWDecode` | **0.247** | 0.659 | 0.659 | 0.633 | 1.634 |
+| `Distance::Jaro` | 1.011 | **0.894** | 0.895 | 1.282 | 0.930 |
+| `Distance::NGram` | 0.901 | 2.014 | **0.497** | 0.794 | 0.798 |
 
-Notes:
-- The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--final` hoists its pure render)
-- JSON, Base64, hashing, and regex are internally based on C libraries
+<small>Notes:</small>
+- <small>Build flags: Avant `--release --cpu=v3` (x86-64-v3); C and C++ use LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); Rust (`cargo build --release`), Go and Crystal (`--release`) use their defaults. C is C compiled with Clang, the faster of the two C compilers measured here (GCC: 59.499 s, 23.4 MB).</small>
+- <small>Each task's time is its whole process: start-up, data preparation, warm-up and the timed iterations; LangArena's published numbers count only the timed iterations.</small>
+- <small>Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes; on a few tasks (`Matmul::Single` above all) that, not the language, explains most of the gap.</small>
+- <small>The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--release` hoists its pure render).</small>
+- <small>JSON, Base64, hashing, and regex are internally based on C libraries.</small>
 
 ## Goals
 

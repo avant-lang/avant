@@ -13,6 +13,16 @@
 // the default environment printed -100 and 43 (no new key found), and
 // AVANT_GC_VERIFY=1 reported a lost field reference in the key buffer.
 // The probe is gc-audit.md's appendix (W13).
+//
+// It still exercises that barrier (Stage 28 W18V2, O144): a scratch
+// runtime with avant_hash_inc_slice's avant_barrier_slot removed prints
+// -100 and 43 plainly and under AVANT_GC_VERIFY=1, where the verifier
+// also prints 1,088 report lines (missing barriers on the large key
+// buffer, the young keys it names left unpromoted, lost references);
+// -90 and 39 under AVANT_YOUNG_MB=1, -97 and 42 with 4,180 report lines
+// under both; AVANT_NURSERY=0 runs no young collection and passes.
+// Deleting avant_barrier (the object barrier) changes nothing here:
+// inc_slice stores through the slot barrier.
 
 class Junk {
   a: String

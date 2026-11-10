@@ -1,0 +1,506 @@
+// The Buf hand-off (Stage 28 W18M, O52; a named generated-code change).
+//
+// `b.to_s` copies the Buf's bytes into a new string, so a Buf built only
+// to make one string holds its storage and the copy at once (LogParser's
+// 8 MiB log buffer and its 7 MB string). This pass replaces the call
+// `avant_buf_to_str(_b)` by `avant_buf_take_str(_b)` where the Buf is
+// known dead after the call; the runtime then makes the storage itself
+// the string when it is large (runtime/avant_buf.c) and leaves the Buf
+// empty, or copies as before.
+//
+// The Buf is dead after the call when, in the calling function:
+// - every local that may hold it (the class of locals joined by whole
+//   copies `_x = copy _y`, and the data pointers `_d = copy (*_b).0` read
+//   from them) is defined only by `avant_buf_new`, `avant_bytes_to_buf`,
+//   `zero`, or a copy within the class: no parameter, no call result
+//   from elsewhere, no load from the heap (the object was made here);
+// - no such local escapes: a whole value is used only as an argument of
+//   a runtime helper that keeps no reference (tk_keeps_none), as an
+//   argument of an Avant function whose parameter keeps none (below), as
+//   a copy into a whole local other than the return place, or by a
+//   barrier; a data pointer is only read through or copied into a local;
+//   no address of such a local or of its fields is taken;
+// - no local of the class is live after the call (flow.av's liveness).
+// A parameter of an Avant function keeps no reference when its class in
+// that function escapes nowhere by the same rules (defined otherwise is
+// allowed there). The parameters are solved together, from "keeps none"
+// down to a fixed point (a recursive call keeps none unless something
+// else does). The class may hold another Buf too (a reassigned local):
+// the rules then hold for every object it held, and liveness is the
+// class's.
+
+import source
+import mir.types
+import mir.ir
+import mir.runtime
+import mir.flow
+
+// The runtime helpers that take a Buf and keep no reference to it, or to
+// its storage, after they return.
+fn tk_keeps_none(name: String): Bool {
+  names = ["avant_buf_push_byte", "avant_buf_push_str", "avant_buf_push_slice", "avant_buf_push_fmt_f", "avant_buf_push_fmt_i", "avant_buf_append", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_size", "avant_buf_clear", "avant_buf_ensure", "avant_bytes_ensure", "avant_buf_set_size", "avant_buf_set_ident", "avant_buf_starts", "avant_buf_fill_appends", "avant_buf_copy_ranges"]
+  i = 0
+  while i < names.size {
+    if str_eq(names[i], name) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+fn tk_fresh(name: String): Bool {
+  str_eq(name, "avant_buf_new") || str_eq(name, "avant_bytes_to_buf")
+}
+
+fn tk_direct(st: MStmt): Bool {
+  if fo = st.indirect {
+    return false
+  }
+  true
+}
+
+fn tk_is_buf(m: MModule, ty: Int): Bool {
+  ts = m.types
+  if ts.kind(ty) != mk_ref() {
+    return false
+  }
+  l = ts.layout_of(ty)
+  l >= 0 && ts.layouts[l].kind == mlk_buf()
+}
+
+// The local of a bare `copy _k`, or -1.
+fn tk_local(o: MOperand): Int {
+  if o.kind != mok_copy() {
+    return -1
+  }
+  if p = o.place {
+    if p.proj.size == 0 {
+      return p.local
+    }
+  }
+  return -1
+}
+
+// The local _b of `copy (*_b).0` (a Buf's or an Array's data pointer), or -1.
+fn tk_data_of(o: MOperand): Int {
+  if o.kind != mok_copy() {
+    return -1
+  }
+  if p = o.place {
+    if p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 0 {
+      return p.local
+    }
+  }
+  return -1
+}
+
+// One function's classes and verdicts.
+class TkFunc {
+  f: MFunc
+  parent: Array(Int)
+  derived: Array(Bool)
+  bufc: Array(Bool)
+  owned: Array(Bool)
+  escapes: Array(Bool)
+  keeps: Array(Bool)
+
+  fn initialize(f: MFunc) {
+    self.f = f
+    p: Array(Int) = []
+    self.parent = p
+    self.derived = mir_bools(f.locals.size, false)
+    self.bufc = mir_bools(f.locals.size, false)
+    self.owned = mir_bools(f.locals.size, true)
+    self.escapes = mir_bools(f.locals.size, false)
+    self.keeps = mir_bools(f.locals.size, false)
+    i = 0
+    while i < f.locals.size {
+      self.parent.push(i)
+      i = i + 1
+    }
+  }
+
+  fn find(x: Int): Int {
+    r = x
+    while self.parent[r] != r {
+      r = self.parent[r]
+    }
+    y = x
+    while self.parent[y] != r {
+      n = self.parent[y]
+      self.parent[y] = r
+      y = n
+    }
+    r
+  }
+
+  fn join(a: Int, b: Int) {
+    ra = self.find(a)
+    rb = self.find(b)
+    if ra != rb {
+      self.parent[ra] = rb
+    }
+  }
+
+  // Whether local x is in a class that holds a Buf.
+  fn member(x: Int): Bool {
+    x >= 0 && x < self.parent.size && self.bufc[self.find(x)]
+  }
+}
+
+class TkPass {
+  m: MModule
+  infos: Array(TkFunc)
+  index: Hash(String, Int)
+
+  fn initialize(m: MModule) {
+    self.m = m
+    a: Array(TkFunc) = []
+    self.infos = a
+    self.index = Hash(String, Int).new
+  }
+
+  // Whether argument k of a call to the Avant function `sym` may be kept.
+  fn param_kept(sym: String, k: Int): Bool {
+    if i = self.index.get(sym) {
+      t = self.infos[i]
+      if k + 1 > t.f.nparams || !tk_is_buf(self.m, t.f.locals[k + 1].ty) {
+        return true
+      }
+      return t.keeps[k + 1]
+    }
+    true
+  }
+}
+
+// The classes of f (whole copies and data-pointer reads join), which hold
+// a Buf, and which are owned (made here).
+fn tk_classes(m: MModule, t: TkFunc) {
+  f = t.f
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      if st.kind == msk_assign() {
+        if p = st.place {
+          if r = st.rv {
+            if p.proj.size == 0 && r.kind == mrk_use() {
+              if a = r.a {
+                y = tk_local(a)
+                if y >= 0 {
+                  t.join(p.local, y)
+                }
+                d = tk_data_of(a)
+                if d >= 0 && tk_is_buf(m, f.locals[d].ty) {
+                  t.join(p.local, d)
+                  t.derived[p.local] = true
+                }
+              }
+            }
+          }
+        }
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  i = 0
+  while i < f.locals.size {
+    if tk_is_buf(m, f.locals[i].ty) {
+      t.bufc[t.find(i)] = true
+    }
+    i = i + 1
+  }
+  // Ownership: every definition of a member is fresh, zero, or a copy
+  // within the class; a parameter is defined elsewhere.
+  i = 1
+  while i <= f.nparams && i < f.locals.size {
+    t.owned[t.find(i)] = false
+    i = i + 1
+  }
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      x = mir_stmt_def(st)
+      if x >= 0 && t.member(x) {
+        ok = false
+        if st.kind == msk_call() {
+          ok = tk_direct(st) && tk_fresh(st.callee) && !t.derived[x]
+        } else if r = st.rv {
+          if r.kind == mrk_zero() {
+            ok = true
+          } else if r.kind == mrk_use() {
+            if a = r.a {
+              ok = tk_local(a) >= 0 || (t.derived[x] && tk_data_of(a) >= 0)
+            }
+          }
+        }
+        if !ok {
+          t.owned[t.find(x)] = false
+        }
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+}
+
+fn tk_mark(t: TkFunc, x: Int) {
+  t.escapes[t.find(x)] = true
+}
+
+// An operand in a position that may keep its value: a whole member or a
+// data pointer of one escapes there. Index operands of its place are
+// plain reads.
+fn tk_keeping(t: TkFunc, o: MOperand) {
+  x = tk_local(o)
+  if x >= 0 && t.member(x) {
+    tk_mark(t, x)
+  }
+  d = tk_data_of(o)
+  if d >= 0 && t.member(d) {
+    tk_mark(t, d)
+  }
+}
+
+// The address of a place based on a member keeps it.
+fn tk_addr(t: TkFunc, p: MPlace) {
+  if t.member(p.local) {
+    tk_mark(t, p.local)
+  }
+}
+
+fn tk_stmt_escapes(pass: TkPass, t: TkFunc, st: MStmt) {
+  if st.kind == msk_call() {
+    if o = st.indirect {
+      tk_keeping(t, o)
+      k = 0
+      while k < st.args.size {
+        tk_keeping(t, st.args[k])
+        k = k + 1
+      }
+      return
+    }
+    avant = false
+    if g = pass.m.func(st.callee) {
+      avant = g.blocks.size > 0
+    }
+    k = 0
+    while k < st.args.size {
+      a = st.args[k]
+      x = tk_local(a)
+      if x >= 0 && t.member(x) {
+        kept = true
+        if !t.derived[x] {
+          if avant {
+            kept = pass.param_kept(st.callee, k)
+          } else {
+            kept = !tk_keeps_none(st.callee)
+          }
+        }
+        if kept {
+          tk_mark(t, x)
+        }
+      } else {
+        tk_keeping(t, a)
+      }
+      k = k + 1
+    }
+    return
+  }
+  if st.kind == msk_barrier() || st.kind == msk_barrier_at() || st.kind == msk_check_bounds() {
+    // A barrier or a check keeps nothing.
+    return
+  }
+  if st.kind != msk_assign() {
+    return
+  }
+  if r = st.rv {
+    if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
+      if p = r.place {
+        tk_addr(t, p)
+      }
+    }
+    whole_local = false
+    if p = st.place {
+      whole_local = p.proj.size == 0 && p.local != 0
+    }
+    if r.kind == mrk_use() && whole_local {
+      // A copy into a whole local stays in the class (joined above).
+      return
+    }
+    if a = r.a {
+      tk_keeping(t, a)
+    }
+    if b = r.b {
+      tk_keeping(t, b)
+    }
+    i = 0
+    while i < r.ops.size {
+      tk_keeping(t, r.ops[i])
+      i = i + 1
+    }
+  }
+}
+
+fn tk_escapes(pass: TkPass, t: TkFunc) {
+  f = t.f
+  i = 0
+  while i < t.escapes.size {
+    t.escapes[i] = false
+    i = i + 1
+  }
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      tk_stmt_escapes(pass, t, blk.stmts[j])
+      j = j + 1
+    }
+    if tm = blk.term {
+      if c = tm.cond {
+        tk_keeping(t, c)
+      }
+    }
+    b = b + 1
+  }
+}
+
+// Whether no member of x's class is live after statement j of block b.
+fn tk_dead_after(t: TkFunc, outs: Array(Array(Bool)), b: Int, j: Int, x: Int): Bool {
+  f = t.f
+  blk = f.blocks[b]
+  live = mir_bools_copy(outs[b])
+  if tm = blk.term {
+    reads: Array(Int) = []
+    mir_term_reads(f, tm, reads)
+    k = 0
+    while k < reads.size {
+      live[reads[k]] = true
+      k = k + 1
+    }
+  }
+  i = blk.stmts.size - 1
+  while i > j {
+    mir_live_step(blk.stmts[i], live)
+    i = i - 1
+  }
+  root = t.find(x)
+  k = 0
+  while k < live.size {
+    if live[k] && t.find(k) == root {
+      return false
+    }
+    k = k + 1
+  }
+  true
+}
+
+fn tk_declare(m: MModule) {
+  name = "avant_buf_take_str"
+  if got = m.extern_index.get(name) {
+    return
+  }
+  // Declared on first use, as the builder's extern_rt does.
+  if r = m.rt.find(name) {
+    sg = m.rt.sig_of(r, m.types)
+    if sg >= 0 {
+      e = MExtern.new(name, sg, r.cls)
+      m.extern_index[name] = m.externs.size
+      m.externs.push(e)
+    }
+  }
+}
+
+// The take sites of one function; returns how many calls it rewrote.
+fn tk_rewrite(t: TkFunc): Int {
+  f = t.f
+  n = 0
+  outs: Array(Array(Bool)) = []
+  have = false
+  b = 0
+  while b < f.blocks.size {
+    blk = f.blocks[b]
+    j = 0
+    while j < blk.stmts.size {
+      st = blk.stmts[j]
+      if st.kind == msk_call() && tk_direct(st) && str_eq(st.callee, "avant_buf_to_str") && st.args.size == 1 {
+        x = tk_local(st.args[0])
+        if x >= 0 && t.member(x) && !t.derived[x] {
+          r = t.find(x)
+          if t.owned[r] && !t.escapes[r] {
+            if !have {
+              outs = mir_live_out(f)
+              have = true
+            }
+            if tk_dead_after(t, outs, b, j, x) {
+              st.callee = "avant_buf_take_str"
+              n = n + 1
+            }
+          }
+        }
+      }
+      j = j + 1
+    }
+    b = b + 1
+  }
+  n
+}
+
+pub fn mir_take_pass(m: MModule) {
+  pass = TkPass.new(m)
+  i = 0
+  while i < m.funcs.size {
+    f = m.funcs[i]
+    has = false
+    if f.blocks.size > 0 {
+      k = 0
+      while k < f.locals.size && !has {
+        has = tk_is_buf(m, f.locals[k].ty)
+        k = k + 1
+      }
+    }
+    if has {
+      t = TkFunc.new(f)
+      tk_classes(m, t)
+      pass.index[f.symbol] = pass.infos.size
+      pass.infos.push(t)
+    }
+    i = i + 1
+  }
+  changed = true
+  while changed {
+    changed = false
+    i = 0
+    while i < pass.infos.size {
+      t = pass.infos[i]
+      tk_escapes(pass, t)
+      k = 1
+      while k <= t.f.nparams && k < t.f.locals.size {
+        e = t.escapes[t.find(k)]
+        if e && !t.keeps[k] {
+          t.keeps[k] = true
+          changed = true
+        }
+        k = k + 1
+      }
+      i = i + 1
+    }
+  }
+  n = 0
+  i = 0
+  while i < pass.infos.size {
+    n = n + tk_rewrite(pass.infos[i])
+    i = i + 1
+  }
+  if n > 0 {
+    tk_declare(m)
+  }
+}

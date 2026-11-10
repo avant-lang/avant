@@ -22,7 +22,7 @@ gc_cflags=
 
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below.
-core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots"
+core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots avant_gc_safepoint"
 for name in $core_units; do
   "$cc" -c $cflags $gc_cflags -o "$root/build/$name.unit.o" "$root/$name.c"
 done
@@ -148,7 +148,13 @@ compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
 # runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;
 # the release ships it beside avant. Without llvm-config or libclang it is
 # skipped with a notice, and `avant bind` says how to build it.
-llvm_config=${LLVM_CONFIG:-llvm-config}
+# BIND_LLVM_CONFIG names the llvm-config whose libclang it links (default:
+# LLVM_CONFIG, else llvm-config), so the helper can stay on a distribution
+# libclang while the compiler's in-process LLVM comes from elsewhere (W18L:
+# the libclang of LLVM's official binaries finds no resource headers when
+# loaded by avant-bind, so `avant bind` of a header that includes
+# <stdbool.h> fails).
+llvm_config=${BIND_LLVM_CONFIG:-${LLVM_CONFIG:-llvm-config}}
 bind_src="$root/../tools/bind.c"
 bind_out="$root/build/avant-bind"
 if command -v "$llvm_config" > /dev/null 2>&1 && [ -f "$bind_src" ]; then

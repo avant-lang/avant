@@ -322,6 +322,18 @@ static void grow(AvantHash *h) {
   h->state = nstate;
   h->cap = ncap;
   h->size = dst.size;
+  /* The hash no longer names its old buffers: large ones go back now
+   * unless a root still names them or they are mature with references
+   * (Stage 28 W18M, O109). */
+  if (okeys) {
+    (void)avant_gc_large_drop(okeys, 2);
+  }
+  if (ovals) {
+    (void)avant_gc_large_drop(ovals, 2);
+  }
+  if (ostate) {
+    (void)avant_gc_large_drop(ostate, 2);
+  }
 }
 
 /* gc-lint: holds nothing (grow is its last statement and roots the hash itself). */
@@ -787,6 +799,91 @@ int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
     h->size += 1;
   }
   return by;
+}
+
+/* Get-or-insert (Stage 28 W18S, O49): the address of key's value, with key
+ * inserted holding init when it was absent (*found then 0, else 1; found
+ * may be NULL). The compiler calls it instead of a get where every path
+ * from the get reaches a set of the same key before any other call
+ * (compiler/mir/upsert.av), and reads and writes the value through the
+ * address: the one lookup serves both. A growth here may collect; the
+ * address stays valid until the caller's next call, and there is none
+ * before its last use. Int values only, so the stores need no barrier.
+ * A nil hash gives a per-thread scratch slot (a get then reads 0 and a
+ * set stores nothing, as before). */
+static __thread int32_t g_upsert_scratch;
+
+int32_t *avant_hash_upsert_i32k(void *hp, int32_t key, int32_t init, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  if (!h) {
+    if (found) {
+      *found = 0;
+    }
+    g_upsert_scratch = init;
+    return &g_upsert_scratch;
+  }
+  /* RC1: grow may collect; the hash is a handle. */
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
+  if (lookup(h, (int64_t)key, hash_i32(key), &i)) {
+    if (found) {
+      *found = 1;
+    }
+    return &((int32_t *)h->vals)[i];
+  }
+  if (found) {
+    *found = 0;
+  }
+  ensure_cap(h);
+  lookup(h, (int64_t)key, hash_i32(key), &i);
+  store_key(h, i, (int64_t)key);
+  store_val_i32(h, i, init);
+  if (!slot_full(h->state[i])) {
+    h->state[i] = 1;
+    h->size += 1;
+  }
+  return &((int32_t *)h->vals)[i];
+}
+
+int32_t *avant_hash_upsert_i32(void *hp, const char *key, int32_t init, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  if (!h) {
+    if (found) {
+      *found = 0;
+    }
+    g_upsert_scratch = init;
+    return &g_upsert_scratch;
+  }
+  /* RC1: grow may collect; the hash and the key are handles. */
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &key);
+  if (lookup_str(h, key, &i)) {
+    if (found) {
+      *found = 1;
+    }
+    return &((int32_t *)h->vals)[i];
+  }
+  if (found) {
+    *found = 0;
+  }
+  ensure_cap(h);
+  lookup_str(h, key, &i);
+  store_key(h, i, (int64_t)(uintptr_t)key);
+  if (h->keys) {
+    avant_barrier_slot(h->keys, &((void **)h->keys)[i]);
+  }
+  store_val_i32(h, i, init);
+  if (h->state && h->key_kind == AVANT_HASH_KEY_STR) {
+    hashes_of(h)[i] = hash_str(key);
+  }
+  if (!slot_full(h->state[i])) {
+    h->state[i] = occ_mark(key, avant_str_n(key));
+    h->size += 1;
+  }
+  return &((int32_t *)h->vals)[i];
 }
 
 int32_t avant_hash_get_or_i32(void *hp, const char *key, int32_t fallback) {

@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 /* The mutator's side of the collector (Stage 28 W12, moved from
  * avant_rt.c): thread registration (stack bounds, frame list heads), frames
@@ -21,19 +23,86 @@
  * thread can collect at any instruction. */
 atomic_int g_avant_shared;
 
+/* Whether a thread has registered yet: the first one is the main thread
+ * (Stage 28 W17a). */
+static atomic_int g_first_registered;
+
 /* The calling thread's collector state (avant_gc_internal.h). */
 __thread GcThread gc_thread;
 
 /* The calling thread's innermost frame (avant_gc.h): generated code's
  * frames and runtime C's handle scopes on one chain (Stage 28 W16a; it
- * was GcThread.frame). */
-__thread __attribute__((visibility("hidden"))) Frame *avant_gc_top;
+ * was GcThread.frame). Generated code reads and writes it since W18. */
+__thread Frame *avant_gc_top;
 
-void avant_gc_register_thread(void) {
+/* Thread exit unregisters (Stage 28 W17c, O126). A thread that exits
+ * still registered (a foreign C thread after its last callback, or any
+ * thread that never called avant_gc_unregister_thread) would leave its
+ * ThreadReg in gc_heap.threads while its GcThread, thread-local, is freed
+ * with the thread: every later collection would read it, and a later
+ * thread on the same reused stack would register the same node again (a
+ * cycle the handshake loops on forever). Every registration sets a
+ * pthread key whose destructor runs at the thread's exit, for threads
+ * Avant did not create too, while the thread's thread-local state is
+ * still valid (glibc runs the key destructors before it frees the
+ * thread). */
+static pthread_key_t g_exit_key;
+static pthread_once_t g_exit_once = PTHREAD_ONCE_INIT;
+
+/* A frame avant_gc_enter allocates: the frame, then the thread's list of
+ * all such frames (GcThread.frame_all). */
+typedef struct CFrame {
+  Frame f;
+  struct CFrame *all;
+} CFrame;
+
+static void thread_exit_hook(void *unused) {
+  CFrame *cf;
+  (void)unused;
+  if (gc_thread.reg.head) {
+    /* Back to running (gc_thread_exiting waits while a collection is in
+     * progress), then unregistered as avant_gc_unregister_thread does it:
+     * the young hole's charge settled, the remembered buffer merged, the
+     * thread out of the list. The thread's frames are gone with its
+     * stack: the chain is dropped first (the thread is running, so no
+     * collection reads it meanwhile). */
+    gc_thread_exiting();
+    avant_gc_top = NULL;
+    avant_gc_unregister_thread();
+  }
+  /* No collection reads an unregistered thread's state: every frame
+   * avant_gc_enter allocated (free, or still on the chain of a thread
+   * that exited inside a callback: O129) and its remembered buffer go
+   * back to the C heap. */
+  gc_thread.frame_free = NULL;
+  while ((cf = gc_thread.frame_all)) {
+    gc_thread.frame_all = cf->all;
+    free(cf->f.slots);
+    free(cf);
+  }
+  free(gc_thread.rembuf);
+  gc_thread.rembuf = NULL;
+  gc_thread.rembuf_n = 0;
+  gc_thread.rembuf_cap = 0;
+}
+
+static void exit_key_make(void) {
+  if (pthread_key_create(&g_exit_key, thread_exit_hook) != 0) {
+    gc_die("cannot create the thread-exit key");
+  }
+}
+
+static void register_thread(int implicit) {
+  int foreign;
   if (gc_thread.reg.head) {
     return;
   }
+  pthread_once(&g_exit_once, exit_key_make);
+  if (pthread_setspecific(g_exit_key, &gc_thread) != 0) {
+    gc_die("cannot set the thread-exit key");
+  }
   gc_thread.reg.head = &avant_gc_top;
+  gc_thread.reg.tid = (int)syscall(SYS_gettid);
   {
     pthread_attr_t attr;
     void *addr = NULL;
@@ -46,28 +115,31 @@ void avant_gc_register_thread(void) {
       pthread_attr_destroy(&attr);
     }
   }
-  pthread_mutex_lock(&gc_heap.threads_mu);
-  gc_thread.reg.next = gc_heap.threads;
-  gc_heap.threads = &gc_thread.reg;
-  if (gc_thread.reg.next) {
-    atomic_store_explicit(&g_avant_shared, 1, memory_order_release);
+  /* A thread registered by its first avant_gc_enter is a foreign one
+   * (rule 4 of gc-design.md section 4.4: native between callbacks),
+   * except the program's first thread (the main thread's first frame). */
+  foreign = implicit && atomic_exchange(&g_first_registered, 1) != 0;
+  if (!implicit) {
+    atomic_store(&g_first_registered, 1);
   }
-  pthread_mutex_unlock(&gc_heap.threads_mu);
+  gc_alloc_thread_init();
+  gc_thread_registered(foreign);
+  /* Every registered thread, a foreign one too, allocates young in its
+   * own young blocks (Stage 28 W17b; until then a foreign thread, the
+   * pool's workers and the HTTP loop threads allocated in the mature
+   * space: the young cursor was one per process, W17a's rule 4 proof). */
+}
+
+void avant_gc_register_thread(void) {
+  register_thread(0);
 }
 
 void avant_gc_unregister_thread(void) {
-  pthread_mutex_lock(&gc_heap.threads_mu);
-  ThreadReg **pp = &gc_heap.threads;
-  while (*pp) {
-    if (*pp == &gc_thread.reg) {
-      *pp = gc_thread.reg.next;
-      break;
-    }
-    pp = &(*pp)->next;
+  if (!gc_thread.reg.head) {
+    return;
   }
-  gc_thread.reg.head = NULL;
-  gc_thread.reg.next = NULL;
-  pthread_mutex_unlock(&gc_heap.threads_mu);
+  gc_alloc_thread_leave();
+  gc_thread_unregistering();
 }
 
 /* A call used to calloc a frame and free it on leave. Hot recursion
@@ -76,19 +148,30 @@ void avant_gc_unregister_thread(void) {
 void avant_gc_enter(void) {
   gc_heap.ctr.root.enters++;
   gc_init();
-  avant_gc_register_thread();
+  if (!gc_thread.reg.head) {
+    register_thread(1);
+  }
+  if (gc_thread.base_native && !avant_gc_top) {
+    /* Rule 4: a foreign thread's callback returns to running (a
+     * safepoint if a collection is in progress). */
+    gc_thread.base_native = 0;
+    avant_gc_native_end();
+  }
   Frame *f = gc_thread.frame_free;
   if (f) {
     gc_thread.frame_free = f->prev;
     f->n = 0;
   } else {
-    f = calloc(1, sizeof(Frame));
-    if (!f) {
+    CFrame *cf = calloc(1, sizeof(CFrame));
+    if (!cf) {
       gc_die("out of memory");
     }
+    cf->all = gc_thread.frame_all;
+    gc_thread.frame_all = cf;
+    f = &cf->f;
   }
   f->prev = avant_gc_top;
-  f->scope = 0;
+  f->scope = AVANT_GC_FRAME_C;
   avant_gc_top = f;
 }
 
@@ -97,7 +180,7 @@ void avant_gc_leave(void) {
   if (!f) {
     gc_die("gc leave without enter");
   }
-  if (f->scope) {
+  if (f->scope & AVANT_GC_SCOPE_OPEN) {
     /* A runtime C scope (RC1) is innermost: it was not closed, or a
      * generated frame was left from inside one. */
     gc_die("gc leave inside a runtime C scope");
@@ -106,6 +189,62 @@ void avant_gc_leave(void) {
   f->n = 0;
   f->prev = gc_thread.frame_free;
   gc_thread.frame_free = f;
+  if (!avant_gc_top && gc_thread.foreign && !gc_thread.base_native) {
+    /* Rule 4: a foreign thread is native between callbacks. */
+    gc_thread.base_native = 1;
+    avant_gc_native_begin();
+  }
+}
+
+/* The frame record in the caller's own stack (Stage 28 W18). Generated
+ * code since W18 does not take a frame from the free list: each frame
+ * function keeps an AvantGcFrame in its stack frame, its slot array right
+ * after it, and fills prev-free fields itself (slots, n = cap = the root
+ * words, scope 0, then each slot's address). When the thread already has
+ * an innermost frame, it links the record inline (prev = avant_gc_top,
+ * avant_gc_top = the record); otherwise, and always in the call forms
+ * (AVANT_LLVM_CALL_FORMS=1), it calls avant_gc_frame_enter, which does
+ * what avant_gc_enter does for a thread's outermost frame (the heap's
+ * first use, the thread's registration, rule 4's return to running for a
+ * foreign thread's callback) and links it. At leave, a record that is
+ * innermost and not outermost is unlinked inline (avant_gc_top = prev);
+ * anything else calls avant_gc_frame_leave. A quiet region does not
+ * clear the record's count: registering slots no collection reads is
+ * harmless. The enters and roots statistics count the frames that
+ * enter through a call (avant_gc_enter, avant_gc_frame_enter): in the
+ * inline forms a thread's outermost frame, in the call forms every
+ * frame. */
+void avant_gc_frame_enter(Frame *f) {
+  gc_heap.ctr.root.enters++;
+  gc_heap.ctr.root.roots += f->n;
+  gc_init();
+  if (!gc_thread.reg.head) {
+    register_thread(1);
+  }
+  if (gc_thread.base_native && !avant_gc_top) {
+    gc_thread.base_native = 0;
+    avant_gc_native_end();
+  }
+  f->prev = avant_gc_top;
+  avant_gc_top = f;
+}
+
+void avant_gc_frame_leave(Frame *f) {
+  if (avant_gc_top != f) {
+    if (!avant_gc_top) {
+      gc_die("gc leave without enter");
+    }
+    if (avant_gc_top->scope & AVANT_GC_SCOPE_OPEN) {
+      gc_die("gc leave inside a runtime C scope");
+    }
+    gc_die("gc leave of a frame that is not innermost");
+  }
+  avant_gc_top = f->prev;
+  if (!avant_gc_top && gc_thread.foreign && !gc_thread.base_native) {
+    /* Rule 4: a foreign thread is native between callbacks. */
+    gc_thread.base_native = 1;
+    avant_gc_native_begin();
+  }
 }
 
 /* A runtime unit registers a thread-local slot that holds a heap
@@ -141,6 +280,22 @@ void avant_gc_quiet_leave(void) {
   }
 }
 
+/* O138 (Stage 28 W18M): avant_gc_root and avant_gc_root_begin act on the
+ * innermost frame, which must be one avant_gc_enter opened. Called by user
+ * C without its own avant_gc_enter, the innermost frame is a generated
+ * function's record or a runtime scope, whose slot array lives in a stack
+ * frame: growing it would realloc a stack address, and filling it would
+ * overwrite the caller's registered slots. */
+static void user_frame_check(Frame *f, const char *who) {
+  if (!(f->scope & AVANT_GC_FRAME_C)) {
+    char msg[256];
+    snprintf(msg, sizeof msg,
+             "%s without avant_gc_enter: the innermost frame is %s, not one this C code opened (call avant_gc_enter first, avant_gc_leave after)",
+             who, (f->scope & AVANT_GC_SCOPE_OPEN) ? "a runtime C scope" : "a generated function's frame record");
+    gc_die(msg);
+  }
+}
+
 void avant_gc_root(void *slot) {
   gc_heap.ctr.root.roots++;
   if (gc_thread.quiet) {
@@ -151,6 +306,7 @@ void avant_gc_root(void *slot) {
   }
   Frame *f = avant_gc_top;
   uint32_t i;
+  user_frame_check(f, "avant_gc_root");
   /*
    * Codegen emits CALL :avant_gc_root at the first use site of a temp.
    * When that site is inside a loop (Array.push/pop), the same stack
@@ -175,6 +331,7 @@ void *avant_gc_root_begin(uint32_t count) {
     gc_die("gc root begin without enter");
   }
   Frame *f = avant_gc_top;
+  user_frame_check(f, "avant_gc_root_begin");
   if (count > f->cap) {
     uint32_t cap = f->cap ? f->cap : 8;
     while (cap < count) {
@@ -200,22 +357,18 @@ void *avant_gc_reload(void *slot) {
   return p;
 }
 
-void avant_pin(void *payload) {
-  if (!payload) {
-    return;
-  }
-  pthread_mutex_lock(&gc_heap.world);
+/* One more pin of payload, under the world lock (taken by the caller).
+ * Returns 0 when payload is not a heap payload (nothing is pinned). */
+static int pin_locked(void *payload) {
   if (!gc_is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&gc_heap.world);
-    return;
+    return 0;
   }
   AvantHeader *h = avant_header(payload);
   if (h->flags & AVANT_FLAG_PINNED) {
     for (PinEnt *p = gc_heap.pins; p; p = p->next) {
       if (p->payload == payload) {
         p->count += 1;
-        pthread_mutex_unlock(&gc_heap.world);
-        return;
+        return 1;
       }
     }
   }
@@ -224,11 +377,48 @@ void avant_pin(void *payload) {
     pthread_mutex_unlock(&gc_heap.world);
     gc_die("out of memory");
   }
-  h->flags |= AVANT_FLAG_PINNED;
+  gc_hdr_or(h, AVANT_FLAG_PINNED);
   e->payload = payload;
   e->count = 1;
   e->next = gc_heap.pins;
   gc_heap.pins = e;
+  return 1;
+}
+
+/* One pin of payload given back, under the world lock (taken by the
+ * caller). A pointer that is not a pinned heap payload is ignored. */
+static void unpin_locked(void *payload) {
+  PinEnt **pp;
+  if (!gc_is_heap_payload(payload, NULL, NULL)) {
+    return;
+  }
+  AvantHeader *h = avant_header(payload);
+  if ((h->flags & AVANT_FLAG_PINNED) == 0) {
+    return;
+  }
+  pp = &gc_heap.pins;
+  while (*pp) {
+    if ((*pp)->payload == payload) {
+      (*pp)->count -= 1;
+      if ((*pp)->count > 0) {
+        return;
+      }
+      PinEnt *dead = *pp;
+      *pp = dead->next;
+      free(dead);
+      break;
+    }
+    pp = &(*pp)->next;
+  }
+  gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
+}
+
+void avant_pin(void *payload) {
+  if (!payload) {
+    return;
+  }
+  pthread_mutex_lock(&gc_heap.world);
+  (void)pin_locked(payload);
   pthread_mutex_unlock(&gc_heap.world);
 }
 
@@ -243,45 +433,221 @@ int avant_pin_count(void) {
 }
 
 void avant_unpin(void *payload) {
-  PinEnt **pp;
   if (!payload) {
     return;
   }
   pthread_mutex_lock(&gc_heap.world);
-  if (!gc_is_heap_payload(payload, NULL, NULL)) {
-    pthread_mutex_unlock(&gc_heap.world);
-    return;
-  }
-  AvantHeader *h = avant_header(payload);
-  if ((h->flags & AVANT_FLAG_PINNED) == 0) {
-    pthread_mutex_unlock(&gc_heap.world);
-    return;
-  }
-  pp = &gc_heap.pins;
-  while (*pp) {
-    if ((*pp)->payload == payload) {
-      (*pp)->count -= 1;
-      if ((*pp)->count > 0) {
-        pthread_mutex_unlock(&gc_heap.world);
-        return;
-      }
-      PinEnt *dead = *pp;
-      *pp = dead->next;
-      free(dead);
-      break;
-    }
-    pp = &(*pp)->next;
-  }
-  h->flags = (uint16_t)(h->flags & ~AVANT_FLAG_PINNED);
+  unpin_locked(payload);
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-/* Task roots (avant_gc.h; Stage 28 W16b, C28, R1). The object is PINNED
- * while rooted so no collection moves it (the young copy keeps its block,
- * defragmentation skips its block), but it is on no pin list: the root
- * is traced from gc_heap.task_roots. A record that is also on the pin
- * list (never today: only avant_spawn roots, and it pins nothing) keeps
- * PINNED after the drop. */
+/* Field pins (Stage 28 W16c, D266; avant_rt.h): the pins that stores of
+ * references into C-layout fields took, recorded by the field's address
+ * so that `release` can give them back. A hash of FieldRec by address,
+ * chained, under the world lock like the pins themselves. A record holds
+ * every value Avant stored at that address since its last release that
+ * took a pin (a value stored again right after itself shares an entry
+ * with a count), and the last value Avant stored there (pinned or not: a
+ * literal string is not a heap payload and takes no pin), which is how a
+ * release knows whether the field still holds Avant's value.
+ *
+ * C changed the memory (Stage 28 W18C, O134). When a store or a release
+ * finds the field no longer holding the value Avant last stored there,
+ * C changed the field or freed the struct and reused its memory (a new
+ * struct at the same address joins the old record). Either way C may
+ * still hold the earlier values (it took the old pointer, or the old
+ * struct's owner kept it), so they stay pinned for the rest of the run:
+ * a store starts the record afresh (a later release gives back only what
+ * Avant stored since), and a release gives back nothing and leaves C's
+ * value in the field. A missing release costs memory, never correctness.
+ * Under AVANT_GC_VERIFY=1 a store that finds its field changed reports it
+ * once per record (the first 32 fields in full) as a likely missing
+ * `release`; a release that finds C's value is silent (C overwriting a
+ * value Avant stored is a correct use, D266, and the release was not
+ * missing). */
+typedef struct FieldVal {
+  void *v;
+  uint32_t count;
+} FieldVal;
+
+typedef struct FieldRec {
+  struct FieldRec *next;
+  void **field;
+  void *last;
+  FieldVal *vals;
+  uint32_t n;
+  uint32_t cap;
+  uint32_t warned;
+} FieldRec;
+
+static FieldRec **field_tab;
+static size_t field_tab_size; /* buckets, a power of two (0: none yet) */
+static size_t field_count;    /* records */
+static uint64_t field_changed; /* stores that found their field changed by C (VERIFY's reports) */
+
+/* R's field no longer holds Avant's last value (CUR is what it holds):
+ * its values stay pinned; the record forgets them. */
+static void field_keep_pinned(FieldRec *r, void *cur, int report) {
+  uint32_t kept = 0;
+  for (uint32_t i = 0; i < r->n; i++) {
+    kept += r->vals[i].count;
+  }
+  if (report && gc_heap.set.verify && !r->warned) {
+    r->warned = 1;
+    if (field_changed++ < 32) {
+      fprintf(stderr,
+              "avant gc verify: a store into C-layout field %p found it no longer holding the value Avant last stored there "
+              "(%p; it holds %p): C changed it, or freed the struct without `release` and reused its memory "
+              "(a missing `release`?); %u earlier pin(s) stay\n",
+              (void *)r->field, r->last, cur, kept);
+    }
+  }
+  r->n = 0;
+}
+
+static size_t field_hash(void **field) {
+  uint64_t x = (uint64_t)(uintptr_t)field >> 3;
+  x *= 0x9E3779B97F4A7C15ull;
+  return (size_t)(x >> 32) & (field_tab_size - 1);
+}
+
+static void *field_alloc(size_t n) {
+  void *p = calloc(1, n);
+  if (!p) {
+    pthread_mutex_unlock(&gc_heap.world);
+    gc_die("out of memory");
+  }
+  return p;
+}
+
+static void field_grow(void) {
+  size_t old = field_tab_size;
+  FieldRec **ot = field_tab;
+  field_tab_size = old ? old * 2 : 64;
+  field_tab = (FieldRec **)field_alloc(field_tab_size * sizeof(FieldRec *));
+  for (size_t i = 0; i < old; i++) {
+    FieldRec *r = ot[i];
+    while (r) {
+      FieldRec *nx = r->next;
+      size_t b = field_hash(r->field);
+      r->next = field_tab[b];
+      field_tab[b] = r;
+      r = nx;
+    }
+  }
+  free(ot);
+}
+
+void avant_pin_field(void *field, void *payload) {
+  void **f = (void **)field;
+  pthread_mutex_lock(&gc_heap.world);
+  int pinned = payload ? pin_locked(payload) : 0;
+  if (field_count >= field_tab_size) {
+    field_grow();
+  }
+  size_t b = field_hash(f);
+  FieldRec *r = field_tab[b];
+  while (r && r->field != f) {
+    r = r->next;
+  }
+  if (!r) {
+    r = (FieldRec *)field_alloc(sizeof(FieldRec));
+    r->field = f;
+    r->next = field_tab[b];
+    field_tab[b] = r;
+    field_count += 1;
+  } else if (*f != r->last) {
+    field_keep_pinned(r, *f, 1);
+  }
+  r->last = payload;
+  if (pinned) {
+    if (r->n > 0 && r->vals[r->n - 1].v == payload) {
+      r->vals[r->n - 1].count += 1;
+    } else {
+      if (r->n == r->cap) {
+        uint32_t cap = r->cap ? r->cap * 2 : 4;
+        FieldVal *nv = (FieldVal *)realloc(r->vals, cap * sizeof(FieldVal));
+        if (!nv) {
+          pthread_mutex_unlock(&gc_heap.world);
+          gc_die("out of memory");
+        }
+        r->vals = nv;
+        r->cap = cap;
+      }
+      r->vals[r->n].v = payload;
+      r->vals[r->n].count = 1;
+      r->n += 1;
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* Gives back r's pins and nulls its field if the field still holds a
+ * value Avant stored there; frees r (already unlinked). */
+static void field_release(FieldRec *r) {
+  void *cur = *r->field;
+  if (cur != r->last) {
+    /* C changed the field (O134): what Avant stored stays pinned. */
+    field_keep_pinned(r, cur, 0);
+  }
+  for (uint32_t i = 0; i < r->n; i++) {
+    for (uint32_t k = 0; k < r->vals[i].count; k++) {
+      unpin_locked(r->vals[i].v);
+    }
+  }
+  if (cur != NULL && cur == r->last) {
+    *r->field = NULL;
+  }
+  free(r->vals);
+  free(r);
+}
+
+void avant_release_range(void *lo, uint64_t n) {
+  uintptr_t a = (uintptr_t)lo;
+  uintptr_t end = a + (uintptr_t)n;
+  pthread_mutex_lock(&gc_heap.world);
+  if (field_count == 0 || n == 0) {
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
+  if (n / sizeof(void *) <= field_count) {
+    /* A field or a struct: look up each pointer-aligned address. */
+    uintptr_t p = (a + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
+    for (; p + sizeof(void *) <= end; p += sizeof(void *)) {
+      FieldRec **rp = &field_tab[field_hash((void **)p)];
+      while (*rp && (uintptr_t)(*rp)->field != p) {
+        rp = &(*rp)->next;
+      }
+      if (*rp) {
+        FieldRec *r = *rp;
+        *rp = r->next;
+        field_count -= 1;
+        field_release(r);
+      }
+    }
+  } else {
+    /* A range larger than the table: walk the table. */
+    for (size_t i = 0; i < field_tab_size; i++) {
+      FieldRec **rp = &field_tab[i];
+      while (*rp) {
+        FieldRec *r = *rp;
+        uintptr_t f = (uintptr_t)r->field;
+        if (f >= a && f < end) {
+          *rp = r->next;
+          field_count -= 1;
+          field_release(r);
+        } else {
+          rp = &r->next;
+        }
+      }
+    }
+  }
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* Task roots (avant_gc.h; Stage 28 W16b, C28, R1): traced from
+ * gc_heap.task_roots and rewritten when the record moves (Stage 28 W17a:
+ * until then the record was PINNED while rooted, D191). */
 void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj) {
   gc_init();
   r->obj = obj;
@@ -292,14 +658,10 @@ void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj) {
     r->next->prev = r;
   }
   gc_heap.task_roots = r;
-  if (gc_is_heap_payload(obj, NULL, NULL)) {
-    avant_header(obj)->flags |= AVANT_FLAG_PINNED;
-  }
   pthread_mutex_unlock(&gc_heap.world);
 }
 
 void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
-  void *obj = r->obj;
   pthread_mutex_lock(&gc_heap.world);
   if (r->prev) {
     r->prev->next = r->next;
@@ -311,18 +673,6 @@ void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
   }
   r->next = r->prev = NULL;
   r->obj = NULL;
-  if (gc_is_heap_payload(obj, NULL, NULL)) {
-    int listed = 0;
-    for (PinEnt *p = gc_heap.pins; p; p = p->next) {
-      if (p->payload == obj) {
-        listed = 1;
-        break;
-      }
-    }
-    if (!listed) {
-      avant_header(obj)->flags = (uint16_t)(avant_header(obj)->flags & ~AVANT_FLAG_PINNED);
-    }
-  }
   pthread_mutex_unlock(&gc_heap.world);
 }
 
@@ -336,13 +686,20 @@ void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
 static void nogc_begin(void *site) {
   gc_init();
   gc_fast_clear();
-  pthread_mutex_lock(&gc_heap.world);
-  if (gc_heap.defer == 0) {
-    gc_heap.region_bytes = 0;
-    gc_heap.region_site = site;
+  /* The thread's own depth (Stage 28 W17a; the only one since W17b,
+   * which retired the process-wide gc_heap.defer, O125): this thread
+   * never stops at a safepoint inside a region, nor turns native, nor
+   * collects; another thread's collection waits for it to leave the
+   * region and reach a safepoint. So no collection runs while the
+   * region is open, and one thread's region no longer holds off the
+   * other threads' collection policy. A region must therefore never
+   * wait for another thread (that thread may be stopped for a
+   * collection that waits for this one). */
+  if (gc_thread.nogc == 0) {
+    gc_thread.region_bytes = 0;
+    gc_thread.region_site = site;
   }
-  gc_heap.defer += 1;
-  pthread_mutex_unlock(&gc_heap.world);
+  gc_thread.nogc += 1;
 }
 
 __attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void) {
@@ -367,11 +724,9 @@ void avant_gc_defer_leave(void) {
  * the end itself collects nothing, so the function may still hold what
  * it built inside. */
 __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void) {
-  pthread_mutex_lock(&gc_heap.world);
-  if (gc_heap.defer > 0) {
-    gc_heap.defer -= 1;
+  if (gc_thread.nogc > 0) {
+    gc_thread.nogc -= 1;
   }
-  pthread_mutex_unlock(&gc_heap.world);
 }
 
 void avant_world_lock(void) {

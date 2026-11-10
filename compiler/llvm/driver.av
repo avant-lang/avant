@@ -22,6 +22,8 @@ import llvm.emit
 
 pub class LlvmJob {
   codegen: String = "debug"
+  // The CPU level (glue.av llvm_cpu_parse); 0 is the artifact default.
+  cpu: Int = 0
   objects: Array(String)
   flags: Array(String)
   keep_ll: String = ""
@@ -83,6 +85,11 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
       return "cannot write ${job.keep_ll}"
     }
   }
+  cpu = job.cpu
+  if cpu == 0 {
+    cpu = llvm_cpu_default()
+  }
+  llvm_set_cpu(cpu)
   err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
   job.compile_us = llvm_us(t1, now_us())
   if err.size > 0 {
