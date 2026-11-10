@@ -10,7 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-#include <sys/resource.h>
 #include <time.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -851,30 +850,28 @@ static void sd_stamp(void) {
   }
 }
 
-/* The choice between the two forms (Stage 28 W18M item 7, after the
- * measurement that inc_slice_mature under VERIFY + STRESS ran 2.26 times
- * slower incremental: 12.9 M minor faults in 30 s, 17.5 s of system time
- * against 4.8). Clearing the bits write-protects every page again, so
- * the first write to each page after a clear faults in the kernel; with a small
- * heap written all over between collections (a stress collection at
- * every helper call) that costs more than the walk it saves. So each
- * form's cost per verification is measured as the program runs, an
- * average over the last few: the whole walk's time, or the incremental
- * check's time plus the process's system time since just before the
- * clear (getrusage: the clear, the write faults it causes, the pagemap
- * read), an upper bound since it also counts the program's own system
- * calls. (A first version priced each minor fault at a constant 1.4 us;
- * the gate's VERIFY pass then spent 4.5 s more system time.) The next verification takes the cheaper form;
- * every SD_PROBE verifications the other form is measured once, so a
- * change of the program's pattern is followed. The bits are cleared only
- * when the next verification is to be incremental; otherwise no page is
- * write-protected and the program runs as under the whole verifier.
- * Which pages are skipped is still decided by the kernel's record alone;
- * the costs only choose whether to ask it. The first SD_WARM verifications
- * are whole (a short program never write-protects its pages). */
-#ifndef SD_PROBE
-#define SD_PROBE 64u
-#endif
+/* The choice between the two forms (Stage 28 W18S, O150; W18M item 7
+ * priced them). The first SD_WARM verifications are whole (a short
+ * program never write-protects its pages); from then on, where soft-dirty
+ * tracking works, every young collection's verification is incremental
+ * for the rest of the run, unless a check reports (then every check is
+ * whole, so the reports are the whole verifier's) or soft-dirty stops
+ * (a fork, a refused read: sd_off). Full collections stay whole.
+ *
+ * W18M priced the two forms as the program ran and took the cheaper one,
+ * trying the other every 64 verifications. Each switch restarts the
+ * record and the soft-dirty bits, so the first incremental checks after
+ * one rebase and fall back to the whole check: the cheaper form per
+ * measurement was the dearer one over a run (W18C, O148: the gate's
+ * verified compiler dump 52-104 s priced, 36.65 s and 0 fallbacks
+ * incremental throughout). Measured at W18S on W18M's four VERIFY +
+ * STRESS rows, the incremental form throughout was not slower than the
+ * whole form nor than the priced choice on any of them except
+ * inc_slice_mature, where it is within a few percent of both
+ * (records/2026-11-10-s28-w18s, o150/). Both forms check the same, so
+ * the choice changes the time only, never the reports.
+ *
+ * Which pages are skipped is still decided by the kernel's record alone. */
 #ifndef SD_WARM
 #define SD_WARM 256u
 #endif
@@ -892,30 +889,6 @@ static void sd_stamp(void) {
 #ifndef SD_CLEAR_MAX
 #define SD_CLEAR_MAX 64u
 #endif
-
-static uint64_t sd_cost_whole;
-static uint64_t sd_cost_incr;
-static uint32_t sd_since_probe;
-
-static uint64_t sd_now(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-}
-
-/* The process's system time in ns. */
-static uint64_t sd_stime(void) {
-  struct rusage ru;
-  if (getrusage(RUSAGE_SELF, &ru) != 0) {
-    return 0;
-  }
-  return (uint64_t)ru.ru_stime.tv_sec * 1000000000ull + (uint64_t)ru.ru_stime.tv_usec * 1000ull;
-}
-
-/* An average over about the last eight costs (0: none yet). */
-static void sd_note(uint64_t *avg, uint64_t cost) {
-  *avg = *avg ? *avg - *avg / 8 + cost / 8 : cost;
-}
 
 /* The incremental reachability checks (Stage 28 W18V2, O119's second
  * half). The checks that depend on reachability, gc_verify_remembered
@@ -961,11 +934,12 @@ static void sd_note(uint64_t *avg, uint64_t cost) {
  * buffer, a trim), and a fallback; such a "rebasing" pass examines every
  * object, so objects the last whole trace did not reach are recorded too.
  * Full collections, the first SD_WARM verifications and the program's
- * exit stay whole; C36's check (gc_verify_begin) keeps W18M's form. */
+ * exit stay whole; C36's check (gc_verify_begin) takes the same form. */
 
 /* VI_FORCE, settable at build time for a proof (W18V2's side by side):
  * 1 makes every M and T whole, 2 makes every verification after the first
- * incremental (no pricing, no warm-up when SD_WARM is set to 1 too). */
+ * incremental (no warm-up when SD_WARM is set to 1 too; since W18S the
+ * normal build is incremental after the warm-up anyway). */
 #ifndef VI_FORCE
 #define VI_FORCE 0
 #endif
@@ -975,23 +949,10 @@ static int v_incr_now;
 static int v_reported;
 /* The record holds nothing yet: every page is hot. */
 static int v_rec_all = 1;
-/* The next rebasing pass is priced (it follows a full collection, a free
- * or a fallback; one after a whole verification is the probe's own). */
-static int v_rec_priced;
-/* The pricing of this collection's verification: 0 none (a full
- * collection), 1 whole, 2 incremental, 3 incremental and not priced. */
-static int v_kind;
-/* This collection's verifier time so far (ns), and the process's system
- * time when the last verification ended. */
-static uint64_t v_cost;
-static uint64_t v_stime0;
 /* The reports of gc_verify_defrag (no counter of its own before). */
 static uint64_t v_defrag_reports;
 /* Set by a free of a mature object outside a collection (avant_gc_los.c). */
 int gc_verify_rebase;
-/* The incremental probe of the pricing below lasts two verifications (the
- * first one rebases). */
-static uint32_t sd_probe_left;
 
 static uint64_t v_report_count(void) {
   return gc_heap.verify_untraced + gc_heap.missing_barriers + gc_heap.stale_seen + gc_heap.verify_lost +
@@ -1000,19 +961,15 @@ static uint64_t v_report_count(void) {
 
 /* A collection's first verification step (gc_collect, under
  * AVANT_GC_VERIFY, after the quarantine's release): C36's check, whole at
- * a full collection (FULL), at the first verification, without soft-dirty
- * tracking, and when the whole form measured cheaper; else over the
- * written pages. It also chooses the form of this collection's M and T:
- * incremental exactly when C36's check is (sd_map then holds the pages
- * written since the last verification) and no check has reported. When
- * the next verification is to be incremental, the bits are cleared at
- * once, so every later write, the collection's own included, is seen by
- * it. */
+ * a full collection (FULL), during the warm-up and without soft-dirty
+ * tracking; else over the written pages. It also chooses the form of
+ * this collection's M and T: incremental exactly when C36's check is
+ * (sd_map then holds the pages written since the last verification) and
+ * no check has reported. After the warm-up the bits are kept cleared for
+ * the next verification, so every later write, the collection's own
+ * included, is seen by it. */
 void gc_verify_begin(int full) {
-  uint64_t t0;
   int incr = 0;
-  int base;
-  int next_incr;
   if (!sd_probed && gc_heap.v_whole + gc_heap.v_incr + 1 >= SD_WARM) {
     sd_probe_once();
   }
@@ -1022,7 +979,6 @@ void gc_verify_begin(int full) {
   if (v_report_count()) {
     v_reported = 1;
   }
-  t0 = sd_now();
   if (gc_heap.sd_mode && !full && sd_based && verify_no_stale_marks_incr()) {
     gc_heap.v_incr++;
     incr = 1;
@@ -1030,55 +986,25 @@ void gc_verify_begin(int full) {
     gc_verify_no_stale_marks();
     gc_heap.v_whole++;
   }
-  v_cost = sd_now() - t0;
   if (gc_verify_rebase) {
     gc_verify_rebase = 0;
     v_rec_all = 1;
-    v_rec_priced = 1;
   }
   v_incr_now = incr && !v_reported && VI_FORCE != 1;
   if (full) {
-    v_kind = 0;
     v_rec_all = 1;
-    v_rec_priced = 1;
     vr_valid = 0;
   } else if (!v_incr_now) {
-    v_kind = 1;
     v_rec_all = 1;
-    v_rec_priced = 0;
-  } else {
-    v_kind = v_rec_all && !v_rec_priced ? 3 : 2;
   }
   if (!gc_heap.sd_mode) {
     return;
   }
-  /* The next form: the cheaper one measured, the other one every
-   * SD_PROBE verifications (and incremental while it has no cost yet);
-   * an incremental probe lasts two verifications, since the first one
-   * after a whole verification rebases the record and is not priced. */
-  base = !sd_cost_incr || (sd_cost_whole && sd_cost_incr <= sd_cost_whole);
-  next_incr = base;
-  if (sd_probe_left) {
-    sd_probe_left--;
-    next_incr = !base;
-  } else if (++sd_since_probe >= SD_PROBE) {
-    sd_since_probe = 0;
-    sd_probe_left = base ? 0 : 1;
-    next_incr = !base;
-  }
   /* A short program (the suite's thousands of small ones) never asks the
    * kernel: its first SD_WARM verifications are whole, so it pays neither
-   * the probe, the clear nor the write faults after it. System time is
-   * sampled at the scheduler's tick, too coarse to price a short run's
-   * faults: the gate's VERIFY pass spent about 4 s more system time
-   * (1.5-2 s less user time) with SD_WARM at 16. */
-  if (gc_heap.v_whole + gc_heap.v_incr < SD_WARM) {
-    next_incr = 0;
-  }
-  if (VI_FORCE == 2) {
-    next_incr = 1;
-  }
-  if (!next_incr) {
+   * the probe, the clear nor the write faults after it (with SD_WARM at
+   * 16 the gate's VERIFY pass spent about 4 s more system time). */
+  if (gc_heap.v_whole + gc_heap.v_incr < SD_WARM && VI_FORCE != 2) {
     sd_based = 0;
     return;
   }
@@ -1096,24 +1022,6 @@ void gc_verify_begin(int full) {
     return;
   }
   sd_based = 1;
-}
-
-/* The end of a young collection's verification (after T): its cost goes
- * to its form's average. The whole form's cost is the three checks' time;
- * the incremental one's adds the process's system time since the last
- * verification ended (the clears, the write faults they cause, the
- * pagemap reads, and the program's own system calls: an upper bound). */
-static void verify_end(void) {
-  if (gc_heap.sd_mode) {
-    uint64_t st = sd_stime();
-    if (v_kind == 1) {
-      sd_note(&sd_cost_whole, v_cost);
-    } else if (v_kind == 2) {
-      sd_note(&sd_cost_incr, v_cost + (st > v_stime0 ? st - v_stime0 : 0));
-    }
-    v_stime0 = st;
-  }
-  v_kind = 0;
 }
 
 /* One bit per heap page: the record (pg_rec, from the last T), the record
@@ -1606,27 +1514,23 @@ static int vi_sticky(void) {
 }
 
 /* An incremental check found a candidate: the whole one runs now, and the
- * record is rebuilt by the next (priced) rebasing pass. */
+ * record is rebuilt by the next rebasing pass. */
 static void vi_fallback(void) {
   gc_heap.v_fallback++;
   v_incr_now = 0;
   v_rec_all = 1;
-  v_rec_priced = 1;
 }
 
 void gc_verify_remembered(void) {
-  uint64_t t0 = sd_now();
   if (!(v_incr_now && vi_remembered())) {
     if (v_incr_now) {
       vi_fallback();
     }
     verify_remembered_whole();
   }
-  v_cost += sd_now() - t0;
 }
 
 void gc_verify_sticky(void) {
-  uint64_t t0 = sd_now();
   if (v_incr_now && vi_sticky()) {
     gc_heap.v_tincr++;
   } else {
@@ -1635,8 +1539,6 @@ void gc_verify_sticky(void) {
     }
     verify_sticky_whole();
   }
-  v_cost += sd_now() - t0;
-  verify_end();
 }
 
 /* AVANT_GC_VERIFY after defragmentation (C31): no reference the
