@@ -12,8 +12,8 @@
 /* Allocation (Stage 28 W12, moved from avant_rt.c): block supply and
  * recycling, the per-space bump cursors, the inline nursery fast path the
  * generated code shares (avant_gc_bump and its mirrors), the slow path
- * (place), and the allocation entry points avant_alloc, avant_bump_alloc
- * and avant_alloc_in_mature. Collection decisions are avant_gc_collect.c's;
+ * (place), and the allocation entry points avant_alloc and
+ * avant_alloc_in_mature. Collection decisions are avant_gc_collect.c's;
  * large objects are avant_gc_los.c's. */
 
 /* Inline nursery fast path (Collector II Wave 1): generated code bumps
@@ -159,12 +159,10 @@ Block *gc_new_block(uint8_t space) {
 /* The inline fast path's limit: the current block's limit, capped where
  * the young budget runs out, so a collecting allocation reaches
  * avant_alloc (which collects) when the budget is spent. Once it is spent
- * the cap is the block's end (Stage 28 W15a1): a leaf, whose fallback
- * avant_bump_alloc never collects, then allocates inline to the end of
- * every block instead of calling C for every object past the budget
- * (Binarytrees::Obj builds an 8 MiB tree in a leaf: +59% time at the 8 MiB
- * budget with the old cap), and a collecting allocation overshoots the
- * budget by at most the rest of one block before avant_alloc collects. */
+ * the cap is the block's end (Stage 28 W15a1), so a collecting allocation
+ * overshoots the budget by at most the rest of one block before
+ * avant_alloc collects. (The cap was chosen for the bump constructor's
+ * leaves, which Stage 29 W1a removed, D298.) */
 static uint8_t *inline_cap(void) {
   uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
   uint8_t *cap = avant_gc_bump + rem;
@@ -724,7 +722,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   int large = alloc_is_large(type_id, payload, total);
   /* Single mutator, under the young threshold: bump and return.
    * Collection stays on the locked path, with the caller's roots
-   * already spilled. This is the same contract as avant_bump_alloc.
+   * already spilled.
    * Medium numeric buffers take the large path so their address stays. */
   if (!shared && !gc_thread.nogc &&
       !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature && !large && !gc_heap.limit_pending && !gc_heap.explicit_pending &&
@@ -868,25 +866,3 @@ __attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint3
   return p;
 }
 
-void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id) {
-  size_t payload;
-  size_t total;
-  AvantHeader *h;
-  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
-    return NULL;
-  }
-  if (nbytes > UINT32_MAX || type_id > UINT16_MAX) {
-    return NULL;
-  }
-  gc_init();
-  gc_fast_refresh();
-  payload = (size_t)nbytes;
-  total = align_up(sizeof(AvantHeader) + payload);
-  h = place_bump(total);
-  if (!h) {
-    return NULL;
-  }
-  init_object(h, payload, type_id, 1, 0);
-  account_alloc(total, 1);
-  return payload_of(h);
-}

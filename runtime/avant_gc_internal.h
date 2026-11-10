@@ -21,7 +21,7 @@
  *                       object lookup, forwarding, the work list, type
  *                       maps, gc_die and gc_xrealloc
  *   avant_gc_alloc.c    block supply, bump cursors, the inline fast
- *                       path's state, avant_alloc and avant_bump_alloc
+ *                       path's state, avant_alloc
  *   avant_gc_los.c      the large-object space
  *   avant_gc_remset.c   the remembered set and the store barriers
  *   avant_gc_sticky.c   the young collection (S+: promotion in place

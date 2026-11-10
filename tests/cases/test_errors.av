@@ -72,6 +72,10 @@ fn test_errors(c: Checks) {
     // callback that takes a struct by value (the SysV callback side of C3).
     expect_err(c, compiler, stamp, "l0001-guard", "struct P2 {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int64): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int64, s: Int64, f: fn(P2): Int)\n}\nfn pick(p: P2): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8i64), 0i64, 8i64, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
+    // Stage 29 W1a (D298): the bump constructor and nursery_reclaim are
+    // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.
+    expect_err(c, compiler, stamp, "bump-removed", "class Node {\n  item: Int = 0\n}\nfn main {\n  n = Node.bump(1)\n}\n", "no method bump")
+    expect_err(c, compiler, stamp, "reclaim-removed", "fn main {\n  nursery_reclaim()\n}\n", "unknown function nursery_reclaim")
     // Stage 29 W1c2 (D305): std.gc's forms and their errors.
     expect_err(c, compiler, stamp, "gc-hold-import", "fn main {\n  gc.hold {\n    x = 1\n  }\n}\n", "gc.hold needs import std.gc")
     expect_err(c, compiler, stamp, "gc-collect-import", "fn main {\n  gc.collect()\n}\n", "unknown name gc")

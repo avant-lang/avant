@@ -642,7 +642,7 @@ static int region_refuses(void) {
   return 1;
 }
 
-void avant_nursery_reclaim(void) {
+void avant_gc_collect_young(void) {
   gc_init();
   /* `gc.collect()` inside a hold (std.gc): deferred to the hold's end. */
   if (gc_thread.hold) {
