@@ -1,5 +1,15 @@
 # Avant Language changelog
 
+## 0.39.0 - 2026-11-10
+
+### Changed
+
+* Building the compiler from source needs v0.38.0 or newer as the seed: the compiler's own source now uses `==` on `Bool` and plain `-1` and `[...]` tails.
+
+### Fixed
+
+* A program with more than 20 syntax errors, or with the same error repeated, no longer makes the compiler loop forever; it stops with the errors it found.
+
 ## 0.38.0 - 2026-11-10
 
 ### Changed
