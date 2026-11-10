@@ -138,15 +138,47 @@ pub class CompileError {
 pub class DiagBag {
   items: Array(CompileError)
   suppressed: Int = 0
+  // Every push counts, kept, repeated or past the cap of 20 (O162): a mark
+  // is this count, so an error since a mark is always seen. The shown
+  // items stop growing at 20 and skip repeats, so their count cannot be a
+  // mark: once it stopped, a parser loop that waits for an error to resync
+  // never saw one and spun on the same token. before_items and
+  // before_suppressed hold the state before each push, so truncate(mark)
+  // can undo a speculative parse exactly.
+  pushes: Int = 0
+  before_items: Array(Int)
+  before_suppressed: Array(Int)
 
   fn initialize {
     xs: Array(CompileError) = []
     self.items = xs
     self.suppressed = 0
+    self.pushes = 0
+    bi: Array(Int) = []
+    self.before_items = bi
+    bs: Array(Int) = []
+    self.before_suppressed = bs
   }
 
   pub fn count: Int {
     self.items.size
+  }
+
+  // Undo every push after mark (a pushes value).
+  pub fn truncate(mark: Int) {
+    if self.pushes <= mark {
+      return
+    }
+    keep = self.before_items[mark]
+    while self.items.size > keep {
+      dummy = self.items.pop
+    }
+    self.suppressed = self.before_suppressed[mark]
+    while self.before_items.size > mark {
+      dummy2 = self.before_items.pop
+      dummy3 = self.before_suppressed.pop
+    }
+    self.pushes = mark
   }
 
   pub fn total: Int {
@@ -158,6 +190,9 @@ pub class DiagBag {
   }
 
   pub fn push(e: CompileError) {
+    self.before_items.push(self.items.size)
+    self.before_suppressed.push(self.suppressed)
+    self.pushes = self.pushes + 1
     i = 0
     while i < self.items.size {
       old = self.items[i]
