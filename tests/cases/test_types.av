@@ -168,6 +168,18 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
     }
     i = i + 1
   }
+  // O33 (Stage 28 W18C): an instance method `bump` beside the bump
+  // constructor of the same class compiles (the constructor is `T#bump`)
+  // and each call reaches its own function.
+  bj: Array(HJob) = []
+  bj.push(compile_job("", compiler, "${root}/tests/fixtures/types/bump_clash.av", "${dir}/bump_clash", "${dir}/bump_clash.log"))
+  run_waves(bj)
+  c.eq_int(bj[0].code, 0, "bump_clash.av: compiles")
+  br: Array(HJob) = []
+  br.push(run_job(dir, "bump_clash", "bump_clash.r"))
+  run_waves(br)
+  c.eq_int(br[0].code, 0, "bump_clash.av: exit 0")
+  c.eq_str(log_text("${dir}/bump_clash.r.out"), "2\n10\n11\n3\n", "bump_clash.av: the method and the constructor each run")
 }
 
 fn test_main(c: Checks) {
