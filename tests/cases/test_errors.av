@@ -52,6 +52,16 @@ fn test_errors(c: Checks) {
     } else {
       c.expect(false, "o162 log")
     }
+    // O163 (Stage 29 W1a): the resolver and the checker see every error,
+    // kept or not (O162 fixed the parser the same way). 25 resolver errors:
+    // 20 shown, and the 5 past the cap counted (before, the checker pulled
+    // only the resolver's kept errors and the count said nothing).
+    expect_err_bounded(c, compiler, stamp, "o163-resolver-errors", "struct S0 {\n  x: Nosuch0\n}\nstruct S1 {\n  x: Nosuch1\n}\nstruct S2 {\n  x: Nosuch2\n}\nstruct S3 {\n  x: Nosuch3\n}\nstruct S4 {\n  x: Nosuch4\n}\nstruct S5 {\n  x: Nosuch5\n}\nstruct S6 {\n  x: Nosuch6\n}\nstruct S7 {\n  x: Nosuch7\n}\nstruct S8 {\n  x: Nosuch8\n}\nstruct S9 {\n  x: Nosuch9\n}\nstruct S10 {\n  x: Nosuch10\n}\nstruct S11 {\n  x: Nosuch11\n}\nstruct S12 {\n  x: Nosuch12\n}\nstruct S13 {\n  x: Nosuch13\n}\nstruct S14 {\n  x: Nosuch14\n}\nstruct S15 {\n  x: Nosuch15\n}\nstruct S16 {\n  x: Nosuch16\n}\nstruct S17 {\n  x: Nosuch17\n}\nstruct S18 {\n  x: Nosuch18\n}\nstruct S19 {\n  x: Nosuch19\n}\nstruct S20 {\n  x: Nosuch20\n}\nstruct S21 {\n  x: Nosuch21\n}\nstruct S22 {\n  x: Nosuch22\n}\nstruct S23 {\n  x: Nosuch23\n}\nstruct S24 {\n  x: Nosuch24\n}\nfn main {\n  puts(nosuch0)\n  puts(nosuch1)\n  puts(nosuch2)\n  puts(nosuch3)\n  puts(nosuch4)\n  puts(nosuch5)\n  puts(nosuch6)\n  puts(nosuch7)\n  puts(nosuch8)\n  puts(nosuch9)\n  puts(nosuch10)\n  puts(nosuch11)\n  puts(nosuch12)\n  puts(nosuch13)\n  puts(nosuch14)\n  puts(nosuch15)\n  puts(nosuch16)\n  puts(nosuch17)\n  puts(nosuch18)\n  puts(nosuch19)\n  puts(nosuch20)\n  puts(nosuch21)\n  puts(nosuch22)\n  puts(nosuch23)\n  puts(nosuch24)\n}\n", "aborting due to 20 previous errors")
+    if o163 = file_read("${scratch()}/errors-${stamp}-o163-resolver-errors.log") {
+      c.expect(str_has(o163, "and 5 more errors (limit 20)"), "o163 counts the resolver's errors past the limit")
+    } else {
+      c.expect(false, "o163 log")
+    }
     expect_err(c, compiler, stamp, "unknown-name", "fn main {\n  puts(x)\n}\n", "unknown name")
     // Stage 29 W1a (A3): postfix ? is refused where the failure cannot be
     // returned (before: an Int result silently returned 0; a String or void

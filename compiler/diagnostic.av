@@ -185,6 +185,23 @@ pub class DiagBag {
     self.items.size + self.suppressed
   }
 
+  // n errors another bag counted but this one did not get as items (O163,
+  // Stage 29 W1a): each is a push, so a mark sees it, and with hidden each
+  // is also one of the errors past the cap ("and N more errors"); without,
+  // it is a repeat, which is never shown twice.
+  pub fn note(n: Int, hidden: Bool) {
+    k = 0
+    while k < n {
+      self.before_items.push(self.items.size)
+      self.before_suppressed.push(self.suppressed)
+      self.pushes = self.pushes + 1
+      if hidden {
+        self.suppressed = self.suppressed + 1
+      }
+      k = k + 1
+    }
+  }
+
   pub fn is_empty: Bool {
     self.items.size == 0
   }
@@ -222,7 +239,7 @@ pub class DiagBag {
       self.push(other.items[i])
       i = i + 1
     }
-    self.suppressed = self.suppressed + other.suppressed
+    self.note(other.suppressed, true)
   }
 
   pub fn render_all: String {

@@ -131,6 +131,11 @@ pub class Checker {
   err: CompileError? = nil
   errors: DiagBag
   resolver_pulled: Int = 0
+  // How much of the resolver's bag the checker has seen (O163): its pushes,
+  // its hidden errors, and its kept items as of the last pull.
+  resolver_pushes: Int = 0
+  resolver_hidden: Int = 0
+  resolver_kept: Int = 0
   poisoned: Bool = false
   return_type: Ty
   loop_depth: Int = 0
@@ -216,6 +221,9 @@ pub class Checker {
     self.err = nil
     self.errors = DiagBag.new
     self.resolver_pulled = 0
+    self.resolver_pushes = 0
+    self.resolver_hidden = 0
+    self.resolver_kept = 0
     self.poisoned = false
     self.return_type = ty_void()
     self.loop_depth = 0
@@ -284,12 +292,13 @@ pub class Checker {
     self.failed
   }
 
+  // Every error counts, kept or not (O163, Stage 29 W1a): see Resolver.
   pub fn err_count: Int {
-    self.errors.count
+    self.errors.pushes
   }
 
   pub fn new_err_since(mark: Int): Bool {
-    self.errors.count > mark
+    self.errors.pushes > mark
   }
 
   pub fn clear_poison {
@@ -317,6 +326,21 @@ pub class Checker {
       self.errors.push(re)
       self.resolver_pulled = self.resolver_pulled + 1
     }
+    if self.resolver_pushes < self.resolver.errors.pushes {
+      // The resolver's errors it did not keep (O163): repeats and those
+      // past its cap are errors here too, and the ones past the cap count
+      // in "and N more errors".
+      hidden = self.resolver.errors.suppressed - self.resolver_hidden
+      kept = self.resolver_pulled - self.resolver_kept
+      repeats = self.resolver.errors.pushes - self.resolver_pushes - hidden - kept
+      self.errors.note(hidden, true)
+      self.errors.note(repeats, false)
+      self.failed = true
+      self.poisoned = true
+      self.resolver_hidden = self.resolver.errors.suppressed
+      self.resolver_pushes = self.resolver.errors.pushes
+    }
+    self.resolver_kept = self.resolver_pulled
     if self.ready_adopt {
       if self.in_adopt {
       } else {
