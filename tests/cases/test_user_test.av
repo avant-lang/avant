@@ -200,6 +200,41 @@ fn test_user_test(c: Checks) {
     c.eq_int(ut_sh(miss_sh, miss_rc), 1, "a missing golden file fails the test")
     c.expect(!file_exists("${root}/proj/missing-want.txt"), "golden does not create the expected file")
 
+    // D84 (Stage 29 W1b): a failed check fails the process, whatever
+    // main returns and whether finish runs: a void main, a main that
+    // returns 0, and a check that fails on another thread.
+    mkdir_p("${root}/d84/tests")
+    dummy_d84 = file_write("${root}/d84/avant.toml", "[package]\nname = \"d84\"\nversion = \"0.1.0\"\n")
+    dummy_dv = file_write("${root}/d84/tests/test_void.av", "import std.testing\n\nfn main {\n  t = Test.new\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
+    dummy_dz = file_write("${root}/d84/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
+    dummy_dt = file_write("${root}/d84/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = Test.new\n    u.check(false, \"fails on a task\")\n    1\n  }\n  h.join\n  0\n}\n")
+    dummy_dp = file_write("${root}/d84/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = Test.new\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
+    d84_names = ["void", "zero", "task"]
+    d84_fails = ["one is two", "one is two", "fails on a task"]
+    i = 0
+    while i < d84_names.size {
+      nm = d84_names[i]
+      d_rc = "${root}/d84-${nm}.rc"
+      d_log = "${root}/d84-${nm}.log"
+      d_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/d84-${nm}.xml > ${ut_quote(d_log)} 2>&1; echo $? > ${ut_quote(d_rc)}\n"
+      c.eq_int(ut_sh(d_sh, d_rc), 1, "D84: a failed check in tests/test_${nm}.av fails the run")
+      d_text = ""
+      if t = file_read(d_log) {
+        d_text = t
+      }
+      c.expect(ut_has(d_text, "FAIL ${d84_fails[i]}"), "D84: tests/test_${nm}.av ran its failing check")
+      c.expect(ut_has(d_text, "FAIL tests/test_${nm}.av") && ut_has(d_text, "1 failed, 0 passed"), "D84: the runner reports tests/test_${nm}.av as failed")
+      d_xml = ""
+      if t = file_read("${root}/d84-${nm}.xml") {
+        d_xml = t
+      }
+      c.expect(ut_has(d_xml, "failures=\"1\""), "D84: the JUnit report counts tests/test_${nm}.av as a failure")
+      i = i + 1
+    }
+    dp_rc = "${root}/d84-pass.rc"
+    dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/d84-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
+    c.eq_int(ut_sh(dp_sh, dp_rc), 0, "D84: a void main whose checks pass still passes")
+
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     dummy_fetch = file_write("${root}/fetch/avant.toml", fetch_body)
     fetch_rc = "${root}/fetch.rc"

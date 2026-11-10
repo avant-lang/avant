@@ -444,6 +444,8 @@ int32_t avant_file_exists(const char *path);
 void *avant_dir_list(const char *path);
 char *avant_tmp_dir(void);
 char *avant_tmp_new_dir(void);
+/* A failed check (std.testing, D84): the process exits 1 if it would exit 0. */
+void avant_test_fail(void);
 void avant_tmp_keep(void);
 int32_t avant_job_start(const char *path, void *args, const char *out_path);
 int32_t avant_job_wait(void);

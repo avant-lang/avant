@@ -1095,7 +1095,7 @@ A string-literal pattern is compiled to a native scanner with re2c at compile ti
 
 ## Testing
 
-`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A void `fn main` is still a successful program and does not change. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
+`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A failed check fails the process whatever `main` returns: a program that would exit `0` after a failed check (a void `fn main`, a `main` that returns `0`, a `main` that never calls `finish`, a check that failed on a task) exits `1`. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
 
 ```avant
 import std.testing
