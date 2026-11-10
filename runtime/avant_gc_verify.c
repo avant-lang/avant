@@ -46,6 +46,13 @@ static uint64_t *vb_named;
 static uint64_t *vb_reach;
 static int vr_valid;
 static size_t vb_words;
+/* The side bits are used from the first soft-dirty clear on (vb_side);
+ * until then no page record is read, and the header bits, which cost
+ * nothing more than the header the check reads anyway, serve as before
+ * (W18V2's tuning: the side bits cost the compiler's dump under VERIFY,
+ * 55 whole verifications, 5% more time). Every bit is clear between
+ * checks, so the switch happens between two checks. */
+static int vb_side;
 
 static void vb_ensure(void) {
   size_t words = (size_t)(((gc_heap.committed >> 3) + 63) / 64);
@@ -62,10 +69,10 @@ static void vb_ensure(void) {
 
 /* Sets START's bit in BITS (FLAG in its header outside the heap); 1 when
  * it was clear. */
-static inline int vb_set(uint64_t *bits, void *start, uint16_t flag) {
+static inline __attribute__((always_inline)) int vb_set(uint64_t *bits, void *start, uint16_t flag) {
   AvantHeader *h = avant_header(start);
   uintptr_t off;
-  if (heap_offset(h, &off)) {
+  if (vb_side && heap_offset(h, &off)) {
     uint64_t g = (uint64_t)off >> 3;
     uint64_t m = 1ULL << (g & 63);
     if (bits[g >> 6] & m) {
@@ -84,7 +91,7 @@ static inline int vb_set(uint64_t *bits, void *start, uint16_t flag) {
 static inline int vb_test(const uint64_t *bits, void *start, uint16_t flag) {
   AvantHeader *h = avant_header(start);
   uintptr_t off;
-  if (heap_offset(h, &off)) {
+  if (vb_side && heap_offset(h, &off)) {
     uint64_t g = (uint64_t)off >> 3;
     return (int)((bits[g >> 6] >> (g & 63)) & 1ULL);
   }
@@ -94,7 +101,7 @@ static inline int vb_test(const uint64_t *bits, void *start, uint16_t flag) {
 static inline void vb_clear(uint64_t *bits, void *start, uint16_t flag) {
   AvantHeader *h = avant_header(start);
   uintptr_t off;
-  if (heap_offset(h, &off)) {
+  if (vb_side && heap_offset(h, &off)) {
     uint64_t g = (uint64_t)off >> 3;
     bits[g >> 6] &= ~(1ULL << (g & 63));
   } else {
@@ -104,7 +111,7 @@ static inline void vb_clear(uint64_t *bits, void *start, uint16_t flag) {
 
 /* START (an object's start, after any forward) is traced: flagged, noted
  * and pushed, unless this check traced it already. */
-static void verify_visit(void *start) {
+static inline __attribute__((always_inline)) void verify_visit(void *start) {
   if (!vb_set(vb_seen, start, AVANT_FLAG_VSEEN)) {
     return;
   }
@@ -121,7 +128,7 @@ static void verify_visit(void *start) {
  * stale and missing-barrier checks each looked the same field up again).
  * Returns the object P names (its start, before following a forward), or
  * NULL when P names no object. */
-static void *verify_trace_r(void *p) {
+static inline __attribute__((always_inline)) void *verify_trace_r(void *p) {
   void *found = gc_object_payload(p, NULL, NULL);
   void *start = found;
   if (!start) {
@@ -155,6 +162,9 @@ static void *verify_pop(void) {
  * are all of it). */
 static void vr_record(int fresh) {
   size_t i;
+  if (!vb_side) {
+    return;
+  }
   if (fresh) {
     memset(vb_reach, 0, vb_words * sizeof(uint64_t));
     vr_valid = 1;
@@ -1080,6 +1090,7 @@ void gc_verify_begin(int full) {
   }
   sd_stamp();
   sd_since_clear = 0;
+  vb_side = 1;
   if (!sd_clear_all()) {
     sd_off();
     return;
