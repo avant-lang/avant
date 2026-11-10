@@ -268,3 +268,146 @@ int32_t rg_bad(const char *s) {
   slots[0] = (void **)&s;
   return s != NULL;
 }
+
+/* ---- O145 (Stage 28 W18C, buf_stale.av): a pointer from avant_buf_bytes
+ * kept across a growth of its Buf names storage the growth replaced.
+ * bs_keep keeps the pointer; bs_read_kept reads through it only under
+ * AVANT_GC_VERIFY=1 (where the verifier promises to catch it: the old
+ * storage is PROT_NONE until the next collection, the read faults, is
+ * reported, and the handler opens the storage and lets the read go on);
+ * elsewhere the read would be undefined, so it is skipped. Either way it
+ * returns 1, so the program prints the same everywhere. */
+#include <stdio.h>
+uint8_t *avant_buf_bytes(void *buf);
+static volatile uint8_t *bs_kept;
+int32_t bs_keep(void *buf) {
+  bs_kept = avant_buf_bytes(buf);
+  return bs_kept ? bs_kept[0] : -1;
+}
+int32_t bs_fresh(void *buf) {
+  uint8_t *p = avant_buf_bytes(buf);
+  return p ? p[0] : -1;
+}
+int32_t bs_read_kept(void) {
+  const char *v = getenv("AVANT_GC_VERIFY");
+  if (bs_kept && v && v[0] == '1') {
+    (void)bs_kept[0];
+  }
+  return 1;
+}
+
+/* ---- O134 (Stage 28 W18C, release_reuse.av): C frees a struct Avant
+ * stored into without a `release`, and the next struct lands at the same
+ * address. A one-slot allocator makes the reuse certain: rr_new always
+ * returns the same zeroed memory; rr_free forgets it. rr_keep keeps the
+ * name C read, as C code that took ownership of it would. */
+static RelHolder rr_slot;
+RelHolder *rr_new(void) {
+  memset(&rr_slot, 0, sizeof rr_slot);
+  return &rr_slot;
+}
+void rr_free(RelHolder *h) { (void)h; }
+static const char *rr_kept;
+void rr_keep(RelHolder *h) { rr_kept = h->name; }
+int32_t rr_kept_is(const char *want) { return rr_kept && strcmp(rr_kept, want) == 0; }
+void rr_set_c_name(RelHolder *h) { h->name = rel_c_text; }
+
+/* ---- O125 (Stage 28 W18C, stall.av): user C that blocks without
+ * avant_gc_native_begin/end. st_block marks that it has started, then
+ * sleeps MS milliseconds in the running state, so a collection's
+ * handshake waits for it the whole time; under AVANT_GC_VERIFY=1 the
+ * handshake reports it after AVANT_GC_VERIFY_STALL_MS and keeps waiting. */
+#include <stdatomic.h>
+#include <time.h>
+int nanosleep(const struct timespec *req, struct timespec *rem);
+static atomic_int st_started;
+int32_t st_block(int32_t ms) {
+  struct timespec ts;
+  ts.tv_sec = ms / 1000;
+  ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+  atomic_store(&st_started, 1);
+  while (nanosleep(&ts, &ts) != 0) {
+  }
+  return ms;
+}
+int32_t st_started_now(void) { return atomic_load(&st_started); }
+
+/* ---- O120 (Stage 28 W18C, held_caps.av): C keeps pointers into 400 large
+ * Bufs' storage, and one collection frees them all. hc_read reads through
+ * the pointers FROM to TO, only under AVANT_GC_VERIFY=1 (where every freed
+ * run is held PROT_NONE until the next collection, so each read faults and
+ * is reported; until W18C only the first 256 runs were held, and the rest
+ * were reused unchecked); it returns how many it went over. */
+static volatile uint8_t *hc_p[400];
+int32_t hc_keep(void *buf, int32_t i) {
+  hc_p[i] = avant_buf_bytes(buf);
+  return hc_p[i][0];
+}
+int32_t hc_read(int32_t from, int32_t to) {
+  const char *v = getenv("AVANT_GC_VERIFY");
+  int32_t n = 0;
+  for (int32_t i = from; i < to; i++) {
+    if (v && v[0] == '1') {
+      (void)hc_p[i][100];
+    }
+    n++;
+  }
+  return n;
+}
+
+/* ---- O129 (Stage 28 W18C, exit_inside.av): C threads that exit inside an
+ * Avant callback. Each thread calls the callback, which calls
+ * ox_exit_here: it opens a frame of its own (avant_gc_enter) with a large
+ * root array (avant_gc_root_begin, 1 MiB of slots, each filled with a
+ * slot that holds NULL, so the pages are resident) and calls pthread_exit
+ * with the frame still on its chain. ox_run runs N such threads one after
+ * another and returns how much the resident set grew, in KiB: the frames
+ * leaked before the fix (64 MiB for 64 threads); the exit frees them. */
+#include <stdio.h>
+void avant_gc_enter(void);
+static foreign_cb_t ox_cb;
+#define OX_SLOTS 131072
+static long ox_rss_kb(void) {
+  long size = 0, res = 0;
+  FILE *f = fopen("/proc/self/statm", "r");
+  if (f) {
+    if (fscanf(f, "%ld %ld", &size, &res) != 2) {
+      res = 0;
+    }
+    fclose(f);
+  }
+  return res * 4;
+}
+int32_t ox_exit_here(int32_t k) {
+  static void *nothing = NULL;
+  void ***slots;
+  (void)k;
+  avant_gc_enter();
+  slots = (void ***)avant_gc_root_begin(OX_SLOTS);
+  for (int32_t i = 0; i < OX_SLOTS; i++) {
+    slots[i] = &nothing;
+  }
+  pthread_exit(NULL);
+  return 0;
+}
+static void *ox_thread(void *arg) {
+  (void)ox_cb((int32_t)(intptr_t)arg);
+  return NULL;
+}
+int32_t ox_run(foreign_cb_t f, int32_t n) {
+  long before;
+  ox_cb = f;
+  /* One thread first, so the C heap's arenas and the thread cache exist
+   * before the measurement starts. */
+  for (int32_t k = 0; k <= n; k++) {
+    pthread_t th;
+    if (k == 1) {
+      before = ox_rss_kb();
+    }
+    avant_gc_native_begin();
+    pthread_create(&th, NULL, ox_thread, (void *)(intptr_t)k);
+    pthread_join(th, NULL);
+    avant_gc_native_end();
+  }
+  return (int32_t)(ox_rss_kb() - before);
+}

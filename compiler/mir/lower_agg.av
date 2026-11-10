@@ -286,7 +286,7 @@ pub fn (lw: MirLower) note_ctor_symbols {
       if t = lw.class_ty(p.classes[i]) {
         owner = lw.owner_text(t, t.mod_name)
         lw.lw_fn_syms[ty_owned_symbol(t, "new")] = "av.${mir_module_part(t.mod_name)}/${owner}.new"
-        lw.lw_fn_syms[ty_owned_symbol(t, "bump")] = "av.${mir_module_part(t.mod_name)}/${owner}.bump"
+        lw.lw_fn_syms[ty_bump_symbol(t)] = "av.${mir_module_part(t.mod_name)}/${owner}#bump"
       }
     }
     i = i + 1
@@ -643,7 +643,7 @@ pub fn (lw: MirLower) lower_ctors {
     if p.classes[i].type_params.size == 0 {
       if t = lw.class_ty(p.classes[i]) {
         lw.lower_ctor(p.classes[i], t)
-        if lw.lw_bumps.has_key(ty_owned_symbol(t, "bump")) && !lw.failed {
+        if lw.lw_bumps.has_key(ty_bump_symbol(t)) && !lw.failed {
           lw.lower_bump(p.classes[i], t)
         }
       }

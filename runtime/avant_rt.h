@@ -195,7 +195,9 @@ void avant_gc_collect(void);
 /* A thread that runs Avant code is registered (explicitly, or by its first
  * call into Avant); one that exits still registered is unregistered by its
  * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
- * unregistration of its own. It must exit outside its callbacks. */
+ * unregistration of its own. A thread that exits inside a callback
+ * (pthread_exit from C that Avant called) is unregistered and its frames
+ * are freed too (Stage 28 W18C). */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
 /* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
@@ -209,7 +211,12 @@ void avant_gc_unregister_thread(void);
  * without touching the Avant heap, a thread is native:
  * avant_gc_native_begin before it, avant_gc_native_end after (they nest;
  * the end waits while a collection is in progress). Between them the
- * thread must not read or write a heap object it has not pinned. */
+ * thread must not read or write a heap object it has not pinned. A C call
+ * that blocks without them holds every thread's collection until it
+ * returns (and deadlocks if it waits for another Avant thread); under
+ * AVANT_GC_VERIFY=1 a collection that has waited AVANT_GC_VERIFY_STALL_MS
+ * (10000 by default) reports the thread and its innermost Avant frame,
+ * and keeps waiting (Stage 28 W18C). */
 extern atomic_int avant_gc_requested;
 void avant_gc_poll(void);
 void avant_gc_native_begin(void);
@@ -264,6 +271,14 @@ void avant_buf_set_ident(void *buf, int32_t n);
 void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras, int32_t n);
 /* Copy n slices from src into dst. Offsets are byte indexes. */
 void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs, void *lens, int32_t n);
+/* The Buf's storage, for C to read or write up to its capacity. The
+ * pointer is valid until the Buf next grows (an append past its capacity,
+ * avant_buf_ensure, any Avant code that may push to it): a growth moves
+ * the bytes and frees the old storage, so call avant_buf_bytes again after
+ * anything that may grow the Buf. Under AVANT_GC_VERIFY=1 the storage a
+ * growth replaced stays PROT_NONE until the next collection, so a use of
+ * a pointer kept across the growth faults and is reported (Stage 28
+ * W18C). */
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
 

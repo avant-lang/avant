@@ -207,10 +207,11 @@ static void print_verify(StatsLine *l) {
     return;
   }
   line_add(l, " verify=%s verify_whole=%llu verify_incr=%llu verify_pages=%llu verify_pages_skipped=%llu"
-              " verify_trace_incr=%llu verify_fallback=%llu",
+              " verify_trace_incr=%llu verify_fallback=%llu verify_held_max=%llu/%llu verify_unprotected=%llu",
            gc_heap.sd_mode ? "incremental" : "whole", u(gc_heap.v_whole), u(gc_heap.v_incr),
            u(gc_heap.v_pages_checked), u(gc_heap.v_pages_skipped), u(gc_heap.v_tincr),
-           u(gc_heap.v_fallback));
+           u(gc_heap.v_fallback), u(gc_heap.v_held_blocks_max), u(gc_heap.v_held_runs_max),
+           u(gc_heap.v_unprotected));
 }
 
 void gc_print_stats(void) {

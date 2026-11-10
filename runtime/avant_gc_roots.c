@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 /* The mutator's side of the collector (Stage 28 W12, moved from
  * avant_rt.c): thread registration (stack bounds, frame list heads), frames
@@ -47,8 +49,15 @@ __thread Frame *avant_gc_top;
 static pthread_key_t g_exit_key;
 static pthread_once_t g_exit_once = PTHREAD_ONCE_INIT;
 
+/* A frame avant_gc_enter allocates: the frame, then the thread's list of
+ * all such frames (GcThread.frame_all). */
+typedef struct CFrame {
+  Frame f;
+  struct CFrame *all;
+} CFrame;
+
 static void thread_exit_hook(void *unused) {
-  Frame *f;
+  CFrame *cf;
   (void)unused;
   if (gc_thread.reg.head) {
     /* Back to running (gc_thread_exiting waits while a collection is in
@@ -61,12 +70,15 @@ static void thread_exit_hook(void *unused) {
     avant_gc_top = NULL;
     avant_gc_unregister_thread();
   }
-  /* No collection reads an unregistered thread's state: its free frames
-   * and its remembered buffer go back to the C heap. */
-  while ((f = gc_thread.frame_free)) {
-    gc_thread.frame_free = f->prev;
-    free(f->slots);
-    free(f);
+  /* No collection reads an unregistered thread's state: every frame
+   * avant_gc_enter allocated (free, or still on the chain of a thread
+   * that exited inside a callback: O129) and its remembered buffer go
+   * back to the C heap. */
+  gc_thread.frame_free = NULL;
+  while ((cf = gc_thread.frame_all)) {
+    gc_thread.frame_all = cf->all;
+    free(cf->f.slots);
+    free(cf);
   }
   free(gc_thread.rembuf);
   gc_thread.rembuf = NULL;
@@ -90,6 +102,7 @@ static void register_thread(int implicit) {
     gc_die("cannot set the thread-exit key");
   }
   gc_thread.reg.head = &avant_gc_top;
+  gc_thread.reg.tid = (int)syscall(SYS_gettid);
   {
     pthread_attr_t attr;
     void *addr = NULL;
@@ -149,10 +162,13 @@ void avant_gc_enter(void) {
     gc_thread.frame_free = f->prev;
     f->n = 0;
   } else {
-    f = calloc(1, sizeof(Frame));
-    if (!f) {
+    CFrame *cf = calloc(1, sizeof(CFrame));
+    if (!cf) {
       gc_die("out of memory");
     }
+    cf->all = gc_thread.frame_all;
+    gc_thread.frame_all = cf;
+    f = &cf->f;
   }
   f->prev = avant_gc_top;
   f->scope = AVANT_GC_FRAME_C;
@@ -433,7 +449,22 @@ void avant_unpin(void *payload) {
  * took a pin (a value stored again right after itself shares an entry
  * with a count), and the last value Avant stored there (pinned or not: a
  * literal string is not a heap payload and takes no pin), which is how a
- * release knows whether the field still holds Avant's value. */
+ * release knows whether the field still holds Avant's value.
+ *
+ * C changed the memory (Stage 28 W18C, O134). When a store or a release
+ * finds the field no longer holding the value Avant last stored there,
+ * C changed the field or freed the struct and reused its memory (a new
+ * struct at the same address joins the old record). Either way C may
+ * still hold the earlier values (it took the old pointer, or the old
+ * struct's owner kept it), so they stay pinned for the rest of the run:
+ * a store starts the record afresh (a later release gives back only what
+ * Avant stored since), and a release gives back nothing and leaves C's
+ * value in the field. A missing release costs memory, never correctness.
+ * Under AVANT_GC_VERIFY=1 a store that finds its field changed reports it
+ * once per record (the first 32 fields in full) as a likely missing
+ * `release`; a release that finds C's value is silent (C overwriting a
+ * value Avant stored is a correct use, D266, and the release was not
+ * missing). */
 typedef struct FieldVal {
   void *v;
   uint32_t count;
@@ -446,11 +477,33 @@ typedef struct FieldRec {
   FieldVal *vals;
   uint32_t n;
   uint32_t cap;
+  uint32_t warned;
 } FieldRec;
 
 static FieldRec **field_tab;
 static size_t field_tab_size; /* buckets, a power of two (0: none yet) */
 static size_t field_count;    /* records */
+static uint64_t field_changed; /* stores that found their field changed by C (VERIFY's reports) */
+
+/* R's field no longer holds Avant's last value (CUR is what it holds):
+ * its values stay pinned; the record forgets them. */
+static void field_keep_pinned(FieldRec *r, void *cur, int report) {
+  uint32_t kept = 0;
+  for (uint32_t i = 0; i < r->n; i++) {
+    kept += r->vals[i].count;
+  }
+  if (report && gc_heap.set.verify && !r->warned) {
+    r->warned = 1;
+    if (field_changed++ < 32) {
+      fprintf(stderr,
+              "avant gc verify: a store into C-layout field %p found it no longer holding the value Avant last stored there "
+              "(%p; it holds %p): C changed it, or freed the struct without `release` and reused its memory "
+              "(a missing `release`?); %u earlier pin(s) stay\n",
+              (void *)r->field, r->last, cur, kept);
+    }
+  }
+  r->n = 0;
+}
 
 static size_t field_hash(void **field) {
   uint64_t x = (uint64_t)(uintptr_t)field >> 3;
@@ -503,6 +556,8 @@ void avant_pin_field(void *field, void *payload) {
     r->next = field_tab[b];
     field_tab[b] = r;
     field_count += 1;
+  } else if (*f != r->last) {
+    field_keep_pinned(r, *f, 1);
   }
   r->last = payload;
   if (pinned) {
@@ -531,16 +586,16 @@ void avant_pin_field(void *field, void *payload) {
  * value Avant stored there; frees r (already unlinked). */
 static void field_release(FieldRec *r) {
   void *cur = *r->field;
-  int ours = cur != NULL && cur == r->last;
+  if (cur != r->last) {
+    /* C changed the field (O134): what Avant stored stays pinned. */
+    field_keep_pinned(r, cur, 0);
+  }
   for (uint32_t i = 0; i < r->n; i++) {
-    if (r->vals[i].v == cur) {
-      ours = cur != NULL;
-    }
     for (uint32_t k = 0; k < r->vals[i].count; k++) {
       unpin_locked(r->vals[i].v);
     }
   }
-  if (ours) {
+  if (cur != NULL && cur == r->last) {
     *r->field = NULL;
   }
   free(r->vals);

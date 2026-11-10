@@ -1744,9 +1744,12 @@ void gc_verify_defrag(void) {
  * opens that block (QUARANTINE_OPENED) and returns, so the access is
  * retried and the program continues (the old bytes are still there, or
  * the stress mode's poison). A fault anywhere else goes to the action
- * that was installed before. At most QUARANTINE_MAX blocks are held
- * (past it a freed block is reused at once, unprotected); a refused
- * mprotect (the mapping-count limit) also frees the block at once.
+ * that was installed before. Every freed block is held (Stage 28 W18C,
+ * O120: until then at most 4,096 were, and past them a freed block was
+ * reused at once, unchecked); a refused mprotect (the mapping-count
+ * limit) leaves a block held but open, and is counted
+ * (verify_unprotected in the stats line), so a run never checks less
+ * silently.
  * Freed lines in blocks that keep live ones cannot be protected (a line
  * is 256 bytes); instead the young sweep holds such blocks back from the
  * young allocator until the next collection begins, so the precise half
@@ -1756,7 +1759,6 @@ void gc_verify_defrag(void) {
 #define QUARANTINED 2
 #define QUARANTINE_OPENED 3
 #define QUARANTINE_HELD 4
-#define QUARANTINE_MAX 4096
 
 static struct sigaction quarantine_old;
 static int quarantine_installed;
@@ -1794,18 +1796,20 @@ static void quarantine_write_str(char *buf, size_t *n, const char *s) {
   }
 }
 
-static void quarantine_report(void *addr, uint64_t coll, const char *what) {
+static void quarantine_report(void *addr, uint64_t coll, const char *what, const char *why) {
   if (gc_heap.verify_lost++ < 32) {
-    char buf[256];
+    char buf[320];
     size_t n = 0;
     quarantine_write_str(buf, &n, "avant gc verify: lost reference: access to ");
     quarantine_write_hex(buf, &n, (uint64_t)(uintptr_t)addr);
     quarantine_write_str(buf, &n, what);
     quarantine_write_dec(buf, &n, coll);
-    quarantine_write_str(buf, &n, " (a reference kept outside the roots across a collection)\n");
+    quarantine_write_str(buf, &n, why);
     (void)!write(2, buf, n);
   }
 }
+
+static const char *const quarantine_across = " (a reference kept outside the roots across a collection)\n";
 
 /* Only async-signal-safe calls: write, mprotect, sigaction. */
 static void quarantine_on_fault(int sig, siginfo_t *si, void *uc) {
@@ -1816,7 +1820,15 @@ static void quarantine_on_fault(int sig, siginfo_t *si, void *uc) {
   for (i = 0; addr && i < gc_heap.held_runs_n; i++) {
     struct GcHeldRun *r = &gc_heap.held_runs[i];
     if (r->state == QUARANTINED && (uint8_t *)addr >= r->lo && (uint8_t *)addr < r->hi) {
-      quarantine_report(addr, gc_heap.held_runs_coll, " in a large run freed at coll=");
+      if (r->drop == 1) {
+        quarantine_report(addr, r->coll, " in a Buf's storage that a growth replaced after coll=",
+                          " (a pointer from avant_buf_bytes kept across a growth of its Buf: call avant_buf_bytes again after anything that may grow it)\n");
+      } else if (r->drop) {
+        quarantine_report(addr, r->coll, " in a runtime buffer that a growth replaced after coll=",
+                          " (a pointer into the old buffer kept across its growth)\n");
+      } else {
+        quarantine_report(addr, r->coll, " in a large run freed at coll=", quarantine_across);
+      }
       r->state = QUARANTINE_OPENED;
       if (mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_READ | PROT_WRITE) == 0) {
         return;
@@ -1826,7 +1838,7 @@ static void quarantine_on_fault(int sig, siginfo_t *si, void *uc) {
   if (addr && heap_offset(addr, &off) && gc_heap.chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
     Block *b = &gc_heap.blocks[off >> BLOCK_SHIFT];
     if (b->clean == QUARANTINED) {
-      quarantine_report(addr, b->idle, " in a block freed at coll=");
+      quarantine_report(addr, b->idle, " in a block freed at coll=", quarantine_across);
       b->clean = QUARANTINE_OPENED;
       if (mprotect(b->base, BLOCK_SIZE, PROT_READ | PROT_WRITE) == 0) {
         return;
@@ -1851,7 +1863,7 @@ static void quarantine_install(void) {
  * it is quarantined, and gc_quarantine_release frees it later (every
  * caller frees blocks inside a collection). */
 int gc_quarantine_block(Block *b) {
-  if (!gc_heap.set.verify || gc_heap.quarantine_n >= QUARANTINE_MAX) {
+  if (!gc_heap.set.verify) {
     return 0;
   }
   if (!quarantine_installed) {
@@ -1869,19 +1881,33 @@ int gc_quarantine_block(Block *b) {
   b->next = gc_heap.quarantine;
   gc_heap.quarantine = b;
   gc_heap.quarantine_n++;
+  if (gc_heap.quarantine_n > gc_heap.v_held_blocks_max) {
+    gc_heap.v_held_blocks_max = gc_heap.quarantine_n;
+  }
   return 1;
 }
 
 /* A dead large object's run (gc_release_large, gc_sweep_large): its
  * start bit is cleared (no lookup finds it) and its pages stay allocated,
- * protected at the collection's end from the run's second page on (the
- * first page keeps the header, which the large space's iterator reads to
- * step over the run), until the next collection begins. 1: held. */
+ * protected whole at the collection's end (the large space's iterator
+ * steps over a run without its start bit by the page table, never its
+ * header: Stage 28 W18C; until then the first page stayed open), until
+ * the next collection begins. 1: held. */
 int gc_quarantine_run(AvantHeader *h) {
   uint8_t *base;
   struct GcHeldRun *r;
-  if (!gc_heap.set.verify || gc_heap.held_runs_n >= sizeof gc_heap.held_runs / sizeof gc_heap.held_runs[0]) {
+  if (!gc_heap.set.verify) {
     return 0;
+  }
+  if (gc_heap.held_runs_n == gc_heap.held_runs_cap) {
+    uint32_t cap = gc_heap.held_runs_cap ? gc_heap.held_runs_cap * 2 : 256;
+    struct GcHeldRun *nr = realloc(gc_heap.held_runs, (size_t)cap * sizeof *nr);
+    if (!nr) {
+      gc_heap.v_unprotected++;
+      return 0;
+    }
+    gc_heap.held_runs = nr;
+    gc_heap.held_runs_cap = cap;
   }
   if (!quarantine_installed) {
     quarantine_install();
@@ -1893,11 +1919,40 @@ int gc_quarantine_run(AvantHeader *h) {
   start_bit_set(h, 0);
   r = &gc_heap.held_runs[gc_heap.held_runs_n++];
   r->h = h;
-  r->lo = base + PAGE_SIZE;
+  r->lo = base;
   r->hi = base + gc_large_bytes(h);
   r->state = QUARANTINE_HELD;
-  gc_heap.held_runs_coll = avant_g_stats.collections;
+  r->drop = 0;
+  r->coll = avant_g_stats.collections;
+  if (gc_heap.held_runs_n > gc_heap.v_held_runs_max) {
+    gc_heap.v_held_runs_max = gc_heap.held_runs_n;
+  }
   return 1;
+}
+
+/* A growth dropped the large buffer H outside a collection
+ * (avant_gc_large_drop; Stage 28 W18C, O145) and gc_release_large held
+ * it: it is protected now, not at the next collection's end, so a C
+ * pointer into it (avant_buf_bytes' result kept across the growth, DROP
+ * 1, or any runtime pointer into the old buffer, DROP 2) faults at its
+ * first use and is reported. It goes back when the next collection
+ * begins, as every held run does. */
+void gc_quarantine_drop_seal(AvantHeader *h, int drop) {
+  uint32_t i = gc_heap.held_runs_n;
+  while (i > 0) {
+    struct GcHeldRun *r = &gc_heap.held_runs[--i];
+    if (r->h == h) {
+      r->drop = drop;
+      if (r->state == QUARANTINE_HELD && r->hi > r->lo) {
+        if (mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
+          r->state = QUARANTINED;
+        } else {
+          gc_heap.v_unprotected++;
+        }
+      }
+      return;
+    }
+  }
 }
 
 /* At the end of a collection: the blocks and runs it freed become
@@ -1908,14 +1963,21 @@ void gc_quarantine_seal(void) {
   uint32_t i;
   for (i = 0; i < gc_heap.held_runs_n; i++) {
     struct GcHeldRun *r = &gc_heap.held_runs[i];
-    if (r->state == QUARANTINE_HELD && r->hi > r->lo &&
-        mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
-      r->state = QUARANTINED;
+    if (r->state == QUARANTINE_HELD && r->hi > r->lo) {
+      if (mprotect(r->lo, (size_t)(r->hi - r->lo), PROT_NONE) == 0) {
+        r->state = QUARANTINED;
+      } else {
+        gc_heap.v_unprotected++;
+      }
     }
   }
   for (b = gc_heap.quarantine; b; b = b->next) {
-    if (b->clean == QUARANTINE_HELD && mprotect(b->base, BLOCK_SIZE, PROT_NONE) == 0) {
-      b->clean = QUARANTINED;
+    if (b->clean == QUARANTINE_HELD) {
+      if (mprotect(b->base, BLOCK_SIZE, PROT_NONE) == 0) {
+        b->clean = QUARANTINED;
+      } else {
+        gc_heap.v_unprotected++;
+      }
     }
   }
 }

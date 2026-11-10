@@ -125,6 +125,7 @@ static void gc_settings_read(GcSettings *s) {
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
   s->stress = env_bool("AVANT_GC_STRESS", 0);
+  s->stall_ms = env_u64("AVANT_GC_VERIFY_STALL_MS", 10000, 0, 1ull << 40);
   for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
     const char *v = getenv(retired_knobs[i]);
     if (v && v[0]) {

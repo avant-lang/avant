@@ -311,6 +311,9 @@ typedef struct ThreadReg {
   void *stack_hi;
   atomic_int state;
   struct GcThread *owner;
+  /* The kernel's thread id, for the verifier's stalled-handshake report
+   * (Stage 28 W18C, O125). */
+  int tid;
 } ThreadReg;
 
 typedef struct PinEnt {
@@ -708,6 +711,10 @@ typedef struct GcSettings {
    * reference the collector does not know across one of these points
    * reads a moved or freed object at once. */
   int stress;
+  /* AVANT_GC_VERIFY_STALL_MS (Stage 28 W18C, O125): under the verifier, a
+   * handshake that has waited this long for a thread to reach a safepoint
+   * reports it and keeps waiting; 10000 by default, 0 never. */
+  uint64_t stall_ms;
 } GcSettings;
 
 /* The collector's state (Stage 28 W14b2, gc-design.md §1.1, O41): one
@@ -942,15 +949,28 @@ typedef struct GcHeap {
   uint64_t v_fallback;
   Block *quarantine;
   uint32_t quarantine_n;
-  /* The freed large runs it holds (header, protected range, state). */
+  /* The freed large runs it holds (header, protected range, state, the
+   * collection that freed it or the last one before a growth dropped it,
+   * and whether a growth dropped it: 1 a Buf's storage, 2 another
+   * runtime buffer; Stage 28 W18C, O145). */
   struct GcHeldRun {
     AvantHeader *h;
     uint8_t *lo;
     uint8_t *hi;
     int state;
-  } held_runs[256];
+    int drop;
+    uint64_t coll;
+  } *held_runs;
   uint32_t held_runs_n;
-  uint64_t held_runs_coll;
+  uint32_t held_runs_cap;
+  /* No cap on what it holds (Stage 28 W18C, O120; until then 4,096 blocks
+   * and 256 runs, past which freed memory was reused unchecked): the most
+   * blocks and runs held at once, and the freed blocks and runs it could
+   * not protect (a refused mprotect, the mapping-count limit) or not hold
+   * (no memory for the record), which the stats line reports. */
+  uint32_t v_held_blocks_max;
+  uint32_t v_held_runs_max;
+  uint64_t v_unprotected;
 
   /* avant_gc_collect.c. (collecting, the running collection's flag, is
    * the collecting thread's own since Stage 28 W17b: GcThread.collecting;
@@ -1037,6 +1057,12 @@ typedef struct GcThread {
    * avant_gc.h, since Stage 28 W16a: runtime C's scopes push onto it
    * inline). */
   Frame *frame_free;
+  /* Every frame avant_gc_enter allocated on this thread, free or on its
+   * chain (CFrame.all), so a thread that exits inside a callback frees the
+   * ones still on its chain too (Stage 28 W18C, O129): the chain itself is
+   * not walked at exit, since the exit unwound the stacks its generated
+   * records lived in. */
+  struct CFrame *frame_all;
   /* avant_gc_quiet_enter's depth: root registration is skipped inside. */
   int quiet;
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */
@@ -1321,6 +1347,10 @@ int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
 void gc_quarantine_seal(void);
 int gc_quarantine_run(AvantHeader *h);
+void gc_quarantine_drop_seal(AvantHeader *h, int drop);
+/* Whether a root of this thread names an address inside PAYLOAD's object
+ * (avant_gc_los.c; Stage 28 W18C). */
+int gc_rooted(void *payload);
 void gc_large_give_held(AvantHeader *h);
 
 /* avant_gc_collect.c */

@@ -23,7 +23,13 @@ static void buf_grow(AvantBuf *b, int32_t need) {
    * after it (RC2). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &b);
-  uint8_t *ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
+  /* AVANT_GC_VERIFY=1: storage C has seen (avant_buf_bytes moved it to
+   * its own pages) keeps its own pages, so the growth after this one can
+   * protect it too (Stage 28 W18C, O145). */
+  uint8_t *ndata = (uint8_t *)avant_gc_verify_paged(b->data, (uint64_t)ncap, 0);
+  if (!ndata) {
+    ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
+  }
   uint8_t *odata = b->data;
   if (odata && b->size > 0) {
     memcpy(ndata, odata, (size_t)b->size);
@@ -32,9 +38,12 @@ static void buf_grow(AvantBuf *b, int32_t need) {
   b->data = ndata;
   b->cap = ncap;
   /* The Buf no longer names its old storage: a large one goes back now
-   * unless a root still names it (Stage 28 W18M, O109). */
+   * unless a root still names it (Stage 28 W18M, O109); under
+   * AVANT_GC_VERIFY=1 it stays PROT_NONE until the next collection, so a
+   * C pointer from avant_buf_bytes kept across this growth faults and is
+   * reported (Stage 28 W18C, O145). */
   if (odata) {
-    (void)avant_gc_large_drop(odata);
+    (void)avant_gc_large_drop(odata, 1);
   }
 }
 
@@ -433,9 +442,34 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
   }
 }
 
+/* AVANT_GC_VERIFY=1 (Stage 28 W18C, O145): storage in a block (a small
+ * buffer) moves to its own pages before C sees it, so that a growth can
+ * protect the storage it replaces whole and a C read through a pointer
+ * kept across the growth faults and is reported. The move never collects
+ * (avant_gc_verify_paged), so avant_buf_bytes stays a non-collecting call.
+ * The storage stays where it is when it is pinned, when a root of this
+ * thread names it (a generated-code slot holding it across this call,
+ * which a move would leave behind), in a shared program, or when the
+ * heap limit is near. */
+static void buf_expose(AvantBuf *b) {
+  uint8_t *ndata = (uint8_t *)avant_gc_verify_paged(b->data, (uint64_t)b->cap, 1);
+  if (ndata) {
+    memcpy(ndata, b->data, (size_t)b->cap);
+    avant_barrier(b);
+    b->data = ndata;
+  }
+}
+
+/* gc-lint: holds nothing (buf_expose never collects: avant_gc_verify_paged takes no safepoint and runs no policy). */
 uint8_t *avant_buf_bytes(void *buf) {
   AvantBuf *b = (AvantBuf *)buf;
-  return b ? b->data : NULL;
+  if (!b) {
+    return NULL;
+  }
+  if (b->data) {
+    buf_expose(b);
+  }
+  return b->data;
 }
 
 int32_t avant_buf_starts(void *buf, const char *s) {

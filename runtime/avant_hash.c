@@ -326,13 +326,13 @@ static void grow(AvantHash *h) {
    * unless a root still names them or they are mature with references
    * (Stage 28 W18M, O109). */
   if (okeys) {
-    (void)avant_gc_large_drop(okeys);
+    (void)avant_gc_large_drop(okeys, 2);
   }
   if (ovals) {
-    (void)avant_gc_large_drop(ovals);
+    (void)avant_gc_large_drop(ovals, 2);
   }
   if (ostate) {
-    (void)avant_gc_large_drop(ostate);
+    (void)avant_gc_large_drop(ostate, 2);
   }
 }
 
