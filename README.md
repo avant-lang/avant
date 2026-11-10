@@ -1522,7 +1522,7 @@ These are decided and currently do not compile.
 
 ## Benchmarks
 
-Seconds, lower is better. **Bold** is best. Measured on this machine (AMD Ryzen 7 5700G, 16 threads, governor `performance`), one process per task, timed by its wall clock, with peak memory from `/usr/bin/time`, the same wrapper for every language; Avant 2026-11-10 (`--release --cpu=v3`), the other languages 2026-11-07 with LangArena's own build flags.
+Seconds, lower is better. **Bold** is best. Measured on an AMD Ryzen 7 5700G, one process per task, timed by its wall clock, with peak memory from `/usr/bin/time`, the same wrapper for every language.
 
 | Language | 49 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
@@ -1584,12 +1584,12 @@ Seconds, lower is better. **Bold** is best. Measured on this machine (AMD Ryzen 
 | `Distance::Jaro` | 1.011 | **0.894** | 0.895 | 1.282 | 0.930 |
 | `Distance::NGram` | 0.901 | 2.014 | **0.497** | 0.794 | 0.798 |
 
-Notes:
-- Build flags: Avant `--release --cpu=v3` (x86-64-v3); C and C++ use LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); Rust (`cargo build --release`), Go and Crystal (`--release`) use their defaults. C is C compiled with Clang, the faster of the two C compilers measured here (GCC: 59.499 s, 23.4 MB).
-- Each task's time is its whole process: start-up, data preparation, warm-up and the timed iterations; LangArena's published numbers count only the timed iterations.
-- Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes; on a few tasks (`Matmul::Single` above all) that, not the language, explains most of the gap.
-- The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--release` hoists its pure render).
-- JSON, Base64, hashing, and regex are internally based on C libraries.
+<small>Notes:</small>
+- <small>Build flags: Avant `--release --cpu=v3` (x86-64-v3); C and C++ use LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); Rust (`cargo build --release`), Go and Crystal (`--release`) use their defaults. C is C compiled with Clang, the faster of the two C compilers measured here (GCC: 59.499 s, 23.4 MB).</small>
+- <small>Each task's time is its whole process: start-up, data preparation, warm-up and the timed iterations; LangArena's published numbers count only the timed iterations.</small>
+- <small>Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes; on a few tasks (`Matmul::Single` above all) that, not the language, explains most of the gap.</small>
+- <small>The 49-task scope excludes `Etc::TextRaytracer`, which is invalid for Avant (`--release` hoists its pure render).</small>
+- <small>JSON, Base64, hashing, and regex are internally based on C libraries.</small>
 
 ## Goals
 
