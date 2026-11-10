@@ -94,9 +94,9 @@ fn q9_cases(base: Int) {
   rel.rel_free(b)
 }
 
-// A field never stored, a value C stored itself, and C overwriting a
-// value Avant stored: the release takes only Avant's pins and never
-// touches C's value.
+// A field never stored, a value C stored itself, and C overwriting a value
+// Avant stored: the release never touches C's value, and gives back nothing
+// when C overwrote Avant's (C may still hold it; W18C, O134): one pin stays.
 fn c_values(base: Int) {
   c = rel.rel_new()
   release(c.note)
@@ -176,6 +176,8 @@ fn main {
   base = rel.avant_pin_count()
   q9_cases(base)
   c_values(base)
+  // c_values leaves the pin of the value C overwrote (O134).
+  base = rel.avant_pin_count()
   struct_release(base)
   bounded(base)
 }

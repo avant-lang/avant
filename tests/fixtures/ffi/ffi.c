@@ -295,3 +295,19 @@ int32_t bs_read_kept(void) {
   }
   return 1;
 }
+
+/* ---- O134 (Stage 28 W18C, release_reuse.av): C frees a struct Avant
+ * stored into without a `release`, and the next struct lands at the same
+ * address. A one-slot allocator makes the reuse certain: rr_new always
+ * returns the same zeroed memory; rr_free forgets it. rr_keep keeps the
+ * name C read, as C code that took ownership of it would. */
+static RelHolder rr_slot;
+RelHolder *rr_new(void) {
+  memset(&rr_slot, 0, sizeof rr_slot);
+  return &rr_slot;
+}
+void rr_free(RelHolder *h) { (void)h; }
+static const char *rr_kept;
+void rr_keep(RelHolder *h) { rr_kept = h->name; }
+int32_t rr_kept_is(const char *want) { return rr_kept && strcmp(rr_kept, want) == 0; }
+void rr_set_c_name(RelHolder *h) { h->name = rel_c_text; }
