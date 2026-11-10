@@ -61,10 +61,10 @@ build_h2o() {
 build_all() {
   say "building servers into $BUILD"
   if ! fresh "$BUILD/avant_server" "$HERE/avant_server.av" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_http.o" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_task.o" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_io.o"; then
-    (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_server.av "$BUILD/avant_server" --debug >/dev/null)
+    (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_server.av "$BUILD/avant_server" --release >/dev/null)
   fi
   if ! fresh "$BUILD/avant_ws" "$HERE/avant_ws.av" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_http.o" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_task.o" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_io.o"; then
-    (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_ws.av "$BUILD/avant_ws" --debug >/dev/null)
+    (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_ws.av "$BUILD/avant_ws" --release >/dev/null)
   fi
   build_h2o
   fresh "$BUILD/rust_server" "$HERE/rust_server.rs" || rustc -O -o "$BUILD/rust_server" "$HERE/rust_server.rs"
