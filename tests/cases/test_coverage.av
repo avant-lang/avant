@@ -159,7 +159,14 @@ fn test_coverage(c: Checks) {
     c.eq_int(jcode, 0, "mini suite for junit")
     if jout = file_read(jlog) {
       c.expect(str_has(jout, "PASS ok"), "mini suite prints PASS")
-      c.expect(str_has(jout, "ok ${jcase}"), "runner names the file")
+      // The runner names a file relative to its working directory when the
+      // file is inside it (O116, Stage 29 W1b: TMPDIR inside the checkout).
+      jname = jcase
+      here = "${cwd_here()}/"
+      if str_has(jcase, here) && str_slice(jcase, 0, here.size) == here {
+        jname = str_slice(jcase, here.size, jcase.size)
+      }
+      c.expect(str_has(jout, "ok ${jname}\n"), "runner names the file")
     } else {
       c.expect(false, "mini suite log")
     }
