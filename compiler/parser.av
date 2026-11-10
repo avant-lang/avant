@@ -113,11 +113,11 @@ pub class Parser {
   }
 
   pub fn err_count: Int {
-    self.errors.count
+    self.errors.pushes
   }
 
   pub fn new_err_since(mark: Int): Bool {
-    self.errors.count > mark
+    self.errors.pushes > mark
   }
 
   pub fn is_top_starter(kind: Int): Bool {
@@ -182,11 +182,8 @@ pub class Parser {
   }
 
   pub fn truncate_errors(mark: Int) {
-    while self.errors.items.size > mark {
-      dummy = self.errors.items.pop
-    }
-    self.errors.suppressed = 0
-    if mark == 0 {
+    self.errors.truncate(mark)
+    if self.errors.pushes == 0 {
       self.failed = false
       self.err = nil
     } else {
