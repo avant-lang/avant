@@ -311,3 +311,23 @@ static const char *rr_kept;
 void rr_keep(RelHolder *h) { rr_kept = h->name; }
 int32_t rr_kept_is(const char *want) { return rr_kept && strcmp(rr_kept, want) == 0; }
 void rr_set_c_name(RelHolder *h) { h->name = rel_c_text; }
+
+/* ---- O125 (Stage 28 W18C, stall.av): user C that blocks without
+ * avant_gc_native_begin/end. st_block marks that it has started, then
+ * sleeps MS milliseconds in the running state, so a collection's
+ * handshake waits for it the whole time; under AVANT_GC_VERIFY=1 the
+ * handshake reports it after AVANT_GC_VERIFY_STALL_MS and keeps waiting. */
+#include <stdatomic.h>
+#include <time.h>
+int nanosleep(const struct timespec *req, struct timespec *rem);
+static atomic_int st_started;
+int32_t st_block(int32_t ms) {
+  struct timespec ts;
+  ts.tv_sec = ms / 1000;
+  ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+  atomic_store(&st_started, 1);
+  while (nanosleep(&ts, &ts) != 0) {
+  }
+  return ms;
+}
+int32_t st_started_now(void) { return atomic_load(&st_started); }

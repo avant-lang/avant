@@ -311,6 +311,9 @@ typedef struct ThreadReg {
   void *stack_hi;
   atomic_int state;
   struct GcThread *owner;
+  /* The kernel's thread id, for the verifier's stalled-handshake report
+   * (Stage 28 W18C, O125). */
+  int tid;
 } ThreadReg;
 
 typedef struct PinEnt {
@@ -708,6 +711,10 @@ typedef struct GcSettings {
    * reference the collector does not know across one of these points
    * reads a moved or freed object at once. */
   int stress;
+  /* AVANT_GC_VERIFY_STALL_MS (Stage 28 W18C, O125): under the verifier, a
+   * handshake that has waited this long for a thread to reach a safepoint
+   * reports it and keeps waiting; 10000 by default, 0 never. */
+  uint64_t stall_ms;
 } GcSettings;
 
 /* The collector's state (Stage 28 W14b2, gc-design.md §1.1, O41): one

@@ -5,6 +5,8 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 /* Threads stop at safepoints (Stage 28 W17a, gc-design.md section 4.4;
@@ -101,6 +103,94 @@ void avant_gc_poll(void) {
   gc_safepoint_slow();
 }
 
+static int others_running(void);
+static uint64_t hs_stall_reports;
+
+/* AVANT_GC_VERIFY=1 (Stage 28 W18C, O125): the handshake has waited
+ * gc_heap.set.stall_ms for the threads still running. Each is reported
+ * with its kernel thread id, its name, and its innermost Avant frame (the
+ * innermost generated function's frame record on its chain, and what
+ * lies above it: user C's frames from avant_gc_enter, runtime C's
+ * scopes); the collection keeps waiting. A running thread that does not
+ * arrive runs C that blocks or loops without avant_gc_native_begin/end
+ * around it (or a long loop that has no safepoint, a leaf, rule 5). The
+ * chain is read while that thread runs: it is stuck below its innermost
+ * frame, and the walk is bounded. Under hs_mu. */
+static void hs_report_stalled(uint64_t waited_ns) {
+  ThreadReg *t;
+  for (t = gc_heap.threads; t; t = t->next) {
+    Frame *f;
+    Frame *gen = NULL;
+    uint32_t above_c = 0;
+    uint32_t above_scope = 0;
+    uint32_t depth = 0;
+    char name[32] = "?";
+    char path[64];
+    FILE *fp;
+    if (t == &gc_thread.reg || atomic_load(&t->state) != GC_RUNNING) {
+      continue;
+    }
+    if (hs_stall_reports++ >= 32) {
+      continue;
+    }
+    snprintf(path, sizeof path, "/proc/self/task/%d/comm", t->tid);
+    if ((fp = fopen(path, "r"))) {
+      if (fgets(name, sizeof name, fp)) {
+        name[strcspn(name, "\n")] = 0;
+      }
+      fclose(fp);
+    }
+    for (f = t->head ? *t->head : NULL; f && depth < 100000; f = f->prev, depth++) {
+      if (f->scope & AVANT_GC_SCOPE_OPEN) {
+        above_scope++;
+      } else if (f->scope & AVANT_GC_FRAME_C) {
+        above_c++;
+      } else {
+        gen = f;
+        break;
+      }
+    }
+    if (gen) {
+      fprintf(stderr,
+              "avant gc verify: a collection has waited %.1f s for thread %d (%s) to reach a safepoint; it is running, "
+              "and its innermost Avant frame is a generated function's frame record at %p (%u root slots; %u C frame(s) "
+              "and %u runtime scope(s) above it, stack %p-%p): C called from there blocks or loops without "
+              "avant_gc_native_begin/end around it (the collection keeps waiting)\n",
+              (double)waited_ns / 1e9, t->tid, name, (void *)gen, gen->n, above_c, above_scope, t->stack_lo,
+              t->stack_hi);
+    } else {
+      fprintf(stderr,
+              "avant gc verify: a collection has waited %.1f s for thread %d (%s) to reach a safepoint; it is running, "
+              "with no generated frame on its chain (%u C frame(s), %u runtime scope(s), stack %p-%p): C that blocks "
+              "or loops needs avant_gc_native_begin/end around it (the collection keeps waiting)\n",
+              (double)waited_ns / 1e9, t->tid, name, above_c, above_scope, t->stack_lo, t->stack_hi);
+    }
+  }
+}
+
+/* The handshake's wait under the verifier: the condition wait with a
+ * deadline, a report at every stall_ms waited. Under hs_mu. */
+static void hs_wait_verify(uint64_t t0) {
+  uint64_t step = gc_heap.set.stall_ms * 1000000ull;
+  uint64_t next = t0 + step;
+  while (others_running()) {
+    struct timespec ts;
+    uint64_t now = hs_now_ns();
+    if (now >= next) {
+      hs_report_stalled(now - t0);
+      next = now + step;
+    }
+    clock_gettime(CLOCK_REALTIME, &ts);
+    {
+      uint64_t left = next - now;
+      uint64_t ns = (uint64_t)ts.tv_nsec + left % 1000000000ull;
+      ts.tv_sec += (time_t)(left / 1000000000ull + ns / 1000000000ull);
+      ts.tv_nsec = (long)(ns % 1000000000ull);
+    }
+    pthread_cond_timedwait(&gc_heap.hs_stopped_cv, &gc_heap.hs_mu, &ts);
+  }
+}
+
 static int others_running(void) {
   ThreadReg *t;
   for (t = gc_heap.threads; t; t = t->next) {
@@ -129,8 +219,12 @@ int gc_stop_world(void) {
   others = gc_heap.threads && (gc_heap.threads != &gc_thread.reg || gc_heap.threads->next);
   if (others) {
     t0 = hs_now_ns();
-    while (others_running()) {
-      pthread_cond_wait(&gc_heap.hs_stopped_cv, &gc_heap.hs_mu);
+    if (gc_heap.set.verify && gc_heap.set.stall_ms) {
+      hs_wait_verify(t0);
+    } else {
+      while (others_running()) {
+        pthread_cond_wait(&gc_heap.hs_stopped_cv, &gc_heap.hs_mu);
+      }
     }
     {
       uint64_t dt = hs_now_ns() - t0;

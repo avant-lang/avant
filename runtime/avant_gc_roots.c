@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 /* The mutator's side of the collector (Stage 28 W12, moved from
  * avant_rt.c): thread registration (stack bounds, frame list heads), frames
@@ -90,6 +92,7 @@ static void register_thread(int implicit) {
     gc_die("cannot set the thread-exit key");
   }
   gc_thread.reg.head = &avant_gc_top;
+  gc_thread.reg.tid = (int)syscall(SYS_gettid);
   {
     pthread_attr_t attr;
     void *addr = NULL;

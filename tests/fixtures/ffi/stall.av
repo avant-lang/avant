@@ -1,0 +1,22 @@
+// O125 (Stage 28 W18C): user C that blocks without avant_gc_native_begin
+// holds every collection: a spawned task calls st_block, which sleeps 1.5 s
+// in the running state, while the main thread asks for a collection. The
+// collection waits until the task returns to Avant (the program is correct,
+// only slow). Under AVANT_GC_VERIFY=1 a handshake that waits longer than
+// AVANT_GC_VERIFY_STALL_MS (10 s by default) reports the thread that has
+// not reached a safepoint and its innermost Avant frame, then keeps
+// waiting. Built with `--cc tests/fixtures/ffi/ffi.c`.
+
+lib st {
+  fun st_block(ms: Int): Int
+  fun st_started_now: Int
+  fun avant_gc_collect
+}
+
+fn main {
+  h = spawn { st.st_block(1500) }
+  while st.st_started_now() == 0 {
+  }
+  st.avant_gc_collect()
+  puts("collected; the task blocked ${h.join} ms")
+}
