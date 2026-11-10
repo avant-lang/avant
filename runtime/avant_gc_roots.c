@@ -49,8 +49,15 @@ __thread Frame *avant_gc_top;
 static pthread_key_t g_exit_key;
 static pthread_once_t g_exit_once = PTHREAD_ONCE_INIT;
 
+/* A frame avant_gc_enter allocates: the frame, then the thread's list of
+ * all such frames (GcThread.frame_all). */
+typedef struct CFrame {
+  Frame f;
+  struct CFrame *all;
+} CFrame;
+
 static void thread_exit_hook(void *unused) {
-  Frame *f;
+  CFrame *cf;
   (void)unused;
   if (gc_thread.reg.head) {
     /* Back to running (gc_thread_exiting waits while a collection is in
@@ -63,12 +70,15 @@ static void thread_exit_hook(void *unused) {
     avant_gc_top = NULL;
     avant_gc_unregister_thread();
   }
-  /* No collection reads an unregistered thread's state: its free frames
-   * and its remembered buffer go back to the C heap. */
-  while ((f = gc_thread.frame_free)) {
-    gc_thread.frame_free = f->prev;
-    free(f->slots);
-    free(f);
+  /* No collection reads an unregistered thread's state: every frame
+   * avant_gc_enter allocated (free, or still on the chain of a thread
+   * that exited inside a callback: O129) and its remembered buffer go
+   * back to the C heap. */
+  gc_thread.frame_free = NULL;
+  while ((cf = gc_thread.frame_all)) {
+    gc_thread.frame_all = cf->all;
+    free(cf->f.slots);
+    free(cf);
   }
   free(gc_thread.rembuf);
   gc_thread.rembuf = NULL;
@@ -152,10 +162,13 @@ void avant_gc_enter(void) {
     gc_thread.frame_free = f->prev;
     f->n = 0;
   } else {
-    f = calloc(1, sizeof(Frame));
-    if (!f) {
+    CFrame *cf = calloc(1, sizeof(CFrame));
+    if (!cf) {
       gc_die("out of memory");
     }
+    cf->all = gc_thread.frame_all;
+    gc_thread.frame_all = cf;
+    f = &cf->f;
   }
   f->prev = avant_gc_top;
   f->scope = AVANT_GC_FRAME_C;

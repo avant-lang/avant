@@ -367,6 +367,28 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   hc_err = log_text("${dir}/held_caps.verify.err")
   c.eq_int(hc_err.split(" in a large run freed at coll=").size - 1, 32, "held_caps.av under AVANT_GC_VERIFY=1: the reads past the old cap are reported (the first 32 printed)")
   c.expect(str_has(hc_err, "verify_held_max=") && str_has(hc_err, "/400 verify_unprotected=0"), "held_caps.av under AVANT_GC_VERIFY=1: 400 runs held, none unprotected")
+  // O129 (Stage 28 W18C): 64 C threads exit inside an Avant callback with a
+  // user C frame (1 MiB of root slots) on their chain; the exit frees it
+  // (about 64 MiB stayed resident at the base).
+  xj: Array(HJob) = []
+  xj.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/exit_inside.av", "${dir}/exit_inside", "${dir}/exit_inside.log", flags_of("tests/fixtures/ffi/exit_inside.av", root)))
+  run_waves(xj)
+  c.eq_int(xj[0].code, 0, "exit_inside.av: compiles")
+  xr: Array(HJob) = []
+  x_envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1"]
+  e = 0
+  while e < x_envs.size {
+    xr.push(run_job_env(dir, "exit_inside", "exit_inside.r${e}", x_envs[e]))
+    e = e + 1
+  }
+  run_waves(xr)
+  e = 0
+  while e < x_envs.size {
+    c.eq_int(xr[e].code, 0, "exit_inside.av under '${x_envs[e]}': exit 0")
+    c.eq_str(log_text("${dir}/exit_inside.r${e}.out"), "64 threads exited inside a callback; their frames freed: true\n", "exit_inside.av under '${x_envs[e]}': the frames are freed")
+    c.eq_str(log_text("${dir}/exit_inside.r${e}.err"), "", "exit_inside.av under '${x_envs[e]}': no stderr")
+    e = e + 1
+  }
 }
 
 fn test_main(c: Checks) {

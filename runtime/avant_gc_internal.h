@@ -1057,6 +1057,12 @@ typedef struct GcThread {
    * avant_gc.h, since Stage 28 W16a: runtime C's scopes push onto it
    * inline). */
   Frame *frame_free;
+  /* Every frame avant_gc_enter allocated on this thread, free or on its
+   * chain (CFrame.all), so a thread that exits inside a callback frees the
+   * ones still on its chain too (Stage 28 W18C, O129): the chain itself is
+   * not walked at exit, since the exit unwound the stacks its generated
+   * records lived in. */
+  struct CFrame *frame_all;
   /* avant_gc_quiet_enter's depth: root registration is skipped inside. */
   int quiet;
   /* avant_alloc_in_mature(1): this thread allocates in mature space. */

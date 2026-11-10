@@ -354,3 +354,60 @@ int32_t hc_read(int32_t from, int32_t to) {
   }
   return n;
 }
+
+/* ---- O129 (Stage 28 W18C, exit_inside.av): C threads that exit inside an
+ * Avant callback. Each thread calls the callback, which calls
+ * ox_exit_here: it opens a frame of its own (avant_gc_enter) with a large
+ * root array (avant_gc_root_begin, 1 MiB of slots, each filled with a
+ * slot that holds NULL, so the pages are resident) and calls pthread_exit
+ * with the frame still on its chain. ox_run runs N such threads one after
+ * another and returns how much the resident set grew, in KiB: the frames
+ * leaked before the fix (64 MiB for 64 threads); the exit frees them. */
+#include <stdio.h>
+void avant_gc_enter(void);
+static foreign_cb_t ox_cb;
+#define OX_SLOTS 131072
+static long ox_rss_kb(void) {
+  long size = 0, res = 0;
+  FILE *f = fopen("/proc/self/statm", "r");
+  if (f) {
+    if (fscanf(f, "%ld %ld", &size, &res) != 2) {
+      res = 0;
+    }
+    fclose(f);
+  }
+  return res * 4;
+}
+int32_t ox_exit_here(int32_t k) {
+  static void *nothing = NULL;
+  void ***slots;
+  (void)k;
+  avant_gc_enter();
+  slots = (void ***)avant_gc_root_begin(OX_SLOTS);
+  for (int32_t i = 0; i < OX_SLOTS; i++) {
+    slots[i] = &nothing;
+  }
+  pthread_exit(NULL);
+  return 0;
+}
+static void *ox_thread(void *arg) {
+  (void)ox_cb((int32_t)(intptr_t)arg);
+  return NULL;
+}
+int32_t ox_run(foreign_cb_t f, int32_t n) {
+  long before;
+  ox_cb = f;
+  /* One thread first, so the C heap's arenas and the thread cache exist
+   * before the measurement starts. */
+  for (int32_t k = 0; k <= n; k++) {
+    pthread_t th;
+    if (k == 1) {
+      before = ox_rss_kb();
+    }
+    avant_gc_native_begin();
+    pthread_create(&th, NULL, ox_thread, (void *)(intptr_t)k);
+    pthread_join(th, NULL);
+    avant_gc_native_end();
+  }
+  return (int32_t)(ox_rss_kb() - before);
+}
