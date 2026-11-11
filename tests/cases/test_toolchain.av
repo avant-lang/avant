@@ -36,6 +36,16 @@ fn tc_same(a: String, b: String): Bool {
   (process_run("/usr/bin/cmp", args) ?? -1) == 0
 }
 
+// The binary's symbol table has a function named name (nm; Stage 29
+// W4b2: a trap's text names its function, so the bytes of a binary
+// whose helper was inlined still hold the name).
+fn tc_fn(path: String, name: String): Bool {
+  args: Array(String) = []
+  args.push("-c")
+  args.push("nm -a '${path}' | grep -q '/${name}$'")
+  (process_run("/bin/sh", args) ?? -1) == 0
+}
+
 // grep -qF: the binary contains the text (a symbol name).
 fn tc_has(path: String, text: String): Bool {
   args: Array(String) = []
@@ -85,9 +95,9 @@ fn test_toolchain(c: Checks) {
     c.expect(!tc_same(bare, optimized), "bare compile does not use --release codegen")
     c.expect(!tc_same(debug, optimized), "--debug and --release are different codegen")
     c.expect(tc_same("${base}-final.bin", optimized), "compile --final is --release")
-    c.expect(tc_has(debug, "helper_twice"), "--debug keeps the helper")
-    c.expect(tc_has(bare, "helper_twice"), "the default mode does not inline the helper")
-    c.expect(!tc_has(optimized, "helper_twice"), "--release inlines the helper")
+    c.expect(tc_fn(debug, "helper_twice"), "--debug keeps the helper")
+    c.expect(tc_fn(bare, "helper_twice"), "the default mode does not inline the helper")
+    c.expect(!tc_fn(optimized, "helper_twice"), "--release inlines the helper")
 
     // The CPU level (Stage 28 W18S, O140): an artifact defaults to v2
     // (--cpu=v2's bytes); every level is a program that records it; one
