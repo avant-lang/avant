@@ -590,3 +590,53 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
   checker_self.current_module = saved
   checker_self.t_int()
 }
+
+// std.gc's two forms (Stage 29 W1c2, D305). `gc` names the module in a
+// module that imports std.gc, unless a local or a field takes the name.
+pub fn (checker_self: Checker) names_std_gc(name: String): Bool {
+  if !str_eq(name, "gc") {
+    return false
+  }
+  if found = checker_self.lookup(name) {
+    return false
+  }
+  if f = checker_self.implicit_field(name) {
+    return false
+  }
+  checker_self.imported_by(checker_self.current_module, "std.gc")
+}
+
+// `gc.hold { }` (parser.av parse_hold): the module imported, and `gc`
+// not a local's or a field's name.
+pub fn (checker_self: Checker) check_hold(stmt: Stmt) {
+  if !checker_self.imported_by(checker_self.current_module, "std.gc") {
+    checker_self.fail(stmt.loc, "gc.hold needs import std.gc")
+    return
+  }
+  if !checker_self.names_std_gc("gc") {
+    checker_self.fail(stmt.loc, "gc.hold: gc names a local or a field here, not std.gc")
+  }
+}
+
+// `gc.collect()`: a young collection now (deferred to the end of an
+// enclosing hold). The call becomes the builtin `#gc.collect`, which no
+// program can name; `gc.hold` outside a statement and any other member
+// are errors.
+pub fn (checker_self: Checker) check_gc_call(expr: Expr): Ty {
+  if str_eq(expr.callee, "collect") {
+    if expr.args.size != 0 {
+      checker_self.fail(expr.loc, "gc.collect takes no arguments")
+    } else if b = expr.block {
+      checker_self.fail(b.loc, "gc.collect takes no block")
+    }
+    expr.receiver = nil
+    expr.callee = "#gc.collect"
+    return checker_self.t_void()
+  }
+  if str_eq(expr.callee, "hold") {
+    checker_self.fail(expr.loc, "gc.hold is a statement: gc.hold { ... }")
+    return checker_self.t_void()
+  }
+  checker_self.fail(expr.loc, "unknown function gc.${expr.callee}; std.gc has gc.hold { } and gc.collect()")
+  checker_self.t_void()
+}

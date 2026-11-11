@@ -452,7 +452,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
 }
 
 void gc_maybe_collect(void) {
-  if (gc_thread.collecting || gc_thread.nogc) {
+  /* A hold (std.gc) defers what falls due to its end, as a region does
+   * to its first collection point after it. */
+  if (gc_thread.collecting || gc_thread.nogc || gc_thread.hold) {
     return;
   }
   if (gc_heap.explicit_pending) {
@@ -590,20 +592,24 @@ void avant_gc_heap_goal_collect(void) {
 /* The function a no-GC region was entered from, for a message WHAT: its
  * symbol when the image exports one, else the call site's offset in its
  * image (addr2line resolves it). */
-static __attribute__((noreturn)) void region_die(const char *what) {
+static __attribute__((noreturn)) void region_die_at(const char *what, void *site) {
   char msg[512];
   Dl_info info;
   memset(&info, 0, sizeof info);
-  if (gc_thread.region_site && dladdr(gc_thread.region_site, &info) && info.dli_sname) {
+  if (site && dladdr(site, &info) && info.dli_sname) {
     snprintf(msg, sizeof msg, "%s (%s)", what, info.dli_sname);
-  } else if (gc_thread.region_site && info.dli_fname && info.dli_fbase) {
+  } else if (site && info.dli_fname && info.dli_fbase) {
     const char *base = strrchr(info.dli_fname, '/');
     snprintf(msg, sizeof msg, "%s (%s+0x%lx)", what, base ? base + 1 : info.dli_fname,
-             (unsigned long)((uintptr_t)gc_thread.region_site - (uintptr_t)info.dli_fbase));
+             (unsigned long)((uintptr_t)site - (uintptr_t)info.dli_fbase));
   } else {
-    snprintf(msg, sizeof msg, "%s (called from %p)", what, gc_thread.region_site);
+    snprintf(msg, sizeof msg, "%s (called from %p)", what, site);
   }
   gc_die(msg);
+}
+
+static __attribute__((noreturn)) void region_die(const char *what) {
+  region_die_at(what, gc_thread.region_site);
 }
 
 /* gc-design.md §5.4: an allocation inside a no-GC region proceeds past
@@ -611,8 +617,14 @@ static __attribute__((noreturn)) void region_die(const char *what) {
  * unless the region alone has allocated more than the limit: no
  * collection after it could bring the heap back under the limit. */
 void gc_region_limit_check(uint64_t bytes) {
-  if (gc_heap.set.heap_max && gc_thread.region_bytes + bytes > gc_heap.set.heap_max) {
+  if (gc_heap.set.heap_max && gc_thread.nogc && gc_thread.region_bytes + bytes > gc_heap.set.heap_max) {
     region_die("heap limit in a no-GC region");
+  }
+  /* A hold (std.gc, Stage 29 W1c2): the same rule over the hold's own
+   * allocations (its inline ones included: the count since its entry). */
+  if (gc_heap.set.heap_max && gc_thread.hold &&
+      avant_g_stats.allocated_bytes - gc_thread.hold_base + bytes > gc_heap.set.heap_max) {
+    region_die_at("heap limit in a no-GC region", gc_thread.hold_site);
   }
 }
 
@@ -632,6 +644,11 @@ static int region_refuses(void) {
 
 void avant_nursery_reclaim(void) {
   gc_init();
+  /* `gc.collect()` inside a hold (std.gc): deferred to the hold's end. */
+  if (gc_thread.hold) {
+    gc_thread.hold_young = 1;
+    return;
+  }
   gc_safepoint();
   gc_lock(&gc_heap.world);
   /* A young collection asked for inside a no-GC region is dropped (the
@@ -650,6 +667,13 @@ void avant_gc_collect(void) {
   gc_init();
   gc_safepoint();
   gc_lock(&gc_heap.world);
+  if (gc_thread.hold && !gc_thread.nogc) {
+    /* Inside a hold (std.gc): at the hold's end. */
+    gc_heap.explicit_pending = 1;
+    gc_fast_clear();
+    pthread_mutex_unlock(&gc_heap.world);
+    return;
+  }
   if (region_refuses()) {
     gc_heap.explicit_pending = 1;
     gc_fast_clear();
@@ -657,5 +681,55 @@ void avant_gc_collect(void) {
     return;
   }
   gc_collect(GC_FULL, 1, GC_WHY_EXPLICIT);
+  pthread_mutex_unlock(&gc_heap.world);
+}
+
+/* `gc.hold { }` (std.gc, Stage 29 W1c2, D305): GcThread.hold's comment.
+ * The compiler brackets the block with these two and ends the hold on
+ * every way out of it (the end of the block, return, break, continue,
+ * a `?` that returns). Under AVANT_GC_STRESS=1 a hold is inactive, so a
+ * stress run collects inside it as it would without it, and the hold
+ * hides no missing root. */
+void avant_gc_hold_begin(void) {
+  gc_init();
+  if (gc_heap.set.stress) {
+    return;
+  }
+  if (gc_thread.hold++ == 0) {
+    gc_thread.hold_base = avant_g_stats.allocated_bytes;
+    gc_thread.hold_site = __builtin_return_address(0);
+    gc_thread.hold_young = 0;
+  }
+}
+
+/* The outermost end: a collection point that runs what fell due inside,
+ * a young collection `gc.collect()` asked for, then the policy's
+ * (gc_maybe_collect: a pending explicit or heap-limit full collection,
+ * the full trigger, the spent young budget). */
+void avant_gc_hold_end(void) {
+  int young;
+  int shared;
+  if (gc_thread.hold <= 0) {
+    return;
+  }
+  if (--gc_thread.hold > 0) {
+    return;
+  }
+  young = gc_thread.hold_young;
+  gc_thread.hold_young = 0;
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
+  shared = atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
+  if (shared) {
+    gc_tl_settle(&gc_thread);
+    gc_fast_clear();
+  }
+  if (!gc_thread.collecting && !gc_thread.nogc) {
+    if (young && !gc_heap.explicit_pending && !gc_heap.limit_pending && !gc_heap.set.nursery_off &&
+        avant_nursery_held > 0) {
+      gc_collect(GC_YOUNG, 1, GC_WHY_EXPLICIT);
+    }
+    gc_maybe_collect();
+  }
   pthread_mutex_unlock(&gc_heap.world);
 }

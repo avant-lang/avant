@@ -592,7 +592,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     }
   }
   Block *b = gc_new_block(bspace);
-  if (!b && gc_thread.nogc && !gc_thread.collecting) {
+  if (!b && (gc_thread.nogc || gc_thread.hold) && !gc_thread.collecting) {
     /* C32 (gc-design.md §5.4): never collect inside a no-GC (defer)
      * region, where a runtime helper holds fresh objects the collector
      * cannot see (avant_str_split's items[]). The allocation proceeds
@@ -841,7 +841,7 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
   gc_init();
   gc_safepoint();
   gc_lock(&gc_heap.world);
-  if (!gc_thread.nogc && !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
+  if (!gc_thread.nogc && !gc_thread.hold && !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
       avant_nursery_held > gc_heap.young_carried && total >= avant_young_bytes) {
     gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);

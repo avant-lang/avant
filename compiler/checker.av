@@ -617,6 +617,10 @@ pub class Checker {
     if last.kind == st_return() {
       return false
     }
+    if last.kind == st_hold() {
+      // A `gc.hold` block ends its function when its own body does.
+      return self.fallthrough(last.body)
+    }
     if last.kind == st_if() {
       if last.else_body.size == 0 {
         return true
@@ -736,6 +740,17 @@ pub class Checker {
       }
       if at_tail {
         if expected.is_void {
+        } else {
+          self.fail(stmt.loc, "missing return value")
+        }
+      }
+      return
+    }
+    if k == st_hold() {
+      self.check_hold(stmt)
+      self.check_block(stmt.body, expected, false)
+      if at_tail {
+        if expected.is_void || !self.fallthrough(stmt.body) {
         } else {
           self.fail(stmt.loc, "missing return value")
         }
@@ -3714,6 +3729,9 @@ pub class Checker {
       } else {
         if recv.type_args.size > 0 {
         } else {
+          if self.names_std_gc(recv.ident) {
+            return self.check_gc_call(expr)
+          }
           if id = self.lib_names.get(recv.ident) {
             if self.lib_is_visible(recv.ident, self.current_module) {
               return self.check_lib_call(expr, recv.ident)

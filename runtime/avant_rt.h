@@ -55,6 +55,11 @@ void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id);
 /* Young collection. A dead nursery is discarded. A still-live tree
  * keeps the existing wait. */
 void avant_nursery_reclaim(void);
+/* `gc.hold { }` (std.gc, Stage 29 W1c2, D305): no collection this thread
+ * would start runs between the two (nested pairs are one); the outermost
+ * end runs what fell due inside. Other threads still collect. */
+void avant_gc_hold_begin(void);
+void avant_gc_hold_end(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 /* Number of distinct pinned payloads (refcounted pins share one entry). */
