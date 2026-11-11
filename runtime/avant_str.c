@@ -287,16 +287,183 @@ char *avant_str_from_u64(uint64_t n) {
   return dup_bytes(buf, (size_t)k);
 }
 
+/* The one text of a Float64 (Stage 29 W4b1, D293, D295 R7): the shortest
+ * decimal that reads back as the same number, laid out as ECMAScript's
+ * Number::toString with a decimal point kept on whole values and no '+'
+ * in the exponent (the layout yyjson's writer gives Json.text, so a float
+ * reads the same in puts, interpolation and JSON): `0.1`, `2.0`, `-0.0`,
+ * `100000000000000000000.0`, `1e21`, `1.5e-7`, `5e-324`; NaN is `nan`, the
+ * infinities `inf` and `-inf`. The digits: %.15g when it reads back (by
+ * DBL_DIG every decimal of 15 or fewer digits that reads back is that
+ * one), else the 16-digit correctly rounded decimal or a neighbour one
+ * unit away that reads back, else the 17-digit one, which always does.
+ * out holds at least 40 bytes; returns the length (out is NUL-terminated). */
+static int fmt_digits(double v, int p, char *dig, int *exp10) {
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%.*e", p - 1, v);
+  int k = 0;
+  const char *s = buf;
+  if (*s == '-') {
+    s++;
+  }
+  for (; *s && *s != 'e'; s++) {
+    if (*s >= '0' && *s <= '9') {
+      dig[k++] = *s;
+    }
+  }
+  dig[k] = 0;
+  *exp10 = (*s == 'e') ? atoi(s + 1) : 0;
+  return k;
+}
+
+static int reads_back(const char *dig, int n, int exp10, double av) {
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%.*se%d", n, dig, exp10 - n + 1);
+  return strtod(buf, NULL) == av;
+}
+
+/* dig += delta (+1 or -1) as an n-digit integer; 0 when the digit count
+ * would change. */
+static int step_digits(char *dig, int n, int delta) {
+  int i = n - 1;
+  if (delta > 0) {
+    while (i >= 0 && dig[i] == '9') {
+      dig[i] = '0';
+      i--;
+    }
+    if (i < 0) {
+      return 0;
+    }
+    dig[i]++;
+  } else {
+    while (i >= 0 && dig[i] == '0') {
+      dig[i] = '9';
+      i--;
+    }
+    if (i < 0) {
+      return 0;
+    }
+    dig[i]--;
+    if (dig[0] == '0') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+int avant_fmt_float_text(char *out, double v) {
+  char *o = out;
+  if (v != v) {
+    memcpy(out, "nan", 4);
+    return 3;
+  }
+  if (signbit(v)) {
+    *o++ = '-';
+    v = -v;
+  }
+  if (isinf(v)) {
+    memcpy(o, "inf", 4);
+    return (int)(o - out) + 3;
+  }
+  if (v == 0.0) {
+    memcpy(o, "0.0", 4);
+    return (int)(o - out) + 3;
+  }
+  char dig[24];
+  int e10 = 0;
+  int n = 0;
+  if (v < 2.2250738585072014e-308) {
+    /* A subnormal has fewer digits of precision than DBL_DIG: search. */
+    for (int p = 1; p <= 17; p++) {
+      n = fmt_digits(v, p, dig, &e10);
+      if (reads_back(dig, n, e10, v)) {
+        break;
+      }
+      char nb[24];
+      memcpy(nb, dig, sizeof(dig));
+      if (step_digits(nb, n, 1) && reads_back(nb, n, e10, v)) {
+        memcpy(dig, nb, sizeof(dig));
+        break;
+      }
+      memcpy(nb, dig, sizeof(dig));
+      if (step_digits(nb, n, -1) && reads_back(nb, n, e10, v)) {
+        memcpy(dig, nb, sizeof(dig));
+        break;
+      }
+    }
+  } else if (!(n = fmt_digits(v, 15, dig, &e10), reads_back(dig, n, e10, v))) {
+    n = fmt_digits(v, 16, dig, &e10);
+    if (!reads_back(dig, n, e10, v)) {
+      char up[24];
+      char down[24];
+      memcpy(up, dig, sizeof(dig));
+      memcpy(down, dig, sizeof(dig));
+      if (step_digits(up, n, 1) && reads_back(up, n, e10, v)) {
+        memcpy(dig, up, sizeof(dig));
+      } else if (step_digits(down, n, -1) && reads_back(down, n, e10, v)) {
+        memcpy(dig, down, sizeof(dig));
+      } else {
+        n = fmt_digits(v, 17, dig, &e10);
+      }
+    }
+  }
+  while (n > 1 && dig[n - 1] == '0') {
+    n--;
+  }
+  dig[n] = 0;
+  int dot = e10 + 1; /* the decimal point after this many digits */
+  if (dot > -6 && dot <= 21) {
+    if (dot <= 0) {
+      *o++ = '0';
+      *o++ = '.';
+      for (int i = 0; i < -dot; i++) {
+        *o++ = '0';
+      }
+      memcpy(o, dig, (size_t)n);
+      o += n;
+    } else {
+      for (int i = 0; i < dot; i++) {
+        *o++ = i < n ? dig[i] : '0';
+      }
+      *o++ = '.';
+      if (n > dot) {
+        memcpy(o, dig + dot, (size_t)(n - dot));
+        o += n - dot;
+      } else {
+        *o++ = '0';
+      }
+    }
+  } else {
+    *o++ = dig[0];
+    if (n > 1) {
+      *o++ = '.';
+      memcpy(o, dig + 1, (size_t)(n - 1));
+      o += n - 1;
+    }
+    o += sprintf(o, "e%d", dot - 1);
+  }
+  *o = 0;
+  return (int)(o - out);
+}
+
 char *avant_str_from_float(double n) {
-  char buf[64];
-  int k = avant_fmt_g(buf, n);
-  if (k < 0) {
-    k = snprintf(buf, sizeof(buf), "%g", n);
-  }
-  if (k < 0) {
-    k = 0;
-  }
+  char buf[48];
+  int k = avant_fmt_float_text(buf, n);
   return dup_bytes(buf, (size_t)k);
+}
+
+/* puts of a Float64 and of a Bool (Stage 29 W4b1, D293): the float's one
+ * text and the words true and false, through stdout's buffer as puts's
+ * printf. */
+void avant_puts_f64(double v) {
+  char buf[48];
+  int k = avant_fmt_float_text(buf, v);
+  buf[k] = '\n';
+  fwrite(buf, 1, (size_t)k + 1, stdout);
+}
+
+void avant_puts_bool(int32_t v) {
+  fputs(v ? "true\n" : "false\n", stdout);
 }
 
 char *avant_str_from_bool(int32_t n) {

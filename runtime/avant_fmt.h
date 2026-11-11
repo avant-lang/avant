@@ -1,4 +1,5 @@
-/* The runtime's float writers (Stage 28 W18S, O48): `%.*f` and `%g`
+/* The runtime's float writers (Stage 28 W18S, O48): `%.*f` (`%g` retired
+ * with the shortest round-trip text, Stage 29 W4b1)
  * without snprintf, byte for byte what glibc prints.
  *
  * A finite double is m * 2^e exactly (m < 2^53). `%.Pf` prints
@@ -157,66 +158,6 @@ static int avant_fmt_fixed(char *out, double v, int prec) {
     return -1;
   }
   return avant_fmt_fixed_q(out, q, neg, prec);
-}
-
-/* snprintf(out, 48, "%g", v), or -1 outside the fixed form's range. */
-static int avant_fmt_g(char *out, double v) {
-  uint64_t bits;
-  uint64_t q;
-  int neg;
-  int bexp;
-  int x;
-  int n;
-  int steps;
-  memcpy(&bits, &v, sizeof bits);
-  bexp = (int)((bits >> 52) & 0x7ff);
-  if (bexp == 0x7ff) {
-    return -1;
-  }
-  if ((bits << 1) == 0) {
-    /* %g of +-0 is "0" (X = 0, %.5f, zeros stripped). */
-    if (bits >> 63) {
-      out[0] = '-';
-      out[1] = '0';
-      return 2;
-    }
-    out[0] = '0';
-    return 1;
-  }
-  if (bexp == 0) {
-    return -1;
-  }
-  /* |v| in [2^(bexp-1023), 2^(bexp-1022)): floor(log10) is x or x + 1. */
-  x = (int)(((int64_t)(bexp - 1023) * 78913) >> 18);
-  for (steps = 0; steps < 3; steps++) {
-    /* -5 is tried too: the estimate may be one below an X of -4. */
-    if (x < -5 || x > 5) {
-      return -1;
-    }
-    if (!avant_fmt_scaled(v, 5 - x, &q, &neg)) {
-      return -1;
-    }
-    if (q >= 1000000ull) {
-      x++;
-    } else if (q < 100000ull) {
-      x--;
-    } else {
-      break;
-    }
-  }
-  if (steps == 3 || x < -4) {
-    return -1;
-  }
-  n = avant_fmt_fixed_q(out, q, neg, 5 - x);
-  if (5 - x > 0) {
-    while (out[n - 1] == '0') {
-      n--;
-    }
-    if (out[n - 1] == '.') {
-      n--;
-    }
-  }
-  return n;
 }
 
 #endif
