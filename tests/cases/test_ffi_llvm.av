@@ -32,13 +32,13 @@ fn both_progs: Array(String) {
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/ffi/${names[i]}.av")
-    i = i + 1
+    i += 1
   }
   ex = ["add", "digest", "json", "layout", "sqrt", "zlib"]
   i = 0
   while i < ex.size {
     xs.push("examples/${ex[i]}.av")
-    i = i + 1
+    i += 1
   }
   xs
 }
@@ -112,19 +112,19 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     k = key_of(progs[i])
     fl = flags_of(progs[i], root)
     jobs.push(compile_job_flags("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log", fl))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < np.size {
     k = key_of(np[i])
     jobs.push(compile_job_flags("AVANT_BACKEND=llvm", compiler, "${root}/${np[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log", flags_of(np[i], root)))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < sp.size {
     k = key_of(sp[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${sp[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gn.size {
@@ -132,13 +132,13 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/tests/fixtures/ffi/${gn[i]}.av")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
-    i = i + 1
+    i += 1
   }
   run_waves(jobs)
   i = 0
   while i < progs.size {
     c.eq_int(jobs[i].code, 0, "${progs[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
   base = progs.size
   i = 0
@@ -150,7 +150,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
       p = sp[i - np.size]
     }
     c.eq_int(jobs[base + i].code, 0, "${p}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
   base = base + np.size + sp.size
   i = 0
@@ -162,7 +162,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "tests/fixtures/ffi/${gn[i]}.av: the MIR dump is tests/goldens/ffi/${gn[i]}.mir")
-    i = i + 1
+    i += 1
   }
 
   // Wave 2: every program, then the new ones under each GC environment.
@@ -176,9 +176,9 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   nbase = runs.size
   i = 0
@@ -188,16 +188,16 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   rbase = runs.size
   renvs = release_envs()
   e = 0
   while e < renvs.size {
     runs.push(run_job_env(dir, "${key_of("tests/fixtures/ffi/release.av")}.new", "${key_of("tests/fixtures/ffi/release.av")}.h${e}", renvs[e]))
-    e = e + 1
+    e += 1
   }
   sbase = runs.size
   i = 0
@@ -209,7 +209,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     sa.push("-c")
     sa.push("exec env AVANT_ROOT=${root} ${dir}/${k}.new > ${dir}/${k}.b.out 2> ${dir}/${k}.b.err < /dev/null")
     runs.push(HJob.new("/bin/sh", sa, "${dir}/${k}.b.sh.log"))
-    i = i + 1
+    i += 1
   }
   run_waves(runs)
   i = 0
@@ -227,9 +227,9 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[per * i + 1 + e].code, want_code, "${p} under ${envs[e]}: the golden exit status")
       c.eq_str(golden_view(p, log_text("${dir}/${k}.g${e}.out")), want_out, "${p} under ${envs[e]}: the golden stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   wants = new_wants()
   i = 0
@@ -245,9 +245,9 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[at + 1 + e].code, 0, "${p} under ${envs[e]}: exit 0")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), wants[i], "${p} under ${envs[e]}: the known stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), "", "${p} under ${envs[e]}: no stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   rk = key_of("tests/fixtures/ffi/release.av")
   e = 0
@@ -255,12 +255,12 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(runs[rbase + e].code, 0, "tests/fixtures/ffi/release.av under ${renvs[e]}: exit 0")
     c.eq_str(log_text("${dir}/${rk}.h${e}.out"), wants[np.size - 1], "tests/fixtures/ffi/release.av under ${renvs[e]}: the known stdout")
     c.eq_str(log_text("${dir}/${rk}.h${e}.err"), "", "tests/fixtures/ffi/release.av under ${renvs[e]}: no stderr")
-    e = e + 1
+    e += 1
   }
   i = 0
   while i < sp.size {
     c.eq_int(runs[sbase + i].code, 0, "${sp[i]} built by the llvm back end: passes")
-    i = i + 1
+    i += 1
   }
   // O138 (Stage 28 W18M): user C's root registration without its own
   // frame stops with the guard's message.
@@ -308,7 +308,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   e = 0
   while e < rr_envs.size {
     rrr.push(run_job_env(dir, "release_reuse", "release_reuse.r${e}", rr_envs[e]))
-    e = e + 1
+    e += 1
   }
   run_waves(rrr)
   rr_want = "stored again: pins 1, C's kept name reads the original 1, churn true\nreleased only: pins 2, C's kept name reads the original 1, churn true\n"
@@ -316,7 +316,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   while e < rr_envs.size {
     c.eq_int(rrr[e].code, 0, "release_reuse.av under '${rr_envs[e]}': exit 0")
     c.eq_str(log_text("${dir}/release_reuse.r${e}.out"), rr_want, "release_reuse.av under '${rr_envs[e]}': the known stdout (C's values from the old struct still read the original)")
-    e = e + 1
+    e += 1
   }
   c.eq_str(log_text("${dir}/release_reuse.r0.err"), "", "release_reuse.av: no stderr")
   rr_err = log_text("${dir}/release_reuse.r2.err")
@@ -336,14 +336,14 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   e = 0
   while e < st_envs.size {
     sr.push(run_job_env(dir, "stall", "stall.r${e}", st_envs[e]))
-    e = e + 1
+    e += 1
   }
   run_waves(sr)
   e = 0
   while e < st_envs.size {
     c.eq_int(sr[e].code, 0, "stall.av under '${st_envs[e]}': exit 0")
     c.eq_str(log_text("${dir}/stall.r${e}.out"), "collected; the task blocked 1500 ms\n", "stall.av under '${st_envs[e]}': the known stdout")
-    e = e + 1
+    e += 1
   }
   c.eq_str(log_text("${dir}/stall.r0.err"), "", "stall.av: no stderr")
   c.eq_str(log_text("${dir}/stall.r1.err"), "", "stall.av under AVANT_GC_VERIFY=1 (the 10 s bound): no report")
@@ -384,7 +384,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   e = 0
   while e < x_envs.size {
     xr.push(run_job_env(dir, "exit_inside", "exit_inside.r${e}", x_envs[e]))
-    e = e + 1
+    e += 1
   }
   run_waves(xr)
   e = 0
@@ -392,7 +392,7 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(xr[e].code, 0, "exit_inside.av under '${x_envs[e]}': exit 0")
     c.eq_str(log_text("${dir}/exit_inside.r${e}.out"), "64 threads exited inside a callback; their frames freed: true\n", "exit_inside.av under '${x_envs[e]}': the frames are freed")
     c.eq_str(log_text("${dir}/exit_inside.r${e}.err"), "", "exit_inside.av under '${x_envs[e]}': no stderr")
-    e = e + 1
+    e += 1
   }
 }
 

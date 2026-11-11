@@ -97,7 +97,7 @@ pub struct Headers {
         return out
       }
       out.push(v)
-      i = i + 1
+      i += 1
     }
     out
   }
@@ -178,7 +178,7 @@ fn name_is(name: String, lit: String): Bool {
     a = name[i]
     b = lit[i]
     if a >= 65 && a <= 90 {
-      a = a + 32
+      a += 32
     }
     if a != b {
       return false
@@ -349,21 +349,21 @@ class HttpState {
       if self.ws_routes[i].path == path {
         return true
       }
-      i = i + 1
+      i += 1
     }
     i = 0
     while i < self.ws_open_routes.size {
       if self.ws_open_routes[i].path == path {
         return true
       }
-      i = i + 1
+      i += 1
     }
     i = 0
     while i < self.ws_close_routes.size {
       if self.ws_close_routes[i].path == path {
         return true
       }
-      i = i + 1
+      i += 1
     }
     false
   }
@@ -385,7 +385,7 @@ class HttpState {
         self.ws_conn_paths.pop
         return
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -396,7 +396,7 @@ class HttpState {
       if r.path == path {
         (r.handler)(conn)
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -409,7 +409,7 @@ class HttpState {
       if r.method == req.method && r.path == req.path {
         return (r.handler)(req)
       }
-      i = i + 1
+      i += 1
     }
     Response.text("not found", 404)
   }
@@ -429,7 +429,7 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
       query = str_slice(target, q + 1, target.size)
       q = target.size
     } else {
-      q = q + 1
+      q += 1
     }
   }
   // A well-formed WebSocket handshake (validated in C) upgrades here
@@ -487,7 +487,7 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
         path = state.ws_conn_paths[i]
         i = state.ws_conn_ids.size
       } else {
-        i = i + 1
+        i += 1
       }
     }
     if path.size == 0 {
@@ -511,7 +511,7 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
         path = state.ws_conn_paths[i]
         i = state.ws_conn_ids.size
       } else {
-        i = i + 1
+        i += 1
       }
     }
     if path.size == 0 {
@@ -664,7 +664,7 @@ fn parse_port(text: String): Int {
     if n > 65535 {
       return -1
     }
-    i = i + 1
+    i += 1
   }
   if n == 0 {
     return -1
@@ -685,7 +685,7 @@ fn http_parse_url(url: String): UrlParts? {
       auth_end = i
       i = rest.size
     } else {
-      i = i + 1
+      i += 1
     }
   }
   authority = str_slice(rest, 0, auth_end)
@@ -708,7 +708,7 @@ fn http_parse_url(url: String): UrlParts? {
         close = j
         j = authority.size
       } else {
-        j = j + 1
+        j += 1
       }
     }
     if close == 0 {
@@ -754,7 +754,7 @@ fn http_parse_url(url: String): UrlParts? {
       target = str_slice(target, 0, hash)
       hash = target.size
     } else {
-      hash = hash + 1
+      hash += 1
     }
   }
   UrlParts { host: host, port: port, authority: authority, target: target }
@@ -821,7 +821,7 @@ fn resolve_url(base: String, loc: String): String? {
         base_path = str_slice(base_path, 0, qi)
         qi = base_path.size
       } else {
-        qi = qi + 1
+        qi += 1
       }
     }
     slash = -1
@@ -858,7 +858,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       buf.push_str(": ")
       buf.push_str(headers[i].value)
       buf.push_str("\r\n")
-      i = i + 1
+      i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
     if body.size > 0 {
@@ -952,7 +952,7 @@ pub class Http {
         }
         loc = resp.headers.get("Location")
         if location = loc {
-          hops = hops + 1
+          hops += 1
           if hops > 5 {
             return HttpError.new("too many redirects")
           }

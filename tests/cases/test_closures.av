@@ -30,7 +30,7 @@ fn both_progs: Array(String) {
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/closures/${names[i]}.av")
-    i = i + 1
+    i += 1
   }
   xs.push("examples/collect.av")
   xs
@@ -60,13 +60,13 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     k = key_of(progs[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < np.size {
     k = key_of(np[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${np[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gn.size {
@@ -74,21 +74,21 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/tests/fixtures/closures/${gn[i]}.av")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
-    i = i + 1
+    i += 1
   }
   run_waves(jobs)
   i = 0
   while i < progs.size {
     c.eq_int(jobs[i].code, 0, "${progs[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
   base = progs.size
   i = 0
   while i < np.size {
     c.eq_int(jobs[base + i].code, 0, "${np[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
-  base = base + np.size
+  base += np.size
   i = 0
   while i < gn.size {
     j = jobs[base + i]
@@ -98,7 +98,7 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "tests/fixtures/closures/${gn[i]}.av: the MIR dump is tests/goldens/closures/${gn[i]}.mir")
-    i = i + 1
+    i += 1
   }
 
   // Wave 2: every program, then the new ones under each GC environment.
@@ -112,9 +112,9 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   nbase = runs.size
   i = 0
@@ -124,9 +124,9 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   run_waves(runs)
   i = 0
@@ -144,9 +144,9 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[per * i + 1 + e].code, want_code, "${p} under ${envs[e]}: the golden exit status")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the golden stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   wants = new_wants()
   i = 0
@@ -162,9 +162,9 @@ fn test_closures(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[at + 1 + e].code, 0, "${p} under ${envs[e]}: exit 0")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), wants[i], "${p} under ${envs[e]}: the known stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), "", "${p} under ${envs[e]}: no stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
 }
 

@@ -104,12 +104,12 @@ fn test_tasks(c: Checks) {
   }
   sum = 0
   if m0 = many.recv {
-    sum = sum + m0
+    sum += m0
   } else {
     c.expect(false, "two senders 0")
   }
   if m1 = many.recv {
-    sum = sum + m1
+    sum += m1
   } else {
     c.expect(false, "two senders 1")
   }
@@ -130,7 +130,7 @@ fn test_tasks(c: Checks) {
 
   mu = Mutex(Int).new(1)
   bumped = mu.with { |x|
-    x = x + 1
+    x += 1
     x
   }
   c.eq_int(bumped, 2, "mutex with")
@@ -139,14 +139,14 @@ fn test_tasks(c: Checks) {
 
   box = Mutex(Held).new(Held.new(1))
   bn = box.with { |x|
-    x.n = x.n + 1
+    x.n += 1
     x.n
   }
   c.eq_int(bn, 2, "mutex class")
 
   cell = Mutex(Cell).new(Cell { n: 1 })
   cn = cell.with { |x|
-    x.n = x.n + 4
+    x.n += 4
     x.n
   }
   c.eq_int(cn, 5, "mutex struct")
@@ -154,7 +154,7 @@ fn test_tasks(c: Checks) {
   shared = Mutex(Int).new(1)
   hm = spawn {
     shared.with { |x|
-      x = x + 10
+      x += 10
       1
     }
   }

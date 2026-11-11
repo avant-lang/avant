@@ -69,7 +69,7 @@ fn hammer_round(port: Int, out: Channel(String), rounds: Int): Int {
   for i in 0..rounds {
     if resp = Http.get("${base}/ping") {
       if resp.status == 200 && body_text(resp) == "pong" {
-        ok = ok + 1
+        ok += 1
       }
     }
   }
@@ -228,7 +228,7 @@ fn test_std_http(c: Checks) {
       } else {
         c.expect(false, "round ${i} present")
       }
-      i = i + 1
+      i += 1
     }
   } else {
     c.expect(false, "listen")
@@ -270,7 +270,7 @@ fn test_std_http(c: Checks) {
       } else {
         c.expect(false, "limit ${i} present")
       }
-      i = i + 1
+      i += 1
     }
   } else {
     c.expect(false, "listen with body limit")
@@ -343,7 +343,7 @@ fn test_std_http(c: Checks) {
       } else {
         c.expect(false, "ws round ${i} present")
       }
-      i = i + 1
+      i += 1
     }
     // Four connections, each one open and one close event. A client's
     // reconnect can log its open before the server logs the previous
@@ -361,9 +361,9 @@ fn test_std_http(c: Checks) {
     i = 0
     while i < evgot.size {
       if evgot[i] == "open" {
-        opens = opens + 1
+        opens += 1
       }
-      i = i + 1
+      i += 1
     }
     c.eq_int(opens, 4, "ws event opens")
     closes: Array(String) = []
@@ -376,11 +376,11 @@ fn test_std_http(c: Checks) {
       seen = 0
       for i in 0..evgot.size {
         if evgot[i] == closes[k] {
-          seen = seen + 1
+          seen += 1
         }
       }
       c.eq_int(seen, 1, "ws event ${closes[k]} once")
-      k = k + 1
+      k += 1
     }
     c.eq_int(evgot.size, opens + 4, "ws events are opens and the four closes")
   } else {
@@ -471,7 +471,7 @@ fn test_std_http(c: Checks) {
       got = 0
       while got < 4 {
         if d = done.recv {
-          got = got + d
+          got += d
         }
       }
       if resp = Http.get("http://127.0.0.1:${port}/__stop") {

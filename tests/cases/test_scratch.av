@@ -57,7 +57,7 @@ fn path_base(p: String): String {
     if p[i] == 47 {
       return str_slice(p, i + 1, p.size)
     }
-    i = i - 1
+    i -= 1
   }
   p
 }
@@ -70,7 +70,7 @@ fn run_env(env: Array(String), bin: String, log: String): Int {
   i = 0
   while i < env.size {
     args.push(env[i])
-    i = i + 1
+    i += 1
   }
   args.push(bin)
   process_run_out("/usr/bin/env", args, log)
@@ -158,7 +158,7 @@ fn test_scratch(c: Checks) {
       gone_args.push("s=$(ps -o stat= -p ${child_pid} 2>/dev/null); case \"$s\" in ''|Z*) exit 0 ;; *) exit 1 ;; esac")
       c.expect(child_pid.size > 0, "SIG${sigs[k]} child recorded its pid")
       c.eq_int(process_run("/bin/sh", gone_args), 0, "SIG${sigs[k]} reaches the blocking child")
-      k = k + 1
+      k += 1
     }
 
     keep_env: Array(String) = []
@@ -238,7 +238,7 @@ fn test_scratch(c: Checks) {
       c.eq_int(stopped, 0, "SIG${sig} stops the runner's jobs")
       left: Array(String) = dir_list(base_dir)
       c.eq_int(left.size, 0, "SIG${sig} leaves nothing in TMPDIR")
-      q = q + 1
+      q += 1
     }
 
     unset_args: Array(String) = []
@@ -274,7 +274,7 @@ fn test_scratch(c: Checks) {
       c.eq_int(nth_line(read_all(crc), 0).to_i, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
       cleft: Array(String) = dir_list(cbase)
       c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
-      q = q + 1
+      q += 1
     }
     c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
     c.expect(!file_exists(unset_dir), "fallback directory removed")

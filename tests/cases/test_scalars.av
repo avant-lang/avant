@@ -21,7 +21,7 @@ fn golden_progs: Array(String) {
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/scalars/${names[i]}.av")
-    i = i + 1
+    i += 1
   }
   xs.push("examples/hello.av")
   xs.push("examples/fact.av")
@@ -66,13 +66,13 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < gp.size {
     progs.push(gp[i])
-    i = i + 1
+    i += 1
   }
   op = other_progs()
   i = 0
   while i < op.size {
     progs.push(op[i])
-    i = i + 1
+    i += 1
   }
 
   // Wave 1: the compiles, the dumps, the refusals.
@@ -81,7 +81,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     k = key_of(progs[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gp.size {
@@ -90,7 +90,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/${gp[i]}")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
-    i = i + 1
+    i += 1
   }
   jobs.push(compile_job("AVANT_BACKEND=bogus", compiler, "${root}/examples/hello.av", "${dir}/bogus", "${dir}/bogus.log"))
   d: Array(String) = []
@@ -111,7 +111,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     p = progs[i]
     c.eq_int(jobs[i].code, 0, "${p}: compiles under llvm")
     c.expect(str_has(log_text(jobs[i].log), "compiled to "), "${p}: llvm prints the compiled-to line")
-    i = i + 1
+    i += 1
   }
   base = progs.size
   i = 0
@@ -123,9 +123,9 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
-    i = i + 1
+    i += 1
   }
-  base = base + gp.size
+  base += gp.size
   bg = jobs[base]
   c.eq_int(bg.code, 1, "AVANT_BACKEND=bogus: exit 1")
   c.expect(str_has(log_text(bg.log), "AVANT_BACKEND must be unset, empty, or llvm (the only back end), not bogus"), "AVANT_BACKEND=bogus: refused, naming the variable")
@@ -146,7 +146,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     k = key_of(progs[i])
     runs.push(run_job(dir, "${k}.new", "${k}.b"))
-    i = i + 1
+    i += 1
   }
   runs.push(run_job(dir, "outdir-llvm/a/b/hello", "outdir-llvm"))
   run_waves(runs)
@@ -160,7 +160,7 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(runs[i].code, golden_status(root, p), "${p}: the golden exit status")
     c.eq_str(log_text("${dir}/${k}.b.out"), golden_out(root, p), "${p}: the golden stdout")
     c.eq_str(log_text("${dir}/${k}.b.err"), golden_err(root, p), "${p}: the golden stderr")
-    i = i + 1
+    i += 1
   }
 }
 

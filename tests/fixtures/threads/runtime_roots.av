@@ -32,7 +32,7 @@ fn churn(id: Int, r: Int, n: Int): Int {
     keep.push(Cell.new(i, "c${id}-${r}-${i}"))
     if keep.size > 40 {
       if keep[0].s.size < 5 {
-        bad = bad + 1
+        bad += 1
       }
       keep.clear
     }
@@ -47,32 +47,32 @@ fn work(id: Int, rounds: Int): Int {
     want = "w${id}-r${r}"
     h = Hash(String, Int).new
     if h.inc_slice(text, 4, text.size - 5) != 1 {
-      bad = bad + 1
+      bad += 1
     }
     h = Hash(String, Int).new
     text = ""
-    bad = bad + churn(id, r, 300)
+    bad += churn(id, r, 300)
     if hash_last_key() != want {
-      bad = bad + 1
+      bad += 1
     }
     if doc = Json.parse("{\"id\": ${id}, \"round\": ${r}, \"name\": \"t${id}\"}") {
-      bad = bad + churn(id, r, 50)
+      bad += churn(id, r, 50)
       if n = doc.int("round") {
         if n != r {
-          bad = bad + 1
+          bad += 1
         }
       } else {
-        bad = bad + 1
+        bad += 1
       }
       if s = doc.str("name") {
         if s != "t${id}" {
-          bad = bad + 1
+          bad += 1
         }
       } else {
-        bad = bad + 1
+        bad += 1
       }
     } else {
-      bad = bad + 1
+      bad += 1
     }
   }
   bad
@@ -86,7 +86,7 @@ fn main {
   }
   mbad = 0
   for r in 0..120 {
-    mbad = mbad + churn(99, r, 200)
+    mbad += churn(99, r, 200)
   }
   wbad = 0
   hs.each { |h| wbad = wbad + h.join }
