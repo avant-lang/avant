@@ -273,7 +273,7 @@ fn main {
 }
 ```
 
-`Array(T).new` takes a size. `push`, `pop`, `clear`, `reserve`, and `fill` are methods. `each` is not a method call: the compiler inlines it as a loop. See [Iteration](#iteration).
+`Array(T).new(n)` makes `n` elements, each the element type's zero (`0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields); `Array(T).new(n, value)` makes `n` copies of `value` (the same object, for a class), and is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` is a compile error that names both ways out, the value form and `[]` with `push`. A negative `n` traps (`avant runtime: Array size -5 is negative`). `push`, `pop`, `clear`, `reserve`, and `fill` are methods. `each` is not a method call: the compiler inlines it as a loop. See [Iteration](#iteration).
 
 ### Hashes
 

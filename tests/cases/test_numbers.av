@@ -98,6 +98,18 @@ fn slice_cases: Array(FCase) {
   xs
 }
 
+fn arraynew_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("anew-zero", "struct P {\n  a: Int\n  s: String\n}\nfn main {\n  xs = Array(Int).new(3)\n  puts(xs[2])\n  ss = Array(String).new(2)\n  puts(\"[\${ss[1]}]\")\n  o: String? = ss[0]\n  puts(o ?? \"nil\")\n  ps = Array(P).new(2)\n  puts(ps[1].s.size)\n  zs = Array(Int?).new(2)\n  puts(zs[0] ?? -7)\n  bs = Array(Bool).new(1)\n  puts(\"\${bs[0]}\")\n  fs = Array(Float64).new(1)\n  puts(\"\${fs[0] == 0.0}\")\n  e = Array(String).new(0)\n  puts(e.size)\n}\n", "0\n[]\n\n0\n-7\nfalse\ntrue\n0\n"))
+  xs.push(accepted("anew-value", "class Node {\n  v: Int = 0\n}\nfn main {\n  n = Node.new\n  n.v = 5\n  ns = Array(Node).new(3, n)\n  puts(ns[2].v)\n  ns[0].v = 6\n  puts(ns[1].v)\n  fs = Array(Float64).new(2, 1.5)\n  puts(\"\${fs[1] == 1.5}\")\n  t = Array(String).new(3, \"x\")\n  puts(t[2])\n  aa = Array(Array(Int)).new(2, [1, 2])\n  puts(aa[1].size)\n  is = Array(Int).new(4, -1)\n  puts(is[3])\n  e = Array(Node).new(0, n)\n  puts(e.size)\n}\n", "5\n6\ntrue\nx\n2\n-1\n0\n"))
+  xs.push(refused("anew-class", "class Node {\n  v: Int = 0\n}\nfn main {\n  xs = Array(Node).new(2)\n  puts(xs.size)\n}\n", "Array(Node).new(n) needs an element value: Node has no zero value; write Array(Node).new(n, value), or start from [] and push"))
+  xs.push(refused("anew-array", "fn main {\n  xs = Array(Array(Int)).new(2)\n  puts(xs.size)\n}\n", "Array(Array(Int)).new(n) needs an element value"))
+  xs.push(refused("anew-generic", "class Node {\n  v: Int = 0\n}\nfn make(n: Int, x: T): Array(T) {\n  Array(T).new(n)\n}\nfn main {\n  a = make(2, 5)\n  puts(a[1])\n  b = make(2, Node.new)\n  puts(b.size)\n}\n", "Array(Node).new(n) needs an element value"))
+  xs.push(refused("anew-value-type", "fn main {\n  xs = Array(Int).new(2, \"a\")\n  puts(xs.size)\n}\n", "Array(Int).new's element value must be Int, got String"))
+  xs.push(trapped("anew-negative", "fn main {\n  n = 0 - 5\n  xs = Array(Int).new(n)\n  puts(xs.size)\n}\n", "", "avant runtime: Array size -5 is negative"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -146,6 +158,9 @@ fn test_main(c: Checks) {
     }
     for f_slice_cases in slice_cases() {
       all.push(f_slice_cases)
+    }
+    for f_arraynew_cases in arraynew_cases() {
+      all.push(f_arraynew_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

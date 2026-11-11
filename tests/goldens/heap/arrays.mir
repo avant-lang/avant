@@ -35,6 +35,7 @@ extern avant_array_sum_i32(ref) -> i32 collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
+extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.arrays/say(_1: ref str, _2: i32) -> i32 leaf @arrays.av:9:1 {
@@ -149,50 +150,59 @@ fn av.arrays/make(_1: i32) -> ref %Array(Int) frame @arrays.av:37:1 {
   let _0: ref %Array(Int)
   let _1 (n): i32
   let _2: i32
-  let _3: u64
+  let _3: bool
   let _4: u64
-  let _5: ref %elems(Int) slot
-  let _6: ref %Array(Int)
-  let _7 (xs): ref %Array(Int)
-  let _8 (i): i32
-  let _9 (__for1_end): i32
-  let _10: bool
-  let _11: i32
-  let _12: ref %elems(Int)
-  let _13: i32
+  let _5: u64
+  let _6: ref %elems(Int) slot
+  let _7: ref %Array(Int)
+  let _8 (xs): ref %Array(Int)
+  let _9 (i): i32
+  let _10 (__for1_end): i32
+  let _11: bool
+  let _12: i32
+  let _13: ref %elems(Int)
+  let _14: i32
 
 bb0:
-  _5 = zero   @37:1
+  _6 = zero   @37:1
   gc.enter   @37:1
-  gc.roots _5   @37:1
+  gc.roots _6   @37:1
   _2 = copy _1   @38:8
-  _3 = cast copy _2 to u64   @38:8
-  _4 = mul copy _3, const u64 4   @38:8
-  _5 = call avant_alloc(copy _4, const u32 0) collects   @38:8
-  _6 = call avant_alloc(const u64 16, const u32 1022) collects   @38:8
-  barrier copy _6   @38:8
-  (*_6).0 = copy _5   @38:8
-  (*_6).1 = copy _2   @38:8
-  (*_6).2 = copy _2   @38:8
-  _7 = copy _6   @38:6
-  _8 = const i32 0   @39:3
-  _9 = copy _1   @39:3
-  goto bb1   @39:3
+  _3 = lt copy _2, const i32 0   @38:8
+  branch copy _3, bb1, bb2   @38:8
 
 bb1:
-  _10 = lt copy _8, copy _9   @39:3
-  branch copy _10, bb2, bb3   @39:3
+  call avant_trap_negative(copy _2, const i32 0) nocollect   @38:8
+  unreachable   @38:8
 
 bb2:
-  _11 = mul.chk copy _8, copy _8   @40:15
-  _12 = copy (*_7).0   @40:7
-  (*_12)[copy _8] = copy _11   @40:11
-  _13 = add copy _8, const i32 1   @39:3
-  _8 = copy _13   @39:3
-  goto bb1   @39:3
+  _4 = cast copy _2 to u64   @38:8
+  _5 = mul copy _4, const u64 4   @38:8
+  _6 = call avant_alloc(copy _5, const u32 0) collects   @38:8
+  _7 = call avant_alloc(const u64 16, const u32 1022) collects   @38:8
+  barrier copy _7   @38:8
+  (*_7).0 = copy _6   @38:8
+  (*_7).1 = copy _2   @38:8
+  (*_7).2 = copy _2   @38:8
+  _8 = copy _7   @38:6
+  _9 = const i32 0   @39:3
+  _10 = copy _1   @39:3
+  goto bb3   @39:3
 
 bb3:
-  _0 = copy _7   @42:3
+  _11 = lt copy _9, copy _10   @39:3
+  branch copy _11, bb4, bb5   @39:3
+
+bb4:
+  _12 = mul.chk copy _9, copy _9   @40:15
+  _13 = copy (*_8).0   @40:7
+  (*_13)[copy _9] = copy _12   @40:11
+  _14 = add copy _9, const i32 1   @39:3
+  _9 = copy _14   @39:3
+  goto bb3   @39:3
+
+bb5:
+  _0 = copy _8   @42:3
   gc.leave   @42:3
   return   @42:3
 }

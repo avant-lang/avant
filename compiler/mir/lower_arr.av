@@ -228,9 +228,13 @@ pub fn (lw: MirLower) elem_ty_of(e: Expr): Ty {
   ty_int()
 }
 
-// `Array(T).new(n)` (the old back end): n, then a zeroed buffer of n
-// elements (size n * size(E), unchecked as in the old back end), then the
-// header with size = cap = n.
+// `Array(T).new(n)` and `Array(T).new(n, value)` (Stage 29 W4b1, D295
+// R5): n (a negative n traps: avant_trap_negative(n, 0)), a zeroed buffer
+// of n elements, then the value, when there is one, stored into every
+// element (a reference-carrying one as a `fresh` store, one closing
+// `barrier`, as an array literal), or else the zero's strings when the
+// element's zero is not all zero bytes (a String is "", W3b's
+// zero_strings); then the header with size = cap = n.
 pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   b = lw.lw_b
   aty = lw.ety(e)
@@ -247,11 +251,81 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   lw.at(e.loc)
   k = b.temp(mt_i32())
   b.assign(b.pl(k), b.rv_use(nv))
+  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i32(0)))
+  ok = lw.trap_open(neg, true)
+  lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
   n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
   b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
+  et = lw.elem_of(aty)
+  want = lw.elem_ty_of(e)
+  rc = b.types.ref_carrying(et)
+  if e.elems.size == 1 {
+    v = lw.lower_coerced(e.elems[0], et, want)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    vt = b.temp(et)
+    b.assign(b.pl(vt), b.rv_use(v))
+    lw.fill_loop(d, k, et, want, vt)
+  } else if ty_zero_stores(want) {
+    lw.fill_loop(d, k, et, want, -1)
+  }
+  lw.at(e.loc)
+  if rc {
+    b.barrier(d)
+  }
   lw.array_header(aty, d, b.copy_local(k))
+}
+
+// for i in 0..n: the buffer's element i (_d's) = _v, or the zero's
+// strings when v is -1.
+pub fn (lw: MirLower) fill_loop(d: Int, n: Int, et: Int, want: Ty, v: Int) {
+  b = lw.lw_b
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block
+  body = b.block
+  done = b.block
+  b.goto(head)
+  b.at(head)
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(n)))
+  b.branch(c, body, done)
+  b.at(body)
+  p = b.index(b.deref(b.pl(d)), b.copy_local(i))
+  if v >= 0 {
+    if b.types.ref_carrying(et) {
+      b.assign_fresh(p, b.rv_use(b.copy_local(v)))
+    } else {
+      b.assign(p, b.rv_use(b.copy_local(v)))
+    }
+  } else {
+    lw.fresh_zero_strings(p, want, et)
+  }
+  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i32(1)))
+  b.goto(head)
+  b.at(done)
+}
+
+// zero_strings for a place inside a buffer being filled: "" into every
+// String of the place (fresh stores; the caller barriers the buffer).
+pub fn (lw: MirLower) fresh_zero_strings(p: MPlace, t: Ty, mt: Int) {
+  b = lw.lw_b
+  if t.is_string {
+    b.assign_fresh(p, b.rv_use(b.str_const("")))
+    return
+  }
+  if t.is_struct {
+    l = b.types.layout_of(mt)
+    for i in 0..t.fields.size {
+      ft = t.fields[i].ty
+      if ft.is_string || ft.is_struct {
+        lw.fresh_zero_strings(b.field(p, i), ft, b.types.layouts[l].fields[i])
+      }
+    }
+  }
 }
 
 // ---- indexing

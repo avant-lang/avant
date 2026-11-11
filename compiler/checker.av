@@ -2043,6 +2043,16 @@ pub class Checker {
         self.fail(size.loc, "Array(T).new expects Int size")
       }
     }
+    // Every element starts at the element type's zero (D292) or at the
+    // given value (Stage 29 W4b1, D295 R5); no element is read unset.
+    if expr.elems.size == 1 {
+      vt = self.check_expr_as(expr.elems[0], elem)
+      if !ty_assignable(vt, elem) {
+        self.fail(expr.elems[0].loc, "Array(${elem.show}).new's element value must be ${elem.show}, got ${vt.show}")
+      }
+    } else if !ty_has_zero(elem) && !type.ty_has_var(elem) {
+      self.fail(expr.loc, "Array(${elem.show}).new(n) needs an element value: ${elem.show} has no zero value; write Array(${elem.show}).new(n, value), or start from [] and push")
+    }
     ty_array(elem)
   }
 

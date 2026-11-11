@@ -43,6 +43,7 @@ extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_eq(ref str, ref str) -> i32 never
 extern avant_str_repeat_byte(i32, i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
+extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.churn/no_leaf() -> ref %churn.Leaf leaf @churn.av:65:1 {
@@ -71,24 +72,25 @@ fn av.churn/junk(_1: i32) -> ref str frame @churn.av:75:1 {
   let _6: ref str
   let _7 (g): ref str slot
   let _8: i32
-  let _9: u64
+  let _9: bool
   let _10: u64
-  let _11: ref %elems(Int) slot
-  let _12: ref %Array(Int)
-  let _13 (xs): ref %Array(Int)
-  let _14: i32
+  let _11: u64
+  let _12: ref %elems(Int) slot
+  let _13: ref %Array(Int)
+  let _14 (xs): ref %Array(Int)
   let _15: i32
-  let _16: ref %elems(Int)
-  let _17: i32
-  let _18: ref %elems(Int)
-  let _19: i32
-  let _20: ref str
+  let _16: i32
+  let _17: ref %elems(Int)
+  let _18: i32
+  let _19: ref %elems(Int)
+  let _20: i32
+  let _21: ref str
 
 bb0:
   _7 = zero   @75:1
-  _11 = zero   @75:1
+  _12 = zero   @75:1
   gc.enter   @75:1
-  gc.roots _7, _11   @75:1
+  gc.roots _7, _12   @75:1
   _2 = rem copy _1, const i32 3000   @76:41
   _3 = add.chk const i32 2000, copy _2   @76:37
   _4 = rem copy _1, const i32 26   @76:26
@@ -96,26 +98,34 @@ bb0:
   _6 = call avant_str_repeat_byte(copy _5, copy _3) collects   @76:7
   _7 = copy _6   @76:5
   _8 = const i32 400   @77:8
-  _9 = cast copy _8 to u64   @77:8
-  _10 = mul copy _9, const u64 4   @77:8
-  _11 = call avant_alloc(copy _10, const u32 0) collects   @77:8
-  _12 = call avant_alloc(const u64 16, const u32 1022) collects   @77:8
-  barrier copy _12   @77:8
-  (*_12).0 = copy _11   @77:8
-  (*_12).1 = copy _8   @77:8
-  (*_12).2 = copy _8   @77:8
-  _13 = copy _12   @77:6
-  _14 = call avant_str_size(copy _7) nocollect   @78:12
-  _15 = copy (*_13).1   @78:5
-  check.bounds const i32 3, copy _15   @78:5
-  _16 = copy (*_13).0   @78:5
-  (*_16)[const i32 3] = copy _14   @78:9
-  _17 = copy (*_13).1   @79:9
-  check.bounds const i32 3, copy _17   @79:9
-  _18 = copy (*_13).0   @79:9
-  _19 = copy (*_18)[const i32 3]   @79:9
-  _20 = call avant_str_cat_i32(const str.0, copy _19) collects   @79:3
-  _0 = copy _20   @79:3
+  _9 = lt copy _8, const i32 0   @77:8
+  branch copy _9, bb1, bb2   @77:8
+
+bb1:
+  call avant_trap_negative(copy _8, const i32 0) nocollect   @77:8
+  unreachable   @77:8
+
+bb2:
+  _10 = cast copy _8 to u64   @77:8
+  _11 = mul copy _10, const u64 4   @77:8
+  _12 = call avant_alloc(copy _11, const u32 0) collects   @77:8
+  _13 = call avant_alloc(const u64 16, const u32 1022) collects   @77:8
+  barrier copy _13   @77:8
+  (*_13).0 = copy _12   @77:8
+  (*_13).1 = copy _8   @77:8
+  (*_13).2 = copy _8   @77:8
+  _14 = copy _13   @77:6
+  _15 = call avant_str_size(copy _7) nocollect   @78:12
+  _16 = copy (*_14).1   @78:5
+  check.bounds const i32 3, copy _16   @78:5
+  _17 = copy (*_14).0   @78:5
+  (*_17)[const i32 3] = copy _15   @78:9
+  _18 = copy (*_14).1   @79:9
+  check.bounds const i32 3, copy _18   @79:9
+  _19 = copy (*_14).0   @79:9
+  _20 = copy (*_19)[const i32 3]   @79:9
+  _21 = call avant_str_cat_i32(const str.0, copy _20) collects   @79:3
+  _0 = copy _21   @79:3
   gc.leave   @79:3
   return   @79:3
 }

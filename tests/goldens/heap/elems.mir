@@ -44,6 +44,7 @@ extern avant_array_sum_u64(ref) -> u64 collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
+extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.elems/show(_1: ref %Array(Int)) -> ref str frame @elems.av:4:1 {
@@ -342,93 +343,102 @@ bb0:
 
 fn av.elems/grids() -> void frame @elems.av:53:1 {
   let _1: i32
-  let _2: u64
+  let _2: bool
   let _3: u64
-  let _4: ref %elems(Int) slot
-  let _5: ref %Array(Int)
-  let _6 (grid): ref %Array(Int) slot
-  let _7 (r): i32
-  let _8 (__for0_end): i32
-  let _9: bool
-  let _10: i32
+  let _4: u64
+  let _5: ref %elems(Int) slot
+  let _6: ref %Array(Int)
+  let _7 (grid): ref %Array(Int) slot
+  let _8 (r): i32
+  let _9 (__for0_end): i32
+  let _10: bool
   let _11: i32
-  let _12: ref str
-  let _13 (n): i32
-  let _14 (__for1_xs): ref %Array(Int)
-  let _15 (__for1_i): i32
-  let _16: i32
-  let _17: bool
-  let _18: ref %elems(Int)
-  let _19: i32
-  let _20 (g): i32
-  let _21: bool
-  let _22: i32
+  let _12: i32
+  let _13: ref str
+  let _14 (n): i32
+  let _15 (__for1_xs): ref %Array(Int)
+  let _16 (__for1_i): i32
+  let _17: i32
+  let _18: bool
+  let _19: ref %elems(Int)
+  let _20: i32
+  let _21 (g): i32
+  let _22: bool
   let _23: i32
+  let _24: i32
 
 bb0:
-  _4 = zero   @53:1
-  _6 = zero   @53:1
+  _5 = zero   @53:1
+  _7 = zero   @53:1
   gc.enter   @53:1
-  gc.roots _4, _6   @53:1
+  gc.roots _5, _7   @53:1
   _1 = const i32 0   @54:10
-  _2 = cast copy _1 to u64   @54:10
-  _3 = mul copy _2, const u64 4   @54:10
-  _4 = call avant_alloc(copy _3, const u32 0) collects   @54:10
-  _5 = call avant_alloc(const u64 16, const u32 1022) collects   @54:10
-  barrier copy _5   @54:10
-  (*_5).0 = copy _4   @54:10
-  (*_5).1 = copy _1   @54:10
-  (*_5).2 = copy _1   @54:10
-  _6 = copy _5   @54:8
-  _7 = const i32 0   @55:3
-  _8 = const i32 4   @55:3
-  goto bb1   @55:3
+  _2 = lt copy _1, const i32 0   @54:10
+  branch copy _2, bb1, bb2   @54:10
 
 bb1:
-  _9 = lt copy _7, copy _8   @55:3
-  branch copy _9, bb2, bb3   @55:3
+  call avant_trap_negative(copy _1, const i32 0) nocollect   @54:10
+  unreachable   @54:10
 
 bb2:
-  _10 = mul copy _7, const i32 10   @56:17
-  call avant_array_push_i32(copy _6, copy _10) collects   @56:9
-  _11 = add copy _7, const i32 1   @55:3
-  _7 = copy _11   @55:3
-  goto bb1   @55:3
+  _3 = cast copy _1 to u64   @54:10
+  _4 = mul copy _3, const u64 4   @54:10
+  _5 = call avant_alloc(copy _4, const u32 0) collects   @54:10
+  _6 = call avant_alloc(const u64 16, const u32 1022) collects   @54:10
+  barrier copy _6   @54:10
+  (*_6).0 = copy _5   @54:10
+  (*_6).1 = copy _1   @54:10
+  (*_6).2 = copy _1   @54:10
+  _7 = copy _6   @54:8
+  _8 = const i32 0   @55:3
+  _9 = const i32 4   @55:3
+  goto bb3   @55:3
 
 bb3:
-  _12 = call av.elems/show(copy _6) collects   @58:8
-  call printf(const str.6, copy _12) nocollect   @58:3
-  _13 = const i32 0   @59:5
-  _14 = copy _6   @60:3
-  _15 = const i32 0   @60:3
-  goto bb4   @60:3
+  _10 = lt copy _8, copy _9   @55:3
+  branch copy _10, bb4, bb5   @55:3
 
 bb4:
-  _16 = copy (*_14).1   @60:3
-  _17 = lt copy _15, copy _16   @60:3
-  branch copy _17, bb5, bb6   @60:3
+  _11 = mul copy _8, const i32 10   @56:17
+  call avant_array_push_i32(copy _7, copy _11) collects   @56:9
+  _12 = add copy _8, const i32 1   @55:3
+  _8 = copy _12   @55:3
+  goto bb3   @55:3
 
 bb5:
-  _18 = copy (*_14).0   @60:3
-  _19 = copy (*_18)[copy _15]   @60:3
-  _20 = copy _19   @60:3
-  _21 = gt copy _20, const i32 15   @61:10
-  branch copy _21, bb7, bb8   @61:5
+  _13 = call av.elems/show(copy _7) collects   @58:8
+  call printf(const str.6, copy _13) nocollect   @58:3
+  _14 = const i32 0   @59:5
+  _15 = copy _7   @60:3
+  _16 = const i32 0   @60:3
+  goto bb6   @60:3
 
 bb6:
-  call printf(const str.3, copy _13) nocollect   @65:3
+  _17 = copy (*_15).1   @60:3
+  _18 = lt copy _16, copy _17   @60:3
+  branch copy _18, bb7, bb8   @60:3
+
+bb7:
+  _19 = copy (*_15).0   @60:3
+  _20 = copy (*_19)[copy _16]   @60:3
+  _21 = copy _20   @60:3
+  _22 = gt copy _21, const i32 15   @61:10
+  branch copy _22, bb9, bb10   @61:5
+
+bb8:
+  call printf(const str.3, copy _14) nocollect   @65:3
   gc.leave   @53:1
   return   @53:1
 
-bb7:
-  _22 = add.chk copy _13, const i32 1   @62:13
-  _13 = copy _22   @62:9
-  goto bb8   @61:5
+bb9:
+  _23 = add.chk copy _14, const i32 1   @62:13
+  _14 = copy _23   @62:9
+  goto bb10   @61:5
 
-bb8:
-  _23 = add copy _15, const i32 1   @60:3
-  _15 = copy _23   @60:3
-  goto bb4   @60:3
+bb10:
+  _24 = add copy _16, const i32 1   @60:3
+  _16 = copy _24   @60:3
+  goto bb6   @60:3
 }
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @elems.av:68:1 {

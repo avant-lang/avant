@@ -81,6 +81,7 @@ extern avant_str_fields(ref str) -> ref collects
 extern avant_str_from_i32_bytes(ref) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_split(ref str, ref str) -> ref collects
+extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.refs/join(_1: ref %Array(String)) -> ref str frame @refs.av:57:1 {
@@ -596,31 +597,36 @@ fn av.refs/recs() -> void frame @refs.av:128:1 {
   let _56: ref str
   let _57: ref str
   let _58: i32
-  let _59: u64
+  let _59: bool
   let _60: u64
-  let _61: ref %elems(refs.Rec) slot
-  let _62: ref %Array(refs.Rec)
-  let _63 (big): ref %Array(refs.Rec) slot
-  let _64: i32
-  let _65: ref %elems(refs.Rec)
-  let _66: i32
-  let _67: %refs.Rec
-  let _68: i32
-  let _69: ref %elems(refs.Rec)
-  let _70: i32
-  let _71: ref %elems(refs.Rec)
-  let _72: ref %refs.Node
-  let _73: ref str
+  let _61: u64
+  let _62: ref %elems(refs.Rec) slot
+  let _63: %refs.Rec
+  let _64: %refs.Rec
+  let _65: i32
+  let _66: bool
+  let _67: ref %Array(refs.Rec)
+  let _68 (big): ref %Array(refs.Rec) slot
+  let _69: i32
+  let _70: ref %elems(refs.Rec)
+  let _71: i32
+  let _72: %refs.Rec
+  let _73: i32
+  let _74: ref %elems(refs.Rec)
+  let _75: i32
+  let _76: ref %elems(refs.Rec)
+  let _77: ref %refs.Node
+  let _78: ref str
 
 bb0:
   _1 = zero   @128:1
   _5 = zero   @128:1
   _6 = zero   @128:1
   _46 = zero   @128:1
-  _61 = zero   @128:1
-  _63 = zero   @128:1
+  _62 = zero   @128:1
+  _68 = zero   @128:1
   gc.enter   @128:1
-  gc.roots _1, _5, _6, _46, _61, _63   @128:1
+  gc.roots _1, _5, _6, _46, _62, _68   @128:1
   _1 = call avant_alloc(const u64 48, const u32 3) collects   @129:8
   _2 = call av.refs/mk(const i32 1) collects   @129:9
   (*_1)[const i32 0] = copy _2 fresh   @129:9
@@ -718,32 +724,56 @@ bb0:
   _57 = copy _53.1   @147:9
   call printf(const str.7, copy _57) nocollect   @147:3
   _58 = const i32 3   @148:9
-  _59 = cast copy _58 to u64   @148:9
-  _60 = mul copy _59, const u64 24   @148:9
-  _61 = call avant_alloc(copy _60, const u32 3) collects   @148:9
-  _62 = call avant_alloc(const u64 16, const u32 1022) collects   @148:9
+  _59 = lt copy _58, const i32 0   @148:9
+  branch copy _59, bb1, bb2   @148:9
+
+bb1:
+  call avant_trap_negative(copy _58, const i32 0) nocollect   @148:9
+  unreachable   @148:9
+
+bb2:
+  _60 = cast copy _58 to u64   @148:9
+  _61 = mul copy _60, const u64 24   @148:9
+  _62 = call avant_alloc(copy _61, const u32 3) collects   @148:9
+  _63 = call av.refs/mk(const i32 0) collects   @148:27
+  _64 = copy _63   @148:9
+  _65 = const i32 0   @148:9
+  goto bb3   @148:9
+
+bb3:
+  _66 = lt copy _65, copy _58   @148:9
+  branch copy _66, bb4, bb5   @148:9
+
+bb4:
+  (*_62)[copy _65] = copy _64 fresh   @148:9
+  _65 = add copy _65, const i32 1   @148:9
+  goto bb3   @148:9
+
+bb5:
   barrier copy _62   @148:9
-  (*_62).0 = copy _61   @148:9
-  (*_62).1 = copy _58   @148:9
-  (*_62).2 = copy _58   @148:9
-  _63 = copy _62   @148:7
-  _64 = copy (*_63).1   @149:11
-  check.bounds const i32 2, copy _64   @149:11
-  _65 = copy (*_63).0   @149:11
-  _66 = copy (*_65)[const i32 2].0   @149:14
-  call printf(const str.8, copy _66) nocollect   @149:3
-  _67 = call av.refs/mk(const i32 9) collects   @150:12
-  _68 = copy (*_63).1   @150:6
-  check.bounds const i32 2, copy _68   @150:6
-  _69 = copy (*_63).0   @150:6
-  barrier copy _69   @150:10
-  (*_69)[const i32 2] = copy _67   @150:10
-  _70 = copy (*_63).1   @151:11
-  check.bounds const i32 2, copy _70   @151:11
-  _71 = copy (*_63).0   @151:11
-  _72 = copy (*_71)[const i32 2].2   @151:14
-  _73 = copy (*_72).1   @151:19
-  call printf(const str.7, copy _73) nocollect   @151:3
+  _67 = call avant_alloc(const u64 16, const u32 1022) collects   @148:9
+  barrier copy _67   @148:9
+  (*_67).0 = copy _62   @148:9
+  (*_67).1 = copy _58   @148:9
+  (*_67).2 = copy _58   @148:9
+  _68 = copy _67   @148:7
+  _69 = copy (*_68).1   @149:11
+  check.bounds const i32 2, copy _69   @149:11
+  _70 = copy (*_68).0   @149:11
+  _71 = copy (*_70)[const i32 2].0   @149:14
+  call printf(const str.8, copy _71) nocollect   @149:3
+  _72 = call av.refs/mk(const i32 9) collects   @150:12
+  _73 = copy (*_68).1   @150:6
+  check.bounds const i32 2, copy _73   @150:6
+  _74 = copy (*_68).0   @150:6
+  barrier copy _74   @150:10
+  (*_74)[const i32 2] = copy _72   @150:10
+  _75 = copy (*_68).1   @151:11
+  check.bounds const i32 2, copy _75   @151:11
+  _76 = copy (*_68).0   @151:11
+  _77 = copy (*_76)[const i32 2].2   @151:14
+  _78 = copy (*_77).1   @151:19
+  call printf(const str.7, copy _78) nocollect   @151:3
   gc.leave   @128:1
   return   @128:1
 }

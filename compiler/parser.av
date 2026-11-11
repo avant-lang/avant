@@ -2428,10 +2428,15 @@ pub class Parser {
     self.skip_newlines
     size = self.parse_expr
     self.skip_newlines
-    self.expect(tk_r_paren())
     e = Expr.new(ex_array_new(), tok.loc)
     e.elem_type = elem
     e.size_expr = size
+    if self.match_tok(tk_comma()) {
+      self.skip_newlines
+      e.elems.push(self.parse_expr)
+      self.skip_newlines
+    }
+    self.expect(tk_r_paren())
     e
   }
 
