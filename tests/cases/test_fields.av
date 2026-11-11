@@ -7,6 +7,11 @@ import backends
 //   - B5, field initialization: a field with no zero value is set by a
 //     default or by initialize on every path before it is read and before
 //     self escapes (tests/fixtures/objects/field_init.av runs the uses).
+//   - B6, the receiver: a field is written `self.name = ...` (a bare write
+//     is refused naming both ways out); a bare name resolves to a local or
+//     parameter, then a field of the receiver (read), then a method of the
+//     receiver (call), then a function; a bare call that fits a method and
+//     a function is refused.
 
 class FCase {
   pub tag: String = ""
@@ -60,6 +65,24 @@ fn init_cases: Array(FCase) {
   xs
 }
 
+fn receiver_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  // B6: the refused forms.
+  xs.push(refused("self-bare-write", "class C {\n  size: Int = 0\n  fn set(xs: Array(Int)) {\n    size = xs.size\n  }\n}\nfn main {\n  c = C.new\n  c.set([1])\n  puts(c.size)\n}\n", "size is a field of C; write self.size = ... to change the field, or choose another name for a local"))
+  xs.push(refused("self-bare-compound", "class C {\n  n: Int = 0\n  fn inc {\n    n += 1\n  }\n}\nfn main {\n  c = C.new\n  c.inc\n  puts(c.n)\n}\n", "n is a field of C; write self.n = ..."))
+  xs.push(refused("self-bare-struct-write", "struct P {\n  x: Int\n  fn bump {\n    x = x + 1\n  }\n}\nfn main {\n  p = P { x: 1 }\n  p.bump\n  puts(p.x)\n}\n", "x is a field of P; write self.x = ..."))
+  xs.push(refused("self-bare-ambiguous", "fn twice(n: Int): Int {\n  n * 2\n}\nclass C {\n  fn twice(n: Int): Int {\n    n + n\n  }\n  fn run: Int {\n    twice(3)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "twice is both a method of C and a function; write self.twice(...) for the method, or qualify the function (module.twice(...))"))
+  xs.push(refused("self-bare-prelude", "class C {\n  fn puts(s: String) {\n  }\n  fn run {\n    puts(\"x\")\n  }\n}\nfn main {\n  C.new.run\n}\n", "puts is both a method of C and a function"))
+  xs.push(refused("self-bare-in-lambda", "class C {\n  fn one: Int {\n    1\n  }\n  fn run: Int {\n    f = { |n: Int| n + one }\n    f(1)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "a lambda cannot capture the method receiver"))
+  // B6: the accepted forms.
+  xs.push(accepted("self-bare-calls", "class Counter {\n  value: Int = 0\n  fn inc: Int {\n    self.value += 1\n    value\n  }\n  fn add(k: Int): Int {\n    self.value += k\n    value\n  }\n  fn twice: Int {\n    inc\n    inc()\n    add(10)\n  }\n}\nfn main {\n  puts(Counter.new.twice)\n}\n", "12\n"))
+  xs.push(accepted("self-param-shadows-field", "class C {\n  value: Int = 5\n  fn initialize(value: Int) {\n    puts(value)\n    puts(self.value)\n    self.value = value\n  }\n}\nfn main {\n  puts(C.new(7).value)\n}\n", "7\n5\n7\n"))
+  xs.push(accepted("self-arity-picks", "fn scale(a: Int, b: Int): Int {\n  a * b\n}\nclass C {\n  k: Int = 3\n  fn scale(a: Int): Int {\n    a + k\n  }\n  fn run: Int {\n    scale(2) + scale(2, 5)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "15\n"))
+  xs.push(accepted("self-local-fn-wins", "class C {\n  fn one: Int {\n    1\n  }\n  fn run: Int {\n    one: fn(): Int = { || 9 }\n    one()\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "9\n"))
+  xs.push(accepted("self-struct-bare-call", "struct V {\n  x: Int\n  y: Int\n  fn sum: Int {\n    x + y\n  }\n  fn twice: Int {\n    sum * 2\n  }\n}\nfn main {\n  puts(V { x: 1, y: 2 }.twice)\n}\n", "6\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -94,7 +117,11 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_fields.av")
   if compiler = env_get("AVANT_COMPILER") {
-    run_cases(c, compiler, scratch_dir(), init_cases())
+    all = init_cases()
+    for f in receiver_cases() {
+      all.push(f)
+    }
+    run_cases(c, compiler, scratch_dir(), all)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

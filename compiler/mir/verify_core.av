@@ -312,27 +312,27 @@ pub class MVerifier {
   }
 
   pub fn cast_ok(src: Int, dst: Int): Bool {
-    ts = self.ts
-    if ts.is_int(src) && (ts.is_int(dst) || dst == mt_f64()) {
+    tys = self.ts
+    if tys.is_int(src) && (tys.is_int(dst) || dst == mt_f64()) {
       return true
     }
-    if src == mt_f64() && ts.is_int(dst) {
+    if src == mt_f64() && tys.is_int(dst) {
       return true
     }
     // A Float32 at the C boundary (Stage 29 W1b): f64 <-> f32 only.
-    if (src == mt_f64() && ts.is_f32(dst)) || (ts.is_f32(src) && dst == mt_f64()) {
+    if (src == mt_f64() && tys.is_f32(dst)) || (tys.is_f32(src) && dst == mt_f64()) {
       return true
     }
-    if src == mt_bool() && ts.is_int(dst) {
+    if src == mt_bool() && tys.is_int(dst) {
       return true
     }
-    if ts.is_refkind(src) && ts.is_refkind(dst) {
+    if tys.is_refkind(src) && tys.is_refkind(dst) {
       return src == mt_ref() || dst == mt_ref()
     }
-    if ts.is_ptr(src) && ts.is_ptr(dst) {
+    if tys.is_ptr(src) && tys.is_ptr(dst) {
       return src == mt_ptr() || dst == mt_ptr()
     }
-    ts.is_refkind(src) && ts.is_ptr(dst)
+    tys.is_refkind(src) && tys.is_ptr(dst)
   }
 
   // struct, union, fnval rvalues (4.3).
@@ -452,33 +452,33 @@ pub class MVerifier {
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        used = self.used
-        used.clear
-        mir_stmt_reads(st, used)
+        uses = self.used
+        uses.clear
+        mir_stmt_reads(st, uses)
         if p = st.place {
-          used.push(p.local)
+          uses.push(p.local)
         }
         if r = st.rv {
           if p = r.place {
-            used.push(p.local)
+            uses.push(p.local)
           }
         }
         if st.dest >= 0 {
-          used.push(st.dest)
+          uses.push(st.dest)
         }
         x = 0
         while x < st.locals.size {
-          used.push(st.locals[x])
+          uses.push(st.locals[x])
           x += 1
         }
-        self.check_used(used, b, j, st.loc)
+        self.check_used(uses, b, j, st.loc)
         j += 1
       }
       if t = blk.term {
-        used = self.used
-        used.clear
-        mir_term_reads(f, t, used)
-        self.check_used(used, b, -1, t.loc)
+        uses = self.used
+        uses.clear
+        mir_term_reads(f, t, uses)
+        self.check_used(uses, b, -1, t.loc)
       }
       b += 1
     }

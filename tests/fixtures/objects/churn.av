@@ -23,7 +23,7 @@ class Leaf {
 
   fn initialize(v: Int) {
     self.v = v
-    s = "leaf-${v}"
+    self.s = "leaf-${v}"
   }
 }
 
@@ -34,9 +34,9 @@ struct Slot {
 
   // Stores through self (barrier_at).
   fn put(l: Leaf, n: String) {
-    leaf = l
+    self.leaf = l
     self.name = n
-    k = l.v
+    self.k = l.v
   }
 
   // Allocates while self points into a heap object: self is a slot and
@@ -47,8 +47,8 @@ struct Slot {
     while r < rounds {
       t = Leaf.new(r)
       sum = sum &+ t.s.size
-      leaf = t
-      name = "refill-${r}"
+      self.leaf = t
+      self.name = "refill-${r}"
       r = r + 1
     }
     sum &+ k
@@ -64,14 +64,14 @@ class Holder {
 
   fn initialize(id: Int) {
     self.id = id
-    direct = Leaf.new(id)
+    self.direct = Leaf.new(id)
     self.slot = Slot { k: id, leaf: direct, name: "" }
   }
 
   // Implicit field store.
   fn adopt(l: Leaf) {
-    direct = l
-    note = "adopted-${l.v}"
+    self.direct = l
+    self.note = "adopted-${l.v}"
   }
 }
 
