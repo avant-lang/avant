@@ -112,6 +112,37 @@ pub fn (lw: MirLower) args_then_recv(args: Array(Expr), recv: Expr): Array(MOper
   out
 }
 
+// `h.delete(k)` as a statement, whose value nobody reads (W4b2: delete
+// gives the value it removed): the plain delete, with no found flag and
+// no value; false when e is not such a call.
+pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
+  if e.callee != "delete" || e.args.size != 1 {
+    return false
+  }
+  if bl = e.block {
+    return false
+  }
+  if recv = e.receiver {
+    if ht = recv.ty {
+      if !ht.is_hash || e.resolved.size > 0 {
+        return false
+      }
+      f = "avant_hash_del"
+      if mir_hash_key_int(ht) {
+        f = "avant_hash_del_i32k"
+      }
+      ops = lw.args_then_recv(e.args, recv)
+      if lw.failed {
+        return true
+      }
+      lw.at(e.loc)
+      lw.lw_b.call(-1, f, ops)
+      return true
+    }
+  }
+  false
+}
+
 // The members of Hash (the old back end).
 pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b

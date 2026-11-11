@@ -10,15 +10,28 @@
 /* Every trap (Stage 29 W4b2, D295 R16) flushes the program's stdout
  * first, so the output a program printed before the trap comes before
  * its message, prints "avant runtime: WHAT", then " at FILE:LINE:COL"
- * when the compiler named the site, and exits with status 1. The site is
- * set by avant_trap_at, which the generated code calls in the trap's cold
- * block just before the trap (a program built by an older compiler, and a
- * trap the runtime raises inside one of its own functions, print no
- * site). */
+ * when the site is known, and exits with status 1. Generated code calls
+ * the _at form of each trap, which takes the site's text as its last
+ * argument (one noreturn call in the cold block, as before); the plain
+ * forms stay for the trap calls inside the runtime's own functions and
+ * for a program built by an older compiler (the seed), and print no
+ * site. */
 static __thread const char *g_trap_loc;
 
-void avant_trap_at(const char *loc) {
-  g_trap_loc = loc;
+/* The program's trap texts, emitted by the compiler (@__avant_trap_sites);
+ * a program without one has none (the weak reference is null). */
+extern const char *const __avant_trap_sites[] __attribute__((weak));
+
+static const char *site_text(int32_t site) {
+  if (!__avant_trap_sites || site < 0) {
+    return NULL;
+  }
+  return __avant_trap_sites[site];
+}
+
+static const char *site_or(int32_t site) {
+  const char *t = site_text(site);
+  return t ? t : "?";
 }
 
 static void trap_head(void) {
@@ -34,27 +47,34 @@ __attribute__((noreturn)) static void trap_tail(void) {
   exit(1);
 }
 
-/* Integer arithmetic that has no correct value (Stage 29 W4b2): what is
- * op (0 +, 1 -, 2 *, 3 /, 4 %, 5 -x) on type (0 Int, 1 Int64, 2 UInt64,
- * 3 another integer width), overflowing (div_zero 0) or dividing by zero
- * (div_zero 1). */
-void avant_trap_arith(int32_t op, int32_t type, int32_t div_zero) {
-  static const char *ops[] = {"+", "-", "*", "/", "%", "-x"};
-  static const char *types[] = {"Int", "Int64", "UInt64", "an integer"};
-  int o = op >= 0 && op <= 5 ? op : 0;
-  int t = type >= 0 && type <= 3 ? type : 3;
+/* Integer overflow and division by zero raised by the generated code
+ * (Stage 29 W4b2, D295 R16): fn names the function and where it starts
+ * ("Heap.pop (heap.av:12:3)"). Every check of a function shares one cold
+ * block (identical bounds traps stay identical), so LLVM can merge and
+ * fold them as before; the function is the site it can name without
+ * costing the hot path. */
+void avant_trap_overflow_in(int32_t fn) {
   trap_head();
-  if (div_zero) {
-    fprintf(stderr, "division by zero in %s %s", types[t], ops[o]);
-  } else {
-    fprintf(stderr, "integer overflow in %s %s", types[t], ops[o]);
-  }
+  fprintf(stderr, "integer overflow in %s", site_or(fn));
+  trap_tail();
+}
+
+void avant_trap_bounds_in(int32_t index, int32_t size, int32_t fn) {
+  trap_head();
+  fprintf(stderr, "index %d out of bounds (size %d) in %s", index, size, site_or(fn));
+  trap_tail();
+}
+
+void avant_trap_div_zero_in(int32_t fn) {
+  trap_head();
+  fprintf(stderr, "division by zero in %s", site_or(fn));
   trap_tail();
 }
 
 /* pop on an empty Array (Stage 29 W4b2: it said "index -1 out of bounds"). */
-void avant_trap_empty(int32_t what) {
+void avant_trap_empty_at(int32_t what, int32_t site) {
   static const char *names[] = {"pop on an empty Array", "shift on an empty Array"};
+  g_trap_loc = site_text(site);
   trap_head();
   fputs(names[what == 1 ? 1 : 0], stderr);
   trap_tail();
@@ -319,7 +339,8 @@ __attribute__((constructor)) static void avant_cpu_check(void) {
 
 /* main's (or run's) Int result outside 0..255 (Stage 29 W4b2, D295 R14):
  * the OS keeps only its low byte, so 256 failures would read as success. */
-void avant_trap_exit_status(int32_t status) {
+void avant_trap_exit_status_at(int32_t status, int32_t site) {
+  g_trap_loc = site_text(site);
   trap_head();
   fprintf(stderr, "exit status %d out of range (0..255)", status);
   trap_tail();
@@ -327,8 +348,56 @@ void avant_trap_exit_status(int32_t status) {
 
 /* A C function declared `: String` that returned NULL (Stage 29 W4b2,
  * D295 R15); `String?` reads NULL as nil. */
-void avant_trap_c_null(const char *name) {
+void avant_trap_c_null_at(const char *name, int32_t site) {
+  g_trap_loc = site_text(site);
   trap_head();
   fprintf(stderr, "C function %s returned NULL for String (declare String?)", name);
   trap_tail();
+}
+
+/* The sited forms of the traps above that the generated code raises
+ * (Stage 29 W4b2): the site, then the trap. */
+void avant_trap_bounds_at(int32_t index, int32_t size, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_bounds(index, size);
+}
+
+void avant_trap_div_zero_at(int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_div_zero();
+}
+
+void avant_trap_overflow_at(int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_overflow();
+}
+
+void avant_trap_shift_at(int64_t amount, int32_t kind, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_shift(amount, kind);
+}
+
+void avant_trap_to_i_at(double x, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_to_i(x);
+}
+
+void avant_trap_c_range_at(int64_t value, int32_t kind, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_c_range(value, kind);
+}
+
+void avant_trap_convert_at(int64_t value, int32_t kind, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_convert(value, kind);
+}
+
+void avant_trap_byte_at(int32_t value, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_byte(value);
+}
+
+void avant_trap_negative_at(int32_t n, int32_t what, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_negative(n, what);
 }

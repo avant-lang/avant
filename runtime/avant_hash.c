@@ -576,8 +576,8 @@ int32_t avant_hash_take_i32k_i32(void *hp, int32_t key, int32_t *found) {
   return v;
 }
 
-/* The seed's delete (its compiler lowers the builtin to these); removed
- * once the seed has the take forms (W4b2). */
+/* delete as a statement, whose value nobody reads (W4b2: and the
+ * seed's delete). */
 void avant_hash_del(void *hp, const char *key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;

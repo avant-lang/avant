@@ -533,7 +533,12 @@ pub class MirLower {
       if self.lw_main {
         sret = mt_i32()
       }
-      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      // The source name a trap prints (W4b2): Owner.name for a method.
+      sname = fnn.name
+      if fnn.owner.size > 0 {
+        sname = "${fnn.owner}.${fnn.name}"
+      }
+      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), sname)
       self.lw_cl.base = self.lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external
