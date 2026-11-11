@@ -249,6 +249,8 @@ fn label(v: Int | String): Int {
 
 A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
 
+An optional reference costs nothing over the reference: `T?` where `T` is a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, and `nil` is the null pointer, in a field, a local, an array element, a parameter or a result (`left: Node?` is 8 bytes). Any other union holds a tag and one slot per member that is not `nil`.
+
 Failure is a union member. There is no unwind. See [Errors](#errors).
 
 ### Arrays
@@ -929,6 +931,8 @@ fn main {
   puts(math.sqrt(4.0))
 }
 ```
+
+`String?` in a `fun` signature is a C `char *` that may be NULL: a NULL result reads as `nil`, and passing `nil` passes NULL (`fun getenv(name: String): String?`).
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
