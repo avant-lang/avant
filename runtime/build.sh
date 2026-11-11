@@ -5,7 +5,14 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cc=${CC:-cc}
 mkdir -p "$root/build"
-cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
+# Code placement (Stage 29 WP, O186): every runtime function starts on a
+# 64-byte boundary and loops on 32, as the compiler places a program's own
+# code (runtime/avant_llvm.c, place_functions). gcc's default is 16 for
+# both, so the runtime growing anywhere moved the hot functions linked
+# after it by 16-byte steps, and with them tasks' times (up to 14%, the
+# WP probe; tools/placement-probe.sh reruns it).
+place="-falign-functions=64 -falign-loops=32"
+cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $place -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
 compile() {
   "$cc" -c $cflags -o "$2" "$1"
