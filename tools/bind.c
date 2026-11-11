@@ -285,6 +285,12 @@ static void emit_fun(Emit *e, CXCursor cursor) {
   if (uret.kind != CXType_Void) {
     fputs(": ", e->out);
     emit_type(e, ret);
+    /* A char * result may be NULL ("absent", "failed"): String? reads it
+     * as nil, where a String result traps on NULL (Stage 29 W4b2, D295
+     * R15). Parameters stay String. */
+    if (uret.kind == CXType_Pointer && is_char_type(unwrap(clang_getPointeeType(uret)))) {
+      fputs("?", e->out);
+    }
   }
   fputc('\n', e->out);
 }

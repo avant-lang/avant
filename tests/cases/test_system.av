@@ -10,6 +10,7 @@ import backends
 // trap, exit 1 and name the trap on stderr.
 //   - file_read, file_write and dir_list give their result or an IoError; process_run and process_run_out the exit status or a ProcessError, with PATH lookup (R12)
 //   - main's (or run's) Int result outside 0..255 traps; inside it is the exit status (R14)
+//   - a C function declared : String that returns NULL traps naming it; String? reads NULL as nil (R15)
 
 class SCase {
   pub tag: String = ""
@@ -80,6 +81,14 @@ fn exit_cases: Array(SCase) {
   xs
 }
 
+fn cnull_cases: Array(SCase) {
+  xs: Array(SCase) = []
+  xs.push(accepted("cnull-present", "lib c {\n  fun getenv(name: String): String\n}\nfn main {\n  puts(c.getenv(\"PATH\").size > 0)\n}\n", "true\n"))
+  xs.push(trapped("cnull-trap", "lib c {\n  fun getenv(name: String): String\n}\nfn main {\n  puts(\"before\")\n  v = c.getenv(\"NO_SUCH_VAR_W4B2\")\n  puts(v.size)\n}\n", "before\n", "avant runtime: C function c.getenv returned NULL for String (declare String?)"))
+  xs.push(accepted("cnull-optional", "lib c {\n  fun getenv(name: String): String?\n}\nfn main {\n  if v = c.getenv(\"NO_SUCH_VAR_W4B2\") {\n    puts(v)\n  } else {\n    puts(\"nil\")\n  }\n  puts(c.getenv(\"NO_SUCH_VAR_W4B2\") ?? \"fallback\")\n}\n", "nil\nfallback\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -129,6 +138,9 @@ fn test_main(c: Checks) {
     }
     for f_exit in exit_cases() {
       all.push(f_exit)
+    }
+    for f_cnull in cnull_cases() {
+      all.push(f_cnull)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

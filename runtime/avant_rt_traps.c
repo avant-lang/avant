@@ -259,3 +259,10 @@ void avant_trap_exit_status(int32_t status) {
   fprintf(stderr, "avant runtime: exit status %d out of range (0..255)\n", status);
   exit(1);
 }
+
+/* A C function declared `: String` that returned NULL (Stage 29 W4b2,
+ * D295 R15); `String?` reads NULL as nil. */
+void avant_trap_c_null(const char *name) {
+  fprintf(stderr, "avant runtime: C function %s returned NULL for String (declare String?)\n", name);
+  exit(1);
+}

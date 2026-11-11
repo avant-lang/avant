@@ -1013,7 +1013,7 @@ fn main {
 }
 ```
 
-`String?` in a `fun` signature is a C `char *` that may be NULL: a NULL result reads as `nil`, and passing `nil` passes NULL (`fun getenv(name: String): String?`).
+`String?` in a `fun` signature is a C `char *` that may be NULL: a NULL result reads as `nil`, and passing `nil` passes NULL (`fun getenv(name: String): String?`). A result declared `String` is a promise that the string is there: a NULL one traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
@@ -1025,7 +1025,7 @@ lib img {
 }
 ```
 
-`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. A `char *` result is bound as `String?` (C returns NULL for "absent" or "failed"); a `char *` parameter is `String`. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
 
 ### Layouts and Ptr
 

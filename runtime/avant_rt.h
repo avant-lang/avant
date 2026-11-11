@@ -416,6 +416,7 @@ __attribute__((noreturn, cold)) void avant_trap_precision(int32_t prec);
 __attribute__((noreturn, cold)) void avant_trap_slice(int32_t start, int32_t stop, int32_t size);
 __attribute__((noreturn, cold)) void avant_trap_negative(int32_t n, int32_t what);
 __attribute__((noreturn, cold)) void avant_trap_exit_status(int32_t status);
+__attribute__((noreturn, cold)) void avant_trap_c_null(const char *name);
 int64_t avant_checked_add_i64(int64_t a, int64_t b);
 int64_t avant_checked_sub_i64(int64_t a, int64_t b);
 int64_t avant_checked_mul_i64(int64_t a, int64_t b);
