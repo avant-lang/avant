@@ -8,15 +8,11 @@ pub fn ch_is_digit(c: Int): Bool {
 }
 
 pub fn ch_is_alpha(c: Int): Bool {
-  if c >= 65 {
-    if c <= 90 {
-      return true
-    }
+  if c >= 65 && c <= 90 {
+    return true
   }
-  if c >= 97 {
-    if c <= 122 {
-      return true
-    }
+  if c >= 97 && c <= 122 {
+    return true
   }
   false
 }
@@ -39,15 +35,11 @@ pub fn ch_is_hex(c: Int): Bool {
   if ch_is_digit(c) {
     return true
   }
-  if c >= 97 {
-    if c <= 102 {
-      return true
-    }
+  if c >= 97 && c <= 102 {
+    return true
   }
-  if c >= 65 {
-    if c <= 70 {
-      return true
-    }
+  if c >= 65 && c <= 70 {
+    return true
   }
   false
 }
@@ -75,8 +67,7 @@ pub class Lexer {
     self.pos = 0
     self.line = 1
     self.column = 1
-    q: Array(Token) = []
-    self.queue = q
+    self.queue = []
     self.qpos = 0
     im = Hash(String, String).new
     self.intern_map = im
@@ -133,12 +124,12 @@ pub class Lexer {
     if self.at_end {
       return
     }
-    self.pos = self.pos + 1
+    self.pos += 1
     if c == 10 {
-      self.line = self.line + 1
+      self.line += 1
       self.column = 1
     } else {
-      self.column = self.column + 1
+      self.column += 1
     }
   }
 
@@ -160,40 +151,28 @@ pub class Lexer {
     if self.peek == 47 {
       self.bump
     }
-    if self.peek == 32 {
-      if self.peek_at(1) == 102 {
-        if self.peek_at(2) == 105 {
-          if self.peek_at(3) == 108 {
-            if self.peek_at(4) == 101 {
-              if self.peek_at(5) == 58 {
-                if self.peek_at(6) == 32 {
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  start = self.pos
-                  while true {
-                    if self.at_end {
-                      break
-                    }
-                    if self.peek == 10 {
-                      break
-                    }
-                    self.bump
-                  }
-                  self.path = self.intern_str(str_slice(self.source.text, start, self.pos))
-                  self.line = 0
-                  self.column = 1
-                  return
-                }
-              }
-            }
-          }
+    if self.peek == 32 && self.peek_at(1) == 102 && self.peek_at(2) == 105 && self.peek_at(3) == 108 && self.peek_at(4) == 101 && self.peek_at(5) == 58 && self.peek_at(6) == 32 {
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      start = self.pos
+      while true {
+        if self.at_end {
+          break
         }
+        if self.peek == 10 {
+          break
+        }
+        self.bump
       }
+      self.path = self.intern_str(str_slice(self.source.text, start, self.pos))
+      self.line = 0
+      self.column = 1
+      return
     }
     while true {
       if self.at_end {
@@ -230,7 +209,7 @@ pub class Lexer {
 
   pub fn queue_take: Token {
     t = self.queue[self.qpos]
-    self.qpos = self.qpos + 1
+    self.qpos += 1
     t
   }
 
@@ -248,10 +227,8 @@ pub class Lexer {
 
   pub fn exponent_ahead: Bool {
     c = self.peek
-    if c != 101 {
-      if c != 69 {
-        return false
-      }
+    if c != 101 && c != 69 {
+      return false
     }
     n = self.peek_next
     if ch_is_digit(n) {
@@ -264,31 +241,23 @@ pub class Lexer {
   }
 
   pub fn read_int_suffix: String {
-    if self.peek == 117 {
-      if self.peek_next == 54 {
-        if self.peek_at(2) == 52 {
-          if ch_is_ident_continue(self.peek_at(3)) {
-            return ""
-          }
-          self.bump
-          self.bump
-          self.bump
-          return "u64"
-        }
+    if self.peek == 117 && self.peek_next == 54 && self.peek_at(2) == 52 {
+      if ch_is_ident_continue(self.peek_at(3)) {
+        return ""
       }
+      self.bump
+      self.bump
+      self.bump
+      return "u64"
     }
-    if self.peek == 105 {
-      if self.peek_next == 54 {
-        if self.peek_at(2) == 52 {
-          if ch_is_ident_continue(self.peek_at(3)) {
-            return ""
-          }
-          self.bump
-          self.bump
-          self.bump
-          return "i64"
-        }
+    if self.peek == 105 && self.peek_next == 54 && self.peek_at(2) == 52 {
+      if ch_is_ident_continue(self.peek_at(3)) {
+        return ""
       }
+      self.bump
+      self.bump
+      self.bump
+      return "i64"
     }
     ""
   }
@@ -300,8 +269,7 @@ pub class Lexer {
       if n == 120 || n == 88 {
         self.bump
         self.bump
-        if ch_is_hex(self.peek) {
-        } else {
+        if !ch_is_hex(self.peek) {
           return self.fail_tok(self.here, "hex literal needs a digit after 0x")
         }
         while ch_is_hex(self.peek) {
@@ -319,13 +287,11 @@ pub class Lexer {
       self.bump
     }
     is_float = false
-    if self.peek == 46 {
-      if ch_is_digit(self.peek_next) {
-        is_float = true
+    if self.peek == 46 && ch_is_digit(self.peek_next) {
+      is_float = true
+      self.bump
+      while ch_is_digit(self.peek) {
         self.bump
-        while ch_is_digit(self.peek) {
-          self.bump
-        }
       }
     }
     if self.exponent_ahead {
@@ -352,7 +318,7 @@ pub class Lexer {
 
   pub fn read_escape: Int {
     if self.at_end {
-      dummy = self.fail_tok(self.here, "unterminated string escape")
+      self.fail_tok(self.here, "unterminated string escape")
       return 0
     }
     c = self.peek
@@ -377,7 +343,7 @@ pub class Lexer {
         36
       }
       else {
-        dummy = self.fail_tok(self.here, "unknown string escape \\" + chr(c))
+        self.fail_tok(self.here, "unknown string escape \\" + chr(c))
         0
       }
     }
@@ -387,7 +353,7 @@ pub class Lexer {
     buf = buf_new()
     while true {
       if self.at_end {
-        dummy = self.fail_tok(self.here, "unterminated string")
+        self.fail_tok(self.here, "unterminated string")
         self.str_frag = ""
         self.str_kind = 2
         return
@@ -400,7 +366,7 @@ pub class Lexer {
         return
       }
       if c == 10 {
-        dummy = self.fail_tok(self.here, "unterminated string")
+        self.fail_tok(self.here, "unterminated string")
         self.str_frag = ""
         self.str_kind = 2
         return
@@ -435,10 +401,8 @@ pub class Lexer {
   }
 
   pub fn is_raw_string_start: Bool {
-    if self.peek == 114 {
-      if self.peek_next == 34 {
-        return true
-      }
+    if self.peek == 114 && self.peek_next == 34 {
+      return true
     }
     false
   }
@@ -447,7 +411,7 @@ pub class Lexer {
     buf = buf_new()
     while true {
       if self.at_end {
-        dummy = self.fail_tok(self.here, "unterminated string")
+        self.fail_tok(self.here, "unterminated string")
         self.str_frag = ""
         self.str_kind = 2
         return
@@ -460,7 +424,7 @@ pub class Lexer {
         return
       }
       if c == 10 {
-        dummy = self.fail_tok(self.here, "unterminated string")
+        self.fail_tok(self.here, "unterminated string")
         self.str_frag = ""
         self.str_kind = 2
         return
@@ -506,7 +470,7 @@ pub class Lexer {
       }
       self.skip_spaces
       if self.at_end {
-        dummy = self.fail_tok(self.here, "unterminated string interpolation")
+        self.fail_tok(self.here, "unterminated string interpolation")
         return tokens
       }
       if self.peek == 10 {
@@ -519,30 +483,27 @@ pub class Lexer {
             last_nl = true
           }
         }
-        if last_nl {
-        } else {
+        if !last_nl {
           tokens.push(Token.new(tk_newline(), loc, ""))
         }
         continue
       }
-      if self.peek == 47 {
-        if self.peek_next == 47 {
-          self.skip_line_comment
-          continue
-        }
+      if self.peek == 47 && self.peek_next == 47 {
+        self.skip_line_comment
+        continue
       }
       tok = self.read_token
       if tok.kind == tk_l_brace() {
-        depth = depth + 1
+        depth += 1
         tokens.push(tok)
       } else if tok.kind == tk_r_brace() {
         if depth == 0 {
           return tokens
         }
-        depth = depth - 1
+        depth -= 1
         tokens.push(tok)
       } else if tok.kind == tk_interp_open() {
-        dummy = self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
+        self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
         return tokens
       } else {
         tokens.push(tok)
@@ -567,7 +528,7 @@ pub class Lexer {
         i = 0
         while i < expr.size {
           tokens.push(expr[i])
-          i = i + 1
+          i += 1
         }
         tokens.push(Token.new(tk_interp_close(), self.here, self.str_frag))
         return tokens
@@ -576,7 +537,7 @@ pub class Lexer {
         i = 0
         while i < expr.size {
           tokens.push(expr[i])
-          i = i + 1
+          i += 1
         }
         tokens.push(Token.new(tk_interp_mid(), self.here, self.str_frag))
       }
@@ -604,7 +565,7 @@ pub class Lexer {
       i = 0
       while i < rest.size {
         self.queue_push(rest[i])
-        i = i + 1
+        i += 1
       }
       return first
     }
@@ -816,20 +777,16 @@ pub class Lexer {
   // compile, run, and dump use tokenize. format uses tokenize_format.
   pub fn tokenize: Array(Token) {
     tokens: Array(Token) = []
-    last_kind = 0 - 1
+    last_kind = -1
     while true {
       self.skip_spaces
-      if self.at_end {
-        if self.queue_empty {
-          break
-        }
+      if self.at_end && self.queue_empty {
+        break
       }
       if self.queue_empty {
-        if self.peek == 47 {
-          if self.peek_next == 47 {
-            self.skip_line_comment
-            continue
-          }
+        if self.peek == 47 && self.peek_next == 47 {
+          self.skip_line_comment
+          continue
         }
         if self.peek == 10 {
           loc = self.here
@@ -845,11 +802,8 @@ pub class Lexer {
         t = self.read_token
         if t.kind == tk_eof() {
           if self.new_err_since(mark) {
-            if self.pos == before {
-              if self.at_end {
-              } else {
-                self.bump
-              }
+            if self.pos == before && !self.at_end {
+              self.bump
             }
             continue
           }
@@ -876,11 +830,10 @@ pub class Lexer {
       }
       if c == 32 {
       } else if c == 9 {
-      } else if c == 13 {
-      } else {
+      } else if c != 13 {
         return false
       }
-      i = i - 1
+      i -= 1
     }
     true
   }
@@ -891,7 +844,7 @@ pub class Lexer {
       if self.source.text[i - 1] == 10 {
         return i
       }
-      i = i - 1
+      i -= 1
     }
     0
   }
@@ -986,7 +939,7 @@ pub class Lexer {
       i = 0
       while i < rest.size {
         self.queue_push(rest[i])
-        i = i + 1
+        i += 1
       }
       return Token.new(tk_interp_open(), loc, raw_open)
     }
@@ -1002,7 +955,7 @@ pub class Lexer {
       }
       self.skip_spaces
       if self.at_end {
-        dummy = self.fail_tok(self.here, "unterminated string interpolation")
+        self.fail_tok(self.here, "unterminated string interpolation")
         return tokens
       }
       if self.peek == 10 {
@@ -1011,28 +964,26 @@ pub class Lexer {
         tokens.push(Token.new(tk_newline(), loc, ""))
         continue
       }
-      if self.peek == 47 {
-        if self.peek_next == 47 {
-          tok = self.read_format_comment
-          tokens.push(tok)
-          continue
-        }
+      if self.peek == 47 && self.peek_next == 47 {
+        tok = self.read_format_comment
+        tokens.push(tok)
+        continue
       }
       tok = self.read_token
       if self.has_err {
         return tokens
       }
       if tok.kind == tk_l_brace() {
-        depth = depth + 1
+        depth += 1
         tokens.push(tok)
       } else if tok.kind == tk_r_brace() {
         if depth == 0 {
           return tokens
         }
-        depth = depth - 1
+        depth -= 1
         tokens.push(tok)
       } else if tok.kind == tk_interp_open() {
-        dummy2 = self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
+        self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
         return tokens
       } else {
         tokens.push(tok)
@@ -1060,7 +1011,7 @@ pub class Lexer {
       i = 0
       while i < expr.size {
         tokens.push(expr[i])
-        i = i + 1
+        i += 1
       }
       if self.str_kind == 0 {
         tokens.push(Token.new(tk_interp_close(), self.here, raw))
@@ -1083,21 +1034,17 @@ pub class Lexer {
         break
       }
       self.skip_spaces
-      if self.at_end {
-        if self.queue_empty {
-          break
-        }
+      if self.at_end && self.queue_empty {
+        break
       }
       if self.queue_empty {
         if self.at_end {
           break
         }
-        if self.peek == 47 {
-          if self.peek_next == 47 {
-            tok = self.read_format_comment
-            tokens.push(tok)
-            continue
-          }
+        if self.peek == 47 && self.peek_next == 47 {
+          tok = self.read_format_comment
+          tokens.push(tok)
+          continue
         }
         if self.peek == 10 {
           loc = self.here

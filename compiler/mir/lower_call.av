@@ -25,12 +25,10 @@ pub fn mir_other_builtin(name: String): Bool {
   names = ["spawn", "avant_gate_new", "avant_gate_lock", "avant_gate_unlock", "avant_gate_wait", "avant_gate_signal", "avant_gate_broadcast"]
   // W8b: lower_task.av lowers these in their checked forms first; what
   // reaches this list is a form the checker would not accept.
-  i = 0
-  while i < names.size {
-    if str_eq(names[i], name) {
+  for nm in names {
+    if nm == name {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -45,10 +43,10 @@ pub fn (lw: MirLower) lower_args(args: Array(Expr)): Array(MOperand) {
     j = i + 1
     while j < args.size {
       o = lw.snap(o, args[j])
-      j = j + 1
+      j += 1
     }
     out.push(o)
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -57,11 +55,11 @@ pub fn (lw: MirLower) lower_args(args: Array(Expr)): Array(MOperand) {
 pub fn (lw: MirLower) call_to(ty: Int, callee: String, args: Array(MOperand)): MOperand {
   b = lw.lw_b
   if ty == mt_void() {
-    dummy = b.call(-1, callee, args)
+    b.call(-1, callee, args)
     return b.c_i32(0)
   }
   t = b.temp(ty)
-  dummy2 = b.call(t, callee, args)
+  b.call(t, callee, args)
   b.copy_local(t)
 }
 
@@ -75,7 +73,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   if e.type_call {
-    if str_eq(e.resolved, "Regex__compile") && e.args.size >= 2 {
+    if e.resolved == "Regex__compile" && e.args.size >= 2 {
       if got0 = lw.lower_re2c_compile(e) {
         return got0
       }
@@ -106,13 +104,13 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   if recv = e.receiver {
-    if recv.kind == ex_name() && str_eq(recv.ident, "String") && str_eq(e.callee, "from_utf8") && e.args.size == 1 {
+    if recv.kind == ex_name() && recv.ident == "String" && e.callee == "from_utf8" && e.args.size == 1 {
       // W8a: String.from_utf8(bytes) (builtins.av emit_from_utf8): the
       // runtime's string with an ok flag, as String?.
       return lw.lower_opt_cstr(e, "avant_str_from_utf8")
     }
     if rt = recv.ty {
-      if str_eq(e.callee, "or") && rt.is_nilable && e.args.size == 1 {
+      if e.callee == "or" && rt.is_nilable && e.args.size == 1 {
         if t = e.ty {
           return lw.lower_coalesce(recv, e.args[0], t, e.loc)
         }
@@ -126,13 +124,11 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           }
         }
       }
-      if (mir_is_str_ty(rt) || rt.is_buf) && str_eq(e.callee, "get") {
+      if (mir_is_str_ty(rt) || rt.is_buf) && e.callee == "get" {
         return lw.lower_get(e, recv, rt, e.args)
       }
-      if rt.is_integer || rt.is_float {
-        if e.args.size == 0 {
-          return lw.member(recv, rt, e.callee, e)
-        }
+      if (rt.is_integer || rt.is_float) && e.args.size == 0 {
+        return lw.member(recv, rt, e.callee, e)
       }
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)
@@ -161,23 +157,23 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     return zero
   }
   c = e.callee
-  if str_eq(c, "puts") || str_eq(c, "puts_u") {
+  if c == "puts" || c == "puts_u" {
     if e.args.size == 1 {
-      return lw.lower_puts(e.args[0], str_eq(c, "puts_u"), e.loc)
+      return lw.lower_puts(e.args[0], c == "puts_u", e.loc)
     }
   }
-  if str_eq(c, "now_ms") || str_eq(c, "now_us") {
+  if c == "now_ms" || c == "now_us" {
     lw.at(e.loc)
     none: Array(MOperand) = []
     return lw.call_to(mt_i32(), "avant_${c}", none)
   }
-  if (str_eq(c, "sqrt") || str_eq(c, "exp")) && e.args.size == 1 {
+  if (c == "sqrt" || c == "exp") && e.args.size == 1 {
     a = lw.lower_expr(e.args[0])
     if lw.failed {
       return zero
     }
     lw.at(e.loc)
-    if str_eq(c, "sqrt") {
+    if c == "sqrt" {
       return lw.call_f64("sqrt", a)
     }
     return lw.call_f64("exp", a)
@@ -191,7 +187,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if got2 = lw.io_builtin(e, c) {
     return got2
   }
-  if (str_eq(c, "process_run") && e.args.size == 2) || (str_eq(c, "process_run_out") && e.args.size == 3) {
+  if (c == "process_run" && e.args.size == 2) || (c == "process_run_out" && e.args.size == 3) {
     // W8a (calls.av emit_process_run, emit_process_run_out): the path,
     // the arguments array, the output path, left to right (the old back
     // end evaluates them right to left).
@@ -252,7 +248,7 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
   args: Array(MOperand) = []
   args.push(b.str_const(fmt))
   args.push(v)
-  dummy = b.call(-1, "printf", args)
+  b.call(-1, "printf", args)
   b.c_i32(0)
 }
 
@@ -273,7 +269,7 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
         return lw.str_member(e, obj, ot, e.ident, none)
       }
       none3: Array(Expr) = []
-      if ot.is_join && str_eq(e.ident, "join") {
+      if ot.is_join && e.ident == "join" {
         return lw.lower_join(e, obj)
       }
       if ot.is_array {
@@ -330,29 +326,29 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
   }
   lw.at(e.loc)
   if ot.is_float {
-    if str_eq(name, "to_i") {
+    if name == "to_i" {
       return lw.f64_to_i32(v, e.loc)
     }
-    if str_eq(name, "abs") {
+    if name == "abs" {
       return lw.call_f64("fabs", v)
     }
-    if str_eq(name, "floor") {
+    if name == "floor" {
       return lw.call_f64("floor", v)
     }
-    if str_eq(name, "sqrt") {
+    if name == "sqrt" {
       return lw.call_f64("sqrt", v)
     }
-    if str_eq(name, "exp") {
+    if name == "exp" {
       return lw.call_f64("exp", v)
     }
   } else {
-    if str_eq(name, "to_f") || str_eq(name, "to_i") || str_eq(name, "to_i64") || str_eq(name, "to_u64") {
+    if name == "to_f" || name == "to_i" || name == "to_i64" || name == "to_u64" {
       if ty == from {
         return v
       }
       return lw.tmp(ty, b.rv_cast(v, ty))
     }
-    if str_eq(name, "abs") {
+    if name == "abs" {
       return lw.int_abs(from, v)
     }
   }
@@ -364,7 +360,7 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
 pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
   b = lw.lw_b
   d = b.temp(ty)
-  dummy = b.assign(b.pl(d), b.rv_use(v))
+  b.assign(b.pl(d), b.rv_use(v))
   sty = ty
   s = b.copy_local(d)
   if ty == mt_u64() {
@@ -376,7 +372,7 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
   join = b.block
   b.branch(c, neg, join)
   b.at(neg)
-  dummy2 = b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
+  b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
   b.goto(join)
   b.at(join)
   b.copy_local(d)
@@ -388,7 +384,7 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
 pub fn (lw: MirLower) f64_to_i32(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   x = b.temp(mt_f64())
-  dummy = b.assign(b.pl(x), b.rv_use(v))
+  b.assign(b.pl(x), b.rv_use(v))
   lo = b.c_f64(mir_f64_bits(-2147483649.0), "-2147483649.0")
   hi = b.c_f64(mir_f64_bits(2147483648.0), "2147483648.0")
   c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(x), lo))

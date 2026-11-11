@@ -99,7 +99,7 @@ pub fn (lw: MirLower) args_then_recv(args: Array(Expr), recv: Expr): Array(MOper
   i = 0
   while i < ops.size {
     ops[i] = lw.snap(ops[i], recv)
-    i = i + 1
+    i += 1
   }
   r = lw.lower_expr(recv)
   out: Array(MOperand) = []
@@ -107,7 +107,7 @@ pub fn (lw: MirLower) args_then_recv(args: Array(Expr), recv: Expr): Array(MOper
   i = 0
   while i < ops.size {
     out.push(ops[i])
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -120,10 +120,10 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     lw.refuse(e.loc, "Hash.${name} with a block (closures, W7b)")
     return zero
   }
-  if str_eq(name, "get") || str_eq(name, "get_slice") || str_eq(name, "get_concat") {
+  if name == "get" || name == "get_slice" || name == "get_concat" {
     return lw.lower_hash_read(e, recv, ht, name, args)
   }
-  if str_eq(name, "each") {
+  if name == "each" {
     lw.refuse(e.loc, "Hash.each (closures, W7b)")
     return zero
   }
@@ -134,27 +134,27 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
   ki = mir_hash_key_int(ht)
   f = ""
   n = 0
-  if str_eq(name, "size") {
+  if name == "size" {
     f = "avant_hash_size"
-  } else if str_eq(name, "clear") {
+  } else if name == "clear" {
     f = "avant_hash_clear"
-  } else if str_eq(name, "keys") {
+  } else if name == "keys" {
     f = "avant_hash_keys_str"
     if ki {
       f = "avant_hash_keys_i32"
     }
-  } else if str_eq(name, "values") {
+  } else if name == "values" {
     f = "avant_hash_vals_i32"
     if mir_hash_val_str(ht) {
       f = "avant_hash_vals_str"
     }
-  } else if str_eq(name, "has_key") {
+  } else if name == "has_key" {
     f = "avant_hash_has_str"
     if ki {
       f = "avant_hash_has_i32k"
     }
     n = 1
-  } else if str_eq(name, "get_or") {
+  } else if name == "get_or" {
     f = "avant_hash_get_or_i32"
     if ki {
       f = "avant_hash_get_or_i32k_i32"
@@ -162,19 +162,19 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
       f = "avant_hash_get_or_str"
     }
     n = 2
-  } else if str_eq(name, "inc") {
+  } else if name == "inc" {
     f = "avant_hash_inc_str"
     if ki {
       f = "avant_hash_inc_i32k"
     }
     n = -1
-  } else if str_eq(name, "delete") {
+  } else if name == "delete" {
     f = "avant_hash_del"
     if ki {
       f = "avant_hash_del_i32k"
     }
     n = 1
-  } else if str_eq(name, "inc_slice") {
+  } else if name == "inc_slice" {
     f = "avant_hash_inc_slice"
     n = 3
   }
@@ -187,10 +187,10 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     return zero
   }
   lw.at(e.loc)
-  if str_eq(name, "inc") && args.size == 1 {
+  if name == "inc" && args.size == 1 {
     ops.push(b.c_i32(1))
   }
-  if str_eq(name, "has_key") {
+  if name == "has_key" {
     r = lw.call_to(mt_i32(), f, ops)
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
@@ -205,28 +205,28 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
 
   f = ""
   n = 0
-  if str_eq(name, "size") {
+  if name == "size" {
     f = "avant_buf_size"
-  } else if str_eq(name, "to_s") || str_eq(name, "to_bytes") {
+  } else if name == "to_s" || name == "to_bytes" {
     f = "avant_buf_to_str"
-  } else if str_eq(name, "clear") {
+  } else if name == "clear" {
     f = "avant_buf_clear"
-  } else if str_eq(name, "push_byte") {
+  } else if name == "push_byte" {
     f = "avant_buf_push_byte"
     n = 1
-  } else if str_eq(name, "push_str") || str_eq(name, "push_bytes") {
+  } else if name == "push_str" || name == "push_bytes" {
     f = "avant_buf_push_str"
     n = 1
-  } else if str_eq(name, "push_slice") {
+  } else if name == "push_slice" {
     f = "avant_buf_push_slice"
     n = 3
-  } else if str_eq(name, "push_fmt_f") {
+  } else if name == "push_fmt_f" {
     f = "avant_buf_push_fmt_f"
     n = 2
-  } else if str_eq(name, "push_fmt_i") {
+  } else if name == "push_fmt_i" {
     f = "avant_buf_push_fmt_i"
     n = 1
-  } else if str_eq(name, "starts_with") {
+  } else if name == "starts_with" {
     f = "avant_buf_starts"
     n = 1
   }
@@ -240,7 +240,7 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
     return zero
   }
   lw.at(e.loc)
-  if str_eq(name, "starts_with") {
+  if name == "starts_with" {
     r = lw.call_to(mt_i32(), f, ops)
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
@@ -254,17 +254,17 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
 pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand? {
   f = ""
   n = 0
-  if rt.is_string && str_eq(name, "split") {
+  if rt.is_string && name == "split" {
     f = "avant_str_split"
     n = 1
-  } else if rt.is_string && str_eq(name, "fields") {
+  } else if rt.is_string && name == "fields" {
     f = "avant_str_fields"
-  } else if str_eq(name, "chars") {
+  } else if name == "chars" {
     f = "avant_str_chars"
     if rt.is_bytes {
       f = "avant_bytes_chars"
     }
-  } else if rt.is_bytes && str_eq(name, "to_buf") {
+  } else if rt.is_bytes && name == "to_buf" {
     f = "avant_bytes_to_buf"
   }
   if f.size == 0 || args.size != n || e.resolved.size > 0 {
@@ -285,11 +285,11 @@ pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String,
 pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
   f = ""
-  if str_eq(c, "buf_new") && e.args.size <= 1 {
+  if c == "buf_new" && e.args.size <= 1 {
     f = "avant_buf_new"
-  } else if str_eq(c, "bytes_to_str") && e.args.size == 1 {
+  } else if c == "bytes_to_str" && e.args.size == 1 {
     f = "avant_str_from_i32_bytes"
-  } else if str_eq(c, "hash_last_key") && e.args.size == 0 {
+  } else if c == "hash_last_key" && e.args.size == 0 {
     f = "avant_hash_last_key"
   }
   if f.size == 0 {
@@ -301,7 +301,7 @@ pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if str_eq(c, "buf_new") && ops.size == 0 {
+  if c == "buf_new" && ops.size == 0 {
     ops.push(b.c_i32(0))
   }
   lw.call_to(ty, f, ops)

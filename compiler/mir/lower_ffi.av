@@ -73,7 +73,7 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
     }
     fields.push(ft)
     names.push(t.fields[j].name)
-    j = j + 1
+    j += 1
   }
   lw.lw_b.note_layout(name, mlk_clayout(), fields, names)
 }
@@ -92,17 +92,15 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
   if cs = lw.lw_syms.find_cfun(e.lib_name, e.callee) {
     ps: Array(Int) = []
     has_cb = false
-    i = 0
-    while i < cs.params.size {
-      if cs.params[i].is_fn {
+    for param in cs.params {
+      if param.is_fn {
         ps.push(mt_ptr())
         has_cb = true
-      } else if cs.params[i].c_scalar > 0 {
-        ps.push(lw.c_scalar_mty(cs.params[i].c_scalar))
+      } else if param.c_scalar > 0 {
+        ps.push(lw.c_scalar_mty(param.c_scalar))
       } else {
-        ps.push(lw.ty_at(cs.params[i], e.loc, "a C parameter"))
+        ps.push(lw.ty_at(param, e.loc, "a C parameter"))
       }
-      i = i + 1
     }
     ret = lw.ty_at(cs.ret, e.loc, "a C result")
     if cs.ret.c_scalar > 0 {
@@ -137,13 +135,11 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
           o = lw.tmp(ps[i], b.rv_use(o))
         }
       }
-      j = i + 1
-      while j < e.args.size {
+      for j in i + 1..e.args.size {
         o = lw.snap(o, e.args[j])
-        j = j + 1
       }
       args.push(o)
-      i = i + 1
+      i += 1
     }
     if lw.failed {
       return zero
@@ -188,7 +184,7 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
       t = at
     }
     target = arg.resolved
-    if !str_starts_mir(target, "av.") {
+    if !str_starts(target, "av.") {
       base = lw.lw_cl.base
       if base.size == 0 {
         base = b.func.symbol
@@ -233,7 +229,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     j = 0
     while j < cb.fty.members.size {
       ps.push(lw.ty_at(cb.fty.members[j], cb.loc, "a C callback parameter"))
-      j = j + 1
+      j += 1
     }
     ret = mt_void()
     if r = cb.fty.inner {
@@ -252,9 +248,9 @@ pub fn (lw: MirLower) lower_cb_thunks {
         lw.refuse(cb.loc, "a C callback with a value of type ${b.types.text(t)} (C3)")
         return
       }
-      j = j + 1
+      j += 1
     }
-    dummy = b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
     lw.lw_ret = ret
     lw.at(cb.loc)
     args: Array(MOperand) = []
@@ -264,18 +260,18 @@ pub fn (lw: MirLower) lower_cb_thunks {
     j = 0
     while j < ps.size {
       args.push(b.copy_local(j + 1))
-      j = j + 1
+      j += 1
     }
     if ret == mt_void() {
-      dummy2 = b.call(-1, cb.target, args)
+      b.call(-1, cb.target, args)
     } else {
       d = b.temp(ret)
-      dummy3 = b.call(d, cb.target, args)
-      dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
+      b.call(d, cb.target, args)
+      b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
     }
     b.ret
     b.end_fn
-    i = i + 1
+    i += 1
   }
 }
 
@@ -324,7 +320,7 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
   }
   vt = mir_c_view_mty(k)
   x = b.temp(vt)
-  dummy = b.assign(b.pl(x), b.rv_use(v))
+  b.assign(b.pl(x), b.rv_use(v))
   lo = -128i64
   hi = 127i64
   if k == cs_int16() {
@@ -405,11 +401,11 @@ pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   v = lw.hold(val, ty)
   a = b.temp(mt_ptr())
-  dummy = b.assign(b.pl(a), b.rv_addr(p))
+  b.assign(b.pl(a), b.rv_addr(p))
   args: Array(MOperand) = []
   args.push(b.copy_local(a))
   args.push(b.copy_local(v))
-  dummy2 = b.call(-1, "avant_pin_field", args)
+  b.call(-1, "avant_pin_field", args)
   dummy3 = b.assign(p, b.rv_use(b.copy_local(v)))
 }
 
@@ -443,13 +439,13 @@ pub fn (lw: MirLower) lower_release(st: Stmt) {
       }
       lw.at(st.loc)
       lo = b.temp(mt_ptr())
-      dummy = b.assign(b.pl(lo), b.rv_addr(p))
+      b.assign(b.pl(lo), b.rv_addr(p))
       n = lw.lw_m.types.size_of(ty)
     }
     args: Array(MOperand) = []
     args.push(b.copy_local(lo))
     args.push(b.c_u64(n.to_i64))
-    dummy2 = b.call(-1, "avant_release_range", args)
+    b.call(-1, "avant_release_range", args)
     return
   }
   lw.refuse(st.loc, "a release without a place")
@@ -471,20 +467,20 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
       }
       lw.at(st.loc)
       h = b.temp(ty)
-      dummy = b.assign(b.pl(h), b.rv_use(v))
+      b.assign(b.pl(h), b.rv_use(v))
       if et.is_fn {
         h2 = b.temp(mt_ref())
-        dummy2 = b.assign(b.pl(h2), b.rv_use(b.copy(b.field(b.pl(h), 0))))
+        b.assign(b.pl(h2), b.rv_use(b.copy(b.field(b.pl(h), 0))))
         h = h2
       }
       args: Array(MOperand) = []
       args.push(b.copy_local(h))
-      dummy3 = b.call(-1, "avant_pin", args)
+      b.call(-1, "avant_pin", args)
       lw.lw_ffi.pins.push(h)
       lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
       lw.lower_stmts(st.body)
-      dummy4 = lw.lw_ffi.pins.pop
-      dummy5 = lw.lw_ffi.pin_depth.pop
+      lw.lw_ffi.pins.pop
+      lw.lw_ffi.pin_depth.pop
       if !lw.failed && lw.open_now {
         lw.at(st.loc)
         lw.unpin(h)
@@ -501,7 +497,7 @@ pub fn (lw: MirLower) unpin(h: Int) {
   args: Array(MOperand) = []
   if h < 0 {
     // A `gc.hold` block's entry (lower_hold).
-    dummy0 = lw.lw_b.call(-1, "avant_gc_hold_end", args)
+    lw.lw_b.call(-1, "avant_gc_hold_end", args)
     return
   }
   args.push(lw.lw_b.copy_local(h))
@@ -517,12 +513,12 @@ pub fn (lw: MirLower) lower_hold(st: Stmt) {
   b = lw.lw_b
   lw.at(st.loc)
   none: Array(MOperand) = []
-  dummy = b.call(-1, "avant_gc_hold_begin", none)
+  b.call(-1, "avant_gc_hold_begin", none)
   lw.lw_ffi.pins.push(-1)
   lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
   lw.lower_stmts(st.body)
-  dummy2 = lw.lw_ffi.pins.pop
-  dummy3 = lw.lw_ffi.pin_depth.pop
+  lw.lw_ffi.pins.pop
+  lw.lw_ffi.pin_depth.pop
   if !lw.failed && lw.open_now {
     lw.at(st.loc)
     lw.unpin(-1)
@@ -535,7 +531,7 @@ pub fn (lw: MirLower) unpin_loop {
   i = lw.lw_ffi.pins.size - 1
   while i >= 0 && lw.lw_ffi.pin_depth[i] == lw.lw_heads.size {
     lw.unpin(lw.lw_ffi.pins[i])
-    i = i - 1
+    i -= 1
   }
 }
 
@@ -547,7 +543,7 @@ pub fn (lw: MirLower) unpin_all {
   i = lw.lw_ffi.pins.size - 1
   while i >= 0 {
     lw.unpin(lw.lw_ffi.pins[i])
-    i = i - 1
+    i -= 1
   }
 }
 

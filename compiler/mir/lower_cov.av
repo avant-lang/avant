@@ -94,82 +94,62 @@ pub fn (lw: MirLower) cov_finish {
   // Runs of points with one rank, then the runs in rank order (a stable
   // insertion sort: few runs, and equal ranks keep lowering order).
   starts: Array(Int) = []
-  i = 0
-  while i < c.kinds.size {
+  for i in 0..c.kinds.size {
     if i == 0 || c.ranks[i] != c.ranks[i - 1] {
       starts.push(i)
     }
-    i = i + 1
   }
   order: Array(Int) = []
-  i = 0
-  while i < starts.size {
+  for i in 0..starts.size {
     j = order.size
     order.push(i)
     while j > 0 && c.ranks[starts[order[j - 1]]] > c.ranks[starts[i]] {
       order[j] = order[j - 1]
-      j = j - 1
+      j -= 1
     }
     order[j] = i
-    i = i + 1
   }
   slot_of: Array(Int) = []
-  i = 0
-  while i < c.kinds.size {
+  for i in 0..c.kinds.size {
     slot_of.push(0)
-    i = i + 1
   }
   buf = buf_new()
   buf.push_str("avant-cov 1\n")
   line_slot = Hash(String, Int).new
   n = 0
-  r = 0
-  while r < order.size {
+  for r in 0..order.size {
     s0 = starts[order[r]]
     s1 = c.kinds.size
     if order[r] + 1 < starts.size {
       s1 = starts[order[r] + 1]
     }
-    k = s0
-    while k < s1 {
+    for k in s0..s1 {
       if c.kinds[k] == 4 {
         key = "${c.paths[k]}:${c.lines[k]}"
         if got = line_slot.get(key) {
           slot_of[k] = got
-          k = k + 1
           continue
         }
         line_slot[key] = n
       }
       slot_of[k] = n
       mir_cov_line(buf, c.kinds[k], c.paths[k], c.lines[k], c.names[k])
-      n = n + 1
-      k = k + 1
+      n += 1
     }
-    r = r + 1
   }
   m = lw.lw_m
   b = lw.lw_b
-  f = 0
-  while f < m.funcs.size {
-    fn_ = m.funcs[f]
-    bb = 0
-    while bb < fn_.blocks.size {
-      blk = fn_.blocks[bb]
-      q = 0
-      while q < blk.stmts.size {
-        st = blk.stmts[q]
-        if st.kind == msk_call() && str_eq(st.callee, "avant_cov_hit") && st.args.size == 1 {
+  for fn_ in m.funcs {
+    for blk in fn_.blocks {
+      for st in blk.stmts {
+        if st.kind == msk_call() && st.callee == "avant_cov_hit" && st.args.size == 1 {
           ev = st.args[0].ival.to_i
           if ev >= 0 && ev < slot_of.size {
             st.args[0] = b.c_i32(slot_of[ev])
           }
         }
-        q = q + 1
       }
-      bb = bb + 1
     }
-    f = f + 1
   }
   dummy = file_write(c.map_path, buf.to_s)
 }

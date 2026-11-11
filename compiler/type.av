@@ -28,24 +28,6 @@ pub fn tyk_fn: Int { 21 }
 pub fn tyk_iface: Int { 22 }
 pub fn tyk_bytes: Int { 23 }
 
-pub fn str_lt(a: String, b: String): Bool {
-  n = a.size
-  if b.size < n {
-    n = b.size
-  }
-  i = 0
-  while i < n {
-    if a[i] < b[i] {
-      return true
-    }
-    if a[i] > b[i] {
-      return false
-    }
-    i = i + 1
-  }
-  a.size < b.size
-}
-
 pub class TyField {
   name: String = ""
   ty: Ty
@@ -89,12 +71,9 @@ pub class Ty {
     self.mod_name = ""
     self.emit_base = ""
     self.template = false
-    m: Array(Ty) = []
-    self.members = m
-    f: Array(TyField) = []
-    self.fields = f
-    ta: Array(Ty) = []
-    self.ty_args = ta
+    self.members = []
+    self.fields = []
+    self.ty_args = []
   }
 
   pub fn is_int: Bool { self.kind == tyk_int() }
@@ -143,25 +122,20 @@ pub class Ty {
   }
 
   pub fn field_named(name: String): Ty? {
-    i = 0
-    while i < self.fields.size {
-      f = self.fields[i]
-      if str_eq(f.name, name) {
+    for f in self.fields {
+      if f.name == name {
         return f.ty
       }
-      i = i + 1
     }
     nil
   }
 
   pub fn field_index(name: String): Int {
-    i = 0
-    while i < self.fields.size {
+    for i in 0..self.fields.size {
       f = self.fields[i]
-      if str_eq(f.name, name) {
+      if f.name == name {
         return i
       }
-      i = i + 1
     }
     -1
   }
@@ -246,16 +220,16 @@ pub class Ty {
       return self.same_agg(other)
     }
     if k == tyk_opaque() {
-      return str_eq(self.name, other.name)
+      return self.name == other.name
     }
     if k == tyk_clayout() {
-      return str_eq(self.name, other.name)
+      return self.name == other.name
     }
     if k == tyk_var() {
-      return str_eq(self.name, other.name)
+      return self.name == other.name
     }
     if k == tyk_module() {
-      return str_eq(self.name, other.name)
+      return self.name == other.name
     }
     if k == tyk_union() {
       if self.members.size != other.members.size {
@@ -263,27 +237,21 @@ pub class Ty {
       }
       i = 0
       while i < self.members.size {
-        if self.members[i].same_as(other.members[i]) {
-        } else {
+        if !self.members[i].same_as(other.members[i]) {
           return false
         }
-        i = i + 1
+        i += 1
       }
       return true
     }
     if k == tyk_iface() {
-      if str_eq(self.name, other.name) {
-        if self.ty_args.size == other.ty_args.size {
-          i = 0
-          while i < self.ty_args.size {
-            if self.ty_args[i].same_as(other.ty_args[i]) {
-            } else {
-              return false
-            }
-            i = i + 1
+      if self.name == other.name && self.ty_args.size == other.ty_args.size {
+        for i in 0..self.ty_args.size {
+          if !self.ty_args[i].same_as(other.ty_args[i]) {
+            return false
           }
-          return true
         }
+        return true
       }
       return false
     }
@@ -291,13 +259,10 @@ pub class Ty {
       if self.members.size != other.members.size {
         return false
       }
-      i = 0
-      while i < self.members.size {
-        if self.members[i].same_as(other.members[i]) {
-        } else {
+      for i in 0..self.members.size {
+        if !self.members[i].same_as(other.members[i]) {
           return false
         }
-        i = i + 1
       }
       if a = self.inner {
         if b = other.inner {
@@ -310,101 +275,75 @@ pub class Ty {
   }
 
   pub fn includes_member(other: Ty): Bool {
-    i = 0
-    while i < self.members.size {
-      if self.members[i].same_as(other) {
+    for mem in self.members {
+      if mem.same_as(other) {
         return true
       }
-      i = i + 1
     }
     false
   }
 
   pub fn includes_nil: Bool {
-    i = 0
-    while i < self.members.size {
-      if self.members[i].is_nil {
+    for mem in self.members {
+      if mem.is_nil {
         return true
       }
-      i = i + 1
     }
     false
   }
 
   pub fn tag_of(member: Ty): Int {
-    i = 0
-    while i < self.members.size {
+    for i in 0..self.members.size {
       if self.members[i].same_as(member) {
         return i
       }
-      i = i + 1
     }
     0
   }
 
   pub fn payload_index(member: Ty): Int {
     n = 0
-    i = 0
-    while i < self.members.size {
-      m = self.members[i]
-      if m.is_nil {
-      } else {
+    for m in self.members {
+      if !m.is_nil {
         if m.same_as(member) {
           return n + 1
         }
-        n = n + 1
+        n += 1
       }
-      i = i + 1
     }
     -1
   }
 
   pub fn payload_members: Array(Ty) {
     kept: Array(Ty) = []
-    i = 0
-    while i < self.members.size {
-      m = self.members[i]
-      if m.is_nil {
-      } else {
+    for m in self.members {
+      if !m.is_nil {
         kept.push(m)
       }
-      i = i + 1
     }
     kept
   }
 
   pub fn is_nilable: Bool {
-    if self.is_union {
-      if self.includes_nil {
-        return self.members.size == 2
-      }
+    if self.is_union && self.includes_nil {
+      return self.members.size == 2
     }
     false
   }
 
   pub fn same_agg(other: Ty): Bool {
-    if self.mod_name.size > 0 {
-      if other.mod_name.size > 0 {
-        if str_eq(self.mod_name, other.mod_name) {
-        } else {
-          return false
-        }
-      }
+    if self.mod_name.size > 0 && other.mod_name.size > 0 && self.mod_name != other.mod_name {
+      return false
     }
     if self.origin.size > 0 {
       if other.origin.size > 0 {
-        if str_eq(self.origin, other.origin) {
-          if self.ty_args.size == other.ty_args.size {
-            i = 0
-            while i < self.ty_args.size {
-              if self.ty_args[i].same_as(other.ty_args[i]) {
-              } else {
-                return false
-              }
-              i = i + 1
+        if self.origin == other.origin && self.ty_args.size == other.ty_args.size {
+          for i in 0..self.ty_args.size {
+            if !self.ty_args[i].same_as(other.ty_args[i]) {
+              return false
             }
-            return true
           }
+          return true
         }
         return false
       }
@@ -413,7 +352,7 @@ pub class Ty {
     if other.origin.size > 0 {
       return false
     }
-    str_eq(self.name, other.name)
+    self.name == other.name
   }
 
   pub fn show: String {
@@ -515,7 +454,7 @@ pub class Ty {
         buf.push_str(", ")
       }
       buf.push_str(self.members[i].show)
-      i = i + 1
+      i += 1
     }
     buf.push_str("): ")
     if r = self.inner {
@@ -547,7 +486,7 @@ pub class Ty {
         buf.push_str(" | ")
       }
       buf.push_str(self.members[i].show)
-      i = i + 1
+      i += 1
     }
     buf.to_s
   }
@@ -577,10 +516,10 @@ pub fn c_scalar_name(k: Int): String {
 pub fn c_scalar_of(name: String): Int {
   k = 1
   while k <= 6 {
-    if str_eq(c_scalar_name(k), name) {
+    if c_scalar_name(k) == name {
       return k
     }
-    k = k + 1
+    k += 1
   }
   0
 }
@@ -643,19 +582,15 @@ pub fn ty_has_var(ty: Ty): Bool {
       return true
     }
   }
-  i = 0
-  while i < ty.members.size {
-    if ty_has_var(ty.members[i]) {
+  for mem in ty.members {
+    if ty_has_var(mem) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < ty.ty_args.size {
-    if ty_has_var(ty.ty_args[i]) {
+  for ty_arg in ty.ty_args {
+    if ty_has_var(ty_arg) {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -725,24 +660,20 @@ pub fn mangle_ty(ty: Ty): String {
   }
   if k == tyk_union() {
     buf = buf_new()
-    i = 0
-    while i < ty.members.size {
+    for i in 0..ty.members.size {
       if i > 0 {
         buf.push_str("_")
       }
       buf.push_str(mangle_ty(ty.members[i]))
-      i = i + 1
     }
     return buf.to_s
   }
   if k == tyk_fn() {
     buf = buf_new()
     buf.push_str("Fn")
-    i = 0
-    while i < ty.members.size {
+    for mem in ty.members {
       buf.push_str("_")
-      buf.push_str(mangle_ty(ty.members[i]))
-      i = i + 1
+      buf.push_str(mangle_ty(mem))
     }
     buf.push_str("__")
     if r = ty.inner {
@@ -752,22 +683,18 @@ pub fn mangle_ty(ty: Ty): String {
     }
     return buf.to_s
   }
-  if ty.origin.size > 0 {
-    if ty.ty_args.size > 0 {
-      buf = buf_new()
-      base = ty.origin
-      if ty.emit_base.size > 0 {
-        base = ty.emit_base
-      }
-      buf.push_str(base)
-      i = 0
-      while i < ty.ty_args.size {
-        buf.push_str("__")
-        buf.push_str(mangle_ty(ty.ty_args[i]))
-        i = i + 1
-      }
-      return buf.to_s
+  if ty.origin.size > 0 && ty.ty_args.size > 0 {
+    buf = buf_new()
+    base = ty.origin
+    if ty.emit_base.size > 0 {
+      base = ty.emit_base
     }
+    buf.push_str(base)
+    for ty_arg in ty.ty_args {
+      buf.push_str("__")
+      buf.push_str(mangle_ty(ty_arg))
+    }
+    return buf.to_s
   }
   if ty.emit_base.size > 0 {
     return ty.emit_base
@@ -784,7 +711,7 @@ pub fn mod_emit_prefix(mod_name: String): String {
     } else {
       buf.push_str(str_slice(mod_name, i, i + 1))
     }
-    i = i + 1
+    i += 1
   }
   buf.to_s
 }
@@ -856,7 +783,7 @@ pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
     i = 0
     while i < ty.members.size {
       ty_flatten_into(ty.members[i], into)
-      i = i + 1
+      i += 1
     }
   } else {
     into.push(ty)
@@ -879,7 +806,7 @@ pub fn ty_member_before(a: Ty, b: Ty): Bool {
   if str_lt(sa, sb) {
     return true
   }
-  if str_eq(sa, sb) {
+  if sa == sb {
     return str_lt(ty_qual_key(a), ty_qual_key(b))
   }
   false
@@ -892,7 +819,7 @@ fn ty_qual_list(buf: Buf, tys: Array(Ty), sep: String) {
       buf.push_str(sep)
     }
     buf.push_str(ty_qual_key(tys[i]))
-    i = i + 1
+    i += 1
   }
 }
 
@@ -962,25 +889,19 @@ pub fn ty_union_build(types: Array(Ty)): Ty {
   i = 0
   while i < types.size {
     ty_flatten_into(types[i], flat)
-    i = i + 1
+    i += 1
   }
   uniq: Array(Ty) = []
-  i = 0
-  while i < flat.size {
-    t = flat[i]
+  for t in flat {
     seen = false
-    j = 0
-    while j < uniq.size {
+    for j in 0..uniq.size {
       if uniq[j].same_as(t) {
         seen = true
       }
-      j = j + 1
     }
-    if seen {
-    } else {
+    if !seen {
       uniq.push(t)
     }
-    i = i + 1
   }
   i = 1
   while i < uniq.size {
@@ -990,12 +911,12 @@ pub fn ty_union_build(types: Array(Ty)): Ty {
         tmp = uniq[j - 1]
         uniq[j - 1] = uniq[j]
         uniq[j] = tmp
-        j = j - 1
+        j -= 1
       } else {
         break
       }
     }
-    i = i + 1
+    i += 1
   }
   if uniq.size == 0 {
     return ty_nil()
@@ -1017,14 +938,10 @@ pub fn ty_nilable(inner: Ty): Ty {
 
 pub fn ty_without_nil(ty: Ty): Ty {
   kept: Array(Ty) = []
-  i = 0
-  while i < ty.members.size {
-    m = ty.members[i]
-    if m.is_nil {
-    } else {
+  for m in ty.members {
+    if !m.is_nil {
       kept.push(m)
     }
-    i = i + 1
   }
   ty_union_build(kept)
 }
@@ -1059,13 +976,10 @@ pub fn if_assign_failure(ty: Ty): Ty {
   if ty.includes_nil {
     return ty_nil()
   }
-  i = 0
-  while i < ty.members.size {
-    m = ty.members[i]
+  for m in ty.members {
     if m.is_class {
       return m
     }
-    i = i + 1
   }
   ty_nil()
 }
@@ -1074,69 +988,62 @@ pub fn ty_assignable(got: Ty, want: Ty): Bool {
   if got.same_as(want) {
     return true
   }
-  if want.is_union {
-    if want.includes_member(got) {
-      return true
-    }
+  if want.is_union && want.includes_member(got) {
+    return true
   }
-  if got.is_union {
-    if want.is_union {
-      i = 0
-      while i < got.members.size {
-        if want.includes_member(got.members[i]) {
-        } else {
-          return false
-        }
-        i = i + 1
+  if got.is_union && want.is_union {
+    for mem in got.members {
+      if !want.includes_member(mem) {
+        return false
       }
-      return true
     }
+    return true
   }
   false
 }
 
 pub fn type_is_builtin(name: String): Bool {
-  if str_eq(name, "Int") {
+  if name == "Int" {
     return true
   }
   if c_scalar_of(name) > 0 {
     return true
   }
-  if str_eq(name, "Int64") {
+  if name == "Int64" {
     return true
   }
-  if str_eq(name, "UInt64") {
+  if name == "UInt64" {
     return true
   }
-  if str_eq(name, "Bool") {
+  if name == "Bool" {
     return true
   }
-  if str_eq(name, "Float64") {
+  if name == "Float64" {
     return true
   }
-  if str_eq(name, "String") {
+  if name == "String" {
     return true
   }
-  if str_eq(name, "Void") {
+  if name == "Void" {
     return true
   }
-  if str_eq(name, "Array") {
+  if name == "Array" {
     return true
   }
-  if str_eq(name, "Ptr") {
+  if name == "Ptr" {
     return true
   }
-  if str_eq(name, "Hash") {
+  if name == "Hash" {
     return true
   }
-  if str_eq(name, "Buf") {
+  if name == "Buf" {
     return true
   }
-  if str_eq(name, "Bytes") {
+  if name == "Bytes" {
     return true
   }
-  if str_eq(name, "Nil") {
+  if name == "Nil" {
     return true
   }
-  str_eq(name, "JoinHandle")
+  name == "JoinHandle"
 }

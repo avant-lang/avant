@@ -76,17 +76,13 @@ pub class MirClosures {
   lam_n: Hash(String, Int)
 
   fn initialize {
-    c: Array(String) = []
-    self.caps = c
-    bx: Array(String) = []
-    self.boxed = bx
+    self.caps = []
+    self.boxed = []
     self.box_local = Hash(String, Int).new
     self.box_ready = Hash(String, Int).new
     self.cap_at = Hash(String, Int).new
-    ct: Array(Ty) = []
-    self.cap_tys = ct
-    p: Array(MirLam) = []
-    self.pending = p
+    self.cap_tys = []
+    self.pending = []
     self.lam_n = Hash(String, Int).new
   }
 }
@@ -120,20 +116,15 @@ pub class MirFfi {
   pin_depth: Array(Int)
 
   fn initialize {
-    c: Array(MirCb) = []
-    self.cbs = c
+    self.cbs = []
     self.cb_seen = Hash(String, Int).new
-    p: Array(Int) = []
-    self.pins = p
-    d: Array(Int) = []
-    self.pin_depth = d
+    self.pins = []
+    self.pin_depth = []
   }
 
   pub fn reset_pins {
-    p: Array(Int) = []
-    self.pins = p
-    d: Array(Int) = []
-    self.pin_depth = d
+    self.pins = []
+    self.pin_depth = []
   }
 }
 
@@ -169,16 +160,12 @@ pub class MirTasks {
   pfields: Array(Int)
 
   fn initialize {
-    p: Array(MirTask) = []
-    self.pending = p
+    self.pending = []
     self.n = Hash(String, Int).new
     self.index = Hash(String, Int).new
-    pn: Array(String) = []
-    self.pnames = pn
-    ph: Array(Int) = []
-    self.pholders = ph
-    pf: Array(Int) = []
-    self.pfields = pf
+    self.pnames = []
+    self.pholders = []
+    self.pfields = []
   }
 }
 
@@ -199,16 +186,11 @@ pub class MirCov {
   lam_index: Hash(String, Int)
 
   fn initialize {
-    k: Array(Int) = []
-    self.kinds = k
-    p: Array(String) = []
-    self.paths = p
-    l: Array(Int) = []
-    self.lines = l
-    nm: Array(String) = []
-    self.names = nm
-    r: Array(Int) = []
-    self.ranks = r
+    self.kinds = []
+    self.paths = []
+    self.lines = []
+    self.names = []
+    self.ranks = []
     self.lam_index = Hash(String, Int).new
   }
 }
@@ -252,17 +234,13 @@ pub class MirLower {
     self.lw_err = ""
     self.lw_fn_syms = Hash(String, String).new
     self.lw_vars = Hash(String, Int).new
-    h: Array(Int) = []
-    self.lw_heads = h
-    x: Array(Int) = []
-    self.lw_exits = x
+    self.lw_heads = []
+    self.lw_exits = []
     self.lw_fn_loc = program.loc
     self.lw_self_name = ""
     self.lw_busy = Hash(String, Int).new
-    ps: Array(String) = []
-    self.lw_pend_struct = ps
-    pe: Array(Int) = []
-    self.lw_pend_elems = pe
+    self.lw_pend_struct = []
+    self.lw_pend_elems = []
     self.lw_all = program_all_functions(program)
     self.lw_cl = MirClosures.new
     self.lw_ffi = MirFfi.new
@@ -291,17 +269,17 @@ pub class MirLower {
   // ---- locations (9): the file table holds paths relative to the root
   // source's directory, else to the Avant root, else as given.
   pub fn rel_path(path: String): String {
-    if self.lw_root_dir.size > 0 && str_starts_mir(path, "${self.lw_root_dir}/") {
+    if self.lw_root_dir.size > 0 && str_starts(path, "${self.lw_root_dir}/") {
       return str_slice(path, self.lw_root_dir.size + 1, path.size)
     }
-    if self.lw_avant_root.size > 0 && str_starts_mir(path, "${self.lw_avant_root}/") {
+    if self.lw_avant_root.size > 0 && str_starts(path, "${self.lw_avant_root}/") {
       return str_slice(path, self.lw_avant_root.size + 1, path.size)
     }
     path
   }
 
   pub fn at(loc: Location) {
-    dummy = self.lw_b.file(self.rel_path(loc.path))
+    self.lw_b.file(self.rel_path(loc.path))
     self.lw_b.at_loc(loc.line, loc.column)
   }
 
@@ -374,7 +352,7 @@ pub class MirLower {
       }
       taken[sym] = 1
       self.lw_fn_syms[fns[i].emit_name] = sym
-      i = i + 1
+      i += 1
     }
     self.note_ctor_symbols
     // W7b: lambda symbols, then the box and environment maps in the old
@@ -383,29 +361,27 @@ pub class MirLower {
     i = 0
     while i < fns.size && !self.failed {
       self.prewalk_function(fns[i])
-      i = i + 1
+      i += 1
     }
     if self.failed {
       return
     }
     has_main = false
     run_fn: Function? = nil
-    i = 0
-    while i < fns.size {
-      if str_eq(fns[i].name, "main") && str_eq(fns[i].mod_name, p.root_module) {
+    for f in fns {
+      if f.name == "main" && f.mod_name == p.root_module {
         has_main = true
       }
-      if str_eq(fns[i].name, "run") && str_eq(fns[i].mod_name, p.root_module) {
-        run_fn = fns[i]
+      if f.name == "run" && f.mod_name == p.root_module {
+        run_fn = f
       }
-      i = i + 1
     }
     i = 0
     while i < fns.size && !self.failed {
       self.lw_cov.rank = i
       self.lower_function(fns[i])
       self.lower_pending_lambdas
-      i = i + 1
+      i += 1
     }
     self.lw_cov.rank = 1000000
     self.lower_ctors
@@ -436,13 +412,10 @@ pub class MirLower {
   // D175).
   pub fn lowered_functions: Array(Function) {
     out: Array(Function) = []
-    i = 0
-    while i < self.lw_all.size {
-      f = self.lw_all[i]
+    for f in self.lw_all {
       if !f.generic && !(f.owner.size > 0 && self.lw_syms.resolver.has_template(f.owner)) {
         out.push(f)
       }
-      i = i + 1
     }
     out
   }
@@ -485,10 +458,8 @@ pub class MirLower {
 
   pub fn begin_at(loc: Location) {
     self.lw_vars = Hash(String, Int).new
-    h: Array(Int) = []
-    self.lw_heads = h
-    x: Array(Int) = []
-    self.lw_exits = x
+    self.lw_heads = []
+    self.lw_exits = []
     self.lw_fn_loc = loc
     self.lw_self = 0
     self.lw_self_struct = false
@@ -532,7 +503,7 @@ pub class MirLower {
       }
     }
     if fs = self.sig_of(fnn) {
-      self.lw_main = str_eq(sym, "main")
+      self.lw_main = sym == "main"
       params: Array(Int) = []
       ret = self.ty_at(fs.ret, fnn.loc, "a result")
       if self.lw_main {
@@ -545,10 +516,8 @@ pub class MirLower {
         if recv >= 0 {
           params.push(recv)
         }
-        i = 0
-        while i < fs.params.size {
-          params.push(self.ty_at(fs.params[i], fnn.loc, "a parameter"))
-          i = i + 1
+        for param in fs.params {
+          params.push(self.ty_at(param, fnn.loc, "a parameter"))
         }
       }
       if self.failed {
@@ -560,7 +529,7 @@ pub class MirLower {
       if self.lw_main {
         sret = mt_i32()
       }
-      dummy = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
       self.lw_cl.base = self.lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external
@@ -576,12 +545,10 @@ pub class MirLower {
           self.bind_receiver(fnn, recv)
         }
         pn: Array(String) = []
-        i = 0
-        while i < fnn.params.size {
+        for i in 0..fnn.params.size {
           self.lw_b.name_param(i + 1 + base, fnn.params[i].name)
           self.lw_vars[self.var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
           pn.push(fnn.params[i].name)
-          i = i + 1
         }
         self.begin_boxes(fnn.box_names, pn, fs.params, base)
       }
@@ -598,11 +565,11 @@ pub class MirLower {
   pub fn main_prologue(loc: Location) {
     self.at(loc)
     none: Array(MOperand) = []
-    dummy = self.lw_b.call(-1, "__avant_type_maps", none)
+    self.lw_b.call(-1, "__avant_type_maps", none)
     args: Array(MOperand) = []
     args.push(self.lw_b.copy_local(1))
     args.push(self.lw_b.copy_local(2))
-    dummy2 = self.lw_b.call(-1, "avant_io_init_argv", args)
+    self.lw_b.call(-1, "avant_io_init_argv", args)
     self.cov_init
   }
 
@@ -621,7 +588,7 @@ pub class MirLower {
     self.at(loc)
     if self.lw_ret == mt_void() {
       if self.lw_main {
-        dummy = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+        self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
       }
       self.lw_b.ret
       return
@@ -637,7 +604,7 @@ pub class MirLower {
     params: Array(Int) = []
     params.push(mt_i32())
     params.push(mt_ptr())
-    dummy = self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
+    self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
     self.lw_b.set_external
     self.lw_b.name_param(1, "argc")
     self.lw_b.name_param(2, "argv")
@@ -653,15 +620,15 @@ pub class MirLower {
     none: Array(MOperand) = []
     if rty == mt_i32() {
       t = self.lw_b.temp(mt_i32())
-      dummy2 = self.lw_b.call(t, sym, none)
-      dummy3 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
+      self.lw_b.call(t, sym, none)
+      self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
     } else {
       dest = -1
       if rty != mt_void() && rty >= 0 {
         dest = self.lw_b.temp(rty)
       }
-      dummy4 = self.lw_b.call(dest, sym, none)
-      dummy5 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+      self.lw_b.call(dest, sym, none)
+      self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
     }
     self.lw_b.ret
     self.lw_b.end_fn
@@ -692,7 +659,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
       dir = str_slice(root_path, 0, i)
       break
     }
-    i = i - 1
+    i -= 1
   }
   lw = MirLower.new(program, symbols, dir, avant_root)
   if cov_map.size > 0 {
@@ -711,12 +678,12 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
     while j < errs.size {
       buf.push_str("\n")
       buf.push_str(errs[j].show)
-      j = j + 1
+      j += 1
     }
     return MirLowered.new(lw.lw_m, buf.to_s)
   }
   mir_take_pass(lw.lw_m)
-  dummy_up = mir_upsert_pass(lw.lw_m)
+  mir_upsert_pass(lw.lw_m)
   mir_loop_pass(lw.lw_m)
   mir_gc_passes(lw.lw_m)
   MirLowered.new(lw.lw_m, "")

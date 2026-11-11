@@ -24,7 +24,7 @@ pub fn key_of(rel: String): String {
     } else {
       buf.push_byte(c)
     }
-    i = i + 1
+    i += 1
   }
   buf.to_s
 }
@@ -40,14 +40,14 @@ pub fn env_job(envs: String, compiler: String, args: Array(String), log: String)
       if ws[j].size > 0 {
         a.push(ws[j])
       }
-      j = j + 1
+      j += 1
     }
   }
   a.push(compiler)
   i = 0
   while i < args.size {
     a.push(args[i])
-    i = i + 1
+    i += 1
   }
   HJob.new("/usr/bin/env", a, log)
 }
@@ -72,7 +72,7 @@ pub fn compile_job_flags(envs: String, compiler: String, src: String, out: Strin
   i = 0
   while i < flags.size {
     a.push(flags[i])
-    i = i + 1
+    i += 1
   }
   env_job(envs, compiler, a, log)
 }
@@ -110,7 +110,7 @@ pub fn run_waves(jobs: Array(HJob)) {
     wave: Array(HJob) = []
     while i < jobs.size && wave.size < 24 {
       wave.push(jobs[i])
-      i = i + 1
+      i += 1
     }
     run_jobs(wave)
   }
@@ -124,10 +124,10 @@ pub fn run_waves(jobs: Array(HJob)) {
 // tests/ and without .av.
 pub fn golden_key(rel: String): String {
   k = rel
-  if k.size > 6 && str_eq(str_slice(k, 0, 6), "tests/") {
+  if k.size > 6 && str_slice(k, 0, 6) == "tests/" {
     k = str_slice(k, 6, k.size)
   }
-  if k.size > 3 && str_eq(str_slice(k, k.size - 3, k.size), ".av") {
+  if k.size > 3 && str_slice(k, k.size - 3, k.size) == ".av" {
     k = str_slice(k, 0, k.size - 3)
   }
   k
@@ -145,11 +145,10 @@ pub fn golden_out(root: String, rel: String): String {
 // the CI runner), so a line of digits and dots reads `<zlib version>`.
 // Other programs compare their whole stdout.
 pub fn golden_view(rel: String, out: String): String {
-  if str_eq(rel, "examples/zlib.av") {
+  if rel == "examples/zlib.av" {
     lines = out.split("\n")
     res = ""
-    i = 0
-    while i < lines.size {
+    for i in 0..lines.size {
       if i > 0 {
         res = res + "\n"
       }
@@ -158,7 +157,6 @@ pub fn golden_view(rel: String, out: String): String {
       } else {
         res = res + lines[i]
       }
-      i = i + 1
     }
     return res
   }
@@ -175,18 +173,18 @@ fn is_version(s: String): Bool {
   i = 0
   while i < s.size {
     ch = str_slice(s, i, i + 1)
-    if str_eq(ch, ".") {
+    if ch == "." {
       if digits == 0 {
         return false
       }
-      dots = dots + 1
+      dots += 1
       digits = 0
     } else if str_has("0123456789", ch) {
-      digits = digits + 1
+      digits += 1
     } else {
       return false
     }
-    i = i + 1
+    i += 1
   }
   dots > 0 && digits > 0
 }
@@ -210,10 +208,10 @@ pub fn golden_status(root: String, rel: String): Int {
     i = 0
     while i < lines.size {
       ws = lines[i].split(" ")
-      if ws.size == 2 && str_eq(ws[0], rel) {
+      if ws.size == 2 && ws[0] == rel {
         return ws[1].to_i
       }
-      i = i + 1
+      i += 1
     }
   }
   -1
@@ -224,12 +222,12 @@ pub fn str_replace_all(s: String, from: String, to: String): String {
   buf = buf_new()
   i = 0
   while i < s.size {
-    if i + from.size <= s.size && str_eq(str_slice(s, i, i + from.size), from) {
+    if i + from.size <= s.size && str_slice(s, i, i + from.size) == from {
       buf.push_str(to)
-      i = i + from.size
+      i += from.size
     } else {
       buf.push_byte(s[i])
-      i = i + 1
+      i += 1
     }
   }
   buf.to_s

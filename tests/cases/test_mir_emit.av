@@ -51,7 +51,7 @@ fn build_job(compiler: String, name: String, out: String, mode: String, extra: A
   i = 0
   while i < extra.size {
     a.push(extra[i])
-    i = i + 1
+    i += 1
   }
   HJob.new(compiler, a, log)
 }
@@ -71,7 +71,7 @@ fn run_job(envs: String, bin: String, args: String, log: String): HJob {
     i = 0
     while i < ws.size {
       a.push(ws[i])
-      i = i + 1
+      i += 1
     }
   }
   a.push(bin)
@@ -80,7 +80,7 @@ fn run_job(envs: String, bin: String, args: String, log: String): HJob {
     i = 0
     while i < ws2.size {
       a.push(ws2[i])
-      i = i + 1
+      i += 1
     }
   }
   HJob.new("/usr/bin/env", a, log)
@@ -149,7 +149,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     builds.push(build_job(compiler, "example", "${dir}/ex-${t}", ms[i], emit_ll("${dir}/ex-${t}.ll"), "${dir}/ex-${t}.build.log"))
     builds.push(build_job(compiler, "constructs", "${dir}/cons-${t}", ms[i], none, "${dir}/cons-${t}.build.log"))
     builds.push(build_job(compiler, "traps", "${dir}/traps-${t}", ms[i], none, "${dir}/traps-${t}.build.log"))
-    i = i + 1
+    i += 1
   }
   cf: Array(String) = []
   cf.push("--call-forms")
@@ -160,7 +160,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     ex = emit_ll("${dir}/${fs[i]}.ll")
     ex.push("--object")
     builds.push(build_job(compiler, fs[i], "${dir}/${fs[i]}.o", "--debug", ex, "${dir}/${fs[i]}.build.log"))
-    i = i + 1
+    i += 1
   }
   builds.push(build_job(compiler, "example_no_barrier", "${dir}/nb", "--debug", emit_ll("${dir}/nb.ll"), "${dir}/nb.build.log"))
   run_jobs(builds)
@@ -169,7 +169,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     b = builds[i]
     c.eq_int(b.code, 0, "__mir-build ${b.args[1]} ${b.args[2]}")
     c.eq_str(log_text(b.log), "", "__mir-build ${b.args[1]} ${b.args[2]} is silent")
-    i = i + 1
+    i += 1
   }
 
   // (a) the .ll: the fixture, and the same text in every mode (D192).
@@ -187,7 +187,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   while i < fs.size {
     c.expect(file_exists("${dir}/${fs[i]}.o"), "${fs[i]}: an object")
     c.expect(str_has(log_text("${dir}/${fs[i]}.ll"), "define internal void @\"av.t/churn\"()"), "${fs[i]}: its .ll defines the module's functions")
-    i = i + 1
+    i += 1
   }
 
   // (e) rejected by the verifier: no .ll, no program, the diagnostic.
@@ -218,7 +218,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     runs.push(run_job(gcv, "${dir}/traps-${t}", "a b", "${dir}/traps-${t}.div0.log"))
     runs.push(run_job(gcv, "${dir}/traps-${t}", "a b c", "${dir}/traps-${t}.bounds.log"))
     runs.push(run_job(gcv, "${dir}/traps-${t}", "a b c d", "${dir}/traps-${t}.min.log"))
-    i = i + 1
+    i += 1
   }
   runs.push(run_job("${gcv} AVANT_GC_STATS=1", "${dir}/ex-calls", "", "${dir}/ex-calls.gc.log"))
   run_jobs(runs)
@@ -256,7 +256,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text(runs[k + 6].log), "avant runtime: index 4 out of bounds (size 4)\n", "traps ${t} check.bounds: message")
     c.eq_int(runs[k + 7].code, 1, "traps ${t} div.chk MIN by -1: exit 1")
     c.eq_str(log_text(runs[k + 7].log), "avant runtime: integer overflow\n", "traps ${t} div.chk MIN by -1: message")
-    i = i + 1
+    i += 1
   }
   last = runs[runs.size - 1]
   cl = log_text(last.log)

@@ -52,14 +52,11 @@ fn gc_envs: Array(String) {
 fn without_frame_links(ll: String): String {
   lines = ll.split("\n")
   out = buf_new()
-  i = 0
-  while i < lines.size {
-    l = lines[i]
+  for l in lines {
     if !(str_has(l, "store volatile ptr ") && str_has(l, ", ptr @avant_gc_top, align 8")) {
       out.push_str(l)
       out.push_str("\n")
     }
-    i = i + 1
   }
   out.to_s
 }
@@ -77,13 +74,13 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     k = key_of(progs[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < np.size {
     k = key_of(np[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${np[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gn.size {
@@ -91,7 +88,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/tests/fixtures/threads/${gn[i]}.av")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
-    i = i + 1
+    i += 1
   }
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
   // Stage 28 W17b (D207 relaxed): no slot access is volatile, in a shared
@@ -104,21 +101,21 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     a.push("${root}/${vol_srcs[i]}")
     a.push("${dir}/vol${i}.ll")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/vol${i}.log"))
-    i = i + 1
+    i += 1
   }
   run_waves(jobs)
   i = 0
   while i < progs.size {
     c.eq_int(jobs[i].code, 0, "${progs[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
   base = progs.size
   i = 0
   while i < np.size {
     c.eq_int(jobs[base + i].code, 0, "${np[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
-  base = base + np.size
+  base += np.size
   i = 0
   while i < gn.size {
     j = jobs[base + i]
@@ -128,9 +125,9 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "tests/fixtures/threads/${gn[i]}.av: the MIR dump is tests/goldens/threads/${gn[i]}.mir")
-    i = i + 1
+    i += 1
   }
-  base = base + gn.size
+  base += gn.size
   c.eq_int(jobs[base].code, 0, "coverage/points.av: a coverage build under llvm")
   c.eq_int(jobs[base + 1].code, 0, "threads/spawn.av: __emit-ll exits 0")
   c.eq_int(jobs[base + 2].code, 0, "heap/loops.av: __emit-ll exits 0")
@@ -157,9 +154,9 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   nbase = runs.size
   i = 0
@@ -169,9 +166,9 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   cbase = runs.size
   runs.push(run_job_env(dir, "cov.new", "cov.new.run", "AVANT_COVERAGE_LCOV=${dir}/cov-new.lcov AVANT_COVERAGE_REPORT=0"))
@@ -191,9 +188,9 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[per * i + 1 + e].code, want_code, "${p} under ${envs[e]}: the golden exit status")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the golden stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   wants = new_wants()
   i = 0
@@ -209,9 +206,9 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[at + 1 + e].code, 0, "${p} under ${envs[e]}: exit 0")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), wants[i], "${p} under ${envs[e]}: the known stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), "", "${p} under ${envs[e]}: no stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   c.eq_int(runs[cbase].code, 0, "coverage/points.av under llvm: exit 0")
   // The slot map and the counts the old back end wrote, frozen at W11

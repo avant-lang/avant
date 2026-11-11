@@ -40,7 +40,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   i = 0
   while i < m.funcs.size {
     ll_function(e, m.funcs[i])
-    i = i + 1
+    i += 1
   }
   body = e.out.to_s
   e.out = buf_new()
@@ -57,11 +57,9 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   out.push_str("\n")
   ll_layouts(e, out)
   if m.strs.size > 0 {
-    i = 0
-    while i < m.strs.size {
+    for i in 0..m.strs.size {
       s = m.strs[i]
       out.push_str("@str.${i} = private constant [${s.size + 1} x i8] c\"${mir_escape(s)}\\00\", align 1\n")
-      i = i + 1
     }
     out.push_str("\n")
   }
@@ -91,26 +89,21 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
 // the element type (E5).
 fn ll_layouts(e: LlEmit, out: Buf) {
   n = 0
-  i = 0
-  while i < e.ts.layouts.size {
-    l = e.ts.layouts[i]
+  for l in e.ts.layouts {
     if l.kind != mlk_elems() {
       out.push_str("${ll_type_name(l.name)} = type {")
-      j = 0
-      while j < l.fields.size {
+      for j in 0..l.fields.size {
         if j > 0 {
           out.push_str(",")
         }
         out.push_str(" ${e.llt(l.fields[j])}")
-        j = j + 1
       }
       if l.fields.size > 0 {
         out.push_str(" ")
       }
       out.push_str("}\n")
-      n = n + 1
+      n += 1
     }
-    i = i + 1
   }
   if n > 0 {
     out.push_str("\n")
@@ -121,22 +114,16 @@ fn ll_layouts(e: LlEmit, out: Buf) {
 
 fn ll_declarations(e: LlEmit, out: Buf) {
   names: Array(String) = []
-  i = 0
-  while i < e.m.externs.size {
-    if !str_eq(e.m.externs[i].name, "__avant_type_maps") {
-      ll_insert_sorted(names, e.m.externs[i].name)
+  for extern in e.m.externs {
+    if extern.name != "__avant_type_maps" {
+      ll_insert_sorted(names, extern.name)
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.rt_names.size {
-    ll_insert_sorted(names, e.rt_names[i])
-    i = i + 1
+  for rt_name in e.rt_names {
+    ll_insert_sorted(names, rt_name)
   }
   scratch = MTypes.new()
-  i = 0
-  while i < names.size {
-    name = names[i]
+  for name in names {
     if x = e.m.ext(name) {
       // A libm row called as its intrinsic (ll_call) needs no declaration.
       if ll_math_intrinsic(e.ts, x).size == 0 {
@@ -149,34 +136,27 @@ fn ll_declarations(e: LlEmit, out: Buf) {
     } else if r = e.m.rt.find(name) {
       out.push_str(ll_declare(scratch, name, e.m.rt.sig_of(r, scratch), r.noreturn, r.attrs))
     }
-    i = i + 1
   }
   intr: Array(String) = []
-  i = 0
-  while i < e.intrinsics.size {
-    ll_insert_sorted(intr, e.intrinsics[i])
-    i = i + 1
+  for intrinsic in e.intrinsics {
+    ll_insert_sorted(intr, intrinsic)
   }
-  i = 0
-  while i < intr.size {
+  for i in 0..intr.size {
     out.push_str("${intr[i]}\n")
-    i = i + 1
   }
 }
 
 fn ll_insert_sorted(xs: Array(String), s: String) {
-  i = 0
-  while i < xs.size {
-    if str_eq(xs[i], s) {
+  for i in 0..xs.size {
+    if xs[i] == s {
       return
     }
-    i = i + 1
   }
   xs.push(s)
   j = xs.size - 1
-  while j > 0 && mir_str_lt(s, xs[j - 1]) {
+  while j > 0 && str_lt(s, xs[j - 1]) {
     xs[j] = xs[j - 1]
-    j = j - 1
+    j -= 1
   }
   xs[j] = s
 }
@@ -188,13 +168,11 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String)
   s = ts.sigs[sig]
   buf = buf_new()
   buf.push_str("declare ${ll_c_type(ts, s.ret)} ${ll_sym(name)}(")
-  i = 0
-  while i < s.params.size {
+  for i in 0..s.params.size {
     if i > 0 {
       buf.push_str(", ")
     }
     buf.push_str(ll_c_param(ts, s.params[i]))
-    i = i + 1
   }
   if s.varargs {
     if s.params.size > 0 {
@@ -251,9 +229,7 @@ fn ll_c_ext(ts: MTypes, ty: Int): String {
 
 fn ll_type_maps(e: LlEmit) {
   e.out.push_str("define internal void @__avant_type_maps() #0 {\nentry:\n")
-  i = 0
-  while i < e.m.maps.size {
-    tm = e.m.maps[i]
+  for tm in e.m.maps {
     chunks = mir_map_chunks(e.ts, tm)
     stride = mir_map_stride(e.ts, tm)
     if stride == 0 && chunks.size == 1 {
@@ -261,15 +237,12 @@ fn ll_type_maps(e: LlEmit) {
       e.line("call void @avant_type_map(i32 ${tm.id}, i64 ${chunks[0].to_i64})")
     } else {
       e.need("avant_type_map_at")
-      c = 0
-      while c < chunks.size {
+      for c in 0..chunks.size {
         if c == 0 || chunks[c] != 0u64 {
           e.line("call void @avant_type_map_at(i32 ${tm.id}, i32 ${stride}, i32 ${64 * c}, i64 ${chunks[c].to_i64})")
         }
-        c = c + 1
       }
     }
-    i = i + 1
   }
   e.line("ret void")
   e.out.push_str("}\n\n")
@@ -296,8 +269,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
     rtext = ll_c_type(e.ts, s.ret)
   }
   e.out.push_str("define ${linkage}${rtext} ${ll_sym(f.symbol)}(")
-  i = 0
-  while i < s.params.size {
+  for i in 0..s.params.size {
     if i > 0 {
       e.out.push_str(", ")
     }
@@ -306,17 +278,14 @@ fn ll_function(e: LlEmit, f: MFunc) {
       ptext = ll_c_param(e.ts, s.params[i])
     }
     e.out.push_str("${ptext} %a${i + 1}")
-    i = i + 1
   }
   e.out.push_str(") #0 {\nalloca:\n")
   e.label = "alloca"
-  i = 0
-  while i < f.locals.size {
+  for i in 0..f.locals.size {
     if f.valid_local(i) {
       ty = f.locals[i].ty
       e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
     }
-    i = i + 1
   }
   e.frame_words = ll_gc_frame_words(e, f)
   if e.frame_words >= 0 {
@@ -325,7 +294,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   i = 1
   while i <= f.nparams {
     e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
-    i = i + 1
+    i += 1
   }
   e.line("br label %bb0")
   b = 0
@@ -337,13 +306,13 @@ fn ll_function(e: LlEmit, f: MFunc) {
     while j < blk.stmts.size {
       e.si = j
       ll_stmt(e, blk.stmts[j])
-      j = j + 1
+      j += 1
     }
     e.si = blk.stmts.size
     if t = blk.term {
       ll_term(e, t)
     }
-    b = b + 1
+    b += 1
   }
   if e.trap_ovf {
     e.block("trap.ovf")
@@ -418,7 +387,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
     args = ll_args(e, st.args, s.params, false)
     result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
   } else if x = e.m.ext(st.callee) {
-    if str_eq(x.name, "avant_gc_poll") {
+    if x.name == "avant_gc_poll" {
       // Stage 28 W17a: the request flag's test, the call only when set.
       ll_gc_poll(e)
       return
@@ -471,16 +440,16 @@ fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
   if s.params.size != 1 || s.params[0] != mt_f64() || s.ret != mt_f64() || s.varargs {
     return ""
   }
-  if str_eq(x.name, "sqrt") {
+  if x.name == "sqrt" {
     return "llvm.sqrt.f64"
   }
-  if str_eq(x.name, "fabs") {
+  if x.name == "fabs" {
     return "llvm.fabs.f64"
   }
-  if str_eq(x.name, "floor") {
+  if x.name == "floor" {
     return "llvm.floor.f64"
   }
-  if str_eq(x.name, "exp") {
+  if x.name == "exp" {
     return "llvm.exp.f64"
   }
   ""
@@ -501,13 +470,11 @@ fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: Str
 fn ll_fn_type(e: LlEmit, s: MSig): String {
   buf = buf_new()
   buf.push_str("(")
-  i = 0
-  while i < s.params.size {
+  for i in 0..s.params.size {
     if i > 0 {
       buf.push_str(", ")
     }
     buf.push_str(e.llt(s.params[i]))
-    i = i + 1
   }
   if s.varargs {
     if s.params.size > 0 {
@@ -541,7 +508,7 @@ fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool
     } else {
       buf.push_str("${e.llt(ty)} ${x}")
     }
-    i = i + 1
+    i += 1
   }
   buf.to_s
 }
@@ -558,10 +525,8 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
   code = e.tmp
   e.line("${code} = extractvalue ${e.llt(fty)} ${fv}, 1")
   rest: Array(Int) = []
-  i = 1
-  while i < s.params.size {
+  for i in 1..s.params.size {
     rest.push(s.params[i])
-    i = i + 1
   }
   args = ll_args(e, st.args, rest, false)
   if args.size > 0 {
@@ -587,7 +552,7 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   if got = e.loop_md.get(key) {
     return ", !llvm.loop !${got}"
   }
-  e.loop_md_n = e.loop_md_n + 1
+  e.loop_md_n += 1
   e.loop_md[key] = e.loop_md_n
   ", !llvm.loop !${e.loop_md_n}"
 }
@@ -600,7 +565,7 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
   i = 1
   while i <= e.loop_md_n {
     out.push_str("!${i} = distinct !{!${i}, !0}\n")
-    i = i + 1
+    i += 1
   }
 }
 
@@ -620,10 +585,8 @@ fn ll_term(e: LlEmit, t: MTerm) {
       ty = e.ov_ty
       buf = buf_new()
       buf.push_str("switch ${e.llt(ty)} ${c}, label %bb${t.targets[t.targets.size - 1]} [")
-      i = 0
-      while i < t.values.size {
+      for i in 0..t.values.size {
         buf.push_str(" ${e.llt(ty)} ${e.int_text(ty, t.values[i])}, label %bb${t.targets[i]}")
-        i = i + 1
       }
       buf.push_str(" ]")
       e.line(buf.to_s)
@@ -685,17 +648,13 @@ fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
   if k == mrk_struct() {
     vals: Array(String) = []
     tys: Array(Int) = []
-    i = 0
-    while i < r.ops.size {
+    for i in 0..r.ops.size {
       vals.push(e.value(r.ops[i]))
       tys.push(e.ov_ty)
-      i = i + 1
     }
     agg = "zeroinitializer"
-    i = 0
-    while i < vals.size {
+    for i in 0..vals.size {
       agg = ll_insert(e, r.ty, agg, tys[i], vals[i], i)
-      i = i + 1
     }
     return agg
   }

@@ -39,19 +39,16 @@ pub fn ll_gc_frame_words(e: LlEmit, f: MFunc): Int {
   stmts = f.blocks[0].stmts
   found = false
   n = 0
-  i = 0
-  while i < stmts.size {
-    st = stmts[i]
+  for st in stmts {
     if st.kind == msk_gc_enter() {
       found = true
     } else if st.kind == msk_gc_roots() {
       j = 0
       while j < st.locals.size {
-        n = n + e.ts.root_count(f.locals[st.locals[j]].ty)
-        j = j + 1
+        n += e.ts.root_count(f.locals[st.locals[j]].ty)
+        j += 1
       }
     }
-    i = i + 1
   }
   if !found {
     return -1
@@ -86,8 +83,8 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
   if roots.size > 0 {
     locals = roots[0].locals
     while i < locals.size {
-      n = n + e.ts.root_count(e.f.locals[locals[i]].ty)
-      i = i + 1
+      n += e.ts.root_count(e.f.locals[locals[i]].ty)
+      i += 1
     }
   }
   slots = "null"
@@ -129,10 +126,10 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
           e.line("${sl} = getelementptr inbounds i8, ptr %gcf, i64 ${32 + w * 8}")
         }
         e.line("store ptr ${at}, ptr ${sl}, align 8")
-        w = w + 1
-        j = j + 1
+        w += 1
+        j += 1
       }
-      i = i + 1
+      i += 1
     }
   }
   e.need("avant_gc_frame_enter")

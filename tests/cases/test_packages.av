@@ -67,14 +67,14 @@ fn test_packages(c: Checks) {
     pkg_mkdir(malformed)
     glog = "${base}/git.log"
 
-    dummy_dep_src = file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello from greeter\"\n}\n")
-    dummy_dep_toml = file_write("${dep}/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
+    file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello from greeter\"\n}\n")
+    file_write("${dep}/avant.toml", "[package]\nname = \"greeter\"\nversion = \"0.1.0\"\n")
     c.eq_int(pkg_git(dep, "init", "-q", glog), 0, "git init dep")
     c.eq_int(pkg_git(dep, "add", "-A", glog), 0, "git add dep")
     c.eq_int(pkg_git_commit(dep, "v1", glog), 0, "git commit dep v1")
 
-    dummy_app_src = file_write("${app}/main.av", "import greeter\nfn main {\n  puts(greeting())\n}\n")
-    dummy_app_toml = file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${dep}\", rev = \"HEAD\" }\n")
+    file_write("${app}/main.av", "import greeter\nfn main {\n  puts(greeting())\n}\n")
+    file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${dep}\", rev = \"HEAD\" }\n")
 
     pre_bin = "${base}/pre-bin"
     pre_log = "${base}/pre.log"
@@ -113,7 +113,7 @@ fn test_packages(c: Checks) {
       c.expect(false, "app binary exists")
     }
 
-    dummy_v2 = file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello v2\"\n}\n")
+    file_write("${dep}/greeter.av", "pub fn greeting: String {\n  \"hello v2\"\n}\n")
     c.eq_int(pkg_git(dep, "add", "-A", glog), 0, "git add dep v2")
     c.eq_int(pkg_git_commit(dep, "v2", glog), 0, "git commit dep v2")
     c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "second fetch succeeds")
@@ -135,16 +135,16 @@ fn test_packages(c: Checks) {
       c.expect(false, "read updated output")
     }
 
-    dummy_a = file_write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
-    dummy_b = file_write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
+    file_write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
+    file_write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
     c.eq_int(pkg_git(dep_a, "init", "-q", glog), 0, "git init depA")
     c.eq_int(pkg_git(dep_a, "add", "-A", glog), 0, "git add depA")
     c.eq_int(pkg_git_commit(dep_a, "a1", glog), 0, "git commit depA")
     c.eq_int(pkg_git(dep_b, "init", "-q", glog), 0, "git init depB")
     c.eq_int(pkg_git(dep_b, "add", "-A", glog), 0, "git add depB")
     c.eq_int(pkg_git_commit(dep_b, "b1", glog), 0, "git commit depB")
-    dummy_app2_src = file_write("${app2}/main.av", "import shared\nfn main {\n  puts(who())\n}\n")
-    dummy_app2_toml = file_write("${app2}/avant.toml", "[package]\nname = \"app2\"\nversion = \"0.1.0\"\n\n[dependencies]\ndepa = { git = \"${dep_a}\", rev = \"HEAD\" }\ndepb = { git = \"${dep_b}\", rev = \"HEAD\" }\n")
+    file_write("${app2}/main.av", "import shared\nfn main {\n  puts(who())\n}\n")
+    file_write("${app2}/avant.toml", "[package]\nname = \"app2\"\nversion = \"0.1.0\"\n\n[dependencies]\ndepa = { git = \"${dep_a}\", rev = \"HEAD\" }\ndepb = { git = \"${dep_b}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_fetch(compiler, app2, false, fetch_log), 0, "fetch for ambiguity case")
     amb_bin = "${base}/amb-bin"
     amb_log = "${base}/amb.log"
@@ -156,17 +156,17 @@ fn test_packages(c: Checks) {
       c.expect(false, "read ambiguity log")
     }
 
-    dummy_inner = file_write("${inner}/deep.av", "pub fn deep: String {\n  \"deep\"\n}\n")
+    file_write("${inner}/deep.av", "pub fn deep: String {\n  \"deep\"\n}\n")
     c.eq_int(pkg_git(inner, "init", "-q", glog), 0, "git init inner")
     c.eq_int(pkg_git(inner, "add", "-A", glog), 0, "git add inner")
     c.eq_int(pkg_git_commit(inner, "i1", glog), 0, "git commit inner")
-    dummy_outer = file_write("${outer}/outer.av", "import deep\npub fn outer_msg: String {\n  \"outer+\" + deep()\n}\n")
-    dummy_outer_toml = file_write("${outer}/avant.toml", "[package]\nname = \"outer\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"HEAD\" }\n")
+    file_write("${outer}/outer.av", "import deep\npub fn outer_msg: String {\n  \"outer+\" + deep()\n}\n")
+    file_write("${outer}/avant.toml", "[package]\nname = \"outer\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_git(outer, "init", "-q", glog), 0, "git init outer")
     c.eq_int(pkg_git(outer, "add", "-A", glog), 0, "git add outer")
     c.eq_int(pkg_git_commit(outer, "o1", glog), 0, "git commit outer")
-    dummy_app3_src = file_write("${app3}/main.av", "import outer\nfn main {\n  puts(outer_msg())\n}\n")
-    dummy_app3_toml = file_write("${app3}/avant.toml", "[package]\nname = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nouter = { git = \"${outer}\", rev = \"HEAD\" }\n")
+    file_write("${app3}/main.av", "import outer\nfn main {\n  puts(outer_msg())\n}\n")
+    file_write("${app3}/avant.toml", "[package]\nname = \"app3\"\nversion = \"0.1.0\"\n\n[dependencies]\nouter = { git = \"${outer}\", rev = \"HEAD\" }\n")
     c.eq_int(pkg_fetch(compiler, app3, false, fetch_log), 0, "fetch transitive deps")
     if lock3 = file_read("${app3}/avant.lock") {
       c.expect(str_has(lock3, "name = \"inner\""), "lockfile records the transitive dep")
@@ -189,7 +189,7 @@ fn test_packages(c: Checks) {
       c.expect(false, "transitive binary exists")
     }
 
-    dummy_bad = file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
+    file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
     bad_log = "${base}/bad.log"
     bad_code = pkg_fetch(compiler, bad, false, bad_log)
     c.expect(bad_code != 0, "fetch of a missing repo fails")
@@ -200,7 +200,7 @@ fn test_packages(c: Checks) {
       c.expect(false, "read bad fetch log")
     }
 
-    dummy_mal = file_write("${malformed}/avant.toml", "[package]\nname = \"oops\n")
+    file_write("${malformed}/avant.toml", "[package]\nname = \"oops\n")
     mal_log = "${base}/malformed.log"
     mal_code = pkg_fetch(compiler, malformed, false, mal_log)
     c.expect(mal_code != 0, "malformed manifest fails")

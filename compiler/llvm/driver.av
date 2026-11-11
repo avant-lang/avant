@@ -36,10 +36,8 @@ pub class LlvmJob {
   // (verb_codegen's names).
   fn initialize(codegen: String) {
     self.codegen = codegen
-    o: Array(String) = []
-    self.objects = o
-    fl: Array(String) = []
-    self.flags = fl
+    self.objects = []
+    self.flags = []
     self.keep_ll = ""
   }
 }
@@ -62,7 +60,7 @@ pub fn llvm_verify(m: MModule): String {
       r = str_slice(r, 0, r.size - 1)
     }
     buf.push_str(r)
-    i = i + 1
+    i += 1
   }
   buf.to_s
 }
@@ -80,10 +78,8 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   text = ll_emit_module(m, job.inline_fast)
   t1 = now_us()
   job.emit_us = llvm_us(t0, t1)
-  if job.keep_ll.size > 0 {
-    if file_write(job.keep_ll, text) != 0 {
-      return "cannot write ${job.keep_ll}"
-    }
+  if job.keep_ll.size > 0 && file_write(job.keep_ll, text) != 0 {
+    return "cannot write ${job.keep_ll}"
   }
   cpu = job.cpu
   if cpu == 0 {
@@ -116,10 +112,8 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
 // from the old driver: `compile x.av out/dir/x` works).
 pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   parent = llvm_out_parent(out_path)
-  if parent.size > 0 {
-    if fs_mkdir_p(parent) != 0 {
-      return "cannot create the output directory ${parent}"
-    }
+  if parent.size > 0 && fs_mkdir_p(parent) != 0 {
+    return "cannot create the output directory ${parent}"
   }
   work = tmp_new_dir()
   obj = "${work}/${m.name}.o"
@@ -130,8 +124,8 @@ pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   t0 = now_us()
   err = llvm_link(obj, job, out_path)
   job.link_us = llvm_us(t0, now_us())
-  dummy = fs_unlink(obj)
-  dummy2 = fs_remove_tree(work)
+  fs_unlink(obj)
+  fs_remove_tree(work)
   err
 }
 
@@ -142,7 +136,7 @@ pub fn llvm_out_parent(out_path: String): String {
     if out_path[i] == 47 {
       return str_slice(out_path, 0, i)
     }
-    i = i - 1
+    i -= 1
   }
   ""
 }
@@ -155,12 +149,10 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   i = 0
   while i < rt.size {
     args.push(rt[i])
-    i = i + 1
+    i += 1
   }
-  i = 0
-  while i < job.objects.size {
-    args.push(job.objects[i])
-    i = i + 1
+  for object in job.objects {
+    args.push(object)
   }
   extra = job.flags
   line = linker_flags_s(extra)
@@ -170,7 +162,7 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
     if words[i].size > 0 {
       args.push(words[i])
     }
-    i = i + 1
+    i += 1
   }
   args.push("-o")
   args.push(out_path)
@@ -185,7 +177,7 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
 pub fn llvm_us(a: Int, b: Int): Int64 {
   d = b.to_i64 - a.to_i64
   if d < 0i64 {
-    d = d + 4294967296i64
+    d += 4294967296i64
   }
   d
 }

@@ -5,7 +5,7 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body:
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
   rlog = "${scratch()}/safety-waveb-${stamp}-${tag}.rlog"
-  dummy = file_write(src, body)
+  file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
   c.expect(file_exists(bin), "${tag} bin exists")
@@ -24,7 +24,7 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
-  dummy = file_write(src, body)
+  file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code != 0, "${tag} is a compile error")
   c.expect(!file_exists(bin), "${tag} writes no binary")
@@ -54,7 +54,7 @@ fn test_safety(c: Checks) {
   } else {
     c.expect(true, "array get oob is nil")
   }
-  if v = xs.get(0 - 1) {
+  if v = xs.get(-1) {
     c.expect(false, "array get neg is nil")
   } else {
     c.expect(true, "array get neg is nil")
@@ -97,7 +97,7 @@ fn test_safety(c: Checks) {
   c.eq_int(low &- 1, 2147483647, "wrap sub")
   c.eq_int(65536 &* 65536, 0, "wrap mul")
   // C4 (W11b): MIN % -1 is 0 for Int and Int64; C1: shifts inside the range.
-  minus_one = 0 - 1
+  minus_one = -1
   c.eq_int(low % minus_one, 0, "Int MIN % -1 is 0")
   low64 = 0i64 - 9223372036854775807i64 - 1i64
   c.expect(low64 % minus_one.to_i64 == 0i64, "Int64 MIN % -1 is 0")
@@ -184,7 +184,7 @@ fn test_safety(c: Checks) {
     bad_src = "${scratch()}/safety-waveb-${stamp}-unknown.av"
     bad_bin = "${scratch()}/safety-waveb-${stamp}-unknown.bin"
     bad_log = "${scratch()}/safety-waveb-${stamp}-unknown.log"
-    dummy_b = file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
+    file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
     code_b = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
     c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
@@ -198,7 +198,7 @@ fn test_safety(c: Checks) {
     c.expect(code_r != 0, "unknown-fn run exits non-zero")
 
     hi_src = "${scratch()}/safety-waveb-${stamp}-hi.av"
-    dummy_h = file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
+    file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
     dbg_bin = "${scratch()}/safety-waveb-${stamp}-hi-dbg.bin"
     dbg_log = "${scratch()}/safety-waveb-${stamp}-hi-dbg.log"
     dbg_flags: Array(String) = []

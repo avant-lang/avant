@@ -30,10 +30,8 @@ pub class CovReport {
 
   fn initialize(anchor: String) {
     self.anchor = anchor
-    xs: Array(CovSlot) = []
-    self.slots = xs
-    ex: Array(String) = []
-    self.excludes = ex
+    self.slots = []
+    self.excludes = []
   }
 
   pub fn use_excludes(dirs: Array(String)) {
@@ -71,7 +69,7 @@ pub class CovReport {
             self.add_slot(kind, path, line, name, hit, false)
           }
         }
-        i = i + 1
+        i += 1
       }
     }
   }
@@ -87,9 +85,7 @@ pub class CovReport {
   pub fn write_lcov(path: String) {
     b = buf_new()
     paths = self.path_list()
-    i = 0
-    while i < paths.size {
-      p = paths[i]
+    for p in paths {
       bare = self.path_bare(p)
       b.push_str("TN:\n")
       b.push_str("SF:${p}\n")
@@ -101,7 +97,6 @@ pub class CovReport {
         self.write_lines(b, p)
       }
       b.push_str("end_of_record\n")
-      i = i + 1
     }
     w = file_write(path, b.to_s)
     if w != 0 {
@@ -116,13 +111,11 @@ pub class CovReport {
     }
     color = cov_color()
     file_w = 10
-    i = 0
-    while i < paths.size {
-      n = paths[i].size
+    for path in paths {
+      n = path.size
       if n > file_w {
         file_w = n
       }
-      i = i + 1
     }
     if file_w > 36 {
       file_w = 36
@@ -132,16 +125,13 @@ pub class CovReport {
     puts(" ${cov_pad("File", file_w)} | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s")
     cov_border(file_w)
     puts(" ${cov_pad("All files", file_w)} |${self.col_stmt("")}|${self.col_branch("")}|${self.col_func("")}|${self.col_line("")}|")
-    i = 0
-    while i < paths.size {
-      p = paths[i]
+    for p in paths {
       shown = p
       if shown.size > file_w {
         shown = str_slice(shown, 0, file_w)
       }
       uncovered = self.uncovered(p)
       puts(" ${cov_pad(shown, file_w)} |${self.col_stmt(p)}|${self.col_branch(p)}|${self.col_func(p)}|${self.col_line(p)}| ${uncovered}")
-      i = i + 1
     }
     cov_border(file_w)
   }
@@ -153,36 +143,25 @@ pub class CovReport {
     if self.known(path) && bare {
       return
     }
-    i = 0
-    while i < self.slots.size {
+    for i in 0..self.slots.size {
       s = self.slots[i]
-      if str_eq(s.kind, kind) {
-        if str_eq(s.path, path) {
-          if s.line == line {
-            if str_eq(s.name, name) {
-              s.hits = s.hits + hits
-              if bare {
-              } else {
-                s.bare = false
-              }
-              self.slots[i] = s
-              return
-            }
-          }
+      if s.kind == kind && s.path == path && s.line == line && s.name == name {
+        s.hits += hits
+        if !bare {
+          s.bare = false
         }
+        self.slots[i] = s
+        return
       }
-      i = i + 1
     }
     self.slots.push(CovSlot.new(kind, path, line, name, hits, bare))
   }
 
   fn known(path: String): Bool {
-    i = 0
-    while i < self.slots.size {
-      if str_eq(self.slots[i].path, path) {
+    for slot in self.slots {
+      if slot.path == path {
         return true
       }
-      i = i + 1
     }
     false
   }
@@ -192,7 +171,7 @@ pub class CovReport {
     i = 0
     while i < names.size {
       name = names[i]
-      i = i + 1
+      i += 1
       if name.size == 0 {
         continue
       }
@@ -200,7 +179,7 @@ pub class CovReport {
         continue
       }
       path = "${dir_abs}/${name}"
-      if str_eq(dir_abs, "/") {
+      if dir_abs == "/" {
         path = "/${name}"
       }
       if file_exists("${path}/.") {
@@ -208,12 +187,8 @@ pub class CovReport {
       } else {
         if str_ends(name, ".av") {
           rel = cov_rel(self.anchor, path)
-          if cov_excluded(rel, excludes) {
-          } else {
-            if self.known(rel) {
-            } else {
-              self.add_bare(rel, path)
-            }
+          if !cov_excluded(rel, excludes) && !self.known(rel) {
+            self.add_bare(rel, path)
           }
         }
       }
@@ -226,7 +201,7 @@ pub class CovReport {
       i = 0
       while i < lines.size {
         self.add_slot("L", rel, lines[i], "", 0, true)
-        i = i + 1
+        i += 1
       }
       if lines.size == 0 {
         self.add_slot("L", rel, 0, "", 0, true)
@@ -236,37 +211,30 @@ pub class CovReport {
 
   fn path_list: Array(String) {
     out: Array(String) = []
-    i = 0
-    while i < self.slots.size {
-      p = self.slots[i].path
+    for slot in self.slots {
+      p = slot.path
       found = false
-      j = 0
-      while j < out.size {
-        if str_eq(out[j], p) {
+      for j in 0..out.size {
+        if out[j] == p {
           found = true
         }
-        j = j + 1
       }
-      if found {
-      } else {
+      if !found {
         out.push(p)
       }
-      i = i + 1
     }
-    a = 1
-    while a < out.size {
+    for a in 1..out.size {
       b = a
       while b > 0 {
         if cov_less(out[b], out[b - 1]) {
           tmp = out[b]
           out[b] = out[b - 1]
           out[b - 1] = tmp
-          b = b - 1
+          b -= 1
         } else {
           break
         }
       }
-      a = a + 1
     }
     out
   }
@@ -276,38 +244,29 @@ pub class CovReport {
     seen = false
     while i < self.slots.size {
       s = self.slots[i]
-      if str_eq(s.path, path) {
+      if s.path == path {
         seen = true
-        if s.bare {
-        } else {
+        if !s.bare {
           return false
         }
       }
-      i = i + 1
+      i += 1
     }
     seen
   }
 
   fn count(path: String, kind: String, hit_only: Bool): Int {
     n = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
-      if str_eq(s.kind, kind) {
-        if path.size == 0 || str_eq(s.path, path) {
-          if s.line == 0 && s.bare {
-          } else {
-            if hit_only {
-              if s.hits > 0 {
-                n = n + 1
-              }
-            } else {
-              n = n + 1
-            }
+    for s in self.slots {
+      if s.kind == kind && (path.size == 0 || s.path == path) && !(s.line == 0 && s.bare) {
+        if hit_only {
+          if s.hits > 0 {
+            n += 1
           }
+        } else {
+          n += 1
         }
       }
-      i = i + 1
     }
     n
   }
@@ -362,43 +321,34 @@ pub class CovReport {
 
   fn uncovered(path: String): String {
     nums: Array(Int) = []
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
-      if str_eq(s.path, path) && str_eq(s.kind, "L") && s.hits == 0 && s.line > 0 {
+    for s in self.slots {
+      if s.path == path && s.kind == "L" && s.hits == 0 && s.line > 0 {
         have = false
-        j = 0
-        while j < nums.size {
-          if nums[j] == s.line {
+        for num in nums {
+          if num == s.line {
             have = true
           }
-          j = j + 1
         }
-        if have {
-        } else {
+        if !have {
           nums.push(s.line)
         }
       }
-      i = i + 1
     }
-    a = 1
-    while a < nums.size {
+    for a in 1..nums.size {
       b = a
       while b > 0 {
         if nums[b] < nums[b - 1] {
           tmp = nums[b]
           nums[b] = nums[b - 1]
           nums[b - 1] = tmp
-          b = b - 1
+          b -= 1
         } else {
           break
         }
       }
-      a = a + 1
     }
     out = buf_new()
-    i = 0
-    while i < nums.size {
+    for i in 0..nums.size {
       if i > 0 {
         out.push_str(",")
       }
@@ -407,7 +357,6 @@ pub class CovReport {
         out.push_str("...")
         break
       }
-      i = i + 1
     }
     out.to_s
   }
@@ -415,33 +364,27 @@ pub class CovReport {
   fn write_funcs(b: Buf, path: String) {
     tot = 0
     hit = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
-      if str_eq(s.path, path) && str_eq(s.kind, "F") {
+    for s in self.slots {
+      if s.path == path && s.kind == "F" {
         name = s.name
         if name.size == 0 {
           name = "fn"
         }
         b.push_str("FN:${s.line},${name}\n")
       }
-      i = i + 1
     }
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
-      if str_eq(s.path, path) && str_eq(s.kind, "F") {
+    for s in self.slots {
+      if s.path == path && s.kind == "F" {
         name = s.name
         if name.size == 0 {
           name = "fn"
         }
         b.push_str("FNDA:${s.hits},${name}\n")
-        tot = tot + 1
+        tot += 1
         if s.hits > 0 {
-          hit = hit + 1
+          hit += 1
         }
       }
-      i = i + 1
     }
     b.push_str("FNF:${tot}\n")
     b.push_str("FNH:${hit}\n")
@@ -450,19 +393,16 @@ pub class CovReport {
   fn write_branches(b: Buf, path: String) {
     tot = 0
     hit = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
-      if str_eq(s.path, path) && str_eq(s.kind, "B") {
+    for s in self.slots {
+      if s.path == path && s.kind == "B" {
         if s.hits > 0 {
           b.push_str("BRDA:${s.line},0,${tot},${s.hits}\n")
-          hit = hit + 1
+          hit += 1
         } else {
           b.push_str("BRDA:${s.line},0,${tot},-\n")
         }
-        tot = tot + 1
+        tot += 1
       }
-      i = i + 1
     }
     b.push_str("BRF:${tot}\n")
     b.push_str("BRH:${hit}\n")
@@ -472,38 +412,29 @@ pub class CovReport {
     seen: Array(Int) = []
     tot = 0
     hit = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
-      if str_eq(s.path, path) && str_eq(s.kind, "L") && s.line > 0 {
+    for s in self.slots {
+      if s.path == path && s.kind == "L" && s.line > 0 {
         have = false
-        j = 0
-        while j < seen.size {
+        for j in 0..seen.size {
           if seen[j] == s.line {
             have = true
           }
-          j = j + 1
         }
-        if have {
-        } else {
+        if !have {
           seen.push(s.line)
           sum = 0
-          k = 0
-          while k < self.slots.size {
-            t = self.slots[k]
-            if str_eq(t.path, path) && str_eq(t.kind, "L") && t.line == s.line {
-              sum = sum + t.hits
+          for t in self.slots {
+            if t.path == path && t.kind == "L" && t.line == s.line {
+              sum += t.hits
             }
-            k = k + 1
           }
           b.push_str("DA:${s.line},${sum}\n")
-          tot = tot + 1
+          tot += 1
           if sum > 0 {
-            hit = hit + 1
+            hit += 1
           }
         }
       }
-      i = i + 1
     }
     b.push_str("LF:${tot}\n")
     b.push_str("LH:${hit}\n")
@@ -523,7 +454,7 @@ fn cov_lines(text: String): Array(String) {
       out.push(line)
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -537,7 +468,7 @@ fn cov_tabs(line: String): Array(String) {
       out.push(str_slice(line, start, i))
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -554,7 +485,7 @@ fn cov_parse_u(s: String): Int {
       return -1
     }
     n = n * 10 + (c - 48)
-    i = i + 1
+    i += 1
   }
   n
 }
@@ -571,32 +502,24 @@ fn cov_read_hit(buf: String, slot: Int): Int {
   b1 = buf[off + 1]
   b2 = buf[off + 2]
   n = b0 + b1 * 256
-  n = n + b2 * 65536
+  n += b2 * 65536
   n
 }
 
 pub fn cov_rel(anchor: String, path: String): String {
   p = path
-  if p.size > 1 {
-    if p[0] == 46 && p[1] == 47 {
-      p = str_slice(p, 2, p.size)
-    }
+  if p.size > 1 && p[0] == 46 && p[1] == 47 {
+    p = str_slice(p, 2, p.size)
   }
-  if anchor.size > 0 && p.size > anchor.size && p[0] == 47 {
-    if str_eq(str_slice(p, 0, anchor.size), anchor) {
-      if p[anchor.size] == 47 {
-        return str_slice(p, anchor.size + 1, p.size)
-      }
-    }
+  if anchor.size > 0 && p.size > anchor.size && p[0] == 47 && str_slice(p, 0, anchor.size) == anchor && p[anchor.size] == 47 {
+    return str_slice(p, anchor.size + 1, p.size)
   }
   p
 }
 
 pub fn cov_excluded(path: String, dirs: Array(String)): Bool {
-  i = 0
-  while i < dirs.size {
-    d = dirs[i]
-    if str_eq(path, d) {
+  for d in dirs {
+    if path == d {
       return true
     }
     pre = d
@@ -606,7 +529,6 @@ pub fn cov_excluded(path: String, dirs: Array(String)): Bool {
     if str_starts(path, pre) {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -623,16 +545,13 @@ fn cov_code_lines(text: String): Array(Int) {
         raw = str_slice(raw, 0, raw.size - 1)
       }
       t = raw.strip()
-      if t.size > 0 {
-        if t.size >= 2 && t[0] == 47 && t[1] == 47 {
-        } else {
-          out.push(line)
-        }
+      if t.size > 0 && !(t.size >= 2 && t[0] == 47 && t[1] == 47) {
+        out.push(line)
       }
-      line = line + 1
+      line += 1
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -642,25 +561,23 @@ fn cov_less(a: String, b: String): Bool {
   if b.size < n {
     n = b.size
   }
-  i = 0
-  while i < n {
+  for i in 0..n {
     if a[i] < b[i] {
       return true
     }
     if a[i] > b[i] {
       return false
     }
-    i = i + 1
   }
   a.size < b.size
 }
 
 fn cov_color: Bool {
   if v = env_get("AVANT_COVERAGE_COLOR") {
-    if str_eq(v, "0") {
+    if v == "0" {
       return false
     }
-    if str_eq(v, "1") {
+    if v == "1" {
       return true
     }
   }
@@ -678,10 +595,8 @@ fn cov_pct(hit: Int, tot: Int): String {
     pad = 1
   }
   b = buf_new()
-  i = 0
-  while i < pad {
+  for i in 0..pad {
     b.push_str(" ")
-    i = i + 1
   }
   if cov_color() {
     code = "31"
@@ -710,10 +625,8 @@ fn cov_pad(s: String, w: Int): String {
   }
   b = buf_new()
   b.push_str(s)
-  i = s.size
-  while i < w {
+  for i in s.size..w {
     b.push_str(" ")
-    i = i + 1
   }
   b.to_s
 }
@@ -723,7 +636,7 @@ fn cov_border(file_w: Int) {
   i = 0
   while i < file_w + 2 {
     b.push_str("-")
-    i = i + 1
+    i += 1
   }
   b.push_str("|---------|----------|---------|---------|-------------------")
   puts(b.to_s)

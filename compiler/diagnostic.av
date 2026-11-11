@@ -4,12 +4,10 @@ pub fn diag_eq(a: String, b: String): Bool {
   if a.size != b.size {
     return false
   }
-  i = 0
-  while i < a.size {
+  for i in 0..a.size {
     if a[i] != b[i] {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -26,7 +24,7 @@ pub fn diag_has(hay: String, needle: String): Bool {
     if diag_eq(str_slice(hay, i, i + needle.size), needle) {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -79,10 +77,10 @@ pub fn diag_line_text(text: String, want_line: Int): String {
       if line == want_line {
         return str_slice(text, start, i)
       }
-      line = line + 1
+      line += 1
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   if line == want_line {
     return str_slice(text, start, text.size)
@@ -116,16 +114,12 @@ pub class CompileError {
           num = "${self.loc.line}"
           buf.push_str("${num} | ${line_text}\n")
           pad = buf_new()
-          j = 0
-          while j < num.size {
+          for j in 0..num.size {
             pad.push_str(" ")
-            j = j + 1
           }
           buf.push_str("${pad.to_s} | ")
-          k = 1
-          while k < self.loc.column {
+          for k in 1..self.loc.column {
             buf.push_str(" ")
-            k = k + 1
           }
           buf.push_str("^\n")
         }
@@ -150,14 +144,11 @@ pub class DiagBag {
   before_suppressed: Array(Int)
 
   fn initialize {
-    xs: Array(CompileError) = []
-    self.items = xs
+    self.items = []
     self.suppressed = 0
     self.pushes = 0
-    bi: Array(Int) = []
-    self.before_items = bi
-    bs: Array(Int) = []
-    self.before_suppressed = bs
+    self.before_items = []
+    self.before_suppressed = []
   }
 
   pub fn count: Int {
@@ -171,12 +162,12 @@ pub class DiagBag {
     }
     keep = self.before_items[mark]
     while self.items.size > keep {
-      dummy = self.items.pop
+      self.items.pop
     }
     self.suppressed = self.before_suppressed[mark]
     while self.before_items.size > mark {
-      dummy2 = self.before_items.pop
-      dummy3 = self.before_suppressed.pop
+      self.before_items.pop
+      self.before_suppressed.pop
     }
     self.pushes = mark
   }
@@ -190,15 +181,13 @@ pub class DiagBag {
   // is also one of the errors past the cap ("and N more errors"); without,
   // it is a repeat, which is never shown twice.
   pub fn note(n: Int, hidden: Bool) {
-    k = 0
-    while k < n {
+    for k in 0..n {
       self.before_items.push(self.items.size)
       self.before_suppressed.push(self.suppressed)
-      self.pushes = self.pushes + 1
+      self.pushes += 1
       if hidden {
-        self.suppressed = self.suppressed + 1
+        self.suppressed += 1
       }
-      k = k + 1
     }
   }
 
@@ -209,25 +198,14 @@ pub class DiagBag {
   pub fn push(e: CompileError) {
     self.before_items.push(self.items.size)
     self.before_suppressed.push(self.suppressed)
-    self.pushes = self.pushes + 1
-    i = 0
-    while i < self.items.size {
-      old = self.items[i]
-      if old.loc.line == e.loc.line {
-        if old.loc.column == e.loc.column {
-          if diag_eq(old.loc.path, e.loc.path) {
-            if diag_eq(old.code, e.code) {
-              if diag_eq(old.message, e.message) {
-                return
-              }
-            }
-          }
-        }
+    self.pushes += 1
+    for old in self.items {
+      if old.loc.line == e.loc.line && old.loc.column == e.loc.column && diag_eq(old.loc.path, e.loc.path) && diag_eq(old.code, e.code) && diag_eq(old.message, e.message) {
+        return
       }
-      i = i + 1
     }
     if self.items.size >= 20 {
-      self.suppressed = self.suppressed + 1
+      self.suppressed += 1
       return
     }
     self.items.push(e)
@@ -237,7 +215,7 @@ pub class DiagBag {
     i = 0
     while i < other.items.size {
       self.push(other.items[i])
-      i = i + 1
+      i += 1
     }
     self.note(other.suppressed, true)
   }
@@ -248,7 +226,7 @@ pub class DiagBag {
     while i < self.items.size {
       buf.push_str(self.items[i].render)
       buf.push_str("\n")
-      i = i + 1
+      i += 1
     }
     if self.items.size > 1 {
       buf.push_str("error: aborting due to ${self.items.size} previous errors\n")

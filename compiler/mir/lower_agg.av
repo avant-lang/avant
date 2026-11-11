@@ -41,29 +41,22 @@ pub fn (lw: MirLower) class_ty(cdef: ClassDef): Ty? {
 // Generic templates are W7.
 pub fn (lw: MirLower) note_classes {
   p = lw.lw_prog
-  i = 0
-  while i < p.classes.size {
-    cdef = p.classes[i]
+  for cdef in p.classes {
     if cdef.type_params.size > 0 {
-      i = i + 1
       continue
     }
     if t = lw.class_ty(cdef) {
       none: Array(Int) = []
       names: Array(String) = []
       l = lw.lw_b.note_layout(mir_mty(t), mlk_class(), none, names)
-      dummy = lw.lw_b.type_id(l)
+      lw.lw_b.type_id(l)
     } else {
       lw.refuse(cdef.loc, "class ${cdef.name} (no resolved type)")
       return
     }
-    i = i + 1
   }
-  i = 0
-  while i < p.classes.size {
-    cdef = p.classes[i]
+  for cdef in p.classes {
     if cdef.type_params.size > 0 {
-      i = i + 1
       continue
     }
     if t = lw.class_ty(cdef) {
@@ -77,11 +70,10 @@ pub fn (lw: MirLower) note_classes {
         }
         fields.push(ft)
         names.push(t.fields[j].name)
-        j = j + 1
+        j += 1
       }
       lw.lw_m.types.set_fields(lw.lw_m.types.layout_named(mir_mty(t)), fields, names)
     }
-    i = i + 1
   }
 }
 
@@ -179,7 +171,7 @@ pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
     }
     fields.push(ft)
     names.push(t.fields[j].name)
-    j = j + 1
+    j += 1
   }
   lw.lw_busy[name] = 0
   ahead = lw.lw_m.types.layout_named(name)
@@ -189,16 +181,14 @@ pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   // Noted ahead by an array of itself: fill it, then every element
   // buffer of it noted while it was empty.
   lw.lw_m.types.set_fields(ahead, fields, names)
-  k = 0
-  while k < lw.lw_pend_struct.size {
-    if str_eq(lw.lw_pend_struct[k], name) {
+  for k in 0..lw.lw_pend_struct.size {
+    if lw.lw_pend_struct[k] == name {
       ef: Array(Int) = []
       ef.push(lw.lw_m.types.agg(ahead))
       en: Array(String) = []
       en.push("")
       lw.lw_m.types.set_fields(lw.lw_pend_elems[k], ef, en)
     }
-    k = k + 1
   }
   ahead
 }
@@ -244,7 +234,7 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
       }
       payloads.push(pt)
     }
-    i = i + 1
+    i += 1
   }
   lw.lw_b.note_union(name, payloads, nil_tag)
 }
@@ -270,7 +260,7 @@ pub fn (lw: MirLower) owner_ty(fnn: Function): Ty? {
 pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
   m = mir_mty(ot)
   pre = "${mir_module_part(ot.mod_name)}."
-  if (ot.is_struct || ot.is_class) && str_eq(mir_module_part(ot.mod_name), mir_module_part(mod_name)) && str_starts_mir(m, pre) {
+  if (ot.is_struct || ot.is_class) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && str_starts(m, pre) {
     return str_slice(m, pre.size, m.size)
   }
   m
@@ -280,15 +270,13 @@ pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
 // named by the checker's resolved name (`ty_owned_symbol(ty, "new")`).
 pub fn (lw: MirLower) note_ctor_symbols {
   p = lw.lw_prog
-  i = 0
-  while i < p.classes.size {
-    if p.classes[i].type_params.size == 0 {
-      if t = lw.class_ty(p.classes[i]) {
+  for cls in p.classes {
+    if cls.type_params.size == 0 {
+      if t = lw.class_ty(cls) {
         owner = lw.owner_text(t, t.mod_name)
         lw.lw_fn_syms[ty_owned_symbol(t, "new")] = "av.${mir_module_part(t.mod_name)}/${owner}.new"
       }
     }
-    i = i + 1
   }
 }
 
@@ -312,7 +300,7 @@ pub fn (lw: MirLower) bind_receiver(fnn: Function, recv: Int) {
 
 // Whether e names a struct method's receiver as a whole.
 pub fn (lw: MirLower) is_struct_self(e: Expr): Bool {
-  lw.lw_self_struct && e.kind == ex_name() && !e.implicit_field && str_eq(e.ident, lw.lw_self_name)
+  lw.lw_self_struct && e.kind == ex_name() && !e.implicit_field && e.ident == lw.lw_self_name
 }
 
 // ---- places
@@ -322,7 +310,7 @@ pub fn (lw: MirLower) clone_place(p: MPlace): MPlace {
   i = 0
   while i < p.proj.size {
     q.proj.push(p.proj[i])
-    i = i + 1
+    i += 1
   }
   q
 }
@@ -405,7 +393,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
           if h < 0 {
             lw.at(e.loc)
             h = b.temp(lw.ety(obj))
-            dummy = b.assign(b.pl(h), b.rv_use(o))
+            b.assign(b.pl(h), b.rv_use(o))
           }
           k = lw.field_of(ot, e.ident, e.loc)
           return b.field(b.deref(b.pl(h)), k)
@@ -420,7 +408,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   }
   lw.at(e.loc)
   t = b.temp(ty)
-  dummy2 = b.assign(b.pl(t), b.rv_use(v))
+  b.assign(b.pl(t), b.rv_use(v))
   b.pl(t)
 }
 
@@ -453,9 +441,9 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
       return
     }
     if lw.lw_m.types.is_addr(b.func.locals[h].ty) {
-      dummy = b.barrier_at(h)
+      b.barrier_at(h)
     } else {
-      dummy2 = b.barrier(h)
+      b.barrier(h)
     }
   }
   dummy3 = b.assign(p, b.rv_use(val))
@@ -571,38 +559,30 @@ pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
     n = t.fields.size
     slots: Array(MOperand) = []
     have: Array(Bool) = []
-    i = 0
-    while i < n {
+    for i in 0..n {
       slots.push(b.c_i32(0))
       have.push(false)
-      i = i + 1
     }
-    i = 0
-    while i < e.field_names.size {
+    for i in 0..e.field_names.size {
       k = lw.field_of(t, e.field_names[i], e.loc)
       if lw.failed {
         return b.c_i32(0)
       }
       o = lw.lower_coerced(e.field_exprs[i], b.types.layouts[l].fields[k], t.fields[k].ty)
-      j = i + 1
-      while j < e.field_exprs.size {
+      for j in i + 1..e.field_exprs.size {
         o = lw.snap(o, e.field_exprs[j])
-        j = j + 1
       }
       if lw.failed {
         return b.c_i32(0)
       }
       slots[k] = o
       have[k] = true
-      i = i + 1
     }
-    i = 0
-    while i < n {
+    for i in 0..n {
       if !have[i] {
         lw.refuse(e.loc, "a struct literal without field ${t.fields[i].name}")
         return b.c_i32(0)
       }
-      i = i + 1
     }
     lw.at(e.loc)
     return lw.tmp(sty, b.rv_struct(l, slots))
@@ -634,7 +614,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     }
     lw.at(e.loc)
     a = b.temp(b.types.addr_of(lw.ety(recv)))
-    dummy = b.assign(b.pl(a), b.rv_addr(p))
+    b.assign(b.pl(a), b.rv_addr(p))
     r = b.copy_local(a)
   }
   if lw.failed {
@@ -645,7 +625,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   i = 0
   while i < ops.size {
     all.push(ops[i])
-    i = i + 1
+    i += 1
   }
   lw.at(e.loc)
   lw.call_to(ret, sym, all)
@@ -670,13 +650,10 @@ pub fn (lw: MirLower) lower_named_call(e: Expr): MOperand? {
 
 // The class's `initialize`, if it has one (decl.av find_initialize).
 pub fn (lw: MirLower) initialize_of(cdef: ClassDef): Function? {
-  i = 0
-  while i < cdef.methods.size {
-    m = cdef.methods[i]
-    if str_eq(m.name, "initialize") && !m.type_method {
+  for m in cdef.methods {
+    if m.name == "initialize" && !m.type_method {
       return m
     }
-    i = i + 1
   }
   nil
 }
@@ -690,7 +667,7 @@ pub fn (lw: MirLower) lower_ctors {
         lw.lower_ctor(p.classes[i], t)
       }
     }
-    i = i + 1
+    i += 1
   }
 }
 
@@ -729,23 +706,19 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
       init_sym = got2
     }
     if sig = lw.lw_syms.find_method_emit(f.emit_name) {
-      i = 0
-      while i < sig.params.size {
-        params.push(lw.ty_at(sig.params[i], f.loc, "a parameter"))
-        i = i + 1
+      for param in sig.params {
+        params.push(lw.ty_at(param, f.loc, "a parameter"))
       }
     }
   }
   if lw.failed {
     return
   }
-  dummy = b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
+  b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
   if f2 = init {
-    i = 0
-    while i < f2.params.size {
+    for i in 0..f2.params.size {
       b.name_param(i + 1, f2.params[i].name)
       lw.lw_vars[lw.var_key(f2.params[i].name, params[i])] = i + 1
-      i = i + 1
     }
   }
   lw.at(cdef.loc)
@@ -753,12 +726,12 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   aargs: Array(MOperand) = []
   aargs.push(b.c_u64(b.types.layouts[layout].size.to_i64))
   aargs.push(b.c_u32(b.types.layouts[layout].type_id))
-  dummy2 = b.call(o, "avant_alloc", aargs)
+  b.call(o, "avant_alloc", aargs)
   lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
   if lw.failed {
     return
   }
-  dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
+  b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
   b.ret
   b.end_fn
 }
@@ -782,16 +755,14 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
       lw.at(fd.loc)
       lw.store_place(b.field(b.deref(b.pl(o)), k), fty, v)
     }
-    j = j + 1
+    j += 1
   }
   lw.at(cdef.loc)
   if init_sym.size > 0 {
     args: Array(MOperand) = []
     args.push(b.copy_local(o))
-    i = 0
-    while i < nparams {
+    for i in 0..nparams {
       args.push(b.copy_local(i + 1))
-      i = i + 1
     }
     dummy3 = b.call(-1, init_sym, args)
   }

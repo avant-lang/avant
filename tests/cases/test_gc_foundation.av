@@ -32,7 +32,7 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
   p = 0
   while p < names.size {
     jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/${names[p]}.av", "${dir}/${names[p]}", "${dir}/${names[p]}.log"))
-    p = p + 1
+    p += 1
   }
   run_waves(jobs)
   envs = gc_envs()
@@ -50,9 +50,9 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
         ev = "-u AVANT_GC_STRESS ${ev}"
       }
       runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", ev))
-      e = e + 1
+      e += 1
     }
-    p = p + 1
+    p += 1
   }
   runs.push(run_job_env(dir, "full_default", "full_default.stats", "-u AVANT_GC_STRESS AVANT_GC_STATS=1"))
   runs.push(run_job_env(dir, "full_default", "full_default.nursery0", "-u AVANT_GC_STRESS -u AVANT_YOUNG_MB AVANT_NURSERY=0 AVANT_GC_STATS=1"))
@@ -69,9 +69,9 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[p * envs.size + e].code, 0, "${names[p]}.av ${what}: exit 0")
       c.eq_str(log_text("${dir}/${k}.out"), wants[p], "${names[p]}.av ${what}: the known stdout")
       c.eq_str(log_text("${dir}/${k}.err"), "", "${names[p]}.av ${what}: no stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    p = p + 1
+    p += 1
   }
   stats = log_text("${dir}/full_default.stats.err")
   c.expect(str_has(stats, " full="), "full_default.av: AVANT_GC_STATS=1 prints the statistics")

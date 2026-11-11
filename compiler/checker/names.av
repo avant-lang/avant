@@ -141,46 +141,46 @@ pub fn reserved_c_names: Hash(String, Int) {
 }
 
 pub fn is_op_fn_name(name: String): Bool {
-  if str_eq(name, "&+") {
+  if name == "&+" {
     return true
   }
-  if str_eq(name, "&-") {
+  if name == "&-" {
     return true
   }
-  if str_eq(name, "&*") {
+  if name == "&*" {
     return true
   }
-  if str_eq(name, "+") {
+  if name == "+" {
     return true
   }
-  if str_eq(name, "-") {
+  if name == "-" {
     return true
   }
-  if str_eq(name, "*") {
+  if name == "*" {
     return true
   }
-  if str_eq(name, "/") {
+  if name == "/" {
     return true
   }
-  if str_eq(name, "%") {
+  if name == "%" {
     return true
   }
-  if str_eq(name, "==") {
+  if name == "==" {
     return true
   }
-  if str_eq(name, "!=") {
+  if name == "!=" {
     return true
   }
-  if str_eq(name, "<") {
+  if name == "<" {
     return true
   }
-  if str_eq(name, "<=") {
+  if name == "<=" {
     return true
   }
-  if str_eq(name, ">") {
+  if name == ">" {
     return true
   }
-  if str_eq(name, ">=") {
+  if name == ">=" {
     return true
   }
   false
@@ -195,8 +195,7 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     if ty.is_nilable {
       inner = ty_without_nil(ty)
       tn = ty_to_type_name(inner, loc)
-      if tn.nilable {
-      } else {
+      if !tn.nilable {
         tn.nilable = true
       }
       return tn
@@ -276,8 +275,7 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
       tn.args.push(ty_to_type_name(m, loc))
     }
     if r = ty.inner {
-      if r.is_void {
-      } else {
+      if !r.is_void {
         tn.ret = ty_to_type_name(r, loc)
       }
     }
@@ -296,26 +294,15 @@ pub class ImplFact {
   }
 }
 
-pub fn str_index(names: Array(String), name: String): Int {
-  for i in 0..names.size {
-    if str_eq(names[i], name) {
-      return i
-    }
-  }
-  -1
-}
-
 pub fn iface_key_of(name: String, args: Array(Ty)): String {
   if args.size == 0 {
     return name
   }
   buf = buf_new()
   buf.push_str(name)
-  i = 0
-  while i < args.size {
+  for arg in args {
     buf.push_str("__")
-    buf.push_str(mangle_ty(args[i]))
-    i = i + 1
+    buf.push_str(mangle_ty(arg))
   }
   buf.to_s
 }
@@ -330,8 +317,8 @@ pub fn impl_type_key(ty: Ty): String {
 pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
   if a.is_var {
     if b.is_var {
-      ia = str_index(ap, a.name)
-      ib = str_index(bp, b.name)
+      ia = ap.index_of(a.name) ?? -1
+      ib = bp.index_of(b.name) ?? -1
       if ia < 0 {
         return false
       }
@@ -349,13 +336,10 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     if a.members.size != b.members.size {
       return false
     }
-    i = 0
-    while i < a.members.size {
-      if ty_eq_sig(a.members[i], b.members[i], ap, bp) {
-      } else {
+    for i in 0..a.members.size {
+      if !ty_eq_sig(a.members[i], b.members[i], ap, bp) {
         return false
       }
-      i = i + 1
     }
     if ar = a.inner {
       if br = b.inner {
@@ -368,13 +352,10 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     if a.members.size != b.members.size {
       return false
     }
-    i = 0
-    while i < a.members.size {
-      if ty_eq_sig(a.members[i], b.members[i], ap, bp) {
-      } else {
+    for i in 0..a.members.size {
+      if !ty_eq_sig(a.members[i], b.members[i], ap, bp) {
         return false
       }
-      i = i + 1
     }
     return true
   }

@@ -69,24 +69,19 @@ fn mir_call_blocks_leaf(m: MModule, st: MStmt, cand: Hash(String, Int)): Bool {
   if f = m.func(st.callee) {
     return !mir_in_set(cand, st.callee)
   }
-  if str_starts_mir(st.callee, "av.") {
+  if str_starts(st.callee, "av.") {
     return true
   }
   st.collects
 }
 
 fn mir_func_blocks_leaf(m: MModule, f: MFunc, cand: Hash(String, Int)): Bool {
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
-    i = 0
-    while i < blk.stmts.size {
-      if mir_call_blocks_leaf(m, blk.stmts[i], cand) {
+  for blk in f.blocks {
+    for stmt in blk.stmts {
+      if mir_call_blocks_leaf(m, stmt, cand) {
         return true
       }
-      i = i + 1
     }
-    b = b + 1
   }
   false
 }
@@ -98,67 +93,48 @@ fn mir_holds_roots(m: MModule, f: MFunc): Bool {
     if f.valid_local(k) && m.types.traced(f.locals[k].ty) {
       return true
     }
-    k = k + 1
+    k += 1
   }
   false
 }
 
 fn mir_mark_calls(m: MModule, f: MFunc) {
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
-    i = 0
-    while i < blk.stmts.size {
-      st = blk.stmts[i]
+  for blk in f.blocks {
+    for st in blk.stmts {
       if st.kind == msk_call() {
         if g = m.func(st.callee) {
           st.collects = g.kind != mfk_leaf()
         }
       }
-      i = i + 1
     }
-    b = b + 1
   }
 }
 
 // The leaf pass (step 2 of 5.9).
 pub fn mir_leaf_pass(m: MModule) {
   cand = Hash(String, Int).new
-  i = 0
-  while i < m.funcs.size {
-    f = m.funcs[i]
-    if f.kind == mfk_unset() && !str_eq(f.symbol, "main") && !(m.shared && mir_holds_roots(m, f)) {
+  for f in m.funcs {
+    if f.kind == mfk_unset() && f.symbol != "main" && !(m.shared && mir_holds_roots(m, f)) {
       cand[f.symbol] = 1
     }
-    i = i + 1
   }
   changed = true
   while changed {
     changed = false
-    i = 0
-    while i < m.funcs.size {
-      f = m.funcs[i]
-      if mir_in_set(cand, f.symbol) {
-        if mir_func_blocks_leaf(m, f, cand) {
-          cand[f.symbol] = 0
-          changed = true
-        }
+    for f in m.funcs {
+      if mir_in_set(cand, f.symbol) && mir_func_blocks_leaf(m, f, cand) {
+        cand[f.symbol] = 0
+        changed = true
       }
-      i = i + 1
     }
   }
-  i = 0
-  while i < m.funcs.size {
-    f = m.funcs[i]
+  for f in m.funcs {
     if mir_in_set(cand, f.symbol) {
       f.kind = mfk_leaf()
     }
-    i = i + 1
   }
-  i = 0
-  while i < m.funcs.size {
-    mir_mark_calls(m, m.funcs[i])
-    i = i + 1
+  for fdef in m.funcs {
+    mir_mark_calls(m, fdef)
   }
 }
 
@@ -198,23 +174,19 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
         // every live local but the call's destination
         d = st.dest
         keep_d = d >= 0 && d < n && mir_bit(need, 0, d)
-        w = 0
-        while w < nw {
+        for w in 0..nw {
           need[w] = need[w] | live[w]
-          w = w + 1
         }
         if d >= 0 && d < n && !keep_d {
           mir_bit_off(need, 0, d)
         }
         if mir_calls_external(m, st) {
-          i = 0
-          while i < st.args.size {
-            if p = st.args[i].place {
+          for arg in st.args {
+            if p = arg.place {
               if p.proj.size == 0 && p.local >= 0 && p.local < n {
                 mir_bit_on(need, 0, p.local)
               }
             }
-            i = i + 1
           }
         }
       }
@@ -228,15 +200,13 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
         }
       }
       mir_live_step_bits(st, live, n, reads)
-      j = j - 1
+      j -= 1
     }
-    b = b + 1
+    b += 1
   }
   out = mir_bools(n, false)
-  k = 0
-  while k < n {
+  for k in 0..n {
     out[k] = mir_bit(need, 0, k) && f.valid_local(k) && ts.traced(f.locals[k].ty)
-    k = k + 1
   }
   out
 }
@@ -272,13 +242,10 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
   // last[h]: the last block of the loop h heads (its latest back edge's
   // source), so the loop's blocks are h..last[h] in the lowering's order.
   last: Array(Int) = []
-  b = 0
-  while b < n {
+  for b in 0..n {
     last.push(-1)
-    b = b + 1
   }
-  b = 0
-  while b < n {
+  for b in 0..n {
     succ = mir_succ(f.blocks[b])
     i = 0
     while i < succ.size {
@@ -289,9 +256,8 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
           last[h] = b
         }
       }
-      i = i + 1
+      i += 1
     }
-    b = b + 1
   }
   // An outer loop (one whose blocks hold another loop's head) always
   // polls (Stage 28 W17b): its new slots cost nothing inside the inner
@@ -299,21 +265,18 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
   // register), and a collection then waits at most for one run of an
   // innermost loop.
   outer = mir_bools(n, false)
-  h = 0
-  while h < n {
+  for h in 0..n {
     if heads[h] {
       k = h + 1
       while k <= last[h] && k < n {
         if heads[k] {
           outer[h] = true
         }
-        k = k + 1
+        k += 1
       }
     }
-    h = h + 1
   }
-  h = 0
-  while h < n {
+  for h in 0..n {
     if heads[h] && !outer[h] {
       live = mir_live_in_bits(lv, h)
       k = 0
@@ -321,13 +284,11 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
         if mir_bit(live, 0, k) && !need0[k] && f.valid_local(k) && ts.traced(f.locals[k].ty) {
           heads[h] = false
         }
-        k = k + 1
+        k += 1
       }
     }
-    h = h + 1
   }
-  h = 0
-  while h < n {
+  for h in 0..n {
     if heads[h] && mir_declare_poll(m) {
       blk = f.blocks[h]
       loc = f.loc
@@ -343,11 +304,10 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
       i = 0
       while i < blk.stmts.size {
         xs.push(blk.stmts[i])
-        i = i + 1
+        i += 1
       }
       blk.stmts = xs
     }
-    h = h + 1
   }
 }
 
@@ -372,7 +332,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
       f.locals[k].slot = true
       slots.push(k)
     }
-    k = k + 1
+    k += 1
   }
   pro: Array(MStmt) = []
   i = 0
@@ -383,7 +343,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
       z.rv = MRvalue.new(mrk_zero())
       pro.push(z)
     }
-    i = i + 1
+    i += 1
   }
   pro.push(MStmt.new(msk_gc_enter(), f.loc))
   roots = MStmt.new(msk_gc_roots(), f.loc)
@@ -393,29 +353,24 @@ fn mir_add_frame(m: MModule, f: MFunc) {
   i = 0
   while i < entry.stmts.size {
     pro.push(entry.stmts[i])
-    i = i + 1
+    i += 1
   }
   entry.stmts = pro
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
+  for blk in f.blocks {
     if t = blk.term {
       if t.kind == mtk_return() {
         blk.stmts.push(MStmt.new(msk_gc_leave(), t.loc))
       }
     }
-    b = b + 1
   }
   if f.blocks.size > 0 {
     reads: Array(Int) = []
     mir_live_block(f, lv, 0, reads)
     f.live = lv
-    i = 0
-    while i < lv.succ.size {
+    for i in 0..lv.succ.size {
       if lv.succ[i] == 0 {
         f.live = nil
       }
-      i = i + 1
     }
   }
 }
@@ -424,13 +379,10 @@ fn mir_add_frame(m: MModule, f: MFunc) {
 // unset becomes a frame (a function whose kind was already set, as in the
 // selftest's hand-built helpers, is left alone).
 pub fn mir_frame_pass(m: MModule) {
-  i = 0
-  while i < m.funcs.size {
-    f = m.funcs[i]
+  for f in m.funcs {
     if f.kind == mfk_unset() {
       mir_add_frame(m, f)
     }
-    i = i + 1
   }
 }
 

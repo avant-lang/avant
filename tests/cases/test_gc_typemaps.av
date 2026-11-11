@@ -42,10 +42,8 @@ fn tm_wide_class: String {
   b = buf_new(4096)
   b.push_str(tm_common())
   b.push_str("class Wide {\n")
-  k = 0
-  while k < 70 {
+  for k in 0..70 {
     b.push_str("  f${k}: Int64\n")
-    k = k + 1
   }
   b.push_str("  name: String\n  fn initialize(i: Int) {\n    self.name = \"w\${i}\"\n  }\n}\n\nfn main: Int {\n  ws: Array(Wide) = []\n  i = 0\n  while i < 500 {\n    ws.push(Wide.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < ws.size {\n    if ws[i].name != \"w\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n")
   b.to_s
@@ -57,13 +55,11 @@ fn tm_wide_class: String {
 fn tm_many_classes: String {
   b = buf_new(16384)
   b.push_str(tm_common())
-  k = 1
-  while k < 420 {
+  for k in 1..420 {
     if k == 399 {
       b.push_str("class Named {\n  name: String\n  fn initialize(i: Int) {\n    self.name = \"x\${i}\"\n  }\n}\n\n")
     }
     b.push_str("class C${k} {\n  v: Int\n}\n\n")
-    k = k + 1
   }
   b.push_str("fn main: Int {\n  n = 7\n  f: fn(): Int = { || n }\n  ns: Array(Named) = []\n  i = 0\n  while i < 2000 {\n    ns.push(Named.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < ns.size {\n    if ns[i].name != \"x\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong + f() * 0)\n  0\n}\n")
   b.to_s

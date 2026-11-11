@@ -54,54 +54,30 @@ pub class FlowFacts {
   gne_live: Array(Int)
 
   fn initialize {
-    fv: Array(String) = []
-    self.fact_var = fv
-    fc: Array(String) = []
-    self.fact_cont = fc
-    fs: Array(Int) = []
-    self.fact_slack = fs
-    fl: Array(Int) = []
-    self.fact_live = fl
-    svv: Array(String) = []
-    self.sv_var = svv
-    svc: Array(String) = []
-    self.sv_cont = svc
-    bvv: Array(String) = []
-    self.bv_var = bvv
-    bvc: Array(String) = []
-    self.bv_cont = bvc
-    bvd: Array(Int) = []
-    self.bv_delta = bvd
-    csc: Array(String) = []
-    self.cs_cont = csc
-    csvv: Array(String) = []
-    self.cs_var = csvv
-    csd: Array(Int) = []
-    self.cs_delta = csd
-    nnv: Array(String) = []
-    self.nn_var = nnv
-    cpv: Array(String) = []
-    self.cap_var = cpv
-    cpvl: Array(Int64) = []
-    self.cap_val = cpvl
-    gcv: Array(String) = []
-    self.gcap_var = gcv
-    gcvl: Array(Int64) = []
-    self.gcap_val = gcvl
-    gcl: Array(Int) = []
-    self.gcap_live = gcl
-    gnv: Array(String) = []
-    self.gnn_var = gnv
-    gnl: Array(Int) = []
-    self.gnn_live = gnl
-    gpv: Array(String) = []
-    self.gpos_var = gpv
-    gpl: Array(Int) = []
-    self.gpos_live = gpl
-    gev: Array(String) = []
-    self.gne_var = gev
-    gel: Array(Int) = []
-    self.gne_live = gel
+    self.fact_var = []
+    self.fact_cont = []
+    self.fact_slack = []
+    self.fact_live = []
+    self.sv_var = []
+    self.sv_cont = []
+    self.bv_var = []
+    self.bv_cont = []
+    self.bv_delta = []
+    self.cs_cont = []
+    self.cs_var = []
+    self.cs_delta = []
+    self.nn_var = []
+    self.cap_var = []
+    self.cap_val = []
+    self.gcap_var = []
+    self.gcap_val = []
+    self.gcap_live = []
+    self.gnn_var = []
+    self.gnn_live = []
+    self.gpos_var = []
+    self.gpos_live = []
+    self.gne_var = []
+    self.gne_live = []
   }
 }
 
@@ -194,20 +170,15 @@ pub class Checker {
     self.functions = fns
     fi = Hash(String, Int).new
     self.fn_index = fi
-    ms: Array(FuncSig) = []
-    self.methods = ms
+    self.methods = []
     mi = Hash(String, Int).new
     self.method_index = mi
     self.fns_named = Hash(String, Int).new
     self.methods_named = Hash(String, Int).new
-    fl: Array(Array(Int)) = []
-    self.fn_lists = fl
-    ml: Array(Array(Int)) = []
-    self.method_lists = ml
-    nn: Array(Int) = []
-    self.none_named = nn
-    cf: Array(CFunSig) = []
-    self.cfuns = cf
+    self.fn_lists = []
+    self.method_lists = []
+    self.none_named = []
+    self.cfuns = []
     cfi = Hash(String, Int).new
     self.cfun_index = cfi
     ln = Hash(String, Int).new
@@ -215,8 +186,7 @@ pub class Checker {
     cs = Hash(String, String).new
     self.c_symbols = cs
     self.reserved = reserved_c_names()
-    sc: Array(Scope) = []
-    self.scopes = sc
+    self.scopes = []
     self.failed = false
     self.err = nil
     self.errors = DiagBag.new
@@ -228,10 +198,8 @@ pub class Checker {
     self.return_type = ty_void()
     self.loop_depth = 0
     self.self_name = ""
-    pend: Array(Function) = []
-    self.pending = pend
-    insts: Array(Function) = []
-    self.instances = insts
+    self.pending = []
+    self.instances = []
     self.next_ol = 1
     self.current_module = ""
     self.root_module = ""
@@ -249,18 +217,13 @@ pub class Checker {
     self.lib_vis = lv
     km = Hash(String, Int).new
     self.known_mods = km
-    le: Array(Expr) = []
-    self.lam_exprs = le
-    ls: Array(Int) = []
-    self.lam_scopes = ls
+    self.lam_exprs = []
+    self.lam_scopes = []
     self.lambda_infer = false
     self.inferred_ret = ty_void()
-    ss: Array(String) = []
-    self.spawn_skip = ss
-    ph: Array(String) = []
-    self.pending_handles = ph
-    pa: Array(String) = []
-    self.pending_arrays = pa
+    self.spawn_skip = []
+    self.pending_handles = []
+    self.pending_arrays = []
     self.facts = FlowFacts.new
     ad = Hash(String, Int).new
     self.adopted = ad
@@ -270,18 +233,13 @@ pub class Checker {
     self.in_task = 0
     self.place_name = ""
     self.place_depth = 0
-    im: Array(ImplFact) = []
-    self.impls = im
-    sp: Array(Ty) = []
-    self.sig_params = sp
+    self.impls = []
+    self.sig_params = []
     self.sig_ret = ty_void()
-    sv: Array(String) = []
-    self.sig_vars = sv
-    wp: Array(Ty) = []
-    self.wit_params = wp
+    self.sig_vars = []
+    self.wit_params = []
     self.wit_ret = ty_void()
-    wv: Array(String) = []
-    self.wit_vars = wv
+    self.wit_vars = []
   }
 
   pub fn has_err: Bool {
@@ -324,7 +282,7 @@ pub class Checker {
       self.failed = true
       self.poisoned = true
       self.errors.push(re)
-      self.resolver_pulled = self.resolver_pulled + 1
+      self.resolver_pulled += 1
     }
     if self.resolver_pushes < self.resolver.errors.pushes {
       // The resolver's errors it did not keep (O163): repeats and those
@@ -341,19 +299,14 @@ pub class Checker {
       self.resolver_pushes = self.resolver.errors.pushes
     }
     self.resolver_kept = self.resolver_pulled
-    if self.ready_adopt {
-      if self.in_adopt {
-      } else {
-        saved: Array(String) = []
-        i = 0
-        while i < self.resolver.tparam_names.size {
-          saved.push(self.resolver.tparam_names[i])
-          i = i + 1
-        }
-        self.resolver.clear_tparams
-        self.adopt_new_types
-        self.resolver.set_tparams(saved)
+    if self.ready_adopt && !self.in_adopt {
+      saved: Array(String) = []
+      for tparam_name in self.resolver.tparam_names {
+        saved.push(tparam_name)
       }
+      self.resolver.clear_tparams
+      self.adopt_new_types
+      self.resolver.set_tparams(saved)
     }
   }
 
@@ -382,7 +335,7 @@ pub class Checker {
       if id = sc.names.get(name) {
         return self.resolver.ty_at(id)
       }
-      i = i - 1
+      i -= 1
     }
     nil
   }
@@ -394,14 +347,14 @@ pub class Checker {
       if id = sc.names.get(name) {
         return i
       }
-      i = i - 1
+      i -= 1
     }
     -1
   }
 
   pub fn alloc_ol(fnn: Function) {
     fnn.ol_index = self.next_ol
-    self.next_ol = self.next_ol + 1
+    self.next_ol += 1
   }
 
   pub fn t_int: Ty { self.resolver.t_int }
@@ -484,18 +437,13 @@ pub class Checker {
       return
     }
     self.return_type = ret
-    ph0: Array(String) = []
-    self.pending_handles = ph0
-    pa0: Array(String) = []
-    self.pending_arrays = pa0
+    self.pending_handles = []
+    self.pending_arrays = []
     self.facts = FlowFacts.new
-    if ret.is_void {
-    } else {
-      if fnn.body.size == 0 {
-        self.fail(fnn.loc, "missing return value")
-        self.current_module = saved_mod
-        return
-      }
+    if !ret.is_void && fnn.body.size == 0 {
+      self.fail(fnn.loc, "missing return value")
+      self.current_module = saved_mod
+      return
     }
     self.self_ty = nil
     self.self_name = ""
@@ -509,8 +457,7 @@ pub class Checker {
           got_owner = true
         }
       }
-      if got_owner {
-      } else {
+      if !got_owner {
         if o2 = self.resolver.get_named(fnn.owner) {
           owner = o2
           got_owner = true
@@ -558,15 +505,14 @@ pub class Checker {
         self.self_ty = nil
         got = self.check_expr_as(default, params[i])
         self.self_ty = saved
-        if ty_assignable(got, params[i]) {
-        } else {
+        if !ty_assignable(got, params[i]) {
           self.fail(default.loc, "cannot assign ${got.show} to ${params[i].show}")
           self.pop_scope
           self.current_module = saved_mod
           return
         }
       }
-      i = i + 1
+      i += 1
     }
     self.current_fn = fnn
     self.check_body(fnn.body, ret, true)
@@ -581,25 +527,20 @@ pub class Checker {
     i = 0
     while i < body.size {
       last = false
-      if at_tail {
-        if i == body.size - 1 {
-          last = true
-        }
+      if at_tail && i == body.size - 1 {
+        last = true
       }
-      if body[i].kind == st_while() {
-        if i > 0 {
-          self.annotate_vstep(body[i - 1], body[i])
-        }
+      if body[i].kind == st_while() && i > 0 {
+        self.annotate_vstep(body[i - 1], body[i])
       }
       self.clear_poison
       self.scan_pending_stmt(body[i])
       self.check_stmt(body[i], expected, last)
-      if self.has_err {
-      } else {
+      if !self.has_err {
         self.register_spawn_pending(body[i])
         self.fact_after_stmt(body[i])
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -661,13 +602,11 @@ pub class Checker {
         if self.reject_clayout_value(got, expr.loc) {
           return
         }
-        if ty_assignable(got, expected) {
-        } else {
+        if !ty_assignable(got, expected) {
           self.fail(stmt.loc, "return type is ${got.show}, expected ${expected.show}")
         }
       } else {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "return needs a value of type ${expected.show}")
         }
       }
@@ -684,8 +623,7 @@ pub class Checker {
       }
       if cond = stmt.cond {
         ct = self.check_expr(cond)
-        if ct.is_bool {
-        } else {
+        if !ct.is_bool {
           self.fail(cond.loc, "if condition must be Bool, got ${ct.show}")
         }
       }
@@ -696,12 +634,10 @@ pub class Checker {
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
         self.push_guard_facts(cond)
-        fi = saved_facts
-        while fi < self.facts.fact_var.size {
+        for fi in saved_facts..self.facts.fact_var.size {
           if self.body_shrinks(stmt.then_body, self.facts.fact_cont[fi]) {
             self.facts.fact_live[fi] = 0
           }
-          fi = fi + 1
         }
       }
       self.check_block(stmt.then_body, expected, false)
@@ -712,23 +648,13 @@ pub class Checker {
         self.check_block(stmt.else_body, expected, false)
         self.cap_kill_assigned_in(stmt.else_body)
       }
-      if at_tail {
-        if expected.is_void {
-        } else {
-          ok = false
-          if stmt.else_body.size > 0 {
-            if self.fallthrough(stmt.then_body) {
-            } else {
-              if self.fallthrough(stmt.else_body) {
-              } else {
-                ok = true
-              }
-            }
-          }
-          if ok {
-          } else {
-            self.fail(stmt.loc, "missing return value")
-          }
+      if at_tail && !expected.is_void {
+        ok = false
+        if stmt.else_body.size > 0 && !self.fallthrough(stmt.then_body) && !self.fallthrough(stmt.else_body) {
+          ok = true
+        }
+        if !ok {
+          self.fail(stmt.loc, "missing return value")
         }
       }
       return
@@ -740,22 +666,16 @@ pub class Checker {
           self.check_release(e, et)
         }
       }
-      if at_tail {
-        if expected.is_void {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !expected.is_void {
+        self.fail(stmt.loc, "missing return value")
       }
       return
     }
     if k == st_hold() {
       self.check_hold(stmt)
       self.check_block(stmt.body, expected, false)
-      if at_tail {
-        if expected.is_void || !self.fallthrough(stmt.body) {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !(expected.is_void || !self.fallthrough(stmt.body)) {
+        self.fail(stmt.loc, "missing return value")
       }
       return
     }
@@ -763,17 +683,13 @@ pub class Checker {
       if e = stmt.expr {
         et = self.check_expr(e)
         heap = et.is_string || et.is_bytes || et.is_buf || et.is_array || et.is_hash || et.is_class || et.is_fn || et.is_join
-        if heap {
-        } else {
+        if !heap {
           self.fail(e.loc, "pin needs a heap value, got ${et.show}")
         }
       }
       self.check_block(stmt.body, expected, false)
-      if at_tail {
-        if expected.is_void || !self.fallthrough(stmt.body) {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !(expected.is_void || !self.fallthrough(stmt.body)) {
+        self.fail(stmt.loc, "missing return value")
       }
       return
     }
@@ -786,17 +702,15 @@ pub class Checker {
           self.annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison
           self.check_stmt(stmt.pre[pi], self.t_void(), false)
-          if self.has_err {
-          } else {
+          if !self.has_err {
             self.fact_after_stmt(stmt.pre[pi])
           }
-          pi = pi + 1
+          pi += 1
         }
         if stmt.for_kind == 1 {
           if pt = stmt.pre[0].target {
             if pty = self.lookup(pt.ident) {
-              if pty.is_int {
-              } else {
+              if !pty.is_int {
                 self.fail(stmt.loc, "for range bounds must be Int, got ${pty.show}")
               }
             }
@@ -804,8 +718,7 @@ pub class Checker {
           if stmt.pre.size > 1 {
             if pt2 = stmt.pre[1].target {
               if pty2 = self.lookup(pt2.ident) {
-                if pty2.is_int {
-                } else {
+                if !pty2.is_int {
                   self.fail(stmt.loc, "for range bounds must be Int, got ${pty2.show}")
                 }
               }
@@ -815,8 +728,7 @@ pub class Checker {
         if stmt.for_kind == 2 {
           if pt = stmt.pre[0].target {
             if pty = self.lookup(pt.ident) {
-              if pty.is_array {
-              } else {
+              if !pty.is_array {
                 self.fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show}")
               }
             }
@@ -829,8 +741,7 @@ pub class Checker {
       }
       if cond = stmt.cond {
         ct = self.check_expr(cond)
-        if ct.is_bool {
-        } else {
+        if !ct.is_bool {
           self.fail(cond.loc, "while condition must be Bool, got ${ct.show}")
         }
       }
@@ -842,17 +753,14 @@ pub class Checker {
         self.push_guard_facts(cond)
       }
       self.cap_kill_assigned_in(stmt.body)
-      self.loop_depth = self.loop_depth + 1
+      self.loop_depth += 1
       self.check_block(stmt.body, expected, false)
-      self.loop_depth = self.loop_depth - 1
+      self.loop_depth -= 1
       self.cap_kill_assigned_in(stmt.body)
       self.pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       self.pop_loop_facts(saved_facts)
-      if at_tail {
-        if expected.is_void {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !expected.is_void {
+        self.fail(stmt.loc, "missing return value")
       }
       if has_pre {
         self.pop_scope
@@ -867,11 +775,8 @@ pub class Checker {
           self.fail(stmt.loc, "break is only valid inside a loop")
         }
       }
-      if at_tail {
-        if expected.is_void {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !expected.is_void {
+        self.fail(stmt.loc, "missing return value")
       }
       return
     }
@@ -883,33 +788,24 @@ pub class Checker {
           self.fail(stmt.loc, "continue is only valid inside a loop")
         }
       }
-      if at_tail {
-        if expected.is_void {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !expected.is_void {
+        self.fail(stmt.loc, "missing return value")
       }
       return
     }
     if k == st_assign() {
       self.check_assign(stmt)
-      if at_tail {
-        if expected.is_void {
-        } else {
-          self.fail(stmt.loc, "missing return value")
-        }
+      if at_tail && !expected.is_void {
+        self.fail(stmt.loc, "missing return value")
       }
       return
     }
     if k == st_expr() {
       if expr = stmt.expr {
         if at_tail {
-          if expr.kind == ex_lambda() {
-            if expected.is_void {
-            } else {
-              got = self.check_expr_as(expr, expected)
-              return
-            }
+          if expr.kind == ex_lambda() && !expected.is_void {
+            got = self.check_expr_as(expr, expected)
+            return
           }
           if self.lambda_infer {
             self.inferred_ret = self.check_expr(expr)
@@ -919,8 +815,7 @@ pub class Checker {
         got = self.check_expr(expr)
         if at_tail {
           if expected.is_void {
-            if got.is_void {
-            } else {
+            if !got.is_void {
               if stmt.lead != 0 {
                 self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
               } else {
@@ -928,8 +823,7 @@ pub class Checker {
               }
             }
           } else {
-            if ty_assignable(got, expected) {
-            } else {
+            if !ty_assignable(got, expected) {
               self.fail(stmt.loc, "last expression is ${got.show}, expected ${expected.show}")
             }
           }
@@ -951,23 +845,13 @@ pub class Checker {
       if stmt.else_body.size > 0 {
         self.check_block(stmt.else_body, expected, false)
       }
-      if at_tail {
-        if expected.is_void {
-        } else {
-          ok = false
-          if stmt.else_body.size > 0 {
-            if self.fallthrough(stmt.then_body) {
-            } else {
-              if self.fallthrough(stmt.else_body) {
-              } else {
-                ok = true
-              }
-            }
-          }
-          if ok {
-          } else {
-            self.fail(stmt.loc, "missing return value")
-          }
+      if at_tail && !expected.is_void {
+        ok = false
+        if stmt.else_body.size > 0 && !self.fallthrough(stmt.then_body) && !self.fallthrough(stmt.else_body) {
+          ok = true
+        }
+        if !ok {
+          self.fail(stmt.loc, "missing return value")
         }
       }
     }
@@ -998,7 +882,7 @@ pub class Checker {
     if target = stmt.target {
       if value = stmt.value {
         if target.kind == ex_name() {
-          if str_eq(target.ident, "self") {
+          if target.ident == "self" {
             self.fail(stmt.loc, "cannot assign to self")
             return
           }
@@ -1023,15 +907,10 @@ pub class Checker {
               early = true
             }
             got = self.check_expr_as(value, want)
-            if ty_assignable(got, want) {
-            } else {
-              if self.fn_compatible(got, want) {
-              } else {
-                self.fail(value.loc, "cannot assign ${got.show} to ${want.show}")
-              }
+            if !ty_assignable(got, want) && !self.fn_compatible(got, want) {
+              self.fail(value.loc, "cannot assign ${got.show} to ${want.show}")
             }
-            if early {
-            } else {
+            if !early {
               self.bind(target.ident, want)
               target.ty = want
             }
@@ -1040,8 +919,7 @@ pub class Checker {
           if existing = self.lookup(target.ident) {
             self.note_capture(target.ident, existing)
             got = self.check_expr_as(value, existing)
-            if ty_assignable(got, existing) {
-            } else {
+            if !ty_assignable(got, existing) {
               self.fail(value.loc, "cannot assign ${got.show} to ${existing.show}")
             }
             target.ty = existing
@@ -1051,8 +929,7 @@ pub class Checker {
             target.implicit_field = true
             target.ty = field_ty
             got = self.check_expr_as(value, field_ty)
-            if ty_assignable(got, field_ty) {
-            } else {
+            if !ty_assignable(got, field_ty) {
               self.fail(value.loc, "cannot assign ${got.show} to ${field_ty.show}")
             }
             return
@@ -1080,15 +957,13 @@ pub class Checker {
               if container.is_hash {
                 if k = container.key {
                   key = self.check_expr_as(ix, k)
-                  if ty_assignable(key, k) {
-                  } else {
+                  if !ty_assignable(key, k) {
                     self.fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
                   }
                 }
                 if v = container.val {
                   got = self.check_expr_as(value, v)
-                  if ty_assignable(got, v) {
-                  } else {
+                  if !ty_assignable(got, v) {
                     self.fail(value.loc, "cannot assign ${got.show} to ${v.show}")
                   }
                   target.ty = v
@@ -1099,18 +974,15 @@ pub class Checker {
           }
         }
         place = self.check_expr(target)
-        if target.kind == ex_field() {
-          if target.method_call {
-            self.fail(stmt.loc, "cannot assign to a method")
-            return
-          }
+        if target.kind == ex_field() && target.method_call {
+          self.fail(stmt.loc, "cannot assign to a method")
+          return
         }
         if self.reject_clayout_value(place, target.loc) {
           return
         }
         got = self.check_expr_as(value, place)
-        if ty_assignable(got, place) {
-        } else {
+        if !ty_assignable(got, place) {
           self.fail(value.loc, "cannot assign ${got.show} to ${place.show}")
         }
         return
@@ -1127,55 +999,43 @@ pub class Checker {
     if target = stmt.target {
       if value = stmt.value {
         if target.kind == ex_name() {
-          if str_eq(target.ident, "self") {
+          if target.ident == "self" {
             self.fail(stmt.loc, "cannot assign to self")
             return
           }
         }
         place = self.check_expr(target)
-        if target.kind == ex_field() {
-          if target.method_call {
-            self.fail(stmt.loc, "cannot assign to a method")
-            return
-          }
+        if target.kind == ex_field() && target.method_call {
+          self.fail(stmt.loc, "cannot assign to a method")
+          return
         }
         if self.reject_clayout_value(place, target.loc) {
           return
         }
         got = self.check_expr_as(value, place)
-        if got.same_as(place) {
-        } else {
+        if !got.same_as(place) {
           self.fail(value.loc, "cannot assign ${got.show} to ${place.show}")
         }
-        if place.is_numeric {
-        } else {
+        if !place.is_numeric {
           self.fail(stmt.loc, "compound assignment expects a numeric target, got ${place.show}")
         }
         if target.kind == ex_name() {
           if value.kind == ex_int() {
             if stmt.op == tk_plus_eq() {
               s = self.fact_any_slack(target.ident)
-              if s >= 0 {
-                if value.int_bits <= s.to_u64 + 1u64 {
-                  stmt.proven = true
-                }
-              }
-            }
-            if stmt.op == tk_minus_eq() {
-              if self.fact_any_slack(target.ident) >= 0 || self.nn_has(target.ident) {
+              if s >= 0 && value.int_bits <= s.to_u64 + 1u64 {
                 stmt.proven = true
               }
             }
-          }
-          if stmt.op == tk_plus_eq() || stmt.op == tk_minus_eq() || stmt.op == tk_star_eq() {
-            if self.compound_proven(stmt.op, target.ident, value, place) {
+            if stmt.op == tk_minus_eq() && (self.fact_any_slack(target.ident) >= 0 || self.nn_has(target.ident)) {
               stmt.proven = true
             }
           }
-          if stmt.op == tk_slash_eq() {
-            if self.divisor_proven(value) {
-              stmt.proven = true
-            }
+          if (stmt.op == tk_plus_eq() || stmt.op == tk_minus_eq() || stmt.op == tk_star_eq()) && self.compound_proven(stmt.op, target.ident, value, place) {
+            stmt.proven = true
+          }
+          if stmt.op == tk_slash_eq() && self.divisor_proven(value) {
+            stmt.proven = true
           }
         }
         return
@@ -1201,17 +1061,8 @@ pub class Checker {
       expr.ty = kind
       return kind
     }
-    if has_want {
-      if ty_has_var(want) {
-      } else {
-        if ty_assignable(kind, want) {
-        } else {
-          if self.fn_compatible(kind, want) {
-          } else {
-            self.fail(expr.loc, "expected ${want.show}, got ${kind.show}")
-          }
-        }
-      }
+    if has_want && !ty_has_var(want) && !ty_assignable(kind, want) && !self.fn_compatible(kind, want) {
+      self.fail(expr.loc, "expected ${want.show}, got ${kind.show}")
     }
     expr.ty = kind
     kind
@@ -1291,7 +1142,7 @@ pub class Checker {
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
     payload = ty_without_nil(left)
     if right_expr.kind == ex_nil() {
-      dummy = self.check_expr(right_expr)
+      self.check_expr(right_expr)
       return left
     }
     right = self.check_expr_as(right_expr, payload)
@@ -1345,20 +1196,15 @@ pub class Checker {
       if ret.is_union {
         succ: Array(Ty) = []
         fails: Array(Ty) = []
-        i = 0
-        while i < got.members.size {
-          m = got.members[i]
+        for m in got.members {
           if ret.includes_member(m) {
             fails.push(m)
           } else {
             succ.push(m)
           }
-          i = i + 1
         }
-        if succ.size == 1 {
-          if fails.size > 0 {
-            return succ[0]
-          }
+        if succ.size == 1 && fails.size > 0 {
+          return succ[0]
         }
         self.fail(loc, "cannot use postfix ? on ${got.show} in a function returning ${ret.show}")
         return self.t_int()
@@ -1375,9 +1221,7 @@ pub class Checker {
   }
 
   pub fn check_interp(expr: Expr): Ty {
-    i = 0
-    while i < expr.parts.size {
-      part = expr.parts[i]
+    for part in expr.parts {
       if inner = part.expr {
         ty = self.check_expr(inner)
         ok = false
@@ -1393,34 +1237,32 @@ pub class Checker {
         if ty.is_bool {
           ok = true
         }
-        if ok {
-        } else {
+        if !ok {
           self.fail(inner.loc, "cannot interpolate ${ty.show}")
         }
       }
-      i = i + 1
     }
     self.t_string()
   }
 
   pub fn check_float_field(expr: Expr): Ty {
-    if str_eq(expr.ident, "sqrt") {
+    if expr.ident == "sqrt" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "abs") {
+    if expr.ident == "abs" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "floor") {
+    if expr.ident == "floor" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "exp") {
+    if expr.ident == "exp" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "to_i") {
+    if expr.ident == "to_i" {
       expr.method_call = true
       return self.t_int()
     }
@@ -1428,23 +1270,23 @@ pub class Checker {
   }
 
   pub fn check_int_field(expr: Expr, object: Ty): Ty {
-    if str_eq(expr.ident, "to_f") {
+    if expr.ident == "to_f" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "abs") {
+    if expr.ident == "abs" {
       expr.method_call = true
       return object
     }
-    if str_eq(expr.ident, "to_i") {
+    if expr.ident == "to_i" {
       expr.method_call = true
       return self.t_int()
     }
-    if str_eq(expr.ident, "to_i64") {
+    if expr.ident == "to_i64" {
       expr.method_call = true
       return self.t_int64()
     }
-    if str_eq(expr.ident, "to_u64") {
+    if expr.ident == "to_u64" {
       expr.method_call = true
       return self.t_uint64()
     }
@@ -1506,15 +1348,13 @@ pub class Checker {
         expr.object = nil
         return self.check_type_call(expr, ty)
       }
-      if obj.kind == ex_name() {
-        if obj.type_args.size > 0 {
-          if self.is_generic_template(obj.ident) {
-            self.take_type_app(obj)
-          } else {
-            call = self.type_app_as_call(obj)
-            expr.object = call
-            obj = call
-          }
+      if obj.kind == ex_name() && obj.type_args.size > 0 {
+        if self.is_generic_template(obj.ident) {
+          self.take_type_app(obj)
+        } else {
+          call = self.type_app_as_call(obj)
+          expr.object = call
+          obj = call
         }
       }
       object = self.check_expr(obj)
@@ -1525,22 +1365,22 @@ pub class Checker {
         return self.check_int_field(expr, object)
       }
       if object.is_string {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "bytes") {
+        if expr.ident == "bytes" {
           expr.method_call = true
           return self.t_bytes()
         }
-        if str_eq(expr.ident, "chars") {
+        if expr.ident == "chars" {
           expr.method_call = true
           return ty_array(self.t_string())
         }
-        if str_eq(expr.ident, "to_f") {
+        if expr.ident == "to_f" {
           expr.method_call = true
           return self.t_float()
         }
-        if str_eq(expr.ident, "to_i") {
+        if expr.ident == "to_i" {
           expr.method_call = true
           return self.t_int()
         }
@@ -1550,14 +1390,14 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_bytes {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "to_buf") {
+        if expr.ident == "to_buf" {
           expr.method_call = true
           return self.t_buf()
         }
-        if str_eq(expr.ident, "chars") {
+        if expr.ident == "chars" {
           expr.method_call = true
           return ty_array(self.t_string())
         }
@@ -1567,46 +1407,44 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_array {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "pop") {
+        if expr.ident == "pop" {
           expr.method_call = true
           if e = object.inner {
             return e
           }
           return self.t_int()
         }
-        if str_eq(expr.ident, "clear") {
+        if expr.ident == "clear" {
           expr.method_call = true
           return self.t_void()
         }
-        if str_eq(expr.ident, "sort") {
+        if expr.ident == "sort" {
           expr.method_call = true
           if e = object.inner {
-            if self.is_ordered_ty(e) {
-            } else {
+            if !self.is_ordered_ty(e) {
               self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
             }
           }
           return self.t_void()
         }
-        if str_eq(expr.ident, "sorted") {
+        if expr.ident == "sorted" {
           expr.method_call = true
           if e = object.inner {
-            if self.is_ordered_ty(e) {
-            } else {
+            if !self.is_ordered_ty(e) {
               self.fail(expr.loc, "Array.sorted needs an ordered element type or a comparator block")
             }
             return ty_array(e)
           }
           return ty_array(self.t_int())
         }
-        if str_eq(expr.ident, "reverse") {
+        if expr.ident == "reverse" {
           expr.method_call = true
           return self.t_void()
         }
-        if str_eq(expr.ident, "min") {
+        if expr.ident == "min" {
           expr.method_call = true
           if e = object.inner {
             if self.is_ordered_ty(e) {
@@ -1620,7 +1458,7 @@ pub class Checker {
           }
           return ty_nilable(self.t_int())
         }
-        if str_eq(expr.ident, "max") {
+        if expr.ident == "max" {
           expr.method_call = true
           if e = object.inner {
             if self.is_ordered_ty(e) {
@@ -1634,7 +1472,7 @@ pub class Checker {
           }
           return ty_nilable(self.t_int())
         }
-        if str_eq(expr.ident, "sum") {
+        if expr.ident == "sum" {
           expr.method_call = true
           if e = object.inner {
             if self.is_numeric_ty(e) {
@@ -1648,42 +1486,42 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_hash {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "keys") {
+        if expr.ident == "keys" {
           expr.method_call = true
           if k = object.key {
             return ty_array(k)
           }
           return ty_array(self.t_int())
         }
-        if str_eq(expr.ident, "values") {
+        if expr.ident == "values" {
           expr.method_call = true
           if v = object.val {
             return ty_array(v)
           }
           return ty_array(self.t_int())
         }
-        if str_eq(expr.ident, "clear") {
+        if expr.ident == "clear" {
           expr.method_call = true
           return self.t_void()
         }
         return self.field_as_call(expr, object)
       }
       if object.is_buf {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "to_bytes") {
+        if expr.ident == "to_bytes" {
           expr.method_call = true
           return self.t_bytes()
         }
-        if str_eq(expr.ident, "to_s") {
+        if expr.ident == "to_s" {
           expr.method_call = true
           return self.t_string()
         }
-        if str_eq(expr.ident, "clear") {
+        if expr.ident == "clear" {
           expr.method_call = true
           return self.t_void()
         }
@@ -1693,7 +1531,7 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_join {
-        if str_eq(expr.ident, "join") {
+        if expr.ident == "join" {
           expr.method_call = true
           if self.in_task > 0 {
             self.fail(expr.loc, "join inside a pool worker")
@@ -1714,29 +1552,18 @@ pub class Checker {
           return field_ty
         }
         has_zero = false
-        mi = 0
-        while mi < self.methods.size {
-          ms = self.methods[mi]
+        for ms in self.methods {
           owner_hit = false
-          if str_eq(ms.owner, object.name) {
+          if ms.owner == object.name {
             owner_hit = true
           } else {
-            if object.origin.size > 0 {
-              if ms.node.generic {
-                if str_eq(ms.owner, object.origin) {
-                  owner_hit = true
-                }
-              }
+            if object.origin.size > 0 && ms.node.generic && ms.owner == object.origin {
+              owner_hit = true
             }
           }
-          if owner_hit {
-            if str_eq(ms.name, expr.ident) {
-              if arity_ok(ms.node, 0) {
-                has_zero = true
-              }
-            }
+          if owner_hit && ms.name == expr.ident && arity_ok(ms.node, 0) {
+            has_zero = true
           }
-          mi = mi + 1
         }
         if has_zero {
           arg_tys: Array(Ty) = []
@@ -1749,27 +1576,18 @@ pub class Checker {
           return self.t_int()
         }
         has_method = false
-        mi = 0
-        while mi < self.methods.size {
-          ms = self.methods[mi]
+        for ms in self.methods {
           owner_hit = false
-          if str_eq(ms.owner, object.name) {
+          if ms.owner == object.name {
             owner_hit = true
           } else {
-            if object.origin.size > 0 {
-              if ms.node.generic {
-                if str_eq(ms.owner, object.origin) {
-                  owner_hit = true
-                }
-              }
+            if object.origin.size > 0 && ms.node.generic && ms.owner == object.origin {
+              owner_hit = true
             }
           }
-          if owner_hit {
-            if str_eq(ms.name, expr.ident) {
-              has_method = true
-            }
+          if owner_hit && ms.name == expr.ident {
+            has_method = true
           }
-          mi = mi + 1
         }
         if has_method {
           self.fail(expr.loc, "methods are not values")
@@ -1806,7 +1624,7 @@ pub class Checker {
         if name.size > 0 {
           return name
         }
-        i = i + 1
+        i += 1
       }
     }
     ""
@@ -1824,19 +1642,10 @@ pub class Checker {
   pub fn builtin_ext_call(expr: Expr, object: Ty): Ty? {
     owner = object.show
     has_zero = false
-    mi = 0
-    while mi < self.methods.size {
-      ms = self.methods[mi]
-      if str_eq(ms.owner, owner) {
-        if str_eq(ms.name, expr.ident) {
-          if arity_ok(ms.node, 0) {
-            if self.method_is_visible(ms.node, self.current_module) {
-              has_zero = true
-            }
-          }
-        }
+    for ms in self.methods {
+      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) && self.method_is_visible(ms.node, self.current_module) {
+        has_zero = true
       }
-      mi = mi + 1
     }
     if has_zero {
       arg_tys: Array(Ty) = []
@@ -1921,17 +1730,10 @@ pub class Checker {
       }
     }
     has_zero = false
-    mi = 0
-    while mi < self.methods.size {
-      ms = self.methods[mi]
-      if str_eq(ms.owner, owner) {
-        if str_eq(ms.name, expr.ident) {
-          if arity_ok(ms.node, 0) {
-            has_zero = true
-          }
-        }
+    for ms in self.methods {
+      if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) {
+        has_zero = true
       }
-      mi = mi + 1
     }
     if has_zero {
       arg_tys: Array(Ty) = []
@@ -1958,39 +1760,28 @@ pub class Checker {
   pub fn check_index(expr: Expr): Ty {
     if arr = expr.left {
       if ix = expr.right {
-        if arr.kind == ex_name() {
-          if arr.implicit_field {
-          } else {
-            cont = arr.ident
-            if ix.kind == ex_name() {
-              if self.fact_slack_of(ix.ident, cont) >= 0 {
-                expr.proven = true
-              }
-            } else if ix.kind == ex_binary() {
-              if ix.op == tk_plus() {
-                if il = ix.left {
-                  if ir = ix.right {
-                    if il.kind == ex_name() {
-                      if self.lit_small(ir) {
-                        sl = self.fact_slack_of(il.ident, cont)
-                        if sl >= 0 {
-                          if ir.int_bits <= sl.to_u64 {
-                            expr.proven = true
-                            ix.proven = true
-                          }
-                        }
-                      }
+        if arr.kind == ex_name() && !arr.implicit_field {
+          cont = arr.ident
+          if ix.kind == ex_name() {
+            if self.fact_slack_of(ix.ident, cont) >= 0 {
+              expr.proven = true
+            }
+          } else if ix.kind == ex_binary() {
+            if ix.op == tk_plus() {
+              if il = ix.left {
+                if ir = ix.right {
+                  if il.kind == ex_name() && self.lit_small(ir) {
+                    sl = self.fact_slack_of(il.ident, cont)
+                    if sl >= 0 && ir.int_bits <= sl.to_u64 {
+                      expr.proven = true
+                      ix.proven = true
                     }
-                    if ir.kind == ex_name() {
-                      if self.lit_small(il) {
-                        sl = self.fact_slack_of(ir.ident, cont)
-                        if sl >= 0 {
-                          if il.int_bits <= sl.to_u64 {
-                            expr.proven = true
-                            ix.proven = true
-                          }
-                        }
-                      }
+                  }
+                  if ir.kind == ex_name() && self.lit_small(il) {
+                    sl = self.fact_slack_of(ir.ident, cont)
+                    if sl >= 0 && il.int_bits <= sl.to_u64 {
+                      expr.proven = true
+                      ix.proven = true
                     }
                   }
                 }
@@ -1998,13 +1789,11 @@ pub class Checker {
             }
           }
         }
-        if ix.kind == ex_binary() {
-          if ix.op == tk_plus() || ix.op == tk_minus() {
-            if il = ix.left {
-              if ir = ix.right {
-                if il.kind == ex_int() || ir.kind == ex_int() {
-                  ix.proven = true
-                }
+        if ix.kind == ex_binary() && (ix.op == tk_plus() || ix.op == tk_minus()) {
+          if il = ix.left {
+            if ir = ix.right {
+              if il.kind == ex_int() || ir.kind == ex_int() {
+                ix.proven = true
               }
             }
           }
@@ -2012,8 +1801,7 @@ pub class Checker {
         container = self.check_expr(arr)
         if container.is_string || container.is_buf || container.is_bytes {
           got = self.check_expr_as(ix, self.t_int())
-          if got.is_int {
-          } else {
+          if !got.is_int {
             self.fail(ix.loc, "index must be Int, got ${got.show}")
           }
           return self.t_int()
@@ -2021,8 +1809,7 @@ pub class Checker {
         if container.is_hash {
           if k = container.key {
             key = self.check_expr_as(ix, k)
-            if ty_assignable(key, k) {
-            } else {
+            if !ty_assignable(key, k) {
               self.fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
             }
           }
@@ -2033,8 +1820,7 @@ pub class Checker {
         }
         if container.is_array {
           got = self.check_expr_as(ix, self.t_int())
-          if got.is_int {
-          } else {
+          if !got.is_int {
             self.fail(ix.loc, "array index must be Int, got ${got.show}")
           }
           if e = container.inner {
@@ -2060,8 +1846,7 @@ pub class Checker {
     }
     if size = expr.size_expr {
       st = self.check_expr_as(size, self.t_int())
-      if st.is_int {
-      } else {
+      if !st.is_int {
         self.fail(size.loc, "Array(T).new expects Int size")
       }
     }
@@ -2070,40 +1855,30 @@ pub class Checker {
 
   pub fn check_array_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.elems.size == 0 {
-      if has_want {
-        if want.is_array {
-          return want
-        }
+      if has_want && want.is_array {
+        return want
       }
       self.fail(expr.loc, "empty array needs a type, e.g. xs: Array(Int) = []")
       return self.t_int()
     }
     elem_ty = self.t_int()
     forced = false
-    if has_want {
-      if want.is_array {
-        if e = want.inner {
-          if ty_has_var(e) {
-          } else {
-            elem_ty = e
-            forced = true
-          }
+    if has_want && want.is_array {
+      if e = want.inner {
+        if !ty_has_var(e) {
+          elem_ty = e
+          forced = true
         }
       }
     }
-    if forced {
-    } else {
+    if !forced {
       elem_ty = self.check_expr(expr.elems[0])
     }
-    i = 0
-    while i < expr.elems.size {
-      el = expr.elems[i]
+    for el in expr.elems {
       got = self.check_expr_as(el, elem_ty)
-      if ty_assignable(got, elem_ty) {
-      } else {
+      if !ty_assignable(got, elem_ty) {
         self.fail(el.loc, "array element is ${got.show}, expected ${elem_ty.show}")
       }
-      i = i + 1
     }
     ty_array(elem_ty)
   }
@@ -2119,27 +1894,17 @@ pub class Checker {
       val = self.resolve_value_in_module(vn)
       self.pull_resolve
     }
-    if key.is_string {
-    } else {
-      if key.is_int {
-      } else {
-        self.fail(expr.loc, "Hash keys must be String or Int")
-        return self.t_int()
-      }
+    if !key.is_string && !key.is_int {
+      self.fail(expr.loc, "Hash keys must be String or Int")
+      return self.t_int()
     }
-    if val.is_int {
-    } else {
-      if val.is_string {
-      } else {
-        self.fail(expr.loc, "Hash values must be Int or String")
-        return self.t_int()
-      }
+    if !val.is_int && !val.is_string {
+      self.fail(expr.loc, "Hash values must be Int or String")
+      return self.t_int()
     }
-    if key.is_int {
-      if val.is_string {
-        self.fail(expr.loc, "Hash(Int, String) is not in this stage")
-        return self.t_int()
-      }
+    if key.is_int && val.is_string {
+      self.fail(expr.loc, "Hash(Int, String) is not in this stage")
+      return self.t_int()
     }
     ty_hash(key, val)
   }
@@ -2148,10 +1913,8 @@ pub class Checker {
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
-      i = 0
-      while i < expr.type_args.size {
-        tn.args.push(expr.type_args[i])
-        i = i + 1
+      for type_arg in expr.type_args {
+        tn.args.push(type_arg)
       }
       ty = self.resolve_in_module(tn)
       self.pull_resolve
@@ -2195,28 +1958,21 @@ pub class Checker {
       if field_ty = ty.field_named(fname) {
         if check_values {
           got = self.check_expr_as(value, field_ty)
-          if ty_assignable(got, field_ty) {
-          } else {
-            if ty_has_var(field_ty) {
-            } else {
-              self.fail(value.loc, "field ${fname} is ${got.show}, expected ${field_ty.show}")
-            }
+          if !ty_assignable(got, field_ty) && !ty_has_var(field_ty) {
+            self.fail(value.loc, "field ${fname} is ${got.show}, expected ${field_ty.show}")
           }
         }
       } else {
         label = ty.show
         self.fail(value.loc, "no field ${fname} on ${label}")
       }
-      i = i + 1
+      i += 1
     }
-    i = 0
-    while i < ty.fields.size {
-      f = ty.fields[i]
+    for f in ty.fields {
       if prev = seen.get(f.name) {
       } else {
         self.fail(expr.loc, "missing field ${f.name}")
       }
-      i = i + 1
     }
     ty
   }
@@ -2224,22 +1980,17 @@ pub class Checker {
   pub fn find_struct_template(name: String, mod_name: String): StructDef? {
     found: StructDef? = nil
     count = 0
-    i = 0
-    while i < self.program.structs.size {
-      sdef = self.program.structs[i]
-      if str_eq(sdef.name, name) {
-        if sdef.type_params.size > 0 {
-          if mod_name.size > 0 {
-            if str_eq(sdef.mod_name, mod_name) {
-              return sdef
-            }
-          } else {
-            count = count + 1
-            found = sdef
+    for sdef in self.program.structs {
+      if sdef.name == name && sdef.type_params.size > 0 {
+        if mod_name.size > 0 {
+          if sdef.mod_name == mod_name {
+            return sdef
           }
+        } else {
+          count += 1
+          found = sdef
         }
       }
-      i = i + 1
     }
     if mod_name.size > 0 {
       return nil
@@ -2253,22 +2004,17 @@ pub class Checker {
   pub fn find_class_template(name: String, mod_name: String): ClassDef? {
     found: ClassDef? = nil
     count = 0
-    i = 0
-    while i < self.program.classes.size {
-      cdef = self.program.classes[i]
-      if str_eq(cdef.name, name) {
-        if cdef.type_params.size > 0 {
-          if mod_name.size > 0 {
-            if str_eq(cdef.mod_name, mod_name) {
-              return cdef
-            }
-          } else {
-            count = count + 1
-            found = cdef
+    for cdef in self.program.classes {
+      if cdef.name == name && cdef.type_params.size > 0 {
+        if mod_name.size > 0 {
+          if cdef.mod_name == mod_name {
+            return cdef
           }
+        } else {
+          count += 1
+          found = cdef
         }
       }
-      i = i + 1
     }
     if mod_name.size > 0 {
       return nil
@@ -2290,22 +2036,14 @@ pub class Checker {
   }
 
   pub fn apply_want_args(origin: String, params: Array(String), has_want: Bool, want: Ty, keys: Array(String), vals: Array(Ty)): Bool {
-    if has_want {
-      if str_eq(want.origin, origin) {
-        if want.ty_args.size == params.size {
-          i = 0
-          while i < params.size {
-            warg = want.ty_args[i]
-            if ty_has_var(warg) {
-            } else {
-              if self.unify_ty(ty_var(params[i]), warg, keys, vals) {
-              } else {
-                return false
-              }
-            }
-            i = i + 1
-          }
+    if has_want && want.origin == origin && want.ty_args.size == params.size {
+      i = 0
+      while i < params.size {
+        warg = want.ty_args[i]
+        if !ty_has_var(warg) && !self.unify_ty(ty_var(params[i]), warg, keys, vals) {
+          return false
         }
+        i += 1
       }
     }
     true
@@ -2320,7 +2058,7 @@ pub class Checker {
       } else {
         return nil
       }
-      i = i + 1
+      i += 1
     }
     out
   }
@@ -2331,7 +2069,7 @@ pub class Checker {
     i = 0
     while i < args.size {
       tn.args.push(ty_to_type_name(args[i], loc))
-      i = i + 1
+      i += 1
     }
     ty = self.resolve_in_module(tn)
     self.pull_resolve
@@ -2348,7 +2086,7 @@ pub class Checker {
       names.push(tmpl.fields[i].name)
       patterns.push(self.resolver.resolve_value(tmpl.fields[i].type))
       self.pull_resolve
-      i = i + 1
+      i += 1
     }
     self.resolver.clear_tparams
     if self.has_err {
@@ -2356,8 +2094,7 @@ pub class Checker {
     }
     keys: Array(String) = []
     vals: Array(Ty) = []
-    if self.apply_want_args(tmpl.name, params, has_want, want, keys, vals) {
-    } else {
+    if !self.apply_want_args(tmpl.name, params, has_want, want, keys, vals) {
       self.fail(expr.loc, "conflicting type arguments")
       return self.t_int()
     }
@@ -2373,50 +2110,41 @@ pub class Checker {
       }
       seen[fname] = 1
       pat: Ty? = nil
-      j = 0
-      while j < names.size {
-        if str_eq(names[j], fname) {
+      for j in 0..names.size {
+        if names[j] == fname {
           pat = patterns[j]
         }
-        j = j + 1
       }
       if p = pat {
         pat_ty = self.subst_ty(p, keys, vals)
         got = self.check_expr_flag(value, true, pat_ty)
         gots.push(got)
         got_names.push(fname)
-        if self.unify_ty(pat_ty, got, keys, vals) {
-        } else {
+        if !self.unify_ty(pat_ty, got, keys, vals) {
           self.fail(value.loc, "conflicting type arguments")
         }
       } else {
         self.fail(value.loc, "no field ${fname} on ${tmpl.name}")
       }
-      i = i + 1
+      i += 1
     }
     if solved = self.solved_args(params, keys, vals, expr.loc) {
       ty = self.instantiate_applied(tmpl.name, expr.mod_name, solved, expr.loc)
       if self.has_err {
         return self.t_int()
       }
-      i = 0
-      while i < got_names.size {
+      for i in 0..got_names.size {
         if field_ty = ty.field_named(got_names[i]) {
-          if ty_assignable(gots[i], field_ty) {
-          } else {
+          if !ty_assignable(gots[i], field_ty) {
             self.fail(expr.loc, "field ${got_names[i]} is ${gots[i].show}, expected ${field_ty.show}")
           }
         }
-        i = i + 1
       }
-      i = 0
-      while i < ty.fields.size {
-        f = ty.fields[i]
+      for f in ty.fields {
         if prev = seen.get(f.name) {
         } else {
           self.fail(expr.loc, "missing field ${f.name}")
         }
-        i = i + 1
       }
       return ty
     }
@@ -2425,7 +2153,7 @@ pub class Checker {
   }
 
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
-    if str_eq(expr.ident, "self") {
+    if expr.ident == "self" {
       if cf = self.current_fn {
         if cf.type_method {
           self.fail(expr.loc, "self is not available in a type-level function")
@@ -2441,13 +2169,9 @@ pub class Checker {
         return self.t_int()
       }
     }
-    if self.lam_exprs.size > 0 {
-      if self.self_name.size > 0 {
-        if str_eq(expr.ident, self.self_name) {
-          self.fail(expr.loc, "a lambda cannot capture the method receiver")
-          return self.t_int()
-        }
-      }
+    if self.lam_exprs.size > 0 && self.self_name.size > 0 && expr.ident == self.self_name {
+      self.fail(expr.loc, "a lambda cannot capture the method receiver")
+      return self.t_int()
     }
     if existing = self.lookup(expr.ident) {
       self.note_capture(expr.ident, existing)
@@ -2466,10 +2190,8 @@ pub class Checker {
         return ty_module(expr.ident)
       }
     }
-    if has_want {
-      if want.is_fn {
-        return self.check_fn_ref(expr, want)
-      }
+    if has_want && want.is_fn {
+      return self.check_fn_ref(expr, want)
     }
     if got = self.check_fn_ref_bare(expr) {
       return got
@@ -2483,15 +2205,13 @@ pub class Checker {
   }
 
   pub fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
-    if has_want {
-      if want.is_float {
-        return self.t_float()
-      }
+    if has_want && want.is_float {
+      return self.t_float()
     }
-    if str_eq(expr.int_suffix, "u64") {
+    if expr.int_suffix == "u64" {
       return self.t_uint64()
     }
-    if str_eq(expr.int_suffix, "i64") {
+    if expr.int_suffix == "i64" {
       return self.t_int64()
     }
     if has_want {
@@ -2569,13 +2289,11 @@ pub class Checker {
   pub fn check_shift_amount(r: Expr, left: Ty, loc: Location) {
     neg = false
     lit = r
-    if r.kind == ex_unary() {
-      if r.op == tk_minus() {
-        if inner = r.inner {
-          if inner.kind == ex_int() {
-            neg = true
-            lit = inner
-          }
+    if r.kind == ex_unary() && r.op == tk_minus() {
+      if inner = r.inner {
+        if inner.kind == ex_int() {
+          neg = true
+          lit = inner
         }
       }
     }
@@ -2676,17 +2394,15 @@ pub class Checker {
           if left.is_nilable {
             return self.coalesce_result(left, r, expr.loc, "??")
           }
-          dummy = self.check_expr(r)
+          self.check_expr(r)
           self.fail(expr.loc, "?? needs a nilable left side, got ${left.show}")
           return left
         }
         if op == tk_amp_amp() {
           left = self.check_expr(l)
           right = self.check_expr(r)
-          if left.is_bool {
-            if right.is_bool {
-              return self.t_bool()
-            }
+          if left.is_bool && right.is_bool {
+            return self.t_bool()
           }
           self.fail(expr.loc, "&& expects Bool operands")
           return self.t_bool()
@@ -2694,40 +2410,31 @@ pub class Checker {
         if op == tk_pipe_pipe() {
           left = self.check_expr(l)
           right = self.check_expr(r)
-          if left.is_bool {
-            if right.is_bool {
-              return self.t_bool()
-            }
+          if left.is_bool && right.is_bool {
+            return self.t_bool()
           }
           self.fail(expr.loc, "|| expects Bool operands")
           return self.t_bool()
         }
         left = self.check_expr(l)
         opname = binary_op_method_name(op)
-        if opname.size > 0 {
-          if left.is_agg {
-            has_op = false
-            mi = 0
-            while mi < self.methods.size {
-              ms = self.methods[mi]
-              if str_eq(ms.owner, left.name) {
-                if str_eq(ms.name, opname) {
-                  has_op = true
-                }
-              }
-              mi = mi + 1
+        if opname.size > 0 && left.is_agg {
+          has_op = false
+          for ms in self.methods {
+            if ms.owner == left.name && ms.name == opname {
+              has_op = true
             }
-            if has_op {
-              right = self.check_expr(r)
-              arg_tys: Array(Ty) = []
-              arg_tys.push(right)
-              none: Ty? = nil
-              if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name) {
-                expr.resolved = sig.node.emit_name
-                return sig.ret
-              }
-              return self.t_int()
+          }
+          if has_op {
+            right = self.check_expr(r)
+            arg_tys: Array(Ty) = []
+            arg_tys.push(right)
+            none: Ty? = nil
+            if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name) {
+              expr.resolved = sig.node.emit_name
+              return sig.ret
             }
+            return self.t_int()
           }
         }
         right_has = false
@@ -2766,62 +2473,52 @@ pub class Checker {
             return self.t_bool()
           }
         }
-        if left.is_bool {
-          if right.is_bool {
-            if op == tk_eq_eq() {
-              return self.t_bool()
-            }
-            if op == tk_not_eq() {
-              return self.t_bool()
-            }
-            self.fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
+        if left.is_bool && right.is_bool {
+          if op == tk_eq_eq() {
             return self.t_bool()
           }
+          if op == tk_not_eq() {
+            return self.t_bool()
+          }
+          self.fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
+          return self.t_bool()
         }
-        if left.is_string {
-          if right.is_string {
-            if op == tk_plus() {
-              return self.t_string()
-            }
-            if op == tk_eq_eq() {
-              return self.t_bool()
-            }
-            if op == tk_not_eq() {
-              return self.t_bool()
-            }
-            self.fail(expr.loc, "unsupported operator on String")
+        if left.is_string && right.is_string {
+          if op == tk_plus() {
             return self.t_string()
           }
-        }
-        if left.is_bytes {
-          if right.is_bytes {
-            if op == tk_eq_eq() {
-              return self.t_bool()
-            }
-            if op == tk_not_eq() {
-              return self.t_bool()
-            }
-            self.fail(expr.loc, "unsupported operator on Bytes")
+          if op == tk_eq_eq() {
             return self.t_bool()
           }
+          if op == tk_not_eq() {
+            return self.t_bool()
+          }
+          self.fail(expr.loc, "unsupported operator on String")
+          return self.t_string()
+        }
+        if left.is_bytes && right.is_bytes {
+          if op == tk_eq_eq() {
+            return self.t_bool()
+          }
+          if op == tk_not_eq() {
+            return self.t_bool()
+          }
+          self.fail(expr.loc, "unsupported operator on Bytes")
+          return self.t_bool()
         }
         if op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star() {
-          if left.is_integer {
-            if right.same_as(left) {
-              return left
-            }
+          if left.is_integer && right.same_as(left) {
+            return left
           }
           self.fail(expr.loc, "wrapping operator expects matching integer operands")
           return left
         }
         if op == tk_percent() {
-          if left.is_integer {
-            if right.same_as(left) {
-              if self.divisor_proven(r) {
-                expr.proven = true
-              }
-              return left
+          if left.is_integer && right.same_as(left) {
+            if self.divisor_proven(r) {
+              expr.proven = true
             }
+            return left
           }
           self.fail(expr.loc, "% expects matching integer operands")
           return left
@@ -2831,87 +2528,57 @@ pub class Checker {
             if left.is_integer {
               self.check_shift_amount(r, left, expr.loc)
             }
-            if left.is_uint64 {
-              if right.is_int {
-                return left
-              }
-            }
-            if left.is_int64 {
-              if right.is_int {
-                return left
-              }
-            }
-          }
-          if left.is_integer {
-            if right.same_as(left) {
+            if left.is_uint64 && right.is_int {
               return left
             }
+            if left.is_int64 && right.is_int {
+              return left
+            }
+          }
+          if left.is_integer && right.same_as(left) {
+            return left
           }
           self.fail(expr.loc, "bitwise operator expects matching integer operands")
           return left
         }
-        if left.is_integer {
-          if right.is_integer {
-            if left.same_as(right) {
-              if op == tk_plus() {
-                if l.kind == ex_name() {
-                  if r.kind == ex_int() {
-                    s = self.fact_any_slack(l.ident)
-                    if s >= 0 {
-                      if r.int_bits <= s.to_u64 + 1u64 {
-                        expr.proven = true
-                      }
-                    }
-                  }
-                }
-                if r.kind == ex_name() {
-                  if l.kind == ex_int() {
-                    s = self.fact_any_slack(r.ident)
-                    if s >= 0 {
-                      if l.int_bits <= s.to_u64 + 1u64 {
-                        expr.proven = true
-                      }
-                    }
-                  }
-                }
-              }
-              if op == tk_minus() {
-                if l.kind == ex_name() {
-                  if r.kind == ex_int() {
-                    if self.fact_any_slack(l.ident) >= 0 || self.nn_has(l.ident) {
-                      expr.proven = true
-                    }
-                  }
-                }
-              }
-              if op == tk_plus() || op == tk_star() || op == tk_minus() {
-                if self.arith_proven(op, l, r, left) {
+        if left.is_integer && right.is_integer {
+          if left.same_as(right) {
+            if op == tk_plus() {
+              if l.kind == ex_name() && r.kind == ex_int() {
+                s = self.fact_any_slack(l.ident)
+                if s >= 0 && r.int_bits <= s.to_u64 + 1u64 {
                   expr.proven = true
                 }
               }
-              if op == tk_slash() {
-                if self.divisor_proven(r) {
+              if r.kind == ex_name() && l.kind == ex_int() {
+                s = self.fact_any_slack(r.ident)
+                if s >= 0 && l.int_bits <= s.to_u64 + 1u64 {
                   expr.proven = true
                 }
               }
-              return self.int_binary(op, left)
             }
-            self.fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}")
-            return left
+            if op == tk_minus() && l.kind == ex_name() && r.kind == ex_int() && (self.fact_any_slack(l.ident) >= 0 || self.nn_has(l.ident)) {
+              expr.proven = true
+            }
+            if (op == tk_plus() || op == tk_star() || op == tk_minus()) && self.arith_proven(op, l, r, left) {
+              expr.proven = true
+            }
+            if op == tk_slash() && self.divisor_proven(r) {
+              expr.proven = true
+            }
+            return self.int_binary(op, left)
           }
+          self.fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}")
+          return left
         }
-        if left.is_numeric {
-          if right.is_numeric {
-            if left.is_float {
-            } else {
-              l.ty = self.t_float()
-            }
-            if right.is_float {
-            } else {
-              r.ty = self.t_float()
-            }
-            return self.float_binary(op, expr.loc)
+        if left.is_numeric && right.is_numeric {
+          if !left.is_float {
+            l.ty = self.t_float()
           }
+          if !right.is_float {
+            r.ty = self.t_float()
+          }
+          return self.float_binary(op, expr.loc)
         }
         self.fail(expr.loc, "binary operator expects numeric operands, got ${left.show} and ${right.show}")
         return self.t_int()
@@ -2941,7 +2608,7 @@ pub class Checker {
         return self.check_indirect_call(expr, existing)
       }
     }
-    if str_eq(expr.callee, "puts") {
+    if expr.callee == "puts" {
       if expr.args.size != 1 {
         self.fail(expr.loc, "puts takes one argument")
         return self.t_void()
@@ -2970,10 +2637,10 @@ pub class Checker {
       self.fail(expr.args[0].loc, "puts cannot print ${printed.show}")
       return self.t_void()
     }
-    if str_eq(expr.callee, "spawn") {
+    if expr.callee == "spawn" {
       return self.check_spawn(expr)
     }
-    if str_eq(expr.callee, "now_ms") {
+    if expr.callee == "now_ms" {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "now_ms takes no arguments")
@@ -2984,7 +2651,7 @@ pub class Checker {
       self.fail(expr.loc, "now_ms takes no arguments")
       return self.t_int()
     }
-    if str_eq(expr.callee, "file_read") {
+    if expr.callee == "file_read" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "file_read takes one String")
@@ -2995,13 +2662,12 @@ pub class Checker {
         return ty_nilable(self.t_string())
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "file_read expects String")
       }
       return ty_nilable(self.t_string())
     }
-    if str_eq(expr.callee, "file_write") {
+    if expr.callee == "file_write" {
       if expr.args.size == 2 {
         if b = expr.block {
           self.fail(expr.loc, "file_write takes a path and a body")
@@ -3012,18 +2678,16 @@ pub class Checker {
         return self.t_int()
       }
       path = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(path, self.t_string()) {
-      } else {
+      if !ty_assignable(path, self.t_string()) {
         self.fail(expr.args[0].loc, "file_write path must be String")
       }
       body = self.check_expr_as(expr.args[1], self.t_string())
-      if ty_assignable(body, self.t_string()) {
-      } else {
+      if !ty_assignable(body, self.t_string()) {
         self.fail(expr.args[1].loc, "file_write body must be String")
       }
       return self.t_int()
     }
-    if str_eq(expr.callee, "argv") {
+    if expr.callee == "argv" {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "argv takes no arguments")
@@ -3034,7 +2698,7 @@ pub class Checker {
       self.fail(expr.loc, "argv takes no arguments")
       return ty_array(self.t_string())
     }
-    if str_eq(expr.callee, "process_run") {
+    if expr.callee == "process_run" {
       if expr.args.size == 2 {
         if b = expr.block {
           self.fail(expr.loc, "process_run takes a path and args")
@@ -3045,19 +2709,17 @@ pub class Checker {
         return self.t_int()
       }
       path = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(path, self.t_string()) {
-      } else {
+      if !ty_assignable(path, self.t_string()) {
         self.fail(expr.args[0].loc, "process_run path must be String")
       }
       args_ty = ty_array(self.t_string())
       got = self.check_expr_as(expr.args[1], args_ty)
-      if ty_assignable(got, args_ty) {
-      } else {
+      if !ty_assignable(got, args_ty) {
         self.fail(expr.args[1].loc, "process_run args must be Array(String)")
       }
       return self.t_int()
     }
-    if str_eq(expr.callee, "process_run_out") {
+    if expr.callee == "process_run_out" {
       if expr.args.size == 3 {
         if b = expr.block {
           self.fail(expr.loc, "process_run_out takes a path, args, and an output path")
@@ -3068,24 +2730,21 @@ pub class Checker {
         return self.t_int()
       }
       path = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(path, self.t_string()) {
-      } else {
+      if !ty_assignable(path, self.t_string()) {
         self.fail(expr.args[0].loc, "process_run_out path must be String")
       }
       args_ty = ty_array(self.t_string())
       got = self.check_expr_as(expr.args[1], args_ty)
-      if ty_assignable(got, args_ty) {
-      } else {
+      if !ty_assignable(got, args_ty) {
         self.fail(expr.args[1].loc, "process_run_out args must be Array(String)")
       }
       outp = self.check_expr_as(expr.args[2], self.t_string())
-      if ty_assignable(outp, self.t_string()) {
-      } else {
+      if !ty_assignable(outp, self.t_string()) {
         self.fail(expr.args[2].loc, "process_run_out output path must be String")
       }
       return self.t_int()
     }
-    if str_eq(expr.callee, "env_get") {
+    if expr.callee == "env_get" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "env_get takes one String")
@@ -3096,13 +2755,12 @@ pub class Checker {
         return ty_nilable(self.t_string())
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "env_get expects String")
       }
       return ty_nilable(self.t_string())
     }
-    if str_eq(expr.callee, "file_exists") {
+    if expr.callee == "file_exists" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "file_exists takes one String")
@@ -3113,13 +2771,12 @@ pub class Checker {
         return self.t_bool()
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "file_exists expects String")
       }
       return self.t_bool()
     }
-    if str_eq(expr.callee, "dir_list") {
+    if expr.callee == "dir_list" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "dir_list takes one String")
@@ -3130,8 +2787,7 @@ pub class Checker {
         return ty_array(self.t_string())
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "dir_list expects String")
       }
       return ty_array(self.t_string())
@@ -3145,7 +2801,7 @@ pub class Checker {
     if ty = self.check_gate_call(expr) {
       return ty
     }
-    if str_eq(expr.callee, "chr") {
+    if expr.callee == "chr" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "chr takes one Int")
@@ -3156,13 +2812,12 @@ pub class Checker {
         return self.t_string()
       }
       got = self.check_expr_as(expr.args[0], self.t_int())
-      if got.is_int {
-      } else {
+      if !got.is_int {
         self.fail(expr.args[0].loc, "chr expects Int")
       }
       return self.t_string()
     }
-    if str_eq(expr.callee, "str_slice") {
+    if expr.callee == "str_slice" {
       if expr.args.size == 3 {
         if b = expr.block {
           self.fail(expr.loc, "str_slice takes String, start, stop")
@@ -3173,23 +2828,20 @@ pub class Checker {
         return self.t_string()
       }
       s = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(s, self.t_string()) {
-      } else {
+      if !ty_assignable(s, self.t_string()) {
         self.fail(expr.args[0].loc, "str_slice expects String")
       }
       start = self.check_expr_as(expr.args[1], self.t_int())
       stop = self.check_expr_as(expr.args[2], self.t_int())
-      if start.is_int {
-      } else {
+      if !start.is_int {
         self.fail(expr.args[1].loc, "start must be Int")
       }
-      if stop.is_int {
-      } else {
+      if !stop.is_int {
         self.fail(expr.args[2].loc, "stop must be Int")
       }
       return self.t_string()
     }
-    if str_eq(expr.callee, "buf_new") {
+    if expr.callee == "buf_new" {
       if b = expr.block {
         self.fail(expr.loc, "buf_new does not take a block")
         return self.t_buf()
@@ -3199,8 +2851,7 @@ pub class Checker {
       }
       if expr.args.size == 1 {
         cap = self.check_expr_as(expr.args[0], self.t_int())
-        if cap.is_int {
-        } else {
+        if !cap.is_int {
           self.fail(expr.args[0].loc, "capacity must be Int")
         }
         return self.t_buf()
@@ -3251,18 +2902,17 @@ pub class Checker {
       } else {
         got = self.check_expr_as(call_arg, params[i])
       }
-      if ty_assignable(got, params[i]) {
-      } else {
+      if !ty_assignable(got, params[i]) {
         n = i + 1
         self.fail(call_arg.loc, "argument ${n} of ${label} is ${got.show}, expected ${params[i].show}")
       }
-      i = i + 1
+      i += 1
     }
   }
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_type_chain(recv)
-    if recv.kind == ex_name() && str_eq(recv.ident, "Buf") && recv.type_args.size == 0 && recv.mod_name.size == 0 {
+    if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
       // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
       // (Stage 29 W1a, A5; before, "unknown type Buf").
       expr.callee = "buf_new"
@@ -3274,15 +2924,12 @@ pub class Checker {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name
-          i = 0
-          while i < recv.type_args.size {
-            tn.args.push(recv.type_args[i])
-            i = i + 1
+          for type_arg in recv.type_args {
+            tn.args.push(type_arg)
           }
           ty = self.resolve_in_module(tn)
           self.pull_resolve
-          if self.has_err {
-          } else {
+          if !self.has_err {
             recv.ty = ty
           }
           empty: Array(Ty) = []
@@ -3313,12 +2960,10 @@ pub class Checker {
   }
 
   pub fn template_initialize(cdef: ClassDef): Function? {
-    i = 0
-    while i < cdef.methods.size {
-      if str_eq(cdef.methods[i].name, "initialize") {
-        return cdef.methods[i]
+    for method in cdef.methods {
+      if method.name == "initialize" {
+        return method
       }
-      i = i + 1
     }
     nil
   }
@@ -3327,8 +2972,7 @@ pub class Checker {
     params = cdef.type_params
     keys: Array(String) = []
     vals: Array(Ty) = []
-    if self.apply_want_args(cdef.name, params, has_want, want, keys, vals) {
-    } else {
+    if !self.apply_want_args(cdef.name, params, has_want, want, keys, vals) {
       self.fail(expr.loc, "conflicting type arguments")
       return self.t_int()
     }
@@ -3340,7 +2984,7 @@ pub class Checker {
       while i < init.params.size {
         pats.push(self.resolver.resolve_value(init.params[i].type))
         self.pull_resolve
-        i = i + 1
+        i += 1
       }
       self.resolver.clear_tparams
       i = 0
@@ -3349,15 +2993,14 @@ pub class Checker {
         if i < pats.size {
           pat_ty = self.subst_ty(pats[i], keys, vals)
           got = self.check_expr_flag(expr.args[i], true, pat_ty)
-          if self.unify_ty(pat_ty, got, keys, vals) {
-          } else {
+          if !self.unify_ty(pat_ty, got, keys, vals) {
             self.fail(expr.args[i].loc, "conflicting type arguments")
           }
         } else {
           got = self.check_expr(expr.args[i])
         }
         pre.push(got)
-        i = i + 1
+        i += 1
       }
     } else {
       if expr.args.size != 0 {
@@ -3384,15 +3027,12 @@ pub class Checker {
     if ty.is_class {
       shown = ty.show
       has_init = false
-      mi = 0
-      while mi < self.methods.size {
-        ms = self.methods[mi]
-        if str_eq(ms.owner, ty.name) {
-          if str_eq(ms.name, "initialize") {
+      for ms in self.methods {
+        if ms.owner == ty.name {
+          if ms.name == "initialize" {
             has_init = true
           }
         }
-        mi = mi + 1
       }
       if has_init {
         arg_tys: Array(Ty) = []
@@ -3400,13 +3040,13 @@ pub class Checker {
           i = 0
           while i < pre.size {
             arg_tys.push(pre[i])
-            i = i + 1
+            i += 1
           }
         } else {
           ai = 0
           while ai < expr.args.size {
             arg_tys.push(self.check_expr(expr.args[ai]))
-            ai = ai + 1
+            ai += 1
           }
         }
         none: Ty? = nil
@@ -3430,18 +3070,16 @@ pub class Checker {
             }
             if i < sig.params.size {
               got = self.fit_call_arg(expr.args[i], got, sig.params[i])
-              if ty_assignable(got, sig.params[i]) {
-              } else {
+              if !ty_assignable(got, sig.params[i]) {
                 n = i + 1
                 self.fail(expr.args[i].loc, "argument ${n} of ${shown}.new is ${got.show}, expected ${sig.params[i].show}")
               }
             }
-            i = i + 1
+            i += 1
           }
         }
       } else {
-        if expr.args.size == 0 {
-        } else {
+        if expr.args.size != 0 {
           self.fail(expr.loc, "${shown}.new takes no arguments")
         }
       }
@@ -3461,20 +3099,17 @@ pub class Checker {
       if self.has_err {
         return ty_c_view(sig.ret)
       }
-      i = 0
-      while i < expr.args.size {
+      for i in 0..expr.args.size {
         if sig.params[i].is_fn {
           arg = expr.args[i]
           if arg.kind == ex_lambda() {
             if arg.cap_names.size > 0 {
               self.fail(arg.loc, "C callback cannot capture ${arg.cap_names[0]}")
             }
-          } else if arg.fn_ref {
-          } else {
+          } else if !arg.fn_ref {
             self.fail(arg.loc, "C callback must be a function name or a lambda that captures nothing")
           }
         }
-        i = i + 1
       }
       expr.lib_name = lib_name
       return ty_c_view(sig.ret)
@@ -3512,7 +3147,7 @@ pub class Checker {
     i = 0
     while i < arg.args.size {
       call.args.push(self.type_name_as_expr(arg.args[i]))
-      i = i + 1
+      i += 1
     }
     call
   }
@@ -3531,13 +3166,11 @@ pub class Checker {
       segs = recv.mod_name.split(".")
       path = Expr.new(ex_name(), recv.loc)
       path.ident = segs[0]
-      i = 1
-      while i < segs.size {
+      for i in 1..segs.size {
         fa = Expr.new(ex_field(), recv.loc)
         fa.object = path
         fa.ident = segs[i]
         path = fa
-        i = i + 1
       }
       call.receiver = path
     }
@@ -3545,14 +3178,12 @@ pub class Checker {
       i = 0
       while i < recv.args.size {
         call.args.push(recv.args[i])
-        i = i + 1
+        i += 1
       }
       return call
     }
-    i = 0
-    while i < recv.type_args.size {
-      call.args.push(self.type_name_as_expr(recv.type_args[i]))
-      i = i + 1
+    for type_arg in recv.type_args {
+      call.args.push(self.type_name_as_expr(type_arg))
     }
     call
   }
@@ -3560,11 +3191,9 @@ pub class Checker {
   // The type reading of `Name(T).member`: the parser's call reading of the
   // arguments (type_app_as_call) is dropped so no later walk meets it.
   pub fn take_type_app(recv: Expr) {
-    if recv.kind == ex_name() {
-      if recv.type_args.size > 0 {
-        none: Array(Expr) = []
-        recv.args = none
-      }
+    if recv.kind == ex_name() && recv.type_args.size > 0 {
+      none: Array(Expr) = []
+      recv.args = none
     }
   }
 
@@ -3592,21 +3221,18 @@ pub class Checker {
 
   pub fn join_segs(segs: Array(String), n: Int): String {
     buf = buf_new()
-    i = 0
-    while i < n {
+    for i in 0..n {
       if i > 0 {
         buf.push_str(".")
       }
       buf.push_str(segs[i])
-      i = i + 1
     }
     buf.to_s
   }
 
   pub fn longest_module(segs: Array(String), allow_full: Bool): Int {
     limit = segs.size
-    if allow_full {
-    } else {
+    if !allow_full {
       if segs.size == 0 {
         return 0
       }
@@ -3619,22 +3245,20 @@ pub class Checker {
       if self.qualifier_ok(mod, self.current_module) {
         best = n
       }
-      n = n + 1
+      n += 1
     }
     best
   }
 
   pub fn flatten_module_receiver(recv: Expr): Expr {
     segs: Array(String) = []
-    if self.ident_chain(recv, segs) {
-      if segs.size > 1 {
-        best = self.longest_module(segs, true)
-        if best == segs.size {
-          mod = self.join_segs(segs, best)
-          name_expr = Expr.new(ex_name(), recv.loc)
-          name_expr.ident = mod
-          return name_expr
-        }
+    if self.ident_chain(recv, segs) && segs.size > 1 {
+      best = self.longest_module(segs, true)
+      if best == segs.size {
+        mod = self.join_segs(segs, best)
+        name_expr = Expr.new(ex_name(), recv.loc)
+        name_expr.ident = mod
+        return name_expr
       }
     }
     recv
@@ -3642,20 +3266,16 @@ pub class Checker {
 
   pub fn flatten_type_chain(recv: Expr): Expr {
     segs: Array(String) = []
-    if self.ident_chain(recv, segs) {
-      if segs.size > 2 {
-        best = self.longest_module(segs, false)
-        if best > 0 {
-          if best == segs.size - 1 {
-            mod = self.join_segs(segs, best)
-            name_expr = Expr.new(ex_name(), recv.loc)
-            name_expr.ident = mod
-            flat = Expr.new(ex_field(), recv.loc)
-            flat.object = name_expr
-            flat.ident = segs[best]
-            return flat
-          }
-        }
+    if self.ident_chain(recv, segs) && segs.size > 2 {
+      best = self.longest_module(segs, false)
+      if best > 0 && best == segs.size - 1 {
+        mod = self.join_segs(segs, best)
+        name_expr = Expr.new(ex_name(), recv.loc)
+        name_expr.ident = mod
+        flat = Expr.new(ex_field(), recv.loc)
+        flat.object = name_expr
+        flat.ident = segs[best]
+        return flat
       }
     }
     recv
@@ -3663,40 +3283,37 @@ pub class Checker {
 
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_module_receiver(recv)
-    if str_eq(expr.callee, "new") {
+    if expr.callee == "new" {
       recv = self.flatten_type_chain(recv)
     }
     expr.receiver = recv
-    if recv.kind == ex_name() {
-      if recv.type_args.size > 0 {
-        if self.is_generic_template(recv.ident) {
-          self.take_type_app(recv)
-          if str_eq(expr.callee, "new") {
+    if recv.kind == ex_name() && recv.type_args.size > 0 {
+      if self.is_generic_template(recv.ident) {
+        self.take_type_app(recv)
+        if expr.callee == "new" {
+        } else {
+          self.fail(recv.loc, "${recv.ident} is a type")
+          return self.t_int()
+        }
+      } else {
+        if expr.callee == "new" {
+          if f = self.find_fn(recv.ident) {
+          } else if v = self.lookup(recv.ident) {
           } else {
-            self.fail(recv.loc, "${recv.ident} is a type")
+            // `Channel(Int).new` with no such generic type (Stage 29
+            // W1a): before, the call reading said "new is a type
+            // constructor".
+            self.fail(recv.loc, "unknown type ${recv.ident}")
             return self.t_int()
           }
-        } else {
-          if str_eq(expr.callee, "new") {
-            if f = self.find_fn(recv.ident) {
-            } else if v = self.lookup(recv.ident) {
-            } else {
-              // `Channel(Int).new` with no such generic type (Stage 29
-              // W1a): before, the call reading said "new is a type
-              // constructor".
-              self.fail(recv.loc, "unknown type ${recv.ident}")
-              return self.t_int()
-            }
-          }
-          return self.rewrite_type_app_call(expr, recv, has_want, want)
         }
+        return self.rewrite_type_app_call(expr, recv, has_want, want)
       }
     }
     if recv.kind == ex_name() {
       if found = self.lookup(recv.ident) {
       } else {
-        if recv.type_args.size > 0 {
-        } else {
+        if !(recv.type_args.size > 0) {
           if self.names_std_gc(recv.ident) {
             return self.check_gc_call(expr)
           }
@@ -3715,36 +3332,32 @@ pub class Checker {
         }
       }
     }
-    if str_eq(expr.callee, "new") {
+    if expr.callee == "new" {
     } else {
       if ty = self.type_call_target(recv, expr.callee) {
         return self.check_type_call(expr, ty)
       }
     }
-    if str_eq(expr.callee, "new") {
+    if expr.callee == "new" {
       return self.check_constructor(expr, recv, has_want, want)
     }
-    if str_eq(expr.callee, "send") {
-      i = 0
-      while i < expr.args.size {
-        if self.expr_is_place(expr.args[i]) {
-          self.fail(expr.args[i].loc, "mutex place cannot escape")
+    if expr.callee == "send" {
+      for arg in expr.args {
+        if self.expr_is_place(arg) {
+          self.fail(arg.loc, "mutex place cannot escape")
           return self.t_void()
         }
-        i = i + 1
       }
     }
     if recv.kind == ex_name() {
-      if str_eq(recv.ident, "String") {
-        if str_eq(expr.callee, "from_utf8") {
-          if expr.args.size == 1 {
-          } else {
+      if recv.ident == "String" {
+        if expr.callee == "from_utf8" {
+          if expr.args.size != 1 {
             self.fail(expr.loc, "String.from_utf8 takes one Bytes")
             return ty_nilable(self.t_string())
           }
           got = self.check_expr_as(expr.args[0], self.t_bytes())
-          if got.is_bytes {
-          } else {
+          if !got.is_bytes {
             self.fail(expr.args[0].loc, "String.from_utf8 expects Bytes")
           }
           return ty_nilable(self.t_string())
@@ -3752,7 +3365,7 @@ pub class Checker {
       }
     }
     object = self.check_expr(recv)
-    if str_eq(expr.callee, "or") {
+    if expr.callee == "or" {
       if b = expr.block {
         self.fail(expr.loc, "or does not take a block")
         return object
@@ -3761,19 +3374,19 @@ pub class Checker {
         if object.is_nilable {
           return self.coalesce_result(object, expr.args[0], expr.loc, "or")
         }
-        dummy = self.check_expr(expr.args[0])
+        self.check_expr(expr.args[0])
         self.fail(expr.loc, "or needs a nilable receiver, got ${object.show}")
         return object
       }
       self.fail(expr.loc, "or takes one fallback")
       return object
     }
-    if str_eq(expr.callee, "with") {
+    if expr.callee == "with" {
       if self.is_mutex_ty(object) {
         return self.check_mutex_with(expr, object)
       }
     }
-    if str_eq(expr.callee, "size") && expr.args.size == 0 {
+    if expr.callee == "size" && expr.args.size == 0 {
       if b = expr.block {
       } else if object.is_string || object.is_bytes || object.is_array || object.is_hash || object.is_buf {
         // `xs.size()` is `xs.size` (A5: one rule for empty parentheses).
@@ -3811,51 +3424,40 @@ pub class Checker {
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     if cond = expr.cond {
       ct = self.check_expr(cond)
-      if ct.is_int {
-      } else {
-        if ct.is_bool {
-        } else {
-          self.fail(cond.loc, "switch discriminant must be Int or Bool, got ${ct.show}")
-        }
+      if !ct.is_int && !ct.is_bool {
+        self.fail(cond.loc, "switch discriminant must be Int or Bool, got ${ct.show}")
       }
     }
     seen = Hash(Int, Int).new
-    i = 0
-    while i < expr.cases.size {
-      arm = expr.cases[i]
+    for arm in expr.cases {
       if arm.labels.size == 0 {
         self.fail(arm.loc, "case needs a label")
       }
-      j = 0
-      while j < arm.labels.size {
-        lab = arm.labels[j].to_i
+      for label in arm.labels {
+        lab = label.to_i
         if prev = seen.get(lab) {
           self.fail(arm.loc, "duplicate case ${lab}")
         }
         seen[lab] = 1
-        j = j + 1
       }
-      i = i + 1
     }
     branch_tys: Array(Ty) = []
     i = 0
     while i < expr.cases.size {
       branch_tys.push(self.check_switch_branch(expr.cases[i].body, has_want, want))
-      i = i + 1
+      i += 1
     }
     if expr.has_else {
       branch_tys.push(self.check_switch_branch(expr.else_body, has_want, want))
     }
     all_void = true
     any_void = false
-    i = 0
-    while i < branch_tys.size {
+    for i in 0..branch_tys.size {
       if branch_tys[i].is_void {
         any_void = true
       } else {
         all_void = false
       }
-      i = i + 1
     }
     if all_void {
       return self.t_void()
@@ -3864,53 +3466,41 @@ pub class Checker {
       self.fail(expr.loc, "switch cases must all produce a value, or none")
       return self.t_int()
     }
-    if expr.has_else {
-    } else {
+    if !expr.has_else {
       self.fail(expr.loc, "switch expression needs else")
       return self.t_int()
     }
-    if has_want {
-      if want.is_void {
-      } else {
-        i = 0
-        while i < branch_tys.size {
-          if ty_assignable(branch_tys[i], want) {
-          } else {
-            self.fail(expr.loc, "switch branch is ${branch_tys[i].show}, expected ${want.show}")
-          }
-          i = i + 1
+    if has_want && !want.is_void {
+      for branch_ty in branch_tys {
+        if !ty_assignable(branch_ty, want) {
+          self.fail(expr.loc, "switch branch is ${branch_ty.show}, expected ${want.show}")
         }
-        return want
       }
+      return want
     }
     if branch_tys.size == 0 {
       return self.t_void()
     }
     result = branch_tys[0]
-    i = 0
-    while i < branch_tys.size {
-      if branch_tys[i].same_as(result) {
-      } else {
-        self.fail(expr.loc, "switch branches have different types ${result.show} and ${branch_tys[i].show}")
+    for branch_ty in branch_tys {
+      if !branch_ty.same_as(result) {
+        self.fail(expr.loc, "switch branches have different types ${result.show} and ${branch_ty.show}")
       }
-      i = i + 1
     }
     result
   }
 
   pub fn check_spawn(expr: Expr): Ty {
-    if expr.args.size == 0 {
-    } else {
+    if expr.args.size != 0 {
       self.fail(expr.loc, "spawn takes a block, not arguments")
       return ty_join(self.t_int())
     }
     if b = expr.block {
-      if b.params.size == 0 {
-      } else {
+      if b.params.size != 0 {
         self.fail(b.loc, "spawn { } does not take block parameters; use items.parallel")
         return ty_join(self.t_int())
       }
-      self.in_task = self.in_task + 1
+      self.in_task += 1
       saved_loops = self.loop_depth
       self.loop_depth = 0
       saved_try = self.try_in
@@ -3918,9 +3508,8 @@ pub class Checker {
       result = self.check_block_value(b)
       self.try_in = saved_try
       self.loop_depth = saved_loops
-      self.in_task = self.in_task - 1
-      if result.is_int {
-      } else {
+      self.in_task -= 1
+      if !result.is_int {
         self.fail(b.loc, "spawn result must be Int")
       }
       self.collect_spawn_captures(expr, b.body)
@@ -3941,12 +3530,10 @@ pub class Checker {
     while i < block.body.size {
       stmt = block.body[i]
       if i == block.body.size - 1 {
-        if stmt.kind == st_return() {
-          if self.place_depth > 0 {
-            self.fail(stmt.loc, "return inside Mutex.with")
-            self.pop_scope
-            return self.t_int()
-          }
+        if stmt.kind == st_return() && self.place_depth > 0 {
+          self.fail(stmt.loc, "return inside Mutex.with")
+          self.pop_scope
+          return self.t_int()
         }
         if stmt.kind == st_expr() {
           if e = stmt.expr {
@@ -3965,48 +3552,38 @@ pub class Checker {
         return self.t_int()
       }
       self.check_stmt(stmt, self.t_void(), false)
-      i = i + 1
+      i += 1
     }
     self.pop_scope
     self.t_int()
   }
 
   pub fn expr_is_place(expr: Expr): Bool {
-    if self.place_depth > 0 {
-      if expr.kind == ex_name() {
-        if str_eq(expr.ident, self.place_name) {
-          return true
-        }
-      }
+    if self.place_depth > 0 && expr.kind == ex_name() && expr.ident == self.place_name {
+      return true
     }
     false
   }
 
   pub fn reject_place_assign(stmt: Stmt): Bool {
-    if self.place_depth > 0 {
-    } else {
+    if !(self.place_depth > 0) {
       return false
     }
     if value = stmt.value {
-      if self.expr_is_place(value) {
-      } else {
+      if !self.expr_is_place(value) {
         return false
       }
     } else {
       return false
     }
     if target = stmt.target {
-      if target.kind == ex_name() {
-        if str_eq(target.ident, self.place_name) {
-          return false
-        }
+      if target.kind == ex_name() && target.ident == self.place_name {
+        return false
       }
       if target.kind == ex_field() {
         if obj = target.object {
-          if obj.kind == ex_name() {
-            if str_eq(obj.ident, self.place_name) {
-              return false
-            }
+          if obj.kind == ex_name() && obj.ident == self.place_name {
+            return false
           }
         }
       }
@@ -4016,10 +3593,10 @@ pub class Checker {
   }
 
   pub fn is_mutex_ty(ty: Ty): Bool {
-    if str_eq(ty.origin, "Mutex") {
+    if ty.origin == "Mutex" {
       return true
     }
-    str_eq(ty.name, "Mutex")
+    ty.name == "Mutex"
   }
 
   pub fn check_mutex_with(expr: Expr, object: Ty): Ty {
@@ -4028,20 +3605,17 @@ pub class Checker {
       return self.t_void()
     }
     if b = expr.block {
-      if b.params.size == 1 {
-      } else {
+      if b.params.size != 1 {
         self.fail(b.loc, "Mutex.with { |x| } takes one block parameter")
         return self.t_void()
       }
-      if object.ty_args.size == 1 {
-      } else {
+      if object.ty_args.size != 1 {
         self.fail(expr.loc, "Mutex needs one type argument")
         return self.t_void()
       }
       t = object.ty_args[0]
       if cell = object.field_named("cell") {
-        if cell.same_as(t) {
-        } else {
+        if !cell.same_as(t) {
           self.fail(expr.loc, "Mutex cell has the wrong type")
           return self.t_void()
         }
@@ -4050,8 +3624,7 @@ pub class Checker {
         return self.t_void()
       }
       if gate = object.field_named("gate") {
-        if gate.is_uint64 {
-        } else {
+        if !gate.is_uint64 {
           self.fail(expr.loc, "Mutex needs a gate field")
           return self.t_void()
         }
@@ -4064,7 +3637,7 @@ pub class Checker {
       self.push_scope
       self.bind(b.params[0], t)
       self.place_name = b.params[0]
-      self.place_depth = self.place_depth + 1
+      self.place_depth += 1
       // As `return`, a `break` or `continue` cannot leave the block: the
       // lock is released at its end only (W10b: both back ends hung).
       saved_loops = self.loop_depth
@@ -4081,7 +3654,7 @@ pub class Checker {
   }
 
   pub fn check_gate_call(expr: Expr): Ty? {
-    if str_eq(expr.callee, "avant_gate_new") {
+    if expr.callee == "avant_gate_new" {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "avant_gate_new takes no arguments")
@@ -4093,19 +3666,19 @@ pub class Checker {
       return self.t_uint64()
     }
     is_gate = false
-    if str_eq(expr.callee, "avant_gate_lock") {
+    if expr.callee == "avant_gate_lock" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_unlock") {
+    if expr.callee == "avant_gate_unlock" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_wait") {
+    if expr.callee == "avant_gate_wait" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_signal") {
+    if expr.callee == "avant_gate_signal" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_broadcast") {
+    if expr.callee == "avant_gate_broadcast" {
       is_gate = true
     }
     if is_gate {
@@ -4119,8 +3692,7 @@ pub class Checker {
         return self.t_void()
       }
       got = self.check_expr_as(expr.args[0], self.t_uint64())
-      if got.is_uint64 {
-      } else {
+      if !got.is_uint64 {
         self.fail(expr.args[0].loc, "${expr.callee} expects UInt64")
       }
       return self.t_void()
@@ -4129,7 +3701,7 @@ pub class Checker {
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {
-    if str_eq(expr.callee, "join") {
+    if expr.callee == "join" {
       if self.in_task > 0 {
         self.fail(expr.loc, "join inside a pool worker")
       }
@@ -4167,12 +3739,9 @@ pub class Checker {
           if e = stmt.expr {
             use_want = false
             use_ty = self.t_int()
-            if has_want {
-              if want.is_void {
-              } else {
-                use_want = true
-                use_ty = want
-              }
+            if has_want && !want.is_void {
+              use_want = true
+              use_ty = want
             }
             ty = self.check_expr_flag(e, use_want, use_ty)
             self.pop_scope
@@ -4184,7 +3753,7 @@ pub class Checker {
         return self.t_void()
       }
       self.check_stmt(stmt, self.t_void(), false)
-      i = i + 1
+      i += 1
     }
     self.pop_scope
     self.t_void()
@@ -4194,18 +3763,14 @@ pub class Checker {
 // Whether a C layout has a field that holds a reference (a `String`,
 // directly or in a nested layout): what `release` gives back (D266).
 pub fn clayout_holds_ref(t: Ty): Bool {
-  i = 0
-  while i < t.fields.size {
-    ft = t.fields[i].ty
+  for field in t.fields {
+    ft = field.ty
     if ft.is_string {
       return true
     }
-    if ft.is_clayout {
-      if clayout_holds_ref(ft) {
-        return true
-      }
+    if ft.is_clayout && clayout_holds_ref(ft) {
+      return true
     }
-    i = i + 1
   }
   false
 }

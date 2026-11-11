@@ -34,13 +34,11 @@ fn scratch_child_src: String {
 fn first_line(path: String): String {
   if text = file_read(path) {
     n = count_lines(text)
-    i = 0
-    while i < n {
+    for i in 0..n {
       line = nth_line(text, i).strip()
       if line.size > 0 && line[0] == 47 {
         return line
       }
-      i = i + 1
     }
   }
   ""
@@ -59,7 +57,7 @@ fn path_base(p: String): String {
     if p[i] == 47 {
       return str_slice(p, i + 1, p.size)
     }
-    i = i - 1
+    i -= 1
   }
   p
 }
@@ -72,7 +70,7 @@ fn run_env(env: Array(String), bin: String, log: String): Int {
   i = 0
   while i < env.size {
     args.push(env[i])
-    i = i + 1
+    i += 1
   }
   args.push(bin)
   process_run_out("/usr/bin/env", args, log)
@@ -117,7 +115,7 @@ fn test_scratch(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     work = scratch_dir()
     src = "${work}/child.av"
-    dummy_w = file_write(src, scratch_child_src())
+    file_write(src, scratch_child_src())
     bin = "${work}/child.bin"
     code = compile_av(compiler, src, bin, "${work}/child.clog")
     c.eq_int(code, 0, "child compiles")
@@ -160,7 +158,7 @@ fn test_scratch(c: Checks) {
       gone_args.push("s=$(ps -o stat= -p ${child_pid} 2>/dev/null); case \"$s\" in ''|Z*) exit 0 ;; *) exit 1 ;; esac")
       c.expect(child_pid.size > 0, "SIG${sigs[k]} child recorded its pid")
       c.eq_int(process_run("/bin/sh", gone_args), 0, "SIG${sigs[k]} reaches the blocking child")
-      k = k + 1
+      k += 1
     }
 
     keep_env: Array(String) = []
@@ -187,7 +185,7 @@ fn test_scratch(c: Checks) {
 
     std_src = "${work}/std_temp.av"
     std_body = "import std.testing\nfn main: Int {\n  t = Test.new\n  a = t.temp_dir\n  b = t.temp_dir\n  puts(a)\n  t.check(a != b, \"fresh per call\")\n  t.check(file_exists(a) && file_exists(b), \"created\")\n  t.check(file_write(\"\${a}/x.txt\", \"x\") == 0, \"writable\")\n  t.finish\n}\n"
-    dummy_sw = file_write(std_src, std_body)
+    file_write(std_src, std_body)
     std_bin = "${work}/std_temp.bin"
     std_code = compile_av(compiler, std_src, std_bin, "${work}/std_temp.clog")
     c.eq_int(std_code, 0, "std.testing temp_dir program compiles")
@@ -206,11 +204,11 @@ fn test_scratch(c: Checks) {
     mkdir_p("${proj}/tests")
     // Its own avant.toml (O116, Stage 29 W1b): with TMPDIR inside a
     // checkout, the runner's walk up from proj would find the checkout's.
-    dummy_pt = file_write("${proj}/avant.toml", "[package]\nname = \"slow\"\nversion = \"0.1.0\"\n")
+    file_write("${proj}/avant.toml", "[package]\nname = \"slow\"\nversion = \"0.1.0\"\n")
     // The job's sleep records its own pid (exec keeps it), so the check
     // looks at exactly that process.
     job_body = "fn main: Int {\n  args: Array(String) = []\n  args.push(\"-c\")\n  args.push(\"echo $$ > ${proj}/sleep.pid; echo 1 > ${proj}/started; exec sleep 30\")\n  dummy = process_run(\"/bin/sh\", args)\n  0\n}\n"
-    dummy_j = file_write("${proj}/tests/test_slow.av", job_body)
+    file_write("${proj}/tests/test_slow.av", job_body)
     abs_c = compiler_abs("scratch", compiler)
     isigs: Array(String) = []
     isigs.push("TERM")
@@ -225,10 +223,10 @@ fn test_scratch(c: Checks) {
       rc = "${work}/int-${sig}.rc"
       script = "#!/bin/sh\ncd '${proj}' || exit 9\nrm -f started sleep.pid\nAVANT_KEEP_TMP= TMPDIR='${base_dir}' env --default-signal=${sig} '${abs_c}' test --jobs 2 > '${work}/int-${sig}.log' 2>&1 &\nr=$!\nn=0\nwhile [ ! -f started ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\nkill -${sig} $r\nwait $r\necho $? > '${rc}'\n"
       sh_path = "${work}/int-${sig}.sh"
-      dummy_s = file_write(sh_path, script)
+      file_write(sh_path, script)
       sh_args: Array(String) = []
       sh_args.push(sh_path)
-      dummy_r = process_run("/bin/sh", sh_args)
+      process_run("/bin/sh", sh_args)
       c.eq_int(nth_line(read_all(rc), 0).to_i, iwant[q], "interrupted runner (SIG${sig}) exits ${iwant[q]}")
       // Gone, or a zombie about to be reaped, means stopped.
       spid = read_all("${proj}/sleep.pid")
@@ -240,7 +238,7 @@ fn test_scratch(c: Checks) {
       c.eq_int(stopped, 0, "SIG${sig} stops the runner's jobs")
       left: Array(String) = dir_list(base_dir)
       c.eq_int(left.size, 0, "SIG${sig} leaves nothing in TMPDIR")
-      q = q + 1
+      q += 1
     }
 
     unset_args: Array(String) = []
@@ -257,7 +255,7 @@ fn test_scratch(c: Checks) {
     // private directory (a compiler crash is the same runtime path) dies
     // by the signal and leaves nothing in TMPDIR.
     crash_src = "${work}/crash.av"
-    dummy_cs = file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int): Int\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise(v.to_i))\n  }\n}\n")
+    file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int): Int\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise(v.to_i))\n  }\n}\n")
     crash_bin = "${work}/crash.bin"
     c.eq_int(compile_av(compiler, crash_src, crash_bin, "${work}/crash.clog"), 0, "crash program compiles")
     crashes = ["11", "7", "8", "abort"]
@@ -269,14 +267,14 @@ fn test_scratch(c: Checks) {
       mkdir_p(cbase)
       crc = "${work}/crash-${q}.rc"
       csh = "${work}/crash-${q}.sh"
-      dummy_ch = file_write(csh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${cbase}' CRASH_SIG=${crashes[q]} '${crash_bin}' > '${work}/crash-${q}.log' 2>&1\necho $? > '${crc}'\n")
+      file_write(csh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${cbase}' CRASH_SIG=${crashes[q]} '${crash_bin}' > '${work}/crash-${q}.log' 2>&1\necho $? > '${crc}'\n")
       ch_args: Array(String) = []
       ch_args.push(csh)
-      dummy_cr = process_run("/bin/sh", ch_args)
+      process_run("/bin/sh", ch_args)
       c.eq_int(nth_line(read_all(crc), 0).to_i, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
       cleft: Array(String) = dir_list(cbase)
       c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
-      q = q + 1
+      q += 1
     }
     c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
     c.expect(!file_exists(unset_dir), "fallback directory removed")

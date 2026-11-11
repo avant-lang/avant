@@ -4,7 +4,7 @@ fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
-  dummy = file_write(src, body)
+  file_write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
@@ -22,7 +22,7 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int, tag: String, body
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
-  dummy = file_write(src, body)
+  file_write(src, body)
   args: Array(String) = []
   args.push("20")
   args.push(compiler)
@@ -220,7 +220,7 @@ fn test_errors(c: Checks) {
     write_av(dir, "priv_main", "import priv\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     priv_bin = "${dir}/priv.bin"
     priv_log = "${dir}/priv.log"
-    dummy_p = compile_av(compiler, "${dir}/priv_main.av", priv_bin, priv_log)
+    compile_av(compiler, "${dir}/priv_main.av", priv_bin, priv_log)
     c.expect(!file_exists(priv_bin), "iface-private bin absent")
     if err = file_read(priv_log) {
       c.expect(str_has(err, "does not implement"), "iface-private")
@@ -231,7 +231,7 @@ fn test_errors(c: Checks) {
     write_av(dir, "hid_main", "import hid\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     hid_bin = "${dir}/hid.bin"
     hid_log = "${dir}/hid.log"
-    dummy_h = compile_av(compiler, "${dir}/hid_main.av", hid_bin, hid_log)
+    compile_av(compiler, "${dir}/hid_main.av", hid_bin, hid_log)
     c.expect(!file_exists(hid_bin), "iface-vis bin absent")
     if err = file_read(hid_log) {
       c.expect(str_has(err, "unknown type Show"), "iface-vis")
@@ -242,7 +242,7 @@ fn test_errors(c: Checks) {
     write_av(dir, "quiet_main", "import quiet\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     quiet_bin = "${dir}/quiet.bin"
     quiet_log = "${dir}/quiet.log"
-    dummy_q = compile_av(compiler, "${dir}/quiet_main.av", quiet_bin, quiet_log)
+    compile_av(compiler, "${dir}/quiet_main.av", quiet_bin, quiet_log)
     c.expect(!file_exists(quiet_bin), "iface-opt-vis bin absent")
     if err = file_read(quiet_log) {
       c.expect(str_has(err, "does not implement"), "iface-opt-vis")

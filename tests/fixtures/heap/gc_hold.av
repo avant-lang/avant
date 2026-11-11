@@ -42,7 +42,7 @@ fn length(c: Cell): Int {
   p = c.next
   while true {
     if x = p {
-      n = n + x.v
+      n += x.v
       p = x.next
     } else {
       break
@@ -54,18 +54,14 @@ fn length(c: Cell): Int {
 // About 64 MiB of lists of 100 cells, each dropped after its sum.
 fn churn(rounds: Int): Int {
   total = 0
-  r = 0
-  while r < rounds {
+  for r in 0..rounds {
     head = Cell.new(0)
-    i = 1
-    while i < 100 {
+    for i in 1..100 {
       c = Cell.new(i)
       c.next = head
       head = c
-      i = i + 1
     }
     total = total &+ length(head)
-    r = r + 1
   }
   total
 }
@@ -100,12 +96,10 @@ fn by_try(k: Int): Int? {
 
 fn build(d: Int): Cell {
   head = Cell.new(0)
-  i = 0
-  while i < d {
+  for i in 0..d {
     c = Cell.new(i % 1000)
     c.next = head
     head = c
-    i = i + 1
   }
   head
 }
@@ -125,11 +119,9 @@ fn case_plain {
 fn case_collect {
   s = 0
   gc.hold {
-    i = 0
-    while i < 10 {
-      s = s + churn(10)
+    for i in 0..10 {
+      s += churn(10)
       gc.collect()
-      i = i + 1
     }
   }
   puts("collect ${s}")
@@ -137,11 +129,9 @@ fn case_collect {
 
 fn case_collects {
   s = 0
-  i = 0
-  while i < 10 {
-    s = s + churn(10)
+  for i in 0..10 {
+    s += churn(10)
     gc.collect()
-    i = i + 1
   }
   puts("collects ${s}")
 }
@@ -151,9 +141,9 @@ fn case_nested {
   gc.hold {
     s = churn(10000)
     gc.hold {
-      s = s + churn(10)
+      s += churn(10)
     }
-    s = s + churn(10000)
+    s += churn(10000)
   }
   puts("nested ${s}")
 }
@@ -165,15 +155,13 @@ fn case_return {
 
 fn case_break {
   s = 0
-  i = 0
-  while i < 5 {
+  for i in 0..5 {
     gc.hold {
-      s = s + churn(10)
+      s += churn(10)
       if i == 2 {
         break
       }
     }
-    i = i + 1
   }
   puts("break ${s} ${churn64()}")
 }
@@ -182,13 +170,13 @@ fn case_continue {
   s = 0
   i = 0
   while i < 3 {
-    i = i + 1
+    i += 1
     gc.hold {
-      s = s + churn(10)
+      s += churn(10)
       if i > 0 {
         continue
       }
-      s = s + 1000000
+      s += 1000000
     }
   }
   puts("continue ${s} ${churn64()}")

@@ -38,13 +38,11 @@ pub fn (lw: MirLower) instance_suffix(fnn: Function): String {
   }
   buf = buf_new()
   buf.push_str("[")
-  j = 0
-  while j < fnn.inst_args.size {
+  for j in 0..fnn.inst_args.size {
     if j > 0 {
       buf.push_str(",")
     }
     buf.push_str(mir_mty(fnn.inst_args[j]))
-    j = j + 1
   }
   buf.push_str("]")
   buf.to_s
@@ -59,7 +57,7 @@ fn mir_params_text(params: Array(Ty)): String {
       buf.push_str(",")
     }
     buf.push_str(mir_mty(params[j]))
-    j = j + 1
+    j += 1
   }
   buf.push_str(")")
   buf.to_s
@@ -70,7 +68,7 @@ fn mir_params_text(params: Array(Ty)): String {
 // module (not an instance) has the same name; `main` of the root module
 // keeps its C name (8.1).
 pub fn (lw: MirLower) symbol_of(fnn: Function): String {
-  if str_eq(fnn.name, "main") && str_eq(fnn.mod_name, lw.lw_prog.root_module) {
+  if fnn.name == "main" && fnn.mod_name == lw.lw_prog.root_module {
     return "main"
   }
   base = "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
@@ -79,15 +77,10 @@ pub fn (lw: MirLower) symbol_of(fnn: Function): String {
     return "${base}${suffix}"
   }
   n = 0
-  i = 0
-  while i < lw.lw_all.size {
-    o = lw.lw_all[i]
-    if !o.generic && !fn_is_method(o) && str_eq(o.name, fnn.name) && str_eq(o.mod_name, fnn.mod_name) {
-      if lw.instance_suffix(o).size == 0 {
-        n = n + 1
-      }
+  for o in lw.lw_all {
+    if !o.generic && !fn_is_method(o) && o.name == fnn.name && o.mod_name == fnn.mod_name && lw.instance_suffix(o).size == 0 {
+      n += 1
     }
-    i = i + 1
   }
   if n <= 1 {
     return base
@@ -126,16 +119,13 @@ pub fn (lw: MirLower) method_symbol(fnn: Function): String {
         return "${base}${suffix}"
       }
       n = 0
-      i = 0
-      while i < lw.lw_syms.methods.size {
-        o = lw.lw_syms.methods[i]
-        if !o.node.generic && str_eq(o.owner, sig.owner) && str_eq(o.node.owner_mod, sig.node.owner_mod) && str_eq(o.name, sig.name) {
+      for o in lw.lw_syms.methods {
+        if !o.node.generic && o.owner == sig.owner && o.node.owner_mod == sig.node.owner_mod && o.name == sig.name {
           onode = o.node
           if lw.instance_suffix(onode).size == 0 {
-            n = n + 1
+            n += 1
           }
         }
-        i = i + 1
       }
       if n > 1 {
         return "${base}${mir_params_text(sig.params)}"
@@ -177,10 +167,8 @@ pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
   }
   if t = e.ty {
     if t.is_class || t.is_union {
-      i = 0
-      while i < lw.lw_syms.methods.size {
-        o = lw.lw_syms.methods[i]
-        if str_eq(o.name, "initialize") && !o.node.generic {
+      for o in lw.lw_syms.methods {
+        if o.name == "initialize" && !o.node.generic {
           onode2 = o.node
           if ot = lw.owner_ty(onode2) {
             want = t
@@ -192,7 +180,6 @@ pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
             }
           }
         }
-        i = i + 1
       }
     }
   }

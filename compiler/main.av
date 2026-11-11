@@ -76,20 +76,17 @@ pub fn show_usage {
 fn take_keep_tmp(args: Array(String)): Array(String) {
   rest: Array(String) = []
   program = false
-  i = 0
-  while i < args.size {
-    a = args[i]
+  for a in args {
     if program {
       rest.push(a)
-    } else if str_eq(a, "--") {
+    } else if a == "--" {
       program = true
       rest.push(a)
-    } else if str_eq(a, "--keep-tmp") {
+    } else if a == "--keep-tmp" {
       tmp_keep()
     } else {
       rest.push(a)
     }
-    i = i + 1
   }
   rest
 }
@@ -97,10 +94,10 @@ fn take_keep_tmp(args: Array(String)): Array(String) {
 // The commands that spawn children create the scratch directory first
 // (Q138), so TMPDIR is exported before any child runs.
 fn spawns_children(command: String): Bool {
-  if str_eq(command, "run") || str_eq(command, "r") || str_eq(command, "test") || str_eq(command, "t") {
+  if command == "run" || command == "r" || command == "test" || command == "t" {
     return true
   }
-  if str_eq(command, "compile") || str_eq(command, "c") || str_eq(command, "fetch") || str_eq(command, "bind") || str_eq(command, "b") {
+  if command == "compile" || command == "c" || command == "fetch" || command == "bind" || command == "b" {
     return true
   }
   str_ends(command, ".av")
@@ -114,8 +111,8 @@ fn format_walk(dir: String, into: Array(String)) {
   i = 0
   while i < names.size {
     name = names[i]
-    i = i + 1
-    if name.size == 0 || name[0] == 46 || str_eq(name, "deps") {
+    i += 1
+    if name.size == 0 || name[0] == 46 || name == "deps" {
       continue
     }
     path = "${dir}/${name}"
@@ -131,16 +128,14 @@ fn format_walk(dir: String, into: Array(String)) {
 }
 
 fn format_sort(paths: Array(String)) {
-  i = 1
-  while i < paths.size {
+  for i in 1..paths.size {
     j = i
     while j > 0 && str_lt(paths[j], paths[j - 1]) {
       tmp = paths[j]
       paths[j] = paths[j - 1]
       paths[j - 1] = tmp
-      j = j - 1
+      j -= 1
     }
-    i = i + 1
   }
 }
 
@@ -164,10 +159,10 @@ pub fn driver_format(args: Array(String)) {
   i = 0
   while i < args.size {
     a = args[i]
-    i = i + 1
-    if str_eq(a, "--check") {
+    i += 1
+    if a == "--check" {
       check = true
-    } else if str_eq(a, "--write") {
+    } else if a == "--write" {
       write = true
     } else if str_starts(a, "-") {
       format_usage_error("unknown format argument ${a}")
@@ -186,7 +181,7 @@ pub fn driver_format(args: Array(String)) {
   i = 0
   while i < inputs.size {
     p = inputs[i]
-    i = i + 1
+    i += 1
     if str_ends(p, ".av") {
       paths.push(p)
     } else if file_exists("${p}/.") {
@@ -197,7 +192,7 @@ pub fn driver_format(args: Array(String)) {
       j = 0
       while j < found.size {
         paths.push(found[j])
-        j = j + 1
+        j += 1
       }
     } else {
       format_usage_error("format needs a .av file or a directory, not ${p}")
@@ -211,7 +206,7 @@ pub fn driver_format(args: Array(String)) {
   i = 0
   while i < paths.size {
     path = paths[i]
-    i = i + 1
+    i += 1
     if text = file_read(path) {
       got = format_source(path, text)
       if !got.ok {
@@ -219,11 +214,11 @@ pub fn driver_format(args: Array(String)) {
         failed = true
         continue
       }
-      same = str_eq(text, got.text)
+      same = text == got.text
       if check {
         if !same {
           puts("would change ${path}")
-          changed = changed + 1
+          changed += 1
         }
       } else if write {
         if !same && file_write(path, got.text) != 0 {
@@ -252,13 +247,13 @@ pub fn driver_format(args: Array(String)) {
 // error goes to stderr with status 1, as in dump (D142), so a golden can
 // never record one. A program that imports has no --check golden.
 fn dump_layer_mode(arg: String): Bool {
-  if str_eq(arg, "--tokens") {
+  if arg == "--tokens" {
     return true
   }
-  if str_eq(arg, "--ast") {
+  if arg == "--ast" {
     return true
   }
-  str_eq(arg, "--check")
+  arg == "--check"
 }
 
 fn driver_dump_layer(mode: String, path: String) {
@@ -269,7 +264,7 @@ fn driver_dump_layer(mode: String, path: String) {
       diag_puts(e.show)
       diag_exit(1)
     }
-    if str_eq(mode, "--tokens") {
+    if mode == "--tokens" {
       dump_tokens(tokens)
       return
     }
@@ -279,18 +274,18 @@ fn driver_dump_layer(mode: String, path: String) {
       diag_puts(e.show)
       diag_exit(1)
     }
-    if str_eq(mode, "--ast") {
+    if mode == "--ast" {
       puts(dump_program(program))
       return
     }
     expander = Expander.new(src, program)
-    dummy_e = expander.expand
+    expander.expand
     if e = expander.err {
       diag_puts(e.show)
       diag_exit(1)
     }
     checker = Checker.new(src, program)
-    dummy = checker.check
+    checker.check
     if e = checker.err {
       diag_puts(e.show)
       diag_exit(1)
@@ -351,7 +346,7 @@ pub fn driver_dump(args: Array(String)) {
 // --call-forms).
 fn llvm_inline_fast: Bool {
   if v = env_get("AVANT_LLVM_CALL_FORMS") {
-    if str_eq(v, "1") {
+    if v == "1" {
       return false
     }
   }
@@ -367,12 +362,12 @@ fn llvm_job_of(job: LinkJob): LlvmJob {
   i = 0
   while i < job.objects.size {
     lj.objects.push(job.objects[i])
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < job.flags.size {
     lj.flags.push(job.flags[i])
-    i = i + 1
+    i += 1
   }
   lj
 }
@@ -411,7 +406,7 @@ pub fn driver_run(args: Array(String)) {
         diag_puts(err)
         diag_exit(1)
       }
-      dummy_chmod2 = fs_chmod_x(out)
+      fs_chmod_x(out)
       rc2 = process_run(out, split.program)
       diag_exit(rc2)
     }
@@ -470,17 +465,17 @@ pub fn driver_bind(args: Array(String)) {
   i = 0
   while i < args.size {
     arg = args[i]
-    if str_eq(arg, "--lib") {
+    if arg == "--lib" {
       if i + 1 >= args.size {
         puts("--lib needs a name")
         show_usage()
         return
       }
       lib_name = args[i + 1]
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--lib=") {
       lib_name = str_slice(arg, 6, arg.size)
-      i = i + 1
+      i += 1
     } else if str_starts(arg, "-") {
       puts("unknown bind argument ${arg}")
       show_usage()
@@ -492,7 +487,7 @@ pub fn driver_bind(args: Array(String)) {
         return
       }
       header = arg
-      i = i + 1
+      i += 1
     }
   }
   if header.size == 0 {
@@ -503,8 +498,7 @@ pub fn driver_bind(args: Array(String)) {
   if lib_name.size == 0 {
     lib_name = bind_default_name(header)
   }
-  if file_exists(header) {
-  } else {
+  if !file_exists(header) {
     puts("header is missing")
     return
   }
@@ -531,9 +525,9 @@ pub fn driver_fetch(args: Array(String)) {
   i = 0
   while i < args.size {
     arg = args[i]
-    if str_eq(arg, "--update") {
+    if arg == "--update" {
       update = true
-      i = i + 1
+      i += 1
     } else if str_starts(arg, "-") {
       diag_puts("unknown fetch argument ${arg}")
       show_usage()
@@ -546,7 +540,7 @@ pub fn driver_fetch(args: Array(String)) {
       }
       seen_dir = true
       dir = arg
-      i = i + 1
+      i += 1
     }
   }
   if pkg_fetch(dir, update) {
@@ -562,12 +556,10 @@ pub fn driver_fetch(args: Array(String)) {
 fn driver_llvm_obj(args: Array(String)) {
   codegen = "default"
   files: Array(String) = []
-  i = 0
-  while i < args.size {
-    a = args[i]
-    if str_eq(a, "--debug") {
+  for a in args {
+    if a == "--debug" {
       codegen = "debug"
-    } else if str_eq(a, "--release") {
+    } else if a == "--release" {
       codegen = "release"
     } else if str_starts(a, "-") {
       diag_puts("__llvm-obj: unknown flag ${a}")
@@ -575,7 +567,6 @@ fn driver_llvm_obj(args: Array(String)) {
     } else {
       files.push(a)
     }
-    i = i + 1
   }
   if files.size != 2 {
     diag_puts("usage: avant __llvm-obj IN.ll OUT.o [--debug|--release]")
@@ -607,26 +598,24 @@ fn driver_mir_build(args: Array(String)) {
   i = 0
   while i < args.size {
     a = args[i]
-    if str_eq(a, "--list") {
+    if a == "--list" {
       names = mir_build_names()
-      k = 0
-      while k < names.size {
-        out_puts(names[k])
-        k = k + 1
+      for name in names {
+        out_puts(name)
       }
       return
-    } else if str_eq(a, "--debug") {
+    } else if a == "--debug" {
       job.codegen = "debug"
-    } else if str_eq(a, "--release") {
+    } else if a == "--release" {
       job.codegen = "release"
-    } else if str_eq(a, "--emit-ll") && i + 1 < args.size {
+    } else if a == "--emit-ll" && i + 1 < args.size {
       job.keep_ll = args[i + 1]
-      i = i + 1
-    } else if str_eq(a, "--object") {
+      i += 1
+    } else if a == "--object" {
       object = true
-    } else if str_eq(a, "--call-forms") {
+    } else if a == "--call-forms" {
       job.inline_fast = false
-    } else if str_eq(a, "--time") {
+    } else if a == "--time" {
       timed = true
     } else if str_starts(a, "-") {
       diag_puts("__mir-build: unknown flag ${a}")
@@ -634,7 +623,7 @@ fn driver_mir_build(args: Array(String)) {
     } else {
       files.push(a)
     }
-    i = i + 1
+    i += 1
   }
   if files.size != 2 {
     diag_puts("usage: avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE] [--object] [--call-forms] [--time]")
@@ -702,85 +691,85 @@ fn main {
   }
   command = args[0]
   if spawns_children(command) {
-    dummy_tmp = tmp_dir()
+    tmp_dir()
   }
-  if str_eq(command, "-h") {
+  if command == "-h" {
     show_usage()
     return
   }
-  if str_eq(command, "--help") {
+  if command == "--help" {
     show_usage()
     return
   }
-  if str_eq(command, "help") {
+  if command == "help" {
     show_usage()
     return
   }
-  if str_eq(command, "dump") {
+  if command == "dump" {
     driver_dump(argv_drop_first(args))
     return
   }
-  if str_eq(command, "d") {
+  if command == "d" {
     driver_dump(argv_drop_first(args))
     return
   }
-  if str_eq(command, "run") {
+  if command == "run" {
     driver_run(argv_drop_first(args))
     return
   }
-  if str_eq(command, "r") {
+  if command == "r" {
     driver_run(argv_drop_first(args))
     return
   }
-  if str_eq(command, "test") {
+  if command == "test" {
     driver_test(argv_drop_first(args))
     return
   }
-  if str_eq(command, "t") {
+  if command == "t" {
     driver_test(argv_drop_first(args))
     return
   }
-  if str_eq(command, "compile") {
+  if command == "compile" {
     driver_compile(argv_drop_first(args))
     return
   }
-  if str_eq(command, "format") {
+  if command == "format" {
     driver_format(argv_drop_first(args))
     return
   }
-  if str_eq(command, "f") {
+  if command == "f" {
     driver_format(argv_drop_first(args))
     return
   }
-  if str_eq(command, "c") {
+  if command == "c" {
     driver_compile(argv_drop_first(args))
     return
   }
-  if str_eq(command, "fetch") {
+  if command == "fetch" {
     driver_fetch(argv_drop_first(args))
     return
   }
-  if str_eq(command, "bind") {
+  if command == "bind" {
     driver_bind(argv_drop_first(args))
     return
   }
-  if str_eq(command, "b") {
+  if command == "b" {
     driver_bind(argv_drop_first(args))
     return
   }
-  if str_eq(command, "__llvm-obj") {
+  if command == "__llvm-obj" {
     driver_llvm_obj(argv_drop_first(args))
     return
   }
-  if str_eq(command, "__mir-build") {
+  if command == "__mir-build" {
     driver_mir_build(argv_drop_first(args))
     return
   }
-  if str_eq(command, "__emit-ll") {
+  if command == "__emit-ll" {
     driver_emit_ll(argv_drop_first(args))
     return
   }
-  if str_eq(command, "__mir-selftest") {
+  if command == "__mir-selftest" {
     mir_selftest()
     return
   }

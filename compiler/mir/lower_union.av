@@ -37,12 +37,10 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
     return -1
   }
   n = 1
-  j = 0
-  while j < i {
+  for j in 0..i {
     if !u.members[j].is_nil {
-      n = n + 1
+      n += 1
     }
-    j = j + 1
   }
   n
 }
@@ -133,10 +131,10 @@ pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty)): Array
     j = i + 1
     while j < args.size {
       o = lw.snap(o, args[j])
-      j = j + 1
+      j += 1
     }
     out.push(o)
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -156,14 +154,13 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   src = lw.hold(o, fty)
   tl = b.types.layout_of(tty)
   d = b.temp(tty)
-  dummy = b.assign(b.pl(d), b.rv_zero)
+  b.assign(b.pl(d), b.rv_zero)
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int64) = []
   targets: Array(Int) = []
   arms: Array(Int) = []
   members: Array(Int) = []
-  i = 0
-  while i < from.members.size {
+  for i in 0..from.members.size {
     if to.includes_member(from.members[i]) {
       arm = b.block
       values.push(i.to_i64)
@@ -171,23 +168,20 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
       arms.push(arm)
       members.push(i)
     }
-    i = i + 1
   }
   join = b.block
   b.switch_on(tag, values, targets, join)
-  i = 0
-  while i < arms.size {
+  for i in 0..arms.size {
     b.at(arms[i])
     m = from.members[members[i]]
     k = to.tag_of(m)
     if m.is_nil {
-      dummy2 = b.assign(b.pl(d), b.rv_union_nil(tl, k))
+      b.assign(b.pl(d), b.rv_union_nil(tl, k))
     } else {
       p = lw.tmp(lw.ty_at(m, loc, "a member"), b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, members[i])))))
-      dummy3 = b.assign(b.pl(d), b.rv_union(tl, k, p))
+      b.assign(b.pl(d), b.rv_union(tl, k, p))
     }
     b.goto(join)
-    i = i + 1
   }
   b.at(join)
   b.copy_local(d)
@@ -247,13 +241,13 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
       return b.c_i32(0)
     }
     lw.at(loc)
-    dummy = b.assign(b.pl(d), b.rv_use(v))
+    b.assign(b.pl(d), b.rv_use(v))
     b.goto(join)
     b.at(bval)
     if result.same_as(uty) {
-      dummy2 = b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
+      b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
     } else {
-      dummy3 = b.assign(b.pl(d), b.rv_use(lw.unwrap(src, uty, ty_without_nil(uty), loc)))
+      b.assign(b.pl(d), b.rv_use(lw.unwrap(src, uty, ty_without_nil(uty), loc)))
     }
     b.goto(join)
     b.at(join)
@@ -267,12 +261,10 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
 // returning ret (the old back end's try_success_from, try_fail_from).
 pub fn mir_try_success(u: Ty, ret: Ty): Ty {
   if !u.includes_nil {
-    i = 0
-    while i < u.members.size {
-      if !ret.includes_member(u.members[i]) {
-        return u.members[i]
+    for mem in u.members {
+      if !ret.includes_member(mem) {
+        return mem
       }
-      i = i + 1
     }
   }
   ty_without_nil(u)
@@ -280,12 +272,10 @@ pub fn mir_try_success(u: Ty, ret: Ty): Ty {
 
 pub fn mir_try_fail(u: Ty, ret: Ty): Ty {
   if !u.includes_nil {
-    i = 0
-    while i < u.members.size {
-      if ret.includes_member(u.members[i]) {
-        return u.members[i]
+    for mem in u.members {
+      if ret.includes_member(mem) {
+        return mem
       }
-      i = i + 1
     }
   }
   ty_nil()
@@ -315,10 +305,10 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
         b.branch(c, bf, bok)
         b.at(bf)
         if ret.same_as(uty) {
-          dummy = b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
+          b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
         } else {
           fv = lw.coerce(lw.unwrap(src, uty, fail, e.loc), fail, ret, e.loc)
-          dummy2 = b.assign(b.pl(0), b.rv_use(fv))
+          b.assign(b.pl(0), b.rv_use(fv))
         }
         lw.unpin_all
         b.ret
@@ -397,10 +387,10 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
   join = b.block
   b.branch(found, bt, bf)
   b.at(bt)
-  dummy = b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
+  b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
   b.goto(join)
   b.at(bf)
-  dummy2 = b.assign(b.pl(d), b.rv_union_nil(l, want.tag_of(ty_nil())))
+  b.assign(b.pl(d), b.rv_union_nil(l, want.tag_of(ty_nil())))
   b.goto(join)
   b.at(join)
   b.copy_local(d)
@@ -416,7 +406,7 @@ pub fn (lw: MirLower) found_is(f: Int): MOperand {
 pub fn (lw: MirLower) found_local: Int {
   b = lw.lw_b
   f = b.temp(mt_i32())
-  dummy = b.assign(b.pl(f), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(f), b.rv_use(b.c_i32(0)))
   f
 }
 
@@ -460,7 +450,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     l = b.types.layout_of(wty)
     d = b.temp(wty)
-    dummy = b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
+    b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i32(0)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
@@ -479,12 +469,12 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
         v = lw.call_to(et, "avant_array_get_ptr", lw.two(b.copy_local(h), b.copy_local(ix)))
       } else {
         dd = b.temp(b.types.ref_to(lw.elems_of(aty)))
-        dummy2 = b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+        b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
         v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(dd)), b.copy_local(ix)))))
       }
     } else if rt.is_buf {
       dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
-      dummy3 = b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+      b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
       byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
       v = lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
     } else {
@@ -494,7 +484,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
       v = lw.tmp(mt_i32(), b.rv_cast(byte2, mt_i32()))
     }
-    dummy4 = b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
+    b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
     b.goto(join)
     b.at(join)
     return b.copy_local(d)
@@ -516,7 +506,7 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
     }
     et = lw.elem_of(aty)
     want = lw.elem_ty_of(recv)
-    if str_eq(name, "index_of") && args.size == 1 {
+    if name == "index_of" && args.size == 1 {
       f = lw.kind_fn("avant_array_index", et, true)
       if f.size == 0 {
         lw.refuse(e.loc, "Array.index_of on ${want.show}")
@@ -573,11 +563,11 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
     lw.at(e.loc)
     fl = lw.found_local
     f = ""
-    if str_eq(name, "get") && args.size == 1 {
+    if name == "get" && args.size == 1 {
       f = mir_hash_op(ht, "get")
-    } else if str_eq(name, "get_slice") && args.size == 3 {
+    } else if name == "get_slice" && args.size == 3 {
       f = "avant_hash_get_str_slice"
-    } else if str_eq(name, "get_concat") && args.size == 2 {
+    } else if name == "get_concat" && args.size == 2 {
       f = "avant_hash_get_concat"
     }
     if f.size == 0 {
@@ -624,13 +614,13 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 // `sha256_word0`; nil when c is not one of them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
-  if str_eq(c, "env_get") && e.args.size == 1 {
+  if c == "env_get" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_env_get")
   }
-  if str_eq(c, "file_read") && e.args.size == 1 {
+  if c == "file_read" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_file_read")
   }
-  if str_eq(c, "wide_op") && e.args.size == 5 {
+  if c == "wide_op" && e.args.size == 5 {
     // calls.av:291-309: the arguments last to first, then the call.
     wops = lw.lower_args_rev(e.args)
     if lw.failed {
@@ -640,26 +630,26 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     return lw.call_to(mt_i32(), "avant_wide_op", wops)
   }
   f = ""
-  if str_eq(c, "wide_hi") && e.args.size == 0 {
+  if c == "wide_hi" && e.args.size == 0 {
     f = "avant_wide_hi"
-  } else if str_eq(c, "checksum_f64") && e.args.size == 1 {
+  } else if c == "checksum_f64" && e.args.size == 1 {
     f = "avant_checksum_f64"
-  } else if str_eq(c, "sha256") && e.args.size == 1 {
+  } else if c == "sha256" && e.args.size == 1 {
     f = "avant_sha256"
-  } else if str_eq(c, "crc32_bytes") && e.args.size == 1 {
+  } else if c == "crc32_bytes" && e.args.size == 1 {
     f = "avant_crc32_i32"
-  } else if str_eq(c, "sha256_word0") && e.args.size == 1 {
+  } else if c == "sha256_word0" && e.args.size == 1 {
     f = "avant_sha256_word0"
-  } else if str_eq(c, "#gc.collect") && e.args.size == 0 {
+  } else if c == "#gc.collect" && e.args.size == 0 {
     // std.gc's `gc.collect()` (checker/visibility.av check_gc_call).
     f = "avant_gc_collect_young"
-  } else if str_eq(c, "argv") && e.args.size == 0 {
+  } else if c == "argv" && e.args.size == 0 {
     f = "avant_argv"
-  } else if str_eq(c, "file_exists") && e.args.size == 1 {
+  } else if c == "file_exists" && e.args.size == 1 {
     f = "avant_file_exists"
-  } else if str_eq(c, "file_write") && e.args.size == 2 {
+  } else if c == "file_write" && e.args.size == 2 {
     f = "avant_file_write"
-  } else if str_eq(c, "dir_list") && e.args.size == 1 {
+  } else if c == "dir_list" && e.args.size == 1 {
     f = "avant_dir_list"
   }
   if f.size == 0 {
@@ -671,7 +661,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if str_eq(c, "file_exists") {
+  if c == "file_exists" {
     r = lw.call_to(mt_i32(), f, ops)
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
