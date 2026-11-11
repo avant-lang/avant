@@ -114,6 +114,15 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
 }
 
 pub fn (lw: MirLower) lower_assign(st: Stmt) {
+  if t0 = st.target {
+    if t0.kind == ex_name() && t0.ident == "_" {
+      // `_ = expr` (Stage 29 W4a, D295): computed and dropped.
+      if v0 = st.value {
+        lw.lower_expr(v0)
+      }
+      return
+    }
+  }
   if t = st.target {
     if t.kind == ex_field() || (t.kind == ex_name() && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
       lw.lower_field_assign(st, t)

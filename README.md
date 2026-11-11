@@ -909,6 +909,8 @@ A union without a failure member (`Int | String`) has nothing for these to open,
 
 An `Error` makes its message readable: it has a `String` field named `message` or a method `fn message: String`. `e.message` reads it, and interpolating the error prints it (`"failed: ${e}"`). `Error` is opted into where the type is declared; it is not a bound and not a value type, and no type may be named `Error`. The standard library's errors (`JsonError`, `HttpError`, `RegexError`, `ZlibError`, `Base64Error`) are marked.
 
+An error cannot be dropped by accident: a statement whose value can be an error (`parse(s)` on its own line, when `parse` returns `Int | ParseError`) is a compile error that names the ways out: handle it (if-assign, `??`), pass it up with `?`, or discard it on purpose with `_ = parse(s)`. `_ = expr` computes the value and drops it; `_` binds nothing and cannot be read.
+
 An error may carry the error that caused it: a field named `cause` holding an `Error` type, or an optional one. It is an ordinary field, set like any other, and the interpolation prints it after the message, outermost first:
 
 ```avant

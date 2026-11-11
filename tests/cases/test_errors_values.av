@@ -109,6 +109,20 @@ fn ifexpr_cases: Array(FCase) {
   xs
 }
 
+fn discard_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("discard-ok", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn count(xs: Array(Int)): Int {\n  xs.push(1)\n  xs.size\n}\nfn main {\n  _ = parse(\"\")\n  _ = parse(\"ab\")\n  _ = ParseError.new(\"x\")\n  xs: Array(Int) = []\n  _ = count(xs)\n  count(xs)\n  e: ParseError? = nil\n  _ = e\n  for i in 0..2 {\n    _ = i\n  }\n  puts(xs.size)\n}\n", "2\n"))
+  xs.push(refused("discard-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  parse(\"ab\")\n  puts(1)\n}\n", "this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ..."))
+  xs.push(refused("discard-error-alone", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  e = ParseError.new(\"x\")\n  e\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError)"))
+  xs.push(refused("discard-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(n: Int): ParseError? {\n  nil\n}\nfn main {\n  check(1)\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError?)"))
+  xs.push(refused("discard-std-error", "import std.zlib\nfn main {\n  raw = \"hello\".bytes\n  dst = buf_new()\n  raw.compress_into(dst)\n  puts(dst.size)\n}\n", "this statement drops a value that can be an error (ZlibError?)"))
+  xs.push(refused("discard-read", "fn main {\n  _ = 3\n  puts(_)\n}\n", "unknown name _"))
+  xs.push(refused("discard-compound", "fn main {\n  _ += 3\n}\n", "_ discards a value with _ = ...; it holds nothing to read or update"))
+  xs.push(refused("discard-typed", "fn main {\n  _: Int = 3\n}\n", "_ = ... discards a value; it takes no type"))
+  xs.push(refused("discard-void", "fn main {\n  _ = puts(1)\n}\n", "there is no value to discard"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -152,6 +166,9 @@ fn test_main(c: Checks) {
     }
     for f_ifexpr_cases in ifexpr_cases() {
       all.push(f_ifexpr_cases)
+    }
+    for f_discard_cases in discard_cases() {
+      all.push(f_discard_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

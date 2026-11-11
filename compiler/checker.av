@@ -831,9 +831,12 @@ pub class Checker {
           }
         }
         got = self.check_expr(expr)
+        if !self.has_err && (!at_tail || expected.is_void) {
+          self.refuse_dropped_error(got, stmt.loc)
+        }
         if at_tail {
           if expected.is_void {
-            if !got.is_void {
+            if !got.is_void && !self.has_err {
               if stmt.lead != 0 {
                 self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
               } else {
@@ -872,6 +875,42 @@ pub class Checker {
           self.fail(stmt.loc, "missing return value")
         }
       }
+    }
+  }
+
+  // `_ = expr` (Stage 29 W4a, D295): the value is computed and dropped on
+  // purpose, an error included; `_` binds nothing and cannot be read.
+  pub fn check_discard(stmt: Stmt) {
+    if stmt.op != tk_eq() {
+      self.fail(stmt.loc, "_ discards a value with _ = ...; it holds nothing to read or update")
+      return
+    }
+    if d = stmt.declared {
+      self.fail(stmt.loc, "_ = ... discards a value; it takes no type")
+      return
+    }
+    if v = stmt.value {
+      got = self.check_expr(v)
+      if !self.has_err && got.is_void {
+        self.fail(stmt.loc, "there is no value to discard: this expression has none")
+      }
+    }
+  }
+
+  // Discarding an error is a compile error (Stage 29 W4a, D295): a
+  // statement whose value can be an Error (a type marked Error, or a
+  // union holding one) is refused, naming the ways out.
+  pub fn refuse_dropped_error(got: Ty, loc: Location) {
+    can = got.error_mark
+    if got.is_union {
+      for m in got.members {
+        if m.error_mark {
+          can = true
+        }
+      }
+    }
+    if can {
+      self.fail(loc, "this statement drops a value that can be an error (${got.show}); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...")
     }
   }
 
@@ -943,6 +982,12 @@ pub class Checker {
   }
 
   pub fn check_assign(stmt: Stmt) {
+    if t0 = stmt.target {
+      if t0.kind == ex_name() && t0.ident == "_" {
+        self.check_discard(stmt)
+        return
+      }
+    }
     if self.reject_place_assign(stmt) {
       return
     }
