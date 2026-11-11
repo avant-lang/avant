@@ -652,6 +652,7 @@ pub class TypeResolver {
   pub fn clone_subst_field(field: Field, from: Array(String), to: Array(TypeName)): Field {
     t = subst_type_name(field.type, from, to)
     f = Field.new(field.loc, field.name, t)
+    f.vis = field.vis
     if d = field.default {
       c = clone_expr(d)
       subst_type_in_expr(c, from, to)
@@ -670,7 +671,9 @@ pub class TypeResolver {
         return
       }
       seen[field.name] = 1
-      resolved.push(TyField.new(field.name, self.resolve_value(field.type)))
+      tf = TyField.new(field.name, self.resolve_value(field.type))
+      tf.vis = field.vis
+      resolved.push(tf)
       if self.new_err_since(mark0) {
         return
       }
@@ -1018,7 +1021,9 @@ pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, 
       return
     }
     seen[field.name] = 1
-    resolved.push(TyField.new(field.name, resolver.resolve_value(field.type)))
+    tf = TyField.new(field.name, resolver.resolve_value(field.type))
+    tf.vis = field.vis
+    resolved.push(tf)
   }
   if ty = resolver.get_named_in(mod_name, name) {
     ty.fields = resolved

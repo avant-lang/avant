@@ -1050,8 +1050,8 @@ pub class Parser {
         vis = true
         self.bump
         self.skip_newlines
-        if self.current.kind != tk_fn() {
-          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+        if self.current.kind != tk_fn() && self.current.kind != tk_ident() {
+          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
       }
@@ -1059,22 +1059,20 @@ pub class Parser {
         body.methods.push(self.parse_fn(owner, vis))
       } else if self.current.kind == tk_quote() {
         if vis {
-          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
         body.quotes.push(self.parse_quote_decl(owner))
       } else if self.current.kind == tk_comptime() {
         if vis {
-          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
         body.comptimes.push(self.parse_comptime_walk(owner))
       } else {
-        if vis {
-          self.fail(self.current.loc, "fields of a pub type are visible; do not mark a field pub")
-          break
-        }
-        body.fields.push(self.parse_field)
+        field = self.parse_field
+        field.vis = vis
+        body.fields.push(field)
       }
       self.skip_newlines
     }

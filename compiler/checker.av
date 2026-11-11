@@ -122,6 +122,11 @@ pub class Checker {
   next_ol: Int = 1
   current_module: String = ""
   call_mod: String = ""
+  // The compiler's own modules, exempt from field privacy until the
+  // mid-stage release (Stage 29 W3a, field_bootstrap_mods).
+  bootstrap_mods: Hash(String, Int)
+  // The working directory, which makes the module paths absolute for it.
+  cwd: String = "."
   root_module: String = ""
   type_mod: Hash(String, String)
   type_vis: Hash(String, Int)
@@ -171,6 +176,8 @@ pub class Checker {
     self.functions = fns
     fi = Hash(String, Int).new
     self.fn_index = fi
+    bm = Hash(String, Int).new
+    self.bootstrap_mods = bm
     self.methods = []
     mi = Hash(String, Int).new
     self.method_index = mi
@@ -927,6 +934,9 @@ pub class Checker {
             return
           }
           if field_ty = self.implicit_field(target.ident) {
+            if st = self.self_ty {
+              self.check_field_visible(st, target.ident, target.loc)
+            }
             target.implicit_field = true
             target.ty = field_ty
             got = self.check_expr_as(value, field_ty)
@@ -1550,6 +1560,7 @@ pub class Checker {
             self.fail(expr.loc, "${object.name}.${expr.ident} is both a field and a method")
             return field_ty
           }
+          self.check_field_visible(object, expr.ident, expr.loc)
           return field_ty
         }
         has_zero = false
@@ -1957,6 +1968,7 @@ pub class Checker {
       }
       seen[fname] = 1
       if field_ty = ty.field_named(fname) {
+        self.check_field_visible(ty, fname, value.loc)
         if check_values {
           got = self.check_expr_as(value, field_ty)
           if !ty_assignable(got, field_ty) && !ty_has_var(field_ty) {
@@ -1971,6 +1983,8 @@ pub class Checker {
     }
     for f in ty.fields {
       if prev = seen.get(f.name) {
+      } else if self.field_hidden(ty, f.name) {
+        self.fail(expr.loc, "${ty.show} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
       } else {
         self.fail(expr.loc, "missing field ${f.name}")
       }
@@ -2136,6 +2150,7 @@ pub class Checker {
       }
       for i in 0..got_names.size {
         if field_ty = ty.field_named(got_names[i]) {
+          self.check_field_visible(ty, got_names[i], expr.loc)
           if !ty_assignable(gots[i], field_ty) {
             self.fail(expr.loc, "field ${got_names[i]} is ${gots[i].show}, expected ${field_ty.show}")
           }
@@ -2143,6 +2158,8 @@ pub class Checker {
       }
       for f in ty.fields {
         if prev = seen.get(f.name) {
+        } else if self.field_hidden(ty, f.name) {
+          self.fail(expr.loc, "${ty.show} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
         } else {
           self.fail(expr.loc, "missing field ${f.name}")
         }
@@ -2179,6 +2196,9 @@ pub class Checker {
       return existing
     }
     if field_ty = self.implicit_field(expr.ident) {
+      if st = self.self_ty {
+        self.check_field_visible(st, expr.ident, expr.loc)
+      }
       if self.lam_exprs.size > 0 {
         self.fail(expr.loc, "a lambda cannot capture the method receiver")
         return self.t_int()

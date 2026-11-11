@@ -64,7 +64,7 @@ fn test_modules(c: Checks) {
     dir = "${scratch()}/modules-${stamp}"
     mkdir_p(dir)
 
-    write_av(dir, "vec", "pub struct Vec2 {\n  x: Int\n  y: Int\n}\npub fn origin: Vec2 {\n  Vec2 { x: 0, y: 0 }\n}\n")
+    write_av(dir, "vec", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\npub fn origin: Vec2 {\n  Vec2 { x: 0, y: 0 }\n}\n")
     write_av(dir, "main", "import vec\nfn main {\n  v = origin()\n  puts(v.x)\n}\n")
     bin = "${dir}/ok.bin"
     log = "${dir}/ok.log"
@@ -162,7 +162,7 @@ fn test_modules(c: Checks) {
     }
 
     write_av(dir, "alpha", "pub fn value: Int { 1 }\n")
-    write_av(dir, "beta", "pub class value {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
+    write_av(dir, "beta", "pub class value {\n  pub n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\n")
     write_av(dir, "qual", "import alpha\nimport beta\nfn main {\n  puts(alpha.value())\n  v = beta.value.new(2)\n  puts(v.n)\n}\n")
     qual_bin = "${dir}/qual.bin"
     qual_log = "${dir}/qual.log"
@@ -177,7 +177,7 @@ fn test_modules(c: Checks) {
       c.expect(false, "qualified clash")
     }
 
-    write_av(dir, "vec2", "pub struct Vec2 {\n  x: Int\n  y: Int\n}\n")
+    write_av(dir, "vec2", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\n")
     write_av(dir, "ext", "import vec2\npub fn (v: Vec2) doubled: Vec2 {\n  Vec2 { x: v.x * 2, y: v.y * 2 }\n}\n")
     write_av(dir, "apply", "import vec2\nimport ext\nfn main {\n  v = Vec2 { x: 1, y: 3 }\n  w = v.doubled()\n  puts(w.x)\n  puts(w.y)\n}\n")
     apply_bin = "${dir}/apply.bin"
@@ -197,7 +197,7 @@ fn test_modules(c: Checks) {
     mkdir_p("${proj}/tests/math")
     mkdir_p("${proj}/http")
     file_write("${proj}/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n")
-    file_write("${proj}/vec.av", "pub struct Vec2 {\n  x: Int\n  y: Int\n}\n")
+    file_write("${proj}/vec.av", "pub struct Vec2 {\n  pub x: Int\n  pub y: Int\n}\n")
     file_write("${proj}/http/server.av", "pub class Server {\n  fn initialize {\n  }\n  pub fn port: Int { 80 }\n}\n")
     file_write("${proj}/tests/math/test_add.av", "import vec\nimport http.server\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  s = Server.new\n  puts(v.x)\n  puts(s.port())\n}\n")
     nest_bin = "${dir}/nest.bin"
@@ -357,8 +357,8 @@ fn test_modules(c: Checks) {
 
     kw = "${dir}/kw"
     mkdir_p("${kw}/pkg")
-    file_write("${kw}/pkg/spawn.av", "pub struct Node {\n  n: Int\n}\npub fn from_spawn: Int { 3 }\n")
-    file_write("${kw}/other.av", "pub struct Node {\n  n: Int\n}\n")
+    file_write("${kw}/pkg/spawn.av", "pub struct Node {\n  pub n: Int\n}\npub fn from_spawn: Int { 3 }\n")
+    file_write("${kw}/other.av", "pub struct Node {\n  pub n: Int\n}\n")
     file_write("${kw}/main.av", "import pkg.spawn\nimport other\nfn main {\n  v = pkg.spawn.Node { n: 1 }\n  w = other.Node { n: 2 }\n  puts(v.n)\n  puts(w.n)\n  puts(from_spawn())\n}\n")
     kw_bin = "${dir}/kw.bin"
     kw_log = "${dir}/kw.log"
@@ -437,8 +437,67 @@ fn test_modules(c: Checks) {
       c.expect(false, "single file no import")
     }
     test_fn_scopes(c, compiler, dir)
+    test_field_privacy(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+// Fields are private unless `pub` (Stage 29 W3a, D299; D42 rule 5
+// replaced): outside its type's module a field without `pub` cannot be
+// read, written, or named in a literal; a comptime walk from another
+// module sees only the `pub` fields. The compiler's own build is exempt
+// until the mid-stage release (a checkout's `compiler/main.av` root).
+fn test_field_privacy(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "acct", "pub class Account {\n  amount: Int = 0\n  pub owner: String = \"\"\n  pub fn balance: Int { amount }\n  pub fn add(n: Int) { self.amount = amount + n }\n}\npub struct Span {\n  pub lo: Int\n  pub hi: Int\n}\npub struct Secret {\n  pub shown: Int\n  kept: Int\n}\npub fn secret(n: Int): Secret { Secret { shown: n, kept: n * 2 } }\npub fn (s: Secret) kept_twice: Int { s.kept * 2 }\n")
+  write_av(dir, "pfok", "import acct\nfn main {\n  a = Account.new\n  a.add(5)\n  a.owner = \"ann\"\n  puts(a.balance)\n  puts(a.owner)\n  s = Span { lo: 1, hi: 4 }\n  s.hi = 6\n  puts(s.hi - s.lo)\n  t = secret(3)\n  puts(t.shown + t.kept_twice)\n}\n")
+  mod_runs(c, compiler, dir, "pfok", "5\nann\n5\n15\n", "pub fields across modules")
+  write_av(dir, "pfread", "import acct\nfn main {\n  a = Account.new\n  puts(a.amount)\n}\n")
+  mod_fails(c, compiler, dir, "pfread", "field amount of Account is private to module acct; mark it pub", "read a private field")
+  write_av(dir, "pfwrite", "import acct\nfn main {\n  a = Account.new\n  a.amount = -100\n  puts(a.balance)\n}\n")
+  mod_fails(c, compiler, dir, "pfwrite", "field amount of Account is private to module acct", "write a private field")
+  write_av(dir, "pfcomp", "import acct\nfn main {\n  a = Account.new\n  a.amount += 1\n  puts(a.balance)\n}\n")
+  mod_fails(c, compiler, dir, "pfcomp", "field amount of Account is private to module acct", "compound-assign a private field")
+  write_av(dir, "pflit", "import acct\nfn main {\n  s = Secret { shown: 1, kept: 2 }\n  puts(s.shown)\n}\n")
+  mod_fails(c, compiler, dir, "pflit", "field kept of Secret is private to module acct", "name a private field in a literal")
+  write_av(dir, "pflit2", "import acct\nfn main {\n  s = Secret { shown: 1 }\n  puts(s.shown)\n}\n")
+  mod_fails(c, compiler, dir, "pflit2", "Secret has private fields (kept); a literal outside module acct cannot build it", "omit a private field in a literal")
+  write_av(dir, "pfext", "import acct\npub fn (s: Secret) peek: Int { s.kept }\nfn main {\n  puts(secret(1).peek)\n}\n")
+  mod_fails(c, compiler, dir, "pfext", "field kept of Secret is private to module acct", "external method in another module")
+  write_av(dir, "gbox", "pub class Holder(T) {\n  item: T\n  pub tag: Int = 1\n  fn initialize(item: T) {\n    self.item = item\n  }\n  pub fn get: T { item }\n}\n")
+  write_av(dir, "pfgen", "import gbox\nfn main {\n  h = Holder.new(\"x\")\n  puts(h.get)\n  puts(h.tag)\n  puts(h.item)\n}\n")
+  mod_fails(c, compiler, dir, "pfgen", "field item of Holder(String) is private to module gbox", "private field of a generic class")
+  write_av(dir, "pfgok", "import gbox\nfn main {\n  h = Holder.new(\"x\")\n  puts(h.get)\n  puts(h.tag)\n}\n")
+  mod_runs(c, compiler, dir, "pfgok", "x\n1\n", "pub field of a generic class")
+  write_av(dir, "pfwalk", "import acct\ncomptime {\n  for f in Secret.fields {\n    quote {\n      fn #(f.name)(s: Secret): #(f.type) {\n        s.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(shown(secret(4)))\n}\n")
+  mod_runs(c, compiler, dir, "pfwalk", "4\n", "comptime walk from another module sees the pub fields")
+  write_av(dir, "pfwalk2", "import acct\ncomptime {\n  for f in Secret.fields {\n    quote {\n      fn #(f.name)(s: Secret): #(f.type) {\n        s.#(f.name)\n      }\n    }\n  }\n}\nfn main {\n  puts(kept(secret(4)))\n}\n")
+  mod_fails(c, compiler, dir, "pfwalk2", "unknown function kept", "comptime walk from another module skips private fields")
+  write_av(dir, "pfquote", "struct P {\n  pub quote {\n  }\n}\nfn main {\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "pfquote", "pub in a type body prefixes fn or a field", "pub before a quote")
+
+  boot = "${dir}/boot"
+  mkdir_p("${boot}/compiler")
+  mkdir_p("${boot}/runtime")
+  file_write("${boot}/runtime/build.sh", "true\n")
+  file_write("${boot}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
+  file_write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
+  boot_bin = "${dir}/boot.bin"
+  boot_log = "${dir}/boot.log"
+  boot_code = compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
+  c.eq_int(boot_code, 0, "the compiler's own build is exempt until the mid-stage release")
+  nob = "${dir}/noboot"
+  mkdir_p("${nob}/compiler")
+  file_write("${nob}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
+  file_write("${nob}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
+  nob_bin = "${dir}/noboot.bin"
+  nob_log = "${dir}/noboot.log"
+  compile_av(compiler, "${nob}/compiler/main.av", nob_bin, nob_log)
+  c.expect(!file_exists(nob_bin), "a compiler/main.av outside a checkout bin absent")
+  if err = file_read(nob_log) {
+    c.expect(str_has(err, "field n of Node is private to module ast"), "a compiler/main.av outside a checkout is not exempt")
+  } else {
+    c.expect(false, "a compiler/main.av outside a checkout is not exempt")
   }
 }
 

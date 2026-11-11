@@ -527,6 +527,21 @@ fn main {
 
 `origin` is `pub` in `vec.av`. `fn main` in the root is the entry point. It is not `pub`.
 
+Fields follow the same rule: a field is private to its type's module unless it is marked `pub`. Outside that module a private field cannot be read, written, or named in a literal, so a type with private fields is built there by a function of its module, which keeps its invariants. `vec.av` publishes both fields of `Vec2`, so the importer above may read `v.x` and write `Vec2 { x: 1, y: 2 }`:
+
+```avant
+pub struct Vec2 {
+  pub x: Int
+  pub y: Int
+}
+
+pub fn origin: Vec2 {
+  Vec2 { x: 0, y: 0 }
+}
+```
+
+A read-only view is a `pub fn`, which reads like a field (`a.balance`). A comptime walk over `T.fields` written in another module than `T`'s sees only `T`'s `pub` fields, the ones its generated code could name. The fields of a C layout (`lib`) are C's and stay visible wherever the layout is.
+
 ### Packages
 
 A package is a git repository of `.av` files. A project that uses packages carries an `avant.toml` beside its root file and runs `avant fetch` to download the dependencies into a `deps/` folder. There is no central registry: a dependency is named by its git URL, and `avant.lock` records the exact commit that was fetched. Compilation still starts at one root file and follows `import`, exactly as described above, and everything still compiles as one program. The manifest is tooling only; it is not a second way to load modules.
@@ -734,7 +749,7 @@ Another provides `beta.av`, which publishes a class with the same name:
 
 ```avant
 pub class value {
-  n: Int
+  pub n: Int
 
   fn initialize(n: Int) {
     self.n = n
@@ -1656,6 +1671,8 @@ sh runtime/build.sh
 ./bin/avant run examples/hello.av
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
+
+Until a release that has field privacy (`pub` fields) is the seed, the compiler's own sources cannot mark their fields `pub` (the seed refuses the word there), so the compiler's own build is exempt from field privacy: when the root is `compiler/main.av` of a checkout (beside `runtime/build.sh`), private fields are not checked between the modules under that `compiler/` directory. Every other program, and every other module, obeys the rule; the exemption goes once the compiler marks its fields.
 
 `sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed), and C′ (`bin/avant-c-llvm`, built by B); `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′), or `c-release` (the `--release` build a release ships) builds one. `sh tools/gate.sh` is the full gate (B, C′, the suite on both, D′, and the fixed point: C′ and D′ emit the same LLVM IR for the compiler and are byte-identical). `sh tools/run-goldens.sh` compiles and runs every example, runnable fixture, and LangArena task in `test` mode and compares each one's stdout, stderr, and exit status with its golden (`GOLDEN_MODE=--release` or empty for the other modes).
 
