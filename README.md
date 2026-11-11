@@ -163,7 +163,11 @@ fn (p: Point) scaled(s: Int): Point {
 
 ### Classes
 
-`Type.new(...)` allocates and calls `initialize`. A field may have a literal or `nil` default.
+`Type.new(...)` allocates and calls `initialize`. No field is ever read unset:
+
+- A field whose type has a natural zero starts at it when it has no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, and a struct of such fields.
+- A field may have a default, any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`.
+- Any other field (a class, `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one) must be set by `initialize` on every path, before it is read and before `self` is used as a value or a method of `self` is called. Otherwise the class is refused, with an error that names the field and the ways out: set it, give it a default, or make it optional (`left: Node?`, which is one pointer).
 
 ```avant
 class Counter {

@@ -746,21 +746,33 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
 // params...)` when the class has one (the parameters are _1.._n).
 pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init_sym: String, nparams: Int) {
   b = lw.lw_b
+  // A default is checked with no names in scope (checker/register.av
+  // check_field_defaults), so it sees none of initialize's parameters
+  // here either (W3b).
+  params = lw.lw_vars
+  lw.lw_vars = Hash(String, Int).new
   j = 0
   while j < cdef.fields.size && !lw.failed {
     fd = cdef.fields[j]
+    k = t.field_index(fd.name)
+    fty = b.types.layouts[layout].fields[k]
     if dv = fd.default {
-      k = t.field_index(fd.name)
-      fty = b.types.layouts[layout].fields[k]
       v = lw.lower_coerced(dv, fty, t.fields[k].ty)
       if lw.failed {
         return
       }
       lw.at(fd.loc)
       lw.store_place(b.field(b.deref(b.pl(o)), k), fty, v)
+    } else if !fd.set_by_init {
+      // The zero of a field without a default (W3b, D292): the
+      // allocation's zero bytes, except a String's, which is "" (left
+      // out when initialize sets the field before anything can read it).
+      lw.at(fd.loc)
+      lw.zero_strings(b.field(b.deref(b.pl(o)), k), t.fields[k].ty, fty)
     }
     j += 1
   }
+  lw.lw_vars = params
   lw.at(cdef.loc)
   if init_sym.size > 0 {
     args: Array(MOperand) = []
@@ -769,6 +781,25 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
       args.push(b.copy_local(i + 1))
     }
     dummy3 = b.call(-1, init_sym, args)
+  }
+}
+
+// The empty string into every String of the zeroed place p of type t
+// (a String field, or a struct field's String fields, nested).
+pub fn (lw: MirLower) zero_strings(p: MPlace, t: Ty, mt: Int) {
+  b = lw.lw_b
+  if t.is_string {
+    lw.store_place(p, mt, b.str_const(""))
+    return
+  }
+  if t.is_struct {
+    l = b.types.layout_of(mt)
+    for i in 0..t.fields.size {
+      ft = t.fields[i].ty
+      if ft.is_string || ft.is_struct {
+        lw.zero_strings(b.field(p, i), ft, b.types.layouts[l].fields[i])
+      }
+    }
   }
 }
 

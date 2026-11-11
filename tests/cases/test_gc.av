@@ -6,7 +6,7 @@ fn test_gc(c: Checks) {
     stamp = now_ms()
     src = "${scratch()}/gc-${stamp}-gc.av"
     dump = "${scratch()}/gc-${stamp}-gc.mir"
-    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  puts(a.left.item)\n}\n"
+    body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  if l = a.left {\n    puts(l.item)\n  }\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write gc fixture")
     code = dump_av(compiler, src, dump)

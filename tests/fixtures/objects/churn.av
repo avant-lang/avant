@@ -65,6 +65,7 @@ class Holder {
   fn initialize(id: Int) {
     self.id = id
     direct = Leaf.new(id)
+    self.slot = Slot { k: id, leaf: direct, name: "" }
   }
 
   // Implicit field store.
@@ -108,17 +109,14 @@ fn check(h: Holder, want: Int): Int {
 // anyway (runtime/avant_gc_young.c, the young copy's slot scan), so only a
 // holder reached through another object depends on its barrier.
 class Root {
-  h0: Holder
-  h1: Holder
-  h2: Holder
+  h0: Holder = Holder.new(1)
+  h1: Holder = Holder.new(2)
+  h2: Holder = Holder.new(3)
 }
 
 fn main {
   n = opaque(300)
   root = Root.new
-  root.h0 = Holder.new(1)
-  root.h1 = Holder.new(2)
-  root.h2 = Holder.new(3)
   total = churn(n * 100)
   bad = 0
   round = 0

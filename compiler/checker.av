@@ -147,6 +147,9 @@ pub class Checker {
   // Where a postfix `?` stands when it cannot return from the body around it
   // ("a spawn block"); empty in a function or lambda body (Stage 29 W1a, A3).
   pub try_in: String = ""
+  // Stage 29 W3b: checking a field default (evaluated before initialize,
+  // with no receiver).
+  pub in_default: Bool = false
   // What a postfix `?` returns from, for its messages.
   pub try_body: String = "the function"
   pub place_name: String = ""
@@ -2175,6 +2178,10 @@ pub class Checker {
       } else {
         if existing = self.lookup("self") {
           return existing
+        }
+        if self.in_default {
+          self.fail(expr.loc, "a field default cannot use self: defaults are evaluated before initialize; set the field in initialize instead")
+          return self.t_int()
         }
         self.fail(expr.loc, "self is only valid in a method")
         return self.t_int()

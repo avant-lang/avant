@@ -59,16 +59,16 @@ bb2:
   return   @17:3
 }
 
-fn av.trees/check(_1: ref %trees.Node, _2: i32) -> i32 leaf @trees.av:20:1 {
+fn av.trees/check(_1: ref %trees.Node) -> i32 leaf @trees.av:20:1 {
   let _0: i32
   let _1 (n): ref %trees.Node
-  let _2 (depth): i32
+  let _2: ref %trees.Node
   let _3: bool
-  let _4: i32
+  let _4 (l): ref %trees.Node
   let _5: ref %trees.Node
-  let _6: i32
-  let _7: i32
-  let _8: ref %trees.Node
+  let _6: bool
+  let _7 (r): ref %trees.Node
+  let _8: i32
   let _9: i32
   let _10: i32
   let _11: i32
@@ -76,29 +76,36 @@ fn av.trees/check(_1: ref %trees.Node, _2: i32) -> i32 leaf @trees.av:20:1 {
   let _13: i32
 
 bb0:
-  _3 = eq copy _2, const i32 0   @21:12
+  _2 = copy (*_1).1   @21:11
+  _3 = ne copy _2, const ref %trees.Node null   @21:3
   branch copy _3, bb1, bb2   @21:3
 
 bb1:
-  _4 = copy (*_1).0   @22:13
-  _0 = copy _4   @22:5
-  return   @22:5
+  _4 = copy _2   @21:3
+  _5 = copy (*_1).2   @22:13
+  _6 = ne copy _5, const ref %trees.Node null   @22:5
+  branch copy _6, bb3, bb4   @22:5
 
 bb2:
-  _5 = copy (*_1).1   @24:10
-  _6 = sub.chk copy _2, const i32 1   @24:23
-  _7 = call av.trees/check(copy _5, copy _6) nocollect   @24:3
-  _8 = copy (*_1).2   @24:37
-  _9 = sub.chk copy _2, const i32 1   @24:51
-  _10 = call av.trees/check(copy _8, copy _9) nocollect   @24:30
-  _11 = add.chk copy _7, copy _10   @24:28
-  _12 = copy (*_1).0   @24:59
-  _13 = add.chk copy _11, copy _12   @24:56
-  _0 = copy _13   @24:56
-  return   @24:56
+  _13 = copy (*_1).0   @26:4
+  _0 = copy _13   @26:4
+  return   @26:4
+
+bb3:
+  _7 = copy _5   @22:5
+  _8 = call av.trees/check(copy _4) nocollect   @23:14
+  _9 = call av.trees/check(copy _7) nocollect   @23:25
+  _10 = add.chk copy _8, copy _9   @23:23
+  _11 = copy (*_1).0   @23:37
+  _12 = add.chk copy _10, copy _11   @23:34
+  _0 = copy _12   @23:7
+  return   @23:7
+
+bb4:
+  goto bb2   @21:3
 }
 
-fn main(_1: i32, _2: ptr) -> i32 frame extern @trees.av:27:1 {
+fn main(_1: i32, _2: ptr) -> i32 frame extern @trees.av:29:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
@@ -107,17 +114,17 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @trees.av:27:1 {
   let _5: i32
 
 bb0:
-  gc.enter   @27:1
-  gc.roots _2   @27:1
-  call __avant_type_maps() nocollect   @27:1
-  call avant_io_init_argv(copy _1, copy _2) collects   @27:1
-  _3 = call av.trees/make(const i32 1, const i32 3) collects   @28:7
-  _4 = copy _3   @28:5
-  _5 = call av.trees/check(copy _4, const i32 3) nocollect   @29:8
-  call printf(const str.0, copy _5) nocollect   @29:3
-  _0 = const i32 0   @27:1
-  gc.leave   @27:1
-  return   @27:1
+  gc.enter   @29:1
+  gc.roots _2   @29:1
+  call __avant_type_maps() nocollect   @29:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @29:1
+  _3 = call av.trees/make(const i32 1, const i32 3) collects   @30:7
+  _4 = copy _3   @30:5
+  _5 = call av.trees/check(copy _4) nocollect   @31:8
+  call printf(const str.0, copy _5) nocollect   @31:3
+  _0 = const i32 0   @29:1
+  gc.leave   @29:1
+  return   @29:1
 }
 
 fn av.trees/Node.initialize(_1: ref %trees.Node, _2: i32) -> void leaf @trees.av:6:3 {
