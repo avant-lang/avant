@@ -110,6 +110,14 @@ fn arraynew_cases: Array(FCase) {
   xs
 }
 
+fn clock_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("clock-64", "fn main {\n  a: Int64 = now_us()\n  b = now_us()\n  puts(\"\${b >= a}\")\n  m: Int64 = now_ms()\n  puts(\"\${m > 0i64}\")\n  puts(\"\${a > 4294967296i64 || a > 0i64}\")\n}\n", "true\ntrue\ntrue\n"))
+  xs.push(refused("clock-int", "fn main {\n  x: Int = now_ms()\n  puts(x)\n}\n", "cannot assign Int64 to Int"))
+  xs.push(accepted("array-nil-store", "fn main {\n  xs = Array(Array(Int)?).new(2)\n  xs[0] = [1]\n  xs[0] = nil\n  puts((xs[0] ?? [5, 6]).size)\n  ys = Array(String?).new(1, \"a\")\n  ys[0] = nil\n  puts(ys[0] ?? \"nil\")\n}\n", "2\nnil\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -161,6 +169,9 @@ fn test_main(c: Checks) {
     }
     for f_arraynew_cases in arraynew_cases() {
       all.push(f_arraynew_cases)
+    }
+    for f_clock_cases in clock_cases() {
+      all.push(f_clock_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

@@ -1436,6 +1436,8 @@ fn main: Int {
 
 ### Time, hashing, and math
 
+`now_ms` and `now_us` read a monotonic clock as `Int64` milliseconds and microseconds (they do not wrap; differences are `Int64` too).
+
 ```avant
 fn main {
   t0 = now_us()

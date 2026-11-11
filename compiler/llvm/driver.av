@@ -74,9 +74,9 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   if bad.size > 0 {
     return bad
   }
-  t0 = now_us()
+  t0 = now_us().to_i64
   text = ll_emit_module(m, job.inline_fast)
-  t1 = now_us()
+  t1 = now_us().to_i64
   job.emit_us = llvm_us(t0, t1)
   if job.keep_ll.size > 0 && file_write(job.keep_ll, text) != 0 {
     return "cannot write ${job.keep_ll}"
@@ -87,7 +87,7 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   }
   llvm_set_cpu(cpu)
   err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
-  job.compile_us = llvm_us(t1, now_us())
+  job.compile_us = llvm_us(t1, now_us().to_i64)
   if err.size > 0 {
     return "internal error: ${err}"
   }
@@ -121,9 +121,9 @@ pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   if err.size > 0 {
     return err
   }
-  t0 = now_us()
+  t0 = now_us().to_i64
   err = llvm_link(obj, job, out_path)
-  job.link_us = llvm_us(t0, now_us())
+  job.link_us = llvm_us(t0, now_us().to_i64)
   fs_unlink(obj)
   fs_remove_tree(work)
   err
@@ -173,9 +173,12 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   ""
 }
 
-// The microseconds between two now_us readings (an Int that wraps).
-pub fn llvm_us(a: Int, b: Int): Int64 {
-  d = b.to_i64 - a.to_i64
+// The microseconds between two now_us readings. Since Stage 29 W4b1 (R6)
+// now_us is an Int64 that does not wrap; the seed v0.40.0's is an Int
+// that wraps every 2^32 microseconds, which the correction below undoes
+// (`.to_i64` reads both the same; the next release drops it).
+pub fn llvm_us(a: Int64, b: Int64): Int64 {
+  d = b - a
   if d < 0i64 {
     d += 4294967296i64
   }

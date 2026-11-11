@@ -162,10 +162,17 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       return lw.lower_puts(e.args[0], c == "puts_u", e.loc)
     }
   }
+  // The 64-bit clock (Stage 29 W4b1, D295 R6): monotonic milliseconds
+  // and microseconds as Int64 (avant_now_ms and avant_now_us, the Int
+  // readings that wrapped, stay for the seed v0.40.0's compiler).
   if c == "now_ms" || c == "now_us" {
     lw.at(e.loc)
     none: Array(MOperand) = []
-    return lw.call_to(mt_i32(), "avant_${c}", none)
+    unit = "ms"
+    if c == "now_us" {
+      unit = "us"
+    }
+    return lw.call_to(mt_i64(), "avant_clock_${unit}", none)
   }
   if (c == "sqrt" || c == "exp") && e.args.size == 1 {
     a = lw.lower_expr(e.args[0])

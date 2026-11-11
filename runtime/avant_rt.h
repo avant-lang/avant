@@ -431,6 +431,8 @@ void avant_gate_wait(uint64_t gate);
 void avant_gate_signal(uint64_t gate);
 void avant_gate_broadcast(uint64_t gate);
 int32_t avant_now_ms(void);
+int64_t avant_clock_ms(void);
+int64_t avant_clock_us(void);
 int32_t avant_now_us(void);
 
 void avant_io_init_argv(int32_t argc, void *argv);
