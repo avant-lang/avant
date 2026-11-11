@@ -153,7 +153,7 @@ fn main {
 
 A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
 
-Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum`, `scaled(2)`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, so nothing is chosen silently. An external method is a function with a receiver parameter:
+Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum` or `sum()`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, so nothing is chosen silently. An external method is a function with a receiver parameter:
 
 ```avant
 fn (p: Point) scaled(s: Int): Point {
