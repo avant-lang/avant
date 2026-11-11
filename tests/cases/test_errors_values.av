@@ -70,6 +70,28 @@ fn cause_cases: Array(FCase) {
   xs
 }
 
+fn flow_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("qq-return", "fn port(h: Hash(String, Int)): Int {\n  p = h.get(\"port\") ?? return 8080\n  p + 1\n}\nfn note(h: Hash(String, Int)) {\n  p = h.get(\"port\") ?? return\n  puts(\"port \${p}\")\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(port(h))\n  note(h)\n  h[\"port\"] = 99\n  puts(port(h))\n  note(h)\n}\n", "8080\n100\nport 99\n"))
+  xs.push(accepted("qq-return-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn sum(xs: Array(String)): Int | ParseError {\n  t = 0\n  for x in xs {\n    n = parse(x) ?? return ParseError.new(\"bad item\")\n    t += n\n  }\n  t\n}\nfn main {\n  puts(sum([\"a\", \"bc\"]) ?? -1)\n  puts(sum([\"a\", \"\"]) ?? -1)\n}\n", "3\n-1\n"))
+  xs.push(accepted("qq-break-continue", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  xs = [\"ab\", \"\", \"cde\", \"f\"]\n  t = 0\n  for x in xs {\n    n = parse(x) ?? continue\n    t += n\n  }\n  puts(t)\n  u = 0\n  for y in xs {\n    m = parse(y) ?? break\n    u += m\n  }\n  puts(u)\n  i = 0\n  w = 0\n  while i < xs.size {\n    s = xs[i]\n    i += 1\n    k = parse(s) ?? continue\n    w += k\n  }\n  puts(w)\n}\n", "6\n2\n6\n"))
+  xs.push(accepted("qq-return-lambda", "fn main {\n  f: fn(Int?): Int = { |o|\n    v = o ?? return -1\n    v * 2\n  }\n  puts(f(4))\n  puts(f(nil))\n}\n", "8\n-1\n"))
+  xs.push(accepted("while-bind", "class Node {\n  v: Int = 0\n  next: Node?\n}\nclass Iter {\n  i: Int = 0\n  fn next: Int? {\n    if i >= 3 {\n      return nil\n    }\n    self.i += 1\n    i * 10\n  }\n}\nfn main {\n  a = Node.new\n  a.v = 1\n  b = Node.new\n  b.v = 2\n  a.next = b\n  cur: Node? = a\n  sum = 0\n  while n = cur {\n    sum += n.v\n    cur = n.next\n  }\n  puts(sum)\n  it = Iter.new\n  while x = it.next {\n    if x == 20 {\n      continue\n    }\n    puts(x)\n  }\n  for k in 0..2 {\n    it2 = Iter.new\n    while y = it2.next {\n      if y > 10 {\n        break\n      }\n      puts(k + y)\n    }\n  }\n}\n", "3\n10\n30\n10\n11\n"))
+  xs.push(accepted("chain-if", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 5\n  h[\"b\"] = 7\n  if x = h.get(\"a\"), y = h.get(\"b\"), x < y {\n    puts(x + y)\n  } else {\n    puts(\"no\")\n  }\n  if x2 = h.get(\"a\"), x2 > 50 {\n    puts(\"big\")\n  } else {\n    puts(\"else\")\n  }\n  if z = h.get(\"zz\"), w = h.get(\"a\") {\n    puts(\"no\")\n  } else {\n    puts(\"first fails\")\n  }\n  if p = parse(\"abc\"), p == 3, q = parse(\"xy\") {\n    puts(p * q)\n  }\n  if r = parse(\"\") , r > 0 {\n    puts(\"no\")\n  }\n  n = 0\n  if n == 0, m = h.get(\"b\") {\n    puts(m)\n  }\n}\n", "12\nelse\nfirst fails\n6\n7\n"))
+  xs.push(accepted("chain-while", "fn main {\n  xs: Array(Int) = [1, 2, 3, 4]\n  i = 0\n  while v = xs.get(i), v < 3 {\n    puts(v)\n    i += 1\n  }\n  for k in 0..3 {\n    if a = xs.get(k), a % 2 == 0 {\n      continue\n    }\n    puts(k)\n  }\n}\n", "1\n2\n0\n2\n"))
+  xs.push(refused("qq-break-outside", "fn main {\n  h = Hash(String, Int).new\n  v = h.get(\"x\") ?? break\n  puts(v)\n}\n", "break is only valid inside a loop"))
+  xs.push(refused("qq-return-type", "fn f(h: Hash(String, Int)): Int {\n  v = h.get(\"x\") ?? return \"no\"\n  v\n}\nfn main {\n  puts(f(Hash(String, Int).new))\n}\n", "return type is String, expected Int"))
+  xs.push(refused("qq-return-void", "fn f(h: Hash(String, Int)) {\n  v = h.get(\"x\") ?? return 3\n  puts(v)\n}\nfn main {\n  f(Hash(String, Int).new)\n}\n", "return type is Int, expected Void"))
+  xs.push(refused("chain-not-bool", "fn main {\n  h = Hash(String, Int).new\n  if x = h.get(\"a\"), x + 1 {\n    puts(x)\n  }\n}\n", "if condition must be Bool, got Int"))
+  xs.push(refused("chain-bind-plain", "fn main {\n  k = 3\n  if a = k, a > 1 {\n    puts(a)\n  }\n}\n", "if-assign needs a value that can fail (T? or T | E with E marked Error), got Int"))
+  xs.push(refused("chain-else-scope", "fn main {\n  h = Hash(String, Int).new\n  if x = h.get(\"a\"), x > 1 {\n    puts(x)\n  } else {\n    puts(x)\n  }\n}\n", "unknown name x"))
+  xs.push(refused("while-bind-scope", "fn main {\n  xs: Array(Int) = [1]\n  i = 0\n  while v = xs.get(i) {\n    i += 1\n  }\n  puts(v)\n}\n", "unknown name v"))
+  xs.push(refused("init-qq-return", "class C {\n  xs: Array(Int)\n  fn initialize(h: Hash(String, Int)) {\n    n = h.get(\"n\") ?? return\n    self.xs = [n]\n  }\n}\nfn main {\n  puts(C.new(Hash(String, Int).new).xs.size)\n}\n", "initialize returns before field xs of C is set"))
+  xs.push(refused("init-chain-read", "class C {\n  xs: Array(Int)\n  fn initialize(h: Hash(String, Int)) {\n    if n = h.get(\"n\"), xs.size > n {\n      puts(n)\n    }\n    self.xs = []\n  }\n}\nfn main {\n  puts(C.new(Hash(String, Int).new).xs.size)\n}\n", "field xs of C is read in initialize before it is set"))
+  xs.push(accepted("init-qq-after", "class C {\n  xs: Array(Int)\n  fn initialize(h: Hash(String, Int)) {\n    self.xs = []\n    n = h.get(\"n\") ?? return\n    xs.push(n)\n  }\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(C.new(h).xs.size)\n  h[\"n\"] = 4\n  puts(C.new(h).xs.size)\n}\n", "0\n1\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -107,6 +129,9 @@ fn test_main(c: Checks) {
     all = marker_cases()
     for f_cause_cases in cause_cases() {
       all.push(f_cause_cases)
+    }
+    for f_flow_cases in flow_cases() {
+      all.push(f_flow_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

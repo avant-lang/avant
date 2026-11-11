@@ -465,7 +465,7 @@ An interface may take type parameters (`interface Eq(T)`). Two bounds are writte
 
 ### If and while
 
-`if` and `while` are statements. `if` may have an `else`. A new name bound in the condition of `if` exists only in the then-block. That is how optional results are opened:
+`if` may have an `else`. A new name bound in the condition of `if` exists only in the then-block. That is how optional results are opened:
 
 ```avant
 fn main {
@@ -481,6 +481,27 @@ fn main {
   }
 }
 ```
+
+A condition may be a list, separated by commas: bindings and `Bool` tests, evaluated left to right, stopping at the first that fails. Each name bound is in scope for the conditions after it and for the then-block; the `else` runs when any of them fails, and sees none of them:
+
+```avant
+if x = h.get("a"), y = h.get("b"), x < y {
+  puts(x + y)
+} else {
+  puts("missing or out of order")
+}
+```
+
+`while` takes the same conditions, so `while v = x { ... }` runs its body while `x` gives a value (and every condition of a list holds), evaluating it again before each iteration; `v` exists in the body only:
+
+```avant
+while n = cur {
+  total += n.v
+  cur = n.next
+}
+```
+
+The right side of `??` may leave instead of giving a value: `v = h.get("port") ?? return 8080`, `?? return` in a function without a result, `?? break` and `?? continue` in a loop. On a failure the statement runs; otherwise `v` is the success value, without nesting the rest of the function in an if-assign.
 
 ### Switch
 
