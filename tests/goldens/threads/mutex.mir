@@ -16,9 +16,8 @@ layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 
 
 const str.0 = "%d\0A"
 const str.1 = "c"
-const str.2 = "%s\0A"
-const str.3 = ""
-const str.4 = "x"
+const str.2 = ""
+const str.3 = "x"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -42,6 +41,7 @@ extern avant_gate_unlock(u64) -> void collects
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i32 collects
+extern avant_puts_str(ref str) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
@@ -331,8 +331,8 @@ bb7:
   _56 = copy _55   @85:18
   _57 = copy (*_53).1   @85:18
   call avant_gate_unlock(copy _57) collects   @85:18
-  call printf(const str.2, copy _56) nocollect   @85:3
-  _58 = call av.mutex/Mutex(String).new(const str.3) collects   @86:23
+  call avant_puts_str(copy _56) nocollect   @85:3
+  _58 = call av.mutex/Mutex(String).new(const str.2) collects   @86:23
   _59 = copy _58   @86:8
   _60 = call avant_alloc(const u64 0, const u32 65535) collects   @87:32
   _61 = call avant_alloc(const u64 16, const u32 1022) collects   @87:32
@@ -507,7 +507,7 @@ bb0:
   gc.roots _2   @10:1
   _2 = call avant_alloc(const u64 16, const u32 1) collects   @10:1
   barrier copy _2   @12:3
-  (*_2).1 = const str.3   @12:3
+  (*_2).1 = const str.2   @12:3
   call av.mutex/Held.initialize(copy _2, copy _1) collects   @10:1
   _0 = copy _2   @10:1
   gc.leave   @10:1
@@ -738,7 +738,7 @@ bb2:
   _8 = copy (*_7).1   @93:19
   call avant_gate_lock(copy _8) collects   @93:19
   _9 = copy (*_7).0   @94:15
-  _10 = call avant_str_concat(copy _9, const str.4) collects   @94:17
+  _10 = call avant_str_concat(copy _9, const str.3) collects   @94:17
   barrier copy _7   @94:13
   (*_7).0 = copy _10   @94:13
   _11 = copy (*_7).0   @95:11

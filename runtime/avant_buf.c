@@ -104,7 +104,10 @@ void avant_buf_append(void *buf, const void *p, int32_t n) {
 /* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
 void avant_buf_push_byte(void *buf, int32_t c) {
   AvantBuf *b = (AvantBuf *)buf;
-  uint8_t byte = (uint8_t)(c & 255);
+  if ((uint32_t)c > 255u) {
+    avant_trap_byte(c);
+  }
+  uint8_t byte = (uint8_t)c;
   if (!b) {
     return;
   }
@@ -142,24 +145,16 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
   int32_t i;
   int32_t end;
   int32_t len;
+  n = s ? avant_str_n(s) : 0;
+  /* 0 <= start <= stop <= size, else a trap (Stage 29 W4b1, D295 R4). */
+  if (start < 0 || stop < start || (size_t)stop > n) {
+    avant_trap_slice(start, stop, (int32_t)n);
+  }
   if (!b || !s) {
     return;
   }
-  n = avant_str_n(s);
   i = start;
-  if (i < 0) {
-    i = 0;
-  }
-  if ((size_t)i > n) {
-    i = (int32_t)n;
-  }
   end = stop;
-  if (end < i) {
-    end = i;
-  }
-  if ((size_t)end > n) {
-    end = (int32_t)n;
-  }
   len = end - i;
   if (len <= 0) {
     return;
@@ -174,16 +169,15 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
-  /* 400: the longest %.16f (a sign, 309 digits, the point, 16); 64 let
+  /* 400: the longest %.64f (a sign, 309 digits, the point, 64); 64 let
    * snprintf truncate a value of 1e47 or more and the append read past
    * the buffer (W18S). */
   char tmp[400];
   int k;
-  if (prec < 0) {
-    prec = 0;
-  }
-  if (prec > 16) {
-    prec = 16;
+  /* 0..64 (the longest text, a sign, 309 digits, the point and 64,
+   * fits); outside traps (Stage 29 W4b1; it was clamped to 0..16). */
+  if (prec < 0 || prec > 64) {
+    avant_trap_precision(prec);
   }
   k = avant_fmt_fixed(tmp, v, prec);
   if (k < 0) {

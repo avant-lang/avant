@@ -162,10 +162,17 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       return lw.lower_puts(e.args[0], c == "puts_u", e.loc)
     }
   }
+  // The 64-bit clock (Stage 29 W4b1, D295 R6): monotonic milliseconds
+  // and microseconds as Int64 (avant_now_ms and avant_now_us, the Int
+  // readings that wrapped, stay for the seed v0.40.0's compiler).
   if c == "now_ms" || c == "now_us" {
     lw.at(e.loc)
     none: Array(MOperand) = []
-    return lw.call_to(mt_i32(), "avant_${c}", none)
+    unit = "ms"
+    if c == "now_us" {
+      unit = "us"
+    }
+    return lw.call_to(mt_i64(), "avant_clock_${unit}", none)
   }
   if (c == "sqrt" || c == "exp") && e.args.size == 1 {
     a = lw.lower_expr(e.args[0])
@@ -221,8 +228,11 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   zero
 }
 
-// puts (calls.av:2043-2075): printf with the old formats; a Bool is
-// widened to i32. puts_u prints "%u\n".
+// puts (calls.av:2043-2075): printf with the old formats for integers
+// and strings; puts_u prints "%u\n". A Float64 prints its one text and a
+// Bool the word true or false (Stage 29 W4b1, D293, D295 R7), through
+// avant_puts_f64 and avant_puts_bool; a String prints by its length
+// (avant_puts_str), a NUL byte included.
 pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOperand {
   b = lw.lw_b
   ty = lw.ety(arg)
@@ -231,6 +241,19 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
     return b.c_i32(0)
   }
   lw.at(loc)
+  if !unsigned && ty == mt_f64() {
+    b.call(-1, "avant_puts_f64", lw.one(v))
+    return b.c_i32(0)
+  }
+  if !unsigned && ty == mt_str() {
+    b.call(-1, "avant_puts_str", lw.one(v))
+    return b.c_i32(0)
+  }
+  if !unsigned && ty == mt_bool() {
+    w = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+    b.call(-1, "avant_puts_bool", lw.one(w))
+    return b.c_i32(0)
+  }
   fmt = "%d\n"
   if unsigned {
     fmt = "%u\n"
@@ -342,40 +365,93 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
       return lw.call_f64("exp", v)
     }
   } else {
-    if name == "to_f" || name == "to_i" || name == "to_i64" || name == "to_u64" {
+    if name == "to_i" || name == "to_i64" || name == "to_u64" {
+      return lw.int_convert(v, from, ty, e.loc)
+    }
+    if name == "to_f" || name == "wrap_i" || name == "wrap_i64" || name == "wrap_u64" {
       if ty == from {
         return v
       }
       return lw.tmp(ty, b.rv_cast(v, ty))
     }
     if name == "abs" {
-      return lw.int_abs(from, v)
+      return lw.int_abs(from, v, e.loc)
     }
   }
   lw.refuse(e.loc, "the member .${name} of ${ot.show}")
   b.c_i32(0)
 }
 
-// abs on an integer: signed and wrapping, on the bits for UInt64 (W5.2).
-pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
+// abs on Int or Int64 (D215, Stage 29 W4b1 R2): the negation of MIN
+// traps like `-MIN` (UInt64.abs is refused by the checker).
+pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   d = b.temp(ty)
   b.assign(b.pl(d), b.rv_use(v))
-  sty = ty
-  s = b.copy_local(d)
-  if ty == mt_u64() {
-    sty = mt_i64()
-    s = lw.tmp(sty, b.rv_cast(b.copy_local(d), sty))
-  }
-  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), s, lw.int_const(sty, 0i64)))
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(d), lw.int_const(ty, 0i64)))
   neg = b.block
   join = b.block
   b.branch(c, neg, join)
   b.at(neg)
+  min = lw.int_const(ty, 0i64 - 2147483647i64 - 1i64)
+  if ty == mt_i64() {
+    min = lw.int_const(ty, 0i64 - 9223372036854775807i64 - 1i64)
+  }
+  is_min = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(d), min))
+  ok = lw.trap_open(is_min, true)
+  none: Array(MOperand) = []
+  lw.trap_close(ok, "avant_trap_overflow", none, loc)
   b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
   b.goto(join)
   b.at(join)
   b.copy_local(d)
+}
+
+pub fn mir_convert_code(ty: Int): Int {
+  if ty == mt_i64() {
+    return 1
+  }
+  if ty == mt_u64() {
+    return 2
+  }
+  0
+}
+
+// to_i, to_i64, to_u64 between Int, Int64 and UInt64 (D215, Stage 29 W4b1
+// R1): the same number in the target type, or avant_trap_convert(value,
+// from * 4 + to) from a cold block; a widening that cannot fail (Int to
+// Int64) is the plain cast. wrap_i, wrap_i64 and wrap_u64 are the plain
+// casts (two's-complement truncation or reinterpretation).
+pub fn (lw: MirLower) int_convert(v: MOperand, from: Int, to: Int, loc: Location): MOperand {
+  b = lw.lw_b
+  if to == from {
+    return v
+  }
+  if from == mt_i32() && to == mt_i64() {
+    return lw.tmp(to, b.rv_cast(v, to))
+  }
+  x = b.temp(from)
+  b.assign(b.pl(x), b.rv_use(v))
+  inside = b.c_bool(true)
+  if from == mt_i64() && to == mt_i32() {
+    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), b.c_i64(0i64 - 2147483648i64)))
+    c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(2147483647i64)))
+    inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  } else if from == mt_u64() && to == mt_i32() {
+    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(2147483647i64)))
+  } else if from == mt_u64() && to == mt_i64() {
+    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(9223372036854775807i64)))
+  } else {
+    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(from, 0i64)))
+  }
+  ok = lw.trap_open(inside, false)
+  wide = b.copy_local(x)
+  if from != mt_i64() {
+    wide = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(x), mt_i64()))
+  }
+  kind = mir_convert_code(from) * 4 + mir_convert_code(to)
+  lw.trap_close(ok, "avant_trap_convert", lw.two(wide, b.c_i32(kind)), loc)
+  lw.tmp(to, b.rv_cast(b.copy_local(x), to))
 }
 
 // Float64.to_i (W5.2; C2, W11b): truncation inside (-2147483649,

@@ -482,6 +482,9 @@ pub class Expander {
       if sz = e.size_expr {
         out.size_expr = self.fill_expr(sz)
       }
+      for fv in e.elems {
+        out.elems.push(self.fill_expr(fv))
+      }
       return out
     }
     if k == ex_hash_new() {
@@ -856,6 +859,9 @@ pub class Expander {
       if sz = e.size_expr {
         self.collect_introduced_expr(sz, into)
       }
+      for fv in e.elems {
+        self.collect_introduced_expr(fv, into)
+      }
       return
     }
     if k == ex_try() {
@@ -1079,6 +1085,9 @@ pub class Expander {
       out = clone_expr(e)
       if sz = e.size_expr {
         out.size_expr = self.rename_expr(sz, map)
+      }
+      for i in 0..e.elems.size {
+        out.elems[i] = self.rename_expr(e.elems[i], map)
       }
       return out
     }

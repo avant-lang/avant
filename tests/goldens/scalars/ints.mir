@@ -10,33 +10,37 @@ typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
+extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_now_us() -> i32 never
+extern avant_puts_bool(i32) -> void never
+extern avant_trap_convert(i64, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.ints/opaque(_1: i32) -> i32 leaf @ints.av:9:1 {
   let _0: i32
   let _1 (n): i32
-  let _2: i32
-  let _3 (a): i32
-  let _4: i32
-  let _5 (b): i32
-  let _6: i32
+  let _2: i64
+  let _3 (a): i64
+  let _4: i64
+  let _5 (b): i64
+  let _6: i64
   let _7: bool
   let _8: i32
+  let _9: i32
 
 bb0:
-  _2 = call avant_now_us() nocollect   @10:7
+  _2 = call avant_clock_us() nocollect   @10:7
   _3 = copy _2   @10:5
-  _4 = call avant_now_us() nocollect   @11:7
+  _4 = call avant_clock_us() nocollect   @11:7
   _5 = copy _4   @11:5
   _6 = sub copy _5, copy _3   @12:8
-  _7 = gt copy _6, const i32 1000000000   @12:13
+  _7 = gt copy _6, const i64 1000000000   @12:13
   branch copy _7, bb1, bb2   @12:3
 
 bb1:
-  _8 = add copy _1, copy _5   @13:14
-  _0 = copy _8   @13:5
+  _8 = cast copy _5 to i32   @13:18
+  _9 = add copy _1, copy _8   @13:14
+  _0 = copy _9   @13:5
   return   @13:5
 
 bb2:
@@ -116,18 +120,21 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @ints.av:18:1 {
   let _68: i32
   let _69: i32
   let _70: i32
-  let _71: u64
-  let _72 (u): u64
-  let _73: u64
+  let _71: i32
+  let _72: bool
+  let _73: i64
   let _74: u64
-  let _75: u64
+  let _75 (u): u64
   let _76: u64
   let _77: u64
   let _78: u64
-  let _79: bool
-  let _80: i32
-  let _81: bool
-  let _82: i32
+  let _79: u64
+  let _80: u64
+  let _81: u64
+  let _82: bool
+  let _83: i32
+  let _84: bool
+  let _85: i32
 
 bb0:
   gc.enter   @18:1
@@ -174,26 +181,26 @@ bb0:
   call printf(const str.0, copy _25) nocollect   @35:3
   _26 = eq copy _4, const i32 17   @36:10
   _27 = cast copy _26 to i32   @36:3
-  call printf(const str.0, copy _27) nocollect   @36:3
+  call avant_puts_bool(copy _27) nocollect   @36:3
   _28 = ne copy _4, const i32 17   @37:10
   _29 = cast copy _28 to i32   @37:3
-  call printf(const str.0, copy _29) nocollect   @37:3
+  call avant_puts_bool(copy _29) nocollect   @37:3
   _30 = lt copy _6, copy _4   @38:10
   _31 = cast copy _30 to i32   @38:3
-  call printf(const str.0, copy _31) nocollect   @38:3
+  call avant_puts_bool(copy _31) nocollect   @38:3
   _32 = le copy _6, const i32 -5   @39:10
   _33 = cast copy _32 to i32   @39:3
-  call printf(const str.0, copy _33) nocollect   @39:3
+  call avant_puts_bool(copy _33) nocollect   @39:3
   _34 = gt copy _6, copy _4   @40:10
   _35 = cast copy _34 to i32   @40:3
-  call printf(const str.0, copy _35) nocollect   @40:3
+  call avant_puts_bool(copy _35) nocollect   @40:3
   _36 = ge copy _4, const i32 18   @41:10
   _37 = cast copy _36 to i32   @41:3
-  call printf(const str.0, copy _37) nocollect   @41:3
+  call avant_puts_bool(copy _37) nocollect   @41:3
   _38 = lt copy _4, copy _6   @42:12
   _39 = not copy _38   @42:8
   _40 = cast copy _39 to i32   @42:3
-  call printf(const str.0, copy _40) nocollect   @42:3
+  call avant_puts_bool(copy _40) nocollect   @42:3
   _41 = call av.ints/opaque(const i32 10) nocollect   @43:7
   _42 = copy _41   @43:5
   _43 = add.chk copy _42, const i32 5   @43:5
@@ -238,26 +245,36 @@ bb0:
   _69 = rem.chk copy _67, copy _68   @58:19
   call printf(const str.0, copy _69) nocollect   @58:3
   _70 = call av.ints/opaque(const i32 7) nocollect   @59:7
-  _71 = cast copy _70 to u64   @59:16
-  _72 = copy _71   @59:5
-  _73 = mul.chk copy _72, const u64 2000000000000000000   @60:10
-  call printf(const str.2, copy _73) nocollect   @60:3
-  _74 = sub.chk copy _72, const u64 2   @61:10
-  call printf(const str.2, copy _74) nocollect   @61:3
-  _75 = div copy _72, const u64 2   @62:10
-  call printf(const str.2, copy _75) nocollect   @62:3
-  _76 = rem copy _72, const u64 4   @63:10
-  call printf(const str.2, copy _76) nocollect   @63:3
-  _77 = sub const u64 0, copy _72   @64:13
-  call printf(const str.2, copy _77) nocollect   @64:3
-  _78 = neg copy _72   @65:8
-  call printf(const str.2, copy _78) nocollect   @65:3
-  _79 = gt copy _72, const u64 6   @66:10
-  _80 = cast copy _79 to i32   @66:3
-  call printf(const str.0, copy _80) nocollect   @66:3
-  _81 = lt copy _50, const i64 0   @67:12
-  _82 = cast copy _81 to i32   @67:3
-  call printf(const str.0, copy _82) nocollect   @67:3
+  _71 = copy _70   @59:16
+  _72 = ge copy _71, const i32 0   @59:16
+  branch copy _72, bb2, bb1   @59:16
+
+bb1:
+  _73 = cast copy _71 to i64   @59:16
+  call avant_trap_convert(copy _73, const i32 2) nocollect   @59:16
+  unreachable   @59:16
+
+bb2:
+  _74 = cast copy _71 to u64   @59:16
+  _75 = copy _74   @59:5
+  _76 = mul.chk copy _75, const u64 2000000000000000000   @60:10
+  call printf(const str.2, copy _76) nocollect   @60:3
+  _77 = sub.chk copy _75, const u64 2   @61:10
+  call printf(const str.2, copy _77) nocollect   @61:3
+  _78 = div copy _75, const u64 2   @62:10
+  call printf(const str.2, copy _78) nocollect   @62:3
+  _79 = rem copy _75, const u64 4   @63:10
+  call printf(const str.2, copy _79) nocollect   @63:3
+  _80 = sub const u64 0, copy _75   @64:13
+  call printf(const str.2, copy _80) nocollect   @64:3
+  _81 = neg copy _75   @65:8
+  call printf(const str.2, copy _81) nocollect   @65:3
+  _82 = gt copy _75, const u64 6   @66:10
+  _83 = cast copy _82 to i32   @66:3
+  call avant_puts_bool(copy _83) nocollect   @66:3
+  _84 = lt copy _50, const i64 0   @67:12
+  _85 = cast copy _84 to i32   @67:3
+  call avant_puts_bool(copy _85) nocollect   @67:3
   _0 = const i32 0   @18:1
   gc.leave   @18:1
   return   @18:1

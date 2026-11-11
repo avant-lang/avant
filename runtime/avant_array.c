@@ -709,8 +709,10 @@ double avant_array_min_f64(void *arr, int32_t *found) {
   double best;
   if (found) { *found = 0; }
   if (!a || !a->buf || a->size <= 0) { return 0; }
+  /* sort's order (NaN after every number; Stage 29 W4b1, D295 R8): the
+   * smallest number, NaN only when every element is NaN. */
   best = ((double *)a->buf)[0];
-  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v < best) { best = v; } }
+  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v < best || best != best) { best = v; } }
   if (found) { *found = 1; }
   return best;
 }
@@ -769,8 +771,10 @@ double avant_array_max_f64(void *arr, int32_t *found) {
   double best;
   if (found) { *found = 0; }
   if (!a || !a->buf || a->size <= 0) { return 0; }
+  /* sort's order (NaN after every number; D295 R8): NaN when any element
+   * is NaN, else the largest number. */
   best = ((double *)a->buf)[0];
-  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v > best) { best = v; } }
+  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v > best || v != v) { best = v; } }
   if (found) { *found = 1; }
   return best;
 }
@@ -792,7 +796,10 @@ int32_t avant_array_sum_i32(void *arr) {
   int32_t i;
   int64_t s = 0;
   if (!a || !a->buf) { return 0; }
+  /* The int64_t total cannot overflow below 2^32 elements; the sum is
+   * checked once against Int (D215, Stage 29 W4b1 R2). */
   for (i = 0; i < a->size; i++) { s += ((int32_t *)a->buf)[i]; }
+  if (s < INT32_MIN || s > INT32_MAX) { avant_trap_overflow(); }
   return (int32_t)s;
 }
 
@@ -801,7 +808,7 @@ int64_t avant_array_sum_i64(void *arr) {
   int32_t i;
   int64_t s = 0;
   if (!a || !a->buf) { return 0; }
-  for (i = 0; i < a->size; i++) { s += ((int64_t *)a->buf)[i]; }
+  for (i = 0; i < a->size; i++) { if (__builtin_add_overflow(s, ((int64_t *)a->buf)[i], &s)) { avant_trap_overflow(); } }
   return s;
 }
 
@@ -810,7 +817,7 @@ uint64_t avant_array_sum_u64(void *arr) {
   int32_t i;
   uint64_t s = 0;
   if (!a || !a->buf) { return 0; }
-  for (i = 0; i < a->size; i++) { s += ((uint64_t *)a->buf)[i]; }
+  for (i = 0; i < a->size; i++) { if (__builtin_add_overflow(s, ((uint64_t *)a->buf)[i], &s)) { avant_trap_overflow(); } }
   return s;
 }
 

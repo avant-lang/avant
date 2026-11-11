@@ -20,23 +20,21 @@ layout %generics.Pt = struct { 0 x: i32, 1 y: i32 }  size 8 align 4
 
 const str.0 = "%d\0A"
 const str.1 = "s"
-const str.2 = "%s\0A"
-const str.3 = "%g\0A"
-const str.4 = "one"
-const str.5 = "k"
-const str.6 = " "
-const str.7 = "empty"
-const str.8 = "x"
-const str.9 = "none"
-const str.10 = "w"
-const str.11 = "n"
-const str.12 = "nothing"
-const str.13 = "/"
-const str.14 = "("
-const str.15 = ", "
-const str.16 = ")"
-const str.17 = "name "
-const str.18 = "stack"
+const str.2 = "one"
+const str.3 = "k"
+const str.4 = " "
+const str.5 = "empty"
+const str.6 = "x"
+const str.7 = "none"
+const str.8 = "w"
+const str.9 = "n"
+const str.10 = "nothing"
+const str.11 = "/"
+const str.12 = "("
+const str.13 = ", "
+const str.14 = ")"
+const str.15 = "name "
+const str.16 = "stack"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -54,6 +52,8 @@ extern avant_array_push_i32(ref, i32) -> void collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_f64(f64) -> void never
+extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern printf(ref str, ...) -> i32 never
@@ -155,22 +155,22 @@ bb0:
   _3 = call av.generics/id[Int](const i32 3) nocollect   @118:8
   call printf(const str.0, copy _3) nocollect   @118:3
   _4 = call av.generics/id[String](const str.1) nocollect   @119:8
-  call printf(const str.2, copy _4) nocollect   @119:3
+  call avant_puts_str(copy _4) nocollect   @119:3
   _5 = call av.generics/id[Float64](const f64 0x4004000000000000 /* 2.5 */) nocollect   @120:8
-  call printf(const str.3, copy _5) nocollect   @120:3
-  _6 = struct %generics.Pair(Int,String) (const i32 1, const str.4)   @121:7
+  call avant_puts_f64(copy _5) nocollect   @120:3
+  _6 = struct %generics.Pair(Int,String) (const i32 1, const str.2)   @121:7
   _7 = copy _6   @121:5
   _8 = addr _7   @122:8
   _9 = call av.generics/Pair(Int,String).swap(copy _8) nocollect   @122:8
   _10 = copy _9   @122:5
   _11 = copy _10.0   @123:9
-  call printf(const str.2, copy _11) nocollect   @123:3
+  call avant_puts_str(copy _11) nocollect   @123:3
   _12 = copy _10.1   @124:9
   call printf(const str.0, copy _12) nocollect   @124:3
-  _13 = call av.generics/pair_of[String,Int](const str.5, const i32 9) nocollect   @125:7
+  _13 = call av.generics/pair_of[String,Int](const str.3, const i32 9) nocollect   @125:7
   _14 = copy _13   @125:5
   _15 = copy _14.0   @126:9
-  call printf(const str.2, copy _15) nocollect   @126:3
+  call avant_puts_str(copy _15) nocollect   @126:3
   _16 = copy _14.1   @127:9
   call printf(const str.0, copy _16) nocollect   @127:3
   _17 = call av.generics/Stack(Int).new() collects   @128:17
@@ -210,9 +210,9 @@ bb5:
   _30 = copy (*_18).2   @136:12
   _31 = copy (*_18).3   @136:23
   _32 = call avant_str_from_int(copy _31) collects   @136:23
-  _33 = call avant_str_concat(copy _30, const str.6) collects   @136:8
+  _33 = call avant_str_concat(copy _30, const str.4) collects   @136:8
   _34 = call avant_str_concat(copy _33, copy _32) collects   @136:8
-  call printf(const str.2, copy _34) nocollect   @136:3
+  call avant_puts_str(copy _34) nocollect   @136:3
   _35 = call av.generics/Stack(String).new() collects   @137:21
   _36 = copy _35   @137:6
   _37 = call av.generics/Stack(String).top(copy _36) nocollect   @138:13
@@ -221,21 +221,21 @@ bb5:
 
 bb6:
   _39 = copy _37   @138:3
-  call printf(const str.2, copy _39) nocollect   @139:5
+  call avant_puts_str(copy _39) nocollect   @139:5
   goto bb8   @138:3
 
 bb7:
-  call printf(const str.2, const str.7) nocollect   @141:5
+  call avant_puts_str(const str.5) nocollect   @141:5
   goto bb8   @138:3
 
 bb8:
-  call av.generics/Stack(String).push(copy _36, const str.8) collects   @143:5
+  call av.generics/Stack(String).push(copy _36, const str.6) collects   @143:5
   _40 = call av.generics/Stack(String).top(copy _36) nocollect   @144:10
   _42 = eq copy _40, const ref str null   @144:15
   branch copy _42, bb9, bb10   @144:15
 
 bb9:
-  _41 = const str.9   @144:15
+  _41 = const str.7   @144:15
   goto bb11   @144:15
 
 bb10:
@@ -243,7 +243,7 @@ bb10:
   goto bb11   @144:15
 
 bb11:
-  call printf(const str.2, copy _41) nocollect   @144:3
+  call avant_puts_str(copy _41) nocollect   @144:3
   _43 = call av.generics/Stack(generics.Pair(Int,String)).new() collects   @145:32
   _44 = copy _43   @145:6
   call av.generics/Stack(generics.Pair(Int,String)).push(copy _44, copy _7) collects   @146:5
@@ -256,7 +256,7 @@ bb12:
   _48 = copy _45.1   @147:3
   _49 = copy _48   @147:3
   _50 = copy _49.1   @148:12
-  call printf(const str.2, copy _50) nocollect   @148:5
+  call avant_puts_str(copy _50) nocollect   @148:5
   goto bb13   @147:3
 
 bb13:
@@ -268,17 +268,17 @@ bb13:
   _55 = call av.generics/Box.wrap[Int](copy _54, const i32 11) nocollect   @152:9
   call printf(const str.0, copy _55) nocollect   @152:3
   _56 = addr _53   @153:9
-  _57 = call av.generics/Box.wrap[String](copy _56, const str.10) nocollect   @153:9
-  call printf(const str.2, copy _57) nocollect   @153:3
+  _57 = call av.generics/Box.wrap[String](copy _56, const str.8) nocollect   @153:9
+  call avant_puts_str(copy _57) nocollect   @153:3
   _58 = struct %generics.Pt (const i32 1, const i32 2)   @154:14
   _59 = call av.generics/twice[generics.Pt](copy _58) collects   @154:8
-  call printf(const str.2, copy _59) nocollect   @154:3
-  _60 = call av.generics/Name.new(const str.11) collects   @155:18
+  call avant_puts_str(copy _59) nocollect   @154:3
+  _60 = call av.generics/Name.new(const str.9) collects   @155:18
   _61 = call av.generics/twice[generics.Name](copy _60) collects   @155:8
-  call printf(const str.2, copy _61) nocollect   @155:3
+  call avant_puts_str(copy _61) nocollect   @155:3
   _62 = struct %generics.Pt (const i32 3, const i32 4)   @156:13
   _63 = call av.generics/both[generics.Pt](copy _62) collects   @156:8
-  call printf(const str.2, copy _63) nocollect   @156:3
+  call avant_puts_str(copy _63) nocollect   @156:3
   _64 = call avant_alloc(const u64 8, const u32 0) collects   @157:20
   (*_64)[const i32 0] = const i32 7   @157:21
   (*_64)[const i32 1] = const i32 8   @157:24
@@ -316,7 +316,7 @@ bb16:
   branch copy _77, bb17, bb18   @160:18
 
 bb17:
-  _76 = const str.12   @160:18
+  _76 = const str.10   @160:18
   goto bb19   @160:18
 
 bb18:
@@ -324,7 +324,7 @@ bb18:
   goto bb19   @160:18
 
 bb19:
-  call printf(const str.2, copy _76) nocollect   @160:3
+  call avant_puts_str(copy _76) nocollect   @160:3
   _0 = const i32 0   @117:1
   gc.leave   @117:1
   return   @117:1
@@ -411,7 +411,7 @@ bb0:
   _3 = call av.generics/Pt.show(copy _2) collects   @95:7
   _4 = addr _1   @95:17
   _5 = call av.generics/Pt.show(copy _4) collects   @95:17
-  _6 = call avant_str_concat(copy _3, const str.6) collects   @95:3
+  _6 = call avant_str_concat(copy _3, const str.4) collects   @95:3
   _7 = call avant_str_concat(copy _6, copy _5) collects   @95:3
   _0 = copy _7   @95:3
   gc.leave   @95:3
@@ -434,7 +434,7 @@ bb0:
   gc.roots _1, _2, _3, _4   @94:1
   _2 = call av.generics/Name.show(copy _1) collects   @95:7
   _3 = call av.generics/Name.show(copy _1) collects   @95:17
-  _4 = call avant_str_concat(copy _2, const str.6) collects   @95:3
+  _4 = call avant_str_concat(copy _2, const str.4) collects   @95:3
   _5 = call avant_str_concat(copy _4, copy _3) collects   @95:3
   _0 = copy _5   @95:3
   gc.leave   @95:3
@@ -463,7 +463,7 @@ bb0:
   _4 = addr _1   @99:17
   _5 = call av.generics/Pt.size(copy _4) nocollect   @99:17
   _6 = call avant_str_from_int(copy _5) collects   @99:17
-  _7 = call avant_str_concat(copy _3, const str.13) collects   @99:3
+  _7 = call avant_str_concat(copy _3, const str.11) collects   @99:3
   _8 = call avant_str_concat(copy _7, copy _6) collects   @99:3
   _0 = copy _8   @99:3
   gc.leave   @99:3
@@ -572,10 +572,10 @@ bb0:
   _3 = call avant_str_from_int(copy _2) collects   @70:9
   _4 = copy (*_1).1   @70:15
   _5 = call avant_str_from_int(copy _4) collects   @70:15
-  _6 = call avant_str_concat(const str.14, copy _3) collects   @70:5
-  _7 = call avant_str_concat(copy _6, const str.15) collects   @70:5
+  _6 = call avant_str_concat(const str.12, copy _3) collects   @70:5
+  _7 = call avant_str_concat(copy _6, const str.13) collects   @70:5
   _8 = call avant_str_concat(copy _7, copy _5) collects   @70:5
-  _9 = call avant_str_concat(copy _8, const str.16) collects   @70:5
+  _9 = call avant_str_concat(copy _8, const str.14) collects   @70:5
   _0 = copy _9   @70:5
   gc.leave   @70:5
   return   @70:5
@@ -641,7 +641,7 @@ bb0:
   gc.enter   @85:3
   gc.roots _2   @85:3
   _2 = copy (*_1).0   @86:13
-  _3 = call avant_str_concat(const str.17, copy _2) collects   @86:5
+  _3 = call avant_str_concat(const str.15, copy _2) collects   @86:5
   _0 = copy _3   @86:5
   gc.leave   @86:5
   return   @86:5
@@ -1042,7 +1042,7 @@ bb0:
   gc.roots _1   @27:1
   _1 = call avant_alloc(const u64 32, const u32 2) collects   @27:1
   barrier copy _1   @30:3
-  (*_1).2 = const str.18   @30:3
+  (*_1).2 = const str.16   @30:3
   (*_1).3 = const i32 0   @31:3
   call av.generics/Stack(Int).initialize(copy _1) collects   @27:1
   _0 = copy _1   @27:1
@@ -1060,7 +1060,7 @@ bb0:
   gc.roots _1   @27:1
   _1 = call avant_alloc(const u64 32, const u32 3) collects   @27:1
   barrier copy _1   @30:3
-  (*_1).2 = const str.18   @30:3
+  (*_1).2 = const str.16   @30:3
   (*_1).3 = const i32 0   @31:3
   call av.generics/Stack(String).initialize(copy _1) collects   @27:1
   _0 = copy _1   @27:1
@@ -1078,7 +1078,7 @@ bb0:
   gc.roots _1   @27:1
   _1 = call avant_alloc(const u64 48, const u32 4) collects   @27:1
   barrier copy _1   @30:3
-  (*_1).2 = const str.18   @30:3
+  (*_1).2 = const str.16   @30:3
   (*_1).3 = const i32 0   @31:3
   call av.generics/Stack(generics.Pair(Int,String)).initialize(copy _1) collects   @27:1
   _0 = copy _1   @27:1

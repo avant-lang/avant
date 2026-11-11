@@ -3,41 +3,43 @@ file 0 "trap_to_i_high.av"
 
 const str.0 = "%d\0A"
 const str.1 = "not reached"
-const str.2 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
+extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_now_us() -> i32 never
+extern avant_puts_str(ref str) -> void never
 extern avant_trap_to_i(f64) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.trap_to_i_high/opaque(_1: i32) -> i32 leaf @trap_to_i_high.av:6:1 {
   let _0: i32
   let _1 (n): i32
-  let _2: i32
-  let _3 (a): i32
-  let _4: i32
-  let _5 (b): i32
-  let _6: i32
+  let _2: i64
+  let _3 (a): i64
+  let _4: i64
+  let _5 (b): i64
+  let _6: i64
   let _7: bool
   let _8: i32
+  let _9: i32
 
 bb0:
-  _2 = call avant_now_us() nocollect   @7:7
+  _2 = call avant_clock_us() nocollect   @7:7
   _3 = copy _2   @7:5
-  _4 = call avant_now_us() nocollect   @8:7
+  _4 = call avant_clock_us() nocollect   @8:7
   _5 = copy _4   @8:5
   _6 = sub copy _5, copy _3   @9:8
-  _7 = gt copy _6, const i32 1000000000   @9:13
+  _7 = gt copy _6, const i64 1000000000   @9:13
   branch copy _7, bb1, bb2   @9:3
 
 bb1:
-  _8 = add copy _1, copy _5   @10:14
-  _0 = copy _8   @10:5
+  _8 = cast copy _5 to i32   @10:18
+  _9 = add copy _1, copy _8   @10:14
+  _0 = copy _9   @10:5
   return   @10:5
 
 bb2:
@@ -97,7 +99,7 @@ bb0:
   _8 = mul const f64 0x41E0000000000000 /* 2147483648.0 */, copy _5   @22:24
   _9 = call av.trap_to_i_high/ti(copy _8) nocollect   @22:8
   call printf(const str.0, copy _9) nocollect   @22:3
-  call printf(const str.2, const str.1) nocollect   @23:3
+  call avant_puts_str(const str.1) nocollect   @23:3
   _0 = const i32 0   @19:1
   gc.leave   @19:1
   return   @19:1

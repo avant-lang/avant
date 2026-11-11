@@ -1465,6 +1465,9 @@ pub class Checker {
     }
     if expr.ident == "abs" {
       expr.method_call = true
+      if object.is_uint64 {
+        self.fail(expr.loc, "abs of a UInt64 is the value itself")
+      }
       return object
     }
     if expr.ident == "to_i" {
@@ -1564,14 +1567,6 @@ pub class Checker {
         if expr.ident == "chars" {
           expr.method_call = true
           return ty_array(self.t_string())
-        }
-        if expr.ident == "to_f" {
-          expr.method_call = true
-          return self.t_float()
-        }
-        if expr.ident == "to_i" {
-          expr.method_call = true
-          return self.t_int()
         }
         if got = self.builtin_ext_call(expr, object) {
           return got
@@ -2039,6 +2034,16 @@ pub class Checker {
       if !st.is_int {
         self.fail(size.loc, "Array(T).new expects Int size")
       }
+    }
+    // Every element starts at the element type's zero (D292) or at the
+    // given value (Stage 29 W4b1, D295 R5); no element is read unset.
+    if expr.elems.size == 1 {
+      vt = self.check_expr_as(expr.elems[0], elem)
+      if !ty_assignable(vt, elem) {
+        self.fail(expr.elems[0].loc, "Array(${elem.show}).new's element value must be ${elem.show}, got ${vt.show}")
+      }
+    } else if !ty_has_zero(elem) && !type.ty_has_var(elem) {
+      self.fail(expr.loc, "Array(${elem.show}).new(n) needs an element value: ${elem.show} has no zero value; write Array(${elem.show}).new(n, value), or start from [] and push")
     }
     ty_array(elem)
   }
@@ -2887,12 +2892,12 @@ pub class Checker {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "now_ms takes no arguments")
-          return self.t_int()
+          return self.t_int64()
         }
-        return self.t_int()
+        return self.t_int64()
       }
       self.fail(expr.loc, "now_ms takes no arguments")
-      return self.t_int()
+      return self.t_int64()
     }
     if expr.callee == "file_read" {
       if expr.args.size == 1 {

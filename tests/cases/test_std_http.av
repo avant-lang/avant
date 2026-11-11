@@ -75,7 +75,7 @@ fn hammer_round(port: Int, out: Channel(String), rounds: Int): Int {
   0
 }
 
-fn raw_round(port: Int, script: String, stamp: Int, mode: String): String {
+fn raw_round(port: Int, script: String, stamp: Int64, mode: String): String {
   log = "${scratch()}/http-raw-${stamp}-${mode}.log"
   args: Array(String) = []
   args.push(script)
@@ -88,7 +88,7 @@ fn raw_round(port: Int, script: String, stamp: Int, mode: String): String {
   ""
 }
 
-fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int64): Int {
   base = "http://127.0.0.1:${port}"
   if resp = Http.post("${base}/echo", "0123456789abcdefghij") {
     out.send("big=${resp.status}")
@@ -125,7 +125,7 @@ fn ws_client_round(port: Int, out: Channel(String)): Int {
   0
 }
 
-fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int64): Int {
   out.send(raw_round(port, script, stamp, "wsecho"))
   out.send(raw_round(port, script, stamp, "wsproto"))
   if resp = Http.get("http://127.0.0.1:${port}/__stop") {
@@ -406,7 +406,7 @@ fn test_std_http(c: Checks) {
   while got_body.size == 0 && now_ms() < deadline {
     if sport == 0 {
       if pt = file_read(portf2) {
-        sport = pt.strip().to_i
+        sport = pt.strip().to_i ?? 0
       }
     }
     if sport > 0 {

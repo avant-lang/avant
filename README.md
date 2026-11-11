@@ -234,7 +234,7 @@ fn id(x: T): T {
 
 ### Primitives
 
-`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i` (`x.exp` or `x.exp()`). Two `Bool`s compare with `==` and `!=`. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
+`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i` (`x.exp` or `x.exp()`). Two `Bool`s compare with `==` and `!=`. `puts` and interpolation print a `Bool` as `true` or `false`, and a `Float64` as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf` (the same text in JSON, where NaN and the infinities are `null`); `fmt_float(x, digits)` and `push_fmt_f` give a fixed number of decimals, 0 to 64 (outside traps). A float literal too large for `Float64` (`1e400`) is a compile error, as an integer literal out of range is. `puts` of a `String` writes all its bytes, a NUL byte included. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
 
 ### Nil and unions
 
@@ -273,7 +273,7 @@ fn main {
 }
 ```
 
-`Array(T).new` takes a size. `push`, `pop`, `clear`, `reserve`, and `fill` are methods. `each` is not a method call: the compiler inlines it as a loop. See [Iteration](#iteration).
+`Array(T).new(n)` makes `n` elements, each the element type's zero (`0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields); `Array(T).new(n, value)` makes `n` copies of `value` (the same object, for a class), and is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` is a compile error that names both ways out, the value form and `[]` with `push`. A negative `n` traps (`avant runtime: Array size -5 is negative`). `push`, `pop`, `clear`, `reserve`, and `fill` are methods. `each` is not a method call: the compiler inlines it as a loop. See [Iteration](#iteration).
 
 ### Hashes
 
@@ -965,6 +965,8 @@ fn main {
 
 `split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`. `Buf.new` (or `Buf.new(capacity)`) makes an empty buffer, the same as `buf_new()`.
 
+`s.to_i`, `s.to_i64` and `s.to_u64` read a whole string as an integer and return `Int?`, `Int64?` and `UInt64?`: an optional sign and decimal digits (or the digits of a base given as `s.to_i(16)`, 2 to 36, letters in either case), within the type's range, and nothing else; anything else (`"12abc"`, `" 42"`, `"0x1F"`, `"3000000000"` for `Int`) is `nil`, so `s.to_i ?? 0` says the fallback. `s.to_f` returns `Float64?` for the same shape as a float literal (`-2.5`, `1e3`, `1.5E-7`) whose value is finite; `"nan"`, `"inf"`, `"1e999"`, `".5"` and `"1."` are `nil`. `str_to_f_slice(s, start, stop)` reads a slice the same way.
+
 Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 
 On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value when `v` is nil, with the fallback evaluated only then. Predicate methods return `Bool`, including `Buf.starts_with`, and arrays add the short-circuiting scans `any { |x| ... }` and `all { |x| ... }` with a `Bool`-returning block.
@@ -973,9 +975,9 @@ On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value 
 
 Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
-Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The rule is that an operation gives the mathematically correct value when one exists and traps when none does: `MIN % -1` is `0` for every signed type (only `MIN / -1` overflows); a shift `<<` or `>>` by an amount outside `0..31` for `Int` (`0..63` for `Int64` and `UInt64`), negative amounts included, traps (`avant runtime: shift amount 32 out of range for Int (0..31)`), and a literal amount outside the range is a compile error; `Float64.to_i` of NaN, an infinity, or a value outside the `Int` range traps (`avant runtime: to_i of Float64 3000000000 out of range for Int`), and inside it truncates toward zero. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow. Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
+Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. A slice (`str_slice(s, start, stop)`, `b.slice(start, stop)`, `buf.push_slice(s, start, stop)` and the other `start, stop` forms) needs `0 <= start <= stop <= size` and traps otherwise (`avant runtime: slice 4..2 out of range (size 5)`): an empty result means the range was empty, never that it was wrong. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The rule is that an operation gives the mathematically correct value when one exists and traps when none does: `MIN % -1` is `0` for every signed type (only `MIN / -1` overflows); a shift `<<` or `>>` by an amount outside `0..31` for `Int` (`0..63` for `Int64` and `UInt64`), negative amounts included, traps (`avant runtime: shift amount 32 out of range for Int (0..31)`), and a literal amount outside the range is a compile error; `Float64.to_i` of NaN, an infinity, or a value outside the `Int` range traps (`avant runtime: to_i of Float64 3000000000 out of range for Int`), and inside it truncates toward zero. The conversions between integer types, `to_i`, `to_i64` and `to_u64`, keep the number or trap (`avant runtime: to_i of Int64 5000000000 out of range for Int`); `to_f` rounds to the nearest `Float64`. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap like `+`; `UInt64` has no `abs` (it is the value itself). A byte stored by `push_byte`, `buf[i] = b`, `chr`, `repeat_byte` or `bytes_to_str` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); write `b & 255` to keep the low byte on purpose. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow, and `wrap_i`, `wrap_i64`, `wrap_u64` reinterpret an integer's two's-complement bits in another integer type (`5000000000i64.wrap_i` is `705032704`, `(-1).wrap_u64` is `18446744073709551615`). Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
 
-`sort` orders `Int`, `Int64`, `UInt64`, `Float64` (NaN last), `String` and `Bytes` (byte order), and `Bool` elements in place, or any element type with a comparator block `sort { |a, b| ... }` returning `Bool`; `sorted` returns a new array and leaves the original alone. `reverse`, `contains(x)`, `index_of(x): Int?`, `min` / `max: T?`, and `sum` cover the other common scans. Hashes add `keys`, `values`, `has_key(k)`, `get_or(k, default)`, `inc(k, by = 1)`, and `each { |k, v| ... }`; `keys` and `values` are in unspecified order.
+`sort` orders `Int`, `Int64`, `UInt64`, `Float64` (NaN last), `String` and `Bytes` (byte order), and `Bool` elements in place, or any element type with a comparator block `sort { |a, b| ... }` returning `Bool`; `sorted` returns a new array and leaves the original alone. `reverse`, `contains(x)`, `index_of(x): Int?`, `min` / `max: T?`, and `sum` cover the other common scans; on `Float64`, `min` and `max` follow `sort`'s order (NaN after every number): `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is, whatever the positions. Hashes add `keys`, `values`, `has_key(k)`, `get_or(k, default)`, `inc(k, by = 1)`, and `each { |k, v| ... }`; `keys` and `values` are in unspecified order.
 
 ```avant
 fn main {
@@ -1436,6 +1438,8 @@ fn main: Int {
 
 ### Time, hashing, and math
 
+`now_ms` and `now_us` read a monotonic clock as `Int64` milliseconds and microseconds (they do not wrap; differences are `Int64` too).
+
 ```avant
 fn main {
   t0 = now_us()
@@ -1510,6 +1514,8 @@ fn main {
   }
 }
 ```
+
+`int` is a JSON integer (no fraction, no exponent) within `Int`, and `nil` for anything else (a real such as `3.7` or `3.0`, an integer beyond `Int`, a non-number); `int64` is the same within `Int64`; `f64` reads any number. Floats are written in the language's one float text (`1.5e-7`, `2.0`), and NaN and the infinities as `null`.
 
 The document owns its values and its text buffer; there is nothing to close.
 

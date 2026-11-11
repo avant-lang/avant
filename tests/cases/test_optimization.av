@@ -1,6 +1,6 @@
 import harness
 
-fn expect_trap_opt(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
+fn expect_trap_opt(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, needle: String) {
   src = "${scratch()}/optimization-wavek-${stamp}-${tag}.av"
   bin = "${scratch()}/optimization-wavek-${stamp}-${tag}.bin"
   clog = "${scratch()}/optimization-wavek-${stamp}-${tag}.clog"
@@ -298,11 +298,11 @@ fn test_optimization(c: Checks) {
   c.eq_int(churn, 1000000, "allocation churn total")
   c.eq_int(long_s.size, 20000, "long string length after churn")
   c.eq_int(long_s[19999], 98, "long string last byte after churn")
-  c.eq_str(fmt_float("0.1".to_f, 10), "0.1000000000", "float parse 0.1")
-  c.eq_str(fmt_float(str_to_f_slice("xx1.25yy", 2, 6), 10), "1.2500000000", "float slice parse 1.25")
-  c.eq_str(fmt_float("1e3".to_f, 2), "1000.00", "float parse exponent")
-  c.eq_str(fmt_float("123456789012345678".to_f, 2), "123456789012345680.00", "float parse long digits fallback")
-  c.eq_str(fmt_float("-0.5".to_f, 10), "-0.5000000000", "float parse negative")
+  c.eq_str(fmt_float("0.1".to_f ?? 0.0, 10), "0.1000000000", "float parse 0.1")
+  c.eq_str(fmt_float(str_to_f_slice("xx1.25yy", 2, 6) ?? 0.0, 10), "1.2500000000", "float slice parse 1.25")
+  c.eq_str(fmt_float("1e3".to_f ?? 0.0, 2), "1000.00", "float parse exponent")
+  c.eq_str(fmt_float("123456789012345678".to_f ?? 0.0, 2), "123456789012345680.00", "float parse long digits fallback")
+  c.eq_str(fmt_float("-0.5".to_f ?? 0.0, 10), "-0.5000000000", "float parse negative")
 
   decl_s = "abca"
   decl_t = "a"

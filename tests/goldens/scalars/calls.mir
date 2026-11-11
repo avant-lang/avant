@@ -2,11 +2,9 @@ module calls
 file 0 "calls.av"
 
 const str.0 = "%d\0A"
-const str.1 = "%s\0A"
-const str.2 = "%g\0A"
-const str.3 = "forty-two"
-const str.4 = "yes"
-const str.5 = "no"
+const str.1 = "forty-two"
+const str.2 = "yes"
+const str.3 = "no"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -14,6 +12,9 @@ typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_bool(i32) -> void never
+extern avant_puts_f64(f64) -> void never
+extern avant_puts_str(ref str) -> void never
 extern printf(ref str, ...) -> i32 never
 
 fn av.calls/fib(_1: i32) -> i32 leaf @calls.av:6:1 {
@@ -100,7 +101,7 @@ fn av.calls/show(String)(_1: ref str) -> void leaf @calls.av:31:1 {
   let _1 (s): ref str
 
 bb0:
-  call printf(const str.1, copy _1) nocollect   @32:3
+  call avant_puts_str(copy _1) nocollect   @32:3
   return   @31:1
 }
 
@@ -108,7 +109,7 @@ fn av.calls/show(Float64)(_1: f64) -> void leaf @calls.av:35:1 {
   let _1 (f): f64
 
 bb0:
-  call printf(const str.2, copy _1) nocollect   @36:3
+  call avant_puts_f64(copy _1) nocollect   @36:3
   return   @35:1
 }
 
@@ -186,17 +187,17 @@ bb0:
   call printf(const str.0, copy _3) nocollect   @58:3
   _4 = call av.calls/is_even(const i32 10) nocollect   @59:8
   _5 = cast copy _4 to i32   @59:3
-  call printf(const str.0, copy _5) nocollect   @59:3
+  call avant_puts_bool(copy _5) nocollect   @59:3
   _6 = call av.calls/is_odd(const i32 7) nocollect   @60:8
   _7 = cast copy _6 to i32   @60:3
-  call printf(const str.0, copy _7) nocollect   @60:3
+  call avant_puts_bool(copy _7) nocollect   @60:3
   call av.calls/show(Int)(const i32 42) nocollect   @61:3
-  call av.calls/show(String)(const str.3) nocollect   @62:3
+  call av.calls/show(String)(const str.1) nocollect   @62:3
   call av.calls/show(Float64)(const f64 0x4010CCCCCCCCCCCD /* 4.2 */) nocollect   @63:3
-  _8 = call av.calls/pick(const bool true, const str.4, const str.5) nocollect   @64:8
-  call printf(const str.1, copy _8) nocollect   @64:3
-  _9 = call av.calls/pick(const bool false, const str.4, const str.5) nocollect   @65:8
-  call printf(const str.1, copy _9) nocollect   @65:3
+  _8 = call av.calls/pick(const bool true, const str.2, const str.3) nocollect   @64:8
+  call avant_puts_str(copy _8) nocollect   @64:3
+  _9 = call av.calls/pick(const bool false, const str.2, const str.3) nocollect   @65:8
+  call avant_puts_str(copy _9) nocollect   @65:3
   _10 = call av.calls/early(const i32 50) nocollect   @66:8
   call printf(const str.0, copy _10) nocollect   @66:3
   _0 = const i32 0   @57:1

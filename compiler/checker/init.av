@@ -24,44 +24,6 @@ import resolve
 import checker.names
 import checker
 
-// Whether a value of type t has a natural zero (D292).
-pub fn ty_has_zero(t: Ty): Bool {
-  if t.is_int || t.is_int64 || t.is_uint64 || t.is_float || t.is_bool || t.is_string {
-    return true
-  }
-  if t.is_union {
-    return t.includes_nil
-  }
-  if t.is_ptr {
-    return true
-  }
-  if t.is_struct {
-    for f in t.fields {
-      if !ty_has_zero(f.ty) {
-        return false
-      }
-    }
-    return true
-  }
-  false
-}
-
-// Whether the zero of t needs a store (a String, or a struct holding
-// one): the allocation's zero bytes are every other zero.
-pub fn ty_zero_stores(t: Ty): Bool {
-  if t.is_string {
-    return true
-  }
-  if t.is_struct {
-    for f in t.fields {
-      if ty_zero_stores(f.ty) {
-        return true
-      }
-    }
-  }
-  false
-}
-
 // The walk over one `initialize`: the required fields, the fields whose
 // zero needs a store, the ones read or exposed before they were set
 // (dirty), the meet of the sets at the returns, and the first error (one

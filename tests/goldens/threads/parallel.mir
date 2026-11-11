@@ -31,13 +31,12 @@ const str.4 = "bb"
 const str.5 = "ccc"
 const str.6 = "dddd"
 const str.7 = "!"
-const str.8 = "%s\0A"
-const str.9 = "item"
-const str.10 = "pre"
-const str.11 = " "
-const str.12 = "n"
-const str.13 = "-"
-const str.14 = "r"
+const str.8 = "item"
+const str.9 = "pre"
+const str.10 = " "
+const str.11 = "n"
+const str.12 = "-"
+const str.13 = "r"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -65,10 +64,12 @@ extern avant_array_set_ptr(ref, i32, ref) -> void never
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_parallel_for(i32, ptr, ref) -> void collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
+extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.parallel/checksum(_1: ref %Array(Int)) -> i32 frame @parallel.av:17:1 {
@@ -287,55 +288,58 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @parallel.av:40:1 {
   let _114 (lam): ref %Array(Int)
   let _115: i32
   let _116: i32
-  let _117: u64
+  let _117: bool
   let _118: u64
-  let _119: ref %elems(String) slot
-  let _120: ref %Array(String)
-  let _121 (empty): ref %Array(String)
-  let _122: ref %Array(String) slot
-  let _123: i32
-  let _124: u64
-  let _125: u64
-  let _126: ref %elems(Int) slot
-  let _127: ref %Array(Int)
-  let _128: ref %Array(Int) slot
-  let _129: ref %par_cap(av.parallel/main#par9) slot
-  let _130 (none): ref %Array(Int)
-  let _131: i32
-  let _132 (total): i32
-  let _133 (round): i32
-  let _134: bool
-  let _135: ref %Array(Int) slot
-  let _136: i32
-  let _137: u64
-  let _138: u64
-  let _139: ref %elems(String) slot
-  let _140: ref %Array(String)
-  let _141: ref %Array(String) slot
-  let _142: ref %par_cap(av.parallel/main#par10) slot
-  let _143 (strs): ref %Array(String) slot
+  let _119: u64
+  let _120: ref %elems(String) slot
+  let _121: i32
+  let _122: bool
+  let _123: ref %Array(String)
+  let _124 (empty): ref %Array(String)
+  let _125: ref %Array(String) slot
+  let _126: i32
+  let _127: u64
+  let _128: u64
+  let _129: ref %elems(Int) slot
+  let _130: ref %Array(Int)
+  let _131: ref %Array(Int) slot
+  let _132: ref %par_cap(av.parallel/main#par9) slot
+  let _133 (none): ref %Array(Int)
+  let _134: i32
+  let _135 (total): i32
+  let _136 (round): i32
+  let _137: bool
+  let _138: ref %Array(Int) slot
+  let _139: i32
+  let _140: u64
+  let _141: u64
+  let _142: ref %elems(String) slot
+  let _143: ref %Array(String)
   let _144: ref %Array(String) slot
-  let _145: i32
-  let _146: u64
-  let _147: u64
-  let _148: ref %elems(Int) slot
-  let _149: ref %Array(Int)
-  let _150: ref %Array(Int) slot
-  let _151: ref %par_cap(av.parallel/main#par11) slot
-  let _152 (sizes): ref %Array(Int)
-  let _153: i32
-  let _154: i32
-  let _155: i32
+  let _145: ref %par_cap(av.parallel/main#par10) slot
+  let _146 (strs): ref %Array(String) slot
+  let _147: ref %Array(String) slot
+  let _148: i32
+  let _149: u64
+  let _150: u64
+  let _151: ref %elems(Int) slot
+  let _152: ref %Array(Int)
+  let _153: ref %Array(Int) slot
+  let _154: ref %par_cap(av.parallel/main#par11) slot
+  let _155 (sizes): ref %Array(Int)
   let _156: i32
-  let _157: ref %elems(String)
-  let _158: ref str
+  let _157: i32
+  let _158: i32
   let _159: i32
-  let _160: i32
-  let _161: i32
-  let _162: ref str
+  let _160: ref %elems(String)
+  let _161: ref str
+  let _162: i32
   let _163: i32
-  let _164: ref %elems(parallel.Item)
+  let _164: i32
   let _165: ref str
+  let _166: i32
+  let _167: ref %elems(parallel.Item)
+  let _168: ref str
 
 bb0:
   _3 = zero   @40:1
@@ -387,22 +391,22 @@ bb0:
   _109 = zero   @40:1
   _111 = zero   @40:1
   _112 = zero   @40:1
-  _119 = zero   @40:1
-  _122 = zero   @40:1
-  _126 = zero   @40:1
-  _128 = zero   @40:1
+  _120 = zero   @40:1
+  _125 = zero   @40:1
   _129 = zero   @40:1
-  _135 = zero   @40:1
-  _139 = zero   @40:1
-  _141 = zero   @40:1
+  _131 = zero   @40:1
+  _132 = zero   @40:1
+  _138 = zero   @40:1
   _142 = zero   @40:1
-  _143 = zero   @40:1
   _144 = zero   @40:1
-  _148 = zero   @40:1
-  _150 = zero   @40:1
+  _145 = zero   @40:1
+  _146 = zero   @40:1
+  _147 = zero   @40:1
   _151 = zero   @40:1
+  _153 = zero   @40:1
+  _154 = zero   @40:1
   gc.enter   @40:1
-  gc.roots _2, _3, _4, _6, _7, _11, _13, _14, _17, _21, _23, _24, _28, _30, _31, _35, _37, _38, _41, _42, _46, _48, _49, _50, _52, _56, _58, _59, _62, _64, _68, _72, _73, _77, _79, _80, _81, _86, _88, _89, _92, _94, _95, _99, _101, _102, _105, _109, _111, _112, _119, _122, _126, _128, _129, _135, _139, _141, _142, _143, _144, _148, _150, _151   @40:1
+  gc.roots _2, _3, _4, _6, _7, _11, _13, _14, _17, _21, _23, _24, _28, _30, _31, _35, _37, _38, _41, _42, _46, _48, _49, _50, _52, _56, _58, _59, _62, _64, _68, _72, _73, _77, _79, _80, _81, _86, _88, _89, _92, _94, _95, _99, _101, _102, _105, _109, _111, _112, _120, _125, _129, _131, _132, _138, _142, _144, _145, _146, _147, _151, _153, _154   @40:1
   call __avant_type_maps() nocollect   @40:1
   call avant_io_init_argv(copy _1, copy _2) collects   @40:1
   _3 = zero   @40:1
@@ -519,7 +523,7 @@ bb0:
   call avant_parallel_for(copy _43, const fn av.parallel/main#par4, copy _49) collects   @51:25
   _50 = copy _48   @51:8
   _51 = call av.parallel/join_all(copy _50) collects   @52:8
-  call printf(const str.8, copy _51) nocollect   @52:3
+  call avant_puts_str(copy _51) nocollect   @52:3
   _52 = copy _6   @53:22
   _53 = copy (*_52).1   @53:22
   _54 = cast copy _53 to u64   @53:22
@@ -539,7 +543,7 @@ bb0:
   call avant_parallel_for(copy _53, const fn av.parallel/main#par5, copy _59) collects   @53:22
   _60 = copy _58   @53:8
   _61 = call av.parallel/join_all(copy _60) collects   @54:8
-  call printf(const str.8, copy _61) nocollect   @54:3
+  call avant_puts_str(copy _61) nocollect   @54:3
   _62 = call avant_alloc(const u64 0, const u32 14) collects   @55:24
   _63 = call avant_alloc(const u64 16, const u32 1022) collects   @55:24
   barrier copy _63   @55:24
@@ -556,7 +560,7 @@ bb1:
   branch copy _66, bb2, bb3   @57:3
 
 bb2:
-  _67 = call avant_str_cat_i32(const str.9, copy _65) collects   @58:36
+  _67 = call avant_str_cat_i32(const str.8, copy _65) collects   @58:36
   _68 = struct %parallel.Item (copy _65, copy _67)   @58:16
   _69 = call avant_array_push_slot(copy _64, const u64 16, const u32 14) collects   @58:10
   (*_69) = copy _68   @58:10
@@ -565,7 +569,7 @@ bb2:
   goto bb1   @57:3
 
 bb3:
-  _71 = struct %parallel.Item (const i32 100, const str.10)   @61:9
+  _71 = struct %parallel.Item (const i32 100, const str.9)   @61:9
   _72 = copy _71   @61:7
   _73 = copy _64   @62:26
   _74 = copy (*_73).1   @62:26
@@ -602,9 +606,9 @@ bb5:
   _86 = call avant_str_from_int(copy _85) collects   @65:21
   _87 = copy (*_81).0   @65:32
   _88 = copy (*_87)[copy _65].1   @65:35
-  _89 = call avant_str_concat(copy _86, const str.11) collects   @65:10
+  _89 = call avant_str_concat(copy _86, const str.10) collects   @65:10
   _90 = call avant_str_concat(copy _89, copy _88) collects   @65:10
-  call printf(const str.8, copy _90) nocollect   @65:5
+  call avant_puts_str(copy _90) nocollect   @65:5
   _91 = add copy _65, const i32 1   @66:11
   _65 = copy _91   @66:7
   goto bb4   @64:3
@@ -665,105 +669,128 @@ bb6:
   _115 = call av.parallel/checksum(copy _114) collects   @75:8
   call printf(const str.2, copy _115) nocollect   @75:3
   _116 = const i32 0   @76:11
-  _117 = cast copy _116 to u64   @76:11
-  _118 = mul copy _117, const u64 8   @76:11
-  _119 = call avant_alloc(copy _118, const u32 65535) collects   @76:11
-  _120 = call avant_alloc(const u64 16, const u32 1022) collects   @76:11
-  barrier copy _120   @76:11
-  (*_120).0 = copy _119   @76:11
-  (*_120).1 = copy _116   @76:11
-  (*_120).2 = copy _116   @76:11
-  _121 = copy _120   @76:9
-  _122 = copy _121   @77:25
-  _123 = copy (*_122).1   @77:25
-  _124 = cast copy _123 to u64   @77:25
-  _125 = mul copy _124, const u64 4   @77:25
-  _126 = call avant_alloc(copy _125, const u32 0) collects   @77:25
-  _127 = call avant_alloc(const u64 16, const u32 1022) collects   @77:25
-  barrier copy _127   @77:25
-  (*_127).0 = copy _126   @77:25
-  (*_127).1 = copy _123   @77:25
-  (*_127).2 = copy _123   @77:25
-  _128 = copy _127   @77:25
-  _129 = call avant_alloc(const u64 16, const u32 11) collects   @77:25
-  barrier copy _129   @77:25
-  (*_129).0 = copy _122   @77:25
-  barrier copy _129   @77:25
-  (*_129).1 = copy _128   @77:25
-  call avant_parallel_for(copy _123, const fn av.parallel/main#par9, copy _129) collects   @77:25
-  _130 = copy _128   @77:8
-  _131 = copy (*_130).1   @78:12
-  call printf(const str.2, copy _131) nocollect   @78:3
-  _132 = const i32 0   @79:9
-  _133 = const i32 0   @80:9
-  goto bb7   @81:3
+  _117 = lt copy _116, const i32 0   @76:11
+  branch copy _117, bb7, bb8   @76:11
 
 bb7:
-  call avant_gc_poll() collects   @81:15
-  _134 = lt copy _133, const i32 200   @81:15
-  branch copy _134, bb8, bb9   @81:3
+  call avant_trap_negative(copy _116, const i32 0) nocollect   @76:11
+  unreachable   @76:11
 
 bb8:
-  _135 = copy _6   @82:24
-  _136 = copy (*_135).1   @82:24
-  _137 = cast copy _136 to u64   @82:24
-  _138 = mul copy _137, const u64 8   @82:24
-  _139 = call avant_alloc(copy _138, const u32 65535) collects   @82:24
-  _140 = call avant_alloc(const u64 16, const u32 1022) collects   @82:24
-  barrier copy _140   @82:24
-  (*_140).0 = copy _139   @82:24
-  (*_140).1 = copy _136   @82:24
-  (*_140).2 = copy _136   @82:24
-  _141 = copy _140   @82:24
-  _142 = call avant_alloc(const u64 24, const u32 12) collects   @82:24
-  barrier copy _142   @82:24
-  (*_142).0 = copy _135   @82:24
-  barrier copy _142   @82:24
-  (*_142).1 = copy _141   @82:24
-  (*_142).2 = copy _133   @82:24
-  call avant_parallel_for(copy _136, const fn av.parallel/main#par10, copy _142) collects   @82:24
-  _143 = copy _141   @82:10
-  _144 = copy _143   @83:27
-  _145 = copy (*_144).1   @83:27
-  _146 = cast copy _145 to u64   @83:27
-  _147 = mul copy _146, const u64 4   @83:27
-  _148 = call avant_alloc(copy _147, const u32 0) collects   @83:27
-  _149 = call avant_alloc(const u64 16, const u32 1022) collects   @83:27
-  barrier copy _149   @83:27
-  (*_149).0 = copy _148   @83:27
-  (*_149).1 = copy _145   @83:27
-  (*_149).2 = copy _145   @83:27
-  _150 = copy _149   @83:27
-  _151 = call avant_alloc(const u64 16, const u32 13) collects   @83:27
-  barrier copy _151   @83:27
-  (*_151).0 = copy _144   @83:27
-  barrier copy _151   @83:27
-  (*_151).1 = copy _150   @83:27
-  call avant_parallel_for(copy _145, const fn av.parallel/main#par11, copy _151) collects   @83:27
-  _152 = copy _150   @83:11
-  _153 = call av.parallel/checksum(copy _152) collects   @84:22
-  _154 = add copy _132, copy _153   @84:19
-  _155 = rem copy _133, const i32 8   @84:52
-  _156 = copy (*_143).1   @84:45
-  check.bounds copy _155, copy _156   @84:45
-  _157 = copy (*_143).0   @84:45
-  _158 = copy (*_157)[copy _155]   @84:45
-  _159 = call avant_str_size(copy _158) nocollect   @84:56
-  _160 = add copy _154, copy _159   @84:38
-  _132 = copy _160   @84:11
-  _161 = add copy _133, const i32 1   @85:19
-  _133 = copy _161   @85:11
-  goto bb7   @81:3
+  _118 = cast copy _116 to u64   @76:11
+  _119 = mul copy _118, const u64 8   @76:11
+  _120 = call avant_alloc(copy _119, const u32 65535) collects   @76:11
+  _121 = const i32 0   @76:11
+  goto bb9   @76:11
 
 bb9:
-  call printf(const str.2, copy _132) nocollect   @87:3
-  _162 = call av.parallel/join_all(copy _50) collects   @88:8
-  call printf(const str.8, copy _162) nocollect   @88:3
-  _163 = copy (*_81).1   @89:13
-  check.bounds const i32 5, copy _163   @89:13
-  _164 = copy (*_81).0   @89:13
-  _165 = copy (*_164)[const i32 5].1   @89:16
-  call printf(const str.8, copy _165) nocollect   @89:3
+  call avant_gc_poll() collects   @76:11
+  _122 = lt copy _121, copy _116   @76:11
+  branch copy _122, bb10, bb11   @76:11
+
+bb10:
+  (*_120)[copy _121] = const str.0 fresh   @76:11
+  _121 = add copy _121, const i32 1   @76:11
+  goto bb9   @76:11
+
+bb11:
+  barrier copy _120   @76:11
+  _123 = call avant_alloc(const u64 16, const u32 1022) collects   @76:11
+  barrier copy _123   @76:11
+  (*_123).0 = copy _120   @76:11
+  (*_123).1 = copy _116   @76:11
+  (*_123).2 = copy _116   @76:11
+  _124 = copy _123   @76:9
+  _125 = copy _124   @77:25
+  _126 = copy (*_125).1   @77:25
+  _127 = cast copy _126 to u64   @77:25
+  _128 = mul copy _127, const u64 4   @77:25
+  _129 = call avant_alloc(copy _128, const u32 0) collects   @77:25
+  _130 = call avant_alloc(const u64 16, const u32 1022) collects   @77:25
+  barrier copy _130   @77:25
+  (*_130).0 = copy _129   @77:25
+  (*_130).1 = copy _126   @77:25
+  (*_130).2 = copy _126   @77:25
+  _131 = copy _130   @77:25
+  _132 = call avant_alloc(const u64 16, const u32 11) collects   @77:25
+  barrier copy _132   @77:25
+  (*_132).0 = copy _125   @77:25
+  barrier copy _132   @77:25
+  (*_132).1 = copy _131   @77:25
+  call avant_parallel_for(copy _126, const fn av.parallel/main#par9, copy _132) collects   @77:25
+  _133 = copy _131   @77:8
+  _134 = copy (*_133).1   @78:12
+  call printf(const str.2, copy _134) nocollect   @78:3
+  _135 = const i32 0   @79:9
+  _136 = const i32 0   @80:9
+  goto bb12   @81:3
+
+bb12:
+  call avant_gc_poll() collects   @81:15
+  _137 = lt copy _136, const i32 200   @81:15
+  branch copy _137, bb13, bb14   @81:3
+
+bb13:
+  _138 = copy _6   @82:24
+  _139 = copy (*_138).1   @82:24
+  _140 = cast copy _139 to u64   @82:24
+  _141 = mul copy _140, const u64 8   @82:24
+  _142 = call avant_alloc(copy _141, const u32 65535) collects   @82:24
+  _143 = call avant_alloc(const u64 16, const u32 1022) collects   @82:24
+  barrier copy _143   @82:24
+  (*_143).0 = copy _142   @82:24
+  (*_143).1 = copy _139   @82:24
+  (*_143).2 = copy _139   @82:24
+  _144 = copy _143   @82:24
+  _145 = call avant_alloc(const u64 24, const u32 12) collects   @82:24
+  barrier copy _145   @82:24
+  (*_145).0 = copy _138   @82:24
+  barrier copy _145   @82:24
+  (*_145).1 = copy _144   @82:24
+  (*_145).2 = copy _136   @82:24
+  call avant_parallel_for(copy _139, const fn av.parallel/main#par10, copy _145) collects   @82:24
+  _146 = copy _144   @82:10
+  _147 = copy _146   @83:27
+  _148 = copy (*_147).1   @83:27
+  _149 = cast copy _148 to u64   @83:27
+  _150 = mul copy _149, const u64 4   @83:27
+  _151 = call avant_alloc(copy _150, const u32 0) collects   @83:27
+  _152 = call avant_alloc(const u64 16, const u32 1022) collects   @83:27
+  barrier copy _152   @83:27
+  (*_152).0 = copy _151   @83:27
+  (*_152).1 = copy _148   @83:27
+  (*_152).2 = copy _148   @83:27
+  _153 = copy _152   @83:27
+  _154 = call avant_alloc(const u64 16, const u32 13) collects   @83:27
+  barrier copy _154   @83:27
+  (*_154).0 = copy _147   @83:27
+  barrier copy _154   @83:27
+  (*_154).1 = copy _153   @83:27
+  call avant_parallel_for(copy _148, const fn av.parallel/main#par11, copy _154) collects   @83:27
+  _155 = copy _153   @83:11
+  _156 = call av.parallel/checksum(copy _155) collects   @84:22
+  _157 = add copy _135, copy _156   @84:19
+  _158 = rem copy _136, const i32 8   @84:52
+  _159 = copy (*_146).1   @84:45
+  check.bounds copy _158, copy _159   @84:45
+  _160 = copy (*_146).0   @84:45
+  _161 = copy (*_160)[copy _158]   @84:45
+  _162 = call avant_str_size(copy _161) nocollect   @84:56
+  _163 = add copy _157, copy _162   @84:38
+  _135 = copy _163   @84:11
+  _164 = add copy _136, const i32 1   @85:19
+  _136 = copy _164   @85:11
+  goto bb12   @81:3
+
+bb14:
+  call printf(const str.2, copy _135) nocollect   @87:3
+  _165 = call av.parallel/join_all(copy _50) collects   @88:8
+  call avant_puts_str(copy _165) nocollect   @88:3
+  _166 = copy (*_81).1   @89:13
+  check.bounds const i32 5, copy _166   @89:13
+  _167 = copy (*_81).0   @89:13
+  _168 = copy (*_167)[const i32 5].1   @89:16
+  call avant_puts_str(copy _168) nocollect   @89:3
   _0 = const i32 0   @40:1
   gc.leave   @40:1
   return   @40:1
@@ -916,7 +943,7 @@ bb0:
   _6 = copy (*_4).0   @53:22
   _7 = copy (*_6)[copy _1]   @53:22
   _8 = copy _7   @53:22
-  _9 = call avant_str_cat_i32(const str.12, copy _8) collects   @53:28
+  _9 = call avant_str_cat_i32(const str.11, copy _8) collects   @53:28
   _10 = copy _9   @53:22
   call avant_array_set_ptr(copy _5, copy _1, copy _10) nocollect   @53:22
   gc.leave   @53:22
@@ -965,7 +992,7 @@ bb0:
   _13 = add.chk copy _11, copy _12   @62:48
   _14 = copy _10.1   @62:70
   _15 = copy _8.1   @62:82
-  _16 = call avant_str_concat(copy _14, const str.13) collects   @62:64
+  _16 = call avant_str_concat(copy _14, const str.12) collects   @62:64
   _17 = call avant_str_concat(copy _16, copy _15) collects   @62:64
   _18 = struct %parallel.Item (copy _13, copy _17)   @62:33
   _19 = copy _18   @62:26
@@ -1154,8 +1181,8 @@ bb0:
   _10 = copy _9   @82:24
   _11 = call avant_str_from_int(copy _10) collects   @82:34
   _12 = call avant_str_from_int(copy _8) collects   @82:43
-  _13 = call avant_str_concat(const str.14, copy _11) collects   @82:30
-  _14 = call avant_str_concat(copy _13, const str.13) collects   @82:30
+  _13 = call avant_str_concat(const str.13, copy _11) collects   @82:30
+  _14 = call avant_str_concat(copy _13, const str.12) collects   @82:30
   _15 = call avant_str_concat(copy _14, copy _12) collects   @82:30
   _16 = copy _15   @82:24
   call avant_array_set_ptr(copy _5, copy _1, copy _16) nocollect   @82:24

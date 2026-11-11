@@ -2,7 +2,6 @@ module slice
 file 0 "slice.av"
 
 const str.0 = "abcd"
-const str.1 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -10,8 +9,8 @@ typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_slice(ref str, i32, i32) -> ref str collects
-extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @slice.av:1:1 {
   let _0: i32
@@ -25,7 +24,7 @@ bb0:
   call __avant_type_maps() nocollect   @1:1
   call avant_io_init_argv(copy _1, copy _2) collects   @1:1
   _3 = call avant_str_slice(const str.0, const i32 1, const i32 3) collects   @2:8
-  call printf(const str.1, copy _3) nocollect   @2:3
+  call avant_puts_str(copy _3) nocollect   @2:3
   _0 = const i32 0   @1:1
   gc.leave   @1:1
   return   @1:1

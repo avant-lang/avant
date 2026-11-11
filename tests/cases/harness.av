@@ -191,20 +191,20 @@ pub class Checks {
   suites_bad: Int = 0
   suite_name: String = ""
   suite_failed_at: Int = 0
-  pub started: Int = 0
-  case_at: Int = 0
+  pub started: Int64 = 0i64
+  case_at: Int64 = 0i64
   lines: Array(String) = []
   rec_suite: Array(String) = []
   rec_name: Array(String) = []
   rec_ok: Array(Int) = []
   rec_ms: Array(Int) = []
-  rec_at: Int = 0
+  rec_at: Int64 = 0i64
 
   fn record(okv: Bool, msg: String) {
     now = now_ms()
     dur = 0
-    if self.rec_at > 0 {
-      dur = now - self.rec_at
+    if self.rec_at > 0i64 {
+      dur = (now - self.rec_at).to_i
     }
     self.rec_at = now
     self.rec_suite.push(self.suite_name)
@@ -558,7 +558,7 @@ pub fn write_av(dir: String, name: String, body: String) {
 }
 
 pub class Channel(T) {
-  slots: Array(T)
+  slots: Array(T?)
   cap: Int
   count: Int
   head: Int
@@ -570,7 +570,7 @@ pub class Channel(T) {
   fn initialize(n: Int = 0) {
     self.cap = n
     self.gate = avant_gate_new()
-    self.slots = Array(T).new(n)
+    self.slots = Array(T?).new(n)
   }
 
   pub fn send(value: T) {
@@ -623,6 +623,7 @@ pub class Channel(T) {
       }
       if count > 0 {
         got = slots[head]
+        slots[head] = nil
         self.head = (head + 1) % cap
         self.count = count - 1
         avant_gate_broadcast(gate)

@@ -10,14 +10,13 @@ layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: 
 layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i32) -> i32 }  size 16 align 8
 
 const str.0 = "short "
-const str.1 = "%s\0A"
-const str.2 = "fresh churn "
-const str.3 = " padding padding"
-const str.4 = "ab"
-const str.5 = "c"
-const str.6 = "%d\0A"
-const str.7 = "abcd"
-const str.8 = "e"
+const str.1 = "fresh churn "
+const str.2 = " padding padding"
+const str.3 = "ab"
+const str.4 = "c"
+const str.5 = "%d\0A"
+const str.6 = "abcd"
+const str.7 = "e"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -32,6 +31,7 @@ extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_pin(ref) -> void never
 extern avant_pin_count() -> i32 collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
@@ -64,7 +64,7 @@ bb1:
 
 bb2:
   _5 = call avant_str_concat(const str.0, copy _1) collects   @20:10
-  call printf(const str.1, copy _5) nocollect   @20:5
+  call avant_puts_str(copy _5) nocollect   @20:5
   call avant_unpin(copy _2) nocollect   @16:3
   _0 = const i32 0   @22:3
   gc.leave   @22:3
@@ -117,8 +117,8 @@ bb1:
   branch copy _7, bb2, bb3   @32:3
 
 bb2:
-  _8 = call avant_str_cat_i32(const str.2, copy _6) collects   @33:9
-  _9 = call avant_str_concat(copy _8, const str.3) collects   @33:28
+  _8 = call avant_str_cat_i32(const str.1, copy _6) collects   @33:9
+  _9 = call avant_str_concat(copy _8, const str.2) collects   @33:28
   _10 = copy _9   @33:7
   call avant_array_push_ptr(copy _5, copy _10, const u32 65535) collects   @34:9
   _11 = copy (*_5).1   @35:12
@@ -195,18 +195,18 @@ bb0:
   _3 = zero   @44:1
   _4 = call avant_pin_count() collects   @45:12
   _5 = copy _4   @45:8
-  _6 = call avant_str_concat(const str.4, const str.5) collects   @46:24
+  _6 = call avant_str_concat(const str.3, const str.4) collects   @46:24
   _7 = call av.fresh/first_long(copy _6) collects   @46:8
-  call printf(const str.6, copy _7) nocollect   @46:3
+  call printf(const str.5, copy _7) nocollect   @46:3
   _8 = call avant_pin_count() collects   @47:10
   _9 = sub.chk copy _8, copy _5   @47:29
-  call printf(const str.6, copy _9) nocollect   @47:3
-  _10 = call avant_str_concat(const str.7, const str.8) collects   @48:26
+  call printf(const str.5, copy _9) nocollect   @47:3
+  _10 = call avant_str_concat(const str.6, const str.7) collects   @48:26
   _11 = call av.fresh/first_long(copy _10) collects   @48:8
-  call printf(const str.6, copy _11) nocollect   @48:3
+  call printf(const str.5, copy _11) nocollect   @48:3
   _12 = call avant_pin_count() collects   @49:10
   _13 = sub.chk copy _12, copy _5   @49:29
-  call printf(const str.6, copy _13) nocollect   @49:3
+  call printf(const str.5, copy _13) nocollect   @49:3
   _3 = call avant_alloc(const u64 8, const u32 1) collects   @51:3
   _14 = call avant_alloc(const u64 0, const u32 0) collects   @51:20
   _15 = call avant_alloc(const u64 16, const u32 1022) collects   @51:20
@@ -228,16 +228,16 @@ bb0:
   call avant_pin(copy _21) nocollect   @54:3
   _22 = call avant_pin_count() collects   @55:12
   _23 = sub.chk copy _22, copy _5   @55:31
-  call printf(const str.6, copy _23) nocollect   @55:5
+  call printf(const str.5, copy _23) nocollect   @55:5
   _24 = call av.fresh/churn(const i32 20000) collects   @56:10
-  call printf(const str.6, copy _24) nocollect   @56:5
+  call printf(const str.5, copy _24) nocollect   @56:5
   _25 = copy _19   @57:10
   _26 = call indirect copy _25(const i32 41) collects   @57:10
-  call printf(const str.6, copy _26) nocollect   @57:5
+  call printf(const str.5, copy _26) nocollect   @57:5
   call avant_unpin(copy _21) nocollect   @54:3
   _27 = call avant_pin_count() collects   @59:10
   _28 = sub.chk copy _27, copy _5   @59:29
-  call printf(const str.6, copy _28) nocollect   @59:3
+  call printf(const str.5, copy _28) nocollect   @59:3
   _0 = const i32 0   @44:1
   gc.leave   @44:1
   return   @44:1

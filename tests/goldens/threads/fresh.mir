@@ -20,13 +20,11 @@ layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i32) -> i32 }  size 
 layout %fn():String = fnval { 0 env: ref, 1 code: code(ref) -> ref str }  size 16 align 8
 
 const str.0 = " "
-const str.1 = "%s\0A"
-const str.2 = "a"
-const str.3 = "bb"
-const str.4 = "ccc"
-const str.5 = "%d\0A"
-const str.6 = ""
-const str.7 = "t"
+const str.1 = "a"
+const str.2 = "bb"
+const str.3 = "ccc"
+const str.4 = ""
+const str.5 = "t"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -53,10 +51,11 @@ extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i32 collects
 extern avant_parallel_for(i32, ptr, ref) -> void collects
+extern avant_puts_bool(i32) -> void never
+extern avant_puts_str(ref str) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
-extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:33:1 {
   let _0: i32
@@ -267,11 +266,11 @@ bb0:
   _38 = call avant_str_concat(copy _37, copy _30) collects   @40:8
   _39 = call avant_str_concat(copy _38, const str.0) collects   @40:8
   _40 = call avant_str_concat(copy _39, copy _34) collects   @40:8
-  call printf(const str.1, copy _40) nocollect   @40:3
+  call avant_puts_str(copy _40) nocollect   @40:3
   _41 = call avant_alloc(const u64 24, const u32 65535) collects   @41:11
-  (*_41)[const i32 0] = const str.2 fresh   @41:12
-  (*_41)[const i32 1] = const str.3 fresh   @41:17
-  (*_41)[const i32 2] = const str.4 fresh   @41:23
+  (*_41)[const i32 0] = const str.1 fresh   @41:12
+  (*_41)[const i32 1] = const str.2 fresh   @41:17
+  (*_41)[const i32 2] = const str.3 fresh   @41:23
   barrier copy _41   @41:11
   _42 = call avant_alloc(const u64 16, const u32 1022) collects   @41:11
   barrier copy _42   @41:11
@@ -313,7 +312,7 @@ bb0:
   _63 = call avant_str_concat(copy _62, copy _58) collects   @46:8
   _64 = call avant_str_concat(copy _63, const str.0) collects   @46:8
   _65 = call avant_str_concat(copy _64, copy _61) collects   @46:8
-  call printf(const str.1, copy _65) nocollect   @46:3
+  call avant_puts_str(copy _65) nocollect   @46:3
   _66 = call av.fresh/Held.new(const i32 5) collects   @47:30
   _67 = call av.fresh/Mutex(fresh.Held).new(copy _66) collects   @47:21
   _68 = copy _67   @47:8
@@ -370,7 +369,7 @@ bb6:
 bb7:
   _87 = gt copy _77, const i32 0   @62:12
   _88 = cast copy _87 to i32   @62:3
-  call printf(const str.5, copy _88) nocollect   @62:3
+  call avant_puts_bool(copy _88) nocollect   @62:3
   _89 = copy _68   @63:18
   _90 = copy (*_89).1   @63:18
   call avant_gate_lock(copy _90) collects   @63:18
@@ -384,7 +383,7 @@ bb7:
   _98 = copy _97   @63:18
   _99 = copy (*_89).1   @63:18
   call avant_gate_unlock(copy _99) collects   @63:18
-  call printf(const str.1, copy _98) nocollect   @63:3
+  call avant_puts_str(copy _98) nocollect   @63:3
   _0 = const i32 0   @33:1
   gc.leave   @33:1
   return   @33:1
@@ -429,7 +428,7 @@ bb0:
   gc.roots _2   @14:1
   _2 = call avant_alloc(const u64 16, const u32 1) collects   @14:1
   barrier copy _2   @16:3
-  (*_2).1 = const str.6   @16:3
+  (*_2).1 = const str.4   @16:3
   call av.fresh/Held.initialize(copy _2, copy _1) collects   @14:1
   _0 = copy _2   @14:1
   gc.leave   @14:1
@@ -640,7 +639,7 @@ bb0:
   (*_10).0 = copy _9   @53:13
   _11 = copy (*_5).0   @54:20
   _12 = copy (*_11).1   @54:21
-  _13 = call avant_str_concat(copy _12, const str.7) collects   @54:17
+  _13 = call avant_str_concat(copy _12, const str.5) collects   @54:17
   _14 = copy (*_5).0   @54:9
   barrier copy _14   @54:15
   (*_14).1 = copy _13   @54:15
