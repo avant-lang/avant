@@ -216,7 +216,7 @@ class Counter {
 
 ### Generic functions
 
-An unbound name in a signature is a type parameter. The call site omits it when the arguments determine it.
+A single capital letter that names no type (`T`, `U`, `K`) in a signature is a type parameter. The call site omits it when the arguments determine it. Any other unknown name is an error, so a misspelt type is caught where it is written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``. A generic struct or class names its parameters in its declaration (`class Entry(Key, Val)`), where any fresh name is allowed.
 
 ```avant
 fn id(x: T): T {

@@ -49,6 +49,26 @@ struct Node(T) {
 struct Tag(T) {
 }
 
+// Stage 29 W3a (D298; D30 amended): a generic type's declared parameters
+// may be any names; a function's implicit ones are single capital letters.
+class Entry(Key, Val) {
+  key: Key
+  val: Val
+
+  fn initialize(key: Key, val: Val) {
+    self.key = key
+    self.val = val
+  }
+
+  fn swapped: Entry(Val, Key) {
+    Entry.new(val, key)
+  }
+}
+
+fn pick_second(a: T, b: U): U {
+  b
+}
+
 fn take(p: Pair(Int, String)): Int {
   p.a
 }
@@ -92,6 +112,9 @@ fn test_generics(c: Checks) {
   right = bump(left)
   c.eq_int(left.a, 1, "struct original")
   c.eq_int(right.a, 2, "struct copy")
+  e = Entry.new("k", 7).swapped
+  c.eq_int(e.key, 7, "named type parameters of a class")
+  c.eq_str(pick_second(1, "two"), "two", "single-letter implicit type parameters")
 }
 
 fn main: Int {
