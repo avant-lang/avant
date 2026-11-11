@@ -245,6 +245,58 @@ fn test_lang(c: Checks) {
     }
   }
   c.eq_int(miss, 0, "void switch miss")
+  test_for_typed_first(c)
+}
+
+struct Cell2 {
+  v: Int
+}
+
+// O181 (Stage 29 W3a): `for` reads its array and its range ends like a
+// while condition, so a body whose first line is a typed declaration is
+// not read as a struct literal; a literal in parentheses still is one.
+fn test_for_typed_first(c: Checks) {
+  n = 3
+  seen = 0
+  for b in 0..n {
+    row: Array(Bool) = []
+    row.push(b > 0)
+    if row[0] {
+      seen += 1
+    }
+  }
+  c.eq_int(seen, 2, "for range with a typed first line")
+  xs = [4, 5]
+  total = 0
+  for x in xs {
+    acc: Array(Int) = []
+    acc.push(x)
+    total += acc[0]
+  }
+  c.eq_int(total, 9, "for array with a typed first line")
+  m = 0
+  for i in 0..(Cell2 { v: 2 }).v {
+    m += 1
+  }
+  c.eq_int(m, 2, "parenthesized literal as a range end")
+  for cell in [Cell2 { v: 7 }] {
+    w: Int = cell.v
+    m += w
+  }
+  c.eq_int(m, 9, "literal inside an array literal")
+  for i in 0..cell_v(Cell2 { v: 2 }) {
+    k: Int = i
+    m += k
+  }
+  c.eq_int(m, 10, "literal as a call argument in a range end")
+  if cell_v(Cell2 { v: 1 }) == 1 {
+    m += 1
+  }
+  c.eq_int(m, 11, "literal as a call argument in a condition")
+}
+
+fn cell_v(cell: Cell2): Int {
+  cell.v
 }
 
 fn main: Int {
