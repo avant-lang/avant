@@ -335,11 +335,11 @@ void avant_buf_set_ident(void *buf, avant_int n) {
   b->size = (int32_t)n;
 }
 
-/* The elements of an Array(Int32), when it has at least n (the offset
- * arrays are Int32, as C's int32_t; Stage 29 W-INT1). */
-static int32_t *buf_i32s(void *arr, avant_int n) {
+/* The elements of an Array(Int) (avant_int, Stage 29 W-INT1), when it
+ * has at least n. */
+static avant_int *buf_i32s(void *arr, avant_int n) {
   typedef struct {
-    int32_t *buf;
+    avant_int *buf;
     int32_t size;
     int32_t cap;
   } I32Arr;
@@ -353,10 +353,10 @@ static int32_t *buf_i32s(void *arr, avant_int n) {
 void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras,
                             avant_int n) {
   AvantBuf *b = (AvantBuf *)buf;
-  int32_t *dst;
-  int32_t *src;
-  int32_t *ln;
-  int32_t *ex;
+  avant_int *dst;
+  avant_int *src;
+  avant_int *ln;
+  avant_int *ex;
   avant_int i;
   if (!b || n <= 0) {
     return;
@@ -410,9 +410,9 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
                            avant_int n) {
   AvantBuf *dst = (AvantBuf *)dst_buf;
   AvantBuf *src = (AvantBuf *)src_buf;
-  int32_t *doff;
-  int32_t *soff;
-  int32_t *ln;
+  avant_int *doff;
+  avant_int *soff;
+  avant_int *ln;
   avant_int i;
   if (!dst || !src || n <= 0) {
     return;

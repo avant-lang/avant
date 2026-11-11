@@ -100,14 +100,16 @@ void avant_trap_overflow(void) {
 
 /* A shift amount outside 0..width - 1 (Stage 28 W11b, C1). kind: 0 Int,
  * 1 Int64, 2 UInt64, + 8 when the amount is a UInt64 (printed unsigned). */
+/* kind: 16 + 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (+ 8 for an unsigned
+ * amount; Stage 29 W-INT1); below 16 the seed's 0 Int (32-bit), 1 Int64,
+ * 2 UInt64. */
 void avant_trap_shift(int64_t amount, int32_t kind) {
-  static const char *names[] = {"Int", "Int64", "UInt64"};
+  static const char *seed_names[] = {"Int", "Int64", "UInt64", "?"};
+  static const char *int_names[] = {"Int", "Int32", "UInt64", "UInt32"};
+  const char **names = kind >= 16 ? int_names : seed_names;
   int t = kind & 3;
   trap_head();
-  if (t > 2) {
-    t = 0;
-  }
-  int top = t == 0 ? 31 : 63;
+  int top = kind >= 16 ? ((t == 1 || t == 3) ? 31 : 63) : (t == 0 ? 31 : 63);
   if (kind & 8) {
     fprintf(stderr, "shift amount %llu out of range for %s (0..%d)", (unsigned long long)amount, names[t], top);
   } else {
@@ -130,21 +132,22 @@ void avant_trap_to_i(double x) {
 
 /* A conversion between integer types whose value the target cannot hold
  * (Stage 29 W4b1, D295 R1: the correct value or a trap). kind is
- * from * 4 + to, each 0 Int, 1 Int64, 2 UInt64; a UInt64 value arrives as
- * its bits and prints unsigned. */
+ * 16 + from * 4 + to, each 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (Stage 29
+ * W-INT1); below 16 it is the seed's from * 4 + to, each 0 Int, 1 Int64,
+ * 2 UInt64 (B's own code, until a release with the 64-bit Int is the
+ * seed). An unsigned value arrives as its bits and prints unsigned. */
 void avant_trap_convert(int64_t value, int32_t kind) {
-  static const char *names[] = {"Int", "Int64", "UInt64"};
-  static const char *methods[] = {"to_i", "to_i64", "to_u64"};
+  static const char *seed_names[] = {"Int", "Int64", "UInt64", "?"};
+  static const char *seed_methods[] = {"to_i", "to_i64", "to_u64", "?"};
+  static const char *int_names[] = {"Int", "Int32", "UInt64", "UInt32"};
+  static const char *int_methods[] = {"to_i", "to_i32", "to_u64", "to_u32"};
+  const char **names = kind >= 16 ? int_names : seed_names;
+  const char **methods = kind >= 16 ? int_methods : seed_methods;
   int from = (kind >> 2) & 3;
   int to = kind & 3;
+  int unsigned_from = kind >= 16 ? (from == 2 || from == 3) : from == 2;
   trap_head();
-  if (from > 2) {
-    from = 0;
-  }
-  if (to > 2) {
-    to = 0;
-  }
-  if (from == 2) {
+  if (unsigned_from) {
     fprintf(stderr, "%s of %s %llu out of range for %s", methods[to], names[from], (unsigned long long)value, names[to]);
   } else {
     fprintf(stderr, "%s of %s %lld out of range for %s", methods[to], names[from], (long long)value, names[to]);
@@ -190,6 +193,12 @@ void avant_trap_size(int32_t kind) {
     fprintf(stderr, "%s would exceed %d %s", what[k], AVANT_SIZE_MAX, k == AVANT_SIZE_ARRAY ? "elements" : "bytes");
   }
   trap_tail();
+}
+
+/* Array(T).new(n) past the ceiling (Stage 29 W-INT1), with its site. */
+void avant_trap_size_at(int32_t kind, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_size(kind);
 }
 
 void avant_trap_negative(avant_int n, int32_t what) {

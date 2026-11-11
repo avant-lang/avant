@@ -334,8 +334,10 @@ static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
   return 0;
 }
 
-static int32_t node_int(yyjson_val *v) {
-  return (int32_t)node_int_in(v, INT32_MIN, INT32_MAX);
+/* Json.int: an integer within Int (64-bit since Stage 29 W-INT1; Json.int64
+ * went with it, one spelling). */
+static avant_int node_int(yyjson_val *v) {
+  return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
 }
 
 static double node_f64(yyjson_val *v) {
@@ -371,14 +373,6 @@ avant_int avant_json_as_int(void *nodep) {
 
 avant_int avant_json_obj_int(void *nodep, const char *key) {
   return node_int((yyjson_val *)avant_json_get(nodep, key));
-}
-
-int64_t avant_json_as_int64(void *nodep) {
-  return node_int_in((yyjson_val *)nodep, INT64_MIN, INT64_MAX);
-}
-
-int64_t avant_json_obj_int64(void *nodep, const char *key) {
-  return node_int_in((yyjson_val *)avant_json_get(nodep, key), INT64_MIN, INT64_MAX);
 }
 
 double avant_json_as_f64(void *nodep) {

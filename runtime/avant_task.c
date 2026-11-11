@@ -17,13 +17,15 @@
  * pool thread, so a full pool deadlocks; those calls die.
  */
 
-typedef int32_t (*avant_task_fn)(void *);
-typedef void (*avant_par_fn)(int32_t, void *);
+/* A spawned block returns an Avant Int (Stage 29 W-INT1: avant_int). */
+typedef avant_int (*avant_task_fn)(void *);
+/* A .parallel thunk takes the element index as an Avant Int. */
+typedef void (*avant_par_fn)(avant_int, void *);
 
 typedef struct {
   avant_task_fn fn;
   void *arg;
-  int32_t result;
+  avant_int result;
   int done;
   pthread_cond_t done_cv;
   /* R1: roots arg (avant_gc_task_root_add) until fn has returned. */
@@ -216,8 +218,7 @@ static void *worker_main(void *p) {
  * join read freed memory and freed it again. */
 typedef struct {
   AvantTask *task;
-  int32_t result;
-  int32_t pad;
+  avant_int result;
 } AvantJoinHandle;
 
 void *avant_spawn(void *fn, void *arg) {
@@ -266,7 +267,7 @@ void *avant_spawn(void *fn, void *arg) {
 avant_int avant_join(void *handle) {
   AvantJoinHandle *hd = (AvantJoinHandle *)handle;
   AvantTask *t;
-  int32_t result;
+  avant_int result;
   if (!hd) {
     return 0;
   }

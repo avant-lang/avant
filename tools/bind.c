@@ -127,10 +127,12 @@ static const char *scalar_name(CXType t) {
     return is_unsigned ? "UInt8" : "Int8";
   case 2:
     return is_unsigned ? "UInt16" : "Int16";
+  /* C's int is Int32 and a 64-bit integer is Int (Stage 29 W-INT1, D314:
+   * Int is 64-bit). */
   case 4:
-    return is_unsigned ? "UInt32" : "Int";
+    return is_unsigned ? "UInt32" : "Int32";
   case 8:
-    return is_unsigned ? "UInt64" : "Int64";
+    return is_unsigned ? "UInt64" : "Int";
   default:
     return NULL;
   }

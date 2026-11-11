@@ -543,7 +543,7 @@ pub class MVerifier {
     }
     if st.kind == msk_check_bounds() {
       t1 = self.op_ty(st.args[1], b, j, st.loc)
-      if t1 >= 0 && (t0 != mt_i32() || t1 != mt_i32()) {
+      if t1 >= 0 && (t0 != t1 || (t0 != mt_i32() && t0 != mt_i64())) {
         self.err(6, b, j, st.loc, "check.bounds of ${self.tx(t0)} and ${self.tx(t1)}")
       }
       return
@@ -651,7 +651,7 @@ pub class MVerifier {
           if !self.ts.compat(t, s.params[k + env], false) {
             self.err(7, b, j, loc, "argument ${k + 1} is ${self.tx(t)}, the callee takes ${self.tx(s.params[k + env])}")
           }
-        } else if !(t == mt_i32() || t == mt_i64() || t == mt_u64() || t == mt_f64() || self.ts.is_refkind(t) || self.ts.is_ptr(t)) {
+        } else if !(t == mt_i32() || t == mt_u32() || t == mt_i64() || t == mt_u64() || t == mt_f64() || self.ts.is_refkind(t) || self.ts.is_ptr(t)) {
           self.err(7, b, j, loc, "variadic argument ${k + 1} of type ${self.tx(t)}")
         }
       }

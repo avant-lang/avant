@@ -27,6 +27,10 @@ pub fn tyk_clayout: Int { 20 }
 pub fn tyk_fn: Int { 21 }
 pub fn tyk_iface: Int { 22 }
 pub fn tyk_bytes: Int { 23 }
+// Stage 29 W-INT1 (D314): `Int` is 64-bit; Int32 and UInt32 are everyday
+// value types (dense storage, C's int). `Int64` names `Int` (ty_int64).
+pub fn tyk_int32: Int { 24 }
+pub fn tyk_uint32: Int { 25 }
 
 pub class TyField {
   pub name: String = ""
@@ -87,6 +91,8 @@ pub class Ty {
   pub fn is_int: Bool { self.kind == tyk_int() }
   pub fn is_int64: Bool { self.kind == tyk_int64() }
   pub fn is_uint64: Bool { self.kind == tyk_uint64() }
+  pub fn is_int32: Bool { self.kind == tyk_int32() }
+  pub fn is_uint32: Bool { self.kind == tyk_uint32() }
   pub fn is_integer: Bool {
     if self.is_int {
       return true
@@ -94,7 +100,24 @@ pub class Ty {
     if self.is_int64 {
       return true
     }
+    if self.is_int32 || self.is_uint32 {
+      return true
+    }
     self.is_uint64
+  }
+  // An unsigned integer type (UInt64, UInt32).
+  pub fn is_unsigned: Bool {
+    self.is_uint64 || self.is_uint32
+  }
+  // The width of an integer type in bits (Int is 64), else 0.
+  pub fn int_width: Int {
+    if self.is_int32 || self.is_uint32 {
+      return 32
+    }
+    if self.is_integer {
+      return 64
+    }
+    0
   }
   pub fn is_bool: Bool { self.kind == tyk_bool() }
   pub fn is_float: Bool { self.kind == tyk_float() }
@@ -160,6 +183,9 @@ pub class Ty {
       return true
     }
     if k == tyk_uint64() {
+      return true
+    }
+    if k == tyk_int32() || k == tyk_uint32() {
       return true
     }
     if k == tyk_bool() {
@@ -377,6 +403,12 @@ pub class Ty {
     if k == tyk_uint64() {
       return "UInt64"
     }
+    if k == tyk_int32() {
+      return "Int32"
+    }
+    if k == tyk_uint32() {
+      return "UInt32"
+    }
     if k == tyk_bool() {
       return "Bool"
     }
@@ -502,8 +534,9 @@ pub class Ty {
 
 // The C scalar types (D64 as amended, Stage 29 W1b): the C width and
 // signedness of a `fun` parameter or result or a C layout's field, seen in
-// Avant as their view type: Int8, Int16, UInt8 and UInt16 as Int, UInt32
-// as Int64, Float32 as Float64. From C a value converts exactly; to C an
+// Avant as their view type: Int8, Int16, UInt8 and UInt16 as Int, Float32
+// as Float64. UInt32 (5) and Int32 are everyday types since Stage 29
+// W-INT1 (D314): cs_uint32 stays only as a range kind (avant_trap_c_range). From C a value converts exactly; to C an
 // integer outside the C type's range traps (D215), and a Float64 rounds to
 // the nearest Float32.
 pub fn cs_int8: Int { 1 }
@@ -524,7 +557,7 @@ pub fn c_scalar_name(k: Int): String {
 pub fn c_scalar_of(name: String): Int {
   k = 1
   while k <= 6 {
-    if c_scalar_name(k) == name {
+    if k != cs_uint32() && c_scalar_name(k) == name {
       return k
     }
     k += 1
@@ -533,10 +566,11 @@ pub fn c_scalar_of(name: String): Int {
 }
 
 pub fn ty_c_scalar(k: Int): Ty {
-  kind = tyk_int()
   if k == cs_uint32() {
-    kind = tyk_int64()
-  } else if k == cs_float32() {
+    return Ty.new(tyk_uint32())
+  }
+  kind = tyk_int()
+  if k == cs_float32() {
     kind = tyk_float()
   }
   t = Ty.new(kind)
@@ -554,8 +588,35 @@ pub fn ty_c_view(t: Ty): Ty {
   Ty.new(t.kind)
 }
 
+// The integer conversions (D295, D312; Stage 29 W-INT1, D314): to_i,
+// to_i32, to_u64 and to_u32 keep the value or trap; wrap_i, wrap_i32,
+// wrap_u64 and wrap_u32 take the two's-complement bits at the target's
+// width (truncating, or extending by the source's sign). to_i64 and
+// wrap_i64 name to_i and wrap_i (Int64 is Int), for the compiler's own
+// source until the next release is the seed. The result type, or nil.
+pub fn int_conversion_ty(name: String): Ty? {
+  if name == "to_i" || name == "to_i64" || name == "wrap_i" || name == "wrap_i64" {
+    return Ty.new(tyk_int())
+  }
+  if name == "to_i32" || name == "wrap_i32" {
+    return Ty.new(tyk_int32())
+  }
+  if name == "to_u64" || name == "wrap_u64" {
+    return Ty.new(tyk_uint64())
+  }
+  if name == "to_u32" || name == "wrap_u32" {
+    return Ty.new(tyk_uint32())
+  }
+  nil
+}
+
 pub fn ty_int: Ty { Ty.new(tyk_int()) }
-pub fn ty_int64: Ty { Ty.new(tyk_int64()) }
+// `Int64` is another name of `Int` (Stage 29 W-INT1, D314: one 64-bit
+// integer; the compiler's own source, which the 32-bit seed also builds,
+// still spells it).
+pub fn ty_int64: Ty { Ty.new(tyk_int()) }
+pub fn ty_int32: Ty { Ty.new(tyk_int32()) }
+pub fn ty_uint32: Ty { Ty.new(tyk_uint32()) }
 pub fn ty_uint64: Ty { Ty.new(tyk_uint64()) }
 pub fn ty_bool: Ty { Ty.new(tyk_bool()) }
 pub fn ty_float: Ty { Ty.new(tyk_float()) }
@@ -613,6 +674,12 @@ pub fn mangle_ty(ty: Ty): String {
   }
   if k == tyk_uint64() {
     return "UInt64"
+  }
+  if k == tyk_int32() {
+    return "Int32"
+  }
+  if k == tyk_uint32() {
+    return "UInt32"
   }
   if k == tyk_bool() {
     return "Bool"
@@ -1050,6 +1117,9 @@ pub fn type_is_builtin(name: String): Bool {
   if name == "UInt64" {
     return true
   }
+  if name == "Int32" || name == "UInt32" {
+    return true
+  }
   if name == "Bool" {
     return true
   }
@@ -1085,7 +1155,7 @@ pub fn type_is_builtin(name: String): Bool {
 
 // Whether a value of type t has a natural zero (D292).
 pub fn ty_has_zero(t: Ty): Bool {
-  if t.is_int || t.is_int64 || t.is_uint64 || t.is_float || t.is_bool || t.is_string {
+  if t.is_integer || t.is_float || t.is_bool || t.is_string {
     return true
   }
   if t.is_union {

@@ -376,7 +376,7 @@ pub class Checker {
   pub fn t_bytes: Ty { self.resolver.t_bytes }
 
   pub fn is_ordered_ty(ty: Ty): Bool {
-    if ty.is_int {
+    if ty.is_integer {
       return true
     }
     if ty.is_int64 {
@@ -398,7 +398,7 @@ pub class Checker {
   }
 
   pub fn is_numeric_ty(ty: Ty): Bool {
-    if ty.is_int {
+    if ty.is_integer {
       return true
     }
     if ty.is_int64 {
@@ -833,7 +833,14 @@ pub class Checker {
             return
           }
         }
-        got = self.check_expr(expr)
+        got = self.t_int()
+        if at_tail && !expected.is_void && self.is_int_literal(expr) {
+          // A literal tail adopts the result type, as `return 0` does
+          // (Stage 29 W-INT1: an Int32 function may end in `0`).
+          got = self.check_expr_as(expr, expected)
+        } else {
+          got = self.check_expr(expr)
+        }
         if !self.has_err && (!at_tail || expected.is_void) {
           self.refuse_dropped_error(got, stmt.loc)
         }
@@ -1233,10 +1240,10 @@ pub class Checker {
       return self.check_call(expr, has_want, want)
     }
     if k == ex_unary() {
-      return self.check_unary(expr)
+      return self.check_unary(expr, has_want, want)
     }
     if k == ex_binary() {
-      return self.check_binary(expr)
+      return self.check_binary(expr, has_want, want)
     }
     if k == ex_switch() {
       return self.check_switch(expr, has_want, want)
@@ -1465,22 +1472,14 @@ pub class Checker {
     }
     if expr.ident == "abs" {
       expr.method_call = true
-      if object.is_uint64 {
-        self.fail(expr.loc, "abs of a UInt64 is the value itself")
+      if object.is_unsigned {
+        self.fail(expr.loc, "abs of a ${object.show} is the value itself")
       }
       return object
     }
-    if expr.ident == "to_i" {
+    if rt = int_conversion_ty(expr.ident) {
       expr.method_call = true
-      return self.t_int()
-    }
-    if expr.ident == "to_i64" {
-      expr.method_call = true
-      return self.t_int64()
-    }
-    if expr.ident == "to_u64" {
-      expr.method_call = true
-      return self.t_uint64()
+      return rt
     }
     self.field_as_call(expr, object)
   }
@@ -2441,34 +2440,106 @@ pub class Checker {
     self.t_int()
   }
 
-  pub fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
-    if has_want && want.is_float {
-      return self.t_float()
-    }
+  // An integer literal's type (Stage 29 W-INT1, D314): its suffix (u64;
+  // i64 names Int), else the integer type the context wants (UInt64,
+  // Int32, UInt32), else Int, a 64-bit integer.
+  pub fn literal_int_ty(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.int_suffix == "u64" {
       return self.t_uint64()
     }
     if expr.int_suffix == "i64" {
-      return self.t_int64()
+      return self.t_int()
     }
     if has_want {
       if want.is_uint64 {
         return self.t_uint64()
       }
-      if want.is_int64 {
-        return self.t_int64()
+      if want.is_int32 {
+        return ty_int32()
+      }
+      if want.is_uint32 {
+        return ty_uint32()
       }
     }
-    max = 2147483647u64
-    if expr.int_bits <= max {
-      return self.t_int()
-    }
-    self.fail(expr.loc, "integer literal does not fit in Int; use ${expr.int_bits}i64 or ${expr.int_bits}u64")
     self.t_int()
   }
 
-  pub fn check_unary(expr: Expr): Ty {
+  // The largest magnitude a literal of ty may have (a negated one may
+  // reach the minimum, max + 1).
+  pub fn literal_int_max(ty: Ty): UInt64 {
+    if ty.is_uint64 {
+      return 18446744073709551615u64
+    }
+    if ty.is_int32 {
+      return 2147483647u64
+    }
+    if ty.is_uint32 {
+      return 4294967295u64
+    }
+    9223372036854775807u64
+  }
+
+  pub fn check_integer(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if has_want && want.is_float {
+      return self.t_float()
+    }
+    ty = self.literal_int_ty(expr, has_want, want)
+    if expr.int_bits <= self.literal_int_max(ty) {
+      return ty
+    }
+    if ty.is_int {
+      self.fail(expr.loc, "integer literal does not fit in Int; use ${expr.int_bits}u64")
+    } else {
+      self.fail(expr.loc, "integer literal does not fit in ${ty.show}")
+    }
+    ty
+  }
+
+  // A negated integer literal (Stage 29 W-INT1): typed like the literal,
+  // and its magnitude may be the minimum's (-2147483648 as Int32,
+  // -9223372036854775808 as Int); an unsigned type has no negative
+  // literal.
+  pub fn check_negated_literal(expr: Expr, lit: Expr, has_want: Bool, want: Ty): Ty {
+    if has_want && want.is_float {
+      lit.ty = self.t_float()
+      return self.t_float()
+    }
+    ty = self.literal_int_ty(lit, has_want, want)
+    if ty.is_unsigned {
+      if lit.int_suffix.size == 0 {
+        ty = self.t_int()
+      } else {
+        self.fail(expr.loc, "a negative literal does not fit in ${ty.show}")
+        lit.ty = ty
+        return ty
+      }
+    }
+    if lit.int_bits > self.literal_int_max(ty) + 1u64 {
+      self.fail(expr.loc, "integer literal does not fit in ${ty.show}")
+    }
+    lit.ty = ty
+    ty
+  }
+
+  // An integer literal, or a negated one: its type adopts the other
+  // operand's (D315).
+  pub fn is_int_literal(e: Expr): Bool {
+    if e.kind == ex_int() {
+      return true
+    }
+    if e.kind == ex_unary() && e.op == tk_minus() {
+      if inner = e.inner {
+        return inner.kind == ex_int()
+      }
+    }
+    false
+  }
+
+  pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
     if inner = expr.inner {
+      if expr.op == tk_minus() && inner.kind == ex_int() {
+        return self.check_negated_literal(expr, inner, has_want, want)
+      }
       got = self.check_expr(inner)
       if expr.op == tk_minus() {
         if got.is_numeric {
@@ -2513,6 +2584,18 @@ pub class Checker {
     op == tk_greater_greater()
   }
 
+  // + - * / % & | ^ and the wrapping operators: their result is their
+  // operands' type.
+  pub fn arith_op(op: Int): Bool {
+    if op == tk_plus() || op == tk_minus() || op == tk_star() || op == tk_slash() || op == tk_percent() {
+      return true
+    }
+    if op == tk_amp() || op == tk_pipe() || op == tk_caret() {
+      return true
+    }
+    op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star()
+  }
+
   pub fn shift_op(op: Int): Bool {
     if op == tk_less_less() {
       return true
@@ -2537,9 +2620,9 @@ pub class Checker {
     if lit.kind != ex_int() {
       return
     }
-    top = 31u64
-    if left.is_int64 || left.is_uint64 {
-      top = 63u64
+    top = 63u64
+    if left.is_int32 || left.is_uint32 {
+      top = 31u64
     }
     if neg {
       if lit.int_bits != 0u64 {
@@ -2622,7 +2705,7 @@ pub class Checker {
     self.t_float()
   }
 
-  pub fn check_binary(expr: Expr): Ty {
+  pub fn check_binary(expr: Expr, has_want: Bool, want: Ty): Ty {
     if l = expr.left {
       if r = expr.right {
         op = expr.op
@@ -2655,7 +2738,28 @@ pub class Checker {
           self.fail(expr.loc, "|| expects Bool operands")
           return self.t_bool()
         }
-        left = self.check_expr(l)
+        // D315 (Stage 29 W-INT1): an integer literal on the left adopts
+        // the right operand's integer type, as one on the right adopts
+        // the left's (`1 + x` types as `x + 1`).
+        left_lit = self.is_int_literal(l) && !self.is_int_literal(r)
+        if left_lit {
+          rfirst = self.check_expr(r)
+          if rfirst.is_integer || rfirst.is_float {
+            left = self.check_expr_as(l, rfirst)
+            right = rfirst
+            return self.binary_typed(expr, l, r, op, left, right)
+          }
+          left = self.check_expr(l)
+          return self.binary_typed(expr, l, r, op, left, rfirst)
+        }
+        // Two literals take the integer type the context wants (`x:
+        // Int32 = 46340 * 46340`), as one literal does.
+        left = self.t_int()
+        if has_want && want.is_integer && self.is_int_literal(l) && self.is_int_literal(r) && self.arith_op(op) {
+          left = self.check_expr_as(l, want)
+        } else {
+          left = self.check_expr(l)
+        }
         opname = binary_op_method_name(op)
         if opname.size > 0 && left.is_agg {
           has_op = false
@@ -2678,7 +2782,7 @@ pub class Checker {
         }
         right_has = false
         right_want = self.t_int()
-        if left.is_integer {
+        if left.is_integer && !self.shift_op(op) {
           right_has = true
           right_want = left
         } else if left.is_float {
@@ -2692,138 +2796,144 @@ pub class Checker {
           right_want = left
         }
         right = self.check_expr_flag(r, right_has, right_want)
-        if left.is_fn {
-          if op == tk_eq_eq() {
-            self.fail(expr.loc, "cannot compare fn values")
-            return self.t_bool()
-          }
-          if op == tk_not_eq() {
-            self.fail(expr.loc, "cannot compare fn values")
-            return self.t_bool()
-          }
-        }
-        if right.is_fn {
-          if op == tk_eq_eq() {
-            self.fail(expr.loc, "cannot compare fn values")
-            return self.t_bool()
-          }
-          if op == tk_not_eq() {
-            self.fail(expr.loc, "cannot compare fn values")
-            return self.t_bool()
-          }
-        }
-        if left.is_bool && right.is_bool {
-          if op == tk_eq_eq() {
-            return self.t_bool()
-          }
-          if op == tk_not_eq() {
-            return self.t_bool()
-          }
-          self.fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
-          return self.t_bool()
-        }
-        if left.is_string && right.is_string {
-          if op == tk_plus() {
-            return self.t_string()
-          }
-          if op == tk_eq_eq() {
-            return self.t_bool()
-          }
-          if op == tk_not_eq() {
-            return self.t_bool()
-          }
-          self.fail(expr.loc, "unsupported operator on String")
-          return self.t_string()
-        }
-        if left.is_bytes && right.is_bytes {
-          if op == tk_eq_eq() {
-            return self.t_bool()
-          }
-          if op == tk_not_eq() {
-            return self.t_bool()
-          }
-          self.fail(expr.loc, "unsupported operator on Bytes")
-          return self.t_bool()
-        }
-        if op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star() {
-          if left.is_integer && right.same_as(left) {
-            return left
-          }
-          self.fail(expr.loc, "wrapping operator expects matching integer operands")
-          return left
-        }
-        if op == tk_percent() {
-          if left.is_integer && right.same_as(left) {
-            if self.divisor_proven(r) {
-              expr.proven = true
-            }
-            return left
-          }
-          self.fail(expr.loc, "% expects matching integer operands")
-          return left
-        }
-        if self.bitwise_op(op) {
-          if self.shift_op(op) {
-            if left.is_integer {
-              self.check_shift_amount(r, left, expr.loc)
-            }
-            if left.is_uint64 && right.is_int {
-              return left
-            }
-            if left.is_int64 && right.is_int {
-              return left
-            }
-          }
-          if left.is_integer && right.same_as(left) {
-            return left
-          }
-          self.fail(expr.loc, "bitwise operator expects matching integer operands")
-          return left
-        }
-        if left.is_integer && right.is_integer {
-          if left.same_as(right) {
-            if op == tk_plus() {
-              if l.kind == ex_name() && r.kind == ex_int() {
-                s = self.fact_any_slack(l.ident)
-                if s >= 0 && r.int_bits <= s.to_u64 + 1u64 {
-                  expr.proven = true
-                }
-              }
-              if r.kind == ex_name() && l.kind == ex_int() {
-                s = self.fact_any_slack(r.ident)
-                if s >= 0 && l.int_bits <= s.to_u64 + 1u64 {
-                  expr.proven = true
-                }
-              }
-            }
-            if op == tk_minus() && l.kind == ex_name() && r.kind == ex_int() && (self.fact_any_slack(l.ident) >= 0 || self.nn_has(l.ident)) {
-              expr.proven = true
-            }
-            if (op == tk_plus() || op == tk_star() || op == tk_minus()) && self.arith_proven(op, l, r, left) {
-              expr.proven = true
-            }
-            if op == tk_slash() && self.divisor_proven(r) {
-              expr.proven = true
-            }
-            return self.int_binary(op, left)
-          }
-          self.fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}")
-          return left
-        }
-        if left.is_numeric && right.is_numeric {
-          if !left.is_float {
-            l.ty = self.t_float()
-          }
-          if !right.is_float {
-            r.ty = self.t_float()
-          }
-          return self.float_binary(op, expr.loc)
-        }
-        self.fail(expr.loc, "binary operator expects numeric operands, got ${left.show} and ${right.show}")
-        return self.t_int()
+        return self.binary_typed(expr, l, r, op, left, right)
       }
     }
     self.t_int()
+  }
+
+  // The typing of a binary operator once both operands are typed (the
+  // part of check_binary after the operands; Stage 29 W-INT1 split it so
+  // a literal on the left can adopt the right's type first).
+  pub fn binary_typed(expr: Expr, l: Expr, r: Expr, op: Int, left: Ty, right: Ty): Ty {
+    if left.is_fn {
+      if op == tk_eq_eq() {
+        self.fail(expr.loc, "cannot compare fn values")
+        return self.t_bool()
+      }
+      if op == tk_not_eq() {
+        self.fail(expr.loc, "cannot compare fn values")
+        return self.t_bool()
+      }
+    }
+    if right.is_fn {
+      if op == tk_eq_eq() {
+        self.fail(expr.loc, "cannot compare fn values")
+        return self.t_bool()
+      }
+      if op == tk_not_eq() {
+        self.fail(expr.loc, "cannot compare fn values")
+        return self.t_bool()
+      }
+    }
+    if left.is_bool && right.is_bool {
+      if op == tk_eq_eq() {
+        return self.t_bool()
+      }
+      if op == tk_not_eq() {
+        return self.t_bool()
+      }
+      self.fail(expr.loc, "unsupported operator on Bool (== and != compare Bools; &&, || and ! combine them)")
+      return self.t_bool()
+    }
+    if left.is_string && right.is_string {
+      if op == tk_plus() {
+        return self.t_string()
+      }
+      if op == tk_eq_eq() {
+        return self.t_bool()
+      }
+      if op == tk_not_eq() {
+        return self.t_bool()
+      }
+      self.fail(expr.loc, "unsupported operator on String")
+      return self.t_string()
+    }
+    if left.is_bytes && right.is_bytes {
+      if op == tk_eq_eq() {
+        return self.t_bool()
+      }
+      if op == tk_not_eq() {
+        return self.t_bool()
+      }
+      self.fail(expr.loc, "unsupported operator on Bytes")
+      return self.t_bool()
+    }
+    if op == tk_amp_plus() || op == tk_amp_minus() || op == tk_amp_star() {
+      if left.is_integer && right.same_as(left) {
+        return left
+      }
+      self.fail(expr.loc, "wrapping operator expects matching integer operands")
+      return left
+    }
+    if op == tk_percent() {
+      if left.is_integer && right.same_as(left) {
+        if self.divisor_proven(r) {
+          expr.proven = true
+        }
+        return left
+      }
+      self.fail(expr.loc, "% expects matching integer operands")
+      return left
+    }
+    if self.bitwise_op(op) {
+      if self.shift_op(op) {
+        if left.is_integer {
+          self.check_shift_amount(r, left, expr.loc)
+        }
+        // The amount may be an Int whatever the shifted type (Stage
+        // 29 W-INT1: UInt64, Int32 and UInt32 values shift by an Int).
+        if left.is_integer && right.is_int {
+          return left
+        }
+      }
+      if left.is_integer && right.same_as(left) {
+        return left
+      }
+      self.fail(expr.loc, "bitwise operator expects matching integer operands")
+      return left
+    }
+    if left.is_integer && right.is_integer {
+      if left.same_as(right) {
+        if op == tk_plus() {
+          if l.kind == ex_name() && r.kind == ex_int() {
+            s = self.fact_any_slack(l.ident)
+            if s >= 0 && r.int_bits <= s.to_u64 + 1u64 {
+              expr.proven = true
+            }
+          }
+          if r.kind == ex_name() && l.kind == ex_int() {
+            s = self.fact_any_slack(r.ident)
+            if s >= 0 && l.int_bits <= s.to_u64 + 1u64 {
+              expr.proven = true
+            }
+          }
+        }
+        if op == tk_minus() && l.kind == ex_name() && r.kind == ex_int() && (self.fact_any_slack(l.ident) >= 0 || self.nn_has(l.ident)) {
+          expr.proven = true
+        }
+        if (op == tk_plus() || op == tk_star() || op == tk_minus()) && self.arith_proven(op, l, r, left) {
+          expr.proven = true
+        }
+        if op == tk_slash() && self.divisor_proven(r) {
+          expr.proven = true
+        }
+        return self.int_binary(op, left)
+      }
+      self.fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}")
+      return left
+    }
+    if left.is_numeric && right.is_numeric {
+      if !left.is_float {
+        l.ty = self.t_float()
+      }
+      if !right.is_float {
+        r.ty = self.t_float()
+      }
+      return self.float_binary(op, expr.loc)
+    }
+    self.fail(expr.loc, "binary operator expects numeric operands, got ${left.show} and ${right.show}")
+    return self.t_int()
   }
 
   pub fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {

@@ -33,7 +33,7 @@
  * numbers, element widths named in an entry, `found` out-parameters)
  * keep their exact C types. */
 #ifndef AVANT_INT_BITS
-#define AVANT_INT_BITS 32
+#define AVANT_INT_BITS 64
 #endif
 #if AVANT_INT_BITS == 32
 typedef int32_t avant_int;
@@ -383,10 +383,12 @@ void avant_array_set_ptr(void *arr, avant_int i, void *elem);
 void *avant_array_get_ptr(void *arr, avant_int i);
 void *avant_array_pop_ptr(void *arr);
 void avant_array_push_i32(void *arr, int32_t v);
+void avant_array_push_i64(void *arr, int64_t v);
 void avant_array_clear(void *arr);
 void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t buf_type_id);
 void *avant_array_pop_slot(void *arr, uint64_t elem_size);
 void avant_array_sort_i32(void *arr);
+void avant_array_sort_u32(void *arr);
 void avant_array_sort_i64(void *arr);
 void avant_array_sort_u64(void *arr);
 void avant_array_sort_f64(void *arr);
@@ -409,6 +411,9 @@ avant_int avant_array_index_f64(void *arr, double v);
 avant_int avant_array_index_str(void *arr, const char *v);
 avant_int avant_array_index_ptr(void *arr, void *v);
 int32_t avant_array_min_i32(void *arr, int32_t *found);
+uint32_t avant_array_min_u32(void *arr, int32_t *found);
+uint32_t avant_array_max_u32(void *arr, int32_t *found);
+uint32_t avant_array_sum_u32(void *arr);
 int64_t avant_array_min_i64(void *arr, int32_t *found);
 uint64_t avant_array_min_u64(void *arr, int32_t *found);
 double avant_array_min_f64(void *arr, int32_t *found);
@@ -423,6 +428,7 @@ int64_t avant_array_sum_i64(void *arr);
 uint64_t avant_array_sum_u64(void *arr);
 double avant_array_sum_f64(void *arr);
 void avant_array_fill_i32(void *arr, int32_t v);
+void avant_array_fill_i64(void *arr, int64_t v);
 void avant_array_fill_u8(void *arr, int32_t v);
 /* Burrows–Wheeler of an Int buffer of bytes. Scratch: sa, rank, tmp
  * (each size >= n) and count (size > every rank, so size >= n).
@@ -477,6 +483,7 @@ __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int3
 #define AVANT_SIZE_ARRAY 2
 #define AVANT_SIZE_HASH 3
 __attribute__((noreturn, cold)) void avant_trap_size(int32_t kind);
+__attribute__((noreturn, cold)) void avant_trap_size_at(int32_t kind, int32_t site);
 /* An Avant Int the runtime passes on to a C int (an HTTP status, an errno,
  * a signal number): the value, or a trap naming the C type (Stage 29
  * W-INT1; D215, the correct value or a trap). Free in the seed-ABI copy. */

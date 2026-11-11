@@ -1280,7 +1280,8 @@ pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int64 {
       return 2147483647i64
     }
     if checker_self.is_sqrt_toi(e) && checker_self.sqrt_src_nonneg(e) {
-      return 46340i64
+      // isqrt of a non-negative Int (64-bit since Stage 29 W-INT1).
+      return 3037000499i64
     }
     return 0i64 - 1i64
   }
@@ -1431,36 +1432,30 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
   }
 }
 
+// The largest value of ty a cap test allows (Stage 29 W-INT1: Int is
+// 64-bit; the caps are non-negative Int64 bounds).
+pub fn (checker_self: Checker) cap_max(ty: Ty): Int64 {
+  if ty.is_int32 {
+    return 2147483647i64
+  }
+  if ty.is_uint32 {
+    return 4294967295i64
+  }
+  9223372036854775807i64
+}
+
 pub fn (checker_self: Checker) cap_sum_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
-  if ty.is_int {
-    if cl > 2147483647i64 - cr {
-      return false
-    }
-    return true
-  }
-  if cl > 2147483647i64 {
-    return false
-  }
-  if cr > 2147483647i64 {
+  if cl > checker_self.cap_max(ty) - cr {
     return false
   }
   true
 }
 
 pub fn (checker_self: Checker) cap_prod_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
-  if ty.is_int {
-    if cl == 0i64 || cr == 0i64 {
-      return true
-    }
-    if cl > 2147483647i64 / cr {
-      return false
-    }
+  if cl == 0i64 || cr == 0i64 {
     return true
   }
-  if cl > 2147483647i64 {
-    return false
-  }
-  if cr > 2147483647i64 {
+  if cl > checker_self.cap_max(ty) / cr {
     return false
   }
   true
@@ -1477,7 +1472,7 @@ pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int64, cr: Int64, ty
     return checker_self.cap_prod_ok(cl, cr, ty)
   }
   if op == tk_minus() {
-    if ty.is_uint64 {
+    if ty.is_unsigned {
       return false
     }
     if cl > 2147483647i64 {
