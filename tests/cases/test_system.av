@@ -11,6 +11,7 @@ import backends
 //   - file_read, file_write and dir_list give their result or an IoError; process_run and process_run_out the exit status or a ProcessError, with PATH lookup (R12)
 //   - main's (or run's) Int result outside 0..255 traps; inside it is the exit status (R14)
 //   - a C function declared : String that returns NULL traps naming it; String? reads NULL as nil (R15)
+//   - every trap the compiler raises names its site (file:line:col), flushes stdout first, names its operation and type, and exits 1 (R16)
 
 class SCase {
   pub tag: String = ""
@@ -89,6 +90,28 @@ fn cnull_cases: Array(SCase) {
   xs
 }
 
+fn trap_cases: Array(SCase) {
+  xs: Array(SCase) = []
+  xs.push(trapped("trap-index", "fn main {\n  puts(\"a\")\n  xs = [1]\n  i = argv().size + 4\n  puts(xs[i])\n}\n", "a\n", "avant runtime: index 5 out of bounds (size 1) at sys-trap-index.av:5:10"))
+  xs.push(trapped("trap-str-index", "fn main {\n  s = \"ab\"\n  i = argv().size + 6\n  puts(s[i])\n}\n", "", "avant runtime: index 7 out of bounds (size 2) at sys-trap-str-index.av:4:9"))
+  xs.push(trapped("trap-add", "fn main {\n  a = 2147483647\n  b = argv().size\n  puts(a + b)\n}\n", "", "avant runtime: integer overflow in Int + at sys-trap-add.av:4:10"))
+  xs.push(trapped("trap-sub", "fn main {\n  a = -2147483647\n  b = argv().size + 1\n  puts(a - b)\n}\n", "", "avant runtime: integer overflow in Int - at sys-trap-sub.av:4:10"))
+  xs.push(trapped("trap-mul64", "fn main {\n  a: Int64 = 9223372036854775807i64\n  b = argv().size.to_i64 + 1i64\n  puts(a * b)\n}\n", "", "avant runtime: integer overflow in Int64 * at sys-trap-mul64.av:4:10"))
+  xs.push(trapped("trap-u64-sub", "fn main {\n  a: UInt64 = 0u64\n  b = argv().size.to_u64 + 1u64\n  puts(a - b)\n}\n", "", "avant runtime: integer overflow in UInt64 - at sys-trap-u64-sub.av:4:10"))
+  xs.push(trapped("trap-neg", "fn main {\n  a = -2147483647 - argv().size\n  puts(-a)\n}\n", "", "avant runtime: integer overflow in Int -x at sys-trap-neg.av:3:8"))
+  xs.push(trapped("trap-div0", "fn main {\n  a = 7\n  b = argv().size - 1\n  puts(a / b)\n}\n", "", "avant runtime: division by zero in Int / at sys-trap-div0.av:4:10"))
+  xs.push(trapped("trap-rem0", "fn main {\n  a = 7\n  b = argv().size - 1\n  puts(a % b)\n}\n", "", "avant runtime: division by zero in Int % at sys-trap-rem0.av:4:10"))
+  xs.push(trapped("trap-div-min", "fn main {\n  a = -2147483647 - argv().size\n  b = 0 - argv().size\n  puts(a / b)\n}\n", "", "avant runtime: integer overflow in Int / at sys-trap-div-min.av:4:10"))
+  xs.push(trapped("trap-pop", "fn main {\n  xs: Array(Int) = []\n  puts(\"p\")\n  puts(xs.pop)\n}\n", "p\n", "avant runtime: pop on an empty Array at sys-trap-pop.av:4:10"))
+  xs.push(trapped("trap-convert", "fn main {\n  big: Int64 = 5000000000i64 + argv().size.to_i64\n  puts(big.to_i)\n}\n", "", "avant runtime: to_i of Int64 5000000001 out of range for Int at sys-trap-convert.av:3:11"))
+  xs.push(trapped("trap-byte", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  b[0] = 299 + argv().size\n}\n", "", "avant runtime: byte 300 out of range (0..255) at sys-trap-byte.av:4:8"))
+  xs.push(trapped("trap-shift", "fn main {\n  n = 31 + argv().size\n  puts(1 << n)\n}\n", "", "avant runtime: shift amount 32 out of range for Int (0..31) at sys-trap-shift.av:3:10"))
+  xs.push(trapped("trap-f2i", "fn main {\n  x = 1e300 * argv().size.to_f\n  puts(x.to_i)\n}\n", "", "avant runtime: to_i of Float64 1e300 out of range for Int at sys-trap-f2i.av:3:9"))
+  xs.push(trapped("trap-array-new", "fn main {\n  n = -4 - argv().size\n  xs = Array(Int).new(n)\n  puts(xs.size)\n}\n", "", "avant runtime: Array size -5 is negative at sys-trap-array-new.av:3:8"))
+  xs.push(accepted("trap-order", "fn main {\n  args = argv()\n  if args.size > 1 {\n    puts(\"first\")\n    puts(\"second\")\n    xs = [1]\n    puts(xs[args.size + 3])\n  }\n  _ = process_run_out(args[0], [\"child\"], \"trap-order.txt\")\n  puts(file_read(\"trap-order.txt\") ?? \"?\")\n}\n", "first\nsecond\navant runtime: index 5 out of bounds (size 1) at sys-trap-order.av:7:12\n\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -141,6 +164,9 @@ fn test_main(c: Checks) {
     }
     for f_cnull in cnull_cases() {
       all.push(f_cnull)
+    }
+    for f_trap in trap_cases() {
+      all.push(f_trap)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

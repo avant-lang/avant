@@ -63,6 +63,13 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     }
     out.push_str("\n")
   }
+  if e.tlocs.size > 0 {
+    for i in 0..e.tlocs.size {
+      t = e.tlocs[i]
+      out.push_str("@tl.${i} = private unnamed_addr constant [${t.size + 1} x i8] c\"${mir_escape(t)}\\00\", align 1\n")
+    }
+    out.push_str("\n")
+  }
   if e.used_alloc_globals {
     out.push_str(ll_alloc_globals())
     out.push_str("\n")
@@ -254,8 +261,6 @@ fn ll_function(e: LlEmit, f: MFunc) {
   e.f = f
   e.v.func = f
   e.tn = 0
-  e.trap_ovf = false
-  e.trap_div0 = false
   s = e.ts.sigs[f.sig]
   linkage = "internal "
   if f.external {
@@ -314,24 +319,13 @@ fn ll_function(e: LlEmit, f: MFunc) {
     }
     b += 1
   }
-  if e.trap_ovf {
-    e.block("trap.ovf")
-    e.need("avant_trap_overflow")
-    e.line("call void @avant_trap_overflow()")
-    e.line("unreachable")
-  }
-  if e.trap_div0 {
-    e.block("trap.div0")
-    e.need("avant_trap_div_zero")
-    e.line("call void @avant_trap_div_zero()")
-    e.line("unreachable")
-  }
   e.out.push_str("}\n\n")
 }
 
 // ---- statements (4.4, 11.3)
 
 fn ll_stmt(e: LlEmit, st: MStmt) {
+  e.site(st.loc)
   k = st.kind
   if k == msk_assign() {
     if p = st.place {
@@ -367,6 +361,7 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   ok = e.part("ok")
   e.line("br i1 ${c}, label %${oob}, label %${ok}")
   e.block(oob)
+  e.trap_site
   e.need("avant_trap_bounds")
   e.line("call void @avant_trap_bounds(i32 ${i}, i32 ${n})")
   e.line("unreachable")
@@ -378,6 +373,10 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
 fn ll_call(e: LlEmit, st: MStmt) {
   result = ""
   ret = mt_void()
+  if str_starts(st.callee, "avant_trap_") {
+    // A trap the lowering raises (its cold block): the site first (D295 R16).
+    e.trap_site
+  }
   if fo = st.indirect {
     result = ll_call_indirect(e, st, fo)
     ret = e.ov_ty
@@ -570,6 +569,7 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
 }
 
 fn ll_term(e: LlEmit, t: MTerm) {
+  e.site(t.loc)
   k = t.kind
   if k == mtk_goto() {
     e.line("br label %bb${t.targets[0]}${ll_cold_md(e, t)}")
@@ -696,7 +696,7 @@ fn ll_unary(e: LlEmit, r: MRvalue): String {
     x = e.value(a)
     ty = e.ov_ty
     if r.op == mop_neg_chk() {
-      return ll_overflow(e, "ssub", ty, "0", x)
+      return ll_overflow(e, "ssub", 5, ty, "0", x)
     }
     t = e.tmp
     if r.op == mop_neg() && ty == mt_f64() {
@@ -769,7 +769,7 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
 
 // add.chk sub.chk mul.chk (11.3): the with.overflow intrinsic and a
 // branch to the function's overflow trap.
-fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
+fn ll_overflow(e: LlEmit, name: String, op: Int, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   pair = "{ ${lt}, i1 }"
   e.need_intrinsic("declare ${pair} @llvm.${name}.with.overflow.${lt}(${lt}, ${lt})")
@@ -779,34 +779,68 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   e.line("${v} = extractvalue ${pair} ${r}, 0")
   o = e.tmp
   e.line("${o} = extractvalue ${pair} ${r}, 1")
-  ok = e.part("ok")
-  e.trap_ovf = true
-  e.line("br i1 ${o}, label %trap.ovf, label %${ok}")
-  e.block(ok)
+  ll_arith_trap(e, o, op, ty, false)
   v
+}
+
+// A cold block for the site's arithmetic trap when c holds (Stage 29
+// W4b2, D295 R16: each site names itself, its operation and its type;
+// they shared one overflow block per function before): op is
+// avant_trap_arith's code (0 +, 1 -, 2 *, 3 /, 4 %).
+fn ll_arith_trap(e: LlEmit, c: String, op: Int, ty: Int, div_zero: Bool) {
+  name = "ovf"
+  dz = 0
+  if div_zero {
+    name = "div0"
+    dz = 1
+  }
+  bad = e.part(name)
+  ok = e.part("${name}.ok")
+  e.line("br i1 ${c}, label %${bad}, label %${ok}")
+  e.block(bad)
+  e.trap_site
+  e.need("avant_trap_arith")
+  e.line("call void @avant_trap_arith(i32 ${op}, i32 ${ll_arith_type(e, ty)}, i32 ${dz})")
+  e.line("unreachable")
+  e.block(ok)
+}
+
+// avant_trap_arith's type code: 0 Int, 1 Int64, 2 UInt64, 3 another width.
+fn ll_arith_type(e: LlEmit, ty: Int): Int {
+  if ty == mt_i32() {
+    return 0
+  }
+  if ty == mt_i64() {
+    return 1
+  }
+  if ty == mt_u64() {
+    return 2
+  }
+  3
 }
 
 fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   signed = e.ts.is_signed_int(ty)
   s = ll_pick(signed, "s", "u")
   if op == mop_add() {
-    return ll_overflow(e, "${s}add", ty, x, y)
+    return ll_overflow(e, "${s}add", 0, ty, x, y)
   }
   if op == mop_sub() {
-    return ll_overflow(e, "${s}sub", ty, x, y)
+    return ll_overflow(e, "${s}sub", 1, ty, x, y)
   }
   if op == mop_mul() {
-    return ll_overflow(e, "${s}mul", ty, x, y)
+    return ll_overflow(e, "${s}mul", 2, ty, x, y)
   }
   // div.chk, rem.chk: divisor 0 traps; signed (MIN, -1) traps for div
   // and gives 0 for rem (a safe divisor of 1).
   lt = e.llt(ty)
   z = e.tmp
   e.line("${z} = icmp eq ${lt} ${y}, 0")
-  nz = e.part("nz")
-  e.trap_div0 = true
-  e.line("br i1 ${z}, label %trap.div0, label %${nz}")
-  e.block(nz)
+  dop = 3
+  if op != mop_div() {
+    dop = 4
+  }
+  ll_arith_trap(e, z, dop, ty, true)
   d = y
   if signed {
     min = "-2147483648"
@@ -824,10 +858,7 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
     mm = e.tmp
     e.line("${mm} = and i1 ${m1}, ${m2}")
     if op == mop_div() {
-      ok = e.part("ok")
-      e.trap_ovf = true
-      e.line("br i1 ${mm}, label %trap.ovf, label %${ok}")
-      e.block(ok)
+      ll_arith_trap(e, mm, 3, ty, false)
     } else {
       d = e.tmp
       e.line("${d} = select i1 ${mm}, ${lt} 1, ${lt} ${y}")

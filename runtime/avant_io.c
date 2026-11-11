@@ -89,7 +89,7 @@ static void scan_threads_flag(void) {
     if (strcmp(a, "--threads") == 0) {
       if (i + 1 >= g_argc) {
         fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
-        abort();
+        exit(1);
       }
       val = g_argv[i + 1];
       consumed = 2;
@@ -102,7 +102,7 @@ static void scan_threads_flag(void) {
       unsigned long long v = strtoull(val, &end, 10);
       if (end == val || *end != '\0' || v < 1 || v > 1073741824ull) {
         fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
-        abort();
+        exit(1);
       }
       avant_set_flag_threads((long)v);
       i += consumed - 1;

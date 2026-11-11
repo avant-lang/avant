@@ -404,6 +404,9 @@ void avant_bwt_inverse(void *bwt, void *next, void *out, int32_t start);
 
 /* Wave B safety floor (Q67-A/Q68-A): language traps. Each prints one
  * diagnostic to stderr and exits 1. They never return. */
+void avant_trap_at(const char *loc);
+__attribute__((noreturn, cold)) void avant_trap_arith(int32_t op, int32_t type, int32_t div_zero);
+__attribute__((noreturn, cold)) void avant_trap_empty(int32_t what);
 void avant_trap_bounds(int32_t index, int32_t size);
 void avant_trap_div_zero(void);
 void avant_trap_overflow(void);
