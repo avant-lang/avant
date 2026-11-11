@@ -61,6 +61,15 @@ fn marker_cases: Array(FCase) {
   xs
 }
 
+fn cause_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("cause-chain", "class JsonError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nclass ConfigError: Error {\n  message: String\n  cause: JsonError?\n  fn initialize(message: String, cause: JsonError?) {\n    self.message = message\n    self.cause = cause\n  }\n}\nclass LoadError: Error {\n  message: String = \"cannot load\"\n  cause: ConfigError\n  fn initialize(cause: ConfigError) {\n    self.cause = cause\n  }\n}\nfn main {\n  e = ConfigError.new(\"bad config\", JsonError.new(\"unexpected end\"))\n  puts(\"\${e}\")\n  puts(\"\${ConfigError.new(\"no port\", nil)}\")\n  puts(\"\${LoadError.new(e)}\")\n  if c = e.cause {\n    puts(c.message)\n  }\n}\n", "bad config: unexpected end\nno port\ncannot load: bad config: unexpected end\nunexpected end\n"))
+  xs.push(accepted("cause-method-message", "class JsonError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nstruct Wrap: Error {\n  code: Int\n  cause: JsonError?\n  fn message: String {\n    \"code \${code}\"\n  }\n}\nfn main {\n  w = Wrap { code: 3, cause: JsonError.new(\"inner\") }\n  puts(\"\${w}\")\n}\n", "code 3: inner\n"))
+  xs.push(refused("cause-not-error", "class Oops: Error {\n  message: String = \"x\"\n  cause: String?\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "Oops is marked Error, so its field cause must be an Error type or an optional one (cause: E?), got String?"))
+  xs.push(refused("cause-union", "class JsonError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nclass Io: Error {\n  message: String = \"io\"\n}\nclass Oops: Error {\n  message: String = \"x\"\n  cause: JsonError | Io | Nil\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "its field cause must be an Error type or an optional one"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -96,6 +105,9 @@ fn test_main(c: Checks) {
   c.suite("tests/cases/test_errors_values.av")
   if compiler = env_get("AVANT_COMPILER") {
     all = marker_cases()
+    for f_cause_cases in cause_cases() {
+      all.push(f_cause_cases)
+    }
     run_cases(c, compiler, scratch_dir(), all)
   } else {
     c.expect(false, "AVANT_COMPILER")

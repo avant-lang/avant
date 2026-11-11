@@ -2612,27 +2612,62 @@ pub class Parser {
   }
 }
 
-// The `Error` marker (D292, Stage 29 W4a): whether a type's interface
-// clause names it.
-pub fn error_opted(opted: Array(TypeName)): Bool {
-  for tn in opted {
-    if tn.name == "Error" && tn.mod_name.size == 0 {
-      return true
-    }
-  }
-  false
-}
-
 // What the interpolation of an error prints (`"${e}"`, D292): a method
 // the parser adds to a type marked `Error`, reading its message (a field
 // or a method; the checker requires one, checker/lambda.av mark_error).
+// With a field `cause` (D300), its own text follows after ": " when it is
+// there: `"${message}: ${cause}"`, so a chain prints outermost first
+// (`cannot load config: bad json: unexpected end`).
 pub fn error_text_method(loc: Location, owner: String, fields: Array(Field)): Function {
   fnn = Function.new(loc, "__avant_error_text")
   fnn.owner = owner
   fnn.vis = true
   fnn.return_type = TypeName.new(loc, "String")
+  cause: Field? = nil
+  for f in fields {
+    if f.name == "cause" {
+      cause = f
+    }
+  }
+  if cf = cause {
+    optional = cf.type.nilable
+    for m in cf.type.members {
+      if m.name == "Nil" {
+        optional = true
+      }
+    }
+    if optional {
+      // if c = self.cause { return "${self.message}: ${c}" }
+      c = Expr.new(ex_name(), loc)
+      c.ident = "__avant_cause"
+      ret = stmt_return(loc, error_chain_text(loc, c))
+      st = Stmt.new(st_if(), loc)
+      st.bind = "__avant_cause"
+      st.cond = error_self_field(loc, "cause")
+      st.then_body.push(ret)
+      fnn.body.push(st)
+    } else {
+      fnn.body.push(stmt_expr(loc, error_chain_text(loc, error_self_field(loc, "cause"))))
+      return fnn
+    }
+  }
   fnn.body.push(stmt_expr(loc, error_self_field(loc, "message")))
   fnn
+}
+
+// "${self.message}: ${c}"
+pub fn error_chain_text(loc: Location, c: Expr): Expr {
+  e = Expr.new(ex_interp(), loc)
+  p1 = InterpPart.new
+  p1.expr = error_self_field(loc, "message")
+  p2 = InterpPart.new
+  p2.text = ": "
+  p3 = InterpPart.new
+  p3.expr = c
+  e.parts.push(p1)
+  e.parts.push(p2)
+  e.parts.push(p3)
+  e
 }
 
 pub fn error_self_field(loc: Location, name: String): Expr {

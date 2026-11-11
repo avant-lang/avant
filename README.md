@@ -880,6 +880,23 @@ A union without a failure member (`Int | String`) has nothing for these to open,
 
 An `Error` makes its message readable: it has a `String` field named `message` or a method `fn message: String`. `e.message` reads it, and interpolating the error prints it (`"failed: ${e}"`). `Error` is opted into where the type is declared; it is not a bound and not a value type, and no type may be named `Error`. The standard library's errors (`JsonError`, `HttpError`, `RegexError`, `ZlibError`, `Base64Error`) are marked.
 
+An error may carry the error that caused it: a field named `cause` holding an `Error` type, or an optional one. It is an ordinary field, set like any other, and the interpolation prints it after the message, outermost first:
+
+```avant
+class ConfigError: Error {
+  message: String
+  cause: JsonError?
+
+  fn initialize(message: String, cause: JsonError?) {
+    self.message = message
+    self.cause = cause
+  }
+}
+
+e = ConfigError.new("bad config", JsonError.new("unexpected end"))
+puts("${e}")            // bad config: unexpected end
+```
+
 ### Compiled errors
 
 Compile errors print to stderr and exit non-zero; runtime traps do the same in the compiled program.
