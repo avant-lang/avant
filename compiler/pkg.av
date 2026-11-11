@@ -78,10 +78,6 @@ pub class PkgLock {
   }
 }
 
-pub fn pkg_trim(s: String): String {
-  s.strip()
-}
-
 pub fn pkg_strip_comment(line: String): String {
   in_str = false
   i = 0
@@ -108,7 +104,7 @@ pub fn pkg_strip_comment(line: String): String {
 }
 
 pub fn pkg_parse_string(s: String, err: String): String {
-  t = pkg_trim(s)
+  t = s.strip()
   if t.size < 2 {
     return ""
   }
@@ -144,7 +140,7 @@ pub fn pkg_parse_string(s: String, err: String): String {
 }
 
 pub fn pkg_string_closed(s: String): Bool {
-  t = pkg_trim(s)
+  t = s.strip()
   if t.size < 2 {
     return false
   }
@@ -217,7 +213,7 @@ pub fn pkg_is_sha(s: String): Bool {
 }
 
 pub fn pkg_apply_pair(m: PkgManifest, dep_idx: Int, key: String, val: String, path: String, line_no: Int): Bool {
-  k = pkg_trim(key)
+  k = key.strip()
   if dep_idx >= 0 {
     dep = m.deps[dep_idx]
     if k == "git" {
@@ -275,7 +271,7 @@ pub class PkgStrings {
 
 pub fn pkg_string_list(val: String): PkgStrings {
   got = PkgStrings.new
-  t = pkg_trim(val)
+  t = val.strip()
   if t.size == 0 {
     return got
   }
@@ -329,7 +325,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
 }
 
 pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
-  k = pkg_trim(key)
+  k = key.strip()
   if k == "dir" {
     if m.test_dir.size > 0 {
       pkg_note_test(m, "${path}:${line_no}: duplicate test key dir")
@@ -399,7 +395,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
 }
 
 pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
-  k = pkg_trim(key)
+  k = key.strip()
   if k == "include" || k == "exclude" {
     if k == "include" {
       if m.cov_include.size > 0 {
@@ -433,7 +429,7 @@ pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String
 }
 
 pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String, line_no: Int): Bool {
-  t = pkg_trim(val)
+  t = val.strip()
   if t.size < 2 || t[0] != 123 || t[t.size - 1] != 125 {
     dep = m.deps[dep_idx]
     m.err = "${path}:${line_no}: dependency ${dep.name} needs an inline table like { git = \"URL\", rev = \"SHA\" }"
@@ -511,7 +507,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
   while li < lines.size {
     line_no = li + 1
     raw = pkg_strip_comment(lines[li])
-    line = pkg_trim(raw)
+    line = raw.strip()
     li = li + 1
     if line.size == 0 {
       continue
@@ -521,7 +517,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         m.err = "${path}:${line_no}: bad section header"
         return m
       }
-      inner = pkg_trim(str_slice(line, 1, line.size - 1))
+      inner = str_slice(line, 1, line.size - 1).strip()
       if inner == "package" {
         section = "package"
         dep_idx = -1
@@ -533,7 +529,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         continue
       }
       if str_starts(inner, "dependencies.") {
-        dname = pkg_trim(str_slice(inner, 13, inner.size))
+        dname = str_slice(inner, 13, inner.size).strip()
         if dname.size == 0 {
           m.err = "${path}:${line_no}: bad dependency section"
           return m
@@ -573,8 +569,8 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       m.err = "${path}:${line_no}: expected key = value"
       return m
     }
-    key = pkg_trim(str_slice(line, 0, eq))
-    val = pkg_trim(str_slice(line, eq + 1, line.size))
+    key = str_slice(line, 0, eq).strip()
+    val = str_slice(line, eq + 1, line.size).strip()
     if section == "package" {
       if !pkg_string_closed(val) {
         m.err = "${path}:${line_no}: unterminated string"
@@ -673,7 +669,7 @@ pub fn pkg_parse_lock(text: String): PkgLock {
   }
   li = 0
   while li < lines.size {
-    line = pkg_trim(pkg_strip_comment(lines[li]))
+    line = pkg_strip_comment(lines[li]).strip()
     li = li + 1
     if line.size == 0 {
       continue
@@ -692,7 +688,7 @@ pub fn pkg_parse_lock(text: String): PkgLock {
       if eq < 0 {
         continue
       }
-      key = pkg_trim(str_slice(line, 0, eq))
+      key = str_slice(line, 0, eq).strip()
       val = str_slice(line, eq + 1, line.size)
       if key == "name" {
         cur_name = pkg_parse_string(val, "")
@@ -770,7 +766,7 @@ pub fn pkg_git(args: Array(String), what: String, tag: String): Bool {
   if code != 0 {
     diag_puts("avant fetch: git ${what} failed (${code})")
     if text = file_read(log) {
-      t = pkg_trim(text)
+      t = text.strip()
       if t.size > 0 {
         diag_puts(t)
       }
@@ -791,7 +787,7 @@ pub fn pkg_git_out(args: Array(String), what: String, tag: String): String {
   if code != 0 {
     diag_puts("avant fetch: git ${what} failed (${code})")
     if text = file_read(log) {
-      t = pkg_trim(text)
+      t = text.strip()
       if t.size > 0 {
         diag_puts(t)
       }
@@ -799,7 +795,7 @@ pub fn pkg_git_out(args: Array(String), what: String, tag: String): String {
     return ""
   }
   if text = file_read(log) {
-    return pkg_trim(text)
+    return text.strip()
   }
   ""
 }

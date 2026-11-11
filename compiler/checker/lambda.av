@@ -817,7 +817,7 @@ pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
     } else if tn.nilable {
     } else if tn.args.size > 0 {
     } else if tn.name.size == 0 {
-    } else if str_index(fnn.type_params, tn.name) >= 0 {
+    } else if fnn.type_params.contains(tn.name) {
       ok = true
     }
     if ok {
@@ -879,7 +879,7 @@ pub fn (checker_self: Checker) bounds_hold(fnn: Function, subst: Array(Ty), loc:
   i = 0
   while i < fnn.bounds.size {
     b = fnn.bounds[i]
-    idx = str_index(fnn.type_params, b.param)
+    idx = fnn.type_params.index_of(b.param) ?? -1
     if idx < 0 {
       checker_self.fail(loc, "bounds are only allowed on a type parameter")
       return false
@@ -915,7 +915,7 @@ pub fn (checker_self: Checker) check_interface_sigs {
       vars: Array(String) = []
       n = 0
       while n < raw.size {
-        if !(str_index(idef.type_params, raw[n]) >= 0) {
+        if !idef.type_params.contains(raw[n]) {
           vars.push(raw[n])
         }
         n = n + 1
@@ -1198,7 +1198,7 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
   vars: Array(String) = []
   i = 0
   while i < raw.size {
-    if !(str_index(idef.type_params, raw[i]) >= 0) {
+    if !idef.type_params.contains(raw[i]) {
       vars.push(raw[i])
     }
     i = i + 1
