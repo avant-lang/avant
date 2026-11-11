@@ -156,19 +156,13 @@ pub class CovReport {
     i = 0
     while i < self.slots.size {
       s = self.slots[i]
-      if s.kind == kind {
-        if s.path == path {
-          if s.line == line {
-            if s.name == name {
-              s.hits = s.hits + hits
-              if !bare {
-                s.bare = false
-              }
-              self.slots[i] = s
-              return
-            }
-          }
+      if s.kind == kind && s.path == path && s.line == line && s.name == name {
+        s.hits = s.hits + hits
+        if !bare {
+          s.bare = false
         }
+        self.slots[i] = s
+        return
       }
       i = i + 1
     }
@@ -207,10 +201,8 @@ pub class CovReport {
       } else {
         if str_ends(name, ".av") {
           rel = cov_rel(self.anchor, path)
-          if !cov_excluded(rel, excludes) {
-            if !self.known(rel) {
-              self.add_bare(rel, path)
-            }
+          if !cov_excluded(rel, excludes) && !self.known(rel) {
+            self.add_bare(rel, path)
           }
         }
       }
@@ -288,17 +280,13 @@ pub class CovReport {
     i = 0
     while i < self.slots.size {
       s = self.slots[i]
-      if s.kind == kind {
-        if path.size == 0 || s.path == path {
-          if !(s.line == 0 && s.bare) {
-            if hit_only {
-              if s.hits > 0 {
-                n = n + 1
-              }
-            } else {
-              n = n + 1
-            }
+      if s.kind == kind && (path.size == 0 || s.path == path) && !(s.line == 0 && s.bare) {
+        if hit_only {
+          if s.hits > 0 {
+            n = n + 1
           }
+        } else {
+          n = n + 1
         }
       }
       i = i + 1
@@ -569,17 +557,11 @@ fn cov_read_hit(buf: String, slot: Int): Int {
 
 pub fn cov_rel(anchor: String, path: String): String {
   p = path
-  if p.size > 1 {
-    if p[0] == 46 && p[1] == 47 {
-      p = str_slice(p, 2, p.size)
-    }
+  if p.size > 1 && p[0] == 46 && p[1] == 47 {
+    p = str_slice(p, 2, p.size)
   }
-  if anchor.size > 0 && p.size > anchor.size && p[0] == 47 {
-    if str_slice(p, 0, anchor.size) == anchor {
-      if p[anchor.size] == 47 {
-        return str_slice(p, anchor.size + 1, p.size)
-      }
-    }
+  if anchor.size > 0 && p.size > anchor.size && p[0] == 47 && str_slice(p, 0, anchor.size) == anchor && p[anchor.size] == 47 {
+    return str_slice(p, anchor.size + 1, p.size)
   }
   p
 }
@@ -615,10 +597,8 @@ fn cov_code_lines(text: String): Array(Int) {
         raw = str_slice(raw, 0, raw.size - 1)
       }
       t = raw.strip()
-      if t.size > 0 {
-        if !(t.size >= 2 && t[0] == 47 && t[1] == 47) {
-          out.push(line)
-        }
+      if t.size > 0 && !(t.size >= 2 && t[0] == 47 && t[1] == 47) {
+        out.push(line)
       }
       line = line + 1
       start = i + 1

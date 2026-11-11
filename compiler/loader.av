@@ -24,10 +24,8 @@ pub fn self_exe_path: String {
   }
   raw = raw_buf.to_s
   n = oslink.readlink("/proc/self/exe", raw, 4095)
-  if n > 0 {
-    if n < 4096 {
-      return str_slice(raw, 0, n)
-    }
+  if n > 0 && n < 4096 {
+    return str_slice(raw, 0, n)
   }
   args = argv()
   if args.size > 0 {
@@ -65,12 +63,8 @@ pub fn module_name_of(path: String): String {
   base = path_basename(path)
   if base.size > 3 {
     n = base.size
-    if base[n - 3] == 46 {
-      if base[n - 2] == 97 {
-        if base[n - 1] == 118 {
-          return str_slice(base, 0, n - 3)
-        }
-      }
+    if base[n - 3] == 46 && base[n - 2] == 97 && base[n - 1] == 118 {
+      return str_slice(base, 0, n - 3)
     }
   }
   base
@@ -98,10 +92,8 @@ pub fn path_under(dir: String, path: String): Bool {
   if path.size <= prefix {
     return false
   }
-  if str_slice(path, 0, prefix) == dir {
-    if path[prefix] == 47 {
-      return true
-    }
+  if str_slice(path, 0, prefix) == dir && path[prefix] == 47 {
+    return true
   }
   false
 }
@@ -141,12 +133,8 @@ pub fn rel_module_name(dir: String, path: String): String {
   }
   if rel.size > 3 {
     n = rel.size
-    if rel[n - 3] == 46 {
-      if rel[n - 2] == 97 {
-        if rel[n - 1] == 118 {
-          rel = str_slice(rel, 0, n - 3)
-        }
-      }
+    if rel[n - 3] == 46 && rel[n - 2] == 97 && rel[n - 1] == 118 {
+      rel = str_slice(rel, 0, n - 3)
     }
   }
   buf = buf_new()
@@ -449,10 +437,8 @@ pub class Loader {
   }
 
   pub fn consider_hit(hits: Array(String), path: String) {
-    if file_exists(path) {
-      if !hit_listed(hits, path) {
-        hits.push(path)
-      }
+    if file_exists(path) && !hit_listed(hits, path) {
+      hits.push(path)
     }
   }
 

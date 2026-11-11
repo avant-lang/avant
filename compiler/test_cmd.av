@@ -627,13 +627,11 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
   i = 0
   while i < files.size {
     f = files[i]
-    if f.compiled {
-      if !f.reported {
-        take_par_logs(f)
-        f.ok = false
-        f.output = append_text(f.output, "test jobs did not finish\n")
-        emit_file(host, f)
-      }
+    if f.compiled && !f.reported {
+      take_par_logs(f)
+      f.ok = false
+      f.output = append_text(f.output, "test jobs did not finish\n")
+      emit_file(host, f)
     }
     i = i + 1
   }
@@ -1107,10 +1105,8 @@ pub fn driver_test(args: Array(String)) {
       }
       f = f + 1
     }
-    if has_ex {
-      if !skip_ex {
-        test_fail("--shard cannot include an exclusive file (pass --skip-exclusive)")
-      }
+    if has_ex && !skip_ex {
+      test_fail("--shard cannot include an exclusive file (pass --skip-exclusive)")
     }
     pool: Array(FileRun) = []
     f = 0

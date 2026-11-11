@@ -71,11 +71,9 @@ fn lv_opt_local(o: MOperand?): Int {
 // A small integer constant (|v| <= 1000000), or false.
 fn lv_small_const(o: MOperand?, out: Array(Int)): Bool {
   if x = o {
-    if x.kind == mok_int() {
-      if x.ival <= 1000000i64 && x.ival >= -1000000i64 {
-        out[0] = x.ival.to_i
-        return true
-      }
+    if x.kind == mok_int() && x.ival <= 1000000i64 && x.ival >= -1000000i64 {
+      out[0] = x.ival.to_i
+      return true
     }
   }
   false
@@ -580,12 +578,8 @@ fn lv_add_const(st: MStmt, v: Int): Int {
   }
   if r = st.rv {
     c: Array(Int) = [0]
-    if (r.kind == mrk_binary() || r.kind == mrk_checked()) && r.op == mop_add() {
-      if lv_opt_local(r.a) == v && lv_small_const(r.b, c) {
-        if c[0] >= 1 {
-          return c[0]
-        }
-      }
+    if (r.kind == mrk_binary() || r.kind == mrk_checked()) && r.op == mop_add() && lv_opt_local(r.a) == v && lv_small_const(r.b, c) && c[0] >= 1 {
+      return c[0]
     }
   }
   0
@@ -764,11 +758,9 @@ fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
       return
     }
     if r.kind == mrk_binary() && r.op == mop_and() {
-      if lv_small_const(r.b, c) || lv_small_const(r.a, c) {
-        if c[0] >= 0 {
-          out.kind = 4
-          out.off = c[0]
-        }
+      if (lv_small_const(r.b, c) || lv_small_const(r.a, c)) && c[0] >= 0 {
+        out.kind = 4
+        out.off = c[0]
       }
       return
     }

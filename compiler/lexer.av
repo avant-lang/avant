@@ -8,15 +8,11 @@ pub fn ch_is_digit(c: Int): Bool {
 }
 
 pub fn ch_is_alpha(c: Int): Bool {
-  if c >= 65 {
-    if c <= 90 {
-      return true
-    }
+  if c >= 65 && c <= 90 {
+    return true
   }
-  if c >= 97 {
-    if c <= 122 {
-      return true
-    }
+  if c >= 97 && c <= 122 {
+    return true
   }
   false
 }
@@ -39,15 +35,11 @@ pub fn ch_is_hex(c: Int): Bool {
   if ch_is_digit(c) {
     return true
   }
-  if c >= 97 {
-    if c <= 102 {
-      return true
-    }
+  if c >= 97 && c <= 102 {
+    return true
   }
-  if c >= 65 {
-    if c <= 70 {
-      return true
-    }
+  if c >= 65 && c <= 70 {
+    return true
   }
   false
 }
@@ -160,40 +152,28 @@ pub class Lexer {
     if self.peek == 47 {
       self.bump
     }
-    if self.peek == 32 {
-      if self.peek_at(1) == 102 {
-        if self.peek_at(2) == 105 {
-          if self.peek_at(3) == 108 {
-            if self.peek_at(4) == 101 {
-              if self.peek_at(5) == 58 {
-                if self.peek_at(6) == 32 {
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  self.bump
-                  start = self.pos
-                  while true {
-                    if self.at_end {
-                      break
-                    }
-                    if self.peek == 10 {
-                      break
-                    }
-                    self.bump
-                  }
-                  self.path = self.intern_str(str_slice(self.source.text, start, self.pos))
-                  self.line = 0
-                  self.column = 1
-                  return
-                }
-              }
-            }
-          }
+    if self.peek == 32 && self.peek_at(1) == 102 && self.peek_at(2) == 105 && self.peek_at(3) == 108 && self.peek_at(4) == 101 && self.peek_at(5) == 58 && self.peek_at(6) == 32 {
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      self.bump
+      start = self.pos
+      while true {
+        if self.at_end {
+          break
         }
+        if self.peek == 10 {
+          break
+        }
+        self.bump
       }
+      self.path = self.intern_str(str_slice(self.source.text, start, self.pos))
+      self.line = 0
+      self.column = 1
+      return
     }
     while true {
       if self.at_end {
@@ -248,10 +228,8 @@ pub class Lexer {
 
   pub fn exponent_ahead: Bool {
     c = self.peek
-    if c != 101 {
-      if c != 69 {
-        return false
-      }
+    if c != 101 && c != 69 {
+      return false
     }
     n = self.peek_next
     if ch_is_digit(n) {
@@ -264,31 +242,23 @@ pub class Lexer {
   }
 
   pub fn read_int_suffix: String {
-    if self.peek == 117 {
-      if self.peek_next == 54 {
-        if self.peek_at(2) == 52 {
-          if ch_is_ident_continue(self.peek_at(3)) {
-            return ""
-          }
-          self.bump
-          self.bump
-          self.bump
-          return "u64"
-        }
+    if self.peek == 117 && self.peek_next == 54 && self.peek_at(2) == 52 {
+      if ch_is_ident_continue(self.peek_at(3)) {
+        return ""
       }
+      self.bump
+      self.bump
+      self.bump
+      return "u64"
     }
-    if self.peek == 105 {
-      if self.peek_next == 54 {
-        if self.peek_at(2) == 52 {
-          if ch_is_ident_continue(self.peek_at(3)) {
-            return ""
-          }
-          self.bump
-          self.bump
-          self.bump
-          return "i64"
-        }
+    if self.peek == 105 && self.peek_next == 54 && self.peek_at(2) == 52 {
+      if ch_is_ident_continue(self.peek_at(3)) {
+        return ""
       }
+      self.bump
+      self.bump
+      self.bump
+      return "i64"
     }
     ""
   }
@@ -318,13 +288,11 @@ pub class Lexer {
       self.bump
     }
     is_float = false
-    if self.peek == 46 {
-      if ch_is_digit(self.peek_next) {
-        is_float = true
+    if self.peek == 46 && ch_is_digit(self.peek_next) {
+      is_float = true
+      self.bump
+      while ch_is_digit(self.peek) {
         self.bump
-        while ch_is_digit(self.peek) {
-          self.bump
-        }
       }
     }
     if self.exponent_ahead {
@@ -434,10 +402,8 @@ pub class Lexer {
   }
 
   pub fn is_raw_string_start: Bool {
-    if self.peek == 114 {
-      if self.peek_next == 34 {
-        return true
-      }
+    if self.peek == 114 && self.peek_next == 34 {
+      return true
     }
     false
   }
@@ -523,11 +489,9 @@ pub class Lexer {
         }
         continue
       }
-      if self.peek == 47 {
-        if self.peek_next == 47 {
-          self.skip_line_comment
-          continue
-        }
+      if self.peek == 47 && self.peek_next == 47 {
+        self.skip_line_comment
+        continue
       }
       tok = self.read_token
       if tok.kind == tk_l_brace() {
@@ -817,17 +781,13 @@ pub class Lexer {
     last_kind = 0 - 1
     while true {
       self.skip_spaces
-      if self.at_end {
-        if self.queue_empty {
-          break
-        }
+      if self.at_end && self.queue_empty {
+        break
       }
       if self.queue_empty {
-        if self.peek == 47 {
-          if self.peek_next == 47 {
-            self.skip_line_comment
-            continue
-          }
+        if self.peek == 47 && self.peek_next == 47 {
+          self.skip_line_comment
+          continue
         }
         if self.peek == 10 {
           loc = self.here
@@ -843,10 +803,8 @@ pub class Lexer {
         t = self.read_token
         if t.kind == tk_eof() {
           if self.new_err_since(mark) {
-            if self.pos == before {
-              if !self.at_end {
-                self.bump
-              }
+            if self.pos == before && !self.at_end {
+              self.bump
             }
             continue
           }
@@ -1007,12 +965,10 @@ pub class Lexer {
         tokens.push(Token.new(tk_newline(), loc, ""))
         continue
       }
-      if self.peek == 47 {
-        if self.peek_next == 47 {
-          tok = self.read_format_comment
-          tokens.push(tok)
-          continue
-        }
+      if self.peek == 47 && self.peek_next == 47 {
+        tok = self.read_format_comment
+        tokens.push(tok)
+        continue
       }
       tok = self.read_token
       if self.has_err {
@@ -1079,21 +1035,17 @@ pub class Lexer {
         break
       }
       self.skip_spaces
-      if self.at_end {
-        if self.queue_empty {
-          break
-        }
+      if self.at_end && self.queue_empty {
+        break
       }
       if self.queue_empty {
         if self.at_end {
           break
         }
-        if self.peek == 47 {
-          if self.peek_next == 47 {
-            tok = self.read_format_comment
-            tokens.push(tok)
-            continue
-          }
+        if self.peek == 47 && self.peek_next == 47 {
+          tok = self.read_format_comment
+          tokens.push(tok)
+          continue
         }
         if self.peek == 10 {
           loc = self.here

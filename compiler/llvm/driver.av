@@ -80,10 +80,8 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   text = ll_emit_module(m, job.inline_fast)
   t1 = now_us()
   job.emit_us = llvm_us(t0, t1)
-  if job.keep_ll.size > 0 {
-    if file_write(job.keep_ll, text) != 0 {
-      return "cannot write ${job.keep_ll}"
-    }
+  if job.keep_ll.size > 0 && file_write(job.keep_ll, text) != 0 {
+    return "cannot write ${job.keep_ll}"
   }
   cpu = job.cpu
   if cpu == 0 {
@@ -116,10 +114,8 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
 // from the old driver: `compile x.av out/dir/x` works).
 pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   parent = llvm_out_parent(out_path)
-  if parent.size > 0 {
-    if fs_mkdir_p(parent) != 0 {
-      return "cannot create the output directory ${parent}"
-    }
+  if parent.size > 0 && fs_mkdir_p(parent) != 0 {
+    return "cannot create the output directory ${parent}"
   }
   work = tmp_new_dir()
   obj = "${work}/${m.name}.o"

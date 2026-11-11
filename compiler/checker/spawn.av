@@ -150,19 +150,15 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if inner = expr.inner {
       checker_self.walk_spawn_expr(inner, node, seen)
     }
-    if expr.indirect {
-      if expr.callee.size > 0 {
-        name = Expr.new(ex_name(), expr.loc)
-        name.ident = expr.callee
-        checker_self.note_spawn_capture(name, node, seen)
-      }
+    if expr.indirect && expr.callee.size > 0 {
+      name = Expr.new(ex_name(), expr.loc)
+      name.ident = expr.callee
+      checker_self.note_spawn_capture(name, node, seen)
     }
     if recv = expr.receiver {
-      if checker_self.array_mutator(expr.callee) {
-        if checker_self.spawn_array_frozen(recv) {
-          root = checker_self.expr_root_name(recv)
-          checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
-        }
+      if checker_self.array_mutator(expr.callee) && checker_self.spawn_array_frozen(recv) {
+        root = checker_self.expr_root_name(recv)
+        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
       }
       checker_self.walk_spawn_expr(recv, node, seen)
     }
@@ -401,10 +397,8 @@ pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
     return
   }
   root = checker_self.expr_root_name(target)
-  if root.size > 0 {
-    if checker_self.pending_has_array(root) {
-      checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
-    }
+  if root.size > 0 && checker_self.pending_has_array(root) {
+    checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
   }
   checker_self.scan_pending_expr(target)
 }
@@ -432,10 +426,8 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if recv = expr.receiver {
       if checker_self.array_mutator(expr.callee) {
         root = checker_self.expr_root_name(recv)
-        if root.size > 0 {
-          if checker_self.pending_has_array(root) {
-            checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
-          }
+        if root.size > 0 && checker_self.pending_has_array(root) {
+          checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
         }
       }
     }
@@ -552,11 +544,9 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
   if checker_self.spawn_skip_has(expr.ident) {
     return
   }
-  if checker_self.place_depth > 0 {
-    if expr.ident == checker_self.place_name {
-      checker_self.fail(expr.loc, "mutex place cannot escape")
-      return
-    }
+  if checker_self.place_depth > 0 && expr.ident == checker_self.place_name {
+    checker_self.fail(expr.loc, "mutex place cannot escape")
+    return
   }
   if ty = checker_self.lookup(expr.ident) {
     if !checker_self.copyable_for_spawn(ty) {

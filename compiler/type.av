@@ -271,17 +271,15 @@ pub class Ty {
       return true
     }
     if k == tyk_iface() {
-      if self.name == other.name {
-        if self.ty_args.size == other.ty_args.size {
-          i = 0
-          while i < self.ty_args.size {
-            if !self.ty_args[i].same_as(other.ty_args[i]) {
-              return false
-            }
-            i = i + 1
+      if self.name == other.name && self.ty_args.size == other.ty_args.size {
+        i = 0
+        while i < self.ty_args.size {
+          if !self.ty_args[i].same_as(other.ty_args[i]) {
+            return false
           }
-          return true
+          i = i + 1
         }
+        return true
       }
       return false
     }
@@ -369,35 +367,27 @@ pub class Ty {
   }
 
   pub fn is_nilable: Bool {
-    if self.is_union {
-      if self.includes_nil {
-        return self.members.size == 2
-      }
+    if self.is_union && self.includes_nil {
+      return self.members.size == 2
     }
     false
   }
 
   pub fn same_agg(other: Ty): Bool {
-    if self.mod_name.size > 0 {
-      if other.mod_name.size > 0 {
-        if self.mod_name != other.mod_name {
-          return false
-        }
-      }
+    if self.mod_name.size > 0 && other.mod_name.size > 0 && self.mod_name != other.mod_name {
+      return false
     }
     if self.origin.size > 0 {
       if other.origin.size > 0 {
-        if self.origin == other.origin {
-          if self.ty_args.size == other.ty_args.size {
-            i = 0
-            while i < self.ty_args.size {
-              if !self.ty_args[i].same_as(other.ty_args[i]) {
-                return false
-              }
-              i = i + 1
+        if self.origin == other.origin && self.ty_args.size == other.ty_args.size {
+          i = 0
+          while i < self.ty_args.size {
+            if !self.ty_args[i].same_as(other.ty_args[i]) {
+              return false
             }
-            return true
+            i = i + 1
           }
+          return true
         }
         return false
       }
@@ -745,22 +735,20 @@ pub fn mangle_ty(ty: Ty): String {
     }
     return buf.to_s
   }
-  if ty.origin.size > 0 {
-    if ty.ty_args.size > 0 {
-      buf = buf_new()
-      base = ty.origin
-      if ty.emit_base.size > 0 {
-        base = ty.emit_base
-      }
-      buf.push_str(base)
-      i = 0
-      while i < ty.ty_args.size {
-        buf.push_str("__")
-        buf.push_str(mangle_ty(ty.ty_args[i]))
-        i = i + 1
-      }
-      return buf.to_s
+  if ty.origin.size > 0 && ty.ty_args.size > 0 {
+    buf = buf_new()
+    base = ty.origin
+    if ty.emit_base.size > 0 {
+      base = ty.emit_base
     }
+    buf.push_str(base)
+    i = 0
+    while i < ty.ty_args.size {
+      buf.push_str("__")
+      buf.push_str(mangle_ty(ty.ty_args[i]))
+      i = i + 1
+    }
+    return buf.to_s
   }
   if ty.emit_base.size > 0 {
     return ty.emit_base
@@ -1065,22 +1053,18 @@ pub fn ty_assignable(got: Ty, want: Ty): Bool {
   if got.same_as(want) {
     return true
   }
-  if want.is_union {
-    if want.includes_member(got) {
-      return true
-    }
+  if want.is_union && want.includes_member(got) {
+    return true
   }
-  if got.is_union {
-    if want.is_union {
-      i = 0
-      while i < got.members.size {
-        if !want.includes_member(got.members[i]) {
-          return false
-        }
-        i = i + 1
+  if got.is_union && want.is_union {
+    i = 0
+    while i < got.members.size {
+      if !want.includes_member(got.members[i]) {
+        return false
       }
-      return true
+      i = i + 1
     }
+    return true
   }
   false
 }

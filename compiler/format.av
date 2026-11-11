@@ -400,15 +400,11 @@ pub fn brace_starts_lambda(tokens: Array(Token), i: Int): Bool {
 }
 
 pub fn must_separate(prev: Int, prev2: Int, curr: Int, nextk: Int): Bool {
-  if prev == tk_bang() {
-    if curr == tk_eq() {
-      return true
-    }
+  if prev == tk_bang() && curr == tk_eq() {
+    return true
   }
-  if prev == tk_minus() {
-    if curr == tk_eq() {
-      return true
-    }
+  if prev == tk_minus() && curr == tk_eq() {
+    return true
   }
   if prev == tk_dot() {
     if curr == tk_integer() {
@@ -587,15 +583,11 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
   if after_tight {
     return true
   }
-  if curr == tk_pipe() {
-    if lambda_state == 2 {
-      return true
-    }
+  if curr == tk_pipe() && lambda_state == 2 {
+    return true
   }
-  if curr == tk_l_bracket() {
-    if value_end(prev) {
-      return true
-    }
+  if curr == tk_l_bracket() && value_end(prev) {
+    return true
   }
   if tight_before(curr) {
     return true
@@ -662,11 +654,9 @@ pub fn reprint(tokens: Array(Token)): String {
     started = at_start
     dedented = false
     if started {
-      if k == tk_r_brace() {
-        if depth > 0 {
-          depth = depth - 1
-          dedented = true
-        }
+      if k == tk_r_brace() && depth > 0 {
+        depth = depth - 1
+        dedented = true
       }
       if k == tk_file_line() {
         buf.push_str(t.value)

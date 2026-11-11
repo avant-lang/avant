@@ -718,16 +718,14 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
           rep.bounds.push(subst_type_name(tn.bounds[bi], from, to))
           bi = bi + 1
         }
-        if tn.nilable {
-          if !rep.nilable {
-            if rep.members.size > 0 {
-              wrapped = TypeName.new(tn.loc, "")
-              wrapped.members.push(rep)
-              wrapped.nilable = true
-              return wrapped
-            }
-            rep.nilable = true
+        if tn.nilable && !rep.nilable {
+          if rep.members.size > 0 {
+            wrapped = TypeName.new(tn.loc, "")
+            wrapped.members.push(rep)
+            wrapped.nilable = true
+            return wrapped
           }
+          rep.nilable = true
         }
         return rep
       }
@@ -778,10 +776,8 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
   if tn.name == "Ptr" {
     if tn.args.size == 1 {
       arg = tn.args[0]
-      if arg.members.size == 0 {
-        if arg.args.size == 0 {
-          return
-        }
+      if arg.members.size == 0 && arg.args.size == 0 {
+        return
       }
     }
   }

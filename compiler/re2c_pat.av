@@ -95,15 +95,11 @@ pub class RePat {
   }
 
   pub fn other_case(c: Int): Int {
-    if c >= 65 {
-      if c <= 90 {
-        return c + 32
-      }
+    if c >= 65 && c <= 90 {
+      return c + 32
     }
-    if c >= 97 {
-      if c <= 122 {
-        return c - 32
-      }
+    if c >= 97 && c <= 122 {
+      return c - 32
     }
     c
   }
@@ -190,11 +186,9 @@ pub class RePat {
       buf.push_str("\\v")
       return true
     }
-    if c >= 48 {
-      if c <= 57 {
-        self.fail("backreference")
-        return false
-      }
+    if c >= 48 && c <= 57 {
+      self.fail("backreference")
+      return false
     }
     self.push_class_char(buf, c)
     true
@@ -228,12 +222,10 @@ pub class RePat {
         body.push_str(self.class_atom(b))
         oa = self.other_case(a)
         ob = self.other_case(b)
-        if oa != a {
-          if ob != b {
-            body.push_str(self.class_atom(oa))
-            body.push_byte(45)
-            body.push_str(self.class_atom(ob))
-          }
+        if oa != a && ob != b {
+          body.push_str(self.class_atom(oa))
+          body.push_byte(45)
+          body.push_str(self.class_atom(ob))
         }
       } else {
         self.bump
@@ -335,11 +327,9 @@ pub class RePat {
     }
     c = self.peek
     self.bump
-    if c >= 48 {
-      if c <= 57 {
-        self.fail("backreference")
-        return ""
-      }
+    if c >= 48 && c <= 57 {
+      self.fail("backreference")
+      return ""
     }
     if c == 100 {
       return "R[0-9]"
@@ -438,17 +428,13 @@ pub class RePat {
       self.fail("non-greedy")
       return ""
     }
-    if atom.size > 0 {
-      if atom[0] == 76 {
-        raw = str_slice(atom, 1, atom.size)
-        return "R${self.quote_lit(raw)}${q}"
-      }
+    if atom.size > 0 && atom[0] == 76 {
+      raw = str_slice(atom, 1, atom.size)
+      return "R${self.quote_lit(raw)}${q}"
     }
-    if atom.size > 0 {
-      if atom[0] == 82 {
-        raw = str_slice(atom, 1, atom.size)
-        return "R${raw}${q}"
-      }
+    if atom.size > 0 && atom[0] == 82 {
+      raw = str_slice(atom, 1, atom.size)
+      return "R${raw}${q}"
     }
     self.fail("bad quantifier")
     ""

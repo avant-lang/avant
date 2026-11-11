@@ -11,15 +11,11 @@ pub fn hex_digit_val(c: Int): Int {
   if ch_is_digit(c) {
     return c - 48
   }
-  if c >= 97 {
-    if c <= 102 {
-      return c - 87
-    }
+  if c >= 97 && c <= 102 {
+    return c - 87
   }
-  if c >= 65 {
-    if c <= 70 {
-      return c - 55
-    }
+  if c >= 65 && c <= 70 {
+    return c - 55
   }
   -1
 }
@@ -355,10 +351,8 @@ pub class Parser {
   pub fn parse_lead_stmt: Stmt {
     lead = 0
     k = self.current.kind
-    if k == tk_minus() || k == tk_l_bracket() {
-      if self.at_line_start {
-        lead = k
-      }
+    if (k == tk_minus() || k == tk_l_bracket()) && self.at_line_start {
+      lead = k
     }
     s = self.parse_stmt
     s.lead = lead
@@ -421,12 +415,10 @@ pub class Parser {
             }
           }
         }
-        if i < stmts.size - 1 {
-          if s.kind == st_expr() {
-            if se = s.expr {
-              if se.kind == ex_unary() || se.kind == ex_array() {
-                self.fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
-              }
+        if i < stmts.size - 1 && s.kind == st_expr() {
+          if se = s.expr {
+            if se.kind == ex_unary() || se.kind == ex_array() {
+              self.fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
             }
           }
         }
@@ -450,15 +442,11 @@ pub class Parser {
       }
     }
     bits = 0u64
-    if raw.size >= 2 {
-      if raw[0] == 48 {
-        if raw[1] == 120 || raw[1] == 88 {
-          bits = parse_u64_hex(str_slice(raw, 2, raw.size))
-          self.int_bits = bits
-          self.int_suffix = suffix
-          return true
-        }
-      }
+    if raw.size >= 2 && raw[0] == 48 && (raw[1] == 120 || raw[1] == 88) {
+      bits = parse_u64_hex(str_slice(raw, 2, raw.size))
+      self.int_bits = bits
+      self.int_suffix = suffix
+      return true
     }
     bits = parse_u64_dec(raw)
     self.int_bits = bits
@@ -521,10 +509,8 @@ pub class Parser {
       }
       if self.new_err_since(mark) {
         self.sync_top
-        if self.index == start_idx {
-          if self.current.kind != tk_eof() {
-            dummy2 = self.bump
-          }
+        if self.index == start_idx && self.current.kind != tk_eof() {
+          dummy2 = self.bump
         }
       }
       self.skip_newlines
@@ -1009,10 +995,8 @@ pub class Parser {
       }
       self.skip_newlines
     }
-    if layout.fields.size == 0 {
-      if !self.new_err_since(mark0) {
-        self.fail(loc, "C layout needs a field")
-      }
+    if layout.fields.size == 0 && !self.new_err_since(mark0) {
+      self.fail(loc, "C layout needs a field")
     }
     dummy2 = self.expect(tk_r_brace())
     layout
@@ -1385,12 +1369,8 @@ pub class Parser {
       stmts.push(self.parse_lead_stmt)
       if self.new_err_since(mark) {
         self.sync_stmt
-        if self.index == start_idx {
-          if self.current.kind != tk_eof() {
-            if self.current.kind != tk_r_brace() {
-              dummy3 = self.bump
-            }
-          }
+        if self.index == start_idx && self.current.kind != tk_eof() && self.current.kind != tk_r_brace() {
+          dummy3 = self.bump
         }
       }
       self.skip_newlines
@@ -1553,10 +1533,8 @@ pub class Parser {
     if self.tokens[i].kind != tk_l_brace() {
       return expr
     }
-    if expr.kind != ex_call() {
-      if expr.kind != ex_field() {
-        return expr
-      }
+    if expr.kind != ex_call() && expr.kind != ex_field() {
+      return expr
     }
     self.skip_newlines
     self.attach_block(expr, self.parse_trailing_block)
@@ -2158,12 +2136,10 @@ pub class Parser {
       dummy2 = self.expect(tk_r_paren())
       return expr
     }
-    if k == tk_l_brace() {
-      if self.lambda_ahead {
-        e = Expr.new(ex_lambda(), tok.loc)
-        e.block = self.parse_trailing_block
-        return e
-      }
+    if k == tk_l_brace() && self.lambda_ahead {
+      e = Expr.new(ex_lambda(), tok.loc)
+      e.block = self.parse_trailing_block
+      return e
     }
     if k == tk_release() {
       self.fail(tok.loc, "release is a statement, not a value")
@@ -2289,14 +2265,12 @@ pub class Parser {
       self.index = after
       return e
     }
-    if ahead.kind == tk_l_brace() {
-      if self.allow_struct_lit {
-        self.skip_newlines
-        if self.struct_literal_ahead {
-          e = self.parse_struct_literal(tok, qual)
-          e.type_args = args
-          return e
-        }
+    if ahead.kind == tk_l_brace() && self.allow_struct_lit {
+      self.skip_newlines
+      if self.struct_literal_ahead {
+        e = self.parse_struct_literal(tok, qual)
+        e.type_args = args
+        return e
       }
     }
     self.index = saved_index
@@ -2322,10 +2296,8 @@ pub class Parser {
       }
       return self.parse_call(tok)
     }
-    if self.allow_struct_lit {
-      if self.struct_literal_ahead {
-        return self.parse_struct_literal(tok, "")
-      }
+    if self.allow_struct_lit && self.struct_literal_ahead {
+      return self.parse_struct_literal(tok, "")
     }
     e = Expr.new(ex_name(), tok.loc)
     e.ident = tok.value
@@ -2582,12 +2554,8 @@ pub class Parser {
       block.body.push(self.parse_lead_stmt)
       if self.new_err_since(mark) {
         self.sync_stmt
-        if self.index == start_idx {
-          if self.current.kind != tk_eof() {
-            if self.current.kind != tk_r_brace() {
-              dummy4 = self.bump
-            }
-          }
+        if self.index == start_idx && self.current.kind != tk_eof() && self.current.kind != tk_r_brace() {
+          dummy4 = self.bump
         }
       }
       self.skip_newlines

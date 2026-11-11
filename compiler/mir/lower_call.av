@@ -129,10 +129,8 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       if (mir_is_str_ty(rt) || rt.is_buf) && e.callee == "get" {
         return lw.lower_get(e, recv, rt, e.args)
       }
-      if rt.is_integer || rt.is_float {
-        if e.args.size == 0 {
-          return lw.member(recv, rt, e.callee, e)
-        }
+      if (rt.is_integer || rt.is_float) && e.args.size == 0 {
+        return lw.member(recv, rt, e.callee, e)
       }
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)

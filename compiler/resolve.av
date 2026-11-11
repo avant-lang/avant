@@ -321,11 +321,9 @@ pub class TypeResolver {
     }
     ntmpl = self.template_count(tn.name)
     if ntmpl > 0 {
-      if tn.mod_name.size == 0 {
-        if ntmpl > 1 {
-          self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
-          return self.t_int
-        }
+      if tn.mod_name.size == 0 && ntmpl > 1 {
+        self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+        return self.t_int
       }
       return self.instantiate_template(tn)
     }
@@ -427,16 +425,14 @@ pub class TypeResolver {
       i = 0
       while i < p.structs.size {
         sdef = p.structs[i]
-        if sdef.name == name {
-          if sdef.type_params.size > 0 {
-            if mod_name.size > 0 {
-              if sdef.mod_name == mod_name {
-                return sdef
-              }
-            } else {
-              count = count + 1
-              found = sdef
+        if sdef.name == name && sdef.type_params.size > 0 {
+          if mod_name.size > 0 {
+            if sdef.mod_name == mod_name {
+              return sdef
             }
+          } else {
+            count = count + 1
+            found = sdef
           }
         }
         i = i + 1
@@ -458,16 +454,14 @@ pub class TypeResolver {
       i = 0
       while i < p.classes.size {
         cdef = p.classes[i]
-        if cdef.name == name {
-          if cdef.type_params.size > 0 {
-            if mod_name.size > 0 {
-              if cdef.mod_name == mod_name {
-                return cdef
-              }
-            } else {
-              count = count + 1
-              found = cdef
+        if cdef.name == name && cdef.type_params.size > 0 {
+          if mod_name.size > 0 {
+            if cdef.mod_name == mod_name {
+              return cdef
             }
+          } else {
+            count = count + 1
+            found = cdef
           }
         }
         i = i + 1
@@ -488,20 +482,16 @@ pub class TypeResolver {
       i = 0
       while i < p.structs.size {
         sdef = p.structs[i]
-        if sdef.name == name {
-          if sdef.type_params.size > 0 {
-            n = n + 1
-          }
+        if sdef.name == name && sdef.type_params.size > 0 {
+          n = n + 1
         }
         i = i + 1
       }
       i = 0
       while i < p.classes.size {
         cdef = p.classes[i]
-        if cdef.name == name {
-          if cdef.type_params.size > 0 {
-            n = n + 1
-          }
+        if cdef.name == name && cdef.type_params.size > 0 {
+          n = n + 1
         }
         i = i + 1
       }
@@ -765,11 +755,9 @@ pub class TypeResolver {
     }
     key = self.inst_key(origin_key, arg_tys)
     label = self.format_app(tn.name, arg_tys)
-    if is_struct {
-      if self.inflight_has(key) {
-        self.fail(tn.loc, "struct layout of ${label} is infinite")
-        return self.t_int
-      }
+    if is_struct && self.inflight_has(key) {
+      self.fail(tn.loc, "struct layout of ${label} is infinite")
+      return self.t_int
     }
     if existing = self.get_named(key) {
       return existing

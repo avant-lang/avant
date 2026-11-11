@@ -13,30 +13,26 @@ import checker.names
 import checker
 
 pub fn (checker_self: Checker) fn_compatible(got: Ty, want: Ty): Bool {
-  if want.is_fn {
-    if got.is_fn {
-      if want.members.size != got.members.size {
+  if want.is_fn && got.is_fn {
+    if want.members.size != got.members.size {
+      return false
+    }
+    i = 0
+    while i < want.members.size {
+      if !want.members[i].is_var && !want.members[i].same_as(got.members[i]) {
         return false
       }
-      i = 0
-      while i < want.members.size {
-        if !want.members[i].is_var {
-          if !want.members[i].same_as(got.members[i]) {
-            return false
-          }
-        }
-        i = i + 1
-      }
-      if wr = want.inner {
-        if wr.is_var {
-          return true
-        }
-        if gr = got.inner {
-          return wr.same_as(gr)
-        }
-      }
-      return true
+      i = i + 1
     }
+    if wr = want.inner {
+      if wr.is_var {
+        return true
+      }
+      if gr = got.inner {
+        return wr.same_as(gr)
+      }
+    }
+    return true
   }
   false
 }
@@ -178,16 +174,14 @@ pub fn (checker_self: Checker) subst_ty(ty: Ty, keys: Array(String), vals: Array
     }
     return ty_fn(ps, ret)
   }
-  if ty.origin.size > 0 {
-    if ty.ty_args.size > 0 {
-      args: Array(Ty) = []
-      i = 0
-      while i < ty.ty_args.size {
-        args.push(checker_self.subst_ty(ty.ty_args[i], keys, vals))
-        i = i + 1
-      }
-      return ty_app(ty.kind, ty.origin, ty.origin, checker_self.resolver.format_app(ty.origin, args), args)
+  if ty.origin.size > 0 && ty.ty_args.size > 0 {
+    args: Array(Ty) = []
+    i = 0
+    while i < ty.ty_args.size {
+      args.push(checker_self.subst_ty(ty.ty_args[i], keys, vals))
+      i = i + 1
     }
+    return ty_app(ty.kind, ty.origin, ty.origin, checker_self.resolver.format_app(ty.origin, args), args)
   }
   ty
 }
@@ -270,27 +264,21 @@ pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(In
   if sig.node.generic {
     i = 0
     while i < deferred.size {
-      if deferred[i] == 0 {
-        if i < sig.params.size {
-          if !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
-            return false
-          }
-        }
+      if deferred[i] == 0 && i < sig.params.size && !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+        return false
       }
       i = i + 1
     }
     i = 0
     while i < deferred.size {
-      if deferred[i] == 1 {
-        if i < sig.params.size {
-          pty = checker_self.subst_ty(sig.params[i], keys, vals)
-          if pty.is_fn {
-            if checker_self.fn_param_needs_type(pty) {
-              return false
-            }
-          } else {
+      if deferred[i] == 1 && i < sig.params.size {
+        pty = checker_self.subst_ty(sig.params[i], keys, vals)
+        if pty.is_fn {
+          if checker_self.fn_param_needs_type(pty) {
             return false
           }
+        } else {
+          return false
         }
       }
       i = i + 1
@@ -300,10 +288,8 @@ pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(In
   i = 0
   while i < deferred.size {
     if deferred[i] == 0 {
-      if i < sig.params.size {
-        if !ty_assignable(ctypes[i], sig.params[i]) {
-          return false
-        }
+      if i < sig.params.size && !ty_assignable(ctypes[i], sig.params[i]) {
+        return false
       }
     } else {
       if i < sig.params.size {
@@ -331,16 +317,10 @@ pub fn (checker_self: Checker) absorb_fn_block(expr: Expr) {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.callee {
-      if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
-        if !checker_self.sig_is_instance(sig) {
-          if sig.params.size == want_n {
-            last = sig.params[want_n - 1]
-            if last.is_fn {
-              take = true
-            }
-          }
-        }
+    if sig.name == expr.callee && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && sig.params.size == want_n {
+      last = sig.params[want_n - 1]
+      if last.is_fn {
+        take = true
       }
     }
     i = i + 1
@@ -375,16 +355,8 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.callee {
-      if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
-        if !checker_self.sig_is_instance(sig) {
-          if arity_ok(sig.node, expr.args.size) {
-            if checker_self.deferred_slots_are_fn(sig, deferred) {
-              hits = hits + 1
-            }
-          }
-        }
-      }
+    if sig.name == expr.callee && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+      hits = hits + 1
     }
     i = i + 1
   }
@@ -409,20 +381,12 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.callee {
-      if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
-        if !checker_self.sig_is_instance(sig) {
-          if arity_ok(sig.node, expr.args.size) {
-            if checker_self.deferred_slots_are_fn(sig, deferred) {
-              if checker_self.deferred_unifies(sig, deferred, ctypes) {
-                cands.push(sig)
-              } else {
-                if sig.node.generic {
-                  saw_generic = true
-                }
-              }
-            }
-          }
+    if sig.name == expr.callee && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+      if checker_self.deferred_unifies(sig, deferred, ctypes) {
+        cands.push(sig)
+      } else {
+        if sig.node.generic {
+          saw_generic = true
         }
       }
     }
@@ -450,13 +414,9 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
   if sig.node.generic {
     i = 0
     while i < deferred.size {
-      if deferred[i] == 0 {
-        if i < sig.params.size {
-          if !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
-            checker_self.fail(expr.loc, "cannot infer type argument")
-            return checker_self.t_int()
-          }
-        }
+      if deferred[i] == 0 && i < sig.params.size && !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+        checker_self.fail(expr.loc, "cannot infer type argument")
+        return checker_self.t_int()
       }
       i = i + 1
     }
@@ -469,13 +429,9 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
         pty = checker_self.subst_ty(sig.params[i], keys, vals)
       }
       got = checker_self.check_fn_arg(expr.args[i], pty)
-      if !checker_self.unify_ty(pty, got, keys, vals) {
-        if !ty_assignable(got, pty) {
-          if !checker_self.fn_compatible(got, pty) {
-            n = i + 1
-            checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${pty.show}")
-          }
-        }
+      if !checker_self.unify_ty(pty, got, keys, vals) && !ty_assignable(got, pty) && !checker_self.fn_compatible(got, pty) {
+        n = i + 1
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${pty.show}")
       }
     }
     i = i + 1
@@ -525,16 +481,12 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.ident {
-      if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
-        if !checker_self.sig_is_instance(sig) {
-          if sig.node.generic {
-            saw_generic = true
-          } else {
-            if checker_self.fn_matches_want(sig, want) {
-              cands.push(sig)
-            }
-          }
+    if sig.name == expr.ident && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) {
+      if sig.node.generic {
+        saw_generic = true
+      } else {
+        if checker_self.fn_matches_want(sig, want) {
+          cands.push(sig)
         }
       }
     }
@@ -567,15 +519,11 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.ident {
-      if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
-        if !checker_self.sig_is_instance(sig) {
-          if sig.node.generic {
-            saw_generic = true
-          } else {
-            cands.push(sig)
-          }
-        }
+    if sig.name == expr.ident && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) {
+      if sig.node.generic {
+        saw_generic = true
+      } else {
+        cands.push(sig)
       }
     }
     i = i + 1
@@ -628,11 +576,9 @@ pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
   i = 0
   while i < expr.args.size {
     got = checker_self.check_expr_as(expr.args[i], callee.members[i])
-    if !ty_assignable(got, callee.members[i]) {
-      if !checker_self.fn_compatible(got, callee.members[i]) {
-        n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} is ${got.show}, expected ${callee.members[i].show}")
-      }
+    if !ty_assignable(got, callee.members[i]) && !checker_self.fn_compatible(got, callee.members[i]) {
+      n = i + 1
+      checker_self.fail(expr.args[i].loc, "argument ${n} is ${got.show}, expected ${callee.members[i].show}")
     }
     i = i + 1
   }
@@ -692,13 +638,9 @@ pub fn (checker_self: Checker) pop_lambda {
 }
 
 pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
-  if checker_self.place_depth > 0 {
-    if name == checker_self.place_name {
-      if checker_self.lam_exprs.size > 0 {
-        checker_self.fail(checker_self.lam_exprs[checker_self.lam_exprs.size - 1].loc, "mutex place cannot escape")
-        return
-      }
-    }
+  if checker_self.place_depth > 0 && name == checker_self.place_name && checker_self.lam_exprs.size > 0 {
+    checker_self.fail(checker_self.lam_exprs[checker_self.lam_exprs.size - 1].loc, "mutex place cannot escape")
+    return
   }
   nlam = checker_self.lam_exprs.size
   if nlam == 0 {
@@ -798,12 +740,8 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     if r = want.inner {
       ret = r
     }
-    if !ret.is_void {
-      if !ret.is_var {
-        if b.body.size == 0 {
-          checker_self.fail(expr.loc, "missing return value")
-        }
-      }
+    if !ret.is_void && !ret.is_var && b.body.size == 0 {
+      checker_self.fail(expr.loc, "missing return value")
     }
     result_ret = ret
     // A postfix `?` in the body returns from the lambda (Stage 29 W1a, A3).
@@ -833,11 +771,9 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     checker_self.try_body = saved_body
     checker_self.loop_depth = saved_loops
     checker_self.pop_lambda
-    if !result_ret.is_void {
-      if result_ret.is_var {
-        checker_self.fail(expr.loc, "cannot infer type argument")
-        result_ret = checker_self.t_void()
-      }
+    if !result_ret.is_void && result_ret.is_var {
+      checker_self.fail(expr.loc, "cannot infer type argument")
+      result_ret = checker_self.t_void()
     }
     ps: Array(Ty) = []
     i = 0
@@ -1241,10 +1177,8 @@ pub fn (checker_self: Checker) find_impl(type_key: String, iface_key: String): I
   i = 0
   while i < checker_self.impls.size {
     fact = checker_self.impls[i]
-    if fact.type_key == type_key {
-      if fact.iface_key == iface_key {
-        return fact
-      }
+    if fact.type_key == type_key && fact.iface_key == iface_key {
+      return fact
     }
     i = i + 1
   }
@@ -1320,18 +1254,12 @@ pub fn (checker_self: Checker) count_witnesses(concrete: Ty, idef: InterfaceDef,
     j = 0
     while j < checker_self.methods.size {
       sig = checker_self.methods[j]
-      if sig.name == method.name {
-        if checker_self.method_is_visible(sig.node, from_mod) {
-          if checker_self.witness_fits(sig, concrete) {
-            if checker_self.wit_params.size == checker_self.sig_params.size {
-              if checker_self.sigs_match() {
-                method_hits = method_hits + 1
-              } else {
-                if method_note.size == 0 {
-                  method_note = checker_self.diff_note(concrete, label, method.name)
-                }
-              }
-            }
+      if sig.name == method.name && checker_self.method_is_visible(sig.node, from_mod) && checker_self.witness_fits(sig, concrete) && checker_self.wit_params.size == checker_self.sig_params.size {
+        if checker_self.sigs_match() {
+          method_hits = method_hits + 1
+        } else {
+          if method_note.size == 0 {
+            method_note = checker_self.diff_note(concrete, label, method.name)
           }
         }
       }
@@ -1369,11 +1297,9 @@ pub fn (checker_self: Checker) sigs_match: Bool {
 pub fn (checker_self: Checker) diff_note(concrete: Ty, label: String, name: String): String {
   i = 0
   while i < checker_self.sig_params.size {
-    if i < checker_self.wit_params.size {
-      if !ty_eq_sig(checker_self.sig_params[i], checker_self.wit_params[i], checker_self.sig_vars, checker_self.wit_vars) {
-        n = i + 1
-        return "${concrete.show} does not implement ${label}: ${name} parameter ${n} is ${checker_self.wit_params[i].show}, expected ${checker_self.sig_params[i].show}"
-      }
+    if i < checker_self.wit_params.size && !ty_eq_sig(checker_self.sig_params[i], checker_self.wit_params[i], checker_self.sig_vars, checker_self.wit_vars) {
+      n = i + 1
+      return "${concrete.show} does not implement ${label}: ${name} parameter ${n} is ${checker_self.wit_params[i].show}, expected ${checker_self.sig_params[i].show}"
     }
     i = i + 1
   }
@@ -1382,51 +1308,45 @@ pub fn (checker_self: Checker) diff_note(concrete: Ty, label: String, name: Stri
 
 pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
   owner = impl_type_key(concrete)
-  if concrete.origin.size > 0 {
-    if sig.owner == concrete.origin {
-      if sig.node.generic {
-        if recv = sig.node.receiver {
-          checker_self.resolver.set_tparams(sig.node.type_params)
-          pat = checker_self.resolver.resolve(recv.type)
-          checker_self.pull_resolve
-          checker_self.resolver.clear_tparams
-          if checker_self.has_err {
+  if concrete.origin.size > 0 && sig.owner == concrete.origin && sig.node.generic {
+    if recv = sig.node.receiver {
+      checker_self.resolver.set_tparams(sig.node.type_params)
+      pat = checker_self.resolver.resolve(recv.type)
+      checker_self.pull_resolve
+      checker_self.resolver.clear_tparams
+      if checker_self.has_err {
+        return false
+      }
+      if pat.origin == concrete.origin && pat.ty_args.size == concrete.ty_args.size {
+        keys: Array(String) = []
+        vals: Array(Ty) = []
+        i = 0
+        while i < pat.ty_args.size {
+          if !checker_self.unify_ty(pat.ty_args[i], concrete.ty_args[i], keys, vals) {
             return false
           }
-          if pat.origin == concrete.origin {
-            if pat.ty_args.size == concrete.ty_args.size {
-              keys: Array(String) = []
-              vals: Array(Ty) = []
-              i = 0
-              while i < pat.ty_args.size {
-                if !checker_self.unify_ty(pat.ty_args[i], concrete.ty_args[i], keys, vals) {
-                  return false
-                }
-                i = i + 1
-              }
-              params: Array(Ty) = []
-              i = 0
-              while i < sig.params.size {
-                params.push(checker_self.subst_ty(sig.params[i], keys, vals))
-                i = i + 1
-              }
-              ret = checker_self.subst_ty(sig.ret, keys, vals)
-              vars: Array(String) = []
-              i = 0
-              while i < sig.node.type_params.size {
-                if g = checker_self.subst_get(keys, vals, sig.node.type_params[i]) {
-                } else {
-                  vars.push(sig.node.type_params[i])
-                }
-                i = i + 1
-              }
-              checker_self.wit_params = params
-              checker_self.wit_ret = ret
-              checker_self.wit_vars = vars
-              return true
-            }
-          }
+          i = i + 1
         }
+        params: Array(Ty) = []
+        i = 0
+        while i < sig.params.size {
+          params.push(checker_self.subst_ty(sig.params[i], keys, vals))
+          i = i + 1
+        }
+        ret = checker_self.subst_ty(sig.ret, keys, vals)
+        vars: Array(String) = []
+        i = 0
+        while i < sig.node.type_params.size {
+          if g = checker_self.subst_get(keys, vals, sig.node.type_params[i]) {
+          } else {
+            vars.push(sig.node.type_params[i])
+          }
+          i = i + 1
+        }
+        checker_self.wit_params = params
+        checker_self.wit_ret = ret
+        checker_self.wit_vars = vars
+        return true
       }
     }
   }
