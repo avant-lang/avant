@@ -70,7 +70,7 @@ That is enough to write and run Avant today. Building the Avant compiler itself 
 
 ## Programs
 
-Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function is its value. A type is written `name: Type`.
+Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function with a result is its value (a final `if`/`else` included); in a function that returns nothing, a value at the end is dropped, as it is anywhere else in the body (but an error is never dropped silently, see [Errors](#errors)). A type is written `name: Type`.
 
 The entry point is `fn main`, or `fn run` (the compiler synthesizes the C `main`). Neither needs `pub`.
 
@@ -153,7 +153,7 @@ fn main {
 
 A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
 
-Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum` or `sum()`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, so nothing is chosen silently. An external method is a function with a receiver parameter:
+Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum` or `sum()`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, and a module name used as a qualifier (`util.twice(3)`) that is also a method of the receiver is an error that asks for `self.util` or another name for the method, so nothing is chosen silently. An external method is a function with a receiver parameter:
 
 ```avant
 fn (p: Point) scaled(s: Int): Point {
@@ -166,7 +166,7 @@ fn (p: Point) scaled(s: Int): Point {
 `Type.new(...)` allocates and calls `initialize`. No field is ever read unset:
 
 - A field whose type has a natural zero starts at it when it has no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, and a struct of such fields.
-- A field may have a default, any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`.
+- A field may have a default, any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`; a default cannot read another field (compute such a value in `initialize`).
 - Any other field (a class, `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one) must be set by `initialize` on every path, before it is read and before `self` is used as a value or a method of `self` is called. Otherwise the class is refused, with an error that names the field and the ways out: set it, give it a default, or make it optional (`left: Node?`, which is one pointer).
 
 ```avant
@@ -465,7 +465,7 @@ An interface may take type parameters (`interface Eq(T)`). Two bounds are writte
 
 ### If and while
 
-`if` and `while` are statements. `if` may have an `else`. A new name bound in the condition of `if` exists only in the then-block. That is how optional results are opened:
+`if` may have an `else`. A new name bound in the condition of `if` exists only in the then-block. That is how optional results are opened:
 
 ```avant
 fn main {
@@ -481,6 +481,35 @@ fn main {
   }
 }
 ```
+
+An `if` with an `else` is also an expression: each branch ends in a value, and the branches' types must agree, as a value `switch`'s do (`label = if n > 10 { "big" } else { "small" }`, `w = if v = cfg.get("width") { v } else { 80 }`, `else if` chains included). A branch may leave instead (`return`, `break`, `continue`). In the same way, a final `if`/`else` in a function with a result is the function's value:
+
+```avant
+fn sign(n: Int): String {
+  if n < 0 { "-" } else if n == 0 { "0" } else { "+" }
+}
+```
+
+A condition may be a list, separated by commas: bindings and `Bool` tests, evaluated left to right, stopping at the first that fails. Each name bound is in scope for the conditions after it and for the then-block; the `else` runs when any of them fails, and sees none of them:
+
+```avant
+if x = h.get("a"), y = h.get("b"), x < y {
+  puts(x + y)
+} else {
+  puts("missing or out of order")
+}
+```
+
+`while` takes the same conditions, so `while v = x { ... }` runs its body while `x` gives a value (and every condition of a list holds), evaluating it again before each iteration; `v` exists in the body only:
+
+```avant
+while n = cur {
+  total += n.v
+  cur = n.next
+}
+```
+
+The right side of `??` may leave instead of giving a value: `v = h.get("port") ?? return 8080`, `?? return` in a function without a result, `?? break` and `?? continue` in a loop. On a failure the statement runs; otherwise `v` is the success value, without nesting the rest of the function in an if-assign.
 
 ### Switch
 
@@ -845,25 +874,59 @@ Packages require `git` at fetch time only; compiling and running afterwards work
 
 ## Errors
 
-A function that can fail returns a union. Postfix `?` unwraps the success side, or returns the failure from the current function.
+A function that can fail returns a union of its result and its failures. A failure is `nil` or a value of a type marked `Error`:
 
 ```avant
-fn parse_id(raw: Int): Int? {
-  if raw < 0 { return nil }
-  raw
+class ParseError: Error {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
 }
 
-fn bump(id: Int): Int? {
-  n = parse_id(id)?
-  n + 1
+fn parse(s: String): Int | ParseError {
+  if s.size == 0 { return ParseError.new("empty") }
+  s.size
+}
+
+fn sum2(a: String, b: String): Int | ParseError {
+  x = parse(a)?
+  y = parse(b)?
+  x + y
 }
 ```
 
-If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
+One rule says what fails: in any union the failures are `Nil` and every member marked `Error` (`class E: Error`, or a struct); the rest is the success value, one type or a smaller union. Postfix `?`, if-assign and `??` follow it:
 
-`?` compiles only where the failure can be returned: on a `T?` the function's result must include `nil`, and on another union the result must hold its failure members. Otherwise it is a compile error that names the result type (`postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+- `x?` gives the success value, or returns the failure from the current function. If `parse(a)` fails, `sum2` returns that `ParseError` and does not evaluate the rest.
+- `if v = x { ... }` binds the success value for the then-block; `v` is not visible in an `else`, and it is not visible after the `if`.
+- `x ?? fallback` is the success value, or the fallback (evaluated only then) on any failure.
 
-`if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
+A union without a failure member (`Int | String`) has nothing for these to open, and one whose every member is a failure (`IoError | ParseError`) has no value to give; both are compile errors. An optional error (`ParseError?`, all its members failures but `nil`) is read like any `T?`: if-assign and `??` give the error when it is not `nil`; `?` is refused on it, since it would pass `nil` up and continue with the error.
+
+`?` compiles only where the failure can be returned: the function's result must hold every failure of the value (`nil` included). Otherwise it is a compile error that names what would be returned (`postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+
+An `Error` makes its message readable: it has a `String` field named `message` or a method `fn message: String`. `e.message` reads it, and interpolating the error prints it (`"failed: ${e}"`). `Error` is opted into where the type is declared; it is not a bound and not a value type, and no type may be named `Error`. The standard library's errors (`JsonError`, `HttpError`, `RegexError`, `ZlibError`, `Base64Error`) are marked.
+
+An error cannot be dropped by accident: a statement whose value can be an error (`parse(s)` on its own line, when `parse` returns `Int | ParseError`) is a compile error that names the ways out: handle it (if-assign, `??`), pass it up with `?`, or discard it on purpose with `_ = parse(s)`. `_ = expr` computes the value and drops it; `_` binds nothing and cannot be read.
+
+An error may carry the error that caused it: a field named `cause` holding an `Error` type, or an optional one. It is an ordinary field, set like any other, and the interpolation prints it after the message, outermost first:
+
+```avant
+class ConfigError: Error {
+  message: String
+  cause: JsonError?
+
+  fn initialize(message: String, cause: JsonError?) {
+    self.message = message
+    self.cause = cause
+  }
+}
+
+e = ConfigError.new("bad config", JsonError.new("unexpected end"))
+puts("${e}")            // bad config: unexpected end
+```
 
 ### Compiled errors
 

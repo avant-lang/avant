@@ -150,6 +150,9 @@ pub class Checker {
   // Stage 29 W3b: checking a field default (evaluated before initialize,
   // with no receiver).
   pub in_default: Bool = false
+  // The class whose field defaults are being checked (O187, Stage 29
+  // W4a): a bare name of one of its fields gets its own message.
+  pub default_owner: Ty? = nil
   // What a postfix `?` returns from, for its messages.
   pub try_body: String = "the function"
   pub place_name: String = ""
@@ -617,6 +620,20 @@ pub class Checker {
       return
     }
     if k == st_if() {
+      if at_tail && stmt.else_body.size > 0 && !expected.is_void && !self.lambda_infer && (self.fallthrough(stmt.then_body) || self.fallthrough(stmt.else_body)) {
+        // A final if/else whose branches end in values is the function's
+        // value (Stage 29 W4a, D31; before, "missing return value").
+        stmt.tail_value = true
+        if t2 = self.check_if_value(stmt, true, expected) {
+          return
+        }
+        self.fail(stmt.loc, "missing return value")
+        return
+      }
+      if stmt.pre.size > 0 {
+        self.check_if_chain(stmt, expected, at_tail)
+        return
+      }
       if stmt.bind.size > 0 {
         self.check_if_assign(stmt, expected, at_tail)
         return
@@ -817,14 +834,17 @@ pub class Checker {
           }
         }
         got = self.check_expr(expr)
+        if !self.has_err && (!at_tail || expected.is_void) {
+          self.refuse_dropped_error(got, stmt.loc)
+        }
         if at_tail {
           if expected.is_void {
-            if !got.is_void {
-              if stmt.lead != 0 {
-                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
-              } else {
-                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
-              }
+            // The uniform void tail (D300, D18 amended; Stage 29 W4a): a
+            // value at the end of a function that returns nothing is a
+            // statement, as it is in the middle. A line starting with `-`
+            // or `[` there is D280's dangling line, as in the middle.
+            if !got.is_void && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
+              self.fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
           } else {
             if !ty_assignable(got, expected) {
@@ -861,21 +881,129 @@ pub class Checker {
     }
   }
 
-  pub fn if_assign_success(got: Ty, loc: Location): Ty {
-    if got.is_union {
-      if success = if_assign_payload(got) {
-        return success
-      }
-      if got.includes_nil {
-        self.fail(loc, "if-assign needs a single success type, got ${got.show}")
-        return self.t_int()
+  // A module name used as a bare qualifier that is also a method of the
+  // receiver (D310's ruling, Stage 29 W4a): nothing wins silently (D308);
+  // an error naming both ways out, and true.
+  pub fn module_is_method(name: String, loc: Location): Bool {
+    if st = self.bare_receiver {
+      if self.receiver_method_fits(st, name, 0) {
+        self.fail(loc, "${name} is both a module and a method of ${st.show}; write self.${name} for the method, or give the method another name to use the module")
+        return true
       }
     }
-    self.fail(loc, "if-assign expects T? or T | Error, got ${got.show}")
+    false
+  }
+
+  // `_ = expr` (Stage 29 W4a, D295): the value is computed and dropped on
+  // purpose, an error included; `_` binds nothing and cannot be read.
+  pub fn check_discard(stmt: Stmt) {
+    if stmt.op != tk_eq() {
+      self.fail(stmt.loc, "_ discards a value with _ = ...; it holds nothing to read or update")
+      return
+    }
+    if d = stmt.declared {
+      self.fail(stmt.loc, "_ = ... discards a value; it takes no type")
+      return
+    }
+    if v = stmt.value {
+      got = self.check_expr(v)
+      if !self.has_err && got.is_void {
+        self.fail(stmt.loc, "there is no value to discard: this expression has none")
+      }
+    }
+  }
+
+  // Discarding an error is a compile error (Stage 29 W4a, D295): a
+  // statement whose value can be an Error (a type marked Error, or a
+  // union holding one) is refused, naming the ways out.
+  pub fn refuse_dropped_error(got: Ty, loc: Location) {
+    can = got.error_mark
+    if got.is_union {
+      for m in got.members {
+        if m.error_mark {
+          can = true
+        }
+      }
+    }
+    if can {
+      self.fail(loc, "this statement drops a value that can be an error (${got.show}); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...")
+    }
+  }
+
+  // One element of a condition list (Stage 29 W4a, D292): a binding
+  // (bound in the current scope to the success part) or a Bool test.
+  pub fn check_cond_element(el: Stmt) {
+    if cond = el.cond {
+      got = self.check_expr(cond)
+      if el.bind.size > 0 {
+        success = self.if_assign_success(got, cond.loc)
+        self.bind(el.bind, success)
+      } else if !got.is_bool {
+        self.fail(cond.loc, "if condition must be Bool, got ${got.show}")
+      }
+    }
+  }
+
+  // `if a = x, b = y, cond { } else { }` (D292): the elements left to
+  // right, each binding in scope for the elements after it and the
+  // then-block; the else-block sees none of them.
+  pub fn check_if_chain(stmt: Stmt, expected: Ty, at_tail: Bool) {
+    self.push_scope
+    for el in stmt.pre {
+      self.check_cond_element(el)
+    }
+    self.check_cond_element(stmt)
+    self.check_body(stmt.then_body, expected, false)
+    self.pop_scope
+    if stmt.else_body.size > 0 {
+      self.check_block(stmt.else_body, expected, false)
+    }
+    if at_tail && !expected.is_void {
+      if !(stmt.else_body.size > 0 && !self.fallthrough(stmt.then_body) && !self.fallthrough(stmt.else_body)) {
+        self.fail(stmt.loc, "missing return value")
+      }
+    }
+  }
+
+  // The success part an if-assign binds (D292): the members of got that
+  // are not failures (type.av ty_failures).
+  pub fn if_assign_success(got: Ty, loc: Location): Ty {
+    if success = self.failure_split(got, loc, "if-assign") {
+      return success
+    }
     self.t_int()
   }
 
+  // The success part of got under the one failure rule (D292), or nil
+  // after an error that names what is missing; what is the operator's
+  // name for the message.
+  pub fn failure_split(got: Ty, loc: Location, what: String): Ty? {
+    if !got.is_union {
+      self.fail(loc, "${what} needs a value that can fail (T? or T | E with E marked Error), got ${got.show}")
+      return nil
+    }
+    if ty_failures(got).size == 0 {
+      if !ty_has_success(got) {
+        self.fail(loc, "${what} on ${got.show}: it has no success value, every member is a failure (Nil or marked Error)")
+      } else {
+        self.fail(loc, "${what} on ${got.show}: it has no failure member; a failure is Nil or a type marked Error (class E: Error)")
+      }
+      return nil
+    }
+    if success = ty_success_part(got) {
+      return success
+    }
+    self.fail(loc, "${what} on ${got.show}: it has no success value, every member is a failure (Nil or marked Error)")
+    nil
+  }
+
   pub fn check_assign(stmt: Stmt) {
+    if t0 = stmt.target {
+      if t0.kind == ex_name() && t0.ident == "_" {
+        self.check_discard(stmt)
+        return
+      }
+    }
     if self.reject_place_assign(stmt) {
       return
     }
@@ -1149,7 +1277,47 @@ pub class Checker {
     self.t_int()
   }
 
+  // Whether `??` and `.or` take left: a union with a failure member and
+  // a success part (D292; the error otherwise is failure_split's).
+  pub fn can_coalesce(left: Ty): Bool {
+    if left.is_union && ty_failures(left).size > 0 {
+      if s = ty_success_part(left) {
+        return true
+      }
+    }
+    false
+  }
+
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
+    fails = ty_failures(left)
+    if right_expr.kind == ex_switch() && right_expr.op == tk_return() {
+      // `x ?? return v`, `?? break`, `?? continue` (Stage 29 W4a): the
+      // statement runs on any failure and leaves; the value is the
+      // success part.
+      payload = ty_without_nil(left)
+      if s = ty_success_part(left) {
+        payload = s
+      }
+      for st in right_expr.else_body {
+        self.check_stmt(st, self.return_type, false)
+      }
+      right_expr.ty = payload
+      return payload
+    }
+    if !(fails.size == 1 && fails[0].is_nil) || !left.is_nilable {
+      // A failure other than nil, or a success part of several members
+      // (D292): the fallback is a value of the success part.
+      payload = left
+      if s = ty_success_part(left) {
+        payload = s
+      }
+      right = self.check_expr_as(right_expr, payload)
+      if ty_assignable(right, payload) {
+        return payload
+      }
+      self.fail(loc, "${opname} fallback must be ${payload.show}, got ${right.show}")
+      return payload
+    }
     payload = ty_without_nil(left)
     if right_expr.kind == ex_nil() {
       self.check_expr(right_expr)
@@ -1174,13 +1342,13 @@ pub class Checker {
     payload
   }
 
-  // `x?` (Stage 29 W1a, A3): the failure goes up only where the body's
-  // result can hold it. A nilable operand fails on `nil`, so the result must
-  // include `Nil`; a union without `Nil` fails on the members the result
-  // holds, and exactly one member is left as the success. Anything else is a
-  // compile error that names the result type and the ways out (before, a
-  // `nil` silently became `0` in an `Int` function, and a `String` or void
-  // result broke the MIR verifier).
+  // `x?` (Stage 29 W1a, A3; W4a, D292): the failures of x (nil and the
+  // members marked Error, type.av ty_failures) go up only where the
+  // body's result can hold each of them; the value is the success part
+  // (one type or a smaller union). Anything else is a compile error that
+  // names what would be returned and the ways out (before W1a, a `nil`
+  // silently became `0` in an `Int` function; before W4a, the failure
+  // was whichever member the result type happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
     if self.place_depth > 0 {
       self.fail(loc, "postfix ? inside Mutex.with cannot return; handle the failure with if-assign or ??")
@@ -1191,11 +1359,22 @@ pub class Checker {
       return self.t_int()
     }
     ret = self.return_type
-    if got.is_union {
-      if got.includes_nil {
-        if ret.is_union && ret.includes_nil {
-          return ty_without_nil(got)
+    if got.is_union && ty_failures(got).size > 0 && !ty_has_success(got) {
+      self.fail(loc, "postfix ? on ${got.show}: it has no success value (every member but nil is marked Error), so ? would pass up nil and continue with the error; open it with if-assign or ??")
+      return self.t_int()
+    }
+    if success = self.failure_split(got, loc, "postfix ?") {
+      fails = ty_failures(got)
+      missing: Array(Ty) = []
+      for f in fails {
+        if !ty_assignable(f, ret) {
+          missing.push(f)
         }
+      }
+      if missing.size == 0 {
+        return success
+      }
+      if fails.size == 1 && fails[0].is_nil {
         if ret.is_void {
           self.fail(loc, "postfix ? would return nil, but ${self.try_body} returns nothing; give it a result that includes nil, or handle the nil with if-assign or ??")
         } else {
@@ -1203,30 +1382,13 @@ pub class Checker {
         }
         return self.t_int()
       }
-      if ret.is_union {
-        succ: Array(Ty) = []
-        fails: Array(Ty) = []
-        for m in got.members {
-          if ret.includes_member(m) {
-            fails.push(m)
-          } else {
-            succ.push(m)
-          }
-        }
-        if succ.size == 1 && fails.size > 0 {
-          return succ[0]
-        }
-        self.fail(loc, "cannot use postfix ? on ${got.show} in a function returning ${ret.show}")
-        return self.t_int()
-      }
+      what = ty_union_build(missing).show
       if ret.is_void {
-        self.fail(loc, "postfix ? on ${got.show} would return the failure, but ${self.try_body} returns nothing; give it a union result that includes the failure, or handle it with if-assign or ??")
+        self.fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns nothing; give it a result that includes ${what}, or handle the failure with if-assign or ??")
       } else {
-        self.fail(loc, "postfix ? on ${got.show} would return the failure, but ${self.try_body} returns ${ret.show}; give it a union result that includes the failure, or handle it with if-assign or ??")
+        self.fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns ${ret.show}; give it a result that includes ${what}, or handle the failure with if-assign or ??")
       }
-      return self.t_int()
     }
-    self.fail(loc, "postfix ? expects a union, got ${got.show}")
     self.t_int()
   }
 
@@ -1234,6 +1396,23 @@ pub class Checker {
     for part in expr.parts {
       if inner = part.expr {
         ty = self.check_expr(inner)
+        if ty.error_mark && !self.has_err {
+          // An error prints its message (D292, Stage 29 W4a): the part
+          // becomes the call of the method the parser added to the type
+          // (parser.av error_text_method); inner is checked once.
+          fa = Expr.new(ex_field(), inner.loc)
+          fa.object = inner
+          fa.ident = "__avant_error_text"
+          arg_tys: Array(Ty) = []
+          none: Ty? = nil
+          if sig = self.match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name) {
+            fa.method_call = true
+            fa.resolved = sig.node.emit_name
+            fa.ty = sig.ret
+            part.expr = fa
+          }
+          continue
+        }
         ok = false
         if ty.is_integer {
           ok = true
@@ -2222,6 +2401,9 @@ pub class Checker {
     }
     if k = self.known_mods.get(expr.ident) {
       if self.qualifier_ok(expr.ident, self.current_module) {
+        if self.module_is_method(expr.ident, expr.loc) {
+          return self.t_int()
+        }
         return ty_module(expr.ident)
       }
     }
@@ -2241,6 +2423,14 @@ pub class Checker {
     if self.is_generic_template(expr.ident) {
       self.fail(expr.loc, "${expr.ident} needs type arguments")
       return self.t_int()
+    }
+    if self.in_default {
+      if owner = self.default_owner {
+        if ft = owner.field_named(expr.ident) {
+          self.fail(expr.loc, "a field default cannot read another field (${expr.ident} of ${owner.show}): defaults are evaluated before initialize, in declaration order; compute it in initialize instead")
+          return self.t_int()
+        }
+      }
     }
     self.fail(expr.loc, "unknown name ${expr.ident}")
     self.t_int()
@@ -2433,11 +2623,13 @@ pub class Checker {
         op = expr.op
         if op == tk_question_question() {
           left = self.check_expr(l)
-          if left.is_nilable {
+          if self.can_coalesce(left) {
             return self.coalesce_result(left, r, expr.loc, "??")
           }
           self.check_expr(r)
-          self.fail(expr.loc, "?? needs a nilable left side, got ${left.show}")
+          if !self.has_err {
+            self.failure_split(left, expr.loc, "??")
+          }
           return left
         }
         if op == tk_amp_amp() {
@@ -3366,6 +3558,9 @@ pub class Checker {
       } else {
         if !(recv.type_args.size > 0) {
           if self.names_std_gc(recv.ident) {
+            if self.module_is_method(recv.ident, recv.loc) {
+              return self.t_int()
+            }
             return self.check_gc_call(expr)
           }
           if id = self.lib_names.get(recv.ident) {
@@ -3377,6 +3572,9 @@ pub class Checker {
           }
           if k = self.known_mods.get(recv.ident) {
             if self.qualifier_ok(recv.ident, self.current_module) {
+              if self.module_is_method(recv.ident, recv.loc) {
+                return self.t_int()
+              }
               return self.dispatch_qualified_call(expr, recv.ident)
             }
           }
@@ -3422,11 +3620,13 @@ pub class Checker {
         return object
       }
       if expr.args.size == 1 {
-        if object.is_nilable {
+        if self.can_coalesce(object) {
           return self.coalesce_result(object, expr.args[0], expr.loc, "or")
         }
         self.check_expr(expr.args[0])
-        self.fail(expr.loc, "or needs a nilable receiver, got ${object.show}")
+        if !self.has_err {
+          self.failure_split(object, expr.loc, "or")
+        }
         return object
       }
       self.fail(expr.loc, "or takes one fallback")
@@ -3473,6 +3673,13 @@ pub class Checker {
   }
 
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.op == tk_if() && expr.else_body.size == 1 {
+      if t = self.check_if_value(expr.else_body[0], has_want, want) {
+        return t
+      }
+      self.fail(expr.loc, "an if used as a value leaves in every branch, so it has no value")
+      return self.t_int()
+    }
     if cond = expr.cond {
       ct = self.check_expr(cond)
       if !ct.is_int && !ct.is_bool {
@@ -3492,14 +3699,22 @@ pub class Checker {
         seen[lab] = 1
       }
     }
+    // An arm that leaves (its last statement a return, break or
+    // continue; Stage 29 W4a) gives no value and joins nothing.
     branch_tys: Array(Ty) = []
     i = 0
     while i < expr.cases.size {
-      branch_tys.push(self.check_switch_branch(expr.cases[i].body, has_want, want))
+      bt = self.check_switch_branch(expr.cases[i].body, has_want, want)
+      if !arm_leaves(expr.cases[i].body) {
+        branch_tys.push(bt)
+      }
       i += 1
     }
     if expr.has_else {
-      branch_tys.push(self.check_switch_branch(expr.else_body, has_want, want))
+      et = self.check_switch_branch(expr.else_body, has_want, want)
+      if !arm_leaves(expr.else_body) {
+        branch_tys.push(et)
+      }
     }
     all_void = true
     any_void = false
@@ -3799,15 +4014,101 @@ pub class Checker {
             return ty
           }
         }
-        self.check_stmt(stmt, self.t_void(), false)
+        self.check_stmt(stmt, self.return_type, false)
         self.pop_scope
         return self.t_void()
       }
-      self.check_stmt(stmt, self.t_void(), false)
+      self.check_stmt(stmt, self.return_type, false)
       i += 1
     }
     self.pop_scope
     self.t_void()
+  }
+
+  // An `if` used as a value (Stage 29 W4a, D31): the condition (a list,
+  // bindings in scope for the then-block), then each branch's value; the
+  // branches' types join as a value switch's do. nil when every branch
+  // leaves (return, break, continue).
+  pub fn check_if_value(stmt: Stmt, has_want: Bool, want: Ty): Ty? {
+    self.push_scope
+    for el in stmt.pre {
+      self.check_cond_element(el)
+    }
+    self.check_cond_element(stmt)
+    t1 = self.check_value_branch(stmt.then_body, has_want, want)
+    self.pop_scope
+    t2 = self.check_value_branch(stmt.else_body, has_want, want)
+    if self.has_err {
+      return self.t_int()
+    }
+    tys: Array(Ty) = []
+    if a = t1 {
+      tys.push(a)
+    }
+    if b = t2 {
+      tys.push(b)
+    }
+    if tys.size == 0 {
+      return nil
+    }
+    for t in tys {
+      if t.is_void {
+        self.fail(stmt.loc, "an if used as a value needs a value at the end of each branch")
+        return self.t_int()
+      }
+    }
+    if has_want && !want.is_void {
+      for t2b in tys {
+        if !ty_assignable(t2b, want) {
+          self.fail(stmt.loc, "if branch is ${t2b.show}, expected ${want.show}")
+        }
+      }
+      return want
+    }
+    result = tys[0]
+    for t3 in tys {
+      if !t3.same_as(result) {
+        self.fail(stmt.loc, "if branches have different types ${result.show} and ${t3.show}")
+      }
+    }
+    result
+  }
+
+  // A branch of an `if` used as a value: its last expression is the value
+  // (a last `if` with an else gives its own); nil when it leaves.
+  pub fn check_value_branch(body: Array(Stmt), has_want: Bool, want: Ty): Ty? {
+    self.push_scope
+    result: Ty? = self.t_void()
+    i = 0
+    while i < body.size {
+      st = body[i]
+      if i == body.size - 1 {
+        k = st.kind
+        if k == st_expr() {
+          if e = st.expr {
+            use_want = false
+            use_ty = self.t_int()
+            if has_want && !want.is_void {
+              use_want = true
+              use_ty = want
+            }
+            result = self.check_expr_flag(e, use_want, use_ty)
+          }
+        } else if k == st_if() && st.else_body.size > 0 {
+          result = self.check_if_value(st, has_want, want)
+        } else {
+          self.check_stmt(st, self.return_type, false)
+          if k == st_return() || k == st_break() || k == st_continue() {
+            result = nil
+          }
+        }
+      } else {
+        self.check_stmt(st, self.return_type, false)
+      }
+      i += 1
+    }
+    self.pop_scope
+    result
   }
 }
 
@@ -3824,4 +4125,20 @@ pub fn clayout_holds_ref(t: Ty): Bool {
     }
   }
   false
+}
+
+// Whether a block's last statement leaves it (return, break, continue).
+pub fn arm_leaves(body: Array(Stmt)): Bool {
+  if body.size == 0 {
+    return false
+  }
+  k = body[body.size - 1].kind
+  k == st_return() || k == st_break() || k == st_continue()
+}
+
+pub fn lead_spelling(lead: Int): String {
+  if lead == tk_minus() {
+    return "-"
+  }
+  "["
 }

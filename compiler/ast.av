@@ -22,6 +22,12 @@ pub fn ex_hash_new: Int { 14 }
 pub fn ex_nil: Int { 15 }
 pub fn ex_try: Int { 16 }
 pub fn ex_interp: Int { 17 }
+// A switch node (`switch c { case ... else ... }`) also holds the two
+// forms whose value comes from statements (Stage 29 W4a), so every walker
+// visits them as it visits a switch: op tk_return, the right side of
+// `x ?? return v` / `?? break` / `?? continue` (else_body is that one
+// statement; cond is nil, no cases); op tk_if, an `if` used as a value
+// (else_body is the if statement, which has an else).
 pub fn ex_switch: Int { 18 }
 pub fn ex_splice: Int { 19 }
 pub fn ex_lambda: Int { 20 }
@@ -214,6 +220,10 @@ pub class Stmt {
   pub for_kind: Int = 0
   pub declared: TypeName? = nil
   pub lead: Int = 0
+  // An `if` with an else at a function's tail whose branches end in
+  // values (Stage 29 W4a, D31): the checker sets it, and the function's
+  // value is the branch's (mir lower_body).
+  pub tail_value: Bool = false
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -1250,3 +1260,15 @@ pub fn collect_fn_type_params(fnn: Function, named: Hash(String, Int)): Array(St
   }
   into
 }
+
+// The `Error` marker (D292, Stage 29 W4a): whether a type's interface
+// clause names it.
+pub fn error_opted(opted: Array(TypeName)): Bool {
+  for tn in opted {
+    if tn.name == "Error" && tn.mod_name.size == 0 {
+      return true
+    }
+  }
+  false
+}
+

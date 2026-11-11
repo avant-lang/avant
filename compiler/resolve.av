@@ -795,6 +795,7 @@ pub class TypeResolver {
           src_opt = cdef.opt_ins
         }
       }
+      shell.error_mark = error_opted(src_opt)
       i = 0
       while i < src_opt.size {
         opted.push(subst_type_name(src_opt[i], params, tn.args))
@@ -1034,6 +1035,10 @@ pub fn load_types(program: Program): TypeResolver {
   resolver = TypeResolver.new
   resolver.program = program
   for sdef in program.structs {
+    if sdef.name == "Error" {
+      resolver.fail(sdef.loc, "Error is the built-in error marker (class E: Error); choose another name")
+      continue
+    }
     if existing = resolver.get_named_in(sdef.mod_name, sdef.name) {
       resolver.fail(sdef.loc, "${sdef.name} is already defined")
       continue
@@ -1042,12 +1047,17 @@ pub fn load_types(program: Program): TypeResolver {
       resolver.check_type_params(sdef.loc, sdef.name, sdef.type_params)
     }
     sty = ty_named(tyk_struct(), sdef.name)
+    sty.error_mark = error_opted(sdef.opt_ins)
     if sdef.type_params.size > 0 {
       sty.template = true
     }
     resolver.bind_type(sdef.mod_name, sdef.name, sty)
   }
   for cdef in program.classes {
+    if cdef.name == "Error" {
+      resolver.fail(cdef.loc, "Error is the built-in error marker (class E: Error); choose another name")
+      continue
+    }
     if already = resolver.get_named_in(cdef.mod_name, cdef.name) {
       resolver.fail(cdef.loc, "${cdef.name} is already defined")
       continue
@@ -1056,6 +1066,7 @@ pub fn load_types(program: Program): TypeResolver {
       resolver.check_type_params(cdef.loc, cdef.name, cdef.type_params)
     }
     cty = ty_named(tyk_class(), cdef.name)
+    cty.error_mark = error_opted(cdef.opt_ins)
     if cdef.type_params.size > 0 {
       cty.template = true
     }
@@ -1064,6 +1075,10 @@ pub fn load_types(program: Program): TypeResolver {
   for idef in program.interfaces {
     if existing = resolver.get_named_in(idef.mod_name, idef.name) {
       resolver.fail(idef.loc, "${idef.name} is already defined")
+      continue
+    }
+    if idef.name == "Error" {
+      resolver.fail(idef.loc, "Error is the built-in error marker (class E: Error); choose another name")
       continue
     }
     if idef.type_params.size > 0 {

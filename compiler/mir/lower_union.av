@@ -314,24 +314,43 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     lw.at(loc)
     src = lw.hold(u, lty)
     d = b.temp(rty)
-    c = lw.tag_is(src, uty, uty.tag_of(ty_nil()), true)
+    fails = ty_failures(uty)
     bnil = b.block
     bval = b.block
     join = b.block
-    b.branch(c, bnil, bval)
-    b.at(bnil)
-    v = lw.lower_coerced(r, rty, result)
-    if lw.failed {
-      return b.c_i32(0)
+    if fails.size == 1 {
+      c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
+      b.branch(c, bnil, bval)
+    } else {
+      lw.branch_failure(src, uty, fails, bnil, bval)
     }
-    lw.at(loc)
-    b.assign(b.pl(d), b.rv_use(v))
-    b.goto(join)
+    b.at(bnil)
+    if r.kind == ex_switch() && r.op == tk_return() {
+      // `?? return v`, `?? break`, `?? continue` (Stage 29 W4a): the
+      // statement leaves; nothing reaches the join from here.
+      lw.lower_stmts(r.else_body)
+      if lw.failed {
+        return b.c_i32(0)
+      }
+      lw.goto_if_open(join, loc)
+    } else {
+      v = lw.lower_coerced(r, rty, result)
+      if lw.failed {
+        return b.c_i32(0)
+      }
+      lw.at(loc)
+      b.assign(b.pl(d), b.rv_use(v))
+      b.goto(join)
+    }
     b.at(bval)
     if result.same_as(uty) {
       b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
     } else {
-      b.assign(b.pl(d), b.rv_use(lw.unwrap(src, uty, ty_without_nil(uty), loc)))
+      success = ty_without_nil(uty)
+      if sp = ty_success_part(uty) {
+        success = sp
+      }
+      b.assign(b.pl(d), b.rv_use(lw.coerce(lw.unwrap(src, uty, success, loc), success, result, loc)))
     }
     b.goto(join)
     b.at(join)
@@ -341,34 +360,26 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
   b.c_i32(0)
 }
 
-// The success and failure parts of u under postfix `?` in a function
-// returning ret (the old back end's try_success_from, try_fail_from).
-pub fn mir_try_success(u: Ty, ret: Ty): Ty {
-  if !u.includes_nil {
-    for mem in u.members {
-      if !ret.includes_member(mem) {
-        return mem
-      }
-    }
+// A branch to bfail when the union in src (of type uty) holds one of
+// fails (D292: several failure members), else to bok: one switch on the
+// tag.
+pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail: Int, bok: Int) {
+  b = lw.lw_b
+  tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+  values: Array(Int64) = []
+  targets: Array(Int) = []
+  for f in fails {
+    values.push(uty.tag_of(f).to_i64)
+    targets.push(bfail)
   }
-  ty_without_nil(u)
+  b.switch_on(tag, values, targets, bok)
 }
 
-pub fn mir_try_fail(u: Ty, ret: Ty): Ty {
-  if !u.includes_nil {
-    for mem in u.members {
-      if ret.includes_member(mem) {
-        return mem
-      }
-    }
-  }
-  ty_nil()
-}
-
-// `e?` (the old back end's emit_try, emit_failure_return): the union once; on the
-// failure tag the function returns the failure (the union itself when the
-// result type is the same, else the failure member as the result type);
-// otherwise the value is the success part.
+// `e?` (the old back end's emit_try, emit_failure_return): the union once; on a
+// failure tag (D292: nil and the members marked Error) the function
+// returns the failure (the union itself when the result type is the
+// same, else the failure as the result type); otherwise the value is the
+// success part.
 pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
   b = lw.lw_b
   if inner = e.inner {
@@ -381,18 +392,27 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
         }
         lw.at(e.loc)
         src = lw.hold(u, ity)
-        success = mir_try_success(uty, ret)
-        fail = mir_try_fail(uty, ret)
-        c = lw.tag_is(src, uty, uty.tag_of(fail), true)
+        fails = ty_failures(uty)
+        success = ty_without_nil(uty)
+        if sp = ty_success_part(uty) {
+          success = sp
+        }
         bf = b.block
         bok = b.block
-        b.branch(c, bf, bok)
+        if fails.size == 1 {
+          c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
+          b.branch(c, bf, bok)
+        } else {
+          lw.branch_failure(src, uty, fails, bf, bok)
+        }
         b.at(bf)
         if ret.same_as(uty) {
           b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
-        } else {
-          fv = lw.coerce(lw.unwrap(src, uty, fail, e.loc), fail, ret, e.loc)
+        } else if fails.size == 1 {
+          fv = lw.coerce(lw.unwrap(src, uty, fails[0], e.loc), fails[0], ret, e.loc)
           b.assign(b.pl(0), b.rv_use(fv))
+        } else {
+          b.assign(b.pl(0), b.rv_use(lw.retag(b.copy_local(src), uty, ret, e.loc)))
         }
         lw.unpin_all
         b.ret
@@ -406,18 +426,18 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
 }
 
 // `if x = cond { } else { }` (the old back end's emit_if_assign; type.av
-// if_assign_payload, if_assign_failure): the union once; when its tag is
-// not the failure's, x (a local of the success type) holds the success
-// part for the then-body.
+// ty_failures, ty_success_part): the union once; when its tag is not a
+// failure's, x (a local of the success type) holds the success part for
+// the then-body.
 pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
   b = lw.lw_b
   if c = st.cond {
     if uty = c.ty {
       success = ty_without_nil(uty)
-      if p = if_assign_payload(uty) {
+      if p = ty_success_part(uty) {
         success = p
       }
-      fail = if_assign_failure(uty)
+      fails = ty_failures(uty)
       cty = lw.ety(c)
       sty = lw.ty_at(success, st.loc, "a binding")
       u = lw.lower_expr(c)
@@ -426,14 +446,18 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
       }
       lw.at(st.loc)
       src = lw.hold(u, cty)
-      ok = lw.tag_is(src, uty, uty.tag_of(fail), false)
       bt = b.block
       bf = b.block
       join = bf
       if st.else_body.size > 0 || lw.lw_cov.on {
         join = b.block
       }
-      b.branch(ok, bt, bf)
+      if fails.size == 1 {
+        ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
+        b.branch(ok, bt, bf)
+      } else {
+        lw.branch_failure(src, uty, fails, bf, bt)
+      }
       b.at(bt)
       lw.cov_branch(st.loc)
       v = lw.unwrap(src, uty, success, st.loc)
@@ -451,6 +475,149 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     }
   }
   lw.refuse(st.loc, "this if binding")
+}
+
+// One binding of an if-assign or a chain element (Stage 29 W4a): the
+// union once; on a failure tag to bfail, else on to a fresh block where
+// the name holds the success part (the builder is left there).
+pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
+  b = lw.lw_b
+  if c = el.cond {
+    if uty = c.ty {
+      success = ty_without_nil(uty)
+      if p = ty_success_part(uty) {
+        success = p
+      }
+      fails = ty_failures(uty)
+      cty = lw.ety(c)
+      sty = lw.ty_at(success, el.loc, "a binding")
+      u = lw.lower_expr(c)
+      if lw.failed {
+        return
+      }
+      lw.at(el.loc)
+      src = lw.hold(u, cty)
+      bok = b.block
+      if fails.size == 1 {
+        ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
+        b.branch(ok, bok, bfail)
+      } else {
+        lw.branch_failure(src, uty, fails, bfail, bok)
+      }
+      b.at(bok)
+      v = lw.unwrap(src, uty, success, el.loc)
+      lw.bind_name(el.bind, success, sty, v, el.loc, false)
+      return
+    }
+  }
+  lw.refuse(el.loc, "this if binding")
+}
+
+// One element of a condition: a binding, or a Bool test whose false goes
+// to bfail; the builder is left where it holds.
+pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int) {
+  if el.bind.size > 0 {
+    lw.lower_cond_bind(el, bfail)
+    return
+  }
+  if c = el.cond {
+    cv = lw.lower_expr(c)
+    if lw.failed {
+      return
+    }
+    bok = lw.lw_b.block
+    lw.at(el.loc)
+    lw.lw_b.branch(cv, bok, bfail)
+    lw.lw_b.at(bok)
+  }
+}
+
+// An `if` with a condition list, or one whose branches give a value
+// (Stage 29 W4a): the elements in order, each failure to the one else
+// block (never duplicated); mode 0 is a statement, 1 writes each
+// branch's value into dest (converted to want), 2 returns it from the
+// function (its tail).
+pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?) {
+  b = lw.lw_b
+  belse = b.block
+  join = belse
+  has_else = st.else_body.size > 0 || lw.lw_cov.on
+  if has_else {
+    join = b.block
+  }
+  for el in st.pre {
+    lw.lower_cond_element(el, belse)
+    if lw.failed {
+      return
+    }
+  }
+  lw.lower_cond_element(st, belse)
+  if lw.failed {
+    return
+  }
+  lw.cov_branch(st.loc)
+  lw.lower_branch(st.then_body, mode, dest, want)
+  lw.goto_if_open(join, st.loc)
+  if has_else {
+    b.at(belse)
+    lw.cov_branch(st.loc)
+    lw.lower_branch(st.else_body, mode, dest, want)
+    lw.goto_if_open(join, st.loc)
+  }
+  b.at(join)
+}
+
+// A branch's statements; in a value mode (lower_if_general) its last
+// expression is the value, and a last `if` with an else gives its own.
+pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want: Ty?) {
+  if mode == 0 {
+    lw.lower_stmts(body)
+    return
+  }
+  b = lw.lw_b
+  i = 0
+  while i < body.size {
+    if lw.failed || !lw.open_now {
+      return
+    }
+    st = body[i]
+    if i == body.size - 1 {
+      if st.kind == st_if() && st.else_body.size > 0 {
+        lw.cov_stmt(st)
+        lw.lower_if_general(st, mode, dest, want)
+        return
+      }
+      if st.kind == st_expr() {
+        if e = st.expr {
+          lw.cov_stmt(st)
+          if mode == 2 {
+            v = lw.lower_ret_value(e)
+            if lw.failed {
+              return
+            }
+            lw.at(st.loc)
+            b.assign(b.pl(0), b.rv_use(v))
+            b.ret
+            return
+          }
+          v2 = lw.lower_expr(e)
+          if t = e.ty {
+            if w = want {
+              v2 = lw.coerce(v2, t, w, e.loc)
+            }
+          }
+          if lw.failed {
+            return
+          }
+          lw.at(st.loc)
+          b.assign(b.pl(dest), b.rv_use(v2))
+          return
+        }
+      }
+    }
+    lw.lower_stmt(st)
+    i += 1
+  }
 }
 
 // ---- results of type T?

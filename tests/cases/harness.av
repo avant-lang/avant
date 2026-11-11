@@ -135,10 +135,8 @@ pub fn avant_test_root: String {
 }
 
 pub fn list_only: Bool {
-  if v = env_get("AVANT_TEST_LIST") {
-    if v == "1" {
-      return true
-    }
+  if v = env_get("AVANT_TEST_LIST"), v == "1" {
+    return true
   }
   false
 }
@@ -176,13 +174,11 @@ pub fn gc_env_outer(stated: String): String {
   own = " ${stated} "
   out = ""
   for nm in names {
-    if v = env_get(nm) {
-      if v.size > 0 && !str_has(own, " ${nm} ") {
-        if out.size > 0 {
-          out = "${out} "
-        }
-        out = "${out}${nm}"
+    if v = env_get(nm), v.size > 0 && !str_has(own, " ${nm} ") {
+      if out.size > 0 {
+        out = "${out} "
       }
+      out = "${out}${nm}"
     }
   }
   out
@@ -322,7 +318,7 @@ pub class Checks {
       b.push_str("</testsuite>\n")
       i = j
     }
-    dummy = file_write(frag, b.to_s)
+    file_write(frag, b.to_s)
   }
 
   pub fn expect(cond: Bool, msg: String) {
@@ -408,15 +404,15 @@ pub fn empty_strs: Array(String) {
 // chmod +x, rm -f, rm -rf, mkdir -p, and pwd -P without starting a tool
 // (D140); runtime/avant_io.c.
 pub fn chmod_x(path: String) {
-  dummy = harness_rt.avant_fs_chmod_x(path)
+  harness_rt.avant_fs_chmod_x(path)
 }
 
 pub fn rm_f(path: String) {
-  dummy = harness_rt.avant_fs_unlink(path)
+  harness_rt.avant_fs_unlink(path)
 }
 
 pub fn rm_rf(path: String) {
-  dummy = harness_rt.avant_fs_remove_tree(path)
+  harness_rt.avant_fs_remove_tree(path)
 }
 
 pub fn copy_file(src: String, dst: String): Int {
@@ -554,11 +550,11 @@ pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
 }
 
 pub fn mkdir_p(path: String) {
-  dummy = harness_rt.avant_fs_mkdir_p(path)
+  harness_rt.avant_fs_mkdir_p(path)
 }
 
 pub fn write_av(dir: String, name: String, body: String) {
-  dummy = file_write("${dir}/${name}.av", body)
+  file_write("${dir}/${name}.av", body)
 }
 
 pub class Channel(T) {

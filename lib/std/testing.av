@@ -20,7 +20,7 @@ lib avant_testing_fs {
 
 fn testing_write(s: String) {
   line = "${s}\n"
-  dummy = avant_testing_io.write(1, line, line.size)
+  avant_testing_io.write(1, line, line.size)
 }
 
 fn testing_slice(s: String, start: Int, stop: Int): String {
@@ -101,11 +101,9 @@ pub class Test {
     self.rec_ok = []
     self.rec_ms = []
     self.rec_at = now_ms()
-    if v = env_get("AVANT_TEST_ONLY") {
-      if v.size > 0 {
-        self.mode = 2
-        self.only = v
-      }
+    if v = env_get("AVANT_TEST_ONLY"), v.size > 0 {
+      self.mode = 2
+      self.only = v
     }
     if v = env_get("AVANT_TEST_LIST") {
         if v == "1" {
@@ -113,10 +111,8 @@ pub class Test {
       }
     }
     if self.mode == 0 {
-      if v = env_get("AVANT_TEST_NAMES") {
-        if v.size > 0 {
-          self.names_path = v
-        }
+      if v = env_get("AVANT_TEST_NAMES"), v.size > 0 {
+        self.names_path = v
       }
     }
   }
@@ -214,7 +210,7 @@ pub class Test {
       }
     }
     b.push_str("</testsuite>\n")
-    dummy = file_write(frag, b.to_s)
+    file_write(frag, b.to_s)
   }
 
   fn pass_line(name: String) {
@@ -341,7 +337,7 @@ pub class Test {
       b.push_str("\n")
       i += 1
     }
-    dummy = file_write(self.names_path, b.to_s)
+    file_write(self.names_path, b.to_s)
   }
 
   pub fn parallel(name: String, body: fn(): Nil): Nil {
