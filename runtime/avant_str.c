@@ -189,10 +189,11 @@ char *avant_str_concat(const char *a, const char *b) {
   return p;
 }
 
+/* bytes_to_str: the bytes are an Array(Int)'s elements (avant_int). */
 char *avant_str_from_i32_bytes(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   int32_t n = 0;
-  const int32_t *src = NULL;
+  const avant_int *src = NULL;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &a);
   if (a && a->buf && a->size > 0) {
@@ -200,18 +201,18 @@ char *avant_str_from_i32_bytes(void *arr) {
   }
   char *p = avant_str_alloc((uint64_t)n);
   if (n) {
-    src = (const int32_t *)a->buf;
+    src = (const avant_int *)a->buf;
   }
   int32_t i;
-  uint32_t any = 0;
+  uint64_t any = 0;
   for (i = 0; i < n; i++) {
-    any |= (uint32_t)src[i];
+    any |= (uint64_t)(int64_t)src[i];
     p[i] = (char)(unsigned char)src[i];
   }
   if (any > 255u) {
     /* A byte outside 0..255 (D295 R3): the first one is named. */
     for (i = 0; i < n; i++) {
-      if ((uint32_t)src[i] > 255u) {
+      if ((uint64_t)(int64_t)src[i] > 255u) {
         avant_trap_byte(src[i]);
       }
     }
@@ -222,8 +223,8 @@ char *avant_str_from_i32_bytes(void *arr) {
 }
 
 /* gc-lint: holds nothing (its inputs are integers). */
-char *avant_str_repeat_byte(int32_t b, int32_t n) {
-  if ((uint32_t)b > 255u) {
+char *avant_str_repeat_byte(avant_int b, avant_int n) {
+  if ((uint64_t)(int64_t)b > 255u) {
     avant_trap_byte(b);
   }
   if (n < 0) {
@@ -238,9 +239,9 @@ char *avant_str_repeat_byte(int32_t b, int32_t n) {
 
 /* A slice needs 0 <= start <= stop <= size, else it traps like an index
  * (Stage 29 W4b1, D295 R4; slices used to clamp). */
-static void check_range(size_t n, int32_t start, int32_t stop, size_t *out_i, size_t *out_len) {
+static void check_range(size_t n, avant_int start, avant_int stop, size_t *out_i, size_t *out_len) {
   if (start < 0 || stop < start || (size_t)stop > n) {
-    avant_trap_slice(start, stop, (int32_t)n);
+    avant_trap_slice(start, stop, (avant_int)n);
   }
   *out_i = (size_t)start;
   *out_len = (size_t)(stop - start);
@@ -249,7 +250,7 @@ static void check_range(size_t n, int32_t start, int32_t stop, size_t *out_i, si
 /* RC2: the source is passed as the string and an offset (dup_bytes_at),
  * never as s + i formed before the allocation. */
 /* gc-lint: holds nothing (dup_bytes_at roots the string itself; nothing is read after it). */
-char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
+char *avant_str_slice(const char *s, avant_int start, avant_int stop) {
   char *r;
   if (!s) {
     s = "";
@@ -264,9 +265,9 @@ char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
   return r;
 }
 
-char *avant_str_from_int(int32_t n) {
+char *avant_str_from_int(avant_int n) {
   char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%d", n);
+  int k = snprintf(buf, sizeof(buf), "%lld", (long long)n);
   if (k < 0) {
     k = 0;
   }
@@ -485,8 +486,8 @@ char *avant_str_from_bool(int32_t n) {
 }
 
 /* gc-lint: holds nothing (its input is a C byte; the result is pinned before any other call). */
-char *avant_str_from_byte(int32_t b) {
-  if ((uint32_t)b > 255u) {
+char *avant_str_from_byte(avant_int b) {
+  if ((uint64_t)(int64_t)b > 255u) {
     avant_trap_byte(b);
   }
   unsigned idx = (unsigned)b;
@@ -500,18 +501,18 @@ char *avant_str_from_byte(int32_t b) {
   return p;
 }
 
-char *avant_str_cat_i32(const char *prefix, int32_t n) {
-  char digs[16];
+char *avant_str_cat_i32(const char *prefix, avant_int n) {
+  char digs[24];
   int nd = 0;
-  uint32_t u;
+  uint64_t u;
   /* RC1: the prefix is a handle across the allocation (digs is C
    * memory). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &prefix);
   if (n < 0) {
-    u = (uint32_t)(-(n + 1)) + 1u;
+    u = (uint64_t)(-((int64_t)n + 1)) + 1u;
   } else {
-    u = (uint32_t)n;
+    u = (uint64_t)n;
   }
   if (u == 0) {
     digs[nd++] = '0';
@@ -655,9 +656,9 @@ static int fast_f64(const char *p, size_t len, double *out) {
  * optional fraction (a point and digits) and an optional exponent (e or
  * E, an optional sign, digits) -- Avant's literal with a sign -- whose
  * value is finite. */
-static void trap_base(int32_t base) {
+static void trap_base(avant_int base) {
   fflush(stdout);
-  fprintf(stderr, "avant runtime: base %d out of range (2..36)\n", base);
+  fprintf(stderr, "avant runtime: base %lld out of range (2..36)\n", (long long)base);
   exit(1);
 }
 
@@ -693,7 +694,7 @@ static int parse_mag(const char *p, size_t n, int32_t base, uint64_t limit, uint
 }
 
 /* A signed integer of p[0..n) within [-(max + 1), max]. */
-static int64_t parse_signed(const char *p, size_t n, int32_t base, uint64_t max, int32_t *ok) {
+static int64_t parse_signed(const char *p, size_t n, avant_int base, uint64_t max, int32_t *ok) {
   int neg = 0;
   uint64_t m = 0;
   if (base < 2 || base > 36) {
@@ -705,22 +706,22 @@ static int64_t parse_signed(const char *p, size_t n, int32_t base, uint64_t max,
     p++;
     n--;
   }
-  if (!parse_mag(p, n, base, neg ? max + 1 : max, &m)) {
+  if (!parse_mag(p, n, (int32_t)base, neg ? max + 1 : max, &m)) {
     return 0;
   }
   *ok = 1;
   return neg ? (int64_t)(0 - m) : (int64_t)m;
 }
 
-int32_t avant_str_parse_i32(const char *s, int32_t base, int32_t *ok) {
+int32_t avant_str_parse_i32(const char *s, avant_int base, int32_t *ok) {
   return (int32_t)parse_signed(s ? s : "", s ? avant_str_n(s) : 0, base, 2147483647ull, ok);
 }
 
-int64_t avant_str_parse_i64(const char *s, int32_t base, int32_t *ok) {
+int64_t avant_str_parse_i64(const char *s, avant_int base, int32_t *ok) {
   return parse_signed(s ? s : "", s ? avant_str_n(s) : 0, base, 9223372036854775807ull, ok);
 }
 
-uint64_t avant_str_parse_u64(const char *s, int32_t base, int32_t *ok) {
+uint64_t avant_str_parse_u64(const char *s, avant_int base, int32_t *ok) {
   const char *p = s ? s : "";
   size_t n = s ? avant_str_n(s) : 0;
   uint64_t m = 0;
@@ -732,7 +733,7 @@ uint64_t avant_str_parse_u64(const char *s, int32_t base, int32_t *ok) {
     p++;
     n--;
   }
-  if (!parse_mag(p, n, base, UINT64_MAX, &m)) {
+  if (!parse_mag(p, n, (int32_t)base, UINT64_MAX, &m)) {
     return 0;
   }
   *ok = 1;
@@ -815,7 +816,7 @@ double avant_str_parse_f64(const char *s) {
   return ok ? v : NAN;
 }
 
-double avant_str_parse_f64_slice(const char *s, int32_t start, int32_t stop) {
+double avant_str_parse_f64_slice(const char *s, avant_int start, avant_int stop) {
   size_t i = 0;
   size_t len = 0;
   int32_t ok = 0;
@@ -824,7 +825,7 @@ double avant_str_parse_f64_slice(const char *s, int32_t start, int32_t stop) {
   return ok ? v : NAN;
 }
 
-char *avant_str_fmt_float(double v, int32_t prec) {
+char *avant_str_fmt_float(double v, avant_int prec) {
   /* 400: the longest %.64f (see avant_buf_push_fmt_f). */
   char buf[400];
   /* 0..64 (the longest text, a sign, 309 digits, the point and 64,
@@ -832,9 +833,9 @@ char *avant_str_fmt_float(double v, int32_t prec) {
   if (prec < 0 || prec > 64) {
     avant_trap_precision(prec);
   }
-  int k = avant_fmt_fixed(buf, v, prec);
+  int k = avant_fmt_fixed(buf, v, (int)prec);
   if (k < 0) {
-    k = snprintf(buf, sizeof(buf), "%.*f", prec, v);
+    k = snprintf(buf, sizeof(buf), "%.*f", (int)prec, v);
   }
   if (k < 0) {
     k = 0;
@@ -857,11 +858,11 @@ int32_t avant_str_eq(const char *a, const char *b) {
   return memcmp(a, b, na) == 0 ? 1 : 0;
 }
 
-int32_t avant_str_size(const char *s) {
-  return (int32_t)avant_str_n(s);
+avant_int avant_str_size(const char *s) {
+  return (avant_int)avant_str_n(s);
 }
 
-int32_t avant_str_byte(const char *s, int32_t i) {
+avant_int avant_str_byte(const char *s, avant_int i) {
   if (!s || i < 0) {
     return 0;
   }
@@ -869,7 +870,7 @@ int32_t avant_str_byte(const char *s, int32_t i) {
   if ((size_t)i >= n) {
     return 0;
   }
-  return (int32_t)(unsigned char)s[i];
+  return (avant_int)(unsigned char)s[i];
 }
 
 int32_t avant_checksum_str(const char *s) {

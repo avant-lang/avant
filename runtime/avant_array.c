@@ -118,7 +118,7 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
  * handshake). Until W17a a shared program took the world lock around
  * each, so that another thread's collection could not move the buffer
  * between the load and the store (D191). */
-void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
+void avant_array_set_ptr(void *arr, avant_int i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
   if (a && a->buf) {
     ((void **)a->buf)[i] = elem;
@@ -126,7 +126,7 @@ void avant_array_set_ptr(void *arr, int32_t i, void *elem) {
   }
 }
 
-void *avant_array_get_ptr(void *arr, int32_t i) {
+void *avant_array_get_ptr(void *arr, avant_int i) {
   AvantArray *a = (AvantArray *)arr;
   if (a && a->buf && i >= 0 && i < a->size) {
     return ((void **)a->buf)[i];
@@ -172,7 +172,7 @@ void avant_array_clear(void *arr) {
 }
 
 /* gc-lint: holds nothing (the growth is its last statement; array_grow roots the array). */
-void avant_array_reserve(void *arr, int32_t n, uint64_t elem_size, uint32_t buf_type_id) {
+void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
   if (!a || n <= a->cap) {
     return;
@@ -612,7 +612,7 @@ int32_t avant_array_contains_f64(void *arr, double v) { return avant_array_index
 int32_t avant_array_contains_str(void *arr, const char *v) { return avant_array_index_str(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_ptr(void *arr, void *v) { return avant_array_index_ptr(arr, v) >= 0 ? 1 : 0; }
 
-int32_t avant_array_index_i32(void *arr, int32_t v) {
+avant_int avant_array_index_i32(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -620,7 +620,7 @@ int32_t avant_array_index_i32(void *arr, int32_t v) {
   return -1;
 }
 
-int32_t avant_array_index_i64(void *arr, int64_t v) {
+avant_int avant_array_index_i64(void *arr, int64_t v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -628,7 +628,7 @@ int32_t avant_array_index_i64(void *arr, int64_t v) {
   return -1;
 }
 
-int32_t avant_array_index_u64(void *arr, uint64_t v) {
+avant_int avant_array_index_u64(void *arr, uint64_t v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -636,7 +636,7 @@ int32_t avant_array_index_u64(void *arr, uint64_t v) {
   return -1;
 }
 
-int32_t avant_array_index_f64(void *arr, double v) {
+avant_int avant_array_index_f64(void *arr, double v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -644,7 +644,7 @@ int32_t avant_array_index_f64(void *arr, double v) {
   return -1;
 }
 
-int32_t avant_array_index_str(void *arr, const char *v) {
+avant_int avant_array_index_str(void *arr, const char *v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -654,7 +654,7 @@ int32_t avant_array_index_str(void *arr, const char *v) {
 
 int32_t avant_array_contains_bool(void *arr, int32_t v) { return avant_array_index_bool(arr, v) >= 0 ? 1 : 0; }
 
-int32_t avant_array_index_bool(void *arr, int32_t v) {
+avant_int avant_array_index_bool(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -662,7 +662,7 @@ int32_t avant_array_index_bool(void *arr, int32_t v) {
   return -1;
 }
 
-int32_t avant_array_index_ptr(void *arr, void *v) {
+avant_int avant_array_index_ptr(void *arr, void *v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   if (!a || !a->buf) { return -1; }
@@ -881,6 +881,8 @@ void avant_array_fill_i32(void *arr, int32_t v) {
 #endif
 }
 
+/* The BWT entries' arrays are Array(Int32) (int32_t elements, as the
+ * C reference's; Stage 29 W-INT1). */
 static int32_t *i32_buf(void *arr, int32_t need) {
   AvantArray *a = (AvantArray *)arr;
   if (!a || !a->buf || a->size < need || need < 0) {
@@ -978,7 +980,7 @@ static int rerank(int32_t *sa, int32_t *rank, int32_t *neu, int32_t n, int32_t a
   return neu[sa[n - 1]] == n - 1;
 }
 
-int32_t avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, void *tmp_arr,
+avant_int avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, void *tmp_arr,
                             void *count_arr, void *out_arr) {
   AvantArray *in_a = (AvantArray *)input_arr;
   int32_t n;
@@ -1071,7 +1073,7 @@ int32_t avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, void 
   return original;
 }
 
-void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, int32_t start) {
+void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, avant_int start) {
   AvantArray *bwt_a = (AvantArray *)bwt_arr;
   int32_t n;
   int32_t *bwt;
@@ -1090,7 +1092,9 @@ void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, int32_t sta
   bwt = i32_buf(bwt_arr, n);
   next = i32_buf(next_arr, n);
   out = i32_buf(out_arr, n);
-  if (!bwt || !next || !out || n <= 0) {
+  /* start names an element (Stage 29 W-INT1: out of range it read past
+   * next). */
+  if (!bwt || !next || !out || n <= 0 || start < 0 || start >= n) {
     return;
   }
   memset(counts, 0, sizeof(counts));
@@ -1109,7 +1113,8 @@ void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, int32_t sta
     next[pos] = i;
     temp_counts[byte]++;
   }
-  idx = start;
+  /* An index of the input (the caller's original slot). */
+  idx = (int32_t)start;
   for (i = 0; i < n; i++) {
     idx = next[idx];
     out[i] = bwt[idx];

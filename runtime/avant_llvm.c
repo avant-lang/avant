@@ -94,7 +94,7 @@ static void on_fatal(const char *reason) {
 }
 
 /* Initializes the native (x86-64) target once. 0 or AVANT_LLVM_TARGET. */
-int32_t avant_llvm_init(void) {
+int64_t avant_llvm_init(void) {
   if (!g_initialized) {
     LLVMInstallFatalErrorHandler(on_fatal);
     LLVMInitializeX86TargetInfo();
@@ -138,7 +138,7 @@ static LLVMCodeGenOptLevel codegen_level(int32_t level) {
 static int32_t g_cpu = 1;
 
 /* The highest x86-64 level this machine runs (1-4). */
-int32_t avant_llvm_host_level(void) {
+int64_t avant_llvm_host_level(void) {
   __builtin_cpu_init();
   if (__builtin_cpu_supports("x86-64-v4")) {
     return 4;
@@ -153,7 +153,7 @@ int32_t avant_llvm_host_level(void) {
 }
 
 /* The level of the next compiles: 1-5 as above. 0 ok, 1 out of range. */
-int32_t avant_llvm_set_cpu(int32_t level) {
+int64_t avant_llvm_set_cpu(int64_t level) {
   if (level < 1 || level > 5) {
     return 1;
   }
@@ -313,7 +313,7 @@ static int32_t compile_buffer(LLVMMemoryBufferRef buf, const char *passes, int32
 /* Compiles the textual IR file ll_path to the object obj_path: parse,
  * verify, run the new-pass-manager pipeline `passes` (empty: none), emit
  * with codegen level `level` (0 None, 1 Less, 2 Default, 3 Aggressive). */
-int32_t avant_llvm_compile_file(const char *ll_path, const char *passes, int32_t level, const char *obj_path) {
+int64_t avant_llvm_compile_file(const char *ll_path, const char *passes, int64_t level, const char *obj_path) {
   LLVMMemoryBufferRef buf = NULL;
   char *msg = NULL;
   clear_error();
@@ -327,7 +327,7 @@ int32_t avant_llvm_compile_file(const char *ll_path, const char *passes, int32_t
 }
 
 /* The same from IR text in memory; `name` labels it in messages. */
-int32_t avant_llvm_compile_text(const char *text, const char *name, const char *passes, int32_t level, const char *obj_path) {
+int64_t avant_llvm_compile_text(const char *text, const char *name, const char *passes, int64_t level, const char *obj_path) {
   clear_error();
   avant_llvm_init();
   LLVMMemoryBufferRef buf = LLVMCreateMemoryBufferWithMemoryRangeCopy(text, strlen(text), name);

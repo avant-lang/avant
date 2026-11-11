@@ -59,16 +59,17 @@ static void buf_reserve(AvantBuf *b, int64_t extra) {
   }
 }
 
-void *avant_buf_new(int32_t cap) {
+void *avant_buf_new(avant_int cap) {
   AvantBuf *b = (AvantBuf *)avant_alloc(sizeof(AvantBuf), AVANT_TYPE_BUF);
   if (cap > 0) {
+    avant_size_check((uint64_t)cap, AVANT_SIZE_BUF);
     /* RC1: the fresh Buf is a handle across its data's allocation. */
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &b);
     uint8_t *data = (uint8_t *)avant_alloc((uint64_t)cap, AVANT_TYPE_BYTES);
     avant_barrier(b);
     b->data = data;
-    b->cap = cap;
+    b->cap = (int32_t)cap;
   }
   return b;
 }
@@ -105,9 +106,9 @@ void avant_buf_append(void *buf, const void *p, int32_t n) {
 }
 
 /* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
-void avant_buf_push_byte(void *buf, int32_t c) {
+void avant_buf_push_byte(void *buf, avant_int c) {
   AvantBuf *b = (AvantBuf *)buf;
-  if ((uint32_t)c > 255u) {
+  if ((uint64_t)(int64_t)c > 255u) {
     avant_trap_byte(c);
   }
   uint8_t byte = (uint8_t)c;
@@ -142,7 +143,7 @@ void avant_buf_push_str(void *buf, const char *s) {
 }
 
 /* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
-void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop) {
+void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int stop) {
   AvantBuf *b = (AvantBuf *)buf;
   size_t n;
   int32_t i;
@@ -151,13 +152,14 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
   n = s ? avant_str_n(s) : 0;
   /* 0 <= start <= stop <= size, else a trap (Stage 29 W4b1, D295 R4). */
   if (start < 0 || stop < start || (size_t)stop > n) {
-    avant_trap_slice(start, stop, (int32_t)n);
+    avant_trap_slice(start, stop, (avant_int)n);
   }
   if (!b || !s) {
     return;
   }
-  i = start;
-  end = stop;
+  /* Within the string, so within the ceiling. */
+  i = (int32_t)start;
+  end = (int32_t)stop;
   len = end - i;
   if (len <= 0) {
     return;
@@ -171,7 +173,7 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
 }
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
-void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
+void avant_buf_push_fmt_f(void *buf, double v, avant_int prec) {
   /* 400: the longest %.64f (a sign, 309 digits, the point, 64); 64 let
    * snprintf truncate a value of 1e47 or more and the append read past
    * the buffer (W18S). */
@@ -182,9 +184,9 @@ void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
   if (prec < 0 || prec > 64) {
     avant_trap_precision(prec);
   }
-  k = avant_fmt_fixed(tmp, v, prec);
+  k = avant_fmt_fixed(tmp, v, (int)prec);
   if (k < 0) {
-    k = snprintf(tmp, sizeof(tmp), "%.*f", prec, v);
+    k = snprintf(tmp, sizeof(tmp), "%.*f", (int)prec, v);
   }
   if (k < 0) {
     return;
@@ -193,9 +195,9 @@ void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
 }
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
-void avant_buf_push_fmt_i(void *buf, int32_t n) {
+void avant_buf_push_fmt_i(void *buf, avant_int n) {
   char tmp[32];
-  int k = snprintf(tmp, sizeof(tmp), "%d", n);
+  int k = snprintf(tmp, sizeof(tmp), "%lld", (long long)n);
   if (k < 0) {
     return;
   }
@@ -266,7 +268,7 @@ void *avant_bytes_to_buf(const char *s) {
   return buf;
 }
 
-int32_t avant_buf_size(void *buf) {
+avant_int avant_buf_size(void *buf) {
   AvantBuf *b = (AvantBuf *)buf;
   return b ? b->size : 0;
 }
@@ -279,7 +281,7 @@ void avant_buf_clear(void *buf) {
 }
 
 /* gc-lint: holds nothing (the growth is its only statement). */
-void avant_bytes_ensure(void *buf, int32_t n) {
+void avant_bytes_ensure(void *buf, avant_int n) {
   avant_buf_ensure(buf, n);
 }
 
@@ -293,11 +295,11 @@ static void buf_ensure_to(void *buf, int64_t n) {
 }
 
 /* gc-lint: holds nothing (the growth is its only statement). */
-void avant_buf_ensure(void *buf, int32_t n) {
+void avant_buf_ensure(void *buf, avant_int n) {
   buf_ensure_to(buf, n);
 }
 
-void avant_buf_set_size(void *buf, int32_t n) {
+void avant_buf_set_size(void *buf, avant_int n) {
   AvantBuf *b = (AvantBuf *)buf;
   if (!b) {
     return;
@@ -308,10 +310,10 @@ void avant_buf_set_size(void *buf, int32_t n) {
   if (n > b->cap) {
     n = b->cap;
   }
-  b->size = n;
+  b->size = (int32_t)n;
 }
 
-void avant_buf_set_ident(void *buf, int32_t n) {
+void avant_buf_set_ident(void *buf, avant_int n) {
   AvantBuf *b = (AvantBuf *)buf;
   int32_t i;
   if (!b || n <= 0) {
@@ -330,10 +332,12 @@ void avant_buf_set_ident(void *buf, int32_t n) {
   for (i = 0; i < n; i++) {
     b->data[i] = (uint8_t)i;
   }
-  b->size = n;
+  b->size = (int32_t)n;
 }
 
-static int32_t *buf_i32s(void *arr, int32_t n) {
+/* The elements of an Array(Int32), when it has at least n (the offset
+ * arrays are Int32, as C's int32_t; Stage 29 W-INT1). */
+static int32_t *buf_i32s(void *arr, avant_int n) {
   typedef struct {
     int32_t *buf;
     int32_t size;
@@ -347,13 +351,13 @@ static int32_t *buf_i32s(void *arr, int32_t n) {
 }
 
 void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras,
-                            int32_t n) {
+                            avant_int n) {
   AvantBuf *b = (AvantBuf *)buf;
   int32_t *dst;
   int32_t *src;
   int32_t *ln;
   int32_t *ex;
-  int32_t i;
+  avant_int i;
   if (!b || n <= 0) {
     return;
   }
@@ -373,16 +377,16 @@ void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *len
   AVANT_GC_ROOT(3, &lens);
   AVANT_GC_ROOT(4, &extras);
   for (i = 0; i < n; i++) {
-    int32_t len = ln[i];
-    int32_t d = dst[i];
-    int32_t s = src[i];
+    int64_t len = ln[i];
+    int64_t d = dst[i];
+    int64_t s = src[i];
     int64_t need;
     uint8_t *p;
     if (len < 0 || d < 0 || s < 0) {
       return;
     }
     /* In 64 bits: d + len + 1 can pass the ceiling (Stage 29 W-INT1). */
-    need = (int64_t)d + (int64_t)len + 1;
+    need = d + len + 1;
     if (need > b->cap) {
       buf_ensure_to(buf, need);
       b = (AvantBuf *)buf;
@@ -403,13 +407,13 @@ void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *len
 }
 
 void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *src_offs, void *lens,
-                           int32_t n) {
+                           avant_int n) {
   AvantBuf *dst = (AvantBuf *)dst_buf;
   AvantBuf *src = (AvantBuf *)src_buf;
   int32_t *doff;
   int32_t *soff;
   int32_t *ln;
-  int32_t i;
+  avant_int i;
   if (!dst || !src || n <= 0) {
     return;
   }
@@ -427,9 +431,9 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
   AVANT_GC_ROOT(3, &src_offs);
   AVANT_GC_ROOT(4, &lens);
   for (i = 0; i < n; i++) {
-    int32_t len = ln[i];
-    int32_t d = doff[i];
-    int32_t s = soff[i];
+    int64_t len = ln[i];
+    int64_t d = doff[i];
+    int64_t s = soff[i];
     int64_t need;
     if (len < 0 || d < 0 || s < 0) {
       return;
@@ -437,7 +441,7 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
     if (len == 0) {
       continue;
     }
-    need = (int64_t)d + (int64_t)len;
+    need = d + len;
     if (need > dst->cap) {
       buf_ensure_to(dst_buf, need);
       dst = (AvantBuf *)dst_buf;
@@ -446,7 +450,7 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
       soff = buf_i32s(src_offs, n);
       ln = buf_i32s(lens, n);
     }
-    if (!dst->data || !src->data || need > dst->cap || (int64_t)s + (int64_t)len > src->cap) {
+    if (!dst->data || !src->data || need > dst->cap || s + len > src->cap) {
       return;
     }
     memcpy(dst->data + d, src->data + s, (size_t)len);

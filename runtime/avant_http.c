@@ -26,7 +26,7 @@
  * 4 allocation failure. */
 static __thread int32_t g_http_status;
 
-int32_t avant_http_take_status(void) {
+avant_int avant_http_take_status(void) {
   int32_t code = g_http_status;
   g_http_status = 0;
   return code;
@@ -132,11 +132,11 @@ static int ascii_ieq(const char *a, size_t an, const char *b, size_t bn) {
   return 1;
 }
 
-int32_t avant_http_header_count(const char *data) {
+avant_int avant_http_header_count(const char *data) {
   return (int32_t)packed_count(data, avant_str_n(data));
 }
 
-int32_t avant_http_header_has(const char *data, const char *name) {
+avant_int avant_http_header_has(const char *data, const char *name) {
   size_t n = avant_str_n(data);
   size_t name_len = avant_str_n(name);
   uint32_t count = packed_count(data, n);
@@ -158,7 +158,7 @@ int32_t avant_http_header_has(const char *data, const char *name) {
 }
 
 /* The index-th value for `name`, or status 1 when there is none. */
-char *avant_http_header_at(const char *data, const char *name, int32_t index) {
+char *avant_http_header_at(const char *data, const char *name, avant_int index) {
   size_t n = avant_str_n(data);
   size_t name_len = avant_str_n(name);
   uint32_t count = packed_count(data, n);
@@ -188,13 +188,13 @@ char *avant_http_header_at(const char *data, const char *name, int32_t index) {
   return avant_str_empty();
 }
 
-char *avant_http_header_name_at(const char *data, int32_t index) {
+char *avant_http_header_name_at(const char *data, avant_int index) {
   size_t n = avant_str_n(data);
   uint32_t count = packed_count(data, n);
   const uint32_t *words = (const uint32_t *)(const void *)data;
   const char *raw;
   set_status(0);
-  if (!data || index < 0 || (uint32_t)index >= count) {
+  if (!data || index < 0 || (uint64_t)index >= count) {
     set_status(1);
     return avant_str_empty();
   }
@@ -203,13 +203,13 @@ char *avant_http_header_name_at(const char *data, int32_t index) {
                      words[1 + (uint32_t)index * 4 + 1]);
 }
 
-char *avant_http_header_value_at(const char *data, int32_t index) {
+char *avant_http_header_value_at(const char *data, avant_int index) {
   size_t n = avant_str_n(data);
   uint32_t count = packed_count(data, n);
   const uint32_t *words = (const uint32_t *)(const void *)data;
   const char *raw;
   set_status(0);
-  if (!data || index < 0 || (uint32_t)index >= count) {
+  if (!data || index < 0 || (uint64_t)index >= count) {
     set_status(1);
     return avant_str_empty();
   }
@@ -492,7 +492,7 @@ char *avant_http_req_headers(void *reqp) {
                               raw_len);
 }
 
-void avant_http_req_respond(void *reqp, int32_t status, const char *head,
+void avant_http_req_respond(void *reqp, avant_int status, const char *head,
                             const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
@@ -506,7 +506,7 @@ void avant_http_req_respond(void *reqp, int32_t status, const char *head,
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
-  write_response(req->sock, status, head, body, conn_header);
+  write_response(req->sock, avant_c_int(status), head, body, conn_header);
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -864,7 +864,8 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
   }
 }
 
-static AvantWsConn *ws_find_global(int32_t id) {
+/* An id is an Avant Int: one no connection has finds none (Stage 29 W-INT1). */
+static AvantWsConn *ws_find_global(avant_int id) {
   AvantWsConn *ws;
   for (ws = g_ws_all; ws; ws = ws->next_global) {
     if (ws->id == id) { return ws; }
@@ -872,7 +873,7 @@ static AvantWsConn *ws_find_global(int32_t id) {
   return NULL;
 }
 
-static AvantWsConn *ws_find(AvantHttpServer *srv, int32_t id) {
+static AvantWsConn *ws_find(AvantHttpServer *srv, avant_int id) {
   AvantWsConn *ws;
   if (!srv) { return NULL; }
   for (ws = srv->ws_all; ws; ws = ws->next_all) {
@@ -944,7 +945,7 @@ static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
   leave_avant();
 }
 
-int32_t avant_ws_event_kind(void *evp) {
+avant_int avant_ws_event_kind(void *evp) {
   AvantWsEvent *ev = (AvantWsEvent *)evp;
   /* First getter of every WS dispatch: the heap-goal boundary, in the
    * avant_http_req_target position. This frame holds no Avant heap
@@ -953,7 +954,7 @@ int32_t avant_ws_event_kind(void *evp) {
   return ev->kind;
 }
 
-int32_t avant_ws_event_conn_id(void *evp) {
+avant_int avant_ws_event_conn_id(void *evp) {
   return ((AvantWsEvent *)evp)->ws->id;
 }
 
@@ -966,7 +967,7 @@ char *avant_ws_event_path(void *evp) {
   return make_string(ev->ws->path, strlen(ev->ws->path));
 }
 
-int32_t avant_ws_event_is_text(void *evp) {
+avant_int avant_ws_event_is_text(void *evp) {
   return ((AvantWsEvent *)evp)->is_text;
 }
 
@@ -976,7 +977,7 @@ char *avant_ws_event_data(void *evp) {
   return make_bytes(ev->data, ev->len);
 }
 
-int32_t avant_ws_event_code(void *evp) {
+avant_int avant_ws_event_code(void *evp) {
   return ((AvantWsEvent *)evp)->code;
 }
 
@@ -986,7 +987,7 @@ char *avant_ws_event_reason(void *evp) {
   return make_string(ev->reason, ev->reason_len);
 }
 
-static int32_t ws_send_common(void *srvp, int32_t id, int32_t is_text,
+static int32_t ws_send_common(void *srvp, avant_int id, int32_t is_text,
                               const char *data) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   AvantWsConn *ws;
@@ -1010,26 +1011,26 @@ static int32_t ws_send_common(void *srvp, int32_t id, int32_t is_text,
   return ok;
 }
 
-int32_t avant_ws_send_text_by_id(int32_t id, const char *data) {
+avant_int avant_ws_send_text_by_id(avant_int id, const char *data) {
   return ws_send_common(NULL, id, 1, data);
 }
 
-int32_t avant_ws_send_text_bytes_by_id(int32_t id, const char *data) {
+avant_int avant_ws_send_text_bytes_by_id(avant_int id, const char *data) {
   return ws_send_common(NULL, id, 1, data);
 }
 
-int32_t avant_ws_send_bytes_by_id(int32_t id, const char *data) {
+avant_int avant_ws_send_bytes_by_id(avant_int id, const char *data) {
   return ws_send_common(NULL, id, 0, data);
 }
 
-int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
+int32_t avant_ws_close_conn(void *srvp, avant_int id, avant_int code,
                             const char *reason);
 
 void *avant_http_req_ws_server(void *reqp) {
   return ((AvantHttpReq *)reqp)->srv;
 }
 
-int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
+int32_t avant_ws_close_conn(void *srvp, avant_int id, avant_int code,
                             const char *reason) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   AvantWsConn *ws;
@@ -1059,7 +1060,7 @@ int32_t avant_ws_close_conn(void *srvp, int32_t id, int32_t code,
   return ok;
 }
 
-int32_t avant_ws_close_by_id(int32_t id, int32_t code, const char *reason) {
+avant_int avant_ws_close_by_id(avant_int id, avant_int code, const char *reason) {
   return avant_ws_close_conn(NULL, id, code, reason);
 }
 
@@ -1092,19 +1093,19 @@ static int32_t ws_send_direct(void *handle, int32_t is_text,
   return ok;
 }
 
-int32_t avant_ws_send_text_direct(void *handle, const char *data) {
+avant_int avant_ws_send_text_direct(void *handle, const char *data) {
   return ws_send_direct(handle, 1, data);
 }
 
-int32_t avant_ws_send_text_bytes_direct(void *handle, const char *data) {
+avant_int avant_ws_send_text_bytes_direct(void *handle, const char *data) {
   return ws_send_direct(handle, 1, data);
 }
 
-int32_t avant_ws_send_bytes_direct(void *handle, const char *data) {
+avant_int avant_ws_send_bytes_direct(void *handle, const char *data) {
   return ws_send_direct(handle, 0, data);
 }
 
-int32_t avant_ws_close_direct(void *handle, int32_t code,
+avant_int avant_ws_close_direct(void *handle, avant_int code,
                               const char *reason) {
   AvantWsConn *ws = (AvantWsConn *)handle;
   unsigned char payload[125];
@@ -1323,16 +1324,16 @@ static void ws_process(Conn *conn, struct us_socket_t *s) {
   }
 }
 
-int32_t avant_http_req_is_ws(void *reqp) {
+avant_int avant_http_req_is_ws(void *reqp) {
   return ((AvantHttpReq *)reqp)->is_ws;
 }
 
-int32_t avant_http_req_ws_id(void *reqp) {
+avant_int avant_http_req_ws_id(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   return req->ws_conn ? req->ws_conn->id : 0;
 }
 
-int32_t avant_http_req_ws_upgrade(void *reqp) {
+avant_int avant_http_req_ws_upgrade(void *reqp) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   AvantHttpServer *srv = req->srv;
   AvantWsConn *ws;
@@ -1947,12 +1948,18 @@ static int32_t pick_ephemeral_port(const char *host) {
 }
 
 /* `loops` <= 0 means the runtime's chosen thread count (Q124-A). */
-void *avant_http_listen(const char *host, int32_t port, int32_t max_body,
-                        int32_t loops, int32_t max_message) {
+void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
+                        avant_int loops, avant_int max_message) {
   AvantHttpServer *srv;
   int n;
   int i;
   set_status(0);
+  /* A port is 0..65535 and the limits and loop count C ints (Stage 29
+   * W-INT1): anything else fails like a port that cannot be bound. */
+  if (port < 0 || port > 65535 || loops > 4096 || max_body > INT32_MAX || max_message > INT32_MAX) {
+    set_status(1);
+    return NULL;
+  }
   if (port == 0) {
     port = pick_ephemeral_port(host);
     if (port == 0) {
@@ -1960,7 +1967,7 @@ void *avant_http_listen(const char *host, int32_t port, int32_t max_body,
       return NULL;
     }
   }
-  n = loops > 0 ? loops : avant_chosen_threads();
+  n = loops > 0 ? (int)loops : (int)avant_chosen_threads();
   if (n < 1) {
     n = 1;
   }
@@ -1969,8 +1976,8 @@ void *avant_http_listen(const char *host, int32_t port, int32_t max_body,
     set_status(4);
     return NULL;
   }
-  srv->max_body = max_body;
-  srv->max_message = max_message > 0 ? max_message : 1048576;
+  srv->max_body = (int32_t)max_body;
+  srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);
@@ -1978,14 +1985,14 @@ void *avant_http_listen(const char *host, int32_t port, int32_t max_body,
     return NULL;
   }
   srv->nloops = n;
-  if (listen_port_taken(host, port, srv)) {
+  if (listen_port_taken(host, (int32_t)port, srv)) {
     free(srv->loops);
     free(srv);
     set_status(1);
     return NULL;
   }
   for (i = 0; i < n; i++) {
-    int32_t p = i == 0 ? port : srv->port;
+    int32_t p = i == 0 ? (int32_t)port : srv->port;
     if (loop_create(srv, &srv->loops[i], host, p) != 0) {
       srv->nloops = i + 1;
       srv_teardown(srv);
@@ -2001,7 +2008,7 @@ void *avant_http_listen(const char *host, int32_t port, int32_t max_body,
   return srv;
 }
 
-int32_t avant_http_port(void *srvp) {
+avant_int avant_http_port(void *srvp) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   return srv ? srv->port : 0;
 }
@@ -2027,7 +2034,7 @@ static void *loop_thread_main(void *arg) {
   return NULL;
 }
 
-int32_t avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
+avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   int i;
   if (!srv || !srv->loops || srv->nloops < 1) {
@@ -2067,7 +2074,7 @@ int32_t avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   return 0;
 }
 
-int32_t avant_http_close(void *srvp) {
+avant_int avant_http_close(void *srvp) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   int i;
   if (!srv) {
@@ -2471,15 +2478,20 @@ static int ws_client_unregister(void *handle);
 
 /* Status through avant_http_take_status: 1 connect failure, 2 timeout,
  * 3 invalid handshake. */
-void *avant_ws_client_connect(const char *host, int32_t port,
+void *avant_ws_client_connect(const char *host, avant_int port,
                               const char *target, const char *key_b64,
-                              int32_t timeout_ms) {
+                              avant_int timeout_ms) {
   WsClient *c;
   struct us_socket_context_options_t options;
   char request[2048];
   int request_len;
   struct timespec deadline;
   set_status(0);
+  /* A port outside 0..65535 cannot connect (Stage 29 W-INT1). */
+  if (port < 0 || port > 65535) {
+    set_status(1);
+    return NULL;
+  }
   c = (WsClient *)calloc(1, sizeof(WsClient));
   if (!c) { set_status(4); return NULL; }
   c->frag_opcode = -1;
@@ -2611,9 +2623,9 @@ static int ws_client_unregister(void *handle) {
   return found;
 }
 
-int32_t avant_ws_client_last_is_text(void) { return g_ws_client_last_is_text; }
+avant_int avant_ws_client_last_is_text(void) { return g_ws_client_last_is_text; }
 
-int32_t avant_ws_client_close_code(void *handle) {
+avant_int avant_ws_client_close_code(void *handle) {
   WsClient *c = (WsClient *)handle;
   if (!c || !ws_client_alive(handle)) { return 1006; }
   return c->close_code;
@@ -2622,7 +2634,7 @@ int32_t avant_ws_client_close_code(void *handle) {
 /* One queued message as Bytes; status 1 when the connection is closed
  * with nothing queued, 2 on timeout. timeout_ms < 0 waits forever. */
 /* gc-lint: holds nothing (the message is C memory; nothing heap is read after make_bytes). */
-char *avant_ws_client_recv(void *handle, int32_t timeout_ms) {
+char *avant_ws_client_recv(void *handle, avant_int timeout_ms) {
   WsClient *c = (WsClient *)handle;
   WsClientMsg *m;
   char *out;
@@ -2676,7 +2688,7 @@ char *avant_ws_client_recv(void *handle, int32_t timeout_ms) {
   return out;
 }
 
-int32_t avant_ws_client_send_text(void *handle, const char *data) {
+avant_int avant_ws_client_send_text(void *handle, const char *data) {
   WsClient *c = (WsClient *)handle;
   int ok;
   if (!c || !ws_client_alive(handle)) { return 0; }
@@ -2684,7 +2696,7 @@ int32_t avant_ws_client_send_text(void *handle, const char *data) {
   return ok;
 }
 
-int32_t avant_ws_client_send_bytes(void *handle, const char *data) {
+avant_int avant_ws_client_send_bytes(void *handle, const char *data) {
   WsClient *c = (WsClient *)handle;
   int ok;
   if (!c || !ws_client_alive(handle)) { return 0; }
@@ -2718,7 +2730,7 @@ char *avant_ws_client_key(void) {
   return make_string(out, (size_t)o);
 }
 
-int32_t avant_ws_client_close(void *handle) {
+avant_int avant_ws_client_close(void *handle) {
   WsClient *c = (WsClient *)handle;
   unsigned char payload[2] = {0x03, 0xe8};
   if (!c || !ws_client_unregister(handle)) { return 0; }
@@ -2820,8 +2832,8 @@ static void fetch_wakeup(struct us_loop_t *loop) {
 }
 
 /* gc-lint: holds nothing (the fetched body is C memory; nothing heap is read after make_bytes). */
-char *avant_http_fetch(const char *host, int32_t port, const char *request,
-                       int32_t timeout_ms) {
+char *avant_http_fetch(const char *host, avant_int port, const char *request,
+                       avant_int timeout_ms) {
   struct us_loop_t *loop;
   struct us_socket_context_t *ctx;
   struct us_socket_context_options_t options;
@@ -2830,6 +2842,10 @@ char *avant_http_fetch(const char *host, int32_t port, const char *request,
   char *out;
   int timeout_s;
   set_status(0);
+  if (port < 0 || port > 65535) {
+    set_status(1);
+    return avant_str_empty();
+  }
   st = (FetchState *)calloc(1, sizeof(FetchState));
   if (!st) {
     set_status(4);
@@ -2867,7 +2883,7 @@ char *avant_http_fetch(const char *host, int32_t port, const char *request,
     set_status(1);
     return avant_str_empty();
   }
-  timeout_s = timeout_ms <= 0 ? 10 : (timeout_ms + 999) / 1000;
+  timeout_s = timeout_ms <= 0 ? 10 : (timeout_ms > INT32_MAX ? INT32_MAX / 1000 : (int)((timeout_ms + 999) / 1000));
   us_socket_timeout(0, sock, (unsigned int)timeout_s);
   st->request = request;
   /* The loop runs native (rule 3); its callbacks read the request, which
@@ -2912,7 +2928,7 @@ static int parse_response_head(const char *raw, size_t n, int *status,
   return *pret >= 0;
 }
 
-int32_t avant_http_resp_status(const char *raw) {
+avant_int avant_http_resp_status(const char *raw) {
   int status = 0;
   struct phr_header headers[HTTP_MAX_HEADERS];
   size_t num_headers = 0;

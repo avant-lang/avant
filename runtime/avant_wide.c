@@ -4,7 +4,7 @@
 
 static __thread int32_t g_wide_hi;
 
-int32_t avant_wide_hi(void) {
+avant_int avant_wide_hi(void) {
   return g_wide_hi;
 }
 
@@ -64,11 +64,13 @@ static int64_t simple_mod(int64_t a, int64_t b) {
   return a - simple_div(a, b) * b;
 }
 
-int32_t avant_wide_op(int32_t op, int32_t a_lo, int32_t a_hi, int32_t b_lo, int32_t b_hi) {
-  uint64_t ua = pack_u(a_lo, a_hi);
-  uint64_t ub = pack_u(b_lo, b_hi);
-  int64_t sa = pack_s(a_lo, a_hi);
-  int64_t sb = pack_s(b_lo, b_hi);
+/* The halves are the low 32 bits of each Int, as they were when Int was
+ * 32 bits (Stage 29 W-INT1); a shift amount is the Int itself. */
+avant_int avant_wide_op(avant_int op, avant_int a_lo, avant_int a_hi, avant_int b_lo, avant_int b_hi) {
+  uint64_t ua = pack_u((int32_t)a_lo, (int32_t)a_hi);
+  uint64_t ub = pack_u((int32_t)b_lo, (int32_t)b_hi);
+  int64_t sa = pack_s((int32_t)a_lo, (int32_t)a_hi);
+  int64_t sb = pack_s((int32_t)b_lo, (int32_t)b_hi);
   switch (op) {
   case 0:
     return finish_u(ua + ub);
@@ -86,7 +88,7 @@ int32_t avant_wide_op(int32_t op, int32_t a_lo, int32_t a_hi, int32_t b_lo, int3
     }
     return finish_u(ua / ub);
   case 6: {
-    int32_t n = b_lo;
+    avant_int n = b_lo;
     if (n <= 0) {
       return finish_u(ua);
     }
@@ -96,7 +98,7 @@ int32_t avant_wide_op(int32_t op, int32_t a_lo, int32_t a_hi, int32_t b_lo, int3
     return finish_u(ua << n);
   }
   case 7: {
-    int32_t n = b_lo;
+    avant_int n = b_lo;
     if (n <= 0) {
       return finish_u(ua);
     }

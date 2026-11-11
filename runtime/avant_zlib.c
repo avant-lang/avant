@@ -13,7 +13,7 @@ static void set_status(int32_t code) {
   g_zlib_status = code;
 }
 
-int32_t avant_zlib_take_status(void) {
+avant_int avant_zlib_take_status(void) {
   int32_t code = g_zlib_status;
   g_zlib_status = 0;
   return code;
@@ -99,7 +99,7 @@ char *avant_zlib_uncompress(const char *s) {
   return out;
 }
 
-int32_t avant_zlib_compress_into(const char *s, void *buf) {
+avant_int avant_zlib_compress_into(const char *s, void *buf) {
   size_t n = avant_str_n(s);
   uLong bound = compressBound((uLong)n);
   uLong dest_len = bound;
@@ -111,7 +111,7 @@ int32_t avant_zlib_compress_into(const char *s, void *buf) {
     set_status(2);
     return 2;
   }
-  at = avant_buf_size(buf);
+  at = (int32_t)avant_buf_size(buf);
   /* In 64 bits, against the Buf ceiling (Stage 29 W-INT1): the 32-bit
    * sum overflowed before its check. */
   if ((int64_t)at + 4 + (int64_t)bound > (int64_t)AVANT_SIZE_MAX) {
@@ -139,7 +139,7 @@ int32_t avant_zlib_compress_into(const char *s, void *buf) {
   return 0;
 }
 
-int32_t avant_zlib_uncompress_into(const char *s, void *buf) {
+avant_int avant_zlib_uncompress_into(const char *s, void *buf) {
   size_t n = avant_str_n(s);
   const uint8_t *p = (const uint8_t *)(s ? s : "");
   uint32_t orig;
@@ -154,7 +154,7 @@ int32_t avant_zlib_uncompress_into(const char *s, void *buf) {
   }
   orig = read_len(p);
   dest_len = orig;
-  at = avant_buf_size(buf);
+  at = (int32_t)avant_buf_size(buf);
   if ((int64_t)at + (int64_t)orig > (int64_t)AVANT_SIZE_MAX) {
     set_status(2);
     return 2;

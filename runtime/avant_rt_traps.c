@@ -59,9 +59,9 @@ void avant_trap_overflow_in(int32_t fn) {
   trap_tail();
 }
 
-void avant_trap_bounds_in(int32_t index, int32_t size, int32_t fn) {
+void avant_trap_bounds_in(avant_int index, avant_int size, int32_t fn) {
   trap_head();
-  fprintf(stderr, "index %d out of bounds (size %d) in %s", index, size, site_or(fn));
+  fprintf(stderr, "index %lld out of bounds (size %lld) in %s", (long long)index, (long long)size, site_or(fn));
   trap_tail();
 }
 
@@ -80,9 +80,9 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   trap_tail();
 }
 
-void avant_trap_bounds(int32_t index, int32_t size) {
+void avant_trap_bounds(avant_int index, avant_int size) {
   trap_head();
-  fprintf(stderr, "index %d out of bounds (size %d)", index, size);
+  fprintf(stderr, "index %lld out of bounds (size %lld)", (long long)index, (long long)size);
   trap_tail();
 }
 
@@ -154,25 +154,25 @@ void avant_trap_convert(int64_t value, int32_t kind) {
 
 /* A byte stored outside 0..255 (Stage 29 W4b1, D295 R3): push_byte, a Buf
  * element, chr, repeat_byte. */
-void avant_trap_byte(int32_t value) {
+void avant_trap_byte(avant_int value) {
   trap_head();
-  fprintf(stderr, "byte %d out of range (0..255)", value);
+  fprintf(stderr, "byte %lld out of range (0..255)", (long long)value);
   trap_tail();
 }
 
 /* A slice whose bounds are not 0 <= start <= stop <= size (Stage 29 W4b1,
  * D295 R4: slices trap like indexing). */
-void avant_trap_slice(int32_t start, int32_t stop, int32_t size) {
+void avant_trap_slice(avant_int start, avant_int stop, avant_int size) {
   trap_head();
-  fprintf(stderr, "slice %d..%d out of range (size %d)", start, stop, size);
+  fprintf(stderr, "slice %lld..%lld out of range (size %lld)", (long long)start, (long long)stop, (long long)size);
   trap_tail();
 }
 
 /* A fixed-point precision outside 0..64 (Stage 29 W4b1: fmt_float and
  * push_fmt_f used to clamp it to 0..16 silently). */
-void avant_trap_precision(int32_t prec) {
+void avant_trap_precision(avant_int prec) {
   trap_head();
-  fprintf(stderr, "precision %d out of range (0..64)", prec);
+  fprintf(stderr, "precision %lld out of range (0..64)", (long long)prec);
   trap_tail();
 }
 
@@ -192,10 +192,10 @@ void avant_trap_size(int32_t kind) {
   trap_tail();
 }
 
-void avant_trap_negative(int32_t n, int32_t what) {
+void avant_trap_negative(avant_int n, int32_t what) {
   static const char *names[] = {"Array size", "repeat_byte count"};
   trap_head();
-  fprintf(stderr, "%s %d is negative", names[what == 1 ? 1 : 0], n);
+  fprintf(stderr, "%s %lld is negative", names[what == 1 ? 1 : 0], (long long)n);
   trap_tail();
 }
 
@@ -203,9 +203,9 @@ void avant_trap_negative(int32_t n, int32_t what) {
  * it (Stage 29 W1b, D64 as amended; D215: the correct value or a trap).
  * kind is type.av's cs_*: 1 Int8, 2 Int16, 3 UInt8, 4 UInt16, 5 UInt32. */
 void avant_trap_c_range(int64_t value, int32_t kind) {
-  static const char *names[] = {"?", "Int8", "Int16", "UInt8", "UInt16", "UInt32"};
-  static const char *ranges[] = {"?", "-128..127", "-32768..32767", "0..255", "0..65535", "0..4294967295"};
-  int k = kind >= 1 && kind <= 5 ? kind : 0;
+  static const char *names[] = {"?", "Int8", "Int16", "UInt8", "UInt16", "UInt32", "Int32"};
+  static const char *ranges[] = {"?", "-128..127", "-32768..32767", "0..255", "0..65535", "0..4294967295", "-2147483648..2147483647"};
+  int k = kind >= 1 && kind <= 6 ? kind : 0;
   trap_head();
   fprintf(stderr, "%lld out of range for the C type %s (%s)", (long long)value, names[k], ranges[k]);
   trap_tail();
@@ -353,10 +353,10 @@ __attribute__((constructor)) static void avant_cpu_check(void) {
 
 /* main's (or run's) Int result outside 0..255 (Stage 29 W4b2, D295 R14):
  * the OS keeps only its low byte, so 256 failures would read as success. */
-void avant_trap_exit_status_at(int32_t status, int32_t site) {
+void avant_trap_exit_status_at(avant_int status, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
-  fprintf(stderr, "exit status %d out of range (0..255)", status);
+  fprintf(stderr, "exit status %lld out of range (0..255)", (long long)status);
   trap_tail();
 }
 
@@ -371,7 +371,7 @@ void avant_trap_c_null_at(const char *name, int32_t site) {
 
 /* The sited forms of the traps above that the generated code raises
  * (Stage 29 W4b2): the site, then the trap. */
-void avant_trap_bounds_at(int32_t index, int32_t size, int32_t site) {
+void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site) {
   g_trap_loc = site_text(site);
   avant_trap_bounds(index, size);
 }
@@ -406,12 +406,12 @@ void avant_trap_convert_at(int64_t value, int32_t kind, int32_t site) {
   avant_trap_convert(value, kind);
 }
 
-void avant_trap_byte_at(int32_t value, int32_t site) {
+void avant_trap_byte_at(avant_int value, int32_t site) {
   g_trap_loc = site_text(site);
   avant_trap_byte(value);
 }
 
-void avant_trap_negative_at(int32_t n, int32_t what, int32_t site) {
+void avant_trap_negative_at(avant_int n, int32_t what, int32_t site) {
   g_trap_loc = site_text(site);
   avant_trap_negative(n, what);
 }
