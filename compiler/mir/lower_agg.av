@@ -467,6 +467,11 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
 // a compound assignment reads and writes one place, its holder evaluated
 // once.
 pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
+  ck = lw.c_field_scalar(t)
+  if ck > 0 {
+    lw.lower_c_field_assign(st, t, ck)
+    return
+  }
   if tt = t.ty {
     ty = lw.field_mty(tt, t.loc)
     if lw.failed {
@@ -503,6 +508,47 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
       r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
       lw.at(st.loc)
       lw.store_place(p2, ty, r)
+    }
+    return
+  }
+  lw.refuse(t.loc, "an untyped assignment")
+}
+
+// A store into a C layout's C scalar field (Stage 29 W1b): the value in
+// its Avant view, converted to the field's C type (a trap out of range),
+// then stored; a compound assignment reads the field into its view first.
+pub fn (lw: MirLower) lower_c_field_assign(st: Stmt, t: Expr, ck: Int) {
+  vt = mir_c_view_mty(ck)
+  nt = lw.c_scalar_mty(ck)
+  if tt = t.ty {
+    if v = st.value {
+      if st.op == tk_eq() {
+        val = lw.lower_coerced(v, vt, tt)
+        if lw.failed {
+          return
+        }
+        p = lw.place_of(t)
+        if lw.failed {
+          return
+        }
+        lw.at(st.loc)
+        lw.store_place(p, nt, lw.to_c_scalar(val, ck, st.loc))
+        return
+      }
+      p2 = lw.place_of(t)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      raw = lw.tmp(nt, lw.lw_b.rv_use(lw.lw_b.copy(lw.clone_place(p2))))
+      cur = lw.from_c_scalar(raw, ck)
+      rhs = lw.lower_expr(v)
+      if lw.failed {
+        return
+      }
+      r = lw.arith(compound_op_of(st.op), vt, cur, rhs, st.proven, st.loc)
+      lw.at(st.loc)
+      lw.store_place(p2, nt, lw.to_c_scalar(r, ck, st.loc))
     }
     return
   }

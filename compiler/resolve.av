@@ -29,6 +29,9 @@ pub class TypeResolver {
   program: Program? = nil
   struct_inflight: Array(String)
   inst_depth: Int = 0
+  // Set while a `fun` signature or a C layout's fields resolve: the only
+  // places a C scalar type (Int8 ... Float32) may be named (Stage 29 W1b).
+  c_scalar_ok: Bool = false
 
   fn initialize {
     n = Hash(String, Int).new
@@ -230,6 +233,15 @@ pub class TypeResolver {
     if str_eq(tn.name, "Int") {
       self.reject_args(tn)
       return self.t_int
+    }
+    cs = c_scalar_of(tn.name)
+    if cs > 0 {
+      self.reject_args(tn)
+      if !self.c_scalar_ok {
+        view = ty_c_view(ty_c_scalar(cs))
+        self.fail(tn.loc, "${tn.name} is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is ${view.show})")
+      }
+      return ty_c_scalar(cs)
     }
     if str_eq(tn.name, "Int64") {
       self.reject_args(tn)
@@ -1028,7 +1040,9 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
     }
     seen[field.name] = 1
     markf = resolver.err_count
+    resolver.c_scalar_ok = true
     ty = resolver.resolve(field.type)
+    resolver.c_scalar_ok = false
     if resolver.new_err_since(markf) {
       return
     }

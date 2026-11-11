@@ -204,6 +204,9 @@ fn test_scratch(c: Checks) {
     // Q146/D131: an interrupted avant test stops its jobs and leaves nothing.
     proj = scratch_dir()
     mkdir_p("${proj}/tests")
+    // Its own avant.toml (O116, Stage 29 W1b): with TMPDIR inside a
+    // checkout, the runner's walk up from proj would find the checkout's.
+    dummy_pt = file_write("${proj}/avant.toml", "[package]\nname = \"slow\"\nversion = \"0.1.0\"\n")
     // The job's sleep records its own pid (exec keeps it), so the check
     // looks at exactly that process.
     job_body = "fn main: Int {\n  args: Array(String) = []\n  args.push(\"-c\")\n  args.push(\"echo $$ > ${proj}/sleep.pid; echo 1 > ${proj}/started; exec sleep 30\")\n  dummy = process_run(\"/bin/sh\", args)\n  0\n}\n"
@@ -249,6 +252,32 @@ fn test_scratch(c: Checks) {
     unset_code = process_run_out("/usr/bin/env", unset_args, unset_log)
     unset_dir = first_line(unset_log)
     c.eq_int(unset_code, 0, "no TMPDIR exits 0")
+
+    // O35 (Stage 29 W1b): a program that crashes after creating its
+    // private directory (a compiler crash is the same runtime path) dies
+    // by the signal and leaves nothing in TMPDIR.
+    crash_src = "${work}/crash.av"
+    dummy_cs = file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int): Int\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise(v.to_i))\n  }\n}\n")
+    crash_bin = "${work}/crash.bin"
+    c.eq_int(compile_av(compiler, crash_src, crash_bin, "${work}/crash.clog"), 0, "crash program compiles")
+    crashes = ["11", "7", "8", "abort"]
+    crash_names = ["SIGSEGV", "SIGBUS", "SIGFPE", "SIGABRT"]
+    crash_codes = [139, 135, 136, 134]
+    q = 0
+    while q < crashes.size {
+      cbase = "${work}/crash-base-${q}"
+      mkdir_p(cbase)
+      crc = "${work}/crash-${q}.rc"
+      csh = "${work}/crash-${q}.sh"
+      dummy_ch = file_write(csh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${cbase}' CRASH_SIG=${crashes[q]} '${crash_bin}' > '${work}/crash-${q}.log' 2>&1\necho $? > '${crc}'\n")
+      ch_args: Array(String) = []
+      ch_args.push(csh)
+      dummy_cr = process_run("/bin/sh", ch_args)
+      c.eq_int(nth_line(read_all(crc), 0).to_i, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
+      cleft: Array(String) = dir_list(cbase)
+      c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
+      q = q + 1
+    }
     c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
     c.expect(!file_exists(unset_dir), "fallback directory removed")
   }

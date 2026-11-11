@@ -200,6 +200,41 @@ fn test_user_test(c: Checks) {
     c.eq_int(ut_sh(miss_sh, miss_rc), 1, "a missing golden file fails the test")
     c.expect(!file_exists("${root}/proj/missing-want.txt"), "golden does not create the expected file")
 
+    // D84 (Stage 29 W1b): a failed check fails the process, whatever
+    // main returns and whether finish runs: a void main, a main that
+    // returns 0, and a check that fails on another thread.
+    mkdir_p("${root}/d84/tests")
+    dummy_d84 = file_write("${root}/d84/avant.toml", "[package]\nname = \"d84\"\nversion = \"0.1.0\"\n")
+    dummy_dv = file_write("${root}/d84/tests/test_void.av", "import std.testing\n\nfn main {\n  t = Test.new\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
+    dummy_dz = file_write("${root}/d84/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
+    dummy_dt = file_write("${root}/d84/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = Test.new\n    u.check(false, \"fails on a task\")\n    1\n  }\n  h.join\n  0\n}\n")
+    dummy_dp = file_write("${root}/d84/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = Test.new\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
+    d84_names = ["void", "zero", "task"]
+    d84_fails = ["one is two", "one is two", "fails on a task"]
+    i = 0
+    while i < d84_names.size {
+      nm = d84_names[i]
+      d_rc = "${root}/d84-${nm}.rc"
+      d_log = "${root}/d84-${nm}.log"
+      d_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/d84-${nm}.xml > ${ut_quote(d_log)} 2>&1; echo $? > ${ut_quote(d_rc)}\n"
+      c.eq_int(ut_sh(d_sh, d_rc), 1, "D84: a failed check in tests/test_${nm}.av fails the run")
+      d_text = ""
+      if t = file_read(d_log) {
+        d_text = t
+      }
+      c.expect(ut_has(d_text, "FAIL ${d84_fails[i]}"), "D84: tests/test_${nm}.av ran its failing check")
+      c.expect(ut_has(d_text, "FAIL tests/test_${nm}.av") && ut_has(d_text, "1 failed, 0 passed"), "D84: the runner reports tests/test_${nm}.av as failed")
+      d_xml = ""
+      if t = file_read("${root}/d84-${nm}.xml") {
+        d_xml = t
+      }
+      c.expect(ut_has(d_xml, "failures=\"1\""), "D84: the JUnit report counts tests/test_${nm}.av as a failure")
+      i = i + 1
+    }
+    dp_rc = "${root}/d84-pass.rc"
+    dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/d84-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
+    c.eq_int(ut_sh(dp_sh, dp_rc), 0, "D84: a void main whose checks pass still passes")
+
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     dummy_fetch = file_write("${root}/fetch/avant.toml", fetch_body)
     fetch_rc = "${root}/fetch.rc"
@@ -226,10 +261,10 @@ fn test_user_test(c: Checks) {
     clock = "${root}/clock"
     mkdir_p("${clock}/tests")
     dummy_clock_toml = file_write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
-    piece = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = env_get(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    nap()\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish\n}\n"
+    piece = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if file_exists(other) {\n      dummy = file_write(flag, \"met\")\n      return\n    }\n    dummy = process_run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = env_get(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    meet(\"DIR/right.start\", \"DIR/NAME.met\")\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish\n}\n"
     left = ut_fill(piece, clock)
     left = ut_fill_name(left, "left")
-    right_src = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    nap()\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish\n}\n"
+    right_src = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if file_exists(other) {\n      dummy = file_write(flag, \"met\")\n      return\n    }\n    dummy = process_run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    meet(\"${clock}/left.start\", \"${clock}/right.met\")\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish\n}\n"
     mid_src = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/mid.start\")\n    nap()\n    stamp(\"${clock}/mid.end\")\n  }\n  t.finish\n}\n"
     dummy_left = file_write("${clock}/tests/test_left.av", left)
     dummy_right = file_write("${clock}/tests/test_right.av", right_src)
@@ -247,18 +282,15 @@ fn test_user_test(c: Checks) {
     pbe = ut_read_ms("${clock}/left.pb.end")
     ms = ut_read_ms("${clock}/mid.start")
     me = ut_read_ms("${clock}/mid.end")
-    c.expect(ls >= 0 && le > ls && rs >= 0 && re > rs, "serial intervals were recorded")
-    // Under an outer AVANT_GC_STRESS the runner's compiles of the two files
-    // (the compiler collecting at every runtime helper call) can outlast
-    // the first file's three one-second naps, so whether their runs
-    // overlap measures the stressed compiler, not the scheduler (Stage 28
-    // W15a2: twice in four stress passes once C-stack pinning made the
-    // stressed compiler slower). The parallel and exclusive checks hold.
-    if gc_stress_outer() {
-      c.skip("non-exclusive files overlap", "outer AVANT_GC_STRESS: the stressed compiler's compile time decides the overlap")
-    } else {
-      c.expect(ls < re && rs < le, "non-exclusive files overlap")
-    }
+    c.expect(ls >= 0 && le >= ls && rs >= 0 && re >= rs, "serial intervals were recorded")
+    // O86 (Stage 29 W1b): the two non-exclusive files meet. Each, once
+    // running, waits (up to 300 s) until the other has started and records
+    // that it saw it; both can only do so if their runs overlap, however
+    // long the runner's compiles take. Before, each slept one second and
+    // the intervals were compared, so under an outer AVANT_GC_STRESS the
+    // stressed compiler's compile time decided the result and the check
+    // was skipped there (Stage 28 W15a2).
+    c.expect(file_exists("${clock}/left.met") && file_exists("${clock}/right.met"), "non-exclusive files overlap")
     c.expect(pas >= 0 && pae > pas && pbs >= 0 && pbe > pbs, "parallel intervals were recorded")
     c.expect(pas < pbe && pbs < pae, "parallel tests in one file overlap")
     c.expect(ms >= 0 && me > ms, "exclusive interval was recorded")

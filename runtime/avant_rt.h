@@ -197,7 +197,9 @@ void avant_gc_collect(void);
  * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
  * unregistration of its own. A thread that exits inside a callback
  * (pthread_exit from C that Avant called) is unregistered and its frames
- * are freed too (Stage 28 W18C). */
+ * are freed too (Stage 28 W18C). A thread may unregister between
+ * callbacks and be registered again by its next one; unregistering drops
+ * every reference the runtime held for it (Stage 29 W1b, O70). */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
 /* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
@@ -396,6 +398,7 @@ void avant_trap_div_zero(void);
 void avant_trap_overflow(void);
 void avant_trap_shift(int64_t amount, int32_t kind);
 void avant_trap_to_i(double x);
+void avant_trap_c_range(int64_t value, int32_t kind);
 int64_t avant_checked_add_i64(int64_t a, int64_t b);
 int64_t avant_checked_sub_i64(int64_t a, int64_t b);
 int64_t avant_checked_mul_i64(int64_t a, int64_t b);
@@ -442,6 +445,8 @@ int32_t avant_file_exists(const char *path);
 void *avant_dir_list(const char *path);
 char *avant_tmp_dir(void);
 char *avant_tmp_new_dir(void);
+/* A failed check (std.testing, D84): the process exits 1 if it would exit 0. */
+void avant_test_fail(void);
 void avant_tmp_keep(void);
 int32_t avant_job_start(const char *path, void *args, const char *out_path);
 int32_t avant_job_wait(void);

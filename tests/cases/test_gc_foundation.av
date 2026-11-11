@@ -15,7 +15,8 @@ import backends
 // heap/full_default.av (O27): reaches the full-collection trigger in the
 // default environment (no suite program did before), with Json.parse on
 // tenured texts between full collections (C31's default-mode exposure).
-// A run with AVANT_GC_STATS=1 checks that full collections ran.
+// A run with AVANT_GC_STATS=1 checks that full collections ran; one under
+// AVANT_NURSERY=0 that the remembered set stays empty (O9).
 //
 // Each program runs plain and under each GC environment below: the known
 // stdout, no stderr (no verifier report), exit 0.
@@ -54,6 +55,7 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
     p = p + 1
   }
   runs.push(run_job_env(dir, "full_default", "full_default.stats", "-u AVANT_GC_STRESS AVANT_GC_STATS=1"))
+  runs.push(run_job_env(dir, "full_default", "full_default.nursery0", "-u AVANT_GC_STRESS -u AVANT_YOUNG_MB AVANT_NURSERY=0 AVANT_GC_STATS=1"))
   run_waves(runs)
   p = 0
   while p < names.size {
@@ -79,6 +81,11 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
   } else {
     c.expect(!str_has(stats, " full=0 "), "full_default.av: full collections in the default environment")
   }
+  // O9 (Stage 29 W1b, checked against today's collector): with no young
+  // generation nothing is remembered, so the remembered set stays empty
+  // across full collections (it grew to 1.6 M entries before W14b1).
+  n0 = log_text("${dir}/full_default.nursery0.err")
+  c.expect(str_has(n0, " rem_peak=0 ") && str_has(n0, " rem_adds=0 ") && !str_has(n0, " full=0 "), "full_default.av under AVANT_NURSERY=0: full collections and an empty remembered set")
 }
 
 fn test_main(c: Checks) {

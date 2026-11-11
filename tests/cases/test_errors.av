@@ -68,6 +68,9 @@ fn test_errors(c: Checks) {
     // result broke the MIR verifier; a lambda, spawn or Mutex.with body was
     // checked against the enclosing function's result).
     // Stage 29 W1a (review 5, defect 4): a generic type that does not exist.
+    // O32 (Stage 29 W1b): the lowering's L0001 guard, reached only by a C
+    // callback that takes a struct by value (the SysV callback side of C3).
+    expect_err(c, compiler, stamp, "l0001-guard", "struct P2 {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int64): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int64, s: Int64, f: fn(P2): Int)\n}\nfn pick(p: P2): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8i64), 0i64, 8i64, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
     // Stage 29 W1a (A6): parser messages name the tokens (they printed the
     // kinds' numbers: "expected 28, found 5").

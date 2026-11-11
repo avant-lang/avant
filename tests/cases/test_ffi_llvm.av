@@ -49,15 +49,19 @@ fn both_progs: Array(String) {
 // foreign_exit.av (Stage 28 W17c, O126): waves of C threads that call an
 // allocating callback and exit without unregistering, while the main
 // thread collects (thread exit unregisters).
+// cscalars.av (Stage 29 W1b, D64 as amended): every C scalar type as a
+// `fun` parameter and result and a C layout's field, both directions.
+// rereg.av (Stage 29 W1b, O70): a C thread that unregisters and calls
+// back again starts with empty runtime-root slots.
 // release.av (Stage 28 W16c, D266): the `release` statement on Q9's two
 // cases (C keeps a pointer, C copies the struct), on fields C stored
 // itself, on whole and nested structs, and in a bounded loop.
 fn new_progs: Array(String) {
-  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av", "tests/fixtures/ffi/foreign.av", "tests/fixtures/ffi/foreign_exit.av", "tests/fixtures/ffi/release.av"]
+  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av", "tests/fixtures/ffi/foreign.av", "tests/fixtures/ffi/foreign_exit.av", "tests/fixtures/ffi/rereg.av", "tests/fixtures/ffi/cscalars.av", "tests/fixtures/ffi/release.av"]
 }
 
 fn new_wants: Array(String) {
-  ["42\n7\n9\n4\n6\n1\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\ncallback bad: 0\n", "q9 pins: 3\nchurn true\nC's kept pointer reads the original: 1\nthe struct C copied reads the original: 1\nthe field reads the last value: 1\nafter release, pins: 0\nthe released field reads null from C: 1\nreleased twice, pins: 0\nchurn after release true\nnever stored: pins 0, note null 1\nC's own value kept: 1\nAvant's value overwritten by C, pins: 1\nreleased: pins 1, C's value kept 1\nstruct pins: 3\nnested released: pins 2, tag null 1, n 5\nstruct released: pins 0, name null 1, note null 1, id 9\ninside pin(s): pins 1\nafter pin(s): pins 0\nstored twice, one released: pins 1, note still reads it 1\nboth released: pins 0\na literal released: pins 0, name null 1\nbounded rounds ok: 400, pins 0\n"]
+  ["42\n7\n9\n4\n6\n1\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\nthread bad: 0\n", "-127\n127\n255\n0\n32767\n60000\n4294967295\n4294967295\n4294967296\n-128\n1.5\n100000001\n7.5\n16\n8\n12\n250 7 65535 -300 -5 4000000000 0.25\n1 9 65534 -32768 127 4294967295 1.5\n32904.5\n", "q9 pins: 3\nchurn true\nC's kept pointer reads the original: 1\nthe struct C copied reads the original: 1\nthe field reads the last value: 1\nafter release, pins: 0\nthe released field reads null from C: 1\nreleased twice, pins: 0\nchurn after release true\nnever stored: pins 0, note null 1\nC's own value kept: 1\nAvant's value overwritten by C, pins: 1\nreleased: pins 1, C's value kept 1\nstruct pins: 3\nnested released: pins 2, tag null 1, n 5\nstruct released: pins 0, name null 1, note null 1, id 9\ninside pin(s): pins 1\nafter pin(s): pins 0\nstored twice, one released: pins 1, note still reads it 1\nboth released: pins 0\na literal released: pins 0, name null 1\nbounded rounds ok: 400, pins 0\n"]
 }
 
 // release.av's bounded loop (Stage 28 W16c, D266): 400 fresh 256 KiB

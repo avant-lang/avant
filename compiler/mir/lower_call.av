@@ -304,6 +304,16 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
   if obj2 = e.object {
     if ot2 = obj2.ty {
       if (ot2.is_ptr || ot2.is_clayout) && !e.method_call {
+        ck = lw.c_field_scalar(e)
+        if ck > 0 {
+          p = lw.place_of(e)
+          if lw.failed {
+            return lw.lw_b.c_i32(0)
+          }
+          lw.at(e.loc)
+          raw = lw.tmp(lw.c_scalar_mty(ck), lw.lw_b.rv_use(lw.lw_b.copy(p)))
+          return lw.from_c_scalar(raw, ck)
+        }
         return lw.lower_place_read(e)
       }
     }

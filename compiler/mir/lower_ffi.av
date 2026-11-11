@@ -65,6 +65,9 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
   j = 0
   while j < t.fields.size {
     ft = lw.field_mty(t.fields[j].ty, loc)
+    if t.fields[j].ty.c_scalar > 0 {
+      ft = lw.c_scalar_mty(t.fields[j].ty.c_scalar)
+    }
     if lw.failed {
       return -1
     }
@@ -94,12 +97,17 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
       if cs.params[i].is_fn {
         ps.push(mt_ptr())
         has_cb = true
+      } else if cs.params[i].c_scalar > 0 {
+        ps.push(lw.c_scalar_mty(cs.params[i].c_scalar))
       } else {
         ps.push(lw.ty_at(cs.params[i], e.loc, "a C parameter"))
       }
       i = i + 1
     }
     ret = lw.ty_at(cs.ret, e.loc, "a C result")
+    if cs.ret.c_scalar > 0 {
+      ret = lw.c_scalar_mty(cs.ret.c_scalar)
+    }
     if lw.failed {
       return zero
     }
@@ -117,6 +125,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         }
         if lw.failed {
           return zero
+        }
+        if cs.params[i].c_scalar > 0 {
+          o = lw.to_c_scalar(o, cs.params[i].c_scalar, a.loc)
         }
         // A reference the C function holds, or an aggregate the emitter
         // passes by the C ABI (C3), is a bare local of the call.
@@ -153,6 +164,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     }
     if dest < 0 {
       return zero
+    }
+    if cs.ret.c_scalar > 0 {
+      return lw.from_c_scalar(b.copy_local(dest), cs.ret.c_scalar)
     }
     return b.copy_local(dest)
   }
@@ -269,6 +283,98 @@ pub fn (lw: MirLower) lower_cb_thunks {
 
 // The place of `p.f` with p a `Ptr(L)`, L a C layout: p in a local (the
 // holder), then `(*_h).k` (V13 wants the deref first).
+// ---- C scalar types (D64 as amended, Stage 29 W1b)
+
+// The C width of a C scalar type (type.av cs_*).
+pub fn (lw: MirLower) c_scalar_mty(k: Int): Int {
+  ts = lw.lw_m.types
+  if k == cs_int8() {
+    return ts.scalar(mk_int(), 8, true, "i8")
+  }
+  if k == cs_int16() {
+    return ts.scalar(mk_int(), 16, true, "i16")
+  }
+  if k == cs_uint8() {
+    return mt_u8()
+  }
+  if k == cs_uint16() {
+    return ts.scalar(mk_int(), 16, false, "u16")
+  }
+  if k == cs_uint32() {
+    return mt_u32()
+  }
+  ts.scalar(mk_f64(), 32, true, "f32")
+}
+
+// A C scalar's value seen in Avant: exact (sign or zero extension, or
+// fpext).
+pub fn (lw: MirLower) from_c_scalar(v: MOperand, k: Int): MOperand {
+  vt = mir_c_view_mty(k)
+  lw.tmp(vt, lw.lw_b.rv_cast(v, vt))
+}
+
+// An Avant value passed or stored as a C scalar: an integer outside the C
+// type's range traps with avant_trap_c_range(value, k) (D215: the correct
+// value or a trap); a Float64 rounds to the nearest Float32.
+pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand {
+  b = lw.lw_b
+  nt = lw.c_scalar_mty(k)
+  if k == cs_float32() {
+    return lw.tmp(nt, b.rv_cast(v, nt))
+  }
+  vt = mir_c_view_mty(k)
+  x = b.temp(vt)
+  dummy = b.assign(b.pl(x), b.rv_use(v))
+  lo = -128i64
+  hi = 127i64
+  if k == cs_int16() {
+    lo = -32768i64
+    hi = 32767i64
+  } else if k == cs_uint8() {
+    lo = 0i64
+    hi = 255i64
+  } else if k == cs_uint16() {
+    lo = 0i64
+    hi = 65535i64
+  } else if k == cs_uint32() {
+    lo = 0i64
+    hi = 4294967295i64
+  }
+  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(vt, lo)))
+  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), lw.int_const(vt, hi)))
+  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  ok = lw.trap_open(inside, false)
+  x64 = b.copy_local(x)
+  if vt != mt_i64() {
+    x64 = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(x), mt_i64()))
+  }
+  lw.trap_close(ok, "avant_trap_c_range", lw.two(x64, b.c_i32(k)), loc)
+  lw.tmp(nt, b.rv_cast(b.copy_local(x), nt))
+}
+
+// The C scalar kind of a C layout's field that e names (directly or
+// through a Ptr), else 0.
+pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
+  if e.kind == ex_field() && !e.method_call {
+    if obj = e.object {
+      if ot = obj.ty {
+        lay = ot
+        if ot.is_ptr {
+          if inner = ot.inner {
+            lay = inner
+          }
+        }
+        if lay.is_clayout {
+          if ft = lay.field_named(e.ident) {
+            return ft.c_scalar
+          }
+        }
+      }
+    }
+  }
+  0
+}
+
 pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
   b = lw.lw_b
   if inner = ot.inner {

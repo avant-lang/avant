@@ -40,7 +40,7 @@ avant compile hello.av hi   # or build a binary named hi
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, or `SIGTERM`; only `kill -9` or a crash leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
+`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, `SIGTERM`, or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`: the process still dies by the signal); only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
 
 That is enough to write and run Avant today. Building the Avant compiler itself is covered at the end, under [Advanced: building the compiler](#advanced-building-the-compiler).
 
@@ -915,7 +915,15 @@ fn main {
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
-`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
+Every C scalar type has an exact name at the boundary: `Int8`, `Int16`, `UInt8`, `UInt16`, `UInt32` and `Float32`, beside `Int` (32-bit), `Int64`, `UInt64`, `Float64` and `Bool`. They are written only in a `fun` signature and a C layout's field. In Avant such a value is its everyday type: `Int8`, `Int16`, `UInt8` and `UInt16` are `Int`, `UInt32` is `Int64`, `Float32` is `Float64`. A value from C converts exactly. A value to C keeps its value or traps: `avant runtime: 256 out of range for the C type UInt8 (0..255)`; a `Float64` rounds to the nearest `Float32`. A C callback's parameters and result use the everyday types for now.
+
+```avant
+lib img {
+  fun img_scale(n: UInt32, gain: Float32): UInt8
+}
+```
+
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
 
 ### Layouts and Ptr
 
@@ -1063,12 +1071,12 @@ quote {
 
 `name : Type` is accepted. The formatter prints `name: Type`: no space before the colon, one space after.
 
-Stdout is the default. `--write` replaces the file. `--check` prints `canonical` or `would change PATH` and does not write. A lex error prints the diagnostic and leaves the file alone.
+Each path is a `.av` file or a directory, walked for `.av` files the way `avant test` walks `tests/` (a name that starts with `.` and a directory named `deps` are skipped). With one file and no flag the canonical text goes to stdout. `--write` rewrites every file that changes. `--check` writes nothing, prints `would change PATH` for each file that would change (`canonical` when none would), and exits 1 if any would, so a CI job can fail on it. A lex error prints the diagnostic, leaves the file alone, and makes the status 1; the other files are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
 
 ```
 avant format FILE.av
-avant format FILE.av --check
-avant format FILE.av --write
+avant format . --check
+avant format src --write
 ```
 
 `compile`, `run`, and `dump` still drop comments. Formatting is a separate command so a format bug cannot change what a program means.
@@ -1095,7 +1103,7 @@ A string-literal pattern is compiled to a native scanner with re2c at compile ti
 
 ## Testing
 
-`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A void `fn main` is still a successful program and does not change. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
+`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A failed check fails the process whatever `main` returns: a program that would exit `0` after a failed check (a void `fn main`, a `main` that returns `0`, a `main` that never calls `finish`, a check that failed on a task) exits `1`. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
 
 ```avant
 import std.testing

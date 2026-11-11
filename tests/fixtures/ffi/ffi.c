@@ -124,6 +124,7 @@ int64_t ffi_spill(int a, int b, int c, int d, int e, Q2 q, int f) {
  * natively (avant_gc_native_begin/end, the ABI for user C that blocks
  * while Avant threads run). */
 #include <pthread.h>
+#include <sched.h>
 void avant_gc_native_begin(void);
 void avant_gc_native_end(void);
 
@@ -211,6 +212,106 @@ int32_t exit_join(void) {
   }
   avant_gc_native_end();
   return bad;
+}
+
+/* cscalars.av (Stage 29 W1b, D64 as amended): every C scalar type as a
+ * parameter, a result and a C layout's field. */
+int8_t cs_neg_i8(int8_t x) { return (int8_t)-x; }
+uint8_t cs_inc_u8(uint8_t x) { return (uint8_t)(x + 1u); }
+int16_t cs_neg_i16(int16_t x) { return (int16_t)-x; }
+uint16_t cs_dbl_u16(uint16_t x) { return (uint16_t)(x * 2u); }
+uint32_t cs_inc_u32(uint32_t x) { return x + 1u; }
+float cs_half_f32(float x) { return x / 2.0f; }
+double cs_widen_f32(float x) { return (double)x; }
+uint32_t cs_max_u32(void) { return 4294967295u; }
+int8_t cs_min_i8(void) { return -128; }
+double cs_sum(int8_t a, uint8_t b, int16_t c, uint16_t d, uint32_t e, float f) {
+  return (double)a + (double)b + (double)c + (double)d + (double)e + (double)f;
+}
+int32_t cs_byte_sum(const uint8_t *p, int32_t n) {
+  int32_t t = 0;
+  for (int32_t i = 0; i < n; i++) {
+    t += p[i];
+  }
+  return t;
+}
+
+typedef struct CsPix {
+  uint8_t r;
+  uint8_t g;
+  uint16_t w;
+  int16_t h;
+  int8_t tag;
+  uint32_t id;
+  float gain;
+} CsPix;
+
+CsPix *cs_pix_new(void) { return (CsPix *)calloc(1, sizeof(CsPix)); }
+int32_t cs_pix_size(void) { return (int32_t)sizeof(CsPix); }
+int32_t cs_pix_off_id(void) { return (int32_t)offsetof(CsPix, id); }
+int32_t cs_pix_off_gain(void) { return (int32_t)offsetof(CsPix, gain); }
+void cs_pix_fill(CsPix *p) {
+  p->r = 250;
+  p->g = 7;
+  p->w = 65535;
+  p->h = -300;
+  p->tag = -5;
+  p->id = 4000000000u;
+  p->gain = 0.25f;
+}
+/* What C reads back after Avant stored into the fields. */
+double cs_pix_total(const CsPix *p) {
+  return (double)p->r + (double)p->g + (double)p->w + (double)p->h + (double)p->tag + (double)p->id + (double)p->gain;
+}
+
+/* rereg.av (Stage 29 W1b, O70): a C thread calls the callback (it
+ * registers implicitly, and the callback leaves a heap key in the
+ * runtime's thread-local hash_last_key slot), unregisters itself
+ * (avant_gc_unregister_thread), waits while the main thread collects, and
+ * calls the callback again (it registers again). Unregistering clears the
+ * thread's runtime-root slots: before, the slot kept naming the key the
+ * main thread's collections had freed, and the second registration's
+ * collections read it. */
+void avant_gc_unregister_thread(void);
+static pthread_t rereg_th;
+static foreign_cb_t rereg_cb;
+static int32_t rereg_bad;
+static int rereg_phase;
+
+static void *rereg_run(void *arg) {
+  (void)arg;
+  rereg_bad = rereg_cb(0);
+  avant_gc_unregister_thread();
+  __atomic_store_n(&rereg_phase, 1, __ATOMIC_RELEASE);
+  while (__atomic_load_n(&rereg_phase, __ATOMIC_ACQUIRE) != 2) {
+    sched_yield();
+  }
+  rereg_bad += rereg_cb(1);
+  avant_gc_unregister_thread();
+  return NULL;
+}
+
+void rereg_start(foreign_cb_t f) {
+  rereg_cb = f;
+  rereg_bad = 0;
+  __atomic_store_n(&rereg_phase, 0, __ATOMIC_RELEASE);
+  pthread_create(&rereg_th, NULL, rereg_run, NULL);
+}
+
+void rereg_wait(void) {
+  avant_gc_native_begin();
+  while (__atomic_load_n(&rereg_phase, __ATOMIC_ACQUIRE) != 1) {
+    sched_yield();
+  }
+  avant_gc_native_end();
+}
+
+int32_t rereg_finish(void) {
+  __atomic_store_n(&rereg_phase, 2, __ATOMIC_RELEASE);
+  avant_gc_native_begin();
+  pthread_join(rereg_th, NULL);
+  avant_gc_native_end();
+  return rereg_bad;
 }
 
 /* release.av (Stage 28 W16c, D266): a C struct whose String fields Avant

@@ -6,6 +6,12 @@ lib avant_testing_tmp {
   fun avant_tmp_new_dir: String
 }
 
+// A failed check fails the process (D84, runtime/avant_io.c): if the
+// program would exit 0, it exits 1.
+lib avant_testing_status {
+  fun avant_test_fail
+}
+
 // File and process helpers in runtime/avant_io.c (D140). Internal.
 lib avant_testing_fs {
   fun avant_fs_chmod_x(path: String): Int
@@ -229,6 +235,7 @@ pub class Test {
 
   fn fail_line(name: String) {
     self.failed = self.failed + 1
+    avant_testing_status.avant_test_fail()
     self.record(false, name)
     testing_write("FAIL ${name}")
   }

@@ -1898,9 +1898,9 @@ pub class Checker {
       if field_ty = pointee.field_named(expr.ident) {
         if sig = self.find_method(owner, expr.ident) {
           self.fail(expr.loc, "${pointee.name}.${expr.ident} is both a field and a method")
-          return field_ty
+          return ty_c_view(field_ty)
         }
-        return field_ty
+        return ty_c_view(field_ty)
       }
     }
     has_zero = false
@@ -1932,7 +1932,7 @@ pub class Checker {
 
   pub fn check_clayout_member(expr: Expr, object: Ty): Ty {
     if field_ty = object.field_named(expr.ident) {
-      return field_ty
+      return ty_c_view(field_ty)
     }
     self.fail(expr.loc, "no field ${expr.ident} on ${object.show}")
     self.t_int()
@@ -3449,7 +3449,7 @@ pub class Checker {
       sig = self.cfuns[id]
       self.check_args(expr, sig.params, "${lib_name}.${expr.callee}")
       if self.has_err {
-        return sig.ret
+        return ty_c_view(sig.ret)
       }
       i = 0
       while i < expr.args.size {
@@ -3467,7 +3467,7 @@ pub class Checker {
         i = i + 1
       }
       expr.lib_name = lib_name
-      return sig.ret
+      return ty_c_view(sig.ret)
     }
     self.fail(expr.loc, "unknown function ${lib_name}.${expr.callee}")
     self.t_int()

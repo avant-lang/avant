@@ -218,6 +218,10 @@ fn ll_c_type(ts: MTypes, ty: Int): String {
   if ty == mt_bool() {
     return "zeroext i1"
   }
+  ext = ll_c_ext(ts, ty)
+  if ext.size > 0 {
+    return "${ext} ${ll_type_text(ts, ty)}"
+  }
   ll_type_text(ts, ty)
 }
 
@@ -226,7 +230,21 @@ fn ll_c_param(ts: MTypes, ty: Int): String {
   if ty == mt_bool() {
     return "i1 zeroext"
   }
+  ext = ll_c_ext(ts, ty)
+  if ext.size > 0 {
+    return "${ll_type_text(ts, ty)} ${ext}"
+  }
   ll_type_text(ts, ty)
+}
+
+// A C integer narrower than 32 bits (a C scalar type, Stage 29 W1b) is
+// extended to 32 bits by its sign, as the SysV ABI's callers do (clang's
+// `signext` and `zeroext`): C code compiled by clang relies on it.
+fn ll_c_ext(ts: MTypes, ty: Int): String {
+  if ts.is_int(ty) && ts.get(ty).bits < 32 {
+    return ll_pick(ts.is_signed_int(ty), "signext", "zeroext")
+  }
+  ""
 }
 
 // ---- __avant_type_maps (3.3, D186)
@@ -518,6 +536,8 @@ fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool
     }
     if c_boundary && ty == mt_bool() {
       buf.push_str("i1 zeroext ${x}")
+    } else if c_boundary && ll_c_ext(e.ts, ty).size > 0 {
+      buf.push_str("${e.llt(ty)} ${ll_c_ext(e.ts, ty)} ${x}")
     } else {
       buf.push_str("${e.llt(ty)} ${x}")
     }
@@ -879,6 +899,10 @@ fn ll_cast(e: LlEmit, x: String, src: Int, dst: Int): String {
     name = ll_pick(ts.is_signed_int(src), "sitofp", "uitofp")
   } else if src == mt_f64() && ts.is_int(dst) {
     name = ll_pick(ts.is_signed_int(dst), "fptosi", "fptoui")
+  } else if src == mt_f64() && ts.is_f32(dst) {
+    name = "fptrunc"
+  } else if ts.is_f32(src) && dst == mt_f64() {
+    name = "fpext"
   }
   if name.size == 0 {
     return x

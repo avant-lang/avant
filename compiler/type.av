@@ -75,6 +75,12 @@ pub class Ty {
   ty_args: Array(Ty)
   mod_name: String = ""
   emit_base: String = ""
+  // A C scalar type (D64 as amended, Stage 29 W1b): cs_* below, 0 for
+  // every other type. Such a Ty has its Avant view's kind (Int, Int64 or
+  // Float64) and its C name as label; it appears only in a `fun` signature
+  // and a C layout's field, where the back end passes and stores the C
+  // width and converts at the boundary.
+  c_scalar: Int = 0
 
   fn initialize(kind: Int) {
     self.kind = kind
@@ -545,6 +551,60 @@ pub class Ty {
     }
     buf.to_s
   }
+}
+
+// The C scalar types (D64 as amended, Stage 29 W1b): the C width and
+// signedness of a `fun` parameter or result or a C layout's field, seen in
+// Avant as their view type: Int8, Int16, UInt8 and UInt16 as Int, UInt32
+// as Int64, Float32 as Float64. From C a value converts exactly; to C an
+// integer outside the C type's range traps (D215), and a Float64 rounds to
+// the nearest Float32.
+pub fn cs_int8: Int { 1 }
+pub fn cs_int16: Int { 2 }
+pub fn cs_uint8: Int { 3 }
+pub fn cs_uint16: Int { 4 }
+pub fn cs_uint32: Int { 5 }
+pub fn cs_float32: Int { 6 }
+
+pub fn c_scalar_name(k: Int): String {
+  names = ["", "Int8", "Int16", "UInt8", "UInt16", "UInt32", "Float32"]
+  if k < 1 || k >= names.size {
+    return ""
+  }
+  names[k]
+}
+
+pub fn c_scalar_of(name: String): Int {
+  k = 1
+  while k <= 6 {
+    if str_eq(c_scalar_name(k), name) {
+      return k
+    }
+    k = k + 1
+  }
+  0
+}
+
+pub fn ty_c_scalar(k: Int): Ty {
+  kind = tyk_int()
+  if k == cs_uint32() {
+    kind = tyk_int64()
+  } else if k == cs_float32() {
+    kind = tyk_float()
+  }
+  t = Ty.new(kind)
+  t.c_scalar = k
+  t.label = c_scalar_name(k)
+  t
+}
+
+// The Avant view of a C scalar type (a fresh plain Int, Int64 or Float64);
+// any other type is itself.
+pub fn ty_c_view(t: Ty): Ty {
+  if t.c_scalar == 0 {
+    return t
+  }
+  Ty.new(t.kind)
 }
 
 pub fn ty_int: Ty { Ty.new(tyk_int()) }
@@ -1044,6 +1104,9 @@ pub fn ty_assignable(got: Ty, want: Ty): Bool {
 
 pub fn type_is_builtin(name: String): Bool {
   if str_eq(name, "Int") {
+    return true
+  }
+  if c_scalar_of(name) > 0 {
     return true
   }
   if str_eq(name, "Int64") {
