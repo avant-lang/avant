@@ -160,7 +160,7 @@ pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
   b = lw.lw_b
   lw.at(loc)
   c = b.temp(b.types.ref_to(l))
-  dummy = b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(tid)))
+  b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(tid)))
   c
 }
 
@@ -197,7 +197,7 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   }
   lw.at(e.loc)
   h = b.temp(mt_ref())
-  dummy = b.call(h, "avant_spawn", lw.two(b.c_fn(sym), arg))
+  b.call(h, "avant_spawn", lw.two(b.c_fn(sym), arg))
   b.copy_local(h)
 }
 
@@ -245,12 +245,12 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   }
   lw.at(e.loc)
   a = b.temp(aty)
-  dummy = b.assign(b.pl(a), b.rv_use(a0))
+  b.assign(b.pl(a), b.rv_use(a0))
   n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(a)), 1))))
   n64 = lw.tmp(mt_u64(), b.rv_cast(lw.dup(n), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(oty)))
   d = b.temp(b.types.ref_to(lw.elems_of(oty)))
-  dummy2 = b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(oty)))
+  b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(oty)))
   out = lw.tmp(oty, b.rv_use(lw.array_header(oty, d, lw.dup(n))))
   l = lw.task_layout(e, sym, true)
   if lw.failed {
@@ -265,7 +265,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
     return zero
   }
   lw.at(e.loc)
-  dummy3 = b.call(-1, "avant_parallel_for", lw.three(lw.dup(n), b.c_fn(sym), b.copy_local(c)))
+  b.call(-1, "avant_parallel_for", lw.three(lw.dup(n), b.c_fn(sym), b.copy_local(c)))
   out
 }
 
@@ -384,7 +384,7 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   b = lw.lw_b
   e = t.expr
   lw.begin_at(e.loc)
-  dummy = b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
+  b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
   lw.lw_cl.base = t.sym
   lw.lw_main = false
   lw.lw_ret = mt_void()
@@ -397,13 +397,13 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   i = 0
   while i < names.size && !lw.failed {
     k = lw.box_local_of(names[i], tys[i], e.loc)
-    dummy2 = b.assign(b.pl(k), b.rv_zero)
+    b.assign(b.pl(k), b.rv_zero)
     i = i + 1
   }
   c = -1
   if l >= 0 {
     c = b.local(b.types.ref_to(l), "cap")
-    dummy3 = b.assign(b.pl(c), b.rv_cast(b.copy_local(rec), b.types.ref_to(l)))
+    b.assign(b.pl(c), b.rv_cast(b.copy_local(rec), b.types.ref_to(l)))
   }
   c
 }
@@ -487,7 +487,7 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
     if got = lw.task_value(bl, ty_int()) {
       if lw.open_now {
         lw.at(e.loc)
-        dummy = b.assign(b.pl(0), b.rv_use(got))
+        b.assign(b.pl(0), b.rv_use(got))
         b.ret
       }
     }
@@ -526,11 +526,11 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
       v = b.c_i32(0)
       if ts.is_refkind(et) {
         gl = b.temp(et)
-        dummy0 = b.call(gl, "avant_array_get_ptr", lw.two(b.copy_local(ah), b.copy_local(1)))
+        b.call(gl, "avant_array_get_ptr", lw.two(b.copy_local(ah), b.copy_local(1)))
         v = b.copy_local(gl)
       } else {
         buf = b.temp(ts.ref_to(lw.elems_of(aty)))
-        dummy = b.assign(b.pl(buf), b.rv_use(b.copy(b.field(b.deref(b.pl(ah)), 0))))
+        b.assign(b.pl(buf), b.rv_use(b.copy(b.field(b.deref(b.pl(ah)), 0))))
         v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(buf)), b.copy_local(1)))))
       }
       lw.bind_name(bl.params[0], lw.elem_ty_of(recv), et, v, bl.loc, false)
@@ -545,10 +545,10 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
           ot = lw.elem_of(oty)
           r = lw.tmp(ot, b.rv_use(got))
           if ts.is_refkind(ot) {
-            dummy2 = b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(dh), b.copy_local(1), r))
+            b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(dh), b.copy_local(1), r))
           } else {
             ob = b.temp(ts.ref_to(lw.elems_of(oty)))
-            dummy3 = b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
+            b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
             lw.store_place(b.index(b.deref(b.pl(ob)), b.copy_local(1)), ot, r)
           }
           b.ret
@@ -602,9 +602,9 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   }
   lw.at(e.loc)
   h = b.temp(mty)
-  dummy = b.assign(b.pl(h), b.rv_use(o))
+  b.assign(b.pl(h), b.rv_use(o))
   g = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  dummy2 = b.call(-1, "avant_gate_lock", lw.one(g))
+  b.call(-1, "avant_gate_lock", lw.one(g))
   lw.lw_task.pnames.push(bl.params[0])
   lw.lw_task.pholders.push(h)
   lw.lw_task.pfields.push(ci)
@@ -613,9 +613,9 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     vt = t
   }
   got = lw.task_value(bl, vt)
-  dummy3 = lw.lw_task.pnames.pop
-  dummy4 = lw.lw_task.pholders.pop
-  dummy5 = lw.lw_task.pfields.pop
+  lw.lw_task.pnames.pop
+  lw.lw_task.pholders.pop
+  lw.lw_task.pfields.pop
   if lw.failed || !lw.open_now {
     return zero
   }
@@ -627,7 +627,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     }
   }
   g2 = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  dummy6 = b.call(-1, "avant_gate_unlock", lw.one(g2))
+  b.call(-1, "avant_gate_unlock", lw.one(g2))
   r
 }
 
@@ -669,7 +669,7 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    dummy = b.call(-1, c, lw.one(a))
+    b.call(-1, c, lw.one(a))
     return b.c_i32(0)
   }
   nil

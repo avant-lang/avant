@@ -69,7 +69,7 @@ pub fn (lw: MirLower) block_recv(recv: Expr, ty: Int): Int {
   }
   lw.at(recv.loc)
   h = b.temp(ty)
-  dummy = b.assign(b.pl(h), b.rv_use(a))
+  b.assign(b.pl(h), b.rv_use(a))
   h
 }
 
@@ -86,7 +86,7 @@ pub fn (lw: MirLower) block_test(h: Int, i: Int, body: Int, exit: Int) {
 pub fn (lw: MirLower) block_elem(h: Int, aty: Int, i: Int): MOperand {
   b = lw.lw_b
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
-  dummy = b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+  b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
   lw.tmp(lw.elem_of(aty), b.rv_use(b.copy(b.index(b.deref(b.pl(d)), b.copy_local(i)))))
 }
 
@@ -97,10 +97,10 @@ pub fn (lw: MirLower) block_elem(h: Int, aty: Int, i: Int): MOperand {
 pub fn (lw: MirLower) block_store(h: Int, aty: Int, i: Int, v: MOperand) {
   b = lw.lw_b
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
-  dummy = b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+  b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
   et = lw.elem_of(aty)
   if b.types.ref_carrying(et) {
-    dummy2 = b.barrier(d)
+    b.barrier(d)
   }
   dummy3 = b.assign(b.index(b.deref(b.pl(d)), b.copy_local(i)), b.rv_use(v))
 }
@@ -108,7 +108,7 @@ pub fn (lw: MirLower) block_store(h: Int, aty: Int, i: Int, v: MOperand) {
 // _i = _i + 1 (the old plain add), then back to head.
 pub fn (lw: MirLower) block_step(i: Int, head: Int) {
   b = lw.lw_b
-  dummy = b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i32(1)))
+  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i32(1)))
   b.goto(head)
 }
 
@@ -117,7 +117,7 @@ pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
   lw.lw_heads.push(cont)
   lw.lw_exits.push(exit)
   lw.lower_stmts(stmts)
-  dummy = lw.lw_heads.pop
+  lw.lw_heads.pop
   dummy2 = lw.lw_exits.pop
 }
 
@@ -171,7 +171,7 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   }
   lw.at(e.loc)
   i = b.temp(mt_i32())
-  dummy = b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block
   body = b.block
   step = b.block
@@ -207,9 +207,9 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   }
   lw.at(e.loc)
   res = b.temp(mt_bool())
-  dummy = b.assign(b.pl(res), b.rv_use(b.c_bool(!is_any)))
+  b.assign(b.pl(res), b.rv_use(b.c_bool(!is_any)))
   i = b.temp(mt_i32())
-  dummy2 = b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block
   body = b.block
   step = b.block
@@ -232,7 +232,7 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
     }
     b.branch(p, hit, step)
     b.at(hit)
-    dummy3 = b.assign(b.pl(res), b.rv_use(b.c_bool(is_any)))
+    b.assign(b.pl(res), b.rv_use(b.c_bool(is_any)))
     b.goto(exit)
   }
   b.at(step)
@@ -261,7 +261,7 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   lw.at(e.loc)
   if do_copy {
     c = b.temp(aty)
-    dummy = b.call(c, "avant_array_copy", lw.three(b.copy_local(arr), lw.elem_size(aty), lw.buf_tid(aty)))
+    b.call(c, "avant_array_copy", lw.three(b.copy_local(arr), lw.elem_size(aty), lw.buf_tid(aty)))
     arr = c
   }
   et = lw.elem_of(aty)
@@ -269,7 +269,7 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(arr)), 1))))
   nl = mir_bare_copy(n)
   i = b.temp(mt_i32())
-  dummy2 = b.assign(b.pl(i), b.rv_use(b.c_i32(1)))
+  b.assign(b.pl(i), b.rv_use(b.c_i32(1)))
   head = b.block
   body = b.block
   exit = b.block
@@ -281,7 +281,7 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   v = lw.block_elem(arr, aty, i)
   vl = mir_bare_copy(v)
   j = b.temp(mt_i32())
-  dummy3 = b.assign(b.pl(j), b.rv_use(b.copy_local(i)))
+  b.assign(b.pl(j), b.rv_use(b.copy_local(i)))
   ihead = b.block
   ibody = b.block
   iexit = b.block
@@ -306,7 +306,7 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
     b.branch(cmp, moved, iexit)
     b.at(moved)
     lw.block_store(arr, aty, j, b.copy_local(pl))
-    dummy4 = b.assign(b.pl(j), b.rv_use(b.copy_local(jml)))
+    b.assign(b.pl(j), b.rv_use(b.copy_local(jml)))
     b.goto(ihead)
   }
   b.at(iexit)
@@ -352,9 +352,9 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
     kf = "avant_hash_keys_i32"
   }
   keys = b.temp(aty)
-  dummy = b.call(keys, kf, lw.one(b.copy_local(h)))
+  b.call(keys, kf, lw.one(b.copy_local(h)))
   i = b.temp(mt_i32())
-  dummy2 = b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block
   body = b.block
   step = b.block

@@ -136,7 +136,7 @@ pub fn (lw: MirLower) hold(o: MOperand, ty: Int): Int {
     return k
   }
   t = lw.lw_b.temp(ty)
-  dummy = lw.lw_b.assign(lw.lw_b.pl(t), lw.lw_b.rv_use(o))
+  lw.lw_b.assign(lw.lw_b.pl(t), lw.lw_b.rv_use(o))
   t
 }
 
@@ -168,11 +168,11 @@ pub fn (lw: MirLower) array_header(aty: Int, d: Int, n: MOperand): MOperand {
   b = lw.lw_b
   l = b.types.layout_of(aty)
   a = b.temp(aty)
-  dummy = b.call(a, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(1022)))
-  dummy2 = b.barrier(a)
-  dummy3 = b.assign(b.field(b.deref(b.pl(a)), 0), b.rv_use(b.copy_local(d)))
-  dummy4 = b.assign(b.field(b.deref(b.pl(a)), 1), b.rv_use(lw.dup(n)))
-  dummy5 = b.assign(b.field(b.deref(b.pl(a)), 2), b.rv_use(n))
+  b.call(a, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(1022)))
+  b.barrier(a)
+  b.assign(b.field(b.deref(b.pl(a)), 0), b.rv_use(b.copy_local(d)))
+  b.assign(b.field(b.deref(b.pl(a)), 1), b.rv_use(lw.dup(n)))
+  b.assign(b.field(b.deref(b.pl(a)), 2), b.rv_use(n))
   b.copy_local(a)
 }
 
@@ -195,7 +195,7 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
   lw.at(e.loc)
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
   size = b.types.size_of(et) * n
-  dummy = b.call(d, "avant_alloc", lw.two(b.c_u64(size.to_i64), lw.buf_tid(aty)))
+  b.call(d, "avant_alloc", lw.two(b.c_u64(size.to_i64), lw.buf_tid(aty)))
   rc = b.types.ref_carrying(et)
   i = 0
   while i < n {
@@ -206,15 +206,15 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
     lw.at(e.elems[i].loc)
     p = b.index(b.deref(b.pl(d)), b.c_i32(i))
     if rc {
-      dummy2 = b.assign_fresh(p, b.rv_use(v))
+      b.assign_fresh(p, b.rv_use(v))
     } else {
-      dummy3 = b.assign(p, b.rv_use(v))
+      b.assign(p, b.rv_use(v))
     }
     i = i + 1
   }
   lw.at(e.loc)
   if rc && n > 0 {
-    dummy4 = b.barrier(d)
+    b.barrier(d)
   }
   lw.array_header(aty, d, b.c_i32(n))
 }
@@ -248,11 +248,11 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   }
   lw.at(e.loc)
   k = b.temp(mt_i32())
-  dummy = b.assign(b.pl(k), b.rv_use(nv))
+  b.assign(b.pl(k), b.rv_use(nv))
   n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
-  dummy2 = b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
+  b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
   lw.array_header(aty, d, b.copy_local(k))
 }
 
@@ -288,7 +288,7 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
   b = lw.lw_b
   lw.seq_bounds(h, i, proven)
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
-  dummy = b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+  b.assign(b.pl(d), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
   b.index(b.deref(b.pl(d)), i)
 }
 
@@ -377,7 +377,7 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
               lw.at(st.loc)
               h = lw.hold(a, aty)
               lw.seq_bounds(h, i, t.proven)
-              dummy = b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(h), lw.dup(i), val))
+              b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(h), lw.dup(i), val))
               return
             }
             val2 = lw.lower_coerced(v, et, want)
@@ -512,7 +512,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       if et == mt_bool() {
         f = "avant_array_fill_u8"
       }
-      dummy = b.call(-1, f, lw.two(b.copy_local(h), v))
+      b.call(-1, f, lw.two(b.copy_local(h), v))
       return zero
     }
     cf = lw.kind_fn("avant_array_contains", et, true)
@@ -546,7 +546,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     four = lw.two(b.copy_local(h2), n)
     four.push(lw.elem_size(aty))
     four.push(lw.buf_tid(aty))
-    dummy2 = b.call(-1, "avant_array_reserve", four)
+    b.call(-1, "avant_array_reserve", four)
     return zero
   }
   if name == "pop" {
@@ -556,20 +556,20 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     // yielding a null reference.
     n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
     last = lw.tmp(mt_i32(), b.rv_bin(mop_sub(), lw.dup(n), b.c_i32(1)))
-    dummy0 = b.check_bounds(last, n)
+    b.check_bounds(last, n)
     if b.types.is_refkind(et) {
       return lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
     }
     s = b.temp(b.types.addr_of(et))
-    dummy3 = b.call(s, "avant_array_pop_slot", lw.two(b.copy_local(h2), lw.elem_size(aty)))
+    b.call(s, "avant_array_pop_slot", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return lw.tmp(et, b.rv_use(b.copy(b.deref(b.pl(s)))))
   }
   if name == "clear" {
-    dummy4 = b.assign(b.field(b.deref(b.pl(h2)), 1), b.rv_use(b.c_i32(0)))
+    b.assign(b.field(b.deref(b.pl(h2)), 1), b.rv_use(b.c_i32(0)))
     return zero
   }
   if name == "reverse" {
-    dummy5 = b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
+    b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
   }
   if name == "sort" || name == "sorted" {
@@ -579,12 +579,12 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       return zero
     }
     if name == "sort" {
-      dummy6 = b.call(-1, sf, lw.one(b.copy_local(h2)))
+      b.call(-1, sf, lw.one(b.copy_local(h2)))
       return zero
     }
     c = b.temp(aty)
-    dummy7 = b.call(c, "avant_array_copy", lw.three(b.copy_local(h2), lw.elem_size(aty), lw.buf_tid(aty)))
-    dummy8 = b.call(-1, sf, lw.one(b.copy_local(c)))
+    b.call(c, "avant_array_copy", lw.three(b.copy_local(h2), lw.elem_size(aty), lw.buf_tid(aty)))
+    b.call(-1, sf, lw.one(b.copy_local(c)))
     return b.copy_local(c)
   }
   if name == "sum" {
@@ -606,14 +606,14 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
 pub fn (lw: MirLower) arr_push(h: Int, aty: Int, et: Int, v: MOperand) {
   b = lw.lw_b
   if et == mt_i32() {
-    dummy = b.call(-1, "avant_array_push_i32", lw.two(b.copy_local(h), v))
+    b.call(-1, "avant_array_push_i32", lw.two(b.copy_local(h), v))
     return
   }
   if b.types.is_refkind(et) {
-    dummy2 = b.call(-1, "avant_array_push_ptr", lw.three(b.copy_local(h), v, lw.buf_tid(aty)))
+    b.call(-1, "avant_array_push_ptr", lw.three(b.copy_local(h), v, lw.buf_tid(aty)))
     return
   }
   s = b.temp(b.types.addr_of(et))
-  dummy3 = b.call(s, "avant_array_push_slot", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
+  b.call(s, "avant_array_push_slot", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
   dummy4 = b.assign(b.deref(b.pl(s)), b.rv_use(v))
 }

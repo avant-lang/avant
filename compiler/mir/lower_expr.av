@@ -97,7 +97,7 @@ pub fn (lw: MirLower) snap(o: MOperand, later: Expr): MOperand {
 
 pub fn (lw: MirLower) tmp(ty: Int, rv: MRvalue): MOperand {
   t = lw.lw_b.temp(ty)
-  dummy = lw.lw_b.assign(lw.lw_b.pl(t), rv)
+  lw.lw_b.assign(lw.lw_b.pl(t), rv)
   lw.lw_b.copy_local(t)
 }
 
@@ -364,7 +364,7 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
       }
       lw.at(e.loc)
       d = b.temp(mt_bool())
-      dummy = b.assign(b.pl(d), b.rv_use(a))
+      b.assign(b.pl(d), b.rv_use(a))
       right = b.block
       join = b.block
       // Under coverage (W8b) the short path has its own block, and each
@@ -401,7 +401,7 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
         return b.c_i32(0)
       }
       lw.at(e.loc)
-      dummy2 = b.assign(b.pl(d), b.rv_use(c))
+      b.assign(b.pl(d), b.rv_use(c))
       b.goto(join)
       b.at(join)
       return b.copy_local(d)
@@ -430,7 +430,7 @@ pub fn (lw: MirLower) trap_open(c: MOperand, trap_on: Bool): Int {
 
 pub fn (lw: MirLower) trap_close(ok: Int, trap: String, args: Array(MOperand), loc: Location) {
   b = lw.lw_b
-  dummy = b.call(-1, trap, args)
+  b.call(-1, trap, args)
   b.unreachable
   b.at(ok)
   lw.at(loc)

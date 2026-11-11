@@ -156,7 +156,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   src = lw.hold(o, fty)
   tl = b.types.layout_of(tty)
   d = b.temp(tty)
-  dummy = b.assign(b.pl(d), b.rv_zero)
+  b.assign(b.pl(d), b.rv_zero)
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int64) = []
   targets: Array(Int) = []
@@ -181,10 +181,10 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
     m = from.members[members[i]]
     k = to.tag_of(m)
     if m.is_nil {
-      dummy2 = b.assign(b.pl(d), b.rv_union_nil(tl, k))
+      b.assign(b.pl(d), b.rv_union_nil(tl, k))
     } else {
       p = lw.tmp(lw.ty_at(m, loc, "a member"), b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, members[i])))))
-      dummy3 = b.assign(b.pl(d), b.rv_union(tl, k, p))
+      b.assign(b.pl(d), b.rv_union(tl, k, p))
     }
     b.goto(join)
     i = i + 1
@@ -247,13 +247,13 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
       return b.c_i32(0)
     }
     lw.at(loc)
-    dummy = b.assign(b.pl(d), b.rv_use(v))
+    b.assign(b.pl(d), b.rv_use(v))
     b.goto(join)
     b.at(bval)
     if result.same_as(uty) {
-      dummy2 = b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
+      b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
     } else {
-      dummy3 = b.assign(b.pl(d), b.rv_use(lw.unwrap(src, uty, ty_without_nil(uty), loc)))
+      b.assign(b.pl(d), b.rv_use(lw.unwrap(src, uty, ty_without_nil(uty), loc)))
     }
     b.goto(join)
     b.at(join)
@@ -315,10 +315,10 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
         b.branch(c, bf, bok)
         b.at(bf)
         if ret.same_as(uty) {
-          dummy = b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
+          b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
         } else {
           fv = lw.coerce(lw.unwrap(src, uty, fail, e.loc), fail, ret, e.loc)
-          dummy2 = b.assign(b.pl(0), b.rv_use(fv))
+          b.assign(b.pl(0), b.rv_use(fv))
         }
         lw.unpin_all
         b.ret
@@ -397,10 +397,10 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
   join = b.block
   b.branch(found, bt, bf)
   b.at(bt)
-  dummy = b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
+  b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
   b.goto(join)
   b.at(bf)
-  dummy2 = b.assign(b.pl(d), b.rv_union_nil(l, want.tag_of(ty_nil())))
+  b.assign(b.pl(d), b.rv_union_nil(l, want.tag_of(ty_nil())))
   b.goto(join)
   b.at(join)
   b.copy_local(d)
@@ -416,7 +416,7 @@ pub fn (lw: MirLower) found_is(f: Int): MOperand {
 pub fn (lw: MirLower) found_local: Int {
   b = lw.lw_b
   f = b.temp(mt_i32())
-  dummy = b.assign(b.pl(f), b.rv_use(b.c_i32(0)))
+  b.assign(b.pl(f), b.rv_use(b.c_i32(0)))
   f
 }
 
@@ -460,7 +460,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     l = b.types.layout_of(wty)
     d = b.temp(wty)
-    dummy = b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
+    b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i32(0)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
@@ -479,12 +479,12 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
         v = lw.call_to(et, "avant_array_get_ptr", lw.two(b.copy_local(h), b.copy_local(ix)))
       } else {
         dd = b.temp(b.types.ref_to(lw.elems_of(aty)))
-        dummy2 = b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+        b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
         v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(dd)), b.copy_local(ix)))))
       }
     } else if rt.is_buf {
       dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
-      dummy3 = b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
+      b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
       byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
       v = lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
     } else {
@@ -494,7 +494,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
       v = lw.tmp(mt_i32(), b.rv_cast(byte2, mt_i32()))
     }
-    dummy4 = b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
+    b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
     b.goto(join)
     b.at(join)
     return b.copy_local(d)

@@ -71,7 +71,7 @@ fn test_toolchain(c: Checks) {
     stamp = now_ms()
     base = "${scratch()}/toolchain-wavei-${stamp}"
     src = "${base}-hello.av"
-    dummy_src = file_write(src, "fn helper_twice(n: Int): Int {\n  n * 2 + 1\n}\n\nfn main {\n  puts(helper_twice(20))\n}\n")
+    file_write(src, "fn helper_twice(n: Int): Int {\n  n * 2 + 1\n}\n\nfn main {\n  puts(helper_twice(20))\n}\n")
 
     code1 = tc_compile(compiler, src, "${base}-debug.bin", "--debug", "${base}-debug.log")
     code2 = tc_compile(compiler, src, "${base}-bare.bin", "", "${base}-bare.log")
@@ -147,10 +147,10 @@ fn test_toolchain(c: Checks) {
     // open pipe as stdin does not hold a compile. These go through sh
     // because they are about stdin plumbing.
     cat_src = "${base}-stdin.av"
-    dummy_cat = file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
+    file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
     pipe_out = "${base}-pipe.out"
     pipe_sh = "${base}-pipe.sh"
-    dummy_ps = file_write(pipe_sh, "printf 'piped input' | '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
+    file_write(pipe_sh, "printf 'piped input' | '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
     sh_args: Array(String) = []
     sh_args.push(pipe_sh)
     pipe_code = process_run("/bin/sh", sh_args)
@@ -167,11 +167,11 @@ fn test_toolchain(c: Checks) {
     // file), capped at 10 s so a regression cannot hang the suite: a
     // compile that waits for its stdin takes the whole cap.
     open_flag = "${base}-open.done"
-    dummy_os = file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
+    file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
     open_args: Array(String) = []
     open_args.push(open_sh)
     started = now_ms()
-    dummy_open = process_run("/bin/sh", open_args)
+    process_run("/bin/sh", open_args)
     c.expect(file_exists(open_bin), "a compile with an open pipe as stdin finishes")
     c.expect(now_ms() - started < 8000, "a compile does not wait for its stdin to close")
   } else {

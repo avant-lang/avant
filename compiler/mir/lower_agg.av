@@ -52,7 +52,7 @@ pub fn (lw: MirLower) note_classes {
       none: Array(Int) = []
       names: Array(String) = []
       l = lw.lw_b.note_layout(mir_mty(t), mlk_class(), none, names)
-      dummy = lw.lw_b.type_id(l)
+      lw.lw_b.type_id(l)
     } else {
       lw.refuse(cdef.loc, "class ${cdef.name} (no resolved type)")
       return
@@ -405,7 +405,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
           if h < 0 {
             lw.at(e.loc)
             h = b.temp(lw.ety(obj))
-            dummy = b.assign(b.pl(h), b.rv_use(o))
+            b.assign(b.pl(h), b.rv_use(o))
           }
           k = lw.field_of(ot, e.ident, e.loc)
           return b.field(b.deref(b.pl(h)), k)
@@ -420,7 +420,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   }
   lw.at(e.loc)
   t = b.temp(ty)
-  dummy2 = b.assign(b.pl(t), b.rv_use(v))
+  b.assign(b.pl(t), b.rv_use(v))
   b.pl(t)
 }
 
@@ -453,9 +453,9 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
       return
     }
     if lw.lw_m.types.is_addr(b.func.locals[h].ty) {
-      dummy = b.barrier_at(h)
+      b.barrier_at(h)
     } else {
-      dummy2 = b.barrier(h)
+      b.barrier(h)
     }
   }
   dummy3 = b.assign(p, b.rv_use(val))
@@ -634,7 +634,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     }
     lw.at(e.loc)
     a = b.temp(b.types.addr_of(lw.ety(recv)))
-    dummy = b.assign(b.pl(a), b.rv_addr(p))
+    b.assign(b.pl(a), b.rv_addr(p))
     r = b.copy_local(a)
   }
   if lw.failed {
@@ -739,7 +739,7 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   if lw.failed {
     return
   }
-  dummy = b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
+  b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
   if f2 = init {
     i = 0
     while i < f2.params.size {
@@ -753,12 +753,12 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   aargs: Array(MOperand) = []
   aargs.push(b.c_u64(b.types.layouts[layout].size.to_i64))
   aargs.push(b.c_u32(b.types.layouts[layout].type_id))
-  dummy2 = b.call(o, "avant_alloc", aargs)
+  b.call(o, "avant_alloc", aargs)
   lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
   if lw.failed {
     return
   }
-  dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
+  b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
   b.ret
   b.end_fn
 }

@@ -57,11 +57,11 @@ pub fn (lw: MirLower) lower_args(args: Array(Expr)): Array(MOperand) {
 pub fn (lw: MirLower) call_to(ty: Int, callee: String, args: Array(MOperand)): MOperand {
   b = lw.lw_b
   if ty == mt_void() {
-    dummy = b.call(-1, callee, args)
+    b.call(-1, callee, args)
     return b.c_i32(0)
   }
   t = b.temp(ty)
-  dummy2 = b.call(t, callee, args)
+  b.call(t, callee, args)
   b.copy_local(t)
 }
 
@@ -250,7 +250,7 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
   args: Array(MOperand) = []
   args.push(b.str_const(fmt))
   args.push(v)
-  dummy = b.call(-1, "printf", args)
+  b.call(-1, "printf", args)
   b.c_i32(0)
 }
 
@@ -362,7 +362,7 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
 pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
   b = lw.lw_b
   d = b.temp(ty)
-  dummy = b.assign(b.pl(d), b.rv_use(v))
+  b.assign(b.pl(d), b.rv_use(v))
   sty = ty
   s = b.copy_local(d)
   if ty == mt_u64() {
@@ -374,7 +374,7 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
   join = b.block
   b.branch(c, neg, join)
   b.at(neg)
-  dummy2 = b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
+  b.assign(b.pl(d), b.rv_un(mop_neg(), b.copy_local(d)))
   b.goto(join)
   b.at(join)
   b.copy_local(d)
@@ -386,7 +386,7 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand): MOperand {
 pub fn (lw: MirLower) f64_to_i32(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   x = b.temp(mt_f64())
-  dummy = b.assign(b.pl(x), b.rv_use(v))
+  b.assign(b.pl(x), b.rv_use(v))
   lo = b.c_f64(mir_f64_bits(-2147483649.0), "-2147483649.0")
   hi = b.c_f64(mir_f64_bits(2147483648.0), "2147483648.0")
   c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(x), lo))

@@ -269,7 +269,7 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
     if lw.failed {
       return
     }
-    dummy = lw.lw_b.type_id(bl)
+    lw.lw_b.type_id(bl)
     i = i + 1
   }
   if e.cap_names.size > 0 {
@@ -277,7 +277,7 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
     if lw.failed {
       return
     }
-    dummy2 = lw.lw_b.type_id(el)
+    lw.lw_b.type_id(el)
   }
   if b = e.block {
     lw.prewalk_stmts(b.body, sym)
@@ -332,7 +332,7 @@ pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   args: Array(MOperand) = []
   args.push(b.c_u64(b.types.layouts[bl].size.to_i64))
   args.push(b.c_u32(b.type_id(bl)))
-  dummy = b.call(k, "avant_alloc", args)
+  b.call(k, "avant_alloc", args)
   lw.lw_cl.box_ready[name] = 1
   k
 }
@@ -348,7 +348,7 @@ pub fn (lw: MirLower) box_holder(name: String, t: Ty, loc: Location, alloc: Bool
     env = lw.lw_cl.env
     lw.at(loc)
     p = b.temp(ts.layouts[ts.layout_of(b.func.locals[env].ty)].fields[ci])
-    dummy = b.assign(b.pl(p), b.rv_use(b.copy(b.field(b.deref(b.pl(env)), ci))))
+    b.assign(b.pl(p), b.rv_use(b.copy(b.field(b.deref(b.pl(env)), ci))))
     return p
   }
   if alloc {
@@ -386,7 +386,7 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
       if fresh {
         lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, name)
       }
-      dummy = lw.ensure_box(name, t, loc)
+      lw.ensure_box(name, t, loc)
     }
     lw.box_store(name, t, v, loc)
     return
@@ -435,7 +435,7 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
     }
     if tt = t {
       k = lw.box_local_of(n, tt, lw.lw_fn_loc)
-      dummy = b.assign(b.pl(k), b.rv_zero)
+      b.assign(b.pl(k), b.rv_zero)
     }
     i = i + 1
   }
@@ -443,7 +443,7 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
   while i < pnames.size && !lw.failed {
     n2 = pnames[i]
     if mir_name_index(bx, n2) >= 0 && i < ptys.size {
-      dummy2 = lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
+      lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
       lw.box_store(n2, ptys[i], b.copy_local(i + 1 + base), lw.lw_fn_loc)
     }
     i = i + 1
@@ -470,7 +470,7 @@ pub fn (lw: MirLower) box_read(e: Expr): MOperand {
 pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
   b = lw.lw_b
   if mir_name_index(lw.lw_cl.caps, t.ident) < 0 {
-    dummy = lw.ensure_box(t.ident, tt, t.loc)
+    lw.ensure_box(t.ident, tt, t.loc)
   }
   if v = st.value {
     if st.op == tk_eq() {
@@ -556,14 +556,14 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   args: Array(MOperand) = []
   args.push(b.c_u64(b.types.layouts[el].size.to_i64))
   args.push(b.c_u32(b.type_id(el)))
-  dummy = b.call(env, "avant_alloc", args)
+  b.call(env, "avant_alloc", args)
   i = 0
   while i < e.cap_names.size && !lw.failed {
     name = e.cap_names[i]
     p = lw.capture_box(name, e.cap_tys[i], e.loc)
     lw.at(e.loc)
-    dummy2 = b.barrier(env)
-    dummy3 = b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
+    b.barrier(env)
+    b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
     i = i + 1
   }
   lw.tmp(fty, b.rv_fnval(l, b.copy_local(env), b.c_fn(sym)))
@@ -613,7 +613,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
   }
   lw.at(e.loc)
   h = b.temp(fty)
-  dummy = b.assign(b.pl(h), b.rv_use(f))
+  b.assign(b.pl(h), b.rv_use(f))
   args = lw.lower_args_to(e.args, e.cap_tys)
   if lw.failed {
     return zero
@@ -624,11 +624,11 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
     return zero
   }
   if ret == mt_void() {
-    dummy2 = b.call_indirect(-1, b.copy_local(h), args)
+    b.call_indirect(-1, b.copy_local(h), args)
     return zero
   }
   r = b.temp(ret)
-  dummy3 = b.call_indirect(r, b.copy_local(h), args)
+  b.call_indirect(r, b.copy_local(h), args)
   b.copy_local(r)
 }
 
@@ -664,7 +664,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
     }
     sig = lw.fn_code_sig(l)
     s = b.types.sigs[sig]
-    dummy = b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
+    b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
     lw.lw_cl.base = lam.sym
     lw.lw_cov.rank = mir_cov_lambda_rank() + 999999
     if li = lw.lw_cov.lam_index.get(lam.sym) {
@@ -702,7 +702,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
       }
       lw.at(e.loc)
       env = b.local(b.types.ref_to(el), "env")
-      dummy2 = b.assign(b.pl(env), b.rv_cast(b.copy_local(1), b.types.ref_to(el)))
+      b.assign(b.pl(env), b.rv_cast(b.copy_local(1), b.types.ref_to(el)))
       lw.lw_cl.env = env
     }
     if bl2 = e.block {
@@ -739,7 +739,7 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           if lw.failed {
             return
           }
-          dummy = b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
+          b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
           b.name_param(1, "env")
           lw.at(f.loc)
           args: Array(MOperand) = []
@@ -752,11 +752,11 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
             j = j + 1
           }
           if ret == mt_void() {
-            dummy2 = b.call(-1, sym, args)
+            b.call(-1, sym, args)
           } else {
             r = b.temp(ret)
-            dummy3 = b.call(r, sym, args)
-            dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
+            b.call(r, sym, args)
+            b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
           }
           b.ret
           b.end_fn

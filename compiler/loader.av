@@ -611,7 +611,7 @@ pub class Loader {
       return nil
     }
     self.setup_deps(path)
-    dummy = self.load_file(path)
+    self.load_file(path)
     if self.failed {
       return nil
     }
@@ -643,14 +643,14 @@ pub class Loader {
       lex = Lexer.new(file)
       tokens = lex.tokenize
       if e = lex.err {
-        dummy2 = self.stack.pop
+        self.stack.pop
         self.absorb(lex.errors)
         return nil
       }
       parser = Parser.new(file, tokens)
       program = parser.parse
       if e2 = parser.err {
-        dummy3 = self.stack.pop
+        self.stack.pop
         self.absorb(parser.errors)
         return nil
       }
@@ -682,7 +682,7 @@ pub class Loader {
           continue
         }
         seen_path[child] = imp.name
-        dummy7 = self.load_file(child)
+        self.load_file(child)
         imports.push(self.module_label(child))
         i = i + 1
       }
@@ -690,10 +690,10 @@ pub class Loader {
       info.imports = imports
       self.mods.push(info)
       self.order.push(path)
-      dummy8 = self.stack.pop
+      self.stack.pop
       return program
     }
-    dummy9 = self.stack.pop
+    self.stack.pop
     self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
     nil
   }
@@ -764,6 +764,6 @@ pub class Loader {
 
 pub fn load_program(path: String): Loader {
   loader = Loader.new()
-  dummy = loader.load_root(path)
+  loader.load_root(path)
   loader
 }

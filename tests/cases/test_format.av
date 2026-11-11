@@ -95,7 +95,7 @@ fn test_format(c: Checks) {
     // each line, and with it where a statement begins, never changes.
     d280_src = "${scratch()}/format-${stamp}-d280.av"
     d280_log = "${scratch()}/format-${stamp}-d280.log"
-    dummy_d280 = file_write(d280_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
+    file_write(d280_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
     d280_code = run_format(compiler, "format", d280_src, d280_log, empty_flags)
     c.eq_int(d280_code, 0, "format D280 lines exits 0")
     c.eq_str(read_or_empty(d280_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n  1,\n  -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line (D280)")
@@ -335,11 +335,11 @@ fn test_format(c: Checks) {
     mkdir_p("${many}/sub")
     mkdir_p("${many}/deps")
     mkdir_p("${many}/.hidden")
-    dummy_m1 = file_write("${many}/a.av", "fn main {\n}\n")
-    dummy_m2 = file_write("${many}/sub/b.av", "fn main{\n}\n")
-    dummy_m3 = file_write("${many}/deps/c.av", "fn main{\n}\n")
-    dummy_m4 = file_write("${many}/.hidden/d.av", "fn main{\n}\n")
-    dummy_m5 = file_write("${many}/sub/e.av", "fn main{\n}\n")
+    file_write("${many}/a.av", "fn main {\n}\n")
+    file_write("${many}/sub/b.av", "fn main{\n}\n")
+    file_write("${many}/deps/c.av", "fn main{\n}\n")
+    file_write("${many}/.hidden/d.av", "fn main{\n}\n")
+    file_write("${many}/sub/e.av", "fn main{\n}\n")
     dir_log = "${scratch()}/format-${stamp}-dir.log"
     dir_code = run_format(compiler, "format", many, dir_log, check_flags)
     c.eq_int(dir_code, 1, "a directory with drift: --check exits 1")

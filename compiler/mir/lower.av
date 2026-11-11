@@ -279,7 +279,7 @@ pub class MirLower {
   }
 
   pub fn at(loc: Location) {
-    dummy = self.lw_b.file(self.rel_path(loc.path))
+    self.lw_b.file(self.rel_path(loc.path))
     self.lw_b.at_loc(loc.line, loc.column)
   }
 
@@ -536,7 +536,7 @@ pub class MirLower {
       if self.lw_main {
         sret = mt_i32()
       }
-      dummy = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
       self.lw_cl.base = self.lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external
@@ -574,11 +574,11 @@ pub class MirLower {
   pub fn main_prologue(loc: Location) {
     self.at(loc)
     none: Array(MOperand) = []
-    dummy = self.lw_b.call(-1, "__avant_type_maps", none)
+    self.lw_b.call(-1, "__avant_type_maps", none)
     args: Array(MOperand) = []
     args.push(self.lw_b.copy_local(1))
     args.push(self.lw_b.copy_local(2))
-    dummy2 = self.lw_b.call(-1, "avant_io_init_argv", args)
+    self.lw_b.call(-1, "avant_io_init_argv", args)
     self.cov_init
   }
 
@@ -597,7 +597,7 @@ pub class MirLower {
     self.at(loc)
     if self.lw_ret == mt_void() {
       if self.lw_main {
-        dummy = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+        self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
       }
       self.lw_b.ret
       return
@@ -613,7 +613,7 @@ pub class MirLower {
     params: Array(Int) = []
     params.push(mt_i32())
     params.push(mt_ptr())
-    dummy = self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
+    self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
     self.lw_b.set_external
     self.lw_b.name_param(1, "argc")
     self.lw_b.name_param(2, "argv")
@@ -629,15 +629,15 @@ pub class MirLower {
     none: Array(MOperand) = []
     if rty == mt_i32() {
       t = self.lw_b.temp(mt_i32())
-      dummy2 = self.lw_b.call(t, sym, none)
-      dummy3 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
+      self.lw_b.call(t, sym, none)
+      self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
     } else {
       dest = -1
       if rty != mt_void() && rty >= 0 {
         dest = self.lw_b.temp(rty)
       }
-      dummy4 = self.lw_b.call(dest, sym, none)
-      dummy5 = self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
+      self.lw_b.call(dest, sym, none)
+      self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
     }
     self.lw_b.ret
     self.lw_b.end_fn
@@ -692,7 +692,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
     return MirLowered.new(lw.lw_m, buf.to_s)
   }
   mir_take_pass(lw.lw_m)
-  dummy_up = mir_upsert_pass(lw.lw_m)
+  mir_upsert_pass(lw.lw_m)
   mir_loop_pass(lw.lw_m)
   mir_gc_passes(lw.lw_m)
   MirLowered.new(lw.lw_m, "")

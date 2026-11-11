@@ -254,7 +254,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
       }
       j = j + 1
     }
-    dummy = b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
     lw.lw_ret = ret
     lw.at(cb.loc)
     args: Array(MOperand) = []
@@ -267,11 +267,11 @@ pub fn (lw: MirLower) lower_cb_thunks {
       j = j + 1
     }
     if ret == mt_void() {
-      dummy2 = b.call(-1, cb.target, args)
+      b.call(-1, cb.target, args)
     } else {
       d = b.temp(ret)
-      dummy3 = b.call(d, cb.target, args)
-      dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
+      b.call(d, cb.target, args)
+      b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
     }
     b.ret
     b.end_fn
@@ -324,7 +324,7 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
   }
   vt = mir_c_view_mty(k)
   x = b.temp(vt)
-  dummy = b.assign(b.pl(x), b.rv_use(v))
+  b.assign(b.pl(x), b.rv_use(v))
   lo = -128i64
   hi = 127i64
   if k == cs_int16() {
@@ -405,11 +405,11 @@ pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   v = lw.hold(val, ty)
   a = b.temp(mt_ptr())
-  dummy = b.assign(b.pl(a), b.rv_addr(p))
+  b.assign(b.pl(a), b.rv_addr(p))
   args: Array(MOperand) = []
   args.push(b.copy_local(a))
   args.push(b.copy_local(v))
-  dummy2 = b.call(-1, "avant_pin_field", args)
+  b.call(-1, "avant_pin_field", args)
   dummy3 = b.assign(p, b.rv_use(b.copy_local(v)))
 }
 
@@ -443,13 +443,13 @@ pub fn (lw: MirLower) lower_release(st: Stmt) {
       }
       lw.at(st.loc)
       lo = b.temp(mt_ptr())
-      dummy = b.assign(b.pl(lo), b.rv_addr(p))
+      b.assign(b.pl(lo), b.rv_addr(p))
       n = lw.lw_m.types.size_of(ty)
     }
     args: Array(MOperand) = []
     args.push(b.copy_local(lo))
     args.push(b.c_u64(n.to_i64))
-    dummy2 = b.call(-1, "avant_release_range", args)
+    b.call(-1, "avant_release_range", args)
     return
   }
   lw.refuse(st.loc, "a release without a place")
@@ -471,20 +471,20 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
       }
       lw.at(st.loc)
       h = b.temp(ty)
-      dummy = b.assign(b.pl(h), b.rv_use(v))
+      b.assign(b.pl(h), b.rv_use(v))
       if et.is_fn {
         h2 = b.temp(mt_ref())
-        dummy2 = b.assign(b.pl(h2), b.rv_use(b.copy(b.field(b.pl(h), 0))))
+        b.assign(b.pl(h2), b.rv_use(b.copy(b.field(b.pl(h), 0))))
         h = h2
       }
       args: Array(MOperand) = []
       args.push(b.copy_local(h))
-      dummy3 = b.call(-1, "avant_pin", args)
+      b.call(-1, "avant_pin", args)
       lw.lw_ffi.pins.push(h)
       lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
       lw.lower_stmts(st.body)
-      dummy4 = lw.lw_ffi.pins.pop
-      dummy5 = lw.lw_ffi.pin_depth.pop
+      lw.lw_ffi.pins.pop
+      lw.lw_ffi.pin_depth.pop
       if !lw.failed && lw.open_now {
         lw.at(st.loc)
         lw.unpin(h)
@@ -501,7 +501,7 @@ pub fn (lw: MirLower) unpin(h: Int) {
   args: Array(MOperand) = []
   if h < 0 {
     // A `gc.hold` block's entry (lower_hold).
-    dummy0 = lw.lw_b.call(-1, "avant_gc_hold_end", args)
+    lw.lw_b.call(-1, "avant_gc_hold_end", args)
     return
   }
   args.push(lw.lw_b.copy_local(h))
@@ -517,12 +517,12 @@ pub fn (lw: MirLower) lower_hold(st: Stmt) {
   b = lw.lw_b
   lw.at(st.loc)
   none: Array(MOperand) = []
-  dummy = b.call(-1, "avant_gc_hold_begin", none)
+  b.call(-1, "avant_gc_hold_begin", none)
   lw.lw_ffi.pins.push(-1)
   lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
   lw.lower_stmts(st.body)
-  dummy2 = lw.lw_ffi.pins.pop
-  dummy3 = lw.lw_ffi.pin_depth.pop
+  lw.lw_ffi.pins.pop
+  lw.lw_ffi.pin_depth.pop
   if !lw.failed && lw.open_now {
     lw.at(st.loc)
     lw.unpin(-1)
