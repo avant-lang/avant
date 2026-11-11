@@ -1011,8 +1011,7 @@ fn lv_freshness(lp: LvLoop) {
       }
     }
   }
-  b = 0
-  while b < n {
+  for b in 0..n {
     row: Array(Bool) = []
     if lp.body[b] {
       cur = ins[b] && b != lp.header
@@ -1028,7 +1027,6 @@ fn lv_freshness(lp: LvLoop) {
       row.push(cur)
     }
     lp.fresh.push(row)
-    b += 1
   }
 }
 
@@ -1068,13 +1066,9 @@ fn lv_loop_keeps(m: MModule, lp: LvLoop, keep: Array(Bool)): Bool {
 // theirs crosses a block boundary or feeds anything but a check.
 fn lv_check_only(f: MFunc): Array(Bool) {
   ok = mir_bools(f.locals.size, true)
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
+  for blk in f.blocks {
     defs: Array(Int) = []
-    j = 0
-    while j < blk.stmts.size {
-      st = blk.stmts[j]
+    for st in blk.stmts {
       reads: Array(Int) = []
       if st.kind == msk_check_bounds() && st.args.size == 2 {
         mir_operand_reads(st.args[0], reads)
@@ -1096,7 +1090,6 @@ fn lv_check_only(f: MFunc): Array(Bool) {
       if d >= 0 {
         defs.push(d)
       }
-      j += 1
     }
     if t = blk.term {
       reads: Array(Int) = []
@@ -1105,7 +1098,6 @@ fn lv_check_only(f: MFunc): Array(Bool) {
         ok[read] = false
       }
     }
-    b += 1
   }
   ok
 }
