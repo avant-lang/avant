@@ -66,11 +66,11 @@ pub struct Match {
       return Span { lo: self.start, hi: self.end }
     }
     if i <= 3 {
-      lo = self.group_lo(i)
+      lo = group_lo(i)
       if lo < 0 {
         return nil
       }
-      return Span { lo: lo, hi: self.group_hi(i) }
+      return Span { lo: lo, hi: group_hi(i) }
     }
     v = rec.avant_regex_span_at(self.code, self.text, self.at, i)
     lo = pair_lo(v)
@@ -81,7 +81,7 @@ pub struct Match {
   }
 
   pub fn group(i: Int): String? {
-    if sp = self.span(i) {
+    if sp = span(i) {
       return str_slice(self.text, sp.lo, sp.hi)
     }
     nil
@@ -92,7 +92,7 @@ pub struct Match {
     if idx < 0 {
       return nil
     }
-    self.group(idx)
+    group(idx)
   }
 
   pub fn group_count: Int {
@@ -274,7 +274,7 @@ pub struct Regex {
   // not participate), and `$$` is a literal dollar.
   pub fn replace(text: String, repl: String): String {
     buf = buf_new()
-    self.replace_into(buf, text, repl)
+    replace_into(buf, text, repl)
     buf.to_s
   }
 
@@ -285,7 +285,7 @@ pub struct Regex {
     last = 0
     at = 0
     while at <= text.size {
-      if m = self.find(text, at) {
+      if m = find(text, at) {
         dst.push_slice(text, last, m.start)
         push_replacement(dst, repl, m)
         last = m.end
@@ -319,7 +319,7 @@ pub struct Regex {
     last = 0
     at = 0
     while at <= text.size {
-      if m = self.find(text, at) {
+      if m = find(text, at) {
         if m.end == m.start {
           at = m.end + 1
         } else {
