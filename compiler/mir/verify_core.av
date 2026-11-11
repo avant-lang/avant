@@ -86,12 +86,10 @@ pub class MVerifier {
     self.m = m
     self.ts = m.types
     self.stage = stage
-    e: Array(MVerr) = []
-    self.errs = e
+    self.errs = []
     self.func = MFunc.new("", 0, mir_loc(0, 0, 0))
     self.no_place = MPlace.new(0)
-    u: Array(Int) = []
-    self.used = u
+    self.used = []
   }
 
   pub fn on(rule: Int): Bool {
@@ -183,7 +181,7 @@ pub class MVerifier {
           return -1
         }
       }
-      k = k + 1
+      k += 1
     }
     ty
   }
@@ -321,6 +319,10 @@ pub class MVerifier {
     if src == mt_f64() && ts.is_int(dst) {
       return true
     }
+    // A Float32 at the C boundary (Stage 29 W1b): f64 <-> f32 only.
+    if (src == mt_f64() && ts.is_f32(dst)) || (ts.is_f32(src) && dst == mt_f64()) {
+      return true
+    }
     if src == mt_bool() && ts.is_int(dst) {
       return true
     }
@@ -350,14 +352,14 @@ pub class MVerifier {
           return -1
         }
         ok = t == l.fields[k]
-        k = k + 1
+        k += 1
       }
       return self.check6(ok, r.ty, b, i, loc, "struct %${l.name}")
     }
     if r.kind == mrk_union() {
       members = l.fields.size - 1
       if l.nil_tag >= 0 {
-        members = members + 1
+        members += 1
       }
       ok = l.kind == mlk_union() && r.op >= 0 && r.op < members
       if ok && r.op == l.nil_tag {
@@ -394,9 +396,7 @@ pub class MVerifier {
     while b < f.blocks.size {
       blk = f.blocks[b]
       if t = blk.term {
-        j = 0
-        while j < t.targets.size {
-          tg = t.targets[j]
+        for tg in t.targets {
           if tg < 0 || tg >= f.blocks.size {
             self.err(2, b, -1, t.loc, "target bb${tg} does not exist")
             self.bad = true
@@ -404,13 +404,12 @@ pub class MVerifier {
             self.err(2, b, -1, t.loc, "an edge enters bb0")
             self.bad = true
           }
-          j = j + 1
         }
       } else {
         self.err(1, b, -1, f.loc, "bb${b} has no terminator")
         self.bad = true
       }
-      b = b + 1
+      b += 1
     }
     self.locals_rule()
     s = self.ts.sigs[f.sig]
@@ -423,12 +422,12 @@ pub class MVerifier {
       j = 0
       while j < blk.stmts.size {
         self.stmt_rules(blk, b, j)
-        j = j + 1
+        j += 1
       }
       if t = blk.term {
         self.term_rule(t, b)
       }
-      b = b + 1
+      b += 1
     }
   }
 
@@ -441,13 +440,11 @@ pub class MVerifier {
       self.bad = true
       return
     }
-    k = 0
-    while k < s.params.size {
+    for k in 0..s.params.size {
       if f.locals[k + 1].ty != s.params[k] {
         self.ferr(3, "_${k + 1} is ${self.tx(f.locals[k + 1].ty)}, the signature says ${self.tx(s.params[k])}")
         self.bad = true
       }
-      k = k + 1
     }
     b = 0
     while b < f.blocks.size {
@@ -472,10 +469,10 @@ pub class MVerifier {
         x = 0
         while x < st.locals.size {
           used.push(st.locals[x])
-          x = x + 1
+          x += 1
         }
         self.check_used(used, b, j, st.loc)
-        j = j + 1
+        j += 1
       }
       if t = blk.term {
         used = self.used
@@ -483,7 +480,7 @@ pub class MVerifier {
         mir_term_reads(f, t, used)
         self.check_used(used, b, -1, t.loc)
       }
-      b = b + 1
+      b += 1
     }
   }
 
@@ -494,7 +491,7 @@ pub class MVerifier {
         self.err(3, b, j, loc, "_${used[x]} is not a local")
         self.bad = true
       }
-      x = x + 1
+      x += 1
     }
   }
 
@@ -589,13 +586,13 @@ pub class MVerifier {
             ok = e.slot_row
           }
         }
-      } else if self.ts.is_ptr(ht) && pk == msk_call() && str_eq(prev.callee, "avant_pin") && prev.args.size == 1 {
+      } else if self.ts.is_ptr(ht) && pk == msk_call() && prev.callee == "avant_pin" && prev.args.size == 1 {
         if a = r.a {
-          ok = r.kind == mrk_use() && str_eq(mir_operand_text(self.ts, a), mir_operand_text(self.ts, prev.args[0]))
+          ok = r.kind == mrk_use() && mir_operand_text(self.ts, a) == mir_operand_text(self.ts, prev.args[0])
         }
-      } else if self.ts.is_ptr(ht) && pk == msk_call() && str_eq(prev.callee, "avant_pin_field") && prev.args.size == 2 {
+      } else if self.ts.is_ptr(ht) && pk == msk_call() && prev.callee == "avant_pin_field" && prev.args.size == 2 {
         if a = r.a {
-          ok = r.kind == mrk_use() && str_eq(mir_operand_text(self.ts, a), mir_operand_text(self.ts, prev.args[1]))
+          ok = r.kind == mrk_use() && mir_operand_text(self.ts, a) == mir_operand_text(self.ts, prev.args[1])
         }
       }
     }
@@ -647,8 +644,7 @@ pub class MVerifier {
       self.err(7, b, j, loc, "${st.args.size} arguments for ${s.text}")
       return
     }
-    k = 0
-    while k < st.args.size {
+    for k in 0..st.args.size {
       t = self.op_ty(st.args[k], b, j, loc)
       if t >= 0 {
         if k < fixed {
@@ -659,7 +655,6 @@ pub class MVerifier {
           self.err(7, b, j, loc, "variadic argument ${k + 1} of type ${self.tx(t)}")
         }
       }
-      k = k + 1
     }
     if st.dest >= 0 {
       dt = self.local_ty(st.dest)
@@ -714,14 +709,12 @@ pub class MVerifier {
       ok = self.ts.is_int(ct) && t.targets.size == t.values.size + 1
       x = 0
       while ok && x < t.values.size {
-        y = x + 1
-        while y < t.values.size {
+        for y in x + 1..t.values.size {
           if t.values[x] == t.values[y] {
             ok = false
           }
-          y = y + 1
         }
-        x = x + 1
+        x += 1
       }
       if !ok {
         self.err(8, b, -1, t.loc, "switch on ${self.tx(ct)} with duplicate or mismatched cases")

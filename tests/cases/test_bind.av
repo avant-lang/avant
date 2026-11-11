@@ -6,7 +6,7 @@ fn invoke(compiler: String, cmd: String, log: String, flags: Array(String)): Int
   i = 0
   while i < flags.size {
     args.push(flags[i])
-    i = i + 1
+    i += 1
   }
   process_run_out(compiler, args, log)
 }
@@ -24,7 +24,7 @@ fn body(text: String): String {
     if text[i] == 10 {
       return str_slice(text, i + 1, text.size)
     }
-    i = i + 1
+    i += 1
   }
   text
 }
@@ -38,7 +38,7 @@ fn head(text: String): String {
 
 fn has_lib(text: String): Bool {
   if text.size >= 4 {
-    if str_eq(str_slice(text, 0, 4), "lib ") {
+    if str_slice(text, 0, 4) == "lib " {
       return true
     }
   }
@@ -61,17 +61,17 @@ fn test_bind(c: Checks) {
     abs_h = "${here}/examples/c/add.h"
     lay = scratch_dir()
     mkdir_p("${lay}/rel")
-    dummy_rc = copy_file(abs_compiler, "${lay}/rel/avant")
-    dummy_rh = copy_file(real_helper, "${lay}/rel/avant-bind")
+    copy_file(abs_compiler, "${lay}/rel/avant")
+    copy_file(real_helper, "${lay}/rel/avant-bind")
     mkdir_p("${lay}/co/bin")
     mkdir_p("${lay}/co/runtime/build")
-    dummy_cc = copy_file(abs_compiler, "${lay}/co/bin/avant")
-    dummy_co = file_write("${lay}/co/runtime/build/avant_rt.o", "")
-    dummy_ch = copy_file(real_helper, "${lay}/co/runtime/build/avant-bind")
-    dummy_stale = file_write("${lay}/co/bin/avant-bind", "#!/bin/sh\necho STALE\nexit 3\n")
+    copy_file(abs_compiler, "${lay}/co/bin/avant")
+    file_write("${lay}/co/runtime/build/avant_rt.o", "")
+    copy_file(real_helper, "${lay}/co/runtime/build/avant-bind")
+    file_write("${lay}/co/bin/avant-bind", "#!/bin/sh\necho STALE\nexit 3\n")
     chmod_x("${lay}/co/bin/avant-bind")
     mkdir_p("${lay}/none")
-    dummy_nc = copy_file(abs_compiler, "${lay}/none/avant")
+    copy_file(abs_compiler, "${lay}/none/avant")
     lay_runs: Array(String) = []
     lay_runs.push("${lay}/rel/avant")
     lay_runs.push("${lay}/co/bin/avant")
@@ -91,7 +91,7 @@ fn test_bind(c: Checks) {
       la_log = "${lay}/run-${k}.log"
       lay_codes.push(process_run_out("/usr/bin/env", la, la_log))
       lay_texts.push(read(la_log))
-      k = k + 1
+      k += 1
     }
     c.expect(lay_codes[0] == 0 && str_has(lay_texts[0], "lib add {"), "a release layout finds avant-bind beside the compiler")
     c.expect(lay_codes[1] == 0 && str_has(lay_texts[1], "lib add {"), "a checkout uses runtime/build/avant-bind")
@@ -228,7 +228,7 @@ fn test_bind(c: Checks) {
     c.eq_int(none_code, 0, "no header exits 0")
     none_txt = read(none_log)
     c.expect(str_has(none_txt, "bind needs a C header"), "bind needs a header")
-    c.expect(str_has(none_txt, "avant-av bind"), "usage lists bind")
+    c.expect(str_has(none_txt, "avant bind"), "usage lists bind")
 
     need_log = "${scratch()}/bind-${stamp}-need.log"
     need_flags: Array(String) = []
@@ -248,30 +248,73 @@ fn test_bind(c: Checks) {
     c.expect(str_has(many_txt, "bind takes one header"), "one header")
     c.expect(!has_lib(many_txt), "two headers print no lib")
 
+    // D64 as amended (Stage 29 W1b): every C scalar type binds to its exact
+    // Avant type (UInt32, Int8 ... Float32); before, one unsigned int,
+    // float or uint8_t failed the whole header.
     u32_h = "${scratch()}/avant_bind_${stamp}_u32.h"
-    dummy_u32 = file_write(u32_h, "unsigned int widen(unsigned int x);\nint add(int a, int b);\n")
+    file_write(u32_h, "unsigned int widen(unsigned int x);\nint add(int a, int b);\n")
     u32_log = "${scratch()}/bind-${stamp}-u32.log"
     u32_flags: Array(String) = []
     u32_flags.push(u32_h)
     u32_code = invoke(compiler, "bind", u32_log, u32_flags)
-    c.eq_int(u32_code, 1, "unsigned 32-bit fun exits non-zero")
+    c.eq_int(u32_code, 0, "unsigned 32-bit fun exits 0")
     u32_txt = read(u32_log)
-    c.expect(str_has(u32_txt, "unsigned 32-bit C type unsigned int has no Avant type"), "unsigned 32-bit fun diagnostic")
-    c.expect(!has_lib(u32_txt), "unsigned 32-bit fun prints no lib")
+    c.expect(str_has(u32_txt, "fun widen(x: UInt32): UInt32"), "unsigned 32-bit maps to UInt32")
+    c.expect(str_has(u32_txt, "fun add(a: Int, b: Int): Int"), "the rest of the header binds")
 
     u32f_h = "${scratch()}/avant_bind_${stamp}_u32f.h"
-    dummy_u32f = file_write(u32f_h, "struct Counter { unsigned int n; int tag; };\nint get_tag(struct Counter *c);\n")
+    file_write(u32f_h, "struct Counter { unsigned int n; int tag; };\nint get_tag(struct Counter *c);\n")
     u32f_log = "${scratch()}/bind-${stamp}-u32f.log"
     u32f_flags: Array(String) = []
     u32f_flags.push(u32f_h)
     u32f_code = invoke(compiler, "bind", u32f_log, u32f_flags)
-    c.eq_int(u32f_code, 1, "unsigned 32-bit field exits non-zero")
+    c.eq_int(u32f_code, 0, "unsigned 32-bit field exits 0")
     u32f_txt = read(u32f_log)
-    c.expect(str_has(u32f_txt, "unsigned 32-bit field has no Avant type"), "unsigned 32-bit field diagnostic")
-    c.expect(!has_lib(u32f_txt), "unsigned 32-bit field prints no lib")
+    c.expect(str_has(u32f_txt, "struct Counter {\n    n: UInt32\n    tag: Int\n  }"), "unsigned 32-bit field maps to UInt32")
+
+    mkdir_p("${scratch()}/bind-${stamp}-cs")
+    sc_h = "${scratch()}/bind-${stamp}-cs/hdr_cs.h"
+    file_write(sc_h, "#include <stdint.h>\ntypedef struct CsPix {\n  uint8_t r;\n  uint8_t g;\n  uint16_t w;\n  int16_t h;\n  int8_t tag;\n  uint32_t id;\n  float gain;\n} CsPix;\nint8_t cs_neg_i8(int8_t x);\nunsigned char cs_inc_u8(unsigned char x);\nshort cs_neg_i16(short x);\nunsigned short cs_dbl_u16(unsigned short x);\nuint32_t cs_inc_u32(uint32_t x);\nfloat cs_half_f32(float x);\ndouble cs_sum(signed char a, uint8_t b, int16_t c, uint16_t d, uint32_t e, float f);\nCsPix *cs_pix_new(void);\nvoid cs_pix_fill(CsPix *p);\ndouble cs_pix_total(const CsPix *p);\n")
+    sc_log = "${scratch()}/bind-${stamp}-cs.log"
+    sc_flags: Array(String) = []
+    sc_flags.push(sc_h)
+    sc_code = invoke(compiler, "bind", sc_log, sc_flags)
+    c.eq_int(sc_code, 0, "C scalar types: bind exits 0")
+    sc_txt = read(sc_log)
+    c.expect(str_has(sc_txt, "struct CsPix {\n    r: UInt8\n    g: UInt8\n    w: UInt16\n    h: Int16\n    tag: Int8\n    id: UInt32\n    gain: Float32\n  }"), "C scalar fields map to their exact types")
+    c.expect(str_has(sc_txt, "fun cs_sum(a: Int8, b: UInt8, c: Int16, d: UInt16, e: UInt32, f: Float32): Float64"), "C scalar parameters map to their exact types")
+    c.expect(str_has(sc_txt, "fun cs_half_f32(x: Float32): Float32"), "float maps to Float32")
+    ld_h = "${scratch()}/avant_bind_${stamp}_ld.h"
+    file_write(ld_h, "long double half(long double x);\n")
+    ld_log = "${scratch()}/bind-${stamp}-ld.log"
+    ld_flags: Array(String) = []
+    ld_flags.push(ld_h)
+    ld_code = invoke(compiler, "bind", ld_log, ld_flags)
+    c.eq_int(ld_code, 1, "long double has no Avant type: bind exits 1")
+    c.expect(str_has(read(ld_log), "unsupported C type long double"), "long double diagnostic")
+    // The generated text compiles against the C it describes and runs.
+    sc_src = "${scratch()}/bind-${stamp}-cs.av"
+    sc_buf = buf_new()
+    sc_buf.push_str(sc_txt)
+    sc_buf.push_str("\nfn main {\n  puts(hdr_cs.cs_neg_i8(-127))\n  puts(hdr_cs.cs_inc_u8(254))\n  puts(hdr_cs.cs_inc_u32(4294967294i64))\n  puts(hdr_cs.cs_half_f32(5.0))\n  puts(hdr_cs.cs_sum(-1, 2, -3, 4, 5i64, 0.5))\n  p = hdr_cs.cs_pix_new()\n  hdr_cs.cs_pix_fill(p)\n  puts(\"\${p.r} \${p.w} \${p.h} \${p.tag} \${p.id} \${p.gain}\")\n}\n")
+    file_write(sc_src, sc_buf.to_s)
+    sc_bin = "${scratch()}/bind-${stamp}-cs.bin"
+    sc_clog = "${scratch()}/bind-${stamp}-cs-cc.log"
+    sc_cc: Array(String) = []
+    sc_cc.push("--cc")
+    sc_cc.push("${root}/tests/fixtures/ffi/ffi.c")
+    c.eq_int(compile_av_flags(compiler, sc_src, sc_bin, sc_clog, sc_cc), 0, "the bound C scalar header compiles")
+    if file_exists(sc_bin) {
+      chmod_x(sc_bin)
+      sc_rlog = "${scratch()}/bind-${stamp}-cs-run.log"
+      c.eq_int(run_av_bin(sc_bin, sc_rlog), 0, "the bound C scalar program runs")
+      c.eq_str(read(sc_rlog), "127\n255\n4294967295\n2.5\n7.5\n250 65535 -300 -5 4000000000 0.25\n", "the bound C scalar program reads C's values")
+    } else {
+      c.expect(false, "the bound C scalar program runs")
+    }
 
     u64_h = "${scratch()}/avant_bind_${stamp}_u64.h"
-    dummy_u64 = file_write(u64_h, "unsigned long long widen64(unsigned long long x);\n")
+    file_write(u64_h, "unsigned long long widen64(unsigned long long x);\n")
     u64_log = "${scratch()}/bind-${stamp}-u64.log"
     u64_flags: Array(String) = []
     u64_flags.push(u64_h)

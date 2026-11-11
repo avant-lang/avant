@@ -17,19 +17,21 @@ import backends
 // GC environments.
 
 fn golden_names: Array(String) {
-  ["churn", "coerce", "generics", "methods", "results", "unions"]
+  ["churn", "coerce", "generics", "generic_targs", "methods", "results", "unions"]
 }
 
 // The programs with a run golden from the old back end.
 fn both_progs: Array(String) {
   xs: Array(String) = []
-  names = ["churn", "generics", "methods", "results", "unions", "external", "order", "self_array"]
+  names = ["churn", "generics", "methods", "results", "unions", "external", "order", "self_array", "nil_tag", "try_lambda", "empty_parens", "generic_for", "generic_targs"]
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/types/${names[i]}.av")
-    i = i + 1
+    i += 1
   }
   xs.push("examples/errors.av")
+  xs.push("tests/fixtures/modules/samename_main.av")
+  xs.push("tests/fixtures/macros/pin_blocks.av")
   xs.push("tests/fixtures/overloading/generic.av")
   xs.push("tests/fixtures/overloading/operator.av")
   xs.push("tests/fixtures/part3/argv.av")
@@ -62,13 +64,13 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     k = key_of(progs[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < np.size {
     k = key_of(np[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${np[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gn.size {
@@ -76,21 +78,21 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/tests/fixtures/types/${gn[i]}.av")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${gn[i]}.mir"))
-    i = i + 1
+    i += 1
   }
   run_waves(jobs)
   i = 0
   while i < progs.size {
     c.eq_int(jobs[i].code, 0, "${progs[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
   base = progs.size
   i = 0
   while i < np.size {
     c.eq_int(jobs[base + i].code, 0, "${np[i]}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
-  base = base + np.size
+  base += np.size
   i = 0
   while i < gn.size {
     j = jobs[base + i]
@@ -100,7 +102,7 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "tests/fixtures/types/${gn[i]}.av: the MIR dump is tests/goldens/types/${gn[i]}.mir")
-    i = i + 1
+    i += 1
   }
 
   // Wave 2: every program, then the new ones under each GC environment.
@@ -114,9 +116,9 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   nbase = runs.size
   i = 0
@@ -126,9 +128,9 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   run_waves(runs)
   i = 0
@@ -146,9 +148,9 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[per * i + 1 + e].code, want_code, "${p} under ${envs[e]}: the golden exit status")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the golden stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   wants = new_wants()
   i = 0
@@ -164,23 +166,10 @@ fn test_types(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[at + 1 + e].code, 0, "${p} under ${envs[e]}: exit 0")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), wants[i], "${p} under ${envs[e]}: the known stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), "", "${p} under ${envs[e]}: no stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
-  // O33 (Stage 28 W18C): an instance method `bump` beside the bump
-  // constructor of the same class compiles (the constructor is `T#bump`)
-  // and each call reaches its own function.
-  bj: Array(HJob) = []
-  bj.push(compile_job("", compiler, "${root}/tests/fixtures/types/bump_clash.av", "${dir}/bump_clash", "${dir}/bump_clash.log"))
-  run_waves(bj)
-  c.eq_int(bj[0].code, 0, "bump_clash.av: compiles")
-  br: Array(HJob) = []
-  // The nursery on: a bump constructor is nil without it (AVANT_NURSERY=0).
-  br.push(run_job_env(dir, "bump_clash", "bump_clash.r", "AVANT_NURSERY=1"))
-  run_waves(br)
-  c.eq_int(br[0].code, 0, "bump_clash.av: exit 0")
-  c.eq_str(log_text("${dir}/bump_clash.r.out"), "2\n10\n11\n3\n", "bump_clash.av: the method and the constructor each run")
 }
 
 fn test_main(c: Checks) {

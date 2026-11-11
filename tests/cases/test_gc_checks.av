@@ -57,13 +57,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   p = 0
   while p < names.size {
     jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/${names[p]}.av", "${dir}/${names[p]}", "${dir}/${names[p]}.log"))
-    p = p + 1
+    p += 1
   }
   run_waves(jobs)
   p = 0
   while p < names.size {
     c.eq_int(jobs[p].code, 0, "${names[p]}.av: compiles")
-    p = p + 1
+    p += 1
   }
   // [program, key, environment, stdout]
   progs: Array(String) = []
@@ -81,7 +81,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     keys.push("limit_defer.g${e}")
     envs.push(lenvs[e])
     wants.push("split bad: 0\nlive bad: 0\n")
-    e = e + 1
+    e += 1
   }
   progs.push("limit_region")
   keys.push("limit_region.g0")
@@ -98,7 +98,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     keys.push("task_records.r${e}")
     envs.push(renvs[e])
     wants.push("sum ok: true\njoined: 200\npins left: 0\n")
-    e = e + 1
+    e += 1
   }
   jenvs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   e = 0
@@ -107,7 +107,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     keys.push("join_twice.g${e}")
     envs.push(jenvs[e])
     wants.push("array: 26602720 26602720 26602720\nfield: 374755 374755\nlocal: 42 42 42\nloop: 2980\nbad: 0\npins left: 0\n")
-    e = e + 1
+    e += 1
   }
   progs.push("inc_slice_mature")
   keys.push("inc_slice_mature.stress")
@@ -121,7 +121,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   k = 0
   while k < progs.size {
     runs.push(run_job_env(dir, progs[k], keys[k], envs[k]))
-    k = k + 1
+    k += 1
   }
   runs.push(run_job_env(dir, "churn", "churn.o9", "AVANT_NURSERY=0 AVANT_GC_STATS=1"))
   senvs = ["AVANT_GC_VERIFY=yes", "AVANT_YOUNG_MB=1x", "AVANT_GC_COPY_RESERVE=0"]
@@ -129,7 +129,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   e = 0
   while e < senvs.size {
     runs.push(run_job_env(dir, "task_pins", "task_pins.s${e}", senvs[e]))
-    e = e + 1
+    e += 1
   }
   // heap/limit_region.av (gc-design.md §5.4, Stage 28 W15a1): a split
   // that alone allocates more than the limit dies naming the region.
@@ -139,7 +139,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   e = 0
   while e < tenvs.size {
     runs.push(run_job_env(dir, "limit_defer", "limit_defer.t${e}", tenvs[e]))
-    e = e + 1
+    e += 1
   }
   run_waves(runs)
   k = 0
@@ -151,7 +151,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(runs[k].code, 0, "${progs[k]}.av ${what}: exit 0")
     c.eq_str(log_text("${dir}/${keys[k]}.out"), wants[k], "${progs[k]}.av ${what}: the known stdout")
     c.eq_str(log_text("${dir}/${keys[k]}.err"), "", "${progs[k]}.av ${what}: no stderr (no verifier report)")
-    k = k + 1
+    k += 1
   }
   stats = log_text("${dir}/churn.o9.err")
   c.eq_int(runs[progs.size].code, 0, "churn.av under AVANT_NURSERY=0: exit 0")
@@ -166,7 +166,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(runs[progs.size + 1 + e].code, 0, "task_pins.av under ${senvs[e]}: exit 0")
     c.eq_str(log_text("${dir}/task_pins.s${e}.out"), "sum: 1490\npins left: 0\n", "task_pins.av under ${senvs[e]}: the known stdout")
     c.eq_str(log_text("${dir}/task_pins.s${e}.err"), serrs[e], "task_pins.av under ${senvs[e]}: one start-up warning")
-    e = e + 1
+    e += 1
   }
   lr = runs[progs.size + 1 + senvs.size]
   c.expect(lr.code != 0, "limit_region.av under AVANT_HEAP_MAX_MB=4: fails")
@@ -176,7 +176,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
     tr = runs[progs.size + 2 + senvs.size + e]
     c.expect(tr.code != 0, "limit_defer.av under ${tenvs[e]}: fails")
     c.eq_str(log_text("${dir}/limit_defer.t${e}.err"), "avant runtime: heap limit\n", "limit_defer.av under ${tenvs[e]}: heap limit")
-    e = e + 1
+    e += 1
   }
 }
 

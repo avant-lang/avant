@@ -53,8 +53,7 @@ pub class MRtTable {
   index: Hash(String, Int)
 
   fn initialize {
-    r: Array(MRtRow) = []
-    self.rows = r
+    self.rows = []
     self.index = Hash(String, Int).new
     mir_rt_fill(self)
     mir_rt_attrs(self)
@@ -64,19 +63,16 @@ pub class MRtTable {
   pub fn row(name: String, params: String, ret: String, cls: Int, flags: String) {
     r = MRtRow.new(name, params, ret, cls)
     words = flags.split(" ")
-    i = 0
-    while i < words.size {
-      w = words[i]
-      if str_eq(w, "alloc") {
+    for w in words {
+      if w == "alloc" {
         r.alloc = true
-      } else if str_eq(w, "slot") {
+      } else if w == "slot" {
         r.slot = true
-      } else if str_eq(w, "noreturn") {
+      } else if w == "noreturn" {
         r.noreturn = true
-      } else if str_eq(w, "varargs") {
+      } else if w == "varargs" {
         r.varargs = true
       }
-      i = i + 1
     }
     self.index[name] = self.rows.size
     self.rows.push(r)
@@ -125,7 +121,7 @@ pub class MRtTable {
           return -1
         }
         ps.push(t)
-        i = i + 1
+        i += 1
       }
     }
     rt = ts.parse_text(r.ret)
@@ -153,9 +149,11 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_release_range", "ptr, u64", "void", n, "")
   t.row("avant_is_heap", "ref", "i32", n, "")
   t.row("avant_is_young", "ref", "i32", n, "")
-  t.row("avant_bump_alloc", "u64, u32", "ref", n, "alloc")
   t.row("avant_gc_quiet_enter", "", "void", n, "")
   t.row("avant_gc_quiet_leave", "", "void", n, "")
+  // std.gc's `gc.hold { }` (Stage 29 W1c2): the entry collects nothing;
+  // the end is a collection point (below).
+  t.row("avant_gc_hold_begin", "", "void", n, "")
   t.row("avant_array_get_ptr", "ref, i32", "ref", n, "")
   t.row("avant_array_set_ptr", "ref, i32, ref", "void", n, "")
   t.row("avant_array_pop_ptr", "ref", "ref", n, "")
@@ -181,6 +179,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_overflow", "", "void", n, "noreturn")
   t.row("avant_trap_shift", "i64, i32", "void", n, "noreturn")
   t.row("avant_trap_to_i", "f64", "void", n, "noreturn")
+  t.row("avant_trap_c_range", "i64, i32", "void", n, "noreturn")
   t.row("avant_checked_add_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_sub_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_mul_i64", "i64, i64", "i64", n, "")
@@ -359,7 +358,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_sha256", "ref str", "ref str", c, "")
   t.row("avant_crc32_i32", "ref", "i32", c, "")
   t.row("avant_sha256_word0", "ref", "i32", c, "")
-  t.row("avant_nursery_reclaim", "", "void", c, "")
+  t.row("avant_gc_collect_young", "", "void", c, "")
+  t.row("avant_gc_hold_end", "", "void", c, "")
 }
 
 // The declarations' attributes (W9b, D207 pass 3; mir.md W9b.3), each

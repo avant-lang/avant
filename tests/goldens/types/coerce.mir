@@ -4,10 +4,10 @@ file 0 "coerce.av"
 layout %coerce.Node = class { 0 v: i32 }  size 4 align 4 id 1
 layout %coerce.Oops = class { 0 m: ref str }  size 8 align 8 id 2
 layout %coerce.Taker = class { }  size 0 align 1 id 3
-layout %coerce.Box(Int) = class { 0 last: %(Int|Nil) }  size 8 align 4 id 4
-layout %(Int|Nil) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %coerce.Box(Int) = class { 0 last: %(Nil|Int) }  size 8 align 4 id 4
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
 layout %(Nil|String) = union { 0 tag: i32, 1 m0: ref str }  size 16 align 8
-layout %(Int|Nil|coerce.Oops) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %coerce.Oops }  size 16 align 8
+layout %(Nil|Int|coerce.Oops) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %coerce.Oops }  size 16 align 8
 layout %(Int|coerce.Oops) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %coerce.Oops }  size 16 align 8
 layout %(Nil|coerce.Node) = union { 0 tag: i32, 1 m0: ref %coerce.Node }  size 16 align 8
 layout %coerce.Slot = struct { 0 k: i32, 1 node: %(Nil|coerce.Node) }  size 24 align 8
@@ -36,9 +36,9 @@ extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern printf(ref str, ...) -> i32 never
 
-fn av.coerce/opt(_1: %(Int|Nil)) -> i32 leaf @coerce.av:58:1 {
+fn av.coerce/opt(_1: %(Nil|Int)) -> i32 leaf @coerce.av:58:1 {
   let _0: i32
-  let _1 (o): %(Int|Nil)
+  let _1 (o): %(Nil|Int)
   let _2: i32
   let _3: i32
   let _4: bool
@@ -46,7 +46,7 @@ fn av.coerce/opt(_1: %(Int|Nil)) -> i32 leaf @coerce.av:58:1 {
 
 bb0:
   _3 = copy _1.0   @59:5
-  _4 = eq copy _3, const i32 1   @59:5
+  _4 = eq copy _3, const i32 0   @59:5
   branch copy _4, bb1, bb2   @59:5
 
 bb1:
@@ -90,10 +90,10 @@ bb3:
   return   @63:5
 }
 
-fn av.coerce/widen(_1: %(Int|Nil)) -> %(Int|Nil|coerce.Oops) leaf @coerce.av:66:1 {
-  let _0: %(Int|Nil|coerce.Oops)
-  let _1 (o): %(Int|Nil)
-  let _2: %(Int|Nil|coerce.Oops)
+fn av.coerce/widen(_1: %(Nil|Int)) -> %(Nil|Int|coerce.Oops) leaf @coerce.av:66:1 {
+  let _0: %(Nil|Int|coerce.Oops)
+  let _1 (o): %(Nil|Int)
+  let _2: %(Nil|Int|coerce.Oops)
   let _3: i32
   let _4: i32
 
@@ -103,12 +103,12 @@ bb0:
   switch copy _3 [0: bb1, 1: bb2] else bb3   @67:3
 
 bb1:
-  _4 = copy _1.1   @67:3
-  _2 = union %(Int|Nil|coerce.Oops) tag 0 (copy _4)   @67:3
+  _2 = union %(Nil|Int|coerce.Oops) tag 0   @67:3
   goto bb3   @67:3
 
 bb2:
-  _2 = union %(Int|Nil|coerce.Oops) tag 1   @67:3
+  _4 = copy _1.1   @67:3
+  _2 = union %(Nil|Int|coerce.Oops) tag 1 (copy _4)   @67:3
   goto bb3   @67:3
 
 bb3:
@@ -116,15 +116,15 @@ bb3:
   return   @67:3
 }
 
-fn av.coerce/kind(_1: i32) -> %(Int|Nil|coerce.Oops) frame @coerce.av:70:1 {
-  let _0: %(Int|Nil|coerce.Oops)
+fn av.coerce/kind(_1: i32) -> %(Nil|Int|coerce.Oops) frame @coerce.av:70:1 {
+  let _0: %(Nil|Int|coerce.Oops)
   let _1 (n): i32
   let _2: bool
-  let _3: %(Int|Nil|coerce.Oops)
+  let _3: %(Nil|Int|coerce.Oops)
   let _4: bool
-  let _5: %(Int|Nil|coerce.Oops)
+  let _5: %(Nil|Int|coerce.Oops)
   let _6: ref %coerce.Oops
-  let _7: %(Int|Nil|coerce.Oops)
+  let _7: %(Nil|Int|coerce.Oops)
 
 bb0:
   gc.enter   @70:1
@@ -133,7 +133,7 @@ bb0:
   branch copy _2, bb1, bb2   @71:3
 
 bb1:
-  _3 = union %(Int|Nil|coerce.Oops) tag 1   @72:12
+  _3 = union %(Nil|Int|coerce.Oops) tag 0   @72:12
   _0 = copy _3   @72:5
   gc.leave   @72:5
   return   @72:5
@@ -143,22 +143,22 @@ bb2:
   branch copy _4, bb3, bb4   @74:3
 
 bb3:
-  _5 = union %(Int|Nil|coerce.Oops) tag 0 (copy _1)   @75:12
+  _5 = union %(Nil|Int|coerce.Oops) tag 1 (copy _1)   @75:12
   _0 = copy _5   @75:5
   gc.leave   @75:5
   return   @75:5
 
 bb4:
   _6 = call av.coerce/Oops.new(const str.1) collects   @77:7
-  _7 = union %(Int|Nil|coerce.Oops) tag 2 (copy _6)   @77:7
+  _7 = union %(Nil|Int|coerce.Oops) tag 2 (copy _6)   @77:7
   _0 = copy _7   @77:7
   gc.leave   @77:7
   return   @77:7
 }
 
-fn av.coerce/desc(_1: %(Int|Nil|coerce.Oops)) -> %(Nil|String) frame @coerce.av:80:1 {
+fn av.coerce/desc(_1: %(Nil|Int|coerce.Oops)) -> %(Nil|String) frame @coerce.av:80:1 {
   let _0: %(Nil|String)
-  let _1 (u): %(Int|Nil|coerce.Oops)
+  let _1 (u): %(Nil|Int|coerce.Oops)
   let _2: i32
   let _3: bool
   let _4: %(Nil|String)
@@ -179,7 +179,7 @@ bb0:
   gc.enter   @80:1
   gc.roots   @80:1
   _2 = copy _1.0   @81:8
-  _3 = eq copy _2, const i32 1   @81:8
+  _3 = eq copy _2, const i32 0   @81:8
   branch copy _3, bb1, bb2   @81:8
 
 bb1:
@@ -191,7 +191,7 @@ bb1:
 bb2:
   _5 = zero   @81:8
   _6 = copy _1.0   @81:8
-  switch copy _6 [0: bb3, 2: bb4] else bb5   @81:8
+  switch copy _6 [1: bb3, 2: bb4] else bb5   @81:8
 
 bb3:
   _7 = copy _1.1   @81:8
@@ -248,9 +248,9 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @coerce.av:88:1 {
   let _19: ref %coerce.Node
   let _20 (n2): ref %coerce.Node
   let _21: i32
-  let _22: %(Int|Nil)
+  let _22: %(Nil|Int)
   let _23: i32
-  let _24: %(Int|Nil)
+  let _24: %(Nil|Int)
   let _25: i32
   let _26: %(Nil|String)
   let _27: ref str
@@ -258,37 +258,37 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @coerce.av:88:1 {
   let _29: ref str
   let _30: ref %coerce.Taker
   let _31 (tk): ref %coerce.Taker
-  let _32: %(Int|Nil)
+  let _32: %(Nil|Int)
   let _33: i32
-  let _34: %(Int|Nil)
+  let _34: %(Nil|Int)
   let _35: i32
-  let _36: %(Int|Nil)
-  let _37: %(Int|Nil|coerce.Oops)
+  let _36: %(Nil|Int)
+  let _37: %(Nil|Int|coerce.Oops)
   let _38: %(Nil|String)
   let _39: ref str
   let _40: i32
   let _41: bool
   let _42: ref str
-  let _43: %(Int|Nil)
-  let _44: %(Int|Nil|coerce.Oops)
+  let _43: %(Nil|Int)
+  let _44: %(Nil|Int|coerce.Oops)
   let _45: %(Nil|String)
   let _46: ref str
   let _47: i32
   let _48: bool
   let _49: ref str
-  let _50: %(Int|Nil|coerce.Oops)
+  let _50: %(Nil|Int|coerce.Oops)
   let _51: %(Nil|String)
   let _52: ref str
   let _53: i32
   let _54: bool
   let _55: ref str
-  let _56: %(Int|Nil|coerce.Oops)
+  let _56: %(Nil|Int|coerce.Oops)
   let _57: %(Nil|String)
   let _58: ref str
   let _59: i32
   let _60: bool
   let _61: ref str
-  let _62: %(Int|Nil|coerce.Oops)
+  let _62: %(Nil|Int|coerce.Oops)
   let _63: %(Nil|String)
   let _64: ref str
   let _65: i32
@@ -296,12 +296,12 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @coerce.av:88:1 {
   let _67: ref str
   let _68: ref %coerce.Box(Int)
   let _69 (b): ref %coerce.Box(Int)
-  let _70: %(Int|Nil)
+  let _70: %(Nil|Int)
   let _71: i32
   let _72: i32
   let _73: bool
   let _74: i32
-  let _75: %(Int|Nil)
+  let _75: %(Nil|Int)
   let _76: i32
   let _77: i32
   let _78: bool
@@ -349,10 +349,10 @@ bb4:
   goto bb5   @94:3
 
 bb5:
-  _22 = union %(Int|Nil) tag 0 (const i32 5)   @99:12
+  _22 = union %(Nil|Int) tag 1 (const i32 5)   @99:12
   _23 = call av.coerce/opt(copy _22) nocollect   @99:8
   call printf(const str.4, copy _23) nocollect   @99:3
-  _24 = union %(Int|Nil) tag 1   @100:12
+  _24 = union %(Nil|Int) tag 0   @100:12
   _25 = call av.coerce/opt(copy _24) nocollect   @100:8
   call printf(const str.4, copy _25) nocollect   @100:3
   _26 = union %(Nil|String) tag 1 (const str.7)   @101:13
@@ -363,13 +363,13 @@ bb5:
   call printf(const str.6, copy _29) nocollect   @102:3
   _30 = call av.coerce/Taker.new() collects   @103:13
   _31 = copy _30   @103:6
-  _32 = union %(Int|Nil) tag 0 (const i32 7)   @104:16
+  _32 = union %(Nil|Int) tag 1 (const i32 7)   @104:16
   _33 = call av.coerce/Taker.take(copy _31, copy _32) nocollect   @104:10
   call printf(const str.4, copy _33) nocollect   @104:3
-  _34 = union %(Int|Nil) tag 1   @105:16
+  _34 = union %(Nil|Int) tag 0   @105:16
   _35 = call av.coerce/Taker.take(copy _31, copy _34) nocollect   @105:10
   call printf(const str.4, copy _35) nocollect   @105:3
-  _36 = union %(Int|Nil) tag 0 (const i32 4)   @106:19
+  _36 = union %(Nil|Int) tag 1 (const i32 4)   @106:19
   _37 = call av.coerce/widen(copy _36) nocollect   @106:13
   _38 = call av.coerce/desc(copy _37) collects   @106:8
   _40 = copy _38.0   @106:23
@@ -387,7 +387,7 @@ bb7:
 
 bb8:
   call printf(const str.6, copy _39) nocollect   @106:3
-  _43 = union %(Int|Nil) tag 1   @107:19
+  _43 = union %(Nil|Int) tag 0   @107:19
   _44 = call av.coerce/widen(copy _43) nocollect   @107:13
   _45 = call av.coerce/desc(copy _44) collects   @107:8
   _47 = copy _45.0   @107:25
@@ -460,7 +460,7 @@ bb20:
   _69 = copy _68   @111:5
   _70 = copy (*_69).0   @112:9
   _72 = copy _70.0   @112:15
-  _73 = eq copy _72, const i32 1   @112:15
+  _73 = eq copy _72, const i32 0   @112:15
   branch copy _73, bb21, bb22   @112:15
 
 bb21:
@@ -477,7 +477,7 @@ bb23:
   call av.coerce/Box(Int).put(copy _69, const i32 9) nocollect   @113:4
   _75 = copy (*_69).0   @114:9
   _77 = copy _75.0   @114:15
-  _78 = eq copy _77, const i32 1   @114:15
+  _78 = eq copy _77, const i32 0   @114:15
   branch copy _78, bb24, bb25   @114:15
 
 bb24:
@@ -522,10 +522,10 @@ bb0:
   return   @50:3
 }
 
-fn av.coerce/Taker.take(_1: ref %coerce.Taker, _2: %(Int|Nil)) -> i32 leaf @coerce.av:53:3 {
+fn av.coerce/Taker.take(_1: ref %coerce.Taker, _2: %(Nil|Int)) -> i32 leaf @coerce.av:53:3 {
   let _0: i32
   let _1 (self): ref %coerce.Taker
-  let _2 (o): %(Int|Nil)
+  let _2 (o): %(Nil|Int)
   let _3: i32
   let _4: i32
   let _5: bool
@@ -533,7 +533,7 @@ fn av.coerce/Taker.take(_1: ref %coerce.Taker, _2: %(Int|Nil)) -> i32 leaf @coer
 
 bb0:
   _4 = copy _2.0   @54:7
-  _5 = eq copy _4, const i32 1   @54:7
+  _5 = eq copy _4, const i32 0   @54:7
   branch copy _5, bb1, bb2   @54:7
 
 bb1:
@@ -560,10 +560,10 @@ bb0:
 fn av.coerce/Box(Int).put(_1: ref %coerce.Box(Int), _2: i32) -> void leaf @coerce.av:44:3 {
   let _1 (self): ref %coerce.Box(Int)
   let _2 (v): i32
-  let _3: %(Int|Nil)
+  let _3: %(Nil|Int)
 
 bb0:
-  _3 = union %(Int|Nil) tag 0 (copy _2)   @45:12
+  _3 = union %(Nil|Int) tag 1 (copy _2)   @45:12
   (*_1).0 = copy _3   @45:10
   return   @44:3
 }
@@ -615,13 +615,13 @@ bb0:
 fn av.coerce/Box(Int).new() -> ref %coerce.Box(Int) frame @coerce.av:38:1 {
   let _0: ref %coerce.Box(Int)
   let _1: ref %coerce.Box(Int)
-  let _2: %(Int|Nil)
+  let _2: %(Nil|Int)
 
 bb0:
   gc.enter   @38:1
   gc.roots   @38:1
   _1 = call avant_alloc(const u64 8, const u32 4) collects   @38:1
-  _2 = union %(Int|Nil) tag 1   @39:14
+  _2 = union %(Nil|Int) tag 0   @39:14
   (*_1).0 = copy _2   @39:3
   call av.coerce/Box(Int).initialize(copy _1) nocollect   @38:1
   _0 = copy _1   @38:1

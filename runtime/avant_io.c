@@ -1020,6 +1020,15 @@ static void tmp_create(void) {
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
   tmp_catch(SIGHUP);
+  /* A crash removes the directory too (O35, Stage 29 W1b): the handler
+   * cleans up and re-raises the signal with its default action, so the
+   * process still dies by it (a core dump included). A crash with no
+   * stack left (a stack overflow) cannot run the handler. */
+  tmp_catch(SIGSEGV);
+  tmp_catch(SIGBUS);
+  tmp_catch(SIGFPE);
+  tmp_catch(SIGILL);
+  tmp_catch(SIGABRT);
   snprintf(marker, sizeof marker, "%s/.avant-scratch", g_tmp_dir);
   fd = open(marker, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   if (fd >= 0) {
@@ -1066,4 +1075,30 @@ void avant_tmp_keep(void) {
   g_tmp_keep = 1;
   setenv("AVANT_KEEP_TMP", "1", 1);
   pthread_mutex_unlock(&g_tmp_lock);
+}
+
+/* D84 (Stage 29 W1b): a failed check fails the process. std.testing's
+ * Test and the suite's harness call avant_test_fail at every failed check;
+ * a program that then ends with status 0 (a void main, a main that
+ * returns 0, a main that never calls finish) exits 1 instead. The handler
+ * is registered before main, so it runs after every exit handler the
+ * runtime registers later (statistics, the verifier, coverage, the
+ * temporary directory), flushes stdio as exit would, and ends the process
+ * with status 1. A non-zero status is kept. Any thread may fail a check. */
+static int g_test_failed;
+
+void avant_test_fail(void) {
+  __atomic_store_n(&g_test_failed, 1, __ATOMIC_RELAXED);
+}
+
+static void test_status_at_exit(int status, void *arg) {
+  (void)arg;
+  if (status == 0 && __atomic_load_n(&g_test_failed, __ATOMIC_RELAXED)) {
+    fflush(NULL);
+    _exit(1);
+  }
+}
+
+__attribute__((constructor)) static void test_status_init(void) {
+  on_exit(test_status_at_exit, NULL);
 }

@@ -44,24 +44,24 @@ import mir.flow
 
 // The upsert for a get callee, or "".
 fn up_name(callee: String): String {
-  if str_eq(callee, "avant_hash_get_i32k_i32") || str_eq(callee, "avant_hash_get_or_i32k_i32") {
+  if callee == "avant_hash_get_i32k_i32" || callee == "avant_hash_get_or_i32k_i32" {
     return "avant_hash_upsert_i32k"
   }
-  if str_eq(callee, "avant_hash_get_i32") || str_eq(callee, "avant_hash_get_or_i32") {
+  if callee == "avant_hash_get_i32" || callee == "avant_hash_get_or_i32" {
     return "avant_hash_upsert_i32"
   }
   ""
 }
 
 fn up_set_name(callee: String): String {
-  if str_starts_mir(callee, "avant_hash_get_or_i32k") || str_eq(callee, "avant_hash_get_i32k_i32") {
+  if str_starts(callee, "avant_hash_get_or_i32k") || callee == "avant_hash_get_i32k_i32" {
     return "avant_hash_set_i32k_i32"
   }
   "avant_hash_set_i32"
 }
 
 fn up_is_or(callee: String): Bool {
-  str_starts_mir(callee, "avant_hash_get_or_")
+  str_starts(callee, "avant_hash_get_or_")
 }
 
 fn up_direct(st: MStmt): Bool {
@@ -148,19 +148,15 @@ class UpWalk {
     self.seen = mir_bools(f.blocks.size, false)
     self.through = mir_bools(f.blocks.size, false)
     self.on_path = mir_bools(f.blocks.size, false)
-    sb: Array(Int) = []
-    self.site_b = sb
-    sj: Array(Int) = []
-    self.site_j = sj
+    self.site_b = []
+    self.site_j = []
   }
 
   fn note_site(b: Int, j: Int) {
-    i = 0
-    while i < self.site_b.size {
+    for i in 0..self.site_b.size {
       if self.site_b[i] == b && self.site_j[i] == j {
         return
       }
-      i = i + 1
     }
     self.site_b.push(b)
     self.site_j.push(j)
@@ -180,13 +176,13 @@ class UpWalk {
     blk = self.f.blocks[b]
     i = j
     while i < blk.stmts.size {
-      self.steps = self.steps + 1
+      self.steps += 1
       if self.steps > 4000 {
         return false
       }
       st = blk.stmts[i]
       if st.kind == msk_call() {
-        if up_direct(st) && str_eq(st.callee, self.set_name) && st.args.size == 3 {
+        if up_direct(st) && st.callee == self.set_name && st.args.size == 3 {
           hl = up_local(st.args[0])
           if hl >= 0 && s.h[hl] && self.same_key(st.args[1], s) {
             self.note_site(b, i)
@@ -196,7 +192,7 @@ class UpWalk {
         }
         // A noreturn trap ends the program (its block ends in
         // unreachable); any other call stops the pass.
-        return up_direct(st) && str_starts_mir(st.callee, "avant_trap_")
+        return up_direct(st) && str_starts(st.callee, "avant_trap_")
       }
       if st.kind == msk_assign() {
         if p = st.place {
@@ -232,7 +228,7 @@ class UpWalk {
         // touches the hash's values; anything else stops the pass.
         return false
       }
-      i = i + 1
+      i += 1
     }
     t = blk.term
     if tm = t {
@@ -246,9 +242,7 @@ class UpWalk {
         return false
       }
       self.through[b] = true
-      k = 0
-      while k < tm.targets.size {
-        nb = tm.targets[k]
+      for nb in tm.targets {
         if nb == self.start || self.on_path[nb] {
           return false
         }
@@ -259,7 +253,6 @@ class UpWalk {
         if !good {
           return false
         }
-        k = k + 1
       }
       return true
     }
@@ -269,12 +262,10 @@ class UpWalk {
 
 fn up_derefs(p: MPlace): Int {
   n = 0
-  i = 0
-  while i < p.proj.size {
+  for i in 0..p.proj.size {
     if p.proj[i].kind == mpk_deref() {
-      n = n + 1
+      n += 1
     }
-    i = i + 1
   }
   n
 }
@@ -282,12 +273,8 @@ fn up_derefs(p: MPlace): Int {
 // The locals whose address the function takes.
 fn up_addr_taken(f: MFunc): Array(Bool) {
   out = mir_bools(f.locals.size, false)
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
-    j = 0
-    while j < blk.stmts.size {
-      st = blk.stmts[j]
+  for blk in f.blocks {
+    for st in blk.stmts {
       if st.kind == msk_assign() {
         if r = st.rv {
           if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
@@ -299,9 +286,7 @@ fn up_addr_taken(f: MFunc): Array(Bool) {
           }
         }
       }
-      j = j + 1
     }
-    b = b + 1
   }
   out
 }
@@ -360,20 +345,15 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
   }
   // Single entry: every reached block's predecessors are the get's block
   // or blocks a path went through.
-  x = 0
-  while x < f.blocks.size {
+  for x in 0..f.blocks.size {
     if w.seen[x] {
       ps = preds[x]
-      y = 0
-      while y < ps.size {
-        q = ps[y]
+      for q in ps {
         if q != b && !w.through[q] {
           return false
         }
-        y = y + 1
       }
     }
-    x = x + 1
   }
   // The rewrite.
   pty = m.types.ptr_to(mt_i32())
@@ -415,19 +395,16 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
       if k == j {
         out.push(ld)
       }
-      k = k + 1
+      k += 1
     }
     f.blocks[b].stmts = out
-    k = 0
-    while k < w.site_b.size {
+    for k in 0..w.site_b.size {
       if w.site_b[k] == b {
-        w.site_j[k] = w.site_j[k] + 1
+        w.site_j[k] += 1
       }
-      k = k + 1
     }
   }
-  k = 0
-  while k < w.site_b.size {
+  for k in 0..w.site_b.size {
     sst = f.blocks[w.site_b[k]].stmts[w.site_j[k]]
     dst = MPlace.new(pl)
     dst.proj.push(MProj.new(mpk_deref(), 0))
@@ -437,7 +414,6 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
     nst.place = dst
     nst.rv = rv2
     f.blocks[w.site_b[k]].stmts[w.site_j[k]] = nst
-    k = k + 1
   }
   up_declare(m, name)
   true
@@ -446,9 +422,7 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
 // The pass; returns how many gets it fused.
 pub fn mir_upsert_pass(m: MModule): Int {
   n = 0
-  i = 0
-  while i < m.funcs.size {
-    f = m.funcs[i]
+  for f in m.funcs {
     has = false
     if f.blocks.size > 0 {
       b = 0
@@ -458,9 +432,9 @@ pub fn mir_upsert_pass(m: MModule): Int {
         while j < blk.stmts.size && !has {
           st = blk.stmts[j]
           has = st.kind == msk_call() && up_name(st.callee).size > 0
-          j = j + 1
+          j += 1
         }
-        b = b + 1
+        b += 1
       }
     }
     if has {
@@ -471,19 +445,16 @@ pub fn mir_upsert_pass(m: MModule): Int {
         j = 0
         while j < f.blocks[b].stmts.size {
           st = f.blocks[b].stmts[j]
-          if st.kind == msk_call() && up_name(st.callee).size > 0 {
-            if up_try(m, f, b, j, preds, taken) {
-              n = n + 1
-              // The new local is not address-taken.
-              taken.push(false)
-            }
+          if st.kind == msk_call() && up_name(st.callee).size > 0 && up_try(m, f, b, j, preds, taken) {
+            n += 1
+            // The new local is not address-taken.
+            taken.push(false)
           }
-          j = j + 1
+          j += 1
         }
-        b = b + 1
+        b += 1
       }
     }
-    i = i + 1
   }
   n
 }

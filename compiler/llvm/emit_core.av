@@ -55,11 +55,9 @@ pub class LlEmit {
     self.f = MFunc.new("", 0, mir_loc0())
     self.out = buf_new()
     self.label = ""
-    r: Array(String) = []
-    self.rt_names = r
+    self.rt_names = []
     self.rt_seen = Hash(String, Int).new
-    i: Array(String) = []
-    self.intrinsics = i
+    self.intrinsics = []
     self.intr_seen = Hash(String, Int).new
     self.loop_md = Hash(String, Int).new
   }
@@ -84,7 +82,7 @@ pub class LlEmit {
   // A fresh temporary, %t<n> per function (E3).
   pub fn tmp: String {
     n = self.tn
-    self.tn = self.tn + 1
+    self.tn += 1
     "%t${n}"
   }
 
@@ -209,9 +207,7 @@ pub class LlEmit {
     ptr = self.local_name(p.local)
     ty = self.f.locals[p.local].ty
     volatile = self.slot_vol(p.local)
-    k = 0
-    while k < p.proj.size {
-      pr = p.proj[k]
+    for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
         ptr = self.load(mt_ptr(), ptr, volatile)
@@ -240,7 +236,6 @@ pub class LlEmit {
         ptr = t
         ty = et
       }
-      k = k + 1
     }
     self.pa_ty = ty
     self.pa_vol = volatile
@@ -314,6 +309,9 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
     return "i${ts.get(ty).bits}"
   }
   if k == mk_f64() {
+    if ts.get(ty).bits == 32 {
+      return "float"
+    }
     return "double"
   }
   if k == mk_agg() {
@@ -332,8 +330,7 @@ pub fn ll_plain(s: String): Bool {
   if s.size == 0 {
     return false
   }
-  i = 0
-  while i < s.size {
+  for i in 0..s.size {
     c = s[i]
     ok = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 45 || c == 36 || c == 46 || c == 95
     if !ok && c >= 48 && c <= 57 {
@@ -342,7 +339,6 @@ pub fn ll_plain(s: String): Bool {
     if !ok {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -350,7 +346,7 @@ pub fn ll_plain(s: String): Bool {
 // A global symbol (8.3): mangled names are always quoted; C names bare
 // when LLVM allows it.
 pub fn ll_sym(name: String): String {
-  if str_starts_mir(name, "av.") || !ll_plain(name) {
+  if str_starts(name, "av.") || !ll_plain(name) {
     return "@\"${name}\""
   }
   "@${name}"

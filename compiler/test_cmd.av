@@ -25,17 +25,14 @@ pub class FileRun {
     self.rel = rel
     self.bin = bin
     self.output = ""
-    names: Array(String) = []
-    self.parallels = names
-    logs: Array(String) = []
-    self.par_logs = logs
+    self.parallels = []
+    self.par_logs = []
     self.ok = true
     self.compiled = false
     self.exclusive = false
     self.reported = false
     self.map = ""
-    fr: Array(String) = []
-    self.frags = fr
+    self.frags = []
     self.pending = 0
   }
 }
@@ -84,8 +81,7 @@ pub class JobSched {
   running: Int = 0
 
   fn initialize(limit: Int) {
-    js: Array(JobCmd) = []
-    self.jobs = js
+    self.jobs = []
     self.limit = limit
     if self.limit < 1 {
       self.limit = 1
@@ -122,7 +118,7 @@ pub class JobSched {
           best = i
         }
       }
-      i = i + 1
+      i += 1
     }
     best
   }
@@ -144,7 +140,7 @@ pub class JobSched {
         return k
       }
       cmd.pid = pid
-      self.running = self.running + 1
+      self.running += 1
     }
     if self.running == 0 {
       return -1
@@ -153,7 +149,7 @@ pub class JobSched {
     if got < 0 {
       return -1
     }
-    self.running = self.running - 1
+    self.running -= 1
     i = 0
     while i < self.jobs.size {
       cmd = self.jobs[i]
@@ -162,7 +158,7 @@ pub class JobSched {
         cmd.finished = true
         return i
       }
-      i = i + 1
+      i += 1
     }
     self.wait_one
   }
@@ -190,7 +186,7 @@ pub class TestHost {
   }
 
   pub fn fresh: String {
-    self.seq = self.seq + 1
+    self.seq += 1
     tmp_path("t-${self.seq}")
   }
 }
@@ -207,7 +203,7 @@ fn parse_u(s: String): Int {
       return -1
     }
     n = n * 10 + (c - 48)
-    i = i + 1
+    i += 1
   }
   n
 }
@@ -218,12 +214,10 @@ fn count_range(part: String): Int {
     return 0
   }
   dash = -1
-  i = 0
-  while i < t.size {
+  for i in 0..t.size {
     if t[i] == 45 {
       dash = i
     }
-    i = i + 1
   }
   if dash < 0 {
     if parse_u(t) < 0 {
@@ -250,10 +244,10 @@ fn count_online: Int {
     i = 0
     while i <= spec.size {
       if i == spec.size || spec[i] == 44 {
-        total = total + count_range(str_slice(spec, start, i))
+        total += count_range(str_slice(spec, start, i))
         start = i + 1
       }
-      i = i + 1
+      i += 1
     }
     if total < 1 {
       return 1
@@ -271,7 +265,7 @@ fn abs_join(dir: String, rel: String): String {
   if rel.size > 0 && rel[0] == 47 {
     return rel
   }
-  if str_eq(dir, "/") {
+  if dir == "/" {
     return "/${rel}"
   }
   "${dir}/${rel}"
@@ -297,34 +291,30 @@ fn path_less(a: String, b: String): Bool {
   if b.size < n {
     n = b.size
   }
-  i = 0
-  while i < n {
+  for i in 0..n {
     if a[i] < b[i] {
       return true
     }
     if a[i] > b[i] {
       return false
     }
-    i = i + 1
   }
   a.size < b.size
 }
 
 fn sort_files(files: Array(FileRun)) {
-  i = 1
-  while i < files.size {
+  for i in 1..files.size {
     j = i
     while j > 0 {
       if path_less(files[j].rel, files[j - 1].rel) {
         tmp = files[j]
         files[j] = files[j - 1]
         files[j - 1] = tmp
-        j = j - 1
+        j -= 1
       } else {
         break
       }
     }
-    i = i + 1
   }
 }
 
@@ -334,19 +324,19 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
   nseq = seq
   while i < names.size {
     name = names[i]
-    i = i + 1
+    i += 1
     if name.size == 0 {
       continue
     }
     if name[0] == 46 {
       continue
     }
-    if str_eq(name, "deps") {
+    if name == "deps" {
       continue
     }
     path = abs_join(dir, name)
     if is_test_name(name) {
-      nseq = nseq + 1
+      nseq += 1
       into.push(FileRun.new(path, rel_of(cwd, path), tmp_path("bin-${nseq}")))
     } else {
       sub = dir_list(path)
@@ -366,12 +356,10 @@ fn read_text(path: String): String {
 }
 
 fn listed(paths: Array(String), path: String): Bool {
-  i = 0
-  while i < paths.size {
-    if str_eq(paths[i], path) {
+  for p in paths {
+    if p == path {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -424,7 +412,7 @@ fn name_lines(text: String): Array(String) {
       }
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -457,10 +445,10 @@ fn emit_file(host: TestHost, f: FileRun) {
   }
   if f.ok {
     out_puts("ok ${f.rel}")
-    host.good = host.good + 1
+    host.good += 1
   } else {
     out_puts("FAIL ${f.rel}")
-    host.bad = host.bad + 1
+    host.bad += 1
   }
 }
 
@@ -480,9 +468,7 @@ fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
 }
 
 fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
-  k = 0
-  while k < f.parallels.size {
-    name = f.parallels[k]
+  for name in f.parallels {
     frag = ""
     if host.junit {
       frag = "${host.fresh()}.junit"
@@ -493,17 +479,14 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
     cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
     sched.add(cmd)
     f.par_logs.push(cmd.log)
-    f.pending = f.pending + 1
-    k = k + 1
+    f.pending += 1
   }
 }
 
 fn take_par_logs(f: FileRun) {
-  k = 0
-  while k < f.par_logs.size {
-    f.output = append_text(f.output, read_text(f.par_logs[k]))
-    rm_file(f.par_logs[k])
-    k = k + 1
+  for par_log in f.par_logs {
+    f.output = append_text(f.output, read_text(par_log))
+    rm_file(par_log)
   }
 }
 
@@ -519,26 +502,26 @@ fn order_first(files: Array(FileRun), first_abs: Array(String)): Array(FileRun) 
   f = 0
   while f < files.size {
     taken.push(0)
-    f = f + 1
+    f += 1
   }
   e = 0
   while e < first_abs.size {
     f = 0
     while f < files.size {
-      if taken[f] == 0 && str_eq(files[f].abs, first_abs[e]) {
+      if taken[f] == 0 && files[f].abs == first_abs[e] {
         taken[f] = 1
         out.push(files[f])
       }
-      f = f + 1
+      f += 1
     }
-    e = e + 1
+    e += 1
   }
   f = 0
   while f < files.size {
     if taken[f] == 0 {
       out.push(files[f])
     }
-    f = f + 1
+    f += 1
   }
   out
 }
@@ -566,7 +549,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     // The tests are local runs: the machine's highest level (O140).
     args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
     sched.add(JobCmd.new(args, "${host.fresh()}.log", 0, i))
-    i = i + 1
+    i += 1
   }
   while true {
     k = sched.wait_one
@@ -596,9 +579,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       found = name_lines(read_text(cmd.names))
       rm_file(cmd.names)
       seen: Array(String) = []
-      n = 0
-      while n < found.size {
-        name = found[n]
+      for name in found {
         if listed(seen, name) {
           f.ok = false
           f.output = append_text(f.output, "duplicate parallel name ${name}\n")
@@ -606,7 +587,6 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
           seen.push(name)
           f.parallels.push(name)
         }
-        n = n + 1
       }
       if f.parallels.size == 0 {
         emit_file(host, f)
@@ -617,31 +597,23 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       if cmd.code != 0 {
         f.ok = false
       }
-      f.pending = f.pending - 1
+      f.pending -= 1
       if f.pending == 0 {
         take_par_logs(f)
         emit_file(host, f)
       }
     }
   }
-  i = 0
-  while i < files.size {
-    f = files[i]
-    if f.compiled {
-      if f.reported {
-      } else {
-        take_par_logs(f)
-        f.ok = false
-        f.output = append_text(f.output, "test jobs did not finish\n")
-        emit_file(host, f)
-      }
+  for f in files {
+    if f.compiled && !f.reported {
+      take_par_logs(f)
+      f.ok = false
+      f.output = append_text(f.output, "test jobs did not finish\n")
+      emit_file(host, f)
     }
-    i = i + 1
   }
   if host.coverage {
-    i = 0
-    while i < files.size {
-      f = files[i]
+    for f in files {
       if f.compiled {
         host.cov.merge_map(f.map)
       }
@@ -649,15 +621,12 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       if f.map.size > 0 {
         rm_file("${f.map}.hits")
       }
-      i = i + 1
     }
   }
-  i = 0
-  while i < files.size {
-    if files[i].compiled {
-      rm_file(files[i].bin)
+  for path in files {
+    if path.compiled {
+      rm_file(path.bin)
     }
-    i = i + 1
   }
 }
 
@@ -677,7 +646,7 @@ fn xml_escape(s: String): String {
     } else {
       b.push_byte(c)
     }
-    i = i + 1
+    i += 1
   }
   b.to_s
 }
@@ -689,10 +658,10 @@ fn find_from(text: String, needle: String, from: Int): Int {
   last = text.size - needle.size
   i = from
   while i <= last {
-    if str_eq(str_slice(text, i, i + needle.size), needle) {
+    if str_slice(text, i, i + needle.size) == needle {
       return i
     }
-    i = i + 1
+    i += 1
   }
   -1
 }
@@ -709,9 +678,9 @@ fn attr_sum(text: String, key: String): Int {
     n = 0
     while j < text.size && text[j] >= 48 && text[j] <= 57 {
       n = n * 10 + (text[j] - 48)
-      j = j + 1
+      j += 1
     }
-    total = total + n
+    total += n
     from = j
   }
   total
@@ -733,21 +702,21 @@ fn suite_time_ms(text: String): Int {
     whole = 0
     while j < text.size && text[j] >= 48 && text[j] <= 57 {
       whole = whole * 10 + (text[j] - 48)
-      j = j + 1
+      j += 1
     }
     frac = 0
     digits = 0
     if j < text.size && text[j] == 46 {
-      j = j + 1
+      j += 1
       while j < text.size && text[j] >= 48 && text[j] <= 57 && digits < 3 {
         frac = frac * 10 + (text[j] - 48)
-        digits = digits + 1
-        j = j + 1
+        digits += 1
+        j += 1
       }
     }
     while digits < 3 {
-      frac = frac * 10
-      digits = digits + 1
+      frac *= 10
+      digits += 1
     }
     total = total + whole * 1000 + frac
     from = j
@@ -773,15 +742,11 @@ fn write_junit(path: String, files: Array(FileRun)) {
   fb = buf_new()
   fb_tests = 0
   fb_bad = 0
-  i = 0
-  while i < files.size {
-    f = files[i]
+  for f in files {
     fragtext = ""
-    k = 0
-    while k < f.frags.size {
-      fragtext = append_text(fragtext, read_text(f.frags[k]))
-      rm_file(f.frags[k])
-      k = k + 1
+    for frag in f.frags {
+      fragtext = append_text(fragtext, read_text(frag))
+      rm_file(frag)
     }
     if fragtext.size > 0 {
       body.push_str(fragtext)
@@ -790,10 +755,10 @@ fn write_junit(path: String, files: Array(FileRun)) {
       }
       tests = tests + attr_sum(fragtext, "tests=\"")
       bad = bad + attr_sum(fragtext, "failures=\"")
-      total_ms = total_ms + suite_time_ms(fragtext)
+      total_ms += suite_time_ms(fragtext)
     } else {
-      fb_tests = fb_tests + 1
-      tests = tests + 1
+      fb_tests += 1
+      tests += 1
       fb.push_str("    <testcase name=\"")
       fb.push_str(xml_escape(f.rel))
       fb.push_str("\" classname=\"")
@@ -802,14 +767,13 @@ fn write_junit(path: String, files: Array(FileRun)) {
       if f.ok {
         fb.push_str("/>\n")
       } else {
-        fb_bad = fb_bad + 1
-        bad = bad + 1
+        fb_bad += 1
+        bad += 1
         fb.push_str(">\n      <failure message=\"failed\"><![CDATA[")
         fb.push_str(f.output)
         fb.push_str("]]></failure>\n    </testcase>\n")
       }
     }
-    i = i + 1
   }
   b = buf_new()
   b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
@@ -830,12 +794,10 @@ fn write_junit(path: String, files: Array(FileRun)) {
 
 fn shard_index(spec: String, want_index: Bool): Int {
   slash = -1
-  i = 0
-  while i < spec.size {
+  for i in 0..spec.size {
     if spec[i] == 47 {
       slash = i
     }
-    i = i + 1
   }
   if slash < 1 {
     return -1
@@ -857,12 +819,10 @@ fn is_dir(path: String): Bool {
 
 fn require_cov_dir(anchor: String, rel: String, key: String) {
   path = abs_join(anchor, rel)
-  if file_exists(path) {
-  } else {
+  if !file_exists(path) {
     test_fail("${key} directory does not exist: ${rel}")
   }
-  if is_dir(path) {
-  } else {
+  if !is_dir(path) {
     test_fail("${key} path is not a directory: ${rel}")
   }
 }
@@ -877,7 +837,7 @@ pub fn driver_test(args: Array(String)) {
   i = 0
   while i < args.size {
     arg = args[i]
-    if str_eq(arg, "--jobs") {
+    if arg == "--jobs" {
       if i + 1 >= args.size {
         test_fail("--jobs needs an integer")
       }
@@ -885,38 +845,38 @@ pub fn driver_test(args: Array(String)) {
       if jobs < 1 {
         test_fail("--jobs needs an integer greater than 0")
       }
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--jobs=") {
       jobs = parse_u(str_slice(arg, 7, arg.size))
       if jobs < 1 {
         test_fail("--jobs needs an integer greater than 0")
       }
-      i = i + 1
-    } else if str_eq(arg, "--shard") {
+      i += 1
+    } else if arg == "--shard" {
       if i + 1 >= args.size {
         test_fail("--shard needs I/N")
       }
       shard = args[i + 1]
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--shard=") {
       shard = str_slice(arg, 8, arg.size)
-      i = i + 1
-    } else if str_eq(arg, "--junit") {
+      i += 1
+    } else if arg == "--junit" {
       if i + 1 >= args.size {
         test_fail("--junit needs a path")
       }
       junit = args[i + 1]
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--junit=") {
       junit = str_slice(arg, 8, arg.size)
-      i = i + 1
-    } else if str_eq(arg, "--skip-exclusive") {
+      i += 1
+    } else if arg == "--skip-exclusive" {
       skip_ex = true
-      i = i + 1
-    } else if str_eq(arg, "--coverage") {
+      i += 1
+    } else if arg == "--coverage" {
       coverage = true
-      i = i + 1
-    } else if str_eq(arg, "-h") || str_eq(arg, "--help") {
+      i += 1
+    } else if arg == "-h" || arg == "--help" {
       diag_puts("avant test [TEST-OPTIONS] [PATH...]")
       diag_puts("--jobs N   test processes at once (default: online processors)")
       diag_puts("--jobs 1   one file at a time")
@@ -925,13 +885,13 @@ pub fn driver_test(args: Array(String)) {
       diag_puts("--skip-exclusive   omit [test] exclusive files")
       diag_puts("--coverage   instrument tests and print one coverage table")
       diag_exit(0)
-    } else if str_eq(arg, "--") {
+    } else if arg == "--" {
       test_fail("avant test does not take program arguments")
     } else if str_starts(arg, "-") {
       test_fail("unknown test argument ${arg}")
     } else {
       paths.push(arg)
-      i = i + 1
+      i += 1
     }
   }
   if jobs < 1 {
@@ -949,8 +909,7 @@ pub fn driver_test(args: Array(String)) {
     man_path = abs_join(man_dir, "avant.toml")
     if text = file_read(man_path) {
       m = pkg_parse_manifest(text, man_path)
-      if m.ok {
-      } else {
+      if !m.ok {
         test_fail(m.err)
       }
       if m.test_err.size > 0 {
@@ -964,25 +923,17 @@ pub fn driver_test(args: Array(String)) {
       }
       test_dir = m.test_dir
       test_entry = m.test_entry
-      k = 0
-      while k < m.test_exclusive.size {
+      for k in 0..m.test_exclusive.size {
         exclusive.push(m.test_exclusive[k])
-        k = k + 1
       }
-      k = 0
-      while k < m.test_first.size {
+      for k in 0..m.test_first.size {
         first.push(m.test_first[k])
-        k = k + 1
       }
-      k = 0
-      while k < m.cov_include.size {
+      for k in 0..m.cov_include.size {
         cov_include.push(m.cov_include[k])
-        k = k + 1
       }
-      k = 0
-      while k < m.cov_exclude.size {
+      for k in 0..m.cov_exclude.size {
         cov_exclude.push(m.cov_exclude[k])
-        k = k + 1
       }
     }
   }
@@ -991,23 +942,18 @@ pub fn driver_test(args: Array(String)) {
     anchor = man_dir
   }
   if coverage {
-    k = 0
-    while k < cov_include.size {
+    for k in 0..cov_include.size {
       require_cov_dir(anchor, cov_include[k], "include")
-      k = k + 1
     }
-    k = 0
-    while k < cov_exclude.size {
+    for k in 0..cov_exclude.size {
       require_cov_dir(anchor, cov_exclude[k], "exclude")
-      k = k + 1
     }
   }
   files: Array(FileRun) = []
   if paths.size == 0 {
     if test_entry.size > 0 {
       entry = abs_join(anchor, test_entry)
-      if file_exists(entry) {
-      } else {
+      if !file_exists(entry) {
         test_fail("test entry does not exist: ${test_entry}")
       }
       files.push(FileRun.new(entry, rel_of(cwd, entry), tmp_path("bin-1")))
@@ -1015,13 +961,12 @@ pub fn driver_test(args: Array(String)) {
       root = abs_join(anchor, "tests")
       if test_dir.size > 0 {
         root = abs_join(anchor, test_dir)
-        if file_exists(root) {
-        } else {
+        if !file_exists(root) {
           test_fail("test dir does not exist: ${test_dir}")
         }
       }
       if file_exists(root) {
-        dummy_seq = walk_tests(root, cwd, files, 0)
+        walk_tests(root, cwd, files, 0)
       }
     }
   } else {
@@ -1029,8 +974,7 @@ pub fn driver_test(args: Array(String)) {
     seq = 0
     while p < paths.size {
       arg = paths[p]
-      if file_exists(arg) {
-      } else {
+      if !file_exists(arg) {
         test_fail("test path does not exist: ${arg}")
       }
       abs = arg
@@ -1038,12 +982,12 @@ pub fn driver_test(args: Array(String)) {
         abs = abs_join(cwd, arg)
       }
       if str_ends(arg, ".av") {
-        seq = seq + 1
+        seq += 1
         files.push(FileRun.new(abs, rel_of(cwd, abs), tmp_path("bin-${seq}")))
       } else {
         seq = walk_tests(abs, cwd, files, seq)
       }
-      p = p + 1
+      p += 1
     }
   }
   sort_files(files)
@@ -1051,48 +995,38 @@ pub fn driver_test(args: Array(String)) {
   e = 0
   while e < exclusive.size {
     ex_abs.push(abs_join(anchor, exclusive[e]))
-    e = e + 1
+    e += 1
   }
   if paths.size == 0 {
-    e = 0
-    while e < ex_abs.size {
+    for e in 0..ex_abs.size {
       found = false
-      f = 0
-      while f < files.size {
-        if str_eq(files[f].abs, ex_abs[e]) {
+      for path in files {
+        if path.abs == ex_abs[e] {
           found = true
         }
-        f = f + 1
       }
-      if found {
-      } else {
+      if !found {
         test_fail("exclusive path is not a selected test: ${exclusive[e]}")
       }
-      e = e + 1
     }
   }
   first_abs: Array(String) = []
   e = 0
   while e < first.size {
     first_abs.push(abs_join(anchor, first[e]))
-    e = e + 1
+    e += 1
   }
   if paths.size == 0 {
-    e = 0
-    while e < first_abs.size {
+    for e in 0..first_abs.size {
       found = false
-      f = 0
-      while f < files.size {
-        if str_eq(files[f].abs, first_abs[e]) {
+      for path in files {
+        if path.abs == first_abs[e] {
           found = true
         }
-        f = f + 1
       }
-      if found {
-      } else {
+      if !found {
         test_fail("first path is not a selected test: ${first[e]}")
       }
-      e = e + 1
     }
   }
   f = 0
@@ -1100,7 +1034,7 @@ pub fn driver_test(args: Array(String)) {
     if listed(ex_abs, files[f].abs) {
       files[f].exclusive = true
     }
-    f = f + 1
+    f += 1
   }
   if shard.size > 0 {
     idx = shard_index(shard, true)
@@ -1109,46 +1043,37 @@ pub fn driver_test(args: Array(String)) {
       test_fail("bad --shard ${shard}")
     }
     has_ex = false
-    f = 0
-    while f < files.size {
-      if files[f].exclusive {
+    for path in files {
+      if path.exclusive {
         has_ex = true
       }
-      f = f + 1
     }
-    if has_ex {
-      if skip_ex {
-      } else {
-        test_fail("--shard cannot include an exclusive file (pass --skip-exclusive)")
-      }
+    if has_ex && !skip_ex {
+      test_fail("--shard cannot include an exclusive file (pass --skip-exclusive)")
     }
     pool: Array(FileRun) = []
     f = 0
     while f < files.size {
-      if skip_ex && files[f].exclusive {
-      } else {
+      if !(skip_ex && files[f].exclusive) {
         pool.push(files[f])
       }
-      f = f + 1
+      f += 1
     }
     picked: Array(FileRun) = []
-    f = 0
-    while f < pool.size {
+    for f in 0..pool.size {
       if f % cnt == idx - 1 {
         picked.push(pool[f])
       }
-      f = f + 1
     }
     files = picked
   } else if skip_ex {
     kept: Array(FileRun) = []
     f = 0
     while f < files.size {
-      if files[f].exclusive {
-      } else {
+      if !files[f].exclusive {
         kept.push(files[f])
       }
-      f = f + 1
+      f += 1
     }
     files = kept
   }
@@ -1180,7 +1105,7 @@ pub fn driver_test(args: Array(String)) {
       } else {
         normals.push(run_order[f])
       }
-      f = f + 1
+      f += 1
     }
     run_many(host, normals)
     f = 0
@@ -1188,7 +1113,7 @@ pub fn driver_test(args: Array(String)) {
       alone: Array(FileRun) = []
       alone.push(excls[f])
       run_many(host, alone)
-      f = f + 1
+      f += 1
     }
   }
   if junit.size > 0 {
@@ -1198,13 +1123,11 @@ pub fn driver_test(args: Array(String)) {
   good = host.good
   puts("${bad} failed, ${good} passed")
   if coverage {
-    k = 0
-    while k < cov_include.size {
+    for k in 0..cov_include.size {
       host.cov.add_tree(abs_join(anchor, cov_include[k]), cov_exclude)
-      k = k + 1
     }
     if host.cov.has_rows {
-      dummy_mk = fs_mkdir_p("coverage")
+      fs_mkdir_p("coverage")
       host.cov.write_lcov("coverage/lcov.info")
       host.cov.print_table
     }

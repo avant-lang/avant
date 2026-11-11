@@ -20,7 +20,7 @@ class LangCounter {
   }
 
   pub fn bump: Int {
-    self.n = self.n + 1
+    self.n += 1
     self.n
   }
 }
@@ -46,7 +46,7 @@ fn test_lang(c: Checks) {
     if n == 3 {
       break
     }
-    n = n + 1
+    n += 1
   }
   c.eq_int(n, 3, "break")
   c.eq_int(8 >> 1, 4, "shift")
@@ -58,14 +58,12 @@ fn test_lang(c: Checks) {
 
   inner = 0
   while inner < 5 {
-    k = 0
-    while k < 3 {
+    for k in 0..3 {
       if k == 1 {
         break
       }
-      k = k + 1
     }
-    inner = inner + 1
+    inner += 1
   }
   c.eq_int(inner, 5, "inner break")
 
@@ -85,8 +83,8 @@ fn test_lang(c: Checks) {
   wide_sum = 0
   while i < 200 {
     wide[i] = 80 - (i * 13) % 180
-    wide_sum = wide_sum + wide[i]
-    i = i + 1
+    wide_sum += wide[i]
+    i += 1
   }
   wide[0] = -2000000000
   wide[1] = 2000000000
@@ -94,15 +92,11 @@ fn test_lang(c: Checks) {
   wide.sort
   wide_got = 0
   wide_ok = 1
-  i = 0
-  while i < 200 {
-    wide_got = wide_got + wide[i]
-    if i > 0 {
-      if wide[i] < wide[i - 1] {
-        wide_ok = 0
-      }
+  for i in 0..200 {
+    wide_got += wide[i]
+    if i > 0 && wide[i] < wide[i - 1] {
+      wide_ok = 0
     }
-    i = i + 1
   }
   c.eq_int(wide_ok, 1, "sort wide ordered")
   c.eq_int(wide_got, wide_sum, "sort wide sum")
@@ -110,29 +104,23 @@ fn test_lang(c: Checks) {
   c.eq_int(wide[199], 2000000000, "sort wide hi")
 
   narrow = Array(Int).new(200)
-  i = 0
-  while i < 200 {
+  for i in 0..200 {
     narrow[i] = (i * 3) % 7 - 3
-    i = i + 1
   }
   narrow.sort
   narrow_ok = 1
-  i = 1
-  while i < 200 {
+  for i in 1..200 {
     if narrow[i] < narrow[i - 1] {
       narrow_ok = 0
     }
-    i = i + 1
   }
   c.eq_int(narrow_ok, 1, "sort narrow ordered")
   c.eq_int(narrow[0], -3, "sort narrow lo")
   c.eq_int(narrow[199], 3, "sort narrow hi")
 
   rev = Array(Int).new(600)
-  i = 0
-  while i < 600 {
+  for i in 0..600 {
     rev[i] = 600 - i
-    i = i + 1
   }
   rev.sort
   c.eq_int(rev[0], 1, "sort reverse lo")
@@ -178,13 +166,13 @@ fn test_lang(c: Checks) {
   flags[0] = false
   nflags = 0
   if flags[1] {
-    nflags = nflags + 1
+    nflags += 1
   }
   if flags[2] {
-    nflags = nflags + 1
+    nflags += 1
   }
   if flags[3] {
-    nflags = nflags + 1
+    nflags += 1
   }
   c.eq_int(nflags, 3, "Array(Bool).fill")
 
@@ -239,7 +227,7 @@ fn test_lang(c: Checks) {
   while i < 2 {
     typed: Array(Int) = []
     typed.push(i)
-    i = i + 1
+    i += 1
   }
   c.eq_int(i, 2, "while typed bind")
 
@@ -257,6 +245,58 @@ fn test_lang(c: Checks) {
     }
   }
   c.eq_int(miss, 0, "void switch miss")
+  test_for_typed_first(c)
+}
+
+struct Cell2 {
+  v: Int
+}
+
+// O181 (Stage 29 W3a): `for` reads its array and its range ends like a
+// while condition, so a body whose first line is a typed declaration is
+// not read as a struct literal; a literal in parentheses still is one.
+fn test_for_typed_first(c: Checks) {
+  n = 3
+  seen = 0
+  for b in 0..n {
+    row: Array(Bool) = []
+    row.push(b > 0)
+    if row[0] {
+      seen += 1
+    }
+  }
+  c.eq_int(seen, 2, "for range with a typed first line")
+  xs = [4, 5]
+  total = 0
+  for x in xs {
+    acc: Array(Int) = []
+    acc.push(x)
+    total += acc[0]
+  }
+  c.eq_int(total, 9, "for array with a typed first line")
+  m = 0
+  for i in 0..(Cell2 { v: 2 }).v {
+    m += 1
+  }
+  c.eq_int(m, 2, "parenthesized literal as a range end")
+  for cell in [Cell2 { v: 7 }] {
+    w: Int = cell.v
+    m += w
+  }
+  c.eq_int(m, 9, "literal inside an array literal")
+  for i in 0..cell_v(Cell2 { v: 2 }) {
+    k: Int = i
+    m += k
+  }
+  c.eq_int(m, 10, "literal as a call argument in a range end")
+  if cell_v(Cell2 { v: 1 }) == 1 {
+    m += 1
+  }
+  c.eq_int(m, 11, "literal as a call argument in a condition")
+}
+
+fn cell_v(cell: Cell2): Int {
+  cell.v
 }
 
 fn main: Int {

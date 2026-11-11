@@ -10,8 +10,7 @@ pub class Re2cPlan {
   fn initialize {
     h = Hash(String, Int).new
     self.ids = h
-    g: Array(Int) = []
-    self.groups = g
+    self.groups = []
     self.src = ""
     self.count = 0
   }
@@ -28,31 +27,31 @@ pub fn re2c_capture_groups(pat: String): Int {
   while i < pat.size {
     c = pat[i]
     if c == 92 {
-      i = i + 2
+      i += 2
     } else if in_class {
       if c == 93 {
         in_class = false
       }
-      i = i + 1
+      i += 1
     } else if c == 91 {
       in_class = true
-      i = i + 1
+      i += 1
     } else if c == 40 {
       if i + 1 < pat.size && pat[i + 1] == 63 {
         if i + 2 < pat.size && pat[i + 2] == 58 {
-          i = i + 3
+          i += 3
         } else {
           return -1
         }
       } else {
-        n = n + 1
+        n += 1
         if n > 1 {
           return -1
         }
-        i = i + 1
+        i += 1
       }
     } else {
-      i = i + 1
+      i += 1
     }
   }
   n
@@ -86,7 +85,7 @@ pub class RePat {
   }
 
   pub fn bump {
-    self.at = self.at + 1
+    self.at += 1
   }
 
   pub fn hex2(c: Int): String {
@@ -95,15 +94,11 @@ pub class RePat {
   }
 
   pub fn other_case(c: Int): Int {
-    if c >= 65 {
-      if c <= 90 {
-        return c + 32
-      }
+    if c >= 65 && c <= 90 {
+      return c + 32
     }
-    if c >= 97 {
-      if c <= 122 {
-        return c - 32
-      }
+    if c >= 97 && c <= 122 {
+      return c - 32
     }
     c
   }
@@ -137,7 +132,7 @@ pub class RePat {
       } else {
         buf.push_byte(c)
       }
-      i = i + 1
+      i += 1
     }
     buf.push_byte(q)
     buf.to_s
@@ -190,11 +185,9 @@ pub class RePat {
       buf.push_str("\\v")
       return true
     }
-    if c >= 48 {
-      if c <= 57 {
-        self.fail("backreference")
-        return false
-      }
+    if c >= 48 && c <= 57 {
+      self.fail("backreference")
+      return false
     }
     self.push_class_char(buf, c)
     true
@@ -216,25 +209,22 @@ pub class RePat {
       c = self.peek
       if c == 92 {
         self.bump
-        if self.class_escape(body) {
-        } else {
+        if !self.class_escape(body) {
           return ""
         }
       } else if self.at + 2 < self.len && self.s[self.at + 1] == 45 && self.s[self.at + 2] != 93 {
         a = c
         b = self.s[self.at + 2]
-        self.at = self.at + 3
+        self.at += 3
         body.push_str(self.class_atom(a))
         body.push_byte(45)
         body.push_str(self.class_atom(b))
         oa = self.other_case(a)
         ob = self.other_case(b)
-        if oa != a {
-          if ob != b {
-            body.push_str(self.class_atom(oa))
-            body.push_byte(45)
-            body.push_str(self.class_atom(ob))
-          }
+        if oa != a && ob != b {
+          body.push_str(self.class_atom(oa))
+          body.push_byte(45)
+          body.push_str(self.class_atom(ob))
         }
       } else {
         self.bump
@@ -336,11 +326,9 @@ pub class RePat {
     }
     c = self.peek
     self.bump
-    if c >= 48 {
-      if c <= 57 {
-        self.fail("backreference")
-        return ""
-      }
+    if c >= 48 && c <= 57 {
+      self.fail("backreference")
+      return ""
     }
     if c == 100 {
       return "R[0-9]"
@@ -427,29 +415,25 @@ pub class RePat {
       return atom
     }
     if self.nongreedy {
-      if str_eq(atom, "R.") {
-        if str_eq(q, "*") {
+      if atom == "R." {
+        if q == "*" {
           return "n"
         }
       }
       self.fail("non-greedy")
       return ""
     }
-    if str_eq(atom, "n") || str_eq(atom, "N") {
+    if atom == "n" || atom == "N" {
       self.fail("non-greedy")
       return ""
     }
-    if atom.size > 0 {
-      if atom[0] == 76 {
-        raw = str_slice(atom, 1, atom.size)
-        return "R${self.quote_lit(raw)}${q}"
-      }
+    if atom.size > 0 && atom[0] == 76 {
+      raw = str_slice(atom, 1, atom.size)
+      return "R${self.quote_lit(raw)}${q}"
     }
-    if atom.size > 0 {
-      if atom[0] == 82 {
-        raw = str_slice(atom, 1, atom.size)
-        return "R${raw}${q}"
-      }
+    if atom.size > 0 && atom[0] == 82 {
+      raw = str_slice(atom, 1, atom.size)
+      return "R${raw}${q}"
     }
     self.fail("bad quantifier")
     ""
@@ -507,7 +491,7 @@ pub class RePat {
     }
     self.bump
     if inner.size == 1 {
-      if str_eq(inner[0], "n") {
+      if inner[0] == "n" {
         if cap {
           return "N"
         }
@@ -535,7 +519,7 @@ pub class RePat {
         self.fail("non-greedy")
         return ""
       }
-      i = i + 1
+      i += 1
     }
     if raw.size == 1 {
       one = self.class_atom(raw[0])
@@ -575,13 +559,13 @@ pub class RePat {
       if p.size > 0 {
         if p[0] == 76 {
           acc = str_slice(p, 1, p.size)
-          i = i + 1
+          i += 1
           while i < parts.size {
             q = parts[i]
             if q.size > 0 {
               if q[0] == 76 {
                 acc = acc + str_slice(q, 1, q.size)
-                i = i + 1
+                i += 1
               } else {
                 break
               }
@@ -592,7 +576,7 @@ pub class RePat {
           merged.push("L${acc}")
         } else {
           merged.push(p)
-          i = i + 1
+          i += 1
         }
       } else {
         self.fail("empty piece")
@@ -603,7 +587,7 @@ pub class RePat {
     i = 0
     while i < merged.size {
       p = merged[i]
-      if str_eq(p, "n") || str_eq(p, "N") {
+      if p == "n" || p == "N" {
         if i + 1 >= merged.size {
           self.fail("non-greedy")
           return ""
@@ -618,22 +602,22 @@ pub class RePat {
         if self.bad {
           return ""
         }
-        if str_eq(p, "N") {
+        if p == "N" {
           out.push_str("(${mid}) ")
         } else {
           out.push_str("${mid} ")
         }
         out.push_str(self.quote_lit(lit))
         out.push_byte(32)
-        i = i + 2
+        i += 2
       } else if p[0] == 76 {
         out.push_str(self.quote_lit(str_slice(p, 1, p.size)))
         out.push_byte(32)
-        i = i + 1
+        i += 1
       } else if p[0] == 82 {
         out.push_str(str_slice(p, 1, p.size))
         out.push_byte(32)
-        i = i + 1
+        i += 1
       } else {
         self.fail("bad piece")
         return ""
@@ -683,7 +667,7 @@ pub fn body_has_capture(body: String): Bool {
     if body[i] == 40 {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -705,19 +689,14 @@ pub class Re2cCollect {
   fn initialize {
     h = Hash(String, Int).new
     self.ids = h
-    p: Array(String) = []
-    self.pats = p
-    f: Array(Int) = []
-    self.flags = f
-    g: Array(Int) = []
-    self.groups = g
-    b: Array(String) = []
-    self.bodies = b
+    self.pats = []
+    self.flags = []
+    self.groups = []
+    self.bodies = []
   }
 
   pub fn note_pat(pat: String, flags: Int) {
-    if flags == 0 || flags == 1 {
-    } else {
+    if !(flags == 0 || flags == 1) {
       return
     }
     key = re2c_key(pat, flags)
@@ -744,7 +723,7 @@ pub class Re2cCollect {
 
   pub fn note_call(expr: Expr) {
     if expr.type_call {
-      if str_eq(expr.resolved, "Regex__compile") {
+      if expr.resolved == "Regex__compile" {
         if expr.args.size >= 1 {
           pat = expr.args[0]
           if pat.kind == ex_string() {
@@ -799,30 +778,27 @@ pub class Re2cCollect {
     i = 0
     while i < expr.args.size {
       self.walk_expr(expr.args[i])
-      i = i + 1
+      i += 1
     }
     i = 0
     while i < expr.elems.size {
       self.walk_expr(expr.elems[i])
-      i = i + 1
+      i += 1
     }
     i = 0
     while i < expr.field_exprs.size {
       self.walk_expr(expr.field_exprs[i])
-      i = i + 1
+      i += 1
     }
-    i = 0
-    while i < expr.parts.size {
-      part = expr.parts[i]
+    for part in expr.parts {
       if inner = part.expr {
         self.walk_expr(inner)
       }
-      i = i + 1
     }
     i = 0
     while i < expr.cases.size {
       self.walk_stmts(expr.cases[i].body)
-      i = i + 1
+      i += 1
     }
     if b = expr.block {
       self.walk_stmts(b.body)
@@ -830,9 +806,7 @@ pub class Re2cCollect {
   }
 
   pub fn walk_stmts(body: Array(Stmt)) {
-    i = 0
-    while i < body.size {
-      stmt = body[i]
+    for stmt in body {
       if e = stmt.expr {
         self.walk_expr(e)
       }
@@ -848,7 +822,6 @@ pub class Re2cCollect {
       self.walk_stmts(stmt.then_body)
       self.walk_stmts(stmt.else_body)
       self.walk_stmts(stmt.body)
-      i = i + 1
     }
   }
 
@@ -856,7 +829,7 @@ pub class Re2cCollect {
     i = 0
     while i < fns.size {
       self.walk_stmts(fns[i].body)
-      i = i + 1
+      i += 1
     }
   }
 
@@ -867,15 +840,12 @@ pub class Re2cCollect {
     buf.push_str("#include <stdint.h>\n\n")
     buf.push_str("/*!maxnmatch:re2c*/\n\n")
     any_cap = false
-    j = 0
-    while j < self.bodies.size {
-      if body_has_capture(self.bodies[j]) {
+    for bd in self.bodies {
+      if body_has_capture(bd) {
         any_cap = true
       }
-      j = j + 1
     }
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       body = self.bodies[i]
       cap = body_has_capture(body)
@@ -957,7 +927,6 @@ pub class Re2cCollect {
       buf.push_str("    */\n")
       buf.push_str("  }\n")
       buf.push_str("}\n\n")
-      i = i + 1
     }
     n = self.bodies.size
     buf.push_str("int32_t avant_re2c_owns(void *re) {\n")
@@ -972,11 +941,9 @@ pub class Re2cCollect {
     buf.push_str("  int32_t m0 = 0, m1 = 0, c0 = 0, c1 = 0, rc = 0;\n")
     buf.push_str("  if (!s) s = \"\";\n")
     buf.push_str("  switch (id) {\n")
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       buf.push_str("    case ${id}: rc = avant_re2c_find_${id}(s, from, &m0, &m1, &c0, &c1); break;\n")
-      i = i + 1
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
@@ -992,22 +959,18 @@ pub class Re2cCollect {
     buf.push_str("}\n\n")
     buf.push_str("int32_t avant_re2c_groups(int32_t id) {\n")
     buf.push_str("  switch (id) {\n")
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       buf.push_str("    case ${id}: return ${self.groups[i]};\n")
-      i = i + 1
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
     buf.push_str("}\n\n")
     buf.push_str("int32_t avant_re2c_count(int32_t id, const char *s) {\n")
     buf.push_str("  switch (id) {\n")
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       buf.push_str("    case ${id}: return avant_re2c_scan_${id}(s);\n")
-      i = i + 1
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
@@ -1020,15 +983,11 @@ pub fn re2c_plan(program: Program): Re2cPlan {
   plan = Re2cPlan.new
   col = Re2cCollect.new
   col.walk_fns(program.functions)
-  i = 0
-  while i < program.classes.size {
-    col.walk_fns(program.classes[i].methods)
-    i = i + 1
+  for cls in program.classes {
+    col.walk_fns(cls.methods)
   }
-  i = 0
-  while i < program.structs.size {
-    col.walk_fns(program.structs[i].methods)
-    i = i + 1
+  for sdef in program.structs {
+    col.walk_fns(sdef.methods)
   }
   if col.pats.size == 0 {
     return plan

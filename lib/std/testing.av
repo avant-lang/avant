@@ -6,6 +6,12 @@ lib avant_testing_tmp {
   fun avant_tmp_new_dir: String
 }
 
+// A failed check fails the process (D84, runtime/avant_io.c): if the
+// program would exit 0, it exits 1.
+lib avant_testing_status {
+  fun avant_test_fail
+}
+
 // File and process helpers in runtime/avant_io.c (D140). Internal.
 lib avant_testing_fs {
   fun avant_fs_chmod_x(path: String): Int
@@ -36,7 +42,7 @@ fn testing_has(hay: String, needle: String): Bool {
     if testing_slice(hay, i, i + needle.size) == needle {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -63,7 +69,7 @@ fn testing_run(bin: String, args: Array(String), out_path: String, err_path: Str
   i = 0
   while i < args.size {
     wrapped.push(args[i])
-    i = i + 1
+    i += 1
   }
   avant_testing_fs.avant_process_run_split("/usr/bin/env", wrapped, out_path, err_path)
 }
@@ -90,14 +96,10 @@ pub class Test {
     self.dup = false
     self.only = ""
     self.names_path = ""
-    ns: Array(String) = []
-    self.names = ns
-    rn: Array(String) = []
-    self.rec_name = rn
-    ro: Array(Int) = []
-    self.rec_ok = ro
-    rm: Array(Int) = []
-    self.rec_ms = rm
+    self.names = []
+    self.rec_name = []
+    self.rec_ok = []
+    self.rec_ms = []
     self.rec_at = now_ms()
     if v = env_get("AVANT_TEST_ONLY") {
       if v.size > 0 {
@@ -123,10 +125,8 @@ pub class Test {
     if self.mode == 1 {
       return true
     }
-    if self.mode == 2 {
-      if self.depth == 0 {
-        return true
-      }
+    if self.mode == 2 && self.depth == 0 {
+      return true
     }
     false
   }
@@ -165,7 +165,7 @@ pub class Test {
       } else {
         b.push_byte(c)
       }
-      i = i + 1
+      i += 1
     }
     b.to_s
   }
@@ -197,38 +197,35 @@ pub class Test {
     n = self.rec_name.size
     badn = 0
     total = 0
-    i = 0
-    while i < n {
-      total = total + self.rec_ms[i]
+    for i in 0..n {
+      total += self.rec_ms[i]
       if self.rec_ok[i] == 0 {
-        badn = badn + 1
+        badn += 1
       }
-      i = i + 1
     }
     b = buf_new()
     b.push_str("<testsuite name=\"std.testing\" tests=\"${n}\" failures=\"${badn}\" time=\"${self.junit_secs(total)}\">\n")
-    i = 0
-    while i < n {
+    for i in 0..n {
       b.push_str("  <testcase name=\"${self.junit_escape(self.rec_name[i])}\" classname=\"std.testing\" time=\"${self.junit_secs(self.rec_ms[i])}\"")
       if self.rec_ok[i] == 0 {
         b.push_str(">\n    <failure message=\"check failed\"/>\n  </testcase>\n")
       } else {
         b.push_str("/>\n")
       }
-      i = i + 1
     }
     b.push_str("</testsuite>\n")
     dummy = file_write(frag, b.to_s)
   }
 
   fn pass_line(name: String) {
-    self.passed = self.passed + 1
+    self.passed += 1
     self.record(true, name)
     testing_write("PASS ${name}")
   }
 
   fn fail_line(name: String) {
-    self.failed = self.failed + 1
+    self.failed += 1
+    avant_testing_status.avant_test_fail()
     self.record(false, name)
     testing_write("FAIL ${name}")
   }
@@ -239,7 +236,7 @@ pub class Test {
       if self.names[i] == name {
         return true
       }
-      i = i + 1
+      i += 1
     }
     self.names.push(name)
     false
@@ -313,9 +310,9 @@ pub class Test {
     if self.mode == 2 {
       return nil
     }
-    self.depth = self.depth + 1
+    self.depth += 1
     body()
-    self.depth = self.depth - 1
+    self.depth -= 1
     nil
   }
 
@@ -342,7 +339,7 @@ pub class Test {
     while i < self.names.size {
       b.push_str(self.names[i])
       b.push_str("\n")
-      i = i + 1
+      i += 1
     }
     dummy = file_write(self.names_path, b.to_s)
   }
@@ -356,16 +353,14 @@ pub class Test {
     }
     if self.mode == 2 {
       if name == self.only {
-        self.depth = self.depth + 1
+        self.depth += 1
         body()
-        self.depth = self.depth - 1
+        self.depth -= 1
       }
       return nil
     }
-    if self.names_path.size > 0 {
-      if self.remember_parallel(name) {
-        self.write_parallel_names()
-      }
+    if self.names_path.size > 0 && self.remember_parallel(name) {
+      self.write_parallel_names()
     }
     nil
   }
@@ -419,7 +414,7 @@ pub class Test {
       testing_write(testing_read(compile_log))
       return nil
     }
-    dummy = avant_testing_fs.avant_fs_chmod_x(out)
+    avant_testing_fs.avant_fs_chmod_x(out)
     empty: Array(String) = []
     stdout_path = "${base}.out"
     stderr_path = "${base}.err"

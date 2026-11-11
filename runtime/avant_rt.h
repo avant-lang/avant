@@ -49,12 +49,11 @@ typedef struct AvantHeader {
 } AvantHeader;
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
-/* Never collects. Returns null when a collection would be required,
- * when another thread exists, or when the nursery is off. */
-void *avant_bump_alloc(uint64_t nbytes, uint32_t type_id);
-/* Young collection. A dead nursery is discarded. A still-live tree
- * keeps the existing wait. */
-void avant_nursery_reclaim(void);
+/* `gc.hold { }` (std.gc, Stage 29 W1c2, D305): no collection this thread
+ * would start runs between the two (nested pairs are one); the outermost
+ * end runs what fell due inside. Other threads still collect. */
+void avant_gc_hold_begin(void);
+void avant_gc_hold_end(void);
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 /* Number of distinct pinned payloads (refcounted pins share one entry). */
@@ -192,12 +191,20 @@ typedef struct AvantGcStats {
 extern AvantGcStats avant_g_stats;
 void avant_gc_stats(AvantGcStats *out);
 void avant_gc_collect(void);
+/* A young collection on request: std.gc's `gc.collect()` (deferred to the
+ * end of an enclosing hold), and the collector's own tests (declared with
+ * `lib` as avant_gc_collect is). It was avant_nursery_reclaim, the
+ * language's `nursery_reclaim()`, until Stage 29 removed that form (D298,
+ * D305). */
+void avant_gc_collect_young(void);
 /* A thread that runs Avant code is registered (explicitly, or by its first
  * call into Avant); one that exits still registered is unregistered by its
  * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
  * unregistration of its own. A thread that exits inside a callback
  * (pthread_exit from C that Avant called) is unregistered and its frames
- * are freed too (Stage 28 W18C). */
+ * are freed too (Stage 28 W18C). A thread may unregister between
+ * callbacks and be registered again by its next one; unregistering drops
+ * every reference the runtime held for it (Stage 29 W1b, O70). */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
 /* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
@@ -396,6 +403,7 @@ void avant_trap_div_zero(void);
 void avant_trap_overflow(void);
 void avant_trap_shift(int64_t amount, int32_t kind);
 void avant_trap_to_i(double x);
+void avant_trap_c_range(int64_t value, int32_t kind);
 int64_t avant_checked_add_i64(int64_t a, int64_t b);
 int64_t avant_checked_sub_i64(int64_t a, int64_t b);
 int64_t avant_checked_mul_i64(int64_t a, int64_t b);
@@ -442,6 +450,8 @@ int32_t avant_file_exists(const char *path);
 void *avant_dir_list(const char *path);
 char *avant_tmp_dir(void);
 char *avant_tmp_new_dir(void);
+/* A failed check (std.testing, D84): the process exits 1 if it would exit 0. */
+void avant_test_fail(void);
 void avant_tmp_keep(void);
 int32_t avant_job_start(const char *path, void *args, const char *out_path);
 int32_t avant_job_wait(void);

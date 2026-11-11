@@ -39,10 +39,8 @@ pub class IrBox {
   fn initialize(ok: Bool) {
     self.ok = ok
     self.re2c_obj = ""
-    objs: Array(String) = []
-    flags: Array(String) = []
-    self.std_objects = objs
-    self.std_flags = flags
+    self.std_objects = []
+    self.std_flags = []
   }
 }
 
@@ -152,11 +150,9 @@ pub fn diag_bag(bag: DiagBag) {
     return
   }
   text = bag.render_all
-  if text.size > 0 {
-    if text[text.size - 1] == 10 {
-      diag_puts(str_slice(text, 0, text.size - 1))
-      return
-    }
+  if text.size > 0 && text[text.size - 1] == 10 {
+    diag_puts(str_slice(text, 0, text.size - 1))
+    return
   }
   diag_puts(text)
 }
@@ -170,10 +166,8 @@ pub class LinkJob {
   cpu: String = ""
 
   fn initialize {
-    o: Array(String) = []
-    f: Array(String) = []
-    self.objects = o
-    self.flags = f
+    self.objects = []
+    self.flags = []
     self.err = ""
     self.codegen = ""
     self.cpu = ""
@@ -185,10 +179,8 @@ pub class CliSplit {
   rest: Array(String)
 
   fn initialize {
-    p: Array(String) = []
-    r: Array(String) = []
-    self.paths = p
-    self.rest = r
+    self.paths = []
+    self.rest = []
   }
 }
 
@@ -201,10 +193,8 @@ pub class RunSplit {
 
   fn initialize {
     self.file = ""
-    lk: Array(String) = []
-    self.link = lk
-    pg: Array(String) = []
-    self.program = pg
+    self.link = []
+    self.program = []
     self.has_dash = false
     self.err = ""
   }
@@ -220,19 +210,12 @@ pub fn str_contains(s: String, needle: String): Bool {
   i = 0
   last = s.size - needle.size
   while i <= last {
-    if str_eq(str_slice(s, i, i + needle.size), needle) {
+    if str_slice(s, i, i + needle.size) == needle {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
-}
-
-pub fn str_starts(s: String, pre: String): Bool {
-  if pre.size > s.size {
-    return false
-  }
-  str_eq(str_slice(s, 0, pre.size), pre)
 }
 
 pub fn drop_av_suffix(path: String): String {
@@ -255,7 +238,7 @@ pub fn avant_checkout_root: String {
   if args.size > 0 {
     dir = path_dirname(args[0])
     base = path_basename(dir)
-    if str_eq(base, "bin") {
+    if base == "bin" {
       parent = path_dirname(dir)
       if file_exists("${parent}/runtime/build/avant_rt.o") {
         return parent
@@ -282,7 +265,7 @@ pub fn avant_root: String {
   if args.size > 0 {
     dir = path_dirname(args[0])
     base = path_basename(dir)
-    if str_eq(base, "bin") {
+    if base == "bin" {
       parent = path_dirname(dir)
       probe = "${parent}/runtime/build/avant_rt.o"
       if file_exists(probe) {
@@ -324,7 +307,7 @@ pub fn runtime_objects(root: String): Array(String) {
   i = 0
   while i < names.size {
     objs.push("${root}/runtime/build/${names[i]}")
-    i = i + 1
+    i += 1
   }
   objs
 }
@@ -332,20 +315,16 @@ pub fn runtime_objects(root: String): Array(String) {
 pub fn linker_flags_s(extra: Array(String)): String {
   buf = buf_new()
   buf.push_str("-pthread -lm")
-  i = 0
-  while i < extra.size {
+  for i in 0..extra.size {
     buf.push_str(" ")
     buf.push_str(extra[i])
-    i = i + 1
   }
   buf.to_s
 }
 
 pub fn compile_source(src: Source): IrBox {
-  if src.path.size > 0 {
-    if file_exists(src.path) {
-      return compile_av_path(src.path)
-    }
+  if src.path.size > 0 && file_exists(src.path) {
+    return compile_av_path(src.path)
   }
   lex = Lexer.new(src)
   tokens = lex.tokenize
@@ -379,13 +358,14 @@ pub fn compile_program(src: Source, program: Program): IrBox {
 // the scratch directory, for a program that runs inside this process.
 pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   expander = Expander.new(src, program)
-  dummy_e = expander.expand
+  expander.expand
   if e = expander.err {
     diag_bag(expander.errors)
     return IrBox.new(false)
   }
   checker = Checker.new(src, program)
-  dummy = checker.check
+  checker.cwd = cwd_physical()
+  checker.check
   if e = checker.err {
     diag_bag(checker.errors)
     return IrBox.new(false)
@@ -438,7 +418,7 @@ pub fn cov_map_dir(path: String): String? {
       }
       return nil
     }
-    i = i - 1
+    i -= 1
   }
   nil
 }
@@ -449,7 +429,7 @@ pub fn cov_map_dir(path: String): String? {
 // end it selected retired in Stage 28 W11).
 pub fn backend_refusal: String? {
   if v = env_get("AVANT_BACKEND") {
-    if v.size == 0 || str_eq(v, "llvm") {
+    if v.size == 0 || v == "llvm" {
       return nil
     }
     return "AVANT_BACKEND must be unset, empty, or llvm (the only back end), not ${v}"
@@ -461,7 +441,7 @@ pub fn backend_refusal: String? {
 pub fn coverage_wanted: Bool {
   if v = env_get("AVANT_COVERAGE") {
     if v.size > 0 {
-      if str_eq(v, "0") {
+      if v == "0" {
       } else {
         return true
       }
@@ -503,25 +483,24 @@ pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable,
 
 pub fn fill_std_link(program: Program, box: IrBox) {
   root = avant_root()
-  i = 0
-  while i < program.mods.size {
-    if str_eq(program.mods[i].name, "std.zlib") {
+  for mod in program.mods {
+    if mod.name == "std.zlib" {
       // zlib is vendored inside avant_zlib.o (D146): no -lz.
       box.std_objects.push("${root}/runtime/build/avant_zlib.o")
     }
-    if str_eq(program.mods[i].name, "std.base64") {
+    if mod.name == "std.base64" {
       box.std_objects.push("${root}/runtime/build/avant_base64.o")
       box.std_objects.push("${root}/runtime/build/libbase64.o")
     }
-    if str_eq(program.mods[i].name, "std.json") {
+    if mod.name == "std.json" {
       box.std_objects.push("${root}/runtime/build/avant_json.o")
       box.std_objects.push("${root}/runtime/build/yyjson.o")
     }
-    if str_eq(program.mods[i].name, "std.regex") {
+    if mod.name == "std.regex" {
       // PCRE2 is vendored inside avant_re.o (D146): no -lpcre2-8.
       box.std_objects.push("${root}/runtime/build/avant_re.o")
     }
-    if str_eq(program.mods[i].name, "std.http") {
+    if mod.name == "std.http" {
       box.std_objects.push("${root}/runtime/build/avant_http.o")
       box.std_objects.push("${root}/runtime/build/us_bsd.o")
       box.std_objects.push("${root}/runtime/build/us_context.o")
@@ -530,20 +509,15 @@ pub fn fill_std_link(program: Program, box: IrBox) {
       box.std_objects.push("${root}/runtime/build/us_udp.o")
       box.std_objects.push("${root}/runtime/build/us_epoll_kqueue.o")
     }
-    i = i + 1
   }
 }
 
 pub fn attach_std_link(box: IrBox, job: LinkJob) {
-  i = 0
-  while i < box.std_objects.size {
-    job.objects.push(box.std_objects[i])
-    i = i + 1
+  for std_object in box.std_objects {
+    job.objects.push(std_object)
   }
-  i = 0
-  while i < box.std_flags.size {
-    job.flags.push(box.std_flags[i])
-    i = i + 1
+  for std_flag in box.std_flags {
+    job.flags.push(std_flag)
   }
 }
 
@@ -628,7 +602,7 @@ pub fn run_cc(args: Array(String)): Int {
   i = 0
   while i < args.size {
     wrapped.push(args[i])
-    i = i + 1
+    i += 1
   }
   tool_run("/usr/bin/env", wrapped)
 }
@@ -696,8 +670,7 @@ pub fn compile_re2c(src: String): String {
 }
 
 pub fn compile_c_file(path: String): String {
-  if file_exists(path) {
-  } else {
+  if !file_exists(path) {
     diag_puts("C source is missing: ${path}")
     return ""
   }
@@ -727,100 +700,100 @@ pub fn parse_link(args: Array(String)): LinkJob {
   i = 0
   while i < args.size {
     arg = args[i]
-    if str_eq(arg, "--debug") {
+    if arg == "--debug" {
       if job.codegen.size > 0 {
         job.err = "choose one of --debug, --release"
         return job
       }
       job.codegen = "debug"
-      i = i + 1
-    } else if str_eq(arg, "--release") {
+      i += 1
+    } else if arg == "--release" {
       if job.codegen.size > 0 {
         job.err = "choose one of --debug, --release"
         return job
       }
       job.codegen = "release"
-      i = i + 1
-    } else if str_eq(arg, "--final") {
+      i += 1
+    } else if arg == "--final" {
       if job.codegen.size > 0 {
         job.err = "choose one of --debug, --release"
         return job
       }
       job.codegen = "release"
-      i = i + 1
-    } else if str_eq(arg, "--cpu") || str_starts(arg, "--cpu=") {
+      i += 1
+    } else if arg == "--cpu" || str_starts(arg, "--cpu=") {
       v = ""
-      if str_eq(arg, "--cpu") {
+      if arg == "--cpu" {
         if i + 1 >= args.size {
           job.err = "--cpu needs a level (baseline, v2, v3, v4, native)"
           return job
         }
         v = args[i + 1]
-        i = i + 2
+        i += 2
       } else {
         v = str_slice(arg, 6, arg.size)
-        i = i + 1
+        i += 1
       }
-      if !(str_eq(v, "baseline") || str_eq(v, "v2") || str_eq(v, "v3") || str_eq(v, "v4") || str_eq(v, "native")) {
+      if !(v == "baseline" || v == "v2" || v == "v3" || v == "v4" || v == "native") {
         job.err = "unknown CPU level ${v} (--cpu=baseline, v2, v3, v4 or native)"
         return job
       }
-      if job.cpu.size > 0 && !str_eq(job.cpu, v) {
+      if job.cpu.size > 0 && job.cpu != v {
         job.err = "choose one --cpu"
         return job
       }
       job.cpu = v
-    } else if str_eq(arg, "--lib") {
+    } else if arg == "--lib" {
       if i + 1 >= args.size {
         job.err = "--lib needs a name"
         return job
       }
       name = args[i + 1]
       job.flags.push("-l${name}")
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--lib=") {
       name = str_slice(arg, 6, arg.size)
       job.flags.push("-l${name}")
-      i = i + 1
-    } else if str_eq(arg, "--cc") {
+      i += 1
+    } else if arg == "--cc" {
       if i + 1 >= args.size {
         job.err = "--cc needs a .c file"
         return job
       }
       obj = compile_c_file(args[i + 1])
-      if str_eq(obj, "") {
+      if obj == "" {
         job.err = "failed to compile C"
         return job
       }
       job.objects.push(obj)
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--cc=") {
       obj = compile_c_file(str_slice(arg, 5, arg.size))
-      if str_eq(obj, "") {
+      if obj == "" {
         job.err = "failed to compile C"
         return job
       }
       job.objects.push(obj)
-      i = i + 1
+      i += 1
     } else if str_starts(arg, "-l") {
       if arg.size > 2 {
         job.flags.push(arg)
-        i = i + 1
+        i += 1
       } else {
         job.err = "unknown link argument ${arg}"
         return job
       }
     } else if str_ends(arg, ".c") {
       obj = compile_c_file(arg)
-      if str_eq(obj, "") {
+      if obj == "" {
         job.err = "failed to compile C"
         return job
       }
       job.objects.push(obj)
-      i = i + 1
+      i += 1
     } else if str_ends(arg, ".o") {
       job.objects.push(arg)
-      i = i + 1
+      i += 1
     } else {
       job.err = "unknown link argument ${arg}"
       return job
@@ -837,24 +810,22 @@ pub fn split_run_args(args: Array(String)): RunSplit {
   while i < args.size {
     if seen {
       split.program.push(args[i])
-    } else if str_eq(args[i], "--") {
+    } else if args[i] == "--" {
       seen = true
     } else {
       left.push(args[i])
     }
-    i = i + 1
+    i += 1
   }
   split.has_dash = seen
   files = 0
-  j = 0
-  while j < left.size {
+  for j in 0..left.size {
     if str_ends(left[j], ".av") {
-      files = files + 1
+      files += 1
       split.file = left[j]
     } else {
       split.link.push(left[j])
     }
-    j = j + 1
   }
   if files == 0 {
     split.err = "run needs a .av file"
@@ -870,14 +841,14 @@ pub fn take_av_files(args: Array(String)): CliSplit {
   while i < args.size {
     if str_ends(args[i], ".av") {
       split.paths.push(args[i])
-      i = i + 1
+      i += 1
     } else {
       break
     }
   }
   while i < args.size {
     split.rest.push(args[i])
-    i = i + 1
+    i += 1
   }
   split
 }
@@ -894,7 +865,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     i = 0
     while i < args.size {
       split.rest.push(args[i])
-      i = i + 1
+      i += 1
     }
     return split
   }
@@ -903,7 +874,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     i = 0
     while i < args.size {
       split.rest.push(args[i])
-      i = i + 1
+      i += 1
     }
     return split
   }
@@ -912,7 +883,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     i = 0
     while i < args.size {
       split.rest.push(args[i])
-      i = i + 1
+      i += 1
     }
     return split
   }
@@ -920,7 +891,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
   i = 1
   while i < args.size {
     split.rest.push(args[i])
-    i = i + 1
+    i += 1
   }
   split
 }
@@ -929,7 +900,7 @@ pub fn verb_codegen(codegen: String, verb: String): String {
   if codegen.size > 0 {
     return codegen
   }
-  if str_eq(verb, "compile") {
+  if verb == "compile" {
     return "default"
   }
   "debug"

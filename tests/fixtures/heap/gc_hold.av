@@ -1,0 +1,246 @@
+// std.gc (Stage 29 W1c2, D305): `gc.hold { }` and `gc.collect()`.
+//
+// GC_HOLD_CASE picks what runs; every case prints the same kind of
+// sums in every collector environment, and test_gc_hints.av reads the
+// collection counts from AVANT_GC_STATS=1 in the default environment:
+//
+//   all       (the default) every case below, one after the other
+//   garbage   64 MiB of short-lived lists inside one hold: no collection
+//             runs inside it; the young collection that fell due runs
+//             at its end (young=1)
+//   plain     the same allocation with no hold: young collections run
+//   collect   ten gc.collect() inside one hold: one young collection,
+//             at the hold's end
+//   collects  ten gc.collect() with no hold: ten
+//   nested    a hold inside a hold is one hold (young=1)
+//   return    a hold left by return, then 64 MiB with no hold
+//   break     a hold left by break, then the same
+//   continue  a hold left by continue, then the same
+//   try       a hold left by `?`, then the same
+//   live      a tree built and kept inside a hold, read after it
+//   thread    a hold on the main thread while a task allocates: the task
+//             collects (other threads are not held) and nothing waits
+//             for the hold to end
+//
+// A hold that a way out failed to end would leave the 64 MiB after it
+// with no collection (young=0); the test checks young > 1 for those.
+
+import std.gc
+
+class Cell {
+  v: Int
+  next: Cell?
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+// The sum of a list's values.
+fn length(c: Cell): Int {
+  n = c.v
+  p = c.next
+  while true {
+    if x = p {
+      n += x.v
+      p = x.next
+    } else {
+      break
+    }
+  }
+  n
+}
+
+// About 64 MiB of lists of 100 cells, each dropped after its sum.
+fn churn(rounds: Int): Int {
+  total = 0
+  for r in 0..rounds {
+    head = Cell.new(0)
+    for i in 1..100 {
+      c = Cell.new(i)
+      c.next = head
+      head = c
+    }
+    total = total &+ length(head)
+  }
+  total
+}
+
+fn churn64: Int {
+  churn(20000)
+}
+
+fn by_return(k: Int): Int {
+  gc.hold {
+    if k > 0 {
+      return churn(10) + k
+    }
+  }
+  0
+}
+
+fn fails(k: Int): Int? {
+  if k > 0 {
+    return nil
+  }
+  k
+}
+
+fn by_try(k: Int): Int? {
+  gc.hold {
+    v = fails(k)?
+    return v + churn(10)
+  }
+  0
+}
+
+fn build(d: Int): Cell {
+  head = Cell.new(0)
+  for i in 0..d {
+    c = Cell.new(i % 1000)
+    c.next = head
+    head = c
+  }
+  head
+}
+
+fn case_garbage {
+  s = 0
+  gc.hold {
+    s = churn64()
+  }
+  puts("garbage ${s}")
+}
+
+fn case_plain {
+  puts("plain ${churn64()}")
+}
+
+fn case_collect {
+  s = 0
+  gc.hold {
+    for i in 0..10 {
+      s += churn(10)
+      gc.collect()
+    }
+  }
+  puts("collect ${s}")
+}
+
+fn case_collects {
+  s = 0
+  for i in 0..10 {
+    s += churn(10)
+    gc.collect()
+  }
+  puts("collects ${s}")
+}
+
+fn case_nested {
+  s = 0
+  gc.hold {
+    s = churn(10000)
+    gc.hold {
+      s += churn(10)
+    }
+    s += churn(10000)
+  }
+  puts("nested ${s}")
+}
+
+fn case_return {
+  a = by_return(3)
+  puts("return ${a} ${churn64()}")
+}
+
+fn case_break {
+  s = 0
+  for i in 0..5 {
+    gc.hold {
+      s += churn(10)
+      if i == 2 {
+        break
+      }
+    }
+  }
+  puts("break ${s} ${churn64()}")
+}
+
+fn case_continue {
+  s = 0
+  i = 0
+  while i < 3 {
+    i += 1
+    gc.hold {
+      s += churn(10)
+      if i > 0 {
+        continue
+      }
+      s += 1000000
+    }
+  }
+  puts("continue ${s} ${churn64()}")
+}
+
+fn case_try {
+  t = by_try(7) ?? -1
+  puts("try ${t} ${churn64()}")
+}
+
+fn case_live {
+  t: Cell? = nil
+  gc.hold {
+    t = build(300000)
+    churn(5000)
+  }
+  if x = t {
+    puts("live ${length(x)} ${churn(5000)} ${length(x)}")
+  }
+}
+
+fn case_thread {
+  s = 0
+  gc.hold {
+    h = spawn { churn64() }
+    s = h.join
+  }
+  puts("thread ${s}")
+}
+
+fn main {
+  which = env_get("GC_HOLD_CASE") ?? "all"
+  all = which == "all"
+  if all || which == "garbage" {
+    case_garbage()
+  }
+  if all || which == "plain" {
+    case_plain()
+  }
+  if all || which == "collect" {
+    case_collect()
+  }
+  if all || which == "collects" {
+    case_collects()
+  }
+  if all || which == "nested" {
+    case_nested()
+  }
+  if all || which == "return" {
+    case_return()
+  }
+  if all || which == "break" {
+    case_break()
+  }
+  if all || which == "continue" {
+    case_continue()
+  }
+  if all || which == "try" {
+    case_try()
+  }
+  if all || which == "live" {
+    case_live()
+  }
+  if all || which == "thread" {
+    case_thread()
+  }
+}

@@ -21,7 +21,7 @@ fn golden_progs: Array(String) {
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/objects/${names[i]}.av")
-    i = i + 1
+    i += 1
   }
   xs
 }
@@ -45,7 +45,7 @@ fn golden_of(rel: String): String {
     if rel[i] == 47 {
       base = str_slice(rel, i + 1, rel.size)
     }
-    i = i + 1
+    i += 1
   }
   "tests/goldens/objects/${str_slice(base, 0, base.size - 3)}.mir"
 }
@@ -60,13 +60,13 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < gp.size {
     progs.push(gp[i])
-    i = i + 1
+    i += 1
   }
   op = other_progs()
   i = 0
   while i < op.size {
     progs.push(op[i])
-    i = i + 1
+    i += 1
   }
 
   // Wave 1: the compiles and the dumps.
@@ -75,7 +75,7 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
   while i < progs.size {
     k = key_of(progs[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gp.size {
@@ -84,14 +84,14 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/${gp[i]}")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
-    i = i + 1
+    i += 1
   }
   run_waves(jobs)
   i = 0
   while i < progs.size {
     p = progs[i]
     c.eq_int(jobs[i].code, 0, "${p}: compiles under llvm")
-    i = i + 1
+    i += 1
   }
   base = progs.size
   i = 0
@@ -103,7 +103,7 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
-    i = i + 1
+    i += 1
   }
 
   // Wave 2: every program, then again under
@@ -118,9 +118,9 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
     e = 0
     while e < envs.size {
       runs.push(run_job_env(dir, "${k}.new", "${k}.g${e}", envs[e]))
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
   run_waves(runs)
   i = 0
@@ -137,9 +137,9 @@ fn test_objects(c: Checks, compiler: String, root: String, dir: String) {
       c.eq_int(runs[per * i + 1 + e].code, golden_status(root, p), "${p} under ${envs[e]}: the golden exit status")
       c.eq_str(log_text("${dir}/${k}.g${e}.out"), want_out, "${p} under ${envs[e]}: the golden stdout")
       c.eq_str(log_text("${dir}/${k}.g${e}.err"), want_err, "${p} under ${envs[e]}: the golden stderr (no verifier report)")
-      e = e + 1
+      e += 1
     }
-    i = i + 1
+    i += 1
   }
 }
 

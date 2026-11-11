@@ -18,16 +18,32 @@ pub fn source_read(path: String): Source? {
   nil
 }
 
-// The runtime's comparison (avant_str_eq: the two lengths first, then one
-// memcmp; Stage 28 W18P, O155) instead of a loop that asked both sizes and
-// bounds-checked both bytes at every step.
-pub fn str_eq(a: String, b: String): Bool {
-  a == b
-}
-
 pub fn str_ends(s: String, suf: String): Bool {
   if suf.size > s.size {
     return false
   }
-  str_eq(str_slice(s, s.size - suf.size, s.size), suf)
+  str_slice(s, s.size - suf.size, s.size) == suf
+}
+
+pub fn str_starts(s: String, pre: String): Bool {
+  if pre.size > s.size {
+    return false
+  }
+  str_slice(s, 0, pre.size) == pre
+}
+
+pub fn str_lt(a: String, b: String): Bool {
+  n = a.size
+  if b.size < n {
+    n = b.size
+  }
+  for i in 0..n {
+    if a[i] < b[i] {
+      return true
+    }
+    if a[i] > b[i] {
+      return false
+    }
+  }
+  a.size < b.size
 }

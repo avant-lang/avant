@@ -1,0 +1,61 @@
+// Stage 29 W1a (A4): `h.each` skips a key the body deleted earlier in the
+// walk. Before, the walk visited it with an invented value (0 or "").
+
+fn main {
+  h = Hash(String, Int).new
+  h["a"] = 1
+  h["b"] = 2
+  h["c"] = 3
+  h["d"] = 4
+  seen = 0
+  sum = 0
+  h.each { |k, v|
+    seen += 1
+    sum += v
+    if seen == 1 {
+      // Delete every other key: none of them may be visited after this.
+      for name in ["a", "b", "c", "d"] {
+        if name != k {
+          h.delete(name)
+        }
+      }
+    }
+  }
+  puts("visited ${seen}, size ${h.size}")
+  puts("sum is the first value: ${sum == 1 || sum == 2 || sum == 3 || sum == 4}")
+  s = Hash(String, String).new
+  s["x"] = "one"
+  s["y"] = "two"
+  s["z"] = "three"
+  n = 0
+  empty = 0
+  s.each { |k, v|
+    n += 1
+    if v.size == 0 {
+      empty += 1
+    }
+    if n == 1 {
+      for name in ["x", "y", "z"] {
+        if name != k {
+          s.delete(name)
+        }
+      }
+    }
+  }
+  puts("visited ${n}, empty values ${empty}, size ${s.size}")
+  m = Hash(Int, Int).new
+  for j in 0..100 {
+    m[j] = j + 1
+  }
+  zeros = 0
+  visits = 0
+  m.each { |k, v|
+    visits += 1
+    if v == 0 {
+      zeros += 1
+    }
+    m.delete(k + 1)
+    m.delete(k - 1)
+  }
+  puts("visited ${visits} of 100, zero values ${zeros}, size ${m.size}")
+}

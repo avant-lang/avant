@@ -91,6 +91,51 @@ static int is_char_type(CXType t) {
   return t.kind == CXType_Char_S || t.kind == CXType_Char_U || t.kind == CXType_SChar;
 }
 
+/* The C scalar types (Stage 29 W1b, D64 as amended): the Avant name of a
+ * C integer or float type by its exact width and signedness, or NULL when
+ * Avant has none (long double, a 128-bit integer). */
+static const char *scalar_name(CXType t) {
+  long long sz;
+  int is_unsigned;
+  t = unwrap(t);
+  switch (t.kind) {
+  case CXType_Char_S:
+  case CXType_SChar:
+  case CXType_Char_U:
+  case CXType_UChar:
+  case CXType_Short:
+  case CXType_UShort:
+  case CXType_Int:
+  case CXType_UInt:
+  case CXType_Long:
+  case CXType_ULong:
+  case CXType_LongLong:
+  case CXType_ULongLong:
+    break;
+  case CXType_Float:
+    return clang_Type_getSizeOf(t) == 4 ? "Float32" : NULL;
+  case CXType_Double:
+    return clang_Type_getSizeOf(t) == 8 ? "Float64" : NULL;
+  default:
+    return NULL;
+  }
+  sz = clang_Type_getSizeOf(t);
+  is_unsigned = t.kind == CXType_Char_U || t.kind == CXType_UChar || t.kind == CXType_UShort || t.kind == CXType_UInt ||
+                t.kind == CXType_ULong || t.kind == CXType_ULongLong;
+  switch (sz) {
+  case 1:
+    return is_unsigned ? "UInt8" : "Int8";
+  case 2:
+    return is_unsigned ? "UInt16" : "Int16";
+  case 4:
+    return is_unsigned ? "UInt32" : "Int";
+  case 8:
+    return is_unsigned ? "UInt64" : "Int64";
+  default:
+    return NULL;
+  }
+}
+
 static int bind_record_name(Bind *b, CXType t, char *out, size_t n);
 static int record_by_value(Emit *e, CXType t);
 
@@ -123,35 +168,27 @@ static void emit_type(Emit *e, CXType t) {
   case CXType_Bool:
     fputs("Bool", e->out);
     return;
+  case CXType_Char_S:
+  case CXType_SChar:
+  case CXType_Char_U:
+  case CXType_UChar:
+  case CXType_Short:
+  case CXType_UShort:
   case CXType_Int:
   case CXType_UInt:
   case CXType_Long:
   case CXType_ULong:
   case CXType_LongLong:
-  case CXType_ULongLong: {
-    long long sz = clang_Type_getSizeOf(t);
-    int unsigned_kind = t.kind == CXType_UInt || t.kind == CXType_ULong || t.kind == CXType_ULongLong;
-    if (sz == 4) {
-      if (unsigned_kind) {
-        CXString spelling = clang_getTypeSpelling(t);
-        snprintf(e->err, sizeof(e->err), "unsigned 32-bit C type %s has no Avant type; bind failed",
-                 clang_getCString(spelling));
-        e->failed = 1;
-        clang_disposeString(spelling);
-        return;
-      }
-      fputs("Int", e->out);
-      return;
+  case CXType_ULongLong:
+  case CXType_Float:
+  case CXType_Double: {
+    const char *name = scalar_name(t);
+    if (!name) {
+      goto unsupported_ty;
     }
-    if (sz == 8) {
-      fputs(unsigned_kind ? "UInt64" : "Int64", e->out);
-      return;
-    }
-    goto unsupported_ty;
-  }
-  case CXType_Double:
-    fputs("Float64", e->out);
+    fputs(name, e->out);
     return;
+  }
   case CXType_Pointer:
     emit_ptr(e, clang_getPointeeType(t));
     return;
@@ -552,39 +589,17 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
     *align = inner->align;
     return 1;
   }
-  if (t.kind == CXType_Short || t.kind == CXType_UShort || t.kind == CXType_Char_S || t.kind == CXType_Char_U ||
-      t.kind == CXType_SChar || t.kind == CXType_UChar || t.kind == CXType_Float) {
-    spelling = clang_getTypeSpelling(t);
-    raw = clang_getCString(spelling);
-    snprintf(reason, reason_n, "unsupported field type %s; skipped", raw ? raw : "?");
-    clang_disposeString(spelling);
-    return 0;
-  }
-  if (t.kind == CXType_Int || t.kind == CXType_UInt || t.kind == CXType_Long || t.kind == CXType_ULong ||
-      t.kind == CXType_LongLong || t.kind == CXType_ULongLong) {
+  if (scalar_name(t)) {
     long long sz = clang_Type_getSizeOf(t);
     long long al = clang_Type_getAlignOf(t);
-    int unsigned_kind = t.kind == CXType_UInt || t.kind == CXType_ULong || t.kind == CXType_ULongLong;
-    if (sz == 4 && al == 4) {
-      if (unsigned_kind) {
-        snprintf(reason, reason_n, "unsigned 32-bit field has no Avant type; bind failed");
-        snprintf(b->e->err, sizeof(b->e->err), "unsigned 32-bit field has no Avant type; bind failed");
-        b->e->failed = 1;
-        return 0;
-      }
-      copy_name(avant, avant_n, "Int");
-      *size = 4;
-      *align = 4;
-      return 1;
+    if (sz != al) {
+      snprintf(reason, reason_n, "scalar field is not aligned to its size; skipped");
+      return 0;
     }
-    if (sz == 8 && al == 8) {
-      copy_name(avant, avant_n, unsigned_kind ? "UInt64" : "Int64");
-      *size = 8;
-      *align = 8;
-      return 1;
-    }
-    snprintf(reason, reason_n, "integer field is not 4 or 8 bytes; skipped");
-    return 0;
+    copy_name(avant, avant_n, scalar_name(t));
+    *size = (int)sz;
+    *align = (int)al;
+    return 1;
   }
   if (t.kind == CXType_ConstantArray || t.kind == CXType_IncompleteArray || t.kind == CXType_VariableArray) {
     snprintf(reason, reason_n, "array field; skipped");

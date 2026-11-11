@@ -3,14 +3,12 @@ import harness
 fn ut_quote(s: String): String {
   b = buf_new()
   b.push_str("'")
-  i = 0
-  while i < s.size {
+  for i in 0..s.size {
     if s[i] == 39 {
       b.push_str("'\\''")
     } else {
       b.push_byte(s[i])
     }
-    i = i + 1
   }
   b.push_str("'")
   b.to_s
@@ -26,10 +24,10 @@ fn ut_has(hay: String, needle: String): Bool {
   last = hay.size - needle.size
   i = 0
   while i <= last {
-    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+    if str_slice(hay, i, i + needle.size) == needle {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -43,7 +41,7 @@ fn ut_sh(body: String, rc_path: String): Int {
   chmod_x(script)
   sh_args: Array(String) = []
   sh_args.push(script)
-  dummy_sh = process_run("/bin/sh", sh_args)
+  process_run("/bin/sh", sh_args)
   if text = file_read(rc_path) {
     t = text.strip()
     n = 0
@@ -57,7 +55,7 @@ fn ut_sh(body: String, rc_path: String): Int {
       if ok {
         n = n * 10 + (c - 48)
       }
-      i = i + 1
+      i += 1
     }
     if ok {
       return n
@@ -73,10 +71,10 @@ fn ut_index(hay: String, needle: String): Int {
   last = hay.size - needle.size
   i = 0
   while i <= last {
-    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+    if str_slice(hay, i, i + needle.size) == needle {
       return i
     }
-    i = i + 1
+    i += 1
   }
   -1
 }
@@ -91,13 +89,11 @@ fn ut_read_ms(path: String): Int {
 fn ut_fill(template: String, dir: String): String {
   parts = template.split("DIR")
   b = buf_new()
-  i = 0
-  while i < parts.size {
+  for i in 0..parts.size {
     if i > 0 {
       b.push_str(dir)
     }
     b.push_str(parts[i])
-    i = i + 1
   }
   b.to_s
 }
@@ -114,20 +110,20 @@ fn test_user_test(c: Checks) {
     mkdir_p("${root}/fetch")
 
     status_body = "fn main: Int {\n  7\n}\n"
-    dummy_st = file_write("${root}/status.av", status_body)
+    file_write("${root}/status.av", status_body)
     status_log = "${root}/status.log"
     status_rc = "${root}/status.rc"
     status_sh = "#!/bin/sh\n${ut_quote(compiler)} run ${ut_quote(root)}/status.av -- > ${ut_quote(status_log)} 2>&1; echo $? > ${ut_quote(status_rc)}\n"
     c.eq_int(ut_sh(status_sh, status_rc), 7, "fn main: Int is the process status")
 
     run_body = "fn run: Int {\n  5\n}\n"
-    dummy_rn = file_write("${root}/runint.av", run_body)
+    file_write("${root}/runint.av", run_body)
     run_rc = "${root}/runint.rc"
     run_sh = "#!/bin/sh\n${ut_quote(compiler)} run ${ut_quote(root)}/runint.av -- > ${ut_quote(root)}/runint.log 2>&1; echo $? > ${ut_quote(run_rc)}\n"
     c.eq_int(ut_sh(run_sh, run_rc), 5, "fn run: Int is the process status")
 
     bad_body = "fn main: String {\n  \"no\"\n}\n"
-    dummy_bad = file_write("${root}/badret.av", bad_body)
+    file_write("${root}/badret.av", bad_body)
     bad_log = "${root}/badret.log"
     bad_args: Array(String) = []
     bad_args.push("run")
@@ -142,7 +138,7 @@ fn test_user_test(c: Checks) {
     }
 
     bare_body = "import std\nfn main {\n}\n"
-    dummy_bare = file_write("${root}/bare.av", bare_body)
+    file_write("${root}/bare.av", bare_body)
     bare_log = "${root}/bare.log"
     bare_args: Array(String) = []
     bare_args.push("run")
@@ -156,7 +152,7 @@ fn test_user_test(c: Checks) {
       c.expect(false, "import std names the module")
     }
 
-    dummy_empty_toml = file_write("${root}/empty/avant.toml", "[package]\nname = \"empty\"\nversion = \"0.1.0\"\n")
+    file_write("${root}/empty/avant.toml", "[package]\nname = \"empty\"\nversion = \"0.1.0\"\n")
     empty_rc = "${root}/empty.rc"
     empty_sh = "#!/bin/sh\ncd ${ut_quote(root)}/empty && ${ut_quote(compiler)} test > ${ut_quote(root)}/empty.log 2>&1; echo $? > ${ut_quote(empty_rc)}\n"
     c.eq_int(ut_sh(empty_sh, empty_rc), 1, "empty selection exits 1")
@@ -169,11 +165,11 @@ fn test_user_test(c: Checks) {
     typo_sh = "#!/bin/sh\n${ut_quote(compiler)} run ${ut_quote(root)}/status.av --relase > ${ut_quote(root)}/typo.log 2>&1; echo $? > ${ut_quote(typo_rc)}\n"
     c.eq_int(ut_sh(typo_sh, typo_rc), 1, "a mistyped run flag is an error")
 
-    dummy_vec = file_write("${root}/proj/vec.av", "pub fn origin: Int {\n  4\n}\nfn hidden: Int {\n  9\n}\n")
-    dummy_fake = file_write("${root}/proj/std/testing.av", "pub fn fake: Int {\n  1\n}\n")
-    dummy_toml = file_write("${root}/proj/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
+    file_write("${root}/proj/vec.av", "pub fn origin: Int {\n  4\n}\nfn hidden: Int {\n  9\n}\n")
+    file_write("${root}/proj/std/testing.av", "pub fn fake: Int {\n  1\n}\n")
+    file_write("${root}/proj/avant.toml", "[package]\nname = \"proj\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
     imp_body = "import vec\nimport std.testing\nfn main: Int {\n  t = Test.new\n  t.check_eq(origin(), 4, \"origin\")\n  t.finish\n}\n"
-    dummy_imp = file_write("${root}/proj/tests/test_import.av", imp_body)
+    file_write("${root}/proj/tests/test_import.av", imp_body)
     imp_rc = "${root}/import.rc"
     imp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test tests/test_import.av > ${ut_quote(root)}/import.log 2>&1; echo $? > ${ut_quote(imp_rc)}\n"
     c.eq_int(ut_sh(imp_sh, imp_rc), 0, "a test under tests/ imports the project")
@@ -184,7 +180,7 @@ fn test_user_test(c: Checks) {
     }
 
     hid_body = "import vec\nfn main: Int {\n  hidden()\n}\n"
-    dummy_hid = file_write("${root}/proj/tests/hidden.av", hid_body)
+    file_write("${root}/proj/tests/hidden.av", hid_body)
     hid_log = "${root}/hidden.log"
     hid_args: Array(String) = []
     hid_args.push("run")
@@ -194,14 +190,49 @@ fn test_user_test(c: Checks) {
     c.expect(hid_code != 0, "a test does not see a private name")
 
     miss_body = "import std.testing\nfn main: Int {\n  t = Test.new\n  t.golden(\"missing-want.txt\", \"x\")\n  t.finish\n}\n"
-    dummy_miss = file_write("${root}/proj/tests/test_miss.av", miss_body)
+    file_write("${root}/proj/tests/test_miss.av", miss_body)
     miss_rc = "${root}/miss.rc"
     miss_sh = "#!/bin/sh\ncd ${ut_quote(root)}/proj && ${ut_quote(compiler)} test tests/test_miss.av > ${ut_quote(root)}/miss.log 2>&1; echo $? > ${ut_quote(miss_rc)}\n"
     c.eq_int(ut_sh(miss_sh, miss_rc), 1, "a missing golden file fails the test")
     c.expect(!file_exists("${root}/proj/missing-want.txt"), "golden does not create the expected file")
 
+    // D84 (Stage 29 W1b): a failed check fails the process, whatever
+    // main returns and whether finish runs: a void main, a main that
+    // returns 0, and a check that fails on another thread.
+    mkdir_p("${root}/d84/tests")
+    file_write("${root}/d84/avant.toml", "[package]\nname = \"d84\"\nversion = \"0.1.0\"\n")
+    file_write("${root}/d84/tests/test_void.av", "import std.testing\n\nfn main {\n  t = Test.new\n  t.check(1 == 2, \"one is two\")\n  puts(\"done\")\n}\n")
+    file_write("${root}/d84/tests/test_zero.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check_eq(1, 2, \"one is two\")\n  t.check(true, \"true holds\")\n  0\n}\n")
+    file_write("${root}/d84/tests/test_task.av", "import std.testing\n\nfn main: Int {\n  h = spawn {\n    u = Test.new\n    u.check(false, \"fails on a task\")\n    1\n  }\n  h.join\n  0\n}\n")
+    file_write("${root}/d84/tests/test_pass.av", "import std.testing\n\nfn main {\n  t = Test.new\n  t.check(true, \"true holds\")\n  puts(\"done\")\n}\n")
+    d84_names = ["void", "zero", "task"]
+    d84_fails = ["one is two", "one is two", "fails on a task"]
+    i = 0
+    while i < d84_names.size {
+      nm = d84_names[i]
+      d_rc = "${root}/d84-${nm}.rc"
+      d_log = "${root}/d84-${nm}.log"
+      d_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/d84-${nm}.xml > ${ut_quote(d_log)} 2>&1; echo $? > ${ut_quote(d_rc)}\n"
+      c.eq_int(ut_sh(d_sh, d_rc), 1, "D84: a failed check in tests/test_${nm}.av fails the run")
+      d_text = ""
+      if t = file_read(d_log) {
+        d_text = t
+      }
+      c.expect(ut_has(d_text, "FAIL ${d84_fails[i]}"), "D84: tests/test_${nm}.av ran its failing check")
+      c.expect(ut_has(d_text, "FAIL tests/test_${nm}.av") && ut_has(d_text, "1 failed, 0 passed"), "D84: the runner reports tests/test_${nm}.av as failed")
+      d_xml = ""
+      if t = file_read("${root}/d84-${nm}.xml") {
+        d_xml = t
+      }
+      c.expect(ut_has(d_xml, "failures=\"1\""), "D84: the JUnit report counts tests/test_${nm}.av as a failure")
+      i += 1
+    }
+    dp_rc = "${root}/d84-pass.rc"
+    dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/d84-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
+    c.eq_int(ut_sh(dp_sh, dp_rc), 0, "D84: a void main whose checks pass still passes")
+
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
-    dummy_fetch = file_write("${root}/fetch/avant.toml", fetch_body)
+    file_write("${root}/fetch/avant.toml", fetch_body)
     fetch_rc = "${root}/fetch.rc"
     fetch_sh = "#!/bin/sh\n${ut_quote(compiler)} fetch ${ut_quote(root)}/fetch > ${ut_quote(root)}/fetch.log 2>&1; echo $? > ${ut_quote(fetch_rc)}\n"
     c.eq_int(ut_sh(fetch_sh, fetch_rc), 0, "fetch accepts [test] and ignores it")
@@ -216,24 +247,24 @@ fn test_user_test(c: Checks) {
     }
 
     both_body = "[package]\nname = \"both\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nentry = \"main.av\"\n"
-    dummy_both = file_write("${root}/both.toml", both_body)
+    file_write("${root}/both.toml", both_body)
     mkdir_p("${root}/both")
-    dummy_both_w = file_write("${root}/both/avant.toml", both_body)
+    file_write("${root}/both/avant.toml", both_body)
     both_rc = "${root}/both.rc"
     both_sh = "#!/bin/sh\ncd ${ut_quote(root)}/both && ${ut_quote(compiler)} test > ${ut_quote(root)}/both.log 2>&1; echo $? > ${ut_quote(both_rc)}\n"
     c.eq_int(ut_sh(both_sh, both_rc), 1, "dir and entry together are an error")
 
     clock = "${root}/clock"
     mkdir_p("${clock}/tests")
-    dummy_clock_toml = file_write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
-    piece = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = env_get(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    nap()\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish\n}\n"
+    file_write("${clock}/avant.toml", "[package]\nname = \"clock\"\nversion = \"0.1.0\"\n\n[test]\nexclusive = [\"tests/test_mid.av\"]\n")
+    piece = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if file_exists(other) {\n      dummy = file_write(flag, \"met\")\n      return\n    }\n    dummy = process_run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  selected = false\n  if v = env_get(\"AVANT_TEST_ONLY\") {\n    if v.size > 0 {\n      selected = true\n    }\n  }\n  if listing {\n  } else if selected {\n  } else {\n    stamp(\"DIR/NAME.start\")\n    meet(\"DIR/right.start\", \"DIR/NAME.met\")\n    stamp(\"DIR/NAME.end\")\n  }\n  t.parallel(\"pa\") {\n    stamp(\"DIR/NAME.pa.start\")\n    nap()\n    stamp(\"DIR/NAME.pa.end\")\n    nil\n  }\n  t.parallel(\"pb\") {\n    stamp(\"DIR/NAME.pb.start\")\n    nap()\n    stamp(\"DIR/NAME.pb.end\")\n    nil\n  }\n  t.finish\n}\n"
     left = ut_fill(piece, clock)
     left = ut_fill_name(left, "left")
-    right_src = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    nap()\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish\n}\n"
+    right_src = "import std.testing\nfn meet(other: String, flag: String) {\n  args: Array(String) = []\n  args.push(\"0.05\")\n  i = 0\n  while i < 6000 {\n    if file_exists(other) {\n      dummy = file_write(flag, \"met\")\n      return\n    }\n    dummy = process_run(\"/bin/sleep\", args)\n    i = i + 1\n  }\n}\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/right.start\")\n    meet(\"${clock}/left.start\", \"${clock}/right.met\")\n    stamp(\"${clock}/right.end\")\n  }\n  t.finish\n}\n"
     mid_src = "import std.testing\nfn stamp(path: String) {\n  dummy = file_write(path, \"\${now_ms()}\")\n}\nfn nap() {\n  args: Array(String) = []\n  args.push(\"1\")\n  dummy = process_run(\"/bin/sleep\", args)\n}\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    if v == \"1\" {\n      listing = true\n    }\n  }\n  if listing {\n  } else {\n    stamp(\"${clock}/mid.start\")\n    nap()\n    stamp(\"${clock}/mid.end\")\n  }\n  t.finish\n}\n"
-    dummy_left = file_write("${clock}/tests/test_left.av", left)
-    dummy_right = file_write("${clock}/tests/test_right.av", right_src)
-    dummy_mid = file_write("${clock}/tests/test_mid.av", mid_src)
+    file_write("${clock}/tests/test_left.av", left)
+    file_write("${clock}/tests/test_right.av", right_src)
+    file_write("${clock}/tests/test_mid.av", mid_src)
     clock_rc = "${root}/clock.rc"
     clock_sh = "#!/bin/sh\ncd ${ut_quote(clock)} && ${ut_quote(compiler)} test --jobs 2 > ${ut_quote(root)}/clock.log 2>&1; echo $? > ${ut_quote(clock_rc)}\n"
     c.eq_int(ut_sh(clock_sh, clock_rc), 0, "overlap fixture exits 0")
@@ -247,18 +278,15 @@ fn test_user_test(c: Checks) {
     pbe = ut_read_ms("${clock}/left.pb.end")
     ms = ut_read_ms("${clock}/mid.start")
     me = ut_read_ms("${clock}/mid.end")
-    c.expect(ls >= 0 && le > ls && rs >= 0 && re > rs, "serial intervals were recorded")
-    // Under an outer AVANT_GC_STRESS the runner's compiles of the two files
-    // (the compiler collecting at every runtime helper call) can outlast
-    // the first file's three one-second naps, so whether their runs
-    // overlap measures the stressed compiler, not the scheduler (Stage 28
-    // W15a2: twice in four stress passes once C-stack pinning made the
-    // stressed compiler slower). The parallel and exclusive checks hold.
-    if gc_stress_outer() {
-      c.skip("non-exclusive files overlap", "outer AVANT_GC_STRESS: the stressed compiler's compile time decides the overlap")
-    } else {
-      c.expect(ls < re && rs < le, "non-exclusive files overlap")
-    }
+    c.expect(ls >= 0 && le >= ls && rs >= 0 && re >= rs, "serial intervals were recorded")
+    // O86 (Stage 29 W1b): the two non-exclusive files meet. Each, once
+    // running, waits (up to 300 s) until the other has started and records
+    // that it saw it; both can only do so if their runs overlap, however
+    // long the runner's compiles take. Before, each slept one second and
+    // the intervals were compared, so under an outer AVANT_GC_STRESS the
+    // stressed compiler's compile time decided the result and the check
+    // was skipped there (Stage 28 W15a2).
+    c.expect(file_exists("${clock}/left.met") && file_exists("${clock}/right.met"), "non-exclusive files overlap")
     c.expect(pas >= 0 && pae > pas && pbs >= 0 && pbe > pbs, "parallel intervals were recorded")
     c.expect(pas < pbe && pbs < pae, "parallel tests in one file overlap")
     c.expect(ms >= 0 && me > ms, "exclusive interval was recorded")
@@ -277,9 +305,9 @@ fn test_user_test(c: Checks) {
     // comes before the broken file's FAIL line, though it sorts after it.
     order = "${root}/order"
     mkdir_p("${order}/tests")
-    dummy_order_toml = file_write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
-    dummy_oa = file_write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
-    dummy_oz = file_write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"z\")\n  t.finish\n}\n")
+    file_write("${order}/avant.toml", "[package]\nname = \"order\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_z.av\"]\n")
+    file_write("${order}/tests/test_a.av", "fn main: Int {\n  missing_name()\n}\n")
+    file_write("${order}/tests/test_z.av", "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"z\")\n  t.finish\n}\n")
     order_rc = "${root}/order.rc"
     order_sh = "#!/bin/sh\ncd ${ut_quote(order)} && ${ut_quote(compiler)} test --jobs 1 > ${ut_quote(root)}/order.log 2>&1; echo $? > ${ut_quote(order_rc)}\n"
     c.eq_int(ut_sh(order_sh, order_rc), 1, "first fixture fails on its broken file")
@@ -293,8 +321,8 @@ fn test_user_test(c: Checks) {
 
     nofirst = "${root}/nofirst"
     mkdir_p("${nofirst}/tests")
-    dummy_nf_toml = file_write("${nofirst}/avant.toml", "[package]\nname = \"nofirst\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_gone.av\"]\n")
-    dummy_nf = file_write("${nofirst}/tests/test_here.av", "fn main: Int {\n  0\n}\n")
+    file_write("${nofirst}/avant.toml", "[package]\nname = \"nofirst\"\nversion = \"0.1.0\"\n\n[test]\nfirst = [\"tests/test_gone.av\"]\n")
+    file_write("${nofirst}/tests/test_here.av", "fn main: Int {\n  0\n}\n")
     nf_rc = "${root}/nofirst.rc"
     nf_sh = "#!/bin/sh\ncd ${ut_quote(nofirst)} && ${ut_quote(compiler)} test > ${ut_quote(root)}/nofirst.log 2>&1; echo $? > ${ut_quote(nf_rc)}\n"
     c.eq_int(ut_sh(nf_sh, nf_rc), 1, "a first path that is not a test is an error")
@@ -311,13 +339,11 @@ fn test_user_test(c: Checks) {
 fn ut_fill_name(template: String, name: String): String {
   parts = template.split("NAME")
   b = buf_new()
-  i = 0
-  while i < parts.size {
+  for i in 0..parts.size {
     if i > 0 {
       b.push_str(name)
     }
     b.push_str(parts[i])
-    i = i + 1
   }
   b.to_s
 }

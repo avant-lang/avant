@@ -75,7 +75,7 @@ fn st_base(shared: Bool): MirBuilder {
   b = MirBuilder.new(m)
   b.file("t.av")
   box = b.note_layout("main.Box", mlk_class(), st_tys(mt_str(), -1), st_names("name"))
-  dummy = b.type_id(box)
+  b.type_id(box)
   rec = b.note_layout("main.Rec", mlk_struct(), st_tys(mt_str(), -1), st_names("s"))
   st_maker(b, "mk")
   st_maker(b, "name")
@@ -136,10 +136,8 @@ fn st_case(out: Buf, name: String, stage: Int, m: MModule) {
   }
   out.push_str("case ${name} ${sname} ${mir_verify_rules(m, stage)}\n")
   errs = mir_verify(m, stage)
-  i = 0
-  while i < errs.size {
+  for i in 0..errs.size {
     out.push_str("  ${errs[i]}\n")
-    i = i + 1
   }
 }
 
@@ -425,7 +423,7 @@ pub fn mir_selftest_finals: Array(String) {
 pub fn st_ok_module(name: String): MModule {
   b = st_base(false)
   vd = mt_void()
-  if str_eq(name, "ok_ref_across_nocollect") {
+  if name == "ok_ref_across_nocollect" {
     // A ref held across nocollect calls needs no slot.
     st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
     l1 = b.local(mt_str(), "")
@@ -436,7 +434,7 @@ pub fn st_ok_module(name: String): MModule {
     b.call(-1, "printf", st_two(b.str_const("%s\n"), b.copy_local(l1)))
     b.gc_leave
     b.ret
-  } else if str_eq(name, "ok_fresh_fill_closed") {
+  } else if name == "ok_fresh_fill_closed" {
     // A fresh fill held in a slot, closed by its barrier.
     box_ref = b.ref_to(st_box(b))
     st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
@@ -450,7 +448,7 @@ pub fn st_ok_module(name: String): MModule {
     b.barrier(0)
     b.gc_leave
     b.ret
-  } else if str_eq(name, "ok_addr_in_slot") {
+  } else if name == "ok_addr_in_slot" {
     // A derived address live across a collecting call, in a slot.
     box_ref = b.ref_to(st_box(b))
     st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
@@ -521,23 +519,19 @@ fn st_accepting(out: Buf) {
 // slots LIST`, then the verifier's answer at final for the case.
 fn st_pass_report(out: Buf, name: String, m: MModule, first: Int) {
   mir_gc_passes(m)
-  i = first
-  while i < m.funcs.size {
+  for i in first..m.funcs.size {
     f = m.funcs[i]
     kind = "frame"
     if f.kind == mfk_leaf() {
       kind = "leaf"
     }
     sl = buf_new()
-    k = 0
-    while k < f.locals.size {
+    for k in 0..f.locals.size {
       if f.valid_local(k) && f.locals[k].slot {
         sl.push_str(" _${k}")
       }
-      k = k + 1
     }
     out.push_str("pass ${name} ${f.symbol} ${kind} slots${sl.to_s}\n")
-    i = i + 1
   }
   st_case(out, name, mst_final(), m)
 }
@@ -592,8 +586,7 @@ fn st_passes(out: Buf) {
   // Leaves: a holds a ref and calls only a never row; c calls the leaf a
   // (re-marked nocollect) and is a leaf; d calls churn and is a frame.
   // In a shared module a is a frame (V19), and so is c.
-  sh = 0
-  while sh < 2 {
+  for sh in 0..2 {
     b = st_base(sh == 1)
     first = b.module.funcs.size
     st_fn(b, "a", st_tys(mt_str(), -1), mt_i32(), un)
@@ -610,7 +603,6 @@ fn st_passes(out: Buf) {
       name = "pass_leaves_shared"
     }
     st_pass_report(out, name, b.module, first)
-    sh = sh + 1
   }
 }
 
@@ -624,10 +616,8 @@ fn st_passes(out: Buf) {
 
 // n locals of type ty, numbered from the first free one.
 fn st_fill(b: MirBuilder, n: Int, ty: Int) {
-  i = 0
-  while i < n {
-    dummy = b.local(ty, "")
-    i = i + 1
+  for i in 0..n {
+    b.local(ty, "")
   }
 }
 
@@ -640,7 +630,7 @@ fn st_insert(blk: MBlock, at: Int, st: MStmt) {
       xs.push(st)
     }
     xs.push(blk.stmts[i])
-    i = i + 1
+    i += 1
   }
   if at >= blk.stmts.size {
     xs.push(st)
@@ -650,12 +640,10 @@ fn st_insert(blk: MBlock, at: Int, st: MStmt) {
 
 // The index of the first call to callee in blk, or -1.
 fn st_find_call(blk: MBlock, callee: String): Int {
-  i = 0
-  while i < blk.stmts.size {
-    if blk.stmts[i].kind == msk_call() && str_eq(blk.stmts[i].callee, callee) {
+  for i in 0..blk.stmts.size {
+    if blk.stmts[i].kind == msk_call() && blk.stmts[i].callee == callee {
       return i
     }
-    i = i + 1
   }
   -1
 }
@@ -680,7 +668,7 @@ fn st_wide(out: Buf) {
   k = 2
   while k <= 70 {
     b.assign(b.pl(k), b.rv_use(b.c_i32(k)))
-    k = k + 1
+    k += 1
   }
   bb1 = b.block
   bb2 = b.block
@@ -886,13 +874,11 @@ fn st_wide(out: Buf) {
   f = m.funcs[first]
   f.locals[1].slot = false
   blk = f.blocks[0]
-  i = 0
-  while i < blk.stmts.size {
+  for i in 0..blk.stmts.size {
     if blk.stmts[i].kind == msk_gc_roots() {
       none: Array(Int) = []
       blk.stmts[i].locals = none
     }
-    i = i + 1
   }
   st_case(out, "slot_dropped_after_passes", fi, m)
 

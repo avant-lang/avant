@@ -31,7 +31,7 @@ fn runtime_objects(root: String): Array(String) {
   i = 0
   while i < names.size {
     objs.push("${root}/runtime/build/${names[i]}")
-    i = i + 1
+    i += 1
   }
   objs
 }
@@ -55,7 +55,7 @@ fn link_args(root: String, obj: String, bin: String): Array(String) {
   i = 0
   while i < objs.size {
     a.push(objs[i])
-    i = i + 1
+    i += 1
   }
   a.push("-pthread")
   a.push("-lm")
@@ -105,7 +105,7 @@ fn test_hello_modes(c: Checks, compiler: String, root: String, dir: String) {
   while i < modes.size {
     t = mode_tag(modes[i])
     compiles.push(HJob.new(compiler, hook_args(hello, "${dir}/hello-${t}.o", modes[i]), "${dir}/hello-${t}.compile.log"))
-    i = i + 1
+    i += 1
   }
   run_jobs(compiles)
   links: Array(HJob) = []
@@ -113,7 +113,7 @@ fn test_hello_modes(c: Checks, compiler: String, root: String, dir: String) {
   while i < modes.size {
     t = mode_tag(modes[i])
     links.push(HJob.new("/usr/bin/env", link_args(root, "${dir}/hello-${t}.o", "${dir}/hello-${t}"), "${dir}/hello-${t}.link.log"))
-    i = i + 1
+    i += 1
   }
   run_jobs(links)
   runs: Array(HJob) = []
@@ -121,7 +121,7 @@ fn test_hello_modes(c: Checks, compiler: String, root: String, dir: String) {
   while i < modes.size {
     t = mode_tag(modes[i])
     runs.push(HJob.new("/usr/bin/env", run_args("${dir}/hello-${t}"), "${dir}/hello-${t}.run.log"))
-    i = i + 1
+    i += 1
   }
   run_jobs(runs)
 
@@ -133,7 +133,7 @@ fn test_hello_modes(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(links[i].code, 0, "cc links hello ${t} with the runtime")
     c.eq_int(runs[i].code, 0, "hello ${t} exits 0 under AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1")
     c.eq_str(log_text(runs[i].log), "Hello Avant 42\n", "hello ${t} output, verifier silent")
-    i = i + 1
+    i += 1
   }
 }
 

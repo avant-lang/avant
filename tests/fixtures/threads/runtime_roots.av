@@ -1,0 +1,95 @@
+// O70 (Stage 29 W1b): the runtime's thread-local references are roots of
+// every thread's collections, not only of the collecting thread's. Each
+// of six tasks puts a fresh key into a hash it then drops (`inc_slice`
+// copies the slice into a new heap string), so `hash_last_key()`'s
+// thread-local slot (avant_hash.c, g_last_key) is the key's only
+// reference; it churns young strings and objects while the main thread
+// and the other tasks do the same, so most collections run on another
+// thread; then it reads the key back. Each task also parses a JSON
+// document per round (avant_json.c keeps the pool in a thread-local slot
+// between the parse and the Json value) and reads a field and a string
+// back. Every value is checked, and the program prints 0 wrong reads in
+// every environment. With gc_each_runtime_root walking only the
+// collecting thread's slots (the code before Stage 28 W17a), the key reads
+// back wrong or the verifier reports the slot.
+
+import std.json
+
+class Cell {
+  v: Int
+  s: String
+
+  fn initialize(v: Int, s: String) {
+    self.v = v
+    self.s = s
+  }
+}
+
+fn churn(id: Int, r: Int, n: Int): Int {
+  keep: Array(Cell) = []
+  bad = 0
+  for i in 0..n {
+    keep.push(Cell.new(i, "c${id}-${r}-${i}"))
+    if keep.size > 40 {
+      if keep[0].s.size < 5 {
+        bad += 1
+      }
+      keep.clear
+    }
+  }
+  bad
+}
+
+fn work(id: Int, rounds: Int): Int {
+  bad = 0
+  for r in 0..rounds {
+    text = "pre-w${id}-r${r}-post"
+    want = "w${id}-r${r}"
+    h = Hash(String, Int).new
+    if h.inc_slice(text, 4, text.size - 5) != 1 {
+      bad += 1
+    }
+    h = Hash(String, Int).new
+    text = ""
+    bad += churn(id, r, 300)
+    if hash_last_key() != want {
+      bad += 1
+    }
+    if doc = Json.parse("{\"id\": ${id}, \"round\": ${r}, \"name\": \"t${id}\"}") {
+      bad += churn(id, r, 50)
+      if n = doc.int("round") {
+        if n != r {
+          bad += 1
+        }
+      } else {
+        bad += 1
+      }
+      if s = doc.str("name") {
+        if s != "t${id}" {
+          bad += 1
+        }
+      } else {
+        bad += 1
+      }
+    } else {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn main {
+  hs: Array(JoinHandle(Int)) = []
+  for k in 0..6 {
+    id = k
+    hs.push(spawn { work(id, 40) })
+  }
+  mbad = 0
+  for r in 0..120 {
+    mbad += churn(99, r, 200)
+  }
+  wbad = 0
+  hs.each { |h| wbad = wbad + h.join }
+  puts("task bad reads: ${wbad}")
+  puts("main bad reads: ${mbad}")
+}

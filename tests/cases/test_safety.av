@@ -5,7 +5,7 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body:
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
   rlog = "${scratch()}/safety-waveb-${stamp}-${tag}.rlog"
-  dummy = file_write(src, body)
+  file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
   c.expect(file_exists(bin), "${tag} bin exists")
@@ -24,7 +24,7 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
-  dummy = file_write(src, body)
+  file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code != 0, "${tag} is a compile error")
   c.expect(!file_exists(bin), "${tag} writes no binary")
@@ -54,7 +54,7 @@ fn test_safety(c: Checks) {
   } else {
     c.expect(true, "array get oob is nil")
   }
-  if v = xs.get(0 - 1) {
+  if v = xs.get(-1) {
     c.expect(false, "array get neg is nil")
   } else {
     c.expect(true, "array get neg is nil")
@@ -97,7 +97,7 @@ fn test_safety(c: Checks) {
   c.eq_int(low &- 1, 2147483647, "wrap sub")
   c.eq_int(65536 &* 65536, 0, "wrap mul")
   // C4 (W11b): MIN % -1 is 0 for Int and Int64; C1: shifts inside the range.
-  minus_one = 0 - 1
+  minus_one = -1
   c.eq_int(low % minus_one, 0, "Int MIN % -1 is 0")
   low64 = 0i64 - 9223372036854775807i64 - 1i64
   c.expect(low64 % minus_one.to_i64 == 0i64, "Int64 MIN % -1 is 0")
@@ -146,6 +146,20 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "pop-empty-struct", "struct P {\n  a: Int\n  b: Int\n}\nfn main {\n  xs: Array(P) = []\n  q = xs.pop()\n  puts(q.a)\n}\n", "index -1 out of bounds (size 0)")
     expect_trap_waveb(c, compiler, stamp, "pop-empty-ref", "fn main {\n  xs = [\"a\"]\n  puts(xs.pop)\n  puts(xs.pop)\n}\n", "index -1 out of bounds (size 0)")
     expect_trap_waveb(c, compiler, stamp, "buf-oob", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  puts(b[5])\n}\n", "out of bounds")
+    // D64 as amended (Stage 29 W1b): a value passed or stored as a C
+    // scalar type that cannot hold it traps (D215); the C function is
+    // never called. Compile errors: a C scalar type outside a `fun`
+    // signature or a C layout's field, and in a C callback.
+    expect_trap_waveb(c, compiler, stamp, "c-u8-arg", "lib c {\n  fun abs(x: UInt8): Int\n}\nfn main {\n  puts(c.abs(256))\n}\n", "avant runtime: 256 out of range for the C type UInt8 (0..255)")
+    expect_trap_waveb(c, compiler, stamp, "c-i8-arg", "lib c {\n  fun abs(x: Int8): Int\n}\nfn main {\n  puts(c.abs(-129))\n}\n", "avant runtime: -129 out of range for the C type Int8 (-128..127)")
+    expect_trap_waveb(c, compiler, stamp, "c-i16-arg", "lib c {\n  fun abs(x: Int16): Int\n}\nfn main {\n  puts(c.abs(40000))\n}\n", "avant runtime: 40000 out of range for the C type Int16 (-32768..32767)")
+    expect_trap_waveb(c, compiler, stamp, "c-u16-arg", "lib c {\n  fun abs(x: UInt16): Int\n}\nfn main {\n  puts(c.abs(-1))\n}\n", "avant runtime: -1 out of range for the C type UInt16 (0..65535)")
+    expect_trap_waveb(c, compiler, stamp, "c-u32-arg", "lib c {\n  fun labs(x: UInt32): Int64\n}\nfn main {\n  puts(c.labs(4294967296i64))\n}\n", "avant runtime: 4294967296 out of range for the C type UInt32 (0..4294967295)")
+    expect_trap_waveb(c, compiler, stamp, "c-field-store", "lib c {\n  struct Px {\n    r: UInt8\n  }\n  fun calloc(n: Int64, size: Int64): Ptr(Px)\n}\nfn main {\n  p = c.calloc(1i64, 8i64)\n  p.r = 255\n  puts(p.r)\n  p.r += 1\n  puts(p.r)\n}\n", "avant runtime: 256 out of range for the C type UInt8 (0..255)")
+    expect_compile_error(c, compiler, stamp, "c-scalar-local", "fn main {\n  x: UInt8 = 1\n  puts(x)\n}\n", "UInt8 is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is Int)")
+    expect_compile_error(c, compiler, stamp, "c-scalar-param", "fn f(x: Float32): Int {\n  1\n}\nfn main {\n  puts(f(1.0))\n}\n", "Float32 is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is Float64)")
+    expect_compile_error(c, compiler, stamp, "c-scalar-field", "struct S {\n  a: UInt32\n}\nfn main {\n  s = S { a: 1i64 }\n  puts(s.a)\n}\n", "UInt32 is a C type")
+    expect_compile_error(c, compiler, stamp, "c-scalar-callback", "lib c {\n  fun qsort(p: Ptr(Void), n: Int64, s: Int64, f: fn(UInt8): Int)\n}\nfn main {\n  puts(1)\n}\n", "a C callback cannot take or return UInt8 yet; use its Avant type (Int)")
     expect_trap_waveb(c, compiler, stamp, "div-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x / y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "rem-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x % y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "overflow-add", "fn main {\n  x = 2147483647\n  y = 1\n  puts(x + y)\n}\n", "integer overflow")
@@ -170,7 +184,7 @@ fn test_safety(c: Checks) {
     bad_src = "${scratch()}/safety-waveb-${stamp}-unknown.av"
     bad_bin = "${scratch()}/safety-waveb-${stamp}-unknown.bin"
     bad_log = "${scratch()}/safety-waveb-${stamp}-unknown.log"
-    dummy_b = file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
+    file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
     code_b = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
     c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
@@ -184,7 +198,7 @@ fn test_safety(c: Checks) {
     c.expect(code_r != 0, "unknown-fn run exits non-zero")
 
     hi_src = "${scratch()}/safety-waveb-${stamp}-hi.av"
-    dummy_h = file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
+    file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
     dbg_bin = "${scratch()}/safety-waveb-${stamp}-hi-dbg.bin"
     dbg_log = "${scratch()}/safety-waveb-${stamp}-hi-dbg.log"
     dbg_flags: Array(String) = []

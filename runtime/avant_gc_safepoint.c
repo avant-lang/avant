@@ -323,6 +323,8 @@ void gc_thread_unregistering(void) {
  * thread. */
 void gc_thread_exiting(void) {
   gc_thread.nogc = 0;
+  gc_thread.hold = 0;
+  gc_thread.hold_young = 0;
   gc_thread.base_native = 0;
   if (gc_thread.native > 0) {
     gc_thread.native = 1;

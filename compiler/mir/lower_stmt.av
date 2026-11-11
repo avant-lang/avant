@@ -33,13 +33,13 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
           return
         }
         lw.at(st.loc)
-        dummy = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
+        lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
         lw.lw_b.ret
         return
       }
     }
     lw.lower_stmt(st)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -50,7 +50,7 @@ pub fn (lw: MirLower) lower_stmts(body: Array(Stmt)) {
       return
     }
     lw.lower_stmt(body[i])
-    i = i + 1
+    i += 1
   }
 }
 
@@ -59,7 +59,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
   k = st.kind
   if k == st_expr() {
     if e = st.expr {
-      dummy = lw.lower_expr(e)
+      lw.lower_expr(e)
     }
     return
   }
@@ -95,6 +95,10 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
   }
   if k == st_pin() {
     lw.lower_pin(st)
+    return
+  }
+  if k == st_hold() {
+    lw.lower_hold(st)
     return
   }
   if k == st_release() {
@@ -139,7 +143,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
           }
           k = lw.var_get(t.ident, ty)
           lw.at(st.loc)
-          dummy = lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(val))
+          lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(val))
           return
         }
         // x op= v: the old value, then v, then the checked op (W5.2).
@@ -155,7 +159,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
         }
         r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
         lw.at(st.loc)
-        dummy2 = lw.lw_b.assign(lw.lw_b.pl(k2), lw.lw_b.rv_use(r))
+        lw.lw_b.assign(lw.lw_b.pl(k2), lw.lw_b.rv_use(r))
       }
       return
     }
@@ -200,9 +204,9 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
     }
     lw.at(st.loc)
     if lw.lw_ret != mt_void() {
-      dummy = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
+      lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
     } else if lw.lw_main {
-      dummy2 = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
+      lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
     }
     lw.unpin_all
     lw.lw_b.ret
@@ -210,7 +214,7 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
   }
   lw.at(st.loc)
   if lw.lw_main {
-    dummy3 = lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
+    lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
   }
   lw.unpin_all
   lw.lw_b.ret
@@ -283,8 +287,8 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.cov_branch(st.loc)
   lw.lower_stmts(st.body)
   lw.goto_if_open(head, st.loc)
-  dummy = lw.lw_heads.pop
-  dummy2 = lw.lw_exits.pop
+  lw.lw_heads.pop
+  lw.lw_exits.pop
   lw.lw_b.at(exit)
 }
 
@@ -312,7 +316,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     lw.at(e.loc)
     if cty == mt_bool() {
       tb = lw.lw_b.temp(mt_i32())
-      dummy = lw.lw_b.assign(lw.lw_b.pl(tb), lw.lw_b.rv_cast(cv, mt_i32()))
+      lw.lw_b.assign(lw.lw_b.pl(tb), lw.lw_b.rv_cast(cv, mt_i32()))
       cv = lw.lw_b.copy_local(tb)
       cty = mt_i32()
     }
@@ -323,7 +327,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     dest = -1
     if rty != mt_void() {
       dest = lw.lw_b.temp(rty)
-      dummy2 = lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero)
+      lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero)
     }
     values: Array(Int64) = []
     targets: Array(Int) = []
@@ -333,20 +337,17 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     // label, the old back end's emit_switch: one branch slot per label).
     entries: Array(Int) = []
     entry_arm: Array(Int) = []
-    i = 0
-    while i < e.cases.size {
+    for i in 0..e.cases.size {
       arm = lw.lw_b.block
       arms.push(arm)
       j = 0
       while j < e.cases[i].labels.size {
         v = e.cases[i].labels[j]
         seen = false
-        q = 0
-        while q < values.size {
-          if values[q] == v {
+        for val in values {
+          if val == v {
             seen = true
           }
-          q = q + 1
         }
         if !seen {
           values.push(v)
@@ -359,9 +360,8 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
             targets.push(arm)
           }
         }
-        j = j + 1
+        j += 1
       }
-      i = i + 1
     }
     other = -1
     if e.has_else || lw.lw_cov.on {
@@ -373,22 +373,18 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     lw.at(e.loc)
     lw.lw_b.switch_on(cv, values, targets, other)
-    i = 0
-    while i < e.cases.size {
-      q2 = 0
-      while q2 < entries.size {
+    for i in 0..e.cases.size {
+      for q2 in 0..entries.size {
         if entry_arm[q2] == i {
           lw.lw_b.at(entries[q2])
           lw.cov_branch(e.cases[i].loc)
           lw.at(e.cases[i].loc)
           lw.lw_b.goto(arms[i])
         }
-        q2 = q2 + 1
       }
       lw.lw_b.at(arms[i])
       lw.lower_arm(e.cases[i].body, dest, e)
       lw.goto_if_open(join, e.cases[i].loc)
-      i = i + 1
     }
     if e.has_else || lw.lw_cov.on {
       lw.lw_b.at(other)
@@ -430,11 +426,11 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
           return
         }
         lw.at(st.loc)
-        dummy2 = lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_use(v))
+        lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_use(v))
         return
       }
     }
     lw.lower_stmt(st)
-    i = i + 1
+    i += 1
   }
 }

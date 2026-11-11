@@ -40,7 +40,7 @@ avant compile hello.av hi   # or build a binary named hi
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, or `SIGTERM`; only `kill -9` or a crash leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
+`compile`, `run`, `test`, `fetch`, and `bind` keep every intermediate file (the IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). The directory is removed when the command exits, including on an error, Ctrl-C, `SIGTERM`, or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`: the process still dies by the signal); only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it. Nothing needs to be configured. `--keep-tmp` keeps the directory for debugging and prints its path; a program run on its own keeps its directory with `AVANT_KEEP_TMP=1`, which `--keep-tmp` also sets for the processes the command starts.
 
 That is enough to write and run Avant today. Building the Avant compiler itself is covered at the end, under [Advanced: building the compiler](#advanced-building-the-compiler).
 
@@ -151,6 +151,8 @@ fn main {
 
 `q` is a separate `Point`. Changing `q.x` does not change `p.x`.
 
+A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
+
 Inside a method, a field name is in scope. `self` is the receiver. An external method is a function with a receiver parameter:
 
 ```avant
@@ -214,7 +216,7 @@ class Counter {
 
 ### Generic functions
 
-An unbound name in a signature is a type parameter. The call site omits it when the arguments determine it.
+A single capital letter that names no type (`T`, `U`, `K`) in a signature is a type parameter. The call site omits it when the arguments determine it. Any other unknown name is an error, so a misspelt type is caught where it is written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``. A generic struct or class names its parameters in its declaration (`class Entry(Key, Val)`), where any fresh name is allowed.
 
 ```avant
 fn id(x: T): T {
@@ -244,6 +246,8 @@ fn label(v: Int | String): Int {
   1
 }
 ```
+
+A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
 
 Failure is a union member. There is no unwind. See [Errors](#errors).
 
@@ -280,6 +284,8 @@ fn main {
 ```
 
 The `if v = ...` form is [if-assign](#if-and-while). `v` exists only in the then-block.
+
+`h.each { |k, v| ... }` walks every key with its value; the order is unspecified. A key the block deletes before the walk reaches it is not visited.
 
 ### Function values
 
@@ -490,13 +496,15 @@ fn main {
 }
 ```
 
+The range's ends and the array are read like an `if` or `while` condition: a struct literal there needs parentheses, brackets or a call around it (`for p in [Point { x: 1 }]`), so a body that starts with a typed declaration (`row: Array(Bool) = []`) is never taken for a literal.
+
 The comptime field walk in [Macros](#macros) is the other `for`, and it keeps its own spelling.
 
 ## Modules
 
 A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. A keyword after a dot is a name, so `import http.spawn` loads `http/spawn.av` and a clash is qualified as `http.spawn.Server`. A keyword that starts a phrase stays that keyword. There is no `module` line, and a directory is not a module.
 
-The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate. The first segment `std` is reserved for the standard library. `import std.testing` loads the bundled test library, and a project file cannot take that name.
+The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. Names belong to their module: two modules may publish the same type or function name, even a function with the same parameters, and a module may define a name that an import also publishes. Only a use that sees more than one is an error, at that use; qualify it with the full module name (`http.server.Server`, `alpha.value()`; a module may also qualify its own names, as `main.helper()`). Functions with different parameter types still meet as one overload set: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments. A qualified call reaches only that module's `pub` functions. Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate. The first segment `std` is reserved for the standard library. `import std.testing` loads the bundled test library, and a project file cannot take that name.
 
 A file under `tests/math/` can import the project next to `avant.toml` and use the public names unqualified:
 
@@ -520,6 +528,21 @@ fn main {
 ```
 
 `origin` is `pub` in `vec.av`. `fn main` in the root is the entry point. It is not `pub`.
+
+Fields follow the same rule: a field is private to its type's module unless it is marked `pub`. Outside that module a private field cannot be read, written, or named in a literal, so a type with private fields is built there by a function of its module, which keeps its invariants. `vec.av` publishes both fields of `Vec2`, so the importer above may read `v.x` and write `Vec2 { x: 1, y: 2 }`:
+
+```avant
+pub struct Vec2 {
+  pub x: Int
+  pub y: Int
+}
+
+pub fn origin: Vec2 {
+  Vec2 { x: 0, y: 0 }
+}
+```
+
+A read-only view is a `pub fn`, which reads like a field (`a.balance`). A comptime walk over `T.fields` written in another module than `T`'s sees only `T`'s `pub` fields, the ones its generated code could name. The fields of a C layout (`lib`) are C's and stay visible wherever the layout is.
 
 ### Packages
 
@@ -714,7 +737,7 @@ avant fetch: dependency greeter resolves to two different commits (...); one ver
 
 Align the pins in `avant.toml` (your manifest's entry is the one to change, since transitive requests are fixed by their publishers) and fetch again. One name always means one version in a project.
 
-The third clash is about public names, and predates packages: if two imported modules publish the same name, qualify the use with the module name, as in `lexer.Lexer`. Fetching a package does not change that rule.
+The third clash is about public names, and predates packages: if two imported modules publish the same name, a use that could mean either is an error, and qualifying it with the module name, as in `lexer.Lexer` or `alpha.value()`, says which. Two functions with the same name and parameters report it at the call, naming both qualified forms (`error[E4000]: ambiguous call to value: alpha.value and gamma.value both match; write alpha.value() or gamma.value()`). Fetching a package does not change that rule.
 
 For example, suppose one fetched dependency provides `alpha.av`, which publishes a function named `value`:
 
@@ -728,7 +751,7 @@ Another provides `beta.av`, which publishes a class with the same name:
 
 ```avant
 pub class value {
-  n: Int
+  pub n: Int
 
   fn initialize(n: Int) {
     self.n = n
@@ -820,6 +843,8 @@ fn bump(id: Int): Int? {
 
 If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
 
+`?` compiles only where the failure can be returned: on a `T?` the function's result must include `nil`, and on another union the result must hold its failure members. Otherwise it is a compile error that names the result type (`postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+
 `if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
 
 ### Compiled errors
@@ -836,6 +861,8 @@ error[E4001]: unknown name nosuch1
 ```
 
 With several errors, the run ends with a summary line: `error: aborting due to N previous errors`.
+
+A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
 
 The first digit of the code names the phase that found the error: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion. Recovery is per statement: a bad statement does not hide errors in later statements, functions, or imported files.
 
@@ -855,7 +882,7 @@ fn main {
 
 `size` is the byte length. Strings are not mutated in place. Concatenation allocates a new string.
 
-`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`.
+`split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`. `Buf.new` (or `Buf.new(capacity)`) makes an empty buffer, the same as `buf_new()`.
 
 Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 
@@ -905,7 +932,15 @@ fn main {
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
-`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
+Every C scalar type has an exact name at the boundary: `Int8`, `Int16`, `UInt8`, `UInt16`, `UInt32` and `Float32`, beside `Int` (32-bit), `Int64`, `UInt64`, `Float64` and `Bool`. They are written only in a `fun` signature and a C layout's field. In Avant such a value is its everyday type: `Int8`, `Int16`, `UInt8` and `UInt16` are `Int`, `UInt32` is `Int64`, `Float32` is `Float64`. A value from C converts exactly. A value to C keeps its value or traps: `avant runtime: 256 out of range for the C type UInt8 (0..255)`; a `Float64` rounds to the nearest `Float32`. A C callback's parameters and result use the everyday types for now.
+
+```avant
+lib img {
+  fun img_scale(n: UInt32, gain: Float32): UInt8
+}
+```
+
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
 
 ### Layouts and Ptr
 
@@ -1053,12 +1088,12 @@ quote {
 
 `name : Type` is accepted. The formatter prints `name: Type`: no space before the colon, one space after.
 
-Stdout is the default. `--write` replaces the file. `--check` prints `canonical` or `would change PATH` and does not write. A lex error prints the diagnostic and leaves the file alone.
+Each path is a `.av` file or a directory, walked for `.av` files the way `avant test` walks `tests/` (a name that starts with `.` and a directory named `deps` are skipped). With one file and no flag the canonical text goes to stdout. `--write` rewrites every file that changes. `--check` writes nothing, prints `would change PATH` for each file that would change (`canonical` when none would), and exits 1 if any would, so a CI job can fail on it. A lex error prints the diagnostic, leaves the file alone, and makes the status 1; the other files are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
 
 ```
 avant format FILE.av
-avant format FILE.av --check
-avant format FILE.av --write
+avant format . --check
+avant format src --write
 ```
 
 `compile`, `run`, and `dump` still drop comments. Formatting is a separate command so a format bug cannot change what a program means.
@@ -1085,7 +1120,7 @@ A string-literal pattern is compiled to a native scanner with re2c at compile ti
 
 ## Testing
 
-`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A void `fn main` is still a successful program and does not change. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
+`avant test` (alias `avant t`) discovers and runs a project's tests. A test file is an ordinary program. It imports `std.testing`, checks what it cares about, and returns `t.finish` from `fn main: Int`. That integer is the process status: `0` when every check passed, `1` when any failed. A failed check fails the process whatever `main` returns: a program that would exit `0` after a failed check (a void `fn main`, a `main` that returns `0`, a `main` that never calls `finish`, a check that failed on a task) exits `1`. The runner trusts the status. It does not read the words `PASS` and `FAIL`.
 
 ```avant
 import std.testing
@@ -1338,6 +1373,7 @@ The standard library is imported, and importing is what links the C library behi
 | `std.json` | `Json.parse` and the parsed-value walk | yyjson |
 | `std.regex` | `Regex.compile` and `Match` values | PCRE2 (re2c scanners for literal patterns) |
 | `std.http` | HTTP server and client, WebSocket server and client | uSockets and picohttpparser (vendored) |
+| `std.gc` | `gc.hold { }` and `gc.collect()`, two hints about when the collector runs | — |
 | `std.testing` | the support library the test runner loads | — |
 
 ### `std.zlib`
@@ -1506,6 +1542,28 @@ The most basic hello-world server: `GET /` answered with `hello` and the WebSock
 | Go (`net/http`) | 349,436 | 18 MB | 215,594 | 12 MB |
 | Crystal (`HTTP::Server`) | 521,997 | 15 MB | 264,813 | 11 MB |
 
+### `std.gc`
+
+Most programs need nothing from this module: the collector sizes its young generation from what survives, and plain `T.new` is the way to allocate. A program that builds a large structure which stays alive while it is built, and then drops it whole, knows two things the collector cannot, and can say them:
+
+```avant
+import std.gc
+
+fn trees_once(depth: Int): Int {
+  gc.collect()
+  sum = 0
+  gc.hold {
+    sum = tree_sum(make_tree(0, depth))
+  }
+  sum
+}
+```
+
+- `gc.hold { ... }` is a statement: no collection that this thread would start runs while the block runs. Its allocations still count: a collection that falls due inside runs when the block ends, and a hold whose own allocations pass `AVANT_HEAP_MAX_MB` stops the program with `heap limit in a no-GC region (...)`. The hold ends on every way out of the block (its end, `return`, `break`, `continue`, a `?` that returns). Holds nest; nested holds are one hold. Another thread still collects while one thread holds (the held thread stops for it at its next safepoint), so a hold never makes another thread wait.
+- `gc.collect()` collects the young generation now: everything young that nothing reaches is reclaimed. Inside a hold it runs when the hold ends. With `AVANT_NURSERY=0` there is no young generation and it does nothing.
+
+Put the end of a hold where the structure is dead (a collection that fell due runs there, and copies whatever is still alive), and `gc.collect()` where it dies. In a module that imports `std.gc`, `gc` names these two forms unless a local or a field takes the name; without the import, `gc.hold` is an error. Under `AVANT_GC_STRESS=1` a hold is inactive, so a stress run checks the code inside it as it checks any other.
+
 ### `std.testing`
 
 `std.testing` is the support library the `avant test` runner itself loads (output plumbing for test binaries). Test files use the `Checks` style shown in [Testing](#testing); `std.testing` is not an assertion API of its own.
@@ -1615,6 +1673,8 @@ sh runtime/build.sh
 ./bin/avant run examples/hello.av
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
+
+Until a release that has field privacy (`pub` fields) is the seed, the compiler's own sources cannot mark their fields `pub` (the seed refuses the word there), so the compiler's own build is exempt from field privacy: when the root is `compiler/main.av` of a checkout (beside `runtime/build.sh`), private fields are not checked between the modules under that `compiler/` directory. Every other program, and every other module, obeys the rule; the exemption goes once the compiler marks its fields.
 
 `sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed), and C′ (`bin/avant-c-llvm`, built by B); `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′), or `c-release` (the `--release` build a release ships) builds one. `sh tools/gate.sh` is the full gate (B, C′, the suite on both, D′, and the fixed point: C′ and D′ emit the same LLVM IR for the compiler and are byte-identical). `sh tools/run-goldens.sh` compiles and runs every example, runnable fixture, and LangArena task in `test` mode and compares each one's stdout, stderr, and exit status with its golden (`GOLDEN_MODE=--release` or empty for the other modes).
 

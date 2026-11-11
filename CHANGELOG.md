@@ -1,5 +1,38 @@
 # Avant Language changelog
 
+## 0.40.0 - 2026-11-11
+
+### Added
+
+* `std.gc`: `gc.hold { ... }` runs a block without starting a collection (a collection that falls due runs when the block ends), and `gc.collect()` collects the young generation now. Most programs need neither; they help a program that builds a large structure and drops it whole.
+* C interop types `Int8`, `Int16`, `UInt8`, `UInt16`, `UInt32` and `Float32` in `fun` signatures and C layouts; a value that does not fit the C type traps. `avant bind` no longer fails a header on `float`, `unsigned int`, `uint8_t` or `short`.
+* `avant format` takes several files and directories; `--check` exits 1 when a file would change.
+* `Buf.new` creates a buffer.
+
+### Changed
+
+* Fields are private to their module unless marked `pub` (C layout fields stay visible). `std` publishes the fields callers read and keeps its C handles private.
+* Functions are scoped per module: two modules may export the same function name; an unqualified call that could mean either is an error naming both qualified calls, and `module.name()` picks one. A qualified call reaches only `pub` functions.
+* Only a single capital letter (`T`, `K`, `V`) is an implicit type parameter; any other unknown type name is an error with a "did you mean" suggestion.
+* Postfix `?` is a compile error where the function's result cannot carry the failure (it used to return `0` silently or stop the compiler).
+* Every method without arguments may be called with or without `()`.
+* Syntax errors name tokens (``expected `{`, found a string``) instead of printing numbers.
+* A test whose check fails makes the process exit 1, even when `main` is void, returns 0 or never calls `finish`.
+* `avant format` usage errors exit 1.
+
+### Removed
+
+* `T.bump(...)` and `nursery_reclaim()`. Use `T.new`, plus `std.gc`'s hints where a program builds a large structure it drops whole. Binarytrees::Obj and Calculator::Ast are about 1.2 times slower than with `T.bump` until `T.new` gets cheaper.
+
+### Fixed
+
+* An optional value that nothing assigned is always `nil` (it could read as present for types whose names sort before `Nil`).
+* `h.each` no longer visits keys deleted during the walk.
+* `for x in xs {` and `for i in 0..n {` followed by a typed declaration no longer fail to parse; struct literals are allowed in call arguments and array literals inside conditions.
+* `for` loops in generic functions compile; two modules may export same-named classes with field defaults; a `pin` block inside a macro or a `spawn` behaves; a `pin(x) { }` block at a function's tail that returns on every path ends the function.
+* A program with many errors in the resolver or checker no longer risks looping.
+* A crashing `avant` or program leaves no `avant-XXXXXX` directory behind; a C thread that unregisters and calls back again no longer reads freed memory.
+
 ## 0.39.0 - 2026-11-10
 
 ### Changed

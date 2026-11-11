@@ -1,0 +1,25 @@
+// std.gc: two hints about when the collector runs (Stage 29 W1c2, D305).
+//
+// Most programs need neither: the collector sizes its young generation
+// from what survives. A program that builds a large structure which
+// stays alive while it is built, and then drops it whole, knows two
+// things the collector cannot:
+//
+//   gc.hold { ... }  no collection this thread would start runs while the
+//                    block runs; its allocations still count (a hold whose
+//                    own allocations pass AVANT_HEAP_MAX_MB stops with
+//                    "heap limit in a no-GC region"), and a collection
+//                    that falls due inside runs when the block ends, on
+//                    every way out of it (return, break, continue, `?`).
+//                    Nested holds are one hold. Other threads still
+//                    collect (they may stop this one at a safepoint).
+//   gc.collect()     a young collection now: what the young generation
+//                    holds that nothing reaches is reclaimed; inside a
+//                    hold it runs at the hold's end.
+//
+// Both are compiler forms (checker/visibility.av, mir/lower_ffi.av) on
+// the runtime's avant_gc_hold_begin/end and avant_gc_collect_young
+// (runtime/avant_gc_collect.c). Importing this module is what makes
+// `gc` name them; it declares nothing else. Under AVANT_GC_STRESS=1 a
+// hold is inactive, so stress runs check the code inside it as they
+// check any other.

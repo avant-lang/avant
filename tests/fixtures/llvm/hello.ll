@@ -25,7 +25,7 @@ declare void @avant_type_map(i32, i64)
 declare void @avant_io_init_argv(i32, ptr)
 declare ptr @avant_alloc(i64, i32)
 declare void @avant_barrier(ptr)
-declare void @avant_nursery_reclaim()
+declare void @avant_gc_collect_young()
 declare ptr @avant_str_from_int(i32)
 declare ptr @avant_str_concat(ptr, ptr)
 declare i32 @printf(ptr, ...)
@@ -70,7 +70,7 @@ entry:
   store ptr %s1, ptr %b1, align 8
 
   ; a young collection: box moves, and its field is traced through map 1
-  call void @avant_nursery_reclaim()
+  call void @avant_gc_collect_young()
   %b2 = load volatile ptr, ptr %box, align 8
   %f = load ptr, ptr %b2, align 8
 

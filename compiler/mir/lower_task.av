@@ -61,7 +61,7 @@ pub fn (lw: MirLower) prewalk_spawn(e: Expr, encl: String) {
   sym = lw.task_symbol(encl, "spawn")
   e.spawn_thunk = sym
   lw.lw_task.index[sym] = lw.lw_task.count
-  lw.lw_task.count = lw.lw_task.count + 1
+  lw.lw_task.count += 1
   if e.cap_names.size == 0 {
     return
   }
@@ -78,7 +78,7 @@ pub fn (lw: MirLower) prewalk_par(e: Expr, encl: String) {
   sym = lw.task_symbol(encl, "par")
   e.spawn_thunk = sym
   lw.lw_task.index[sym] = lw.lw_task.count
-  lw.lw_task.count = lw.lw_task.count + 1
+  lw.lw_task.count += 1
   l = lw.task_layout(e, sym, true)
   if l >= 0 {
     dummy = lw.lw_b.type_id(l)
@@ -112,11 +112,9 @@ pub fn (lw: MirLower) task_layout(e: Expr, sym: String, par: Bool): Int {
       names.push("out")
     }
   }
-  i = 0
-  while i < e.cap_names.size {
+  for i in 0..e.cap_names.size {
     fields.push(lw.field_mty(e.cap_tys[i], e.loc))
     names.push(e.cap_names[i])
-    i = i + 1
   }
   if lw.failed {
     return -1
@@ -151,7 +149,7 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
     }
     lw.at(e.loc)
     lw.store_place(b.field(b.deref(b.pl(c)), base + i), ts.layouts[l].fields[base + i], v)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -160,7 +158,7 @@ pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
   b = lw.lw_b
   lw.at(loc)
   c = b.temp(b.types.ref_to(l))
-  dummy = b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(tid)))
+  b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i64), b.c_u32(tid)))
   c
 }
 
@@ -169,7 +167,7 @@ pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
 pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   b = lw.lw_b
   sym = e.spawn_thunk
-  if !str_starts_mir(sym, "av.") {
+  if !str_starts(sym, "av.") {
     lw.refuse(e.loc, "a spawn the pre-walk did not name (internal)")
     return b.c_i32(0)
   }
@@ -197,7 +195,7 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   }
   lw.at(e.loc)
   h = b.temp(mt_ref())
-  dummy = b.call(h, "avant_spawn", lw.two(b.c_fn(sym), arg))
+  b.call(h, "avant_spawn", lw.two(b.c_fn(sym), arg))
   b.copy_local(h)
 }
 
@@ -225,7 +223,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   sym = e.spawn_thunk
-  if !str_starts_mir(sym, "av.") {
+  if !str_starts(sym, "av.") {
     lw.refuse(e.loc, "a .parallel the pre-walk did not name (internal)")
     return zero
   }
@@ -245,12 +243,12 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   }
   lw.at(e.loc)
   a = b.temp(aty)
-  dummy = b.assign(b.pl(a), b.rv_use(a0))
+  b.assign(b.pl(a), b.rv_use(a0))
   n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(a)), 1))))
   n64 = lw.tmp(mt_u64(), b.rv_cast(lw.dup(n), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(oty)))
   d = b.temp(b.types.ref_to(lw.elems_of(oty)))
-  dummy2 = b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(oty)))
+  b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(oty)))
   out = lw.tmp(oty, b.rv_use(lw.array_header(oty, d, lw.dup(n))))
   l = lw.task_layout(e, sym, true)
   if lw.failed {
@@ -265,7 +263,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
     return zero
   }
   lw.at(e.loc)
-  dummy3 = b.call(-1, "avant_parallel_for", lw.three(lw.dup(n), b.c_fn(sym), b.copy_local(c)))
+  b.call(-1, "avant_parallel_for", lw.three(lw.dup(n), b.c_fn(sym), b.copy_local(c)))
   out
 }
 
@@ -279,17 +277,15 @@ pub fn (lw: MirLower) lower_pending_tasks {
     // The queue is in lowering order; the old back end emits in pre-walk
     // order: take the lowest index not lowered yet.
     best = -1
-    i = lw.lw_task.done
-    while i < lw.lw_task.pending.size {
+    for i in lw.lw_task.done..lw.lw_task.pending.size {
       if best < 0 || lw.lw_task.pending[i].index < lw.lw_task.pending[best].index {
         best = i
       }
-      i = i + 1
     }
     t = lw.lw_task.pending[best]
     lw.lw_task.pending[best] = lw.lw_task.pending[lw.lw_task.done]
     lw.lw_task.pending[lw.lw_task.done] = t
-    lw.lw_task.done = lw.lw_task.done + 1
+    lw.lw_task.done += 1
     lw.lw_cov.rank = mir_cov_task_rank() + t.index
     if t.par {
       lw.lower_par_thunk(t)
@@ -307,9 +303,7 @@ pub fn (lw: MirLower) lower_pending_tasks {
 // block a lambda captures is boxed too, which the old back end cannot
 // compile).
 pub fn (lw: MirLower) task_boxes(stmts: Array(Stmt), names: Array(String), tys: Array(Ty)) {
-  i = 0
-  while i < stmts.size {
-    st = stmts[i]
+  for st in stmts {
     lw.task_boxes_opt(st.cond, names, tys)
     lw.task_boxes_opt(st.target, names, tys)
     lw.task_boxes_opt(st.value, names, tys)
@@ -318,7 +312,6 @@ pub fn (lw: MirLower) task_boxes(stmts: Array(Stmt), names: Array(String), tys: 
     lw.task_boxes(st.then_body, names, tys)
     lw.task_boxes(st.else_body, names, tys)
     lw.task_boxes(st.body, names, tys)
-    i = i + 1
   }
 }
 
@@ -336,7 +329,7 @@ pub fn (lw: MirLower) task_boxes_expr(e: Expr, names: Array(String), tys: Array(
         names.push(e.cap_names[i])
         tys.push(e.cap_tys[i])
       }
-      i = i + 1
+      i += 1
     }
     return
   }
@@ -350,27 +343,27 @@ pub fn (lw: MirLower) task_boxes_expr(e: Expr, names: Array(String), tys: Array(
   i = 0
   while i < e.args.size {
     lw.task_boxes_expr(e.args[i], names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.elems.size {
     lw.task_boxes_expr(e.elems[i], names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.field_exprs.size {
     lw.task_boxes_expr(e.field_exprs[i], names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.parts.size {
     lw.task_boxes_opt(e.parts[i].expr, names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.cases.size {
     lw.task_boxes(e.cases[i].body, names, tys)
-    i = i + 1
+    i += 1
   }
   lw.task_boxes(e.else_body, names, tys)
   if bl = e.block {
@@ -384,7 +377,7 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   b = lw.lw_b
   e = t.expr
   lw.begin_at(e.loc)
-  dummy = b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
+  b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
   lw.lw_cl.base = t.sym
   lw.lw_main = false
   lw.lw_ret = mt_void()
@@ -397,13 +390,13 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   i = 0
   while i < names.size && !lw.failed {
     k = lw.box_local_of(names[i], tys[i], e.loc)
-    dummy2 = b.assign(b.pl(k), b.rv_zero)
-    i = i + 1
+    b.assign(b.pl(k), b.rv_zero)
+    i += 1
   }
   c = -1
   if l >= 0 {
     c = b.local(b.types.ref_to(l), "cap")
-    dummy3 = b.assign(b.pl(c), b.rv_cast(b.copy_local(rec), b.types.ref_to(l)))
+    b.assign(b.pl(c), b.rv_cast(b.copy_local(rec), b.types.ref_to(l)))
   }
   c
 }
@@ -422,7 +415,7 @@ pub fn (lw: MirLower) load_captures(e: Expr, c: Int, l: Int, base: Int) {
       return
     }
     lw.bind_name(e.cap_names[i], e.cap_tys[i], ty, v, e.loc, false)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -442,7 +435,7 @@ pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
       return nil
     }
     lw.lower_stmt(bl.body[i])
-    i = i + 1
+    i += 1
   }
   if lw.failed || !lw.open_now {
     return nil
@@ -487,7 +480,7 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
     if got = lw.task_value(bl, ty_int()) {
       if lw.open_now {
         lw.at(e.loc)
-        dummy = b.assign(b.pl(0), b.rv_use(got))
+        b.assign(b.pl(0), b.rv_use(got))
         b.ret
       }
     }
@@ -526,11 +519,11 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
       v = b.c_i32(0)
       if ts.is_refkind(et) {
         gl = b.temp(et)
-        dummy0 = b.call(gl, "avant_array_get_ptr", lw.two(b.copy_local(ah), b.copy_local(1)))
+        b.call(gl, "avant_array_get_ptr", lw.two(b.copy_local(ah), b.copy_local(1)))
         v = b.copy_local(gl)
       } else {
         buf = b.temp(ts.ref_to(lw.elems_of(aty)))
-        dummy = b.assign(b.pl(buf), b.rv_use(b.copy(b.field(b.deref(b.pl(ah)), 0))))
+        b.assign(b.pl(buf), b.rv_use(b.copy(b.field(b.deref(b.pl(ah)), 0))))
         v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(buf)), b.copy_local(1)))))
       }
       lw.bind_name(bl.params[0], lw.elem_ty_of(recv), et, v, bl.loc, false)
@@ -545,10 +538,10 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
           ot = lw.elem_of(oty)
           r = lw.tmp(ot, b.rv_use(got))
           if ts.is_refkind(ot) {
-            dummy2 = b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(dh), b.copy_local(1), r))
+            b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(dh), b.copy_local(1), r))
           } else {
             ob = b.temp(ts.ref_to(lw.elems_of(oty)))
-            dummy3 = b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
+            b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
             lw.store_place(b.index(b.deref(b.pl(ob)), b.copy_local(1)), ot, r)
           }
           b.ret
@@ -568,10 +561,10 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
 pub fn (lw: MirLower) mutex_index(name: String): Int {
   i = lw.lw_task.pnames.size - 1
   while i >= 0 {
-    if str_eq(lw.lw_task.pnames[i], name) {
+    if lw.lw_task.pnames[i] == name {
       return i
     }
-    i = i - 1
+    i -= 1
   }
   -1
 }
@@ -602,9 +595,9 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   }
   lw.at(e.loc)
   h = b.temp(mty)
-  dummy = b.assign(b.pl(h), b.rv_use(o))
+  b.assign(b.pl(h), b.rv_use(o))
   g = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  dummy2 = b.call(-1, "avant_gate_lock", lw.one(g))
+  b.call(-1, "avant_gate_lock", lw.one(g))
   lw.lw_task.pnames.push(bl.params[0])
   lw.lw_task.pholders.push(h)
   lw.lw_task.pfields.push(ci)
@@ -613,9 +606,9 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     vt = t
   }
   got = lw.task_value(bl, vt)
-  dummy3 = lw.lw_task.pnames.pop
-  dummy4 = lw.lw_task.pholders.pop
-  dummy5 = lw.lw_task.pfields.pop
+  lw.lw_task.pnames.pop
+  lw.lw_task.pholders.pop
+  lw.lw_task.pfields.pop
   if lw.failed || !lw.open_now {
     return zero
   }
@@ -627,7 +620,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     }
   }
   g2 = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  dummy6 = b.call(-1, "avant_gate_unlock", lw.one(g2))
+  b.call(-1, "avant_gate_unlock", lw.one(g2))
   r
 }
 
@@ -638,27 +631,27 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
   c = e.callee
   if recv = e.receiver {
     if rt = recv.ty {
-      if rt.is_join && str_eq(c, "join") {
+      if rt.is_join && c == "join" {
         return lw.lower_join(e, recv)
       }
       if bl = e.block {
-        if rt.is_array && str_eq(c, "parallel") {
+        if rt.is_array && c == "parallel" {
           return lw.lower_parallel(e, recv)
         }
-        if rt.is_class && str_eq(c, "with") && (str_eq(rt.origin, "Mutex") || str_eq(rt.name, "Mutex")) {
+        if rt.is_class && c == "with" && (rt.origin == "Mutex" || rt.name == "Mutex") {
           return lw.lower_mutex_with(e, recv, rt, bl)
         }
       }
     }
     return nil
   }
-  if str_eq(c, "spawn") {
+  if c == "spawn" {
     if bl2 = e.block {
       return lw.lower_spawn(e)
     }
     return nil
   }
-  if str_eq(c, "avant_gate_new") && e.args.size == 0 {
+  if c == "avant_gate_new" && e.args.size == 0 {
     lw.at(e.loc)
     none: Array(MOperand) = []
     return lw.call_to(mt_u64(), c, none)
@@ -669,7 +662,7 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    dummy = b.call(-1, c, lw.one(a))
+    b.call(-1, c, lw.one(a))
     return b.c_i32(0)
   }
   nil
@@ -677,5 +670,5 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
 
 // The gate builtins taking a gate (calls.av is_gate_callee).
 pub fn mir_gate_builtin(name: String): Bool {
-  str_eq(name, "avant_gate_lock") || str_eq(name, "avant_gate_unlock") || str_eq(name, "avant_gate_wait") || str_eq(name, "avant_gate_signal") || str_eq(name, "avant_gate_broadcast")
+  name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast"
 }

@@ -1,0 +1,38 @@
+// A `pin(x) { }` or `gc.hold { }` block at a function's tail whose body
+// returns ends the function (Stage 29 W1c2, the checker's fallthrough
+// rule): before, the `pin` form was "missing return value". The pin is
+// released and the hold ended on that return; prints the results and
+// the pins left.
+
+import std.gc
+
+lib gc_rt {
+  fun avant_pin_count: Int
+}
+
+fn pinned_size(s: String, k: Int): Int {
+  pin(s) {
+    if k > 0 {
+      return s.size + k
+    }
+    return s.size
+  }
+}
+
+fn held_sum(k: Int): Int {
+  gc.hold {
+    t = 0
+    for i in 0..k {
+      t += i
+    }
+    return t
+  }
+}
+
+fn main {
+  a = pinned_size("tail-${12}", 3)
+  b = pinned_size("tail-${34}", 0)
+  puts("pin ${a} ${b}")
+  puts("hold ${held_sum(100)}")
+  puts("pins left: ${gc_rt.avant_pin_count()}")
+}

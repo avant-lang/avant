@@ -47,7 +47,7 @@ fn test_macros(c: Checks) {
     c.eq_int(fields_code, 0, "field walk compile")
     c.expect(file_exists(fields_bin), "field walk bin")
     chmod_x(fields_bin)
-    dummy_f = run_av_bin(fields_bin, fields_out)
+    run_av_bin(fields_bin, fields_out)
     if got = file_read(fields_out) {
       c.eq_str(got, "3\n4\n", "field walk accessors")
     } else {
@@ -57,7 +57,7 @@ fn test_macros(c: Checks) {
     write_av(dir, "splice_out", "fn #(name): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n")
     splice_bin = "${dir}/splice.bin"
     splice_log = "${dir}/splice.log"
-    dummy_s = compile_av(compiler, "${dir}/splice_out.av", splice_bin, splice_log)
+    compile_av(compiler, "${dir}/splice_out.av", splice_bin, splice_log)
     c.expect(!file_exists(splice_bin), "splice outside quote bin absent")
     if err = file_read(splice_log) {
       c.expect(str_has(err, "splice #() only belongs in quote"), "splice outside quote")
@@ -68,7 +68,7 @@ fn test_macros(c: Checks) {
     write_av(dir, "bad_comptime", "comptime {\n  puts(1)\n}\nfn main {\n  puts(1)\n}\n")
     bad_bin = "${dir}/bad.bin"
     bad_log = "${dir}/bad.log"
-    dummy_b = compile_av(compiler, "${dir}/bad_comptime.av", bad_bin, bad_log)
+    compile_av(compiler, "${dir}/bad_comptime.av", bad_bin, bad_log)
     c.expect(!file_exists(bad_bin), "bad comptime bin absent")
     if err = file_read(bad_log) {
       c.expect(str_has(err, "field walk"), "comptime field walk")
@@ -79,7 +79,7 @@ fn test_macros(c: Checks) {
     write_av(dir, "nested", "quote {\n  fn inner: Int {\n    quote {\n      1\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n")
     nest_bin = "${dir}/nest.bin"
     nest_log = "${dir}/nest.log"
-    dummy_n = compile_av(compiler, "${dir}/nested.av", nest_bin, nest_log)
+    compile_av(compiler, "${dir}/nested.av", nest_bin, nest_log)
     c.expect(!file_exists(nest_bin), "nested quote bin absent")
     if err = file_read(nest_log) {
       c.expect(str_has(err, "quote cannot nest"), "nested quote")

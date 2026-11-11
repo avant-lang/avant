@@ -46,7 +46,7 @@ pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
   i = 0
   while i < t.members.size {
     ps.push(lw.ty_at(t.members[i], loc, "an fn parameter"))
-    i = i + 1
+    i += 1
   }
   ret = mt_void()
   if r = t.inner {
@@ -99,15 +99,13 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
   }
   fields: Array(Int) = []
   names: Array(String) = []
-  i = 0
-  while i < e.cap_names.size {
+  for i in 0..e.cap_names.size {
     bl = lw.box_layout(e.cap_tys[i], e.loc)
     if lw.failed {
       return -1
     }
     fields.push(lw.lw_m.types.ref_to(bl))
     names.push(e.cap_names[i])
-    i = i + 1
   }
   lw.lw_b.note_layout(name, mlk_record(), fields, names)
 }
@@ -128,7 +126,7 @@ pub fn (lw: MirLower) lam_base(fnn: Function): String {
   if got = lw.lw_fn_syms.get(fnn.emit_name) {
     sym = got
   }
-  if str_starts_mir(sym, "av.") {
+  if str_starts(sym, "av.") {
     return sym
   }
   "av.${mir_module_part(fnn.mod_name)}/${fnn.name}"
@@ -147,7 +145,7 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
       lw.prewalk_stmts(st.pre, encl)
       lw.prewalk_opt(st.cond, encl)
       lw.prewalk_stmts(st.body, encl)
-    } else if k == st_pin() {
+    } else if k == st_pin() || k == st_hold() {
       lw.prewalk_opt(st.expr, encl)
       lw.prewalk_stmts(st.body, encl)
     } else if k == st_release() {
@@ -158,7 +156,7 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
     } else if k == st_expr() || k == st_return() {
       lw.prewalk_opt(st.expr, encl)
     }
-    i = i + 1
+    i += 1
   }
 }
 
@@ -172,7 +170,7 @@ pub fn (lw: MirLower) prewalk_list(es: Array(Expr), encl: String) {
   i = 0
   while i < es.size {
     lw.prewalk_expr(es[i], encl)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -190,11 +188,11 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     if recv = e.receiver {
       lw.prewalk_expr(recv, encl)
       if rt = recv.ty {
-        if rt.is_array && str_eq(e.callee, "parallel") && mir_has_block(e) {
+        if rt.is_array && e.callee == "parallel" && mir_has_block(e) {
           lw.prewalk_par(e, encl)
         }
       }
-    } else if str_eq(e.callee, "spawn") && mir_has_block(e) {
+    } else if e.callee == "spawn" && mir_has_block(e) {
       lw.prewalk_spawn(e, encl)
     }
     lw.prewalk_list(e.args, encl)
@@ -215,19 +213,15 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
   } else if k == ex_array_new() {
     lw.prewalk_opt(e.size_expr, encl)
   } else if k == ex_interp() {
-    i = 0
-    while i < e.parts.size {
-      lw.prewalk_opt(e.parts[i].expr, encl)
-      i = i + 1
+    for pt in e.parts {
+      lw.prewalk_opt(pt.expr, encl)
     }
   } else if k == ex_lambda() {
     lw.prewalk_lambda(e, encl)
   } else if k == ex_switch() {
     lw.prewalk_opt(e.cond, encl)
-    i = 0
-    while i < e.cases.size {
-      lw.prewalk_stmts(e.cases[i].body, encl)
-      i = i + 1
+    for cas in e.cases {
+      lw.prewalk_stmts(cas.body, encl)
     }
     if e.has_else {
       lw.prewalk_stmts(e.else_body, encl)
@@ -258,8 +252,7 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
   sym = lw.lambda_symbol(encl)
   e.resolved = sym
   lw.lw_cov.lam_index[sym] = lw.lw_cov.lam_index.size
-  i = 0
-  while i < e.cap_names.size {
+  for i in 0..e.cap_names.size {
     key = "${encl}|${e.cap_names[i]}"
     if !lw.lw_cl.cap_at.has_key(key) {
       lw.lw_cl.cap_at[key] = lw.lw_cl.cap_tys.size
@@ -269,15 +262,14 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
     if lw.failed {
       return
     }
-    dummy = lw.lw_b.type_id(bl)
-    i = i + 1
+    lw.lw_b.type_id(bl)
   }
   if e.cap_names.size > 0 {
     el = lw.env_layout(e, sym)
     if lw.failed {
       return
     }
-    dummy2 = lw.lw_b.type_id(el)
+    lw.lw_b.type_id(el)
   }
   if b = e.block {
     lw.prewalk_stmts(b.body, sym)
@@ -287,12 +279,10 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
 // ---- names through boxes
 
 pub fn mir_name_index(names: Array(String), name: String): Int {
-  i = 0
-  while i < names.size {
-    if str_eq(names[i], name) {
+  for i in 0..names.size {
+    if names[i] == name {
       return i
     }
-    i = i + 1
   }
   -1
 }
@@ -332,7 +322,7 @@ pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   args: Array(MOperand) = []
   args.push(b.c_u64(b.types.layouts[bl].size.to_i64))
   args.push(b.c_u32(b.type_id(bl)))
-  dummy = b.call(k, "avant_alloc", args)
+  b.call(k, "avant_alloc", args)
   lw.lw_cl.box_ready[name] = 1
   k
 }
@@ -348,7 +338,7 @@ pub fn (lw: MirLower) box_holder(name: String, t: Ty, loc: Location, alloc: Bool
     env = lw.lw_cl.env
     lw.at(loc)
     p = b.temp(ts.layouts[ts.layout_of(b.func.locals[env].ty)].fields[ci])
-    dummy = b.assign(b.pl(p), b.rv_use(b.copy(b.field(b.deref(b.pl(env)), ci))))
+    b.assign(b.pl(p), b.rv_use(b.copy(b.field(b.deref(b.pl(env)), ci))))
     return p
   }
   if alloc {
@@ -386,7 +376,7 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
       if fresh {
         lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, name)
       }
-      dummy = lw.ensure_box(name, t, loc)
+      lw.ensure_box(name, t, loc)
     }
     lw.box_store(name, t, v, loc)
     return
@@ -413,13 +403,10 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
   b = lw.lw_b
   sym = lw.lw_cl.base
   bx: Array(String) = []
-  i = 0
-  while i < names.size {
-    n = names[i]
-    if !(lw.lw_self > 0 && str_eq(n, lw.lw_self_name)) {
+  for n in names {
+    if !(lw.lw_self > 0 && n == lw.lw_self_name) {
       bx.push(n)
     }
-    i = i + 1
   }
   lw.lw_cl.boxed = bx
   lw.at(lw.lw_fn_loc)
@@ -435,18 +422,18 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
     }
     if tt = t {
       k = lw.box_local_of(n, tt, lw.lw_fn_loc)
-      dummy = b.assign(b.pl(k), b.rv_zero)
+      b.assign(b.pl(k), b.rv_zero)
     }
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < pnames.size && !lw.failed {
     n2 = pnames[i]
     if mir_name_index(bx, n2) >= 0 && i < ptys.size {
-      dummy2 = lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
+      lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
       lw.box_store(n2, ptys[i], b.copy_local(i + 1 + base), lw.lw_fn_loc)
     }
-    i = i + 1
+    i += 1
   }
 }
 
@@ -470,7 +457,7 @@ pub fn (lw: MirLower) box_read(e: Expr): MOperand {
 pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
   b = lw.lw_b
   if mir_name_index(lw.lw_cl.caps, t.ident) < 0 {
-    dummy = lw.ensure_box(t.ident, tt, t.loc)
+    lw.ensure_box(t.ident, tt, t.loc)
   }
   if v = st.value {
     if st.op == tk_eq() {
@@ -528,7 +515,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
     return zero
   }
   sym = e.resolved
-  if !str_starts_mir(sym, "av.") {
+  if !str_starts(sym, "av.") {
     base = lw.lw_cl.base
     if base.size == 0 {
       base = b.func.symbol
@@ -556,15 +543,15 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   args: Array(MOperand) = []
   args.push(b.c_u64(b.types.layouts[el].size.to_i64))
   args.push(b.c_u32(b.type_id(el)))
-  dummy = b.call(env, "avant_alloc", args)
+  b.call(env, "avant_alloc", args)
   i = 0
   while i < e.cap_names.size && !lw.failed {
     name = e.cap_names[i]
     p = lw.capture_box(name, e.cap_tys[i], e.loc)
     lw.at(e.loc)
-    dummy2 = b.barrier(env)
-    dummy3 = b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
-    i = i + 1
+    b.barrier(env)
+    b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
+    i += 1
   }
   lw.tmp(fty, b.rv_fnval(l, b.copy_local(env), b.c_fn(sym)))
 }
@@ -613,7 +600,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
   }
   lw.at(e.loc)
   h = b.temp(fty)
-  dummy = b.assign(b.pl(h), b.rv_use(f))
+  b.assign(b.pl(h), b.rv_use(f))
   args = lw.lower_args_to(e.args, e.cap_tys)
   if lw.failed {
     return zero
@@ -624,11 +611,11 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
     return zero
   }
   if ret == mt_void() {
-    dummy2 = b.call_indirect(-1, b.copy_local(h), args)
+    b.call_indirect(-1, b.copy_local(h), args)
     return zero
   }
   r = b.temp(ret)
-  dummy3 = b.call_indirect(r, b.copy_local(h), args)
+  b.call_indirect(r, b.copy_local(h), args)
   b.copy_local(r)
 }
 
@@ -638,10 +625,8 @@ pub fn (lw: MirLower) lower_pending_lambdas {
   while lw.lw_cl.pending.size > 0 && !lw.failed {
     lam = lw.lw_cl.pending[0]
     rest: Array(MirLam) = []
-    i = 1
-    while i < lw.lw_cl.pending.size {
+    for i in 1..lw.lw_cl.pending.size {
       rest.push(lw.lw_cl.pending[i])
-      i = i + 1
     }
     lw.lw_cl.pending = rest
     lw.lower_thunk(lam)
@@ -664,7 +649,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
     }
     sig = lw.fn_code_sig(l)
     s = b.types.sigs[sig]
-    dummy = b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
+    b.begin_fn(lam.sym, sig, lw.mloc(e.loc), "lambda")
     lw.lw_cl.base = lam.sym
     lw.lw_cov.rank = mir_cov_lambda_rank() + 999999
     if li = lw.lw_cov.lam_index.get(lam.sym) {
@@ -685,14 +670,12 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
         b.name_param(i + 2, bl.params[i])
         lw.lw_vars[lw.var_key(bl.params[i], s.params[i + 1])] = i + 2
         pnames.push(bl.params[i])
-        i = i + 1
+        i += 1
       }
     }
     caps: Array(String) = []
-    i = 0
-    while i < e.cap_names.size {
-      caps.push(e.cap_names[i])
-      i = i + 1
+    for cap_name in e.cap_names {
+      caps.push(cap_name)
     }
     lw.lw_cl.caps = caps
     if caps.size > 0 {
@@ -702,7 +685,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
       }
       lw.at(e.loc)
       env = b.local(b.types.ref_to(el), "env")
-      dummy2 = b.assign(b.pl(env), b.rv_cast(b.copy_local(1), b.types.ref_to(el)))
+      b.assign(b.pl(env), b.rv_cast(b.copy_local(1), b.types.ref_to(el)))
       lw.lw_cl.env = env
     }
     if bl2 = e.block {
@@ -730,39 +713,35 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           lw.begin_function(f)
           ps: Array(Int) = []
           ps.push(mt_ref())
-          j = 0
-          while j < fs.params.size {
-            ps.push(lw.ty_at(fs.params[j], f.loc, "a parameter"))
-            j = j + 1
+          for param in fs.params {
+            ps.push(lw.ty_at(param, f.loc, "a parameter"))
           }
           ret = lw.ty_at(fs.ret, f.loc, "a result")
           if lw.failed {
             return
           }
-          dummy = b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
+          b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
           b.name_param(1, "env")
           lw.at(f.loc)
           args: Array(MOperand) = []
-          j = 0
-          while j < fs.params.size {
+          for j in 0..fs.params.size {
             if j < f.params.size {
               b.name_param(j + 2, f.params[j].name)
             }
             args.push(b.copy_local(j + 2))
-            j = j + 1
           }
           if ret == mt_void() {
-            dummy2 = b.call(-1, sym, args)
+            b.call(-1, sym, args)
           } else {
             r = b.temp(ret)
-            dummy3 = b.call(r, sym, args)
-            dummy4 = b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
+            b.call(r, sym, args)
+            b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
           }
           b.ret
           b.end_fn
         }
       }
     }
-    i = i + 1
+    i += 1
   }
 }

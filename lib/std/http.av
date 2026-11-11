@@ -51,7 +51,7 @@ lib httpc {
 }
 
 pub class HttpError {
-  message: String
+  pub message: String
 
   fn initialize(message: String) {
     self.message = message
@@ -59,8 +59,8 @@ pub class HttpError {
 }
 
 pub struct Header {
-  name: String
-  value: String
+  pub name: String
+  pub value: String
 }
 
 // The headers of a received message. This is one collector buffer the
@@ -97,7 +97,7 @@ pub struct Headers {
         return out
       }
       out.push(v)
-      i = i + 1
+      i += 1
     }
     out
   }
@@ -127,11 +127,11 @@ fn empty_headers: Headers {
 // of the socket buffer before the handler runs; `query` is the raw
 // query string without the `?`, or nil when the target has none.
 pub struct Request {
-  method: String
-  path: String
-  query: String?
-  headers: Headers
-  body: Bytes
+  pub method: String
+  pub path: String
+  pub query: String?
+  pub headers: Headers
+  pub body: Bytes
 }
 
 // A response, in both directions: a handler returns one, and the
@@ -141,10 +141,10 @@ pub struct Request {
 // Connection are managed by the server and the client; setting them
 // with `header` has no effect.
 pub struct Response {
-  status: Int
-  headers: Headers
-  head: String
-  body: Bytes
+  pub status: Int
+  pub headers: Headers
+  pub head: String
+  pub body: Bytes
 
   pub fn self.text(body: String, status: Int = 200): Response {
     Response { status: status, headers: empty_headers(), head: "Content-Type: text/plain; charset=utf-8\r\n", body: body.bytes }
@@ -174,17 +174,15 @@ fn name_is(name: String, lit: String): Bool {
   if name.size != lit.size {
     return false
   }
-  i = 0
-  while i < name.size {
+  for i in 0..name.size {
     a = name[i]
     b = lit[i]
     if a >= 65 && a <= 90 {
-      a = a + 32
+      a += 32
     }
     if a != b {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -195,8 +193,8 @@ fn name_is(name: String, lit: String): Bool {
 // text message was validated as UTF-8 by the runtime before dispatch;
 // `text` is nil for a binary message.
 pub struct WsMessage {
-  is_text: Bool
-  body: Bytes
+  pub is_text: Bool
+  pub body: Bytes
 
   pub fn is_binary: Bool {
     !self.is_text
@@ -321,18 +319,12 @@ class HttpState {
   bound_port: Int = 0
 
   fn initialize {
-    r: Array(Route) = []
-    self.routes = r
-    wr: Array(WsRoute) = []
-    self.ws_routes = wr
-    wo: Array(WsOpenRoute) = []
-    self.ws_open_routes = wo
-    wc: Array(WsCloseRoute) = []
-    self.ws_close_routes = wc
-    wi: Array(Int) = []
-    self.ws_conn_ids = wi
-    wp: Array(String) = []
-    self.ws_conn_paths = wp
+    self.routes = []
+    self.ws_routes = []
+    self.ws_open_routes = []
+    self.ws_close_routes = []
+    self.ws_conn_ids = []
+    self.ws_conn_paths = []
   }
 
   fn add(method: String, path: String, handler: fn(Request): Response) {
@@ -357,21 +349,21 @@ class HttpState {
       if self.ws_routes[i].path == path {
         return true
       }
-      i = i + 1
+      i += 1
     }
     i = 0
     while i < self.ws_open_routes.size {
       if self.ws_open_routes[i].path == path {
         return true
       }
-      i = i + 1
+      i += 1
     }
     i = 0
     while i < self.ws_close_routes.size {
       if self.ws_close_routes[i].path == path {
         return true
       }
-      i = i + 1
+      i += 1
     }
     false
   }
@@ -389,11 +381,11 @@ class HttpState {
         last = self.ws_conn_ids.size - 1
         self.ws_conn_ids[i] = self.ws_conn_ids[last]
         self.ws_conn_paths[i] = self.ws_conn_paths[last]
-        dummy1 = self.ws_conn_ids.pop
-        dummy2 = self.ws_conn_paths.pop
+        self.ws_conn_ids.pop
+        self.ws_conn_paths.pop
         return
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -404,7 +396,7 @@ class HttpState {
       if r.path == path {
         (r.handler)(conn)
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -417,7 +409,7 @@ class HttpState {
       if r.method == req.method && r.path == req.path {
         return (r.handler)(req)
       }
-      i = i + 1
+      i += 1
     }
     Response.text("not found", 404)
   }
@@ -437,7 +429,7 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
       query = str_slice(target, q + 1, target.size)
       q = target.size
     } else {
-      q = q + 1
+      q += 1
     }
   }
   // A well-formed WebSocket handshake (validated in C) upgrades here
@@ -495,7 +487,7 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
         path = state.ws_conn_paths[i]
         i = state.ws_conn_ids.size
       } else {
-        i = i + 1
+        i += 1
       }
     }
     if path.size == 0 {
@@ -504,13 +496,10 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
     is_text = httpc.avant_ws_event_is_text(raw) != 0
     data = httpc.avant_ws_event_data(raw)
     msg = WsMessage { is_text: is_text, body: data }
-    i = 0
-    while i < state.ws_routes.size {
-      r = state.ws_routes[i]
+    for r in state.ws_routes {
       if r.path == path {
         (r.handler)(conn, msg)
       }
-      i = i + 1
     }
     return
   }
@@ -522,7 +511,7 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
         path = state.ws_conn_paths[i]
         i = state.ws_conn_ids.size
       } else {
-        i = i + 1
+        i += 1
       }
     }
     if path.size == 0 {
@@ -530,13 +519,10 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
     }
     code = httpc.avant_ws_event_code(raw)
     reason = httpc.avant_ws_event_reason(raw)
-    i = 0
-    while i < state.ws_close_routes.size {
-      rc = state.ws_close_routes[i]
+    for rc in state.ws_close_routes {
       if rc.path == path {
         (rc.handler)(conn, code, reason)
       }
-      i = i + 1
     }
     state.unregister_ws_conn(wid)
   }
@@ -628,7 +614,7 @@ pub struct Server {
     }
     self.state.serving = true
     pin(self.state) {
-      dummy = httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch)
+      httpc.avant_http_serve(self.handle, self.state, http_dispatch, ws_dispatch)
     }
     self.state.serving = false
   }
@@ -678,7 +664,7 @@ fn parse_port(text: String): Int {
     if n > 65535 {
       return -1
     }
-    i = i + 1
+    i += 1
   }
   if n == 0 {
     return -1
@@ -699,7 +685,7 @@ fn http_parse_url(url: String): UrlParts? {
       auth_end = i
       i = rest.size
     } else {
-      i = i + 1
+      i += 1
     }
   }
   authority = str_slice(rest, 0, auth_end)
@@ -707,12 +693,10 @@ fn http_parse_url(url: String): UrlParts? {
   if authority.size == 0 {
     return nil
   }
-  at = 0
-  while at < authority.size {
+  for at in 0..authority.size {
     if authority[at] == 64 {
       return nil
     }
-    at = at + 1
   }
   host = authority
   port = 80
@@ -724,7 +708,7 @@ fn http_parse_url(url: String): UrlParts? {
         close = j
         j = authority.size
       } else {
-        j = j + 1
+        j += 1
       }
     }
     if close == 0 {
@@ -742,12 +726,10 @@ fn http_parse_url(url: String): UrlParts? {
     }
   } else {
     colon = -1
-    j = 0
-    while j < authority.size {
+    for j in 0..authority.size {
       if authority[j] == 58 {
         colon = j
       }
-      j = j + 1
     }
     if colon >= 0 {
       host = str_slice(authority, 0, colon)
@@ -772,7 +754,7 @@ fn http_parse_url(url: String): UrlParts? {
       target = str_slice(target, 0, hash)
       hash = target.size
     } else {
-      hash = hash + 1
+      hash += 1
     }
   }
   UrlParts { host: host, port: port, authority: authority, target: target }
@@ -782,27 +764,22 @@ fn http_parse_url(url: String): UrlParts? {
 fn remove_dot_segments(path: String): String {
   parts = path.split("/")
   kept: Array(String) = []
-  i = 0
-  while i < parts.size {
-    seg = parts[i]
+  for seg in parts {
     if seg == "." {
     } else if seg == ".." {
       if kept.size > 1 {
-        dummy = kept.pop
+        kept.pop
       }
     } else {
       kept.push(seg)
     }
-    i = i + 1
   }
   buf = buf_new()
-  i = 0
-  while i < kept.size {
+  for i in 0..kept.size {
     if i > 0 {
       buf.push_str("/")
     }
     buf.push_str(kept[i])
-    i = i + 1
   }
   out = buf.to_s
   if out.size == 0 {
@@ -844,16 +821,14 @@ fn resolve_url(base: String, loc: String): String? {
         base_path = str_slice(base_path, 0, qi)
         qi = base_path.size
       } else {
-        qi = qi + 1
+        qi += 1
       }
     }
     slash = -1
-    j = 0
-    while j < base_path.size {
+    for j in 0..base_path.size {
       if base_path[j] == 47 {
         slash = j
       }
-      j = j + 1
     }
     merged = "${str_slice(base_path, 0, slash + 1)}${loc}"
     return "${origin}${remove_dot_segments(merged)}"
@@ -883,7 +858,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       buf.push_str(": ")
       buf.push_str(headers[i].value)
       buf.push_str("\r\n")
-      i = i + 1
+      i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
     if body.size > 0 {
@@ -977,7 +952,7 @@ pub class Http {
         }
         loc = resp.headers.get("Location")
         if location = loc {
-          hops = hops + 1
+          hops += 1
           if hops > 5 {
             return HttpError.new("too many redirects")
           }

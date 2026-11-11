@@ -24,7 +24,7 @@ fn golden_progs: Array(String) {
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/heap/${names[i]}.av")
-    i = i + 1
+    i += 1
   }
   xs
 }
@@ -35,6 +35,7 @@ fn other_progs: Array(String) {
   xs.push("tests/fixtures/heap/trap_loop.av")
   xs.push("tests/fixtures/heap/trap_loop_str.av")
   xs.push("tests/fixtures/heap/trap_pop.av")
+  xs.push("tests/fixtures/heap/each_delete.av")
   xs.push("examples/sieve.av")
   xs.push("tests/fixtures/modules/main.av")
   xs.push("tests/fixtures/part3/buf.av")
@@ -49,7 +50,7 @@ fn golden_of(rel: String): String {
     if rel[i] == 47 {
       base = str_slice(rel, i + 1, rel.size)
     }
-    i = i + 1
+    i += 1
   }
   "tests/goldens/heap/${str_slice(base, 0, base.size - 3)}.mir"
 }
@@ -64,13 +65,13 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
   i = 0
   while i < gp.size {
     progs.push(gp[i])
-    i = i + 1
+    i += 1
   }
   op = other_progs()
   i = 0
   while i < op.size {
     progs.push(op[i])
-    i = i + 1
+    i += 1
   }
 
   // Wave 1: the compiles and the dumps.
@@ -80,7 +81,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
     k = key_of(progs[i])
     jobs.push(compile_job("AVANT_BACKEND=llvm", compiler, "${root}/${progs[i]}", "${dir}/${k}.new", "${dir}/${k}.new.log"))
     jobs.push(compile_job("AVANT_BACKEND=llvm AVANT_LLVM_CALL_FORMS=1", compiler, "${root}/${progs[i]}", "${dir}/${k}.cf", "${dir}/${k}.cf.log"))
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < gp.size {
@@ -89,7 +90,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
     a.push("dump")
     a.push("${root}/${gp[i]}")
     jobs.push(env_job("AVANT_BACKEND=llvm", compiler, a, "${dir}/${k}.mir"))
-    i = i + 1
+    i += 1
   }
   run_waves(jobs)
   i = 0
@@ -97,7 +98,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
     p = progs[i]
     c.eq_int(jobs[2 * i].code, 0, "${p}: compiles under llvm")
     c.eq_int(jobs[2 * i + 1].code, 0, "${p}: compiles under llvm with the call forms")
-    i = i + 1
+    i += 1
   }
   base = 2 * progs.size
   i = 0
@@ -109,7 +110,7 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
       want = t
     }
     c.eq_str(log_text(j.log), want, "${gp[i]}: the MIR dump is ${golden_of(gp[i])}")
-    i = i + 1
+    i += 1
   }
 
   // Wave 2: every program in both forms, then each under each GC
@@ -127,11 +128,11 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
       e = 0
       while e < envs.size {
         runs.push(run_job_env(dir, "${k}.${forms[f]}", "${k}.${forms[f]}.g${e}", envs[e]))
-        e = e + 1
+        e += 1
       }
-      f = f + 1
+      f += 1
     }
-    i = i + 1
+    i += 1
   }
   run_waves(runs)
   i = 0
@@ -153,11 +154,11 @@ fn test_heap(c: Checks, compiler: String, root: String, dir: String) {
         c.eq_int(runs[at + 1 + e].code, want_code, "${p} (${fm}) under ${envs[e]}: the golden exit status")
         c.eq_str(log_text("${dir}/${k}.${fm}.g${e}.out"), want_out, "${p} (${fm}) under ${envs[e]}: the golden stdout")
         c.eq_str(log_text("${dir}/${k}.${fm}.g${e}.err"), want_err, "${p} (${fm}) under ${envs[e]}: the golden stderr (no verifier report)")
-        e = e + 1
+        e += 1
       }
-      f = f + 1
+      f += 1
     }
-    i = i + 1
+    i += 1
   }
 }
 

@@ -33,26 +33,24 @@ fn test_ffi(c: Checks) {
   while i < 5 {
     pin(s) {
       if i == 2 {
-        i = i + 1
+        i += 1
         continue
       }
       if i == 4 {
         break
       }
-      total = total + 1
+      total += 1
     }
-    i = i + 1
+    i += 1
   }
   c.eq_int(total, 3, "break and continue cross the pin scope")
   c.eq_int(ffi_rt.avant_pin_count(), base, "pin scope unpins on break and continue")
   n = 0
-  j = 0
-  while j < 20000 {
+  for j in 0..20000 {
     t = "pin-leak-probe-${j}"
     pin(t) {
-      n = n + t.size
+      n += t.size
     }
-    j = j + 1
   }
   c.expect(n > 0, "pin leak loop ran")
   c.eq_int(ffi_rt.avant_pin_count(), base, "pin scope does not leak over 20000 rounds")
@@ -89,7 +87,7 @@ fn test_ffi(c: Checks) {
     cap_bin = "${scratch()}/ffi-waveg-${stamp}-cap"
     cap_log = "${scratch()}/ffi-waveg-${stamp}-cap.log"
     cap_body = "lib libc {\n  struct CInt {\n    v: Int\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int)\n  fun cb_buf_new(n: Int): Ptr(CInt)\n}\nfn main {\n  buf = libc.cb_buf_new(2)\n  bias = 3\n  libc.qsort(buf, 2, 4, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v + bias })\n}\n"
-    dummy_cap = file_write(cap_src, cap_body)
+    file_write(cap_src, cap_body)
     cap_code = compile_av(compiler, cap_src, cap_bin, cap_log)
     c.expect(cap_code != 0, "capturing callback does not compile")
     if cap_txt = file_read(cap_log) {
@@ -102,7 +100,7 @@ fn test_ffi(c: Checks) {
     var_bin = "${scratch()}/ffi-waveg-${stamp}-var"
     var_log = "${scratch()}/ffi-waveg-${stamp}-var.log"
     var_body = "lib libc {\n  struct CInt {\n    v: Int\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int)\n  fun cb_buf_new(n: Int): Ptr(CInt)\n}\nfn cmp_asc(a: Ptr(CInt), b: Ptr(CInt)): Int {\n  a.v - b.v\n}\nfn main {\n  buf = libc.cb_buf_new(2)\n  f = cmp_asc\n  libc.qsort(buf, 2, 4, f)\n}\n"
-    dummy_var = file_write(var_src, var_body)
+    file_write(var_src, var_body)
     var_code = compile_av(compiler, var_src, var_bin, var_log)
     c.expect(var_code != 0, "fn variable callback does not compile")
     if var_txt = file_read(var_log) {
@@ -114,7 +112,7 @@ fn test_ffi(c: Checks) {
     pin_src = "${scratch()}/ffi-waveg-${stamp}-pin.av"
     pin_bin = "${scratch()}/ffi-waveg-${stamp}-pin"
     pin_log = "${scratch()}/ffi-waveg-${stamp}-pin.log"
-    dummy_pin = file_write(pin_src, "fn main {\n  pin(42) {\n    puts(\"no\")\n  }\n}\n")
+    file_write(pin_src, "fn main {\n  pin(42) {\n    puts(\"no\")\n  }\n}\n")
     pin_code = compile_av(compiler, pin_src, pin_bin, pin_log)
     c.expect(pin_code != 0, "pin of an Int does not compile")
     if pin_txt = file_read(pin_log) {

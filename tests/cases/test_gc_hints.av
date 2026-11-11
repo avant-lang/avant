@@ -1,0 +1,144 @@
+import harness
+import backends
+
+// std.gc (Stage 29 W1c2, D305): `gc.hold { }` and `gc.collect()`,
+// through heap/gc_hold.av (its comment lists the cases).
+//
+// Every case together prints the known stdout, nothing on stderr and
+// exits 0 plainly and under the collector's environments, the full
+// AVANT_GC_STRESS=1 included. Then, each case alone with AVANT_GC_STATS=1
+// and every collector variable unset (so each pass of the gate checks
+// the same numbers):
+//   - a hold defers the collections its allocations make due to its end:
+//     64 MiB of garbage in a hold makes one young collection, with no
+//     hold more than one; ten gc.collect() in a hold make one, without
+//     a hold ten; nested holds are one hold (one);
+//   - a hold ends on every way out: after a hold left by return, break,
+//     continue or `?`, the same 64 MiB makes more than one;
+//   - another thread still collects while the main thread holds (the
+//     task's 64 MiB, joined from inside the hold, makes more than one,
+//     and nothing waits for the hold to end);
+//   - under AVANT_GC_STRESS=1 a hold is inactive (more than one young
+//     collection for the garbage case), so a stress run checks the code
+//     inside a hold as it checks any other;
+//   - the heap limit still applies: the garbage case under
+//     AVANT_HEAP_MAX_MB=16 stops with "heap limit in a no-GC region (",
+//     and the same allocation with no hold runs under that limit.
+//
+// heap/pin_tail.av: a `pin(x) { }` or `gc.hold { }` block at a
+// function's tail whose body returns ends the function (the checker's
+// fallthrough rule, W1c2; the `pin` form was "missing return value"),
+// with the pin released on that return, plainly and under each
+// environment above.
+
+fn hold_all_out: String {
+  "garbage 99000000\nplain 99000000\ncollect 495000\ncollects 495000\nnested 99049500\nreturn 49503 99000000\nbreak 148500 99000000\ncontinue 148500 99000000\ntry -1 99000000\nlive 149850000 24750000 149850000\nthread 99000000\n"
+}
+
+// Every collector variable unset, then SET.
+fn hold_clean(set: String): String {
+  "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS -u AVANT_GC_STATS ${set}"
+}
+
+fn young_one(stats: String): Bool {
+  str_has(stats, " young=1 ")
+}
+
+fn young_many(stats: String): Bool {
+  str_has(stats, " young=") && !str_has(stats, " young=0 ") && !str_has(stats, " young=1 ")
+}
+
+fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/gc_hold.av", "${dir}/gc_hold", "${dir}/gc_hold.log"))
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/pin_tail.av", "${dir}/pin_tail", "${dir}/pin_tail.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "gc_hold.av: compiles")
+  c.eq_int(jobs[1].code, 0, "pin_tail.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "gc_hold", "gc_hold.g${e}", envs[e]))
+    e += 1
+  }
+  // [case, the check's name, one young collection (else more than one)]
+  cases = ["garbage", "plain", "collect", "collects", "nested", "return", "break", "continue", "try", "thread"]
+  ones = [true, false, true, false, true, false, false, false, false, false]
+  e = 0
+  while e < cases.size {
+    runs.push(run_job_env(dir, "gc_hold", "gc_hold.s${e}", hold_clean("AVANT_GC_STATS=1 GC_HOLD_CASE=${cases[e]}")))
+    e += 1
+  }
+  runs.push(run_job_env(dir, "gc_hold", "gc_hold.stress", hold_clean("AVANT_GC_STRESS=1 AVANT_GC_STATS=1 GC_HOLD_CASE=garbage")))
+  runs.push(run_job_env(dir, "gc_hold", "gc_hold.limit", hold_clean("AVANT_HEAP_MAX_MB=16 GC_HOLD_CASE=garbage")))
+  runs.push(run_job_env(dir, "gc_hold", "gc_hold.nolimit", hold_clean("AVANT_HEAP_MAX_MB=16 GC_HOLD_CASE=plain")))
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "pin_tail", "pin_tail.g${e}", envs[e]))
+    e += 1
+  }
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "gc_hold.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/gc_hold.g${e}.out"), hold_all_out(), "gc_hold.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/gc_hold.g${e}.err"), "", "gc_hold.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  e = 0
+  while e < cases.size {
+    r = runs[envs.size + e]
+    stats = log_text("${dir}/gc_hold.s${e}.err")
+    c.eq_int(r.code, 0, "gc_hold.av ${cases[e]}: exit 0")
+    if ones[e] {
+      c.expect(young_one(stats), "gc_hold.av ${cases[e]}: one young collection (young=1)")
+    } else {
+      c.expect(young_many(stats), "gc_hold.av ${cases[e]}: more than one young collection")
+    }
+    c.expect(str_has(stats, " full=0 "), "gc_hold.av ${cases[e]}: no full collection")
+    e += 1
+  }
+  at = envs.size + cases.size
+  c.eq_int(runs[at].code, 0, "gc_hold.av garbage under AVANT_GC_STRESS=1: exit 0")
+  c.eq_str(log_text("${dir}/gc_hold.stress.out"), "garbage 99000000\n", "gc_hold.av garbage under AVANT_GC_STRESS=1: the known stdout")
+  c.expect(young_many(log_text("${dir}/gc_hold.stress.err")), "gc_hold.av garbage under AVANT_GC_STRESS=1: the hold is inactive (more than one young collection)")
+  c.expect(runs[at + 1].code != 0, "gc_hold.av garbage under AVANT_HEAP_MAX_MB=16: fails")
+  c.expect(str_has(log_text("${dir}/gc_hold.limit.err"), "avant runtime: heap limit in a no-GC region ("), "gc_hold.av garbage under AVANT_HEAP_MAX_MB=16: heap limit in a no-GC region")
+  c.eq_int(runs[at + 2].code, 0, "gc_hold.av plain under AVANT_HEAP_MAX_MB=16: exit 0")
+  c.eq_str(log_text("${dir}/gc_hold.nolimit.out"), "plain 99000000\n", "gc_hold.av plain under AVANT_HEAP_MAX_MB=16: the known stdout")
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[at + 3 + e].code, 0, "pin_tail.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/pin_tail.g${e}.out"), "pin 10 7\nhold 4950\npins left: 0\n", "pin_tail.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/pin_tail.g${e}.err"), "", "pin_tail.av ${what}: no stderr")
+    e += 1
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_hints.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_gc_hints(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

@@ -18,13 +18,11 @@ import mir.verify_module
 pub fn mir_verify_errors(m: MModule, stage: Int): Array(MVerr) {
   v = MVerifier.new(m, stage)
   mir_verify_module(v)
-  k = 0
-  while k < m.funcs.size {
-    v.func = m.funcs[k]
+  for fdef in m.funcs {
+    v.func = fdef
     v.bad = false
     v.func_rules()
     mir_verify_gc(v)
-    k = k + 1
   }
   v.errs
 }
@@ -35,7 +33,7 @@ pub fn mir_verify(m: MModule, stage: Int): Array(String) {
   i = 0
   while i < errs.size {
     out.push(errs[i].show)
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -46,15 +44,13 @@ pub fn mir_verify_rules(m: MModule, stage: Int): String {
   errs = mir_verify_errors(m, stage)
   seen = mir_seen_rules(errs)
   buf = buf_new()
-  r = 1
-  while r < seen.size {
+  for r in 1..seen.size {
     if seen[r] {
       if buf.size > 0 {
         buf.push_str(",")
       }
       buf.push_str("V${r}")
     }
-    r = r + 1
   }
   if buf.size == 0 {
     return "ok"
@@ -64,17 +60,13 @@ pub fn mir_verify_rules(m: MModule, stage: Int): String {
 
 fn mir_seen_rules(errs: Array(MVerr)): Array(Bool) {
   seen: Array(Bool) = []
-  r = 0
-  while r < 64 {
+  for r in 0..64 {
     seen.push(false)
-    r = r + 1
   }
-  i = 0
-  while i < errs.size {
+  for i in 0..errs.size {
     if errs[i].rule > 0 && errs[i].rule < 64 {
       seen[errs[i].rule] = true
     }
-    i = i + 1
   }
   seen
 }

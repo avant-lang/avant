@@ -5,7 +5,7 @@ fn expect_trap_opt(c: Checks, compiler: String, stamp: Int, tag: String, body: S
   bin = "${scratch()}/optimization-wavek-${stamp}-${tag}.bin"
   clog = "${scratch()}/optimization-wavek-${stamp}-${tag}.clog"
   rlog = "${scratch()}/optimization-wavek-${stamp}-${tag}.rlog"
-  dummy = file_write(src, body)
+  file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
   c.expect(file_exists(bin), "${tag} bin exists")
@@ -29,10 +29,10 @@ fn test_optimization(c: Checks) {
   while p <= sqrt_limit {
     k = p * p
     while k <= limit {
-      acc = acc + 1
-      k = k + p
+      acc += 1
+      k += p
     }
-    p = p + 1
+    p += 1
   }
   c.eq_int(acc, 19603746, "sieve-like bounded loop count")
   c.eq_int(p, 1733, "sqrt-bounded loop exit")
@@ -73,7 +73,7 @@ fn test_optimization(c: Checks) {
   mi = 0
   while mi <= 5 {
     mtmp[mi] = marr[mi]
-    mi = mi + 1
+    mi += 1
   }
   mi = 0
   mj = 3
@@ -81,51 +81,45 @@ fn test_optimization(c: Checks) {
   while mi <= 2 && mj <= 5 {
     if mtmp[mi] <= mtmp[mj] {
       marr[mk] = mtmp[mi]
-      mi = mi + 1
+      mi += 1
     } else {
       marr[mk] = mtmp[mj]
-      mj = mj + 1
+      mj += 1
     }
-    mk = mk + 1
+    mk += 1
   }
   while mi <= 2 {
     marr[mk] = mtmp[mi]
-    mi = mi + 1
-    mk = mk + 1
+    mi += 1
+    mk += 1
   }
   while mj <= 5 {
     marr[mk] = mtmp[mj]
-    mj = mj + 1
-    mk = mk + 1
+    mj += 1
+    mk += 1
   }
   c.eq_int(marr[0] + marr[1] * 10 + marr[2] * 100 + marr[3] * 1000 + marr[4] * 10000 + marr[5] * 100000, 654321, "two-pointer merge window over parameter bounds")
 
   nbrs = [10, 20, 30, 40]
   base = 0
   acc2 = 0
-  k2 = 0
-  while k2 < 4 {
-    acc2 = acc2 + nbrs[base + k2]
-    k2 = k2 + 1
+  for k2 in 0..4 {
+    acc2 += nbrs[base + k2]
   }
   c.eq_int(acc2, 100, "invariant-plus-induction index window")
 
   cells = [7, 8, 9]
   cell = 1
   acc3 = 0
-  k3 = 0
-  while k3 < 3 {
-    acc3 = acc3 + cells[cell]
-    k3 = k3 + 1
+  for k3 in 0..3 {
+    acc3 += cells[cell]
   }
   c.eq_int(acc3, 24, "loop-invariant index validated at entry")
 
   edge5 = [10, 20, 30, 40, 50]
   acc4 = 0
-  bi2 = 0
-  while bi2 < 4 {
-    acc4 = acc4 + edge5[bi2 + 1]
-    bi2 = bi2 + 1
+  for bi2 in 0..4 {
+    acc4 += edge5[bi2 + 1]
   }
   c.eq_int(acc4, 140, "guarded index plus offset at size minus one boundary")
 
@@ -135,50 +129,36 @@ fn test_optimization(c: Checks) {
   bsrc.push_byte(65)
   bsrc.push_byte(255)
   bfreq: Array(Int) = []
-  bfi = 0
-  while bfi < 256 {
+  for bfi in 0..256 {
     bfreq.push(0)
-    bfi = bfi + 1
   }
-  bi3 = 0
-  while bi3 < bsrc.size {
+  for bi3 in 0..bsrc.size {
     bfreq[bsrc[bi3]] = bfreq[bsrc[bi3]] + 1
-    bi3 = bi3 + 1
   }
   c.eq_int(bfreq[255], 2, "byte 255 into 256-entry table at boundary")
   c.eq_int(bfreq[0] * 10 + bfreq[65], 11, "byte table counts for 0 and 65")
 
   mvals = [511, 385]
   mtab: Array(Int) = []
-  mti = 0
-  while mti < 256 {
+  for mti in 0..256 {
     mtab.push(mti)
-    mti = mti + 1
   }
   macc = 0
-  mi3 = 0
-  while mi3 < 2 {
-    macc = macc + mtab[mvals[mi3] & 255]
-    mi3 = mi3 + 1
+  for mi3 in 0..2 {
+    macc += mtab[mvals[mi3] & 255]
   }
   c.eq_int(macc, 384, "masked byte index sum")
 
   ssrc = buf_new()
-  ssi = 0
-  while ssi < 8 {
+  for ssi in 0..8 {
     ssrc.push_byte(255)
-    ssi = ssi + 1
   }
   stab: Array(Int) = []
-  sti = 0
-  while sti < 2048 {
+  for sti in 0..2048 {
     stab.push(0)
-    sti = sti + 1
   }
-  si3 = 0
-  while si3 < ssrc.size {
+  for si3 in 0..ssrc.size {
     stab[ssrc[si3] * 8 + 7] = stab[ssrc[si3] * 8 + 7] + 1
-    si3 = si3 + 1
   }
   c.eq_int(stab[2047], 8, "scaled byte index at 2047 boundary")
 
@@ -187,17 +167,15 @@ fn test_optimization(c: Checks) {
   nsrc.push_byte(5)
   nsrc.push_byte(5)
   ntab: Array(Int) = []
-  nti = 0
-  while nti < 256 {
+  for nti in 0..256 {
     ntab.push(nti)
-    nti = nti + 1
   }
   nacc = 0
   ni3 = 0
   while ni3 < nsrc.size {
     nb = nsrc[ni3]
-    nacc = nacc + ntab[nb]
-    ni3 = ni3 + 1
+    nacc += ntab[nb]
+    ni3 += 1
   }
   c.eq_int(nacc, 15, "named byte index sum")
 
@@ -215,9 +193,9 @@ fn test_optimization(c: Checks) {
     } else if dc == 45 {
       dtape[dpos] = (dtape[dpos] - 1) & 255
     } else if dc == 62 {
-      dpos = dpos + 1
+      dpos += 1
     } else if dc == 60 {
-      dpos = dpos - 1
+      dpos -= 1
       if dpos < 0 {
         dpos = 0
       }
@@ -232,7 +210,7 @@ fn test_optimization(c: Checks) {
     } else if dc == 46 {
       dres = (dres << 2) &+ dtape[dpos]
     }
-    dpc = dpc + 1
+    dpc += 1
   }
   c.eq_int(dres, 3, "dispatch loop with validated jump table")
 
@@ -258,7 +236,7 @@ fn test_optimization(c: Checks) {
     } else if ec == 46 {
       eres = (eres << 2) &+ etape[epos]
     }
-    epc = epc + 1
+    epc += 1
   }
   c.eq_int(eres, 1, "dispatch forward jump over validated table")
   c.eq_int(etape[0], 1, "dispatch forward jump tape result")
@@ -276,7 +254,7 @@ fn test_optimization(c: Checks) {
       ftape[fpos] = (ftape[fpos] + 1) & 255
     } else if fc == 45 {
       ftape[fpos] = (ftape[fpos] - 1) & 255
-      fsteps = fsteps + 1
+      fsteps += 1
     } else if fc == 91 {
       if ftape[fpos] == 0 {
         fpc = fjumps[fpc]
@@ -286,7 +264,7 @@ fn test_optimization(c: Checks) {
         fpc = fjumps[fpc]
       }
     }
-    fpc = fpc + 1
+    fpc += 1
   }
   c.eq_int(ftape[0], 0, "dispatch backward jump to size minus one boundary tape")
   c.eq_int(fsteps, 2, "dispatch backward jump to size minus one boundary steps")
@@ -308,16 +286,14 @@ fn test_optimization(c: Checks) {
   byte_sum = 0
   bi = 0
   while bi < long_s.size {
-    byte_sum = byte_sum + long_s[bi]
-    bi = bi + 1
+    byte_sum += long_s[bi]
+    bi += 1
   }
   c.eq_int(byte_sum, 1960000, "long string per-byte sum")
   churn = 0
-  ci = 0
-  while ci < 2000 {
+  for ci in 0..2000 {
     junk = repeat_byte(99, 500)
-    churn = churn + junk.size
-    ci = ci + 1
+    churn += junk.size
   }
   c.eq_int(churn, 1000000, "allocation churn total")
   c.eq_int(long_s.size, 20000, "long string length after churn")
@@ -331,24 +307,20 @@ fn test_optimization(c: Checks) {
   decl_s = "abca"
   decl_t = "a"
   decl_m: Array(Int) = []
-  decl_di = 0
-  while decl_di < 4 {
+  for decl_di in 0..4 {
     decl_m.push(0)
-    decl_di = decl_di + 1
   }
   decl_hits = 0
-  decl_i = 0
-  while decl_i < 4 {
+  for decl_i in 0..4 {
     decl_j = 0
     decl_fin = decl_i
     while decl_j <= decl_fin && decl_j < 4 {
       if decl_m[decl_j] == 0 && decl_s[decl_j] == decl_t[0] {
-        decl_hits = decl_hits + 1
+        decl_hits += 1
         decl_m[decl_j] = 1
       }
-      decl_j = decl_j + 1
+      decl_j += 1
     }
-    decl_i = decl_i + 1
   }
   c.eq_int(decl_hits, 2, "call-sized decline string loop computes")
 
