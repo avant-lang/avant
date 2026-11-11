@@ -617,8 +617,10 @@ pub class Checker {
     if last.kind == st_return() {
       return false
     }
-    if last.kind == st_hold() {
-      // A `gc.hold` block ends its function when its own body does.
+    if last.kind == st_hold() || last.kind == st_pin() {
+      // A `gc.hold` or `pin(x)` block ends its function when its own
+      // body does (Stage 29 W1c2; before, a `pin` block whose body
+      // returned was "missing return value" at a function's tail).
       return self.fallthrough(last.body)
     }
     if last.kind == st_if() {
@@ -768,7 +770,7 @@ pub class Checker {
       }
       self.check_block(stmt.body, expected, false)
       if at_tail {
-        if expected.is_void {
+        if expected.is_void || !self.fallthrough(stmt.body) {
         } else {
           self.fail(stmt.loc, "missing return value")
         }

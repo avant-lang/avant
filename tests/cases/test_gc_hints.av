@@ -24,6 +24,12 @@ import backends
 //   - the heap limit still applies: the garbage case under
 //     AVANT_HEAP_MAX_MB=16 stops with "heap limit in a no-GC region (",
 //     and the same allocation with no hold runs under that limit.
+//
+// heap/pin_tail.av: a `pin(x) { }` or `gc.hold { }` block at a
+// function's tail whose body returns ends the function (the checker's
+// fallthrough rule, W1c2; the `pin` form was "missing return value"),
+// with the pin released on that return, plainly and under each
+// environment above.
 
 fn hold_all_out: String {
   "garbage 99000000\nplain 99000000\ncollect 495000\ncollects 495000\nnested 99049500\nreturn 49503 99000000\nbreak 148500 99000000\ncontinue 148500 99000000\ntry -1 99000000\nlive 149850000 24750000 149850000\nthread 99000000\n"
@@ -45,8 +51,10 @@ fn young_many(stats: String): Bool {
 fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/gc_hold.av", "${dir}/gc_hold", "${dir}/gc_hold.log"))
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/pin_tail.av", "${dir}/pin_tail", "${dir}/pin_tail.log"))
   run_waves(jobs)
   c.eq_int(jobs[0].code, 0, "gc_hold.av: compiles")
+  c.eq_int(jobs[1].code, 0, "pin_tail.av: compiles")
   envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
   runs: Array(HJob) = []
   e = 0
@@ -65,6 +73,11 @@ fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
   runs.push(run_job_env(dir, "gc_hold", "gc_hold.stress", hold_clean("AVANT_GC_STRESS=1 AVANT_GC_STATS=1 GC_HOLD_CASE=garbage")))
   runs.push(run_job_env(dir, "gc_hold", "gc_hold.limit", hold_clean("AVANT_HEAP_MAX_MB=16 GC_HOLD_CASE=garbage")))
   runs.push(run_job_env(dir, "gc_hold", "gc_hold.nolimit", hold_clean("AVANT_HEAP_MAX_MB=16 GC_HOLD_CASE=plain")))
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "pin_tail", "pin_tail.g${e}", envs[e]))
+    e = e + 1
+  }
   run_waves(runs)
   e = 0
   while e < envs.size {
@@ -98,6 +111,17 @@ fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(str_has(log_text("${dir}/gc_hold.limit.err"), "avant runtime: heap limit in a no-GC region ("), "gc_hold.av garbage under AVANT_HEAP_MAX_MB=16: heap limit in a no-GC region")
   c.eq_int(runs[at + 2].code, 0, "gc_hold.av plain under AVANT_HEAP_MAX_MB=16: exit 0")
   c.eq_str(log_text("${dir}/gc_hold.nolimit.out"), "plain 99000000\n", "gc_hold.av plain under AVANT_HEAP_MAX_MB=16: the known stdout")
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[at + 3 + e].code, 0, "pin_tail.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/pin_tail.g${e}.out"), "pin 10 7\nhold 4950\npins left: 0\n", "pin_tail.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/pin_tail.g${e}.err"), "", "pin_tail.av ${what}: no stderr")
+    e = e + 1
+  }
 }
 
 fn test_main(c: Checks) {

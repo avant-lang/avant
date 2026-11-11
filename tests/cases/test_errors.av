@@ -84,6 +84,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gc-hold-value", "import std.gc\nfn main {\n  x = gc.hold {\n    1\n  }\n}\n", "gc.hold is a statement: gc.hold { ... }")
     expect_err(c, compiler, stamp, "gc-unknown", "import std.gc\nfn main {\n  gc.frob()\n}\n", "unknown function gc.frob; std.gc has gc.hold { } and gc.collect()")
     expect_err(c, compiler, stamp, "gc-hold-local", "import std.gc\nfn main {\n  gc = 1\n  gc.hold {\n    x = gc\n  }\n}\n", "gc.hold: gc names a local or a field here, not std.gc")
+    expect_err(c, compiler, stamp, "pin-tail", "fn f(s: String, k: Int): Int {\n  pin(s) {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(\"a\", 2))\n}\n", "missing return value")
     expect_err(c, compiler, stamp, "gc-hold-tail", "import std.gc\nfn f(k: Int): Int {\n  gc.hold {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(2))\n}\n", "missing return value")
     // Stage 29 W1a (A6): parser messages name the tokens (they printed the
     // kinds' numbers: "expected 28, found 5").
