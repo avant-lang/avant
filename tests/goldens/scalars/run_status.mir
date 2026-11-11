@@ -10,6 +10,7 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
+extern avant_trap_exit_status(i32) -> void never noreturn
 
 fn av.run_status/run() -> i32 leaf @run_status.av:4:1 {
   let _0: i32
@@ -25,6 +26,8 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @run_status.av:4:1 {
   let _1 (argc): i32
   let _2 (argv): ptr slot
   let _3: i32
+  let _4: u32
+  let _5: bool
 
 bb0:
   gc.enter   @4:1
@@ -32,6 +35,15 @@ bb0:
   call __avant_type_maps() nocollect   @4:1
   call avant_io_init_argv(copy _1, copy _2) collects   @4:1
   _3 = call av.run_status/run() nocollect   @4:1
+  _4 = cast copy _3 to u32   @4:1
+  _5 = le copy _4, const u32 255   @4:1
+  branch copy _5, bb2, bb1   @4:1
+
+bb1:
+  call avant_trap_exit_status(copy _3) nocollect   @4:1
+  unreachable   @4:1
+
+bb2:
   _0 = copy _3   @4:1
   gc.leave   @4:1
   return   @4:1

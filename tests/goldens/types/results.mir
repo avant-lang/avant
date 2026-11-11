@@ -1,7 +1,10 @@
 module results
 file 0 "results.av"
+file 1 "<prelude>"
 
 layout %results.Pt = class { 0 x: i32, 1 tag: ref str }  size 16 align 8 id 1
+layout %prelude.IoError = class { 0 op: ref str, 1 path: ref str, 2 errno: i32 }  size 24 align 8 id 2
+layout %prelude.ProcessError = class { 0 path: ref str, 1 errno: i32, 2 signal: i32, 3 output: ref str }  size 24 align 8 id 3
 layout %elems(Int) = elems { 0: i32 }  size 4 align 4
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
@@ -15,6 +18,10 @@ layout %Array(results.Pt) = array { 0 data: ref %elems(results.Pt), 1 size: i32,
 layout %elems(u8) = elems { 0: u8 }  size 1 align 1
 layout %Buf = buf { 0 data: ref %elems(u8), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1021
 layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 state: ref, 3 size: i32, 4 cap: i32, 5 key_kind: i32, 6 val_kind: i32 }  size 40 align 8 id 1023
+layout %(prelude.IoError|String) = union { 0 tag: i32, 1 m0: ref %prelude.IoError, 2 m1: ref str }  size 24 align 8
+layout %(Int|prelude.IoError) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %prelude.IoError }  size 16 align 8
+layout %(Array(String)|prelude.IoError) = union { 0 tag: i32, 1 m0: ref %Array(String), 2 m1: ref %prelude.IoError }  size 24 align 8
+layout %(Int|prelude.ProcessError) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %prelude.ProcessError }  size 16 align 8
 
 const str.0 = "%d\0A"
 const str.1 = "b"
@@ -33,12 +40,28 @@ const str.13 = "AVANT_W7A_SURELY_UNSET"
 const str.14 = "unset"
 const str.15 = "/nonexistent/avant-w7a"
 const str.16 = "no file"
-const str.17 = "pt"
+const str.17 = "read"
+const str.18 = "write"
+const str.19 = "list"
+const str.20 = ""
+const str.21 = "cannot "
+const str.22 = " "
+const str.23 = ": "
+const str.24 = "avant_sys.avant_sys_strerror"
+const str.25 = " killed by signal "
+const str.26 = " ("
+const str.27 = "avant_sys.avant_sys_strsignal"
+const str.28 = ")"
+const str.29 = "cannot run "
+const str.30 = ": cannot open "
+const str.31 = "pt"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1 %results.Pt stride 0 bits [0x2]
+typemap 2 %prelude.IoError stride 0 bits [0x3]
+typemap 3 %prelude.ProcessError stride 0 bits [0x5]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
@@ -54,7 +77,6 @@ extern avant_array_min_str(ref, ptr) -> ref str collects
 extern avant_buf_new(i32) -> ref collects
 extern avant_buf_push_str(ref, ref str) -> void collects
 extern avant_env_get(ref str, ptr) -> ref str collects
-extern avant_file_read(ref str, ptr) -> ref str collects
 extern avant_hash_get_concat(ref, ref str, ref str, ptr) -> i32 collects
 extern avant_hash_get_i32(ref, ref str, ptr) -> i32 never
 extern avant_hash_get_i32k_i32(ref, i32, ptr) -> i32 never
@@ -67,7 +89,19 @@ extern avant_hash_set_str(ref, ref str, ref str) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_f64(f64) -> void never
 extern avant_puts_str(ref str) -> void never
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
+extern avant_sys_errno() -> i32 collects
+extern avant_sys_list(ref str) -> ref %Array(String) collects
+extern avant_sys_read(ref str) -> ref str collects
+extern avant_sys_run(ref str, ref %Array(String), ref str) -> i32 collects
+extern avant_sys_signal() -> i32 collects
+extern avant_sys_stage() -> i32 collects
+extern avant_sys_strerror(i32) -> ref str collects
+extern avant_sys_strsignal(i32) -> ref str collects
+extern avant_sys_write(ref str, ref str) -> i32 collects
+extern avant_trap_c_null(ref str) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @results.av:16:1 {
@@ -420,13 +454,11 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @results.av:16:1 {
   let _346: ref str
   let _347: ref str
   let _348: bool
-  let _349: i32
-  let _350: ptr i32 slot
-  let _351: ref str
-  let _352: bool
-  let _353: ref str
-  let _354: bool
-  let _355 (t): ref str
+  let _349: %(prelude.IoError|String)
+  let _350: i32
+  let _351: bool
+  let _352: ref str
+  let _353 (t): ref str
 
 bb0:
   _3 = zero   @16:1
@@ -452,9 +484,8 @@ bb0:
   _325 = zero   @16:1
   _334 = zero   @16:1
   _343 = zero   @16:1
-  _350 = zero   @16:1
   gc.enter   @16:1
-  gc.roots _2, _3, _5, _57, _66, _74, _76, _78, _98, _100, _102, _117, _119, _139, _146, _159, _216, _244, _273, _303, _323, _325, _334, _343, _350   @16:1
+  gc.roots _2, _3, _5, _57, _66, _74, _76, _78, _98, _100, _102, _117, _119, _139, _146, _159, _216, _244, _273, _303, _323, _325, _334, _343   @16:1
   call __avant_type_maps() nocollect   @16:1
   call avant_io_init_argv(copy _1, copy _2) collects   @16:1
   _3 = call avant_alloc(const u64 12, const u32 0) collects   @17:20
@@ -1513,37 +1544,232 @@ bb190:
 
 bb191:
   call avant_puts_str(copy _347) nocollect   @67:3
-  _349 = const i32 0   @68:10
-  _350 = addr.raw _349   @68:10
-  _351 = call avant_file_read(const str.15, copy _350) collects   @68:10
-  _352 = eq copy _349, const i32 1   @68:10
-  branch copy _352, bb192, bb193   @68:10
+  _349 = call av.prelude/file_read(const str.15) collects   @68:10
+  _350 = copy _349.0   @68:3
+  _351 = ne copy _350, const i32 0   @68:3
+  branch copy _351, bb192, bb193   @68:3
 
 bb192:
-  _353 = copy _351   @68:10
-  goto bb194   @68:10
+  _352 = copy _349.2   @68:3
+  _353 = copy _352   @68:3
+  call avant_puts_str(copy _353) nocollect   @69:5
+  goto bb194   @68:3
 
 bb193:
-  _353 = const ref str null   @68:10
-  goto bb194   @68:10
+  call avant_puts_str(const str.16) nocollect   @71:5
+  goto bb194   @68:3
 
 bb194:
-  _354 = ne copy _353, const ref str null   @68:3
-  branch copy _354, bb195, bb196   @68:3
-
-bb195:
-  _355 = copy _353   @68:3
-  call avant_puts_str(copy _355) nocollect   @69:5
-  goto bb197   @68:3
-
-bb196:
-  call avant_puts_str(const str.16) nocollect   @71:5
-  goto bb197   @68:3
-
-bb197:
   _0 = const i32 0   @16:1
   gc.leave   @16:1
   return   @16:1
+}
+
+fn av.prelude/file_read(_1: ref str) -> %(prelude.IoError|String) frame @<prelude>:58:5 {
+  let _0: %(prelude.IoError|String)
+  let _1 (path): ref str slot
+  let _2: ref str
+  let _3: bool
+  let _4 (text): ref str
+  let _5: %(prelude.IoError|String)
+  let _6: i32
+  let _7: ref %prelude.IoError
+  let _8: %(prelude.IoError|String)
+
+bb0:
+  gc.enter   @58:5
+  gc.roots _1   @58:5
+  _2 = call avant_sys_read(copy _1) collects   @59:22
+  _3 = ne copy _2, const ref str null   @59:3
+  branch copy _3, bb1, bb2   @59:3
+
+bb1:
+  _4 = copy _2   @59:3
+  _5 = union %(prelude.IoError|String) tag 1 (copy _4)   @60:12
+  _0 = copy _5   @60:5
+  gc.leave   @60:5
+  return   @60:5
+
+bb2:
+  _6 = call avant_sys_errno() collects   @62:38
+  _7 = call av.prelude/IoError.new(const str.17, copy _1, copy _6) collects   @62:10
+  _8 = union %(prelude.IoError|String) tag 0 (copy _7)   @62:10
+  _0 = copy _8   @62:10
+  gc.leave   @62:10
+  return   @62:10
+}
+
+fn av.prelude/file_write(_1: ref str, _2: ref str) -> %(Int|prelude.IoError) frame @<prelude>:66:5 {
+  let _0: %(Int|prelude.IoError)
+  let _1 (path): ref str slot
+  let _2 (body): ref str slot
+  let _3: i32
+  let _4 (n): i32
+  let _5: bool
+  let _6: i32
+  let _7: ref %prelude.IoError
+  let _8: %(Int|prelude.IoError)
+  let _9: %(Int|prelude.IoError)
+
+bb0:
+  gc.enter   @66:5
+  gc.roots _1, _2   @66:5
+  _3 = call avant_sys_write(copy _1, copy _2) collects   @67:16
+  _4 = copy _3   @67:5
+  _5 = lt copy _4, const i32 0   @68:8
+  branch copy _5, bb1, bb2   @68:3
+
+bb1:
+  _6 = call avant_sys_errno() collects   @69:48
+  _7 = call av.prelude/IoError.new(const str.18, copy _1, copy _6) collects   @69:19
+  _8 = union %(Int|prelude.IoError) tag 1 (copy _7)   @69:19
+  _0 = copy _8   @69:5
+  gc.leave   @69:5
+  return   @69:5
+
+bb2:
+  _9 = union %(Int|prelude.IoError) tag 0 (copy _4)   @71:3
+  _0 = copy _9   @71:3
+  gc.leave   @71:3
+  return   @71:3
+}
+
+fn av.prelude/dir_list(_1: ref str) -> %(Array(String)|prelude.IoError) frame @<prelude>:75:5 {
+  let _0: %(Array(String)|prelude.IoError)
+  let _1 (path): ref str slot
+  let _2: ref %Array(String)
+  let _3: bool
+  let _4 (names): ref %Array(String)
+  let _5: %(Array(String)|prelude.IoError)
+  let _6: i32
+  let _7: ref %prelude.IoError
+  let _8: %(Array(String)|prelude.IoError)
+
+bb0:
+  gc.enter   @75:5
+  gc.roots _1   @75:5
+  _2 = call avant_sys_list(copy _1) collects   @76:23
+  _3 = ne copy _2, const ref %Array(String) null   @76:3
+  branch copy _3, bb1, bb2   @76:3
+
+bb1:
+  _4 = copy _2   @76:3
+  _5 = union %(Array(String)|prelude.IoError) tag 0 (copy _4)   @77:12
+  _0 = copy _5   @77:5
+  gc.leave   @77:5
+  return   @77:5
+
+bb2:
+  _6 = call avant_sys_errno() collects   @79:38
+  _7 = call av.prelude/IoError.new(const str.19, copy _1, copy _6) collects   @79:10
+  _8 = union %(Array(String)|prelude.IoError) tag 1 (copy _7)   @79:10
+  _0 = copy _8   @79:10
+  gc.leave   @79:10
+  return   @79:10
+}
+
+fn av.prelude/process_run(_1: ref str, _2: ref %Array(String)) -> %(Int|prelude.ProcessError) frame @<prelude>:84:5 {
+  let _0: %(Int|prelude.ProcessError)
+  let _1 (path): ref str slot
+  let _2 (args): ref %Array(String) slot
+  let _3: ref str slot
+  let _4: i32
+  let _5: %(Int|prelude.ProcessError)
+
+bb0:
+  _3 = zero   @84:5
+  gc.enter   @84:5
+  gc.roots _1, _2, _3   @84:5
+  _3 = const str.20   @85:60
+  _4 = call avant_sys_run(copy _1, copy _2, copy _3) collects   @85:33
+  _5 = call av.prelude/process_result(copy _1, copy _4, const str.20) collects   @85:3
+  _0 = copy _5   @85:3
+  gc.leave   @85:3
+  return   @85:3
+}
+
+fn av.prelude/process_run_out(_1: ref str, _2: ref %Array(String), _3: ref str) -> %(Int|prelude.ProcessError) frame @<prelude>:89:5 {
+  let _0: %(Int|prelude.ProcessError)
+  let _1 (path): ref str slot
+  let _2 (args): ref %Array(String) slot
+  let _3 (out): ref str slot
+  let _4: i32
+  let _5: %(Int|prelude.ProcessError)
+
+bb0:
+  gc.enter   @89:5
+  gc.roots _1, _2, _3   @89:5
+  _4 = call avant_sys_run(copy _1, copy _2, copy _3) collects   @90:33
+  _5 = call av.prelude/process_result(copy _1, copy _4, copy _3) collects   @90:3
+  _0 = copy _5   @90:3
+  gc.leave   @90:3
+  return   @90:3
+}
+
+fn av.prelude/process_result(_1: ref str, _2: i32, _3: ref str) -> %(Int|prelude.ProcessError) frame @<prelude>:93:1 {
+  let _0: %(Int|prelude.ProcessError)
+  let _1 (path): ref str slot
+  let _2 (st): i32
+  let _3 (out): ref str slot
+  let _4: bool
+  let _5: i32
+  let _6: ref %prelude.ProcessError
+  let _7: %(Int|prelude.ProcessError)
+  let _8: bool
+  let _9: i32
+  let _10: bool
+  let _11: i32
+  let _12: ref %prelude.ProcessError
+  let _13: %(Int|prelude.ProcessError)
+  let _14: i32
+  let _15: ref %prelude.ProcessError
+  let _16: %(Int|prelude.ProcessError)
+  let _17: %(Int|prelude.ProcessError)
+
+bb0:
+  gc.enter   @93:1
+  gc.roots _1, _3   @93:1
+  _4 = eq copy _2, const i32 -2   @94:9
+  branch copy _4, bb1, bb2   @94:3
+
+bb1:
+  _5 = call avant_sys_signal() collects   @95:47
+  _6 = call av.prelude/ProcessError.new(copy _1, const i32 0, copy _5, const str.20) collects   @95:24
+  _7 = union %(Int|prelude.ProcessError) tag 1 (copy _6)   @95:24
+  _0 = copy _7   @95:5
+  gc.leave   @95:5
+  return   @95:5
+
+bb2:
+  _8 = lt copy _2, const i32 0   @97:9
+  branch copy _8, bb3, bb4   @97:3
+
+bb3:
+  _9 = call avant_sys_stage() collects   @98:17
+  _10 = eq copy _9, const i32 1   @98:36
+  branch copy _10, bb5, bb6   @98:5
+
+bb4:
+  _17 = union %(Int|prelude.ProcessError) tag 0 (copy _2)   @103:3
+  _0 = copy _17   @103:3
+  gc.leave   @103:3
+  return   @103:3
+
+bb5:
+  _11 = call avant_sys_errno() collects   @99:46
+  _12 = call av.prelude/ProcessError.new(copy _1, copy _11, const i32 0, copy _3) collects   @99:26
+  _13 = union %(Int|prelude.ProcessError) tag 1 (copy _12)   @99:26
+  _0 = copy _13   @99:7
+  gc.leave   @99:7
+  return   @99:7
+
+bb6:
+  _14 = call avant_sys_errno() collects   @101:44
+  _15 = call av.prelude/ProcessError.new(copy _1, copy _14, const i32 0, const str.20) collects   @101:24
+  _16 = union %(Int|prelude.ProcessError) tag 1 (copy _15)   @101:24
+  _0 = copy _16   @101:5
+  gc.leave   @101:5
+  return   @101:5
 }
 
 fn av.results/Pt.initialize(_1: ref %results.Pt, _2: i32) -> void leaf @results.av:11:3 {
@@ -1553,6 +1779,245 @@ fn av.results/Pt.initialize(_1: ref %results.Pt, _2: i32) -> void leaf @results.
 bb0:
   (*_1).0 = copy _2   @12:12
   return   @11:3
+}
+
+fn av.prelude/IoError.initialize(_1: ref %prelude.IoError, _2: ref str, _3: ref str, _4: i32) -> void leaf @<prelude>:20:3 {
+  let _1 (self): ref %prelude.IoError
+  let _2 (op): ref str
+  let _3 (path): ref str
+  let _4 (errno): i32
+
+bb0:
+  barrier copy _1   @21:13
+  (*_1).0 = copy _2   @21:13
+  barrier copy _1   @22:15
+  (*_1).1 = copy _3   @22:15
+  (*_1).2 = copy _4   @23:16
+  return   @20:3
+}
+
+fn av.prelude/IoError.message(_1: ref %prelude.IoError) -> ref str frame @<prelude>:26:7 {
+  let _0: ref str
+  let _1 (self): ref %prelude.IoError
+  let _2: ref str slot
+  let _3: ref str slot
+  let _4: i32
+  let _5: ref str slot
+  let _6: bool
+  let _7: ref str slot
+  let _8: ref str slot
+  let _9: ref str slot
+  let _10: ref str slot
+  let _11: ref str
+
+bb0:
+  _2 = zero   @26:7
+  _3 = zero   @26:7
+  _5 = zero   @26:7
+  _7 = zero   @26:7
+  _8 = zero   @26:7
+  _9 = zero   @26:7
+  _10 = zero   @26:7
+  gc.enter   @26:7
+  gc.roots _2, _3, _5, _7, _8, _9, _10   @26:7
+  _2 = copy (*_1).0   @27:15
+  _3 = copy (*_1).1   @27:21
+  _4 = copy (*_1).2   @27:59
+  _5 = call avant_sys_strerror(copy _4) collects   @27:39
+  _6 = eq copy _5, const ref str null   @27:39
+  branch copy _6, bb1, bb2   @27:39
+
+bb1:
+  call avant_trap_c_null(const str.24) nocollect   @27:39
+  unreachable   @27:39
+
+bb2:
+  _7 = call avant_str_concat(const str.21, copy _2) collects   @27:5
+  _8 = call avant_str_concat(copy _7, const str.22) collects   @27:5
+  _9 = call avant_str_concat(copy _8, copy _3) collects   @27:5
+  _10 = call avant_str_concat(copy _9, const str.23) collects   @27:5
+  _11 = call avant_str_concat(copy _10, copy _5) collects   @27:5
+  _0 = copy _11   @27:5
+  gc.leave   @27:5
+  return   @27:5
+}
+
+fn av.prelude/IoError.__avant_error_text(_1: ref %prelude.IoError) -> ref str frame @<prelude>:15:5 {
+  let _0: ref str
+  let _1 (self): ref %prelude.IoError
+  let _2: ref str
+
+bb0:
+  gc.enter   @15:5
+  gc.roots   @15:5
+  _2 = call av.prelude/IoError.message(copy _1) collects   @15:5
+  _0 = copy _2   @15:5
+  gc.leave   @15:5
+  return   @15:5
+}
+
+fn av.prelude/ProcessError.initialize(_1: ref %prelude.ProcessError, _2: ref str, _3: i32, _4: i32, _5: ref str) -> void leaf @<prelude>:39:3 {
+  let _1 (self): ref %prelude.ProcessError
+  let _2 (path): ref str
+  let _3 (errno): i32
+  let _4 (signal): i32
+  let _5 (output): ref str
+
+bb0:
+  barrier copy _1   @40:15
+  (*_1).0 = copy _2   @40:15
+  (*_1).1 = copy _3   @41:16
+  (*_1).2 = copy _4   @42:17
+  barrier copy _1   @43:17
+  (*_1).3 = copy _5   @43:17
+  return   @39:3
+}
+
+fn av.prelude/ProcessError.message(_1: ref %prelude.ProcessError) -> ref str frame @<prelude>:46:7 {
+  let _0: ref str
+  let _1 (self): ref %prelude.ProcessError slot
+  let _2: i32
+  let _3: bool
+  let _4: ref str slot
+  let _5: i32
+  let _6: ref str slot
+  let _7: i32
+  let _8: ref str slot
+  let _9: bool
+  let _10: ref str slot
+  let _11: ref str slot
+  let _12: ref str slot
+  let _13: ref str slot
+  let _14: ref str
+  let _15: ref str
+  let _16: i32
+  let _17: bool
+  let _18: ref str slot
+  let _19: ref str slot
+  let _20: i32
+  let _21: ref str slot
+  let _22: bool
+  let _23: ref str slot
+  let _24: ref str slot
+  let _25: ref str slot
+  let _26: ref str slot
+  let _27: ref str
+  let _28: ref str slot
+  let _29: i32
+  let _30: ref str slot
+  let _31: bool
+  let _32: ref str slot
+  let _33: ref str slot
+  let _34: ref str
+
+bb0:
+  _4 = zero   @46:7
+  _6 = zero   @46:7
+  _8 = zero   @46:7
+  _10 = zero   @46:7
+  _11 = zero   @46:7
+  _12 = zero   @46:7
+  _13 = zero   @46:7
+  _18 = zero   @46:7
+  _19 = zero   @46:7
+  _21 = zero   @46:7
+  _23 = zero   @46:7
+  _24 = zero   @46:7
+  _25 = zero   @46:7
+  _26 = zero   @46:7
+  _28 = zero   @46:7
+  _30 = zero   @46:7
+  _32 = zero   @46:7
+  _33 = zero   @46:7
+  gc.enter   @46:7
+  gc.roots _1, _4, _6, _8, _10, _11, _12, _13, _18, _19, _21, _23, _24, _25, _26, _28, _30, _32, _33   @46:7
+  _2 = copy (*_1).2   @47:8
+  _3 = gt copy _2, const i32 0   @47:15
+  branch copy _3, bb1, bb2   @47:5
+
+bb1:
+  _4 = copy (*_1).0   @48:17
+  _5 = copy (*_1).2   @48:42
+  _6 = call avant_str_from_int(copy _5) collects   @48:42
+  _7 = copy (*_1).2   @48:83
+  _8 = call avant_sys_strsignal(copy _7) collects   @48:62
+  _9 = eq copy _8, const ref str null   @48:62
+  branch copy _9, bb3, bb4   @48:62
+
+bb2:
+  _15 = copy (*_1).3   @50:8
+  _16 = call avant_str_size(copy _15) nocollect   @50:14
+  _17 = gt copy _16, const i32 0   @50:20
+  branch copy _17, bb5, bb6   @50:5
+
+bb3:
+  call avant_trap_c_null(const str.27) nocollect   @48:62
+  unreachable   @48:62
+
+bb4:
+  _10 = call avant_str_concat(copy _4, const str.25) collects   @48:14
+  _11 = call avant_str_concat(copy _10, copy _6) collects   @48:14
+  _12 = call avant_str_concat(copy _11, const str.26) collects   @48:14
+  _13 = call avant_str_concat(copy _12, copy _8) collects   @48:14
+  _14 = call avant_str_concat(copy _13, const str.28) collects   @48:14
+  _0 = copy _14   @48:7
+  gc.leave   @48:7
+  return   @48:7
+
+bb5:
+  _18 = copy (*_1).0   @51:28
+  _19 = copy (*_1).3   @51:49
+  _20 = copy (*_1).1   @51:89
+  _21 = call avant_sys_strerror(copy _20) collects   @51:69
+  _22 = eq copy _21, const ref str null   @51:69
+  branch copy _22, bb7, bb8   @51:69
+
+bb6:
+  _28 = copy (*_1).0   @53:19
+  _29 = copy (*_1).1   @53:57
+  _30 = call avant_sys_strerror(copy _29) collects   @53:37
+  _31 = eq copy _30, const ref str null   @53:37
+  branch copy _31, bb9, bb10   @53:37
+
+bb7:
+  call avant_trap_c_null(const str.24) nocollect   @51:69
+  unreachable   @51:69
+
+bb8:
+  _23 = call avant_str_concat(const str.29, copy _18) collects   @51:14
+  _24 = call avant_str_concat(copy _23, const str.30) collects   @51:14
+  _25 = call avant_str_concat(copy _24, copy _19) collects   @51:14
+  _26 = call avant_str_concat(copy _25, const str.23) collects   @51:14
+  _27 = call avant_str_concat(copy _26, copy _21) collects   @51:14
+  _0 = copy _27   @51:7
+  gc.leave   @51:7
+  return   @51:7
+
+bb9:
+  call avant_trap_c_null(const str.24) nocollect   @53:37
+  unreachable   @53:37
+
+bb10:
+  _32 = call avant_str_concat(const str.29, copy _28) collects   @53:5
+  _33 = call avant_str_concat(copy _32, const str.23) collects   @53:5
+  _34 = call avant_str_concat(copy _33, copy _30) collects   @53:5
+  _0 = copy _34   @53:5
+  gc.leave   @53:5
+  return   @53:5
+}
+
+fn av.prelude/ProcessError.__avant_error_text(_1: ref %prelude.ProcessError) -> ref str frame @<prelude>:33:5 {
+  let _0: ref str
+  let _1 (self): ref %prelude.ProcessError
+  let _2: ref str
+
+bb0:
+  gc.enter   @33:5
+  gc.roots   @33:5
+  _2 = call av.prelude/ProcessError.message(copy _1) collects   @33:5
+  _0 = copy _2   @33:5
+  gc.leave   @33:5
+  return   @33:5
 }
 
 fn av.results/Pt.new(_1: i32) -> ref %results.Pt frame @results.av:7:1 {
@@ -1565,9 +2030,44 @@ bb0:
   gc.roots   @7:1
   _2 = call avant_alloc(const u64 16, const u32 1) collects   @7:1
   barrier copy _2   @9:3
-  (*_2).1 = const str.17   @9:3
+  (*_2).1 = const str.31   @9:3
   call av.results/Pt.initialize(copy _2, copy _1) nocollect   @7:1
   _0 = copy _2   @7:1
   gc.leave   @7:1
   return   @7:1
+}
+
+fn av.prelude/IoError.new(_1: ref str, _2: ref str, _3: i32) -> ref %prelude.IoError frame @<prelude>:15:5 {
+  let _0: ref %prelude.IoError
+  let _1 (op): ref str slot
+  let _2 (path): ref str slot
+  let _3 (errno): i32
+  let _4: ref %prelude.IoError
+
+bb0:
+  gc.enter   @15:5
+  gc.roots _1, _2   @15:5
+  _4 = call avant_alloc(const u64 24, const u32 2) collects   @15:5
+  call av.prelude/IoError.initialize(copy _4, copy _1, copy _2, copy _3) nocollect   @15:5
+  _0 = copy _4   @15:5
+  gc.leave   @15:5
+  return   @15:5
+}
+
+fn av.prelude/ProcessError.new(_1: ref str, _2: i32, _3: i32, _4: ref str) -> ref %prelude.ProcessError frame @<prelude>:33:5 {
+  let _0: ref %prelude.ProcessError
+  let _1 (path): ref str slot
+  let _2 (errno): i32
+  let _3 (signal): i32
+  let _4 (output): ref str slot
+  let _5: ref %prelude.ProcessError
+
+bb0:
+  gc.enter   @33:5
+  gc.roots _1, _4   @33:5
+  _5 = call avant_alloc(const u64 24, const u32 3) collects   @33:5
+  call av.prelude/ProcessError.initialize(copy _5, copy _1, copy _2, copy _3, copy _4) nocollect   @33:5
+  _0 = copy _5   @33:5
+  gc.leave   @33:5
+  return   @33:5
 }

@@ -82,6 +82,7 @@ extern avant_str_fields(ref str) -> ref collects
 extern avant_str_from_i32_bytes(ref) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_split(ref str, ref str) -> ref collects
+extern avant_trap_empty(i32) -> void never noreturn
 extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
@@ -172,7 +173,7 @@ fn av.refs/strings() -> void frame @refs.av:69:1 {
   let _16: ref %elems(String)
   let _17: ref str
   let _18: i32
-  let _19: i32
+  let _19: bool
   let _20: ref str
   let _21: ref str
   let _22: ref %Array(String)
@@ -239,8 +240,14 @@ bb0:
   _17 = copy (*_16)[const i32 1]   @79:10
   call avant_puts_str(copy _17) nocollect   @79:3
   _18 = copy (*_3).1   @80:10
-  _19 = sub copy _18, const i32 1   @80:10
-  check.bounds copy _19, copy _18   @80:10
+  _19 = eq copy _18, const i32 0   @80:10
+  branch copy _19, bb1, bb2   @80:10
+
+bb1:
+  call avant_trap_empty(const i32 0) nocollect   @80:10
+  unreachable   @80:10
+
+bb2:
   _20 = call avant_array_pop_ptr(copy _3) nocollect   @80:10
   call avant_puts_str(copy _20) nocollect   @80:3
   call avant_array_reverse(copy _3, const u64 8) collects   @81:5
@@ -296,7 +303,7 @@ fn av.refs/nodes() -> void frame @refs.av:96:1 {
   let _13: ref %refs.Node
   let _14: ref str
   let _15: i32
-  let _16: i32
+  let _16: bool
   let _17: ref %refs.Node
   let _18 (last): ref %refs.Node slot
   let _19: i32
@@ -405,8 +412,14 @@ bb3:
   _14 = copy (*_13).1   @104:13
   call avant_puts_str(copy _14) nocollect   @104:3
   _15 = copy (*_3).1   @105:12
-  _16 = sub copy _15, const i32 1   @105:12
-  check.bounds copy _16, copy _15   @105:12
+  _16 = eq copy _15, const i32 0   @105:12
+  branch copy _16, bb4, bb5   @105:12
+
+bb4:
+  call avant_trap_empty(const i32 0) nocollect   @105:12
+  unreachable   @105:12
+
+bb5:
   _17 = call avant_array_pop_ptr(copy _3) nocollect   @105:12
   _18 = copy _17   @105:8
   _19 = copy (*_18).0   @106:12
@@ -491,21 +504,21 @@ bb3:
   _52 = const i32 0   @116:5
   _53 = copy _46   @117:3
   _54 = const i32 0   @117:3
-  goto bb4   @117:3
+  goto bb6   @117:3
 
-bb4:
+bb6:
   _55 = copy (*_53).1   @117:3
   _56 = lt copy _54, copy _55   @117:3
-  branch copy _56, bb5, bb6   @117:3
+  branch copy _56, bb7, bb8   @117:3
 
-bb5:
+bb7:
   _57 = copy (*_53).0   @117:3
   _58 = copy (*_57)[copy _54]   @117:3
   _59 = copy _58   @117:3
   _60 = const i32 0   @118:7
-  goto bb7   @119:5
+  goto bb9   @119:5
 
-bb6:
+bb8:
   call printf(const str.11, copy _52) nocollect   @124:3
   _68 = copy (*_46).1   @125:12
   check.bounds const i32 3, copy _68   @125:12
@@ -519,24 +532,24 @@ bb6:
   gc.leave   @96:1
   return   @96:1
 
-bb7:
+bb9:
   _61 = copy (*_59).1   @119:18
   _62 = lt copy _60, copy _61   @119:13
-  branch copy _62, bb8, bb9   @119:5
+  branch copy _62, bb10, bb11   @119:5
 
-bb8:
+bb10:
   _63 = copy (*_59).0   @120:18
   _64 = copy (*_63)[copy _60]   @120:18
   _65 = add.chk copy _52, copy _64   @120:13
   _52 = copy _65   @120:9
   _66 = add copy _60, const i32 1   @121:13
   _60 = copy _66   @121:9
-  goto bb7   @119:5
+  goto bb9   @119:5
 
-bb9:
+bb11:
   _67 = add copy _54, const i32 1   @117:3
   _54 = copy _67   @117:3
-  goto bb4   @117:3
+  goto bb6   @117:3
 }
 
 fn av.refs/recs() -> void frame @refs.av:128:1 {
@@ -582,7 +595,7 @@ fn av.refs/recs() -> void frame @refs.av:128:1 {
   let _40: ref %elems(refs.Rec)
   let _41: i32
   let _42: i32
-  let _43: i32
+  let _43: bool
   let _44: addr %refs.Rec
   let _45: %refs.Rec
   let _46 (p): %refs.Rec slot
@@ -701,8 +714,14 @@ bb0:
   _41 = copy (*_40)[const i32 0].0   @140:13
   call printf(const str.11, copy _41) nocollect   @140:3
   _42 = copy (*_5).1   @141:9
-  _43 = sub copy _42, const i32 1   @141:9
-  check.bounds copy _43, copy _42   @141:9
+  _43 = eq copy _42, const i32 0   @141:9
+  branch copy _43, bb1, bb2   @141:9
+
+bb1:
+  call avant_trap_empty(const i32 0) nocollect   @141:9
+  unreachable   @141:9
+
+bb2:
   _44 = call avant_array_pop_slot(copy _5, const u64 24) collects   @141:9
   _45 = copy (*_44)   @141:9
   _46 = copy _45   @141:5
@@ -726,31 +745,31 @@ bb0:
   call avant_puts_str(copy _57) nocollect   @147:3
   _58 = const i32 3   @148:9
   _59 = lt copy _58, const i32 0   @148:9
-  branch copy _59, bb1, bb2   @148:9
+  branch copy _59, bb3, bb4   @148:9
 
-bb1:
+bb3:
   call avant_trap_negative(copy _58, const i32 0) nocollect   @148:9
   unreachable   @148:9
 
-bb2:
+bb4:
   _60 = cast copy _58 to u64   @148:9
   _61 = mul copy _60, const u64 24   @148:9
   _62 = call avant_alloc(copy _61, const u32 3) collects   @148:9
   _63 = call av.refs/mk(const i32 0) collects   @148:27
   _64 = copy _63   @148:9
   _65 = const i32 0   @148:9
-  goto bb3   @148:9
-
-bb3:
-  _66 = lt copy _65, copy _58   @148:9
-  branch copy _66, bb4, bb5   @148:9
-
-bb4:
-  (*_62)[copy _65] = copy _64 fresh   @148:9
-  _65 = add copy _65, const i32 1   @148:9
-  goto bb3   @148:9
+  goto bb5   @148:9
 
 bb5:
+  _66 = lt copy _65, copy _58   @148:9
+  branch copy _66, bb6, bb7   @148:9
+
+bb6:
+  (*_62)[copy _65] = copy _64 fresh   @148:9
+  _65 = add copy _65, const i32 1   @148:9
+  goto bb5   @148:9
+
+bb7:
   barrier copy _62   @148:9
   _67 = call avant_alloc(const u64 16, const u32 1022) collects   @148:9
   barrier copy _67   @148:9

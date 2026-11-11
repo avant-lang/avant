@@ -61,6 +61,7 @@ extern avant_str_eq(ref str, ref str) -> i32 never
 extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_repeat_byte(i32, i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
+extern avant_trap_empty(i32) -> void never noreturn
 extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
@@ -681,7 +682,7 @@ fn av.churn/round(_1: ref %churn.Root, _2: i32) -> i32 frame @churn.av:130:1 {
   let _197: bool
   let _198: ref %Array(churn.Slot) slot
   let _199: i32
-  let _200: i32
+  let _200: bool
   let _201: addr %churn.Slot
   let _202: %churn.Slot
   let _203 (dummy): %churn.Slot
@@ -1035,8 +1036,20 @@ bb10:
 bb11:
   _198 = copy (*_12).2   @160:16
   _199 = copy (*_198).1   @160:22
-  _200 = sub copy _199, const i32 1   @160:22
-  check.bounds copy _200, copy _199   @160:22
+  _200 = eq copy _199, const i32 0   @160:22
+  branch copy _200, bb13, bb14   @160:22
+
+bb12:
+  _205 = copy (*_12).4   @163:9
+  _206 = copy (*_205).1   @163:14
+  _207 = gt copy _206, const i32 8   @163:20
+  branch copy _207, bb15, bb16   @163:5
+
+bb13:
+  call avant_trap_empty(const i32 0) nocollect   @160:22
+  unreachable   @160:22
+
+bb14:
   _201 = call avant_array_pop_slot(copy _198, const u64 24) collects   @160:22
   _202 = copy (*_201)   @160:22
   _203 = copy _202   @160:13
@@ -1044,13 +1057,7 @@ bb11:
   (*_204).1 = const i32 0   @161:15
   goto bb12   @159:5
 
-bb12:
-  _205 = copy (*_12).4   @163:9
-  _206 = copy (*_205).1   @163:14
-  _207 = gt copy _206, const i32 8   @163:20
-  branch copy _207, bb13, bb14   @163:5
-
-bb13:
+bb15:
   _208 = call avant_alloc(const u64 8, const u32 65535) collects   @164:16
   _209 = call avant_alloc(const u64 12, const u32 0) collects   @164:17
   (*_209)[const i32 0] = copy _15   @164:18
@@ -1072,20 +1079,20 @@ bb13:
   (*_213).2 = const i32 1   @164:16
   barrier copy _12   @164:14
   (*_12).4 = copy _213   @164:14
-  goto bb14   @163:5
+  goto bb16   @163:5
 
-bb14:
+bb16:
   _214 = copy (*_12).5   @166:9
   _215 = call avant_hash_size(copy _214) nocollect   @166:11
   _216 = gt copy _215, const i32 20   @166:17
-  branch copy _216, bb15, bb16   @166:5
+  branch copy _216, bb17, bb18   @166:5
 
-bb15:
+bb17:
   _217 = copy (*_12).5   @167:8
   call avant_hash_clear(copy _217) nocollect   @167:10
-  goto bb16   @166:5
+  goto bb18   @166:5
 
-bb16:
+bb18:
   _218 = add copy _4, const i32 1   @169:11
   _4 = copy _218   @169:7
   goto bb1   @133:3
