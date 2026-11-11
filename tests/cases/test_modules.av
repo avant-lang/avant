@@ -446,8 +446,9 @@ fn test_modules(c: Checks) {
 // Fields are private unless `pub` (Stage 29 W3a, D299; D42 rule 5
 // replaced): outside its type's module a field without `pub` cannot be
 // read, written, or named in a literal; a comptime walk from another
-// module sees only the `pub` fields. The compiler's own build is exempt
-// until the mid-stage release (a checkout's `compiler/main.av` root).
+// module sees only the `pub` fields. No build is exempt: the compiler's
+// own layout (a checkout's `compiler/main.av` root) obeys the rule too
+// (its W3a bootstrap exemption ended with the v0.40.0 seed, W3a2).
 fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   write_av(dir, "acct", "pub class Account {\n  amount: Int = 0\n  pub owner: String = \"\"\n  pub fn balance: Int { amount }\n  pub fn add(n: Int) { self.amount = amount + n }\n}\npub struct Span {\n  pub lo: Int\n  pub hi: Int\n}\npub struct Secret {\n  pub shown: Int\n  kept: Int\n}\npub fn secret(n: Int): Secret { Secret { shown: n, kept: n * 2 } }\npub fn (s: Secret) kept_twice: Int { s.kept * 2 }\n")
   write_av(dir, "pfok", "import acct\nfn main {\n  a = Account.new\n  a.add(5)\n  a.owner = \"ann\"\n  puts(a.balance)\n  puts(a.owner)\n  s = Span { lo: 1, hi: 4 }\n  s.hi = 6\n  puts(s.hi - s.lo)\n  t = secret(3)\n  puts(t.shown + t.kept_twice)\n}\n")
@@ -484,20 +485,12 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   file_write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
   boot_bin = "${dir}/boot.bin"
   boot_log = "${dir}/boot.log"
-  boot_code = compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
-  c.eq_int(boot_code, 0, "the compiler's own build is exempt until the mid-stage release")
-  nob = "${dir}/noboot"
-  mkdir_p("${nob}/compiler")
-  file_write("${nob}/compiler/ast.av", "pub struct Node {\n  n: Int\n}\n")
-  file_write("${nob}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
-  nob_bin = "${dir}/noboot.bin"
-  nob_log = "${dir}/noboot.log"
-  compile_av(compiler, "${nob}/compiler/main.av", nob_bin, nob_log)
-  c.expect(!file_exists(nob_bin), "a compiler/main.av outside a checkout bin absent")
-  if err = file_read(nob_log) {
-    c.expect(str_has(err, "field n of Node is private to module ast"), "a compiler/main.av outside a checkout is not exempt")
+  compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
+  c.expect(!file_exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
+  if err = file_read(boot_log) {
+    c.expect(str_has(err, "field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")
   } else {
-    c.expect(false, "a compiler/main.av outside a checkout is not exempt")
+    c.expect(false, "a checkout's compiler/main.av is not exempt")
   }
 }
 

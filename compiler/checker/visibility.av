@@ -23,7 +23,6 @@ pub fn (checker_self: Checker) note_modules {
     }
   }
   checker_self.known_mods = km
-  checker_self.bootstrap_mods = field_bootstrap_mods(checker_self.program, checker_self.cwd)
   tm = Hash(String, String).new
   tv = Hash(String, Int).new
   checker_self.type_mod = tm
@@ -48,55 +47,6 @@ pub fn (checker_self: Checker) note_modules {
   }
 }
 
-// The bootstrap exemption of field privacy (Stage 29 W3a, D299; proposed
-// decision in the W3a record). The v0.39.0 seed refuses `pub` on a field,
-// so the compiler's own sources cannot mark their fields until a release
-// with this rule is the seed (the mid-stage release, D294). Until then,
-// and only in the compiler's own build, field privacy is not checked
-// between the compiler's modules: the build whose root is `compiler/main.av`
-// of an Avant checkout (beside `runtime/build.sh`), for the modules under
-// that `compiler/` directory. Every other program, and every other module
-// of that build, obeys the rule. Removed at the mid-stage release, when
-// the compiler marks its fields `pub`.
-pub fn field_bootstrap_mods(program: Program, cwd: String): Hash(String, Int) {
-  out = Hash(String, Int).new
-  root_path = ""
-  for info in program.mods {
-    if info.name == program.root_module {
-      root_path = bootstrap_abs(info.path, cwd)
-    }
-  }
-  if path_basename(root_path) != "main.av" {
-    return out
-  }
-  dir = path_dirname(root_path)
-  if path_basename(dir) != "compiler" {
-    return out
-  }
-  if !file_exists("${path_dirname(dir)}/runtime/build.sh") {
-    return out
-  }
-  prefix = "${dir}/"
-  for info in program.mods {
-    p = bootstrap_abs(info.path, cwd)
-    if p.size > prefix.size && str_slice(p, 0, prefix.size) == prefix {
-      out[info.name] = 1
-    }
-  }
-  out
-}
-
-pub fn bootstrap_abs(path: String, cwd: String): String {
-  if path.size > 0 && path[0] == 47 {
-    return path
-  }
-  p = path
-  while p.size > 2 && str_slice(p, 0, 2) == "./" {
-    p = str_slice(p, 2, p.size)
-  }
-  "${cwd}/${p}"
-}
-
 // Fields are private unless `pub` (Stage 29 W3a, D299; D42 rule 5
 // replaced): a field without `pub` is read, written and named in a literal
 // only inside its type's module.
@@ -109,11 +59,6 @@ pub fn (checker_self: Checker) field_hidden(owner: Ty, name: String): Bool {
     if f.name == name {
       if f.vis {
         return false
-      }
-      if flag = checker_self.bootstrap_mods.get(owner.mod_name) {
-        if flag2 = checker_self.bootstrap_mods.get(from) {
-          return false
-        }
       }
       return true
     }
