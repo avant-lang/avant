@@ -23,7 +23,7 @@ fn has_sub(s: String, needle: String): Bool {
 }
 
 fn run_args(bin: String, args: Array(String), log: String): Int {
-  process_run_out(bin, args, log)
+  process_run_out(bin, args, log) ?? -1
 }
 
 fn run_env_args(bin: String, name: String, value: String, args: Array(String), log: String): Int {
@@ -35,7 +35,7 @@ fn run_env_args(bin: String, name: String, value: String, args: Array(String), l
     full.push(args[i])
     i += 1
   }
-  process_run_out("/usr/bin/env", full, log)
+  process_run_out("/usr/bin/env", full, log) ?? -1
 }
 
 fn test_threads(c: Checks) {
@@ -44,8 +44,7 @@ fn test_threads(c: Checks) {
     stamp = now_ms()
     src = "${scratch()}/threads-${stamp}.av"
     bin = "${scratch()}/threads-${stamp}.bin"
-    w = file_write(src, threads_fixture())
-    c.eq_int(w, 0, "write threads fixture")
+    c.wrote(file_write(src, threads_fixture()), "write threads fixture")
     code = compile_av(compiler, src, bin, "${scratch()}/threads-${stamp}.clog")
     c.eq_int(code, 0, "compile threads fixture")
 

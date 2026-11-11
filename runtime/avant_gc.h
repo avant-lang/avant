@@ -180,7 +180,7 @@
  *     avant_json_f64s, copy_str                    C
  *     base64 encode/decode, zlib                   C
  *     sha256 (avant_codec.c)                       N (digest in C)
- *     avant_argv, avant_dir_list                   C (array filled in
+ *     avant_argv, avant_sys_list, avant_fs_list    C (array filled in
  *                                                  place)
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
  *     avant_spawn (avant_task.c; C28, R1)          C (the record is a

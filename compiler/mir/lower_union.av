@@ -863,7 +863,7 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
   b.c_i32(0)
 }
 
-// `env_get(name)`, `file_read(path)` (calls.av emit_opt_cstr): the
+// `env_get(name)` (calls.av emit_opt_cstr): the
 // argument, then the runtime's string with an ok flag, as String?.
 pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
   b = lw.lw_b
@@ -885,16 +885,13 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 
 // The builtins of the old back end that need no FFI and are neither
 // string nor heap builtins (calls.av:157-200, 252-272, 291-320, 349-352):
-// `argv`, `file_exists`, `file_write`, `dir_list`, the two T? readers,
+// `argv`, `file_exists`, `env_get`,
 // `wide_op`, `wide_hi`, `checksum_f64`, `sha256`, `crc32_bytes`,
 // `sha256_word0`; nil when c is not one of them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
   if c == "env_get" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_env_get")
-  }
-  if c == "file_read" && e.args.size == 1 {
-    return lw.lower_opt_cstr(e, "avant_file_read")
   }
   if c == "wide_op" && e.args.size == 5 {
     // calls.av:291-309: the arguments last to first, then the call.
@@ -923,10 +920,6 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     f = "avant_argv"
   } else if c == "file_exists" && e.args.size == 1 {
     f = "avant_file_exists"
-  } else if c == "file_write" && e.args.size == 2 {
-    f = "avant_file_write"
-  } else if c == "dir_list" && e.args.size == 1 {
-    f = "avant_dir_list"
   }
   if f.size == 0 {
     return nil

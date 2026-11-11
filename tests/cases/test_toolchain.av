@@ -16,7 +16,7 @@ fn tc_compile(compiler: String, src: String, bin: String, mode: String, log: Str
   if mode.size > 0 {
     args.push(mode)
   }
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 fn tc_bytes(path: String): String {
@@ -33,7 +33,7 @@ fn tc_same(a: String, b: String): Bool {
   args.push("-s")
   args.push(a)
   args.push(b)
-  process_run("/usr/bin/cmp", args) == 0
+  (process_run("/usr/bin/cmp", args) ?? -1) == 0
 }
 
 // grep -qF: the binary contains the text (a symbol name).
@@ -42,7 +42,7 @@ fn tc_has(path: String, text: String): Bool {
   args.push("-qF")
   args.push(text)
   args.push(path)
-  process_run("/usr/bin/grep", args) == 0
+  (process_run("/usr/bin/grep", args) ?? -1) == 0
 }
 
 // The directory `--keep-tmp` names on stderr, or "".
@@ -68,7 +68,7 @@ fn test_toolchain(c: Checks) {
     stamp = now_ms()
     base = "${scratch()}/toolchain-wavei-${stamp}"
     src = "${base}-hello.av"
-    file_write(src, "fn helper_twice(n: Int): Int {\n  n * 2 + 1\n}\n\nfn main {\n  puts(helper_twice(20))\n}\n")
+    _ = file_write(src, "fn helper_twice(n: Int): Int {\n  n * 2 + 1\n}\n\nfn main {\n  puts(helper_twice(20))\n}\n")
 
     code1 = tc_compile(compiler, src, "${base}-debug.bin", "--debug", "${base}-debug.log")
     code2 = tc_compile(compiler, src, "${base}-bare.bin", "", "${base}-bare.log")
@@ -104,7 +104,7 @@ fn test_toolchain(c: Checks) {
       cargs.push(lbin)
       cargs.push("--debug")
       cargs.push("--cpu=${lv[k]}")
-      c.eq_int(process_run_out(compiler, cargs, "${base}-cpu-${lv[k]}.log"), 0, "compile --cpu=${lv[k]} exits zero")
+      c.eq_int((process_run_out(compiler, cargs, "${base}-cpu-${lv[k]}.log") ?? -1), 0, "compile --cpu=${lv[k]} exits zero")
       c.expect(tc_has(lbin, "__avant_cpu_level"), "a --cpu=${lv[k]} program records its level")
       rcode = run_av_bin(lbin, "${base}-cpu-${lv[k]}.run")
       rout = tc_bytes("${base}-cpu-${lv[k]}.run")
@@ -118,7 +118,7 @@ fn test_toolchain(c: Checks) {
       k += 1
     }
     c.expect(tc_same(debug, "${base}-cpu-v2.bin"), "an artifact's default level is v2")
-    bad_code = process_run_out(compiler, ["compile", src, "${base}-cpu-bad.bin", "--cpu=v9"], "${base}-cpu-bad.log")
+    bad_code = process_run_out(compiler, ["compile", src, "${base}-cpu-bad.bin", "--cpu=v9"], "${base}-cpu-bad.log") ?? -1
     c.eq_int(bad_code, 1, "an unknown --cpu is refused")
     c.expect(str_has(tc_bytes("${base}-cpu-bad.log"), "unknown CPU level v9"), "the refusal names the level")
 
@@ -131,7 +131,7 @@ fn test_toolchain(c: Checks) {
     run_args: Array(String) = []
     run_args.push("-c")
     run_args.push("TMPDIR='${run_tmp}' exec '${compiler}' run --keep-tmp '${src}' > '${run_log}' 2>&1 < /dev/null")
-    run_code = process_run("/bin/sh", run_args)
+    run_code = process_run("/bin/sh", run_args) ?? -1
     c.eq_int(run_code, 0, "bare run exits zero")
     c.expect(str_has(tc_bytes(run_log), "41\n"), "bare run prints the program's output")
     kept = tc_kept_dir(run_log)
@@ -144,13 +144,13 @@ fn test_toolchain(c: Checks) {
     // open pipe as stdin does not hold a compile. These go through sh
     // because they are about stdin plumbing.
     cat_src = "${base}-stdin.av"
-    file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
+    _ = file_write(cat_src, "fn main {\n  puts(file_read(\"/dev/stdin\") ?? \"none\")\n}\n")
     pipe_out = "${base}-pipe.out"
     pipe_sh = "${base}-pipe.sh"
-    file_write(pipe_sh, "printf 'piped input' | '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
+    _ = file_write(pipe_sh, "printf 'piped input' | '${compiler}' run '${cat_src}' > '${pipe_out}' 2>&1\n")
     sh_args: Array(String) = []
     sh_args.push(pipe_sh)
-    pipe_code = process_run("/bin/sh", sh_args)
+    pipe_code = process_run("/bin/sh", sh_args) ?? -1
     c.eq_int(pipe_code, 0, "avant run with piped stdin exits zero")
     if pt = file_read(pipe_out) {
       c.expect(str_has(pt, "piped input"), "piped stdin reaches the program avant run starts")
@@ -164,11 +164,11 @@ fn test_toolchain(c: Checks) {
     // file), capped at 10 s so a regression cannot hang the suite: a
     // compile that waits for its stdin takes the whole cap.
     open_flag = "${base}-open.done"
-    file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
+    _ = file_write(open_sh, "i=0; while [ ! -f '${open_flag}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done | { '${compiler}' compile '${src}' '${open_bin}' > /dev/null 2>&1; : > '${open_flag}'; }\n")
     open_args: Array(String) = []
     open_args.push(open_sh)
     started = now_ms()
-    process_run("/bin/sh", open_args)
+    _ = process_run("/bin/sh", open_args)
     c.expect(file_exists(open_bin), "a compile with an open pipe as stdin finishes")
     c.expect(now_ms() - started < 8000, "a compile does not wait for its stdin to close")
   } else {

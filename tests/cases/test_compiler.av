@@ -6,7 +6,7 @@ fn test_compiler(c: Checks) {
   echo_out = "${scratch()}/compiler-${stamp}-echo.txt"
   echo_args: Array(String) = []
   echo_args.push("ok")
-  echo_code = process_run_out("/bin/echo", echo_args, echo_out)
+  echo_code = process_run_out("/bin/echo", echo_args, echo_out) ?? -1
   c.eq_int(echo_code, 0, "process_run_out echo")
   if echoed = file_read(echo_out) {
     c.eq_str(echoed, "ok\n", "process_run_out capture")
@@ -34,26 +34,26 @@ fn test_compiler(c: Checks) {
   mkdir_p("${fs}/a/b/c")
   c.expect(file_exists("${fs}/a/b/c"), "mkdir_p makes nested directories")
   script = "${fs}/a/run.sh"
-  file_write(script, "#!/bin/sh\nexit 3\n")
+  _ = file_write(script, "#!/bin/sh\nexit 3\n")
   chmod_x(script)
-  c.eq_int(process_run(script, empty_strs()), 3, "chmod_x makes a file executable")
+  c.eq_int((process_run(script, empty_strs()) ?? -1), 3, "chmod_x makes a file executable")
   rm_f(script)
   rm_f(script)
   c.expect(!file_exists(script), "rm_f removes a file and ignores a missing one")
   keep = "${fs}/keep.txt"
-  file_write(keep, "kept")
+  _ = file_write(keep, "kept")
   ln_args: Array(String) = []
   ln_args.push("-s")
   ln_args.push(keep)
   ln_args.push("${fs}/a/b/link")
-  process_run("/bin/ln", ln_args)
+  _ = process_run("/bin/ln", ln_args)
   rm_rf("${fs}/a")
   c.expect(!file_exists("${fs}/a"), "rm_rf removes a tree")
   c.expect(file_exists(keep), "rm_rf does not follow a symbolic link")
   pwd_out = "${fs}/pwd.txt"
   pwd_args: Array(String) = []
   pwd_args.push("-P")
-  process_run_out("/bin/pwd", pwd_args, pwd_out)
+  _ = process_run_out("/bin/pwd", pwd_args, pwd_out)
   pwd_text = ""
   if pt = file_read(pwd_out) {
     pwd_text = pt.strip()
@@ -69,8 +69,7 @@ fn test_compiler(c: Checks) {
     hello_log = "${scratch()}/compiler-${stamp}-hello.log"
     hello_dump = "${scratch()}/compiler-${stamp}-hello.mir"
     hello_body = "fn main {\n  w = file_write(\"${hello_out}\", \"Hello Avant\")\n}\n"
-    w = file_write(hello_src, hello_body)
-    c.eq_int(w, 0, "write hello fixture")
+    c.wrote(file_write(hello_src, hello_body), "write hello fixture")
     hello_code = compile_av(compiler, hello_src, hello_bin, hello_log)
     c.eq_int(hello_code, 0, "compile hello fixture")
     c.expect(file_exists(hello_bin), "hello bin exists")
@@ -97,8 +96,7 @@ fn test_compiler(c: Checks) {
     fact_out = "${scratch()}/compiler-${stamp}-fact.txt"
     fact_log = "${scratch()}/compiler-${stamp}-fact.log"
     fact_body = "fn fact(n: Int): Int {\n  if n <= 1 { return 1 }\n  n * fact(n - 1)\n}\nfn main {\n  n = fact(5)\n  b = buf_new()\n  b.push_fmt_i(n)\n  w = file_write(\"${fact_out}\", b.to_s)\n}\n"
-    w2 = file_write(fact_src, fact_body)
-    c.eq_int(w2, 0, "write fact fixture")
+    c.wrote(file_write(fact_src, fact_body), "write fact fixture")
     fact_code = compile_av(compiler, fact_src, fact_bin, fact_log)
     c.eq_int(fact_code, 0, "compile fact fixture")
     c.expect(file_exists(fact_bin), "fact bin exists")
@@ -114,8 +112,7 @@ fn test_compiler(c: Checks) {
     bad_src = "${scratch()}/compiler-${stamp}-bad.av"
     bad_bin = "${scratch()}/compiler-${stamp}-bad.bin"
     bad_log = "${scratch()}/compiler-${stamp}-bad.log"
-    w3 = file_write(bad_src, "fn main {\n  puts(x)\n}\n")
-    c.eq_int(w3, 0, "write bad fixture")
+    c.wrote(file_write(bad_src, "fn main {\n  puts(x)\n}\n"), "write bad fixture")
     bad_code = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(bad_code != 0, "compile bad exits non-zero")
     c.expect(!file_exists(bad_bin), "bad bin absent")

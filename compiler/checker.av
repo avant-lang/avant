@@ -2899,42 +2899,6 @@ pub class Checker {
       self.fail(expr.loc, "now_ms takes no arguments")
       return self.t_int64()
     }
-    if expr.callee == "file_read" {
-      if expr.args.size == 1 {
-        if b = expr.block {
-          self.fail(expr.loc, "file_read takes one String")
-          return ty_nilable(self.t_string())
-        }
-      } else {
-        self.fail(expr.loc, "file_read takes one String")
-        return ty_nilable(self.t_string())
-      }
-      got = self.check_expr_as(expr.args[0], self.t_string())
-      if !ty_assignable(got, self.t_string()) {
-        self.fail(expr.args[0].loc, "file_read expects String")
-      }
-      return ty_nilable(self.t_string())
-    }
-    if expr.callee == "file_write" {
-      if expr.args.size == 2 {
-        if b = expr.block {
-          self.fail(expr.loc, "file_write takes a path and a body")
-          return self.t_int()
-        }
-      } else {
-        self.fail(expr.loc, "file_write takes a path and a body")
-        return self.t_int()
-      }
-      path = self.check_expr_as(expr.args[0], self.t_string())
-      if !ty_assignable(path, self.t_string()) {
-        self.fail(expr.args[0].loc, "file_write path must be String")
-      }
-      body = self.check_expr_as(expr.args[1], self.t_string())
-      if !ty_assignable(body, self.t_string()) {
-        self.fail(expr.args[1].loc, "file_write body must be String")
-      }
-      return self.t_int()
-    }
     if expr.callee == "argv" {
       if expr.args.size == 0 {
         if b = expr.block {
@@ -2945,52 +2909,6 @@ pub class Checker {
       }
       self.fail(expr.loc, "argv takes no arguments")
       return ty_array(self.t_string())
-    }
-    if expr.callee == "process_run" {
-      if expr.args.size == 2 {
-        if b = expr.block {
-          self.fail(expr.loc, "process_run takes a path and args")
-          return self.t_int()
-        }
-      } else {
-        self.fail(expr.loc, "process_run takes a path and args")
-        return self.t_int()
-      }
-      path = self.check_expr_as(expr.args[0], self.t_string())
-      if !ty_assignable(path, self.t_string()) {
-        self.fail(expr.args[0].loc, "process_run path must be String")
-      }
-      args_ty = ty_array(self.t_string())
-      got = self.check_expr_as(expr.args[1], args_ty)
-      if !ty_assignable(got, args_ty) {
-        self.fail(expr.args[1].loc, "process_run args must be Array(String)")
-      }
-      return self.t_int()
-    }
-    if expr.callee == "process_run_out" {
-      if expr.args.size == 3 {
-        if b = expr.block {
-          self.fail(expr.loc, "process_run_out takes a path, args, and an output path")
-          return self.t_int()
-        }
-      } else {
-        self.fail(expr.loc, "process_run_out takes a path, args, and an output path")
-        return self.t_int()
-      }
-      path = self.check_expr_as(expr.args[0], self.t_string())
-      if !ty_assignable(path, self.t_string()) {
-        self.fail(expr.args[0].loc, "process_run_out path must be String")
-      }
-      args_ty = ty_array(self.t_string())
-      got = self.check_expr_as(expr.args[1], args_ty)
-      if !ty_assignable(got, args_ty) {
-        self.fail(expr.args[1].loc, "process_run_out args must be Array(String)")
-      }
-      outp = self.check_expr_as(expr.args[2], self.t_string())
-      if !ty_assignable(outp, self.t_string()) {
-        self.fail(expr.args[2].loc, "process_run_out output path must be String")
-      }
-      return self.t_int()
     }
     if expr.callee == "env_get" {
       if expr.args.size == 1 {
@@ -3023,22 +2941,6 @@ pub class Checker {
         self.fail(expr.args[0].loc, "file_exists expects String")
       }
       return self.t_bool()
-    }
-    if expr.callee == "dir_list" {
-      if expr.args.size == 1 {
-        if b = expr.block {
-          self.fail(expr.loc, "dir_list takes one String")
-          return ty_array(self.t_string())
-        }
-      } else {
-        self.fail(expr.loc, "dir_list takes one String")
-        return ty_array(self.t_string())
-      }
-      got = self.check_expr_as(expr.args[0], self.t_string())
-      if !ty_assignable(got, self.t_string()) {
-        self.fail(expr.args[0].loc, "dir_list expects String")
-      }
-      return ty_array(self.t_string())
     }
     if ty = self.check_codec_call(expr) {
       return ty

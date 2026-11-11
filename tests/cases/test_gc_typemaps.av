@@ -69,7 +69,7 @@ fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
@@ -83,13 +83,13 @@ fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log:
   args.push("${n1}=${v1}")
   args.push("${n2}=${v2}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn tm_case(c: Checks, compiler: String, stem: String, name: String, src: String, want: String) {
   path = "${stem}-${name}.av"
   bin = "${stem}-${name}.bin"
-  c.eq_int(file_write(path, src), 0, "${name}: write fixture")
+  c.wrote(file_write(path, src), "${name}: write fixture")
   code = compile_av(compiler, path, bin, "${stem}-${name}.clog")
   c.eq_int(code, 0, "${name}: compile")
   if code != 0 {

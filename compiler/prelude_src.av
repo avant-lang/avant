@@ -1,0 +1,151 @@
+// The prelude module's source: the file and process functions (Stage 29 W4b2, D295 R12),
+// written in Avant: file_read, file_write, dir_list, process_run and
+// process_run_out return their result or an Error value that says what
+// failed, IoError for files and directories, ProcessError for programs.
+// The loader adds this module, named `prelude`, to a program whose source
+// names one of the functions (prelude_wanted); every module of the
+// program then sees its pub names, the two error types included. The runtime entries are
+// avant_sys_* in runtime/avant_io.c. The text is built line by line
+// because the seed has no multi-line string literal yet (D299).
+
+import token
+
+// The names that bring the module in: its functions. A program that
+// calls none of them may declare its own IoError or ProcessError.
+pub fn prelude_names: Array(String) {
+  ["file_read", "file_write", "dir_list", "process_run", "process_run_out"]
+}
+
+// Whether a module's tokens name one of the prelude module's names.
+pub fn prelude_wanted(tokens: Array(Token)): Bool {
+  names = prelude_names()
+  for t in tokens {
+    if t.kind == tk_ident() {
+      for n in names {
+        if t.value == n {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
+pub fn prelude_path: String {
+  "<prelude>"
+}
+
+pub fn prelude_source: String {
+  b = buf_new()
+  lines = [
+    "lib avant_sys {",
+    "  fun avant_sys_read(path: String): String?",
+    "  fun avant_sys_write(path: String, body: String): Int",
+    "  fun avant_sys_list(path: String): Array(String)?",
+    "  fun avant_sys_run(path: String, args: Array(String), out: String): Int",
+    "  fun avant_sys_errno: Int",
+    "  fun avant_sys_stage: Int",
+    "  fun avant_sys_signal: Int",
+    "  fun avant_sys_strerror(code: Int): String",
+    "  fun avant_sys_strsignal(sig: Int): String",
+    "}",
+    "",
+    "// A file or directory operation that failed: op is \"read\", \"write\" or",
+    "// \"list\", errno the OS error number.",
+    "pub class IoError: Error {",
+    "  pub op: String",
+    "  pub path: String",
+    "  pub errno: Int",
+    "",
+    "  fn initialize(op: String, path: String, errno: Int) {",
+    "    self.op = op",
+    "    self.path = path",
+    "    self.errno = errno",
+    "  }",
+    "",
+    "  pub fn message: String {",
+    "    \"cannot \${op} \${path}: \${avant_sys.avant_sys_strerror(errno)}\"",
+    "  }",
+    "}",
+    "",
+    "// A program that could not start (errno; output names the output file",
+    "// it could not open, else it is \"\"), or that a signal killed (signal).",
+    "pub class ProcessError: Error {",
+    "  pub path: String",
+    "  pub errno: Int",
+    "  pub signal: Int",
+    "  pub output: String",
+    "",
+    "  fn initialize(path: String, errno: Int, signal: Int, output: String) {",
+    "    self.path = path",
+    "    self.errno = errno",
+    "    self.signal = signal",
+    "    self.output = output",
+    "  }",
+    "",
+    "  pub fn message: String {",
+    "    if signal > 0 {",
+    "      return \"\${path} killed by signal \${signal} (\${avant_sys.avant_sys_strsignal(signal)})\"",
+    "    }",
+    "    if output.size > 0 {",
+    "      return \"cannot run \${path}: cannot open \${output}: \${avant_sys.avant_sys_strerror(errno)}\"",
+    "    }",
+    "    \"cannot run \${path}: \${avant_sys.avant_sys_strerror(errno)}\"",
+    "  }",
+    "}",
+    "",
+    "// The whole file.",
+    "pub fn file_read(path: String): String | IoError {",
+    "  if text = avant_sys.avant_sys_read(path) {",
+    "    return text",
+    "  }",
+    "  IoError.new(\"read\", path, avant_sys.avant_sys_errno())",
+    "}",
+    "",
+    "// Creates or replaces the file; the bytes written.",
+    "pub fn file_write(path: String, body: String): Int | IoError {",
+    "  n = avant_sys.avant_sys_write(path, body)",
+    "  if n < 0 {",
+    "    return IoError.new(\"write\", path, avant_sys.avant_sys_errno())",
+    "  }",
+    "  n",
+    "}",
+    "",
+    "// The names in the directory, sorted, without . and ..",
+    "pub fn dir_list(path: String): Array(String) | IoError {",
+    "  if names = avant_sys.avant_sys_list(path) {",
+    "    return names",
+    "  }",
+    "  IoError.new(\"list\", path, avant_sys.avant_sys_errno())",
+    "}",
+    "",
+    "// Runs the program (a name without / is looked up on PATH) and waits;",
+    "// the exit status of a process that exited.",
+    "pub fn process_run(path: String, args: Array(String)): Int | ProcessError {",
+    "  process_result(path, avant_sys.avant_sys_run(path, args, \"\"), \"\")",
+    "}",
+    "",
+    "// process_run with stdout and stderr written to the file out.",
+    "pub fn process_run_out(path: String, args: Array(String), out: String): Int | ProcessError {",
+    "  process_result(path, avant_sys.avant_sys_run(path, args, out), out)",
+    "}",
+    "",
+    "fn process_result(path: String, st: Int, out: String): Int | ProcessError {",
+    "  if st == -2 {",
+    "    return ProcessError.new(path, 0, avant_sys.avant_sys_signal(), \"\")",
+    "  }",
+    "  if st < 0 {",
+    "    if avant_sys.avant_sys_stage() == 1 {",
+    "      return ProcessError.new(path, avant_sys.avant_sys_errno(), 0, out)",
+    "    }",
+    "    return ProcessError.new(path, avant_sys.avant_sys_errno(), 0, \"\")",
+    "  }",
+    "  st",
+    "}"
+  ]
+  for line in lines {
+    b.push_str(line)
+    b.push_str("\n")
+  }
+  b.to_s
+}

@@ -318,7 +318,7 @@ pub class Checks {
       b.push_str("</testsuite>\n")
       i = j
     }
-    file_write(frag, b.to_s)
+    _ = file_write(frag, b.to_s)
   }
 
   pub fn expect(cond: Bool, msg: String) {
@@ -341,6 +341,18 @@ pub class Checks {
   // check (gc_env_outer); the default suite skips none.
   pub fn skip(msg: String, why: String) {
     self.lines.push("    ○ ${msg} (skipped: ${why})")
+  }
+
+  // A file the test writes (Stage 29 W4b2): passes when file_write
+  // succeeded; a failure shows its IoError.
+  pub fn wrote(r: Int | IoError, msg: String) {
+    if n = r {
+      self.expect(true, msg)
+    } else if e = io_failure(r) {
+      self.expect(false, msg)
+      self.lines.push("    ${e}")
+      self.lines.push("")
+    }
   }
 
   pub fn eq_int(got: Int, want: Int, msg: String) {
@@ -431,7 +443,7 @@ pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int 
   // Test programs are compiled fast (--debug); a bare compile uses the
   // default mode. test_toolchain.av covers the verb defaults.
   args.push("--debug")
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String, extra: Array(String)): Int {
@@ -457,7 +469,7 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   if !has_codegen {
     args.push("--debug")
   }
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 // `dump`: the MIR text (D171), which the callers inspect (the old back
@@ -466,7 +478,7 @@ pub fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 // `__emit-ll SRC OUT` (internal, Stage 28 W9): the pre-optimization .ll
@@ -477,7 +489,7 @@ pub fn emit_ll(compiler: String, src: String, out: String, log: String): Int {
   args.push("__emit-ll")
   args.push(src)
   args.push(out)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 // A hidden front-end dump (D137): flag is --tokens, --ast, or --check.
@@ -486,7 +498,7 @@ pub fn dump_layer(compiler: String, flag: String, src: String, log: String): Int
   args.push("dump")
   args.push(flag)
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn compiler_abs(tag: String, path: String): String {
@@ -501,14 +513,14 @@ pub fn compiler_abs(tag: String, path: String): String {
 }
 
 pub fn run_av_bin(bin: String, log: String): Int {
-  process_run_out(bin, empty_strs(), log)
+  process_run_out(bin, empty_strs(), log) ?? -1
 }
 
 pub fn run_av_cmd(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("run")
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array(String)): Int {
@@ -520,7 +532,7 @@ pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array
     args.push(extra[i])
     i += 1
   }
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): Int {
@@ -530,7 +542,7 @@ pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): 
   args.push("compile")
   args.push(src)
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // The MIR with coverage on (as dump_av).
@@ -540,12 +552,19 @@ pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
   args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
+}
+
+// The IoError of a failed file_write, else nil (until W5's switch reads
+// a failure member in place).
+pub fn io_failure(r: Int | IoError): IoError? {
+  _ = r?
+  nil
 }
 
 pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
   path = "${scratch()}/${stem}-${stamp}-${name}"
-  file_write(path, body)
+  _ = file_write(path, body)
   path
 }
 
@@ -554,7 +573,7 @@ pub fn mkdir_p(path: String) {
 }
 
 pub fn write_av(dir: String, name: String, body: String) {
-  file_write("${dir}/${name}.av", body)
+  _ = file_write("${dir}/${name}.av", body)
 }
 
 pub class Channel(T) {

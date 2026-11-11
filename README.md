@@ -1313,7 +1313,7 @@ import std.testing
 fn main: Int {
   t = Test.new
   dir = t.temp_dir
-  t.check(file_write("${dir}/notes.txt", "hi") == 0, "write in temp_dir")
+  t.check((file_write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
   t.finish
 }
 ```
@@ -1420,11 +1420,30 @@ Builtins are the prelude: names every program can use with no import. Runnable e
 | Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt`, `exp` |
 ### Files, process, and environment
 
+The file, directory and process calls return their result or an error value (D295) that says what failed:
+
+| Call | Result |
+| --- | --- |
+| `file_read(path)` | `String \| IoError`: the whole file |
+| `file_write(path, body)` | `Int \| IoError`: the bytes written (the file is created or replaced) |
+| `dir_list(path)` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` |
+| `process_run(path, args)` | `Int \| ProcessError`: the exit status of a process that exited |
+| `process_run_out(path, args, out)` | the same, with stdout and stderr written to the file `out` |
+
+An `IoError` has `op` (`"read"`, `"write"` or `"list"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. A non-zero exit status is not an error: it is the `Int`. A program name without `/` is looked up on `PATH` (`process_run("ls", ["-l"])`). Both types are failures under the error rule (`?`, if-assign, `??`), and dropping one is a compile error (`_ = file_write(...)` drops it on purpose). The error types exist in a program that calls one of these functions.
+
 ```avant
+fn copy(from: String, to: String): Int | IoError {
+  text = file_read(from)?
+  file_write(to, text)?
+}
+
 fn main: Int {
   if text = file_read("notes.txt") {
     puts(text.size)
   }
+  code = process_run("ls", ["-l"]) ?? -1
+  puts(code)
   if home = env_get("HOME") {
     puts(home)
   }
