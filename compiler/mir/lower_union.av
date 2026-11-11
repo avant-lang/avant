@@ -77,6 +77,13 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
     lw.refuse(loc, "a value of type ${got.show} as ${want.show}")
     return o
   }
+  if r = mir_opt_ref(want) {
+    // An optional reference (W3b, B13): the reference itself, or null.
+    if got.is_nil {
+      return b.c_null(wty)
+    }
+    return o
+  }
   l = b.types.layout_of(wty)
   lw.at(loc)
   if got.is_nil {
@@ -91,6 +98,9 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
     // `nil` into a union place: the nil tag directly.
     lw.at(v.loc)
     b = lw.lw_b
+    if r = mir_opt_ref(want) {
+      return b.c_null(ty)
+    }
     return lw.tmp(ty, b.rv_union_nil(b.types.layout_of(ty), want.tag_of(ty_nil())))
   }
   // Every value here is checked: the field defaults of generic class
@@ -151,7 +161,15 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
     return o
   }
   lw.at(loc)
+  fr = mir_is_opt_ref(from)
+  tr = mir_is_opt_ref(to)
+  if fr && tr {
+    return o
+  }
   src = lw.hold(o, fty)
+  if fr || tr {
+    return lw.retag_ref(src, from, to, tty, loc)
+  }
   tl = b.types.layout_of(tty)
   d = b.temp(tty)
   b.assign(b.pl(d), b.rv_zero)
@@ -187,6 +205,64 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   b.copy_local(d)
 }
 
+// retag where one side is an optional reference (W3b, B13): from one,
+// its null pointer as to's nil and its reference as to's member; into
+// one, the payload of its reference member, null for every other member
+// (nil, or the failure side the caller's test already excluded).
+fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location): MOperand {
+  b = lw.lw_b
+  d = b.temp(tty)
+  join = b.block
+  if fm = mir_opt_ref(from) {
+    tl = b.types.layout_of(tty)
+    b.assign(b.pl(d), b.rv_zero)
+    bnil = b.block
+    bval = b.block
+    b.branch(lw.ref_is_null(src, true), bnil, bval)
+    b.at(bnil)
+    if to.includes_nil {
+      b.assign(b.pl(d), b.rv_union_nil(tl, to.tag_of(ty_nil())))
+    }
+    b.goto(join)
+    b.at(bval)
+    if to.includes_member(fm) {
+      b.assign(b.pl(d), b.rv_union(tl, to.tag_of(fm), b.copy_local(src)))
+    }
+    b.goto(join)
+    b.at(join)
+    return b.copy_local(d)
+  }
+  if tm = mir_opt_ref(to) {
+    b.assign(b.pl(d), b.rv_use(b.c_null(tty)))
+    k = from.tag_of(tm)
+    if k >= 0 {
+      tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+      arm = b.block
+      values: Array(Int64) = [k.to_i64]
+      targets: Array(Int) = [arm]
+      b.switch_on(tag, values, targets, join)
+      b.at(arm)
+      p = lw.tmp(tty, b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, k)))))
+      b.assign(b.pl(d), b.rv_use(p))
+      b.goto(join)
+      b.at(join)
+    }
+    return b.copy_local(d)
+  }
+  b.copy_local(d)
+}
+
+// Whether the optional reference in src is null (eq) or not.
+fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
+  b = lw.lw_b
+  ty = b.func.locals[src].ty
+  op = mop_eq()
+  if !eq {
+    op = mop_ne()
+  }
+  lw.tmp(mt_bool(), b.rv_cmp(op, b.copy_local(src), b.c_null(ty)))
+}
+
 // The value of type success held by the union in src (of type uty):
 // the payload of that member (the old back end's emit_unwrap), a re-tagged union
 // when success is a union of several members, nothing for Nil.
@@ -195,6 +271,10 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
   if success.is_nil {
     return b.c_i32(0)
   }
+  if r = mir_opt_ref(uty) {
+    // The reference itself (W3b, B13).
+    return b.copy_local(src)
+  }
   if success.is_union {
     return lw.retag(b.copy_local(src), uty, success, loc)
   }
@@ -202,9 +282,13 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
   lw.tmp(st, b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(uty, uty.tag_of(success))))))
 }
 
-// `tag == k` (or `!=`) of the union in src.
-pub fn (lw: MirLower) tag_is(src: Int, k: Int, eq: Bool): MOperand {
+// `tag == k` (or `!=`) of the union in src, of type uty; for an
+// optional reference, a null test (W3b, B13).
+pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   b = lw.lw_b
+  if r = mir_opt_ref(uty) {
+    return lw.ref_is_null(src, eq == uty.members[k].is_nil)
+  }
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   op = mop_eq()
   if !eq {
@@ -230,7 +314,7 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     lw.at(loc)
     src = lw.hold(u, lty)
     d = b.temp(rty)
-    c = lw.tag_is(src, uty.tag_of(ty_nil()), true)
+    c = lw.tag_is(src, uty, uty.tag_of(ty_nil()), true)
     bnil = b.block
     bval = b.block
     join = b.block
@@ -299,7 +383,7 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
         src = lw.hold(u, ity)
         success = mir_try_success(uty, ret)
         fail = mir_try_fail(uty, ret)
-        c = lw.tag_is(src, uty.tag_of(fail), true)
+        c = lw.tag_is(src, uty, uty.tag_of(fail), true)
         bf = b.block
         bok = b.block
         b.branch(c, bf, bok)
@@ -342,7 +426,7 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
       }
       lw.at(st.loc)
       src = lw.hold(u, cty)
-      ok = lw.tag_is(src, uty.tag_of(fail), false)
+      ok = lw.tag_is(src, uty, uty.tag_of(fail), false)
       bt = b.block
       bf = b.block
       join = bf
@@ -380,13 +464,23 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
   if lw.failed {
     return b.c_i32(0)
   }
-  l = b.types.layout_of(wty)
   d = b.temp(wty)
   bt = b.block
   bf = b.block
   join = b.block
   b.branch(found, bt, bf)
   b.at(bt)
+  if r = mir_opt_ref(want) {
+    // An optional reference (W3b, B13): the reference, or null.
+    b.assign(b.pl(d), b.rv_use(v))
+    b.goto(join)
+    b.at(bf)
+    b.assign(b.pl(d), b.rv_use(b.c_null(wty)))
+    b.goto(join)
+    b.at(join)
+    return b.copy_local(d)
+  }
+  l = b.types.layout_of(wty)
   b.assign(b.pl(d), b.rv_union(l, want.tag_of(vt), v))
   b.goto(join)
   b.at(bf)
@@ -448,9 +542,17 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     } else {
       n = lw.call_to(mt_i32(), "avant_str_size", lw.one(b.copy_local(h)))
     }
-    l = b.types.layout_of(wty)
+    oref = mir_is_opt_ref(t)
+    l = -1
+    if !oref {
+      l = b.types.layout_of(wty)
+    }
     d = b.temp(wty)
-    b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
+    if oref {
+      b.assign(b.pl(d), b.rv_use(b.c_null(wty)))
+    } else {
+      b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
+    }
     c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i32(0)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
@@ -484,7 +586,14 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
       v = lw.tmp(mt_i32(), b.rv_cast(byte2, mt_i32()))
     }
-    b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
+    if oref || t.same_as(elt) {
+      // An optional reference, or an element that is already the result
+      // (`get` on an `Array(T?)`, W3b: the verifier refused the old
+      // re-wrapping of the element as its own member).
+      b.assign(b.pl(d), b.rv_use(v))
+    } else {
+      b.assign(b.pl(d), b.rv_union(l, t.tag_of(elt), v))
+    }
     b.goto(join)
     b.at(join)
     return b.copy_local(d)

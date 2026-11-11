@@ -9,7 +9,7 @@ fn test_safepoints(c: Checks) {
     clog = "${scratch()}/safepoints-${stamp}-compile.log"
     rlog = "${scratch()}/safepoints-${stamp}-run.log"
     slog = "${scratch()}/safepoints-${stamp}-stats.log"
-    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) + check(n.right, depth - 1) + n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
+    body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  if l = n.left {\n    if r = n.right {\n      return check(l, depth - 1) + check(r, depth - 1) + n.item\n    }\n  }\n  n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write nursery churn")
     cc = compile_av(compiler, src, bin, clog)
@@ -69,7 +69,7 @@ fn test_safepoints(c: Checks) {
       bbin = "${scratch()}/safepoints-${stamp}-barrier"
       blog = "${scratch()}/safepoints-${stamp}-barrier-cc.log"
       brun = "${scratch()}/safepoints-${stamp}-barrier-run.log"
-      bbody = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts(a.left.item)\n}\n"
+      bbody = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  if l = a.left {\n    puts(l.item)\n  }\n}\n"
       bw = file_write(bsrc, bbody)
       c.eq_int(bw, 0, "write old-object store")
       bcc = compile_av(compiler, bsrc, bbin, blog)

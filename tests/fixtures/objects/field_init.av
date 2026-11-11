@@ -1,0 +1,154 @@
+// Stage 29 W3b (B5, D292): no field is ever read unset. A field with a
+// natural zero starts at it (0, 0.0, false, "", nil for any T?, a struct
+// of such fields); a field default may be any expression that does not
+// use self, evaluated at each construction in declaration order before
+// initialize; every other field is set by initialize on every path before
+// it is read (tests/cases/test_fields.av has the refused forms).
+
+fn seven: Int {
+  7
+}
+
+fn note(tag: String, v: Int): Int {
+  puts("default ${tag}")
+  v
+}
+
+class Leaf {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+struct Inner {
+  n: Int
+  s: String
+  on: Bool
+}
+
+struct Pair {
+  a: Leaf
+  k: Int
+}
+
+// Every field has a zero: no initialize needed.
+class Zeros {
+  i: Int
+  big: Int64
+  u: UInt64
+  f: Float64
+  b: Bool
+  s: String
+  leaf: Leaf?
+  xs: Array(Int)?
+  inner: Inner
+}
+
+// Expression defaults, in declaration order, before initialize.
+class Defaults {
+  first: Int = note("first", 1)
+  xs: Array(Int) = []
+  h: Hash(String, Int) = Hash(String, Int).new
+  sum: Int = 1 + 2 * 3
+  call: Int = seven()
+  leaf: Leaf = Leaf.new(4)
+  pair: Pair = Pair { a: Leaf.new(5), k: 6 }
+  twice: fn(Int): Int = { |x| x * 2 }
+  last: Int = note("last", 2)
+
+  fn initialize {
+    puts("initialize sees ${first} ${sum} ${call} ${leaf.v} ${pair.a.v} ${xs.size}")
+    xs.push(9)
+  }
+}
+
+// Required fields set by initialize on every path.
+class Paths {
+  kind: Int
+  leaf: Leaf
+  names: Array(String)
+  label: String
+
+  fn initialize(kind: Int) {
+    self.kind = kind
+    if kind > 0 {
+      self.leaf = Leaf.new(kind)
+      self.names = ["pos"]
+    } else {
+      self.names = []
+      if kind == 0 {
+        self.leaf = Leaf.new(0)
+        return
+      }
+      self.leaf = Leaf.new(-1)
+    }
+    self.label = "k${leaf.v}"
+  }
+}
+
+// A String field initialize reads before setting starts at "".
+class Grow {
+  text: String
+
+  fn initialize(n: Int) {
+    for i in 0..n {
+      self.text = text + "x"
+    }
+  }
+}
+
+class Box(T) {
+  item: T
+}
+
+class Stack(T) {
+  items: Array(T) = []
+
+  fn push(v: T) {
+    items.push(v)
+  }
+}
+
+fn main {
+  z = Zeros.new
+  puts(z.i)
+  puts(z.big)
+  puts(z.u)
+  puts(z.f)
+  puts(z.b)
+  puts("[${z.s}] ${z.s.size}")
+  if l = z.leaf {
+    puts("leaf ${l.v}")
+  } else {
+    puts("leaf nil")
+  }
+  puts((z.xs ?? [1, 2]).size)
+  puts("[${z.inner.s}] ${z.inner.n} ${z.inner.on}")
+
+  d = Defaults.new
+  puts(d.xs.size)
+  d.h["k"] = 1
+  puts(d.h.size)
+  puts((d.twice)(d.sum))
+  d2 = Defaults.new
+  puts(d2.xs.size)
+
+  for k in [1, 0, -2] {
+    p = Paths.new(k)
+    puts("${p.kind} ${p.leaf.v} ${p.names.size} [${p.label}]")
+  }
+
+  puts(Grow.new(3).text)
+  puts("[${Grow.new(0).text}]")
+
+  bi = Box(Int).new
+  puts(bi.item)
+  bs = Box(String).new
+  puts("[${bs.item}]")
+  st = Stack(String).new
+  st.push("a")
+  st.push("b")
+  puts(st.items.size)
+}

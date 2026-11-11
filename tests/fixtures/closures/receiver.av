@@ -1,0 +1,68 @@
+// Stage 29 W3b (B7, S13): a lambda inside a method uses self, its fields
+// and its methods bare. The receiver is captured by value, as self is
+// never reassigned: a class receiver's reference (the lambda sees later
+// changes to the object), a struct receiver's copy (it does not; a write
+// through self inside such a lambda is refused). Nested lambdas pass it
+// on; the captured reference keeps the object alive across collections.
+
+class Counter {
+  k: Int = 2
+  total: Int = 0
+  names: Array(String) = []
+
+  fn add(n: Int): Int {
+    n + k
+  }
+
+  fn run: Int {
+    f = { |n: Int| n + k }
+    g = { |n: Int| add(n) * 2 }
+    h = { |n: Int| self.total += n
+      total }
+    nested = { |n: Int|
+      inner = { |m: Int| m + k + n }
+      inner(1)
+    }
+    f(1) + g(1) + h(5) + h(5) + nested(10)
+  }
+
+  fn later: fn(Int): Int {
+    { |n| n * k }
+  }
+
+  fn each_cap: Int {
+    s = 0
+    [1, 2, 3].each { |x| s += x + k }
+    s
+  }
+}
+
+struct P {
+  x: Int
+  y: Int
+  fn sum: Int {
+    x + y
+  }
+  fn maker: fn(): Int {
+    { || x * 10 + sum }
+  }
+}
+
+fn main {
+  c = Counter.new
+  puts(c.run)
+  f = c.later
+  c.k = 5
+  puts(f(3))
+  puts(c.each_cap)
+  p = P { x: 1, y: 2 }
+  m = p.maker
+  p.x = 9
+  puts(m())
+  junk = 0
+  for i in 0..20000 {
+    t = Counter.new
+    junk += t.k
+  }
+  puts(f(4) + junk)
+}

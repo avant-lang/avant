@@ -1,0 +1,157 @@
+import harness
+import backends
+
+// Stage 29 W3b (D292): fields. Each program is compiled in parallel; a
+// refused one must leave no binary and say the expected words, an
+// accepted one must print what it should.
+//   - B5, field initialization: a field with no zero value is set by a
+//     default or by initialize on every path before it is read and before
+//     self escapes (tests/fixtures/objects/field_init.av runs the uses).
+//   - B6, the receiver: a field is written `self.name = ...` (a bare write
+//     is refused naming both ways out); a bare name resolves to a local or
+//     parameter, then a field of the receiver (read), then a method of the
+//     receiver (call), then a function; a bare call that fits a method and
+//     a function is refused.
+//   - B7, lambdas capture the receiver: by value (a class's reference, a
+//     struct's copy, whose writes are refused); fixtures/closures/
+//     receiver.av runs the uses under the GC environments.
+
+class FCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn init_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  // B5: the refused forms.
+  xs.push(refused("init-no-initialize", "class Leaf {\n  v: Int = 1\n}\nclass Nd {\n  left: Leaf\n}\nfn main {\n  puts(Nd.new.left.v)\n}\n", "field left of Nd has no zero value, no default, and Nd has no initialize to set it; set it in an initialize (self.left = ...), give it a default (left: Leaf = ...), or make it optional (left: Leaf?)"))
+  xs.push(refused("init-one-branch", "class C {\n  xs: Array(Int)\n  fn initialize(n: Int) {\n    if n > 0 {\n      self.xs = [n]\n    }\n  }\n}\nfn main {\n  puts(C.new(1).xs.size)\n}\n", "field xs of C is not set on every path through initialize; set it on every path (self.xs = ...)"))
+  xs.push(refused("init-loop-only", "class C {\n  xs: Array(Int)\n  fn initialize(n: Int) {\n    for i in 0..n {\n      self.xs = [i]\n    }\n  }\n}\nfn main {\n  puts(C.new(1).xs.size)\n}\n", "field xs of C is not set on every path through initialize"))
+  xs.push(refused("init-read-first", "class C {\n  xs: Array(Int)\n  fn initialize {\n    puts(xs.size)\n    self.xs = []\n  }\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "field xs of C is read in initialize before it is set; set it before this read (self.xs = ...)"))
+  xs.push(refused("init-read-self-dot", "class C {\n  xs: Array(Int)\n  fn initialize {\n    n = self.xs.size\n    self.xs = [n]\n  }\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "field xs of C is read in initialize before it is set"))
+  xs.push(refused("init-method-first", "class C {\n  xs: Array(Int)\n  fn initialize {\n    self.fill\n    self.xs = []\n  }\n  fn fill {\n    xs.push(1)\n  }\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "a method of self is called in initialize before field xs of C is set"))
+  xs.push(refused("init-self-escapes", "class C {\n  xs: Array(Int)\n  fn initialize {\n    keep(self)\n    self.xs = []\n  }\n}\nfn keep(c: C) {\n  puts(c.xs.size)\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "self is used as a value in initialize before field xs of C is set"))
+  xs.push(refused("init-return-early", "class C {\n  xs: Array(Int)\n  fn initialize(n: Int) {\n    if n == 0 {\n      return\n    }\n    self.xs = []\n  }\n}\nfn main {\n  puts(C.new(0).xs.size)\n}\n", "initialize returns before field xs of C is set; set it before the return (self.xs = ...)"))
+  xs.push(refused("init-union-field", "class C {\n  u: Int | String\n}\nfn main {\n  c = C.new\n}\n", "make it optional (u: Int | String | Nil)"))
+  xs.push(refused("init-fn-field", "class C {\n  f: fn(Int): Int\n}\nfn main {\n  c = C.new\n}\n", "set it in an initialize (self.f = ...) or give it a default (f: fn(Int): Int = ...)"))
+  xs.push(refused("init-struct-holding-class", "class Leaf {\n  v: Int = 1\n}\nstruct Slot {\n  k: Int\n  leaf: Leaf\n}\nclass C {\n  slot: Slot\n}\nfn main {\n  c = C.new\n}\n", "field slot of C has no zero value"))
+  xs.push(refused("init-generic-instance", "class Leaf {\n  v: Int = 1\n}\nclass Box(T) {\n  item: T\n}\nfn main {\n  a = Box(Int).new\n  b = Box(Leaf).new\n  puts(a.item)\n}\n", "field item of Box(Leaf) has no zero value"))
+  xs.push(refused("init-default-self", "class C {\n  k: Int = 2\n  n: Int = self.k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "a field default cannot use self"))
+  xs.push(refused("init-default-field", "class C {\n  k: Int = 2\n  n: Int = k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "unknown name k"))
+  xs.push(refused("init-default-try", "fn maybe: Int? {\n  3\n}\nclass C {\n  r: Int? = maybe()?\n}\nfn main {\n  puts(C.new.r ?? 0)\n}\n", "postfix ? inside a field default cannot return the failure"))
+  xs.push(refused("init-default-type", "class C {\n  xs: Array(Int) = \"no\"\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "cannot assign String to Array(Int)"))
+  // B5: the accepted forms.
+  xs.push(accepted("init-every-path", "class Leaf {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nclass C {\n  leaf: Leaf\n  fn initialize(n: Int) {\n    if n > 0 {\n      self.leaf = Leaf.new(n)\n    } else {\n      self.leaf = Leaf.new(0)\n    }\n    puts(leaf.v)\n  }\n}\nfn main {\n  puts(C.new(3).leaf.v + C.new(-1).leaf.v)\n}\n", "3\n0\n3\n"))
+  xs.push(accepted("init-switch-else", "class C {\n  xs: Array(Int)\n  fn initialize(n: Int) {\n    switch n {\n      case 0 {\n        self.xs = []\n      }\n      else {\n        self.xs = [n]\n      }\n    }\n  }\n}\nfn main {\n  puts(C.new(0).xs.size + C.new(4).xs.size)\n}\n", "1\n"))
+  xs.push(accepted("init-then-method", "class C {\n  xs: Array(Int)\n  fn initialize {\n    self.xs = []\n    self.fill\n  }\n  fn fill {\n    xs.push(1)\n  }\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "1\n"))
+  xs.push(accepted("init-default-then-initialize", "class C {\n  xs: Array(Int) = [1, 2]\n  fn initialize {\n    xs.push(3)\n  }\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "3\n"))
+  xs.push(accepted("init-zero-string", "class C {\n  s: String\n  n: Int\n}\nfn main {\n  c = C.new\n  puts(c.s + \"|\")\n  puts(c.s.size)\n  puts(c.n)\n}\n", "|\n0\n0\n"))
+  xs
+}
+
+fn receiver_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  // B6: the refused forms.
+  xs.push(refused("self-bare-write", "class C {\n  size: Int = 0\n  fn set(xs: Array(Int)) {\n    size = xs.size\n  }\n}\nfn main {\n  c = C.new\n  c.set([1])\n  puts(c.size)\n}\n", "size is a field of C; write self.size = ... to change the field, or choose another name for a local"))
+  xs.push(refused("self-bare-compound", "class C {\n  n: Int = 0\n  fn inc {\n    n += 1\n  }\n}\nfn main {\n  c = C.new\n  c.inc\n  puts(c.n)\n}\n", "n is a field of C; write self.n = ..."))
+  xs.push(refused("self-bare-struct-write", "struct P {\n  x: Int\n  fn bump {\n    x = x + 1\n  }\n}\nfn main {\n  p = P { x: 1 }\n  p.bump\n  puts(p.x)\n}\n", "x is a field of P; write self.x = ..."))
+  xs.push(refused("self-bare-ambiguous", "fn twice(n: Int): Int {\n  n * 2\n}\nclass C {\n  fn twice(n: Int): Int {\n    n + n\n  }\n  fn run: Int {\n    twice(3)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "twice is both a method of C and a function; write self.twice(...) for the method, or qualify the function (module.twice(...))"))
+  xs.push(refused("self-bare-prelude", "class C {\n  fn puts(s: String) {\n  }\n  fn run {\n    puts(\"x\")\n  }\n}\nfn main {\n  C.new.run\n}\n", "puts is both a method of C and a function"))
+  // B6: the accepted forms.
+  xs.push(accepted("self-bare-calls", "class Counter {\n  value: Int = 0\n  fn inc: Int {\n    self.value += 1\n    value\n  }\n  fn add(k: Int): Int {\n    self.value += k\n    value\n  }\n  fn twice: Int {\n    inc\n    inc()\n    add(10)\n  }\n}\nfn main {\n  puts(Counter.new.twice)\n}\n", "12\n"))
+  xs.push(accepted("self-param-shadows-field", "class C {\n  value: Int = 5\n  fn initialize(value: Int) {\n    puts(value)\n    puts(self.value)\n    self.value = value\n  }\n}\nfn main {\n  puts(C.new(7).value)\n}\n", "7\n5\n7\n"))
+  xs.push(accepted("self-arity-picks", "fn scale(a: Int, b: Int): Int {\n  a * b\n}\nclass C {\n  k: Int = 3\n  fn scale(a: Int): Int {\n    a + k\n  }\n  fn run: Int {\n    scale(2) + scale(2, 5)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "15\n"))
+  xs.push(accepted("self-local-fn-wins", "class C {\n  fn one: Int {\n    1\n  }\n  fn run: Int {\n    one: fn(): Int = { || 9 }\n    one()\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "9\n"))
+  xs.push(accepted("self-struct-bare-call", "struct V {\n  x: Int\n  y: Int\n  fn sum: Int {\n    x + y\n  }\n  fn twice: Int {\n    sum * 2\n  }\n}\nfn main {\n  puts(V { x: 1, y: 2 }.twice)\n}\n", "6\n"))
+  xs
+}
+
+fn lambda_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  // B7: the refused forms.
+  xs.push(refused("lambda-struct-copy-write", "struct P {\n  x: Int\n  fn maker: fn(): Int {\n    { ||\n      self.x = 3\n      x\n    }\n  }\n}\nfn main {\n  p = P { x: 1 }\n  f = p.maker\n  puts(f())\n}\n", "a lambda holds a copy of the struct receiver, so this write would change only the copy"))
+  xs.push(refused("lambda-external-receiver", "class C {\n  v: Int = 1\n}\nfn (c: C) maker: fn(): Int {\n  { || c.v }\n}\nfn main {\n  f = C.new.maker\n  puts(f())\n}\n", "a lambda cannot capture the receiver c of an external method; copy it into a local first"))
+  xs.push(refused("lambda-init-escape", "class C {\n  xs: Array(Int)\n  f: fn(): Int = { || 0 }\n  fn initialize {\n    self.f = { || xs.size }\n    self.xs = []\n  }\n}\nfn main {\n  puts((C.new.f)())\n}\n", "a lambda uses the receiver in initialize before field xs of C is set"))
+  // B7: the accepted forms.
+  xs.push(accepted("lambda-bare-field-method", "class C {\n  k: Int = 2\n  fn one: Int {\n    1\n  }\n  fn run: Int {\n    f = { |n: Int| n + k + one }\n    f(1)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n", "4\n"))
+  xs.push(accepted("lambda-self-later", "class C {\n  k: Int = 2\n  fn maker: fn(Int): Int {\n    { |n| n * self.k }\n  }\n}\nfn main {\n  c = C.new\n  f = c.maker\n  c.k = 7\n  puts(f(3))\n}\n", "21\n"))
+  xs.push(accepted("lambda-struct-copy", "struct P {\n  x: Int\n  fn maker: fn(): Int {\n    { || x * 10 }\n  }\n}\nfn main {\n  p = P { x: 1 }\n  f = p.maker\n  p.x = 9\n  puts(f())\n}\n", "10\n"))
+  xs.push(accepted("lambda-init-after-set", "class C {\n  xs: Array(Int)\n  f: fn(): Int = { || 0 }\n  fn initialize {\n    self.xs = [1, 2]\n    self.f = { || xs.size }\n  }\n}\nfn main {\n  puts((C.new.f)())\n}\n", "2\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/fields-${f.tag}.av"
+    file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/fields-${f.tag}.bin", "${dir}/fields-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "fields-${f2.tag}.bin", "fields-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/fields-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/fields-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/fields-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_fields.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all = init_cases()
+    for f in receiver_cases() {
+      all.push(f)
+    }
+    for f2 in lambda_cases() {
+      all.push(f2)
+    }
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

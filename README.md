@@ -153,7 +153,7 @@ fn main {
 
 A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
 
-Inside a method, a field name is in scope. `self` is the receiver. An external method is a function with a receiver parameter:
+Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum` or `sum()`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, so nothing is chosen silently. An external method is a function with a receiver parameter:
 
 ```avant
 fn (p: Point) scaled(s: Int): Point {
@@ -163,7 +163,11 @@ fn (p: Point) scaled(s: Int): Point {
 
 ### Classes
 
-`Type.new(...)` allocates and calls `initialize`. A field may have a literal or `nil` default.
+`Type.new(...)` allocates and calls `initialize`. No field is ever read unset:
+
+- A field whose type has a natural zero starts at it when it has no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, and a struct of such fields.
+- A field may have a default, any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`.
+- Any other field (a class, `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one) must be set by `initialize` on every path, before it is read and before `self` is used as a value or a method of `self` is called. Otherwise the class is refused, with an error that names the field and the ways out: set it, give it a default, or make it optional (`left: Node?`, which is one pointer).
 
 ```avant
 class Counter {
@@ -174,7 +178,7 @@ class Counter {
   }
 
   fn inc: Int {
-    value += 1
+    self.value += 1
     value
   }
 }
@@ -248,6 +252,8 @@ fn label(v: Int | String): Int {
 ```
 
 A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
+
+An optional reference costs nothing over the reference: `T?` where `T` is a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, and `nil` is the null pointer, in a field, a local, an array element, a parameter or a result (`left: Node?` is 8 bytes). Any other union holds a tag and one slot per member that is not `nil`.
 
 Failure is a union member. There is no unwind. See [Errors](#errors).
 
@@ -355,6 +361,18 @@ fn main {
 ```
 
 `f(1)` is `11`. `n` was captured from `add`.
+
+A lambda inside a method may use `self`, and so its fields and methods bare. The receiver is captured by value, because `self` is never reassigned: a class receiver is its reference (the lambda sees later changes to the object), a struct receiver is a copy (it does not, and a write through `self` inside such a lambda is an error, since it would change only the copy).
+
+```avant
+class Scale {
+  k: Int = 2
+
+  fn by: fn(Int): Int {
+    { |n| n * k }
+  }
+}
+```
 
 ### Generic structs and classes
 
@@ -929,6 +947,8 @@ fn main {
   puts(math.sqrt(4.0))
 }
 ```
+
+`String?` in a `fun` signature is a C `char *` that may be NULL: a NULL result reads as `nil`, and passing `nil` passes NULL (`fun getenv(name: String): String?`).
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 

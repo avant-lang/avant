@@ -57,7 +57,8 @@ fn take_str(f: fn(String): Int): Int {
 }
 
 class Box {
-  f: fn(): Int
+  // A field default may be any expression (Stage 29 W3b, D292).
+  f: fn(): Int = { || 0 }
 
   fn initialize {
   }
@@ -119,7 +120,8 @@ struct Hold {
 class Nest {
   inner: Hold
 
-  fn initialize {
+  fn initialize(inner: Hold) {
+    self.inner = inner
   }
 }
 
@@ -176,6 +178,7 @@ fn test_fn(c: Checks) {
   }
   c.eq_int(rec(), 3, "recursive lambda")
   box = Box.new()
+  c.eq_int((box.f)(), 0, "fn field default")
   box.f = { || 9 }
   c.eq_int((box.f)(), 9, "fn field")
   fs: Array(fn(): Int) = []
@@ -294,7 +297,7 @@ fn test_fn(c: Checks) {
   c.eq_int(box_see(), 9, "box survives spawn")
   go() { || }
   c.expect(true, "empty void lambda")
-  nest = Nest.new()
+  nest = Nest.new(Hold { f: { |n| n } })
   nest.inner = Hold { f: inc }
   c.eq_int((nest.inner.f)(6), 7, "fn in nested struct")
   outer_n = 4
@@ -356,7 +359,7 @@ fn test_fn(c: Checks) {
     clog = "${scratch()}/fn-${stamp}-compile.log"
     rlog = "${scratch()}/fn-${stamp}-run.log"
     slog = "${scratch()}/fn-${stamp}-stats.log"
-    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nclass Hold {\n  f: fn(): String\n  g: fn(Int): Int\n  fn initialize {\n  }\n}\nstruct Inner {\n  f: fn(): String\n}\nclass Nest {\n  inner: Inner\n  fn initialize {\n  }\n}\nfn ident(n: Int): Int {\n  n + 1\n}\nfn main {\n  h = Hold.new()\n  s = \"ke\" + \"pt\"\n  h.f = { || s }\n  h.g = ident\n  arr: Array(fn(): String) = []\n  arr.push({ || s })\n  nest = Nest.new()\n  nest.inner = Inner { f: { || s } }\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts((h.f)())\n  puts((arr[0])())\n  puts((h.g)(41))\n  puts((nest.inner.f)())\n}\n"
+    body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nclass Hold {\n  f: fn(): String = { || \"\" }\n  g: fn(Int): Int = ident\n  fn initialize {\n  }\n}\nstruct Inner {\n  f: fn(): String\n}\nclass Nest {\n  inner: Inner = Inner { f: { || \"\" } }\n  fn initialize {\n  }\n}\nfn ident(n: Int): Int {\n  n + 1\n}\nfn main {\n  h = Hold.new()\n  s = \"ke\" + \"pt\"\n  h.f = { || s }\n  h.g = ident\n  arr: Array(fn(): String) = []\n  arr.push({ || s })\n  nest = Nest.new()\n  nest.inner = Inner { f: { || s } }\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts((h.f)())\n  puts((arr[0])())\n  puts((h.g)(41))\n  puts((nest.inner.f)())\n}\n"
     w = file_write(src, body)
     c.eq_int(w, 0, "write nursery fn")
     cc = compile_av(compiler, src, bin, clog)

@@ -18,7 +18,7 @@ class Node {
 
 class Mixed {
   flag: Bool
-  u: Int | String
+  u: Int | String = 0
   n: Int
   big: Int64
   on: Bool
@@ -111,6 +111,10 @@ class Box {
   first: Bool
   r: Ref
   last: String
+
+  fn initialize(r: Ref) {
+    self.r = r
+  }
 }
 
 fn junk(i: Int): Int {
@@ -144,12 +148,11 @@ fn main {
     w = Wide.new
     w.w69 = 7i64
     w.name = "wide-${i}"
-    b = Box.new
-    b.last = "last-${i}"
     nd = Node.new
     nd.v = i
     nd.label = "inner-${i}"
-    b.r = Ref { tag: i, node: nd, text: "ref-${i}" }
+    b = Box.new(Ref { tag: i, node: nd, text: "ref-${i}" })
+    b.last = "last-${i}"
     total = total &+ junk(i)
     if m.s.size != 6 + "${i}".size || w.name.size != 5 + "${i}".size {
       puts("bad string at ${i}")
