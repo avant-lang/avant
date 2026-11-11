@@ -118,6 +118,14 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "if-bool", "fn main {\n  if 1 { puts(\"x\") }\n}\n", "if condition must be Bool")
     expect_err(c, compiler, stamp, "missing-return", "fn f: Int {\n}\nfn main {\n  puts(f())\n}\n", "missing return value")
     expect_err(c, compiler, stamp, "block-scope", "fn main {\n  if true {\n    y = 3\n  }\n  puts(y)\n}\n", "unknown name y")
+    // Stage 29 W3a (D298; D30 amended): only a single capital letter is an
+    // implicit type parameter; another unknown name is an unknown type,
+    // with the nearest known name when one is close.
+    expect_err(c, compiler, stamp, "tparam-typo", "fn f(x: Strng): Int {\n  x.size\n}\nfn main {\n  puts(f(\"abc\"))\n}\n", "unknown type Strng (did you mean `String`?)")
+    expect_err(c, compiler, stamp, "tparam-case", "fn f(x: Array(string)): Int {\n  x.size\n}\nfn main {\n  puts(1)\n}\n", "unknown type string (did you mean `String`?)")
+    expect_err(c, compiler, stamp, "tparam-user", "struct Point {\n  x: Int\n}\nfn f(p: Pont): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "unknown type Pont (did you mean `Point`?)")
+    expect_err(c, compiler, stamp, "tparam-word", "fn first(xs: Array(Elem)): Elem {\n  xs[0]\n}\nfn main {\n  puts(first([1]))\n}\n", "unknown type Elem\n")
+    expect_err(c, compiler, stamp, "tparam-digit", "fn id(x: T2): T2 {\n  x\n}\nfn main {\n  puts(id(1))\n}\n", "unknown type T2")
     expect_err(c, compiler, stamp, "unknown-type", "fn main {\n  x: Float = 1\n  puts(1)\n}\n", "unknown type Float")
     expect_err(c, compiler, stamp, "non-trailing-default", "fn f(a: Int = 1, b: Int): Int {\n  a + b\n}\nfn main {\n  puts(1)\n}\n", "trailing")
     expect_err(c, compiler, stamp, "dup-overload", "fn show(n: Int): Int {\n  n\n}\nfn show(n: Int): String {\n  \"x\"\n}\nfn main {\n  puts(1)\n}\n", "already defined")

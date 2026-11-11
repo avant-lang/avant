@@ -216,7 +216,7 @@ class Counter {
 
 ### Generic functions
 
-An unbound name in a signature is a type parameter. The call site omits it when the arguments determine it.
+A single capital letter that names no type (`T`, `U`, `K`) in a signature is a type parameter. The call site omits it when the arguments determine it. Any other unknown name is an error, so a misspelt type is caught where it is written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``. A generic struct or class names its parameters in its declaration (`class Entry(Key, Val)`), where any fresh name is allowed.
 
 ```avant
 fn id(x: T): T {
@@ -496,13 +496,15 @@ fn main {
 }
 ```
 
+The range's ends and the array are read like an `if` or `while` condition: a struct literal there needs parentheses, brackets or a call around it (`for p in [Point { x: 1 }]`), so a body that starts with a typed declaration (`row: Array(Bool) = []`) is never taken for a literal.
+
 The comptime field walk in [Macros](#macros) is the other `for`, and it keeps its own spelling.
 
 ## Modules
 
 A file is a module. Its name is its path from the directory that owns it, with a slash written as a dot: `http/server.av` is `http.server`, and a file beside the compilation root keeps that file's basename. `import http.server` loads `http/server.av`. A keyword after a dot is a name, so `import http.spawn` loads `http/spawn.av` and a clash is qualified as `http.spawn.Server`. A keyword that starts a phrase stays that keyword. There is no `module` line, and a directory is not a module.
 
-The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. If two imports publish the same name, qualify with the full module name (`http.server.Server`). Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate. The first segment `std` is reserved for the standard library. `import std.testing` loads the bundled test library, and a project file cannot take that name.
+The compiler looks beside the importing file, then in the directory of the file being compiled, then under the nearest `avant.toml` above that file, then in each fetched dependency. The same path found in two of those places is one file. Two different files for one import are an error. A dependency does not look in the program that imported it. Names are private unless marked `pub`. Public names enter the importer's scope. Names belong to their module: two modules may publish the same type or function name, even a function with the same parameters, and a module may define a name that an import also publishes. Only a use that sees more than one is an error, at that use; qualify it with the full module name (`http.server.Server`, `alpha.value()`; a module may also qualify its own names, as `main.helper()`). Functions with different parameter types still meet as one overload set: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments. A qualified call reaches only that module's `pub` functions. Cycles are an error, including across directories. The compiler takes one root file and follows imports. It does not take a list of files to concatenate. The first segment `std` is reserved for the standard library. `import std.testing` loads the bundled test library, and a project file cannot take that name.
 
 A file under `tests/math/` can import the project next to `avant.toml` and use the public names unqualified:
 
@@ -526,6 +528,21 @@ fn main {
 ```
 
 `origin` is `pub` in `vec.av`. `fn main` in the root is the entry point. It is not `pub`.
+
+Fields follow the same rule: a field is private to its type's module unless it is marked `pub`. Outside that module a private field cannot be read, written, or named in a literal, so a type with private fields is built there by a function of its module, which keeps its invariants. `vec.av` publishes both fields of `Vec2`, so the importer above may read `v.x` and write `Vec2 { x: 1, y: 2 }`:
+
+```avant
+pub struct Vec2 {
+  pub x: Int
+  pub y: Int
+}
+
+pub fn origin: Vec2 {
+  Vec2 { x: 0, y: 0 }
+}
+```
+
+A read-only view is a `pub fn`, which reads like a field (`a.balance`). A comptime walk over `T.fields` written in another module than `T`'s sees only `T`'s `pub` fields, the ones its generated code could name. The fields of a C layout (`lib`) are C's and stay visible wherever the layout is.
 
 ### Packages
 
@@ -720,7 +737,7 @@ avant fetch: dependency greeter resolves to two different commits (...); one ver
 
 Align the pins in `avant.toml` (your manifest's entry is the one to change, since transitive requests are fixed by their publishers) and fetch again. One name always means one version in a project.
 
-The third clash is about public names, and predates packages: if two imported modules publish the same name, qualify the use with the module name, as in `lexer.Lexer`. Fetching a package does not change that rule.
+The third clash is about public names, and predates packages: if two imported modules publish the same name, a use that could mean either is an error, and qualifying it with the module name, as in `lexer.Lexer` or `alpha.value()`, says which. Two functions with the same name and parameters report it at the call, naming both qualified forms (`error[E4000]: ambiguous call to value: alpha.value and gamma.value both match; write alpha.value() or gamma.value()`). Fetching a package does not change that rule.
 
 For example, suppose one fetched dependency provides `alpha.av`, which publishes a function named `value`:
 
@@ -734,7 +751,7 @@ Another provides `beta.av`, which publishes a class with the same name:
 
 ```avant
 pub class value {
-  n: Int
+  pub n: Int
 
   fn initialize(n: Int) {
     self.n = n
@@ -1656,6 +1673,8 @@ sh runtime/build.sh
 ./bin/avant run examples/hello.av
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
+
+Until a release that has field privacy (`pub` fields) is the seed, the compiler's own sources cannot mark their fields `pub` (the seed refuses the word there), so the compiler's own build is exempt from field privacy: when the root is `compiler/main.av` of a checkout (beside `runtime/build.sh`), private fields are not checked between the modules under that `compiler/` directory. Every other program, and every other module, obeys the rule; the exemption goes once the compiler marks its fields.
 
 `sh tools/letters.sh` does the same for the letters the gate uses: the runtime, B (`bin/avant-b`, built by the seed), and C′ (`bin/avant-c-llvm`, built by B); `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′), or `c-release` (the `--release` build a release ships) builds one. `sh tools/gate.sh` is the full gate (B, C′, the suite on both, D′, and the fixed point: C′ and D′ emit the same LLVM IR for the compiler and are byte-identical). `sh tools/run-goldens.sh` compiles and runs every example, runnable fixture, and LangArena task in `test` mode and compares each one's stdout, stderr, and exit status with its golden (`GOLDEN_MODE=--release` or empty for the other modes).
 

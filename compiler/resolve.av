@@ -32,6 +32,8 @@ pub class TypeResolver {
   // Set while a `fun` signature or a C layout's fields resolve: the only
   // places a C scalar type (Int8 ... Float32) may be named (Stage 29 W1b).
   c_scalar_ok: Bool = false
+  // Every declared type name, for "did you mean" (Stage 29 W3a).
+  type_names: Array(String)
 
   fn initialize {
     n = Hash(String, Int).new
@@ -58,6 +60,7 @@ pub class TypeResolver {
     self.tparam_names = []
     self.program = nil
     self.struct_inflight = []
+    self.type_names = []
     self.inst_depth = 0
     self.failed = false
     self.err = nil
@@ -122,6 +125,10 @@ pub class TypeResolver {
 
   pub fn put_named(name: String, ty: Ty): Int {
     id = self.intern(ty)
+    if prev = self.named.get(name) {
+    } else {
+      self.type_names.push(name)
+    }
     self.named[name] = id
     id
   }
@@ -137,8 +144,37 @@ pub class TypeResolver {
       }
     } else {
       self.named[name] = id
+      self.type_names.push(name)
     }
     id
+  }
+
+  // The known type name nearest to name, as " (did you mean `String`?)",
+  // or "" when none is close (Stage 29 W3a, D298: a name that is not a
+  // single capital letter is no longer a type parameter).
+  pub fn type_hint(name: String): String {
+    best = ""
+    best_d = name.size / 3
+    if best_d < 1 {
+      best_d = 1
+    }
+    best_d += 1
+    builtin = "Int Int64 UInt64 Bool Float64 String Array Hash Buf Bytes Ptr Void Nil"
+    cands = builtin.split(" ")
+    for t in self.type_names {
+      cands.push(t)
+    }
+    for t in cands {
+      d = name_distance(name, t)
+      if d < best_d && t != name {
+        best = t
+        best_d = d
+      }
+    }
+    if best.size == 0 {
+      return ""
+    }
+    " (did you mean `${best}`?)"
   }
 
   pub fn get_named(name: String): Ty? {
@@ -344,7 +380,7 @@ pub class TypeResolver {
     if opq = self.get_opaque(tn.name) {
       return opq
     }
-    self.fail(tn.loc, "unknown type ${tn.name}")
+    self.fail(tn.loc, "unknown type ${tn.name}${self.type_hint(tn.name)}")
     self.t_int
   }
 
@@ -616,6 +652,7 @@ pub class TypeResolver {
   pub fn clone_subst_field(field: Field, from: Array(String), to: Array(TypeName)): Field {
     t = subst_type_name(field.type, from, to)
     f = Field.new(field.loc, field.name, t)
+    f.vis = field.vis
     if d = field.default {
       c = clone_expr(d)
       subst_type_in_expr(c, from, to)
@@ -634,7 +671,9 @@ pub class TypeResolver {
         return
       }
       seen[field.name] = 1
-      resolved.push(TyField.new(field.name, self.resolve_value(field.type)))
+      tf = TyField.new(field.name, self.resolve_value(field.type))
+      tf.vis = field.vis
+      resolved.push(tf)
       if self.new_err_since(mark0) {
         return
       }
@@ -982,7 +1021,9 @@ pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, 
       return
     }
     seen[field.name] = 1
-    resolved.push(TyField.new(field.name, resolver.resolve_value(field.type)))
+    tf = TyField.new(field.name, resolver.resolve_value(field.type))
+    tf.vis = field.vis
+    resolved.push(tf)
   }
   if ty = resolver.get_named_in(mod_name, name) {
     ty.fields = resolved
@@ -1098,4 +1139,37 @@ pub fn seal_one_emit(resolver: TypeResolver, mod_name: String, name: String) {
       ty.emit_base = "${mod_emit_prefix(mod_name)}__${name}"
     }
   }
+}
+
+// Edit distance between two names, a letter's case counting half a change
+// (so `string` is nearest `String`), in whole steps rounded up.
+pub fn name_distance(a: String, b: String): Int {
+  prev: Array(Int) = []
+  for j in 0..b.size + 1 {
+    prev.push(j * 2)
+  }
+  for i in 1..a.size + 1 {
+    cur: Array(Int) = []
+    cur.push(i * 2)
+    for j in 1..b.size + 1 {
+      x = a[i - 1]
+      y = b[j - 1]
+      cost = 2
+      if x == y {
+        cost = 0
+      } else if x == y + 32 || y == x + 32 {
+        cost = 1
+      }
+      best = prev[j - 1] + cost
+      if prev[j] + 2 < best {
+        best = prev[j] + 2
+      }
+      if cur[j - 1] + 2 < best {
+        best = cur[j - 1] + 2
+      }
+      cur.push(best)
+    }
+    prev = cur
+  }
+  (prev[b.size] + 1) / 2
 }

@@ -1050,8 +1050,8 @@ pub class Parser {
         vis = true
         self.bump
         self.skip_newlines
-        if self.current.kind != tk_fn() {
-          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+        if self.current.kind != tk_fn() && self.current.kind != tk_ident() {
+          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
       }
@@ -1059,22 +1059,20 @@ pub class Parser {
         body.methods.push(self.parse_fn(owner, vis))
       } else if self.current.kind == tk_quote() {
         if vis {
-          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
         body.quotes.push(self.parse_quote_decl(owner))
       } else if self.current.kind == tk_comptime() {
         if vis {
-          self.fail(self.current.loc, "pub in a type body only prefixes fn")
+          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
         body.comptimes.push(self.parse_comptime_walk(owner))
       } else {
-        if vis {
-          self.fail(self.current.loc, "fields of a pub type are visible; do not mark a field pub")
-          break
-        }
-        body.fields.push(self.parse_field)
+        field = self.parse_field
+        field.vis = vis
+        body.fields.push(field)
       }
       self.skip_newlines
     }
@@ -1681,14 +1679,18 @@ pub class Parser {
     self.skip_newlines
     self.expect(tk_in())
     self.skip_newlines
-    first = self.parse_expr
+    // The array and the range's ends are read like a while or if
+    // condition, with no struct literal (O181, Stage 29 W3a): before,
+    // `for x in xs {` with a first body line `row: Array(Bool) = []` read
+    // `xs { row: ... }` as a literal.
+    first = self.parse_for_operand
     self.skip_newlines
     id = self.for_id
     self.for_id += 1
     if self.current.kind == tk_dot_dot() {
       self.bump
       self.skip_newlines
-      end_expr = self.parse_expr
+      end_expr = self.parse_for_operand
       self.skip_newlines
       raw_body = self.parse_block
       end_name = "__for${id}_end"
@@ -1820,6 +1822,14 @@ pub class Parser {
       return 0i64
     }
     bits.to_i64()
+  }
+
+  pub fn parse_for_operand: Expr {
+    old = self.allow_struct_lit
+    self.allow_struct_lit = false
+    expr = self.parse_expr
+    self.allow_struct_lit = old
+    expr
   }
 
   pub fn parse_cond_expr: Expr {
@@ -2337,6 +2347,10 @@ pub class Parser {
     loc = self.expect(tk_l_bracket()).loc
     self.skip_newlines
     e = Expr.new(ex_array(), loc)
+    // Inside the brackets a struct literal is unambiguous, as inside
+    // parentheses, also in a condition or a for operand (Stage 29 W3a).
+    old = self.allow_struct_lit
+    self.allow_struct_lit = true
     if self.current.kind != tk_r_bracket() {
       while true {
         e.elems.push(self.parse_expr)
@@ -2351,6 +2365,7 @@ pub class Parser {
         }
       }
     }
+    self.allow_struct_lit = old
     self.expect(tk_r_bracket())
     e
   }
@@ -2570,6 +2585,10 @@ pub class Parser {
     self.expect(tk_l_paren())
     self.skip_newlines
     args: Array(Expr) = []
+    // A struct literal is unambiguous inside the parentheses, also in a
+    // condition or a for operand (Stage 29 W3a).
+    old = self.allow_struct_lit
+    self.allow_struct_lit = true
     if self.current.kind != tk_r_paren() {
       while true {
         args.push(self.maybe_trailing_block(self.parse_expr))
@@ -2581,6 +2600,7 @@ pub class Parser {
         }
       }
     }
+    self.allow_struct_lit = old
     self.expect(tk_r_paren())
     args
   }

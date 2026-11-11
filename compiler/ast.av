@@ -231,6 +231,8 @@ pub class Field {
   name: String = ""
   type: TypeName
   default: Expr? = nil
+  // `pub` (Stage 29 W3a, D299): visible outside the type's module.
+  vis: Bool = false
 
   fn initialize(loc: Location, name: String, type: TypeName) {
     self.loc = loc
@@ -725,12 +727,22 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
   if tn.name.size == 0 {
     return
   }
+  // Only a single capital letter is an implicit type parameter (Stage 29
+  // W3a, D298; D30 amended): any other unknown name stays a type and is
+  // reported as unknown, with the nearest known name.
+  if !is_type_param_name(tn.name) {
+    return
+  }
   for i in 0..into.size {
     if into[i] == tn.name {
       return
     }
   }
   into.push(tn.name)
+}
+
+pub fn is_type_param_name(name: String): Bool {
+  name.size == 1 && name[0] >= 65 && name[0] <= 90
 }
 
 pub fn clone_param(p: Param): Param {

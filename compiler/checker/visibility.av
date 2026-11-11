@@ -23,6 +23,7 @@ pub fn (checker_self: Checker) note_modules {
     }
   }
   checker_self.known_mods = km
+  checker_self.bootstrap_mods = field_bootstrap_mods(checker_self.program, checker_self.cwd)
   tm = Hash(String, String).new
   tv = Hash(String, Int).new
   checker_self.type_mod = tm
@@ -45,6 +46,91 @@ pub fn (checker_self: Checker) note_modules {
       checker_self.remember_type(lay.name, lib_def.mod_name, lib_def.vis)
     }
   }
+}
+
+// The bootstrap exemption of field privacy (Stage 29 W3a, D299; proposed
+// decision in the W3a record). The v0.39.0 seed refuses `pub` on a field,
+// so the compiler's own sources cannot mark their fields until a release
+// with this rule is the seed (the mid-stage release, D294). Until then,
+// and only in the compiler's own build, field privacy is not checked
+// between the compiler's modules: the build whose root is `compiler/main.av`
+// of an Avant checkout (beside `runtime/build.sh`), for the modules under
+// that `compiler/` directory. Every other program, and every other module
+// of that build, obeys the rule. Removed at the mid-stage release, when
+// the compiler marks its fields `pub`.
+pub fn field_bootstrap_mods(program: Program, cwd: String): Hash(String, Int) {
+  out = Hash(String, Int).new
+  root_path = ""
+  for info in program.mods {
+    if info.name == program.root_module {
+      root_path = bootstrap_abs(info.path, cwd)
+    }
+  }
+  if path_basename(root_path) != "main.av" {
+    return out
+  }
+  dir = path_dirname(root_path)
+  if path_basename(dir) != "compiler" {
+    return out
+  }
+  if !file_exists("${path_dirname(dir)}/runtime/build.sh") {
+    return out
+  }
+  prefix = "${dir}/"
+  for info in program.mods {
+    p = bootstrap_abs(info.path, cwd)
+    if p.size > prefix.size && str_slice(p, 0, prefix.size) == prefix {
+      out[info.name] = 1
+    }
+  }
+  out
+}
+
+pub fn bootstrap_abs(path: String, cwd: String): String {
+  if path.size > 0 && path[0] == 47 {
+    return path
+  }
+  p = path
+  while p.size > 2 && str_slice(p, 0, 2) == "./" {
+    p = str_slice(p, 2, p.size)
+  }
+  "${cwd}/${p}"
+}
+
+// Fields are private unless `pub` (Stage 29 W3a, D299; D42 rule 5
+// replaced): a field without `pub` is read, written and named in a literal
+// only inside its type's module.
+pub fn (checker_self: Checker) field_hidden(owner: Ty, name: String): Bool {
+  from = checker_self.current_module
+  if owner.mod_name.size == 0 || from.size == 0 || owner.mod_name == from {
+    return false
+  }
+  for f in owner.fields {
+    if f.name == name {
+      if f.vis {
+        return false
+      }
+      if flag = checker_self.bootstrap_mods.get(owner.mod_name) {
+        if flag2 = checker_self.bootstrap_mods.get(from) {
+          return false
+        }
+      }
+      return true
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) field_private_text(owner: Ty, name: String): String {
+  "field ${name} of ${owner.show} is private to module ${owner.mod_name}; mark it pub"
+}
+
+pub fn (checker_self: Checker) check_field_visible(owner: Ty, name: String, loc: Location): Bool {
+  if checker_self.field_hidden(owner, name) {
+    checker_self.fail(loc, checker_self.field_private_text(owner, name))
+    return false
+  }
+  true
 }
 
 pub fn type_slot(mod_name: String, name: String): String {
@@ -198,6 +284,66 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
     return checker_self.imported_by(from_mod, fnn.mod_name)
   }
   false
+}
+
+// Functions are scoped per module (Stage 29 W3a, D298). A candidate at an
+// unqualified call is a function the current module sees (its own, and the
+// pub functions of the modules it imports); at a qualified call `m.f()`
+// (qual, or call_mod while match_func runs), only m's functions among them.
+pub fn (checker_self: Checker) fn_candidate_q(fnn: Function, qual: String): Bool {
+  if qual.size > 0 && fnn.mod_name != qual {
+    return false
+  }
+  checker_self.fn_is_visible(fnn, checker_self.current_module)
+}
+
+pub fn (checker_self: Checker) fn_candidate(fnn: Function): Bool {
+  checker_self.fn_candidate_q(fnn, checker_self.call_mod)
+}
+
+// Two or more functions match a call equally. When they come from
+// different modules, the message names each one's module and the
+// qualified calls that pick one (D298); as for types, a module's own
+// function does not win over an imported one of the same signature.
+pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, cands: Array(FuncSig), plain: String) {
+  mods: Array(String) = []
+  for sig in cands {
+    seen = false
+    for m in mods {
+      if m == sig.node.mod_name {
+        seen = true
+      }
+    }
+    if !seen {
+      mods.push(sig.node.mod_name)
+    }
+  }
+  if mods.size < 2 {
+    checker_self.fail(loc, plain)
+    return
+  }
+  defs = buf_new()
+  calls = buf_new()
+  for k in 0..mods.size {
+    if k > 0 {
+      sep = ", "
+      if k == mods.size - 1 {
+        sep = " and "
+      }
+      defs.push_str(sep)
+      if k == mods.size - 1 {
+        sep = " or "
+      }
+      calls.push_str(sep)
+    }
+    defs.push_str("${mods[k]}.${name}")
+    calls.push_str("${mods[k]}.${name}()")
+  }
+  both = "both"
+  if mods.size > 2 {
+    both = "all"
+  }
+  checker_self.fail(loc, "${plain}: ${defs.to_s} ${both} match; write ${calls.to_s}")
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
@@ -492,6 +638,14 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
     checker_self.fail(expr.loc, "new is a type constructor")
     return checker_self.t_int()
   }
+  // A block or lambda argument (Stage 29 W3a): `m.f { |x| ... }` picks m's
+  // f as `f { ... }` would, its body checked in the calling module.
+  checker_self.absorb_fn_block_q(expr, mod)
+  none: Ty? = nil
+  if got = checker_self.dispatch_deferred_q(expr, none, mod) {
+    expr.receiver = nil
+    return got
+  }
   saved = checker_self.current_module
   arg_tys: Array(Ty) = []
   i = 0
@@ -499,14 +653,11 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
     arg_tys.push(checker_self.check_expr(expr.args[i]))
     i += 1
   }
+  checker_self.call_mod = mod
+  matched = checker_self.match_func(expr.callee, arg_tys, none, expr.loc)
+  checker_self.call_mod = ""
   checker_self.current_module = mod
-  none: Ty? = nil
-  if sig = checker_self.match_func(expr.callee, arg_tys, none, expr.loc) {
-    if sig.node.mod_name != mod {
-      checker_self.fail(expr.loc, "unknown function ${mod}.${expr.callee}")
-      checker_self.current_module = saved
-      return checker_self.t_int()
-    }
+  if sig = matched {
     checker_self.fill_defaults(expr, sig.node)
     i = 0
     while i < expr.args.size {

@@ -99,6 +99,13 @@ fn test_format(c: Checks) {
     d280_code = run_format(compiler, "format", d280_src, d280_log, empty_flags)
     c.eq_int(d280_code, 0, "format D280 lines exits 0")
     c.eq_str(read_or_empty(d280_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n  1,\n  -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line (D280)")
+    // Stage 29 W3a (D299): `pub` before a field formats like `pub` before fn.
+    pubf_src = "${scratch()}/format-${stamp}-pubf.av"
+    pubf_log = "${scratch()}/format-${stamp}-pubf.log"
+    file_write(pubf_src, "pub struct P {\n    pub   x :Int\nkept: Int = 2\n  pub fn get: Int { x }\n}\n")
+    pubf_code = run_format(compiler, "format", pubf_src, pubf_log, empty_flags)
+    c.eq_int(pubf_code, 0, "format pub fields exits 0")
+    c.eq_str(read_or_empty(pubf_log), "pub struct P {\n  pub x: Int\n  kept: Int = 2\n  pub fn get: Int { x }\n}\n", "format pub fields")
     nl_log = "${scratch()}/format-${stamp}-newlines.log"
     nl_code = run_format(compiler, "format", "${root}/tests/fixtures/syntax/newlines.av", nl_log, check_flags)
     c.eq_int(nl_code, 0, "newlines fixture format exits 0")

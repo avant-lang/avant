@@ -27,6 +27,8 @@ pub class Expander {
   next_id: Int = 0
   ctx_var: String = ""
   ctx_field: Field? = nil
+  // The module of the type find_all_fields found last.
+  fields_mod: String = ""
   failed: Bool = false
   err: CompileError? = nil
   errors: DiagBag
@@ -103,7 +105,7 @@ pub class Expander {
 
   pub fn expand_walks(walks: Array(ComptimeWalk), owner: String) {
     for walk in walks {
-      fields = self.find_fields(walk.type_name, walk.loc)
+      fields = self.find_fields(walk.type_name, walk.loc, walk.mod_name)
       own = owner
       if own.size == 0 {
         own = walk.owner
@@ -157,9 +159,27 @@ pub class Expander {
     self.fail(fnn.loc, "quote owner ${owner} is not a type")
   }
 
-  pub fn find_fields(type_name: String, loc: Location): Array(Field) {
+  // A walk over `T.fields` written in another module than T's sees only
+  // T's `pub` fields (Stage 29 W3a, D299): the code it writes could name
+  // no other.
+  pub fn find_fields(type_name: String, loc: Location, from_mod: String): Array(Field) {
+    all = self.find_all_fields(type_name, loc)
+    if self.fields_mod.size == 0 || from_mod.size == 0 || self.fields_mod == from_mod {
+      return all
+    }
+    out: Array(Field) = []
+    for f in all {
+      if f.vis {
+        out.push(f)
+      }
+    }
+    out
+  }
+
+  pub fn find_all_fields(type_name: String, loc: Location): Array(Field) {
     found: Array(Field) = []
     hits = 0
+    self.fields_mod = ""
     for sdef in self.program.structs {
       if sdef.name == type_name {
         if sdef.type_params.size > 0 {
@@ -167,6 +187,7 @@ pub class Expander {
           return found
         }
         found = sdef.fields
+        self.fields_mod = sdef.mod_name
         hits += 1
       }
     }
@@ -177,6 +198,7 @@ pub class Expander {
           return found
         }
         found = cls.fields
+        self.fields_mod = cls.mod_name
         hits += 1
       }
     }
