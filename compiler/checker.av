@@ -836,12 +836,12 @@ pub class Checker {
         }
         if at_tail {
           if expected.is_void {
-            if !got.is_void && !self.has_err {
-              if stmt.lead != 0 {
-                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
-              } else {
-                self.fail(stmt.loc, "unused ${got.show} value at the end of a void function")
-              }
+            // The uniform void tail (D300, D18 amended; Stage 29 W4a): a
+            // value at the end of a function that returns nothing is a
+            // statement, as it is in the middle. A line starting with `-`
+            // or `[` there is D280's dangling line, as in the middle.
+            if !got.is_void && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
+              self.fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
           } else {
             if !ty_assignable(got, expected) {
@@ -4101,4 +4101,11 @@ pub fn arm_leaves(body: Array(Stmt)): Bool {
   }
   k = body[body.size - 1].kind
   k == st_return() || k == st_break() || k == st_continue()
+}
+
+pub fn lead_spelling(lead: Int): String {
+  if lead == tk_minus() {
+    return "-"
+  }
+  "["
 }

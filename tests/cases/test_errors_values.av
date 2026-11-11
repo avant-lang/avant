@@ -123,6 +123,14 @@ fn discard_cases: Array(FCase) {
   xs
 }
 
+fn voidtail_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("void-tail", "fn pop_one(xs: Array(Int)) {\n  xs.pop\n}\nfn count(xs: Array(Int)): Int {\n  xs.push(9)\n  xs.size\n}\nfn add(xs: Array(Int)) {\n  count(xs)\n}\nfn go(f: fn()) {\n  f()\n}\nfn stop(h: JoinHandle(Int)) {\n  h.join\n}\nfn main {\n  xs = [1, 2, 3]\n  pop_one(xs)\n  add(xs)\n  puts(xs.size)\n  go() { || xs.push(4) }\n  puts(xs.size)\n  stop(spawn { 7 })\n}\n", "3\n4\n"))
+  xs.push(refused("void-tail-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(s: String) {\n  parse(s)\n}\nfn main {\n  check(\"a\")\n}\n", "this statement drops a value that can be an error (Int | ParseError)"))
+  xs.push(refused("void-tail-minus", "fn main {\n  a = 1\n  t = a\n  - 2\n}\n", "this line starts with `-`, so it begins a new statement whose value nobody uses"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -169,6 +177,9 @@ fn test_main(c: Checks) {
     }
     for f_discard_cases in discard_cases() {
       all.push(f_discard_cases)
+    }
+    for f_voidtail_cases in voidtail_cases() {
+      all.push(f_voidtail_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

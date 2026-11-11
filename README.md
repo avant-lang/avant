@@ -70,7 +70,7 @@ That is enough to write and run Avant today. Building the Avant compiler itself 
 
 ## Programs
 
-Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function is its value. A type is written `name: Type`.
+Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function with a result is its value (a final `if`/`else` included); in a function that returns nothing, a value at the end is dropped, as it is anywhere else in the body (but an error is never dropped silently, see [Errors](#errors)). A type is written `name: Type`.
 
 The entry point is `fn main`, or `fn run` (the compiler synthesizes the C `main`). Neither needs `pub`.
 
