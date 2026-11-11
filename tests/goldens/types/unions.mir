@@ -3,18 +3,16 @@ file 0 "unions.av"
 
 layout %unions.Leaf = class { 0 n: i32 }  size 4 align 4 id 1
 layout %unions.Oops = class { 0 m: ref str }  size 8 align 8 id 2
-layout %unions.Holder = class { 0 a: %(Nil|unions.Leaf), 1 b: %(Int|String), 2 c: %(Nil|Bool), 3 cell: %unions.Cell }  size 56 align 8 id 3
-layout %(Nil|unions.Leaf) = union { 0 tag: i32, 1 m0: ref %unions.Leaf }  size 16 align 8
+layout %unions.Holder = class { 0 a: ref %unions.Leaf, 1 b: %(Int|String), 2 c: %(Nil|Bool), 3 cell: %unions.Cell }  size 48 align 8 id 3
 layout %(Int|String) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref str }  size 16 align 8
 layout %(Nil|Bool) = union { 0 tag: i32, 1 m0: bool }  size 8 align 4
 layout %unions.V = struct { 0 x: i32, 1 y: i32 }  size 8 align 4
 layout %(Nil|unions.V) = union { 0 tag: i32, 1 m0: %unions.V }  size 12 align 4
 layout %unions.Cell = struct { 0 k: i32, 1 v: %(Nil|unions.V) }  size 16 align 4
-layout %(Nil|String) = union { 0 tag: i32, 1 m0: ref str }  size 16 align 8
 layout %(Int|unions.Oops) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %unions.Oops }  size 16 align 8
 layout %(unions.Oops|String) = union { 0 tag: i32, 1 m0: ref %unions.Oops, 2 m1: ref str }  size 24 align 8
 layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
-layout %elems((Nil|unions.Leaf)) = elems { 0: %(Nil|unions.Leaf) }  size 16 align 8 id 4
+layout %elems((Nil|unions.Leaf)) = elems { 0: ref %unions.Leaf }  size 8 align 8 id 65535
 layout %Array((Nil|unions.Leaf)) = array { 0 data: ref %elems((Nil|unions.Leaf)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %elems((Nil|unions.V)) = elems { 0: %(Nil|unions.V) }  size 12 align 4
 layout %Array((Nil|unions.V)) = array { 0 data: ref %elems((Nil|unions.V)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
@@ -37,13 +35,14 @@ typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1 %unions.Leaf stride 0 bits [0x0]
 typemap 2 %unions.Oops stride 0 bits [0x1]
-typemap 3 %unions.Holder stride 0 bits [0xa]
-typemap 4 %elems((Nil|unions.Leaf)) stride 2 bits [0x2]
+typemap 3 %unions.Holder stride 0 bits [0x5]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_pop_slot(ref, u64) -> addr collects
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
+extern avant_array_set_ptr(ref, i32, ref) -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
@@ -86,25 +85,21 @@ bb2:
   return   @54:3
 }
 
-fn av.unions/name(_1: i32) -> %(Nil|String) leaf @unions.av:57:1 {
-  let _0: %(Nil|String)
+fn av.unions/name(_1: i32) -> ref str leaf @unions.av:57:1 {
+  let _0: ref str
   let _1 (n): i32
   let _2: bool
-  let _3: %(Nil|String)
-  let _4: %(Nil|String)
 
 bb0:
   _2 = eq copy _1, const i32 1   @58:8
   branch copy _2, bb1, bb2   @58:3
 
 bb1:
-  _3 = union %(Nil|String) tag 1 (const str.0)   @59:12
-  _0 = copy _3   @59:5
+  _0 = const str.0   @59:5
   return   @59:5
 
 bb2:
-  _4 = union %(Nil|String) tag 0   @61:3
-  _0 = copy _4   @61:3
+  _0 = const ref str null   @61:3
   return   @61:3
 }
 
@@ -180,35 +175,31 @@ bb2:
   return   @73:3
 }
 
-fn av.unions/plus1(_1: %(Nil|String)) -> %(Nil|Int) leaf @unions.av:76:1 {
+fn av.unions/plus1(_1: ref str) -> %(Nil|Int) leaf @unions.av:76:1 {
   let _0: %(Nil|Int)
-  let _1 (s): %(Nil|String)
-  let _2: i32
-  let _3: bool
-  let _4: %(Nil|Int)
-  let _5: ref str
-  let _6 (t): ref str
-  let _7: i32
-  let _8: i32
-  let _9: %(Nil|Int)
+  let _1 (s): ref str
+  let _2: bool
+  let _3: %(Nil|Int)
+  let _4 (t): ref str
+  let _5: i32
+  let _6: i32
+  let _7: %(Nil|Int)
 
 bb0:
-  _2 = copy _1.0   @77:8
-  _3 = eq copy _2, const i32 0   @77:8
-  branch copy _3, bb1, bb2   @77:8
+  _2 = eq copy _1, const ref str null   @77:8
+  branch copy _2, bb1, bb2   @77:8
 
 bb1:
-  _4 = union %(Nil|Int) tag 0   @77:8
-  _0 = copy _4   @77:8
+  _3 = union %(Nil|Int) tag 0   @77:8
+  _0 = copy _3   @77:8
   return   @77:8
 
 bb2:
-  _5 = copy _1.1   @77:8
-  _6 = copy _5   @77:5
-  _7 = call avant_str_size(copy _6) nocollect   @78:4
-  _8 = add.chk copy _7, const i32 1   @78:10
-  _9 = union %(Nil|Int) tag 1 (copy _8)   @78:10
-  _0 = copy _9   @78:10
+  _4 = copy _1   @77:5
+  _5 = call avant_str_size(copy _4) nocollect   @78:4
+  _6 = add.chk copy _5, const i32 1   @78:10
+  _7 = union %(Nil|Int) tag 1 (copy _6)   @78:10
+  _0 = copy _7   @78:10
   return   @78:10
 }
 
@@ -227,9 +218,9 @@ bb0:
   return   @83:3
 }
 
-fn av.unions/pass(_1: %(Nil|unions.Leaf)) -> %(Nil|unions.Leaf) leaf @unions.av:86:1 {
-  let _0: %(Nil|unions.Leaf)
-  let _1 (o): %(Nil|unions.Leaf)
+fn av.unions/pass(_1: ref %unions.Leaf) -> ref %unions.Leaf leaf @unions.av:86:1 {
+  let _0: ref %unions.Leaf
+  let _1 (o): ref %unions.Leaf
 
 bb0:
   _0 = copy _1   @87:3
@@ -245,15 +236,13 @@ fn av.unions/sum(_1: ref %Array((Nil|unions.Leaf))) -> i32 leaf @unions.av:90:1 
   let _5: i32
   let _6: bool
   let _7: ref %elems((Nil|unions.Leaf))
-  let _8: %(Nil|unions.Leaf)
-  let _9 (e): %(Nil|unions.Leaf)
-  let _10: i32
-  let _11: bool
-  let _12: ref %unions.Leaf
-  let _13 (f): ref %unions.Leaf
+  let _8: ref %unions.Leaf
+  let _9 (e): ref %unions.Leaf
+  let _10: bool
+  let _11 (f): ref %unions.Leaf
+  let _12: i32
+  let _13: i32
   let _14: i32
-  let _15: i32
-  let _16: i32
 
 bb0:
   _2 = const i32 0   @91:5
@@ -270,25 +259,23 @@ bb2:
   _7 = copy (*_3).0   @92:3
   _8 = copy (*_7)[copy _4]   @92:3
   _9 = copy _8   @92:3
-  _10 = copy _9.0   @93:5
-  _11 = ne copy _10, const i32 0   @93:5
-  branch copy _11, bb4, bb5   @93:5
+  _10 = ne copy _9, const ref %unions.Leaf null   @93:5
+  branch copy _10, bb4, bb5   @93:5
 
 bb3:
   _0 = copy _2   @97:3
   return   @97:3
 
 bb4:
-  _12 = copy _9.1   @93:5
-  _13 = copy _12   @93:5
-  _14 = copy (*_13).0   @94:13
-  _15 = add.chk copy _2, copy _14   @94:13
-  _2 = copy _15   @94:9
+  _11 = copy _9   @93:5
+  _12 = copy (*_11).0   @94:13
+  _13 = add.chk copy _2, copy _12   @94:13
+  _2 = copy _13   @94:9
   goto bb5   @93:5
 
 bb5:
-  _16 = add copy _4, const i32 1   @92:3
-  _4 = copy _16   @92:3
+  _14 = add copy _4, const i32 1   @92:3
+  _4 = copy _14   @92:3
   goto bb1   @92:3
 }
 
@@ -298,179 +285,152 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @unions.av:100:1 {
   let _2 (argv): ptr slot
   let _3: ref %unions.Holder
   let _4 (h): ref %unions.Holder slot
-  let _5: %(Nil|unions.Leaf)
-  let _6: i32
-  let _7: bool
-  let _8: ref %unions.Leaf
-  let _9 (l): ref %unions.Leaf
-  let _10: i32
+  let _5: ref %unions.Leaf
+  let _6: bool
+  let _7 (l): ref %unions.Leaf
+  let _8: i32
+  let _9: ref %unions.Leaf
+  let _10: ref %unions.Leaf
   let _11: ref %unions.Leaf
-  let _12: %(Nil|unions.Leaf)
-  let _13: %(Nil|unions.Leaf)
-  let _14: %(Nil|unions.Leaf)
-  let _15: i32
-  let _16: bool
-  let _17: ref %unions.Leaf
-  let _18 (l2): ref %unions.Leaf
+  let _12: bool
+  let _13 (l2): ref %unions.Leaf
+  let _14: i32
+  let _15: %(Int|String)
+  let _16: %(Int|String)
+  let _17: %(Nil|Bool)
+  let _18: %(Nil|Bool)
   let _19: i32
-  let _20: %(Int|String)
-  let _21: %(Int|String)
-  let _22: %(Nil|Bool)
-  let _23: %(Nil|Bool)
-  let _24: i32
-  let _25: bool
-  let _26: bool
-  let _27 (c): bool
-  let _28: i32
-  let _29: %(Nil|unions.V)
-  let _30: %(Nil|unions.V)
+  let _20: bool
+  let _21: bool
+  let _22 (c): bool
+  let _23: i32
+  let _24: %(Nil|unions.V)
+  let _25: %(Nil|unions.V)
+  let _26: i32
+  let _27: bool
+  let _28: %unions.V
+  let _29 (cv): %unions.V
+  let _30: i32
   let _31: i32
-  let _32: bool
-  let _33: %unions.V
-  let _34 (cv): %unions.V
-  let _35: i32
-  let _36: i32
-  let _37: i32
-  let _38: %(Nil|unions.V)
+  let _32: i32
+  let _33: %(Nil|unions.V)
+  let _34: i32
+  let _35: bool
+  let _36: %unions.V
+  let _37 (v): %unions.V
+  let _38: i32
   let _39: i32
-  let _40: bool
-  let _41: %unions.V
-  let _42 (v): %unions.V
+  let _40: i32
+  let _41: %(Nil|unions.V)
+  let _42: %unions.V
   let _43: i32
-  let _44: i32
-  let _45: i32
-  let _46: %(Nil|unions.V)
-  let _47: %unions.V
+  let _44: bool
+  let _45: %unions.V
+  let _46: %unions.V
+  let _47 (w): %unions.V
   let _48: i32
-  let _49: bool
-  let _50: %unions.V
-  let _51: %unions.V
-  let _52 (w): %unions.V
-  let _53: i32
-  let _54: %(Nil|String)
-  let _55: ref str
-  let _56: i32
-  let _57: bool
+  let _49: ref str
+  let _50: ref str
+  let _51: bool
+  let _52: ref str
+  let _53: ref str
+  let _54: ref str
+  let _55: bool
+  let _56: ref str
+  let _57: ref str
   let _58: ref str
-  let _59: ref str
-  let _60: %(Nil|String)
+  let _59: bool
+  let _60: ref str
   let _61: ref str
-  let _62: i32
-  let _63: bool
-  let _64: ref str
-  let _65: ref str
-  let _66: %(Nil|String)
+  let _62: bool
+  let _63: ref str
+  let _64: %(unions.Oops|String)
+  let _65: i32
+  let _66: bool
   let _67: ref str
-  let _68: i32
-  let _69: bool
-  let _70: ref str
-  let _71: %(Nil|String)
+  let _68 (r): ref str
+  let _69: %(unions.Oops|String)
+  let _70: i32
+  let _71: bool
   let _72: ref str
-  let _73: i32
-  let _74: bool
-  let _75: ref str
-  let _76: ref str
-  let _77: %(unions.Oops|String)
-  let _78: i32
-  let _79: bool
+  let _73 (r2): ref str
+  let _74: ref str
+  let _75: %(Nil|Int)
+  let _76: i32
+  let _77: i32
+  let _78: bool
+  let _79: i32
   let _80: ref str
-  let _81 (r): ref str
-  let _82: %(unions.Oops|String)
+  let _81: %(Nil|Int)
+  let _82: i32
   let _83: i32
   let _84: bool
-  let _85: ref str
-  let _86 (r2): ref str
-  let _87: %(Nil|String)
-  let _88: %(Nil|Int)
+  let _85: i32
+  let _86: %(Nil|Int)
+  let _87 (o): %(Nil|Int)
+  let _88: i32
   let _89: i32
-  let _90: i32
-  let _91: bool
-  let _92: i32
-  let _93: %(Nil|String)
-  let _94: %(Nil|Int)
+  let _90: bool
+  let _91: i32
+  let _92: %(Nil|Int)
+  let _93: i32
+  let _94: bool
   let _95: i32
-  let _96: i32
-  let _97: bool
-  let _98: i32
-  let _99: %(Nil|Int)
-  let _100 (o): %(Nil|Int)
-  let _101: i32
-  let _102: i32
-  let _103: bool
-  let _104: i32
-  let _105: %(Nil|Int)
+  let _96 (q): i32
+  let _97: ref %elems((Nil|unions.Leaf)) slot
+  let _98: ref %unions.Leaf
+  let _99: ref %unions.Leaf
+  let _100: ref %Array((Nil|unions.Leaf))
+  let _101 (xs): ref %Array((Nil|unions.Leaf)) slot
+  let _102: ref %unions.Leaf slot
+  let _103: i32
+  let _104: ref %unions.Leaf
+  let _105: i32
   let _106: i32
-  let _107: bool
-  let _108: i32
-  let _109 (q): i32
-  let _110: ref %elems((Nil|unions.Leaf)) slot
-  let _111: ref %unions.Leaf
-  let _112: %(Nil|unions.Leaf)
-  let _113: %(Nil|unions.Leaf)
-  let _114: ref %unions.Leaf
-  let _115: %(Nil|unions.Leaf)
-  let _116: ref %Array((Nil|unions.Leaf))
-  let _117 (xs): ref %Array((Nil|unions.Leaf)) slot
-  let _118: %(Nil|unions.Leaf) slot
-  let _119: addr %(Nil|unions.Leaf)
-  let _120: ref %unions.Leaf
-  let _121: %(Nil|unions.Leaf) slot
-  let _122: addr %(Nil|unions.Leaf)
+  let _107: ref %elems((Nil|unions.Leaf))
+  let _108: ref %unions.Leaf
+  let _109: bool
+  let _110 (g): ref %unions.Leaf
+  let _111: i32
+  let _112: ref %elems((Nil|unions.V)) slot
+  let _113: %(Nil|unions.V)
+  let _114: %(Nil|unions.V)
+  let _115: ref %Array((Nil|unions.V))
+  let _116 (vs): ref %Array((Nil|unions.V)) slot
+  let _117: %(Nil|unions.V)
+  let _118: addr %(Nil|unions.V)
+  let _119: i32
+  let _120: i32
+  let _121: addr %(Nil|unions.V)
+  let _122: %(Nil|unions.V)
   let _123: i32
-  let _124: ref %unions.Leaf
-  let _125: %(Nil|unions.Leaf)
-  let _126: i32
-  let _127: ref %elems((Nil|unions.Leaf))
+  let _124: bool
+  let _125: %unions.V
+  let _126 (p): %unions.V
+  let _127: i32
   let _128: i32
-  let _129: ref %elems((Nil|unions.Leaf))
-  let _130: %(Nil|unions.Leaf)
-  let _131: i32
-  let _132: bool
-  let _133: ref %unions.Leaf
-  let _134 (g): ref %unions.Leaf
-  let _135: i32
-  let _136: ref %elems((Nil|unions.V)) slot
-  let _137: %(Nil|unions.V)
-  let _138: %(Nil|unions.V)
-  let _139: ref %Array((Nil|unions.V))
-  let _140 (vs): ref %Array((Nil|unions.V)) slot
-  let _141: %(Nil|unions.V)
-  let _142: addr %(Nil|unions.V)
-  let _143: i32
-  let _144: i32
-  let _145: addr %(Nil|unions.V)
-  let _146: %(Nil|unions.V)
-  let _147: i32
-  let _148: bool
-  let _149: %unions.V
-  let _150 (p): %unions.V
-  let _151: i32
-  let _152: i32
 
 bb0:
   _4 = zero   @100:1
-  _110 = zero   @100:1
-  _117 = zero   @100:1
-  _118 = zero   @100:1
-  _121 = zero   @100:1
-  _136 = zero   @100:1
-  _140 = zero   @100:1
+  _97 = zero   @100:1
+  _101 = zero   @100:1
+  _102 = zero   @100:1
+  _112 = zero   @100:1
+  _116 = zero   @100:1
   gc.enter   @100:1
-  gc.roots _2, _4, _110, _117, _118, _121, _136, _140   @100:1
+  gc.roots _2, _4, _97, _101, _102, _112, _116   @100:1
   call __avant_type_maps() nocollect   @100:1
   call avant_io_init_argv(copy _1, copy _2) collects   @100:1
   _3 = call av.unions/Holder.new() collects   @101:13
   _4 = copy _3   @101:5
   _5 = copy (*_4).0   @102:11
-  _6 = copy _5.0   @102:3
-  _7 = ne copy _6, const i32 0   @102:3
-  branch copy _7, bb1, bb2   @102:3
+  _6 = ne copy _5, const ref %unions.Leaf null   @102:3
+  branch copy _6, bb1, bb2   @102:3
 
 bb1:
-  _8 = copy _5.1   @102:3
-  _9 = copy _8   @102:3
-  _10 = copy (*_9).0   @103:11
-  call printf(const str.4, copy _10) nocollect   @103:5
+  _7 = copy _5   @102:3
+  _8 = copy (*_7).0   @103:11
+  call printf(const str.4, copy _8) nocollect   @103:5
   goto bb3   @102:3
 
 bb2:
@@ -478,184 +438,173 @@ bb2:
   goto bb3   @102:3
 
 bb3:
-  _11 = call av.unions/Leaf.new(const i32 3) collects   @107:13
-  _12 = union %(Nil|unions.Leaf) tag 1 (copy _11)   @107:13
+  _9 = call av.unions/Leaf.new(const i32 3) collects   @107:13
   barrier copy _4   @107:7
-  (*_4).0 = copy _12   @107:7
-  _13 = copy (*_4).0   @108:17
-  _14 = call av.unions/pass(copy _13) nocollect   @108:11
-  _15 = copy _14.0   @108:3
-  _16 = ne copy _15, const i32 0   @108:3
-  branch copy _16, bb4, bb5   @108:3
+  (*_4).0 = copy _9   @107:7
+  _10 = copy (*_4).0   @108:17
+  _11 = call av.unions/pass(copy _10) nocollect   @108:11
+  _12 = ne copy _11, const ref %unions.Leaf null   @108:3
+  branch copy _12, bb4, bb5   @108:3
 
 bb4:
-  _17 = copy _14.1   @108:3
-  _18 = copy _17   @108:3
-  _19 = copy (*_18).0   @109:12
-  call printf(const str.4, copy _19) nocollect   @109:5
+  _13 = copy _11   @108:3
+  _14 = copy (*_13).0   @109:12
+  call printf(const str.4, copy _14) nocollect   @109:5
   goto bb5   @108:3
 
 bb5:
-  _20 = union %(Int|String) tag 1 (const str.6)   @111:9
+  _15 = union %(Int|String) tag 1 (const str.6)   @111:9
   barrier copy _4   @111:7
-  (*_4).1 = copy _20   @111:7
-  _21 = union %(Int|String) tag 0 (const i32 9)   @112:9
+  (*_4).1 = copy _15   @111:7
+  _16 = union %(Int|String) tag 0 (const i32 9)   @112:9
   barrier copy _4   @112:7
-  (*_4).1 = copy _21   @112:7
-  _22 = union %(Nil|Bool) tag 1 (const bool true)   @113:9
-  (*_4).2 = copy _22   @113:7
-  _23 = copy (*_4).2   @114:11
-  _24 = copy _23.0   @114:3
-  _25 = ne copy _24, const i32 0   @114:3
-  branch copy _25, bb6, bb7   @114:3
+  (*_4).1 = copy _16   @112:7
+  _17 = union %(Nil|Bool) tag 1 (const bool true)   @113:9
+  (*_4).2 = copy _17   @113:7
+  _18 = copy (*_4).2   @114:11
+  _19 = copy _18.0   @114:3
+  _20 = ne copy _19, const i32 0   @114:3
+  branch copy _20, bb6, bb7   @114:3
 
 bb6:
-  _26 = copy _23.1   @114:3
-  _27 = copy _26   @114:3
-  _28 = cast copy _27 to i32   @115:5
-  call printf(const str.4, copy _28) nocollect   @115:5
+  _21 = copy _18.1   @114:3
+  _22 = copy _21   @114:3
+  _23 = cast copy _22 to i32   @115:5
+  call printf(const str.4, copy _23) nocollect   @115:5
   goto bb7   @114:3
 
 bb7:
-  _29 = call av.unions/pick(const i32 4) nocollect   @117:14
-  (*_4).3.1 = copy _29   @117:12
-  _30 = copy (*_4).3.1   @118:17
-  _31 = copy _30.0   @118:3
-  _32 = ne copy _31, const i32 0   @118:3
-  branch copy _32, bb8, bb9   @118:3
+  _24 = call av.unions/pick(const i32 4) nocollect   @117:14
+  (*_4).3.1 = copy _24   @117:12
+  _25 = copy (*_4).3.1   @118:17
+  _26 = copy _25.0   @118:3
+  _27 = ne copy _26, const i32 0   @118:3
+  branch copy _27, bb8, bb9   @118:3
 
 bb8:
-  _33 = copy _30.1   @118:3
-  _34 = copy _33   @118:3
-  _35 = copy _34.0   @119:12
-  _36 = copy _34.1   @119:19
-  _37 = mul.chk copy _35, copy _36   @119:15
-  call printf(const str.4, copy _37) nocollect   @119:5
+  _28 = copy _25.1   @118:3
+  _29 = copy _28   @118:3
+  _30 = copy _29.0   @119:12
+  _31 = copy _29.1   @119:19
+  _32 = mul.chk copy _30, copy _31   @119:15
+  call printf(const str.4, copy _32) nocollect   @119:5
   goto bb9   @118:3
 
 bb9:
-  _38 = call av.unions/pick(const i32 2) nocollect   @121:10
-  _39 = copy _38.0   @121:3
-  _40 = ne copy _39, const i32 0   @121:3
-  branch copy _40, bb10, bb11   @121:3
+  _33 = call av.unions/pick(const i32 2) nocollect   @121:10
+  _34 = copy _33.0   @121:3
+  _35 = ne copy _34, const i32 0   @121:3
+  branch copy _35, bb10, bb11   @121:3
 
 bb10:
-  _41 = copy _38.1   @121:3
-  _42 = copy _41   @121:3
-  _43 = copy _42.0   @122:11
-  _44 = copy _42.1   @122:17
-  _45 = add.chk copy _43, copy _44   @122:14
-  call printf(const str.4, copy _45) nocollect   @122:5
+  _36 = copy _33.1   @121:3
+  _37 = copy _36   @121:3
+  _38 = copy _37.0   @122:11
+  _39 = copy _37.1   @122:17
+  _40 = add.chk copy _38, copy _39   @122:14
+  call printf(const str.4, copy _40) nocollect   @122:5
   goto bb11   @121:3
 
 bb11:
-  _46 = call av.unions/pick(const i32 0) nocollect   @124:7
-  _48 = copy _46.0   @124:15
-  _49 = eq copy _48, const i32 0   @124:15
-  branch copy _49, bb12, bb13   @124:15
+  _41 = call av.unions/pick(const i32 0) nocollect   @124:7
+  _43 = copy _41.0   @124:15
+  _44 = eq copy _43, const i32 0   @124:15
+  branch copy _44, bb12, bb13   @124:15
 
 bb12:
-  _50 = struct %unions.V (const i32 1, const i32 1)   @124:18
-  _47 = copy _50   @124:15
+  _45 = struct %unions.V (const i32 1, const i32 1)   @124:18
+  _42 = copy _45   @124:15
   goto bb14   @124:15
 
 bb13:
-  _51 = copy _46.1   @124:15
-  _47 = copy _51   @124:15
+  _46 = copy _41.1   @124:15
+  _42 = copy _46   @124:15
   goto bb14   @124:15
 
 bb14:
-  _52 = copy _47   @124:5
-  _53 = copy _52.0   @125:9
-  call printf(const str.4, copy _53) nocollect   @125:3
-  _54 = call av.unions/name(const i32 1) nocollect   @126:8
-  _56 = copy _54.0   @126:16
-  _57 = eq copy _56, const i32 0   @126:16
-  branch copy _57, bb15, bb16   @126:16
+  _47 = copy _42   @124:5
+  _48 = copy _47.0   @125:9
+  call printf(const str.4, copy _48) nocollect   @125:3
+  _49 = call av.unions/name(const i32 1) nocollect   @126:8
+  _51 = eq copy _49, const ref str null   @126:16
+  branch copy _51, bb15, bb16   @126:16
 
 bb15:
-  _58 = call av.unions/say(const str.7) collects   @126:19
-  _55 = copy _58   @126:16
+  _52 = call av.unions/say(const str.7) collects   @126:19
+  _50 = copy _52   @126:16
   goto bb17   @126:16
 
 bb16:
-  _59 = copy _54.1   @126:16
-  _55 = copy _59   @126:16
+  _50 = copy _49   @126:16
   goto bb17   @126:16
 
 bb17:
-  call printf(const str.3, copy _55) nocollect   @126:3
-  _60 = call av.unions/name(const i32 2) nocollect   @127:8
-  _62 = copy _60.0   @127:16
-  _63 = eq copy _62, const i32 0   @127:16
-  branch copy _63, bb18, bb19   @127:16
+  call printf(const str.3, copy _50) nocollect   @126:3
+  _53 = call av.unions/name(const i32 2) nocollect   @127:8
+  _55 = eq copy _53, const ref str null   @127:16
+  branch copy _55, bb18, bb19   @127:16
 
 bb18:
-  _64 = call av.unions/say(const str.8) collects   @127:19
-  _61 = copy _64   @127:16
+  _56 = call av.unions/say(const str.8) collects   @127:19
+  _54 = copy _56   @127:16
   goto bb20   @127:16
 
 bb19:
-  _65 = copy _60.1   @127:16
-  _61 = copy _65   @127:16
+  _54 = copy _53   @127:16
   goto bb20   @127:16
 
 bb20:
-  call printf(const str.3, copy _61) nocollect   @127:3
-  _66 = call av.unions/name(const i32 3) nocollect   @128:8
-  _68 = copy _66.0   @128:15
-  _69 = eq copy _68, const i32 0   @128:15
-  branch copy _69, bb21, bb22   @128:15
+  call printf(const str.3, copy _54) nocollect   @127:3
+  _57 = call av.unions/name(const i32 3) nocollect   @128:8
+  _59 = eq copy _57, const ref str null   @128:15
+  branch copy _59, bb21, bb22   @128:15
 
 bb21:
-  _67 = const str.9   @128:15
+  _58 = const str.9   @128:15
   goto bb23   @128:15
 
 bb22:
-  _70 = copy _66.1   @128:15
-  _67 = copy _70   @128:15
+  _58 = copy _57   @128:15
   goto bb23   @128:15
 
 bb23:
-  call printf(const str.3, copy _67) nocollect   @128:3
-  _71 = call av.unions/name(const i32 1) nocollect   @129:8
-  _73 = copy _71.0   @129:15
-  _74 = eq copy _73, const i32 0   @129:15
-  branch copy _74, bb24, bb25   @129:15
+  call printf(const str.3, copy _58) nocollect   @128:3
+  _60 = call av.unions/name(const i32 1) nocollect   @129:8
+  _62 = eq copy _60, const ref str null   @129:15
+  branch copy _62, bb24, bb25   @129:15
 
 bb24:
-  _75 = call av.unions/say(const str.10) collects   @129:19
-  _72 = copy _75   @129:15
+  _63 = call av.unions/say(const str.10) collects   @129:19
+  _61 = copy _63   @129:15
   goto bb26   @129:15
 
 bb25:
-  _76 = copy _71.1   @129:15
-  _72 = copy _76   @129:15
+  _61 = copy _60   @129:15
   goto bb26   @129:15
 
 bb26:
-  call printf(const str.3, copy _72) nocollect   @129:3
-  _77 = call av.unions/twice(const i32 9, const i32 3) collects   @130:10
-  _78 = copy _77.0   @130:3
-  _79 = ne copy _78, const i32 0   @130:3
-  branch copy _79, bb27, bb28   @130:3
+  call printf(const str.3, copy _61) nocollect   @129:3
+  _64 = call av.unions/twice(const i32 9, const i32 3) collects   @130:10
+  _65 = copy _64.0   @130:3
+  _66 = ne copy _65, const i32 0   @130:3
+  branch copy _66, bb27, bb28   @130:3
 
 bb27:
-  _80 = copy _77.2   @130:3
-  _81 = copy _80   @130:3
-  call printf(const str.3, copy _81) nocollect   @131:5
+  _67 = copy _64.2   @130:3
+  _68 = copy _67   @130:3
+  call printf(const str.3, copy _68) nocollect   @131:5
   goto bb28   @130:3
 
 bb28:
-  _82 = call av.unions/twice(const i32 9, const i32 0) collects   @133:11
-  _83 = copy _82.0   @133:3
-  _84 = ne copy _83, const i32 0   @133:3
-  branch copy _84, bb29, bb30   @133:3
+  _69 = call av.unions/twice(const i32 9, const i32 0) collects   @133:11
+  _70 = copy _69.0   @133:3
+  _71 = ne copy _70, const i32 0   @133:3
+  branch copy _71, bb29, bb30   @133:3
 
 bb29:
-  _85 = copy _82.2   @133:3
-  _86 = copy _85   @133:3
-  call printf(const str.3, copy _86) nocollect   @134:5
+  _72 = copy _69.2   @133:3
+  _73 = copy _72   @133:3
+  call printf(const str.3, copy _73) nocollect   @134:5
   goto bb31   @133:3
 
 bb30:
@@ -663,151 +612,139 @@ bb30:
   goto bb31   @133:3
 
 bb31:
-  _87 = call av.unions/name(const i32 1) nocollect   @138:14
-  _88 = call av.unions/plus1(copy _87) nocollect   @138:8
-  _90 = copy _88.0   @138:23
-  _91 = eq copy _90, const i32 0   @138:23
-  branch copy _91, bb32, bb33   @138:23
+  _74 = call av.unions/name(const i32 1) nocollect   @138:14
+  _75 = call av.unions/plus1(copy _74) nocollect   @138:8
+  _77 = copy _75.0   @138:23
+  _78 = eq copy _77, const i32 0   @138:23
+  branch copy _78, bb32, bb33   @138:23
 
 bb32:
-  _89 = const i32 -1   @138:23
+  _76 = const i32 -1   @138:23
   goto bb34   @138:23
 
 bb33:
-  _92 = copy _88.1   @138:23
-  _89 = copy _92   @138:23
+  _79 = copy _75.1   @138:23
+  _76 = copy _79   @138:23
   goto bb34   @138:23
 
 bb34:
-  call printf(const str.4, copy _89) nocollect   @138:3
-  _93 = call av.unions/name(const i32 5) nocollect   @139:14
-  _94 = call av.unions/plus1(copy _93) nocollect   @139:8
-  _96 = copy _94.0   @139:23
-  _97 = eq copy _96, const i32 0   @139:23
-  branch copy _97, bb35, bb36   @139:23
+  call printf(const str.4, copy _76) nocollect   @138:3
+  _80 = call av.unions/name(const i32 5) nocollect   @139:14
+  _81 = call av.unions/plus1(copy _80) nocollect   @139:8
+  _83 = copy _81.0   @139:23
+  _84 = eq copy _83, const i32 0   @139:23
+  branch copy _84, bb35, bb36   @139:23
 
 bb35:
-  _95 = const i32 -1   @139:23
+  _82 = const i32 -1   @139:23
   goto bb37   @139:23
 
 bb36:
-  _98 = copy _94.1   @139:23
-  _95 = copy _98   @139:23
+  _85 = copy _81.1   @139:23
+  _82 = copy _85   @139:23
   goto bb37   @139:23
 
 bb37:
-  call printf(const str.4, copy _95) nocollect   @139:3
-  _99 = union %(Nil|Int) tag 0   @140:13
-  _100 = copy _99   @140:3
-  _102 = copy _100.0   @141:10
-  _103 = eq copy _102, const i32 0   @141:10
-  branch copy _103, bb38, bb39   @141:10
+  call printf(const str.4, copy _82) nocollect   @139:3
+  _86 = union %(Nil|Int) tag 0   @140:13
+  _87 = copy _86   @140:3
+  _89 = copy _87.0   @141:10
+  _90 = eq copy _89, const i32 0   @141:10
+  branch copy _90, bb38, bb39   @141:10
 
 bb38:
-  _101 = const i32 11   @141:10
+  _88 = const i32 11   @141:10
   goto bb40   @141:10
 
 bb39:
-  _104 = copy _100.1   @141:10
-  _101 = copy _104   @141:10
+  _91 = copy _87.1   @141:10
+  _88 = copy _91   @141:10
   goto bb40   @141:10
 
 bb40:
-  call printf(const str.4, copy _101) nocollect   @141:3
-  _105 = union %(Nil|Int) tag 1 (const i32 4)   @142:7
-  _100 = copy _105   @142:5
-  _106 = copy _100.0   @143:3
-  _107 = ne copy _106, const i32 0   @143:3
-  branch copy _107, bb41, bb42   @143:3
+  call printf(const str.4, copy _88) nocollect   @141:3
+  _92 = union %(Nil|Int) tag 1 (const i32 4)   @142:7
+  _87 = copy _92   @142:5
+  _93 = copy _87.0   @143:3
+  _94 = ne copy _93, const i32 0   @143:3
+  branch copy _94, bb41, bb42   @143:3
 
 bb41:
-  _108 = copy _100.1   @143:3
-  _109 = copy _108   @143:3
-  call printf(const str.4, copy _109) nocollect   @144:5
+  _95 = copy _87.1   @143:3
+  _96 = copy _95   @143:3
+  call printf(const str.4, copy _96) nocollect   @144:5
   goto bb42   @143:3
 
 bb42:
-  _110 = call avant_alloc(const u64 48, const u32 4) collects   @146:22
-  _111 = call av.unions/Leaf.new(const i32 1) collects   @146:27
-  _112 = union %(Nil|unions.Leaf) tag 1 (copy _111)   @146:27
-  (*_110)[const i32 0] = copy _112 fresh   @146:27
-  _113 = union %(Nil|unions.Leaf) tag 0   @146:36
-  (*_110)[const i32 1] = copy _113 fresh   @146:36
-  _114 = call av.unions/Leaf.new(const i32 3) collects   @146:45
-  _115 = union %(Nil|unions.Leaf) tag 1 (copy _114)   @146:45
-  (*_110)[const i32 2] = copy _115 fresh   @146:45
-  barrier copy _110   @146:22
-  _116 = call avant_alloc(const u64 16, const u32 1022) collects   @146:22
-  barrier copy _116   @146:22
-  (*_116).0 = copy _110   @146:22
-  (*_116).1 = const i32 3   @146:22
-  (*_116).2 = const i32 3   @146:22
-  _117 = copy _116   @146:3
-  _118 = union %(Nil|unions.Leaf) tag 0   @147:11
-  _119 = call avant_array_push_slot(copy _117, const u64 16, const u32 4) collects   @147:5
-  (*_119) = copy _118   @147:5
-  _120 = call av.unions/Leaf.new(const i32 5) collects   @148:15
-  _121 = union %(Nil|unions.Leaf) tag 1 (copy _120)   @148:15
-  _122 = call avant_array_push_slot(copy _117, const u64 16, const u32 4) collects   @148:5
-  (*_122) = copy _121   @148:5
-  _123 = call av.unions/sum(copy _117) nocollect   @149:8
-  call printf(const str.4, copy _123) nocollect   @149:3
-  _124 = call av.unions/Leaf.new(const i32 10) collects   @150:15
-  _125 = union %(Nil|unions.Leaf) tag 1 (copy _124)   @150:15
-  _126 = copy (*_117).1   @150:5
-  check.bounds const i32 1, copy _126   @150:5
-  _127 = copy (*_117).0   @150:5
-  barrier copy _127   @150:9
-  (*_127)[const i32 1] = copy _125   @150:9
-  _128 = copy (*_117).1   @151:12
-  check.bounds const i32 1, copy _128   @151:12
-  _129 = copy (*_117).0   @151:12
-  _130 = copy (*_129)[const i32 1]   @151:12
-  _131 = copy _130.0   @151:3
-  _132 = ne copy _131, const i32 0   @151:3
-  branch copy _132, bb43, bb44   @151:3
+  _97 = call avant_alloc(const u64 24, const u32 65535) collects   @146:22
+  _98 = call av.unions/Leaf.new(const i32 1) collects   @146:27
+  (*_97)[const i32 0] = copy _98 fresh   @146:27
+  (*_97)[const i32 1] = const ref %unions.Leaf null fresh   @146:36
+  _99 = call av.unions/Leaf.new(const i32 3) collects   @146:45
+  (*_97)[const i32 2] = copy _99 fresh   @146:45
+  barrier copy _97   @146:22
+  _100 = call avant_alloc(const u64 16, const u32 1022) collects   @146:22
+  barrier copy _100   @146:22
+  (*_100).0 = copy _97   @146:22
+  (*_100).1 = const i32 3   @146:22
+  (*_100).2 = const i32 3   @146:22
+  _101 = copy _100   @146:3
+  call avant_array_push_ptr(copy _101, const ref %unions.Leaf null, const u32 65535) collects   @147:5
+  _102 = call av.unions/Leaf.new(const i32 5) collects   @148:15
+  call avant_array_push_ptr(copy _101, copy _102, const u32 65535) collects   @148:5
+  _103 = call av.unions/sum(copy _101) nocollect   @149:8
+  call printf(const str.4, copy _103) nocollect   @149:3
+  _104 = call av.unions/Leaf.new(const i32 10) collects   @150:15
+  _105 = copy (*_101).1   @150:9
+  check.bounds const i32 1, copy _105   @150:9
+  call avant_array_set_ptr(copy _101, const i32 1, copy _104) nocollect   @150:9
+  _106 = copy (*_101).1   @151:12
+  check.bounds const i32 1, copy _106   @151:12
+  _107 = copy (*_101).0   @151:12
+  _108 = copy (*_107)[const i32 1]   @151:12
+  _109 = ne copy _108, const ref %unions.Leaf null   @151:3
+  branch copy _109, bb43, bb44   @151:3
 
 bb43:
-  _133 = copy _130.1   @151:3
-  _134 = copy _133   @151:3
-  _135 = copy (*_134).0   @152:11
-  call printf(const str.4, copy _135) nocollect   @152:5
+  _110 = copy _108   @151:3
+  _111 = copy (*_110).0   @152:11
+  call printf(const str.4, copy _111) nocollect   @152:5
   goto bb44   @151:3
 
 bb44:
-  _136 = call avant_alloc(const u64 24, const u32 0) collects   @154:19
-  _137 = call av.unions/pick(const i32 1) nocollect   @154:20
-  (*_136)[const i32 0] = copy _137   @154:20
-  _138 = call av.unions/pick(const i32 0) nocollect   @154:29
-  (*_136)[const i32 1] = copy _138   @154:29
-  _139 = call avant_alloc(const u64 16, const u32 1022) collects   @154:19
-  barrier copy _139   @154:19
-  (*_139).0 = copy _136   @154:19
-  (*_139).1 = const i32 2   @154:19
-  (*_139).2 = const i32 2   @154:19
-  _140 = copy _139   @154:3
-  _141 = call av.unions/pick(const i32 7) nocollect   @155:11
-  _142 = call avant_array_push_slot(copy _140, const u64 12, const u32 0) collects   @155:5
-  (*_142) = copy _141   @155:5
-  _143 = copy (*_140).1   @156:12
-  _144 = sub copy _143, const i32 1   @156:12
-  check.bounds copy _144, copy _143   @156:12
-  _145 = call avant_array_pop_slot(copy _140, const u64 12) collects   @156:12
-  _146 = copy (*_145)   @156:12
-  _147 = copy _146.0   @156:3
-  _148 = ne copy _147, const i32 0   @156:3
-  branch copy _148, bb45, bb46   @156:3
+  _112 = call avant_alloc(const u64 24, const u32 0) collects   @154:19
+  _113 = call av.unions/pick(const i32 1) nocollect   @154:20
+  (*_112)[const i32 0] = copy _113   @154:20
+  _114 = call av.unions/pick(const i32 0) nocollect   @154:29
+  (*_112)[const i32 1] = copy _114   @154:29
+  _115 = call avant_alloc(const u64 16, const u32 1022) collects   @154:19
+  barrier copy _115   @154:19
+  (*_115).0 = copy _112   @154:19
+  (*_115).1 = const i32 2   @154:19
+  (*_115).2 = const i32 2   @154:19
+  _116 = copy _115   @154:3
+  _117 = call av.unions/pick(const i32 7) nocollect   @155:11
+  _118 = call avant_array_push_slot(copy _116, const u64 12, const u32 0) collects   @155:5
+  (*_118) = copy _117   @155:5
+  _119 = copy (*_116).1   @156:12
+  _120 = sub copy _119, const i32 1   @156:12
+  check.bounds copy _120, copy _119   @156:12
+  _121 = call avant_array_pop_slot(copy _116, const u64 12) collects   @156:12
+  _122 = copy (*_121)   @156:12
+  _123 = copy _122.0   @156:3
+  _124 = ne copy _123, const i32 0   @156:3
+  branch copy _124, bb45, bb46   @156:3
 
 bb45:
-  _149 = copy _146.1   @156:3
-  _150 = copy _149   @156:3
-  _151 = copy _150.1   @157:11
-  call printf(const str.4, copy _151) nocollect   @157:5
+  _125 = copy _122.1   @156:3
+  _126 = copy _125   @156:3
+  _127 = copy _126.1   @157:11
+  call printf(const str.4, copy _127) nocollect   @157:5
   goto bb46   @156:3
 
 bb46:
-  _152 = copy (*_140).1   @159:10
-  call printf(const str.4, copy _152) nocollect   @159:3
+  _128 = copy (*_116).1   @159:10
+  call printf(const str.4, copy _128) nocollect   @159:3
   _0 = const i32 0   @100:1
   gc.leave   @100:1
   return   @100:1
@@ -877,22 +814,20 @@ bb0:
 fn av.unions/Holder.new() -> ref %unions.Holder frame @unions.av:35:1 {
   let _0: ref %unions.Holder
   let _1: ref %unions.Holder
-  let _2: %(Nil|unions.Leaf)
-  let _3: %(Int|String)
-  let _4: %(Nil|Bool)
+  let _2: %(Int|String)
+  let _3: %(Nil|Bool)
 
 bb0:
   gc.enter   @35:1
   gc.roots   @35:1
-  _1 = call avant_alloc(const u64 56, const u32 3) collects   @35:1
-  _2 = union %(Nil|unions.Leaf) tag 0   @36:14
+  _1 = call avant_alloc(const u64 48, const u32 3) collects   @35:1
   barrier copy _1   @36:3
-  (*_1).0 = copy _2   @36:3
-  _3 = union %(Int|String) tag 0 (const i32 0)   @37:21
+  (*_1).0 = const ref %unions.Leaf null   @36:3
+  _2 = union %(Int|String) tag 0 (const i32 0)   @37:21
   barrier copy _1   @37:3
-  (*_1).1 = copy _3   @37:3
-  _4 = union %(Nil|Bool) tag 0   @38:14
-  (*_1).2 = copy _4   @38:3
+  (*_1).1 = copy _2   @37:3
+  _3 = union %(Nil|Bool) tag 0   @38:14
+  (*_1).2 = copy _3   @38:3
   call av.unions/Holder.initialize(copy _1) nocollect   @35:1
   _0 = copy _1   @35:1
   gc.leave   @35:1

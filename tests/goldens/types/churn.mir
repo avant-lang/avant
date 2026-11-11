@@ -2,16 +2,14 @@ module churn
 file 0 "churn.av"
 
 layout %churn.Leaf = class { 0 v: i32, 1 s: ref str }  size 16 align 8 id 1
-layout %churn.Holder = class { 0 id: i32, 1 opt: %(Nil|churn.Leaf), 2 mix: %(Int|churn.Leaf), 3 slot: %churn.Slot, 4 name: %(Nil|String), 5 opts: ref %Array((Nil|churn.Leaf)), 6 slots: ref %Array(churn.Slot) }  size 96 align 8 id 2
+layout %churn.Holder = class { 0 id: i32, 1 opt: ref %churn.Leaf, 2 mix: %(Int|churn.Leaf), 3 slot: %churn.Slot, 4 name: ref str, 5 opts: ref %Array((Nil|churn.Leaf)), 6 slots: ref %Array(churn.Slot) }  size 72 align 8 id 2
 layout %churn.Root = class { 0 holders: ref %Array(churn.Holder) }  size 8 align 8 id 3
 layout %churn.Oops = class { 0 m: ref str }  size 8 align 8 id 4
-layout %(Nil|churn.Leaf) = union { 0 tag: i32, 1 m0: ref %churn.Leaf }  size 16 align 8
 layout %(Int|churn.Leaf) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %churn.Leaf }  size 16 align 8
-layout %churn.Slot = struct { 0 k: i32, 1 leaf: %(Nil|churn.Leaf) }  size 24 align 8
-layout %(Nil|String) = union { 0 tag: i32, 1 m0: ref str }  size 16 align 8
-layout %elems((Nil|churn.Leaf)) = elems { 0: %(Nil|churn.Leaf) }  size 16 align 8 id 5
+layout %churn.Slot = struct { 0 k: i32, 1 leaf: ref %churn.Leaf }  size 16 align 8
+layout %elems((Nil|churn.Leaf)) = elems { 0: ref %churn.Leaf }  size 8 align 8 id 65535
 layout %Array((Nil|churn.Leaf)) = array { 0 data: ref %elems((Nil|churn.Leaf)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %elems(churn.Slot) = elems { 0: %churn.Slot }  size 24 align 8 id 6
+layout %elems(churn.Slot) = elems { 0: %churn.Slot }  size 16 align 8 id 5
 layout %Array(churn.Slot) = array { 0 data: ref %elems(churn.Slot), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %elems(churn.Holder) = elems { 0: ref %churn.Holder }  size 8 align 8 id 65535
 layout %Array(churn.Holder) = array { 0 data: ref %elems(churn.Holder), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
@@ -30,16 +28,16 @@ typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1 %churn.Leaf stride 0 bits [0x2]
-typemap 2 %churn.Holder stride 0 bits [0xe94]
+typemap 2 %churn.Holder stride 0 bits [0x1ea]
 typemap 3 %churn.Root stride 0 bits [0x1]
 typemap 4 %churn.Oops stride 0 bits [0x1]
-typemap 5 %elems((Nil|churn.Leaf)) stride 2 bits [0x2]
-typemap 6 %elems(churn.Slot) stride 3 bits [0x4]
+typemap 5 %elems(churn.Slot) stride 2 bits [0x2]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
+extern avant_array_set_ptr(ref, i32, ref) -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_eq(ref str, ref str) -> i32 never
@@ -47,23 +45,19 @@ extern avant_str_repeat_byte(i32, i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
 extern printf(ref str, ...) -> i32 never
 
-fn av.churn/no_leaf() -> %(Nil|churn.Leaf) leaf @churn.av:62:1 {
-  let _0: %(Nil|churn.Leaf)
-  let _1: %(Nil|churn.Leaf)
+fn av.churn/no_leaf() -> ref %churn.Leaf leaf @churn.av:62:1 {
+  let _0: ref %churn.Leaf
 
 bb0:
-  _1 = union %(Nil|churn.Leaf) tag 0   @63:3
-  _0 = copy _1   @63:3
+  _0 = const ref %churn.Leaf null   @63:3
   return   @63:3
 }
 
-fn av.churn/no_name() -> %(Nil|String) leaf @churn.av:66:1 {
-  let _0: %(Nil|String)
-  let _1: %(Nil|String)
+fn av.churn/no_name() -> ref str leaf @churn.av:66:1 {
+  let _0: ref str
 
 bb0:
-  _1 = union %(Nil|String) tag 0   @67:3
-  _0 = copy _1   @67:3
+  _0 = const ref str null   @67:3
   return   @67:3
 }
 
@@ -126,16 +120,14 @@ bb0:
   return   @76:3
 }
 
-fn av.churn/leaf_or_nil(_1: i32, _2: bool) -> %(Nil|churn.Leaf) frame @churn.av:79:1 {
-  let _0: %(Nil|churn.Leaf)
+fn av.churn/leaf_or_nil(_1: i32, _2: bool) -> ref %churn.Leaf frame @churn.av:79:1 {
+  let _0: ref %churn.Leaf
   let _1 (v): i32
   let _2 (on): bool
   let _3: ref %churn.Leaf
   let _4 (l): ref %churn.Leaf slot
   let _5: ref str
   let _6 (dummy): ref str
-  let _7: %(Nil|churn.Leaf)
-  let _8: %(Nil|churn.Leaf)
 
 bb0:
   _4 = zero   @79:1
@@ -148,77 +140,71 @@ bb1:
   _4 = copy _3   @81:7
   _5 = call av.churn/junk(copy _1) collects   @82:13
   _6 = copy _5   @82:11
-  _7 = union %(Nil|churn.Leaf) tag 1 (copy _4)   @83:12
-  _0 = copy _7   @83:5
+  _0 = copy _4   @83:5
   gc.leave   @83:5
   return   @83:5
 
 bb2:
-  _8 = union %(Nil|churn.Leaf) tag 0   @85:3
-  _0 = copy _8   @85:3
+  _0 = const ref %churn.Leaf null   @85:3
   gc.leave   @85:3
   return   @85:3
 }
 
-fn av.churn/bad_leaf(_1: %(Nil|churn.Leaf), _2: i32, _3: bool) -> i32 frame @churn.av:88:1 {
+fn av.churn/bad_leaf(_1: ref %churn.Leaf, _2: i32, _3: bool) -> i32 frame @churn.av:88:1 {
   let _0: i32
-  let _1 (o): %(Nil|churn.Leaf)
+  let _1 (o): ref %churn.Leaf
   let _2 (v): i32
   let _3 (on): bool
-  let _4: i32
-  let _5: bool
-  let _6: ref %churn.Leaf
-  let _7 (l): ref %churn.Leaf
-  let _8: bool
+  let _4: bool
+  let _5 (l): ref %churn.Leaf
+  let _6: bool
+  let _7: bool
+  let _8: i32
   let _9: bool
-  let _10: i32
-  let _11: bool
-  let _12: bool
-  let _13: ref str slot
-  let _14: ref str
-  let _15: i32
-  let _16: bool
-  let _17: bool
+  let _10: bool
+  let _11: ref str slot
+  let _12: ref str
+  let _13: i32
+  let _14: bool
+  let _15: bool
 
 bb0:
-  _13 = zero   @88:1
+  _11 = zero   @88:1
   gc.enter   @88:1
-  gc.roots _13   @88:1
-  _4 = copy _1.0   @89:3
-  _5 = ne copy _4, const i32 0   @89:3
-  branch copy _5, bb1, bb2   @89:3
+  gc.roots _11   @88:1
+  _4 = ne copy _1, const ref %churn.Leaf null   @89:3
+  branch copy _4, bb1, bb2   @89:3
 
 bb1:
-  _6 = copy _1.1   @89:3
-  _7 = copy _6   @89:3
-  _8 = not copy _3   @90:8
-  _9 = copy _8   @90:12
-  branch copy _9, bb4, bb3   @90:12
+  _5 = copy _1   @89:3
+  _6 = not copy _3   @90:8
+  _7 = copy _6   @90:12
+  branch copy _7, bb4, bb3   @90:12
 
 bb2:
   branch copy _3, bb9, bb10   @95:3
 
 bb3:
-  _10 = copy (*_7).0   @90:16
-  _11 = ne copy _10, copy _2   @90:19
-  _9 = copy _11   @90:12
+  _8 = copy (*_5).0   @90:16
+  _9 = ne copy _8, copy _2   @90:19
+  _7 = copy _9   @90:12
   goto bb4   @90:12
 
 bb4:
-  _12 = copy _9   @90:24
-  branch copy _12, bb6, bb5   @90:24
+  _10 = copy _7   @90:24
+  branch copy _10, bb6, bb5   @90:24
 
 bb5:
-  _13 = copy (*_7).1   @90:30
-  _14 = call avant_str_cat_i32(const str.1, copy _2) collects   @90:36
-  _15 = call avant_str_eq(copy _13, copy _14) nocollect   @90:33
-  _16 = eq copy _15, const i32 1   @90:33
-  _17 = not copy _16   @90:27
-  _12 = copy _17   @90:24
+  _11 = copy (*_5).1   @90:30
+  _12 = call avant_str_cat_i32(const str.1, copy _2) collects   @90:36
+  _13 = call avant_str_eq(copy _11, copy _12) nocollect   @90:33
+  _14 = eq copy _13, const i32 1   @90:33
+  _15 = not copy _14   @90:27
+  _10 = copy _15   @90:24
   goto bb6   @90:24
 
 bb6:
-  branch copy _12, bb7, bb8   @90:5
+  branch copy _10, bb7, bb8   @90:5
 
 bb7:
   _0 = const i32 1   @91:7
@@ -380,7 +366,7 @@ fn av.churn/round(_1: ref %churn.Root, _2: i32) -> i32 frame @churn.av:132:1 {
   let _16: i32
   let _17: i32
   let _18 (v): i32
-  let _19: %(Nil|churn.Leaf)
+  let _19: ref %churn.Leaf
   let _20: ref str
   let _21 (dummy): ref str
   let _22: i32
@@ -392,114 +378,107 @@ fn av.churn/round(_1: ref %churn.Root, _2: i32) -> i32 frame @churn.av:132:1 {
   let _28: ref str
   let _29: i32
   let _30: bool
-  let _31: %(Nil|churn.Leaf)
+  let _31: ref %churn.Leaf
   let _32: i32
   let _33: ref str
-  let _34: %(Nil|String)
-  let _35: %(Nil|String)
-  let _36: ref %Array((Nil|churn.Leaf))
-  let _37: i32
-  let _38: bool
-  let _39: i32
-  let _40: %(Nil|churn.Leaf) slot
-  let _41: ref %Array((Nil|churn.Leaf)) slot
-  let _42: addr %(Nil|churn.Leaf)
-  let _43: i32
-  let _44: %(Nil|churn.Leaf)
+  let _34: ref str
+  let _35: ref %Array((Nil|churn.Leaf))
+  let _36: i32
+  let _37: bool
+  let _38: i32
+  let _39: ref %churn.Leaf slot
+  let _40: ref %Array((Nil|churn.Leaf)) slot
+  let _41: i32
+  let _42: ref %churn.Leaf
+  let _43: ref %Array((Nil|churn.Leaf))
+  let _44: i32
   let _45: i32
-  let _46: ref %Array((Nil|churn.Leaf))
+  let _46: ref %Array(churn.Slot)
   let _47: i32
-  let _48: ref %elems((Nil|churn.Leaf))
-  let _49: ref %Array(churn.Slot)
+  let _48: bool
+  let _49: i32
   let _50: i32
-  let _51: bool
-  let _52: i32
-  let _53: i32
-  let _54: %(Nil|churn.Leaf)
-  let _55: %churn.Slot slot
-  let _56: ref %Array(churn.Slot) slot
-  let _57: addr %churn.Slot
-  let _58: i32
+  let _51: ref %churn.Leaf
+  let _52: %churn.Slot slot
+  let _53: ref %Array(churn.Slot) slot
+  let _54: addr %churn.Slot
+  let _55: i32
+  let _56: i32
+  let _57: ref %churn.Leaf
+  let _58: %churn.Slot
   let _59: i32
-  let _60: %(Nil|churn.Leaf)
-  let _61: %churn.Slot
-  let _62: i32
-  let _63: ref %Array(churn.Slot)
-  let _64: i32
-  let _65: ref %elems(churn.Slot)
+  let _60: ref %Array(churn.Slot)
+  let _61: i32
+  let _62: ref %elems(churn.Slot)
+  let _63: i32
+  let _64: ref str
+  let _65: ref %churn.Leaf
   let _66: i32
-  let _67: ref str
-  let _68: %(Nil|churn.Leaf)
+  let _67: i32
+  let _68: %(Int|churn.Leaf)
   let _69: i32
   let _70: i32
-  let _71: %(Int|churn.Leaf)
-  let _72: i32
+  let _71: i32
+  let _72: ref %churn.Leaf
   let _73: i32
-  let _74: i32
-  let _75: %(Nil|churn.Leaf)
+  let _74: bool
+  let _75: i32
   let _76: i32
-  let _77: bool
-  let _78: i32
-  let _79: i32
-  let _80: %(Nil|String)
-  let _81: ref str slot
-  let _82: i32
+  let _77: ref str
+  let _78: ref str slot
+  let _79: bool
+  let _80: ref str
+  let _81: i32
+  let _82: bool
   let _83: bool
-  let _84: ref str
+  let _84: i32
   let _85: ref str
-  let _86: i32
+  let _86: ref str
   let _87: bool
-  let _88: bool
-  let _89: i32
-  let _90: %(Nil|String)
-  let _91: ref str
+  let _88: i32
+  let _89: bool
+  let _90: i32
+  let _91: ref %Array((Nil|churn.Leaf))
   let _92: i32
-  let _93: bool
-  let _94: ref str
-  let _95: i32
-  let _96: bool
-  let _97: i32
-  let _98: ref %Array((Nil|churn.Leaf))
-  let _99: i32
+  let _93: i32
+  let _94 (k): i32
+  let _95: ref %Array((Nil|churn.Leaf))
+  let _96: i32
+  let _97: bool
+  let _98: i32
+  let _99: ref %Array((Nil|churn.Leaf))
   let _100: i32
-  let _101 (k): i32
-  let _102: ref %Array((Nil|churn.Leaf))
+  let _101: ref %elems((Nil|churn.Leaf))
+  let _102: ref %churn.Leaf
   let _103: i32
-  let _104: bool
+  let _104: i32
   let _105: i32
-  let _106: ref %Array((Nil|churn.Leaf))
+  let _106: ref %Array(churn.Slot)
   let _107: i32
-  let _108: ref %elems((Nil|churn.Leaf))
-  let _109: %(Nil|churn.Leaf)
-  let _110: i32
+  let _108: i32
+  let _109 (k2): i32
+  let _110: ref %Array(churn.Slot)
   let _111: i32
-  let _112: i32
-  let _113: ref %Array(churn.Slot)
-  let _114: i32
+  let _112: bool
+  let _113: i32
+  let _114: ref %Array(churn.Slot)
   let _115: i32
-  let _116 (k2): i32
-  let _117: ref %Array(churn.Slot)
+  let _116: ref %elems(churn.Slot)
+  let _117: ref %churn.Leaf
   let _118: i32
-  let _119: bool
+  let _119: i32
   let _120: i32
-  let _121: ref %Array(churn.Slot)
-  let _122: i32
-  let _123: ref %elems(churn.Slot)
-  let _124: %(Nil|churn.Leaf)
-  let _125: i32
-  let _126: i32
-  let _127: i32
-  let _128: i32
+  let _121: i32
 
 bb0:
   _15 = zero   @132:1
+  _39 = zero   @132:1
   _40 = zero   @132:1
-  _41 = zero   @132:1
-  _55 = zero   @132:1
-  _56 = zero   @132:1
-  _81 = zero   @132:1
+  _52 = zero   @132:1
+  _53 = zero   @132:1
+  _78 = zero   @132:1
   gc.enter   @132:1
-  gc.roots _1, _15, _40, _41, _55, _56, _81   @132:1
+  gc.roots _1, _15, _39, _40, _52, _53, _78   @132:1
   _3 = const i32 0   @133:7
   _4 = rem copy _2, const i32 2   @134:10
   _5 = eq copy _4, const i32 0   @134:14
@@ -565,203 +544,195 @@ bb6:
 
 bb7:
   _33 = call avant_str_cat_i32(const str.2, copy _18) collects   @150:16
-  _34 = union %(Nil|String) tag 1 (copy _33)   @150:16
   barrier copy _15   @150:14
-  (*_15).4 = copy _34   @150:14
+  (*_15).4 = copy _33   @150:14
   goto bb9   @149:5
 
 bb8:
-  _35 = call av.churn/no_name() nocollect   @152:16
+  _34 = call av.churn/no_name() nocollect   @152:16
   barrier copy _15   @152:14
-  (*_15).4 = copy _35   @152:14
+  (*_15).4 = copy _34   @152:14
   goto bb9   @149:5
 
 bb9:
-  _36 = copy (*_15).5   @154:9
-  _37 = copy (*_36).1   @154:14
-  _38 = lt copy _37, const i32 8   @154:20
-  branch copy _38, bb10, bb11   @154:5
+  _35 = copy (*_15).5   @154:9
+  _36 = copy (*_35).1   @154:14
+  _37 = lt copy _36, const i32 8   @154:20
+  branch copy _37, bb10, bb11   @154:5
 
 bb10:
-  _39 = add.chk copy _18, const i32 3   @155:33
-  _40 = call av.churn/leaf_or_nil(copy _39, copy _6) collects   @155:19
-  _41 = copy (*_15).5   @155:8
-  _42 = call avant_array_push_slot(copy _41, const u64 16, const u32 5) collects   @155:13
-  (*_42) = copy _40   @155:13
+  _38 = add.chk copy _18, const i32 3   @155:33
+  _39 = call av.churn/leaf_or_nil(copy _38, copy _6) collects   @155:19
+  _40 = copy (*_15).5   @155:8
+  call avant_array_push_ptr(copy _40, copy _39, const u32 65535) collects   @155:13
   goto bb12   @154:5
 
 bb11:
-  _43 = add.chk copy _18, const i32 3   @157:37
-  _44 = call av.churn/leaf_or_nil(copy _43, copy _6) collects   @157:23
-  _45 = rem copy _2, const i32 8   @157:16
-  _46 = copy (*_15).5   @157:8
-  _47 = copy (*_46).1   @157:13
-  check.bounds copy _45, copy _47   @157:13
-  _48 = copy (*_46).0   @157:13
-  barrier copy _48   @157:21
-  (*_48)[copy _45] = copy _44   @157:21
+  _41 = add.chk copy _18, const i32 3   @157:37
+  _42 = call av.churn/leaf_or_nil(copy _41, copy _6) collects   @157:23
+  _43 = copy (*_15).5   @157:8
+  _44 = rem copy _2, const i32 8   @157:16
+  _45 = copy (*_43).1   @157:21
+  check.bounds copy _44, copy _45   @157:21
+  call avant_array_set_ptr(copy _43, copy _44, copy _42) nocollect   @157:21
   goto bb12   @154:5
 
 bb12:
-  _49 = copy (*_15).6   @159:9
-  _50 = copy (*_49).1   @159:15
-  _51 = lt copy _50, const i32 4   @159:21
-  branch copy _51, bb13, bb14   @159:5
+  _46 = copy (*_15).6   @159:9
+  _47 = copy (*_46).1   @159:15
+  _48 = lt copy _47, const i32 4   @159:21
+  branch copy _48, bb13, bb14   @159:5
 
 bb13:
-  _52 = add.chk copy _18, const i32 4   @160:32
-  _53 = add.chk copy _18, const i32 4   @160:57
-  _54 = call av.churn/leaf_or_nil(copy _53, copy _6) collects   @160:43
-  _55 = struct %churn.Slot (copy _52, copy _54)   @160:20
-  _56 = copy (*_15).6   @160:8
-  _57 = call avant_array_push_slot(copy _56, const u64 24, const u32 6) collects   @160:14
-  (*_57) = copy _55   @160:14
+  _49 = add.chk copy _18, const i32 4   @160:32
+  _50 = add.chk copy _18, const i32 4   @160:57
+  _51 = call av.churn/leaf_or_nil(copy _50, copy _6) collects   @160:43
+  _52 = struct %churn.Slot (copy _49, copy _51)   @160:20
+  _53 = copy (*_15).6   @160:8
+  _54 = call avant_array_push_slot(copy _53, const u64 16, const u32 5) collects   @160:14
+  (*_54) = copy _52   @160:14
   goto bb15   @159:5
 
 bb14:
-  _58 = add.chk copy _18, const i32 4   @162:36
-  _59 = add.chk copy _18, const i32 4   @162:61
-  _60 = call av.churn/leaf_or_nil(copy _59, copy _6) collects   @162:47
-  _61 = struct %churn.Slot (copy _58, copy _60)   @162:24
-  _62 = rem copy _2, const i32 4   @162:17
-  _63 = copy (*_15).6   @162:8
-  _64 = copy (*_63).1   @162:14
-  check.bounds copy _62, copy _64   @162:14
-  _65 = copy (*_63).0   @162:14
-  barrier copy _65   @162:22
-  (*_65)[copy _62] = copy _61   @162:22
+  _55 = add.chk copy _18, const i32 4   @162:36
+  _56 = add.chk copy _18, const i32 4   @162:61
+  _57 = call av.churn/leaf_or_nil(copy _56, copy _6) collects   @162:47
+  _58 = struct %churn.Slot (copy _55, copy _57)   @162:24
+  _59 = rem copy _2, const i32 4   @162:17
+  _60 = copy (*_15).6   @162:8
+  _61 = copy (*_60).1   @162:14
+  check.bounds copy _59, copy _61   @162:14
+  _62 = copy (*_60).0   @162:14
+  barrier copy _62   @162:22
+  (*_62)[copy _59] = copy _58   @162:22
   goto bb15   @159:5
 
 bb15:
-  _66 = add.chk copy _18, const i32 5   @164:20
-  _67 = call av.churn/junk(copy _66) collects   @164:13
-  _21 = copy _67   @164:11
-  _68 = copy (*_15).1   @165:22
-  _69 = call av.churn/bad_leaf(copy _68, copy _18, copy _6) collects   @165:12
-  _70 = add.chk copy _3, copy _69   @165:12
-  _3 = copy _70   @165:9
-  _71 = copy (*_15).2   @166:21
-  _72 = add.chk copy _18, const i32 1   @166:29
-  _73 = call av.churn/bad_mix(copy _71, copy _72, copy _6) collects   @166:12
-  _74 = add.chk copy _3, copy _73   @166:12
-  _3 = copy _74   @166:9
-  _75 = copy (*_15).3.1   @167:27
-  _76 = add.chk copy _18, const i32 2   @167:36
-  _77 = not copy _6   @167:41
-  _78 = call av.churn/bad_leaf(copy _75, copy _76, copy _77) collects   @167:12
-  _79 = add.chk copy _3, copy _78   @167:12
-  _3 = copy _79   @167:9
+  _63 = add.chk copy _18, const i32 5   @164:20
+  _64 = call av.churn/junk(copy _63) collects   @164:13
+  _21 = copy _64   @164:11
+  _65 = copy (*_15).1   @165:22
+  _66 = call av.churn/bad_leaf(copy _65, copy _18, copy _6) collects   @165:12
+  _67 = add.chk copy _3, copy _66   @165:12
+  _3 = copy _67   @165:9
+  _68 = copy (*_15).2   @166:21
+  _69 = add.chk copy _18, const i32 1   @166:29
+  _70 = call av.churn/bad_mix(copy _68, copy _69, copy _6) collects   @166:12
+  _71 = add.chk copy _3, copy _70   @166:12
+  _3 = copy _71   @166:9
+  _72 = copy (*_15).3.1   @167:27
+  _73 = add.chk copy _18, const i32 2   @167:36
+  _74 = not copy _6   @167:41
+  _75 = call av.churn/bad_leaf(copy _72, copy _73, copy _74) collects   @167:12
+  _76 = add.chk copy _3, copy _75   @167:12
+  _3 = copy _76   @167:9
   branch copy _6, bb16, bb17   @168:5
 
 bb16:
-  _80 = copy (*_15).4   @169:14
-  _82 = copy _80.0   @169:20
-  _83 = eq copy _82, const i32 0   @169:20
-  branch copy _83, bb19, bb20   @169:20
+  _77 = copy (*_15).4   @169:14
+  _79 = eq copy _77, const ref str null   @169:20
+  branch copy _79, bb19, bb20   @169:20
 
 bb17:
-  _90 = copy (*_15).4   @172:17
-  _92 = copy _90.0   @172:23
-  _93 = eq copy _92, const i32 0   @172:23
-  branch copy _93, bb24, bb25   @172:23
+  _85 = copy (*_15).4   @172:17
+  _87 = eq copy _85, const ref str null   @172:23
+  branch copy _87, bb24, bb25   @172:23
 
 bb18:
-  _98 = copy (*_15).5   @175:10
-  _99 = copy (*_98).1   @175:15
-  _100 = sub copy _99, const i32 1   @175:21
-  _101 = copy _100   @175:7
-  _102 = copy (*_15).5   @176:9
-  _103 = copy (*_102).1   @176:14
-  _104 = ge copy _103, const i32 8   @176:20
-  branch copy _104, bb29, bb30   @176:5
+  _91 = copy (*_15).5   @175:10
+  _92 = copy (*_91).1   @175:15
+  _93 = sub copy _92, const i32 1   @175:21
+  _94 = copy _93   @175:7
+  _95 = copy (*_15).5   @176:9
+  _96 = copy (*_95).1   @176:14
+  _97 = ge copy _96, const i32 8   @176:20
+  branch copy _97, bb29, bb30   @176:5
 
 bb19:
-  _81 = const str.3   @169:20
+  _78 = const str.3   @169:20
   goto bb21   @169:20
 
 bb20:
-  _84 = copy _80.1   @169:20
-  _81 = copy _84   @169:20
+  _78 = copy _77   @169:20
   goto bb21   @169:20
 
 bb21:
-  _85 = call avant_str_cat_i32(const str.2, copy _18) collects   @169:30
-  _86 = call avant_str_eq(copy _81, copy _85) nocollect   @169:27
-  _87 = eq copy _86, const i32 1   @169:27
-  _88 = not copy _87   @169:10
-  branch copy _88, bb22, bb23   @169:7
+  _80 = call avant_str_cat_i32(const str.2, copy _18) collects   @169:30
+  _81 = call avant_str_eq(copy _78, copy _80) nocollect   @169:27
+  _82 = eq copy _81, const i32 1   @169:27
+  _83 = not copy _82   @169:10
+  branch copy _83, bb22, bb23   @169:7
 
 bb22:
-  _89 = add.chk copy _3, const i32 1   @169:7
-  _3 = copy _89   @170:13
+  _84 = add.chk copy _3, const i32 1   @169:7
+  _3 = copy _84   @170:13
   goto bb23   @169:7
 
 bb23:
   goto bb18   @168:5
 
 bb24:
-  _91 = const str.4   @172:23
+  _86 = const str.4   @172:23
   goto bb26   @172:23
 
 bb25:
-  _94 = copy _90.1   @172:23
-  _91 = copy _94   @172:23
+  _86 = copy _85   @172:23
   goto bb26   @172:23
 
 bb26:
-  _95 = call avant_str_eq(copy _91, const str.4) nocollect   @172:33
-  _96 = eq copy _95, const i32 0   @172:33
-  branch copy _96, bb27, bb28   @172:12
+  _88 = call avant_str_eq(copy _86, const str.4) nocollect   @172:33
+  _89 = eq copy _88, const i32 0   @172:33
+  branch copy _89, bb27, bb28   @172:12
 
 bb27:
-  _97 = add.chk copy _3, const i32 1   @172:12
-  _3 = copy _97   @173:11
+  _90 = add.chk copy _3, const i32 1   @172:12
+  _3 = copy _90   @173:11
   goto bb28   @172:12
 
 bb28:
   goto bb18   @168:5
 
 bb29:
-  _105 = rem copy _2, const i32 8   @177:13
-  _101 = copy _105   @177:9
+  _98 = rem copy _2, const i32 8   @177:13
+  _94 = copy _98   @177:9
   goto bb30   @176:5
 
 bb30:
-  _106 = copy (*_15).5   @179:22
-  _107 = copy (*_106).1   @179:27
-  check.bounds copy _101, copy _107   @179:27
-  _108 = copy (*_106).0   @179:27
-  _109 = copy (*_108)[copy _101]   @179:27
-  _110 = add.chk copy _18, const i32 3   @179:34
-  _111 = call av.churn/bad_leaf(copy _109, copy _110, copy _6) collects   @179:12
-  _112 = add.chk copy _3, copy _111   @179:12
-  _3 = copy _112   @179:9
-  _113 = copy (*_15).6   @180:11
-  _114 = copy (*_113).1   @180:17
-  _115 = sub copy _114, const i32 1   @180:23
-  _116 = copy _115   @180:8
-  _117 = copy (*_15).6   @181:9
-  _118 = copy (*_117).1   @181:15
-  _119 = ge copy _118, const i32 4   @181:21
-  branch copy _119, bb31, bb32   @181:5
+  _99 = copy (*_15).5   @179:22
+  _100 = copy (*_99).1   @179:27
+  check.bounds copy _94, copy _100   @179:27
+  _101 = copy (*_99).0   @179:27
+  _102 = copy (*_101)[copy _94]   @179:27
+  _103 = add.chk copy _18, const i32 3   @179:34
+  _104 = call av.churn/bad_leaf(copy _102, copy _103, copy _6) collects   @179:12
+  _105 = add.chk copy _3, copy _104   @179:12
+  _3 = copy _105   @179:9
+  _106 = copy (*_15).6   @180:11
+  _107 = copy (*_106).1   @180:17
+  _108 = sub copy _107, const i32 1   @180:23
+  _109 = copy _108   @180:8
+  _110 = copy (*_15).6   @181:9
+  _111 = copy (*_110).1   @181:15
+  _112 = ge copy _111, const i32 4   @181:21
+  branch copy _112, bb31, bb32   @181:5
 
 bb31:
-  _120 = rem copy _2, const i32 4   @182:14
-  _116 = copy _120   @182:10
+  _113 = rem copy _2, const i32 4   @182:14
+  _109 = copy _113   @182:10
   goto bb32   @181:5
 
 bb32:
-  _121 = copy (*_15).6   @184:22
-  _122 = copy (*_121).1   @184:28
-  check.bounds copy _116, copy _122   @184:28
-  _123 = copy (*_121).0   @184:28
-  _124 = copy (*_123)[copy _116].1   @184:32
-  _125 = add.chk copy _18, const i32 4   @184:41
-  _126 = call av.churn/bad_leaf(copy _124, copy _125, copy _6) collects   @184:12
-  _127 = add.chk copy _3, copy _126   @184:12
-  _3 = copy _127   @184:9
-  _128 = add copy _7, const i32 1   @184:9
-  _7 = copy _128   @185:7
+  _114 = copy (*_15).6   @184:22
+  _115 = copy (*_114).1   @184:28
+  check.bounds copy _109, copy _115   @184:28
+  _116 = copy (*_114).0   @184:28
+  _117 = copy (*_116)[copy _109].1   @184:32
+  _118 = add.chk copy _18, const i32 4   @184:41
+  _119 = call av.churn/bad_leaf(copy _117, copy _118, copy _6) collects   @184:12
+  _120 = add.chk copy _3, copy _119   @184:12
+  _3 = copy _120   @184:9
+  _121 = add copy _7, const i32 1   @184:9
+  _7 = copy _121   @185:7
   goto bb1   @136:3
 }
 
@@ -776,8 +747,8 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @churn.av:190:1 {
   let _7: ref %churn.Holder slot
   let _8: ref %Array(churn.Holder) slot
   let _9: i32
-  let _10: %(Nil|churn.Leaf)
-  let _11 (keep): %(Nil|churn.Leaf) slot
+  let _10: ref %churn.Leaf
+  let _11 (keep): ref %churn.Leaf slot
   let _12 (bad): i32
   let _13 (r): i32
   let _14: bool
@@ -806,14 +777,12 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @churn.av:190:1 {
   let _37: ref %Array((Nil|churn.Leaf))
   let _38: i32
   let _39: ref %elems((Nil|churn.Leaf))
-  let _40: %(Nil|churn.Leaf)
-  let _41: i32
-  let _42: bool
-  let _43: ref %churn.Leaf
-  let _44 (l): ref %churn.Leaf
+  let _40: ref %churn.Leaf
+  let _41: bool
+  let _42 (l): ref %churn.Leaf
+  let _43: i32
+  let _44: i32
   let _45: i32
-  let _46: i32
-  let _47: i32
 
 bb0:
   _4 = zero   @190:1
@@ -914,25 +883,23 @@ bb13:
   check.bounds copy _33, copy _38   @214:20
   _39 = copy (*_37).0   @214:20
   _40 = copy (*_39)[copy _33]   @214:20
-  _41 = copy _40.0   @214:7
-  _42 = ne copy _41, const i32 0   @214:7
-  branch copy _42, bb15, bb16   @214:7
+  _41 = ne copy _40, const ref %churn.Leaf null   @214:7
+  branch copy _41, bb15, bb16   @214:7
 
 bb14:
-  _47 = add copy _5, const i32 1   @213:5
-  _5 = copy _47   @219:7
+  _45 = add copy _5, const i32 1   @213:5
+  _5 = copy _45   @219:7
   goto bb9   @210:3
 
 bb15:
-  _43 = copy _40.1   @214:7
-  _44 = copy _43   @214:7
-  _45 = add.chk copy _24, const i32 1   @214:7
-  _24 = copy _45   @215:14
+  _42 = copy _40   @214:7
+  _43 = add.chk copy _24, const i32 1   @214:7
+  _24 = copy _43   @215:14
   goto bb16   @214:7
 
 bb16:
-  _46 = add copy _33, const i32 1   @214:7
-  _33 = copy _46   @217:9
+  _44 = add copy _33, const i32 1   @214:7
+  _33 = copy _44   @217:9
   goto bb12   @213:5
 }
 
@@ -955,11 +922,11 @@ bb0:
 fn av.churn/Holder.initialize(_1: ref %churn.Holder, _2: i32) -> void frame @churn.av:41:3 {
   let _1 (self): ref %churn.Holder slot
   let _2 (id): i32
-  let _3: %(Nil|churn.Leaf)
+  let _3: ref %churn.Leaf
   let _4: %(Int|churn.Leaf)
-  let _5: %(Nil|churn.Leaf)
+  let _5: ref %churn.Leaf
   let _6: %churn.Slot
-  let _7: %(Nil|String)
+  let _7: ref str
   let _8: ref %elems((Nil|churn.Leaf)) slot
   let _9: ref %Array((Nil|churn.Leaf))
   let _10 (o): ref %Array((Nil|churn.Leaf))
@@ -986,7 +953,7 @@ bb0:
   _7 = call av.churn/no_name() nocollect   @46:12
   barrier copy _1   @46:10
   (*_1).4 = copy _7   @46:10
-  _8 = call avant_alloc(const u64 0, const u32 5) collects   @47:23
+  _8 = call avant_alloc(const u64 0, const u32 65535) collects   @47:23
   _9 = call avant_alloc(const u64 16, const u32 1022) collects   @47:23
   barrier copy _9   @47:23
   (*_9).0 = copy _8   @47:23
@@ -995,7 +962,7 @@ bb0:
   _10 = copy _9   @47:5
   barrier copy _1   @48:10
   (*_1).5 = copy _10   @48:10
-  _11 = call avant_alloc(const u64 0, const u32 6) collects   @49:22
+  _11 = call avant_alloc(const u64 0, const u32 5) collects   @49:22
   _12 = call avant_alloc(const u64 16, const u32 1022) collects   @49:22
   barrier copy _12   @49:22
   (*_12).0 = copy _11   @49:22
@@ -1064,7 +1031,7 @@ bb0:
   _2 = zero   @32:1
   gc.enter   @32:1
   gc.roots _2   @32:1
-  _2 = call avant_alloc(const u64 96, const u32 2) collects   @32:1
+  _2 = call avant_alloc(const u64 72, const u32 2) collects   @32:1
   call av.churn/Holder.initialize(copy _2, copy _1) collects   @32:1
   _0 = copy _2   @32:1
   gc.leave   @32:1

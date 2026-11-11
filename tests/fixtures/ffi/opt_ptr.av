@@ -1,0 +1,31 @@
+// Stage 29 W3b (B13): an optional reference is one pointer, `nil` the null
+// pointer, so `String?` is exactly a C `char *` that may be NULL, both as a
+// `fun` result and as a parameter. Before, `String?` crossed the C boundary
+// as a tag-and-payload pair: a NULL `getenv` result crashed the program.
+
+lib c {
+  fun getenv(name: String): String?
+  fun setenv(name: String, value: String, overwrite: Int): Int
+  fun strchr(s: String, ch: Int): String?
+  fun setlocale(category: Int, locale: String?): String?
+}
+
+fn show(s: String?) {
+  if v = s {
+    puts("\"${v}\"")
+  } else {
+    puts("nil")
+  }
+}
+
+fn main {
+  show(c.getenv("AVANT_W3B_SURELY_UNSET"))
+  _ok = c.setenv("AVANT_W3B_SET", "here", 1)
+  show(c.getenv("AVANT_W3B_SET"))
+  show(c.strchr("key=value", 61))
+  show(c.strchr("no equals", 61))
+  q: String? = nil
+  show(c.setlocale(6, q))
+  show(c.setlocale(6, "C"))
+  show(c.setlocale(6, "no-such-locale-w3b"))
+}

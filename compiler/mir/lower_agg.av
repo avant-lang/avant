@@ -127,6 +127,10 @@ pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
 // The MIR type of a field of type t: what a value of it is, or, for a
 // union, its layout (2.4); -1 after refusing.
 pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
+  if r = mir_opt_ref(t) {
+    // An optional reference is one pointer slot (W3b, B13).
+    return lw.field_mty(r, loc)
+  }
   if t.is_union {
     l = lw.union_layout(t, loc)
     if l < 0 {
