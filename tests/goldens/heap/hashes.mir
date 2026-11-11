@@ -84,6 +84,7 @@ extern avant_hash_vals_str(ref) -> ref collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
+extern avant_trap_byte(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.hashes/say(_1: ref str, _2: i32) -> i32 leaf @hashes.av:10:1 {
@@ -427,36 +428,42 @@ fn av.hashes/bufs() -> void frame @hashes.av:94:1 {
   let _12: ref %elems(u8)
   let _13: u8
   let _14: i32
-  let _15: u8
-  let _16: i32
-  let _17: ref %elems(u8)
-  let _18: i32
-  let _19: ref %elems(u8)
-  let _20: u8
+  let _15: i32
+  let _16: u32
+  let _17: bool
+  let _18: u8
+  let _19: i32
+  let _20: ref %elems(u8)
   let _21: i32
-  let _22: i32
+  let _22: ref %elems(u8)
   let _23: u8
-  let _24: ref str
+  let _24: i32
   let _25: i32
-  let _26: ref %Buf
-  let _27 (c): ref %Buf slot
-  let _28 (i): i32
-  let _29: bool
-  let _30: i32
+  let _26: i32
+  let _27: u32
+  let _28: bool
+  let _29: u8
+  let _30: ref str
   let _31: i32
-  let _32: i32
-  let _33: i32
-  let _34: i32
-  let _35: ref %Buf
-  let _36 (d): ref %Buf slot
-  let _37: ref str
+  let _32: ref %Buf
+  let _33 (c): ref %Buf slot
+  let _34 (i): i32
+  let _35: bool
+  let _36: i32
+  let _37: i32
+  let _38: i32
+  let _39: i32
+  let _40: i32
+  let _41: ref %Buf
+  let _42 (d): ref %Buf slot
+  let _43: ref str
 
 bb0:
   _2 = zero   @94:1
-  _27 = zero   @94:1
-  _36 = zero   @94:1
+  _33 = zero   @94:1
+  _42 = zero   @94:1
   gc.enter   @94:1
-  gc.roots _2, _27, _36   @94:1
+  gc.roots _2, _33, _42   @94:1
   _1 = call avant_buf_new(const i32 0) collects   @95:7
   _2 = copy _1   @95:5
   call avant_buf_push_str(copy _2, const str.23) collects   @96:4
@@ -483,50 +490,70 @@ bb0:
   _13 = copy (*_12)[const i32 5]   @106:9
   _14 = cast copy _13 to i32   @106:9
   call printf(const str.6, copy _14) nocollect   @106:3
-  _15 = cast const i32 97 to u8   @107:8
-  _16 = copy (*_2).1   @107:4
-  check.bounds const i32 5, copy _16   @107:4
-  _17 = copy (*_2).0   @107:4
-  (*_17)[const i32 5] = copy _15   @107:8
-  _18 = copy (*_2).1   @108:4
-  check.bounds const i32 6, copy _18   @108:4
-  _19 = copy (*_2).0   @108:4
-  _20 = copy (*_19)[const i32 6]   @108:8
-  _21 = cast copy _20 to i32   @108:8
-  _22 = add.chk copy _21, const i32 1   @108:8
-  _23 = cast copy _22 to u8   @108:8
-  (*_19)[const i32 6] = copy _23   @108:8
-  _24 = call avant_buf_take_str(copy _2) collects   @109:26
-  _25 = call av.hashes/bytes_to_str_len(copy _24) nocollect   @109:8
-  call printf(const str.6, copy _25) nocollect   @109:3
-  _26 = call avant_buf_new(const i32 4) collects   @110:7
-  _27 = copy _26   @110:5
-  _28 = const i32 0   @111:5
-  goto bb1   @112:3
+  _15 = const i32 97   @107:8
+  _16 = cast copy _15 to u32   @107:8
+  _17 = le copy _16, const u32 255   @107:8
+  branch copy _17, bb2, bb1   @107:8
 
 bb1:
-  _29 = lt copy _28, const i32 300   @112:11
-  branch copy _29, bb2, bb3   @112:3
+  call avant_trap_byte(copy _15) nocollect   @107:8
+  unreachable   @107:8
 
 bb2:
-  _30 = rem copy _28, const i32 10   @113:24
-  _31 = add.chk const i32 48, copy _30   @113:20
-  call avant_buf_push_byte(copy _27, copy _31) collects   @113:6
-  _32 = add copy _28, const i32 1   @114:11
-  _28 = copy _32   @114:7
-  goto bb1   @112:3
+  _18 = cast copy _15 to u8   @107:8
+  _19 = copy (*_2).1   @107:4
+  check.bounds const i32 5, copy _19   @107:4
+  _20 = copy (*_2).0   @107:4
+  (*_20)[const i32 5] = copy _18   @107:8
+  _21 = copy (*_2).1   @108:4
+  check.bounds const i32 6, copy _21   @108:4
+  _22 = copy (*_2).0   @108:4
+  _23 = copy (*_22)[const i32 6]   @108:8
+  _24 = cast copy _23 to i32   @108:8
+  _25 = add.chk copy _24, const i32 1   @108:8
+  _26 = copy _25   @108:8
+  _27 = cast copy _26 to u32   @108:8
+  _28 = le copy _27, const u32 255   @108:8
+  branch copy _28, bb4, bb3   @108:8
 
 bb3:
-  _33 = call avant_buf_size(copy _27) nocollect   @116:9
-  call printf(const str.6, copy _33) nocollect   @116:3
-  call avant_buf_clear(copy _27) nocollect   @117:4
-  _34 = call avant_buf_size(copy _27) nocollect   @118:9
-  call printf(const str.6, copy _34) nocollect   @118:3
-  _35 = call avant_bytes_to_buf(const str.28) collects   @119:21
-  _36 = copy _35   @119:5
-  call avant_buf_push_str(copy _36, const str.29) collects   @120:4
-  _37 = call avant_buf_take_str(copy _36) collects   @121:9
-  call printf(const str.0, copy _37) nocollect   @121:3
+  call avant_trap_byte(copy _26) nocollect   @108:8
+  unreachable   @108:8
+
+bb4:
+  _29 = cast copy _26 to u8   @108:8
+  (*_22)[const i32 6] = copy _29   @108:8
+  _30 = call avant_buf_take_str(copy _2) collects   @109:26
+  _31 = call av.hashes/bytes_to_str_len(copy _30) nocollect   @109:8
+  call printf(const str.6, copy _31) nocollect   @109:3
+  _32 = call avant_buf_new(const i32 4) collects   @110:7
+  _33 = copy _32   @110:5
+  _34 = const i32 0   @111:5
+  goto bb5   @112:3
+
+bb5:
+  _35 = lt copy _34, const i32 300   @112:11
+  branch copy _35, bb6, bb7   @112:3
+
+bb6:
+  _36 = rem copy _34, const i32 10   @113:24
+  _37 = add.chk const i32 48, copy _36   @113:20
+  call avant_buf_push_byte(copy _33, copy _37) collects   @113:6
+  _38 = add copy _34, const i32 1   @114:11
+  _34 = copy _38   @114:7
+  goto bb5   @112:3
+
+bb7:
+  _39 = call avant_buf_size(copy _33) nocollect   @116:9
+  call printf(const str.6, copy _39) nocollect   @116:3
+  call avant_buf_clear(copy _33) nocollect   @117:4
+  _40 = call avant_buf_size(copy _33) nocollect   @118:9
+  call printf(const str.6, copy _40) nocollect   @118:3
+  _41 = call avant_bytes_to_buf(const str.28) collects   @119:21
+  _42 = copy _41   @119:5
+  call avant_buf_push_str(copy _42, const str.29) collects   @120:4
+  _43 = call avant_buf_take_str(copy _42) collects   @121:9
+  call printf(const str.0, copy _43) nocollect   @121:3
   gc.leave   @94:1
   return   @94:1
 }

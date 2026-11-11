@@ -395,7 +395,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   // The header: size | type << 32 | (HEAP | YOUNG) << 48.
   if const_size {
     hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
-    e.line("store i64 ${hdr.to_i64}, ptr ${bump}, align 8")
+    e.line("store i64 ${bits_u64_to_i64(hdr)}, ptr ${bump}, align 8")
   } else {
     tz = e.tmp
     e.line("${tz} = zext i32 ${ty} to i64")
@@ -404,7 +404,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
     h1 = e.tmp
     e.line("${h1} = or i64 ${size}, ${tsh}")
     h2 = e.tmp
-    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).to_i64}")
+    e.line("${h2} = or i64 ${h1}, ${bits_u64_to_i64(32800u64 << 48u64)}")
     e.line("store i64 ${h2}, ptr ${bump}, align 8")
   }
   obj = e.tmp

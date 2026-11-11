@@ -50,6 +50,51 @@ void avant_trap_to_i(double x) {
   exit(1);
 }
 
+/* A conversion between integer types whose value the target cannot hold
+ * (Stage 29 W4b1, D295 R1: the correct value or a trap). kind is
+ * from * 4 + to, each 0 Int, 1 Int64, 2 UInt64; a UInt64 value arrives as
+ * its bits and prints unsigned. */
+void avant_trap_convert(int64_t value, int32_t kind) {
+  static const char *names[] = {"Int", "Int64", "UInt64"};
+  static const char *methods[] = {"to_i", "to_i64", "to_u64"};
+  int from = (kind >> 2) & 3;
+  int to = kind & 3;
+  if (from > 2) {
+    from = 0;
+  }
+  if (to > 2) {
+    to = 0;
+  }
+  if (from == 2) {
+    fprintf(stderr, "avant runtime: %s of %s %llu out of range for %s\n", methods[to], names[from], (unsigned long long)value, names[to]);
+  } else {
+    fprintf(stderr, "avant runtime: %s of %s %lld out of range for %s\n", methods[to], names[from], (long long)value, names[to]);
+  }
+  exit(1);
+}
+
+/* A byte stored outside 0..255 (Stage 29 W4b1, D295 R3): push_byte, a Buf
+ * element, chr, repeat_byte. */
+void avant_trap_byte(int32_t value) {
+  fprintf(stderr, "avant runtime: byte %d out of range (0..255)\n", value);
+  exit(1);
+}
+
+/* A slice whose bounds are not 0 <= start <= stop <= size (Stage 29 W4b1,
+ * D295 R4: slices trap like indexing). */
+void avant_trap_slice(int32_t start, int32_t stop, int32_t size) {
+  fprintf(stderr, "avant runtime: slice %d..%d out of range (size %d)\n", start, stop, size);
+  exit(1);
+}
+
+/* A negative count where a size is meant (Stage 29 W4b1). what names the
+ * operation: 0 Array(T).new's size, 1 repeat_byte's count. */
+void avant_trap_negative(int32_t n, int32_t what) {
+  static const char *names[] = {"Array size", "repeat_byte count"};
+  fprintf(stderr, "avant runtime: %s %d is negative\n", names[what == 1 ? 1 : 0], n);
+  exit(1);
+}
+
 /* An Avant value passed to or stored as a C scalar type that cannot hold
  * it (Stage 29 W1b, D64 as amended; D215: the correct value or a trap).
  * kind is type.av's cs_*: 1 Int8, 2 Int16, 3 UInt8, 4 UInt16, 5 UInt32. */

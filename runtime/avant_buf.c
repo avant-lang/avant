@@ -104,7 +104,10 @@ void avant_buf_append(void *buf, const void *p, int32_t n) {
 /* gc-lint: holds nothing (the slow path is the last statement and roots b and p itself). */
 void avant_buf_push_byte(void *buf, int32_t c) {
   AvantBuf *b = (AvantBuf *)buf;
-  uint8_t byte = (uint8_t)(c & 255);
+  if ((uint32_t)c > 255u) {
+    avant_trap_byte(c);
+  }
+  uint8_t byte = (uint8_t)c;
   if (!b) {
     return;
   }

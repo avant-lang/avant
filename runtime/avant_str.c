@@ -199,8 +199,18 @@ char *avant_str_from_i32_bytes(void *arr) {
     src = (const int32_t *)a->buf;
   }
   int32_t i;
+  uint32_t any = 0;
   for (i = 0; i < n; i++) {
-    p[i] = (char)(unsigned char)(src[i] & 255);
+    any |= (uint32_t)src[i];
+    p[i] = (char)(unsigned char)src[i];
+  }
+  if (any > 255u) {
+    /* A byte outside 0..255 (D295 R3): the first one is named. */
+    for (i = 0; i < n; i++) {
+      if ((uint32_t)src[i] > 255u) {
+        avant_trap_byte(src[i]);
+      }
+    }
   }
   p[n] = 0;
   avant_str_tag(p);
@@ -209,11 +219,14 @@ char *avant_str_from_i32_bytes(void *arr) {
 
 /* gc-lint: holds nothing (its inputs are integers). */
 char *avant_str_repeat_byte(int32_t b, int32_t n) {
+  if ((uint32_t)b > 255u) {
+    avant_trap_byte(b);
+  }
   if (n < 0) {
-    n = 0;
+    avant_trap_negative(n, 1);
   }
   char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
-  memset(p, (unsigned char)(b & 255), (size_t)n);
+  memset(p, (unsigned char)b, (size_t)n);
   p[n] = 0;
   avant_str_tag(p);
   return p;
@@ -301,7 +314,10 @@ char *avant_str_from_bool(int32_t n) {
 
 /* gc-lint: holds nothing (its input is a C byte; the result is pinned before any other call). */
 char *avant_str_from_byte(int32_t b) {
-  unsigned idx = (unsigned)(b & 255);
+  if ((uint32_t)b > 255u) {
+    avant_trap_byte(b);
+  }
+  unsigned idx = (unsigned)b;
   if (g_byte_str[idx]) {
     return g_byte_str[idx];
   }

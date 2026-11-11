@@ -1,0 +1,147 @@
+import harness
+import backends
+
+// Stage 29 W4b1: honest defaults for numbers, parsing and printing (D293,
+// D295; review 4's R1-R10). Each program is compiled in parallel; a
+// refused one must leave no binary and say the expected words, an
+// accepted one must print what it should, and a trapping one must print
+// what it printed before the trap, exit 1 and name the trap on stderr.
+//   - conversions between Int, Int64 and UInt64 keep the value or trap;
+//     wrap_i, wrap_i64 and wrap_u64 reinterpret the bits (R1);
+//   - abs, sum and Hash.inc follow D215; UInt64.abs is refused (R2);
+//   - a byte stored outside 0..255 traps (R3).
+
+class FCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub err: String = ""
+  pub ok: Bool = false
+  pub trap: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn trapped(tag: String, src: String, out: String, needle: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.err = needle
+  f.ok = true
+  f.trap = true
+  f
+}
+
+fn conv_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("conv-in-range", "fn main {\n  a: Int64 = 0i64 - 2147483648i64\n  b: Int64 = 2147483647i64\n  puts(a.to_i)\n  puts(b.to_i)\n  u: UInt64 = 2147483647u64\n  puts(u.to_i)\n  v: UInt64 = 9223372036854775807u64\n  puts(v.to_i64)\n  n = 7\n  puts(n.to_u64)\n  puts(n.to_i64)\n  m: Int64 = 9223372036854775807i64\n  puts(m.to_u64)\n  puts(n.to_i)\n  puts(m.to_i64)\n  puts(v.to_u64)\n}\n", "-2147483648\n2147483647\n2147483647\n9223372036854775807\n7\n7\n9223372036854775807\n7\n9223372036854775807\n9223372036854775807\n"))
+  xs.push(accepted("conv-wrap", "fn main {\n  big: Int64 = 5000000000i64\n  puts(big.wrap_i)\n  n = -1\n  puts(n.wrap_u64)\n  puts(n.wrap_i64)\n  puts(n.wrap_i)\n  u: UInt64 = 18446744073709551615u64\n  puts(u.wrap_i64)\n  puts(u.wrap_i)\n  puts(u.wrap_u64)\n  h: UInt64 = 9223372036854775808u64\n  puts(h.wrap_i64)\n  puts(3000000000i64.wrap_i)\n  puts(big.wrap_u64())\n}\n", "705032704\n18446744073709551615\n-1\n-1\n-1\n-1\n18446744073709551615\n-9223372036854775808\n-1294967296\n5000000000\n"))
+  xs.push(trapped("conv-i64-to-i-high", "fn main {\n  puts(1)\n  big: Int64 = 5000000000i64\n  puts(big.to_i)\n}\n", "1\n", "avant runtime: to_i of Int64 5000000000 out of range for Int"))
+  xs.push(trapped("conv-i64-to-i-low", "fn main {\n  x: Int64 = 0i64 - 2147483649i64\n  puts(x.to_i)\n}\n", "", "avant runtime: to_i of Int64 -2147483649 out of range for Int"))
+  xs.push(trapped("conv-i-to-u64", "fn main {\n  n = -1\n  puts(n.to_u64)\n}\n", "", "avant runtime: to_u64 of Int -1 out of range for UInt64"))
+  xs.push(trapped("conv-i64-to-u64", "fn main {\n  n = 0i64 - 3i64\n  puts(n.to_u64())\n}\n", "", "avant runtime: to_u64 of Int64 -3 out of range for UInt64"))
+  xs.push(trapped("conv-u64-to-i64", "fn main {\n  u: UInt64 = 18446744073709551615u64\n  puts(u.to_i64)\n}\n", "", "avant runtime: to_i64 of UInt64 18446744073709551615 out of range for Int64"))
+  xs.push(trapped("conv-u64-to-i", "fn main {\n  u: UInt64 = 2147483648u64\n  puts(u.to_i)\n}\n", "", "avant runtime: to_i of UInt64 2147483648 out of range for Int"))
+  xs.push(refused("conv-wrap-args", "fn main {\n  puts(3.wrap_i(1))\n}\n", "Int.wrap_i takes no arguments"))
+  xs.push(accepted("abs-ok", "fn main {\n  puts((0 - 5).abs)\n  puts((0 - 2147483647).abs)\n  puts((0i64 - 9223372036854775807i64).abs)\n  puts(4.abs())\n}\n", "5\n2147483647\n9223372036854775807\n4\n"))
+  xs.push(trapped("abs-min", "fn main {\n  m = -2147483647 - 1\n  puts(m.abs)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("abs-min-i64", "fn main {\n  m = 0i64 - 9223372036854775807i64 - 1i64\n  puts(m.abs)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(refused("abs-u64", "fn main {\n  x = 3u64\n  puts(x.abs)\n}\n", "abs of a UInt64 is the value itself"))
+  xs.push(refused("abs-u64-call", "fn main {\n  x = 3u64\n  puts(x.abs())\n}\n", "abs of a UInt64 is the value itself"))
+  xs.push(accepted("sum-ok", "fn main {\n  puts([2147483647, -1, 1].sum)\n  puts([9223372036854775807i64, 0i64 - 1i64].sum)\n  puts([18446744073709551614u64, 1u64].sum)\n  xs: Array(Int) = []\n  puts(xs.sum)\n}\n", "2147483647\n9223372036854775806\n18446744073709551615\n0\n"))
+  xs.push(trapped("sum-int", "fn main {\n  puts([2147483647, 1].sum)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("sum-int-low", "fn main {\n  puts([-2147483647, -1, -1].sum)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("sum-i64", "fn main {\n  puts([9223372036854775807i64, 1i64].sum)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("sum-u64", "fn main {\n  puts([18446744073709551615u64, 1u64].sum)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(accepted("inc-ok", "fn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 2147483646\n  h.inc(\"a\")\n  puts(h.get(\"a\") ?? 0)\n  h.inc(\"b\", -2147483647)\n  h.inc(\"b\", -1)\n  puts(h.get(\"b\") ?? 0)\n  g = Hash(Int, Int).new\n  g.inc(4, 3)\n  g.inc(4)\n  puts(g.get(4) ?? 0)\n}\n", "2147483647\n-2147483648\n4\n"))
+  xs.push(trapped("inc-str", "fn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 2147483647\n  h.inc(\"a\")\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("inc-int-key", "fn main {\n  h = Hash(Int, Int).new\n  h.inc(1, -2147483647)\n  h.inc(1, -2)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(accepted("byte-ok", "fn main {\n  buf = buf_new()\n  buf.push_byte(0)\n  buf.push_byte(255)\n  buf[0] = 65\n  buf[1] -= 189\n  puts(buf.to_s)\n  puts(chr(66))\n  puts(repeat_byte(67, 3))\n  puts(repeat_byte(67, 0).size)\n  puts(bytes_to_str([68, 69]))\n}\n", "AB\nB\nCCC\n0\nDE\n"))
+  xs.push(trapped("byte-push-high", "fn main {\n  buf = buf_new()\n  buf.push_byte(300)\n}\n", "", "avant runtime: byte 300 out of range (0..255)"))
+  xs.push(trapped("byte-push-neg", "fn main {\n  buf = buf_new()\n  buf.push_byte(-1)\n}\n", "", "avant runtime: byte -1 out of range (0..255)"))
+  xs.push(trapped("byte-index-store", "fn main {\n  buf = buf_new()\n  buf.push_byte(1)\n  buf[0] = 256\n}\n", "", "avant runtime: byte 256 out of range (0..255)"))
+  xs.push(trapped("byte-index-compound", "fn main {\n  buf = buf_new()\n  buf.push_byte(200)\n  buf[0] += 56\n}\n", "", "avant runtime: byte 256 out of range (0..255)"))
+  xs.push(trapped("byte-chr", "fn main {\n  puts(chr(300))\n}\n", "", "avant runtime: byte 300 out of range (0..255)"))
+  xs.push(trapped("byte-repeat", "fn main {\n  puts(repeat_byte(321, 2))\n}\n", "", "avant runtime: byte 321 out of range (0..255)"))
+  xs.push(trapped("byte-repeat-count", "fn main {\n  puts(repeat_byte(65, -3))\n}\n", "", "avant runtime: repeat_byte count -3 is negative"))
+  xs.push(trapped("byte-bytes-to-str", "fn main {\n  puts(bytes_to_str([65, 66, 400, -1]))\n}\n", "", "avant runtime: byte 400 out of range (0..255)"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/num-${f.tag}.av"
+    file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/num-${f.tag}.bin", "${dir}/num-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "num-${f2.tag}.bin", "num-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/num-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      out = log_text("${dir}/num-${f3.tag}.run.out")
+      if f3.trap {
+        c.eq_int(runs[k].code, 1, "${f3.tag}: exit 1")
+        c.eq_str(out, f3.want, "${f3.tag}: stdout before the trap")
+        err = log_text("${dir}/num-${f3.tag}.run.err")
+        c.expect(str_has(err, f3.err), "${f3.tag}: stderr says ${f3.err}")
+      } else {
+        c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+        c.eq_str(out, f3.want, "${f3.tag}: stdout")
+      }
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/num-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_numbers.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all: Array(FCase) = []
+    for f_conv_cases in conv_cases() {
+      all.push(f_conv_cases)
+    }
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

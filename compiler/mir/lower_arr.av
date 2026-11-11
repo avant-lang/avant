@@ -384,7 +384,7 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
             }
             if ct.is_buf {
               lw.at(st.loc)
-              val2 = lw.tmp(mt_u8(), b.rv_cast(val2, mt_u8()))
+              val2 = lw.byte_of(val2, st.loc)
             }
             val2 = lw.snap(val2, t)
             p = lw.index_place(t)
@@ -417,7 +417,7 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
           r = lw.arith(compound_op_of(st.op), vty, cur, rhs, st.proven, st.loc)
           lw.at(st.loc)
           if ct.is_buf {
-            r = lw.tmp(mt_u8(), b.rv_cast(r, mt_u8()))
+            r = lw.byte_of(r, st.loc)
           }
           lw.store_place(p2, et, r)
           return
@@ -426,6 +426,20 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
     }
   }
   lw.refuse(t.loc, "assignment to this index")
+}
+
+// A Buf element store (Stage 29 W4b1, D295 R3): the Int v as a byte, or
+// avant_trap_byte(v) from a cold block when v is outside 0..255 (one
+// unsigned compare; LLVM drops it where v is known to be a byte).
+pub fn (lw: MirLower) byte_of(v: MOperand, loc: Location): MOperand {
+  b = lw.lw_b
+  x = b.temp(mt_i32())
+  b.assign(b.pl(x), b.rv_use(v))
+  u = lw.tmp(mt_u32(), b.rv_cast(b.copy_local(x), mt_u32()))
+  inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u32(255)))
+  ok = lw.trap_open(inside, false)
+  lw.trap_close(ok, "avant_trap_byte", lw.one(b.copy_local(x)), loc)
+  lw.tmp(mt_u8(), b.rv_cast(b.copy_local(x), mt_u8()))
 }
 
 // ---- members

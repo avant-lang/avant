@@ -53,6 +53,9 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
     return checker_self.expect_no_args(expr, checker_self.t_float(), "${object.show}.to_f takes no arguments")
   }
   if expr.callee == "abs" {
+    if object.is_uint64 {
+      checker_self.fail(expr.loc, "abs of a UInt64 is the value itself")
+    }
     return checker_self.expect_no_args(expr, object, "${object.show}.abs takes no arguments")
   }
   if expr.callee == "to_i" {
@@ -63,6 +66,15 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
   }
   if expr.callee == "to_u64" {
     return checker_self.expect_no_args(expr, checker_self.t_uint64(), "${object.show}.to_u64 takes no arguments")
+  }
+  if expr.callee == "wrap_i" {
+    return checker_self.expect_no_args(expr, checker_self.t_int(), "${object.show}.wrap_i takes no arguments")
+  }
+  if expr.callee == "wrap_i64" {
+    return checker_self.expect_no_args(expr, checker_self.t_int64(), "${object.show}.wrap_i64 takes no arguments")
+  }
+  if expr.callee == "wrap_u64" {
+    return checker_self.expect_no_args(expr, checker_self.t_uint64(), "${object.show}.wrap_u64 takes no arguments")
   }
   checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
   object

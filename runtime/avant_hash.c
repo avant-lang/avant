@@ -582,7 +582,10 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   uint32_t hv = hash_bytes(p, n);
   int32_t i = 0;
   if (lookup_bytes(h, p, n, hv, &i)) {
-    int32_t c = ((int32_t *)h->vals)[i] + 1;
+    int32_t c;
+    if (__builtin_add_overflow(((int32_t *)h->vals)[i], 1, &c)) {
+      avant_trap_overflow();
+    }
     ((int32_t *)h->vals)[i] = c;
     g_last_key = (const char *)(uintptr_t)load_key(h, i);
     return c;
@@ -755,7 +758,10 @@ int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &key);
   if (lookup_str(h, key, &i)) {
-    int32_t c = ((int32_t *)h->vals)[i] + by;
+    int32_t c;
+    if (__builtin_add_overflow(((int32_t *)h->vals)[i], by, &c)) {
+      avant_trap_overflow();
+    }
     ((int32_t *)h->vals)[i] = c;
     return c;
   }
@@ -786,7 +792,10 @@ int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
   if (lookup(h, (int64_t)key, hash_i32(key), &i)) {
-    int32_t c = ((int32_t *)h->vals)[i] + by;
+    int32_t c;
+    if (__builtin_add_overflow(((int32_t *)h->vals)[i], by, &c)) {
+      avant_trap_overflow();
+    }
     ((int32_t *)h->vals)[i] = c;
     return c;
   }
