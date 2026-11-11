@@ -200,6 +200,66 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
   false
 }
 
+// Functions are scoped per module (Stage 29 W3a, D298). A candidate at an
+// unqualified call is a function the current module sees (its own, and the
+// pub functions of the modules it imports); at a qualified call `m.f()`
+// (qual, or call_mod while match_func runs), only m's functions among them.
+pub fn (checker_self: Checker) fn_candidate_q(fnn: Function, qual: String): Bool {
+  if qual.size > 0 && fnn.mod_name != qual {
+    return false
+  }
+  checker_self.fn_is_visible(fnn, checker_self.current_module)
+}
+
+pub fn (checker_self: Checker) fn_candidate(fnn: Function): Bool {
+  checker_self.fn_candidate_q(fnn, checker_self.call_mod)
+}
+
+// Two or more functions match a call equally. When they come from
+// different modules, the message names each one's module and the
+// qualified calls that pick one (D298); as for types, a module's own
+// function does not win over an imported one of the same signature.
+pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, cands: Array(FuncSig), plain: String) {
+  mods: Array(String) = []
+  for sig in cands {
+    seen = false
+    for m in mods {
+      if m == sig.node.mod_name {
+        seen = true
+      }
+    }
+    if !seen {
+      mods.push(sig.node.mod_name)
+    }
+  }
+  if mods.size < 2 {
+    checker_self.fail(loc, plain)
+    return
+  }
+  defs = buf_new()
+  calls = buf_new()
+  for k in 0..mods.size {
+    if k > 0 {
+      sep = ", "
+      if k == mods.size - 1 {
+        sep = " and "
+      }
+      defs.push_str(sep)
+      if k == mods.size - 1 {
+        sep = " or "
+      }
+      calls.push_str(sep)
+    }
+    defs.push_str("${mods[k]}.${name}")
+    calls.push_str("${mods[k]}.${name}()")
+  }
+  both = "both"
+  if mods.size > 2 {
+    both = "all"
+  }
+  checker_self.fail(loc, "${plain}: ${defs.to_s} ${both} match; write ${calls.to_s}")
+}
+
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
   if fnn.owner == "Bytes" || fnn.owner == "String" || fnn.owner == "Buf" {
     if fnn.mod_name == from_mod {
@@ -492,6 +552,14 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
     checker_self.fail(expr.loc, "new is a type constructor")
     return checker_self.t_int()
   }
+  // A block or lambda argument (Stage 29 W3a): `m.f { |x| ... }` picks m's
+  // f as `f { ... }` would, its body checked in the calling module.
+  checker_self.absorb_fn_block_q(expr, mod)
+  none: Ty? = nil
+  if got = checker_self.dispatch_deferred_q(expr, none, mod) {
+    expr.receiver = nil
+    return got
+  }
   saved = checker_self.current_module
   arg_tys: Array(Ty) = []
   i = 0
@@ -499,14 +567,11 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
     arg_tys.push(checker_self.check_expr(expr.args[i]))
     i += 1
   }
+  checker_self.call_mod = mod
+  matched = checker_self.match_func(expr.callee, arg_tys, none, expr.loc)
+  checker_self.call_mod = ""
   checker_self.current_module = mod
-  none: Ty? = nil
-  if sig = checker_self.match_func(expr.callee, arg_tys, none, expr.loc) {
-    if sig.node.mod_name != mod {
-      checker_self.fail(expr.loc, "unknown function ${mod}.${expr.callee}")
-      checker_self.current_module = saved
-      return checker_self.t_int()
-    }
+  if sig = matched {
     checker_self.fill_defaults(expr, sig.node)
     i = 0
     while i < expr.args.size {

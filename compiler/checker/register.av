@@ -85,6 +85,18 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
   n
 }
 
+// A public function of another module with the same name and parameters
+// (D298): both take their module in their emit name, which stays unique.
+pub fn (checker_self: Checker) pub_twin_elsewhere(sig: FuncSig): Bool {
+  for i in 1..checker_self.functions.size {
+    other = checker_self.functions[i]
+    if !other.node.generic && other.node.vis && other.name == sig.name && other.node.mod_name != sig.node.mod_name && params_same(other.params, sig.params) {
+      return true
+    }
+  }
+  false
+}
+
 pub fn (checker_self: Checker) find_sig_by_node(fnn: Function): FuncSig? {
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
@@ -203,6 +215,9 @@ pub fn (checker_self: Checker) assign_emit_names {
             g += 1
           }
         }
+      }
+      if sig.node.vis && sig.node.mod_name.size > 0 && checker_self.pub_twin_elsewhere(sig) {
+        base = "${sig.node.mod_name}__${name}"
       }
       if g <= 1 {
         sig.node.emit_name = base
@@ -547,15 +562,10 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       if fnn.mod_name.size == 0 {
         same_mod = true
       }
+      // Functions are scoped per module (Stage 29 W3a, D298): two modules
+      // may define the same name and signature; an unqualified call that
+      // sees both is ambiguous at that call (match_func).
       if same_mod {
-        checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
-        return
-      }
-      if existing.node.vis {
-        checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
-        return
-      }
-      if fnn.vis {
         checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
         return
       }

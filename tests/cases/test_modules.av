@@ -1,5 +1,62 @@
 import harness
 
+// Stage 29 W3a: a module program that compiles and prints want.
+fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String, tag: String) {
+  bin = "${dir}/${name}.bin"
+  log = "${dir}/${name}.log"
+  out = "${dir}/${name}.out"
+  code = compile_av(compiler, "${dir}/${name}.av", bin, log)
+  c.eq_int(code, 0, "${tag} compiles")
+  chmod_x(bin)
+  run_av_bin(bin, out)
+  if got = file_read(out) {
+    c.eq_str(got, want, tag)
+  } else {
+    c.expect(false, tag)
+  }
+}
+
+// Stage 29 W3a: a module program that fails to compile with needle.
+fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: String, tag: String) {
+  bin = "${dir}/${name}.bin"
+  log = "${dir}/${name}.log"
+  compile_av(compiler, "${dir}/${name}.av", bin, log)
+  c.expect(!file_exists(bin), "${tag} bin absent")
+  if err = file_read(log) {
+    c.expect(str_has(err, needle), tag)
+  } else {
+    c.expect(false, tag)
+  }
+}
+
+// Functions are scoped per module (Stage 29 W3a, D298; D42 rules 3 and 7
+// replaced): two modules may export one name and signature; only an
+// unqualified call that sees both is ambiguous, and its message names the
+// qualified forms; `module.name()` picks one; as for types, a module's
+// own function does not win over an imported one of the same signature.
+fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "fa", "pub fn helper: Int { 1 }\nfn secret: Int { 7 }\npub fn pick(s: String): Int { s.size }\npub fn twice(f: fn(Int): Int): Int { f(f(1)) }\n")
+  write_av(dir, "fb", "pub fn helper: Int { 2 }\npub fn pick(n: Int): Int { n }\npub fn twice(f: fn(Int): Int): Int { f(1) }\n")
+  write_av(dir, "fboth", "import fa\nimport fb\nfn helper: Int { 3 }\nfn main {\n  puts(fa.helper() + fb.helper() * 10 + fboth.helper() * 100)\n  puts(pick(\"abc\") + pick(40))\n  puts(fa.twice { |x| x + 5 })\n  puts(fb.twice { |x| x + 5 })\n}\n")
+  mod_runs(c, compiler, dir, "fboth", "321\n43\n11\n6\n", "same pub fn in two modules, qualified")
+  write_av(dir, "funused", "import fa\nimport fb\nfn main {\n  puts(5)\n}\n")
+  mod_runs(c, compiler, dir, "funused", "5\n", "same pub fn in two modules, unused")
+  write_av(dir, "famb", "import fa\nimport fb\nfn main {\n  puts(helper())\n}\n")
+  mod_fails(c, compiler, dir, "famb", "ambiguous call to helper: fa.helper and fb.helper both match; write fa.helper() or fb.helper()", "two imports ambiguous at the call")
+  write_av(dir, "fown", "import fa\nfn helper: Int { 3 }\nfn main {\n  puts(helper())\n}\n")
+  mod_fails(c, compiler, dir, "fown", "write fa.helper() or fown.helper()", "own and imported ambiguous, as for types")
+  write_av(dir, "flam", "import fa\nimport fb\nfn main {\n  twice { |x| x + 1 }\n}\n")
+  mod_fails(c, compiler, dir, "flam", "twice: fa.twice and fb.twice both match; write fa.twice() or fb.twice()", "block argument ambiguous at the call")
+  write_av(dir, "fpriv", "import fa\nfn main {\n  puts(fa.secret())\n}\n")
+  mod_fails(c, compiler, dir, "fpriv", "function fa.secret is private to its module; mark it pub", "qualified call to a private function")
+  write_av(dir, "fnone", "import fa\nfn main {\n  puts(fa.nothing())\n}\n")
+  mod_fails(c, compiler, dir, "fnone", "unknown function fa.nothing", "qualified call to no function")
+  write_av(dir, "fseen", "import fa\nfn main {\n  puts(fb.helper())\n}\n")
+  mod_fails(c, compiler, dir, "fseen", "fb.helper", "qualified call to a module not imported")
+  write_av(dir, "fdup", "fn helper: Int { 1 }\nfn helper: Int { 2 }\nfn main {\n  puts(helper())\n}\n")
+  mod_fails(c, compiler, dir, "fdup", "function helper is already defined", "one module defines a name twice")
+}
+
 fn test_modules(c: Checks) {
   c.suite("tests/cases/test_modules.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -379,6 +436,7 @@ fn test_modules(c: Checks) {
     } else {
       c.expect(false, "single file no import")
     }
+    test_fn_scopes(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

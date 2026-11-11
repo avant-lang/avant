@@ -378,7 +378,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
           is_inst = true
         }
       }
-      if !is_inst && checker_self.fn_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
+      if !is_inst && checker_self.fn_candidate(sig.node) && arity_ok(sig.node, arg_tys.size) {
         if sig.node.generic {
           saw_generic = true
           if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
@@ -408,7 +408,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
     n = 0
     for x in 0..named.size {
       sig = checker_self.functions[named[x]]
-      if sig.name == name && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && !sig.node.generic && arity_ok(sig.node, arg_tys.size) {
+      if sig.name == name && checker_self.fn_candidate(sig.node) && !checker_self.sig_is_instance(sig) && !sig.node.generic && arity_ok(sig.node, arg_tys.size) {
         only = sig
         n += 1
       }
@@ -418,15 +418,21 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
         return one
       }
     }
+    shown = name
+    if checker_self.call_mod.size > 0 {
+      shown = "${checker_self.call_mod}.${name}"
+    }
     if n > 1 {
-      checker_self.fail(loc, "no matching function ${name}")
+      checker_self.fail(loc, "no matching function ${shown}")
+    } else if n == 0 && checker_self.call_mod.size > 0 && checker_self.has_private_fn(checker_self.call_mod, name) {
+      checker_self.fail(loc, "function ${shown} is private to its module; mark it pub")
     } else {
-      checker_self.fail(loc, "unknown function ${name}")
+      checker_self.fail(loc, "unknown function ${shown}")
     }
     return nil
   }
   if cands.size > 1 {
-    checker_self.fail(loc, "ambiguous call to ${name}")
+    checker_self.fail_ambiguous_call(loc, name, cands, "ambiguous call to ${name}")
     return nil
   }
   chosen = cands[0]
@@ -438,6 +444,17 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
     return nil
   }
   chosen
+}
+
+pub fn (checker_self: Checker) has_private_fn(mod: String, name: String): Bool {
+  named = checker_self.fn_indices_named(name)
+  for x in 0..named.size {
+    sig = checker_self.functions[named[x]]
+    if sig.name == name && sig.node.mod_name == mod && !sig.node.vis {
+      return true
+    }
+  }
+  false
 }
 
 pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String, owner_mod: String): FuncSig? {

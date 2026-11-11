@@ -288,6 +288,10 @@ pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(In
 }
 
 pub fn (checker_self: Checker) absorb_fn_block(expr: Expr) {
+  checker_self.absorb_fn_block_q(expr, "")
+}
+
+pub fn (checker_self: Checker) absorb_fn_block_q(expr: Expr, qual: String) {
   if b = expr.block {
   } else {
     return
@@ -296,7 +300,7 @@ pub fn (checker_self: Checker) absorb_fn_block(expr: Expr) {
   take = false
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.callee && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && sig.params.size == want_n {
+    if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && sig.params.size == want_n {
       last = sig.params[want_n - 1]
       if last.is_fn {
         take = true
@@ -314,6 +318,10 @@ pub fn (checker_self: Checker) absorb_fn_block(expr: Expr) {
 }
 
 pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty? {
+  checker_self.dispatch_deferred_q(expr, expected, "")
+}
+
+pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qual: String): Ty? {
   deferred: Array(Int) = []
   any = false
   for arg in expr.args {
@@ -330,7 +338,7 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
   hits = 0
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.callee && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+    if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
       hits += 1
     }
   }
@@ -354,7 +362,7 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
   saw_generic = false
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.name == expr.callee && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+    if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
       if checker_self.deferred_unifies(sig, deferred, ctypes) {
         cands.push(sig)
       } else {
@@ -373,7 +381,7 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
     return checker_self.t_int()
   }
   if cands.size > 1 {
-    checker_self.fail(expr.loc, "ambiguous call to ${expr.callee}")
+    checker_self.fail_ambiguous_call(expr.loc, expr.callee, cands, "ambiguous call to ${expr.callee}")
     return checker_self.t_int()
   }
   checker_self.finish_deferred(expr, cands[0], deferred, ctypes, expected)
@@ -469,7 +477,7 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
     return ty
   }
   if cands.size > 1 {
-    checker_self.fail(expr.loc, "ambiguous overload of ${expr.ident}")
+    checker_self.fail_ambiguous_call(expr.loc, expr.ident, cands, "ambiguous overload of ${expr.ident}")
     return checker_self.t_int()
   }
   if saw_generic {
@@ -503,7 +511,7 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
     return ty
   }
   if cands.size > 1 {
-    checker_self.fail(expr.loc, "ambiguous overload of ${expr.ident}")
+    checker_self.fail_ambiguous_call(expr.loc, expr.ident, cands, "ambiguous overload of ${expr.ident}")
     return checker_self.t_int()
   }
   if saw_generic {
