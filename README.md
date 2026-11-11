@@ -496,6 +496,8 @@ fn main {
 }
 ```
 
+The range's ends and the array are read like an `if` or `while` condition: a struct literal there needs parentheses, brackets or a call around it (`for p in [Point { x: 1 }]`), so a body that starts with a typed declaration (`row: Array(Bool) = []`) is never taken for a literal.
+
 The comptime field walk in [Macros](#macros) is the other `for`, and it keeps its own spelling.
 
 ## Modules
