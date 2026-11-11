@@ -14,38 +14,28 @@ import mir.verify_core
 
 pub fn mir_verify_module(v: MVerifier) {
   ts = v.ts
-  k = 0
-  while k < ts.layouts.size {
+  for k in 0..ts.layouts.size {
     l = ts.layouts[k]
-    x = 0
-    while x < l.fields.size {
+    for x in 0..l.fields.size {
       if ts.is_addr(l.fields[x]) {
         v.merr(10, "field ${x} of %${l.name} is a derived address")
       }
-      x = x + 1
     }
     mir_layout_id_rule(v, k, l)
-    k = k + 1
   }
-  k = 0
-  while k < v.m.externs.size {
-    e = v.m.externs[k]
+  for e in v.m.externs {
     s = ts.sigs[e.sig]
-    x = 0
-    while x < s.params.size {
-      if ts.is_addr(s.params[x]) {
+    for param in s.params {
+      if ts.is_addr(param) {
         v.merr(10, "extern ${e.name} takes a derived address")
       }
-      x = x + 1
     }
     if ts.is_addr(s.ret) && !e.slot_row {
       v.merr(10, "extern ${e.name} returns a derived address")
     }
-    k = k + 1
   }
   seen = Hash(String, Int).new
-  k = 0
-  while k < v.m.funcs.size {
+  for k in 0..v.m.funcs.size {
     g = v.m.funcs[k]
     if seen.has_key(g.symbol) {
       v.merr(20, "symbol ${g.symbol} is defined twice")
@@ -56,7 +46,6 @@ pub fn mir_verify_module(v: MVerifier) {
     } else if !g.external && !mir_mangled_ok(g.symbol) {
       v.merr(20, "${g.symbol} is not a mangled Avant symbol (8.2)")
     }
-    k = k + 1
   }
   ids = Hash(String, Int).new
   k = 0
@@ -111,12 +100,10 @@ fn mir_layout_id_rule(v: MVerifier, k: Int, l: MLayout) {
     return
   }
   owners = 0
-  x = 0
-  while x < v.m.maps.size {
-    if v.m.maps[x].id == id && v.m.maps[x].layout == k {
+  for map in v.m.maps {
+    if map.id == id && map.layout == k {
       owners = owners + 1
     }
-    x = x + 1
   }
   if owners != 1 {
     v.merr(20, "%${l.name} carries type id ${id} without its registry entry")

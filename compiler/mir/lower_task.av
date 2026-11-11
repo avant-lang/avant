@@ -112,11 +112,9 @@ pub fn (lw: MirLower) task_layout(e: Expr, sym: String, par: Bool): Int {
       names.push("out")
     }
   }
-  i = 0
-  while i < e.cap_names.size {
+  for i in 0..e.cap_names.size {
     fields.push(lw.field_mty(e.cap_tys[i], e.loc))
     names.push(e.cap_names[i])
-    i = i + 1
   }
   if lw.failed {
     return -1
@@ -279,12 +277,10 @@ pub fn (lw: MirLower) lower_pending_tasks {
     // The queue is in lowering order; the old back end emits in pre-walk
     // order: take the lowest index not lowered yet.
     best = -1
-    i = lw.lw_task.done
-    while i < lw.lw_task.pending.size {
+    for i in lw.lw_task.done..lw.lw_task.pending.size {
       if best < 0 || lw.lw_task.pending[i].index < lw.lw_task.pending[best].index {
         best = i
       }
-      i = i + 1
     }
     t = lw.lw_task.pending[best]
     lw.lw_task.pending[best] = lw.lw_task.pending[lw.lw_task.done]
@@ -307,9 +303,7 @@ pub fn (lw: MirLower) lower_pending_tasks {
 // block a lambda captures is boxed too, which the old back end cannot
 // compile).
 pub fn (lw: MirLower) task_boxes(stmts: Array(Stmt), names: Array(String), tys: Array(Ty)) {
-  i = 0
-  while i < stmts.size {
-    st = stmts[i]
+  for st in stmts {
     lw.task_boxes_opt(st.cond, names, tys)
     lw.task_boxes_opt(st.target, names, tys)
     lw.task_boxes_opt(st.value, names, tys)
@@ -318,7 +312,6 @@ pub fn (lw: MirLower) task_boxes(stmts: Array(Stmt), names: Array(String), tys: 
     lw.task_boxes(st.then_body, names, tys)
     lw.task_boxes(st.else_body, names, tys)
     lw.task_boxes(st.body, names, tys)
-    i = i + 1
   }
 }
 

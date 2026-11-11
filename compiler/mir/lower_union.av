@@ -37,12 +37,10 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
     return -1
   }
   n = 1
-  j = 0
-  while j < i {
+  for j in 0..i {
     if !u.members[j].is_nil {
       n = n + 1
     }
-    j = j + 1
   }
   n
 }
@@ -162,8 +160,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   targets: Array(Int) = []
   arms: Array(Int) = []
   members: Array(Int) = []
-  i = 0
-  while i < from.members.size {
+  for i in 0..from.members.size {
     if to.includes_member(from.members[i]) {
       arm = b.block
       values.push(i.to_i64)
@@ -171,12 +168,10 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
       arms.push(arm)
       members.push(i)
     }
-    i = i + 1
   }
   join = b.block
   b.switch_on(tag, values, targets, join)
-  i = 0
-  while i < arms.size {
+  for i in 0..arms.size {
     b.at(arms[i])
     m = from.members[members[i]]
     k = to.tag_of(m)
@@ -187,7 +182,6 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
       b.assign(b.pl(d), b.rv_union(tl, k, p))
     }
     b.goto(join)
-    i = i + 1
   }
   b.at(join)
   b.copy_local(d)
@@ -267,12 +261,10 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
 // returning ret (the old back end's try_success_from, try_fail_from).
 pub fn mir_try_success(u: Ty, ret: Ty): Ty {
   if !u.includes_nil {
-    i = 0
-    while i < u.members.size {
-      if !ret.includes_member(u.members[i]) {
-        return u.members[i]
+    for mem in u.members {
+      if !ret.includes_member(mem) {
+        return mem
       }
-      i = i + 1
     }
   }
   ty_without_nil(u)
@@ -280,12 +272,10 @@ pub fn mir_try_success(u: Ty, ret: Ty): Ty {
 
 pub fn mir_try_fail(u: Ty, ret: Ty): Ty {
   if !u.includes_nil {
-    i = 0
-    while i < u.members.size {
-      if ret.includes_member(u.members[i]) {
-        return u.members[i]
+    for mem in u.members {
+      if ret.includes_member(mem) {
+        return mem
       }
-      i = i + 1
     }
   }
   ty_nil()

@@ -396,9 +396,7 @@ pub class MVerifier {
     while b < f.blocks.size {
       blk = f.blocks[b]
       if t = blk.term {
-        j = 0
-        while j < t.targets.size {
-          tg = t.targets[j]
+        for tg in t.targets {
           if tg < 0 || tg >= f.blocks.size {
             self.err(2, b, -1, t.loc, "target bb${tg} does not exist")
             self.bad = true
@@ -406,7 +404,6 @@ pub class MVerifier {
             self.err(2, b, -1, t.loc, "an edge enters bb0")
             self.bad = true
           }
-          j = j + 1
         }
       } else {
         self.err(1, b, -1, f.loc, "bb${b} has no terminator")
@@ -443,13 +440,11 @@ pub class MVerifier {
       self.bad = true
       return
     }
-    k = 0
-    while k < s.params.size {
+    for k in 0..s.params.size {
       if f.locals[k + 1].ty != s.params[k] {
         self.ferr(3, "_${k + 1} is ${self.tx(f.locals[k + 1].ty)}, the signature says ${self.tx(s.params[k])}")
         self.bad = true
       }
-      k = k + 1
     }
     b = 0
     while b < f.blocks.size {
@@ -649,8 +644,7 @@ pub class MVerifier {
       self.err(7, b, j, loc, "${st.args.size} arguments for ${s.text}")
       return
     }
-    k = 0
-    while k < st.args.size {
+    for k in 0..st.args.size {
       t = self.op_ty(st.args[k], b, j, loc)
       if t >= 0 {
         if k < fixed {
@@ -661,7 +655,6 @@ pub class MVerifier {
           self.err(7, b, j, loc, "variadic argument ${k + 1} of type ${self.tx(t)}")
         }
       }
-      k = k + 1
     }
     if st.dest >= 0 {
       dt = self.local_ty(st.dest)
@@ -716,12 +709,10 @@ pub class MVerifier {
       ok = self.ts.is_int(ct) && t.targets.size == t.values.size + 1
       x = 0
       while ok && x < t.values.size {
-        y = x + 1
-        while y < t.values.size {
+        for y in x + 1..t.values.size {
           if t.values[x] == t.values[y] {
             ok = false
           }
-          y = y + 1
         }
         x = x + 1
       }

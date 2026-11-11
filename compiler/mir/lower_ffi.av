@@ -92,17 +92,15 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
   if cs = lw.lw_syms.find_cfun(e.lib_name, e.callee) {
     ps: Array(Int) = []
     has_cb = false
-    i = 0
-    while i < cs.params.size {
-      if cs.params[i].is_fn {
+    for param in cs.params {
+      if param.is_fn {
         ps.push(mt_ptr())
         has_cb = true
-      } else if cs.params[i].c_scalar > 0 {
-        ps.push(lw.c_scalar_mty(cs.params[i].c_scalar))
+      } else if param.c_scalar > 0 {
+        ps.push(lw.c_scalar_mty(param.c_scalar))
       } else {
-        ps.push(lw.ty_at(cs.params[i], e.loc, "a C parameter"))
+        ps.push(lw.ty_at(param, e.loc, "a C parameter"))
       }
-      i = i + 1
     }
     ret = lw.ty_at(cs.ret, e.loc, "a C result")
     if cs.ret.c_scalar > 0 {
@@ -137,10 +135,8 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
           o = lw.tmp(ps[i], b.rv_use(o))
         }
       }
-      j = i + 1
-      while j < e.args.size {
+      for j in i + 1..e.args.size {
         o = lw.snap(o, e.args[j])
-        j = j + 1
       }
       args.push(o)
       i = i + 1

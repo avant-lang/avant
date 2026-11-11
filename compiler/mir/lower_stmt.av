@@ -337,20 +337,17 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     // label, the old back end's emit_switch: one branch slot per label).
     entries: Array(Int) = []
     entry_arm: Array(Int) = []
-    i = 0
-    while i < e.cases.size {
+    for i in 0..e.cases.size {
       arm = lw.lw_b.block
       arms.push(arm)
       j = 0
       while j < e.cases[i].labels.size {
         v = e.cases[i].labels[j]
         seen = false
-        q = 0
-        while q < values.size {
-          if values[q] == v {
+        for val in values {
+          if val == v {
             seen = true
           }
-          q = q + 1
         }
         if !seen {
           values.push(v)
@@ -365,7 +362,6 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
         }
         j = j + 1
       }
-      i = i + 1
     }
     other = -1
     if e.has_else || lw.lw_cov.on {
@@ -377,22 +373,18 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     lw.at(e.loc)
     lw.lw_b.switch_on(cv, values, targets, other)
-    i = 0
-    while i < e.cases.size {
-      q2 = 0
-      while q2 < entries.size {
+    for i in 0..e.cases.size {
+      for q2 in 0..entries.size {
         if entry_arm[q2] == i {
           lw.lw_b.at(entries[q2])
           lw.cov_branch(e.cases[i].loc)
           lw.at(e.cases[i].loc)
           lw.lw_b.goto(arms[i])
         }
-        q2 = q2 + 1
       }
       lw.lw_b.at(arms[i])
       lw.lower_arm(e.cases[i].body, dest, e)
       lw.goto_if_open(join, e.cases[i].loc)
-      i = i + 1
     }
     if e.has_else || lw.lw_cov.on {
       lw.lw_b.at(other)

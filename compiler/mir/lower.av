@@ -368,15 +368,13 @@ pub class MirLower {
     }
     has_main = false
     run_fn: Function? = nil
-    i = 0
-    while i < fns.size {
-      if fns[i].name == "main" && fns[i].mod_name == p.root_module {
+    for f in fns {
+      if f.name == "main" && f.mod_name == p.root_module {
         has_main = true
       }
-      if fns[i].name == "run" && fns[i].mod_name == p.root_module {
-        run_fn = fns[i]
+      if f.name == "run" && f.mod_name == p.root_module {
+        run_fn = f
       }
-      i = i + 1
     }
     i = 0
     while i < fns.size && !self.failed {
@@ -414,13 +412,10 @@ pub class MirLower {
   // D175).
   pub fn lowered_functions: Array(Function) {
     out: Array(Function) = []
-    i = 0
-    while i < self.lw_all.size {
-      f = self.lw_all[i]
+    for f in self.lw_all {
       if !f.generic && !(f.owner.size > 0 && self.lw_syms.resolver.has_template(f.owner)) {
         out.push(f)
       }
-      i = i + 1
     }
     out
   }
@@ -521,10 +516,8 @@ pub class MirLower {
         if recv >= 0 {
           params.push(recv)
         }
-        i = 0
-        while i < fs.params.size {
-          params.push(self.ty_at(fs.params[i], fnn.loc, "a parameter"))
-          i = i + 1
+        for param in fs.params {
+          params.push(self.ty_at(param, fnn.loc, "a parameter"))
         }
       }
       if self.failed {
@@ -552,12 +545,10 @@ pub class MirLower {
           self.bind_receiver(fnn, recv)
         }
         pn: Array(String) = []
-        i = 0
-        while i < fnn.params.size {
+        for i in 0..fnn.params.size {
           self.lw_b.name_param(i + 1 + base, fnn.params[i].name)
           self.lw_vars[self.var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
           pn.push(fnn.params[i].name)
-          i = i + 1
         }
         self.begin_boxes(fnn.box_names, pn, fs.params, base)
       }

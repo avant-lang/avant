@@ -39,12 +39,10 @@ import mir.flow
 // its storage, after they return.
 fn tk_keeps_none(name: String): Bool {
   names = ["avant_buf_push_byte", "avant_buf_push_str", "avant_buf_push_slice", "avant_buf_push_fmt_f", "avant_buf_push_fmt_i", "avant_buf_append", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_size", "avant_buf_clear", "avant_buf_ensure", "avant_bytes_ensure", "avant_buf_set_size", "avant_buf_set_ident", "avant_buf_starts", "avant_buf_fill_appends", "avant_buf_copy_ranges"]
-  i = 0
-  while i < names.size {
-    if names[i] == name {
+  for nm in names {
+    if nm == name {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -176,12 +174,8 @@ class TkPass {
 // a Buf, and which are owned (made here).
 fn tk_classes(m: MModule, t: TkFunc) {
   f = t.f
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
-    j = 0
-    while j < blk.stmts.size {
-      st = blk.stmts[j]
+  for blk in f.blocks {
+    for st in blk.stmts {
       if st.kind == msk_assign() {
         if p = st.place {
           if r = st.rv {
@@ -201,9 +195,7 @@ fn tk_classes(m: MModule, t: TkFunc) {
           }
         }
       }
-      j = j + 1
     }
-    b = b + 1
   }
   i = 0
   while i < f.locals.size {
@@ -219,12 +211,8 @@ fn tk_classes(m: MModule, t: TkFunc) {
     t.owned[t.find(i)] = false
     i = i + 1
   }
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
-    j = 0
-    while j < blk.stmts.size {
-      st = blk.stmts[j]
+  for blk in f.blocks {
+    for st in blk.stmts {
       x = mir_stmt_def(st)
       if x >= 0 && t.member(x) {
         ok = false
@@ -243,9 +231,7 @@ fn tk_classes(m: MModule, t: TkFunc) {
           t.owned[t.find(x)] = false
         }
       }
-      j = j + 1
     }
-    b = b + 1
   }
 }
 
@@ -349,14 +335,10 @@ fn tk_stmt_escapes(pass: TkPass, t: TkFunc, st: MStmt) {
 
 fn tk_escapes(pass: TkPass, t: TkFunc) {
   f = t.f
-  i = 0
-  while i < t.escapes.size {
+  for i in 0..t.escapes.size {
     t.escapes[i] = false
-    i = i + 1
   }
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
+  for blk in f.blocks {
     j = 0
     while j < blk.stmts.size {
       tk_stmt_escapes(pass, t, blk.stmts[j])
@@ -367,7 +349,6 @@ fn tk_escapes(pass: TkPass, t: TkFunc) {
         tk_keeping(t, c)
       }
     }
-    b = b + 1
   }
 }
 
@@ -379,10 +360,8 @@ fn tk_dead_after(t: TkFunc, outs: Array(Array(Bool)), b: Int, j: Int, x: Int): B
   if tm = blk.term {
     reads: Array(Int) = []
     mir_term_reads(f, tm, reads)
-    k = 0
-    while k < reads.size {
-      live[reads[k]] = true
-      k = k + 1
+    for read in reads {
+      live[read] = true
     }
   }
   i = blk.stmts.size - 1
@@ -454,9 +433,7 @@ fn tk_rewrite(t: TkFunc): Int {
 
 pub fn mir_take_pass(m: MModule) {
   pass = TkPass.new(m)
-  i = 0
-  while i < m.funcs.size {
-    f = m.funcs[i]
+  for f in m.funcs {
     has = false
     if f.blocks.size > 0 {
       k = 0
@@ -471,14 +448,11 @@ pub fn mir_take_pass(m: MModule) {
       pass.index[f.symbol] = pass.infos.size
       pass.infos.push(t)
     }
-    i = i + 1
   }
   changed = true
   while changed {
     changed = false
-    i = 0
-    while i < pass.infos.size {
-      t = pass.infos[i]
+    for t in pass.infos {
       tk_escapes(pass, t)
       k = 1
       while k <= t.f.nparams && k < t.f.locals.size {
@@ -489,14 +463,11 @@ pub fn mir_take_pass(m: MModule) {
         }
         k = k + 1
       }
-      i = i + 1
     }
   }
   n = 0
-  i = 0
-  while i < pass.infos.size {
-    n = n + tk_rewrite(pass.infos[i])
-    i = i + 1
+  for info in pass.infos {
+    n = n + tk_rewrite(info)
   }
   if n > 0 {
     tk_declare(m)

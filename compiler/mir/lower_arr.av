@@ -197,8 +197,7 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
   size = b.types.size_of(et) * n
   b.call(d, "avant_alloc", lw.two(b.c_u64(size.to_i64), lw.buf_tid(aty)))
   rc = b.types.ref_carrying(et)
-  i = 0
-  while i < n {
+  for i in 0..n {
     v = lw.lower_coerced(e.elems[i], et, want)
     if lw.failed {
       return b.c_i32(0)
@@ -210,7 +209,6 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
     } else {
       b.assign(p, b.rv_use(v))
     }
-    i = i + 1
   }
   lw.at(e.loc)
   if rc && n > 0 {

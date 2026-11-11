@@ -54,9 +54,7 @@ pub fn mir_int_text(ty: Int, v: Int64): String {
 
 pub fn mir_place_text(ts: MTypes, p: MPlace): String {
   s = "_${p.local}"
-  i = 0
-  while i < p.proj.size {
-    pr = p.proj[i]
+  for pr in p.proj {
     if pr.kind == mpk_deref() {
       s = "(*${s})"
     } else if pr.kind == mpk_field() {
@@ -64,7 +62,6 @@ pub fn mir_place_text(ts: MTypes, p: MPlace): String {
     } else if o = pr.index {
       s = "${s}[${mir_operand_text(ts, o)}]"
     }
-    i = i + 1
   }
   s
 }
@@ -215,15 +212,13 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
   if k == msk_gc_roots() {
     buf = buf_new()
     buf.push_str("gc.roots")
-    i = 0
-    while i < st.locals.size {
+    for i in 0..st.locals.size {
       if i == 0 {
         buf.push_str(" ")
       } else {
         buf.push_str(", ")
       }
       buf.push_str("_${st.locals[i]}")
-      i = i + 1
     }
     return buf.to_s
   }
@@ -249,13 +244,11 @@ pub fn mir_term_text(ts: MTypes, t: MTerm): String {
     if c = t.cond {
       ty = c.ty
     }
-    i = 0
-    while i < t.values.size {
+    for i in 0..t.values.size {
       if i > 0 {
         buf.push_str(", ")
       }
       buf.push_str("${mir_int_text(ty, t.values[i])}: bb${t.targets[i]}")
-      i = i + 1
     }
     buf.push_str("] else bb${t.targets[t.targets.size - 1]}")
     return buf.to_s
@@ -283,8 +276,7 @@ pub fn mir_file_name(m: MModule, file: Int): String {
 pub fn mir_layout_text(ts: MTypes, l: MLayout): String {
   buf = buf_new()
   buf.push_str("layout %${l.name} = ${mlk_name(l.kind)} {")
-  i = 0
-  while i < l.fields.size {
+  for i in 0..l.fields.size {
     if i > 0 {
       buf.push_str(",")
     }
@@ -293,7 +285,6 @@ pub fn mir_layout_text(ts: MTypes, l: MLayout): String {
       buf.push_str(" ${l.names[i]}")
     }
     buf.push_str(": ${ts.text(l.fields[i])}")
-    i = i + 1
   }
   buf.push_str(" }  size ${l.size} align ${l.align}")
   if l.type_id != 0 {
@@ -316,23 +307,16 @@ pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
   // one avant_type_map call in both back ends).
   l = ts.layouts[tm.layout]
   n = 1
-  j = 0
-  while j < l.ref_words.size {
-    if l.ref_words[j] / 64 + 1 > n {
-      n = l.ref_words[j] / 64 + 1
+  for ref_word in l.ref_words {
+    if ref_word / 64 + 1 > n {
+      n = ref_word / 64 + 1
     }
-    j = j + 1
   }
-  c = 0
-  while c < n {
+  for c in 0..n {
     out.push(0u64)
-    c = c + 1
   }
-  i = 0
-  while i < l.ref_words.size {
-    w = l.ref_words[i]
+  for w in l.ref_words {
     out[w / 64] = out[w / 64] | (1u64 << (w % 64).to_u64)
-    i = i + 1
   }
   out
 }
@@ -363,9 +347,7 @@ pub fn mir_extern_text(m: MModule, e: MExtern): String {
 
 pub fn mir_sorted_externs(m: MModule): Array(MExtern) {
   out: Array(MExtern) = []
-  i = 0
-  while i < m.externs.size {
-    e = m.externs[i]
+  for e in m.externs {
     j = out.size
     out.push(e)
     while j > 0 && str_lt(e.name, out[j - 1].name) {
@@ -373,7 +355,6 @@ pub fn mir_sorted_externs(m: MModule): Array(MExtern) {
       j = j - 1
     }
     out[j] = e
-    i = i + 1
   }
   out
 }
@@ -383,13 +364,11 @@ pub fn mir_func_header(m: MModule, f: MFunc, with_locs: Bool): String {
   s = ts.sigs[f.sig]
   buf = buf_new()
   buf.push_str("fn ${f.symbol}(")
-  i = 0
-  while i < s.params.size {
+  for i in 0..s.params.size {
     if i > 0 {
       buf.push_str(", ")
     }
     buf.push_str("_${i + 1}: ${ts.text(s.params[i])}")
-    i = i + 1
   }
   buf.push_str(") -> ${ts.text(s.ret)}")
   if f.kind == mfk_frame() {
@@ -412,8 +391,7 @@ pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
   buf.push_str(mir_func_header(m, f, with_locs))
   buf.push_str("\n")
   any = false
-  i = 0
-  while i < f.locals.size {
+  for i in 0..f.locals.size {
     if f.valid_local(i) {
       l = f.locals[i]
       buf.push_str("  let _${i}")
@@ -427,7 +405,6 @@ pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
       buf.push_str("\n")
       any = true
     }
-    i = i + 1
   }
   b = 0
   while b < f.blocks.size {
@@ -436,15 +413,12 @@ pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
     }
     blk = f.blocks[b]
     buf.push_str("bb${b}:\n")
-    j = 0
-    while j < blk.stmts.size {
-      st = blk.stmts[j]
+    for st in blk.stmts {
       buf.push_str("  ${mir_stmt_text(m, st)}")
       if with_locs {
         buf.push_str("   ${mir_loc_text(m, f, st.loc)}")
       }
       buf.push_str("\n")
-      j = j + 1
     }
     if t = blk.term {
       buf.push_str("  ${mir_term_text(m.types, t)}")
@@ -473,18 +447,14 @@ pub fn mir_print(m: MModule, with_locs: Bool): String {
   }
   if ts.layouts.size > 0 {
     buf.push_str("\n")
-    i = 0
-    while i < ts.layouts.size {
-      buf.push_str("${mir_layout_text(ts, ts.layouts[i])}\n")
-      i = i + 1
+    for lay in ts.layouts {
+      buf.push_str("${mir_layout_text(ts, lay)}\n")
     }
   }
   if m.strs.size > 0 {
     buf.push_str("\n")
-    i = 0
-    while i < m.strs.size {
+    for i in 0..m.strs.size {
       buf.push_str("const str.${i} = \"${mir_escape(m.strs[i])}\"\n")
-      i = i + 1
     }
   }
   buf.push_str("\n")
@@ -517,11 +487,9 @@ pub fn mir_print(m: MModule, with_locs: Bool): String {
       i = i + 1
     }
   }
-  i = 0
-  while i < m.funcs.size {
+  for fdef in m.funcs {
     buf.push_str("\n")
-    mir_print_func(m, m.funcs[i], with_locs, buf)
-    i = i + 1
+    mir_print_func(m, fdef, with_locs, buf)
   }
   buf.to_s
 }

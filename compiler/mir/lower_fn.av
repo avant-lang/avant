@@ -99,15 +99,13 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
   }
   fields: Array(Int) = []
   names: Array(String) = []
-  i = 0
-  while i < e.cap_names.size {
+  for i in 0..e.cap_names.size {
     bl = lw.box_layout(e.cap_tys[i], e.loc)
     if lw.failed {
       return -1
     }
     fields.push(lw.lw_m.types.ref_to(bl))
     names.push(e.cap_names[i])
-    i = i + 1
   }
   lw.lw_b.note_layout(name, mlk_record(), fields, names)
 }
@@ -215,19 +213,15 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
   } else if k == ex_array_new() {
     lw.prewalk_opt(e.size_expr, encl)
   } else if k == ex_interp() {
-    i = 0
-    while i < e.parts.size {
-      lw.prewalk_opt(e.parts[i].expr, encl)
-      i = i + 1
+    for pt in e.parts {
+      lw.prewalk_opt(pt.expr, encl)
     }
   } else if k == ex_lambda() {
     lw.prewalk_lambda(e, encl)
   } else if k == ex_switch() {
     lw.prewalk_opt(e.cond, encl)
-    i = 0
-    while i < e.cases.size {
-      lw.prewalk_stmts(e.cases[i].body, encl)
-      i = i + 1
+    for cas in e.cases {
+      lw.prewalk_stmts(cas.body, encl)
     }
     if e.has_else {
       lw.prewalk_stmts(e.else_body, encl)
@@ -258,8 +252,7 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
   sym = lw.lambda_symbol(encl)
   e.resolved = sym
   lw.lw_cov.lam_index[sym] = lw.lw_cov.lam_index.size
-  i = 0
-  while i < e.cap_names.size {
+  for i in 0..e.cap_names.size {
     key = "${encl}|${e.cap_names[i]}"
     if !lw.lw_cl.cap_at.has_key(key) {
       lw.lw_cl.cap_at[key] = lw.lw_cl.cap_tys.size
@@ -270,7 +263,6 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
       return
     }
     lw.lw_b.type_id(bl)
-    i = i + 1
   }
   if e.cap_names.size > 0 {
     el = lw.env_layout(e, sym)
@@ -287,12 +279,10 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
 // ---- names through boxes
 
 pub fn mir_name_index(names: Array(String), name: String): Int {
-  i = 0
-  while i < names.size {
+  for i in 0..names.size {
     if names[i] == name {
       return i
     }
-    i = i + 1
   }
   -1
 }
@@ -413,13 +403,10 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
   b = lw.lw_b
   sym = lw.lw_cl.base
   bx: Array(String) = []
-  i = 0
-  while i < names.size {
-    n = names[i]
+  for n in names {
     if !(lw.lw_self > 0 && n == lw.lw_self_name) {
       bx.push(n)
     }
-    i = i + 1
   }
   lw.lw_cl.boxed = bx
   lw.at(lw.lw_fn_loc)
@@ -638,10 +625,8 @@ pub fn (lw: MirLower) lower_pending_lambdas {
   while lw.lw_cl.pending.size > 0 && !lw.failed {
     lam = lw.lw_cl.pending[0]
     rest: Array(MirLam) = []
-    i = 1
-    while i < lw.lw_cl.pending.size {
+    for i in 1..lw.lw_cl.pending.size {
       rest.push(lw.lw_cl.pending[i])
-      i = i + 1
     }
     lw.lw_cl.pending = rest
     lw.lower_thunk(lam)
@@ -689,10 +674,8 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
       }
     }
     caps: Array(String) = []
-    i = 0
-    while i < e.cap_names.size {
-      caps.push(e.cap_names[i])
-      i = i + 1
+    for cap_name in e.cap_names {
+      caps.push(cap_name)
     }
     lw.lw_cl.caps = caps
     if caps.size > 0 {
@@ -730,10 +713,8 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           lw.begin_function(f)
           ps: Array(Int) = []
           ps.push(mt_ref())
-          j = 0
-          while j < fs.params.size {
-            ps.push(lw.ty_at(fs.params[j], f.loc, "a parameter"))
-            j = j + 1
+          for param in fs.params {
+            ps.push(lw.ty_at(param, f.loc, "a parameter"))
           }
           ret = lw.ty_at(fs.ret, f.loc, "a result")
           if lw.failed {
@@ -743,13 +724,11 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           b.name_param(1, "env")
           lw.at(f.loc)
           args: Array(MOperand) = []
-          j = 0
-          while j < fs.params.size {
+          for j in 0..fs.params.size {
             if j < f.params.size {
               b.name_param(j + 2, f.params[j].name)
             }
             args.push(b.copy_local(j + 2))
-            j = j + 1
           }
           if ret == mt_void() {
             b.call(-1, sym, args)
