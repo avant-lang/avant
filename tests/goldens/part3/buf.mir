@@ -5,7 +5,6 @@ layout %elems(u8) = elems { 0: u8 }  size 1 align 1
 layout %Buf = buf { 0 data: ref %elems(u8), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1021
 
 const str.0 = "hi"
-const str.1 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -18,7 +17,7 @@ extern avant_buf_push_str(ref, ref str) -> void collects
 extern avant_buf_take_str(ref) -> ref str collects
 extern avant_buf_to_str(ref) -> ref str collects
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern printf(ref str, ...) -> i32 never
+extern avant_puts_str(ref str) -> void never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @buf.av:1:1 {
   let _0: i32
@@ -39,7 +38,7 @@ bb0:
   call avant_buf_push_str(copy _4, const str.0) collects   @3:4
   call avant_buf_push_byte(copy _4, const i32 33) collects   @4:4
   _5 = call avant_buf_take_str(copy _4) collects   @5:9
-  call printf(const str.1, copy _5) nocollect   @5:3
+  call avant_puts_str(copy _5) nocollect   @5:3
   _0 = const i32 0   @1:1
   gc.leave   @1:1
   return   @1:1

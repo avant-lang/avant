@@ -462,6 +462,16 @@ void avant_puts_f64(double v) {
   fwrite(buf, 1, (size_t)k + 1, stdout);
 }
 
+/* puts of a String: its bytes by length, so a NUL byte inside prints
+ * (Stage 29 W4b1, review 4 section 11; printf's %s stopped at it). */
+void avant_puts_str(const char *s) {
+  size_t n = s ? avant_str_n(s) : 0;
+  if (n) {
+    fwrite(s, 1, n, stdout);
+  }
+  putc('\n', stdout);
+}
+
 void avant_puts_bool(int32_t v) {
   fputs(v ? "true\n" : "false\n", stdout);
 }
@@ -792,13 +802,12 @@ double avant_str_parse_f64_slice(const char *s, int32_t start, int32_t stop, int
 }
 
 char *avant_str_fmt_float(double v, int32_t prec) {
-  /* 400: the longest %.16f (see avant_buf_push_fmt_f). */
+  /* 400: the longest %.64f (see avant_buf_push_fmt_f). */
   char buf[400];
-  if (prec < 0) {
-    prec = 0;
-  }
-  if (prec > 16) {
-    prec = 16;
+  /* 0..64 (the longest text, a sign, 309 digits, the point and 64,
+   * fits); outside traps (Stage 29 W4b1; it was clamped to 0..16). */
+  if (prec < 0 || prec > 64) {
+    avant_trap_precision(prec);
   }
   int k = avant_fmt_fixed(buf, v, prec);
   if (k < 0) {

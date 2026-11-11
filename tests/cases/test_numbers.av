@@ -150,6 +150,16 @@ fn parse_cases: Array(FCase) {
   xs
 }
 
+fn small_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("puts-nul", "fn main {\n  s = \"a\${chr(0)}b\"\n  puts(s)\n  puts(s.size)\n}\n", "a${chr(0)}b\n3\n"))
+  xs.push(accepted("precision", "fn main {\n  puts(fmt_float(1.0 / 3.0, 20))\n  buf = buf_new()\n  buf.push_fmt_f(2.5, 0)\n  buf.push_byte(32)\n  buf.push_fmt_f(0.1, 17)\n  puts(buf.to_s)\n}\n", "0.33333333333333331483\n2 0.10000000000000001\n"))
+  xs.push(trapped("precision-neg", "fn main {\n  puts(fmt_float(1.0, -1))\n}\n", "", "avant runtime: precision -1 out of range (0..64)"))
+  xs.push(trapped("precision-big", "fn main {\n  buf = buf_new()\n  buf.push_fmt_f(1.0, 65)\n}\n", "", "avant runtime: precision 65 out of range (0..64)"))
+  xs.push(refused("float-literal-range", "fn main {\n  x = 1e400\n  puts(x)\n}\n", "float literal 1e400 is out of range for Float64"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -213,6 +223,9 @@ fn test_main(c: Checks) {
     }
     for f_parse_cases in parse_cases() {
       all.push(f_parse_cases)
+    }
+    for f_small_cases in small_cases() {
+      all.push(f_small_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

@@ -18,9 +18,8 @@ layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 
 const str.0 = "%d\0A"
 const str.1 = "msg"
 const str.2 = ""
-const str.3 = "%s\0A"
-const str.4 = "-"
-const str.5 = "worker"
+const str.3 = "-"
+const str.4 = "worker"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -45,6 +44,7 @@ extern avant_gate_wait(u64) -> void collects
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i32 collects
+extern avant_puts_str(ref str) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
@@ -301,7 +301,7 @@ bb8:
   call printf(const str.0, copy _38) nocollect   @135:3
   call printf(const str.0, copy _30) nocollect   @136:3
   call printf(const str.0, copy _29) nocollect   @137:3
-  call printf(const str.3, copy _31) nocollect   @138:3
+  call avant_puts_str(copy _31) nocollect   @138:3
   _39 = call av.channels/Channel(String).new(const i32 4) collects   @139:28
   _40 = copy _39   @139:11
   _41 = call avant_alloc(const u64 0, const u32 65535) collects   @140:37
@@ -426,12 +426,12 @@ bb26:
   check.bounds const i32 0, copy _103   @160:14
   _104 = copy (*_102).0   @160:14
   _105 = copy (*_104)[const i32 0]   @160:14
-  call printf(const str.3, copy _105) nocollect   @160:3
+  call avant_puts_str(copy _105) nocollect   @160:3
   _106 = copy (*_102).1   @161:14
   check.bounds const i32 3, copy _106   @161:14
   _107 = copy (*_102).0   @161:14
   _108 = copy (*_107)[const i32 3]   @161:14
-  call printf(const str.3, copy _108) nocollect   @161:3
+  call avant_puts_str(copy _108) nocollect   @161:3
   _0 = const i32 0   @101:1
   gc.leave   @101:1
   return   @101:1
@@ -1299,7 +1299,7 @@ bb1:
 
 bb2:
   _9 = call avant_str_from_int(copy _7) collects   @121:31
-  _10 = call avant_str_concat(copy _6, const str.4) collects   @121:18
+  _10 = call avant_str_concat(copy _6, const str.3) collects   @121:18
   _11 = call avant_str_concat(copy _10, copy _9) collects   @121:18
   call av.channels/Channel(String).send(copy _4, copy _11) collects   @121:12
   _12 = add.chk copy _7, const i32 1   @122:13
@@ -1332,7 +1332,7 @@ bb0:
   _4 = copy _3   @144:18
   _5 = copy (*_2).1   @144:18
   _6 = copy _5   @144:18
-  _7 = call avant_str_cat_i32(const str.5, copy _6) collects   @145:20
+  _7 = call avant_str_cat_i32(const str.4, copy _6) collects   @145:20
   call av.channels/Channel(String).send(copy _4, copy _7) collects   @145:14
   _0 = copy _6   @144:18
   gc.leave   @144:18

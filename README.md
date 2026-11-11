@@ -234,7 +234,7 @@ fn id(x: T): T {
 
 ### Primitives
 
-`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i` (`x.exp` or `x.exp()`). Two `Bool`s compare with `==` and `!=`. `puts` and interpolation print a `Bool` as `true` or `false`, and a `Float64` as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf` (the same text in JSON, where NaN and the infinities are `null`); `fmt_float(x, digits)` and `push_fmt_f` give a fixed number of decimals. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
+`Int` is a 32-bit signed integer. `Int64` and `UInt64` are 64-bit. `Float64`, `Bool`, and `String` are the other everyday primitives. `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i` (`x.exp` or `x.exp()`). Two `Bool`s compare with `==` and `!=`. `puts` and interpolation print a `Bool` as `true` or `false`, and a `Float64` as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf` (the same text in JSON, where NaN and the infinities are `null`); `fmt_float(x, digits)` and `push_fmt_f` give a fixed number of decimals, 0 to 64 (outside traps). A float literal too large for `Float64` (`1e400`) is a compile error, as an integer literal out of range is. `puts` of a `String` writes all its bytes, a NUL byte included. `Void` is the result of a function that does not return a value. An omitted return type means `Void`.
 
 ### Nil and unions
 

@@ -8,15 +8,14 @@ layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: 
 const str.0 = "pin churn "
 const str.1 = " padding padding"
 const str.2 = "short"
-const str.3 = "%s\0A"
-const str.4 = "hello"
-const str.5 = "world"
-const str.6 = "%d\0A"
-const str.7 = "longer"
-const str.8 = "boxed"
-const str.9 = "!"
-const str.10 = "i"
-const str.11 = "probe-"
+const str.3 = "hello"
+const str.4 = "world"
+const str.5 = "%d\0A"
+const str.6 = "longer"
+const str.7 = "boxed"
+const str.8 = "!"
+const str.9 = "i"
+const str.10 = "probe-"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -29,6 +28,7 @@ extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_pin(ref) -> void never
 extern avant_pin_count() -> i32 collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
@@ -144,7 +144,7 @@ bb1:
   return   @47:7
 
 bb2:
-  call printf(const str.3, const str.2) nocollect   @49:5
+  call avant_puts_str(const str.2) nocollect   @49:5
   call avant_unpin(copy _3) nocollect   @45:3
   _0 = const i32 -1   @51:3
   gc.leave   @51:3
@@ -229,35 +229,35 @@ bb0:
   call avant_io_init_argv(copy _1, copy _2) collects   @54:1
   _3 = call avant_pin_count() collects   @55:12
   _4 = copy _3   @55:8
-  _5 = call avant_str_concat(const str.4, const str.5) collects   @56:15
+  _5 = call avant_str_concat(const str.3, const str.4) collects   @56:15
   _6 = copy _5   @56:5
   _7 = copy _6   @57:3
   call avant_pin(copy _7) nocollect   @57:3
   _8 = call avant_pin_count() collects   @58:12
   _9 = sub.chk copy _8, copy _4   @58:31
-  call printf(const str.6, copy _9) nocollect   @58:5
+  call printf(const str.5, copy _9) nocollect   @58:5
   _10 = copy _6   @59:5
   call avant_pin(copy _10) nocollect   @59:5
   _11 = call avant_pin_count() collects   @60:14
   _12 = sub.chk copy _11, copy _4   @60:33
-  call printf(const str.6, copy _12) nocollect   @60:7
+  call printf(const str.5, copy _12) nocollect   @60:7
   call avant_unpin(copy _10) nocollect   @59:5
   _13 = call avant_pin_count() collects   @62:12
   _14 = sub.chk copy _13, copy _4   @62:31
-  call printf(const str.6, copy _14) nocollect   @62:5
+  call printf(const str.5, copy _14) nocollect   @62:5
   _15 = call av.pins/churn(const i32 30000) collects   @63:10
-  call printf(const str.6, copy _15) nocollect   @63:5
-  call printf(const str.3, copy _6) nocollect   @64:5
+  call printf(const str.5, copy _15) nocollect   @63:5
+  call avant_puts_str(copy _6) nocollect   @64:5
   call avant_unpin(copy _7) nocollect   @57:3
   _16 = call avant_pin_count() collects   @66:10
   _17 = sub.chk copy _16, copy _4   @66:29
-  call printf(const str.6, copy _17) nocollect   @66:3
-  _18 = call av.pins/early(const str.7, copy _4) collects   @67:8
-  call printf(const str.6, copy _18) nocollect   @67:3
+  call printf(const str.5, copy _17) nocollect   @66:3
+  _18 = call av.pins/early(const str.6, copy _4) collects   @67:8
+  call printf(const str.5, copy _18) nocollect   @67:3
   _19 = call avant_pin_count() collects   @68:10
   _20 = sub.chk copy _19, copy _4   @68:29
-  call printf(const str.6, copy _20) nocollect   @68:3
-  _21 = call avant_str_concat(const str.8, const str.9) collects   @70:23
+  call printf(const str.5, copy _20) nocollect   @68:3
+  _21 = call avant_str_concat(const str.7, const str.8) collects   @70:23
   _22 = call av.pins/Box.new(copy _21, const i32 3) collects   @70:10
   _23 = copy _22   @70:5
   _24 = const i32 0   @71:9
@@ -275,10 +275,10 @@ bb2:
   branch copy _28, bb4, bb5   @75:7
 
 bb3:
-  call printf(const str.6, copy _24) nocollect   @89:3
+  call printf(const str.5, copy _24) nocollect   @89:3
   _39 = call avant_pin_count() collects   @90:10
   _40 = sub.chk copy _39, copy _4   @90:29
-  call printf(const str.6, copy _40) nocollect   @90:3
+  call printf(const str.5, copy _40) nocollect   @90:3
   _41 = copy _23   @93:3
   call avant_pin(copy _41) nocollect   @93:3
   _42 = const i32 0   @94:7
@@ -299,7 +299,7 @@ bb6:
   goto bb3   @80:9
 
 bb7:
-  _31 = call avant_str_cat_i32(const str.10, copy _25) collects   @82:15
+  _31 = call avant_str_cat_i32(const str.9, copy _25) collects   @82:15
   _32 = copy _31   @82:13
   _33 = copy _32   @83:7
   call avant_pin(copy _33) nocollect   @83:7
@@ -327,11 +327,11 @@ bb9:
 bb10:
   _47 = call avant_pin_count() collects   @104:12
   _48 = sub.chk copy _47, copy _4   @104:31
-  call printf(const str.6, copy _48) nocollect   @104:5
+  call printf(const str.5, copy _48) nocollect   @104:5
   call avant_unpin(copy _41) nocollect   @93:3
   _49 = call avant_pin_count() collects   @106:10
   _50 = sub.chk copy _49, copy _4   @106:29
-  call printf(const str.6, copy _50) nocollect   @106:3
+  call printf(const str.5, copy _50) nocollect   @106:3
   _51 = const i32 0   @108:5
   _52 = const i32 0   @109:5
   goto bb15   @110:3
@@ -354,7 +354,7 @@ bb15:
   branch copy _53, bb16, bb17   @110:3
 
 bb16:
-  _54 = call avant_str_cat_i32(const str.11, copy _52) collects   @111:9
+  _54 = call avant_str_cat_i32(const str.10, copy _52) collects   @111:9
   _55 = copy _54   @111:7
   _56 = copy _55   @112:5
   call avant_pin(copy _56) nocollect   @112:5
@@ -367,12 +367,12 @@ bb16:
   goto bb15   @110:3
 
 bb17:
-  call printf(const str.6, copy _51) nocollect   @117:3
+  call printf(const str.5, copy _51) nocollect   @117:3
   _60 = call avant_pin_count() collects   @118:10
   _61 = sub.chk copy _60, copy _4   @118:29
-  call printf(const str.6, copy _61) nocollect   @118:3
+  call printf(const str.5, copy _61) nocollect   @118:3
   _62 = copy (*_23).0   @119:9
-  call printf(const str.3, copy _62) nocollect   @119:3
+  call avant_puts_str(copy _62) nocollect   @119:3
   _0 = const i32 0   @54:1
   gc.leave   @54:1
   return   @54:1

@@ -169,16 +169,15 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_f(void *buf, double v, int32_t prec) {
-  /* 400: the longest %.16f (a sign, 309 digits, the point, 16); 64 let
+  /* 400: the longest %.64f (a sign, 309 digits, the point, 64); 64 let
    * snprintf truncate a value of 1e47 or more and the append read past
    * the buffer (W18S). */
   char tmp[400];
   int k;
-  if (prec < 0) {
-    prec = 0;
-  }
-  if (prec > 16) {
-    prec = 16;
+  /* 0..64 (the longest text, a sign, 309 digits, the point and 64,
+   * fits); outside traps (Stage 29 W4b1; it was clamped to 0..16). */
+  if (prec < 0 || prec > 64) {
+    avant_trap_precision(prec);
   }
   k = avant_fmt_fixed(tmp, v, prec);
   if (k < 0) {

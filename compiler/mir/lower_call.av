@@ -231,7 +231,8 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
 // puts (calls.av:2043-2075): printf with the old formats for integers
 // and strings; puts_u prints "%u\n". A Float64 prints its one text and a
 // Bool the word true or false (Stage 29 W4b1, D293, D295 R7), through
-// avant_puts_f64 and avant_puts_bool.
+// avant_puts_f64 and avant_puts_bool; a String prints by its length
+// (avant_puts_str), a NUL byte included.
 pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOperand {
   b = lw.lw_b
   ty = lw.ety(arg)
@@ -242,6 +243,10 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
   lw.at(loc)
   if !unsigned && ty == mt_f64() {
     b.call(-1, "avant_puts_f64", lw.one(v))
+    return b.c_i32(0)
+  }
+  if !unsigned && ty == mt_str() {
+    b.call(-1, "avant_puts_str", lw.one(v))
     return b.c_i32(0)
   }
   if !unsigned && ty == mt_bool() {

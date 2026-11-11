@@ -9,7 +9,6 @@ layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: 
 const str.0 = "x"
 const str.1 = "y"
 const str.2 = "%d\0A"
-const str.3 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -20,6 +19,7 @@ extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_i32(ref, i32) -> void collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
 extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @generic_targs.av:12:1 {
@@ -58,7 +58,7 @@ bb0:
   check.bounds const i32 1, copy _9   @20:9
   _10 = copy (*_6).0   @20:9
   _11 = copy (*_10)[const i32 1]   @20:9
-  call printf(const str.3, copy _11) nocollect   @20:3
+  call avant_puts_str(copy _11) nocollect   @20:3
   _0 = const i32 0   @12:1
   gc.leave   @12:1
   return   @12:1

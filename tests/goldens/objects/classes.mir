@@ -6,20 +6,19 @@ layout %classes.Plain = class { 0 x: i32, 1 s: ref str, 2 other: ref %classes.Co
 layout %classes.Defaults = class { 0 kind: i32, 1 text: ref str }  size 16 align 8 id 3
 layout %classes.Pair = struct { 0 a: i32, 1 b: ref str }  size 16 align 8
 
-const str.0 = "%s\0A"
-const str.1 = "mk "
-const str.2 = "%d\0A"
-const str.3 = "renamed"
-const str.4 = "plain"
-const str.5 = "arg"
-const str.6 = "recv"
-const str.7 = "value"
-const str.8 = "holder"
-const str.9 = "c"
-const str.10 = ":"
-const str.11 = "ctr"
-const str.12 = ""
-const str.13 = "dflt"
+const str.0 = "mk "
+const str.1 = "%d\0A"
+const str.2 = "renamed"
+const str.3 = "plain"
+const str.4 = "arg"
+const str.5 = "recv"
+const str.6 = "value"
+const str.7 = "holder"
+const str.8 = "c"
+const str.9 = ":"
+const str.10 = "ctr"
+const str.11 = ""
+const str.12 = "dflt"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -31,6 +30,7 @@ typemap 3 %classes.Defaults stride 0 bits [0x2]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_bool(i32) -> ref str collects
@@ -46,7 +46,7 @@ fn av.classes/say(_1: ref str, _2: i32) -> i32 leaf @classes.av:69:1 {
   let _2 (v): i32
 
 bb0:
-  call printf(const str.0, copy _1) nocollect   @70:3
+  call avant_puts_str(copy _1) nocollect   @70:3
   _0 = copy _2   @71:3
   return   @71:3
 }
@@ -78,8 +78,8 @@ fn av.classes/mk_counter(_1: ref str) -> ref %classes.Counter frame @classes.av:
 bb0:
   gc.enter   @81:1
   gc.roots _1   @81:1
-  _2 = call avant_str_concat(const str.1, copy _1) collects   @82:8
-  call printf(const str.0, copy _2) nocollect   @82:3
+  _2 = call avant_str_concat(const str.0, copy _1) collects   @82:8
+  call avant_puts_str(copy _2) nocollect   @82:3
   _3 = call av.classes/Counter.new(const i32 100) collects   @83:10
   _0 = copy _3   @83:10
   gc.leave   @83:10
@@ -150,22 +150,22 @@ bb0:
   _3 = call av.classes/Counter.new(const i32 5) collects   @87:14
   _4 = copy _3   @87:5
   _5 = call av.classes/Counter.label(copy _4) collects   @88:9
-  call printf(const str.0, copy _5) nocollect   @88:3
+  call avant_puts_str(copy _5) nocollect   @88:3
   _6 = call av.classes/Counter.incr(copy _4) nocollect   @89:9
-  call printf(const str.2, copy _6) nocollect   @89:3
+  call printf(const str.1, copy _6) nocollect   @89:3
   _7 = call av.classes/Counter.incr(copy _4) nocollect   @90:9
-  call printf(const str.2, copy _7) nocollect   @90:3
+  call printf(const str.1, copy _7) nocollect   @90:3
   _8 = call av.classes/Counter.add(copy _4, const i32 7) nocollect   @91:9
-  call printf(const str.2, copy _8) nocollect   @91:3
+  call printf(const str.1, copy _8) nocollect   @91:3
   _9 = call av.classes/Counter.label(copy _4) collects   @92:9
-  call printf(const str.0, copy _9) nocollect   @92:3
-  call av.classes/Counter.rename(copy _4, const str.3) nocollect   @93:4
+  call avant_puts_str(copy _9) nocollect   @92:3
+  call av.classes/Counter.rename(copy _4, const str.2) nocollect   @93:4
   _10 = copy (*_4).1   @94:9
-  call printf(const str.0, copy _10) nocollect   @94:3
+  call avant_puts_str(copy _10) nocollect   @94:3
   _11 = copy (*_4).5.1   @95:11
-  call printf(const str.0, copy _11) nocollect   @95:3
+  call avant_puts_str(copy _11) nocollect   @95:3
   _12 = copy (*_4).5.0   @96:11
-  call printf(const str.2, copy _12) nocollect   @96:3
+  call printf(const str.1, copy _12) nocollect   @96:3
   _13 = copy (*_4).0   @97:7
   _14 = add.chk copy _13, const i32 5   @97:7
   (*_4).0 = copy _14   @97:7
@@ -176,21 +176,21 @@ bb0:
   _18 = mul.chk copy _17, const i32 3   @99:7
   (*_4).0 = copy _18   @99:7
   _19 = copy (*_4).0   @100:9
-  call printf(const str.2, copy _19) nocollect   @100:3
+  call printf(const str.1, copy _19) nocollect   @100:3
   _20 = call av.classes/Counter.make(const i32 9) collects   @102:14
   _21 = copy _20   @102:5
   _22 = call av.classes/Counter.label(copy _21) collects   @103:9
-  call printf(const str.0, copy _22) nocollect   @103:3
+  call avant_puts_str(copy _22) nocollect   @103:3
   _23 = call av.classes/Plain.new() collects   @105:12
   _24 = copy _23   @105:5
   _25 = copy (*_24).0   @106:9
-  call printf(const str.2, copy _25) nocollect   @106:3
+  call printf(const str.1, copy _25) nocollect   @106:3
   _26 = copy (*_24).1   @107:9
   _27 = call avant_str_size(copy _26) nocollect   @107:11
-  call printf(const str.2, copy _27) nocollect   @107:3
+  call printf(const str.1, copy _27) nocollect   @107:3
   (*_24).0 = const i32 4   @108:7
   barrier copy _24   @109:7
-  (*_24).1 = const str.4   @109:7
+  (*_24).1 = const str.3   @109:7
   barrier copy _24   @110:11
   (*_24).2 = copy _21   @110:11
   _28 = copy (*_24).2   @111:11
@@ -204,7 +204,7 @@ bb1:
 
 bb2:
   _31 = copy (*_21).0   @114:9
-  call printf(const str.2, copy _31) nocollect   @114:3
+  call printf(const str.1, copy _31) nocollect   @114:3
   _32 = copy (*_24).2   @115:12
   _33 = ne copy _32, const ref %classes.Counter null   @115:3
   branch copy _33, bb3, bb4   @115:3
@@ -212,33 +212,33 @@ bb2:
 bb3:
   _34 = copy _32   @115:3
   _35 = call av.classes/Counter.label(copy _34) collects   @116:12
-  call printf(const str.0, copy _35) nocollect   @116:5
+  call avant_puts_str(copy _35) nocollect   @116:5
   goto bb4   @115:3
 
 bb4:
   _36 = call av.classes/Defaults.new() collects   @119:15
   _37 = copy _36   @119:5
   _38 = copy (*_37).0   @120:9
-  call printf(const str.2, copy _38) nocollect   @120:3
+  call printf(const str.1, copy _38) nocollect   @120:3
   _39 = copy (*_37).1   @121:9
-  call printf(const str.0, copy _39) nocollect   @121:3
+  call avant_puts_str(copy _39) nocollect   @121:3
   _40 = call av.classes/pick(copy _4, copy _21, const bool true) nocollect   @123:8
   _41 = copy (*_40).0   @123:24
-  call printf(const str.2, copy _41) nocollect   @123:3
+  call printf(const str.1, copy _41) nocollect   @123:3
   _42 = call av.classes/pick(copy _4, copy _21, const bool false) nocollect   @124:8
   _43 = copy (*_42).0   @124:25
-  call printf(const str.2, copy _43) nocollect   @124:3
+  call printf(const str.1, copy _43) nocollect   @124:3
   _44 = copy _4   @125:9
   (*_44).0 = const i32 1   @126:11
   _45 = copy (*_4).0   @127:9
-  call printf(const str.2, copy _45) nocollect   @127:3
-  _46 = call av.classes/say(const str.5, const i32 3) nocollect   @130:30
-  _47 = call av.classes/mk_counter(const str.6) collects   @130:7
+  call printf(const str.1, copy _45) nocollect   @127:3
+  _46 = call av.classes/say(const str.4, const i32 3) nocollect   @130:30
+  _47 = call av.classes/mk_counter(const str.5) collects   @130:7
   _48 = call av.classes/Counter.add(copy _47, copy _46) nocollect   @130:25
   _49 = copy _48   @130:5
-  call printf(const str.2, copy _49) nocollect   @131:3
-  _50 = call av.classes/say(const str.7, const i32 8) nocollect   @133:28
-  _51 = call av.classes/mk_counter(const str.8) collects   @133:3
+  call printf(const str.1, copy _49) nocollect   @131:3
+  _50 = call av.classes/say(const str.6, const i32 8) nocollect   @133:28
+  _51 = call av.classes/mk_counter(const str.7) collects   @133:3
   (*_51).0 = copy _50   @133:26
   _0 = const i32 0   @86:1
   gc.leave   @86:1
@@ -254,7 +254,7 @@ bb0:
   gc.enter   @22:3
   gc.roots _1   @22:3
   (*_1).0 = copy _2   @23:12
-  _3 = call avant_str_cat_i32(const str.9, copy _2) collects   @24:17
+  _3 = call avant_str_cat_i32(const str.8, copy _2) collects   @24:17
   barrier copy _1   @24:15
   (*_1).1 = copy _3   @24:15
   gc.leave   @22:3
@@ -346,13 +346,13 @@ bb0:
   _9 = call avant_str_from_bool(copy _8) collects   @39:29
   _10 = copy (*_1).4   @39:35
   _11 = call avant_str_from_float(copy _10) collects   @39:35
-  _12 = call avant_str_concat(copy _2, const str.10) collects   @39:5
+  _12 = call avant_str_concat(copy _2, const str.9) collects   @39:5
   _13 = call avant_str_concat(copy _12, copy _4) collects   @39:5
-  _14 = call avant_str_concat(copy _13, const str.10) collects   @39:5
+  _14 = call avant_str_concat(copy _13, const str.9) collects   @39:5
   _15 = call avant_str_concat(copy _14, copy _6) collects   @39:5
-  _16 = call avant_str_concat(copy _15, const str.10) collects   @39:5
+  _16 = call avant_str_concat(copy _15, const str.9) collects   @39:5
   _17 = call avant_str_concat(copy _16, copy _9) collects   @39:5
-  _18 = call avant_str_concat(copy _17, const str.10) collects   @39:5
+  _18 = call avant_str_concat(copy _17, const str.9) collects   @39:5
   _19 = call avant_str_concat(copy _18, copy _11) collects   @39:5
   _0 = copy _19   @39:5
   gc.leave   @39:5
@@ -412,12 +412,12 @@ bb0:
   _2 = call avant_alloc(const u64 56, const u32 1) collects   @14:1
   (*_2).0 = const i32 10   @15:3
   barrier copy _2   @16:3
-  (*_2).1 = const str.11   @16:3
+  (*_2).1 = const str.10   @16:3
   (*_2).2 = const i64 0   @17:3
   (*_2).3 = const bool true   @18:3
   (*_2).4 = const f64 0x3FE0000000000000 /* 0.5 */   @19:3
   barrier copy _2   @20:3
-  (*_2).5.1 = const str.12   @20:3
+  (*_2).5.1 = const str.11   @20:3
   call av.classes/Counter.initialize(copy _2, copy _1) collects   @14:1
   _0 = copy _2   @14:1
   gc.leave   @14:1
@@ -433,7 +433,7 @@ bb0:
   gc.roots   @55:1
   _1 = call avant_alloc(const u64 24, const u32 2) collects   @55:1
   barrier copy _1   @57:3
-  (*_1).1 = const str.12   @57:3
+  (*_1).1 = const str.11   @57:3
   _0 = copy _1   @55:1
   gc.leave   @55:1
   return   @55:1
@@ -449,7 +449,7 @@ bb0:
   _1 = call avant_alloc(const u64 16, const u32 3) collects   @61:1
   (*_1).0 = const i32 3   @62:3
   barrier copy _1   @63:3
-  (*_1).1 = const str.13   @63:3
+  (*_1).1 = const str.12   @63:3
   call av.classes/Defaults.initialize(copy _1) nocollect   @61:1
   _0 = copy _1   @61:1
   gc.leave   @61:1

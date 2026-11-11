@@ -154,7 +154,7 @@ static int avant_fmt_fixed_q(char *out, uint64_t q, int neg, int prec) {
 static int avant_fmt_fixed(char *out, double v, int prec) {
   uint64_t q;
   int neg;
-  if (!avant_fmt_scaled(v, prec, &q, &neg)) {
+  if (prec < 0 || prec > 16 || !avant_fmt_scaled(v, prec, &q, &neg)) {
     return -1;
   }
   return avant_fmt_fixed_q(out, q, neg, prec);

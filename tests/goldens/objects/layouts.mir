@@ -17,12 +17,11 @@ const str.4 = "inner-"
 const str.5 = "ref-"
 const str.6 = "last-"
 const str.7 = "bad string at "
-const str.8 = "%s\0A"
-const str.9 = "bad box at "
-const str.10 = "bad scalar at "
-const str.11 = "%d\0A"
-const str.12 = "node"
-const str.13 = ""
+const str.8 = "bad box at "
+const str.9 = "bad scalar at "
+const str.10 = "%d\0A"
+const str.11 = "node"
+const str.12 = ""
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -36,6 +35,7 @@ typemap 5 %layouts.Box stride 0 bits [0x1c]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
@@ -259,7 +259,7 @@ bb2:
   branch copy _32, bb5, bb4   @157:36
 
 bb3:
-  call printf(const str.11, copy _3) nocollect   @169:3
+  call printf(const str.10, copy _3) nocollect   @169:3
   _0 = const i32 0   @136:1
   gc.leave   @136:1
   return   @136:1
@@ -279,7 +279,7 @@ bb5:
 
 bb6:
   _39 = call avant_str_cat_i32(const str.7, copy _4) collects   @158:12
-  call printf(const str.8, copy _39) nocollect   @158:7
+  call avant_puts_str(copy _39) nocollect   @158:7
   goto bb7   @157:5
 
 bb7:
@@ -321,8 +321,8 @@ bb11:
   branch copy _54, bb12, bb13   @160:5
 
 bb12:
-  _61 = call avant_str_cat_i32(const str.9, copy _4) collects   @161:12
-  call printf(const str.8, copy _61) nocollect   @161:7
+  _61 = call avant_str_cat_i32(const str.8, copy _4) collects   @161:12
+  call avant_puts_str(copy _61) nocollect   @161:7
   goto bb13   @160:5
 
 bb13:
@@ -362,8 +362,8 @@ bb19:
   branch copy _71, bb20, bb21   @163:5
 
 bb20:
-  _74 = call avant_str_cat_i32(const str.10, copy _4) collects   @164:12
-  call printf(const str.8, copy _74) nocollect   @164:7
+  _74 = call avant_str_cat_i32(const str.9, copy _4) collects   @164:12
+  call avant_puts_str(copy _74) nocollect   @164:7
   goto bb21   @163:5
 
 bb21:
@@ -417,7 +417,7 @@ bb0:
   barrier copy _1   @15:3
   (*_1).1 = const ref %layouts.Node null   @15:3
   barrier copy _1   @16:3
-  (*_1).2 = const str.12   @16:3
+  (*_1).2 = const str.11   @16:3
   _0 = copy _1   @13:1
   gc.leave   @13:1
   return   @13:1
@@ -436,7 +436,7 @@ bb0:
   barrier copy _1   @21:3
   (*_1).1 = copy _2   @21:3
   barrier copy _1   @26:3
-  (*_1).6 = const str.13   @26:3
+  (*_1).6 = const str.12   @26:3
   barrier copy _1   @27:3
   (*_1).7 = const ref str null   @27:3
   _0 = copy _1   @19:1
@@ -453,7 +453,7 @@ bb0:
   gc.roots   @30:1
   _1 = call avant_alloc(const u64 568, const u32 4) collects   @30:1
   barrier copy _1   @101:3
-  (*_1).70 = const str.13   @101:3
+  (*_1).70 = const str.12   @101:3
   _0 = copy _1   @30:1
   gc.leave   @30:1
   return   @30:1
@@ -469,9 +469,9 @@ bb0:
   gc.roots _1   @110:1
   _2 = call avant_alloc(const u64 40, const u32 5) collects   @110:1
   barrier copy _2   @112:3
-  (*_2).1.2 = const str.13   @112:3
+  (*_2).1.2 = const str.12   @112:3
   barrier copy _2   @113:3
-  (*_2).2 = const str.13   @113:3
+  (*_2).2 = const str.12   @113:3
   call av.layouts/Box.initialize(copy _2, copy _1) nocollect   @110:1
   _0 = copy _2   @110:1
   gc.leave   @110:1

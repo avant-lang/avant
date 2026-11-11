@@ -87,6 +87,13 @@ void avant_trap_slice(int32_t start, int32_t stop, int32_t size) {
   exit(1);
 }
 
+/* A fixed-point precision outside 0..64 (Stage 29 W4b1: fmt_float and
+ * push_fmt_f used to clamp it to 0..16 silently). */
+void avant_trap_precision(int32_t prec) {
+  fprintf(stderr, "avant runtime: precision %d out of range (0..64)\n", prec);
+  exit(1);
+}
+
 /* A negative count where a size is meant (Stage 29 W4b1). what names the
  * operation: 0 Array(T).new's size, 1 repeat_byte's count. */
 void avant_trap_negative(int32_t n, int32_t what) {

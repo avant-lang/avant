@@ -18,19 +18,18 @@ const str.3 = "%d\0A"
 const str.4 = "%lld\0A"
 const str.5 = "%llu\0A"
 const str.6 = "not true is true"
-const str.7 = "%s\0A"
-const str.8 = "not true is false"
-const str.9 = "hello"
-const str.10 = " "
-const str.11 = "world"
-const str.12 = "literal"
-const str.13 = "ABC"
-const str.14 = "n="
-const str.15 = "-tail"
-const str.16 = "first"
-const str.17 = "pair"
-const str.18 = "!"
-const str.19 = "h"
+const str.7 = "not true is false"
+const str.8 = "hello"
+const str.9 = " "
+const str.10 = "world"
+const str.11 = "literal"
+const str.12 = "ABC"
+const str.13 = "n="
+const str.14 = "-tail"
+const str.15 = "first"
+const str.16 = "pair"
+const str.17 = "!"
+const str.18 = "h"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -44,6 +43,7 @@ extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_bool(i32) -> void never
 extern avant_puts_f64(f64) -> void never
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
@@ -337,30 +337,30 @@ bb0:
   branch copy _17, bb1, bb2   @83:3
 
 bb1:
-  call printf(const str.7, const str.6) nocollect   @84:5
+  call avant_puts_str(const str.6) nocollect   @84:5
   goto bb3   @83:3
 
 bb2:
-  call printf(const str.7, const str.8) nocollect   @86:5
+  call avant_puts_str(const str.7) nocollect   @86:5
   goto bb3   @83:3
 
 bb3:
   _18 = call ffi_mixed(const i32 1, const f64 0x4006000000000000 /* 2.75 */, const bool true, const i64 1000) collects   @88:11
   call printf(const str.3, copy _18) nocollect   @88:3
-  _19 = call avant_str_concat(const str.9, const str.10) collects   @90:18
-  _20 = call avant_str_concat(copy _19, const str.11) collects   @90:24
+  _19 = call avant_str_concat(const str.8, const str.9) collects   @90:18
+  _20 = call avant_str_concat(copy _19, const str.10) collects   @90:24
   _21 = copy _20   @90:8
   _22 = call ffi_strlen(copy _21) collects   @91:11
   call printf(const str.3, copy _22) nocollect   @91:3
-  _23 = const str.12   @92:23
+  _23 = const str.11   @92:23
   _24 = call ffi_strlen(copy _23) collects   @92:11
   call printf(const str.3, copy _24) nocollect   @92:3
   _25 = call ffi_static_str() collects   @93:11
-  call printf(const str.7, copy _25) nocollect   @93:3
+  call avant_puts_str(copy _25) nocollect   @93:3
   _26 = call ffi_static_str() collects   @94:11
   _27 = copy _26   @94:6
-  call printf(const str.7, copy _27) nocollect   @95:3
-  _28 = const str.13   @96:8
+  call avant_puts_str(copy _27) nocollect   @95:3
+  _28 = const str.12   @96:8
   _29 = call avant_str_size(copy _28) nocollect   @97:36
   _30 = call ffi_bytes_sum(copy _28, copy _29) collects   @97:11
   call printf(const str.3, copy _30) nocollect   @97:3
@@ -375,8 +375,8 @@ bb4:
   branch copy _34, bb5, bb6   @104:3
 
 bb5:
-  _35 = call avant_str_cat_i32(const str.14, copy _33) collects   @105:32
-  _36 = call avant_str_concat(copy _35, const str.15) collects   @105:41
+  _35 = call avant_str_cat_i32(const str.13, copy _33) collects   @105:32
+  _36 = call avant_str_concat(copy _35, const str.14) collects   @105:41
   _37 = call ffi_strlen(copy _36) collects   @105:20
   _38 = add.chk copy _32, copy _37   @105:15
   _32 = copy _38   @105:9
@@ -390,11 +390,11 @@ bb6:
   _41 = copy _40   @110:5
   _42 = call ffi_cell_get(copy _41) collects   @111:11
   call printf(const str.3, copy _42) nocollect   @111:3
-  _43 = call av.calls/Holder.new(const str.16, copy _41, const i32 3) collects   @112:13
+  _43 = call av.calls/Holder.new(const str.15, copy _41, const i32 3) collects   @112:13
   _44 = copy _43   @112:5
   _45 = call ffi_cell_new(const i32 88) collects   @113:10
   _46 = copy _45   @113:5
-  _47 = call avant_str_concat(const str.17, const str.18) collects   @114:27
+  _47 = call avant_str_concat(const str.16, const str.17) collects   @114:27
   _48 = struct %calls.Pair (copy _47, copy _46)   @114:8
   _49 = copy _48   @114:6
   _50 = call av.calls/churn(const i32 20000) collects   @115:8
@@ -403,12 +403,12 @@ bb6:
   _52 = call ffi_cell_get(copy _51) collects   @116:11
   call printf(const str.3, copy _52) nocollect   @116:3
   _53 = copy (*_44).0   @117:9
-  call printf(const str.7, copy _53) nocollect   @117:3
+  call avant_puts_str(copy _53) nocollect   @117:3
   _54 = copy _49.1   @118:27
   _55 = call ffi_cell_get(copy _54) collects   @118:11
   call printf(const str.3, copy _55) nocollect   @118:3
   _56 = copy _49.0   @119:10
-  call printf(const str.7, copy _56) nocollect   @119:3
+  call avant_puts_str(copy _56) nocollect   @119:3
   (*_44).1 = copy _46   @120:10
   _57 = copy (*_44).1   @121:26
   _58 = call ffi_cell_get(copy _57) collects   @121:11
@@ -428,7 +428,7 @@ bb7:
   branch copy _63, bb8, bb9   @124:3
 
 bb8:
-  _64 = call avant_str_cat_i32(const str.19, copy _62) collects   @125:29
+  _64 = call avant_str_cat_i32(const str.18, copy _62) collects   @125:29
   _65 = call av.calls/Holder.new(copy _64, copy _41, copy _62) collects   @125:24
   call avant_array_push_ptr(copy _61, copy _65, const u32 65535) collects   @125:12
   _66 = add copy _62, const i32 1   @126:11
@@ -456,7 +456,7 @@ bb9:
   _79 = copy (*_61).0   @130:15
   _80 = copy (*_79)[const i32 7]   @130:15
   _81 = copy (*_80).0   @130:18
-  call printf(const str.7, copy _81) nocollect   @130:3
+  call avant_puts_str(copy _81) nocollect   @130:3
   _82 = call avant_alloc(const u64 0, const u32 0) collects   @131:29
   _83 = call avant_alloc(const u64 16, const u32 1022) collects   @131:29
   barrier copy _83   @131:29

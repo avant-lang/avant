@@ -9,20 +9,19 @@ layout %methods.Money = struct { 0 c: i32 }  size 4 align 4
 
 const str.0 = "!"
 const str.1 = "int "
-const str.2 = "%s\0A"
-const str.3 = "str "
-const str.4 = "two "
-const str.5 = " "
-const str.6 = "hi"
-const str.7 = "a"
-const str.8 = "-"
-const str.9 = "x"
-const str.10 = "xyz"
-const str.11 = "%d\0A"
-const str.12 = "abc"
-const str.13 = "s"
-const str.14 = "right"
-const str.15 = "left"
+const str.2 = "str "
+const str.3 = "two "
+const str.4 = " "
+const str.5 = "hi"
+const str.6 = "a"
+const str.7 = "-"
+const str.8 = "x"
+const str.9 = "xyz"
+const str.10 = "%d\0A"
+const str.11 = "abc"
+const str.12 = "s"
+const str.13 = "right"
+const str.14 = "left"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -36,6 +35,7 @@ extern avant_buf_push_str(ref, ref str) -> void collects
 extern avant_buf_size(ref) -> i32 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_bool(i32) -> void never
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
@@ -128,7 +128,7 @@ bb0:
   gc.enter   @121:1
   gc.roots   @121:1
   _2 = call avant_str_cat_i32(const str.1, copy _1) collects   @122:8
-  call printf(const str.2, copy _2) nocollect   @122:3
+  call avant_puts_str(copy _2) nocollect   @122:3
   gc.leave   @121:1
   return   @121:1
 }
@@ -140,8 +140,8 @@ fn av.methods/show(String)(_1: ref str) -> void frame @methods.av:125:1 {
 bb0:
   gc.enter   @125:1
   gc.roots _1   @125:1
-  _2 = call avant_str_concat(const str.3, copy _1) collects   @126:8
-  call printf(const str.2, copy _2) nocollect   @126:3
+  _2 = call avant_str_concat(const str.2, copy _1) collects   @126:8
+  call avant_puts_str(copy _2) nocollect   @126:3
   gc.leave   @125:1
   return   @125:1
 }
@@ -164,10 +164,10 @@ bb0:
   gc.roots _3, _4, _5, _6   @129:1
   _3 = call avant_str_from_int(copy _1) collects   @130:15
   _4 = call avant_str_from_int(copy _2) collects   @130:20
-  _5 = call avant_str_concat(const str.4, copy _3) collects   @130:8
-  _6 = call avant_str_concat(copy _5, const str.5) collects   @130:8
+  _5 = call avant_str_concat(const str.3, copy _3) collects   @130:8
+  _6 = call avant_str_concat(copy _5, const str.4) collects   @130:8
   _7 = call avant_str_concat(copy _6, copy _4) collects   @130:8
-  call printf(const str.2, copy _7) nocollect   @130:3
+  call avant_puts_str(copy _7) nocollect   @130:3
   gc.leave   @129:1
   return   @129:1
 }
@@ -178,7 +178,7 @@ fn av.methods/say(_1: ref str, _2: i32) -> i32 leaf @methods.av:133:1 {
   let _2 (n): i32
 
 bb0:
-  call printf(const str.2, copy _1) nocollect   @134:3
+  call avant_puts_str(copy _1) nocollect   @134:3
   _0 = copy _2   @135:3
   return   @135:3
 }
@@ -300,21 +300,21 @@ bb0:
   gc.roots _2, _8, _69   @145:1
   call __avant_type_maps() nocollect   @145:1
   call avant_io_init_argv(copy _1, copy _2) collects   @145:1
-  _3 = call av.methods/String.shout(const str.6) collects   @146:12
-  call printf(const str.2, copy _3) nocollect   @146:3
-  _4 = call av.methods/String.shout(const str.7) collects   @147:11
-  call printf(const str.2, copy _4) nocollect   @147:3
-  _5 = call av.methods/String.pad(const str.9, const i32 4, const str.8) collects   @148:11
-  call printf(const str.2, copy _5) nocollect   @148:3
-  _6 = call av.methods/Bytes.second(const str.10) nocollect   @149:19
-  call printf(const str.11, copy _6) nocollect   @149:3
+  _3 = call av.methods/String.shout(const str.5) collects   @146:12
+  call avant_puts_str(copy _3) nocollect   @146:3
+  _4 = call av.methods/String.shout(const str.6) collects   @147:11
+  call avant_puts_str(copy _4) nocollect   @147:3
+  _5 = call av.methods/String.pad(const str.8, const i32 4, const str.7) collects   @148:11
+  call avant_puts_str(copy _5) nocollect   @148:3
+  _6 = call av.methods/Bytes.second(const str.9) nocollect   @149:19
+  call printf(const str.10, copy _6) nocollect   @149:3
   _7 = call avant_buf_new(const i32 0) collects   @150:8
   _8 = copy _7   @150:6
-  call avant_buf_push_str(copy _8, const str.12) collects   @151:5
+  call avant_buf_push_str(copy _8, const str.11) collects   @151:5
   _9 = call av.methods/Buf.twice(copy _8) nocollect   @152:10
-  call printf(const str.11, copy _9) nocollect   @152:3
+  call printf(const str.10, copy _9) nocollect   @152:3
   _10 = call av.methods/Buf.twice(copy _8) nocollect   @153:10
-  call printf(const str.11, copy _10) nocollect   @153:3
+  call printf(const str.10, copy _10) nocollect   @153:3
   _11 = struct %methods.Money (const i32 5)   @154:7
   _12 = copy _11   @154:5
   _13 = struct %methods.Money (const i32 7)   @155:7
@@ -323,42 +323,42 @@ bb0:
   _16 = call av.methods/Money.+(copy _15, copy _14) nocollect   @156:11
   _17 = copy _16   @156:11
   _18 = copy _17.0   @156:15
-  call printf(const str.11, copy _18) nocollect   @156:3
+  call printf(const str.10, copy _18) nocollect   @156:3
   _19 = addr _14   @157:11
   _20 = call av.methods/Money.-(copy _19, copy _12) nocollect   @157:11
   _21 = copy _20   @157:11
   _22 = copy _21.0   @157:15
-  call printf(const str.11, copy _22) nocollect   @157:3
+  call printf(const str.10, copy _22) nocollect   @157:3
   _23 = addr _12   @158:11
   _24 = call av.methods/Money.*(copy _23, const i32 3) nocollect   @158:11
   _25 = copy _24   @158:11
   _26 = copy _25.0   @158:15
-  call printf(const str.11, copy _26) nocollect   @158:3
+  call printf(const str.10, copy _26) nocollect   @158:3
   _27 = addr _14   @159:11
   _28 = call av.methods/Money./(copy _27, const i32 2) nocollect   @159:11
   _29 = copy _28   @159:11
   _30 = copy _29.0   @159:15
-  call printf(const str.11, copy _30) nocollect   @159:3
+  call printf(const str.10, copy _30) nocollect   @159:3
   _31 = addr _14   @160:11
   _32 = call av.methods/Money.%(copy _31, const i32 4) nocollect   @160:11
   _33 = copy _32   @160:11
   _34 = copy _33.0   @160:15
-  call printf(const str.11, copy _34) nocollect   @160:3
+  call printf(const str.10, copy _34) nocollect   @160:3
   _35 = addr _12   @161:11
   _36 = call av.methods/Money.&+(copy _35, copy _14) nocollect   @161:11
   _37 = copy _36   @161:11
   _38 = copy _37.0   @161:16
-  call printf(const str.11, copy _38) nocollect   @161:3
+  call printf(const str.10, copy _38) nocollect   @161:3
   _39 = addr _12   @162:11
   _40 = call av.methods/Money.&-(copy _39, copy _14) nocollect   @162:11
   _41 = copy _40   @162:11
   _42 = copy _41.0   @162:16
-  call printf(const str.11, copy _42) nocollect   @162:3
+  call printf(const str.10, copy _42) nocollect   @162:3
   _43 = addr _12   @163:11
   _44 = call av.methods/Money.&*(copy _43, copy _14) nocollect   @163:11
   _45 = copy _44   @163:11
   _46 = copy _45.0   @163:16
-  call printf(const str.11, copy _46) nocollect   @163:3
+  call printf(const str.10, copy _46) nocollect   @163:3
   _47 = addr _12   @164:10
   _48 = call av.methods/Money.==(copy _47, copy _14) nocollect   @164:10
   _49 = cast copy _48 to i32   @164:3
@@ -386,36 +386,36 @@ bb0:
   _65 = call av.methods/Money.zero() nocollect   @170:12
   _66 = copy _65   @170:5
   _67 = copy _66.0   @171:9
-  call printf(const str.11, copy _67) nocollect   @171:3
+  call printf(const str.10, copy _67) nocollect   @171:3
   _68 = call av.methods/Acc.new(const i32 1) collects   @172:12
   _69 = copy _68   @172:7
   call av.methods/Acc.add(Int)(copy _69, const i32 2) nocollect   @173:6
-  call av.methods/Acc.add(String)(copy _69, const str.10) nocollect   @174:6
+  call av.methods/Acc.add(String)(copy _69, const str.9) nocollect   @174:6
   call av.methods/Acc.add(Int,Int)(copy _69, const i32 2, const i32 5) nocollect   @175:6
   _70 = copy (*_69).0   @176:11
-  call printf(const str.11, copy _70) nocollect   @176:3
+  call printf(const str.10, copy _70) nocollect   @176:3
   _71 = call av.methods/Acc.+(copy _69, const i32 4) collects   @177:13
   _72 = copy (*_71).0   @177:17
-  call printf(const str.11, copy _72) nocollect   @177:3
+  call printf(const str.10, copy _72) nocollect   @177:3
   _73 = call av.methods/some(const i32 3) nocollect   @178:17
   _74 = call av.methods/Acc.keep(copy _69, copy _73) nocollect   @178:11
-  call printf(const str.11, copy _74) nocollect   @178:3
+  call printf(const str.10, copy _74) nocollect   @178:3
   _75 = call av.methods/some(const i32 0) nocollect   @179:17
   _76 = call av.methods/Acc.keep(copy _69, copy _75) nocollect   @179:11
-  call printf(const str.11, copy _76) nocollect   @179:3
+  call printf(const str.10, copy _76) nocollect   @179:3
   call av.methods/show(Int)(const i32 1) collects   @180:3
-  call av.methods/show(String)(const str.13) collects   @181:3
+  call av.methods/show(String)(const str.12) collects   @181:3
   call av.methods/show(Int,Int)(const i32 2, const i32 3) collects   @182:3
-  _77 = call av.methods/say(const str.14, const i32 2) nocollect   @183:48
+  _77 = call av.methods/say(const str.13, const i32 2) nocollect   @183:48
   _78 = struct %methods.Money (copy _77)   @183:37
-  _79 = call av.methods/say(const str.15, const i32 1) nocollect   @183:18
+  _79 = call av.methods/say(const str.14, const i32 1) nocollect   @183:18
   _80 = struct %methods.Money (copy _79)   @183:7
   _81 = copy _80   @183:7
   _82 = addr _81   @183:35
   _83 = call av.methods/Money.+(copy _82, copy _78) nocollect   @183:35
   _84 = copy _83   @183:5
   _85 = copy _84.0   @184:9
-  call printf(const str.11, copy _85) nocollect   @184:3
+  call printf(const str.10, copy _85) nocollect   @184:3
   _0 = const i32 0   @145:1
   gc.leave   @145:1
   return   @145:1

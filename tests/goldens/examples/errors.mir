@@ -5,7 +5,6 @@ layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
 
 const str.0 = "%d\0A"
 const str.1 = "n="
-const str.2 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -13,6 +12,7 @@ typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i32) -> ref str collects
 extern printf(ref str, ...) -> i32 never
 
@@ -118,7 +118,7 @@ bb4:
 
 bb5:
   _13 = call avant_str_cat_i32(const str.1, const i32 41) collects   @22:8
-  call printf(const str.2, copy _13) nocollect   @22:3
+  call avant_puts_str(copy _13) nocollect   @22:3
   _0 = const i32 0   @13:1
   gc.leave   @13:1
   return   @13:1
