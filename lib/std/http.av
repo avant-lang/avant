@@ -932,37 +932,22 @@ pub class Http {
     cur_body = body
     hops = 0
     while true {
-      got = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)
-      if resp = got {
-        if !follow {
-          return resp
-        }
-        redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
-        if !redirect {
-          return resp
-        }
-        loc = resp.headers.get("Location")
-        if location = loc {
-          hops += 1
-          if hops > 5 {
-            return HttpError.new("too many redirects")
-          }
-          next = resolve_url(cur_url, location)
-          if next_url = next {
-            if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
-              cur_method = "GET"
-              cur_body = "".bytes
-            }
-            cur_url = next_url
-          } else {
-            return HttpError.new("invalid redirect location: ${location}")
-          }
-        } else {
-          return resp
-        }
-      } else {
-        return got
+      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)?
+      redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
+      if !follow || !redirect {
+        return resp
       }
+      location = resp.headers.get("Location") ?? return resp
+      hops += 1
+      if hops > 5 {
+        return HttpError.new("too many redirects")
+      }
+      next_url = resolve_url(cur_url, location) ?? return HttpError.new("invalid redirect location: ${location}")
+      if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
+        cur_method = "GET"
+        cur_body = "".bytes
+      }
+      cur_url = next_url
     }
     HttpError.new("too many redirects")
   }
