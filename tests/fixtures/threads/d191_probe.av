@@ -21,15 +21,12 @@ class Node {
 fn work(shared: Array(String), id: Int, rounds: Int): Int {
   bad = 0
   keep: Array(String) = []
-  r = 0
-  while r < rounds {
-    i = 0
-    while i < shared.size {
+  for r in 0..rounds {
+    for i in 0..shared.size {
       s = shared[i]
       if s.size != 5 + "${i}".size {
         bad = bad + 1
       }
-      i = i + 1
     }
     nd = Node.new(r, shared[r % shared.size])
     if nd.s.size < 6 {
@@ -47,40 +44,30 @@ fn work(shared: Array(String), id: Int, rounds: Int): Int {
       }
       keep.clear
     }
-    r = r + 1
   }
   bad
 }
 
 fn main {
   shared: Array(String) = []
-  i = 0
-  while i < 200 {
+  for i in 0..200 {
     shared.push("item-${i}")
-    i = i + 1
   }
   hs: Array(JoinHandle(Int)) = []
-  k = 0
-  while k < 8 {
+  for k in 0..8 {
     id = k
     hs.push(spawn { work(shared, id, 1000) })
-    k = k + 1
   }
   mbad = 0
   mine: Array(String) = []
-  j = 0
-  while j < 20000 {
+  for j in 0..20000 {
     mine.push("main-init")
-    j = j + 1
   }
   nodes: Array(Node) = []
-  j = 0
-  while j < 5000 {
+  for j in 0..5000 {
     nodes.push(Node.new(j, "node-init"))
-    j = j + 1
   }
-  r = 0
-  while r < 60000 {
+  for r in 0..60000 {
     at = r % 20000
     if mine[at].size < 6 {
       mbad = mbad + 1
@@ -90,7 +77,6 @@ fn main {
     if nodes[(r + 1) % 5000].s.size < 6 {
       mbad = mbad + 1
     }
-    r = r + 1
   }
   wbad = 0
   hs.each { |h| wbad = wbad + h.join }

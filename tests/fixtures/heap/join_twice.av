@@ -23,10 +23,8 @@ class Holder {
 
 fn work(n: Int): Int {
   acc = 0
-  i = 0
-  while i < n {
+  for i in 0..n {
     acc = acc &+ i * 3
-    i = i + 1
   }
   acc + n
 }
@@ -37,10 +35,8 @@ fn churn(rounds: Int): Int {
   r = 0
   while r < rounds {
     keep: Array(String) = []
-    i = 0
-    while i < 200 {
+    for i in 0..200 {
       keep.push("churn-${r}-${i}")
-      i = i + 1
     }
     total = total + keep[r % 200].size
     r = r + 1
@@ -54,11 +50,9 @@ fn main {
 
   // Handles in an array, each joined three times.
   hs: Array(JoinHandle(Int)) = []
-  i = 0
-  while i < 16 {
+  for i in 0..16 {
     n = 1000 + i * 7
     hs.push(spawn { work(n) })
-    i = i + 1
   }
   first: Array(Int) = []
   s1 = 0
@@ -72,14 +66,12 @@ fn main {
   churn(300)
   gc_rt.avant_gc_collect_young()
   s2 = 0
-  i = 0
-  while i < hs.size {
+  for i in 0..hs.size {
     v = hs[i].join
     if v != first[i] {
       bad = bad + 1
     }
     s2 = s2 + v
-    i = i + 1
   }
   gc_rt.avant_gc_collect()
   s3 = 0
@@ -121,8 +113,7 @@ fn main {
 
   // Many handles, each joined twice in a row.
   t = 0
-  i = 0
-  while i < 200 {
+  for i in 0..200 {
     s = "task-${i}"
     k = spawn { s.size }
     p = k.join
@@ -131,7 +122,6 @@ fn main {
       bad = bad + 1
     }
     t = t + p + q
-    i = i + 1
   }
   puts("loop: ${t}")
   puts("bad: ${bad}")

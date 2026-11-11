@@ -364,10 +364,8 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   hr.push(run_job_env(dir, "held_caps", "held_caps.plain", "-u AVANT_GC_VERIFY"))
   hr.push(run_job_env(dir, "held_caps", "held_caps.verify", "AVANT_NURSERY=1 AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=64 AVANT_GC_STATS=1"))
   run_waves(hr)
-  e = 0
-  while e < 2 {
+  for e in 0..2 {
     c.eq_int(hr[e].code, 0, "held_caps.av run ${e}: exit 0")
-    e = e + 1
   }
   c.eq_str(log_text("${dir}/held_caps.plain.out"), "kept 38800 read 100\n", "held_caps.av: the known stdout")
   c.eq_str(log_text("${dir}/held_caps.verify.out"), "kept 38800 read 100\n", "held_caps.av under AVANT_GC_VERIFY=1: the known stdout")

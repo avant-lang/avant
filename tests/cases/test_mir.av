@@ -32,25 +32,20 @@ fn section(log: String, start: String): String {
 // The rules of the `case NAME STAGE RULES` line, or "(missing)".
 fn case_rules(lines: Array(String), name: String, stage: String): String {
   head = "case ${name} ${stage} "
-  i = 0
-  while i < lines.size {
-    l = lines[i]
+  for l in lines {
     if l.size > head.size && str_slice(l, 0, head.size) == head {
       return str_slice(l, head.size, l.size)
     }
-    i = i + 1
   }
   "(missing)"
 }
 
 fn count_cases(lines: Array(String)): Int {
   n = 0
-  i = 0
-  while i < lines.size {
-    if lines[i].size > 5 && str_slice(lines[i], 0, 5) == "case " {
+  for line in lines {
+    if line.size > 5 && str_slice(line, 0, 5) == "case " {
       n = n + 1
     }
-    i = i + 1
   }
   n
 }
@@ -194,12 +189,10 @@ fn test_mir(c: Checks) {
     c.eq_int(count_cases(lines), w.names.size, "no case without an expectation")
     pl = pass_lines()
     npass = 0
-    i = 0
-    while i < lines.size {
-      if lines[i].size > 5 && str_slice(lines[i], 0, 5) == "pass " {
+    for line in lines {
+      if line.size > 5 && str_slice(line, 0, 5) == "pass " {
         npass = npass + 1
       }
-      i = i + 1
     }
     c.eq_int(npass, pl.size, "one pass line per function of the pass cases")
     i = 0

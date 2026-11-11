@@ -66,14 +66,12 @@ fn client_round(port: Int, out: Channel(String)): Int {
 fn hammer_round(port: Int, out: Channel(String), rounds: Int): Int {
   base = "http://127.0.0.1:${port}"
   ok = 0
-  i = 0
-  while i < rounds {
+  for i in 0..rounds {
     if resp = Http.get("${base}/ping") {
       if resp.status == 200 && body_text(resp) == "pong" {
         ok = ok + 1
       }
     }
-    i = i + 1
   }
   out.send("hammer=${ok}/${rounds}")
   0
@@ -352,14 +350,12 @@ fn test_std_http(c: Checks) {
     // connection's close, so the order across connections is not fixed:
     // count the opens and require each close code exactly once.
     evgot: Array(String) = []
-    i = 0
-    while i < 8 {
+    for i in 0..8 {
       if line = events.recv {
         evgot.push(line)
       } else {
         c.expect(false, "ws event ${i} present")
       }
-      i = i + 1
     }
     opens = 0
     i = 0
@@ -378,12 +374,10 @@ fn test_std_http(c: Checks) {
     k = 0
     while k < closes.size {
       seen = 0
-      i = 0
-      while i < evgot.size {
+      for i in 0..evgot.size {
         if evgot[i] == closes[k] {
           seen = seen + 1
         }
-        i = i + 1
       }
       c.eq_int(seen, 1, "ws event ${closes[k]} once")
       k = k + 1
@@ -490,14 +484,12 @@ fn test_std_http(c: Checks) {
     c.eq_int(h3.join, 0, "hammer task 3")
     c.eq_int(h4.join, 0, "hammer task 4")
     c.eq_int(stopper.join, 0, "hammer stopper")
-    i = 0
-    while i < 4 {
+    for i in 0..4 {
       if line = out.recv {
         c.eq_str(line, "hammer=25/25", "hammer round ${i}")
       } else {
         c.expect(false, "hammer round ${i} present")
       }
-      i = i + 1
     }
   } else {
     c.expect(false, "listen for multi-loop test")

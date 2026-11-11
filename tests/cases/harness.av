@@ -48,12 +48,10 @@ pub fn nth_line(s: String, n: Int): String {
 
 pub fn count_lines(s: String): Int {
   n = 0
-  i = 0
-  while i < s.size {
+  for i in 0..s.size {
     if s[i] == 10 {
       n = n + 1
     }
-    i = i + 1
   }
   n
 }
@@ -95,16 +93,13 @@ pub class HJob {
 // could not start, 128+n for a signal).
 pub fn run_jobs(jobs: Array(HJob)) {
   running = 0
-  i = 0
-  while i < jobs.size {
-    j = jobs[i]
+  for j in jobs {
     j.pid = harness_rt.avant_job_start(j.path, j.args, j.log)
     if j.pid > 0 {
       running = running + 1
     } else {
       j.code = 127
     }
-    i = i + 1
   }
   while running > 0 {
     got = harness_rt.avant_job_wait()
@@ -112,12 +107,10 @@ pub fn run_jobs(jobs: Array(HJob)) {
       break
     }
     st = harness_rt.avant_job_status()
-    k = 0
-    while k < jobs.size {
+    for k in 0..jobs.size {
       if jobs[k].pid == got {
         jobs[k].code = st
       }
-      k = k + 1
     }
     running = running - 1
   }
@@ -182,17 +175,15 @@ pub fn gc_env_outer(stated: String): String {
   names = gc_env_names()
   own = " ${stated} "
   out = ""
-  i = 0
-  while i < names.size {
-    if v = env_get(names[i]) {
-      if v.size > 0 && !str_has(own, " ${names[i]} ") {
+  for nm in names {
+    if v = env_get(nm) {
+      if v.size > 0 && !str_has(own, " ${nm} ") {
         if out.size > 0 {
           out = "${out} "
         }
-        out = "${out}${names[i]}"
+        out = "${out}${nm}"
       }
     }
-    i = i + 1
   }
   out
 }
@@ -328,15 +319,13 @@ pub class Checks {
         j = j + 1
       }
       b.push_str("<testsuite name=\"${self.junit_escape(suite)}\" tests=\"${n}\" failures=\"${badn}\" time=\"${self.junit_secs(total)}\">\n")
-      k = i
-      while k < j {
+      for k in i..j {
         b.push_str("  <testcase name=\"${self.junit_escape(self.rec_name[k])}\" classname=\"${self.junit_escape(suite)}\" time=\"${self.junit_secs(self.rec_ms[k])}\"")
         if self.rec_ok[k] == 0 {
           b.push_str(">\n    <failure message=\"check failed\"/>\n  </testcase>\n")
         } else {
           b.push_str("/>\n")
         }
-        k = k + 1
       }
       b.push_str("</testsuite>\n")
       i = j

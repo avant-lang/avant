@@ -28,8 +28,7 @@ class Cell {
 fn churn(id: Int, r: Int, n: Int): Int {
   keep: Array(Cell) = []
   bad = 0
-  i = 0
-  while i < n {
+  for i in 0..n {
     keep.push(Cell.new(i, "c${id}-${r}-${i}"))
     if keep.size > 40 {
       if keep[0].s.size < 5 {
@@ -37,15 +36,13 @@ fn churn(id: Int, r: Int, n: Int): Int {
       }
       keep.clear
     }
-    i = i + 1
   }
   bad
 }
 
 fn work(id: Int, rounds: Int): Int {
   bad = 0
-  r = 0
-  while r < rounds {
+  for r in 0..rounds {
     text = "pre-w${id}-r${r}-post"
     want = "w${id}-r${r}"
     h = Hash(String, Int).new
@@ -77,24 +74,19 @@ fn work(id: Int, rounds: Int): Int {
     } else {
       bad = bad + 1
     }
-    r = r + 1
   }
   bad
 }
 
 fn main {
   hs: Array(JoinHandle(Int)) = []
-  k = 0
-  while k < 6 {
+  for k in 0..6 {
     id = k
     hs.push(spawn { work(id, 40) })
-    k = k + 1
   }
   mbad = 0
-  r = 0
-  while r < 120 {
+  for r in 0..120 {
     mbad = mbad + churn(99, r, 200)
-    r = r + 1
   }
   wbad = 0
   hs.each { |h| wbad = wbad + h.join }

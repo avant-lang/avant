@@ -103,29 +103,23 @@ fn test_optimization(c: Checks) {
   nbrs = [10, 20, 30, 40]
   base = 0
   acc2 = 0
-  k2 = 0
-  while k2 < 4 {
+  for k2 in 0..4 {
     acc2 = acc2 + nbrs[base + k2]
-    k2 = k2 + 1
   }
   c.eq_int(acc2, 100, "invariant-plus-induction index window")
 
   cells = [7, 8, 9]
   cell = 1
   acc3 = 0
-  k3 = 0
-  while k3 < 3 {
+  for k3 in 0..3 {
     acc3 = acc3 + cells[cell]
-    k3 = k3 + 1
   }
   c.eq_int(acc3, 24, "loop-invariant index validated at entry")
 
   edge5 = [10, 20, 30, 40, 50]
   acc4 = 0
-  bi2 = 0
-  while bi2 < 4 {
+  for bi2 in 0..4 {
     acc4 = acc4 + edge5[bi2 + 1]
-    bi2 = bi2 + 1
   }
   c.eq_int(acc4, 140, "guarded index plus offset at size minus one boundary")
 
@@ -135,50 +129,36 @@ fn test_optimization(c: Checks) {
   bsrc.push_byte(65)
   bsrc.push_byte(255)
   bfreq: Array(Int) = []
-  bfi = 0
-  while bfi < 256 {
+  for bfi in 0..256 {
     bfreq.push(0)
-    bfi = bfi + 1
   }
-  bi3 = 0
-  while bi3 < bsrc.size {
+  for bi3 in 0..bsrc.size {
     bfreq[bsrc[bi3]] = bfreq[bsrc[bi3]] + 1
-    bi3 = bi3 + 1
   }
   c.eq_int(bfreq[255], 2, "byte 255 into 256-entry table at boundary")
   c.eq_int(bfreq[0] * 10 + bfreq[65], 11, "byte table counts for 0 and 65")
 
   mvals = [511, 385]
   mtab: Array(Int) = []
-  mti = 0
-  while mti < 256 {
+  for mti in 0..256 {
     mtab.push(mti)
-    mti = mti + 1
   }
   macc = 0
-  mi3 = 0
-  while mi3 < 2 {
+  for mi3 in 0..2 {
     macc = macc + mtab[mvals[mi3] & 255]
-    mi3 = mi3 + 1
   }
   c.eq_int(macc, 384, "masked byte index sum")
 
   ssrc = buf_new()
-  ssi = 0
-  while ssi < 8 {
+  for ssi in 0..8 {
     ssrc.push_byte(255)
-    ssi = ssi + 1
   }
   stab: Array(Int) = []
-  sti = 0
-  while sti < 2048 {
+  for sti in 0..2048 {
     stab.push(0)
-    sti = sti + 1
   }
-  si3 = 0
-  while si3 < ssrc.size {
+  for si3 in 0..ssrc.size {
     stab[ssrc[si3] * 8 + 7] = stab[ssrc[si3] * 8 + 7] + 1
-    si3 = si3 + 1
   }
   c.eq_int(stab[2047], 8, "scaled byte index at 2047 boundary")
 
@@ -187,10 +167,8 @@ fn test_optimization(c: Checks) {
   nsrc.push_byte(5)
   nsrc.push_byte(5)
   ntab: Array(Int) = []
-  nti = 0
-  while nti < 256 {
+  for nti in 0..256 {
     ntab.push(nti)
-    nti = nti + 1
   }
   nacc = 0
   ni3 = 0
@@ -313,11 +291,9 @@ fn test_optimization(c: Checks) {
   }
   c.eq_int(byte_sum, 1960000, "long string per-byte sum")
   churn = 0
-  ci = 0
-  while ci < 2000 {
+  for ci in 0..2000 {
     junk = repeat_byte(99, 500)
     churn = churn + junk.size
-    ci = ci + 1
   }
   c.eq_int(churn, 1000000, "allocation churn total")
   c.eq_int(long_s.size, 20000, "long string length after churn")
@@ -331,14 +307,11 @@ fn test_optimization(c: Checks) {
   decl_s = "abca"
   decl_t = "a"
   decl_m: Array(Int) = []
-  decl_di = 0
-  while decl_di < 4 {
+  for decl_di in 0..4 {
     decl_m.push(0)
-    decl_di = decl_di + 1
   }
   decl_hits = 0
-  decl_i = 0
-  while decl_i < 4 {
+  for decl_i in 0..4 {
     decl_j = 0
     decl_fin = decl_i
     while decl_j <= decl_fin && decl_j < 4 {
@@ -348,7 +321,6 @@ fn test_optimization(c: Checks) {
       }
       decl_j = decl_j + 1
     }
-    decl_i = decl_i + 1
   }
   c.eq_int(decl_hits, 2, "call-sized decline string loop computes")
 

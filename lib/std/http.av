@@ -174,8 +174,7 @@ fn name_is(name: String, lit: String): Bool {
   if name.size != lit.size {
     return false
   }
-  i = 0
-  while i < name.size {
+  for i in 0..name.size {
     a = name[i]
     b = lit[i]
     if a >= 65 && a <= 90 {
@@ -184,7 +183,6 @@ fn name_is(name: String, lit: String): Bool {
     if a != b {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -498,13 +496,10 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
     is_text = httpc.avant_ws_event_is_text(raw) != 0
     data = httpc.avant_ws_event_data(raw)
     msg = WsMessage { is_text: is_text, body: data }
-    i = 0
-    while i < state.ws_routes.size {
-      r = state.ws_routes[i]
+    for r in state.ws_routes {
       if r.path == path {
         (r.handler)(conn, msg)
       }
-      i = i + 1
     }
     return
   }
@@ -524,13 +519,10 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
     }
     code = httpc.avant_ws_event_code(raw)
     reason = httpc.avant_ws_event_reason(raw)
-    i = 0
-    while i < state.ws_close_routes.size {
-      rc = state.ws_close_routes[i]
+    for rc in state.ws_close_routes {
       if rc.path == path {
         (rc.handler)(conn, code, reason)
       }
-      i = i + 1
     }
     state.unregister_ws_conn(wid)
   }
@@ -701,12 +693,10 @@ fn http_parse_url(url: String): UrlParts? {
   if authority.size == 0 {
     return nil
   }
-  at = 0
-  while at < authority.size {
+  for at in 0..authority.size {
     if authority[at] == 64 {
       return nil
     }
-    at = at + 1
   }
   host = authority
   port = 80
@@ -736,12 +726,10 @@ fn http_parse_url(url: String): UrlParts? {
     }
   } else {
     colon = -1
-    j = 0
-    while j < authority.size {
+    for j in 0..authority.size {
       if authority[j] == 58 {
         colon = j
       }
-      j = j + 1
     }
     if colon >= 0 {
       host = str_slice(authority, 0, colon)
@@ -776,9 +764,7 @@ fn http_parse_url(url: String): UrlParts? {
 fn remove_dot_segments(path: String): String {
   parts = path.split("/")
   kept: Array(String) = []
-  i = 0
-  while i < parts.size {
-    seg = parts[i]
+  for seg in parts {
     if seg == "." {
     } else if seg == ".." {
       if kept.size > 1 {
@@ -787,16 +773,13 @@ fn remove_dot_segments(path: String): String {
     } else {
       kept.push(seg)
     }
-    i = i + 1
   }
   buf = buf_new()
-  i = 0
-  while i < kept.size {
+  for i in 0..kept.size {
     if i > 0 {
       buf.push_str("/")
     }
     buf.push_str(kept[i])
-    i = i + 1
   }
   out = buf.to_s
   if out.size == 0 {
@@ -842,12 +825,10 @@ fn resolve_url(base: String, loc: String): String? {
       }
     }
     slash = -1
-    j = 0
-    while j < base_path.size {
+    for j in 0..base_path.size {
       if base_path[j] == 47 {
         slash = j
       }
-      j = j + 1
     }
     merged = "${str_slice(base_path, 0, slash + 1)}${loc}"
     return "${origin}${remove_dot_segments(merged)}"
