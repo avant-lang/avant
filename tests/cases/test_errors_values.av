@@ -131,11 +131,39 @@ fn voidtail_cases: Array(FCase) {
   xs
 }
 
+// A case's source may hold more modules: after a line `//== name.av`
+// the lines up to the next such line are the module name.av, written
+// beside the program (its own lines are the ones before the first).
+fn write_sources(dir: String, src: String, text: String) {
+  parts = text.split("//== ")
+  file_write(src, parts[0])
+  for i in 1..parts.size {
+    lines = parts[i].split("\n")
+    body = ""
+    for j in 1..lines.size {
+      body = body + lines[j]
+      if j < lines.size - 1 {
+        body = body + "\n"
+      }
+    }
+    file_write("${dir}/${lines[0]}", body)
+  }
+}
+
+fn ruling_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(refused("mod-method-call", "import errvutil\nclass C {\n  fn errvutil: Int {\n    1\n  }\n  fn run: Int {\n    errvutil.twice(3)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n//== errvutil.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "errvutil is both a module and a method of C; write self.errvutil for the method, or give the method another name to use the module"))
+  xs.push(accepted("mod-no-method", "import errvutil2\nclass C {\n  fn other: Int {\n    1\n  }\n  fn run: Int {\n    errvutil2.twice(3) + self.other\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n//== errvutil2.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "7\n"))
+  xs.push(refused("mod-method-gc", "import std.gc\nclass C {\n  fn gc: Int {\n    1\n  }\n  fn run {\n    gc.collect()\n  }\n}\nfn main {\n  C.new.run\n}\n", "gc is both a module and a method of C; write self.gc for the method"))
+  xs.push(refused("default-reads-field", "class C {\n  k: Int = 2\n  n: Int = k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "a field default cannot read another field (k of C): defaults are evaluated before initialize, in declaration order; compute it in initialize instead"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
     src = "${dir}/errv-${f.tag}.av"
-    file_write(src, f.src)
+    write_sources(dir, src, f.src)
     jobs.push(compile_job("", compiler, src, "${dir}/errv-${f.tag}.bin", "${dir}/errv-${f.tag}.log"))
   }
   run_waves(jobs)
@@ -180,6 +208,9 @@ fn test_main(c: Checks) {
     }
     for f_voidtail_cases in voidtail_cases() {
       all.push(f_voidtail_cases)
+    }
+    for f_ruling_cases in ruling_cases() {
+      all.push(f_ruling_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

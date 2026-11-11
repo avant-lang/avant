@@ -56,7 +56,7 @@ fn init_cases: Array(FCase) {
   xs.push(refused("init-struct-holding-class", "class Leaf {\n  v: Int = 1\n}\nstruct Slot {\n  k: Int\n  leaf: Leaf\n}\nclass C {\n  slot: Slot\n}\nfn main {\n  c = C.new\n}\n", "field slot of C has no zero value"))
   xs.push(refused("init-generic-instance", "class Leaf {\n  v: Int = 1\n}\nclass Box(T) {\n  item: T\n}\nfn main {\n  a = Box(Int).new\n  b = Box(Leaf).new\n  puts(a.item)\n}\n", "field item of Box(Leaf) has no zero value"))
   xs.push(refused("init-default-self", "class C {\n  k: Int = 2\n  n: Int = self.k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "a field default cannot use self"))
-  xs.push(refused("init-default-field", "class C {\n  k: Int = 2\n  n: Int = k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "unknown name k"))
+  xs.push(refused("init-default-field", "class C {\n  k: Int = 2\n  n: Int = k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "a field default cannot read another field (k of C)"))
   xs.push(refused("init-default-try", "fn maybe: Int? {\n  3\n}\nclass C {\n  r: Int? = maybe()?\n}\nfn main {\n  puts(C.new.r ?? 0)\n}\n", "postfix ? inside a field default cannot return the failure"))
   xs.push(refused("init-default-type", "class C {\n  xs: Array(Int) = \"no\"\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "cannot assign String to Array(Int)"))
   // B5: the accepted forms.

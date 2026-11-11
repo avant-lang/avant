@@ -153,7 +153,7 @@ fn main {
 
 A method without arguments may be called with or without `()`: `q.sum` and `q.sum()` are the same call. The rule is the same for every builtin: `s.strip` and `s.strip()`, `xs.size` and `xs.size()`, `xs.pop` and `xs.pop()`.
 
-Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum` or `sum()`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, so nothing is chosen silently. An external method is a function with a receiver parameter:
+Inside a method, `self` is the receiver. A field is read bare (`x`) or as `self.x`, and written only as `self.x = ...`: a bare `x = ...` where `x` is a field is an error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line. A method of the same type is called bare (`sum` or `sum()`) or as `self.sum`. A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function; a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, and a module name used as a qualifier (`util.twice(3)`) that is also a method of the receiver is an error that asks for `self.util` or another name for the method, so nothing is chosen silently. An external method is a function with a receiver parameter:
 
 ```avant
 fn (p: Point) scaled(s: Int): Point {
@@ -166,7 +166,7 @@ fn (p: Point) scaled(s: Int): Point {
 `Type.new(...)` allocates and calls `initialize`. No field is ever read unset:
 
 - A field whose type has a natural zero starts at it when it has no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, and a struct of such fields.
-- A field may have a default, any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`.
+- A field may have a default, any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`; a default cannot read another field (compute such a value in `initialize`).
 - Any other field (a class, `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one) must be set by `initialize` on every path, before it is read and before `self` is used as a value or a method of `self` is called. Otherwise the class is refused, with an error that names the field and the ways out: set it, give it a default, or make it optional (`left: Node?`, which is one pointer).
 
 ```avant

@@ -150,6 +150,9 @@ pub class Checker {
   // Stage 29 W3b: checking a field default (evaluated before initialize,
   // with no receiver).
   pub in_default: Bool = false
+  // The class whose field defaults are being checked (O187, Stage 29
+  // W4a): a bare name of one of its fields gets its own message.
+  pub default_owner: Ty? = nil
   // What a postfix `?` returns from, for its messages.
   pub try_body: String = "the function"
   pub place_name: String = ""
@@ -876,6 +879,19 @@ pub class Checker {
         }
       }
     }
+  }
+
+  // A module name used as a bare qualifier that is also a method of the
+  // receiver (D310's ruling, Stage 29 W4a): nothing wins silently (D308);
+  // an error naming both ways out, and true.
+  pub fn module_is_method(name: String, loc: Location): Bool {
+    if st = self.bare_receiver {
+      if self.receiver_method_fits(st, name, 0) {
+        self.fail(loc, "${name} is both a module and a method of ${st.show}; write self.${name} for the method, or give the method another name to use the module")
+        return true
+      }
+    }
+    false
   }
 
   // `_ = expr` (Stage 29 W4a, D295): the value is computed and dropped on
@@ -2385,6 +2401,9 @@ pub class Checker {
     }
     if k = self.known_mods.get(expr.ident) {
       if self.qualifier_ok(expr.ident, self.current_module) {
+        if self.module_is_method(expr.ident, expr.loc) {
+          return self.t_int()
+        }
         return ty_module(expr.ident)
       }
     }
@@ -2404,6 +2423,14 @@ pub class Checker {
     if self.is_generic_template(expr.ident) {
       self.fail(expr.loc, "${expr.ident} needs type arguments")
       return self.t_int()
+    }
+    if self.in_default {
+      if owner = self.default_owner {
+        if ft = owner.field_named(expr.ident) {
+          self.fail(expr.loc, "a field default cannot read another field (${expr.ident} of ${owner.show}): defaults are evaluated before initialize, in declaration order; compute it in initialize instead")
+          return self.t_int()
+        }
+      }
     }
     self.fail(expr.loc, "unknown name ${expr.ident}")
     self.t_int()
@@ -3531,6 +3558,9 @@ pub class Checker {
       } else {
         if !(recv.type_args.size > 0) {
           if self.names_std_gc(recv.ident) {
+            if self.module_is_method(recv.ident, recv.loc) {
+              return self.t_int()
+            }
             return self.check_gc_call(expr)
           }
           if id = self.lib_names.get(recv.ident) {
@@ -3542,6 +3572,9 @@ pub class Checker {
           }
           if k = self.known_mods.get(recv.ident) {
             if self.qualifier_ok(recv.ident, self.current_module) {
+              if self.module_is_method(recv.ident, recv.loc) {
+                return self.t_int()
+              }
               return self.dispatch_qualified_call(expr, recv.ident)
             }
           }
