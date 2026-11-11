@@ -450,8 +450,7 @@ pub class Loader {
 
   pub fn consider_hit(hits: Array(String), path: String) {
     if file_exists(path) {
-      if hit_listed(hits, path) {
-      } else {
+      if !hit_listed(hits, path) {
         hits.push(path)
       }
     }
@@ -520,8 +519,7 @@ pub class Loader {
       self.consider_hit(hits, join_dir(dep, rel))
       i = 0
       while i < self.dep_dirs.size {
-        if self.dep_dirs[i] == dep {
-        } else {
+        if self.dep_dirs[i] != dep {
           self.consider_hit(hits, join_dir(self.dep_dirs[i], rel))
         }
         i = i + 1
@@ -570,8 +568,7 @@ pub class Loader {
 
   pub fn note_module_path(name: String, path: String, loc: Location) {
     if prev = self.mod_paths.get(name) {
-      if prev == path {
-      } else {
+      if prev != path {
         self.fail(loc, "module ${name} is both ${prev} and ${path}")
       }
     } else {
@@ -628,8 +625,7 @@ pub class Loader {
   }
 
   pub fn load_root(path: String): Program? {
-    if file_exists(path) {
-    } else {
+    if !file_exists(path) {
       self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
       return nil
     }

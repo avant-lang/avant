@@ -57,8 +57,7 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   if ty.is_struct {
     i = 0
     while i < ty.fields.size {
-      if checker_self.copyable_bits(ty.fields[i].ty) {
-      } else {
+      if !checker_self.copyable_bits(ty.fields[i].ty) {
         return false
       }
       i = i + 1
@@ -357,8 +356,7 @@ pub fn (checker_self: Checker) pending_join(handle: String) {
   kept_a: Array(String) = []
   i = 0
   while i < checker_self.pending_handles.size {
-    if checker_self.pending_handles[i] == handle {
-    } else {
+    if checker_self.pending_handles[i] != handle {
       kept_h.push(checker_self.pending_handles[i])
       kept_a.push(checker_self.pending_arrays[i])
     }
@@ -561,8 +559,7 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     }
   }
   if ty = checker_self.lookup(expr.ident) {
-    if checker_self.copyable_for_spawn(ty) {
-    } else {
+    if !checker_self.copyable_for_spawn(ty) {
       checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show} is not copied at send (D35)")
       return
     }

@@ -214,8 +214,7 @@ pub fn pkg_is_sha(s: String): Bool {
     if c >= 65 && c <= 70 {
       ok = true
     }
-    if ok {
-    } else {
+    if !ok {
       return false
     }
     i = i + 1
@@ -288,8 +287,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
     return got
   }
   if t[0] == 34 {
-    if pkg_string_closed(t) {
-    } else {
+    if !pkg_string_closed(t) {
       return got
     }
     got.items.push(pkg_parse_string(t, ""))
@@ -327,8 +325,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
       }
       i = i + 1
     }
-    if closed {
-    } else {
+    if !closed {
       return got
     }
     item = pkg_parse_string(str_slice(inner, start, i), "")
@@ -345,8 +342,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
       pkg_note_test(m, "${path}:${line_no}: duplicate test key dir")
       return true
     }
-    if pkg_string_closed(val) {
-    } else {
+    if !pkg_string_closed(val) {
       pkg_note_test(m, "${path}:${line_no}: dir needs a string")
       return true
     }
@@ -361,8 +357,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
       pkg_note_test(m, "${path}:${line_no}: duplicate test key entry")
       return true
     }
-    if pkg_string_closed(val) {
-    } else {
+    if !pkg_string_closed(val) {
       pkg_note_test(m, "${path}:${line_no}: entry needs a string")
       return true
     }
@@ -493,14 +488,12 @@ pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String,
       }
       i = i + 1
     }
-    if closed {
-    } else {
+    if !closed {
       m.err = "${path}:${line_no}: unterminated string in inline table"
       return false
     }
     vtext = str_slice(inner, vstart, i)
-    if pkg_apply_pair(m, dep_idx, key, vtext, path, line_no) {
-    } else {
+    if !pkg_apply_pair(m, dep_idx, key, vtext, path, line_no) {
       return false
     }
   }
@@ -590,13 +583,11 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
     key = pkg_trim(str_slice(line, 0, eq))
     val = pkg_trim(str_slice(line, eq + 1, line.size))
     if section == "package" {
-      if pkg_string_closed(val) {
-      } else {
+      if !pkg_string_closed(val) {
         m.err = "${path}:${line_no}: unterminated string"
         return m
       }
-      if pkg_apply_pair(m, -1, key, val, path, line_no) {
-      } else {
+      if !pkg_apply_pair(m, -1, key, val, path, line_no) {
         return m
       }
       continue
@@ -606,13 +597,11 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         m.err = "${path}:${line_no}: dependency key outside a dependency"
         return m
       }
-      if pkg_string_closed(val) {
-      } else {
+      if !pkg_string_closed(val) {
         m.err = "${path}:${line_no}: unterminated string"
         return m
       }
-      if pkg_apply_pair(m, dep_idx, key, val, path, line_no) {
-      } else {
+      if !pkg_apply_pair(m, dep_idx, key, val, path, line_no) {
         return m
       }
       continue
@@ -637,8 +626,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       m.deps.push(PkgDep.new(key, "", ""))
       didx = m.deps.size - 1
       if val.size > 0 && val[0] == 123 {
-        if pkg_parse_inline(m, didx, val, path, line_no) {
-        } else {
+        if !pkg_parse_inline(m, didx, val, path, line_no) {
           return m
         }
       } else {
@@ -648,15 +636,13 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       continue
     }
     if section == "test" {
-      if pkg_apply_test(m, key, val, path, line_no) {
-      } else {
+      if !pkg_apply_test(m, key, val, path, line_no) {
         return m
       }
       continue
     }
     if section == "coverage" {
-      if pkg_apply_coverage(m, key, val, path, line_no) {
-      } else {
+      if !pkg_apply_coverage(m, key, val, path, line_no) {
         return m
       }
       continue
@@ -845,14 +831,12 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     return false
   }
   m = pkg_parse_manifest(text, manifest_path)
-  if m.ok {
-  } else {
+  if !m.ok {
     diag_puts("avant fetch: ${m.err}")
     return false
   }
   lock = PkgLock.new
-  if update {
-  } else {
+  if !update {
     lock_path = pkg_join(dir, "avant.lock")
     if lt = file_read(lock_path) {
       lock = pkg_parse_lock(lt)
@@ -947,8 +931,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     sub_path = pkg_join(dest, "avant.toml")
     if st = file_read(sub_path) {
       sub = pkg_parse_manifest(st, sub_path)
-      if sub.ok {
-      } else {
+      if !sub.ok {
         diag_puts("avant fetch: ${sub.err}")
         return false
       }

@@ -32,8 +32,7 @@ pub fn (checker_self: Checker) symbol_table: SymbolTable {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.node.generic {
-    } else {
+    if !sig.node.generic {
       table.add_function(sig)
     }
     i = i + 1
@@ -42,8 +41,7 @@ pub fn (checker_self: Checker) symbol_table: SymbolTable {
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
     if sig.node.generic {
-    } else if checker_self.resolver.has_template(sig.owner) {
-    } else {
+    } else if !checker_self.resolver.has_template(sig.owner) {
       table.add_method(sig)
     }
     i = i + 1
@@ -138,16 +136,14 @@ pub fn (checker_self: Checker) assign_emit_names {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if sig.node.generic {
-    } else {
+    if !sig.node.generic {
       name = sig.name
       if name == "main" {
         nroot = 0
         j = 1
         while j < checker_self.functions.size {
           other = checker_self.functions[j]
-          if other.node.generic {
-          } else {
+          if !other.node.generic {
             if other.name == name {
               if other.node.mod_name == checker_self.root_module {
                 nroot = nroot + 1
@@ -174,8 +170,7 @@ pub fn (checker_self: Checker) assign_emit_names {
         j = 1
         while j < checker_self.functions.size {
           other = checker_self.functions[j]
-          if other.node.generic {
-          } else {
+          if !other.node.generic {
             if other.name == name {
               if other.node.mod_name == checker_self.root_module {
                 nroot = nroot + 1
@@ -201,8 +196,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       j = 1
       while j < checker_self.functions.size {
         other = checker_self.functions[j]
-        if other.node.generic {
-        } else {
+        if !other.node.generic {
           if other.name == name {
             found = false
             m = 0
@@ -212,8 +206,7 @@ pub fn (checker_self: Checker) assign_emit_names {
               }
               m = m + 1
             }
-            if found {
-            } else {
+            if !found {
               mods.push(other.node.mod_name)
             }
           }
@@ -222,8 +215,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       }
       base = name
       if mods.size > 1 {
-        if sig.node.vis {
-        } else {
+        if !sig.node.vis {
           if sig.node.mod_name.size > 0 {
             base = "${sig.node.mod_name}__${name}"
           }
@@ -233,16 +225,14 @@ pub fn (checker_self: Checker) assign_emit_names {
       j = 1
       while j < checker_self.functions.size {
         other = checker_self.functions[j]
-        if other.node.generic {
-        } else {
+        if !other.node.generic {
           if other.name == name {
             if sig.node.vis {
               if other.node.vis {
                 g = g + 1
               }
             } else {
-              if other.node.vis {
-              } else {
+              if !other.node.vis {
                 if other.node.mod_name == sig.node.mod_name {
                   g = g + 1
                 }
@@ -256,8 +246,7 @@ pub fn (checker_self: Checker) assign_emit_names {
         j = 1
         while j < checker_self.functions.size {
           other = checker_self.functions[j]
-          if other.node.generic {
-          } else {
+          if !other.node.generic {
             if other.name == name {
               g = g + 1
             }
@@ -276,8 +265,7 @@ pub fn (checker_self: Checker) assign_emit_names {
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
-    if sig.node.generic {
-    } else {
+    if !sig.node.generic {
       name = sig.name
       owner = sig.owner
       owner_mod = sig.node.owner_mod
@@ -291,8 +279,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       j = 0
       while j < checker_self.methods.size {
         other = checker_self.methods[j]
-        if other.node.generic {
-        } else {
+        if !other.node.generic {
           if other.owner == owner {
             if other.node.owner_mod == owner_mod {
               if other.name == name {
@@ -386,8 +373,7 @@ pub fn (checker_self: Checker) check: Program {
     }
     i = i + 1
   }
-  if has_entry {
-  } else {
+  if !has_entry {
     checker_self.fail(checker_self.program.loc, "program needs fn main or fn run")
     return checker_self.program
   }
@@ -396,8 +382,7 @@ pub fn (checker_self: Checker) check: Program {
   i = 0
   while i < fns.size {
     fnn = fns[i]
-    if fnn.generic {
-    } else {
+    if !fnn.generic {
       checker_self.check_function(fnn)
     }
     i = i + 1
@@ -534,8 +519,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   }
   if fnn.name == "main" {
     if checker_self.root_module.size > 0 {
-      if fnn.mod_name == checker_self.root_module {
-      } else {
+      if fnn.mod_name != checker_self.root_module {
         if fnn.mod_name.size > 0 {
           checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
           return
@@ -545,8 +529,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   }
   if fnn.name == "run" {
     if checker_self.root_module.size > 0 {
-      if fnn.mod_name == checker_self.root_module {
-      } else {
+      if fnn.mod_name != checker_self.root_module {
         if fnn.mod_name.size > 0 {
           checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
           return
@@ -627,8 +610,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   checker_self.current_module = saved_mod
   if fnn.name == "main" || fnn.name == "run" {
     if ret.is_void {
-    } else if ret.is_int {
-    } else {
+    } else if !ret.is_int {
       checker_self.fail(fnn.loc, "fn ${fnn.name} returns ${ret.show}; the process status is Int")
       return
     }
@@ -762,8 +744,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       return
     }
   }
-  if has_owner {
-  } else {
+  if !has_owner {
     checker_self.resolver.clear_tparams
     checker_self.current_module = saved_mod
     return
@@ -834,8 +815,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   checker_self.current_module = saved_mod
   if fnn.name == "initialize" {
-    if ret.is_void {
-    } else {
+    if !ret.is_void {
       checker_self.fail(fnn.loc, "initialize cannot return a value")
       return
     }
@@ -874,8 +854,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     checker_self.method_index[key] = checker_self.methods.size - 1
   }
   if checker_self.adopt_pending {
-    if fnn.generic {
-    } else {
+    if !fnn.generic {
       checker_self.assign_one_method_emit(sig)
       checker_self.pending.push(fnn)
     }
@@ -990,8 +969,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   j = 0
   while j < checker_self.methods.size {
     other = checker_self.methods[j]
-    if other.node.generic {
-    } else {
+    if !other.node.generic {
       if other.owner == owner {
         if other.node.owner_mod == sig.node.owner_mod {
           if other.name == name {
@@ -1016,8 +994,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   j = 0
   while j < checker_self.methods.size {
     other = checker_self.methods[j]
-    if other.node.generic {
-    } else {
+    if !other.node.generic {
       if other.owner == owner {
         if other.node.owner_mod == sig.node.owner_mod {
           if other.name == name {
@@ -1110,16 +1087,14 @@ pub fn (checker_self: Checker) check_field_defaults {
             j = j + 1
             continue
           }
-          if checker_self.trivial_default(default) {
-          } else {
+          if !checker_self.trivial_default(default) {
             checker_self.fail(default.loc, "field default must be a literal or nil")
             return
           }
           if want = ty.field_named(field.name) {
             checker_self.push_scope
             got = checker_self.check_expr_as(default, want)
-            if ty_assignable(got, want) {
-            } else {
+            if !ty_assignable(got, want) {
               checker_self.fail(default.loc, "cannot assign ${got.show} to ${want.show}")
             }
             checker_self.pop_scope

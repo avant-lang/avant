@@ -607,8 +607,7 @@ pub class Parser {
     dummy = self.expect(tk_l_brace())
     self.skip_newlines
     for_tok = self.current
-    if for_tok.kind == tk_for() {
-    } else {
+    if for_tok.kind != tk_for() {
       self.fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
     dummy_for = self.bump
@@ -616,8 +615,7 @@ pub class Parser {
     var_tok = self.expect(tk_ident())
     self.skip_newlines
     in_tok = self.current
-    if in_tok.kind == tk_in() {
-    } else {
+    if in_tok.kind != tk_in() {
       self.fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
     dummy_in = self.bump
@@ -634,8 +632,7 @@ pub class Parser {
     self.skip_newlines
     dummy_lb = self.expect(tk_l_brace())
     self.skip_newlines
-    if self.current.kind == tk_quote() {
-    } else {
+    if self.current.kind != tk_quote() {
       self.fail(self.current.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
     qdecl = self.parse_quote_decl(owner)
@@ -650,12 +647,10 @@ pub class Parser {
 
   pub fn parse_splice: Expr {
     loc = self.expect(tk_pound()).loc
-    if self.in_quote {
-    } else {
+    if !self.in_quote {
       self.fail(loc, "splice #() only belongs in quote")
     }
-    if self.current.kind == tk_l_paren() {
-    } else {
+    if self.current.kind != tk_l_paren() {
       self.fail(self.current.loc, "expected ( after #")
     }
     dummy = self.bump
@@ -1015,8 +1010,7 @@ pub class Parser {
       self.skip_newlines
     }
     if layout.fields.size == 0 {
-      if self.new_err_since(mark0) {
-      } else {
+      if !self.new_err_since(mark0) {
         self.fail(loc, "C layout needs a field")
       }
     }
@@ -1086,8 +1080,7 @@ pub class Parser {
         vis = true
         dummy_pub = self.bump
         self.skip_newlines
-        if self.current.kind == tk_fn() {
-        } else {
+        if self.current.kind != tk_fn() {
           self.fail(self.current.loc, "pub in a type body only prefixes fn")
           break
         }
@@ -1852,8 +1845,7 @@ pub class Parser {
       return 0i64
     }
     tok = self.bump
-    if self.parse_int_tok(tok) {
-    } else {
+    if !self.parse_int_tok(tok) {
       return 0i64
     }
     if self.int_suffix.size != 0 {
@@ -1927,8 +1919,7 @@ pub class Parser {
     loc = self.expect(tk_return()).loc
     expr: Expr? = nil
     k = self.current.kind
-    if k == tk_newline() || k == tk_r_brace() || k == tk_eof() {
-    } else {
+    if !(k == tk_newline() || k == tk_r_brace() || k == tk_eof()) {
       expr = self.maybe_trailing_block(self.parse_expr)
     }
     stmt_return(loc, expr)
@@ -1997,8 +1988,7 @@ pub class Parser {
                 took_type = true
               }
             }
-            if took_type {
-            } else {
+            if !took_type {
               args = self.parse_arg_list
               call = Expr.new(ex_call(), at)
               call.callee = field.value

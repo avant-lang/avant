@@ -342,8 +342,7 @@ pub class Checker {
     }
     self.resolver_kept = self.resolver_pulled
     if self.ready_adopt {
-      if self.in_adopt {
-      } else {
+      if !self.in_adopt {
         saved: Array(String) = []
         i = 0
         while i < self.resolver.tparam_names.size {
@@ -489,8 +488,7 @@ pub class Checker {
     pa0: Array(String) = []
     self.pending_arrays = pa0
     self.facts = FlowFacts.new
-    if ret.is_void {
-    } else {
+    if !ret.is_void {
       if fnn.body.size == 0 {
         self.fail(fnn.loc, "missing return value")
         self.current_module = saved_mod
@@ -509,8 +507,7 @@ pub class Checker {
           got_owner = true
         }
       }
-      if got_owner {
-      } else {
+      if !got_owner {
         if o2 = self.resolver.get_named(fnn.owner) {
           owner = o2
           got_owner = true
@@ -558,8 +555,7 @@ pub class Checker {
         self.self_ty = nil
         got = self.check_expr_as(default, params[i])
         self.self_ty = saved
-        if ty_assignable(got, params[i]) {
-        } else {
+        if !ty_assignable(got, params[i]) {
           self.fail(default.loc, "cannot assign ${got.show} to ${params[i].show}")
           self.pop_scope
           self.current_module = saved_mod
@@ -594,8 +590,7 @@ pub class Checker {
       self.clear_poison
       self.scan_pending_stmt(body[i])
       self.check_stmt(body[i], expected, last)
-      if self.has_err {
-      } else {
+      if !self.has_err {
         self.register_spawn_pending(body[i])
         self.fact_after_stmt(body[i])
       }
@@ -661,13 +656,11 @@ pub class Checker {
         if self.reject_clayout_value(got, expr.loc) {
           return
         }
-        if ty_assignable(got, expected) {
-        } else {
+        if !ty_assignable(got, expected) {
           self.fail(stmt.loc, "return type is ${got.show}, expected ${expected.show}")
         }
       } else {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "return needs a value of type ${expected.show}")
         }
       }
@@ -684,8 +677,7 @@ pub class Checker {
       }
       if cond = stmt.cond {
         ct = self.check_expr(cond)
-        if ct.is_bool {
-        } else {
+        if !ct.is_bool {
           self.fail(cond.loc, "if condition must be Bool, got ${ct.show}")
         }
       }
@@ -713,20 +705,16 @@ pub class Checker {
         self.cap_kill_assigned_in(stmt.else_body)
       }
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           ok = false
           if stmt.else_body.size > 0 {
-            if self.fallthrough(stmt.then_body) {
-            } else {
-              if self.fallthrough(stmt.else_body) {
-              } else {
+            if !self.fallthrough(stmt.then_body) {
+              if !self.fallthrough(stmt.else_body) {
                 ok = true
               }
             }
           }
-          if ok {
-          } else {
+          if !ok {
             self.fail(stmt.loc, "missing return value")
           }
         }
@@ -741,8 +729,7 @@ pub class Checker {
         }
       }
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -752,8 +739,7 @@ pub class Checker {
       self.check_hold(stmt)
       self.check_block(stmt.body, expected, false)
       if at_tail {
-        if expected.is_void || !self.fallthrough(stmt.body) {
-        } else {
+        if !(expected.is_void || !self.fallthrough(stmt.body)) {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -763,15 +749,13 @@ pub class Checker {
       if e = stmt.expr {
         et = self.check_expr(e)
         heap = et.is_string || et.is_bytes || et.is_buf || et.is_array || et.is_hash || et.is_class || et.is_fn || et.is_join
-        if heap {
-        } else {
+        if !heap {
           self.fail(e.loc, "pin needs a heap value, got ${et.show}")
         }
       }
       self.check_block(stmt.body, expected, false)
       if at_tail {
-        if expected.is_void || !self.fallthrough(stmt.body) {
-        } else {
+        if !(expected.is_void || !self.fallthrough(stmt.body)) {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -786,8 +770,7 @@ pub class Checker {
           self.annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison
           self.check_stmt(stmt.pre[pi], self.t_void(), false)
-          if self.has_err {
-          } else {
+          if !self.has_err {
             self.fact_after_stmt(stmt.pre[pi])
           }
           pi = pi + 1
@@ -795,8 +778,7 @@ pub class Checker {
         if stmt.for_kind == 1 {
           if pt = stmt.pre[0].target {
             if pty = self.lookup(pt.ident) {
-              if pty.is_int {
-              } else {
+              if !pty.is_int {
                 self.fail(stmt.loc, "for range bounds must be Int, got ${pty.show}")
               }
             }
@@ -804,8 +786,7 @@ pub class Checker {
           if stmt.pre.size > 1 {
             if pt2 = stmt.pre[1].target {
               if pty2 = self.lookup(pt2.ident) {
-                if pty2.is_int {
-                } else {
+                if !pty2.is_int {
                   self.fail(stmt.loc, "for range bounds must be Int, got ${pty2.show}")
                 }
               }
@@ -815,8 +796,7 @@ pub class Checker {
         if stmt.for_kind == 2 {
           if pt = stmt.pre[0].target {
             if pty = self.lookup(pt.ident) {
-              if pty.is_array {
-              } else {
+              if !pty.is_array {
                 self.fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show}")
               }
             }
@@ -829,8 +809,7 @@ pub class Checker {
       }
       if cond = stmt.cond {
         ct = self.check_expr(cond)
-        if ct.is_bool {
-        } else {
+        if !ct.is_bool {
           self.fail(cond.loc, "while condition must be Bool, got ${ct.show}")
         }
       }
@@ -849,8 +828,7 @@ pub class Checker {
       self.pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       self.pop_loop_facts(saved_facts)
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -868,8 +846,7 @@ pub class Checker {
         }
       }
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -884,8 +861,7 @@ pub class Checker {
         }
       }
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -894,8 +870,7 @@ pub class Checker {
     if k == st_assign() {
       self.check_assign(stmt)
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           self.fail(stmt.loc, "missing return value")
         }
       }
@@ -905,8 +880,7 @@ pub class Checker {
       if expr = stmt.expr {
         if at_tail {
           if expr.kind == ex_lambda() {
-            if expected.is_void {
-            } else {
+            if !expected.is_void {
               got = self.check_expr_as(expr, expected)
               return
             }
@@ -919,8 +893,7 @@ pub class Checker {
         got = self.check_expr(expr)
         if at_tail {
           if expected.is_void {
-            if got.is_void {
-            } else {
+            if !got.is_void {
               if stmt.lead != 0 {
                 self.fail(stmt.loc, "unused ${got.show} value at the end of a void function: a line starting with `-` or `[` begins a new statement; to continue the line before, end it with the operator or an open bracket")
               } else {
@@ -928,8 +901,7 @@ pub class Checker {
               }
             }
           } else {
-            if ty_assignable(got, expected) {
-            } else {
+            if !ty_assignable(got, expected) {
               self.fail(stmt.loc, "last expression is ${got.show}, expected ${expected.show}")
             }
           }
@@ -952,20 +924,16 @@ pub class Checker {
         self.check_block(stmt.else_body, expected, false)
       }
       if at_tail {
-        if expected.is_void {
-        } else {
+        if !expected.is_void {
           ok = false
           if stmt.else_body.size > 0 {
-            if self.fallthrough(stmt.then_body) {
-            } else {
-              if self.fallthrough(stmt.else_body) {
-              } else {
+            if !self.fallthrough(stmt.then_body) {
+              if !self.fallthrough(stmt.else_body) {
                 ok = true
               }
             }
           }
-          if ok {
-          } else {
+          if !ok {
             self.fail(stmt.loc, "missing return value")
           }
         }
@@ -1023,15 +991,12 @@ pub class Checker {
               early = true
             }
             got = self.check_expr_as(value, want)
-            if ty_assignable(got, want) {
-            } else {
-              if self.fn_compatible(got, want) {
-              } else {
+            if !ty_assignable(got, want) {
+              if !self.fn_compatible(got, want) {
                 self.fail(value.loc, "cannot assign ${got.show} to ${want.show}")
               }
             }
-            if early {
-            } else {
+            if !early {
               self.bind(target.ident, want)
               target.ty = want
             }
@@ -1040,8 +1005,7 @@ pub class Checker {
           if existing = self.lookup(target.ident) {
             self.note_capture(target.ident, existing)
             got = self.check_expr_as(value, existing)
-            if ty_assignable(got, existing) {
-            } else {
+            if !ty_assignable(got, existing) {
               self.fail(value.loc, "cannot assign ${got.show} to ${existing.show}")
             }
             target.ty = existing
@@ -1051,8 +1015,7 @@ pub class Checker {
             target.implicit_field = true
             target.ty = field_ty
             got = self.check_expr_as(value, field_ty)
-            if ty_assignable(got, field_ty) {
-            } else {
+            if !ty_assignable(got, field_ty) {
               self.fail(value.loc, "cannot assign ${got.show} to ${field_ty.show}")
             }
             return
@@ -1080,15 +1043,13 @@ pub class Checker {
               if container.is_hash {
                 if k = container.key {
                   key = self.check_expr_as(ix, k)
-                  if ty_assignable(key, k) {
-                  } else {
+                  if !ty_assignable(key, k) {
                     self.fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
                   }
                 }
                 if v = container.val {
                   got = self.check_expr_as(value, v)
-                  if ty_assignable(got, v) {
-                  } else {
+                  if !ty_assignable(got, v) {
                     self.fail(value.loc, "cannot assign ${got.show} to ${v.show}")
                   }
                   target.ty = v
@@ -1109,8 +1070,7 @@ pub class Checker {
           return
         }
         got = self.check_expr_as(value, place)
-        if ty_assignable(got, place) {
-        } else {
+        if !ty_assignable(got, place) {
           self.fail(value.loc, "cannot assign ${got.show} to ${place.show}")
         }
         return
@@ -1143,12 +1103,10 @@ pub class Checker {
           return
         }
         got = self.check_expr_as(value, place)
-        if got.same_as(place) {
-        } else {
+        if !got.same_as(place) {
           self.fail(value.loc, "cannot assign ${got.show} to ${place.show}")
         }
-        if place.is_numeric {
-        } else {
+        if !place.is_numeric {
           self.fail(stmt.loc, "compound assignment expects a numeric target, got ${place.show}")
         }
         if target.kind == ex_name() {
@@ -1202,12 +1160,9 @@ pub class Checker {
       return kind
     }
     if has_want {
-      if ty_has_var(want) {
-      } else {
-        if ty_assignable(kind, want) {
-        } else {
-          if self.fn_compatible(kind, want) {
-          } else {
+      if !ty_has_var(want) {
+        if !ty_assignable(kind, want) {
+          if !self.fn_compatible(kind, want) {
             self.fail(expr.loc, "expected ${want.show}, got ${kind.show}")
           }
         }
@@ -1393,8 +1348,7 @@ pub class Checker {
         if ty.is_bool {
           ok = true
         }
-        if ok {
-        } else {
+        if !ok {
           self.fail(inner.loc, "cannot interpolate ${ty.show}")
         }
       }
@@ -1584,8 +1538,7 @@ pub class Checker {
         if expr.ident == "sort" {
           expr.method_call = true
           if e = object.inner {
-            if self.is_ordered_ty(e) {
-            } else {
+            if !self.is_ordered_ty(e) {
               self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
             }
           }
@@ -1594,8 +1547,7 @@ pub class Checker {
         if expr.ident == "sorted" {
           expr.method_call = true
           if e = object.inner {
-            if self.is_ordered_ty(e) {
-            } else {
+            if !self.is_ordered_ty(e) {
               self.fail(expr.loc, "Array.sorted needs an ordered element type or a comparator block")
             }
             return ty_array(e)
@@ -1959,8 +1911,7 @@ pub class Checker {
     if arr = expr.left {
       if ix = expr.right {
         if arr.kind == ex_name() {
-          if arr.implicit_field {
-          } else {
+          if !arr.implicit_field {
             cont = arr.ident
             if ix.kind == ex_name() {
               if self.fact_slack_of(ix.ident, cont) >= 0 {
@@ -2012,8 +1963,7 @@ pub class Checker {
         container = self.check_expr(arr)
         if container.is_string || container.is_buf || container.is_bytes {
           got = self.check_expr_as(ix, self.t_int())
-          if got.is_int {
-          } else {
+          if !got.is_int {
             self.fail(ix.loc, "index must be Int, got ${got.show}")
           }
           return self.t_int()
@@ -2021,8 +1971,7 @@ pub class Checker {
         if container.is_hash {
           if k = container.key {
             key = self.check_expr_as(ix, k)
-            if ty_assignable(key, k) {
-            } else {
+            if !ty_assignable(key, k) {
               self.fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
             }
           }
@@ -2033,8 +1982,7 @@ pub class Checker {
         }
         if container.is_array {
           got = self.check_expr_as(ix, self.t_int())
-          if got.is_int {
-          } else {
+          if !got.is_int {
             self.fail(ix.loc, "array index must be Int, got ${got.show}")
           }
           if e = container.inner {
@@ -2060,8 +2008,7 @@ pub class Checker {
     }
     if size = expr.size_expr {
       st = self.check_expr_as(size, self.t_int())
-      if st.is_int {
-      } else {
+      if !st.is_int {
         self.fail(size.loc, "Array(T).new expects Int size")
       }
     }
@@ -2083,24 +2030,21 @@ pub class Checker {
     if has_want {
       if want.is_array {
         if e = want.inner {
-          if ty_has_var(e) {
-          } else {
+          if !ty_has_var(e) {
             elem_ty = e
             forced = true
           }
         }
       }
     }
-    if forced {
-    } else {
+    if !forced {
       elem_ty = self.check_expr(expr.elems[0])
     }
     i = 0
     while i < expr.elems.size {
       el = expr.elems[i]
       got = self.check_expr_as(el, elem_ty)
-      if ty_assignable(got, elem_ty) {
-      } else {
+      if !ty_assignable(got, elem_ty) {
         self.fail(el.loc, "array element is ${got.show}, expected ${elem_ty.show}")
       }
       i = i + 1
@@ -2119,18 +2063,14 @@ pub class Checker {
       val = self.resolve_value_in_module(vn)
       self.pull_resolve
     }
-    if key.is_string {
-    } else {
-      if key.is_int {
-      } else {
+    if !key.is_string {
+      if !key.is_int {
         self.fail(expr.loc, "Hash keys must be String or Int")
         return self.t_int()
       }
     }
-    if val.is_int {
-    } else {
-      if val.is_string {
-      } else {
+    if !val.is_int {
+      if !val.is_string {
         self.fail(expr.loc, "Hash values must be Int or String")
         return self.t_int()
       }
@@ -2195,10 +2135,8 @@ pub class Checker {
       if field_ty = ty.field_named(fname) {
         if check_values {
           got = self.check_expr_as(value, field_ty)
-          if ty_assignable(got, field_ty) {
-          } else {
-            if ty_has_var(field_ty) {
-            } else {
+          if !ty_assignable(got, field_ty) {
+            if !ty_has_var(field_ty) {
               self.fail(value.loc, "field ${fname} is ${got.show}, expected ${field_ty.show}")
             }
           }
@@ -2296,10 +2234,8 @@ pub class Checker {
           i = 0
           while i < params.size {
             warg = want.ty_args[i]
-            if ty_has_var(warg) {
-            } else {
-              if self.unify_ty(ty_var(params[i]), warg, keys, vals) {
-              } else {
+            if !ty_has_var(warg) {
+              if !self.unify_ty(ty_var(params[i]), warg, keys, vals) {
                 return false
               }
             }
@@ -2356,8 +2292,7 @@ pub class Checker {
     }
     keys: Array(String) = []
     vals: Array(Ty) = []
-    if self.apply_want_args(tmpl.name, params, has_want, want, keys, vals) {
-    } else {
+    if !self.apply_want_args(tmpl.name, params, has_want, want, keys, vals) {
       self.fail(expr.loc, "conflicting type arguments")
       return self.t_int()
     }
@@ -2385,8 +2320,7 @@ pub class Checker {
         got = self.check_expr_flag(value, true, pat_ty)
         gots.push(got)
         got_names.push(fname)
-        if self.unify_ty(pat_ty, got, keys, vals) {
-        } else {
+        if !self.unify_ty(pat_ty, got, keys, vals) {
           self.fail(value.loc, "conflicting type arguments")
         }
       } else {
@@ -2402,8 +2336,7 @@ pub class Checker {
       i = 0
       while i < got_names.size {
         if field_ty = ty.field_named(got_names[i]) {
-          if ty_assignable(gots[i], field_ty) {
-          } else {
+          if !ty_assignable(gots[i], field_ty) {
             self.fail(expr.loc, "field ${got_names[i]} is ${gots[i].show}, expected ${field_ty.show}")
           }
         }
@@ -2902,12 +2835,10 @@ pub class Checker {
         }
         if left.is_numeric {
           if right.is_numeric {
-            if left.is_float {
-            } else {
+            if !left.is_float {
               l.ty = self.t_float()
             }
-            if right.is_float {
-            } else {
+            if !right.is_float {
               r.ty = self.t_float()
             }
             return self.float_binary(op, expr.loc)
@@ -2995,8 +2926,7 @@ pub class Checker {
         return ty_nilable(self.t_string())
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "file_read expects String")
       }
       return ty_nilable(self.t_string())
@@ -3012,13 +2942,11 @@ pub class Checker {
         return self.t_int()
       }
       path = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(path, self.t_string()) {
-      } else {
+      if !ty_assignable(path, self.t_string()) {
         self.fail(expr.args[0].loc, "file_write path must be String")
       }
       body = self.check_expr_as(expr.args[1], self.t_string())
-      if ty_assignable(body, self.t_string()) {
-      } else {
+      if !ty_assignable(body, self.t_string()) {
         self.fail(expr.args[1].loc, "file_write body must be String")
       }
       return self.t_int()
@@ -3045,14 +2973,12 @@ pub class Checker {
         return self.t_int()
       }
       path = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(path, self.t_string()) {
-      } else {
+      if !ty_assignable(path, self.t_string()) {
         self.fail(expr.args[0].loc, "process_run path must be String")
       }
       args_ty = ty_array(self.t_string())
       got = self.check_expr_as(expr.args[1], args_ty)
-      if ty_assignable(got, args_ty) {
-      } else {
+      if !ty_assignable(got, args_ty) {
         self.fail(expr.args[1].loc, "process_run args must be Array(String)")
       }
       return self.t_int()
@@ -3068,19 +2994,16 @@ pub class Checker {
         return self.t_int()
       }
       path = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(path, self.t_string()) {
-      } else {
+      if !ty_assignable(path, self.t_string()) {
         self.fail(expr.args[0].loc, "process_run_out path must be String")
       }
       args_ty = ty_array(self.t_string())
       got = self.check_expr_as(expr.args[1], args_ty)
-      if ty_assignable(got, args_ty) {
-      } else {
+      if !ty_assignable(got, args_ty) {
         self.fail(expr.args[1].loc, "process_run_out args must be Array(String)")
       }
       outp = self.check_expr_as(expr.args[2], self.t_string())
-      if ty_assignable(outp, self.t_string()) {
-      } else {
+      if !ty_assignable(outp, self.t_string()) {
         self.fail(expr.args[2].loc, "process_run_out output path must be String")
       }
       return self.t_int()
@@ -3096,8 +3019,7 @@ pub class Checker {
         return ty_nilable(self.t_string())
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "env_get expects String")
       }
       return ty_nilable(self.t_string())
@@ -3113,8 +3035,7 @@ pub class Checker {
         return self.t_bool()
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "file_exists expects String")
       }
       return self.t_bool()
@@ -3130,8 +3051,7 @@ pub class Checker {
         return ty_array(self.t_string())
       }
       got = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(got, self.t_string()) {
-      } else {
+      if !ty_assignable(got, self.t_string()) {
         self.fail(expr.args[0].loc, "dir_list expects String")
       }
       return ty_array(self.t_string())
@@ -3156,8 +3076,7 @@ pub class Checker {
         return self.t_string()
       }
       got = self.check_expr_as(expr.args[0], self.t_int())
-      if got.is_int {
-      } else {
+      if !got.is_int {
         self.fail(expr.args[0].loc, "chr expects Int")
       }
       return self.t_string()
@@ -3173,18 +3092,15 @@ pub class Checker {
         return self.t_string()
       }
       s = self.check_expr_as(expr.args[0], self.t_string())
-      if ty_assignable(s, self.t_string()) {
-      } else {
+      if !ty_assignable(s, self.t_string()) {
         self.fail(expr.args[0].loc, "str_slice expects String")
       }
       start = self.check_expr_as(expr.args[1], self.t_int())
       stop = self.check_expr_as(expr.args[2], self.t_int())
-      if start.is_int {
-      } else {
+      if !start.is_int {
         self.fail(expr.args[1].loc, "start must be Int")
       }
-      if stop.is_int {
-      } else {
+      if !stop.is_int {
         self.fail(expr.args[2].loc, "stop must be Int")
       }
       return self.t_string()
@@ -3199,8 +3115,7 @@ pub class Checker {
       }
       if expr.args.size == 1 {
         cap = self.check_expr_as(expr.args[0], self.t_int())
-        if cap.is_int {
-        } else {
+        if !cap.is_int {
           self.fail(expr.args[0].loc, "capacity must be Int")
         }
         return self.t_buf()
@@ -3251,8 +3166,7 @@ pub class Checker {
       } else {
         got = self.check_expr_as(call_arg, params[i])
       }
-      if ty_assignable(got, params[i]) {
-      } else {
+      if !ty_assignable(got, params[i]) {
         n = i + 1
         self.fail(call_arg.loc, "argument ${n} of ${label} is ${got.show}, expected ${params[i].show}")
       }
@@ -3281,8 +3195,7 @@ pub class Checker {
           }
           ty = self.resolve_in_module(tn)
           self.pull_resolve
-          if self.has_err {
-          } else {
+          if !self.has_err {
             recv.ty = ty
           }
           empty: Array(Ty) = []
@@ -3327,8 +3240,7 @@ pub class Checker {
     params = cdef.type_params
     keys: Array(String) = []
     vals: Array(Ty) = []
-    if self.apply_want_args(cdef.name, params, has_want, want, keys, vals) {
-    } else {
+    if !self.apply_want_args(cdef.name, params, has_want, want, keys, vals) {
       self.fail(expr.loc, "conflicting type arguments")
       return self.t_int()
     }
@@ -3349,8 +3261,7 @@ pub class Checker {
         if i < pats.size {
           pat_ty = self.subst_ty(pats[i], keys, vals)
           got = self.check_expr_flag(expr.args[i], true, pat_ty)
-          if self.unify_ty(pat_ty, got, keys, vals) {
-          } else {
+          if !self.unify_ty(pat_ty, got, keys, vals) {
             self.fail(expr.args[i].loc, "conflicting type arguments")
           }
         } else {
@@ -3430,8 +3341,7 @@ pub class Checker {
             }
             if i < sig.params.size {
               got = self.fit_call_arg(expr.args[i], got, sig.params[i])
-              if ty_assignable(got, sig.params[i]) {
-              } else {
+              if !ty_assignable(got, sig.params[i]) {
                 n = i + 1
                 self.fail(expr.args[i].loc, "argument ${n} of ${shown}.new is ${got.show}, expected ${sig.params[i].show}")
               }
@@ -3440,8 +3350,7 @@ pub class Checker {
           }
         }
       } else {
-        if expr.args.size == 0 {
-        } else {
+        if expr.args.size != 0 {
           self.fail(expr.loc, "${shown}.new takes no arguments")
         }
       }
@@ -3469,8 +3378,7 @@ pub class Checker {
             if arg.cap_names.size > 0 {
               self.fail(arg.loc, "C callback cannot capture ${arg.cap_names[0]}")
             }
-          } else if arg.fn_ref {
-          } else {
+          } else if !arg.fn_ref {
             self.fail(arg.loc, "C callback must be a function name or a lambda that captures nothing")
           }
         }
@@ -3605,8 +3513,7 @@ pub class Checker {
 
   pub fn longest_module(segs: Array(String), allow_full: Bool): Int {
     limit = segs.size
-    if allow_full {
-    } else {
+    if !allow_full {
       if segs.size == 0 {
         return 0
       }
@@ -3695,8 +3602,7 @@ pub class Checker {
     if recv.kind == ex_name() {
       if found = self.lookup(recv.ident) {
       } else {
-        if recv.type_args.size > 0 {
-        } else {
+        if !(recv.type_args.size > 0) {
           if self.names_std_gc(recv.ident) {
             return self.check_gc_call(expr)
           }
@@ -3737,14 +3643,12 @@ pub class Checker {
     if recv.kind == ex_name() {
       if recv.ident == "String" {
         if expr.callee == "from_utf8" {
-          if expr.args.size == 1 {
-          } else {
+          if expr.args.size != 1 {
             self.fail(expr.loc, "String.from_utf8 takes one Bytes")
             return ty_nilable(self.t_string())
           }
           got = self.check_expr_as(expr.args[0], self.t_bytes())
-          if got.is_bytes {
-          } else {
+          if !got.is_bytes {
             self.fail(expr.args[0].loc, "String.from_utf8 expects Bytes")
           }
           return ty_nilable(self.t_string())
@@ -3811,10 +3715,8 @@ pub class Checker {
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     if cond = expr.cond {
       ct = self.check_expr(cond)
-      if ct.is_int {
-      } else {
-        if ct.is_bool {
-        } else {
+      if !ct.is_int {
+        if !ct.is_bool {
           self.fail(cond.loc, "switch discriminant must be Int or Bool, got ${ct.show}")
         }
       }
@@ -3864,18 +3766,15 @@ pub class Checker {
       self.fail(expr.loc, "switch cases must all produce a value, or none")
       return self.t_int()
     }
-    if expr.has_else {
-    } else {
+    if !expr.has_else {
       self.fail(expr.loc, "switch expression needs else")
       return self.t_int()
     }
     if has_want {
-      if want.is_void {
-      } else {
+      if !want.is_void {
         i = 0
         while i < branch_tys.size {
-          if ty_assignable(branch_tys[i], want) {
-          } else {
+          if !ty_assignable(branch_tys[i], want) {
             self.fail(expr.loc, "switch branch is ${branch_tys[i].show}, expected ${want.show}")
           }
           i = i + 1
@@ -3889,8 +3788,7 @@ pub class Checker {
     result = branch_tys[0]
     i = 0
     while i < branch_tys.size {
-      if branch_tys[i].same_as(result) {
-      } else {
+      if !branch_tys[i].same_as(result) {
         self.fail(expr.loc, "switch branches have different types ${result.show} and ${branch_tys[i].show}")
       }
       i = i + 1
@@ -3899,14 +3797,12 @@ pub class Checker {
   }
 
   pub fn check_spawn(expr: Expr): Ty {
-    if expr.args.size == 0 {
-    } else {
+    if expr.args.size != 0 {
       self.fail(expr.loc, "spawn takes a block, not arguments")
       return ty_join(self.t_int())
     }
     if b = expr.block {
-      if b.params.size == 0 {
-      } else {
+      if b.params.size != 0 {
         self.fail(b.loc, "spawn { } does not take block parameters; use items.parallel")
         return ty_join(self.t_int())
       }
@@ -3919,8 +3815,7 @@ pub class Checker {
       self.try_in = saved_try
       self.loop_depth = saved_loops
       self.in_task = self.in_task - 1
-      if result.is_int {
-      } else {
+      if !result.is_int {
         self.fail(b.loc, "spawn result must be Int")
       }
       self.collect_spawn_captures(expr, b.body)
@@ -3983,13 +3878,11 @@ pub class Checker {
   }
 
   pub fn reject_place_assign(stmt: Stmt): Bool {
-    if self.place_depth > 0 {
-    } else {
+    if !(self.place_depth > 0) {
       return false
     }
     if value = stmt.value {
-      if self.expr_is_place(value) {
-      } else {
+      if !self.expr_is_place(value) {
         return false
       }
     } else {
@@ -4028,20 +3921,17 @@ pub class Checker {
       return self.t_void()
     }
     if b = expr.block {
-      if b.params.size == 1 {
-      } else {
+      if b.params.size != 1 {
         self.fail(b.loc, "Mutex.with { |x| } takes one block parameter")
         return self.t_void()
       }
-      if object.ty_args.size == 1 {
-      } else {
+      if object.ty_args.size != 1 {
         self.fail(expr.loc, "Mutex needs one type argument")
         return self.t_void()
       }
       t = object.ty_args[0]
       if cell = object.field_named("cell") {
-        if cell.same_as(t) {
-        } else {
+        if !cell.same_as(t) {
           self.fail(expr.loc, "Mutex cell has the wrong type")
           return self.t_void()
         }
@@ -4050,8 +3940,7 @@ pub class Checker {
         return self.t_void()
       }
       if gate = object.field_named("gate") {
-        if gate.is_uint64 {
-        } else {
+        if !gate.is_uint64 {
           self.fail(expr.loc, "Mutex needs a gate field")
           return self.t_void()
         }
@@ -4119,8 +4008,7 @@ pub class Checker {
         return self.t_void()
       }
       got = self.check_expr_as(expr.args[0], self.t_uint64())
-      if got.is_uint64 {
-      } else {
+      if !got.is_uint64 {
         self.fail(expr.args[0].loc, "${expr.callee} expects UInt64")
       }
       return self.t_void()
@@ -4168,8 +4056,7 @@ pub class Checker {
             use_want = false
             use_ty = self.t_int()
             if has_want {
-              if want.is_void {
-              } else {
+              if !want.is_void {
                 use_want = true
                 use_ty = want
               }

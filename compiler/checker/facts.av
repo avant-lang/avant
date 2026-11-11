@@ -27,8 +27,7 @@ pub fn (checker_self: Checker) nn_remove(name: String) {
   kept: Array(String) = []
   i = 0
   while i < checker_self.facts.nn_var.size {
-    if checker_self.facts.nn_var[i] == name {
-    } else {
+    if checker_self.facts.nn_var[i] != name {
       kept.push(checker_self.facts.nn_var[i])
     }
     i = i + 1
@@ -126,8 +125,7 @@ pub fn (checker_self: Checker) body_vstep(body: Array(Stmt), ivar: String): Int 
     if got > 0 {
       if step < 0 {
         step = got
-      } else if step == got {
-      } else {
+      } else if step != got {
         return 0 - 1
       }
     }
@@ -258,8 +256,7 @@ pub fn (checker_self: Checker) sv_remove_var(v: String) {
   kept_c: Array(String) = []
   i = 0
   while i < checker_self.facts.sv_var.size {
-    if checker_self.facts.sv_var[i] == v {
-    } else {
+    if checker_self.facts.sv_var[i] != v {
       kept_v.push(checker_self.facts.sv_var[i])
       kept_c.push(checker_self.facts.sv_cont[i])
     }
@@ -359,8 +356,7 @@ pub fn (checker_self: Checker) bv_remove_var(v: String) {
   kept_d: Array(Int) = []
   i = 0
   while i < checker_self.facts.bv_var.size {
-    if checker_self.facts.bv_var[i] == v {
-    } else {
+    if checker_self.facts.bv_var[i] != v {
       kept_v.push(checker_self.facts.bv_var[i])
       kept_c.push(checker_self.facts.bv_cont[i])
       kept_d.push(checker_self.facts.bv_delta[i])
@@ -620,8 +616,7 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
               }
             }
           }
-          if sv_done {
-          } else {
+          if !sv_done {
             checker_self.sv_remove_var(v)
           }
           bc = checker_self.bound_cont_of(val)
@@ -868,43 +863,37 @@ pub fn (checker_self: Checker) deep_ivar_ok_stmt(s: Stmt, ivar: String): Bool {
 
 pub fn (checker_self: Checker) deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
   if e = s.expr {
-    if checker_self.deep_ivar_ok_expr(e, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(e, ivar) {
       return false
     }
   }
   if c = s.cond {
-    if checker_self.deep_ivar_ok_expr(c, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(c, ivar) {
       return false
     }
   }
   if v = s.value {
-    if checker_self.deep_ivar_ok_expr(v, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(v, ivar) {
       return false
     }
   }
   i = 0
   while i < s.then_body.size {
-    if checker_self.deep_ivar_ok_stmt(s.then_body[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_stmt(s.then_body[i], ivar) {
       return false
     }
     i = i + 1
   }
   i = 0
   while i < s.else_body.size {
-    if checker_self.deep_ivar_ok_stmt(s.else_body[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_stmt(s.else_body[i], ivar) {
       return false
     }
     i = i + 1
   }
   i = 0
   while i < s.body.size {
-    if checker_self.deep_ivar_ok_stmt(s.body[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_stmt(s.body[i], ivar) {
       return false
     }
     i = i + 1
@@ -914,76 +903,65 @@ pub fn (checker_self: Checker) deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
 
 pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
   if inner = e.inner {
-    if checker_self.deep_ivar_ok_expr(inner, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(inner, ivar) {
       return false
     }
   }
   if l = e.left {
-    if checker_self.deep_ivar_ok_expr(l, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(l, ivar) {
       return false
     }
   }
   if r = e.right {
-    if checker_self.deep_ivar_ok_expr(r, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(r, ivar) {
       return false
     }
   }
   if obj = e.object {
-    if checker_self.deep_ivar_ok_expr(obj, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(obj, ivar) {
       return false
     }
   }
   if recv = e.receiver {
-    if checker_self.deep_ivar_ok_expr(recv, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(recv, ivar) {
       return false
     }
   }
   i = 0
   while i < e.args.size {
-    if checker_self.deep_ivar_ok_expr(e.args[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(e.args[i], ivar) {
       return false
     }
     i = i + 1
   }
   i = 0
   while i < e.elems.size {
-    if checker_self.deep_ivar_ok_expr(e.elems[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(e.elems[i], ivar) {
       return false
     }
     i = i + 1
   }
   i = 0
   while i < e.field_exprs.size {
-    if checker_self.deep_ivar_ok_expr(e.field_exprs[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(e.field_exprs[i], ivar) {
       return false
     }
     i = i + 1
   }
   if sz = e.size_expr {
-    if checker_self.deep_ivar_ok_expr(sz, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(sz, ivar) {
       return false
     }
   }
   if c = e.cond {
-    if checker_self.deep_ivar_ok_expr(c, ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_expr(c, ivar) {
       return false
     }
   }
   if b = e.block {
     j = 0
     while j < b.body.size {
-      if checker_self.deep_ivar_ok_stmt(b.body[j], ivar) {
-      } else {
+      if !checker_self.deep_ivar_ok_stmt(b.body[j], ivar) {
         return false
       }
       j = j + 1
@@ -994,8 +972,7 @@ pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
     cs = e.cases[i]
     j = 0
     while j < cs.body.size {
-      if checker_self.deep_ivar_ok_stmt(cs.body[j], ivar) {
-      } else {
+      if !checker_self.deep_ivar_ok_stmt(cs.body[j], ivar) {
         return false
       }
       j = j + 1
@@ -1004,8 +981,7 @@ pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
   }
   i = 0
   while i < e.else_body.size {
-    if checker_self.deep_ivar_ok_stmt(e.else_body[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_stmt(e.else_body[i], ivar) {
       return false
     }
     i = i + 1
@@ -1016,8 +992,7 @@ pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
 pub fn (checker_self: Checker) body_ivar_ok(body: Array(Stmt), ivar: String): Bool {
   i = 0
   while i < body.size {
-    if checker_self.deep_ivar_ok_stmt(body[i], ivar) {
-    } else {
+    if !checker_self.deep_ivar_ok_stmt(body[i], ivar) {
       return false
     }
     i = i + 1
@@ -1150,8 +1125,7 @@ pub fn (checker_self: Checker) fact_from_cond(e: Expr, body: Array(Stmt), nnl: A
       if str_index(nnl, ivar) >= 0 {
         nonneg2 = true
       }
-      if nonneg2 {
-      } else {
+      if !nonneg2 {
         return
       }
       if checker_self.body_ivar_ok(body, ivar) {
@@ -1182,12 +1156,10 @@ pub fn (checker_self: Checker) fact_from_cond(e: Expr, body: Array(Stmt), nnl: A
     if str_index(nnl, ivar) >= 0 {
       nonneg = true
     }
-    if nonneg {
-    } else {
+    if !nonneg {
       return
     }
-    if direct {
-    } else {
+    if !direct {
       if checker_self.body_shrinks(body, cont) {
         return
       }
@@ -1245,8 +1217,7 @@ pub fn (checker_self: Checker) cap_remove(name: String) {
   kept_c: Array(Int64) = []
   i = 0
   while i < checker_self.facts.cap_var.size {
-    if checker_self.facts.cap_var[i] == name {
-    } else {
+    if checker_self.facts.cap_var[i] != name {
       kept_v.push(checker_self.facts.cap_var[i])
       kept_c.push(checker_self.facts.cap_val[i])
     }
@@ -1726,12 +1697,10 @@ pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int64, cr: Int64, ty
 }
 
 pub fn (checker_self: Checker) arith_proven(op: Int, l: Expr, r: Expr, ty: Ty): Bool {
-  if checker_self.expr_nonneg(l) {
-  } else {
+  if !checker_self.expr_nonneg(l) {
     return false
   }
-  if checker_self.expr_nonneg(r) {
-  } else {
+  if !checker_self.expr_nonneg(r) {
     return false
   }
   cl = checker_self.cap_of_expr(l)
@@ -1740,12 +1709,10 @@ pub fn (checker_self: Checker) arith_proven(op: Int, l: Expr, r: Expr, ty: Ty): 
 }
 
 pub fn (checker_self: Checker) compound_proven(op: Int, target: String, value: Expr, ty: Ty): Bool {
-  if checker_self.nn_proven(target) {
-  } else {
+  if !checker_self.nn_proven(target) {
     return false
   }
-  if checker_self.expr_nonneg(value) {
-  } else {
+  if !checker_self.expr_nonneg(value) {
     return false
   }
   ct = checker_self.cap_of(target)

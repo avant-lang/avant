@@ -628,8 +628,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
   while i < files.size {
     f = files[i]
     if f.compiled {
-      if f.reported {
-      } else {
+      if !f.reported {
         take_par_logs(f)
         f.ok = false
         f.output = append_text(f.output, "test jobs did not finish\n")
@@ -857,12 +856,10 @@ fn is_dir(path: String): Bool {
 
 fn require_cov_dir(anchor: String, rel: String, key: String) {
   path = abs_join(anchor, rel)
-  if file_exists(path) {
-  } else {
+  if !file_exists(path) {
     test_fail("${key} directory does not exist: ${rel}")
   }
-  if is_dir(path) {
-  } else {
+  if !is_dir(path) {
     test_fail("${key} path is not a directory: ${rel}")
   }
 }
@@ -949,8 +946,7 @@ pub fn driver_test(args: Array(String)) {
     man_path = abs_join(man_dir, "avant.toml")
     if text = file_read(man_path) {
       m = pkg_parse_manifest(text, man_path)
-      if m.ok {
-      } else {
+      if !m.ok {
         test_fail(m.err)
       }
       if m.test_err.size > 0 {
@@ -1006,8 +1002,7 @@ pub fn driver_test(args: Array(String)) {
   if paths.size == 0 {
     if test_entry.size > 0 {
       entry = abs_join(anchor, test_entry)
-      if file_exists(entry) {
-      } else {
+      if !file_exists(entry) {
         test_fail("test entry does not exist: ${test_entry}")
       }
       files.push(FileRun.new(entry, rel_of(cwd, entry), tmp_path("bin-1")))
@@ -1015,8 +1010,7 @@ pub fn driver_test(args: Array(String)) {
       root = abs_join(anchor, "tests")
       if test_dir.size > 0 {
         root = abs_join(anchor, test_dir)
-        if file_exists(root) {
-        } else {
+        if !file_exists(root) {
           test_fail("test dir does not exist: ${test_dir}")
         }
       }
@@ -1029,8 +1023,7 @@ pub fn driver_test(args: Array(String)) {
     seq = 0
     while p < paths.size {
       arg = paths[p]
-      if file_exists(arg) {
-      } else {
+      if !file_exists(arg) {
         test_fail("test path does not exist: ${arg}")
       }
       abs = arg
@@ -1064,8 +1057,7 @@ pub fn driver_test(args: Array(String)) {
         }
         f = f + 1
       }
-      if found {
-      } else {
+      if !found {
         test_fail("exclusive path is not a selected test: ${exclusive[e]}")
       }
       e = e + 1
@@ -1088,8 +1080,7 @@ pub fn driver_test(args: Array(String)) {
         }
         f = f + 1
       }
-      if found {
-      } else {
+      if !found {
         test_fail("first path is not a selected test: ${first[e]}")
       }
       e = e + 1
@@ -1117,16 +1108,14 @@ pub fn driver_test(args: Array(String)) {
       f = f + 1
     }
     if has_ex {
-      if skip_ex {
-      } else {
+      if !skip_ex {
         test_fail("--shard cannot include an exclusive file (pass --skip-exclusive)")
       }
     }
     pool: Array(FileRun) = []
     f = 0
     while f < files.size {
-      if skip_ex && files[f].exclusive {
-      } else {
+      if !(skip_ex && files[f].exclusive) {
         pool.push(files[f])
       }
       f = f + 1
@@ -1144,8 +1133,7 @@ pub fn driver_test(args: Array(String)) {
     kept: Array(FileRun) = []
     f = 0
     while f < files.size {
-      if files[f].exclusive {
-      } else {
+      if !files[f].exclusive {
         kept.push(files[f])
       }
       f = f + 1

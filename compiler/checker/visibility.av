@@ -346,15 +346,13 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
 
 pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
   if tn.mod_name.size > 0 {
-    if checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
-    } else {
+    if !checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
       checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
       return checker_self.t_int()
     }
     owners = checker_self.mods_of_type(tn.name)
     if owners.size > 0 {
-      if checker_self.type_is_visible(tn.name, checker_self.current_module, tn.mod_name) {
-      } else {
+      if !checker_self.type_is_visible(tn.name, checker_self.current_module, tn.mod_name) {
         checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
         return checker_self.t_int()
       }
@@ -366,8 +364,7 @@ pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
         checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
         return checker_self.t_int()
       }
-      if checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-      } else {
+      if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
         checker_self.fail(tn.loc, "unknown type ${tn.name}")
         return checker_self.t_int()
       }
@@ -390,15 +387,13 @@ pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
 
 pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
   if tn.mod_name.size > 0 {
-    if checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
-    } else {
+    if !checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
       checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
       return checker_self.t_int()
     }
   } else {
     if named = checker_self.resolver.get_named(tn.name) {
-      if checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-      } else {
+      if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
         checker_self.fail(tn.loc, "unknown type ${tn.name}")
         return checker_self.t_int()
       }
@@ -412,8 +407,7 @@ pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
 }
 
 pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Function) {
-  if fnn.vis {
-  } else {
+  if !fnn.vis {
     return
   }
   if ty.is_agg {
@@ -425,8 +419,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
         owner = o
       }
     }
-    if owner == fnn.mod_name {
-    } else {
+    if owner != fnn.mod_name {
       vis = 0
       if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
         vis = flag
@@ -435,8 +428,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
           vis = flag2
         }
       }
-      if vis == 1 {
-      } else {
+      if vis != 1 {
         checker_self.fail(loc, "pub signature cannot use private type ${ty.name}")
       }
     }
@@ -472,8 +464,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
         owner = o
       }
     }
-    if owner == fnn.mod_name {
-    } else {
+    if owner != fnn.mod_name {
       vis = 0
       if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
         vis = flag
@@ -482,8 +473,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
           vis = flag2
         }
       }
-      if vis == 1 {
-      } else {
+      if vis != 1 {
         checker_self.fail(loc, "pub signature cannot use private type ${ty.name}")
       }
     }
@@ -532,8 +522,7 @@ pub fn (checker_self: Checker) type_from_recv(recv: Expr, loc: Location): Ty? {
   if recv.kind == ex_field() {
     if obj = recv.object {
       object = checker_self.check_expr(obj)
-      if object.is_module {
-      } else {
+      if !object.is_module {
         checker_self.fail(loc, "new is a type constructor")
         return nil
       }
@@ -559,8 +548,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
   checker_self.current_module = mod
   none: Ty? = nil
   if sig = checker_self.match_func(expr.callee, arg_tys, none, expr.loc) {
-    if sig.node.mod_name == mod {
-    } else {
+    if sig.node.mod_name != mod {
       checker_self.fail(expr.loc, "unknown function ${mod}.${expr.callee}")
       checker_self.current_module = saved
       return checker_self.t_int()
@@ -575,8 +563,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
         got = checker_self.check_expr_as(expr.args[i], sig.params[i])
       }
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
-      if ty_assignable(got, sig.params[i]) {
-      } else {
+      if !ty_assignable(got, sig.params[i]) {
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
       }

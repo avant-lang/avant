@@ -135,8 +135,7 @@ pub class TypeResolver {
     self.named[self.type_key(mod_name, name)] = id
     if prev = self.named.get(name) {
       old = self.ty_at(prev)
-      if old.mod_name == mod_name {
-      } else {
+      if old.mod_name != mod_name {
         self.collide[name] = 1
       }
     } else {
@@ -824,8 +823,7 @@ pub class TypeResolver {
         i = i + 1
       }
       if is_struct {
-        if self.has_struct_named(key) {
-        } else {
+        if !self.has_struct_named(key) {
           sinst = StructDef.new(loc, key)
           sinst.fields = fields
           sinst.methods = methods
@@ -835,8 +833,7 @@ pub class TypeResolver {
           p.structs.push(sinst)
         }
       } else {
-        if self.has_class_named(key) {
-        } else {
+        if !self.has_class_named(key) {
           cinst = ClassDef.new(loc, key)
           cinst.fields = fields
           cinst.methods = methods
@@ -1053,8 +1050,7 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
         return
       }
     }
-    if c_field_ok(ty) {
-    } else {
+    if !c_field_ok(ty) {
       resolver.fail(field.loc, "C layout fields must be C types, not ${ty.show}")
       return
     }
@@ -1175,8 +1171,7 @@ pub fn load_types(program: Program): TypeResolver {
   i = 0
   while i < program.structs.size {
     sdef2 = program.structs[i]
-    if sdef2.type_params.size > 0 {
-    } else {
+    if !(sdef2.type_params.size > 0) {
       fill_type_fields(resolver, sdef2.mod_name, sdef2.name, sdef2.fields)
     }
     i = i + 1
@@ -1184,8 +1179,7 @@ pub fn load_types(program: Program): TypeResolver {
   i = 0
   while i < program.classes.size {
     cdef2 = program.classes[i]
-    if cdef2.type_params.size > 0 {
-    } else {
+    if !(cdef2.type_params.size > 0) {
       fill_type_fields(resolver, cdef2.mod_name, cdef2.name, cdef2.fields)
     }
     i = i + 1
