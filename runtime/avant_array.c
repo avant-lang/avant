@@ -15,11 +15,14 @@ typedef struct {
   int32_t cap;
 } AvantArray;
 
-static void array_grow(AvantArray *a, int32_t min_cap, uint64_t elem_size, uint32_t buf_type_id) {
+/* min_cap is checked against the ceiling here, before anything is
+ * allocated (Stage 29 W-INT1): every growth comes through this one. */
+static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint32_t buf_type_id) {
+  avant_size_check((uint64_t)min_cap, AVANT_SIZE_ARRAY);
   int32_t ncap = a->cap ? a->cap : 4;
   while (ncap < min_cap) {
     if (ncap > 1073741823) {
-      ncap = min_cap;
+      ncap = (int32_t)min_cap;
       break;
     }
     ncap *= 2;
@@ -70,7 +73,7 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &a);
     if (a->size >= a->cap) {
-      array_grow(a, a->size + 1, elem_size, buf_type_id);
+      array_grow(a, (int64_t)a->size + 1, elem_size, buf_type_id);
     }
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
@@ -154,7 +157,7 @@ void avant_array_push_i32(void *arr, int32_t v) {
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &a);
     if (a->size >= a->cap) {
-      array_grow(a, a->size + 1, sizeof(int32_t), AVANT_TYPE_BYTES);
+      array_grow(a, (int64_t)a->size + 1, sizeof(int32_t), AVANT_TYPE_BYTES);
     }
     ((int32_t *)a->buf)[a->size] = v;
     a->size += 1;

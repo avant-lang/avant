@@ -46,7 +46,7 @@ static char *make_string(const char *p, size_t n) {
   char *out;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &p);
-  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)n);
   if (n > 0) {
     memcpy(out, p, n);
   }
@@ -59,7 +59,7 @@ static char *make_bytes(const char *p, size_t n) {
   char *out;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &p);
-  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)n);
   if (n > 0) {
     memcpy(out, p, n);
   }
@@ -84,7 +84,7 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
   const char *raw0 = raw;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &raw);
-  out = (char *)avant_alloc((uint64_t)total + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)total);
   words = (uint32_t *)out;
   words[0] = (uint32_t)count;
   for (i = 0; i < count; i++) {

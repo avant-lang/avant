@@ -452,7 +452,7 @@ char *avant_regex_error_text(void) {
   if (n < 0) {
     n = 0;
   }
-  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)n);
   memcpy(out, buf, (size_t)n);
   out[n] = 0;
   avant_str_tag(out);

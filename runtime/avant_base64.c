@@ -69,7 +69,7 @@ char *avant_base64_encode(const char *s) {
    * allocation. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
-  out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)out_n);
   p = (const unsigned char *)(s ? s : "");
   base64_encode((const char *)p, n, out, &wrote, 0);
   out[out_n] = 0;
@@ -87,7 +87,7 @@ char *avant_base64_decode(const char *s) {
   /* RC1/RC2, as in avant_base64_encode. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
-  out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)out_n);
   p = (const unsigned char *)(s ? s : "");
   if (!decode_write(out, out_n, p, n, &wrote)) {
     set_status(1);

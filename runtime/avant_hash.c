@@ -278,6 +278,11 @@ static uint64_t val_bytes(const AvantHash *h, int32_t cap) {
  * buffers not yet published are handles, and the old buffers are read
  * from the hash after the last allocation (RC2). */
 static void grow(AvantHash *h) {
+  /* The slot ceiling, before anything is allocated (Stage 29 W-INT1):
+   * cap is a power of two, so the next one would not fit. */
+  if (h->cap >= AVANT_HASH_SLOTS_MAX) {
+    avant_trap_size(AVANT_SIZE_HASH);
+  }
   int32_t ncap = h->cap ? h->cap * 2 : 8;
   void *nkeys = NULL;
   uint8_t *nstate = NULL;
@@ -338,7 +343,7 @@ static void grow(AvantHash *h) {
 
 /* gc-lint: holds nothing (grow is its last statement and roots the hash itself). */
 static void ensure_cap(AvantHash *h) {
-  if (h->size * 4 >= h->cap * 3) {
+  if ((int64_t)h->size * 4 >= (int64_t)h->cap * 3) {
     grow(h);
   }
 }
@@ -630,7 +635,7 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   ensure_cap(h);
   p = s + off;
   lookup_bytes(h, p, n, hv, &i);
-  char *key = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *key = avant_str_alloc((uint64_t)n);
   p = s + off;
   if (n) {
     memcpy(key, p, n);

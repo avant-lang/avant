@@ -112,7 +112,11 @@ static size_t str_n_long(const char *s) {
       return n;
     }
   }
-  return strlen(s);
+  /* A C string: within the String ceiling, or a trap (Stage 29 W-INT1;
+   * a heap string is within it by construction). */
+  size_t n = strlen(s);
+  avant_size_check(n, AVANT_SIZE_STRING);
+  return n;
 }
 
 size_t avant_str_n(const char *s) {
@@ -137,7 +141,7 @@ char *avant_str_empty(void) {
 static char *dup_bytes_at(const char *s, size_t off, size_t n) {
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   if (n) {
     memcpy(p, s + off, n);
   }
@@ -177,7 +181,7 @@ char *avant_str_concat(const char *a, const char *b) {
   AVANT_GC_SCOPE(2);
   AVANT_GC_ROOT(0, &a);
   AVANT_GC_ROOT(1, &b);
-  char *p = (char *)avant_alloc((uint64_t)na + (uint64_t)nb + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)na + (uint64_t)nb);
   memcpy(p, a, na);
   memcpy(p + na, b, nb);
   p[na + nb] = 0;
@@ -194,7 +198,7 @@ char *avant_str_from_i32_bytes(void *arr) {
   if (a && a->buf && a->size > 0) {
     n = a->size;
   }
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   if (n) {
     src = (const int32_t *)a->buf;
   }
@@ -225,7 +229,7 @@ char *avant_str_repeat_byte(int32_t b, int32_t n) {
   if (n < 0) {
     avant_trap_negative(n, 1);
   }
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   memset(p, (unsigned char)b, (size_t)n);
   p[n] = 0;
   avant_str_tag(p);
@@ -523,7 +527,7 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   size_t np = avant_str_n(prefix);
   size_t neg = n < 0 ? 1u : 0u;
   size_t total = np + neg + (size_t)nd;
-  char *p = (char *)avant_alloc((uint64_t)total + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)total);
   if (np) {
     memcpy(p, prefix, np);
   }

@@ -1,0 +1,41 @@
+// The size ceiling (Stage 29 W-INT1, review 6 section 1.6): each mode
+// asks the runtime for a size past its ceiling without allocating it
+// (tests/fixtures/ffi/ceiling.c builds the state) and must trap, or for a
+// file past the String ceiling, which is an IoError. Built with
+// `--cc tests/fixtures/ffi/ceiling.c`; run as `ceiling MODE [PATH]`.
+
+lib ceil {
+  fun ceil_probe(mode: Int64): Int64
+  fun ceil_concat(a: String, b: String): Int64
+  fun ceil_sparse(path: String, n: Int64): Int64
+}
+
+fn read_failure(r: String | IoError): IoError? {
+  _ = r?
+  nil
+}
+
+fn main {
+  args = argv()
+  mode = args[1]
+  if mode == "concat" {
+    a = "ceiling-a-" + mode
+    b = "ceiling-b-" + mode
+    _ = ceil.ceil_concat(a, b)
+  } else if mode == "read" {
+    path = args[2]
+    if ceil.ceil_sparse(path, 3221225472i64) != 0i64 {
+      puts("could not make the sparse file")
+      return
+    }
+    if e = read_failure(file_read(path)) {
+      puts("errno ${e.errno}: ${e}")
+    } else {
+      puts("read a file past the ceiling")
+    }
+    return
+  } else if n = mode.to_i64 {
+    _ = ceil.ceil_probe(n)
+  }
+  puts("no trap")
+}

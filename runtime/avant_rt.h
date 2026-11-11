@@ -433,6 +433,29 @@ __attribute__((noreturn, cold)) void avant_trap_slice(int32_t start, int32_t sto
 __attribute__((noreturn, cold)) void avant_trap_negative(int32_t n, int32_t what);
 __attribute__((noreturn, cold)) void avant_trap_exit_status_at(int32_t status, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int32_t site);
+
+/* The size ceiling (Stage 29 W-INT1, review 6 section 1.6): a String,
+ * Bytes or Buf holds at most AVANT_SIZE_MAX bytes and an Array at most
+ * AVANT_SIZE_MAX elements, because their headers keep 32-bit sizes; a
+ * Hash at most AVANT_HASH_SLOTS_MAX slots (a power of two). Every size or
+ * capacity the runtime computes is checked before anything is allocated
+ * or written, and one that would pass its ceiling traps with
+ * "avant runtime: Buf would exceed 2147483647 bytes" (no wrapped size, no
+ * write past a capacity). The check is one compare on a growth or
+ * allocation path; the fast paths already compare against the capacity.
+ * file_read of a larger file is an IoError (EFBIG). */
+#define AVANT_SIZE_MAX 2147483647
+#define AVANT_HASH_SLOTS_MAX 1073741824
+#define AVANT_SIZE_STRING 0
+#define AVANT_SIZE_BUF 1
+#define AVANT_SIZE_ARRAY 2
+#define AVANT_SIZE_HASH 3
+__attribute__((noreturn, cold)) void avant_trap_size(int32_t kind);
+static inline void avant_size_check(uint64_t n, int32_t kind) {
+  if (__builtin_expect(n > (uint64_t)AVANT_SIZE_MAX, 0)) {
+    avant_trap_size(kind);
+  }
+}
 int64_t avant_checked_add_i64(int64_t a, int64_t b);
 int64_t avant_checked_sub_i64(int64_t a, int64_t b);
 int64_t avant_checked_mul_i64(int64_t a, int64_t b);
@@ -581,6 +604,13 @@ char *avant_http_resp_body(const char *raw);
 
 static inline AvantHeader *avant_header(void *payload) {
   return ((AvantHeader *)payload) - 1;
+}
+
+/* A fresh heap string of N bytes plus its NUL (not tagged, not filled):
+ * N past the ceiling traps before the allocation. */
+static inline char *avant_str_alloc(uint64_t n) {
+  avant_size_check(n, AVANT_SIZE_STRING);
+  return (char *)avant_alloc(n + 1, AVANT_TYPE_BYTES);
 }
 
 static inline void avant_str_tag(void *payload) {

@@ -178,6 +178,20 @@ void avant_trap_precision(int32_t prec) {
 
 /* A negative count where a size is meant (Stage 29 W4b1). what names the
  * operation: 0 Array(T).new's size, 1 repeat_byte's count. */
+/* A size or capacity past its ceiling (Stage 29 W-INT1; avant_rt.h,
+ * AVANT_SIZE_MAX): kind is AVANT_SIZE_STRING, _BUF, _ARRAY or _HASH. */
+void avant_trap_size(int32_t kind) {
+  static const char *what[] = {"String", "Buf", "Array", "Hash"};
+  int k = kind >= 0 && kind <= 3 ? kind : 0;
+  trap_head();
+  if (k == AVANT_SIZE_HASH) {
+    fprintf(stderr, "Hash would exceed %d slots", AVANT_HASH_SLOTS_MAX);
+  } else {
+    fprintf(stderr, "%s would exceed %d %s", what[k], AVANT_SIZE_MAX, k == AVANT_SIZE_ARRAY ? "elements" : "bytes");
+  }
+  trap_tail();
+}
+
 void avant_trap_negative(int32_t n, int32_t what) {
   static const char *names[] = {"Array size", "repeat_byte count"};
   trap_head();

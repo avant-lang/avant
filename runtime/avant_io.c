@@ -30,7 +30,7 @@ static void *g_argv_arr;
 /* gc-lint: holds nothing (every caller passes C memory: argv, file and
  * environment text, directory names, paths). */
 static char *dup_bytes(const char *s, size_t n) {
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   if (n) {
     memcpy(p, s, n);
   }
@@ -184,6 +184,13 @@ static char *read_all(FILE *f, size_t *np) {
   size_t cap = 4096;
   if (fseek(f, 0, SEEK_END) == 0) {
     long sz = ftell(f);
+    /* A file past the String ceiling is an IoError (EFBIG) before
+     * anything is read (Stage 29 W-INT1). */
+    if (sz > (long)AVANT_SIZE_MAX) {
+      fclose(f);
+      errno = EFBIG;
+      return NULL;
+    }
     if (sz > 0) {
       cap = (size_t)sz + 1;
     }
@@ -200,6 +207,14 @@ static char *read_all(FILE *f, size_t *np) {
   size_t n = 0;
   for (;;) {
     if (n == cap) {
+      /* A file whose size was not known (a pipe, /proc) stops at the
+       * ceiling the same way. */
+      if (cap > (size_t)AVANT_SIZE_MAX) {
+        free(raw);
+        fclose(f);
+        errno = EFBIG;
+        return NULL;
+      }
       size_t ncap = cap * 2;
       char *grown = (char *)realloc(raw, ncap + 1);
       if (!grown) {
@@ -223,6 +238,12 @@ static char *read_all(FILE *f, size_t *np) {
       }
       break;
     }
+  }
+  if (n > (size_t)AVANT_SIZE_MAX) {
+    free(raw);
+    fclose(f);
+    errno = EFBIG;
+    return NULL;
   }
   raw[n] = 0;
   fclose(f);
@@ -294,6 +315,12 @@ int32_t avant_sys_write(const char *path, const char *body) {
     body = "";
   }
   n = avant_str_n(body);
+  /* The count is an Avant Int: a body past the ceiling (a C string) is
+   * EFBIG, never a wrapped count (Stage 29 W-INT1). */
+  if (n > (size_t)AVANT_SIZE_MAX) {
+    g_sys_errno = EFBIG;
+    return -1;
+  }
   f = fopen(path ? path : "", "wb");
   if (!f) {
     g_sys_errno = errno;
@@ -906,6 +933,11 @@ static int list_names(const char *path, char ***out, int32_t *np) {
       continue;
     }
     if (n >= cap) {
+      /* An Array of names stays within the ceiling (Stage 29 W-INT1). */
+      if (cap > AVANT_SIZE_MAX / 2) {
+        err = EOVERFLOW;
+        break;
+      }
       int32_t next = cap == 0 ? 16 : cap * 2;
       char **grown = (char **)realloc(names, (size_t)next * sizeof(char *));
       if (!grown) {

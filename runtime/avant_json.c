@@ -263,6 +263,7 @@ void *avant_json_f64s(void *nodep, const char *key) {
   AVANT_GC_ROOT(1, &key);
   AVANT_GC_ROOT(2, &out);
   out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  avant_size_check((uint64_t)n, AVANT_SIZE_ARRAY);
   if (n > 0) {
     buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
   }
@@ -303,7 +304,7 @@ static char *copy_str(const char *p, size_t n) {
   char *out;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &p);
-  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)n);
   if (p && n > 0) {
     memcpy(out, p, n);
   }

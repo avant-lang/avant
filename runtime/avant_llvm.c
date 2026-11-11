@@ -337,7 +337,7 @@ int32_t avant_llvm_compile_text(const char *text, const char *name, const char *
 /* gc-lint: holds nothing (S is C memory: LLVM's messages, a C buffer). */
 static char *avant_string(const char *s) {
   size_t n = s ? strlen(s) : 0;
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   if (n) {
     memcpy(p, s, n);
   }

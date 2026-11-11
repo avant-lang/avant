@@ -4,7 +4,7 @@
 #
 # Over the runtime units outside the collector (runtime/avant_*.c except
 # avant_gc_*.c and avant_rt_traps.c), a function is *allocating* when its
-# body calls avant_alloc or another allocating function of any of these
+# body calls avant_alloc (or the inline avant_str_alloc of avant_rt.h) or another allocating function of any of these
 # units (the closure is taken over all of them, so a helper defined in one
 # file and called from another counts). Every function that calls an
 # allocating function must, in its body, open a handle scope
@@ -88,6 +88,8 @@ FNR == 1 { flush(); incom = 0; pending_ok = 0 }
 END {
   flush()
   alloc["avant_alloc"] = 1
+  # the inline string allocator of avant_rt.h (Stage 29 W-INT1) allocates
+  alloc["avant_str_alloc"] = 1
   changed = 1
   while (changed) {
     changed = 0
