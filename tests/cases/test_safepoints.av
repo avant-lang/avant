@@ -96,18 +96,17 @@ fn test_safepoints(c: Checks) {
       blog2 = "${scratch()}/safepoints-${stamp}-bump-cc.log"
       brun2 = "${scratch()}/safepoints-${stamp}-bump-run.log"
       bdump = "${scratch()}/safepoints-${stamp}-bump.mir"
-      bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  if n = Node.bump(item) {\n    if depth > 0 {\n      shift = 1 << (depth - 1)\n      if l = make_tree(item - shift, depth - 1) {\n        if r = make_tree(item + shift, depth - 1) {\n          n.left = l\n          n.right = r\n          return n\n        }\n      }\n      return nil\n    }\n    return n\n  }\n  nil\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  nursery_reclaim()\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
+      bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  n = Node.new(item)\n  if depth > 0 {\n    shift = 1 << (depth - 1)\n    if l = make_tree(item - shift, depth - 1) {\n      if r = make_tree(item + shift, depth - 1) {\n        n.left = l\n        n.right = r\n        return n\n      }\n    }\n    return nil\n  }\n  n\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
       bw2 = file_write(bsrc2, bbody2)
       c.eq_int(bw2, 0, "write bump tree")
       // The MIR (D171; the old back end's IR until W11).
       dcode2 = dump_av(compiler, bsrc2, bdump)
       c.eq_int(dcode2, 0, "dump bump tree")
       if ir2 = file_read(bdump) {
-        c.expect(str_has(ir2, "fn av.bump/Node#bump("), "bump constructor is emitted (T#bump since Stage 28 W18C, O33)")
-        c.expect(str_has(ir2, "= call avant_bump_alloc(") && str_has(ir2, ") nocollect"), "bump uses the non-collecting allocator")
-        c.expect(str_has(ir2, "fn av.bump/make_tree(_1: i32, _2: i32) -> %(Nil|bump.Node) leaf"), "a quiet leaf: make_tree runs no collection")
-        c.expect(!str_has(ir2, "avant_gc_quiet_enter"), "a quiet leaf does not take a quiet guard")
-        c.expect(str_has(ir2, "call avant_nursery_reclaim()"), "dead nursery is reclaimed between trees")
+        // The tree that used the bump constructor and nursery_reclaim,
+        // with ordinary allocation (Stage 29 W1a, D298: both removed).
+        c.expect(!str_has(ir2, "#bump") && !str_has(ir2, "avant_bump_alloc") && !str_has(ir2, "nursery_reclaim"), "no bump constructor or nursery reclaim")
+        c.expect(str_has(ir2, "call av.bump/Node.new("), "the tree allocates with Node.new")
       } else {
         c.expect(false, "read bump dump")
       }
@@ -115,10 +114,7 @@ fn test_safepoints(c: Checks) {
       c.eq_int(bcc2, 0, "compile bump tree")
       if file_exists(bbin2) {
         chmod_x(bbin2)
-        benv2: Array(String) = []
-        benv2.push("AVANT_NURSERY=1")
-        benv2.push(bbin2)
-        bcode2 = process_run_out("/usr/bin/env", benv2, brun2)
+        bcode2 = run_av_bin(bbin2, brun2)
         c.eq_int(bcode2, 0, "bump tree runs")
         if bout2 = file_read(brun2) {
           c.eq_str(bout2, "2540\n", "bump tree sum")

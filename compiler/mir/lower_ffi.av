@@ -499,8 +499,34 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
 
 pub fn (lw: MirLower) unpin(h: Int) {
   args: Array(MOperand) = []
+  if h < 0 {
+    // A `gc.hold` block's entry (lower_hold).
+    dummy0 = lw.lw_b.call(-1, "avant_gc_hold_end", args)
+    return
+  }
   args.push(lw.lw_b.copy_local(h))
   dummy = lw.lw_b.call(-1, "avant_unpin", args)
+}
+
+// `gc.hold { body }` (std.gc, Stage 29 W1c2, D305): avant_gc_hold_begin,
+// the body, avant_gc_hold_end at the end of the block when it falls
+// through. The hold is an entry of the pin stack (h -1), so it ends on
+// every way out as a pin is unpinned: before a return (and a `?` that
+// returns), and on break or continue out of a loop opened outside it.
+pub fn (lw: MirLower) lower_hold(st: Stmt) {
+  b = lw.lw_b
+  lw.at(st.loc)
+  none: Array(MOperand) = []
+  dummy = b.call(-1, "avant_gc_hold_begin", none)
+  lw.lw_ffi.pins.push(-1)
+  lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
+  lw.lower_stmts(st.body)
+  dummy2 = lw.lw_ffi.pins.pop
+  dummy3 = lw.lw_ffi.pin_depth.pop
+  if !lw.failed && lw.open_now {
+    lw.at(st.loc)
+    lw.unpin(-1)
+  }
 }
 
 // Before `break` or `next`: the pins opened inside the innermost loop,

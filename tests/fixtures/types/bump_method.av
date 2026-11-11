@@ -1,9 +1,8 @@
-// A method named `bump` called on a value (Stage 28 W10b): only a type
-// takes the bump constructor (`Leaf.bump(9)`, nil when the bump fails);
-// `k.bump(2)` on a value is the method (until W10b the checker took every
-// `.bump(...)` call for the constructor: `unknown type k`). Field and
-// implicit-field receivers too. tests/fixtures/ffi/layout.av has the
-// `Ptr(Rec)` receiver case.
+// A method named `bump` called on a value (Stage 28 W10b): `k.bump(2)` is
+// the method (until W10b the checker took every `.bump(...)` call for the
+// bump constructor: `unknown type k`; the constructor itself is gone since
+// Stage 29 W1a, D298). Field and implicit-field receivers too.
+// tests/fixtures/ffi/layout.av has the `Ptr(Rec)` receiver case.
 
 class Counter {
   n: Int = 0
@@ -41,7 +40,6 @@ fn main {
   puts(k.bump(3))
   h = Holder.new
   puts(h.twice(4))
-  if lf = Leaf.bump(9) {
-    puts(lf.v)
-  }
+  lf = Leaf.new(9)
+  puts(lf.v)
 }

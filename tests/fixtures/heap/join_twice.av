@@ -10,6 +10,7 @@
 lib gc_rt {
   fun avant_pin_count: Int
   fun avant_gc_collect()
+  fun avant_gc_collect_young()
 }
 
 class Holder {
@@ -69,7 +70,7 @@ fn main {
     i = i + 1
   }
   churn(300)
-  nursery_reclaim()
+  gc_rt.avant_gc_collect_young()
   s2 = 0
   i = 0
   while i < hs.size {
@@ -98,7 +99,7 @@ fn main {
   holder = Holder.new(spawn { work(500) + tag.size })
   a = holder.h.join
   churn(300)
-  nursery_reclaim()
+  gc_rt.avant_gc_collect_young()
   gc_rt.avant_gc_collect()
   b = holder.h.join
   if a != b {

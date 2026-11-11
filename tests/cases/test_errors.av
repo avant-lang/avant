@@ -72,6 +72,20 @@ fn test_errors(c: Checks) {
     // callback that takes a struct by value (the SysV callback side of C3).
     expect_err(c, compiler, stamp, "l0001-guard", "struct P2 {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int64): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int64, s: Int64, f: fn(P2): Int)\n}\nfn pick(p: P2): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8i64), 0i64, 8i64, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
+    // Stage 29 W1a (D298): the bump constructor and nursery_reclaim are
+    // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.
+    expect_err(c, compiler, stamp, "bump-removed", "class Node {\n  item: Int = 0\n}\nfn main {\n  n = Node.bump(1)\n}\n", "no method bump")
+    expect_err(c, compiler, stamp, "reclaim-removed", "fn main {\n  nursery_reclaim()\n}\n", "unknown function nursery_reclaim")
+    // Stage 29 W1c2 (D305): std.gc's forms and their errors.
+    expect_err(c, compiler, stamp, "gc-hold-import", "fn main {\n  gc.hold {\n    x = 1\n  }\n}\n", "gc.hold needs import std.gc")
+    expect_err(c, compiler, stamp, "gc-collect-import", "fn main {\n  gc.collect()\n}\n", "unknown name gc")
+    expect_err(c, compiler, stamp, "gc-collect-args", "import std.gc\nfn main {\n  gc.collect(1)\n}\n", "gc.collect takes no arguments")
+    expect_err(c, compiler, stamp, "gc-collect-block", "import std.gc\nfn main {\n  gc.collect { || 1 }\n}\n", "gc.collect takes no block")
+    expect_err(c, compiler, stamp, "gc-hold-value", "import std.gc\nfn main {\n  x = gc.hold {\n    1\n  }\n}\n", "gc.hold is a statement: gc.hold { ... }")
+    expect_err(c, compiler, stamp, "gc-unknown", "import std.gc\nfn main {\n  gc.frob()\n}\n", "unknown function gc.frob; std.gc has gc.hold { } and gc.collect()")
+    expect_err(c, compiler, stamp, "gc-hold-local", "import std.gc\nfn main {\n  gc = 1\n  gc.hold {\n    x = gc\n  }\n}\n", "gc.hold: gc names a local or a field here, not std.gc")
+    expect_err(c, compiler, stamp, "pin-tail", "fn f(s: String, k: Int): Int {\n  pin(s) {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(\"a\", 2))\n}\n", "missing return value")
+    expect_err(c, compiler, stamp, "gc-hold-tail", "import std.gc\nfn f(k: Int): Int {\n  gc.hold {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(2))\n}\n", "missing return value")
     // Stage 29 W1a (A6): parser messages name the tokens (they printed the
     // kinds' numbers: "expected 28, found 5").
     expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")

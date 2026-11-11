@@ -617,6 +617,12 @@ pub class Checker {
     if last.kind == st_return() {
       return false
     }
+    if last.kind == st_hold() || last.kind == st_pin() {
+      // A `gc.hold` or `pin(x)` block ends its function when its own
+      // body does (Stage 29 W1c2; before, a `pin` block whose body
+      // returned was "missing return value" at a function's tail).
+      return self.fallthrough(last.body)
+    }
     if last.kind == st_if() {
       if last.else_body.size == 0 {
         return true
@@ -742,6 +748,17 @@ pub class Checker {
       }
       return
     }
+    if k == st_hold() {
+      self.check_hold(stmt)
+      self.check_block(stmt.body, expected, false)
+      if at_tail {
+        if expected.is_void || !self.fallthrough(stmt.body) {
+        } else {
+          self.fail(stmt.loc, "missing return value")
+        }
+      }
+      return
+    }
     if k == st_pin() {
       if e = stmt.expr {
         et = self.check_expr(e)
@@ -753,7 +770,7 @@ pub class Checker {
       }
       self.check_block(stmt.body, expected, false)
       if at_tail {
-        if expected.is_void {
+        if expected.is_void || !self.fallthrough(stmt.body) {
         } else {
           self.fail(stmt.loc, "missing return value")
         }
@@ -2924,13 +2941,6 @@ pub class Checker {
         return self.check_indirect_call(expr, existing)
       }
     }
-    if str_eq(expr.callee, "nursery_reclaim") {
-      if expr.args.size != 0 {
-        self.fail(expr.loc, "nursery_reclaim takes no arguments")
-        return self.t_void()
-      }
-      return self.t_void()
-    }
     if str_eq(expr.callee, "puts") {
       if expr.args.size != 1 {
         self.fail(expr.loc, "puts takes one argument")
@@ -3651,33 +3661,6 @@ pub class Checker {
     recv
   }
 
-  // Whether a receiver is a value rather than a type: anything but a chain
-  // of names, or a chain whose first name is a local, `self`, or a field
-  // of self. A type is written `Name` or `mod.Name` (a module qualifier is
-  // never a value).
-  pub fn names_value(recv: Expr): Bool {
-    segs: Array(String) = []
-    if self.ident_chain(recv, segs) {
-    } else {
-      return true
-    }
-    if recv.kind == ex_name() {
-      if recv.type_args.size > 0 {
-        return false
-      }
-    }
-    if str_eq(segs[0], "self") {
-      return true
-    }
-    if found = self.lookup(segs[0]) {
-      return true
-    }
-    if f = self.implicit_field(segs[0]) {
-      return true
-    }
-    false
-  }
-
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_module_receiver(recv)
     if str_eq(expr.callee, "new") {
@@ -3714,6 +3697,9 @@ pub class Checker {
       } else {
         if recv.type_args.size > 0 {
         } else {
+          if self.names_std_gc(recv.ident) {
+            return self.check_gc_call(expr)
+          }
           if id = self.lib_names.get(recv.ident) {
             if self.lib_is_visible(recv.ident, self.current_module) {
               return self.check_lib_call(expr, recv.ident)
@@ -3737,22 +3723,6 @@ pub class Checker {
     }
     if str_eq(expr.callee, "new") {
       return self.check_constructor(expr, recv, has_want, want)
-    }
-    if str_eq(expr.callee, "bump") && self.names_value(recv) {
-      // `v.bump(...)` on a value is an ordinary method call; only a type
-      // (`Node.bump(...)`, `m.Node.bump(...)`) takes the bump constructor.
-      // The back ends tell the two apart by this flag (ast_is_ctor_call).
-      expr.method_call = true
-    } else if str_eq(expr.callee, "bump") {
-      ty = self.check_constructor(expr, recv, has_want, want)
-      if self.has_err {
-        return ty
-      }
-      if ty.is_class {
-        expr.resolved = ty_bump_symbol(ty)
-        return ty_nilable(ty)
-      }
-      return ty
     }
     if str_eq(expr.callee, "send") {
       i = 0

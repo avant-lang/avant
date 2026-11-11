@@ -1,7 +1,8 @@
 // The builtins whose result is T? on the new back end (Stage 28 W7a):
 // String.get, Bytes.get, Array.get, Buf.get (bounded reads), index_of,
 // min, max, hash reads (`h[k]`, get, get_slice, get_concat), env_get,
-// file_read, and the bump constructor C.bump (nil when the bump fails).
+// and file_read. (The bump constructor C.bump was one until Stage 29 W1a
+// removed it, D298.)
 
 class Pt {
   x: Int
@@ -69,17 +70,4 @@ fn main {
   } else {
     puts("no file")
   }
-  // Whether a bump succeeds depends on the nursery (always nil under
-  // AVANT_NURSERY=0), so only what a success holds is printed.
-  bad = 0
-  i = 0
-  while i < 100 {
-    if pb = Pt.bump(i) {
-      if pb.x != i || pb.tag.size != 2 {
-        bad += 1
-      }
-    }
-    i += 1
-  }
-  puts(bad)
 }

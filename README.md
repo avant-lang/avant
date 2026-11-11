@@ -1356,6 +1356,7 @@ The standard library is imported, and importing is what links the C library behi
 | `std.json` | `Json.parse` and the parsed-value walk | yyjson |
 | `std.regex` | `Regex.compile` and `Match` values | PCRE2 (re2c scanners for literal patterns) |
 | `std.http` | HTTP server and client, WebSocket server and client | uSockets and picohttpparser (vendored) |
+| `std.gc` | `gc.hold { }` and `gc.collect()`, two hints about when the collector runs | — |
 | `std.testing` | the support library the test runner loads | — |
 
 ### `std.zlib`
@@ -1523,6 +1524,28 @@ The most basic hello-world server: `GET /` answered with `hello` and the WebSock
 | Rust (std, thread per connection) | 507,603 | 3.4 MB | 252,175 | 2.6 MB |
 | Go (`net/http`) | 349,436 | 18 MB | 215,594 | 12 MB |
 | Crystal (`HTTP::Server`) | 521,997 | 15 MB | 264,813 | 11 MB |
+
+### `std.gc`
+
+Most programs need nothing from this module: the collector sizes its young generation from what survives, and plain `T.new` is the way to allocate. A program that builds a large structure which stays alive while it is built, and then drops it whole, knows two things the collector cannot, and can say them:
+
+```avant
+import std.gc
+
+fn trees_once(depth: Int): Int {
+  gc.collect()
+  sum = 0
+  gc.hold {
+    sum = tree_sum(make_tree(0, depth))
+  }
+  sum
+}
+```
+
+- `gc.hold { ... }` is a statement: no collection that this thread would start runs while the block runs. Its allocations still count: a collection that falls due inside runs when the block ends, and a hold whose own allocations pass `AVANT_HEAP_MAX_MB` stops the program with `heap limit in a no-GC region (...)`. The hold ends on every way out of the block (its end, `return`, `break`, `continue`, a `?` that returns). Holds nest; nested holds are one hold. Another thread still collects while one thread holds (the held thread stops for it at its next safepoint), so a hold never makes another thread wait.
+- `gc.collect()` collects the young generation now: everything young that nothing reaches is reclaimed. Inside a hold it runs when the hold ends. With `AVANT_NURSERY=0` there is no young generation and it does nothing.
+
+Put the end of a hold where the structure is dead (a collection that fell due runs there, and copies whatever is still alive), and `gc.collect()` where it dies. In a module that imports `std.gc`, `gc` names these two forms unless a local or a field takes the name; without the import, `gc.hold` is an error. Under `AVANT_GC_STRESS=1` a hold is inactive, so a stress run checks the code inside it as it checks any other.
 
 ### `std.testing`
 

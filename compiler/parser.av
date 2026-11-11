@@ -1441,10 +1441,49 @@ pub class Parser {
       return self.parse_quote_stmt
     }
     if k == tk_ident() {
+      if self.gc_hold_ahead {
+        return self.parse_hold
+      }
       return self.parse_ident_stmt
     }
     expr = self.parse_expr
     self.finish_stmt(expr)
+  }
+
+  // `gc.hold { ... }` (std.gc, Stage 29 W1c2, D305): a statement, the
+  // shape of `pin(x) { }` without a value. The checker asks for
+  // `import std.gc`. Any other use of `gc.hold` is an ordinary call and
+  // the checker refuses it.
+  pub fn gc_hold_ahead: Bool {
+    if !str_eq(self.current.value, "gc") {
+      return false
+    }
+    i = self.index + 1
+    if i + 1 >= self.tokens.size {
+      return false
+    }
+    if self.tokens[i].kind != tk_dot() {
+      return false
+    }
+    if self.tokens[i + 1].kind != tk_ident() || !str_eq(self.tokens[i + 1].value, "hold") {
+      return false
+    }
+    i = i + 2
+    while i < self.tokens.size && self.tokens[i].kind == tk_newline() {
+      i = i + 1
+    }
+    i < self.tokens.size && self.tokens[i].kind == tk_l_brace()
+  }
+
+  pub fn parse_hold: Stmt {
+    loc = self.bump.loc
+    dummy = self.expect(tk_dot())
+    dummy2 = self.bump
+    self.skip_newlines
+    body = self.parse_block
+    s = Stmt.new(st_hold(), loc)
+    s.body = body
+    s
   }
 
   pub fn annotated_bind_ahead: Bool {

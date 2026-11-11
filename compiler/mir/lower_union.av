@@ -10,7 +10,7 @@
 // Reads test the tag and copy the payload. The builtins whose result is
 // `T?` are here too: `get` on String, Bytes, Array, Buf, and Hash, hash
 // index reads, `get_slice`, `get_concat`, `index_of`, `min`, `max`,
-// `env_get`, `file_read`, and the `bump` constructor.
+// `env_get`, and `file_read`.
 
 import location
 import source
@@ -621,7 +621,7 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 // string nor heap builtins (calls.av:157-200, 252-272, 291-320, 349-352):
 // `argv`, `file_exists`, `file_write`, `dir_list`, the two T? readers,
 // `wide_op`, `wide_hi`, `checksum_f64`, `sha256`, `crc32_bytes`,
-// `sha256_word0`, `nursery_reclaim`; nil when c is not one of them.
+// `sha256_word0`; nil when c is not one of them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
   if str_eq(c, "env_get") && e.args.size == 1 {
@@ -650,8 +650,9 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     f = "avant_crc32_i32"
   } else if str_eq(c, "sha256_word0") && e.args.size == 1 {
     f = "avant_sha256_word0"
-  } else if str_eq(c, "nursery_reclaim") && e.args.size == 0 {
-    f = "avant_nursery_reclaim"
+  } else if str_eq(c, "#gc.collect") && e.args.size == 0 {
+    // std.gc's `gc.collect()` (checker/visibility.av check_gc_call).
+    f = "avant_gc_collect_young"
   } else if str_eq(c, "argv") && e.args.size == 0 {
     f = "avant_argv"
   } else if str_eq(c, "file_exists") && e.args.size == 1 {
@@ -675,78 +676,4 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
   lw.call_to(ty, f, ops)
-}
-
-// ---- `C.bump(args)` (the old back end's emit_bump_constructor; trick #15)
-
-// `C.bump(args) -> C?`: avant_bump_alloc(size, id), nil when it fails;
-// otherwise the field defaults (behind their barriers), initialize, and
-// the object as C?. Emitted after C.new for every class whose bump is
-// called (analysis.av class_uses_bump); the leaf pass decides its frame.
-pub fn (lw: MirLower) lower_bump(cdef: ClassDef, t: Ty) {
-  b = lw.lw_b
-  sym = ""
-  if got = lw.lw_fn_syms.get(ty_bump_symbol(t)) {
-    sym = got
-  }
-  opt = ty_nilable(t)
-  lw.lw_vars = Hash(String, Int).new
-  lw.reset_closures
-  lw.lw_fn_loc = cdef.loc
-  cty = lw.value_agg_ty(t, cdef.loc)
-  oty = lw.ty_at(opt, cdef.loc, "a result")
-  if lw.failed {
-    return
-  }
-  lw.lw_ret = oty
-  lw.lw_ret_ty = opt
-  layout = b.types.layout_of(cty)
-  ol = b.types.layout_of(oty)
-  params: Array(Int) = []
-  init_sym = ""
-  init: Function? = nil
-  if f = lw.initialize_of(cdef) {
-    init = f
-    if got2 = lw.lw_fn_syms.get(f.emit_name) {
-      init_sym = got2
-    }
-    if sig = lw.lw_syms.find_method_emit(f.emit_name) {
-      i = 0
-      while i < sig.params.size {
-        params.push(lw.ty_at(sig.params[i], f.loc, "a parameter"))
-        i = i + 1
-      }
-    }
-  }
-  if lw.failed {
-    return
-  }
-  dummy = b.begin_fn(sym, b.sig(params, oty, false), lw.mloc(cdef.loc), "bump")
-  if f2 = init {
-    i = 0
-    while i < f2.params.size {
-      b.name_param(i + 1, f2.params[i].name)
-      lw.lw_vars[lw.var_key(f2.params[i].name, params[i])] = i + 1
-      i = i + 1
-    }
-  }
-  lw.at(cdef.loc)
-  o = b.temp(cty)
-  dummy2 = b.call(o, "avant_bump_alloc", lw.two(b.c_u64(b.types.layouts[layout].size.to_i64), b.c_u32(b.types.layouts[layout].type_id)))
-  c = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(o), b.c_null(cty)))
-  bnil = b.block
-  bok = b.block
-  b.branch(c, bnil, bok)
-  b.at(bnil)
-  dummy3 = b.assign(b.pl(0), b.rv_union_nil(ol, opt.tag_of(ty_nil())))
-  b.ret
-  b.at(bok)
-  lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
-  if lw.failed {
-    return
-  }
-  lw.at(cdef.loc)
-  dummy4 = b.assign(b.pl(0), b.rv_union(ol, opt.tag_of(t), b.copy_local(o)))
-  b.ret
-  b.end_fn
 }

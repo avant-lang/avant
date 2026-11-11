@@ -21,7 +21,7 @@
  *                       object lookup, forwarding, the work list, type
  *                       maps, gc_die and gc_xrealloc
  *   avant_gc_alloc.c    block supply, bump cursors, the inline fast
- *                       path's state, avant_alloc and avant_bump_alloc
+ *                       path's state, avant_alloc
  *   avant_gc_los.c      the large-object space
  *   avant_gc_remset.c   the remembered set and the store barriers
  *   avant_gc_sticky.c   the young collection (S+: promotion in place
@@ -1144,6 +1144,23 @@ typedef struct GcThread {
   int collecting;
   uint64_t region_bytes;
   void *region_site;
+  /* `gc.hold { }` (std.gc, Stage 29 W1c2, D305): hold, the depth of this
+   * thread's holds (nested holds are one); while it is above zero no
+   * collection this thread would start runs (gc_maybe_collect returns,
+   * a young collection `gc.collect()` asks for is noted in hold_young),
+   * and the heap limit is the no-GC region's (C32: the hold's own
+   * allocations, counted from hold_base, past the limit stop the program
+   * with "heap limit in a no-GC region"). Unlike nogc it is no region:
+   * the thread still stops at safepoints and turns native at blocking
+   * waits, so other threads' collections run as before (they may move
+   * what it holds; generated code roots everything). The outermost
+   * end (avant_gc_hold_end) is a collection point that runs what fell
+   * due inside. hold_site: the outermost entry's caller, for the
+   * message. Inactive under AVANT_GC_STRESS=1. */
+  int hold;
+  int hold_young;
+  uint64_t hold_base;
+  void *hold_site;
 } GcThread;
 
 extern __thread GcThread gc_thread;
