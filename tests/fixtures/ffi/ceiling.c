@@ -16,11 +16,11 @@
 #include <unistd.h>
 
 void avant_buf_append(void *buf, const void *p, int32_t n);
-void avant_buf_push_byte(void *buf, int32_t c);
+void avant_buf_push_byte(void *buf, int64_t c);
 void avant_array_push_i32(void *arr, int32_t v);
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
-void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val);
-void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras, int32_t n);
+void avant_hash_set_i32k_i32(void *hp, int64_t key, int64_t val);
+void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *lens, void *extras, int64_t n);
 
 typedef struct {
   uint8_t *data;
@@ -88,11 +88,12 @@ int64_t ceil_probe(int64_t mode) {
   } else if (mode == 7) {
     /* One range: copy 16 bytes from 0 to CEIL_MAX - 4 (an end past the
      * ceiling, which 32-bit arithmetic wrapped negative). The offset
-     * arrays are Array(Int) layouts of one element each. */
-    static int32_t dst[1] = {CEIL_MAX - 4};
-    static int32_t src[1] = {0};
-    static int32_t len[1] = {16};
-    static int32_t ext[1] = {0};
+     * arrays are Array(Int) layouts (64-bit elements) of one element
+     * each. */
+    static int64_t dst[1] = {CEIL_MAX - 4};
+    static int64_t src[1] = {0};
+    static int64_t len[1] = {16};
+    static int64_t ext[1] = {0};
     CeilArr d = {dst, 1, 1}, s = {src, 1, 1}, l = {len, 1, 1}, e = {ext, 1, 1};
     CeilBuf *b = fake_buf(16);
     avant_buf_fill_appends(b, &d, &s, &l, &e, 1);

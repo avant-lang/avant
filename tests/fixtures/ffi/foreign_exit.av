@@ -10,11 +10,11 @@
 // list: the next thread on its reused stack registered the same node
 // again, a cycle the handshake looped on forever.
 lib fc {
-  fun exit_start(f: fn(Int): Int, n: Int, rounds: Int, explicit: Bool)
-  fun exit_join: Int
+  fun exit_start(f: fn(Int32): Int32, n: Int32, rounds: Int32, explicit: Bool)
+  fun exit_join: Int32
 }
 
-fn check(i: Int): Int {
+fn check(i: Int32): Int32 {
   s = "cb-${i}"
   a: Array(String) = []
   a.push(s)
@@ -33,7 +33,7 @@ fn main {
   bad = 0
   cbad = 0
   for w in 0..40 {
-    fc.exit_start(check, 1 + w % 3, 200, w % 4 == 3)
+    fc.exit_start(check, (1 + w % 3).to_i32, 200, w % 4 == 3)
     for r in 0..4000 {
       at = r % 500
       if mine[at].size < 6 {
@@ -41,7 +41,7 @@ fn main {
       }
       mine[at] = "main-${w}-${r}"
     }
-    cbad += fc.exit_join()
+    cbad += fc.exit_join().to_i
   }
   puts("main bad: ${bad}")
   puts("callback bad: ${cbad}")

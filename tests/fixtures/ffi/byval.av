@@ -5,15 +5,16 @@
 // with a partial eightbyte, 24 bytes in memory (`byval`, and `sret` for a
 // result), a String inside the struct (a reference passed while the
 // struct's local is rooted), two Bools packed in one eightbyte, and a
-// pair that no longer fits the registers left after five Ints (memory).
+// pair that no longer fits the registers left after five Int32s (memory;
+// C's int is Int32, Stage 29 W-INT1).
 // The old back end passes LLVM aggregates, which is not the C ABI: its
 // answers are wrong (an expected difference, D196; checked by
 // tests/cases/test_ffi_llvm.av, skipped by the differential).
 // Built with `--cc tests/fixtures/ffi/ffi.c`.
 
 struct P2 {
-  a: Int
-  b: Int
+  a: Int32
+  b: Int32
 }
 
 struct V2 {
@@ -22,14 +23,14 @@ struct V2 {
 }
 
 struct Mix {
-  a: Int
+  a: Int32
   d: Float64
 }
 
 struct Tri {
-  a: Int
-  b: Int
-  c: Int
+  a: Int32
+  b: Int32
+  c: Int32
 }
 
 struct Big {
@@ -39,14 +40,14 @@ struct Big {
 }
 
 struct Named {
-  n: Int
+  n: Int32
   s: String
 }
 
 struct Flags {
   a: Bool
   b: Bool
-  n: Int
+  n: Int32
 }
 
 struct Q2 {
@@ -55,19 +56,19 @@ struct Q2 {
 }
 
 lib bv {
-  fun ffi_p2_sum(p: P2): Int
-  fun ffi_p2_make(a: Int, b: Int): P2
+  fun ffi_p2_sum(p: P2): Int32
+  fun ffi_p2_make(a: Int32, b: Int32): P2
   fun ffi_v2_dot(a: V2, b: V2): Float64
   fun ffi_v2_scale(v: V2, k: Float64): V2
   fun ffi_mix(m: Mix): Float64
-  fun ffi_mix_make(a: Int, d: Float64): Mix
-  fun ffi_tri(t: Tri): Int
-  fun ffi_tri_make(a: Int): Tri
+  fun ffi_mix_make(a: Int32, d: Float64): Mix
+  fun ffi_tri(t: Tri): Int32
+  fun ffi_tri_make(a: Int32): Tri
   fun ffi_big_sum(b: Big): Int64
   fun ffi_big_make(a: Int64): Big
-  fun ffi_named(n: Named): Int
-  fun ffi_flags(f: Flags): Int
-  fun ffi_spill(a: Int, b: Int, c: Int, d: Int, e: Int, q: Q2, f: Int): Int64
+  fun ffi_named(n: Named): Int32
+  fun ffi_flags(f: Flags): Int32
+  fun ffi_spill(a: Int32, b: Int32, c: Int32, d: Int32, e: Int32, q: Q2, f: Int32): Int64
 }
 
 class Keep {
@@ -111,7 +112,7 @@ fn main {
   i = 0
   acc = 0
   while i < 2000 {
-    acc = acc + bv.ffi_named(Named { n: i % 7, s: "s${i}" + "-x" })
+    acc = acc + bv.ffi_named(Named { n: (i % 7).to_i32, s: "s${i}" + "-x" }).to_i
     i = i + 1
   }
   puts(acc)

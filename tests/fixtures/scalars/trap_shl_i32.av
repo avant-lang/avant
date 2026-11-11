@@ -1,0 +1,20 @@
+// C1 (W11b): Int32 << 32 traps (Stage 29 W-INT1): `avant runtime: shift
+// amount 32 out of range for Int32 (0..31)`, exit 1.
+// n, unknown to every optimizer: the other branch (two clock reads a
+// thousand seconds apart) never runs.
+fn opaque(n: Int): Int {
+  a = now_us()
+  b = now_us()
+  if b &- a > 1000000000 {
+    return n &+ b.wrap_i
+  }
+  n
+}
+
+fn main {
+  k = opaque(0)
+  one: Int32 = 1
+  puts(one << (31 + k))
+  puts(one << (32 + k))
+  puts("not reached")
+}
