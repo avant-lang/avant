@@ -709,8 +709,10 @@ double avant_array_min_f64(void *arr, int32_t *found) {
   double best;
   if (found) { *found = 0; }
   if (!a || !a->buf || a->size <= 0) { return 0; }
+  /* sort's order (NaN after every number; Stage 29 W4b1, D295 R8): the
+   * smallest number, NaN only when every element is NaN. */
   best = ((double *)a->buf)[0];
-  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v < best) { best = v; } }
+  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v < best || best != best) { best = v; } }
   if (found) { *found = 1; }
   return best;
 }
@@ -769,8 +771,10 @@ double avant_array_max_f64(void *arr, int32_t *found) {
   double best;
   if (found) { *found = 0; }
   if (!a || !a->buf || a->size <= 0) { return 0; }
+  /* sort's order (NaN after every number; D295 R8): NaN when any element
+   * is NaN, else the largest number. */
   best = ((double *)a->buf)[0];
-  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v > best) { best = v; } }
+  for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v > best || v != v) { best = v; } }
   if (found) { *found = 1; }
   return best;
 }

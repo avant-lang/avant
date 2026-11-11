@@ -128,6 +128,12 @@ fn print_cases: Array(FCase) {
   xs
 }
 
+fn nan_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("nan-min-max", "fn main {\n  n = 0.0 / 0.0\n  puts([n, 1.0, -2.0].min ?? 9.0)\n  puts([1.0, n, -2.0].min ?? 9.0)\n  puts([1.0, -2.0, n].min ?? 9.0)\n  puts([n, n].min ?? 9.0)\n  puts([n, 1.0, -2.0].max ?? 9.0)\n  puts([1.0, n, -2.0].max ?? 9.0)\n  puts([1.0, -2.0, n].max ?? 9.0)\n  puts([1.0, -2.0].max ?? 9.0)\n  xs = [3.0, n, -1.0]\n  puts((xs.min ?? 9.0) == xs.sorted[0])\n}\n", "-2.0\n-2.0\n-2.0\nnan\nnan\nnan\nnan\n1.0\ntrue\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -185,6 +191,9 @@ fn test_main(c: Checks) {
     }
     for f_print_cases in print_cases() {
       all.push(f_print_cases)
+    }
+    for f_nan_cases in nan_cases() {
+      all.push(f_nan_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {
