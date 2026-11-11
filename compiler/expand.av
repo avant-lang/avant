@@ -13,12 +13,10 @@ pub fn ident_ok(s: String): Bool {
   if !ch_is_ident_start(s[0]) {
     return false
   }
-  i = 1
-  while i < s.size {
+  for i in 1..s.size {
     if !ch_is_ident_continue(s[i]) {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -60,27 +58,21 @@ pub class Expander {
     self.expand_quotes(self.program.quotes, "")
     empty_q: Array(QuoteDecl) = []
     self.program.quotes = empty_q
-    i = 0
-    while i < self.program.structs.size {
-      sdef = self.program.structs[i]
+    for sdef in self.program.structs {
       self.expand_quotes(sdef.quotes, sdef.name)
       sq: Array(QuoteDecl) = []
       sdef.quotes = sq
       self.expand_walks(sdef.comptimes, sdef.name)
       sc: Array(ComptimeWalk) = []
       sdef.comptimes = sc
-      i = i + 1
     }
-    i = 0
-    while i < self.program.classes.size {
-      cdef = self.program.classes[i]
+    for cdef in self.program.classes {
       self.expand_quotes(cdef.quotes, cdef.name)
       cq: Array(QuoteDecl) = []
       cdef.quotes = cq
       self.expand_walks(cdef.comptimes, cdef.name)
       cc: Array(ComptimeWalk) = []
       cdef.comptimes = cc
-      i = i + 1
     }
     self.expand_walks(self.program.comptimes, "")
     empty_c: Array(ComptimeWalk) = []
@@ -95,9 +87,7 @@ pub class Expander {
   }
 
   pub fn expand_quotes(quotes: Array(QuoteDecl), owner: String) {
-    i = 0
-    while i < quotes.size {
-      q = quotes[i]
+    for q in quotes {
       own = owner
       if own.size == 0 {
         own = q.owner
@@ -108,14 +98,11 @@ pub class Expander {
         self.inject_function(fnn, own, q.mod_name)
         j = j + 1
       }
-      i = i + 1
     }
   }
 
   pub fn expand_walks(walks: Array(ComptimeWalk), owner: String) {
-    i = 0
-    while i < walks.size {
-      walk = walks[i]
+    for walk in walks {
       fields = self.find_fields(walk.type_name, walk.loc)
       own = owner
       if own.size == 0 {
@@ -135,7 +122,6 @@ pub class Expander {
         self.ctx_field = nil
         j = j + 1
       }
-      i = i + 1
     }
   }
 
@@ -156,21 +142,17 @@ pub class Expander {
       return
     }
     fnn.owner = owner
-    i = 0
-    while i < self.program.structs.size {
-      if self.program.structs[i].name == owner {
-        self.program.structs[i].methods.push(fnn)
+    for sdef in self.program.structs {
+      if sdef.name == owner {
+        sdef.methods.push(fnn)
         return
       }
-      i = i + 1
     }
-    i = 0
-    while i < self.program.classes.size {
-      if self.program.classes[i].name == owner {
-        self.program.classes[i].methods.push(fnn)
+    for cls in self.program.classes {
+      if cls.name == owner {
+        cls.methods.push(fnn)
         return
       }
-      i = i + 1
     }
     self.fail(fnn.loc, "quote owner ${owner} is not a type")
   }
@@ -178,43 +160,33 @@ pub class Expander {
   pub fn find_fields(type_name: String, loc: Location): Array(Field) {
     found: Array(Field) = []
     hits = 0
-    i = 0
-    while i < self.program.structs.size {
-      if self.program.structs[i].name == type_name {
-        if self.program.structs[i].type_params.size > 0 {
+    for sdef in self.program.structs {
+      if sdef.name == type_name {
+        if sdef.type_params.size > 0 {
           self.fail(loc, "comptime cannot walk generic type ${type_name}")
           return found
         }
-        found = self.program.structs[i].fields
+        found = sdef.fields
         hits = hits + 1
       }
-      i = i + 1
     }
-    i = 0
-    while i < self.program.classes.size {
-      if self.program.classes[i].name == type_name {
-        if self.program.classes[i].type_params.size > 0 {
+    for cls in self.program.classes {
+      if cls.name == type_name {
+        if cls.type_params.size > 0 {
           self.fail(loc, "comptime cannot walk generic type ${type_name}")
           return found
         }
-        found = self.program.classes[i].fields
+        found = cls.fields
         hits = hits + 1
       }
-      i = i + 1
     }
-    i = 0
-    while i < self.program.libs.size {
-      lib_def = self.program.libs[i]
-      j = 0
-      while j < lib_def.layouts.size {
-        lay = lib_def.layouts[j]
+    for lib_def in self.program.libs {
+      for lay in lib_def.layouts {
         if lay.name == type_name {
           found = lay.fields
           hits = hits + 1
         }
-        j = j + 1
       }
-      i = i + 1
     }
     if hits == 0 {
       self.fail(loc, "unknown type ${type_name} for fields")
@@ -504,13 +476,10 @@ pub class Expander {
     }
     if k == ex_interp() {
       out = clone_expr(e)
-      i = 0
-      while i < out.parts.size {
-        p = out.parts[i]
+      for p in out.parts {
         if inner = p.expr {
           p.expr = self.fill_expr(inner)
         }
-        i = i + 1
       }
       return out
     }
@@ -519,11 +488,8 @@ pub class Expander {
       if c = e.cond {
         out.cond = self.fill_expr(c)
       }
-      i = 0
-      while i < out.cases.size {
-        arm = out.cases[i]
+      for arm in out.cases {
         arm.body = self.fill_stmt_list(arm.body)
-        i = i + 1
       }
       eb: Array(Stmt) = []
       i = 0
@@ -680,13 +646,11 @@ pub class Expander {
 
   pub fn hygiene_function(fnn: Function) {
     introduced: Array(String) = []
-    i = 0
-    while i < fnn.params.size {
-      if fnn.params[i].name == "self" {
+    for param in fnn.params {
+      if param.name == "self" {
       } else {
-        introduced.push(fnn.params[i].name)
+        introduced.push(param.name)
       }
-      i = i + 1
     }
     if r = fnn.receiver {
       if r.name == "self" {
@@ -699,12 +663,10 @@ pub class Expander {
     if map.size == 0 {
       return
     }
-    i = 0
-    while i < fnn.params.size {
+    for i in 0..fnn.params.size {
       if mapped = map.get(fnn.params[i].name) {
         fnn.params[i].name = mapped
       }
-      i = i + 1
     }
     if r = fnn.receiver {
       if mapped = map.get(r.name) {
@@ -731,9 +693,7 @@ pub class Expander {
     }
     id = self.next_id
     self.next_id = self.next_id + 1
-    i = 0
-    while i < introduced.size {
-      name = introduced[i]
+    for name in introduced {
       if name == "self" {
       } else {
         if prev = map.get(name) {
@@ -741,15 +701,12 @@ pub class Expander {
           map[name] = "__q${id}_${name}"
         }
       }
-      i = i + 1
     }
     map
   }
 
   pub fn collect_introduced(body: Array(Stmt), into: Array(String)) {
-    i = 0
-    while i < body.size {
-      s = body[i]
+    for s in body {
       k = s.kind
       if k == st_assign() {
         if t = s.target {
@@ -797,7 +754,6 @@ pub class Expander {
           self.collect_introduced_expr(e, into)
         }
       }
-      i = i + 1
     }
   }
 
@@ -881,13 +837,10 @@ pub class Expander {
       return
     }
     if k == ex_interp() {
-      i = 0
-      while i < e.parts.size {
-        p = e.parts[i]
+      for p in e.parts {
         if inner = p.expr {
           self.collect_introduced_expr(inner, into)
         }
-        i = i + 1
       }
       return
     }
@@ -1025,12 +978,10 @@ pub class Expander {
       out.args = args
       if b = e.block {
         nb = clone_block(b)
-        i = 0
-        while i < nb.params.size {
+        for i in 0..nb.params.size {
           if mapped = map.get(nb.params[i]) {
             nb.params[i] = mapped
           }
-          i = i + 1
         }
         nb.body = self.rename_stmt_list(b.body, map)
         out.block = nb
@@ -1111,13 +1062,10 @@ pub class Expander {
     }
     if k == ex_interp() {
       out = clone_expr(e)
-      i = 0
-      while i < out.parts.size {
-        p = out.parts[i]
+      for p in out.parts {
         if inner = p.expr {
           p.expr = self.rename_expr(inner, map)
         }
-        i = i + 1
       }
       return out
     }
@@ -1139,12 +1087,10 @@ pub class Expander {
       out = clone_expr(e)
       if b = e.block {
         nb = clone_block(b)
-        i = 0
-        while i < nb.params.size {
+        for i in 0..nb.params.size {
           if mapped = map.get(nb.params[i]) {
             nb.params[i] = mapped
           }
-          i = i + 1
         }
         nb.body = self.rename_stmt_list(b.body, map)
         out.block = nb
@@ -1156,9 +1102,7 @@ pub class Expander {
 
   pub fn expand_stmt_list(body: Array(Stmt)): Array(Stmt) {
     out: Array(Stmt) = []
-    i = 0
-    while i < body.size {
-      s = body[i]
+    for s in body {
       k = s.kind
       if k == st_quote() {
         filled = self.fill_stmt_list(s.body)
@@ -1208,7 +1152,6 @@ pub class Expander {
       } else {
         out.push(s)
       }
-      i = i + 1
     }
     out
   }

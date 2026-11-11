@@ -17,10 +17,8 @@ lib oslink {
 // when the compiler is started through PATH.
 pub fn self_exe_path: String {
   raw_buf = buf_new()
-  nfill = 0
-  while nfill < 4096 {
+  for nfill in 0..4096 {
     raw_buf.push_byte(0)
-    nfill = nfill + 1
   }
   raw = raw_buf.to_s
   n = oslink.readlink("/proc/self/exe", raw, 4095)
@@ -176,12 +174,10 @@ pub fn find_manifest(start: String): String {
 }
 
 pub fn hit_listed(list: Array(String), path: String): Bool {
-  i = 0
-  while i < list.size {
+  for i in 0..list.size {
     if list[i] == path {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -189,149 +185,87 @@ pub fn hit_listed(list: Array(String), path: String): Bool {
 pub fn tag_module(program: Program, name: String, path: String) {
   program.module_name = name
   program.module_path = path
-  i = 0
-  while i < program.structs.size {
-    sdef = program.structs[i]
+  for sdef in program.structs {
     sdef.mod_name = name
-    j = 0
-    while j < sdef.methods.size {
+    for j in 0..sdef.methods.size {
       sdef.methods[j].mod_name = name
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.classes.size {
-    cdef = program.classes[i]
+  for cdef in program.classes {
     cdef.mod_name = name
-    j = 0
-    while j < cdef.methods.size {
+    for j in 0..cdef.methods.size {
       cdef.methods[j].mod_name = name
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.functions.size {
+  for i in 0..program.functions.size {
     program.functions[i].mod_name = name
-    i = i + 1
   }
-  i = 0
-  while i < program.interfaces.size {
-    idef = program.interfaces[i]
+  for idef in program.interfaces {
     idef.mod_name = name
-    j = 0
-    while j < idef.methods.size {
+    for j in 0..idef.methods.size {
       idef.methods[j].mod_name = name
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.opt_ins.size {
+  for i in 0..program.opt_ins.size {
     program.opt_ins[i].mod_name = name
-    i = i + 1
   }
-  i = 0
-  while i < program.libs.size {
-    lib_def = program.libs[i]
+  for lib_def in program.libs {
     lib_def.mod_name = name
-    j = 0
-    while j < lib_def.layouts.size {
+    for j in 0..lib_def.layouts.size {
       lib_def.layouts[j].mod_name = name
       lib_def.layouts[j].vis = lib_def.vis
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.quotes.size {
-    q = program.quotes[i]
+  for q in program.quotes {
     q.mod_name = name
-    j = 0
-    while j < q.functions.size {
+    for j in 0..q.functions.size {
       q.functions[j].mod_name = name
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.comptimes.size {
-    c = program.comptimes[i]
+  for c in program.comptimes {
     c.mod_name = name
     c.qdecl.mod_name = name
-    j = 0
-    while j < c.qdecl.functions.size {
+    for j in 0..c.qdecl.functions.size {
       c.qdecl.functions[j].mod_name = name
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.structs.size {
-    sdef = program.structs[i]
-    j = 0
-    while j < sdef.quotes.size {
-      q = sdef.quotes[j]
+  for sdef in program.structs {
+    for q in sdef.quotes {
       q.mod_name = name
-      k = 0
-      while k < q.functions.size {
+      for k in 0..q.functions.size {
         q.functions[k].mod_name = name
-        k = k + 1
       }
-      j = j + 1
     }
-    j = 0
-    while j < sdef.comptimes.size {
-      c = sdef.comptimes[j]
+    for c in sdef.comptimes {
       c.mod_name = name
       c.qdecl.mod_name = name
-      k = 0
-      while k < c.qdecl.functions.size {
+      for k in 0..c.qdecl.functions.size {
         c.qdecl.functions[k].mod_name = name
-        k = k + 1
       }
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.classes.size {
-    cdef = program.classes[i]
-    j = 0
-    while j < cdef.quotes.size {
-      q = cdef.quotes[j]
+  for cdef in program.classes {
+    for q in cdef.quotes {
       q.mod_name = name
-      k = 0
-      while k < q.functions.size {
+      for k in 0..q.functions.size {
         q.functions[k].mod_name = name
-        k = k + 1
       }
-      j = j + 1
     }
-    j = 0
-    while j < cdef.comptimes.size {
-      c = cdef.comptimes[j]
+    for c in cdef.comptimes {
       c.mod_name = name
       c.qdecl.mod_name = name
-      k = 0
-      while k < c.qdecl.functions.size {
+      for k in 0..c.qdecl.functions.size {
         c.qdecl.functions[k].mod_name = name
-        k = k + 1
       }
-      j = j + 1
     }
-    i = i + 1
   }
 }
 
 pub fn path_in_list(list: Array(String), path: String): Bool {
-  i = 0
-  while i < list.size {
+  for i in 0..list.size {
     if list[i] == path {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -399,12 +333,10 @@ pub class Loader {
   }
 
   pub fn dep_root_of(path: String): String {
-    i = 0
-    while i < self.dep_dirs.size {
-      if path_under(self.dep_dirs[i], path) {
-        return self.dep_dirs[i]
+    for dep_dir in self.dep_dirs {
+      if path_under(dep_dir, path) {
+        return dep_dir
       }
-      i = i + 1
     }
     ""
   }
@@ -470,8 +402,7 @@ pub class Loader {
       return ""
     }
     dir = path_dirname(self.exe_path())
-    guard = 0
-    while guard < 64 {
+    for guard in 0..64 {
       cand = join_dir(dir, suffix)
       if file_exists(cand) {
         self.std_names[cand] = name
@@ -482,7 +413,6 @@ pub class Loader {
         break
       }
       dir = parent
-      guard = guard + 1
     }
     self.fail(loc, "cannot find ${name} in the standard library")
     ""
@@ -498,12 +428,10 @@ pub class Loader {
     if dep.size > 0 {
       self.consider_hit(hits, join_dir(path_dirname(importer), rel))
       self.consider_hit(hits, join_dir(dep, rel))
-      i = 0
-      while i < self.dep_dirs.size {
-        if self.dep_dirs[i] != dep {
-          self.consider_hit(hits, join_dir(self.dep_dirs[i], rel))
+      for dep_dir in self.dep_dirs {
+        if dep_dir != dep {
+          self.consider_hit(hits, join_dir(dep_dir, rel))
         }
-        i = i + 1
       }
     } else {
       self.consider_hit(hits, join_dir(path_dirname(importer), rel))
@@ -511,10 +439,8 @@ pub class Loader {
       if self.manifest_dir.size > 0 {
         self.consider_hit(hits, join_dir(self.manifest_dir, rel))
       }
-      i = 0
-      while i < self.dep_dirs.size {
-        self.consider_hit(hits, join_dir(self.dep_dirs[i], rel))
-        i = i + 1
+      for dep_dir in self.dep_dirs {
+        self.consider_hit(hits, join_dir(dep_dir, rel))
       }
     }
     if hits.size == 0 {
@@ -536,10 +462,8 @@ pub class Loader {
     if hits.size > 1 {
       buf = buf_new()
       buf.push_str("import ${name} is ambiguous:")
-      i = 0
-      while i < hits.size {
-        buf.push_str(" ${hits[i]}")
-        i = i + 1
+      for hit in hits {
+        buf.push_str(" ${hit}")
       }
       self.fail(loc, buf.to_s)
       return ""
@@ -560,14 +484,12 @@ pub class Loader {
   pub fn dep_child(name: String): String {
     hit = ""
     hits = 0
-    i = 0
-    while i < self.dep_dirs.size {
-      cand = "${self.dep_dirs[i]}/${name}.av"
+    for dep_dir in self.dep_dirs {
+      cand = "${dep_dir}/${name}.av"
       if file_exists(cand) {
         hits = hits + 1
         hit = cand
       }
-      i = i + 1
     }
     if hits == 1 {
       return hit
@@ -588,15 +510,12 @@ pub class Loader {
   }
 
   pub fn absorb(bag: DiagBag) {
-    i = 0
-    while i < bag.items.size {
-      e = bag.items[i]
+    for e in bag.items {
       if self.errors.count == 0 {
         self.err = e
       }
       self.failed = true
       self.errors.push(e)
-      i = i + 1
     }
     self.errors.note(bag.suppressed, true)
   }
@@ -622,13 +541,11 @@ pub class Loader {
     if path_in_list(self.stack, path) {
       buf = buf_new()
       buf.push_str("import cycle: ")
-      i = 0
-      while i < self.stack.size {
+      for i in 0..self.stack.size {
         if i > 0 {
           buf.push_str(" -> ")
         }
         buf.push_str(self.module_label(self.stack[i]))
-        i = i + 1
       }
       buf.push_str(" -> ")
       buf.push_str(self.module_label(path))
@@ -702,8 +619,7 @@ pub class Loader {
     if id = self.loaded.get(root_path) {
       root = self.programs[id]
       merged = Program.new(root.loc)
-      i = 0
-      while i < self.order.size {
+      for i in 0..self.order.size {
         pid = 0
         if found = self.loaded.get(self.order[i]) {
           pid = found
@@ -749,7 +665,6 @@ pub class Loader {
           merged.comptimes.push(p.comptimes[j])
           j = j + 1
         }
-        i = i + 1
       }
       merged.imports = root.imports
       merged.module_name = root.module_name

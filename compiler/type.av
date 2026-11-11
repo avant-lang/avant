@@ -122,25 +122,20 @@ pub class Ty {
   }
 
   pub fn field_named(name: String): Ty? {
-    i = 0
-    while i < self.fields.size {
-      f = self.fields[i]
+    for f in self.fields {
       if f.name == name {
         return f.ty
       }
-      i = i + 1
     }
     nil
   }
 
   pub fn field_index(name: String): Int {
-    i = 0
-    while i < self.fields.size {
+    for i in 0..self.fields.size {
       f = self.fields[i]
       if f.name == name {
         return i
       }
-      i = i + 1
     }
     -1
   }
@@ -251,12 +246,10 @@ pub class Ty {
     }
     if k == tyk_iface() {
       if self.name == other.name && self.ty_args.size == other.ty_args.size {
-        i = 0
-        while i < self.ty_args.size {
+        for i in 0..self.ty_args.size {
           if !self.ty_args[i].same_as(other.ty_args[i]) {
             return false
           }
-          i = i + 1
         }
         return true
       }
@@ -266,12 +259,10 @@ pub class Ty {
       if self.members.size != other.members.size {
         return false
       }
-      i = 0
-      while i < self.members.size {
+      for i in 0..self.members.size {
         if !self.members[i].same_as(other.members[i]) {
           return false
         }
-        i = i + 1
       }
       if a = self.inner {
         if b = other.inner {
@@ -284,63 +275,51 @@ pub class Ty {
   }
 
   pub fn includes_member(other: Ty): Bool {
-    i = 0
-    while i < self.members.size {
-      if self.members[i].same_as(other) {
+    for mem in self.members {
+      if mem.same_as(other) {
         return true
       }
-      i = i + 1
     }
     false
   }
 
   pub fn includes_nil: Bool {
-    i = 0
-    while i < self.members.size {
-      if self.members[i].is_nil {
+    for mem in self.members {
+      if mem.is_nil {
         return true
       }
-      i = i + 1
     }
     false
   }
 
   pub fn tag_of(member: Ty): Int {
-    i = 0
-    while i < self.members.size {
+    for i in 0..self.members.size {
       if self.members[i].same_as(member) {
         return i
       }
-      i = i + 1
     }
     0
   }
 
   pub fn payload_index(member: Ty): Int {
     n = 0
-    i = 0
-    while i < self.members.size {
-      m = self.members[i]
+    for m in self.members {
       if !m.is_nil {
         if m.same_as(member) {
           return n + 1
         }
         n = n + 1
       }
-      i = i + 1
     }
     -1
   }
 
   pub fn payload_members: Array(Ty) {
     kept: Array(Ty) = []
-    i = 0
-    while i < self.members.size {
-      m = self.members[i]
+    for m in self.members {
       if !m.is_nil {
         kept.push(m)
       }
-      i = i + 1
     }
     kept
   }
@@ -359,12 +338,10 @@ pub class Ty {
     if self.origin.size > 0 {
       if other.origin.size > 0 {
         if self.origin == other.origin && self.ty_args.size == other.ty_args.size {
-          i = 0
-          while i < self.ty_args.size {
+          for i in 0..self.ty_args.size {
             if !self.ty_args[i].same_as(other.ty_args[i]) {
               return false
             }
-            i = i + 1
           }
           return true
         }
@@ -605,19 +582,15 @@ pub fn ty_has_var(ty: Ty): Bool {
       return true
     }
   }
-  i = 0
-  while i < ty.members.size {
-    if ty_has_var(ty.members[i]) {
+  for mem in ty.members {
+    if ty_has_var(mem) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < ty.ty_args.size {
-    if ty_has_var(ty.ty_args[i]) {
+  for ty_arg in ty.ty_args {
+    if ty_has_var(ty_arg) {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -687,24 +660,20 @@ pub fn mangle_ty(ty: Ty): String {
   }
   if k == tyk_union() {
     buf = buf_new()
-    i = 0
-    while i < ty.members.size {
+    for i in 0..ty.members.size {
       if i > 0 {
         buf.push_str("_")
       }
       buf.push_str(mangle_ty(ty.members[i]))
-      i = i + 1
     }
     return buf.to_s
   }
   if k == tyk_fn() {
     buf = buf_new()
     buf.push_str("Fn")
-    i = 0
-    while i < ty.members.size {
+    for mem in ty.members {
       buf.push_str("_")
-      buf.push_str(mangle_ty(ty.members[i]))
-      i = i + 1
+      buf.push_str(mangle_ty(mem))
     }
     buf.push_str("__")
     if r = ty.inner {
@@ -721,11 +690,9 @@ pub fn mangle_ty(ty: Ty): String {
       base = ty.emit_base
     }
     buf.push_str(base)
-    i = 0
-    while i < ty.ty_args.size {
+    for ty_arg in ty.ty_args {
       buf.push_str("__")
-      buf.push_str(mangle_ty(ty.ty_args[i]))
-      i = i + 1
+      buf.push_str(mangle_ty(ty_arg))
     }
     return buf.to_s
   }
@@ -925,21 +892,16 @@ pub fn ty_union_build(types: Array(Ty)): Ty {
     i = i + 1
   }
   uniq: Array(Ty) = []
-  i = 0
-  while i < flat.size {
-    t = flat[i]
+  for t in flat {
     seen = false
-    j = 0
-    while j < uniq.size {
+    for j in 0..uniq.size {
       if uniq[j].same_as(t) {
         seen = true
       }
-      j = j + 1
     }
     if !seen {
       uniq.push(t)
     }
-    i = i + 1
   }
   i = 1
   while i < uniq.size {
@@ -976,13 +938,10 @@ pub fn ty_nilable(inner: Ty): Ty {
 
 pub fn ty_without_nil(ty: Ty): Ty {
   kept: Array(Ty) = []
-  i = 0
-  while i < ty.members.size {
-    m = ty.members[i]
+  for m in ty.members {
     if !m.is_nil {
       kept.push(m)
     }
-    i = i + 1
   }
   ty_union_build(kept)
 }
@@ -1017,13 +976,10 @@ pub fn if_assign_failure(ty: Ty): Ty {
   if ty.includes_nil {
     return ty_nil()
   }
-  i = 0
-  while i < ty.members.size {
-    m = ty.members[i]
+  for m in ty.members {
     if m.is_class {
       return m
     }
-    i = i + 1
   }
   ty_nil()
 }
@@ -1036,12 +992,10 @@ pub fn ty_assignable(got: Ty, want: Ty): Bool {
     return true
   }
   if got.is_union && want.is_union {
-    i = 0
-    while i < got.members.size {
-      if !want.includes_member(got.members[i]) {
+    for mem in got.members {
+      if !want.includes_member(mem) {
         return false
       }
-      i = i + 1
     }
     return true
   }

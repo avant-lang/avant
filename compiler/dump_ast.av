@@ -13,12 +13,9 @@ import checker
 // One line per token: kind, line, column, escaped value (the --tokens
 // dump, D137).
 pub fn dump_tokens(tokens: Array(Token)) {
-  i = 0
-  while i < tokens.size {
-    t = tokens[i]
+  for t in tokens {
     loc = t.loc
     puts("${t.kind}\t${loc.line}\t${loc.column}\t${escape_dump(t.value)}")
-    i = i + 1
   }
 }
 
@@ -48,13 +45,11 @@ pub fn dump_type(t: TypeName): String {
   if t.fn_type {
     buf = buf_new()
     buf.push_str("fn(")
-    i = 0
-    while i < t.args.size {
+    for i in 0..t.args.size {
       if i > 0 {
         buf.push_str(",")
       }
       buf.push_str(dump_type(t.args[i]))
-      i = i + 1
     }
     buf.push_str(")")
     if r = t.ret {
@@ -80,13 +75,11 @@ pub fn dump_type(t: TypeName): String {
     buf.push_str(t.name)
     if t.args.size > 0 {
       buf.push_str("(")
-      i = 0
-      while i < t.args.size {
+      for i in 0..t.args.size {
         if i > 0 {
           buf.push_str(",")
         }
         buf.push_str(dump_type(t.args[i]))
-        i = i + 1
       }
       buf.push_str(")")
     }
@@ -148,25 +141,19 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(" ")
       buf.push_str(dump_expr(recv))
     }
-    i = 0
-    while i < e.args.size {
+    for arg in e.args {
       buf.push_str(" ")
-      buf.push_str(dump_expr(e.args[i]))
-      i = i + 1
+      buf.push_str(dump_expr(arg))
     }
     if b = e.block {
       buf.push_str(" (block")
-      j = 0
-      while j < b.params.size {
+      for param in b.params {
         buf.push_str(" |")
-        buf.push_str(b.params[j])
-        j = j + 1
+        buf.push_str(param)
       }
-      j = 0
-      while j < b.body.size {
+      for st in b.body {
         buf.push_str(" ")
-        buf.push_str(dump_stmt(b.body[j]))
-        j = j + 1
+        buf.push_str(dump_stmt(st))
       }
       buf.push_str(")")
     }
@@ -233,11 +220,9 @@ pub fn dump_expr(e: Expr): String {
   }
   if k == ex_array() {
     buf.push_str("(array")
-    i = 0
-    while i < e.elems.size {
+    for elem in e.elems {
       buf.push_str(" ")
-      buf.push_str(dump_expr(e.elems[i]))
-      i = i + 1
+      buf.push_str(dump_expr(elem))
     }
     buf.push_str(")")
     return buf.to_s
@@ -247,32 +232,23 @@ pub fn dump_expr(e: Expr): String {
     if c = e.cond {
       buf.push_str(dump_expr(c))
     }
-    i = 0
-    while i < e.cases.size {
-      arm = e.cases[i]
+    for arm in e.cases {
       buf.push_str(" (case")
-      j = 0
-      while j < arm.labels.size {
+      for label in arm.labels {
         buf.push_str(" ")
-        buf.push_fmt_i(arm.labels[j].to_i)
-        j = j + 1
+        buf.push_fmt_i(label.to_i)
       }
-      j = 0
-      while j < arm.body.size {
+      for st in arm.body {
         buf.push_str(" ")
-        buf.push_str(dump_stmt(arm.body[j]))
-        j = j + 1
+        buf.push_str(dump_stmt(st))
       }
       buf.push_str(")")
-      i = i + 1
     }
     if e.has_else {
       buf.push_str(" (else")
-      i = 0
-      while i < e.else_body.size {
+      for st in e.else_body {
         buf.push_str(" ")
-        buf.push_str(dump_stmt(e.else_body[i]))
-        i = i + 1
+        buf.push_str(dump_stmt(st))
       }
       buf.push_str(")")
     }
@@ -321,19 +297,15 @@ pub fn dump_stmt(s: Stmt): String {
     if c = s.cond {
       buf.push_str(dump_expr(c))
     }
-    i = 0
-    while i < s.then_body.size {
+    for stmt in s.then_body {
       buf.push_str(" ")
-      buf.push_str(dump_stmt(s.then_body[i]))
-      i = i + 1
+      buf.push_str(dump_stmt(stmt))
     }
     if s.else_body.size > 0 {
       buf.push_str(" (else")
-      i = 0
-      while i < s.else_body.size {
+      for st in s.else_body {
         buf.push_str(" ")
-        buf.push_str(dump_stmt(s.else_body[i]))
-        i = i + 1
+        buf.push_str(dump_stmt(st))
       }
       buf.push_str(")")
     }
@@ -342,20 +314,16 @@ pub fn dump_stmt(s: Stmt): String {
   }
   if k == st_while() {
     buf.push_str("(while ")
-    i = 0
-    while i < s.pre.size {
+    for st in s.pre {
       buf.push_str(" ")
-      buf.push_str(dump_stmt(s.pre[i]))
-      i = i + 1
+      buf.push_str(dump_stmt(st))
     }
     if c = s.cond {
       buf.push_str(dump_expr(c))
     }
-    i = 0
-    while i < s.body.size {
+    for st in s.body {
       buf.push_str(" ")
-      buf.push_str(dump_stmt(s.body[i]))
-      i = i + 1
+      buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
     return buf.to_s
@@ -376,11 +344,9 @@ pub fn dump_stmt(s: Stmt): String {
   }
   if k == st_hold() {
     buf.push_str("(gc.hold")
-    i = 0
-    while i < s.body.size {
+    for st in s.body {
       buf.push_str(" ")
-      buf.push_str(dump_stmt(s.body[i]))
-      i = i + 1
+      buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
     return buf.to_s
@@ -390,11 +356,9 @@ pub fn dump_stmt(s: Stmt): String {
     if e = s.expr {
       buf.push_str(dump_expr(e))
     }
-    i = 0
-    while i < s.body.size {
+    for st in s.body {
       buf.push_str(" ")
-      buf.push_str(dump_stmt(s.body[i]))
-      i = i + 1
+      buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
     return buf.to_s
@@ -415,11 +379,9 @@ pub fn dump_stmt(s: Stmt): String {
   }
   if k == st_quote() {
     buf.push_str("(quote")
-    i = 0
-    while i < s.body.size {
+    for st in s.body {
       buf.push_str(" ")
-      buf.push_str(dump_stmt(s.body[i]))
-      i = i + 1
+      buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
     return buf.to_s
@@ -445,25 +407,20 @@ pub fn dump_fn(fnn: Function): String {
     buf.push_str(dump_type(recv.type))
     buf.push_str(")")
   }
-  i = 0
-  while i < fnn.params.size {
-    p = fnn.params[i]
+  for p in fnn.params {
     buf.push_str(" (param ")
     buf.push_str(p.name)
     buf.push_str(" ")
     buf.push_str(dump_type(p.type))
     buf.push_str(")")
-    i = i + 1
   }
   if rt = fnn.return_type {
     buf.push_str(" ")
     buf.push_str(dump_type(rt))
   }
-  i = 0
-  while i < fnn.body.size {
+  for st in fnn.body {
     buf.push_str(" ")
-    buf.push_str(dump_stmt(fnn.body[i]))
-    i = i + 1
+    buf.push_str(dump_stmt(st))
   }
   buf.push_str(")")
   buf.to_s
@@ -472,57 +429,39 @@ pub fn dump_fn(fnn: Function): String {
 pub fn dump_program(program: Program): String {
   buf = buf_new()
   buf.push_str("(program")
-  i = 0
-  while i < program.structs.size {
-    s = program.structs[i]
+  for s in program.structs {
     buf.push_str(" (struct ")
     buf.push_str(s.name)
     buf.push_str(")")
-    i = i + 1
   }
-  i = 0
-  while i < program.classes.size {
-    c = program.classes[i]
+  for c in program.classes {
     buf.push_str(" (class ")
     buf.push_str(c.name)
     buf.push_str(")")
-    i = i + 1
   }
-  i = 0
-  while i < program.functions.size {
+  for function in program.functions {
     buf.push_str(" ")
-    buf.push_str(dump_fn(program.functions[i]))
-    i = i + 1
+    buf.push_str(dump_fn(function))
   }
-  i = 0
-  while i < program.quotes.size {
-    q = program.quotes[i]
+  for q in program.quotes {
     buf.push_str(" (quote")
-    j = 0
-    while j < q.functions.size {
+    for function in q.functions {
       buf.push_str(" ")
-      buf.push_str(dump_fn(q.functions[j]))
-      j = j + 1
+      buf.push_str(dump_fn(function))
     }
     buf.push_str(")")
-    i = i + 1
   }
-  i = 0
-  while i < program.comptimes.size {
-    walk = program.comptimes[i]
+  for walk in program.comptimes {
     buf.push_str(" (comptime ")
     buf.push_str(walk.type_name)
     buf.push_str(" ")
     buf.push_str(walk.var_name)
     buf.push_str(" (quote")
-    j = 0
-    while j < walk.qdecl.functions.size {
+    for function in walk.qdecl.functions {
       buf.push_str(" ")
-      buf.push_str(dump_fn(walk.qdecl.functions[j]))
-      j = j + 1
+      buf.push_str(dump_fn(function))
     }
     buf.push_str("))")
-    i = i + 1
   }
   buf.push_str(")")
   buf.to_s

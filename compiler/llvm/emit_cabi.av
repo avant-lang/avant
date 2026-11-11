@@ -58,12 +58,10 @@ pub fn ll_cabi_needed(ts: MTypes, sig: Int): Bool {
   if ts.kind(s.ret) == mk_agg() {
     return true
   }
-  i = 0
-  while i < s.params.size {
-    if ts.kind(s.params[i]) == mk_agg() {
+  for param in s.params {
+    if ts.kind(param) == mk_agg() {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -94,12 +92,10 @@ fn ll_cabi_split(ts: MTypes, ty: Int, v: CAbiVal) {
   fps: Array(Bool) = []
   ll_cabi_leaves(ts, ty, 0, offs, fps)
   n = (size + 7) / 8
-  i = 0
-  while i < n {
+  for i in 0..n {
     sse = false
     any = false
-    j = 0
-    while j < offs.size {
+    for j in 0..offs.size {
       if offs[j] >= 8 * i && offs[j] < 8 * i + 8 {
         if !any {
           sse = true
@@ -107,7 +103,6 @@ fn ll_cabi_split(ts: MTypes, ty: Int, v: CAbiVal) {
         }
         sse = sse && fps[j]
       }
-      j = j + 1
     }
     if sse {
       v.parts.push("double")
@@ -119,19 +114,16 @@ fn ll_cabi_split(ts: MTypes, ty: Int, v: CAbiVal) {
       v.parts.push("i${bytes * 8}")
     }
     v.offs.push(8 * i)
-    i = i + 1
   }
 }
 
 fn ll_cabi_count(v: CAbiVal, sse: Bool): Int {
   n = 0
-  i = 0
-  while i < v.parts.size {
-    d = v.parts[i] == "double"
+  for pt in v.parts {
+    d = pt == "double"
     if d == sse {
       n = n + 1
     }
-    i = i + 1
   }
   n
 }
@@ -157,9 +149,7 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
     }
   }
   plan = CAbiSig.new(rv)
-  i = 0
-  while i < s.params.size {
-    t = s.params[i]
+  for t in s.params {
     v = CAbiVal.new(cabi_direct(), t)
     if ts.kind(t) == mk_agg() {
       size = ts.size_of(t)
@@ -191,7 +181,6 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
       ints = ints - 1
     }
     plan.args.push(v)
-    i = i + 1
   }
   plan
 }
@@ -221,14 +210,10 @@ fn ll_cabi_param_texts(ts: MTypes, plan: CAbiSig): Array(String) {
   if plan.ret.kind == cabi_memory() {
     out.push("ptr sret(${ll_type_text(ts, plan.ret.ty)}) align ${ts.align_of(plan.ret.ty)}")
   }
-  i = 0
-  while i < plan.args.size {
-    v = plan.args[i]
+  for v in plan.args {
     if v.kind == cabi_parts() {
-      j = 0
-      while j < v.parts.size {
-        out.push(v.parts[j])
-        j = j + 1
+      for pt in v.parts {
+        out.push(pt)
       }
     } else if v.kind == cabi_memory() {
       out.push("ptr byval(${ll_type_text(ts, v.ty)}) align 8")
@@ -239,20 +224,17 @@ fn ll_cabi_param_texts(ts: MTypes, plan: CAbiSig): Array(String) {
         out.push(ll_type_text(ts, v.ty))
       }
     }
-    i = i + 1
   }
   out
 }
 
 fn ll_cabi_join(xs: Array(String)): String {
   buf = buf_new()
-  i = 0
-  while i < xs.size {
+  for i in 0..xs.size {
     if i > 0 {
       buf.push_str(", ")
     }
     buf.push_str(xs[i])
-    i = i + 1
   }
   buf.to_s
 }
@@ -300,14 +282,12 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
     } else if v.kind == cabi_parts() {
       a2 = ll_cabi_addr(e, st.args[i])
       vol = e.pa_vol
-      j = 0
-      while j < v.parts.size {
+      for j in 0..v.parts.size {
         g = e.tmp
         e.line("${g} = getelementptr inbounds i8, ptr ${a2}, i64 ${v.offs[j]}")
         x2 = e.tmp
         e.line("${x2} = load${e.vol(vol)} ${v.parts[j]}, ptr ${g}, align ${e.align(v.ty)}")
         args.push("${v.parts[j]} ${x2}")
-        j = j + 1
       }
     }
     i = i + 1
@@ -316,16 +296,13 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   // The function type of the call names types only (attributes are on
   // the arguments).
   ptypes: Array(String) = []
-  i = 0
-  while i < ptexts.size {
-    t = ptexts[i]
+  for t in ptexts {
     if str_starts(t, "ptr ") {
       t = "ptr"
     } else if t == "i1 zeroext" {
       t = "i1"
     }
     ptypes.push(t)
-    i = i + 1
   }
   rtext = ll_cabi_ret_text(ts, plan)
   call = "call ${rtext} (${ll_cabi_join(ptypes)}) ${ll_sym(name)}(${ll_cabi_join(args)})"
@@ -345,8 +322,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
     e.store(rv.ty, r, e.local_name(d), slot)
     return
   }
-  j = 0
-  while j < rv.parts.size {
+  for j in 0..rv.parts.size {
     x = r
     if rv.parts.size > 1 {
       x = e.tmp
@@ -355,6 +331,5 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
     g = e.tmp
     e.line("${g} = getelementptr inbounds i8, ptr ${e.local_name(d)}, i64 ${rv.offs[j]}")
     e.line("store${e.vol(slot)} ${rv.parts[j]} ${x}, ptr ${g}, align ${e.align(rv.ty)}")
-    j = j + 1
   }
 }

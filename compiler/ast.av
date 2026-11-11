@@ -541,30 +541,18 @@ pub fn stmt_quote(loc: Location, body: Array(Stmt)): Stmt {
 
 pub fn program_all_functions(program: Program): Array(Function) {
   out: Array(Function) = []
-  i = 0
-  while i < program.functions.size {
-    out.push(program.functions[i])
-    i = i + 1
+  for function in program.functions {
+    out.push(function)
   }
-  i = 0
-  while i < program.structs.size {
-    sdef = program.structs[i]
-    j = 0
-    while j < sdef.methods.size {
-      out.push(sdef.methods[j])
-      j = j + 1
+  for sdef in program.structs {
+    for method in sdef.methods {
+      out.push(method)
     }
-    i = i + 1
   }
-  i = 0
-  while i < program.classes.size {
-    cdef = program.classes[i]
-    j = 0
-    while j < cdef.methods.size {
-      out.push(cdef.methods[j])
-      j = j + 1
+  for cdef in program.classes {
+    for method in cdef.methods {
+      out.push(method)
     }
-    i = i + 1
   }
   out
 }
@@ -737,12 +725,10 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
   if tn.name.size == 0 {
     return
   }
-  i = 0
-  while i < into.size {
+  for i in 0..into.size {
     if into[i] == tn.name {
       return
     }
-    i = i + 1
   }
   into.push(tn.name)
 }
@@ -994,11 +980,8 @@ pub fn clone_function(fnn: Function): Function {
     out.type_params.push(fnn.type_params[i])
     i = i + 1
   }
-  i = 0
-  while i < fnn.bounds.size {
-    b = fnn.bounds[i]
+  for b in fnn.bounds {
     out.bounds.push(TypeBound.new(b.param, clone_type_name(b.iface)))
-    i = i + 1
   }
   i = 0
   while i < fnn.inst_args.size {
@@ -1060,13 +1043,10 @@ pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
     subst_type_in_expr(e.field_exprs[i], from, to)
     i = i + 1
   }
-  i = 0
-  while i < e.parts.size {
-    p = e.parts[i]
+  for p in e.parts {
     if inner = p.expr {
       subst_type_in_expr(inner, from, to)
     }
-    i = i + 1
   }
   i = 0
   while i < e.cases.size {
@@ -1134,27 +1114,19 @@ pub fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeNa
   if t = fnn.return_type {
     fnn.return_type = subst_type_name(t, from, to)
   }
-  i = 0
-  while i < fnn.params.size {
-    p = fnn.params[i]
+  for p in fnn.params {
     p.type = subst_type_name(p.type, from, to)
     if d = p.default {
       subst_type_in_expr(d, from, to)
     }
-    i = i + 1
   }
-  i = 0
-  while i < fnn.bounds.size {
-    b = fnn.bounds[i]
+  for b in fnn.bounds {
     b.iface = subst_type_name(b.iface, from, to)
-    j = 0
-    while j < from.size {
+    for j in 0..from.size {
       if b.param == from[j] {
         b.param = to[j].name
       }
-      j = j + 1
     }
-    i = i + 1
   }
   subst_type_in_stmts(fnn.body, from, to)
 }
@@ -1209,13 +1181,10 @@ pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
     e.field_exprs[i] = rewrite_expr_names(e.field_exprs[i], from, to)
     i = i + 1
   }
-  i = 0
-  while i < e.parts.size {
-    p = e.parts[i]
+  for p in e.parts {
     if inner = p.expr {
       p.expr = rewrite_expr_names(inner, from, to)
     }
-    i = i + 1
   }
   i = 0
   while i < e.cases.size {
@@ -1254,10 +1223,8 @@ pub fn rewrite_stmt_names(s: Stmt, from: Array(String), to: Array(Expr)) {
 
 pub fn collect_fn_type_params(fnn: Function, named: Hash(String, Int)): Array(String) {
   into: Array(String) = []
-  i = 0
-  while i < fnn.params.size {
-    type_name_unbound_names(fnn.params[i].type, named, into)
-    i = i + 1
+  for param in fnn.params {
+    type_name_unbound_names(param.type, named, into)
   }
   if r = fnn.receiver {
     type_name_unbound_names(r.type, named, into)

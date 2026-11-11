@@ -4,12 +4,10 @@ pub fn diag_eq(a: String, b: String): Bool {
   if a.size != b.size {
     return false
   }
-  i = 0
-  while i < a.size {
+  for i in 0..a.size {
     if a[i] != b[i] {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -116,16 +114,12 @@ pub class CompileError {
           num = "${self.loc.line}"
           buf.push_str("${num} | ${line_text}\n")
           pad = buf_new()
-          j = 0
-          while j < num.size {
+          for j in 0..num.size {
             pad.push_str(" ")
-            j = j + 1
           }
           buf.push_str("${pad.to_s} | ")
-          k = 1
-          while k < self.loc.column {
+          for k in 1..self.loc.column {
             buf.push_str(" ")
-            k = k + 1
           }
           buf.push_str("^\n")
         }
@@ -187,15 +181,13 @@ pub class DiagBag {
   // is also one of the errors past the cap ("and N more errors"); without,
   // it is a repeat, which is never shown twice.
   pub fn note(n: Int, hidden: Bool) {
-    k = 0
-    while k < n {
+    for k in 0..n {
       self.before_items.push(self.items.size)
       self.before_suppressed.push(self.suppressed)
       self.pushes = self.pushes + 1
       if hidden {
         self.suppressed = self.suppressed + 1
       }
-      k = k + 1
     }
   }
 
@@ -207,13 +199,10 @@ pub class DiagBag {
     self.before_items.push(self.items.size)
     self.before_suppressed.push(self.suppressed)
     self.pushes = self.pushes + 1
-    i = 0
-    while i < self.items.size {
-      old = self.items[i]
+    for old in self.items {
       if old.loc.line == e.loc.line && old.loc.column == e.loc.column && diag_eq(old.loc.path, e.loc.path) && diag_eq(old.code, e.code) && diag_eq(old.message, e.message) {
         return
       }
-      i = i + 1
     }
     if self.items.size >= 20 {
       self.suppressed = self.suppressed + 1

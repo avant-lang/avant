@@ -315,11 +315,9 @@ pub fn runtime_objects(root: String): Array(String) {
 pub fn linker_flags_s(extra: Array(String)): String {
   buf = buf_new()
   buf.push_str("-pthread -lm")
-  i = 0
-  while i < extra.size {
+  for i in 0..extra.size {
     buf.push_str(" ")
     buf.push_str(extra[i])
-    i = i + 1
   }
   buf.to_s
 }
@@ -484,25 +482,24 @@ pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable,
 
 pub fn fill_std_link(program: Program, box: IrBox) {
   root = avant_root()
-  i = 0
-  while i < program.mods.size {
-    if program.mods[i].name == "std.zlib" {
+  for mod in program.mods {
+    if mod.name == "std.zlib" {
       // zlib is vendored inside avant_zlib.o (D146): no -lz.
       box.std_objects.push("${root}/runtime/build/avant_zlib.o")
     }
-    if program.mods[i].name == "std.base64" {
+    if mod.name == "std.base64" {
       box.std_objects.push("${root}/runtime/build/avant_base64.o")
       box.std_objects.push("${root}/runtime/build/libbase64.o")
     }
-    if program.mods[i].name == "std.json" {
+    if mod.name == "std.json" {
       box.std_objects.push("${root}/runtime/build/avant_json.o")
       box.std_objects.push("${root}/runtime/build/yyjson.o")
     }
-    if program.mods[i].name == "std.regex" {
+    if mod.name == "std.regex" {
       // PCRE2 is vendored inside avant_re.o (D146): no -lpcre2-8.
       box.std_objects.push("${root}/runtime/build/avant_re.o")
     }
-    if program.mods[i].name == "std.http" {
+    if mod.name == "std.http" {
       box.std_objects.push("${root}/runtime/build/avant_http.o")
       box.std_objects.push("${root}/runtime/build/us_bsd.o")
       box.std_objects.push("${root}/runtime/build/us_context.o")
@@ -511,20 +508,15 @@ pub fn fill_std_link(program: Program, box: IrBox) {
       box.std_objects.push("${root}/runtime/build/us_udp.o")
       box.std_objects.push("${root}/runtime/build/us_epoll_kqueue.o")
     }
-    i = i + 1
   }
 }
 
 pub fn attach_std_link(box: IrBox, job: LinkJob) {
-  i = 0
-  while i < box.std_objects.size {
-    job.objects.push(box.std_objects[i])
-    i = i + 1
+  for std_object in box.std_objects {
+    job.objects.push(std_object)
   }
-  i = 0
-  while i < box.std_flags.size {
-    job.flags.push(box.std_flags[i])
-    i = i + 1
+  for std_flag in box.std_flags {
+    job.flags.push(std_flag)
   }
 }
 
@@ -826,15 +818,13 @@ pub fn split_run_args(args: Array(String)): RunSplit {
   }
   split.has_dash = seen
   files = 0
-  j = 0
-  while j < left.size {
+  for j in 0..left.size {
     if str_ends(left[j], ".av") {
       files = files + 1
       split.file = left[j]
     } else {
       split.link.push(left[j])
     }
-    j = j + 1
   }
   if files == 0 {
     split.err = "run needs a .av file"

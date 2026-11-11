@@ -85,9 +85,7 @@ pub class CovReport {
   pub fn write_lcov(path: String) {
     b = buf_new()
     paths = self.path_list()
-    i = 0
-    while i < paths.size {
-      p = paths[i]
+    for p in paths {
       bare = self.path_bare(p)
       b.push_str("TN:\n")
       b.push_str("SF:${p}\n")
@@ -99,7 +97,6 @@ pub class CovReport {
         self.write_lines(b, p)
       }
       b.push_str("end_of_record\n")
-      i = i + 1
     }
     w = file_write(path, b.to_s)
     if w != 0 {
@@ -114,13 +111,11 @@ pub class CovReport {
     }
     color = cov_color()
     file_w = 10
-    i = 0
-    while i < paths.size {
-      n = paths[i].size
+    for path in paths {
+      n = path.size
       if n > file_w {
         file_w = n
       }
-      i = i + 1
     }
     if file_w > 36 {
       file_w = 36
@@ -130,16 +125,13 @@ pub class CovReport {
     puts(" ${cov_pad("File", file_w)} | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s")
     cov_border(file_w)
     puts(" ${cov_pad("All files", file_w)} |${self.col_stmt("")}|${self.col_branch("")}|${self.col_func("")}|${self.col_line("")}|")
-    i = 0
-    while i < paths.size {
-      p = paths[i]
+    for p in paths {
       shown = p
       if shown.size > file_w {
         shown = str_slice(shown, 0, file_w)
       }
       uncovered = self.uncovered(p)
       puts(" ${cov_pad(shown, file_w)} |${self.col_stmt(p)}|${self.col_branch(p)}|${self.col_func(p)}|${self.col_line(p)}| ${uncovered}")
-      i = i + 1
     }
     cov_border(file_w)
   }
@@ -151,8 +143,7 @@ pub class CovReport {
     if self.known(path) && bare {
       return
     }
-    i = 0
-    while i < self.slots.size {
+    for i in 0..self.slots.size {
       s = self.slots[i]
       if s.kind == kind && s.path == path && s.line == line && s.name == name {
         s.hits = s.hits + hits
@@ -162,18 +153,15 @@ pub class CovReport {
         self.slots[i] = s
         return
       }
-      i = i + 1
     }
     self.slots.push(CovSlot.new(kind, path, line, name, hits, bare))
   }
 
   fn known(path: String): Bool {
-    i = 0
-    while i < self.slots.size {
-      if self.slots[i].path == path {
+    for slot in self.slots {
+      if slot.path == path {
         return true
       }
-      i = i + 1
     }
     false
   }
@@ -223,24 +211,19 @@ pub class CovReport {
 
   fn path_list: Array(String) {
     out: Array(String) = []
-    i = 0
-    while i < self.slots.size {
-      p = self.slots[i].path
+    for slot in self.slots {
+      p = slot.path
       found = false
-      j = 0
-      while j < out.size {
+      for j in 0..out.size {
         if out[j] == p {
           found = true
         }
-        j = j + 1
       }
       if !found {
         out.push(p)
       }
-      i = i + 1
     }
-    a = 1
-    while a < out.size {
+    for a in 1..out.size {
       b = a
       while b > 0 {
         if cov_less(out[b], out[b - 1]) {
@@ -252,7 +235,6 @@ pub class CovReport {
           break
         }
       }
-      a = a + 1
     }
     out
   }
@@ -275,9 +257,7 @@ pub class CovReport {
 
   fn count(path: String, kind: String, hit_only: Bool): Int {
     n = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.kind == kind && (path.size == 0 || s.path == path) && !(s.line == 0 && s.bare) {
         if hit_only {
           if s.hits > 0 {
@@ -287,7 +267,6 @@ pub class CovReport {
           n = n + 1
         }
       }
-      i = i + 1
     }
     n
   }
@@ -342,26 +321,20 @@ pub class CovReport {
 
   fn uncovered(path: String): String {
     nums: Array(Int) = []
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.path == path && s.kind == "L" && s.hits == 0 && s.line > 0 {
         have = false
-        j = 0
-        while j < nums.size {
-          if nums[j] == s.line {
+        for num in nums {
+          if num == s.line {
             have = true
           }
-          j = j + 1
         }
         if !have {
           nums.push(s.line)
         }
       }
-      i = i + 1
     }
-    a = 1
-    while a < nums.size {
+    for a in 1..nums.size {
       b = a
       while b > 0 {
         if nums[b] < nums[b - 1] {
@@ -373,11 +346,9 @@ pub class CovReport {
           break
         }
       }
-      a = a + 1
     }
     out = buf_new()
-    i = 0
-    while i < nums.size {
+    for i in 0..nums.size {
       if i > 0 {
         out.push_str(",")
       }
@@ -386,7 +357,6 @@ pub class CovReport {
         out.push_str("...")
         break
       }
-      i = i + 1
     }
     out.to_s
   }
@@ -394,9 +364,7 @@ pub class CovReport {
   fn write_funcs(b: Buf, path: String) {
     tot = 0
     hit = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.path == path && s.kind == "F" {
         name = s.name
         if name.size == 0 {
@@ -404,11 +372,8 @@ pub class CovReport {
         }
         b.push_str("FN:${s.line},${name}\n")
       }
-      i = i + 1
     }
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.path == path && s.kind == "F" {
         name = s.name
         if name.size == 0 {
@@ -420,7 +385,6 @@ pub class CovReport {
           hit = hit + 1
         }
       }
-      i = i + 1
     }
     b.push_str("FNF:${tot}\n")
     b.push_str("FNH:${hit}\n")
@@ -429,9 +393,7 @@ pub class CovReport {
   fn write_branches(b: Buf, path: String) {
     tot = 0
     hit = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.path == path && s.kind == "B" {
         if s.hits > 0 {
           b.push_str("BRDA:${s.line},0,${tot},${s.hits}\n")
@@ -441,7 +403,6 @@ pub class CovReport {
         }
         tot = tot + 1
       }
-      i = i + 1
     }
     b.push_str("BRF:${tot}\n")
     b.push_str("BRH:${hit}\n")
@@ -451,28 +412,21 @@ pub class CovReport {
     seen: Array(Int) = []
     tot = 0
     hit = 0
-    i = 0
-    while i < self.slots.size {
-      s = self.slots[i]
+    for s in self.slots {
       if s.path == path && s.kind == "L" && s.line > 0 {
         have = false
-        j = 0
-        while j < seen.size {
+        for j in 0..seen.size {
           if seen[j] == s.line {
             have = true
           }
-          j = j + 1
         }
         if !have {
           seen.push(s.line)
           sum = 0
-          k = 0
-          while k < self.slots.size {
-            t = self.slots[k]
+          for t in self.slots {
             if t.path == path && t.kind == "L" && t.line == s.line {
               sum = sum + t.hits
             }
-            k = k + 1
           }
           b.push_str("DA:${s.line},${sum}\n")
           tot = tot + 1
@@ -481,7 +435,6 @@ pub class CovReport {
           }
         }
       }
-      i = i + 1
     }
     b.push_str("LF:${tot}\n")
     b.push_str("LH:${hit}\n")
@@ -565,9 +518,7 @@ pub fn cov_rel(anchor: String, path: String): String {
 }
 
 pub fn cov_excluded(path: String, dirs: Array(String)): Bool {
-  i = 0
-  while i < dirs.size {
-    d = dirs[i]
+  for d in dirs {
     if path == d {
       return true
     }
@@ -578,7 +529,6 @@ pub fn cov_excluded(path: String, dirs: Array(String)): Bool {
     if str_starts(path, pre) {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -611,15 +561,13 @@ fn cov_less(a: String, b: String): Bool {
   if b.size < n {
     n = b.size
   }
-  i = 0
-  while i < n {
+  for i in 0..n {
     if a[i] < b[i] {
       return true
     }
     if a[i] > b[i] {
       return false
     }
-    i = i + 1
   }
   a.size < b.size
 }
@@ -647,10 +595,8 @@ fn cov_pct(hit: Int, tot: Int): String {
     pad = 1
   }
   b = buf_new()
-  i = 0
-  while i < pad {
+  for i in 0..pad {
     b.push_str(" ")
-    i = i + 1
   }
   if cov_color() {
     code = "31"
@@ -679,10 +625,8 @@ fn cov_pad(s: String, w: Int): String {
   }
   b = buf_new()
   b.push_str(s)
-  i = s.size
-  while i < w {
+  for i in s.size..w {
     b.push_str(" ")
-    i = i + 1
   }
   b.to_s
 }

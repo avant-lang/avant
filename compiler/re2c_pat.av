@@ -790,13 +790,10 @@ pub class Re2cCollect {
       self.walk_expr(expr.field_exprs[i])
       i = i + 1
     }
-    i = 0
-    while i < expr.parts.size {
-      part = expr.parts[i]
+    for part in expr.parts {
       if inner = part.expr {
         self.walk_expr(inner)
       }
-      i = i + 1
     }
     i = 0
     while i < expr.cases.size {
@@ -809,9 +806,7 @@ pub class Re2cCollect {
   }
 
   pub fn walk_stmts(body: Array(Stmt)) {
-    i = 0
-    while i < body.size {
-      stmt = body[i]
+    for stmt in body {
       if e = stmt.expr {
         self.walk_expr(e)
       }
@@ -827,7 +822,6 @@ pub class Re2cCollect {
       self.walk_stmts(stmt.then_body)
       self.walk_stmts(stmt.else_body)
       self.walk_stmts(stmt.body)
-      i = i + 1
     }
   }
 
@@ -846,15 +840,12 @@ pub class Re2cCollect {
     buf.push_str("#include <stdint.h>\n\n")
     buf.push_str("/*!maxnmatch:re2c*/\n\n")
     any_cap = false
-    j = 0
-    while j < self.bodies.size {
-      if body_has_capture(self.bodies[j]) {
+    for bd in self.bodies {
+      if body_has_capture(bd) {
         any_cap = true
       }
-      j = j + 1
     }
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       body = self.bodies[i]
       cap = body_has_capture(body)
@@ -936,7 +927,6 @@ pub class Re2cCollect {
       buf.push_str("    */\n")
       buf.push_str("  }\n")
       buf.push_str("}\n\n")
-      i = i + 1
     }
     n = self.bodies.size
     buf.push_str("int32_t avant_re2c_owns(void *re) {\n")
@@ -951,11 +941,9 @@ pub class Re2cCollect {
     buf.push_str("  int32_t m0 = 0, m1 = 0, c0 = 0, c1 = 0, rc = 0;\n")
     buf.push_str("  if (!s) s = \"\";\n")
     buf.push_str("  switch (id) {\n")
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       buf.push_str("    case ${id}: rc = avant_re2c_find_${id}(s, from, &m0, &m1, &c0, &c1); break;\n")
-      i = i + 1
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
@@ -971,22 +959,18 @@ pub class Re2cCollect {
     buf.push_str("}\n\n")
     buf.push_str("int32_t avant_re2c_groups(int32_t id) {\n")
     buf.push_str("  switch (id) {\n")
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       buf.push_str("    case ${id}: return ${self.groups[i]};\n")
-      i = i + 1
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
     buf.push_str("}\n\n")
     buf.push_str("int32_t avant_re2c_count(int32_t id, const char *s) {\n")
     buf.push_str("  switch (id) {\n")
-    i = 0
-    while i < self.bodies.size {
+    for i in 0..self.bodies.size {
       id = i + 1
       buf.push_str("    case ${id}: return avant_re2c_scan_${id}(s);\n")
-      i = i + 1
     }
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
@@ -999,15 +983,11 @@ pub fn re2c_plan(program: Program): Re2cPlan {
   plan = Re2cPlan.new
   col = Re2cCollect.new
   col.walk_fns(program.functions)
-  i = 0
-  while i < program.classes.size {
-    col.walk_fns(program.classes[i].methods)
-    i = i + 1
+  for cls in program.classes {
+    col.walk_fns(cls.methods)
   }
-  i = 0
-  while i < program.structs.size {
-    col.walk_fns(program.structs[i].methods)
-    i = i + 1
+  for sdef in program.structs {
+    col.walk_fns(sdef.methods)
   }
   if col.pats.size == 0 {
     return plan

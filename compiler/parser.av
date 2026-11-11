@@ -38,14 +38,12 @@ pub fn parse_u64_dec(s: String): UInt64 {
 
 pub fn parse_u64_hex(s: String): UInt64 {
   n = 0u64
-  i = 0
-  while i < s.size {
+  for i in 0..s.size {
     v = hex_digit_val(s[i])
     if v < 0 {
       return 0u64
     }
     n = n * 16u64 + v.to_u64
-    i = i + 1
   }
   n
 }
@@ -255,13 +253,11 @@ pub class Parser {
   }
 
   pub fn look_ahead_non_nl: Token {
-    i = self.index
-    while i < self.tokens.size {
+    for i in self.index..self.tokens.size {
       t = self.tokens[i]
       if t.kind != tk_newline() {
         return t
       }
-      i = i + 1
     }
     self.tokens[self.tokens.size - 1]
   }
@@ -744,13 +740,10 @@ pub class Parser {
     params = self.parse_type_params(loc)
     opted = self.parse_opt_clause()
     body = self.parse_type_body(name)
-    i = 0
-    while i < body.fields.size {
-      field = body.fields[i]
+    for field in body.fields {
       if d = field.default {
         self.fail(field.loc, "struct fields have no defaults; use a literal")
       }
-      i = i + 1
     }
     defn = StructDef.new(loc, name)
     defn.type_params = params
@@ -1027,14 +1020,11 @@ pub class Parser {
       self.fail(self.current.loc, "fun is a C declaration; it has no body")
       return decl
     }
-    i = 0
-    while i < decl.params.size {
-      p = decl.params[i]
+    for p in decl.params {
       if d = p.default {
         self.fail(p.loc, "fun parameters cannot have defaults")
         return decl
       }
-      i = i + 1
     }
     decl
   }
@@ -1459,12 +1449,10 @@ pub class Parser {
     if self.current.kind != tk_ident() {
       return false
     }
-    i = self.index + 1
-    while i < self.tokens.size {
+    for i in self.index + 1..self.tokens.size {
       if self.tokens[i].kind != tk_newline() {
         return self.tokens[i].kind == tk_colon()
       }
-      i = i + 1
     }
     false
   }
@@ -1540,12 +1528,10 @@ pub class Parser {
     if self.current.kind != tk_ident() {
       return false
     }
-    i = self.index + 1
-    while i < self.tokens.size {
+    for i in self.index + 1..self.tokens.size {
       if self.tokens[i].kind != tk_newline() {
         return self.tokens[i].kind == tk_eq()
       }
-      i = i + 1
     }
     false
   }
@@ -1663,9 +1649,7 @@ pub class Parser {
 
   pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
     out: Array(Stmt) = []
-    i = 0
-    while i < body.size {
-      s = body[i]
+    for s in body {
       if s.kind == st_continue() {
         out.push(self.for_inc(loc, counter))
         out.push(s)
@@ -1676,10 +1660,8 @@ pub class Parser {
       } else if s.kind == st_expr() {
         if e = s.expr {
           if e.kind == ex_switch() {
-            ci = 0
-            while ci < e.cases.size {
+            for ci in 0..e.cases.size {
               e.cases[ci].body = self.for_advance(e.cases[ci].body, counter, loc)
-              ci = ci + 1
             }
             e.else_body = self.for_advance(e.else_body, counter, loc)
           }
@@ -1688,7 +1670,6 @@ pub class Parser {
       } else {
         out.push(s)
       }
-      i = i + 1
     }
     out
   }
@@ -2153,8 +2134,7 @@ pub class Parser {
     if self.current.kind != tk_l_brace() {
       return false
     }
-    i = self.index + 1
-    while i < self.tokens.size {
+    for i in self.index + 1..self.tokens.size {
       if self.tokens[i].kind != tk_newline() {
         k = self.tokens[i].kind
         if k == tk_pipe() {
@@ -2165,7 +2145,6 @@ pub class Parser {
         }
         return false
       }
-      i = i + 1
     }
     false
   }
@@ -2396,13 +2375,11 @@ pub class Parser {
     segs: Array(String) = []
     if self.collect_idents(expr, segs) {
       buf = buf_new()
-      i = 0
-      while i < segs.size {
+      for i in 0..segs.size {
         if i > 0 {
           buf.push_str(".")
         }
         buf.push_str(segs[i])
-        i = i + 1
       }
       return buf.to_s
     }
