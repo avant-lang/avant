@@ -362,6 +362,18 @@ fn main {
 
 `f(1)` is `11`. `n` was captured from `add`.
 
+A lambda inside a method may use `self`, and so its fields and methods bare. The receiver is captured by value, because `self` is never reassigned: a class receiver is its reference (the lambda sees later changes to the object), a struct receiver is a copy (it does not, and a write through `self` inside such a lambda is an error, since it would change only the copy).
+
+```avant
+class Scale {
+  k: Int = 2
+
+  fn by: fn(Int): Int {
+    { |n| n * k }
+  }
+}
+```
+
 ### Generic structs and classes
 
 A struct or a class may take type parameters. Each use is its own layout. `Box(Int)` and `Box(String)` are different types. An unapplied `Box` is an error. A type parameter must be a fresh name, not an existing type.

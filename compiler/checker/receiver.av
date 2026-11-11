@@ -99,3 +99,71 @@ pub fn (checker_self: Checker) refuse_bare_field_write(target: Expr, loc: Locati
   }
   checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write self.${target.ident} = ... to change the field, or choose another name for a local")
 }
+
+// self inside a lambda of an inherent method (Stage 29 W3b, B7, S13):
+// every enclosing lambda captures it, by value, since self is never
+// reassigned (a class receiver's reference, a struct receiver's copy);
+// the receiver's type, or nil after refusing (an external method's
+// receiver may be reassigned, so it is not captured this way).
+pub fn (checker_self: Checker) capture_receiver(loc: Location): Ty? {
+  if checker_self.self_name != "self" {
+    checker_self.fail(loc, "a lambda cannot capture the receiver ${checker_self.self_name} of an external method; copy it into a local first")
+    return nil
+  }
+  st = checker_self.t_int()
+  if got = checker_self.lookup("self") {
+    st = got
+  } else if s2 = checker_self.self_ty {
+    st = s2
+  } else {
+    checker_self.fail(loc, "self is only valid in a method")
+    return nil
+  }
+  for lam in checker_self.lam_exprs {
+    seen = false
+    for n in lam.cap_names {
+      if n == "self" {
+        seen = true
+      }
+    }
+    if !seen {
+      lam.cap_names.push("self")
+      lam.cap_tys.push(st)
+    }
+  }
+  st
+}
+
+// A write through self (self.f = ..., self.s.f += ...) inside a lambda of
+// a struct method: the lambda holds a copy of the receiver, so the write
+// would change only the copy; refused.
+pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
+  if checker_self.lam_exprs.size == 0 {
+    return
+  }
+  if st = checker_self.self_ty {
+    if !st.is_struct {
+      return
+    }
+  } else {
+    return
+  }
+  cur = target
+  done = false
+  while !done {
+    if cur.kind == ex_field() || cur.kind == ex_index() {
+      if o = cur.object {
+        cur = o
+      } else if l = cur.left {
+        cur = l
+      } else {
+        done = true
+      }
+    } else {
+      done = true
+    }
+  }
+  if cur.kind == ex_name() && cur.ident == "self" {
+    checker_self.fail(loc, "a lambda holds a copy of the struct receiver, so this write would change only the copy; write the field outside the lambda, or make the type a class")
+  }
+}

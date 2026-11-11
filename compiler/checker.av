@@ -982,6 +982,7 @@ pub class Checker {
           self.refuse_bare_field_write(target, stmt.loc)
           return
         }
+        self.refuse_copy_write(target, stmt.loc)
         if self.reject_clayout_value(place, target.loc) {
           return
         }
@@ -1017,6 +1018,7 @@ pub class Checker {
           self.refuse_bare_field_write(target, stmt.loc)
           return
         }
+        self.refuse_copy_write(target, stmt.loc)
         if self.reject_clayout_value(place, target.loc) {
           return
         }
@@ -2189,7 +2191,12 @@ pub class Checker {
       }
     }
     if self.lam_exprs.size > 0 && self.self_name.size > 0 && expr.ident == self.self_name {
-      self.fail(expr.loc, "a lambda cannot capture the method receiver")
+      // Stage 29 W3b (B7, S13): a lambda in a method captures self, by
+      // value (self is never reassigned): a class receiver's reference, a
+      // struct receiver's copy.
+      if st2 = self.capture_receiver(expr.loc) {
+        return st2
+      }
       return self.t_int()
     }
     if existing = self.lookup(expr.ident) {
@@ -2201,8 +2208,14 @@ pub class Checker {
         self.check_field_visible(st, expr.ident, expr.loc)
       }
       if self.lam_exprs.size > 0 {
-        self.fail(expr.loc, "a lambda cannot capture the method receiver")
-        return self.t_int()
+        // Inside a lambda a bare field reads it through the captured
+        // receiver: the name becomes self.name (W3b, B7).
+        r0 = Expr.new(ex_name(), expr.loc)
+        r0.ident = "self"
+        dummy0 = self.check_expr(r0)
+        expr.kind = ex_field()
+        expr.object = r0
+        return field_ty
       }
       expr.implicit_field = true
       return field_ty
@@ -2214,10 +2227,6 @@ pub class Checker {
     }
     // Stage 29 W3b (B6): a bare method name is a call on the receiver.
     if r = self.bare_method_call(expr, expr.ident, 0) {
-      if self.lam_exprs.size > 0 {
-        self.fail(expr.loc, "a lambda cannot capture the method receiver")
-        return self.t_int()
-      }
       expr.kind = ex_call()
       expr.callee = expr.ident
       expr.receiver = r
@@ -2647,10 +2656,6 @@ pub class Checker {
       argc += 1
     }
     if r = self.bare_method_call(expr, expr.callee, argc) {
-      if self.lam_exprs.size > 0 {
-        self.fail(expr.loc, "a lambda cannot capture the method receiver")
-        return self.t_int()
-      }
       expr.receiver = r
       return self.check_method_call(expr, r, has_want, want)
     }
