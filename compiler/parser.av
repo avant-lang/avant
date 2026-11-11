@@ -7,6 +7,15 @@ import type
 import ast
 import resolve
 
+// A float literal's value (Stage 29 W4b1): String.to_f is a Float64? since
+// W4b1 and a Float64 in the seed v0.40.0, so the parser reads the lexer's
+// checked literal text with libc's atof, which both build the same
+// (correctly rounded, as the runtime's parser); the next release reads
+// it with `text.to_f ?? 0.0`.
+lib parse_libc {
+  fun atof(s: String): Float64
+}
+
 pub fn hex_digit_val(c: Int): Int {
   if ch_is_digit(c) {
     return c - 48
@@ -670,7 +679,7 @@ pub class Parser {
     } else if k == tk_float() {
       self.bump
       e = Expr.new(ex_float(), tok.loc)
-      e.float_val = tok.value.to_f
+      e.float_val = parse_libc.atof(tok.value)
       e.value_str = tok.value
       left = e
     } else if k == tk_true() {
@@ -2135,7 +2144,7 @@ pub class Parser {
     if k == tk_float() {
       self.bump
       e = Expr.new(ex_float(), tok.loc)
-      e.float_val = tok.value.to_f
+      e.float_val = parse_libc.atof(tok.value)
       e.value_str = tok.value
       return e
     }

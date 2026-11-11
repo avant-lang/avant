@@ -12,6 +12,8 @@ lib jsonc {
   fun avant_json_len(node: Ptr(Void)): Int
   fun avant_json_as_int(node: Ptr(Void)): Int
   fun avant_json_obj_int(node: Ptr(Void), key: String): Int
+  fun avant_json_as_int64(node: Ptr(Void)): Int64
+  fun avant_json_obj_int64(node: Ptr(Void), key: String): Int64
   fun avant_json_as_f64(node: Ptr(Void)): Float64
   fun avant_json_obj_f64(node: Ptr(Void), key: String): Float64
   fun avant_json_as_bool(node: Ptr(Void)): Int
@@ -39,7 +41,7 @@ fn json_error(code: Int): JsonError {
 
 pub class JsonValue {
   pub kind: Int = 0
-  pub int_val: Int = 0
+  pub int_val: Int64 = 0i64
   pub f64_val: Float64 = 0.0
   pub str_val: String = ""
   pub bool_val: Bool = false
@@ -181,6 +183,24 @@ pub struct Json {
     v
   }
 
+  // A JSON integer within Int64 (Stage 29 W4b1, D295 R10), as int is
+  // within Int; a real or a larger integer is nil (read it with f64).
+  pub fn int64: Int64? {
+    v = jsonc.avant_json_as_int64(self.node)
+    if jsonc.avant_json_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
+  pub fn int64(key: String): Int64? {
+    v = jsonc.avant_json_obj_int64(self.node, key)
+    if jsonc.avant_json_take_status() != 0 {
+      return nil
+    }
+    v
+  }
+
   pub fn f64: Float64? {
     v = jsonc.avant_json_as_f64(self.node)
     if jsonc.avant_json_take_status() != 0 {
@@ -237,7 +257,13 @@ pub struct Json {
     v = JsonValue.new
     v.kind = self.kind
     if self.is_int {
-      v.int_val = self.int ?? 0
+      // An integer beyond Int64 keeps its value as a float (kind 4).
+      if i = self.int64 {
+        v.int_val = i
+      } else {
+        v.kind = 4
+        v.f64_val = self.f64 ?? 0.0
+      }
     } else if self.is_float {
       v.f64_val = self.f64 ?? 0.0
     } else if self.is_str {

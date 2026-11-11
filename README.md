@@ -965,6 +965,8 @@ fn main {
 
 `split(sep)` splits on a separator and keeps empty fields, `fields()` splits on runs of whitespace and drops empties, and `strip()` / `strip_left()` / `strip_right()` trim whitespace. `Bytes` is the immutable binary counterpart of `String`: `s.bytes` views a string's bytes, `String.from_utf8(b)` returns `String?` (nil on invalid UTF-8), `Bytes` supports `size`, indexing, `.get(i)`, and `.slice(a, b)`, and `Buf` converts with `.to_bytes` / `push_bytes(b)` and `b.to_buf`. `Buf.new` (or `Buf.new(capacity)`) makes an empty buffer, the same as `buf_new()`.
 
+`s.to_i`, `s.to_i64` and `s.to_u64` read a whole string as an integer and return `Int?`, `Int64?` and `UInt64?`: an optional sign and decimal digits (or the digits of a base given as `s.to_i(16)`, 2 to 36, letters in either case), within the type's range, and nothing else; anything else (`"12abc"`, `" 42"`, `"0x1F"`, `"3000000000"` for `Int`) is `nil`, so `s.to_i ?? 0` says the fallback. `s.to_f` returns `Float64?` for the same shape as a float literal (`-2.5`, `1e3`, `1.5E-7`) whose value is finite; `"nan"`, `"inf"`, `"1e999"`, `".5"` and `"1."` are `nil`. `str_to_f_slice(s, start, stop)` reads a slice the same way.
+
 Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 
 On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value when `v` is nil, with the fallback evaluated only then. Predicate methods return `Bool`, including `Buf.starts_with`, and arrays add the short-circuiting scans `any { |x| ... }` and `all { |x| ... }` with a `Bool`-returning block.
@@ -1512,6 +1514,8 @@ fn main {
   }
 }
 ```
+
+`int` is a JSON integer (no fraction, no exponent) within `Int`, and `nil` for anything else (a real such as `3.7` or `3.0`, an integer beyond `Int`, a non-number); `int64` is the same within `Int64`; `f64` reads any number. Floats are written in the language's one float text (`1.5e-7`, `2.0`), and NaN and the infinities as `null`.
 
 The document owns its values and its text buffer; there is nothing to close.
 

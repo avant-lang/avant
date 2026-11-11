@@ -1,6 +1,7 @@
 // String and Bytes members and the string builtins on the new back end
 // (Stage 28 W6a): size, indexing, bytes, Bytes size, indexing and slice,
-// strip, strip_left, strip_right, to_i, to_f, chr, repeat_byte,
+// strip, strip_left, strip_right, to_i, to_f (strict, T?, since Stage 29
+// W4b1), chr, repeat_byte,
 // str_slice, fmt_float, checksum_str, str_to_f_slice; the builtins
 // evaluate their arguments last to first (the old order). Slices stay
 // inside their string (they trap outside it since Stage 29 W4b1, D295 R4;
@@ -51,11 +52,11 @@ fn main {
   puts("[${"  pad me  ".strip_right()}]")
   puts("[${"tight".strip()}]")
   puts("[${"   ".strip()}]")
-  puts("123".to_i + opaque(1))
-  puts("-45xyz".to_i)
-  puts("abc".to_i)
-  puts("2.5".to_f * 2.0)
-  puts("1e3".to_f)
+  puts(("123".to_i ?? 0) + opaque(1))
+  puts("-45xyz".to_i ?? -1)
+  puts("abc".to_i ?? 0)
+  puts(("2.5".to_f ?? 0.0) * 2.0)
+  puts("1e3".to_f ?? 0.0)
   puts(chr(65 + opaque(1)))
   puts(chr(opaque(122)) + chr(48))
   puts(repeat_byte(say("byte", 61), say("count", 4)))
@@ -67,6 +68,6 @@ fn main {
   puts(fmt_float(2.0, 0))
   puts(checksum_str("hello"))
   puts(checksum_str(""))
-  puts(str_to_f_slice("xx1.25yy", 2, 6))
-  puts(str_to_f_slice("12", 2, 2))
+  puts(str_to_f_slice("xx1.25yy", 2, 6) ?? 0.0)
+  puts(str_to_f_slice("12", 2, 2) ?? 0.0)
 }

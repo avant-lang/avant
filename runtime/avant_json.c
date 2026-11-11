@@ -306,19 +306,29 @@ static char *copy_str(const char *p, size_t n) {
   return out;
 }
 
+/* A JSON integer (no fraction, no exponent: yyjson's int and uint kinds)
+ * within [lo, hi], else status 1 (Stage 29 W4b1, D295 R10: Json.int is
+ * nil for a real, for a non-number and outside the type's range). */
+static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
+  if (v && yyjson_is_uint(v)) {
+    uint64_t u = yyjson_get_uint(v);
+    if (u <= (uint64_t)hi) {
+      set_status(0);
+      return (int64_t)u;
+    }
+  } else if (v && yyjson_is_sint(v)) {
+    int64_t s = yyjson_get_sint(v);
+    if (s >= lo && s <= hi) {
+      set_status(0);
+      return s;
+    }
+  }
+  set_status(1);
+  return 0;
+}
+
 static int32_t node_int(yyjson_val *v) {
-  if (!v || !yyjson_is_num(v)) {
-    set_status(1);
-    return 0;
-  }
-  set_status(0);
-  if (yyjson_is_int(v)) {
-    return (int32_t)yyjson_get_sint(v);
-  }
-  if (yyjson_is_uint(v)) {
-    return (int32_t)yyjson_get_uint(v);
-  }
-  return (int32_t)yyjson_get_real(v);
+  return (int32_t)node_int_in(v, INT32_MIN, INT32_MAX);
 }
 
 static double node_f64(yyjson_val *v) {
@@ -354,6 +364,14 @@ int32_t avant_json_as_int(void *nodep) {
 
 int32_t avant_json_obj_int(void *nodep, const char *key) {
   return node_int((yyjson_val *)avant_json_get(nodep, key));
+}
+
+int64_t avant_json_as_int64(void *nodep) {
+  return node_int_in((yyjson_val *)nodep, INT64_MIN, INT64_MAX);
+}
+
+int64_t avant_json_obj_int64(void *nodep, const char *key) {
+  return node_int_in((yyjson_val *)avant_json_get(nodep, key), INT64_MIN, INT64_MAX);
 }
 
 double avant_json_as_f64(void *nodep) {

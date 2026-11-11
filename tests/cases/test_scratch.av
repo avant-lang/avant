@@ -227,7 +227,7 @@ fn test_scratch(c: Checks) {
       sh_args: Array(String) = []
       sh_args.push(sh_path)
       process_run("/bin/sh", sh_args)
-      c.eq_int(nth_line(read_all(rc), 0).to_i, iwant[q], "interrupted runner (SIG${sig}) exits ${iwant[q]}")
+      c.eq_int(nth_line(read_all(rc), 0).to_i ?? -1, iwant[q], "interrupted runner (SIG${sig}) exits ${iwant[q]}")
       // Gone, or a zombie about to be reaped, means stopped.
       spid = read_all("${proj}/sleep.pid")
       st_args: Array(String) = []
@@ -255,7 +255,7 @@ fn test_scratch(c: Checks) {
     // private directory (a compiler crash is the same runtime path) dies
     // by the signal and leaves nothing in TMPDIR.
     crash_src = "${work}/crash.av"
-    file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int): Int\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise(v.to_i))\n  }\n}\n")
+    file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int): Int\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise(v.to_i ?? 0))\n  }\n}\n")
     crash_bin = "${work}/crash.bin"
     c.eq_int(compile_av(compiler, crash_src, crash_bin, "${work}/crash.clog"), 0, "crash program compiles")
     crashes = ["11", "7", "8", "abort"]
@@ -271,7 +271,7 @@ fn test_scratch(c: Checks) {
       ch_args: Array(String) = []
       ch_args.push(csh)
       process_run("/bin/sh", ch_args)
-      c.eq_int(nth_line(read_all(crc), 0).to_i, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
+      c.eq_int(nth_line(read_all(crc), 0).to_i ?? -1, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
       cleft: Array(String) = dir_list(cbase)
       c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
       q += 1

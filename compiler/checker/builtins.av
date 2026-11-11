@@ -156,11 +156,29 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
   if expr.callee == "chars" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
   }
+  // Strict parsing (Stage 29 W4b1, D293, D295 R9): the whole string is
+  // the number, else nil; an integer may name its base (2..36).
   if expr.callee == "to_f" {
-    return checker_self.expect_no_args(expr, checker_self.t_float(), "String.to_f takes no arguments")
+    return checker_self.expect_no_args(expr, ty_nilable(checker_self.t_float()), "String.to_f takes no arguments")
   }
-  if expr.callee == "to_i" {
-    return checker_self.expect_no_args(expr, checker_self.t_int(), "String.to_i takes no arguments")
+  if expr.callee == "to_i" || expr.callee == "to_i64" || expr.callee == "to_u64" {
+    rt = checker_self.t_int()
+    if expr.callee == "to_i64" {
+      rt = checker_self.t_int64()
+    } else if expr.callee == "to_u64" {
+      rt = checker_self.t_uint64()
+    }
+    if expr.args.size > 1 {
+      checker_self.fail(expr.loc, "String.${expr.callee} takes at most one argument, the base")
+    } else if expr.args.size == 1 {
+      bt = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+      if !bt.is_int {
+        checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be Int")
+      } else if expr.args[0].kind == ex_int() && (expr.args[0].int_bits < 2u64 || expr.args[0].int_bits > 36u64) {
+        checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be in 2..36")
+      }
+    }
+    return ty_nilable(rt)
   }
   if expr.callee == "get" {
     if expr.args.size != 1 {
@@ -1125,11 +1143,11 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     if expr.args.size == 3 {
       if b = expr.block {
         checker_self.fail(expr.loc, "str_to_f_slice takes String, start, stop")
-        return checker_self.t_float()
+        return ty_nilable(checker_self.t_float())
       }
     } else {
       checker_self.fail(expr.loc, "str_to_f_slice takes String, start, stop")
-      return checker_self.t_float()
+      return ty_nilable(checker_self.t_float())
     }
     s = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
     if !ty_assignable(s, checker_self.t_string()) {
@@ -1144,7 +1162,7 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     } else {
       checker_self.fail(expr.loc, "start and stop must be Int")
     }
-    return checker_self.t_float()
+    return ty_nilable(checker_self.t_float())
   }
   if expr.callee == "hash_last_key" {
     if expr.args.size == 0 {

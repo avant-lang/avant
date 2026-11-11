@@ -1,6 +1,9 @@
 module members
 file 0 "members.av"
 
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %(Nil|Float64) = union { 0 tag: i32, 1 m0: f64 }  size 16 align 8
+
 const str.0 = "%s\0A"
 const str.1 = "hello, world"
 const str.2 = "%d\0A"
@@ -41,16 +44,16 @@ extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_eq(ref str, ref str) -> i32 never
 extern avant_str_fmt_float(f64, i32) -> ref str collects
 extern avant_str_from_byte(i32) -> ref str collects
+extern avant_str_parse_f64(ref str, ptr) -> f64 never
+extern avant_str_parse_f64_slice(ref str, i32, i32, ptr) -> f64 never
+extern avant_str_parse_i32(ref str, i32, ptr) -> i32 never
 extern avant_str_repeat_byte(i32, i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
 extern avant_str_slice(ref str, i32, i32) -> ref str collects
 extern avant_str_strip(ref str, i32) -> ref str collects
-extern avant_str_to_f(ref str) -> f64 never
-extern avant_str_to_f_slice(ref str, i32, i32) -> f64 never
-extern avant_str_to_i(ref str) -> i32 never
 extern printf(ref str, ...) -> i32 never
 
-fn av.members/opaque(_1: i32) -> i32 leaf @members.av:9:1 {
+fn av.members/opaque(_1: i32) -> i32 leaf @members.av:10:1 {
   let _0: i32
   let _1 (n): i32
   let _2: i64
@@ -63,37 +66,37 @@ fn av.members/opaque(_1: i32) -> i32 leaf @members.av:9:1 {
   let _9: i32
 
 bb0:
-  _2 = call avant_clock_us() nocollect   @10:7
-  _3 = copy _2   @10:5
-  _4 = call avant_clock_us() nocollect   @11:7
-  _5 = copy _4   @11:5
-  _6 = sub.chk copy _5, copy _3   @12:8
-  _7 = gt copy _6, const i64 1000000000   @12:12
-  branch copy _7, bb1, bb2   @12:3
+  _2 = call avant_clock_us() nocollect   @11:7
+  _3 = copy _2   @11:5
+  _4 = call avant_clock_us() nocollect   @12:7
+  _5 = copy _4   @12:5
+  _6 = sub.chk copy _5, copy _3   @13:8
+  _7 = gt copy _6, const i64 1000000000   @13:12
+  branch copy _7, bb1, bb2   @13:3
 
 bb1:
-  _8 = cast copy _5 to i32   @13:18
-  _9 = add copy _1, copy _8   @13:14
-  _0 = copy _9   @13:5
-  return   @13:5
+  _8 = cast copy _5 to i32   @14:18
+  _9 = add copy _1, copy _8   @14:14
+  _0 = copy _9   @14:5
+  return   @14:5
 
 bb2:
-  _0 = copy _1   @15:3
-  return   @15:3
+  _0 = copy _1   @16:3
+  return   @16:3
 }
 
-fn av.members/say(_1: ref str, _2: i32) -> i32 leaf @members.av:18:1 {
+fn av.members/say(_1: ref str, _2: i32) -> i32 leaf @members.av:19:1 {
   let _0: i32
   let _1 (tag): ref str
   let _2 (v): i32
 
 bb0:
-  call printf(const str.0, copy _1) nocollect   @19:3
-  _0 = copy _2   @20:3
-  return   @20:3
+  call printf(const str.0, copy _1) nocollect   @20:3
+  _0 = copy _2   @21:3
+  return   @21:3
 }
 
-fn av.members/count_byte(_1: ref str, _2: i32) -> i32 leaf @members.av:23:1 {
+fn av.members/count_byte(_1: ref str, _2: i32) -> i32 leaf @members.av:24:1 {
   let _0: i32
   let _1 (s): ref str
   let _2 (c): i32
@@ -110,42 +113,42 @@ fn av.members/count_byte(_1: ref str, _2: i32) -> i32 leaf @members.av:23:1 {
   let _13: i32
 
 bb0:
-  _3 = const i32 0   @24:5
-  _4 = const i32 0   @25:5
-  goto bb6   @26:3
+  _3 = const i32 0   @25:5
+  _4 = const i32 0   @26:5
+  goto bb6   @27:3
 
 bb1:
-  _5 = copy _13   @26:14
-  _6 = lt copy _4, copy _5   @26:11
-  branch copy _6, bb2, bb3   @26:3
+  _5 = copy _13   @27:14
+  _6 = lt copy _4, copy _5   @27:11
+  branch copy _6, bb2, bb3   @27:3
 
 bb2:
-  _7 = cast copy _1 to ptr u8   @27:9
-  _8 = copy (*_7)[copy _4]   @27:9
-  _9 = cast copy _8 to i32   @27:9
-  _10 = eq copy _9, copy _2   @27:13
-  branch copy _10, bb4, bb5   @27:5
+  _7 = cast copy _1 to ptr u8   @28:9
+  _8 = copy (*_7)[copy _4]   @28:9
+  _9 = cast copy _8 to i32   @28:9
+  _10 = eq copy _9, copy _2   @28:13
+  branch copy _10, bb4, bb5   @28:5
 
 bb3:
-  _0 = copy _3   @32:3
-  return   @32:3
+  _0 = copy _3   @33:3
+  return   @33:3
 
 bb4:
-  _11 = add.chk copy _3, const i32 1   @28:13
-  _3 = copy _11   @28:9
-  goto bb5   @27:5
+  _11 = add.chk copy _3, const i32 1   @29:13
+  _3 = copy _11   @29:9
+  goto bb5   @28:5
 
 bb5:
-  _12 = add copy _4, const i32 1   @30:11
-  _4 = copy _12   @30:7
-  goto bb1   @26:3
+  _12 = add copy _4, const i32 1   @31:11
+  _4 = copy _12   @31:7
+  goto bb1   @27:3
 
 bb6:
-  _13 = call avant_str_size(copy _1) nocollect   @26:3
-  goto bb1   @26:3
+  _13 = call avant_str_size(copy _1) nocollect   @27:3
+  goto bb1   @27:3
 }
 
-fn main(_1: i32, _2: ptr) -> i32 frame extern @members.av:35:1 {
+fn main(_1: i32, _2: ptr) -> i32 frame extern @members.av:36:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
@@ -196,174 +199,426 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @members.av:35:1 {
   let _47: ref str slot
   let _48: ref str
   let _49: i32
-  let _50: i32
+  let _50: ptr i32
   let _51: i32
-  let _52: i32
-  let _53: i32
-  let _54: f64
-  let _55: f64
-  let _56: f64
+  let _52: bool
+  let _53: %(Nil|Int)
+  let _54: i32
+  let _55: i32
+  let _56: bool
   let _57: i32
   let _58: i32
-  let _59: ref str
+  let _59: i32
   let _60: i32
-  let _61: ref str slot
-  let _62: ref str slot
-  let _63: ref str
-  let _64: i32
+  let _61: ptr i32
+  let _62: i32
+  let _63: bool
+  let _64: %(Nil|Int)
   let _65: i32
-  let _66: ref str
-  let _67: ref str
+  let _66: i32
+  let _67: bool
   let _68: i32
   let _69: i32
-  let _70: i32
-  let _71: ref str
-  let _72: ref str
-  let _73: ref str
+  let _70: ptr i32
+  let _71: i32
+  let _72: bool
+  let _73: %(Nil|Int)
   let _74: i32
   let _75: i32
-  let _76: ref str
-  let _77: ref str
+  let _76: bool
+  let _77: i32
   let _78: i32
-  let _79: i32
+  let _79: ptr i32
   let _80: f64
-  let _81: f64
+  let _81: bool
+  let _82: %(Nil|Float64)
+  let _83: f64
+  let _84: i32
+  let _85: bool
+  let _86: f64
+  let _87: f64
+  let _88: i32
+  let _89: ptr i32
+  let _90: f64
+  let _91: bool
+  let _92: %(Nil|Float64)
+  let _93: f64
+  let _94: i32
+  let _95: bool
+  let _96: f64
+  let _97: i32
+  let _98: i32
+  let _99: ref str
+  let _100: i32
+  let _101: ref str slot
+  let _102: ref str slot
+  let _103: ref str
+  let _104: i32
+  let _105: i32
+  let _106: ref str
+  let _107: ref str
+  let _108: i32
+  let _109: i32
+  let _110: i32
+  let _111: ref str
+  let _112: ref str
+  let _113: ref str
+  let _114: i32
+  let _115: i32
+  let _116: ref str
+  let _117: ref str
+  let _118: i32
+  let _119: i32
+  let _120: i32
+  let _121: ptr i32
+  let _122: f64
+  let _123: bool
+  let _124: %(Nil|Float64)
+  let _125: f64
+  let _126: i32
+  let _127: bool
+  let _128: f64
+  let _129: i32
+  let _130: ptr i32
+  let _131: f64
+  let _132: bool
+  let _133: %(Nil|Float64)
+  let _134: f64
+  let _135: i32
+  let _136: bool
+  let _137: f64
 
 bb0:
-  _3 = zero   @35:1
-  _18 = zero   @35:1
-  _34 = zero   @35:1
-  _35 = zero   @35:1
-  _37 = zero   @35:1
-  _38 = zero   @35:1
-  _40 = zero   @35:1
-  _41 = zero   @35:1
-  _43 = zero   @35:1
-  _44 = zero   @35:1
-  _46 = zero   @35:1
-  _47 = zero   @35:1
-  _61 = zero   @35:1
-  _62 = zero   @35:1
-  gc.enter   @35:1
-  gc.roots _2, _3, _18, _34, _35, _37, _38, _40, _41, _43, _44, _46, _47, _61, _62   @35:1
-  call __avant_type_maps() nocollect   @35:1
-  call avant_io_init_argv(copy _1, copy _2) collects   @35:1
-  _3 = const str.1   @36:5
-  _4 = call avant_str_size(copy _3) nocollect   @37:9
-  call printf(const str.2, copy _4) nocollect   @37:3
-  _5 = call avant_str_size(copy _3) nocollect   @38:9
-  check.bounds const i32 0, copy _5   @38:9
-  _6 = cast copy _3 to ptr u8   @38:9
-  _7 = copy (*_6)[const i32 0]   @38:9
-  _8 = cast copy _7 to i32   @38:9
-  call printf(const str.2, copy _8) nocollect   @38:3
-  _9 = call av.members/opaque(const i32 11) nocollect   @39:10
-  _10 = call avant_str_size(copy _3) nocollect   @39:9
-  check.bounds copy _9, copy _10   @39:9
-  _11 = cast copy _3 to ptr u8   @39:9
-  _12 = copy (*_11)[copy _9]   @39:9
-  _13 = cast copy _12 to i32   @39:9
-  call printf(const str.2, copy _13) nocollect   @39:3
-  _14 = call av.members/count_byte(copy _3, const i32 108) nocollect   @40:8
-  call printf(const str.2, copy _14) nocollect   @40:3
-  _15 = call avant_str_concat(copy _3, copy _3) collects   @41:19
-  _16 = call av.members/count_byte(copy _15, const i32 111) nocollect   @41:8
-  call printf(const str.2, copy _16) nocollect   @41:3
-  _17 = call avant_str_size(const str.3) nocollect   @42:10
-  call printf(const str.2, copy _17) nocollect   @42:3
-  _18 = copy _3   @43:6
-  _19 = call avant_str_size(copy _18) nocollect   @44:10
-  call printf(const str.2, copy _19) nocollect   @44:3
-  _20 = call avant_str_size(copy _18) nocollect   @45:10
-  check.bounds const i32 4, copy _20   @45:10
-  _21 = cast copy _18 to ptr u8   @45:10
-  _22 = copy (*_21)[const i32 4]   @45:10
-  _23 = cast copy _22 to i32   @45:10
-  call printf(const str.2, copy _23) nocollect   @45:3
-  _24 = call av.members/opaque(const i32 7) nocollect   @46:18
-  _25 = call avant_str_slice(copy _18, copy _24, const i32 12) collects   @46:11
-  _26 = copy _25   @46:7
-  _27 = call avant_str_eq(copy _26, const str.4) nocollect   @47:12
-  _28 = eq copy _27, const i32 1   @47:12
-  _29 = cast copy _28 to i32   @47:3
-  call avant_puts_bool(copy _29) nocollect   @47:3
-  _30 = call av.members/say(const str.5, const i32 5) nocollect   @48:34
-  _31 = call av.members/say(const str.6, const i32 3) nocollect   @48:17
-  _32 = call avant_str_slice(copy _18, copy _31, copy _30) collects   @48:10
-  _33 = call avant_str_size(copy _32) nocollect   @48:49
-  call printf(const str.2, copy _33) nocollect   @48:3
-  _34 = call avant_str_strip(const str.8, const i32 0) collects   @49:24
-  _35 = call avant_str_concat(const str.7, copy _34) collects   @49:8
-  _36 = call avant_str_concat(copy _35, const str.9) collects   @49:8
-  call printf(const str.0, copy _36) nocollect   @49:3
-  _37 = call avant_str_strip(const str.8, const i32 1) collects   @50:24
-  _38 = call avant_str_concat(const str.7, copy _37) collects   @50:8
-  _39 = call avant_str_concat(copy _38, const str.9) collects   @50:8
-  call printf(const str.0, copy _39) nocollect   @50:3
-  _40 = call avant_str_strip(const str.8, const i32 2) collects   @51:24
-  _41 = call avant_str_concat(const str.7, copy _40) collects   @51:8
-  _42 = call avant_str_concat(copy _41, const str.9) collects   @51:8
-  call printf(const str.0, copy _42) nocollect   @51:3
-  _43 = call avant_str_strip(const str.10, const i32 0) collects   @52:19
-  _44 = call avant_str_concat(const str.7, copy _43) collects   @52:8
-  _45 = call avant_str_concat(copy _44, const str.9) collects   @52:8
-  call printf(const str.0, copy _45) nocollect   @52:3
-  _46 = call avant_str_strip(const str.11, const i32 0) collects   @53:17
-  _47 = call avant_str_concat(const str.7, copy _46) collects   @53:8
-  _48 = call avant_str_concat(copy _47, const str.9) collects   @53:8
-  call printf(const str.0, copy _48) nocollect   @53:3
-  _49 = call avant_str_to_i(const str.12) nocollect   @54:13
-  _50 = call av.members/opaque(const i32 1) nocollect   @54:21
-  _51 = add.chk copy _49, copy _50   @54:19
-  call printf(const str.2, copy _51) nocollect   @54:3
-  _52 = call avant_str_to_i(const str.13) nocollect   @55:16
-  call printf(const str.2, copy _52) nocollect   @55:3
-  _53 = call avant_str_to_i(const str.14) nocollect   @56:13
-  call printf(const str.2, copy _53) nocollect   @56:3
-  _54 = call avant_str_to_f(const str.15) nocollect   @57:13
-  _55 = mul copy _54, const f64 0x4000000000000000 /* 2.0 */   @57:19
-  call avant_puts_f64(copy _55) nocollect   @57:3
-  _56 = call avant_str_to_f(const str.16) nocollect   @58:13
-  call avant_puts_f64(copy _56) nocollect   @58:3
-  _57 = call av.members/opaque(const i32 1) nocollect   @59:17
-  _58 = add.chk const i32 65, copy _57   @59:15
-  _59 = call avant_str_from_byte(copy _58) collects   @59:8
-  call printf(const str.0, copy _59) nocollect   @59:3
-  _60 = call av.members/opaque(const i32 122) nocollect   @60:12
-  _61 = call avant_str_from_byte(copy _60) collects   @60:8
-  _62 = call avant_str_from_byte(const i32 48) collects   @60:27
-  _63 = call avant_str_concat(copy _61, copy _62) collects   @60:25
-  call printf(const str.0, copy _63) nocollect   @60:3
-  _64 = call av.members/say(const str.17, const i32 4) nocollect   @61:37
-  _65 = call av.members/say(const str.18, const i32 61) nocollect   @61:20
-  _66 = call avant_str_repeat_byte(copy _65, copy _64) collects   @61:8
-  call printf(const str.0, copy _66) nocollect   @61:3
-  _67 = call avant_str_repeat_byte(const i32 45, const i32 0) collects   @62:8
-  _68 = call avant_str_size(copy _67) nocollect   @62:26
-  call printf(const str.2, copy _68) nocollect   @62:3
-  _69 = call av.members/say(const str.19, const i32 11) nocollect   @63:49
-  _70 = call av.members/say(const str.20, const i32 6) nocollect   @63:33
-  _71 = call avant_str_slice(const str.21, copy _70, copy _69) collects   @63:8
-  call printf(const str.0, copy _71) nocollect   @63:3
-  _72 = call avant_str_slice(const str.22, const i32 0, const i32 5) collects   @64:8
-  call printf(const str.0, copy _72) nocollect   @64:3
-  _73 = call avant_str_slice(const str.22, const i32 3, const i32 3) collects   @65:8
-  _74 = call avant_str_size(copy _73) nocollect   @65:32
-  call printf(const str.2, copy _74) nocollect   @65:3
-  _75 = call av.members/opaque(const i32 2) nocollect   @66:27
-  _76 = call avant_str_fmt_float(const f64 0x400921F9F01B866E /* 3.14159 */, copy _75) collects   @66:8
-  call printf(const str.0, copy _76) nocollect   @66:3
-  _77 = call avant_str_fmt_float(const f64 0x4000000000000000 /* 2.0 */, const i32 0) collects   @67:8
-  call printf(const str.0, copy _77) nocollect   @67:3
-  _78 = call avant_checksum_str(const str.22) nocollect   @68:8
-  call printf(const str.2, copy _78) nocollect   @68:3
-  _79 = call avant_checksum_str(const str.3) nocollect   @69:8
-  call printf(const str.2, copy _79) nocollect   @69:3
-  _80 = call avant_str_to_f_slice(const str.23, const i32 2, const i32 6) nocollect   @70:8
-  call avant_puts_f64(copy _80) nocollect   @70:3
-  _81 = call avant_str_to_f_slice(const str.24, const i32 2, const i32 2) nocollect   @71:8
-  call avant_puts_f64(copy _81) nocollect   @71:3
-  _0 = const i32 0   @35:1
-  gc.leave   @35:1
-  return   @35:1
+  _3 = zero   @36:1
+  _18 = zero   @36:1
+  _34 = zero   @36:1
+  _35 = zero   @36:1
+  _37 = zero   @36:1
+  _38 = zero   @36:1
+  _40 = zero   @36:1
+  _41 = zero   @36:1
+  _43 = zero   @36:1
+  _44 = zero   @36:1
+  _46 = zero   @36:1
+  _47 = zero   @36:1
+  _101 = zero   @36:1
+  _102 = zero   @36:1
+  gc.enter   @36:1
+  gc.roots _2, _3, _18, _34, _35, _37, _38, _40, _41, _43, _44, _46, _47, _101, _102   @36:1
+  call __avant_type_maps() nocollect   @36:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @36:1
+  _3 = const str.1   @37:5
+  _4 = call avant_str_size(copy _3) nocollect   @38:9
+  call printf(const str.2, copy _4) nocollect   @38:3
+  _5 = call avant_str_size(copy _3) nocollect   @39:9
+  check.bounds const i32 0, copy _5   @39:9
+  _6 = cast copy _3 to ptr u8   @39:9
+  _7 = copy (*_6)[const i32 0]   @39:9
+  _8 = cast copy _7 to i32   @39:9
+  call printf(const str.2, copy _8) nocollect   @39:3
+  _9 = call av.members/opaque(const i32 11) nocollect   @40:10
+  _10 = call avant_str_size(copy _3) nocollect   @40:9
+  check.bounds copy _9, copy _10   @40:9
+  _11 = cast copy _3 to ptr u8   @40:9
+  _12 = copy (*_11)[copy _9]   @40:9
+  _13 = cast copy _12 to i32   @40:9
+  call printf(const str.2, copy _13) nocollect   @40:3
+  _14 = call av.members/count_byte(copy _3, const i32 108) nocollect   @41:8
+  call printf(const str.2, copy _14) nocollect   @41:3
+  _15 = call avant_str_concat(copy _3, copy _3) collects   @42:19
+  _16 = call av.members/count_byte(copy _15, const i32 111) nocollect   @42:8
+  call printf(const str.2, copy _16) nocollect   @42:3
+  _17 = call avant_str_size(const str.3) nocollect   @43:10
+  call printf(const str.2, copy _17) nocollect   @43:3
+  _18 = copy _3   @44:6
+  _19 = call avant_str_size(copy _18) nocollect   @45:10
+  call printf(const str.2, copy _19) nocollect   @45:3
+  _20 = call avant_str_size(copy _18) nocollect   @46:10
+  check.bounds const i32 4, copy _20   @46:10
+  _21 = cast copy _18 to ptr u8   @46:10
+  _22 = copy (*_21)[const i32 4]   @46:10
+  _23 = cast copy _22 to i32   @46:10
+  call printf(const str.2, copy _23) nocollect   @46:3
+  _24 = call av.members/opaque(const i32 7) nocollect   @47:18
+  _25 = call avant_str_slice(copy _18, copy _24, const i32 12) collects   @47:11
+  _26 = copy _25   @47:7
+  _27 = call avant_str_eq(copy _26, const str.4) nocollect   @48:12
+  _28 = eq copy _27, const i32 1   @48:12
+  _29 = cast copy _28 to i32   @48:3
+  call avant_puts_bool(copy _29) nocollect   @48:3
+  _30 = call av.members/say(const str.5, const i32 5) nocollect   @49:34
+  _31 = call av.members/say(const str.6, const i32 3) nocollect   @49:17
+  _32 = call avant_str_slice(copy _18, copy _31, copy _30) collects   @49:10
+  _33 = call avant_str_size(copy _32) nocollect   @49:49
+  call printf(const str.2, copy _33) nocollect   @49:3
+  _34 = call avant_str_strip(const str.8, const i32 0) collects   @50:24
+  _35 = call avant_str_concat(const str.7, copy _34) collects   @50:8
+  _36 = call avant_str_concat(copy _35, const str.9) collects   @50:8
+  call printf(const str.0, copy _36) nocollect   @50:3
+  _37 = call avant_str_strip(const str.8, const i32 1) collects   @51:24
+  _38 = call avant_str_concat(const str.7, copy _37) collects   @51:8
+  _39 = call avant_str_concat(copy _38, const str.9) collects   @51:8
+  call printf(const str.0, copy _39) nocollect   @51:3
+  _40 = call avant_str_strip(const str.8, const i32 2) collects   @52:24
+  _41 = call avant_str_concat(const str.7, copy _40) collects   @52:8
+  _42 = call avant_str_concat(copy _41, const str.9) collects   @52:8
+  call printf(const str.0, copy _42) nocollect   @52:3
+  _43 = call avant_str_strip(const str.10, const i32 0) collects   @53:19
+  _44 = call avant_str_concat(const str.7, copy _43) collects   @53:8
+  _45 = call avant_str_concat(copy _44, const str.9) collects   @53:8
+  call printf(const str.0, copy _45) nocollect   @53:3
+  _46 = call avant_str_strip(const str.11, const i32 0) collects   @54:17
+  _47 = call avant_str_concat(const str.7, copy _46) collects   @54:8
+  _48 = call avant_str_concat(copy _47, const str.9) collects   @54:8
+  call printf(const str.0, copy _48) nocollect   @54:3
+  _49 = const i32 0   @55:14
+  _50 = addr.raw _49   @55:14
+  _51 = call avant_str_parse_i32(const str.12, const i32 10, copy _50) nocollect   @55:14
+  _52 = eq copy _49, const i32 1   @55:14
+  branch copy _52, bb1, bb2   @55:14
+
+bb1:
+  _53 = union %(Nil|Int) tag 1 (copy _51)   @55:14
+  goto bb3   @55:14
+
+bb2:
+  _53 = union %(Nil|Int) tag 0   @55:14
+  goto bb3   @55:14
+
+bb3:
+  _55 = copy _53.0   @55:20
+  _56 = eq copy _55, const i32 0   @55:20
+  branch copy _56, bb4, bb5   @55:20
+
+bb4:
+  _54 = const i32 0   @55:20
+  goto bb6   @55:20
+
+bb5:
+  _57 = copy _53.1   @55:20
+  _54 = copy _57   @55:20
+  goto bb6   @55:20
+
+bb6:
+  _58 = call av.members/opaque(const i32 1) nocollect   @55:28
+  _59 = add.chk copy _54, copy _58   @55:26
+  call printf(const str.2, copy _59) nocollect   @55:3
+  _60 = const i32 0   @56:16
+  _61 = addr.raw _60   @56:16
+  _62 = call avant_str_parse_i32(const str.13, const i32 10, copy _61) nocollect   @56:16
+  _63 = eq copy _60, const i32 1   @56:16
+  branch copy _63, bb7, bb8   @56:16
+
+bb7:
+  _64 = union %(Nil|Int) tag 1 (copy _62)   @56:16
+  goto bb9   @56:16
+
+bb8:
+  _64 = union %(Nil|Int) tag 0   @56:16
+  goto bb9   @56:16
+
+bb9:
+  _66 = copy _64.0   @56:22
+  _67 = eq copy _66, const i32 0   @56:22
+  branch copy _67, bb10, bb11   @56:22
+
+bb10:
+  _65 = const i32 -1   @56:22
+  goto bb12   @56:22
+
+bb11:
+  _68 = copy _64.1   @56:22
+  _65 = copy _68   @56:22
+  goto bb12   @56:22
+
+bb12:
+  call printf(const str.2, copy _65) nocollect   @56:3
+  _69 = const i32 0   @57:13
+  _70 = addr.raw _69   @57:13
+  _71 = call avant_str_parse_i32(const str.14, const i32 10, copy _70) nocollect   @57:13
+  _72 = eq copy _69, const i32 1   @57:13
+  branch copy _72, bb13, bb14   @57:13
+
+bb13:
+  _73 = union %(Nil|Int) tag 1 (copy _71)   @57:13
+  goto bb15   @57:13
+
+bb14:
+  _73 = union %(Nil|Int) tag 0   @57:13
+  goto bb15   @57:13
+
+bb15:
+  _75 = copy _73.0   @57:19
+  _76 = eq copy _75, const i32 0   @57:19
+  branch copy _76, bb16, bb17   @57:19
+
+bb16:
+  _74 = const i32 0   @57:19
+  goto bb18   @57:19
+
+bb17:
+  _77 = copy _73.1   @57:19
+  _74 = copy _77   @57:19
+  goto bb18   @57:19
+
+bb18:
+  call printf(const str.2, copy _74) nocollect   @57:3
+  _78 = const i32 0   @58:14
+  _79 = addr.raw _78   @58:14
+  _80 = call avant_str_parse_f64(const str.15, copy _79) nocollect   @58:14
+  _81 = eq copy _78, const i32 1   @58:14
+  branch copy _81, bb19, bb20   @58:14
+
+bb19:
+  _82 = union %(Nil|Float64) tag 1 (copy _80)   @58:14
+  goto bb21   @58:14
+
+bb20:
+  _82 = union %(Nil|Float64) tag 0   @58:14
+  goto bb21   @58:14
+
+bb21:
+  _84 = copy _82.0   @58:20
+  _85 = eq copy _84, const i32 0   @58:20
+  branch copy _85, bb22, bb23   @58:20
+
+bb22:
+  _83 = const f64 0x0000000000000000 /* 0.0 */   @58:20
+  goto bb24   @58:20
+
+bb23:
+  _86 = copy _82.1   @58:20
+  _83 = copy _86   @58:20
+  goto bb24   @58:20
+
+bb24:
+  _87 = mul copy _83, const f64 0x4000000000000000 /* 2.0 */   @58:28
+  call avant_puts_f64(copy _87) nocollect   @58:3
+  _88 = const i32 0   @59:13
+  _89 = addr.raw _88   @59:13
+  _90 = call avant_str_parse_f64(const str.16, copy _89) nocollect   @59:13
+  _91 = eq copy _88, const i32 1   @59:13
+  branch copy _91, bb25, bb26   @59:13
+
+bb25:
+  _92 = union %(Nil|Float64) tag 1 (copy _90)   @59:13
+  goto bb27   @59:13
+
+bb26:
+  _92 = union %(Nil|Float64) tag 0   @59:13
+  goto bb27   @59:13
+
+bb27:
+  _94 = copy _92.0   @59:19
+  _95 = eq copy _94, const i32 0   @59:19
+  branch copy _95, bb28, bb29   @59:19
+
+bb28:
+  _93 = const f64 0x0000000000000000 /* 0.0 */   @59:19
+  goto bb30   @59:19
+
+bb29:
+  _96 = copy _92.1   @59:19
+  _93 = copy _96   @59:19
+  goto bb30   @59:19
+
+bb30:
+  call avant_puts_f64(copy _93) nocollect   @59:3
+  _97 = call av.members/opaque(const i32 1) nocollect   @60:17
+  _98 = add.chk const i32 65, copy _97   @60:15
+  _99 = call avant_str_from_byte(copy _98) collects   @60:8
+  call printf(const str.0, copy _99) nocollect   @60:3
+  _100 = call av.members/opaque(const i32 122) nocollect   @61:12
+  _101 = call avant_str_from_byte(copy _100) collects   @61:8
+  _102 = call avant_str_from_byte(const i32 48) collects   @61:27
+  _103 = call avant_str_concat(copy _101, copy _102) collects   @61:25
+  call printf(const str.0, copy _103) nocollect   @61:3
+  _104 = call av.members/say(const str.17, const i32 4) nocollect   @62:37
+  _105 = call av.members/say(const str.18, const i32 61) nocollect   @62:20
+  _106 = call avant_str_repeat_byte(copy _105, copy _104) collects   @62:8
+  call printf(const str.0, copy _106) nocollect   @62:3
+  _107 = call avant_str_repeat_byte(const i32 45, const i32 0) collects   @63:8
+  _108 = call avant_str_size(copy _107) nocollect   @63:26
+  call printf(const str.2, copy _108) nocollect   @63:3
+  _109 = call av.members/say(const str.19, const i32 11) nocollect   @64:49
+  _110 = call av.members/say(const str.20, const i32 6) nocollect   @64:33
+  _111 = call avant_str_slice(const str.21, copy _110, copy _109) collects   @64:8
+  call printf(const str.0, copy _111) nocollect   @64:3
+  _112 = call avant_str_slice(const str.22, const i32 0, const i32 5) collects   @65:8
+  call printf(const str.0, copy _112) nocollect   @65:3
+  _113 = call avant_str_slice(const str.22, const i32 3, const i32 3) collects   @66:8
+  _114 = call avant_str_size(copy _113) nocollect   @66:32
+  call printf(const str.2, copy _114) nocollect   @66:3
+  _115 = call av.members/opaque(const i32 2) nocollect   @67:27
+  _116 = call avant_str_fmt_float(const f64 0x400921F9F01B866E /* 3.14159 */, copy _115) collects   @67:8
+  call printf(const str.0, copy _116) nocollect   @67:3
+  _117 = call avant_str_fmt_float(const f64 0x4000000000000000 /* 2.0 */, const i32 0) collects   @68:8
+  call printf(const str.0, copy _117) nocollect   @68:3
+  _118 = call avant_checksum_str(const str.22) nocollect   @69:8
+  call printf(const str.2, copy _118) nocollect   @69:3
+  _119 = call avant_checksum_str(const str.3) nocollect   @70:8
+  call printf(const str.2, copy _119) nocollect   @70:3
+  _120 = const i32 0   @71:8
+  _121 = addr.raw _120   @71:8
+  _122 = call avant_str_parse_f64_slice(const str.23, const i32 2, const i32 6, copy _121) nocollect   @71:8
+  _123 = eq copy _120, const i32 1   @71:8
+  branch copy _123, bb31, bb32   @71:8
+
+bb31:
+  _124 = union %(Nil|Float64) tag 1 (copy _122)   @71:8
+  goto bb33   @71:8
+
+bb32:
+  _124 = union %(Nil|Float64) tag 0   @71:8
+  goto bb33   @71:8
+
+bb33:
+  _126 = copy _124.0   @71:41
+  _127 = eq copy _126, const i32 0   @71:41
+  branch copy _127, bb34, bb35   @71:41
+
+bb34:
+  _125 = const f64 0x0000000000000000 /* 0.0 */   @71:41
+  goto bb36   @71:41
+
+bb35:
+  _128 = copy _124.1   @71:41
+  _125 = copy _128   @71:41
+  goto bb36   @71:41
+
+bb36:
+  call avant_puts_f64(copy _125) nocollect   @71:3
+  _129 = const i32 0   @72:8
+  _130 = addr.raw _129   @72:8
+  _131 = call avant_str_parse_f64_slice(const str.24, const i32 2, const i32 2, copy _130) nocollect   @72:8
+  _132 = eq copy _129, const i32 1   @72:8
+  branch copy _132, bb37, bb38   @72:8
+
+bb37:
+  _133 = union %(Nil|Float64) tag 1 (copy _131)   @72:8
+  goto bb39   @72:8
+
+bb38:
+  _133 = union %(Nil|Float64) tag 0   @72:8
+  goto bb39   @72:8
+
+bb39:
+  _135 = copy _133.0   @72:35
+  _136 = eq copy _135, const i32 0   @72:35
+  branch copy _136, bb40, bb41   @72:35
+
+bb40:
+  _134 = const f64 0x0000000000000000 /* 0.0 */   @72:35
+  goto bb42   @72:35
+
+bb41:
+  _137 = copy _133.1   @72:35
+  _134 = copy _137   @72:35
+  goto bb42   @72:35
+
+bb42:
+  call avant_puts_f64(copy _134) nocollect   @72:3
+  _0 = const i32 0   @36:1
+  gc.leave   @36:1
+  return   @36:1
 }

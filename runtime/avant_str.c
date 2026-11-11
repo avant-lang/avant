@@ -626,55 +626,169 @@ static int fast_f64(const char *p, size_t len, double *out) {
   }
 }
 
-double avant_str_to_f(const char *s) {
-  if (!s) {
-    return 0.0;
-  }
-  double v = 0.0;
-  if (fast_f64(s, avant_str_n(s), &v)) {
-    return v;
-  }
-  return strtod(s, NULL);
+/* Strict number parsing (Stage 29 W4b1, D293, D295 R9): the whole text
+ * is the number or the result is "absent" (*ok = 0). An integer is an
+ * optional sign and digits of its base (2..36, letters either case; no
+ * prefix, no space, no underscore), within the target type's range; a
+ * UInt64 takes no '-'. A float is an optional sign, decimal digits, an
+ * optional fraction (a point and digits) and an optional exponent (e or
+ * E, an optional sign, digits) -- Avant's literal with a sign -- whose
+ * value is finite. */
+static void trap_base(int32_t base) {
+  fprintf(stderr, "avant runtime: base %d out of range (2..36)\n", base);
+  exit(1);
 }
 
-double avant_str_to_f_slice(const char *s, int32_t start, int32_t stop) {
-  if (!s) {
-    return 0.0;
+/* The magnitude of p[0..n) in base, at most limit; 0 when it is not one. */
+static int parse_mag(const char *p, size_t n, int32_t base, uint64_t limit, uint64_t *out) {
+  uint64_t v = 0;
+  size_t i;
+  if (n == 0) {
+    return 0;
   }
+  for (i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)p[i];
+    int d;
+    if (c >= '0' && c <= '9') {
+      d = c - '0';
+    } else if (c >= 'a' && c <= 'z') {
+      d = c - 'a' + 10;
+    } else if (c >= 'A' && c <= 'Z') {
+      d = c - 'A' + 10;
+    } else {
+      return 0;
+    }
+    if (d >= base) {
+      return 0;
+    }
+    if (v > (limit - (uint64_t)d) / (uint64_t)base) {
+      return 0;
+    }
+    v = v * (uint64_t)base + (uint64_t)d;
+  }
+  *out = v;
+  return 1;
+}
+
+/* A signed integer of p[0..n) within [-(max + 1), max]. */
+static int64_t parse_signed(const char *p, size_t n, int32_t base, uint64_t max, int32_t *ok) {
+  int neg = 0;
+  uint64_t m = 0;
+  if (base < 2 || base > 36) {
+    trap_base(base);
+  }
+  *ok = 0;
+  if (n > 0 && (p[0] == '-' || p[0] == '+')) {
+    neg = p[0] == '-';
+    p++;
+    n--;
+  }
+  if (!parse_mag(p, n, base, neg ? max + 1 : max, &m)) {
+    return 0;
+  }
+  *ok = 1;
+  return neg ? (int64_t)(0 - m) : (int64_t)m;
+}
+
+int32_t avant_str_parse_i32(const char *s, int32_t base, int32_t *ok) {
+  return (int32_t)parse_signed(s ? s : "", s ? avant_str_n(s) : 0, base, 2147483647ull, ok);
+}
+
+int64_t avant_str_parse_i64(const char *s, int32_t base, int32_t *ok) {
+  return parse_signed(s ? s : "", s ? avant_str_n(s) : 0, base, 9223372036854775807ull, ok);
+}
+
+uint64_t avant_str_parse_u64(const char *s, int32_t base, int32_t *ok) {
+  const char *p = s ? s : "";
+  size_t n = s ? avant_str_n(s) : 0;
+  uint64_t m = 0;
+  if (base < 2 || base > 36) {
+    trap_base(base);
+  }
+  *ok = 0;
+  if (n > 0 && p[0] == '+') {
+    p++;
+    n--;
+  }
+  if (!parse_mag(p, n, base, UINT64_MAX, &m)) {
+    return 0;
+  }
+  *ok = 1;
+  return m;
+}
+
+static int digits_at(const char *p, size_t n, size_t *i) {
+  size_t start = *i;
+  while (*i < n && p[*i] >= '0' && p[*i] <= '9') {
+    (*i)++;
+  }
+  return *i > start;
+}
+
+static int float_syntax(const char *p, size_t n) {
   size_t i = 0;
-  size_t len = 0;
-  check_range(avant_str_n(s), start, stop, &i, &len);
-  if (len == 0) {
-    return 0.0;
+  if (i < n && (p[i] == '-' || p[i] == '+')) {
+    i++;
   }
-  {
-    double fv = 0.0;
-    if (fast_f64(s + i, len, &fv)) {
-      return fv;
+  if (!digits_at(p, n, &i)) {
+    return 0;
+  }
+  if (i < n && p[i] == '.') {
+    i++;
+    if (!digits_at(p, n, &i)) {
+      return 0;
     }
   }
-  if (len < 128) {
-    char buf[128];
-    memcpy(buf, s + i, len);
-    buf[len] = 0;
-    return strtod(buf, NULL);
+  if (i < n && (p[i] == 'e' || p[i] == 'E')) {
+    i++;
+    if (i < n && (p[i] == '-' || p[i] == '+')) {
+      i++;
+    }
+    if (!digits_at(p, n, &i)) {
+      return 0;
+    }
   }
-  char *tmp = (char *)malloc(len + 1);
-  if (!tmp) {
+  return i == n;
+}
+
+static double parse_float(const char *p, size_t n, int32_t *ok) {
+  double v = 0.0;
+  *ok = 0;
+  if (!float_syntax(p, n)) {
     return 0.0;
   }
-  memcpy(tmp, s + i, len);
-  tmp[len] = 0;
-  double v = strtod(tmp, NULL);
-  free(tmp);
+  if (!fast_f64(p, n, &v)) {
+    char buf[128];
+    char *tmp = buf;
+    if (n >= sizeof(buf)) {
+      tmp = (char *)malloc(n + 1);
+      if (!tmp) {
+        return 0.0;
+      }
+    }
+    memcpy(tmp, p, n);
+    tmp[n] = 0;
+    v = strtod(tmp, NULL);
+    if (tmp != buf) {
+      free(tmp);
+    }
+  }
+  if (isinf(v)) {
+    return 0.0;
+  }
+  *ok = 1;
   return v;
 }
 
-int32_t avant_str_to_i(const char *s) {
-  if (!s) {
-    return 0;
-  }
-  return (int32_t)strtol(s, NULL, 10);
+double avant_str_parse_f64(const char *s, int32_t *ok) {
+  return parse_float(s ? s : "", s ? avant_str_n(s) : 0, ok);
+}
+
+double avant_str_parse_f64_slice(const char *s, int32_t start, int32_t stop, int32_t *ok) {
+  size_t i = 0;
+  size_t len = 0;
+  check_range(s ? avant_str_n(s) : 0, start, stop, &i, &len);
+  return parse_float((s ? s : "") + i, len, ok);
 }
 
 char *avant_str_fmt_float(double v, int32_t prec) {
