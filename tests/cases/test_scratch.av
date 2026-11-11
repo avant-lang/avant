@@ -226,7 +226,7 @@ fn test_scratch(c: Checks) {
       _ = file_write(sh_path, script)
       sh_args: Array(String) = []
       sh_args.push(sh_path)
-      _ = process_run("/bin/sh", sh_args) ?? -1
+      _ = process_run("/bin/sh", sh_args)
       c.eq_int(nth_line(read_all(rc), 0).to_i ?? -1, iwant[q], "interrupted runner (SIG${sig}) exits ${iwant[q]}")
       // Gone, or a zombie about to be reaped, means stopped.
       spid = read_all("${proj}/sleep.pid")
@@ -270,7 +270,7 @@ fn test_scratch(c: Checks) {
       _ = file_write(csh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${cbase}' CRASH_SIG=${crashes[q]} '${crash_bin}' > '${work}/crash-${q}.log' 2>&1\necho $? > '${crc}'\n")
       ch_args: Array(String) = []
       ch_args.push(csh)
-      _ = process_run("/bin/sh", ch_args) ?? -1
+      _ = process_run("/bin/sh", ch_args)
       c.eq_int(nth_line(read_all(crc), 0).to_i ?? -1, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
       cleft = dir_list(cbase) ?? empty_strs()
       c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
