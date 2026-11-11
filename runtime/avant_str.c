@@ -540,13 +540,14 @@ char *avant_str_cat_i32(const char *prefix, int32_t n) {
   return p;
 }
 
-/* Exact fast float parse. Accepts only [-]digits[.digits][(e|E)[-]digits]
- * (either digit run may be empty, not both) whose mantissa fits in 53 bits
- * with at most 15 significant digits and whose decimal exponent is within
- * 22. The true value is then mantissa * 10^e with both operands exactly
+/* Exact fast float parse of the strict shape [+-]digits[.digits][(e|E)
+ * [+-]digits] (Stage 29 W4b1: both digit runs of the mantissa non-empty
+ * when present): 1 with the value when the mantissa fits in 53 bits with
+ * at most 15 significant digits and the decimal exponent is within 22 (the
+ * true value is then mantissa * 10^e with both operands exactly
  * representable, so one IEEE multiply or divide rounds it exactly as the
- * correctly rounded strtod does. Anything else returns 0 and the caller
- * falls back to strtod on the same bytes. */
+ * correctly rounded strtod does); -1 when the text is not of the shape; 0
+ * when it may be but needs strtod. */
 static int fast_f64(const char *p, size_t len, double *out) {
   static const double pow10_exact[23] = {
       1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
@@ -561,6 +562,9 @@ static int fast_f64(const char *p, size_t len, double *out) {
   if (i < len && (p[i] == '-' || p[i] == '+')) {
     neg = p[i] == '-';
     i++;
+  }
+  if (i >= len || p[i] < '0' || p[i] > '9') {
+    return -1;
   }
   while (i < len && p[i] >= '0' && p[i] <= '9') {
     int d = p[i] - '0';
@@ -577,6 +581,9 @@ static int fast_f64(const char *p, size_t len, double *out) {
   }
   if (i < len && p[i] == '.') {
     i++;
+    if (i >= len || p[i] < '0' || p[i] > '9') {
+      return -1;
+    }
     while (i < len && p[i] >= '0' && p[i] <= '9') {
       int d = p[i] - '0';
       exp10--;
@@ -604,11 +611,11 @@ static int fast_f64(const char *p, size_t len, double *out) {
       j++;
     }
     if (j >= len) {
-      return 0;
+      return -1;
     }
     for (; j < len; j++) {
       if (p[j] < '0' || p[j] > '9') {
-        return 0;
+        return -1;
       }
       e = e * 10 + (p[j] - '0');
       if (e > 1000) {
@@ -764,10 +771,14 @@ static int float_syntax(const char *p, size_t n) {
 static double parse_float(const char *p, size_t n, int32_t *ok) {
   double v = 0.0;
   *ok = 0;
-  if (!float_syntax(p, n)) {
+  int fast = fast_f64(p, n, &v);
+  if (fast < 0) {
     return 0.0;
   }
-  if (!fast_f64(p, n, &v)) {
+  if (fast == 0) {
+    if (!float_syntax(p, n)) {
+      return 0.0;
+    }
     char buf[128];
     char *tmp = buf;
     if (n >= sizeof(buf)) {
@@ -790,15 +801,22 @@ static double parse_float(const char *p, size_t n, int32_t *ok) {
   return v;
 }
 
-double avant_str_parse_f64(const char *s, int32_t *ok) {
-  return parse_float(s ? s : "", s ? avant_str_n(s) : 0, ok);
+/* A parsed float is never NaN (the text "nan" is not a number here), so
+ * the two float parsers return NaN for "absent": the caller tests v == v,
+ * with no flag through memory. */
+double avant_str_parse_f64(const char *s) {
+  int32_t ok = 0;
+  double v = parse_float(s ? s : "", s ? avant_str_n(s) : 0, &ok);
+  return ok ? v : NAN;
 }
 
-double avant_str_parse_f64_slice(const char *s, int32_t start, int32_t stop, int32_t *ok) {
+double avant_str_parse_f64_slice(const char *s, int32_t start, int32_t stop) {
   size_t i = 0;
   size_t len = 0;
+  int32_t ok = 0;
   check_range(s ? avant_str_n(s) : 0, start, stop, &i, &len);
-  return parse_float((s ? s : "") + i, len, ok);
+  double v = parse_float((s ? s : "") + i, len, &ok);
+  return ok ? v : NAN;
 }
 
 char *avant_str_fmt_float(double v, int32_t prec) {
