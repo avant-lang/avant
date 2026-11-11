@@ -1,12 +1,12 @@
 module collect
 file 0 "collect.av"
 
-layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 state: ref, 3 size: i32, 4 cap: i32, 5 key_kind: i32, 6 val_kind: i32 }  size 40 align 8 id 1023
-layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 const str.1 = "a"
 const str.2 = "b"
 const str.3 = "hi "
@@ -18,11 +18,11 @@ typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
-extern avant_array_push_i32(ref, i32) -> void collects
-extern avant_hash_get_i32(ref, ref str, ptr) -> i32 never
+extern avant_array_push_i64(ref, i64) -> void collects
+extern avant_hash_get_i32(ref, ref str, ptr) -> i64 never
 extern avant_hash_new(i32, i32) -> ref collects
-extern avant_hash_set_i32(ref, ref str, i32) -> void collects
-extern avant_hash_size(ref) -> i32 never
+extern avant_hash_set_i32(ref, ref str, i64) -> void collects
+extern avant_hash_size(ref) -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
@@ -35,49 +35,50 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @collect.av:1:1 {
   let _3: ref %elems(Int) slot
   let _4: ref %Array(Int)
   let _5 (xs): ref %Array(Int) slot
-  let _6 (sum): i32
+  let _6 (sum): i64
   let _7: ref %Array(Int)
   let _8: i32
   let _9: i32
   let _10: bool
   let _11: ref %elems(Int)
-  let _12: i32
-  let _13 (n): i32
-  let _14: i32
+  let _12: i64
+  let _13 (n): i64
+  let _14: i64
   let _15: i32
-  let _16: ref %Hash
-  let _17 (h): ref %Hash slot
-  let _18: i32
-  let _19: ptr i32
-  let _20: i32
-  let _21: bool
-  let _22: %(Nil|Int)
-  let _23: i32
-  let _24: bool
-  let _25: i32
-  let _26 (v): i32
-  let _27: i32
-  let _28: ref str
+  let _16: i64
+  let _17: ref %Hash
+  let _18 (h): ref %Hash slot
+  let _19: i32
+  let _20: ptr i32
+  let _21: i64
+  let _22: bool
+  let _23: %(Nil|Int)
+  let _24: i32
+  let _25: bool
+  let _26: i64
+  let _27 (v): i64
+  let _28: i64
+  let _29: ref str
 
 bb0:
   _3 = zero   @1:1
   _5 = zero   @1:1
-  _17 = zero   @1:1
+  _18 = zero   @1:1
   gc.enter   @1:1
-  gc.roots _2, _3, _5, _17   @1:1
+  gc.roots _2, _3, _5, _18   @1:1
   call __avant_type_maps() nocollect   @1:1
   call avant_io_init_argv(copy _1, copy _2) collects   @1:1
-  _3 = call avant_alloc(const u64 8, const u32 0) collects   @2:20
-  (*_3)[const i32 0] = const i32 1   @2:21
-  (*_3)[const i32 1] = const i32 2   @2:24
+  _3 = call avant_alloc(const u64 16, const u32 0) collects   @2:20
+  (*_3)[const i64 0] = const i64 1   @2:21
+  (*_3)[const i64 1] = const i64 2   @2:24
   _4 = call avant_alloc(const u64 16, const u32 1022) collects   @2:20
   barrier copy _4   @2:20
   (*_4).0 = copy _3   @2:20
   (*_4).1 = const i32 2   @2:20
   (*_4).2 = const i32 2   @2:20
   _5 = copy _4   @2:3
-  call avant_array_push_i32(copy _5, const i32 3) collects   @3:5
-  _6 = const i32 0   @4:7
+  call avant_array_push_i64(copy _5, const i64 3) collects   @3:5
+  _6 = const i64 0   @4:7
   _7 = copy _5   @5:3
   _8 = const i32 0   @5:11
   goto bb1   @5:11
@@ -102,41 +103,42 @@ bb3:
 bb4:
   call printf(const str.0, copy _6) nocollect   @6:3
   _15 = copy (*_5).1   @7:10
-  call printf(const str.0, copy _15) nocollect   @7:3
-  _16 = call avant_hash_new(const i32 1, const i32 0) collects   @9:7
-  _17 = copy _16   @9:5
-  call avant_hash_set_i32(copy _17, const str.1, const i32 10) collects   @10:10
-  call avant_hash_set_i32(copy _17, const str.2, const i32 20) collects   @11:10
-  _18 = const i32 0   @12:11
-  _19 = addr.raw _18   @12:11
-  _20 = call avant_hash_get_i32(copy _17, const str.1, copy _19) nocollect   @12:11
-  _21 = eq copy _18, const i32 1   @12:11
-  branch copy _21, bb5, bb6   @12:11
+  _16 = cast copy _15 to i64   @7:10
+  call printf(const str.0, copy _16) nocollect   @7:3
+  _17 = call avant_hash_new(const i32 1, const i32 0) collects   @9:7
+  _18 = copy _17   @9:5
+  call avant_hash_set_i32(copy _18, const str.1, const i64 10) collects   @10:10
+  call avant_hash_set_i32(copy _18, const str.2, const i64 20) collects   @11:10
+  _19 = const i32 0   @12:11
+  _20 = addr.raw _19   @12:11
+  _21 = call avant_hash_get_i32(copy _18, const str.1, copy _20) nocollect   @12:11
+  _22 = eq copy _19, const i32 1   @12:11
+  branch copy _22, bb5, bb6   @12:11
 
 bb5:
-  _22 = union %(Nil|Int) tag 1 (copy _20)   @12:11
+  _23 = union %(Nil|Int) tag 1 (copy _21)   @12:11
   goto bb7   @12:11
 
 bb6:
-  _22 = union %(Nil|Int) tag 0   @12:11
+  _23 = union %(Nil|Int) tag 0   @12:11
   goto bb7   @12:11
 
 bb7:
-  _23 = copy _22.0   @12:3
-  _24 = ne copy _23, const i32 0   @12:3
-  branch copy _24, bb8, bb9   @12:3
+  _24 = copy _23.0   @12:3
+  _25 = ne copy _24, const i32 0   @12:3
+  branch copy _25, bb8, bb9   @12:3
 
 bb8:
-  _25 = copy _22.1   @12:3
-  _26 = copy _25   @12:3
-  call printf(const str.0, copy _26) nocollect   @13:5
+  _26 = copy _23.1   @12:3
+  _27 = copy _26   @12:3
+  call printf(const str.0, copy _27) nocollect   @13:5
   goto bb9   @12:3
 
 bb9:
-  _27 = call avant_hash_size(copy _17) nocollect   @15:9
-  call printf(const str.0, copy _27) nocollect   @15:3
-  _28 = call avant_str_concat(const str.3, const str.4) collects   @16:14
-  call avant_puts_str(copy _28) nocollect   @16:3
+  _28 = call avant_hash_size(copy _18) nocollect   @15:9
+  call printf(const str.0, copy _28) nocollect   @15:3
+  _29 = call avant_str_concat(const str.3, const str.4) collects   @16:14
+  call avant_puts_str(copy _29) nocollect   @16:3
   _0 = const i32 0   @1:1
   gc.leave   @1:1
   return   @1:1

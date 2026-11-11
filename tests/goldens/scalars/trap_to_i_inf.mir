@@ -1,7 +1,7 @@
 module trap_to_i_inf
 file 0 "trap_to_i_inf.av"
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 const str.1 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
@@ -15,17 +15,16 @@ extern avant_puts_str(ref str) -> void never
 extern avant_trap_to_i(f64) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.trap_to_i_inf/opaque(_1: i32) -> i32 leaf @trap_to_i_inf.av:6:1 {
-  let _0: i32
-  let _1 (n): i32
+fn av.trap_to_i_inf/opaque(_1: i64) -> i64 leaf @trap_to_i_inf.av:6:1 {
+  let _0: i64
+  let _1 (n): i64
   let _2: i64
   let _3 (a): i64
   let _4: i64
   let _5 (b): i64
   let _6: i64
   let _7: bool
-  let _8: i32
-  let _9: i32
+  let _8: i64
 
 bb0:
   _2 = call avant_clock_us() nocollect   @7:7
@@ -37,9 +36,8 @@ bb0:
   branch copy _7, bb1, bb2   @9:3
 
 bb1:
-  _8 = cast copy _5 to i32   @10:18
-  _9 = add copy _1, copy _8   @10:14
-  _0 = copy _9   @10:5
+  _8 = add copy _1, copy _5   @10:14
+  _0 = copy _8   @10:5
   return   @10:5
 
 bb2:
@@ -47,19 +45,19 @@ bb2:
   return   @12:3
 }
 
-fn av.trap_to_i_inf/ti(_1: f64) -> i32 leaf @trap_to_i_inf.av:15:1 {
-  let _0: i32
+fn av.trap_to_i_inf/ti(_1: f64) -> i64 leaf @trap_to_i_inf.av:15:1 {
+  let _0: i64
   let _1 (x): f64
   let _2: f64
   let _3: bool
   let _4: bool
   let _5: bool
-  let _6: i32
+  let _6: i64
 
 bb0:
   _2 = copy _1   @16:4
-  _3 = gt copy _2, const f64 0xC1E0000000200000 /* -2147483649.0 */   @16:4
-  _4 = lt copy _2, const f64 0x41E0000000000000 /* 2147483648.0 */   @16:4
+  _3 = ge copy _2, const f64 0xC3E0000000000000 /* -9223372036854775808.0 */   @16:4
+  _4 = lt copy _2, const f64 0x43E0000000000000 /* 9223372036854775808.0 */   @16:4
   _5 = and copy _3, copy _4   @16:4
   branch copy _5, bb2, bb1   @16:4
 
@@ -68,7 +66,7 @@ bb1:
   unreachable   @16:4
 
 bb2:
-  _6 = cast copy _2 to i32   @16:4
+  _6 = cast copy _2 to i64   @16:4
   _0 = copy _6   @16:4
   return   @16:4
 }
@@ -77,22 +75,22 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_to_i_inf.av:19:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
   let _4: f64
   let _5 (one): f64
   let _6: f64
   let _7 (z): f64
   let _8: f64
-  let _9: i32
+  let _9: i64
   let _10: f64
-  let _11: i32
+  let _11: i64
 
 bb0:
   gc.enter   @19:1
   gc.roots _2   @19:1
   call __avant_type_maps() nocollect   @19:1
   call avant_io_init_argv(copy _1, copy _2) collects   @19:1
-  _3 = call av.trap_to_i_inf/opaque(const i32 1) nocollect   @20:9
+  _3 = call av.trap_to_i_inf/opaque(const i64 1) nocollect   @20:9
   _4 = cast copy _3 to f64   @20:18
   _5 = copy _4   @20:7
   _6 = sub copy _5, const f64 0x3FF0000000000000 /* 1.0 */   @21:11

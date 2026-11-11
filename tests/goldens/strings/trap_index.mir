@@ -2,7 +2,7 @@ module trap_index
 file 0 "trap_index.av"
 
 const str.0 = "a"
-const str.1 = "%d\0A"
+const str.1 = "%lld\0A"
 const str.2 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
@@ -13,21 +13,20 @@ extern __avant_type_maps() -> void never
 extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
-extern avant_str_cat_i32(ref str, i32) -> ref str collects
-extern avant_str_size(ref str) -> i32 never
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
 extern printf(ref str, ...) -> i32 never
 
-fn av.trap_index/opaque(_1: i32) -> i32 leaf @trap_index.av:5:1 {
-  let _0: i32
-  let _1 (n): i32
+fn av.trap_index/opaque(_1: i64) -> i64 leaf @trap_index.av:5:1 {
+  let _0: i64
+  let _1 (n): i64
   let _2: i64
   let _3 (a): i64
   let _4: i64
   let _5 (b): i64
   let _6: i64
   let _7: bool
-  let _8: i32
-  let _9: i32
+  let _8: i64
 
 bb0:
   _2 = call avant_clock_us() nocollect   @6:7
@@ -39,9 +38,8 @@ bb0:
   branch copy _7, bb1, bb2   @8:3
 
 bb1:
-  _8 = cast copy _5 to i32   @9:18
-  _9 = add copy _1, copy _8   @9:14
-  _0 = copy _9   @9:5
+  _8 = add copy _1, copy _5   @9:14
+  _0 = copy _8   @9:5
   return   @9:5
 
 bb2:
@@ -53,39 +51,39 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_index.av:14:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
   let _4: ref str
   let _5 (s): ref str
-  let _6: i32
+  let _6: i64
   let _7: ptr u8
   let _8: u8
-  let _9: i32
-  let _10: i32
-  let _11: i32
+  let _9: i64
+  let _10: i64
+  let _11: i64
   let _12: ptr u8
   let _13: u8
-  let _14: i32
+  let _14: i64
 
 bb0:
   gc.enter   @14:1
   gc.roots _2   @14:1
   call __avant_type_maps() nocollect   @14:1
   call avant_io_init_argv(copy _1, copy _2) collects   @14:1
-  _3 = call av.trap_index/opaque(const i32 12) nocollect   @15:11
+  _3 = call av.trap_index/opaque(const i64 12) nocollect   @15:11
   _4 = call avant_str_cat_i32(const str.0, copy _3) collects   @15:7
   _5 = copy _4   @15:5
   _6 = call avant_str_size(copy _5) nocollect   @16:9
-  check.bounds const i32 2, copy _6   @16:9
+  check.bounds const i64 2, copy _6   @16:9
   _7 = cast copy _5 to ptr u8   @16:9
-  _8 = copy (*_7)[const i32 2]   @16:9
-  _9 = cast copy _8 to i32   @16:9
+  _8 = copy (*_7)[const i64 2]   @16:9
+  _9 = cast copy _8 to i64   @16:9
   call printf(const str.1, copy _9) nocollect   @16:3
-  _10 = call av.trap_index/opaque(const i32 5) nocollect   @17:10
+  _10 = call av.trap_index/opaque(const i64 5) nocollect   @17:10
   _11 = call avant_str_size(copy _5) nocollect   @17:9
   check.bounds copy _10, copy _11   @17:9
   _12 = cast copy _5 to ptr u8   @17:9
   _13 = copy (*_12)[copy _10]   @17:9
-  _14 = cast copy _13 to i32   @17:9
+  _14 = cast copy _13 to i64   @17:9
   call printf(const str.1, copy _14) nocollect   @17:3
   call avant_puts_str(const str.2) nocollect   @18:3
   _0 = const i32 0   @14:1

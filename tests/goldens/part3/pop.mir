@@ -1,10 +1,10 @@
 module pop
 file 0 "pop.av"
 
-layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -26,8 +26,8 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @pop.av:1:1 {
   let _5 (xs): ref %Array(Int) slot
   let _6: i32
   let _7: bool
-  let _8: addr i32
-  let _9: i32
+  let _8: addr i64
+  let _9: i64
 
 bb0:
   _3 = zero   @1:1
@@ -36,9 +36,9 @@ bb0:
   gc.roots _2, _3, _5   @1:1
   call __avant_type_maps() nocollect   @1:1
   call avant_io_init_argv(copy _1, copy _2) collects   @1:1
-  _3 = call avant_alloc(const u64 8, const u32 0) collects   @2:20
-  (*_3)[const i32 0] = const i32 1   @2:21
-  (*_3)[const i32 1] = const i32 2   @2:24
+  _3 = call avant_alloc(const u64 16, const u32 0) collects   @2:20
+  (*_3)[const i64 0] = const i64 1   @2:21
+  (*_3)[const i64 1] = const i64 2   @2:24
   _4 = call avant_alloc(const u64 16, const u32 1022) collects   @2:20
   barrier copy _4   @2:20
   (*_4).0 = copy _3   @2:20
@@ -54,7 +54,7 @@ bb1:
   unreachable   @3:10
 
 bb2:
-  _8 = call avant_array_pop_slot(copy _5, const u64 4) collects   @3:10
+  _8 = call avant_array_pop_slot(copy _5, const u64 8) collects   @3:10
   _9 = copy (*_8)   @3:10
   call printf(const str.0, copy _9) nocollect   @3:3
   _0 = const i32 0   @1:1

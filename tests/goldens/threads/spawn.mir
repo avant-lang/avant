@@ -2,16 +2,16 @@ module spawn shared
 file 0 "spawn.av"
 
 layout %spawn.Holder = class { 0 h: ref, 1 tag: ref str }  size 16 align 8 id 1
-layout %spawn_cap(av.spawn/main#spawn2) = record { 0 n: i32, 1 k: i32 }  size 8 align 4
+layout %spawn_cap(av.spawn/main#spawn2) = record { 0 n: i64, 1 k: i64 }  size 16 align 8
 layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %spawn.Rec = struct { 0 id: i32, 1 name: ref str }  size 16 align 8
+layout %spawn.Rec = struct { 0 id: i64, 1 name: ref str }  size 16 align 8
 layout %spawn_cap(av.spawn/main#spawn3) = record { 0 name: ref str, 1 words: ref %Array(String), 2 rec: %spawn.Rec }  size 32 align 8 id 2
 layout %spawn_cap(av.spawn/main#spawn4) = record { 0 many: ref %Array(String) }  size 8 align 8 id 3
-layout %box(Int) = record { 0 v: i32 }  size 4 align 4 id 4
+layout %box(Int) = record { 0 v: i64 }  size 8 align 8 id 4
 layout %env(av.spawn/main#lam1) = record { 0 b: ref %box(Int) }  size 8 align 8 id 5
-layout %spawn_cap(av.spawn/main#spawn5) = record { 0 b: i32 }  size 4 align 4
-layout %spawn_cap(av.spawn/main#spawn6) = record { 0 n: i32, 1 name: ref str }  size 16 align 8 id 6
+layout %spawn_cap(av.spawn/main#spawn5) = record { 0 b: i64 }  size 8 align 8
+layout %spawn_cap(av.spawn/main#spawn6) = record { 0 n: i64, 1 name: ref str }  size 16 align 8 id 6
 layout %env(av.spawn/main#lam2) = record { 0 n: ref %box(Int) }  size 8 align 8 id 7
 layout %box(String) = record { 0 v: ref str }  size 8 align 8 id 8
 layout %env(av.spawn/main#lam3) = record { 0 name: ref %box(String), 1 n: ref %box(Int) }  size 16 align 8 id 9
@@ -19,8 +19,8 @@ layout %spawn_cap(av.spawn/main#spawn7) = record { 0 tag: ref str }  size 8 alig
 layout %fn():Void = fnval { 0 env: ref, 1 code: code(ref) -> void }  size 16 align 8
 layout %elems(JoinHandle(Int)) = elems { 0: ref }  size 8 align 8 id 65535
 layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i32) -> i32 }  size 16 align 8
-layout %fn():Int = fnval { 0 env: ref, 1 code: code(ref) -> i32 }  size 16 align 8
+layout %fn(Int):Int = fnval { 0 env: ref, 1 code: code(ref, i64) -> i64 }  size 16 align 8
+layout %fn():Int = fnval { 0 env: ref, 1 code: code(ref) -> i64 }  size 16 align 8
 
 const str.0 = "-"
 const str.1 = "word"
@@ -31,7 +31,7 @@ const str.5 = "three"
 const str.6 = "rec-name"
 const str.7 = "t"
 const str.8 = "holder"
-const str.9 = "%d\0A"
+const str.9 = "%lld\0A"
 const str.10 = "held"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
@@ -53,28 +53,28 @@ extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_join(ref) -> i32 collects
+extern avant_join(ref) -> i64 collects
 extern avant_puts_str(ref str) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
-extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
-extern avant_str_size(ref str) -> i32 never
+extern avant_str_from_int(i64) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
 extern printf(ref str, ...) -> i32 never
 
-fn av.spawn/work(_1: i32) -> i32 leaf @spawn.av:27:1 {
-  let _0: i32
-  let _1 (n): i32
-  let _2 (acc): i32
-  let _3 (i): i32
+fn av.spawn/work(_1: i64) -> i64 leaf @spawn.av:27:1 {
+  let _0: i64
+  let _1 (n): i64
+  let _2 (acc): i64
+  let _3 (i): i64
   let _4: bool
-  let _5: i32
-  let _6: i32
-  let _7: i32
+  let _5: i64
+  let _6: i64
+  let _7: i64
 
 bb0:
-  _2 = const i32 0   @28:7
-  _3 = const i32 0   @29:5
+  _2 = const i64 0   @28:7
+  _3 = const i64 0   @29:5
   goto bb1   @30:3
 
 bb1:
@@ -82,10 +82,10 @@ bb1:
   branch copy _4, bb2, bb3   @30:3
 
 bb2:
-  _5 = mul.chk copy _3, const i32 3   @31:20
+  _5 = mul.chk copy _3, const i64 3   @31:20
   _6 = add copy _2, copy _5   @31:15
   _2 = copy _6   @31:9
-  _7 = add copy _3, const i32 1   @32:11
+  _7 = add copy _3, const i64 1   @32:11
   _3 = copy _7   @32:7
   goto bb1   @30:3
 
@@ -94,35 +94,39 @@ bb3:
   return   @34:3
 }
 
-fn av.spawn/churn_sum(_1: ref str, _2: i32) -> i32 frame @spawn.av:38:1 {
-  let _0: i32
+fn av.spawn/churn_sum(_1: ref str, _2: i64) -> i64 frame @spawn.av:38:1 {
+  let _0: i64
   let _1 (tag): ref str slot
-  let _2 (rounds): i32
+  let _2 (rounds): i64
   let _3: ref %elems(String) slot
   let _4: ref %Array(String)
   let _5 (keep): ref %Array(String) slot
-  let _6 (total): i32
-  let _7 (i): i32
+  let _6 (total): i64
+  let _7 (i): i64
   let _8: bool
   let _9: ref str slot
   let _10: ref str slot
   let _11: ref str
   let _12 (s): ref str slot
   let _13: i32
-  let _14: bool
-  let _15: i32
-  let _16: ref %elems(String)
-  let _17: ref str
-  let _18: i32
-  let _19: i32
-  let _20: i32
-  let _21: ref %elems(String)
-  let _22: ref str
-  let _23: i32
-  let _24: i32
-  let _25: i32
-  let _26: i32
-  let _27: i32
+  let _14: i64
+  let _15: bool
+  let _16: i32
+  let _17: i64
+  let _18: ref %elems(String)
+  let _19: ref str
+  let _20: i64
+  let _21: i64
+  let _22: i32
+  let _23: i64
+  let _24: ref %elems(String)
+  let _25: ref str
+  let _26: i64
+  let _27: i64
+  let _28: i64
+  let _29: i32
+  let _30: i64
+  let _31: i64
 
 bb0:
   _3 = zero   @38:1
@@ -139,8 +143,8 @@ bb0:
   (*_4).1 = const i32 0   @39:25
   (*_4).2 = const i32 0   @39:25
   _5 = copy _4   @39:3
-  _6 = const i32 0   @40:9
-  _7 = const i32 0   @41:5
+  _6 = const i64 0   @40:9
+  _7 = const i64 0   @41:5
   goto bb1   @42:3
 
 bb1:
@@ -155,49 +159,53 @@ bb2:
   _12 = copy _11   @43:7
   call avant_array_push_ptr(copy _5, copy _12, const u32 65535) collects   @44:9
   _13 = copy (*_5).1   @45:12
-  _14 = gt copy _13, const i32 64   @45:18
-  branch copy _14, bb4, bb5   @45:5
+  _14 = cast copy _13 to i64   @45:12
+  _15 = gt copy _14, const i64 64   @45:18
+  branch copy _15, bb4, bb5   @45:5
 
 bb3:
-  _26 = copy (*_5).1   @51:15
-  _27 = add.chk copy _6, copy _26   @51:9
-  _0 = copy _27   @51:9
+  _29 = copy (*_5).1   @51:15
+  _30 = cast copy _29 to i64   @51:15
+  _31 = add.chk copy _6, copy _30   @51:9
+  _0 = copy _31   @51:9
   gc.leave   @51:9
   return   @51:9
 
 bb4:
-  _15 = copy (*_5).1   @46:27
-  check.bounds const i32 0, copy _15   @46:27
-  _16 = copy (*_5).0   @46:27
-  _17 = copy (*_16)[const i32 0]   @46:27
-  _18 = call avant_str_size(copy _17) nocollect   @46:30
-  _19 = add.chk copy _6, copy _18   @46:21
-  _20 = copy (*_5).1   @46:42
-  check.bounds const i32 64, copy _20   @46:42
-  _21 = copy (*_5).0   @46:42
-  _22 = copy (*_21)[const i32 64]   @46:42
-  _23 = call avant_str_size(copy _22) nocollect   @46:46
-  _24 = add.chk copy _19, copy _23   @46:36
-  _6 = copy _24   @46:13
+  _16 = copy (*_5).1   @46:27
+  _17 = cast copy _16 to i64   @46:27
+  check.bounds const i64 0, copy _17   @46:27
+  _18 = copy (*_5).0   @46:27
+  _19 = copy (*_18)[const i64 0]   @46:27
+  _20 = call avant_str_size(copy _19) nocollect   @46:30
+  _21 = add.chk copy _6, copy _20   @46:21
+  _22 = copy (*_5).1   @46:42
+  _23 = cast copy _22 to i64   @46:42
+  check.bounds const i64 64, copy _23   @46:42
+  _24 = copy (*_5).0   @46:42
+  _25 = copy (*_24)[const i64 64]   @46:42
+  _26 = call avant_str_size(copy _25) nocollect   @46:46
+  _27 = add.chk copy _21, copy _26   @46:36
+  _6 = copy _27   @46:13
   (*_5).1 = const i32 0   @47:11
   goto bb5   @45:5
 
 bb5:
-  _25 = add copy _7, const i32 1   @49:11
-  _7 = copy _25   @49:7
+  _28 = add copy _7, const i64 1   @49:11
+  _7 = copy _28   @49:7
   goto bb1   @42:3
 }
 
-fn av.spawn/make_words(_1: i32) -> ref %Array(String) frame @spawn.av:54:1 {
+fn av.spawn/make_words(_1: i64) -> ref %Array(String) frame @spawn.av:54:1 {
   let _0: ref %Array(String)
-  let _1 (n): i32
+  let _1 (n): i64
   let _2: ref %elems(String) slot
   let _3: ref %Array(String)
   let _4 (out): ref %Array(String) slot
-  let _5 (i): i32
+  let _5 (i): i64
   let _6: bool
   let _7: ref str slot
-  let _8: i32
+  let _8: i64
 
 bb0:
   _2 = zero   @54:1
@@ -212,7 +220,7 @@ bb0:
   (*_3).1 = const i32 0   @55:24
   (*_3).2 = const i32 0   @55:24
   _4 = copy _3   @55:3
-  _5 = const i32 0   @56:5
+  _5 = const i64 0   @56:5
   goto bb1   @57:3
 
 bb1:
@@ -223,7 +231,7 @@ bb1:
 bb2:
   _7 = call avant_str_cat_i32(const str.1, copy _5) collects   @58:14
   call avant_array_push_ptr(copy _4, copy _7, const u32 65535) collects   @58:8
-  _8 = add copy _5, const i32 1   @59:11
+  _8 = add copy _5, const i64 1   @59:11
   _5 = copy _8   @59:7
   goto bb1   @57:3
 
@@ -242,9 +250,9 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:64:1 {
   let _5 (name): ref %box(String) slot
   let _6: ref
   let _7 (h0): ref slot
-  let _8 (k): i32
+  let _8 (k): i64
   let _9: ref %spawn_cap(av.spawn/main#spawn2) slot
-  let _10: i32
+  let _10: i64
   let _11: ref
   let _12 (h1): ref slot
   let _13: ref %elems(String) slot
@@ -266,12 +274,12 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:64:1 {
   let _29 (inc): %fn():Void slot
   let _30: %fn():Void
   let _31: ref %spawn_cap(av.spawn/main#spawn5) slot
-  let _32: i32
+  let _32: i64
   let _33: ref
   let _34 (hb): ref slot
   let _35: %fn():Void
   let _36: ref %spawn_cap(av.spawn/main#spawn6) slot
-  let _37: i32
+  let _37: i64
   let _38: ref str
   let _39: ref
   let _40 (hl): ref slot
@@ -281,24 +289,24 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:64:1 {
   let _44: ref %elems(String) slot
   let _45: ref %Array(String)
   let _46 (tags): ref %Array(String) slot
-  let _47 (i): i32
+  let _47 (i): i64
   let _48: bool
   let _49: ref str
   let _50 (tag): ref str slot
   let _51: ref %spawn_cap(av.spawn/main#spawn7) slot
   let _52: ref slot
-  let _53: i32
+  let _53: i64
   let _54: ref
   let _55: ref %spawn.Holder
   let _56 (holder): ref %spawn.Holder slot
-  let _57: i32
-  let _58: i32
-  let _59: i32
-  let _60: i32
-  let _61: i32
-  let _62: i32
-  let _63: i32
-  let _64 (sum): i32
+  let _57: i64
+  let _58: i64
+  let _59: i64
+  let _60: i64
+  let _61: i64
+  let _62: i64
+  let _63: i64
+  let _64 (sum): i64
   let _65: ref %Array(JoinHandle(Int)) slot
   let _66: i32
   let _67: i32
@@ -306,14 +314,15 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:64:1 {
   let _69: ref %elems(JoinHandle(Int))
   let _70: ref
   let _71 (h): ref slot
-  let _72: i32
-  let _73: i32
+  let _72: i64
+  let _73: i64
   let _74: ref slot
-  let _75: i32
+  let _75: i64
   let _76: ref str
   let _77: i32
-  let _78: ref %elems(String)
-  let _79: ref str
+  let _78: i64
+  let _79: ref %elems(String)
+  let _80: ref str
 
 bb0:
   _3 = zero   @64:1
@@ -355,10 +364,10 @@ bb0:
   _5 = zero   @64:1
   _6 = call avant_spawn(const fn av.spawn/main#spawn1, const ref null) collects   @65:8
   _7 = copy _6   @65:6
-  _4 = call avant_alloc(const u64 4, const u32 4) collects   @66:3
-  (*_4).0 = const i32 500   @66:5
-  _8 = const i32 7   @67:5
-  _9 = call avant_alloc(const u64 8, const u32 0) collects   @68:8
+  _4 = call avant_alloc(const u64 8, const u32 4) collects   @66:3
+  (*_4).0 = const i64 500   @66:5
+  _8 = const i64 7   @67:5
+  _9 = call avant_alloc(const u64 16, const u32 0) collects   @68:8
   _10 = copy (*_4).0   @68:8
   (*_9).0 = copy _10   @68:8
   (*_9).1 = copy _8   @68:8
@@ -368,9 +377,9 @@ bb0:
   barrier copy _5   @69:8
   (*_5).0 = const str.2   @69:8
   _13 = call avant_alloc(const u64 24, const u32 65535) collects   @70:11
-  (*_13)[const i32 0] = const str.3 fresh   @70:12
-  (*_13)[const i32 1] = const str.4 fresh   @70:19
-  (*_13)[const i32 2] = const str.5 fresh   @70:26
+  (*_13)[const i64 0] = const str.3 fresh   @70:12
+  (*_13)[const i64 1] = const str.4 fresh   @70:19
+  (*_13)[const i64 2] = const str.5 fresh   @70:26
   barrier copy _13   @70:11
   _14 = call avant_alloc(const u64 16, const u32 1022) collects   @70:11
   barrier copy _14   @70:11
@@ -378,7 +387,7 @@ bb0:
   (*_14).1 = const i32 3   @70:11
   (*_14).2 = const i32 3   @70:11
   _15 = copy _14   @70:9
-  _16 = struct %spawn.Rec (const i32 3, const str.6)   @71:9
+  _16 = struct %spawn.Rec (const i64 3, const str.6)   @71:9
   _17 = copy _16   @71:7
   _18 = call avant_alloc(const u64 32, const u32 2) collects   @72:8
   _19 = copy (*_5).0   @72:8
@@ -390,15 +399,15 @@ bb0:
   (*_18).2 = copy _17   @72:8
   _20 = call avant_spawn(const fn av.spawn/main#spawn3, copy _18) collects   @72:8
   _21 = copy _20   @72:6
-  _22 = call av.spawn/make_words(const i32 300) collects   @73:10
+  _22 = call av.spawn/make_words(const i64 300) collects   @73:10
   _23 = copy _22   @73:8
   _24 = call avant_alloc(const u64 8, const u32 3) collects   @74:8
   barrier copy _24   @74:8
   (*_24).0 = copy _23   @74:8
   _25 = call avant_spawn(const fn av.spawn/main#spawn4, copy _24) collects   @74:8
   _26 = copy _25   @74:6
-  _3 = call avant_alloc(const u64 4, const u32 4) collects   @83:3
-  (*_3).0 = const i32 10   @83:5
+  _3 = call avant_alloc(const u64 8, const u32 4) collects   @83:3
+  (*_3).0 = const i64 10   @83:5
   _27 = call avant_alloc(const u64 8, const u32 5) collects   @84:9
   barrier copy _27   @84:9
   (*_27).0 = copy _3   @84:9
@@ -406,7 +415,7 @@ bb0:
   _29 = copy _28   @84:7
   _30 = copy _29   @85:3
   call indirect copy _30() collects   @85:3
-  _31 = call avant_alloc(const u64 4, const u32 0) collects   @86:8
+  _31 = call avant_alloc(const u64 8, const u32 0) collects   @86:8
   _32 = copy (*_3).0   @86:8
   (*_31).0 = copy _32   @86:8
   _33 = call avant_spawn(const fn av.spawn/main#spawn5, copy _31) collects   @86:8
@@ -435,12 +444,12 @@ bb0:
   (*_45).1 = const i32 0   @94:25
   (*_45).2 = const i32 0   @94:25
   _46 = copy _45   @94:3
-  _47 = const i32 0   @95:5
+  _47 = const i64 0   @95:5
   goto bb1   @96:3
 
 bb1:
   call avant_gc_poll() collects   @96:11
-  _48 = lt copy _47, const i32 24   @96:11
+  _48 = lt copy _47, const i64 24   @96:11
   branch copy _48, bb2, bb3   @96:3
 
 bb2:
@@ -452,7 +461,7 @@ bb2:
   (*_51).0 = copy _50   @99:13
   _52 = call avant_spawn(const fn av.spawn/main#spawn7, copy _51) collects   @99:13
   call avant_array_push_ptr(copy _43, copy _52, const u32 65535) collects   @99:7
-  _53 = add copy _47, const i32 1   @100:11
+  _53 = add copy _47, const i64 1   @100:11
   _47 = copy _53   @100:7
   goto bb1   @96:3
 
@@ -474,7 +483,7 @@ bb3:
   call printf(const str.9, copy _62) nocollect   @108:3
   _63 = call avant_join(copy _40) collects   @109:10
   call printf(const str.9, copy _63) nocollect   @109:3
-  _64 = const i32 0   @110:7
+  _64 = const i64 0   @110:7
   _65 = copy _43   @111:3
   _66 = const i32 0   @111:11
   goto bb4   @111:11
@@ -506,10 +515,11 @@ bb7:
   _76 = copy (*_56).1   @114:14
   call avant_puts_str(copy _76) nocollect   @114:3
   _77 = copy (*_46).1   @115:12
-  check.bounds const i32 23, copy _77   @115:12
-  _78 = copy (*_46).0   @115:12
-  _79 = copy (*_78)[const i32 23]   @115:12
-  call avant_puts_str(copy _79) nocollect   @115:3
+  _78 = cast copy _77 to i64   @115:12
+  check.bounds const i64 23, copy _78   @115:12
+  _79 = copy (*_46).0   @115:12
+  _80 = copy (*_79)[const i64 23]   @115:12
+  call avant_puts_str(copy _80) nocollect   @115:3
   _0 = const i32 0   @64:1
   gc.leave   @64:1
   return   @64:1
@@ -519,8 +529,8 @@ fn av.spawn/main#lam1(_1: ref) -> void frame @spawn.av:84:9 {
   let _1 (env): ref
   let _2 (env): ref %env(av.spawn/main#lam1)
   let _3: ref %box(Int)
-  let _4: i32
-  let _5: i32
+  let _4: i64
+  let _5: i64
   let _6: ref %box(Int)
 
 bb0:
@@ -529,7 +539,7 @@ bb0:
   _2 = cast copy _1 to ref %env(av.spawn/main#lam1)   @84:9
   _3 = copy (*_2).0   @84:18
   _4 = copy (*_3).0   @84:18
-  _5 = add copy _4, const i32 1   @84:20
+  _5 = add copy _4, const i64 1   @84:20
   _6 = copy (*_2).0   @84:16
   (*_6).0 = copy _5   @84:16
   gc.leave   @84:9
@@ -569,30 +579,30 @@ bb0:
   return   @17:1
 }
 
-fn av.spawn/main#spawn1(_1: ref) -> i32 frame @spawn.av:65:8 {
-  let _0: i32
+fn av.spawn/main#spawn1(_1: ref) -> i64 frame @spawn.av:65:8 {
+  let _0: i64
   let _1 (cap): ref
-  let _2: i32
+  let _2: i64
 
 bb0:
   gc.enter   @65:8
   gc.roots   @65:8
-  _2 = call av.spawn/work(const i32 1000) nocollect   @65:16
+  _2 = call av.spawn/work(const i64 1000) nocollect   @65:16
   _0 = copy _2   @65:8
   gc.leave   @65:8
   return   @65:8
 }
 
-fn av.spawn/main#spawn2(_1: ref) -> i32 frame @spawn.av:68:8 {
-  let _0: i32
+fn av.spawn/main#spawn2(_1: ref) -> i64 frame @spawn.av:68:8 {
+  let _0: i64
   let _1 (cap): ref
   let _2 (cap): ref %spawn_cap(av.spawn/main#spawn2)
-  let _3: i32
-  let _4 (n): i32
-  let _5: i32
-  let _6 (k): i32
-  let _7: i32
-  let _8: i32
+  let _3: i64
+  let _4 (n): i64
+  let _5: i64
+  let _6 (k): i64
+  let _7: i64
+  let _8: i64
 
 bb0:
   gc.enter   @68:8
@@ -609,8 +619,8 @@ bb0:
   return   @68:8
 }
 
-fn av.spawn/main#spawn3(_1: ref) -> i32 frame @spawn.av:72:8 {
-  let _0: i32
+fn av.spawn/main#spawn3(_1: ref) -> i64 frame @spawn.av:72:8 {
+  let _0: i64
   let _1 (cap): ref
   let _2 (cap): ref %spawn_cap(av.spawn/main#spawn3)
   let _3: ref str
@@ -619,19 +629,20 @@ fn av.spawn/main#spawn3(_1: ref) -> i32 frame @spawn.av:72:8 {
   let _6 (words): ref %Array(String)
   let _7: %spawn.Rec
   let _8 (rec): %spawn.Rec
-  let _9: i32
-  let _10: i32
+  let _9: i64
+  let _10: i64
   let _11: i32
-  let _12: ref %elems(String)
-  let _13: ref str
-  let _14: i32
-  let _15: i32
-  let _16: i32
-  let _17: ref str
-  let _18: i32
-  let _19: i32
-  let _20: i32
-  let _21: i32
+  let _12: i64
+  let _13: ref %elems(String)
+  let _14: ref str
+  let _15: i64
+  let _16: i64
+  let _17: i64
+  let _18: ref str
+  let _19: i64
+  let _20: i64
+  let _21: i64
+  let _22: i64
 
 bb0:
   gc.enter   @72:8
@@ -644,40 +655,43 @@ bb0:
   _7 = copy (*_2).2   @72:8
   _8 = copy _7   @72:8
   _9 = call avant_str_size(copy _4) nocollect   @72:20
-  _10 = mul.chk copy _9, const i32 100   @72:26
+  _10 = mul copy _9, const i64 100   @72:26
   _11 = copy (*_6).1   @72:39
-  check.bounds const i32 2, copy _11   @72:39
-  _12 = copy (*_6).0   @72:39
-  _13 = copy (*_12)[const i32 2]   @72:39
-  _14 = call avant_str_size(copy _13) nocollect   @72:42
-  _15 = mul.chk copy _14, const i32 10   @72:48
-  _16 = add.chk copy _10, copy _15   @72:32
-  _17 = copy _8.1   @72:58
-  _18 = call avant_str_size(copy _17) nocollect   @72:63
-  _19 = add.chk copy _16, copy _18   @72:53
-  _20 = copy _8.0   @72:74
-  _21 = add.chk copy _19, copy _20   @72:69
-  _0 = copy _21   @72:8
+  _12 = cast copy _11 to i64   @72:39
+  check.bounds const i64 2, copy _12   @72:39
+  _13 = copy (*_6).0   @72:39
+  _14 = copy (*_13)[const i64 2]   @72:39
+  _15 = call avant_str_size(copy _14) nocollect   @72:42
+  _16 = mul copy _15, const i64 10   @72:48
+  _17 = add copy _10, copy _16   @72:32
+  _18 = copy _8.1   @72:58
+  _19 = call avant_str_size(copy _18) nocollect   @72:63
+  _20 = add copy _17, copy _19   @72:53
+  _21 = copy _8.0   @72:74
+  _22 = add.chk copy _20, copy _21   @72:69
+  _0 = copy _22   @72:8
   gc.leave   @72:8
   return   @72:8
 }
 
-fn av.spawn/main#spawn4(_1: ref) -> i32 frame @spawn.av:74:8 {
-  let _0: i32
+fn av.spawn/main#spawn4(_1: ref) -> i64 frame @spawn.av:74:8 {
+  let _0: i64
   let _1 (cap): ref
   let _2 (cap): ref %spawn_cap(av.spawn/main#spawn4)
   let _3: ref %Array(String)
   let _4 (many): ref %Array(String)
-  let _5 (total): i32
-  let _6 (i): i32
+  let _5 (total): i64
+  let _6 (i): i64
   let _7: i32
-  let _8: bool
-  let _9: i32
-  let _10: ref %elems(String)
-  let _11: ref str
-  let _12: i32
-  let _13: i32
-  let _14: i32
+  let _8: i64
+  let _9: bool
+  let _10: i32
+  let _11: i64
+  let _12: ref %elems(String)
+  let _13: ref str
+  let _14: i64
+  let _15: i64
+  let _16: i64
 
 bb0:
   gc.enter   @74:8
@@ -685,25 +699,27 @@ bb0:
   _2 = cast copy _1 to ref %spawn_cap(av.spawn/main#spawn4)   @74:8
   _3 = copy (*_2).0   @74:8
   _4 = copy _3   @74:8
-  _5 = const i32 0   @75:11
-  _6 = const i32 0   @76:7
+  _5 = const i64 0   @75:11
+  _6 = const i64 0   @76:7
   goto bb1   @77:5
 
 bb1:
   _7 = copy (*_4).1   @77:19
-  _8 = lt copy _6, copy _7   @77:13
-  branch copy _8, bb2, bb3   @77:5
+  _8 = cast copy _7 to i64   @77:19
+  _9 = lt copy _6, copy _8   @77:13
+  branch copy _9, bb2, bb3   @77:5
 
 bb2:
-  _9 = copy (*_4).1   @78:27
-  check.bounds copy _6, copy _9   @78:27
-  _10 = copy (*_4).0   @78:27
-  _11 = copy (*_10)[copy _6]   @78:27
-  _12 = call avant_str_size(copy _11) nocollect   @78:30
-  _13 = add.chk copy _5, copy _12   @78:21
-  _5 = copy _13   @78:13
-  _14 = add.chk copy _6, const i32 1   @79:13
-  _6 = copy _14   @79:9
+  _10 = copy (*_4).1   @78:27
+  _11 = cast copy _10 to i64   @78:27
+  check.bounds copy _6, copy _11   @78:27
+  _12 = copy (*_4).0   @78:27
+  _13 = copy (*_12)[copy _6]   @78:27
+  _14 = call avant_str_size(copy _13) nocollect   @78:30
+  _15 = add.chk copy _5, copy _14   @78:21
+  _5 = copy _15   @78:13
+  _16 = add.chk copy _6, const i64 1   @79:13
+  _6 = copy _16   @79:9
   goto bb1   @77:5
 
 bb3:
@@ -712,13 +728,13 @@ bb3:
   return   @74:8
 }
 
-fn av.spawn/main#spawn5(_1: ref) -> i32 frame @spawn.av:86:8 {
-  let _0: i32
+fn av.spawn/main#spawn5(_1: ref) -> i64 frame @spawn.av:86:8 {
+  let _0: i64
   let _1 (cap): ref
   let _2 (cap): ref %spawn_cap(av.spawn/main#spawn5)
-  let _3: i32
-  let _4 (b): i32
-  let _5: i32
+  let _3: i64
+  let _4 (b): i64
+  let _5: i64
 
 bb0:
   gc.enter   @86:8
@@ -726,19 +742,19 @@ bb0:
   _2 = cast copy _1 to ref %spawn_cap(av.spawn/main#spawn5)   @86:8
   _3 = copy (*_2).0   @86:8
   _4 = copy _3   @86:8
-  _5 = mul.chk copy _4, const i32 2   @86:18
+  _5 = mul.chk copy _4, const i64 2   @86:18
   _0 = copy _5   @86:8
   gc.leave   @86:8
   return   @86:8
 }
 
-fn av.spawn/main#spawn6(_1: ref) -> i32 frame @spawn.av:88:8 {
-  let _0: i32
+fn av.spawn/main#spawn6(_1: ref) -> i64 frame @spawn.av:88:8 {
+  let _0: i64
   let _1 (cap): ref
   let _2 (n): ref %box(Int) slot
   let _3 (name): ref %box(String) slot
   let _4 (cap): ref %spawn_cap(av.spawn/main#spawn6) slot
-  let _5: i32
+  let _5: i64
   let _6: ref str slot
   let _7: ref %env(av.spawn/main#lam2)
   let _8: %fn(Int):Int
@@ -747,13 +763,13 @@ fn av.spawn/main#spawn6(_1: ref) -> i32 frame @spawn.av:88:8 {
   let _11: %fn():Int
   let _12 (g): %fn():Int slot
   let _13: %fn(Int):Int
-  let _14: i32
+  let _14: i64
   let _15: %fn(Int):Int
-  let _16: i32
-  let _17: i32
+  let _16: i64
+  let _17: i64
   let _18: %fn():Int
-  let _19: i32
-  let _20: i32
+  let _19: i64
+  let _20: i64
 
 bb0:
   _2 = zero   @88:8
@@ -768,7 +784,7 @@ bb0:
   _3 = zero   @88:8
   _4 = cast copy _1 to ref %spawn_cap(av.spawn/main#spawn6)   @88:8
   _5 = copy (*_4).0   @88:8
-  _2 = call avant_alloc(const u64 4, const u32 4) collects   @88:8
+  _2 = call avant_alloc(const u64 8, const u32 4) collects   @88:8
   (*_2).0 = copy _5   @88:8
   _6 = copy (*_4).1   @88:8
   _3 = call avant_alloc(const u64 8, const u32 8) collects   @88:8
@@ -787,9 +803,9 @@ bb0:
   _11 = fnval %fn():Int (copy _10, const fn av.spawn/main#lam3)   @90:9
   _12 = copy _11   @90:7
   _13 = copy _9   @91:5
-  _14 = call indirect copy _13(const i32 1) collects   @91:5
+  _14 = call indirect copy _13(const i64 1) collects   @91:5
   _15 = copy _9   @91:12
-  _16 = call indirect copy _15(const i32 2) collects   @91:12
+  _16 = call indirect copy _15(const i64 2) collects   @91:12
   _17 = add.chk copy _14, copy _16   @91:10
   _18 = copy _12   @91:19
   _19 = call indirect copy _18() collects   @91:19
@@ -799,14 +815,14 @@ bb0:
   return   @88:8
 }
 
-fn av.spawn/main#lam2(_1: ref, _2: i32) -> i32 frame @spawn.av:89:23 {
-  let _0: i32
+fn av.spawn/main#lam2(_1: ref, _2: i64) -> i64 frame @spawn.av:89:23 {
+  let _0: i64
   let _1 (env): ref
-  let _2 (x): i32
+  let _2 (x): i64
   let _3 (env): ref %env(av.spawn/main#lam2)
   let _4: ref %box(Int)
-  let _5: i32
-  let _6: i32
+  let _5: i64
+  let _6: i64
 
 bb0:
   gc.enter   @89:23
@@ -820,16 +836,16 @@ bb0:
   return   @89:31
 }
 
-fn av.spawn/main#lam3(_1: ref) -> i32 frame @spawn.av:90:9 {
-  let _0: i32
+fn av.spawn/main#lam3(_1: ref) -> i64 frame @spawn.av:90:9 {
+  let _0: i64
   let _1 (env): ref
   let _2 (env): ref %env(av.spawn/main#lam3)
   let _3: ref %box(String)
   let _4: ref str
-  let _5: i32
+  let _5: i64
   let _6: ref %box(Int)
-  let _7: i32
-  let _8: i32
+  let _7: i64
+  let _8: i64
 
 bb0:
   gc.enter   @90:9
@@ -846,15 +862,15 @@ bb0:
   return   @90:24
 }
 
-fn av.spawn/main#spawn7(_1: ref) -> i32 frame @spawn.av:99:13 {
-  let _0: i32
+fn av.spawn/main#spawn7(_1: ref) -> i64 frame @spawn.av:99:13 {
+  let _0: i64
   let _1 (cap): ref
   let _2 (cap): ref %spawn_cap(av.spawn/main#spawn7)
   let _3: ref str
   let _4 (tag): ref str slot
-  let _5: i32
-  let _6: i32
-  let _7: i32
+  let _5: i64
+  let _6: i64
+  let _7: i64
 
 bb0:
   _4 = zero   @99:13
@@ -863,7 +879,7 @@ bb0:
   _2 = cast copy _1 to ref %spawn_cap(av.spawn/main#spawn7)   @99:13
   _3 = copy (*_2).0   @99:13
   _4 = copy _3   @99:13
-  _5 = call av.spawn/churn_sum(copy _4, const i32 3000) collects   @99:21
+  _5 = call av.spawn/churn_sum(copy _4, const i64 3000) collects   @99:21
   _6 = call avant_str_size(copy _4) nocollect   @99:47
   _7 = add.chk copy _5, copy _6   @99:42
   _0 = copy _7   @99:13
@@ -871,15 +887,15 @@ bb0:
   return   @99:13
 }
 
-fn av.spawn/main#spawn8(_1: ref) -> i32 frame @spawn.av:102:23 {
-  let _0: i32
+fn av.spawn/main#spawn8(_1: ref) -> i64 frame @spawn.av:102:23 {
+  let _0: i64
   let _1 (cap): ref
-  let _2: i32
+  let _2: i64
 
 bb0:
   gc.enter   @102:23
   gc.roots   @102:23
-  _2 = call av.spawn/churn_sum(const str.10, const i32 500) collects   @102:31
+  _2 = call av.spawn/churn_sum(const str.10, const i64 500) collects   @102:31
   _0 = copy _2   @102:23
   gc.leave   @102:23
   return   @102:23

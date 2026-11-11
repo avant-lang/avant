@@ -12,12 +12,12 @@ const str.2 = "retained-by-C-"
 const str.3 = "copied-in-C-"
 const str.4 = "overwritten-"
 const str.5 = "q9 pins: "
-const str.6 = "retained-by-C-42"
-const str.7 = "C's kept pointer reads the original: "
-const str.8 = "copied-in-C-49"
-const str.9 = "the struct C copied reads the original: "
-const str.10 = "overwritten-7"
-const str.11 = "the field reads the last value: "
+const str.6 = "C's kept pointer reads the original: "
+const str.7 = "retained-by-C-42"
+const str.8 = "the struct C copied reads the original: "
+const str.9 = "copied-in-C-49"
+const str.10 = "the field reads the last value: "
+const str.11 = "overwritten-7"
 const str.12 = "after release, pins: "
 const str.13 = "the released field reads null from C: "
 const str.14 = "released twice, pins: "
@@ -63,15 +63,16 @@ extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_gc_collect() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_pin(ref) -> void never
-extern avant_pin_count() -> i32 collects
+extern avant_pin_count() -> i64 collects
 extern avant_pin_field(ptr, ref) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_release_range(ptr, u64) -> void never
-extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_bool(i32) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
-extern avant_str_size(ref str) -> i32 never
+extern avant_str_from_int(i64) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
+extern avant_trap_convert(i64, i32) -> void never noreturn
 extern avant_unpin(ref) -> void never
 extern rel_clear(ptr %release.Holder) -> void collects
 extern rel_copy(ptr %release.Holder, ptr %release.Holder) -> void collects
@@ -89,26 +90,27 @@ extern rel_note_null(ptr %release.Holder) -> i32 collects
 extern rel_set_c_name(ptr %release.Holder) -> void collects
 extern rel_tag_null(ptr %release.Holder) -> i32 collects
 
-fn av.release/churn(_1: i32) -> i32 frame @release.av:46:1 {
-  let _0: i32
-  let _1 (n): i32
-  let _2 (t): i32
+fn av.release/churn(_1: i64) -> i64 frame @release.av:46:1 {
+  let _0: i64
+  let _1 (n): i64
+  let _2 (t): i64
   let _3: ref %elems(String) slot
   let _4: ref %Array(String)
   let _5 (keep): ref %Array(String) slot
-  let _6 (i): i32
+  let _6 (i): i64
   let _7: bool
   let _8: ref str slot
   let _9: ref str slot
   let _10: ref str
   let _11 (s): ref str slot
   let _12: i32
-  let _13: bool
-  let _14: ref %elems(String) slot
-  let _15: ref %Array(String)
-  let _16: i32
-  let _17: i32
-  let _18: i32
+  let _13: i64
+  let _14: bool
+  let _15: ref %elems(String) slot
+  let _16: ref %Array(String)
+  let _17: i64
+  let _18: i64
+  let _19: i64
 
 bb0:
   _3 = zero   @46:1
@@ -116,10 +118,10 @@ bb0:
   _8 = zero   @46:1
   _9 = zero   @46:1
   _11 = zero   @46:1
-  _14 = zero   @46:1
+  _15 = zero   @46:1
   gc.enter   @46:1
-  gc.roots _3, _5, _8, _9, _11, _14   @46:1
-  _2 = const i32 0   @47:5
+  gc.roots _3, _5, _8, _9, _11, _15   @46:1
+  _2 = const i64 0   @47:5
   _3 = call avant_alloc(const u64 0, const u32 65535) collects   @48:25
   _4 = call avant_alloc(const u64 16, const u32 1022) collects   @48:25
   barrier copy _4   @48:25
@@ -127,7 +129,7 @@ bb0:
   (*_4).1 = const i32 0   @48:25
   (*_4).2 = const i32 0   @48:25
   _5 = copy _4   @48:3
-  _6 = const i32 0   @49:5
+  _6 = const i64 0   @49:5
   goto bb1   @50:3
 
 bb1:
@@ -141,8 +143,9 @@ bb2:
   _11 = copy _10   @51:7
   call avant_array_push_ptr(copy _5, copy _11, const u32 65535) collects   @52:9
   _12 = copy (*_5).1   @53:12
-  _13 = gt copy _12, const i32 300   @53:18
-  branch copy _13, bb4, bb5   @53:5
+  _13 = cast copy _12 to i64   @53:12
+  _14 = gt copy _13, const i64 300   @53:18
+  branch copy _14, bb4, bb5   @53:5
 
 bb3:
   _0 = copy _2   @59:3
@@ -150,74 +153,82 @@ bb3:
   return   @59:3
 
 bb4:
-  _14 = call avant_alloc(const u64 0, const u32 65535) collects   @54:14
-  _15 = call avant_alloc(const u64 16, const u32 1022) collects   @54:14
-  barrier copy _15   @54:14
-  (*_15).0 = copy _14   @54:14
-  (*_15).1 = const i32 0   @54:14
-  (*_15).2 = const i32 0   @54:14
-  _5 = copy _15   @54:12
+  _15 = call avant_alloc(const u64 0, const u32 65535) collects   @54:14
+  _16 = call avant_alloc(const u64 16, const u32 1022) collects   @54:14
+  barrier copy _16   @54:14
+  (*_16).0 = copy _15   @54:14
+  (*_16).1 = const i32 0   @54:14
+  (*_16).2 = const i32 0   @54:14
+  _5 = copy _16   @54:12
   goto bb5   @53:5
 
 bb5:
-  _16 = call avant_str_size(copy _11) nocollect   @56:14
-  _17 = add.chk copy _2, copy _16   @56:11
-  _2 = copy _17   @56:7
-  _18 = add copy _6, const i32 1   @57:11
-  _6 = copy _18   @57:7
+  _17 = call avant_str_size(copy _11) nocollect   @56:14
+  _18 = add.chk copy _2, copy _17   @56:11
+  _2 = copy _18   @56:7
+  _19 = add copy _6, const i64 1   @57:11
+  _6 = copy _19   @57:7
   goto bb1   @50:3
 }
 
-fn av.release/q9_cases(_1: i32) -> void frame @release.av:65:1 {
-  let _1 (base): i32
+fn av.release/q9_cases(_1: i64) -> void frame @release.av:65:1 {
+  let _1 (base): i64
   let _2: ptr %release.Holder
   let _3 (a): ptr %release.Holder slot
   let _4: ptr %release.Holder
   let _5 (b): ptr %release.Holder slot
-  let _6 (k): i32
-  let _7: i32
+  let _6 (k): i64
+  let _7: i64
   let _8: ref str
   let _9: ptr
-  let _10: i32
+  let _10: i64
   let _11: ref str
   let _12: ptr
   let _13: ref str
   let _14: ptr
-  let _15: i32
-  let _16: i32
+  let _15: i64
+  let _16: i64
   let _17: ref str
-  let _18: i32
-  let _19 (t): i32
-  let _20: i32
-  let _21: i32
+  let _18: i64
+  let _19 (t): i64
+  let _20: i64
+  let _21: i64
   let _22: bool
   let _23: i32
   let _24: ref str slot
   let _25: ref str
   let _26: ref str slot
   let _27: i32
-  let _28: ref str
+  let _28: i64
   let _29: ref str slot
-  let _30: i32
-  let _31: ref str
-  let _32: ref str slot
-  let _33: i32
-  let _34: ref str
-  let _35: ptr
-  let _36: i32
+  let _30: ref str
+  let _31: ref str slot
+  let _32: i32
+  let _33: i64
+  let _34: ref str slot
+  let _35: ref str
+  let _36: ref str slot
   let _37: i32
-  let _38: ref str
-  let _39: i32
+  let _38: i64
+  let _39: ref str slot
   let _40: ref str
   let _41: ptr
-  let _42: i32
-  let _43: i32
+  let _42: i64
+  let _43: i64
   let _44: ref str
   let _45: i32
-  let _46: bool
-  let _47: i32
-  let _48: ref str slot
-  let _49: ref str
+  let _46: i64
+  let _47: ref str slot
+  let _48: ref str
+  let _49: ptr
+  let _50: i64
+  let _51: i64
+  let _52: ref str
+  let _53: i64
+  let _54: bool
+  let _55: i32
+  let _56: ref str slot
+  let _57: ref str
 
 bb0:
   _3 = zero   @65:1
@@ -225,22 +236,26 @@ bb0:
   _24 = zero   @65:1
   _26 = zero   @65:1
   _29 = zero   @65:1
-  _32 = zero   @65:1
-  _48 = zero   @65:1
+  _31 = zero   @65:1
+  _34 = zero   @65:1
+  _36 = zero   @65:1
+  _39 = zero   @65:1
+  _47 = zero   @65:1
+  _56 = zero   @65:1
   gc.enter   @65:1
-  gc.roots _3, _5, _24, _26, _29, _32, _48   @65:1
+  gc.roots _3, _5, _24, _26, _29, _31, _34, _36, _39, _47, _56   @65:1
   _2 = call rel_new() collects   @66:10
   _3 = copy _2   @66:5
   _4 = call rel_new() collects   @67:10
   _5 = copy _4   @67:5
-  _6 = const i32 7   @68:5
-  _7 = mul copy _6, const i32 6   @69:31
+  _6 = const i64 7   @68:5
+  _7 = mul copy _6, const i64 6   @69:31
   _8 = call avant_str_cat_i32(const str.2, copy _7) collects   @69:12
   _9 = addr (*_3).0   @69:10
   call avant_pin_field(copy _9, copy _8) nocollect   @69:10
   (*_3).0 = copy _8   @69:10
   call rel_keep(copy _3) collects   @70:6
-  _10 = mul copy _6, const i32 7   @71:29
+  _10 = mul copy _6, const i64 7   @71:29
   _11 = call avant_str_cat_i32(const str.3, copy _10) collects   @71:12
   _12 = addr (*_3).0   @71:10
   call avant_pin_field(copy _12, copy _11) nocollect   @71:10
@@ -254,105 +269,118 @@ bb0:
   _16 = sub.chk copy _15, copy _1   @74:42
   _17 = call avant_str_cat_i32(const str.5, copy _16) collects   @74:8
   call avant_puts_str(copy _17) nocollect   @74:3
-  _18 = call av.release/churn(const i32 100000) collects   @75:7
+  _18 = call av.release/churn(const i64 100000) collects   @75:7
   _19 = copy _18   @75:5
   call avant_gc_collect() collects   @76:6
-  _20 = call av.release/churn(const i32 100000) collects   @77:11
+  _20 = call av.release/churn(const i64 100000) collects   @77:11
   _21 = add.chk copy _19, copy _20   @77:9
   _19 = copy _21   @77:5
   call avant_gc_collect() collects   @78:6
-  _22 = gt copy _19, const i32 0   @79:19
+  _22 = gt copy _19, const i64 0   @79:19
   _23 = cast copy _22 to i32   @79:19
   _24 = call avant_str_from_bool(copy _23) collects   @79:19
   _25 = call avant_str_concat(const str.0, copy _24) collects   @79:8
   call avant_puts_str(copy _25) nocollect   @79:3
-  _26 = const str.6   @80:64
+  _26 = const str.7   @80:64
   _27 = call rel_kept_is(copy _26) collects   @80:51
-  _28 = call avant_str_cat_i32(const str.7, copy _27) collects   @80:8
-  call avant_puts_str(copy _28) nocollect   @80:3
-  _29 = const str.8   @81:70
-  _30 = call rel_name_is(copy _5, copy _29) collects   @81:54
-  _31 = call avant_str_cat_i32(const str.9, copy _30) collects   @81:8
-  call avant_puts_str(copy _31) nocollect   @81:3
-  _32 = const str.10   @82:62
-  _33 = call rel_name_is(copy _3, copy _32) collects   @82:46
-  _34 = call avant_str_cat_i32(const str.11, copy _33) collects   @82:8
-  call avant_puts_str(copy _34) nocollect   @82:3
+  _28 = cast copy _27 to i64   @80:51
+  _29 = call avant_str_from_int(copy _28) collects   @80:51
+  _30 = call avant_str_concat(const str.6, copy _29) collects   @80:8
+  call avant_puts_str(copy _30) nocollect   @80:3
+  _31 = const str.9   @81:70
+  _32 = call rel_name_is(copy _5, copy _31) collects   @81:54
+  _33 = cast copy _32 to i64   @81:54
+  _34 = call avant_str_from_int(copy _33) collects   @81:54
+  _35 = call avant_str_concat(const str.8, copy _34) collects   @81:8
+  call avant_puts_str(copy _35) nocollect   @81:3
+  _36 = const str.11   @82:62
+  _37 = call rel_name_is(copy _3, copy _36) collects   @82:46
+  _38 = cast copy _37 to i64   @82:46
+  _39 = call avant_str_from_int(copy _38) collects   @82:46
+  _40 = call avant_str_concat(const str.10, copy _39) collects   @82:8
+  call avant_puts_str(copy _40) nocollect   @82:3
   call rel_forget() collects   @83:6
   call rel_clear(copy _5) collects   @84:6
-  _35 = addr (*_3).0   @85:3
-  call avant_release_range(copy _35, const u64 8) nocollect   @85:3
-  _36 = call avant_pin_count() collects   @86:35
-  _37 = sub.chk copy _36, copy _1   @86:54
-  _38 = call avant_str_cat_i32(const str.12, copy _37) collects   @86:8
-  call avant_puts_str(copy _38) nocollect   @86:3
-  _39 = call rel_name_null(copy _3) collects   @87:52
-  _40 = call avant_str_cat_i32(const str.13, copy _39) collects   @87:8
-  call avant_puts_str(copy _40) nocollect   @87:3
-  _41 = addr (*_3).0   @88:3
-  call avant_release_range(copy _41, const u64 8) nocollect   @88:3
-  _42 = call avant_pin_count() collects   @89:36
-  _43 = sub.chk copy _42, copy _1   @89:55
-  _44 = call avant_str_cat_i32(const str.14, copy _43) collects   @89:8
-  call avant_puts_str(copy _44) nocollect   @89:3
-  _45 = call av.release/churn(const i32 100000) collects   @90:7
-  _19 = copy _45   @90:5
+  _41 = addr (*_3).0   @85:3
+  call avant_release_range(copy _41, const u64 8) nocollect   @85:3
+  _42 = call avant_pin_count() collects   @86:35
+  _43 = sub.chk copy _42, copy _1   @86:54
+  _44 = call avant_str_cat_i32(const str.12, copy _43) collects   @86:8
+  call avant_puts_str(copy _44) nocollect   @86:3
+  _45 = call rel_name_null(copy _3) collects   @87:52
+  _46 = cast copy _45 to i64   @87:52
+  _47 = call avant_str_from_int(copy _46) collects   @87:52
+  _48 = call avant_str_concat(const str.13, copy _47) collects   @87:8
+  call avant_puts_str(copy _48) nocollect   @87:3
+  _49 = addr (*_3).0   @88:3
+  call avant_release_range(copy _49, const u64 8) nocollect   @88:3
+  _50 = call avant_pin_count() collects   @89:36
+  _51 = sub.chk copy _50, copy _1   @89:55
+  _52 = call avant_str_cat_i32(const str.14, copy _51) collects   @89:8
+  call avant_puts_str(copy _52) nocollect   @89:3
+  _53 = call av.release/churn(const i64 100000) collects   @90:7
+  _19 = copy _53   @90:5
   call avant_gc_collect() collects   @91:6
-  _46 = gt copy _19, const i32 0   @92:33
-  _47 = cast copy _46 to i32   @92:33
-  _48 = call avant_str_from_bool(copy _47) collects   @92:33
-  _49 = call avant_str_concat(const str.15, copy _48) collects   @92:8
-  call avant_puts_str(copy _49) nocollect   @92:3
+  _54 = gt copy _19, const i64 0   @92:33
+  _55 = cast copy _54 to i32   @92:33
+  _56 = call avant_str_from_bool(copy _55) collects   @92:33
+  _57 = call avant_str_concat(const str.15, copy _56) collects   @92:8
+  call avant_puts_str(copy _57) nocollect   @92:3
   call rel_free(copy _3) collects   @93:6
   call rel_free(copy _5) collects   @94:6
   gc.leave   @65:1
   return   @65:1
 }
 
-fn av.release/c_values(_1: i32) -> void frame @release.av:100:1 {
-  let _1 (base): i32
+fn av.release/c_values(_1: i64) -> void frame @release.av:100:1 {
+  let _1 (base): i64
   let _2: ptr %release.Holder
   let _3 (c): ptr %release.Holder slot
   let _4: ptr
-  let _5: i32
-  let _6: i32
+  let _5: i64
+  let _6: i64
   let _7: ref str slot
   let _8: i32
-  let _9: ref str slot
+  let _9: i64
   let _10: ref str slot
   let _11: ref str slot
-  let _12: ref str
-  let _13: ptr
-  let _14: i32
-  let _15: ref str
-  let _16 (k): i32
-  let _17: ref str
-  let _18: ptr
-  let _19: i32
-  let _20: i32
-  let _21: ref str
-  let _22: ptr
-  let _23: i32
-  let _24: i32
-  let _25: ref str slot
-  let _26: i32
-  let _27: ref str slot
+  let _12: ref str slot
+  let _13: ref str
+  let _14: ptr
+  let _15: i32
+  let _16: i64
+  let _17: ref str slot
+  let _18: ref str
+  let _19 (k): i64
+  let _20: ref str
+  let _21: ptr
+  let _22: i64
+  let _23: i64
+  let _24: ref str
+  let _25: ptr
+  let _26: i64
+  let _27: i64
   let _28: ref str slot
-  let _29: ref str slot
-  let _30: ref str
+  let _29: i32
+  let _30: i64
+  let _31: ref str slot
+  let _32: ref str slot
+  let _33: ref str slot
+  let _34: ref str
 
 bb0:
   _3 = zero   @100:1
   _7 = zero   @100:1
-  _9 = zero   @100:1
   _10 = zero   @100:1
   _11 = zero   @100:1
-  _25 = zero   @100:1
-  _27 = zero   @100:1
+  _12 = zero   @100:1
+  _17 = zero   @100:1
   _28 = zero   @100:1
-  _29 = zero   @100:1
+  _31 = zero   @100:1
+  _32 = zero   @100:1
+  _33 = zero   @100:1
   gc.enter   @100:1
-  gc.roots _3, _7, _9, _10, _11, _25, _27, _28, _29   @100:1
+  gc.roots _3, _7, _10, _11, _12, _17, _28, _31, _32, _33   @100:1
   _2 = call rel_new() collects   @101:10
   _3 = copy _2   @101:5
   _4 = addr (*_3).4   @102:3
@@ -361,161 +389,178 @@ bb0:
   _6 = sub.chk copy _5, copy _1   @103:52
   _7 = call avant_str_from_int(copy _6) collects   @103:52
   _8 = call rel_note_null(copy _3) collects   @103:76
-  _9 = call avant_str_from_int(copy _8) collects   @103:76
-  _10 = call avant_str_concat(const str.16, copy _7) collects   @103:8
-  _11 = call avant_str_concat(copy _10, const str.17) collects   @103:8
-  _12 = call avant_str_concat(copy _11, copy _9) collects   @103:8
-  call avant_puts_str(copy _12) nocollect   @103:3
+  _9 = cast copy _8 to i64   @103:76
+  _10 = call avant_str_from_int(copy _9) collects   @103:76
+  _11 = call avant_str_concat(const str.16, copy _7) collects   @103:8
+  _12 = call avant_str_concat(copy _11, const str.17) collects   @103:8
+  _13 = call avant_str_concat(copy _12, copy _10) collects   @103:8
+  call avant_puts_str(copy _13) nocollect   @103:3
   call rel_set_c_name(copy _3) collects   @104:6
-  _13 = addr (*_3).0   @105:3
-  call avant_release_range(copy _13, const u64 8) nocollect   @105:3
+  _14 = addr (*_3).0   @105:3
+  call avant_release_range(copy _14, const u64 8) nocollect   @105:3
   call avant_release_range(copy _3, const u64 48) nocollect   @106:3
-  _14 = call rel_name_is_c(copy _3) collects   @107:34
-  _15 = call avant_str_cat_i32(const str.18, copy _14) collects   @107:8
-  call avant_puts_str(copy _15) nocollect   @107:3
-  _16 = const i32 3   @108:5
-  _17 = call avant_str_cat_i32(const str.19, copy _16) collects   @109:12
-  _18 = addr (*_3).0   @109:10
-  call avant_pin_field(copy _18, copy _17) nocollect   @109:10
-  (*_3).0 = copy _17   @109:10
+  _15 = call rel_name_is_c(copy _3) collects   @107:34
+  _16 = cast copy _15 to i64   @107:34
+  _17 = call avant_str_from_int(copy _16) collects   @107:34
+  _18 = call avant_str_concat(const str.18, copy _17) collects   @107:8
+  call avant_puts_str(copy _18) nocollect   @107:3
+  _19 = const i64 3   @108:5
+  _20 = call avant_str_cat_i32(const str.19, copy _19) collects   @109:12
+  _21 = addr (*_3).0   @109:10
+  call avant_pin_field(copy _21, copy _20) nocollect   @109:10
+  (*_3).0 = copy _20   @109:10
   call rel_set_c_name(copy _3) collects   @110:6
-  _19 = call avant_pin_count() collects   @111:52
-  _20 = sub.chk copy _19, copy _1   @111:71
-  _21 = call avant_str_cat_i32(const str.20, copy _20) collects   @111:8
-  call avant_puts_str(copy _21) nocollect   @111:3
-  _22 = addr (*_3).0   @112:3
-  call avant_release_range(copy _22, const u64 8) nocollect   @112:3
-  _23 = call avant_pin_count() collects   @113:29
-  _24 = sub.chk copy _23, copy _1   @113:48
-  _25 = call avant_str_from_int(copy _24) collects   @113:48
-  _26 = call rel_name_is_c(copy _3) collects   @113:77
-  _27 = call avant_str_from_int(copy _26) collects   @113:77
-  _28 = call avant_str_concat(const str.21, copy _25) collects   @113:8
-  _29 = call avant_str_concat(copy _28, const str.22) collects   @113:8
-  _30 = call avant_str_concat(copy _29, copy _27) collects   @113:8
-  call avant_puts_str(copy _30) nocollect   @113:3
+  _22 = call avant_pin_count() collects   @111:52
+  _23 = sub.chk copy _22, copy _1   @111:71
+  _24 = call avant_str_cat_i32(const str.20, copy _23) collects   @111:8
+  call avant_puts_str(copy _24) nocollect   @111:3
+  _25 = addr (*_3).0   @112:3
+  call avant_release_range(copy _25, const u64 8) nocollect   @112:3
+  _26 = call avant_pin_count() collects   @113:29
+  _27 = sub.chk copy _26, copy _1   @113:48
+  _28 = call avant_str_from_int(copy _27) collects   @113:48
+  _29 = call rel_name_is_c(copy _3) collects   @113:77
+  _30 = cast copy _29 to i64   @113:77
+  _31 = call avant_str_from_int(copy _30) collects   @113:77
+  _32 = call avant_str_concat(const str.21, copy _28) collects   @113:8
+  _33 = call avant_str_concat(copy _32, const str.22) collects   @113:8
+  _34 = call avant_str_concat(copy _33, copy _31) collects   @113:8
+  call avant_puts_str(copy _34) nocollect   @113:3
   call rel_free(copy _3) collects   @114:6
   gc.leave   @100:1
   return   @100:1
 }
 
-fn av.release/struct_release(_1: i32) -> void frame @release.av:118:1 {
-  let _1 (base): i32
+fn av.release/struct_release(_1: i64) -> void frame @release.av:118:1 {
+  let _1 (base): i64
   let _2: ptr %release.Holder
   let _3 (e): ptr %release.Holder slot
-  let _4 (k): i32
+  let _4 (k): i64
   let _5: ref str
   let _6: ptr
   let _7: ref str
   let _8: ptr
-  let _9: ref str
-  let _10: ptr
-  let _11: i32
-  let _12: i32
-  let _13: ref str
-  let _14: ptr
-  let _15: i32
-  let _16: i32
-  let _17: ref str slot
-  let _18: i32
-  let _19: ref str slot
-  let _20: i32
-  let _21: ref str slot
-  let _22: ref str slot
+  let _9: i64
+  let _10: bool
+  let _11: bool
+  let _12: bool
+  let _13: bool
+  let _14: i32
+  let _15: ref str
+  let _16: ptr
+  let _17: i64
+  let _18: i64
+  let _19: ref str
+  let _20: ptr
+  let _21: i64
+  let _22: i64
   let _23: ref str slot
-  let _24: ref str slot
-  let _25: ref str slot
-  let _26: ref str
+  let _24: i32
+  let _25: i64
+  let _26: ref str slot
   let _27: i32
-  let _28: i32
+  let _28: i64
   let _29: ref str slot
-  let _30: i32
+  let _30: ref str slot
   let _31: ref str slot
-  let _32: i32
+  let _32: ref str slot
   let _33: ref str slot
-  let _34: i32
-  let _35: ref str slot
-  let _36: ref str slot
+  let _34: ref str
+  let _35: i64
+  let _36: i64
   let _37: ref str slot
-  let _38: ref str slot
-  let _39: ref str slot
+  let _38: i32
+  let _39: i64
   let _40: ref str slot
-  let _41: ref str slot
-  let _42: ref str
-  let _43: ref str
-  let _44 (s): ref str slot
-  let _45: ref str slot
-  let _46: ptr
-  let _47: ptr
-  let _48: i32
-  let _49: i32
-  let _50: ref str
-  let _51: i32
-  let _52: i32
+  let _41: i32
+  let _42: i64
+  let _43: ref str slot
+  let _44: i32
+  let _45: i64
+  let _46: ref str slot
+  let _47: ref str slot
+  let _48: ref str slot
+  let _49: ref str slot
+  let _50: ref str slot
+  let _51: ref str slot
+  let _52: ref str slot
   let _53: ref str
-  let _54: ptr
-  let _55: ptr
-  let _56: ptr
-  let _57: i32
-  let _58: i32
-  let _59: ref str slot
-  let _60: ref str slot
-  let _61: i32
-  let _62: ref str slot
-  let _63: ref str slot
-  let _64: ref str slot
-  let _65: ref str
+  let _54: ref str
+  let _55 (s): ref str slot
+  let _56: ref str slot
+  let _57: ptr
+  let _58: ptr
+  let _59: i64
+  let _60: i64
+  let _61: ref str
+  let _62: i64
+  let _63: i64
+  let _64: ref str
+  let _65: ptr
   let _66: ptr
-  let _67: i32
-  let _68: i32
-  let _69: ref str
-  let _70: ref str
-  let _71: ptr
-  let _72: ptr
-  let _73: i32
-  let _74: i32
+  let _67: ptr
+  let _68: i64
+  let _69: i64
+  let _70: ref str slot
+  let _71: ref str slot
+  let _72: i32
+  let _73: i64
+  let _74: ref str slot
   let _75: ref str slot
-  let _76: i32
-  let _77: ref str slot
-  let _78: ref str slot
-  let _79: ref str slot
-  let _80: ref str
+  let _76: ref str slot
+  let _77: ref str
+  let _78: ptr
+  let _79: i64
+  let _80: i64
+  let _81: ref str
+  let _82: ref str
+  let _83: ptr
+  let _84: ptr
+  let _85: i64
+  let _86: i64
+  let _87: ref str slot
+  let _88: i32
+  let _89: i64
+  let _90: ref str slot
+  let _91: ref str slot
+  let _92: ref str slot
+  let _93: ref str
 
 bb0:
   _3 = zero   @118:1
-  _17 = zero   @118:1
-  _19 = zero   @118:1
-  _21 = zero   @118:1
-  _22 = zero   @118:1
   _23 = zero   @118:1
-  _24 = zero   @118:1
-  _25 = zero   @118:1
+  _26 = zero   @118:1
   _29 = zero   @118:1
+  _30 = zero   @118:1
   _31 = zero   @118:1
+  _32 = zero   @118:1
   _33 = zero   @118:1
-  _35 = zero   @118:1
-  _36 = zero   @118:1
   _37 = zero   @118:1
-  _38 = zero   @118:1
-  _39 = zero   @118:1
   _40 = zero   @118:1
-  _41 = zero   @118:1
-  _44 = zero   @118:1
-  _45 = zero   @118:1
-  _59 = zero   @118:1
-  _60 = zero   @118:1
-  _62 = zero   @118:1
-  _63 = zero   @118:1
-  _64 = zero   @118:1
+  _43 = zero   @118:1
+  _46 = zero   @118:1
+  _47 = zero   @118:1
+  _48 = zero   @118:1
+  _49 = zero   @118:1
+  _50 = zero   @118:1
+  _51 = zero   @118:1
+  _52 = zero   @118:1
+  _55 = zero   @118:1
+  _56 = zero   @118:1
+  _70 = zero   @118:1
+  _71 = zero   @118:1
+  _74 = zero   @118:1
   _75 = zero   @118:1
-  _77 = zero   @118:1
-  _78 = zero   @118:1
-  _79 = zero   @118:1
+  _76 = zero   @118:1
+  _87 = zero   @118:1
+  _90 = zero   @118:1
+  _91 = zero   @118:1
+  _92 = zero   @118:1
   gc.enter   @118:1
-  gc.roots _3, _17, _19, _21, _22, _23, _24, _25, _29, _31, _33, _35, _36, _37, _38, _39, _40, _41, _44, _45, _59, _60, _62, _63, _64, _75, _77, _78, _79   @118:1
+  gc.roots _3, _23, _26, _29, _30, _31, _32, _33, _37, _40, _43, _46, _47, _48, _49, _50, _51, _52, _55, _56, _70, _71, _74, _75, _76, _87, _90, _91, _92   @118:1
   _2 = call rel_new() collects   @119:10
   _3 = copy _2   @119:5
-  _4 = const i32 5   @120:5
+  _4 = const i64 5   @120:5
   _5 = call avant_str_cat_i32(const str.23, copy _4) collects   @121:12
   _6 = addr (*_3).0   @121:10
   call avant_pin_field(copy _6, copy _5) nocollect   @121:10
@@ -524,121 +569,141 @@ bb0:
   _8 = addr (*_3).3.0   @122:12
   call avant_pin_field(copy _8, copy _7) nocollect   @122:12
   (*_3).3.0 = copy _7   @122:12
-  (*_3).3.1 = copy _4   @123:10
-  _9 = call avant_str_cat_i32(const str.25, copy _4) collects   @124:12
-  _10 = addr (*_3).4   @124:10
-  call avant_pin_field(copy _10, copy _9) nocollect   @124:10
-  (*_3).4 = copy _9   @124:10
+  _9 = copy _4   @123:13
+  _10 = ge copy _9, const i64 0   @123:13
+  _11 = ge copy _9, const i64 -2147483648   @123:13
+  _12 = le copy _9, const i64 2147483647   @123:13
+  _13 = and copy _11, copy _12   @123:13
+  branch copy _13, bb2, bb1   @123:13
+
+bb1:
+  call avant_trap_convert(copy _9, const i32 17) nocollect   @123:13
+  unreachable   @123:13
+
+bb2:
+  _14 = cast copy _9 to i32   @123:13
+  (*_3).3.1 = copy _14   @123:10
+  _15 = call avant_str_cat_i32(const str.25, copy _4) collects   @124:12
+  _16 = addr (*_3).4   @124:10
+  call avant_pin_field(copy _16, copy _15) nocollect   @124:10
+  (*_3).4 = copy _15   @124:10
   (*_3).1 = const i32 9   @125:8
-  _11 = call avant_pin_count() collects   @126:27
-  _12 = sub.chk copy _11, copy _1   @126:46
-  _13 = call avant_str_cat_i32(const str.26, copy _12) collects   @126:8
-  call avant_puts_str(copy _13) nocollect   @126:3
-  _14 = addr (*_3).3   @127:3
-  call avant_release_range(copy _14, const u64 16) nocollect   @127:3
-  _15 = call avant_pin_count() collects   @128:36
-  _16 = sub.chk copy _15, copy _1   @128:55
-  _17 = call avant_str_from_int(copy _16) collects   @128:55
-  _18 = call rel_tag_null(copy _3) collects   @128:78
-  _19 = call avant_str_from_int(copy _18) collects   @128:78
-  _20 = copy (*_3).3.1   @128:105
-  _21 = call avant_str_from_int(copy _20) collects   @128:105
-  _22 = call avant_str_concat(const str.27, copy _17) collects   @128:8
-  _23 = call avant_str_concat(copy _22, const str.28) collects   @128:8
-  _24 = call avant_str_concat(copy _23, copy _19) collects   @128:8
-  _25 = call avant_str_concat(copy _24, const str.29) collects   @128:8
-  _26 = call avant_str_concat(copy _25, copy _21) collects   @128:8
-  call avant_puts_str(copy _26) nocollect   @128:3
+  _17 = call avant_pin_count() collects   @126:27
+  _18 = sub.chk copy _17, copy _1   @126:46
+  _19 = call avant_str_cat_i32(const str.26, copy _18) collects   @126:8
+  call avant_puts_str(copy _19) nocollect   @126:3
+  _20 = addr (*_3).3   @127:3
+  call avant_release_range(copy _20, const u64 16) nocollect   @127:3
+  _21 = call avant_pin_count() collects   @128:36
+  _22 = sub.chk copy _21, copy _1   @128:55
+  _23 = call avant_str_from_int(copy _22) collects   @128:55
+  _24 = call rel_tag_null(copy _3) collects   @128:78
+  _25 = cast copy _24 to i64   @128:78
+  _26 = call avant_str_from_int(copy _25) collects   @128:78
+  _27 = copy (*_3).3.1   @128:105
+  _28 = cast copy _27 to i64   @128:105
+  _29 = call avant_str_from_int(copy _28) collects   @128:105
+  _30 = call avant_str_concat(const str.27, copy _23) collects   @128:8
+  _31 = call avant_str_concat(copy _30, const str.28) collects   @128:8
+  _32 = call avant_str_concat(copy _31, copy _26) collects   @128:8
+  _33 = call avant_str_concat(copy _32, const str.29) collects   @128:8
+  _34 = call avant_str_concat(copy _33, copy _29) collects   @128:8
+  call avant_puts_str(copy _34) nocollect   @128:3
   call avant_release_range(copy _3, const u64 48) nocollect   @129:3
-  _27 = call avant_pin_count() collects   @130:36
-  _28 = sub.chk copy _27, copy _1   @130:55
-  _29 = call avant_str_from_int(copy _28) collects   @130:55
-  _30 = call rel_name_null(copy _3) collects   @130:79
-  _31 = call avant_str_from_int(copy _30) collects   @130:79
-  _32 = call rel_note_null(copy _3) collects   @130:114
-  _33 = call avant_str_from_int(copy _32) collects   @130:114
-  _34 = copy (*_3).1   @130:140
-  _35 = call avant_str_from_int(copy _34) collects   @130:140
-  _36 = call avant_str_concat(const str.30, copy _29) collects   @130:8
-  _37 = call avant_str_concat(copy _36, const str.31) collects   @130:8
-  _38 = call avant_str_concat(copy _37, copy _31) collects   @130:8
-  _39 = call avant_str_concat(copy _38, const str.17) collects   @130:8
-  _40 = call avant_str_concat(copy _39, copy _33) collects   @130:8
-  _41 = call avant_str_concat(copy _40, const str.32) collects   @130:8
-  _42 = call avant_str_concat(copy _41, copy _35) collects   @130:8
-  call avant_puts_str(copy _42) nocollect   @130:3
-  _43 = call avant_str_cat_i32(const str.33, copy _4) collects   @131:7
-  _44 = copy _43   @131:5
-  _45 = copy _44   @132:3
-  call avant_pin(copy _45) nocollect   @132:3
-  _46 = addr (*_3).0   @133:12
-  call avant_pin_field(copy _46, copy _44) nocollect   @133:12
-  (*_3).0 = copy _44   @133:12
-  _47 = addr (*_3).0   @134:5
-  call avant_release_range(copy _47, const u64 8) nocollect   @134:5
-  _48 = call avant_pin_count() collects   @135:36
-  _49 = sub.chk copy _48, copy _1   @135:55
-  _50 = call avant_str_cat_i32(const str.34, copy _49) collects   @135:10
-  call avant_puts_str(copy _50) nocollect   @135:5
-  call avant_unpin(copy _45) nocollect   @132:3
-  _51 = call avant_pin_count() collects   @137:33
-  _52 = sub.chk copy _51, copy _1   @137:52
-  _53 = call avant_str_cat_i32(const str.35, copy _52) collects   @137:8
-  call avant_puts_str(copy _53) nocollect   @137:3
-  _54 = addr (*_3).0   @138:10
-  call avant_pin_field(copy _54, copy _44) nocollect   @138:10
-  (*_3).0 = copy _44   @138:10
-  _55 = addr (*_3).4   @139:10
-  call avant_pin_field(copy _55, copy _44) nocollect   @139:10
-  (*_3).4 = copy _44   @139:10
-  _56 = addr (*_3).0   @140:3
-  call avant_release_range(copy _56, const u64 8) nocollect   @140:3
-  _57 = call avant_pin_count() collects   @141:47
-  _58 = sub.chk copy _57, copy _1   @141:66
-  _59 = call avant_str_from_int(copy _58) collects   @141:66
-  _60 = const str.38   @141:116
-  _61 = call rel_note_is(copy _3, copy _60) collects   @141:100
-  _62 = call avant_str_from_int(copy _61) collects   @141:100
-  _63 = call avant_str_concat(const str.36, copy _59) collects   @141:8
-  _64 = call avant_str_concat(copy _63, const str.37) collects   @141:8
-  _65 = call avant_str_concat(copy _64, copy _62) collects   @141:8
-  call avant_puts_str(copy _65) nocollect   @141:3
-  _66 = addr (*_3).4   @142:3
-  call avant_release_range(copy _66, const u64 8) nocollect   @142:3
-  _67 = call avant_pin_count() collects   @143:34
-  _68 = sub.chk copy _67, copy _1   @143:53
-  _69 = call avant_str_cat_i32(const str.39, copy _68) collects   @143:8
-  call avant_puts_str(copy _69) nocollect   @143:3
-  _70 = const str.40   @144:10
-  _71 = addr (*_3).0   @144:10
-  call avant_pin_field(copy _71, copy _70) nocollect   @144:10
-  (*_3).0 = copy _70   @144:10
-  _72 = addr (*_3).0   @145:3
-  call avant_release_range(copy _72, const u64 8) nocollect   @145:3
-  _73 = call avant_pin_count() collects   @146:39
-  _74 = sub.chk copy _73, copy _1   @146:58
-  _75 = call avant_str_from_int(copy _74) collects   @146:58
-  _76 = call rel_name_null(copy _3) collects   @146:82
-  _77 = call avant_str_from_int(copy _76) collects   @146:82
-  _78 = call avant_str_concat(const str.41, copy _75) collects   @146:8
-  _79 = call avant_str_concat(copy _78, const str.31) collects   @146:8
-  _80 = call avant_str_concat(copy _79, copy _77) collects   @146:8
-  call avant_puts_str(copy _80) nocollect   @146:3
+  _35 = call avant_pin_count() collects   @130:36
+  _36 = sub.chk copy _35, copy _1   @130:55
+  _37 = call avant_str_from_int(copy _36) collects   @130:55
+  _38 = call rel_name_null(copy _3) collects   @130:79
+  _39 = cast copy _38 to i64   @130:79
+  _40 = call avant_str_from_int(copy _39) collects   @130:79
+  _41 = call rel_note_null(copy _3) collects   @130:114
+  _42 = cast copy _41 to i64   @130:114
+  _43 = call avant_str_from_int(copy _42) collects   @130:114
+  _44 = copy (*_3).1   @130:140
+  _45 = cast copy _44 to i64   @130:140
+  _46 = call avant_str_from_int(copy _45) collects   @130:140
+  _47 = call avant_str_concat(const str.30, copy _37) collects   @130:8
+  _48 = call avant_str_concat(copy _47, const str.31) collects   @130:8
+  _49 = call avant_str_concat(copy _48, copy _40) collects   @130:8
+  _50 = call avant_str_concat(copy _49, const str.17) collects   @130:8
+  _51 = call avant_str_concat(copy _50, copy _43) collects   @130:8
+  _52 = call avant_str_concat(copy _51, const str.32) collects   @130:8
+  _53 = call avant_str_concat(copy _52, copy _46) collects   @130:8
+  call avant_puts_str(copy _53) nocollect   @130:3
+  _54 = call avant_str_cat_i32(const str.33, copy _4) collects   @131:7
+  _55 = copy _54   @131:5
+  _56 = copy _55   @132:3
+  call avant_pin(copy _56) nocollect   @132:3
+  _57 = addr (*_3).0   @133:12
+  call avant_pin_field(copy _57, copy _55) nocollect   @133:12
+  (*_3).0 = copy _55   @133:12
+  _58 = addr (*_3).0   @134:5
+  call avant_release_range(copy _58, const u64 8) nocollect   @134:5
+  _59 = call avant_pin_count() collects   @135:36
+  _60 = sub.chk copy _59, copy _1   @135:55
+  _61 = call avant_str_cat_i32(const str.34, copy _60) collects   @135:10
+  call avant_puts_str(copy _61) nocollect   @135:5
+  call avant_unpin(copy _56) nocollect   @132:3
+  _62 = call avant_pin_count() collects   @137:33
+  _63 = sub.chk copy _62, copy _1   @137:52
+  _64 = call avant_str_cat_i32(const str.35, copy _63) collects   @137:8
+  call avant_puts_str(copy _64) nocollect   @137:3
+  _65 = addr (*_3).0   @138:10
+  call avant_pin_field(copy _65, copy _55) nocollect   @138:10
+  (*_3).0 = copy _55   @138:10
+  _66 = addr (*_3).4   @139:10
+  call avant_pin_field(copy _66, copy _55) nocollect   @139:10
+  (*_3).4 = copy _55   @139:10
+  _67 = addr (*_3).0   @140:3
+  call avant_release_range(copy _67, const u64 8) nocollect   @140:3
+  _68 = call avant_pin_count() collects   @141:47
+  _69 = sub.chk copy _68, copy _1   @141:66
+  _70 = call avant_str_from_int(copy _69) collects   @141:66
+  _71 = const str.38   @141:116
+  _72 = call rel_note_is(copy _3, copy _71) collects   @141:100
+  _73 = cast copy _72 to i64   @141:100
+  _74 = call avant_str_from_int(copy _73) collects   @141:100
+  _75 = call avant_str_concat(const str.36, copy _70) collects   @141:8
+  _76 = call avant_str_concat(copy _75, const str.37) collects   @141:8
+  _77 = call avant_str_concat(copy _76, copy _74) collects   @141:8
+  call avant_puts_str(copy _77) nocollect   @141:3
+  _78 = addr (*_3).4   @142:3
+  call avant_release_range(copy _78, const u64 8) nocollect   @142:3
+  _79 = call avant_pin_count() collects   @143:34
+  _80 = sub.chk copy _79, copy _1   @143:53
+  _81 = call avant_str_cat_i32(const str.39, copy _80) collects   @143:8
+  call avant_puts_str(copy _81) nocollect   @143:3
+  _82 = const str.40   @144:10
+  _83 = addr (*_3).0   @144:10
+  call avant_pin_field(copy _83, copy _82) nocollect   @144:10
+  (*_3).0 = copy _82   @144:10
+  _84 = addr (*_3).0   @145:3
+  call avant_release_range(copy _84, const u64 8) nocollect   @145:3
+  _85 = call avant_pin_count() collects   @146:39
+  _86 = sub.chk copy _85, copy _1   @146:58
+  _87 = call avant_str_from_int(copy _86) collects   @146:58
+  _88 = call rel_name_null(copy _3) collects   @146:82
+  _89 = cast copy _88 to i64   @146:82
+  _90 = call avant_str_from_int(copy _89) collects   @146:82
+  _91 = call avant_str_concat(const str.41, copy _87) collects   @146:8
+  _92 = call avant_str_concat(copy _91, const str.31) collects   @146:8
+  _93 = call avant_str_concat(copy _92, copy _90) collects   @146:8
+  call avant_puts_str(copy _93) nocollect   @146:3
   call rel_free(copy _3) collects   @147:6
   gc.leave   @118:1
   return   @118:1
 }
 
-fn av.release/bounded(_1: i32) -> void frame @release.av:152:1 {
-  let _1 (base): i32
+fn av.release/bounded(_1: i64) -> void frame @release.av:152:1 {
+  let _1 (base): i64
   let _2 (big): ref str slot
-  let _3: i32
+  let _3: i64
   let _4: bool
   let _5: ref str
   let _6: ptr %release.Holder
   let _7 (h): ptr %release.Holder slot
-  let _8 (ok): i32
-  let _9 (i): i32
+  let _8 (ok): i64
+  let _9 (i): i64
   let _10: bool
   let _11: ref str slot
   let _12: ref str slot
@@ -646,18 +711,19 @@ fn av.release/bounded(_1: i32) -> void frame @release.av:152:1 {
   let _14 (s): ref str slot
   let _15: ptr
   let _16: i32
-  let _17: i32
-  let _18: bool
-  let _19: i32
-  let _20: ptr
-  let _21: i32
-  let _22: ref str slot
-  let _23: i32
-  let _24: i32
-  let _25: ref str slot
+  let _17: i64
+  let _18: i64
+  let _19: bool
+  let _20: i64
+  let _21: ptr
+  let _22: i64
+  let _23: ref str slot
+  let _24: i64
+  let _25: i64
   let _26: ref str slot
   let _27: ref str slot
-  let _28: ref str
+  let _28: ref str slot
+  let _29: ref str
 
 bb0:
   _2 = zero   @152:1
@@ -665,18 +731,18 @@ bb0:
   _11 = zero   @152:1
   _12 = zero   @152:1
   _14 = zero   @152:1
-  _22 = zero   @152:1
-  _25 = zero   @152:1
+  _23 = zero   @152:1
   _26 = zero   @152:1
   _27 = zero   @152:1
+  _28 = zero   @152:1
   gc.enter   @152:1
-  gc.roots _2, _7, _11, _12, _14, _22, _25, _26, _27   @152:1
+  gc.roots _2, _7, _11, _12, _14, _23, _26, _27, _28   @152:1
   _2 = const str.42   @153:7
   goto bb1   @154:3
 
 bb1:
   _3 = call avant_str_size(copy _2) nocollect   @154:12
-  _4 = lt copy _3, const i32 262144   @154:18
+  _4 = lt copy _3, const i64 262144   @154:18
   branch copy _4, bb2, bb3   @154:3
 
 bb2:
@@ -687,12 +753,12 @@ bb2:
 bb3:
   _6 = call rel_new() collects   @157:10
   _7 = copy _6   @157:5
-  _8 = const i32 0   @158:6
-  _9 = const i32 0   @159:5
+  _8 = const i64 0   @158:6
+  _9 = const i64 0   @159:5
   goto bb4   @160:3
 
 bb4:
-  _10 = lt copy _9, const i32 400   @160:11
+  _10 = lt copy _9, const i64 400   @160:11
   branch copy _10, bb5, bb6   @160:3
 
 bb5:
@@ -704,35 +770,36 @@ bb5:
   call avant_pin_field(copy _15, copy _14) nocollect   @162:12
   (*_7).0 = copy _14   @162:12
   call rel_keep(copy _7) collects   @163:8
-  _16 = call rel_name_len(copy _7) collects   @164:11
-  _17 = call avant_str_size(copy _14) nocollect   @164:32
-  _18 = eq copy _16, copy _17   @164:28
-  branch copy _18, bb7, bb8   @164:5
+  _16 = call rel_name_len(copy _7) collects   @164:12
+  _17 = cast copy _16 to i64   @164:27
+  _18 = call avant_str_size(copy _14) nocollect   @164:37
+  _19 = eq copy _17, copy _18   @164:33
+  branch copy _19, bb7, bb8   @164:5
 
 bb6:
-  _22 = call avant_str_from_int(copy _8) collects   @171:30
-  _23 = call avant_pin_count() collects   @171:45
-  _24 = sub.chk copy _23, copy _1   @171:64
-  _25 = call avant_str_from_int(copy _24) collects   @171:64
-  _26 = call avant_str_concat(const str.44, copy _22) collects   @171:8
-  _27 = call avant_str_concat(copy _26, const str.45) collects   @171:8
-  _28 = call avant_str_concat(copy _27, copy _25) collects   @171:8
-  call avant_puts_str(copy _28) nocollect   @171:3
+  _23 = call avant_str_from_int(copy _8) collects   @171:30
+  _24 = call avant_pin_count() collects   @171:45
+  _25 = sub.chk copy _24, copy _1   @171:64
+  _26 = call avant_str_from_int(copy _25) collects   @171:64
+  _27 = call avant_str_concat(const str.44, copy _23) collects   @171:8
+  _28 = call avant_str_concat(copy _27, const str.45) collects   @171:8
+  _29 = call avant_str_concat(copy _28, copy _26) collects   @171:8
+  call avant_puts_str(copy _29) nocollect   @171:3
   call rel_free(copy _7) collects   @172:6
   gc.leave   @152:1
   return   @152:1
 
 bb7:
-  _19 = add.chk copy _8, const i32 1   @165:15
-  _8 = copy _19   @165:10
+  _20 = add.chk copy _8, const i64 1   @165:15
+  _8 = copy _20   @165:10
   goto bb8   @164:5
 
 bb8:
   call rel_forget() collects   @167:8
-  _20 = addr (*_7).0   @168:5
-  call avant_release_range(copy _20, const u64 8) nocollect   @168:5
-  _21 = add copy _9, const i32 1   @169:11
-  _9 = copy _21   @169:7
+  _21 = addr (*_7).0   @168:5
+  call avant_release_range(copy _21, const u64 8) nocollect   @168:5
+  _22 = add copy _9, const i64 1   @169:11
+  _9 = copy _22   @169:7
   goto bb4   @160:3
 }
 
@@ -740,9 +807,9 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @release.av:175:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
-  let _4 (base): i32
-  let _5: i32
+  let _3: i64
+  let _4 (base): i64
+  let _5: i64
 
 bb0:
   gc.enter   @175:1

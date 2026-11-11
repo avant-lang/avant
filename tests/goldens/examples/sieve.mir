@@ -1,10 +1,10 @@
 module sieve
 file 0 "sieve.av"
 
-layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -13,57 +13,63 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_trap_negative(i32, i32) -> void never noreturn
+extern avant_trap_negative(i64, i32) -> void never noreturn
+extern avant_trap_size(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.sieve/sieve(_1: i32) -> i32 frame @sieve.av:1:1 {
-  let _0: i32
-  let _1 (n): i32
-  let _2: i32
+fn av.sieve/sieve(_1: i64) -> i64 frame @sieve.av:1:1 {
+  let _0: i64
+  let _1 (n): i64
+  let _2: i64
   let _3: bool
-  let _4: u64
+  let _4: bool
   let _5: u64
-  let _6: ref %elems(Int) slot
-  let _7: ref %Array(Int)
-  let _8 (flags): ref %Array(Int)
-  let _9 (i): i32
-  let _10 (__for0_end): i32
-  let _11: bool
-  let _12: ref %elems(Int)
-  let _13: i32
-  let _14: i32
-  let _15: ref %elems(Int)
-  let _16: bool
-  let _17: i32
+  let _6: u64
+  let _7: ref %elems(Int) slot
+  let _8: i32
+  let _9: ref %Array(Int)
+  let _10 (flags): ref %Array(Int)
+  let _11 (i): i64
+  let _12 (__for0_end): i64
+  let _13: bool
+  let _14: ref %elems(Int)
+  let _15: i64
+  let _16: i32
+  let _17: i64
   let _18: ref %elems(Int)
-  let _19 (p): i32
+  let _19: bool
   let _20: i32
-  let _21: bool
-  let _22: i32
-  let _23: ref %elems(Int)
-  let _24: i32
+  let _21: i64
+  let _22: ref %elems(Int)
+  let _23 (p): i64
+  let _24: i64
   let _25: bool
   let _26: i32
-  let _27 (k): i32
-  let _28: bool
-  let _29: ref %elems(Int)
-  let _30: i32
-  let _31: i32
-  let _32 (count): i32
-  let _33 (__for1_end): i32
-  let _34: bool
-  let _35: ref %elems(Int)
-  let _36: i32
-  let _37: bool
-  let _38: i32
-  let _39: i32
+  let _27: i64
+  let _28: ref %elems(Int)
+  let _29: i64
+  let _30: bool
+  let _31: i64
+  let _32 (k): i64
+  let _33: bool
+  let _34: ref %elems(Int)
+  let _35: i64
+  let _36: i64
+  let _37 (count): i64
+  let _38 (__for1_end): i64
+  let _39: bool
+  let _40: ref %elems(Int)
+  let _41: i64
+  let _42: bool
+  let _43: i64
+  let _44: i64
 
 bb0:
-  _6 = zero   @1:1
+  _7 = zero   @1:1
   gc.enter   @1:1
-  gc.roots _6   @1:1
+  gc.roots _7   @1:1
   _2 = copy _1   @2:11
-  _3 = lt copy _2, const i32 0   @2:11
+  _3 = lt copy _2, const i64 0   @2:11
   branch copy _3, bb1, bb2   @2:11
 
 bb1:
@@ -71,130 +77,142 @@ bb1:
   unreachable   @2:11
 
 bb2:
-  _4 = cast copy _2 to u64   @2:11
-  _5 = mul copy _4, const u64 4   @2:11
-  _6 = call avant_alloc(copy _5, const u32 0) collects   @2:11
-  _7 = call avant_alloc(const u64 16, const u32 1022) collects   @2:11
-  barrier copy _7   @2:11
-  (*_7).0 = copy _6   @2:11
-  (*_7).1 = copy _2   @2:11
-  (*_7).2 = copy _2   @2:11
-  _8 = copy _7   @2:9
-  _9 = const i32 0   @3:3
-  _10 = copy _1   @3:3
-  goto bb3   @3:3
+  _4 = gt copy _2, const i64 2147483647   @2:11
+  branch copy _4, bb3, bb4   @2:11
 
 bb3:
-  _11 = lt copy _9, copy _10   @3:3
-  branch copy _11, bb4, bb5   @3:3
+  call avant_trap_size(const i32 2) nocollect   @2:11
+  unreachable   @2:11
 
 bb4:
-  _12 = copy (*_8).0   @4:10
-  (*_12)[copy _9] = const i32 1   @4:14
-  _13 = add copy _9, const i32 1   @3:3
-  _9 = copy _13   @3:3
-  goto bb3   @3:3
+  _5 = cast copy _2 to u64   @2:11
+  _6 = mul copy _5, const u64 8   @2:11
+  _7 = call avant_alloc(copy _6, const u32 0) collects   @2:11
+  _8 = cast copy _2 to i32   @2:11
+  _9 = call avant_alloc(const u64 16, const u32 1022) collects   @2:11
+  barrier copy _9   @2:11
+  (*_9).0 = copy _7   @2:11
+  (*_9).1 = copy _8   @2:11
+  (*_9).2 = copy _8   @2:11
+  _10 = copy _9   @2:9
+  _11 = const i64 0   @3:3
+  _12 = copy _1   @3:3
+  goto bb5   @3:3
 
 bb5:
-  _14 = copy (*_8).1   @6:8
-  check.bounds const i32 0, copy _14   @6:8
-  _15 = copy (*_8).0   @6:8
-  (*_15)[const i32 0] = const i32 0   @6:12
-  _16 = gt copy _1, const i32 1   @7:8
-  branch copy _16, bb6, bb7   @7:3
+  _13 = lt copy _11, copy _12   @3:3
+  branch copy _13, bb6, bb7   @3:3
 
 bb6:
-  _17 = copy (*_8).1   @8:10
-  check.bounds const i32 1, copy _17   @8:10
-  _18 = copy (*_8).0   @8:10
-  (*_18)[const i32 1] = const i32 0   @8:14
-  goto bb7   @7:3
+  _14 = copy (*_10).0   @4:10
+  (*_14)[copy _11] = const i64 1   @4:14
+  _15 = add copy _11, const i64 1   @3:3
+  _11 = copy _15   @3:3
+  goto bb5   @3:3
 
 bb7:
-  _19 = const i32 2   @10:5
-  goto bb8   @11:3
+  _16 = copy (*_10).1   @6:8
+  _17 = cast copy _16 to i64   @6:8
+  check.bounds const i64 0, copy _17   @6:8
+  _18 = copy (*_10).0   @6:8
+  (*_18)[const i64 0] = const i64 0   @6:12
+  _19 = gt copy _1, const i64 1   @7:8
+  branch copy _19, bb8, bb9   @7:3
 
 bb8:
-  _20 = mul copy _19, copy _19   @11:11
-  _21 = lt copy _20, copy _1   @11:15
-  branch copy _21, bb9, bb10   @11:3
+  _20 = copy (*_10).1   @8:10
+  _21 = cast copy _20 to i64   @8:10
+  check.bounds const i64 1, copy _21   @8:10
+  _22 = copy (*_10).0   @8:10
+  (*_22)[const i64 1] = const i64 0   @8:14
+  goto bb9   @7:3
 
 bb9:
-  _22 = copy (*_8).1   @12:13
-  check.bounds copy _19, copy _22   @12:13
-  _23 = copy (*_8).0   @12:13
-  _24 = copy (*_23)[copy _19]   @12:13
-  _25 = eq copy _24, const i32 1   @12:17
-  branch copy _25, bb11, bb12   @12:5
+  _23 = const i64 2   @10:5
+  goto bb10   @11:3
 
 bb10:
-  _32 = const i32 0   @21:9
-  _9 = const i32 0   @22:3
-  _33 = copy _1   @22:3
-  goto bb16   @22:3
+  _24 = mul copy _23, copy _23   @11:11
+  _25 = lt copy _24, copy _1   @11:15
+  branch copy _25, bb11, bb12   @11:3
 
 bb11:
-  _26 = mul.chk copy _19, copy _19   @13:13
-  _27 = copy _26   @13:9
-  goto bb13   @14:7
+  _26 = copy (*_10).1   @12:13
+  _27 = cast copy _26 to i64   @12:13
+  check.bounds copy _23, copy _27   @12:13
+  _28 = copy (*_10).0   @12:13
+  _29 = copy (*_28)[copy _23]   @12:13
+  _30 = eq copy _29, const i64 1   @12:17
+  branch copy _30, bb13, bb14   @12:5
 
 bb12:
-  _31 = add.chk copy _19, const i32 1   @19:11
-  _19 = copy _31   @19:7
-  goto bb8   @11:3
+  _37 = const i64 0   @21:9
+  _11 = const i64 0   @22:3
+  _38 = copy _1   @22:3
+  goto bb18   @22:3
 
 bb13:
-  _28 = lt copy _27, copy _1   @14:15
-  branch copy _28, bb14, bb15   @14:7
+  _31 = mul.chk copy _23, copy _23   @13:13
+  _32 = copy _31   @13:9
+  goto bb15   @14:7
 
 bb14:
-  _29 = copy (*_8).0   @15:14
-  (*_29)[copy _27] = const i32 0   @15:18
-  _30 = add.chk copy _27, copy _19   @16:15
-  _27 = copy _30   @16:11
-  goto bb13   @14:7
+  _36 = add.chk copy _23, const i64 1   @19:11
+  _23 = copy _36   @19:7
+  goto bb10   @11:3
 
 bb15:
-  goto bb12   @12:5
+  _33 = lt copy _32, copy _1   @14:15
+  branch copy _33, bb16, bb17   @14:7
 
 bb16:
-  _34 = lt copy _9, copy _33   @22:3
-  branch copy _34, bb17, bb18   @22:3
+  _34 = copy (*_10).0   @15:14
+  (*_34)[copy _32] = const i64 0   @15:18
+  _35 = add.chk copy _32, copy _23   @16:15
+  _32 = copy _35   @16:11
+  goto bb15   @14:7
 
 bb17:
-  _35 = copy (*_8).0   @23:13
-  _36 = copy (*_35)[copy _9]   @23:13
-  _37 = eq copy _36, const i32 1   @23:17
-  branch copy _37, bb19, bb20   @23:5
+  goto bb14   @12:5
 
 bb18:
-  _0 = copy _32   @27:3
+  _39 = lt copy _11, copy _38   @22:3
+  branch copy _39, bb19, bb20   @22:3
+
+bb19:
+  _40 = copy (*_10).0   @23:13
+  _41 = copy (*_40)[copy _11]   @23:13
+  _42 = eq copy _41, const i64 1   @23:17
+  branch copy _42, bb21, bb22   @23:5
+
+bb20:
+  _0 = copy _37   @27:3
   gc.leave   @27:3
   return   @27:3
 
-bb19:
-  _38 = add.chk copy _32, const i32 1   @24:21
-  _32 = copy _38   @24:13
-  goto bb20   @23:5
+bb21:
+  _43 = add.chk copy _37, const i64 1   @24:21
+  _37 = copy _43   @24:13
+  goto bb22   @23:5
 
-bb20:
-  _39 = add copy _9, const i32 1   @22:3
-  _9 = copy _39   @22:3
-  goto bb16   @22:3
+bb22:
+  _44 = add copy _11, const i64 1   @22:3
+  _11 = copy _44   @22:3
+  goto bb18   @22:3
 }
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @sieve.av:30:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
 
 bb0:
   gc.enter   @30:1
   gc.roots _2   @30:1
   call __avant_type_maps() nocollect   @30:1
   call avant_io_init_argv(copy _1, copy _2) collects   @30:1
-  _3 = call av.sieve/sieve(const i32 100) collects   @31:8
+  _3 = call av.sieve/sieve(const i64 100) collects   @31:8
   call printf(const str.0, copy _3) nocollect   @31:3
   _0 = const i32 0   @30:1
   gc.leave   @30:1

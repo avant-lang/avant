@@ -1,14 +1,14 @@
 module structs
 file 0 "structs.av"
 
-layout %structs.Holder = class { 0 tag: ref str, 1 v: %structs.Vec, 2 named: %structs.Named }  size 56 align 8 id 1
-layout %structs.Vec = struct { 0 x: i32, 1 y: i32 }  size 8 align 4
-layout %structs.Named = struct { 0 id: i32, 1 name: ref str, 2 pos: %structs.Vec, 3 big: i64, 4 on: bool }  size 40 align 8
-layout %structs.Link = struct { 0 key: i32, 1 obj: ref %structs.Holder }  size 16 align 8
+layout %structs.Holder = class { 0 tag: ref str, 1 v: %structs.Vec, 2 named: %structs.Named }  size 72 align 8 id 1
+layout %structs.Vec = struct { 0 x: i64, 1 y: i64 }  size 16 align 8
+layout %structs.Named = struct { 0 id: i64, 1 name: ref str, 2 pos: %structs.Vec, 3 big: i64, 4 on: bool }  size 48 align 8
+layout %structs.Link = struct { 0 key: i64, 1 obj: ref %structs.Holder }  size 16 align 8
 
 const str.0 = "/"
 const str.1 = ","
-const str.2 = "%d\0A"
+const str.2 = "%lld\0A"
 const str.3 = "y"
 const str.4 = "x"
 const str.5 = "first"
@@ -22,7 +22,7 @@ const str.11 = ""
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
-typemap 1 %structs.Holder stride 0 bits [0x9]
+typemap 1 %structs.Holder stride 0 bits [0x11]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
@@ -30,19 +30,18 @@ extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_bool(i32) -> ref str collects
-extern avant_str_from_i64(i64) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
+extern avant_str_from_int(i64) -> ref str collects
 extern printf(ref str, ...) -> i32 never
 
 fn av.structs/Named.show(_1: addr %structs.Named) -> ref str frame @structs.av:41:1 {
   let _0: ref str
   let _1 (n): addr %structs.Named slot
-  let _2: i32
+  let _2: i64
   let _3: ref str slot
   let _4: ref str slot
-  let _5: i32
+  let _5: i64
   let _6: ref str slot
-  let _7: i32
+  let _7: i64
   let _8: ref str slot
   let _9: i64
   let _10: ref str slot
@@ -86,7 +85,7 @@ bb0:
   _7 = copy (*_1).2.1   @42:40
   _8 = call avant_str_from_int(copy _7) collects   @42:40
   _9 = copy (*_1).3   @42:47
-  _10 = call avant_str_from_i64(copy _9) collects   @42:47
+  _10 = call avant_str_from_int(copy _9) collects   @42:47
   _11 = copy (*_1).4   @42:56
   _12 = cast copy _11 to i32   @42:56
   _13 = call avant_str_from_bool(copy _12) collects   @42:56
@@ -114,14 +113,14 @@ bb0:
   barrier_at copy _1   @46:10
   (*_1).1 = copy _2   @46:10
   _3 = addr (*_1).2   @47:8
-  call av.structs/Vec.scale(copy _3, const i32 10) nocollect   @47:8
+  call av.structs/Vec.scale(copy _3, const i64 10) nocollect   @47:8
   return   @45:1
 }
 
-fn av.structs/say(_1: ref str, _2: i32) -> i32 leaf @structs.av:66:1 {
-  let _0: i32
+fn av.structs/say(_1: ref str, _2: i64) -> i64 leaf @structs.av:66:1 {
+  let _0: i64
   let _1 (tag): ref str
-  let _2 (v): i32
+  let _2 (v): i64
 
 bb0:
   call avant_puts_str(copy _1) nocollect   @67:3
@@ -129,10 +128,10 @@ bb0:
   return   @68:3
 }
 
-fn av.structs/make_vec(_1: i32, _2: i32) -> %structs.Vec leaf @structs.av:71:1 {
+fn av.structs/make_vec(_1: i64, _2: i64) -> %structs.Vec leaf @structs.av:71:1 {
   let _0: %structs.Vec
-  let _1 (a): i32
-  let _2 (b): i32
+  let _1 (a): i64
+  let _2 (b): i64
   let _3: %structs.Vec
 
 bb0:
@@ -144,8 +143,8 @@ bb0:
 fn av.structs/swap(_1: %structs.Vec) -> %structs.Vec leaf @structs.av:75:1 {
   let _0: %structs.Vec
   let _1 (v): %structs.Vec
-  let _2: i32
-  let _3: i32
+  let _2: i64
+  let _3: i64
   let _4: %structs.Vec
 
 bb0:
@@ -156,16 +155,16 @@ bb0:
   return   @76:3
 }
 
-fn av.structs/bump_copy(_1: %structs.Vec) -> i32 leaf @structs.av:79:1 {
-  let _0: i32
+fn av.structs/bump_copy(_1: %structs.Vec) -> i64 leaf @structs.av:79:1 {
+  let _0: i64
   let _1 (v): %structs.Vec
   let _2: addr %structs.Vec
   let _3: addr %structs.Vec
-  let _4: i32
+  let _4: i64
 
 bb0:
   _2 = addr _1   @80:4
-  call av.structs/Vec.scale(copy _2, const i32 100) nocollect   @80:4
+  call av.structs/Vec.scale(copy _2, const i64 100) nocollect   @80:4
   _3 = addr _1   @81:4
   _4 = call av.structs/Vec.sum(copy _3) nocollect   @81:4
   _0 = copy _4   @81:4
@@ -179,39 +178,39 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @structs.av:84:1 {
   let _3: %structs.Vec
   let _4 (a): %structs.Vec
   let _5: addr %structs.Vec
-  let _6: i32
+  let _6: i64
   let _7 (b): %structs.Vec
-  let _8: i32
-  let _9: i32
+  let _8: i64
+  let _9: i64
   let _10: %structs.Vec
   let _11: %structs.Vec
-  let _12: i32
-  let _13: i32
+  let _12: i64
+  let _13: i64
   let _14: addr %structs.Vec
-  let _15: i32
+  let _15: i64
   let _16: addr %structs.Vec
-  let _17: i32
-  let _18: i32
+  let _17: i64
+  let _18: i64
   let _19: addr %structs.Vec
   let _20: %structs.Vec
   let _21: %structs.Vec
-  let _22: i32
-  let _23: i32
+  let _22: i64
+  let _23: i64
   let _24: addr %structs.Vec
-  let _25: i32
+  let _25: i64
   let _26: %structs.Vec
   let _27: %structs.Vec
   let _28: addr %structs.Vec
   let _29: %structs.Vec
   let _30: %structs.Vec
   let _31: addr %structs.Vec
-  let _32: i32
-  let _33: i32
-  let _34: i32
+  let _32: i64
+  let _33: i64
+  let _34: i64
   let _35: %structs.Vec
   let _36 (w): %structs.Vec
   let _37: addr %structs.Vec
-  let _38: i32
+  let _38: i64
   let _39: %structs.Vec
   let _40: %structs.Named
   let _41 (n): %structs.Named slot
@@ -221,16 +220,16 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @structs.av:84:1 {
   let _45: addr %structs.Named
   let _46: ref str
   let _47 (m): %structs.Named
-  let _48: i32
-  let _49: i32
+  let _48: i64
+  let _49: i64
   let _50: ref %structs.Holder
   let _51 (h): ref %structs.Holder slot
-  let _52: i32
+  let _52: i64
   let _53: addr %structs.Named
   let _54: ref str
   let _55: addr %structs.Vec
   let _56: addr %structs.Vec
-  let _57: i32
+  let _57: i64
   let _58: addr %structs.Named
   let _59: ref str
   let _60: ref str
@@ -239,7 +238,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @structs.av:84:1 {
   let _63: ref %structs.Holder
   let _64: ref str
   let _65 (l2): %structs.Link
-  let _66: i32
+  let _66: i64
   let _67: ref %structs.Holder
   let _68: ref str
 
@@ -250,13 +249,13 @@ bb0:
   gc.roots _2, _41, _51   @84:1
   call __avant_type_maps() nocollect   @84:1
   call avant_io_init_argv(copy _1, copy _2) collects   @84:1
-  _3 = call av.structs/make_vec(const i32 1, const i32 2) nocollect   @85:7
+  _3 = call av.structs/make_vec(const i64 1, const i64 2) nocollect   @85:7
   _4 = copy _3   @85:5
   _5 = addr _4   @86:9
   _6 = call av.structs/Vec.sum(copy _5) nocollect   @86:9
   call printf(const str.2, copy _6) nocollect   @86:3
   _7 = copy _4   @87:5
-  _7.0 = const i32 50   @88:7
+  _7.0 = const i64 50   @88:7
   _8 = copy _4.0   @89:9
   call printf(const str.2, copy _8) nocollect   @89:3
   _9 = copy _7.0   @90:9
@@ -271,7 +270,7 @@ bb0:
   _15 = call av.structs/Vec.sum(copy _14) nocollect   @93:9
   call printf(const str.2, copy _15) nocollect   @93:3
   _16 = addr _4   @94:4
-  call av.structs/Vec.scale(copy _16, const i32 4) nocollect   @94:4
+  call av.structs/Vec.scale(copy _16, const i64 4) nocollect   @94:4
   _17 = copy _4.0   @95:9
   call printf(const str.2, copy _17) nocollect   @95:3
   _18 = copy _4.1   @96:9
@@ -286,7 +285,7 @@ bb0:
   _24 = addr _4   @99:9
   _25 = call av.structs/Vec.norm1(copy _24) nocollect   @99:9
   call printf(const str.2, copy _25) nocollect   @99:3
-  _26 = call av.structs/make_vec(const i32 3, const i32 4) nocollect   @100:8
+  _26 = call av.structs/make_vec(const i64 3, const i64 4) nocollect   @100:8
   _27 = copy _26   @100:8
   _28 = addr _27   @100:22
   _29 = call av.structs/Vec.twice(copy _28) nocollect   @100:22
@@ -294,15 +293,15 @@ bb0:
   _31 = addr _30   @100:30
   _32 = call av.structs/Vec.sum(copy _31) nocollect   @100:30
   call printf(const str.2, copy _32) nocollect   @100:3
-  _33 = call av.structs/say(const str.3, const i32 6) nocollect   @103:16
-  _34 = call av.structs/say(const str.4, const i32 5) nocollect   @103:32
+  _33 = call av.structs/say(const str.3, const i64 6) nocollect   @103:16
+  _34 = call av.structs/say(const str.4, const i64 5) nocollect   @103:32
   _35 = struct %structs.Vec (copy _34, copy _33)   @103:7
   _36 = copy _35   @103:5
   _37 = addr _36   @104:9
   _38 = call av.structs/Vec.sum(copy _37) nocollect   @104:9
   call printf(const str.2, copy _38) nocollect   @104:3
-  _39 = struct %structs.Vec (const i32 1, const i32 1)   @106:42
-  _40 = struct %structs.Named (const i32 7, const str.5, copy _39, const i64 9000000000, const bool true)   @106:7
+  _39 = struct %structs.Vec (const i64 1, const i64 1)   @106:42
+  _40 = struct %structs.Named (const i64 7, const str.5, copy _39, const i64 9000000000, const bool true)   @106:7
   _41 = copy _40   @106:5
   _42 = addr _41   @107:9
   _43 = call av.structs/Named.show(copy _42) collects   @107:9
@@ -313,7 +312,7 @@ bb0:
   _46 = call av.structs/Named.show(copy _45) collects   @109:9
   call avant_puts_str(copy _46) nocollect   @109:3
   _47 = copy _41   @110:5
-  _47.2.1 = const i32 99   @111:11
+  _47.2.1 = const i64 99   @111:11
   _48 = copy _41.2.1   @112:13
   call printf(const str.2, copy _48) nocollect   @112:3
   _49 = copy _47.2.1   @113:13
@@ -330,8 +329,8 @@ bb0:
   _54 = call av.structs/Named.show(copy _53) collects   @120:15
   call avant_puts_str(copy _54) nocollect   @120:3
   _55 = addr (*_51).1   @121:6
-  call av.structs/Vec.scale(copy _55, const i32 2) nocollect   @121:6
-  (*_51).2.2.0 = const i32 123   @122:17
+  call av.structs/Vec.scale(copy _55, const i64 2) nocollect   @121:6
+  (*_51).2.2.0 = const i64 123   @122:17
   _56 = addr (*_51).1   @123:11
   _57 = call av.structs/Vec.sum(copy _56) nocollect   @123:11
   call printf(const str.2, copy _57) nocollect   @123:3
@@ -342,7 +341,7 @@ bb0:
   (*_51).2.1 = const str.7   @125:16
   _60 = copy (*_51).2.1   @126:15
   call avant_puts_str(copy _60) nocollect   @126:3
-  _61 = struct %structs.Link (const i32 3, copy _51)   @128:7
+  _61 = struct %structs.Link (const i64 3, copy _51)   @128:7
   _62 = copy _61   @128:5
   _63 = copy _62.1   @129:4
   barrier copy _63   @129:13
@@ -350,7 +349,7 @@ bb0:
   _64 = copy (*_51).0   @130:9
   call avant_puts_str(copy _64) nocollect   @130:3
   _65 = copy _62   @131:6
-  _65.0 = const i32 4   @132:10
+  _65.0 = const i64 4   @132:10
   _66 = copy _62.0   @133:9
   call printf(const str.2, copy _66) nocollect   @133:3
   _67 = copy _65.1   @134:10
@@ -361,12 +360,12 @@ bb0:
   return   @84:1
 }
 
-fn av.structs/Vec.sum(_1: addr %structs.Vec) -> i32 leaf @structs.av:13:3 {
-  let _0: i32
+fn av.structs/Vec.sum(_1: addr %structs.Vec) -> i64 leaf @structs.av:13:3 {
+  let _0: i64
   let _1 (self): addr %structs.Vec
-  let _2: i32
-  let _3: i32
-  let _4: i32
+  let _2: i64
+  let _3: i64
+  let _4: i64
 
 bb0:
   _2 = copy (*_1).0   @14:5
@@ -376,13 +375,13 @@ bb0:
   return   @14:7
 }
 
-fn av.structs/Vec.scale(_1: addr %structs.Vec, _2: i32) -> void leaf @structs.av:17:3 {
+fn av.structs/Vec.scale(_1: addr %structs.Vec, _2: i64) -> void leaf @structs.av:17:3 {
   let _1 (self): addr %structs.Vec
-  let _2 (k): i32
-  let _3: i32
-  let _4: i32
-  let _5: i32
-  let _6: i32
+  let _2 (k): i64
+  let _3: i64
+  let _4: i64
+  let _5: i64
+  let _6: i64
 
 bb0:
   _3 = copy (*_1).0   @18:14
@@ -405,22 +404,22 @@ bb0:
   _2 = copy (*_1)   @23:9
   _3 = copy _2   @23:7
   _4 = addr _3   @24:6
-  call av.structs/Vec.scale(copy _4, const i32 2) nocollect   @24:6
+  call av.structs/Vec.scale(copy _4, const i64 2) nocollect   @24:6
   _0 = copy _3   @25:5
   return   @25:5
 }
 
-fn av.structs/Vec.norm1(_1: addr %structs.Vec) -> i32 leaf @structs.av:28:3 {
-  let _0: i32
+fn av.structs/Vec.norm1(_1: addr %structs.Vec) -> i64 leaf @structs.av:28:3 {
+  let _0: i64
   let _1 (self): addr %structs.Vec
   let _2: addr %structs.Vec
-  let _3: i32
+  let _3: i64
   let _4: addr %structs.Vec
   let _5: %structs.Vec
   let _6: %structs.Vec
   let _7: addr %structs.Vec
-  let _8: i32
-  let _9: i32
+  let _8: i64
+  let _9: i64
 
 bb0:
   _2 = addr (*_1)   @29:9
@@ -442,7 +441,7 @@ fn av.structs/Holder.grow(_1: ref %structs.Holder) -> void leaf @structs.av:55:3
 
 bb0:
   _2 = addr (*_1).1   @56:6
-  call av.structs/Vec.scale(copy _2, const i32 3) nocollect   @56:6
+  call av.structs/Vec.scale(copy _2, const i64 3) nocollect   @56:6
   _3 = addr (*_1).2   @57:10
   call av.structs/Named.rename(copy _3, const str.9) nocollect   @57:10
   return   @55:3
@@ -455,7 +454,7 @@ fn av.structs/Holder.new() -> ref %structs.Holder frame @structs.av:50:1 {
 bb0:
   gc.enter   @50:1
   gc.roots   @50:1
-  _1 = call avant_alloc(const u64 56, const u32 1) collects   @50:1
+  _1 = call avant_alloc(const u64 72, const u32 1) collects   @50:1
   barrier copy _1   @51:3
   (*_1).0 = const str.10   @51:3
   barrier copy _1   @53:3
