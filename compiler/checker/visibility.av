@@ -96,7 +96,7 @@ pub fn (checker_self: Checker) mods_of_type(name: String): Array(String) {
         }
         start = i + 1
       }
-      i = i + 1
+      i += 1
     }
   }
   out
@@ -151,7 +151,7 @@ pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, 
   n = 0
   for owner in owners {
     if checker_self.type_slot_visible(name, owner, from_mod) {
-      n = n + 1
+      n += 1
       found = owner
     }
   }
@@ -233,7 +233,7 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     if checker_self.type_slot_visible(name, type_mods[ti], from_mod) {
       origins.push("type:${type_mods[ti]}")
     }
-    ti = ti + 1
+    ti += 1
   }
   if id = checker_self.lib_names.get(name) {
     if checker_self.lib_is_visible(name, from_mod) {
@@ -261,10 +261,10 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
   for o in origins {
     if o.size >= 5 {
       if str_slice(o, 0, 5) == "type:" {
-        owner_count = owner_count + 1
+        owner_count += 1
         has_type = true
       } else if str_slice(o, 0, 4) == "lib:" {
-        owner_count = owner_count + 1
+        owner_count += 1
         has_type = true
       } else if str_slice(o, 0, 3) == "fn:" {
         has_fn = true
@@ -497,7 +497,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
   i = 0
   while i < expr.args.size {
     arg_tys.push(checker_self.check_expr(expr.args[i]))
-    i = i + 1
+    i += 1
   }
   checker_self.current_module = mod
   none: Ty? = nil
@@ -521,7 +521,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
       }
-      i = i + 1
+      i += 1
     }
     expr.resolved = sig.node.emit_name
     expr.receiver = nil

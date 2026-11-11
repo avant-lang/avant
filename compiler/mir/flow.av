@@ -26,7 +26,7 @@ pub fn mir_bools_copy(a: Array(Bool)): Array(Bool) {
   i = 0
   while i < a.size {
     xs.push(a[i])
-    i = i + 1
+    i += 1
   }
   xs
 }
@@ -40,7 +40,7 @@ fn mir_place_reads(p: MPlace, as_value: Bool, out: Array(Int)) {
     if o = p.proj[i].index {
       mir_operand_reads(o, out)
     }
-    i = i + 1
+    i += 1
   }
 }
 
@@ -69,14 +69,14 @@ pub fn mir_stmt_reads(st: MStmt, out: Array(Int)) {
     i = 0
     while i < r.ops.size {
       mir_operand_reads(r.ops[i], out)
-      i = i + 1
+      i += 1
     }
   }
   mir_opt_reads(st.indirect, out)
   i = 0
   while i < st.args.size {
     mir_operand_reads(st.args[i], out)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -147,7 +147,7 @@ pub fn mir_preds(f: MFunc): Array(Array(Int)) {
   while b < f.blocks.size {
     e: Array(Int) = []
     ps.push(e)
-    b = b + 1
+    b += 1
   }
   b = 0
   while b < f.blocks.size {
@@ -155,9 +155,9 @@ pub fn mir_preds(f: MFunc): Array(Array(Int)) {
     i = 0
     while i < succ.size {
       ps[succ[i]].push(b)
-      i = i + 1
+      i += 1
     }
-    b = b + 1
+    b += 1
   }
   ps
 }
@@ -177,7 +177,7 @@ pub fn mir_defined_in(f: MFunc): Array(UInt64) {
   k = 0
   while k < n {
     mir_bit_on(full, 0, k)
-    k = k + 1
+    k += 1
   }
   defs = mir_zero_words(nb * nw)
   ins = mir_zero_words(nb * nw)
@@ -196,20 +196,20 @@ pub fn mir_defined_in(f: MFunc): Array(UInt64) {
       if d >= 0 && d < n {
         mir_bit_on(defs, at, d)
       }
-      j = j + 1
+      j += 1
     }
-    b = b + 1
+    b += 1
   }
   if nb > 0 {
     w = 0
     while w < nw {
       ins[w] = 0u64
-      w = w + 1
+      w += 1
     }
     k = 1
     while k <= f.nparams && k < n {
       mir_bit_on(ins, 0, k)
-      k = k + 1
+      k += 1
     }
   }
   cur = mir_zero_words(nw)
@@ -228,7 +228,7 @@ pub fn mir_defined_in(f: MFunc): Array(UInt64) {
           for w in 0..nw {
             cur[w] = cur[w] & outs[po + w]
           }
-          i = i + 1
+          i += 1
         }
         for w in 0..nw {
           ins[at + w] = cur[w]
@@ -325,7 +325,7 @@ pub fn mir_live_block(f: MFunc, lv: MLive, b: Int, reads: Array(Int)) {
     reads.clear
     mir_stmt_reads(st, reads)
     mir_bits_mark(lv.gen, at, n, reads)
-    i = i - 1
+    i -= 1
   }
 }
 
@@ -346,11 +346,11 @@ pub fn mir_live(f: MFunc): MLive {
       i = 0
       while i < t.targets.size {
         lv.succ.push(t.targets[i])
-        i = i + 1
+        i += 1
       }
     }
     mir_live_block(f, lv, b, reads)
-    b = b + 1
+    b += 1
   }
   lv.succ_at.push(lv.succ.size)
   ins = mir_zero_words(nb * nw)
@@ -374,7 +374,7 @@ pub fn mir_live(f: MFunc): MLive {
           changed = true
         }
       }
-      b = b - 1
+      b -= 1
     }
   }
   lv

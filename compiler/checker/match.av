@@ -90,7 +90,7 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
         if !checker_self.unify_ty(pattern.members[i], actual.members[i], keys, vals) {
           return false
         }
-        i = i + 1
+        i += 1
       }
       if pe = pattern.inner {
         if ae = actual.inner {
@@ -107,7 +107,7 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
         if !checker_self.unify_ty(pattern.ty_args[i], actual.ty_args[i], keys, vals) {
           return false
         }
-        i = i + 1
+        i += 1
       }
       return true
     }
@@ -124,7 +124,7 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
     if i < arg_tys.size && !checker_self.unify_ty(params[i], arg_tys[i], keys, vals) {
       return nil
     }
-    i = i + 1
+    i += 1
   }
   for name in tparams {
     if got = checker_self.subst_get(keys, vals, name) {
@@ -144,7 +144,7 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
     } else {
       return nil
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -170,7 +170,7 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
     if i < arg_tys.size && !checker_self.unify_ty(params[i], arg_tys[i], keys, vals) {
       return nil
     }
-    i = i + 1
+    i += 1
   }
   for name in tparams {
     if got = checker_self.subst_get(keys, vals, name) {
@@ -190,7 +190,7 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
     } else {
       return nil
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -255,7 +255,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   i = 0
   while i < from.size {
     to.push(ty_to_type_name(subst[i], loc))
-    i = i + 1
+    i += 1
   }
   emit = sig_mangle(sig.node.name, subst)
   if existing = checker_self.find_instance(emit) {
@@ -271,7 +271,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   i = 0
   while i < subst.size {
     ia.push(subst[i])
-    i = i + 1
+    i += 1
   }
   inst.inst_args = ia
   checker_self.alloc_ol(inst)
@@ -281,7 +281,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   while i < inst.params.size {
     params.push(checker_self.resolver.resolve_value(inst.params[i].type))
     checker_self.pull_resolve
-    i = i + 1
+    i += 1
   }
   ret = checker_self.t_void()
   if t = inst.return_type {
@@ -312,7 +312,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
     to.push(ty_to_type_name(subst[i], loc))
     buf.push_str("__")
     buf.push_str(mangle_ty(subst[i]))
-    i = i + 1
+    i += 1
   }
   emit = buf.to_s
   if existing = checker_self.find_instance(emit) {
@@ -328,7 +328,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   i = 0
   while i < subst.size {
     ia.push(subst[i])
-    i = i + 1
+    i += 1
   }
   inst.inst_args = ia
   inst.owner = sig.owner
@@ -339,7 +339,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   while i < inst.params.size {
     params.push(checker_self.resolver.resolve_value(inst.params[i].type))
     checker_self.pull_resolve
-    i = i + 1
+    i += 1
   }
   ret = checker_self.t_void()
   if t = inst.return_type {
@@ -397,7 +397,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
         }
       }
     }
-    x = x + 1
+    x += 1
   }
   if cands.size == 0 {
     if saw_generic {
@@ -410,7 +410,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
       sig = checker_self.functions[named[x]]
       if sig.name == name && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && !sig.node.generic && arity_ok(sig.node, arg_tys.size) {
         only = sig
-        n = n + 1
+        n += 1
       }
     }
     if n == 1 {
@@ -448,7 +448,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
   while x < named.size {
     sig = checker_self.methods[named[x]]
     if sig.node.type_method {
-      x = x + 1
+      x += 1
       continue
     }
     if sig.owner == owner {
@@ -485,7 +485,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       }
       }
     }
-    x = x + 1
+    x += 1
   }
   if act = checker_self.resolver.get_named(owner) {
     if act.origin.size > 0 {
@@ -510,7 +510,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
             }
           }
         }
-        x = x + 1
+        x += 1
       }
     }
   }
@@ -578,7 +578,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
   i = 0
   while i < expr.args.size {
     arg_tys.push(checker_self.check_expr(expr.args[i]))
-    i = i + 1
+    i += 1
   }
   cands: Array(FuncSig) = []
   saw_instance = false
@@ -639,7 +639,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
   i = 0
   while i < expr.args.size {
     arg_tys.push(checker_self.check_expr(expr.args[i]))
-    i = i + 1
+    i += 1
   }
   visible = false
   named = checker_self.fn_indices_named(expr.callee)
@@ -668,7 +668,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
       }
-      i = i + 1
+      i += 1
     }
     expr.resolved = sig.node.emit_name
     return sig.ret
@@ -745,7 +745,7 @@ pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, ke
           if !checker_self.unify_ty(pat.ty_args[i], act.ty_args[i], keys, vals) {
             return false
           }
-          i = i + 1
+          i += 1
         }
         return true
       }
@@ -777,7 +777,7 @@ pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, d
         return false
       }
     }
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < deferred.size {
@@ -791,7 +791,7 @@ pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, d
         return false
       }
     }
-    i = i + 1
+    i += 1
   }
   true
 }
@@ -802,13 +802,13 @@ pub fn (checker_self: Checker) collect_method_deferred(expr: Expr, owner: String
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
     if sig.node.type_method {
-      i = i + 1
+      i += 1
       continue
     }
     if sig.name == expr.callee && checker_self.method_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && checker_self.method_deferred_ok(sig, owner, deferred, ctypes) {
       cands.push(sig)
     }
-    i = i + 1
+    i += 1
   }
   cands
 }
@@ -831,7 +831,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
         return checker_self.t_int()
       }
     }
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < expr.args.size {
@@ -847,7 +847,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
         return checker_self.t_int()
       }
     }
-    i = i + 1
+    i += 1
   }
   if checker_self.has_err {
     return checker_self.t_int()
@@ -888,7 +888,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
       }
     }
-    i = i + 1
+    i += 1
   }
   expr.resolved = sig.node.emit_name
   sig.ret
@@ -930,7 +930,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
         deferred.push(0)
         ctypes.push(checker_self.check_expr(expr.args[i]))
       }
-      i = i + 1
+      i += 1
     }
     if checker_self.has_err {
       return checker_self.t_int()
@@ -948,7 +948,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
   i = 0
   while i < expr.args.size {
     arg_tys.push(checker_self.check_expr(expr.args[i]))
-    i = i + 1
+    i += 1
   }
   if sig = checker_self.match_method(owner, expr.callee, arg_tys, expected, expr.loc, shown, object.mod_name) {
     checker_self.fill_defaults(expr, sig.node)
@@ -965,7 +965,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
       }
-      i = i + 1
+      i += 1
     }
     expr.resolved = sig.node.emit_name
     return sig.ret

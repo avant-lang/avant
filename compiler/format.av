@@ -451,12 +451,12 @@ pub fn nth_significant(tokens: Array(Token), i: Int, n: Int): Int {
     if k == tk_newline() {
     } else if k == tk_comment() {
     } else if k != tk_file_line() {
-      seen = seen + 1
+      seen += 1
       if seen == n {
         return k
       }
     }
-    j = j + 1
+    j += 1
   }
   tk_eof()
 }
@@ -477,9 +477,9 @@ pub fn fn_receiver_space(tokens: Array(Token), i: Int, prev: Int): Bool {
     } else if k == tk_comment() {
     } else if k == tk_file_line() {
     } else if k == tk_l_paren() {
-      depth = depth + 1
+      depth += 1
     } else if k == tk_r_paren() {
-      depth = depth - 1
+      depth -= 1
       if depth == 0 {
         if saw_colon {
           nxt = nth_significant(tokens, j, 1)
@@ -494,7 +494,7 @@ pub fn fn_receiver_space(tokens: Array(Token), i: Int, prev: Int): Bool {
         saw_colon = true
       }
     }
-    j = j + 1
+    j += 1
   }
   false
 }
@@ -508,7 +508,7 @@ pub fn prev_significant(tokens: Array(Token), i: Int): Int {
     } else if k != tk_file_line() {
       return j
     }
-    j = j - 1
+    j -= 1
   }
   -1
 }
@@ -534,9 +534,9 @@ pub fn names_operator_method(tokens: Array(Token), i: Int): Bool {
   while j >= 0 {
     k = tokens[j].kind
     if k == tk_r_paren() {
-      depth = depth + 1
+      depth += 1
     } else if k == tk_l_paren() {
-      depth = depth - 1
+      depth -= 1
       if depth == 0 {
         before = prev_significant(tokens, j)
         if before < 0 {
@@ -545,7 +545,7 @@ pub fn names_operator_method(tokens: Array(Token), i: Int): Bool {
         return tokens[before].kind == tk_fn()
       }
     }
-    j = j - 1
+    j -= 1
   }
   false
 }
@@ -620,8 +620,8 @@ pub fn reprint(tokens: Array(Token)): String {
   buf = buf_new()
   depth = 0
   at_start = true
-  prev = 0 - 1
-  prev2 = 0 - 1
+  prev = -1
+  prev2 = -1
   after_tight = false
   lambda_state = 0
   pending = 0
@@ -633,8 +633,8 @@ pub fn reprint(tokens: Array(Token)): String {
       break
     }
     if k == tk_newline() {
-      pending = pending + 1
-      i = i + 1
+      pending += 1
+      i += 1
       continue
     }
     if pending > 0 {
@@ -649,7 +649,7 @@ pub fn reprint(tokens: Array(Token)): String {
     dedented = false
     if started {
       if k == tk_r_brace() && depth > 0 {
-        depth = depth - 1
+        depth -= 1
         dedented = true
       }
       if k == tk_file_line() {
@@ -675,7 +675,7 @@ pub fn reprint(tokens: Array(Token)): String {
     if k == tk_comment() {
     } else if k == tk_file_line() {
     } else if k == tk_l_brace() {
-      depth = depth + 1
+      depth += 1
       if brace_starts_lambda(tokens, i) {
         lambda_state = 1
       } else {
@@ -685,7 +685,7 @@ pub fn reprint(tokens: Array(Token)): String {
     } else if k == tk_r_brace() {
       if dedented {
       } else if depth > 0 {
-        depth = depth - 1
+        depth -= 1
       }
       after_tight = false
       lambda_state = 0
@@ -719,7 +719,7 @@ pub fn reprint(tokens: Array(Token)): String {
     }
     prev2 = prev
     prev = k
-    i = i + 1
+    i += 1
   }
   if pending > 0 {
     push_newlines(buf, collapse_newlines(pending))

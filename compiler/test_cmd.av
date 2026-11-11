@@ -118,7 +118,7 @@ pub class JobSched {
           best = i
         }
       }
-      i = i + 1
+      i += 1
     }
     best
   }
@@ -140,7 +140,7 @@ pub class JobSched {
         return k
       }
       cmd.pid = pid
-      self.running = self.running + 1
+      self.running += 1
     }
     if self.running == 0 {
       return -1
@@ -149,7 +149,7 @@ pub class JobSched {
     if got < 0 {
       return -1
     }
-    self.running = self.running - 1
+    self.running -= 1
     i = 0
     while i < self.jobs.size {
       cmd = self.jobs[i]
@@ -158,7 +158,7 @@ pub class JobSched {
         cmd.finished = true
         return i
       }
-      i = i + 1
+      i += 1
     }
     self.wait_one
   }
@@ -186,7 +186,7 @@ pub class TestHost {
   }
 
   pub fn fresh: String {
-    self.seq = self.seq + 1
+    self.seq += 1
     tmp_path("t-${self.seq}")
   }
 }
@@ -203,7 +203,7 @@ fn parse_u(s: String): Int {
       return -1
     }
     n = n * 10 + (c - 48)
-    i = i + 1
+    i += 1
   }
   n
 }
@@ -244,10 +244,10 @@ fn count_online: Int {
     i = 0
     while i <= spec.size {
       if i == spec.size || spec[i] == 44 {
-        total = total + count_range(str_slice(spec, start, i))
+        total += count_range(str_slice(spec, start, i))
         start = i + 1
       }
-      i = i + 1
+      i += 1
     }
     if total < 1 {
       return 1
@@ -310,7 +310,7 @@ fn sort_files(files: Array(FileRun)) {
         tmp = files[j]
         files[j] = files[j - 1]
         files[j - 1] = tmp
-        j = j - 1
+        j -= 1
       } else {
         break
       }
@@ -324,7 +324,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
   nseq = seq
   while i < names.size {
     name = names[i]
-    i = i + 1
+    i += 1
     if name.size == 0 {
       continue
     }
@@ -336,7 +336,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
     }
     path = abs_join(dir, name)
     if is_test_name(name) {
-      nseq = nseq + 1
+      nseq += 1
       into.push(FileRun.new(path, rel_of(cwd, path), tmp_path("bin-${nseq}")))
     } else {
       sub = dir_list(path)
@@ -412,7 +412,7 @@ fn name_lines(text: String): Array(String) {
       }
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   out
 }
@@ -445,10 +445,10 @@ fn emit_file(host: TestHost, f: FileRun) {
   }
   if f.ok {
     out_puts("ok ${f.rel}")
-    host.good = host.good + 1
+    host.good += 1
   } else {
     out_puts("FAIL ${f.rel}")
-    host.bad = host.bad + 1
+    host.bad += 1
   }
 }
 
@@ -479,7 +479,7 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
     cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
     sched.add(cmd)
     f.par_logs.push(cmd.log)
-    f.pending = f.pending + 1
+    f.pending += 1
   }
 }
 
@@ -502,7 +502,7 @@ fn order_first(files: Array(FileRun), first_abs: Array(String)): Array(FileRun) 
   f = 0
   while f < files.size {
     taken.push(0)
-    f = f + 1
+    f += 1
   }
   e = 0
   while e < first_abs.size {
@@ -512,16 +512,16 @@ fn order_first(files: Array(FileRun), first_abs: Array(String)): Array(FileRun) 
         taken[f] = 1
         out.push(files[f])
       }
-      f = f + 1
+      f += 1
     }
-    e = e + 1
+    e += 1
   }
   f = 0
   while f < files.size {
     if taken[f] == 0 {
       out.push(files[f])
     }
-    f = f + 1
+    f += 1
   }
   out
 }
@@ -549,7 +549,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     // The tests are local runs: the machine's highest level (O140).
     args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
     sched.add(JobCmd.new(args, "${host.fresh()}.log", 0, i))
-    i = i + 1
+    i += 1
   }
   while true {
     k = sched.wait_one
@@ -597,7 +597,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       if cmd.code != 0 {
         f.ok = false
       }
-      f.pending = f.pending - 1
+      f.pending -= 1
       if f.pending == 0 {
         take_par_logs(f)
         emit_file(host, f)
@@ -646,7 +646,7 @@ fn xml_escape(s: String): String {
     } else {
       b.push_byte(c)
     }
-    i = i + 1
+    i += 1
   }
   b.to_s
 }
@@ -661,7 +661,7 @@ fn find_from(text: String, needle: String, from: Int): Int {
     if str_slice(text, i, i + needle.size) == needle {
       return i
     }
-    i = i + 1
+    i += 1
   }
   -1
 }
@@ -678,9 +678,9 @@ fn attr_sum(text: String, key: String): Int {
     n = 0
     while j < text.size && text[j] >= 48 && text[j] <= 57 {
       n = n * 10 + (text[j] - 48)
-      j = j + 1
+      j += 1
     }
-    total = total + n
+    total += n
     from = j
   }
   total
@@ -702,21 +702,21 @@ fn suite_time_ms(text: String): Int {
     whole = 0
     while j < text.size && text[j] >= 48 && text[j] <= 57 {
       whole = whole * 10 + (text[j] - 48)
-      j = j + 1
+      j += 1
     }
     frac = 0
     digits = 0
     if j < text.size && text[j] == 46 {
-      j = j + 1
+      j += 1
       while j < text.size && text[j] >= 48 && text[j] <= 57 && digits < 3 {
         frac = frac * 10 + (text[j] - 48)
-        digits = digits + 1
-        j = j + 1
+        digits += 1
+        j += 1
       }
     }
     while digits < 3 {
-      frac = frac * 10
-      digits = digits + 1
+      frac *= 10
+      digits += 1
     }
     total = total + whole * 1000 + frac
     from = j
@@ -755,10 +755,10 @@ fn write_junit(path: String, files: Array(FileRun)) {
       }
       tests = tests + attr_sum(fragtext, "tests=\"")
       bad = bad + attr_sum(fragtext, "failures=\"")
-      total_ms = total_ms + suite_time_ms(fragtext)
+      total_ms += suite_time_ms(fragtext)
     } else {
-      fb_tests = fb_tests + 1
-      tests = tests + 1
+      fb_tests += 1
+      tests += 1
       fb.push_str("    <testcase name=\"")
       fb.push_str(xml_escape(f.rel))
       fb.push_str("\" classname=\"")
@@ -767,8 +767,8 @@ fn write_junit(path: String, files: Array(FileRun)) {
       if f.ok {
         fb.push_str("/>\n")
       } else {
-        fb_bad = fb_bad + 1
-        bad = bad + 1
+        fb_bad += 1
+        bad += 1
         fb.push_str(">\n      <failure message=\"failed\"><![CDATA[")
         fb.push_str(f.output)
         fb.push_str("]]></failure>\n    </testcase>\n")
@@ -845,37 +845,37 @@ pub fn driver_test(args: Array(String)) {
       if jobs < 1 {
         test_fail("--jobs needs an integer greater than 0")
       }
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--jobs=") {
       jobs = parse_u(str_slice(arg, 7, arg.size))
       if jobs < 1 {
         test_fail("--jobs needs an integer greater than 0")
       }
-      i = i + 1
+      i += 1
     } else if arg == "--shard" {
       if i + 1 >= args.size {
         test_fail("--shard needs I/N")
       }
       shard = args[i + 1]
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--shard=") {
       shard = str_slice(arg, 8, arg.size)
-      i = i + 1
+      i += 1
     } else if arg == "--junit" {
       if i + 1 >= args.size {
         test_fail("--junit needs a path")
       }
       junit = args[i + 1]
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--junit=") {
       junit = str_slice(arg, 8, arg.size)
-      i = i + 1
+      i += 1
     } else if arg == "--skip-exclusive" {
       skip_ex = true
-      i = i + 1
+      i += 1
     } else if arg == "--coverage" {
       coverage = true
-      i = i + 1
+      i += 1
     } else if arg == "-h" || arg == "--help" {
       diag_puts("avant test [TEST-OPTIONS] [PATH...]")
       diag_puts("--jobs N   test processes at once (default: online processors)")
@@ -891,7 +891,7 @@ pub fn driver_test(args: Array(String)) {
       test_fail("unknown test argument ${arg}")
     } else {
       paths.push(arg)
-      i = i + 1
+      i += 1
     }
   }
   if jobs < 1 {
@@ -982,12 +982,12 @@ pub fn driver_test(args: Array(String)) {
         abs = abs_join(cwd, arg)
       }
       if str_ends(arg, ".av") {
-        seq = seq + 1
+        seq += 1
         files.push(FileRun.new(abs, rel_of(cwd, abs), tmp_path("bin-${seq}")))
       } else {
         seq = walk_tests(abs, cwd, files, seq)
       }
-      p = p + 1
+      p += 1
     }
   }
   sort_files(files)
@@ -995,7 +995,7 @@ pub fn driver_test(args: Array(String)) {
   e = 0
   while e < exclusive.size {
     ex_abs.push(abs_join(anchor, exclusive[e]))
-    e = e + 1
+    e += 1
   }
   if paths.size == 0 {
     for e in 0..ex_abs.size {
@@ -1014,7 +1014,7 @@ pub fn driver_test(args: Array(String)) {
   e = 0
   while e < first.size {
     first_abs.push(abs_join(anchor, first[e]))
-    e = e + 1
+    e += 1
   }
   if paths.size == 0 {
     for e in 0..first_abs.size {
@@ -1034,7 +1034,7 @@ pub fn driver_test(args: Array(String)) {
     if listed(ex_abs, files[f].abs) {
       files[f].exclusive = true
     }
-    f = f + 1
+    f += 1
   }
   if shard.size > 0 {
     idx = shard_index(shard, true)
@@ -1057,7 +1057,7 @@ pub fn driver_test(args: Array(String)) {
       if !(skip_ex && files[f].exclusive) {
         pool.push(files[f])
       }
-      f = f + 1
+      f += 1
     }
     picked: Array(FileRun) = []
     for f in 0..pool.size {
@@ -1073,7 +1073,7 @@ pub fn driver_test(args: Array(String)) {
       if !files[f].exclusive {
         kept.push(files[f])
       }
-      f = f + 1
+      f += 1
     }
     files = kept
   }
@@ -1105,7 +1105,7 @@ pub fn driver_test(args: Array(String)) {
       } else {
         normals.push(run_order[f])
       }
-      f = f + 1
+      f += 1
     }
     run_many(host, normals)
     f = 0
@@ -1113,7 +1113,7 @@ pub fn driver_test(args: Array(String)) {
       alone: Array(FileRun) = []
       alone.push(excls[f])
       run_many(host, alone)
-      f = f + 1
+      f += 1
     }
   }
   if junit.size > 0 {

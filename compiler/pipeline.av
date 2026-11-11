@@ -213,7 +213,7 @@ pub fn str_contains(s: String, needle: String): Bool {
     if str_slice(s, i, i + needle.size) == needle {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -307,7 +307,7 @@ pub fn runtime_objects(root: String): Array(String) {
   i = 0
   while i < names.size {
     objs.push("${root}/runtime/build/${names[i]}")
-    i = i + 1
+    i += 1
   }
   objs
 }
@@ -417,7 +417,7 @@ pub fn cov_map_dir(path: String): String? {
       }
       return nil
     }
-    i = i - 1
+    i -= 1
   }
   nil
 }
@@ -601,7 +601,7 @@ pub fn run_cc(args: Array(String)): Int {
   i = 0
   while i < args.size {
     wrapped.push(args[i])
-    i = i + 1
+    i += 1
   }
   tool_run("/usr/bin/env", wrapped)
 }
@@ -705,21 +705,21 @@ pub fn parse_link(args: Array(String)): LinkJob {
         return job
       }
       job.codegen = "debug"
-      i = i + 1
+      i += 1
     } else if arg == "--release" {
       if job.codegen.size > 0 {
         job.err = "choose one of --debug, --release"
         return job
       }
       job.codegen = "release"
-      i = i + 1
+      i += 1
     } else if arg == "--final" {
       if job.codegen.size > 0 {
         job.err = "choose one of --debug, --release"
         return job
       }
       job.codegen = "release"
-      i = i + 1
+      i += 1
     } else if arg == "--cpu" || str_starts(arg, "--cpu=") {
       v = ""
       if arg == "--cpu" {
@@ -728,10 +728,10 @@ pub fn parse_link(args: Array(String)): LinkJob {
           return job
         }
         v = args[i + 1]
-        i = i + 2
+        i += 2
       } else {
         v = str_slice(arg, 6, arg.size)
-        i = i + 1
+        i += 1
       }
       if !(v == "baseline" || v == "v2" || v == "v3" || v == "v4" || v == "native") {
         job.err = "unknown CPU level ${v} (--cpu=baseline, v2, v3, v4 or native)"
@@ -749,11 +749,11 @@ pub fn parse_link(args: Array(String)): LinkJob {
       }
       name = args[i + 1]
       job.flags.push("-l${name}")
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--lib=") {
       name = str_slice(arg, 6, arg.size)
       job.flags.push("-l${name}")
-      i = i + 1
+      i += 1
     } else if arg == "--cc" {
       if i + 1 >= args.size {
         job.err = "--cc needs a .c file"
@@ -765,7 +765,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
         return job
       }
       job.objects.push(obj)
-      i = i + 2
+      i += 2
     } else if str_starts(arg, "--cc=") {
       obj = compile_c_file(str_slice(arg, 5, arg.size))
       if obj == "" {
@@ -773,11 +773,11 @@ pub fn parse_link(args: Array(String)): LinkJob {
         return job
       }
       job.objects.push(obj)
-      i = i + 1
+      i += 1
     } else if str_starts(arg, "-l") {
       if arg.size > 2 {
         job.flags.push(arg)
-        i = i + 1
+        i += 1
       } else {
         job.err = "unknown link argument ${arg}"
         return job
@@ -789,10 +789,10 @@ pub fn parse_link(args: Array(String)): LinkJob {
         return job
       }
       job.objects.push(obj)
-      i = i + 1
+      i += 1
     } else if str_ends(arg, ".o") {
       job.objects.push(arg)
-      i = i + 1
+      i += 1
     } else {
       job.err = "unknown link argument ${arg}"
       return job
@@ -814,13 +814,13 @@ pub fn split_run_args(args: Array(String)): RunSplit {
     } else {
       left.push(args[i])
     }
-    i = i + 1
+    i += 1
   }
   split.has_dash = seen
   files = 0
   for j in 0..left.size {
     if str_ends(left[j], ".av") {
-      files = files + 1
+      files += 1
       split.file = left[j]
     } else {
       split.link.push(left[j])
@@ -840,14 +840,14 @@ pub fn take_av_files(args: Array(String)): CliSplit {
   while i < args.size {
     if str_ends(args[i], ".av") {
       split.paths.push(args[i])
-      i = i + 1
+      i += 1
     } else {
       break
     }
   }
   while i < args.size {
     split.rest.push(args[i])
-    i = i + 1
+    i += 1
   }
   split
 }
@@ -864,7 +864,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     i = 0
     while i < args.size {
       split.rest.push(args[i])
-      i = i + 1
+      i += 1
     }
     return split
   }
@@ -873,7 +873,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     i = 0
     while i < args.size {
       split.rest.push(args[i])
-      i = i + 1
+      i += 1
     }
     return split
   }
@@ -882,7 +882,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
     i = 0
     while i < args.size {
       split.rest.push(args[i])
-      i = i + 1
+      i += 1
     }
     return split
   }
@@ -890,7 +890,7 @@ pub fn take_out_path(args: Array(String), source: String): CliSplit {
   i = 1
   while i < args.size {
     split.rest.push(args[i])
-    i = i + 1
+    i += 1
   }
   split
 }

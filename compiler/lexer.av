@@ -124,12 +124,12 @@ pub class Lexer {
     if self.at_end {
       return
     }
-    self.pos = self.pos + 1
+    self.pos += 1
     if c == 10 {
-      self.line = self.line + 1
+      self.line += 1
       self.column = 1
     } else {
-      self.column = self.column + 1
+      self.column += 1
     }
   }
 
@@ -209,7 +209,7 @@ pub class Lexer {
 
   pub fn queue_take: Token {
     t = self.queue[self.qpos]
-    self.qpos = self.qpos + 1
+    self.qpos += 1
     t
   }
 
@@ -494,13 +494,13 @@ pub class Lexer {
       }
       tok = self.read_token
       if tok.kind == tk_l_brace() {
-        depth = depth + 1
+        depth += 1
         tokens.push(tok)
       } else if tok.kind == tk_r_brace() {
         if depth == 0 {
           return tokens
         }
-        depth = depth - 1
+        depth -= 1
         tokens.push(tok)
       } else if tok.kind == tk_interp_open() {
         self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
@@ -528,7 +528,7 @@ pub class Lexer {
         i = 0
         while i < expr.size {
           tokens.push(expr[i])
-          i = i + 1
+          i += 1
         }
         tokens.push(Token.new(tk_interp_close(), self.here, self.str_frag))
         return tokens
@@ -537,7 +537,7 @@ pub class Lexer {
         i = 0
         while i < expr.size {
           tokens.push(expr[i])
-          i = i + 1
+          i += 1
         }
         tokens.push(Token.new(tk_interp_mid(), self.here, self.str_frag))
       }
@@ -565,7 +565,7 @@ pub class Lexer {
       i = 0
       while i < rest.size {
         self.queue_push(rest[i])
-        i = i + 1
+        i += 1
       }
       return first
     }
@@ -777,7 +777,7 @@ pub class Lexer {
   // compile, run, and dump use tokenize. format uses tokenize_format.
   pub fn tokenize: Array(Token) {
     tokens: Array(Token) = []
-    last_kind = 0 - 1
+    last_kind = -1
     while true {
       self.skip_spaces
       if self.at_end && self.queue_empty {
@@ -833,7 +833,7 @@ pub class Lexer {
       } else if c != 13 {
         return false
       }
-      i = i - 1
+      i -= 1
     }
     true
   }
@@ -844,7 +844,7 @@ pub class Lexer {
       if self.source.text[i - 1] == 10 {
         return i
       }
-      i = i - 1
+      i -= 1
     }
     0
   }
@@ -939,7 +939,7 @@ pub class Lexer {
       i = 0
       while i < rest.size {
         self.queue_push(rest[i])
-        i = i + 1
+        i += 1
       }
       return Token.new(tk_interp_open(), loc, raw_open)
     }
@@ -974,13 +974,13 @@ pub class Lexer {
         return tokens
       }
       if tok.kind == tk_l_brace() {
-        depth = depth + 1
+        depth += 1
         tokens.push(tok)
       } else if tok.kind == tk_r_brace() {
         if depth == 0 {
           return tokens
         }
-        depth = depth - 1
+        depth -= 1
         tokens.push(tok)
       } else if tok.kind == tk_interp_open() {
         self.fail_tok(tok.loc, "nested string interpolation is not in Stage 6")
@@ -1011,7 +1011,7 @@ pub class Lexer {
       i = 0
       while i < expr.size {
         tokens.push(expr[i])
-        i = i + 1
+        i += 1
       }
       if self.str_kind == 0 {
         tokens.push(Token.new(tk_interp_close(), self.here, raw))

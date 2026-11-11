@@ -24,7 +24,7 @@ pub fn diag_has(hay: String, needle: String): Bool {
     if diag_eq(str_slice(hay, i, i + needle.size), needle) {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -77,10 +77,10 @@ pub fn diag_line_text(text: String, want_line: Int): String {
       if line == want_line {
         return str_slice(text, start, i)
       }
-      line = line + 1
+      line += 1
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   if line == want_line {
     return str_slice(text, start, text.size)
@@ -184,9 +184,9 @@ pub class DiagBag {
     for k in 0..n {
       self.before_items.push(self.items.size)
       self.before_suppressed.push(self.suppressed)
-      self.pushes = self.pushes + 1
+      self.pushes += 1
       if hidden {
-        self.suppressed = self.suppressed + 1
+        self.suppressed += 1
       }
     }
   }
@@ -198,14 +198,14 @@ pub class DiagBag {
   pub fn push(e: CompileError) {
     self.before_items.push(self.items.size)
     self.before_suppressed.push(self.suppressed)
-    self.pushes = self.pushes + 1
+    self.pushes += 1
     for old in self.items {
       if old.loc.line == e.loc.line && old.loc.column == e.loc.column && diag_eq(old.loc.path, e.loc.path) && diag_eq(old.code, e.code) && diag_eq(old.message, e.message) {
         return
       }
     }
     if self.items.size >= 20 {
-      self.suppressed = self.suppressed + 1
+      self.suppressed += 1
       return
     }
     self.items.push(e)
@@ -215,7 +215,7 @@ pub class DiagBag {
     i = 0
     while i < other.items.size {
       self.push(other.items[i])
-      i = i + 1
+      i += 1
     }
     self.note(other.suppressed, true)
   }
@@ -226,7 +226,7 @@ pub class DiagBag {
     while i < self.items.size {
       buf.push_str(self.items[i].render)
       buf.push_str("\n")
-      i = i + 1
+      i += 1
     }
     if self.items.size > 1 {
       buf.push_str("error: aborting due to ${self.items.size} previous errors\n")

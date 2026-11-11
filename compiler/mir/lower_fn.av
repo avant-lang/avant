@@ -46,7 +46,7 @@ pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
   i = 0
   while i < t.members.size {
     ps.push(lw.ty_at(t.members[i], loc, "an fn parameter"))
-    i = i + 1
+    i += 1
   }
   ret = mt_void()
   if r = t.inner {
@@ -156,7 +156,7 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
     } else if k == st_expr() || k == st_return() {
       lw.prewalk_opt(st.expr, encl)
     }
-    i = i + 1
+    i += 1
   }
 }
 
@@ -170,7 +170,7 @@ pub fn (lw: MirLower) prewalk_list(es: Array(Expr), encl: String) {
   i = 0
   while i < es.size {
     lw.prewalk_expr(es[i], encl)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -424,7 +424,7 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
       k = lw.box_local_of(n, tt, lw.lw_fn_loc)
       b.assign(b.pl(k), b.rv_zero)
     }
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < pnames.size && !lw.failed {
@@ -433,7 +433,7 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
       lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
       lw.box_store(n2, ptys[i], b.copy_local(i + 1 + base), lw.lw_fn_loc)
     }
-    i = i + 1
+    i += 1
   }
 }
 
@@ -551,7 +551,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
     lw.at(e.loc)
     b.barrier(env)
     b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
-    i = i + 1
+    i += 1
   }
   lw.tmp(fty, b.rv_fnval(l, b.copy_local(env), b.c_fn(sym)))
 }
@@ -670,7 +670,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
         b.name_param(i + 2, bl.params[i])
         lw.lw_vars[lw.var_key(bl.params[i], s.params[i + 1])] = i + 2
         pnames.push(bl.params[i])
-        i = i + 1
+        i += 1
       }
     }
     caps: Array(String) = []
@@ -742,6 +742,6 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
         }
       }
     }
-    i = i + 1
+    i += 1
   }
 }

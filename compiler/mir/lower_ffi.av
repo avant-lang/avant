@@ -73,7 +73,7 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
     }
     fields.push(ft)
     names.push(t.fields[j].name)
-    j = j + 1
+    j += 1
   }
   lw.lw_b.note_layout(name, mlk_clayout(), fields, names)
 }
@@ -139,7 +139,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         o = lw.snap(o, e.args[j])
       }
       args.push(o)
-      i = i + 1
+      i += 1
     }
     if lw.failed {
       return zero
@@ -229,7 +229,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     j = 0
     while j < cb.fty.members.size {
       ps.push(lw.ty_at(cb.fty.members[j], cb.loc, "a C callback parameter"))
-      j = j + 1
+      j += 1
     }
     ret = mt_void()
     if r = cb.fty.inner {
@@ -248,7 +248,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
         lw.refuse(cb.loc, "a C callback with a value of type ${b.types.text(t)} (C3)")
         return
       }
-      j = j + 1
+      j += 1
     }
     b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
     lw.lw_ret = ret
@@ -260,7 +260,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     j = 0
     while j < ps.size {
       args.push(b.copy_local(j + 1))
-      j = j + 1
+      j += 1
     }
     if ret == mt_void() {
       b.call(-1, cb.target, args)
@@ -271,7 +271,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     }
     b.ret
     b.end_fn
-    i = i + 1
+    i += 1
   }
 }
 
@@ -531,7 +531,7 @@ pub fn (lw: MirLower) unpin_loop {
   i = lw.lw_ffi.pins.size - 1
   while i >= 0 && lw.lw_ffi.pin_depth[i] == lw.lw_heads.size {
     lw.unpin(lw.lw_ffi.pins[i])
-    i = i - 1
+    i -= 1
   }
 }
 
@@ -543,7 +543,7 @@ pub fn (lw: MirLower) unpin_all {
   i = lw.lw_ffi.pins.size - 1
   while i >= 0 {
     lw.unpin(lw.lw_ffi.pins[i])
-    i = i - 1
+    i -= 1
   }
 }
 

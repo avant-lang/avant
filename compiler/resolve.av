@@ -71,7 +71,7 @@ pub class TypeResolver {
     while i < names.size {
       tp[names[i]] = 1
       copy.push(names[i])
-      i = i + 1
+      i += 1
     }
     self.tparams = tp
     self.tparam_names = copy
@@ -209,7 +209,7 @@ pub class TypeResolver {
       i = 0
       while i < tn.args.size {
         params.push(self.resolve_value_uninline(tn.args[i]))
-        i = i + 1
+        i += 1
       }
       ret = self.t_void
       if r = tn.ret {
@@ -222,7 +222,7 @@ pub class TypeResolver {
       i = 0
       while i < tn.members.size {
         parts.push(self.resolve(tn.members[i]))
-        i = i + 1
+        i += 1
       }
       return ty_union_build(parts)
     }
@@ -391,7 +391,7 @@ pub class TypeResolver {
         buf.push_str(", ")
       }
       buf.push_str(args[i].show)
-      i = i + 1
+      i += 1
     }
     buf.push_str(")")
     buf.to_s
@@ -418,7 +418,7 @@ pub class TypeResolver {
               return sdef
             }
           } else {
-            count = count + 1
+            count += 1
             found = sdef
           }
         }
@@ -444,7 +444,7 @@ pub class TypeResolver {
               return cdef
             }
           } else {
-            count = count + 1
+            count += 1
             found = cdef
           }
         }
@@ -464,12 +464,12 @@ pub class TypeResolver {
     if p = self.program {
       for sdef in p.structs {
         if sdef.name == name && sdef.type_params.size > 0 {
-          n = n + 1
+          n += 1
         }
       }
       for cdef in p.classes {
         if cdef.name == name && cdef.type_params.size > 0 {
-          n = n + 1
+          n += 1
         }
       }
     }
@@ -574,7 +574,7 @@ pub class TypeResolver {
       if self.new_err_since(mark0) {
         return self.t_int
       }
-      i = i + 1
+      i += 1
     }
     label = self.format_app(idef.name, arg_tys)
     self.fail(tn.loc, "${label} is not a value type")
@@ -695,7 +695,7 @@ pub class TypeResolver {
       if self.new_err_since(mark0) {
         return self.t_int
       }
-      i = i + 1
+      i += 1
     }
     if self.ty_args_have_var(arg_tys) {
       return self.make_pattern(kind, tn.name, arg_tys)
@@ -713,10 +713,10 @@ pub class TypeResolver {
     if existing = self.get_named(key) {
       return existing
     }
-    self.inst_depth = self.inst_depth + 1
+    self.inst_depth += 1
     if self.inst_depth > 32 {
       self.fail(tn.loc, "type instantiation too deep")
-      self.inst_depth = self.inst_depth - 1
+      self.inst_depth -= 1
       return self.t_int
     }
     shell = ty_app(kind, key, tn.name, label, arg_tys)
@@ -731,7 +731,7 @@ pub class TypeResolver {
       i = 0
       while i < src_fields.size {
         fields.push(self.clone_subst_field(src_fields[i], params, tn.args))
-        i = i + 1
+        i += 1
       }
       i = 0
       while i < src_methods.size {
@@ -743,7 +743,7 @@ pub class TypeResolver {
         m.type_params = fresh
         m.emit_name = m.name
         methods.push(m)
-        i = i + 1
+        i += 1
       }
       opted: Array(TypeName) = []
       src_opt: Array(TypeName) = []
@@ -759,7 +759,7 @@ pub class TypeResolver {
       i = 0
       while i < src_opt.size {
         opted.push(subst_type_name(src_opt[i], params, tn.args))
-        i = i + 1
+        i += 1
       }
       if is_struct {
         if !self.has_struct_named(key) {
@@ -793,7 +793,7 @@ pub class TypeResolver {
         self.struct_inflight = saved
       }
     }
-    self.inst_depth = self.inst_depth - 1
+    self.inst_depth -= 1
     shell
   }
 }
@@ -808,7 +808,7 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
   i = 0
   while i < tn.members.size {
     note_ptr_opaque_skip(tn.members[i], resolver, skip)
-    i = i + 1
+    i += 1
   }
   for bound in tn.bounds {
     note_ptr_opaque_skip(bound, resolver, skip)
@@ -860,7 +860,7 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
       k = 0
       while k < lay.fields.size {
         note_type_name(lay.fields[k].type, resolver)
-        k = k + 1
+        k += 1
       }
     }
   }
@@ -868,14 +868,14 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
     j = 0
     while j < sdef.fields.size {
       note_type_name(sdef.fields[j].type, resolver)
-      j = j + 1
+      j += 1
     }
   }
   for cdef in program.classes {
     j = 0
     while j < cdef.fields.size {
       note_type_name(cdef.fields[j].type, resolver)
-      j = j + 1
+      j += 1
     }
   }
   fns = program_all_functions(program)
@@ -965,7 +965,7 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
       return
     }
     resolved.push(TyField.new(field.name, ty))
-    i = i + 1
+    i += 1
   }
   if ty = resolver.get_named_in(layout.mod_name, layout.name) {
     ty.fields = resolved
@@ -1068,7 +1068,7 @@ pub fn load_types(program: Program): TypeResolver {
     j = 0
     while j < lib_def.layouts.size {
       fill_clayout_fields(resolver, lib_def.layouts[j], ready)
-      j = j + 1
+      j += 1
     }
   }
   seal_type_emits(program, resolver)

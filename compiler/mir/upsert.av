@@ -176,7 +176,7 @@ class UpWalk {
     blk = self.f.blocks[b]
     i = j
     while i < blk.stmts.size {
-      self.steps = self.steps + 1
+      self.steps += 1
       if self.steps > 4000 {
         return false
       }
@@ -228,7 +228,7 @@ class UpWalk {
         // touches the hash's values; anything else stops the pass.
         return false
       }
-      i = i + 1
+      i += 1
     }
     t = blk.term
     if tm = t {
@@ -264,7 +264,7 @@ fn up_derefs(p: MPlace): Int {
   n = 0
   for i in 0..p.proj.size {
     if p.proj[i].kind == mpk_deref() {
-      n = n + 1
+      n += 1
     }
   }
   n
@@ -395,12 +395,12 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
       if k == j {
         out.push(ld)
       }
-      k = k + 1
+      k += 1
     }
     f.blocks[b].stmts = out
     for k in 0..w.site_b.size {
       if w.site_b[k] == b {
-        w.site_j[k] = w.site_j[k] + 1
+        w.site_j[k] += 1
       }
     }
   }
@@ -432,9 +432,9 @@ pub fn mir_upsert_pass(m: MModule): Int {
         while j < blk.stmts.size && !has {
           st = blk.stmts[j]
           has = st.kind == msk_call() && up_name(st.callee).size > 0
-          j = j + 1
+          j += 1
         }
-        b = b + 1
+        b += 1
       }
     }
     if has {
@@ -446,13 +446,13 @@ pub fn mir_upsert_pass(m: MModule): Int {
         while j < f.blocks[b].stmts.size {
           st = f.blocks[b].stmts[j]
           if st.kind == msk_call() && up_name(st.callee).size > 0 && up_try(m, f, b, j, preds, taken) {
-            n = n + 1
+            n += 1
             // The new local is not address-taken.
             taken.push(false)
           }
-          j = j + 1
+          j += 1
         }
-        b = b + 1
+        b += 1
       }
     }
   }

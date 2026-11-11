@@ -83,7 +83,7 @@ pub fn pkg_strip_comment(line: String): String {
     c = line[i]
     if in_str {
       if c == 92 {
-        i = i + 2
+        i += 2
         continue
       }
       if c == 34 {
@@ -96,7 +96,7 @@ pub fn pkg_strip_comment(line: String): String {
         return str_slice(line, 0, i)
       }
     }
-    i = i + 1
+    i += 1
   }
   line
 }
@@ -128,11 +128,11 @@ pub fn pkg_parse_string(s: String, err: String): String {
       } else {
         b.push_byte(n)
       }
-      i = i + 2
+      i += 2
       continue
     }
     b.push_byte(c)
-    i = i + 1
+    i += 1
   }
   ""
 }
@@ -149,13 +149,13 @@ pub fn pkg_string_closed(s: String): Bool {
   while i < t.size {
     c = t[i]
     if c == 92 {
-      i = i + 2
+      i += 2
       continue
     }
     if c == 34 {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -167,7 +167,7 @@ pub fn pkg_find_eq(line: String): Int {
     c = line[i]
     if in_str {
       if c == 92 {
-        i = i + 2
+        i += 2
         continue
       }
       if c == 34 {
@@ -180,7 +180,7 @@ pub fn pkg_find_eq(line: String): Int {
         return i
       }
     }
-    i = i + 1
+    i += 1
   }
   -1
 }
@@ -205,7 +205,7 @@ pub fn pkg_is_sha(s: String): Bool {
     if !ok {
       return false
     }
-    i = i + 1
+    i += 1
   }
   true
 }
@@ -289,7 +289,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
   n = inner.size
   while i < n {
     while i < n && (inner[i] == 32 || inner[i] == 44 || inner[i] == 9) {
-      i = i + 1
+      i += 1
     }
     if i >= n {
       break
@@ -298,19 +298,19 @@ pub fn pkg_string_list(val: String): PkgStrings {
       return got
     }
     start = i
-    i = i + 1
+    i += 1
     closed = false
     while i < n {
       if inner[i] == 92 {
-        i = i + 2
+        i += 2
         continue
       }
       if inner[i] == 34 {
         closed = true
-        i = i + 1
+        i += 1
         break
       }
-      i = i + 1
+      i += 1
     }
     if !closed {
       return got
@@ -364,7 +364,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
       i = 0
       while i < list.items.size {
         m.test_exclusive.push(list.items[i])
-        i = i + 1
+        i += 1
       }
     } else {
       pkg_note_test(m, "${path}:${line_no}: exclusive needs a string or a list of strings")
@@ -381,7 +381,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
       i = 0
       while i < list.items.size {
         m.test_first.push(list.items[i])
-        i = i + 1
+        i += 1
       }
     } else {
       pkg_note_test(m, "${path}:${line_no}: first needs a string or a list of strings")
@@ -415,7 +415,7 @@ pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String
         } else {
           m.cov_exclude.push(list.items[i])
         }
-        i = i + 1
+        i += 1
       }
     } else {
       pkg_note_cov(m, "${path}:${line_no}: ${k} needs a string or a list of strings")
@@ -438,42 +438,42 @@ pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String,
   n = inner.size
   while i < n {
     while i < n && (inner[i] == 32 || inner[i] == 44 || inner[i] == 9) {
-      i = i + 1
+      i += 1
     }
     if i >= n {
       break
     }
     start = i
     while i < n && inner[i] != 61 {
-      i = i + 1
+      i += 1
     }
     if i >= n {
       m.err = "${path}:${line_no}: bad inline table for dependency ${m.deps[dep_idx].name}"
       return false
     }
     key = str_slice(inner, start, i)
-    i = i + 1
+    i += 1
     while i < n && (inner[i] == 32 || inner[i] == 9) {
-      i = i + 1
+      i += 1
     }
     if i >= n || inner[i] != 34 {
       m.err = "${path}:${line_no}: inline table values must be strings"
       return false
     }
     vstart = i
-    i = i + 1
+    i += 1
     closed = false
     while i < n {
       if inner[i] == 92 {
-        i = i + 2
+        i += 2
         continue
       }
       if inner[i] == 34 {
         closed = true
-        i = i + 1
+        i += 1
         break
       }
-      i = i + 1
+      i += 1
     }
     if !closed {
       m.err = "${path}:${line_no}: unterminated string in inline table"
@@ -499,14 +499,14 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       lines.push(str_slice(text, start, i))
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   li = 0
   while li < lines.size {
     line_no = li + 1
     raw = pkg_strip_comment(lines[li])
     line = raw.strip()
-    li = li + 1
+    li += 1
     if line.size == 0 {
       continue
     }
@@ -538,7 +538,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
           if m.deps[j].name == dname {
             found = j
           }
-          j = j + 1
+          j += 1
         }
         if found >= 0 {
           dep_idx = found
@@ -604,7 +604,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         if m.deps[j].name == key {
           dup = true
         }
-        j = j + 1
+        j += 1
       }
       if dup {
         m.err = "${path}:${line_no}: duplicate dependency ${key}"
@@ -660,12 +660,12 @@ pub fn pkg_parse_lock(text: String): PkgLock {
       lines.push(str_slice(text, start, i))
       start = i + 1
     }
-    i = i + 1
+    i += 1
   }
   li = 0
   while li < lines.size {
     line = pkg_strip_comment(lines[li]).strip()
-    li = li + 1
+    li += 1
     if line.size == 0 {
       continue
     }
@@ -710,7 +710,7 @@ pub fn pkg_lock_push(lock: PkgLock, name: String, source: String) {
         sha = str_slice(rest, h + 1, rest.size)
         break
       }
-      h = h - 1
+      h -= 1
     }
   }
   lock.ents.push(PkgLockEnt.new(name, git, sha))
@@ -832,7 +832,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
   qi = 0
   while qi < queue.size {
     dep = queue[qi]
-    qi = qi + 1
+    qi += 1
     dest = pkg_join(dir, "deps/${dep.name}")
     if update && file_exists(dest) {
       fs_remove_tree(dest)

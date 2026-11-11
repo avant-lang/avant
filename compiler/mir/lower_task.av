@@ -61,7 +61,7 @@ pub fn (lw: MirLower) prewalk_spawn(e: Expr, encl: String) {
   sym = lw.task_symbol(encl, "spawn")
   e.spawn_thunk = sym
   lw.lw_task.index[sym] = lw.lw_task.count
-  lw.lw_task.count = lw.lw_task.count + 1
+  lw.lw_task.count += 1
   if e.cap_names.size == 0 {
     return
   }
@@ -78,7 +78,7 @@ pub fn (lw: MirLower) prewalk_par(e: Expr, encl: String) {
   sym = lw.task_symbol(encl, "par")
   e.spawn_thunk = sym
   lw.lw_task.index[sym] = lw.lw_task.count
-  lw.lw_task.count = lw.lw_task.count + 1
+  lw.lw_task.count += 1
   l = lw.task_layout(e, sym, true)
   if l >= 0 {
     dummy = lw.lw_b.type_id(l)
@@ -149,7 +149,7 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
     }
     lw.at(e.loc)
     lw.store_place(b.field(b.deref(b.pl(c)), base + i), ts.layouts[l].fields[base + i], v)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -285,7 +285,7 @@ pub fn (lw: MirLower) lower_pending_tasks {
     t = lw.lw_task.pending[best]
     lw.lw_task.pending[best] = lw.lw_task.pending[lw.lw_task.done]
     lw.lw_task.pending[lw.lw_task.done] = t
-    lw.lw_task.done = lw.lw_task.done + 1
+    lw.lw_task.done += 1
     lw.lw_cov.rank = mir_cov_task_rank() + t.index
     if t.par {
       lw.lower_par_thunk(t)
@@ -329,7 +329,7 @@ pub fn (lw: MirLower) task_boxes_expr(e: Expr, names: Array(String), tys: Array(
         names.push(e.cap_names[i])
         tys.push(e.cap_tys[i])
       }
-      i = i + 1
+      i += 1
     }
     return
   }
@@ -343,27 +343,27 @@ pub fn (lw: MirLower) task_boxes_expr(e: Expr, names: Array(String), tys: Array(
   i = 0
   while i < e.args.size {
     lw.task_boxes_expr(e.args[i], names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.elems.size {
     lw.task_boxes_expr(e.elems[i], names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.field_exprs.size {
     lw.task_boxes_expr(e.field_exprs[i], names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.parts.size {
     lw.task_boxes_opt(e.parts[i].expr, names, tys)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.cases.size {
     lw.task_boxes(e.cases[i].body, names, tys)
-    i = i + 1
+    i += 1
   }
   lw.task_boxes(e.else_body, names, tys)
   if bl = e.block {
@@ -391,7 +391,7 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   while i < names.size && !lw.failed {
     k = lw.box_local_of(names[i], tys[i], e.loc)
     b.assign(b.pl(k), b.rv_zero)
-    i = i + 1
+    i += 1
   }
   c = -1
   if l >= 0 {
@@ -415,7 +415,7 @@ pub fn (lw: MirLower) load_captures(e: Expr, c: Int, l: Int, base: Int) {
       return
     }
     lw.bind_name(e.cap_names[i], e.cap_tys[i], ty, v, e.loc, false)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -435,7 +435,7 @@ pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
       return nil
     }
     lw.lower_stmt(bl.body[i])
-    i = i + 1
+    i += 1
   }
   if lw.failed || !lw.open_now {
     return nil
@@ -564,7 +564,7 @@ pub fn (lw: MirLower) mutex_index(name: String): Int {
     if lw.lw_task.pnames[i] == name {
       return i
     }
-    i = i - 1
+    i -= 1
   }
   -1
 }

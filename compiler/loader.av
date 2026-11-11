@@ -38,7 +38,7 @@ pub fn path_basename(path: String): String {
     if path[i] == 47 {
       return str_slice(path, i + 1, path.size)
     }
-    i = i - 1
+    i -= 1
   }
   path
 }
@@ -52,7 +52,7 @@ pub fn path_dirname(path: String): String {
       }
       return str_slice(path, 0, i)
     }
-    i = i - 1
+    i -= 1
   }
   "."
 }
@@ -115,7 +115,7 @@ pub fn import_rel(name: String): String {
     } else {
       buf.push_str(str_slice(name, i, i + 1))
     }
-    i = i + 1
+    i += 1
   }
   buf.push_str(".av")
   buf.to_s
@@ -143,7 +143,7 @@ pub fn rel_module_name(dir: String, path: String): String {
     } else {
       buf.push_str(str_slice(rel, i, i + 1))
     }
-    i = i + 1
+    i += 1
   }
   buf.to_s
 }
@@ -152,7 +152,7 @@ pub fn find_manifest(start: String): String {
   dir = start
   guard = 0
   while guard < 64 {
-    guard = guard + 1
+    guard += 1
     cand = "avant.toml"
     if dir == "." {
     } else {
@@ -328,7 +328,7 @@ pub class Loader {
       } else if file_exists("${full}/avant.toml") {
         self.dep_dirs.push(full)
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -487,7 +487,7 @@ pub class Loader {
     for dep_dir in self.dep_dirs {
       cand = "${dep_dir}/${name}.av"
       if file_exists(cand) {
-        hits = hits + 1
+        hits += 1
         hit = cand
       }
     }
@@ -584,24 +584,24 @@ pub class Loader {
         imp = program.imports[i]
         if prev = seen.get(imp.name) {
           self.fail(imp.loc, "already imported ${imp.name}")
-          i = i + 1
+          i += 1
           continue
         }
         seen[imp.name] = 1
         child = self.resolve_import(path, imp.name, imp.loc)
         if child == "" {
-          i = i + 1
+          i += 1
           continue
         }
         if prior = seen_path.get(child) {
           self.fail(imp.loc, "import ${prior} and ${imp.name} open the same file ${child}")
-          i = i + 1
+          i += 1
           continue
         }
         seen_path[child] = imp.name
         self.load_file(child)
         imports.push(self.module_label(child))
-        i = i + 1
+        i += 1
       }
       info = ModInfo.new(name, path)
       info.imports = imports
@@ -628,42 +628,42 @@ pub class Loader {
         j = 0
         while j < p.structs.size {
           merged.structs.push(p.structs[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.classes.size {
           merged.classes.push(p.classes[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.functions.size {
           merged.functions.push(p.functions[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.interfaces.size {
           merged.interfaces.push(p.interfaces[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.opt_ins.size {
           merged.opt_ins.push(p.opt_ins[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.libs.size {
           merged.libs.push(p.libs[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.quotes.size {
           merged.quotes.push(p.quotes[j])
-          j = j + 1
+          j += 1
         }
         j = 0
         while j < p.comptimes.size {
           merged.comptimes.push(p.comptimes[j])
-          j = j + 1
+          j += 1
         }
       }
       merged.imports = root.imports

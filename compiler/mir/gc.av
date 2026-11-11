@@ -93,7 +93,7 @@ fn mir_holds_roots(m: MModule, f: MFunc): Bool {
     if f.valid_local(k) && m.types.traced(f.locals[k].ty) {
       return true
     }
-    k = k + 1
+    k += 1
   }
   false
 }
@@ -200,9 +200,9 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
         }
       }
       mir_live_step_bits(st, live, n, reads)
-      j = j - 1
+      j -= 1
     }
-    b = b + 1
+    b += 1
   }
   out = mir_bools(n, false)
   for k in 0..n {
@@ -256,7 +256,7 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
           last[h] = b
         }
       }
-      i = i + 1
+      i += 1
     }
   }
   // An outer loop (one whose blocks hold another loop's head) always
@@ -272,7 +272,7 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
         if heads[k] {
           outer[h] = true
         }
-        k = k + 1
+        k += 1
       }
     }
   }
@@ -284,7 +284,7 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
         if mir_bit(live, 0, k) && !need0[k] && f.valid_local(k) && ts.traced(f.locals[k].ty) {
           heads[h] = false
         }
-        k = k + 1
+        k += 1
       }
     }
   }
@@ -304,7 +304,7 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
       i = 0
       while i < blk.stmts.size {
         xs.push(blk.stmts[i])
-        i = i + 1
+        i += 1
       }
       blk.stmts = xs
     }
@@ -332,7 +332,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
       f.locals[k].slot = true
       slots.push(k)
     }
-    k = k + 1
+    k += 1
   }
   pro: Array(MStmt) = []
   i = 0
@@ -343,7 +343,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
       z.rv = MRvalue.new(mrk_zero())
       pro.push(z)
     }
-    i = i + 1
+    i += 1
   }
   pro.push(MStmt.new(msk_gc_enter(), f.loc))
   roots = MStmt.new(msk_gc_roots(), f.loc)
@@ -353,7 +353,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
   i = 0
   while i < entry.stmts.size {
     pro.push(entry.stmts[i])
-    i = i + 1
+    i += 1
   }
   entry.stmts = pro
   for blk in f.blocks {

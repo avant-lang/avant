@@ -282,7 +282,7 @@ pub class Checker {
       self.failed = true
       self.poisoned = true
       self.errors.push(re)
-      self.resolver_pulled = self.resolver_pulled + 1
+      self.resolver_pulled += 1
     }
     if self.resolver_pushes < self.resolver.errors.pushes {
       // The resolver's errors it did not keep (O163): repeats and those
@@ -335,7 +335,7 @@ pub class Checker {
       if id = sc.names.get(name) {
         return self.resolver.ty_at(id)
       }
-      i = i - 1
+      i -= 1
     }
     nil
   }
@@ -347,14 +347,14 @@ pub class Checker {
       if id = sc.names.get(name) {
         return i
       }
-      i = i - 1
+      i -= 1
     }
     -1
   }
 
   pub fn alloc_ol(fnn: Function) {
     fnn.ol_index = self.next_ol
-    self.next_ol = self.next_ol + 1
+    self.next_ol += 1
   }
 
   pub fn t_int: Ty { self.resolver.t_int }
@@ -512,7 +512,7 @@ pub class Checker {
           return
         }
       }
-      i = i + 1
+      i += 1
     }
     self.current_fn = fnn
     self.check_body(fnn.body, ret, true)
@@ -540,7 +540,7 @@ pub class Checker {
         self.register_spawn_pending(body[i])
         self.fact_after_stmt(body[i])
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -705,7 +705,7 @@ pub class Checker {
           if !self.has_err {
             self.fact_after_stmt(stmt.pre[pi])
           }
-          pi = pi + 1
+          pi += 1
         }
         if stmt.for_kind == 1 {
           if pt = stmt.pre[0].target {
@@ -753,9 +753,9 @@ pub class Checker {
         self.push_guard_facts(cond)
       }
       self.cap_kill_assigned_in(stmt.body)
-      self.loop_depth = self.loop_depth + 1
+      self.loop_depth += 1
       self.check_block(stmt.body, expected, false)
-      self.loop_depth = self.loop_depth - 1
+      self.loop_depth -= 1
       self.cap_kill_assigned_in(stmt.body)
       self.pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       self.pop_loop_facts(saved_facts)
@@ -1624,7 +1624,7 @@ pub class Checker {
         if name.size > 0 {
           return name
         }
-        i = i + 1
+        i += 1
       }
     }
     ""
@@ -1966,7 +1966,7 @@ pub class Checker {
         label = ty.show
         self.fail(value.loc, "no field ${fname} on ${label}")
       }
-      i = i + 1
+      i += 1
     }
     for f in ty.fields {
       if prev = seen.get(f.name) {
@@ -1987,7 +1987,7 @@ pub class Checker {
             return sdef
           }
         } else {
-          count = count + 1
+          count += 1
           found = sdef
         }
       }
@@ -2011,7 +2011,7 @@ pub class Checker {
             return cdef
           }
         } else {
-          count = count + 1
+          count += 1
           found = cdef
         }
       }
@@ -2043,7 +2043,7 @@ pub class Checker {
         if !ty_has_var(warg) && !self.unify_ty(ty_var(params[i]), warg, keys, vals) {
           return false
         }
-        i = i + 1
+        i += 1
       }
     }
     true
@@ -2058,7 +2058,7 @@ pub class Checker {
       } else {
         return nil
       }
-      i = i + 1
+      i += 1
     }
     out
   }
@@ -2069,7 +2069,7 @@ pub class Checker {
     i = 0
     while i < args.size {
       tn.args.push(ty_to_type_name(args[i], loc))
-      i = i + 1
+      i += 1
     }
     ty = self.resolve_in_module(tn)
     self.pull_resolve
@@ -2086,7 +2086,7 @@ pub class Checker {
       names.push(tmpl.fields[i].name)
       patterns.push(self.resolver.resolve_value(tmpl.fields[i].type))
       self.pull_resolve
-      i = i + 1
+      i += 1
     }
     self.resolver.clear_tparams
     if self.has_err {
@@ -2126,7 +2126,7 @@ pub class Checker {
       } else {
         self.fail(value.loc, "no field ${fname} on ${tmpl.name}")
       }
-      i = i + 1
+      i += 1
     }
     if solved = self.solved_args(params, keys, vals, expr.loc) {
       ty = self.instantiate_applied(tmpl.name, expr.mod_name, solved, expr.loc)
@@ -2906,7 +2906,7 @@ pub class Checker {
         n = i + 1
         self.fail(call_arg.loc, "argument ${n} of ${label} is ${got.show}, expected ${params[i].show}")
       }
-      i = i + 1
+      i += 1
     }
   }
 
@@ -2984,7 +2984,7 @@ pub class Checker {
       while i < init.params.size {
         pats.push(self.resolver.resolve_value(init.params[i].type))
         self.pull_resolve
-        i = i + 1
+        i += 1
       }
       self.resolver.clear_tparams
       i = 0
@@ -3000,7 +3000,7 @@ pub class Checker {
           got = self.check_expr(expr.args[i])
         }
         pre.push(got)
-        i = i + 1
+        i += 1
       }
     } else {
       if expr.args.size != 0 {
@@ -3040,13 +3040,13 @@ pub class Checker {
           i = 0
           while i < pre.size {
             arg_tys.push(pre[i])
-            i = i + 1
+            i += 1
           }
         } else {
           ai = 0
           while ai < expr.args.size {
             arg_tys.push(self.check_expr(expr.args[ai]))
-            ai = ai + 1
+            ai += 1
           }
         }
         none: Ty? = nil
@@ -3075,7 +3075,7 @@ pub class Checker {
                 self.fail(expr.args[i].loc, "argument ${n} of ${shown}.new is ${got.show}, expected ${sig.params[i].show}")
               }
             }
-            i = i + 1
+            i += 1
           }
         }
       } else {
@@ -3147,7 +3147,7 @@ pub class Checker {
     i = 0
     while i < arg.args.size {
       call.args.push(self.type_name_as_expr(arg.args[i]))
-      i = i + 1
+      i += 1
     }
     call
   }
@@ -3178,7 +3178,7 @@ pub class Checker {
       i = 0
       while i < recv.args.size {
         call.args.push(recv.args[i])
-        i = i + 1
+        i += 1
       }
       return call
     }
@@ -3245,7 +3245,7 @@ pub class Checker {
       if self.qualifier_ok(mod, self.current_module) {
         best = n
       }
-      n = n + 1
+      n += 1
     }
     best
   }
@@ -3445,7 +3445,7 @@ pub class Checker {
     i = 0
     while i < expr.cases.size {
       branch_tys.push(self.check_switch_branch(expr.cases[i].body, has_want, want))
-      i = i + 1
+      i += 1
     }
     if expr.has_else {
       branch_tys.push(self.check_switch_branch(expr.else_body, has_want, want))
@@ -3500,7 +3500,7 @@ pub class Checker {
         self.fail(b.loc, "spawn { } does not take block parameters; use items.parallel")
         return ty_join(self.t_int())
       }
-      self.in_task = self.in_task + 1
+      self.in_task += 1
       saved_loops = self.loop_depth
       self.loop_depth = 0
       saved_try = self.try_in
@@ -3508,7 +3508,7 @@ pub class Checker {
       result = self.check_block_value(b)
       self.try_in = saved_try
       self.loop_depth = saved_loops
-      self.in_task = self.in_task - 1
+      self.in_task -= 1
       if !result.is_int {
         self.fail(b.loc, "spawn result must be Int")
       }
@@ -3552,7 +3552,7 @@ pub class Checker {
         return self.t_int()
       }
       self.check_stmt(stmt, self.t_void(), false)
-      i = i + 1
+      i += 1
     }
     self.pop_scope
     self.t_int()
@@ -3637,7 +3637,7 @@ pub class Checker {
       self.push_scope
       self.bind(b.params[0], t)
       self.place_name = b.params[0]
-      self.place_depth = self.place_depth + 1
+      self.place_depth += 1
       // As `return`, a `break` or `continue` cannot leave the block: the
       // lock is released at its end only (W10b: both back ends hung).
       saved_loops = self.loop_depth
@@ -3753,7 +3753,7 @@ pub class Checker {
         return self.t_void()
       }
       self.check_stmt(stmt, self.t_void(), false)
-      i = i + 1
+      i += 1
     }
     self.pop_scope
     self.t_void()

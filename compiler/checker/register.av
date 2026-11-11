@@ -35,7 +35,7 @@ pub fn (checker_self: Checker) symbol_table: SymbolTable {
     if !sig.node.generic {
       table.add_function(sig)
     }
-    i = i + 1
+    i += 1
   }
   for sig in checker_self.methods {
     if sig.node.generic {
@@ -46,7 +46,7 @@ pub fn (checker_self: Checker) symbol_table: SymbolTable {
   i = 0
   while i < checker_self.cfuns.size {
     table.add_cfun(checker_self.cfuns[i])
-    i = i + 1
+    i += 1
   }
   table
 }
@@ -69,7 +69,7 @@ pub fn (checker_self: Checker) count_named_fns(name: String): Int {
   n = 0
   for i in 1..checker_self.functions.size {
     if checker_self.functions[i].name == name {
-      n = n + 1
+      n += 1
     }
   }
   n
@@ -79,7 +79,7 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
   n = 0
   for sig in checker_self.methods {
     if sig.owner == owner && sig.node.owner_mod == owner_mod && sig.name == name {
-      n = n + 1
+      n += 1
     }
   }
   n
@@ -120,13 +120,13 @@ pub fn (checker_self: Checker) assign_emit_names {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             if other.node.mod_name == checker_self.root_module {
-              nroot = nroot + 1
+              nroot += 1
             } else {
               if checker_self.root_module.size == 0 {
-                nroot = nroot + 1
+                nroot += 1
               } else {
                 if other.node.mod_name.size == 0 {
-                  nroot = nroot + 1
+                  nroot += 1
                 }
               }
             }
@@ -143,13 +143,13 @@ pub fn (checker_self: Checker) assign_emit_names {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             if other.node.mod_name == checker_self.root_module {
-              nroot = nroot + 1
+              nroot += 1
             } else {
               if checker_self.root_module.size == 0 {
-                nroot = nroot + 1
+                nroot += 1
               } else {
                 if other.node.mod_name.size == 0 {
-                  nroot = nroot + 1
+                  nroot += 1
                 }
               }
             }
@@ -186,21 +186,21 @@ pub fn (checker_self: Checker) assign_emit_names {
         if !other.node.generic && other.name == name {
           if sig.node.vis {
             if other.node.vis {
-              g = g + 1
+              g += 1
             }
           } else {
             if !other.node.vis && other.node.mod_name == sig.node.mod_name {
-              g = g + 1
+              g += 1
             }
           }
         }
-        j = j + 1
+        j += 1
       }
       if g == 0 {
         for j in 1..checker_self.functions.size {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
-            g = g + 1
+            g += 1
           }
         }
       }
@@ -225,7 +225,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       n = 0
       for other in checker_self.methods {
         if !other.node.generic && other.owner == owner && other.node.owner_mod == owner_mod && other.name == name {
-          n = n + 1
+          n += 1
         }
       }
       shown = owner
@@ -266,7 +266,7 @@ pub fn (checker_self: Checker) check: Program {
     } else {
       checker_self.register_function(fnn)
     }
-    i = i + 1
+    i += 1
   }
   checker_self.ready_adopt = true
   checker_self.clear_poison
@@ -320,7 +320,7 @@ pub fn (checker_self: Checker) check: Program {
   i = 0
   while i < checker_self.pending.size {
     checker_self.check_function(checker_self.pending[i])
-    i = i + 1
+    i += 1
   }
   // C14: generic class instances made while checking the bodies get their
   // cloned field defaults typed by their fields too (the first pass ran
@@ -384,7 +384,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
           if pty.members[mi].c_scalar > 0 {
             narrow = pty.members[mi].show
           }
-          mi = mi + 1
+          mi += 1
         }
         if r = pty.inner {
           if r.is_fn {
@@ -404,7 +404,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
         }
       }
       params.push(pty)
-      k = k + 1
+      k += 1
     }
     ret = checker_self.t_void()
     if t = cfun.return_type {
@@ -499,7 +499,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   while i < fnn.params.size {
     params.push(checker_self.resolve_value_in_module(fnn.params[i].type))
     checker_self.pull_resolve
-    i = i + 1
+    i += 1
   }
   ret = checker_self.t_void()
   if t = fnn.return_type {
@@ -523,7 +523,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   i = 0
   while i < params.size {
     checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
-    i = i + 1
+    i += 1
   }
   checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   checker_self.current_module = saved_mod
@@ -701,7 +701,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   while i < fnn.params.size {
     params.push(checker_self.resolve_value_in_module(fnn.params[i].type))
     checker_self.pull_resolve
-    i = i + 1
+    i += 1
   }
   ret = checker_self.t_void()
   if t = fnn.return_type {
@@ -725,7 +725,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   i = 0
   while i < params.size {
     checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
-    i = i + 1
+    i += 1
   }
   checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   checker_self.current_module = saved_mod
@@ -778,7 +778,7 @@ pub fn (checker_self: Checker) adopt_one_struct(sdef: StructDef) {
         return
       }
     }
-    j = j + 1
+    j += 1
   }
   if sdef.type_params.size > 0 {
     return
@@ -797,7 +797,7 @@ pub fn (checker_self: Checker) adopt_one_class(cdef: ClassDef) {
         return
       }
     }
-    j = j + 1
+    j += 1
   }
   if cdef.type_params.size > 0 {
     return
@@ -868,7 +868,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   n = 0
   for other in checker_self.methods {
     if !other.node.generic && other.owner == owner && other.node.owner_mod == sig.node.owner_mod && other.name == name {
-      n = n + 1
+      n += 1
     }
   }
   if name == "initialize" {
@@ -957,7 +957,7 @@ pub fn (checker_self: Checker) check_field_defaults {
           if t = default.ty {
             // Typed by an earlier pass (C14: this runs again after the
             // bodies, for the instances of generic classes made there).
-            j = j + 1
+            j += 1
             continue
           }
           if !checker_self.trivial_default(default) {
@@ -973,7 +973,7 @@ pub fn (checker_self: Checker) check_field_defaults {
             checker_self.pop_scope
           }
         }
-        j = j + 1
+        j += 1
       }
     }
   }

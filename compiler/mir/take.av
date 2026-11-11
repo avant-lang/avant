@@ -114,7 +114,7 @@ class TkFunc {
     i = 0
     while i < f.locals.size {
       self.parent.push(i)
-      i = i + 1
+      i += 1
     }
   }
 
@@ -202,14 +202,14 @@ fn tk_classes(m: MModule, t: TkFunc) {
     if tk_is_buf(m, f.locals[i].ty) {
       t.bufc[t.find(i)] = true
     }
-    i = i + 1
+    i += 1
   }
   // Ownership: every definition of a member is fresh, zero, or a copy
   // within the class; a parameter is defined elsewhere.
   i = 1
   while i <= f.nparams && i < f.locals.size {
     t.owned[t.find(i)] = false
-    i = i + 1
+    i += 1
   }
   for blk in f.blocks {
     for st in blk.stmts {
@@ -267,7 +267,7 @@ fn tk_stmt_escapes(pass: TkPass, t: TkFunc, st: MStmt) {
       k = 0
       while k < st.args.size {
         tk_keeping(t, st.args[k])
-        k = k + 1
+        k += 1
       }
       return
     }
@@ -294,7 +294,7 @@ fn tk_stmt_escapes(pass: TkPass, t: TkFunc, st: MStmt) {
       } else {
         tk_keeping(t, a)
       }
-      k = k + 1
+      k += 1
     }
     return
   }
@@ -328,7 +328,7 @@ fn tk_stmt_escapes(pass: TkPass, t: TkFunc, st: MStmt) {
     i = 0
     while i < r.ops.size {
       tk_keeping(t, r.ops[i])
-      i = i + 1
+      i += 1
     }
   }
 }
@@ -342,7 +342,7 @@ fn tk_escapes(pass: TkPass, t: TkFunc) {
     j = 0
     while j < blk.stmts.size {
       tk_stmt_escapes(pass, t, blk.stmts[j])
-      j = j + 1
+      j += 1
     }
     if tm = blk.term {
       if c = tm.cond {
@@ -367,7 +367,7 @@ fn tk_dead_after(t: TkFunc, outs: Array(Array(Bool)), b: Int, j: Int, x: Int): B
   i = blk.stmts.size - 1
   while i > j {
     mir_live_step(blk.stmts[i], live)
-    i = i - 1
+    i -= 1
   }
   root = t.find(x)
   k = 0
@@ -375,7 +375,7 @@ fn tk_dead_after(t: TkFunc, outs: Array(Array(Bool)), b: Int, j: Int, x: Int): B
     if live[k] && t.find(k) == root {
       return false
     }
-    k = k + 1
+    k += 1
   }
   true
 }
@@ -419,14 +419,14 @@ fn tk_rewrite(t: TkFunc): Int {
             }
             if tk_dead_after(t, outs, b, j, x) {
               st.callee = "avant_buf_take_str"
-              n = n + 1
+              n += 1
             }
           }
         }
       }
-      j = j + 1
+      j += 1
     }
-    b = b + 1
+    b += 1
   }
   n
 }
@@ -439,7 +439,7 @@ pub fn mir_take_pass(m: MModule) {
       k = 0
       while k < f.locals.size && !has {
         has = tk_is_buf(m, f.locals[k].ty)
-        k = k + 1
+        k += 1
       }
     }
     if has {
@@ -461,13 +461,13 @@ pub fn mir_take_pass(m: MModule) {
           t.keeps[k] = true
           changed = true
         }
-        k = k + 1
+        k += 1
       }
     }
   }
   n = 0
   for info in pass.infos {
-    n = n + tk_rewrite(info)
+    n += tk_rewrite(info)
   }
   if n > 0 {
     tk_declare(m)

@@ -99,21 +99,21 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
 }
 
 pub fn (checker_self: Checker) body_vstep(body: Array(Stmt), ivar: String): Int {
-  step = 0 - 1
+  step = -1
   i = 0
   while i < body.size {
     got = checker_self.stmt_vstep(body[i], ivar)
     if got == 0 - 2 {
-      return 0 - 1
+      return -1
     }
     if got > 0 {
       if step < 0 {
         step = got
       } else if step != got {
-        return 0 - 1
+        return -1
       }
     }
-    i = i + 1
+    i += 1
   }
   step
 }
@@ -215,7 +215,7 @@ pub fn (checker_self: Checker) sv_remove_var(v: String) {
 }
 
 pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
-  best = 0 - 1
+  best = -1
   for i in 0..checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_cont[i] == cont && checker_self.facts.fact_slack[i] > best {
       best = checker_self.facts.fact_slack[i]
@@ -225,7 +225,7 @@ pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
 }
 
 pub fn (checker_self: Checker) fact_any_slack(v: String): Int {
-  best = 0 - 1
+  best = -1
   for i in 0..checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_slack[i] > best {
       best = checker_self.facts.fact_slack[i]
@@ -840,7 +840,7 @@ pub fn (checker_self: Checker) body_ivar_ok(body: Array(Stmt), ivar: String): Bo
     if !checker_self.deep_ivar_ok_stmt(body[i], ivar) {
       return false
     }
-    i = i + 1
+    i += 1
   }
   true
 }
@@ -851,7 +851,7 @@ pub fn (checker_self: Checker) body_shrinks(body: Array(Stmt), cont: String): Bo
     if checker_self.deep_shrinks_stmt(body[i], cont) {
       return true
     }
-    i = i + 1
+    i += 1
   }
   false
 }
@@ -1395,7 +1395,7 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
       if b.kind == ex_int() && b.int_bits <= 4611686018427387904u64 {
         low = b.int_bits.to_i64()
         if op == tk_greater() {
-          low = low + 1i64
+          low += 1i64
         }
         if low >= 1i64 {
           checker_self.gnn_put(v)
@@ -1628,22 +1628,22 @@ pub fn (checker_self: Checker) cap_collect_assigned_stmt(s: Stmt, into: Array(St
   i = 0
   while i < s.then_body.size {
     checker_self.cap_collect_assigned_stmt(s.then_body[i], into)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < s.else_body.size {
     checker_self.cap_collect_assigned_stmt(s.else_body[i], into)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < s.body.size {
     checker_self.cap_collect_assigned_stmt(s.body[i], into)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < s.pre.size {
     checker_self.cap_collect_assigned_stmt(s.pre[i], into)
-    i = i + 1
+    i += 1
   }
 }
 
@@ -1652,20 +1652,20 @@ pub fn (checker_self: Checker) cap_collect_assigned_expr(e: Expr, into: Array(St
     j = 0
     while j < b.body.size {
       checker_self.cap_collect_assigned_stmt(b.body[j], into)
-      j = j + 1
+      j += 1
     }
   }
   for cs in e.cases {
     j = 0
     while j < cs.body.size {
       checker_self.cap_collect_assigned_stmt(cs.body[j], into)
-      j = j + 1
+      j += 1
     }
   }
   i = 0
   while i < e.else_body.size {
     checker_self.cap_collect_assigned_stmt(e.else_body[i], into)
-    i = i + 1
+    i += 1
   }
   if inner = e.inner {
     checker_self.cap_collect_assigned_expr(inner, into)
@@ -1685,17 +1685,17 @@ pub fn (checker_self: Checker) cap_collect_assigned_expr(e: Expr, into: Array(St
   i = 0
   while i < e.args.size {
     checker_self.cap_collect_assigned_expr(e.args[i], into)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.elems.size {
     checker_self.cap_collect_assigned_expr(e.elems[i], into)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < e.field_exprs.size {
     checker_self.cap_collect_assigned_expr(e.field_exprs[i], into)
-    i = i + 1
+    i += 1
   }
   if sz = e.size_expr {
     checker_self.cap_collect_assigned_expr(sz, into)
@@ -1710,12 +1710,12 @@ pub fn (checker_self: Checker) cap_kill_assigned_in(body: Array(Stmt)) {
   i = 0
   while i < body.size {
     checker_self.cap_collect_assigned_stmt(body[i], names)
-    i = i + 1
+    i += 1
   }
   i = 0
   while i < names.size {
     checker_self.cap_remove(names[i])
-    i = i + 1
+    i += 1
   }
 }
 

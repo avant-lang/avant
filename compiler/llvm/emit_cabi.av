@@ -74,7 +74,7 @@ fn ll_cabi_leaves(ts: MTypes, ty: Int, base: Int, offs: Array(Int), fps: Array(B
     i = 0
     while i < l.fields.size {
       ll_cabi_leaves(ts, l.fields[i], base + l.offsets[i], offs, fps)
-      i = i + 1
+      i += 1
     }
     return
   }
@@ -122,7 +122,7 @@ fn ll_cabi_count(v: CAbiVal, sse: Bool): Int {
   for pt in v.parts {
     d = pt == "double"
     if d == sse {
-      n = n + 1
+      n += 1
     }
   }
   n
@@ -142,7 +142,7 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
       rv.kind = cabi_none()
     } else if size > 16 {
       rv.kind = cabi_memory()
-      ints = ints - 1
+      ints -= 1
     } else {
       rv.kind = cabi_parts()
       ll_cabi_split(ts, s.ret, rv)
@@ -163,8 +163,8 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
         ns = ll_cabi_count(v, true)
         if ni <= ints && ns <= sses {
           v.kind = cabi_parts()
-          ints = ints - ni
-          sses = sses - ns
+          ints -= ni
+          sses -= ns
         } else {
           v.kind = cabi_memory()
           p: Array(String) = []
@@ -175,10 +175,10 @@ pub fn ll_cabi_plan(ts: MTypes, sig: Int): CAbiSig {
       }
     } else if ts.kind(t) == mk_f64() {
       if sses > 0 {
-        sses = sses - 1
+        sses -= 1
       }
     } else if ints > 0 {
-      ints = ints - 1
+      ints -= 1
     }
     plan.args.push(v)
   }
@@ -290,7 +290,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
         args.push("${v.parts[j]} ${x2}")
       }
     }
-    i = i + 1
+    i += 1
   }
   ptexts = ll_cabi_param_texts(ts, plan)
   // The function type of the call names types only (attributes are on

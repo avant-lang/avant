@@ -40,7 +40,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   i = 0
   while i < m.funcs.size {
     ll_function(e, m.funcs[i])
-    i = i + 1
+    i += 1
   }
   body = e.out.to_s
   e.out = buf_new()
@@ -102,7 +102,7 @@ fn ll_layouts(e: LlEmit, out: Buf) {
         out.push_str(" ")
       }
       out.push_str("}\n")
-      n = n + 1
+      n += 1
     }
   }
   if n > 0 {
@@ -156,7 +156,7 @@ fn ll_insert_sorted(xs: Array(String), s: String) {
   j = xs.size - 1
   while j > 0 && str_lt(s, xs[j - 1]) {
     xs[j] = xs[j - 1]
-    j = j - 1
+    j -= 1
   }
   xs[j] = s
 }
@@ -294,7 +294,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   i = 1
   while i <= f.nparams {
     e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
-    i = i + 1
+    i += 1
   }
   e.line("br label %bb0")
   b = 0
@@ -306,13 +306,13 @@ fn ll_function(e: LlEmit, f: MFunc) {
     while j < blk.stmts.size {
       e.si = j
       ll_stmt(e, blk.stmts[j])
-      j = j + 1
+      j += 1
     }
     e.si = blk.stmts.size
     if t = blk.term {
       ll_term(e, t)
     }
-    b = b + 1
+    b += 1
   }
   if e.trap_ovf {
     e.block("trap.ovf")
@@ -508,7 +508,7 @@ fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool
     } else {
       buf.push_str("${e.llt(ty)} ${x}")
     }
-    i = i + 1
+    i += 1
   }
   buf.to_s
 }
@@ -552,7 +552,7 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   if got = e.loop_md.get(key) {
     return ", !llvm.loop !${got}"
   }
-  e.loop_md_n = e.loop_md_n + 1
+  e.loop_md_n += 1
   e.loop_md[key] = e.loop_md_n
   ", !llvm.loop !${e.loop_md_n}"
 }
@@ -565,7 +565,7 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
   i = 1
   while i <= e.loop_md_n {
     out.push_str("!${i} = distinct !{!${i}, !0}\n")
-    i = i + 1
+    i += 1
   }
 }
 
