@@ -1187,7 +1187,7 @@ avant format src --write
 
 ## Regex
 
-Regex lives in the standard library: `import std.regex` is what links PCRE2. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`, `re.find(text, from = 0)` returns a `Match?` value carrying the bounds (`m.start`, `m.end`, `m.span(i)`) and the groups (`m.group(i)`, or `m.group("name")` for a named group), `re.count(text)` counts non-overlapping matches, `re.matches(text)` iterates them, and `re.replace` / `re.split` work on every match. A compiled pattern is a handle: `re.close` releases it (the compiler keeps a bounded cache of compiled patterns, so compiling the same pattern again is cheap), `re.scoped { |r| ... }` closes on exit, and operations on a closed `Regex` report no match.
+Regex lives in the standard library: `import std.regex` is what links PCRE2. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`, `re.find(text, from = 0)` returns a `Match?` value carrying the bounds (`m.start`, `m.end`, `m.span(i)`) and the groups (`m.group(i)`, or `m.group("name")` for a named group), `re.count(text)` counts non-overlapping matches, `re.matches(text)` iterates them, and `re.replace` / `re.split` work on every match. A compiled pattern is a handle: `re.close` releases it (the compiler keeps a bounded cache of compiled patterns, so compiling the same pattern again is cheap), `re.scoped { |r| ... }` closes on exit, and an operation on a closed `Regex` traps (`avant runtime: Regex used after close`): a use after close is a program error, not a "no match". A pattern that does not compile is a `RegexError` with PCRE2's reason and the offset in the pattern it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`).
 
 ```avant
 import std.regex
@@ -1537,6 +1537,8 @@ fn main {
 ```
 
 `int` is a JSON integer (no fraction, no exponent) within `Int`, and `nil` for anything else (a real such as `3.7` or `3.0`, an integer beyond `Int`, a non-number); `int64` is the same within `Int64`; `f64` reads any number. Floats are written in the language's one float text (`1.5e-7`, `2.0`), and NaN and the infinities as `null`.
+
+A `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none). `Json.obj` and `Json.arr` start a `JsonBuilder`; used against its shape it traps, saying how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers still open (`JsonBuilder.to_s: 2 containers still open`).
 
 The document owns its values and its text buffer; there is nothing to close.
 

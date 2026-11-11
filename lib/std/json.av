@@ -22,21 +22,31 @@ lib jsonc {
   fun avant_json_obj_str(node: Ptr(Void), key: String): String
   fun avant_json_key_at(node: Ptr(Void), index: Int): String
   fun avant_json_text(node: Ptr(Void)): String
+  fun avant_json_error_text: String
+  fun avant_json_error_offset: Int64
+  fun avant_json_misuse(what: String)
 }
 
+
+// A document that does not parse: the message says what yyjson found
+// and where ("invalid JSON at byte 7: unexpected character"); offset is
+// that byte offset, -1 when the error has none (Stage 29 W4b2, D295 R11).
 pub class JsonError: Error {
   pub message: String
+  pub offset: Int = -1
 
-  fn initialize(message: String) {
+  fn initialize(message: String, offset: Int = -1) {
     self.message = message
+    self.offset = offset
   }
 }
 
 fn json_error(code: Int): JsonError {
   if code == 1 {
-    return JsonError.new("invalid JSON document")
+    off = jsonc.avant_json_error_offset().to_i
+    return JsonError.new("invalid JSON at byte ${off}: ${jsonc.avant_json_error_text()}", off)
   }
-  JsonError.new("JSON error")
+  JsonError.new("JSON parse ran out of memory")
 }
 
 pub class JsonValue {
@@ -398,6 +408,7 @@ pub class JsonBuilder {
 
   pub fn end: JsonBuilder {
     if self.stack.size == 0 {
+      jsonc.avant_json_misuse("JsonBuilder.end: nothing open")
       return self
     }
     top = self.stack[self.stack.size - 1]
@@ -412,6 +423,10 @@ pub class JsonBuilder {
   }
 
   pub fn key(name: String): JsonBuilder {
+    if self.stack.size == 0 || self.stack[self.stack.size - 1] != 1 {
+      jsonc.avant_json_misuse("JsonBuilder.key: not inside an object")
+      return self
+    }
     if self.counts[self.counts.size - 1] > 0 {
       self.buf.push_str(",")
     }
@@ -533,6 +548,9 @@ pub class JsonBuilder {
   }
 
   pub fn to_s: String {
+    if self.stack.size > 0 {
+      jsonc.avant_json_misuse("JsonBuilder.to_s: ${self.stack.size} containers still open")
+    }
     self.buf.to_s
   }
 }

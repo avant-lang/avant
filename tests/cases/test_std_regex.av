@@ -202,12 +202,8 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "shared pattern survives sibling close")
   }
-  if gone = shared_a.find("azzz") {
-    c.expect(false, "closed regex finds nothing")
-  } else {
-    c.expect(true, "closed regex finds nothing")
-  }
-  c.eq_int(shared_a.count("zzz"), 0, "closed regex counts zero")
+  // A use after close traps (Stage 29 W4b2, test_system.av lib-regex-*).
+  c.expect(shared_a.is_closed, "closed regex says so")
   shared_b.close
 
   scoped_len = 0

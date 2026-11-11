@@ -12,6 +12,7 @@ import backends
 //   - main's (or run's) Int result outside 0..255 traps; inside it is the exit status (R14)
 //   - a C function declared : String that returns NULL traps naming it; String? reads NULL as nil (R15)
 //   - every trap the compiler raises names its site (file:line:col), flushes stdout first, names its operation and type, and exits 1 (R16)
+//   - JsonBuilder misuse and a closed Regex trap saying what failed; Json.parse and Regex.compile errors carry the library's reason and offset (R11)
 
 class SCase {
   pub tag: String = ""
@@ -112,6 +113,19 @@ fn trap_cases: Array(SCase) {
   xs
 }
 
+fn lib_cases: Array(SCase) {
+  xs: Array(SCase) = []
+  xs.push(accepted("lib-json-error", "import std.json\nimport std.regex\n\nfn jfail(r: Json | JsonError): JsonError? {\n  _ = r?\n  nil\n}\n\nfn rfail(r: Regex | RegexError): RegexError? {\n  _ = r?\n  nil\n}\n\nfn main {\n  if e = jfail(Json.parse(\"{\\\"a\\\": 1,}\")) {\n    puts(\"\${e}\")\n    puts(e.offset)\n  }\n  if e2 = jfail(Json.parse(\"[1, 2\")) {\n    puts(e2.message)\n  }\n  if e3 = rfail(Regex.compile(\"(unclosed\")) {\n    puts(\"\${e3}\")\n    puts(e3.offset)\n  }\n  puts(JsonError.new(\"mine\").offset)\n}\n", "invalid JSON at byte 7: trailing comma is not allowed\n7\ninvalid JSON at byte 5: unexpected end of data\ninvalid regular expression at offset 9: missing closing parenthesis\n9\n-1\n"))
+  xs.push(trapped("lib-builder-end", "import std.json\nfn main {\n  b = Json.arr\n  puts(b.end.to_s)\n  b.end\n}\n", "[]\n", "avant runtime: JsonBuilder.end: nothing open"))
+  xs.push(trapped("lib-builder-key", "import std.json\nfn main {\n  b = Json.arr\n  b.key(\"x\")\n}\n", "", "avant runtime: JsonBuilder.key: not inside an object"))
+  xs.push(trapped("lib-builder-key-top", "import std.json\nfn main {\n  b = JsonBuilder.new\n  b.key(\"x\")\n}\n", "", "avant runtime: JsonBuilder.key: not inside an object"))
+  xs.push(trapped("lib-builder-open", "import std.json\nfn main {\n  b = Json.obj\n  b.key(\"a\").arr\n  puts(b.to_s)\n}\n", "", "avant runtime: JsonBuilder.to_s: 2 containers still open"))
+  xs.push(accepted("lib-builder-ok", "import std.json\nfn main {\n  b = Json.obj\n  b.set(\"a\", 1)\n  b.key(\"xs\").arr.add(1).add(2).end\n  puts(b.end.to_s)\n}\n", "{\"a\":1,\"xs\":[1,2]}\n"))
+  xs.push(trapped("lib-regex-closed-find", "import std.regex\nfn main {\n  if re = Regex.compile(\"a+\") {\n    re.close\n    puts(\"closed\")\n    if m = re.find(\"aa\") {\n      puts(m.start)\n    }\n  }\n}\n", "closed\n", "avant runtime: Regex used after close"))
+  xs.push(trapped("lib-regex-closed-count", "import std.regex\nfn main {\n  if re = Regex.compile(\"b\") {\n    re.close\n    re.close\n    puts(re.count(\"bb\"))\n  }\n}\n", "", "avant runtime: Regex used after close"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -167,6 +181,9 @@ fn test_main(c: Checks) {
     }
     for f_trap in trap_cases() {
       all.push(f_trap)
+    }
+    for f_lib in lib_cases() {
+      all.push(f_lib)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {
