@@ -123,7 +123,7 @@ pub fn (checker_self: Checker) mods_of_type(name: String): Array(String) {
 }
 
 pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String, from_mod: String): Bool {
-  if str_eq(mod_name, from_mod) {
+  if mod_name == from_mod {
     return true
   }
   if v = checker_self.type_vis.get(type_slot(mod_name, name)) {
@@ -135,16 +135,16 @@ pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String,
 }
 
 pub fn (checker_self: Checker) imported_by(from_mod: String, target: String): Bool {
-  if str_eq(from_mod, target) {
+  if from_mod == target {
     return true
   }
   i = 0
   while i < checker_self.program.mods.size {
     info = checker_self.program.mods[i]
-    if str_eq(info.name, from_mod) {
+    if info.name == from_mod {
       j = 0
       while j < info.imports.size {
-        if str_eq(info.imports[j], target) {
+        if info.imports[j] == target {
           return true
         }
         j = j + 1
@@ -156,7 +156,7 @@ pub fn (checker_self: Checker) imported_by(from_mod: String, target: String): Bo
 }
 
 pub fn (checker_self: Checker) qualifier_ok(qual: String, from_mod: String): Bool {
-  if str_eq(qual, from_mod) {
+  if qual == from_mod {
     return true
   }
   checker_self.imported_by(from_mod, qual)
@@ -202,7 +202,7 @@ pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): B
   if o = checker_self.lib_mod.get(name) {
     owner = o
   }
-  if str_eq(owner, from_mod) {
+  if owner == from_mod {
     return true
   }
   if v = checker_self.lib_vis.get(name) {
@@ -214,7 +214,7 @@ pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): B
 }
 
 pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): Bool {
-  if str_eq(fnn.mod_name, from_mod) {
+  if fnn.mod_name == from_mod {
     return true
   }
   if fnn.mod_name.size == 0 {
@@ -230,8 +230,8 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
-  if str_eq(fnn.owner, "Bytes") || str_eq(fnn.owner, "String") || str_eq(fnn.owner, "Buf") {
-    if str_eq(fnn.mod_name, from_mod) {
+  if fnn.owner == "Bytes" || fnn.owner == "String" || fnn.owner == "Buf" {
+    if fnn.mod_name == from_mod {
       return true
     }
     return checker_self.imported_by(from_mod, fnn.mod_name)
@@ -239,10 +239,10 @@ pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String
   if fnn.vis {
     return true
   }
-  if str_eq(fnn.name, "initialize") {
+  if fnn.name == "initialize" {
     return true
   }
-  if str_eq(fnn.mod_name, from_mod) {
+  if fnn.mod_name == from_mod {
     return true
   }
   if fnn.mod_name.size == 0 {
@@ -277,7 +277,7 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, name) {
+    if sig.name == name {
       if checker_self.fn_is_visible(sig.node, from_mod) {
         if seen = fn_mods.get(sig.node.mod_name) {
         } else {
@@ -295,13 +295,13 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
   while i < origins.size {
     o = origins[i]
     if o.size >= 5 {
-      if str_eq(str_slice(o, 0, 5), "type:") {
+      if str_slice(o, 0, 5) == "type:" {
         owner_count = owner_count + 1
         has_type = true
-      } else if str_eq(str_slice(o, 0, 4), "lib:") {
+      } else if str_slice(o, 0, 4) == "lib:" {
         owner_count = owner_count + 1
         has_type = true
-      } else if str_eq(str_slice(o, 0, 3), "fn:") {
+      } else if str_slice(o, 0, 3) == "fn:" {
         has_fn = true
       }
     }
@@ -425,7 +425,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
         owner = o
       }
     }
-    if str_eq(owner, fnn.mod_name) {
+    if owner == fnn.mod_name {
     } else {
       vis = 0
       if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
@@ -472,7 +472,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
         owner = o
       }
     }
-    if str_eq(owner, fnn.mod_name) {
+    if owner == fnn.mod_name {
     } else {
       vis = 0
       if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
@@ -545,7 +545,7 @@ pub fn (checker_self: Checker) type_from_recv(recv: Expr, loc: Location): Ty? {
 }
 
 pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String): Ty {
-  if str_eq(expr.callee, "new") {
+  if expr.callee == "new" {
     checker_self.fail(expr.loc, "new is a type constructor")
     return checker_self.t_int()
   }
@@ -559,7 +559,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
   checker_self.current_module = mod
   none: Ty? = nil
   if sig = checker_self.match_func(expr.callee, arg_tys, none, expr.loc) {
-    if str_eq(sig.node.mod_name, mod) {
+    if sig.node.mod_name == mod {
     } else {
       checker_self.fail(expr.loc, "unknown function ${mod}.${expr.callee}")
       checker_self.current_module = saved
@@ -594,7 +594,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
 // std.gc's two forms (Stage 29 W1c2, D305). `gc` names the module in a
 // module that imports std.gc, unless a local or a field takes the name.
 pub fn (checker_self: Checker) names_std_gc(name: String): Bool {
-  if !str_eq(name, "gc") {
+  if name != "gc" {
     return false
   }
   if found = checker_self.lookup(name) {
@@ -623,7 +623,7 @@ pub fn (checker_self: Checker) check_hold(stmt: Stmt) {
 // program can name; `gc.hold` outside a statement and any other member
 // are errors.
 pub fn (checker_self: Checker) check_gc_call(expr: Expr): Ty {
-  if str_eq(expr.callee, "collect") {
+  if expr.callee == "collect" {
     if expr.args.size != 0 {
       checker_self.fail(expr.loc, "gc.collect takes no arguments")
     } else if b = expr.block {
@@ -633,7 +633,7 @@ pub fn (checker_self: Checker) check_gc_call(expr: Expr): Ty {
     expr.callee = "#gc.collect"
     return checker_self.t_void()
   }
-  if str_eq(expr.callee, "hold") {
+  if expr.callee == "hold" {
     checker_self.fail(expr.loc, "gc.hold is a statement: gc.hold { ... }")
     return checker_self.t_void()
   }

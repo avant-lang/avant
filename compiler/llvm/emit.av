@@ -123,7 +123,7 @@ fn ll_declarations(e: LlEmit, out: Buf) {
   names: Array(String) = []
   i = 0
   while i < e.m.externs.size {
-    if !str_eq(e.m.externs[i].name, "__avant_type_maps") {
+    if e.m.externs[i].name != "__avant_type_maps" {
       ll_insert_sorted(names, e.m.externs[i].name)
     }
     i = i + 1
@@ -167,7 +167,7 @@ fn ll_declarations(e: LlEmit, out: Buf) {
 fn ll_insert_sorted(xs: Array(String), s: String) {
   i = 0
   while i < xs.size {
-    if str_eq(xs[i], s) {
+    if xs[i] == s {
       return
     }
     i = i + 1
@@ -418,7 +418,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
     args = ll_args(e, st.args, s.params, false)
     result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
   } else if x = e.m.ext(st.callee) {
-    if str_eq(x.name, "avant_gc_poll") {
+    if x.name == "avant_gc_poll" {
       // Stage 28 W17a: the request flag's test, the call only when set.
       ll_gc_poll(e)
       return
@@ -471,16 +471,16 @@ fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
   if s.params.size != 1 || s.params[0] != mt_f64() || s.ret != mt_f64() || s.varargs {
     return ""
   }
-  if str_eq(x.name, "sqrt") {
+  if x.name == "sqrt" {
     return "llvm.sqrt.f64"
   }
-  if str_eq(x.name, "fabs") {
+  if x.name == "fabs" {
     return "llvm.fabs.f64"
   }
-  if str_eq(x.name, "floor") {
+  if x.name == "floor" {
     return "llvm.floor.f64"
   }
-  if str_eq(x.name, "exp") {
+  if x.name == "exp" {
     return "llvm.exp.f64"
   }
   ""

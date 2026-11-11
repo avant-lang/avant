@@ -190,11 +190,11 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     if recv = e.receiver {
       lw.prewalk_expr(recv, encl)
       if rt = recv.ty {
-        if rt.is_array && str_eq(e.callee, "parallel") && mir_has_block(e) {
+        if rt.is_array && e.callee == "parallel" && mir_has_block(e) {
           lw.prewalk_par(e, encl)
         }
       }
-    } else if str_eq(e.callee, "spawn") && mir_has_block(e) {
+    } else if e.callee == "spawn" && mir_has_block(e) {
       lw.prewalk_spawn(e, encl)
     }
     lw.prewalk_list(e.args, encl)
@@ -289,7 +289,7 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
 pub fn mir_name_index(names: Array(String), name: String): Int {
   i = 0
   while i < names.size {
-    if str_eq(names[i], name) {
+    if names[i] == name {
       return i
     }
     i = i + 1
@@ -416,7 +416,7 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
   i = 0
   while i < names.size {
     n = names[i]
-    if !(lw.lw_self > 0 && str_eq(n, lw.lw_self_name)) {
+    if !(lw.lw_self > 0 && n == lw.lw_self_name) {
       bx.push(n)
     }
     i = i + 1

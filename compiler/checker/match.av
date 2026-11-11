@@ -15,7 +15,7 @@ import checker
 pub fn (checker_self: Checker) subst_get(keys: Array(String), vals: Array(Ty), name: String): Ty? {
   i = 0
   while i < keys.size {
-    if str_eq(keys[i], name) {
+    if keys[i] == name {
       return vals[i]
     }
     i = i + 1
@@ -104,7 +104,7 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
     return false
   }
   if pattern.origin.size > 0 {
-    if str_eq(pattern.origin, actual.origin) {
+    if pattern.origin == actual.origin {
       if pattern.ty_args.size == actual.ty_args.size {
         i = 0
         while i < pattern.ty_args.size {
@@ -168,7 +168,7 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
 pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?, pat: Ty, act: Ty): Array(Ty)? {
   keys: Array(String) = []
   vals: Array(Ty) = []
-  if str_eq(pat.origin, act.origin) {
+  if pat.origin == act.origin {
     if pat.ty_args.size == act.ty_args.size {
       i = 0
       while i < pat.ty_args.size {
@@ -226,7 +226,7 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
 
 pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String, arg_tys: Array(Ty), expected: Ty?): Array(Ty)? {
   if recv = sig.node.receiver {
-    if str_eq(sig.owner, call_owner) {
+    if sig.owner == call_owner {
     } else {
       if act = checker_self.resolver.get_named(call_owner) {
         checker_self.resolver.set_tparams(sig.node.type_params)
@@ -266,7 +266,7 @@ pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
   i = 0
   while i < checker_self.program.structs.size {
     sdef = checker_self.program.structs[i]
-    if str_eq(sdef.name, owner) {
+    if sdef.name == owner {
       sdef.methods.push(fnn)
       return
     }
@@ -275,7 +275,7 @@ pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
   i = 0
   while i < checker_self.program.classes.size {
     cdef = checker_self.program.classes[i]
-    if str_eq(cdef.name, owner) {
+    if cdef.name == owner {
       cdef.methods.push(fnn)
       return
     }
@@ -416,7 +416,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   x = 0
   while x < named.size {
     sig = checker_self.functions[named[x]]
-    if str_eq(sig.name, name) {
+    if sig.name == name {
       is_inst = false
       j = 0
       while j < checker_self.instances.size {
@@ -464,7 +464,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
     x = 0
     while x < named.size {
       sig = checker_self.functions[named[x]]
-      if str_eq(sig.name, name) {
+      if sig.name == name {
         if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
           if checker_self.sig_is_instance(sig) {
           } else {
@@ -518,18 +518,18 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       x = x + 1
       continue
     }
-    if str_eq(sig.owner, owner) {
+    if sig.owner == owner {
       mod_ok = true
       if owner_mod.size > 0 {
         if sig.node.owner_mod.size > 0 {
-          if str_eq(sig.node.owner_mod, owner_mod) {
+          if sig.node.owner_mod == owner_mod {
           } else {
             mod_ok = false
           }
         }
       }
       if mod_ok {
-      if str_eq(sig.name, name) {
+      if sig.name == name {
         is_inst = false
         j = 0
         while j < checker_self.instances.size {
@@ -574,10 +574,10 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       x = 0
       while x < named.size {
         sig = checker_self.methods[named[x]]
-        if str_eq(sig.owner, owner) {
+        if sig.owner == owner {
         } else {
           if sig.node.generic {
-            if str_eq(sig.name, name) {
+            if sig.name == name {
               if recv = sig.node.receiver {
                 if checker_self.method_is_visible(sig.node, checker_self.current_module) {
                   if arity_ok(sig.node, arg_tys.size) {
@@ -657,8 +657,8 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
     while i < checker_self.methods.size {
       sig = checker_self.methods[i]
       if sig.node.type_method {
-        if str_eq(sig.owner, tt.name) {
-          if str_eq(sig.name, callee) {
+        if sig.owner == tt.name {
+          if sig.name == callee {
             return ty
           }
         }
@@ -685,18 +685,18 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
-    if str_eq(sig.owner, ty.name) {
+    if sig.owner == ty.name {
       mod_ok = true
       if ty.mod_name.size > 0 {
         if sig.node.owner_mod.size > 0 {
-          if str_eq(sig.node.owner_mod, ty.mod_name) {
+          if sig.node.owner_mod == ty.mod_name {
           } else {
             mod_ok = false
           }
         }
       }
       if mod_ok {
-        if str_eq(sig.name, expr.callee) {
+        if sig.name == expr.callee {
           if sig.node.type_method {
             if checker_self.method_is_visible(sig.node, checker_self.current_module) {
               if arity_ok(sig.node, arg_tys.size) {
@@ -761,7 +761,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
   x = 0
   while x < named.size {
     sig = checker_self.functions[named[x]]
-    if str_eq(sig.name, expr.callee) {
+    if sig.name == expr.callee {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         visible = true
       }
@@ -798,14 +798,14 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
 }
 
 pub fn (checker_self: Checker) method_targets_owner(sig: FuncSig, owner: String): Bool {
-  if str_eq(sig.owner, owner) {
+  if sig.owner == owner {
     return true
   }
   if sig.node.generic {
     if recv = sig.node.receiver {
       if act = checker_self.resolver.get_named(owner) {
         if act.origin.size > 0 {
-          return str_eq(sig.owner, act.origin)
+          return sig.owner == act.origin
         }
       }
     }
@@ -823,7 +823,7 @@ pub fn (checker_self: Checker) absorb_method_block(expr: Expr, owner: String) {
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
-    if str_eq(sig.name, expr.callee) {
+    if sig.name == expr.callee {
       if checker_self.method_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {
@@ -862,7 +862,7 @@ pub fn (checker_self: Checker) expr_has_deferred(expr: Expr): Bool {
 }
 
 pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, keys: Array(String), vals: Array(Ty)): Bool {
-  if str_eq(sig.owner, owner) {
+  if sig.owner == owner {
     return true
   }
   if recv = sig.node.receiver {
@@ -874,7 +874,7 @@ pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, ke
       if checker_self.has_err {
         return false
       }
-      if str_eq(pat.origin, act.origin) {
+      if pat.origin == act.origin {
         if pat.ty_args.size == act.ty_args.size {
           i = 0
           while i < pat.ty_args.size {
@@ -955,7 +955,7 @@ pub fn (checker_self: Checker) collect_method_deferred(expr: Expr, owner: String
       i = i + 1
       continue
     }
-    if str_eq(sig.name, expr.callee) {
+    if sig.name == expr.callee {
       if checker_self.method_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {

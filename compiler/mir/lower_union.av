@@ -516,7 +516,7 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
     }
     et = lw.elem_of(aty)
     want = lw.elem_ty_of(recv)
-    if str_eq(name, "index_of") && args.size == 1 {
+    if name == "index_of" && args.size == 1 {
       f = lw.kind_fn("avant_array_index", et, true)
       if f.size == 0 {
         lw.refuse(e.loc, "Array.index_of on ${want.show}")
@@ -573,11 +573,11 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
     lw.at(e.loc)
     fl = lw.found_local
     f = ""
-    if str_eq(name, "get") && args.size == 1 {
+    if name == "get" && args.size == 1 {
       f = mir_hash_op(ht, "get")
-    } else if str_eq(name, "get_slice") && args.size == 3 {
+    } else if name == "get_slice" && args.size == 3 {
       f = "avant_hash_get_str_slice"
-    } else if str_eq(name, "get_concat") && args.size == 2 {
+    } else if name == "get_concat" && args.size == 2 {
       f = "avant_hash_get_concat"
     }
     if f.size == 0 {
@@ -624,13 +624,13 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
 // `sha256_word0`; nil when c is not one of them.
 pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   b = lw.lw_b
-  if str_eq(c, "env_get") && e.args.size == 1 {
+  if c == "env_get" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_env_get")
   }
-  if str_eq(c, "file_read") && e.args.size == 1 {
+  if c == "file_read" && e.args.size == 1 {
     return lw.lower_opt_cstr(e, "avant_file_read")
   }
-  if str_eq(c, "wide_op") && e.args.size == 5 {
+  if c == "wide_op" && e.args.size == 5 {
     // calls.av:291-309: the arguments last to first, then the call.
     wops = lw.lower_args_rev(e.args)
     if lw.failed {
@@ -640,26 +640,26 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     return lw.call_to(mt_i32(), "avant_wide_op", wops)
   }
   f = ""
-  if str_eq(c, "wide_hi") && e.args.size == 0 {
+  if c == "wide_hi" && e.args.size == 0 {
     f = "avant_wide_hi"
-  } else if str_eq(c, "checksum_f64") && e.args.size == 1 {
+  } else if c == "checksum_f64" && e.args.size == 1 {
     f = "avant_checksum_f64"
-  } else if str_eq(c, "sha256") && e.args.size == 1 {
+  } else if c == "sha256" && e.args.size == 1 {
     f = "avant_sha256"
-  } else if str_eq(c, "crc32_bytes") && e.args.size == 1 {
+  } else if c == "crc32_bytes" && e.args.size == 1 {
     f = "avant_crc32_i32"
-  } else if str_eq(c, "sha256_word0") && e.args.size == 1 {
+  } else if c == "sha256_word0" && e.args.size == 1 {
     f = "avant_sha256_word0"
-  } else if str_eq(c, "#gc.collect") && e.args.size == 0 {
+  } else if c == "#gc.collect" && e.args.size == 0 {
     // std.gc's `gc.collect()` (checker/visibility.av check_gc_call).
     f = "avant_gc_collect_young"
-  } else if str_eq(c, "argv") && e.args.size == 0 {
+  } else if c == "argv" && e.args.size == 0 {
     f = "avant_argv"
-  } else if str_eq(c, "file_exists") && e.args.size == 1 {
+  } else if c == "file_exists" && e.args.size == 1 {
     f = "avant_file_exists"
-  } else if str_eq(c, "file_write") && e.args.size == 2 {
+  } else if c == "file_write" && e.args.size == 2 {
     f = "avant_file_write"
-  } else if str_eq(c, "dir_list") && e.args.size == 1 {
+  } else if c == "dir_list" && e.args.size == 1 {
     f = "avant_dir_list"
   }
   if f.size == 0 {
@@ -671,7 +671,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if str_eq(c, "file_exists") {
+  if c == "file_exists" {
     r = lw.call_to(mt_i32(), f, ops)
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }

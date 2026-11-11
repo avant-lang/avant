@@ -130,7 +130,7 @@ fn ll_cabi_count(v: CAbiVal, sse: Bool): Int {
   n = 0
   i = 0
   while i < v.parts.size {
-    d = str_eq(v.parts[i], "double")
+    d = v.parts[i] == "double"
     if d == sse {
       n = n + 1
     }
@@ -324,7 +324,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
     t = ptexts[i]
     if str_starts_mir(t, "ptr ") {
       t = "ptr"
-    } else if str_eq(t, "i1 zeroext") {
+    } else if t == "i1 zeroext" {
       t = "i1"
     }
     ptypes.push(t)
@@ -333,7 +333,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   rtext = ll_cabi_ret_text(ts, plan)
   call = "call ${rtext} (${ll_cabi_join(ptypes)}) ${ll_sym(name)}(${ll_cabi_join(args)})"
   rv = plan.ret
-  if rv.kind == cabi_memory() || rv.kind == cabi_none() || str_eq(rtext, "void") {
+  if rv.kind == cabi_memory() || rv.kind == cabi_none() || rtext == "void" {
     e.line(call)
     return
   }

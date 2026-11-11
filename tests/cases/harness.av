@@ -1,17 +1,3 @@
-pub fn str_eq(a: String, b: String): Bool {
-  if a.size != b.size {
-    return false
-  }
-  i = 0
-  while i < a.size {
-    if a[i] != b[i] {
-      return false
-    }
-    i = i + 1
-  }
-  true
-}
-
 pub fn str_has(hay: String, needle: String): Bool {
   if needle.size > hay.size {
     return false
@@ -21,7 +7,7 @@ pub fn str_has(hay: String, needle: String): Bool {
   }
   i = 0
   while i + needle.size <= hay.size {
-    if str_eq(str_slice(hay, i, i + needle.size), needle) {
+    if str_slice(hay, i, i + needle.size) == needle {
       return true
     }
     i = i + 1
@@ -339,7 +325,7 @@ pub class Checks {
       n = 0
       badn = 0
       total = 0
-      while j < self.rec_name.size && str_eq(self.rec_suite[j], suite) {
+      while j < self.rec_name.size && self.rec_suite[j] == suite {
         n = n + 1
         total = total + self.rec_ms[j]
         if self.rec_ok[j] == 0 {
@@ -404,8 +390,8 @@ pub class Checks {
   }
 
   pub fn eq_str(got: String, want: String, msg: String) {
-    self.record(str_eq(got, want), msg)
-    if str_eq(got, want) {
+    self.record(got == want, msg)
+    if got == want {
       self.passed = self.passed + 1
       self.lines.push("    ✓ ${msg}")
     } else {
@@ -485,13 +471,13 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   has_codegen = false
   i = 0
   while i < extra.size {
-    if str_eq(extra[i], "--debug") {
+    if extra[i] == "--debug" {
       has_codegen = true
     }
-    if str_eq(extra[i], "--release") {
+    if extra[i] == "--release" {
       has_codegen = true
     }
-    if str_eq(extra[i], "--final") {
+    if extra[i] == "--final" {
       has_codegen = true
     }
     args.push(extra[i])
@@ -538,7 +524,7 @@ pub fn compiler_abs(tag: String, path: String): String {
     return path
   }
   here = cwd_here()
-  if str_eq(here, ".") {
+  if here == "." {
     return path
   }
   "${here}/${path}"

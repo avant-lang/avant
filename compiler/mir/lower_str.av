@@ -233,7 +233,7 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if got = lw.str_heap_member(e, recv, rt, name, args) {
     return got
   }
-  if rt.is_bytes && str_eq(name, "slice") && args.size == 2 {
+  if rt.is_bytes && name == "slice" && args.size == 2 {
     // builtins.av:1820-1844: stop, start, then the receiver.
     ops = lw.lower_args_rev(args)
     s = lw.lower_expr(recv)
@@ -255,9 +255,9 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     lw.refuse(e.loc, "the member .${name} of ${rt.show}")
     return b.c_i32(0)
   }
-  known = str_eq(name, "size") || str_eq(name, "bytes")
+  known = name == "size" || name == "bytes"
   if rt.is_string {
-    known = known || str_eq(name, "to_i") || str_eq(name, "to_f") || str_eq(name, "strip") || str_eq(name, "strip_left") || str_eq(name, "strip_right")
+    known = known || name == "to_i" || name == "to_f" || name == "strip" || name == "strip_left" || name == "strip_right"
   }
   if !known {
     lw.refuse(e.loc, "the member .${name} of ${rt.show}")
@@ -268,22 +268,22 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if str_eq(name, "size") {
+  if name == "size" {
     return lw.i32_call1("avant_str_size", s)
   }
-  if str_eq(name, "bytes") {
+  if name == "bytes" {
     return s
   }
-  if str_eq(name, "to_i") {
+  if name == "to_i" {
     return lw.i32_call1("avant_str_to_i", s)
   }
-  if str_eq(name, "to_f") {
+  if name == "to_f" {
     return lw.call_f64("avant_str_to_f", s)
   }
   mode = 0
-  if str_eq(name, "strip_left") {
+  if name == "strip_left" {
     mode = 1
-  } else if str_eq(name, "strip_right") {
+  } else if name == "strip_right" {
     mode = 2
   }
   sargs: Array(MOperand) = []
@@ -301,19 +301,19 @@ pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if str_eq(c, "chr") {
+  if c == "chr" {
     return lw.str_call("avant_str_from_byte", ops)
   }
-  if str_eq(c, "checksum_str") {
+  if c == "checksum_str" {
     return lw.call_to(mt_i32(), "avant_checksum_str", ops)
   }
-  if str_eq(c, "repeat_byte") {
+  if c == "repeat_byte" {
     return lw.str_call("avant_str_repeat_byte", ops)
   }
-  if str_eq(c, "fmt_float") {
+  if c == "fmt_float" {
     return lw.str_call("avant_str_fmt_float", ops)
   }
-  if str_eq(c, "str_slice") {
+  if c == "str_slice" {
     return lw.str_call("avant_str_slice", ops)
   }
   lw.call_to(mt_f64(), "avant_str_to_f_slice", ops)

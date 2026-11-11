@@ -568,7 +568,7 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
 pub fn (lw: MirLower) mutex_index(name: String): Int {
   i = lw.lw_task.pnames.size - 1
   while i >= 0 {
-    if str_eq(lw.lw_task.pnames[i], name) {
+    if lw.lw_task.pnames[i] == name {
       return i
     }
     i = i - 1
@@ -638,27 +638,27 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
   c = e.callee
   if recv = e.receiver {
     if rt = recv.ty {
-      if rt.is_join && str_eq(c, "join") {
+      if rt.is_join && c == "join" {
         return lw.lower_join(e, recv)
       }
       if bl = e.block {
-        if rt.is_array && str_eq(c, "parallel") {
+        if rt.is_array && c == "parallel" {
           return lw.lower_parallel(e, recv)
         }
-        if rt.is_class && str_eq(c, "with") && (str_eq(rt.origin, "Mutex") || str_eq(rt.name, "Mutex")) {
+        if rt.is_class && c == "with" && (rt.origin == "Mutex" || rt.name == "Mutex") {
           return lw.lower_mutex_with(e, recv, rt, bl)
         }
       }
     }
     return nil
   }
-  if str_eq(c, "spawn") {
+  if c == "spawn" {
     if bl2 = e.block {
       return lw.lower_spawn(e)
     }
     return nil
   }
-  if str_eq(c, "avant_gate_new") && e.args.size == 0 {
+  if c == "avant_gate_new" && e.args.size == 0 {
     lw.at(e.loc)
     none: Array(MOperand) = []
     return lw.call_to(mt_u64(), c, none)
@@ -677,5 +677,5 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
 
 // The gate builtins taking a gate (calls.av is_gate_callee).
 pub fn mir_gate_builtin(name: String): Bool {
-  str_eq(name, "avant_gate_lock") || str_eq(name, "avant_gate_unlock") || str_eq(name, "avant_gate_wait") || str_eq(name, "avant_gate_signal") || str_eq(name, "avant_gate_broadcast")
+  name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast"
 }

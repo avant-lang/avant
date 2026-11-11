@@ -711,7 +711,7 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
   if tn.args.size == 0 {
     i = 0
     while i < from.size {
-      if str_eq(tn.name, from[i]) {
+      if tn.name == from[i] {
         rep = clone_type_name(to[i])
         bi = 0
         while bi < tn.bounds.size {
@@ -776,7 +776,7 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
     }
     return
   }
-  if str_eq(tn.name, "Ptr") {
+  if tn.name == "Ptr" {
     if tn.args.size == 1 {
       arg = tn.args[0]
       if arg.members.size == 0 {
@@ -805,7 +805,7 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
   }
   i = 0
   while i < into.size {
-    if str_eq(into[i], tn.name) {
+    if into[i] == tn.name {
       return
     }
     i = i + 1
@@ -868,7 +868,7 @@ pub fn clone_block(b: Block): Block {
 // A checked call on a receiver that constructs (`T.new(...)`), rather
 // than calling a method.
 pub fn ast_is_ctor_call(e: Expr): Bool {
-  str_eq(e.callee, "new")
+  e.callee == "new"
 }
 
 pub fn clone_expr(e: Expr): Expr {
@@ -1215,7 +1215,7 @@ pub fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeNa
     b.iface = subst_type_name(b.iface, from, to)
     j = 0
     while j < from.size {
-      if str_eq(b.param, from[j]) {
+      if b.param == from[j] {
         b.param = to[j].name
       }
       j = j + 1
@@ -1229,7 +1229,7 @@ pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
   if e.kind == ex_name() {
     i = 0
     while i < from.size {
-      if str_eq(e.ident, from[i]) {
+      if e.ident == from[i] {
         return clone_expr(to[i])
       }
       i = i + 1

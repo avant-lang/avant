@@ -40,17 +40,17 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
       if rt = recv.ty {
         c = e.callee
         if rt.is_array && e.args.size == 0 {
-          if str_eq(c, "each") && bl.params.size == 1 {
+          if c == "each" && bl.params.size == 1 {
             return lw.arr_each(e, recv, bl)
           }
-          if (str_eq(c, "any") || str_eq(c, "all")) && bl.params.size == 1 {
-            return lw.arr_pred(e, recv, bl, str_eq(c, "any"))
+          if (c == "any" || c == "all") && bl.params.size == 1 {
+            return lw.arr_pred(e, recv, bl, c == "any")
           }
-          if (str_eq(c, "sort") || str_eq(c, "sorted")) && bl.params.size == 2 {
-            return lw.arr_sort_block(e, recv, bl, str_eq(c, "sorted"))
+          if (c == "sort" || c == "sorted") && bl.params.size == 2 {
+            return lw.arr_sort_block(e, recv, bl, c == "sorted")
           }
         }
-        if rt.is_hash && str_eq(c, "each") && e.args.size == 0 && bl.params.size == 2 {
+        if rt.is_hash && c == "each" && e.args.size == 0 && bl.params.size == 2 {
           return lw.hash_each(e, recv, rt, bl)
         }
       }

@@ -471,17 +471,17 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     lw.refuse(e.loc, "Array.${name} with a block (closures, W7b)")
     return zero
   }
-  if str_eq(name, "get") {
+  if name == "get" {
     return lw.lower_get(e, recv, rt, args)
   }
-  if str_eq(name, "index_of") || str_eq(name, "min") || str_eq(name, "max") {
+  if name == "index_of" || name == "min" || name == "max" {
     return lw.lower_arr_opt(e, recv, rt, name, args)
   }
-  if str_eq(name, "each") || str_eq(name, "any") || str_eq(name, "all") {
+  if name == "each" || name == "any" || name == "all" {
     lw.refuse(e.loc, "Array.${name} (closures, W7b)")
     return zero
   }
-  if str_eq(name, "parallel") {
+  if name == "parallel" {
     lw.refuse(e.loc, "Array.parallel without a block")
     return zero
   }
@@ -492,7 +492,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(recv)
   // The value first, then the receiver: push, contains, fill.
-  if (str_eq(name, "push") || str_eq(name, "contains") || str_eq(name, "fill")) && args.size == 1 {
+  if (name == "push" || name == "contains" || name == "fill") && args.size == 1 {
     v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
     a = lw.lower_expr(recv)
     if lw.failed {
@@ -500,14 +500,14 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     h = lw.hold(a, aty)
-    if str_eq(name, "push") {
+    if name == "push" {
       lw.arr_push(h, aty, et, v)
       return zero
     }
     if et == mt_bool() {
       v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
     }
-    if str_eq(name, "fill") {
+    if name == "fill" {
       f = "avant_array_fill_i32"
       if et == mt_bool() {
         f = "avant_array_fill_u8"
@@ -523,7 +523,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     r = lw.call_to(mt_i32(), cf, lw.two(b.copy_local(h), v))
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
-  if args.size > 0 && !str_eq(name, "reserve") {
+  if args.size > 0 && name != "reserve" {
     lw.refuse(e.loc, "Array.${name} with arguments")
     return zero
   }
@@ -533,10 +533,10 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   lw.at(e.loc)
   h2 = lw.hold(a2, aty)
-  if str_eq(name, "size") {
+  if name == "size" {
     return lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
   }
-  if str_eq(name, "reserve") && args.size == 1 {
+  if name == "reserve" && args.size == 1 {
     // The receiver, then the count (builtins.av:1309-1330).
     n = lw.lower_expr(args[0])
     if lw.failed {
@@ -549,7 +549,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     dummy2 = b.call(-1, "avant_array_reserve", four)
     return zero
   }
-  if str_eq(name, "pop") {
+  if name == "pop" {
     // C9 (W10b): pop reads the element at size - 1, so an empty array
     // traps as indexing it there does ("index -1 out of bounds (size 0)")
     // instead of reading through the runtime's null (non-references) or
@@ -564,21 +564,21 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     dummy3 = b.call(s, "avant_array_pop_slot", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return lw.tmp(et, b.rv_use(b.copy(b.deref(b.pl(s)))))
   }
-  if str_eq(name, "clear") {
+  if name == "clear" {
     dummy4 = b.assign(b.field(b.deref(b.pl(h2)), 1), b.rv_use(b.c_i32(0)))
     return zero
   }
-  if str_eq(name, "reverse") {
+  if name == "reverse" {
     dummy5 = b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
   }
-  if str_eq(name, "sort") || str_eq(name, "sorted") {
+  if name == "sort" || name == "sorted" {
     sf = lw.kind_fn("avant_array_sort", et, false)
     if sf.size == 0 {
       lw.refuse(e.loc, "Array.${name} on ${want.show}")
       return zero
     }
-    if str_eq(name, "sort") {
+    if name == "sort" {
       dummy6 = b.call(-1, sf, lw.one(b.copy_local(h2)))
       return zero
     }
@@ -587,7 +587,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     dummy8 = b.call(-1, sf, lw.one(b.copy_local(c)))
     return b.copy_local(c)
   }
-  if str_eq(name, "sum") {
+  if name == "sum" {
     sm = lw.kind_fn("avant_array_sum", et, false)
     if sm.size == 0 || et == mt_bool() {
       lw.refuse(e.loc, "Array.sum on ${want.show}")

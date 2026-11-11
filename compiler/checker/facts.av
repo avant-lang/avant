@@ -27,7 +27,7 @@ pub fn (checker_self: Checker) nn_remove(name: String) {
   kept: Array(String) = []
   i = 0
   while i < checker_self.facts.nn_var.size {
-    if str_eq(checker_self.facts.nn_var[i], name) {
+    if checker_self.facts.nn_var[i] == name {
     } else {
       kept.push(checker_self.facts.nn_var[i])
     }
@@ -68,7 +68,7 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
                   }
                   if cl = cc.left {
                     if cl.kind == ex_name() {
-                      if str_eq(cl.ident, ivar) {
+                      if cl.ident == ivar {
                         matched = true
                       }
                     } else if cl.kind == ex_binary() {
@@ -76,7 +76,7 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
                         if cll = cl.left {
                           if clr = cl.right {
                             if cll.kind == ex_name() {
-                              if str_eq(cll.ident, ivar) {
+                              if cll.ident == ivar {
                                 if checker_self.lit_small(clr) {
                                   coff = clr.int_bits.to_i
                                   matched = true
@@ -84,7 +84,7 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
                               }
                             }
                             if clr.kind == ex_name() {
-                              if str_eq(clr.ident, ivar) {
+                              if clr.ident == ivar {
                                 if checker_self.lit_small(cll) {
                                   coff = cll.int_bits.to_i
                                   matched = true
@@ -140,7 +140,7 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
   if s.kind == st_assign() {
     if t = s.target {
       if t.kind == ex_name() {
-        if str_eq(t.ident, ivar) {
+        if t.ident == ivar {
           if s.op == tk_plus_eq() {
             if v = s.value {
               if v.kind == ex_int() {
@@ -160,7 +160,7 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
                   if l = v.left {
                     if r = v.right {
                       if l.kind == ex_name() {
-                        if str_eq(l.ident, ivar) {
+                        if l.ident == ivar {
                           if r.kind == ex_int() {
                             if r.int_bits >= 1u64 {
                               if r.int_bits <= 1000000u64 {
@@ -171,7 +171,7 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
                         }
                       }
                       if r.kind == ex_name() {
-                        if str_eq(r.ident, ivar) {
+                        if r.ident == ivar {
                           if l.kind == ex_int() {
                             if l.int_bits >= 1u64 {
                               if l.int_bits <= 1000000u64 {
@@ -232,7 +232,7 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
 pub fn (checker_self: Checker) sv_put(v: String, cont: String) {
   i = 0
   while i < checker_self.facts.sv_var.size {
-    if str_eq(checker_self.facts.sv_var[i], v) {
+    if checker_self.facts.sv_var[i] == v {
       checker_self.facts.sv_cont[i] = cont
       return
     }
@@ -245,7 +245,7 @@ pub fn (checker_self: Checker) sv_put(v: String, cont: String) {
 pub fn (checker_self: Checker) sv_get(v: String): String {
   i = 0
   while i < checker_self.facts.sv_var.size {
-    if str_eq(checker_self.facts.sv_var[i], v) {
+    if checker_self.facts.sv_var[i] == v {
       return checker_self.facts.sv_cont[i]
     }
     i = i + 1
@@ -258,7 +258,7 @@ pub fn (checker_self: Checker) sv_remove_var(v: String) {
   kept_c: Array(String) = []
   i = 0
   while i < checker_self.facts.sv_var.size {
-    if str_eq(checker_self.facts.sv_var[i], v) {
+    if checker_self.facts.sv_var[i] == v {
     } else {
       kept_v.push(checker_self.facts.sv_var[i])
       kept_c.push(checker_self.facts.sv_cont[i])
@@ -274,8 +274,8 @@ pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
   i = 0
   while i < checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 {
-      if str_eq(checker_self.facts.fact_var[i], v) {
-        if str_eq(checker_self.facts.fact_cont[i], cont) {
+      if checker_self.facts.fact_var[i] == v {
+        if checker_self.facts.fact_cont[i] == cont {
           if checker_self.facts.fact_slack[i] > best {
             best = checker_self.facts.fact_slack[i]
           }
@@ -292,7 +292,7 @@ pub fn (checker_self: Checker) fact_any_slack(v: String): Int {
   i = 0
   while i < checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 {
-      if str_eq(checker_self.facts.fact_var[i], v) {
+      if checker_self.facts.fact_var[i] == v {
         if checker_self.facts.fact_slack[i] > best {
           best = checker_self.facts.fact_slack[i]
         }
@@ -306,10 +306,10 @@ pub fn (checker_self: Checker) fact_any_slack(v: String): Int {
 pub fn (checker_self: Checker) kill_facts_for(v: String) {
   i = 0
   while i < checker_self.facts.fact_var.size {
-    if str_eq(checker_self.facts.fact_var[i], v) {
+    if checker_self.facts.fact_var[i] == v {
       checker_self.facts.fact_live[i] = 0
     }
-    if str_eq(checker_self.facts.fact_cont[i], v) {
+    if checker_self.facts.fact_cont[i] == v {
       checker_self.facts.fact_live[i] = 0
     }
     i = i + 1
@@ -319,7 +319,7 @@ pub fn (checker_self: Checker) kill_facts_for(v: String) {
 pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int) {
   i = 0
   while i < checker_self.facts.bv_var.size {
-    if str_eq(checker_self.facts.bv_var[i], v) {
+    if checker_self.facts.bv_var[i] == v {
       checker_self.facts.bv_cont[i] = cont
       checker_self.facts.bv_delta[i] = delta
       return
@@ -334,7 +334,7 @@ pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int) {
 pub fn (checker_self: Checker) bv_get(v: String): String {
   i = 0
   while i < checker_self.facts.bv_var.size {
-    if str_eq(checker_self.facts.bv_var[i], v) {
+    if checker_self.facts.bv_var[i] == v {
       return checker_self.facts.bv_cont[i]
     }
     i = i + 1
@@ -345,7 +345,7 @@ pub fn (checker_self: Checker) bv_get(v: String): String {
 pub fn (checker_self: Checker) bv_delta_of(v: String): Int {
   i = 0
   while i < checker_self.facts.bv_var.size {
-    if str_eq(checker_self.facts.bv_var[i], v) {
+    if checker_self.facts.bv_var[i] == v {
       return checker_self.facts.bv_delta[i]
     }
     i = i + 1
@@ -359,7 +359,7 @@ pub fn (checker_self: Checker) bv_remove_var(v: String) {
   kept_d: Array(Int) = []
   i = 0
   while i < checker_self.facts.bv_var.size {
-    if str_eq(checker_self.facts.bv_var[i], v) {
+    if checker_self.facts.bv_var[i] == v {
     } else {
       kept_v.push(checker_self.facts.bv_var[i])
       kept_c.push(checker_self.facts.bv_cont[i])
@@ -375,7 +375,7 @@ pub fn (checker_self: Checker) bv_remove_var(v: String) {
 pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int) {
   i = 0
   while i < checker_self.facts.cs_cont.size {
-    if str_eq(checker_self.facts.cs_cont[i], cont) {
+    if checker_self.facts.cs_cont[i] == cont {
       checker_self.facts.cs_var[i] = v
       checker_self.facts.cs_delta[i] = delta
       return
@@ -390,7 +390,7 @@ pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int) {
 pub fn (checker_self: Checker) cs_cont_of_var(v: String): String {
   i = 0
   while i < checker_self.facts.cs_var.size {
-    if str_eq(checker_self.facts.cs_var[i], v) {
+    if checker_self.facts.cs_var[i] == v {
       return checker_self.facts.cs_cont[i]
     }
     i = i + 1
@@ -401,7 +401,7 @@ pub fn (checker_self: Checker) cs_cont_of_var(v: String): String {
 pub fn (checker_self: Checker) cs_delta_of_var(v: String): Int {
   i = 0
   while i < checker_self.facts.cs_var.size {
-    if str_eq(checker_self.facts.cs_var[i], v) {
+    if checker_self.facts.cs_var[i] == v {
       return checker_self.facts.cs_delta[i]
     }
     i = i + 1
@@ -411,7 +411,7 @@ pub fn (checker_self: Checker) cs_delta_of_var(v: String): Int {
 
 pub fn (checker_self: Checker) bound_cont_of(e: Expr): String {
   if e.kind == ex_field() {
-    if str_eq(e.ident, "size") {
+    if e.ident == "size" {
       if obj = e.object {
         if obj.kind == ex_name() {
           if obj.implicit_field {
@@ -491,7 +491,7 @@ pub fn (checker_self: Checker) value_is_nonneg(val: Expr, selfname: String): Boo
     return true
   }
   if val.kind == ex_field() {
-    if str_eq(val.ident, "size") {
+    if val.ident == "size" {
       return true
     }
   }
@@ -535,7 +535,7 @@ pub fn (checker_self: Checker) value_is_nonneg(val: Expr, selfname: String): Boo
             if checker_self.nn_has(l.ident) {
               lok = true
             }
-            if str_eq(l.ident, selfname) {
+            if l.ident == selfname {
               if checker_self.nn_has(selfname) {
                 lok = true
               }
@@ -579,7 +579,7 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
           }
           sv_done = false
           if val.kind == ex_field() {
-            if str_eq(val.ident, "size") {
+            if val.ident == "size" {
               if obj = val.object {
                 if obj.kind == ex_name() {
                   checker_self.sv_put(v, obj.ident)
@@ -651,7 +651,7 @@ pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
   if s.kind == st_assign() {
     if t = s.target {
       if t.kind == ex_name() {
-        if str_eq(t.ident, cont) {
+        if t.ident == cont {
           return true
         }
       }
@@ -703,9 +703,9 @@ pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
 
 pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
   if e.kind == ex_call() {
-    if str_eq(e.callee, "pop") || str_eq(e.callee, "clear") {
+    if e.callee == "pop" || e.callee == "clear" {
       if recv = e.receiver {
-        if str_eq(checker_self.expr_root_name(recv), cont) {
+        if checker_self.expr_root_name(recv) == cont {
           return true
         }
       }
@@ -822,7 +822,7 @@ pub fn (checker_self: Checker) deep_ivar_ok_stmt(s: Stmt, ivar: String): Bool {
   if s.kind == st_assign() {
     if t = s.target {
       if t.kind == ex_name() {
-        if str_eq(t.ident, ivar) {
+        if t.ident == ivar {
           if s.op == tk_plus_eq() {
             if v = s.value {
               if checker_self.step_is_nonneg(v) {
@@ -838,14 +838,14 @@ pub fn (checker_self: Checker) deep_ivar_ok_stmt(s: Stmt, ivar: String): Bool {
                   if l = v.left {
                     if r = v.right {
                       if l.kind == ex_name() {
-                        if str_eq(l.ident, ivar) {
+                        if l.ident == ivar {
                           if checker_self.step_is_nonneg(r) {
                             return checker_self.deep_ivar_ok_rest(s, ivar)
                           }
                         }
                       }
                       if r.kind == ex_name() {
-                        if str_eq(r.ident, ivar) {
+                        if r.ident == ivar {
                           if checker_self.step_is_nonneg(l) {
                             return checker_self.deep_ivar_ok_rest(s, ivar)
                           }
@@ -1219,7 +1219,7 @@ pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
 pub fn (checker_self: Checker) cap_put(name: String, val: Int64) {
   i = 0
   while i < checker_self.facts.cap_var.size {
-    if str_eq(checker_self.facts.cap_var[i], name) {
+    if checker_self.facts.cap_var[i] == name {
       checker_self.facts.cap_val[i] = val
       return
     }
@@ -1232,7 +1232,7 @@ pub fn (checker_self: Checker) cap_put(name: String, val: Int64) {
 pub fn (checker_self: Checker) cap_get(name: String): Int64 {
   i = 0
   while i < checker_self.facts.cap_var.size {
-    if str_eq(checker_self.facts.cap_var[i], name) {
+    if checker_self.facts.cap_var[i] == name {
       return checker_self.facts.cap_val[i]
     }
     i = i + 1
@@ -1245,7 +1245,7 @@ pub fn (checker_self: Checker) cap_remove(name: String) {
   kept_c: Array(Int64) = []
   i = 0
   while i < checker_self.facts.cap_var.size {
-    if str_eq(checker_self.facts.cap_var[i], name) {
+    if checker_self.facts.cap_var[i] == name {
     } else {
       kept_v.push(checker_self.facts.cap_var[i])
       kept_c.push(checker_self.facts.cap_val[i])
@@ -1267,7 +1267,7 @@ pub fn (checker_self: Checker) gcap_get(name: String): Int64 {
   i = 0
   while i < checker_self.facts.gcap_var.size {
     if checker_self.facts.gcap_live[i] == 1 {
-      if str_eq(checker_self.facts.gcap_var[i], name) {
+      if checker_self.facts.gcap_var[i] == name {
         if best < 0i64 || checker_self.facts.gcap_val[i] < best {
           best = checker_self.facts.gcap_val[i]
         }
@@ -1312,7 +1312,7 @@ pub fn (checker_self: Checker) gnn_has(name: String): Bool {
   i = 0
   while i < checker_self.facts.gnn_var.size {
     if checker_self.facts.gnn_live[i] == 1 {
-      if str_eq(checker_self.facts.gnn_var[i], name) {
+      if checker_self.facts.gnn_var[i] == name {
         return true
       }
     }
@@ -1325,7 +1325,7 @@ pub fn (checker_self: Checker) gpos_has(name: String): Bool {
   i = 0
   while i < checker_self.facts.gpos_var.size {
     if checker_self.facts.gpos_live[i] == 1 {
-      if str_eq(checker_self.facts.gpos_var[i], name) {
+      if checker_self.facts.gpos_var[i] == name {
         return true
       }
     }
@@ -1338,7 +1338,7 @@ pub fn (checker_self: Checker) gne_has(name: String): Bool {
   i = 0
   while i < checker_self.facts.gne_var.size {
     if checker_self.facts.gne_live[i] == 1 {
-      if str_eq(checker_self.facts.gne_var[i], name) {
+      if checker_self.facts.gne_var[i] == name {
         return true
       }
     }
@@ -1357,28 +1357,28 @@ pub fn (checker_self: Checker) nn_proven(name: String): Bool {
 pub fn (checker_self: Checker) cap_kill_guards(name: String) {
   i = 0
   while i < checker_self.facts.gcap_var.size {
-    if str_eq(checker_self.facts.gcap_var[i], name) {
+    if checker_self.facts.gcap_var[i] == name {
       checker_self.facts.gcap_live[i] = 0
     }
     i = i + 1
   }
   i = 0
   while i < checker_self.facts.gnn_var.size {
-    if str_eq(checker_self.facts.gnn_var[i], name) {
+    if checker_self.facts.gnn_var[i] == name {
       checker_self.facts.gnn_live[i] = 0
     }
     i = i + 1
   }
   i = 0
   while i < checker_self.facts.gpos_var.size {
-    if str_eq(checker_self.facts.gpos_var[i], name) {
+    if checker_self.facts.gpos_var[i] == name {
       checker_self.facts.gpos_live[i] = 0
     }
     i = i + 1
   }
   i = 0
   while i < checker_self.facts.gne_var.size {
-    if str_eq(checker_self.facts.gne_var[i], name) {
+    if checker_self.facts.gne_var[i] == name {
       checker_self.facts.gne_live[i] = 0
     }
     i = i + 1
@@ -1409,16 +1409,16 @@ pub fn (checker_self: Checker) is_sqrt_toi(e: Expr): Bool {
   if e.kind != ex_field() {
     return false
   }
-  if str_eq(e.ident, "to_i") {
+  if e.ident == "to_i" {
   } else {
     return false
   }
   if obj = e.object {
     if obj.kind == ex_field() {
-      if str_eq(obj.ident, "sqrt") {
+      if obj.ident == "sqrt" {
         if o2 = obj.object {
           if o2.kind == ex_field() {
-            if str_eq(o2.ident, "to_f") {
+            if o2.ident == "to_f" {
               if src = o2.object {
                 if t = src.ty {
                   return t.is_int
@@ -1458,7 +1458,7 @@ pub fn (checker_self: Checker) expr_nonneg(e: Expr): Bool {
     return checker_self.nn_proven(e.ident)
   }
   if e.kind == ex_field() {
-    if str_eq(e.ident, "size") {
+    if e.ident == "size" {
       return true
     }
     if checker_self.is_sqrt_toi(e) {
@@ -1502,7 +1502,7 @@ pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int64 {
     return checker_self.cap_of(e.ident)
   }
   if e.kind == ex_field() {
-    if str_eq(e.ident, "size") {
+    if e.ident == "size" {
       return 2147483647i64
     }
     if checker_self.is_sqrt_toi(e) {
@@ -1793,7 +1793,7 @@ pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
     c = checker_self.cap_of_expr(val)
     if c >= 0i64 {
       if val.kind == ex_field() {
-        if str_eq(val.ident, "size") {
+        if val.ident == "size" {
           checker_self.cap_remove(v)
           return
         }

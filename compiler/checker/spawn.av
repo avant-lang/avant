@@ -13,16 +13,16 @@ import checker.names
 import checker
 
 pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
-  if str_eq(ty.origin, "Channel") {
+  if ty.origin == "Channel" {
     return true
   }
-  if str_eq(ty.name, "Channel") {
+  if ty.name == "Channel" {
     return true
   }
-  if str_eq(ty.origin, "Mutex") {
+  if ty.origin == "Mutex" {
     return true
   }
-  str_eq(ty.name, "Mutex")
+  ty.name == "Mutex"
 }
 
 pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
@@ -279,7 +279,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
 pub fn (checker_self: Checker) spawn_skip_has(name: String): Bool {
   i = 0
   while i < checker_self.spawn_skip.size {
-    if str_eq(checker_self.spawn_skip[i], name) {
+    if checker_self.spawn_skip[i] == name {
       return true
     }
     i = i + 1
@@ -306,25 +306,25 @@ pub fn (checker_self: Checker) expr_root_name(expr: Expr): String {
 }
 
 pub fn (checker_self: Checker) array_mutator(name: String): Bool {
-  if str_eq(name, "push") {
+  if name == "push" {
     return true
   }
-  if str_eq(name, "pop") {
+  if name == "pop" {
     return true
   }
-  if str_eq(name, "clear") {
+  if name == "clear" {
     return true
   }
-  if str_eq(name, "fill") {
+  if name == "fill" {
     return true
   }
-  if str_eq(name, "sort") {
+  if name == "sort" {
     return true
   }
-  if str_eq(name, "reverse") {
+  if name == "reverse" {
     return true
   }
-  str_eq(name, "reserve")
+  name == "reserve"
 }
 
 pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
@@ -344,7 +344,7 @@ pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
 pub fn (checker_self: Checker) pending_has_array(name: String): Bool {
   i = 0
   while i < checker_self.pending_arrays.size {
-    if str_eq(checker_self.pending_arrays[i], name) {
+    if checker_self.pending_arrays[i] == name {
       return true
     }
     i = i + 1
@@ -357,7 +357,7 @@ pub fn (checker_self: Checker) pending_join(handle: String) {
   kept_a: Array(String) = []
   i = 0
   while i < checker_self.pending_handles.size {
-    if str_eq(checker_self.pending_handles[i], handle) {
+    if checker_self.pending_handles[i] == handle {
     } else {
       kept_h.push(checker_self.pending_handles[i])
       kept_a.push(checker_self.pending_arrays[i])
@@ -414,7 +414,7 @@ pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
 pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   k = expr.kind
   if k == ex_field() {
-    if str_eq(expr.ident, "join") {
+    if expr.ident == "join" {
       if obj = expr.object {
         if obj.kind == ex_name() {
           checker_self.pending_join(obj.ident)
@@ -424,7 +424,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     }
   }
   if k == ex_call() {
-    if str_eq(expr.callee, "join") {
+    if expr.callee == "join" {
       if recv = expr.receiver {
         if recv.kind == ex_name() {
           checker_self.pending_join(recv.ident)
@@ -514,7 +514,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
   if stmt.kind == st_assign() {
     if v = stmt.value {
       if v.kind == ex_call() {
-        if str_eq(v.callee, "spawn") {
+        if v.callee == "spawn" {
           handle = ""
           if t = stmt.target {
             if t.kind == ex_name() {
@@ -536,7 +536,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
   }
   if e = stmt.expr {
     if e.kind == ex_call() {
-      if str_eq(e.callee, "spawn") {
+      if e.callee == "spawn" {
         i = 0
         while i < e.cap_names.size {
           if e.cap_tys[i].is_array {
@@ -555,7 +555,7 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     return
   }
   if checker_self.place_depth > 0 {
-    if str_eq(expr.ident, checker_self.place_name) {
+    if expr.ident == checker_self.place_name {
       checker_self.fail(expr.loc, "mutex place cannot escape")
       return
     }

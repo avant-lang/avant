@@ -191,7 +191,7 @@ pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   lw.lw_m.types.set_fields(ahead, fields, names)
   k = 0
   while k < lw.lw_pend_struct.size {
-    if str_eq(lw.lw_pend_struct[k], name) {
+    if lw.lw_pend_struct[k] == name {
       ef: Array(Int) = []
       ef.push(lw.lw_m.types.agg(ahead))
       en: Array(String) = []
@@ -270,7 +270,7 @@ pub fn (lw: MirLower) owner_ty(fnn: Function): Ty? {
 pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
   m = mir_mty(ot)
   pre = "${mir_module_part(ot.mod_name)}."
-  if (ot.is_struct || ot.is_class) && str_eq(mir_module_part(ot.mod_name), mir_module_part(mod_name)) && str_starts_mir(m, pre) {
+  if (ot.is_struct || ot.is_class) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && str_starts_mir(m, pre) {
     return str_slice(m, pre.size, m.size)
   }
   m
@@ -312,7 +312,7 @@ pub fn (lw: MirLower) bind_receiver(fnn: Function, recv: Int) {
 
 // Whether e names a struct method's receiver as a whole.
 pub fn (lw: MirLower) is_struct_self(e: Expr): Bool {
-  lw.lw_self_struct && e.kind == ex_name() && !e.implicit_field && str_eq(e.ident, lw.lw_self_name)
+  lw.lw_self_struct && e.kind == ex_name() && !e.implicit_field && e.ident == lw.lw_self_name
 }
 
 // ---- places
@@ -673,7 +673,7 @@ pub fn (lw: MirLower) initialize_of(cdef: ClassDef): Function? {
   i = 0
   while i < cdef.methods.size {
     m = cdef.methods[i]
-    if str_eq(m.name, "initialize") && !m.type_method {
+    if m.name == "initialize" && !m.type_method {
       return m
     }
     i = i + 1

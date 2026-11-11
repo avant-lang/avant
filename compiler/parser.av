@@ -627,7 +627,7 @@ pub class Parser {
     dummy_dot = self.expect(tk_dot())
     self.skip_newlines
     fields_tok = self.take_name_after_dot
-    if str_eq(fields_tok.value, "fields") {
+    if fields_tok.value == "fields" {
     } else {
       self.fail(fields_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
@@ -744,7 +744,7 @@ pub class Parser {
       tok = self.expect(tk_ident())
       i = 0
       while i < names.size {
-        if str_eq(names[i], tok.value) {
+        if names[i] == tok.value {
           self.fail(tok.loc, "duplicate type parameter ${tok.value}")
         }
         i = i + 1
@@ -1201,7 +1201,7 @@ pub class Parser {
       }
       name = self.parse_fn_name
     }
-    if str_eq(name, "new") {
+    if name == "new" {
       if owner.size > 0 {
         self.fail(name_loc, "new is reserved; write initialize")
       }
@@ -1455,7 +1455,7 @@ pub class Parser {
   // `import std.gc`. Any other use of `gc.hold` is an ordinary call and
   // the checker refuses it.
   pub fn gc_hold_ahead: Bool {
-    if !str_eq(self.current.value, "gc") {
+    if self.current.value != "gc" {
       return false
     }
     i = self.index + 1
@@ -1465,7 +1465,7 @@ pub class Parser {
     if self.tokens[i].kind != tk_dot() {
       return false
     }
-    if self.tokens[i + 1].kind != tk_ident() || !str_eq(self.tokens[i + 1].value, "hold") {
+    if self.tokens[i + 1].kind != tk_ident() || self.tokens[i + 1].value != "hold" {
       return false
     }
     i = i + 2
@@ -2006,7 +2006,7 @@ pub class Parser {
               call.receiver = cur
               cur = call
             }
-          } else if str_eq(field.value, "new") {
+          } else if field.value == "new" {
             call = Expr.new(ex_call(), at)
             call.callee = "new"
             call.receiver = cur
@@ -2316,12 +2316,12 @@ pub class Parser {
 
   pub fn parse_ident_expr: Expr {
     tok = self.bump
-    if str_eq(tok.value, "Array") {
+    if tok.value == "Array" {
       if self.current.kind == tk_l_paren() {
         return self.parse_array_new(tok)
       }
     }
-    if str_eq(tok.value, "Hash") {
+    if tok.value == "Hash" {
       if self.current.kind == tk_l_paren() {
         return self.parse_hash_new(tok)
       }
@@ -2352,7 +2352,7 @@ pub class Parser {
     dummy3 = self.expect(tk_dot())
     self.skip_newlines
     meth = self.take_name_after_dot
-    if str_eq(meth.value, "new") {
+    if meth.value == "new" {
     } else {
       self.fail(meth.loc, "Array(T) only supports .new")
     }
@@ -2381,7 +2381,7 @@ pub class Parser {
     dummy4 = self.expect(tk_dot())
     self.skip_newlines
     meth = self.take_name_after_dot
-    if str_eq(meth.value, "new") {
+    if meth.value == "new" {
     } else {
       self.fail(meth.loc, "Hash(K, V) only supports .new")
     }

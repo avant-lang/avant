@@ -157,7 +157,7 @@ pub fn mir_lv_keeps_sizes(name: String): Bool {
   exact = ["avant_alloc", "avant_pin", "avant_unpin", "avant_pin_field", "avant_release_range", "avant_array_get_ptr", "avant_array_set_ptr", "avant_array_copy", "avant_array_reverse", "avant_buf_size", "avant_buf_starts", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_new", "printf", "fabs", "floor", "sqrt", "exp", "__avant_type_maps"]
   i = 0
   while i < exact.size {
-    if str_eq(name, exact[i]) {
+    if name == exact[i] {
       return true
     }
     i = i + 1
@@ -172,7 +172,7 @@ fn lv_fresh_here(blk: MBlock, j: Int, h: Int): Bool {
   while k >= 0 {
     st = blk.stmts[k]
     if mir_stmt_def(st) == h {
-      return st.kind == msk_call() && str_eq(st.callee, "avant_alloc")
+      return st.kind == msk_call() && st.callee == "avant_alloc"
     }
     k = k - 1
   }
@@ -650,7 +650,7 @@ fn lv_size_stmt(lp: LvLoop, ts: MTypes, st: MStmt, out: LvSize) {
     }
     return
   }
-  if st.kind == msk_call() && str_eq(st.callee, "avant_str_size") && st.args.size == 1 {
+  if st.kind == msk_call() && st.callee == "avant_str_size" && st.args.size == 1 {
     s = lv_local(st.args[0])
     if s >= 0 && lv_holder_kind(lp, ts, s, false) == 2 {
       out.h = s
@@ -1651,7 +1651,7 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        if st.kind == msk_call() && str_eq(st.callee, "avant_str_size") && st.args.size == 1 && st.dest >= 0 {
+        if st.kind == msk_call() && st.callee == "avant_str_size" && st.args.size == 1 && st.dest >= 0 {
           v = lv_local(st.args[0])
           if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
             k = 0

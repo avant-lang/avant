@@ -135,7 +135,7 @@ pub class TypeResolver {
     self.named[self.type_key(mod_name, name)] = id
     if prev = self.named.get(name) {
       old = self.ty_at(prev)
-      if str_eq(old.mod_name, mod_name) {
+      if old.mod_name == mod_name {
       } else {
         self.collide[name] = 1
       }
@@ -230,7 +230,7 @@ pub class TypeResolver {
       }
       return ty_union_build(parts)
     }
-    if str_eq(tn.name, "Int") {
+    if tn.name == "Int" {
       self.reject_args(tn)
       return self.t_int
     }
@@ -243,57 +243,57 @@ pub class TypeResolver {
       }
       return ty_c_scalar(cs)
     }
-    if str_eq(tn.name, "Int64") {
+    if tn.name == "Int64" {
       self.reject_args(tn)
       return self.t_int64
     }
-    if str_eq(tn.name, "UInt64") {
+    if tn.name == "UInt64" {
       self.reject_args(tn)
       return self.t_uint64
     }
-    if str_eq(tn.name, "Bool") {
+    if tn.name == "Bool" {
       self.reject_args(tn)
       return self.t_bool
     }
-    if str_eq(tn.name, "Float64") {
+    if tn.name == "Float64" {
       self.reject_args(tn)
       return self.t_float
     }
-    if str_eq(tn.name, "String") {
+    if tn.name == "String" {
       self.reject_args(tn)
       return self.t_string
     }
-    if str_eq(tn.name, "Buf") {
+    if tn.name == "Buf" {
       self.reject_args(tn)
       return self.t_buf
     }
-    if str_eq(tn.name, "Bytes") {
+    if tn.name == "Bytes" {
       self.reject_args(tn)
       return self.t_bytes
     }
-    if str_eq(tn.name, "Nil") {
+    if tn.name == "Nil" {
       self.reject_args(tn)
       return self.t_nil
     }
-    if str_eq(tn.name, "Void") {
+    if tn.name == "Void" {
       self.reject_args(tn)
       return self.t_void
     }
-    if str_eq(tn.name, "Array") {
+    if tn.name == "Array" {
       if tn.args.size != 1 {
         self.fail(tn.loc, "Array takes one type argument")
         return self.t_int
       }
       return ty_array(self.resolve_value_uninline(tn.args[0]))
     }
-    if str_eq(tn.name, "Hash") {
+    if tn.name == "Hash" {
       if tn.args.size != 2 {
         self.fail(tn.loc, "Hash takes two type arguments")
         return self.t_int
       }
       return ty_hash(self.resolve_value_uninline(tn.args[0]), self.resolve_value_uninline(tn.args[1]))
     }
-    if str_eq(tn.name, "JoinHandle") {
+    if tn.name == "JoinHandle" {
       if tn.args.size != 1 {
         self.fail(tn.loc, "JoinHandle takes one type argument")
         return self.t_int
@@ -303,13 +303,13 @@ pub class TypeResolver {
     if idef = self.find_interface(tn.name) {
       return self.reject_iface_value(tn, idef)
     }
-    if str_eq(tn.name, "Ptr") {
+    if tn.name == "Ptr" {
       if tn.args.size != 1 {
         self.fail(tn.loc, "Ptr takes one type argument")
         return self.t_int
       }
       inner = tn.args[0]
-      if str_eq(inner.name, "Void") {
+      if inner.name == "Void" {
         self.reject_args(inner)
         return ty_ptr(self.t_void)
       }
@@ -385,7 +385,7 @@ pub class TypeResolver {
   pub fn inflight_has(key: String): Bool {
     i = 0
     while i < self.struct_inflight.size {
-      if str_eq(self.struct_inflight[i], key) {
+      if self.struct_inflight[i] == key {
         return true
       }
       i = i + 1
@@ -428,10 +428,10 @@ pub class TypeResolver {
       i = 0
       while i < p.structs.size {
         sdef = p.structs[i]
-        if str_eq(sdef.name, name) {
+        if sdef.name == name {
           if sdef.type_params.size > 0 {
             if mod_name.size > 0 {
-              if str_eq(sdef.mod_name, mod_name) {
+              if sdef.mod_name == mod_name {
                 return sdef
               }
             } else {
@@ -459,10 +459,10 @@ pub class TypeResolver {
       i = 0
       while i < p.classes.size {
         cdef = p.classes[i]
-        if str_eq(cdef.name, name) {
+        if cdef.name == name {
           if cdef.type_params.size > 0 {
             if mod_name.size > 0 {
-              if str_eq(cdef.mod_name, mod_name) {
+              if cdef.mod_name == mod_name {
                 return cdef
               }
             } else {
@@ -489,7 +489,7 @@ pub class TypeResolver {
       i = 0
       while i < p.structs.size {
         sdef = p.structs[i]
-        if str_eq(sdef.name, name) {
+        if sdef.name == name {
           if sdef.type_params.size > 0 {
             n = n + 1
           }
@@ -499,7 +499,7 @@ pub class TypeResolver {
       i = 0
       while i < p.classes.size {
         cdef = p.classes[i]
-        if str_eq(cdef.name, name) {
+        if cdef.name == name {
           if cdef.type_params.size > 0 {
             n = n + 1
           }
@@ -518,7 +518,7 @@ pub class TypeResolver {
     if p = self.program {
       i = 0
       while i < p.structs.size {
-        if str_eq(p.structs[i].name, name) {
+        if p.structs[i].name == name {
           return true
         }
         i = i + 1
@@ -531,7 +531,7 @@ pub class TypeResolver {
     if p = self.program {
       i = 0
       while i < p.classes.size {
-        if str_eq(p.classes[i].name, name) {
+        if p.classes[i].name == name {
           return true
         }
         i = i + 1
@@ -545,7 +545,7 @@ pub class TypeResolver {
       i = 0
       while i < p.interfaces.size {
         idef = p.interfaces[i]
-        if str_eq(idef.name, name) {
+        if idef.name == name {
           return idef
         }
         i = i + 1
@@ -561,14 +561,14 @@ pub class TypeResolver {
     if p = self.program {
       i = 0
       while i < p.structs.size {
-        if str_eq(p.structs[i].name, name) {
+        if p.structs[i].name == name {
           return true
         }
         i = i + 1
       }
       i = 0
       while i < p.classes.size {
-        if str_eq(p.classes[i].name, name) {
+        if p.classes[i].name == name {
           return true
         }
         i = i + 1
@@ -578,7 +578,7 @@ pub class TypeResolver {
         lib_def = p.libs[i]
         j = 0
         while j < lib_def.layouts.size {
-          if str_eq(lib_def.layouts[j].name, name) {
+          if lib_def.layouts[j].name == name {
             return true
           }
           j = j + 1
@@ -587,7 +587,7 @@ pub class TypeResolver {
       }
       i = 0
       while i < p.interfaces.size {
-        if str_eq(p.interfaces[i].name, name) {
+        if p.interfaces[i].name == name {
           return true
         }
         i = i + 1
@@ -643,7 +643,7 @@ pub class TypeResolver {
         return
       }
       seen[p] = 1
-      if str_eq(p, type_name) {
+      if p == type_name {
         self.fail(loc, "type parameter ${p} must be a fresh name")
         return
       }
@@ -882,7 +882,7 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
     note_ptr_opaque_skip(tn.bounds[i], resolver, skip)
     i = i + 1
   }
-  if str_eq(tn.name, "Ptr") {
+  if tn.name == "Ptr" {
     if tn.args.size == 1 {
       inner = tn.args[0]
       if inner.args.size == 0 {

@@ -425,7 +425,7 @@ pub fn mir_selftest_finals: Array(String) {
 pub fn st_ok_module(name: String): MModule {
   b = st_base(false)
   vd = mt_void()
-  if str_eq(name, "ok_ref_across_nocollect") {
+  if name == "ok_ref_across_nocollect" {
     // A ref held across nocollect calls needs no slot.
     st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
     l1 = b.local(mt_str(), "")
@@ -436,7 +436,7 @@ pub fn st_ok_module(name: String): MModule {
     b.call(-1, "printf", st_two(b.str_const("%s\n"), b.copy_local(l1)))
     b.gc_leave
     b.ret
-  } else if str_eq(name, "ok_fresh_fill_closed") {
+  } else if name == "ok_fresh_fill_closed" {
     // A fresh fill held in a slot, closed by its barrier.
     box_ref = b.ref_to(st_box(b))
     st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
@@ -450,7 +450,7 @@ pub fn st_ok_module(name: String): MModule {
     b.barrier(0)
     b.gc_leave
     b.ret
-  } else if str_eq(name, "ok_addr_in_slot") {
+  } else if name == "ok_addr_in_slot" {
     // A derived address live across a collecting call, in a slot.
     box_ref = b.ref_to(st_box(b))
     st_fn(b, "f", st_tys(box_ref, -1), vd, mfk_frame())
@@ -652,7 +652,7 @@ fn st_insert(blk: MBlock, at: Int, st: MStmt) {
 fn st_find_call(blk: MBlock, callee: String): Int {
   i = 0
   while i < blk.stmts.size {
-    if blk.stmts[i].kind == msk_call() && str_eq(blk.stmts[i].callee, callee) {
+    if blk.stmts[i].kind == msk_call() && blk.stmts[i].callee == callee {
       return i
     }
     i = i + 1

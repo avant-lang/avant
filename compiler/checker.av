@@ -998,7 +998,7 @@ pub class Checker {
     if target = stmt.target {
       if value = stmt.value {
         if target.kind == ex_name() {
-          if str_eq(target.ident, "self") {
+          if target.ident == "self" {
             self.fail(stmt.loc, "cannot assign to self")
             return
           }
@@ -1127,7 +1127,7 @@ pub class Checker {
     if target = stmt.target {
       if value = stmt.value {
         if target.kind == ex_name() {
-          if str_eq(target.ident, "self") {
+          if target.ident == "self" {
             self.fail(stmt.loc, "cannot assign to self")
             return
           }
@@ -1404,23 +1404,23 @@ pub class Checker {
   }
 
   pub fn check_float_field(expr: Expr): Ty {
-    if str_eq(expr.ident, "sqrt") {
+    if expr.ident == "sqrt" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "abs") {
+    if expr.ident == "abs" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "floor") {
+    if expr.ident == "floor" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "exp") {
+    if expr.ident == "exp" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "to_i") {
+    if expr.ident == "to_i" {
       expr.method_call = true
       return self.t_int()
     }
@@ -1428,23 +1428,23 @@ pub class Checker {
   }
 
   pub fn check_int_field(expr: Expr, object: Ty): Ty {
-    if str_eq(expr.ident, "to_f") {
+    if expr.ident == "to_f" {
       expr.method_call = true
       return self.t_float()
     }
-    if str_eq(expr.ident, "abs") {
+    if expr.ident == "abs" {
       expr.method_call = true
       return object
     }
-    if str_eq(expr.ident, "to_i") {
+    if expr.ident == "to_i" {
       expr.method_call = true
       return self.t_int()
     }
-    if str_eq(expr.ident, "to_i64") {
+    if expr.ident == "to_i64" {
       expr.method_call = true
       return self.t_int64()
     }
-    if str_eq(expr.ident, "to_u64") {
+    if expr.ident == "to_u64" {
       expr.method_call = true
       return self.t_uint64()
     }
@@ -1525,22 +1525,22 @@ pub class Checker {
         return self.check_int_field(expr, object)
       }
       if object.is_string {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "bytes") {
+        if expr.ident == "bytes" {
           expr.method_call = true
           return self.t_bytes()
         }
-        if str_eq(expr.ident, "chars") {
+        if expr.ident == "chars" {
           expr.method_call = true
           return ty_array(self.t_string())
         }
-        if str_eq(expr.ident, "to_f") {
+        if expr.ident == "to_f" {
           expr.method_call = true
           return self.t_float()
         }
-        if str_eq(expr.ident, "to_i") {
+        if expr.ident == "to_i" {
           expr.method_call = true
           return self.t_int()
         }
@@ -1550,14 +1550,14 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_bytes {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "to_buf") {
+        if expr.ident == "to_buf" {
           expr.method_call = true
           return self.t_buf()
         }
-        if str_eq(expr.ident, "chars") {
+        if expr.ident == "chars" {
           expr.method_call = true
           return ty_array(self.t_string())
         }
@@ -1567,21 +1567,21 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_array {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "pop") {
+        if expr.ident == "pop" {
           expr.method_call = true
           if e = object.inner {
             return e
           }
           return self.t_int()
         }
-        if str_eq(expr.ident, "clear") {
+        if expr.ident == "clear" {
           expr.method_call = true
           return self.t_void()
         }
-        if str_eq(expr.ident, "sort") {
+        if expr.ident == "sort" {
           expr.method_call = true
           if e = object.inner {
             if self.is_ordered_ty(e) {
@@ -1591,7 +1591,7 @@ pub class Checker {
           }
           return self.t_void()
         }
-        if str_eq(expr.ident, "sorted") {
+        if expr.ident == "sorted" {
           expr.method_call = true
           if e = object.inner {
             if self.is_ordered_ty(e) {
@@ -1602,11 +1602,11 @@ pub class Checker {
           }
           return ty_array(self.t_int())
         }
-        if str_eq(expr.ident, "reverse") {
+        if expr.ident == "reverse" {
           expr.method_call = true
           return self.t_void()
         }
-        if str_eq(expr.ident, "min") {
+        if expr.ident == "min" {
           expr.method_call = true
           if e = object.inner {
             if self.is_ordered_ty(e) {
@@ -1620,7 +1620,7 @@ pub class Checker {
           }
           return ty_nilable(self.t_int())
         }
-        if str_eq(expr.ident, "max") {
+        if expr.ident == "max" {
           expr.method_call = true
           if e = object.inner {
             if self.is_ordered_ty(e) {
@@ -1634,7 +1634,7 @@ pub class Checker {
           }
           return ty_nilable(self.t_int())
         }
-        if str_eq(expr.ident, "sum") {
+        if expr.ident == "sum" {
           expr.method_call = true
           if e = object.inner {
             if self.is_numeric_ty(e) {
@@ -1648,42 +1648,42 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_hash {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "keys") {
+        if expr.ident == "keys" {
           expr.method_call = true
           if k = object.key {
             return ty_array(k)
           }
           return ty_array(self.t_int())
         }
-        if str_eq(expr.ident, "values") {
+        if expr.ident == "values" {
           expr.method_call = true
           if v = object.val {
             return ty_array(v)
           }
           return ty_array(self.t_int())
         }
-        if str_eq(expr.ident, "clear") {
+        if expr.ident == "clear" {
           expr.method_call = true
           return self.t_void()
         }
         return self.field_as_call(expr, object)
       }
       if object.is_buf {
-        if str_eq(expr.ident, "size") {
+        if expr.ident == "size" {
           return self.t_int()
         }
-        if str_eq(expr.ident, "to_bytes") {
+        if expr.ident == "to_bytes" {
           expr.method_call = true
           return self.t_bytes()
         }
-        if str_eq(expr.ident, "to_s") {
+        if expr.ident == "to_s" {
           expr.method_call = true
           return self.t_string()
         }
-        if str_eq(expr.ident, "clear") {
+        if expr.ident == "clear" {
           expr.method_call = true
           return self.t_void()
         }
@@ -1693,7 +1693,7 @@ pub class Checker {
         return self.field_as_call(expr, object)
       }
       if object.is_join {
-        if str_eq(expr.ident, "join") {
+        if expr.ident == "join" {
           expr.method_call = true
           if self.in_task > 0 {
             self.fail(expr.loc, "join inside a pool worker")
@@ -1718,19 +1718,19 @@ pub class Checker {
         while mi < self.methods.size {
           ms = self.methods[mi]
           owner_hit = false
-          if str_eq(ms.owner, object.name) {
+          if ms.owner == object.name {
             owner_hit = true
           } else {
             if object.origin.size > 0 {
               if ms.node.generic {
-                if str_eq(ms.owner, object.origin) {
+                if ms.owner == object.origin {
                   owner_hit = true
                 }
               }
             }
           }
           if owner_hit {
-            if str_eq(ms.name, expr.ident) {
+            if ms.name == expr.ident {
               if arity_ok(ms.node, 0) {
                 has_zero = true
               }
@@ -1753,19 +1753,19 @@ pub class Checker {
         while mi < self.methods.size {
           ms = self.methods[mi]
           owner_hit = false
-          if str_eq(ms.owner, object.name) {
+          if ms.owner == object.name {
             owner_hit = true
           } else {
             if object.origin.size > 0 {
               if ms.node.generic {
-                if str_eq(ms.owner, object.origin) {
+                if ms.owner == object.origin {
                   owner_hit = true
                 }
               }
             }
           }
           if owner_hit {
-            if str_eq(ms.name, expr.ident) {
+            if ms.name == expr.ident {
               has_method = true
             }
           }
@@ -1827,8 +1827,8 @@ pub class Checker {
     mi = 0
     while mi < self.methods.size {
       ms = self.methods[mi]
-      if str_eq(ms.owner, owner) {
-        if str_eq(ms.name, expr.ident) {
+      if ms.owner == owner {
+        if ms.name == expr.ident {
           if arity_ok(ms.node, 0) {
             if self.method_is_visible(ms.node, self.current_module) {
               has_zero = true
@@ -1924,8 +1924,8 @@ pub class Checker {
     mi = 0
     while mi < self.methods.size {
       ms = self.methods[mi]
-      if str_eq(ms.owner, owner) {
-        if str_eq(ms.name, expr.ident) {
+      if ms.owner == owner {
+        if ms.name == expr.ident {
           if arity_ok(ms.node, 0) {
             has_zero = true
           }
@@ -2227,10 +2227,10 @@ pub class Checker {
     i = 0
     while i < self.program.structs.size {
       sdef = self.program.structs[i]
-      if str_eq(sdef.name, name) {
+      if sdef.name == name {
         if sdef.type_params.size > 0 {
           if mod_name.size > 0 {
-            if str_eq(sdef.mod_name, mod_name) {
+            if sdef.mod_name == mod_name {
               return sdef
             }
           } else {
@@ -2256,10 +2256,10 @@ pub class Checker {
     i = 0
     while i < self.program.classes.size {
       cdef = self.program.classes[i]
-      if str_eq(cdef.name, name) {
+      if cdef.name == name {
         if cdef.type_params.size > 0 {
           if mod_name.size > 0 {
-            if str_eq(cdef.mod_name, mod_name) {
+            if cdef.mod_name == mod_name {
               return cdef
             }
           } else {
@@ -2291,7 +2291,7 @@ pub class Checker {
 
   pub fn apply_want_args(origin: String, params: Array(String), has_want: Bool, want: Ty, keys: Array(String), vals: Array(Ty)): Bool {
     if has_want {
-      if str_eq(want.origin, origin) {
+      if want.origin == origin {
         if want.ty_args.size == params.size {
           i = 0
           while i < params.size {
@@ -2375,7 +2375,7 @@ pub class Checker {
       pat: Ty? = nil
       j = 0
       while j < names.size {
-        if str_eq(names[j], fname) {
+        if names[j] == fname {
           pat = patterns[j]
         }
         j = j + 1
@@ -2425,7 +2425,7 @@ pub class Checker {
   }
 
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
-    if str_eq(expr.ident, "self") {
+    if expr.ident == "self" {
       if cf = self.current_fn {
         if cf.type_method {
           self.fail(expr.loc, "self is not available in a type-level function")
@@ -2443,7 +2443,7 @@ pub class Checker {
     }
     if self.lam_exprs.size > 0 {
       if self.self_name.size > 0 {
-        if str_eq(expr.ident, self.self_name) {
+        if expr.ident == self.self_name {
           self.fail(expr.loc, "a lambda cannot capture the method receiver")
           return self.t_int()
         }
@@ -2488,10 +2488,10 @@ pub class Checker {
         return self.t_float()
       }
     }
-    if str_eq(expr.int_suffix, "u64") {
+    if expr.int_suffix == "u64" {
       return self.t_uint64()
     }
-    if str_eq(expr.int_suffix, "i64") {
+    if expr.int_suffix == "i64" {
       return self.t_int64()
     }
     if has_want {
@@ -2710,8 +2710,8 @@ pub class Checker {
             mi = 0
             while mi < self.methods.size {
               ms = self.methods[mi]
-              if str_eq(ms.owner, left.name) {
-                if str_eq(ms.name, opname) {
+              if ms.owner == left.name {
+                if ms.name == opname {
                   has_op = true
                 }
               }
@@ -2941,7 +2941,7 @@ pub class Checker {
         return self.check_indirect_call(expr, existing)
       }
     }
-    if str_eq(expr.callee, "puts") {
+    if expr.callee == "puts" {
       if expr.args.size != 1 {
         self.fail(expr.loc, "puts takes one argument")
         return self.t_void()
@@ -2970,10 +2970,10 @@ pub class Checker {
       self.fail(expr.args[0].loc, "puts cannot print ${printed.show}")
       return self.t_void()
     }
-    if str_eq(expr.callee, "spawn") {
+    if expr.callee == "spawn" {
       return self.check_spawn(expr)
     }
-    if str_eq(expr.callee, "now_ms") {
+    if expr.callee == "now_ms" {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "now_ms takes no arguments")
@@ -2984,7 +2984,7 @@ pub class Checker {
       self.fail(expr.loc, "now_ms takes no arguments")
       return self.t_int()
     }
-    if str_eq(expr.callee, "file_read") {
+    if expr.callee == "file_read" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "file_read takes one String")
@@ -3001,7 +3001,7 @@ pub class Checker {
       }
       return ty_nilable(self.t_string())
     }
-    if str_eq(expr.callee, "file_write") {
+    if expr.callee == "file_write" {
       if expr.args.size == 2 {
         if b = expr.block {
           self.fail(expr.loc, "file_write takes a path and a body")
@@ -3023,7 +3023,7 @@ pub class Checker {
       }
       return self.t_int()
     }
-    if str_eq(expr.callee, "argv") {
+    if expr.callee == "argv" {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "argv takes no arguments")
@@ -3034,7 +3034,7 @@ pub class Checker {
       self.fail(expr.loc, "argv takes no arguments")
       return ty_array(self.t_string())
     }
-    if str_eq(expr.callee, "process_run") {
+    if expr.callee == "process_run" {
       if expr.args.size == 2 {
         if b = expr.block {
           self.fail(expr.loc, "process_run takes a path and args")
@@ -3057,7 +3057,7 @@ pub class Checker {
       }
       return self.t_int()
     }
-    if str_eq(expr.callee, "process_run_out") {
+    if expr.callee == "process_run_out" {
       if expr.args.size == 3 {
         if b = expr.block {
           self.fail(expr.loc, "process_run_out takes a path, args, and an output path")
@@ -3085,7 +3085,7 @@ pub class Checker {
       }
       return self.t_int()
     }
-    if str_eq(expr.callee, "env_get") {
+    if expr.callee == "env_get" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "env_get takes one String")
@@ -3102,7 +3102,7 @@ pub class Checker {
       }
       return ty_nilable(self.t_string())
     }
-    if str_eq(expr.callee, "file_exists") {
+    if expr.callee == "file_exists" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "file_exists takes one String")
@@ -3119,7 +3119,7 @@ pub class Checker {
       }
       return self.t_bool()
     }
-    if str_eq(expr.callee, "dir_list") {
+    if expr.callee == "dir_list" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "dir_list takes one String")
@@ -3145,7 +3145,7 @@ pub class Checker {
     if ty = self.check_gate_call(expr) {
       return ty
     }
-    if str_eq(expr.callee, "chr") {
+    if expr.callee == "chr" {
       if expr.args.size == 1 {
         if b = expr.block {
           self.fail(expr.loc, "chr takes one Int")
@@ -3162,7 +3162,7 @@ pub class Checker {
       }
       return self.t_string()
     }
-    if str_eq(expr.callee, "str_slice") {
+    if expr.callee == "str_slice" {
       if expr.args.size == 3 {
         if b = expr.block {
           self.fail(expr.loc, "str_slice takes String, start, stop")
@@ -3189,7 +3189,7 @@ pub class Checker {
       }
       return self.t_string()
     }
-    if str_eq(expr.callee, "buf_new") {
+    if expr.callee == "buf_new" {
       if b = expr.block {
         self.fail(expr.loc, "buf_new does not take a block")
         return self.t_buf()
@@ -3262,7 +3262,7 @@ pub class Checker {
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_type_chain(recv)
-    if recv.kind == ex_name() && str_eq(recv.ident, "Buf") && recv.type_args.size == 0 && recv.mod_name.size == 0 {
+    if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
       // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
       // (Stage 29 W1a, A5; before, "unknown type Buf").
       expr.callee = "buf_new"
@@ -3315,7 +3315,7 @@ pub class Checker {
   pub fn template_initialize(cdef: ClassDef): Function? {
     i = 0
     while i < cdef.methods.size {
-      if str_eq(cdef.methods[i].name, "initialize") {
+      if cdef.methods[i].name == "initialize" {
         return cdef.methods[i]
       }
       i = i + 1
@@ -3387,8 +3387,8 @@ pub class Checker {
       mi = 0
       while mi < self.methods.size {
         ms = self.methods[mi]
-        if str_eq(ms.owner, ty.name) {
-          if str_eq(ms.name, "initialize") {
+        if ms.owner == ty.name {
+          if ms.name == "initialize" {
             has_init = true
           }
         }
@@ -3663,7 +3663,7 @@ pub class Checker {
 
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = self.flatten_module_receiver(recv)
-    if str_eq(expr.callee, "new") {
+    if expr.callee == "new" {
       recv = self.flatten_type_chain(recv)
     }
     expr.receiver = recv
@@ -3671,13 +3671,13 @@ pub class Checker {
       if recv.type_args.size > 0 {
         if self.is_generic_template(recv.ident) {
           self.take_type_app(recv)
-          if str_eq(expr.callee, "new") {
+          if expr.callee == "new" {
           } else {
             self.fail(recv.loc, "${recv.ident} is a type")
             return self.t_int()
           }
         } else {
-          if str_eq(expr.callee, "new") {
+          if expr.callee == "new" {
             if f = self.find_fn(recv.ident) {
             } else if v = self.lookup(recv.ident) {
             } else {
@@ -3715,16 +3715,16 @@ pub class Checker {
         }
       }
     }
-    if str_eq(expr.callee, "new") {
+    if expr.callee == "new" {
     } else {
       if ty = self.type_call_target(recv, expr.callee) {
         return self.check_type_call(expr, ty)
       }
     }
-    if str_eq(expr.callee, "new") {
+    if expr.callee == "new" {
       return self.check_constructor(expr, recv, has_want, want)
     }
-    if str_eq(expr.callee, "send") {
+    if expr.callee == "send" {
       i = 0
       while i < expr.args.size {
         if self.expr_is_place(expr.args[i]) {
@@ -3735,8 +3735,8 @@ pub class Checker {
       }
     }
     if recv.kind == ex_name() {
-      if str_eq(recv.ident, "String") {
-        if str_eq(expr.callee, "from_utf8") {
+      if recv.ident == "String" {
+        if expr.callee == "from_utf8" {
           if expr.args.size == 1 {
           } else {
             self.fail(expr.loc, "String.from_utf8 takes one Bytes")
@@ -3752,7 +3752,7 @@ pub class Checker {
       }
     }
     object = self.check_expr(recv)
-    if str_eq(expr.callee, "or") {
+    if expr.callee == "or" {
       if b = expr.block {
         self.fail(expr.loc, "or does not take a block")
         return object
@@ -3768,12 +3768,12 @@ pub class Checker {
       self.fail(expr.loc, "or takes one fallback")
       return object
     }
-    if str_eq(expr.callee, "with") {
+    if expr.callee == "with" {
       if self.is_mutex_ty(object) {
         return self.check_mutex_with(expr, object)
       }
     }
-    if str_eq(expr.callee, "size") && expr.args.size == 0 {
+    if expr.callee == "size" && expr.args.size == 0 {
       if b = expr.block {
       } else if object.is_string || object.is_bytes || object.is_array || object.is_hash || object.is_buf {
         // `xs.size()` is `xs.size` (A5: one rule for empty parentheses).
@@ -3974,7 +3974,7 @@ pub class Checker {
   pub fn expr_is_place(expr: Expr): Bool {
     if self.place_depth > 0 {
       if expr.kind == ex_name() {
-        if str_eq(expr.ident, self.place_name) {
+        if expr.ident == self.place_name {
           return true
         }
       }
@@ -3997,14 +3997,14 @@ pub class Checker {
     }
     if target = stmt.target {
       if target.kind == ex_name() {
-        if str_eq(target.ident, self.place_name) {
+        if target.ident == self.place_name {
           return false
         }
       }
       if target.kind == ex_field() {
         if obj = target.object {
           if obj.kind == ex_name() {
-            if str_eq(obj.ident, self.place_name) {
+            if obj.ident == self.place_name {
               return false
             }
           }
@@ -4016,10 +4016,10 @@ pub class Checker {
   }
 
   pub fn is_mutex_ty(ty: Ty): Bool {
-    if str_eq(ty.origin, "Mutex") {
+    if ty.origin == "Mutex" {
       return true
     }
-    str_eq(ty.name, "Mutex")
+    ty.name == "Mutex"
   }
 
   pub fn check_mutex_with(expr: Expr, object: Ty): Ty {
@@ -4081,7 +4081,7 @@ pub class Checker {
   }
 
   pub fn check_gate_call(expr: Expr): Ty? {
-    if str_eq(expr.callee, "avant_gate_new") {
+    if expr.callee == "avant_gate_new" {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "avant_gate_new takes no arguments")
@@ -4093,19 +4093,19 @@ pub class Checker {
       return self.t_uint64()
     }
     is_gate = false
-    if str_eq(expr.callee, "avant_gate_lock") {
+    if expr.callee == "avant_gate_lock" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_unlock") {
+    if expr.callee == "avant_gate_unlock" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_wait") {
+    if expr.callee == "avant_gate_wait" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_signal") {
+    if expr.callee == "avant_gate_signal" {
       is_gate = true
     }
-    if str_eq(expr.callee, "avant_gate_broadcast") {
+    if expr.callee == "avant_gate_broadcast" {
       is_gate = true
     }
     if is_gate {
@@ -4129,7 +4129,7 @@ pub class Checker {
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {
-    if str_eq(expr.callee, "join") {
+    if expr.callee == "join" {
       if self.in_task > 0 {
         self.fail(expr.loc, "join inside a pool worker")
       }

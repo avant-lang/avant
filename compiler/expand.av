@@ -28,7 +28,7 @@ pub fn ident_ok(s: String): Bool {
 pub fn list_has_str(list: Array(String), name: String): Bool {
   i = 0
   while i < list.size {
-    if str_eq(list[i], name) {
+    if list[i] == name {
       return true
     }
     i = i + 1
@@ -171,7 +171,7 @@ pub class Expander {
     fnn.owner = owner
     i = 0
     while i < self.program.structs.size {
-      if str_eq(self.program.structs[i].name, owner) {
+      if self.program.structs[i].name == owner {
         self.program.structs[i].methods.push(fnn)
         return
       }
@@ -179,7 +179,7 @@ pub class Expander {
     }
     i = 0
     while i < self.program.classes.size {
-      if str_eq(self.program.classes[i].name, owner) {
+      if self.program.classes[i].name == owner {
         self.program.classes[i].methods.push(fnn)
         return
       }
@@ -193,7 +193,7 @@ pub class Expander {
     hits = 0
     i = 0
     while i < self.program.structs.size {
-      if str_eq(self.program.structs[i].name, type_name) {
+      if self.program.structs[i].name == type_name {
         if self.program.structs[i].type_params.size > 0 {
           self.fail(loc, "comptime cannot walk generic type ${type_name}")
           return found
@@ -205,7 +205,7 @@ pub class Expander {
     }
     i = 0
     while i < self.program.classes.size {
-      if str_eq(self.program.classes[i].name, type_name) {
+      if self.program.classes[i].name == type_name {
         if self.program.classes[i].type_params.size > 0 {
           self.fail(loc, "comptime cannot walk generic type ${type_name}")
           return found
@@ -221,7 +221,7 @@ pub class Expander {
       j = 0
       while j < lib_def.layouts.size {
         lay = lib_def.layouts[j]
-        if str_eq(lay.name, type_name) {
+        if lay.name == type_name {
           found = lay.fields
           hits = hits + 1
         }
@@ -588,7 +588,7 @@ pub class Expander {
         self.fail(inner.loc, "splice f.type needs a field walk")
         return TypeName.new(inner.loc, "Int")
       }
-      if str_eq(inner.ident, "type") {
+      if inner.ident == "type" {
       } else {
         self.fail(inner.loc, "f.type is the field type in a walk")
         return TypeName.new(inner.loc, "Int")
@@ -633,12 +633,12 @@ pub class Expander {
         return inner
       }
       if field = self.ctx_field {
-        if str_eq(inner.ident, "name") {
+        if inner.ident == "name" {
           e = Expr.new(ex_string(), inner.loc)
           e.value_str = field.name
           return e
         }
-        if str_eq(inner.ident, "type") {
+        if inner.ident == "type" {
           self.fail(inner.loc, "f.type is a type, not an expression")
           return inner
         }
@@ -658,11 +658,11 @@ pub class Expander {
     }
     if obj = fa.object {
       if obj.kind == ex_name() {
-        if str_eq(obj.ident, self.ctx_var) {
-          if str_eq(fa.ident, "name") {
+        if obj.ident == self.ctx_var {
+          if fa.ident == "name" {
             return true
           }
-          if str_eq(fa.ident, "type") {
+          if fa.ident == "type" {
             return true
           }
         }
@@ -677,7 +677,7 @@ pub class Expander {
       self.fail(fa.loc, "splice f.name needs a field walk")
       return ""
     }
-    if str_eq(fa.ident, "name") {
+    if fa.ident == "name" {
     } else {
       self.fail(fa.loc, "f.name is the field name in a walk")
       return ""
@@ -700,14 +700,14 @@ pub class Expander {
     introduced: Array(String) = []
     i = 0
     while i < fnn.params.size {
-      if str_eq(fnn.params[i].name, "self") {
+      if fnn.params[i].name == "self" {
       } else {
         introduced.push(fnn.params[i].name)
       }
       i = i + 1
     }
     if r = fnn.receiver {
-      if str_eq(r.name, "self") {
+      if r.name == "self" {
       } else {
         introduced.push(r.name)
       }
@@ -752,7 +752,7 @@ pub class Expander {
     i = 0
     while i < introduced.size {
       name = introduced[i]
-      if str_eq(name, "self") {
+      if name == "self" {
       } else {
         if prev = map.get(name) {
         } else {

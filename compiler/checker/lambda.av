@@ -57,7 +57,7 @@ pub fn (checker_self: Checker) sig_is_instance(sig: FuncSig): Bool {
 pub fn (checker_self: Checker) add_name(names: Array(String), name: String) {
   i = 0
   while i < names.size {
-    if str_eq(names[i], name) {
+    if names[i] == name {
       return
     }
     i = i + 1
@@ -338,7 +338,7 @@ pub fn (checker_self: Checker) absorb_fn_block(expr: Expr) {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, expr.callee) {
+    if sig.name == expr.callee {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {
@@ -384,7 +384,7 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, expr.callee) {
+    if sig.name == expr.callee {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {
@@ -419,7 +419,7 @@ pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty?
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, expr.callee) {
+    if sig.name == expr.callee {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {
@@ -540,7 +540,7 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, expr.ident) {
+    if sig.name == expr.ident {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {
@@ -583,7 +583,7 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, expr.ident) {
+    if sig.name == expr.ident {
       if checker_self.fn_is_visible(sig.node, checker_self.current_module) {
         if checker_self.sig_is_instance(sig) {
         } else {
@@ -713,7 +713,7 @@ pub fn (checker_self: Checker) pop_lambda {
 
 pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
   if checker_self.place_depth > 0 {
-    if str_eq(name, checker_self.place_name) {
+    if name == checker_self.place_name {
       if checker_self.lam_exprs.size > 0 {
         checker_self.fail(checker_self.lam_exprs[checker_self.lam_exprs.size - 1].loc, "mutex place cannot escape")
         return
@@ -738,7 +738,7 @@ pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
       seen = false
       i = 0
       while i < lam.cap_names.size {
-        if str_eq(lam.cap_names[i], name) {
+        if lam.cap_names[i] == name {
           seen = true
         }
         i = i + 1
@@ -1256,7 +1256,7 @@ pub fn (checker_self: Checker) fact_visible(fact: ImplFact): Bool {
   if fact.vis {
     return true
   }
-  if str_eq(fact.mod_name, checker_self.current_module) {
+  if fact.mod_name == checker_self.current_module {
     return true
   }
   if fact.mod_name.size == 0 {
@@ -1272,8 +1272,8 @@ pub fn (checker_self: Checker) find_impl(type_key: String, iface_key: String): I
   i = 0
   while i < checker_self.impls.size {
     fact = checker_self.impls[i]
-    if str_eq(fact.type_key, type_key) {
-      if str_eq(fact.iface_key, iface_key) {
+    if fact.type_key == type_key {
+      if fact.iface_key == iface_key {
         return fact
       }
     }
@@ -1353,7 +1353,7 @@ pub fn (checker_self: Checker) count_witnesses(concrete: Ty, idef: InterfaceDef,
     j = 0
     while j < checker_self.methods.size {
       sig = checker_self.methods[j]
-      if str_eq(sig.name, method.name) {
+      if sig.name == method.name {
         if checker_self.method_is_visible(sig.node, from_mod) {
           if checker_self.witness_fits(sig, concrete) {
             if checker_self.wit_params.size == checker_self.sig_params.size {
@@ -1418,7 +1418,7 @@ pub fn (checker_self: Checker) diff_note(concrete: Ty, label: String, name: Stri
 pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
   owner = impl_type_key(concrete)
   if concrete.origin.size > 0 {
-    if str_eq(sig.owner, concrete.origin) {
+    if sig.owner == concrete.origin {
       if sig.node.generic {
         if recv = sig.node.receiver {
           checker_self.resolver.set_tparams(sig.node.type_params)
@@ -1428,7 +1428,7 @@ pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
           if checker_self.has_err {
             return false
           }
-          if str_eq(pat.origin, concrete.origin) {
+          if pat.origin == concrete.origin {
             if pat.ty_args.size == concrete.ty_args.size {
               keys: Array(String) = []
               vals: Array(Ty) = []
@@ -1466,7 +1466,7 @@ pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
       }
     }
   }
-  if str_eq(sig.owner, owner) {
+  if sig.owner == owner {
     checker_self.wit_params = sig.params
     checker_self.wit_ret = sig.ret
     checker_self.wit_vars = sig.node.type_params

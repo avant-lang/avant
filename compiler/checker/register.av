@@ -77,7 +77,7 @@ pub fn (checker_self: Checker) count_named_fns(name: String): Int {
   n = 0
   i = 1
   while i < checker_self.functions.size {
-    if str_eq(checker_self.functions[i].name, name) {
+    if checker_self.functions[i].name == name {
       n = n + 1
     }
     i = i + 1
@@ -90,9 +90,9 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
   i = 0
   while i < checker_self.methods.size {
     sig = checker_self.methods[i]
-    if str_eq(sig.owner, owner) {
-      if str_eq(sig.node.owner_mod, owner_mod) {
-        if str_eq(sig.name, name) {
+    if sig.owner == owner {
+      if sig.node.owner_mod == owner_mod {
+        if sig.name == name {
           n = n + 1
         }
       }
@@ -126,7 +126,7 @@ pub fn (checker_self: Checker) find_instance(emit: String): Function? {
   i = 0
   while i < checker_self.instances.size {
     inst = checker_self.instances[i]
-    if str_eq(inst.emit_name, emit) {
+    if inst.emit_name == emit {
       return inst
     }
     i = i + 1
@@ -141,15 +141,15 @@ pub fn (checker_self: Checker) assign_emit_names {
     if sig.node.generic {
     } else {
       name = sig.name
-      if str_eq(name, "main") {
+      if name == "main" {
         nroot = 0
         j = 1
         while j < checker_self.functions.size {
           other = checker_self.functions[j]
           if other.node.generic {
           } else {
-            if str_eq(other.name, name) {
-              if str_eq(other.node.mod_name, checker_self.root_module) {
+            if other.name == name {
+              if other.node.mod_name == checker_self.root_module {
                 nroot = nroot + 1
               } else {
                 if checker_self.root_module.size == 0 {
@@ -169,15 +169,15 @@ pub fn (checker_self: Checker) assign_emit_names {
           return
         }
       }
-      if str_eq(name, "run") {
+      if name == "run" {
         nroot = 0
         j = 1
         while j < checker_self.functions.size {
           other = checker_self.functions[j]
           if other.node.generic {
           } else {
-            if str_eq(other.name, name) {
-              if str_eq(other.node.mod_name, checker_self.root_module) {
+            if other.name == name {
+              if other.node.mod_name == checker_self.root_module {
                 nroot = nroot + 1
               } else {
                 if checker_self.root_module.size == 0 {
@@ -203,11 +203,11 @@ pub fn (checker_self: Checker) assign_emit_names {
         other = checker_self.functions[j]
         if other.node.generic {
         } else {
-          if str_eq(other.name, name) {
+          if other.name == name {
             found = false
             m = 0
             while m < mods.size {
-              if str_eq(mods[m], other.node.mod_name) {
+              if mods[m] == other.node.mod_name {
                 found = true
               }
               m = m + 1
@@ -235,7 +235,7 @@ pub fn (checker_self: Checker) assign_emit_names {
         other = checker_self.functions[j]
         if other.node.generic {
         } else {
-          if str_eq(other.name, name) {
+          if other.name == name {
             if sig.node.vis {
               if other.node.vis {
                 g = g + 1
@@ -243,7 +243,7 @@ pub fn (checker_self: Checker) assign_emit_names {
             } else {
               if other.node.vis {
               } else {
-                if str_eq(other.node.mod_name, sig.node.mod_name) {
+                if other.node.mod_name == sig.node.mod_name {
                   g = g + 1
                 }
               }
@@ -258,7 +258,7 @@ pub fn (checker_self: Checker) assign_emit_names {
           other = checker_self.functions[j]
           if other.node.generic {
           } else {
-            if str_eq(other.name, name) {
+            if other.name == name {
               g = g + 1
             }
           }
@@ -281,7 +281,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       name = sig.name
       owner = sig.owner
       owner_mod = sig.node.owner_mod
-      if str_eq(name, "initialize") {
+      if name == "initialize" {
         if checker_self.count_named_methods(owner, name, owner_mod) > 1 {
           checker_self.fail(sig.node.loc, "initialize cannot be overloaded")
           return
@@ -293,9 +293,9 @@ pub fn (checker_self: Checker) assign_emit_names {
         other = checker_self.methods[j]
         if other.node.generic {
         } else {
-          if str_eq(other.owner, owner) {
-            if str_eq(other.node.owner_mod, owner_mod) {
-              if str_eq(other.name, name) {
+          if other.owner == owner {
+            if other.node.owner_mod == owner_mod {
+              if other.name == name {
                 n = n + 1
               }
             }
@@ -366,8 +366,8 @@ pub fn (checker_self: Checker) check: Program {
   i = 1
   while i < checker_self.functions.size {
     sig = checker_self.functions[i]
-    if str_eq(sig.name, "main") {
-      if str_eq(sig.node.mod_name, checker_self.root_module) {
+    if sig.name == "main" {
+      if sig.node.mod_name == checker_self.root_module {
         has_entry = true
       } else {
         if checker_self.root_module.size == 0 {
@@ -375,8 +375,8 @@ pub fn (checker_self: Checker) check: Program {
         }
       }
     }
-    if str_eq(sig.name, "run") {
-      if str_eq(sig.node.mod_name, checker_self.root_module) {
+    if sig.name == "run" {
+      if sig.node.mod_name == checker_self.root_module {
         has_entry = true
       } else {
         if checker_self.root_module.size == 0 {
@@ -532,9 +532,9 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     checker_self.fail(fnn.loc, "operator methods need a receiver")
     return
   }
-  if str_eq(fnn.name, "main") {
+  if fnn.name == "main" {
     if checker_self.root_module.size > 0 {
-      if str_eq(fnn.mod_name, checker_self.root_module) {
+      if fnn.mod_name == checker_self.root_module {
       } else {
         if fnn.mod_name.size > 0 {
           checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
@@ -543,9 +543,9 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       }
     }
   }
-  if str_eq(fnn.name, "run") {
+  if fnn.name == "run" {
     if checker_self.root_module.size > 0 {
-      if str_eq(fnn.mod_name, checker_self.root_module) {
+      if fnn.mod_name == checker_self.root_module {
       } else {
         if fnn.mod_name.size > 0 {
           checker_self.fail(fnn.loc, "fn ${fnn.name} is program entry; keep it in the root")
@@ -571,13 +571,13 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     return
   }
   tparams = collect_fn_type_params(fnn, checker_self.resolver.named)
-  if str_eq(fnn.name, "main") {
+  if fnn.name == "main" {
     if tparams.size > 0 {
       checker_self.fail(fnn.loc, "main cannot be generic")
       return
     }
   }
-  if str_eq(fnn.name, "run") {
+  if fnn.name == "run" {
     if tparams.size > 0 {
       checker_self.fail(fnn.loc, "run cannot be generic")
       return
@@ -625,7 +625,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   }
   checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   checker_self.current_module = saved_mod
-  if str_eq(fnn.name, "main") || str_eq(fnn.name, "run") {
+  if fnn.name == "main" || fnn.name == "run" {
     if ret.is_void {
     } else if ret.is_int {
     } else {
@@ -636,10 +636,10 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   i = 1
   while i < checker_self.functions.size {
     existing = checker_self.functions[i]
-    if str_eq(existing.name, fnn.name) {
+    if existing.name == fnn.name {
       if params_same(existing.params, params) {
         same_mod = false
-        if str_eq(existing.node.mod_name, fnn.mod_name) {
+        if existing.node.mod_name == fnn.mod_name {
           same_mod = true
         }
         if existing.node.mod_name.size == 0 {
@@ -768,7 +768,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     checker_self.current_module = saved_mod
     return
   }
-  if str_eq(fnn.name, "new") {
+  if fnn.name == "new" {
     checker_self.fail(fnn.loc, "new is reserved; write initialize")
     checker_self.resolver.clear_tparams
     checker_self.current_module = saved_mod
@@ -833,7 +833,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
   checker_self.current_module = saved_mod
-  if str_eq(fnn.name, "initialize") {
+  if fnn.name == "initialize" {
     if ret.is_void {
     } else {
       checker_self.fail(fnn.loc, "initialize cannot return a value")
@@ -847,9 +847,9 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   i = 0
   while i < checker_self.methods.size {
     existing = checker_self.methods[i]
-    if str_eq(existing.owner, owner_key) {
-      if str_eq(existing.node.owner_mod, fnn.owner_mod) {
-        if str_eq(existing.name, fnn.name) {
+    if existing.owner == owner_key {
+      if existing.node.owner_mod == fnn.owner_mod {
+        if existing.name == fnn.name {
           if existing.node.type_method != fnn.type_method {
             checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
             return
@@ -992,9 +992,9 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
     other = checker_self.methods[j]
     if other.node.generic {
     } else {
-      if str_eq(other.owner, owner) {
-        if str_eq(other.node.owner_mod, sig.node.owner_mod) {
-          if str_eq(other.name, name) {
+      if other.owner == owner {
+        if other.node.owner_mod == sig.node.owner_mod {
+          if other.name == name {
             n = n + 1
           }
         }
@@ -1002,7 +1002,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
     }
     j = j + 1
   }
-  if str_eq(name, "initialize") {
+  if name == "initialize" {
     if n > 1 {
       checker_self.fail(sig.node.loc, "initialize cannot be overloaded")
       return
@@ -1018,9 +1018,9 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
     other = checker_self.methods[j]
     if other.node.generic {
     } else {
-      if str_eq(other.owner, owner) {
-        if str_eq(other.node.owner_mod, sig.node.owner_mod) {
-          if str_eq(other.name, name) {
+      if other.owner == owner {
+        if other.node.owner_mod == sig.node.owner_mod {
+          if other.name == name {
             if n <= 1 {
               other.node.emit_name = "${shown}__${sanitized}"
             } else {

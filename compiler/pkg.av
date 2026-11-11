@@ -75,7 +75,7 @@ pub class PkgLock {
   pub fn find(name: String): PkgLockEnt? {
     i = 0
     while i < self.ents.size {
-      if str_eq(self.ents[i].name, name) {
+      if self.ents[i].name == name {
         return self.ents[i]
       }
       i = i + 1
@@ -227,7 +227,7 @@ pub fn pkg_apply_pair(m: PkgManifest, dep_idx: Int, key: String, val: String, pa
   k = pkg_trim(key)
   if dep_idx >= 0 {
     dep = m.deps[dep_idx]
-    if str_eq(k, "git") {
+    if k == "git" {
       dep.git = pkg_parse_string(val, "")
       if dep.git.size == 0 {
         m.err = "${path}:${line_no}: dependency ${dep.name} has a bad git value"
@@ -235,7 +235,7 @@ pub fn pkg_apply_pair(m: PkgManifest, dep_idx: Int, key: String, val: String, pa
       }
       return true
     }
-    if str_eq(k, "rev") || str_eq(k, "tag") || str_eq(k, "branch") {
+    if k == "rev" || k == "tag" || k == "branch" {
       dep.rev = pkg_parse_string(val, "")
       if dep.rev.size == 0 {
         m.err = "${path}:${line_no}: dependency ${dep.name} has a bad ${k} value"
@@ -246,11 +246,11 @@ pub fn pkg_apply_pair(m: PkgManifest, dep_idx: Int, key: String, val: String, pa
     m.err = "${path}:${line_no}: unknown dependency key ${k} (want git, rev, tag, or branch)"
     return false
   }
-  if str_eq(k, "name") {
+  if k == "name" {
     m.name = pkg_parse_string(val, "")
     return true
   }
-  if str_eq(k, "version") {
+  if k == "version" {
     m.version = pkg_parse_string(val, "")
     return true
   }
@@ -340,7 +340,7 @@ pub fn pkg_string_list(val: String): PkgStrings {
 
 pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
   k = pkg_trim(key)
-  if str_eq(k, "dir") {
+  if k == "dir" {
     if m.test_dir.size > 0 {
       pkg_note_test(m, "${path}:${line_no}: duplicate test key dir")
       return true
@@ -356,7 +356,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     }
     return true
   }
-  if str_eq(k, "entry") {
+  if k == "entry" {
     if m.test_entry.size > 0 {
       pkg_note_test(m, "${path}:${line_no}: duplicate test key entry")
       return true
@@ -372,7 +372,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     }
     return true
   }
-  if str_eq(k, "exclusive") {
+  if k == "exclusive" {
     if m.test_exclusive.size > 0 {
       pkg_note_test(m, "${path}:${line_no}: duplicate test key exclusive")
       return true
@@ -389,7 +389,7 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
     }
     return true
   }
-  if str_eq(k, "first") {
+  if k == "first" {
     if m.test_first.size > 0 {
       pkg_note_test(m, "${path}:${line_no}: duplicate test key first")
       return true
@@ -412,8 +412,8 @@ pub fn pkg_apply_test(m: PkgManifest, key: String, val: String, path: String, li
 
 pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
   k = pkg_trim(key)
-  if str_eq(k, "include") || str_eq(k, "exclude") {
-    if str_eq(k, "include") {
+  if k == "include" || k == "exclude" {
+    if k == "include" {
       if m.cov_include.size > 0 {
         pkg_note_cov(m, "${path}:${line_no}: duplicate coverage key include")
         return true
@@ -428,7 +428,7 @@ pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String
     if list.ok {
       i = 0
       while i < list.items.size {
-        if str_eq(k, "include") {
+        if k == "include" {
           m.cov_include.push(list.items[i])
         } else {
           m.cov_exclude.push(list.items[i])
@@ -536,12 +536,12 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         return m
       }
       inner = pkg_trim(str_slice(line, 1, line.size - 1))
-      if str_eq(inner, "package") {
+      if inner == "package" {
         section = "package"
         dep_idx = -1
         continue
       }
-      if str_eq(inner, "dependencies") {
+      if inner == "dependencies" {
         section = "dependencies"
         dep_idx = -1
         continue
@@ -555,7 +555,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         j = 0
         found = -1
         while j < m.deps.size {
-          if str_eq(m.deps[j].name, dname) {
+          if m.deps[j].name == dname {
             found = j
           }
           j = j + 1
@@ -569,12 +569,12 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         section = "dep"
         continue
       }
-      if str_eq(inner, "test") {
+      if inner == "test" {
         section = "test"
         dep_idx = -1
         continue
       }
-      if str_eq(inner, "coverage") {
+      if inner == "coverage" {
         section = "coverage"
         dep_idx = -1
         continue
@@ -589,7 +589,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
     }
     key = pkg_trim(str_slice(line, 0, eq))
     val = pkg_trim(str_slice(line, eq + 1, line.size))
-    if str_eq(section, "package") {
+    if section == "package" {
       if pkg_string_closed(val) {
       } else {
         m.err = "${path}:${line_no}: unterminated string"
@@ -601,7 +601,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       }
       continue
     }
-    if str_eq(section, "dep") {
+    if section == "dep" {
       if dep_idx < 0 {
         m.err = "${path}:${line_no}: dependency key outside a dependency"
         return m
@@ -617,7 +617,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       }
       continue
     }
-    if str_eq(section, "dependencies") {
+    if section == "dependencies" {
       if key.size == 0 {
         m.err = "${path}:${line_no}: bad dependency name"
         return m
@@ -625,7 +625,7 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       j = 0
       dup = false
       while j < m.deps.size {
-        if str_eq(m.deps[j].name, key) {
+        if m.deps[j].name == key {
           dup = true
         }
         j = j + 1
@@ -647,14 +647,14 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
       }
       continue
     }
-    if str_eq(section, "test") {
+    if section == "test" {
       if pkg_apply_test(m, key, val, path, line_no) {
       } else {
         return m
       }
       continue
     }
-    if str_eq(section, "coverage") {
+    if section == "coverage" {
       if pkg_apply_coverage(m, key, val, path, line_no) {
       } else {
         return m
@@ -699,7 +699,7 @@ pub fn pkg_parse_lock(text: String): PkgLock {
     if line.size == 0 {
       continue
     }
-    if str_eq(line, "[[package]]") {
+    if line == "[[package]]" {
       if cur_name.size > 0 {
         pkg_lock_push(lock, cur_name, cur_source)
       }
@@ -715,9 +715,9 @@ pub fn pkg_parse_lock(text: String): PkgLock {
       }
       key = pkg_trim(str_slice(line, 0, eq))
       val = str_slice(line, eq + 1, line.size)
-      if str_eq(key, "name") {
+      if key == "name" {
         cur_name = pkg_parse_string(val, "")
-      } else if str_eq(key, "source") {
+      } else if key == "source" {
         cur_source = pkg_parse_string(val, "")
       }
     }
@@ -826,7 +826,7 @@ pub fn pkg_git_out(args: Array(String), what: String, tag: String): String {
 }
 
 pub fn pkg_join(dir: String, leaf: String): String {
-  if str_eq(dir, ".") {
+  if dir == "." {
     return leaf
   }
   if dir.size > 0 && dir[dir.size - 1] == 47 {
@@ -876,7 +876,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     }
     locked_sha = ""
     if ent = lock.find(dep.name) {
-      if str_eq(ent.git, dep.git) {
+      if ent.git == dep.git {
         locked_sha = ent.sha
       }
     }
@@ -935,7 +935,7 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     }
     key = "${dep.git}#${sha}"
     if prev = seen.get(dep.name) {
-      if str_eq(prev, key) {
+      if prev == key {
         continue
       }
       diag_puts("avant fetch: dependency ${dep.name} resolves to two different commits (${prev} vs ${key}); one version per name in this spike")

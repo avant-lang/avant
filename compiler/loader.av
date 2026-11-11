@@ -78,14 +78,14 @@ pub fn module_name_of(path: String): String {
 
 pub fn child_av_path(importer: String, name: String): String {
   dir = path_dirname(importer)
-  if str_eq(dir, ".") {
+  if dir == "." {
     return "${name}.av"
   }
   "${dir}/${name}.av"
 }
 
 pub fn path_under(dir: String, path: String): Bool {
-  if str_eq(dir, ".") {
+  if dir == "." {
     if path.size == 0 {
       return false
     }
@@ -98,7 +98,7 @@ pub fn path_under(dir: String, path: String): Bool {
   if path.size <= prefix {
     return false
   }
-  if str_eq(str_slice(path, 0, prefix), dir) {
+  if str_slice(path, 0, prefix) == dir {
     if path[prefix] == 47 {
       return true
     }
@@ -107,10 +107,10 @@ pub fn path_under(dir: String, path: String): Bool {
 }
 
 pub fn join_dir(dir: String, rel: String): String {
-  if str_eq(dir, ".") {
+  if dir == "." {
     return rel
   }
-  if str_eq(dir, "/") {
+  if dir == "/" {
     return "/${rel}"
   }
   "${dir}/${rel}"
@@ -133,7 +133,7 @@ pub fn import_rel(name: String): String {
 
 pub fn rel_module_name(dir: String, path: String): String {
   rel = path
-  if str_eq(dir, ".") {
+  if dir == "." {
   } else {
     if path_under(dir, path) {
       rel = str_slice(path, dir.size + 1, path.size)
@@ -168,18 +168,18 @@ pub fn find_manifest(start: String): String {
   while guard < 64 {
     guard = guard + 1
     cand = "avant.toml"
-    if str_eq(dir, ".") {
+    if dir == "." {
     } else {
       cand = "${dir}/avant.toml"
     }
     if file_exists(cand) {
       return dir
     }
-    if str_eq(dir, ".") {
+    if dir == "." {
       return ""
     }
     parent = path_dirname(dir)
-    if str_eq(parent, dir) {
+    if parent == dir {
       return ""
     }
     dir = parent
@@ -190,7 +190,7 @@ pub fn find_manifest(start: String): String {
 pub fn hit_listed(list: Array(String), path: String): Bool {
   i = 0
   while i < list.size {
-    if str_eq(list[i], path) {
+    if list[i] == path {
       return true
     }
     i = i + 1
@@ -340,7 +340,7 @@ pub fn tag_module(program: Program, name: String, path: String) {
 pub fn path_in_list(list: Array(String), path: String): Bool {
   i = 0
   while i < list.size {
-    if str_eq(list[i], path) {
+    if list[i] == path {
       return true
     }
     i = i + 1
@@ -434,14 +434,14 @@ pub class Loader {
     if path_under(self.project_dir, path) {
       return rel_module_name(self.project_dir, path)
     }
-    if str_eq(path_dirname(path), self.project_dir) {
+    if path_dirname(path) == self.project_dir {
       return rel_module_name(self.project_dir, path)
     }
     if self.manifest_dir.size > 0 {
       if path_under(self.manifest_dir, path) {
         return rel_module_name(self.manifest_dir, path)
       }
-      if str_eq(path_dirname(path), self.manifest_dir) {
+      if path_dirname(path) == self.manifest_dir {
         return rel_module_name(self.manifest_dir, path)
       }
     }
@@ -458,11 +458,11 @@ pub class Loader {
   }
 
   pub fn std_import(name: String): Bool {
-    if str_eq(name, "std") {
+    if name == "std" {
       return true
     }
     if name.size > 4 {
-      if str_eq(str_slice(name, 0, 4), "std.") {
+      if str_slice(name, 0, 4) == "std." {
         return true
       }
     }
@@ -474,7 +474,7 @@ pub class Loader {
   }
 
   pub fn resolve_std(name: String, loc: Location): String {
-    if str_eq(name, "std") {
+    if name == "std" {
       self.fail(loc, "import std needs a module")
       return ""
     }
@@ -498,7 +498,7 @@ pub class Loader {
         return cand
       }
       parent = path_dirname(dir)
-      if str_eq(parent, dir) {
+      if parent == dir {
         break
       }
       dir = parent
@@ -520,7 +520,7 @@ pub class Loader {
       self.consider_hit(hits, join_dir(dep, rel))
       i = 0
       while i < self.dep_dirs.size {
-        if str_eq(self.dep_dirs[i], dep) {
+        if self.dep_dirs[i] == dep {
         } else {
           self.consider_hit(hits, join_dir(self.dep_dirs[i], rel))
         }
@@ -570,7 +570,7 @@ pub class Loader {
 
   pub fn note_module_path(name: String, path: String, loc: Location) {
     if prev = self.mod_paths.get(name) {
-      if str_eq(prev, path) {
+      if prev == path {
       } else {
         self.fail(loc, "module ${name} is both ${prev} and ${path}")
       }
@@ -695,7 +695,7 @@ pub class Loader {
         }
         seen[imp.name] = 1
         child = self.resolve_import(path, imp.name, imp.loc)
-        if str_eq(child, "") {
+        if child == "" {
           i = i + 1
           continue
         }

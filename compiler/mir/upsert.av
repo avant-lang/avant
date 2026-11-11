@@ -44,17 +44,17 @@ import mir.flow
 
 // The upsert for a get callee, or "".
 fn up_name(callee: String): String {
-  if str_eq(callee, "avant_hash_get_i32k_i32") || str_eq(callee, "avant_hash_get_or_i32k_i32") {
+  if callee == "avant_hash_get_i32k_i32" || callee == "avant_hash_get_or_i32k_i32" {
     return "avant_hash_upsert_i32k"
   }
-  if str_eq(callee, "avant_hash_get_i32") || str_eq(callee, "avant_hash_get_or_i32") {
+  if callee == "avant_hash_get_i32" || callee == "avant_hash_get_or_i32" {
     return "avant_hash_upsert_i32"
   }
   ""
 }
 
 fn up_set_name(callee: String): String {
-  if str_starts_mir(callee, "avant_hash_get_or_i32k") || str_eq(callee, "avant_hash_get_i32k_i32") {
+  if str_starts_mir(callee, "avant_hash_get_or_i32k") || callee == "avant_hash_get_i32k_i32" {
     return "avant_hash_set_i32k_i32"
   }
   "avant_hash_set_i32"
@@ -186,7 +186,7 @@ class UpWalk {
       }
       st = blk.stmts[i]
       if st.kind == msk_call() {
-        if up_direct(st) && str_eq(st.callee, self.set_name) && st.args.size == 3 {
+        if up_direct(st) && st.callee == self.set_name && st.args.size == 3 {
           hl = up_local(st.args[0])
           if hl >= 0 && s.h[hl] && self.same_key(st.args[1], s) {
             self.note_site(b, i)

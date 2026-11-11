@@ -41,7 +41,7 @@ fn tk_keeps_none(name: String): Bool {
   names = ["avant_buf_push_byte", "avant_buf_push_str", "avant_buf_push_slice", "avant_buf_push_fmt_f", "avant_buf_push_fmt_i", "avant_buf_append", "avant_buf_to_str", "avant_buf_take_str", "avant_buf_size", "avant_buf_clear", "avant_buf_ensure", "avant_bytes_ensure", "avant_buf_set_size", "avant_buf_set_ident", "avant_buf_starts", "avant_buf_fill_appends", "avant_buf_copy_ranges"]
   i = 0
   while i < names.size {
-    if str_eq(names[i], name) {
+    if names[i] == name {
       return true
     }
     i = i + 1
@@ -50,7 +50,7 @@ fn tk_keeps_none(name: String): Bool {
 }
 
 fn tk_fresh(name: String): Bool {
-  str_eq(name, "avant_buf_new") || str_eq(name, "avant_bytes_to_buf")
+  name == "avant_buf_new" || name == "avant_bytes_to_buf"
 }
 
 fn tk_direct(st: MStmt): Bool {
@@ -431,7 +431,7 @@ fn tk_rewrite(t: TkFunc): Int {
     j = 0
     while j < blk.stmts.size {
       st = blk.stmts[j]
-      if st.kind == msk_call() && tk_direct(st) && str_eq(st.callee, "avant_buf_to_str") && st.args.size == 1 {
+      if st.kind == msk_call() && tk_direct(st) && st.callee == "avant_buf_to_str" && st.args.size == 1 {
         x = tk_local(st.args[0])
         if x >= 0 && t.member(x) && !t.derived[x] {
           r = t.find(x)
