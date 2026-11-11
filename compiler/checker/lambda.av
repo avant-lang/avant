@@ -911,8 +911,13 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
     return
   }
   ty: Ty? = nil
-  if found = checker_self.resolver.get_named(type_name) {
+  // By module (Stage 29 W4a): two modules may declare the same type name,
+  // and get_named answers nil for such a name, which skipped the
+  // declaration's interface clause without a word.
+  if found = checker_self.resolver.get_named_in(mod_name, type_name) {
     ty = found
+  } else if found2 = checker_self.resolver.get_named(type_name) {
+    ty = found2
   } else {
     return
   }
@@ -921,6 +926,15 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
     checker_self.current_module = mod_name
     i = 0
     while i < opt_ins.size {
+      if opt_ins[i].name == "Error" {
+        checker_self.mark_error(concrete, opt_ins[i], type_name, mod_name)
+        if checker_self.has_err {
+          checker_self.current_module = saved
+          return
+        }
+        i += 1
+        continue
+      }
       checker_self.record_impl(concrete, opt_ins[i], loc, mod_name, true)
       if checker_self.has_err {
         checker_self.current_module = saved
@@ -930,6 +944,60 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
     }
     checker_self.current_module = saved
   }
+}
+
+// The `Error` marker (D292, Stage 29 W4a): a class or struct declared
+// `class E: Error` is a failure in every union it is a member of
+// (type.av ty_failures). It must make its message readable: a String
+// field or a method without parameters named `message` (what `e.message`
+// and the interpolation `"${e}"` read). `Error` takes no type
+// arguments and is not a bound or a value type.
+pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: String, mod_name: String) {
+  if tn.args.size > 0 {
+    checker_self.fail(tn.loc, "Error does not take type arguments")
+    return
+  }
+  if !(ty.is_class || ty.is_struct) {
+    checker_self.fail(tn.loc, "${ty.show} cannot be marked Error; only a class or a struct can")
+    return
+  }
+  found = false
+  for f in ty.fields {
+    if f.name == "message" {
+      if !f.ty.is_string {
+        checker_self.fail(tn.loc, "${ty.show} is marked Error, so its field message must be a String, got ${f.ty.show}")
+        return
+      }
+      found = true
+    }
+  }
+  if !found {
+    for m in checker_self.error_methods(type_name, mod_name) {
+      if m.name == "message" && m.params.size == 0 {
+        found = true
+      }
+    }
+  }
+  if !found {
+    checker_self.fail(tn.loc, "${ty.show} is marked Error but has no message; give it a field message: String or a method fn message: String")
+    return
+  }
+  ty.error_mark = true
+}
+
+pub fn (checker_self: Checker) error_methods(type_name: String, mod_name: String): Array(Function) {
+  for c in checker_self.program.classes {
+    if c.name == type_name && c.mod_name == mod_name {
+      return c.methods
+    }
+  }
+  for s in checker_self.program.structs {
+    if s.name == type_name && s.mod_name == mod_name {
+      return s.methods
+    }
+  }
+  none: Array(Function) = []
+  none
 }
 
 pub fn (checker_self: Checker) apply_late_opt_ins {
@@ -946,6 +1014,11 @@ pub fn (checker_self: Checker) apply_late_opt_ins {
     }
     if checker_self.opt_target_ok(ty) {
       for iface in opt.ifaces {
+        if iface.name == "Error" {
+          checker_self.fail(iface.loc, "Error is opted into where the type is declared (class E: Error { ... })")
+          checker_self.current_module = saved
+          return
+        }
         checker_self.record_impl(ty, iface, opt.loc, opt.mod_name, opt.vis)
         if checker_self.has_err {
           checker_self.current_module = saved
@@ -1060,6 +1133,10 @@ pub fn (checker_self: Checker) record_impl(concrete: Ty, tn: TypeName, loc: Loca
 }
 
 pub fn (checker_self: Checker) use_impl(concrete: Ty, tn: TypeName, loc: Location): Bool {
+  if tn.name == "Error" {
+    checker_self.fail(loc, "Error marks a failure type (class E: Error); it is not a bound")
+    return false
+  }
   idef: InterfaceDef? = nil
   if found = checker_self.resolver.find_interface(tn.name) {
     idef = found

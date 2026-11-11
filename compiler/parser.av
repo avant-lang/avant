@@ -753,6 +753,9 @@ pub class Parser {
     defn.comptimes = body.comptimes
     defn.opt_ins = opted
     defn.vis = vis
+    if error_opted(opted) {
+      defn.methods.push(error_text_method(loc, name, defn.fields))
+    }
     defn
   }
 
@@ -770,6 +773,9 @@ pub class Parser {
     defn.comptimes = body.comptimes
     defn.opt_ins = opted
     defn.vis = vis
+    if error_opted(opted) {
+      defn.methods.push(error_text_method(loc, name, defn.fields))
+    }
     defn
   }
 
@@ -2604,4 +2610,36 @@ pub class Parser {
     self.expect(tk_r_paren())
     args
   }
+}
+
+// The `Error` marker (D292, Stage 29 W4a): whether a type's interface
+// clause names it.
+pub fn error_opted(opted: Array(TypeName)): Bool {
+  for tn in opted {
+    if tn.name == "Error" && tn.mod_name.size == 0 {
+      return true
+    }
+  }
+  false
+}
+
+// What the interpolation of an error prints (`"${e}"`, D292): a method
+// the parser adds to a type marked `Error`, reading its message (a field
+// or a method; the checker requires one, checker/lambda.av mark_error).
+pub fn error_text_method(loc: Location, owner: String, fields: Array(Field)): Function {
+  fnn = Function.new(loc, "__avant_error_text")
+  fnn.owner = owner
+  fnn.vis = true
+  fnn.return_type = TypeName.new(loc, "String")
+  fnn.body.push(stmt_expr(loc, error_self_field(loc, "message")))
+  fnn
+}
+
+pub fn error_self_field(loc: Location, name: String): Expr {
+  me = Expr.new(ex_name(), loc)
+  me.ident = "self"
+  fa = Expr.new(ex_field(), loc)
+  fa.object = me
+  fa.ident = name
+  fa
 }

@@ -66,6 +66,10 @@ pub class Ty {
   // and a C layout's field, where the back end passes and stores the C
   // width and converts at the boundary.
   pub c_scalar: Int = 0
+  // Marked `Error` (D292, Stage 29 W4a): a class or struct declared
+  // `class E: Error`; in a union it is a failure (ty_failures below).
+  // Set once on the type's one Ty when its declaration is registered.
+  pub error_mark: Bool = false
 
   fn initialize(kind: Int) {
     self.kind = kind
@@ -949,42 +953,69 @@ pub fn ty_without_nil(ty: Ty): Ty {
   ty_union_build(kept)
 }
 
-pub fn if_assign_payload(ty: Ty): Ty? {
-  if ty.is_union {
-    if ty.includes_nil {
-      success = ty_without_nil(ty)
-      if success.is_union {
-        return nil
-      }
-      return success
-    }
-    if ty.members.size == 2 {
-      a = ty.members[0]
-      b = ty.members[1]
-      if a.is_class {
-        if b.is_class {
-          return nil
-        }
-        return b
-      }
-      if b.is_class {
-        return a
-      }
-    }
-  }
-  nil
+// The one failure rule (D292, Stage 29 W4a): in a union the failures are
+// `Nil` and every member marked `Error` (`class E: Error`); the rest is
+// the success value, one type or a smaller union. A union with no
+// success member but `Nil` (an optional error, `E?`, such as a `cause`)
+// has `Nil` as its only failure for if-assign and `??`, so the error is
+// the value read; postfix `?` refuses it (it would pass up the `nil`).
+pub fn ty_is_failure(m: Ty): Bool {
+  m.is_nil || m.error_mark
 }
 
-pub fn if_assign_failure(ty: Ty): Ty {
-  if ty.includes_nil {
-    return ty_nil()
-  }
+pub fn ty_has_success(ty: Ty): Bool {
   for m in ty.members {
-    if m.is_class {
-      return m
+    if !ty_is_failure(m) {
+      return true
     }
   }
-  ty_nil()
+  false
+}
+
+// The failure members of the union ty under the rule above (in member
+// order; empty when ty has none).
+pub fn ty_failures(ty: Ty): Array(Ty) {
+  out: Array(Ty) = []
+  if !ty.is_union {
+    return out
+  }
+  if !ty_has_success(ty) {
+    if ty.includes_nil {
+      out.push(ty_nil())
+    }
+    return out
+  }
+  for m in ty.members {
+    if ty_is_failure(m) {
+      out.push(m)
+    }
+  }
+  out
+}
+
+// The success part of the union ty: its members that are not failures,
+// one type or a union; nil when ty has no failure or no success.
+pub fn ty_success_part(ty: Ty): Ty? {
+  fails = ty_failures(ty)
+  if fails.size == 0 {
+    return nil
+  }
+  kept: Array(Ty) = []
+  for m in ty.members {
+    failed = false
+    for f in fails {
+      if f.same_as(m) {
+        failed = true
+      }
+    }
+    if !failed {
+      kept.push(m)
+    }
+  }
+  if kept.size == 0 {
+    return nil
+  }
+  ty_union_build(kept)
 }
 
 pub fn ty_assignable(got: Ty, want: Ty): Bool {

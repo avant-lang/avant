@@ -845,25 +845,40 @@ Packages require `git` at fetch time only; compiling and running afterwards work
 
 ## Errors
 
-A function that can fail returns a union. Postfix `?` unwraps the success side, or returns the failure from the current function.
+A function that can fail returns a union of its result and its failures. A failure is `nil` or a value of a type marked `Error`:
 
 ```avant
-fn parse_id(raw: Int): Int? {
-  if raw < 0 { return nil }
-  raw
+class ParseError: Error {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
 }
 
-fn bump(id: Int): Int? {
-  n = parse_id(id)?
-  n + 1
+fn parse(s: String): Int | ParseError {
+  if s.size == 0 { return ParseError.new("empty") }
+  s.size
+}
+
+fn sum2(a: String, b: String): Int | ParseError {
+  x = parse(a)?
+  y = parse(b)?
+  x + y
 }
 ```
 
-If `parse_id` returns `nil`, `bump` returns `nil` and does not evaluate `n + 1`.
+One rule says what fails: in any union the failures are `Nil` and every member marked `Error` (`class E: Error`, or a struct); the rest is the success value, one type or a smaller union. Postfix `?`, if-assign and `??` follow it:
 
-`?` compiles only where the failure can be returned: on a `T?` the function's result must include `nil`, and on another union the result must hold its failure members. Otherwise it is a compile error that names the result type (`postfix ? would return nil, but the function returns Int; declare the result Int?, or handle the nil with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+- `x?` gives the success value, or returns the failure from the current function. If `parse(a)` fails, `sum2` returns that `ParseError` and does not evaluate the rest.
+- `if v = x { ... }` binds the success value for the then-block; `v` is not visible in an `else`, and it is not visible after the `if`.
+- `x ?? fallback` is the success value, or the fallback (evaluated only then) on any failure.
 
-`if user = find("ada") { ... }` is the same idea when you want the success value in a block instead of an early return. `user` is not visible in an `else`, and it is not visible after the `if`.
+A union without a failure member (`Int | String`) has nothing for these to open, and one whose every member is a failure (`IoError | ParseError`) has no value to give; both are compile errors. An optional error (`ParseError?`, all its members failures but `nil`) is read like any `T?`: if-assign and `??` give the error when it is not `nil`; `?` is refused on it, since it would pass `nil` up and continue with the error.
+
+`?` compiles only where the failure can be returned: the function's result must hold every failure of the value (`nil` included). Otherwise it is a compile error that names what would be returned (`postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??`). In a lambda, `?` returns from the lambda; a `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+
+An `Error` makes its message readable: it has a `String` field named `message` or a method `fn message: String`. `e.message` reads it, and interpolating the error prints it (`"failed: ${e}"`). `Error` is opted into where the type is declared; it is not a bound and not a value type, and no type may be named `Error`. The standard library's errors (`JsonError`, `HttpError`, `RegexError`, `ZlibError`, `Base64Error`) are marked.
 
 ### Compiled errors
 

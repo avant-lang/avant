@@ -1,0 +1,113 @@
+import harness
+import backends
+
+// Stage 29 W4a: errors and values. Each program is compiled in parallel;
+// a refused one must leave no binary and say the expected words, an
+// accepted one must print what it should.
+//   - the Error marker and one failure rule (D292): in a union the
+//     failures are Nil and every member marked Error (`class E: Error`);
+//     the rest is the success value. Postfix `?`, if-assign and `??`
+//     follow it; `?` passes the failure up only where the result can
+//     hold it. An Error makes its message readable (a field or a method
+//     `message`); `"${e}"` prints it.
+
+class FCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn marker_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("err-propagate", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn sum2(a: String, b: String): Int | ParseError {\n  x = parse(a)?\n  y = parse(b)?\n  x + y\n}\nfn main {\n  puts(sum2(\"ab\", \"cde\") ?? -1)\n  puts(sum2(\"ab\", \"\") ?? -1)\n  if v = sum2(\"a\", \"b\") {\n    puts(v)\n  }\n}\n", "5\n-1\n2\n"))
+  xs.push(accepted("err-message", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  code: Int = 0\n  fn initialize(code: Int) {\n    self.code = code\n  }\n  fn message: String {\n    \"io \${code}\"\n  }\n}\nfn main {\n  e = ParseError.new(\"bad\")\n  puts(e.message)\n  puts(\"got: \${e}\")\n  i = IoError.new(5)\n  puts(i.message)\n  puts(\"\${i}!\")\n}\n", "bad\ngot: bad\nio 5\nio 5!\n"))
+  xs.push(accepted("err-two-failures", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  message: String = \"io\"\n}\nfn read(n: Int): String | IoError | Nil {\n  if n == 0 {\n    return nil\n  }\n  if n < 0 {\n    return IoError.new\n  }\n  \"data\${n}\"\n}\nfn twice(n: Int): Int | IoError | ParseError | Nil {\n  s = read(n)?\n  k = parse(s)?\n  k * 2\n}\nfn main {\n  puts(twice(3) ?? -7)\n  puts(twice(0) ?? -8)\n  puts(twice(-1) ?? -9)\n  if s = read(4) {\n    puts(s)\n  }\n  if s2 = read(-4) {\n    puts(s2)\n  } else {\n    puts(\"failed\")\n  }\n}\n", "10\n-8\n-9\ndata4\nfailed\n"))
+  xs.push(accepted("err-success-union", "class Oops: Error {\n  message: String = \"oops\"\n}\nfn pick(n: Int): Int | String | Oops {\n  if n < 0 {\n    return Oops.new\n  }\n  if n == 0 {\n    return \"zero\"\n  }\n  n\n}\nfn show(v: Int | String): String {\n  \"shown\"\n}\nfn lift(n: Int): Int | String | Oops {\n  v = pick(n)?\n  w: Int | String = v\n  w\n}\nfn main {\n  if v = pick(3) {\n    puts(show(v))\n  }\n  w = pick(-1) ?? \"fallback\"\n  puts(show(w))\n  if x = lift(0) {\n    puts(show(x))\n  }\n  if y = lift(-2) {\n    puts(\"no\")\n  } else {\n    puts(\"lifted failure\")\n  }\n}\n", "shown\nshown\nshown\nlifted failure\n"))
+  xs.push(accepted("err-optional", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  opt: ParseError? = nil\n  if o = opt {\n    puts(\"no\")\n  } else {\n    puts(\"none\")\n  }\n  opt = ParseError.new(\"kept\")\n  if o2 = opt {\n    puts(\"has \${o2}\")\n  }\n  d = opt ?? ParseError.new(\"d\")\n  puts(d.message)\n  errs: Array(ParseError) = [ParseError.new(\"p\")]\n  if last = errs.get(0) {\n    puts(last.message)\n  }\n}\n", "none\nhas kept\nkept\np\n"))
+  xs.push(accepted("err-struct", "struct Code: Error {\n  n: Int\n  fn message: String {\n    \"code \${n}\"\n  }\n}\nfn f(n: Int): Int | Code {\n  if n > 9 {\n    return Code { n: n }\n  }\n  n\n}\nfn g(n: Int): String | Code {\n  k = f(n)?\n  \"ok \${k}\"\n}\nfn main {\n  puts(g(3) ?? \"failed\")\n  puts(g(12) ?? \"failed\")\n  c = Code { n: 4 }\n  puts(\"\${c}\")\n}\n", "ok 3\nfailed\ncode 4\n"))
+  xs.push(accepted("err-or", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  puts(parse(\"\").or(4))\n  puts(parse(\"xy\").or(4))\n}\n", "4\n2\n"))
+  xs.push(refused("err-no-failure-if", "class Leaf {\n  v: Int = 1\n}\nfn f(n: Int): Int | Leaf {\n  n\n}\nfn main {\n  if v = f(1) {\n    puts(v)\n  }\n}\n", "if-assign on Int | Leaf: it has no failure member; a failure is Nil or a type marked Error (class E: Error)"))
+  xs.push(refused("err-no-failure-try", "class Leaf {\n  v: Int = 1\n}\nfn f(n: Int): Int | Leaf {\n  n\n}\nfn g: Int | Leaf {\n  x = f(1)?\n  x\n}\nfn main {\n  puts(1)\n}\n", "postfix ? on Int | Leaf: it has no failure member"))
+  xs.push(refused("err-no-failure-qq", "fn f(n: Int): Int | String {\n  n\n}\nfn main {\n  puts(f(1) ?? 0)\n}\n", "?? on Int | String: it has no failure member"))
+  xs.push(refused("err-not-union", "fn main {\n  x = 3\n  if v = x {\n    puts(v)\n  }\n}\n", "if-assign needs a value that can fail (T? or T | E with E marked Error), got Int"))
+  xs.push(refused("err-try-cannot-hold", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn f(s: String): Int {\n  n = parse(s)?\n  n\n}\nfn main {\n  puts(f(\"a\"))\n}\n", "postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError"))
+  xs.push(refused("err-try-missing-one", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  message: String = \"io\"\n}\nfn r(n: Int): Int | IoError | ParseError {\n  n\n}\nfn f(n: Int): Int | ParseError {\n  k = r(n)?\n  k\n}\nfn main {\n  puts(f(1) ?? 0)\n}\n", "would return IoError, but the function returns Int | ParseError"))
+  xs.push(refused("err-try-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn f(o: ParseError?): Int? {\n  e = o?\n  1\n}\nfn main {\n  puts(f(nil) ?? 0)\n}\n", "postfix ? on ParseError?: it has no success value"))
+  xs.push(refused("err-no-success", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  message: String = \"io\"\n}\nfn r(n: Int): IoError | ParseError {\n  IoError.new\n}\nfn main {\n  if e = r(1) {\n    puts(1)\n  }\n}\n", "if-assign on IoError | ParseError: it has no success value, every member is a failure"))
+  xs.push(refused("err-no-message", "class Oops: Error {\n  code: Int = 0\n}\nfn main {\n  puts(Oops.new.code)\n}\n", "Oops is marked Error but has no message; give it a field message: String or a method fn message: String"))
+  xs.push(refused("err-message-type", "class Oops: Error {\n  message: Int = 0\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "its field message must be a String, got Int"))
+  xs.push(refused("err-type-args", "class Oops: Error(Int) {\n  message: String = \"\"\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "Error does not take type arguments"))
+  xs.push(refused("err-reserved", "class Error {\n  message: String = \"\"\n}\nfn main {\n  puts(1)\n}\n", "Error is the built-in error marker (class E: Error); choose another name"))
+  xs.push(refused("err-late-optin", "class Oops {\n  message: String = \"\"\n}\nOops: Error\nfn main {\n  puts(Oops.new.message)\n}\n", "Error is opted into where the type is declared"))
+  xs.push(refused("err-bound", "class Oops: Error {\n  message: String = \"\"\n}\nfn show(e: T: Error): String {\n  \"x\"\n}\nfn main {\n  puts(show(Oops.new))\n}\n", "Error marks a failure type (class E: Error); it is not a bound"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/errv-${f.tag}.av"
+    file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/errv-${f.tag}.bin", "${dir}/errv-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "errv-${f2.tag}.bin", "errv-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/errv-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/errv-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/errv-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_errors_values.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all = marker_cases()
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

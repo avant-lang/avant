@@ -861,18 +861,36 @@ pub class Checker {
     }
   }
 
+  // The success part an if-assign binds (D292): the members of got that
+  // are not failures (type.av ty_failures).
   pub fn if_assign_success(got: Ty, loc: Location): Ty {
-    if got.is_union {
-      if success = if_assign_payload(got) {
-        return success
-      }
-      if got.includes_nil {
-        self.fail(loc, "if-assign needs a single success type, got ${got.show}")
-        return self.t_int()
-      }
+    if success = self.failure_split(got, loc, "if-assign") {
+      return success
     }
-    self.fail(loc, "if-assign expects T? or T | Error, got ${got.show}")
     self.t_int()
+  }
+
+  // The success part of got under the one failure rule (D292), or nil
+  // after an error that names what is missing; what is the operator's
+  // name for the message.
+  pub fn failure_split(got: Ty, loc: Location, what: String): Ty? {
+    if !got.is_union {
+      self.fail(loc, "${what} needs a value that can fail (T? or T | E with E marked Error), got ${got.show}")
+      return nil
+    }
+    if ty_failures(got).size == 0 {
+      if !ty_has_success(got) {
+        self.fail(loc, "${what} on ${got.show}: it has no success value, every member is a failure (Nil or marked Error)")
+      } else {
+        self.fail(loc, "${what} on ${got.show}: it has no failure member; a failure is Nil or a type marked Error (class E: Error)")
+      }
+      return nil
+    }
+    if success = ty_success_part(got) {
+      return success
+    }
+    self.fail(loc, "${what} on ${got.show}: it has no success value, every member is a failure (Nil or marked Error)")
+    nil
   }
 
   pub fn check_assign(stmt: Stmt) {
@@ -1149,7 +1167,33 @@ pub class Checker {
     self.t_int()
   }
 
+  // Whether `??` and `.or` take left: a union with a failure member and
+  // a success part (D292; the error otherwise is failure_split's).
+  pub fn can_coalesce(left: Ty): Bool {
+    if left.is_union && ty_failures(left).size > 0 {
+      if s = ty_success_part(left) {
+        return true
+      }
+    }
+    false
+  }
+
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
+    fails = ty_failures(left)
+    if !(fails.size == 1 && fails[0].is_nil) || !left.is_nilable {
+      // A failure other than nil, or a success part of several members
+      // (D292): the fallback is a value of the success part.
+      payload = left
+      if s = ty_success_part(left) {
+        payload = s
+      }
+      right = self.check_expr_as(right_expr, payload)
+      if ty_assignable(right, payload) {
+        return payload
+      }
+      self.fail(loc, "${opname} fallback must be ${payload.show}, got ${right.show}")
+      return payload
+    }
     payload = ty_without_nil(left)
     if right_expr.kind == ex_nil() {
       self.check_expr(right_expr)
@@ -1174,13 +1218,13 @@ pub class Checker {
     payload
   }
 
-  // `x?` (Stage 29 W1a, A3): the failure goes up only where the body's
-  // result can hold it. A nilable operand fails on `nil`, so the result must
-  // include `Nil`; a union without `Nil` fails on the members the result
-  // holds, and exactly one member is left as the success. Anything else is a
-  // compile error that names the result type and the ways out (before, a
-  // `nil` silently became `0` in an `Int` function, and a `String` or void
-  // result broke the MIR verifier).
+  // `x?` (Stage 29 W1a, A3; W4a, D292): the failures of x (nil and the
+  // members marked Error, type.av ty_failures) go up only where the
+  // body's result can hold each of them; the value is the success part
+  // (one type or a smaller union). Anything else is a compile error that
+  // names what would be returned and the ways out (before W1a, a `nil`
+  // silently became `0` in an `Int` function; before W4a, the failure
+  // was whichever member the result type happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
     if self.place_depth > 0 {
       self.fail(loc, "postfix ? inside Mutex.with cannot return; handle the failure with if-assign or ??")
@@ -1191,11 +1235,22 @@ pub class Checker {
       return self.t_int()
     }
     ret = self.return_type
-    if got.is_union {
-      if got.includes_nil {
-        if ret.is_union && ret.includes_nil {
-          return ty_without_nil(got)
+    if got.is_union && ty_failures(got).size > 0 && !ty_has_success(got) {
+      self.fail(loc, "postfix ? on ${got.show}: it has no success value (every member but nil is marked Error), so ? would pass up nil and continue with the error; open it with if-assign or ??")
+      return self.t_int()
+    }
+    if success = self.failure_split(got, loc, "postfix ?") {
+      fails = ty_failures(got)
+      missing: Array(Ty) = []
+      for f in fails {
+        if !ty_assignable(f, ret) {
+          missing.push(f)
         }
+      }
+      if missing.size == 0 {
+        return success
+      }
+      if fails.size == 1 && fails[0].is_nil {
         if ret.is_void {
           self.fail(loc, "postfix ? would return nil, but ${self.try_body} returns nothing; give it a result that includes nil, or handle the nil with if-assign or ??")
         } else {
@@ -1203,30 +1258,13 @@ pub class Checker {
         }
         return self.t_int()
       }
-      if ret.is_union {
-        succ: Array(Ty) = []
-        fails: Array(Ty) = []
-        for m in got.members {
-          if ret.includes_member(m) {
-            fails.push(m)
-          } else {
-            succ.push(m)
-          }
-        }
-        if succ.size == 1 && fails.size > 0 {
-          return succ[0]
-        }
-        self.fail(loc, "cannot use postfix ? on ${got.show} in a function returning ${ret.show}")
-        return self.t_int()
-      }
+      what = ty_union_build(missing).show
       if ret.is_void {
-        self.fail(loc, "postfix ? on ${got.show} would return the failure, but ${self.try_body} returns nothing; give it a union result that includes the failure, or handle it with if-assign or ??")
+        self.fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns nothing; give it a result that includes ${what}, or handle the failure with if-assign or ??")
       } else {
-        self.fail(loc, "postfix ? on ${got.show} would return the failure, but ${self.try_body} returns ${ret.show}; give it a union result that includes the failure, or handle it with if-assign or ??")
+        self.fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns ${ret.show}; give it a result that includes ${what}, or handle the failure with if-assign or ??")
       }
-      return self.t_int()
     }
-    self.fail(loc, "postfix ? expects a union, got ${got.show}")
     self.t_int()
   }
 
@@ -1234,6 +1272,23 @@ pub class Checker {
     for part in expr.parts {
       if inner = part.expr {
         ty = self.check_expr(inner)
+        if ty.error_mark && !self.has_err {
+          // An error prints its message (D292, Stage 29 W4a): the part
+          // becomes the call of the method the parser added to the type
+          // (parser.av error_text_method); inner is checked once.
+          fa = Expr.new(ex_field(), inner.loc)
+          fa.object = inner
+          fa.ident = "__avant_error_text"
+          arg_tys: Array(Ty) = []
+          none: Ty? = nil
+          if sig = self.match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name) {
+            fa.method_call = true
+            fa.resolved = sig.node.emit_name
+            fa.ty = sig.ret
+            part.expr = fa
+          }
+          continue
+        }
         ok = false
         if ty.is_integer {
           ok = true
@@ -2433,11 +2488,13 @@ pub class Checker {
         op = expr.op
         if op == tk_question_question() {
           left = self.check_expr(l)
-          if left.is_nilable {
+          if self.can_coalesce(left) {
             return self.coalesce_result(left, r, expr.loc, "??")
           }
           self.check_expr(r)
-          self.fail(expr.loc, "?? needs a nilable left side, got ${left.show}")
+          if !self.has_err {
+            self.failure_split(left, expr.loc, "??")
+          }
           return left
         }
         if op == tk_amp_amp() {
@@ -3422,11 +3479,13 @@ pub class Checker {
         return object
       }
       if expr.args.size == 1 {
-        if object.is_nilable {
+        if self.can_coalesce(object) {
           return self.coalesce_result(object, expr.args[0], expr.loc, "or")
         }
         self.check_expr(expr.args[0])
-        self.fail(expr.loc, "or needs a nilable receiver, got ${object.show}")
+        if !self.has_err {
+          self.failure_split(object, expr.loc, "or")
+        }
         return object
       }
       self.fail(expr.loc, "or takes one fallback")

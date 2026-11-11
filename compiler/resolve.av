@@ -1034,6 +1034,10 @@ pub fn load_types(program: Program): TypeResolver {
   resolver = TypeResolver.new
   resolver.program = program
   for sdef in program.structs {
+    if sdef.name == "Error" {
+      resolver.fail(sdef.loc, "Error is the built-in error marker (class E: Error); choose another name")
+      continue
+    }
     if existing = resolver.get_named_in(sdef.mod_name, sdef.name) {
       resolver.fail(sdef.loc, "${sdef.name} is already defined")
       continue
@@ -1048,6 +1052,10 @@ pub fn load_types(program: Program): TypeResolver {
     resolver.bind_type(sdef.mod_name, sdef.name, sty)
   }
   for cdef in program.classes {
+    if cdef.name == "Error" {
+      resolver.fail(cdef.loc, "Error is the built-in error marker (class E: Error); choose another name")
+      continue
+    }
     if already = resolver.get_named_in(cdef.mod_name, cdef.name) {
       resolver.fail(cdef.loc, "${cdef.name} is already defined")
       continue
@@ -1064,6 +1072,10 @@ pub fn load_types(program: Program): TypeResolver {
   for idef in program.interfaces {
     if existing = resolver.get_named_in(idef.mod_name, idef.name) {
       resolver.fail(idef.loc, "${idef.name} is already defined")
+      continue
+    }
+    if idef.name == "Error" {
+      resolver.fail(idef.loc, "Error is the built-in error marker (class E: Error); choose another name")
       continue
     }
     if idef.type_params.size > 0 {

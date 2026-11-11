@@ -31,7 +31,7 @@ fn tm_nested_array: String {
 }
 
 fn tm_union_offset: String {
-  tm_common() + "class Holder {\n  u: Int | String\n  n: Int\n  fn initialize(i: Int) {\n    self.u = \"u\${i}\"\n    self.n = i\n  }\n}\n\nfn bad(u: Int | String, want: String): Int? {\n  s = u?\n  if s != want {\n    return 1\n  }\n  0\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < hs.size {\n    if b = bad(hs[i].u, \"u\${i}\") {\n      wrong = wrong + b\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+  tm_common() + "struct Absent: Error {\n  code: Int\n  fn message: String {\n    \"absent\"\n  }\n}\n\nclass Holder {\n  u: String | Absent\n  n: Int\n  fn initialize(i: Int) {\n    self.u = \"u\${i}\"\n    self.n = i\n  }\n}\n\nfn bad(u: String | Absent, want: String): Int? {\n  if s = u {\n    if s != want {\n      return 1\n    }\n    return 0\n  }\n  1\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < hs.size {\n    if b = bad(hs[i].u, \"u\${i}\") {\n      wrong = wrong + b\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
 }
 
 fn tm_barriers: String {

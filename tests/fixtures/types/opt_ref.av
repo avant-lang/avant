@@ -57,16 +57,34 @@ fn depth(n: Node?): Int {
   d
 }
 
-fn widen(n: Node?): Node | Int | Nil {
+// A number as a failure (D292, Stage 29 W4a), so the three members can be
+// told apart before `switch` (W5): if-assign reads the Node, and num_of
+// passes the two failures up with `?`.
+struct Num: Error {
+  n: Int
+
+  fn message: String {
+    "num"
+  }
+}
+
+fn widen(n: Node?): Node | Num | Nil {
   n
 }
 
-fn desc(u: Node | Int | Nil): String? {
-  x = u?
-  if i = x {
-    return "int ${i}"
+fn desc(u: Node | Num | Nil): String? {
+  if x = u {
+    return "node"
   }
-  "node"
+  if k = num_of(u) {
+    return "int ${k.n}"
+  }
+  nil
+}
+
+fn num_of(u: Node | Num | Nil): Num? {
+  x = u?
+  nil
 }
 
 fn try_name(n: Node?): String? {
@@ -192,7 +210,7 @@ fn main {
   // To and from a larger union.
   puts(desc(widen(a)) ?? "widened nil")
   puts(desc(widen(nil)) ?? "widened nil")
-  puts(desc(5) ?? "widened nil")
+  puts(desc(Num { n: 5 }) ?? "widened nil")
 
   // Generic instances: T? of a class is one pointer, of an Int a union.
   bn = Box(Node).new

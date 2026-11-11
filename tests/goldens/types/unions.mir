@@ -2,7 +2,7 @@ module unions
 file 0 "unions.av"
 
 layout %unions.Leaf = class { 0 n: i32 }  size 4 align 4 id 1
-layout %unions.Oops = class { 0 m: ref str }  size 8 align 8 id 2
+layout %unions.Oops = class { 0 message: ref str }  size 8 align 8 id 2
 layout %unions.Holder = class { 0 a: ref %unions.Leaf, 1 b: %(Int|String), 2 c: %(Nil|Bool), 3 cell: %unions.Cell }  size 48 align 8 id 3
 layout %(Int|String) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref str }  size 16 align 8
 layout %(Nil|Bool) = union { 0 tag: i32, 1 m0: bool }  size 8 align 4
@@ -761,12 +761,23 @@ bb0:
 
 fn av.unions/Oops.initialize(_1: ref %unions.Oops, _2: ref str) -> void leaf @unions.av:20:3 {
   let _1 (self): ref %unions.Oops
-  let _2 (m): ref str
+  let _2 (message): ref str
 
 bb0:
-  barrier copy _1   @21:12
-  (*_1).0 = copy _2   @21:12
+  barrier copy _1   @21:18
+  (*_1).0 = copy _2   @21:18
   return   @20:3
+}
+
+fn av.unions/Oops.__avant_error_text(_1: ref %unions.Oops) -> ref str leaf @unions.av:17:1 {
+  let _0: ref str
+  let _1 (self): ref %unions.Oops
+  let _2: ref str
+
+bb0:
+  _2 = copy (*_1).0   @17:1
+  _0 = copy _2   @17:1
+  return   @17:1
 }
 
 fn av.unions/Holder.initialize(_1: ref %unions.Holder) -> void leaf @unions.av:41:3 {
@@ -798,7 +809,7 @@ bb0:
 
 fn av.unions/Oops.new(_1: ref str) -> ref %unions.Oops frame @unions.av:17:1 {
   let _0: ref %unions.Oops
-  let _1 (m): ref str slot
+  let _1 (message): ref str slot
   let _2: ref %unions.Oops
 
 bb0:
