@@ -4,7 +4,7 @@ fn expect_err(c: Checks, compiler: String, stamp: Int64, tag: String, body: Stri
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
-  file_write(src, body)
+  _ = file_write(src, body)
   code = compile_av(compiler, src, bin, log)
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
@@ -22,7 +22,7 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int64, tag: String, bo
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
-  file_write(src, body)
+  _ = file_write(src, body)
   args: Array(String) = []
   args.push("20")
   args.push(compiler)
@@ -31,7 +31,7 @@ fn expect_err_bounded(c: Checks, compiler: String, stamp: Int64, tag: String, bo
   args.push(bin)
   args.push("--debug")
   started = now_ms()
-  code = process_run_out("/usr/bin/timeout", args, log)
+  code = process_run_out("/usr/bin/timeout", args, log) ?? -1
   c.expect(code != 124, "${tag} finishes")
   c.expect(now_ms() - started < 10000, "${tag} finishes in time")
   c.expect(!file_exists(bin), "${tag} bin absent")

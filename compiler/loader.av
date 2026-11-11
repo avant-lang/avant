@@ -7,6 +7,7 @@ import type
 import ast
 import resolve
 import parser
+import prelude_src
 
 lib oslink {
   fun readlink(path: String, buf: String, n: Int): Int
@@ -284,6 +285,7 @@ pub class Loader {
   manifest_dir: String = ""
   mod_paths: Hash(String, String)
   std_names: Hash(String, String)
+  wants_prelude: Bool = false
 
   fn initialize {
     h = Hash(String, Int).new
@@ -319,7 +321,7 @@ pub class Loader {
       deps_at = self.manifest_dir
     }
     deps_root = "${deps_at}/deps"
-    entries = dir_list(deps_root)
+    entries = shim_dir_list(deps_root)
     i = 0
     while i < entries.size {
       full = "${deps_root}/${entries[i]}"
@@ -534,7 +536,13 @@ pub class Loader {
     if self.failed {
       return nil
     }
-    self.merge(path)
+    if merged = self.merge(path) {
+      if self.wants_prelude {
+        add_prelude(merged)
+      }
+      return merged
+    }
+    nil
   }
 
   pub fn load_file(path: String): Program? {
@@ -563,6 +571,9 @@ pub class Loader {
         self.stack.pop
         self.absorb(lex.errors)
         return nil
+      }
+      if !self.wants_prelude && prelude_wanted(tokens) {
+        self.wants_prelude = true
       }
       parser = Parser.new(file, tokens)
       program = parser.parse
@@ -624,47 +635,7 @@ pub class Loader {
         if found = self.loaded.get(self.order[i]) {
           pid = found
         }
-        p = self.programs[pid]
-        j = 0
-        while j < p.structs.size {
-          merged.structs.push(p.structs[j])
-          j += 1
-        }
-        j = 0
-        while j < p.classes.size {
-          merged.classes.push(p.classes[j])
-          j += 1
-        }
-        j = 0
-        while j < p.functions.size {
-          merged.functions.push(p.functions[j])
-          j += 1
-        }
-        j = 0
-        while j < p.interfaces.size {
-          merged.interfaces.push(p.interfaces[j])
-          j += 1
-        }
-        j = 0
-        while j < p.opt_ins.size {
-          merged.opt_ins.push(p.opt_ins[j])
-          j += 1
-        }
-        j = 0
-        while j < p.libs.size {
-          merged.libs.push(p.libs[j])
-          j += 1
-        }
-        j = 0
-        while j < p.quotes.size {
-          merged.quotes.push(p.quotes[j])
-          j += 1
-        }
-        j = 0
-        while j < p.comptimes.size {
-          merged.comptimes.push(p.comptimes[j])
-          j += 1
-        }
+        merge_decls(merged, self.programs[pid])
       }
       merged.imports = root.imports
       merged.module_name = root.module_name
@@ -675,6 +646,67 @@ pub class Loader {
     }
     nil
   }
+}
+
+// Appends p's declarations to merged, in order.
+pub fn merge_decls(merged: Program, p: Program) {
+  j = 0
+  while j < p.structs.size {
+    merged.structs.push(p.structs[j])
+    j += 1
+  }
+  j = 0
+  while j < p.classes.size {
+    merged.classes.push(p.classes[j])
+    j += 1
+  }
+  j = 0
+  while j < p.functions.size {
+    merged.functions.push(p.functions[j])
+    j += 1
+  }
+  j = 0
+  while j < p.interfaces.size {
+    merged.interfaces.push(p.interfaces[j])
+    j += 1
+  }
+  j = 0
+  while j < p.opt_ins.size {
+    merged.opt_ins.push(p.opt_ins[j])
+    j += 1
+  }
+  j = 0
+  while j < p.libs.size {
+    merged.libs.push(p.libs[j])
+    j += 1
+  }
+  j = 0
+  while j < p.quotes.size {
+    merged.quotes.push(p.quotes[j])
+    j += 1
+  }
+  j = 0
+  while j < p.comptimes.size {
+    merged.comptimes.push(p.comptimes[j])
+    j += 1
+  }
+}
+
+// Adds the prelude module (prelude_src.av) to a merged program: its
+// declarations after every other module's, so the program's own types
+// keep their order, and an import of it in every module.
+pub fn add_prelude(merged: Program) {
+  src = Source.new(prelude_path(), prelude_source())
+  lex = Lexer.new(src)
+  tokens = lex.tokenize
+  parser = Parser.new(src, tokens)
+  p = parser.parse
+  tag_module(p, "prelude", prelude_path())
+  merge_decls(merged, p)
+  for info in merged.mods {
+    info.imports.push("prelude")
+  }
+  merged.mods.push(ModInfo.new("prelude", prelude_path()))
 }
 
 pub fn load_program(path: String): Loader {

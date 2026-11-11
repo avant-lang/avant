@@ -711,7 +711,11 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     gc_fast_refresh();
   }
   if (nbytes > UINT32_MAX) {
-    gc_die("object too large");
+    /* A size the program asked for, not a collector fault: status 1
+     * like a trap, no core dump (Stage 29 W4b2, D295 R16). */
+    fflush(stdout);
+    fprintf(stderr, "avant runtime: object too large (%llu bytes)\n", (unsigned long long)nbytes);
+    exit(1);
   }
   if (type_id > UINT16_MAX) {
     gc_die("type id too large");

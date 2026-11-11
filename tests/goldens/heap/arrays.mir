@@ -36,6 +36,7 @@ extern avant_puts_bool(i32) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
+extern avant_trap_empty(i32) -> void never noreturn
 extern avant_trap_negative(i32, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
@@ -221,11 +222,11 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @arrays.av:47:1 {
   let _9: i32
   let _10: ref str
   let _11: i32
-  let _12: i32
+  let _12: bool
   let _13: addr i32
   let _14: i32
   let _15: i32
-  let _16: i32
+  let _16: bool
   let _17: addr i32
   let _18: i32
   let _19: ref str
@@ -317,14 +318,26 @@ bb0:
   _10 = call av.arrays/show(copy _5) collects   @54:8
   call avant_puts_str(copy _10) nocollect   @54:3
   _11 = copy (*_5).1   @55:10
-  _12 = sub copy _11, const i32 1   @55:10
-  check.bounds copy _12, copy _11   @55:10
+  _12 = eq copy _11, const i32 0   @55:10
+  branch copy _12, bb1, bb2   @55:10
+
+bb1:
+  call avant_trap_empty(const i32 0) nocollect   @55:10
+  unreachable   @55:10
+
+bb2:
   _13 = call avant_array_pop_slot(copy _5, const u64 4) collects   @55:10
   _14 = copy (*_13)   @55:10
   call printf(const str.2, copy _14) nocollect   @55:3
   _15 = copy (*_5).1   @56:10
-  _16 = sub copy _15, const i32 1   @56:10
-  check.bounds copy _16, copy _15   @56:10
+  _16 = eq copy _15, const i32 0   @56:10
+  branch copy _16, bb3, bb4   @56:10
+
+bb3:
+  call avant_trap_empty(const i32 0) nocollect   @56:10
+  unreachable   @56:10
+
+bb4:
   _17 = call avant_array_pop_slot(copy _5, const u64 4) collects   @56:10
   _18 = copy (*_17)   @56:10
   call printf(const str.2, copy _18) nocollect   @56:3

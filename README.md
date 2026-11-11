@@ -72,7 +72,7 @@ That is enough to write and run Avant today. Building the Avant compiler itself 
 
 Braces are required. There are no parentheses on `if`, `while`, or `switch`, and no semicolons. `=` binds a new name or assigns an existing one. The last expression in a function with a result is its value (a final `if`/`else` included); in a function that returns nothing, a value at the end is dropped, as it is anywhere else in the body (but an error is never dropped silently, see [Errors](#errors)). A type is written `name: Type`.
 
-The entry point is `fn main`, or `fn run` (the compiler synthesizes the C `main`). Neither needs `pub`.
+The entry point is `fn main`, or `fn run` (the compiler synthesizes the C `main`). Neither needs `pub`. An entry that returns `Int` gives the process its exit status, which must be in `0..255`: any other value traps (`avant runtime: exit status 256 out of range (0..255)`, status 1) rather than reach the OS cut to its low byte, where 256 failures would read as success. A void entry exits `0`.
 
 ```avant
 fn main {
@@ -290,6 +290,8 @@ fn main {
 ```
 
 The `if v = ...` form is [if-assign](#if-and-while). `v` exists only in the then-block.
+
+`h.delete(k)` removes the key and returns the value it held, or `nil` when the key was absent (`if old = h.delete("a") { ... }`); as a statement the result is dropped.
 
 `h.each { |k, v| ... }` walks every key with its value; the order is unspecified. A key the block deletes before the walk reaches it is not visited.
 
@@ -932,6 +934,8 @@ puts("${e}")            // bad config: unexpected end
 
 Compile errors print to stderr and exit non-zero; runtime traps do the same in the compiled program.
 
+A trap prints one line, `avant runtime: WHAT` and where, and exits with status 1. Whatever the program printed before it comes first: the trap flushes stdout before it writes to stderr, so a log with both streams reads in order. A trap the compiler places at one operation names that operation's position: `pop` on an empty array, the integer and float conversions, shifts, byte stores into a `Buf`, `Array(T).new` with a negative size, `main`'s exit status and a C `String` result that is NULL (`avant runtime: pop on an empty Array at main.av:7:10`, `avant runtime: to_i of Int64 5000000000 out of range for Int at main.av:3:11`). Indexing out of bounds, integer overflow and division by zero name the function and where it starts (`avant runtime: index 5 out of bounds (size 1) in Heap.at (heap.av:12:3)`, `avant runtime: integer overflow in twice (main.av:9:1)`): every such check of a function shares one cold exit, which lets the optimizer fold a statement's checks into one branch; a position per check would cost time in hot loops. A trap raised inside a runtime function (a slice's bounds, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8) names the operation and its values but no position yet.
+
 Compile errors carry a stable code and show the offending line with a caret. The compiler recovers after an error and reports the rest of the program in the same run — up to 20 errors, with a count of any beyond that — so one compile shows every independent mistake it can find:
 
 ```
@@ -967,7 +971,7 @@ fn main {
 
 `s.to_i`, `s.to_i64` and `s.to_u64` read a whole string as an integer and return `Int?`, `Int64?` and `UInt64?`: an optional sign and decimal digits (or the digits of a base given as `s.to_i(16)`, 2 to 36, letters in either case), within the type's range, and nothing else; anything else (`"12abc"`, `" 42"`, `"0x1F"`, `"3000000000"` for `Int`) is `nil`, so `s.to_i ?? 0` says the fallback. `s.to_f` returns `Float64?` for the same shape as a float literal (`-2.5`, `1e3`, `1.5E-7`) whose value is finite; `"nan"`, `"inf"`, `"1e999"`, `".5"` and `"1."` are `nil`. `str_to_f_slice(s, start, stop)` reads a slice the same way.
 
-Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
+Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes`; on bytes that are not valid UTF-8 both trap (`avant runtime: String.chars needs valid UTF-8`). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 
 On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value when `v` is nil, with the fallback evaluated only then. Predicate methods return `Bool`, including `Buf.starts_with`, and arrays add the short-circuiting scans `any { |x| ... }` and `all { |x| ... }` with a `Bool`-returning block.
 
@@ -975,7 +979,7 @@ On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value 
 
 Indexing is `xs[i]`. `push` may grow the buffer. `each` is the iteration form. A running total is an outer local, assigned from inside the block:
 
-Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. A slice (`str_slice(s, start, stop)`, `b.slice(start, stop)`, `buf.push_slice(s, start, stop)` and the other `start, stop` forms) needs `0 <= start <= stop <= size` and traps otherwise (`avant runtime: slice 4..2 out of range (size 5)`): an empty result means the range was empty, never that it was wrong. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The rule is that an operation gives the mathematically correct value when one exists and traps when none does: `MIN % -1` is `0` for every signed type (only `MIN / -1` overflows); a shift `<<` or `>>` by an amount outside `0..31` for `Int` (`0..63` for `Int64` and `UInt64`), negative amounts included, traps (`avant runtime: shift amount 32 out of range for Int (0..31)`), and a literal amount outside the range is a compile error; `Float64.to_i` of NaN, an infinity, or a value outside the `Int` range traps (`avant runtime: to_i of Float64 3000000000 out of range for Int`), and inside it truncates toward zero. The conversions between integer types, `to_i`, `to_i64` and `to_u64`, keep the number or trap (`avant runtime: to_i of Int64 5000000000 out of range for Int`); `to_f` rounds to the nearest `Float64`. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap like `+`; `UInt64` has no `abs` (it is the value itself). A byte stored by `push_byte`, `buf[i] = b`, `chr`, `repeat_byte` or `bytes_to_str` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); write `b & 255` to keep the low byte on purpose. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow, and `wrap_i`, `wrap_i64`, `wrap_u64` reinterpret an integer's two's-complement bits in another integer type (`5000000000i64.wrap_i` is `705032704`, `(-1).wrap_u64` is `18446744073709551615`). Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
+Indexing an `Array`, `String`, `Buf`, or `Bytes` outside `0 <= i < size` traps at runtime: one diagnostic on stderr and a non-zero exit. `.get(i)` returns `T?` instead — the element or nil. A slice (`str_slice(s, start, stop)`, `b.slice(start, stop)`, `buf.push_slice(s, start, stop)` and the other `start, stop` forms) needs `0 <= start <= stop <= size` and traps otherwise (`avant runtime: slice 4..2 out of range (size 5)`): an empty result means the range was empty, never that it was wrong. Integer `+`, `-`, `*` (and `/`, `%`) are checked the same way: overflow and division by zero trap. The rule is that an operation gives the mathematically correct value when one exists and traps when none does: `MIN % -1` is `0` for every signed type (only `MIN / -1` overflows); a shift `<<` or `>>` by an amount outside `0..31` for `Int` (`0..63` for `Int64` and `UInt64`), negative amounts included, traps (`avant runtime: shift amount 32 out of range for Int (0..31)`), and a literal amount outside the range is a compile error; `Float64.to_i` of NaN, an infinity, or a value outside the `Int` range traps (`avant runtime: to_i of Float64 3000000000.0 out of range for Int`), and inside it truncates toward zero. The conversions between integer types, `to_i`, `to_i64` and `to_u64`, keep the number or trap (`avant runtime: to_i of Int64 5000000000 out of range for Int`); `to_f` rounds to the nearest `Float64`. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap like `+`; `UInt64` has no `abs` (it is the value itself). A byte stored by `push_byte`, `buf[i] = b`, `chr`, `repeat_byte` or `bytes_to_str` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); write `b & 255` to keep the low byte on purpose. The wrapping spelling is explicit literal text: `&+`, `&-`, `&*` wrap on overflow, and `wrap_i`, `wrap_i64`, `wrap_u64` reinterpret an integer's two's-complement bits in another integer type (`5000000000i64.wrap_i` is `705032704`, `(-1).wrap_u64` is `18446744073709551615`). Checks the compiler can prove safe — a literal index into a literal, an induction variable under its loop bound, a loop whose whole index range is validated once on entry — are not emitted.
 
 `sort` orders `Int`, `Int64`, `UInt64`, `Float64` (NaN last), `String` and `Bytes` (byte order), and `Bool` elements in place, or any element type with a comparator block `sort { |a, b| ... }` returning `Bool`; `sorted` returns a new array and leaves the original alone. `reverse`, `contains(x)`, `index_of(x): Int?`, `min` / `max: T?`, and `sum` cover the other common scans; on `Float64`, `min` and `max` follow `sort`'s order (NaN after every number): `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is, whatever the positions. Hashes add `keys`, `values`, `has_key(k)`, `get_or(k, default)`, `inc(k, by = 1)`, and `each { |k, v| ... }`; `keys` and `values` are in unspecified order.
 
@@ -1013,7 +1017,7 @@ fn main {
 }
 ```
 
-`String?` in a `fun` signature is a C `char *` that may be NULL: a NULL result reads as `nil`, and passing `nil` passes NULL (`fun getenv(name: String): String?`).
+`String?` in a `fun` signature is a C `char *` that may be NULL: a NULL result reads as `nil`, and passing `nil` passes NULL (`fun getenv(name: String): String?`). A result declared `String` is a promise that the string is there: a NULL one traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
 
 C++ is reached only as `extern "C"`. Link a system library with `--lib NAME` (`--lib z` for zlib) and an extra `.c` or `.o` with `--cc`.
 
@@ -1025,7 +1029,7 @@ lib img {
 }
 ```
 
-`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
+`avant bind HEADER.h` reads a header with libclang and prints an editable `lib` block. Each C scalar type maps to its exact type (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `unsigned int` to `UInt32`, `float` to `Float32`); a type with no Avant name (`long double`) fails the bind with a message. A `char *` result is bound as `String?` (C returns NULL for "absent" or "failed"); a `char *` parameter is `String`. The command lives on the identity compiler. The translator is `tools/bind.c`, built by `sh runtime/build.sh` into `runtime/build/avant-bind` (it needs `llvm-config` and libclang; without them the build skips it with a notice). A release ships `avant-bind` beside `avant`. In a checkout the compiler runs `runtime/build/avant-bind`; elsewhere it runs the `avant-bind` beside itself. `avant bind` builds nothing and writes nothing into the project.
 
 ### Layouts and Ptr
 
@@ -1185,7 +1189,7 @@ avant format src --write
 
 ## Regex
 
-Regex lives in the standard library: `import std.regex` is what links PCRE2. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`, `re.find(text, from = 0)` returns a `Match?` value carrying the bounds (`m.start`, `m.end`, `m.span(i)`) and the groups (`m.group(i)`, or `m.group("name")` for a named group), `re.count(text)` counts non-overlapping matches, `re.matches(text)` iterates them, and `re.replace` / `re.split` work on every match. A compiled pattern is a handle: `re.close` releases it (the compiler keeps a bounded cache of compiled patterns, so compiling the same pattern again is cheap), `re.scoped { |r| ... }` closes on exit, and operations on a closed `Regex` report no match.
+Regex lives in the standard library: `import std.regex` is what links PCRE2. `Regex.compile(pattern, caseless = false)` returns `Regex | RegexError`, `re.find(text, from = 0)` returns a `Match?` value carrying the bounds (`m.start`, `m.end`, `m.span(i)`) and the groups (`m.group(i)`, or `m.group("name")` for a named group), `re.count(text)` counts non-overlapping matches, `re.matches(text)` iterates them, and `re.replace` / `re.split` work on every match. A compiled pattern is a handle: `re.close` releases it (the compiler keeps a bounded cache of compiled patterns, so compiling the same pattern again is cheap), `re.scoped { |r| ... }` closes on exit, and an operation on a closed `Regex` traps (`avant runtime: Regex used after close`): a use after close is a program error, not a "no match". A pattern that does not compile is a `RegexError` with PCRE2's reason and the offset in the pattern it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`).
 
 ```avant
 import std.regex
@@ -1313,7 +1317,7 @@ import std.testing
 fn main: Int {
   t = Test.new
   dir = t.temp_dir
-  t.check(file_write("${dir}/notes.txt", "hi") == 0, "write in temp_dir")
+  t.check((file_write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
   t.finish
 }
 ```
@@ -1420,11 +1424,30 @@ Builtins are the prelude: names every program can use with no import. Runnable e
 | Hashing and math | `sha256`, `checksum_str`, `checksum_f64`, `sqrt`, `exp` |
 ### Files, process, and environment
 
+The file, directory and process calls return their result or an error value (D295) that says what failed:
+
+| Call | Result |
+| --- | --- |
+| `file_read(path)` | `String \| IoError`: the whole file |
+| `file_write(path, body)` | `Int \| IoError`: the bytes written (the file is created or replaced) |
+| `dir_list(path)` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` |
+| `process_run(path, args)` | `Int \| ProcessError`: the exit status of a process that exited |
+| `process_run_out(path, args, out)` | the same, with stdout and stderr written to the file `out` |
+
+An `IoError` has `op` (`"read"`, `"write"` or `"list"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`. A non-zero exit status is not an error: it is the `Int`. A program name without `/` is looked up on `PATH` (`process_run("ls", ["-l"])`). Both types are failures under the error rule (`?`, if-assign, `??`), and dropping one is a compile error (`_ = file_write(...)` drops it on purpose). The error types exist in a program that calls one of these functions.
+
 ```avant
+fn copy(from: String, to: String): Int | IoError {
+  text = file_read(from)?
+  file_write(to, text)?
+}
+
 fn main: Int {
   if text = file_read("notes.txt") {
     puts(text.size)
   }
+  code = process_run("ls", ["-l"]) ?? -1
+  puts(code)
   if home = env_get("HOME") {
     puts(home)
   }
@@ -1516,6 +1539,8 @@ fn main {
 ```
 
 `int` is a JSON integer (no fraction, no exponent) within `Int`, and `nil` for anything else (a real such as `3.7` or `3.0`, an integer beyond `Int`, a non-number); `int64` is the same within `Int64`; `f64` reads any number. Floats are written in the language's one float text (`1.5e-7`, `2.0`), and NaN and the infinities as `null`.
+
+A `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none). `Json.obj` and `Json.arr` start a `JsonBuilder`; used against its shape it traps, saying how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers still open (`JsonBuilder.to_s: 2 containers still open`).
 
 The document owns its values and its text buffer; there is nothing to close.
 

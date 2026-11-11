@@ -21,7 +21,7 @@ fn mkdir_p(path: String) {
   args: Array(String) = []
   args.push("-p")
   args.push(path)
-  process_run("/bin/mkdir", args)
+  _ = process_run("/bin/mkdir", args)
 }
 
 // The back end's IR, the MIR `avant dump` prints (D171; the goldens
@@ -33,7 +33,7 @@ fn dump_av(compiler: String, src: String, log: String): Int {
   args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // A hidden front-end dump of the compiler under test (D137): flag is
@@ -43,7 +43,7 @@ fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args.push("dump")
   args.push(flag)
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 fn bless_fail(msg: String) {
@@ -93,7 +93,7 @@ fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Boo
   args.push("dump")
   args.push("${root}/${src_rel}")
   dest = "${root}/tests/goldens/${stem}.mir"
-  code = process_run_out("/usr/bin/env", args, dest)
+  code = process_run_out("/usr/bin/env", args, dest) ?? -1
   if code != 0 {
     bless_fail("dump ${stem}.mir exited ${code}")
     if err = file_read(dest) {

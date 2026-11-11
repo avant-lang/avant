@@ -63,6 +63,22 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     }
     out.push_str("\n")
   }
+  if e.tlocs.size > 0 {
+    // The trap sites (D295 R16): their texts, and the table the runtime
+    // reads through its weak reference, indexed by a trap's last argument.
+    for i in 0..e.tlocs.size {
+      t = e.tlocs[i]
+      out.push_str("@tl.${i} = private unnamed_addr constant [${t.size + 1} x i8] c\"${mir_escape(t)}\\00\", align 1\n")
+    }
+    out.push_str("@__avant_trap_sites = constant [${e.tlocs.size} x ptr] [")
+    for j in 0..e.tlocs.size {
+      if j > 0 {
+        out.push_str(", ")
+      }
+      out.push_str("ptr @tl.${j}")
+    }
+    out.push_str("]\n\n")
+  }
   if e.used_alloc_globals {
     out.push_str(ll_alloc_globals())
     out.push_str("\n")
@@ -80,6 +96,9 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   out.push_str(body)
   out.push_str(maps)
   out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" }\n")
+  if e.used_stubs {
+    out.push_str("attributes #1 = { cold noinline noreturn nounwind \"frame-pointer\"=\"all\" }\n")
+  }
   ll_loop_md(e, out)
   out.to_s
 }
@@ -256,6 +275,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   e.tn = 0
   e.trap_ovf = false
   e.trap_div0 = false
+  e.trap_bounds = false
   s = e.ts.sigs[f.sig]
   linkage = "internal "
   if f.external {
@@ -314,24 +334,15 @@ fn ll_function(e: LlEmit, f: MFunc) {
     }
     b += 1
   }
-  if e.trap_ovf {
-    e.block("trap.ovf")
-    e.need("avant_trap_overflow")
-    e.line("call void @avant_trap_overflow()")
-    e.line("unreachable")
-  }
-  if e.trap_div0 {
-    e.block("trap.div0")
-    e.need("avant_trap_div_zero")
-    e.line("call void @avant_trap_div_zero()")
-    e.line("unreachable")
-  }
+  ll_arith_block(e)
   e.out.push_str("}\n\n")
+  ll_trap_stubs(e)
 }
 
 // ---- statements (4.4, 11.3)
 
 fn ll_stmt(e: LlEmit, st: MStmt) {
+  e.site(st.loc)
   k = st.kind
   if k == msk_assign() {
     if p = st.place {
@@ -367,8 +378,13 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   ok = e.part("ok")
   e.line("br i1 ${c}, label %${oob}, label %${ok}")
   e.block(oob)
-  e.need("avant_trap_bounds")
-  e.line("call void @avant_trap_bounds(i32 ${i}, i32 ${n})")
+  // The function's own stub (ll_trap_stubs), which names the function:
+  // the check's trap block calls it with the same two arguments as the
+  // plain trap, so LLVM's inlining costs and merging stay as they were
+  // (W4b2, D295 R16; a site argument per check flipped an inlining on
+  // Maze::AStar, +5.8% instructions).
+  e.trap_bounds = true
+  e.line("call void ${ll_stub(e, "#tb")}(i32 ${i}, i32 ${n})")
   e.line("unreachable")
   e.block(ok)
 }
@@ -415,6 +431,16 @@ fn ll_call(e: LlEmit, st: MStmt) {
     } else {
       args = ll_args(e, st.args, s.params, true)
       callee = ll_sym(x.name)
+      if x.noreturn && str_starts(x.name, "avant_trap_") {
+        // A trap the lowering raises: its sited form, with the site's
+        // text last (D295 R16).
+        e.need("${x.name}_at")
+        callee = ll_sym("${x.name}_at")
+        if args.size > 0 {
+          args = "${args}, "
+        }
+        args = "${args}i32 ${e.site_ref}"
+      }
       rt = ll_c_type(e.ts, ret)
       if s.varargs || sig != x.sig {
         rt = "${rt} ${ll_fn_type(e, s)}"
@@ -570,6 +596,7 @@ fn ll_loop_md(e: LlEmit, out: Buf) {
 }
 
 fn ll_term(e: LlEmit, t: MTerm) {
+  e.site(t.loc)
   k = t.kind
   if k == mtk_goto() {
     e.line("br label %bb${t.targets[0]}${ll_cold_md(e, t)}")
@@ -779,11 +806,91 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   e.line("${v} = extractvalue ${pair} ${r}, 0")
   o = e.tmp
   e.line("${o} = extractvalue ${pair} ${r}, 1")
-  ok = e.part("ok")
-  e.trap_ovf = true
-  e.line("br i1 ${o}, label %trap.ovf, label %${ok}")
-  e.block(ok)
+  ll_arith_trap(e, o, false)
   v
+}
+
+// The function's arithmetic trap when c holds (Stage 29 W4b2, D295
+// R16): every overflow site of a function branches to its one
+// trap.ovf block, every division by zero to trap.div0, as before, so
+// LLVM keeps folding a statement's checks into one branch (a block per
+// site, or a phi of the sites, kept it from that: +7% instructions on
+// Maze::AStar); the block names the function and where it starts.
+fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
+  name = "ovf"
+  if div_zero {
+    name = "div0"
+    e.trap_div0 = true
+  } else {
+    e.trap_ovf = true
+  }
+  ok = e.part("${name}.ok")
+  e.line("br i1 ${c}, label %trap.${name}, label %${ok}")
+  e.block(ok)
+}
+
+// The function's own site, "Name (file:line:col)", for the traps that
+// name their function (D295 R16): arithmetic, bounds.
+fn ll_fn_site(e: LlEmit): String {
+  loc = e.f.loc
+  path = "?"
+  if loc.file >= 0 && loc.file < e.m.files.size {
+    path = e.m.files[loc.file]
+  }
+  fname = e.f.source_name
+  if fname.size == 0 {
+    fname = e.f.symbol
+  }
+  e.text_ref("${fname} (${path}:${loc.line}:${loc.col})")
+}
+
+// The function's shared arithmetic trap blocks (ll_arith_trap).
+fn ll_arith_block(e: LlEmit) {
+  if !e.trap_ovf && !e.trap_div0 {
+    return
+  }
+  if e.trap_ovf {
+    e.block("trap.ovf")
+    e.line("call void ${ll_stub(e, "#to")}()")
+    e.line("unreachable")
+  }
+  if e.trap_div0 {
+    e.block("trap.div0")
+    e.line("call void ${ll_stub(e, "#td")}()")
+    e.line("unreachable")
+  }
+}
+
+// The LLVM name of the function's trap stub with suffix suf.
+fn ll_stub(e: LlEmit, suf: String): String {
+  ll_sym(e.f.symbol + suf)
+}
+
+// The function's trap stubs (D295 R16): cold, never inlined, they call
+// the runtime's trap with the function's site (ll_fn_site), so the
+// function's own trap blocks keep the plain trap's arguments.
+fn ll_trap_stubs(e: LlEmit) {
+  if !e.trap_ovf && !e.trap_div0 && !e.trap_bounds {
+    return
+  }
+  e.used_stubs = true
+  fsite = ll_fn_site(e)
+  o = e.out
+  if e.trap_bounds {
+    e.need("avant_trap_bounds_in")
+    o.push_str("define internal void ${ll_stub(e, "#tb")}(i32 %i, i32 %n) #1 {\n")
+    o.push_str("  call void @avant_trap_bounds_in(i32 %i, i32 %n, i32 ${fsite})\n  unreachable\n}\n\n")
+  }
+  if e.trap_ovf {
+    e.need("avant_trap_overflow_in")
+    o.push_str("define internal void ${ll_stub(e, "#to")}() #1 {\n")
+    o.push_str("  call void @avant_trap_overflow_in(i32 ${fsite})\n  unreachable\n}\n\n")
+  }
+  if e.trap_div0 {
+    e.need("avant_trap_div_zero_in")
+    o.push_str("define internal void ${ll_stub(e, "#td")}() #1 {\n")
+    o.push_str("  call void @avant_trap_div_zero_in(i32 ${fsite})\n  unreachable\n}\n\n")
+  }
 }
 
 fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
@@ -803,10 +910,7 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   z = e.tmp
   e.line("${z} = icmp eq ${lt} ${y}, 0")
-  nz = e.part("nz")
-  e.trap_div0 = true
-  e.line("br i1 ${z}, label %trap.div0, label %${nz}")
-  e.block(nz)
+  ll_arith_trap(e, z, true)
   d = y
   if signed {
     min = "-2147483648"
@@ -824,10 +928,7 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
     mm = e.tmp
     e.line("${mm} = and i1 ${m1}, ${m2}")
     if op == mop_div() {
-      ok = e.part("ok")
-      e.trap_ovf = true
-      e.line("br i1 ${mm}, label %trap.ovf, label %${ok}")
-      e.block(ok)
+      ll_arith_trap(e, mm, false)
     } else {
       d = e.tmp
       e.line("${d} = select i1 ${mm}, ${lt} 1, ${lt} ${y}")

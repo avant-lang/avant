@@ -636,13 +636,14 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if name == "pop" {
-    // C9 (W10b): pop reads the element at size - 1, so an empty array
-    // traps as indexing it there does ("index -1 out of bounds (size 0)")
-    // instead of reading through the runtime's null (non-references) or
-    // yielding a null reference.
+    // C9 (W10b): pop on an empty array traps instead of reading through
+    // the runtime's null (non-references) or yielding a null reference;
+    // its message names pop (Stage 29 W4b2, D295 R16: it said "index -1
+    // out of bounds (size 0)").
     n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
-    last = lw.tmp(mt_i32(), b.rv_bin(mop_sub(), lw.dup(n), b.c_i32(1)))
-    b.check_bounds(last, n)
+    empty = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), n, b.c_i32(0)))
+    ok = lw.trap_open(empty, true)
+    lw.trap_close(ok, "avant_trap_empty", lw.one(b.c_i32(0)), e.loc)
     if b.types.is_refkind(et) {
       return lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
     }

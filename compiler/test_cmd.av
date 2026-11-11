@@ -319,7 +319,7 @@ fn sort_files(files: Array(FileRun)) {
 }
 
 fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
-  names = dir_list(dir)
+  names = shim_dir_list(dir)
   i = 0
   nseq = seq
   while i < names.size {
@@ -339,7 +339,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
       nseq += 1
       into.push(FileRun.new(path, rel_of(cwd, path), tmp_path("bin-${nseq}")))
     } else {
-      sub = dir_list(path)
+      sub = shim_dir_list(path)
       if sub.size > 0 {
         nseq = walk_tests(path, cwd, into, nseq)
       }
@@ -785,7 +785,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
     b.push_str("  </testsuite>\n")
   }
   b.push_str("</testsuites>\n")
-  w = file_write(path, b.to_s)
+  w = shim_file_write(path, b.to_s)
   if w != 0 {
     diag_puts("cannot write ${path}")
     diag_exit(1)

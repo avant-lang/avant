@@ -9,14 +9,37 @@ lib rec {
   fun avant_regex_span_at(code: Ptr(Void), text: String, from: Int, i: Int): Int64
   fun avant_regex_count(code: Ptr(Void), text: String): Int
   fun avant_re2c_handle(id: Int): Ptr(Void)
+  fun avant_regex_error_text: String
+  fun avant_regex_error_offset: Int
+  fun avant_regex_closed
 }
 
+// A pattern that does not compile: the message is PCRE2's, with the
+// pattern offset it points at ("invalid regular expression at offset 3:
+// missing closing parenthesis"); offset is -1 when there is none (Stage
+// 29 W4b2, D295 R11).
 pub class RegexError: Error {
   pub message: String
+  pub offset: Int = -1
 
-  fn initialize(message: String) {
+  fn initialize(message: String, offset: Int = -1) {
     self.message = message
+    self.offset = offset
   }
+}
+
+fn regex_error(status: Int): RegexError {
+  if status == 1 {
+    off = rec.avant_regex_error_offset()
+    return RegexError.new("invalid regular expression at offset ${off}: ${rec.avant_regex_error_text()}", off)
+  }
+  RegexError.new("regular expression compile ran out of memory")
+}
+
+// Every operation on a closed Regex traps (Stage 29 W4b2, D295 R11): a
+// use after close is a program error, not an honest "no match".
+fn regex_closed {
+  rec.avant_regex_closed()
 }
 
 pub struct Span {
@@ -195,7 +218,7 @@ pub struct Regex {
     code = rec.avant_regex_compile(pattern, flags)
     status = rec.avant_regex_take_status()
     if status != 0 {
-      return RegexError.new("invalid regular expression")
+      return regex_error(status)
     }
     Regex { code: code, scan: code, ngroups: rec.avant_regex_groups(code), closed: false }
   }
@@ -203,7 +226,7 @@ pub struct Regex {
   // Releases this handle's hold on the compiled pattern. The C side may
   // keep the pattern in its bounded cache for the next compile; other
   // handles on the same pattern are unaffected. Closing twice is a
-  // no-op, and every operation on a closed Regex reports no match.
+  // no-op, and every operation on a closed Regex traps.
   pub fn close {
     if self.closed {
       return
@@ -224,6 +247,7 @@ pub struct Regex {
 
   pub fn find(text: String, from: Int = 0): Match? {
     if self.closed {
+      regex_closed()
       return nil
     }
     p0 = rec.avant_regex_find(self.scan, text, from)
@@ -260,6 +284,7 @@ pub struct Regex {
 
   pub fn count(text: String): Int {
     if self.closed {
+      regex_closed()
       return 0
     }
     rec.avant_regex_count(self.code, text)
@@ -280,6 +305,7 @@ pub struct Regex {
 
   pub fn replace_into(dst: Buf, text: String, repl: String) {
     if self.closed {
+      regex_closed()
       return
     }
     last = 0
@@ -313,7 +339,7 @@ pub struct Regex {
   pub fn split(text: String): Array(String) {
     parts: Array(String) = []
     if self.closed {
-      parts.push(text)
+      regex_closed()
       return parts
     }
     last = 0
@@ -375,7 +401,7 @@ fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool): Regex
   code = rec.avant_regex_compile(pattern, flags)
   status = rec.avant_regex_take_status()
   if status != 0 {
-    return RegexError.new("invalid regular expression")
+    return regex_error(status)
   }
   Regex { code: code, scan: rec.avant_re2c_handle(id), ngroups: groups, closed: false }
 }

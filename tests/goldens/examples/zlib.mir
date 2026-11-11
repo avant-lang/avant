@@ -1,6 +1,8 @@
 module zlib
 file 0 "zlib.av"
 
+const str.0 = "z.zlibVersion"
+
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
@@ -8,6 +10,7 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
+extern avant_trap_c_null(ref str) -> void never noreturn
 extern zlibVersion() -> ref str collects
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @zlib.av:5:1 {
@@ -15,6 +18,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @zlib.av:5:1 {
   let _1 (argc): i32
   let _2 (argv): ptr slot
   let _3: ref str
+  let _4: bool
 
 bb0:
   gc.enter   @5:1
@@ -22,6 +26,14 @@ bb0:
   call __avant_type_maps() nocollect   @5:1
   call avant_io_init_argv(copy _1, copy _2) collects   @5:1
   _3 = call zlibVersion() collects   @6:9
+  _4 = eq copy _3, const ref str null   @6:9
+  branch copy _4, bb1, bb2   @6:9
+
+bb1:
+  call avant_trap_c_null(const str.0) nocollect   @6:9
+  unreachable   @6:9
+
+bb2:
   call avant_puts_str(copy _3) nocollect   @6:3
   _0 = const i32 0   @5:1
   gc.leave   @5:1

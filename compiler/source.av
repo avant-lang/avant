@@ -11,6 +11,34 @@ pub class Source {
   }
 }
 
+// The compiler's own file_write, dir_list and process_run until the next
+// release (Stage 29 W4b2, the narrow shim): the seed v0.40.0 types them as
+// Int, Array(String) and Int, the compiler it builds as a result or an
+// IoError / ProcessError (D295 R12), so the compiler calls these runtime
+// entries, which mean the same under both. At the next release the
+// compiler adopts the prelude's forms and the shim goes, with
+// avant_fs_write/list/run and the runtime's avant_file_read.
+lib sys_shim {
+  fun avant_fs_write(path: String, body: String): Int
+  fun avant_fs_list(path: String): Array(String)
+  fun avant_fs_run(path: String, args: Array(String)): Int
+}
+
+// 0 when the whole body was written, else 1.
+pub fn shim_file_write(path: String, body: String): Int {
+  sys_shim.avant_fs_write(path, body)
+}
+
+// The sorted names, empty when the directory cannot be read.
+pub fn shim_dir_list(path: String): Array(String) {
+  sys_shim.avant_fs_list(path)
+}
+
+// The exit status; 128 + n for signal n; 127 when it could not start.
+pub fn shim_process_run(path: String, args: Array(String)): Int {
+  sys_shim.avant_fs_run(path, args)
+}
+
 pub fn source_read(path: String): Source? {
   if text = file_read(path) {
     return Source.new(path, text)

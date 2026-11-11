@@ -48,6 +48,7 @@ extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i32) -> ref str collects
 extern avant_str_size(ref str) -> i32 never
+extern avant_trap_empty(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.unions/none_v() -> %(Nil|unions.V) leaf @unions.av:46:1 {
@@ -401,7 +402,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @unions.av:100:1 {
   let _117: %(Nil|unions.V)
   let _118: addr %(Nil|unions.V)
   let _119: i32
-  let _120: i32
+  let _120: bool
   let _121: addr %(Nil|unions.V)
   let _122: %(Nil|unions.V)
   let _123: i32
@@ -728,22 +729,28 @@ bb44:
   _118 = call avant_array_push_slot(copy _116, const u64 12, const u32 0) collects   @155:5
   (*_118) = copy _117   @155:5
   _119 = copy (*_116).1   @156:12
-  _120 = sub copy _119, const i32 1   @156:12
-  check.bounds copy _120, copy _119   @156:12
+  _120 = eq copy _119, const i32 0   @156:12
+  branch copy _120, bb45, bb46   @156:12
+
+bb45:
+  call avant_trap_empty(const i32 0) nocollect   @156:12
+  unreachable   @156:12
+
+bb46:
   _121 = call avant_array_pop_slot(copy _116, const u64 12) collects   @156:12
   _122 = copy (*_121)   @156:12
   _123 = copy _122.0   @156:3
   _124 = ne copy _123, const i32 0   @156:3
-  branch copy _124, bb45, bb46   @156:3
+  branch copy _124, bb47, bb48   @156:3
 
-bb45:
+bb47:
   _125 = copy _122.1   @156:3
   _126 = copy _125   @156:3
   _127 = copy _126.1   @157:11
   call printf(const str.3, copy _127) nocollect   @157:5
-  goto bb46   @156:3
+  goto bb48   @156:3
 
-bb46:
+bb48:
   _128 = copy (*_116).1   @159:10
   call printf(const str.3, copy _128) nocollect   @159:3
   _0 = const i32 0   @100:1

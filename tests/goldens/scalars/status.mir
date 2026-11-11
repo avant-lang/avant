@@ -11,6 +11,7 @@ extern __avant_type_maps() -> void never
 extern avant_clock_ms() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
+extern avant_trap_exit_status(i32) -> void never noreturn
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @status.av:3:1 {
   let _0: i32
@@ -18,6 +19,12 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @status.av:3:1 {
   let _2 (argv): ptr slot
   let _3: i64
   let _4: bool
+  let _5: i32
+  let _6: u32
+  let _7: bool
+  let _8: i32
+  let _9: u32
+  let _10: bool
 
 bb0:
   gc.enter   @3:1
@@ -30,12 +37,32 @@ bb0:
   branch copy _4, bb1, bb2   @5:3
 
 bb1:
-  _0 = const i32 9   @6:5
+  _5 = const i32 9   @6:12
+  _6 = cast copy _5 to u32   @6:12
+  _7 = le copy _6, const u32 255   @6:12
+  branch copy _7, bb4, bb3   @6:12
+
+bb2:
+  _8 = const i32 3   @8:3
+  _9 = cast copy _8 to u32   @8:3
+  _10 = le copy _9, const u32 255   @8:3
+  branch copy _10, bb6, bb5   @8:3
+
+bb3:
+  call avant_trap_exit_status(copy _5) nocollect   @6:12
+  unreachable   @6:12
+
+bb4:
+  _0 = copy _5   @6:5
   gc.leave   @6:5
   return   @6:5
 
-bb2:
-  _0 = const i32 3   @8:3
+bb5:
+  call avant_trap_exit_status(copy _8) nocollect   @8:3
+  unreachable   @8:3
+
+bb6:
+  _0 = copy _8   @8:3
   gc.leave   @8:3
   return   @8:3
 }

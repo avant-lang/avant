@@ -194,17 +194,6 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if got2 = lw.io_builtin(e, c) {
     return got2
   }
-  if (c == "process_run" && e.args.size == 2) || (c == "process_run_out" && e.args.size == 3) {
-    // W8a (calls.av emit_process_run, emit_process_run_out): the path,
-    // the arguments array, the output path, left to right (the old back
-    // end evaluates them right to left).
-    ops = lw.lower_args(e.args)
-    if lw.failed {
-      return zero
-    }
-    lw.at(e.loc)
-    return lw.call_to(mt_i32(), "avant_${c}", ops)
-  }
   if mir_other_builtin(c) {
     lw.refuse(e.loc, "the builtin ${c}")
     return zero

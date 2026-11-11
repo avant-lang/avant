@@ -2,6 +2,7 @@
 #include "avant_rt.h"
 
 #include <pcre2.h>
+#include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,6 +103,11 @@ static int32_t g_cache_n;
 static uint64_t g_cache_tick;
 static pthread_mutex_t g_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 
+/* Why the last compile on this thread failed (Stage 29 W4b2, D295 R11):
+ * PCRE2's error code and the pattern offset it names. */
+static __thread int g_re_err;
+static __thread int32_t g_re_off;
+
 static pcre2_code *compile_pat(const char *pat, int32_t flags, int32_t *ngroups) {
   int err = 0;
   PCRE2_SIZE erroff = 0;
@@ -112,6 +118,10 @@ static pcre2_code *compile_pat(const char *pat, int32_t flags, int32_t *ngroups)
   }
   code = pcre2_compile((PCRE2_SPTR)pat, PCRE2_ZERO_TERMINATED, opts, &err,
                        &erroff, NULL);
+  if (!code) {
+    g_re_err = err;
+    g_re_off = (int32_t)erroff;
+  }
   if (code) {
     uint32_t caps = 0;
     (void)pcre2_jit_compile(code, PCRE2_JIT_COMPLETE);
@@ -430,4 +440,33 @@ int32_t avant_regex_count(void *handle, const char *s) {
     start = next;
   }
   return n;
+}
+
+/* PCRE2's text for the last failed compile ("missing closing
+ * parenthesis"), and the offset in the pattern it points at. */
+/* gc-lint: holds nothing (C memory only). */
+char *avant_regex_error_text(void) {
+  PCRE2_UCHAR buf[256];
+  int n = pcre2_get_error_message(g_re_err, buf, sizeof buf);
+  char *out;
+  if (n < 0) {
+    n = 0;
+  }
+  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  memcpy(out, buf, (size_t)n);
+  out[n] = 0;
+  avant_str_tag(out);
+  return out;
+}
+
+int32_t avant_regex_error_offset(void) {
+  return g_re_off;
+}
+
+/* A Regex used after close (Stage 29 W4b2, D295 R11): a program error,
+ * not an honest "no match". Printed as a trap (stdout first, status 1). */
+void avant_regex_closed(void) {
+  fflush(stdout);
+  fputs("avant runtime: Regex used after close\n", stderr);
+  exit(1);
 }

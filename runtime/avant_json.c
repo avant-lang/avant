@@ -16,6 +16,10 @@
 
 /* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
 static __thread int32_t g_json_status;
+/* Why the last parse on this thread failed (Stage 29 W4b2, D295 R11):
+ * yyjson's message (a static string) and the byte offset it names. */
+static __thread const char *g_json_err_msg;
+static __thread int64_t g_json_err_pos;
 static __thread char *g_json_pool;
 static __thread int g_json_pool_rooted;
 
@@ -145,6 +149,8 @@ void *avant_json_parse(const char *s) {
       return doc;
     }
     if (err.code != YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
+      g_json_err_msg = err.msg;
+      g_json_err_pos = (int64_t)err.pos;
       set_status(1);
       return NULL;
     }
@@ -440,4 +446,24 @@ char *avant_json_text(void *nodep) {
     free(raw);
     return out;
   }
+}
+
+/* yyjson's message for the last failed parse ("unexpected character"),
+ * and the byte offset it names. */
+/* gc-lint: holds nothing (C memory only). */
+char *avant_json_error_text(void) {
+  const char *m = g_json_err_msg ? g_json_err_msg : "invalid JSON document";
+  return copy_str(m, strlen(m));
+}
+
+int64_t avant_json_error_offset(void) {
+  return g_json_err_pos;
+}
+
+/* A JsonBuilder used against its contract (Stage 29 W4b2, D295 R11):
+ * what says how. Printed as a trap (stdout first, status 1). */
+void avant_json_misuse(const char *what) {
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: %s\n", what);
+  exit(1);
 }

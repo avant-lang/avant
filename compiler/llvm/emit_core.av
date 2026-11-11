@@ -11,7 +11,7 @@
 // emit_gc.av holds the GC sequences, emit.av the statements, functions,
 // and the module.
 //
-// D188 and D192: LlEmit holds 20 words; no array of structs or unions.
+// D188 and D192: LlEmit holds 27 words; no array of structs or unions.
 
 import source
 import mir.types
@@ -36,8 +36,15 @@ pub class LlEmit {
   pub used_poll_global: Bool = false
   pub used_frame_global: Bool = false
   pub frame_words: Int = -1
+  pub cur_file: Int = 0
+  pub cur_line: Int = 0
+  pub cur_col: Int = 0
+  pub tlocs: Array(String)
+  tloc_seen: Hash(String, Int)
   pub trap_ovf: Bool = false
   pub trap_div0: Bool = false
+  pub trap_bounds: Bool = false
+  pub used_stubs: Bool = false
   pub rt_names: Array(String)
   rt_seen: Hash(String, Int)
   pub intrinsics: Array(String)
@@ -60,6 +67,41 @@ pub class LlEmit {
     self.intrinsics = []
     self.intr_seen = Hash(String, Int).new
     self.loop_md = Hash(String, Int).new
+    self.tlocs = []
+    self.tloc_seen = Hash(String, Int).new
+  }
+
+  // The source site of the statement being emitted (Stage 29 W4b2, D295
+  // R16), for a trap's message.
+  pub fn site(loc: MLoc) {
+    self.cur_file = loc.file
+    self.cur_line = loc.line
+    self.cur_col = loc.col
+  }
+
+  // The site's number N in the module's table of trap texts,
+  // @__avant_trap_sites ("file:line:col", one entry per text), the last
+  // argument of a trap's _at form (D295 R16). An immediate, not the
+  // text's address: a constant address in a cold block was hoisted into
+  // hot loops as a live register (+5.8% instructions on Maze::AStar).
+  pub fn site_ref: String {
+    path = "?"
+    if self.cur_file >= 0 && self.cur_file < self.m.files.size {
+      path = self.m.files[self.cur_file]
+    }
+    self.text_ref("${path}:${self.cur_line}:${self.cur_col}")
+  }
+
+  // A trap text's number in the module's table (one per text).
+  pub fn text_ref(text: String): String {
+    n = self.tlocs.size
+    if got = self.tloc_seen.get(text) {
+      n = got
+    } else {
+      self.tloc_seen[text] = n
+      self.tlocs.push(text)
+    }
+    "${n}"
   }
 
   // ---- output

@@ -652,6 +652,7 @@ static int fast_f64(const char *p, size_t len, double *out) {
  * E, an optional sign, digits) -- Avant's literal with a sign -- whose
  * value is finite. */
 static void trap_base(int32_t base) {
+  fflush(stdout);
   fprintf(stderr, "avant runtime: base %d out of range (2..36)\n", base);
   exit(1);
 }
@@ -963,6 +964,7 @@ void *avant_str_split(const char *s, const char *sep) {
   n = avant_str_n(s);
   m = avant_str_n(sep);
   if (m == 0) {
+    fflush(stdout);
     fprintf(stderr, "avant runtime: split separator is empty\n");
     exit(1);
   }
@@ -1168,7 +1170,10 @@ static size_t utf8_char_len(const unsigned char *s, size_t n, size_t i, int *val
   return (size_t)extra + 1;
 }
 
-static void *chars_build(const char *s, int strict) {
+/* String.chars and Bytes.chars: one String per codepoint; invalid UTF-8
+ * traps on both (Stage 29 W4b2: String.chars used to split a bad byte
+ * into a U+FFFD piece while Bytes.chars trapped; one rule now). */
+static void *chars_build(const char *s, const char *type) {
   size_t n;
   size_t i = 0;
   int32_t count = 0;
@@ -1177,8 +1182,9 @@ static void *chars_build(const char *s, int strict) {
     s = "";
   }
   n = avant_str_n(s);
-  if (strict && !utf8_valid((const unsigned char *)s, n)) {
-    fprintf(stderr, "avant runtime: Bytes.chars needs valid UTF-8\n");
+  if (!utf8_valid((const unsigned char *)s, n)) {
+    fflush(stdout);
+    fprintf(stderr, "avant runtime: %s.chars needs valid UTF-8\n", type);
     exit(1);
   }
   while (i < n) {
@@ -1205,9 +1211,9 @@ static void *chars_build(const char *s, int strict) {
 }
 
 void *avant_str_chars(const char *s) {
-  return chars_build(s, 0);
+  return chars_build(s, "String");
 }
 
 void *avant_bytes_chars(const char *s) {
-  return chars_build(s, 1);
+  return chars_build(s, "Bytes");
 }

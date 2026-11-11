@@ -5,7 +5,7 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int64, tag: String, bod
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
   rlog = "${scratch()}/safety-waveb-${stamp}-${tag}.rlog"
-  file_write(src, body)
+  _ = file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code == 0, "${tag} compiles")
   c.expect(file_exists(bin), "${tag} bin exists")
@@ -24,7 +24,7 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int64, tag: String, 
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
-  file_write(src, body)
+  _ = file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.expect(code != 0, "${tag} is a compile error")
   c.expect(!file_exists(bin), "${tag} writes no binary")
@@ -142,9 +142,9 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "str-oob", "fn main {\n  s = \"hi\"\n  puts(s[10])\n}\n", "out of bounds")
     // C9 (W10b): pop on an empty array is the index trap at size - 1, for
     // Int, struct, and reference elements.
-    expect_trap_waveb(c, compiler, stamp, "pop-empty-int", "fn main {\n  xs: Array(Int) = []\n  puts(xs.pop)\n}\n", "index -1 out of bounds (size 0)")
-    expect_trap_waveb(c, compiler, stamp, "pop-empty-struct", "struct P {\n  a: Int\n  b: Int\n}\nfn main {\n  xs: Array(P) = []\n  q = xs.pop()\n  puts(q.a)\n}\n", "index -1 out of bounds (size 0)")
-    expect_trap_waveb(c, compiler, stamp, "pop-empty-ref", "fn main {\n  xs = [\"a\"]\n  puts(xs.pop)\n  puts(xs.pop)\n}\n", "index -1 out of bounds (size 0)")
+    expect_trap_waveb(c, compiler, stamp, "pop-empty-int", "fn main {\n  xs: Array(Int) = []\n  puts(xs.pop)\n}\n", "pop on an empty Array")
+    expect_trap_waveb(c, compiler, stamp, "pop-empty-struct", "struct P {\n  a: Int\n  b: Int\n}\nfn main {\n  xs: Array(P) = []\n  q = xs.pop()\n  puts(q.a)\n}\n", "pop on an empty Array")
+    expect_trap_waveb(c, compiler, stamp, "pop-empty-ref", "fn main {\n  xs = [\"a\"]\n  puts(xs.pop)\n  puts(xs.pop)\n}\n", "pop on an empty Array")
     expect_trap_waveb(c, compiler, stamp, "buf-oob", "fn main {\n  b = buf_new()\n  b.push_byte(1)\n  puts(b[5])\n}\n", "out of bounds")
     // D64 as amended (Stage 29 W1b): a value passed or stored as a C
     // scalar type that cannot hold it traps (D215); the C function is
@@ -176,7 +176,7 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "shift-i64", "fn main {\n  n = 64i64\n  puts(1i64 << n)\n}\n", "avant runtime: shift amount 64 out of range for Int64 (0..63)")
     expect_trap_waveb(c, compiler, stamp, "shift-u64", "fn main {\n  n = 100u64\n  puts(1u64 >> n)\n}\n", "avant runtime: shift amount 100 out of range for UInt64 (0..63)")
     expect_trap_waveb(c, compiler, stamp, "to-i-nan", "fn main {\n  z = 0.0\n  puts((z / z).to_i)\n}\n", "avant runtime: to_i of Float64 nan out of range for Int")
-    expect_trap_waveb(c, compiler, stamp, "to-i-big", "fn main {\n  x = 3.0e9\n  puts(x.to_i)\n}\n", "avant runtime: to_i of Float64 3000000000 out of range for Int")
+    expect_trap_waveb(c, compiler, stamp, "to-i-big", "fn main {\n  x = 3.0e9\n  puts(x.to_i)\n}\n", "avant runtime: to_i of Float64 3000000000.0 out of range for Int")
     expect_compile_error(c, compiler, stamp, "shift-const-wide", "fn main {\n  x = 1\n  puts(x << 32)\n}\n", "shift amount 32 out of range for Int (0..31)")
     expect_compile_error(c, compiler, stamp, "shift-const-neg", "fn main {\n  x = 1\n  puts(x >> -1)\n}\n", "shift amount -1 out of range for Int (0..31)")
     expect_compile_error(c, compiler, stamp, "shift-const-u64", "fn main {\n  x = 1u64\n  puts(x << 64u64)\n}\n", "shift amount 64 out of range for UInt64 (0..63)")
@@ -184,7 +184,7 @@ fn test_safety(c: Checks) {
     bad_src = "${scratch()}/safety-waveb-${stamp}-unknown.av"
     bad_bin = "${scratch()}/safety-waveb-${stamp}-unknown.bin"
     bad_log = "${scratch()}/safety-waveb-${stamp}-unknown.log"
-    file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
+    _ = file_write(bad_src, "fn main {\n  puts(nosuchfn(1))\n}\n")
     code_b = compile_av(compiler, bad_src, bad_bin, bad_log)
     c.expect(code_b != 0, "unknown-fn compile exits non-zero")
     c.expect(!file_exists(bad_bin), "unknown-fn bin absent")
@@ -198,7 +198,7 @@ fn test_safety(c: Checks) {
     c.expect(code_r != 0, "unknown-fn run exits non-zero")
 
     hi_src = "${scratch()}/safety-waveb-${stamp}-hi.av"
-    file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
+    _ = file_write(hi_src, "fn main {\n  puts(\"hi\")\n}\n")
     dbg_bin = "${scratch()}/safety-waveb-${stamp}-hi-dbg.bin"
     dbg_log = "${scratch()}/safety-waveb-${stamp}-hi-dbg.log"
     dbg_flags: Array(String) = []
