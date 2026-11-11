@@ -482,6 +482,14 @@ fn main {
 }
 ```
 
+An `if` with an `else` is also an expression: each branch ends in a value, and the branches' types must agree, as a value `switch`'s do (`label = if n > 10 { "big" } else { "small" }`, `w = if v = cfg.get("width") { v } else { 80 }`, `else if` chains included). A branch may leave instead (`return`, `break`, `continue`). In the same way, a final `if`/`else` in a function with a result is the function's value:
+
+```avant
+fn sign(n: Int): String {
+  if n < 0 { "-" } else if n == 0 { "0" } else { "+" }
+}
+```
+
 A condition may be a list, separated by commas: bindings and `Bool` tests, evaluated left to right, stopping at the first that fails. Each name bound is in scope for the conditions after it and for the then-block; the `else` runs when any of them fails, and sees none of them:
 
 ```avant

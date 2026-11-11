@@ -92,6 +92,23 @@ fn flow_cases: Array(FCase) {
   xs
 }
 
+fn ifexpr_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("if-expr-uses", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn sign(n: Int): String {\n  if n < 0 { \"-\" } else if n == 0 { \"0\" } else { \"+\" }\n}\nfn width(h: Hash(String, Int)): Int {\n  if v = h.get(\"width\") {\n    v * 2\n  } else {\n    80\n  }\n}\nfn pick(n: Int): Int {\n  if n > 10 {\n    return 100\n  } else {\n    n + 1\n  }\n}\nfn chain(h: Hash(String, Int)): Int {\n  if a = h.get(\"a\"), b = h.get(\"b\") { a + b } else { -1 }\n}\nfn opt(n: Int): Int? {\n  if n > 0 { n } else { nil }\n}\nfn main {\n  puts(sign(-3))\n  puts(sign(0))\n  puts(sign(5))\n  h = Hash(String, Int).new\n  puts(width(h))\n  h[\"width\"] = 3\n  puts(width(h))\n  puts(pick(20))\n  puts(pick(2))\n  label = if h.size > 0 { \"some\" } else { \"none\" }\n  puts(label)\n  w = if v = h.get(\"width\") { v } else { 80 }\n  puts(w)\n  k = (if w > 2 { 10 } else { 20 }) + 1\n  puts(k)\n  h[\"a\"] = 1\n  puts(chain(h))\n  h[\"b\"] = 2\n  puts(chain(h))\n  puts(opt(3) ?? 0)\n  puts(opt(-3) ?? 0)\n  n = if p = parse(\"abc\") { p } else { 0 }\n  puts(n)\n  total = 0\n  for x in [\"a\", \"\", \"bcd\"] {\n    total += if q = parse(x) { q } else { continue }\n  }\n  puts(total)\n  m: Int? = if total > 3 { total } else { nil }\n  puts(m ?? -1)\n}\n", "-\n0\n+\n80\n6\n100\n3\nsome\n3\n11\n-1\n3\n3\n0\n3\n4\n4\n"))
+  xs.push(accepted("if-expr-method-lambda", "class C {\n  k: Int = 2\n  fn half(n: Int): Int {\n    if n % 2 == 0 {\n      n / 2\n    } else {\n      n * k\n    }\n  }\n}\nfn main {\n  c = C.new\n  puts(c.half(8))\n  puts(c.half(3))\n  f: fn(Int): String = { |n|\n    if n > 0 { \"pos\" } else { \"neg\" }\n  }\n  puts(f(1))\n  puts(f(-1))\n  xs = [3, 4]\n  ys: Array(String) = []\n  for x in xs {\n    ys.push(if x > 3 { \"big\" } else { \"small\" })\n  }\n  puts(ys.size)\n  puts(ys[0])\n}\n", "4\n6\npos\nneg\n2\nsmall\n"))
+  xs.push(accepted("switch-arm-return", "fn f(n: Int): Int {\n  x = switch n {\n    case 1 {\n      return 5\n    }\n    else {\n      7\n    }\n  }\n  x + 1\n}\nfn main {\n  puts(f(1))\n  puts(f(2))\n}\n", "5\n8\n"))
+  xs.push(refused("if-expr-no-else", "fn main {\n  x = if true { 1 }\n  puts(x)\n}\n", "an if used as a value needs an else, so every case gives one"))
+  xs.push(refused("if-expr-types", "fn main {\n  n = 3\n  x = if n > 1 { 1 } else { \"a\" }\n  puts(x)\n}\n", "if branches have different types Int and String"))
+  xs.push(refused("if-expr-void-branch", "fn main {\n  n = 3\n  x = if n > 1 { 1 } else { puts(2) }\n  puts(x)\n}\n", "an if used as a value needs a value at the end of each branch"))
+  xs.push(refused("if-expr-want", "fn main {\n  n = 3\n  x: Int = if n > 1 { \"a\" } else { 1 }\n  puts(x)\n}\n", "expected Int, got String"))
+  xs.push(refused("if-expr-leaves", "fn f(n: Int): Int {\n  x = if n > 1 { return 1 } else { return 2 }\n  x\n}\nfn main {\n  puts(f(1))\n}\n", "an if used as a value leaves in every branch, so it has no value"))
+  xs.push(refused("if-tail-void-branch", "fn f(n: Int): Int {\n  if n > 1 {\n    n\n  } else {\n    puts(n)\n  }\n}\nfn main {\n  puts(f(1))\n}\n", "expected Int, got Void"))
+  xs.push(refused("if-tail-type", "fn f(n: Int): Int {\n  if n > 1 {\n    n\n  } else {\n    \"small\"\n  }\n}\nfn main {\n  puts(f(1))\n}\n", "expected Int, got String"))
+  xs.push(refused("if-tail-no-else", "fn f(n: Int): Int {\n  if n > 1 {\n    n\n  }\n}\nfn main {\n  puts(f(1))\n}\n", "missing return value"))
+  xs.push(refused("if-expr-bind-scope", "fn main {\n  h = Hash(String, Int).new\n  x = if v = h.get(\"a\") { v } else { v + 1 }\n  puts(x)\n}\n", "unknown name v"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -132,6 +149,9 @@ fn test_main(c: Checks) {
     }
     for f_flow_cases in flow_cases() {
       all.push(f_flow_cases)
+    }
+    for f_ifexpr_cases in ifexpr_cases() {
+      all.push(f_ifexpr_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

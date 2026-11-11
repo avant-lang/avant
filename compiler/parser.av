@@ -2167,6 +2167,19 @@ pub class Parser {
     if k == tk_spawn() {
       return self.parse_spawn(tok)
     }
+    if k == tk_if() {
+      // An `if` used as a value (Stage 29 W4a, D31): held by a switch
+      // node with op tk_if (ast.av); it needs an else.
+      st = self.parse_if
+      if st.else_body.size == 0 {
+        self.fail(st.loc, "an if used as a value needs an else, so every case gives one")
+      }
+      ife = Expr.new(ex_switch(), st.loc)
+      ife.op = tk_if()
+      ife.has_else = true
+      ife.else_body.push(st)
+      return ife
+    }
     if k == tk_switch() {
       return self.parse_switch
     }

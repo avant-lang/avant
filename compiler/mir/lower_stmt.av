@@ -25,6 +25,11 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
       return
     }
     st = body[i]
+    if i == body.size - 1 && st.kind == st_if() && st.tail_value && lw.lw_ret != mt_void() {
+      lw.cov_stmt(st)
+      lw.lower_if_general(st, 2, -1, nil)
+      return
+    }
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
       if e = st.expr {
         lw.cov_stmt(st)
@@ -307,6 +312,13 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   }
   if lw.failed {
     return lw.lw_b.c_i32(0)
+  }
+  if e.op == tk_if() && e.else_body.size == 1 && rty != mt_void() {
+    // An `if` used as a value (Stage 29 W4a): each branch writes the
+    // result temporary.
+    dest = lw.lw_b.temp(rty)
+    lw.lower_if_general(e.else_body[0], 1, dest, e.ty)
+    return lw.lw_b.copy_local(dest)
   }
   if c = e.cond {
     cv = lw.lower_expr(c)

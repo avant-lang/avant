@@ -617,6 +617,16 @@ pub class Checker {
       return
     }
     if k == st_if() {
+      if at_tail && stmt.else_body.size > 0 && !expected.is_void && !self.lambda_infer && (self.fallthrough(stmt.then_body) || self.fallthrough(stmt.else_body)) {
+        // A final if/else whose branches end in values is the function's
+        // value (Stage 29 W4a, D31; before, "missing return value").
+        stmt.tail_value = true
+        if t2 = self.check_if_value(stmt, true, expected) {
+          return
+        }
+        self.fail(stmt.loc, "missing return value")
+        return
+      }
       if stmt.pre.size > 0 {
         self.check_if_chain(stmt, expected, at_tail)
         return
@@ -3585,6 +3595,13 @@ pub class Checker {
   }
 
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.op == tk_if() && expr.else_body.size == 1 {
+      if t = self.check_if_value(expr.else_body[0], has_want, want) {
+        return t
+      }
+      self.fail(expr.loc, "an if used as a value leaves in every branch, so it has no value")
+      return self.t_int()
+    }
     if cond = expr.cond {
       ct = self.check_expr(cond)
       if !ct.is_int && !ct.is_bool {
@@ -3604,14 +3621,22 @@ pub class Checker {
         seen[lab] = 1
       }
     }
+    // An arm that leaves (its last statement a return, break or
+    // continue; Stage 29 W4a) gives no value and joins nothing.
     branch_tys: Array(Ty) = []
     i = 0
     while i < expr.cases.size {
-      branch_tys.push(self.check_switch_branch(expr.cases[i].body, has_want, want))
+      bt = self.check_switch_branch(expr.cases[i].body, has_want, want)
+      if !arm_leaves(expr.cases[i].body) {
+        branch_tys.push(bt)
+      }
       i += 1
     }
     if expr.has_else {
-      branch_tys.push(self.check_switch_branch(expr.else_body, has_want, want))
+      et = self.check_switch_branch(expr.else_body, has_want, want)
+      if !arm_leaves(expr.else_body) {
+        branch_tys.push(et)
+      }
     }
     all_void = true
     any_void = false
@@ -3911,17 +3936,102 @@ pub class Checker {
             return ty
           }
         }
-        self.check_stmt(stmt, self.t_void(), false)
+        self.check_stmt(stmt, self.return_type, false)
         self.pop_scope
         return self.t_void()
       }
-      self.check_stmt(stmt, self.t_void(), false)
+      self.check_stmt(stmt, self.return_type, false)
       i += 1
     }
     self.pop_scope
     self.t_void()
   }
 
+  // An `if` used as a value (Stage 29 W4a, D31): the condition (a list,
+  // bindings in scope for the then-block), then each branch's value; the
+  // branches' types join as a value switch's do. nil when every branch
+  // leaves (return, break, continue).
+  pub fn check_if_value(stmt: Stmt, has_want: Bool, want: Ty): Ty? {
+    self.push_scope
+    for el in stmt.pre {
+      self.check_cond_element(el)
+    }
+    self.check_cond_element(stmt)
+    t1 = self.check_value_branch(stmt.then_body, has_want, want)
+    self.pop_scope
+    t2 = self.check_value_branch(stmt.else_body, has_want, want)
+    if self.has_err {
+      return self.t_int()
+    }
+    tys: Array(Ty) = []
+    if a = t1 {
+      tys.push(a)
+    }
+    if b = t2 {
+      tys.push(b)
+    }
+    if tys.size == 0 {
+      return nil
+    }
+    for t in tys {
+      if t.is_void {
+        self.fail(stmt.loc, "an if used as a value needs a value at the end of each branch")
+        return self.t_int()
+      }
+    }
+    if has_want && !want.is_void {
+      for t2b in tys {
+        if !ty_assignable(t2b, want) {
+          self.fail(stmt.loc, "if branch is ${t2b.show}, expected ${want.show}")
+        }
+      }
+      return want
+    }
+    result = tys[0]
+    for t3 in tys {
+      if !t3.same_as(result) {
+        self.fail(stmt.loc, "if branches have different types ${result.show} and ${t3.show}")
+      }
+    }
+    result
+  }
+
+  // A branch of an `if` used as a value: its last expression is the value
+  // (a last `if` with an else gives its own); nil when it leaves.
+  pub fn check_value_branch(body: Array(Stmt), has_want: Bool, want: Ty): Ty? {
+    self.push_scope
+    result: Ty? = self.t_void()
+    i = 0
+    while i < body.size {
+      st = body[i]
+      if i == body.size - 1 {
+        k = st.kind
+        if k == st_expr() {
+          if e = st.expr {
+            use_want = false
+            use_ty = self.t_int()
+            if has_want && !want.is_void {
+              use_want = true
+              use_ty = want
+            }
+            result = self.check_expr_flag(e, use_want, use_ty)
+          }
+        } else if k == st_if() && st.else_body.size > 0 {
+          result = self.check_if_value(st, has_want, want)
+        } else {
+          self.check_stmt(st, self.return_type, false)
+          if k == st_return() || k == st_break() || k == st_continue() {
+            result = nil
+          }
+        }
+      } else {
+        self.check_stmt(st, self.return_type, false)
+      }
+      i += 1
+    }
+    self.pop_scope
+    result
+  }
 }
 
 // Whether a C layout has a field that holds a reference (a `String`,
@@ -3937,4 +4047,13 @@ pub fn clayout_holds_ref(t: Ty): Bool {
     }
   }
   false
+}
+
+// Whether a block's last statement leaves it (return, break, continue).
+pub fn arm_leaves(body: Array(Stmt)): Bool {
+  if body.size == 0 {
+    return false
+  }
+  k = body[body.size - 1].kind
+  k == st_return() || k == st_break() || k == st_continue()
 }
