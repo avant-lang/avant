@@ -16,16 +16,11 @@ pub fn (checker_self: Checker) note_modules {
   checker_self.root_module = checker_self.program.root_module
   checker_self.current_module = checker_self.root_module
   km = Hash(String, Int).new
-  i = 0
-  while i < checker_self.program.mods.size {
-    info = checker_self.program.mods[i]
+  for info in checker_self.program.mods {
     km[info.name] = 1
-    j = 0
-    while j < info.imports.size {
-      km[info.imports[j]] = 1
-      j = j + 1
+    for imp in info.imports {
+      km[imp] = 1
     }
-    i = i + 1
   }
   checker_self.known_mods = km
   tm = Hash(String, String).new
@@ -36,34 +31,19 @@ pub fn (checker_self: Checker) note_modules {
   checker_self.type_list = tlist
   tmulti = Hash(String, Int).new
   checker_self.type_multi = tmulti
-  i = 0
-  while i < checker_self.program.structs.size {
-    sdef = checker_self.program.structs[i]
+  for sdef in checker_self.program.structs {
     checker_self.remember_type(sdef.name, sdef.mod_name, sdef.vis)
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.program.classes.size {
-    cdef = checker_self.program.classes[i]
+  for cdef in checker_self.program.classes {
     checker_self.remember_type(cdef.name, cdef.mod_name, cdef.vis)
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.program.interfaces.size {
-    idef = checker_self.program.interfaces[i]
+  for idef in checker_self.program.interfaces {
     checker_self.remember_type(idef.name, idef.mod_name, idef.vis)
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.program.libs.size {
-    lib_def = checker_self.program.libs[i]
-    j = 0
-    while j < lib_def.layouts.size {
-      lay = lib_def.layouts[j]
+  for lib_def in checker_self.program.libs {
+    for lay in lib_def.layouts {
       checker_self.remember_type(lay.name, lib_def.mod_name, lib_def.vis)
-      j = j + 1
     }
-    i = i + 1
   }
 }
 
@@ -138,19 +118,14 @@ pub fn (checker_self: Checker) imported_by(from_mod: String, target: String): Bo
   if from_mod == target {
     return true
   }
-  i = 0
-  while i < checker_self.program.mods.size {
-    info = checker_self.program.mods[i]
+  for info in checker_self.program.mods {
     if info.name == from_mod {
-      j = 0
-      while j < info.imports.size {
-        if info.imports[j] == target {
+      for imp in info.imports {
+        if imp == target {
           return true
         }
-        j = j + 1
       }
     }
-    i = i + 1
   }
   false
 }
@@ -174,13 +149,11 @@ pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, 
   owners = checker_self.mods_of_type(name)
   found = ""
   n = 0
-  i = 0
-  while i < owners.size {
-    if checker_self.type_slot_visible(name, owners[i], from_mod) {
+  for owner in owners {
+    if checker_self.type_slot_visible(name, owner, from_mod) {
       n = n + 1
-      found = owners[i]
+      found = owner
     }
-    i = i + 1
   }
   if n == 1 {
     return found
@@ -272,8 +245,7 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     }
   }
   fn_mods = Hash(String, Int).new
-  i = 1
-  while i < checker_self.functions.size {
+  for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.name == name && checker_self.fn_is_visible(sig.node, from_mod) {
       if seen = fn_mods.get(sig.node.mod_name) {
@@ -282,14 +254,11 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
         origins.push("fn:${sig.node.mod_name}")
       }
     }
-    i = i + 1
   }
   owner_count = 0
   has_type = false
   has_fn = false
-  i = 0
-  while i < origins.size {
-    o = origins[i]
+  for o in origins {
     if o.size >= 5 {
       if str_slice(o, 0, 5) == "type:" {
         owner_count = owner_count + 1
@@ -301,7 +270,6 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
         has_fn = true
       }
     }
-    i = i + 1
   }
   if owner_count > 1 {
     return true
@@ -476,18 +444,14 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
     return
   }
   if ty.is_union {
-    i = 0
-    while i < ty.members.size {
-      checker_self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
-      i = i + 1
+    for mem in ty.members {
+      checker_self.ensure_pub_sig_ty(mem, loc, fnn)
     }
     return
   }
   if ty.is_fn {
-    i = 0
-    while i < ty.members.size {
-      checker_self.ensure_pub_sig_ty(ty.members[i], loc, fnn)
-      i = i + 1
+    for mem in ty.members {
+      checker_self.ensure_pub_sig_ty(mem, loc, fnn)
     }
     if r = ty.inner {
       checker_self.ensure_pub_sig_ty(r, loc, fnn)

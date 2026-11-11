@@ -301,10 +301,8 @@ pub class Checker {
     self.resolver_kept = self.resolver_pulled
     if self.ready_adopt && !self.in_adopt {
       saved: Array(String) = []
-      i = 0
-      while i < self.resolver.tparam_names.size {
-        saved.push(self.resolver.tparam_names[i])
-        i = i + 1
+      for tparam_name in self.resolver.tparam_names {
+        saved.push(tparam_name)
       }
       self.resolver.clear_tparams
       self.adopt_new_types
@@ -636,12 +634,10 @@ pub class Checker {
       if cond = stmt.cond {
         self.push_loop_facts(cond, stmt.then_body)
         self.push_guard_facts(cond)
-        fi = saved_facts
-        while fi < self.facts.fact_var.size {
+        for fi in saved_facts..self.facts.fact_var.size {
           if self.body_shrinks(stmt.then_body, self.facts.fact_cont[fi]) {
             self.facts.fact_live[fi] = 0
           }
-          fi = fi + 1
         }
       }
       self.check_block(stmt.then_body, expected, false)
@@ -1200,15 +1196,12 @@ pub class Checker {
       if ret.is_union {
         succ: Array(Ty) = []
         fails: Array(Ty) = []
-        i = 0
-        while i < got.members.size {
-          m = got.members[i]
+        for m in got.members {
           if ret.includes_member(m) {
             fails.push(m)
           } else {
             succ.push(m)
           }
-          i = i + 1
         }
         if succ.size == 1 && fails.size > 0 {
           return succ[0]
@@ -1228,9 +1221,7 @@ pub class Checker {
   }
 
   pub fn check_interp(expr: Expr): Ty {
-    i = 0
-    while i < expr.parts.size {
-      part = expr.parts[i]
+    for part in expr.parts {
       if inner = part.expr {
         ty = self.check_expr(inner)
         ok = false
@@ -1250,7 +1241,6 @@ pub class Checker {
           self.fail(inner.loc, "cannot interpolate ${ty.show}")
         }
       }
-      i = i + 1
     }
     self.t_string()
   }
@@ -1562,9 +1552,7 @@ pub class Checker {
           return field_ty
         }
         has_zero = false
-        mi = 0
-        while mi < self.methods.size {
-          ms = self.methods[mi]
+        for ms in self.methods {
           owner_hit = false
           if ms.owner == object.name {
             owner_hit = true
@@ -1576,7 +1564,6 @@ pub class Checker {
           if owner_hit && ms.name == expr.ident && arity_ok(ms.node, 0) {
             has_zero = true
           }
-          mi = mi + 1
         }
         if has_zero {
           arg_tys: Array(Ty) = []
@@ -1589,9 +1576,7 @@ pub class Checker {
           return self.t_int()
         }
         has_method = false
-        mi = 0
-        while mi < self.methods.size {
-          ms = self.methods[mi]
+        for ms in self.methods {
           owner_hit = false
           if ms.owner == object.name {
             owner_hit = true
@@ -1603,7 +1588,6 @@ pub class Checker {
           if owner_hit && ms.name == expr.ident {
             has_method = true
           }
-          mi = mi + 1
         }
         if has_method {
           self.fail(expr.loc, "methods are not values")
@@ -1658,13 +1642,10 @@ pub class Checker {
   pub fn builtin_ext_call(expr: Expr, object: Ty): Ty? {
     owner = object.show
     has_zero = false
-    mi = 0
-    while mi < self.methods.size {
-      ms = self.methods[mi]
+    for ms in self.methods {
       if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) && self.method_is_visible(ms.node, self.current_module) {
         has_zero = true
       }
-      mi = mi + 1
     }
     if has_zero {
       arg_tys: Array(Ty) = []
@@ -1749,13 +1730,10 @@ pub class Checker {
       }
     }
     has_zero = false
-    mi = 0
-    while mi < self.methods.size {
-      ms = self.methods[mi]
+    for ms in self.methods {
       if ms.owner == owner && ms.name == expr.ident && arity_ok(ms.node, 0) {
         has_zero = true
       }
-      mi = mi + 1
     }
     if has_zero {
       arg_tys: Array(Ty) = []
@@ -1896,14 +1874,11 @@ pub class Checker {
     if !forced {
       elem_ty = self.check_expr(expr.elems[0])
     }
-    i = 0
-    while i < expr.elems.size {
-      el = expr.elems[i]
+    for el in expr.elems {
       got = self.check_expr_as(el, elem_ty)
       if !ty_assignable(got, elem_ty) {
         self.fail(el.loc, "array element is ${got.show}, expected ${elem_ty.show}")
       }
-      i = i + 1
     }
     ty_array(elem_ty)
   }
@@ -1938,10 +1913,8 @@ pub class Checker {
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
-      i = 0
-      while i < expr.type_args.size {
-        tn.args.push(expr.type_args[i])
-        i = i + 1
+      for type_arg in expr.type_args {
+        tn.args.push(type_arg)
       }
       ty = self.resolve_in_module(tn)
       self.pull_resolve
@@ -1995,14 +1968,11 @@ pub class Checker {
       }
       i = i + 1
     }
-    i = 0
-    while i < ty.fields.size {
-      f = ty.fields[i]
+    for f in ty.fields {
       if prev = seen.get(f.name) {
       } else {
         self.fail(expr.loc, "missing field ${f.name}")
       }
-      i = i + 1
     }
     ty
   }
@@ -2010,9 +1980,7 @@ pub class Checker {
   pub fn find_struct_template(name: String, mod_name: String): StructDef? {
     found: StructDef? = nil
     count = 0
-    i = 0
-    while i < self.program.structs.size {
-      sdef = self.program.structs[i]
+    for sdef in self.program.structs {
       if sdef.name == name && sdef.type_params.size > 0 {
         if mod_name.size > 0 {
           if sdef.mod_name == mod_name {
@@ -2023,7 +1991,6 @@ pub class Checker {
           found = sdef
         }
       }
-      i = i + 1
     }
     if mod_name.size > 0 {
       return nil
@@ -2037,9 +2004,7 @@ pub class Checker {
   pub fn find_class_template(name: String, mod_name: String): ClassDef? {
     found: ClassDef? = nil
     count = 0
-    i = 0
-    while i < self.program.classes.size {
-      cdef = self.program.classes[i]
+    for cdef in self.program.classes {
       if cdef.name == name && cdef.type_params.size > 0 {
         if mod_name.size > 0 {
           if cdef.mod_name == mod_name {
@@ -2050,7 +2015,6 @@ pub class Checker {
           found = cdef
         }
       }
-      i = i + 1
     }
     if mod_name.size > 0 {
       return nil
@@ -2146,12 +2110,10 @@ pub class Checker {
       }
       seen[fname] = 1
       pat: Ty? = nil
-      j = 0
-      while j < names.size {
+      for j in 0..names.size {
         if names[j] == fname {
           pat = patterns[j]
         }
-        j = j + 1
       }
       if p = pat {
         pat_ty = self.subst_ty(p, keys, vals)
@@ -2171,23 +2133,18 @@ pub class Checker {
       if self.has_err {
         return self.t_int()
       }
-      i = 0
-      while i < got_names.size {
+      for i in 0..got_names.size {
         if field_ty = ty.field_named(got_names[i]) {
           if !ty_assignable(gots[i], field_ty) {
             self.fail(expr.loc, "field ${got_names[i]} is ${gots[i].show}, expected ${field_ty.show}")
           }
         }
-        i = i + 1
       }
-      i = 0
-      while i < ty.fields.size {
-        f = ty.fields[i]
+      for f in ty.fields {
         if prev = seen.get(f.name) {
         } else {
           self.fail(expr.loc, "missing field ${f.name}")
         }
-        i = i + 1
       }
       return ty
     }
@@ -2463,13 +2420,10 @@ pub class Checker {
         opname = binary_op_method_name(op)
         if opname.size > 0 && left.is_agg {
           has_op = false
-          mi = 0
-          while mi < self.methods.size {
-            ms = self.methods[mi]
+          for ms in self.methods {
             if ms.owner == left.name && ms.name == opname {
               has_op = true
             }
-            mi = mi + 1
           }
           if has_op {
             right = self.check_expr(r)
@@ -2970,10 +2924,8 @@ pub class Checker {
         if recv.type_args.size > 0 {
           tn = TypeName.new(recv.loc, recv.ident)
           tn.mod_name = recv.mod_name
-          i = 0
-          while i < recv.type_args.size {
-            tn.args.push(recv.type_args[i])
-            i = i + 1
+          for type_arg in recv.type_args {
+            tn.args.push(type_arg)
           }
           ty = self.resolve_in_module(tn)
           self.pull_resolve
@@ -3008,12 +2960,10 @@ pub class Checker {
   }
 
   pub fn template_initialize(cdef: ClassDef): Function? {
-    i = 0
-    while i < cdef.methods.size {
-      if cdef.methods[i].name == "initialize" {
-        return cdef.methods[i]
+    for method in cdef.methods {
+      if method.name == "initialize" {
+        return method
       }
-      i = i + 1
     }
     nil
   }
@@ -3077,15 +3027,12 @@ pub class Checker {
     if ty.is_class {
       shown = ty.show
       has_init = false
-      mi = 0
-      while mi < self.methods.size {
-        ms = self.methods[mi]
+      for ms in self.methods {
         if ms.owner == ty.name {
           if ms.name == "initialize" {
             has_init = true
           }
         }
-        mi = mi + 1
       }
       if has_init {
         arg_tys: Array(Ty) = []
@@ -3152,8 +3099,7 @@ pub class Checker {
       if self.has_err {
         return ty_c_view(sig.ret)
       }
-      i = 0
-      while i < expr.args.size {
+      for i in 0..expr.args.size {
         if sig.params[i].is_fn {
           arg = expr.args[i]
           if arg.kind == ex_lambda() {
@@ -3164,7 +3110,6 @@ pub class Checker {
             self.fail(arg.loc, "C callback must be a function name or a lambda that captures nothing")
           }
         }
-        i = i + 1
       }
       expr.lib_name = lib_name
       return ty_c_view(sig.ret)
@@ -3221,13 +3166,11 @@ pub class Checker {
       segs = recv.mod_name.split(".")
       path = Expr.new(ex_name(), recv.loc)
       path.ident = segs[0]
-      i = 1
-      while i < segs.size {
+      for i in 1..segs.size {
         fa = Expr.new(ex_field(), recv.loc)
         fa.object = path
         fa.ident = segs[i]
         path = fa
-        i = i + 1
       }
       call.receiver = path
     }
@@ -3239,10 +3182,8 @@ pub class Checker {
       }
       return call
     }
-    i = 0
-    while i < recv.type_args.size {
-      call.args.push(self.type_name_as_expr(recv.type_args[i]))
-      i = i + 1
+    for type_arg in recv.type_args {
+      call.args.push(self.type_name_as_expr(type_arg))
     }
     call
   }
@@ -3280,13 +3221,11 @@ pub class Checker {
 
   pub fn join_segs(segs: Array(String), n: Int): String {
     buf = buf_new()
-    i = 0
-    while i < n {
+    for i in 0..n {
       if i > 0 {
         buf.push_str(".")
       }
       buf.push_str(segs[i])
-      i = i + 1
     }
     buf.to_s
   }
@@ -3403,13 +3342,11 @@ pub class Checker {
       return self.check_constructor(expr, recv, has_want, want)
     }
     if expr.callee == "send" {
-      i = 0
-      while i < expr.args.size {
-        if self.expr_is_place(expr.args[i]) {
-          self.fail(expr.args[i].loc, "mutex place cannot escape")
+      for arg in expr.args {
+        if self.expr_is_place(arg) {
+          self.fail(arg.loc, "mutex place cannot escape")
           return self.t_void()
         }
-        i = i + 1
       }
     }
     if recv.kind == ex_name() {
@@ -3492,22 +3429,17 @@ pub class Checker {
       }
     }
     seen = Hash(Int, Int).new
-    i = 0
-    while i < expr.cases.size {
-      arm = expr.cases[i]
+    for arm in expr.cases {
       if arm.labels.size == 0 {
         self.fail(arm.loc, "case needs a label")
       }
-      j = 0
-      while j < arm.labels.size {
-        lab = arm.labels[j].to_i
+      for label in arm.labels {
+        lab = label.to_i
         if prev = seen.get(lab) {
           self.fail(arm.loc, "duplicate case ${lab}")
         }
         seen[lab] = 1
-        j = j + 1
       }
-      i = i + 1
     }
     branch_tys: Array(Ty) = []
     i = 0
@@ -3520,14 +3452,12 @@ pub class Checker {
     }
     all_void = true
     any_void = false
-    i = 0
-    while i < branch_tys.size {
+    for i in 0..branch_tys.size {
       if branch_tys[i].is_void {
         any_void = true
       } else {
         all_void = false
       }
-      i = i + 1
     }
     if all_void {
       return self.t_void()
@@ -3541,12 +3471,10 @@ pub class Checker {
       return self.t_int()
     }
     if has_want && !want.is_void {
-      i = 0
-      while i < branch_tys.size {
-        if !ty_assignable(branch_tys[i], want) {
-          self.fail(expr.loc, "switch branch is ${branch_tys[i].show}, expected ${want.show}")
+      for branch_ty in branch_tys {
+        if !ty_assignable(branch_ty, want) {
+          self.fail(expr.loc, "switch branch is ${branch_ty.show}, expected ${want.show}")
         }
-        i = i + 1
       }
       return want
     }
@@ -3554,12 +3482,10 @@ pub class Checker {
       return self.t_void()
     }
     result = branch_tys[0]
-    i = 0
-    while i < branch_tys.size {
-      if !branch_tys[i].same_as(result) {
-        self.fail(expr.loc, "switch branches have different types ${result.show} and ${branch_tys[i].show}")
+    for branch_ty in branch_tys {
+      if !branch_ty.same_as(result) {
+        self.fail(expr.loc, "switch branches have different types ${result.show} and ${branch_ty.show}")
       }
-      i = i + 1
     }
     result
   }
@@ -3837,16 +3763,14 @@ pub class Checker {
 // Whether a C layout has a field that holds a reference (a `String`,
 // directly or in a nested layout): what `release` gives back (D266).
 pub fn clayout_holds_ref(t: Ty): Bool {
-  i = 0
-  while i < t.fields.size {
-    ft = t.fields[i].ty
+  for field in t.fields {
+    ft = field.ty
     if ft.is_string {
       return true
     }
     if ft.is_clayout && clayout_holds_ref(ft) {
       return true
     }
-    i = i + 1
   }
   false
 }

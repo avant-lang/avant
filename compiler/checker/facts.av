@@ -25,12 +25,10 @@ pub fn (checker_self: Checker) nn_add(name: String) {
 
 pub fn (checker_self: Checker) nn_remove(name: String) {
   kept: Array(String) = []
-  i = 0
-  while i < checker_self.facts.nn_var.size {
+  for i in 0..checker_self.facts.nn_var.size {
     if checker_self.facts.nn_var[i] != name {
       kept.push(checker_self.facts.nn_var[i])
     }
-    i = i + 1
   }
   checker_self.facts.nn_var = kept
 }
@@ -153,62 +151,52 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
       }
     }
   }
-  i = 0
-  while i < s.then_body.size {
-    got = checker_self.stmt_vstep(s.then_body[i], ivar)
+  for st in s.then_body {
+    got = checker_self.stmt_vstep(st, ivar)
     if got == 0 - 2 {
       return 0 - 2
     }
     if got > 0 {
       return got
     }
-    i = i + 1
   }
-  i = 0
-  while i < s.else_body.size {
-    got = checker_self.stmt_vstep(s.else_body[i], ivar)
+  for st in s.else_body {
+    got = checker_self.stmt_vstep(st, ivar)
     if got == 0 - 2 {
       return 0 - 2
     }
     if got > 0 {
       return got
     }
-    i = i + 1
   }
-  i = 0
-  while i < s.body.size {
-    got = checker_self.stmt_vstep(s.body[i], ivar)
+  for st in s.body {
+    got = checker_self.stmt_vstep(st, ivar)
     if got == 0 - 2 {
       return 0 - 2
     }
     if got > 0 {
       return got
     }
-    i = i + 1
   }
   -1
 }
 
 pub fn (checker_self: Checker) sv_put(v: String, cont: String) {
-  i = 0
-  while i < checker_self.facts.sv_var.size {
+  for i in 0..checker_self.facts.sv_var.size {
     if checker_self.facts.sv_var[i] == v {
       checker_self.facts.sv_cont[i] = cont
       return
     }
-    i = i + 1
   }
   checker_self.facts.sv_var.push(v)
   checker_self.facts.sv_cont.push(cont)
 }
 
 pub fn (checker_self: Checker) sv_get(v: String): String {
-  i = 0
-  while i < checker_self.facts.sv_var.size {
+  for i in 0..checker_self.facts.sv_var.size {
     if checker_self.facts.sv_var[i] == v {
       return checker_self.facts.sv_cont[i]
     }
-    i = i + 1
   }
   ""
 }
@@ -216,13 +204,11 @@ pub fn (checker_self: Checker) sv_get(v: String): String {
 pub fn (checker_self: Checker) sv_remove_var(v: String) {
   kept_v: Array(String) = []
   kept_c: Array(String) = []
-  i = 0
-  while i < checker_self.facts.sv_var.size {
+  for i in 0..checker_self.facts.sv_var.size {
     if checker_self.facts.sv_var[i] != v {
       kept_v.push(checker_self.facts.sv_var[i])
       kept_c.push(checker_self.facts.sv_cont[i])
     }
-    i = i + 1
   }
   checker_self.facts.sv_var = kept_v
   checker_self.facts.sv_cont = kept_c
@@ -230,50 +216,42 @@ pub fn (checker_self: Checker) sv_remove_var(v: String) {
 
 pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
   best = 0 - 1
-  i = 0
-  while i < checker_self.facts.fact_var.size {
+  for i in 0..checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_cont[i] == cont && checker_self.facts.fact_slack[i] > best {
       best = checker_self.facts.fact_slack[i]
     }
-    i = i + 1
   }
   best
 }
 
 pub fn (checker_self: Checker) fact_any_slack(v: String): Int {
   best = 0 - 1
-  i = 0
-  while i < checker_self.facts.fact_var.size {
+  for i in 0..checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_slack[i] > best {
       best = checker_self.facts.fact_slack[i]
     }
-    i = i + 1
   }
   best
 }
 
 pub fn (checker_self: Checker) kill_facts_for(v: String) {
-  i = 0
-  while i < checker_self.facts.fact_var.size {
+  for i in 0..checker_self.facts.fact_var.size {
     if checker_self.facts.fact_var[i] == v {
       checker_self.facts.fact_live[i] = 0
     }
     if checker_self.facts.fact_cont[i] == v {
       checker_self.facts.fact_live[i] = 0
     }
-    i = i + 1
   }
 }
 
 pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int) {
-  i = 0
-  while i < checker_self.facts.bv_var.size {
+  for i in 0..checker_self.facts.bv_var.size {
     if checker_self.facts.bv_var[i] == v {
       checker_self.facts.bv_cont[i] = cont
       checker_self.facts.bv_delta[i] = delta
       return
     }
-    i = i + 1
   }
   checker_self.facts.bv_var.push(v)
   checker_self.facts.bv_cont.push(cont)
@@ -281,23 +259,19 @@ pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int) {
 }
 
 pub fn (checker_self: Checker) bv_get(v: String): String {
-  i = 0
-  while i < checker_self.facts.bv_var.size {
+  for i in 0..checker_self.facts.bv_var.size {
     if checker_self.facts.bv_var[i] == v {
       return checker_self.facts.bv_cont[i]
     }
-    i = i + 1
   }
   ""
 }
 
 pub fn (checker_self: Checker) bv_delta_of(v: String): Int {
-  i = 0
-  while i < checker_self.facts.bv_var.size {
+  for i in 0..checker_self.facts.bv_var.size {
     if checker_self.facts.bv_var[i] == v {
       return checker_self.facts.bv_delta[i]
     }
-    i = i + 1
   }
   0
 }
@@ -306,14 +280,12 @@ pub fn (checker_self: Checker) bv_remove_var(v: String) {
   kept_v: Array(String) = []
   kept_c: Array(String) = []
   kept_d: Array(Int) = []
-  i = 0
-  while i < checker_self.facts.bv_var.size {
+  for i in 0..checker_self.facts.bv_var.size {
     if checker_self.facts.bv_var[i] != v {
       kept_v.push(checker_self.facts.bv_var[i])
       kept_c.push(checker_self.facts.bv_cont[i])
       kept_d.push(checker_self.facts.bv_delta[i])
     }
-    i = i + 1
   }
   checker_self.facts.bv_var = kept_v
   checker_self.facts.bv_cont = kept_c
@@ -321,14 +293,12 @@ pub fn (checker_self: Checker) bv_remove_var(v: String) {
 }
 
 pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int) {
-  i = 0
-  while i < checker_self.facts.cs_cont.size {
+  for i in 0..checker_self.facts.cs_cont.size {
     if checker_self.facts.cs_cont[i] == cont {
       checker_self.facts.cs_var[i] = v
       checker_self.facts.cs_delta[i] = delta
       return
     }
-    i = i + 1
   }
   checker_self.facts.cs_cont.push(cont)
   checker_self.facts.cs_var.push(v)
@@ -336,23 +306,19 @@ pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int) {
 }
 
 pub fn (checker_self: Checker) cs_cont_of_var(v: String): String {
-  i = 0
-  while i < checker_self.facts.cs_var.size {
+  for i in 0..checker_self.facts.cs_var.size {
     if checker_self.facts.cs_var[i] == v {
       return checker_self.facts.cs_cont[i]
     }
-    i = i + 1
   }
   ""
 }
 
 pub fn (checker_self: Checker) cs_delta_of_var(v: String): Int {
-  i = 0
-  while i < checker_self.facts.cs_var.size {
+  for i in 0..checker_self.facts.cs_var.size {
     if checker_self.facts.cs_var[i] == v {
       return checker_self.facts.cs_delta[i]
     }
-    i = i + 1
   }
   0
 }
@@ -573,12 +539,10 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
     }
   }
   checker_self.cap_kill_captures_stmt(stmt)
-  i = 0
-  while i < checker_self.facts.fact_var.size {
+  for i in 0..checker_self.facts.fact_var.size {
     if checker_self.facts.fact_live[i] == 1 && checker_self.deep_shrinks_stmt(stmt, checker_self.facts.fact_cont[i]) {
       checker_self.facts.fact_live[i] = 0
     }
-    i = i + 1
   }
 }
 
@@ -610,26 +574,20 @@ pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
       return true
     }
   }
-  i = 0
-  while i < s.then_body.size {
-    if checker_self.deep_shrinks_stmt(s.then_body[i], cont) {
+  for st in s.then_body {
+    if checker_self.deep_shrinks_stmt(st, cont) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < s.else_body.size {
-    if checker_self.deep_shrinks_stmt(s.else_body[i], cont) {
+  for st in s.else_body {
+    if checker_self.deep_shrinks_stmt(st, cont) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < s.body.size {
-    if checker_self.deep_shrinks_stmt(s.body[i], cont) {
+  for st in s.body {
+    if checker_self.deep_shrinks_stmt(st, cont) {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -669,26 +627,20 @@ pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
       return true
     }
   }
-  i = 0
-  while i < e.args.size {
-    if checker_self.deep_shrinks_expr(e.args[i], cont) {
+  for arg in e.args {
+    if checker_self.deep_shrinks_expr(arg, cont) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.elems.size {
-    if checker_self.deep_shrinks_expr(e.elems[i], cont) {
+  for elem in e.elems {
+    if checker_self.deep_shrinks_expr(elem, cont) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.field_exprs.size {
-    if checker_self.deep_shrinks_expr(e.field_exprs[i], cont) {
+  for field_expr in e.field_exprs {
+    if checker_self.deep_shrinks_expr(field_expr, cont) {
       return true
     }
-    i = i + 1
   }
   if sz = e.size_expr {
     if checker_self.deep_shrinks_expr(sz, cont) {
@@ -701,42 +653,30 @@ pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
     }
   }
   if b = e.block {
-    j = 0
-    while j < b.body.size {
-      if checker_self.deep_shrinks_stmt(b.body[j], cont) {
+    for st in b.body {
+      if checker_self.deep_shrinks_stmt(st, cont) {
         return true
       }
-      j = j + 1
     }
   }
-  i = 0
-  while i < e.cases.size {
-    cs = e.cases[i]
-    j = 0
-    while j < cs.body.size {
-      if checker_self.deep_shrinks_stmt(cs.body[j], cont) {
+  for cs in e.cases {
+    for st in cs.body {
+      if checker_self.deep_shrinks_stmt(st, cont) {
         return true
       }
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.else_body.size {
-    if checker_self.deep_shrinks_stmt(e.else_body[i], cont) {
+  for st in e.else_body {
+    if checker_self.deep_shrinks_stmt(st, cont) {
       return true
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.parts.size {
-    part = e.parts[i]
+  for part in e.parts {
     if inner = part.expr {
       if checker_self.deep_shrinks_expr(inner, cont) {
         return true
       }
     }
-    i = i + 1
   }
   false
 }
@@ -803,26 +743,20 @@ pub fn (checker_self: Checker) deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
       return false
     }
   }
-  i = 0
-  while i < s.then_body.size {
-    if !checker_self.deep_ivar_ok_stmt(s.then_body[i], ivar) {
+  for st in s.then_body {
+    if !checker_self.deep_ivar_ok_stmt(st, ivar) {
       return false
     }
-    i = i + 1
   }
-  i = 0
-  while i < s.else_body.size {
-    if !checker_self.deep_ivar_ok_stmt(s.else_body[i], ivar) {
+  for st in s.else_body {
+    if !checker_self.deep_ivar_ok_stmt(st, ivar) {
       return false
     }
-    i = i + 1
   }
-  i = 0
-  while i < s.body.size {
-    if !checker_self.deep_ivar_ok_stmt(s.body[i], ivar) {
+  for st in s.body {
+    if !checker_self.deep_ivar_ok_stmt(st, ivar) {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -853,26 +787,20 @@ pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
       return false
     }
   }
-  i = 0
-  while i < e.args.size {
-    if !checker_self.deep_ivar_ok_expr(e.args[i], ivar) {
+  for arg in e.args {
+    if !checker_self.deep_ivar_ok_expr(arg, ivar) {
       return false
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.elems.size {
-    if !checker_self.deep_ivar_ok_expr(e.elems[i], ivar) {
+  for elem in e.elems {
+    if !checker_self.deep_ivar_ok_expr(elem, ivar) {
       return false
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.field_exprs.size {
-    if !checker_self.deep_ivar_ok_expr(e.field_exprs[i], ivar) {
+  for field_expr in e.field_exprs {
+    if !checker_self.deep_ivar_ok_expr(field_expr, ivar) {
       return false
     }
-    i = i + 1
   }
   if sz = e.size_expr {
     if !checker_self.deep_ivar_ok_expr(sz, ivar) {
@@ -885,32 +813,23 @@ pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
     }
   }
   if b = e.block {
-    j = 0
-    while j < b.body.size {
-      if !checker_self.deep_ivar_ok_stmt(b.body[j], ivar) {
+    for st in b.body {
+      if !checker_self.deep_ivar_ok_stmt(st, ivar) {
         return false
       }
-      j = j + 1
     }
   }
-  i = 0
-  while i < e.cases.size {
-    cs = e.cases[i]
-    j = 0
-    while j < cs.body.size {
-      if !checker_self.deep_ivar_ok_stmt(cs.body[j], ivar) {
+  for cs in e.cases {
+    for st in cs.body {
+      if !checker_self.deep_ivar_ok_stmt(st, ivar) {
         return false
       }
-      j = j + 1
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.else_body.size {
-    if !checker_self.deep_ivar_ok_stmt(e.else_body[i], ivar) {
+  for st in e.else_body {
+    if !checker_self.deep_ivar_ok_stmt(st, ivar) {
       return false
     }
-    i = i + 1
   }
   true
 }
@@ -1105,25 +1024,21 @@ pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
 }
 
 pub fn (checker_self: Checker) cap_put(name: String, val: Int64) {
-  i = 0
-  while i < checker_self.facts.cap_var.size {
+  for i in 0..checker_self.facts.cap_var.size {
     if checker_self.facts.cap_var[i] == name {
       checker_self.facts.cap_val[i] = val
       return
     }
-    i = i + 1
   }
   checker_self.facts.cap_var.push(name)
   checker_self.facts.cap_val.push(val)
 }
 
 pub fn (checker_self: Checker) cap_get(name: String): Int64 {
-  i = 0
-  while i < checker_self.facts.cap_var.size {
+  for i in 0..checker_self.facts.cap_var.size {
     if checker_self.facts.cap_var[i] == name {
       return checker_self.facts.cap_val[i]
     }
-    i = i + 1
   }
   0i64 - 1i64
 }
@@ -1131,13 +1046,11 @@ pub fn (checker_self: Checker) cap_get(name: String): Int64 {
 pub fn (checker_self: Checker) cap_remove(name: String) {
   kept_v: Array(String) = []
   kept_c: Array(Int64) = []
-  i = 0
-  while i < checker_self.facts.cap_var.size {
+  for i in 0..checker_self.facts.cap_var.size {
     if checker_self.facts.cap_var[i] != name {
       kept_v.push(checker_self.facts.cap_var[i])
       kept_c.push(checker_self.facts.cap_val[i])
     }
-    i = i + 1
   }
   checker_self.facts.cap_var = kept_v
   checker_self.facts.cap_val = kept_c
@@ -1151,12 +1064,10 @@ pub fn (checker_self: Checker) gcap_put(name: String, val: Int64) {
 
 pub fn (checker_self: Checker) gcap_get(name: String): Int64 {
   best = 0i64 - 1i64
-  i = 0
-  while i < checker_self.facts.gcap_var.size {
+  for i in 0..checker_self.facts.gcap_var.size {
     if checker_self.facts.gcap_live[i] == 1 && checker_self.facts.gcap_var[i] == name && (best < 0i64 || checker_self.facts.gcap_val[i] < best) {
       best = checker_self.facts.gcap_val[i]
     }
-    i = i + 1
   }
   best
 }
@@ -1192,34 +1103,28 @@ pub fn (checker_self: Checker) gne_put(name: String) {
 }
 
 pub fn (checker_self: Checker) gnn_has(name: String): Bool {
-  i = 0
-  while i < checker_self.facts.gnn_var.size {
+  for i in 0..checker_self.facts.gnn_var.size {
     if checker_self.facts.gnn_live[i] == 1 && checker_self.facts.gnn_var[i] == name {
       return true
     }
-    i = i + 1
   }
   false
 }
 
 pub fn (checker_self: Checker) gpos_has(name: String): Bool {
-  i = 0
-  while i < checker_self.facts.gpos_var.size {
+  for i in 0..checker_self.facts.gpos_var.size {
     if checker_self.facts.gpos_live[i] == 1 && checker_self.facts.gpos_var[i] == name {
       return true
     }
-    i = i + 1
   }
   false
 }
 
 pub fn (checker_self: Checker) gne_has(name: String): Bool {
-  i = 0
-  while i < checker_self.facts.gne_var.size {
+  for i in 0..checker_self.facts.gne_var.size {
     if checker_self.facts.gne_live[i] == 1 && checker_self.facts.gne_var[i] == name {
       return true
     }
-    i = i + 1
   }
   false
 }
@@ -1232,33 +1137,25 @@ pub fn (checker_self: Checker) nn_proven(name: String): Bool {
 }
 
 pub fn (checker_self: Checker) cap_kill_guards(name: String) {
-  i = 0
-  while i < checker_self.facts.gcap_var.size {
+  for i in 0..checker_self.facts.gcap_var.size {
     if checker_self.facts.gcap_var[i] == name {
       checker_self.facts.gcap_live[i] = 0
     }
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.facts.gnn_var.size {
+  for i in 0..checker_self.facts.gnn_var.size {
     if checker_self.facts.gnn_var[i] == name {
       checker_self.facts.gnn_live[i] = 0
     }
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.facts.gpos_var.size {
+  for i in 0..checker_self.facts.gpos_var.size {
     if checker_self.facts.gpos_var[i] == name {
       checker_self.facts.gpos_live[i] = 0
     }
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.facts.gne_var.size {
+  for i in 0..checker_self.facts.gne_var.size {
     if checker_self.facts.gne_var[i] == name {
       checker_self.facts.gne_live[i] = 0
     }
-    i = i + 1
   }
 }
 
@@ -1758,15 +1655,12 @@ pub fn (checker_self: Checker) cap_collect_assigned_expr(e: Expr, into: Array(St
       j = j + 1
     }
   }
-  i = 0
-  while i < e.cases.size {
-    cs = e.cases[i]
+  for cs in e.cases {
     j = 0
     while j < cs.body.size {
       checker_self.cap_collect_assigned_stmt(cs.body[j], into)
       j = j + 1
     }
-    i = i + 1
   }
   i = 0
   while i < e.else_body.size {
@@ -1842,34 +1736,24 @@ pub fn (checker_self: Checker) cap_kill_captures_rest(s: Stmt) {
   if v = s.value {
     checker_self.cap_kill_captures_expr(v)
   }
-  i = 0
-  while i < s.then_body.size {
-    checker_self.cap_kill_captures_rest(s.then_body[i])
-    i = i + 1
+  for st in s.then_body {
+    checker_self.cap_kill_captures_rest(st)
   }
-  i = 0
-  while i < s.else_body.size {
-    checker_self.cap_kill_captures_rest(s.else_body[i])
-    i = i + 1
+  for st in s.else_body {
+    checker_self.cap_kill_captures_rest(st)
   }
-  i = 0
-  while i < s.body.size {
-    checker_self.cap_kill_captures_rest(s.body[i])
-    i = i + 1
+  for st in s.body {
+    checker_self.cap_kill_captures_rest(st)
   }
-  i = 0
-  while i < s.pre.size {
-    checker_self.cap_kill_captures_rest(s.pre[i])
-    i = i + 1
+  for st in s.pre {
+    checker_self.cap_kill_captures_rest(st)
   }
 }
 
 pub fn (checker_self: Checker) cap_kill_captures_expr(e: Expr) {
-  i = 0
-  while i < e.cap_names.size {
-    checker_self.cap_remove(e.cap_names[i])
-    checker_self.cap_kill_guards(e.cap_names[i])
-    i = i + 1
+  for cap_name in e.cap_names {
+    checker_self.cap_remove(cap_name)
+    checker_self.cap_kill_guards(cap_name)
   }
   if inner = e.inner {
     checker_self.cap_kill_captures_expr(inner)
@@ -1886,20 +1770,14 @@ pub fn (checker_self: Checker) cap_kill_captures_expr(e: Expr) {
   if recv = e.receiver {
     checker_self.cap_kill_captures_expr(recv)
   }
-  i = 0
-  while i < e.args.size {
-    checker_self.cap_kill_captures_expr(e.args[i])
-    i = i + 1
+  for arg in e.args {
+    checker_self.cap_kill_captures_expr(arg)
   }
-  i = 0
-  while i < e.elems.size {
-    checker_self.cap_kill_captures_expr(e.elems[i])
-    i = i + 1
+  for elem in e.elems {
+    checker_self.cap_kill_captures_expr(elem)
   }
-  i = 0
-  while i < e.field_exprs.size {
-    checker_self.cap_kill_captures_expr(e.field_exprs[i])
-    i = i + 1
+  for field_expr in e.field_exprs {
+    checker_self.cap_kill_captures_expr(field_expr)
   }
   if sz = e.size_expr {
     checker_self.cap_kill_captures_expr(sz)
@@ -1908,33 +1786,21 @@ pub fn (checker_self: Checker) cap_kill_captures_expr(e: Expr) {
     checker_self.cap_kill_captures_expr(c)
   }
   if b = e.block {
-    j = 0
-    while j < b.body.size {
-      checker_self.cap_kill_captures_rest(b.body[j])
-      j = j + 1
+    for st in b.body {
+      checker_self.cap_kill_captures_rest(st)
     }
   }
-  i = 0
-  while i < e.cases.size {
-    cs = e.cases[i]
-    j = 0
-    while j < cs.body.size {
-      checker_self.cap_kill_captures_rest(cs.body[j])
-      j = j + 1
+  for cs in e.cases {
+    for st in cs.body {
+      checker_self.cap_kill_captures_rest(st)
     }
-    i = i + 1
   }
-  i = 0
-  while i < e.else_body.size {
-    checker_self.cap_kill_captures_rest(e.else_body[i])
-    i = i + 1
+  for st in e.else_body {
+    checker_self.cap_kill_captures_rest(st)
   }
-  i = 0
-  while i < e.parts.size {
-    part = e.parts[i]
+  for part in e.parts {
     if inner2 = part.expr {
       checker_self.cap_kill_captures_expr(inner2)
     }
-    i = i + 1
   }
 }

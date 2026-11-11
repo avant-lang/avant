@@ -37,14 +37,11 @@ pub fn (checker_self: Checker) symbol_table: SymbolTable {
     }
     i = i + 1
   }
-  i = 0
-  while i < checker_self.methods.size {
-    sig = checker_self.methods[i]
+  for sig in checker_self.methods {
     if sig.node.generic {
     } else if !checker_self.resolver.has_template(sig.owner) {
       table.add_method(sig)
     }
-    i = i + 1
   }
   i = 0
   while i < checker_self.cfuns.size {
@@ -56,9 +53,7 @@ pub fn (checker_self: Checker) symbol_table: SymbolTable {
 
 pub fn (checker_self: Checker) check_trailing_defaults(fnn: Function) {
   seen = false
-  i = 0
-  while i < fnn.params.size {
-    p = fnn.params[i]
+  for p in fnn.params {
     if d = p.default {
       seen = true
     } else {
@@ -67,77 +62,61 @@ pub fn (checker_self: Checker) check_trailing_defaults(fnn: Function) {
         return
       }
     }
-    i = i + 1
   }
 }
 
 pub fn (checker_self: Checker) count_named_fns(name: String): Int {
   n = 0
-  i = 1
-  while i < checker_self.functions.size {
+  for i in 1..checker_self.functions.size {
     if checker_self.functions[i].name == name {
       n = n + 1
     }
-    i = i + 1
   }
   n
 }
 
 pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, owner_mod: String): Int {
   n = 0
-  i = 0
-  while i < checker_self.methods.size {
-    sig = checker_self.methods[i]
+  for sig in checker_self.methods {
     if sig.owner == owner && sig.node.owner_mod == owner_mod && sig.name == name {
       n = n + 1
     }
-    i = i + 1
   }
   n
 }
 
 pub fn (checker_self: Checker) find_sig_by_node(fnn: Function): FuncSig? {
-  i = 1
-  while i < checker_self.functions.size {
+  for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.node.ol_index == fnn.ol_index {
       return sig
     }
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.methods.size {
-    sig = checker_self.methods[i]
+  for sig in checker_self.methods {
     if sig.node.ol_index == fnn.ol_index {
       return sig
     }
-    i = i + 1
   }
   nil
 }
 
 pub fn (checker_self: Checker) find_instance(emit: String): Function? {
-  i = 0
-  while i < checker_self.instances.size {
-    inst = checker_self.instances[i]
+  for inst in checker_self.instances {
     if inst.emit_name == emit {
       return inst
     }
-    i = i + 1
   }
   nil
 }
 
 pub fn (checker_self: Checker) assign_emit_names {
-  i = 1
-  while i < checker_self.functions.size {
+  for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if !sig.node.generic {
       name = sig.name
       if name == "main" {
         nroot = 0
-        j = 1
-        while j < checker_self.functions.size {
+        for j in 1..checker_self.functions.size {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             if other.node.mod_name == checker_self.root_module {
@@ -152,7 +131,6 @@ pub fn (checker_self: Checker) assign_emit_names {
               }
             }
           }
-          j = j + 1
         }
         if nroot > 1 {
           checker_self.fail(sig.node.loc, "function ${name} is already defined")
@@ -161,8 +139,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       }
       if name == "run" {
         nroot = 0
-        j = 1
-        while j < checker_self.functions.size {
+        for j in 1..checker_self.functions.size {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             if other.node.mod_name == checker_self.root_module {
@@ -177,7 +154,6 @@ pub fn (checker_self: Checker) assign_emit_names {
               }
             }
           }
-          j = j + 1
         }
         if nroot > 1 {
           checker_self.fail(sig.node.loc, "function ${name} is already defined")
@@ -185,23 +161,19 @@ pub fn (checker_self: Checker) assign_emit_names {
         }
       }
       mods: Array(String) = []
-      j = 1
-      while j < checker_self.functions.size {
+      for j in 1..checker_self.functions.size {
         other = checker_self.functions[j]
         if !other.node.generic && other.name == name {
           found = false
-          m = 0
-          while m < mods.size {
-            if mods[m] == other.node.mod_name {
+          for mod in mods {
+            if mod == other.node.mod_name {
               found = true
             }
-            m = m + 1
           }
           if !found {
             mods.push(other.node.mod_name)
           }
         }
-        j = j + 1
       }
       base = name
       if mods.size > 1 && !sig.node.vis && sig.node.mod_name.size > 0 {
@@ -225,13 +197,11 @@ pub fn (checker_self: Checker) assign_emit_names {
         j = j + 1
       }
       if g == 0 {
-        j = 1
-        while j < checker_self.functions.size {
+        for j in 1..checker_self.functions.size {
           other = checker_self.functions[j]
           if !other.node.generic && other.name == name {
             g = g + 1
           }
-          j = j + 1
         }
       }
       if g <= 1 {
@@ -240,11 +210,8 @@ pub fn (checker_self: Checker) assign_emit_names {
         sig.node.emit_name = sig_mangle(base, sig.params)
       }
     }
-    i = i + 1
   }
-  i = 0
-  while i < checker_self.methods.size {
-    sig = checker_self.methods[i]
+  for sig in checker_self.methods {
     if !sig.node.generic {
       name = sig.name
       owner = sig.owner
@@ -256,13 +223,10 @@ pub fn (checker_self: Checker) assign_emit_names {
         }
       }
       n = 0
-      j = 0
-      while j < checker_self.methods.size {
-        other = checker_self.methods[j]
+      for other in checker_self.methods {
         if !other.node.generic && other.owner == owner && other.node.owner_mod == owner_mod && other.name == name {
           n = n + 1
         }
-        j = j + 1
       }
       shown = owner
       if flag = checker_self.resolver.collide.get(owner) {
@@ -275,7 +239,6 @@ pub fn (checker_self: Checker) assign_emit_names {
         sig.node.emit_name = sig_mangle("${shown}__${sanitized}", sig.params)
       }
     }
-    i = i + 1
   }
 }
 
@@ -290,11 +253,9 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.resolver = load_types(checker_self.program)
   checker_self.pull_resolve
   checker_self.note_modules
-  i = 0
-  while i < checker_self.program.libs.size {
+  for lb in checker_self.program.libs {
     checker_self.clear_poison
-    checker_self.register_lib(checker_self.program.libs[i])
-    i = i + 1
+    checker_self.register_lib(lb)
   }
   i = 0
   while i < checker_self.program.functions.size {
@@ -324,8 +285,7 @@ pub fn (checker_self: Checker) check: Program {
     return checker_self.program
   }
   has_entry = false
-  i = 1
-  while i < checker_self.functions.size {
+  for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.name == "main" {
       if sig.node.mod_name == checker_self.root_module {
@@ -345,7 +305,6 @@ pub fn (checker_self: Checker) check: Program {
         }
       }
     }
-    i = i + 1
   }
   if !has_entry {
     checker_self.fail(checker_self.program.loc, "program needs fn main or fn run")
@@ -353,13 +312,10 @@ pub fn (checker_self: Checker) check: Program {
   }
   fns = program_all_functions(checker_self.program)
   checker_self.adopt_pending = true
-  i = 0
-  while i < fns.size {
-    fnn = fns[i]
+  for fnn in fns {
     if !fnn.generic {
       checker_self.check_function(fnn)
     }
-    i = i + 1
   }
   i = 0
   while i < checker_self.pending.size {
@@ -388,9 +344,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
     return
   }
   checker_self.lib_names[lib_def.name] = 1
-  j = 0
-  while j < lib_def.funs.size {
-    cfun = lib_def.funs[j]
+  for cfun in lib_def.funs {
     key = "${lib_def.name}.${cfun.name}"
     if taken = checker_self.cfun_index.get(key) {
       checker_self.fail(cfun.loc, "fun ${cfun.name} is already defined in lib ${lib_def.name}")
@@ -476,7 +430,6 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
     checker_self.cfuns.push(sig)
     checker_self.cfun_index[key] = checker_self.cfuns.size - 1
     checker_self.c_symbols[cfun.name] = key
-    j = j + 1
   }
   checker_self.lib_mod[lib_def.name] = lib_def.mod_name
   if lib_def.vis {
@@ -581,8 +534,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       return
     }
   }
-  i = 1
-  while i < checker_self.functions.size {
+  for i in 1..checker_self.functions.size {
     existing = checker_self.functions[i]
     if existing.name == fnn.name && params_same(existing.params, params) {
       same_mod = false
@@ -608,7 +560,6 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
         return
       }
     }
-    i = i + 1
   }
   checker_self.alloc_ol(fnn)
   sig = FuncSig.new(fnn.name, fnn, params, ret)
@@ -788,9 +739,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       return
     }
   }
-  i = 0
-  while i < checker_self.methods.size {
-    existing = checker_self.methods[i]
+  for existing in checker_self.methods {
     if existing.owner == owner_key && existing.node.owner_mod == fnn.owner_mod && existing.name == fnn.name {
       if existing.node.type_method != fnn.type_method {
         checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
@@ -801,7 +750,6 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         return
       }
     }
-    i = i + 1
   }
   checker_self.alloc_ol(fnn)
   sig = FuncSig.new(fnn.name, fnn, params, ret)
@@ -888,9 +836,7 @@ pub fn (checker_self: Checker) adopt_new_types {
   grow = true
   while grow {
     grow = false
-    i = 0
-    while i < checker_self.program.structs.size {
-      sdef = checker_self.program.structs[i]
+    for sdef in checker_self.program.structs {
       slot = "${sdef.mod_name}@@${sdef.name}"
       if seen = checker_self.adopted.get(slot) {
       } else {
@@ -900,11 +846,8 @@ pub fn (checker_self: Checker) adopt_new_types {
         checker_self.clear_poison
         grow = true
       }
-      i = i + 1
     }
-    i = 0
-    while i < checker_self.program.classes.size {
-      cdef = checker_self.program.classes[i]
+    for cdef in checker_self.program.classes {
       slot = "${cdef.mod_name}@@${cdef.name}"
       if seen = checker_self.adopted.get(slot) {
       } else {
@@ -914,7 +857,6 @@ pub fn (checker_self: Checker) adopt_new_types {
         checker_self.clear_poison
         grow = true
       }
-      i = i + 1
     }
   }
   checker_self.in_adopt = false
@@ -924,13 +866,10 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   name = sig.name
   owner = sig.owner
   n = 0
-  j = 0
-  while j < checker_self.methods.size {
-    other = checker_self.methods[j]
+  for other in checker_self.methods {
     if !other.node.generic && other.owner == owner && other.node.owner_mod == sig.node.owner_mod && other.name == name {
       n = n + 1
     }
-    j = j + 1
   }
   if name == "initialize" {
     if n > 1 {
@@ -943,9 +882,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   if flag = checker_self.resolver.collide.get(owner) {
     shown = "${mod_emit_prefix(sig.node.owner_mod)}__${owner}"
   }
-  j = 0
-  while j < checker_self.methods.size {
-    other = checker_self.methods[j]
+  for other in checker_self.methods {
     if !other.node.generic && other.owner == owner && other.node.owner_mod == sig.node.owner_mod && other.name == name {
       if n <= 1 {
         other.node.emit_name = "${shown}__${sanitized}"
@@ -953,16 +890,12 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
         other.node.emit_name = sig_mangle("${shown}__${sanitized}", other.params)
       }
     }
-    j = j + 1
   }
 }
 
 pub fn (checker_self: Checker) reserve_constructors {
-  i = 0
-  while i < checker_self.program.classes.size {
-    cdef = checker_self.program.classes[i]
+  for cdef in checker_self.program.classes {
     if cdef.type_params.size > 0 {
-      i = i + 1
       continue
     }
     name = "${cdef.name}__new"
@@ -975,7 +908,6 @@ pub fn (checker_self: Checker) reserve_constructors {
     if id = checker_self.method_index.get(name) {
       checker_self.fail(cdef.loc, "${name} collides with the synthesized constructor")
     }
-    i = i + 1
   }
 }
 
@@ -1009,11 +941,8 @@ pub fn (checker_self: Checker) check_field_defaults {
   saved_name = checker_self.self_name
   checker_self.self_ty = nil
   checker_self.self_name = ""
-  i = 0
-  while i < checker_self.program.classes.size {
-    defn = checker_self.program.classes[i]
+  for defn in checker_self.program.classes {
     if defn.type_params.size > 0 {
-      i = i + 1
       continue
     }
     checker_self.current_module = defn.mod_name
@@ -1047,7 +976,6 @@ pub fn (checker_self: Checker) check_field_defaults {
         j = j + 1
       }
     }
-    i = i + 1
   }
   checker_self.self_ty = saved
   checker_self.self_name = saved_name
