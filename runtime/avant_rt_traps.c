@@ -252,3 +252,10 @@ __attribute__((constructor)) static void avant_cpu_check(void) {
   }
   exit(1);
 }
+
+/* main's (or run's) Int result outside 0..255 (Stage 29 W4b2, D295 R14):
+ * the OS keeps only its low byte, so 256 failures would read as success. */
+void avant_trap_exit_status(int32_t status) {
+  fprintf(stderr, "avant runtime: exit status %d out of range (0..255)\n", status);
+  exit(1);
+}

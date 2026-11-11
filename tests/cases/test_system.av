@@ -9,6 +9,7 @@ import backends
 // its status, and a trapping one must print what it printed before the
 // trap, exit 1 and name the trap on stderr.
 //   - file_read, file_write and dir_list give their result or an IoError; process_run and process_run_out the exit status or a ProcessError, with PATH lookup (R12)
+//   - main's (or run's) Int result outside 0..255 traps; inside it is the exit status (R14)
 
 class SCase {
   pub tag: String = ""
@@ -66,6 +67,19 @@ fn io_cases: Array(SCase) {
   xs
 }
 
+fn exit_cases: Array(SCase) {
+  xs: Array(SCase) = []
+  xs.push(exited("exit-255", "fn main: Int {\n  puts(\"x\")\n  255\n}\n", "x\n", 255, ""))
+  xs.push(exited("exit-3-return", "fn main: Int {\n  n = argv().size\n  if n > 0 {\n    return 3\n  }\n  0\n}\n", "", 3, ""))
+  xs.push(trapped("exit-256", "fn main: Int {\n  puts(\"before\")\n  256\n}\n", "before\n", "avant runtime: exit status 256 out of range (0..255)"))
+  xs.push(trapped("exit-neg", "fn main: Int {\n  n = argv().size\n  if n > 0 {\n    return -1\n  }\n  0\n}\n", "", "avant runtime: exit status -1 out of range (0..255)"))
+  xs.push(trapped("exit-if-tail", "fn main: Int {\n  n = argv().size\n  if n > 100 {\n    0\n  } else {\n    1000 + n\n  }\n}\n", "", "avant runtime: exit status 1001 out of range (0..255)"))
+  xs.push(trapped("exit-switch-tail", "fn main: Int {\n  n = argv().size\n  switch n {\n    case 1 {\n      512\n    }\n    else {\n      0\n    }\n  }\n}\n", "", "avant runtime: exit status 512 out of range (0..255)"))
+  xs.push(trapped("exit-run", "fn run: Int {\n  puts(\"run\")\n  300\n}\n", "run\n", "avant runtime: exit status 300 out of range (0..255)"))
+  xs.push(exited("exit-run-ok", "fn run: Int {\n  7\n}\n", "", 7, ""))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -112,6 +126,9 @@ fn test_main(c: Checks) {
     all: Array(SCase) = []
     for f_io in io_cases() {
       all.push(f_io)
+    }
+    for f_exit in exit_cases() {
+      all.push(f_exit)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

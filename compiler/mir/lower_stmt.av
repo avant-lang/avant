@@ -204,10 +204,29 @@ pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
   v = lw.lower_expr(e)
   if rt = lw.lw_ret_ty {
     if t = e.ty {
-      return lw.coerce(v, t, rt, e.loc)
+      v = lw.coerce(v, t, rt, e.loc)
     }
   }
+  if lw.lw_main && lw.lw_ret == mt_i32() && !lw.failed {
+    return lw.exit_status(v, e.loc)
+  }
   v
+}
+
+// main's Int result is the process's exit status (Stage 29 W4b2, D295
+// R14): outside 0..255 it traps (avant_trap_exit_status, from a cold
+// block) rather than reach the OS modulo 256, where 256 failures read as
+// success. One unsigned compare per return of main.
+pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
+  b = lw.lw_b
+  lw.at(loc)
+  x = b.temp(mt_i32())
+  b.assign(b.pl(x), b.rv_use(v))
+  u = lw.tmp(mt_u32(), b.rv_cast(b.copy_local(x), mt_u32()))
+  inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u32(255)))
+  ok = lw.trap_open(inside, false)
+  lw.trap_close(ok, "avant_trap_exit_status", lw.one(b.copy_local(x)), loc)
+  b.copy_local(x)
 }
 
 pub fn (lw: MirLower) lower_return(st: Stmt) {
