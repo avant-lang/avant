@@ -343,24 +343,14 @@ static void ensure_cap(AvantHash *h) {
   }
 }
 
-static void clamp_slice(const char *s, int32_t start, int32_t stop, const char **out, size_t *n) {
+/* A key slice traps like avant_str_slice (Stage 29 W4b1, D295 R4). */
+static void check_slice(const char *s, int32_t start, int32_t stop, const char **out, size_t *n) {
   size_t len = avant_str_n(s);
-  int32_t i = start;
-  if (i < 0) {
-    i = 0;
+  if (start < 0 || stop < start || (size_t)stop > len) {
+    avant_trap_slice(start, stop, (int32_t)len);
   }
-  if ((size_t)i > len) {
-    i = (int32_t)len;
-  }
-  int32_t end = stop;
-  if (end < i) {
-    end = i;
-  }
-  if ((size_t)end > len) {
-    end = (int32_t)len;
-  }
-  *out = (s ? s : "") + i;
-  *n = (size_t)(end - i);
+  *out = (s ? s : "") + start;
+  *n = (size_t)(stop - start);
 }
 
 static void trim_slice(const char **p, size_t *n) {
@@ -577,7 +567,7 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   if (!s) {
     s = "";
   }
-  clamp_slice(s, start, stop, &p, &n);
+  check_slice(s, start, stop, &p, &n);
   size_t off = (size_t)(p - s);
   uint32_t hv = hash_bytes(p, n);
   int32_t i = 0;
@@ -627,7 +617,7 @@ const char *avant_hash_get_str_slice(void *hp, const char *s, int32_t start, int
   }
   const char *p = NULL;
   size_t n = 0;
-  clamp_slice(s, start, stop, &p, &n);
+  check_slice(s, start, stop, &p, &n);
   trim_slice(&p, &n);
   int32_t i = 0;
   if (!lookup_bytes(h, p, n, hash_bytes(p, n), &i)) {

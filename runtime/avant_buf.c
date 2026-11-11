@@ -145,24 +145,16 @@ void avant_buf_push_slice(void *buf, const char *s, int32_t start, int32_t stop)
   int32_t i;
   int32_t end;
   int32_t len;
+  n = s ? avant_str_n(s) : 0;
+  /* 0 <= start <= stop <= size, else a trap (Stage 29 W4b1, D295 R4). */
+  if (start < 0 || stop < start || (size_t)stop > n) {
+    avant_trap_slice(start, stop, (int32_t)n);
+  }
   if (!b || !s) {
     return;
   }
-  n = avant_str_n(s);
   i = start;
-  if (i < 0) {
-    i = 0;
-  }
-  if ((size_t)i > n) {
-    i = (int32_t)n;
-  }
   end = stop;
-  if (end < i) {
-    end = i;
-  }
-  if ((size_t)end > n) {
-    end = (int32_t)n;
-  }
   len = end - i;
   if (len <= 0) {
     return;

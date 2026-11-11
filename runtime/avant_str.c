@@ -232,23 +232,14 @@ char *avant_str_repeat_byte(int32_t b, int32_t n) {
   return p;
 }
 
-static void clamp_range(size_t n, int32_t start, int32_t stop, size_t *out_i, size_t *out_len) {
-  int32_t i = start;
-  if (i < 0) {
-    i = 0;
+/* A slice needs 0 <= start <= stop <= size, else it traps like an index
+ * (Stage 29 W4b1, D295 R4; slices used to clamp). */
+static void check_range(size_t n, int32_t start, int32_t stop, size_t *out_i, size_t *out_len) {
+  if (start < 0 || stop < start || (size_t)stop > n) {
+    avant_trap_slice(start, stop, (int32_t)n);
   }
-  if ((size_t)i > n) {
-    i = (int32_t)n;
-  }
-  int32_t end = stop;
-  if (end < i) {
-    end = i;
-  }
-  if ((size_t)end > n) {
-    end = (int32_t)n;
-  }
-  *out_i = (size_t)i;
-  *out_len = (size_t)(end - i);
+  *out_i = (size_t)start;
+  *out_len = (size_t)(stop - start);
 }
 
 /* RC2: the source is passed as the string and an offset (dup_bytes_at),
@@ -261,7 +252,7 @@ char *avant_str_slice(const char *s, int32_t start, int32_t stop) {
   }
   size_t i = 0;
   size_t len = 0;
-  clamp_range(avant_str_n(s), start, stop, &i, &len);
+  check_range(avant_str_n(s), start, stop, &i, &len);
   if (len == 0) {
     return empty_str();
   }
@@ -485,7 +476,7 @@ double avant_str_to_f_slice(const char *s, int32_t start, int32_t stop) {
   }
   size_t i = 0;
   size_t len = 0;
-  clamp_range(avant_str_n(s), start, stop, &i, &len);
+  check_range(avant_str_n(s), start, stop, &i, &len);
   if (len == 0) {
     return 0.0;
   }

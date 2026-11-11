@@ -2,7 +2,9 @@
 // (Stage 28 W6a): size, indexing, bytes, Bytes size, indexing and slice,
 // strip, strip_left, strip_right, to_i, to_f, chr, repeat_byte,
 // str_slice, fmt_float, checksum_str, str_to_f_slice; the builtins
-// evaluate their arguments last to first (the old order).
+// evaluate their arguments last to first (the old order). Slices stay
+// inside their string (they trap outside it since Stage 29 W4b1, D295 R4;
+// tests/cases/test_numbers.av has the traps).
 
 fn opaque(n: Int): Int {
   a = now_us()
@@ -59,12 +61,12 @@ fn main {
   puts(repeat_byte(say("byte", 61), say("count", 4)))
   puts(repeat_byte(45, 0).size)
   puts(str_slice("hello world", say("from", 6), say("to", 11)))
-  puts(str_slice("hello", -3, 99))
-  puts(str_slice("hello", 3, 1).size)
+  puts(str_slice("hello", 0, 5))
+  puts(str_slice("hello", 3, 3).size)
   puts(fmt_float(3.14159, opaque(2)))
   puts(fmt_float(2.0, 0))
   puts(checksum_str("hello"))
   puts(checksum_str(""))
   puts(str_to_f_slice("xx1.25yy", 2, 6))
-  puts(str_to_f_slice("12", 5, 9))
+  puts(str_to_f_slice("12", 2, 2))
 }
