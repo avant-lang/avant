@@ -291,6 +291,8 @@ fn main {
 
 The `if v = ...` form is [if-assign](#if-and-while). `v` exists only in the then-block.
 
+`h.delete(k)` removes the key and returns the value it held, or `nil` when the key was absent (`if old = h.delete("a") { ... }`); as a statement the result is dropped.
+
 `h.each { |k, v| ... }` walks every key with its value; the order is unspecified. A key the block deletes before the walk reaches it is not visited.
 
 ### Function values
@@ -932,7 +934,7 @@ puts("${e}")            // bad config: unexpected end
 
 Compile errors print to stderr and exit non-zero; runtime traps do the same in the compiled program.
 
-A trap prints one line, `avant runtime: WHAT at FILE:LINE:COL`, and exits with status 1. Whatever the program printed before it comes first: the trap flushes stdout before it writes to stderr, so a log with both streams reads in order. The line names the operation and its type and the source position of the operation (`avant runtime: integer overflow in Int + at main.av:12:9`, `avant runtime: division by zero in Int64 % at main.av:3:12`, `avant runtime: index 5 out of bounds (size 1) at main.av:4:10`, `avant runtime: pop on an empty Array at main.av:7:10`). The position is that of every trap the compiler places: indexing, `pop`, arithmetic overflow and division by zero, shifts, the integer and float conversions, byte stores into a `Buf`, `Array(T).new` with a negative size, `main`'s exit status, a C `String` result that is NULL. A trap raised inside a runtime function (a slice's bounds, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `Bytes.chars` on invalid UTF-8) names the operation and its values but not yet its position.
+A trap prints one line, `avant runtime: WHAT at FILE:LINE:COL`, and exits with status 1. Whatever the program printed before it comes first: the trap flushes stdout before it writes to stderr, so a log with both streams reads in order. The line names the operation and its type and the source position of the operation (`avant runtime: integer overflow in Int + at main.av:12:9`, `avant runtime: division by zero in Int64 % at main.av:3:12`, `avant runtime: index 5 out of bounds (size 1) at main.av:4:10`, `avant runtime: pop on an empty Array at main.av:7:10`). The position is that of every trap the compiler places: indexing, `pop`, arithmetic overflow and division by zero, shifts, the integer and float conversions, byte stores into a `Buf`, `Array(T).new` with a negative size, `main`'s exit status, a C `String` result that is NULL. A trap raised inside a runtime function (a slice's bounds, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8) names the operation and its values but not yet its position.
 
 Compile errors carry a stable code and show the offending line with a caret. The compiler recovers after an error and reports the rest of the program in the same run — up to 20 errors, with a count of any beyond that — so one compile shows every independent mistake it can find:
 
@@ -969,7 +971,7 @@ fn main {
 
 `s.to_i`, `s.to_i64` and `s.to_u64` read a whole string as an integer and return `Int?`, `Int64?` and `UInt64?`: an optional sign and decimal digits (or the digits of a base given as `s.to_i(16)`, 2 to 36, letters in either case), within the type's range, and nothing else; anything else (`"12abc"`, `" 42"`, `"0x1F"`, `"3000000000"` for `Int`) is `nil`, so `s.to_i ?? 0` says the fallback. `s.to_f` returns `Float64?` for the same shape as a float literal (`-2.5`, `1e3`, `1.5E-7`) whose value is finite; `"nan"`, `"inf"`, `"1e999"`, `".5"` and `"1."` are `nil`. `str_to_f_slice(s, start, stop)` reads a slice the same way.
 
-Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes` (`Bytes` traps on invalid UTF-8). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
+Indexing stays byte-based; the text-correct path is `.chars`, which returns one `String` per Unicode codepoint on both `String` and `Bytes`; on bytes that are not valid UTF-8 both trap (`avant runtime: String.chars needs valid UTF-8`). A raw string `r"..."` is single-line with no escapes and no interpolation, for paths and templates: in `r"C:\tmp"` the backslash is a literal character, not an escape. Backtick strings are not a form.
 
 On a nilable value, `v ?? fallback` and `v.or(fallback)` are the fallback value when `v` is nil, with the fallback evaluated only then. Predicate methods return `Bool`, including `Buf.starts_with`, and arrays add the short-circuiting scans `any { |x| ... }` and `all { |x| ... }` with a `Bool`-returning block.
 

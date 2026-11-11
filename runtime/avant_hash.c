@@ -531,6 +531,53 @@ static void erase_at(AvantHash *h, int32_t i) {
   }
 }
 
+/* Hash.delete (Stage 29 W4b2): removes the key and gives the value it
+ * held, *found 1; or *found 0 when the key was absent. erase_at does not
+ * allocate, so a String value stays valid. */
+int32_t avant_hash_take_i32(void *hp, const char *key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  int32_t v;
+  *found = 0;
+  if (!h || !h->cap || !lookup_str(h, key, &i)) {
+    return 0;
+  }
+  v = ((int32_t *)h->vals)[i];
+  erase_at(h, i);
+  *found = 1;
+  return v;
+}
+
+char *avant_hash_take_str(void *hp, const char *key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  char *v;
+  *found = 0;
+  if (!h || !h->cap || !lookup_str(h, key, &i)) {
+    return NULL;
+  }
+  v = ((char **)h->vals)[i];
+  erase_at(h, i);
+  *found = 1;
+  return v;
+}
+
+int32_t avant_hash_take_i32k_i32(void *hp, int32_t key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t i = 0;
+  int32_t v;
+  *found = 0;
+  if (!h || !h->cap || !lookup(h, (int64_t)key, hash_i32(key), &i)) {
+    return 0;
+  }
+  v = ((int32_t *)h->vals)[i];
+  erase_at(h, i);
+  *found = 1;
+  return v;
+}
+
+/* The seed's delete (its compiler lowers the builtin to these); removed
+ * once the seed has the take forms (W4b2). */
 void avant_hash_del(void *hp, const char *key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;

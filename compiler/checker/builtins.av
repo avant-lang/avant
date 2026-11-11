@@ -877,14 +877,19 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     return checker_self.t_int()
   }
   if expr.callee == "delete" {
+    // The value removed, or nil when the key was absent (Stage 29 W4b2).
+    gone = ty_nilable(checker_self.t_int())
+    if v = hash.val {
+      gone = ty_nilable(v)
+    }
     if expr.args.size == 1 {
       if b = expr.block {
         checker_self.fail(expr.loc, "delete takes one key")
-        return checker_self.t_void()
+        return gone
       }
     } else {
       checker_self.fail(expr.loc, "delete takes one key")
-      return checker_self.t_void()
+      return gone
     }
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
@@ -892,7 +897,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
       }
     }
-    return checker_self.t_void()
+    return gone
   }
   if expr.callee == "inc_slice" {
     if expr.args.size == 3 {

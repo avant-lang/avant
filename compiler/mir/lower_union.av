@@ -822,7 +822,8 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
 }
 
 // Hash reads (as the old back end did): `h[k]` and
-// `h.get(k)` (the key, then the hash), `h.get_slice(s, a, b)` (b, a, s,
+// `h.get(k)` (the key, then the hash), `h.delete(k)` (the same, removing
+// the key), `h.get_slice(s, a, b)` (b, a, s,
 // then the hash), `h.get_concat(a, b)` (b, a, then the hash); each runtime
 // read reports through a found flag.
 pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
@@ -841,6 +842,9 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
     f = ""
     if name == "get" && args.size == 1 {
       f = mir_hash_op(ht, "get")
+    } else if name == "delete" && args.size == 1 {
+      // Stage 29 W4b2: delete gives the value it removed, or nil.
+      f = mir_hash_op(ht, "take")
     } else if name == "get_slice" && args.size == 3 {
       f = "avant_hash_get_str_slice"
     } else if name == "get_concat" && args.size == 2 {

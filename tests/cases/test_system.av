@@ -13,6 +13,7 @@ import backends
 //   - a C function declared : String that returns NULL traps naming it; String? reads NULL as nil (R15)
 //   - every trap the compiler raises names its site (file:line:col), flushes stdout first, names its operation and type, and exits 1 (R16)
 //   - JsonBuilder misuse and a closed Regex trap saying what failed; Json.parse and Regex.compile errors carry the library's reason and offset (R11)
+//   - Hash.delete gives the removed value or nil; String.chars traps on invalid UTF-8 as Bytes.chars does (review 4, section 11)
 
 class SCase {
   pub tag: String = ""
@@ -126,6 +127,14 @@ fn lib_cases: Array(SCase) {
   xs
 }
 
+fn small_cases: Array(SCase) {
+  xs: Array(SCase) = []
+  xs.push(accepted("small-delete", "fn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 7\n  if v = h.delete(\"a\") {\n    puts(v)\n  }\n  puts(h.delete(\"a\") ?? -1)\n  puts(h.size)\n  s = Hash(String, String).new\n  s[\"k\"] = \"v\"\n  puts(s.delete(\"k\") ?? \"none\")\n  puts(s.delete(\"k\") ?? \"none\")\n  n = Hash(Int, Int).new\n  n[3] = 9\n  n.delete(4)\n  puts(n.delete(3) ?? 0)\n  puts(n.has_key(3))\n}\n", "7\n-1\n0\nv\nnone\n9\nfalse\n"))
+  xs.push(trapped("small-chars", "fn main {\n  puts(\"x\".chars.size)\n  s = \"a\${chr(255)}b\"\n  puts(s.chars.size)\n}\n", "1\n", "avant runtime: String.chars needs valid UTF-8"))
+  xs.push(accepted("small-chars-ok", "fn main {\n  cs = \"héllo\".chars\n  puts(cs.size)\n  puts(cs[1])\n}\n", "5\né\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(SCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -184,6 +193,9 @@ fn test_main(c: Checks) {
     }
     for f_lib in lib_cases() {
       all.push(f_lib)
+    }
+    for f_small in small_cases() {
+      all.push(f_small)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

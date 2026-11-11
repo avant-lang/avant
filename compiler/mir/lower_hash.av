@@ -120,7 +120,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     lw.refuse(e.loc, "Hash.${name} with a block (closures, W7b)")
     return zero
   }
-  if name == "get" || name == "get_slice" || name == "get_concat" {
+  if name == "get" || name == "get_slice" || name == "get_concat" || name == "delete" {
     return lw.lower_hash_read(e, recv, ht, name, args)
   }
   if name == "each" {
@@ -168,12 +168,6 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
       f = "avant_hash_inc_i32k"
     }
     n = -1
-  } else if name == "delete" {
-    f = "avant_hash_del"
-    if ki {
-      f = "avant_hash_del_i32k"
-    }
-    n = 1
   } else if name == "inc_slice" {
     f = "avant_hash_inc_slice"
     n = 3
