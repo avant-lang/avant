@@ -4,8 +4,6 @@ Avant is a compiled, garbage-collected programming language that aims for the de
 
 For a long time a programmer picked one pair: simplicity and productivity, or performance and efficiency. Avant's bet is that you no longer have to choose, and its rule is to show the evidence, the losses included: [Benchmarks](#benchmarks) prints the rows where Avant is behind beside the rows where it leads.
 
-The joke version is "Crystal with curly braces, for people who came from C and JavaScript". The serious version starts here.
-
 ## A taste
 
 <!-- check: run id=taste -->
@@ -107,7 +105,10 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 
 ## Contents
 
-**Start here:** [A taste](#a-taste) · [Install](#install)
+**Start here:**
+
+- [A taste](#a-taste)
+- [Install](#install)
 
 **The language**
 
