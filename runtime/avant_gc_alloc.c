@@ -720,6 +720,15 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   if (type_id > UINT16_MAX) {
     gc_die("type id too large");
   }
+  /* No empty payload (Stage 29 W-INT1): a 0-byte object's payload
+   * address is the address just past its header, so at the end of a block
+   * it is the next block's first address, and a reference to it was taken
+   * for the object there (a young copy left the holder's field naming the
+   * old copy; found by AVANT_GC_VERIFY on the compiler's own dump). An
+   * empty array buffer or an empty class gets one word. */
+  if (nbytes == 0) {
+    nbytes = 8;
+  }
 
   size_t payload = (size_t)nbytes;
   size_t total = align_up(sizeof(AvantHeader) + payload);
