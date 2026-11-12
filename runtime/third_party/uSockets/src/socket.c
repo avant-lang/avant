@@ -164,6 +164,12 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
+        /* Avant patch (Stage 29 W-FIX1a, P191; runtime/third_party/NOTICE.md):
+         * mark the failed write as us_socket_write does. Without it a short
+         * write2 made from inside on_writable lost its writable poll when
+         * the handler returned (loop.c stops polling for writable unless
+         * last_write_failed is set), and the rest was never sent. */
+        s->context->loop->data.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 

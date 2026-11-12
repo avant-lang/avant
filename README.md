@@ -2912,9 +2912,11 @@ Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: se
 - A `Match` is a value: there are no global match cursors.
 - In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign.
 - A pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`).
-- A compiled pattern is a handle. `re.close` releases it; an operation on a closed `Regex` traps (`avant runtime: Regex used after close`), because a use after close is a program error, not a "no match". Compiling the same pattern again is cheap: a bounded cache keeps compiled patterns.
+- A compiled pattern is a handle, and copies of a `Regex` are the same handle: `re.close` through any of them releases it and closes them all. An operation on a closed `Regex` traps (`avant runtime: Regex used after close`), because a use after close is a program error, not a "no match"; so do a `Match`'s named groups and its groups past the third, which are read from the pattern. Compiling the same pattern again is cheap: a bounded cache keeps compiled patterns.
+- **At PCRE2's limits a match traps; it is never read as "no match".** A search that backtracks past PCRE2's match limit (ten million steps), or runs into its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. There is no way yet to set a limit or to get the failure as a value, so a pattern or a text that comes from outside is yours to bound (its length, its shape) before matching.
+- A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered, on a larger stack and then by PCRE2's interpreter, at a cost in memory that grows with the text. A pattern may have any number of groups PCRE2 accepts.
 
-**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT, and the compiler says so when it compiles your program. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts; that cost is the caller's to bound.
+**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT, and the compiler says so when it compiles your program. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
 
 ### std.http
 
@@ -2971,11 +2973,11 @@ fn main {
 - **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, no middleware and no streaming. Register every route before `serve`.
 - **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`: `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)`, then `.header(name, value)`. `Content-Length` and `Connection` are the server's to set.
 - **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
-- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400.
+- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400, and so is one whose `Content-Length` lines disagree.
 - **Connections** are kept alive, and pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
 - **Handlers must not block the loop.** Hand slow work to `spawn`.
+- **An idle connection is closed**: an HTTP connection on which nothing has happened for about 30 seconds (no request bytes arrived, no answer bytes left). A WebSocket connection has no such timeout.
 - **A trap in a handler ends the server**, like any [trap](#traps). Run it under a supervisor, and read request data with the non-trapping forms.
-- **One known defect, being fixed:** a client that disconnects while pipelined answers are still unread ends the server process. The supervisor covers it meanwhile.
 - `close` stops the server and lets `serve` return. A server that is never closed keeps its socket until the process exits; there is no finalizer.
 
 #### HTTP client

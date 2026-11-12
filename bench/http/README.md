@@ -41,7 +41,7 @@ How to read the methods:
 
 Three labelled variants run only when named, never under `all`, and are not the plain rows:
 
-- `avant-nosigpipe` is the same Avant binary started by `env --ignore-signal=PIPE`. `std.http` as shipped does not ignore SIGPIPE, so a client that closes with pipelined answers unread, which is what `wrk` does to its connections at the end of a B or C load, ends the server process; the plain row can then have no server left for its measured load. This variant is how the server's throughput under B and C is measured until that is fixed; `tables.py` reports the plain row's dead runs as they are.
+- `avant-nosigpipe` is the same Avant binary started by `env --ignore-signal=PIPE`. Up to v0.41.0 a client that closed with pipelined answers unread, which is what `wrk` does to its connections at the end of a B or C load, ended the server process with SIGPIPE, so the plain row could have no server left for its measured load, and this variant was how the server's throughput under B and C was measured. The server's writes no longer raise the signal, and `check.py`'s `close_unread` passes on the plain row; the variant stays for measuring a binary built before that.
 - `hyper-nodate` and `fasthttp-nodate` are those servers with their `Date` header (and fasthttp's `Server` header) switched off: an 84-byte answer, like the servers that send neither.
 
 ## What is kept, and the tables

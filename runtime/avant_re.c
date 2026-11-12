@@ -50,6 +50,80 @@ static pcre2_match_data *md_for(pcre2_code *code) {
   return md;
 }
 
+/* A PCRE2 failure that is not "no match" (Stage 29 W-FIX1a, P40): the
+ * match limit, the depth limit, the heap limit, no memory, an internal
+ * error. It used to read as "no match": find gave nil, count stopped
+ * early, replace left the rest of the text as it was. It is a trap now,
+ * naming the operation and PCRE2's own words for the failure (stdout
+ * first, status 1, as avant_regex_closed). */
+static void re_trap(const char *op, int rc) {
+  PCRE2_UCHAR buf[160];
+  if (pcre2_get_error_message(rc, buf, sizeof buf) < 0) {
+    memcpy(buf, "unknown error", 14);
+  }
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: %s: %s (PCRE2 error %d)\n", op,
+          (const char *)buf, rc);
+  exit(1);
+}
+
+/* The JIT's machine stack is 32 KiB unless one is assigned, and a match
+ * that needs more fails with PCRE2_ERROR_JIT_STACKLIMIT although nothing
+ * is wrong with the pattern or the text (a group repeated a few thousand
+ * times is enough); it read as "no match". Such a match is run again
+ * here: first by the JIT on a stack of its own that may grow to
+ * RE_JIT_STACK_MAX (address space until it is used; made for this one
+ * match and given back after it, so a program whose matches are never
+ * deep never pays for it and a thread keeps nothing), then, if even
+ * that is not enough or the stack cannot be had, by the interpreter,
+ * whose frames live on the heap. So the JIT's stack limit is never the
+ * reason for an answer: what comes back is the match, "no match", or
+ * one of the interpreter's own limits (re_trap). Measured on
+ * ((a)|(b))*c over "ab" repeated (Stage 29 W-FIX1a): the JIT takes
+ * about 48 bytes of stack per repetition, the interpreter about 660
+ * bytes of heap and thirty times the time, and the interpreter stops
+ * at its match limit near 2.4 million repetitions; with 256 MiB the
+ * JIT answers past that point, so the interpreter is the last resort
+ * for patterns whose JIT frames are larger.
+ *
+ * AVANT_RE_JIT_STACK_KB is an internal variable for the suite, not a
+ * user setting: a number from 32 to 262144 makes that the stack's
+ * limit in KiB, so tests/cases/test_std_regex.av can reach the
+ * interpreter with a small text. It can only shrink the stack. */
+#define RE_JIT_STACK_MAX (256u * 1024u * 1024u)
+
+static size_t re_jit_stack_max(void) {
+  const char *v = getenv("AVANT_RE_JIT_STACK_KB");
+  if (v && v[0] >= '0' && v[0] <= '9') {
+    long kb = strtol(v, NULL, 10);
+    if (kb >= 32 && kb <= (long)(RE_JIT_STACK_MAX / 1024u)) {
+      return (size_t)kb * 1024u;
+    }
+  }
+  return RE_JIT_STACK_MAX;
+}
+
+static int re_deep(pcre2_code *code, const char *s, size_t n, size_t from,
+                   pcre2_match_data *md) {
+  int rc = PCRE2_ERROR_JIT_STACKLIMIT;
+  size_t max = re_jit_stack_max();
+  pcre2_match_context *mctx = pcre2_match_context_create(NULL);
+  if (mctx) {
+    pcre2_jit_stack *stack =
+        pcre2_jit_stack_create(max < 65536 ? max : 65536, max, NULL);
+    if (stack) {
+      pcre2_jit_stack_assign(mctx, NULL, stack);
+      rc = pcre2_match(code, (PCRE2_SPTR)s, n, from, 0, md, mctx);
+      pcre2_jit_stack_free(stack);
+    }
+    pcre2_match_context_free(mctx);
+  }
+  if (rc == PCRE2_ERROR_JIT_STACKLIMIT) {
+    rc = pcre2_match(code, (PCRE2_SPTR)s, n, from, PCRE2_NO_JIT, md, NULL);
+  }
+  return rc;
+}
+
 /* re2c scanners, when the compiler generated them for this program.
  * The generated object provides the strong versions; these weak
  * defaults keep a program without literal patterns linkable. */
@@ -291,18 +365,53 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from);
  * once, so no allocation happens on the find path. */
 static __thread int32_t g_last_spans[128];
 static __thread int32_t g_last_pairs;
+/* A pattern with more than 63 groups (Stage 29 W-FIX1a, P40: the pairs
+ * were capped at 64, so groups past the 63rd read as "did not take
+ * part"): its pairs go to a buffer of this thread sized from the
+ * pattern, and g_last_spans stays the home of every other match. */
+static __thread int32_t *g_more_spans;
+static __thread int32_t g_more_cap;
+
+static int32_t *spans_for(int32_t pairs) {
+  if (pairs <= 64) {
+    return g_last_spans;
+  }
+  if (pairs > g_more_cap) {
+    int32_t *next = (int32_t *)realloc(g_more_spans,
+                                       (size_t)pairs * 2 * sizeof(int32_t));
+    if (!next) {
+      return NULL;
+    }
+    g_more_spans = next;
+    g_more_cap = pairs;
+  }
+  return g_more_spans;
+}
 
 /* Packed (lo, hi) of pair i of the last match, or -1 when the pair
  * did not participate or does not exist. */
 int64_t avant_regex_span_pair(avant_int i) {
+  const int32_t *spans = g_last_pairs > 64 ? g_more_spans : g_last_spans;
   int32_t lo;
   int32_t hi;
   if (i < 0 || i >= g_last_pairs) {
     return -1;
   }
-  lo = g_last_spans[2 * i];
-  hi = g_last_spans[2 * i + 1];
+  lo = spans[2 * i];
+  hi = spans[2 * i + 1];
   return ((int64_t)lo << 32) | (uint32_t)hi;
+}
+
+/* Why this thread's last avant_regex_find returned -2: PCRE2's error
+ * code. The Avant side traps through avant_regex_failed with the
+ * operation it was running (lib/std/regex.av, RegexState.op: 0 find,
+ * 1 replace, 2 split, 3 matches). */
+static __thread int g_re_match_err;
+
+void avant_regex_failed(avant_int op) {
+  static const char *const names[] = {"Regex.find", "Regex.replace",
+                                      "Regex.split", "Regex.matches"};
+  re_trap(names[op >= 0 && op < 4 ? op : 0], g_re_match_err);
 }
 
 /* Packed (lo, hi) of pair i of the match at or after `from`,
@@ -310,7 +419,11 @@ int64_t avant_regex_span_pair(avant_int i) {
  * the ones a Match value carries inline. */
 int64_t avant_regex_span_at(void *handle, const char *s, avant_int from,
                             avant_int i) {
-  if (avant_regex_find(handle, s, from) < 0) {
+  int64_t whole = avant_regex_find(handle, s, from);
+  if (whole == -2) {
+    re_trap("Match.span", g_re_match_err);
+  }
+  if (whole < 0) {
     return -1;
   }
   return avant_regex_span_pair(i);
@@ -318,7 +431,8 @@ int64_t avant_regex_span_at(void *handle, const char *s, avant_int from,
 
 /* Finds the first match at or after `from` and keeps its span pairs
  * in thread-local scratch for avant_regex_span_pair. Returns the
- * packed whole-match pair, or -1 on no match. */
+ * packed whole-match pair, -1 on no match, or -2 when PCRE2 failed
+ * (the caller traps through avant_regex_failed). */
 int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
   ReEntry *e;
   pcre2_match_data *md;
@@ -327,6 +441,7 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
   PCRE2_SIZE *ov;
   int32_t pairs;
   int32_t i;
+  int32_t *spans;
   g_last_pairs = 0;
   if (!handle) {
     return -1;
@@ -371,23 +486,32 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
     return -1;
   }
   rc = pcre2_match(e->code, (PCRE2_SPTR)s, n, (PCRE2_SIZE)from, 0, md, NULL);
+  if (rc == PCRE2_ERROR_JIT_STACKLIMIT) {
+    rc = re_deep(e->code, s, n, (size_t)from, md);
+  }
   if (rc < 0) {
-    return -1;
+    if (rc == PCRE2_ERROR_NOMATCH) {
+      return -1;
+    }
+    g_re_match_err = rc;
+    return -2;
   }
   ov = pcre2_get_ovector_pointer(md);
   pairs = e->ngroups + 1;
-  if (pairs > 64) {
-    pairs = 64;
+  spans = spans_for(pairs);
+  if (!spans) {
+    g_re_match_err = PCRE2_ERROR_NOMEMORY;
+    return -2;
   }
   for (i = 0; i < pairs; i++) {
     PCRE2_SIZE a = ov[2 * i];
     PCRE2_SIZE b = ov[2 * i + 1];
     if (a == PCRE2_UNSET) {
-      g_last_spans[2 * i] = -1;
-      g_last_spans[2 * i + 1] = -1;
+      spans[2 * i] = -1;
+      spans[2 * i + 1] = -1;
     } else {
-      g_last_spans[2 * i] = (int32_t)a;
-      g_last_spans[2 * i + 1] = (int32_t)b;
+      spans[2 * i] = (int32_t)a;
+      spans[2 * i + 1] = (int32_t)b;
     }
   }
   g_last_pairs = pairs;
@@ -432,7 +556,13 @@ avant_int avant_regex_count(void *handle, const char *s) {
     } else {
       rc = pcre2_match(e->code, (PCRE2_SPTR)s, slen, start, 0, md, NULL);
     }
+    if (rc == PCRE2_ERROR_JIT_STACKLIMIT) {
+      rc = re_deep(e->code, s, slen, start, md);
+    }
     if (rc < 0) {
+      if (rc != PCRE2_ERROR_NOMATCH) {
+        re_trap("Regex.count", rc);
+      }
       break;
     }
     n = n + 1;
