@@ -161,7 +161,7 @@ fn ec_print(b: MirBuilder, fmt: String, args: Array(MOperand)) {
   dummy = b.call(-1, "printf", all)
 }
 
-fn ec_f64(b: MirBuilder, bits: Int64, shown: String): MOperand {
+fn ec_f64(b: MirBuilder, bits: Int, shown: String): MOperand {
   b.c_f64(bits, shown)
 }
 
@@ -201,9 +201,9 @@ fn ec_constructs: MModule {
   c1 = b.block
   c2 = b.block
   c3 = b.block
-  vals: Array(Int64) = []
-  vals.push(0i64)
-  vals.push(1i64)
+  vals: Array(Int) = []
+  vals.push(0)
+  vals.push(1)
   b.switch_on(b.copy_local(1), vals, ec_tys(c1, c2), c3)
   b.at(c1)
   b.assign(b.pl(0), b.rv_use(b.c_i32(10)))
@@ -249,7 +249,7 @@ fn ec_constructs: MModule {
   b.assign(b.pl(x), b.rv_un(mop_neg_chk(), b.copy_local(x)))
   ec_print(b, "%d\n", ec1(b.copy_local(x)))
   b.assign(b.pl(y), b.rv_cast(b.copy_local(x), mt_i64()))
-  b.assign(b.pl(y), b.rv_chk(mop_mul(), b.copy_local(y), b.c_i64(1000000000000i64)))
+  b.assign(b.pl(y), b.rv_chk(mop_mul(), b.copy_local(y), b.c_i64(1000000000000)))
   ec_print(b, "%lld\n", ec1(b.copy_local(y)))
   b.assign(b.pl(x), b.rv_chk(mop_rem(), b.c_i32(-2147483647 - 1), b.c_i32(-1)))
   b.assign(b.pl(x2), b.rv_chk(mop_div(), b.c_i32(17), b.c_i32(5)))
@@ -273,23 +273,23 @@ fn ec_constructs: MModule {
 
   // f64.
   b.assign(b.pl(z), b.rv_cast(b.copy_local(x), mt_f64()))
-  b.assign(b.pl(z), b.rv_bin(mop_mul(), b.copy_local(z), ec_f64(b, 4609434218613702656i64, "1.5")))
-  b.assign(b.pl(z), b.rv_bin(mop_div(), b.copy_local(z), ec_f64(b, 4611686018427387904i64, "2")))
+  b.assign(b.pl(z), b.rv_bin(mop_mul(), b.copy_local(z), ec_f64(b, 4609434218613702656, "1.5")))
+  b.assign(b.pl(z), b.rv_bin(mop_div(), b.copy_local(z), ec_f64(b, 4611686018427387904, "2")))
   b.assign(b.pl(z), b.rv_un(mop_neg(), b.copy_local(z)))
   ec_print(b, "%g\n", ec1(b.copy_local(z)))
   b.assign(b.pl(x), b.rv_cast(b.copy_local(z), mt_i32()))
-  b.assign(b.pl(c), b.rv_cmp(mop_lt(), b.copy_local(z), ec_f64(b, 4618441417868443648i64, "6")))
+  b.assign(b.pl(c), b.rv_cmp(mop_lt(), b.copy_local(z), ec_f64(b, 4618441417868443648, "6")))
   b.assign(b.pl(x2), b.rv_cast(b.copy_local(c), mt_i32()))
   ec_print(b, "%d %d\n", ec2(b.copy_local(x), b.copy_local(x2)))
 
   // A struct by value, a field store.
-  b.assign(b.pl(p), b.rv_struct(pair, ec2(b.c_i32(7), b.c_i64(9i64))))
+  b.assign(b.pl(p), b.rv_struct(pair, ec2(b.c_i32(7), b.c_i64(9))))
   b.assign(b.field(b.pl(p), 0), b.rv_use(b.c_i32(11)))
   ec_print(b, "%d %lld\n", ec2(b.copy(b.field(b.pl(p), 0)), b.copy(b.field(b.pl(p), 1))))
 
   // A union whose reference payload (word 1) is the only root of a heap
   // string across a collection.
-  b.call(s, "avant_str_from_int", ec1(b.c_i64(12345i64)))
+  b.call(s, "avant_str_from_int", ec1(b.c_i64(12345)))
   b.assign(b.pl(u), b.rv_union(un, 1, b.copy_local(s)))
   b.assign(b.pl(s), b.rv_zero)
   b.call(-1, "avant_gc_collect", ec0())
@@ -308,7 +308,7 @@ fn ec_constructs: MModule {
   // collection: the struct's word is a root.
   b.assign(b.pl(r), b.rv_struct(rec, ec1(b.str_const("rec"))))
   b.assign(b.pl(a), b.rv_addr(b.pl(r)))
-  b.call(s, "avant_str_from_int", ec1(b.c_i64(777i64)))
+  b.call(s, "avant_str_from_int", ec1(b.c_i64(777)))
   b.call(-1, "av.main/Rec.set", ec2(b.copy_local(a), b.copy_local(s)))
   b.assign(b.pl(s), b.rv_zero)
   b.call(-1, "avant_gc_collect", ec0())
@@ -317,7 +317,7 @@ fn ec_constructs: MModule {
 
   // An element buffer of four Ints (dynamic size: the inline path's
   // runtime size tests), bounds-checked stores and loads.
-  b.assign(b.pl(n), b.rv_use(b.c_u64(16i64)))
+  b.assign(b.pl(n), b.rv_use(b.c_u64(16)))
   b.call(buf, "avant_alloc", ec2(b.copy_local(n), b.c_u32(0)))
   b.check_bounds(b.c_i32(2), b.c_i32(4))
   b.assign(b.index(b.deref(b.pl(buf)), b.c_i32(2)), b.rv_use(b.c_i32(5)))
@@ -328,7 +328,7 @@ fn ec_constructs: MModule {
   // addr.raw of a frame local for a C out-parameter.
   b.assign(b.pl(t), b.rv_use(b.c_i32(99)))
   b.assign(b.pl(pp), b.rv_addr_raw(b.pl(t)))
-  b.call(-1, "memset", ec3(b.copy_local(pp), b.c_i32(0), b.c_u64(4i64)))
+  b.call(-1, "memset", ec3(b.copy_local(pp), b.c_i32(0), b.c_u64(4)))
   ec_print(b, "%d %d\n", ec2(b.copy_local(x2), b.copy_local(t)))
   ec_main_end(b)
   m
@@ -349,11 +349,11 @@ fn ec_traps: MModule {
   t3 = b.block
   t4 = b.block
   done = b.block
-  vals: Array(Int64) = []
-  vals.push(2i64)
-  vals.push(3i64)
-  vals.push(4i64)
-  vals.push(5i64)
+  vals: Array(Int) = []
+  vals.push(2)
+  vals.push(3)
+  vals.push(4)
+  vals.push(5)
   targets = ec_tys(t1, t2)
   targets.push(t3)
   targets.push(t4)

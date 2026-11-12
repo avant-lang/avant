@@ -28,9 +28,9 @@ pub class LlvmJob {
   pub flags: Array(String)
   pub keep_ll: String = ""
   pub inline_fast: Bool = true
-  pub emit_us: Int64 = 0i64
-  pub compile_us: Int64 = 0i64
-  pub link_us: Int64 = 0i64
+  pub emit_us: Int = 0
+  pub compile_us: Int = 0
+  pub link_us: Int = 0
 
   // codegen: "debug", "default" (compile's bare mode), or "release"
   // (verb_codegen's names).
@@ -74,9 +74,9 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   if bad.size > 0 {
     return bad
   }
-  t0 = now_us().to_i64
+  t0 = now_us().to_i
   text = ll_emit_module(m, job.inline_fast)
-  t1 = now_us().to_i64
+  t1 = now_us().to_i
   job.emit_us = llvm_us(t0, t1)
   if job.keep_ll.size > 0 && shim_file_write(job.keep_ll, text) != 0 {
     return "cannot write ${job.keep_ll}"
@@ -87,7 +87,7 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   }
   llvm_set_cpu(cpu)
   err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
-  job.compile_us = llvm_us(t1, now_us().to_i64)
+  job.compile_us = llvm_us(t1, now_us().to_i)
   if err.size > 0 {
     return "internal error: ${err}"
   }
@@ -121,9 +121,9 @@ pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   if err.size > 0 {
     return err
   }
-  t0 = now_us().to_i64
+  t0 = now_us().to_i
   err = llvm_link(obj, job, out_path)
-  job.link_us = llvm_us(t0, now_us().to_i64)
+  job.link_us = llvm_us(t0, now_us().to_i)
   fs_unlink(obj)
   fs_remove_tree(work)
   err
@@ -174,13 +174,13 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
 }
 
 // The microseconds between two now_us readings. Since Stage 29 W4b1 (R6)
-// now_us is an Int64 that does not wrap; the seed v0.40.0's is an Int
+// now_us is an Int that does not wrap; the seed v0.40.0's is an Int
 // that wraps every 2^32 microseconds, which the correction below undoes
-// (`.to_i64` reads both the same; the next release drops it).
-pub fn llvm_us(a: Int64, b: Int64): Int64 {
+// (`.to_i` reads both the same; the next release drops it).
+pub fn llvm_us(a: Int, b: Int): Int {
   d = b - a
-  if d < 0i64 {
-    d += 4294967296i64
+  if d < 0 {
+    d += 4294967296
   }
   d
 }

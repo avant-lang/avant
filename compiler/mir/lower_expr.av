@@ -206,7 +206,7 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
   if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() {
     v64 = bits_u64_to_i64(e.int_bits)
     if neg {
-      v64 = 0i64 &- v64
+      v64 = 0 &- v64
     }
     return b.c_int(ty, v64)
   }
@@ -428,7 +428,7 @@ pub fn (lw: MirLower) trap_close(ok: Int, trap: String, args: Array(MOperand), l
   lw.at(loc)
 }
 
-pub fn (lw: MirLower) int_const(ty: Int, v: Int64): MOperand {
+pub fn (lw: MirLower) int_const(ty: Int, v: Int): MOperand {
   if ty == mt_i64() {
     return lw.lw_b.c_i64(v)
   }
@@ -503,18 +503,18 @@ pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: 
 // in range. Then the amount in the left type, and shl or shr by signedness.
 pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand, loc: Location): MOperand {
   b = lw.lw_b
-  width = 64i64
+  width = 64
   kind = 16
   if ty == mt_i32() {
-    width = 32i64
+    width = 32
     kind = 17
   } else if ty == mt_u64() {
     kind = 18
   } else if ty == mt_u32() {
-    width = 32i64
+    width = 32
     kind = 19
   }
-  if c.kind != mok_int() || c.ival < 0i64 || c.ival >= width {
+  if c.kind != mok_int() || c.ival < 0 || c.ival >= width {
     ut = at
     if at == mt_i32() {
       ut = mt_u32()
@@ -525,9 +525,9 @@ pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand,
     if ut != at {
       u = lw.tmp(ut, b.rv_cast(u, ut))
     }
-    lim = b.c_u64(width - 1i64)
+    lim = b.c_u64(width - 1)
     if ut == mt_u32() {
-      lim = b.c_u32((width - 1i64).to_i)
+      lim = b.c_u32((width - 1).to_i)
     }
     ok = lw.trap_open(lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), u, lim)), true)
     amt64 = lw.dup(c)

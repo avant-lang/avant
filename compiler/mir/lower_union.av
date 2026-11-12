@@ -174,14 +174,14 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   d = b.temp(tty)
   b.assign(b.pl(d), b.rv_zero)
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
-  values: Array(Int64) = []
+  values: Array(Int) = []
   targets: Array(Int) = []
   arms: Array(Int) = []
   members: Array(Int) = []
   for i in 0..from.members.size {
     if to.includes_member(from.members[i]) {
       arm = b.block
-      values.push(i.to_i64)
+      values.push(i.to_i)
       targets.push(arm)
       arms.push(arm)
       members.push(i)
@@ -238,7 +238,7 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
     if k >= 0 {
       tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
       arm = b.block
-      values: Array(Int64) = [k.to_i64]
+      values: Array(Int) = [k.to_i]
       targets: Array(Int) = [arm]
       b.switch_on(tag, values, targets, join)
       b.at(arm)
@@ -366,10 +366,10 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
 pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail: Int, bok: Int) {
   b = lw.lw_b
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
-  values: Array(Int64) = []
+  values: Array(Int) = []
   targets: Array(Int) = []
   for f in fails {
-    values.push(uty.tag_of(f).to_i64)
+    values.push(uty.tag_of(f).to_i)
     targets.push(bfail)
   }
   b.switch_on(tag, values, targets, bok)
@@ -694,7 +694,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     lw.at(e.loc)
     h = lw.hold(r, aty)
-    iv = b.c_i64(0i64)
+    iv = b.c_i64(0)
     if args.size > 0 {
       iv = lw.lower_expr(args[0])
     }
@@ -703,7 +703,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     lw.at(e.loc)
     ix = lw.hold(iv, mt_int())
-    n = b.c_i64(0i64)
+    n = b.c_i64(0)
     if rt.is_array || rt.is_buf {
       n = lw.seq_size(h)
     } else {
@@ -720,7 +720,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     } else {
       b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     }
-    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i64(0i64)))
+    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i64(0)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
     bt = b.block
@@ -804,7 +804,7 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
       }
       ix = lw.call_to(mt_int(), f, lw.two(a, v))
       k = lw.hold(ix, mt_int())
-      c = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(k), b.c_i64(0i64)))
+      c = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(k), b.c_i64(0)))
       return lw.opt_of(t, c, b.copy_local(k), ty_int(), e.loc)
     }
     mf = lw.kind_fn("avant_array_${name}", et, false)

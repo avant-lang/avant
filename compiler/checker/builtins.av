@@ -61,6 +61,11 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
   if rt = int_conversion_ty(expr.callee) {
     return checker_self.expect_no_args(expr, rt, "${object.show}.${expr.callee} takes no arguments")
   }
+  now = removed_int_conversion(expr.callee)
+  if now.size > 0 {
+    checker_self.fail(expr.loc, removed_int_message(expr.callee, now))
+    return checker_self.t_int()
+  }
   checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
   object
 }
@@ -146,11 +151,14 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
   if expr.callee == "to_f" {
     return checker_self.expect_no_args(expr, ty_nilable(checker_self.t_float()), "String.to_f takes no arguments")
   }
-  if expr.callee == "to_i" || expr.callee == "to_i64" || expr.callee == "to_u64" {
+  if expr.callee == "to_i64" {
+    // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+    checker_self.fail(expr.loc, removed_int_message("to_i64", "to_i"))
+    return ty_nilable(checker_self.t_int())
+  }
+  if expr.callee == "to_i" || expr.callee == "to_u64" {
     rt = checker_self.t_int()
-    if expr.callee == "to_i64" {
-      rt = checker_self.t_int64()
-    } else if expr.callee == "to_u64" {
+    if expr.callee == "to_u64" {
       rt = checker_self.t_uint64()
     }
     if expr.args.size > 1 {
@@ -1072,12 +1080,12 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     if expr.args.size == 0 {
       if b = expr.block {
         checker_self.fail(expr.loc, "now_us takes no arguments")
-        return checker_self.t_int64()
+        return checker_self.t_int()
       }
-      return checker_self.t_int64()
+      return checker_self.t_int()
     }
     checker_self.fail(expr.loc, "now_us takes no arguments")
-    return checker_self.t_int64()
+    return checker_self.t_int()
   }
   if expr.callee == "repeat_byte" {
     if expr.args.size == 2 {

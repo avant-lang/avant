@@ -336,20 +336,20 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
   vt = mir_c_view_mty(k)
   x = b.temp(vt)
   b.assign(b.pl(x), b.rv_use(v))
-  lo = -128i64
-  hi = 127i64
+  lo = -128
+  hi = 127
   if k == cs_int16() {
-    lo = -32768i64
-    hi = 32767i64
+    lo = -32768
+    hi = 32767
   } else if k == cs_uint8() {
-    lo = 0i64
-    hi = 255i64
+    lo = 0
+    hi = 255
   } else if k == cs_uint16() {
-    lo = 0i64
-    hi = 65535i64
+    lo = 0
+    hi = 65535
   } else if k == cs_uint32() {
-    lo = 0i64
-    hi = 4294967295i64
+    lo = 0
+    hi = 4294967295
   }
   c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(vt, lo)))
   c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), lw.int_const(vt, hi)))
@@ -459,7 +459,7 @@ pub fn (lw: MirLower) lower_release(st: Stmt) {
     }
     args: Array(MOperand) = []
     args.push(b.copy_local(lo))
-    args.push(b.c_u64(n.to_i64))
+    args.push(b.c_u64(n.to_i))
     b.call(-1, "avant_release_range", args)
     return
   }
@@ -604,8 +604,8 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
   if sym = lw.lw_fn_syms.get("regex_from_re2c") {
     b = lw.lw_b
     args: Array(MOperand) = []
-    args.push(b.c_i64(rid.to_i64))
-    args.push(b.c_i64(groups.to_i64))
+    args.push(b.c_i64(rid.to_i))
+    args.push(b.c_i64(groups.to_i))
     args.push(lw.lower_expr(pat))
     args.push(lw.lower_expr(flags))
     if lw.failed {

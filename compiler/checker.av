@@ -42,9 +42,9 @@ pub class FlowFacts {
   pub cs_delta: Array(Int)
   pub nn_var: Array(String)
   pub cap_var: Array(String)
-  pub cap_val: Array(Int64)
+  pub cap_val: Array(Int)
   pub gcap_var: Array(String)
-  pub gcap_val: Array(Int64)
+  pub gcap_val: Array(Int)
   pub gcap_live: Array(Int)
   pub gnn_var: Array(String)
   pub gnn_live: Array(Int)
@@ -365,7 +365,6 @@ pub class Checker {
   }
 
   pub fn t_int: Ty { self.resolver.t_int }
-  pub fn t_int64: Ty { self.resolver.t_int64 }
   pub fn t_uint64: Ty { self.resolver.t_uint64 }
   pub fn t_bool: Ty { self.resolver.t_bool }
   pub fn t_float: Ty { self.resolver.t_float }
@@ -377,9 +376,6 @@ pub class Checker {
 
   pub fn is_ordered_ty(ty: Ty): Bool {
     if ty.is_integer {
-      return true
-    }
-    if ty.is_int64 {
       return true
     }
     if ty.is_uint64 {
@@ -399,9 +395,6 @@ pub class Checker {
 
   pub fn is_numeric_ty(ty: Ty): Bool {
     if ty.is_integer {
-      return true
-    }
-    if ty.is_int64 {
       return true
     }
     if ty.is_uint64 {
@@ -1481,6 +1474,11 @@ pub class Checker {
       expr.method_call = true
       return rt
     }
+    now = removed_int_conversion(expr.ident)
+    if now.size > 0 {
+      self.fail(expr.loc, removed_int_message(expr.ident, now))
+      return self.t_int()
+    }
     self.field_as_call(expr, object)
   }
 
@@ -2440,15 +2438,12 @@ pub class Checker {
     self.t_int()
   }
 
-  // An integer literal's type (Stage 29 W-INT1, D314): its suffix (u64;
-  // i64 names Int), else the integer type the context wants (UInt64,
-  // Int32, UInt32), else Int, a 64-bit integer.
+  // An integer literal's type (Stage 29 W-INT1, D314): its suffix (u64),
+  // else the integer type the context wants (UInt64, Int32, UInt32), else
+  // Int, a 64-bit integer.
   pub fn literal_int_ty(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.int_suffix == "u64" {
       return self.t_uint64()
-    }
-    if expr.int_suffix == "i64" {
-      return self.t_int()
     }
     if has_want {
       if want.is_uint64 {
@@ -3002,12 +2997,12 @@ pub class Checker {
       if expr.args.size == 0 {
         if b = expr.block {
           self.fail(expr.loc, "now_ms takes no arguments")
-          return self.t_int64()
+          return self.t_int()
         }
-        return self.t_int64()
+        return self.t_int()
       }
       self.fail(expr.loc, "now_ms takes no arguments")
-      return self.t_int64()
+      return self.t_int()
     }
     if expr.callee == "argv" {
       if expr.args.size == 0 {

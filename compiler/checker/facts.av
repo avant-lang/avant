@@ -1023,7 +1023,7 @@ pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
   }
 }
 
-pub fn (checker_self: Checker) cap_put(name: String, val: Int64) {
+pub fn (checker_self: Checker) cap_put(name: String, val: Int) {
   for i in 0..checker_self.facts.cap_var.size {
     if checker_self.facts.cap_var[i] == name {
       checker_self.facts.cap_val[i] = val
@@ -1034,18 +1034,18 @@ pub fn (checker_self: Checker) cap_put(name: String, val: Int64) {
   checker_self.facts.cap_val.push(val)
 }
 
-pub fn (checker_self: Checker) cap_get(name: String): Int64 {
+pub fn (checker_self: Checker) cap_get(name: String): Int {
   for i in 0..checker_self.facts.cap_var.size {
     if checker_self.facts.cap_var[i] == name {
       return checker_self.facts.cap_val[i]
     }
   }
-  0i64 - 1i64
+  0 - 1
 }
 
 pub fn (checker_self: Checker) cap_remove(name: String) {
   kept_v: Array(String) = []
-  kept_c: Array(Int64) = []
+  kept_c: Array(Int) = []
   for i in 0..checker_self.facts.cap_var.size {
     if checker_self.facts.cap_var[i] != name {
       kept_v.push(checker_self.facts.cap_var[i])
@@ -1056,29 +1056,29 @@ pub fn (checker_self: Checker) cap_remove(name: String) {
   checker_self.facts.cap_val = kept_c
 }
 
-pub fn (checker_self: Checker) gcap_put(name: String, val: Int64) {
+pub fn (checker_self: Checker) gcap_put(name: String, val: Int) {
   checker_self.facts.gcap_var.push(name)
   checker_self.facts.gcap_val.push(val)
   checker_self.facts.gcap_live.push(1)
 }
 
-pub fn (checker_self: Checker) gcap_get(name: String): Int64 {
-  best = 0i64 - 1i64
+pub fn (checker_self: Checker) gcap_get(name: String): Int {
+  best = 0 - 1
   for i in 0..checker_self.facts.gcap_var.size {
-    if checker_self.facts.gcap_live[i] == 1 && checker_self.facts.gcap_var[i] == name && (best < 0i64 || checker_self.facts.gcap_val[i] < best) {
+    if checker_self.facts.gcap_live[i] == 1 && checker_self.facts.gcap_var[i] == name && (best < 0 || checker_self.facts.gcap_val[i] < best) {
       best = checker_self.facts.gcap_val[i]
     }
   }
   best
 }
 
-pub fn (checker_self: Checker) cap_of(name: String): Int64 {
+pub fn (checker_self: Checker) cap_of(name: String): Int {
   a = checker_self.cap_get(name)
   g = checker_self.gcap_get(name)
-  if a < 0i64 {
+  if a < 0 {
     return g
   }
-  if g < 0i64 {
+  if g < 0 {
     return a
   }
   if a < g {
@@ -1265,53 +1265,53 @@ pub fn (checker_self: Checker) expr_nonneg(e: Expr): Bool {
   false
 }
 
-pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int64 {
+pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int {
   if e.kind == ex_int() {
     if e.int_bits <= 4611686018427387904u64 {
-      return e.int_bits.to_i64()
+      return e.int_bits.to_i()
     }
-    return 0i64 - 1i64
+    return 0 - 1
   }
   if e.kind == ex_name() {
     return checker_self.cap_of(e.ident)
   }
   if e.kind == ex_field() {
     if e.ident == "size" {
-      return 2147483647i64
+      return 2147483647
     }
     if checker_self.is_sqrt_toi(e) && checker_self.sqrt_src_nonneg(e) {
       // isqrt of a non-negative Int (64-bit since Stage 29 W-INT1).
-      return 3037000499i64
+      return 3037000499
     }
-    return 0i64 - 1i64
+    return 0 - 1
   }
   if e.kind == ex_binary() {
     if l = e.left {
       if r = e.right {
         cl = checker_self.cap_of_expr(l)
-        if cl < 0i64 {
-          return 0i64 - 1i64
+        if cl < 0 {
+          return 0 - 1
         }
         if e.op == tk_plus() {
           cr = checker_self.cap_of_expr(r)
-          if cr < 0i64 {
-            return 0i64 - 1i64
+          if cr < 0 {
+            return 0 - 1
           }
-          if cl > 2305843009213693952i64 - cr {
-            return 0i64 - 1i64
+          if cl > 2305843009213693952 - cr {
+            return 0 - 1
           }
           return cl + cr
         }
         if e.op == tk_star() {
           cr = checker_self.cap_of_expr(r)
-          if cr < 0i64 {
-            return 0i64 - 1i64
+          if cr < 0 {
+            return 0 - 1
           }
-          if cl == 0i64 || cr == 0i64 {
-            return 0i64
+          if cl == 0 || cr == 0 {
+            return 0
           }
-          if cl > 9223372036854775807i64 / cr {
-            return 0i64 - 1i64
+          if cl > 9223372036854775807 / cr {
+            return 0 - 1
           }
           return cl * cr
         }
@@ -1319,12 +1319,12 @@ pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int64 {
           if checker_self.expr_nonneg(r) {
             return cl
           }
-          return 0i64 - 1i64
+          return 0 - 1
         }
       }
     }
   }
-  0i64 - 1i64
+  0 - 1
 }
 
 pub fn (checker_self: Checker) flip_cmp(op: Int): Int {
@@ -1381,12 +1381,12 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
   if b = bound {
     if op == tk_less() || op == tk_less_eq() {
       cb = checker_self.cap_of_expr(b)
-      if cb >= 0i64 {
+      if cb >= 0 {
         cap = cb
         if op == tk_less() {
-          cap = cb - 1i64
+          cap = cb - 1
         }
-        if cap >= 0i64 {
+        if cap >= 0 {
           checker_self.gcap_put(v, cap)
         }
       }
@@ -1394,15 +1394,15 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
     }
     if op == tk_greater() || op == tk_greater_eq() {
       if b.kind == ex_int() && b.int_bits <= 4611686018427387904u64 {
-        low = b.int_bits.to_i64()
+        low = b.int_bits.to_i()
         if op == tk_greater() {
-          low += 1i64
+          low += 1
         }
-        if low >= 1i64 {
+        if low >= 1 {
           checker_self.gnn_put(v)
           checker_self.gpos_put(v)
           checker_self.gne_put(v)
-        } else if low == 0i64 {
+        } else if low == 0 {
           checker_self.gnn_put(v)
         }
       }
@@ -1416,13 +1416,13 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
     }
     if op == tk_eq_eq() {
       cb2 = checker_self.cap_of_expr(b)
-      if cb2 >= 0i64 {
+      if cb2 >= 0 {
         checker_self.gcap_put(v, cb2)
       }
       if b.kind == ex_int() && b.int_bits <= 4611686018427387904u64 {
-        lv = b.int_bits.to_i64()
+        lv = b.int_bits.to_i()
         checker_self.gnn_put(v)
-        if lv >= 1i64 {
+        if lv >= 1 {
           checker_self.gpos_put(v)
           checker_self.gne_put(v)
         }
@@ -1433,26 +1433,26 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
 }
 
 // The largest value of ty a cap test allows (Stage 29 W-INT1: Int is
-// 64-bit; the caps are non-negative Int64 bounds).
-pub fn (checker_self: Checker) cap_max(ty: Ty): Int64 {
+// 64-bit; the caps are non-negative Int bounds).
+pub fn (checker_self: Checker) cap_max(ty: Ty): Int {
   if ty.is_int32 {
-    return 2147483647i64
+    return 2147483647
   }
   if ty.is_uint32 {
-    return 4294967295i64
+    return 4294967295
   }
-  9223372036854775807i64
+  9223372036854775807
 }
 
-pub fn (checker_self: Checker) cap_sum_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
+pub fn (checker_self: Checker) cap_sum_ok(cl: Int, cr: Int, ty: Ty): Bool {
   if cl > checker_self.cap_max(ty) - cr {
     return false
   }
   true
 }
 
-pub fn (checker_self: Checker) cap_prod_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
-  if cl == 0i64 || cr == 0i64 {
+pub fn (checker_self: Checker) cap_prod_ok(cl: Int, cr: Int, ty: Ty): Bool {
+  if cl == 0 || cr == 0 {
     return true
   }
   if cl > checker_self.cap_max(ty) / cr {
@@ -1461,8 +1461,8 @@ pub fn (checker_self: Checker) cap_prod_ok(cl: Int64, cr: Int64, ty: Ty): Bool {
   true
 }
 
-pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int64, cr: Int64, ty: Ty): Bool {
-  if cl < 0i64 || cr < 0i64 {
+pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int, cr: Int, ty: Ty): Bool {
+  if cl < 0 || cr < 0 {
     return false
   }
   if op == tk_plus() {
@@ -1475,10 +1475,10 @@ pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int64, cr: Int64, ty
     if ty.is_unsigned {
       return false
     }
-    if cl > 2147483647i64 {
+    if cl > 2147483647 {
       return false
     }
-    if cr > 2147483647i64 {
+    if cr > 2147483647 {
       return false
     }
     return true
@@ -1539,12 +1539,12 @@ pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
   checker_self.cap_kill_guards(v)
   if op == tk_eq() {
     if checker_self.is_sqrt_toi(val) && checker_self.sqrt_src_nonneg(val) {
-      checker_self.cap_put(v, 46340i64)
+      checker_self.cap_put(v, 46340)
       checker_self.nn_add(v)
       return
     }
     c = checker_self.cap_of_expr(val)
-    if c >= 0i64 {
+    if c >= 0 {
       if val.kind == ex_field() {
         if val.ident == "size" {
           checker_self.cap_remove(v)
@@ -1559,8 +1559,8 @@ pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
   }
   if op == tk_plus_eq() {
     cv = checker_self.cap_of_expr(val)
-    if old_cap >= 0i64 && cv >= 0i64 {
-      if old_cap > 2305843009213693952i64 - cv {
+    if old_cap >= 0 && cv >= 0 {
+      if old_cap > 2305843009213693952 - cv {
         checker_self.cap_remove(v)
       } else {
         checker_self.cap_put(v, old_cap + cv)
@@ -1572,7 +1572,7 @@ pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
   }
   if op == tk_minus_eq() {
     if checker_self.expr_nonneg(val) {
-      if old_cap >= 0i64 {
+      if old_cap >= 0 {
         checker_self.cap_put(v, old_cap)
       } else {
         checker_self.cap_remove(v)
@@ -1584,10 +1584,10 @@ pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
   }
   if op == tk_star_eq() {
     cv2 = checker_self.cap_of_expr(val)
-    if old_cap >= 0i64 && cv2 >= 0i64 {
-      if old_cap == 0i64 || cv2 == 0i64 {
-        checker_self.cap_put(v, 0i64)
-      } else if old_cap > 9223372036854775807i64 / cv2 {
+    if old_cap >= 0 && cv2 >= 0 {
+      if old_cap == 0 || cv2 == 0 {
+        checker_self.cap_put(v, 0)
+      } else if old_cap > 9223372036854775807 / cv2 {
         checker_self.cap_remove(v)
       } else {
         checker_self.cap_put(v, old_cap * cv2)

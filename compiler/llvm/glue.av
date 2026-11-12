@@ -6,17 +6,17 @@
 
 import source
 
-// Its integers are Int64 (C int64_t) on both sides (Stage 29 W-INT1): the
+// Its integers are Int (C int64_t) on both sides (Stage 29 W-INT1): the
 // seed's `Int` is 32-bit and B's is 64-bit, and both link this one object.
 lib avant_llvm {
-  fun avant_llvm_init: Int64
-  fun avant_llvm_compile_file(ll_path: String, passes: String, level: Int64, obj_path: String): Int64
-  fun avant_llvm_compile_text(text: String, name: String, passes: String, level: Int64, obj_path: String): Int64
+  fun avant_llvm_init: Int
+  fun avant_llvm_compile_file(ll_path: String, passes: String, level: Int, obj_path: String): Int
+  fun avant_llvm_compile_text(text: String, name: String, passes: String, level: Int, obj_path: String): Int
   fun avant_llvm_error: String
   fun avant_llvm_version: String
-  fun avant_llvm_f64_text(bits: Int64): String
-  fun avant_llvm_host_level: Int64
-  fun avant_llvm_set_cpu(level: Int64): Int64
+  fun avant_llvm_f64_text(bits: Int): String
+  fun avant_llvm_host_level: Int
+  fun avant_llvm_set_cpu(level: Int): Int
 }
 
 // The codegen modes (D174), one table: the new-pass-manager pipeline and
@@ -75,13 +75,13 @@ fn llvm_result(code: Int, label: String): String {
 // codegen mode `codegen`: parse, verify, the mode's pipeline, emit. Returns
 // "" on success, else the message for a diagnostic.
 pub fn llvm_compile_file(ll_path: String, codegen: String, obj_path: String): String {
-  code = avant_llvm.avant_llvm_compile_file(ll_path, llvm_mode_passes(codegen), llvm_mode_level(codegen).to_i64, obj_path)
+  code = avant_llvm.avant_llvm_compile_file(ll_path, llvm_mode_passes(codegen), llvm_mode_level(codegen).to_i, obj_path)
   llvm_result(code.to_i, ll_path)
 }
 
 // The same from IR text in memory; name labels it in messages.
 pub fn llvm_compile_text(text: String, name: String, codegen: String, obj_path: String): String {
-  code = avant_llvm.avant_llvm_compile_text(text, name, llvm_mode_passes(codegen), llvm_mode_level(codegen).to_i64, obj_path)
+  code = avant_llvm.avant_llvm_compile_text(text, name, llvm_mode_passes(codegen), llvm_mode_level(codegen).to_i, obj_path)
   llvm_result(code.to_i, name)
 }
 
@@ -92,7 +92,7 @@ pub fn llvm_version: String {
 
 // A double constant's IR text from its bits (O141): a shortest round-trip
 // decimal, or a bitcast of the bits for a NaN or an infinity.
-pub fn llvm_f64_text(bits: Int64): String {
+pub fn llvm_f64_text(bits: Int): String {
   avant_llvm.avant_llvm_f64_text(bits)
 }
 
@@ -149,5 +149,5 @@ pub fn llvm_cpu_name(level: Int): String {
 }
 
 pub fn llvm_set_cpu(level: Int) {
-  dummy = avant_llvm.avant_llvm_set_cpu(level.to_i64)
+  dummy = avant_llvm.avant_llvm_set_cpu(level.to_i)
 }

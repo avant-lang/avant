@@ -1,8 +1,8 @@
 // The lowering of calls and scalar members (Stage 28 W5b;
 // stages/stage28/mir.md W5.2, W5.3): direct calls of the program's plain
 // functions, the builtins `puts`, `puts_u`, `now_ms`, `now_us`, `sqrt`,
-// `exp`, and the conversions and members of Int, Int64, UInt64 (`to_f
-// to_i to_i64 to_u64 abs`) and Float64 (`to_i abs floor sqrt exp`), in
+// `exp`, and the conversions and members of the integer types (`to_f
+// to_i to_u64 abs`) and Float64 (`to_i abs floor sqrt exp`), in
 // their field (`x.to_f`) and call (`x.to_f()`) forms.
 
 import location
@@ -163,7 +163,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
     }
   }
   // The 64-bit clock (Stage 29 W4b1, D295 R6): monotonic milliseconds
-  // and microseconds as Int64 (avant_now_ms and avant_now_us, the Int
+  // and microseconds as Int (avant_now_ms and avant_now_us, the Int
   // readings that wrapped, stay for the seed v0.40.0's compiler).
   if c == "now_ms" || c == "now_us" {
     lw.at(e.loc)
@@ -360,10 +360,10 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
       return lw.call_f64("exp", v)
     }
   } else {
-    if name == "to_i" || name == "to_i64" || name == "to_u64" || name == "to_i32" || name == "to_u32" {
+    if name == "to_i" || name == "to_u64" || name == "to_i32" || name == "to_u32" {
       return lw.int_convert(v, from, ty, e.loc)
     }
-    if name == "to_f" || name == "wrap_i" || name == "wrap_i64" || name == "wrap_u64" || name == "wrap_i32" || name == "wrap_u32" {
+    if name == "to_f" || name == "wrap_i" || name == "wrap_u64" || name == "wrap_i32" || name == "wrap_u32" {
       if ty == from {
         return v
       }
@@ -377,20 +377,20 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
   b.c_i32(0)
 }
 
-// abs on Int or Int64 (D215, Stage 29 W4b1 R2): the negation of MIN
+// abs on a signed integer (D215, Stage 29 W4b1 R2): the negation of MIN
 // traps like `-MIN` (UInt64.abs is refused by the checker).
 pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   d = b.temp(ty)
   b.assign(b.pl(d), b.rv_use(v))
-  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(d), lw.int_const(ty, 0i64)))
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(d), lw.int_const(ty, 0)))
   neg = b.block
   join = b.block
   b.branch(c, neg, join)
   b.at(neg)
-  min = lw.int_const(ty, 0i64 - 2147483647i64 - 1i64)
+  min = lw.int_const(ty, 0 - 2147483647 - 1)
   if ty == mt_i64() {
-    min = lw.int_const(ty, 0i64 - 9223372036854775807i64 - 1i64)
+    min = lw.int_const(ty, 0 - 9223372036854775807 - 1)
   }
   is_min = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(d), min))
   ok = lw.trap_open(is_min, true)
@@ -403,8 +403,7 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand, loc: Location): MOperand {
 }
 
 // The kinds of avant_trap_convert (Stage 29 W-INT1): 16 + from * 4 + to,
-// each 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (below 16, the seed's codes:
-// 0 Int, 1 Int64, 2 UInt64).
+// each 0 Int, 1 Int32, 2 UInt64, 3 UInt32.
 pub fn mir_convert_code(ty: Int): Int {
   if ty == mt_i32() {
     return 1
@@ -422,7 +421,7 @@ pub fn mir_int_signed(ty: Int): Bool {
   ty == mt_i32() || ty == mt_i64()
 }
 
-// to_i, to_i32, to_u64, to_u32 (and to_i64, to_i's other name) between
+// to_i, to_i32, to_u64, to_u32 between
 // Int, Int32, UInt64 and UInt32 (D215, Stage 29 W4b1 R1, W-INT1): the same
 // number in the target type, or avant_trap_convert(value, kind) from a
 // cold block; a widening that cannot fail (Int32 or UInt32 to Int, UInt32
@@ -441,23 +440,23 @@ pub fn (lw: MirLower) int_convert(v: MOperand, from: Int, to: Int, loc: Location
   b.assign(b.pl(x), b.rv_use(v))
   inside = b.c_bool(true)
   if mir_int_signed(from) {
-    c0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(from, 0i64)))
+    c0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), lw.int_const(from, 0)))
     if to == mt_i32() {
-      lo = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), b.c_i64(0i64 - 2147483648i64)))
-      hi = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(2147483647i64)))
+      lo = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), b.c_i64(0 - 2147483648)))
+      hi = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(2147483647)))
       inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), lo, hi))
     } else if to == mt_u32() && from == mt_i64() {
-      hi2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(4294967295i64)))
+      hi2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i64(4294967295)))
       inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c0, hi2))
     } else {
       inside = c0
     }
   } else if to == mt_i64() {
-    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(9223372036854775807i64)))
+    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(9223372036854775807)))
   } else if to == mt_i32() {
-    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), lw.int_const(from, 2147483647i64)))
+    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), lw.int_const(from, 2147483647)))
   } else {
-    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(4294967295i64)))
+    inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_u64(4294967295)))
   }
   ok = lw.trap_open(inside, false)
   wide = b.copy_local(x)

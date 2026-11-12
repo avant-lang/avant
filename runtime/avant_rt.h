@@ -247,7 +247,6 @@ char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(avant_int b, avant_int n);
 char *avant_str_slice(const char *s, avant_int start, avant_int stop);
 char *avant_str_from_int(avant_int n);
-char *avant_str_from_i64(int64_t n);
 char *avant_str_from_u64(uint64_t n);
 char *avant_str_from_float(double n);
 char *avant_str_from_bool(int32_t n);

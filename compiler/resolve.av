@@ -15,7 +15,6 @@ pub class TypeResolver {
   err: CompileError? = nil
   pub errors: DiagBag
   pub t_int: Ty
-  pub t_int64: Ty
   pub t_uint64: Ty
   pub t_bool: Ty
   pub t_float: Ty
@@ -46,7 +45,6 @@ pub class TypeResolver {
     inn.push(ty_void())
     self.interned = inn
     self.t_int = ty_int()
-    self.t_int64 = ty_int64()
     self.t_uint64 = ty_uint64()
     self.t_bool = ty_bool()
     self.t_float = ty_float()
@@ -159,7 +157,7 @@ pub class TypeResolver {
       best_d = 1
     }
     best_d += 1
-    builtin = "Int Int64 UInt64 Bool Float64 String Array Hash Buf Bytes Ptr Void Nil"
+    builtin = "Int Int32 UInt32 UInt64 Bool Float64 String Array Hash Buf Bytes Ptr Void Nil"
     cands = builtin.split(" ")
     for t in self.type_names {
       cands.push(t)
@@ -276,7 +274,8 @@ pub class TypeResolver {
       return ty_c_scalar(cs)
     }
     if tn.name == "Int64" {
-      self.reject_args(tn)
+      // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+      self.fail(tn.loc, removed_int_message("Int64", "Int"))
       return self.t_int
     }
     if tn.name == "Int32" {
@@ -947,9 +946,6 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
 
 pub fn c_field_ok(ty: Ty): Bool {
   if ty.is_integer {
-    return true
-  }
-  if ty.is_int64 {
     return true
   }
   if ty.is_uint64 {

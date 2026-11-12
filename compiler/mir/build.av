@@ -285,28 +285,28 @@ pub class MirBuilder {
 
   pub fn copy_local(local: Int): MOperand { self.copy(self.pl(local)) }
 
-  pub fn c_int(ty: Int, v: Int64): MOperand {
+  pub fn c_int(ty: Int, v: Int): MOperand {
     o = MOperand.new(mok_int(), ty)
     o.ival = v
     o
   }
 
-  pub fn c_i32(v: Int): MOperand { self.c_int(mt_i32(), v.to_i64) }
-  pub fn c_u32(v: Int): MOperand { self.c_int(mt_u32(), v.to_i64) }
-  pub fn c_i64(v: Int64): MOperand { self.c_int(mt_i64(), v) }
-  pub fn c_u64(v: Int64): MOperand { self.c_int(mt_u64(), v) }
+  pub fn c_i32(v: Int): MOperand { self.c_int(mt_i32(), v.to_i) }
+  pub fn c_u32(v: Int): MOperand { self.c_int(mt_u32(), v.to_i) }
+  pub fn c_i64(v: Int): MOperand { self.c_int(mt_i64(), v) }
+  pub fn c_u64(v: Int): MOperand { self.c_int(mt_u64(), v) }
 
   pub fn c_bool(v: Bool): MOperand {
     o = MOperand.new(mok_bool(), mt_bool())
     if v {
-      o.ival = 1i64
+      o.ival = 1
     }
     o
   }
 
   // An f64 constant: its bit pattern and its %g rendering (printed as a
   // comment; empty prints none).
-  pub fn c_f64(bits: Int64, shown: String): MOperand {
+  pub fn c_f64(bits: Int, shown: String): MOperand {
     o = MOperand.new(mok_f64(), mt_f64())
     o.ival = bits
     o.text = shown
@@ -490,7 +490,7 @@ pub class MirBuilder {
   }
 
   // targets[i] is the block for values[i]; other is the else block.
-  pub fn switch_on(o: MOperand, values: Array(Int64), targets: Array(Int), other: Int) {
+  pub fn switch_on(o: MOperand, values: Array(Int), targets: Array(Int), other: Int) {
     t = MTerm.new(mtk_switch(), self.cur_loc)
     t.cond = o
     t.values = values

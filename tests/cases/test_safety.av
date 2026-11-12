@@ -1,6 +1,6 @@
 import harness
 
-fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, needle: String) {
+fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
@@ -20,7 +20,7 @@ fn expect_trap_waveb(c: Checks, compiler: String, stamp: Int64, tag: String, bod
 
 // A program the checker rejects: the compile exits non-zero, writes no
 // binary, and its diagnostic names needle.
-fn expect_compile_error(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, needle: String) {
+fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/safety-waveb-${stamp}-${tag}.av"
   bin = "${scratch()}/safety-waveb-${stamp}-${tag}.bin"
   clog = "${scratch()}/safety-waveb-${stamp}-${tag}.clog"
@@ -165,12 +165,12 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "c-i8-arg", "lib c {\n  fun abs(x: Int8): Int32\n}\nfn main {\n  puts(c.abs(-129))\n}\n", "avant runtime: -129 out of range for the C type Int8 (-128..127)")
     expect_trap_waveb(c, compiler, stamp, "c-i16-arg", "lib c {\n  fun abs(x: Int16): Int32\n}\nfn main {\n  puts(c.abs(40000))\n}\n", "avant runtime: 40000 out of range for the C type Int16 (-32768..32767)")
     expect_trap_waveb(c, compiler, stamp, "c-u16-arg", "lib c {\n  fun abs(x: UInt16): Int32\n}\nfn main {\n  puts(c.abs(-1))\n}\n", "avant runtime: -1 out of range for the C type UInt16 (0..65535)")
-    expect_trap_waveb(c, compiler, stamp, "c-u32-arg", "lib c {\n  fun labs(x: UInt32): Int64\n}\nfn main {\n  x = 4294967296\n  puts(c.labs(x.to_u32))\n}\n", "avant runtime: to_u32 of Int 4294967296 out of range for UInt32")
-    expect_trap_waveb(c, compiler, stamp, "c-field-store", "lib c {\n  struct Px {\n    r: UInt8\n  }\n  fun calloc(n: Int64, size: Int64): Ptr(Px)\n}\nfn main {\n  p = c.calloc(1i64, 8i64)\n  p.r = 255\n  puts(p.r)\n  p.r += 1\n  puts(p.r)\n}\n", "avant runtime: 256 out of range for the C type UInt8 (0..255)")
+    expect_trap_waveb(c, compiler, stamp, "c-u32-arg", "lib c {\n  fun labs(x: UInt32): Int\n}\nfn main {\n  x = 4294967296\n  puts(c.labs(x.to_u32))\n}\n", "avant runtime: to_u32 of Int 4294967296 out of range for UInt32")
+    expect_trap_waveb(c, compiler, stamp, "c-field-store", "lib c {\n  struct Px {\n    r: UInt8\n  }\n  fun calloc(n: Int, size: Int): Ptr(Px)\n}\nfn main {\n  p = c.calloc(1, 8)\n  p.r = 255\n  puts(p.r)\n  p.r += 1\n  puts(p.r)\n}\n", "avant runtime: 256 out of range for the C type UInt8 (0..255)")
     expect_compile_error(c, compiler, stamp, "c-scalar-local", "fn main {\n  x: UInt8 = 1\n  puts(x)\n}\n", "UInt8 is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is Int)")
     expect_compile_error(c, compiler, stamp, "c-scalar-param", "fn f(x: Float32): Int {\n  1\n}\nfn main {\n  puts(f(1.0))\n}\n", "Float32 is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is Float64)")
     expect_compile_error(c, compiler, stamp, "c-scalar-field", "struct S {\n  a: UInt16\n}\nfn main {\n  s = S { a: 1 }\n  puts(s.a)\n}\n", "UInt16 is a C type")
-    expect_compile_error(c, compiler, stamp, "c-scalar-callback", "lib c {\n  fun qsort(p: Ptr(Void), n: Int64, s: Int64, f: fn(UInt8): Int)\n}\nfn main {\n  puts(1)\n}\n", "a C callback cannot take or return UInt8 yet; use its Avant type (Int)")
+    expect_compile_error(c, compiler, stamp, "c-scalar-callback", "lib c {\n  fun qsort(p: Ptr(Void), n: Int, s: Int, f: fn(UInt8): Int)\n}\nfn main {\n  puts(1)\n}\n", "a C callback cannot take or return UInt8 yet; use its Avant type (Int)")
     expect_trap_waveb(c, compiler, stamp, "div-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x / y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "rem-zero", "fn main {\n  x = 10\n  y = 0\n  puts(x % y)\n}\n", "division by zero")
     expect_trap_waveb(c, compiler, stamp, "overflow-add", "fn main {\n  x = 9223372036854775807\n  y = 1\n  puts(x + y)\n}\n", "integer overflow")
@@ -178,7 +178,7 @@ fn test_safety(c: Checks) {
     expect_trap_waveb(c, compiler, stamp, "overflow-u32", "fn main {\n  x: UInt32 = 0\n  y: UInt32 = 1\n  puts(x - y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "overflow-mul", "fn main {\n  x = 4000000000\n  y = 4000000000\n  puts(x * y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "overflow-compound", "fn main {\n  x = 9223372036854775807\n  x += 1\n  puts(x)\n}\n", "integer overflow")
-    expect_trap_waveb(c, compiler, stamp, "overflow-i64", "fn main {\n  x = 9223372036854775807i64\n  y = 1i64\n  puts(x + y)\n}\n", "integer overflow")
+    expect_trap_waveb(c, compiler, stamp, "overflow-i64", "fn main {\n  x = 9223372036854775807\n  y = 1\n  puts(x + y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "overflow-u64", "fn main {\n  x = 18446744073709551615u64\n  y = 1u64\n  puts(x + y)\n}\n", "integer overflow")
     expect_trap_waveb(c, compiler, stamp, "div-overflow", "fn main {\n  x = -9223372036854775808\n  y = 0 - 1\n  puts(x / y)\n}\n", "integer overflow")
     // C1, C2 (W11b): a shift amount outside 0..width - 1 traps, as does

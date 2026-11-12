@@ -9,14 +9,11 @@ import type
 import mir.types
 
 // The MIR type of t in the supported subset (2.9), or -1: Int i64 (Stage
-// 29 W-INT1, D314; Int64 is Int), Int32 i32, UInt32 u32, UInt64 u64, Bool
+// 29 W-INT1, D314), Int32 i32, UInt32 u32, UInt64 u64, Bool
 // bool, Float64 f64, Void void, String and Bytes `ref str` (a literal's
 // constant or a heap string, W6a).
 pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_int {
-    return mt_i64()
-  }
-  if t.is_int64 {
     return mt_i64()
   }
   if t.is_int32 {
@@ -189,9 +186,6 @@ pub fn mir_mty(t: Ty): String {
   if t.is_int {
     return "Int"
   }
-  if t.is_int64 {
-    return "Int64"
-  }
   if t.is_uint64 {
     return "UInt64"
   }
@@ -257,26 +251,26 @@ pub fn mir_module_part(name: String): String {
 // exponent comes from halving or doubling into [1, 2) (or stopping at the
 // subnormal exponent), and the 52 fraction bits from two exact 26-bit
 // halves.
-pub fn mir_f64_bits(v: Float64): Int64 {
+pub fn mir_f64_bits(v: Float64): Int {
   if v != v {
-    return 9221120237041090560i64
+    return 9221120237041090560
   }
-  sign = 0i64
+  sign = 0
   x = v
   if x < 0.0 {
-    sign = 1i64
+    sign = 1
     x = 0.0 - x
   } else if x == 0.0 {
     if 1.0 / x < 0.0 {
-      sign = 1i64
+      sign = 1
     }
   }
-  top = sign << 63i64
+  top = sign << 63
   if x == 0.0 {
     return top
   }
   if x > 1.7976931348623157e308 {
-    return top | (2047i64 << 52i64)
+    return top | (2047 << 52)
   }
   e = 0
   while x >= 2.0 {
@@ -296,7 +290,7 @@ pub fn mir_f64_bits(v: Float64): Int64 {
   scaled = frac * 67108864.0
   hi = scaled.floor
   lo = (scaled - hi) * 67108864.0
-  top | (biased.to_i64 << 52i64) | (hi.to_i.to_i64 << 26i64) | lo.to_i.to_i64
+  top | (biased.to_i << 52) | (hi.to_i.to_i << 26) | lo.to_i.to_i
 }
 
 // The type of a C scalar's Avant view: Float64 for Float32, Int (i64)

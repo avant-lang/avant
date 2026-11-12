@@ -450,8 +450,10 @@ pub class Parser {
       }
     } else if str_ends(raw, "i64") {
       if raw.size > 3 {
-        suffix = "i64"
+        // One integer spelling (Stage 29 W-ADOPT, D300, D317): the lexer
+        // still reads the suffix so the error can say what to write.
         raw = str_slice(raw, 0, raw.size - 3)
+        self.fail(tok.loc, removed_int_message("the i64 suffix", raw))
       }
     }
     bits = 0u64
@@ -1899,7 +1901,7 @@ pub class Parser {
     arm
   }
 
-  pub fn parse_case_label: Int64 {
+  pub fn parse_case_label: Int {
     neg = false
     if self.current.kind == tk_minus() {
       self.bump
@@ -1908,29 +1910,29 @@ pub class Parser {
     }
     if self.current.kind != tk_integer() {
       self.fail(self.current.loc, "case label must be an integer literal")
-      return 0i64
+      return 0
     }
     tok = self.bump
     if !self.parse_int_tok(tok) {
-      return 0i64
+      return 0
     }
     if self.int_suffix.size != 0 {
       self.fail(tok.loc, "case label must be an Int literal")
-      return 0i64
+      return 0
     }
     bits = self.int_bits
     if neg {
       if bits > 2147483648u64 {
         self.fail(tok.loc, "case label does not fit in Int")
-        return 0i64
+        return 0
       }
-      return 0i64 - bits.to_i64()
+      return 0 - bits.to_i()
     }
     if bits > 2147483647u64 {
       self.fail(tok.loc, "case label does not fit in Int")
-      return 0i64
+      return 0
     }
-    bits.to_i64()
+    bits.to_i()
   }
 
   pub fn parse_for_operand: Expr {
