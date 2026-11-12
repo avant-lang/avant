@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 static uint32_t crc_table[4][256];
 static int crc_ready;
@@ -182,8 +185,31 @@ int32_t avant_sha256_word0(const char *s) {
     src = (const uint8_t *)s;
   }
   /* Eight independent chains (index i & 7): eight steps at a time keep
-   * the same per-element arithmetic and the same result. */
-  for (i = 0; i + 8 <= n; i += 8) {
+   * the same per-element arithmetic and the same result. With SSE2 the
+   * eight chains are two 4 x 32-bit vectors and the eight bytes are
+   * widened into them (Stage 29 W-INT2: with byte input GCC no longer
+   * vectorizes the chain loop, 3.7x the time of W-INT1's lanes). */
+  i = 0;
+#if defined(__SSE2__)
+  {
+    __m128i lo = _mm_loadu_si128((const __m128i *)(const void *)&hashes[0]);
+    __m128i hi = _mm_loadu_si128((const __m128i *)(const void *)&hashes[4]);
+    const __m128i zero = _mm_setzero_si128();
+    for (; i + 8 <= n; i += 8) {
+      __m128i b = _mm_loadl_epi64((const __m128i *)(const void *)(src + i));
+      __m128i w = _mm_unpacklo_epi8(b, zero);
+      __m128i bl = _mm_unpacklo_epi16(w, zero);
+      __m128i bh = _mm_unpackhi_epi16(w, zero);
+      lo = _mm_add_epi32(_mm_add_epi32(_mm_slli_epi32(lo, 5), lo), bl);
+      hi = _mm_add_epi32(_mm_add_epi32(_mm_slli_epi32(hi, 5), hi), bh);
+      lo = _mm_xor_si128(_mm_add_epi32(lo, _mm_slli_epi32(lo, 10)), _mm_srli_epi32(lo, 6));
+      hi = _mm_xor_si128(_mm_add_epi32(hi, _mm_slli_epi32(hi, 10)), _mm_srli_epi32(hi, 6));
+    }
+    _mm_storeu_si128((__m128i *)(void *)&hashes[0], lo);
+    _mm_storeu_si128((__m128i *)(void *)&hashes[4], hi);
+  }
+#else
+  for (; i + 8 <= n; i += 8) {
     int k;
     for (k = 0; k < 8; k++) {
       uint32_t hash = hashes[k];
@@ -192,6 +218,7 @@ int32_t avant_sha256_word0(const char *s) {
       hashes[k] = hash;
     }
   }
+#endif
   for (; i < n; i++) {
     uint32_t idx = (uint32_t)i & 7u;
     uint32_t hash = hashes[idx];
