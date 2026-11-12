@@ -220,6 +220,18 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
   }
 }
 
+// Stage 29 W-INT2: the runtime entries the LangArena tasks call at the
+// references' widths: crc32_bytes and sha256_word0 take Bytes; the BWT
+// entries take the bytes in a Buf, the suffix array and the inverse's
+// links as Array(Int), the ranks and counts as Array(Int32).
+fn byte_entry_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("checksum-bytes", "fn main {\n  puts(crc32_bytes(\"123456789\".bytes))\n  puts(sha256_word0(\"123456789\".bytes))\n  puts(sha256_word0(\"\".bytes))\n  b = Buf.new\n  for r in 0..3 {\n    for i in 0..256 {\n      b.push_byte(i)\n    }\n  }\n  b.push_str(\"xyz\")\n  d = b.to_bytes\n  puts(crc32_bytes(d))\n  puts(sha256_word0(d))\n}\n", "-873187034\n-1940684025\n1743128938\n1133535873\n950977636\n"))
+  xs.push(refused("checksum-array", "fn main {\n  puts(crc32_bytes([1, 2]))\n}\n", "crc32_bytes expects Bytes"))
+  xs.push(accepted("bwt-entries", "lib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_bwt_inverse(bwt: Buf, next: Array(Int), out: Buf, start: Int)\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\n\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\n\nfn roundtrip(s: String): String {\n  n = s.size\n  input = sized(n)\n  for i in 0..n {\n    input[i] = s[i]\n  }\n  out = sized(n)\n  idx = fast.avant_bwt_transform(input, Array(Int).new(n), Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), out)\n  back = sized(n)\n  fast.avant_bwt_inverse(out, Array(Int).new(n), back, idx)\n  \"\${out.to_s} \${idx} \${back.to_s == s}\"\n}\n\nfn main {\n  puts(roundtrip(\"banana\"))\n  puts(roundtrip(\"abracadabra\"))\n  long = Buf.new\n  for i in 0..3000 {\n    long.push_byte(97 + (i * 7 + i / 13) % 5)\n  }\n  r = roundtrip(long.to_s)\n  puts(str_slice(r, r.size - 4, r.size))\n}\n", "nnbaaa 3 true\nrdarcaaaabb 2 true\ntrue\n"))
+  xs
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_numbers.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -247,6 +259,9 @@ fn test_main(c: Checks) {
     }
     for f_small_cases in small_cases() {
       all.push(f_small_cases)
+    }
+    for f_byte_entry_cases in byte_entry_cases() {
+      all.push(f_byte_entry_cases)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

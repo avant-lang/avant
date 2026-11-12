@@ -5,12 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-  void *buf;
-  int32_t size;
-  int32_t cap;
-} AvantArray;
-
 static uint32_t crc_table[4][256];
 static int crc_ready;
 
@@ -37,27 +31,28 @@ static void crc_init(void) {
   crc_ready = 1;
 }
 
-int32_t avant_crc32_i32(void *arr) {
+/* crc32_bytes(b: Bytes) (Stage 29 W-INT2: the bytes themselves, as the
+ * references' uint8_t buffers; the Array(Int) form is gone). */
+int32_t avant_crc32_bytes(const char *s) {
   crc_init();
-  AvantArray *a = (AvantArray *)arr;
   uint32_t crc = 0xFFFFFFFFu;
   int32_t i = 0;
   int32_t n = 0;
-  const avant_int *src = NULL;
-  if (a && a->buf && a->size > 0) {
-    n = a->size;
-    src = (const avant_int *)a->buf;
+  const uint8_t *src = (const uint8_t *)"";
+  if (s) {
+    n = (int32_t)avant_str_n(s);
+    src = (const uint8_t *)s;
   }
-  /* The bytes are an Array(Int)'s elements (avant_int). Slicing by 4: the same CRC recurrence applied to four bytes at
+  /* Slicing by 4: the same CRC recurrence applied to four bytes at
    * once through the derived tables; the result is bit-identical. */
   for (; i + 4 <= n; i += 4) {
-    uint32_t c = crc ^ (uint8_t)(src[i] & 255);
-    crc = crc_table[3][c & 255u] ^ crc_table[2][((c >> 8) ^ (uint8_t)(src[i + 1] & 255)) & 255u] ^
-          crc_table[1][((c >> 16) ^ (uint8_t)(src[i + 2] & 255)) & 255u] ^
-          crc_table[0][((c >> 24) ^ (uint8_t)(src[i + 3] & 255)) & 255u];
+    uint32_t c = crc ^ src[i];
+    crc = crc_table[3][c & 255u] ^ crc_table[2][((c >> 8) ^ src[i + 1]) & 255u] ^
+          crc_table[1][((c >> 16) ^ src[i + 2]) & 255u] ^
+          crc_table[0][((c >> 24) ^ src[i + 3]) & 255u];
   }
   for (; i < n; i++) {
-    crc = crc_table[0][(crc ^ (uint8_t)(src[i] & 255)) & 255u] ^ (crc >> 8);
+    crc = crc_table[0][(crc ^ src[i]) & 255u] ^ (crc >> 8);
   }
   return (int32_t)(crc ^ 0xFFFFFFFFu);
 }
@@ -173,33 +168,26 @@ char *avant_sha256(const char *s) {
   return out;
 }
 
-int32_t avant_sha256_word0(void *arr) {
+/* sha256_word0(b: Bytes) (Stage 29 W-INT2: the bytes themselves). */
+int32_t avant_sha256_word0(const char *s) {
   uint32_t hashes[8] = {
       0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
       0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u,
   };
-  AvantArray *a = (AvantArray *)arr;
   int32_t i;
   int32_t n = 0;
-  const avant_int *src = NULL;
-  if (a && a->buf && a->size > 0) {
-    n = a->size;
-    src = (const avant_int *)a->buf;
+  const uint8_t *src = (const uint8_t *)"";
+  if (s) {
+    n = (int32_t)avant_str_n(s);
+    src = (const uint8_t *)s;
   }
   /* Eight independent chains (index i & 7): eight steps at a time keep
    * the same per-element arithmetic and the same result. */
   for (i = 0; i + 8 <= n; i += 8) {
     int k;
-    /* The 64-bit elements' low bytes first, as 32-bit lanes, so the chains
-     * vectorize as they did over 32-bit elements (Stage 29 W-INT1: 3.6x
-     * the instructions on Hash::SHA256 without it). */
-    uint32_t lane[8];
-    for (k = 0; k < 8; k++) {
-      lane[k] = (uint32_t)src[i + k] & 255u;
-    }
     for (k = 0; k < 8; k++) {
       uint32_t hash = hashes[k];
-      hash = ((hash << 5) + hash) + lane[k];
+      hash = ((hash << 5) + hash) + src[i + k];
       hash = (hash + (hash << 10)) ^ (hash >> 6);
       hashes[k] = hash;
     }
@@ -207,7 +195,7 @@ int32_t avant_sha256_word0(void *arr) {
   for (; i < n; i++) {
     uint32_t idx = (uint32_t)i & 7u;
     uint32_t hash = hashes[idx];
-    hash = ((hash << 5) + hash) + (uint8_t)(src[i] & 255);
+    hash = ((hash << 5) + hash) + src[i];
     hash = (hash + (hash << 10)) ^ (hash >> 6);
     hashes[idx] = hash;
   }

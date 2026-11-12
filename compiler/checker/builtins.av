@@ -1002,10 +1002,10 @@ pub fn (checker_self: Checker) check_codec_call(expr: Expr): Ty? {
     return checker_self.check_one_string(expr, checker_self.t_string())
   }
   if expr.callee == "crc32_bytes" {
-    return checker_self.check_i32_bytes(expr)
+    return checker_self.check_bytes_checksum(expr)
   }
   if expr.callee == "sha256_word0" {
-    return checker_self.check_i32_bytes(expr)
+    return checker_self.check_bytes_checksum(expr)
   }
   nil
 }
@@ -1048,27 +1048,21 @@ pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
   checker_self.t_void()
 }
 
-pub fn (checker_self: Checker) check_i32_bytes(expr: Expr): Ty {
+// crc32_bytes and sha256_word0 take Bytes (Stage 29 W-INT2: the
+// references hash a uint8_t buffer; the Array(Int) form is gone).
+pub fn (checker_self: Checker) check_bytes_checksum(expr: Expr): Ty {
   if expr.args.size == 1 {
     if b = expr.block {
-      checker_self.fail(expr.loc, "${expr.callee} takes Array(Int)")
+      checker_self.fail(expr.loc, "${expr.callee} takes one Bytes")
       return ty_int32()
     }
   } else {
-    checker_self.fail(expr.loc, "${expr.callee} takes Array(Int)")
+    checker_self.fail(expr.loc, "${expr.callee} takes one Bytes")
     return ty_int32()
   }
-  got = checker_self.check_expr(expr.args[0])
-  ok = false
-  if got.is_array {
-    if e = got.inner {
-      if e.is_int {
-        ok = true
-      }
-    }
-  }
-  if !ok {
-    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Array(Int)")
+  got = checker_self.check_expr_as(expr.args[0], checker_self.t_bytes())
+  if !got.is_bytes {
+    checker_self.fail(expr.args[0].loc, "${expr.callee} expects Bytes")
   }
   ty_int32()
 }
