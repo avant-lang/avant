@@ -2852,9 +2852,10 @@ fn main {
 - **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`: `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)`, then `.header(name, value)`. `Content-Length` and `Connection` are the server's to set.
 - **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
 - **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400.
-- **Connections** are kept alive, and pipelined requests are answered in order. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
+- **Connections** are kept alive, and pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
 - **Handlers must not block the loop.** Hand slow work to `spawn`.
 - **A trap in a handler ends the server**, like any [trap](#traps). Run it under a supervisor, and read request data with the non-trapping forms.
+- **One known defect, being fixed:** a client that disconnects while pipelined answers are still unread ends the server process. The supervisor covers it meanwhile.
 - `close` stops the server and lets `serve` return. A server that is never closed keeps its socket until the process exits; there is no finalizer.
 
 #### HTTP client
@@ -3339,10 +3340,10 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
 | `fn main` returning an error | decided | handle it in `main` |
 | `print` (no newline), writing to stderr, `exit(status)` | decided | `puts`; `main`'s result |
-| Reading standard input | not started | `file_read("/dev/stdin")` |
-| The time of day; `sleep` | not started | intervals with `now_ms`; C's `usleep` through a `lib` block |
+| Reading standard input | planned | `file_read("/dev/stdin")` |
+| The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
-| `Mutex.with` keeping a reference from leaving the lock | not started | return plain values from the block ([Channel and Mutex](#channel-and-mutex)) |
+| `Mutex.with` keeping a reference from leaving the lock | a defect, being fixed | return plain values from the block ([Channel and Mutex](#channel-and-mutex)) |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
@@ -3470,19 +3471,34 @@ One weakness these tables understate is allocation-heavy code. `Binarytrees::Are
 
 ### HTTP and WebSocket servers
 
-The most basic server in each language: `GET /` answered with `hello`, and a WebSocket echo. Every server is an optimized build; the sources and the script are in [bench/http](bench/http). Avant's row is the median of three runs (2026-11-10, `--release`).
+The most basic server in each language: `GET /` answered with `hello`, over keep-alive connections. Every server is an optimized build, and all eight were measured in one session. The sources and the script are in `bench/http/`.
 
-<!-- TODO(benchmarks): replace this table and the caveat below when the comparison has been repeated by more than one stated method (more connections, pipelining, the load generator on its own cores) and with more servers in it. -->
+| Server | Requests per second | Peak memory |
+| --- | ---: | ---: |
+| Avant (`std.http`) | 491,761 | 7.3 MB |
+| C (h2o) | 475,331 | 8.6 MB |
+| Rust (std, thread per connection) | 499,582 | 3.3 MB |
+| Rust (hyper) | 493,031 | 6.2 MB |
+| Go (`net/http`) | 348,106 | 18.6 MB |
+| Go (fasthttp) | 426,621 | 11.0 MB |
+| Crystal (`HTTP::Server`) | 478,206 | 15.3 MB |
+| Valk (`http.serve_fast`) | 472,085 | 12.3 MB |
 
-| Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
-| --- | ---: | ---: | ---: | ---: |
-| Avant (`std.http`) | 507,795 | 7.2 MB | 247,803 | 6.9 MB |
-| C (h2o) | 484,026 | 8.4 MB | 251,006 | 8.5 MB |
-| Rust (std, thread per connection) | 507,603 | 3.4 MB | 252,175 | 2.6 MB |
-| Go (`net/http`) | 349,436 | 18 MB | 215,594 | 12 MB |
-| Crystal (`HTTP::Server`) | 521,997 | 15 MB | 264,813 | 11 MB |
+**Method.** `wrk -t4 -c64 -d10s --latency`, with the load generator on the same machine as the server and no pipelining; one server at a time, three runs per server after a warm-up, the median printed (AMD Ryzen 7 5700G, 2026-11-12).
 
-**Caveat: this table may be measuring the load generator, not the servers.** The method is `wrk -t4 -c64 -d10s` (64 connections, no pipelining) for HTTP and 8 connections for WebSocket, with the load generator on the same machine as the server, one server at a time. Four of the five HTTP rows fall within 8% of one another, which is what a saturated client looks like. Until the comparison is repeated by methods that can tell fast servers apart, read the request rates as "these servers keep up with this client", and the memory columns as the informative part.
+**This table does not rank its fastest rows.** At this load the load generator is the limit for five of the eight servers (Avant, h2o, both Rust servers and Valk): `wrk` uses all four of its threads for them, so their numbers are level. What the table shows is that none of them is the bottleneck at 64 connections, and what each costs in memory.
+
+Pipelined loads (many requests sent in one write) are not shown. Avant's server answers each pipelined request with its own write today, which is slower than servers that answer a batch with one write; this is being worked on.
+
+The WebSocket echo was not measured in that session. These are the earlier numbers, kept apart so the two tables never mix sessions: messages per second over 8 connections for 10 seconds; Avant's row is the median of three runs (2026-11-10), the other rows one run each (2026-11-04).
+
+| Server | Messages per second | Peak memory |
+| --- | ---: | ---: |
+| Avant (`std.http`) | 247,803 | 6.9 MB |
+| C (h2o) | 251,006 | 8.5 MB |
+| Rust (std, thread per connection) | 252,175 | 2.6 MB |
+| Go (`net/http`) | 215,594 | 12 MB |
+| Crystal (`HTTP::Server`) | 264,813 | 11 MB |
 
 ### Reading these numbers
 
@@ -3513,7 +3529,7 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 | Interop | C libraries usable with little ceremony |
 | Concurrency | built in, and obvious |
 
-Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
+Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
 
 Avant is not a better TypeScript, not a borrow-checker language, not a dynamic language with types bolted on, and not a research language. It does not try to please everyone.
 
