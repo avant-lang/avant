@@ -163,6 +163,23 @@ fn test_testing_docs(c: Checks) {
       c.expect(false, "avant run counts every check")
     }
 
+    // O416 (Stage 29 W-FIX1d): the two files a test process writes for
+    // the runner. A failed write of either was dropped: a report without
+    // this process's checks, or parallel bodies that never run, with
+    // status 0. Each is given a path that is a directory (it cannot be
+    // written, whoever runs the suite): the run fails and names the file
+    // and the reason.
+    lost_body = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"serial\")\n  t.parallel(\"one\") {\n    t.check(true, \"in one\")\n  }\n  t.finish\n}\n"
+    mkdir_p("${dir}/lost/isdir")
+    _ = file_write("${dir}/lost/test_lost.av", lost_body)
+    lost_rc = "${dir}/lost.rc"
+    ld = td_quote("${dir}/lost")
+    lost_sh = "cd ${ld} || exit 1\n${td_quote(compiler)} compile test_lost.av lost.bin --debug > c.out 2>&1 || exit 1\nAVANT_JUNIT_FRAGMENT=${ld}/isdir ./lost.bin > j.out 2>&1; j=$?\nAVANT_TEST_NAMES=${ld}/isdir ./lost.bin > n.out 2>&1; n=$?\necho \"$j $n\" > status.txt\necho 0 > ${td_quote(lost_rc)}\n"
+    c.eq_int(td_sh(lost_sh, lost_rc), 0, "a test binary runs with unwritable runner files")
+    c.eq_str(file_read("${dir}/lost/status.txt") ?? "", "1 1\n", "a lost JUnit fragment and a lost names file each fail the run")
+    c.eq_str(file_read("${dir}/lost/j.out") ?? "", "PASS serial\nPASS in one\nFAIL the JUnit fragment was not written: cannot write ${dir}/lost/isdir: Is a directory\n0 failed, 2 passed\n", "a lost JUnit fragment is reported with its path and reason")
+    c.eq_str(file_read("${dir}/lost/n.out") ?? "", "PASS serial\nFAIL the parallel names were not written, so the parallel tests cannot run: cannot write ${dir}/lost/isdir: Is a directory\n0 failed, 1 passed\n", "a lost names file is reported with its path and reason")
+
     _ = file_write("${dir}/want.txt", "Hello Avant\n")
     _ = file_write("${dir}/hello.want", "Hello Avant\n")
     _ = file_write("${dir}/hello.av", "fn main {\n  puts(\"Hello Avant\")\n}\n")

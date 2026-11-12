@@ -62,6 +62,23 @@ fn test_coverage(c: Checks) {
       ex_code = process_run_out("/usr/bin/env", ex_args, "${nd}-explicit.log") ?? -1
       c.eq_int(ex_code, 0, "${bk}: compile with AVANT_COVERAGE_MAP in a missing directory")
       c.expect(file_exists("${nd}/m/n/explicit.map"), "${bk}: AVANT_COVERAGE_MAP is written in the created directory")
+      // The slot map cannot be written (its path is a directory, which
+      // nobody can write as a file): the build fails and says which file
+      // and why (O416, Stage 29 W-FIX1d; the failure was dropped and a
+      // binary without its map was built with status 0).
+      mkdir_p("${nd}/isdir")
+      lm_args: Array(String) = []
+      lm_args.push("AVANT_BACKEND=${bk}")
+      lm_args.push("AVANT_COVERAGE=1")
+      lm_args.push("AVANT_COVERAGE_MAP=${nd}/isdir")
+      lm_args.push(compiler)
+      lm_args.push("compile")
+      lm_args.push(src)
+      lm_args.push("${nd}/lost/cov.bin")
+      lm_code = process_run_out("/usr/bin/env", lm_args, "${nd}-lost.log") ?? -1
+      c.eq_int(lm_code, 1, "${bk}: a coverage build whose slot map cannot be written fails")
+      c.expect(!file_exists("${nd}/lost/cov.bin"), "${bk}: and builds no binary")
+      c.eq_str(file_read("${nd}-lost.log") ?? "", "error: the coverage map was not written: cannot write ${nd}/isdir: Is a directory\n", "${bk}: and names the file and the reason")
       bi += 1
     }
     chmod_x(bin)

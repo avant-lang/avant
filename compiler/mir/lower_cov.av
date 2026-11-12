@@ -157,7 +157,18 @@ pub fn (lw: MirLower) cov_finish {
       }
     }
   }
-  _ = file_write(c.map_path, buf.to_s)
+  // A coverage build without its slot map cannot be reported on (the
+  // counters would have no lines): the build fails and says why (O416,
+  // Stage 29 W-FIX1d; the failure was dropped and the binary built).
+  if e = mir_cov_write_failure(file_write(c.map_path, buf.to_s)) {
+    lw.fail_build("error: the coverage map was not written: ${e.message}")
+  }
+}
+
+// A write's failure, or nil.
+fn mir_cov_write_failure(r: Int | IoError): IoError? {
+  _ = r?
+  nil
 }
 
 pub fn mir_cov_line(buf: Buf, kind: Int, path: String, line: Int, name: String) {
