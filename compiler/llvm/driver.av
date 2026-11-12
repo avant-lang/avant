@@ -71,11 +71,11 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   if bad.size > 0 {
     return bad
   }
-  t0 = now_us().to_i
+  t0 = now_us()
   text = ll_emit_module(m, job.inline_fast)
-  t1 = now_us().to_i
-  job.emit_us = llvm_us(t0, t1)
-  if job.keep_ll.size > 0 && shim_file_write(job.keep_ll, text) != 0 {
+  t1 = now_us()
+  job.emit_us = t1 - t0
+  if job.keep_ll.size > 0 && (file_write(job.keep_ll, text) ?? -1) < 0 {
     return "cannot write ${job.keep_ll}"
   }
   cpu = job.cpu
@@ -84,7 +84,7 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   }
   llvm_set_cpu(cpu)
   err = llvm_compile_text(text, "${m.name}.ll", job.codegen, obj_path)
-  job.compile_us = llvm_us(t1, now_us().to_i)
+  job.compile_us = now_us() - t1
   if err.size > 0 {
     return "internal error: ${err}"
   }
@@ -98,7 +98,7 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
   if bad.size > 0 {
     return bad
   }
-  if shim_file_write(ll_path, ll_emit_module(m, inline_fast)) != 0 {
+  if (file_write(ll_path, ll_emit_module(m, inline_fast)) ?? -1) < 0 {
     return "cannot write ${ll_path}"
   }
   ""
@@ -118,9 +118,9 @@ pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   if err.size > 0 {
     return err
   }
-  t0 = now_us().to_i
+  t0 = now_us()
   err = llvm_link(obj, job, out_path)
-  job.link_us = llvm_us(t0, now_us().to_i)
+  job.link_us = now_us() - t0
   fs_unlink(obj)
   fs_remove_tree(work)
   err
@@ -170,14 +170,3 @@ pub fn llvm_link(obj: String, job: LlvmJob, out_path: String): String {
   ""
 }
 
-// The microseconds between two now_us readings. Since Stage 29 W4b1 (R6)
-// now_us is an Int that does not wrap; the seed v0.40.0's is an Int
-// that wraps every 2^32 microseconds, which the correction below undoes
-// (`.to_i` reads both the same; the next release drops it).
-pub fn llvm_us(a: Int, b: Int): Int {
-  d = b - a
-  if d < 0 {
-    d += 4294967296
-  }
-  d
-}

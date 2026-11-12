@@ -513,8 +513,6 @@ avant_int avant_sys_signal(void);
 char *avant_sys_strerror(avant_int code);
 char *avant_sys_strsignal(avant_int sig);
 avant_int avant_fs_run(const char *path, void *args);
-avant_int avant_fs_write(const char *path, const char *body);
-void *avant_fs_list(const char *path);
 avant_int avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path);
 avant_int avant_tool_run(const char *path, void *args, const char *out_path, const char *err_path);
 avant_int avant_fs_unlink(const char *path);

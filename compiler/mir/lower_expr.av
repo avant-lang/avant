@@ -204,14 +204,14 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
     return b.c_f64(mir_f64_bits(v), text)
   }
   if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() {
-    v64 = bits_u64_to_i64(e.int_bits)
+    v64 = e.int_bits.wrap_i
     if neg {
       v64 = 0 &- v64
     }
     return b.c_int(ty, v64)
   }
   if ty == mt_u64() {
-    return b.c_u64(bits_u64_to_i64(e.int_bits))
+    return b.c_u64(e.int_bits.wrap_i)
   }
   lw.refuse(e.loc, "this literal")
   b.c_i32(0)
