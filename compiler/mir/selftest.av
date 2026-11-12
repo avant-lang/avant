@@ -96,7 +96,7 @@ fn st_maker(b: MirBuilder, name: String) {
   b.assign(b.pl(0), b.rv_zero)
   b.gc_enter
   b.gc_roots(st_ints(0, -1))
-  b.call(0, "avant_str_from_int", st_one(b.c_i64(1i64)))
+  b.call(0, "avant_str_from_int", st_one(b.c_i64(1)))
   b.gc_leave
   b.ret
 }
@@ -324,7 +324,7 @@ fn st_rejecting(out: Buf) {
   box_ref = b.ref_to(st_box(b))
   st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_unset())
   lh = b.local(box_ref, "")
-  b.call(lh, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(lh)), 0), b.rv_use(b.copy_local(1)))
   b.ret
   st_case(out, "v14_no_closing_barrier", lo, b.module)
@@ -334,9 +334,9 @@ fn st_rejecting(out: Buf) {
   box_ref = b.ref_to(st_box(b))
   st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_unset())
   lh = b.local(box_ref, "")
-  b.call(lh, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(lh)), 0), b.rv_use(b.copy_local(1)))
-  b.call(lh, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.barrier(lh)
   b.ret
   st_case(out, "v14_redefined_before_barrier", lo, b.module)
@@ -368,7 +368,7 @@ fn st_rejecting(out: Buf) {
   b = st_base(false)
   st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
   l1 = b.local(mt_str(), "")
-  st = b.call(l1, "avant_str_from_int", st_one(b.c_i64(1i64)))
+  st = b.call(l1, "avant_str_from_int", st_one(b.c_i64(1)))
   st.collects = false
   b.ret
   st_case(out, "v18_collects_marked_nocollect", lo, b.module)
@@ -391,7 +391,7 @@ fn st_rejecting(out: Buf) {
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
   st_fn(b, "f", st_tys(-1, -1), box_ref, mfk_unset())
-  b.call(0, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(2)))
+  b.call(0, "avant_alloc", st_two(b.c_u64(8), b.c_u32(2)))
   b.ret
   st_case(out, "v21_wrong_type_id", lo, b.module)
 
@@ -404,7 +404,7 @@ fn st_rejecting(out: Buf) {
   en.push("")
   el = b.note_layout("elems(Int)", mlk_elems(), ef, en)
   st_fn(b, "f", st_tys(-1, -1), b.ref_to(el), mfk_unset())
-  b.call(0, "avant_alloc", st_two(b.c_u64(6i64), b.c_u32(0)))
+  b.call(0, "avant_alloc", st_two(b.c_u64(6), b.c_u32(0)))
   b.ret
   st_case(out, "v21_partial_element", lo, b.module)
 }
@@ -443,7 +443,7 @@ pub fn st_ok_module(name: String): MModule {
     b.assign(b.pl(0), b.rv_zero)
     b.gc_enter
     b.gc_roots(st_ints(0, 1))
-    b.call(0, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+    b.call(0, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
     b.assign_fresh(b.field(b.deref(b.pl(0)), 0), b.rv_use(b.copy_local(1)))
     b.barrier(0)
     b.gc_leave
@@ -506,7 +506,7 @@ fn st_accepting(out: Buf) {
   b.ret
   st_fn(b, "h", st_tys(mt_ref(), b.agg(rec)), vd, mfk_unset())
   l3 = b.local(b.addr_of(b.agg(rec)), "")
-  args = st_two(b.copy_local(1), b.c_u64(8i64))
+  args = st_two(b.copy_local(1), b.c_u64(8))
   args.push(b.c_u32(0))
   b.call(l3, "avant_array_push_slot", args)
   b.assign(b.deref(b.pl(l3)), b.rv_use(b.copy_local(2)))
@@ -897,7 +897,7 @@ fn st_wide(out: Buf) {
   st_fn(b, "f", st_tys(mt_str(), -1), vd, un)
   st_fill(b, 68, mt_i32())
   l70 = b.local(box_ref, "")
-  b.call(l70, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.call(l70, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
   b.ret
   st_case(out, "v14_wide", lo, b.module)
@@ -910,7 +910,7 @@ fn st_wide(out: Buf) {
   l70 = b.local(box_ref, "")
   b.gc_enter
   b.gc_roots(st_ints(1, -1))
-  b.call(l70, "avant_alloc", st_two(b.c_u64(8i64), b.c_u32(1)))
+  b.call(l70, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(l70)), 0), b.rv_use(b.copy_local(1)))
   b.barrier(l70)
   b.gc_leave

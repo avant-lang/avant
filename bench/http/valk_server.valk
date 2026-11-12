@@ -1,0 +1,35 @@
+// Valk hello-world server for the HTTP harness (bench/http/run.sh), on
+// `http.serve_fast`, the handler form the original program uses.
+//
+// Adapted from valk-lang/valk, examples/bench/http/main.valk (commit 3322430,
+// tag 0.8.5). MIT, (c) 2024 Lorenz Vandevelde. Kept from the original: the
+// fast handler (`fn(http.Context, http.ResponseWriter)`) answering through
+// `res.send`, and `http.serve_fast` with the server's default settings.
+// Changed for this harness: the port comes from the first argument (default
+// 18301) instead of the fixed 9000; the body is `hello` with
+// `Content-Type: text/plain; charset=utf-8`, like the other rows (the
+// original answers `Hello, World!` as `text/html`); the second argument is
+// the worker count (absent or 0: one worker per hardware thread, Valk's
+// default), passed as the last argument of `http.serve_fast`, the knob the
+// original's README names. There is no `/quit` route: every path answers
+// `hello`, as in the original, and the harness stops the server with
+// SIGTERM, as it does the h2o row.
+// Usage: valk_server [port] [workers]
+
+use valk.http
+
+fn fast(req: http.Context, res: http.ResponseWriter) {
+    res.send("hello", 200, "text/plain; charset=utf-8")
+}
+
+fn main(args: Array[String]) {
+    let host = "127.0.0.1"
+    let port : u16 = 18301
+    let workers : uint = 0
+    args.get(1) -> value {
+        let n : uint = value.to_uint() ! panic("Invalid port: %value")
+        port = n.to(u16)
+    }
+    args.get(2) -> value : workers = value.to_uint() ! panic("Invalid worker count: %value")
+    http.serve_fast(host, port, fast, workers) ! panic("Failed to start server")
+}

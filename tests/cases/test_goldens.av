@@ -49,7 +49,7 @@ fn expect_file(c: Checks, got_path: String, want_path: String, msg: String, root
   }
 }
 
-fn check_layer(c: Checks, compiler: String, flag: String, src: String, golden: String, stamp: Int64, key: String, root: String) {
+fn check_layer(c: Checks, compiler: String, flag: String, src: String, golden: String, stamp: Int, key: String, root: String) {
   out = "${scratch()}/goldens-${stamp}-${key}.out"
   code = dump_layer(compiler, flag, src, out)
   c.eq_int(code, 0, "dump ${key}")
@@ -57,7 +57,7 @@ fn check_layer(c: Checks, compiler: String, flag: String, src: String, golden: S
 }
 
 // The MIR layer (D171; the old back end's IR until Stage 28 W11).
-fn dump_mir(c: Checks, compiler: String, src: String, golden: String, stamp: Int64, key: String, root: String) {
+fn dump_mir(c: Checks, compiler: String, src: String, golden: String, stamp: Int, key: String, root: String) {
   out = "${scratch()}/goldens-${stamp}-${key}.out"
   code = dump_av(compiler, src, out)
   c.eq_int(code, 0, "dump ${key}")
@@ -69,14 +69,14 @@ fn dump_mir(c: Checks, compiler: String, src: String, golden: String, stamp: Int
 // the std files by the absolute path the compiler found them at (Stage
 // 28 W11; json.av runs against its run golden, std.http is
 // test_std_http_llvm.av).
-fn dump_imports(c: Checks, compiler: String, root: String, stamp: Int64, src_rel: String, stem: String, key: String) {
+fn dump_imports(c: Checks, compiler: String, root: String, stamp: Int, src_rel: String, stem: String, key: String) {
   src = "${root}/${src_rel}"
   base = "${root}/tests/goldens/${stem}"
   check_layer(c, compiler, "--tokens", src, "${base}.tok", stamp, "${key}-tok", root)
   check_layer(c, compiler, "--ast", src, "${base}.ast", stamp, "${key}-ast", root)
 }
 
-fn dump_all(c: Checks, compiler: String, root: String, stamp: Int64, src_rel: String, stem: String, key: String) {
+fn dump_all(c: Checks, compiler: String, root: String, stamp: Int, src_rel: String, stem: String, key: String) {
   src = "${root}/${src_rel}"
   base = "${root}/tests/goldens/${stem}"
   check_layer(c, compiler, "--tokens", src, "${base}.tok", stamp, "${key}-tok", root)

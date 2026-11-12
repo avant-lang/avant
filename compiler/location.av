@@ -1,15 +1,20 @@
 pub class Location {
   pub path: String = ""
-  pub line: Int = 0
-  pub column: Int = 0
-  offset: Int = 0
+  // Positions are stored in 32 bits (Stage 29 W-ADOPT: every token,
+  // expression and statement holds a Location) and read as Int.
+  line32: Int32 = 0
+  column32: Int32 = 0
+  offset32: Int32 = 0
 
   fn initialize(path: String, line: Int, column: Int, offset: Int) {
     self.path = path
-    self.line = line
-    self.column = column
-    self.offset = offset
+    self.line32 = line.to_i32
+    self.column32 = column.to_i32
+    self.offset32 = offset.to_i32
   }
+
+  pub fn line: Int { self.line32.to_i }
+  pub fn column: Int { self.column32.to_i }
 
   pub fn show: String {
     "${self.path}:${self.line}:${self.column}"

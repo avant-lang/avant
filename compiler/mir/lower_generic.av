@@ -111,27 +111,25 @@ pub fn (lw: MirLower) method_owner(fnn: Function): Ty? {
 // or `(params)` when the owner has several non-instance methods of the
 // name (overloads).
 pub fn (lw: MirLower) method_symbol(fnn: Function): String {
-  if sig = lw.lw_syms.find_method_emit(fnn.emit_name) {
-    if ot = lw.method_owner(fnn) {
-      base = "av.${mir_module_part(fnn.mod_name)}/${lw.owner_text(ot, fnn.mod_name)}.${fnn.name}"
-      suffix = lw.instance_suffix(fnn)
-      if suffix.size > 0 {
-        return "${base}${suffix}"
-      }
-      n = 0
-      for o in lw.lw_syms.methods {
-        if !o.node.generic && o.owner == sig.owner && o.node.owner_mod == sig.node.owner_mod && o.name == sig.name {
-          onode = o.node
-          if lw.instance_suffix(onode).size == 0 {
-            n += 1
-          }
+  if sig = lw.lw_syms.find_method_emit(fnn.emit_name), ot = lw.method_owner(fnn) {
+    base = "av.${mir_module_part(fnn.mod_name)}/${lw.owner_text(ot, fnn.mod_name)}.${fnn.name}"
+    suffix = lw.instance_suffix(fnn)
+    if suffix.size > 0 {
+      return "${base}${suffix}"
+    }
+    n = 0
+    for o in lw.lw_syms.methods {
+      if !o.node.generic && o.owner == sig.owner && o.node.owner_mod == sig.node.owner_mod && o.name == sig.name {
+        onode = o.node
+        if lw.instance_suffix(onode).size == 0 {
+          n += 1
         }
       }
-      if n > 1 {
-        return "${base}${mir_params_text(sig.params)}"
-      }
-      return base
     }
+    if n > 1 {
+      return "${base}${mir_params_text(sig.params)}"
+    }
+    return base
   }
   lw.refuse(fnn.loc, "method ${fnn.name} (no checked signature)")
   ""
@@ -165,19 +163,17 @@ pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
   if ms = lw.lw_syms.find_method_emit(resolved) {
     return ms.params
   }
-  if t = e.ty {
-    if t.is_class || t.is_union {
-      for o in lw.lw_syms.methods {
-        if o.name == "initialize" && !o.node.generic {
-          onode2 = o.node
-          if ot = lw.owner_ty(onode2) {
-            want = t
-            if t.is_union {
-              want = ty_without_nil(t)
-            }
-            if ot.same_as(want) {
-              return o.params
-            }
+  if t = e.ty, t.is_class || t.is_union {
+    for o in lw.lw_syms.methods {
+      if o.name == "initialize" && !o.node.generic {
+        onode2 = o.node
+        if ot = lw.owner_ty(onode2) {
+          want = t
+          if t.is_union {
+            want = ty_without_nil(t)
+          }
+          if ot.same_as(want) {
+            return o.params
           }
         }
       }
@@ -191,16 +187,10 @@ pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
 // emit_method_invoke): the right operand (the argument) first, then the
 // left (the receiver), then the call of `Owner.op`.
 pub fn (lw: MirLower) lower_op_method(e: Expr): MOperand {
-  if l = e.left {
-    if r = e.right {
-      if lt = l.ty {
-        if sym = lw.lw_fn_syms.get(e.resolved) {
-          args: Array(Expr) = []
-          args.push(r)
-          return lw.lower_method_call(e, l, lt, sym, args)
-        }
-      }
-    }
+  if l = e.left, r = e.right, lt = l.ty, sym = lw.lw_fn_syms.get(e.resolved) {
+    args: Array(Expr) = []
+    args.push(r)
+    return lw.lower_method_call(e, l, lt, sym, args)
   }
   lw.refuse(e.loc, "the operator method ${e.resolved}")
   lw.lw_b.c_i32(0)

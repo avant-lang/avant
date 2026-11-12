@@ -123,10 +123,8 @@ fn mir_is_zero_of(st: MStmt, l: Int): Bool {
   if st.kind != msk_assign() {
     return false
   }
-  if p = st.place {
-    if r = st.rv {
-      return p.proj.size == 0 && p.local == l && r.kind == mrk_zero()
-    }
+  if p = st.place, r = st.rv {
+    return p.proj.size == 0 && p.local == l && r.kind == mrk_zero()
   }
   false
 }
@@ -259,7 +257,7 @@ fn mir_v11_v12(v: MVerifier) {
       dropped = v.errs.pop
     }
   }
-  dummy = mir_v11_walk(v, mir_live(f), false)
+  mir_v11_walk(v, mir_live(f), false)
 }
 
 // V11's address-taken clause alone, in the walk's order (blocks up,
@@ -282,12 +280,10 @@ fn mir_v11_addr(v: MVerifier, b: Int, j: Int, st: MStmt) {
   f = v.func
   ts = v.ts
   if f.kind == mfk_frame() && st.kind == msk_assign() {
-    if r = st.rv {
-      if p = r.place {
-        l = p.local
-        if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
-          v.err(11, b, j, st.loc, "the address of _${l} (${v.tx(f.locals[l].ty)}) is taken and _${l} is not a slot")
-        }
+    if r = st.rv, p = r.place {
+      l = p.local
+      if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && !f.locals[l].slot && ts.traced(f.locals[l].ty) {
+        v.err(11, b, j, st.loc, "the address of _${l} (${v.tx(f.locals[l].ty)}) is taken and _${l} is not a slot")
       }
     }
   }
@@ -524,10 +520,8 @@ fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(UInt64), report
       mir_bit_off(pd, 0, d)
       rd[d] = 2
       if st.kind == msk_call() {
-        if e = v.m.ext(st.callee) {
-          if e.alloc {
-            rd[d] = 1
-          }
+        if e = v.m.ext(st.callee), e.alloc {
+          rd[d] = 1
         }
       }
     }
@@ -552,15 +546,13 @@ fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(UInt64), report
     j += 1
   }
   if report {
-    if t = blk.term {
-      if t.kind == mtk_return() {
-        k = 0
-        while k < f.locals.size {
-          if mir_bit(pd, 0, k) {
-            v.err(14, b, -1, t.loc, "return before the closing barrier of the fresh fill through _${k}")
-          }
-          k += 1
+    if t = blk.term, t.kind == mtk_return() {
+      k = 0
+      while k < f.locals.size {
+        if mir_bit(pd, 0, k) {
+          v.err(14, b, -1, t.loc, "return before the closing barrier of the fresh fill through _${k}")
         }
+        k += 1
       }
     }
   }

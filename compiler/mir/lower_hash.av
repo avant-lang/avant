@@ -122,23 +122,21 @@ pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
   if bl = e.block {
     return false
   }
-  if recv = e.receiver {
-    if ht = recv.ty {
-      if !ht.is_hash || e.resolved.size > 0 {
-        return false
-      }
-      f = "avant_hash_del"
-      if mir_hash_key_int(ht) {
-        f = "avant_hash_del_i32k"
-      }
-      ops = lw.args_then_recv(e.args, recv)
-      if lw.failed {
-        return true
-      }
-      lw.at(e.loc)
-      lw.lw_b.call(-1, f, ops)
+  if recv = e.receiver, ht = recv.ty {
+    if !ht.is_hash || e.resolved.size > 0 {
+      return false
+    }
+    f = "avant_hash_del"
+    if mir_hash_key_int(ht) {
+      f = "avant_hash_del_i32k"
+    }
+    ops = lw.args_then_recv(e.args, recv)
+    if lw.failed {
       return true
     }
+    lw.at(e.loc)
+    lw.lw_b.call(-1, f, ops)
+    return true
   }
   false
 }
@@ -213,7 +211,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
   }
   lw.at(e.loc)
   if name == "inc" && args.size == 1 {
-    ops.push(b.c_i64(1i64))
+    ops.push(b.c_i64(1))
   }
   if name == "has_key" {
     r = lw.call_to(mt_i32(), f, ops)
@@ -327,7 +325,7 @@ pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
   }
   lw.at(e.loc)
   if c == "buf_new" && ops.size == 0 {
-    ops.push(b.c_i64(0i64))
+    ops.push(b.c_i64(0))
   }
   lw.call_to(ty, f, ops)
 }

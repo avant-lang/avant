@@ -386,7 +386,7 @@ void avant_gate_broadcast(uint64_t gate) {
 }
 
 /* The 64-bit monotonic clock (Stage 29 W4b1, D295 R6): now_ms and now_us
- * are Int64 readings that do not wrap. */
+ * are Int readings that do not wrap. */
 int64_t avant_clock_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -397,19 +397,4 @@ int64_t avant_clock_us(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-}
-
-/* The Int readings that wrap, kept for the compiler the seed v0.40.0
- * builds (its now_ms and now_us call these); removed when the seed is a
- * release with the 64-bit clock. */
-int32_t avant_now_ms(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (int32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
-}
-
-int32_t avant_now_us(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (int32_t)(ts.tv_sec * 1000000 + ts.tv_nsec / 1000);
 }

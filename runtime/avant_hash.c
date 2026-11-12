@@ -17,7 +17,7 @@ typedef struct {
 } AvantHash;
 
 /* An Int key or value is stored as the language's Int (avant_int: 64-bit;
- * 32-bit in the seed-ABI copy, runtime/build.sh), so the generated code's
+ * runtime/avant_rt.h), so the generated code's
  * pointer into a value slot (the upsert rows) has the Int's width. */
 typedef avant_int hint;
 

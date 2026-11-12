@@ -1,5 +1,19 @@
 # Avant Language changelog
 
+## 0.42.0 - 2026-11-12
+
+### Fixed
+
+* `std.http`: a client that disconnects with pipelined answers unread no longer ends the server; an answer the socket takes only in part is sent whole and in order (it was cut, silently); the 30-second timeout is an idle timeout (a busy keep-alive connection was closed 30 seconds after it was accepted); a request whose `Content-Length` lines disagree is answered 400.
+* `std.regex`: copies of a `Regex` share its open or closed state, and using a copy of a closed `Regex` traps (it read freed memory); a match that reaches PCRE2's limits traps with the operation and the reason (it read as "no match"); deeply nested matches are answered; groups past the 63rd are read.
+
+### Changed
+
+* Removed: `Int64`, the `i64` literal suffix, `to_i64` and `wrap_i64`. Write `Int`, a plain literal, `to_i` and `wrap_i`.
+* The README is rewritten from start to finish; `tools/readme-check.sh` compiles and runs its examples.
+* `bench/http/` measures by stated methods and adds Rust hyper, Go fasthttp and Valk; `bench/valk-gc/` and `bench/valk/` hold Valk's collector and general suites.
+* Building the compiler from source needs v0.41.0 or newer as the seed.
+
 ## 0.41.0 - 2026-11-12
 
 ### Added

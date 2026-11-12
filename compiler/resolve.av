@@ -15,7 +15,6 @@ pub class TypeResolver {
   err: CompileError? = nil
   pub errors: DiagBag
   pub t_int: Ty
-  pub t_int64: Ty
   pub t_uint64: Ty
   pub t_bool: Ty
   pub t_float: Ty
@@ -46,7 +45,6 @@ pub class TypeResolver {
     inn.push(ty_void())
     self.interned = inn
     self.t_int = ty_int()
-    self.t_int64 = ty_int64()
     self.t_uint64 = ty_uint64()
     self.t_bool = ty_bool()
     self.t_float = ty_float()
@@ -124,7 +122,7 @@ pub class TypeResolver {
   }
 
   pub fn put_named(name: String, ty: Ty): Int {
-    id = self.intern(ty)
+    id = intern(ty)
     if prev = self.named.get(name) {
     } else {
       self.type_names.push(name)
@@ -135,10 +133,10 @@ pub class TypeResolver {
 
   pub fn bind_type(mod_name: String, name: String, ty: Ty): Int {
     ty.mod_name = mod_name
-    id = self.intern(ty)
-    self.named[self.type_key(mod_name, name)] = id
+    id = intern(ty)
+    self.named[type_key(mod_name, name)] = id
     if prev = self.named.get(name) {
-      old = self.ty_at(prev)
+      old = ty_at(prev)
       if old.mod_name != mod_name {
         self.collide[name] = 1
       }
@@ -159,7 +157,7 @@ pub class TypeResolver {
       best_d = 1
     }
     best_d += 1
-    builtin = "Int Int64 UInt64 Bool Float64 String Array Hash Buf Bytes Ptr Void Nil"
+    builtin = "Int Int32 UInt32 UInt64 Bool Float64 String Array Hash Buf Bytes Ptr Void Nil"
     cands = builtin.split(" ")
     for t in self.type_names {
       cands.push(t)
@@ -182,51 +180,51 @@ pub class TypeResolver {
       return nil
     }
     if id = self.named.get(name) {
-      return self.ty_at(id)
+      return ty_at(id)
     }
     nil
   }
 
   pub fn get_named_in(mod_name: String, name: String): Ty? {
-    if id = self.named.get(self.type_key(mod_name, name)) {
-      return self.ty_at(id)
+    if id = self.named.get(type_key(mod_name, name)) {
+      return ty_at(id)
     }
     nil
   }
 
   pub fn get_named_for(mod_name: String, name: String): Ty? {
-    if ty = self.get_named_in(mod_name, name) {
+    if ty = get_named_in(mod_name, name) {
       return ty
     }
-    self.get_named(name)
+    get_named(name)
   }
 
   pub fn get_opaque(name: String): Ty? {
     if id = self.opaques.get(name) {
-      return self.ty_at(id)
+      return ty_at(id)
     }
     nil
   }
 
   pub fn resolve_value(tn: TypeName): Ty {
-    ty = self.resolve(tn)
+    ty = resolve(tn)
     if ty.is_opaque {
-      self.fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+      fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
       return self.t_int
     }
     if ty.is_clayout {
-      self.fail(tn.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+      fail(tn.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
       return self.t_int
     }
     if ty.is_void {
-      self.fail(tn.loc, "Void is not a value; use Ptr(Void) or omit a return type")
+      fail(tn.loc, "Void is not a value; use Ptr(Void) or omit a return type")
       return self.t_int
     }
     ty
   }
 
   pub fn resolve(tn: TypeName): Ty {
-    inner = self.resolve_core(tn)
+    inner = resolve_core(tn)
     if tn.nilable {
       return ty_nilable(inner)
     }
@@ -235,7 +233,7 @@ pub class TypeResolver {
 
   pub fn reject_args(tn: TypeName) {
     if tn.args.size > 0 {
-      self.fail(tn.loc, "${tn.name} does not take type arguments")
+      fail(tn.loc, "${tn.name} does not take type arguments")
     }
   }
 
@@ -244,12 +242,12 @@ pub class TypeResolver {
       params: Array(Ty) = []
       i = 0
       while i < tn.args.size {
-        params.push(self.resolve_value_uninline(tn.args[i]))
+        params.push(resolve_value_uninline(tn.args[i]))
         i += 1
       }
       ret = self.t_void
       if r = tn.ret {
-        ret = self.resolve_uninline(r)
+        ret = resolve_uninline(r)
       }
       return ty_fn(params, ret)
     }
@@ -257,138 +255,137 @@ pub class TypeResolver {
       parts: Array(Ty) = []
       i = 0
       while i < tn.members.size {
-        parts.push(self.resolve(tn.members[i]))
+        parts.push(resolve(tn.members[i]))
         i += 1
       }
       return ty_union_build(parts)
     }
     if tn.name == "Int" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_int
     }
     cs = c_scalar_of(tn.name)
     if cs > 0 {
-      self.reject_args(tn)
+      reject_args(tn)
       if !self.c_scalar_ok {
         view = ty_c_view(ty_c_scalar(cs))
-        self.fail(tn.loc, "${tn.name} is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is ${view.show})")
+        fail(tn.loc, "${tn.name} is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is ${view.show})")
       }
       return ty_c_scalar(cs)
     }
     if tn.name == "Int64" {
-      self.reject_args(tn)
+      // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+      fail(tn.loc, removed_int_message("Int64", "Int"))
       return self.t_int
     }
     if tn.name == "Int32" {
-      self.reject_args(tn)
+      reject_args(tn)
       return ty_int32()
     }
     if tn.name == "UInt32" {
-      self.reject_args(tn)
+      reject_args(tn)
       return ty_uint32()
     }
     if tn.name == "UInt64" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_uint64
     }
     if tn.name == "Bool" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_bool
     }
     if tn.name == "Float64" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_float
     }
     if tn.name == "String" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_string
     }
     if tn.name == "Buf" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_buf
     }
     if tn.name == "Bytes" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_bytes
     }
     if tn.name == "Nil" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_nil
     }
     if tn.name == "Void" {
-      self.reject_args(tn)
+      reject_args(tn)
       return self.t_void
     }
     if tn.name == "Array" {
       if tn.args.size != 1 {
-        self.fail(tn.loc, "Array takes one type argument")
+        fail(tn.loc, "Array takes one type argument")
         return self.t_int
       }
-      return ty_array(self.resolve_value_uninline(tn.args[0]))
+      return ty_array(resolve_value_uninline(tn.args[0]))
     }
     if tn.name == "Hash" {
       if tn.args.size != 2 {
-        self.fail(tn.loc, "Hash takes two type arguments")
+        fail(tn.loc, "Hash takes two type arguments")
         return self.t_int
       }
-      return ty_hash(self.resolve_value_uninline(tn.args[0]), self.resolve_value_uninline(tn.args[1]))
+      return ty_hash(resolve_value_uninline(tn.args[0]), resolve_value_uninline(tn.args[1]))
     }
     if tn.name == "JoinHandle" {
       if tn.args.size != 1 {
-        self.fail(tn.loc, "JoinHandle takes one type argument")
+        fail(tn.loc, "JoinHandle takes one type argument")
         return self.t_int
       }
-      return ty_join(self.resolve_value_uninline(tn.args[0]))
+      return ty_join(resolve_value_uninline(tn.args[0]))
     }
-    if idef = self.find_interface(tn.name) {
-      return self.reject_iface_value(tn, idef)
+    if idef = find_interface(tn.name) {
+      return reject_iface_value(tn, idef)
     }
     if tn.name == "Ptr" {
       if tn.args.size != 1 {
-        self.fail(tn.loc, "Ptr takes one type argument")
+        fail(tn.loc, "Ptr takes one type argument")
         return self.t_int
       }
       inner = tn.args[0]
       if inner.name == "Void" {
-        self.reject_args(inner)
+        reject_args(inner)
         return ty_ptr(self.t_void)
       }
-      return ty_ptr(self.resolve_uninline(inner))
+      return ty_ptr(resolve_uninline(inner))
     }
-    if id = self.tparams.get(tn.name) {
-      if tn.args.size == 0 {
-        return ty_var(tn.name)
-      }
+    if id = self.tparams.get(tn.name), tn.args.size == 0 {
+      return ty_var(tn.name)
     }
-    ntmpl = self.template_count(tn.name)
+    ntmpl = template_count(tn.name)
     if ntmpl > 0 {
       if tn.mod_name.size == 0 && ntmpl > 1 {
-        self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+        fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
         return self.t_int
       }
-      return self.instantiate_template(tn)
+      return instantiate_template(tn)
     }
-    self.reject_args(tn)
+    reject_args(tn)
     if tn.mod_name.size > 0 {
-      if found = self.get_named_in(tn.mod_name, tn.name) {
+      if found = get_named_in(tn.mod_name, tn.name) {
         if found.template {
-          self.fail(tn.loc, "${tn.name} needs type arguments")
+          fail(tn.loc, "${tn.name} needs type arguments")
           return self.t_int
         }
         return found
       }
     }
-    if found = self.get_named(tn.name) {
+    if found = get_named(tn.name) {
       if found.template {
-        self.fail(tn.loc, "${tn.name} needs type arguments")
+        fail(tn.loc, "${tn.name} needs type arguments")
         return self.t_int
       }
       return found
     }
-    if opq = self.get_opaque(tn.name) {
+    if opq = get_opaque(tn.name) {
       return opq
     }
-    self.fail(tn.loc, "unknown type ${tn.name}${self.type_hint(tn.name)}")
+    fail(tn.loc, "unknown type ${tn.name}${type_hint(tn.name)}")
     self.t_int
   }
 
@@ -403,7 +400,7 @@ pub class TypeResolver {
   pub fn resolve_uninline(tn: TypeName): Ty {
     saved = self.save_inflight
     self.struct_inflight = []
-    ty = self.resolve(tn)
+    ty = resolve(tn)
     self.struct_inflight = saved
     ty
   }
@@ -411,7 +408,7 @@ pub class TypeResolver {
   pub fn resolve_value_uninline(tn: TypeName): Ty {
     saved = self.save_inflight
     self.struct_inflight = []
-    ty = self.resolve_value(tn)
+    ty = resolve_value(tn)
     self.struct_inflight = saved
     ty
   }
@@ -521,7 +518,7 @@ pub class TypeResolver {
   }
 
   pub fn has_template(name: String): Bool {
-    self.template_count(name) > 0
+    template_count(name) > 0
   }
 
   pub fn has_struct_named(name: String): Bool {
@@ -592,14 +589,14 @@ pub class TypeResolver {
     n = idef.type_params.size
     if n == 0 {
       if tn.args.size > 0 {
-        self.fail(tn.loc, "${idef.name} does not take type arguments")
+        fail(tn.loc, "${idef.name} does not take type arguments")
         return self.t_int
       }
-      self.fail(tn.loc, "${idef.name} is not a value type")
+      fail(tn.loc, "${idef.name} is not a value type")
       return self.t_int
     }
     if tn.args.size == 0 {
-      self.fail(tn.loc, "${idef.name} needs type arguments")
+      fail(tn.loc, "${idef.name} needs type arguments")
       return self.t_int
     }
     if tn.args.size != n {
@@ -607,21 +604,21 @@ pub class TypeResolver {
       if n == 1 {
         word = "type argument"
       }
-      self.fail(tn.loc, "${idef.name} takes ${n} ${word}")
+      fail(tn.loc, "${idef.name} takes ${n} ${word}")
       return self.t_int
     }
     arg_tys: Array(Ty) = []
     mark0 = self.err_count
     i = 0
     while i < tn.args.size {
-      arg_tys.push(self.resolve(tn.args[i]))
-      if self.new_err_since(mark0) {
+      arg_tys.push(resolve(tn.args[i]))
+      if new_err_since(mark0) {
         return self.t_int
       }
       i += 1
     }
-    label = self.format_app(idef.name, arg_tys)
-    self.fail(tn.loc, "${label} is not a value type")
+    label = format_app(idef.name, arg_tys)
+    fail(tn.loc, "${label} is not a value type")
     self.t_int
   }
 
@@ -629,16 +626,16 @@ pub class TypeResolver {
     seen = Hash(String, Int).new
     for p in params {
       if prev = seen.get(p) {
-        self.fail(loc, "duplicate type parameter ${p}")
+        fail(loc, "duplicate type parameter ${p}")
         return
       }
       seen[p] = 1
       if p == type_name {
-        self.fail(loc, "type parameter ${p} must be a fresh name")
+        fail(loc, "type parameter ${p} must be a fresh name")
         return
       }
-      if self.defines_type(p) {
-        self.fail(loc, "type parameter ${p} must be a fresh name")
+      if defines_type(p) {
+        fail(loc, "type parameter ${p} must be a fresh name")
         return
       }
     }
@@ -654,7 +651,7 @@ pub class TypeResolver {
   }
 
   pub fn make_pattern(kind: Int, origin: String, args: Array(Ty)): Ty {
-    ty_app(kind, origin, origin, self.format_app(origin, args), args)
+    ty_app(kind, origin, origin, format_app(origin, args), args)
   }
 
   pub fn clone_subst_field(field: Field, from: Array(String), to: Array(TypeName)): Field {
@@ -675,14 +672,14 @@ pub class TypeResolver {
     mark0 = self.err_count
     for field in fields {
       if prev = seen.get(field.name) {
-        self.fail(field.loc, "duplicate field ${field.name}")
+        fail(field.loc, "duplicate field ${field.name}")
         return
       }
       seen[field.name] = 1
-      tf = TyField.new(field.name, self.resolve_value(field.type))
+      tf = TyField.new(field.name, resolve_value(field.type))
       tf.vis = field.vis
       resolved.push(tf)
-      if self.new_err_since(mark0) {
+      if new_err_since(mark0) {
         return
       }
     }
@@ -698,7 +695,7 @@ pub class TypeResolver {
     mod_name = ""
     vis = false
     loc = tn.loc
-    if sdef = self.find_struct_template(tn.name, tn.mod_name) {
+    if sdef = find_struct_template(tn.name, tn.mod_name) {
       is_struct = true
       kind = tyk_struct()
       params = sdef.type_params
@@ -708,7 +705,7 @@ pub class TypeResolver {
       vis = sdef.vis
       loc = sdef.loc
     } else {
-      if cdef = self.find_class_template(tn.name, tn.mod_name) {
+      if cdef = find_class_template(tn.name, tn.mod_name) {
         kind = tyk_class()
         params = cdef.type_params
         src_fields = cdef.fields
@@ -717,12 +714,12 @@ pub class TypeResolver {
         vis = cdef.vis
         loc = cdef.loc
       } else {
-        self.fail(tn.loc, "unknown type ${tn.name}")
+        fail(tn.loc, "unknown type ${tn.name}")
         return self.t_int
       }
     }
     if tn.args.size == 0 {
-      self.fail(tn.loc, "${tn.name} needs type arguments")
+      fail(tn.loc, "${tn.name} needs type arguments")
       return self.t_int
     }
     if tn.args.size != params.size {
@@ -731,38 +728,38 @@ pub class TypeResolver {
       if n == 1 {
         word = "type argument"
       }
-      self.fail(tn.loc, "${tn.name} takes ${n} ${word}")
+      fail(tn.loc, "${tn.name} takes ${n} ${word}")
       return self.t_int
     }
     arg_tys: Array(Ty) = []
     mark0 = self.err_count
     i = 0
     while i < tn.args.size {
-      arg_tys.push(self.resolve(tn.args[i]))
-      if self.new_err_since(mark0) {
+      arg_tys.push(resolve(tn.args[i]))
+      if new_err_since(mark0) {
         return self.t_int
       }
       i += 1
     }
-    if self.ty_args_have_var(arg_tys) {
-      return self.make_pattern(kind, tn.name, arg_tys)
+    if ty_args_have_var(arg_tys) {
+      return make_pattern(kind, tn.name, arg_tys)
     }
     origin_key = tn.name
     if flag = self.collide.get(tn.name) {
       origin_key = "${mod_emit_prefix(mod_name)}__${tn.name}"
     }
-    key = self.inst_key(origin_key, arg_tys)
-    label = self.format_app(tn.name, arg_tys)
-    if is_struct && self.inflight_has(key) {
-      self.fail(tn.loc, "struct layout of ${label} is infinite")
+    key = inst_key(origin_key, arg_tys)
+    label = format_app(tn.name, arg_tys)
+    if is_struct && inflight_has(key) {
+      fail(tn.loc, "struct layout of ${label} is infinite")
       return self.t_int
     }
-    if existing = self.get_named(key) {
+    if existing = get_named(key) {
       return existing
     }
     self.inst_depth += 1
     if self.inst_depth > 32 {
-      self.fail(tn.loc, "type instantiation too deep")
+      fail(tn.loc, "type instantiation too deep")
       self.inst_depth -= 1
       return self.t_int
     }
@@ -771,13 +768,13 @@ pub class TypeResolver {
     if flag2 = self.collide.get(tn.name) {
       shell.emit_base = "${mod_emit_prefix(mod_name)}__${tn.name}"
     }
-    self.put_named(key, shell)
+    put_named(key, shell)
     if p = self.program {
       fields: Array(Field) = []
       methods: Array(Function) = []
       i = 0
       while i < src_fields.size {
-        fields.push(self.clone_subst_field(src_fields[i], params, tn.args))
+        fields.push(clone_subst_field(src_fields[i], params, tn.args))
         i += 1
       }
       i = 0
@@ -795,11 +792,11 @@ pub class TypeResolver {
       opted: Array(TypeName) = []
       src_opt: Array(TypeName) = []
       if is_struct {
-        if sdef = self.find_struct_template(tn.name, tn.mod_name) {
+        if sdef = find_struct_template(tn.name, tn.mod_name) {
           src_opt = sdef.opt_ins
         }
       } else {
-        if cdef = self.find_class_template(tn.name, tn.mod_name) {
+        if cdef = find_class_template(tn.name, tn.mod_name) {
           src_opt = cdef.opt_ins
         }
       }
@@ -810,7 +807,7 @@ pub class TypeResolver {
         i += 1
       }
       if is_struct {
-        if !self.has_struct_named(key) {
+        if !has_struct_named(key) {
           sinst = StructDef.new(loc, key)
           sinst.fields = fields
           sinst.methods = methods
@@ -820,7 +817,7 @@ pub class TypeResolver {
           p.structs.push(sinst)
         }
       } else {
-        if !self.has_class_named(key) {
+        if !has_class_named(key) {
           cinst = ClassDef.new(loc, key)
           cinst.fields = fields
           cinst.methods = methods
@@ -832,12 +829,12 @@ pub class TypeResolver {
       }
       if is_struct {
         self.struct_inflight.push(key)
-        self.fill_inst_fields(shell, fields)
+        fill_inst_fields(shell, fields)
         self.struct_inflight.pop
       } else {
         saved = self.save_inflight
         self.struct_inflight = []
-        self.fill_inst_fields(shell, fields)
+        fill_inst_fields(shell, fields)
         self.struct_inflight = saved
       }
     }
@@ -947,9 +944,6 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
 
 pub fn c_field_ok(ty: Ty): Bool {
   if ty.is_integer {
-    return true
-  }
-  if ty.is_int64 {
     return true
   }
   if ty.is_uint64 {
@@ -1157,10 +1151,8 @@ pub fn seal_type_emits(program: Program, resolver: TypeResolver) {
 }
 
 pub fn seal_one_emit(resolver: TypeResolver, mod_name: String, name: String) {
-  if flag = resolver.collide.get(name) {
-    if ty = resolver.get_named_in(mod_name, name) {
-      ty.emit_base = "${mod_emit_prefix(mod_name)}__${name}"
-    }
+  if flag = resolver.collide.get(name), ty = resolver.get_named_in(mod_name, name) {
+    ty.emit_base = "${mod_emit_prefix(mod_name)}__${name}"
   }
 }
 

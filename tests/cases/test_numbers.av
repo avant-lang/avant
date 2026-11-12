@@ -6,8 +6,8 @@ import backends
 // refused one must leave no binary and say the expected words, an
 // accepted one must print what it should, and a trapping one must print
 // what it printed before the trap, exit 1 and name the trap on stderr.
-//   - conversions between Int, Int64 and UInt64 keep the value or trap;
-//     wrap_i, wrap_i64 and wrap_u64 reinterpret the bits (R1);
+//   - conversions between the integer types keep the value or trap;
+//     wrap_i and wrap_u64 reinterpret the bits (R1);
 //   - abs, sum and Hash.inc follow D215; UInt64.abs is refused (R2);
 //   - a byte stored outside 0..255 traps (R3).
 
@@ -50,7 +50,7 @@ fn trapped(tag: String, src: String, out: String, needle: String): FCase {
 
 fn conv_cases: Array(FCase) {
   xs: Array(FCase) = []
-  xs.push(accepted("conv-in-range", "fn main {\n  a: Int64 = 0i64 - 2147483648i64\n  b: Int64 = 2147483647i64\n  puts(a.to_i)\n  puts(b.to_i)\n  u: UInt64 = 2147483647u64\n  puts(u.to_i)\n  v: UInt64 = 9223372036854775807u64\n  puts(v.to_i64)\n  n = 7\n  puts(n.to_u64)\n  puts(n.to_i64)\n  m: Int64 = 9223372036854775807i64\n  puts(m.to_u64)\n  puts(n.to_i)\n  puts(m.to_i64)\n  puts(v.to_u64)\n}\n", "-2147483648\n2147483647\n2147483647\n9223372036854775807\n7\n7\n9223372036854775807\n7\n9223372036854775807\n9223372036854775807\n"))
+  xs.push(accepted("conv-in-range", "fn main {\n  a: Int = 0 - 2147483648\n  b: Int = 2147483647\n  puts(a.to_i)\n  puts(b.to_i)\n  u: UInt64 = 2147483647u64\n  puts(u.to_i)\n  v: UInt64 = 9223372036854775807u64\n  puts(v.to_i)\n  n = 7\n  puts(n.to_u64)\n  puts(n.to_i)\n  m: Int = 9223372036854775807\n  puts(m.to_u64)\n  puts(n.to_i)\n  puts(m.to_i)\n  puts(v.to_u64)\n}\n", "-2147483648\n2147483647\n2147483647\n9223372036854775807\n7\n7\n9223372036854775807\n7\n9223372036854775807\n9223372036854775807\n"))
   xs.push(accepted("conv-wrap", "fn main {\n  big = 5000000000\n  puts(big.wrap_i32)\n  n = -1\n  puts(n.wrap_u64)\n  puts(n.wrap_u32)\n  puts(n.wrap_i)\n  u: UInt64 = 18446744073709551615u64\n  puts(u.wrap_i32)\n  puts(u.wrap_i)\n  puts(u.wrap_u64)\n  h: UInt64 = 9223372036854775808u64\n  puts(h.wrap_i)\n  puts(3000000000.wrap_i32)\n  puts(big.wrap_u64())\n  w: Int32 = -2\n  puts(w.wrap_u32)\n  puts(w.wrap_u64)\n  v: UInt32 = 4294967295\n  puts(v.wrap_i32)\n  puts(v.wrap_i)\n}\n", "705032704\n18446744073709551615\n4294967295\n-1\n-1\n-1\n18446744073709551615\n-9223372036854775808\n-1294967296\n5000000000\n4294967294\n18446744073709551614\n-1\n4294967295\n"))
   // Int32 and UInt32 as everyday types (Stage 29 W-INT1, D314): arrays
   // (4 bytes an element), struct fields, arithmetic, literals adopting
@@ -77,18 +77,18 @@ fn conv_cases: Array(FCase) {
   xs.push(trapped("conv-u64-to-i", "fn main {\n  u: UInt64 = 18446744073709551615u64\n  puts(u.to_i)\n}\n", "", "avant runtime: to_i of UInt64 18446744073709551615 out of range for Int"))
   xs.push(trapped("conv-u64-to-i32", "fn main {\n  u: UInt64 = 2147483648u64\n  puts(u.to_i32)\n}\n", "", "avant runtime: to_i32 of UInt64 2147483648 out of range for Int32"))
   xs.push(refused("conv-wrap-args", "fn main {\n  puts(3.wrap_i(1))\n}\n", "Int.wrap_i takes no arguments"))
-  xs.push(accepted("abs-ok", "fn main {\n  puts((0 - 5).abs)\n  puts((0 - 2147483647).abs)\n  puts((0i64 - 9223372036854775807i64).abs)\n  puts(4.abs())\n}\n", "5\n2147483647\n9223372036854775807\n4\n"))
+  xs.push(accepted("abs-ok", "fn main {\n  puts((0 - 5).abs)\n  puts((0 - 2147483647).abs)\n  puts((0 - 9223372036854775807).abs)\n  puts(4.abs())\n}\n", "5\n2147483647\n9223372036854775807\n4\n"))
   xs.push(trapped("abs-min", "fn main {\n  m: Int32 = -2147483648\n  puts(m.abs)\n}\n", "", "avant runtime: integer overflow"))
-  xs.push(trapped("abs-min-i64", "fn main {\n  m = 0i64 - 9223372036854775807i64 - 1i64\n  puts(m.abs)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("abs-min-i64", "fn main {\n  m = 0 - 9223372036854775807 - 1\n  puts(m.abs)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(refused("abs-u64", "fn main {\n  x = 3u64\n  puts(x.abs)\n}\n", "abs of a UInt64 is the value itself"))
   xs.push(refused("abs-u64-call", "fn main {\n  x = 3u64\n  puts(x.abs())\n}\n", "abs of a UInt64 is the value itself"))
-  xs.push(accepted("sum-ok", "fn main {\n  puts([2147483647, -1, 1].sum)\n  puts([9223372036854775807i64, 0i64 - 1i64].sum)\n  puts([18446744073709551614u64, 1u64].sum)\n  xs: Array(Int) = []\n  puts(xs.sum)\n}\n", "2147483647\n9223372036854775806\n18446744073709551615\n0\n"))
+  xs.push(accepted("sum-ok", "fn main {\n  puts([2147483647, -1, 1].sum)\n  puts([9223372036854775807, 0 - 1].sum)\n  puts([18446744073709551614u64, 1u64].sum)\n  xs: Array(Int) = []\n  puts(xs.sum)\n}\n", "2147483647\n9223372036854775806\n18446744073709551615\n0\n"))
   xs.push(trapped("sum-int", "fn main {\n  puts([9223372036854775807, 1].sum)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(trapped("sum-int32", "fn main {\n  xs: Array(Int32) = [2147483647, 1]\n  puts(xs.sum)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(trapped("sum-uint32", "fn main {\n  xs: Array(UInt32) = [4294967295, 1]\n  puts(xs.sum)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(trapped("sum-int-low", "fn main {\n  puts([-9223372036854775807, -1, -1].sum)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(trapped("sum-int32-low", "fn main {\n  xs: Array(Int32) = [-2147483647, -1, -1]\n  puts(xs.sum)\n}\n", "", "avant runtime: integer overflow"))
-  xs.push(trapped("sum-i64", "fn main {\n  puts([9223372036854775807i64, 1i64].sum)\n}\n", "", "avant runtime: integer overflow"))
+  xs.push(trapped("sum-i64", "fn main {\n  puts([9223372036854775807, 1].sum)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(trapped("sum-u64", "fn main {\n  puts([18446744073709551615u64, 1u64].sum)\n}\n", "", "avant runtime: integer overflow"))
   xs.push(accepted("inc-ok", "fn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 2147483646\n  h.inc(\"a\")\n  puts(h.get(\"a\") ?? 0)\n  h.inc(\"b\", -2147483647)\n  h.inc(\"b\", -1)\n  puts(h.get(\"b\") ?? 0)\n  g = Hash(Int, Int).new\n  g.inc(4, 3)\n  g.inc(4)\n  puts(g.get(4) ?? 0)\n}\n", "2147483647\n-2147483648\n4\n"))
   xs.push(trapped("inc-str", "fn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 9223372036854775807\n  h.inc(\"a\")\n}\n", "", "avant runtime: integer overflow"))
@@ -133,7 +133,7 @@ fn arraynew_cases: Array(FCase) {
 
 fn clock_cases: Array(FCase) {
   xs: Array(FCase) = []
-  xs.push(accepted("clock-64", "fn main {\n  a: Int64 = now_us()\n  b = now_us()\n  puts(\"\${b >= a}\")\n  m: Int64 = now_ms()\n  puts(\"\${m > 0i64}\")\n  puts(\"\${a > 4294967296i64 || a > 0i64}\")\n}\n", "true\ntrue\ntrue\n"))
+  xs.push(accepted("clock-64", "fn main {\n  a: Int = now_us()\n  b = now_us()\n  puts(\"\${b >= a}\")\n  m: Int = now_ms()\n  puts(\"\${m > 0}\")\n  puts(\"\${a > 4294967296 || a > 0}\")\n}\n", "true\ntrue\ntrue\n"))
   xs.push(accepted("clock-int", "fn main {\n  x: Int = now_ms()\n  puts(x > 0)\n}\n", "true\n"))
   xs.push(accepted("array-nil-store", "fn main {\n  xs = Array(Array(Int)?).new(2)\n  xs[0] = [1]\n  xs[0] = nil\n  puts((xs[0] ?? [5, 6]).size)\n  ys = Array(String?).new(1, \"a\")\n  ys[0] = nil\n  puts(ys[0] ?? \"nil\")\n}\n", "2\nnil\n"))
   xs
@@ -159,7 +159,7 @@ fn parse_cases: Array(FCase) {
   xs: Array(FCase) = []
   xs.push(accepted("parse-strict", "fn show(s: String) {\n  i = \"-\"\n  if v = s.to_i {\n    i = \"\${v}\"\n  }\n  f = \"-\"\n  if w = s.to_f {\n    f = \"\${w}\"\n  }\n  puts(\"[\${s}] \${i} \${f}\")\n}\nfn main {\n  for s in [\"42\", \"-7\", \"+3\", \"007\", \"-0\", \"2147483647\", \"-2147483648\", \"2147483648\", \"3000000000\", \"9223372036854775807\", \"9223372036854775808\", \"-9223372036854775808\", \"99999999999999999999\", \"12abc\", \"  42\", \"42 \", \"0x1F\", \"\", \"-\", \"+\", \"1.5\", \"1e3\", \"1E-2\", \"-2.5e+3\", \"nan\", \"inf\", \"-inf\", \"1e999\", \"1.5xyz\", \".5\", \"5.\", \"1e\", \"1_000\"] {\n    show(s)\n  }\n}\n", "[42] 42 42.0\n[-7] -7 -7.0\n[+3] 3 3.0\n[007] 7 7.0\n[-0] 0 -0.0\n[2147483647] 2147483647 2147483647.0\n[-2147483648] -2147483648 -2147483648.0\n[2147483648] 2147483648 2147483648.0\n[3000000000] 3000000000 3000000000.0\n[9223372036854775807] 9223372036854775807 9223372036854776000.0\n[9223372036854775808] - 9223372036854776000.0\n[-9223372036854775808] -9223372036854775808 -9223372036854776000.0\n[99999999999999999999] - 100000000000000000000.0\n[12abc] - -\n[  42] - -\n[42 ] - -\n[0x1F] - -\n[] - -\n[-] - -\n[+] - -\n[1.5] - 1.5\n[1e3] - 1000.0\n[1E-2] - 0.01\n[-2.5e+3] - -2500.0\n[nan] - -\n[inf] - -\n[-inf] - -\n[1e999] - -\n[1.5xyz] - -\n[.5] - -\n[5.] - -\n[1e] - -\n[1_000] - -\n"))
   xs.push(accepted("parse-bases", "fn main {\n  puts(\"ff\".to_i(16) ?? -1)\n  puts(\"FF\".to_i(16) ?? -1)\n  puts(\"-z\".to_i(36) ?? -1)\n  puts(\"102\".to_i(2) ?? -1)\n  puts(\"777\".to_i(8) ?? -1)\n  puts(\"0x1F\".to_i(16) ?? -1)\n  puts(\"7fffffff\".to_i(16) ?? -1)\n  puts(\"80000000\".to_i(16) ?? -1)\n  puts(\"7fffffffffffffff\".to_i(16) ?? -1)\n  puts(\"8000000000000000\".to_i(16) ?? -1)\n  b = 2\n  puts(\"1011\".to_i(b) ?? -1)\n}\n", "255\n255\n-35\n-1\n511\n-1\n2147483647\n2147483648\n9223372036854775807\n-1\n11\n"))
-  xs.push(accepted("parse-wide", "fn main {\n  puts(\"9223372036854775807\".to_i64 ?? 0i64)\n  puts(\"-9223372036854775808\".to_i64 ?? 0i64)\n  puts(\"9223372036854775808\".to_i64 ?? 0i64)\n  puts(\"18446744073709551615\".to_u64 ?? 0u64)\n  puts(\"18446744073709551616\".to_u64 ?? 7u64)\n  puts(\"-1\".to_u64 ?? 7u64)\n  puts(\"ffffffffffffffff\".to_u64(16) ?? 0u64)\n  puts(\"5000000000\".to_i64(10) ?? 0i64)\n}\n", "9223372036854775807\n-9223372036854775808\n0\n18446744073709551615\n7\n7\n18446744073709551615\n5000000000\n"))
+  xs.push(accepted("parse-wide", "fn main {\n  puts(\"9223372036854775807\".to_i ?? 0)\n  puts(\"-9223372036854775808\".to_i ?? 0)\n  puts(\"9223372036854775808\".to_i ?? 0)\n  puts(\"18446744073709551615\".to_u64 ?? 0u64)\n  puts(\"18446744073709551616\".to_u64 ?? 7u64)\n  puts(\"-1\".to_u64 ?? 7u64)\n  puts(\"ffffffffffffffff\".to_u64(16) ?? 0u64)\n  puts(\"5000000000\".to_i(10) ?? 0)\n}\n", "9223372036854775807\n-9223372036854775808\n0\n18446744073709551615\n7\n7\n18446744073709551615\n5000000000\n"))
   xs.push(accepted("parse-slice", "fn main {\n  puts(str_to_f_slice(\"x2.5y\", 1, 4) ?? -1.0)\n  puts(str_to_f_slice(\"x2.5y\", 0, 4) ?? -1.0)\n  puts(str_to_f_slice(\"x2.5y\", 2, 2) ?? -1.0)\n}\n", "2.5\n-1.0\n-1.0\n"))
   xs.push(accepted("parse-fallback", "fn main {\n  n = \"12x\".to_i ?? 0\n  puts(n)\n  if v = \"8\".to_i {\n    puts(v * 2)\n  }\n  x = \"0.5\".to_f ?? 1.0\n  puts(x)\n}\n", "0\n16\n0.5\n"))
   xs.push(refused("parse-base-literal", "fn main {\n  puts(\"1\".to_i(1) ?? 0)\n}\n", "the base of String.to_i must be in 2..36"))
@@ -228,6 +228,17 @@ fn byte_entry_cases: Array(FCase) {
   xs: Array(FCase) = []
   xs.push(accepted("checksum-bytes", "fn main {\n  puts(crc32_bytes(\"123456789\".bytes))\n  puts(sha256_word0(\"123456789\".bytes))\n  puts(sha256_word0(\"\".bytes))\n  b = Buf.new\n  for r in 0..3 {\n    for i in 0..256 {\n      b.push_byte(i)\n    }\n  }\n  b.push_str(\"xyz\")\n  d = b.to_bytes\n  puts(crc32_bytes(d))\n  puts(sha256_word0(d))\n}\n", "-873187034\n-1940684025\n1743128938\n1133535873\n950977636\n"))
   xs.push(refused("checksum-array", "fn main {\n  puts(crc32_bytes([1, 2]))\n}\n", "crc32_bytes expects Bytes"))
+  // One integer spelling (Stage 29 W-ADOPT, D300, D317): the forms that
+  // named Int's for one release are refused with the form to write.
+  xs.push(refused("int64-type-removed", "fn main {\n  a: Int64 = 5\n  puts(a)\n}\n", "Int64 was removed: Int is the 64-bit integer (write Int)"))
+  xs.push(refused("int64-in-array-removed", "fn f(xs: Array(Int64)): Int {\n  xs.size\n}\n\nfn main {\n  puts(f([1]))\n}\n", "Int64 was removed: Int is the 64-bit integer (write Int)"))
+  xs.push(refused("i64-suffix-removed", "fn main {\n  a = 5i64\n  puts(a)\n}\n", "the i64 suffix was removed: Int is the 64-bit integer (write 5)"))
+  xs.push(refused("i64-hex-suffix-removed", "fn main {\n  a = 0xffi64\n  puts(a)\n}\n", "the i64 suffix was removed: Int is the 64-bit integer (write 0xff)"))
+  xs.push(refused("to-i64-removed", "fn main {\n  u = 7u64\n  puts(u.to_i64)\n}\n", "to_i64 was removed: Int is the 64-bit integer (write to_i)"))
+  xs.push(refused("to-i64-call-removed", "fn main {\n  u = 7u64\n  puts(u.to_i64())\n}\n", "to_i64 was removed: Int is the 64-bit integer (write to_i)"))
+  xs.push(refused("wrap-i64-removed", "fn main {\n  u = 7u64\n  puts(u.wrap_i64)\n}\n", "wrap_i64 was removed: Int is the 64-bit integer (write wrap_i)"))
+  xs.push(refused("string-to-i64-removed", "fn main {\n  puts(\"9\".to_i64 ?? 0)\n}\n", "to_i64 was removed: Int is the 64-bit integer (write to_i)"))
+  xs.push(accepted("i64-is-a-name", "fn main {\n  i64 = 5\n  to_i64 = i64 + 1\n  puts(to_i64)\n  puts(7u64.wrap_i)\n}\n", "6\n7\n"))
   xs.push(accepted("bwt-entries", "lib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_bwt_inverse(bwt: Buf, next: Array(Int), out: Buf, start: Int)\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\n\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\n\nfn roundtrip(s: String): String {\n  n = s.size\n  input = sized(n)\n  for i in 0..n {\n    input[i] = s[i]\n  }\n  out = sized(n)\n  idx = fast.avant_bwt_transform(input, Array(Int).new(n), Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), out)\n  back = sized(n)\n  fast.avant_bwt_inverse(out, Array(Int).new(n), back, idx)\n  \"\${out.to_s} \${idx} \${back.to_s == s}\"\n}\n\nfn main {\n  puts(roundtrip(\"banana\"))\n  puts(roundtrip(\"abracadabra\"))\n  long = Buf.new\n  for i in 0..3000 {\n    long.push_byte(97 + (i * 7 + i / 13) % 5)\n  }\n  r = roundtrip(long.to_s)\n  puts(str_slice(r, r.size - 4, r.size))\n}\n", "nnbaaa 3 true\nrdarcaaaabb 2 true\ntrue\n"))
   xs
 }

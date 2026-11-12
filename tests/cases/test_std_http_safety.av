@@ -1,0 +1,252 @@
+import harness
+import std.http
+
+// Safety behaviours of std.http's server (Stage 29 W-FIX1a), each a
+// defect that had no test: a client that closes with pipelined answers
+// unread (O240); answers larger than the socket takes at once, and
+// answers piling up for a client that does not read (P191); a timeout
+// that closed busy connections (P192); Content-Length lines that
+// disagree (P193). The byte-level client is
+// tests/fixtures/http/raw_client.py: it prints one line per mode.
+
+lib c {
+  fun setenv(name: String, value: String, overwrite: Int32): Int32
+}
+
+fn set_env(name: String, value: String) {
+  one: Int32 = 1
+  _ = c.setenv(name, value, one)
+}
+
+class Hits {
+  pub n: Int
+
+  pub fn initialize {
+    self.n = 0
+  }
+}
+
+// This process's peak resident memory in kB (VmHWM), 0 when unreadable.
+fn peak_rss_kb: Int {
+  if text = file_read("/proc/self/status") {
+    i = 0
+    while i < count_lines(text) {
+      line = nth_line(text, i)
+      if line.size > 6 && str_slice(line, 0, 6) == "VmHWM:" {
+        digits = buf_new()
+        for k in 6..line.size {
+          if line[k] >= 48 && line[k] <= 57 {
+            digits.push_byte(line[k])
+          }
+        }
+        return digits.to_s.to_i ?? 0
+      }
+      i += 1
+    }
+  }
+  0
+}
+
+fn raw_client(port: Int, root: String, stamp: Int, mode: String, arg: String): String {
+  log = "${scratch()}/http-safety-${stamp}-${mode}-${arg}.log"
+  args: Array(String) = []
+  args.push("${root}/tests/fixtures/http/raw_client.py")
+  args.push("${port}")
+  args.push(mode)
+  if arg.size > 0 {
+    args.push(arg)
+  }
+  _ = process_run_out("/usr/bin/python3", args, log)
+  if text = file_read(log) {
+    return nth_line(text, 0)
+  }
+  ""
+}
+
+fn stop(port: Int) {
+  if resp = Http.get("http://127.0.0.1:${port}/__stop") {
+  }
+}
+
+fn close_unread_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
+  out.send(raw_client(port, root, stamp, "close_unread", "2"))
+  out.send(raw_client(port, root, stamp, "close_unread", "16"))
+  out.send(raw_client(port, root, stamp, "close_unread", "2000"))
+  out.send(raw_client(port, root, stamp, "lengths", ""))
+  stop(port)
+  0
+}
+
+fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
+  out.send(raw_client(port, root, stamp, "slow_big", ""))
+  out.send(raw_client(port, root, stamp, "pile", ""))
+  out.send(raw_client(port, root, stamp, "close_big", ""))
+  out.send(raw_client(port, root, stamp, "half_close", ""))
+  out.send(raw_client(port, root, stamp, "flood", ""))
+  0
+}
+
+fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
+  i = 0
+  while i < want.size {
+    if line = out.recv {
+      c.eq_str(line, want[i], "${what} ${i}")
+    } else {
+      c.expect(false, "${what} ${i} present")
+    }
+    i += 1
+  }
+}
+
+fn test_std_http_safety(c: Checks, root: String) {
+  c.suite("tests/cases/test_std_http_safety.av")
+  stamp = now_ms()
+
+  // O240: the client closes with pipelined answers unread. The write
+  // that meets the reset connection used to raise SIGPIPE, which ended
+  // this process (status 141); now it fails quietly, the connection is
+  // closed, and the server answers the next client. One loop, so every
+  // answer of the connection is written by the same thread, in order.
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.post("/echo") { |req|
+      Response.bytes(req.body)
+    }
+    server.get("/hidden") { |req|
+      Response.text("smuggled")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(8)
+    handle = spawn {
+      close_unread_round(port, out, root, stamp)
+    }
+    server.serve
+    c.eq_int(handle.join, 0, "close-unread task")
+    want: Array(String) = []
+    want.push("close_unread=alive")
+    want.push("close_unread=alive")
+    want.push("close_unread=alive")
+    expect_lines(c, out, want, "a close with pipelined answers unread leaves the server alive:")
+    // P193: a second Content-Length with another value was accepted and
+    // the first one won, so the rest of the body ran as a request of its
+    // own (GET /hidden here). Disagreeing lines, and a folded one, are
+    // 400 and close; lines repeating one number stay one value.
+    lwant: Array(String) = []
+    lwant.push("lengths=differ:400,differ-reversed:400,third-differs:400,case:400,folded:400,list:400,same:200")
+    expect_lines(c, out, lwant, "Content-Length lines that disagree are refused:")
+  } else {
+    c.expect(false, "listen for the close-unread test")
+  }
+
+  // P191: the socket takes only part of an answer. The rest is queued
+  // per connection and sent when the socket is writable again: no byte
+  // is lost, answers stay in order, Connection: close waits for the
+  // queue, and a client that does not read is not served or read
+  // further, so the server's memory stays bounded.
+  //
+  // P192: the 30-second timeout was armed once, when the connection was
+  // accepted, so a busy keep-alive connection was closed like an idle
+  // one. It is an idle timeout now: request bytes, and queued answer
+  // bytes the client takes, start it again. The server is created with
+  // the timeout shortened to 8 s by AVANT_HTTP_IDLE_TIMEOUT_S (an
+  // internal variable for this test, read when the server is created);
+  // the idle round takes that long, so it runs beside the queue round.
+  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "8")
+  listened = Http.listen(0, "127.0.0.1", 1048576, 1)
+  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
+  if opened = listened {
+    server = opened
+    big = buf_new()
+    for i in 0..8388608 {
+      big.push_byte(97 + i % 26)
+    }
+    big_bytes = big.to_s.bytes
+    digits: Array(Bytes) = []
+    for d in 0..10 {
+      b = buf_new()
+      for i in 0..65536 {
+        b.push_byte(48 + d)
+      }
+      digits.push(b.to_s.bytes)
+    }
+    flood_hits = Hits.new()
+    server.get("/big") { |req|
+      Response.bytes(big_bytes)
+    }
+    server.get("/n") { |req|
+      k = (req.query ?? "0").to_i ?? 0
+      Response.bytes(digits[k % 10])
+    }
+    server.get("/f") { |req|
+      flood_hits.n += 1
+      Response.bytes(digits[1])
+    }
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(8)
+    idle_out = Channel(String).new(2)
+    done = Channel(Int).new(2)
+    before_kb = peak_rss_kb()
+    queue_task = spawn {
+      r = queue_round(port, out, root, stamp)
+      done.send(1)
+      r
+    }
+    idle_task = spawn {
+      idle_out.send(raw_client(port, root, stamp, "idle", ""))
+      done.send(1)
+      0
+    }
+    stopper = spawn {
+      got = 0
+      while got < 2 {
+        if d = done.recv {
+          got += d
+        }
+      }
+      stop(port)
+      0
+    }
+    server.serve
+    c.eq_int(queue_task.join, 0, "output-queue task")
+    c.eq_int(idle_task.join, 0, "idle-timeout task")
+    c.eq_int(stopper.join, 0, "stopper task")
+    want: Array(String) = []
+    want.push("slow_big=whole,then pong")
+    want.push("pile=65 whole,in order")
+    want.push("close_big=whole,then eof")
+    want.push("half_close=2 whole,then eof")
+    want.push("flood=held back")
+    expect_lines(c, out, want, "an answer the socket takes in part is queued, not cut:")
+    c.expect(flood_hits.n > 0 && flood_hits.n < 2000, "a client that reads nothing is served a bounded number of requests")
+    c.expect(before_kb > 0 && peak_rss_kb() - before_kb < 65536, "a client that reads nothing does not grow the server's memory")
+    idle_want: Array(String) = []
+    idle_want.push("idle=idle closed,busy alive")
+    expect_lines(c, idle_out, idle_want, "idle and stalled connections are closed, a busy one is not:")
+  } else {
+    c.expect(false, "listen for the output-queue and idle-timeout test")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_std_http_safety(c, avant_test_root())
+  c.finish
+}

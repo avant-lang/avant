@@ -274,15 +274,6 @@ char *avant_str_from_int(avant_int n) {
   return dup_bytes(buf, (size_t)k);
 }
 
-char *avant_str_from_i64(int64_t n) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%lld", (long long)n);
-  if (k < 0) {
-    k = 0;
-  }
-  return dup_bytes(buf, (size_t)k);
-}
-
 char *avant_str_from_u64(uint64_t n) {
   char buf[32];
   int k = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)n);

@@ -410,15 +410,30 @@ int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
+/* Avant patch (Stage 29 W-FIX1a, O240; runtime/third_party/NOTICE.md):
+ * sendmsg with MSG_NOSIGNAL in place of writev. writev cannot carry the
+ * flag, so a peer that had reset the connection made this write raise
+ * SIGPIPE and end the process; with the flag the call fails with EPIPE,
+ * as bsd_send's does. Where MSG_NOSIGNAL does not exist (macOS) the
+ * socket carries SO_NOSIGPIPE from apple_no_sigpipe. */
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     struct iovec chunks[2];
-    
+    struct msghdr msg;
+
     chunks[0].iov_base = (char *)header;
     chunks[0].iov_len = header_length;
     chunks[1].iov_base = (char *)payload;
     chunks[1].iov_len = payload_length;
-    
-    return writev(fd, chunks, 2);
+
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_iov = chunks;
+    msg.msg_iovlen = 2;
+
+    return sendmsg(fd, &msg, MSG_NOSIGNAL);
 }
 #else
 int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {

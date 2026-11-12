@@ -49,12 +49,10 @@ pub class MRtRow {
 }
 
 pub class MRtTable {
-  rows: Array(MRtRow)
-  index: Hash(String, Int)
+  rows: Array(MRtRow) = []
+  index: Hash(String, Int) = Hash(String, Int).new
 
   fn initialize {
-    self.rows = []
-    self.index = Hash(String, Int).new
     mir_rt_fill(self)
     mir_rt_attrs(self)
   }
@@ -81,13 +79,13 @@ pub class MRtTable {
   // W9b (D207): LLVM function attributes for the declaration of a row
   // whose C body is a pure reader (each proven in mir_rt_attrs).
   pub fn set_attrs(name: String, text: String) {
-    if r = self.find(name) {
+    if r = find(name) {
       r.attrs = text
     }
   }
 
   pub fn attrs_of(name: String): String {
-    if r = self.find(name) {
+    if r = find(name) {
       return r.attrs
     }
     ""
@@ -102,7 +100,7 @@ pub class MRtTable {
 
   // The class of a C name: the row's, or collects for a name not here.
   pub fn class_of(name: String): Int {
-    if r = self.find(name) {
+    if r = find(name) {
       return r.cls
     }
     mcc_collects()
@@ -290,7 +288,6 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_io_init_argv", "i32, ptr", "void", c, "")
   t.row("avant_gc_collect", "", "void", c, "")
   t.row("avant_str_from_int", "i64", "ref str", c, "")
-  t.row("avant_str_from_i64", "i64", "ref str", c, "")
   t.row("avant_str_from_u64", "u64", "ref str", c, "")
   t.row("avant_str_from_float", "f64", "ref str", c, "")
   t.row("avant_puts_f64", "f64", "void", n, "")

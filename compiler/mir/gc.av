@@ -182,21 +182,15 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
         }
         if mir_calls_external(m, st) {
           for arg in st.args {
-            if p = arg.place {
-              if p.proj.size == 0 && p.local >= 0 && p.local < n {
-                mir_bit_on(need, 0, p.local)
-              }
+            if p = arg.place, p.proj.size == 0 && p.local >= 0 && p.local < n {
+              mir_bit_on(need, 0, p.local)
             }
           }
         }
       }
       if st.kind == msk_assign() {
-        if r = st.rv {
-          if p = r.place {
-            if (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && p.local >= 0 && p.local < n {
-              mir_bit_on(need, 0, p.local)
-            }
-          }
+        if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && p.local >= 0 && p.local < n {
+          mir_bit_on(need, 0, p.local)
         }
       }
       mir_live_step_bits(st, live, n, reads)
@@ -357,10 +351,8 @@ fn mir_add_frame(m: MModule, f: MFunc) {
   }
   entry.stmts = pro
   for blk in f.blocks {
-    if t = blk.term {
-      if t.kind == mtk_return() {
-        blk.stmts.push(MStmt.new(msk_gc_leave(), t.loc))
-      }
+    if t = blk.term, t.kind == mtk_return() {
+      blk.stmts.push(MStmt.new(msk_gc_leave(), t.loc))
     }
   }
   if f.blocks.size > 0 {

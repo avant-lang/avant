@@ -1,5 +1,5 @@
 // C layouts through pointers (Stage 28 W8a, audit 1.7, 4.6 (4)): a C
-// struct with Int, String, Bool, a nested C struct, Int64, and Ptr(Void)
+// struct with Int, String, Bool, a nested C struct, Int, and Ptr(Void)
 // fields, laid out by the C rule (offsets checked against C's offsetof),
 // read and written through `Ptr(Rec)` (compound assignments too, nested
 // fields through the outer pointer), methods on `Ptr(Rec)` receivers
@@ -18,7 +18,7 @@ lib lay {
     name: String
     on: Bool
     at: Pt
-    big: Int64
+    big: Int
     link: Ptr(Void)
   }
   fun ffi_rec_new(id: Int32): Ptr(Rec)
@@ -27,7 +27,7 @@ lib lay {
   fun ffi_rec_name_len(r: Ptr(Rec)): Int32
   fun ffi_rec_on(r: Ptr(Rec)): Int32
   fun ffi_rec_x(r: Ptr(Rec)): Float64
-  fun ffi_rec_big(r: Ptr(Rec)): Int64
+  fun ffi_rec_big(r: Ptr(Rec)): Int
   fun ffi_rec_off_name: Int32
   fun ffi_rec_off_on: Int32
   fun ffi_rec_off_at: Int32
@@ -46,7 +46,7 @@ fn (r: Ptr(Rec)) norm2: Float64 {
 
 fn (r: Ptr(Rec)) bump(by: Int) {
   r.id += by.to_i32
-  r.big = r.big * 2i64
+  r.big = r.big * 2
 }
 
 fn (r: Ptr(Rec)) label: String {
@@ -99,7 +99,7 @@ fn main {
   r.on = true
   r.at.x = 3.0
   r.at.y = 4.0
-  r.big = 1i64 << 40i64
+  r.big = 1 << 40
   r.id += 30
   r.at.y -= 1.0
   puts(lay.ffi_rec_id(r))

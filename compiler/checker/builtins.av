@@ -61,6 +61,11 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
   if rt = int_conversion_ty(expr.callee) {
     return checker_self.expect_no_args(expr, rt, "${object.show}.${expr.callee} takes no arguments")
   }
+  now = removed_int_conversion(expr.callee)
+  if now.size > 0 {
+    checker_self.fail(expr.loc, removed_int_message(expr.callee, now))
+    return checker_self.t_int()
+  }
   checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
   object
 }
@@ -146,11 +151,14 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
   if expr.callee == "to_f" {
     return checker_self.expect_no_args(expr, ty_nilable(checker_self.t_float()), "String.to_f takes no arguments")
   }
-  if expr.callee == "to_i" || expr.callee == "to_i64" || expr.callee == "to_u64" {
+  if expr.callee == "to_i64" {
+    // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+    checker_self.fail(expr.loc, removed_int_message("to_i64", "to_i"))
+    return ty_nilable(checker_self.t_int())
+  }
+  if expr.callee == "to_i" || expr.callee == "to_u64" {
     rt = checker_self.t_int()
-    if expr.callee == "to_i64" {
-      rt = checker_self.t_int64()
-    } else if expr.callee == "to_u64" {
+    if expr.callee == "to_u64" {
       rt = checker_self.t_uint64()
     }
     if expr.args.size > 1 {
@@ -384,10 +392,8 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       }
       return checker_self.t_void()
     }
-    if e = array.inner {
-      if !checker_self.is_ordered_ty(e) {
-        checker_self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
-      }
+    if e = array.inner, !checker_self.is_ordered_ty(e) {
+      checker_self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
     }
     return checker_self.t_void()
   }
@@ -783,10 +789,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if v = hash.val {
-      if v.is_int {
-        ok = true
-      }
+    if v = hash.val, v.is_int {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "inc is Hash(K, Int) only")
@@ -815,16 +819,14 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         checker_self.fail(b.loc, "each { |k, v| ... } takes two block parameters")
         return checker_self.t_void()
       }
-      if k = hash.key {
-        if v = hash.val {
-          checker_self.push_scope
-          checker_self.bind(b.params[0], k)
-          checker_self.bind(b.params[1], v)
-          checker_self.loop_depth += 1
-          checker_self.check_body(b.body, checker_self.t_void(), false)
-          checker_self.loop_depth -= 1
-          checker_self.pop_scope
-        }
+      if k = hash.key, v = hash.val {
+        checker_self.push_scope
+        checker_self.bind(b.params[0], k)
+        checker_self.bind(b.params[1], v)
+        checker_self.loop_depth += 1
+        checker_self.check_body(b.body, checker_self.t_void(), false)
+        checker_self.loop_depth -= 1
+        checker_self.pop_scope
       }
       return checker_self.t_void()
     }
@@ -897,12 +899,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if k = hash.key {
-      if v = hash.val {
-        if k.is_string && v.is_int {
-          ok = true
-        }
-      }
+    if k = hash.key, v = hash.val, k.is_string && v.is_int {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "inc_slice is Hash(String, Int) only")
@@ -933,12 +931,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if k = hash.key {
-      if v = hash.val {
-        if k.is_string && v.is_string {
-          ok = true
-        }
-      }
+    if k = hash.key, v = hash.val, k.is_string && v.is_string {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "get_slice is Hash(String, String) only")
@@ -972,12 +966,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return ty_nilable(checker_self.t_int())
     }
     ok = false
-    if k = hash.key {
-      if v = hash.val {
-        if k.is_string && v.is_int {
-          ok = true
-        }
-      }
+    if k = hash.key, v = hash.val, k.is_string && v.is_int {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "get_concat is Hash(String, Int) only")
@@ -1072,12 +1062,12 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     if expr.args.size == 0 {
       if b = expr.block {
         checker_self.fail(expr.loc, "now_us takes no arguments")
-        return checker_self.t_int64()
+        return checker_self.t_int()
       }
-      return checker_self.t_int64()
+      return checker_self.t_int()
     }
     checker_self.fail(expr.loc, "now_us takes no arguments")
-    return checker_self.t_int64()
+    return checker_self.t_int()
   }
   if expr.callee == "repeat_byte" {
     if expr.args.size == 2 {
@@ -1288,10 +1278,8 @@ pub fn (checker_self: Checker) check_i32_bytes_to_str(expr: Expr): Ty {
   got = checker_self.check_expr(expr.args[0])
   ok = false
   if got.is_array {
-    if e = got.inner {
-      if e.is_int {
-        ok = true
-      }
+    if e = got.inner, e.is_int {
+      ok = true
     }
   }
   if !ok {

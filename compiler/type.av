@@ -5,7 +5,6 @@ import token
 import lexer
 
 pub fn tyk_int: Int { 1 }
-pub fn tyk_int64: Int { 2 }
 pub fn tyk_uint64: Int { 3 }
 pub fn tyk_bool: Int { 4 }
 pub fn tyk_float: Int { 5 }
@@ -28,7 +27,8 @@ pub fn tyk_fn: Int { 21 }
 pub fn tyk_iface: Int { 22 }
 pub fn tyk_bytes: Int { 23 }
 // Stage 29 W-INT1 (D314): `Int` is 64-bit; Int32 and UInt32 are everyday
-// value types (dense storage, C's int). `Int64` names `Int` (ty_int64).
+// value types (dense storage, C's int). Kind 2 was `Int64`, which named
+// `Int` for one release and is gone (W-ADOPT, D300's one spelling).
 pub fn tyk_int32: Int { 24 }
 pub fn tyk_uint32: Int { 25 }
 
@@ -59,14 +59,14 @@ pub class Ty {
   pub inner: Ty? = nil
   pub key: Ty? = nil
   pub val: Ty? = nil
-  pub members: Array(Ty)
-  pub fields: Array(TyField)
-  pub ty_args: Array(Ty)
+  pub members: Array(Ty) = []
+  pub fields: Array(TyField) = []
+  pub ty_args: Array(Ty) = []
   pub mod_name: String = ""
   pub emit_base: String = ""
   // A C scalar type (D64 as amended, Stage 29 W1b): cs_* below, 0 for
-  // every other type. Such a Ty has its Avant view's kind (Int, Int64 or
-  // Float64) and its C name as label; it appears only in a `fun` signature
+  // every other type. Such a Ty has its Avant view's kind (an integer
+  // type or Float64) and its C name as label; it appears only in a `fun` signature
   // and a C layout's field, where the back end passes and stores the C
   // width and converts at the boundary.
   pub c_scalar: Int = 0
@@ -78,26 +78,14 @@ pub class Ty {
 
   fn initialize(kind: Int) {
     self.kind = kind
-    self.label = ""
-    self.origin = ""
-    self.mod_name = ""
-    self.emit_base = ""
-    self.template = false
-    self.members = []
-    self.fields = []
-    self.ty_args = []
   }
 
   pub fn is_int: Bool { self.kind == tyk_int() }
-  pub fn is_int64: Bool { self.kind == tyk_int64() }
   pub fn is_uint64: Bool { self.kind == tyk_uint64() }
   pub fn is_int32: Bool { self.kind == tyk_int32() }
   pub fn is_uint32: Bool { self.kind == tyk_uint32() }
   pub fn is_integer: Bool {
     if self.is_int {
-      return true
-    }
-    if self.is_int64 {
       return true
     }
     if self.is_int32 || self.is_uint32 {
@@ -179,9 +167,6 @@ pub class Ty {
     if k == tyk_int() {
       return true
     }
-    if k == tyk_int64() {
-      return true
-    }
     if k == tyk_uint64() {
       return true
     }
@@ -210,48 +195,34 @@ pub class Ty {
       return true
     }
     if k == tyk_array() {
-      if a = self.inner {
-        if b = other.inner {
-          return a.same_as(b)
-        }
+      if a = self.inner, b = other.inner {
+        return a.same_as(b)
       }
       return false
     }
     if k == tyk_ptr() {
-      if a = self.inner {
-        if b = other.inner {
-          return a.same_as(b)
-        }
+      if a = self.inner, b = other.inner {
+        return a.same_as(b)
       }
       return false
     }
     if k == tyk_join() {
-      if a = self.inner {
-        if b = other.inner {
-          return a.same_as(b)
-        }
+      if a = self.inner, b = other.inner {
+        return a.same_as(b)
       }
       return false
     }
     if k == tyk_hash() {
-      if ak = self.key {
-        if av = self.val {
-          if bk = other.key {
-            if bv = other.val {
-              if ak.same_as(bk) {
-                return av.same_as(bv)
-              }
-            }
-          }
-        }
+      if ak = self.key, av = self.val, bk = other.key, bv = other.val, ak.same_as(bk) {
+        return av.same_as(bv)
       }
       return false
     }
     if k == tyk_struct() {
-      return self.same_agg(other)
+      return same_agg(other)
     }
     if k == tyk_class() {
-      return self.same_agg(other)
+      return same_agg(other)
     }
     if k == tyk_opaque() {
       return self.name == other.name
@@ -298,10 +269,8 @@ pub class Ty {
           return false
         }
       }
-      if a = self.inner {
-        if b = other.inner {
-          return a.same_as(b)
-        }
+      if a = self.inner, b = other.inner {
+        return a.same_as(b)
       }
       return false
     }
@@ -396,9 +365,6 @@ pub class Ty {
     k = self.kind
     if k == tyk_int() {
       return "Int"
-    }
-    if k == tyk_int64() {
-      return "Int64"
     }
     if k == tyk_uint64() {
       return "UInt64"
@@ -579,7 +545,7 @@ pub fn ty_c_scalar(k: Int): Ty {
   t
 }
 
-// The Avant view of a C scalar type (a fresh plain Int, Int64 or Float64);
+// The Avant view of a C scalar type (a fresh plain integer or Float64);
 // any other type is itself.
 pub fn ty_c_view(t: Ty): Ty {
   if t.c_scalar == 0 {
@@ -591,11 +557,10 @@ pub fn ty_c_view(t: Ty): Ty {
 // The integer conversions (D295, D312; Stage 29 W-INT1, D314): to_i,
 // to_i32, to_u64 and to_u32 keep the value or trap; wrap_i, wrap_i32,
 // wrap_u64 and wrap_u32 take the two's-complement bits at the target's
-// width (truncating, or extending by the source's sign). to_i64 and
-// wrap_i64 name to_i and wrap_i (Int64 is Int), for the compiler's own
-// source until the next release is the seed. The result type, or nil.
+// width (truncating, or extending by the source's sign). The result
+// type, or nil.
 pub fn int_conversion_ty(name: String): Ty? {
-  if name == "to_i" || name == "to_i64" || name == "wrap_i" || name == "wrap_i64" {
+  if name == "to_i" || name == "wrap_i" {
     return Ty.new(tyk_int())
   }
   if name == "to_i32" || name == "wrap_i32" {
@@ -610,11 +575,25 @@ pub fn int_conversion_ty(name: String): Ty? {
   nil
 }
 
+// One integer spelling (Stage 29 W-ADOPT, D300, D317): `Int64`, the `i64`
+// suffix, `to_i64` and `wrap_i64` named `Int`'s forms for one release and
+// are refused with the form to write. The replacement of a removed
+// conversion's name, or "".
+pub fn removed_int_conversion(name: String): String {
+  if name == "to_i64" {
+    return "to_i"
+  }
+  if name == "wrap_i64" {
+    return "wrap_i"
+  }
+  ""
+}
+
+pub fn removed_int_message(name: String, now: String): String {
+  "${name} was removed: Int is the 64-bit integer (write ${now})"
+}
+
 pub fn ty_int: Ty { Ty.new(tyk_int()) }
-// `Int64` is another name of `Int` (Stage 29 W-INT1, D314: one 64-bit
-// integer; the compiler's own source, which the 32-bit seed also builds,
-// still spells it).
-pub fn ty_int64: Ty { Ty.new(tyk_int()) }
 pub fn ty_int32: Ty { Ty.new(tyk_int32()) }
 pub fn ty_uint32: Ty { Ty.new(tyk_uint32()) }
 pub fn ty_uint64: Ty { Ty.new(tyk_uint64()) }
@@ -636,20 +615,14 @@ pub fn ty_has_var(ty: Ty): Bool {
   if ty.is_var {
     return true
   }
-  if inner = ty.inner {
-    if ty_has_var(inner) {
-      return true
-    }
+  if inner = ty.inner, ty_has_var(inner) {
+    return true
   }
-  if key = ty.key {
-    if ty_has_var(key) {
-      return true
-    }
+  if key = ty.key, ty_has_var(key) {
+    return true
   }
-  if val = ty.val {
-    if ty_has_var(val) {
-      return true
-    }
+  if val = ty.val, ty_has_var(val) {
+    return true
   }
   for mem in ty.members {
     if ty_has_var(mem) {
@@ -668,9 +641,6 @@ pub fn mangle_ty(ty: Ty): String {
   k = ty.kind
   if k == tyk_int() {
     return "Int"
-  }
-  if k == tyk_int64() {
-    return "Int64"
   }
   if k == tyk_uint64() {
     return "UInt64"
@@ -1111,6 +1081,8 @@ pub fn type_is_builtin(name: String): Bool {
   if c_scalar_of(name) > 0 {
     return true
   }
+  // `Int64` stays a reserved name: the resolver refuses it with the form
+  // to write (Stage 29 W-ADOPT, D300's one spelling).
   if name == "Int64" {
     return true
   }

@@ -1,7 +1,25 @@
 import harness
 import std.regex
 
-fn regex_child(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
+lib c {
+  fun setenv(name: String, value: String, overwrite: Int32): Int32
+}
+
+fn set_env(name: String, value: String) {
+  one: Int32 = 1
+  _ = c.setenv(name, value, one)
+}
+
+fn repeated(piece: String, n: Int, tail: String): String {
+  b = buf_new()
+  for i in 0..n {
+    b.push_str(piece)
+  }
+  b.push_str(tail)
+  b.to_s
+}
+
+fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
   src = "${scratch()}/regex-${stamp}-${tag}.av"
   bin = "${scratch()}/regex-${stamp}-${tag}.bin"
   clog = "${scratch()}/regex-${stamp}-${tag}.log"
@@ -30,6 +48,25 @@ fn regex_child(c: Checks, compiler: String, stamp: Int64, tag: String, body: Str
   } else {
     c.expect(false, "${tag} stdout missing")
   }
+}
+
+// One run of a compiled child that must trap: exit status 1, `out` on
+// stdout before the trap, `needle` on stderr (the log holds both).
+fn regex_trap_run(c: Checks, bin: String, stamp: Int, tag: String, args: Array(String), out: String, needle: String) {
+  rlog = "${scratch()}/regex-${stamp}-${tag}.out"
+  code = process_run_out(bin, args, rlog) ?? -1
+  c.eq_int(code, 1, "${tag}: exits 1")
+  if got = file_read(rlog) {
+    c.eq_str(got, "${out}${needle}\n", "${tag}: output, then the trap")
+  } else {
+    c.expect(false, "${tag}: output missing")
+  }
+}
+
+fn one_arg(a: String): Array(String) {
+  xs: Array(String) = []
+  xs.push(a)
+  xs
 }
 
 fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
@@ -206,6 +243,69 @@ fn test_std_regex(c: Checks) {
   c.expect(shared_a.is_closed, "closed regex says so")
   shared_b.close
 
+  // The open or closed state is one shared place (Stage 29 W-FIX1a,
+  // P150): a copy of a Regex is the same handle, so closing through any
+  // copy closes them all, once. Each copy used to carry its own flag,
+  // and a copy of a closed Regex read the released handle.
+  twin_a = must_compile(c, "yy+", false, "twin a")
+  twin_b = must_compile(c, "yy+", false, "twin b")
+  twin_copy = twin_a
+  c.expect(!twin_copy.is_closed, "a copy of an open regex is open")
+  twin_a.close
+  c.expect(twin_copy.is_closed, "closing a regex closes its copies")
+  twin_copy.close
+  twin_a.close
+  c.expect(!twin_b.is_closed, "another compile of the same pattern stays open")
+  if m = twin_b.find("ayyy") {
+    c.eq_int(m.end, 4, "another compile of the same pattern still matches")
+  } else {
+    c.expect(false, "another compile of the same pattern still matches")
+  }
+  twin_b.close
+
+  // PCRE2's failures are not "no match" (Stage 29 W-FIX1a, P40). A
+  // match that nests deeper than the JIT's 32 KiB stack is answered: by
+  // the JIT on a larger stack, and past that by the interpreter (reached
+  // here by shrinking that stack with the suite's internal variable
+  // AVANT_RE_JIT_STACK_KB). It used to be nil, and count 0.
+  deep_pat = "((a)|(b))*"
+  deep_pat = deep_pat + "c"
+  deep = must_compile(c, deep_pat, false, "deep")
+  deep_text = repeated("ab", 20000, "c")
+  if m = deep.find(deep_text) {
+    c.eq_int(m.end - m.start, 40001, "a match deeper than the JIT's own stack is found")
+  } else {
+    c.expect(false, "a match deeper than the JIT's own stack is found")
+  }
+  c.eq_int(deep.count(deep_text), 1, "and counted")
+  set_env("AVANT_RE_JIT_STACK_KB", "64")
+  if m = deep.find(deep_text) {
+    c.eq_int(m.end - m.start, 40001, "past the JIT's larger stack the interpreter finds it")
+  } else {
+    c.expect(false, "past the JIT's larger stack the interpreter finds it")
+  }
+  c.eq_int(deep.count(deep_text), 1, "and counts it")
+  set_env("AVANT_RE_JIT_STACK_KB", "")
+  deep.close
+
+  // Groups past the 63rd are read: the span pairs were capped at 64, so
+  // they read as "did not take part".
+  many = must_compile(c, repeated("(x)", 70, ""), false, "seventy groups")
+  if m = many.find(repeated("x", 70, "")) {
+    c.eq_int(m.group_count, 70, "seventy groups counted")
+    c.eq_str(m.group(63) ?? "nil", "x", "group 63")
+    c.eq_str(m.group(64) ?? "nil", "x", "group 64 took part")
+    c.eq_str(m.group(70) ?? "nil", "x", "group 70 took part")
+    if sp = m.span(70) {
+      c.eq_int(sp.lo, 69, "group 70 span")
+    } else {
+      c.expect(false, "group 70 span")
+    }
+  } else {
+    c.expect(false, "seventy groups match")
+  }
+  many.close
+
   scoped_len = 0
   if re = Regex.compile("q+") {
     re.scoped { |r|
@@ -224,6 +324,48 @@ fn test_std_regex(c: Checks) {
     regex_child(c, compiler, stamp, "regex-computed", computed, "", "stays on PCRE2", "2\n4\n")
     unsupported = "import std.regex\nfn main {\n  if re = Regex.compile(\"(a)\\\\1\") {\n    if m = re.find(\"baa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-backref", unsupported, "stays on PCRE2", "", "1\n3\n")
+
+    // P150: every use through a copy of a closed Regex traps, whichever
+    // copy was closed and wherever the copy lives (a parameter, an array,
+    // a MatchIter, a Match's named groups and its groups past the third).
+    // "uncached" fills the 128-entry cache with patterns in use first,
+    // so the pattern is freed by close itself: that run used to end in a
+    // segmentation fault.
+    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  if mode == \"uncached\" {\n    for i in 0..128 {\n      if r = Regex.compile(\"h\${i}x+\") {\n        held.push(r)\n      }\n    }\n  }\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close\n      puts(\"closed \${copy.is_closed}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close\n      puts(\"closed \${re.is_closed}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close\n      puts(\"closed \${xs[0].is_closed}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next {\n        puts(m.end)\n      }\n      copy.close\n      if m = it.next {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
+    csrc = "${scratch()}/regex-${stamp}-copies.av"
+    cbin = "${scratch()}/regex-${stamp}-copies.bin"
+    _ = file_write(csrc, copies)
+    c.eq_int(compile_av(compiler, csrc, cbin, "${scratch()}/regex-${stamp}-copies.log"), 0, "compile closed-copies")
+    chmod_x(cbin)
+    trap = "avant runtime: Regex used after close"
+    regex_trap_run(c, cbin, stamp, "copy-find", one_arg("copy-find"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "uncached", one_arg("uncached"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "copy-close", one_arg("copy-close"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "param", one_arg("param"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "array", one_arg("array"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "iter", one_arg("iter"), "2\n", trap)
+    regex_trap_run(c, cbin, stamp, "names", one_arg("names"), "aa\nc\n", trap)
+    fourth = one_arg("names")
+    fourth.push("4")
+    regex_trap_run(c, cbin, stamp, "names-4", fourth, "aa\nc\n", trap)
+
+    // P40: a match that reaches PCRE2's match limit traps, naming the
+    // operation: (a+)+$ on forty a's, a b and "aaa" has a match (the last
+    // three a's), but the attempt at the first a backtracks past the
+    // limit. It used to read as "no match": find nil, count 0, replace
+    // and split the text unchanged, the iterator done.
+    limits = "import std.regex\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  p = \"(a+)+\"\n  p = p + \"\$\"\n  b = buf_new()\n  for i in 0..40 {\n    b.push_str(\"a\")\n  }\n  b.push_str(\"b aaa\")\n  text = b.to_s\n  if re = Regex.compile(p) {\n    puts(\"start\")\n    if mode == \"find\" {\n      if m = re.find(text) {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n    if mode == \"count\" {\n      puts(re.count(text))\n    }\n    if mode == \"replace\" {\n      puts(re.replace(text, \"X\"))\n    }\n    if mode == \"split\" {\n      puts(re.split(text).size)\n    }\n    if mode == \"matches\" {\n      it = re.matches(text)\n      if m = it.next {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n  }\n}\n"
+    lsrc = "${scratch()}/regex-${stamp}-limits.av"
+    lbin = "${scratch()}/regex-${stamp}-limits.bin"
+    _ = file_write(lsrc, limits)
+    c.eq_int(compile_av(compiler, lsrc, lbin, "${scratch()}/regex-${stamp}-limits.log"), 0, "compile limits")
+    chmod_x(lbin)
+    said = "match limit exceeded (PCRE2 error -47)"
+    regex_trap_run(c, lbin, stamp, "limit-find", one_arg("find"), "start\n", "avant runtime: Regex.find: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-count", one_arg("count"), "start\n", "avant runtime: Regex.count: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-replace", one_arg("replace"), "start\n", "avant runtime: Regex.replace: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-split", one_arg("split"), "start\n", "avant runtime: Regex.split: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-matches", one_arg("matches"), "start\n", "avant runtime: Regex.matches: ${said}")
   }
 }
 

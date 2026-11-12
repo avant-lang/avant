@@ -58,17 +58,10 @@ pub fn parse_u64_hex(s: String): UInt64 {
 }
 
 pub class TypeBody {
-  fields: Array(Field)
-  methods: Array(Function)
-  quotes: Array(QuoteDecl)
-  comptimes: Array(ComptimeWalk)
-
-  fn initialize {
-    self.fields = []
-    self.methods = []
-    self.quotes = []
-    self.comptimes = []
-  }
+  fields: Array(Field) = []
+  methods: Array(Function) = []
+  quotes: Array(QuoteDecl) = []
+  comptimes: Array(ComptimeWalk) = []
 }
 
 pub class Parser {
@@ -108,7 +101,7 @@ pub class Parser {
   pub fn float_lit(tok: Token): Float64 {
     v = parse_libc.atof(tok.value)
     if v * 0.0 != 0.0 {
-      self.fail(tok.loc, "float literal ${tok.value} is out of range for Float64")
+      fail(tok.loc, "float literal ${tok.value} is out of range for Float64")
       return 0.0
     }
     v
@@ -170,7 +163,7 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.is_top_starter(self.current.kind) {
+      if is_top_starter(self.current.kind) {
         break
       }
       self.bump
@@ -212,7 +205,7 @@ pub class Parser {
   }
 
   pub fn dummy_stmt(loc: Location): Stmt {
-    stmt_expr(loc, self.dummy_expr(loc))
+    stmt_expr(loc, dummy_expr(loc))
   }
 
   pub fn dummy_fn(loc: Location): Function {
@@ -243,10 +236,10 @@ pub class Parser {
     tok = self.current
     if tok.kind != kind {
       if (tok.kind == tk_minus() || tok.kind == tk_plus() || tok.kind == tk_l_bracket()) && self.at_line_start {
-        self.fail(tok.loc, "expected ${token_name(kind)}, found ${token_name(tok.kind)}: a line starting with `+`, `-` or `[` never continues the line before; to continue it, end that line with the operator or an open bracket (`total = a +` then `b`)")
+        fail(tok.loc, "expected ${token_name(kind)}, found ${token_name(tok.kind)}: a line starting with `+`, `-` or `[` never continues the line before; to continue it, end that line with the operator or an open bracket (`total = a +` then `b`)")
         return tok
       }
-      self.fail(tok.loc, "expected ${token_name(kind)}, found ${token_name(tok.kind)}")
+      fail(tok.loc, "expected ${token_name(kind)}, found ${token_name(tok.kind)}")
       return tok
     }
     self.bump
@@ -263,7 +256,7 @@ pub class Parser {
       self.bump
       return Token.new(tk_ident(), tok.loc, spell)
     }
-    self.fail(tok.loc, "expected a name, found ${token_name(tok.kind)}")
+    fail(tok.loc, "expected a name, found ${token_name(tok.kind)}")
     tok
   }
 
@@ -336,7 +329,7 @@ pub class Parser {
     if kind == tk_minus() || kind == tk_plus() {
       return
     }
-    if self.infix_prec(kind) >= 0 {
+    if infix_prec(kind) >= 0 {
       self.skip_newlines
     }
   }
@@ -382,15 +375,13 @@ pub class Parser {
     }
     if k == ex_unary() {
       if inner = e.inner {
-        return self.inert_expr(inner)
+        return inert_expr(inner)
       }
       return true
     }
     if k == ex_binary() {
-      if l = e.left {
-        if r = e.right {
-          return self.inert_expr(l) && self.inert_expr(r)
-        }
+      if l = e.left, r = e.right {
+        return inert_expr(l) && inert_expr(r)
       }
       return false
     }
@@ -416,23 +407,19 @@ pub class Parser {
     while i < stmts.size {
       s = stmts[i]
       if s.lead != 0 {
-        t = self.lead_text(s.lead)
+        t = lead_text(s.lead)
         hint = "to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)"
         if i > 0 {
           p = stmts[i - 1]
           if p.kind == st_expr() {
-            if pe = p.expr {
-              if self.inert_expr(pe) {
-                self.fail(s.loc, "this line starts with `${t}`, so it begins a new statement and leaves the line before as a value nobody uses; ${hint}")
-              }
+            if pe = p.expr, inert_expr(pe) {
+              fail(s.loc, "this line starts with `${t}`, so it begins a new statement and leaves the line before as a value nobody uses; ${hint}")
             }
           }
         }
         if i < stmts.size - 1 && s.kind == st_expr() {
-          if se = s.expr {
-            if se.kind == ex_unary() || se.kind == ex_array() {
-              self.fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
-            }
+          if se = s.expr, se.kind == ex_unary() || se.kind == ex_array() {
+            fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
           }
         }
       }
@@ -450,8 +437,10 @@ pub class Parser {
       }
     } else if str_ends(raw, "i64") {
       if raw.size > 3 {
-        suffix = "i64"
+        // One integer spelling (Stage 29 W-ADOPT, D300, D317): the lexer
+        // still reads the suffix so the error can say what to write.
         raw = str_slice(raw, 0, raw.size - 3)
+        fail(tok.loc, removed_int_message("the i64 suffix", raw))
       }
     }
     bits = 0u64
@@ -483,44 +472,44 @@ pub class Parser {
       k = self.current.kind
       if k == tk_import() {
         if vis {
-          self.fail(self.current.loc, "import cannot be pub")
+          fail(self.current.loc, "import cannot be pub")
         } else {
           program.imports.push(self.parse_import)
         }
       } else if k == tk_struct() {
-        program.structs.push(self.parse_struct(vis))
+        program.structs.push(parse_struct(vis))
       } else if k == tk_class() {
-        program.classes.push(self.parse_class(vis))
+        program.classes.push(parse_class(vis))
       } else if k == tk_lib() {
-        program.libs.push(self.parse_lib(vis))
+        program.libs.push(parse_lib(vis))
       } else if k == tk_fn() {
-        program.functions.push(self.parse_fn("", vis))
+        program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
-        program.interfaces.push(self.parse_interface(vis))
+        program.interfaces.push(parse_interface(vis))
       } else if k == tk_ident() {
-        self.parse_opt_in(program, vis)
+        parse_opt_in(program, vis)
       } else if k == tk_quote() {
         if vis {
-          self.fail(self.current.loc, "quote cannot be pub; mark the fns inside")
+          fail(self.current.loc, "quote cannot be pub; mark the fns inside")
         } else {
-          program.quotes.push(self.parse_quote_decl(""))
+          program.quotes.push(parse_quote_decl(""))
         }
       } else if k == tk_comptime() {
         if vis {
-          self.fail(self.current.loc, "comptime cannot be pub")
+          fail(self.current.loc, "comptime cannot be pub")
         } else {
-          program.comptimes.push(self.parse_comptime_walk(""))
+          program.comptimes.push(parse_comptime_walk(""))
         }
       } else if k == tk_fun() {
-        self.fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
+        fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
       } else {
         if vis {
-          self.fail(self.current.loc, "pub prefixes struct, class, lib, fn, or interface")
+          fail(self.current.loc, "pub prefixes struct, class, lib, fn, or interface")
         } else {
-          self.fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
+          fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
         }
       }
-      if self.new_err_since(mark) {
+      if new_err_since(mark) {
         self.sync_top
         if self.index == start_idx && self.current.kind != tk_eof() {
           self.bump
@@ -532,9 +521,9 @@ pub class Parser {
   }
 
   pub fn parse_import: ImportDecl {
-    loc = self.expect(tk_import()).loc
+    loc = expect(tk_import()).loc
     self.skip_newlines
-    name = self.expect(tk_ident())
+    name = expect(tk_ident())
     buf = buf_new()
     buf.push_str(name.value)
     while self.current.kind == tk_dot() {
@@ -549,11 +538,11 @@ pub class Parser {
 
   pub fn parse_quote_decl(owner: String): QuoteDecl {
     if self.in_quote {
-      self.fail(self.current.loc, "quote cannot nest")
+      fail(self.current.loc, "quote cannot nest")
     }
-    loc = self.expect(tk_quote()).loc
+    loc = expect(tk_quote()).loc
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     self.in_quote = true
     q = QuoteDecl.new(loc)
@@ -566,7 +555,7 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.new_err_since(mark0) {
+      if new_err_since(mark0) {
         break
       }
       vis = false
@@ -576,23 +565,23 @@ pub class Parser {
         self.skip_newlines
       }
       if self.current.kind == tk_fn() {
-        q.functions.push(self.parse_fn(owner, vis))
+        q.functions.push(parse_fn(owner, vis))
       } else {
-        self.fail(self.current.loc, "quote holds fn")
+        fail(self.current.loc, "quote holds fn")
         break
       }
       self.skip_newlines
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     self.in_quote = false
     q
   }
 
   pub fn parse_quote_stmt: Stmt {
     if self.in_quote {
-      self.fail(self.current.loc, "quote cannot nest")
+      fail(self.current.loc, "quote cannot nest")
     }
-    loc = self.expect(tk_quote()).loc
+    loc = expect(tk_quote()).loc
     self.skip_newlines
     self.in_quote = true
     body = self.parse_block
@@ -601,62 +590,62 @@ pub class Parser {
   }
 
   pub fn parse_comptime_walk(owner: String): ComptimeWalk {
-    loc = self.expect(tk_comptime()).loc
+    loc = expect(tk_comptime()).loc
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     for_tok = self.current
     if for_tok.kind != tk_for() {
-      self.fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      fail(for_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
     self.bump
     self.skip_newlines
-    var_tok = self.expect(tk_ident())
+    var_tok = expect(tk_ident())
     self.skip_newlines
     in_tok = self.current
     if in_tok.kind != tk_in() {
-      self.fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      fail(in_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
     self.bump
     self.skip_newlines
-    type_tok = self.expect(tk_ident())
+    type_tok = expect(tk_ident())
     self.skip_newlines
-    self.expect(tk_dot())
+    expect(tk_dot())
     self.skip_newlines
     fields_tok = self.take_name_after_dot
     if fields_tok.value == "fields" {
     } else {
-      self.fail(fields_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      fail(fields_tok.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     if self.current.kind != tk_quote() {
-      self.fail(self.current.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
+      fail(self.current.loc, "Stage 13 comptime is a field walk: for f in Type.fields { quote { ... } }")
     }
-    qdecl = self.parse_quote_decl(owner)
+    qdecl = parse_quote_decl(owner)
     self.skip_newlines
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     self.skip_newlines
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     walk = ComptimeWalk.new(loc, var_tok.value, type_tok.value, qdecl)
     walk.owner = owner
     walk
   }
 
   pub fn parse_splice: Expr {
-    loc = self.expect(tk_pound()).loc
+    loc = expect(tk_pound()).loc
     if !self.in_quote {
-      self.fail(loc, "splice #() only belongs in quote")
+      fail(loc, "splice #() only belongs in quote")
     }
     if self.current.kind != tk_l_paren() {
-      self.fail(self.current.loc, "expected ( after #")
+      fail(self.current.loc, "expected ( after #")
     }
     self.bump
     self.skip_newlines
     inner = self.parse_splice_payload
     self.skip_newlines
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     e = Expr.new(ex_splice(), loc)
     e.inner = inner
     e
@@ -665,7 +654,7 @@ pub class Parser {
   pub fn parse_splice_payload: Expr {
     tok = self.current
     k = tok.kind
-    left = self.dummy_expr(tok.loc)
+    left = dummy_expr(tok.loc)
     if k == tk_ident() {
       self.bump
       e = Expr.new(ex_name(), tok.loc)
@@ -683,7 +672,7 @@ pub class Parser {
       left = e
     } else if k == tk_integer() {
       self.bump
-      ok = self.parse_int_tok(tok)
+      ok = parse_int_tok(tok)
       e = Expr.new(ex_int(), tok.loc)
       e.int_bits = self.int_bits
       e.int_suffix = self.int_suffix
@@ -691,7 +680,7 @@ pub class Parser {
     } else if k == tk_float() {
       self.bump
       e = Expr.new(ex_float(), tok.loc)
-      e.float_val = self.float_lit(tok)
+      e.float_val = float_lit(tok)
       e.value_str = tok.value
       left = e
     } else if k == tk_true() {
@@ -708,7 +697,7 @@ pub class Parser {
       self.bump
       left = Expr.new(ex_nil(), tok.loc)
     } else {
-      self.fail(tok.loc, "splice is a literal, a name, or f.name / f.type")
+      fail(tok.loc, "splice is a literal, a name, or f.name / f.type")
     }
     if self.current.kind == tk_dot() {
       at = self.bump.loc
@@ -730,40 +719,40 @@ pub class Parser {
     self.bump
     self.skip_newlines
     if self.current.kind == tk_r_paren() {
-      self.fail(loc, "type parameter list is empty")
+      fail(loc, "type parameter list is empty")
       self.bump
       return names
     }
     while true {
-      tok = self.expect(tk_ident())
+      tok = expect(tk_ident())
       i = 0
       while i < names.size {
         if names[i] == tok.value {
-          self.fail(tok.loc, "duplicate type parameter ${tok.value}")
+          fail(tok.loc, "duplicate type parameter ${tok.value}")
         }
         i += 1
       }
       names.push(tok.value)
       self.skip_newlines
-      if self.match_tok(tk_comma()) {
+      if match_tok(tk_comma()) {
         self.skip_newlines
       } else {
         break
       }
     }
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     names
   }
 
   pub fn parse_struct(vis: Bool): StructDef {
-    loc = self.expect(tk_struct()).loc
-    name = self.expect(tk_ident()).value
-    params = self.parse_type_params(loc)
-    opted = self.parse_opt_clause()
-    body = self.parse_type_body(name)
+    loc = expect(tk_struct()).loc
+    name = expect(tk_ident()).value
+    params = parse_type_params(loc)
+    opted = parse_opt_clause()
+    body = parse_type_body(name)
     for field in body.fields {
       if d = field.default {
-        self.fail(field.loc, "struct fields have no defaults; use a literal")
+        fail(field.loc, "struct fields have no defaults; use a literal")
       }
     }
     defn = StructDef.new(loc, name)
@@ -781,11 +770,11 @@ pub class Parser {
   }
 
   pub fn parse_class(vis: Bool): ClassDef {
-    loc = self.expect(tk_class()).loc
-    name = self.expect(tk_ident()).value
-    params = self.parse_type_params(loc)
-    opted = self.parse_opt_clause()
-    body = self.parse_type_body(name)
+    loc = expect(tk_class()).loc
+    name = expect(tk_ident()).value
+    params = parse_type_params(loc)
+    opted = parse_opt_clause()
+    body = parse_type_body(name)
     defn = ClassDef.new(loc, name)
     defn.type_params = params
     defn.fields = body.fields
@@ -806,7 +795,7 @@ pub class Parser {
     if self.current.kind == tk_colon() {
       self.bump
       self.skip_newlines
-      return self.parse_iface_apps()
+      return parse_iface_apps()
     }
     empty
   }
@@ -816,7 +805,7 @@ pub class Parser {
     while true {
       apps.push(self.parse_primary_type)
       self.skip_newlines
-      if self.match_tok(tk_plus()) {
+      if match_tok(tk_plus()) {
         self.skip_newlines
       } else {
         break
@@ -837,14 +826,14 @@ pub class Parser {
   }
 
   pub fn parse_interface(vis: Bool): InterfaceDef {
-    loc = self.expect(tk_interface()).loc
-    name = self.expect(tk_ident()).value
-    params = self.parse_type_params(loc)
+    loc = expect(tk_interface()).loc
+    name = expect(tk_ident()).value
+    params = parse_type_params(loc)
     idef = InterfaceDef.new(loc, name)
     idef.type_params = params
     idef.vis = vis
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     mark0 = self.err_count
     while true {
@@ -854,23 +843,23 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.new_err_since(mark0) {
+      if new_err_since(mark0) {
         break
       }
       if self.current.kind == tk_fn() {
         idef.methods.push(self.parse_iface_method)
       } else {
-        self.fail(self.current.loc, "interface methods are signatures")
+        fail(self.current.loc, "interface methods are signatures")
         break
       }
       self.skip_newlines
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     idef
   }
 
   pub fn parse_iface_method: Function {
-    loc = self.expect(tk_fn()).loc
+    loc = expect(tk_fn()).loc
     name = self.parse_fn_name
     fnn = Function.new(loc, name)
     if self.current.kind == tk_l_paren() {
@@ -880,22 +869,22 @@ pub class Parser {
         while true {
           fnn.params.push(self.parse_param)
           self.skip_newlines
-          if self.match_tok(tk_comma()) {
+          if match_tok(tk_comma()) {
             self.skip_newlines
           } else {
             break
           }
         }
       }
-      self.expect(tk_r_paren())
+      expect(tk_r_paren())
     }
-    if self.match_tok(tk_colon()) {
+    if match_tok(tk_colon()) {
       self.skip_newlines
       fnn.return_type = self.parse_bounded_type
     }
     self.skip_newlines
     if self.current.kind == tk_l_brace() {
-      self.fail(self.current.loc, "interface methods have no body")
+      fail(self.current.loc, "interface methods have no body")
       fnn.body = self.parse_block
     }
     fnn
@@ -906,9 +895,9 @@ pub class Parser {
     self.skip_newlines
     if self.current.kind != tk_colon() {
       if vis {
-        self.fail(target.loc, "pub prefixes struct, class, lib, fn, or interface")
+        fail(target.loc, "pub prefixes struct, class, lib, fn, or interface")
       } else {
-        self.fail(target.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime")
+        fail(target.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime")
       }
       return
     }
@@ -921,10 +910,10 @@ pub class Parser {
   }
 
   pub fn parse_lib(vis: Bool): LibDef {
-    loc = self.expect(tk_lib()).loc
-    name = self.expect(tk_ident()).value
+    loc = expect(tk_lib()).loc
+    name = expect(tk_ident()).value
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     defn = LibDef.new(loc, name)
     defn.vis = vis
@@ -937,38 +926,38 @@ pub class Parser {
         break
       }
       if self.current.kind == tk_struct() {
-        defn.layouts.push(self.parse_clayout(vis))
-        if self.new_err_since(mark0) {
+        defn.layouts.push(parse_clayout(vis))
+        if new_err_since(mark0) {
           break
         }
         self.skip_newlines
       } else if self.current.kind == tk_fn() {
-        self.fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
+        fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
         break
       } else if self.current.kind != tk_fun() {
-        self.fail(self.current.loc, "inside lib, write fun or struct")
+        fail(self.current.loc, "inside lib, write fun or struct")
         break
       } else {
         defn.funs.push(self.parse_fun_decl)
-        if self.new_err_since(mark0) {
+        if new_err_since(mark0) {
           break
         }
         self.skip_newlines
       }
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     defn.vis = vis
     defn
   }
 
   pub fn parse_clayout(vis: Bool): CLayout {
-    loc = self.expect(tk_struct()).loc
-    name = self.expect(tk_ident()).value
+    loc = expect(tk_struct()).loc
+    name = expect(tk_ident()).value
     if self.current.kind == tk_l_paren() {
-      self.fail(self.current.loc, "lib structs take no type parameters")
+      fail(self.current.loc, "lib structs take no type parameters")
     }
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     layout = CLayout.new(loc, name)
     layout.vis = vis
@@ -981,46 +970,46 @@ pub class Parser {
         break
       }
       if self.current.kind == tk_fn() {
-        self.fail(self.current.loc, "C layout fields are name: Type only")
+        fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
       if self.current.kind == tk_fun() {
-        self.fail(self.current.loc, "C layout fields are name: Type only")
+        fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
       if self.current.kind == tk_quote() {
-        self.fail(self.current.loc, "C layout fields are name: Type only")
+        fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
       if self.current.kind == tk_comptime() {
-        self.fail(self.current.loc, "C layout fields are name: Type only")
+        fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
       if self.current.kind == tk_pub() {
-        self.fail(self.current.loc, "C layout fields are name: Type only")
+        fail(self.current.loc, "C layout fields are name: Type only")
         break
       }
       field = self.parse_field
       if d = field.default {
-        self.fail(field.loc, "C layout fields have no defaults")
+        fail(field.loc, "C layout fields have no defaults")
         break
       }
       layout.fields.push(field)
-      if self.new_err_since(mark0) {
+      if new_err_since(mark0) {
         break
       }
       self.skip_newlines
     }
-    if layout.fields.size == 0 && !self.new_err_since(mark0) {
-      self.fail(loc, "C layout needs a field")
+    if layout.fields.size == 0 && !new_err_since(mark0) {
+      fail(loc, "C layout needs a field")
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     layout
   }
 
   pub fn parse_fun_decl: FunDecl {
-    loc = self.expect(tk_fun()).loc
-    name_tok = self.expect(tk_ident())
+    loc = expect(tk_fun()).loc
+    name_tok = expect(tk_ident())
     decl = FunDecl.new(loc, name_tok.value)
     if self.current.kind == tk_l_paren() {
       self.bump
@@ -1029,27 +1018,27 @@ pub class Parser {
         while true {
           decl.params.push(self.parse_param)
           self.skip_newlines
-          if self.match_tok(tk_comma()) {
+          if match_tok(tk_comma()) {
             self.skip_newlines
           } else {
             break
           }
         }
       }
-      self.expect(tk_r_paren())
+      expect(tk_r_paren())
     }
-    if self.match_tok(tk_colon()) {
+    if match_tok(tk_colon()) {
       self.skip_newlines
       decl.return_type = self.parse_type_name
     }
     self.skip_newlines
     if self.current.kind == tk_l_brace() {
-      self.fail(self.current.loc, "fun is a C declaration; it has no body")
+      fail(self.current.loc, "fun is a C declaration; it has no body")
       return decl
     }
     for p in decl.params {
       if d = p.default {
-        self.fail(p.loc, "fun parameters cannot have defaults")
+        fail(p.loc, "fun parameters cannot have defaults")
         return decl
       }
     }
@@ -1058,7 +1047,7 @@ pub class Parser {
 
   pub fn parse_type_body(owner: String): TypeBody {
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     body = TypeBody.new()
     mark0 = self.err_count
@@ -1069,7 +1058,7 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      if self.new_err_since(mark0) {
+      if new_err_since(mark0) {
         break
       }
       vis = false
@@ -1078,24 +1067,24 @@ pub class Parser {
         self.bump
         self.skip_newlines
         if self.current.kind != tk_fn() && self.current.kind != tk_ident() {
-          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
+          fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
       }
       if self.current.kind == tk_fn() {
-        body.methods.push(self.parse_fn(owner, vis))
+        body.methods.push(parse_fn(owner, vis))
       } else if self.current.kind == tk_quote() {
         if vis {
-          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
+          fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
-        body.quotes.push(self.parse_quote_decl(owner))
+        body.quotes.push(parse_quote_decl(owner))
       } else if self.current.kind == tk_comptime() {
         if vis {
-          self.fail(self.current.loc, "pub in a type body prefixes fn or a field")
+          fail(self.current.loc, "pub in a type body prefixes fn or a field")
           break
         }
-        body.comptimes.push(self.parse_comptime_walk(owner))
+        body.comptimes.push(parse_comptime_walk(owner))
       } else {
         field = self.parse_field
         field.vis = vis
@@ -1103,17 +1092,17 @@ pub class Parser {
       }
       self.skip_newlines
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     body
   }
 
   pub fn parse_field: Field {
-    name = self.expect(tk_ident())
-    self.expect(tk_colon())
+    name = expect(tk_ident())
+    expect(tk_colon())
     self.skip_newlines
     type = self.parse_type_name
     field = Field.new(name.loc, name.value, type)
-    if self.match_tok(tk_eq()) {
+    if match_tok(tk_eq()) {
       self.skip_newlines
       field.default = self.parse_expr
     }
@@ -1121,11 +1110,11 @@ pub class Parser {
   }
 
   pub fn parse_fn(owner: String, vis: Bool): Function {
-    loc = self.expect(tk_fn()).loc
+    loc = expect(tk_fn()).loc
     receiver: Param? = nil
     if owner.size > 0 {
       if self.current.kind == tk_l_paren() {
-        self.fail(self.current.loc, "inherent methods do not take a receiver; use fn name(...)")
+        fail(self.current.loc, "inherent methods do not take a receiver; use fn name(...)")
       }
     } else {
       if self.current.kind == tk_l_paren() {
@@ -1133,11 +1122,11 @@ pub class Parser {
         self.skip_newlines
         recv = self.parse_param
         if d = recv.default {
-          self.fail(recv.loc, "receiver cannot have a default")
+          fail(recv.loc, "receiver cannot have a default")
         }
         receiver = recv
         self.skip_newlines
-        self.expect(tk_r_paren())
+        expect(tk_r_paren())
         self.skip_newlines
       }
     }
@@ -1156,16 +1145,16 @@ pub class Parser {
           while true {
             fnn_hold.params.push(self.parse_param)
             self.skip_newlines
-            if self.match_tok(tk_comma()) {
+            if match_tok(tk_comma()) {
               self.skip_newlines
             } else {
               break
             }
           }
         }
-        self.expect(tk_r_paren())
+        expect(tk_r_paren())
       }
-      if self.match_tok(tk_colon()) {
+      if match_tok(tk_colon()) {
         self.skip_newlines
         fnn_hold.return_type = self.parse_bounded_type
       }
@@ -1177,24 +1166,24 @@ pub class Parser {
     if owner.size > 0 {
       if self.current.kind == tk_self() {
         self.bump
-        self.expect(tk_dot())
-        name = self.expect(tk_ident()).value
+        expect(tk_dot())
+        name = expect(tk_ident()).value
         type_meth = true
       } else {
         name = self.parse_fn_name
       }
     } else {
       if self.current.kind == tk_self() {
-        self.fail(self.current.loc, "a type-level function belongs in a type body: fn self.name(...)")
+        fail(self.current.loc, "a type-level function belongs in a type body: fn self.name(...)")
       }
       name = self.parse_fn_name
     }
     if name == "new" {
       if owner.size > 0 {
-        self.fail(name_loc, "new is reserved; write initialize")
+        fail(name_loc, "new is reserved; write initialize")
       }
       if r = receiver {
-        self.fail(name_loc, "new is reserved; write initialize")
+        fail(name_loc, "new is reserved; write initialize")
       }
     }
     fnn = Function.new(loc, name)
@@ -1209,16 +1198,16 @@ pub class Parser {
         while true {
           fnn.params.push(self.parse_param)
           self.skip_newlines
-          if self.match_tok(tk_comma()) {
+          if match_tok(tk_comma()) {
             self.skip_newlines
           } else {
             break
           }
         }
       }
-      self.expect(tk_r_paren())
+      expect(tk_r_paren())
     }
-    if self.match_tok(tk_colon()) {
+    if match_tok(tk_colon()) {
       self.skip_newlines
       fnn.return_type = self.parse_bounded_type
     }
@@ -1238,17 +1227,17 @@ pub class Parser {
       self.bump
       return op
     }
-    self.fail(tok.loc, "expected function name")
+    fail(tok.loc, "expected function name")
     ""
   }
 
   pub fn parse_param: Param {
-    name_tok = self.expect(tk_ident())
-    self.expect(tk_colon())
+    name_tok = expect(tk_ident())
+    expect(tk_colon())
     self.skip_newlines
     type = self.parse_bounded_type
     p = Param.new(name_tok.loc, name_tok.value, type)
-    if self.match_tok(tk_eq()) {
+    if match_tok(tk_eq()) {
       self.skip_newlines
       p.default = self.parse_expr
     }
@@ -1264,7 +1253,7 @@ pub class Parser {
     first_copy = first
     u = TypeName.new(loc, "")
     u.members.push(first_copy)
-    while self.match_tok(tk_pipe()) {
+    while match_tok(tk_pipe()) {
       self.skip_newlines
       u.members.push(self.parse_nilable_type)
     }
@@ -1284,20 +1273,20 @@ pub class Parser {
     tok = self.bump
     tn = TypeName.new(tok.loc, "")
     tn.fn_type = true
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     if self.current.kind != tk_r_paren() {
       while true {
         tn.args.push(self.parse_type_name)
         self.skip_newlines
-        if self.match_tok(tk_comma()) {
+        if match_tok(tk_comma()) {
           self.skip_newlines
         } else {
           break
         }
       }
     }
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     if self.current.kind == tk_colon() {
       self.bump
       self.skip_newlines
@@ -1316,7 +1305,7 @@ pub class Parser {
     if self.current.kind == tk_fn() {
       return self.parse_fn_type
     }
-    tok = self.expect(tk_ident())
+    tok = expect(tk_ident())
     parts: Array(String) = []
     parts.push(tok.value)
     while self.current.kind == tk_dot() {
@@ -1344,7 +1333,7 @@ pub class Parser {
       self.bump
       self.skip_newlines
       if self.current.kind == tk_r_paren() {
-        self.fail(tok.loc, "empty type arguments")
+        fail(tok.loc, "empty type arguments")
         self.bump
         return tn
       }
@@ -1352,20 +1341,20 @@ pub class Parser {
         while true {
           tn.args.push(self.parse_type_name)
           self.skip_newlines
-          if self.match_tok(tk_comma()) {
+          if match_tok(tk_comma()) {
             self.skip_newlines
           } else {
             break
           }
         }
       }
-      self.expect(tk_r_paren())
+      expect(tk_r_paren())
     }
     tn
   }
 
   pub fn parse_block: Array(Stmt) {
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     stmts: Array(Stmt) = []
     while true {
@@ -1378,7 +1367,7 @@ pub class Parser {
       mark = self.err_count
       start_idx = self.index
       stmts.push(self.parse_lead_stmt)
-      if self.new_err_since(mark) {
+      if new_err_since(mark) {
         self.sync_stmt
         if self.index == start_idx && self.current.kind != tk_eof() && self.current.kind != tk_r_brace() {
           self.bump
@@ -1386,8 +1375,8 @@ pub class Parser {
       }
       self.skip_newlines
     }
-    self.lead_check(stmts)
-    self.expect(tk_r_brace())
+    lead_check(stmts)
+    expect(tk_r_brace())
     stmts
   }
 
@@ -1431,7 +1420,7 @@ pub class Parser {
       return self.parse_ident_stmt
     }
     expr = self.parse_expr
-    self.finish_stmt(expr)
+    finish_stmt(expr)
   }
 
   // `gc.hold { ... }` (std.gc, Stage 29 W1c2, D305): a statement, the
@@ -1461,7 +1450,7 @@ pub class Parser {
 
   pub fn parse_hold: Stmt {
     loc = self.bump.loc
-    self.expect(tk_dot())
+    expect(tk_dot())
     self.bump
     self.skip_newlines
     body = self.parse_block
@@ -1486,13 +1475,13 @@ pub class Parser {
     if self.annotated_bind_ahead {
       loc = self.current.loc
       name = self.bump
-      self.expect(tk_colon())
+      expect(tk_colon())
       self.skip_newlines
       declared = self.parse_type_name
       self.skip_newlines
-      self.expect(tk_eq())
+      expect(tk_eq())
       self.skip_newlines
-      value = self.maybe_trailing_block(self.parse_expr)
+      value = maybe_trailing_block(self.parse_expr)
       s = Stmt.new(st_assign(), loc)
       target = Expr.new(ex_name(), name.loc)
       target.ident = name.value
@@ -1503,16 +1492,16 @@ pub class Parser {
       return s
     }
     expr = self.parse_expr
-    self.finish_stmt(expr)
+    finish_stmt(expr)
   }
 
   pub fn finish_stmt(expr: Expr): Stmt {
-    expr2 = self.maybe_trailing_block(expr)
+    expr2 = maybe_trailing_block(expr)
     self.skip_newlines_if_continuing
     if token_is_assign_op(self.current.kind) {
       op = self.bump
       self.skip_newlines
-      value = self.maybe_trailing_block(self.parse_expr)
+      value = maybe_trailing_block(self.parse_expr)
       s = Stmt.new(st_assign(), op.loc)
       s.target = expr2
       s.value = value
@@ -1525,7 +1514,7 @@ pub class Parser {
   pub fn maybe_trailing_block(expr: Expr): Expr {
     if expr.kind == ex_unary() {
       if inner = expr.inner {
-        expr.inner = self.maybe_trailing_block(inner)
+        expr.inner = maybe_trailing_block(inner)
       }
       return expr
     }
@@ -1546,7 +1535,7 @@ pub class Parser {
       return expr
     }
     self.skip_newlines
-    self.attach_block(expr, self.parse_trailing_block)
+    attach_block(expr, self.parse_trailing_block)
   }
 
   pub fn if_assign_ahead: Bool {
@@ -1569,7 +1558,7 @@ pub class Parser {
     if self.if_assign_ahead {
       name = self.bump
       self.skip_newlines
-      self.expect(tk_eq())
+      expect(tk_eq())
       self.skip_newlines
       el.bind = name.value
     }
@@ -1582,11 +1571,11 @@ pub class Parser {
   // scope for the elements after it and the then-block. The last element
   // is the statement's own cond and bind; the ones before it are `pre`.
   pub fn parse_cond_list(loc: Location): Stmt {
-    s = self.parse_cond_element(loc)
+    s = parse_cond_element(loc)
     while self.current.kind == tk_comma() {
       self.bump
       self.skip_newlines
-      next = self.parse_cond_element(self.current.loc)
+      next = parse_cond_element(self.current.loc)
       first = Stmt.new(st_if(), s.loc)
       first.bind = s.bind
       first.cond = s.cond
@@ -1598,11 +1587,11 @@ pub class Parser {
   }
 
   pub fn parse_if: Stmt {
-    loc = self.expect(tk_if()).loc
+    loc = expect(tk_if()).loc
     self.skip_newlines
-    head = self.parse_cond_list(loc)
+    head = parse_cond_list(loc)
     bind = head.bind
-    cond = self.dummy_expr(loc)
+    cond = dummy_expr(loc)
     if c = head.cond {
       cond = c
     }
@@ -1629,13 +1618,13 @@ pub class Parser {
   }
 
   pub fn parse_pin: Stmt {
-    loc = self.expect(tk_pin()).loc
+    loc = expect(tk_pin()).loc
     self.skip_newlines
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     value = self.parse_expr
     self.skip_newlines
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     self.skip_newlines
     body = self.parse_block
     s = Stmt.new(st_pin(), loc)
@@ -1647,13 +1636,13 @@ pub class Parser {
   // `release(place)` (Stage 28 W16c, D266): a statement, the shape of
   // `pin(x)` without a block.
   pub fn parse_release: Stmt {
-    loc = self.expect(tk_release()).loc
+    loc = expect(tk_release()).loc
     self.skip_newlines
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     value = self.parse_expr
     self.skip_newlines
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     s = Stmt.new(st_release(), loc)
     s.expr = value
     s
@@ -1664,9 +1653,9 @@ pub class Parser {
   // condition is evaluated before each iteration (`continue` too), the
   // names it binds live in the body only.
   pub fn parse_while: Stmt {
-    loc = self.expect(tk_while()).loc
+    loc = expect(tk_while()).loc
     self.skip_newlines
-    head = self.parse_cond_list(loc)
+    head = parse_cond_list(loc)
     self.skip_newlines
     body = self.parse_block
     s = Stmt.new(st_while(), loc)
@@ -1698,7 +1687,7 @@ pub class Parser {
 
   pub fn for_assign(loc: Location, name: String, value: Expr): Stmt {
     s = Stmt.new(st_assign(), loc)
-    s.target = self.for_name_expr(loc, name)
+    s.target = for_name_expr(loc, name)
     s.value = value
     s.op = tk_eq()
     s
@@ -1713,33 +1702,33 @@ pub class Parser {
   }
 
   pub fn for_inc(loc: Location, name: String): Stmt {
-    self.for_assign(loc, name, self.for_binary(loc, tk_plus(), self.for_name_expr(loc, name), self.for_int_expr(loc, 1u64)))
+    for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, 1u64)))
   }
 
   pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
     out: Array(Stmt) = []
     for s in body {
       if s.kind == st_continue() {
-        out.push(self.for_inc(loc, counter))
+        out.push(for_inc(loc, counter))
         out.push(s)
       } else if s.kind == st_while() {
         // A nested loop's `continue` is its own.
         out.push(s)
       } else {
         if s.kind == st_if() {
-          s.then_body = self.for_advance(s.then_body, counter, loc)
-          s.else_body = self.for_advance(s.else_body, counter, loc)
+          s.then_body = for_advance(s.then_body, counter, loc)
+          s.else_body = for_advance(s.else_body, counter, loc)
           for el in s.pre {
-            self.for_advance_opt(el.cond, counter, loc)
+            for_advance_opt(el.cond, counter, loc)
           }
         }
         if s.kind == st_pin() || s.kind == st_hold() {
-          s.body = self.for_advance(s.body, counter, loc)
+          s.body = for_advance(s.body, counter, loc)
         }
-        self.for_advance_opt(s.expr, counter, loc)
-        self.for_advance_opt(s.value, counter, loc)
-        self.for_advance_opt(s.target, counter, loc)
-        self.for_advance_opt(s.cond, counter, loc)
+        for_advance_opt(s.expr, counter, loc)
+        for_advance_opt(s.value, counter, loc)
+        for_advance_opt(s.target, counter, loc)
+        for_advance_opt(s.cond, counter, loc)
         out.push(s)
       }
     }
@@ -1750,7 +1739,7 @@ pub class Parser {
   // and an `if` used as a value, Stage 29 W4a), outside lambdas.
   pub fn for_advance_opt(e: Expr?, counter: String, loc: Location) {
     if x = e {
-      self.for_advance_expr(x, counter, loc)
+      for_advance_expr(x, counter, loc)
     }
   }
 
@@ -1760,33 +1749,33 @@ pub class Parser {
     }
     if e.kind == ex_switch() {
       for ci in 0..e.cases.size {
-        e.cases[ci].body = self.for_advance(e.cases[ci].body, counter, loc)
+        e.cases[ci].body = for_advance(e.cases[ci].body, counter, loc)
       }
-      e.else_body = self.for_advance(e.else_body, counter, loc)
+      e.else_body = for_advance(e.else_body, counter, loc)
     }
-    self.for_advance_opt(e.left, counter, loc)
-    self.for_advance_opt(e.right, counter, loc)
-    self.for_advance_opt(e.object, counter, loc)
-    self.for_advance_opt(e.cond, counter, loc)
-    self.for_advance_opt(e.receiver, counter, loc)
-    self.for_advance_opt(e.inner, counter, loc)
+    for_advance_opt(e.left, counter, loc)
+    for_advance_opt(e.right, counter, loc)
+    for_advance_opt(e.object, counter, loc)
+    for_advance_opt(e.cond, counter, loc)
+    for_advance_opt(e.receiver, counter, loc)
+    for_advance_opt(e.inner, counter, loc)
     for a in e.args {
-      self.for_advance_expr(a, counter, loc)
+      for_advance_expr(a, counter, loc)
     }
     for x in e.elems {
-      self.for_advance_expr(x, counter, loc)
+      for_advance_expr(x, counter, loc)
     }
     for f in e.field_exprs {
-      self.for_advance_expr(f, counter, loc)
+      for_advance_expr(f, counter, loc)
     }
   }
 
   pub fn parse_for: Stmt {
-    loc = self.expect(tk_for()).loc
+    loc = expect(tk_for()).loc
     self.skip_newlines
-    var_tok = self.expect(tk_ident())
+    var_tok = expect(tk_ident())
     self.skip_newlines
-    self.expect(tk_in())
+    expect(tk_in())
     self.skip_newlines
     // The array and the range's ends are read like a while or if
     // condition, with no struct literal (O181, Stage 29 W3a): before,
@@ -1805,11 +1794,11 @@ pub class Parser {
       end_name = "__for${id}_end"
       s = Stmt.new(st_while(), loc)
       s.for_kind = 1
-      s.pre.push(self.for_assign(loc, var_tok.value, first))
-      s.pre.push(self.for_assign(loc, end_name, end_expr))
-      s.cond = self.for_binary(loc, tk_less(), self.for_name_expr(loc, var_tok.value), self.for_name_expr(loc, end_name))
-      s.body = self.for_advance(raw_body, var_tok.value, loc)
-      s.body.push(self.for_inc(loc, var_tok.value))
+      s.pre.push(for_assign(loc, var_tok.value, first))
+      s.pre.push(for_assign(loc, end_name, end_expr))
+      s.cond = for_binary(loc, tk_less(), for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
+      s.body = for_advance(raw_body, var_tok.value, loc)
+      s.body.push(for_inc(loc, var_tok.value))
       return s
     }
     raw_body2 = self.parse_block
@@ -1817,32 +1806,32 @@ pub class Parser {
     idx_name = "__for${id}_i"
     s2 = Stmt.new(st_while(), loc)
     s2.for_kind = 2
-    s2.pre.push(self.for_assign(loc, xs_name, first))
-    s2.pre.push(self.for_assign(loc, idx_name, self.for_int_expr(loc, 0u64)))
+    s2.pre.push(for_assign(loc, xs_name, first))
+    s2.pre.push(for_assign(loc, idx_name, for_int_expr(loc, 0u64)))
     size_expr = Expr.new(ex_field(), loc)
-    size_expr.object = self.for_name_expr(loc, xs_name)
+    size_expr.object = for_name_expr(loc, xs_name)
     size_expr.ident = "size"
-    s2.cond = self.for_binary(loc, tk_less(), self.for_name_expr(loc, idx_name), size_expr)
+    s2.cond = for_binary(loc, tk_less(), for_name_expr(loc, idx_name), size_expr)
     elem_expr = Expr.new(ex_index(), loc)
-    elem_expr.left = self.for_name_expr(loc, xs_name)
-    elem_expr.right = self.for_name_expr(loc, idx_name)
-    s2.body.push(self.for_assign(loc, var_tok.value, elem_expr))
-    adv = self.for_advance(raw_body2, idx_name, loc)
+    elem_expr.left = for_name_expr(loc, xs_name)
+    elem_expr.right = for_name_expr(loc, idx_name)
+    s2.body.push(for_assign(loc, var_tok.value, elem_expr))
+    adv = for_advance(raw_body2, idx_name, loc)
     bi = 0
     while bi < adv.size {
       s2.body.push(adv[bi])
       bi += 1
     }
-    s2.body.push(self.for_inc(loc, idx_name))
+    s2.body.push(for_inc(loc, idx_name))
     s2
   }
 
   pub fn parse_switch: Expr {
-    loc = self.expect(tk_switch()).loc
+    loc = expect(tk_switch()).loc
     self.skip_newlines
     cond = self.parse_cond_expr
     self.skip_newlines
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     expr = Expr.new(ex_switch(), loc)
     expr.cond = cond
@@ -1856,12 +1845,12 @@ pub class Parser {
       }
       if self.current.kind == tk_case() {
         if seen_else {
-          self.fail(self.current.loc, "else must be the last switch arm")
+          fail(self.current.loc, "else must be the last switch arm")
         }
         expr.cases.push(self.parse_switch_case)
       } else if self.current.kind == tk_else() {
         if seen_else {
-          self.fail(self.current.loc, "duplicate else in switch")
+          fail(self.current.loc, "duplicate else in switch")
         }
         self.bump
         self.skip_newlines
@@ -1869,26 +1858,26 @@ pub class Parser {
         expr.has_else = true
         seen_else = true
       } else {
-        self.fail(self.current.loc, "expected case or else, found ${token_name(self.current.kind)}")
+        fail(self.current.loc, "expected case or else, found ${token_name(self.current.kind)}")
         break
       }
       self.skip_newlines
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     if expr.cases.size == 0 {
-      self.fail(loc, "switch needs a case")
+      fail(loc, "switch needs a case")
     }
     expr
   }
 
   pub fn parse_switch_case: SwitchCase {
-    loc = self.expect(tk_case()).loc
+    loc = expect(tk_case()).loc
     self.skip_newlines
     arm = SwitchCase.new(loc)
     while true {
       arm.labels.push(self.parse_case_label)
       self.skip_newlines
-      if self.match_tok(tk_comma()) {
+      if match_tok(tk_comma()) {
         self.skip_newlines
       } else {
         break
@@ -1899,7 +1888,7 @@ pub class Parser {
     arm
   }
 
-  pub fn parse_case_label: Int64 {
+  pub fn parse_case_label: Int {
     neg = false
     if self.current.kind == tk_minus() {
       self.bump
@@ -1907,30 +1896,30 @@ pub class Parser {
       neg = true
     }
     if self.current.kind != tk_integer() {
-      self.fail(self.current.loc, "case label must be an integer literal")
-      return 0i64
+      fail(self.current.loc, "case label must be an integer literal")
+      return 0
     }
     tok = self.bump
-    if !self.parse_int_tok(tok) {
-      return 0i64
+    if !parse_int_tok(tok) {
+      return 0
     }
     if self.int_suffix.size != 0 {
-      self.fail(tok.loc, "case label must be an Int literal")
-      return 0i64
+      fail(tok.loc, "case label must be an Int literal")
+      return 0
     }
     bits = self.int_bits
     if neg {
       if bits > 2147483648u64 {
-        self.fail(tok.loc, "case label does not fit in Int")
-        return 0i64
+        fail(tok.loc, "case label does not fit in Int")
+        return 0
       }
-      return 0i64 - bits.to_i64()
+      return 0 - bits.to_i()
     }
     if bits > 2147483647u64 {
-      self.fail(tok.loc, "case label does not fit in Int")
-      return 0i64
+      fail(tok.loc, "case label does not fit in Int")
+      return 0
     }
-    bits.to_i64()
+    bits.to_i()
   }
 
   pub fn parse_for_operand: Expr {
@@ -1946,7 +1935,7 @@ pub class Parser {
     self.allow_struct_lit = false
     expr = self.parse_expr
     if self.pred_block_ahead {
-      expr = self.maybe_trailing_block(expr)
+      expr = maybe_trailing_block(expr)
     }
     self.allow_struct_lit = old
     expr
@@ -1980,34 +1969,34 @@ pub class Parser {
   }
 
   pub fn parse_break: Stmt {
-    loc = self.expect(tk_break()).loc
+    loc = expect(tk_break()).loc
     Stmt.new(st_break(), loc)
   }
 
   pub fn parse_continue: Stmt {
-    loc = self.expect(tk_continue()).loc
+    loc = expect(tk_continue()).loc
     Stmt.new(st_continue(), loc)
   }
 
   pub fn parse_return: Stmt {
-    loc = self.expect(tk_return()).loc
+    loc = expect(tk_return()).loc
     expr: Expr? = nil
     k = self.current.kind
     if !(k == tk_newline() || k == tk_r_brace() || k == tk_eof()) {
-      expr = self.maybe_trailing_block(self.parse_expr)
+      expr = maybe_trailing_block(self.parse_expr)
     }
     stmt_return(loc, expr)
   }
 
   pub fn parse_expr: Expr {
-    self.parse_expr_min(0)
+    parse_expr_min(0)
   }
 
   pub fn parse_expr_min(min_prec: Int): Expr {
-    left = self.parse_postfix(self.parse_prefix)
+    left = parse_postfix(self.parse_prefix)
     while true {
       self.skip_newlines_if_continuing
-      prec = self.infix_prec(self.current.kind)
+      prec = infix_prec(self.current.kind)
       if prec < min_prec {
         break
       }
@@ -2017,13 +2006,13 @@ pub class Parser {
       if op.kind == tk_question_question() {
         next_prec = prec
       }
-      right = self.dummy_expr(op.loc)
+      right = dummy_expr(op.loc)
       k2 = self.current.kind
       if op.kind == tk_question_question() && (k2 == tk_return() || k2 == tk_break() || k2 == tk_continue()) {
         // `x ?? return v`, `?? break`, `?? continue` (Stage 29 W4a,
         // D292): the right side is that statement, held by a switch node
         // with op tk_return (ast.av), which every walker already visits.
-        st = self.dummy_stmt(op.loc)
+        st = dummy_stmt(op.loc)
         if k2 == tk_break() {
           st = self.parse_break
         } else if k2 == tk_continue() {
@@ -2036,7 +2025,7 @@ pub class Parser {
         right.has_else = true
         right.else_body.push(st)
       } else {
-        right = self.parse_expr_min(next_prec)
+        right = parse_expr_min(next_prec)
       }
       bin = Expr.new(ex_binary(), op.loc)
       bin.op = op.kind
@@ -2075,9 +2064,9 @@ pub class Parser {
           field = self.take_name_after_dot
           if self.current.kind == tk_l_paren() {
             took_type = false
-            qual_pre = self.qual_of(cur)
+            qual_pre = qual_of(cur)
             if qual_pre.size > 0 {
-              if app = self.parse_maybe_type_app(field, qual_pre) {
+              if app = parse_maybe_type_app(field, qual_pre) {
                 cur = app
                 took_type = true
               }
@@ -2097,7 +2086,7 @@ pub class Parser {
             cur = call
           } else if self.allow_struct_lit {
             if self.struct_literal_ahead {
-              cur = self.parse_struct_literal(field, self.qual_of(cur))
+              cur = parse_struct_literal(field, qual_of(cur))
             } else {
               fa = Expr.new(ex_field(), at)
               fa.object = cur
@@ -2116,7 +2105,7 @@ pub class Parser {
         self.skip_newlines
         idxe = self.parse_expr
         self.skip_newlines
-        self.expect(tk_r_bracket())
+        expect(tk_r_bracket())
         ix = Expr.new(ex_index(), at)
         ix.left = cur
         ix.right = idxe
@@ -2147,7 +2136,7 @@ pub class Parser {
     k = tok.kind
     if k == tk_integer() {
       self.bump
-      ok = self.parse_int_tok(tok)
+      ok = parse_int_tok(tok)
       e = Expr.new(ex_int(), tok.loc)
       e.int_bits = self.int_bits
       e.int_suffix = self.int_suffix
@@ -2156,7 +2145,7 @@ pub class Parser {
     if k == tk_float() {
       self.bump
       e = Expr.new(ex_float(), tok.loc)
-      e.float_val = self.float_lit(tok)
+      e.float_val = float_lit(tok)
       e.value_str = tok.value
       return e
     }
@@ -2186,14 +2175,14 @@ pub class Parser {
       return Expr.new(ex_nil(), tok.loc)
     }
     if k == tk_spawn() {
-      return self.parse_spawn(tok)
+      return parse_spawn(tok)
     }
     if k == tk_if() {
       // An `if` used as a value (Stage 29 W4a, D31): held by a switch
       // node with op tk_if (ast.av); it needs an else.
       st = self.parse_if
       if st.else_body.size == 0 {
-        self.fail(st.loc, "an if used as a value needs an else, so every case gives one")
+        fail(st.loc, "an if used as a value needs an else, so every case gives one")
       }
       ife = Expr.new(ex_switch(), st.loc)
       ife.op = tk_if()
@@ -2230,7 +2219,7 @@ pub class Parser {
     if k == tk_minus() {
       self.bump
       self.skip_newlines
-      inner = self.parse_expr_min(11)
+      inner = parse_expr_min(11)
       e = Expr.new(ex_unary(), tok.loc)
       e.op = tk_minus()
       e.inner = inner
@@ -2239,7 +2228,7 @@ pub class Parser {
     if k == tk_bang() {
       self.bump
       self.skip_newlines
-      inner = self.parse_expr_min(11)
+      inner = parse_expr_min(11)
       e = Expr.new(ex_unary(), tok.loc)
       e.op = tk_bang()
       e.inner = inner
@@ -2248,7 +2237,7 @@ pub class Parser {
     if k == tk_tilde() {
       self.bump
       self.skip_newlines
-      inner = self.parse_expr_min(11)
+      inner = parse_expr_min(11)
       e = Expr.new(ex_unary(), tok.loc)
       e.op = tk_tilde()
       e.inner = inner
@@ -2259,10 +2248,10 @@ pub class Parser {
       self.skip_newlines
       old = self.allow_struct_lit
       self.allow_struct_lit = true
-      expr = self.maybe_trailing_block(self.parse_expr)
+      expr = maybe_trailing_block(self.parse_expr)
       self.allow_struct_lit = old
       self.skip_newlines
-      self.expect(tk_r_paren())
+      expect(tk_r_paren())
       return expr
     }
     if k == tk_l_brace() && self.lambda_ahead {
@@ -2271,15 +2260,15 @@ pub class Parser {
       return e
     }
     if k == tk_release() {
-      self.fail(tok.loc, "release is a statement, not a value")
-      return self.dummy_expr(tok.loc)
+      fail(tok.loc, "release is a statement, not a value")
+      return dummy_expr(tok.loc)
     }
     if k == tk_plus() && self.at_line_start {
-      self.fail(tok.loc, "a line cannot start with `+`: a line starting with `+`, `-` or `[` begins a new statement; to continue the line before, end it with the operator (`total = a +` then `b`)")
+      fail(tok.loc, "a line cannot start with `+`: a line starting with `+`, `-` or `[` begins a new statement; to continue the line before, end it with the operator (`total = a +` then `b`)")
       return Expr.new(ex_int(), tok.loc)
     }
-    self.fail(tok.loc, "expected an expression, found ${token_name(k)}")
-    self.dummy_expr(tok.loc)
+    fail(tok.loc, "expected an expression, found ${token_name(k)}")
+    dummy_expr(tok.loc)
   }
 
   pub fn lambda_ahead: Bool {
@@ -2346,13 +2335,13 @@ pub class Parser {
     if self.current.kind != tk_r_paren() {
       while true {
         args.push(self.parse_type_name)
-        if self.new_err_since(saved_mark) {
+        if new_err_since(saved_mark) {
           self.index = saved_index
-          self.truncate_errors(saved_mark)
+          truncate_errors(saved_mark)
           return nil
         }
         self.skip_newlines
-        if self.match_tok(tk_comma()) {
+        if match_tok(tk_comma()) {
           self.skip_newlines
         } else {
           break
@@ -2361,13 +2350,13 @@ pub class Parser {
     }
     if self.current.kind != tk_r_paren() {
       self.index = saved_index
-      self.truncate_errors(saved_mark)
+      truncate_errors(saved_mark)
       return nil
     }
     self.bump
     if args.size == 0 {
       self.index = saved_index
-      self.truncate_errors(saved_mark)
+      truncate_errors(saved_mark)
       return nil
     }
     ahead = self.look_ahead_non_nl
@@ -2384,8 +2373,8 @@ pub class Parser {
       self.index = saved_index
       call_mark = self.err_count
       exprs = self.parse_arg_list
-      if self.new_err_since(call_mark) {
-        self.truncate_errors(call_mark)
+      if new_err_since(call_mark) {
+        truncate_errors(call_mark)
       } else if self.index == after {
         e.args = exprs
       }
@@ -2395,13 +2384,13 @@ pub class Parser {
     if ahead.kind == tk_l_brace() && self.allow_struct_lit {
       self.skip_newlines
       if self.struct_literal_ahead {
-        e = self.parse_struct_literal(tok, qual)
+        e = parse_struct_literal(tok, qual)
         e.type_args = args
         return e
       }
     }
     self.index = saved_index
-    self.truncate_errors(saved_mark)
+    truncate_errors(saved_mark)
     nil
   }
 
@@ -2409,22 +2398,22 @@ pub class Parser {
     tok = self.bump
     if tok.value == "Array" {
       if self.current.kind == tk_l_paren() {
-        return self.parse_array_new(tok)
+        return parse_array_new(tok)
       }
     }
     if tok.value == "Hash" {
       if self.current.kind == tk_l_paren() {
-        return self.parse_hash_new(tok)
+        return parse_hash_new(tok)
       }
     }
     if self.current.kind == tk_l_paren() {
-      if app = self.parse_maybe_type_app(tok, "") {
+      if app = parse_maybe_type_app(tok, "") {
         return app
       }
-      return self.parse_call(tok)
+      return parse_call(tok)
     }
     if self.allow_struct_lit && self.struct_literal_ahead {
-      return self.parse_struct_literal(tok, "")
+      return parse_struct_literal(tok, "")
     }
     e = Expr.new(ex_name(), tok.loc)
     e.ident = tok.value
@@ -2432,57 +2421,57 @@ pub class Parser {
   }
 
   pub fn parse_array_new(tok: Token): Expr {
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     elem = self.parse_type_name
     self.skip_newlines
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     self.skip_newlines
-    self.expect(tk_dot())
+    expect(tk_dot())
     self.skip_newlines
     meth = self.take_name_after_dot
     if meth.value == "new" {
     } else {
-      self.fail(meth.loc, "Array(T) only supports .new")
+      fail(meth.loc, "Array(T) only supports .new")
     }
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     size = self.parse_expr
     self.skip_newlines
     e = Expr.new(ex_array_new(), tok.loc)
     e.elem_type = elem
     e.size_expr = size
-    if self.match_tok(tk_comma()) {
+    if match_tok(tk_comma()) {
       self.skip_newlines
       e.elems.push(self.parse_expr)
       self.skip_newlines
     }
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     e
   }
 
   pub fn parse_hash_new(tok: Token): Expr {
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     key = self.parse_type_name
     self.skip_newlines
-    self.expect(tk_comma())
+    expect(tk_comma())
     self.skip_newlines
     val = self.parse_type_name
     self.skip_newlines
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     self.skip_newlines
-    self.expect(tk_dot())
+    expect(tk_dot())
     self.skip_newlines
     meth = self.take_name_after_dot
     if meth.value == "new" {
     } else {
-      self.fail(meth.loc, "Hash(K, V) only supports .new")
+      fail(meth.loc, "Hash(K, V) only supports .new")
     }
     if self.current.kind == tk_l_paren() {
       self.bump
       self.skip_newlines
-      self.expect(tk_r_paren())
+      expect(tk_r_paren())
     }
     e = Expr.new(ex_hash_new(), tok.loc)
     e.key_type = key
@@ -2491,7 +2480,7 @@ pub class Parser {
   }
 
   pub fn parse_array_literal: Expr {
-    loc = self.expect(tk_l_bracket()).loc
+    loc = expect(tk_l_bracket()).loc
     self.skip_newlines
     e = Expr.new(ex_array(), loc)
     // Inside the brackets a struct literal is unambiguous, as inside
@@ -2502,7 +2491,7 @@ pub class Parser {
       while true {
         e.elems.push(self.parse_expr)
         self.skip_newlines
-        if self.match_tok(tk_comma()) {
+        if match_tok(tk_comma()) {
           self.skip_newlines
           if self.current.kind == tk_r_bracket() {
             break
@@ -2513,7 +2502,7 @@ pub class Parser {
       }
     }
     self.allow_struct_lit = old
-    self.expect(tk_r_bracket())
+    expect(tk_r_bracket())
     e
   }
 
@@ -2523,11 +2512,9 @@ pub class Parser {
       return true
     }
     if expr.kind == ex_field() {
-      if obj = expr.object {
-        if self.collect_idents(obj, segs) {
-          segs.push(expr.ident)
-          return true
-        }
+      if obj = expr.object, collect_idents(obj, segs) {
+        segs.push(expr.ident)
+        return true
       }
     }
     false
@@ -2535,7 +2522,7 @@ pub class Parser {
 
   pub fn qual_of(expr: Expr): String {
     segs: Array(String) = []
-    if self.collect_idents(expr, segs) {
+    if collect_idents(expr, segs) {
       buf = buf_new()
       for i in 0..segs.size {
         if i > 0 {
@@ -2549,7 +2536,7 @@ pub class Parser {
   }
 
   pub fn parse_struct_literal(name: Token, qual: String): Expr {
-    self.expect(tk_l_brace())
+    expect(tk_l_brace())
     self.skip_newlines
     e = Expr.new(ex_struct(), name.loc)
     e.type_name = name.value
@@ -2561,20 +2548,20 @@ pub class Parser {
       if self.current.kind == tk_eof() {
         break
       }
-      field = self.expect(tk_ident())
-      self.expect(tk_colon())
+      field = expect(tk_ident())
+      expect(tk_colon())
       self.skip_newlines
       value = self.parse_expr
       e.field_names.push(field.value)
       e.field_exprs.push(value)
       self.skip_newlines
-      if self.match_tok(tk_comma()) {
+      if match_tok(tk_comma()) {
         self.skip_newlines
       } else {
         break
       }
     }
-    self.expect(tk_r_brace())
+    expect(tk_r_brace())
     e
   }
 
@@ -2599,7 +2586,7 @@ pub class Parser {
   }
 
   pub fn parse_interpolated_string: Expr {
-    open = self.expect(tk_interp_open())
+    open = expect(tk_interp_open())
     e = Expr.new(ex_interp(), open.loc)
     if open.value.size != 0 {
       p = InterpPart.new()
@@ -2617,7 +2604,7 @@ pub class Parser {
         break
       }
       if self.current.kind == tk_interp_mid() {
-        self.fail(self.current.loc, "expected interpolation expression")
+        fail(self.current.loc, "expected interpolation expression")
         break
       }
       self.skip_newlines
@@ -2636,7 +2623,7 @@ pub class Parser {
       } else if self.current.kind == tk_interp_close() {
         continue
       } else {
-        self.fail(self.current.loc, "expected end of interpolation")
+        fail(self.current.loc, "expected end of interpolation")
         break
       }
     }
@@ -2644,7 +2631,7 @@ pub class Parser {
   }
 
   pub fn parse_trailing_block: Block {
-    loc = self.expect(tk_l_brace()).loc
+    loc = expect(tk_l_brace()).loc
     self.skip_newlines
     block = Block.new(loc)
     if self.current.kind == tk_pipe_pipe() {
@@ -2655,7 +2642,7 @@ pub class Parser {
       self.skip_newlines
       if self.current.kind != tk_pipe() {
         while true {
-          name = self.expect(tk_ident())
+          name = expect(tk_ident())
           block.params.push(name.value)
           ann = TypeName.new(name.loc, "")
           if self.current.kind == tk_colon() {
@@ -2667,14 +2654,14 @@ pub class Parser {
           }
           block.param_types.push(ann)
           self.skip_newlines
-          if self.match_tok(tk_comma()) {
+          if match_tok(tk_comma()) {
             self.skip_newlines
           } else {
             break
           }
         }
       }
-      self.expect(tk_pipe())
+      expect(tk_pipe())
       self.skip_newlines
     }
     while true {
@@ -2687,7 +2674,7 @@ pub class Parser {
       mark = self.err_count
       start_idx = self.index
       block.body.push(self.parse_lead_stmt)
-      if self.new_err_since(mark) {
+      if new_err_since(mark) {
         self.sync_stmt
         if self.index == start_idx && self.current.kind != tk_eof() && self.current.kind != tk_r_brace() {
           self.bump
@@ -2695,15 +2682,15 @@ pub class Parser {
       }
       self.skip_newlines
     }
-    self.lead_check(block.body)
-    self.expect(tk_r_brace())
+    lead_check(block.body)
+    expect(tk_r_brace())
     block
   }
 
   pub fn attach_block(left: Expr, block: Block): Expr {
     if left.kind == ex_call() {
       if b = left.block {
-        self.fail(block.loc, "call already has a block")
+        fail(block.loc, "call already has a block")
         return left
       }
       left.block = block
@@ -2724,12 +2711,12 @@ pub class Parser {
       call.block = block
       return call
     }
-    self.fail(block.loc, "trailing block must follow a call")
+    fail(block.loc, "trailing block must follow a call")
     left
   }
 
   pub fn parse_arg_list: Array(Expr) {
-    self.expect(tk_l_paren())
+    expect(tk_l_paren())
     self.skip_newlines
     args: Array(Expr) = []
     // A struct literal is unambiguous inside the parentheses, also in a
@@ -2738,9 +2725,9 @@ pub class Parser {
     self.allow_struct_lit = true
     if self.current.kind != tk_r_paren() {
       while true {
-        args.push(self.maybe_trailing_block(self.parse_expr))
+        args.push(maybe_trailing_block(self.parse_expr))
         self.skip_newlines
-        if self.match_tok(tk_comma()) {
+        if match_tok(tk_comma()) {
           self.skip_newlines
         } else {
           break
@@ -2748,7 +2735,7 @@ pub class Parser {
       }
     }
     self.allow_struct_lit = old
-    self.expect(tk_r_paren())
+    expect(tk_r_paren())
     args
   }
 }

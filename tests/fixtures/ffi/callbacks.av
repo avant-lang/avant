@@ -16,8 +16,8 @@ lib cb {
   fun ffi_fold(f: fn(Float64, Float64): Float64, seed: Float64, n: Int32): Float64
   fun ffi_repeat(f: fn(Int32): Int32, n: Int32): Int32
   fun ffi_each(f: fn(Int32), n: Int32)
-  fun qsort(base: Ptr(CInt), nmemb: Int64, size: Int64, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)
-  fun malloc(n: Int64): Ptr(CInt)
+  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)
+  fun malloc(n: Int): Ptr(CInt)
   fun free(p: Ptr(CInt))
 }
 
@@ -92,11 +92,11 @@ fn main {
   puts(keep.lines[0])
   puts(keep.lines[1])
   puts(cb.ffi_repeat({ |i: Int32| ("x" + "${i}").size.to_i32 }, 5000))
-  buf = cb.malloc(16i64)
+  buf = cb.malloc(16)
   buf.v = 9
-  cb.qsort(buf, 1i64, 4i64, by_v)
+  cb.qsort(buf, 1, 4, by_v)
   puts(buf.v)
-  cb.qsort(buf, 1i64, 4i64, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v })
+  cb.qsort(buf, 1, 4, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v })
   puts(buf.v)
   cb.free(buf)
 }

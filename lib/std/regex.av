@@ -4,14 +4,15 @@ lib rec {
   fun avant_regex_release(code: Ptr(Void))
   fun avant_regex_groups(code: Ptr(Void)): Int
   fun avant_regex_group_index(code: Ptr(Void), name: String): Int
-  fun avant_regex_find(code: Ptr(Void), text: String, from: Int): Int64
-  fun avant_regex_span_pair(i: Int): Int64
-  fun avant_regex_span_at(code: Ptr(Void), text: String, from: Int, i: Int): Int64
+  fun avant_regex_find(code: Ptr(Void), text: String, from: Int): Int
+  fun avant_regex_span_pair(i: Int): Int
+  fun avant_regex_span_at(code: Ptr(Void), text: String, from: Int, i: Int): Int
   fun avant_regex_count(code: Ptr(Void), text: String): Int
   fun avant_re2c_handle(id: Int): Ptr(Void)
   fun avant_regex_error_text: String
   fun avant_regex_error_offset: Int
   fun avant_regex_closed
+  fun avant_regex_failed(op: Int)
 }
 
 // A pattern that does not compile: the message is PCRE2's, with the
@@ -47,9 +48,26 @@ pub struct Span {
   pub hi: Int
 }
 
+// Whether one compiled Regex is still open, in one shared place (Stage 29
+// W-FIX1a): a Regex is a struct, so each copy of it would carry a flag of
+// its own, and a copy of a closed Regex went on to read the handle that
+// close had released. Every copy of the value, and every Match it
+// produced, points at this one object, the way a Server's copies share
+// their HttpState.
+//
+// `op` is the operation in progress, for the trap of a PCRE2 failure: 0
+// find, 1 replace, 2 split, 3 matches. replace, split and matches run on
+// find; they say who they are here, so find itself stays the one hot
+// path and takes no extra argument.
+class RegexState {
+  closed: Bool = false
+  op: Int = 0
+}
+
 pub struct Match {
   text: String
   code: Ptr(Void)
+  state: RegexState
   ngroups: Int
   at: Int
   pub start: Int
@@ -95,6 +113,12 @@ pub struct Match {
       }
       return Span { lo: lo, hi: group_hi(i) }
     }
+    // Groups past the third are read from the pattern again: not after
+    // its Regex was closed.
+    if self.state.closed {
+      regex_closed()
+      return nil
+    }
     v = rec.avant_regex_span_at(self.code, self.text, self.at, i)
     lo = pair_lo(v)
     if lo < 0 {
@@ -111,6 +135,11 @@ pub struct Match {
   }
 
   pub fn group(name: String): String? {
+    // The name is looked up in the pattern: not after its Regex was closed.
+    if self.state.closed {
+      regex_closed()
+      return nil
+    }
     idx = rec.avant_regex_group_index(self.code, name)
     if idx < 0 {
       return nil
@@ -123,14 +152,14 @@ pub struct Match {
   }
 }
 
-fn pair_lo(v: Int64): Int {
+fn pair_lo(v: Int): Int {
   (v >> 32).to_i
 }
 
-fn pair_hi(v: Int64): Int {
-  h = v & 4294967295i64
-  if h >= 2147483648i64 {
-    h -= 4294967296i64
+fn pair_hi(v: Int): Int {
+  h = v & 4294967295
+  if h >= 2147483648 {
+    h -= 4294967296
   }
   h.to_i
 }
@@ -196,20 +225,24 @@ fn is_digits(s: String): Bool {
 // A Regex is a value holding one hold on a compiled pattern, in the
 // shape of Json: the struct form is what lets Regex | RegexError open
 // with if-assign, since the error must be the union's one class.
-// Copies of a Regex value are the same handle; close it once, through
-// one of them.
+// Copies of a Regex value are the same handle and share its open or
+// closed state (RegexState): close it once, through any of them, and
+// every copy is closed.
 pub struct Regex {
   code: Ptr(Void)
   scan: Ptr(Void)
   ngroups: Int
-  closed: Bool
+  state: RegexState
 
   // Compiles `pattern` on PCRE2 with JIT. A pattern written as a string
   // literal may instead be compiled by re2c into a scanner; that path
   // exposes group 0 and group 1 only and has no named groups, so a
   // literal with named groups or more than one group stays on PCRE2.
   // PCRE2 backtracking can be catastrophic on adversarial patterns and
-  // texts; that cost is the caller's to bound, as with the built-ins.
+  // texts: a match that reaches PCRE2's match, depth or heap limit
+  // traps, naming the operation (it is never read as "no match"), and
+  // there is no limit parameter yet, so what comes from outside is the
+  // caller's to bound.
   pub fn self.compile(pattern: String, caseless: Bool = false): Regex | RegexError {
     flags = 0
     if caseless {
@@ -220,23 +253,25 @@ pub struct Regex {
     if status != 0 {
       return regex_error(status)
     }
-    Regex { code: code, scan: code, ngroups: rec.avant_regex_groups(code), closed: false }
+    Regex { code: code, scan: code, ngroups: rec.avant_regex_groups(code), state: RegexState.new() }
   }
 
   // Releases this handle's hold on the compiled pattern. The C side may
   // keep the pattern in its bounded cache for the next compile; other
-  // handles on the same pattern are unaffected. Closing twice is a
-  // no-op, and every operation on a closed Regex traps.
+  // handles on the same pattern (other compiles of it) are unaffected.
+  // Closing twice, through this value or a copy of it, is a no-op, and
+  // every operation on a closed Regex, through any copy, traps; so do a
+  // Match's named groups and its groups past the third.
   pub fn close {
-    if self.closed {
+    if self.state.closed {
       return
     }
-    self.closed = true
+    self.state.closed = true
     rec.avant_regex_release(self.code)
   }
 
   pub fn is_closed: Bool {
-    self.closed
+    self.state.closed
   }
 
   // Runs the block with this Regex and closes it on exit.
@@ -245,18 +280,24 @@ pub struct Regex {
     self.close
   }
 
+  // A PCRE2 failure that is not "no match" (its match, depth or heap
+  // limit, no memory) traps, naming the operation in progress; it is
+  // never nil.
   pub fn find(text: String, from: Int = 0): Match? {
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return nil
     }
     p0 = rec.avant_regex_find(self.scan, text, from)
-    if p0 == -1i64 {
+    if p0 < 0 {
+      if p0 != -1 {
+        rec.avant_regex_failed(self.state.op)
+      }
       return nil
     }
-    p1 = -1i64
-    p2 = -1i64
-    p3 = -1i64
+    p1 = -1
+    p2 = -1
+    p3 = -1
     if self.ngroups >= 1 {
       p1 = rec.avant_regex_span_pair(1)
     }
@@ -269,6 +310,7 @@ pub struct Regex {
     Match {
       text: text,
       code: self.code,
+      state: self.state,
       ngroups: self.ngroups,
       at: from,
       start: pair_lo(p0),
@@ -283,7 +325,7 @@ pub struct Regex {
   }
 
   pub fn count(text: String): Int {
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return 0
     }
@@ -304,12 +346,13 @@ pub struct Regex {
   }
 
   pub fn replace_into(dst: Buf, text: String, repl: String) {
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return
     }
     last = 0
     at = 0
+    self.state.op = 1
     while at <= text.size {
       if m = find(text, at) {
         dst.push_slice(text, last, m.start)
@@ -330,6 +373,7 @@ pub struct Regex {
         break
       }
     }
+    self.state.op = 0
     dst.push_slice(text, last, text.size)
   }
 
@@ -338,12 +382,13 @@ pub struct Regex {
   // points; their bytes stay in the surrounding piece.
   pub fn split(text: String): Array(String) {
     parts: Array(String) = []
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return parts
     }
     last = 0
     at = 0
+    self.state.op = 2
     while at <= text.size {
       if m = find(text, at) {
         if m.end == m.start {
@@ -357,6 +402,7 @@ pub struct Regex {
         break
       }
     }
+    self.state.op = 0
     parts.push(str_slice(text, last, text.size))
     parts
   }
@@ -377,7 +423,10 @@ pub class MatchIter {
     if self.done {
       return nil
     }
-    if m = self.re.find(self.text, self.at) {
+    self.re.state.op = 3
+    found = self.re.find(self.text, self.at)
+    self.re.state.op = 0
+    if m = found {
       if m.end == m.start {
         self.at = m.end + 1
       } else {
@@ -403,5 +452,5 @@ fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool): Regex
   if status != 0 {
     return regex_error(status)
   }
-  Regex { code: code, scan: rec.avant_re2c_handle(id), ngroups: groups, closed: false }
+  Regex { code: code, scan: rec.avant_re2c_handle(id), ngroups: groups, state: RegexState.new() }
 }

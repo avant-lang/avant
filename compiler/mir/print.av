@@ -45,9 +45,9 @@ pub fn mir_escape(s: String): String {
   buf.to_s
 }
 
-pub fn mir_int_text(ty: Int, v: Int64): String {
+pub fn mir_int_text(ty: Int, v: Int): String {
   if ty == mt_u64() {
-    return "${bits_i64_to_u64(v)}"
+    return "${v.wrap_u64}"
   }
   "${v}"
 }
@@ -77,13 +77,13 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
     return "const fn ${o.text}"
   }
   if o.kind == mok_bool() {
-    if o.ival != 0i64 {
+    if o.ival != 0 {
       return "const bool true"
     }
     return "const bool false"
   }
   if o.kind == mok_f64() {
-    s = "const f64 0x${mir_hex(bits_i64_to_u64(o.ival), true, 16)}"
+    s = "const f64 0x${mir_hex(o.ival.wrap_u64, true, 16)}"
     if o.text.size > 0 {
       s = "${s} /* ${o.text} */"
     }

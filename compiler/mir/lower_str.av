@@ -70,7 +70,7 @@ pub fn (lw: MirLower) int_call1(callee: String, a: MOperand): MOperand {
   lw.call_to(mt_int(), callee, args)
 }
 
-// A scalar's text (the old back end): String as is; Int, Int64, UInt64,
+// A scalar's text (the old back end): String as is; Int, Int32, UInt32, UInt64,
 // Float64 (`%g`), and Bool (widened to i32) through avant_str_from_*.
 pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
   b = lw.lw_b
@@ -84,9 +84,6 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
     // Its value as an Int (extended by its sign; Stage 29 W-INT1).
     w32 = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
     return lw.str_call1("avant_str_from_int", w32)
-  }
-  if t.is_int64 {
-    return lw.str_call1("avant_str_from_i64", v)
   }
   if t.is_uint64 {
     return lw.str_call1("avant_str_from_u64", v)
@@ -104,10 +101,8 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
 
 pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
   for i in from..e.parts.size {
-    if x = e.parts[i].expr {
-      if mir_has_switch(x) {
-        return true
-      }
+    if x = e.parts[i].expr, mir_has_switch(x) {
+      return true
     }
   }
   false
@@ -120,31 +115,23 @@ pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
 pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
   b = lw.lw_b
   if e.parts.size == 2 {
-    if text = e.parts[0].text {
-      if inner = e.parts[1].expr {
-        if it = inner.ty {
-          if it.is_int {
-            n = lw.lower_expr(inner)
-            if lw.failed {
-              return b.c_i32(0)
-            }
-            lw.at(e.loc)
-            args: Array(MOperand) = []
-            args.push(b.str_const(text))
-            args.push(n)
-            return lw.str_call("avant_str_cat_i32", args)
-          }
-        }
+    if text = e.parts[0].text, inner = e.parts[1].expr, it = inner.ty, it.is_int {
+      n = lw.lower_expr(inner)
+      if lw.failed {
+        return b.c_i32(0)
       }
+      lw.at(e.loc)
+      args: Array(MOperand) = []
+      args.push(b.str_const(text))
+      args.push(n)
+      return lw.str_call("avant_str_cat_i32", args)
     }
   }
   pieces: Array(MOperand) = []
   for i in 0..e.parts.size {
     part = e.parts[i]
-    if text = part.text {
-      if text.size > 0 {
-        pieces.push(b.str_const(text))
-      }
+    if text = part.text, text.size > 0 {
+      pieces.push(b.str_const(text))
     }
     if inner = part.expr {
       if it = inner.ty {
@@ -257,7 +244,7 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     cargs.push(ops[1])
     return lw.str_call("avant_str_slice", cargs)
   }
-  if rt.is_string && (name == "to_i" || name == "to_i64" || name == "to_u64" || name == "to_f") {
+  if rt.is_string && (name == "to_i" || name == "to_u64" || name == "to_f") {
     return lw.str_parse(e, recv, name, args)
   }
   if args.size > 0 {
@@ -330,12 +317,12 @@ pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
   b.c_i32(0)
 }
 
-// String.to_i, to_i64, to_u64 (an optional base, 10 by default) and to_f
+// String.to_i, to_u64 (an optional base, 10 by default) and to_f
 // (Stage 29 W4b1, D293, D295 R9): strict, through avant_str_parse_* and a
 // found flag, giving T?. The base, then the receiver.
 pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
-  base = b.c_i64(10i64)
+  base = b.c_i64(10)
   if args.size == 1 {
     base = lw.snap(lw.lower_expr(args[0]), recv)
   }
@@ -350,8 +337,8 @@ pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(E
   vt = ty_float()
   mt = mt_f64()
   f = "avant_str_parse_f64"
-  if name == "to_i" || name == "to_i64" {
-    // Int is 64-bit (Stage 29 W-INT1); to_i64 is to_i's other name.
+  if name == "to_i" {
+    // Int is 64-bit (Stage 29 W-INT1).
     vt = ty_int()
     mt = mt_int()
     f = "avant_str_parse_i64"
