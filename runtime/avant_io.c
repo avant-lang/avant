@@ -251,38 +251,6 @@ static char *read_all(FILE *f, size_t *np) {
   return raw;
 }
 
-/* The seed's file_read (its compiler lowers the builtin to this entry);
- * removed once the seed has the prelude's file_read (W4b2). */
-/* gc-lint: holds nothing (the text read is C memory; the path is not read after dup_bytes). */
-char *avant_file_read(const char *path, int32_t *ok) {
-  size_t n = 0;
-  char *raw;
-  if (ok) {
-    *ok = 0;
-  }
-  if (!path) {
-    return NULL;
-  }
-  FILE *f = open_read(path);
-  if (!f) {
-    return NULL;
-  }
-  /* Native while the file is read into C memory (Stage 28 W17a, rule 2):
-   * path is not read again. */
-  avant_gc_native_begin();
-  raw = read_all(f, &n);
-  avant_gc_native_end();
-  if (!raw) {
-    return NULL;
-  }
-  char *heap = dup_bytes(raw, n);
-  free(raw);
-  if (ok) {
-    *ok = 1;
-  }
-  return heap;
-}
-
 /* The prelude's file_read (Stage 29 W4b2, D295 R12): the text, or NULL
  * with avant_sys_errno() telling why. */
 /* gc-lint: holds nothing (the text read is C memory; the path is not read after dup_bytes). */
@@ -623,17 +591,11 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   return WIFEXITED(st) ? WEXITSTATUS(st) : 1;
 }
 
-/* The compiler's own run until the next release (W4b2): the old
- * process_run's answer (the exit status, 128 + n for signal n, 127 when
- * it could not start), the same under the seed and the new prelude. */
+/* `avant run` starts the program with this (W4b2, kept at W-ADOPT): the
+ * exit status, 128 + n for signal n, 127 when it could not start, which
+ * the command passes on as its own. */
 avant_int avant_fs_run(const char *path, void *args) {
   return run_child(path, args, NULL, NULL, 0);
-}
-
-/* The compiler's own file_write until the next release (W4b2): 0 when
- * the whole body was written, else 1. */
-avant_int avant_fs_write(const char *path, const char *body) {
-  return avant_sys_write(path, body) < 0 ? 1 : 0;
 }
 
 /* Starts a job without waiting: path with args, stdout and stderr to
@@ -1005,20 +967,6 @@ void *avant_sys_list(const char *path) {
   g_sys_errno = err;
   if (err) {
     return NULL;
-  }
-  return names_array(names, n);
-}
-
-/* The compiler's own listing until the next release (W4b2): the seed's
- * prelude has dir_list as an Array(String), the new one as a result or
- * an IoError, so the compiler binds this entry, empty when the directory
- * cannot be read (the old dir_list's answer), under both. */
-/* gc-lint: holds nothing (the path is read before names_array allocates). */
-void *avant_fs_list(const char *path) {
-  char **names;
-  int32_t n;
-  if (list_names(path ? path : "", &names, &n) != 0) {
-    return names_array(NULL, 0);
   }
   return names_array(names, n);
 }

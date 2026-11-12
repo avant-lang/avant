@@ -36,10 +36,6 @@ pub class Expander {
   fn initialize(source: Source, program: Program) {
     self.source = source
     self.program = program
-    self.next_id = 0
-    self.ctx_var = ""
-    self.failed = false
-    self.err = nil
     self.errors = DiagBag.new
   }
 
@@ -57,32 +53,32 @@ pub class Expander {
   }
 
   pub fn expand: Program {
-    self.expand_quotes(self.program.quotes, "")
+    expand_quotes(self.program.quotes, "")
     empty_q: Array(QuoteDecl) = []
     self.program.quotes = empty_q
     for sdef in self.program.structs {
-      self.expand_quotes(sdef.quotes, sdef.name)
+      expand_quotes(sdef.quotes, sdef.name)
       sq: Array(QuoteDecl) = []
       sdef.quotes = sq
-      self.expand_walks(sdef.comptimes, sdef.name)
+      expand_walks(sdef.comptimes, sdef.name)
       sc: Array(ComptimeWalk) = []
       sdef.comptimes = sc
     }
     for cdef in self.program.classes {
-      self.expand_quotes(cdef.quotes, cdef.name)
+      expand_quotes(cdef.quotes, cdef.name)
       cq: Array(QuoteDecl) = []
       cdef.quotes = cq
-      self.expand_walks(cdef.comptimes, cdef.name)
+      expand_walks(cdef.comptimes, cdef.name)
       cc: Array(ComptimeWalk) = []
       cdef.comptimes = cc
     }
-    self.expand_walks(self.program.comptimes, "")
+    expand_walks(self.program.comptimes, "")
     empty_c: Array(ComptimeWalk) = []
     self.program.comptimes = empty_c
     fns = program_all_functions(self.program)
     i = 0
     while i < fns.size {
-      fns[i].body = self.expand_stmt_list(fns[i].body)
+      fns[i].body = expand_stmt_list(fns[i].body)
       i += 1
     }
     self.program
@@ -96,8 +92,8 @@ pub class Expander {
       }
       j = 0
       while j < q.functions.size {
-        fnn = self.fill_and_hygiene_fn(clone_function(q.functions[j]))
-        self.inject_function(fnn, own, q.mod_name)
+        fnn = fill_and_hygiene_fn(clone_function(q.functions[j]))
+        inject_function(fnn, own, q.mod_name)
         j += 1
       }
     }
@@ -105,7 +101,7 @@ pub class Expander {
 
   pub fn expand_walks(walks: Array(ComptimeWalk), owner: String) {
     for walk in walks {
-      fields = self.find_fields(walk.type_name, walk.loc, walk.mod_name)
+      fields = find_fields(walk.type_name, walk.loc, walk.mod_name)
       own = owner
       if own.size == 0 {
         own = walk.owner
@@ -116,8 +112,8 @@ pub class Expander {
         self.ctx_field = fields[j]
         k = 0
         while k < walk.qdecl.functions.size {
-          fnn = self.fill_and_hygiene_fn(clone_function(walk.qdecl.functions[k]))
-          self.inject_function(fnn, own, walk.mod_name)
+          fnn = fill_and_hygiene_fn(clone_function(walk.qdecl.functions[k]))
+          inject_function(fnn, own, walk.mod_name)
           k += 1
         }
         self.ctx_var = ""
@@ -128,9 +124,9 @@ pub class Expander {
   }
 
   pub fn fill_and_hygiene_fn(fnn: Function): Function {
-    self.fill_function(fnn)
-    self.hygiene_function(fnn)
-    fnn.body = self.expand_stmt_list(fnn.body)
+    fill_function(fnn)
+    hygiene_function(fnn)
+    fnn.body = expand_stmt_list(fnn.body)
     fnn
   }
 
@@ -156,14 +152,14 @@ pub class Expander {
         return
       }
     }
-    self.fail(fnn.loc, "quote owner ${owner} is not a type")
+    fail(fnn.loc, "quote owner ${owner} is not a type")
   }
 
   // A walk over `T.fields` written in another module than T's sees only
   // T's `pub` fields (Stage 29 W3a, D299): the code it writes could name
   // no other.
   pub fn find_fields(type_name: String, loc: Location, from_mod: String): Array(Field) {
-    all = self.find_all_fields(type_name, loc)
+    all = find_all_fields(type_name, loc)
     if self.fields_mod.size == 0 || from_mod.size == 0 || self.fields_mod == from_mod {
       return all
     }
@@ -183,7 +179,7 @@ pub class Expander {
     for sdef in self.program.structs {
       if sdef.name == type_name {
         if sdef.type_params.size > 0 {
-          self.fail(loc, "comptime cannot walk generic type ${type_name}")
+          fail(loc, "comptime cannot walk generic type ${type_name}")
           return found
         }
         found = sdef.fields
@@ -194,7 +190,7 @@ pub class Expander {
     for cls in self.program.classes {
       if cls.name == type_name {
         if cls.type_params.size > 0 {
-          self.fail(loc, "comptime cannot walk generic type ${type_name}")
+          fail(loc, "comptime cannot walk generic type ${type_name}")
           return found
         }
         found = cls.fields
@@ -211,35 +207,35 @@ pub class Expander {
       }
     }
     if hits == 0 {
-      self.fail(loc, "unknown type ${type_name} for fields")
+      fail(loc, "unknown type ${type_name} for fields")
     }
     if hits > 1 {
-      self.fail(loc, "ambiguous type ${type_name} for fields")
+      fail(loc, "ambiguous type ${type_name} for fields")
     }
     found
   }
 
   pub fn fill_function(fnn: Function) {
     if sp = fnn.name_splice {
-      fnn.name = self.splice_to_ident(sp)
+      fnn.name = splice_to_ident(sp)
       fnn.emit_name = fnn.name
       fnn.name_splice = nil
     }
     if r = fnn.receiver {
-      r.type = self.fill_type_name(r.type)
+      r.type = fill_type_name(r.type)
     }
     if t = fnn.return_type {
-      fnn.return_type = self.fill_type_name(t)
+      fnn.return_type = fill_type_name(t)
     }
     i = 0
     while i < fnn.params.size {
-      fnn.params[i].type = self.fill_type_name(fnn.params[i].type)
+      fnn.params[i].type = fill_type_name(fnn.params[i].type)
       i += 1
     }
     body: Array(Stmt) = []
     i = 0
     while i < fnn.body.size {
-      body.push(self.fill_stmt(fnn.body[i]))
+      body.push(fill_stmt(fnn.body[i]))
       i += 1
     }
     fnn.body = body
@@ -247,22 +243,22 @@ pub class Expander {
 
   pub fn fill_type_name(tn: TypeName): TypeName {
     if sp = tn.splice {
-      return self.splice_to_type(sp)
+      return splice_to_type(sp)
     }
     args: Array(TypeName) = []
     i = 0
     while i < tn.args.size {
-      args.push(self.fill_type_name(tn.args[i]))
+      args.push(fill_type_name(tn.args[i]))
       i += 1
     }
     tn.args = args
     if r = tn.ret {
-      tn.ret = self.fill_type_name(r)
+      tn.ret = fill_type_name(r)
     }
     members: Array(TypeName) = []
     i = 0
     while i < tn.members.size {
-      members.push(self.fill_type_name(tn.members[i]))
+      members.push(fill_type_name(tn.members[i]))
       i += 1
     }
     tn.members = members
@@ -273,13 +269,13 @@ pub class Expander {
     k = s.kind
     if k == st_expr() {
       if e = s.expr {
-        return stmt_expr(s.loc, self.fill_expr(e))
+        return stmt_expr(s.loc, fill_expr(e))
       }
       return s
     }
     if k == st_return() {
       if e = s.expr {
-        return stmt_return_val(s.loc, self.fill_expr(e))
+        return stmt_return_val(s.loc, fill_expr(e))
       }
       return stmt_return_void(s.loc)
     }
@@ -287,21 +283,21 @@ pub class Expander {
       out = Stmt.new(st_if(), s.loc)
       out.bind = s.bind
       if c = s.cond {
-        out.cond = self.fill_expr(c)
+        out.cond = fill_expr(c)
       }
       i = 0
       while i < s.pre.size {
-        out.pre.push(self.fill_stmt(s.pre[i]))
+        out.pre.push(fill_stmt(s.pre[i]))
         i += 1
       }
       i = 0
       while i < s.then_body.size {
-        out.then_body.push(self.fill_stmt(s.then_body[i]))
+        out.then_body.push(fill_stmt(s.then_body[i]))
         i += 1
       }
       i = 0
       while i < s.else_body.size {
-        out.else_body.push(self.fill_stmt(s.else_body[i]))
+        out.else_body.push(fill_stmt(s.else_body[i]))
         i += 1
       }
       return out
@@ -310,16 +306,16 @@ pub class Expander {
       out = Stmt.new(st_while(), s.loc)
       out.for_kind = s.for_kind
       if c = s.cond {
-        out.cond = self.fill_expr(c)
+        out.cond = fill_expr(c)
       }
       i = 0
       while i < s.pre.size {
-        out.pre.push(self.fill_stmt(s.pre[i]))
+        out.pre.push(fill_stmt(s.pre[i]))
         i += 1
       }
       i = 0
       while i < s.body.size {
-        out.body.push(self.fill_stmt(s.body[i]))
+        out.body.push(fill_stmt(s.body[i]))
         i += 1
       }
       return out
@@ -327,18 +323,18 @@ pub class Expander {
     if k == st_release() {
       out = Stmt.new(st_release(), s.loc)
       if e = s.expr {
-        out.expr = self.fill_expr(e)
+        out.expr = fill_expr(e)
       }
       return out
     }
     if k == st_pin() || k == st_hold() {
       out = Stmt.new(k, s.loc)
       if e = s.expr {
-        out.expr = self.fill_expr(e)
+        out.expr = fill_expr(e)
       }
       i = 0
       while i < s.body.size {
-        out.body.push(self.fill_stmt(s.body[i]))
+        out.body.push(fill_stmt(s.body[i]))
         i += 1
       }
       return out
@@ -347,18 +343,18 @@ pub class Expander {
       out = Stmt.new(st_assign(), s.loc)
       out.op = s.op
       if t = s.target {
-        out.target = self.fill_expr(t)
+        out.target = fill_expr(t)
       }
       if v = s.value {
-        out.value = self.fill_expr(v)
+        out.value = fill_expr(v)
       }
       if d = s.declared {
-        out.declared = self.fill_type_name(d)
+        out.declared = fill_type_name(d)
       }
       return out
     }
     if k == st_quote() {
-      return stmt_quote(s.loc, self.fill_stmt_list(s.body))
+      return stmt_quote(s.loc, fill_stmt_list(s.body))
     }
     s
   }
@@ -367,7 +363,7 @@ pub class Expander {
     out: Array(Stmt) = []
     i = 0
     while i < body.size {
-      out.push(self.fill_stmt(body[i]))
+      out.push(fill_stmt(body[i]))
       i += 1
     }
     out
@@ -376,28 +372,28 @@ pub class Expander {
   pub fn fill_expr(e: Expr): Expr {
     k = e.kind
     if k == ex_splice() {
-      return self.splice_to_expr(e)
+      return splice_to_expr(e)
     }
     if k == ex_call() {
       if sp = e.splice {
-        e.callee = self.splice_to_ident(sp)
+        e.callee = splice_to_ident(sp)
         e.splice = nil
       }
       if r = e.receiver {
-        e.receiver = self.fill_expr(r)
+        e.receiver = fill_expr(r)
       }
       args: Array(Expr) = []
       i = 0
       while i < e.args.size {
-        args.push(self.fill_expr(e.args[i]))
+        args.push(fill_expr(e.args[i]))
         i += 1
       }
       e.args = args
       if b = e.block {
-        b.body = self.fill_stmt_list(b.body)
+        b.body = fill_stmt_list(b.body)
       }
       if inner = e.inner {
-        e.inner = self.fill_expr(inner)
+        e.inner = fill_expr(inner)
       }
       return e
     }
@@ -405,10 +401,10 @@ pub class Expander {
       if b = e.block {
         i = 0
         while i < b.param_types.size {
-          b.param_types[i] = self.fill_type_name(b.param_types[i])
+          b.param_types[i] = fill_type_name(b.param_types[i])
           i += 1
         }
-        b.body = self.fill_stmt_list(b.body)
+        b.body = fill_stmt_list(b.body)
       }
       return e
     }
@@ -416,7 +412,7 @@ pub class Expander {
       out = Expr.new(ex_unary(), e.loc)
       out.op = e.op
       if inner = e.inner {
-        out.inner = self.fill_expr(inner)
+        out.inner = fill_expr(inner)
       }
       return out
     }
@@ -424,33 +420,33 @@ pub class Expander {
       out = Expr.new(ex_binary(), e.loc)
       out.op = e.op
       if l = e.left {
-        out.left = self.fill_expr(l)
+        out.left = fill_expr(l)
       }
       if r = e.right {
-        out.right = self.fill_expr(r)
+        out.right = fill_expr(r)
       }
       return out
     }
     if k == ex_field() {
       if sp = e.splice {
-        e.ident = self.splice_to_ident(sp)
+        e.ident = splice_to_ident(sp)
         e.splice = nil
       }
       out = Expr.new(ex_field(), e.loc)
       out.ident = e.ident
       out.method_call = e.method_call
       if obj = e.object {
-        out.object = self.fill_expr(obj)
+        out.object = fill_expr(obj)
       }
       return out
     }
     if k == ex_index() {
       out = Expr.new(ex_index(), e.loc)
       if l = e.left {
-        out.left = self.fill_expr(l)
+        out.left = fill_expr(l)
       }
       if r = e.right {
-        out.right = self.fill_expr(r)
+        out.right = fill_expr(r)
       }
       return out
     }
@@ -459,7 +455,7 @@ pub class Expander {
       fe: Array(Expr) = []
       i = 0
       while i < e.field_exprs.size {
-        fe.push(self.fill_expr(e.field_exprs[i]))
+        fe.push(fill_expr(e.field_exprs[i]))
         i += 1
       }
       out.field_exprs = fe
@@ -469,7 +465,7 @@ pub class Expander {
       out = Expr.new(ex_array(), e.loc)
       i = 0
       while i < e.elems.size {
-        out.elems.push(self.fill_expr(e.elems[i]))
+        out.elems.push(fill_expr(e.elems[i]))
         i += 1
       }
       return out
@@ -477,30 +473,30 @@ pub class Expander {
     if k == ex_array_new() {
       out = Expr.new(ex_array_new(), e.loc)
       if t = e.elem_type {
-        out.elem_type = self.fill_type_name(t)
+        out.elem_type = fill_type_name(t)
       }
       if sz = e.size_expr {
-        out.size_expr = self.fill_expr(sz)
+        out.size_expr = fill_expr(sz)
       }
       for fv in e.elems {
-        out.elems.push(self.fill_expr(fv))
+        out.elems.push(fill_expr(fv))
       }
       return out
     }
     if k == ex_hash_new() {
       out = Expr.new(ex_hash_new(), e.loc)
       if t = e.key_type {
-        out.key_type = self.fill_type_name(t)
+        out.key_type = fill_type_name(t)
       }
       if t = e.val_type {
-        out.val_type = self.fill_type_name(t)
+        out.val_type = fill_type_name(t)
       }
       return out
     }
     if k == ex_try() {
       out = Expr.new(ex_try(), e.loc)
       if inner = e.inner {
-        out.inner = self.fill_expr(inner)
+        out.inner = fill_expr(inner)
       }
       return out
     }
@@ -508,7 +504,7 @@ pub class Expander {
       out = clone_expr(e)
       for p in out.parts {
         if inner = p.expr {
-          p.expr = self.fill_expr(inner)
+          p.expr = fill_expr(inner)
         }
       }
       return out
@@ -516,15 +512,15 @@ pub class Expander {
     if k == ex_switch() {
       out = clone_expr(e)
       if c = e.cond {
-        out.cond = self.fill_expr(c)
+        out.cond = fill_expr(c)
       }
       for arm in out.cases {
-        arm.body = self.fill_stmt_list(arm.body)
+        arm.body = fill_stmt_list(arm.body)
       }
       eb: Array(Stmt) = []
       i = 0
       while i < e.else_body.size {
-        eb.push(self.fill_stmt(e.else_body[i]))
+        eb.push(fill_stmt(e.else_body[i]))
         i += 1
       }
       out.else_body = eb
@@ -543,50 +539,50 @@ pub class Expander {
   }
 
   pub fn splice_to_ident(sp: Expr): String {
-    inner = self.splice_payload(sp)
+    inner = splice_payload(sp)
     if inner.kind == ex_string() {
-      return self.ident_from_string(inner.value_str, inner.loc)
+      return ident_from_string(inner.value_str, inner.loc)
     }
     if inner.kind == ex_name() {
       return inner.ident
     }
     if inner.kind == ex_field() {
-      return self.walk_field_name(inner)
+      return walk_field_name(inner)
     }
-    self.fail(inner.loc, "splice is a name here")
+    fail(inner.loc, "splice is a name here")
     ""
   }
 
   pub fn splice_to_type(sp: Expr): TypeName {
-    inner = self.splice_payload(sp)
+    inner = splice_payload(sp)
     if inner.kind == ex_string() {
-      return TypeName.new(inner.loc, self.ident_from_string(inner.value_str, inner.loc))
+      return TypeName.new(inner.loc, ident_from_string(inner.value_str, inner.loc))
     }
     if inner.kind == ex_name() {
       return TypeName.new(inner.loc, inner.ident)
     }
     if inner.kind == ex_field() {
-      if !self.walk_field(inner) {
-        self.fail(inner.loc, "splice f.type needs a field walk")
+      if !walk_field(inner) {
+        fail(inner.loc, "splice f.type needs a field walk")
         return TypeName.new(inner.loc, "Int")
       }
       if inner.ident == "type" {
       } else {
-        self.fail(inner.loc, "f.type is the field type in a walk")
+        fail(inner.loc, "f.type is the field type in a walk")
         return TypeName.new(inner.loc, "Int")
       }
       if field = self.ctx_field {
         return clone_type_name(field.type)
       }
-      self.fail(inner.loc, "splice f.type needs a field walk")
+      fail(inner.loc, "splice f.type needs a field walk")
       return TypeName.new(inner.loc, "Int")
     }
-    self.fail(inner.loc, "splice is a type here")
+    fail(inner.loc, "splice is a type here")
     TypeName.new(inner.loc, "Int")
   }
 
   pub fn splice_to_expr(sp: Expr): Expr {
-    inner = self.splice_payload(sp)
+    inner = splice_payload(sp)
     k = inner.kind
     if k == ex_int() {
       return clone_expr(inner)
@@ -609,8 +605,8 @@ pub class Expander {
       return e
     }
     if k == ex_field() {
-      if !self.walk_field(inner) {
-        self.fail(inner.loc, "splice f.name needs a field walk")
+      if !walk_field(inner) {
+        fail(inner.loc, "splice f.name needs a field walk")
         return inner
       }
       if field = self.ctx_field {
@@ -620,16 +616,16 @@ pub class Expander {
           return e
         }
         if inner.ident == "type" {
-          self.fail(inner.loc, "f.type is a type, not an expression")
+          fail(inner.loc, "f.type is a type, not an expression")
           return inner
         }
-        self.fail(inner.loc, "field walk splice is f.name or f.type")
+        fail(inner.loc, "field walk splice is f.name or f.type")
         return inner
       }
-      self.fail(inner.loc, "splice f.name needs a field walk")
+      fail(inner.loc, "splice f.name needs a field walk")
       return inner
     }
-    self.fail(inner.loc, "splice is a literal, a name, or f.name / f.type")
+    fail(inner.loc, "splice is a literal, a name, or f.name / f.type")
     inner
   }
 
@@ -637,27 +633,25 @@ pub class Expander {
     if self.ctx_var.size == 0 {
       return false
     }
-    if obj = fa.object {
-      if obj.kind == ex_name() && obj.ident == self.ctx_var {
-        if fa.ident == "name" {
-          return true
-        }
-        if fa.ident == "type" {
-          return true
-        }
+    if obj = fa.object, obj.kind == ex_name() && obj.ident == self.ctx_var {
+      if fa.ident == "name" {
+        return true
+      }
+      if fa.ident == "type" {
+        return true
       }
     }
     false
   }
 
   pub fn walk_field_name(fa: Expr): String {
-    if !self.walk_field(fa) {
-      self.fail(fa.loc, "splice f.name needs a field walk")
+    if !walk_field(fa) {
+      fail(fa.loc, "splice f.name needs a field walk")
       return ""
     }
     if fa.ident == "name" {
     } else {
-      self.fail(fa.loc, "f.name is the field name in a walk")
+      fail(fa.loc, "f.name is the field name in a walk")
       return ""
     }
     if field = self.ctx_field {
@@ -670,7 +664,7 @@ pub class Expander {
     if ident_ok(s) {
       return s
     }
-    self.fail(loc, "splice is not an identifier ${s}")
+    fail(loc, "splice is not an identifier ${s}")
     s
   }
 
@@ -688,8 +682,8 @@ pub class Expander {
         introduced.push(r.name)
       }
     }
-    self.collect_introduced(fnn.body, introduced)
-    map = self.rename_map(introduced)
+    collect_introduced(fnn.body, introduced)
+    map = rename_map(introduced)
     if map.size == 0 {
       return
     }
@@ -698,22 +692,20 @@ pub class Expander {
         fnn.params[i].name = mapped
       }
     }
-    if r = fnn.receiver {
-      if mapped = map.get(r.name) {
-        r.name = mapped
-      }
+    if r = fnn.receiver, mapped = map.get(r.name) {
+      r.name = mapped
     }
-    fnn.body = self.rename_stmt_list(fnn.body, map)
+    fnn.body = rename_stmt_list(fnn.body, map)
   }
 
   pub fn hygiene_stmts(body: Array(Stmt)): Array(Stmt) {
     introduced: Array(String) = []
-    self.collect_introduced(body, introduced)
-    map = self.rename_map(introduced)
+    collect_introduced(body, introduced)
+    map = rename_map(introduced)
     if map.size == 0 {
       return body
     }
-    self.rename_stmt_list(body, map)
+    rename_stmt_list(body, map)
   }
 
   pub fn rename_map(introduced: Array(String)): Hash(String, String) {
@@ -739,50 +731,48 @@ pub class Expander {
     for s in body {
       k = s.kind
       if k == st_assign() {
-        if t = s.target {
-          if t.kind == ex_name() && t.ident != "_" {
-            into.push(t.ident)
-          }
+        if t = s.target, t.kind == ex_name() && t.ident != "_" {
+          into.push(t.ident)
         }
         if v = s.value {
-          self.collect_introduced_expr(v, into)
+          collect_introduced_expr(v, into)
         }
       } else if k == st_if() {
-        self.collect_introduced(s.pre, into)
+        collect_introduced(s.pre, into)
         if s.bind.size > 0 {
           into.push(s.bind)
         }
         if c = s.cond {
-          self.collect_introduced_expr(c, into)
+          collect_introduced_expr(c, into)
         }
-        self.collect_introduced(s.then_body, into)
-        self.collect_introduced(s.else_body, into)
+        collect_introduced(s.then_body, into)
+        collect_introduced(s.else_body, into)
       } else if k == st_while() {
-        self.collect_introduced(s.pre, into)
+        collect_introduced(s.pre, into)
         if c = s.cond {
-          self.collect_introduced_expr(c, into)
+          collect_introduced_expr(c, into)
         }
-        self.collect_introduced(s.body, into)
+        collect_introduced(s.body, into)
       } else if k == st_quote() {
-        self.collect_introduced(s.body, into)
+        collect_introduced(s.body, into)
       } else if k == st_pin() || k == st_hold() {
         // O131 (Stage 29 W1a): the names a `pin` block assigns are the
         // quote's too (a `gc.hold` block's as well, W1c2).
         if pe = s.expr {
-          self.collect_introduced_expr(pe, into)
+          collect_introduced_expr(pe, into)
         }
-        self.collect_introduced(s.body, into)
+        collect_introduced(s.body, into)
       } else if k == st_release() {
         if re = s.expr {
-          self.collect_introduced_expr(re, into)
+          collect_introduced_expr(re, into)
         }
       } else if k == st_expr() {
         if e = s.expr {
-          self.collect_introduced_expr(e, into)
+          collect_introduced_expr(e, into)
         }
       } else if k == st_return() {
         if e = s.expr {
-          self.collect_introduced_expr(e, into)
+          collect_introduced_expr(e, into)
         }
       }
     }
@@ -797,52 +787,52 @@ pub class Expander {
           into.push(b.params[i])
           i += 1
         }
-        self.collect_introduced(b.body, into)
+        collect_introduced(b.body, into)
       }
       if r = e.receiver {
-        self.collect_introduced_expr(r, into)
+        collect_introduced_expr(r, into)
       }
       i = 0
       while i < e.args.size {
-        self.collect_introduced_expr(e.args[i], into)
+        collect_introduced_expr(e.args[i], into)
         i += 1
       }
       return
     }
     if k == ex_unary() {
       if inner = e.inner {
-        self.collect_introduced_expr(inner, into)
+        collect_introduced_expr(inner, into)
       }
       return
     }
     if k == ex_binary() {
       if l = e.left {
-        self.collect_introduced_expr(l, into)
+        collect_introduced_expr(l, into)
       }
       if r = e.right {
-        self.collect_introduced_expr(r, into)
+        collect_introduced_expr(r, into)
       }
       return
     }
     if k == ex_field() {
       if obj = e.object {
-        self.collect_introduced_expr(obj, into)
+        collect_introduced_expr(obj, into)
       }
       return
     }
     if k == ex_index() {
       if l = e.left {
-        self.collect_introduced_expr(l, into)
+        collect_introduced_expr(l, into)
       }
       if r = e.right {
-        self.collect_introduced_expr(r, into)
+        collect_introduced_expr(r, into)
       }
       return
     }
     if k == ex_struct() {
       i = 0
       while i < e.field_exprs.size {
-        self.collect_introduced_expr(e.field_exprs[i], into)
+        collect_introduced_expr(e.field_exprs[i], into)
         i += 1
       }
       return
@@ -850,44 +840,44 @@ pub class Expander {
     if k == ex_array() {
       i = 0
       while i < e.elems.size {
-        self.collect_introduced_expr(e.elems[i], into)
+        collect_introduced_expr(e.elems[i], into)
         i += 1
       }
       return
     }
     if k == ex_array_new() {
       if sz = e.size_expr {
-        self.collect_introduced_expr(sz, into)
+        collect_introduced_expr(sz, into)
       }
       for fv in e.elems {
-        self.collect_introduced_expr(fv, into)
+        collect_introduced_expr(fv, into)
       }
       return
     }
     if k == ex_try() {
       if inner = e.inner {
-        self.collect_introduced_expr(inner, into)
+        collect_introduced_expr(inner, into)
       }
       return
     }
     if k == ex_interp() {
       for p in e.parts {
         if inner = p.expr {
-          self.collect_introduced_expr(inner, into)
+          collect_introduced_expr(inner, into)
         }
       }
       return
     }
     if k == ex_switch() {
       if c = e.cond {
-        self.collect_introduced_expr(c, into)
+        collect_introduced_expr(c, into)
       }
       i = 0
       while i < e.cases.size {
-        self.collect_introduced(e.cases[i].body, into)
+        collect_introduced(e.cases[i].body, into)
         i += 1
       }
-      self.collect_introduced(e.else_body, into)
+      collect_introduced(e.else_body, into)
       return
     }
     if k == ex_lambda() {
@@ -897,7 +887,7 @@ pub class Expander {
           into.push(b.params[i])
           i += 1
         }
-        self.collect_introduced(b.body, into)
+        collect_introduced(b.body, into)
       }
     }
   }
@@ -906,7 +896,7 @@ pub class Expander {
     out: Array(Stmt) = []
     i = 0
     while i < body.size {
-      out.push(self.rename_stmt(body[i], map))
+      out.push(rename_stmt(body[i], map))
       i += 1
     }
     out
@@ -916,13 +906,13 @@ pub class Expander {
     k = s.kind
     if k == st_expr() {
       if e = s.expr {
-        return stmt_expr(s.loc, self.rename_expr(e, map))
+        return stmt_expr(s.loc, rename_expr(e, map))
       }
       return s
     }
     if k == st_return() {
       if e = s.expr {
-        return stmt_return_val(s.loc, self.rename_expr(e, map))
+        return stmt_return_val(s.loc, rename_expr(e, map))
       }
       return stmt_return_void(s.loc)
     }
@@ -933,21 +923,21 @@ pub class Expander {
         out.bind = mapped
       }
       if c = s.cond {
-        out.cond = self.rename_expr(c, map)
+        out.cond = rename_expr(c, map)
       }
-      out.pre = self.rename_stmt_list(s.pre, map)
-      out.then_body = self.rename_stmt_list(s.then_body, map)
-      out.else_body = self.rename_stmt_list(s.else_body, map)
+      out.pre = rename_stmt_list(s.pre, map)
+      out.then_body = rename_stmt_list(s.then_body, map)
+      out.else_body = rename_stmt_list(s.else_body, map)
       return out
     }
     if k == st_while() {
       out = Stmt.new(st_while(), s.loc)
       out.for_kind = s.for_kind
       if c = s.cond {
-        out.cond = self.rename_expr(c, map)
+        out.cond = rename_expr(c, map)
       }
-      out.pre = self.rename_stmt_list(s.pre, map)
-      out.body = self.rename_stmt_list(s.body, map)
+      out.pre = rename_stmt_list(s.pre, map)
+      out.body = rename_stmt_list(s.body, map)
       return out
     }
     if k == st_assign() {
@@ -955,20 +945,20 @@ pub class Expander {
       out.op = s.op
       out.declared = s.declared
       if t = s.target {
-        out.target = self.rename_expr(t, map)
+        out.target = rename_expr(t, map)
       }
       if v = s.value {
-        out.value = self.rename_expr(v, map)
+        out.value = rename_expr(v, map)
       }
       return out
     }
     if k == st_quote() {
-      return stmt_quote(s.loc, self.rename_stmt_list(s.body, map))
+      return stmt_quote(s.loc, rename_stmt_list(s.body, map))
     }
     if k == st_release() {
       out = Stmt.new(st_release(), s.loc)
       if e = s.expr {
-        out.expr = self.rename_expr(e, map)
+        out.expr = rename_expr(e, map)
       }
       return out
     }
@@ -977,9 +967,9 @@ pub class Expander {
       // quote's local inside it captured the paste site's.
       out = Stmt.new(k, s.loc)
       if e = s.expr {
-        out.expr = self.rename_expr(e, map)
+        out.expr = rename_expr(e, map)
       }
-      out.body = self.rename_stmt_list(s.body, map)
+      out.body = rename_stmt_list(s.body, map)
       return out
     }
     s
@@ -1002,12 +992,12 @@ pub class Expander {
         out.callee = mapped
       }
       if r = e.receiver {
-        out.receiver = self.rename_expr(r, map)
+        out.receiver = rename_expr(r, map)
       }
       args: Array(Expr) = []
       i = 0
       while i < e.args.size {
-        args.push(self.rename_expr(e.args[i], map))
+        args.push(rename_expr(e.args[i], map))
         i += 1
       }
       out.args = args
@@ -1018,7 +1008,7 @@ pub class Expander {
             nb.params[i] = mapped
           }
         }
-        nb.body = self.rename_stmt_list(b.body, map)
+        nb.body = rename_stmt_list(b.body, map)
         out.block = nb
       }
       return out
@@ -1027,7 +1017,7 @@ pub class Expander {
       out = Expr.new(ex_unary(), e.loc)
       out.op = e.op
       if inner = e.inner {
-        out.inner = self.rename_expr(inner, map)
+        out.inner = rename_expr(inner, map)
       }
       return out
     }
@@ -1035,10 +1025,10 @@ pub class Expander {
       out = Expr.new(ex_binary(), e.loc)
       out.op = e.op
       if l = e.left {
-        out.left = self.rename_expr(l, map)
+        out.left = rename_expr(l, map)
       }
       if r = e.right {
-        out.right = self.rename_expr(r, map)
+        out.right = rename_expr(r, map)
       }
       return out
     }
@@ -1047,17 +1037,17 @@ pub class Expander {
       out.ident = e.ident
       out.method_call = e.method_call
       if obj = e.object {
-        out.object = self.rename_expr(obj, map)
+        out.object = rename_expr(obj, map)
       }
       return out
     }
     if k == ex_index() {
       out = Expr.new(ex_index(), e.loc)
       if l = e.left {
-        out.left = self.rename_expr(l, map)
+        out.left = rename_expr(l, map)
       }
       if r = e.right {
-        out.right = self.rename_expr(r, map)
+        out.right = rename_expr(r, map)
       }
       return out
     }
@@ -1066,7 +1056,7 @@ pub class Expander {
       fe: Array(Expr) = []
       i = 0
       while i < e.field_exprs.size {
-        fe.push(self.rename_expr(e.field_exprs[i], map))
+        fe.push(rename_expr(e.field_exprs[i], map))
         i += 1
       }
       out.field_exprs = fe
@@ -1076,7 +1066,7 @@ pub class Expander {
       out = Expr.new(ex_array(), e.loc)
       i = 0
       while i < e.elems.size {
-        out.elems.push(self.rename_expr(e.elems[i], map))
+        out.elems.push(rename_expr(e.elems[i], map))
         i += 1
       }
       return out
@@ -1084,17 +1074,17 @@ pub class Expander {
     if k == ex_array_new() {
       out = clone_expr(e)
       if sz = e.size_expr {
-        out.size_expr = self.rename_expr(sz, map)
+        out.size_expr = rename_expr(sz, map)
       }
       for i in 0..e.elems.size {
-        out.elems[i] = self.rename_expr(e.elems[i], map)
+        out.elems[i] = rename_expr(e.elems[i], map)
       }
       return out
     }
     if k == ex_try() {
       out = Expr.new(ex_try(), e.loc)
       if inner = e.inner {
-        out.inner = self.rename_expr(inner, map)
+        out.inner = rename_expr(inner, map)
       }
       return out
     }
@@ -1102,7 +1092,7 @@ pub class Expander {
       out = clone_expr(e)
       for p in out.parts {
         if inner = p.expr {
-          p.expr = self.rename_expr(inner, map)
+          p.expr = rename_expr(inner, map)
         }
       }
       return out
@@ -1110,15 +1100,15 @@ pub class Expander {
     if k == ex_switch() {
       out = clone_expr(e)
       if c = e.cond {
-        out.cond = self.rename_expr(c, map)
+        out.cond = rename_expr(c, map)
       }
       i = 0
       while i < out.cases.size {
         arm = out.cases[i]
-        arm.body = self.rename_stmt_list(arm.body, map)
+        arm.body = rename_stmt_list(arm.body, map)
         i += 1
       }
-      out.else_body = self.rename_stmt_list(e.else_body, map)
+      out.else_body = rename_stmt_list(e.else_body, map)
       return out
     }
     if k == ex_lambda() {
@@ -1130,7 +1120,7 @@ pub class Expander {
             nb.params[i] = mapped
           }
         }
-        nb.body = self.rename_stmt_list(b.body, map)
+        nb.body = rename_stmt_list(b.body, map)
         out.block = nb
       }
       return out
@@ -1143,9 +1133,9 @@ pub class Expander {
     for s in body {
       k = s.kind
       if k == st_quote() {
-        filled = self.fill_stmt_list(s.body)
-        hygiened = self.hygiene_stmts(filled)
-        nested = self.expand_stmt_list(hygiened)
+        filled = fill_stmt_list(s.body)
+        hygiened = hygiene_stmts(filled)
+        nested = expand_stmt_list(hygiened)
         j = 0
         while j < nested.size {
           out.push(nested[j])
@@ -1155,21 +1145,21 @@ pub class Expander {
         n = Stmt.new(st_if(), s.loc)
         n.bind = s.bind
         n.cond = s.cond
-        n.pre = self.expand_stmt_list(s.pre)
-        n.then_body = self.expand_stmt_list(s.then_body)
-        n.else_body = self.expand_stmt_list(s.else_body)
+        n.pre = expand_stmt_list(s.pre)
+        n.then_body = expand_stmt_list(s.then_body)
+        n.else_body = expand_stmt_list(s.else_body)
         out.push(n)
       } else if k == st_while() {
         n = Stmt.new(st_while(), s.loc)
         n.for_kind = s.for_kind
         n.cond = s.cond
-        n.pre = self.expand_stmt_list(s.pre)
-        n.body = self.expand_stmt_list(s.body)
+        n.pre = expand_stmt_list(s.pre)
+        n.body = expand_stmt_list(s.body)
         out.push(n)
       } else if k == st_pin() || k == st_hold() {
         n = Stmt.new(k, s.loc)
         n.expr = s.expr
-        n.body = self.expand_stmt_list(s.body)
+        n.body = expand_stmt_list(s.body)
         out.push(n)
       } else if k == st_expr() {
         if e = s.expr {
@@ -1177,10 +1167,10 @@ pub class Expander {
             sw = clone_expr(e)
             j = 0
             while j < sw.cases.size {
-              sw.cases[j].body = self.expand_stmt_list(e.cases[j].body)
+              sw.cases[j].body = expand_stmt_list(e.cases[j].body)
               j += 1
             }
-            sw.else_body = self.expand_stmt_list(e.else_body)
+            sw.else_body = expand_stmt_list(e.else_body)
             out.push(stmt_expr(s.loc, sw))
           } else {
             out.push(s)

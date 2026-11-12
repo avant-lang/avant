@@ -86,10 +86,8 @@ pub fn (checker_self: Checker) ty_has_var(ty: Ty): Bool {
     }
   }
   if ty.is_hash {
-    if k = ty.key {
-      if checker_self.ty_has_var(k) {
-        return true
-      }
+    if k = ty.key, checker_self.ty_has_var(k) {
+      return true
     }
     if v = ty.val {
       return checker_self.ty_has_var(v)
@@ -138,10 +136,8 @@ pub fn (checker_self: Checker) subst_ty(ty: Ty, keys: Array(String), vals: Array
     }
   }
   if ty.is_hash {
-    if k = ty.key {
-      if v = ty.val {
-        return ty_hash(checker_self.subst_ty(k, keys, vals), checker_self.subst_ty(v, keys, vals))
-      }
+    if k = ty.key, v = ty.val {
+      return ty_hash(checker_self.subst_ty(k, keys, vals), checker_self.subst_ty(v, keys, vals))
     }
   }
   if ty.is_join {
@@ -605,7 +601,7 @@ pub fn (checker_self: Checker) push_lambda(expr: Expr) {
 pub fn (checker_self: Checker) pop_lambda {
   checker_self.pop_scope
   checker_self.lam_exprs.pop
-  dummy2 = checker_self.lam_scopes.pop
+  checker_self.lam_scopes.pop
 }
 
 pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {

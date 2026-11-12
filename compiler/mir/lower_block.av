@@ -35,25 +35,21 @@ import mir.lower_fn
 
 // The block forms, or nil for a call this file does not lower.
 pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
-  if bl = e.block {
-    if recv = e.receiver {
-      if rt = recv.ty {
-        c = e.callee
-        if rt.is_array && e.args.size == 0 {
-          if c == "each" && bl.params.size == 1 {
-            return lw.arr_each(e, recv, bl)
-          }
-          if (c == "any" || c == "all") && bl.params.size == 1 {
-            return lw.arr_pred(e, recv, bl, c == "any")
-          }
-          if (c == "sort" || c == "sorted") && bl.params.size == 2 {
-            return lw.arr_sort_block(e, recv, bl, c == "sorted")
-          }
-        }
-        if rt.is_hash && c == "each" && e.args.size == 0 && bl.params.size == 2 {
-          return lw.hash_each(e, recv, rt, bl)
-        }
+  if bl = e.block, recv = e.receiver, rt = recv.ty {
+    c = e.callee
+    if rt.is_array && e.args.size == 0 {
+      if c == "each" && bl.params.size == 1 {
+        return lw.arr_each(e, recv, bl)
       }
+      if (c == "any" || c == "all") && bl.params.size == 1 {
+        return lw.arr_pred(e, recv, bl, c == "any")
+      }
+      if (c == "sort" || c == "sorted") && bl.params.size == 2 {
+        return lw.arr_sort_block(e, recv, bl, c == "sorted")
+      }
+    }
+    if rt.is_hash && c == "each" && e.args.size == 0 && bl.params.size == 2 {
+      return lw.hash_each(e, recv, rt, bl)
     }
   }
   nil
@@ -102,7 +98,7 @@ pub fn (lw: MirLower) block_store(h: Int, aty: Int, i: Int, v: MOperand) {
   if b.types.ref_carrying(et) {
     b.barrier(d)
   }
-  dummy3 = b.assign(b.index(b.deref(b.pl(d)), b.copy_local(i)), b.rv_use(v))
+  b.assign(b.index(b.deref(b.pl(d)), b.copy_local(i)), b.rv_use(v))
 }
 
 // _i = _i + 1 (the old plain add), then back to head.
@@ -118,7 +114,7 @@ pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
   lw.lw_exits.push(exit)
   lw.lower_stmts(stmts)
   lw.lw_heads.pop
-  dummy2 = lw.lw_exits.pop
+  lw.lw_exits.pop
 }
 
 // A value block (emit_pred_block, emit_cmp_block): every statement but

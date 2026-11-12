@@ -76,10 +76,8 @@ fn up_local(o: MOperand): Int {
   if o.kind != mok_copy() {
     return -1
   }
-  if p = o.place {
-    if p.proj.size == 0 {
-      return p.local
-    }
+  if p = o.place, p.proj.size == 0 {
+    return p.local
   }
   -1
 }
@@ -184,8 +182,8 @@ class UpWalk {
       if st.kind == msk_call() {
         if up_direct(st) && st.callee == self.set_name && st.args.size == 3 {
           hl = up_local(st.args[0])
-          if hl >= 0 && s.h[hl] && self.same_key(st.args[1], s) {
-            self.note_site(b, i)
+          if hl >= 0 && s.h[hl] && same_key(st.args[1], s) {
+            note_site(b, i)
             return true
           }
           return false
@@ -207,15 +205,11 @@ class UpWalk {
             nh = false
             nk = false
             if p.proj.size == 0 && !self.addr_taken[p.local] {
-              if r = st.rv {
-                if r.kind == mrk_use() {
-                  if a = r.a {
-                    y = up_local(a)
-                    if y >= 0 {
-                      nh = s.h[y]
-                      nk = s.k[y]
-                    }
-                  }
+              if r = st.rv, r.kind == mrk_use(), a = r.a {
+                y = up_local(a)
+                if y >= 0 {
+                  nh = s.h[y]
+                  nk = s.k[y]
                 }
               }
             }
@@ -248,7 +242,7 @@ class UpWalk {
         }
         self.seen[nb] = true
         self.on_path[nb] = true
-        good = self.walk(nb, 0, s.copy)
+        good = walk(nb, 0, s.copy)
         self.on_path[nb] = false
         if !good {
           return false
@@ -276,14 +270,8 @@ fn up_addr_taken(f: MFunc): Array(Bool) {
   for blk in f.blocks {
     for st in blk.stmts {
       if st.kind == msk_assign() {
-        if r = st.rv {
-          if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
-            if p = r.place {
-              if p.local >= 0 && p.local < out.size {
-                out[p.local] = true
-              }
-            }
-          }
+        if r = st.rv, r.kind == mrk_addr() || r.kind == mrk_addr_raw(), p = r.place, p.local >= 0 && p.local < out.size {
+          out[p.local] = true
         }
       }
     }

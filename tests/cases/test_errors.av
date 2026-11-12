@@ -1,6 +1,6 @@
 import harness
 
-fn expect_err(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, needle: String) {
+fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
@@ -18,7 +18,7 @@ fn expect_err(c: Checks, compiler: String, stamp: Int64, tag: String, body: Stri
 // repeated at the same place, once left the parser blind to new errors,
 // and its top-level loop spun on one token for ever. The compile runs
 // under /usr/bin/timeout so a regression fails here instead of hanging.
-fn expect_err_bounded(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, needle: String) {
+fn expect_err_bounded(c: Checks, compiler: String, stamp: Int, tag: String, body: String, needle: String) {
   src = "${scratch()}/errors-${stamp}-${tag}.av"
   bin = "${scratch()}/errors-${stamp}-${tag}.bin"
   log = "${scratch()}/errors-${stamp}-${tag}.log"
@@ -70,7 +70,7 @@ fn test_errors(c: Checks) {
     // Stage 29 W1a (review 5, defect 4): a generic type that does not exist.
     // O32 (Stage 29 W1b): the lowering's L0001 guard, reached only by a C
     // callback that takes a struct by value (the SysV callback side of C3).
-    expect_err(c, compiler, stamp, "l0001-guard", "struct P2 {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int64): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int64, s: Int64, f: fn(P2): Int)\n}\nfn pick(p: P2): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8i64), 0i64, 8i64, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
+    expect_err(c, compiler, stamp, "l0001-guard", "struct P2 {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int, s: Int, f: fn(P2): Int)\n}\nfn pick(p: P2): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8), 0, 8, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
     // Stage 29 W1a (D298): the bump constructor and nursery_reclaim are
     // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.

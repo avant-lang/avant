@@ -72,10 +72,8 @@ fn tk_local(o: MOperand): Int {
   if o.kind != mok_copy() {
     return -1
   }
-  if p = o.place {
-    if p.proj.size == 0 {
-      return p.local
-    }
+  if p = o.place, p.proj.size == 0 {
+    return p.local
   }
   -1
 }
@@ -85,10 +83,8 @@ fn tk_data_of(o: MOperand): Int {
   if o.kind != mok_copy() {
     return -1
   }
-  if p = o.place {
-    if p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 0 {
-      return p.local
-    }
+  if p = o.place, p.proj.size == 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_field() && p.proj[1].field == 0 {
+    return p.local
   }
   -1
 }
@@ -96,7 +92,7 @@ fn tk_data_of(o: MOperand): Int {
 // One function's classes and verdicts.
 class TkFunc {
   f: MFunc
-  parent: Array(Int)
+  parent: Array(Int) = []
   derived: Array(Bool)
   bufc: Array(Bool)
   owned: Array(Bool)
@@ -105,7 +101,6 @@ class TkFunc {
 
   fn initialize(f: MFunc) {
     self.f = f
-    self.parent = []
     self.derived = mir_bools(f.locals.size, false)
     self.bufc = mir_bools(f.locals.size, false)
     self.owned = mir_bools(f.locals.size, true)
@@ -133,8 +128,8 @@ class TkFunc {
   }
 
   fn join(a: Int, b: Int) {
-    ra = self.find(a)
-    rb = self.find(b)
+    ra = find(a)
+    rb = find(b)
     if ra != rb {
       self.parent[ra] = rb
     }
@@ -142,19 +137,17 @@ class TkFunc {
 
   // Whether local x is in a class that holds a Buf.
   fn member(x: Int): Bool {
-    x >= 0 && x < self.parent.size && self.bufc[self.find(x)]
+    x >= 0 && x < self.parent.size && self.bufc[find(x)]
   }
 }
 
 class TkPass {
   m: MModule
-  infos: Array(TkFunc)
-  index: Hash(String, Int)
+  infos: Array(TkFunc) = []
+  index: Hash(String, Int) = Hash(String, Int).new
 
   fn initialize(m: MModule) {
     self.m = m
-    self.infos = []
-    self.index = Hash(String, Int).new
   }
 
   // Whether argument k of a call to the Avant function `sym` may be kept.
@@ -177,21 +170,15 @@ fn tk_classes(m: MModule, t: TkFunc) {
   for blk in f.blocks {
     for st in blk.stmts {
       if st.kind == msk_assign() {
-        if p = st.place {
-          if r = st.rv {
-            if p.proj.size == 0 && r.kind == mrk_use() {
-              if a = r.a {
-                y = tk_local(a)
-                if y >= 0 {
-                  t.join(p.local, y)
-                }
-                d = tk_data_of(a)
-                if d >= 0 && tk_is_buf(m, f.locals[d].ty) {
-                  t.join(p.local, d)
-                  t.derived[p.local] = true
-                }
-              }
-            }
+        if p = st.place, r = st.rv, p.proj.size == 0 && r.kind == mrk_use(), a = r.a {
+          y = tk_local(a)
+          if y >= 0 {
+            t.join(p.local, y)
+          }
+          d = tk_data_of(a)
+          if d >= 0 && tk_is_buf(m, f.locals[d].ty) {
+            t.join(p.local, d)
+            t.derived[p.local] = true
           }
         }
       }
@@ -344,10 +331,8 @@ fn tk_escapes(pass: TkPass, t: TkFunc) {
       tk_stmt_escapes(pass, t, blk.stmts[j])
       j += 1
     }
-    if tm = blk.term {
-      if c = tm.cond {
-        tk_keeping(t, c)
-      }
+    if tm = blk.term, c = tm.cond {
+      tk_keeping(t, c)
     }
   }
 }

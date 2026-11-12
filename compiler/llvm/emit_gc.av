@@ -242,12 +242,8 @@ fn ll_barrier_store(e: LlEmit, o: MOperand): Int {
   if k >= stmts.size || stmts[k].kind != msk_assign() {
     return -1
   }
-  if hp = o.place {
-    if p = stmts[k].place {
-      if hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index() {
-        return k
-      }
-    }
+  if hp = o.place, p = stmts[k].place, hp.proj.size == 0 && p.local == hp.local && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index() {
+    return k
   }
   -1
 }
@@ -306,8 +302,8 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
   sz = args[0].ival
   tid = args[1].ival
-  if args[0].kind == mok_int() && sz == 0i64 {
-    sz = 8i64
+  if args[0].kind == mok_int() && sz == 0 {
+    sz = 8
     size = "8"
   } else if args[0].kind != mok_int() {
     z = e.tmp
@@ -318,8 +314,8 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   }
   total = "0"
   if const_size {
-    tot = (sz + 15i64) & -8i64
-    if !e.inline_fast || tot > 8192i64 || (tid == 0i64 && sz >= 6144i64) {
+    tot = (sz + 15) & -8
+    if !e.inline_fast || tot > 8192 || (tid == 0 && sz >= 6144) {
       return ll_alloc_call(e, callee, size, ty)
     }
     total = "${tot}"
@@ -408,7 +404,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   // The header: size | type << 32 | (HEAP | YOUNG) << 48.
   if const_size {
     hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
-    e.line("store i64 ${bits_u64_to_i64(hdr)}, ptr ${bump}, align 8")
+    e.line("store i64 ${hdr.wrap_i}, ptr ${bump}, align 8")
   } else {
     tz = e.tmp
     e.line("${tz} = zext i32 ${ty} to i64")
@@ -417,7 +413,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
     h1 = e.tmp
     e.line("${h1} = or i64 ${size}, ${tsh}")
     h2 = e.tmp
-    e.line("${h2} = or i64 ${h1}, ${bits_u64_to_i64(32800u64 << 48u64)}")
+    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).wrap_i}")
     e.line("store i64 ${h2}, ptr ${bump}, align 8")
   }
   obj = e.tmp

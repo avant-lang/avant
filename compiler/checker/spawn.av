@@ -39,9 +39,6 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   if ty.is_integer {
     return true
   }
-  if ty.is_int64 {
-    return true
-  }
   if ty.is_uint64 {
     return true
   }
@@ -384,28 +381,22 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   k = expr.kind
   if k == ex_field() {
     if expr.ident == "join" {
-      if obj = expr.object {
-        if obj.kind == ex_name() {
-          checker_self.pending_join(obj.ident)
-          return
-        }
+      if obj = expr.object, obj.kind == ex_name() {
+        checker_self.pending_join(obj.ident)
+        return
       }
     }
   }
   if k == ex_call() {
     if expr.callee == "join" {
-      if recv = expr.receiver {
-        if recv.kind == ex_name() {
-          checker_self.pending_join(recv.ident)
-        }
+      if recv = expr.receiver, recv.kind == ex_name() {
+        checker_self.pending_join(recv.ident)
       }
     }
-    if recv = expr.receiver {
-      if checker_self.array_mutator(expr.callee) {
-        root = checker_self.expr_root_name(recv)
-        if root.size > 0 && checker_self.pending_has_array(root) {
-          checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
-        }
+    if recv = expr.receiver, checker_self.array_mutator(expr.callee) {
+      root = checker_self.expr_root_name(recv)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
       }
     }
   }
@@ -461,35 +452,25 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
 
 pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
   if stmt.kind == st_assign() {
-    if v = stmt.value {
-      if v.kind == ex_call() {
-        if v.callee == "spawn" {
-          handle = ""
-          if t = stmt.target {
-            if t.kind == ex_name() {
-              handle = t.ident
-            }
-          }
-          for i in 0..v.cap_names.size {
-            if v.cap_tys[i].is_array {
-              checker_self.pending_handles.push(handle)
-              checker_self.pending_arrays.push(v.cap_names[i])
-            }
-          }
-          return
+    if v = stmt.value, v.kind == ex_call(), v.callee == "spawn" {
+      handle = ""
+      if t = stmt.target, t.kind == ex_name() {
+        handle = t.ident
+      }
+      for i in 0..v.cap_names.size {
+        if v.cap_tys[i].is_array {
+          checker_self.pending_handles.push(handle)
+          checker_self.pending_arrays.push(v.cap_names[i])
         }
       }
+      return
     }
   }
-  if e = stmt.expr {
-    if e.kind == ex_call() {
-      if e.callee == "spawn" {
-        for i in 0..e.cap_names.size {
-          if e.cap_tys[i].is_array {
-            checker_self.pending_handles.push("")
-            checker_self.pending_arrays.push(e.cap_names[i])
-          }
-        }
+  if e = stmt.expr, e.kind == ex_call(), e.callee == "spawn" {
+    for i in 0..e.cap_names.size {
+      if e.cap_tys[i].is_array {
+        checker_self.pending_handles.push("")
+        checker_self.pending_arrays.push(e.cap_names[i])
       }
     }
   }

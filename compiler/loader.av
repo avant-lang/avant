@@ -310,7 +310,7 @@ pub class Loader {
     if n = self.std_names.get(path) {
       return n
     }
-    self.logical_name(path)
+    logical_name(path)
   }
 
   pub fn setup_deps(root_path: String) {
@@ -321,7 +321,7 @@ pub class Loader {
       deps_at = self.manifest_dir
     }
     deps_root = "${deps_at}/deps"
-    entries = shim_dir_list(deps_root)
+    entries = dir_list(deps_root) ?? []
     i = 0
     while i < entries.size {
       full = "${deps_root}/${entries[i]}"
@@ -344,7 +344,7 @@ pub class Loader {
   }
 
   pub fn logical_name(path: String): String {
-    dep = self.dep_root_of(path)
+    dep = dep_root_of(path)
     if dep.size > 0 {
       return rel_module_name(dep, path)
     }
@@ -389,7 +389,7 @@ pub class Loader {
 
   pub fn resolve_std(name: String, loc: Location): String {
     if name == "std" {
-      self.fail(loc, "import std needs a module")
+      fail(loc, "import std needs a module")
       return ""
     }
     rel = import_rel(name)
@@ -400,10 +400,10 @@ pub class Loader {
         self.std_names[path] = name
         return path
       }
-      self.fail(loc, "cannot find ${name} in the standard library")
+      fail(loc, "cannot find ${name} in the standard library")
       return ""
     }
-    dir = path_dirname(self.exe_path())
+    dir = path_dirname(exe_path())
     for guard in 0..64 {
       cand = join_dir(dir, suffix)
       if file_exists(cand) {
@@ -416,33 +416,33 @@ pub class Loader {
       }
       dir = parent
     }
-    self.fail(loc, "cannot find ${name} in the standard library")
+    fail(loc, "cannot find ${name} in the standard library")
     ""
   }
 
   pub fn resolve_import(importer: String, name: String, loc: Location): String {
-    if self.std_import(name) {
-      return self.resolve_std(name, loc)
+    if std_import(name) {
+      return resolve_std(name, loc)
     }
     rel = import_rel(name)
     hits: Array(String) = []
-    dep = self.dep_root_of(importer)
+    dep = dep_root_of(importer)
     if dep.size > 0 {
-      self.consider_hit(hits, join_dir(path_dirname(importer), rel))
-      self.consider_hit(hits, join_dir(dep, rel))
+      consider_hit(hits, join_dir(path_dirname(importer), rel))
+      consider_hit(hits, join_dir(dep, rel))
       for dep_dir in self.dep_dirs {
         if dep_dir != dep {
-          self.consider_hit(hits, join_dir(dep_dir, rel))
+          consider_hit(hits, join_dir(dep_dir, rel))
         }
       }
     } else {
-      self.consider_hit(hits, join_dir(path_dirname(importer), rel))
-      self.consider_hit(hits, join_dir(self.project_dir, rel))
+      consider_hit(hits, join_dir(path_dirname(importer), rel))
+      consider_hit(hits, join_dir(self.project_dir, rel))
       if self.manifest_dir.size > 0 {
-        self.consider_hit(hits, join_dir(self.manifest_dir, rel))
+        consider_hit(hits, join_dir(self.manifest_dir, rel))
       }
       for dep_dir in self.dep_dirs {
-        self.consider_hit(hits, join_dir(dep_dir, rel))
+        consider_hit(hits, join_dir(dep_dir, rel))
       }
     }
     if hits.size == 0 {
@@ -451,12 +451,12 @@ pub class Loader {
         anchor = self.manifest_dir
       }
       if file_exists("${anchor}/avant.toml") {
-        self.fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${anchor})")
+        fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${anchor})")
       } else {
         if file_exists("${self.project_dir}/avant.toml") {
-          self.fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${self.project_dir})")
+          fail(loc, "cannot find ${name}.av next to ${importer} or in fetched deps (run: avant fetch ${self.project_dir})")
         } else {
-          self.fail(loc, "cannot find ${name}.av next to ${importer}")
+          fail(loc, "cannot find ${name}.av next to ${importer}")
         }
       }
       return ""
@@ -467,7 +467,7 @@ pub class Loader {
       for hit in hits {
         buf.push_str(" ${hit}")
       }
-      self.fail(loc, buf.to_s)
+      fail(loc, buf.to_s)
       return ""
     }
     hits[0]
@@ -476,7 +476,7 @@ pub class Loader {
   pub fn note_module_path(name: String, path: String, loc: Location) {
     if prev = self.mod_paths.get(name) {
       if prev != path {
-        self.fail(loc, "module ${name} is both ${prev} and ${path}")
+        fail(loc, "module ${name} is both ${prev} and ${path}")
       }
     } else {
       self.mod_paths[name] = path
@@ -528,15 +528,15 @@ pub class Loader {
 
   pub fn load_root(path: String): Program? {
     if !file_exists(path) {
-      self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
+      fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
       return nil
     }
-    self.setup_deps(path)
-    self.load_file(path)
+    setup_deps(path)
+    load_file(path)
     if self.failed {
       return nil
     }
-    if merged = self.merge(path) {
+    if merged = merge(path) {
       if self.wants_prelude {
         add_prelude(merged)
       }
@@ -553,11 +553,11 @@ pub class Loader {
         if i > 0 {
           buf.push_str(" -> ")
         }
-        buf.push_str(self.module_label(self.stack[i]))
+        buf.push_str(module_label(self.stack[i]))
       }
       buf.push_str(" -> ")
-      buf.push_str(self.module_label(path))
-      self.fail(Location.new(path, 1, 1, 0), buf.to_s)
+      buf.push_str(module_label(path))
+      fail(Location.new(path, 1, 1, 0), buf.to_s)
       return nil
     }
     if id = self.loaded.get(path) {
@@ -569,7 +569,7 @@ pub class Loader {
       tokens = lex.tokenize
       if e = lex.err {
         self.stack.pop
-        self.absorb(lex.errors)
+        absorb(lex.errors)
         return nil
       }
       if !self.wants_prelude && prelude_wanted(tokens) {
@@ -579,11 +579,11 @@ pub class Loader {
       program = parser.parse
       if e2 = parser.err {
         self.stack.pop
-        self.absorb(parser.errors)
+        absorb(parser.errors)
         return nil
       }
-      name = self.module_label(path)
-      self.note_module_path(name, path, program.loc)
+      name = module_label(path)
+      note_module_path(name, path, program.loc)
       tag_module(program, name, path)
       self.programs.push(program)
       self.loaded[path] = self.programs.size - 1
@@ -594,24 +594,24 @@ pub class Loader {
       while i < program.imports.size {
         imp = program.imports[i]
         if prev = seen.get(imp.name) {
-          self.fail(imp.loc, "already imported ${imp.name}")
+          fail(imp.loc, "already imported ${imp.name}")
           i += 1
           continue
         }
         seen[imp.name] = 1
-        child = self.resolve_import(path, imp.name, imp.loc)
+        child = resolve_import(path, imp.name, imp.loc)
         if child == "" {
           i += 1
           continue
         }
         if prior = seen_path.get(child) {
-          self.fail(imp.loc, "import ${prior} and ${imp.name} open the same file ${child}")
+          fail(imp.loc, "import ${prior} and ${imp.name} open the same file ${child}")
           i += 1
           continue
         }
         seen_path[child] = imp.name
-        self.load_file(child)
-        imports.push(self.module_label(child))
+        load_file(child)
+        imports.push(module_label(child))
         i += 1
       }
       info = ModInfo.new(name, path)
@@ -622,7 +622,7 @@ pub class Loader {
       return program
     }
     self.stack.pop
-    self.fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
+    fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
     nil
   }
 

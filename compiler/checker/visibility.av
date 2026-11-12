@@ -137,10 +137,8 @@ pub fn (checker_self: Checker) type_slot_visible(name: String, mod_name: String,
   if mod_name == from_mod {
     return true
   }
-  if v = checker_self.type_vis.get(type_slot(mod_name, name)) {
-    if v == 1 {
-      return checker_self.imported_by(from_mod, mod_name)
-    }
+  if v = checker_self.type_vis.get(type_slot(mod_name, name)), v == 1 {
+    return checker_self.imported_by(from_mod, mod_name)
   }
   false
 }
@@ -170,10 +168,8 @@ pub fn (checker_self: Checker) qualifier_ok(qual: String, from_mod: String): Boo
 
 pub fn (checker_self: Checker) visible_type_mod(name: String, from_mod: String, qual: String): String {
   if qual.size > 0 {
-    if o = checker_self.type_mod.get(type_slot(qual, name)) {
-      if checker_self.qualifier_ok(qual, from_mod) && checker_self.type_slot_visible(name, qual, from_mod) {
-        return qual
-      }
+    if o = checker_self.type_mod.get(type_slot(qual, name)), checker_self.qualifier_ok(qual, from_mod) && checker_self.type_slot_visible(name, qual, from_mod) {
+      return qual
     }
     return ""
   }
@@ -207,10 +203,8 @@ pub fn (checker_self: Checker) lib_is_visible(name: String, from_mod: String): B
   if owner == from_mod {
     return true
   }
-  if v = checker_self.lib_vis.get(name) {
-    if v == 1 {
-      return checker_self.imported_by(from_mod, owner)
-    }
+  if v = checker_self.lib_vis.get(name), v == 1 {
+    return checker_self.imported_by(from_mod, owner)
   }
   false
 }
@@ -326,14 +320,12 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     }
     ti += 1
   }
-  if id = checker_self.lib_names.get(name) {
-    if checker_self.lib_is_visible(name, from_mod) {
-      owner = from_mod
-      if o = checker_self.lib_mod.get(name) {
-        owner = o
-      }
-      origins.push("lib:${owner}")
+  if id = checker_self.lib_names.get(name), checker_self.lib_is_visible(name, from_mod) {
+    owner = from_mod
+    if o = checker_self.lib_mod.get(name) {
+      owner = o
     }
+    origins.push("lib:${owner}")
   }
   fn_mods = Hash(String, Int).new
   for i in 1..checker_self.functions.size {
@@ -382,10 +374,8 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
       return ty
     }
   }
-  if ty = checker_self.resolver.get_named(name) {
-    if checker_self.type_is_visible(name, checker_self.current_module, qual) {
-      return ty
-    }
+  if ty = checker_self.resolver.get_named(name), checker_self.type_is_visible(name, checker_self.current_module, qual) {
+    return ty
   }
   if qual.size > 0 {
     checker_self.fail(loc, "unknown type ${qual}.${name}")
@@ -551,10 +541,8 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
 }
 
 pub fn (checker_self: Checker) lookup_module_type(mod: String, name: String, loc: Location): Ty? {
-  if ty = checker_self.resolver.get_named_in(mod, name) {
-    if checker_self.type_is_visible(name, checker_self.current_module, mod) {
-      return ty
-    }
+  if ty = checker_self.resolver.get_named_in(mod, name), checker_self.type_is_visible(name, checker_self.current_module, mod) {
+    return ty
   }
   checker_self.fail(loc, "unknown type ${mod}.${name}")
   nil

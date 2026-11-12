@@ -10,8 +10,8 @@ pub class FileRun {
   rel: String = ""
   bin: String = ""
   output: String = ""
-  parallels: Array(String)
-  par_logs: Array(String)
+  parallels: Array(String) = []
+  par_logs: Array(String) = []
   ok: Bool = true
   compiled: Bool = false
   exclusive: Bool = false
@@ -24,9 +24,6 @@ pub class FileRun {
     self.abs = abs
     self.rel = rel
     self.bin = bin
-    self.output = ""
-    self.parallels = []
-    self.par_logs = []
     self.ok = true
     self.compiled = false
     self.exclusive = false
@@ -61,13 +58,8 @@ pub class JobCmd {
   fn initialize(args: Array(String), log: String, kind: Int, file: Int) {
     self.args = args
     self.log = log
-    self.pid = 0
-    self.code = 0
-    self.finished = false
-    self.started = false
     self.kind = kind
     self.file = file
-    self.names = ""
   }
 }
 
@@ -76,12 +68,11 @@ pub class JobCmd {
 // as its own compile is done: there is no phase barrier. A free slot takes
 // a waiting run before a waiting compile, and the earliest file first.
 pub class JobSched {
-  jobs: Array(JobCmd)
+  jobs: Array(JobCmd) = []
   limit: Int = 1
   running: Int = 0
 
   fn initialize(limit: Int) {
-    self.jobs = []
     self.limit = limit
     if self.limit < 1 {
       self.limit = 1
@@ -114,7 +105,7 @@ pub class JobSched {
       if !cmd.started {
         if best < 0 {
           best = i
-        } else if self.better(cmd, self.jobs[best]) {
+        } else if better(cmd, self.jobs[best]) {
           best = i
         }
       }
@@ -176,12 +167,7 @@ pub class TestHost {
 
   fn initialize(compiler: String, jobs: Int) {
     self.compiler = compiler
-    self.seq = 0
     self.jobs = jobs
-    self.coverage = false
-    self.junit = false
-    self.good = 0
-    self.bad = 0
     self.cov = CovReport.new("")
   }
 
@@ -319,7 +305,7 @@ fn sort_files(files: Array(FileRun)) {
 }
 
 fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
-  names = shim_dir_list(dir)
+  names = dir_list(dir) ?? []
   i = 0
   nseq = seq
   while i < names.size {
@@ -339,7 +325,7 @@ fn walk_tests(dir: String, cwd: String, into: Array(FileRun), seq: Int): Int {
       nseq += 1
       into.push(FileRun.new(path, rel_of(cwd, path), tmp_path("bin-${nseq}")))
     } else {
-      sub = shim_dir_list(path)
+      sub = dir_list(path) ?? []
       if sub.size > 0 {
         nseq = walk_tests(path, cwd, into, nseq)
       }
@@ -394,7 +380,7 @@ fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: 
 }
 
 fn rm_file(path: String) {
-  dummy = fs_unlink(path)
+  fs_unlink(path)
 }
 
 fn name_lines(text: String): Array(String) {
@@ -418,7 +404,7 @@ fn name_lines(text: String): Array(String) {
 }
 
 fn chmod_bin(path: String) {
-  dummy = fs_chmod_x(path)
+  fs_chmod_x(path)
 }
 
 fn append_text(into: String, chunk: String): String {
@@ -785,8 +771,8 @@ fn write_junit(path: String, files: Array(FileRun)) {
     b.push_str("  </testsuite>\n")
   }
   b.push_str("</testsuites>\n")
-  w = shim_file_write(path, b.to_s)
-  if w != 0 {
+  w = file_write(path, b.to_s) ?? -1
+  if w < 0 {
     diag_puts("cannot write ${path}")
     diag_exit(1)
   }

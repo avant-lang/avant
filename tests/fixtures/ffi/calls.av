@@ -1,5 +1,5 @@
 // Calls into C with every conversion the language has (Stage 28 W8a,
-// stages/stage28/mir.md W8a): Int, Int64, UInt64, Float64, and Bool in
+// stages/stage28/mir.md W8a): Int, UInt64, Float64, and Bool in
 // and out (Bool with `zeroext`, section 14 8.5), String and Bytes in, a
 // C string out, opaque `Ptr(Void)` values round-tripped, `Ptr(Void)`
 // fields in a class and in a struct (never traced, 2.3), an array of
@@ -9,13 +9,13 @@
 
 lib ffi {
   fun ffi_add_i32(a: Int32, b: Int32): Int32
-  fun ffi_mul_i64(a: Int64, b: Int64): Int64
+  fun ffi_mul_i64(a: Int, b: Int): Int
   fun ffi_shl_u64(a: UInt64, n: Int32): UInt64
   fun ffi_scale(x: Float64, k: Float64): Float64
   fun ffi_is_pos(x: Int32): Bool
   fun ffi_bool_to_int(b: Bool): Int32
   fun ffi_not(b: Bool): Bool
-  fun ffi_mixed(a: Int32, b: Float64, c: Bool, d: Int64): Int32
+  fun ffi_mixed(a: Int32, b: Float64, c: Bool, d: Int): Int32
   fun ffi_strlen(s: String): Int32
   fun ffi_static_str: String
   fun ffi_bytes_sum(b: Bytes, n: Int32): Int32
@@ -71,7 +71,7 @@ fn churn(n: Int): Int {
 fn main {
   puts(ffi.ffi_add_i32(40, 2))
   puts(ffi.ffi_add_i32(-7, 3))
-  puts(ffi.ffi_mul_i64(3000000000i64, 3i64))
+  puts(ffi.ffi_mul_i64(3000000000, 3))
   puts(ffi.ffi_shl_u64(1u64, 63))
   puts(ffi.ffi_scale(2.5, 4.0))
   puts(ffi.ffi_is_pos(5))
@@ -85,7 +85,7 @@ fn main {
   } else {
     puts("not true is false")
   }
-  puts(ffi.ffi_mixed(1, 2.75, true, 1000i64))
+  puts(ffi.ffi_mixed(1, 2.75, true, 1000))
 
   word = "hello" + " " + "world"
   puts(ffi.ffi_strlen(word))

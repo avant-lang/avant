@@ -32,7 +32,7 @@ gc_cflags=
 core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots avant_gc_safepoint"
 
 # The objects every program links (pipeline.av runtime_object_names), into
-# OUT with EXTRA flags: avant_rt.o from the core units, then the others.
+# OUT: avant_rt.o from the core units, then the others.
 # The core units fold into avant_rt.o: the seed's link table names
 # avant_rt.o only, so a new core object could not be linked by the old
 # seed. The source split is organizational; the link surface is not:
@@ -41,12 +41,11 @@ core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_re
 # other never becomes part of the object's surface.
 build_core() {
   out=$1
-  extra=$2
   mkdir -p "$out"
   set --
   for name in $core_units; do
     # shellcheck disable=SC2086
-    "$cc" -c $cflags $extra $gc_cflags -o "$out/$name.unit.o" "$root/$name.c"
+    "$cc" -c $cflags $gc_cflags -o "$out/$name.unit.o" "$root/$name.c"
     set -- "$@" "$out/$name.unit.o"
   done
   ld -r -o "$out/avant_rt_merged.o" "$@"
@@ -74,28 +73,17 @@ build_core() {
   mv "$out/avant_rt_merged.o" "$out/avant_rt.o"
   for name in avant_str avant_buf avant_hash avant_array avant_task avant_wide avant_codec avant_io avant_cov; do
     # shellcheck disable=SC2086
-    "$cc" -c $cflags $extra -o "$out/$name.o" "$root/$name.c"
+    "$cc" -c $cflags -o "$out/$name.o" "$root/$name.c"
   done
 }
 
-build_core "$root/build" ""
+build_core "$root/build"
+# The seed-ABI copy W-INT1 built (a 32-bit avant_int for the v0.40.0
+# seed's B) is gone since W-ADOPT; a checkout built before keeps none.
+rm -rf "$root/build/seed-abi"
 for name in avant_json.c avant_http.c avant_base64.c; do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
-
-# The seed's ABI (Stage 29 W-INT1, the bootstrap): the v0.40.0 seed's code
-# generator calls the runtime with a 32-bit `Int`, so B, the compiler the
-# seed builds, links a copy of the program objects built with
-# -DAVANT_INT_BITS=32 (avant_rt.h, avant_int), from the same sources.
-# runtime/build/seed-abi is laid out as an Avant root (runtime/build/*.o
-# and runtime/avant_rt.h, a header that selects the 32-bit Int), so
-# tools/letters.sh builds B with AVANT_ROOT pointing at it; everything B
-# builds links runtime/build. The copy goes when a release with the 64-bit
-# Int is the seed.
-seed_abi="$root/build/seed-abi"
-rm -rf "$seed_abi"
-build_core "$seed_abi/runtime/build" "-DAVANT_INT_BITS=32"
-printf '%s\n' '/* The seed ABI (runtime/build.sh): a 32-bit avant_int. */' '#define AVANT_INT_BITS 32' '#include "../../../avant_rt.h"' > "$seed_abi/runtime/avant_rt.h"
 
 # zlib (D146), vendored at the pin in third_party/zlib/PIN: the library
 # files compress and uncompress need, built as zlib's own configure builds
