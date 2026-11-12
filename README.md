@@ -1823,6 +1823,7 @@ fn main {
 - A struct literal infers its arguments the same way: `Pair { first: 1, second: "x" }` is `Pair(Int, String)`.
 - A generic class may name itself (`next: Link(T)?`): a class is a pointer. A struct is copied inline, so a struct that contains itself, generic or not, is an error.
 - `Array`, `Hash`, `Ptr` and `JoinHandle` are built in; they are not generic types you could declare.
+- A generic type or function imported from another module takes the types of the module that uses it, `pub` or private: with `Box` imported, `Box(Point)` and `Box.new(Point { ... })` work for a `Point` declared here. A type argument is a name like any other where it is written: a private type of another module is unknown there, also as an element type (`Array(Hidden)`) or inside a union or a function type.
 
 ## Interfaces
 

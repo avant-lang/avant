@@ -686,6 +686,51 @@ pub class TypeResolver {
     ty.fields = resolved
   }
 
+  // Pins the user type names inside a type argument (O255, Stage 29
+  // W-FIX1b): each is given the module of the type it resolves to here,
+  // where the generic is used, and marked, so the instance's fields and
+  // methods, which are checked in the generic's own module, read the
+  // same types. Type parameters and built-in names are left as they are.
+  pub fn pin_type_name(tn: TypeName) {
+    for a in tn.args {
+      pin_type_name(a)
+    }
+    for m in tn.members {
+      pin_type_name(m)
+    }
+    if r = tn.ret {
+      pin_type_name(r)
+    }
+    if tn.fn_type || tn.members.size > 0 || tn.pinned {
+      return
+    }
+    if id = self.tparams.get(tn.name), tn.args.size == 0 {
+      return
+    }
+    if template_count(tn.name) > 0 {
+      if sdef = find_struct_template(tn.name, tn.mod_name) {
+        tn.mod_name = sdef.mod_name
+        tn.pinned = true
+      } else if cdef = find_class_template(tn.name, tn.mod_name) {
+        tn.mod_name = cdef.mod_name
+        tn.pinned = true
+      }
+      return
+    }
+    if tn.mod_name.size > 0 {
+      if found = get_named_in(tn.mod_name, tn.name) {
+        tn.pinned = true
+        return
+      }
+    }
+    if found = get_named(tn.name) {
+      if found.is_struct || found.is_class || found.is_clayout {
+        tn.mod_name = found.mod_name
+        tn.pinned = true
+      }
+    }
+  }
+
   pub fn instantiate_template(tn: TypeName): Ty {
     is_struct = false
     kind = tyk_class()
@@ -770,17 +815,25 @@ pub class TypeResolver {
     }
     put_named(key, shell)
     if p = self.program {
+      // The arguments as the instance carries them: copies, pinned to
+      // the types they name here (pin_type_name).
+      pargs: Array(TypeName) = []
+      for a in tn.args {
+        pa = clone_type_name(a)
+        pin_type_name(pa)
+        pargs.push(pa)
+      }
       fields: Array(Field) = []
       methods: Array(Function) = []
       i = 0
       while i < src_fields.size {
-        fields.push(clone_subst_field(src_fields[i], params, tn.args))
+        fields.push(clone_subst_field(src_fields[i], params, pargs))
         i += 1
       }
       i = 0
       while i < src_methods.size {
         m = clone_function(src_methods[i])
-        subst_function_types(m, params, tn.args)
+        subst_function_types(m, params, pargs)
         m.owner = key
         m.generic = false
         fresh: Array(String) = []
@@ -803,7 +856,7 @@ pub class TypeResolver {
       shell.error_mark = error_opted(src_opt)
       i = 0
       while i < src_opt.size {
-        opted.push(subst_type_name(src_opt[i], params, tn.args))
+        opted.push(subst_type_name(src_opt[i], params, pargs))
         i += 1
       }
       if is_struct {

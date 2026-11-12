@@ -539,12 +539,24 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     ret = ty
   }
   checker_self.resolver.clear_tparams
+  // An instance's signature names its type arguments as they were
+  // written where the generic is used (pinned): that module's rule,
+  // already applied there. The template's own signature was checked
+  // with its parameters open.
   i = 0
   while i < params.size {
-    checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    if !type_name_has_pinned(fnn.params[i].type) {
+      checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    }
     i += 1
   }
-  checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  ret_pinned = false
+  if rt = fnn.return_type {
+    ret_pinned = type_name_has_pinned(rt)
+  }
+  if !ret_pinned {
+    checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  }
   checker_self.current_module = saved_mod
   if fnn.name == "main" || fnn.name == "run" {
     if ret.is_void {
@@ -736,12 +748,24 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     ret = ty
   }
   checker_self.resolver.clear_tparams
+  // An instance's signature names its type arguments as they were
+  // written where the generic is used (pinned): that module's rule,
+  // already applied there. The template's own signature was checked
+  // with its parameters open.
   i = 0
   while i < params.size {
-    checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    if !type_name_has_pinned(fnn.params[i].type) {
+      checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    }
     i += 1
   }
-  checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  ret_pinned = false
+  if rt = fnn.return_type {
+    ret_pinned = type_name_has_pinned(rt)
+  }
+  if !ret_pinned {
+    checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  }
   checker_self.current_module = saved_mod
   if fnn.name == "initialize" {
     if !ret.is_void {
