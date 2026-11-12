@@ -958,9 +958,27 @@ void avant_array_fill_i64(void *arr, int64_t v) {
     memset(p, v == 0 ? 0 : 0xff, (size_t)a->size * sizeof(int64_t));
     return;
   }
+#if defined(__SSE2__)
+  {
+    /* Two elements a store, as fill_i32 stores four. */
+    __m128i x = _mm_set1_epi64x(v);
+    int32_t n = a->size;
+    i = 0;
+    while (i + 4 <= n) {
+      _mm_storeu_si128((__m128i *)(p + i), x);
+      _mm_storeu_si128((__m128i *)(p + i + 2), x);
+      i += 4;
+    }
+    while (i < n) {
+      p[i] = v;
+      i++;
+    }
+  }
+#else
   for (i = 0; i < a->size; i++) {
     p[i] = v;
   }
+#endif
 }
 
 void avant_array_fill_i32(void *arr, int32_t v) {

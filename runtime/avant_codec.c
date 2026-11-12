@@ -190,9 +190,16 @@ int32_t avant_sha256_word0(void *arr) {
    * the same per-element arithmetic and the same result. */
   for (i = 0; i + 8 <= n; i += 8) {
     int k;
+    /* The 64-bit elements' low bytes first, as 32-bit lanes, so the chains
+     * vectorize as they did over 32-bit elements (Stage 29 W-INT1: 3.6x
+     * the instructions on Hash::SHA256 without it). */
+    uint32_t lane[8];
+    for (k = 0; k < 8; k++) {
+      lane[k] = (uint32_t)src[i + k] & 255u;
+    }
     for (k = 0; k < 8; k++) {
       uint32_t hash = hashes[k];
-      hash = ((hash << 5) + hash) + (uint8_t)(src[i + k] & 255);
+      hash = ((hash << 5) + hash) + lane[k];
       hash = (hash + (hash << 10)) ^ (hash >> 6);
       hashes[k] = hash;
     }
