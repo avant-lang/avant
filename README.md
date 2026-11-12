@@ -142,7 +142,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 
 - [Coming from another language](#coming-from-another-language): [the deliberate differences](#the-deliberate-differences) · [by language](#by-language)
 - [Not built yet](#not-built-yet)
-- [Benchmarks](#benchmarks): [LangArena](#langarena) · [where Avant loses](#where-avant-loses) · [garbage collector](#garbage-collector) · [HTTP and WebSocket servers](#http-and-websocket-servers) · [reading these numbers](#reading-these-numbers)
+- [Benchmarks](#benchmarks): [LangArena](#langarena) · [where Avant loses](#where-avant-loses) · [garbage collector](#garbage-collector) · [Valk's general suite](#valks-general-suite) · [HTTP and WebSocket servers](#http-and-websocket-servers) · [reading these numbers](#reading-these-numbers)
 - [Goals](#goals)
 
 **Going deeper**
@@ -586,7 +586,7 @@ fn main {
 
 ### Literals
 
-An integer literal is an `Int` unless its context gives it another integer type: a declared type, a parameter, a field, a function's result, or the other operand of an operator, on either side.
+An integer literal is an `Int` unless its context gives it another number type: a declared type, a parameter, a field, a function's result, or the other operand of an operator, on either side. The context may be a `Float64` too: with a float `f`, `f * 2` and `2 * f` are float arithmetic.
 
 ```avant
 fn half(n: Int32): Int32 {
@@ -609,7 +609,7 @@ A literal outside its type's range is a compile error (`integer literal does not
 
 ### Conversions
 
-Values of different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `Int` and a `Float64`, is a compile error. Convert explicitly, and choose what happens when the value does not fit.
+Values of different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `Int` and a `Float64`, is a compile error (`binary operator expects matching types, got Int32 and Int`). Only literals adapt. Convert explicitly, and choose what happens when the value does not fit.
 
 | To | Keep the number, or trap | Reinterpret the bits, never trap |
 | --- | --- | --- |
@@ -707,7 +707,7 @@ fn main {
 | `s[i]` | the byte at `i`, an `Int`; traps outside `0 <= i < size` |
 | `s.get(i)` | the byte, or `nil` outside the string (`Int?`) |
 | `a + b` | a new string |
-| `a == b`, `a != b` | equality by content |
+| `a == b`, `a != b` | equality by content. There is no `<` on strings; `sort`, `min` and `max` order them by bytes |
 | `s.split(sep)` | `Array(String)`, empty fields kept; an empty separator traps |
 | `s.fields` | split on runs of whitespace, empty fields dropped |
 | `s.strip`, `s.strip_left`, `s.strip_right` | whitespace trimmed |
@@ -1410,9 +1410,9 @@ avant runtime: index 5 out of bounds (size 3) in main (main.av:1:1)
 ```
 
 - The line is `avant runtime: WHAT` and where. Whatever the program printed before comes first: a trap flushes stdout before it writes to stderr, so a log with both streams reads in order.
-- A trap placed at one operation names that operation's position: `pop` on an empty array, the number conversions, shifts, byte stores into a `Buf`, `Array(T).new` with a negative size, `main`'s exit status and a C string result that is NULL (`avant runtime: pop on an empty Array at main.av:7:10`).
+- A trap placed at one operation names that operation's position: `pop` on an empty array, the number conversions, shifts, a byte stored with `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status and a C string result that is NULL (`avant runtime: pop on an empty Array at main.av:7:10`).
 - Indexing out of bounds, integer overflow and division by zero name the function and where it starts (`avant runtime: integer overflow in twice (main.av:9:1)`). Every such check of a function shares one cold exit, which lets the optimizer fold a statement's checks into one branch; a position per check would cost time in hot loops.
-- A trap raised inside a runtime function (a slice's bounds, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8) names the operation and its values, and no position yet.
+- A trap raised inside a runtime function (a slice's bounds, `push_byte`, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8) names the operation and its values, and no position yet.
 
 | What traps | The form that does not |
 | --- | --- |
@@ -1531,7 +1531,7 @@ fn main {
 }
 ```
 
-- A lambda created in a `for` loop sees the loop's one variable, not a copy per iteration; copy it into a new name inside the body to keep the value (`k = i`, then capture `k`). A per-iteration variable is decided and not built.
+- A lambda created in a `for` loop sees the loop's one variable, not a copy per iteration: three lambdas made in `for i in 0..3` all read 3 afterwards. Copy the variable into a new name inside the body to keep the value (`k = i`, then capture `k`); a name first assigned inside a loop body is new at each iteration. A per-iteration loop variable is decided and not built.
 - A lambda inside a method may use `self`, and so its fields and methods bare. The receiver is captured by value, because `self` is never reassigned: a class receiver is its reference (the lambda sees later changes to the object); a struct receiver is a copy, and a write through `self` inside such a lambda is an error, since it would change only the copy.
 
 ```avant
@@ -1557,21 +1557,39 @@ The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, 
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
-| a builtin's block (`xs.each { ... }`) | returns from the enclosing function | leaves the loop |
+| a builtin's block (`xs.each { ... }`) | leaves the enclosing function | leaves the loop |
 | a lambda, a trailing block of your own function | returns from the lambda | a compile error |
 
 ```avant
 fn first_big(xs: Array(Int)): Int {
+  found = -1
   xs.each { |x|
-    if x > 10 { return x }     // returns from first_big
+    if x > 10 {
+      found = x
+      break                  // leaves the each
+    }
   }
-  -1
+  found
+}
+
+fn report(xs: Array(Int)) {
+  xs.each { |x|
+    if x < 0 {
+      puts("negative: ${x}")
+      return                 // leaves report
+    }
+  }
+  puts("all good")
 }
 
 fn main {
   puts(first_big([3, 12, 40]))   // => 12
+  report([1, -2, 3])             // => negative: -2
+  report([1, 2])                 // => all good
 }
 ```
+
+One limit: inside a builtin's block, `return` cannot carry a value yet (`return x` there is refused, because the block itself returns nothing). Set a variable and `break`, as `first_big` does, or use `for`, where `return x` works.
 
 ## Generics
 
@@ -1823,7 +1841,7 @@ fn main {
 }
 ```
 
-A bare `value()` there is refused, naming both: `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`. The same holds for types (`beta.Token`, `error[E4000]: ambiguous name Token; qualify it`). Nothing wins silently, not even the module's own name over an imported one.
+A bare `value()` there is refused, naming both: `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`. A name that is a function in one module and a type in another is refused the same way (`ambiguous name value; qualify it`), and so is a type two modules both publish: write `beta.Token`. (For that last case the message is still the unhelpful `unknown type Token`.) Nothing wins silently, not even the module's own name over an imported one.
 
 - Functions with different parameter types still meet as one overload set across modules: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments.
 - A qualified call reaches only that module's `pub` functions. A module may qualify its own names (`main.helper()`).
@@ -1833,6 +1851,7 @@ A bare `value()` there is refused, naming both: `ambiguous call to value: alpha.
 
 A package is a git repository of `.av` files. A project lists its dependencies in `avant.toml`, and `avant fetch` downloads them into `deps/`. There is no central registry: a dependency is its git URL, and `avant.lock` records the exact commit.
 
+<!-- check: file project=pkg file=avant.toml -->
 ```toml
 [package]
 name = "myapp"
@@ -1841,6 +1860,12 @@ version = "0.1.0"
 [dependencies]
 greeter = { git = "https://github.com/example/greeter.git", rev = "v1.0.0" }
 ```
+
+<!-- check: hidden project=pkg file=deps/greeter/avant.toml
+[package]
+name = "greeter"
+version = "1.0.0"
+-->
 
 ```sh
 avant fetch          # clone the dependencies into deps/, write avant.lock
@@ -1956,7 +1981,7 @@ Publishing is pushing to any git host. A new version is a new tag or commit; exi
 
 Each clash is reported, never silently resolved.
 
-- **Two dependencies provide the same module file.** Importing that name is a compile error (`import shared is ambiguous:` followed by the files found); there is no priority order between dependencies. Rename the module in one package or stop fetching one. A file beside your own root is different: your local `shared.av` is found first and shadows a fetched one, which is the supported way to patch a dependency while you work.
+- **Two places provide the same module file.** Importing that name is a compile error that lists the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`). There is no priority order, between dependencies or between a dependency and your own tree: a `shared.av` beside your root file clashes with a fetched one the same way. Rename one module, or stop fetching one package.
 - **One dependency name reaches two commits**, for example your manifest pins one and a dependency of a dependency asks for another. Fetch stops: `avant fetch: dependency greeter resolves to two different commits (...)`. Align your manifest's pin and fetch again. One name is one version in a project.
 - **Two modules publish the same name.** The ordinary [name clash](#name-clashes): qualify the use.
 
@@ -2063,7 +2088,7 @@ class Mutex(T) {
 }
 -->
 
-- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block, and the block's value is the call's. `return`, `break` and `continue` inside `with` are errors.
+- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors.
 - `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
 - Waiting and waking go through the runtime's `avant_gate_*` functions, which is all the two classes are built on.
 
@@ -3144,102 +3169,163 @@ What is decided, or simply missing, said in one place. Each item is repeated bes
 
 ## Benchmarks
 
-Every number here was measured on one machine (an AMD Ryzen 7 5700G), each language built with optimizations, and the rows where Avant loses are printed with the rest. Read [Reading these numbers](#reading-these-numbers) before quoting any of them.
+Every number here was measured on one machine (an AMD Ryzen 7 5700G), each language built with optimizations, and the rows where Avant loses are printed as plainly as the rows where it wins. Read [Reading these numbers](#reading-these-numbers) before quoting any of them.
 
 ### LangArena
 
-[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-10 (commit `6ab8b35`, `--release --cpu=v3`, the machine otherwise idle, governor `performance`); the other languages on 2026-11-07.
-
-<!-- TODO(orchestrator): replace both LangArena tables, the date and commit line above, the notes' GCC figure, and every derived figure in "Where Avant loses" and "Goals" (26 of 49, the worst-rows list, 7 and 11 tasks) from W-ADOPT's final LangArena run. -->
+[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-12 (commit `a6246d8`, `--release --cpu=v3`, one run, the machine otherwise idle, governor `performance`, all 50 task checksums correct); the other languages on 2026-11-07.
 
 | Language | 49 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
-| Avant | **39.023** | **19.0 MB** |
+| Avant | **38.201** | **20.3 MB** |
 | C | 58.583 | 23.4 MB |
 | Rust | 58.926 | 29.8 MB |
 | Crystal | 85.670 | 67.1 MB |
 | Go | 117.876 | 64.3 MB |
 
-**The total flatters Avant.** Part of that gap is not the language: see the caveats below, the compiled-in task sizes above all. The honest reading is task by task.
+**The total flatters Avant.** Much of that gap is not the language: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, and several rows measure C libraries ([Reading these numbers](#reading-these-numbers)). The honest reading is task by task.
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `Binarytrees::Obj` | **0.623** | 2.736 | 2.865 | 1.325 | 1.881 |
-| `Binarytrees::Arena` | 0.520 | 0.355 | **0.341** | 0.759 | 0.362 |
-| `Brainfuck::Array` | 1.635 | 1.896 | 1.825 | 1.968 | **1.546** |
-| `Brainfuck::Recursion` | 1.906 | 1.570 | **1.522** | 1.745 | 1.709 |
-| `Matmul::Single` | **1.152** | 5.646 | 5.758 | 5.832 | 5.769 |
-| `Matmul::T4` | **0.949** | 1.485 | 1.551 | 3.380 | 1.558 |
-| `Matmul::T8` | **0.582** | 0.799 | 0.858 | 2.642 | 0.888 |
-| `Matmul::T16` | 0.596 | **0.482** | 0.729 | 2.339 | 0.781 |
-| `Base64::Encode` | 0.127 | **0.119** | 0.352 | 1.633 | 2.591 |
-| `Base64::Decode` | 0.154 | **0.147** | 0.398 | 1.520 | 1.886 |
-| `Json::Generate` | **0.283** | 0.661 | 0.337 | 1.173 | 1.256 |
-| `Json::ParseDom` | 0.099 | **0.098** | 1.694 | 0.540 | 1.609 |
-| `Json::ParseMapping` | 0.238 | **0.229** | 0.425 | 1.546 | 2.871 |
-| `CSV::Parse` | **0.758** | 2.247 | 0.881 | 3.418 | 3.000 |
-| `Etc::Sieve` | 1.423 | **0.920** | 0.979 | 2.360 | 1.896 |
-| `Etc::NeuralNet` | 1.301 | **1.073** | 1.165 | 1.260 | 2.219 |
-| `Etc::CacheSimulation` | **0.493** | 0.762 | 0.863 | 1.298 | 1.638 |
-| `Etc::GameOfLife` | 1.438 | 1.487 | 1.503 | 2.816 | **0.980** |
-| `Etc::Words` | 1.125 | 2.284 | 1.080 | **0.902** | 1.372 |
-| `Etc::LogParser` | 0.473 | 0.496 | **0.348** | 1.207 | 28.911 |
-| `Template::Regex` | **0.992** | 1.269 | 3.660 | 1.673 | 7.730 |
-| `Template::Parse` | **0.809** | 1.132 | 1.181 | 2.737 | 0.891 |
-| `Sort::Quick` | 1.434 | **1.186** | 1.193 | 1.550 | 1.305 |
-| `Sort::Merge` | 1.739 | **1.165** | 1.540 | 2.309 | 1.593 |
-| `Sort::Self` | **0.103** | 2.095 | 0.412 | 1.079 | 1.333 |
-| `Graph::BFS` | **1.141** | 1.372 | 1.787 | 3.057 | 2.615 |
-| `Graph::DFS` | **1.193** | 1.225 | 1.450 | 2.190 | 1.742 |
-| `Graph::AStar` | **0.821** | 2.212 | 2.340 | 1.950 | 3.867 |
-| `Hash::SHA256` | **0.613** | 1.155 | 1.218 | 1.214 | 1.243 |
-| `Hash::CRC32` | **0.137** | 0.986 | 0.986 | 0.987 | 4.197 |
-| `Calculator::Ast` | **0.441** | 1.041 | 0.600 | 0.494 | 0.580 |
-| `Calculator::Interpreter` | **0.242** | 1.248 | 0.901 | 1.088 | 0.871 |
-| `Maze::Generator` | **0.570** | 0.596 | 1.012 | 2.718 | 1.457 |
-| `Maze::BFS` | **0.531** | 0.670 | 1.272 | 3.683 | 2.168 |
-| `Maze::AStar` | **1.089** | 1.776 | 1.464 | 4.363 | 4.092 |
-| `CLBG::Fannkuchredux` | 1.361 | 1.298 | 1.371 | 1.229 | **1.162** |
-| `CLBG::Mandelbrot` | **0.973** | 0.981 | 1.025 | 0.998 | 1.013 |
-| `CLBG::Nbody` | 1.255 | 1.271 | **1.200** | 1.296 | 1.445 |
+| `Binarytrees::Obj` | **0.618** | 2.736 | 2.865 | 1.325 | 1.881 |
+| `Binarytrees::Arena` | 0.435 | 0.355 | **0.341** | 0.759 | 0.362 |
+| `Brainfuck::Array` | 1.773 | 1.896 | 1.825 | 1.968 | **1.546** |
+| `Brainfuck::Recursion` | 1.553 | 1.570 | **1.522** | 1.745 | 1.709 |
+| `Matmul::Single` | **1.117** | 5.646 | 5.758 | 5.832 | 5.769 |
+| `Matmul::T4` | **0.947** | 1.485 | 1.551 | 3.380 | 1.558 |
+| `Matmul::T8` | **0.593** | 0.799 | 0.858 | 2.642 | 0.888 |
+| `Matmul::T16` | 0.601 | **0.482** | 0.729 | 2.339 | 0.781 |
+| `Base64::Encode` | 0.123 | **0.119** | 0.352 | 1.633 | 2.591 |
+| `Base64::Decode` | **0.145** | 0.147 | 0.398 | 1.520 | 1.886 |
+| `Json::Generate` | **0.246** | 0.661 | 0.337 | 1.173 | 1.256 |
+| `Json::ParseDom` | **0.098** | **0.098** | 1.694 | 0.540 | 1.609 |
+| `Json::ParseMapping` | 0.234 | **0.229** | 0.425 | 1.546 | 2.871 |
+| `CSV::Parse` | **0.759** | 2.247 | 0.881 | 3.418 | 3.000 |
+| `Etc::Sieve` | 1.450 | **0.920** | 0.979 | 2.360 | 1.896 |
+| `Etc::NeuralNet` | 1.305 | **1.073** | 1.165 | 1.260 | 2.219 |
+| `Etc::CacheSimulation` | **0.492** | 0.762 | 0.863 | 1.298 | 1.638 |
+| `Etc::GameOfLife` | 1.433 | 1.487 | 1.503 | 2.816 | **0.980** |
+| `Etc::Words` | 1.037 | 2.284 | 1.080 | **0.902** | 1.372 |
+| `Etc::LogParser` | 0.467 | 0.496 | **0.348** | 1.207 | 28.911 |
+| `Template::Regex` | **0.916** | 1.269 | 3.660 | 1.673 | 7.730 |
+| `Template::Parse` | **0.755** | 1.132 | 1.181 | 2.737 | 0.891 |
+| `Sort::Quick` | 1.312 | **1.186** | 1.193 | 1.550 | 1.305 |
+| `Sort::Merge` | 1.738 | **1.165** | 1.540 | 2.309 | 1.593 |
+| `Sort::Self` | **0.101** | 2.095 | 0.412 | 1.079 | 1.333 |
+| `Graph::BFS` | **1.150** | 1.372 | 1.787 | 3.057 | 2.615 |
+| `Graph::DFS` | **1.219** | 1.225 | 1.450 | 2.190 | 1.742 |
+| `Graph::AStar` | **0.777** | 2.212 | 2.340 | 1.950 | 3.867 |
+| `Hash::SHA256` | **0.249** | 1.155 | 1.218 | 1.214 | 1.243 |
+| `Hash::CRC32` | **0.131** | 0.986 | 0.986 | 0.987 | 4.197 |
+| `Calculator::Ast` | **0.450** | 1.041 | 0.600 | 0.494 | 0.580 |
+| `Calculator::Interpreter` | **0.255** | 1.248 | 0.901 | 1.088 | 0.871 |
+| `Maze::Generator` | 0.668 | **0.596** | 1.012 | 2.718 | 1.457 |
+| `Maze::BFS` | 0.700 | **0.670** | 1.272 | 3.683 | 2.168 |
+| `Maze::AStar` | **1.175** | 1.776 | 1.464 | 4.363 | 4.092 |
+| `CLBG::Fannkuchredux` | 1.355 | 1.298 | 1.371 | 1.229 | **1.162** |
+| `CLBG::Mandelbrot` | 0.982 | **0.981** | 1.025 | 0.998 | 1.013 |
+| `CLBG::Nbody` | 1.256 | 1.271 | **1.200** | 1.296 | 1.445 |
 | `CLBG::Spectralnorm` | **0.984** | 1.035 | 1.031 | 1.039 | 1.065 |
-| `Compress::BWTEncode` | 0.437 | 0.505 | **0.418** | 1.332 | 2.140 |
+| `Compress::BWTEncode` | **0.330** | 0.505 | 0.418 | 1.332 | 2.140 |
 | `Compress::BWTDecode` | **0.685** | 0.721 | 1.024 | 1.152 | 1.938 |
-| `Compress::HuffEncode` | **0.537** | 0.795 | 0.717 | 1.104 | 0.908 |
-| `Compress::HuffDecode` | 0.575 | **0.445** | 0.556 | 0.907 | 1.265 |
-| `Compress::ArithEncode` | 1.187 | 1.036 | **0.977** | 1.139 | 1.015 |
-| `Compress::ArithDecode` | 0.984 | **0.895** | 1.359 | 0.960 | 0.910 |
-| `Compress::LZWEncode` | **0.156** | 1.413 | 0.707 | 1.052 | 1.244 |
-| `Compress::LZWDecode` | **0.247** | 0.659 | 0.659 | 0.633 | 1.634 |
-| `Distance::Jaro` | 1.011 | **0.894** | 0.895 | 1.282 | 0.930 |
-| `Distance::NGram` | 0.901 | 2.014 | **0.497** | 0.794 | 0.798 |
+| `Compress::HuffEncode` | **0.634** | 0.795 | 0.717 | 1.104 | 0.908 |
+| `Compress::HuffDecode` | 0.521 | **0.445** | 0.556 | 0.907 | 1.265 |
+| `Compress::ArithEncode` | 1.218 | 1.036 | **0.977** | 1.139 | 1.015 |
+| `Compress::ArithDecode` | 0.961 | **0.895** | 1.359 | 0.960 | 0.910 |
+| `Compress::LZWEncode` | **0.196** | 1.413 | 0.707 | 1.052 | 1.244 |
+| `Compress::LZWDecode` | **0.238** | 0.659 | 0.659 | 0.633 | 1.634 |
+| `Distance::Jaro` | 0.963 | **0.894** | 0.895 | 1.282 | 0.930 |
+| `Distance::NGram` | 0.855 | 2.014 | **0.497** | 0.794 | 0.798 |
 
 ### Where Avant loses
 
-Avant is the fastest of the five on 26 of the 49 tasks. These are the rows where it is furthest behind the best other language:
+Among these five, Avant is the fastest on 26 of the 49 tasks. Against the best of *every* language measured on this machine (C and C++ under both GCC and Clang included, so a wider field than the table above), its time is at or ahead of the best on 24 tasks, the median task is 1.02× the best, and three tasks are more than 1.5× behind. The worst rows by time:
 
-| Task | Avant | Best | Behind by |
+| Task | Avant (s) | Best (s) | Behind by |
 | --- | ---: | ---: | ---: |
-| `Distance::NGram` | 0.901 | 0.497 (Rust) | 1.81× |
-| `Etc::Sieve` | 1.423 | 0.920 (C) | 1.55× |
-| `Binarytrees::Arena` | 0.520 | 0.341 (Rust) | 1.52× |
-| `Sort::Merge` | 1.739 | 1.165 (C) | 1.49× |
-| `Etc::GameOfLife` | 1.438 | 0.980 (Go) | 1.47× |
-| `Etc::LogParser` | 0.473 | 0.348 (Rust) | 1.36× |
-| `Compress::HuffDecode` | 0.575 | 0.445 (C) | 1.29× |
+| `Etc::GameOfLife` | 1.433 | 0.813 (C++, GCC) | 1.76× |
+| `Distance::NGram` | 0.855 | 0.497 (Rust) | 1.72× |
+| `Etc::Sieve` | 1.450 | 0.920 (C, Clang) | 1.58× |
+| `Sort::Merge` | 1.738 | 1.165 (C, Clang) | 1.49× |
+| `CLBG::Spectralnorm` | 0.984 | 0.671 (C++, GCC) | 1.47× |
+| `Binarytrees::Arena` | 0.435 | 0.306 (C, GCC) | 1.42× |
+| `Etc::NeuralNet` | 1.305 | 0.948 (C++, Clang) | 1.38× |
+| `Etc::LogParser` | 0.467 | 0.348 (Rust) | 1.34× |
 
-Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should never be behind either of them. It still is on some tasks, and each is an open defect:
+Memory, the same way: at or below the best on 31 tasks, the median task at 0.90× the best, five tasks more than 1.5× above it. The worst rows by peak memory:
 
-- **Slower than Crystal (7 tasks):** `Brainfuck::Recursion`, `Etc::NeuralNet`, `Etc::Words`, `CLBG::Fannkuchredux`, `Compress::ArithEncode`, `Compress::ArithDecode`, `Distance::NGram`.
-- **Slower than Go (11 tasks):** `Binarytrees::Arena`, `Brainfuck::Array`, `Brainfuck::Recursion`, `Etc::GameOfLife`, `Sort::Quick`, `Sort::Merge`, `CLBG::Fannkuchredux`, `Compress::ArithEncode`, `Compress::ArithDecode`, `Distance::Jaro`, `Distance::NGram`.
+| Task | Avant (MB) | Best (MB) | Above by |
+| --- | ---: | ---: | ---: |
+| `CLBG::Spectralnorm` | 6.1 | 2.7 (C, GCC) | 2.21× |
+| `Binarytrees::Arena` | 51.3 | 26.7 (C, Clang) | 1.92× |
+| `Etc::LogParser` | 17.7 | 9.9 (C, GCC) | 1.78× |
+| `Etc::GameOfLife` | 53.7 | 30.4 (Go) | 1.77× |
+| `Sort::Self` | 11.3 | 7.1 (C, Clang) | 1.59× |
 
-Memory has the same shape: the average is the lowest of the five, and the worst rows are allocation-heavy tasks (`CLBG::Spectralnorm`, `Sort::Quick`, `Binarytrees::Arena`).
+Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should never be behind either of them on any task, in time or in memory. It is behind on twelve, and each is an open defect:
+
+| Task | Behind |
+| --- | --- |
+| `Etc::GameOfLife` | time 1.46× Go; memory 1.77× Go |
+| `Binarytrees::Arena` | time 1.20× Go |
+| `Compress::ArithEncode` | time 1.07× Crystal, 1.20× Go |
+| `CLBG::Fannkuchredux` | time 1.10× Crystal, 1.17× Go |
+| `Etc::Words` | time 1.15× Crystal |
+| `Brainfuck::Array` | time 1.15× Go |
+| `Sort::Merge` | time 1.09× Go |
+| `Distance::NGram` | time 1.08× Crystal, 1.07× Go |
+| `Compress::ArithDecode` | time 1.06× Go |
+| `Etc::NeuralNet` | time 1.04× Crystal |
+| `Distance::Jaro` | time 1.04× Go |
+| `Sort::Quick` | time 1.01× Go |
+
+These come from one run; ratios within a few percent may be that run's noise.
 
 ### Garbage collector
 
-<!-- TODO(orchestrator): the garbage-collector comparison (Valk's GC suite, ported: Avant, Valk, Go, Crystal, D, C#, Java on this machine) goes here: the table, its date, commit and method, and the scenarios where Avant trails, named. Replace the paragraph below. -->
+Scenarios, and the Valk, Go, D and C# programs, from [Valk](https://github.com/valk-lang/valk) (`examples/bench/gc`, MIT, © 2024 Lorenz Vandevelde); the Avant, Crystal and Java programs are ports. The suite is in `bench/valk-gc/`. It isolates what a collector costs: seven scenarios in one process, each timed by the program itself.
 
-A comparison of collectors alone, on the scenarios of [Valk](https://github.com/valk-lang/valk)'s garbage-collector benchmark (short-lived allocation, a stable heap, long-lived structures, mutation, churn beside a large live set), is being measured on this machine against Valk, Go, Crystal, D, C# and Java. No number is published until that run is complete; the scenarios where Avant trails will be printed with the rest.
+Milliseconds, median of seven runs, lower is better; **bold** is the best of the row. AMD Ryzen 7 5700G, Linux 7.2.8, governor `performance`, one warm-up and seven rotating rounds of fresh processes, every run's result verified, 2026-11-12. Avant `--release` (commit `a6246d8`), Valk 0.8.5 `--release`, Go 1.26.0, D (LDC 1.41.0), C# (.NET 10.0.15, tiered JIT), Crystal 1.21.1, Java 25 (G1).
+
+| Scenario | Avant | Valk | Go | D | C# | Crystal | Java |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 short-lived allocation | 49.2 | **11.5** | 155 | 164 | 105 | 100 | 55.3 |
+| 2 forced collections of a stable heap | 5830 | **0.317** | 5394 | 1793 | 3603 | 1621 | 5647 |
+| 3 build a long-lived chain | 332 | **62.4** | 115 | 176 | 243 | 140 | 129 |
+| 4 free a long-lived chain | 6.58 | 32.2 | 54.4 | 13.9 | 19.7 | **3.34** | 7.19 |
+| 5 mutate live links | 9.58 | 11.2 | **8.92** | 11.6 | 14.9 | 11.8 | 12.7 |
+| 6 churn beside a large live set | 48.8 | **5.44** | 127 | 117 | 52.1 | 45.6 | 26.8 |
+| 7 tree churn | 150 | **44.5** | 270 | 307 | 179 | 136 | 99.3 |
+
+**Avant leads Valk on 2 of the 7 scenarios and trails on 5.** No scenario's ranges overlap.
+
+| Scenario | Avant (ms) | Valk (ms) | Avant ÷ Valk | |
+| --- | ---: | ---: | ---: | --- |
+| 1 short-lived allocation | 49.2 | 11.5 | 4.29 | trails |
+| 2 forced collections of a stable heap | 5830 | 0.317 | 18,392 | trails |
+| 3 build a long-lived chain | 332 | 62.4 | 5.32 | trails |
+| 4 free a long-lived chain | 6.58 | 32.2 | 0.20 | **leads** |
+| 5 mutate live links | 9.58 | 11.2 | 0.86 | **leads** |
+| 6 churn beside a large live set | 48.8 | 5.44 | 8.97 | trails |
+| 7 tree churn | 150 | 44.5 | 3.38 | trails |
+| 8 reverse live links in place (*added by Avant; not part of Valk's suite; separate builds*) | 10.7 | 139 | 0.077 | leads |
+
+The whole seven-scenario process takes Avant 6.51 s and 100.1 MB of peak memory, and Valk 0.206 s and 81.0 MB. Among all seven languages, Avant is the slowest on scenarios 2 (where its range overlaps Java's) and 3, second on 1, 4 and 5, and fourth on 6 and 7.
+
+Why Avant trails, each cause resting on a count or a profile:
+
+- **Allocation is too expensive** (scenario 1, and most of 6 and 7). One iteration of scenario 1 runs 95 instructions in Avant and 17 in Valk: `T.new` is an out-of-line call of 81 instructions. The collector itself is under 3% of that scenario.
+- **A build where everything survives is processed several times** (scenario 3): the objects are copied out of the young generation, traced again, then marked by full collections. 89% of the scenario is collector pauses, and Avant is the slowest of the seven.
+- **A full collection pays for the whole live heap** (scenario 2, and part of 6). Scenario 2 forces 500 full collections of an unchanged heap: Valk's collector processes only what changed, and a tracing collector re-marks the live heap each time. Stated literally, that is 5,830 ms against 0.317 ms, and it is a defect. Two findings sit inside it: the defragmenter moves the same sparse block again at every full collection of an unchanged heap (41% of the cost), and one internal check is 39% of the instructions. The equivalent operation, a collection when nothing has changed, costs 0.90 µs in Avant (a young collection) and 0.63 µs in Valk (a local collection); it is printed here for the comparison and is not the bar.
+- **Valk does not give scenario 7's trees to its collector at all**: its compiler proves they can live in a region. With `--no-regions` Valk takes 54.3 ms, still 2.8× faster than Avant.
+
+Where Avant leads: freeing (scenario 4), because a tracing collector never visits the dead; plain pointer reads (scenario 5), which Avant does not mask; and writes into old objects (scenario 8).
+
+Two labelled variants, neither a headline row. With [collection hints](#collection-hints), Avant takes 192 ms on scenario 3, 41.1 ms on 6 and 117 ms on 7. The programs as Valk ships them carry a few asymmetries that were measured and left in the table: Go's sink is atomic (scenario 1: 155 ms, 149 ms with a plain one); Go and D return memory to the system inside scenario 4's timer (54.4 ms and 13.9 ms; 43.3 ms and 2.13 ms with it outside); and C#'s JIT warms up inside the timers (scenario 1: 105 ms, 76.3 ms without tiering).
+
+### Valk's general suite
+
+Valk also ships a general benchmark suite (eight single-threaded programs in Valk, Go and Rust). It was measured on this machine as shipped, to have the baseline. **Avant's ports are not written yet, so Avant has no row there and no table is printed here**: a comparison without Avant in it says nothing about Avant. The baseline, with a note per program on whether the three versions are equivalent programs (four of the eight are not, as shipped), is in `bench/valk/`. When Avant's ports exist, the table comes here, with Valk's tag and those notes beside the numbers.
 
 ### HTTP and WebSocket servers
 
@@ -3259,13 +3345,16 @@ The most basic server in each language: `GET /` answered with `hello`, and a Web
 
 ### Reading these numbers
 
+These notes are about [LangArena](#langarena).
+
 - **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); the C column is Clang, the faster of the two C compilers measured (GCC: 59.499 s, 23.4 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
 - **The whole process is timed**: start-up, data preparation, warm-up and the timed iterations. LangArena's published numbers count only the timed iterations.
-- **Compiled-in task sizes.** Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes. On a few tasks, `Matmul::Single` above all, that, not the language, explains most of the gap.
-- **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, and the Burrows-Wheeler transform inside `Compress::BWTEncode` and `Compress::BWTDecode` is runtime C. Their numbers are the C code's merit.
-- **Library-leaning rows.** The JSON, Base64 and regex tasks (`Json::*`, `Base64::*`, `Template::Regex`, `Etc::LogParser`) run mostly inside yyjson, the aklomp codec and PCRE2 or re2c: the speed is those libraries', reached through Avant's bindings.
+- **Compiled-in task sizes.** Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
+- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.4 seconds between Avant's total and C's.
+- **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it in the language; the Burrows-Wheeler transform inside `Compress::BWTEncode` and `BWTDecode` is runtime C too.
+- **Library-leaning rows.** `Json::ParseDom` and `Json::ParseMapping` (yyjson in Avant and C; simdjson in C++; serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust): the speed is those libraries', reached through Avant's bindings. `Sort::Self` is each language's own library sort, by the task's definition. In `CSV::Parse`, Rust and C++ use CSV libraries; in `Json::Generate`, C and C++ use JSON libraries and Avant writes into its own buffer.
 - **Scope.** 49 of LangArena's 50 tasks: `Etc::TextRaytracer` is left out because it is invalid for Avant (`--release` hoists its pure render out of the timed loop).
-- **Equivalent programs.** Avant's tasks follow the algorithms and the data widths of the C and Rust references; where an Avant source was cleverer than its reference, it was rewritten to match.
+- **Equivalent programs is the rule**: Avant's tasks are meant to follow the algorithms and the data widths of the C and Rust references, and a row that does not is named above until it is rewritten.
 
 ## Goals
 
@@ -3283,7 +3372,7 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 | Interop | C libraries usable with little ceremony |
 | Concurrency | built in, and obvious |
 
-Where Avant stands today: ahead of C and Rust on the 49-task total, with the caveats above; three tasks beyond the 1.5× bar; behind Crystal on 7 tasks and behind Go on 11. Every one of those rows is a defect on the list until it is fixed. The gaps are named, published and worked on, never hidden and never rounded away.
+Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). On the collector, Avant leads Valk on two of seven scenarios and trails on five ([Garbage collector](#garbage-collector)). Every one of those rows is a defect on the list until it is fixed. The gaps are named, published and worked on, never hidden and never rounded away.
 
 Avant is not a better TypeScript, not a borrow-checker language, not a dynamic language with types bolted on, and not a research language. It does not try to please everyone.
 

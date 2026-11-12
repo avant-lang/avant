@@ -33,7 +33,10 @@
 #              the compiler's and then the program's otherwise)
 #   hidden     not a block: a comment that holds source the page does not
 #              show, `<!-- check: hidden id=NAME`, the source, then `-->`
-#              on its own line; other blocks take it with pre= or post=
+#              on its own line; other blocks take it with pre= or post=.
+#              `<!-- check: hidden project=P file=PATH` instead puts the
+#              text in project P as PATH (a file every block of the
+#              project sees, wherever the comment stands)
 # SHAPE (how the shown text becomes a program)
 #   body       the text is statements: it is wrapped in `fn main { }`
 #   decls      the text is declarations: an empty `fn main { }` is added
@@ -187,6 +190,21 @@ BEGIN { n = 0; infence = 0; inhidden = 0; pending = "" }
     sub(/^<!-- check: hidden id=/, "", name)
     sub(/[ \t]*$/, "", name)
     hfile = W "/ids/" name
+    printf "" > hfile
+    inhidden = 1
+    next
+  }
+  if (line ~ /^<!-- check: hidden project=[A-Za-z0-9_-]+ file=[A-Za-z0-9_.\/-]+[ \t]*$/) {
+    name = line
+    sub(/^<!-- check: hidden project=/, "", name)
+    sub(/[ \t]*$/, "", name)
+    proj = name
+    sub(/ file=.*$/, "", proj)
+    sub(/^.* file=/, "", name)
+    hfile = W "/p/" proj "/" name
+    hdir = hfile
+    sub(/\/[^\/]*$/, "", hdir)
+    system("mkdir -p \"" hdir "\"")
     printf "" > hfile
     inhidden = 1
     next
