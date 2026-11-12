@@ -24,6 +24,8 @@ Each vendored tree has exactly one pin of record: the table above for `yyjson/` 
 The tree is upstream `7a7c820` plus the changes below, each marked "Avant patch" in the source. An update of the pin re-applies each one or drops it with the upstream change that makes it unnecessary, and says which in the commit message.
 
 - `uSockets/src/bsd.c`, `bsd_write2` (Stage 29 W-FIX1a): `sendmsg` with `MSG_NOSIGNAL` in place of `writev`. `writev` cannot carry the flag, so a write to a connection the peer had reset raised SIGPIPE and ended the process (a client that closed with two pipelined answers unread did it); the call now fails with `EPIPE`, as `bsd_send` in the same file already does. Every socket write of the runtime goes through `bsd_send` or `bsd_write2`.
+- `uSockets/src/socket.c`, `us_socket_write2` (Stage 29 W-FIX1a): a short write sets the loop's `last_write_failed`, as `us_socket_write` does. Without it a short `us_socket_write2` made from inside `on_writable` lost its writable poll when the handler returned (`loop.c` stops polling for writable unless that flag is set), and the rest was never sent. `std.http` answers the requests that waited behind a queued answer from `on_writable`.
+- `uSockets/src/loop.c`, `us_internal_dispatch_ready_poll` (Stage 29 W-FIX1a): after a read that filled the whole receive buffer the socket is read again only if it is still polled for readable. `std.http` stops polling a connection for readable while an answer's tail is queued, so that a client that does not read is held back by TCP; reading on regardless grew that connection's input without bound.
 
 ## PCRE2
 

@@ -1,6 +1,10 @@
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "libusockets.h"
+/* For LIBUS_SOCKET_READABLE and LIBUS_SOCKET_WRITABLE, the events
+ * us_poll_change takes: libusockets.h declares the function and keeps
+ * the constants in its internal headers. */
+#include "internal/internal.h"
 #include "picohttpparser.h"
 
 #include <arpa/inet.h>
@@ -267,6 +271,15 @@ typedef struct AvantWsConn {
   struct AvantWsConn *next_global;
 } AvantWsConn;
 
+/* out is the connection's output queue (Stage 29 W-FIX1a, P191): the
+ * bytes of an answer the socket did not take, in C memory, sent by
+ * srv_on_writable. While it holds anything the connection takes no
+ * further request and is not read (conn_send), so it never holds more
+ * than one answer's tail and the input buffer stops growing; a later
+ * answer cannot overtake it. close_after_flush: the connection is shut
+ * down when the queue drains (Connection: close, an error answer, the
+ * server closing). peer_ended: the peer sent FIN while output was still
+ * queued; the socket closes once everything is answered and sent. */
 typedef struct Conn {
   AvantHttpServer *srv;
   char *buf;
@@ -275,6 +288,12 @@ typedef struct Conn {
   int answered;
   int sent_continue;
   AvantWsConn *ws;
+  char *out;
+  size_t out_len;
+  size_t out_off;
+  size_t out_cap;
+  int close_after_flush;
+  int peer_ended;
 } Conn;
 
 /* One event loop per loop thread, all binding the same port through
@@ -362,11 +381,91 @@ static size_t put_str(char *dst, const char *src, size_t len) {
   return len;
 }
 
+static int conn_out_pending(const Conn *conn) {
+  return conn->out_len > conn->out_off;
+}
+
+static void conn_poll(struct us_socket_t *s, int events) {
+  us_poll_change((struct us_poll_t *)s,
+                 us_socket_context_loop(0, us_socket_context(0, s)), events);
+}
+
+/* Appends n bytes to the output queue; 0 when memory ran out. */
+static int conn_out_append(Conn *conn, const char *p, size_t n) {
+  if (n == 0) {
+    return 1;
+  }
+  if (conn->out_len + n > conn->out_cap) {
+    size_t want = conn->out_cap ? conn->out_cap : 4096;
+    char *next;
+    while (want < conn->out_len + n) {
+      want *= 2;
+    }
+    next = (char *)realloc(conn->out, want);
+    if (!next) {
+      return 0;
+    }
+    conn->out = next;
+    conn->out_cap = want;
+  }
+  memcpy(conn->out + conn->out_len, p, n);
+  conn->out_len += n;
+  return 1;
+}
+
+/* Sends the two pieces of an answer in order (b may be NULL with bn 0).
+ * With nothing queued they go to the socket in one vectored write, and
+ * only what the socket did not take is copied into the queue; with a
+ * tail already queued they are appended behind it, so bytes leave in
+ * the order they were handed in. The pieces may be Avant heap memory:
+ * nothing of them is kept past this call. While the queue holds
+ * anything the socket is polled for writable only: the connection is
+ * not read, so a client that does not read its answers is held back by
+ * TCP instead of filling the server's memory. When the queue cannot
+ * grow the connection is closed: the answer cannot be completed, and a
+ * cut answer followed by another is worse than a closed connection. */
+static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
+                      size_t an, const char *b, size_t bn) {
+  size_t written = 0;
+  if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
+    return;
+  }
+  if (!conn_out_pending(conn)) {
+    int w = us_socket_write2(0, s, a, (int)an, b, (int)bn);
+    written = w > 0 ? (size_t)w : 0;
+    if (written >= an + bn) {
+      return;
+    }
+  }
+  if (written < an) {
+    if (!conn_out_append(conn, a + written, an - written) ||
+        !conn_out_append(conn, b, bn)) {
+      us_socket_close(0, s, 0, NULL);
+      return;
+    }
+  } else if (!conn_out_append(conn, b + (written - an), bn - (written - an))) {
+    us_socket_close(0, s, 0, NULL);
+    return;
+  }
+  conn_poll(s, LIBUS_SOCKET_WRITABLE);
+}
+
+/* The answer is complete and the connection ends after it: shut down
+ * now, or when the queued tail has been sent. */
+static void conn_finish(Conn *conn, struct us_socket_t *s) {
+  conn->answered = 1;
+  if (conn_out_pending(conn)) {
+    conn->close_after_flush = 1;
+  } else {
+    us_socket_shutdown(0, s);
+  }
+}
+
 /* conn_header is "close", "keep-alive", or NULL to omit the header.
  * The prefix is assembled by hand: a hello-world response costs two
  * snprintf calls per request otherwise, which profiling put at about
  * a seventh of the loop thread's user time. */
-static void write_response(struct us_socket_t *s, int32_t status,
+static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
                            const char *head, const char *body,
                            const char *conn_header) {
   size_t body_len = avant_str_n(body);
@@ -407,10 +506,7 @@ static void write_response(struct us_socket_t *s, int32_t status,
     char line[256];
     int m = snprintf(line, sizeof(line), "HTTP/1.1 %d %s\r\n", (int)status,
                      reason_phrase(status));
-    us_socket_write(0, s, line, m, 1);
-    if (head_len > 0) {
-      us_socket_write(0, s, head, (int)head_len, 1);
-    }
+    conn_send(conn, s, line, (size_t)m, head, head_len);
     if (conn_header) {
       m = snprintf(line, sizeof(line),
                    "Content-Length: %zu\r\nConnection: %s\r\n\r\n", body_len,
@@ -418,20 +514,17 @@ static void write_response(struct us_socket_t *s, int32_t status,
     } else {
       m = snprintf(line, sizeof(line), "Content-Length: %zu\r\n\r\n", body_len);
     }
-    us_socket_write(0, s, line, m, 1);
-    if (body_len > 0) {
-      us_socket_write(0, s, body, (int)body_len, 0);
-    }
+    conn_send(conn, s, line, (size_t)m, body, body_len);
     return;
   }
-  us_socket_write2(0, s, prefix, n, body, (int)body_len);
+  conn_send(conn, s, prefix, n, body, body_len);
 }
 
 static void send_error(Conn *conn, struct us_socket_t *s, int32_t status) {
   const char *phrase = reason_phrase(status);
-  write_response(s, status, "Content-Type: text/plain\r\n", phrase, "close");
-  conn->answered = 1;
-  us_socket_shutdown(0, s);
+  write_response(conn, s, status, "Content-Type: text/plain\r\n", phrase,
+                 "close");
+  conn_finish(conn, s);
 }
 
 /* A parsed request, valid only for the dispatch call. Pointers borrow
@@ -506,7 +599,8 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
-  write_response(req->sock, avant_c_int(status), head, body, conn_header);
+  write_response(req->conn, req->sock, avant_c_int(status), head, body,
+                 conn_header);
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -1395,6 +1489,11 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     return;
   }
   for (;;) {
+    /* An answer's tail is still queued: the next request waits in the
+     * buffer until srv_on_writable has sent it (P191). */
+    if (conn_out_pending(conn)) {
+      return;
+    }
     const char *method = NULL;
     const char *target = NULL;
     size_t method_len = 0;
@@ -1447,7 +1546,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
           ascii_ieq(value, value_len, "100-continue", 12) &&
           !conn->sent_continue) {
         const char *cont = "HTTP/1.1 100 Continue\r\n\r\n";
-        us_socket_write(0, s, cont, (int)strlen(cont), 0);
+        conn_send(conn, s, cont, strlen(cont), NULL, 0);
         conn->sent_continue = 1;
       }
       return;
@@ -1522,6 +1621,11 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     enter_avant();
     srv->dispatch(srv->state, &req);
     leave_avant();
+    if (us_socket_is_closed(0, s)) {
+      /* The answer could not be queued (conn_send closed the socket);
+       * srv_on_close has freed the buffers. */
+      return;
+    }
     if (req.upgraded) {
       /* The 101 is written and the connection is a WebSocket now. Any
        * bytes past the handshake are frames already in the buffer. */
@@ -1536,8 +1640,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
       return;
     }
     if (!keep_alive) {
-      conn->answered = 1;
-      us_socket_shutdown(0, s);
+      conn_finish(conn, s);
       return;
     }
     /* The dispatch copied what it kept; consume this request and look
@@ -1550,6 +1653,50 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     if (conn->len == 0) {
       return;
     }
+  }
+}
+
+/* Loop thread only, from srv_on_writable: sends the queued tail. When
+ * it has all gone the connection takes up what waited behind it: the
+ * shutdown of a finished connection, the requests still in the input
+ * buffer (which may queue again), the close a peer's FIN asked for. */
+static void conn_flush(Conn *conn, struct us_socket_t *s) {
+  while (conn_out_pending(conn)) {
+    size_t rem = conn->out_len - conn->out_off;
+    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
+    int written = us_socket_write(0, s, conn->out + conn->out_off, chunk, 0);
+    if (written > 0) {
+      conn->out_off += (size_t)written;
+    }
+    if (written < chunk) {
+      /* us_socket_write polls for readable again; this connection is
+       * read only when its queue is empty. */
+      conn_poll(s, LIBUS_SOCKET_WRITABLE);
+      return;
+    }
+  }
+  free(conn->out);
+  conn->out = NULL;
+  conn->out_len = 0;
+  conn->out_off = 0;
+  conn->out_cap = 0;
+  conn_poll(s, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+  if (conn->close_after_flush) {
+    us_socket_shutdown(0, s);
+    if (conn->peer_ended) {
+      us_socket_close(0, s, 0, NULL);
+    }
+    return;
+  }
+  if (!conn->answered && !conn->ws && conn->len > 0) {
+    conn_process(conn, s);
+    if (us_socket_is_closed(0, s)) {
+      return;
+    }
+  }
+  if (conn->peer_ended && !conn_out_pending(conn)) {
+    us_socket_shutdown(0, s);
+    us_socket_close(0, s, 0, NULL);
   }
 }
 
@@ -1682,6 +1829,13 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
   }
   free(node->conn.buf);
   node->conn.buf = NULL;
+  node->conn.len = 0;
+  node->conn.cap = 0;
+  free(node->conn.out);
+  node->conn.out = NULL;
+  node->conn.out_len = 0;
+  node->conn.out_off = 0;
+  node->conn.out_cap = 0;
   if (hl) {
     link = &hl->conns_head;
     while (*link && *link != node) {
@@ -1695,6 +1849,15 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
 }
 
 static struct us_socket_t *srv_on_end(struct us_socket_t *s) {
+  ConnNode *node = (ConnNode *)us_socket_ext(0, s);
+  if (!node->conn.ws && conn_out_pending(&node->conn)) {
+    /* The peer finished sending but may still be reading: what is
+     * queued, and the requests behind it, are answered first
+     * (conn_flush closes). */
+    node->conn.peer_ended = 1;
+    conn_poll(s, LIBUS_SOCKET_WRITABLE);
+    return s;
+  }
   us_socket_shutdown(0, s);
   return us_socket_close(0, s, 0, NULL);
 }
@@ -1707,6 +1870,8 @@ static struct us_socket_t *srv_on_writable(struct us_socket_t *s) {
   ConnNode *node = (ConnNode *)us_socket_ext(0, s);
   if (node->conn.ws) {
     ws_flush(node->conn.ws);
+  } else {
+    conn_flush(&node->conn, s);
   }
   return s;
 }
@@ -1752,6 +1917,12 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
         node->conn.answered = 1;
       } else if (node->conn.ws) {
         node->conn.answered = 1;
+      } else if (conn_out_pending(&node->conn)) {
+        /* An answer's tail is still queued: it is sent, then the
+         * connection shuts down (conn_flush); requests behind it are
+         * not taken. */
+        node->conn.answered = 1;
+        node->conn.close_after_flush = 1;
       }
       if (!node->conn.answered) {
         us_socket_close(0, node->sock, 0, NULL);

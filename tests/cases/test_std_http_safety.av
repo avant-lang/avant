@@ -3,8 +3,39 @@ import std.http
 
 // Safety behaviours of std.http's server (Stage 29 W-FIX1a), each a
 // defect that had no test: a client that closes with pipelined answers
-// unread (O240). The byte-level client is
-// tests/fixtures/http/raw_client.py: it prints one line per mode.
+// unread (O240); answers larger than the socket takes at once, and
+// answers piling up for a client that does not read (P191). The
+// byte-level client is tests/fixtures/http/raw_client.py: it prints one
+// line per mode.
+
+class Hits {
+  pub n: Int
+
+  pub fn initialize {
+    self.n = 0
+  }
+}
+
+// This process's peak resident memory in kB (VmHWM), 0 when unreadable.
+fn peak_rss_kb: Int {
+  if text = file_read("/proc/self/status") {
+    i = 0
+    while i < count_lines(text) {
+      line = nth_line(text, i)
+      if line.size > 6 && str_slice(line, 0, 6) == "VmHWM:" {
+        digits = buf_new()
+        for k in 6..line.size {
+          if line[k] >= 48 && line[k] <= 57 {
+            digits.push_byte(line[k])
+          }
+        }
+        return digits.to_s.to_i ?? 0
+      }
+      i += 1
+    }
+  }
+  0
+}
 
 fn raw_client(port: Int, root: String, stamp: Int, mode: String, arg: String): String {
   log = "${scratch()}/http-safety-${stamp}-${mode}-${arg}.log"
@@ -31,6 +62,16 @@ fn close_unread_round(port: Int, out: Channel(String), root: String, stamp: Int)
   out.send(raw_client(port, root, stamp, "close_unread", "2"))
   out.send(raw_client(port, root, stamp, "close_unread", "16"))
   out.send(raw_client(port, root, stamp, "close_unread", "2000"))
+  stop(port)
+  0
+}
+
+fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
+  out.send(raw_client(port, root, stamp, "slow_big", ""))
+  out.send(raw_client(port, root, stamp, "pile", ""))
+  out.send(raw_client(port, root, stamp, "close_big", ""))
+  out.send(raw_client(port, root, stamp, "half_close", ""))
+  out.send(raw_client(port, root, stamp, "flood", ""))
   stop(port)
   0
 }
@@ -79,6 +120,66 @@ fn test_std_http_safety(c: Checks, root: String) {
     expect_lines(c, out, want, "a close with pipelined answers unread leaves the server alive:")
   } else {
     c.expect(false, "listen for the close-unread test")
+  }
+
+  // P191: the socket takes only part of an answer. The rest is queued
+  // per connection and sent when the socket is writable again: no byte
+  // is lost, answers stay in order, Connection: close waits for the
+  // queue, and a client that does not read is not served or read
+  // further, so the server's memory stays bounded.
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    big = buf_new()
+    for i in 0..8388608 {
+      big.push_byte(97 + i % 26)
+    }
+    big_bytes = big.to_s.bytes
+    digits: Array(Bytes) = []
+    for d in 0..10 {
+      b = buf_new()
+      for i in 0..65536 {
+        b.push_byte(48 + d)
+      }
+      digits.push(b.to_s.bytes)
+    }
+    flood_hits = Hits.new()
+    server.get("/big") { |req|
+      Response.bytes(big_bytes)
+    }
+    server.get("/n") { |req|
+      k = (req.query ?? "0").to_i ?? 0
+      Response.bytes(digits[k % 10])
+    }
+    server.get("/f") { |req|
+      flood_hits.n += 1
+      Response.bytes(digits[1])
+    }
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(8)
+    before_kb = peak_rss_kb()
+    handle = spawn {
+      queue_round(port, out, root, stamp)
+    }
+    server.serve
+    c.eq_int(handle.join, 0, "output-queue task")
+    want: Array(String) = []
+    want.push("slow_big=whole,then pong")
+    want.push("pile=65 whole,in order")
+    want.push("close_big=whole,then eof")
+    want.push("half_close=2 whole,then eof")
+    want.push("flood=held back")
+    expect_lines(c, out, want, "an answer the socket takes in part is queued, not cut:")
+    c.expect(flood_hits.n > 0 && flood_hits.n < 2000, "a client that reads nothing is served a bounded number of requests")
+    c.expect(before_kb > 0 && peak_rss_kb() - before_kb < 65536, "a client that reads nothing does not grow the server's memory")
+  } else {
+    c.expect(false, "listen for the output-queue test")
   }
 }
 
