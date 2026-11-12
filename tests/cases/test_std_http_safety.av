@@ -12,7 +12,9 @@ import std.http
 // socket takes at once (O513); a peer that accepts and never answers,
 // or never reads (O514). And of WebSocket values whose connection is
 // gone: a WsConn kept after its server (O515), a copy of a closed
-// WsConnection (O516).
+// WsConnection (O516). And WebSocket connections opening and closing
+// together on a server with more than one loop (Stage 29 W-FIX1e,
+// O564).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -410,6 +412,126 @@ fn ws_cases(c: Checks) {
   }
 }
 
+// O564: one client task of ws_route_cases. It opens `rounds`
+// connections in turn, on /a and /b alternately, sends two messages on
+// each and closes it; /a answers each message once, /b twice (its two
+// routes, in the order they were registered). At the first answer that
+// is missing or comes from the wrong route it sends what it saw to
+// wrongs, stops (on the starting head a wrong route could leave every
+// later answer missing, five seconds each) and returns 1.
+fn ws_route_round(port: Int, t: Int, rounds: Int, done: Channel(Int), wrongs: Channel(String)): Int {
+  wrong = ""
+  k = 0
+  while k < rounds && wrong.size == 0 {
+    p = "a"
+    if (t + k) % 2 == 1 {
+      p = "b"
+    }
+    if conn = Ws.connect("ws://127.0.0.1:${port}/${p}", 5000) {
+      m = 0
+      while m < 2 && wrong.size == 0 {
+        body = "${t}.${k}.${m}"
+        want: Array(String) = []
+        if p == "a" {
+          want.push("a ${body}")
+        } else {
+          want.push("b1 ${body}")
+          want.push("b2 ${body}")
+        }
+        if conn.send_text(body) {
+          for w in want {
+            if wrong.size == 0 {
+              got = "nothing"
+              if msg = conn.recv(5000) {
+                got = msg.text ?? "a binary message"
+              }
+              if got != w {
+                wrong = "task ${t}, connection ${k} on /${p}: ${got} for ${w}"
+              }
+            }
+          }
+        } else {
+          wrong = "task ${t}, connection ${k} on /${p}: the send failed"
+        }
+        m += 1
+      }
+      conn.close
+    } else {
+      wrong = "task ${t}, connection ${k} on /${p}: the connect failed"
+    }
+    k += 1
+  }
+  if wrong.size > 0 {
+    wrongs.send(wrong)
+  }
+  done.send(1)
+  if wrong.size > 0 {
+    return 1
+  }
+  0
+}
+
+// O564: a server with more than one loop kept its open WebSocket
+// connections' ids and paths in two arrays its loop threads shared
+// with no lock; connections opening and closing together on different
+// loops raced on them, and the server trapped (an index out of bounds)
+// or ran a message on another connection's route. Each connection now
+// carries its route in its own C record. Eight loops, eight client
+// tasks opening and closing 200 connections each: every answer must
+// come from the connection's own route.
+fn ws_route_cases(c: Checks) {
+  tasks = 8
+  rounds = 200
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 8) {
+    server = opened
+    server.websocket("/b") { |conn, msg|
+      _ = conn.send_text("b1 ${msg.text ?? "?"}")
+    }
+    server.websocket("/a") { |conn, msg|
+      _ = conn.send_text("a ${msg.text ?? "?"}")
+    }
+    server.websocket("/b") { |conn, msg|
+      _ = conn.send_text("b2 ${msg.text ?? "?"}")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    done = Channel(Int).new(tasks)
+    wrongs = Channel(String).new(tasks)
+    handles: Array(JoinHandle(Int)) = []
+    for t in 0..tasks {
+      handles.push(spawn {
+        ws_route_round(port, t, rounds, done, wrongs)
+      })
+    }
+    stopper = spawn {
+      got = 0
+      while got < tasks {
+        if d = done.recv {
+          got += d
+        }
+      }
+      stop(port)
+      0
+    }
+    server.serve
+    failed = 0
+    for h in handles {
+      failed += h.join
+    }
+    _ = stopper.join
+    wrong = ""
+    if failed > 0 {
+      wrong = wrongs.recv ?? "?"
+    }
+    c.eq_str(wrong, "", "WebSocket connections opening and closing together on 8 loops: the first answer missing or from another route")
+  } else {
+    c.expect(false, "listen for the multi-loop WebSocket route test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -597,5 +719,6 @@ fn main: Int {
   test_std_http_safety(c, avant_test_root())
   client_cases(c)
   ws_cases(c)
+  ws_route_cases(c)
   c.finish
 }

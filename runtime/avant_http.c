@@ -252,7 +252,14 @@ typedef struct WsOut {
  * twice. A WsConn whose id is not the record's is a value of a
  * connection that has closed: every operation through it answers
  * "closed" (ws_record_is). id and owner_tid are read by such values
- * from any thread, so both are stored and loaded atomically. */
+ * from any thread, so both are stored and loaded atomically.
+ *
+ * route is the index, in the server's WebSocket message routes, of the
+ * first route on the connection's path (-1 when the path has none),
+ * given by std.http at the upgrade and read for every message by
+ * avant_ws_event_route (Stage 29 W-FIX1e, O564). Only the owner thread
+ * writes it and reads it, so the loop threads share no table of
+ * connections. */
 typedef struct AvantWsConn {
   int64_t id;
   AvantHttpServer *srv;
@@ -261,6 +268,7 @@ typedef struct AvantWsConn {
   struct Conn *conn;
   pthread_t owner_tid;
   char *path;
+  avant_int route;
   char *frag;
   size_t frag_len;
   size_t frag_cap;
@@ -919,6 +927,7 @@ static AvantWsConn *ws_record_take(void) {
   ws->sock = NULL;
   ws->conn = NULL;
   ws->path = NULL;
+  ws->route = -1;
   ws->frag = NULL;
   ws->frag_len = 0;
   ws->frag_cap = 0;
@@ -1192,6 +1201,11 @@ avant_int avant_ws_event_kind(void *evp) {
 
 avant_int avant_ws_event_conn_id(void *evp) {
   return ((AvantWsEvent *)evp)->ws->id;
+}
+
+/* The connection's first message route, set at the upgrade (O564). */
+avant_int avant_ws_event_route(void *evp) {
+  return ((AvantWsEvent *)evp)->ws->route;
 }
 
 char *avant_ws_event_path(void *evp) {
@@ -1569,7 +1583,7 @@ avant_int avant_http_req_ws_id(void *reqp) {
   return req->ws_conn ? req->ws_conn->id : 0;
 }
 
-avant_int avant_http_req_ws_upgrade(void *reqp) {
+avant_int avant_http_req_ws_upgrade(void *reqp, avant_int route) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   AvantHttpServer *srv = req->srv;
   AvantWsConn *ws;
@@ -1603,6 +1617,7 @@ avant_int avant_http_req_ws_upgrade(void *reqp) {
     return 0;
   }
   ws->srv = srv;
+  ws->route = route;
   ws->loop = loop_of_socket(req->sock);
   ws->sock = req->sock;
   ws->conn = req->conn;
