@@ -8,6 +8,8 @@ import std.http
 // that closed busy connections (P192); Content-Length lines that
 // disagree (P193). The byte-level client is
 // tests/fixtures/http/raw_client.py: it prints one line per mode.
+// And of its client (Stage 29 W-FIX1d): a request larger than the
+// socket takes at once (O513).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -84,6 +86,61 @@ fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
   out.send(raw_client(port, root, stamp, "half_close", ""))
   out.send(raw_client(port, root, stamp, "flood", ""))
   0
+}
+
+fn post_big_round(port: Int, out: Channel(String), n: Int): Int {
+  b = buf_new()
+  for i in 0..n {
+    b.push_byte(97 + i % 26)
+  }
+  if resp = Http.post("http://127.0.0.1:${port}/len", b.to_s) {
+    out.send("status ${resp.status}: ${String.from_utf8(resp.body) ?? "?"}")
+  } else {
+    out.send("HttpError")
+  }
+  stop(port)
+  0
+}
+
+// O513: the client wrote its request once and ignored what the socket
+// took, so a request larger than the socket's buffer was cut and the
+// server waited for the rest until its idle timeout closed the
+// connection. The rest is now sent as the socket becomes writable: the
+// server receives every byte, in order. (The server's idle timeout is
+// shortened so that a cut request fails this check in 8 s, not 30.)
+fn client_cases(c: Checks) {
+  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "8")
+  listened = Http.listen(0, "127.0.0.1", 33554432, 1)
+  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
+  if opened = listened {
+    server = opened
+    server.post("/len") { |req|
+      body = req.body
+      bad = 0
+      for i in 0..body.size {
+        if body[i] != 97 + i % 26 {
+          bad += 1
+        }
+      }
+      Response.text("${body.size} bytes, ${bad} out of place")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(2)
+    task = spawn {
+      post_big_round(port, out, 8388608)
+    }
+    server.serve
+    c.eq_int(task.join, 0, "client post task")
+    want: Array(String) = []
+    want.push("status 200: 8388608 bytes, 0 out of place")
+    expect_lines(c, out, want, "a request the socket takes in part reaches the server whole and in order:")
+  } else {
+    c.expect(false, "listen for the client's large request")
+  }
 }
 
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
@@ -248,5 +305,6 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_std_http_safety(c, avant_test_root())
+  client_cases(c)
   c.finish
 }

@@ -417,6 +417,29 @@ static void conn_poll(struct us_socket_t *s, int events) {
                  us_socket_context_loop(0, us_socket_context(0, s)), events);
 }
 
+/* Writes p[*off .. len) to the socket, in pieces of at most 1 GiB (the
+ * socket takes an int length), and advances *off by what the socket
+ * took. Returns 1 when everything has gone and 0 when the socket took
+ * only a part: us_socket_write has then asked for the socket's writable
+ * event, and the caller's on_writable handler calls this again with the
+ * same offset. The server's output queue (conn_flush) and the client's
+ * request (fetch_send; Stage 29 W-FIX1d, O513) are both sent by it. */
+static int sock_write_rest(struct us_socket_t *s, const char *p, size_t len,
+                           size_t *off) {
+  while (*off < len) {
+    size_t rem = len - *off;
+    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
+    int written = us_socket_write(0, s, p + *off, chunk, 0);
+    if (written > 0) {
+      *off += (size_t)written;
+    }
+    if (written < chunk) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 /* Appends n bytes to the output queue; 0 when memory ran out. */
 static int conn_out_append(Conn *conn, const char *p, size_t n) {
   if (n == 0) {
@@ -1707,16 +1730,14 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
  * shutdown of a finished connection, the requests still in the input
  * buffer (which may queue again), the close a peer's FIN asked for. */
 static void conn_flush(Conn *conn, struct us_socket_t *s) {
-  while (conn_out_pending(conn)) {
-    size_t rem = conn->out_len - conn->out_off;
-    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
-    int written = us_socket_write(0, s, conn->out + conn->out_off, chunk, 0);
-    if (written > 0) {
+  if (conn_out_pending(conn)) {
+    size_t before = conn->out_off;
+    int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off);
+    if (conn->out_off > before) {
       /* The client took queued bytes: it is not stalled (P192). */
-      conn->out_off += (size_t)written;
       us_socket_timeout(0, s, conn->srv->idle_timeout);
     }
-    if (written < chunk) {
+    if (!done) {
       /* us_socket_write polls for readable again; this connection is
        * read only when its queue is empty. */
       conn_poll(s, LIBUS_SOCKET_WRITABLE);
@@ -2974,17 +2995,31 @@ avant_int avant_ws_client_close(void *handle) {
 
 /* ---- client fetch primitive ---- */
 
+/* request is the whole request (the head and the body), pinned for the
+ * loop; sent is how much of it the socket has taken. */
 typedef struct FetchState {
   char *buf;
   size_t len;
   size_t cap;
   int failed;
   const char *request;
+  size_t request_len;
+  size_t sent;
 } FetchState;
 
 static FetchState *fetch_of_socket(struct us_socket_t *s) {
   struct us_loop_t *loop = us_socket_context_loop(0, us_socket_context(0, s));
   return *(FetchState **)us_loop_ext(loop);
+}
+
+/* Sends what is left of the request (Stage 29 W-FIX1d, O513: the one
+ * write of fetch_on_open ignored its count and fetch_on_writable was
+ * empty, so a request the socket took only in part was cut there and
+ * the server waited for the rest). Nothing is copied: the request stays
+ * pinned until the loop ends, so the rest is sent from it, in order,
+ * each time the socket is writable again. */
+static void fetch_send(FetchState *st, struct us_socket_t *s) {
+  (void)sock_write_rest(s, st->request, st->request_len, &st->sent);
 }
 
 static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
@@ -2995,7 +3030,7 @@ static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
   (void)ip_length;
   /* The request goes out only now: writing on a still-connecting
    * socket corrupts the semi-socket state machine. */
-  us_socket_write(0, s, st->request, (int)avant_str_n(st->request), 0);
+  fetch_send(st, s);
   return s;
 }
 
@@ -3048,6 +3083,7 @@ static struct us_socket_t *fetch_on_connect_error(struct us_socket_t *s,
 }
 
 static struct us_socket_t *fetch_on_writable(struct us_socket_t *s) {
+  fetch_send(fetch_of_socket(s), s);
   return s;
 }
 
@@ -3110,6 +3146,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   timeout_s = timeout_ms <= 0 ? 10 : (timeout_ms > INT32_MAX ? INT32_MAX / 1000 : (int)((timeout_ms + 999) / 1000));
   us_socket_timeout(0, sock, (unsigned int)timeout_s);
   st->request = request;
+  st->request_len = avant_str_n(request);
   /* The loop runs native (rule 3); its callbacks read the request, which
    * is pinned for the loop (a collection on another thread may run
    * meanwhile and must not move or free it). */
