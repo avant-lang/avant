@@ -438,6 +438,7 @@ fn test_modules(c: Checks) {
     }
     test_fn_scopes(c, compiler, dir)
     test_field_privacy(c, compiler, dir)
+    test_default_modules(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -492,6 +493,22 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   } else {
     c.expect(false, "a checkout's compiler/main.av is not exempt")
   }
+}
+
+// A parameter default belongs to its declaration (O343, O17, O223, Stage
+// 29 W-FIX1b): spliced into a call, it is checked in the callee's module,
+// with none of the caller's names in scope, whatever the call's form: a
+// qualified call, an unqualified one, a constructor, a method with and
+// without parentheses, a type-level function. Before, only the qualified
+// call did; the others reported `unknown function secret`, or called the
+// calling module's function of that name. An earlier parameter named by a
+// default is the caller's argument, checked as the caller wrote it.
+fn test_default_modules(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "dlib", "fn secret: Int {\n  7\n}\n\npub fn pick(n: Int = secret()): Int {\n  n\n}\n\npub fn span(a: Int, b: Int = a + secret()): Int {\n  a * 100 + b\n}\n\npub fn same(a: String, b: String = a): String {\n  \"\${a}\${b}\"\n}\n\npub class Box {\n  pub v: Int = 0\n\n  fn initialize(v: Int = secret()) {\n    self.v = v\n  }\n\n  pub fn plus(k: Int = secret()): Int {\n    v + k\n  }\n\n  pub fn self.make(k: Int = secret()): Int {\n    k\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far(k: Int = secret()): Int {\n    x + k\n  }\n}\n\npub fn (s: String) pad(k: Int = secret()): Int {\n  s.size + k\n}\n")
+  write_av(dir, "dplain", "import dlib\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus)\n  puts(Box.make())\n  puts(Box.make)\n  p = Pt { x: 1 }\n  puts(p.far)\n  puts(\"ab\".pad)\n}\n")
+  mod_runs(c, compiler, dir, "dplain", "7\n7\n7\n14\n14\n7\n7\n8\n9\n", "a default names a function private to its module: every call form")
+  write_av(dir, "dsame", "import dlib\n\nfn secret: Int {\n  1000\n}\n\nfn mine: Int {\n  3\n}\n\nclass User {\n  n: Int = 0\n\n  fn secret: Int {\n    5000\n  }\n\n  fn go: Int {\n    pick() + Box.new.plus\n  }\n}\n\nfn wrap(x: T): Int {\n  pick() + Box.new.v\n}\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus)\n  puts(Box.make())\n  puts(Box.make)\n  puts(User.new.go)\n  puts(wrap(1) + wrap(\"s\"))\n  secret = { |k: Int| k + 90000 }\n  puts(pick() + secret(1))\n  x = 4\n  puts(span(x + mine()))\n  puts(span(1, 2))\n  puts(same(\"ab\"))\n  puts(dsame.secret())\n}\n")
+  mod_runs(c, compiler, dir, "dsame", "7\n7\n7\n14\n14\n7\n7\n21\n28\n90008\n714\n102\nabab\n1000\n", "the calling module's function, method and local of the same name do not capture a default")
 }
 
 fn main: Int {

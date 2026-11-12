@@ -19,6 +19,11 @@ import backends
 //     would be that one object), and `Array(T).new(n) { |i| ... }` builds
 //     each element (tests/fixtures/heap/build.av runs it under the
 //     collector's modes).
+//   - O223, O17: a method whose parameters all have defaults, called
+//     without parentheses, is the call with them (the build stopped in
+//     the MIR verifier); a type-level function's defaults are checked and
+//     typed like any argument. Defaults across modules (O343) are
+//     tests/cases/test_modules.av's.
 
 class RCase {
   pub tag: String = ""
@@ -102,6 +107,15 @@ fn array_cases: Array(RCase) {
   xs
 }
 
+fn default_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(accepted("default-no-parens", "class Conn {\n  n: Int = 3\n\n  fn recv(wait: Int = 5): Int {\n    n + wait\n  }\n\n  fn both(a: Int = 1, b: Int = a + 8): Int {\n    n + a + b\n  }\n\n  fn twice: Int {\n    recv + recv\n  }\n}\n\nstruct P {\n  x: Int\n\n  fn far(k: Int = 4): Int {\n    x + k\n  }\n}\n\nfn (p: P) wide(k: Int = 5): Int {\n  p.x + k\n}\n\nfn (s: String) shout(mark: String = \"!\"): String {\n  \"\${s}\${mark}\"\n}\n\nclass Cell(T) {\n  item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  fn pick(other: T, n: Int = 9): Int {\n    n\n  }\n\n  fn count(n: Int = 9): Int {\n    n\n  }\n}\n\nfn main {\n  c = Conn.new\n  puts(c.recv())\n  puts(c.recv)\n  puts(c.twice)\n  puts(c.both)\n  p = P { x: 2 }\n  puts(p.far)\n  puts(p.wide)\n  puts(c.recv + p.far - 2)\n  cell = Cell.new(\"s\")\n  puts(\"\${cell.count} \${cell.pick(\"t\")}\")\n  puts(\"ab\".shout)\n  if c.recv > 7 {\n    puts(c.recv(2))\n  }\n}\n", "8\n8\n16\n13\n6\n7\n12\n9 9\nab!\n5\n"))
+  xs.push(refused("default-no-parens-assign", "class Conn {\n  n: Int = 3\n\n  fn recv(wait: Int = 5): Int {\n    n + wait\n  }\n}\nfn main {\n  c = Conn.new\n  c.recv = 4\n}\n", "cannot assign to a method", "10:10"))
+  xs.push(refused("default-missing-required", "class Conn {\n  n: Int = 3\n\n  fn need(a: Int, b: Int = 1): Int {\n    n + a + b\n  }\n}\nfn main {\n  puts(Conn.new.need)\n}\n", "methods are not values", "9:16"))
+  xs.push(accepted("default-typed-on-type-call", "class K {\n  pub n: Int = 0\n  pub on: Bool = false\n  pub f: Float64 = 0.0\n\n  fn self.make(n: Int = 3, on: Bool = false, f: Float64 = 2.5, tag: String = \"t\", big: UInt64 = 7): K {\n    k = K.new\n    k.n = n + tag.size - 1 + big.to_i - 7\n    k.on = on\n    k.f = f\n    k\n  }\n}\nfn main {\n  a = K.make\n  puts(\"\${a.n} \${a.on}\")\n  b = K.make(5, true)\n  puts(\"\${b.n} \${b.on}\")\n  puts(K.make().f)\n}\n", "3 false\n5 true\n2.5\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -143,6 +157,9 @@ fn test_main(c: Checks) {
     }
     for f2 in array_cases() {
       all.push(f2)
+    }
+    for f3 in default_cases() {
+      all.push(f3)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

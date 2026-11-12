@@ -161,6 +161,16 @@ pub class Expr {
   pub type_call: Bool = false
   pub fn_ref: Bool = false
   vis: Bool = false
+  // A parameter default spliced into a call as an argument
+  // (checker/match.av fill_defaults): a call checked again drops it and
+  // splices anew, so a default is never taken for an argument the caller
+  // wrote. This flag and the next share the four flags' word: the node's
+  // size is unchanged.
+  pub is_default: Bool = false
+  // Inside such a default, a copy of one of the caller's arguments
+  // standing in for the parameter the default names: checked where the
+  // caller wrote it, not where the default was declared.
+  pub caller_copy: Bool = false
   pub mod_name: String = ""
   pub splice: Expr? = nil
 
@@ -742,6 +752,8 @@ pub fn clone_expr(e: Expr): Expr {
   out.indirect = e.indirect
   out.type_call = e.type_call
   out.fn_ref = e.fn_ref
+  out.is_default = e.is_default
+  out.caller_copy = e.caller_copy
   out.resolved = e.resolved
   out.spawn_thunk = e.spawn_thunk
   if sp = e.splice {

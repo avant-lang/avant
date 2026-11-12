@@ -186,22 +186,99 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
   checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected)
 }
 
+// The defaults of the parameters a call leaves out, spliced in as
+// arguments and marked (Expr.is_default), so a call that is checked again
+// (a generic function's instance, a receiver checked twice) drops them
+// first (drop_spliced_defaults) and no default is taken for an argument
+// the caller wrote. Where a default names an earlier parameter, a copy of
+// that argument's expression stands in for the name, marked
+// (Expr.caller_copy; rewrite_expr_names clones it, and a clone keeps the
+// mark).
 pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
   while expr.args.size < fnn.params.size {
     i = expr.args.size
     if d = fnn.params[i].default {
-      cloned = clone_expr(d)
       from: Array(String) = []
       to: Array(Expr) = []
       for j in 0..i {
         from.push(fnn.params[j].name)
-        to.push(expr.args[j])
+        copy = clone_expr(expr.args[j])
+        copy.is_default = false
+        copy.caller_copy = true
+        to.push(copy)
       }
-      expr.args.push(rewrite_expr_names(cloned, from, to))
+      spliced = rewrite_expr_names(clone_expr(d), from, to)
+      spliced.is_default = true
+      expr.args.push(spliced)
     } else {
       checker_self.fail(expr.loc, "${fnn.name} takes ${fnn.params.size} arguments, got ${expr.args.size}")
       return
     }
+  }
+}
+
+// A default spliced into a call by fill_defaults, checked against its
+// parameter (O343, O17, Stage 29 W-FIX1b): a default belongs to its
+// declaration, so it is checked in the callee's module, with no local of
+// the caller in scope and no receiver, whatever the call's form (before,
+// an unqualified call, a constructor and a method call checked it in the
+// calling module: a private function of the callee's module was unknown
+// there, and a function of the same name in the calling module was
+// called instead). The caller's context is kept for the copies of its
+// arguments inside the default (check_caller_copy).
+pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, want: Ty, fnn: Function): Ty {
+  saved_mod = checker_self.def_mod
+  saved_scopes = checker_self.def_scopes
+  saved_self = checker_self.def_self
+  saved_name = checker_self.def_self_name
+  saved_depth = checker_self.arg_default
+  checker_self.def_mod = checker_self.current_module
+  checker_self.def_scopes = checker_self.scopes
+  checker_self.def_self = checker_self.self_ty
+  checker_self.def_self_name = checker_self.self_name
+  fresh: Array(Scope) = []
+  checker_self.scopes = fresh
+  checker_self.push_scope
+  checker_self.current_module = fnn.mod_name
+  checker_self.self_ty = nil
+  checker_self.self_name = ""
+  checker_self.arg_default = saved_depth + 1
+  got = checker_self.check_expr_as(expr.args[i], want)
+  checker_self.arg_default = saved_depth
+  checker_self.self_name = checker_self.def_self_name
+  checker_self.self_ty = checker_self.def_self
+  checker_self.scopes = checker_self.def_scopes
+  checker_self.current_module = checker_self.def_mod
+  checker_self.def_self_name = saved_name
+  checker_self.def_self = saved_self
+  checker_self.def_scopes = saved_scopes
+  checker_self.def_mod = saved_mod
+  got
+}
+
+// Inside a spliced default, a copy of one of the caller's arguments: it
+// is checked in the caller's context, then the default's check goes on.
+pub fn (checker_self: Checker) check_caller_copy(expr: Expr, has_want: Bool, want: Ty): Ty {
+  iso_scopes = checker_self.scopes
+  iso_mod = checker_self.current_module
+  depth = checker_self.arg_default
+  checker_self.scopes = checker_self.def_scopes
+  checker_self.current_module = checker_self.def_mod
+  checker_self.self_ty = checker_self.def_self
+  checker_self.self_name = checker_self.def_self_name
+  checker_self.arg_default = 0
+  got = checker_self.check_expr_flag(expr, has_want, want)
+  checker_self.arg_default = depth
+  checker_self.self_name = ""
+  checker_self.self_ty = nil
+  checker_self.current_module = iso_mod
+  checker_self.scopes = iso_scopes
+  got
+}
+
+pub fn (checker_self: Checker) drop_spliced_defaults(expr: Expr) {
+  while expr.args.size > 0 && expr.args[expr.args.size - 1].is_default {
+    expr.args.pop
   }
 }
 
@@ -654,7 +731,19 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     checker_self.fail(expr.loc, "type-level functions on generic types are not supported yet")
     return checker_self.t_int()
   }
+  given = expr.args.size
   checker_self.fill_defaults(expr, sig.node)
+  // The defaults it spliced are checked like any argument (O17: they
+  // reached the back end untyped).
+  for di in given..expr.args.size {
+    if di < sig.params.size {
+      dgot = checker_self.check_default_arg(expr, di, sig.params[di], sig.node)
+      if !ty_assignable(dgot, sig.params[di]) {
+        dn = di + 1
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show}.${expr.callee} is ${dgot.show}, expected ${sig.params[di].show}")
+      }
+    }
+  }
   expr.resolved = sig.node.emit_name
   expr.type_call = true
   sig.ret
@@ -691,7 +780,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
       if i < arg_tys.size {
         got = arg_tys[i]
       } else {
-        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+        got = checker_self.check_default_arg(expr, i, sig.params[i], sig.node)
       }
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
@@ -900,11 +989,17 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
     }
   }
   base = deferred.size
+  given = expr.args.size
   checker_self.fill_defaults(expr, sig.node)
   i = base
   while i < expr.args.size {
     if i < sig.params.size {
-      got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+      got = checker_self.t_int()
+      if i < given {
+        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+      } else {
+        got = checker_self.check_default_arg(expr, i, sig.params[i], sig.node)
+      }
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
@@ -978,7 +1073,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
       if i < arg_tys.size {
         got = arg_tys[i]
       } else {
-        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+        got = checker_self.check_default_arg(expr, i, sig.params[i], sig.node)
       }
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {

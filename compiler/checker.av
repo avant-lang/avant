@@ -133,6 +133,14 @@ pub class Checker {
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
+  // While a spliced default is checked (check_default_arg; how deep):
+  // the caller's context, for the copies of its arguments inside the
+  // default.
+  pub arg_default: Int = 0
+  pub def_mod: String = ""
+  pub def_scopes: Array(Scope) = []
+  pub def_self: Ty? = nil
+  pub def_self_name: String = ""
   // The variables of the `for` loops being checked (D329, Stage 29
   // W-FIX1b): each one's name, the scope that holds it, and 3 for a
   // range's counter or 4 for an array's element (the parser's for_kind
@@ -1095,7 +1103,7 @@ pub class Checker {
         }
       }
       place = check_expr(target)
-      if target.kind == ex_field() && target.method_call {
+      if (target.kind == ex_field() && target.method_call) || target.kind == ex_call() {
         fail(stmt.loc, "cannot assign to a method")
         return
       }
@@ -1132,7 +1140,7 @@ pub class Checker {
         }
       }
       place = check_expr(target)
-      if target.kind == ex_field() && target.method_call {
+      if (target.kind == ex_field() && target.method_call) || target.kind == ex_call() {
         fail(stmt.loc, "cannot assign to a method")
         return
       }
@@ -1188,6 +1196,12 @@ pub class Checker {
   pub fn check_expr_flag(expr: Expr, has_want: Bool, want: Ty): Ty {
     if self.has_err {
       return t_int()
+    }
+    // Inside a spliced default (check_default_arg): a copy of an earlier
+    // argument of the call, standing in for its parameter, is the
+    // caller's expression and is checked in the caller's context.
+    if expr.caller_copy && self.arg_default > 0 {
+      return check_caller_copy(expr, has_want, want)
     }
     mark = self.err_count
     kind = check_expr_core(expr, has_want, want)
@@ -1745,6 +1759,9 @@ pub class Checker {
           arg_tys: Array(Ty) = []
           none: Ty? = nil
           if sig = match_method(object.name, expr.ident, arg_tys, none, expr.loc, object.name, object.mod_name, no_int_literals()) {
+            if sig.node.params.size > 0 {
+              return paren_call_of(expr)
+            }
             expr.method_call = true
             expr.resolved = sig.node.emit_name
             return sig.ret
@@ -1827,6 +1844,9 @@ pub class Checker {
       arg_tys: Array(Ty) = []
       none: Ty? = nil
       if sig = match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, "", no_int_literals()) {
+        if sig.node.params.size > 0 {
+          return paren_call_of(expr)
+        }
         expr.method_call = true
         expr.resolved = sig.node.emit_name
         return sig.ret
@@ -1884,6 +1904,23 @@ pub class Checker {
     fail(e.loc, "release takes a C-layout field or a Ptr to a C layout, got ${et.show}")
   }
 
+  // `c.recv` where every parameter of `recv` has a default (O223, Stage
+  // 29 W-FIX1b): the call `c.recv()`. The member node becomes that call,
+  // so its defaults are spliced and checked, and every later walk sees
+  // them, as for the form with parentheses (before, the member was
+  // lowered as a call without its arguments, and the MIR verifier
+  // stopped the build).
+  pub fn paren_call_of(expr: Expr): Ty {
+    if recv = expr.object {
+      expr.kind = ex_call()
+      expr.callee = expr.ident
+      expr.receiver = recv
+      expr.object = nil
+      return check_method_call(expr, recv, false, t_int())
+    }
+    t_int()
+  }
+
   pub fn check_ptr_member(expr: Expr, object: Ty): Ty {
     owner = method_owner_name(object)
     pointee = object
@@ -1909,6 +1946,9 @@ pub class Checker {
       arg_tys: Array(Ty) = []
       none: Ty? = nil
       if sig = match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, object.mod_name, no_int_literals()) {
+        if sig.node.params.size > 0 {
+          return paren_call_of(expr)
+        }
         expr.method_call = true
         expr.resolved = sig.node.emit_name
         return sig.ret
@@ -2956,6 +2996,7 @@ pub class Checker {
   }
 
   pub fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
+    drop_spliced_defaults(expr)
     if expr.indirect {
       if inner = expr.inner {
         callee = check_expr(inner)
@@ -3346,13 +3387,13 @@ pub class Checker {
               if i < pre.size {
                 got = pre[i]
               } else {
-                got = check_expr_as(expr.args[i], sig.params[i])
+                got = check_default_arg(expr, i, sig.params[i], sig.node)
               }
             } else {
               if i < arg_tys.size {
                 got = arg_tys[i]
               } else {
-                got = check_expr_as(expr.args[i], sig.params[i])
+                got = check_default_arg(expr, i, sig.params[i], sig.node)
               }
             }
             if i < sig.params.size {
